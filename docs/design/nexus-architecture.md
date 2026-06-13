@@ -688,7 +688,7 @@ event: export_bundle_created { destination, includes_phi: true,
 
 * ADR-002 (Rev-1..Rev-9) — `docs/adr/ADR-002-m3-memory-merge.md`
 * Memory architecture v3 — `docs/design/m3-memory-architecture.md`
-* UX redesign v2 — `docs/design/nexus-ux-redesign-v2.md`
+* UX redesign v2 — `docs/design/nexus-architecture.md`
 * M3-Agent — <https://github.com/ByteDance-Seed/m3-agent>
 * MONAI — <https://github.com/Project-MONAI/MONAI>
 * Tauri 2.0 — <https://v2.tauri.app>

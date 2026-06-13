@@ -404,6 +404,13 @@ async def upload_file(
     # the upload still works but won't auto-file into a patient
     # bucket (the DICOM path can still self-bind from tags).
     session_id: str = Form(""),
+    # Explicit patient_hash override — when the medic has a patient
+    # open in the desktop and drops a CT, they expect the upload to
+    # ATTACH to that patient, not mint a new patient row from the
+    # DICOM PatientID tag. The desktop passes this; backend uses it
+    # to short-circuit both the session→patient_hash lookup and the
+    # DICOM-tag-derived hash. Empty string means "no override".
+    patient_hash: str = Form(""),
     current_user: str = Depends(get_current_user),
 ) -> UploadResponse:
     """Receive a multipart upload, persist it across all three layers
@@ -690,14 +697,27 @@ async def upload_file(
     dicom_preview_dir = ""
 
     # ── Layer 2: SQL + disk index ─────────────────────────────────
-    # #178 — inherit the session's patient_hash so non-DICOM uploads
-    # (PDFs, TIFFs, lab notes) land in the right patient bucket. For
-    # DICOM uploads this gets overwritten with the parsed PatientID/
-    # Name hash by the prerender background task. The COALESCE in
-    # the dicom prerender UPDATE keeps the session-inherited value
-    # only when the DICOM-derived hash is empty.
+    # Patient binding priority (highest → lowest):
+    #   1. Explicit ``patient_hash`` form param — when the medic has
+    #      a patient open in the desktop and drops a CT, they expect
+    #      the upload to ATTACH to that patient. We honor this even
+    #      for DICOM uploads, suppressing the PatientID-derived hash
+    #      via the FORCE flag below.
+    #   2. ``session_id`` → sessions.patient_hash  (#178 — inherited
+    #      from active chat session for non-DICOM uploads).
+    #   3. DICOM PatientID tag (parsed by background prerender; the
+    #      COALESCE in that path keeps an inherited value only when
+    #      the DICOM-derived hash is empty).
     inherited_patient_hash = ""
-    if session_id:
+    force_patient_hash = False
+    if patient_hash.strip():
+        inherited_patient_hash = patient_hash.strip()
+        force_patient_hash = True
+        logger.info(
+            "upload bound to patient %s by explicit override",
+            inherited_patient_hash[:12],
+        )
+    elif session_id:
         try:
             with get_db_connection() as conn:
                 row = conn.execute(
@@ -763,6 +783,7 @@ async def upload_file(
             _run_dicom_prerender_async,
             user_id=current_user, file_id=file_id, name=name,
             mime=mime, size_bytes=total, disk_path=disk_path,
+            force_patient_hash=force_patient_hash,
         )
 
     return UploadResponse(
@@ -776,6 +797,7 @@ async def upload_file(
 def _run_dicom_prerender_async(
     *, user_id: str, file_id: str, name: str, mime: str,
     size_bytes: int, disk_path: Path,
+    force_patient_hash: bool = False,
 ) -> None:
     """Background task body — runs the existing
     prerender_archive_for_upload helper, then writes the resulting
@@ -822,7 +844,12 @@ def _run_dicom_prerender_async(
         # under one patient bucket (the medic's mental model is
         # "this patient's files," not "this study's PNGs").
         new_patient_hash = ""
-        if new_status == "rendered" and new_study_id:
+        if new_status == "rendered" and new_study_id and not force_patient_hash:
+            # Only derive patient_hash from the DICOM PatientID tag
+            # when the medic DIDN'T explicitly bind the upload to a
+            # patient. When force_patient_hash is set, the upload row
+            # already has the desired patient_hash from the synchronous
+            # insert above — we must not overwrite it.
             try:
                 from nexus_server.dicom import load_study
                 _study = load_study(user_id, new_study_id)
@@ -841,6 +868,37 @@ def _run_dicom_prerender_async(
                         new_patient_hash, file_id,
                     ),
                 )
+                # Also rebind the DICOM study row to the override
+                # patient_hash so /api/v1/dicom/patients/{hash}/studies
+                # surfaces the study under the right patient.
+                if force_patient_hash and new_study_id:
+                    try:
+                        from nexus_server.dicom import _index_db_path
+                        import sqlite3 as _sql
+                        dconn = _sql.connect(_index_db_path())
+                        try:
+                            # Re-read the synchronous insert's patient_hash
+                            # (we don't have it as a param, so look it up).
+                            row = conn.execute(
+                                "SELECT patient_hash FROM uploads WHERE file_id = ?",
+                                (file_id,),
+                            ).fetchone()
+                            forced = row[0] if row else ""
+                            if forced:
+                                dconn.execute(
+                                    "UPDATE dicom_studies SET patient_hash = ? "
+                                    "WHERE user_id = ? AND study_id = ?",
+                                    (forced, user_id, new_study_id),
+                                )
+                                dconn.commit()
+                                logger.info(
+                                    "rebound study %s → patient %s (force)",
+                                    new_study_id[:8], forced[:12],
+                                )
+                        finally:
+                            dconn.close()
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("study rebind failed: %s", e)
                 conn.commit()
         except Exception as e:  # noqa: BLE001
             logger.warning(

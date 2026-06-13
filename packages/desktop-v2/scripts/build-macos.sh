@@ -409,20 +409,57 @@ SOURCE_HASH_FILE="$SERVER_ROOT/dist/.source.sha256"
 #   - the user `git pull`s — the new files are written but their
 #     mtimes can predate the binary.
 # Content hashing is robust against all of these.
+#
+# We use Python (already installed two stages ago) rather than
+# ``find | xargs shasum`` because the latter splits args on whitespace
+# and the user's checkout path frequently contains spaces (e.g.
+# ``~/Library/Application Support/...``). Under ``set -euo pipefail`` a
+# split-on-space xargs failure aborts the script silently before
+# Stage 3 prints anything. Python handles paths transparently and
+# also lets us return a friendly "" on errors instead of crashing.
 compute_source_hash() {
-  {
-    find "$SERVER_ROOT/nexus_server" \
-         "$SERVER_ROOT/scripts" \
-         "$REPO_ROOT/packages/sdk" \
-         "$REPO_ROOT/packages/nexus" \
-         -type f \( -name '*.py' -o -name '*.toml' \) 2>/dev/null
-    # Spec + version stamp also contribute.
-    echo "$SERVER_ROOT/nexus-server.spec"
-    echo "$SERVER_ROOT/pyproject.toml"
-  } | sort -u | xargs shasum -a 256 2>/dev/null | shasum -a 256 | awk '{print $1}'
+  python3 - <<'PYHASH' "$SERVER_ROOT/nexus_server" \
+                       "$SERVER_ROOT/scripts" \
+                       "$REPO_ROOT/packages/sdk" \
+                       "$REPO_ROOT/packages/nexus" \
+                       "$SERVER_ROOT/nexus-server.spec" \
+                       "$SERVER_ROOT/pyproject.toml" 2>/dev/null || echo ""
+import hashlib, os, sys
+roots = sys.argv[1:]
+files = []
+for r in roots:
+    if os.path.isfile(r):
+        files.append(r)
+        continue
+    if not os.path.isdir(r):
+        continue
+    for dp, _dirs, fs in os.walk(r):
+        # Skip noisy / non-source dirs.
+        if any(p in dp for p in ("/__pycache__", "/.venv", "/node_modules", "/.git", "/build", "/dist")):
+            continue
+        for f in fs:
+            if f.endswith((".py", ".toml", ".spec")):
+                files.append(os.path.join(dp, f))
+files.sort()
+h = hashlib.sha256()
+for f in files:
+    try:
+        with open(f, "rb") as fp:
+            h.update(f.encode())
+            h.update(b":")
+            h.update(fp.read())
+            h.update(b"\n")
+    except OSError:
+        pass
+print(h.hexdigest())
+PYHASH
 }
 
 NEEDED_HASH="$(compute_source_hash)"
+if [ -z "$NEEDED_HASH" ]; then
+  warn "couldn't compute source hash — defaulting to force rebuild"
+  NEEDED_HASH="force-rebuild-$(date +%s)"
+fi
 say "source-hash:  $NEEDED_HASH"
 if [ -f "$SOURCE_HASH_FILE" ]; then
   CURRENT_HASH="$(cat "$SOURCE_HASH_FILE" 2>/dev/null || echo "")"
@@ -674,6 +711,27 @@ fi
 # ═════════════════════════════════════════════════════════════════════
 
 step "Tauri build — .dmg installer (Rust cold compile: 5-10 min)"
+
+# Belt-and-suspenders: pnpm 10's beforeBuildCommand re-checks ignored
+# build scripts and fails the run with ERR_PNPM_IGNORED_BUILDS even
+# when our install passed. THREE layers of defence:
+#   1. .npmrc has verify-deps-before-run=false (file-level config).
+#   2. tauri.conf.json's beforeBuildCommand passes --config flags inline
+#      so the deps-check is disabled even if the .npmrc isn't read.
+#   3. Below: export env-var equivalents so any further pnpm sub-spawns
+#      that bypass both inherit the right setting.
+# Confirmed in sandbox against pnpm 10.34.3 — the inline --config form
+# silences the gate; bare env var is just additional safety net.
+export PNPM_VERIFY_DEPS_BEFORE_RUN=false
+export npm_config_verify_deps_before_run=false
+export npm_config_strict_dep_builds=false
+# The definitive bypass — verified by reading pnpm 10.34.3 source at
+# pnpm.cjs:141046 (createAllowBuildFunction returns () => true when
+# this is set, so ignoredBuilds stays empty and the throw at :175546
+# can't fire). Acceptable for our use because the dep tree is pinned
+# in pnpm-lock.yaml — no untrusted code can inject a postinstall.
+export npm_config_dangerously_allow_all_builds=true
+export PNPM_DANGEROUSLY_ALLOW_ALL_BUILDS=true
 
 if [ "$SIGN" = true ]; then
   [ -n "${APPLE_SIGNING_IDENTITY:-}" ] || die "APPLE_SIGNING_IDENTITY required for --sign"

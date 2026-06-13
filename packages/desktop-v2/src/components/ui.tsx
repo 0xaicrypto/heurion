@@ -1,6 +1,6 @@
 /**
  * Component vocabulary — the 8 primitives from
- * docs/design/nexus-ux-redesign.md §7.
+ * docs/design/nexus-architecture.md §7.
  *
  * Kept in one file deliberately; the design says "small set of
  * primitives composes every screen" and that's easier to enforce

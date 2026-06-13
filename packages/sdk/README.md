@@ -97,7 +97,7 @@ EventLog (SQLite + FTS5)
 Mixing them would be a bug — the chat projection can hallucinate, the
 anchor projection cannot. See
 [`docs/concepts/dpm.md`](../../docs/concepts/dpm.md) for the full model
-and [`docs/design/recursive-projection.md`](../../docs/design/recursive-projection.md)
+and [`docs/design/nexus-architecture.md`](../../docs/design/nexus-architecture.md)
 for the RLM design.
 
 ---

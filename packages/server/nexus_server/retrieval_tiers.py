@@ -23,7 +23,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterator, Optional
+from typing import AsyncIterator, Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -351,3 +351,171 @@ def retrieve(
     else:
         yield from yield_t3(conn, user_id=user_id,
                             patient_hash=patient_hash, question=question)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Async dispatcher — T3 now calls the real LLM via llm_gateway. T1/T2
+# stay synchronous (template / SQL) and are bridged into the async
+# iterator via the sync `yield_t1` / `yield_t2` paths.
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _gather_patient_context(
+    conn: sqlite3.Connection, user_id: str, patient_hash: str,
+) -> str:
+    """Build a compact text block of the patient's graph for LLM grounding.
+    Includes findings, medications, recent studies, and semantic facts —
+    everything the LLM needs to ground its answer in the medic's record."""
+    parts: list[str] = []
+    try:
+        rows = conn.execute(
+            "SELECT node_type, content_json FROM clinical_graph_nodes "
+            "WHERE user_id = ? AND patient_hash = ? "
+            "  AND node_type IN ('finding','med','ddx','study','semantic_fact','measurement') "
+            "ORDER BY weight DESC LIMIT 40",
+            (user_id, patient_hash),
+        ).fetchall()
+    except sqlite3.Error:
+        return ""
+    if not rows:
+        return ""
+    by_kind: dict[str, list[str]] = {}
+    for ntype, raw in rows:
+        try:
+            content = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        label = content.get("label") or content.get("modality") or content.get("name") or "?"
+        extra = ""
+        if "size_cm" in content:    extra = f" ({content['size_cm']} cm)"
+        elif "study_date" in content: extra = f" on {content['study_date']}"
+        elif "value" in content:    extra = f" = {content['value']}"
+        by_kind.setdefault(ntype, []).append(f"{label}{extra}")
+    label_map = {
+        "finding": "Active findings",
+        "med": "Medications",
+        "ddx": "Differential diagnoses",
+        "study": "Imaging studies",
+        "semantic_fact": "Patient-level facts",
+        "measurement": "Measurements",
+    }
+    for kind, items in by_kind.items():
+        parts.append(f"{label_map.get(kind, kind)}: " + "; ".join(items[:10]))
+    return "\n".join(parts)
+
+
+async def yield_t3_llm(
+    conn: sqlite3.Connection,
+    *,
+    user_id: str,
+    patient_hash: Optional[str],
+    question: str,
+) -> AsyncIterator[RetrievalChunk]:
+    """T3 — real LLM-grounded answer. Replaces the placeholder.
+
+    Pipeline:
+      1. Emit tier_classified + a reasoning preview (so the UI's
+         TierIndicator + ReasoningPane have something to render).
+      2. Pull patient context from clinical_graph_nodes.
+      3. Call llm_gateway.call_llm with a clinician-grounded system
+         prompt + the patient context.
+      4. Emit the LLM's answer as a single final_answer_chunk + a
+         citations event with any nodes we grounded on.
+    """
+    yield RetrievalChunk("tier_classified", {"tier": "T3"})
+    yield RetrievalChunk(
+        "reasoning_chunk",
+        {"text": f"Searching the patient record for: {question[:80]}…"},
+    )
+
+    context_block = ""
+    cited_node_ids: list[int] = []
+    if patient_hash:
+        try:
+            ctx_rows = conn.execute(
+                "SELECT node_id, node_type FROM clinical_graph_nodes "
+                "WHERE user_id = ? AND patient_hash = ? "
+                "  AND node_type IN ('finding','med','study') "
+                "ORDER BY weight DESC LIMIT 8",
+                (user_id, patient_hash),
+            ).fetchall()
+            cited_node_ids = [int(r[0]) for r in ctx_rows]
+        except sqlite3.Error:
+            cited_node_ids = []
+        context_block = _gather_patient_context(conn, user_id, patient_hash)
+        if context_block:
+            yield RetrievalChunk(
+                "search_results_summary",
+                {"count": len(cited_node_ids), "preview": "graph entities scanned"},
+            )
+
+    system_prompt = (
+        "You are Nexus, a clinical workflow assistant for a practising "
+        "physician. Answer the medic's question directly and concisely. "
+        "When relevant, ground your answer in the patient context "
+        "provided below. If the context is empty or does not address "
+        "the question, answer from general medical knowledge but say "
+        "so explicitly. Always recommend professional review for any "
+        "decision-bearing output. Do NOT include hedging boilerplate; "
+        "the medic is qualified."
+    )
+    if context_block:
+        system_prompt += "\n\nPATIENT CONTEXT (from the local clinical graph):\n" + context_block
+
+    try:
+        from nexus_server import llm_gateway
+        content, model, _stop, _tools = await llm_gateway.call_llm(
+            messages=[{"role": "user", "content": question}],
+            system_prompt=system_prompt,
+            model=None,            # use config.DEFAULT_LLM_MODEL
+            temperature=0.4,
+            max_tokens=1024,
+            tools=None,
+        )
+        logger.info("yield_t3_llm: model=%s answer_chars=%d", model, len(content))
+        answer = content.strip() or "(no response)"
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("LLM call failed in yield_t3_llm")
+        answer = (
+            f"⚠ LLM call failed: {exc}. Check Settings · LLM — make sure "
+            f"the active provider has an API key, and the key is valid."
+        )
+
+    yield RetrievalChunk("final_answer_chunk", {"text": answer})
+    yield RetrievalChunk(
+        "citations",
+        {"refs": [{"node_id": nid, "kind": "graph_node"} for nid in cited_node_ids]},
+    )
+    yield RetrievalChunk("turn_complete", {})
+
+
+async def retrieve_async(
+    conn: sqlite3.Connection,
+    *,
+    user_id: str,
+    patient_hash: Optional[str],
+    question: str,
+) -> AsyncIterator[RetrievalChunk]:
+    """Async retrieval dispatcher. T1/T2 share their synchronous
+    implementations (they're pure SQL/template), so we adapt them via
+    a sync-iterator → async-iterator bridge. T3 uses yield_t3_llm,
+    which actually calls the LLM gateway."""
+    choice = classify(conn, user_id=user_id, patient_hash=patient_hash, question=question)
+    logger.info(
+        "retrieve_async: user=%s patient=%s tier=%s reason=%s",
+        user_id, patient_hash, choice.tier.value, choice.reason,
+    )
+    if choice.tier == Tier.T1 and choice.view_kind and patient_hash:
+        for chunk in yield_t1(conn, user_id=user_id,
+                              patient_hash=patient_hash,
+                              view_kind=choice.view_kind):
+            yield chunk
+    elif choice.tier == Tier.T2 and choice.anchor_hint and patient_hash:
+        for chunk in yield_t2(conn, user_id=user_id, patient_hash=patient_hash,
+                              question=question, anchor=choice.anchor_hint):
+            yield chunk
+    else:
+        async for chunk in yield_t3_llm(
+            conn, user_id=user_id, patient_hash=patient_hash, question=question,
+        ):
+            yield chunk

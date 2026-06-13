@@ -905,7 +905,7 @@ function MetaLayer() {
       ))}
       <li className="mt-2 text-caption text-text-tertiary">
         Surfaces here read-only for now; tuning UI is Settings → Evolution
-        (M5). See <span className="font-mono">docs/design/falsifiable-evolution.md</span>.
+        (M5). See <span className="font-mono">docs/design/nexus-architecture.md</span>.
       </li>
     </ul>
   );
@@ -1519,6 +1519,11 @@ export function ImagingMode() {
 
     try {
       const r = await api.uploadFile(file, file.name, {
+        // Bind to the currently-open patient if there is one. Without
+        // this, a DICOM zip with its own PatientID would mint a NEW
+        // patient row instead of attaching to the one the medic has
+        // open in the desktop.
+        patientHash: p?.patientHash,
         onProgress: (loaded, total) =>
           update({ uploadedBytes: loaded, uploadedTotal: total }),
       });

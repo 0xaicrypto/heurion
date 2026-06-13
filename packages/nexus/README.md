@@ -180,7 +180,7 @@ REPL variable and writes code that recursively calls a cheaper
 sub-LLM over chunks. Defaults are conservative — short logs always
 take the single-call fast path; truncation / runtime errors fall back
 to single-call. See
-[`docs/design/recursive-projection.md`](../../docs/design/recursive-projection.md).
+[`docs/design/nexus-architecture.md`](../../docs/design/nexus-architecture.md).
 
 ---
 

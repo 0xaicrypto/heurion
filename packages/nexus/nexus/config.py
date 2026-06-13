@@ -35,7 +35,7 @@ class TwinConfig:
     # ``"rlm"`` — Recursive Language Model: load events as a REPL
     # variable, root LLM writes code to slice / sub-call. Quality
     # scales with log size at the cost of higher per-turn variance.
-    # See ``docs/design/recursive-projection.md``.
+    # See ``docs/design/nexus-architecture.md``.
     chat_projection_mode: str = "single_call"
 
     # Fast-path: skip RLM and use single_call when the trajectory

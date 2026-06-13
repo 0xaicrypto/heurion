@@ -125,8 +125,19 @@ function MainShell() {
 export default function App() {
   const token         = useAppState((s) => s.token);
   const bootHydrated  = useAppState((s) => s.bootHydrated);
+  const logout        = useAppState((s) => s.logout);
 
   useGlobalShortcuts();
+
+  // The api-client fires this when a 401 fails to recover via the
+  // cached user_id (e.g. server's user table got reset, or first
+  // sign-in on a new machine). Wiping the token bounces us to the
+  // LoginView via the conditional render below.
+  useEffect(() => {
+    const handler = () => logout();
+    window.addEventListener('nexus:auth-expired', handler);
+    return () => window.removeEventListener('nexus:auth-expired', handler);
+  }, [logout]);
 
   // Avoid a one-frame login flicker before hydrate completes.
   if (!bootHydrated) return null;

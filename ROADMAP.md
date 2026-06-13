@@ -120,7 +120,7 @@ is a clean break — no compatibility aliases.
 
 ### Phase I–N — BEP v0.2 design (in flight)
 
-Detailed design lives in [`docs/design/bep-v0.2.md`](docs/design/bep-v0.2.md).
+Detailed design lives in [`docs/design/nexus-architecture.md`](docs/design/nexus-architecture.md).
 Summary:
 
 - **I.** Monolith decomposition (`twin.py`, `state.py`,
@@ -138,7 +138,7 @@ Summary:
 ### Phase O — Falsifiable Evolution (next)
 
 Detailed design lives in
-[`docs/design/falsifiable-evolution.md`](docs/design/falsifiable-evolution.md).
+[`docs/design/nexus-architecture.md`](docs/design/nexus-architecture.md).
 
 Make every Nexus self-evolution edit a falsifiable, on-chain
 contract: each `MemoryEvolver` / `SkillEvolver` / `PersonaEvolver` /
@@ -195,7 +195,7 @@ Conservative defaults baked in per AHE empirical findings:
 ### Phase P — Recursive Projection (RLM-style chat context)
 
 Detailed design lives in
-[`docs/design/recursive-projection.md`](docs/design/recursive-projection.md).
+[`docs/design/nexus-architecture.md`](docs/design/nexus-architecture.md).
 
 Replace the single-call ``π(events, task, budget)`` chat
 projection with a Recursive Language Model: load the EventLog as a

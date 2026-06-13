@@ -1,7 +1,7 @@
 /**
  * Global keyboard shortcut hook.
  *
- * Per docs/design/nexus-ux-redesign.md §3 ("keyboard-first for the senior
+ * Per docs/design/nexus-architecture.md §3 ("keyboard-first for the senior
  * persona") and §5 (⌘. for context rail, ⌘K for command palette).
  *
  * Intentionally tiny — listen on window keydown, dispatch on match.

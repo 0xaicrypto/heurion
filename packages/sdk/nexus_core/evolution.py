@@ -2,7 +2,7 @@
 
 Implements the BEP-Nexus §3.4 event schema and the normative
 verdict-decision rules from
-``docs/design/falsifiable-evolution.md``.
+``docs/design/nexus-architecture.md``.
 
 The high-level flow:
 

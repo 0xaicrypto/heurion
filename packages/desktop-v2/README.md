@@ -1,7 +1,7 @@
 # nexus-desktop-v2
 
 Next-generation Nexus desktop. Tauri 2.0 + React 18 + TypeScript + Tailwind + Radix.
-Supersedes `packages/desktop/` (Avalonia 11) — see `docs/design/nexus-ux-redesign.md`
+Supersedes `packages/desktop/` (Avalonia 11) — see `docs/design/nexus-architecture.md`
 and `docs/adr/ADR-002-m3-memory-merge.md`.
 
 ## What's in U0 (now closed)
@@ -10,7 +10,7 @@ and `docs/adr/ADR-002-m3-memory-merge.md`.
   Windows). Single tiny window pre-coloured to the dark theme so there is no
   white-flash on launch.
 - **Vite + React 18 + TypeScript** frontend with HMR. Strict TS settings.
-- **Tailwind + design tokens** from `docs/design/nexus-ux-redesign.md` §4 —
+- **Tailwind + design tokens** from `docs/design/nexus-architecture.md` §4 —
   warm-neutral palette, Google blue accent, Tiempos/system/JetBrains Mono
   type stack. Dark mode default, light mode supported via `.dark` class on
   `<html>`.
@@ -149,7 +149,7 @@ packages/desktop-v2/
 
 ## Design references
 
-- `docs/design/nexus-ux-redesign.md` — the design proposal this app implements
+- `docs/design/nexus-architecture.md` — the design proposal this app implements
 - `docs/design/m3-memory-architecture.md` v3 — memory layer behind the Memory mode
 - `docs/adr/ADR-002-m3-memory-merge.md` — memory architecture decision
 

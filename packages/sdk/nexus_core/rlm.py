@@ -47,7 +47,7 @@ is fine for chat projection (best-effort), unsafe for chain anchor
 If a future version needs RLM-with-replay (e.g. for cross-runtime
 DPM), record the trajectory (code + sub-LM I/O pairs) into the
 EventLog so a different runtime can replay deterministically.
-That's tracked in ``docs/design/recursive-projection.md``.
+That's tracked in ``docs/design/nexus-architecture.md``.
 
 Sandbox model
 =============

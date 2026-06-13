@@ -123,7 +123,7 @@ fn dirs_home() -> Option<PathBuf> {
 /// from the value. Returns an empty map and logs a warning if the file
 /// is missing — the sidecar still boots, just without LLM keys, and the
 /// frontend's Settings · LLM dialog can write the file later.
-fn load_user_env(path: &PathBuf) -> HashMap<String, String> {
+fn load_user_env(path: &Path) -> HashMap<String, String> {
     let mut out: HashMap<String, String> = HashMap::new();
     let text = match fs::read_to_string(path) {
         Ok(t) => t,
@@ -270,7 +270,7 @@ fn seed_or_merge_user_env(app: &AppHandle, user_env_path: &Path) -> Result<usize
         return Ok(0);
     }
 
-    let now = chrono_now_utc_compact();
+    let now = unix_now_secs();
     let header = format!(
         "\n# ── Bundle merge {} (Tauri startup) — added {} new key(s) ─\n",
         now, to_append.len()
@@ -295,16 +295,16 @@ fn seed_or_merge_user_env(app: &AppHandle, user_env_path: &Path) -> Result<usize
     Ok(to_append.len())
 }
 
-/// UTC timestamp in compact form, no external crate dep.
-fn chrono_now_utc_compact() -> String {
+/// Unix-seconds timestamp as a string. Used as a build-merge marker
+/// in .env headers ("# ── Bundle merge 1718312480 …"). No external
+/// crate dep — full calendar arithmetic isn't worth pulling chrono.
+fn unix_now_secs() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // We don't need full calendar arithmetic; the unix-secs form is
-    // sufficient for "which build was this" and stays human-readable.
-    format!("{}", secs)
+        .unwrap_or(0)
+        .to_string()
 }
 
 /// Launch the bundled nexus-server binary. Streams its stdout/stderr
@@ -430,7 +430,9 @@ fn llm_env_status() -> serde_json::Value {
         "has_gemini_key":   has_key("GEMINI_API_KEY"),
         "has_openai_key":   has_key("OPENAI_API_KEY"),
         "has_anthropic_key":has_key("ANTHROPIC_API_KEY"),
-        "advisory":         null::<String>,
+        // serde_json::json! takes JSON-literal tokens, not Rust generics —
+        // ``null`` is what you write for an explicit null.
+        "advisory":         null,
     })
 }
 
@@ -474,15 +476,21 @@ fn llm_env_write(updates: HashMap<String, String>) -> Result<serde_json::Value, 
         }
         new_lines.push(format!(
             "# ── Settings · LLM (written via Tauri IPC at unix {}) ──",
-            chrono_now_utc_compact(),
+            unix_now_secs(),
         ));
         for (k, v) in &remaining {
             new_lines.push(format!("{}={}", k, v));
         }
     }
 
-    // Atomic write: tempfile + rename.
-    let tmp = path.with_extension("env.tmp");
+    // Atomic write: tempfile + rename. ``Path::with_extension`` is
+    // unsafe for our filename — for ``/path/.env``, Rust treats the
+    // whole name as the stem, so with_extension("env.tmp") produces
+    // ``/path/.env.env.tmp``. Build the sibling path explicitly.
+    let tmp = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(".env.tmp");
     {
         let mut f = fs::File::create(&tmp)
             .map_err(|e| format!("create {}: {e}", tmp.display()))?;
@@ -515,7 +523,14 @@ fn restart_sidecar(app: AppHandle) -> Result<String, String> {
     log::info!("restart_sidecar: killing current child");
     {
         let state: State<SidecarState> = app.state();
-        if let Ok(mut guard) = state.0.lock() {
+        // Same E0597 dance as the exit handler at the top of this
+        // file: ``state.0.lock()`` returns a Result whose Err variant
+        // holds a MutexGuard borrowed from ``state``. As an unnamed
+        // temporary in the ``if let`` scrutinee, the Result outlives
+        // ``state`` and the borrow checker rejects the drop order.
+        // Binding to a named local pins both lifetimes to the block.
+        let lock_result = state.0.lock();
+        if let Ok(mut guard) = lock_result {
             if let Some(child) = guard.take() {
                 let _ = child.kill();
             }

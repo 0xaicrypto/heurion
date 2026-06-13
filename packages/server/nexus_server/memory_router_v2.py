@@ -10,7 +10,7 @@ Mounted at ``/api/v1/memory`` by main.py. All endpoints are auth-gated
 so the agent cannot pivot to another medic's data even if a malicious
 client tampers with paths.
 
-Endpoint groups (see docs/design/nexus-ux-redesign-v2.md §8 for the
+Endpoint groups (see docs/design/nexus-architecture.md §8 for the
 complete contract):
 
 * Layer 1 projection reads — patient summary / findings / medications /

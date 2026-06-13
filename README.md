@@ -144,7 +144,7 @@ log so that performance and auditability don't fight:
 The two projections never share state. The chat projection can hallucinate
 a detail; the anchor projection cannot, because its inputs are bytes and
 its outputs are commitments. See [`docs/concepts/dpm.md`](docs/concepts/dpm.md)
-and [`docs/design/recursive-projection.md`](docs/design/recursive-projection.md).
+and [`docs/design/nexus-architecture.md`](docs/design/nexus-architecture.md).
 
 ### Five-namespace typed memory (Phase J)
 
@@ -192,7 +192,7 @@ verdict       ──►  VerdictRunner scans the EventLog window:
 The user can also *manually* approve or revert any pending edit from
 the desktop UI; both produce verdict / revert events that look
 identical to the auto-grader's, so the timeline reads uniformly. See
-[`docs/design/falsifiable-evolution.md`](docs/design/falsifiable-evolution.md).
+[`docs/design/nexus-architecture.md`](docs/design/nexus-architecture.md).
 
 ### On-chain identity + verifiable growth (BEP-Nexus)
 
@@ -295,8 +295,8 @@ pytest packages/server/tests/     # 122 tests
 | Understand on-chain identity | [`docs/concepts/identity.md`](docs/concepts/identity.md) |
 | Understand chain mode vs local mode | [`docs/concepts/modes.md`](docs/concepts/modes.md) |
 | Read the on-chain protocol spec | [`docs/BEP-nexus.md`](docs/BEP-nexus.md) |
-| Read the falsifiable-evolution design | [`docs/design/falsifiable-evolution.md`](docs/design/falsifiable-evolution.md) |
-| Read the RLM-based projection design | [`docs/design/recursive-projection.md`](docs/design/recursive-projection.md) |
+| Read the falsifiable-evolution design | [`docs/design/nexus-architecture.md`](docs/design/nexus-architecture.md) |
+| Read the RLM-based projection design | [`docs/design/nexus-architecture.md`](docs/design/nexus-architecture.md) |
 | Build the desktop locally | [`packages/desktop/README.md`](packages/desktop/README.md) |
 | Run the server locally | [`packages/server/README.md`](packages/server/README.md) |
 | Add a new tool the agent can call | [`docs/how-to/add-a-tool.md`](docs/how-to/add-a-tool.md) |

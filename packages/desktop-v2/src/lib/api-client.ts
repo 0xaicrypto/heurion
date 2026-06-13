@@ -98,10 +98,59 @@ class _ApiClient {
     return h;
   }
 
+  /** Called once on 401 — silently re-auth with the cached user_id so
+   *  the medic doesn't have to retype their display name after the
+   *  server rotates JWT secrets (rebuilds, restart, 24h expiry, etc.).
+   *  Returns the new token, or null if cached id is unknown to backend. */
+  private async silentReauth(): Promise<string | null> {
+    const cachedUserId = readUserId();
+    if (!cachedUserId) return null;
+    try {
+      interface LoginResp { jwt_token: string; expires_in_seconds: number; }
+      const r = await fetch(`${baseUrl}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ user_id: cachedUserId }),
+      });
+      if (!r.ok) return null;
+      const body = (await r.json()) as LoginResp;
+      this.token = body.jwt_token;
+      try { localStorage.setItem('nexus.auth.token', body.jwt_token); } catch { /* ignore */ }
+      return body.jwt_token;
+    } catch {
+      return null;
+    }
+  }
+
   private async fetch<T>(path: string, init?: RequestInit): Promise<T> {
-    const h = this.headers(init?.headers);
-    if (init?.body && !h.has('Content-Type')) h.set('Content-Type', 'application/json');
-    const r = await fetch(`${baseUrl}${path}`, { ...init, headers: h });
+    const doFetch = async (): Promise<Response> => {
+      const h = this.headers(init?.headers);
+      if (init?.body && !h.has('Content-Type')) h.set('Content-Type', 'application/json');
+      return fetch(`${baseUrl}${path}`, { ...init, headers: h });
+    };
+
+    let r = await doFetch();
+
+    // 401 → try one silent re-auth + retry. Skip the dance for the
+    // auth endpoints themselves so we don't recurse.
+    if (r.status === 401 && !path.startsWith('/api/v1/auth/')) {
+      const newToken = await this.silentReauth();
+      if (newToken) {
+        r = await doFetch();
+      } else {
+        // Cached user_id is no longer recognised by this backend —
+        // wipe the token so App.tsx bounces to LoginView on its next
+        // store read. (The store-level subscription picks this up.)
+        this.token = null;
+        try { localStorage.removeItem('nexus.auth.token'); } catch { /* ignore */ }
+        // Dispatch a one-time event the App can listen for to force a
+        // logout + login-screen render.
+        try {
+          window.dispatchEvent(new CustomEvent('nexus:auth-expired'));
+        } catch { /* SSR */ }
+      }
+    }
+
     if (!r.ok) {
       const text = await r.text().catch(() => '');
       throw new ApiError(r.status, text || r.statusText, path);
@@ -414,6 +463,10 @@ class _ApiClient {
     filename: string,
     options?: {
       sessionId?: string;
+      /** When the medic has a patient open in the desktop, pass their
+       *  hash so the backend BINDS the upload to that patient instead
+       *  of minting a new patient from the DICOM PatientID tag. */
+      patientHash?: string;
       onProgress?: (loaded: number, total: number) => void;
     },
   ): Promise<{
@@ -439,7 +492,8 @@ class _ApiClient {
     return new Promise((resolve, reject) => {
       const form = new FormData();
       form.append('file', file, filename);
-      if (options?.sessionId) form.append('session_id', options.sessionId);
+      if (options?.sessionId)   form.append('session_id',   options.sessionId);
+      if (options?.patientHash) form.append('patient_hash', options.patientHash);
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${baseUrl}/api/v1/files/upload`);
       if (this.token) xhr.setRequestHeader('Authorization', `Bearer ${this.token}`);

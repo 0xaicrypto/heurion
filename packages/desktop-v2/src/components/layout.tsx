@@ -1,6 +1,6 @@
 /**
  * Shell composition — global header, patients sidebar, main canvas tabs,
- * context rail. Per docs/design/nexus-ux-redesign.md §5.
+ * context rail. Per docs/design/nexus-architecture.md §5.
  */
 
 import { useState } from 'react';

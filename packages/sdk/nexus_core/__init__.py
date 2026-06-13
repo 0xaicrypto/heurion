@@ -176,7 +176,7 @@ from .anchor import (
 )
 
 # ── Recursive Language Model (long-context projection primitive) ──────
-# See `nexus_core.rlm` and `docs/design/recursive-projection.md`.
+# See `nexus_core.rlm` and `docs/design/nexus-architecture.md`.
 from .rlm import (
     RLMRunner,
     RLMConfig,
@@ -188,7 +188,7 @@ from .rlm import (
 # ── Falsifiable evolution (Phase O — BEP-Nexus §3.4) ──────────────────
 # Proposal / verdict / revert primitives + the normative verdict
 # decision rules. See `nexus_core.evolution` and
-# `docs/design/falsifiable-evolution.md`.
+# `docs/design/nexus-architecture.md`.
 from .evolution import (
     EvolutionProposal,
     EvolutionVerdict,

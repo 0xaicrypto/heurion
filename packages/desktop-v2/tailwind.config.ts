@@ -1,7 +1,7 @@
 import type { Config } from 'tailwindcss';
 
 /**
- * Design tokens from docs/design/nexus-ux-redesign.md §4.
+ * Design tokens from docs/design/nexus-architecture.md §4.
  * Two-mode (light/dark) colour tokens are CSS variables in index.css;
  * the Tailwind config just exposes them as named utilities so the JSX
  * stays theme-agnostic (`bg-surface`, not `bg-[#252320]`).

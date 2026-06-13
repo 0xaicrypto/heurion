@@ -36,7 +36,7 @@ from nexus_server.event_sourcing.handlers import (
     _h_assistant_response,
     _h_user_message,
 )
-from nexus_server.retrieval_tiers import retrieve
+from nexus_server.retrieval_tiers import retrieve_async
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ async def chat(
             # 2. Run retrieval — yields RetrievalChunk events
             collected_answer: list[str] = []
             collected_refs: list[dict] = []
-            for chunk in retrieve(
+            async for chunk in retrieve_async(
                 conn,
                 user_id=current_user,
                 patient_hash=req.patient_hash,
@@ -118,4 +118,53 @@ async def chat(
                 "assistant_event_idx": assistant_idx,
             })
 
+            # 4. Fire the chat_ingester so this turn's clinical entities
+            #    populate Layer 1 of the patient graph. Without this, the
+            #    Memory tab stays at (0) and yield_t3_llm's next call has
+            #    no PATIENT CONTEXT to ground in. Best-effort — failure
+            #    here must not break the SSE stream we already finished.
+            if req.patient_hash:
+                try:
+                    _run_chat_ingester_safe(
+                        user_id=current_user,
+                        patient_hash=req.patient_hash,
+                        session_id=req.session_id,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("chat_ingester failed (non-fatal): %s", exc)
+
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+def _run_chat_ingester_safe(
+    *, user_id: str, patient_hash: str, session_id: str,
+) -> None:
+    """Run the chat_ingester for one encounter and log how it went.
+    Idempotent: re-running on the same encounter just produces a
+    second batch of NODE_ADDED events (the handler dedupes by
+    (user_id, patient_hash, evidence_quote))."""
+    from nexus_server.event_sourcing import Store, init_event_sourcing_schema
+    from nexus_server.memorization.chat_ingester import ChatIngester
+    from nexus_server.memorization.llm_extractor import (
+        llm_chat_extractor, EXTRACTION_MODEL_TAG, EXTRACTION_PROMPT_ID,
+    )
+
+    with get_db_connection() as conn:
+        init_event_sourcing_schema(conn)
+        store = Store(conn)
+        ingester = ChatIngester(
+            store=store, conn=conn,
+            extractor=llm_chat_extractor,
+            extraction_model=EXTRACTION_MODEL_TAG,
+            extraction_prompt_id=EXTRACTION_PROMPT_ID,
+        )
+        node_idxs = ingester.ingest_encounter(
+            user_id=user_id,
+            patient_hash=patient_hash,
+            encounter_id=session_id or "(no-session)",
+            source_event_idx=0,   # not used by current handlers
+        )
+        logger.info(
+            "chat_ingester: user=%s patient=%s emitted %d node(s)",
+            user_id, patient_hash[:12], len(node_idxs),
+        )
