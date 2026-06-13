@@ -32,12 +32,58 @@ dependencies = [
     # this, FastAPI raises at route-registration time, breaking every
     # other route too — so it's a hard dep, not optional.
     "python-multipart>=0.0.9",
+    # Stripe billing SDK — checkout sessions, customer portal,
+    # webhook event verification. Hard dep so "STRIPE_SECRET_KEY
+    # configured but stripe module missing" is impossible.
+    "stripe>=7.0",
+    # #135 — vector index for semantic memory search. sqlite-vec is a
+    # SQLite extension that adds vec0 virtual tables for k-NN over
+    # float32 vectors; lives in the same .db file as the rest of
+    # state. Hard dep so semantic search either works or fails fast
+    # (search_chunks raises EmbeddingUnavailable) — never silently
+    # degrades to lexical without telling the agent.
+    "sqlite-vec>=0.1.6",
+    # #140 — DICOM medical imaging stack. pydicom parses .dcm files +
+    # zip archives, pylibjpeg handles the JPEG2000 / JPEG-LS transfer
+    # syntaxes hospital PACS commonly export, Pillow renders the
+    # final slice/MIP/grid PNGs we ship to vision LLMs. Hard deps
+    # because medical imaging is a core product capability — we'd
+    # rather fail at install than silently degrade to "DICOM not
+    # supported" the moment a medic drops their first zip.
+    "pydicom>=3.0",
+    "pylibjpeg>=2.0",
+    "pylibjpeg-libjpeg>=2.0",
+    "pylibjpeg-openjpeg>=2.0",
+    "numpy>=1.24",
+    "pillow>=10.0",
+    # #145 — SAM (Segment Anything) auto-segmentation runs locally
+    # via ONNX. onnxruntime is CPU-only by default (~10 MB wheel);
+    # GPU variant is opt-in via NEXUS_SAM_PROVIDER=cuda. scikit-image
+    # is used by the mask→polygon converter (marching squares).
+    "onnxruntime>=1.16",
+    "scikit-image>=0.21",
+    # #126 — pytesseract is now a hard dep so the python side is
+    # always present; the tesseract SYSTEM BINARY (brew install
+    # tesseract) is still installed at runtime by setup.sh's macOS
+    # path. The tool returns a graceful "tesseract not found"
+    # error if the binary is missing, so the agent's chat turn
+    # never crashes — it just falls back to vision.
+    "pytesseract>=0.3",
 ]
 
 [project.optional-dependencies]
 llm-extra = [
     "openai>=1.0",
     "anthropic>=0.7",
+]
+# #126 — OCR backend for the ocr_image tool. Optional because the
+# tesseract system binary needs to be installed separately
+# (`brew install tesseract` on macOS, `apt install tesseract-ocr`
+# on Debian). The tool's _probe_ocr falls back gracefully when
+# either piece is missing; vision multimodal always works.
+ocr = [
+    "pytesseract>=0.3",
+    "pillow>=10.0",
 ]
 dev = [
     "pytest>=7.0",
@@ -66,6 +112,36 @@ nexus = { workspace = true }
 # directory containing __init__.py, so new subpackages auto-ship.
 where = ["."]
 include = ["nexus_server*"]
+
+# Ship the starter pack assets (workflow.json + skill .md files) as
+# data alongside the Python code. Without this, ``starter_packs.py``
+# resolves PACKS_ROOT to a path that doesn't exist in the installed
+# wheel — the runtime install_pack() call would 500 with "Pack assets
+# missing on disk". Recursive globs catch everything in
+# nexus_server/starter_packs/, present and future.
+[tool.setuptools.package-data]
+"nexus_server" = [
+    "starter_packs/**/*.json",
+    "starter_packs/**/*.md",
+    "starter_packs/**/*.yaml",
+    # #96 fix: BUILD_INFO is stamped by build-macos.sh inside the
+    # bundle's nexus_server/ dir. Without this glob, pip's install
+    # phase skips it (non-.py files aren't copied by default) and
+    # the server reports build=0/version=dev at runtime even on a
+    # freshly built .dmg. Listing it as package data tells pip to
+    # ship the file into site-packages alongside the source.
+    "BUILD_INFO",
+    # #154 fix: the Cornerstone3D viewer.html (#143) is served as a
+    # StaticFiles mount at /dicom-viewer/. Without this glob,
+    # non-editable pip install (the `.app` bundle path) DROPS the
+    # whole static/ directory — the mount registers but the file
+    # isn't there, so every request 404s. Symptom: clicking the
+    # chip's "View 3D" button opened a browser at the viewer URL
+    # and showed `{"detail":"Not Found"}` instead of the viewer.
+    # Glob covers any future assets (css/js/wasm) that get added
+    # alongside dicom-viewer.html.
+    "static/**/*",
+]
 
 [tool.black]
 line-length = 100

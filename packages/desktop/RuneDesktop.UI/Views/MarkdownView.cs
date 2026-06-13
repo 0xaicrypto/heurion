@@ -21,11 +21,19 @@ namespace RuneDesktop.UI.Views;
 /// ColorTextBlock, syntax-high helpers etc.  This single-file
 /// renderer covers 95% of what LLMs actually emit — headers, bold,
 /// italic, inline code, fenced code blocks (with copy button),
-/// lists (ordered + unordered), links, blockquotes — and stays
-/// auditable + tweakable in 200 lines.  When the rest of the
-/// missing markdown features (tables, nested lists, footnotes)
-/// becomes a real ask, we can swap in a proper library and keep the
-/// public ``Build`` signature stable.
+/// lists (ordered + unordered), links, blockquotes, AND
+/// GFM-style pipe tables — and stays auditable + tweakable in
+/// ~300 lines.  When the rest of the missing markdown features
+/// (nested lists, footnotes, definition lists) becomes a real ask,
+/// we can swap in a proper library and keep the public ``Build``
+/// signature stable.
+///
+/// Selectability: all body text is rendered via
+/// <see cref="SelectableTextBlock"/> rather than the default
+/// <see cref="TextBlock"/>, so users can drag-select assistant
+/// replies and hit Cmd/Ctrl-C. The previous all-TextBlock build
+/// silently swallowed mouse selection — copying chat output meant
+/// re-typing it, which was a regular user complaint.
 /// </summary>
 public static class MarkdownRenderer
 {
@@ -109,6 +117,35 @@ public static class MarkdownRenderer
                 continue;
             }
 
+            // GFM pipe table. Detection requires line 1 to contain
+            // pipes AND line 2 to look like a separator row
+            // (|---|:---:|---:| etc). Without the separator-row check
+            // we'd accidentally parse any single |-containing line as
+            // a table header — that fires on "max | grep" style
+            // English prose surprisingly often.
+            if (line.Contains('|') && i + 1 < lines.Length
+                && Regex.IsMatch(lines[i + 1], @"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$"))
+            {
+                var headers = SplitTableRow(line);
+                var alignments = ParseAlignments(lines[i + 1]);
+                i += 2;  // skip header + separator
+                var rows = new List<IList<string>>();
+                while (i < lines.Length
+                       && lines[i].Contains('|')
+                       && !string.IsNullOrWhiteSpace(lines[i])
+                       // Bail out if we run into a header / fence /
+                       // another block boundary mid-table.
+                       && !lines[i].StartsWith("```")
+                       && !lines[i].StartsWith("> ")
+                       && !Regex.IsMatch(lines[i], @"^(#{1,6})\s+"))
+                {
+                    rows.Add(SplitTableRow(lines[i]));
+                    i++;
+                }
+                blocks.Add(new TableBlock(headers, rows, alignments));
+                continue;
+            }
+
             // Lists — collect consecutive list items, mixed bullet
             // / numeric markers all flatten into one ListBlock.
             if (Regex.IsMatch(line, @"^\s*([-*+]|\d+\.)\s+"))
@@ -156,7 +193,7 @@ public static class MarkdownRenderer
         public Control ToControl(IBrush foreground)
         {
             var size = Level switch { 1 => 20.0, 2 => 17.0, 3 => 15.0, _ => 14.0 };
-            var tb = new TextBlock
+            var tb = new SelectableTextBlock
             {
                 FontSize = size,
                 FontWeight = FontWeight.SemiBold,
@@ -173,7 +210,7 @@ public static class MarkdownRenderer
     {
         public Control ToControl(IBrush foreground)
         {
-            var tb = new TextBlock
+            var tb = new SelectableTextBlock
             {
                 FontSize = 14,
                 Foreground = foreground,
@@ -195,6 +232,10 @@ public static class MarkdownRenderer
             {
                 var row = new Grid { ColumnDefinitions = new ColumnDefinitions("22,*") };
                 var marker = Ordered ? $"{idx}." : "•";
+                // List marker stays as plain TextBlock — selecting "•"
+                // or "1." separately from the item text isn't useful
+                // and SelectableTextBlock here adds noise to the
+                // selection rectangle.
                 row.Children.Add(new TextBlock
                 {
                     Text = marker,
@@ -203,7 +244,7 @@ public static class MarkdownRenderer
                     Margin = new Thickness(0, 0, 4, 0),
                     VerticalAlignment = VerticalAlignment.Top,
                 });
-                var body = new TextBlock
+                var body = new SelectableTextBlock
                 {
                     FontSize = 14,
                     Foreground = foreground,
@@ -224,7 +265,7 @@ public static class MarkdownRenderer
     {
         public Control ToControl(IBrush foreground)
         {
-            var tb = new TextBlock
+            var tb = new SelectableTextBlock
             {
                 FontSize = 14,
                 Foreground = foreground,
@@ -240,6 +281,116 @@ public static class MarkdownRenderer
                 Padding = new Thickness(10, 4, 4, 4),
                 Margin = new Thickness(0, 2, 0, 2),
                 Child = tb,
+            };
+        }
+    }
+
+    private sealed record TableBlock(
+        IList<string> Headers,
+        IList<IList<string>> Rows,
+        IList<TextAlignment> Alignments) : IBlock
+    {
+        public Control ToControl(IBrush foreground)
+        {
+            // ── Grid sizing ─────────────────────────────────────────
+            // One column per header, each starring (*) so the table
+            // fills the bubble width. Row 0 = header, rows 1..N = data.
+            // All rows Auto so multi-line cells expand vertically.
+            int cols = Headers.Count;
+            var grid = new Grid();
+            for (int c = 0; c < cols; c++)
+            {
+                grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+            }
+            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));      // header
+            for (int r = 0; r < Rows.Count; r++)
+            {
+                grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            }
+
+            var border = new SolidColorBrush(Color.Parse("#3A3F47"));
+            var headerBg = new SolidColorBrush(Color.Parse("#1A1D22"));
+
+            Control MakeCell(string text, int col, int row, bool isHeader)
+            {
+                var align = col < Alignments.Count ? Alignments[col] : TextAlignment.Left;
+                var tb = new SelectableTextBlock
+                {
+                    FontSize = 13,
+                    FontWeight = isHeader ? FontWeight.SemiBold : FontWeight.Normal,
+                    Foreground = foreground,
+                    TextWrapping = TextWrapping.Wrap,
+                    TextAlignment = align,
+                    LineHeight = 19,
+                };
+                FillInlines(tb.Inlines!, text, foreground);
+                // Per-cell padding lives on a Border so the grid lines
+                // (created via the cell-border below) sit flush against
+                // neighbour cells instead of leaving a padded gap.
+                var cell = new Border
+                {
+                    Padding = new Thickness(10, 6, 10, 6),
+                    BorderThickness = new Thickness(
+                        // left border only on the first column to avoid
+                        // double-thickness vertical lines
+                        col == 0 ? 0 : 1,
+                        // top border only on the first data row (under
+                        // the header) — already drawn via the header
+                        // row's bottom in the visual stack
+                        0,
+                        0,
+                        // bottom border on every cell forms horizontal
+                        // grid lines + table bottom edge
+                        1),
+                    BorderBrush = border,
+                    Background = isHeader ? headerBg : null,
+                    Child = tb,
+                };
+                Grid.SetColumn(cell, col);
+                Grid.SetRow(cell, row);
+                return cell;
+            }
+
+            // Headers
+            for (int c = 0; c < cols; c++)
+            {
+                grid.Children.Add(MakeCell(Headers[c], c, 0, isHeader: true));
+            }
+            // Data
+            for (int r = 0; r < Rows.Count; r++)
+            {
+                var row = Rows[r];
+                for (int c = 0; c < cols; c++)
+                {
+                    var cellText = c < row.Count ? row[c] : "";
+                    grid.Children.Add(MakeCell(cellText, c, r + 1, isHeader: false));
+                }
+            }
+
+            // Wrap in an outer border so the leftmost/topmost edges
+            // are also visible (cells only draw bottom + left-on-c>0).
+            var framed = new Border
+            {
+                BorderThickness = new Thickness(1),
+                BorderBrush = border,
+                CornerRadius = new CornerRadius(4),
+                ClipToBounds = true,
+                Child = grid,
+            };
+
+            // Wide tables that don't fit the bubble width get a local
+            // horizontal scrollbar instead of clipping. The OUTER chat
+            // ScrollViewer is intentionally H-disabled to keep the
+            // chat column from being squashed (see ChatView.axaml
+            // comments); per-element ScrollViewers handle overflow
+            // surgically without that side-effect. Code blocks do the
+            // same thing.
+            return new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility   = ScrollBarVisibility.Disabled,
+                Margin = new Thickness(0, 6, 0, 6),
+                Content = framed,
             };
         }
     }
@@ -315,20 +466,63 @@ public static class MarkdownRenderer
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 Content = body,
-                Background = new SolidColorBrush(Color.Parse("#0E1014")),
+                // Code block surface — uses the app-wide "sunken" tone
+                // (matches App.axaml SurfaceSunken). Hardcoded here
+                // because MarkdownView builds controls in C#, not XAML,
+                // so it can't `{StaticResource}` directly.
+                Background = new SolidColorBrush(Color.Parse("#161618")),
             });
 
             return new Border
             {
                 CornerRadius = new CornerRadius(6),
-                Background = new SolidColorBrush(Color.Parse("#0E1014")),
-                BorderBrush = new SolidColorBrush(Color.Parse("#262A31")),
+                Background = new SolidColorBrush(Color.Parse("#161618")),
+                BorderBrush = new SolidColorBrush(Color.Parse("#3A3A3C")),  // Divider
                 BorderThickness = new Thickness(1),
                 Margin = new Thickness(0, 4, 0, 4),
                 ClipToBounds = true,
                 Child = stack,
             };
         }
+    }
+
+    // ── Table helpers ──────────────────────────────────────────────
+
+    /// <summary>Split a GFM table row on `|`, trimming surrounding
+    /// whitespace per cell. Outer pipes (`| a | b |`) and pipe-less
+    /// edges (`a | b`) are both accepted.</summary>
+    private static IList<string> SplitTableRow(string line)
+    {
+        // Strip a leading and trailing pipe if present so we don't
+        // emit a phantom empty cell at the start/end.
+        var trimmed = line.Trim();
+        if (trimmed.StartsWith("|")) trimmed = trimmed.Substring(1);
+        if (trimmed.EndsWith("|"))   trimmed = trimmed.Substring(0, trimmed.Length - 1);
+        // Naive split — does NOT handle escaped `\|` inside cells.
+        // LLM-emitted tables ~never use that escape; revisit if a
+        // real user hits it.
+        return trimmed.Split('|').Select(s => s.Trim()).ToList();
+    }
+
+    /// <summary>Parse a GFM alignment separator row like
+    /// `|:---|:---:|---:|` into per-column TextAlignments.</summary>
+    private static IList<TextAlignment> ParseAlignments(string sep)
+    {
+        var cells = SplitTableRow(sep);
+        var aligns = new List<TextAlignment>(cells.Count);
+        foreach (var c in cells)
+        {
+            var t = c.Trim();
+            bool left  = t.StartsWith(":");
+            bool right = t.EndsWith(":");
+            aligns.Add((left, right) switch
+            {
+                (true,  true)  => TextAlignment.Center,
+                (false, true)  => TextAlignment.Right,
+                _              => TextAlignment.Left,
+            });
+        }
+        return aligns;
     }
 
     // ── Inline parsing ──────────────────────────────────────────────

@@ -67,6 +67,47 @@ DISTILL_SYSTEM_PROMPT = (
 )
 
 
+# #128 — image caption distill. Separate prompt because vision input
+# is fundamentally different from text: we want structured fields
+# the memory layer can index, not free-form prose. The output is
+# intentionally short (~600 chars) so we don't bloat attachment_distilled
+# rows that will be re-read every session via the uploads memory block.
+IMAGE_DISTILL_SYSTEM_PROMPT = (
+    "You are a visual indexer for a long-running personal assistant. "
+    "Given a single image, produce a STRUCTURED CAPTION that the "
+    "assistant can use months later to remember what the user showed "
+    "it — without re-reading the original pixels.\n\n"
+    "Output format (markdown, plain text — NO code fences, NO yaml "
+    "wrapping):\n"
+    "- 'kind:' one of {screenshot, photo, chart, diagram, code, "
+    "  document_scan, ui_mockup, medical_imaging, art, meme, other}.\n"
+    "- 'domain:' one short phrase for the subject area (e.g. "
+    "  'crypto trading view', 'github pull request', "
+    "  'chest CT axial', 'family vacation photo', 'react component', "
+    "  'shopping receipt'). Be concrete; this is what the assistant "
+    "  will grep on to find this image later.\n"
+    "- 'summary:' 1–3 sentences describing what's visually in the "
+    "  image. Focus on layout, content, and key text that's actually "
+    "  visible — not interpretation.\n"
+    "- 'salient_text:' the most important short text strings visible "
+    "  in the image (button labels, headers, prices, error messages, "
+    "  identifiers, error codes). Comma-separated. Skip if no readable "
+    "  text. Do NOT transcribe entire paragraphs — caller can OCR if "
+    "  they need that.\n"
+    "- 'entities:' people / products / orgs / tickers / file names "
+    "  visible. Comma-separated; skip if none.\n"
+    "- 'follow_up_hints:' 1–2 short phrases describing what kind of "
+    "  questions the user likely wants help with based on this image "
+    "  (e.g. 'analyze support/resistance', 'review code style', "
+    "  'identify radiological finding'). Helps the assistant pick a "
+    "  default response framing.\n"
+    "- Be literal. If you can't tell what something is, say "
+    "  'unclear' instead of guessing.\n"
+    "- Hard limit: 800 characters total. Image captions should be "
+    "  scannable in a memory list, not encyclopedic."
+)
+
+
 # ── Type alias for an LLM caller ──────────────────────────────────────
 #
 # Callers thread their own LLM in. The signature mirrors the server's
@@ -140,6 +181,24 @@ def extract_text(
             "binary-stub",
         )
 
+    # DOCX: Word documents. ZIP wrappers around word/document.xml.
+    # Try python-docx (clean paragraph extraction) first, then fall
+    # back to a stdlib zipfile + lxml/regex parser so we still work
+    # when the SDK is installed without the optional ``docx`` extra.
+    _DOCX_MIME = (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",  # legacy .doc — extraction may fail but try
+    )
+    if mime in _DOCX_MIME or name.lower().endswith((".docx", ".doc")):
+        text = _extract_docx_text(raw)
+        if text:
+            return text[:DISTILL_INPUT_CHAR_BUDGET], "docx"
+        return (
+            f"[DOCX {name!r} — text extraction unavailable; "
+            f"{len(raw)} bytes]",
+            "binary-stub",
+        )
+
     # Plain text dressed up as binary by an over-cautious client?
     try:
         decoded = raw.decode("utf-8")
@@ -183,6 +242,102 @@ def _extract_pdf_text(raw: bytes) -> str:
         return "".join(chunks)
     except Exception as e:
         logger.debug("PDF extraction failed: %s", e)
+        return ""
+
+
+def _extract_docx_text(raw: bytes) -> str:
+    """Pull text out of a Word .docx file.
+
+    Strategy (best → fallback):
+      1. ``python-docx`` — clean paragraph + table walk. Preferred,
+         but optional dependency.
+      2. ``zipfile`` + xml.etree — stdlib-only fallback. .docx is just
+         a ZIP archive whose ``word/document.xml`` holds the text in
+         ``<w:t>`` runs. This works even when python-docx isn't
+         installed (eg. on a minimal user machine).
+
+    Headings / tables / lists all flatten to plain paragraphs joined
+    by blank lines. That's fine for the distiller — it cares about
+    semantic content, not Word formatting.
+
+    Returns "" on total failure; the caller renders a metadata stub.
+    """
+    # ── Path 1: python-docx ────────────────────────────────────────
+    try:
+        import docx as _docx  # type: ignore
+    except ImportError:
+        _docx = None  # type: ignore
+
+    if _docx is not None:
+        try:
+            doc = _docx.Document(io.BytesIO(raw))
+            chunks: list[str] = []
+            running_total = 0
+
+            # Paragraphs in document order.
+            for p in doc.paragraphs:
+                t = (p.text or "").strip()
+                if not t:
+                    continue
+                chunks.append(t)
+                running_total += len(t)
+                if running_total >= DISTILL_INPUT_CHAR_BUDGET:
+                    return "\n\n".join(chunks)
+
+            # Tables — flatten cells row-by-row so column relationships
+            # survive in plain text. Useful for spec docs / contracts /
+            # data sheets that put real content in tables.
+            for tbl in doc.tables:
+                for row in tbl.rows:
+                    row_text = " | ".join(
+                        (c.text or "").strip() for c in row.cells
+                    )
+                    if row_text.strip(" |"):
+                        chunks.append(row_text)
+                        running_total += len(row_text)
+                        if running_total >= DISTILL_INPUT_CHAR_BUDGET:
+                            return "\n\n".join(chunks)
+
+            return "\n\n".join(chunks)
+        except Exception as e:
+            logger.debug("python-docx extraction failed, falling back: %s", e)
+
+    # ── Path 2: stdlib zipfile + xml.etree ─────────────────────────
+    try:
+        import zipfile
+        import xml.etree.ElementTree as ET
+
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            try:
+                xml_bytes = zf.read("word/document.xml")
+            except KeyError:
+                logger.debug("docx missing word/document.xml — not a valid Word file?")
+                return ""
+
+        # WordprocessingML namespace. Hard-code it to avoid xmlns gymnastics.
+        ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+        root = ET.fromstring(xml_bytes)
+
+        chunks: list[str] = []
+        running_total = 0
+        # Iterate over paragraphs; concatenate every <w:t> child of
+        # every <w:r> run inside. Drops formatting but preserves
+        # paragraph boundaries — same as Word's "save as text" does.
+        for para in root.iter(f"{ns}p"):
+            parts: list[str] = []
+            for t in para.iter(f"{ns}t"):
+                if t.text:
+                    parts.append(t.text)
+            line = "".join(parts).strip()
+            if not line:
+                continue
+            chunks.append(line)
+            running_total += len(line)
+            if running_total >= DISTILL_INPUT_CHAR_BUDGET:
+                break
+        return "\n\n".join(chunks)
+    except Exception as e:
+        logger.debug("docx stdlib extraction failed: %s", e)
         return ""
 
 
@@ -238,3 +393,98 @@ async def distill(
         f"({mime}, {size_bytes} bytes)]\n\n{head}"
     )
     return fallback, source + "+fallback"
+
+
+# Cap on the image caption summary — kept tight (vs DISTILL_OUTPUT_CHAR_BUDGET
+# at 4k) because image captions sit in the per-session memory block that
+# gets re-read every turn. A bloated caption would steal context budget
+# from the rest of the conversation. The system prompt enforces ~800
+# chars; this is just the hard ceiling.
+IMAGE_CAPTION_CHAR_BUDGET = 1200
+
+
+async def distill_image(
+    *,
+    name: str,
+    mime: str,
+    size_bytes: int,
+    content_base64: str,
+    llm_fn: LlmFn,
+) -> tuple[str, str]:
+    """Distill a single image attachment via a vision LLM call (#128).
+
+    Mirrors :func:`distill` but routes through the vision multimodal
+    path: we attach the raw image bytes as an ``inline_data`` part on
+    the user message (via the ``images`` field) and ask the LLM for
+    a structured caption with the fields IMAGE_DISTILL_SYSTEM_PROMPT
+    specifies (kind / domain / summary / salient_text / entities /
+    follow_up_hints).
+
+    Returns ``(caption, source_label)``. On any failure the caller
+    gets a neutral stub so the memory chain has *something* to write
+    instead of "" — the source label tells downstream code which
+    branch fired (``"vision-caption"`` /
+    ``"vision-caption+fallback"``).
+
+    Why vision rather than OCR-then-distill: the goal here is
+    indexability — caption is read by FTS / vector search later when
+    the user asks "the chest CT I showed you last week". A vision
+    model sees layout, colour, and content in one pass; OCR misses
+    everything except text and loses the modality cue.
+
+    Cost: one extra vision call per uploaded image (≈ ¥0.003 with
+    Gemini Flash). Paid once on upload; saved many times over by
+    skipping image bytes on subsequent turns referencing the same
+    attachment.
+    """
+    if not content_base64:
+        return (
+            f"[Image — {name} ({mime}, {size_bytes} bytes); no bytes "
+            f"available to caption.]",
+            "vision-caption+empty",
+        )
+
+    user_msg = {
+        "role": "user",
+        "content": (
+            f"Filename: {name}\n"
+            f"MIME: {mime}\n"
+            f"Size: {size_bytes} bytes\n\n"
+            "Caption this image using the structured fields defined "
+            "in your instructions. Stay within the 800-character budget."
+        ),
+        # #123-shape: the LLM client converts this into a Gemini
+        # inline_data Blob part. Other providers (OpenAI vision /
+        # Anthropic vision) wire their own image part shape; the
+        # llm_fn caller decides which provider is active.
+        "images": [{"mime": mime, "data_b64": content_base64}],
+    }
+
+    try:
+        content, _model, _stop, _tools = await llm_fn(
+            [user_msg],
+            IMAGE_DISTILL_SYSTEM_PROMPT,
+            None,    # default vision-capable model (Gemini 2.5 Flash by default)
+            0.2,     # low temp: captions should be repeatable on re-distill
+            512,     # output budget — caption is short by design
+            None,    # no tools
+        )
+        caption = (content or "").strip()
+        if caption:
+            if len(caption) > IMAGE_CAPTION_CHAR_BUDGET:
+                caption = caption[:IMAGE_CAPTION_CHAR_BUDGET] + "…"
+            return caption, "vision-caption"
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "Image distillation LLM call failed for %s: %s", name, e,
+        )
+
+    # Vision call failed — emit a neutral stub. Important to still
+    # return *something* readable so attachment_distilled / memory
+    # blocks don't render an empty fence to the agent later.
+    return (
+        f"[Image — {name} ({mime}, {size_bytes} bytes). "
+        "Vision caption distill unavailable; the image was still "
+        "shown to the model on the current turn.]",
+        "vision-caption+fallback",
+    )

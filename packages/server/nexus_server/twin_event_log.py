@@ -116,6 +116,36 @@ def _open_readonly(user_id: str) -> Optional[sqlite3.Connection]:
         return None
 
 
+def snippet_around(
+    text: str, query: str, half: int = 100,
+) -> str:
+    """Return a ~``2*half``-char window of ``text`` centred on the first
+    case-insensitive occurrence of ``query``. Used by every keyword-
+    search surface (chat search, file content search) so the LLM
+    sees a consistent excerpt shape.
+
+    Edge cases:
+      - query empty → first 2*half chars of text.
+      - query not found → first 2*half chars of text (caller should
+        normally avoid passing non-matching text).
+      - text shorter than window → returned as-is, no ellipsis.
+    """
+    text = text or ""
+    if not query:
+        return text[: 2 * half]
+    pos = text.lower().find(query.lower())
+    if pos < 0:
+        return text[: 2 * half]
+    start = max(0, pos - half)
+    end = min(len(text), pos + len(query) + half)
+    snippet = text[start:end]
+    if start > 0:
+        snippet = "…" + snippet
+    if end < len(text):
+        snippet = snippet + "…"
+    return snippet
+
+
 def _ts_to_iso(ts: float | int | None) -> str:
     if ts is None:
         return ""
@@ -221,6 +251,57 @@ def list_memory_compacts(user_id: str, limit: int = 50) -> list[dict]:
 # ── Chat history ──────────────────────────────────────────────────────
 
 
+# Known LLM-context block markers that pre-fix llm_gateway code
+# accidentally persisted into the user_message column (#99). When the
+# client fetches history, we strip these prefixes so old chats don't
+# render the entire scaffolding as the user's bubble. Cheap no-op on
+# uncontaminated rows.
+_CONTEXT_BLOCK_PREFIXES = (
+    "[CONTEXT — ",
+    "[WORKFLOW RECIPES — ",
+    "[CONTEXT — INFLIGHT WORKFLOWS]",
+    "[CONTEXT — FILES YOU'VE PROCESSED BEFORE]",
+)
+
+
+def _strip_leaked_context_blocks(content: str) -> str:
+    """Strip persisted LLM-context blocks from a user_message content.
+
+    History: through #97 the llm_gateway concatenated context blocks
+    (workflow recipes, uploaded-files reminder) onto ``effective_bare``
+    before passing it to ``twin.chat``. ``effective_bare`` is the
+    string that gets persisted as the user_message event, so old chat
+    history shows the entire scaffolding as a giant blue user bubble.
+    Post #97 fix the blocks only ride in ``effective_folded`` (LLM-
+    only) so new turns are clean — but old DB rows still have the
+    gunk.
+
+    Strategy: if content starts with a known block marker, find the
+    LAST ``\\n\\n`` in the string and treat everything after as the
+    real user message. Works for the 99% case (user typed one or two
+    lines). Edge case (user wrote a multi-paragraph message AND it
+    was contaminated) → user loses earlier paragraphs but at least
+    doesn't see the scaffolding. Best we can do without per-block
+    parsing, and the alternative (rendering the full gunk) is worse.
+    """
+    if not content:
+        return content
+    if not any(content.startswith(p) for p in _CONTEXT_BLOCK_PREFIXES):
+        return content  # uncontaminated
+    last_para = content.rfind("\n\n")
+    if last_para < 0:
+        return content  # malformed; can't recover
+    candidate = content[last_para + 2:].strip()
+    if not candidate:
+        return content
+    # Don't return something that itself looks like a block marker
+    # (would happen if the user_message was effectively empty and only
+    # context survived to the end).
+    if any(candidate.startswith(p) for p in _CONTEXT_BLOCK_PREFIXES):
+        return content
+    return candidate
+
+
 def list_messages(
     user_id: str,
     limit: int,
@@ -248,8 +329,17 @@ def list_messages(
     if conn is None:
         return [], 0
     try:
-        where = "event_type IN ('user_message', 'assistant_response')"
-        params: list = []
+        # Filter set: traditional chat turns + the new workflow_run
+        # inline cards. workflow_run rows carry a workflow_run_id in
+        # their metadata; the client renders them as live-polling
+        # cards instead of plain text bubbles.
+        _CHAT_EVENT_TYPES = (
+            "user_message", "assistant_response", "assistant_message",
+            "workflow_run",
+        )
+        types_sql = "(" + ",".join("?" * len(_CHAT_EVENT_TYPES)) + ")"
+        where = f"event_type IN {types_sql}"
+        params: list = list(_CHAT_EVENT_TYPES)
         if before_idx is not None:
             where += " AND idx < ?"
             params.append(int(before_idx))
@@ -271,8 +361,8 @@ def list_messages(
             params,
         ).fetchall()
         # Total count: same filter minus pagination cursor + limit.
-        count_where = "event_type IN ('user_message', 'assistant_response')"
-        count_params: list = []
+        count_where = f"event_type IN {types_sql}"
+        count_params: list = list(_CHAT_EVENT_TYPES)
         if session_id is not None:
             count_where += " AND COALESCE(session_id, '') = ?"
             count_params.append(session_id)
@@ -298,14 +388,265 @@ def list_messages(
         attachments = meta.get("attachments") if isinstance(meta, dict) else None
         if not isinstance(attachments, list):
             attachments = []
+        # Map event_type → (role, message_kind). user_message stays
+        # user-text; assistant_response / assistant_message both render
+        # as assistant text. workflow_run gets a special kind so the
+        # client picks the live-card renderer instead of a text bubble.
+        et = r[1]
+        if et == "user_message":
+            role, kind = "user", "text"
+        elif et == "workflow_run":
+            role, kind = "assistant", "workflow_run"
+        else:  # assistant_response / assistant_message / future
+            role, kind = "assistant", "text"
+        content = r[2] or ""
+        # Read-time strip for pre-fix contaminated user_message rows
+        # (see _strip_leaked_context_blocks docstring). Cheap no-op on
+        # clean rows; aggressive cleanup on poisoned ones. Doesn't
+        # touch the DB — pure render-time filter so existing chat
+        # history doesn't have to be migrated.
+        if et == "user_message":
+            content = _strip_leaked_context_blocks(content)
         msgs.append({
-            "role": "user" if r[1] == "user_message" else "assistant",
-            "content": r[2] or "",
+            "role": role,
+            "content": content,
             "timestamp": _ts_to_iso(r[3]),
             "sync_id": int(r[0]),
             "attachments": attachments,
+            "message_kind": kind,
+            "metadata": meta if isinstance(meta, dict) else {},
         })
     return msgs, total
+
+
+# ── Side-effect events from a single chat turn (Phase B fix) ──────────
+
+
+# Event types that the chat surface renders inline (between the user
+# bubble and the assistant bubble) when they appear mid-turn. Today
+# only ``workflow_run`` qualifies, but the registry is extensible.
+_SIDE_EFFECT_EVENT_TYPES = ("workflow_run",)
+
+
+def latest_event_idx(user_id: str) -> int:
+    """Return the highest event idx currently in the user's log. Used
+    by the chat gateway to snapshot a "before" marker so it can detect
+    new events the agent's tools insert during the upcoming turn.
+
+    Returns 0 if the log doesn't exist yet (fresh user) — caller should
+    treat 0 as "everything counts as new"."""
+    conn = _open_readonly(user_id)
+    if conn is None:
+        return 0
+    try:
+        row = conn.execute("SELECT COALESCE(MAX(idx), 0) FROM events").fetchone()
+        return int(row[0]) if row else 0
+    except sqlite3.Error as e:
+        logger.warning("latest_event_idx failed for %s: %s", user_id, e)
+        return 0
+    finally:
+        conn.close()
+
+
+def find_recent_workflow_run_ids(
+    user_id: str,
+    session_id: str,
+    max_age_seconds: int = 30 * 60,
+    limit: int = 5,
+) -> list[dict]:
+    """Return recent workflow_run events from this session, newest first.
+
+    Used by the chat gateway to figure out which workflow runs the
+    user might still want to talk about while they're in flight. The
+    runs returned here are CANDIDATES — the caller is expected to
+    query ``workflows.get_run()`` on each to filter down to runs
+    actually still in progress.
+
+    Each row: {sync_id, run_id, workflow_name, total_steps, started_at}.
+    """
+    conn = _open_readonly(user_id)
+    if conn is None:
+        return []
+    try:
+        cutoff = (
+            datetime.now(timezone.utc).timestamp() - max_age_seconds
+        )
+        rows = conn.execute(
+            """
+            SELECT idx, content, timestamp, metadata
+            FROM events
+            WHERE event_type = 'workflow_run'
+              AND COALESCE(session_id, '') = ?
+              AND timestamp >= ?
+            ORDER BY idx DESC
+            LIMIT ?
+            """,
+            (session_id or "", cutoff, int(limit)),
+        ).fetchall()
+    except sqlite3.Error as e:
+        logger.warning(
+            "find_recent_workflow_run_ids failed for %s: %s", user_id, e,
+        )
+        return []
+    finally:
+        conn.close()
+
+    out: list[dict] = []
+    for r in rows:
+        meta = _safe_json(r[3])
+        rid = meta.get("workflow_run_id") if isinstance(meta, dict) else None
+        if not rid:
+            continue
+        out.append({
+            "sync_id":       int(r[0]),
+            "content":       r[1] or "",
+            "started_at":    _ts_to_iso(r[2]),
+            "run_id":        rid,
+            "workflow_name": meta.get("workflow_name", "") if isinstance(meta, dict) else "",
+            "total_steps":   meta.get("total_steps", 0) if isinstance(meta, dict) else 0,
+        })
+    return out
+
+
+def list_side_effect_events_since(
+    user_id: str,
+    session_id: str,
+    since_idx: int,
+) -> list[dict]:
+    """Return any inline-renderable side-effect events (workflow_run
+    today) that landed in the user's event log AFTER ``since_idx``,
+    scoped to the given chat session. Caller is the chat gateway which
+    needs to ship these to the desktop so the inline workflow card
+    shows up immediately, not on next session re-open."""
+    conn = _open_readonly(user_id)
+    if conn is None:
+        return []
+    try:
+        types_sql = "(" + ",".join("?" * len(_SIDE_EFFECT_EVENT_TYPES)) + ")"
+        rows = conn.execute(
+            f"""
+            SELECT idx, event_type, content, timestamp, metadata,
+                   COALESCE(session_id, '') AS sid
+            FROM events
+            WHERE event_type IN {types_sql}
+              AND idx > ?
+              AND COALESCE(session_id, '') = ?
+            ORDER BY idx ASC
+            """,
+            (*_SIDE_EFFECT_EVENT_TYPES, int(since_idx), session_id or ""),
+        ).fetchall()
+    except sqlite3.Error as e:
+        logger.warning(
+            "list_side_effect_events_since failed for %s: %s", user_id, e,
+        )
+        return []
+    finally:
+        conn.close()
+
+    out = []
+    for r in rows:
+        out.append({
+            "sync_id": int(r[0]),
+            "event_type": r[1],
+            "content": r[2] or "",
+            "timestamp": _ts_to_iso(r[3]),
+            "metadata": _safe_json(r[4]),
+        })
+    return out
+
+
+# ── Cross-session search (Phase C-1) ──────────────────────────────────
+
+
+_SEARCHABLE_EVENT_TYPES = (
+    "user_message", "assistant_response", "assistant_message",
+)
+
+
+def search_messages(
+    user_id: str,
+    query: str,
+    limit: int = 5,
+    exclude_session_id: Optional[str] = None,
+) -> list[dict]:
+    """Substring search over chat messages in the user's event_log.
+
+    Returns at most ``limit`` matches, newest-first, each shaped as::
+
+        {
+          "sync_id":     int,    # events.idx
+          "session_id":  str,    # "" means default/legacy session
+          "role":        "user" | "assistant",
+          "snippet":     str,    # ~240-char window centred on the match
+          "timestamp":   ISO-8601 str,
+        }
+
+    Implementation note: SQLite LIKE %q% — not FTS — because the event
+    log is small (single-digit MB even for power users), the deployment
+    is single-tenant per twin DB (no shared index to maintain), and a
+    LIKE pass scans <50k rows in well under 100ms on commodity disks.
+    If a user's log ever crosses 100k chat events we can add an FTS5
+    virtual-table mirror, but that's a future optimisation.
+
+    ``exclude_session_id`` lets the caller hide the current session so
+    "search past chats" doesn't surface the user's just-typed sentence
+    as a hit on itself. Pass ``None`` to disable.
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+
+    conn = _open_readonly(user_id)
+    if conn is None:
+        return []
+    try:
+        types_sql = "(" + ",".join("?" * len(_SEARCHABLE_EVENT_TYPES)) + ")"
+        where = (
+            f"event_type IN {types_sql} "
+            f"AND content IS NOT NULL "
+            # LIKE is case-insensitive on ASCII when both sides are
+            # uppercased — cheap CI without ICU.
+            f"AND UPPER(content) LIKE UPPER(?)"
+        )
+        params: list = list(_SEARCHABLE_EVENT_TYPES) + [f"%{q}%"]
+        if exclude_session_id is not None:
+            where += " AND COALESCE(session_id, '') != ?"
+            params.append(exclude_session_id)
+        params.append(int(limit))
+        rows = conn.execute(
+            f"""
+            SELECT idx, event_type, content, timestamp,
+                   COALESCE(session_id, '') AS sid
+            FROM events
+            WHERE {where}
+            ORDER BY idx DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    except sqlite3.Error as e:
+        logger.warning("search_messages failed for %s: %s", user_id, e)
+        return []
+    finally:
+        conn.close()
+
+    hits: list[dict] = []
+    for r in rows:
+        idx, et, content, ts, sid = r
+        role = "user" if et == "user_message" else "assistant"
+        # Same strip as list_messages — don't surface leaked context
+        # blocks in search results either.
+        snippet_source = content or ""
+        if et == "user_message":
+            snippet_source = _strip_leaked_context_blocks(snippet_source)
+        hits.append({
+            "sync_id":    int(idx),
+            "session_id": sid,
+            "role":       role,
+            "snippet":    snippet_around(snippet_source, q),
+            "timestamp":  _ts_to_iso(ts),
+        })
+    return hits
 
 
 # ── Timeline (raw, server merges with anchors) ────────────────────────
@@ -351,17 +692,18 @@ def list_timeline_events(user_id: str, limit: int) -> list[dict]:
     ]
 
 
-# ── Test helpers ──────────────────────────────────────────────────────
+# ── Direct event-log writer ───────────────────────────────────────────
 #
-# Tests used to build state by inserting into ``sync_events`` directly.
-# After S5 the canonical store is twin's per-user event_log SQLite, so
-# tests need a small writer that mirrors what twin's append() does
-# without spinning up a DigitalTwin. This is intentionally NOT exposed
-# via ``__all__`` and lives under a ``_test_`` prefix — production code
-# should never call it.
+# Originally introduced as a test helper (hence the older
+# ``_test_append_event`` name, kept below as a backwards-compat alias).
+# Phase B promoted this to a production write surface — tools like
+# ``run_workflow`` and routes like ``/run-in-chat`` use it to drop
+# inline workflow_run cards into chat without spinning up a full
+# DigitalTwin chat turn. It mirrors what twin's append() does, but
+# bypasses the LLM round-trip.
 
 
-def _test_append_event(
+def append_event(
     user_id: str,
     event_type: str,
     content: str,
@@ -369,11 +711,15 @@ def _test_append_event(
     session_id: str = "",
     timestamp: Optional[float] = None,
 ) -> int:
-    """Append one row to a user's twin EventLog — test-only.
+    """Append one row to a user's twin EventLog.
 
-    Creates the directory + table layout on first call so a test can
-    seed events for a freshly-registered user that never opened a
-    twin. Returns the row's ``idx`` (== sync_id on the wire).
+    Creates the directory + table layout on first call so callers
+    can seed events for a freshly-registered user that never opened
+    a twin. Returns the row's ``idx`` (== sync_id on the wire).
+
+    Used by tests AND by Phase B production paths
+    (``tools_workflow.RunWorkflowTool`` and
+    ``workflows_router.start_run_in_chat_endpoint``).
     """
     p = _db_path(user_id)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -415,5 +761,55 @@ def _test_append_event(
         )
         conn.commit()
         return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+# Backwards-compat alias — historical name used by every existing test.
+# Keep around so the existing test suite keeps passing; new code uses
+# ``append_event``.
+_test_append_event = append_event
+
+
+def replace_last_assistant_response(
+    user_id: str, session_id: str, new_content: str,
+) -> bool:
+    """Overwrite the content of the most recent assistant_response row
+    in the user's event log for this session. Used by the Level-2
+    self-correcting workflow rescue: when Gemini hallucinates "我将
+    启动 X 工作流" without emitting a function_call, the server starts
+    the workflow itself and replaces the hallucinated reply with a
+    crisp "已启动" ack so the user doesn't see two contradictory
+    messages.
+
+    Returns True on success, False if no matching row found.
+    """
+    p = _db_path(user_id)
+    if not p.exists():
+        return False
+    conn = sqlite3.connect(str(p))
+    try:
+        row = conn.execute(
+            """
+            SELECT idx FROM events
+            WHERE event_type IN ('assistant_response', 'assistant_message')
+              AND COALESCE(session_id, '') = ?
+            ORDER BY idx DESC LIMIT 1
+            """,
+            (session_id or "",),
+        ).fetchone()
+        if not row:
+            return False
+        conn.execute(
+            "UPDATE events SET content = ? WHERE idx = ?",
+            (new_content, int(row[0])),
+        )
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logger.warning(
+            "replace_last_assistant_response failed for %s: %s", user_id, e,
+        )
+        return False
     finally:
         conn.close()

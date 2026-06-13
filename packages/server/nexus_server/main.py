@@ -56,14 +56,52 @@ def _load_dotenv():
 
 _load_dotenv()
 
-# Configure file + console logging
+# Configure file + console logging.
+#
+# Log file location is resolved to an *always-writable* directory so
+# nexus_server doesn't crash when its source tree happens to be on a
+# read-only filesystem — which is the case when the server is launched
+# from inside a packaged macOS .app bundle (Contents/Resources/ is
+# read-only). Resolution order:
+#   1. NEXUS_LOG_DIR env var if set
+#   2. RUNE_HOME_EXPORT env var (set by the desktop's start.sh)
+#   3. ~/Library/Application Support/RuneProtocol (mac default)
+#   4. Current working directory (legacy fallback for plain `dotnet run`
+#      and pytest runs where cwd is the repo root and writable)
+def _resolve_log_path() -> str:
+    candidates = [
+        os.environ.get("NEXUS_LOG_DIR"),
+        os.environ.get("RUNE_HOME_EXPORT"),
+        os.path.expanduser("~/Library/Application Support/RuneProtocol"),
+        os.getcwd(),
+    ]
+    for c in candidates:
+        if not c:
+            continue
+        try:
+            os.makedirs(c, exist_ok=True)
+            # Verify writability with a touch — `os.access(W_OK)` lies
+            # on some macOS filesystems (e.g. read-only DMG mounts
+            # report writable until the open() call).
+            probe = os.path.join(c, ".nexus_log_probe")
+            with open(probe, "a"):
+                pass
+            os.remove(probe)
+            return os.path.join(c, "nexus_server.log")
+        except OSError:
+            continue
+    # Last-resort: log only to stderr.
+    return ""
+
+_log_path = _resolve_log_path()
+_handlers: list[logging.Handler] = [logging.StreamHandler()]
+if _log_path:
+    _handlers.insert(0, logging.FileHandler(_log_path, mode="a"))
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.FileHandler("nexus_server.log", mode="a"),
-        logging.StreamHandler(),
-    ],
+    handlers=_handlers,
 )
 # Suppress noisy HTTP debug logs
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -77,8 +115,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from nexus_server import (
-    agent_state, auth, chain_proxy, files, llm_gateway,
-    sessions_router, thinking_stream, user_profile,
+    agent_state, auth, billing_routes, chain_proxy, files, llm_gateway,
+    memory_router, sessions_router, thinking_stream, user_profile,
+    workflows_router,
 )
 # Phase C: passkey_page moved into the ``auth`` domain package.
 from nexus_server.auth import passkey_page
@@ -96,12 +135,41 @@ config = get_config()
 # ───────────────────────────────────────────────────────────────────────────
 
 
+def _read_build_info() -> dict[str, str]:
+    """Read the BUILD_INFO file stamped by build-macos.sh at package
+    time. Returns ``{version, build, built_at}`` or sensible "dev"
+    defaults when the file is absent (e.g. during ``pytest`` runs in
+    the source tree, where there's no .dmg build step).
+    """
+    info_path = Path(__file__).parent / "BUILD_INFO"
+    out = {"version": "dev", "build": "0", "built_at": "unknown"}
+    try:
+        if info_path.exists():
+            for line in info_path.read_text().splitlines():
+                line = line.strip()
+                if not line or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                out[k.strip()] = v.strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+BUILD_INFO = _read_build_info()
+
+
 class HealthCheckResponse(BaseModel):
-    """Health check response."""
+    """Health check response. ``version`` reflects the .dmg build that
+    shipped this server — desktop polls /healthz on each launch and
+    can compare against its own bundled version to detect
+    server↔client drift."""
 
     status: str
     timestamp: str
-    version: str = "0.1.0"
+    version: str = BUILD_INFO["version"]
+    build: str = BUILD_INFO["build"]
+    built_at: str = BUILD_INFO["built_at"]
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -122,9 +190,100 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     import os as _os
 
     # Startup
-    logger.info("Starting Nexus API Server")
+    logger.info(
+        "Starting Nexus API Server (build %s, version %s, built_at %s)",
+        BUILD_INFO["build"], BUILD_INFO["version"], BUILD_INFO["built_at"],
+    )
     config.validate()
     init_db()
+
+    # #135 — semantic memory index. Idempotent; safe to call every boot.
+    # If sqlite-vec isn't installed (broken venv) we log and continue —
+    # search_chunks raising EmbeddingUnavailable later is a better
+    # failure mode than refusing to start the server.
+    try:
+        from nexus_server.vector_index import init_vector_index
+        init_vector_index()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "vector_index init failed: %s — semantic search will be "
+            "unavailable until this is fixed", e,
+        )
+
+    # #140 — DICOM study / series index. Same defensive pattern as
+    # vector_index — schema setup must never block server boot
+    # (a broken pydicom install would otherwise lock the medic out
+    # of every other feature).
+    try:
+        from nexus_server.dicom import init_dicom_index
+        init_dicom_index()
+        # #144 — RT contour tables sit alongside dicom_studies in the
+        # same DB. Init right after so a fresh install gets everything.
+        from nexus_server.dicom_router import init_rt_tables
+        init_rt_tables()
+        # #181 — manually-registered patient roster table. Lives in
+        # the same DB as dicom_studies so /patients/full can JOIN.
+        from nexus_server.patients_router import init_patients_table
+        init_patients_table()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "dicom_index init failed: %s — medical imaging will be "
+            "unavailable until this is fixed", e,
+        )
+
+    # #169 — async background task queue + worker. Spawns a single
+    # asyncio task that drains the async_tasks SQLite queue forever:
+    # picks up queued tasks, runs them through twin.chat, emails the
+    # result, posts a completion card into the chat session. Defensive
+    # init pattern (table create + worker spawn) matches the other
+    # background components above.
+    try:
+        from nexus_server import async_tasks
+        async_tasks._init_db()
+        async_tasks.start_worker()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "async_tasks init failed: %s — defer_to_background tool "
+            "will accept calls but no worker will execute them",
+            e,
+        )
+
+    # #195 / ADR-002 Rev-8 — event-sourcing foundation. Brings up the
+    # canonical twin_event_log + projection_state + all v3 projection
+    # tables (clinical_graph_nodes/edges, node_provenance, cached_views,
+    # practitioner_facts/observations, reference_knowledge). Idempotent;
+    # safe to call every boot. Defensive: failure here would block all
+    # M0+ memory features but must not block server start (auth + DICOM
+    # path stays usable).
+    try:
+        from nexus_server.database import get_db_connection
+        from nexus_server.event_sourcing import init_event_sourcing_schema
+        with get_db_connection() as _es_conn:
+            init_event_sourcing_schema(_es_conn)
+            # #213 — apply any pending schema migrations (Rev-7 §16.6).
+            from nexus_server.migrations import apply_pending
+            applied = apply_pending(_es_conn)
+            if applied:
+                logger.info("schema migrations applied: %s", applied)
+        logger.info("event-sourcing schema initialised (Rev-8 SSOT contract)")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "event_sourcing init failed: %s — memory_router_v2 endpoints "
+            "will be unavailable until this is fixed", e,
+        )
+
+    # #213 — D1 daily snapshot scheduler (Rev-7 / §16.3 Tier 2).
+    # Fires once per ~24h; rolling 30 daily / 12 weekly / 24 monthly
+    # retention. Snapshot files land in ~/Documents/Nexus Archive/.
+    try:
+        import pathlib as _pl
+        from nexus_server.persistence import start_snapshot_scheduler
+        _db_path = _pl.Path(config.DATABASE_URL.replace("sqlite:///", ""))
+        if _db_path.exists():
+            start_snapshot_scheduler(_db_path)
+            logger.info("daily snapshot scheduler started (Rev-7 D1)")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("snapshot scheduler failed to start: %s", e)
 
     # Phase B: the anchor retry daemon was removed entirely. After S4
     # nothing in production created retryable rows (twin's ChainBackend
@@ -254,16 +413,24 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS middleware
-    cors_origins = (
-        config.CORS_ALLOW_ORIGINS.split(",")
-        if config.CORS_ALLOW_ORIGINS != "*"
-        else ["*"]
-    )
+    # CORS middleware.
+    #
+    # Wildcard handling: CORS spec forbids `Access-Control-Allow-Origin: *`
+    # combined with `Access-Control-Allow-Credentials: true` — browsers
+    # reject the preflight. We rely on Bearer JWT in the Authorization
+    # header (not cookies), so credentials=true is not actually required
+    # for our auth flow. When CORS_ALLOW_ORIGINS="*" we disable
+    # allow_credentials so the wildcard works correctly. This is what
+    # the bundled desktop sets (the webview origin is tauri://localhost
+    # or asset://localhost depending on macOS version — wildcard side-
+    # steps the version difference, and the backend is bound to 127.0.0.1
+    # so off-host requests can't reach it anyway).
+    is_wildcard = config.CORS_ALLOW_ORIGINS == "*"
+    cors_origins = ["*"] if is_wildcard else config.CORS_ALLOW_ORIGINS.split(",")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
-        allow_credentials=True,
+        allow_credentials=not is_wildcard,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -291,11 +458,33 @@ def create_app() -> FastAPI:
     async def healthz() -> HealthCheckResponse:
         return await _health()
 
+    # Build identity endpoint — frontend hits this on launch and compares
+    # to its own bundled VITE_NEXUS_BUILD_ID. A mismatch means the user
+    # has a stale .app talking to a fresh backend (or vice versa).
+    @app.get("/api/v1/build", tags=["health"])
+    async def build_info():
+        try:
+            from nexus_server.__build_info__ import (
+                BUILD_ID, BUILD_TIME, GIT_SHA, VERSION,
+            )
+        except Exception:
+            BUILD_ID = BUILD_TIME = GIT_SHA = VERSION = "unknown"
+        return {
+            "version":    VERSION,
+            "build_id":   BUILD_ID,
+            "build_time": BUILD_TIME,
+            "git_sha":    GIT_SHA,
+        }
+
     # Include routers with API prefixes
     app.include_router(auth.router)
     app.include_router(passkey_page.router)
     app.include_router(llm_gateway.router)
     app.include_router(chain_proxy.router)
+    # Stripe billing — checkout / portal / webhook / status. Routes
+    # gracefully return 501 when STRIPE_SECRET_KEY isn't set, so the
+    # router is always wired regardless of deployment mode.
+    app.include_router(billing_routes.router)
     app.include_router(user_profile.router)
     app.include_router(agent_state.router)
     # /api/v1/files/upload — desktop streams attachments here so the
@@ -312,11 +501,90 @@ def create_app() -> FastAPI:
     # Lives at /api/v1/sessions; the desktop sidebar lists these so users
     # can hold multiple parallel conversations with the same agent.
     app.include_router(sessions_router.router)
+    app.include_router(workflows_router.router)
+    # Phase C-2: /api/v1/agent/memory — user-facing memory management
+    # (view, edit, pause, reset). Backs the AccountView "Memory" tab.
+    app.include_router(memory_router.router)
     # Live agent thinking stream (Server-Sent Events). The desktop's
     # cognition panel opens a long-lived connection and renders typed
     # reasoning steps (memory recall, tool calls, Gemini thinking
     # tokens, evolution proposals) as the agent runs each chat turn.
     app.include_router(thinking_stream.router)
+    # #130 — Expert feedback loop: medic clicks ✓ Accept / ✗ Correct
+    # on an assistant message; we persist to per-skill feedback.jsonl
+    # which #131 vision-grounded skill evolution consumes as its
+    # training corpus.
+    from nexus_server import feedback as _fb
+    app.include_router(_fb.router)
+    # #172 — async tasks list endpoint for the desktop task-list UI.
+    # Worker spawn happens in lifespan() above; this just exposes
+    # GET /api/v1/async-tasks so the desktop can poll for status.
+    from nexus_server import async_tasks as _async_tasks
+    app.include_router(_async_tasks.router)
+    # #176 — per-patient memory CRUD (get/put/append). Schema
+    # migration is idempotent and runs on first request.
+    from nexus_server import patient_memory as _pmem
+    app.include_router(_pmem.router)
+    # #195 / ADR-002 Rev-8 — v3 memory layer HTTP surface. Layer 1
+    # projection reads (findings/medications/timeline/conflicts),
+    # provenance drill-down for CitationChip, Layer 2 practitioner
+    # candidates + confirm/reject, audit log slice. All endpoints
+    # auth-gated via Depends(get_current_user); user_id closed over
+    # server-side so an LLM-controlled call cannot pivot to another
+    # medic's data.
+    from nexus_server import memory_router_v2 as _memory_v2
+    app.include_router(_memory_v2.router)
+    # #208 — Tier-classified SSE chat endpoint backed by retrieval_tiers.
+    # POST /api/v1/agent/chat returns Server-Sent Events with the
+    # tier_classified / reasoning_chunk / final_answer_chunk / citations /
+    # turn_complete sequence the desktop's Encounter mode subscribes to.
+    from nexus_server import chat_router_v2 as _chat_v2
+    app.include_router(_chat_v2.router)
+    # #213 — MONAI Label OHIF bridge (Rev-6/Rev-9). Captures medic
+    # corrections from OHIF viewer annotations into event_log.
+    from nexus_server.monai_runtime import ohif_label_bridge as _ohif
+    app.include_router(_ohif.router)
+    # #142/#144/#146 — DICOM HTTP API: render slices/MIP/grid, ROI
+    # CRUD, RTSTRUCT import/export, SAM auto-segment endpoint.
+    # Hosts the API the Cornerstone3D WebView in the desktop viewer
+    # talks to.
+    from nexus_server import dicom_router as _dcm_router
+    app.include_router(_dcm_router.router)
+    # #181 — manual patient registration + full roster.
+    from nexus_server import patients_router as _patients_router
+    app.include_router(_patients_router.router)
+    # #191 — DICOM Quick scan endpoint (Gemini Flash triage).
+    from nexus_server import quick_scan as _quick_scan
+    app.include_router(_quick_scan.router)
+    # U3.3 — Settings · Data export. /api/v1/export/archive_path + /bundle.
+    # Builds a zip of the user's twin_event_log + manifest under
+    # ~/Documents/Nexus Archive/. Restore endpoints land alongside in
+    # M3.3 finalize (destructive replace requires extra Rev-19 guards).
+    from nexus_server import export_router as _export_router
+    app.include_router(_export_router.router)
+    # U3.3 — Settings · LLM. Lets the desktop write GEMINI/OPENAI/
+    # ANTHROPIC keys + provider/model selection to $RUNE_HOME/.env and
+    # picks up the change in-process (no restart). v1-parity since v1's
+    # start.sh seeded the same file; the Tauri sidecar in lib.rs reads
+    # it back on every launch.
+    from nexus_server import settings_router as _settings_router
+    app.include_router(_settings_router.router)
+
+    # #143 — serve the Cornerstone3D viewer.html as a static page.
+    # Desktop launches the user's default browser at
+    # http://localhost:8001/dicom-viewer/?studyId=…&token=… when the
+    # medic clicks Open Viewer; the page then talks to /api/v1/dicom/*
+    # via fetch(). Mounting static is the simplest deploy — no
+    # WebView packaging, no extra runtime, no .NET 10 compat risk.
+    from pathlib import Path as _Path
+    from fastapi.staticfiles import StaticFiles as _StaticFiles
+    _static_dir = _Path(__file__).parent / "static"
+    if _static_dir.is_dir():
+        app.mount(
+            "/dicom-viewer",
+            _StaticFiles(directory=str(_static_dir), html=True),
+            name="dicom-viewer",
+        )
 
     return app
 

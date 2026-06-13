@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<!--
+  Nexus DICOM Viewer — #157 (pure canvas, no ESM/CDN deps)
+                       + #162 (patient context auto-prepended)
+                       + #163 (in-viewer chat sidebar + ROI annotation)
+
+  What this viewer does:
+    * Scrolls through a DICOM study's slices (server-side rendered to PNG).
+    * Shift-drag to draw a yellow rectangle ROI on the current slice.
+    * Right sidebar — chat with the agent WITHOUT leaving the viewer.
+        The medic types a question; the viewer attaches the current
+        slice (or the cropped ROI) and POSTs to /api/v1/llm/chat.
+        Reply renders in the panel. The chat is persisted to the
+        user's twin event log too, so the desktop main chat sees it
+        on next refresh.
+    * "Send region" button → crops to the ROI bbox + sends.
+    * "Mark / Send marked" → same #149 protocol, talks to the desktop
+       via /api/v1/dicom/send-to-agent queue.
+
+  Why no cornerstone3D / dcmjs / xmlbuilder2:
+    The 3D library chain has a CJS↔ESM landmine (dcmjs imports
+    `xmlbuilder2`'s `create` as a named export, but xmlbuilder2 uses
+    module.exports = {...} which neither jsDelivr nor esm.sh expose
+    cleanly through ESM). We sidestep all of it — the server already
+    renders slice PNGs on demand.
+
+  Host integration:
+    NEXUS_CONFIG = { serverUrl, token, studyId } injected by the
+    desktop, or fall back to URL query params for standalone browser
+    opens. window.chrome.webview.postMessage / WKWebView bridges
+    kept for future native window hosts.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nexus DICOM Viewer</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0a0a0a;
+               color: #e7e7e7; font-family: -apple-system, system-ui, sans-serif; }
+  body { display: grid; grid-template-columns: 220px 1fr 360px;
+         grid-template-rows: 48px 1fr 44px; height: 100vh; }
+  header { grid-column: 1 / 4; background: #161616; border-bottom: 1px solid #2a2a2a;
+           display: flex; align-items: center; padding: 0 16px; gap: 12px; }
+  header .title { font-size: 13px; font-weight: 600; }
+  header .meta { font-size: 11px; color: #888; }
+  .sidebar { background: #111; border-right: 1px solid #2a2a2a; padding: 12px;
+             overflow-y: auto; display: flex; flex-direction: column; }
+  .sidebar.right { border-left: 1px solid #2a2a2a; border-right: none;
+                   padding: 0; }
+  .sidebar h3 { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+                color: #888; margin: 16px 0 6px 0; font-weight: 600; }
+  .sidebar h3:first-child { margin-top: 0; }
+  .toolbtn { display: block; width: 100%; padding: 8px 10px; margin-bottom: 4px;
+             background: #1d1d1d; border: 1px solid #2a2a2a; border-radius: 6px;
+             color: #ddd; font-size: 12px; cursor: pointer; text-align: left;
+             transition: background 0.1s; }
+  .toolbtn:hover { background: #252525; }
+  .toolbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .toolbtn.active { background: #2563eb; border-color: #2563eb; color: white; }
+  .toolbtn.primary { background: #2563eb; border-color: #2563eb; color: white; }
+  .toolbtn.danger { background: transparent; color: #e76f6f; }
+  #viewport { background: #000; position: relative; overflow: hidden;
+              user-select: none; -webkit-user-select: none; cursor: crosshair;
+              display: flex; align-items: center; justify-content: center; }
+  #canvas-stack { position: relative; }
+  #slice-canvas, #overlay-canvas {
+    display: block;
+    image-rendering: -webkit-optimize-contrast;
+  }
+  #overlay-canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+  #hud { position: absolute; inset: 0; pointer-events: none;
+         font-size: 11px; color: #888; padding: 10px;
+         display: flex; flex-direction: column; justify-content: space-between; }
+  #hud .tl, #hud .tr, #hud .bl, #hud .br {
+    background: rgba(0,0,0,0.4); padding: 4px 8px; border-radius: 4px;
+    line-height: 1.5;
+  }
+  #hud .top, #hud .bot { display: flex; justify-content: space-between; }
+  footer { grid-column: 1 / 4; background: #161616; border-top: 1px solid #2a2a2a;
+           display: flex; align-items: center; padding: 0 16px; gap: 12px;
+           font-size: 11px; color: #888; }
+  footer .spacer { flex: 1; }
+  .slice-control { display: flex; align-items: center; gap: 8px; flex: 1; }
+  .slice-control input[type="range"] { flex: 1; max-width: 500px; }
+  select, input[type="text"], textarea {
+    background: #1d1d1d; border: 1px solid #2a2a2a; color: #ddd; padding: 6px;
+    border-radius: 4px; font-size: 12px; width: 100%;
+  }
+  textarea { font-family: inherit; resize: vertical; min-height: 44px; }
+  .status-bar { font-size: 11px; padding: 4px 8px; background: #1a1a1a;
+                border-radius: 4px; color: #999; word-break: break-all; }
+  .error { color: #e76f6f; }
+
+  /* Right sidebar: chat panel */
+  .chat-header { padding: 12px; border-bottom: 1px solid #2a2a2a;
+                 font-size: 11px; color: #888; text-transform: uppercase;
+                 letter-spacing: 0.05em; font-weight: 600; }
+  .chat-tools { padding: 8px 12px; border-bottom: 1px solid #2a2a2a;
+                background: #0d0d0d; display: flex; gap: 6px; flex-wrap: wrap; }
+  .chat-tools .toolbtn { margin-bottom: 0; width: auto; flex: 1 1 calc(50% - 4px);
+                         font-size: 11px; padding: 6px 8px; text-align: center; }
+  .chat-log { flex: 1; overflow-y: auto; padding: 12px;
+              display: flex; flex-direction: column; gap: 10px;
+              min-height: 0;     /* allow flexbox to shrink for overflow */ }
+  .msg { padding: 8px 10px; border-radius: 8px; font-size: 12px;
+         line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { background: #1e3a8a; color: #fff; align-self: flex-end;
+              max-width: 92%; }
+  .msg.agent { background: #1a1a1a; border: 1px solid #2a2a2a;
+               max-width: 100%; }
+  .msg.sys { background: transparent; color: #777; font-style: italic;
+             font-size: 11px; align-self: center; }
+  .msg .role { font-size: 10px; color: #888; margin-bottom: 4px;
+               text-transform: uppercase; letter-spacing: 0.04em; }
+  .chat-input { padding: 10px 12px; border-top: 1px solid #2a2a2a;
+                background: #0d0d0d; }
+  .chat-input textarea { margin-bottom: 6px; }
+  .chat-input .row { display: flex; gap: 6px; }
+  .chat-input .row .toolbtn { margin-bottom: 0; flex: 1; }
+  .typing { color: #888; font-size: 11px; padding: 0 12px 6px 12px;
+            display: none; }
+  .typing.on { display: block; }
+  .ctx-hint { padding: 6px 12px; font-size: 10px; color: #666;
+              background: #0d0d0d; border-bottom: 1px solid #2a2a2a; }
+  .ctx-hint .ctx-tag { color: #f59e0b; }   /* yellow ROI tag */
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="title" id="study-title">Loading…</div>
+    <div class="meta" id="study-meta"></div>
+  </div>
+</header>
+
+<!-- LEFT: tools / series / preset -->
+<aside class="sidebar">
+  <h3>Series</h3>
+  <select id="series-select"></select>
+
+  <h3>Window preset</h3>
+  <select id="window-select">
+    <option value="default" selected>Default (auto)</option>
+    <option value="lung">Lung (-600 / 1500)</option>
+    <option value="mediastinum">Mediastinum (40 / 400)</option>
+    <option value="bone">Bone (400 / 1800)</option>
+    <option value="brain">Brain (40 / 80)</option>
+  </select>
+
+  <h3>How to use</h3>
+  <div class="status-bar">
+    Scroll: change slice<br>
+    Drag: W/L adjust<br>
+    <b style="color:#f59e0b">Shift+Drag: draw ROI</b><br>
+    Double-click: reset W/L
+  </div>
+
+  <h3>Status</h3>
+  <div id="status" class="status-bar">Booting…</div>
+
+  <h3>Reset</h3>
+  <button class="toolbtn" id="reset-wl-btn">Reset W/L</button>
+  <button class="toolbtn" id="clear-roi-btn">Clear ROI</button>
+  <button class="toolbtn" id="reload-btn">Reload study</button>
+</aside>
+
+<!-- CENTER: image viewport -->
+<main id="viewport">
+  <div id="canvas-stack">
+    <canvas id="slice-canvas" width="512" height="512"></canvas>
+    <canvas id="overlay-canvas" width="512" height="512"></canvas>
+  </div>
+  <div id="hud">
+    <div class="top">
+      <div class="tl" id="ov-patient"></div>
+      <div class="tr" id="ov-window"></div>
+    </div>
+    <div class="bot">
+      <div class="bl" id="ov-slice"></div>
+      <div class="br" id="ov-modality"></div>
+    </div>
+  </div>
+</main>
+
+<!-- RIGHT: in-viewer agent chat panel -->
+<aside class="sidebar right">
+  <div class="chat-header">Agent</div>
+  <div class="ctx-hint" id="ctx-hint">Context: current slice will be sent.</div>
+  <div class="chat-tools">
+    <button class="toolbtn" id="mark-btn" title="Mark current slice for batch send">⌘ Mark</button>
+    <button class="toolbtn" id="clear-marks-btn">Clear marks</button>
+    <button class="toolbtn" id="send-marked-btn" title="Send all marked slices to desktop chat">→ Marked → desktop</button>
+  </div>
+  <div id="marked-display" class="ctx-hint">no marks</div>
+  <div class="chat-log" id="chat-log"></div>
+  <div class="typing" id="typing">Agent is thinking…</div>
+  <div class="chat-input">
+    <textarea id="chat-input" placeholder="问 agent：这张切片有什么发现？" rows="2"></textarea>
+    <div class="row">
+      <button class="toolbtn primary" id="send-slice-btn">↑ Send slice + ask</button>
+      <button class="toolbtn" id="send-region-btn" disabled>↑ Send region + ask</button>
+    </div>
+  </div>
+</aside>
+
+<!-- BOTTOM: slice slider -->
+<footer>
+  <div class="slice-control">
+    <span>Slice</span>
+    <input type="range" id="slice-slider" min="0" max="0" value="0" />
+    <span id="slice-label">0 / 0</span>
+  </div>
+  <div class="spacer"></div>
+  <div id="footer-status">—</div>
+</footer>
+
+<script>
+"use strict";
+
+// ── Config ───────────────────────────────────────────────────────
+const params = new URLSearchParams(window.location.search);
+const CFG = window.NEXUS_CONFIG || {
+  serverUrl: params.get("serverUrl") || window.location.origin,
+  token:     params.get("token")     || "",
+  studyId:   params.get("studyId")   || "",
+};
+
+// ── Patient context (#162): fetched once at boot, prepended to
+// every chat from this viewer so the agent never forgets which
+// patient we're looking at.
+let patientContext = "";
+
+async function postToHost(msg) {
+  try {
+    if (window.chrome && window.chrome.webview) {
+      window.chrome.webview.postMessage(msg);
+      return;
+    }
+    if (window.webkit && window.webkit.messageHandlers
+        && window.webkit.messageHandlers.nexus) {
+      window.webkit.messageHandlers.nexus.postMessage(JSON.stringify(msg));
+      return;
+    }
+    // Standalone browser → server queue.
+    if (msg && msg.kind === "send-to-agent") {
+      const body = {
+        study_id:   msg.study_id,
+        series_id:  msg.series_id,
+        slice_idx:  msg.slice_idx,
+        window:     msg.window || "default",
+        wl:         msg.wl ?? null,
+        ww:         msg.ww ?? null,
+        is_last:    !!msg.is_last,
+        batch_size: msg.batch_size || 1,
+        note:       msg.note || "",
+      };
+      const resp = await fetch(
+        `${CFG.serverUrl}/api/v1/dicom/send-to-agent`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${CFG.token}`,
+            "Content-Type":  "application/json",
+          },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        console.warn("send-to-agent failed:", resp.status, text);
+        setStatus(`Send failed: ${resp.status} ${text}`, true);
+      }
+      return;
+    }
+    console.log("[host msg]", msg);
+  } catch (e) {
+    console.warn("postToHost failed:", e);
+    setStatus(`Send failed: ${e.message}`, true);
+  }
+}
+
+async function api(path, opts = {}) {
+  const headers = { "Authorization": `Bearer ${CFG.token}`,
+                    ...(opts.headers || {}) };
+  const resp = await fetch(`${CFG.serverUrl}${path}`, { ...opts, headers });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`${resp.status} ${resp.statusText} on ${path}: ${text}`);
+  }
+  const ct = resp.headers.get("content-type") || "";
+  if (ct.startsWith("application/json")) return resp.json();
+  if (ct.startsWith("image/"))           return resp.blob();
+  return resp;
+}
+
+// ── State ────────────────────────────────────────────────────────
+const state = {
+  study: null,
+  activeSeries: null,
+  sliceIdx: 0,
+  sliceCount: 0,
+  windowPreset: "default",
+  wlOverride: null,
+  wwOverride: null,
+  pendingPng: null,
+  inflight: 0,
+  markedSlices: new Set(),
+  // ROI overlay (#163-C)
+  roi: null,           // {x, y, w, h} in canvas-px (relative to slice-canvas)
+  roiDrag: null,       // {x0, y0} during drag
+  // Cached current bitmap so we can re-blit overlay without re-fetching
+  currentBitmap: null,
+};
+
+const sliceCanvas = document.getElementById("slice-canvas");
+const sliceCtx = sliceCanvas.getContext("2d");
+const overlayCanvas = document.getElementById("overlay-canvas");
+const overlayCtx = overlayCanvas.getContext("2d");
+const chatLog = document.getElementById("chat-log");
+
+function setStatus(text, isErr) {
+  const el = document.getElementById("status");
+  el.textContent = text;
+  el.className = "status-bar" + (isErr ? " error" : "");
+  document.getElementById("footer-status").textContent = text;
+}
+
+// ── Boot ─────────────────────────────────────────────────────────
+async function loadStudy() {
+  if (!CFG.studyId) { setStatus("No studyId provided.", true); return; }
+  if (!CFG.token)   { setStatus("No auth token provided.", true); return; }
+  setStatus("Loading study metadata…");
+  try {
+    state.study = await api(`/api/v1/dicom/studies/${CFG.studyId}`);
+  } catch (e) {
+    setStatus(`Failed to load study: ${e.message}`, true);
+    return;
+  }
+  if (!state.study || !state.study.series || !state.study.series.length) {
+    setStatus("Study has no series.", true); return;
+  }
+
+  document.getElementById("study-title").textContent =
+    state.study.study_description || state.study.study_id || "DICOM study";
+  document.getElementById("study-meta").textContent =
+    `${state.study.modality || "?"} · ${state.study.series.length} series · ` +
+    `${state.study.study_date || ""}`;
+  document.getElementById("ov-patient").textContent =
+    state.study.patient_age_group || "";
+
+  // Fetch patient context for the chat panel (#162).
+  try {
+    const ctx = await api(
+      `/api/v1/dicom/studies/${CFG.studyId}/patient-context`,
+    );
+    patientContext = (ctx && ctx.text) || "";
+    if (patientContext) {
+      addChatMsg("sys", "Patient context loaded — agent will be told who this patient is on every question.");
+    }
+  } catch (e) {
+    console.warn("patient-context fetch failed:", e);
+  }
+
+  const seriesSel = document.getElementById("series-select");
+  seriesSel.innerHTML = "";
+  state.study.series.forEach(s => {
+    const opt = document.createElement("option");
+    opt.value = s.series_id;
+    opt.textContent =
+      `${(s.modality || "?")}: ${s.series_description || s.series_instance_uid.slice(0, 16)} ` +
+      `(${s.instance_count} slices)`;
+    seriesSel.appendChild(opt);
+  });
+  seriesSel.addEventListener("change", () => {
+    const chosen = state.study.series.find(s => s.series_id === seriesSel.value);
+    if (chosen) selectSeries(chosen);
+  });
+  const initial = state.study.series.reduce(
+    (a, b) => (b.instance_count > a.instance_count ? b : a),
+  );
+  seriesSel.value = initial.series_id;
+  selectSeries(initial);
+}
+
+function selectSeries(s) {
+  state.activeSeries = s;
+  state.sliceIdx = Math.floor(s.instance_count / 2);
+  state.sliceCount = s.instance_count;
+  state.wlOverride = null;
+  state.wwOverride = null;
+  state.roi = null;
+  document.getElementById("slice-slider").max = String(s.instance_count - 1);
+  document.getElementById("slice-slider").value = String(state.sliceIdx);
+  document.getElementById("ov-modality").textContent = s.modality || "";
+  redrawOverlay();
+  renderCurrentSlice();
+  updateCtxHint();
+}
+
+// ── Rendering ────────────────────────────────────────────────────
+async function renderCurrentSlice() {
+  if (!state.activeSeries) return;
+  if (state.pendingPng) { try { state.pendingPng.abort(); } catch {} }
+  const ac = new AbortController();
+  state.pendingPng = ac;
+  const tag = ++state.inflight;
+
+  const params = new URLSearchParams({
+    kind: "slice",
+    slice: String(state.sliceIdx),
+    window: state.windowPreset,
+  });
+  if (state.wlOverride !== null) params.set("wl", String(state.wlOverride));
+  if (state.wwOverride !== null) params.set("ww", String(state.wwOverride));
+
+  const url =
+    `${CFG.serverUrl}/api/v1/dicom/studies/${CFG.studyId}` +
+    `/series/${state.activeSeries.series_id}/render?${params}`;
+
+  let blob;
+  try {
+    const resp = await fetch(url, {
+      headers: { "Authorization": `Bearer ${CFG.token}` },
+      signal: ac.signal,
+    });
+    if (tag !== state.inflight) return;
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`${resp.status} ${resp.statusText}: ${text}`);
+    }
+    blob = await resp.blob();
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    setStatus(`Render failed: ${e.message}`, true);
+    return;
+  }
+
+  const bitmap = await createImageBitmap(blob);
+  if (tag !== state.inflight) return;
+  state.currentBitmap = bitmap;
+
+  sliceCanvas.width = bitmap.width;
+  sliceCanvas.height = bitmap.height;
+  overlayCanvas.width = bitmap.width;
+  overlayCanvas.height = bitmap.height;
+  sliceCtx.clearRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+  sliceCtx.drawImage(bitmap, 0, 0);
+  redrawOverlay();
+
+  document.getElementById("ov-slice").textContent =
+    `Slice ${state.sliceIdx + 1} / ${state.sliceCount}` +
+    (state.markedSlices.has(state.sliceIdx) ? "  ●" : "");
+  document.getElementById("ov-window").textContent =
+    state.wlOverride !== null
+      ? `WL ${state.wlOverride.toFixed(0)} / WW ${state.wwOverride.toFixed(0)}`
+      : `Preset: ${state.windowPreset}`;
+  document.getElementById("slice-label").textContent =
+    `${state.sliceIdx + 1} / ${state.sliceCount}`;
+  setStatus(`Loaded slice ${state.sliceIdx + 1}`);
+}
+
+function redrawOverlay() {
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  if (state.roi) {
+    const r = state.roi;
+    overlayCtx.strokeStyle = "#f59e0b";    // amber-500
+    overlayCtx.lineWidth = 2;
+    overlayCtx.setLineDash([4, 3]);
+    overlayCtx.strokeRect(r.x, r.y, r.w, r.h);
+    overlayCtx.setLineDash([]);
+    // label
+    overlayCtx.fillStyle = "#f59e0bcc";
+    overlayCtx.font = "12px -apple-system, sans-serif";
+    overlayCtx.fillText(
+      `ROI ${r.w}×${r.h}`, r.x + 4, Math.max(14, r.y - 4),
+    );
+  }
+  if (state.roiDrag && state.roiDrag.preview) {
+    const p = state.roiDrag.preview;
+    overlayCtx.strokeStyle = "#f59e0b88";
+    overlayCtx.lineWidth = 2;
+    overlayCtx.setLineDash([2, 2]);
+    overlayCtx.strokeRect(p.x, p.y, p.w, p.h);
+    overlayCtx.setLineDash([]);
+  }
+}
+
+function updateCtxHint() {
+  const el = document.getElementById("ctx-hint");
+  if (state.roi) {
+    el.innerHTML = `Context: <span class="ctx-tag">ROI region</span> on slice ${state.sliceIdx + 1} will be sent.`;
+  } else {
+    el.textContent = `Context: slice ${state.sliceIdx + 1} (${state.windowPreset}) will be sent.`;
+  }
+  // Toggle Send Region button enablement
+  document.getElementById("send-region-btn").disabled = !state.roi;
+}
+
+// ── Interactions ─────────────────────────────────────────────────
+
+document.getElementById("viewport").addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  if (!state.activeSeries) return;
+  const dir = Math.sign(ev.deltaY);
+  const next = Math.max(0, Math.min(state.sliceCount - 1, state.sliceIdx + dir));
+  if (next !== state.sliceIdx) {
+    state.sliceIdx = next;
+    document.getElementById("slice-slider").value = String(next);
+    renderCurrentSlice();
+    updateCtxHint();
+  }
+}, { passive: false });
+
+document.getElementById("slice-slider").addEventListener("input", (ev) => {
+  state.sliceIdx = parseInt(ev.target.value, 10) || 0;
+  renderCurrentSlice();
+  updateCtxHint();
+});
+
+// Convert a clientX/Y to canvas-coords (since the canvas is centered
+// inside the viewport with object-fit-ish behaviour).
+function canvasCoords(ev) {
+  const rect = sliceCanvas.getBoundingClientRect();
+  const sx = sliceCanvas.width / rect.width;
+  const sy = sliceCanvas.height / rect.height;
+  return {
+    x: Math.round((ev.clientX - rect.left) * sx),
+    y: Math.round((ev.clientY - rect.top) * sy),
+  };
+}
+
+let dragMode = null;    // "wl" | "roi" | null
+let dragStart = null;
+
+document.getElementById("viewport").addEventListener("mousedown", (ev) => {
+  if (ev.button !== 0) return;
+  if (ev.shiftKey) {
+    // ROI rectangle draw
+    const p = canvasCoords(ev);
+    dragMode = "roi";
+    dragStart = { x: p.x, y: p.y };
+    state.roiDrag = { x0: p.x, y0: p.y, preview: { x: p.x, y: p.y, w: 0, h: 0 } };
+    redrawOverlay();
+  } else {
+    dragMode = "wl";
+    dragStart = { x: ev.clientX, y: ev.clientY,
+                  wl: state.wlOverride ?? 40, ww: state.wwOverride ?? 400 };
+  }
+});
+
+window.addEventListener("mousemove", (ev) => {
+  if (!dragMode) return;
+  if (dragMode === "wl") {
+    const dx = ev.clientX - dragStart.x;
+    const dy = ev.clientY - dragStart.y;
+    state.wwOverride = Math.max(1, dragStart.ww + dx * 4);
+    state.wlOverride = dragStart.wl - dy * 4;
+    if (state.inflight === state._lastRendered) renderCurrentSlice();
+  } else if (dragMode === "roi") {
+    const p = canvasCoords(ev);
+    const x = Math.min(state.roiDrag.x0, p.x);
+    const y = Math.min(state.roiDrag.y0, p.y);
+    const w = Math.abs(p.x - state.roiDrag.x0);
+    const h = Math.abs(p.y - state.roiDrag.y0);
+    state.roiDrag.preview = { x, y, w, h };
+    redrawOverlay();
+  }
+});
+
+window.addEventListener("mouseup", () => {
+  if (!dragMode) return;
+  if (dragMode === "wl") {
+    renderCurrentSlice();
+  } else if (dragMode === "roi") {
+    if (state.roiDrag.preview && state.roiDrag.preview.w > 4
+        && state.roiDrag.preview.h > 4) {
+      state.roi = state.roiDrag.preview;
+      setStatus(`ROI set: ${state.roi.w}×${state.roi.h} px`);
+    } else {
+      // tiny rectangle → treat as cancel
+      state.roi = null;
+    }
+    state.roiDrag = null;
+    redrawOverlay();
+    updateCtxHint();
+  }
+  dragMode = null;
+  dragStart = null;
+});
+
+document.getElementById("viewport").addEventListener("dblclick", () => {
+  state.wlOverride = null;
+  state.wwOverride = null;
+  renderCurrentSlice();
+});
+
+document.getElementById("window-select").addEventListener("change", (ev) => {
+  state.windowPreset = ev.target.value;
+  state.wlOverride = null;
+  state.wwOverride = null;
+  renderCurrentSlice();
+  updateCtxHint();
+});
+
+document.getElementById("reset-wl-btn").addEventListener("click", () => {
+  state.wlOverride = null;
+  state.wwOverride = null;
+  renderCurrentSlice();
+});
+
+document.getElementById("clear-roi-btn").addEventListener("click", () => {
+  state.roi = null;
+  redrawOverlay();
+  updateCtxHint();
+  setStatus("ROI cleared.");
+});
+
+document.getElementById("reload-btn").addEventListener("click", () => {
+  chatLog.innerHTML = "";
+  loadStudy();
+});
+
+// ── Marked-slices → desktop chat (legacy #149 path) ─────────────
+function refreshMarkedDisplay() {
+  const el = document.getElementById("marked-display");
+  if (state.markedSlices.size === 0) {
+    el.textContent = "no marks";
+  } else {
+    const arr = Array.from(state.markedSlices).sort((a, b) => a - b);
+    el.textContent = `marked: ${arr.map(i => i + 1).join(", ")}`;
+  }
+}
+
+document.getElementById("mark-btn").addEventListener("click", () => {
+  if (!state.activeSeries) return;
+  if (state.markedSlices.has(state.sliceIdx)) {
+    state.markedSlices.delete(state.sliceIdx);
+  } else {
+    state.markedSlices.add(state.sliceIdx);
+  }
+  refreshMarkedDisplay();
+  renderCurrentSlice();
+});
+
+document.getElementById("clear-marks-btn").addEventListener("click", () => {
+  state.markedSlices.clear();
+  refreshMarkedDisplay();
+  renderCurrentSlice();
+});
+
+document.getElementById("send-marked-btn").addEventListener("click", async () => {
+  if (!state.activeSeries) return;
+  const toSend = state.markedSlices.size > 0
+    ? Array.from(state.markedSlices).sort((a, b) => a - b)
+    : [state.sliceIdx];
+  setStatus(`Sending ${toSend.length} slice${toSend.length === 1 ? "" : "s"} → desktop…`);
+  for (let i = 0; i < toSend.length; i++) {
+    await postToHost({
+      kind:       "send-to-agent",
+      study_id:   CFG.studyId,
+      series_id:  state.activeSeries.series_id,
+      slice_idx:  toSend[i],
+      window:     state.windowPreset,
+      wl:         state.wlOverride,
+      ww:         state.wwOverride,
+      is_last:    (i === toSend.length - 1),
+      batch_size: toSend.length,
+    });
+  }
+  setStatus(`Sent ${toSend.length} → desktop chat.`);
+  state.markedSlices.clear();
+  refreshMarkedDisplay();
+});
+
+// ── In-viewer chat (#163-A) ─────────────────────────────────────
+
+function addChatMsg(role, text) {
+  const div = document.createElement("div");
+  div.className = `msg ${role}`;
+  if (role !== "sys") {
+    const r = document.createElement("div");
+    r.className = "role";
+    r.textContent = role === "user" ? "You" : "Agent";
+    div.appendChild(r);
+  }
+  const body = document.createElement("div");
+  body.textContent = text;
+  div.appendChild(body);
+  chatLog.appendChild(div);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function setTyping(on) {
+  document.getElementById("typing").className = on ? "typing on" : "typing";
+}
+
+// Returns base64 PNG of the current slice, cropped to ROI if specified.
+function captureSlicePngBase64(crop) {
+  if (!state.currentBitmap) return null;
+  let outCanvas;
+  if (crop && crop.w > 1 && crop.h > 1) {
+    outCanvas = document.createElement("canvas");
+    outCanvas.width = crop.w;
+    outCanvas.height = crop.h;
+    outCanvas.getContext("2d").drawImage(
+      state.currentBitmap,
+      crop.x, crop.y, crop.w, crop.h,    // source rect
+      0, 0, crop.w, crop.h,              // dest rect
+    );
+  } else {
+    outCanvas = sliceCanvas;
+  }
+  // Strip data URL prefix to keep just base64.
+  const dataUrl = outCanvas.toDataURL("image/png");
+  return dataUrl.replace(/^data:image\/png;base64,/, "");
+}
+
+async function sendToAgent({ withRoi }) {
+  if (!state.activeSeries) {
+    addChatMsg("sys", "No active series loaded.");
+    return;
+  }
+  const inputEl = document.getElementById("chat-input");
+  const question = (inputEl.value || "").trim()
+    || (withRoi
+        ? `请分析我标注的这个区域 (${state.roi.w}×${state.roi.h} px) — 有什么发现？`
+        : `请详细分析这张切片（slice ${state.sliceIdx + 1}, ${state.windowPreset} 窗）。`);
+
+  const crop = withRoi ? state.roi : null;
+  const pngB64 = captureSlicePngBase64(crop);
+  if (!pngB64) {
+    addChatMsg("sys", "Slice not loaded yet.");
+    return;
+  }
+
+  const userMsg = withRoi
+    ? `${question}\n\n[Region: x=${crop.x} y=${crop.y} ${crop.w}×${crop.h} on slice ${state.sliceIdx + 1}]`
+    : `${question}\n\n[Slice ${state.sliceIdx + 1}, ${state.windowPreset} window]`;
+  addChatMsg("user", userMsg);
+  inputEl.value = "";
+  setTyping(true);
+
+  // Build the chat request. Prepend patient context as a system-style
+  // prefix to the bare user text so the agent sees patient identity
+  // before the question.
+  const fullText = patientContext
+    ? `${patientContext}\n\n${userMsg}`
+    : userMsg;
+  const attachName = withRoi
+    ? `slice-${state.sliceIdx}-roi-${crop.w}x${crop.h}.png`
+    : `slice-${state.sliceIdx}-${state.windowPreset}.png`;
+  const body = {
+    messages: [{ role: "user", content: fullText }],
+    system_prompt: null,
+    tool_definitions: [],
+    attachments: [{
+      name: attachName,
+      mime: "image/png",
+      size_bytes: Math.floor(pngB64.length * 0.75),   // rough b64 → bytes
+      content_text: null,
+      content_base64: pngB64,
+      file_id: null,
+    }],
+    session_id: "",      // empty = default session; mirrors desktop default
+  };
+
+  try {
+    const resp = await fetch(
+      `${CFG.serverUrl}/api/v1/llm/chat`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${CFG.token}`,
+          "Content-Type":  "application/json",
+        },
+        body: JSON.stringify(body),
+      },
+    );
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`${resp.status}: ${text}`);
+    }
+    const data = await resp.json();
+    // The server's LLMChatResponse uses `content` (mirroring OpenAI /
+    // Anthropic message shape). Earlier viewer code read `.reply`
+    // which always came back undefined — every reply showed up as
+    // "(empty reply)". Accept either spelling so a future rename
+    // doesn't silently regress.
+    const replyText =
+      (data && (data.content || data.reply || data.text)) || "";
+    if (!replyText) {
+      console.warn("chat response had no content; full body =", data);
+    }
+    addChatMsg("agent", replyText || "(empty reply — see console)");
+  } catch (e) {
+    addChatMsg("sys", `Failed: ${e.message}`);
+    console.warn(e);
+  } finally {
+    setTyping(false);
+  }
+}
+
+document.getElementById("send-slice-btn").addEventListener("click", () => {
+  sendToAgent({ withRoi: false });
+});
+document.getElementById("send-region-btn").addEventListener("click", () => {
+  if (!state.roi) {
+    addChatMsg("sys", "Draw an ROI first (Shift+drag on the image).");
+    return;
+  }
+  sendToAgent({ withRoi: true });
+});
+
+// Shift+Enter newline, Enter send (when chat textarea focused).
+document.getElementById("chat-input").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && !ev.shiftKey) {
+    ev.preventDefault();
+    if (state.roi) sendToAgent({ withRoi: true });
+    else sendToAgent({ withRoi: false });
+  }
+});
+
+// ── Global keyboard ────────────────────────────────────────────
+window.addEventListener("keydown", (ev) => {
+  if (ev.target.tagName === "INPUT" || ev.target.tagName === "SELECT"
+      || ev.target.tagName === "TEXTAREA") return;
+  if (ev.key === "ArrowDown" || ev.key === "j") {
+    state.sliceIdx = Math.min(state.sliceCount - 1, state.sliceIdx + 1);
+    document.getElementById("slice-slider").value = String(state.sliceIdx);
+    renderCurrentSlice();
+    updateCtxHint();
+  } else if (ev.key === "ArrowUp" || ev.key === "k") {
+    state.sliceIdx = Math.max(0, state.sliceIdx - 1);
+    document.getElementById("slice-slider").value = String(state.sliceIdx);
+    renderCurrentSlice();
+    updateCtxHint();
+  } else if ((ev.metaKey || ev.ctrlKey) && ev.key === "m") {
+    ev.preventDefault();
+    document.getElementById("mark-btn").click();
+  }
+});
+
+refreshMarkedDisplay();
+loadStudy();
+</script>
+</body>
+</html>

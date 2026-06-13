@@ -95,6 +95,245 @@ public record FileUploadResponse
 
     [JsonPropertyName("size_bytes")]
     public long SizeBytes { get; init; }
+
+    /// <summary>#152 — server's DICOM verdict at upload time. Empty
+    /// for non-medical files. One of: ``rendered``, ``not_dicom``,
+    /// ``render_failed``, ``too_large``, ``not_zip``. The chip uses
+    /// this to show a green ✓ for ``rendered`` and a ⚠ for the
+    /// failure modes so the medic sees the result BEFORE clicking
+    /// send.</summary>
+    [JsonPropertyName("dicom_status")]
+    public string DicomStatus { get; init; } = "";
+
+    /// <summary>Persisted DICOM study id, when applicable. The
+    /// desktop uses this to open the dedicated viewer for the
+    /// study without a separate lookup round-trip.</summary>
+    [JsonPropertyName("dicom_study_id")]
+    public string DicomStudyId { get; init; } = "";
+
+    /// <summary>#158 — when true, the client should poll
+    /// <see cref="GetDicomPrerenderProgressAsync"/> until the
+    /// returned state is "done" before showing the Preview
+    /// button. Set for any zip-like upload; the server falls back
+    /// to a fast "done" response for zips that turn out not to
+    /// be DICOM so this doesn't add latency for non-medical
+    /// uploads.</summary>
+    [JsonPropertyName("dicom_prerender_active")]
+    public bool DicomPrerenderActive { get; init; } = false;
+}
+
+/// <summary>#161 — one "Send to agent" intent the DICOM viewer
+/// queued on the server. Desktop drains the queue via
+/// GET /api/v1/dicom/pending-sends and processes each item by
+/// fetching the slice PNG + injecting it into the chat as a
+/// vision attachment.</summary>
+public record DicomSendToAgentItem
+{
+    [JsonPropertyName("study_id")]   public string StudyId   { get; init; } = "";
+    [JsonPropertyName("series_id")]  public string SeriesId  { get; init; } = "";
+    [JsonPropertyName("slice_idx")]  public int    SliceIdx  { get; init; }
+    [JsonPropertyName("window")]     public string Window    { get; init; } = "default";
+    [JsonPropertyName("wl")]         public double? Wl       { get; init; }
+    [JsonPropertyName("ww")]         public double? Ww       { get; init; }
+    [JsonPropertyName("is_last")]    public bool   IsLast    { get; init; }
+    [JsonPropertyName("batch_size")] public int    BatchSize { get; init; } = 1;
+    [JsonPropertyName("note")]       public string Note      { get; init; } = "";
+    [JsonPropertyName("enqueued_at")] public double EnqueuedAt { get; init; }
+}
+
+public record DicomPendingSendsResponse
+{
+    [JsonPropertyName("items")]
+    public List<DicomSendToAgentItem> Items { get; init; } = new();
+
+    [JsonPropertyName("count")]
+    public int Count { get; init; }
+}
+
+/// <summary>#174 — one row in the patient navigator.</summary>
+public record PatientCard
+{
+    [JsonPropertyName("patient_hash")]      public string PatientHash     { get; init; } = "";
+    [JsonPropertyName("patient_age_group")] public string AgeGroup        { get; init; } = "";
+    [JsonPropertyName("patient_sex")]       public string Sex             { get; init; } = "";
+    [JsonPropertyName("study_count")]       public int    StudyCount      { get; init; }
+    [JsonPropertyName("latest_study_date")] public string LatestStudyDate { get; init; } = "";
+    [JsonPropertyName("latest_modality")]   public string LatestModality  { get; init; } = "";
+    [JsonPropertyName("last_seen_at")]      public long   LastSeenAt      { get; init; }
+}
+
+/// <summary>#181 — body of POST /patients/register-manual. All fields
+/// optional except initials OR mrn (at least one needed so the server
+/// has something to hash).</summary>
+public record RegisterManualPatientRequest
+{
+    [JsonPropertyName("initials")]        public string Initials       { get; init; } = "";
+    [JsonPropertyName("mrn")]             public string Mrn            { get; init; } = "";
+    [JsonPropertyName("age")]             public int    Age            { get; init; }
+    [JsonPropertyName("sex")]             public string Sex            { get; init; } = "";
+    [JsonPropertyName("chief_complaint")] public string ChiefComplaint { get; init; } = "";
+    [JsonPropertyName("notes")]           public string Notes          { get; init; } = "";
+    /// <summary>#181 — when set, server also UPDATEs sessions SET
+    /// patient_hash so subsequent uploads in this chat inherit the
+    /// hash via the #178 session → uploads.patient_hash join.</summary>
+    [JsonPropertyName("session_id")]      public string SessionId      { get; init; } = "";
+}
+
+/// <summary>#181 — server response carrying the freshly-minted (or
+/// upserted) patient_hash. The desktop binds the active session to
+/// this hash so subsequent uploads inherit it.</summary>
+public record RegisterManualPatientResponse
+{
+    [JsonPropertyName("patient_hash")] public string PatientHash { get; init; } = "";
+    [JsonPropertyName("age_group")]    public string AgeGroup    { get; init; } = "";
+}
+
+/// <summary>#181 — full patient roster row used by the Patients main
+/// canvas view. Combines manual demographics with derived study
+/// aggregates. ``Source`` is "manual" / "dicom" / "both" so the UI
+/// can show a small badge indicating where the data came from.</summary>
+public record PatientDetail
+{
+    [JsonPropertyName("patient_hash")]      public string PatientHash     { get; init; } = "";
+    [JsonPropertyName("initials")]          public string Initials        { get; init; } = "";
+    [JsonPropertyName("mrn")]               public string Mrn             { get; init; } = "";
+    [JsonPropertyName("age_value")]         public int    AgeValue        { get; init; }
+    [JsonPropertyName("age_group")]         public string AgeGroup        { get; init; } = "";
+    [JsonPropertyName("sex")]               public string Sex             { get; init; } = "";
+    [JsonPropertyName("chief_complaint")]   public string ChiefComplaint  { get; init; } = "";
+    [JsonPropertyName("notes")]             public string Notes           { get; init; } = "";
+    [JsonPropertyName("created_at")]        public long   CreatedAt       { get; init; }
+    [JsonPropertyName("updated_at")]        public long   UpdatedAt       { get; init; }
+    [JsonPropertyName("study_count")]       public int    StudyCount      { get; init; }
+    [JsonPropertyName("latest_study_date")] public string LatestStudyDate { get; init; } = "";
+    [JsonPropertyName("latest_modality")]   public string LatestModality  { get; init; } = "";
+    [JsonPropertyName("last_seen_at")]      public long   LastSeenAt      { get; init; }
+    [JsonPropertyName("source")]            public string Source          { get; init; } = "";
+}
+
+/// <summary>#159 — DICOM study metadata + series list, as returned
+/// by GET /api/v1/dicom/studies/{id}. Mirrors the StudyInfo pydantic
+/// model on the server.</summary>
+public record DicomStudyInfo
+{
+    [JsonPropertyName("study_id")]
+    public string StudyId { get; init; } = "";
+
+    [JsonPropertyName("study_description")]
+    public string StudyDescription { get; init; } = "";
+
+    [JsonPropertyName("study_date")]
+    public string StudyDate { get; init; } = "";
+
+    [JsonPropertyName("modality")]
+    public string Modality { get; init; } = "";
+
+    [JsonPropertyName("patient_age_group")]
+    public string PatientAgeGroup { get; init; } = "";
+
+    [JsonPropertyName("patient_hash")]
+    public string PatientHash { get; init; } = "";
+
+    [JsonPropertyName("series")]
+    public List<DicomSeriesInfo> Series { get; init; } = new();
+
+    [JsonPropertyName("created_at")]
+    public long CreatedAt { get; init; }
+}
+
+public record DicomSeriesInfo
+{
+    [JsonPropertyName("series_id")]
+    public string SeriesId { get; init; } = "";
+
+    [JsonPropertyName("series_instance_uid")]
+    public string SeriesInstanceUid { get; init; } = "";
+
+    [JsonPropertyName("series_description")]
+    public string SeriesDescription { get; init; } = "";
+
+    [JsonPropertyName("modality")]
+    public string Modality { get; init; } = "";
+
+    [JsonPropertyName("instance_count")]
+    public int InstanceCount { get; init; }
+}
+
+/// <summary>#172 — one row in the async-tasks list UI.</summary>
+public record AsyncTaskInfo
+{
+    [JsonPropertyName("task_id")]    public string TaskId      { get; init; } = "";
+    [JsonPropertyName("description")] public string Description { get; init; } = "";
+    [JsonPropertyName("status")]     public string Status      { get; init; } = "";
+    [JsonPropertyName("eta_seconds")] public int    EtaSeconds  { get; init; }
+    [JsonPropertyName("result_text")] public string ResultText  { get; init; } = "";
+    [JsonPropertyName("error")]      public string Error       { get; init; } = "";
+    [JsonPropertyName("created_at")]  public long   CreatedAt   { get; init; }
+    [JsonPropertyName("completed_at")] public long  CompletedAt { get; init; }
+    [JsonPropertyName("emailed_at")]  public long   EmailedAt   { get; init; }
+
+    public bool IsActive => Status == "queued" || Status == "running";
+    public bool IsDone => Status == "done" || Status == "emailed";
+    public bool IsFailed => Status == "failed";
+}
+
+public record AsyncTaskListResponse
+{
+    [JsonPropertyName("tasks")]
+    public List<AsyncTaskInfo> Tasks { get; init; } = new();
+
+    [JsonPropertyName("active_count")]
+    public int ActiveCount { get; init; }
+
+    [JsonPropertyName("finished_count")]
+    public int FinishedCount { get; init; }
+}
+
+/// <summary>#162 — patient context block lookup response.</summary>
+public record DicomPatientContextResponse
+{
+    [JsonPropertyName("text")]
+    public string Text { get; init; } = "";
+
+    [JsonPropertyName("study_id")]
+    public string StudyId { get; init; } = "";
+}
+
+/// <summary>#158 — snapshot of the server's prerender progress for a
+/// specific upload. Returned by GET /api/v1/files/{file_id}/prerender-progress.
+/// </summary>
+public record DicomPrerenderProgress
+{
+    [JsonPropertyName("state")]
+    public string State { get; init; } = "unknown";
+
+    [JsonPropertyName("stage")]
+    public string Stage { get; init; } = "";
+
+    [JsonPropertyName("current")]
+    public int Current { get; init; }
+
+    [JsonPropertyName("total")]
+    public int Total { get; init; }
+
+    [JsonPropertyName("percent")]
+    public double Percent { get; init; }
+
+    [JsonPropertyName("study_id")]
+    public string StudyId { get; init; } = "";
+
+    [JsonPropertyName("preview_dir")]
+    public string PreviewDir { get; init; } = "";
+
+    [JsonPropertyName("error")]
+    public string Error { get; init; } = "";
+
+    public bool IsDone =>
+        string.Equals(State, "done", StringComparison.OrdinalIgnoreCase);
+    public bool IsError =>
+        string.Equals(State, "error", StringComparison.OrdinalIgnoreCase);
+    public bool IsRunning =>
+        State == "queued" || State == "parsing" || State == "rendering";
 }
 
 /// <summary>
@@ -122,6 +361,20 @@ public record ChatMessageView
     /// reload instead of falling back to "📎 paper.pdf" plain text.</summary>
     [JsonPropertyName("attachments")]
     public List<HistoryAttachmentInfo> Attachments { get; init; } = [];
+
+    /// <summary>Phase A: distinguishes inline workflow cards from
+    /// regular text bubbles. Server sets this based on event_type.
+    /// Values: "text" (default — render as bubble) | "workflow_run"
+    /// (render as live polling card using <c>metadata.workflow_run_id</c>).</summary>
+    [JsonPropertyName("message_kind")]
+    public string MessageKind { get; init; } = "text";
+
+    /// <summary>Event-type-specific structured payload. For
+    /// ``workflow_run`` cards, contains workflow_run_id /
+    /// workflow_id / workflow_name / total_steps. For regular text
+    /// messages, usually empty.</summary>
+    [JsonPropertyName("metadata")]
+    public Dictionary<string, System.Text.Json.JsonElement> Metadata { get; init; } = new();
 }
 
 /// <summary>Mirror of the server's AttachmentInfo. Lives here as a
@@ -324,6 +577,26 @@ public record ChatResponse
     /// one per attachment. Empty when no files were attached.
     /// </summary>
     public List<AttachmentSummary> AttachmentSummaries { get; init; } = [];
+
+    /// <summary>
+    /// Phase B fix: events the agent's tools wrote during this chat
+    /// turn that aren't the normal user_message / assistant_response —
+    /// e.g. a workflow_run card kicked off by run_workflow. The chat
+    /// surface renders these inline between the user bubble and the
+    /// assistant reply, in chronological order.
+    /// </summary>
+    public List<SideEffectEvent> SideEffectEvents { get; init; } = [];
+}
+
+/// <summary>One side-effect event from a chat turn. Today only
+/// ``workflow_run`` shows up; the registry is extensible.</summary>
+public record SideEffectEvent
+{
+    [JsonPropertyName("sync_id")]    public long SyncId { get; init; }
+    [JsonPropertyName("event_type")] public string EventType { get; init; } = "";
+    [JsonPropertyName("content")]    public string Content { get; init; } = "";
+    [JsonPropertyName("timestamp")]  public string Timestamp { get; init; } = "";
+    [JsonPropertyName("metadata")]   public Dictionary<string, JsonElement> Metadata { get; init; } = new();
 }
 
 // [REMOVED — Round 2-A] PushEventsRequest / SyncResponse records were
@@ -457,6 +730,64 @@ public class ApiClient
     /// logout, while VMs are tearing down).</summary>
     public bool HasBearerToken => !string.IsNullOrEmpty(_bearerToken);
 
+    /// <summary>Current bearer token. Exposed so the DICOM viewer
+    /// (Avalonia.WebView) can pass it to the embedded Cornerstone3D
+    /// page as a query-string param. Returns null when not logged in.</summary>
+    public string? BearerToken => _bearerToken;
+
+    // ── #149: DICOM viewer integration ──────────────────────────────
+    //
+    // Fetches a rendered slice PNG from /api/v1/dicom/.../render. The
+    // medic clicks "Send to agent" inside the embedded Cornerstone3D
+    // viewer; ChatViewModel.HandleViewerSliceAsync calls this to grab
+    // bytes, then wraps them into a PendingAttachment + autoreply.
+
+    public async Task<byte[]?> GetDicomSlicePngAsync(
+        string studyId,
+        string seriesId,
+        int sliceIdx,
+        string window = "lung")
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/dicom/studies/" +
+                  $"{Uri.EscapeDataString(studyId)}/series/" +
+                  $"{Uri.EscapeDataString(seriesId)}/render" +
+                  $"?kind=slice&slice={sliceIdx}" +
+                  $"&window={Uri.EscapeDataString(window)}";
+        try
+        {
+            using var resp = await _httpClient.GetAsync(url);
+            if (!resp.IsSuccessStatusCode) return null;
+            return await resp.Content.ReadAsByteArrayAsync();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>#159 — fetch study metadata + the series list so the
+    /// inline preview can show "Slice N / M" and pick which series to
+    /// scroll. Mirrors the HTML viewer's first /studies/{id} call.
+    /// </summary>
+    public async Task<DicomStudyInfo?> GetDicomStudyAsync(string studyId)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/dicom/studies/" +
+                  $"{Uri.EscapeDataString(studyId)}";
+        try
+        {
+            var resp = await _httpClient.GetAsync(url);
+            if (!resp.IsSuccessStatusCode) return null;
+            return await resp.Content
+                .ReadFromJsonAsync<DicomStudyInfo>(JsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>Re-target this client at a new server URL.
     ///
     /// Used by the first-run Welcome wizard (and the gear icon on the
@@ -545,6 +876,7 @@ public class ApiClient
             ToolCalls = [],
             Usage = null,
             AttachmentSummaries = serverResp.AttachmentSummaries ?? [],
+            SideEffectEvents = serverResp.SideEffectEvents ?? [],
         };
     }
 
@@ -557,6 +889,12 @@ public class ApiClient
         [JsonPropertyName("stop_reason")] public string? StopReason { get; init; }
         [JsonPropertyName("tool_calls_executed")] public List<string> ToolCallsExecuted { get; init; } = [];
         [JsonPropertyName("attachment_summaries")] public List<AttachmentSummary> AttachmentSummaries { get; init; } = [];
+        // Phase B fix: side-effect events the agent's tools inserted
+        // mid-turn (workflow_run cards from run_workflow today). The
+        // chat surface renders these between the user bubble and the
+        // assistant text bubble.
+        [JsonPropertyName("side_effect_events")]
+        public List<SideEffectEvent> SideEffectEvents { get; init; } = [];
     }
 
     // [REMOVED — Round 2-A] PushEventsAsync / PullEventsAsync used to
@@ -598,6 +936,456 @@ public class ApiClient
         var url = $"{_serverUrl}/api/v1/user/profile";
         try { return await GetWithRetryAsync<UserProfileResponse>(url); }
         catch { return null; }
+    }
+
+    // ── Build identity (#96) ─────────────────────────────────────────
+    //
+    // /healthz returns version/build/built_at — desktop reads this on
+    // every Account view load so we can show the running server build
+    // and flag client↔server drift (e.g. user updated the .app but the
+    // venv still holds old bytecode and the version doesn't match).
+    public async Task<ServerHealth?> GetHealthAsync()
+    {
+        // No auth required; healthz is public for liveness probes.
+        var url = $"{_serverUrl}/healthz";
+        try { return await GetWithRetryAsync<ServerHealth>(url); }
+        catch { return null; }
+    }
+
+    // ── #107: orphan twin recovery (#105 follow-up) ─────────────────
+    //
+    // Scans the server's local twin store for user_id directories
+    // that aren't ours. Returns ``Enabled=false`` if the server hasn't
+    // opted in via NEXUS_ALLOW_ORPHAN_RECOVERY — desktop hides the
+    // section in that case.
+    public async Task<OrphanTwinListResponse?> ListOrphanTwinsAsync()
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/agent/orphan_twins";
+        try { return await GetWithRetryAsync<OrphanTwinListResponse>(url); }
+        catch { return null; }
+    }
+
+    /// <summary>Merge an orphan twin's events into the current user's
+    /// twin. Returns the response on success (with merged_event_count
+    /// + orphan_removed) or null on failure. ``deleteAfter=true``
+    /// (server default) cleans up the source dir after a successful
+    /// merge so the user doesn't see it again.</summary>
+    public async Task<OrphanTwinMergeResponse?> MergeOrphanTwinAsync(
+        string orphanUserId, bool deleteAfter = true)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/agent/orphan_twins/" +
+                  $"{Uri.EscapeDataString(orphanUserId)}/merge" +
+                  $"?delete_after={(deleteAfter ? "true" : "false")}";
+        try
+        {
+            using var resp = await _httpClient.PostAsync(url, content: null);
+            if (!resp.IsSuccessStatusCode) return null;
+            return await resp.Content.ReadFromJsonAsync<OrphanTwinMergeResponse>();
+        }
+        catch { return null; }
+    }
+
+    // ── Files page (cross-session uploaded file library) ────────────
+
+    public async Task<FileListResponse?> ListFilesAsync(int limit = 200)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/files/list?limit={limit}";
+        try { return await GetWithRetryAsync<FileListResponse>(url); }
+        catch { return null; }
+    }
+
+    public async Task<FilePreviewResponse?> GetFilePreviewAsync(string fileId)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/files/{Uri.EscapeDataString(fileId)}/preview";
+        try { return await GetWithRetryAsync<FilePreviewResponse>(url); }
+        catch { return null; }
+    }
+
+    public async Task<bool> DeleteFileAsync(string fileId)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/files/{Uri.EscapeDataString(fileId)}";
+        try
+        {
+            using var resp = await _httpClient.DeleteAsync(url);
+            return resp.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+
+    // ── #130: Expert feedback loop ──────────────────────────────────
+    //
+    // Thin wrapper around POST /api/v1/feedback. The medic clicks
+    // ✓ Accept or ✗ Correct on an assistant bubble; we fire-and-forget
+    // a record to the per-skill feedback.jsonl that #131 vision-grounded
+    // skill evolution consumes as training data.
+    //
+    // Failure modes: server unreachable / 4xx → return false; the
+    // caller (ChatMessageViewModel) leaves the feedback state as
+    // "none" so the user can retry. We don't propagate exceptions
+    // because the user already moved on visually.
+
+    public async Task<bool> SubmitFeedbackAsync(
+        long assistantEventIdx,
+        string kind,
+        string? correctionText = null,
+        string? skillName = null,
+        string? tag = null)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/feedback";
+        var payload = new
+        {
+            assistant_event_idx = assistantEventIdx,
+            kind = kind,
+            correction_text = correctionText,
+            skill_name = skillName,
+            tag = tag,
+        };
+        try
+        {
+            using var content = new StringContent(
+                System.Text.Json.JsonSerializer.Serialize(payload),
+                System.Text.Encoding.UTF8,
+                "application/json");
+            using var resp = await _httpClient.PostAsync(url, content);
+            return resp.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+
+    // ── Phase C-2: Memory management ────────────────────────────────
+    //
+    // Thin wrappers over /api/v1/agent/memory. All endpoints return
+    // the same MemorySnapshot shape; the View pulls the latest and
+    // re-binds the draft text + budget hints from it.
+
+    public async Task<MemorySnapshot?> GetMemoryAsync()
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/agent/memory/";
+        try { return await GetWithRetryAsync<MemorySnapshot>(url); }
+        catch { return null; }
+    }
+
+    public async Task<MemorySnapshot?> PutMemoryEntriesAsync(List<string> entries)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/agent/memory/memory";
+        var req = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = JsonContent.Create(new MemoryEntriesBody { Entries = entries }),
+        };
+        var resp = await _httpClient.SendAsync(req);
+        if (!resp.IsSuccessStatusCode) return null;
+        return await resp.Content.ReadFromJsonAsync<MemorySnapshot>();
+    }
+
+    public async Task<MemorySnapshot?> PutUserEntriesAsync(List<string> entries)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/agent/memory/user";
+        var req = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = JsonContent.Create(new MemoryEntriesBody { Entries = entries }),
+        };
+        var resp = await _httpClient.SendAsync(req);
+        if (!resp.IsSuccessStatusCode) return null;
+        return await resp.Content.ReadFromJsonAsync<MemorySnapshot>();
+    }
+
+    public async Task<MemorySnapshot?> PauseMemoryAsync()
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/agent/memory/pause";
+        var req = new HttpRequestMessage(HttpMethod.Post, url);
+        var resp = await _httpClient.SendAsync(req);
+        if (!resp.IsSuccessStatusCode) return null;
+        return await resp.Content.ReadFromJsonAsync<MemorySnapshot>();
+    }
+
+    public async Task<MemorySnapshot?> ResumeMemoryAsync()
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/agent/memory/resume";
+        var req = new HttpRequestMessage(HttpMethod.Post, url);
+        var resp = await _httpClient.SendAsync(req);
+        if (!resp.IsSuccessStatusCode) return null;
+        return await resp.Content.ReadFromJsonAsync<MemorySnapshot>();
+    }
+
+    public async Task<MemorySnapshot?> ResetMemoryAsync()
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/agent/memory/";
+        var req = new HttpRequestMessage(HttpMethod.Delete, url);
+        var resp = await _httpClient.SendAsync(req);
+        if (!resp.IsSuccessStatusCode) return null;
+        return await resp.Content.ReadFromJsonAsync<MemorySnapshot>();
+    }
+
+    // ── Workflows (Phase 1) ─────────────────────────────────────────
+    //
+    // Thin wrappers over /api/v1/workflows/* server routes. Each
+    // method returns null on a soft failure (network blip, server
+    // 4xx/5xx) so the caller can render an empty state instead of
+    // surfacing a stack trace. Hard auth failures (missing token)
+    // bubble up via EnsureAuthenticated().
+
+    public async Task<List<Workflow>> ListWorkflowsAsync(bool includeArchived = false)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/workflows?include_archived={(includeArchived ? "true" : "false")}";
+        try
+        {
+            var resp = await GetWithRetryAsync<WorkflowListResponse>(url);
+            return resp?.Workflows ?? new List<Workflow>();
+        }
+        catch { return new List<Workflow>(); }
+    }
+
+    public async Task<Workflow?> GetWorkflowAsync(string workflowId)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/workflows/{Uri.EscapeDataString(workflowId)}";
+        try { return await GetWithRetryAsync<Workflow>(url); }
+        catch { return null; }
+    }
+
+    public async Task<Workflow?> CreateWorkflowAsync(CreateWorkflowRequest request)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/workflows";
+        try
+        {
+            using var resp = await _httpClient.PostAsJsonAsync(url, request);
+            if (!resp.IsSuccessStatusCode) return null;
+            return await resp.Content.ReadFromJsonAsync<Workflow>();
+        }
+        catch { return null; }
+    }
+
+    public async Task<bool> DeleteWorkflowAsync(string workflowId)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/workflows/{Uri.EscapeDataString(workflowId)}";
+        try
+        {
+            using var resp = await _httpClient.DeleteAsync(url);
+            return resp.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+    // #93: CancelWorkflowRunAsync deleted along with the inline
+    // workflow card UI — no more in-flight runs to cancel (executor
+    // removed in #92). RunWorkflow* / StartWorkflowRun* were already
+    // removed at Phase B when the agent's run_workflow tool became
+    // the canonical run entry point. GetWorkflowRunAsync /
+    // ListWorkflowRunsAsync stay below — they read HISTORICAL run
+    // records that pre-deletion users may still have in their DB.
+
+    public async Task<WorkflowRun?> GetWorkflowRunAsync(string runId)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/workflows/runs/{Uri.EscapeDataString(runId)}";
+        try { return await GetWithRetryAsync<WorkflowRun>(url); }
+        catch { return null; }
+    }
+
+    public async Task<List<WorkflowRun>> ListWorkflowRunsAsync(
+        string? workflowId = null, int limit = 50)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/workflows/runs?limit={limit}";
+        if (!string.IsNullOrEmpty(workflowId))
+            url += $"&workflow_id={Uri.EscapeDataString(workflowId)}";
+        try
+        {
+            var resp = await GetWithRetryAsync<RunListResponse>(url);
+            return resp?.Runs ?? new List<WorkflowRun>();
+        }
+        catch { return new List<WorkflowRun>(); }
+    }
+
+    /// <summary>List bundled starter packs. Returns empty list on
+    /// failure — the empty state shows "no packs available" rather
+    /// than an error toast for a cleaner UX.</summary>
+    public async Task<List<StarterPackInfo>> ListStarterPacksAsync()
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/workflows/packs";
+        try
+        {
+            var resp = await GetWithRetryAsync<StarterPackListResponse>(url);
+            return resp?.Packs ?? new List<StarterPackInfo>();
+        }
+        catch { return new List<StarterPackInfo>(); }
+    }
+
+    // #93: SendWorkflowRunToChatAsync removed (server endpoint deleted
+    // in #92). The auto-inject-final-output path was specific to the
+    // workflow_run inline card; now delegate() tool calls render
+    // their results in the cognition surface, and the agent writes
+    // the final article as its own text reply per the recipe block.
+
+    // ── #111: skill marketplace MVP — URL import ─────────────────────
+
+    /// <summary>Import a SKILL.md from a URL (raw GitHub, gist,
+    /// agentskills.io). Server validates the host allow-list, parses
+    /// frontmatter, drops the file under .nexus/skills/&lt;name&gt;/.
+    /// Returns the installed skill name on success or null on
+    /// failure (caller surfaces the error message itself via a
+    /// status string in the UI).</summary>
+    public async Task<ImportedSkillInfo?> ImportSkillFromUrlAsync(string url)
+    {
+        EnsureAuthenticated();
+        var endpoint = $"{_serverUrl}/api/v1/workflows/skills/import";
+        var body = new { url };
+        try
+        {
+            using var resp = await _httpClient.PostAsJsonAsync(endpoint, body);
+            if (!resp.IsSuccessStatusCode) return null;
+            return await resp.Content.ReadFromJsonAsync<ImportedSkillInfo>();
+        }
+        catch { return null; }
+    }
+
+    /// <summary>One-click install. Returns the created Workflow on
+    /// success or null on failure. Caller is responsible for
+    /// surfacing errors to the user (e.g. "coming soon" packs return
+    /// 403; not-found returns 404).</summary>
+    public async Task<Workflow?> InstallStarterPackAsync(string packId)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/workflows/packs/{Uri.EscapeDataString(packId)}/install";
+        try
+        {
+            using var resp = await _httpClient.PostAsync(url, content: null);
+            if (!resp.IsSuccessStatusCode) return null;
+            return await resp.Content.ReadFromJsonAsync<Workflow>();
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Partial update of the user profile. The server applies
+    /// only the non-null fields in <paramref name="patch"/>. Returns
+    /// the updated record (server's canonical view) or null when the
+    /// request failed. Bearer is set on _httpClient's default headers
+    /// at login, so we don't need to wire it per-request here.</summary>
+    public async Task<UserProfileResponse?> UpdateUserProfileAsync(UserProfilePatch patch)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/user/profile";
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Patch, url)
+            {
+                Content = JsonContent.Create(patch),
+            };
+            using var resp = await _httpClient.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return null;
+            return await resp.Content.ReadFromJsonAsync<UserProfileResponse>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // ── Billing APIs ──────────────────────────────────────────────────
+    //
+    // Three thin wrappers over POST /api/v1/billing/{checkout,portal}
+    // and GET /api/v1/billing/subscription. The server is the only
+    // thing that talks to Stripe directly; the desktop just opens
+    // the URLs it returns in the system browser.
+    //
+    // All three return null on 501 (billing not configured on the
+    // server) so the Plan view can render a "Contact support" state
+    // instead of throwing.
+
+    /// <summary>Snapshot of the user's current subscription state.
+    /// Matches server's BillingSubscriptionStatus pydantic model.</summary>
+    public sealed record SubscriptionStatus
+    {
+        [JsonPropertyName("tier")] public string Tier { get; init; } = "beta";
+        [JsonPropertyName("subscription_state")] public string? State { get; init; }
+        [JsonPropertyName("trial_ends_at")] public string? TrialEndsAt { get; init; }
+        [JsonPropertyName("renews_at")] public string? RenewsAt { get; init; }
+        [JsonPropertyName("has_payment_method")] public bool HasPaymentMethod { get; init; }
+        [JsonPropertyName("manage_url_available")] public bool ManageUrlAvailable { get; init; }
+    }
+
+    /// <summary>Returned by /checkout and /portal endpoints — just a
+    /// one-time URL the desktop opens in the user's default browser.</summary>
+    public sealed record BillingUrlResponse
+    {
+        [JsonPropertyName("url")] public string Url { get; init; } = "";
+    }
+
+    /// <summary>GET /api/v1/billing/subscription. Returns null when
+    /// billing isn't configured on the server (501).</summary>
+    public async Task<SubscriptionStatus?> GetSubscriptionAsync()
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/billing/subscription";
+        try { return await GetWithRetryAsync<SubscriptionStatus>(url); }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotImplemented)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>POST /api/v1/billing/checkout — start a Stripe Checkout
+    /// session for the given tier+cadence. Returns the one-time URL
+    /// the caller opens in the system browser. Null when billing is
+    /// disabled (501) or that tier isn't configured (400).</summary>
+    public async Task<string?> CreateCheckoutUrlAsync(string tier, string cadence = "monthly")
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/billing/checkout";
+        try
+        {
+            var resp = await PostWithRetryAsync<BillingUrlResponse>(
+                url, new { tier, cadence });
+            return resp?.Url;
+        }
+        catch (HttpRequestException ex)
+            when (ex.StatusCode is System.Net.HttpStatusCode.NotImplemented
+                                or System.Net.HttpStatusCode.BadRequest)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>POST /api/v1/billing/portal — open the Stripe-hosted
+    /// "manage subscription" page. 404 if user hasn't completed a
+    /// checkout yet (no stripe_customer_id) — caller should route to
+    /// checkout instead.</summary>
+    public async Task<string?> CreatePortalUrlAsync()
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/billing/portal";
+        try
+        {
+            var resp = await PostWithRetryAsync<BillingUrlResponse>(url, new { });
+            return resp?.Url;
+        }
+        catch (HttpRequestException ex)
+            when (ex.StatusCode is System.Net.HttpStatusCode.NotImplemented
+                                or System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
     }
 
     // ── Chain / Anchor APIs ───────────────────────────────────────────
@@ -1070,8 +1858,230 @@ public class ApiClient
     /// Streams the bytes — no base64 encode, no JSON wrap — so a 100 MB
     /// upload doesn't multiply by 1.33 over the wire.
     /// </summary>
-    public async Task<FileUploadResponse> UploadFileAsync(
+    /// <summary>#162 — fetch the formatted patient-context block for
+    /// a given DICOM study. Returned text gets prepended to the
+    /// medic's chat prompt so the agent always knows which patient
+    /// the slice belongs to. Empty string means "no demographic
+    /// info available" — caller falls back to plain prompt.</summary>
+    public async Task<string> GetDicomPatientContextAsync(string studyId)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/dicom/studies/" +
+                  $"{Uri.EscapeDataString(studyId)}/patient-context";
+        try
+        {
+            var resp = await _httpClient.GetAsync(url);
+            if (!resp.IsSuccessStatusCode) return "";
+            var body = await resp.Content
+                .ReadFromJsonAsync<DicomPatientContextResponse>(JsonOptions);
+            return body?.Text ?? "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    /// <summary>#174 — list patient cards for the patient navigator.
+    /// Returns one row per distinct patient_hash from the user's
+    /// dicom_studies. Anonymous studies are bucketed into "_anonymous".
+    /// </summary>
+    public async Task<List<PatientCard>> ListPatientsAsync()
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/dicom/patients";
+        try
+        {
+            var resp = await _httpClient.GetAsync(url);
+            if (!resp.IsSuccessStatusCode) return new List<PatientCard>();
+            return await resp.Content
+                .ReadFromJsonAsync<List<PatientCard>>(JsonOptions)
+                ?? new List<PatientCard>();
+        }
+        catch
+        {
+            return new List<PatientCard>();
+        }
+    }
+
+    /// <summary>#174 — drill-down to a single patient's studies for
+    /// the timeline view inside their card.</summary>
+    public async Task<List<DicomStudyInfo>> ListPatientStudiesAsync(string patientHash)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/dicom/patients/" +
+                  $"{Uri.EscapeDataString(patientHash)}/studies";
+        try
+        {
+            var resp = await _httpClient.GetAsync(url);
+            if (!resp.IsSuccessStatusCode) return new List<DicomStudyInfo>();
+            return await resp.Content
+                .ReadFromJsonAsync<List<DicomStudyInfo>>(JsonOptions)
+                ?? new List<DicomStudyInfo>();
+        }
+        catch
+        {
+            return new List<DicomStudyInfo>();
+        }
+    }
+
+    /// <summary>#191 — kick off a Quick scan for a DICOM study.
+    /// Server enqueues a background worker (Gemini Flash triage on
+    /// 4×4 grids of the primary series) and returns immediately.
+    /// Report lands in chat as an assistant_response with
+    /// metadata.kind="quick_scan_report".</summary>
+    public async Task<bool> TriggerQuickScanAsync(string studyId)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/dicom/studies/" +
+                  $"{Uri.EscapeDataString(studyId)}/quick-scan";
+        try
+        {
+            var resp = await _httpClient.PostAsync(url, content: null);
+            return resp.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>#181 — register a manually-entered patient (no DICOM
+    /// yet). Server hashes the identity, upserts, and returns the
+    /// stable patient_hash. The desktop then binds the active session
+    /// to that hash so subsequent uploads inherit per-patient routing.
+    /// Returns null on auth/network/validation errors (e.g. neither
+    /// initials nor MRN provided).</summary>
+    public async Task<RegisterManualPatientResponse?> RegisterManualPatientAsync(
+        RegisterManualPatientRequest body)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/dicom/patients/register-manual";
+        try
+        {
+            var resp = await _httpClient.PostAsJsonAsync(url, body, JsonOptions);
+            if (!resp.IsSuccessStatusCode) return null;
+            return await resp.Content
+                .ReadFromJsonAsync<RegisterManualPatientResponse>(JsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>#181 — full patient roster (manual + DICOM merged).
+    /// Used by the Patients main-canvas view. Returns rows sorted by
+    /// most-recently-touched first.</summary>
+    public async Task<List<PatientDetail>> ListPatientsFullAsync()
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/dicom/patients/full";
+        try
+        {
+            var resp = await _httpClient.GetAsync(url);
+            if (!resp.IsSuccessStatusCode) return new List<PatientDetail>();
+            return await resp.Content
+                .ReadFromJsonAsync<List<PatientDetail>>(JsonOptions)
+                ?? new List<PatientDetail>();
+        }
+        catch
+        {
+            return new List<PatientDetail>();
+        }
+    }
+
+    /// <summary>#181 — single-patient detail (manual fields + study
+    /// aggregates). Used by the Patients view detail pane.</summary>
+    public async Task<PatientDetail?> GetPatientDetailAsync(string patientHash)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/dicom/patients/" +
+                  $"{Uri.EscapeDataString(patientHash)}/detail";
+        try
+        {
+            var resp = await _httpClient.GetAsync(url);
+            if (!resp.IsSuccessStatusCode) return null;
+            return await resp.Content
+                .ReadFromJsonAsync<PatientDetail>(JsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>#172 — list this user's recent background tasks for
+    /// the task-list UI panel. Newest first. Includes running, just-
+    /// finished, and recently-failed. Returns empty list when no
+    /// tasks were ever scheduled.</summary>
+    public async Task<AsyncTaskListResponse> ListAsyncTasksAsync(int limit = 30)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/async-tasks?limit={limit}";
+        try
+        {
+            var resp = await _httpClient.GetAsync(url);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return new AsyncTaskListResponse();
+            }
+            var body = await resp.Content
+                .ReadFromJsonAsync<AsyncTaskListResponse>(JsonOptions);
+            return body ?? new AsyncTaskListResponse();
+        }
+        catch
+        {
+            return new AsyncTaskListResponse();
+        }
+    }
+
+    /// <summary>#161 — drain any "Send to agent" intents the DICOM
+    /// viewer page has queued on the server. Returns the items + an
+    /// empty list when nothing's queued. Desktop polls this every
+    /// 1-2 s while there's at least one open DICOM study; the
+    /// viewer's button POSTs to /dicom/send-to-agent and the items
+    /// flow back here.</summary>
+    public async Task<List<DicomSendToAgentItem>> DrainDicomPendingSendsAsync()
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/dicom/pending-sends";
+        var resp = await _httpClient.GetAsync(url);
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content
+            .ReadFromJsonAsync<DicomPendingSendsResponse>(JsonOptions);
+        return body?.Items ?? new List<DicomSendToAgentItem>();
+    }
+
+    /// <summary>#158 — poll the server's DICOM prerender progress for a
+    /// freshly-uploaded file. Returns ``state="unknown"`` if the file_id
+    /// has no entry (either not a DICOM zip, or it expired from the
+    /// in-memory tracker after 1h). The caller is expected to poll on
+    /// a short interval (e.g. 500-1000 ms) until State is "done" or
+    /// "error".</summary>
+    public async Task<DicomPrerenderProgress> GetDicomPrerenderProgressAsync(
+        string fileId)
+    {
+        EnsureAuthenticated();
+        var url = $"{_serverUrl}/api/v1/files/{Uri.EscapeDataString(fileId)}" +
+                  "/prerender-progress";
+        var resp = await _httpClient.GetAsync(url);
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content
+            .ReadFromJsonAsync<DicomPrerenderProgress>(JsonOptions);
+        return body ?? new DicomPrerenderProgress { State = "unknown" };
+    }
+
+    public Task<FileUploadResponse> UploadFileAsync(
         Stream content, string filename, string mime)
+        => UploadFileAsync(content, filename, mime, sessionId: "");
+
+    /// <summary>#178/#181 — upload variant that passes the active
+    /// session_id so the server can inherit the session's patient_hash
+    /// onto the new uploads row (and via the DICOM prerender path,
+    /// also persist the DICOM-derived hash back to the session).</summary>
+    public async Task<FileUploadResponse> UploadFileAsync(
+        Stream content, string filename, string mime, string sessionId)
     {
         EnsureAuthenticated();
         var url = $"{_serverUrl}/api/v1/files/upload";
@@ -1081,6 +2091,10 @@ public class ApiClient
         fileContent.Headers.ContentType =
             new System.Net.Http.Headers.MediaTypeHeaderValue(mime);
         form.Add(fileContent, "file", filename);
+        if (!string.IsNullOrEmpty(sessionId))
+        {
+            form.Add(new StringContent(sessionId), "session_id");
+        }
 
         // Bypass PostWithRetryAsync — that helper PostsAsJson; multipart
         // needs raw HttpClient. We still want one retry on 5xx but keep

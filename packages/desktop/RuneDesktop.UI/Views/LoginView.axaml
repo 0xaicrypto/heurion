@@ -4,41 +4,42 @@
              Background="{StaticResource SurfaceBaseBrush}">
 
   <Panel>
-    <!-- Same purple gradient that the passkey browser page uses, so the
-         hand-off between desktop and browser feels seamless. The rest
-         of the app is dark. -->
-    <Border Background="{StaticResource BrandPurpleGradient}"/>
+    <!-- Flat dark canvas. The old purple gradient was a hand-off cue
+         to the passkey browser page, but post-HIG we want the desktop
+         to feel like a native macOS welcome sheet — calm, dark, no
+         theatrical colour. The browser page can keep its own
+         branding; the seam is fine. -->
+    <Border Background="{StaticResource SurfaceBaseBrush}"/>
 
     <!-- Gear icon: re-opens the Welcome wizard so the user can switch
-         which Nexus server they connect to without reinstalling.
-         Bound to LoginVm.OpenSettingsCommand (local DataContext) —
-         LoginVm fires OpenSettingsRequested which MainViewModel
-         catches and flips ShowWelcome=true. Local binding is more
-         reliable than walking the visual tree for {$parent[Window]}. -->
+         which Nexus server they connect to without reinstalling. -->
     <Button HorizontalAlignment="Right" VerticalAlignment="Top"
-            Margin="0,16,16,0"
-            Classes="ghost"
-            Padding="8,6"
+            Margin="0,12,12,0"
+            Classes="toolbar"
             FontSize="16"
             Command="{Binding OpenSettingsCommand}"
             ToolTip.Tip="Change server URL">
       <TextBlock Text="⚙"
-                 Foreground="{StaticResource TextPrimaryBrush}"/>
+                 Foreground="{StaticResource TextSecondaryBrush}"/>
     </Button>
 
+    <!-- Welcome sheet. macOS HIG: centred card with 14 px corner
+         radius (matches NSWindow sheet style), soft shadow, hairline
+         border. No coloured glow. -->
     <Border HorizontalAlignment="Center" VerticalAlignment="Center"
-            Width="380" Padding="40,42" CornerRadius="18"
+            Width="380" Padding="40,42" CornerRadius="14"
             Background="{StaticResource SurfaceCardBrush}"
             BorderBrush="{StaticResource DividerBrush}" BorderThickness="1"
-            BoxShadow="0 24 64 0 #66000000">
+            BoxShadow="0 12 36 0 #66000000">
       <StackPanel Spacing="28">
         <StackPanel Spacing="14" HorizontalAlignment="Center">
-          <Border Width="76" Height="76" CornerRadius="18"
+          <!-- #185 — branded logo tile. Matches the passkey login
+               page exactly: 72px deep-navy square + BNB-yellow N. -->
+          <Border Width="72" Height="72" CornerRadius="16"
                   HorizontalAlignment="Center"
-                  Background="{StaticResource BrandAccentBrush}"
-                  BoxShadow="0 6 18 0 #29F0B90B">
-            <TextBlock Text="N" FontSize="36" FontWeight="Bold"
-                       Foreground="{StaticResource TextOnAccentBrush}"
+                  Background="#0F1729">
+            <TextBlock Text="N" FontSize="40" FontWeight="Bold"
+                       Foreground="#F0B90B"
                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
           <TextBlock Text="Nexus"
@@ -52,11 +53,14 @@
         </StackPanel>
 
         <StackPanel Spacing="12">
+          <!-- Primary CTA. macOS sheet primary buttons are full-width
+               filled .accent at 6 px radius (we keep `pill` off this
+               one — the rounded-rect is the standard sheet style). -->
           <Button Content="Get Started"
                   Command="{Binding LoginWithPasskeyCommand}"
-                  Classes="accent pill"
+                  Classes="accent"
                   HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                  Padding="0,14" FontSize="15"
+                  Padding="0,12" FontSize="14"
                   IsEnabled="{Binding !IsLoading}"/>
 
           <StackPanel Spacing="8" IsVisible="{Binding IsLoading}">
@@ -69,7 +73,7 @@
                     FontSize="13"/>
           </StackPanel>
 
-          <Border Background="#3A2A2C" CornerRadius="6" Padding="12,8"
+          <Border Background="#26FF453A" CornerRadius="6" Padding="12,8"
                   IsVisible="{Binding ErrorMessage,
                             Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
             <TextBlock Text="{Binding ErrorMessage}"

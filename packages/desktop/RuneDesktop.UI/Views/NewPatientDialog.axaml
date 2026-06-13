@@ -1,0 +1,345 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:RuneDesktop.UI.ViewModels"
+        x:Class="RuneDesktop.UI.Views.NewPatientDialog"
+        x:DataType="vm:NewPatientDialogViewModel"
+        Title="New patient case"
+        Width="600" Height="720"
+        MinWidth="520" MinHeight="600"
+        WindowStartupLocation="CenterOwner"
+        CanResize="True"
+        Background="{StaticResource SurfaceBaseBrush}">
+
+  <!--
+    #182 Phase 2 — Editorial × Dark redesign. Sheet pattern:
+      - Header: PATIENT eyebrow + LargeTitle display + subline
+      - Body: Double-Bezel cards for each section
+              (Identifier / Demographics / Chief Complaint / Notes / Attachments)
+      - Footer: SurfaceMuted band with Cancel (ghost) + Create (accent)
+    Inputs go on Card-white-on-navy surfaces with hairline borders;
+    focus switches to indigo border + tint ring.
+  -->
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- ── HEADER ────────────────────────────────────────────────── -->
+    <Border Grid.Row="0" Padding="32,28,32,18"
+            BorderThickness="0,0,0,1"
+            BorderBrush="{StaticResource DividerBrush}">
+      <StackPanel Spacing="4">
+        <TextBlock Text="REGISTER PATIENT" Classes="eyebrow"/>
+        <TextBlock Text="New patient case"
+                   Classes="display"
+                   FontSize="{StaticResource FontSizeTitle2}"
+                   FontWeight="Bold"
+                   Foreground="{StaticResource TextPrimaryBrush}"/>
+        <TextBlock Text="Capture basic case info — files can be attached now or anytime later."
+                   FontSize="{StaticResource FontSizeCallout}"
+                   Foreground="{StaticResource TextSecondaryBrush}"
+                   Margin="0,4,0,0"/>
+      </StackPanel>
+    </Border>
+
+    <!-- ── BODY ──────────────────────────────────────────────────── -->
+    <ScrollViewer Grid.Row="1" Padding="32,24,32,16"
+                  VerticalScrollBarVisibility="Auto">
+      <StackPanel Spacing="24">
+
+        <!-- ─── IDENTIFIER (Double-Bezel) ─────────────────────────── -->
+        <StackPanel Spacing="10">
+          <TextBlock Text="IDENTIFIER" Classes="eyebrow"/>
+          <Border Padding="1.5" CornerRadius="14"
+                  Background="{StaticResource SurfaceBaseBrush}"
+                  BorderBrush="{StaticResource DividerBrush}"
+                  BorderThickness="1">
+            <Border Padding="20,18"
+                    CornerRadius="12"
+                    Background="{StaticResource SurfaceCardBrush}">
+              <Grid ColumnDefinitions="*,16,*" RowDefinitions="Auto,Auto">
+                <StackPanel Grid.Column="0" Grid.Row="0" Spacing="6">
+                  <TextBlock Text="Patient initials"
+                             FontSize="{StaticResource FontSizeSmall}"
+                             FontWeight="Medium"
+                             Foreground="{StaticResource TextSecondaryBrush}"/>
+                  <TextBox Text="{Binding Initials, Mode=TwoWay}"
+                           Watermark="J.D."
+                           FontSize="{StaticResource FontSizeCallout}"
+                           Padding="12,9"
+                           Background="{StaticResource SurfaceRaisedBrush}"
+                           BorderBrush="{StaticResource DividerBrush}"
+                           CornerRadius="10"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Grid.Row="0" Spacing="6">
+                  <TextBlock Text="MRN (optional)"
+                             FontSize="{StaticResource FontSizeSmall}"
+                             FontWeight="Medium"
+                             Foreground="{StaticResource TextSecondaryBrush}"/>
+                  <TextBox Text="{Binding Mrn, Mode=TwoWay}"
+                           Watermark="Hospital record #"
+                           FontFamily="{StaticResource UiFontMono}"
+                           FontSize="{StaticResource FontSizeBody}"
+                           Padding="12,9"
+                           Background="{StaticResource SurfaceRaisedBrush}"
+                           BorderBrush="{StaticResource DividerBrush}"
+                           CornerRadius="10"/>
+                </StackPanel>
+                <TextBlock Grid.Column="0" Grid.Row="1"
+                           Grid.ColumnSpan="3"
+                           Text="Initials OR MRN required — server uses one of them as the stable patient identifier."
+                           FontSize="{StaticResource FontSizeCaption}"
+                           Foreground="{StaticResource TextTertiaryBrush}"
+                           Margin="0,10,0,0"
+                           TextWrapping="Wrap"/>
+              </Grid>
+            </Border>
+          </Border>
+        </StackPanel>
+
+        <!-- ─── DEMOGRAPHICS (Double-Bezel) ───────────────────────── -->
+        <StackPanel Spacing="10">
+          <TextBlock Text="DEMOGRAPHICS" Classes="eyebrow"/>
+          <Border Padding="1.5" CornerRadius="14"
+                  Background="{StaticResource SurfaceBaseBrush}"
+                  BorderBrush="{StaticResource DividerBrush}"
+                  BorderThickness="1">
+            <Border Padding="20,18"
+                    CornerRadius="12"
+                    Background="{StaticResource SurfaceCardBrush}">
+              <Grid ColumnDefinitions="140,24,*">
+                <StackPanel Grid.Column="0" Spacing="6">
+                  <TextBlock Text="Age"
+                             FontSize="{StaticResource FontSizeSmall}"
+                             FontWeight="Medium"
+                             Foreground="{StaticResource TextSecondaryBrush}"/>
+                  <NumericUpDown Value="{Binding Age, Mode=TwoWay}"
+                                 Minimum="0" Maximum="130"
+                                 FormatString="0"
+                                 FontSize="{StaticResource FontSizeCallout}"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="6">
+                  <TextBlock Text="Sex"
+                             FontSize="{StaticResource FontSizeSmall}"
+                             FontWeight="Medium"
+                             Foreground="{StaticResource TextSecondaryBrush}"/>
+                  <!-- Segmented sex picker — pure ghost buttons until
+                       active, then accent-tint chip. -->
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Button Command="{Binding SelectMaleCommand}"
+                            Classes="toolbar"
+                            Padding="18,9"
+                            FontSize="{StaticResource FontSizeBody}">
+                      <TextBlock Text="Male"/>
+                    </Button>
+                    <Button Command="{Binding SelectFemaleCommand}"
+                            Classes="toolbar"
+                            Padding="18,9"
+                            FontSize="{StaticResource FontSizeBody}">
+                      <TextBlock Text="Female"/>
+                    </Button>
+                    <Button Command="{Binding SelectOtherCommand}"
+                            Classes="toolbar"
+                            Padding="18,9"
+                            FontSize="{StaticResource FontSizeBody}">
+                      <TextBlock Text="Other"/>
+                    </Button>
+                    <!-- Active-sex indicator dot + label. Bound to Sex
+                         so it auto-updates. Empty Sex → invisible. -->
+                    <StackPanel Orientation="Horizontal"
+                                Spacing="6" Margin="10,0,0,0"
+                                VerticalAlignment="Center"
+                                IsVisible="{Binding Sex,
+                                           Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                      <Ellipse Width="6" Height="6"
+                               Fill="{StaticResource AccentBrush}"
+                               VerticalAlignment="Center"/>
+                      <TextBlock Text="{Binding Sex}"
+                                 FontSize="{StaticResource FontSizeSmall}"
+                                 FontWeight="SemiBold"
+                                 Foreground="{StaticResource AccentBrush}"
+                                 VerticalAlignment="Center"/>
+                    </StackPanel>
+                  </StackPanel>
+                </StackPanel>
+              </Grid>
+            </Border>
+          </Border>
+        </StackPanel>
+
+        <!-- ─── CHIEF COMPLAINT (Double-Bezel) ────────────────────── -->
+        <StackPanel Spacing="10">
+          <TextBlock Text="CHIEF COMPLAINT" Classes="eyebrow"/>
+          <Border Padding="1.5" CornerRadius="14"
+                  Background="{StaticResource SurfaceBaseBrush}"
+                  BorderBrush="{StaticResource DividerBrush}"
+                  BorderThickness="1">
+            <Border Padding="20,18"
+                    CornerRadius="12"
+                    Background="{StaticResource SurfaceCardBrush}">
+              <TextBox Text="{Binding ChiefComplaint, Mode=TwoWay}"
+                       Watermark="e.g. left-upper lobe nodule, follow-up CT"
+                       FontSize="{StaticResource FontSizeCallout}"
+                       Padding="12,9"
+                       Background="{StaticResource SurfaceRaisedBrush}"
+                       BorderBrush="{StaticResource DividerBrush}"
+                       CornerRadius="10"/>
+            </Border>
+          </Border>
+        </StackPanel>
+
+        <!-- ─── NOTES (Double-Bezel) ──────────────────────────────── -->
+        <StackPanel Spacing="10">
+          <TextBlock Text="NOTES (OPTIONAL)" Classes="eyebrow"/>
+          <Border Padding="1.5" CornerRadius="14"
+                  Background="{StaticResource SurfaceBaseBrush}"
+                  BorderBrush="{StaticResource DividerBrush}"
+                  BorderThickness="1">
+            <Border Padding="20,18"
+                    CornerRadius="12"
+                    Background="{StaticResource SurfaceCardBrush}">
+              <TextBox Text="{Binding Notes, Mode=TwoWay}"
+                       Watermark="Prior labs, treatment plan, referring physician..."
+                       FontSize="{StaticResource FontSizeBody}"
+                       Padding="12,9"
+                       Height="96"
+                       AcceptsReturn="True"
+                       TextWrapping="Wrap"
+                       Background="{StaticResource SurfaceRaisedBrush}"
+                       BorderBrush="{StaticResource DividerBrush}"
+                       CornerRadius="10"/>
+            </Border>
+          </Border>
+        </StackPanel>
+
+        <!-- ─── ATTACHMENTS ───────────────────────────────────────── -->
+        <StackPanel Spacing="10">
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Left"
+                       Text="DIAGNOSTIC FILES (OPTIONAL)"
+                       Classes="eyebrow"/>
+            <Button DockPanel.Dock="Right"
+                    Command="{Binding AttachFilesCommand}"
+                    Classes="tinted"
+                    Padding="14,7" FontSize="{StaticResource FontSizeSmall}">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="📎"/>
+                <TextBlock Text="Attach"/>
+              </StackPanel>
+            </Button>
+            <Panel/>
+          </DockPanel>
+          <Border Padding="1.5" CornerRadius="14"
+                  Background="{StaticResource SurfaceBaseBrush}"
+                  BorderBrush="{StaticResource DividerBrush}"
+                  BorderThickness="1">
+            <Border Padding="14"
+                    CornerRadius="12"
+                    Background="{StaticResource SurfaceCardBrush}"
+                    MinHeight="80">
+              <Grid>
+                <!-- Empty state -->
+                <StackPanel IsVisible="{Binding !StagedFiles.Count}"
+                            Spacing="6"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                  <TextBlock Text="No files attached"
+                             FontSize="{StaticResource FontSizeBody}"
+                             FontWeight="Medium"
+                             Foreground="{StaticResource TextSecondaryBrush}"
+                             HorizontalAlignment="Center"/>
+                  <TextBlock Text="DICOM zips, TIFF slides, lab reports — add now or later"
+                             FontSize="{StaticResource FontSizeCaption}"
+                             Foreground="{StaticResource TextTertiaryBrush}"
+                             HorizontalAlignment="Center"/>
+                </StackPanel>
+                <!-- File chips -->
+                <ItemsControl ItemsSource="{Binding StagedFiles}"
+                              IsVisible="{Binding StagedFiles.Count}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="vm:StagedFileViewModel">
+                      <Border Padding="12,9" Margin="0,3"
+                              CornerRadius="8"
+                              Background="{StaticResource SurfaceRaisedBrush}"
+                              BorderBrush="{StaticResource DividerBrush}"
+                              BorderThickness="1">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                          <TextBlock Grid.Column="0" Text="📄"
+                                     FontSize="14" Margin="0,0,12,0"
+                                     VerticalAlignment="Center"/>
+                          <StackPanel Grid.Column="1" Spacing="2">
+                            <TextBlock Text="{Binding Name}"
+                                       FontSize="{StaticResource FontSizeBody}"
+                                       FontWeight="Medium"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="{Binding SizeDisplay}"
+                                       FontSize="{StaticResource FontSizeCaption}"
+                                       Foreground="{StaticResource TextTertiaryBrush}"/>
+                          </StackPanel>
+                          <Button Grid.Column="3"
+                                  Command="{Binding $parent[ItemsControl].DataContext.RemoveStagedFileCommand}"
+                                  CommandParameter="{Binding}"
+                                  Classes="ghost"
+                                  Padding="8,4"
+                                  FontSize="14">
+                            <TextBlock Text="✕"
+                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                          </Button>
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Grid>
+            </Border>
+          </Border>
+        </StackPanel>
+
+        <!-- ─── ERROR (if any) ────────────────────────────────────── -->
+        <Border IsVisible="{Binding ErrorMessage,
+                            Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                Padding="14,11" CornerRadius="10"
+                Background="#26EA4335"
+                BorderBrush="{StaticResource ErrorBrush}"
+                BorderThickness="1">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Text="⚠" FontSize="14"
+                       Foreground="{StaticResource ErrorBrush}"
+                       VerticalAlignment="Center"/>
+            <TextBlock Text="{Binding ErrorMessage}"
+                       FontSize="{StaticResource FontSizeBody}"
+                       TextWrapping="Wrap"
+                       Foreground="{StaticResource ErrorBrush}"
+                       VerticalAlignment="Center"/>
+          </StackPanel>
+        </Border>
+
+      </StackPanel>
+    </ScrollViewer>
+
+    <!-- ── FOOTER ────────────────────────────────────────────────── -->
+    <Border Grid.Row="2" Padding="32,16"
+            BorderThickness="0,1,0,0"
+            BorderBrush="{StaticResource DividerBrush}"
+            Background="{StaticResource SurfaceMutedBrush}">
+      <DockPanel>
+        <Button DockPanel.Dock="Left"
+                Command="{Binding CancelCommand}"
+                Classes="ghost"
+                Padding="18,9" FontSize="{StaticResource FontSizeBody}">
+          <TextBlock Text="Cancel"/>
+        </Button>
+        <Button DockPanel.Dock="Right"
+                Command="{Binding SaveCommand}"
+                IsEnabled="{Binding CanSave}"
+                Classes="accent"
+                Padding="22,9" FontSize="{StaticResource FontSizeBody}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="Create case"/>
+            <TextBlock Text="↵" Opacity="0.7"/>
+          </StackPanel>
+        </Button>
+        <Panel/>
+      </DockPanel>
+    </Border>
+  </Grid>
+</Window>

@@ -1,0 +1,121 @@
+/*
+ * Design tokens from docs/design/nexus-ux-redesign.md §4.
+ * Two themes; dark is the default (radiologists' preference, per #189).
+ * Tokens are CSS variables so Tailwind utilities like `bg-surface`
+ * pick up theme automatically.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Light mode */
+    --bg: #f7f4ee;
+    --surface: #ffffff;
+    --surface-elevated: #ffffff;
+    --text-primary: #2d2a26;
+    --text-secondary: #6b6660;
+    --text-tertiary: #8c867d;
+    --border: #e8e2d8;
+    --border-strong: #d4cdbf;
+    --accent-subtle: rgba(26, 115, 232, 0.08);
+  }
+
+  html.dark {
+    --bg: #1b1a18;
+    --surface: #252320;
+    --surface-elevated: #2d2a26;
+    --text-primary: #ede6d8;
+    --text-secondary: #a09a8e;
+    --text-tertiary: #756f64;
+    --border: #3a3631;
+    --border-strong: #4a4540;
+    --accent-subtle: rgba(26, 115, 232, 0.16);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: theme('fontFamily.body');
+    font-size: 14px;
+    line-height: 20px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior: none;
+    user-select: none;
+  }
+
+  /* Text in main content areas should be selectable.
+     Chrome elements (sidebar, header) stay unselectable for
+     a more native-app feel. Override via .selectable class. */
+  .selectable,
+  .selectable * {
+    user-select: text;
+  }
+
+  /* macOS-style title-bar drag region under Tauri's Overlay style.
+     Lets the user drag the window from the header. */
+  .drag {
+    -webkit-app-region: drag;
+  }
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 8px;
+    border: 2px solid var(--bg);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--border-strong);
+  }
+}
+
+@layer components {
+  /* Focus ring — single style, used by every interactive element. */
+  .focus-ring {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-bg;
+  }
+}
+
+/* ── Report export (PDF via window.print) ──────────────────────────── */
+/* When ReportMode triggers exportPdf() it toggles .report-print-mode  */
+/* on <body>; this stylesheet then hides the app shell and lays the    */
+/* preview block out as a single printable page.                       */
+@media print {
+  body.report-print-mode * {
+    visibility: hidden;
+  }
+  body.report-print-mode .report-print,
+  body.report-print-mode .report-print * {
+    visibility: visible;
+  }
+  body.report-print-mode .report-print {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    color: #000 !important;
+    background: #fff !important;
+    padding: 24mm 18mm;
+    font-size: 11pt;
+    line-height: 1.4;
+  }
+  @page { margin: 0; }
+}

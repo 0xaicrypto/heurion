@@ -40,7 +40,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter, BackgroundTasks, Depends, File, Form, HTTPException,
+    UploadFile, status,
+)
 from pydantic import BaseModel
 
 from nexus_server.auth import get_current_user
@@ -53,9 +56,38 @@ config = get_config()
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
 
 
+# Hard cap on file upload size. Used to default to 100 MB but DICOM
+# CT studies are routinely 500 MB - 1.5 GB (256-512 slices × 500 KB
+# each + thin-slice variants). Bumped to 2 GB and made env-overridable
+# so high-throughput sites can push further without a code change.
+#
+# Important: the upload route below streams to disk in 1 MB chunks
+# rather than buffering the whole file in memory, so this ceiling
+# only constrains disk space + sha256 cost — not RAM. A 1 GB upload
+# uses ~1 MB peak RSS instead of 1 GB.
 # Hard cap mirrors llm_gateway's MAX_ATTACHMENT_BYTES_TOTAL — a single
 # file shouldn't be bigger than the chat-time per-call cap.
-MAX_FILE_BYTES = 100 * 1024 * 1024
+MAX_FILE_BYTES = int(
+    __import__("os").environ.get(
+        "NEXUS_MAX_FILE_BYTES",
+        str(2 * 1024 * 1024 * 1024),   # 2 GB default for DICOM CT zips
+    ),
+)
+
+
+def format_size_hint(size_bytes: int) -> str:
+    """Human-readable byte count — ``312 B`` / ``45 KB`` / ``2 MB``.
+
+    Shared by every place that surfaces a file size to either the user
+    (Files page, chat chips) or the LLM (uploads memory injection block,
+    curated MEMORY.md entries). Previously copy-pasted in 3+ spots;
+    refactor #5 hoisted them here.
+    """
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes // 1024} KB"
+    return f"{size_bytes // (1024 * 1024)} MB"
 
 
 def _files_dir() -> Path:
@@ -108,6 +140,29 @@ def _ensure_uploads_table() -> None:
             "sha256 TEXT NOT NULL DEFAULT ''",
             "gnfd_path TEXT NOT NULL DEFAULT ''",
             "extracted_text TEXT NOT NULL DEFAULT ''",
+            # #152 — upload-time DICOM prerender status. Empty for
+            # non-medical uploads; one of dicom.DICOM_STATUS_* for
+            # zip archives that were probed at upload time.
+            "dicom_status TEXT NOT NULL DEFAULT ''",
+            "dicom_study_id TEXT NOT NULL DEFAULT ''",
+            "dicom_preview_dir TEXT NOT NULL DEFAULT ''",
+            # #160 — Gemini-incompatible-format normalizer. For TIFF
+            # / RAW / BMP uploads we save a downsized JPEG copy at
+            # upload time; chat-time resolver swaps the attachment
+            # mime + bytes so the vision model sees something it can
+            # actually decode. Empty for formats Gemini already
+            # handles cleanly.
+            "image_normalized_status TEXT NOT NULL DEFAULT ''",
+            "image_normalized_path TEXT NOT NULL DEFAULT ''",
+            # #178 — per-patient binding for *all* uploads (DICOM,
+            # PDFs, TIFFs, lab notes). For DICOM uploads we fill this
+            # from the parsed PatientName/ID hash; for everything else
+            # we inherit the active session's patient_hash (set on
+            # sessions table by #176) so PDFs and pathology TIFFs
+            # land in the same patient bucket as the DICOM study they
+            # belong to. Empty when the medic uploads outside any
+            # patient context.
+            "patient_hash TEXT NOT NULL DEFAULT ''",
         ):
             try:
                 conn.execute(f"ALTER TABLE uploads ADD COLUMN {col_def}")
@@ -125,16 +180,230 @@ def _ensure_uploads_table() -> None:
         conn.commit()
 
 
+class FileEntry(BaseModel):
+    """One row in the user-facing Files list."""
+    file_id: str
+    name: str
+    mime: str
+    size_bytes: int
+    created_at: str
+    sha256: str = ""
+    has_text: bool = False
+    excerpt: str = ""              # first ~300 chars of extracted_text
+
+
+class FileListResponse(BaseModel):
+    files: list[FileEntry]
+    total: int
+
+
+class FilePreviewResponse(BaseModel):
+    """Full preview shape — bigger excerpt than the list endpoint."""
+    file_id: str
+    name: str
+    mime: str
+    size_bytes: int
+    created_at: str
+    sha256: str = ""
+    extracted_text: str = ""       # full cached extraction, capped
+    has_text: bool = False
+    text_truncated: bool = False
+
+
+# Preview returns up to this many chars of extracted text. Anything
+# longer gets truncated + the response sets ``text_truncated=True`` so
+# the client can render a "Show more" hint or open a different path.
+_PREVIEW_TEXT_CAP = 100 * 1024
+
+
+@router.get("/list", response_model=FileListResponse)
+async def list_files(
+    current_user: str = Depends(get_current_user),
+    limit: int = 200,
+) -> FileListResponse:
+    """List the calling user's uploaded files, newest first.
+
+    Powers the desktop "Files" page (D-2 follow-up — UX surface for
+    Memory Fix A). The response is intentionally shallow: name,
+    mime, size, ~300-char excerpt. For full text use ``/preview``.
+    """
+    _ensure_uploads_table()
+    limit = max(1, min(int(limit), 1000))
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT file_id, name, mime, size_bytes, created_at,
+                   sha256, extracted_text
+            FROM uploads WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (current_user, limit),
+        ).fetchall()
+    files: list[FileEntry] = []
+    for r in rows:
+        fid, name, mime, size_bytes, created_at, sha256, text = r
+        text = text or ""
+        excerpt = text[:300]
+        if len(text) > 300:
+            excerpt += "…"
+        files.append(FileEntry(
+            file_id=fid,
+            name=name,
+            mime=mime or "",
+            size_bytes=int(size_bytes or 0),
+            created_at=str(created_at) if created_at else "",
+            sha256=sha256 or "",
+            has_text=bool(text),
+            excerpt=excerpt,
+        ))
+    return FileListResponse(files=files, total=len(files))
+
+
+@router.get("/{file_id}/preview", response_model=FilePreviewResponse)
+async def preview_file(
+    file_id: str,
+    current_user: str = Depends(get_current_user),
+) -> FilePreviewResponse:
+    """Fetch metadata + extracted text for one file. Used by the
+    Files-page preview pane when the user clicks a row."""
+    _ensure_uploads_table()
+    with get_db_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT file_id, name, mime, size_bytes, created_at,
+                   sha256, extracted_text, disk_path
+            FROM uploads WHERE user_id = ? AND file_id = ?
+            """,
+            (current_user, file_id),
+        ).fetchone()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File {file_id} not found for this user",
+        )
+    fid, name, mime, size_bytes, created_at, sha256, text, disk_path = row
+    text = text or ""
+    # Lazy extract: if extracted_text was never populated AND disk
+    # copy exists, run the SDK distiller now + cache result. Means
+    # the user opens the file in the UI for the first time, sees
+    # actual text, not a stub.
+    if not text and disk_path:
+        try:
+            extracted = await _extract_from_disk(disk_path, name, mime or "")
+            if extracted:
+                _save_extracted_text(fid, extracted)
+                text = extracted
+        except Exception as e:  # noqa: BLE001
+            logger.debug("lazy extract for %s failed: %s", name, e)
+    truncated = len(text) > _PREVIEW_TEXT_CAP
+    if truncated:
+        text = text[:_PREVIEW_TEXT_CAP]
+    return FilePreviewResponse(
+        file_id=fid,
+        name=name,
+        mime=mime or "",
+        size_bytes=int(size_bytes or 0),
+        created_at=str(created_at) if created_at else "",
+        sha256=sha256 or "",
+        extracted_text=text,
+        has_text=bool(text),
+        text_truncated=truncated,
+    )
+
+
+@router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_file(
+    file_id: str,
+    current_user: str = Depends(get_current_user),
+):
+    """Remove a file: SQL row + on-disk copy + (best-effort) Greenfield
+    object. Curated memory entries that mention the file are left in
+    place — they're historical record, not actionable references."""
+    _ensure_uploads_table()
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT disk_path FROM uploads "
+            "WHERE user_id = ? AND file_id = ?",
+            (current_user, file_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"File {file_id} not found",
+            )
+        disk_path = row[0]
+        conn.execute(
+            "DELETE FROM uploads WHERE user_id = ? AND file_id = ?",
+            (current_user, file_id),
+        )
+        conn.commit()
+
+    # Best-effort disk cleanup.
+    try:
+        p = Path(disk_path)
+        if p.exists():
+            p.unlink()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("disk delete for %s failed: %s", disk_path, e)
+    logger.info("Deleted file %s for user %s", file_id, current_user)
+    return None
+
+
 class UploadResponse(BaseModel):
     file_id: str
     name: str
     mime: str
     size_bytes: int
+    # #152 — DICOM prerender status carried back to the client so the
+    # attachment chip can show whether the medical archive was
+    # successfully ingested at upload time. ``""`` for non-DICOM
+    # uploads. See dicom.DICOM_STATUS_* for the value space.
+    # #158 — for DICOM zip uploads this starts as "prerendering";
+    # the client polls /api/v1/files/{file_id}/prerender-progress
+    # and waits for state="done" before treating the study as
+    # viewer-ready.
+    dicom_status: str = ""
+    # Persisted study_id (uuid) when prerender succeeded. The desktop
+    # uses this to open the dedicated viewer without a separate
+    # /studies lookup. Empty when not applicable. With #158 async
+    # prerender this only becomes non-empty AFTER the background task
+    # has parsed the archive — clients should rely on the progress
+    # endpoint's study_id field for the canonical value.
+    dicom_study_id: str = ""
+    # #158 — when True the client should poll the progress endpoint.
+    # Set to True for any zip-like upload (we won't know until probe
+    # whether it's actually DICOM, so we err on the side of polling
+    # and the progress endpoint returns state="done" quickly when it
+    # isn't).
+    dicom_prerender_active: bool = False
+
+
+class PrerenderProgressResponse(BaseModel):
+    """#158 — polled by the desktop chip to drive the progress bar
+    during long DICOM prerenders. Returned by GET
+    /api/v1/files/{file_id}/prerender-progress.
+    """
+    state:        str   # queued|parsing|rendering|done|error|unknown
+    stage:        str   # human label: detecting / parse_archive / cache_slices / ...
+    current:      int   # current item count within stage
+    total:        int   # total items in stage (0 when not applicable)
+    percent:      float # 0..100 convenience
+    study_id:     str   # populated once the study has been persisted
+    preview_dir:  str   # absolute path under the user uploads dir
+    error:        str   # populated only when state == "error"
 
 
 @router.post("/upload", response_model=UploadResponse)
 async def upload_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    # #178 — optional session_id Form param so non-DICOM uploads
+    # inherit the active session's patient_hash. The desktop client
+    # passes this when the user has a patient selected; without it
+    # the upload still works but won't auto-file into a patient
+    # bucket (the DICOM path can still self-bind from tags).
+    session_id: str = Form(""),
     current_user: str = Depends(get_current_user),
 ) -> UploadResponse:
     """Receive a multipart upload, persist it across all three layers
@@ -160,31 +429,107 @@ async def upload_file(
     """
     _ensure_uploads_table()
 
-    # Stream-read with a hard size cap. Naïve approach — fine for files
-    # up to MAX_FILE_BYTES; switch to chunked tee + cap if we grow this.
-    raw = await file.read()
-    if len(raw) > MAX_FILE_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds {MAX_FILE_BYTES // (1024*1024)} MB limit",
-        )
-
     name = file.filename or "upload"
+    # ── Filename normalisation ────────────────────────────────────
+    # Some HTTP clients send non-ASCII filenames RFC 2047 encoded-word
+    # style ("=?utf-8?B?<base64>?=") — desktop's multipart layer
+    # does this for Chinese characters. Without decoding, the chip
+    # shows gibberish AND extension-based detectors (image
+    # normalizer, DICOM zip detector) miss the real ".tif" / ".zip"
+    # suffix because it's hidden inside the base64 payload.
+    # email.header.decode_header handles all encoding-word variants
+    # (UTF-8 / GBK / ISO-8859 / etc.) and returns a list of
+    # (chunk, charset) tuples we just join + decode.
+    if name.startswith("=?") and "?=" in name:
+        try:
+            import email.header as _eh
+            parts = _eh.decode_header(name)
+            name = "".join(
+                p.decode(c or "utf-8", errors="replace")
+                if isinstance(p, bytes) else p
+                for p, c in parts
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.debug("filename decode_header failed for %r: %s", name, e)
+
+    # Mac / Linux clients sometimes send filename as a full path
+    # ("Documents/2026-06/foo.tif" with embedded "/"). Strip the dir
+    # portion — we already namespace by user + file_id on disk.
+    if "/" in name or "\\" in name:
+        name = name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+
     # Trust client-provided mime when given, else guess from extension.
     mime = file.content_type or (mimetypes.guess_type(name)[0] or
                                  "application/octet-stream")
+    # Application/octet-stream is the default desktop fallback for
+    # MIMEs it doesn't recognise; on a real medical image we'd
+    # rather lean on extension. mimetypes.guess_type is slightly
+    # more comprehensive than our hand-rolled desktop table.
+    if mime == "application/octet-stream":
+        guessed = mimetypes.guess_type(name)[0]
+        if guessed:
+            mime = guessed
     file_id = uuid.uuid4().hex
-
-    # Compute content hash up front — used as the integrity field on the
-    # EventLog metadata + the Greenfield object's content-addressable
-    # part of the gnfd_path. Cheap (sha256 on at most 100 MB).
-    import hashlib
-    sha256 = hashlib.sha256(raw).hexdigest()
 
     user_dir = _files_dir() / current_user
     user_dir.mkdir(parents=True, exist_ok=True)
     disk_path = user_dir / f"{file_id}-{_safe_name(name)}"
-    disk_path.write_bytes(raw)
+
+    # Stream the upload to disk in 1 MB chunks rather than buffering the
+    # full payload in memory. Critical for DICOM CT studies — a 1 GB
+    # zip used to OOM the server at `await file.read()`; now peak RSS
+    # stays around 1 MB regardless of file size.
+    #
+    # Size cap is enforced as we go: when total > MAX_FILE_BYTES we
+    # delete the partial file and 413. sha256 is computed incrementally
+    # over the same chunk stream so we don't pay a second read pass.
+    import hashlib
+    hasher = hashlib.sha256()
+    total = 0
+    CHUNK = 1024 * 1024  # 1 MB
+    try:
+        with disk_path.open("wb") as out:
+            while True:
+                chunk = await file.read(CHUNK)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_FILE_BYTES:
+                    # Clean up the partial write before raising so we
+                    # don't leak disk space on rejected uploads.
+                    out.close()
+                    try:
+                        disk_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=(
+                            f"File exceeds {MAX_FILE_BYTES // (1024*1024)} MB "
+                            f"limit (set NEXUS_MAX_FILE_BYTES to override)"
+                        ),
+                    )
+                out.write(chunk)
+                hasher.update(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        # Mid-stream error (disk full, connection drop). Clean up.
+        try:
+            disk_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Upload stream failed: {e}",
+        )
+    sha256 = hasher.hexdigest()
+
+    # Layer 1 mirror still wants the bytes (small files only — Greenfield
+    # write-behind path expects raw). For the big-file path it'll skip
+    # because skip_greenfield is True (#134). Read back from disk only
+    # when we actually need raw bytes for that mirror.
+    raw = b""  # populated below only when Greenfield mirror is enabled
 
     # ── Layer 1 mirror: Greenfield + EventLog → BSC anchor ────────
     # Best-effort. If the user's twin or chain backend isn't ready
@@ -192,28 +537,53 @@ async def upload_file(
     # accept the upload — Layer 2 (disk + SQL) is enough for chat
     # to work. ``gnfd_path`` stays empty until a future re-mirror
     # opportunity.
+    #
+    # #134: when NEXUS_GREENFIELD_DISABLED is set (default), skip the
+    # Greenfield mirror entirely. Disk + SQL is the durability layer;
+    # a traditional S3-compatible backend will replace the Greenfield
+    # mirror in a follow-up task. ``gnfd_path`` stays "" so existing
+    # readers (which already treat empty as "no mirror") keep working.
     gnfd_path = ""
+    skip_greenfield = getattr(config, "NEXUS_GREENFIELD_DISABLED", True)
     try:
         from nexus_server.twin_manager import get_twin
         twin = await get_twin(current_user)
         # Path convention: files/<file_id>/<safe_name>. Bucket is
         # injected by ChainBackend so a per-agent bucket layout
         # (nexus-agent-{token_id}) Just Works.
-        gnfd_path = f"files/{file_id}/{_safe_name(name)}"
-        backend = getattr(twin, "rune", None)
-        backend = getattr(backend, "_backend", None) if backend else None
-        if backend is not None and hasattr(backend, "store_blob"):
-            try:
-                await backend.store_blob(gnfd_path, raw)
-            except Exception as e:  # noqa: BLE001
-                # store_blob is async write-behind; failures here are
-                # rare and only mean the local cache succeeded.
-                logger.warning(
-                    "Greenfield mirror failed for %s: %s — disk + SQL "
-                    "still serve chat, file recovery limited.",
-                    name, e,
-                )
-                gnfd_path = ""
+        if not skip_greenfield:
+            gnfd_path = f"files/{file_id}/{_safe_name(name)}"
+            backend = getattr(twin, "rune", None)
+            backend = getattr(backend, "_backend", None) if backend else None
+            if backend is not None and hasattr(backend, "store_blob"):
+                # Read disk back to memory only when we actually need
+                # the bytes for the Greenfield mirror. Streaming kept
+                # them off RAM during upload; reading back here is
+                # bounded to ~MAX_FILE_BYTES (with the caveat that
+                # Greenfield write-behind itself won't comfortably
+                # handle multi-GB blobs — this whole branch is
+                # disabled by default via #134 anyway).
+                try:
+                    raw = disk_path.read_bytes()
+                except OSError as e:
+                    logger.warning(
+                        "Greenfield mirror read-back failed: %s", e,
+                    )
+                    raw = b""
+                try:
+                    if raw:
+                        await backend.store_blob(gnfd_path, raw)
+                    else:
+                        gnfd_path = ""
+                except Exception as e:  # noqa: BLE001
+                    # store_blob is async write-behind; failures here are
+                    # rare and only mean the local cache succeeded.
+                    logger.warning(
+                        "Greenfield mirror failed for %s: %s — disk + SQL "
+                        "still serve chat, file recovery limited.",
+                        name, e,
+                    )
+                    gnfd_path = ""
         # Emit the file_uploaded event regardless — Layer 1 anchor
         # records the metadata even if the Greenfield blob write
         # didn't land. The recovery path can re-fetch from disk OR
@@ -226,7 +596,7 @@ async def upload_file(
                     "file_id": file_id,
                     "name": name,
                     "mime": mime,
-                    "size_bytes": len(raw),
+                    "size_bytes": total,
                     "sha256": sha256,
                     "gnfd_path": gnfd_path,
                 },
@@ -240,29 +610,503 @@ async def upload_file(
         # write to disk + SQL so the next chat works.
         logger.debug("twin/chain unavailable for %s: %s", name, e)
 
+    # ── #160: image format normalizer ─────────────────────────────
+    # TIFF / RAW / BMP uploads need a JPEG transcoded copy because
+    # Gemini's vision model doesn't accept those MIMEs (and even
+    # those it does accept can be 100+ MB, well over the per-image
+    # cap). Run synchronously in the upload route — typical 50 MB
+    # TIFF transcodes in ~2 s and we WANT the response to wait so
+    # the chat-time resolver always sees a fully-baked normalized
+    # copy. If transcode fails, the upload still succeeds with the
+    # original on disk — the medic can re-export from their PACS in
+    # a supported format.
+    image_normalized_status = ""
+    image_normalized_path_str = ""
+    try:
+        from nexus_server.image_normalizer import (
+            looks_normalizable, transcode_to_jpeg, derive_normalized_path,
+        )
+        if looks_normalizable(name, mime):
+            norm_dest = derive_normalized_path(disk_path)
+            norm_result = transcode_to_jpeg(
+                source_path=disk_path,
+                dest_path=norm_dest,
+            )
+            image_normalized_status = norm_result.get("status", "") or ""
+            if image_normalized_status == "converted":
+                image_normalized_path_str = str(norm_dest)
+            logger.info(
+                "image normalize — file=%s status=%s src=%d B → out=%d B "
+                "(%dx%d)%s",
+                name, image_normalized_status or "(none)",
+                int(norm_result.get("src_bytes", 0)),
+                int(norm_result.get("out_bytes", 0)),
+                int(norm_result.get("out_width", 0)),
+                int(norm_result.get("out_height", 0)),
+                f" err={norm_result['error']}" if norm_result.get("error") else "",
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "image_normalize hook crashed on %s: %s — file still "
+            "accepted, vision will fall back to whatever Gemini does "
+            "with the original.", name, e,
+        )
+
+    # ── #158: async DICOM prerender ───────────────────────────────
+    # Pre-#158 we did prerender synchronously here, which made
+    # multi-GB CT uploads block the upload HTTP response for
+    # 30-60s with zero progress feedback. The medic saw "uploading"
+    # then "✓ DICOM ingested" with no idea of what happened in
+    # between.
+    #
+    # New design: kick off the prerender on the BackgroundTasks queue
+    # (which FastAPI runs AFTER the response goes out) and stamp the
+    # uploads row with dicom_status="prerendering". The client polls
+    # /api/v1/files/{file_id}/prerender-progress for stage / current /
+    # total and updates the chip's progress bar in real time. Once
+    # the background task hits state="done", the client refreshes the
+    # chip to ✓ + Preview.
+    name_lower = (name or "").lower()
+    looks_like_zip = (
+        mime == "application/zip" or name_lower.endswith(".zip")
+    )
+    if looks_like_zip:
+        dicom_status = "prerendering"
+        dicom_prerender_active = True
+        # Initialise the progress tracker IMMEDIATELY (before the
+        # response goes out) so the client's first poll always
+        # sees a valid entry instead of an unknown-id 404.
+        try:
+            from nexus_server.dicom import _set_prerender_progress
+            _set_prerender_progress(
+                file_id, state="queued", stage="queued", total=1,
+            )
+        except Exception:
+            pass
+    else:
+        dicom_status = ""
+        dicom_prerender_active = False
+    dicom_study_id = ""
+    dicom_preview_dir = ""
+
     # ── Layer 2: SQL + disk index ─────────────────────────────────
+    # #178 — inherit the session's patient_hash so non-DICOM uploads
+    # (PDFs, TIFFs, lab notes) land in the right patient bucket. For
+    # DICOM uploads this gets overwritten with the parsed PatientID/
+    # Name hash by the prerender background task. The COALESCE in
+    # the dicom prerender UPDATE keeps the session-inherited value
+    # only when the DICOM-derived hash is empty.
+    inherited_patient_hash = ""
+    if session_id:
+        try:
+            with get_db_connection() as conn:
+                row = conn.execute(
+                    "SELECT patient_hash FROM sessions "
+                    "WHERE session_id = ? AND user_id = ?",
+                    (session_id, current_user),
+                ).fetchone()
+                if row and row[0]:
+                    inherited_patient_hash = row[0]
+        except Exception as e:  # noqa: BLE001
+            logger.debug(
+                "session→patient_hash lookup failed (%s): %s",
+                session_id[:8], e,
+            )
     now_iso = datetime.now(timezone.utc).isoformat()
     with get_db_connection() as conn:
         conn.execute(
             """
             INSERT INTO uploads
             (file_id, user_id, name, mime, size_bytes, disk_path,
-             created_at, sha256, gnfd_path, extracted_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '')
+             created_at, sha256, gnfd_path, extracted_text,
+             dicom_status, dicom_study_id, dicom_preview_dir,
+             image_normalized_status, image_normalized_path,
+             patient_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)
             """,
-            (file_id, current_user, name, mime, len(raw),
-             str(disk_path), now_iso, sha256, gnfd_path),
+            (file_id, current_user, name, mime, total,
+             str(disk_path), now_iso, sha256, gnfd_path,
+             dicom_status, dicom_study_id, dicom_preview_dir,
+             image_normalized_status, image_normalized_path_str,
+             inherited_patient_hash),
         )
         conn.commit()
 
     logger.info(
         "Uploaded file %s (%s, %d bytes, sha256=%s, gnfd=%s) for user %s",
-        name, mime, len(raw), sha256[:12],
+        name, mime, total, sha256[:12],
         gnfd_path or "(skipped)", current_user,
     )
+
+    # Memory Fix B: append a curated memory entry so the file persists
+    # in MEMORY.md across sessions. Without this, MEMORY.md never
+    # grows from user activity — only from explicit agent reflection.
+    # Best-effort: if twin / curated_memory is not ready we skip.
+    try:
+        await _record_upload_in_curated_memory(
+            current_user, name=name, mime=mime,
+            size_bytes=total, uploaded_at=now_iso,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug(
+            "curated_memory upload record skipped for %s: %s", name, e,
+        )
+
+    # #158 — schedule the background prerender AFTER everything that
+    # the synchronous response depends on has been committed to disk
+    # + DB. FastAPI runs BackgroundTasks once the response has been
+    # written to the wire, so the upload completes from the client's
+    # POV in ~upload-time milliseconds (network only), and the heavy
+    # DICOM parse + slice cache happens out of band.
+    if dicom_prerender_active:
+        background_tasks.add_task(
+            _run_dicom_prerender_async,
+            user_id=current_user, file_id=file_id, name=name,
+            mime=mime, size_bytes=total, disk_path=disk_path,
+        )
+
     return UploadResponse(
-        file_id=file_id, name=name, mime=mime, size_bytes=len(raw),
+        file_id=file_id, name=name, mime=mime, size_bytes=total,
+        dicom_status=dicom_status,
+        dicom_study_id=dicom_study_id,
+        dicom_prerender_active=dicom_prerender_active,
     )
+
+
+def _run_dicom_prerender_async(
+    *, user_id: str, file_id: str, name: str, mime: str,
+    size_bytes: int, disk_path: Path,
+) -> None:
+    """Background task body — runs the existing
+    prerender_archive_for_upload helper, then writes the resulting
+    status + study_id + preview_dir back into the uploads row so
+    subsequent file_id resolutions (chat-time DICOM rewrite, viewer
+    open) see the persisted result.
+
+    Errors are logged + reflected into the in-memory progress tracker
+    (state="error"). The upload itself is already accepted by the
+    time we get here — failures here only mean the agent / viewer
+    fall back to less-rich behaviour.
+    """
+    try:
+        from nexus_server.dicom import (
+            prerender_archive_for_upload, _set_prerender_progress,
+        )
+        prerender = prerender_archive_for_upload(
+            user_id=user_id,
+            upload_file_id=file_id,
+            upload_name=name,
+            upload_mime=mime,
+            upload_size=size_bytes,
+            disk_path=disk_path,
+        )
+        new_status = prerender.get("status", "") or ""
+        new_study_id = prerender.get("study_id", "") or ""
+        new_preview_dir = prerender.get("preview_dir", "") or ""
+        logger.info(
+            "DICOM upload verdict (async) — file=%s file_id=%s "
+            "status=%s study_id=%s series=%d instances=%d modality=%s%s",
+            name, file_id[:8], new_status or "(none)",
+            (new_study_id or "(none)")[:8],
+            int(prerender.get("series_count", 0)),
+            int(prerender.get("instance_count", 0)),
+            prerender.get("modality", ""),
+            f" err={prerender['error']}" if prerender.get("error") else "",
+        )
+        # Persist updated fields onto the uploads row so chat-time
+        # lookups (resolve_files / _maybe_rewrite_dicom_archive_to_pngs)
+        # see them.
+        # #178 — also propagate the patient_hash from the parsed
+        # DICOM study onto the uploads row. Lets the per-patient
+        # files endpoint return non-DICOM + DICOM uploads together
+        # under one patient bucket (the medic's mental model is
+        # "this patient's files," not "this study's PNGs").
+        new_patient_hash = ""
+        if new_status == "rendered" and new_study_id:
+            try:
+                from nexus_server.dicom import load_study
+                _study = load_study(user_id, new_study_id)
+                new_patient_hash = (_study.patient_hash if _study else "") or ""
+            except Exception:
+                pass
+        try:
+            with get_db_connection() as conn:
+                conn.execute(
+                    "UPDATE uploads SET dicom_status = ?, "
+                    "dicom_study_id = ?, dicom_preview_dir = ?, "
+                    "patient_hash = COALESCE(NULLIF(?, ''), patient_hash) "
+                    "WHERE file_id = ?",
+                    (
+                        new_status, new_study_id, new_preview_dir,
+                        new_patient_hash, file_id,
+                    ),
+                )
+                conn.commit()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Failed to persist async prerender status for %s: %s",
+                file_id[:8], e,
+            )
+
+        # #178 — proactively emit an assistant_response event with a
+        # one-paragraph patient summary right after prerender. This
+        # way the medic, on next chat refresh, sees the agent has
+        # already noticed the upload + volunteered patient context —
+        # no need to type "what did I just upload?" or "summarize
+        # this study." Eliminates one round-trip per study.
+        #
+        # NOTE: this is a *sync* background task (def, not async def);
+        # we use `asyncio.run` to drive the async get_twin call.
+        # asyncio.run is safe here because BackgroundTasks runs each
+        # callable in its own thread (anyio.to_thread.run_sync) — there
+        # is no enclosing event loop in this thread, so .run() can
+        # spin up a fresh one without "RuntimeError: this event loop
+        # is already running".
+        if new_status == "rendered" and new_study_id:
+            try:
+                from nexus_server.dicom import load_study
+                study = load_study(user_id, new_study_id)
+                if study is not None:
+                    summary_lines = []
+                    short_hash = (study.patient_hash or "")[:12] or "(anonymous)"
+                    demo = []
+                    if study.patient_sex: demo.append(study.patient_sex)
+                    if study.patient_age_group: demo.append(study.patient_age_group)
+                    demo_str = " · ".join(demo) if demo else "no demographics"
+                    summary_lines.append(
+                        f"📁 New study ingested for patient "
+                        f"PHI-hash:{short_hash} ({demo_str})."
+                    )
+                    summary_lines.append(
+                        f"  • File: {name}  · "
+                        f"{study.modality or '?'}  · "
+                        f"{study.study_date or 'date unknown'}"
+                    )
+                    if study.study_description:
+                        summary_lines.append(
+                            f"  • Description: {study.study_description}"
+                        )
+                    summary_lines.append(
+                        f"  • {len(study.series)} series · "
+                        f"{study.total_instances} total slices"
+                    )
+                    summary_lines.append("")
+                    summary_lines.append(
+                        "Ready when you are — click 🩻 Preview on the "
+                        "chip to open the viewer, or ask: 'what do "
+                        "you see in the chest CT?' / '描述一下这个 "
+                        "study 的发现'."
+                    )
+
+                    async def _emit_summary() -> None:
+                        from nexus_server.twin_manager import get_twin
+                        twin = await get_twin(user_id)
+                        twin.event_log.append(
+                            "assistant_response",
+                            "\n".join(summary_lines),
+                            metadata={
+                                "kind":         "auto_patient_summary",
+                                "study_id":     new_study_id,
+                                "file_id":      file_id,
+                                "patient_hash": study.patient_hash or "",
+                            },
+                        )
+                    import asyncio as _asyncio
+                    _asyncio.run(_emit_summary())
+            except Exception as e:  # noqa: BLE001
+                logger.debug(
+                    "auto patient summary emit failed for %s: %s",
+                    file_id[:8], e,
+                )
+
+        # #162 — write a curated memory entry for the patient so the
+        # association ("medic uploaded study X for patient hash Y on
+        # date Z") survives across chat sessions. Cross-session
+        # patient continuity is the whole point of patient binding —
+        # without this, if the medic logs out and back in, the agent
+        # forgets which patient any previously-uploaded study belonged
+        # to. Best-effort: any failure here just means cross-session
+        # memory is shallower, the live turn still works fine.
+        if new_status == "rendered" and new_study_id:
+            try:
+                import asyncio as _asyncio
+                _asyncio.run(_record_patient_in_curated_memory(
+                    user_id=user_id,
+                    study_id=new_study_id,
+                    modality=prerender.get("modality", ""),
+                    name=name,
+                    series_count=int(prerender.get("series_count", 0)),
+                    instance_count=int(prerender.get("instance_count", 0)),
+                ))
+            except Exception as e:  # noqa: BLE001
+                logger.debug(
+                    "patient curated-memory write skipped for %s: %s",
+                    file_id[:8], e,
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.exception(
+            "DICOM prerender background task crashed for %s: %s",
+            file_id[:8], e,
+        )
+        try:
+            from nexus_server.dicom import _set_prerender_progress
+            _set_prerender_progress(
+                file_id, state="error", stage="task_crashed",
+                error=f"{type(e).__name__}: {e}",
+            )
+        except Exception:
+            pass
+
+
+@router.get(
+    "/{file_id}/prerender-progress",
+    response_model=PrerenderProgressResponse,
+)
+async def prerender_progress(
+    file_id: str,
+    current_user: str = Depends(get_current_user),
+) -> PrerenderProgressResponse:
+    """#158 — poll endpoint for the desktop's prerender progress bar.
+
+    Returns the latest snapshot from the in-memory tracker in
+    dicom._prerender_progress. When the tracker has no entry (either
+    the upload was never a DICOM zip, or it happened more than an
+    hour ago and was GC'd), we return state="unknown" so the client
+    knows to stop polling.
+
+    Auth note: we don't gate by user_id on the progress dict (it's
+    keyed by file_id which is itself a uuid). Strictly, the caller
+    could probe arbitrary file_ids — but they'd only get an opaque
+    progress state, no bytes. If a stronger boundary is needed
+    later, we can join through uploads.user_id.
+    """
+    from nexus_server.dicom import get_prerender_progress
+    p = get_prerender_progress(file_id)
+    if p is None:
+        return PrerenderProgressResponse(
+            state="unknown", stage="", current=0, total=0,
+            percent=0.0, study_id="", preview_dir="", error="",
+        )
+    total = max(0, int(p.get("total") or 0))
+    current = max(0, int(p.get("current") or 0))
+    pct = (100.0 * current / total) if total > 0 else (
+        100.0 if p.get("state") == "done" else 0.0
+    )
+    return PrerenderProgressResponse(
+        state=str(p.get("state") or "unknown"),
+        stage=str(p.get("stage") or ""),
+        current=current,
+        total=total,
+        percent=round(pct, 1),
+        study_id=str(p.get("study_id") or ""),
+        preview_dir=str(p.get("preview_dir") or ""),
+        error=str(p.get("error") or ""),
+    )
+
+
+async def _record_upload_in_curated_memory(
+    user_id: str, *,
+    name: str, mime: str, size_bytes: int, uploaded_at: str,
+) -> None:
+    """Append a one-line fact to the user's MEMORY.md so the agent
+    remembers ``user uploaded X on Y`` across sessions.
+
+    Format: ``[YYYY-MM-DD] Uploaded file 'name.pdf' (mime, size).``
+
+    Idempotent: CuratedMemory.add_memory dedupes by exact string match,
+    so a re-upload of the same file on the same day produces no new
+    entry. Different day → new entry, which is correct (multiple
+    uploads of the same name are legitimate revision history).
+    """
+    from nexus_server.twin_manager import get_twin
+    twin = await get_twin(user_id)
+    cm = getattr(twin, "curated_memory", None)
+    if cm is None:
+        return
+
+    # Honour the user's pause toggle (Phase C-2 memory_router).
+    pause_marker = cm._dir / ".paused"
+    try:
+        if pause_marker.exists():
+            return
+    except Exception:  # noqa: BLE001
+        pass
+
+    size_hint = format_size_hint(size_bytes)
+
+    # Date-only stamp — agent doesn't need precise time-of-day in
+    # curated memory; that's what event_log timestamps are for.
+    date_part = uploaded_at[:10] if uploaded_at else ""
+
+    entry = (
+        f"[{date_part}] Uploaded file {name!r} "
+        f"({mime}, {size_hint}). Use read_uploaded_file({name!r}) "
+        f"to recall full contents."
+    )
+    try:
+        cm.add_memory(entry)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("curated_memory.add_memory failed: %s", e)
+
+
+async def _record_patient_in_curated_memory(
+    *, user_id: str, study_id: str, modality: str, name: str,
+    series_count: int, instance_count: int,
+) -> None:
+    """#162 — emit a patient-identity memory entry into the user's
+    MEMORY.md once a DICOM upload finishes prerendering successfully.
+
+    Entry format::
+
+        [YYYY-MM-DD] Patient PHI-hash:abc12345 — uploaded {modality}
+        study {name!r} ({series_count} series, {instance_count} slices).
+
+    Cross-session continuity: when the medic logs out and back in,
+    or starts a new chat session, the agent loads this from
+    curated memory and knows that any reference to "the patient"
+    in subsequent uploads of the same study (via patient_hash) refers
+    to the same person. Without this, the binding lives only in the
+    in-memory dicom_studies table joined at chat-time — and any
+    process restart breaks the link.
+
+    Idempotent via CuratedMemory.add_memory's exact-match dedupe.
+    """
+    from nexus_server.twin_manager import get_twin
+    from nexus_server.dicom import get_patient_context_block
+    from datetime import datetime, timezone
+
+    twin = await get_twin(user_id)
+    cm = getattr(twin, "curated_memory", None)
+    if cm is None:
+        return
+    try:
+        if (cm._dir / ".paused").exists():
+            return
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Re-use the same patient context formatter so the memory entry
+    # is consistent with what the agent sees in-chat — no chance of
+    # drift between "what's in memory" and "what gets injected
+    # per-turn".
+    context = get_patient_context_block(user_id, study_id)
+    date_part = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if context:
+        entry = (
+            f"[{date_part}] DICOM upload: {name!r} ({modality or '?'}, "
+            f"{series_count} series, {instance_count} slices).\n"
+            f"{context}"
+        )
+    else:
+        entry = (
+            f"[{date_part}] DICOM upload: {name!r} ({modality or '?'}, "
+            f"{series_count} series, {instance_count} slices). "
+            f"study_id={study_id[:8]}"
+        )
+    try:
+        cm.add_memory(entry)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("patient curated_memory.add_memory failed: %s", e)
 
 
 def _safe_name(name: str) -> str:
@@ -286,22 +1130,53 @@ def resolve_files(user_id: str, file_ids: list[str]) -> list[dict]:
     with get_db_connection() as conn:
         rows = conn.execute(
             f"""
-            SELECT file_id, name, mime, size_bytes, disk_path
+            SELECT file_id, name, mime, size_bytes, disk_path,
+                   dicom_status, dicom_study_id, dicom_preview_dir,
+                   image_normalized_status, image_normalized_path
             FROM uploads
             WHERE user_id = ? AND file_id IN ({placeholders})
             """,
             (user_id, *file_ids),
         ).fetchall()
-    return [
-        {
-            "file_id": r[0],
-            "name": r[1],
-            "mime": r[2],
-            "size_bytes": int(r[3]),
-            "disk_path": r[4],
-        }
-        for r in rows
-    ]
+    out = []
+    for r in rows:
+        fid, name, mime, size_bytes, disk_path = r[0], r[1], r[2], int(r[3]), r[4]
+        norm_status = r[8] or ""
+        norm_path = r[9] or ""
+        # #160 — if the upload had a Gemini-incompatible format and the
+        # normalizer produced a JPEG copy, transparently swap the
+        # downstream view to point at the normalized file. The
+        # original on disk + greenfield mirror keep the lossless
+        # source; only the chat-time multimodal path sees the JPEG.
+        effective_mime = mime
+        effective_disk = disk_path
+        if norm_status == "converted" and norm_path:
+            from pathlib import Path as _P
+            np = _P(norm_path)
+            if np.exists():
+                effective_mime = "image/jpeg"
+                effective_disk = norm_path
+                try:
+                    size_bytes = np.stat().st_size
+                except OSError:
+                    pass
+        out.append({
+            "file_id":            fid,
+            "name":               name,
+            "mime":               effective_mime,
+            "size_bytes":         size_bytes,
+            "disk_path":          effective_disk,
+            # #152 — DICOM prerender outputs carried through.
+            "dicom_status":       r[5] or "",
+            "dicom_study_id":     r[6] or "",
+            "dicom_preview_dir":  r[7] or "",
+            # #160 — image normalize metadata. The mime/disk_path above
+            # already point at the normalized copy when applicable;
+            # these extra fields are for diagnostic logging / UI badge.
+            "image_normalized_status": norm_status,
+            "original_mime":      mime,    # before swap (for "from .tif" hint)
+        })
+    return out
 
 
 def read_file_bytes(disk_path: str) -> Optional[bytes]:
@@ -578,4 +1453,102 @@ def list_user_files(user_id: str) -> dict[str, int]:
         # Replacing duplicate-name entries with the latest is fine —
         # the tool's listing surface is informational.
         out[r[0]] = len(r[2]) if r[2] else int(r[1])
+    return out
+
+
+def search_uploaded_files(
+    user_id: str, query: str, limit: int = 5,
+) -> list[dict]:
+    """Memory Fix C: substring search over uploaded files' extracted
+    text. Returns each hit's name, snippet centred on the match, and
+    a sync_id-shaped ``file_id`` so the chat surface can link to it.
+
+    Mirrors the wire shape ``search_messages`` uses so the
+    ``search_past_chats`` tool can interleave file hits with chat hits.
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+
+    _ensure_uploads_table()
+    pattern = f"%{q}%"
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT name, mime, created_at, extracted_text
+            FROM uploads
+            WHERE user_id = ?
+              AND extracted_text != ''
+              AND UPPER(extracted_text) LIKE UPPER(?)
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (user_id, pattern, int(limit)),
+        ).fetchall()
+
+    from nexus_server.twin_event_log import snippet_around as _snip
+
+    hits: list[dict] = []
+    for r in rows:
+        name, mime, created_at, extracted_text = r
+        hits.append({
+            "file_name":   name,
+            "mime":        mime or "",
+            "uploaded_at": str(created_at) if created_at else "",
+            "snippet":     _snip(extracted_text or "", q),
+        })
+    return hits
+
+
+def list_recent_files_for_prompt(
+    user_id: str, limit: int = 8, snippet_chars: int = 300,
+) -> list[dict]:
+    """Memory Fix A: return rich file metadata + a snippet of
+    extracted_text for the twin's system prompt builder.
+
+    Without this, the agent forgets files across sessions even though
+    the bytes + extracted_text are still in the SQL store — it just
+    has no idea they exist.
+
+    Returns newest-first, at most ``limit`` rows. Each entry::
+
+        {
+          "name":         str,
+          "mime":         str,
+          "size_bytes":   int,
+          "created_at":   ISO-8601 str,
+          "snippet":      str,    # first ~snippet_chars of extracted_text
+          "has_text":     bool,   # True iff extracted_text is non-empty
+        }
+    """
+    _ensure_uploads_table()
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT name, mime, size_bytes, created_at, extracted_text
+            FROM uploads WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (user_id, int(limit)),
+        ).fetchall()
+    out: list[dict] = []
+    seen_names: set[str] = set()
+    for r in rows:
+        name, mime, size_bytes, created_at, extracted_text = r
+        if name in seen_names:
+            continue
+        seen_names.add(name)
+        text = extracted_text or ""
+        snippet = text[:snippet_chars].strip()
+        if len(text) > snippet_chars:
+            snippet += "…"
+        out.append({
+            "name":       name,
+            "mime":       mime or "",
+            "size_bytes": int(size_bytes or 0),
+            "created_at": str(created_at) if created_at else "",
+            "snippet":    snippet,
+            "has_text":   bool(text),
+        })
     return out

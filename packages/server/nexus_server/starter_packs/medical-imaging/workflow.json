@@ -1,0 +1,18 @@
+{
+  "name": "Medical Imaging Read",
+  "description": "Structured medical-image reading. Router identifies modality + body region; then the appropriate specialist reader produces a systematic finding report; the summarizer formats it for clinical handoff. Best-fit for chest CT (the most common case). For other modalities (head CT, X-ray, dermatology, pathology) you can delegate directly to the specialist sub-agent from chat — they're all installed by this pack. Decision support only — every output recommends professional review.",
+  "definition": {
+    "inputs": [
+      { "key": "study_input",      "label": "Medical image / study (drag DICOM zip, paste screenshot, or describe the imaging)", "type": "longtext", "required": true,  "options": [] },
+      { "key": "clinical_context", "label": "Clinical context (symptoms, prior dx, what you're looking for) — optional",        "type": "longtext", "required": false, "options": [] },
+      { "key": "patient_age_sex",  "label": "Patient age / sex (helps differential) — optional",                                 "type": "text",     "required": false, "options": [] }
+    ],
+    "steps": [
+      { "skill": "medical-image-router",      "label": "Router",     "id": "router" },
+      { "skill": "chest-ct-reader",            "label": "Reader",     "id": "reader",    "depends_on": ["router"] },
+      { "skill": "medical-report-summarizer",  "label": "Summarize",  "id": "summarize", "depends_on": ["reader"] }
+    ],
+    "mode": "linear",
+    "metadata": { "source": "starter-pack:medical-imaging" }
+  }
+}

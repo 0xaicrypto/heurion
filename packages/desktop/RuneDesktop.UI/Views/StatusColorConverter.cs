@@ -37,7 +37,11 @@ public sealed class StatusColorConverter : IValueConverter
     public object? Convert(object? value, Type targetType,
                            object? parameter, CultureInfo culture)
     {
-        return value as string switch
+        // Parens disambiguate `as` vs `switch` precedence — without
+        // them C# 10+ raises CS8848 because `value as string switch …`
+        // could parse either way. The intent is clear when the
+        // pattern-match runs on the (value as string) result.
+        return (value as string) switch
         {
             "Success"  => Success,
             "Warning"  => Warning,

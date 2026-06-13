@@ -1,0 +1,101 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:RuneDesktop.UI.ViewModels"
+             x:Class="RuneDesktop.UI.Views.LibraryView"
+             x:DataType="vm:MainViewModel">
+
+  <!--
+    #175 — Library hub.
+    Consolidates Workflows / Files / Plan / Account into one card
+    grid. Clicking a card sets ActiveView so the corresponding sub-
+    page renders; the canvas tab strip stays on "Library" the whole
+    time so the medic doesn't think they "left".
+  -->
+
+  <ScrollViewer Padding="40">
+    <StackPanel Spacing="24" MaxWidth="900">
+      <StackPanel Spacing="6">
+        <TextBlock Text="Library"
+                   FontSize="22" FontWeight="SemiBold"
+                   Foreground="{StaticResource TextPrimaryBrush}"/>
+        <TextBlock Text="Workflows, files, billing, and account in one place."
+                   FontSize="13"
+                   Foreground="{StaticResource TextSecondaryBrush}"/>
+      </StackPanel>
+
+      <ItemsControl>
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel ItemWidth="280" ItemHeight="160"/>
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.Items>
+          <Button Command="{Binding ShowWorkflowsCommand}"
+                  Margin="0,0,12,12" Padding="20"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Stretch"
+                  Classes="ghost">
+            <StackPanel Spacing="8">
+              <TextBlock Text="⚙" FontSize="28"
+                         Foreground="{StaticResource AccentBrush}"/>
+              <TextBlock Text="Workflows"
+                         FontSize="14" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimaryBrush}"/>
+              <TextBlock Text="Multi-step recipes (Medical Imaging Read, Research Brief, etc.)"
+                         FontSize="11" TextWrapping="Wrap"
+                         Foreground="{StaticResource TextSecondaryBrush}"/>
+            </StackPanel>
+          </Button>
+          <Button Command="{Binding ShowFilesCommand}"
+                  Margin="0,0,12,12" Padding="20"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Stretch"
+                  Classes="ghost">
+            <StackPanel Spacing="8">
+              <TextBlock Text="📁" FontSize="28"
+                         Foreground="{StaticResource AccentBrush}"/>
+              <TextBlock Text="Files"
+                         FontSize="14" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimaryBrush}"/>
+              <TextBlock Text="All uploads across sessions, with text preview + delete."
+                         FontSize="11" TextWrapping="Wrap"
+                         Foreground="{StaticResource TextSecondaryBrush}"/>
+            </StackPanel>
+          </Button>
+          <Button Command="{Binding ShowAccountCommand}"
+                  Margin="0,0,12,12" Padding="20"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Stretch"
+                  Classes="ghost">
+            <StackPanel Spacing="8">
+              <TextBlock Text="👤" FontSize="28"
+                         Foreground="{StaticResource AccentBrush}"/>
+              <TextBlock Text="Account"
+                         FontSize="14" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimaryBrush}"/>
+              <TextBlock Text="Profile, memory editor, sign-out."
+                         FontSize="11" TextWrapping="Wrap"
+                         Foreground="{StaticResource TextSecondaryBrush}"/>
+            </StackPanel>
+          </Button>
+          <Button Command="{Binding ShowPlanCommand}"
+                  Margin="0,0,12,12" Padding="20"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Stretch"
+                  Classes="ghost">
+            <StackPanel Spacing="8">
+              <TextBlock Text="💳" FontSize="28"
+                         Foreground="{StaticResource AccentBrush}"/>
+              <TextBlock Text="Plan &amp; billing"
+                         FontSize="14" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimaryBrush}"/>
+              <TextBlock Text="Subscription tier, token spend, invoices."
+                         FontSize="11" TextWrapping="Wrap"
+                         Foreground="{StaticResource TextSecondaryBrush}"/>
+            </StackPanel>
+          </Button>
+        </ItemsControl.Items>
+      </ItemsControl>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

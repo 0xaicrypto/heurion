@@ -1,0 +1,97 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:RuneDesktop.UI.ViewModels"
+        x:Class="RuneDesktop.UI.Views.SplashWindow"
+        Title="Nexus"
+        Icon="avares://Nexus/Assets/nexus-icon.png"
+        Width="480" Height="320"
+        WindowStartupLocation="CenterScreen"
+        CanResize="False"
+        ShowInTaskbar="False"
+        SystemDecorations="BorderOnly"
+        Background="#0F1729"
+        x:DataType="vm:SplashViewModel">
+
+  <!-- #185 Splash boot window — self-contained palette (renders before
+       App.axaml resources are loaded). Aligned to the login-page
+       palette: midnight navy bg + indigo accent + BNB-yellow logo. -->
+  <Window.Resources>
+    <SolidColorBrush x:Key="N_Bg"     Color="#0F1729"/>
+    <SolidColorBrush x:Key="N_Card"   Color="#182338"/>
+    <SolidColorBrush x:Key="N_Raised" Color="#1F2C42"/>
+    <SolidColorBrush x:Key="N_Accent" Color="#6B7EE6"/>
+    <SolidColorBrush x:Key="N_Text"   Color="#F0F2F5"/>
+    <SolidColorBrush x:Key="N_Muted"  Color="#9CA8BD"/>
+    <SolidColorBrush x:Key="N_Error"  Color="#EA4335"/>
+  </Window.Resources>
+
+  <Grid RowDefinitions="*,Auto" Margin="32,28,32,24">
+    <!-- Logo + title -->
+    <StackPanel Grid.Row="0" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
+      <!-- #185 — branded logo tile (matches login page): 72×72
+           deep-navy + BNB-yellow N. -->
+      <Border Width="72" Height="72" CornerRadius="16"
+              Background="#0F1729"
+              BorderBrush="#1F2C42" BorderThickness="1">
+        <TextBlock Text="N" FontSize="40" FontWeight="Bold"
+                   Foreground="#F0B90B"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      </Border>
+
+      <!-- Booting state -->
+      <StackPanel IsVisible="{Binding IsBooting}" Spacing="8" HorizontalAlignment="Center">
+        <TextBlock Text="{Binding StatusTitle}"
+                   FontSize="15" FontWeight="SemiBold"
+                   Foreground="{StaticResource N_Text}"
+                   HorizontalAlignment="Center"/>
+        <TextBlock Text="{Binding StatusDetail}"
+                   FontSize="11"
+                   Foreground="{StaticResource N_Muted}"
+                   FontFamily="Menlo, Consolas, monospace"
+                   TextTrimming="CharacterEllipsis"
+                   MaxWidth="400"
+                   HorizontalAlignment="Center"
+                   TextAlignment="Center"/>
+        <!-- Indeterminate progress bar — System Blue line. -->
+        <ProgressBar IsIndeterminate="True"
+                     Height="2" Width="280"
+                     Foreground="{StaticResource N_Accent}"
+                     Background="{StaticResource N_Card}"
+                     Margin="0,10,0,0"/>
+      </StackPanel>
+
+      <!-- Errored state -->
+      <StackPanel IsVisible="{Binding IsErrored}" Spacing="10" HorizontalAlignment="Center">
+        <TextBlock Text="⚠ Backend failed to start"
+                   FontSize="15" FontWeight="SemiBold"
+                   Foreground="{StaticResource N_Error}"
+                   HorizontalAlignment="Center"/>
+        <TextBox Text="{Binding ErrorMessage}"
+                 IsReadOnly="True"
+                 AcceptsReturn="True"
+                 FontSize="11"
+                 FontFamily="Menlo, Consolas, monospace"
+                 Foreground="{StaticResource N_Muted}"
+                 Background="{StaticResource N_Card}"
+                 BorderThickness="0"
+                 MaxHeight="120" MaxWidth="400"
+                 TextWrapping="Wrap"/>
+      </StackPanel>
+    </StackPanel>
+
+    <!-- Footer buttons (only when errored) -->
+    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10"
+                HorizontalAlignment="Right" IsVisible="{Binding IsErrored}">
+      <Button Content="Open log folder" Click="OnOpenLogFolderClick"
+              Background="Transparent" Foreground="{StaticResource N_Muted}"
+              BorderThickness="0" Padding="10,6" FontSize="12"/>
+      <!-- Retry is the primary action — filled System Blue, white
+           label, 6 px corner radius (HIG rectangular CTA). -->
+      <Button Content="Retry"
+              Command="{Binding RetryCommand}"
+              Background="{StaticResource N_Accent}" Foreground="#FFFFFF"
+              BorderThickness="0" CornerRadius="6"
+              Padding="16,7" FontSize="12" FontWeight="Medium"/>
+    </StackPanel>
+  </Grid>
+</Window>

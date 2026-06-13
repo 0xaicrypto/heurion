@@ -1,0 +1,103 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:RuneDesktop.UI.ViewModels"
+             x:Class="RuneDesktop.UI.Views.StatusBarView"
+             x:DataType="vm:StatusBarViewModel">
+
+  <!--
+    #174 — bottom 28px status bar.
+    Replaces:
+      - the floating chain-degradation toast (now an inline pill)
+      - the buried token spend meter
+      - the invisible OCR / SMTP / relay backend status
+    Everything global lives here as pill-style chips.
+  -->
+
+  <Border Height="28"
+          Background="{StaticResource SurfaceMutedBrush}"
+          BorderBrush="{StaticResource DividerBrush}"
+          BorderThickness="0,1,0,0"
+          Padding="12,4">
+    <DockPanel LastChildFill="False">
+      <!-- LEFT pills -->
+      <StackPanel Orientation="Horizontal" Spacing="14"
+                  DockPanel.Dock="Left"
+                  VerticalAlignment="Center">
+        <!-- Server build -->
+        <TextBlock Text="Nexus"
+                   FontSize="10" FontWeight="SemiBold"
+                   Foreground="{StaticResource TextPrimaryBrush}"
+                   VerticalAlignment="Center"/>
+        <Border CornerRadius="3" Padding="5,1"
+                Background="{StaticResource SurfaceCardBrush}">
+          <TextBlock Text="{Binding ServerBuild}"
+                     FontSize="9"
+                     Foreground="{StaticResource TextTertiaryBrush}"/>
+        </Border>
+      </StackPanel>
+
+      <!-- RIGHT pills -->
+      <StackPanel Orientation="Horizontal" Spacing="14"
+                  DockPanel.Dock="Right"
+                  VerticalAlignment="Center">
+        <!-- Token spend -->
+        <StackPanel Orientation="Horizontal" Spacing="4"
+                    IsVisible="{Binding TokenSpendLabel,
+                               Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+          <TextBlock Text="$"
+                     FontSize="10"
+                     Foreground="{StaticResource TextTertiaryBrush}"/>
+          <TextBlock Text="{Binding TokenSpendLabel}"
+                     FontSize="10"
+                     Foreground="{StaticResource TextSecondaryBrush}"/>
+        </StackPanel>
+
+        <!-- Backend pills -->
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <Ellipse Width="6" Height="6"
+                   Fill="{Binding OcrReady,
+                         Converter={x:Static vm:BoolToHealthBrushConverter.Instance}}"
+                   VerticalAlignment="Center"/>
+          <TextBlock Text="OCR"
+                     FontSize="10"
+                     Foreground="{StaticResource TextTertiaryBrush}"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <Ellipse Width="6" Height="6"
+                   Fill="{Binding SmtpRelayReady,
+                         Converter={x:Static vm:BoolToHealthBrushConverter.Instance}}"
+                   VerticalAlignment="Center"/>
+          <TextBlock Text="Email relay"
+                     FontSize="10"
+                     Foreground="{StaticResource TextTertiaryBrush}"/>
+        </StackPanel>
+
+        <!-- Active tasks pill — clickable -->
+        <Button Command="{Binding $parent[Window].DataContext.ActivityPanelVm.SelectTasksCommand}"
+                Classes="ghost" Padding="6,2" FontSize="10"
+                ToolTip.Tip="Click to open the Tasks tab in the right panel">
+          <StackPanel Orientation="Horizontal" Spacing="4">
+            <TextBlock Text="⚙"
+                       FontSize="11"
+                       Foreground="{StaticResource AccentBrush}"/>
+            <TextBlock Text="{Binding TasksPillLabel}"
+                       FontSize="10"
+                       Foreground="{StaticResource TextSecondaryBrush}"/>
+          </StackPanel>
+        </Button>
+
+        <!-- Server / chain health -->
+        <StackPanel Orientation="Horizontal" Spacing="4"
+                    ToolTip.Tip="{Binding ChainStatusLabel}">
+          <Ellipse Width="6" Height="6"
+                   Fill="{Binding ChainHealthy,
+                         Converter={x:Static vm:BoolToHealthBrushConverter.Instance}}"
+                   VerticalAlignment="Center"/>
+          <TextBlock Text="{Binding ChainStatusLabel}"
+                     FontSize="10"
+                     Foreground="{StaticResource TextTertiaryBrush}"/>
+        </StackPanel>
+      </StackPanel>
+    </DockPanel>
+  </Border>
+</UserControl>

@@ -206,27 +206,61 @@ public partial class SessionListViewModel : ObservableObject
         }
     }
 
-    /// <summary>Pick an initial session right after login. Prefers the
-    /// most recently active named session; falls back to the synthetic
-    /// default if any pre-multi-session messages exist; otherwise
-    /// creates a brand-new session so the chat surface is never empty.</summary>
+    /// <summary>Pick an initial session right after login.
+    ///
+    /// Resume policy (each fallback only if the previous yields nothing):
+    ///   1. Most recent NON-DEFAULT session that has at least one message.
+    ///   2. The synthetic default session (legacy pre-multi-session
+    ///      conversation), if it has any messages.
+    ///   3. Most recent non-default session even if empty (e.g. user
+    ///      hit "+ New chat" but didn't type yet — resume that draft).
+    ///   4. No-op: leave CurrentSessionId blank. The chat surface
+    ///      shows its empty state with the input box, and the user
+    ///      clicks "+ New chat" themselves when they want to start.
+    ///
+    /// Earlier this method auto-bootstrapped a "New chat" placeholder
+    /// in step 4. That accumulated "New chat · No messages yet" rows
+    /// on every login for users who hadn't sent a turn yet, which
+    /// felt noisy. Modern macOS apps (Mail, Messages) don't
+    /// pre-create empty conversations — they show an empty surface
+    /// until the user starts one.</summary>
     public async Task<string> SelectInitialAsync()
     {
         await RefreshAsync();
-        var first = Sessions.FirstOrDefault(s => !s.IsDefault);
-        if (first is not null)
+
+        // 1. Most recent non-default session WITH messages.
+        var withMessages = Sessions
+            .Where(s => !s.IsDefault && s.MessageCount > 0)
+            .FirstOrDefault();
+        if (withMessages is not null)
         {
-            Select(first.Id);
-            return first.Id;
+            Select(withMessages.Id);
+            return withMessages.Id;
         }
-        var fallback = Sessions.FirstOrDefault();
-        if (fallback is not null)
+
+        // 2. Legacy default session if it has any messages.
+        var defaultWithMessages = Sessions
+            .Where(s => s.IsDefault && s.MessageCount > 0)
+            .FirstOrDefault();
+        if (defaultWithMessages is not null)
         {
-            Select(fallback.Id);
-            return fallback.Id;
+            Select(defaultWithMessages.Id);
+            return defaultWithMessages.Id;
         }
-        // Brand-new user — bootstrap a session.
-        return await NewSessionAsync();
+
+        // 3. Anything at all (empty drafts the user can fill in).
+        var anyExisting = Sessions.FirstOrDefault();
+        if (anyExisting is not null)
+        {
+            Select(anyExisting.Id);
+            return anyExisting.Id;
+        }
+
+        // 4. Truly empty — no sessions of any kind. Leave selection
+        //    blank instead of bootstrapping one. The chat surface
+        //    renders its empty state (just the input box) and the
+        //    user explicitly clicks "+ New chat" when they're ready.
+        return "";
     }
 
     private void ApplyList(List<SessionInfo> fresh)
@@ -365,18 +399,21 @@ internal static class SessionPrefs
 
     private static string CollapsedPath => System.IO.Path.Combine(Dir, "session_rail.txt");
     private static string HiddenPath    => System.IO.Path.Combine(Dir, "session_rail_hidden.txt");
-    private static string CognitionPath => System.IO.Path.Combine(Dir, "cognition_hidden.txt");
+    // v2 path: bumped when we flipped the default from "shown" to
+    // "hidden" so existing users with the old "false" pref don't keep
+    // forcing cognition visible. New file = clean default of true.
+    private static string CognitionPath => System.IO.Path.Combine(Dir, "cognition_hidden_v2.txt");
     private static string ActivityPath  => System.IO.Path.Combine(Dir, "activity_sidebar_hidden.txt");
 
-    private static bool ReadFlag(string path)
+    private static bool ReadFlag(string path, bool fallback = false)
     {
         try
         {
-            if (!System.IO.File.Exists(path)) return false;
+            if (!System.IO.File.Exists(path)) return fallback;
             var raw = System.IO.File.ReadAllText(path).Trim();
             return raw == "1" || raw.Equals("true", StringComparison.OrdinalIgnoreCase);
         }
-        catch { return false; }
+        catch { return fallback; }
     }
 
     private static void WriteFlag(string path, bool value)
@@ -391,7 +428,11 @@ internal static class SessionPrefs
     public static bool LoadHidden() => ReadFlag(HiddenPath);
     public static void SaveHidden(bool v) => WriteFlag(HiddenPath, v);
 
-    public static bool LoadCognitionHidden() => ReadFlag(CognitionPath);
+    // Cognition defaults to HIDDEN on first launch (HIG progressive
+    // disclosure — inspector panels are opt-in, not opt-out). The
+    // fallback parameter on ReadFlag is what enforces that when the
+    // user has never toggled the panel.
+    public static bool LoadCognitionHidden() => ReadFlag(CognitionPath, fallback: true);
     public static void SaveCognitionHidden(bool v) => WriteFlag(CognitionPath, v);
 
     public static bool LoadActivityHidden() => ReadFlag(ActivityPath);

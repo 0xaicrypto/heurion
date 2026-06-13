@@ -615,8 +615,12 @@ public partial class WorkdirNodeViewModel : ObservableObject
     /// is looking at on hover.</summary>
     public string SyncTooltip => State switch
     {
-        SyncState.Synced  => "Confirmed on Greenfield",
-        SyncState.Pending => "Local-only — pending Greenfield put (WAL will retry)",
+        // #134: Greenfield mirror disabled — sync state UI is dormant
+        // (Work Directory panel hidden in axaml). Tooltips reworded
+        // so any stale "Greenfield" copy that does sneak through
+        // doesn't confuse users while we're on local-only storage.
+        SyncState.Synced  => "Confirmed locally",
+        SyncState.Pending => "Local-only (durability backup paused while migrating storage)",
         SyncState.Folder  => "",
         _                 => "Sync state unknown",
     };

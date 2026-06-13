@@ -1,0 +1,227 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:RuneDesktop.UI.ViewModels"
+             x:Class="RuneDesktop.UI.Views.PatientNavigatorView"
+             x:DataType="vm:PatientNavigatorViewModel">
+
+  <!--
+    #174 — patient-centric left rail. Replaces SessionRailView.
+    Each patient_hash gets a collapsible card; expanding shows the
+    timeline of all studies for that patient. Clicking a study tells
+    the parent (via PatientNavigatorViewModel.OnStudySelected) to
+    surface it in the chat / viewer.
+  -->
+
+  <Border Background="{StaticResource SurfaceBaseBrush}"
+          BorderBrush="{StaticResource DividerBrush}"
+          BorderThickness="0,0,1,0"
+          Width="260">
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
+      <!-- Header -->
+      <Border Grid.Row="0"
+              Padding="12,12,12,8"
+              BorderThickness="0,0,0,1"
+              BorderBrush="{StaticResource DividerBrush}">
+        <DockPanel>
+          <!-- #181 — header label is now a button that navigates to
+               the full Patients view in the main canvas. The rail
+               stays compact (just current-context summary); the
+               main canvas is the place to browse the whole roster.
+               #184 — bind to local OpenFullRosterCommand instead of
+               crossing DataContext with a type cast (Avalonia 11.3
+               can't resolve namespaced type casts in runtime binding
+               expressions — that was the startup crash). The command
+               just invokes a callback that MainViewModel sets to
+               flip ActiveView = "patients". -->
+          <Button DockPanel.Dock="Left"
+                  Command="{Binding OpenFullRosterCommand}"
+                  Classes="ghost"
+                  Padding="0" FontSize="13"
+                  VerticalAlignment="Center"
+                  ToolTip.Tip="Open full patient roster">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <TextBlock Text="Patients"
+                         FontSize="13" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimaryBrush}"/>
+              <TextBlock Text="›"
+                         FontSize="13"
+                         Foreground="{StaticResource TextTertiaryBrush}"/>
+            </StackPanel>
+          </Button>
+          <Button DockPanel.Dock="Right"
+                  Command="{Binding RefreshAsyncCommand}"
+                  Classes="ghost"
+                  Padding="6,2" FontSize="13"
+                  Foreground="{StaticResource TextSecondaryBrush}"
+                  ToolTip.Tip="Refresh patient list">
+            <TextBlock Text="↻"/>
+          </Button>
+          <!-- #178 — explicit "+ New patient" affordance. The medic
+               can also drag-drop a zip to auto-mint a card, but having
+               a clear primary action covers cases where the first
+               input is a TIFF / PDF / lab note rather than DICOM. -->
+          <!-- #189 — use tinted class defaults (matches login-page
+               button sizing). No inline padding/font overrides. -->
+          <Button DockPanel.Dock="Right"
+                  Command="{Binding NewPatientCommand}"
+                  Classes="tinted"
+                  Margin="0,0,6,0"
+                  ToolTip.Tip="Start a new patient case — agent will prompt for files">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <TextBlock Text="+" FontWeight="SemiBold"/>
+              <TextBlock Text="New patient"/>
+            </StackPanel>
+          </Button>
+        </DockPanel>
+      </Border>
+
+      <!-- Search -->
+      <Border Grid.Row="1" Padding="12,8,12,8">
+        <TextBox Text="{Binding SearchQuery, Mode=TwoWay}"
+                 Watermark="Search patients..."
+                 FontSize="12"
+                 Padding="8,6"/>
+      </Border>
+
+      <!-- Patient list -->
+      <ScrollViewer Grid.Row="2" Padding="6,0,6,8">
+        <Grid>
+        <!-- Empty-state CTA: shown when no patients exist yet. The
+             primary action button surfaces the file picker directly
+             so the medic doesn't have to hunt for "+ New" — same
+             gesture as Slack's "Send your first message" placeholder. -->
+        <Border Padding="16,28"
+                IsVisible="{Binding !Patients.Count}"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Top">
+          <!-- #189 — empty-state CTA removed. Header "+ New patient"
+               is the single entry point; this just illustrates the
+               state and points at the header. -->
+          <StackPanel Spacing="14" HorizontalAlignment="Center">
+            <TextBlock Text="🩻"
+                       FontSize="42"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="No patients yet"
+                       FontSize="14" FontWeight="SemiBold"
+                       HorizontalAlignment="Center"
+                       Foreground="{StaticResource TextPrimaryBrush}"/>
+            <TextBlock TextWrapping="Wrap" FontSize="11"
+                       TextAlignment="Center" MaxWidth="220"
+                       Foreground="{StaticResource TextSecondaryBrush}"
+                       Text="Click + New patient above to start a case. The agent will ask for the studies — DICOM .zip, TIFF, lab reports — each grouped under one patient."/>
+          </StackPanel>
+        </Border>
+        <ItemsControl ItemsSource="{Binding FilteredPatients}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="vm:PatientCardViewModel">
+              <Border Margin="0,2,0,4"
+                      Padding="10,8"
+                      CornerRadius="8"
+                      BorderBrush="{StaticResource DividerBrush}"
+                      BorderThickness="1"
+                      Background="{StaticResource SurfaceCardBrush}">
+                <StackPanel Spacing="6">
+                  <!-- Card header (always visible) -->
+                  <Button Command="{Binding ToggleExpandAsyncCommand}"
+                          Classes="ghost"
+                          Padding="0"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Stretch">
+                    <Grid ColumnDefinitions="*,Auto"
+                          RowDefinitions="Auto,Auto">
+                      <TextBlock Grid.Column="0" Grid.Row="0"
+                                 Text="{Binding ShortHash}"
+                                 FontSize="12" FontWeight="SemiBold"
+                                 Foreground="{StaticResource TextPrimaryBrush}"/>
+                      <TextBlock Grid.Column="1" Grid.Row="0"
+                                 FontSize="11"
+                                 Foreground="{StaticResource TextTertiaryBrush}">
+                        <Run Text="📁 "/><Run Text="{Binding StudyCount}"/>
+                      </TextBlock>
+                      <TextBlock Grid.Column="0" Grid.Row="1"
+                                 Grid.ColumnSpan="2"
+                                 Text="{Binding DemographicsLabel}"
+                                 FontSize="10"
+                                 Foreground="{StaticResource TextSecondaryBrush}"
+                                 Margin="0,2,0,0"/>
+                    </Grid>
+                  </Button>
+
+                  <!-- Latest modality + date strip -->
+                  <StackPanel Orientation="Horizontal" Spacing="6"
+                              IsVisible="{Binding !IsExpanded}">
+                    <Border CornerRadius="3" Padding="4,1"
+                            Background="{StaticResource SurfaceMutedBrush}">
+                      <TextBlock Text="{Binding LatestModality}"
+                                 FontSize="10"
+                                 Foreground="{StaticResource AccentBrush}"/>
+                    </Border>
+                    <TextBlock Text="{Binding LatestStudyDate}"
+                               FontSize="10"
+                               Foreground="{StaticResource TextTertiaryBrush}"
+                               VerticalAlignment="Center"/>
+                  </StackPanel>
+
+                  <!-- Expanded: studies timeline -->
+                  <StackPanel IsVisible="{Binding IsExpanded}" Spacing="3">
+                    <TextBlock Text="Loading studies..."
+                               FontSize="10"
+                               IsVisible="{Binding IsLoadingStudies}"
+                               Foreground="{StaticResource TextTertiaryBrush}"/>
+                    <ItemsControl ItemsSource="{Binding Studies}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                          <Button Classes="ghost"
+                                  Padding="6,4"
+                                  Margin="0,1"
+                                  HorizontalAlignment="Stretch"
+                                  HorizontalContentAlignment="Stretch"
+                                  Command="{Binding $parent[ItemsControl].DataContext.SelectStudyCommand}"
+                                  CommandParameter="{Binding}">
+                            <Grid ColumnDefinitions="Auto,*,Auto">
+                              <TextBlock Grid.Column="0"
+                                         Text="📅"
+                                         FontSize="11"
+                                         Margin="0,0,6,0"
+                                         VerticalAlignment="Center"/>
+                              <StackPanel Grid.Column="1">
+                                <TextBlock FontSize="11"
+                                           Foreground="{StaticResource TextPrimaryBrush}">
+                                  <Run Text="{Binding Modality}"/><Run Text=" · "/><Run Text="{Binding StudyDate}"/>
+                                </TextBlock>
+                                <TextBlock Text="{Binding StudyDescription}"
+                                           FontSize="10"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           MaxWidth="190"/>
+                              </StackPanel>
+                            </Grid>
+                          </Button>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        </Grid>
+      </ScrollViewer>
+
+      <!-- Footer kept minimal — the inline empty-state above already
+           explains how to add a patient. Reserved for future use
+           (refresh status, total patient count, etc.). -->
+      <Border Grid.Row="3"
+              Padding="12,4"
+              BorderThickness="0,1,0,0"
+              BorderBrush="{StaticResource DividerBrush}"
+              IsVisible="{Binding Patients.Count}">
+        <TextBlock FontSize="10"
+                   Foreground="{StaticResource TextTertiaryBrush}">
+          <Run Text="{Binding Patients.Count}"/><Run Text=" patient(s) on file"/>
+        </TextBlock>
+      </Border>
+    </Grid>
+  </Border>
+</UserControl>

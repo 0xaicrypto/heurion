@@ -67,7 +67,7 @@ dotnet publish "$PROJECT" \
     -o "$PUBLISH_DIR" \
     --nologo --verbosity minimal
 
-chmod +x "$PUBLISH_DIR/RuneDesktop.UI"
+chmod +x "$PUBLISH_DIR/Nexus"
 
 # ── Step 2: tarball (always, even if appimagetool missing) ───────────
 TARBALL="$DIST/$APP_NAME-linux-$ARCH_LABEL-$VERSION.tar.gz"
@@ -92,7 +92,7 @@ cat > "$APPDIR/AppRun" <<EOF
 #!/bin/sh
 HERE=\$(dirname "\$(readlink -f "\$0")")
 export LD_LIBRARY_PATH="\$HERE/usr/bin:\$LD_LIBRARY_PATH"
-exec "\$HERE/usr/bin/RuneDesktop.UI" "\$@"
+exec "\$HERE/usr/bin/Nexus" "\$@"
 EOF
 chmod +x "$APPDIR/AppRun"
 
@@ -102,7 +102,7 @@ cat > "$APPDIR/$APP_NAME.desktop" <<EOF
 Type=Application
 Name=$APP_NAME
 Comment=Self-evolving AI agent on BNB Chain
-Exec=RuneDesktop.UI
+Exec=Nexus
 Icon=$APP_NAME
 Categories=Network;Chat;Utility;
 Terminal=false

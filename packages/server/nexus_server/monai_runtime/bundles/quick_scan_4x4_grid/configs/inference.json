@@ -1,0 +1,39 @@
+{
+  "backend_kind": "gemini_flash_quick_scan",
+  "prompt_id": "quick_scan_triage_v3",
+  "prompt_version": "3.0.0",
+  "network_def": null,
+  "preprocessing": {
+    "render_pipeline": "nexus_server.dicom.render_4x4_grid",
+    "window_level_presets": {
+      "CT_abdomen":    {"width": 400, "level": 40},
+      "CT_lung":       {"width": 1500, "level": -600},
+      "CT_brain":      {"width": 80,   "level": 40},
+      "CT_bone":       {"width": 1800, "level": 400},
+      "MR_default":    "auto"
+    },
+    "grid_dim": [4, 4],
+    "slice_selection": "uniform_with_anchors",
+    "output_resolution": [512, 512]
+  },
+  "postprocessing": {
+    "parse_strategy": "structured_markdown_v3",
+    "fields_required": [
+      "slice_range",
+      "verdict",
+      "finding",
+      "urgency"
+    ],
+    "disclaimer_text": "Preliminary AI screen — not a diagnosis. Radiologist review required.",
+    "disclaimer_immutable": true
+  },
+  "safety": {
+    "failure_mode": "emit_empty_with_disclaimer",
+    "rationale": "Never leave the medic with an empty silence; always emit a report — even 'no flagged findings' — so it's clear Quick scan ran."
+  },
+  "provenance_extraction_model": "monai-bundle://quick_scan_4x4_grid@0.3.0",
+  "notes": [
+    "Per Rev-8: raw_output_text is archived verbatim in ingestion_llm_response events; replay never re-invokes Gemini Flash.",
+    "Per Rev-6: this Bundle is the M10 swap-in point — backend_kind changes from gemini_flash_quick_scan to remote_monai_vista3d when inference companion ships."
+  ]
+}

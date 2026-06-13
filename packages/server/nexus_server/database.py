@@ -52,15 +52,68 @@ def init_db() -> None:
         """
     )
 
-    # Idempotent migration: add chain_agent_id / chain_register_tx columns
-    # if the table predates them (CREATE TABLE IF NOT EXISTS won't add new
-    # columns on its own).
+    # Idempotent migration: add new columns if the table predates them.
+    # CREATE TABLE IF NOT EXISTS won't add new columns; ALTER guarded by
+    # PRAGMA inspection is the SQLite-portable pattern.
     cursor.execute("PRAGMA table_info(users)")
     existing_cols = {row[1] for row in cursor.fetchall()}
     if "chain_agent_id" not in existing_cols:
         cursor.execute("ALTER TABLE users ADD COLUMN chain_agent_id INTEGER")
     if "chain_register_tx" not in existing_cols:
         cursor.execute("ALTER TABLE users ADD COLUMN chain_register_tx TEXT")
+
+    # ── Billing + approval columns (Phase: paid SaaS) ────────────────
+    # status:       lifecycle gate set by admin approval flow.
+    #               pending / approved / suspended / declined.
+    # email:        primary contact + magic-link recovery target.
+    # organization / intended_use / signup_metadata: collected at
+    #               signup for the admin's review.
+    # is_admin:     1 enables /api/v1/admin/* endpoints for this user.
+    # tier:         subscription tier — drives quota + price.
+    #               beta / trial / pro / pro_plus / radiology_pro /
+    #               team_seat / enterprise.
+    # stripe_customer_id:    Stripe Customer ID (cus_...) created on first
+    #                        checkout.
+    # stripe_subscription_id: Stripe Subscription ID (sub_...). Null when
+    #                        user is on trial / no active sub.
+    # subscription_state:    mirrors Stripe's status — none / trialing /
+    #                        active / past_due / canceled / unpaid /
+    #                        incomplete.
+    # trial_ends_at:         when the no-card trial expires. Server
+    #                        flips to 'trial_expired' if no subscription
+    #                        by this time.
+    # subscription_renews_at: convenience denormalisation of Stripe's
+    #                        current_period_end. Avoids needing to hit
+    #                        the API just to render "renews on …".
+    billing_cols = {
+        "status":                ("TEXT", "'approved'"),  # legacy users grandfathered
+        "email":                 ("TEXT", "NULL"),
+        "organization":          ("TEXT", "NULL"),
+        "intended_use":          ("TEXT", "NULL"),
+        "signup_metadata":       ("TEXT", "NULL"),
+        "signup_ip":             ("TEXT", "NULL"),
+        "approved_at":           ("TIMESTAMP", "NULL"),
+        "approved_by":           ("TEXT", "NULL"),
+        "admin_notes":           ("TEXT", "NULL"),
+        "is_admin":              ("INTEGER", "0"),
+        "tier":                  ("TEXT", "'beta'"),
+        "stripe_customer_id":    ("TEXT", "NULL"),
+        "stripe_subscription_id":("TEXT", "NULL"),
+        "subscription_state":    ("TEXT", "NULL"),
+        "trial_ends_at":         ("TIMESTAMP", "NULL"),
+        "subscription_renews_at":("TIMESTAMP", "NULL"),
+    }
+    for col, (typ, default) in billing_cols.items():
+        if col not in existing_cols:
+            cursor.execute(
+                f"ALTER TABLE users ADD COLUMN {col} {typ} DEFAULT {default}"
+            )
+
+    # Index frequent admin queries: "pending users sorted by signup time".
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_users_status_created "
+        "ON users(status, created_at DESC)"
+    )
 
     # Phase B: ``sync_events`` table dropped.
     #
@@ -235,6 +288,132 @@ def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS idx_nexus_sessions_user "
         "ON nexus_sessions(user_id, archived, last_message_at DESC)"
     )
+
+    # ── Workflows (Phase 1a) ─────────────────────────────────────────
+    #
+    # A workflow is a stored sequence of agent steps (skill names) the
+    # user can run end-to-end. Definition is held as a JSON blob in
+    # ``definition`` so the schema can evolve without per-field
+    # migrations — see workflows.py for the WorkflowDefinition shape.
+    #
+    # We track runs separately so a single workflow can have many
+    # concurrent / historical executions, each with its own per-step
+    # input/output trace. This is the "chain-anchored audit" anchor
+    # point for Phase 4 — each run gets a Merkle root over its step
+    # rows + a BSC tx hash once anchored.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS nexus_workflows (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            definition TEXT NOT NULL,                 -- JSON: WorkflowDefinition
+            created_at TIMESTAMP NOT NULL,
+            updated_at TIMESTAMP NOT NULL,
+            archived INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_nexus_workflows_user "
+        "ON nexus_workflows(user_id, archived, updated_at DESC)"
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS nexus_workflow_runs (
+            id TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            status TEXT NOT NULL,                     -- pending | running | succeeded | failed | cancelled
+            inputs TEXT NOT NULL DEFAULT '{}',        -- JSON: input map at submit time
+            error_message TEXT NOT NULL DEFAULT '',
+            current_step INTEGER NOT NULL DEFAULT 0,
+            total_steps INTEGER NOT NULL DEFAULT 0,
+            total_cost_usd REAL NOT NULL DEFAULT 0.0, -- rolled up across steps
+            started_at TIMESTAMP NOT NULL,
+            finished_at TIMESTAMP,
+            anchor_tx TEXT,                           -- BSC tx hash (Phase 4)
+            -- v2.1 iterative mode tracking. Default 0 / "" so existing
+            -- linear-mode rows continue to deserialise cleanly.
+            current_iteration INTEGER NOT NULL DEFAULT 0,
+            max_iterations INTEGER NOT NULL DEFAULT 0,
+            last_gatekeeper_verdict TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (workflow_id) REFERENCES nexus_workflows(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_nexus_workflow_runs_user "
+        "ON nexus_workflow_runs(user_id, started_at DESC)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_nexus_workflow_runs_workflow "
+        "ON nexus_workflow_runs(workflow_id, started_at DESC)"
+    )
+
+    # Migration: backfill v2.1 columns on existing tables (idempotent).
+    # ALTER TABLE ADD COLUMN doesn't have IF NOT EXISTS in SQLite, so we
+    # introspect first.
+    existing_cols = {
+        r[1] for r in cursor.execute(
+            "PRAGMA table_info(nexus_workflow_runs)"
+        ).fetchall()
+    }
+    for col, ddl in [
+        ("current_iteration",       "INTEGER NOT NULL DEFAULT 0"),
+        ("max_iterations",          "INTEGER NOT NULL DEFAULT 0"),
+        ("last_gatekeeper_verdict", "TEXT NOT NULL DEFAULT ''"),
+    ]:
+        if col not in existing_cols:
+            cursor.execute(
+                f"ALTER TABLE nexus_workflow_runs ADD COLUMN {col} {ddl}"
+            )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS nexus_workflow_run_steps (
+            run_id TEXT NOT NULL,
+            step_index INTEGER NOT NULL,
+            skill_name TEXT NOT NULL,
+            status TEXT NOT NULL,                     -- pending | running | succeeded | failed | skipped
+            input TEXT NOT NULL DEFAULT '',           -- handoff payload sent to LLM
+            output TEXT NOT NULL DEFAULT '',          -- model's full response
+            model_used TEXT NOT NULL DEFAULT '',
+            cost_usd REAL NOT NULL DEFAULT 0.0,
+            started_at TIMESTAMP,
+            finished_at TIMESTAMP,
+            error_message TEXT NOT NULL DEFAULT '',
+            -- v2.1: iteration this step belongs to (0 for linear).
+            -- The PRIMARY KEY changes from (run_id, step_index) to
+            -- (run_id, iteration, step_index) so an iterative run can
+            -- store multiple rows per (run_id, step_index).
+            iteration INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (run_id, iteration, step_index),
+            FOREIGN KEY (run_id) REFERENCES nexus_workflow_runs(id)
+        )
+        """
+    )
+
+    # Migration: existing nexus_workflow_run_steps rows have PRIMARY KEY
+    # (run_id, step_index); we need to upgrade to include iteration.
+    # SQLite can't ALTER PRIMARY KEY, so we only do the ALTER for the
+    # iteration column. New iterative runs accept the collision risk —
+    # we mitigate by always writing iteration>=1 for iterative runs and
+    # checking for existing rows before INSERT (handled in runner).
+    existing_step_cols = {
+        r[1] for r in cursor.execute(
+            "PRAGMA table_info(nexus_workflow_run_steps)"
+        ).fetchall()
+    }
+    if "iteration" not in existing_step_cols:
+        cursor.execute(
+            "ALTER TABLE nexus_workflow_run_steps "
+            "ADD COLUMN iteration INTEGER NOT NULL DEFAULT 0"
+        )
 
     conn.commit()
     conn.close()

@@ -21,13 +21,17 @@
             BoxShadow="0 8 32 0 #44000000">
       <StackPanel Spacing="20">
 
-        <!-- Logo + heading -->
+        <!-- Logo + heading. Neutral surface tile to match LoginView and
+             SplashWindow — the brand colour belongs in the dock icon,
+             not in every chrome surface. -->
         <StackPanel Orientation="Horizontal" Spacing="14"
                     HorizontalAlignment="Center">
-          <Border Width="48" Height="48" CornerRadius="12"
-                  Background="{StaticResource BrandAccentBrush}">
-            <TextBlock Text="N" FontSize="24" FontWeight="Bold"
-                       Foreground="{StaticResource TextOnAccentBrush}"
+          <!-- #185 — branded logo tile (matches passkey login page).
+               72×72 deep-navy square + BNB-yellow N. -->
+          <Border Width="72" Height="72" CornerRadius="16"
+                  Background="#0F1729">
+            <TextBlock Text="N" FontSize="40" FontWeight="Bold"
+                       Foreground="#F0B90B"
                        HorizontalAlignment="Center"
                        VerticalAlignment="Center"/>
           </Border>
@@ -57,16 +61,14 @@
         <!-- Server URL input -->
         <StackPanel Spacing="6">
           <TextBlock Text="SERVER URL"
-                     FontSize="10" FontWeight="Bold"
+                     FontSize="10" FontWeight="SemiBold"
                      Foreground="{StaticResource TextTertiaryBrush}"/>
           <TextBox Text="{Binding ServerUrl, Mode=TwoWay,
                                   UpdateSourceTrigger=PropertyChanged}"
                    Watermark="https://1-2-3-4.nip.io  or  http://localhost:8001"
+                   Classes="chat"
                    FontFamily="Menlo, Consolas, monospace"
-                   FontSize="13"
-                   Padding="12,10"
-                   Background="{StaticResource SurfaceMutedBrush}"
-                   BorderBrush="{StaticResource DividerBrush}"/>
+                   FontSize="13"/>
           <TextBlock FontSize="11"
                      Foreground="{StaticResource TextTertiaryBrush}"
                      TextWrapping="Wrap">
@@ -98,16 +100,18 @@
         <!-- Test connection button + status -->
         <StackPanel Spacing="8">
           <StackPanel Orientation="Horizontal" Spacing="10">
+            <!-- Test = tinted (secondary commitment). Continue is the
+                 primary CTA below; using filled .accent here would
+                 compete with it. -->
             <Button Content="Test connection"
                     Command="{Binding TestConnectionCommand}"
-                    Classes="primary"
-                    Padding="16,8"
+                    Classes="tinted"
                     HorizontalAlignment="Left"
                     FontSize="13"/>
             <!-- Spinner while testing -->
             <TextBlock Text="⟳"
                        FontSize="16"
-                       Foreground="{StaticResource AccentClaudeBrush}"
+                       Foreground="{StaticResource SystemBlueBrush}"
                        VerticalAlignment="Center"
                        IsVisible="{Binding TestStatus, ConverterParameter=testing,
                                    Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
@@ -131,21 +135,15 @@
             </TextBlock>
           </StackPanel>
 
-          <!-- Status pill — color depends on TestStatus.
-               We render 3 separate borders gated on equality with the
-               sentinel strings so the colors are static + simple. -->
+          <!-- Status pill — tinted background using the semantic brush.
+               macOS info banners use ~10 % tint of the semantic colour
+               on a neutral surface, no border. Removes the prior dark-
+               green block (#1B3220) which was a holdover from the old
+               palette. -->
           <Border CornerRadius="6" Padding="10,7"
-                  Background="#1B3220"
-                  BorderBrush="{StaticResource SuccessBrush}"
-                  BorderThickness="1">
-            <Border.IsVisible>
-              <Binding Path="TestStatus"
-                       Converter="{x:Static StringConverters.IsNotNullOrEmpty}"/>
-            </Border.IsVisible>
-            <Border.Styles>
-              <!-- Hide unless TestStatus == "ok". We filter via a
-                   ConverterParameter trick: render only when equal. -->
-            </Border.Styles>
+                  Background="#2630D158"
+                  IsVisible="{Binding TestStatus,
+                              Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
             <TextBlock Text="{Binding TestMessage}"
                        FontSize="12"
                        Foreground="{StaticResource TextPrimaryBrush}"
@@ -153,23 +151,22 @@
           </Border>
         </StackPanel>
 
-        <!-- Continue / use-anyway buttons -->
+        <!-- Continue / use-anyway buttons. macOS sheet convention:
+             secondary on the left (ghost), primary filled on the right. -->
         <Grid ColumnDefinitions="Auto,*,Auto">
           <Button Grid.Column="0"
                   Content="Use anyway"
                   Command="{Binding UseAnywayCommand}"
                   Classes="ghost"
                   FontSize="12"
-                  Padding="12,8"
                   ToolTip.Tip="Save without verifying — useful if the server is offline or behind a VPN."/>
 
           <Button Grid.Column="2"
-                  Content="Continue →"
+                  Content="Continue"
                   Command="{Binding ContinueCommand}"
                   IsEnabled="{Binding CanContinue}"
-                  Classes="primary"
+                  Classes="accent"
                   FontSize="13"
-                  Padding="20,10"
                   HorizontalAlignment="Right"/>
         </Grid>
 

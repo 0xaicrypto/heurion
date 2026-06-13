@@ -40,11 +40,22 @@ public partial class CognitionPanelViewModel : ObservableObject
     [ObservableProperty] private string _streamStatus = "idle";
 
     /// <summary>Top-level visibility of the entire cognition column.
-    /// Persisted to disk so the user's choice survives restart. The
-    /// chat surface's right column collapses to 0 width when this is
-    /// true. Toggle from the top bar (Cmd+Shift+\\). Distinct from the
-    /// streams' own per-section show/hide.</summary>
-    [ObservableProperty] private bool _isHidden;
+    /// Persisted to disk so the user's choice survives restart.
+    ///
+    /// DEFAULTS TO HIDDEN (true). The cognition column is a
+    /// power-user inspector — it shows live thinking traces,
+    /// Greenfield queue health, on-chain anchor history, etc. For a
+    /// new user the visual density is overwhelming and steals focus
+    /// from the chat itself. macOS / HIG progressive-disclosure
+    /// pattern: hide non-essential dashboards by default, let the
+    /// user opt in via the toolbar toggle.
+    ///
+    /// SessionPrefs.LoadCognitionHidden() restores the user's last
+    /// choice across restarts; if they've opened it once, it stays
+    /// open. If we've never written the file (first launch / first
+    /// run after this default flip) the catch keeps IsHidden at
+    /// its declared default — true.</summary>
+    [ObservableProperty] private bool _isHidden = true;
 
     /// <summary>Phase C3: pressure dashboard child VM. Refreshed
     /// alongside the polled streams (5s minimum cadence enforced
@@ -80,8 +91,13 @@ public partial class CognitionPanelViewModel : ObservableObject
             OnPropertyChanged(nameof(OnChainEmpty));
         Workdir.CollectionChanged += (_, _) =>
             OnPropertyChanged(nameof(WorkdirEmpty));
-        try { IsHidden = SessionPrefs.LoadCognitionHidden(); }
-        catch { /* missing prefs file → default visible */ }
+        // #174 follow-up — the new ActivityPanelView on the far
+        // right now owns the "live cognition" surface. The
+        // ChatView-embedded Cognition panel is redundant with it,
+        // so we ignore any saved SessionPrefs value and force it
+        // hidden by default. The medic can still re-toggle from
+        // the header brain icon if they want both panels open.
+        IsHidden = true;
     }
 
     /// <summary>Tell the cognition panel which session is active.
@@ -321,7 +337,10 @@ public partial class CognitionPanelViewModel : ObservableObject
         // collapsed-turn rows ("▸ Turn 3 · 4.7s · 'Show me ZK …'")
         // make sense at a glance.
         if (frame.Kind == "heard" && string.IsNullOrEmpty(turn.Headline))
-            turn.Headline = frame.Content;
+            // ?? "" silences CS8601 — Content is nullable on the
+            // wire (server may send "kind=heard" with empty body for
+            // tool-only turns) but turn.Headline is non-null.
+            turn.Headline = frame.Content ?? "";
 
         if (frame.Kind == "replied")
         {

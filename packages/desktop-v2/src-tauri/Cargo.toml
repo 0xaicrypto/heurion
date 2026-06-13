@@ -1,0 +1,28 @@
+[package]
+name = "nexus-desktop-v2"
+version = "0.1.0"
+description = "Nexus desktop — clinical workflow agent"
+authors = ["JZ"]
+edition = "2021"
+rust-version = "1.77"
+
+# https://crates.io/categories/development-tools::build-utils
+[lib]
+name = "nexus_desktop_v2_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.1", features = [] }
+tauri-plugin-shell = "2.0"
+tauri-plugin-log = "2.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+
+[features]
+# this feature is used for production builds or when `devUrl` points to localhost
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

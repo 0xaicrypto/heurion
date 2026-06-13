@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -50,6 +51,15 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string? _toastMessage;
     [ObservableProperty] private bool _toastVisible;
 
+    /// <summary>#181 — set by the View layer (MainWindow code-behind)
+    /// at construction so the VM can request a modal "New patient"
+    /// dialog without owning Window / StorageProvider. The handler
+    /// shows the modal and returns the dialog result (or null on
+    /// cancel). Plain delegate field (not event) since there's
+    /// exactly one subscriber.</summary>
+    public System.Func<NewPatientDialogViewModel, System.Threading.Tasks.Task<NewPatientDialogResult?>>?
+        RequestShowNewPatientDialog { get; set; }
+
     /// <summary>First grapheme of the display name, used for the avatar
     /// pill in the top-right corner. Returns "?" when no profile.</summary>
     public string UserInitial => string.IsNullOrEmpty(UserName)
@@ -78,7 +88,120 @@ public partial class MainViewModel : ObservableObject
     /// so the gear icon on the Login view has somewhere to point at;
     /// only displayed when ShowWelcome == true.</summary>
     public WelcomeViewModel WelcomeVm { get; }
+    /// <summary>Plan &amp; Billing surface — current tier, trial countdown,
+    /// upgrade cards. Reached from the user-pill menu (top-right ▾).</summary>
+    public PlanViewModel PlanVm { get; }
+    /// <summary>Account surface — editable display name + signup metadata.
+    /// Reached from the user-pill menu.</summary>
+    public AccountViewModel AccountVm { get; }
+    /// <summary>Workflows surface — multi-agent pipelines.
+    /// Reached from the user-pill menu.</summary>
+    public WorkflowsViewModel WorkflowsVm { get; }
+    /// <summary>Files surface — cross-session uploaded file library
+    /// with preview. Reached from the left rail (top-level nav).</summary>
+    public FilesViewModel FilesVm { get; }
+
+    /// <summary>#174 — new top-level VMs for the redesigned shell.
+    /// PatientNavigatorVm replaces the session rail; ActivityPanelVm
+    /// hosts Now/Tasks/History tabs in the right rail; StatusBarVm
+    /// drives the new bottom status bar.</summary>
+    public PatientNavigatorViewModel PatientNavigatorVm { get; }
+    public ActivityPanelViewModel ActivityPanelVm { get; }
+    public StatusBarViewModel StatusBarVm { get; }
+    /// <summary>#177 — onboarding checklist surfaced at the top of
+    /// the chat canvas on first launch. Auto-hides once all items
+    /// are complete OR the medic dismisses it.</summary>
+    public OnboardingChecklistViewModel OnboardingVm { get; }
+
+    /// <summary>#181 — main-canvas full patient roster. Shown when
+    /// ActiveView == "patients" (medic clicks the "Patients" header
+    /// in the left rail, or opens Library → Patients).</summary>
+    public PatientsViewModel PatientsVm { get; }
+
     public ApiClient Api { get; }
+
+    /// <summary>Which top-level view is visible:
+    /// "chat" / "plan" / "account" / "workflows". Defaults to chat.
+    /// Plan / Account / Workflows are entered from the user-pill
+    /// drop-down menu (Slack / Linear / Figma pattern).</summary>
+    [ObservableProperty] private string _activeView = "chat";
+
+    [RelayCommand] private void ShowChat() => ActiveView = "chat";
+    [RelayCommand] private void ShowPlan() => ActiveView = "plan";
+    [RelayCommand] private void ShowAccount() => ActiveView = "account";
+    [RelayCommand] private void ShowWorkflows() => ActiveView = "workflows";
+    [RelayCommand] private void ShowFiles() => ActiveView = "files";
+    // #175 — new top-level Viewer + Library tabs. Viewer hosts the
+    // DICOM viewer inline (so the medic doesn't have to pop a
+    // browser). Library is the consolidation hub for
+    // Workflows/Files/Plan/Account — a card grid that links into the
+    // sub-views without each needing its own top-level slot.
+    [RelayCommand] private void ShowViewer() => ActiveView = "viewer";
+    [RelayCommand] private void ShowLibrary() => ActiveView = "library";
+    [RelayCommand] private void ShowPatients() => ActiveView = "patients";
+
+    public bool IsChatActive => ActiveView == "chat";
+    public bool IsPlanActive => ActiveView == "plan";
+    public bool IsAccountActive => ActiveView == "account";
+    public bool IsWorkflowsActive => ActiveView == "workflows";
+    public bool IsFilesActive => ActiveView == "files";
+    public bool IsViewerActive => ActiveView == "viewer";
+    public bool IsLibraryActive => ActiveView == "library";
+    /// <summary>#181 — full-roster Patients view active flag.</summary>
+    public bool IsPatientsActive => ActiveView == "patients";
+
+    /// <summary>#175 — convenience flags for the canvas top tab strip:
+    /// Chat / Viewer / Library are the three primary tabs. Plan /
+    /// Account / Workflows / Files are sub-pages reached via the
+    /// Library card grid — they aren't top-level tabs anymore but
+    /// keep their own IsXActive flags so the legacy axaml bindings
+    /// in their views keep resolving correctly.</summary>
+    public bool IsCanvasChat    => IsChatActive;
+    public bool IsCanvasViewer  => IsViewerActive;
+    public bool IsCanvasLibrary => IsLibraryActive
+                                || IsPlanActive
+                                || IsAccountActive
+                                || IsWorkflowsActive
+                                || IsFilesActive;
+    /// <summary>#181 — patients view is its own canvas slot.</summary>
+    public bool IsCanvasPatients => IsPatientsActive;
+
+    partial void OnActiveViewChanged(string value)
+    {
+        OnPropertyChanged(nameof(IsChatActive));
+        OnPropertyChanged(nameof(IsPlanActive));
+        OnPropertyChanged(nameof(IsAccountActive));
+        OnPropertyChanged(nameof(IsWorkflowsActive));
+        OnPropertyChanged(nameof(IsFilesActive));
+        OnPropertyChanged(nameof(IsViewerActive));
+        OnPropertyChanged(nameof(IsLibraryActive));
+        OnPropertyChanged(nameof(IsPatientsActive));
+        OnPropertyChanged(nameof(IsCanvasChat));
+        OnPropertyChanged(nameof(IsCanvasViewer));
+        OnPropertyChanged(nameof(IsCanvasLibrary));
+        OnPropertyChanged(nameof(IsCanvasPatients));
+
+        // #181 — refresh roster when navigating into the Patients view.
+        if (value == "patients" && PatientsVm is not null)
+        {
+            _ = PatientsVm.RefreshAsync();
+        }
+
+        // Phase C-2: when the user navigates into Account, fetch the
+        // latest memory snapshot so the Memory tab shows live data.
+        // Fire-and-forget — failure surfaces in AccountVm.ErrorMessage.
+        if (value == "account" && AccountVm is not null)
+        {
+            _ = AccountVm.LoadMemoryAsync();
+        }
+
+        // D-2 follow-up: when the user navigates into Files, fetch
+        // the latest list so they see fresh metadata.
+        if (value == "files" && FilesVm is not null)
+        {
+            _ = FilesVm.RefreshAsync();
+        }
+    }
 
     public MainViewModel()
     {
@@ -105,6 +228,84 @@ public partial class MainViewModel : ObservableObject
         ChatVm = new ChatViewModel(Api);
         SessionsVm = new SessionListViewModel(Api);
         WelcomeVm = new WelcomeViewModel();
+        PlanVm = new PlanViewModel(Api);
+        AccountVm = new AccountViewModel(Api);
+        // WorkflowsVm wires into Sessions (so "Send to chat" knows
+        // which session to inject into) and into the view-router
+        // (so it can navigate back to the chat surface after sending).
+        WorkflowsVm = new WorkflowsViewModel(
+            Api,
+            sessions: SessionsVm,
+            navigateToView: target => ActiveView = target);
+        FilesVm = new FilesViewModel(Api);
+
+        // #174 — patient navigator, activity panel, status bar
+        PatientNavigatorVm = new PatientNavigatorViewModel(Api);
+        // #181 — full-roster main-canvas view. Refreshed on navigation
+        // into "patients" mode (see OnActiveViewChanged).
+        PatientsVm = new PatientsViewModel(Api);
+        ActivityPanelVm = new ActivityPanelViewModel(
+            cognition: ChatVm.Cognition,
+            tasks: ChatVm.AsyncTasks,
+            history: ChatVm.Activity);
+        StatusBarVm = new StatusBarViewModel(Api, ChatVm.AsyncTasks);
+        // Status-bar tasks pill click → activate the Activity panel's
+        // Tasks tab so the medic can see what's running.
+        StatusBarVm.OnTasksPillClicked = () =>
+        {
+            ActivityPanelVm.SelectedTab = 1;
+            ActivityPanelVm.IsCollapsed = false;
+        };
+        // Patient nav → study selection → switch view to chat and
+        // surface the study (future: also open viewer mode).
+        PatientNavigatorVm.OnStudySelected = async study =>
+        {
+            ActiveView = "chat";
+            await System.Threading.Tasks.Task.CompletedTask;
+        };
+        // #181 — "+ New patient" → open the modal dialog where the
+        // medic fills in basic case info FIRST, optionally attaching
+        // diagnostic files. Replaces the older #178 flow that auto-
+        // popped the file picker — the medic asked for a form-first
+        // UX so they can capture demographics + chief complaint
+        // before any uploads. The dialog itself is owned by the
+        // View layer (MainWindow code-behind listens to this event
+        // and pops a modal Window); the VM just raises the request.
+        PatientNavigatorVm.OnNewPatientRequested = async () =>
+        {
+            ActiveView = "chat";
+            await OpenNewPatientDialogAsync();
+        };
+        // #184 — rail's "Patients ›" header opens the full-roster
+        // main-canvas view. Wired via callback (not direct binding)
+        // because Avalonia 11.3 can't resolve namespaced type casts
+        // in runtime binding expressions — that was the startup crash.
+        PatientNavigatorVm.OnOpenFullRoster = () => ActiveView = "patients";
+        // #193 — clicking a patient card in the rail also navigates
+        // to the patients canvas AND selects that patient so the
+        // detail pane on the right populates. We look the patient up
+        // in PatientsVm.Patients (already populated by the canvas
+        // refresh). If it's not loaded yet, we kick a refresh and
+        // try again.
+        PatientNavigatorVm.OnPatientSelected = async (patientHash) =>
+        {
+            ActiveView = "patients";
+            // Make sure the roster is populated before selecting.
+            if (PatientsVm.Patients.Count == 0)
+            {
+                await PatientsVm.RefreshAsync();
+            }
+            var match = PatientsVm.Patients
+                .FirstOrDefault(p => p.PatientHash == patientHash);
+            if (match is not null)
+            {
+                PatientsVm.SelectedPatient = match;
+            }
+        };
+        // #177 — onboarding checklist (needs MainViewModel ref so
+        // its "Fix it" commands can navigate views).
+        OnboardingVm = new OnboardingChecklistViewModel(Api, this);
+
         WelcomeVm.SetupComplete += OnWelcomeComplete;
 
         LoginVm.LoginSuccess += OnLoginSuccess;
@@ -145,6 +346,86 @@ public partial class MainViewModel : ObservableObject
                 () => { ToastVisible = false; },
                 System.TimeSpan.FromSeconds(8));
         });
+    }
+
+    /// <summary>#181 — orchestrates the "+ New patient" flow.
+    ///
+    /// 1. Mint a dialog VM bound to the active session (so the server
+    ///    can also UPDATE sessions SET patient_hash on register).
+    /// 2. Raise <see cref="RequestShowNewPatientDialog"/> — the View
+    ///    layer (MainWindow) handles the actual modal show and
+    ///    returns the result via the Task it awaits.
+    /// 3. If saved: upload any staged files with session_id so they
+    ///    inherit the new patient_hash; post a chat guidance bubble
+    ///    summarising the case; refresh the patient navigator.
+    /// 4. If cancelled: do nothing (no chat noise on accidental clicks).
+    /// </summary>
+    private async System.Threading.Tasks.Task OpenNewPatientDialogAsync()
+    {
+        if (RequestShowNewPatientDialog is null) return;
+        var dialogVm = new NewPatientDialogViewModel(
+            Api, sessionId: ChatVm.CurrentSessionId ?? "");
+        var result = await RequestShowNewPatientDialog(dialogVm);
+        if (result is null) return;
+
+        // Upload staged files (in parallel, capped). Each upload
+        // passes the active session_id so the server inherits the
+        // session's just-set patient_hash onto the uploads row.
+        var sessionId = ChatVm.CurrentSessionId ?? "";
+        var uploaded = new System.Collections.Generic.List<string>();
+        foreach (var f in result.StagedFiles)
+        {
+            try
+            {
+                await using var stream =
+                    System.IO.File.OpenRead(f.LocalPath);
+                var mime = GuessMimeFromName(f.Name);
+                var resp = await Api.UploadFileAsync(
+                    stream, f.Name, mime, sessionId);
+                if (resp is not null && !string.IsNullOrEmpty(resp.FileId))
+                {
+                    uploaded.Add($"{f.Name} ({f.SizeDisplay})");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"NewPatient upload failed for {f.Name}: {ex.Message}");
+            }
+        }
+
+        // Refresh patient navigator so the new card shows up
+        // immediately (don't wait for the next 8s poll cycle).
+        _ = PatientNavigatorVm.RefreshAsync();
+
+        // Post a chat guidance bubble summarising the new case +
+        // what (if anything) was attached.
+        await ChatVm.NarrateNewPatientAsync(
+            patientHash:    result.PatientHash,
+            initials:       result.Initials,
+            mrn:            result.Mrn,
+            ageGroup:       result.AgeGroup,
+            sex:            result.Sex,
+            chiefComplaint: result.ChiefComplaint,
+            uploadedFiles:  uploaded);
+    }
+
+    /// <summary>Tiny MIME guess used by the New Patient upload path.
+    /// ChatViewModel's GuessMime is private; this is a slimmer copy
+    /// covering the formats medics drop into the dialog.</summary>
+    private static string GuessMimeFromName(string name)
+    {
+        var lower = (name ?? "").ToLowerInvariant();
+        if (lower.EndsWith(".zip"))  return "application/zip";
+        if (lower.EndsWith(".pdf"))  return "application/pdf";
+        if (lower.EndsWith(".docx")) return
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        if (lower.EndsWith(".png"))  return "image/png";
+        if (lower.EndsWith(".jpg") || lower.EndsWith(".jpeg")) return "image/jpeg";
+        if (lower.EndsWith(".tif") || lower.EndsWith(".tiff")) return "image/tiff";
+        if (lower.EndsWith(".dcm"))  return "application/dicom";
+        if (lower.EndsWith(".txt"))  return "text/plain";
+        return "application/octet-stream";
     }
 
     private async void OnLoginSuccess(object? sender, LoginViewModel.LoginSuccessArgs e)
@@ -259,6 +540,7 @@ public partial class MainViewModel : ObservableObject
     private void Logout()
     {
         ChatVm.StopChainStatusPolling();
+        WorkflowsVm.Stop();
         Api.ClearBearerToken();
         IsLoggedIn = false;
         UserName = "";

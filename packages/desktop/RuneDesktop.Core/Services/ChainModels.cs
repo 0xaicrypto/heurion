@@ -352,7 +352,9 @@ public record SyncStatusResponse
 
 /// <summary>Server-side user profile — what the user signed up as.
 /// Used by the desktop to show the real display name + user_id in the
-/// top-right pill instead of the passkey-fallback "Passkey User".</summary>
+/// top-right pill, AND to power the Account view (editable name / org /
+/// intended_use). Email is keyed to the passkey credential so it's
+/// presented read-only.</summary>
 public record UserProfileResponse
 {
     [JsonPropertyName("user_id")]
@@ -363,6 +365,266 @@ public record UserProfileResponse
 
     [JsonPropertyName("created_at")]
     public string CreatedAt { get; init; } = "";
+
+    // ── Signup metadata (added with the gated-beta + Stripe migration) ──
+    //
+    // These come from the user's original signup form (status,
+    // organization, intended use). The desktop renders them in the
+    // Account view; display_name + organization + intended_use are
+    // editable via PATCH /api/v1/user/profile. Email is RO — it's
+    // bound to the passkey credential. Status/tier are server-managed.
+
+    [JsonPropertyName("email")]
+    public string? Email { get; init; }
+
+    [JsonPropertyName("organization")]
+    public string? Organization { get; init; }
+
+    [JsonPropertyName("intended_use")]
+    public string? IntendedUse { get; init; }
+
+    [JsonPropertyName("status")]
+    public string? Status { get; init; }
+
+    [JsonPropertyName("tier")]
+    public string? Tier { get; init; }
+}
+
+
+/// <summary>Body shape for PATCH /api/v1/user/profile. All fields
+/// nullable — the server applies only the keys present in the JSON
+/// (partial update). Caller is expected to send only what's changed,
+/// but the API tolerates a full echo too.</summary>
+public record UserProfilePatch
+{
+    [JsonPropertyName("display_name")]
+    public string? DisplayName { get; init; }
+
+    [JsonPropertyName("organization")]
+    public string? Organization { get; init; }
+
+    [JsonPropertyName("intended_use")]
+    public string? IntendedUse { get; init; }
+}
+
+
+// ─── Files (cross-session uploaded file library) ─────────────────────
+
+public record FileEntryInfo
+{
+    [JsonPropertyName("file_id")]    public string FileId { get; init; } = "";
+    [JsonPropertyName("name")]       public string Name { get; init; } = "";
+    [JsonPropertyName("mime")]       public string Mime { get; init; } = "";
+    [JsonPropertyName("size_bytes")] public long SizeBytes { get; init; }
+    [JsonPropertyName("created_at")] public string CreatedAt { get; init; } = "";
+    [JsonPropertyName("sha256")]     public string Sha256 { get; init; } = "";
+    [JsonPropertyName("has_text")]   public bool HasText { get; init; }
+    [JsonPropertyName("excerpt")]    public string Excerpt { get; init; } = "";
+}
+
+public record FileListResponse
+{
+    [JsonPropertyName("files")] public List<FileEntryInfo> Files { get; init; } = new();
+    [JsonPropertyName("total")] public int Total { get; init; }
+}
+
+public record FilePreviewResponse
+{
+    [JsonPropertyName("file_id")]         public string FileId { get; init; } = "";
+    [JsonPropertyName("name")]            public string Name { get; init; } = "";
+    [JsonPropertyName("mime")]            public string Mime { get; init; } = "";
+    [JsonPropertyName("size_bytes")]      public long SizeBytes { get; init; }
+    [JsonPropertyName("created_at")]      public string CreatedAt { get; init; } = "";
+    [JsonPropertyName("sha256")]          public string Sha256 { get; init; } = "";
+    [JsonPropertyName("extracted_text")]  public string ExtractedText { get; init; } = "";
+    [JsonPropertyName("has_text")]        public bool HasText { get; init; }
+    [JsonPropertyName("text_truncated")]  public bool TextTruncated { get; init; }
+}
+
+
+// ─── Phase C-2: Memory management ───────────────────────────────────
+
+/// <summary>Mirror of nexus_server.memory_router.MemorySnapshot. Returned
+/// from every /api/v1/agent/memory endpoint — the desktop re-renders
+/// the Memory tab off whichever snapshot the latest call returned.</summary>
+public record MemorySnapshot
+{
+    [JsonPropertyName("memory_entries")]
+    public List<string> MemoryEntries { get; init; } = new();
+
+    [JsonPropertyName("user_entries")]
+    public List<string> UserEntries { get; init; } = new();
+
+    [JsonPropertyName("persona")]
+    public string Persona { get; init; } = "";
+
+    [JsonPropertyName("paused")]
+    public bool Paused { get; init; }
+
+    [JsonPropertyName("memory_chars_used")]
+    public int MemoryCharsUsed { get; init; }
+
+    [JsonPropertyName("memory_chars_limit")]
+    public int MemoryCharsLimit { get; init; } = 3000;
+
+    [JsonPropertyName("user_chars_used")]
+    public int UserCharsUsed { get; init; }
+
+    [JsonPropertyName("user_chars_limit")]
+    public int UserCharsLimit { get; init; } = 2000;
+}
+
+/// <summary>Body shape for PUT /api/v1/agent/memory/memory and
+/// /agent/memory/user — full replacement of an entries list.</summary>
+public record MemoryEntriesBody
+{
+    [JsonPropertyName("entries")]
+    public List<string> Entries { get; init; } = new();
+}
+
+
+// ─── Workflows (Phase 1) ────────────────────────────────────────────
+//
+// These mirror the Pydantic shapes in packages/server/nexus_server/
+// workflows.py. They're records so the Json deserializer can populate
+// them directly off the wire. Field names use JsonPropertyName to map
+// snake_case server fields onto PascalCase C# properties.
+
+/// <summary>One declared input field on a workflow.</summary>
+public record WorkflowInputSpec
+{
+    [JsonPropertyName("key")]       public string Key { get; init; } = "";
+    [JsonPropertyName("label")]     public string Label { get; init; } = "";
+    [JsonPropertyName("type")]      public string Type { get; init; } = "text";
+    [JsonPropertyName("required")]  public bool Required { get; init; } = true;
+    [JsonPropertyName("options")]   public List<string> Options { get; init; } = new();
+}
+
+/// <summary>#106: optional per-step verifier (D-3 layer). When set,
+/// the orchestrating agent runs a verifier delegate() after the main
+/// step's delegate() returns, parses the JSON verdict, and retries
+/// the step on fail (up to MaxRetries times).</summary>
+public record VerifierSpec
+{
+    [JsonPropertyName("skill")]       public string Skill { get; init; } = "";
+    [JsonPropertyName("criteria")]    public string Criteria { get; init; } = "";
+    [JsonPropertyName("max_retries")] public int MaxRetries { get; init; } = 1;
+}
+
+/// <summary>One step in a workflow — references an installed skill by name.</summary>
+public record WorkflowStep
+{
+    [JsonPropertyName("skill")] public string Skill { get; init; } = "";
+    [JsonPropertyName("model")] public string? Model { get; init; }
+    [JsonPropertyName("label")] public string Label { get; init; } = "";
+    // #110: optional verifier — WorkflowsView shows a shield badge
+    // + "Quality-gated by <skill>" hint when this is non-null so
+    // users know which steps have D-3 verification before installing.
+    [JsonPropertyName("verifier")]
+    public VerifierSpec? Verifier { get; init; }
+}
+
+/// <summary>The recipe — what the workflow does, independent of who's running it.</summary>
+public record WorkflowDefinition
+{
+    [JsonPropertyName("inputs")] public List<WorkflowInputSpec> Inputs { get; init; } = new();
+    [JsonPropertyName("steps")]  public List<WorkflowStep> Steps { get; init; } = new();
+    [JsonPropertyName("metadata")]
+    public Dictionary<string, System.Text.Json.JsonElement> Metadata { get; init; } = new();
+}
+
+/// <summary>A stored workflow definition + its server-side metadata row.</summary>
+public record Workflow
+{
+    [JsonPropertyName("id")]          public string Id { get; init; } = "";
+    [JsonPropertyName("user_id")]     public string UserId { get; init; } = "";
+    [JsonPropertyName("name")]        public string Name { get; init; } = "";
+    [JsonPropertyName("description")] public string Description { get; init; } = "";
+    [JsonPropertyName("definition")]  public WorkflowDefinition Definition { get; init; } = new();
+    [JsonPropertyName("created_at")]  public string CreatedAt { get; init; } = "";
+    [JsonPropertyName("updated_at")]  public string UpdatedAt { get; init; } = "";
+    [JsonPropertyName("archived")]    public bool Archived { get; init; }
+}
+
+/// <summary>One step's execution trace within a run.</summary>
+public record WorkflowRunStep
+{
+    [JsonPropertyName("step_index")]   public int StepIndex { get; init; }
+    [JsonPropertyName("skill_name")]   public string SkillName { get; init; } = "";
+    [JsonPropertyName("status")]       public string Status { get; init; } = "pending";
+    [JsonPropertyName("input")]        public string Input { get; init; } = "";
+    [JsonPropertyName("output")]       public string Output { get; init; } = "";
+    [JsonPropertyName("model_used")]   public string ModelUsed { get; init; } = "";
+    [JsonPropertyName("cost_usd")]     public double CostUsd { get; init; }
+    [JsonPropertyName("started_at")]   public string? StartedAt { get; init; }
+    [JsonPropertyName("finished_at")]  public string? FinishedAt { get; init; }
+    [JsonPropertyName("error_message")] public string ErrorMessage { get; init; } = "";
+}
+
+/// <summary>A single execution of a workflow — run id + status +
+/// every step's trace. Polled by WorkflowRunViewModel every ~2s.</summary>
+public record WorkflowRun
+{
+    [JsonPropertyName("id")]              public string Id { get; init; } = "";
+    [JsonPropertyName("workflow_id")]     public string WorkflowId { get; init; } = "";
+    [JsonPropertyName("user_id")]         public string UserId { get; init; } = "";
+    [JsonPropertyName("status")]          public string Status { get; init; } = "pending";
+    [JsonPropertyName("inputs")]
+    public Dictionary<string, string> Inputs { get; init; } = new();
+    [JsonPropertyName("error_message")]   public string ErrorMessage { get; init; } = "";
+    [JsonPropertyName("current_step")]    public int CurrentStep { get; init; }
+    [JsonPropertyName("total_steps")]     public int TotalSteps { get; init; }
+    [JsonPropertyName("total_cost_usd")]  public double TotalCostUsd { get; init; }
+    [JsonPropertyName("started_at")]      public string StartedAt { get; init; } = "";
+    [JsonPropertyName("finished_at")]     public string? FinishedAt { get; init; }
+    [JsonPropertyName("anchor_tx")]       public string? AnchorTx { get; init; }
+    [JsonPropertyName("steps")]
+    public List<WorkflowRunStep> Steps { get; init; } = new();
+}
+
+/// <summary>Body shape for POST /api/v1/workflows.</summary>
+public record CreateWorkflowRequest
+{
+    [JsonPropertyName("name")]        public string Name { get; init; } = "";
+    [JsonPropertyName("description")] public string Description { get; init; } = "";
+    [JsonPropertyName("definition")]  public WorkflowDefinition Definition { get; init; } = new();
+}
+
+// v2.1: RunWorkflowRequest / RunInChatRequest / RunInChatResponse
+// were the desktop-side wire shapes for the now-deleted
+// RunWorkflowInChatAsync + StartWorkflowRunAsync. Runs are
+// chat-first now (agent's run_workflow tool calls workflows.start_run
+// server-internally), so the desktop never needs these wire shapes.
+
+public record WorkflowListResponse
+{
+    [JsonPropertyName("workflows")] public List<Workflow> Workflows { get; init; } = new();
+}
+
+public record RunListResponse
+{
+    [JsonPropertyName("runs")] public List<WorkflowRun> Runs { get; init; } = new();
+}
+
+/// <summary>Server-bundled starter pack metadata. Mirrors the
+/// StarterPackInfo schema in nexus_server/workflows_router.py.</summary>
+public record StarterPackInfo
+{
+    [JsonPropertyName("id")]          public string Id { get; init; } = "";
+    [JsonPropertyName("name")]        public string Name { get; init; } = "";
+    [JsonPropertyName("description")] public string Description { get; init; } = "";
+    [JsonPropertyName("step_count")]  public int StepCount { get; init; }
+    [JsonPropertyName("audience")]    public string Audience { get; init; } = "";
+    /// <summary>"free" | "pro" | "pro_plus" | "radiology_pro"</summary>
+    [JsonPropertyName("tier")]        public string Tier { get; init; } = "free";
+    [JsonPropertyName("available")]   public bool Available { get; init; } = true;
+    [JsonPropertyName("coming_soon_note")]
+    public string ComingSoonNote { get; init; } = "";
+}
+
+public record StarterPackListResponse
+{
+    [JsonPropertyName("packs")] public List<StarterPackInfo> Packs { get; init; } = new();
 }
 
 
@@ -782,4 +1044,88 @@ public record LearningSummaryResponse
 
     [JsonPropertyName("data_flow")]
     public List<DataFlowStage> DataFlow { get; init; } = [];
+}
+
+/// <summary>/healthz response shape. ``version`` reflects the .dmg
+/// build the server is running (stamped at .dmg build time via
+/// BUILD_NUMBER); compared against the desktop's own assembly version
+/// in AccountView to flag client↔server drift after an in-place
+/// .app update where the venv held onto stale bytecode (#95). #96.
+/// </summary>
+public record ServerHealth
+{
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "";
+
+    [JsonPropertyName("version")]
+    public string Version { get; init; } = "dev";
+
+    [JsonPropertyName("build")]
+    public string Build { get; init; } = "0";
+
+    [JsonPropertyName("built_at")]
+    public string BuiltAt { get; init; } = "unknown";
+}
+
+/// <summary>One orphan twin row surfaced in the Account view's
+/// "Recover lost chats" section. #105/#107 — twin DBs on this
+/// machine that aren't owned by the currently-logged-in user.
+/// Almost always = the user accidentally re-registered instead of
+/// signing in (pre-#101 default-register bug) and left old chat
+/// history stranded under a different user_id.</summary>
+public record OrphanTwinSummary
+{
+    [JsonPropertyName("user_id")]
+    public string UserId { get; init; } = "";
+
+    [JsonPropertyName("agent_id")]
+    public string AgentId { get; init; } = "";
+
+    [JsonPropertyName("event_count")]
+    public int EventCount { get; init; }
+
+    [JsonPropertyName("message_count")]
+    public int MessageCount { get; init; }
+
+    [JsonPropertyName("session_count")]
+    public int SessionCount { get; init; }
+
+    [JsonPropertyName("last_active")]
+    public string? LastActive { get; init; }
+}
+
+/// <summary>GET /api/v1/agent/orphan_twins response. ``Enabled`` is
+/// false on hosted deployments where the env gate isn't set; the
+/// desktop hides the entire section in that case to avoid teasing a
+/// feature the server won't honour.</summary>
+public record OrphanTwinListResponse
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; }
+
+    [JsonPropertyName("twins")]
+    public List<OrphanTwinSummary> Twins { get; init; } = new();
+}
+
+/// <summary>POST /merge response. ``MergedEventCount`` lets the UI
+/// celebrate ("✓ recovered 87 messages"). ``OrphanRemoved`` confirms
+/// the source dir was cleaned up.</summary>
+public record OrphanTwinMergeResponse
+{
+    [JsonPropertyName("merged_event_count")]
+    public int MergedEventCount { get; init; }
+
+    [JsonPropertyName("orphan_removed")]
+    public bool OrphanRemoved { get; init; }
+}
+
+/// <summary>#111: response from POST /workflows/skills/import.
+/// Imported skill's resolved name + filesystem path + bytes written
+/// so the UI can confirm to the user "✓ installed content-strategist
+/// (1.2 KB)".</summary>
+public record ImportedSkillInfo
+{
+    [JsonPropertyName("name")] public string Name { get; init; } = "";
+    [JsonPropertyName("path")] public string Path { get; init; } = "";
+    [JsonPropertyName("bytes_written")] public int BytesWritten { get; init; }
 }

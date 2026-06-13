@@ -1,0 +1,54 @@
+# Paper Polish taxonomy — VTO-inspired (Visual Typesetting Optimization).
+# Lifted from PaperFit's defect categories and adapted for the
+# Inspector / Diagnoser / Patcher / Judge handoff.
+
+defect_tier:
+  A_LAYOUT_CRITICAL:
+    description: "Visual layout problem that makes the page unprintable / unreviewable."
+    examples:
+      - "Two-column page with one column 80% empty (column imbalance)."
+      - "Float (figure/table) on last page with no caption flow to body text."
+      - "Section heading orphaned at bottom of page; following content on next."
+      - "Equation overflowing column width."
+  B_FLOAT:
+    description: "Float placement / sizing that's distracting but printable."
+    examples:
+      - "Float far from its first \\ref."
+      - "Table caption above table when paper convention is below (or vice versa)."
+      - "Two figures side-by-side that should stack (or vice versa)."
+  C_CITATION:
+    description: "Citation / cross-reference hygiene."
+    examples:
+      - "\\cite{foo} with no matching bib entry."
+      - "Figure with no \\label, or with a label nobody \\refs."
+      - "Forward reference to a section number that doesn't exist."
+  D_STRUCTURE:
+    description: "Outline / section consistency."
+    examples:
+      - "Section levels skipped (\\section then \\subsubsection)."
+      - "Inconsistent heading capitalisation across sections."
+      - "Abstract longer than the venue's word limit."
+  E_PROSE:
+    description: "Sentence-level polish — passive voice, undefined acronyms, jargon."
+    severity_floor: "advisory"
+
+severity:
+  CRITICAL: "A-tier, or any defect that violates the target venue's submission rules."
+  HIGH:     "A-tier that's printable, or B-tier with high reader-impact."
+  MEDIUM:   "B-tier or C-tier with clear fix."
+  LOW:      "D-tier, or E-tier where the prose is technically OK but improvable."
+  NIT:      "Author taste."
+
+status:
+  OPEN:        "Defect stands."
+  PATCHED:     "Patcher wrote a concrete source-level fix."
+  WONTFIX:     "Author / venue convention overrides — must include one-line justification."
+  ENV_BLOCKED: "Defect requires visual inspection but Inspector ran text-only — defer to author's local check."
+
+# Environment capability flags the Inspector emits so downstream
+# agents (and the Judge) know what's verifiable in this run.
+environment_flags:
+  HAS_LATEX:       "Inspector successfully compiled the source."
+  HAS_POPPLER:     "Inspector rendered PDF pages to images for visual diagnosis."
+  HAS_VISION_LLM:  "The pipeline LLM accepted image input for diagnosis."
+  TEXT_ONLY:       "None of the above — Inspector ran on source only. A-tier visual defects auto-WONTFIX."

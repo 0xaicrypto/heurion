@@ -301,15 +301,19 @@ def test_learned_skill_success_rate():
 
 def test_skills_upsert_and_get(tmp_path):
     s = SkillsStore(tmp_path)
+    # SkillsStore is generic — the exact skill name / task_kinds here
+    # are illustrative only. Used to mention smart_contract_audit
+    # (the now-removed crypto pack); kept as code_review since it
+    # still exists and the store doesn't care what task_kinds say.
     sk = LearnedSkill(
-        skill_name="solidity_review",
-        strategy="check reentrancy + gas",
+        skill_name="diff_review",
+        strategy="check edge cases + tests",
         confidence=0.8,
-        task_kinds=["code_review", "smart_contract_audit"],
+        task_kinds=["code_review"],
     )
     s.upsert(sk)
-    got = s.get("solidity_review")
-    assert got.strategy == "check reentrancy + gas"
+    got = s.get("diff_review")
+    assert got.strategy == "check edge cases + tests"
     assert got.confidence == 0.8
 
 

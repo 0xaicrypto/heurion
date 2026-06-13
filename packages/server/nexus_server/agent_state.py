@@ -81,12 +81,21 @@ class AttachmentInfo(BaseModel):
 class ChatMessageView(BaseModel):
     """A single chat message as rendered by the desktop. Server is the
     single source of truth — desktop never persists messages locally
-    after the thin-client refactor (Round 2)."""
+    after the thin-client refactor (Round 2).
+
+    ``message_kind`` lets the client pick the right renderer:
+      * ``"text"`` (default) — normal user / assistant text bubble
+      * ``"workflow_run"`` — inline workflow card. ``workflow_run_id``
+        in metadata points to a row in nexus_workflow_runs; the client
+        polls /api/v1/workflows/runs/{id} for live updates.
+    """
     role: str           # "user" | "assistant"
     content: str
     timestamp: str      # ISO-8601 (server_received_at)
     sync_id: int
     attachments: list[AttachmentInfo] = []
+    message_kind: str = "text"                       # "text" | "workflow_run"
+    metadata: dict = {}                              # event-type-specific payload
 
 
 class ChatMessagesResponse(BaseModel):
@@ -991,7 +1000,7 @@ async def get_chain_events(
                        object_path, error, duration_ms, created_at
                 FROM twin_chain_events
                 WHERE user_id = ?
-                ORDER BY id DESC
+                ORDER BY event_id DESC
                 LIMIT ?
                 """,
                 (current_user, capped),
@@ -2015,3 +2024,114 @@ async def get_sync_anchors(
         limit = 20
     rows = list_anchors_for_user(current_user, limit=limit)
     return {"anchors": rows}
+
+
+# ── #105: orphan twin recovery — endpoints ────────────────────────────
+
+
+class OrphanTwinSummary(BaseModel):
+    """One orphan twin row surfaced to the desktop's Account view."""
+    user_id: str
+    agent_id: str
+    event_count: int
+    message_count: int
+    session_count: int
+    last_active: Optional[str]
+
+
+class OrphanTwinListResponse(BaseModel):
+    """GET /api/v1/agent/orphan_twins response."""
+    enabled: bool                          # False → recovery disabled in this deployment
+    twins: list[OrphanTwinSummary]
+
+
+@router.get("/orphan_twins", response_model=OrphanTwinListResponse)
+async def list_orphan_twins_endpoint(
+    current_user: str = Depends(get_current_user),
+) -> OrphanTwinListResponse:
+    """List twin DBs on this server that aren't owned by the calling
+    user. Returns ``enabled=False`` when single-tenant gate is off
+    (production hosted deployments)."""
+    from nexus_server import orphan_twins as _ot
+    if not _ot.is_enabled():
+        return OrphanTwinListResponse(enabled=False, twins=[])
+    rows = _ot.list_orphan_twins(current_user)
+    return OrphanTwinListResponse(
+        enabled=True,
+        twins=[OrphanTwinSummary(**r) for r in rows],
+    )
+
+
+class OrphanTwinMergeResponse(BaseModel):
+    """POST /api/v1/agent/orphan_twins/{user_id}/merge response."""
+    merged_event_count: int
+    orphan_removed: bool
+
+
+@router.post(
+    "/orphan_twins/{orphan_user_id}/merge",
+    response_model=OrphanTwinMergeResponse,
+)
+async def merge_orphan_twin_endpoint(
+    orphan_user_id: str,
+    delete_after: bool = True,
+    current_user: str = Depends(get_current_user),
+) -> OrphanTwinMergeResponse:
+    """Copy every event from the orphan twin into the current user's
+    twin. ``delete_after=True`` (default) rms the orphan's data dir
+    once the merge is done; set to False if you want to keep an
+    untouched copy as a backup."""
+    from nexus_server import orphan_twins as _ot
+    if not _ot.is_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Orphan twin recovery is disabled on this server "
+                   "(NEXUS_ALLOW_ORPHAN_RECOVERY not set).",
+        )
+    if orphan_user_id == current_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can't merge a user into itself.",
+        )
+    try:
+        n = _ot.merge_orphan_into(orphan_user_id, current_user)
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    removed = False
+    if delete_after and n > 0:
+        try:
+            removed = _ot.rm_orphan_twin(orphan_user_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("orphan_twins delete-after failed: %s", e)
+    return OrphanTwinMergeResponse(
+        merged_event_count=n, orphan_removed=removed,
+    )
+
+
+# ── #113: token spend meter — usage summary endpoint ──────────────────
+
+
+class UsageRollupResponse(BaseModel):
+    """GET /api/v1/agent/usage_summary?days=N. Aggregated token usage
+    + estimated $ cost for the meter UI."""
+    total:        dict
+    today:        dict
+    by_day:       list[dict]
+    by_model:     list[dict]
+    window_days:  int
+
+
+@router.get("/usage_summary", response_model=UsageRollupResponse)
+async def usage_summary_endpoint(
+    days: int = 7,
+    current_user: str = Depends(get_current_user),
+) -> UsageRollupResponse:
+    """Roll up token usage for the current user over the last N days
+    (default 7, cap 90). Drives the desktop cognition panel's
+    'Today: X tokens · $Y' indicator."""
+    from nexus_server import llm_usage
+    summary = llm_usage.usage_summary(current_user, days=days)
+    return UsageRollupResponse(**summary)

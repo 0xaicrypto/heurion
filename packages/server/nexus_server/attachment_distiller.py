@@ -24,8 +24,11 @@ from nexus_core.distiller import (
     DISTILL_INPUT_CHAR_BUDGET,
     DISTILL_OUTPUT_CHAR_BUDGET,
     DISTILL_SYSTEM_PROMPT,
+    IMAGE_CAPTION_CHAR_BUDGET,
+    IMAGE_DISTILL_SYSTEM_PROMPT,
     LlmFn,
     distill,
+    distill_image,
     extract_text,
 )
 
@@ -40,9 +43,12 @@ distill_attachment = distill
 
 __all__ = [
     "distill_attachment",
+    "distill_image",
     "extract_text",
     "DISTILL_INPUT_CHAR_BUDGET",
     "DISTILL_OUTPUT_CHAR_BUDGET",
     "DISTILL_SYSTEM_PROMPT",
+    "IMAGE_CAPTION_CHAR_BUDGET",
+    "IMAGE_DISTILL_SYSTEM_PROMPT",
     "LlmFn",
 ]

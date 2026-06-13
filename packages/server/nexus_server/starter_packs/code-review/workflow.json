@@ -1,0 +1,26 @@
+{
+  "name": "Code Review",
+  "description": "Iterative 5-stage code review. Context → Bugs → Security → Style/Tests → Summarize, with a quality gatekeeper that loops until all CRITICAL and HIGH findings are resolved or acknowledged. Paste a diff or attach files.",
+  "definition": {
+    "inputs": [
+      { "key": "diff_or_files", "label": "Code (diff, file paths, or pasted source)", "type": "longtext", "required": true,  "options": [] },
+      { "key": "language",      "label": "Primary language",                          "type": "text",     "required": true,  "options": [] },
+      { "key": "context",       "label": "What's this change trying to do?",          "type": "longtext", "required": false, "options": [] }
+    ],
+    "steps": [
+      { "skill": "code-review-context",   "label": "Context",      "id": "context" },
+      { "skill": "code-review-bugs",      "label": "Bugs",         "id": "bugs",      "depends_on": ["context"] },
+      { "skill": "code-review-security",  "label": "Security",     "id": "security",  "depends_on": ["context"] },
+      { "skill": "code-review-style",     "label": "Style / Tests","id": "style",     "depends_on": ["context"] },
+      { "skill": "code-review-summarize", "label": "Summarize",    "id": "summarize", "depends_on": ["bugs", "security", "style"] }
+    ],
+    "mode": "iterative",
+    "max_iterations": 3,
+    "gatekeeper": {
+      "skill": "code-review-judge",
+      "pass_criteria": "Every finding marked CRITICAL or HIGH must be (a) addressed by a suggested patch in the latest summary, OR (b) explicitly marked ACKNOWLEDGED with a justification by the summarizer. MEDIUM and LOW findings may remain open but must be listed. If any CRITICAL/HIGH is still BLOCKED (no patch, no acknowledgement), pass=false.",
+      "label": "Judge"
+    },
+    "metadata": { "source": "starter-pack:code-review" }
+  }
+}

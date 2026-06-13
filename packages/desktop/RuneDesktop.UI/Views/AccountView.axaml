@@ -1,0 +1,396 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:RuneDesktop.UI.ViewModels"
+             xmlns:converters="clr-namespace:Avalonia.Data.Converters;assembly=Avalonia.Base"
+             x:Class="RuneDesktop.UI.Views.AccountView"
+             x:DataType="vm:AccountViewModel"
+             Background="{StaticResource SurfaceBaseBrush}">
+
+  <!--
+    Account surface. Mirrors PlanView's layout (centred MaxWidth 720
+    column, 32 px margin) so the user navigating between Account and
+    Plan via the user menu feels they're moving inside the same
+    "settings" group — no width jump.
+  -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto"
+                HorizontalScrollBarVisibility="Disabled">
+    <StackPanel MaxWidth="720"
+                Margin="32,32,32,48"
+                Spacing="20"
+                HorizontalAlignment="Center">
+
+      <!-- ═════ Title ═════════════════════════════════════════════ -->
+      <StackPanel Spacing="6">
+        <TextBlock Text="Account"
+                   FontSize="26" FontWeight="SemiBold"
+                   Foreground="{StaticResource TextPrimaryBrush}"/>
+        <TextBlock Text="Your identity and signup details. Email is bound to your passkey and can't be changed here."
+                   FontSize="13"
+                   Foreground="{StaticResource TextSecondaryBrush}"
+                   TextWrapping="Wrap" MaxWidth="640"/>
+        <!-- #96: build identity row. Lets the user verify "is the new
+             .dmg actually running?" without digging through logs. The
+             mismatch hint surfaces when desktop and server versions
+             disagree (almost always = stale venv bytecode after an
+             in-place update — fixed structurally in #95 going
+             forward). -->
+        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+          <TextBlock Text="{Binding BuildVersion, StringFormat='Desktop {0}'}"
+                     FontSize="11" FontFamily="Menlo, Consolas, monospace"
+                     Foreground="{StaticResource TextTertiaryBrush}"/>
+          <TextBlock Text="·" FontSize="11"
+                     Foreground="{StaticResource TextTertiaryBrush}"/>
+          <TextBlock Text="{Binding ServerBuild, StringFormat='Server {0}'}"
+                     FontSize="11" FontFamily="Menlo, Consolas, monospace"
+                     Foreground="{StaticResource TextTertiaryBrush}"
+                     IsVisible="{Binding ServerBuild, Converter={x:Static converters:StringConverters.IsNotNullOrEmpty}}"/>
+        </StackPanel>
+        <TextBlock Text="{Binding BuildMismatchHint}"
+                   FontSize="11"
+                   Foreground="{StaticResource ErrorBrush}"
+                   TextWrapping="Wrap" MaxWidth="640"
+                   IsVisible="{Binding BuildMismatchHint, Converter={x:Static converters:StringConverters.IsNotNullOrEmpty}}"/>
+      </StackPanel>
+
+      <!-- ═════ Identity card (read-only) ═════════════════════════
+           macOS Settings panes group read-only attributes together at
+           the top, then editable fields below. -->
+      <Border Background="{StaticResource SurfaceCardBrush}"
+              BorderBrush="{StaticResource DividerBrush}"
+              BorderThickness="1"
+              CornerRadius="10"
+              Padding="20">
+        <Grid ColumnDefinitions="160,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+          <TextBlock Grid.Column="0" Grid.Row="0"
+                     Text="Email"
+                     FontSize="12"
+                     Foreground="{StaticResource TextTertiaryBrush}"
+                     VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="1" Grid.Row="0"
+                     Text="{Binding Email}"
+                     FontSize="13"
+                     Foreground="{StaticResource TextPrimaryBrush}"
+                     Margin="0,4,0,4"
+                     VerticalAlignment="Center"
+                     TextTrimming="CharacterEllipsis"/>
+
+          <Rectangle Grid.Column="0" Grid.Row="1" Grid.ColumnSpan="2"
+                     Height="1" Margin="0,8,0,8"
+                     Fill="{StaticResource DividerBrush}"/>
+
+          <TextBlock Grid.Column="0" Grid.Row="2"
+                     Text="User ID"
+                     FontSize="12"
+                     Foreground="{StaticResource TextTertiaryBrush}"
+                     VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="1" Grid.Row="2"
+                     Text="{Binding UserId}"
+                     FontSize="12"
+                     FontFamily="Menlo, Consolas, monospace"
+                     Foreground="{StaticResource TextSecondaryBrush}"
+                     Margin="0,4,0,4"
+                     VerticalAlignment="Center"
+                     TextTrimming="CharacterEllipsis"/>
+
+          <Rectangle Grid.Column="0" Grid.Row="3" Grid.ColumnSpan="2"
+                     Height="1" Margin="0,8,0,8"
+                     Fill="{StaticResource DividerBrush}"/>
+
+          <TextBlock Grid.Column="0" Grid.Row="4"
+                     Text="Member since"
+                     FontSize="12"
+                     Foreground="{StaticResource TextTertiaryBrush}"
+                     VerticalAlignment="Center"/>
+          <StackPanel Grid.Column="1" Grid.Row="4"
+                      Orientation="Horizontal" Spacing="10"
+                      VerticalAlignment="Center"
+                      Margin="0,4,0,4">
+            <TextBlock Text="{Binding CreatedAt}"
+                       FontSize="13"
+                       Foreground="{StaticResource TextPrimaryBrush}"/>
+            <Border Background="{StaticResource SurfaceMutedBrush}"
+                    CornerRadius="999" Padding="8,2">
+              <TextBlock Text="{Binding TierLabel}"
+                         FontSize="11"
+                         Foreground="{StaticResource TextSecondaryBrush}"/>
+            </Border>
+            <Border Background="{StaticResource SurfaceMutedBrush}"
+                    CornerRadius="999" Padding="8,2"
+                    IsVisible="{Binding StatusLabel,
+                                Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+              <TextBlock Text="{Binding StatusLabel}"
+                         FontSize="11"
+                         Foreground="{StaticResource TextSecondaryBrush}"/>
+            </Border>
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- ═════ Editable card ═════════════════════════════════════ -->
+      <Border Background="{StaticResource SurfaceCardBrush}"
+              BorderBrush="{StaticResource DividerBrush}"
+              BorderThickness="1"
+              CornerRadius="10"
+              Padding="20">
+        <StackPanel Spacing="14">
+          <TextBlock Text="PROFILE"
+                     FontSize="10" FontWeight="SemiBold"
+                     Foreground="{StaticResource TextTertiaryBrush}"/>
+
+          <Grid ColumnDefinitions="160,*" RowDefinitions="Auto,Auto,Auto">
+            <!-- Display name -->
+            <TextBlock Grid.Column="0" Grid.Row="0"
+                       Text="Display name"
+                       FontSize="12"
+                       Foreground="{StaticResource TextSecondaryBrush}"
+                       VerticalAlignment="Center"
+                       Margin="0,8,0,8"/>
+            <TextBox Grid.Column="1" Grid.Row="0"
+                     Classes="chat"
+                     Text="{Binding DisplayNameDraft, Mode=TwoWay}"
+                     Margin="0,4,0,4"
+                     Watermark="How others see you"/>
+
+            <!-- Organization -->
+            <TextBlock Grid.Column="0" Grid.Row="1"
+                       Text="Organization"
+                       FontSize="12"
+                       Foreground="{StaticResource TextSecondaryBrush}"
+                       VerticalAlignment="Center"
+                       Margin="0,8,0,8"/>
+            <TextBox Grid.Column="1" Grid.Row="1"
+                     Classes="chat"
+                     Text="{Binding OrganizationDraft, Mode=TwoWay}"
+                     Margin="0,4,0,4"
+                     Watermark="Your workplace, clinic, or team"/>
+
+            <!-- Intended use -->
+            <TextBlock Grid.Column="0" Grid.Row="2"
+                       Text="Intended use"
+                       FontSize="12"
+                       Foreground="{StaticResource TextSecondaryBrush}"
+                       VerticalAlignment="Top"
+                       Margin="0,14,0,0"/>
+            <TextBox Grid.Column="1" Grid.Row="2"
+                     Classes="chat"
+                     Text="{Binding IntendedUseDraft, Mode=TwoWay}"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     MinHeight="80"
+                     Margin="0,8,0,4"
+                     Watermark="How you plan to use Nexus"/>
+          </Grid>
+
+          <!-- Action row: Cancel (ghost) + Save (filled accent).
+               macOS convention: cancel on the left, primary on the
+               right. Save disabled until there's an actual diff. -->
+          <StackPanel Orientation="Horizontal" Spacing="8"
+                      HorizontalAlignment="Right" Margin="0,4,0,0">
+            <Button Content="Cancel"
+                    Command="{Binding CancelCommand}"
+                    IsEnabled="{Binding HasUnsavedChanges}"
+                    Classes="ghost"
+                    FontSize="13"/>
+            <Button Content="Save changes"
+                    Command="{Binding SaveCommand}"
+                    IsEnabled="{Binding HasUnsavedChanges}"
+                    Classes="accent"
+                    FontSize="13"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- ═════ Status / error banners ════════════════════════════ -->
+      <Border IsVisible="{Binding StatusMessage,
+                          Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+              Background="#2630D158"
+              CornerRadius="6"
+              Padding="12,9">
+        <TextBlock Text="{Binding StatusMessage}"
+                   FontSize="12"
+                   Foreground="{StaticResource SuccessBrush}"/>
+      </Border>
+      <Border IsVisible="{Binding ErrorMessage,
+                          Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+              Background="#26FF453A"
+              CornerRadius="6"
+              Padding="12,9">
+        <TextBlock Text="{Binding ErrorMessage}"
+                   FontSize="12"
+                   Foreground="{StaticResource ErrorBrush}"
+                   TextWrapping="Wrap"/>
+      </Border>
+
+      <ProgressBar IsIndeterminate="True"
+                   IsVisible="{Binding IsBusy}"
+                   Height="2"/>
+
+      <!-- ═════ Recover lost chats (#105/#107) ════════════════════════
+           Surfaces twin DBs on this machine that aren't owned by the
+           current user — almost always pre-#101 default-register
+           victims whose history got stranded under a fresh user_id.
+           Hidden when the server gate is off (hosted multi-tenant)
+           OR when no orphans were found (clean install). -->
+      <Border IsVisible="{Binding HasOrphanTwins}"
+              Background="{StaticResource SurfaceCardBrush}"
+              BorderBrush="{StaticResource DividerBrush}"
+              BorderThickness="1"
+              CornerRadius="10"
+              Padding="20">
+        <StackPanel Spacing="12">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Recover lost chats"
+                       FontSize="16" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimaryBrush}"/>
+            <TextBlock TextWrapping="Wrap" MaxWidth="640"
+                       FontSize="12"
+                       Foreground="{StaticResource TextSecondaryBrush}"
+                       Text="We found chat history on this machine that's not linked to your current account. This usually happens when an earlier login accidentally created a second account. Click Recover to merge those messages into your current account."/>
+          </StackPanel>
+
+          <ItemsControl ItemsSource="{Binding OrphanTwins}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate DataType="vm:OrphanTwinViewModel">
+                <Border Margin="0,0,0,6"
+                        Background="{StaticResource SurfaceBaseBrush}"
+                        BorderBrush="{StaticResource DividerBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="12,10">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Grid.Column="0" Spacing="2">
+                      <TextBlock FontSize="12"
+                                 FontFamily="Menlo, Consolas, monospace"
+                                 Foreground="{StaticResource TextPrimaryBrush}"
+                                 Text="{Binding UserIdShort, StringFormat='user_id: {0}…'}"/>
+                      <TextBlock FontSize="11"
+                                 Foreground="{StaticResource TextTertiaryBrush}"
+                                 Text="{Binding Summary}"/>
+                    </StackPanel>
+                    <Button Grid.Column="1"
+                            Classes="accent"
+                            Content="Recover"
+                            FontSize="12"
+                            VerticalAlignment="Center"
+                            Command="{Binding $parent[UserControl].((vm:AccountViewModel)DataContext).MergeOrphanCommand}"
+                            CommandParameter="{Binding}"/>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <TextBlock Text="{Binding OrphanMergeStatus}"
+                     FontSize="11"
+                     Foreground="{StaticResource TextSecondaryBrush}"
+                     TextWrapping="Wrap"
+                     IsVisible="{Binding OrphanMergeStatus,
+                                 Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+        </StackPanel>
+      </Border>
+
+      <!-- ═════ Memory ═════════════════════════════════════════════
+           Phase C-2: user-facing window into what the agent remembers.
+           Modelled after Claude.ai's "View and edit memory" panel —
+           inline edit (textarea), pause / resume, reset, char-budget
+           hint per bucket. -->
+      <Border Background="{StaticResource SurfaceCardBrush}"
+              BorderBrush="{StaticResource DividerBrush}"
+              BorderThickness="1"
+              CornerRadius="10"
+              Padding="20">
+        <StackPanel Spacing="16">
+
+          <!-- Header + pause toggle -->
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Grid.Column="0" Spacing="4">
+              <TextBlock Text="MEMORY"
+                         FontSize="10" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextTertiaryBrush}"/>
+              <TextBlock Text="What your agent remembers about you across chats."
+                         FontSize="12"
+                         Foreground="{StaticResource TextSecondaryBrush}"
+                         TextWrapping="Wrap"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10"
+                        VerticalAlignment="Center">
+              <TextBlock Text="Paused"
+                         FontSize="12"
+                         Foreground="{StaticResource TextSecondaryBrush}"
+                         VerticalAlignment="Center"/>
+              <ToggleSwitch IsChecked="{Binding MemoryPaused, Mode=TwoWay}"
+                            OnContent="" OffContent=""
+                            VerticalAlignment="Center"/>
+            </StackPanel>
+          </Grid>
+
+          <!-- Facts / lessons / conventions bucket -->
+          <StackPanel Spacing="6">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="Facts &amp; lessons (MEMORY.md)"
+                         FontSize="12" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimaryBrush}"/>
+              <TextBlock Grid.Column="1"
+                         Text="{Binding MemoryCharBudget}"
+                         FontSize="11"
+                         FontFamily="Menlo, Consolas, monospace"
+                         Foreground="{StaticResource TextTertiaryBrush}"
+                         VerticalAlignment="Center"/>
+            </Grid>
+            <TextBox Classes="chat"
+                     Text="{Binding MemoryDraft, Mode=TwoWay}"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     MinHeight="120"
+                     FontFamily="Menlo, Consolas, monospace"
+                     FontSize="12"
+                     Watermark="One memory per line. Lines are entries — blank lines split them."/>
+          </StackPanel>
+
+          <!-- User preferences bucket -->
+          <StackPanel Spacing="6">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="About you (USER.md)"
+                         FontSize="12" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimaryBrush}"/>
+              <TextBlock Grid.Column="1"
+                         Text="{Binding UserCharBudget}"
+                         FontSize="11"
+                         FontFamily="Menlo, Consolas, monospace"
+                         Foreground="{StaticResource TextTertiaryBrush}"
+                         VerticalAlignment="Center"/>
+            </Grid>
+            <TextBox Classes="chat"
+                     Text="{Binding UserDraft, Mode=TwoWay}"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     MinHeight="80"
+                     FontFamily="Menlo, Consolas, monospace"
+                     FontSize="12"
+                     Watermark="Preferences, working style, communication notes."/>
+          </StackPanel>
+
+          <!-- Action row -->
+          <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+            <Button Grid.Column="0" Classes="ghost"
+                    Content="Refresh"
+                    Command="{Binding LoadMemoryCommand}"
+                    FontSize="13"/>
+            <Button Grid.Column="2" Classes="ghost"
+                    Content="Reset all memory"
+                    Command="{Binding ResetMemoryCommand}"
+                    Foreground="{StaticResource ErrorBrush}"
+                    FontSize="13"
+                    Margin="0,0,8,0"/>
+            <Button Grid.Column="3" Classes="accent"
+                    Content="Save memory"
+                    Command="{Binding SaveMemoryCommand}"
+                    IsEnabled="{Binding HasMemoryChanges}"
+                    FontSize="13"/>
+          </Grid>
+
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

@@ -15,40 +15,48 @@
     the VM) so the column animates without needing a converter.
   -->
 
+  <!-- Outer rail Border. Width comes from the VM (0/60/240) and the
+       MaxWidth caps it at the expanded value so a misbehaving binding
+       can never balloon the rail past 240 px. ClipToBounds ensures
+       overlong session titles wrap / ellipsis inside the rail
+       instead of pushing it wider. -->
   <Border BorderThickness="0,0,1,0"
           BorderBrush="{StaticResource DividerBrush}"
-          Width="{Binding RailWidth}">
+          Width="{Binding RailWidth}"
+          MaxWidth="240"
+          ClipToBounds="True">
 
     <Grid RowDefinitions="Auto,Auto,*,Auto">
 
-      <!-- ─── New chat button ─────────────────────────────────────── -->
+      <!-- ─── New chat button ─────────────────────────────────────────
+           HIG: the source-list "compose" affordance in macOS Mail /
+           Messages is a quiet button — outlined or tinted, not solid
+           accent. We use the `.tinted` style: System Blue text on a
+           12 % blue tint, so it's clearly the primary action without
+           dominating the rail. -->
       <Border Grid.Row="0" Padding="10,12,10,8">
         <Panel>
           <!-- Expanded form: full-width labelled button -->
           <Button Command="{Binding NewSessionCommand}"
                   HorizontalAlignment="Stretch"
-                  HorizontalContentAlignment="Left"
-                  Background="{StaticResource BrandAccentBrush}"
-                  Foreground="{StaticResource TextOnAccentBrush}"
-                  CornerRadius="6"
-                  Padding="10,8"
-                  FontSize="13" FontWeight="SemiBold"
+                  HorizontalContentAlignment="Center"
+                  Classes="tinted"
+                  Padding="10,7"
+                  FontSize="13"
                   IsVisible="{Binding !IsCollapsed}"
                   ToolTip.Tip="Start a new chat thread (Ctrl+N)">
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBlock Text="+" FontSize="16" FontWeight="Bold"
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <TextBlock Text="+" FontSize="14" FontWeight="SemiBold"
                          VerticalAlignment="Center"/>
               <TextBlock Text="New chat" VerticalAlignment="Center"/>
             </StackPanel>
           </Button>
           <!-- Collapsed form: just the + glyph -->
           <Button Command="{Binding NewSessionCommand}"
-                  Background="{StaticResource BrandAccentBrush}"
-                  Foreground="{StaticResource TextOnAccentBrush}"
-                  CornerRadius="6"
-                  Width="32" Height="32"
+                  Classes="tinted"
+                  Width="30" Height="30"
                   Padding="0"
-                  FontSize="16" FontWeight="Bold"
+                  FontSize="14" FontWeight="SemiBold"
                   HorizontalAlignment="Center"
                   HorizontalContentAlignment="Center"
                   VerticalContentAlignment="Center"
@@ -107,15 +115,21 @@
                            clip the initial. The expanded form gets
                            its avatar→title gap from the title
                            StackPanel's own left margin instead. -->
+                      <!-- Session avatar: rounded square, soft monochrome
+                           surface (not accent). macOS Messages keeps
+                           thread avatars neutral; identity comes from
+                           the initial letter, not the disc colour. -->
                       <Border Grid.Column="0"
-                              Width="28" Height="28"
+                              Width="26" Height="26"
                               CornerRadius="6"
-                              Background="{StaticResource AccentClaudeBrush}"
+                              Background="{StaticResource SurfaceRaisedBrush}"
+                              BorderBrush="{StaticResource DividerBrush}"
+                              BorderThickness="1"
                               VerticalAlignment="Center"
                               HorizontalAlignment="Center">
                         <TextBlock Text="{Binding Initial}"
-                                   FontSize="13" FontWeight="SemiBold"
-                                   Foreground="{StaticResource TextOnAccentBrush}"
+                                   FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center"/>
                       </Border>
@@ -142,7 +156,7 @@
                                  Foreground="{StaticResource TextPrimaryBrush}"
                                  Background="Transparent"
                                  BorderThickness="0,0,0,1"
-                                 BorderBrush="{StaticResource BrandAccentBrush}"
+                                 BorderBrush="{StaticResource SystemBlueBrush}"
                                  Padding="0,0,0,2"
                                  Margin="0"
                                  MinHeight="0"

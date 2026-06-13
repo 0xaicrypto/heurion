@@ -1,11 +1,28 @@
 """SkillManager — install, load, and manage external skills.
 
-Compatible with Binance Skills Hub format:
-  - SKILL.md with YAML frontmatter + markdown instructions
-  - Optional reference files (references/*.md)
-  - Optional .local.md for user-specific config (not distributed)
+Two on-disk layouts supported (loader auto-detects):
 
-Skills are installed to a local directory and loaded into the LLM system prompt.
+  Layout A — Folder per skill ("Binance Skills Hub" style, Nexus legacy):
+    {skills_dir}/<skill-name>/SKILL.md      # YAML frontmatter + body
+    {skills_dir}/<skill-name>/references/   # optional
+    {skills_dir}/<skill-name>/.local.md     # user overrides, not distributed
+
+  Layout B — Flat ``.claude/agents/`` style (Claude Code ecosystem):
+    {skills_dir}/<skill-name>.md            # single file, frontmatter + body
+
+Layout B is the Claude Code convention. Supporting it gives Nexus drop-in
+compatibility with the existing agent ecosystem on GitHub (anthropic-
+experimental/agent-cookbook and friends) — copy a ``.claude/agents/
+researcher.md`` into Nexus's skills dir, it loads.
+
+Frontmatter is also Claude-Code-compatible. Both ``name`` (Claude Code,
+preferred) and ``title`` (Nexus legacy) are accepted as the display
+name; both top-level and nested-under-``metadata`` ``version``/``author``
+work. New fields ``model`` (per-skill model pin) and ``tools`` (tool
+allow-list) are read for Phase 1 workflow support.
+
+Skills are installed to a local directory and loaded into the LLM system
+prompt.
 """
 
 from __future__ import annotations
@@ -149,16 +166,49 @@ async def _ensure_node_available() -> bool:
 
 @dataclass
 class InstalledSkill:
-    """Metadata for an installed skill."""
+    """Metadata for an installed skill.
+
+    ``name`` is the kebab-case identifier (Claude Code convention),
+    used as the addressable handle in workflows + tool invocation.
+    ``title`` is the human-readable display name; falls back to
+    ``name`` when the frontmatter only carries the Claude Code shape.
+
+    ``model`` and ``tools`` are new in Phase 0 (alignment with
+    ``.claude/agents/``). They drive Phase 1 workflow features:
+      * ``model`` — preferred model for steps using this skill
+        (``"strong"``, ``"fast"``, ``"cheap"`` workflow-level tier
+        OR an explicit model id like ``"claude-sonnet-4-6"``).
+        ``None`` means "use whatever the workflow / user picked".
+      * ``tools`` — allowlist of tool names this skill may invoke.
+        Empty list = no restriction (use the agent's default tool set).
+        Mirrors the ``tools:`` array in Claude Code's spec.
+
+    ``layout`` records which on-disk shape this skill came from so
+    the exporter can round-trip without surprises.
+    """
     name: str
     title: str
     description: str
     version: str
     author: str
-    path: Path                          # Local directory
-    instructions: str                   # Full SKILL.md content (after frontmatter)
+    path: Path                          # Local directory OR file (depends on layout)
+    instructions: str                   # Body (after frontmatter)
     references: dict[str, str] = field(default_factory=dict)  # filename -> content
     metadata: dict[str, Any] = field(default_factory=dict)
+    model: Optional[str] = None         # per-skill model pin (Claude Code compat)
+    tools: list[str] = field(default_factory=list)  # tool allow-list
+    layout: str = "folder"              # "folder" (Layout A) | "flat" (Layout B)
+    # #104: agentskills.io marketplace spec compatibility — each skill
+    # carries its own ``license`` (e.g. "MIT", "Apache-2.0") so a
+    # marketplace can show + filter on licence before install. Empty
+    # string when the SKILL.md doesn't declare one.
+    license: str = ""
+    # #119(C): per-skill optimizer model — used only during evolve
+    # runs, not at inference. Lets a skill be authored with a cheap
+    # target (e.g. gemini-2.5-flash) and a strong evolver (e.g.
+    # claude-opus-4-6 or gemini-2.5-pro) for ~25-45% extra gain per
+    # SkillOpt §4. None = fall back to ``model`` for both.
+    optimizer_model: Optional[str] = None
 
 
 class SkillManager:
@@ -178,34 +228,90 @@ class SkillManager:
         self._load_all()
 
     def _load_all(self) -> None:
-        """Load all skills from the skills directory."""
+        """Load all skills from the skills directory.
+
+        Scans for BOTH layouts:
+          * Layout A — directories containing a ``SKILL.md``.
+          * Layout B — top-level ``*.md`` files (``.claude/agents/`` style).
+
+        On name collision (a folder skill and a flat skill share a name),
+        the folder takes precedence — the flat file is logged + skipped.
+        Folder skills can carry references / .local.md / multi-file
+        state that the flat form can't represent, so they're the
+        richer artifact.
+        """
         if not self._skills_dir.exists():
             return
-        for skill_dir in sorted(self._skills_dir.iterdir()):
-            if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
+        # Pass 1 — folder skills (Layout A, richer).
+        for entry in sorted(self._skills_dir.iterdir()):
+            if entry.is_dir() and (entry / "SKILL.md").exists():
                 try:
-                    skill = self._load_skill(skill_dir)
+                    skill = self._load_skill_folder(entry)
                     self._skills[skill.name] = skill
-                    logger.info("Loaded skill: %s (%s)", skill.name, skill.title)
+                    logger.info("Loaded skill: %s (%s) [folder]", skill.name, skill.title)
                 except Exception as e:
-                    logger.warning("Failed to load skill from %s: %s", skill_dir, e)
+                    logger.warning("Failed to load folder skill %s: %s", entry, e)
+
+        # Pass 2 — flat `.claude/agents/`-style skills.
+        for entry in sorted(self._skills_dir.iterdir()):
+            if (
+                entry.is_file()
+                and entry.suffix == ".md"
+                and entry.name != "SKILL.md"  # never confuse with folder marker
+                and not entry.name.startswith(".")
+            ):
+                try:
+                    skill = self._load_skill_flat(entry)
+                    if skill.name in self._skills:
+                        logger.info(
+                            "Flat skill %s shadowed by existing folder skill, skipped",
+                            entry.name,
+                        )
+                        continue
+                    self._skills[skill.name] = skill
+                    logger.info("Loaded skill: %s (%s) [flat]", skill.name, skill.title)
+                except Exception as e:
+                    logger.warning("Failed to load flat skill %s: %s", entry, e)
 
     def _load_skill(self, skill_dir: Path) -> InstalledSkill:
-        """Parse a SKILL.md file and load the skill."""
-        skill_md = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        """Backwards-compat shim — delegates to :meth:`_load_skill_folder`.
 
-        # Parse YAML frontmatter
+        Old callers (this module's installers + external code) still
+        invoke ``_load_skill`` with a directory. New code should use
+        the explicit ``_load_skill_folder`` / ``_load_skill_flat``
+        methods.
+        """
+        return self._load_skill_folder(skill_dir)
+
+    def _load_skill_folder(self, skill_dir: Path) -> InstalledSkill:
+        """Layout A loader — directory with ``SKILL.md`` + optional refs."""
+        skill_md = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
         frontmatter, body = _parse_frontmatter(skill_md)
 
-        name = skill_dir.name
-        title = frontmatter.get("title", name)
-        description = frontmatter.get("description", "")
-        metadata = frontmatter.get("metadata", {})
-        version = metadata.get("version", "0.0.0") if isinstance(metadata, dict) else "0.0.0"
-        author = metadata.get("author", "") if isinstance(metadata, dict) else ""
+        # Default identity from the directory name; frontmatter overrides.
+        # ``name`` (Claude Code) takes priority over ``title`` (legacy).
+        name = (
+            str(frontmatter.get("name") or "").strip()
+            or skill_dir.name
+        )
+        title = (
+            str(frontmatter.get("title") or "").strip()
+            or str(frontmatter.get("name") or "").strip()
+            or skill_dir.name
+        )
+        description = str(frontmatter.get("description") or "")
+
+        # Version / author — accept both top-level (Claude Code style)
+        # and metadata.{...} (legacy Nexus). Top-level wins when both
+        # are present.
+        version, author = _extract_version_author(frontmatter)
+        model = _extract_model(frontmatter)
+        tools = _extract_tools(frontmatter)
+        license_ = _extract_license(frontmatter)
+        optimizer_model = _extract_optimizer_model(frontmatter)
 
         # Load reference files
-        references = {}
+        references: dict[str, str] = {}
         refs_dir = skill_dir / "references"
         if refs_dir.exists():
             for ref_file in refs_dir.glob("*.md"):
@@ -217,7 +323,6 @@ class SkillManager:
         if local_md.exists():
             local_content = local_md.read_text(encoding="utf-8")
 
-        # Combine instructions: main body + local overrides
         instructions = body.strip()
         if local_content:
             instructions += f"\n\n## User Configuration\n{local_content}"
@@ -232,6 +337,53 @@ class SkillManager:
             instructions=instructions,
             references=references,
             metadata=frontmatter,
+            model=model,
+            tools=tools,
+            layout="folder",
+            license=license_,
+            optimizer_model=optimizer_model,
+        )
+
+    def _load_skill_flat(self, skill_file: Path) -> InstalledSkill:
+        """Layout B loader — single ``.claude/agents/``-style markdown file.
+
+        The file's stem (filename without ``.md``) is the default name,
+        overridable by frontmatter ``name``. No references, no
+        ``.local.md`` — flat layout is single-file by design.
+        """
+        text = skill_file.read_text(encoding="utf-8")
+        frontmatter, body = _parse_frontmatter(text)
+
+        name = (
+            str(frontmatter.get("name") or "").strip()
+            or skill_file.stem
+        )
+        title = (
+            str(frontmatter.get("title") or "").strip()
+            or name
+        )
+        description = str(frontmatter.get("description") or "")
+        version, author = _extract_version_author(frontmatter)
+        model = _extract_model(frontmatter)
+        tools = _extract_tools(frontmatter)
+        license_ = _extract_license(frontmatter)
+        optimizer_model = _extract_optimizer_model(frontmatter)
+
+        return InstalledSkill(
+            name=name,
+            title=title,
+            description=description,
+            version=str(version),
+            author=str(author),
+            path=skill_file,
+            instructions=body.strip(),
+            references={},
+            metadata=frontmatter,
+            model=model,
+            tools=tools,
+            layout="flat",
+            license=license_,
+            optimizer_model=optimizer_model,
         )
 
     async def install(self, source: str) -> InstalledSkill:
@@ -354,14 +506,32 @@ class SkillManager:
         if not query:
             return self._anthropic_listing_cache[:limit]
 
-        q = query.lower()
+        # Tokenise on whitespace AND separators so "gif creator"
+        # matches "slack-gif-creator", "doc_writer" matches
+        # "doc writer", etc. The earlier rev was a raw substring count,
+        # which silently missed every multi-word query that didn't
+        # match a literal hyphen-free segment of the skill name.
+        import re
+        def _norm(s: str) -> str:
+            return re.sub(r"[\-_/]+", " ", (s or "").lower())
+
+        q_norm = _norm(query).strip()
+        if not q_norm:
+            return self._anthropic_listing_cache[:limit]
+        q_tokens = [t for t in q_norm.split() if t]
+
         scored: list[tuple[int, dict]] = []
         for row in self._anthropic_listing_cache:
-            haystack = (
-                row["name"].lower() + " " + row["description"].lower()
+            haystack = _norm(
+                row["name"] + " " + row["description"] + " " + row["identifier"]
             )
-            score = haystack.count(q)
-            if score > 0 or q in row["identifier"].lower():
+            # Phrase match (highest weight) + per-token bonus so
+            # "gif creator" beats just "gif" alone.
+            score = haystack.count(q_norm) * 3
+            for t in q_tokens:
+                if t in haystack:
+                    score += 1
+            if score > 0:
                 scored.append((score, row))
         scored.sort(key=lambda x: -x[0])
         return [r for _, r in scored[:limit]]
@@ -834,7 +1004,9 @@ class SkillManager:
     def install_local(self, path: str | Path) -> InstalledSkill:
         """Install a skill from a local directory.
 
-        Copies the skill folder to the skills directory.
+        Copies the skill folder to the skills directory. Only valid
+        for Layout A (folder with SKILL.md). For ``.claude/agents/``
+        single-file imports, use :meth:`install_from_claude_agents`.
         """
         src = Path(path)
         if not (src / "SKILL.md").exists():
@@ -851,6 +1023,124 @@ class SkillManager:
         self._skills[skill.name] = skill
         logger.info("Installed local skill: %s (%s)", skill.name, skill.title)
         return skill
+
+    def install_from_claude_agents(self, path: str | Path) -> InstalledSkill:
+        """Install a ``.claude/agents/``-style agent markdown file.
+
+        Path can point to:
+          * A single ``.md`` file (e.g. ``~/proj/.claude/agents/researcher.md``).
+          * A directory — installs every ``.md`` file in it as a flat skill.
+
+        Files are copied verbatim into the skills dir under their
+        original filename. The flat-layout loader picks them up.
+        Frontmatter ``name`` is the addressable identifier; falls
+        back to the filename stem.
+
+        Returns the installed skill (or the LAST one if a directory
+        was passed; iterate ``installed`` for the full set).
+        """
+        src = Path(path).expanduser()
+        if not src.exists():
+            raise FileNotFoundError(f"Path not found: {src}")
+
+        if src.is_file():
+            if src.suffix != ".md":
+                raise ValueError(f"Not a markdown file: {src}")
+            return self._install_flat_file(src)
+
+        # Directory — install all .md files inside.
+        installed: list[InstalledSkill] = []
+        for md in sorted(src.glob("*.md")):
+            if md.name.startswith(".") or md.name == "SKILL.md":
+                continue
+            try:
+                installed.append(self._install_flat_file(md))
+            except Exception as e:
+                logger.warning("Skipped %s during bulk import: %s", md, e)
+        if not installed:
+            raise RuntimeError(f"No installable .md files found in {src}")
+        return installed[-1]
+
+    def _install_flat_file(self, src: Path) -> InstalledSkill:
+        """Copy a single Claude Code agent file into the skills dir."""
+        # Preserve the original filename so the round-trip (export →
+        # import) is identity. The frontmatter `name` is the
+        # addressable identifier, but the filename is what the user
+        # sees on disk.
+        dest = self._skills_dir / src.name
+        if dest.exists():
+            dest.unlink()
+        shutil.copyfile(src, dest)
+
+        skill = self._load_skill_flat(dest)
+        # Evict any previously-loaded skill of the same name (re-install).
+        self._skills[skill.name] = skill
+        logger.info(
+            "Installed Claude Code agent: %s (%s) from %s",
+            skill.name, skill.title, src,
+        )
+        return skill
+
+    def export_to_claude_agents(
+        self, name: str, dest_dir: str | Path,
+    ) -> Path:
+        """Export an installed skill as a ``.claude/agents/``-compatible
+        single-file markdown.
+
+        Writes ``{dest_dir}/{name}.md`` with frontmatter normalized to
+        the Claude Code shape:
+
+          ---
+          name: <skill-name>
+          description: <one-line>
+          model: <hint>     # only if set
+          tools: [...]      # only if non-empty
+          version: <ver>    # only if non-default
+          author: <author>  # only if set
+          ---
+
+          <body>
+
+        Folder-skill references / ``.local.md`` are NOT included — the
+        flat layout can't carry them. Caller is responsible for
+        bundling references separately if needed.
+
+        Returns the path to the written file.
+        """
+        skill = self._skills.get(name)
+        if skill is None:
+            raise KeyError(f"No installed skill named {name!r}")
+
+        dest = Path(dest_dir).expanduser()
+        dest.mkdir(parents=True, exist_ok=True)
+        out_path = dest / f"{skill.name}.md"
+
+        # Build frontmatter in a stable, readable order. Only include
+        # fields that have meaningful values so the output stays clean.
+        lines: list[str] = ["---"]
+        lines.append(f"name: {skill.name}")
+        # description: quote if it contains a colon to keep the YAML
+        # parser sane.
+        desc = skill.description.replace("\n", " ").strip()
+        if ":" in desc:
+            desc = f'"{desc}"'
+        lines.append(f"description: {desc}")
+        if skill.model:
+            lines.append(f"model: {skill.model}")
+        if skill.tools:
+            lines.append(f"tools: [{', '.join(skill.tools)}]")
+        if skill.version and skill.version != "0.0.0":
+            lines.append(f"version: {skill.version}")
+        if skill.author:
+            lines.append(f"author: {skill.author}")
+        lines.append("---")
+        lines.append("")
+        lines.append(skill.instructions.strip())
+        lines.append("")
+
+        out_path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info("Exported skill %s → %s", skill.name, out_path)
+        return out_path
 
     def uninstall(self, name: str) -> bool:
         """Remove an installed skill."""
@@ -1091,7 +1381,14 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
     """Parse YAML frontmatter from a markdown file.
 
     Returns (frontmatter_dict, body_text).
-    Simple parser — no PyYAML dependency.
+    Hand-rolled parser — no PyYAML dependency. Handles:
+      * Top-level scalars:           ``name: foo``
+      * Nested objects (1-level):    ``metadata:\\n  version: 1.0``
+      * Inline lists:                ``tools: [Read, Edit]``
+      * Block lists (1-level):       ``tools:\\n  - Read\\n  - Edit``
+
+    Anything fancier (deep nesting, multi-line strings, anchors) isn't
+    needed for ``.claude/agents/`` or Nexus skills, so we don't try.
     """
     if not text.startswith("---"):
         return {}, text
@@ -1104,32 +1401,248 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
     yaml_block = text[3:end].strip()
     body = text[end + 3:].strip()
 
-    # Simple YAML parser (handles key: value and nested metadata:)
     frontmatter: dict[str, Any] = {}
-    current_dict = frontmatter
-    current_key = None
+    current_key: Optional[str] = None  # last top-level key with an open value (dict or list)
+    pending_key: Optional[str] = None  # ``key:`` line with no value yet — type TBD
 
-    for line in yaml_block.splitlines():
+    def _scalar(raw: str) -> str:
+        return raw.strip().strip("\"'")
+
+    def _inline_list(raw: str) -> list[str]:
+        # "[a, b, c]" → ["a","b","c"]
+        inner = raw.strip()
+        if inner.startswith("[") and inner.endswith("]"):
+            inner = inner[1:-1]
+        return [
+            item.strip().strip("\"'")
+            for item in inner.split(",")
+            if item.strip()
+        ]
+
+    for raw_line in yaml_block.splitlines():
+        line = raw_line.rstrip()
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
 
         indent = len(line) - len(line.lstrip())
 
-        if ":" in stripped:
-            key, _, value = stripped.partition(":")
-            key = key.strip()
-            value = value.strip()
+        # Continuation of a pending or open block list / dict:
+        # ``  - item``  →  it's a list.
+        if stripped.startswith("-") and (pending_key or current_key):
+            target_key = pending_key or current_key
+            # First "-" after a pending key materialises the value as a list.
+            if pending_key:
+                frontmatter[pending_key] = []
+                current_key = pending_key
+                pending_key = None
+            elif not isinstance(frontmatter.get(current_key), list):
+                # current_key was an open dict but we're seeing a list
+                # entry — flip to list (typical when user writes
+                # ``metadata:\n  - x`` which we'd previously assumed was a
+                # dict).
+                frontmatter[current_key] = []
+            item = _scalar(stripped[1:])
+            if item:
+                frontmatter[current_key].append(item)
+            continue
 
-            if indent > 0 and current_key and isinstance(frontmatter.get(current_key), dict):
-                # Nested value
-                frontmatter[current_key][key] = value
-            elif value:
-                frontmatter[key] = value
-                current_key = key
-            else:
-                # Key with no value — start nested dict
-                frontmatter[key] = {}
-                current_key = key
+        # Indented ``key: value`` → nested scalar under the open dict.
+        if indent > 0 and ":" in stripped:
+            # Promote a pending key into an open dict on first nested write.
+            if pending_key:
+                frontmatter[pending_key] = {}
+                current_key = pending_key
+                pending_key = None
+            if current_key is not None and isinstance(frontmatter.get(current_key), dict):
+                k, _, v = stripped.partition(":")
+                frontmatter[current_key][k.strip()] = _scalar(v)
+                continue
+
+        # Any non-continuation line at indent 0 closes the previous
+        # open structure. A pending_key with no follow-up resolves to
+        # an empty dict so it's harmless to consumers that just probe
+        # for keys.
+        if indent == 0:
+            if pending_key is not None:
+                frontmatter.setdefault(pending_key, {})
+                current_key = pending_key
+                pending_key = None
+
+        if ":" not in stripped:
+            continue
+
+        key, _, value = stripped.partition(":")
+        key = key.strip()
+        value = value.strip()
+
+        if not value:
+            # ``key:`` with no inline value — defer typing until we
+            # see what the next line looks like.
+            pending_key = key
+            current_key = None  # close any prior open struct
+            continue
+
+        if value.startswith("["):
+            frontmatter[key] = _inline_list(value)
+            current_key = key
+            pending_key = None
+            continue
+
+        # Plain scalar value.
+        frontmatter[key] = _scalar(value)
+        current_key = key
+        pending_key = None
+
+    # Trailing pending key with no follow-up: keep it as an empty dict.
+    if pending_key is not None:
+        frontmatter.setdefault(pending_key, {})
 
     return frontmatter, body
+
+
+# ── Helpers shared by folder + flat loaders ────────────────────────
+
+def _extract_version_author(fm: dict) -> tuple[str, str]:
+    """Pull version + author from frontmatter, accepting both shapes.
+
+    Claude Code style: top-level ``version: 1.0`` / ``author: alice``.
+    Nexus legacy:      nested ``metadata: { version: 1.0, author: alice }``.
+
+    Top-level wins when both are present so a migrated skill that
+    carries an updated top-level value isn't masked by stale legacy
+    ``metadata.*``.
+    """
+    version = fm.get("version")
+    author = fm.get("author")
+    metadata = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
+    if not version:
+        version = metadata.get("version", "0.0.0")
+    if not author:
+        author = metadata.get("author", "")
+    return str(version), str(author)
+
+
+def _extract_model(fm: dict) -> Optional[str]:
+    """Read the model hint. Accept either ``model:`` (Claude Code) or
+    ``metadata.model:`` (Nexus legacy). Returns None when absent.
+
+    Values can be:
+      * Workflow tier hints: ``strong`` / ``fast`` / ``cheap``.
+      * Explicit model ids: ``claude-sonnet-4-6``, ``claude-haiku-4-5``,
+        etc. — passed through verbatim to the runtime.
+    """
+    val = fm.get("model")
+    if val:
+        return str(val).strip() or None
+    metadata = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
+    val = metadata.get("model")
+    return (str(val).strip() or None) if val else None
+
+
+def _extract_tools(fm: dict) -> list[str]:
+    """Read the tool allow-list. Accept Claude Code shapes:
+      * ``tools: [Read, Edit]`` (inline)
+      * ``tools:\\n  - Read\\n  - Edit`` (block)
+    Also accepts the agentskills.io ``allowed-tools`` synonym.
+    Empty / missing = no restriction.
+    """
+    val = fm.get("tools") or fm.get("allowed-tools")
+    if isinstance(val, list):
+        return [str(t).strip() for t in val if str(t).strip()]
+    if isinstance(val, str) and val.strip():
+        return [val.strip()]
+    return []
+
+
+def _extract_license(fm: dict) -> str:
+    """#104: agentskills.io marketplace alignment — each skill carries a
+    per-skill ``license`` field in SKILL.md frontmatter. Accept the
+    top-level shape (Claude Code + agentskills.io convention) and the
+    legacy ``metadata.license`` nesting. Empty string when absent so
+    callers can treat "no license declared" uniformly.
+    """
+    val = fm.get("license")
+    if val:
+        return str(val).strip()
+    metadata = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
+    return str(metadata.get("license") or "").strip()
+
+
+# ── #119: SkillOpt-style evolution helpers ────────────────────────
+
+
+# Fenced markers that delineate the SKILL.md region that step-level
+# evolution must NOT touch. The validation-gated evolver passes these
+# blocks through verbatim — only content outside them is editable.
+DURABLE_OPEN  = "<!-- nexus:durable -->"
+DURABLE_CLOSE = "<!-- /nexus:durable -->"
+
+
+def _extract_optimizer_model(fm: dict) -> Optional[str]:
+    """#119(C) target/optimizer split — a skill can declare a
+    stronger model to use ONLY during evolve runs. Inference still
+    uses the cheap ``model`` field. None = use the same model for
+    both. Accept top-level ``optimizer_model`` (preferred) and
+    ``metadata.optimizer_model`` (legacy).
+    """
+    val = fm.get("optimizer_model")
+    if val:
+        return str(val).strip() or None
+    metadata = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
+    val = metadata.get("optimizer_model")
+    return (str(val).strip() or None) if val else None
+
+
+def extract_durable_regions(body: str) -> tuple[list[str], str]:
+    """#119(B) protected region. Returns
+    ``(durable_blocks, editable_body)`` — durable_blocks is the list
+    of inner contents from each fenced region, editable_body is the
+    skill text with each fenced block REPLACED by a placeholder so
+    optimizers can re-thread them on edit.
+
+    Placeholder uses an opaque sentinel so optimizer LLMs are
+    unlikely to mangle it. The reverse op is :func:`reweave_durable`.
+    """
+    if DURABLE_OPEN not in body:
+        return [], body
+    out_blocks: list[str] = []
+    cursor = 0
+    pieces: list[str] = []
+    while True:
+        i = body.find(DURABLE_OPEN, cursor)
+        if i < 0:
+            pieces.append(body[cursor:])
+            break
+        pieces.append(body[cursor:i])
+        end = body.find(DURABLE_CLOSE, i)
+        if end < 0:
+            # Malformed — bail and treat the rest as editable so we
+            # don't blackhole the file.
+            pieces.append(body[i:])
+            break
+        inner = body[i + len(DURABLE_OPEN): end].strip("\n")
+        out_blocks.append(inner)
+        pieces.append(f"<<<NEXUS_DURABLE_{len(out_blocks)-1}>>>")
+        cursor = end + len(DURABLE_CLOSE)
+    return out_blocks, "".join(pieces)
+
+
+def reweave_durable(editable_body: str, durable_blocks: list[str]) -> str:
+    """Reverse of :func:`extract_durable_regions`. Replaces each
+    ``<<<NEXUS_DURABLE_N>>>`` placeholder with its protected block
+    re-fenced. If the optimizer accidentally deleted a placeholder
+    we re-append the block at the end so durable rules are never
+    lost."""
+    out = editable_body
+    used: set[int] = set()
+    for idx, inner in enumerate(durable_blocks):
+        ph = f"<<<NEXUS_DURABLE_{idx}>>>"
+        fenced = f"{DURABLE_OPEN}\n{inner}\n{DURABLE_CLOSE}"
+        if ph in out:
+            out = out.replace(ph, fenced, 1)
+            used.add(idx)
+    for idx, inner in enumerate(durable_blocks):
+        if idx not in used:
+            out += f"\n\n{DURABLE_OPEN}\n{inner}\n{DURABLE_CLOSE}\n"
+    return out

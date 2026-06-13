@@ -11,11 +11,14 @@
 
   <PropertyGroup>
     <!-- App identity for the OS dock / taskbar / Start menu.
-         AssemblyTitle / Product control the human-readable name; the
-         actual dock raster comes from the .ico / .icns produced by
-         scripts/build-icon.sh, wired in via the conditional ItemGroup
-         below so a fresh checkout still builds even before you've run
-         the icon-build step. -->
+         AssemblyName overrides the output binary name (was
+         RuneDesktop.UI.dll → now Nexus.dll). This is what macOS shows
+         in the Dock tooltip when running via `dotnet run` — without
+         it the Dock reads "RuneDesktop.UI". build-macos.sh has been
+         updated to reference the new binary name.
+         AssemblyTitle / Product control human-readable strings in
+         the binary's metadata blob. -->
+    <AssemblyName>Nexus</AssemblyName>
     <AssemblyTitle>Nexus</AssemblyTitle>
     <Product>Nexus</Product>
   </PropertyGroup>
@@ -31,6 +34,19 @@
     <PackageReference Include="Avalonia.Svg.Skia" Version="11.3.*" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.*" />
   </ItemGroup>
+
+  <!--
+    #143 - DICOM viewer.
+
+    .NET 10 + Avalonia 11.3 currently lacks a stable embedded
+    WebView. Rather than ship a NuGet dep that fails to resolve
+    on developer machines, we launch the Cornerstone3D viewer in
+    a chromeless Chrome / Edge / Brave window via the browser's
+    app-mode flag. Visually indistinguishable from a native
+    window (no tabs, no address bar, no toolbar). See
+    Services/DicomViewerLauncher.cs for the fallback chain.
+    Zero extra NuGet packages.
+  -->
 
   <ItemGroup>
     <ProjectReference Include="../RuneDesktop.Core/RuneDesktop.Core.csproj" />

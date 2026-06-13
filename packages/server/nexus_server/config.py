@@ -66,6 +66,50 @@ class ServerConfig:
         os.getenv("RATE_LIMIT_OTHER_REQUESTS_PER_MINUTE", "120")
     )
 
+    # ── Stripe billing ─────────────────────────────────────────────
+    # The secret key from your Stripe dashboard (live or test). Empty
+    # = billing disabled; checkout/webhook endpoints return 501 and
+    # the desktop just hides "Upgrade" CTAs. This lets the server boot
+    # in a no-billing dev mode for unit tests and local play.
+    STRIPE_SECRET_KEY: Optional[str] = os.getenv("STRIPE_SECRET_KEY")
+    # Signing secret used to verify webhook payloads. Stripe shows
+    # this in Dashboard → Developers → Webhooks → your endpoint.
+    STRIPE_WEBHOOK_SECRET: Optional[str] = os.getenv("STRIPE_WEBHOOK_SECRET")
+    # URL Stripe redirects the user back to after successful checkout
+    # / cancel. Both must be reachable from the user's browser; for
+    # local dev, http://localhost:<port> works because the desktop
+    # opens a system browser pointed at the local server.
+    STRIPE_SUCCESS_URL: str = os.getenv(
+        "STRIPE_SUCCESS_URL", "http://localhost:8001/billing/success"
+    )
+    STRIPE_CANCEL_URL: str = os.getenv(
+        "STRIPE_CANCEL_URL", "http://localhost:8001/billing/cancel"
+    )
+    # Per-tier Stripe Price IDs. You create these in Stripe Dashboard
+    # (Products → New Product → set monthly + yearly prices, copy IDs
+    # like "price_1ABCxyz..."). Empty value = that tier isn't sellable
+    # in this deployment. See docs/BILLING.md for the canonical list.
+    STRIPE_PRICE_PRO_MONTHLY:  Optional[str] = os.getenv("STRIPE_PRICE_PRO_MONTHLY")
+    STRIPE_PRICE_PRO_YEARLY:   Optional[str] = os.getenv("STRIPE_PRICE_PRO_YEARLY")
+    STRIPE_PRICE_PRO_PLUS_MONTHLY: Optional[str] = os.getenv("STRIPE_PRICE_PRO_PLUS_MONTHLY")
+    STRIPE_PRICE_PRO_PLUS_YEARLY:  Optional[str] = os.getenv("STRIPE_PRICE_PRO_PLUS_YEARLY")
+    STRIPE_PRICE_RADIOLOGY_MONTHLY: Optional[str] = os.getenv("STRIPE_PRICE_RADIOLOGY_MONTHLY")
+    STRIPE_PRICE_RADIOLOGY_YEARLY:  Optional[str] = os.getenv("STRIPE_PRICE_RADIOLOGY_YEARLY")
+
+    @property
+    def billing_enabled(self) -> bool:
+        return bool(self.STRIPE_SECRET_KEY and self.STRIPE_WEBHOOK_SECRET)
+
+    def stripe_price_id(self, tier: str, cadence: str = "monthly") -> Optional[str]:
+        """Resolve a tier+cadence pair to its Stripe Price ID.
+
+        ``tier`` ∈ {pro, pro_plus, radiology}; ``cadence`` ∈ {monthly, yearly}.
+        Returns None if that combination isn't configured in this deployment
+        (operator hasn't created the product yet).
+        """
+        key = f"STRIPE_PRICE_{tier.upper()}_{cadence.upper()}"
+        return getattr(self, key, None)
+
     # ── Chain / Blockchain ─────────────────────────────────────────
     # Server-owned custodial signing key. Used to sponsor on-chain ops
     # for Web2 users who don't carry their own wallet. NOT the same as
@@ -105,6 +149,22 @@ class ServerConfig:
     NEXUS_MAINNET_IDENTITY_REGISTRY: Optional[str] = os.getenv(
         "NEXUS_MAINNET_IDENTITY_REGISTRY"
     )
+
+    # #134 — Greenfield (BNB Chain decentralised storage) sync toggle.
+    # Default ON-DISABLED while we transition off Greenfield onto a
+    # traditional object-storage backend (S3-compatible) as the
+    # durability layer. When this is "1" / "true" / "yes":
+    #   * files.upload_file skips the store_blob mirror step
+    #   * twin_manager's log handler still tolerates greenfield_put
+    #     events (older sessions may still emit them), but new uploads
+    #     never produce them
+    #   * desktop UI hides the Work-directory bucket-tree panel and
+    #     swaps the sync badge to "Local-only"
+    # Set to "0" only when you need to test the legacy path. Once the
+    # S3 backend lands (separate task), all of this code goes away.
+    NEXUS_GREENFIELD_DISABLED: bool = os.getenv(
+        "NEXUS_GREENFIELD_DISABLED", "1",
+    ).strip().lower() in ("1", "true", "yes", "on")
 
     @property
     def network_short(self) -> str:

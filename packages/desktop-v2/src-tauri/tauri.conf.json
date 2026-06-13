@@ -1,0 +1,61 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nexus",
+  "version": "0.1.0",
+  "identifier": "io.runeprotocol.nexus",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Nexus",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 700,
+        "decorations": true,
+        "transparent": false,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "backgroundColor": "#1B1A18"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Medical",
+    "shortDescription": "Clinical workflow agent",
+    "longDescription": "Nexus is a clinical workflow agent for radiologists and hospitalists. Imaging, labs, and chat in one surface.",
+    "externalBin": [
+      "binaries/nexus-server"
+    ],
+    "resources": [
+      "resources/default.env",
+      "resources/server.build_info"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "exceptionDomain": "localhost",
+      "providerShortName": "Nexus",
+      "entitlements": "entitlements.plist"
+    }
+  }
+}

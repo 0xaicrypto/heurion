@@ -1,65 +1,114 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Nexus app icon. The "永生 agent" logo: a chain link forming an N.
-  - Outer rounded square: BNB-yellow gradient (matches BrandAccentBrush)
-  - The N is rendered as an open chain link — two rings with a diagonal
-    bar — visually encoding the "two on-chain anchors connected by an
-    immutable history" idea.
-  - Sized at 1024x1024 for crisp dock / taskbar rendering on retina;
-    scales down cleanly because all paths are vector.
+  Nexus app icon — Apple HIG style.
+
+  Design rationale
+  ────────────────
+  * macOS Big Sur+ squircle (corner radius ≈ 22.5% of side). The shape
+    itself is half the brand recognition on macOS; we honour it.
+  * Single-colour glyph (white N) on a dark, desaturated gradient.
+    Dropped the previous yellow because Apple's HIG steers app icons
+    toward two-tone treatments: one chromatic background, one neutral
+    foreground glyph. Yellow-on-navy reads as a brand poster, not a
+    macOS icon.
+  * Soft top-edge highlight + faint inner stroke + drop shadow on the
+    N — the depth cues Apple's own icons (Mail, Music, Messages) use to
+    make the glyph feel like a real object sitting in the tile, rather
+    than a flat decal.
+  * No anchor dot, no inner gloss strip. Apple icons stay calm at
+    16-32 px in the Dock; extra micro-details just turn into noise at
+    those sizes.
+
+  Tested at 16, 32, 64, 128, 256, 512, 1024.
+  Pipeline: scripts/build-icon.sh → rsvg-convert → iconutil → .icns.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"
      viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%"  stop-color="#F5C842"/>
-      <stop offset="100%" stop-color="#F0B90B"/>
+    <!--
+      Background gradient. Deep slate at top, very dark navy at bottom.
+      Slightly cooler than pure black so the tile reads as "dark UI"
+      not "broken icon". Hue tuned to align with the desktop's new
+      macOS-dark palette (SurfaceBase #1E1E1E neighbourhood).
+    -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#2E3540"/>
+      <stop offset="55%"  stop-color="#1A1F28"/>
+      <stop offset="100%" stop-color="#0E1117"/>
     </linearGradient>
-    <linearGradient id="bg-dark" x1="0%" y1="100%" x2="100%" y2="0%">
-      <stop offset="0%"  stop-color="#5C3F00"  stop-opacity="0.15"/>
-      <stop offset="100%" stop-color="#000000" stop-opacity="0.0"/>
+
+    <!--
+      N glyph fill. Near-white with a hair of warm tint at the top so
+      the letter doesn't feel clinical. Light → very light from top to
+      bottom mimics rim-light depth.
+    -->
+    <linearGradient id="n" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E6E8EE"/>
     </linearGradient>
-    <filter id="soft" x="-10%" y="-10%" width="120%" height="120%">
-      <feGaussianBlur stdDeviation="8"/>
+
+    <!--
+      Drop shadow under the N. Soft, downward — gives the glyph "lift"
+      off the background, the way the letter on a Notion / Linear icon
+      seems to sit slightly above the tile.
+    -->
+    <filter id="lift" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14"
+                    flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+
+    <!--
+      Inner shadow on the N — very subtle, gives a hint of bevel.
+      Achieved by compositing a blurred negative against the source
+      shape.
+    -->
+    <filter id="inset" x="-5%" y="-5%" width="110%" height="110%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="6" result="blur"/>
+      <feOffset in="blur" dx="0" dy="-3" result="offset"/>
+      <feComposite in="SourceAlpha" in2="offset" operator="arithmetic"
+                   k2="-1" k3="1" result="inv"/>
+      <feFlood flood-color="#0E1117" flood-opacity="0.18"/>
+      <feComposite in2="inv" operator="in"/>
+      <feComposite in2="SourceGraphic" operator="over"/>
     </filter>
   </defs>
 
-  <!-- Background tile -->
-  <rect x="0" y="0" width="1024" height="1024" rx="220" ry="220"
-        fill="url(#bg)"/>
-  <rect x="0" y="0" width="1024" height="1024" rx="220" ry="220"
-        fill="url(#bg-dark)"/>
-
-  <!-- Subtle inner stroke -->
-  <rect x="20" y="20" width="984" height="984" rx="200" ry="200"
-        fill="none" stroke="#FFFFFF" stroke-opacity="0.18"
-        stroke-width="3"/>
+  <!-- Background tile — macOS Big Sur squircle radius (22.5% × side). -->
+  <rect width="1024" height="1024" rx="230" ry="230" fill="url(#bg)"/>
 
   <!--
-    "N" rendered as two chain rings + one diagonal connecting bar.
-    Each ring is a thick stroke circle. Total composition is centred
-    in the inner safe area (200..824 horizontally, 200..824 vertically).
+    Top-edge highlight. A faint white strip at the top, fading to
+    transparent — the same trick Apple uses on Music / Calendar to
+    suggest the tile is convex. Stays under the N so it doesn't
+    interfere with the glyph itself.
   -->
+  <rect x="40" y="32" width="944" height="180" rx="110" ry="110"
+        fill="#FFFFFF" opacity="0.06"/>
 
-  <!-- Left ring (top-left) -->
-  <circle cx="312" cy="332" r="140" fill="none" stroke="#1A1006"
-          stroke-width="80" stroke-linecap="round"/>
+  <!--
+    Inner edge stroke — gives the tile a crisp boundary against light
+    Dock backgrounds. Very subtle (8 % white at 2 px).
+  -->
+  <rect x="14" y="14" width="996" height="996" rx="218" ry="218"
+        fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="2"/>
 
-  <!-- Right ring (bottom-right) -->
-  <circle cx="712" cy="692" r="140" fill="none" stroke="#1A1006"
-          stroke-width="80" stroke-linecap="round"/>
-
-  <!-- Diagonal bar joining them — the 'leg' of the N -->
-  <line x1="372" y1="392" x2="652" y2="632"
-        stroke="#1A1006" stroke-width="80" stroke-linecap="round"/>
-
-  <!-- A faint highlight stroke layered on top to give the chain
-       a slightly metallic feel -->
-  <circle cx="312" cy="332" r="140" fill="none" stroke="#FFFFFF"
-          stroke-opacity="0.18" stroke-width="6"/>
-  <circle cx="712" cy="692" r="140" fill="none" stroke="#FFFFFF"
-          stroke-opacity="0.18" stroke-width="6"/>
-  <line x1="372" y1="392" x2="652" y2="632"
-        stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="6"
-        stroke-linecap="round"/>
+  <!--
+    The N.
+      Left vertical:   x = 286..426   (140 px wide)
+      Right vertical:  x = 598..738   (140 px wide)
+      Diagonal:        parallelogram from top of left to bottom of right.
+    Corners rounded at 24 px for a hint of softness without losing the
+    geometric character. Composed under one filter group so the drop
+    shadow + inner shadow apply to the whole letter as a single mass.
+  -->
+  <g filter="url(#lift)">
+    <g filter="url(#inset)">
+      <rect x="286" y="290" width="140" height="444" rx="24" ry="24"
+            fill="url(#n)"/>
+      <rect x="598" y="290" width="140" height="444" rx="24" ry="24"
+            fill="url(#n)"/>
+      <polygon points="286,290 426,290 738,734 598,734"
+               fill="url(#n)"/>
+    </g>
+  </g>
 </svg>

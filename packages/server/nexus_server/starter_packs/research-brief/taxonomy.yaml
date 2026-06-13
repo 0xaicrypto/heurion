@@ -1,0 +1,31 @@
+# Research Brief taxonomy — shared vocabulary across the pipeline.
+# Every sub-agent uses these labels when annotating findings, sources,
+# or caveats. The Synthesizer trusts this taxonomy when it picks which
+# findings rise to "key findings" vs which get demoted to "open questions".
+
+source_tier:
+  T1: "Primary source — peer-reviewed paper, court filing, regulator publication, official statistics, original dataset."
+  T2: "Authoritative secondary — established journalism (Reuters/FT/WSJ), industry analyst (Gartner/Forrester), official company filing."
+  T3: "Aggregator / explainer — Wikipedia, blog post citing primary sources, podcast transcripts."
+  T4: "Unverified — social media post, press release, opinion piece, AI-generated content."
+
+finding_strength:
+  STRONG:   "Multiple T1/T2 sources agree. Effect size or numbers reported."
+  MODERATE: "Single T1/T2 source, or multiple T2/T3 in agreement."
+  WEAK:     "Single T3 source, or T1/T2 with caveats / small sample."
+  ANECDOTE: "T4 only, or single example used as evidence."
+
+caveat_type:
+  SCOPE:       "Finding only holds within a specific time / geography / population."
+  CONTESTED:   "Other reputable sources disagree."
+  STALE:       "Source is old; underlying conditions may have changed."
+  CONFLICT:    "Source has a financial / political / institutional interest in the conclusion."
+  EXTRAPOLATION: "Conclusion goes beyond what the source actually claimed."
+
+# Output sections (every researcher / synthesizer must structure under these):
+sections:
+  EXEC_SUMMARY:      "3-5 sentence verdict. The TL;DR a busy reader can act on."
+  KEY_FINDINGS:      "Numbered list of STRONG/MODERATE findings with citations."
+  NUANCE:            "Caveats, contested claims, conflicting evidence."
+  SOURCES:           "Numbered list keyed to citations in KEY_FINDINGS."
+  OPEN_QUESTIONS:    "What this brief CAN'T answer yet; what's needed to close."

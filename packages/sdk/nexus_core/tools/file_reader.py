@@ -77,14 +77,43 @@ class ReadUploadedFileTool(BaseTool):
     def name(self) -> str:
         return "read_uploaded_file"
 
+    # Per-call read window.
+    #
+    # Default is "read the whole file" (capped at MAX_READ_CHARS) so a
+    # single call returns the entire content for any reasonably sized
+    # document. The agent should NOT chunk unless the file is genuinely
+    # huge — see description for prompt-level guidance.
+    #
+    # Sizing for modern models:
+    #   Gemini 1.5/2 Flash: 1-2M token context → comfortably fits 1M chars
+    #   Claude 3.5 Sonnet:  200k token context → comfortably fits 500k chars
+    #   GPT-4o:             128k token context → comfortably fits 300k chars
+    # 1M cap covers all three with margin; the rare doc that exceeds it
+    # is what offset/limit pagination is still there for.
+    #
+    # Earlier rev was default=2000 / cap=8000 (sized for Claude Opus 1's
+    # ~10k-token tool budget). That cap forced the agent into a
+    # read → "still need more" → ask user → read-again loop on every
+    # 30k-char PDF, which was both wasteful and visibly bad UX
+    # (the user complained about it explicitly: "this 45k PDF should
+    # not need 6 reads").
+    DEFAULT_READ_CHARS = 200_000
+    MAX_READ_CHARS = 1_000_000
+
     @property
     def description(self) -> str:
         return (
             "Read content from a file the user has uploaded. "
-            "Use this to read large files that were only partially previewed. "
-            "Specify offset (character position) and limit (max chars to return). "
-            "Call with just the filename to get file info and first 2000 chars. "
-            "Call with no filename to list all uploaded files."
+            "DEFAULT BEHAVIOUR: a single call with just the filename "
+            f"returns the WHOLE file (up to {self.DEFAULT_READ_CHARS:,} "
+            "characters). For typical PDFs / docs / spreadsheet exports "
+            "you should call this ONCE and answer the user's question — "
+            "do NOT pause to ask 'should I continue reading?' between "
+            "chunks; the cap is large enough that pagination is rarely "
+            "needed. Pass offset+limit only when the file is reported "
+            f"larger than {self.MAX_READ_CHARS:,} characters in the "
+            "header of an earlier read. Call with no filename to list "
+            "all uploaded files."
         )
 
     @property
@@ -102,7 +131,14 @@ class ReadUploadedFileTool(BaseTool):
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max characters to return (default: 2000, max: 8000)",
+                    "description": (
+                        f"Max characters to return. Defaults to "
+                        f"{self.DEFAULT_READ_CHARS:,} (= read the whole "
+                        f"file in one shot). Hard cap "
+                        f"{self.MAX_READ_CHARS:,}. Only set this "
+                        f"explicitly when the file is genuinely huge "
+                        f"and you want to stream it in chunks."
+                    ),
                 },
                 "search": {
                     "type": "string",
@@ -172,9 +208,13 @@ class ReadUploadedFileTool(BaseTool):
     # ── Public surface ────────────────────────────────────────────
 
     async def execute(
-        self, filename: str = "", offset: int = 0, limit: int = 2000,
+        self, filename: str = "", offset: int = 0, limit: int = 0,
         search: str = "", **kwargs
     ) -> ToolResult:
+        # `limit=0` means "use the class default" — lets the caller
+        # opt out of choosing a number and get sensible behaviour.
+        if limit <= 0:
+            limit = self.DEFAULT_READ_CHARS
         # ── No filename → list available files ────────────────────
         if not filename:
             listing_map = await self._list()
@@ -206,7 +246,8 @@ class ReadUploadedFileTool(BaseTool):
                 output=self._search_in_text(content, real_name, search),
             )
 
-        limit = min(limit, 8000)  # Hard cap at 8K per read
+        # Hard cap protects context — see class-level comment.
+        limit = min(limit, self.MAX_READ_CHARS)
         chunk, total = self._slice(content, offset, limit)
         remaining = total - offset - len(chunk)
         header = (
@@ -214,9 +255,17 @@ class ReadUploadedFileTool(BaseTool):
             f"Showing: {offset:,}-{offset + len(chunk):,}]"
         )
         if remaining > 0:
+            # Imperative hint to the agent — it should fetch the rest
+            # itself in the same turn, not stop and ask the user. The
+            # user-facing complaint that triggered this rev was the
+            # agent saying "want me to keep reading?" between every
+            # 8k chunk on a 45k-char PDF.
             header += (
-                f"\n[{remaining:,} more chars — "
-                f"use offset={offset + len(chunk)} to continue]"
+                f"\n[{remaining:,} more chars remaining. "
+                f"Call this tool again with offset={offset + len(chunk)} "
+                f"in the SAME turn to fetch the rest — DO NOT pause to "
+                f"ask the user; just continue reading until you have "
+                f"the whole file or enough to answer the question.]"
             )
             header += f"\n[Tip: use search='keyword' to find specific content]"
         return ToolResult(output=f"{header}\n\n{chunk}")

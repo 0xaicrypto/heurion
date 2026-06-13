@@ -267,12 +267,20 @@ class ChainBackend(StorageBackend):
     # writes are landing again. A successful write clears the marker
     # immediately, so this is really just "how long without ANY write
     # activity before we forget about a prior fallback".
-    _GREENFIELD_FALLBACK_STALE_AFTER = 300.0
+    # Was 300s. A single transient SP-timeout would lock the UI in
+    # "degraded" for 5 min even after Greenfield came back — visually
+    # the user sees periodic 5-min flap cycles with no actual ongoing
+    # problem. 60s is short enough that one bad probe rolls off fast,
+    # long enough that a real outage doesn't flicker green/red every
+    # poll cycle. The flag is *also* cleared immediately on any
+    # successful Greenfield write — see _record_greenfield_success.
+    _GREENFIELD_FALLBACK_STALE_AFTER = 60.0
     # Same model for BSC anchor failures. BSC's anchor cadence is much
     # slower than Greenfield's PUT cadence (anchors fire on commit, not
-    # on every write), so the staleness window also serves as a soft
-    # "if we haven't tried to anchor in 5 min the world's at peace".
-    _BSC_FAILURE_STALE_AFTER = 300.0
+    # on every write), so we keep a longer window — a single failed
+    # anchor probably IS worth flagging for a while since the next
+    # anchor attempt might be minutes away.
+    _BSC_FAILURE_STALE_AFTER = 120.0
     # WAL entries older than this are surfaced as "X writes pending for
     # over 1 minute" in the desktop UI. Anything younger is just normal
     # backpressure during heavy writes.
@@ -779,8 +787,10 @@ class ChainBackend(StorageBackend):
                 # Successful chain write clears any prior fallback
                 # marker, so the health card returns to green once
                 # writes start landing again. (The marker auto-stales
-                # at 5 minutes, but this gives an immediate recovery
-                # signal — important for the desktop's polling card.)
+                # at _GREENFIELD_FALLBACK_STALE_AFTER seconds — but
+                # this gives an immediate recovery signal, which is
+                # what the desktop's 2s polling card needs to feel
+                # responsive instead of "stuck in degraded".)
                 self._last_greenfield_fallback_at = None
             except GreenfieldFallbackError as e:
                 # Data is durable in local cache, but did NOT make it

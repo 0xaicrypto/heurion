@@ -1,0 +1,25 @@
+{
+  "name": "Paper Polish",
+  "description": "Iterative academic paper polish — visual layout, citation hygiene, structure consistency. PaperFit-inspired closed loop with Inspector → Diagnoser → Patcher → Gatekeeper. Degrades gracefully to text-only review when LaTeX / Poppler environment isn't available.",
+  "definition": {
+    "inputs": [
+      { "key": "paper_source", "label": "Paper (LaTeX .tex, PDF path, or pasted prose)", "type": "longtext", "required": true,  "options": [] },
+      { "key": "venue",        "label": "Target venue (CVPR / ICLR / NeurIPS / arXiv / generic)", "type": "text",     "required": true,  "options": [] },
+      { "key": "page_budget",  "label": "Page budget (e.g. '8 pages + refs', leave empty for no limit)", "type": "text", "required": false, "options": [] }
+    ],
+    "steps": [
+      { "skill": "paper-polish-inspector",  "label": "Inspector" },
+      { "skill": "paper-polish-diagnoser",  "label": "Diagnoser" },
+      { "skill": "paper-polish-patcher",    "label": "Patcher" },
+      { "skill": "paper-polish-formatter",  "label": "Formatter" }
+    ],
+    "mode": "iterative",
+    "max_iterations": 4,
+    "gatekeeper": {
+      "skill": "paper-polish-judge",
+      "pass_criteria": "Every A-tier (LAYOUT_CRITICAL) defect from the Inspector must be PATCHED or marked WONTFIX with justification. Every B-tier (FLOAT) defect should be PATCHED or WONTFIX. Citation completeness ≥ 95% (every \\cite resolves to a bib entry, every figure / table has \\label + matching \\ref). If the environment is text-only (no LaTeX/Poppler available), A-tier visual defects waive automatically — the Judge only checks structural defects.",
+      "label": "Judge"
+    },
+    "metadata": { "source": "starter-pack:paper-polish" }
+  }
+}

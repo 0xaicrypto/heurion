@@ -65,17 +65,22 @@ PASSKEY_PAGE_HTML = """<!DOCTYPE html>
         }
 
         .logo {
+            /* Matches the desktop app icon (Nexus.icns): dark-navy
+               rounded square + BNB-yellow N. Kept in sync with
+               packages/desktop/RuneDesktop.UI/Assets/nexus-logo.svg
+               so the login modal and the app's dock icon present a
+               single coherent identity. */
             width: 72px;
             height: 72px;
             margin: 0 auto 16px;
-            background: #F0B90B;
-            border-radius: 12px;
+            background: #0F1729;
+            border-radius: 16px;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 40px;
             font-weight: bold;
-            color: white;
+            color: #F0B90B;
         }
 
         .header h1 {
@@ -281,7 +286,7 @@ PASSKEY_PAGE_HTML = """<!DOCTYPE html>
 <body>
     <div class="container">
         <div class="header">
-            <div class="logo">R</div>
+            <div class="logo">N</div>
             <h1>Nexus</h1>
             <p>Secure authentication with passkeys</p>
         </div>
@@ -325,6 +330,26 @@ PASSKEY_PAGE_HTML = """<!DOCTYPE html>
 
         <!-- Register Mode -->
         <div id="registerMode" class="hidden">
+            <!-- #101: prevent silent history loss. If you already have
+                 an account, registering creates a NEW user_id and your
+                 existing chats become invisible (they're tied to the
+                 old user_id). Returning users almost always want
+                 Sign In, not Create Account. -->
+            <div style="background: rgba(255, 165, 0, 0.1);
+                        border: 1px solid rgba(255, 165, 0, 0.3);
+                        border-radius: 6px; padding: 10px 12px;
+                        margin-bottom: 14px; font-size: 12px;
+                        color: #e0b070;">
+                ⚠ Only use Create Account if you've never signed in
+                before. If you already have chat history, registering
+                a new passkey will create a SEPARATE account — your
+                old chats will not be accessible from it.
+                <a href="#" onclick="setMode('login'); return false;"
+                   style="color: #ffc080; text-decoration: underline;">
+                    Sign in instead →
+                </a>
+            </div>
+
             <div class="form-group">
                 <label for="regDisplayName">Display Name</label>
                 <input type="text" id="regDisplayName" placeholder="Enter your name"
@@ -476,7 +501,24 @@ PASSKEY_PAGE_HTML = """<!DOCTYPE html>
                 });
 
                 if (!finishResp.ok) {
-                    const errData = await finishResp.json();
+                    // #101: when the server can't find a matching passkey
+                    // (status 404), it's almost always because the user
+                    // never registered on this machine (or their iCloud
+                    // Keychain doesn't have the credential synced).
+                    // Surface a clear next step + auto-flip the mode
+                    // toggle to Register so the user can fix it with
+                    // one click instead of staring at a cryptic 404.
+                    const errData = await finishResp.json().catch(() => ({}));
+                    if (finishResp.status === 404) {
+                        showStatus(
+                            'No matching passkey for this device. ' +
+                            'Click "Create Account" to register first.',
+                            'error',
+                        );
+                        setMode('register');
+                        loginBtn.disabled = false;
+                        return;
+                    }
                     throw new Error(errData.detail || 'Authentication failed');
                 }
 
@@ -630,12 +672,21 @@ PASSKEY_PAGE_HTML = """<!DOCTYPE html>
                 if (headerP) {
                     headerP.textContent = 'Continue to Nexus on your desktop';
                 }
-                // Default to register for first-time users; the mode toggle
-                // is still visible so returning users can flip to Sign In.
-                setMode('register');
-                // Pre-focus the name input so the user can just type and Enter
-                const nameInput = document.getElementById('regDisplayName');
-                if (nameInput) nameInput.focus();
+                // #101: default to SIGN-IN, not register. Returning users
+                // re-opening the desktop should hit the login path so
+                // they recover their existing user_id (and therefore
+                // their chat history, which is keyed by user_id under
+                // ~/.nexus_server/twins/<user_id>/). Defaulting to
+                // register silently spawned a fresh user_id every time
+                // someone forgot to flip the toggle, with the symptom
+                // "all my chats disappeared after logout".
+                //
+                // First-timers can still flip to "Create Account" via
+                // the visible toggle. The handleLogin flow surfaces a
+                // clean "No matching passkey found — register first?"
+                // error if there's nothing to sign in to, which is the
+                // RIGHT prompt for a true first-timer.
+                setMode('login');
             }
         });
     </script>

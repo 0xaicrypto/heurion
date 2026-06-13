@@ -116,17 +116,6 @@ _test_override: Optional[object] = None  # let unit tests inject a fake twin
 # ── Lazy create / cache ───────────────────────────────────────────────
 
 
-def _network_short(network_str: str) -> str:
-    """[Deprecated — use :attr:`config.network_short` instead.]
-
-    Kept for back-compat with existing test calls; new code should read
-    ``config.network_short`` directly. This shim ignores its argument and
-    delegates to the canonical config-level helper so all modules end up
-    with the same answer regardless of which path they took to find it.
-    """
-    return config.network_short
-
-
 _bootstrap_lock = asyncio.Lock()
 # In-process bootstrap mutex per user_id. Threading.Lock would also work,
 # but the bootstrap function is called from both async (TwinManager) and
@@ -336,7 +325,7 @@ def _resolve_chain_kwargs(user_id: str) -> dict:
         )
         return {}
 
-    net_short = _network_short(config.NEXUS_NETWORK)
+    net_short = config.network_short
     net_prefix = "MAINNET" if net_short == "mainnet" else "TESTNET"
 
     return {
@@ -455,6 +444,39 @@ async def _create_twin(user_id: str):
         logger.debug(
             "session_metadata replay skipped for %s: %s", user_id, e,
         )
+
+    # ── User-scoped tool registration ──
+    # Each entry is (module_path, register_fn_name, human_label). The
+    # register_fn is expected to take (twin, user_id) and attach its
+    # tools to the twin's ToolRegistry. We iterate so adding a 4th
+    # tool category is one line — and a single failure doesn't stop
+    # the others from registering.
+    _USER_SCOPED_TOOL_REGISTRARS = (
+        # Phase B: chat-first workflow invocation (list_workflows).
+        ("nexus_server.tools_workflow", "register_workflow_tools", "Workflow"),
+        # Phase C-1: cross-session memory search (search_past_chats).
+        ("nexus_server.tools_memory",   "register_memory_tools",   "Memory"),
+        # D-2: ad-hoc subagent delegation (delegate).
+        ("nexus_server.tools_subagent", "register_subagent_tools", "Subagent"),
+        # #114: macOS Calendar + Mail bridges (read_calendar + compose_email_draft).
+        ("nexus_server.tools_calendar", "register_calendar_tools", "Calendar"),
+        # #119: SkillOpt-style validation-gated skill evolver.
+        ("nexus_server.tools_evolve",   "register_evolve_tools",   "Evolve"),
+        # #126: OCR via tesseract for narrow text-extraction needs
+        # (vision still default for general image understanding).
+        ("nexus_server.tools_ocr",      "register_ocr_tools",      "OCR"),
+        # #169: defer_to_background — schedule long-running tasks for
+        # async execution + email notification.
+        ("nexus_server.tools_async",    "register_async_tools",    "AsyncTasks"),
+    )
+    for module_path, fn_name, label in _USER_SCOPED_TOOL_REGISTRARS:
+        try:
+            module = __import__(module_path, fromlist=[fn_name])
+            getattr(module, fn_name)(twin, user_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "%s tools not registered for %s: %s", label, user_id, e,
+            )
     return twin
 
 

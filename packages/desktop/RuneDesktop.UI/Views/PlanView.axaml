@@ -1,0 +1,340 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:RuneDesktop.UI.ViewModels"
+             x:Class="RuneDesktop.UI.Views.PlanView"
+             x:DataType="vm:PlanViewModel"
+             Background="{StaticResource SurfaceBaseBrush}">
+
+  <ScrollViewer VerticalScrollBarVisibility="Auto"
+                HorizontalScrollBarVisibility="Disabled">
+    <StackPanel MaxWidth="960"
+                Margin="32,32,32,48"
+                Spacing="24"
+                HorizontalAlignment="Center">
+
+      <!-- ═════ Title ═════════════════════════════════════════════
+           macOS HIG: large titles are 22-28 pt SemiBold (not Bold) —
+           Bold should be reserved for short, demanding emphasis.
+           Subtitle uses the secondary label colour. -->
+      <StackPanel Spacing="6">
+        <TextBlock Text="Plan &amp; Billing"
+                   FontSize="26" FontWeight="SemiBold"
+                   Foreground="{StaticResource TextPrimaryBrush}"/>
+        <TextBlock Text="Manage your Nexus subscription. Changes take effect immediately; cancellations end at the next billing date."
+                   FontSize="13"
+                   Foreground="{StaticResource TextSecondaryBrush}"
+                   TextWrapping="Wrap" MaxWidth="640"/>
+      </StackPanel>
+
+      <!-- ═════ Current plan card ═════════════════════════════════
+           macOS NSBox-style card: card surface, hairline border,
+           10 px corner radius. 20 px padding (HIG default for grouped
+           content containers). -->
+      <Border Background="{StaticResource SurfaceCardBrush}"
+              BorderBrush="{StaticResource DividerBrush}"
+              BorderThickness="1"
+              CornerRadius="10"
+              Padding="20">
+        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto">
+          <TextBlock Grid.Column="0" Grid.Row="0"
+                     Text="CURRENT PLAN"
+                     FontSize="10" FontWeight="SemiBold"
+                     Foreground="{StaticResource TextTertiaryBrush}"
+                     Margin="0,0,0,8"/>
+          <StackPanel Grid.Column="0" Grid.Row="1"
+                      Orientation="Horizontal" Spacing="10"
+                      VerticalAlignment="Center">
+            <TextBlock Text="{Binding CurrentTierLabel}"
+                       FontSize="24" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimaryBrush}"/>
+            <Border Background="{StaticResource SurfaceMutedBrush}"
+                    CornerRadius="999"
+                    Padding="10,3"
+                    VerticalAlignment="Center"
+                    IsVisible="{Binding StateLabel,
+                                Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+              <TextBlock Text="{Binding StateLabel}"
+                         FontSize="11"
+                         Foreground="{StaticResource TextSecondaryBrush}"/>
+            </Border>
+          </StackPanel>
+
+          <!-- Trial countdown / renewal info -->
+          <Grid Grid.Column="0" Grid.Row="2"
+                ColumnDefinitions="Auto,*,Auto,*"
+                Margin="0,18,0,0">
+            <TextBlock Grid.Column="0" Text="Trial ends:"
+                       FontSize="12"
+                       Foreground="{StaticResource TextTertiaryBrush}"
+                       Margin="0,0,8,0"/>
+            <TextBlock Grid.Column="1" Text="{Binding TrialCountdown}"
+                       FontSize="12"
+                       Foreground="{StaticResource TextPrimaryBrush}"/>
+            <TextBlock Grid.Column="2" Text="Next billing:"
+                       FontSize="12"
+                       Foreground="{StaticResource TextTertiaryBrush}"
+                       Margin="16,0,8,0"/>
+            <TextBlock Grid.Column="3" Text="{Binding RenewsOnLabel}"
+                       FontSize="12"
+                       Foreground="{StaticResource TextPrimaryBrush}"/>
+          </Grid>
+
+          <!-- Manage subscription button: tinted (System Blue text on
+               12 % blue tint) — this is a secondary commitment, not
+               the primary CTA on the page, but it's still navigation
+               into Stripe so it deserves more weight than ghost. -->
+          <Button Grid.Column="1" Grid.Row="1" Grid.RowSpan="2"
+                  Command="{Binding ManageSubscriptionCommand}"
+                  IsVisible="{Binding CanManage}"
+                  IsEnabled="{Binding !IsBusy}"
+                  VerticalAlignment="Center"
+                  Classes="tinted"
+                  FontSize="13">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <TextBlock Text="Manage subscription"/>
+              <TextBlock Text="↗" FontSize="13"/>
+            </StackPanel>
+          </Button>
+        </Grid>
+      </Border>
+
+      <!-- ═════ Upgrade cards row ═════════════════════════════════
+           Three pricing tiers, side-by-side. HIG choices:
+             * Title weight: SemiBold (not Bold) — Bold reserved for
+               the price number.
+             * "Recommended / featured" highlighting on Radiology Pro
+               uses a soft inner background tone and an inline pill
+               above the title, not a thick coloured border (which
+               reads as warning / error on macOS).
+             * Primary CTA: filled .accent (rectangular, 6 px radius).
+             * Secondary CTA: .tinted (Blue text on tint) — visually
+               weaker than filled but stronger than ghost. This is
+               the macOS pattern for "two related actions, one
+               preferred". -->
+      <StackPanel Spacing="12"
+                  IsVisible="{Binding !BillingUnavailable}">
+        <TextBlock Text="UPGRADE OR CHANGE PLAN"
+                   FontSize="10" FontWeight="SemiBold"
+                   Foreground="{StaticResource TextTertiaryBrush}"/>
+
+        <UniformGrid Rows="1" Columns="3" >
+          <!-- Pro -->
+          <Border Margin="0,0,6,0"
+                  Background="{StaticResource SurfaceCardBrush}"
+                  BorderBrush="{StaticResource DividerBrush}"
+                  BorderThickness="1"
+                  CornerRadius="10"
+                  Padding="20">
+            <StackPanel Spacing="10">
+              <TextBlock Text="Pro" FontSize="17" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimaryBrush}"/>
+              <StackPanel Orientation="Horizontal" Spacing="6"
+                          VerticalAlignment="Center">
+                <TextBlock Text="$29" FontSize="28" FontWeight="Bold"
+                           Foreground="{StaticResource TextPrimaryBrush}"/>
+                <TextBlock Text="/ month" FontSize="13"
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           VerticalAlignment="Bottom" Margin="0,0,0,6"/>
+              </StackPanel>
+              <TextBlock Text="$290 / year (save 17%)"
+                         FontSize="11"
+                         Foreground="{StaticResource TextTertiaryBrush}"/>
+              <StackPanel Spacing="4" Margin="0,6,0,0">
+                <TextBlock Text="• Single agent, single device"
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBlock Text="• Unlimited chat turns"
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBlock Text="• 1 GB Greenfield storage"
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+              </StackPanel>
+              <StackPanel Spacing="6" Margin="0,12,0,0">
+                <Button Content="Subscribe monthly"
+                        Command="{Binding UpgradeCommand}"
+                        CommandParameter="pro:monthly"
+                        IsEnabled="{Binding !IsBusy}"
+                        Classes="accent"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        FontSize="13"/>
+                <Button Content="Subscribe yearly"
+                        Command="{Binding UpgradeCommand}"
+                        CommandParameter="pro:yearly"
+                        IsEnabled="{Binding !IsBusy}"
+                        Classes="tinted"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        FontSize="13"/>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <!-- Pro Plus -->
+          <Border Margin="3,0,3,0"
+                  Background="{StaticResource SurfaceCardBrush}"
+                  BorderBrush="{StaticResource DividerBrush}"
+                  BorderThickness="1"
+                  CornerRadius="10"
+                  Padding="20">
+            <StackPanel Spacing="10">
+              <TextBlock Text="Pro Plus" FontSize="17" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimaryBrush}"/>
+              <StackPanel Orientation="Horizontal" Spacing="6"
+                          VerticalAlignment="Center">
+                <TextBlock Text="$59" FontSize="28" FontWeight="Bold"
+                           Foreground="{StaticResource TextPrimaryBrush}"/>
+                <TextBlock Text="/ month" FontSize="13"
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           VerticalAlignment="Bottom" Margin="0,0,0,6"/>
+              </StackPanel>
+              <TextBlock Text="$590 / year (save 17%)"
+                         FontSize="11"
+                         Foreground="{StaticResource TextTertiaryBrush}"/>
+              <StackPanel Spacing="4" Margin="0,6,0,0">
+                <TextBlock Text="• Up to 5 agents"
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBlock Text="• Multi-device sync"
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBlock Text="• 10 GB Greenfield storage"
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBlock Text="• Priority email support"
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+              </StackPanel>
+              <StackPanel Spacing="6" Margin="0,12,0,0">
+                <Button Content="Subscribe monthly"
+                        Command="{Binding UpgradeCommand}"
+                        CommandParameter="pro_plus:monthly"
+                        IsEnabled="{Binding !IsBusy}"
+                        Classes="accent"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        FontSize="13"/>
+                <Button Content="Subscribe yearly"
+                        Command="{Binding UpgradeCommand}"
+                        CommandParameter="pro_plus:yearly"
+                        IsEnabled="{Binding !IsBusy}"
+                        Classes="tinted"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        FontSize="13"/>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <!-- Radiology Pro: subtle tint background + inline VERTICAL
+               badge above the title (Apple's "Featured" treatment in
+               the App Store / Settings sheets). Border stays 1 px,
+               same as the others — featured-ness comes from tint, not
+               border thickness. -->
+          <Border Margin="6,0,0,0"
+                  Background="{StaticResource SurfaceCardBrush}"
+                  BorderBrush="{StaticResource SystemBlueBrush}"
+                  BorderThickness="1"
+                  CornerRadius="10"
+                  Padding="20">
+            <StackPanel Spacing="10">
+              <Border Background="{StaticResource SystemBlueTintBrush}"
+                      CornerRadius="4"
+                      Padding="6,2"
+                      HorizontalAlignment="Left">
+                <TextBlock Text="VERTICAL"
+                           FontSize="9" FontWeight="SemiBold"
+                           Foreground="{StaticResource SystemBlueBrush}"/>
+              </Border>
+              <TextBlock Text="Radiology Pro" FontSize="17" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimaryBrush}"/>
+              <StackPanel Orientation="Horizontal" Spacing="6"
+                          VerticalAlignment="Center">
+                <TextBlock Text="$149" FontSize="28" FontWeight="Bold"
+                           Foreground="{StaticResource TextPrimaryBrush}"/>
+                <TextBlock Text="/ month" FontSize="13"
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           VerticalAlignment="Bottom" Margin="0,0,0,6"/>
+              </StackPanel>
+              <TextBlock Text="$1490 / year (save 17%)"
+                         FontSize="11"
+                         Foreground="{StaticResource TextTertiaryBrush}"/>
+              <StackPanel Spacing="4" Margin="0,6,0,0">
+                <TextBlock Text="• Medical persona library"
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBlock Text="• Report templates (CT / MRI / mammo)"
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBlock Text="• HIPAA-ready bucket + audit log"
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBlock Text="• Phone + email support"
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+              </StackPanel>
+              <StackPanel Spacing="6" Margin="0,12,0,0">
+                <Button Content="Subscribe monthly"
+                        Command="{Binding UpgradeCommand}"
+                        CommandParameter="radiology:monthly"
+                        IsEnabled="{Binding !IsBusy}"
+                        Classes="accent"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        FontSize="13"/>
+                <Button Content="Subscribe yearly"
+                        Command="{Binding UpgradeCommand}"
+                        CommandParameter="radiology:yearly"
+                        IsEnabled="{Binding !IsBusy}"
+                        Classes="tinted"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        FontSize="13"/>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </UniformGrid>
+      </StackPanel>
+
+      <!-- ═════ Billing unavailable (server has no Stripe key) ═══ -->
+      <Border IsVisible="{Binding BillingUnavailable}"
+              Background="{StaticResource SurfaceMutedBrush}"
+              BorderBrush="{StaticResource DividerBrush}"
+              BorderThickness="1"
+              CornerRadius="8"
+              Padding="20">
+        <StackPanel Spacing="6">
+          <TextBlock Text="Billing isn't configured on this server."
+                     FontSize="14" FontWeight="SemiBold"
+                     Foreground="{StaticResource TextPrimaryBrush}"/>
+          <TextBlock Text="Contact your administrator to enable subscriptions. If you run this server yourself, see docs/BILLING.md for Stripe setup steps."
+                     FontSize="12"
+                     Foreground="{StaticResource TextSecondaryBrush}"
+                     TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+      <!-- ═════ Error banner ════════════════════════════════════
+           macOS error banner style: tinted background (~10 % system
+           red), red label, no border (the tint is the boundary). -->
+      <Border IsVisible="{Binding ErrorMessage,
+                          Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+              Background="#26FF453A"
+              CornerRadius="6"
+              Padding="12,9">
+        <TextBlock Text="{Binding ErrorMessage}"
+                   FontSize="12"
+                   Foreground="{StaticResource ErrorBrush}"
+                   TextWrapping="Wrap"/>
+      </Border>
+
+      <!-- ═════ Loading hint ════════════════════════════════════
+           Indeterminate progress bar inherits the accent from the
+           global ProgressBar style (System Blue). -->
+      <ProgressBar IsIndeterminate="True"
+                   IsVisible="{Binding IsBusy}"
+                   Height="2"/>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

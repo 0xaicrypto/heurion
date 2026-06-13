@@ -27,13 +27,63 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Maximum tool call rounds to prevent infinite loops. 10 was generous
-# enough that one stuck tool (e.g. an `npx` first-run download timing
-# out + the LLM retrying the same install with a different identifier)
-# could keep the chat surface waiting for several minutes. 5 still
-# covers all real multi-step tool flows we've seen, and caps worst-case
-# wall time at ~MAX_TOOL_ROUNDS × per-tool budget.
-MAX_TOOL_ROUNDS = 5
+# Maximum tool call rounds to prevent infinite loops. 5 was previously
+# adequate, but with the #91 subagent-recipe model a single user
+# request can legitimately need 5+ delegate() calls (5-step packs like
+# Content Studio: strategist → researcher → writer → editor → publisher)
+# plus a final round for the LLM to write its text reply. Raising to 12
+# gives multi-step workflows enough budget while still capping a stuck
+# tool loop's worst-case wall time. Per-tool timeout (90s) keeps the
+# total bounded.
+MAX_TOOL_ROUNDS = 12
+
+
+# How many times to auto-continue when the provider returns
+# MAX_TOKENS-truncated text. Each continuation re-sends the
+# conversation + a "continue from where you left off" nudge and
+# stitches the continuation onto the previous chunk. Cap at 2 so a
+# pathologically long pipeline can't burn unbounded tokens — 2
+# continuations on top of the initial reply gives us up to 3× the
+# max_tokens budget in stitched output, plenty for any reasonable
+# article-length deliverable.
+MAX_AUTO_CONTINUATIONS = 2
+
+# Marker appended ONLY when auto-continue exhausted its budget and
+# the reply was still truncated. The normal happy path stitches
+# silently — the user sees a complete reply with no system noise.
+_TRUNCATION_MARKER = (
+    "\n\n…[response still truncated after auto-continuation. "
+    "Ask 'please continue' to get the rest.]"
+)
+
+# System message the SDK injects when asking the model to resume.
+# Keep it terse — verbose nudges cause models to preamble ("Sure,
+# continuing from where I left off…") which double-prefaces the
+# stitched output.
+_CONTINUATION_NUDGE = (
+    "Continue your previous response from EXACTLY where it cut off. "
+    "Do NOT repeat any prior text. Do NOT add a preamble like "
+    "'continuing from…' — just resume the next character / word "
+    "of the prose. Match the prior style + register seamlessly."
+)
+
+
+def _is_max_tokens_truncation(finish_reason) -> bool:
+    """Return True if ``finish_reason`` indicates the provider stopped
+    generation because it hit max_tokens (vs natural stop, safety
+    block, tool call, etc.). Each provider names this differently;
+    normalise here so callers can branch once."""
+    if finish_reason is None:
+        return False
+    s = str(finish_reason).upper()
+    # Gemini: FinishReason.MAX_TOKENS (also a bare "2" enum value).
+    # OpenAI: "length"
+    # Anthropic: "max_tokens"
+    return (
+        "MAX_TOKENS" in s
+        or s == "LENGTH" or s.endswith(".LENGTH")
+        or s == "2"  # Gemini enum literal
+    )
 
 # Hard ceiling on a single tool execution. Tools that already have
 # their own internal timeouts (skill installer, file generator) just
@@ -90,7 +140,16 @@ class LLMClient:
         messages: list[dict],
         system: str = "",
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        # 2048 was the old default and quietly truncated any reply
+        # longer than ~1500 Chinese characters — a problem when the
+        # agent runs a full Content Studio recipe and tries to surface
+        # a publishable article as its text reply. 8192 covers the
+        # 99% case (long-form articles, multi-step explanations,
+        # citation lists). Modern Gemini / Claude / GPT all support
+        # this and well beyond; the per-provider call paths pass it
+        # through verbatim. Caller can override per-call when they
+        # KNOW the reply will be short (saves a bit of latency).
+        max_tokens: int = 8192,
         json_mode: bool = False,
         tools: Optional["ToolRegistry"] = None,
         thinking_emitter=None,
@@ -187,8 +246,68 @@ class LLMClient:
 
             # Check if LLM wants to call tools
             if not response.get("tool_calls"):
-                # LLM produced a text response — we're done
-                return response.get("text", "")
+                # LLM produced a text response — we're done.
+                # #97 defence: if the text is empty BUT we executed
+                # tools earlier, surface the last successful tool's
+                # output as the reply. Otherwise a chain of tool calls
+                # ends with a blank assistant bubble and the user has
+                # no idea what happened. Caller (llm_gateway) still
+                # has its own empty-reply guard for the no-tool case.
+                text = response.get("text", "")
+
+                # #97 round-3: mid-recipe stop nudge. When the LLM
+                # called delegate() one or more times AND then went
+                # silent (no text, no further call), it's usually
+                # "decision fatigue" — Gemini decided 2 of 5 steps was
+                # enough. Try a single re-prompt: append a system-style
+                # nudge to the messages and call the LLM once more. If
+                # it still stops, fall through to the synth-from-tool
+                # fallback below.
+                delegate_calls = [
+                    t for t in tool_calls_log if t.get("tool") == "delegate"
+                ]
+                if (
+                    not text.strip()
+                    and delegate_calls
+                    and round_num < MAX_TOOL_ROUNDS - 1
+                ):
+                    logger.warning(
+                        "LLM stopped after %d delegate() call(s) with no "
+                        "text — injecting continue nudge and retrying.",
+                        len(delegate_calls),
+                    )
+                    working_messages.append({
+                        "role": "user",
+                        "content": (
+                            "(System nudge: you called delegate() "
+                            f"{len(delegate_calls)} time(s) and then stopped. "
+                            "If the workflow recipe has more steps, call "
+                            "delegate() for the NEXT step now. If you "
+                            "completed all steps, write the final "
+                            "deliverable as your text reply — copying the "
+                            "last sub-agent's output verbatim is fine. "
+                            "Empty replies mid-recipe are bugs.)"
+                        ),
+                    })
+                    continue  # re-enter the loop for one more round
+
+                if not text.strip() and tool_calls_log:
+                    last_ok = next(
+                        (t for t in reversed(tool_calls_log) if t.get("success")),
+                        None,
+                    )
+                    if last_ok is not None:
+                        logger.warning(
+                            "LLM returned empty text after %d tool call(s); "
+                            "synthesising reply from last successful tool '%s'",
+                            len(tool_calls_log), last_ok["tool"],
+                        )
+                        return (
+                            "(The agent finished its tool loop without "
+                            "writing a summary. Last tool result below:)\n\n"
+                            + str(last_ok.get("result", ""))
+                        )
+                return text
 
             # Execute each tool call
             for tc in response["tool_calls"]:
@@ -441,10 +560,97 @@ class LLMClient:
         if not tool_calls:
             logger.debug("Gemini chose text response (no tool calls)")
 
+        text_out = "\n".join(text_parts) if text_parts else ""
+        # #103: detect MAX_TOKENS truncation + auto-continue. We don't
+        # try to continue when there are tool_calls (the LLM was using
+        # the tail for a function call, not free text).
+        finish_reason = getattr(candidate, "finish_reason", None)
+        if _is_max_tokens_truncation(finish_reason) and not tool_calls:
+            text_out = await self._auto_continue_gemini_tools(
+                messages, system, temperature, max_tokens, tool_defs,
+                initial_text=text_out,
+                thinking_emitter=thinking_emitter,
+            )
         return {
-            "text": "\n".join(text_parts) if text_parts else "",
+            "text": text_out,
             "tool_calls": tool_calls,
         }
+
+    async def _auto_continue_gemini_tools(
+        self, messages, system, temperature, max_tokens, tool_defs,
+        *, initial_text: str, thinking_emitter,
+    ) -> str:
+        """Recursively re-ask Gemini to continue when its previous turn
+        was cut off by MAX_TOKENS. Returns the stitched text. Stops
+        after MAX_AUTO_CONTINUATIONS attempts or when a continuation
+        comes back with a non-truncated finish_reason."""
+        stitched = initial_text or ""
+        # Build a working message list: original messages + Gemini's
+        # truncated assistant turn + a user-style nudge asking it to
+        # continue. We keep re-using the SAME _call_gemini_tools entry
+        # so the conversation shape stays consistent.
+        working = list(messages)
+        for attempt in range(MAX_AUTO_CONTINUATIONS):
+            logger.warning(
+                "Gemini truncated at attempt %d (chars so far=%d) — "
+                "auto-continuing…",
+                attempt, len(stitched),
+            )
+            # Append the truncated assistant text + the continuation
+            # nudge. Note: we DON'T pass tool_defs for the continuation
+            # call — at this point we just want raw text completion.
+            working = working + [
+                {"role": "assistant", "content": stitched},
+                {"role": "user", "content": _CONTINUATION_NUDGE},
+            ]
+            try:
+                result = await self._call_gemini_tools(
+                    working, system, temperature, max_tokens,
+                    tool_defs=[],  # text-only continuation
+                    thinking_emitter=thinking_emitter,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "auto-continue: provider call failed (%s) — bailing "
+                    "with marker.", e,
+                )
+                return stitched + _TRUNCATION_MARKER
+            chunk = (result.get("text") or "").lstrip()
+            # Strip a duplicate truncation marker — the inner call's
+            # last-attempt marker would land mid-stitch.
+            if chunk.endswith(_TRUNCATION_MARKER):
+                chunk = chunk[: -len(_TRUNCATION_MARKER)]
+                stitched += chunk
+                # Inner call already exhausted its own budget; append
+                # outer marker and return.
+                return stitched + _TRUNCATION_MARKER
+            stitched += chunk
+            # If the inner result didn't terminate with a marker AND
+            # there's no obvious truncation cue, we're done.
+            if not chunk:
+                logger.warning(
+                    "auto-continue: empty continuation chunk on attempt "
+                    "%d — bailing with marker.", attempt,
+                )
+                return stitched + _TRUNCATION_MARKER
+            # Heuristic: if the chunk is shorter than ~80% of max_tokens-
+            # worth of chars, the model probably did finish on this
+            # round. Return clean.
+            # (~4 chars / token is a rough mid-language average.)
+            if len(chunk) < int(max_tokens * 4 * 0.8):
+                logger.info(
+                    "auto-continue: completed after %d attempt(s), "
+                    "total %d chars stitched.",
+                    attempt + 1, len(stitched),
+                )
+                return stitched
+        # Exhausted budget.
+        logger.warning(
+            "auto-continue: hit MAX_AUTO_CONTINUATIONS=%d, still "
+            "truncated; appending marker.",
+            MAX_AUTO_CONTINUATIONS,
+        )
+        return stitched + _TRUNCATION_MARKER
 
     @staticmethod
     def _json_schema_to_gemini(schema: dict) -> dict:
@@ -537,13 +743,38 @@ class LLMClient:
                 continue
 
             else:
-                # Regular text message
+                # Regular text message — and, since #123, optional
+                # ``images`` list (each entry: {mime: "image/png",
+                # data_b64: "..."}). Images become inline_data parts
+                # alongside the text so Gemini sees them as multimodal
+                # input. We base64-decode here (instead of letting
+                # Gemini do it) because types.Blob.data expects raw
+                # bytes; passing a base64 string silently fails.
                 gemini_role = "user" if role == "user" else "model"
                 content_text = msg.get("content", "")
+                images = msg.get("images") or []
+                parts: list = []
                 if content_text:
+                    parts.append(types.Part(text=content_text))
+                for img in images:
+                    try:
+                        import base64 as _b64
+                        raw = _b64.b64decode(img["data_b64"])
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "Skipping image part (decode failed): %s", e,
+                        )
+                        continue
+                    parts.append(types.Part(
+                        inline_data=types.Blob(
+                            mime_type=img.get("mime", "image/png"),
+                            data=raw,
+                        ),
+                    ))
+                if parts:
                     contents.append(types.Content(
                         role=gemini_role,
-                        parts=[types.Part(text=content_text)],
+                        parts=parts,
                     ))
                 i += 1
 
@@ -791,21 +1022,29 @@ class LLMClient:
             # or when the model has nothing to say. Return empty string
             # so callers can handle it gracefully.
             text = response.text
+            finish_reason = None
+            if hasattr(response, 'candidates') and response.candidates:
+                finish_reason = getattr(
+                    response.candidates[0], 'finish_reason', None,
+                )
             if text is None:
-                # Check if blocked by safety filter
-                if hasattr(response, 'candidates') and response.candidates:
-                    candidate = response.candidates[0]
-                    reason = getattr(candidate, 'finish_reason', None)
-                    if reason and str(reason) not in ('STOP', '1', 'FinishReason.STOP'):
-                        logger.debug(
-                            "Gemini response blocked: finish_reason=%s", reason
-                        )
+                if finish_reason and str(finish_reason) not in (
+                    'STOP', '1', 'FinishReason.STOP',
+                ):
+                    logger.debug(
+                        "Gemini response blocked: finish_reason=%s", finish_reason
+                    )
                 return ""
+            # Tag the return so the async wrapper knows to run
+            # auto-continue. We can't `await` from inside this sync
+            # executor body, so we tunnel the signal back as a tuple.
+            if _is_max_tokens_truncation(finish_reason):
+                return ("__NEXUS_TRUNCATED__", text or "")
             return text
 
         loop = asyncio.get_event_loop()
         try:
-            return await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 loop.run_in_executor(None, _call),
                 timeout=LLM_CALL_TIMEOUT_SECONDS,
             )
@@ -814,8 +1053,85 @@ class LLMClient:
                 "Gemini call timed out after %.0fs", LLM_CALL_TIMEOUT_SECONDS,
             )
             return ""
+        # #103: auto-continue if the sync inner call returned the
+        # truncation sentinel. Run up to MAX_AUTO_CONTINUATIONS
+        # follow-up calls, stitching each chunk onto the prior text.
+        if isinstance(result, tuple) and result and result[0] == "__NEXUS_TRUNCATED__":
+            stitched = result[1] or ""
+            working = list(messages)
+            for attempt in range(MAX_AUTO_CONTINUATIONS):
+                logger.warning(
+                    "Gemini non-tool path truncated; auto-continue "
+                    "attempt %d (chars so far=%d)",
+                    attempt, len(stitched),
+                )
+                working = working + [
+                    {"role": "assistant", "content": stitched},
+                    {"role": "user", "content": _CONTINUATION_NUDGE},
+                ]
+                try:
+                    inner = await self._chat_gemini(
+                        working, system, temperature, max_tokens,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("auto-continue failed: %s", e)
+                    return stitched + _TRUNCATION_MARKER
+                # inner is either a plain str (clean finish) or a
+                # tuple sentinel if THAT call also truncated.
+                if isinstance(inner, tuple) and inner and inner[0] == "__NEXUS_TRUNCATED__":
+                    chunk = (inner[1] or "").lstrip()
+                    if not chunk:
+                        return stitched + _TRUNCATION_MARKER
+                    stitched += chunk
+                    continue  # try one more round
+                chunk = (inner or "").lstrip()
+                stitched += chunk
+                logger.info(
+                    "auto-continue (non-tool): done after %d round(s), "
+                    "total %d chars.", attempt + 1, len(stitched),
+                )
+                return stitched
+            return stitched + _TRUNCATION_MARKER
+        return result
 
     async def _chat_anthropic(self, messages, system, temperature, max_tokens) -> str:
+        text = await self._anthropic_call_once(messages, system, temperature, max_tokens)
+        if not (isinstance(text, tuple) and text and text[0] == "__NEXUS_TRUNCATED__"):
+            return text
+        # #103: auto-continue loop for Anthropic.
+        stitched = text[1] or ""
+        working = list(messages)
+        for attempt in range(MAX_AUTO_CONTINUATIONS):
+            logger.warning(
+                "Anthropic truncated; auto-continue attempt %d "
+                "(chars so far=%d)", attempt, len(stitched),
+            )
+            working = working + [
+                {"role": "assistant", "content": stitched},
+                {"role": "user", "content": _CONTINUATION_NUDGE},
+            ]
+            try:
+                inner = await self._anthropic_call_once(
+                    working, system, temperature, max_tokens,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Anthropic auto-continue failed: %s", e)
+                return stitched + _TRUNCATION_MARKER
+            if isinstance(inner, tuple) and inner and inner[0] == "__NEXUS_TRUNCATED__":
+                chunk = (inner[1] or "").lstrip()
+                if not chunk:
+                    return stitched + _TRUNCATION_MARKER
+                stitched += chunk
+                continue
+            stitched += (inner or "").lstrip()
+            return stitched
+        return stitched + _TRUNCATION_MARKER
+
+    async def _anthropic_call_once(self, messages, system, temperature, max_tokens):
+        """One Anthropic call. Returns plain str on clean finish, or
+        a tuple sentinel ``("__NEXUS_TRUNCATED__", text)`` when the
+        response hit max_tokens. _chat_anthropic wraps this with the
+        auto-continue loop."""
         response = await self._client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
@@ -823,21 +1139,65 @@ class LLMClient:
             system=system or "You are a helpful assistant.",
             messages=messages,
         )
-        return response.content[0].text
+        text = response.content[0].text
+        stop_reason = getattr(response, "stop_reason", None)
+        if _is_max_tokens_truncation(stop_reason):
+            return ("__NEXUS_TRUNCATED__", text or "")
+        return text
 
     async def _chat_openai(self, messages, system, temperature, max_tokens) -> str:
+        text = await self._openai_call_once(messages, system, temperature, max_tokens)
+        if not (isinstance(text, tuple) and text and text[0] == "__NEXUS_TRUNCATED__"):
+            return text
+        # #103: auto-continue loop for OpenAI.
+        stitched = text[1] or ""
+        working = list(messages)
+        for attempt in range(MAX_AUTO_CONTINUATIONS):
+            logger.warning(
+                "OpenAI truncated; auto-continue attempt %d "
+                "(chars so far=%d)", attempt, len(stitched),
+            )
+            working = working + [
+                {"role": "assistant", "content": stitched},
+                {"role": "user", "content": _CONTINUATION_NUDGE},
+            ]
+            try:
+                inner = await self._openai_call_once(
+                    working, system, temperature, max_tokens,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("OpenAI auto-continue failed: %s", e)
+                return stitched + _TRUNCATION_MARKER
+            if isinstance(inner, tuple) and inner and inner[0] == "__NEXUS_TRUNCATED__":
+                chunk = (inner[1] or "").lstrip()
+                if not chunk:
+                    return stitched + _TRUNCATION_MARKER
+                stitched += chunk
+                continue
+            stitched += (inner or "").lstrip()
+            return stitched
+        return stitched + _TRUNCATION_MARKER
+
+    async def _openai_call_once(self, messages, system, temperature, max_tokens):
+        """Single OpenAI call. Plain str on clean finish, tuple
+        sentinel on max_tokens truncation. _chat_openai wraps with the
+        auto-continue loop."""
         full_messages = []
         if system:
             full_messages.append({"role": "system", "content": system})
         full_messages.extend(messages)
-
         response = await self._client.chat.completions.create(
             model=self.model,
             messages=full_messages,
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        return response.choices[0].message.content
+        choice = response.choices[0]
+        text = choice.message.content
+        finish_reason = getattr(choice, "finish_reason", None)
+        if _is_max_tokens_truncation(finish_reason):
+            return ("__NEXUS_TRUNCATED__", text or "")
+        return text
 
     async def complete(
         self,

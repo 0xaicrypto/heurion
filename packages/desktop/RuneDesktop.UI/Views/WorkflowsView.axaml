@@ -1,0 +1,742 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:RuneDesktop.UI.ViewModels"
+             x:Class="RuneDesktop.UI.Views.WorkflowsView"
+             x:DataType="vm:WorkflowsViewModel"
+             Background="{StaticResource SurfaceBaseBrush}">
+
+  <!--
+    Workflows surface — Linear-style.
+
+    Topology
+    ────────
+    Full-bleed two-pane. No outer container card, no nested cards.
+    Sidebar bleeds to the left edge of the view; main content uses
+    typography + whitespace as the visual structure, not borders.
+
+      ┌──────────────┬──────────────────────────────────────────┐
+      │              │                                          │
+      │  Source list │  Page header                             │
+      │  (280 px)    │  ────────────────────────────────────    │
+      │              │                                          │
+      │  • Workflow  │  Step flow visualisation (pill chain)    │
+      │  • Workflow  │                                          │
+      │              │  INPUTS                                  │
+      │  Recent runs │  field  ─────────────                    │
+      │  • Run       │  field  ─────────────                    │
+      │  • Run       │                                          │
+      │              │                       [ Run workflow ]   │
+      └──────────────┴──────────────────────────────────────────┘
+
+    When a run is active, the main content is replaced by a vertical
+    pipeline timeline. Back link returns to the workflow detail.
+
+    Visual language
+    ───────────────
+      * Section labels: 10pt SemiBold, uppercase, letter-spaced,
+        TextTertiary. Used sparingly — only above lists / form blocks.
+      * Display: workflow name 24pt SemiBold TextPrimary.
+      * Body: 13pt TextSecondary or TextPrimary depending on weight.
+      * Monospace (Menlo): ids, model names, tx hashes.
+      * Section spacing: 28-36 px between groups. Tight intra-group
+        spacing (4-8 px).
+  -->
+
+  <Grid ColumnDefinitions="280,1,*">
+
+    <!-- ═════════════════════════════════════════════════════════════
+         LEFT — Source list
+         ═════════════════════════════════════════════════════════════ -->
+    <Border Grid.Column="0"
+            Background="{StaticResource SurfaceMutedBrush}">
+      <ScrollViewer VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="0" Margin="0,16,0,24">
+
+          <!-- Section: WORKFLOWS -->
+          <DockPanel Margin="20,4,16,8" LastChildFill="False">
+            <TextBlock DockPanel.Dock="Left"
+                       Text="WORKFLOWS"
+                       FontSize="10" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextTertiaryBrush}"
+                       VerticalAlignment="Center"/>
+            <StackPanel DockPanel.Dock="Right"
+                        Orientation="Horizontal" Spacing="4">
+              <Button Classes="toolbar"
+                      Command="{Binding ShowPackGalleryCommand}"
+                      FontSize="11"
+                      Padding="6,3"
+                      Content="+ Install"
+                      ToolTip.Tip="Browse and install starter packs"/>
+              <Button Classes="toolbar"
+                      Command="{Binding RefreshCommand}"
+                      IsEnabled="{Binding !IsLoading}"
+                      FontSize="11"
+                      Padding="6,3"
+                      Content="↻"
+                      ToolTip.Tip="Reload"/>
+            </StackPanel>
+          </DockPanel>
+
+          <!-- Workflow rows -->
+          <ItemsControl ItemsSource="{Binding Workflows}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate DataType="vm:WorkflowItemViewModel">
+                <Button Command="{Binding $parent[UserControl].((vm:WorkflowsViewModel)DataContext).SelectWorkflowCommand}"
+                        CommandParameter="{Binding}"
+                        Background="Transparent" BorderThickness="0"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Padding="20,9" CornerRadius="0">
+                  <Button.Styles>
+                    <Style Selector="Button:pointerover /template/ ContentPresenter">
+                      <Setter Property="Background" Value="#1AFFFFFF"/>
+                    </Style>
+                  </Button.Styles>
+                  <StackPanel Spacing="3">
+                    <TextBlock Text="{Binding Name}"
+                               FontSize="13" FontWeight="SemiBold"
+                               Foreground="{StaticResource TextPrimaryBrush}"
+                               TextTrimming="CharacterEllipsis"/>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <TextBlock FontSize="11"
+                                 Foreground="{StaticResource TextTertiaryBrush}">
+                        <Run Text="{Binding StepCount}"/>
+                        <Run Text=" steps"/>
+                      </TextBlock>
+                      <!-- #110: D-3 verifier badge — shows which packs
+                           have quality-gated steps. -->
+                      <TextBlock Text="{Binding VerifierBadge}"
+                                 FontSize="11"
+                                 Foreground="{StaticResource AccentBrush}"
+                                 IsVisible="{Binding HasVerifiers}"/>
+                    </StackPanel>
+                  </StackPanel>
+                </Button>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <!-- Empty state inline within source list -->
+          <TextBlock Text="No workflows yet"
+                     FontSize="12"
+                     Foreground="{StaticResource TextTertiaryBrush}"
+                     Margin="20,8,20,16"
+                     IsVisible="{Binding HasNoWorkflows}"/>
+
+          <!-- Section: RECENT RUNS -->
+          <TextBlock Text="RECENT RUNS"
+                     FontSize="10" FontWeight="SemiBold"
+                     Foreground="{StaticResource TextTertiaryBrush}"
+                     Margin="20,28,20,8"
+                     IsVisible="{Binding RecentRuns.Count}"/>
+
+          <ItemsControl ItemsSource="{Binding RecentRuns}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate DataType="vm:WorkflowRunSummaryViewModel">
+                <Button Command="{Binding $parent[UserControl].((vm:WorkflowsViewModel)DataContext).OpenRunCommand}"
+                        CommandParameter="{Binding}"
+                        Background="Transparent" BorderThickness="0"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Padding="20,7" CornerRadius="0">
+                  <Button.Styles>
+                    <Style Selector="Button:pointerover /template/ ContentPresenter">
+                      <Setter Property="Background" Value="#1AFFFFFF"/>
+                    </Style>
+                  </Button.Styles>
+                  <Grid ColumnDefinitions="Auto,*,Auto">
+                    <TextBlock Grid.Column="0"
+                               Text="{Binding StatusBadge}"
+                               FontSize="13"
+                               Foreground="{Binding StatusColor}"
+                               VerticalAlignment="Center"
+                               Margin="0,0,10,0"/>
+                    <StackPanel Grid.Column="1" Spacing="2">
+                      <TextBlock Text="{Binding StepProgress}"
+                                 FontSize="12" FontWeight="SemiBold"
+                                 Foreground="{StaticResource TextPrimaryBrush}"/>
+                      <TextBlock Text="{Binding StartedAtRelative}"
+                                 FontSize="10"
+                                 Foreground="{StaticResource TextTertiaryBrush}"/>
+                    </StackPanel>
+                  </Grid>
+                </Button>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <!-- Vertical hairline divider -->
+    <Border Grid.Column="1" Background="{StaticResource DividerBrush}"/>
+
+    <!-- ═════════════════════════════════════════════════════════════
+         RIGHT — Page content
+         Three mutually-exclusive states layered in a single Grid:
+           (a) Empty (no workflows installed at all)
+           (b) Active run (timeline)
+           (c) Selected workflow (detail + inputs + run button)
+         ═════════════════════════════════════════════════════════════ -->
+    <Grid Grid.Column="2">
+
+      <!-- ─── (a) Pack gallery ─────────────────────────────────────────
+           Surface when: (a) user has no workflows yet (empty-state pitch),
+           OR (b) user clicked "+ Install" in the rail to add more packs.
+           Both paths share the same gallery template. -->
+      <ScrollViewer IsVisible="{Binding ShouldShowPackGallery}"
+                    VerticalScrollBarVisibility="Auto">
+        <Border MaxWidth="640" HorizontalAlignment="Center"
+                Margin="48,72,48,48">
+          <StackPanel Spacing="20">
+            <Grid ColumnDefinitions="*,Auto">
+              <StackPanel Grid.Column="0" Spacing="10">
+                <TextBlock Text="Workflows"
+                           FontSize="28" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextPrimaryBrush}"/>
+                <TextBlock TextWrapping="Wrap"
+                           FontSize="14" LineHeight="22"
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           Text="Chain specialist agents end-to-end. Each step runs in its own context — research, draft, edit, ship — without the context contamination of a single long thread. Pick a starter pack below, or import a Claude Code agent."/>
+              </StackPanel>
+              <!-- Close button — only shown when the gallery was
+                   explicitly opened (rail "+ Install"). For the
+                   empty-state path, hide it; the user has nowhere
+                   else to go. -->
+              <Button Grid.Column="1"
+                      Classes="ghost"
+                      Content="✕"
+                      FontSize="14"
+                      Padding="8,4"
+                      VerticalAlignment="Top"
+                      Command="{Binding HidePackGalleryCommand}"
+                      IsVisible="{Binding PackGalleryVisible}"
+                      ToolTip.Tip="Close install gallery"/>
+            </Grid>
+
+            <Rectangle Height="1" Fill="{StaticResource DividerBrush}" Margin="0,8,0,8"/>
+
+            <!-- #111: skill marketplace MVP — import any SKILL.md from a
+                 raw URL. Server validates host allow-list + parses
+                 frontmatter for the skill name. Installed skill goes
+                 under .nexus/skills/<name>/SKILL.md and is immediately
+                 referenceable from new workflows. -->
+            <StackPanel Spacing="6" Margin="0,0,0,16">
+              <TextBlock Text="IMPORT SKILL FROM URL"
+                         FontSize="10" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextTertiaryBrush}"/>
+              <TextBlock TextWrapping="Wrap" MaxWidth="640"
+                         FontSize="11"
+                         Foreground="{StaticResource TextSecondaryBrush}"
+                         Text="Paste a raw SKILL.md URL (raw.githubusercontent.com, gist, or agentskills.io). The skill becomes available as a delegate target in new workflow steps."/>
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox Grid.Column="0"
+                         Classes="chat"
+                         FontFamily="Menlo, Consolas, monospace"
+                         FontSize="12"
+                         Watermark="https://raw.githubusercontent.com/…/SKILL.md"
+                         Text="{Binding ImportSkillUrl, Mode=TwoWay}"/>
+                <Button Grid.Column="1"
+                        Classes="accent"
+                        Content="Import"
+                        Command="{Binding ImportSkillFromUrlCommand}"/>
+              </Grid>
+              <TextBlock Text="{Binding ImportSkillStatus}"
+                         FontSize="11"
+                         TextWrapping="Wrap"
+                         Foreground="{StaticResource TextSecondaryBrush}"
+                         IsVisible="{Binding ImportSkillStatus,
+                                     Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+            </StackPanel>
+
+            <Rectangle Height="1" Fill="{StaticResource DividerBrush}" Margin="0,4,0,8"/>
+
+            <TextBlock Text="STARTER PACKS"
+                       FontSize="10" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextTertiaryBrush}"/>
+
+            <ItemsControl ItemsSource="{Binding Packs}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <UniformGrid Columns="2"/>
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="vm:StarterPackItemViewModel">
+                  <Border Margin="0,0,8,8"
+                          Background="{StaticResource SurfaceCardBrush}"
+                          BorderBrush="{StaticResource DividerBrush}"
+                          BorderThickness="1" CornerRadius="10"
+                          Padding="18,16">
+                    <StackPanel Spacing="8">
+                      <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0"
+                                   Text="{Binding Name}"
+                                   FontSize="14" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <Border Grid.Column="1"
+                                Padding="6,2" CornerRadius="999"
+                                Background="{StaticResource SurfaceMutedBrush}"
+                                VerticalAlignment="Center">
+                          <TextBlock Text="{Binding TierLabel}"
+                                     FontSize="10" FontWeight="SemiBold"
+                                     Foreground="{Binding TierColor}"/>
+                        </Border>
+                      </Grid>
+                      <TextBlock Text="{Binding SummaryLine}"
+                                 FontSize="11"
+                                 Foreground="{StaticResource TextTertiaryBrush}"/>
+                      <TextBlock TextWrapping="Wrap"
+                                 FontSize="12" LineHeight="18"
+                                 Foreground="{StaticResource TextSecondaryBrush}"
+                                 Text="{Binding Description}"/>
+                      <!-- Install button (when available + not yet installed) -->
+                      <Button Classes="accent"
+                              Margin="0,4,0,0"
+                              HorizontalAlignment="Stretch"
+                              FontSize="12"
+                              Command="{Binding $parent[UserControl].((vm:WorkflowsViewModel)DataContext).InstallPackCommand}"
+                              CommandParameter="{Binding}"
+                              IsVisible="{Binding ShowInstallAction}">
+                        <StackPanel Orientation="Horizontal" Spacing="6"
+                                    HorizontalAlignment="Center">
+                          <TextBlock Text="Install" FontWeight="Medium"/>
+                          <TextBlock Text="·"
+                                     Foreground="{StaticResource TextOnAccentBrush}"
+                                     IsVisible="{Binding IsInstalling}"/>
+                          <TextBlock Text="installing…"
+                                     Foreground="{StaticResource TextOnAccentBrush}"
+                                     IsVisible="{Binding IsInstalling}"/>
+                        </StackPanel>
+                      </Button>
+
+                      <!-- Uninstall button (when already installed) -->
+                      <Button Classes="ghost"
+                              Margin="0,4,0,0"
+                              HorizontalAlignment="Stretch"
+                              FontSize="12"
+                              Command="{Binding $parent[UserControl].((vm:WorkflowsViewModel)DataContext).UninstallPackCommand}"
+                              CommandParameter="{Binding}"
+                              IsVisible="{Binding ShowUninstallAction}">
+                        <StackPanel Orientation="Horizontal" Spacing="6"
+                                    HorizontalAlignment="Center">
+                          <TextBlock Text="✓ Installed — Uninstall"
+                                     FontWeight="Medium"
+                                     IsVisible="{Binding !IsUninstalling}"/>
+                          <TextBlock Text="uninstalling…"
+                                     IsVisible="{Binding IsUninstalling}"/>
+                        </StackPanel>
+                      </Button>
+
+                      <!-- Coming-soon note (pack not yet released) -->
+                      <Border Background="{StaticResource SurfaceMutedBrush}"
+                              CornerRadius="6" Padding="10,7"
+                              Margin="0,4,0,0"
+                              IsVisible="{Binding !Available}">
+                        <TextBlock FontSize="11"
+                                   Foreground="{StaticResource TextSecondaryBrush}">
+                          <Run Text="Coming soon — "/>
+                          <Run Text="{Binding ComingSoonNote}"/>
+                        </TextBlock>
+                      </Border>
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock TextWrapping="Wrap"
+                       FontSize="11"
+                       Foreground="{StaticResource TextTertiaryBrush}"
+                       Margin="0,8,0,0"
+                       Text="Click Install to add a starter pack to your workflow list. Each pack ships the agents (skill files) and the workflow definition; you can run it immediately after install."/>
+          </StackPanel>
+        </Border>
+      </ScrollViewer>
+
+      <!-- ─── (b) Active run timeline ────────────────────────────────-->
+      <ScrollViewer IsVisible="{Binding ActiveRun, Converter={x:Static ObjectConverters.IsNotNull}}"
+                    VerticalScrollBarVisibility="Auto">
+        <Border MaxWidth="900" HorizontalAlignment="Stretch"
+                Margin="40,32,40,48">
+          <StackPanel Spacing="24" DataContext="{Binding ActiveRun}">
+
+            <!-- Page header: run id + back link -->
+            <Grid ColumnDefinitions="*,Auto">
+              <StackPanel Grid.Column="0" Spacing="6">
+                <Button Classes="toolbar"
+                        FontSize="11"
+                        Padding="0,2"
+                        Command="{Binding $parent[UserControl].((vm:WorkflowsViewModel)DataContext).SelectWorkflowCommand}"
+                        CommandParameter="{Binding $parent[UserControl].((vm:WorkflowsViewModel)DataContext).Selected}"
+                        HorizontalAlignment="Left"
+                        Content="← Back to workflow"
+                        IsVisible="{Binding $parent[UserControl].((vm:WorkflowsViewModel)DataContext).Selected,
+                                    Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                <TextBlock FontSize="24" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextPrimaryBrush}">
+                  <Run Text="Run"/>
+                  <Run Text=" "/>
+                  <Run Text="{Binding Id}"
+                       FontFamily="Menlo, Consolas, monospace"
+                       FontSize="20"
+                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                </TextBlock>
+              </StackPanel>
+              <!-- Big status pill. Color driven from VM (StatusColor
+                   hex string) — Avalonia parses hex into the dot's
+                   Background brush automatically. -->
+              <Border Grid.Column="1" VerticalAlignment="Top"
+                      Padding="14,7" CornerRadius="999"
+                      Background="{StaticResource SurfaceCardBrush}"
+                      BorderBrush="{StaticResource DividerBrush}"
+                      BorderThickness="1">
+                <StackPanel Orientation="Horizontal" Spacing="8"
+                            VerticalAlignment="Center">
+                  <Border Width="8" Height="8" CornerRadius="4"
+                          Background="{Binding StatusColor}"
+                          VerticalAlignment="Center"/>
+                  <TextBlock Text="{Binding StatusLabel}"
+                             FontSize="13" FontWeight="SemiBold"
+                             Foreground="{StaticResource TextPrimaryBrush}"
+                             VerticalAlignment="Center"/>
+                </StackPanel>
+              </Border>
+            </Grid>
+
+            <!-- Progress meta row -->
+            <StackPanel Orientation="Horizontal" Spacing="20">
+              <StackPanel Spacing="2">
+                <TextBlock Text="STEP" FontSize="10" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextTertiaryBrush}"/>
+                <TextBlock FontSize="14" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextPrimaryBrush}">
+                  <Run Text="{Binding CurrentStep}"/>
+                  <Run Text=" / "/>
+                  <Run Text="{Binding TotalSteps}"/>
+                </TextBlock>
+              </StackPanel>
+              <StackPanel Spacing="2">
+                <TextBlock Text="STARTED" FontSize="10" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextTertiaryBrush}"/>
+                <TextBlock Text="{Binding StartedAt}"
+                           FontSize="13"
+                           Foreground="{StaticResource TextPrimaryBrush}"/>
+              </StackPanel>
+              <StackPanel Spacing="2"
+                          IsVisible="{Binding FinishedAt,
+                                      Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                <TextBlock Text="FINISHED" FontSize="10" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextTertiaryBrush}"/>
+                <TextBlock Text="{Binding FinishedAt}"
+                           FontSize="13"
+                           Foreground="{StaticResource TextPrimaryBrush}"/>
+              </StackPanel>
+            </StackPanel>
+
+            <ProgressBar IsIndeterminate="True" Height="2"
+                         IsVisible="{Binding IsRunning}"/>
+
+            <!-- Run-level error -->
+            <Border Background="#26FF453A" CornerRadius="6" Padding="12,9"
+                    IsVisible="{Binding ErrorMessage,
+                                Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+              <TextBlock Text="{Binding ErrorMessage}"
+                         FontSize="12"
+                         Foreground="{StaticResource ErrorBrush}"
+                         TextWrapping="Wrap"/>
+            </Border>
+
+            <!-- ── Step pipeline ────────────────────────────────────
+                 Each step is a row with a left-aligned node + a
+                 vertical connecting line. The line is rendered by a
+                 1px wide Rectangle behind the node circle. Last step
+                 has no trailing line (handled by the line being part
+                 of the row, not a separate element). -->
+            <TextBlock Text="PIPELINE"
+                       FontSize="10" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextTertiaryBrush}"/>
+
+            <ItemsControl ItemsSource="{Binding Steps}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="vm:WorkflowRunStepViewModel">
+                  <Grid ColumnDefinitions="32,*" MinHeight="56">
+                    <!-- Node + connector column -->
+                    <Panel Grid.Column="0">
+                      <!-- Vertical line spanning full height. The node
+                           sits on top, hiding the line where it
+                           passes through. -->
+                      <Rectangle Width="1"
+                                 HorizontalAlignment="Center"
+                                 Fill="{StaticResource DividerBrush}"/>
+                      <!-- Status node. BorderBrush bound directly to
+                           the hex-string StatusColor — Avalonia's
+                           implicit string→brush converter handles
+                           the parse. (Binding SolidColorBrush.Color
+                           to a string does NOT auto-convert because
+                           Color is a struct, not a brush.) -->
+                      <Border Width="20" Height="20" CornerRadius="10"
+                              VerticalAlignment="Top"
+                              HorizontalAlignment="Center"
+                              Margin="0,2,0,0"
+                              Background="{StaticResource SurfaceBaseBrush}"
+                              BorderBrush="{Binding StatusColor}"
+                              BorderThickness="2">
+                        <TextBlock Text="{Binding StatusBadge}"
+                                   FontSize="11" FontWeight="Bold"
+                                   Foreground="{Binding StatusColor}"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                      </Border>
+                    </Panel>
+                    <!-- Content column -->
+                    <StackPanel Grid.Column="1" Spacing="4"
+                                Margin="14,0,0,16">
+                      <Button Command="{Binding ToggleExpandedCommand}"
+                              Background="Transparent" BorderThickness="0"
+                              Padding="0"
+                              HorizontalAlignment="Stretch"
+                              HorizontalContentAlignment="Stretch">
+                        <Grid ColumnDefinitions="*,Auto,Auto">
+                          <StackPanel Grid.Column="0" Spacing="2">
+                            <TextBlock Text="{Binding SkillName}"
+                                       FontSize="14" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextPrimaryBrush}"/>
+                            <TextBlock Text="{Binding Status}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                          </StackPanel>
+                          <TextBlock Grid.Column="1"
+                                     Text="{Binding ModelUsed}"
+                                     FontSize="10"
+                                     FontFamily="Menlo, Consolas, monospace"
+                                     Foreground="{StaticResource TextTertiaryBrush}"
+                                     VerticalAlignment="Center"
+                                     Margin="0,0,12,0"/>
+                          <TextBlock Grid.Column="2"
+                                     Text="▾"
+                                     FontSize="11"
+                                     Foreground="{StaticResource TextTertiaryBrush}"
+                                     VerticalAlignment="Center"
+                                     IsVisible="{Binding Output,
+                                                 Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                        </Grid>
+                      </Button>
+                      <!-- Expanded output -->
+                      <Border IsVisible="{Binding IsExpanded}"
+                              Background="{StaticResource SurfaceSunkenBrush}"
+                              BorderBrush="{StaticResource DividerBrush}"
+                              BorderThickness="1"
+                              CornerRadius="6"
+                              Padding="14,11"
+                              Margin="0,4,0,0">
+                        <StackPanel Spacing="6">
+                          <SelectableTextBlock Text="{Binding Output}"
+                                               FontSize="12"
+                                               LineHeight="18"
+                                               Foreground="{StaticResource TextPrimaryBrush}"
+                                               TextWrapping="Wrap"
+                                               IsVisible="{Binding Output,
+                                                           Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                          <TextBlock Text="{Binding ErrorMessage}"
+                                     FontSize="12"
+                                     Foreground="{StaticResource ErrorBrush}"
+                                     TextWrapping="Wrap"
+                                     IsVisible="{Binding ErrorMessage,
+                                                 Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                        </StackPanel>
+                      </Border>
+                    </StackPanel>
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Send to chat — visible only when run succeeded.
+                 Pipes the final step's output into the active chat
+                 session as an assistant message, then navigates back
+                 to the chat view so the user can immediately iterate
+                 ("rewrite tweet 3", "tighten the conclusion"). -->
+            <Grid ColumnDefinitions="*,Auto"
+                  IsVisible="{Binding IsSucceeded}"
+                  Margin="0,8,0,0">
+              <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="2">
+                <TextBlock Text="Pipe this run's output back into chat"
+                           FontSize="13" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextPrimaryBrush}"/>
+                <TextBlock Text="Final step's output becomes an assistant message you can chat-iterate on."
+                           FontSize="11"
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           TextWrapping="Wrap" MaxWidth="540"/>
+              </StackPanel>
+              <Button Grid.Column="1"
+                      Classes="accent"
+                      Content="Send to chat"
+                      FontSize="13"
+                      VerticalAlignment="Center"
+                      Command="{Binding $parent[UserControl].((vm:WorkflowsViewModel)DataContext).SendActiveRunToChatCommand}"/>
+            </Grid>
+
+            <!-- Anchor footer (Phase 4) -->
+            <StackPanel Orientation="Horizontal" Spacing="8"
+                        IsVisible="{Binding HasAnchor}">
+              <Border Width="8" Height="8" CornerRadius="4"
+                      Background="{StaticResource SuccessBrush}"
+                      VerticalAlignment="Center"/>
+              <TextBlock Text="Anchored to BSC ·"
+                         FontSize="11" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextSecondaryBrush}"
+                         VerticalAlignment="Center"/>
+              <TextBlock Text="{Binding AnchorTx}"
+                         FontSize="11"
+                         FontFamily="Menlo, Consolas, monospace"
+                         Foreground="{StaticResource TextTertiaryBrush}"
+                         VerticalAlignment="Center"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+      </ScrollViewer>
+
+      <!-- ─── (c) Selected workflow detail ──────────────────────────-->
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <ScrollViewer.IsVisible>
+          <MultiBinding Converter="{x:Static BoolConverters.And}">
+            <!-- Pack gallery hides the detail pane regardless of
+                 selection — v2.1 fix for users with installed
+                 workflows who click "+ Install". -->
+            <Binding Path="ShouldShowPackGallery" Converter="{x:Static BoolConverters.Not}"/>
+            <Binding Path="ActiveRun" Converter="{x:Static ObjectConverters.IsNull}"/>
+            <Binding Path="Selected" Converter="{x:Static ObjectConverters.IsNotNull}"/>
+          </MultiBinding>
+        </ScrollViewer.IsVisible>
+        <Border MaxWidth="900" HorizontalAlignment="Stretch"
+                Margin="40,32,40,48">
+          <StackPanel Spacing="28" DataContext="{Binding Selected}">
+
+            <!-- Page header -->
+            <StackPanel Spacing="10">
+              <TextBlock Text="{Binding Name}"
+                         FontSize="28" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimaryBrush}"/>
+              <TextBlock Text="{Binding Description}"
+                         FontSize="14" LineHeight="22"
+                         Foreground="{StaticResource TextSecondaryBrush}"
+                         TextWrapping="Wrap"
+                         IsVisible="{Binding Description,
+                                     Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+            </StackPanel>
+
+            <!-- Step flow visualisation. Pill chain with → between
+                 steps. Visually communicates the pipeline at a
+                 glance — way more readable than a raw string. -->
+            <StackPanel Spacing="8">
+              <TextBlock Text="PIPELINE"
+                         FontSize="10" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextTertiaryBrush}"/>
+              <Border Padding="14,10" CornerRadius="8"
+                      Background="{StaticResource SurfaceMutedBrush}">
+                <TextBlock Text="{Binding StepsSummary}"
+                           FontSize="13"
+                           FontFamily="Menlo, Consolas, monospace"
+                           Foreground="{StaticResource TextPrimaryBrush}"
+                           TextWrapping="Wrap"/>
+              </Border>
+            </StackPanel>
+
+            <!-- Expected inputs (read-only schema). Agent collects
+                 these from chat context when it decides to run. -->
+            <StackPanel Spacing="10"
+                        IsVisible="{Binding InputFields.Count}">
+              <TextBlock Text="EXPECTED INPUTS"
+                         FontSize="10" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextTertiaryBrush}"/>
+              <Border Background="{StaticResource SurfaceMutedBrush}"
+                      CornerRadius="6" Padding="14,10">
+                <ItemsControl ItemsSource="{Binding InputFields}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="vm:WorkflowInputFieldViewModel">
+                      <Grid ColumnDefinitions="Auto,*" Margin="0,0,0,6">
+                        <TextBlock Grid.Column="0"
+                                   Text="{Binding Label}"
+                                   FontSize="12" FontWeight="SemiBold"
+                                   FontFamily="Menlo, Consolas, monospace"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   Margin="0,0,12,0"
+                                   MinWidth="120"/>
+                        <TextBlock Grid.Column="1"
+                                   FontSize="12"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   TextWrapping="Wrap">
+                          <Run Text="{Binding Type}"/>
+                          <Run Text=" · "/>
+                          <Run Text="{Binding RequirementLabel}"/>
+                        </TextBlock>
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Border>
+              <TextBlock FontSize="11"
+                         Foreground="{StaticResource TextTertiaryBrush}"
+                         TextWrapping="Wrap">
+                <Run Text="The agent infers these from chat. If a required input is missing, it will ask you in conversation before running."/>
+              </TextBlock>
+            </StackPanel>
+
+            <!-- Phase B: chat-first invocation. The Workflows view is a
+                 LIBRARY — browse / install / history. Runs are triggered
+                 from chat by the agent (via run_workflow tool) when the
+                 user describes a task that fits this workflow. -->
+            <Border Background="{StaticResource SurfaceMutedBrush}"
+                    CornerRadius="8" Padding="16,14">
+              <StackPanel Spacing="6">
+                <TextBlock Text="HOW TO RUN"
+                           FontSize="10" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextTertiaryBrush}"/>
+                <TextBlock FontSize="13" LineHeight="20"
+                           Foreground="{StaticResource TextPrimaryBrush}"
+                           TextWrapping="Wrap">
+                  <Run Text="Go to "/>
+                  <Run Text="Chat" FontWeight="SemiBold"/>
+                  <Run Text=" and describe the task. The agent decides when this workflow is the right tool and runs it inline — output streams back into the conversation."/>
+                </TextBlock>
+                <TextBlock FontSize="12" LineHeight="18"
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           TextWrapping="Wrap"
+                           Margin="0,4,0,0">
+                  <Run Text="Example: "/>
+                  <Run Text="{Binding ChatExamplePrompt}"
+                       FontStyle="Italic"/>
+                </TextBlock>
+              </StackPanel>
+            </Border>
+
+            <!-- Status / error row (no Run button — chat-first) -->
+            <StackPanel Spacing="6"
+                        DataContext="{Binding $parent[UserControl].((vm:WorkflowsViewModel)DataContext)}">
+              <Border Background="#26FF453A" CornerRadius="6" Padding="12,9"
+                      IsVisible="{Binding ErrorMessage,
+                                  Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                <TextBlock Text="{Binding ErrorMessage}"
+                           FontSize="12"
+                           Foreground="{StaticResource ErrorBrush}"
+                           TextWrapping="Wrap"/>
+              </Border>
+              <Border Background="#2630D158" CornerRadius="6" Padding="12,9"
+                      IsVisible="{Binding StatusMessage,
+                                  Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                <TextBlock Text="{Binding StatusMessage}"
+                           FontSize="12"
+                           Foreground="{StaticResource SuccessBrush}"/>
+              </Border>
+            </StackPanel>
+
+          </StackPanel>
+        </Border>
+      </ScrollViewer>
+
+    </Grid>
+
+  </Grid>
+</UserControl>

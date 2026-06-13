@@ -1,0 +1,29 @@
+{
+  "name": "Research Brief",
+  "description": "5-agent decision-grade research pipeline. Scoper → Researcher → Fact-checker → Synthesizer → Publisher. Topic in, citable brief out — exec summary, key findings, sources, open questions.",
+  "definition": {
+    "inputs": [
+      { "key": "topic",    "label": "Topic / question", "type": "longtext", "required": true,  "options": [] },
+      { "key": "audience", "label": "Audience",         "type": "text",     "required": true,  "options": [] },
+      { "key": "depth",    "label": "Depth",            "type": "select",   "required": true,
+        "options": ["Quick brief (3-5 sources)", "Standard (10 sources)", "Deep dive (20+ sources)"] }
+    ],
+    "steps": [
+      { "skill": "research-scoper",       "label": "Scoper" },
+      { "skill": "research-researcher",   "label": "Researcher",
+        "tools": ["web_search", "read_url"], "timeout_seconds": 300,
+        "verifier": {
+          "skill": "research-source-verifier",
+          "criteria": "Every finding has a citable source. No T4-only STRONG findings. No hallucinated quotes. Coverage matches the requested depth.",
+          "max_retries": 1
+        }
+      },
+      { "skill": "research-factchecker",  "label": "Fact-checker",
+        "tools": ["read_url"], "timeout_seconds": 180 },
+      { "skill": "research-synthesizer",  "label": "Synthesizer" },
+      { "skill": "research-publisher",    "label": "Publisher" }
+    ],
+    "mode": "linear",
+    "metadata": { "source": "starter-pack:research-brief" }
+  }
+}

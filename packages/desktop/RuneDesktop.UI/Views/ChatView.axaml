@@ -17,212 +17,176 @@
          can see the agent thinking, learning, and committing to chain
          in real time. No clicks required.
          ══════════════════════════════════════════════════════════════ -->
-    <!-- Three resizable columns. Default widths (320 / * / 380) match
-         the pre-Phase-Q layout but are user-draggable via the two
-         GridSplitters between them. Min widths keep any column from
-         being collapsed to nothing. -->
-    <Grid>
+    <!-- Two resizable columns:
+           Col 0 = chat surface (flex, MinWidth 380)
+           Col 1 = vertical splitter (4 px gutter, drag to resize cognition)
+           Col 2 = cognition column (default 380, drag-resizable 320–800)
+
+         The legacy LEFT activity sidebar (ERC-8004 pill, state counters,
+         deprecated ACTIVITY stream) was removed in this rev — its data
+         was already duplicated by the top bar (identity pill) and the
+         right-rail Brain Dashboard (state counters, namespace cards).
+         Keeping it was visual debt that pushed the chat into a tight
+         ~380 px center column on most laptops.
+
+         The cognition column track is given an explicit pixel Width
+         (not Auto) because GridSplitter.ResizeBehavior=PreviousAndNext
+         only works when BOTH neighbouring tracks have non-Auto widths.
+         If we leave it Auto the splitter ends up locked because the
+         column track keeps re-sizing itself to the inner Border's
+         desired width on every layout pass. -->
+    <Grid x:Name="LayoutGrid">
       <Grid.ColumnDefinitions>
-        <!-- Width="Auto" on the two side-column tracks so they
-             collapse to 0 when their inner Border IsVisible=false
-             (toggled via IsActivityHidden / Cognition.IsHidden).
-             A `Width=320` column track DOES NOT collapse just because
-             its content is invisible — Avalonia keeps the track at
-             its declared width, and the chat column never reclaims
-             the space. Switching to Auto + Width on the inner Border
-             gives us "track collapses → chat fills it" automatically.
-             That bug was visible after collapsing both panels: the
-             chat surface stayed 380 px narrower than the window. -->
+        <!-- chat: fluid, takes whatever's left after cognition. -->
+        <ColumnDefinition Width="*"/>
+        <!-- splitter handle column. Auto-sized — when the splitter
+             Border inside is IsVisible=false (cognition hidden),
+             its desired width is 0 and this column collapses,
+             letting chat reclaim those 6 px. When visible the
+             Border's Width=6 expands the column to 6.
+             We bypass Avalonia 11.3's GridSplitter and drive resize
+             from code-behind because GridSplitter writes past
+             MaxWidth (drag could balloon cognition to ~80 % of
+             screen, squashing chat to a 200-px strip). -->
         <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="*" MinWidth="380"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="Auto"/>
+        <!-- cognition: default 400 px; resized by dragging col 1.
+             Code-behind clamps the column Width to [320, 800] so
+             chat keeps at least ~520 px on a typical 1280-px window
+             and cognition keeps enough room for its 320-px chart.
+             Not x:Named — Avalonia's ColumnDefinition doesn't inherit
+             from Control so XAML's `x:Name` rejects it (AVLN2000).
+             The splitter handler in code-behind reaches this track
+             via LayoutGrid.ColumnDefinitions[2]. -->
+        <ColumnDefinition Width="400"/>
       </Grid.ColumnDefinitions>
 
-      <!-- ═════ LEFT SIDEBAR ═════════════════════════════════════════
-           Visibility bound to ChatViewModel.IsActivityHidden so the
-           user can collapse the entire activity column from the top
-           bar — same pattern as Cognition (right column) and the
-           session rail. Width is fixed at 320 px when visible (used
-           to be a `*` column with MinWidth that prevented total
-           collapse). -->
-      <Border Grid.Column="0"
-              Width="320"
-              Background="{StaticResource SurfaceMutedBrush}"
-              BorderThickness="0,0,1,0"
-              BorderBrush="{StaticResource DividerBrush}"
-              IsVisible="{Binding IsActivityHidden,
-                          Converter={x:Static BoolConverters.Not}}">
-        <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
-
-          <!-- ── Identity card ─────────────────────────────────────── -->
-          <Border Grid.Row="0" Padding="16,18,16,14">
-            <StackPanel Spacing="10">
-              <StackPanel Orientation="Horizontal" Spacing="10">
-                <Border Width="36" Height="36" CornerRadius="10"
-                        Background="{StaticResource BrandAccentBrush}">
-                  <TextBlock Text="N" FontSize="17" FontWeight="Bold"
-                             Foreground="{StaticResource TextOnAccentBrush}"
-                             HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
-                <StackPanel VerticalAlignment="Center" Spacing="2">
-                  <TextBlock Text="Digital Twin"
-                             FontSize="14" FontWeight="SemiBold"
-                             Foreground="{StaticResource TextPrimaryBrush}"/>
-                  <StackPanel Orientation="Horizontal" Spacing="6">
-                    <TextBlock Text="ERC-8004" FontSize="10" FontWeight="Bold"
-                               Foreground="{StaticResource SuccessBrush}"
-                               IsVisible="{Binding IsOnChain}"/>
-                    <TextBlock Text="{Binding ChainTokenId}"
-                               FontSize="11"
-                               Foreground="{StaticResource TextSecondaryBrush}"
-                               FontFamily="Consolas, Menlo, monospace"
-                               IsVisible="{Binding IsOnChain}"/>
-                    <TextBlock Text="not registered"
-                               FontSize="11"
-                               Foreground="{StaticResource TextTertiaryBrush}"
-                               IsVisible="{Binding !IsOnChain}"/>
-                  </StackPanel>
-                </StackPanel>
-              </StackPanel>
-              <TextBlock Text="{Binding ChainNetwork}"
-                         FontSize="10"
-                         Foreground="{StaticResource TextTertiaryBrush}"
-                         IsVisible="{Binding ChainNetwork,
-                                   Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-            </StackPanel>
-          </Border>
-
-          <Border Grid.Row="1" Height="1"
-                  Background="{StaticResource DividerBrush}" Margin="16,0"/>
-
-          <!-- ── State counters ──────────────────────────────────────── -->
-          <StackPanel Grid.Row="2" Margin="16,12,16,8" Spacing="10">
-            <TextBlock Text="STATE" FontSize="10" FontWeight="Bold"
-                       Foreground="{StaticResource TextTertiaryBrush}"/>
-            <UniformGrid Columns="2">
-              <StackPanel Margin="0,0,8,8">
-                <TextBlock Text="{Binding TurnCount}" FontSize="20"
-                           FontWeight="Bold"
-                           Foreground="{StaticResource TextPrimaryBrush}"/>
-                <TextBlock Text="Turns" FontSize="10"
-                           Foreground="{StaticResource TextSecondaryBrush}"/>
-              </StackPanel>
-              <StackPanel Margin="8,0,0,8">
-                <TextBlock Text="{Binding MemoryCount}" FontSize="20"
-                           FontWeight="Bold"
-                           Foreground="{StaticResource TextPrimaryBrush}"/>
-                <TextBlock Text="Memories" FontSize="10"
-                           Foreground="{StaticResource TextSecondaryBrush}"/>
-              </StackPanel>
-              <StackPanel Margin="0,0,8,0">
-                <TextBlock Text="{Binding AnchoredCount}" FontSize="20"
-                           FontWeight="Bold"
-                           Foreground="{StaticResource SuccessBrush}"/>
-                <TextBlock Text="Anchored" FontSize="10"
-                           Foreground="{StaticResource TextSecondaryBrush}"/>
-              </StackPanel>
-              <StackPanel Margin="8,0,0,0">
-                <TextBlock Text="{Binding PendingAnchorCount}" FontSize="20"
-                           FontWeight="Bold"
-                           Foreground="{StaticResource WarningBrush}"/>
-                <TextBlock Text="Pending" FontSize="10"
-                           Foreground="{StaticResource TextSecondaryBrush}"/>
-              </StackPanel>
-            </UniformGrid>
-            <!-- Phase D 续 / #159 v4 — every sidebar button retired.
-                 Their contents all live in the always-visible
-                 Cognition column now:
-                   * Thinking      → Cognition.THINKING section
-                   * Progress      → Cognition.JUST LEARNED + Recent Verdicts
-                   * Workdir       → Cognition.WORK DIRECTORY section
-                   * Evolution     → Cognition.RECENT VERDICTS (no inline
-                                     Approve/Revert here yet — TODO
-                                     re-attach them to verdict cards if
-                                     the user misses that surface).
-                 The whole point of the right-column reorganisation
-                 was to make slide-overs unnecessary; leaving the
-                 buttons here was just visual debt. -->
-          </StackPanel>
-
-          <!-- ── Phase D 续 / #159 v3 — Activity Stream retired.
-               Raw event-log spam (SkillEvolver / MemoryEvolver / etc.)
-               now lives in the Cognition column's "Just Learned" feed
-               in curated, just-the-content form. Reclaiming this
-               vertical space gives more room for the chat list / file
-               drawer / etc. -->
-          <Border Grid.Row="3"/>
-        </Grid>
-      </Border>
-
-      <!-- Splitter between left sidebar and chat surface. ResizeBehavior
-           PreviousAndNext lets the user push width between the two
-           neighbouring columns by dragging this 4-px gutter. Hidden
-           when the activity sidebar is collapsed — no point dragging
-           an invisible gutter. -->
-      <GridSplitter Grid.Column="1" Width="4"
-                    ResizeBehavior="PreviousAndNext"
-                    ResizeDirection="Columns"
-                    Background="{StaticResource DividerBrush}"
-                    HorizontalAlignment="Stretch"
-                    IsVisible="{Binding IsActivityHidden,
-                                Converter={x:Static BoolConverters.Not}}"/>
-
-      <!-- ═════ MIDDLE: CHAT AREA ═══════════════════════════════════
+      <!-- ═════ LEFT (col 0): CHAT AREA ═════════════════════════════
            Drag-and-drop is enabled on this whole column so users can
            drop files anywhere in the chat surface (matching Claude /
            Cowork). Code-behind wires DragOver / Drop into
            ChatViewModel.HandleDroppedFilesAsync. The IsDraggingOver
            overlay shows a tinted "Drop to attach" hint while the
-           cursor carries files over the area. -->
-      <Grid Grid.Column="2" RowDefinitions="*,Auto,Auto"
+           cursor carries files over the area.
+
+           Row 0 — chat-local toolbar (44 px). Hosts the inspector
+           toggle on the right; mirrors macOS app pattern where view-
+           specific controls live in a tight strip on the canvas
+           itself, not the window-level toolbar.
+           Row 1 — messages scrollviewer (*).
+           Row 2 — typing indicator (auto).
+           Row 3 — input bar (auto). -->
+      <Grid Grid.Column="0" RowDefinitions="36,*,Auto,Auto"
             x:Name="ChatColumnGrid"
             DragDrop.AllowDrop="True">
 
-        <!-- Messages — horizontal scroll set to Auto so any single
-             content block (code blocks, long URLs, wide tables) that
-             overflows can scroll horizontally instead of getting
-             clipped by the column. Vertical scroll is always Auto. -->
-        <ScrollViewer Grid.Row="0"
-                      VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Auto"
-                      x:Name="MessageScrollViewer">
-          <Panel>
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
-                        Spacing="10" Margin="32,80"
-                        IsVisible="{Binding HasNoMessages}">
-              <Border Width="56" Height="56" CornerRadius="14"
-                      Background="{StaticResource BrandAccentBrush}"
-                      HorizontalAlignment="Center">
-                <TextBlock Text="N" FontSize="26" FontWeight="Bold"
-                           Foreground="{StaticResource TextOnAccentBrush}"
-                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
-              </Border>
-              <TextBlock Text="Say hi to your Digital Twin"
-                         FontSize="15" FontWeight="SemiBold"
-                         Foreground="{StaticResource TextPrimaryBrush}"
-                         HorizontalAlignment="Center"/>
-              <TextBlock Text="Conversation, memory, and on-chain provenance show up in the sidebar as you chat."
-                         FontSize="12"
-                         Foreground="{StaticResource TextSecondaryBrush}"
-                         HorizontalAlignment="Center" TextAlignment="Center"
-                         MaxWidth="320" TextWrapping="Wrap"/>
-            </StackPanel>
+        <!-- Chat-local toolbar. Translucent, no border on the bottom
+             until the user scrolls (would be nice; punted for now).
+             Just an inspector toggle on the right — keeps it as a
+             pure "open the dashboard" affordance. -->
+        <Border Grid.Row="0"
+                Background="{StaticResource SurfaceBaseBrush}"
+                BorderThickness="0,0,0,1"
+                BorderBrush="{StaticResource DividerBrush}"
+                Padding="14,0">
+          <DockPanel>
+            <Button DockPanel.Dock="Right"
+                    Classes="toolbar"
+                    Command="{Binding Cognition.ToggleHiddenCommand}"
+                    ToolTip.Tip="Show inspector (Ctrl+Shift+\)"
+                    FontSize="14"
+                    VerticalAlignment="Center">
+              <TextBlock Text="◧"
+                         Foreground="{StaticResource TextSecondaryBrush}"/>
+            </Button>
+            <Panel/>
+          </DockPanel>
+        </Border>
 
-            <ItemsControl ItemsSource="{Binding Messages}"
-                          Margin="32,16,32,28">
+        <!-- Messages — horizontal scroll DISABLED at this level. With
+             Auto, the ScrollViewer measured its content with infinite
+             available width, which let the inner StackPanel + bubble
+             grid demand whatever width the natural markdown content
+             wanted. That demand cascaded back through the Grid layout
+             pass and bypassed the chat ColumnDefinition's MinWidth,
+             leaving chat as a 200-px strip on screen with a horizontal
+             scrollbar at the bottom. Disabling here forces the chat
+             column to size by the OUTER constraints and any wide
+             children (code blocks, tables) get their OWN local
+             ScrollViewer in the markdown renderer instead. -->
+        <ScrollViewer Grid.Row="1"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      x:Name="MessageScrollViewer">
+          <!-- Centred reading column. macOS chat surfaces (Messages,
+               Claude, ChatGPT desktop) cap the conversation at ~760 px
+               and centre it inside the available width — that's how
+               collapsing the sidebar still "feels" responsive: the
+               surrounding margin breathes, the readable column stays
+               at a comfortable line length.
+
+               Implementation: Border (MaxWidth=780, HorizontalAlignment=
+               Center) instead of StackPanel-with-HA-Center because
+               Avalonia's StackPanel collapses to content desired width
+               which then floats LEFT inside the parent, producing the
+               "chat jammed against one edge" bug. Border with a fixed
+               MaxWidth + Center DOES reliably centre. -->
+          <Border MaxWidth="780"
+                  HorizontalAlignment="Center">
+            <StackPanel>
+              <!-- Empty state. Neutral surface tile, not brand colour —
+                   matches the rest of the HIG redesign. -->
+              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Spacing="12" Margin="32,96"
+                          IsVisible="{Binding HasNoMessages}">
+                <!-- #185 — branded logo tile (matches login page).
+                     72×72 deep-navy + BNB-yellow N. -->
+                <Border Width="72" Height="72" CornerRadius="16"
+                        Background="#0F1729"
+                        HorizontalAlignment="Center">
+                  <TextBlock Text="N" FontSize="40" FontWeight="Bold"
+                             Foreground="#F0B90B"
+                             HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <TextBlock Text="Say hi to your Digital Twin"
+                           FontSize="15" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextPrimaryBrush}"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="Conversation, memory, and on-chain provenance show up in the sidebar as you chat."
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           HorizontalAlignment="Center" TextAlignment="Center"
+                           MaxWidth="360" TextWrapping="Wrap"/>
+              </StackPanel>
+
+              <ItemsControl ItemsSource="{Binding Messages}"
+                            Margin="24,16,24,28">
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
                   <StackPanel Margin="0,8" HorizontalAlignment="{Binding HAlignment}">
+                    <!-- ───────────────────────────────────────────────
+                         #93: the inline workflow_run card was deleted
+                         along with the run_workflow tool (#91) and the
+                         server-side runtime (#92). Old historical
+                         workflow_run events fall back to the text
+                         bubble path via IsTextBubble — their content
+                         ("Started workflow: X") renders as a regular
+                         assistant message. delegate() calls are tools
+                         rendered by the cognition / tool-call surface,
+                         not by this template. -->
                     <StackPanel Orientation="Horizontal" Spacing="10"
-                                HorizontalAlignment="{Binding HAlignment}">
+                                HorizontalAlignment="{Binding HAlignment}"
+                                IsVisible="{Binding IsTextBubble}">
+                      <!-- Agent avatar — monochrome surface tile, not
+                           accent. Identity reads from position + the
+                           letter, not from the disc colour. -->
                       <Border Width="28" Height="28" CornerRadius="14"
-                              Background="{StaticResource BrandAccentBrush}"
+                              Background="{StaticResource SurfaceRaisedBrush}"
+                              BorderBrush="{StaticResource DividerBrush}"
+                              BorderThickness="1"
                               IsVisible="{Binding !IsUser}"
                               VerticalAlignment="Top">
-                        <TextBlock Text="R" FontSize="12" FontWeight="Bold"
-                                   Foreground="{StaticResource TextOnAccentBrush}"
+                        <TextBlock Text="N" FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center"/>
                       </Border>
@@ -244,28 +208,45 @@
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                               <DataTemplate>
+                                <!-- #125: bubble chip auto-switches to
+                                     image-preview mode when we have a
+                                     thumbnail (current-session sends).
+                                     History reload uses the glyph
+                                     branch since LocalSourcePath is
+                                     null until v2 ships a server-side
+                                     thumbnail endpoint. -->
                                 <Border Margin="0,0,6,4"
-                                        Padding="8,5"
-                                        CornerRadius="999"
+                                        Padding="6,4"
+                                        CornerRadius="8"
                                         Background="#33000000"
                                         BorderBrush="#55FFFFFF"
                                         BorderThickness="1">
-                                  <StackPanel Orientation="Horizontal" Spacing="6">
+                                  <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <!-- Image-preview branch -->
+                                    <Image Source="{Binding Thumbnail}"
+                                           IsVisible="{Binding HasThumbnail}"
+                                           MaxWidth="320" MaxHeight="240"
+                                           Stretch="Uniform"/>
+                                    <!-- Glyph branch (file or no preview) -->
                                     <TextBlock Text="{Binding Glyph}"
+                                               IsVisible="{Binding !HasThumbnail}"
                                                FontSize="14"
                                                VerticalAlignment="Center"/>
-                                    <TextBlock Text="{Binding Name}"
-                                               FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{Binding $parent[ItemsControl].((vm:ChatMessageViewModel)DataContext).TextColor}"
-                                               TextTrimming="CharacterEllipsis"
-                                               MaxWidth="220"
-                                               VerticalAlignment="Center"/>
-                                    <TextBlock Text="{Binding SizeText}"
-                                               FontSize="10"
-                                               Foreground="{Binding $parent[ItemsControl].((vm:ChatMessageViewModel)DataContext).TimeColor}"
-                                               VerticalAlignment="Center"
-                                               IsVisible="{Binding SizeText,
-                                                           Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                    <StackPanel Orientation="Vertical" Spacing="2"
+                                                VerticalAlignment="Center">
+                                      <TextBlock Text="{Binding Name}"
+                                                 FontSize="12" FontWeight="SemiBold"
+                                                 Foreground="{Binding $parent[ItemsControl].((vm:ChatMessageViewModel)DataContext).TextColor}"
+                                                 TextTrimming="CharacterEllipsis"
+                                                 MaxWidth="280"
+                                                 VerticalAlignment="Center"/>
+                                      <TextBlock Text="{Binding SizeText}"
+                                                 FontSize="10"
+                                                 Foreground="{Binding $parent[ItemsControl].((vm:ChatMessageViewModel)DataContext).TimeColor}"
+                                                 VerticalAlignment="Center"
+                                                 IsVisible="{Binding SizeText,
+                                                             Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                    </StackPanel>
                                   </StackPanel>
                                 </Border>
                               </DataTemplate>
@@ -284,36 +265,116 @@
                                               BodyForeground="{Binding TextColor}"
                                               IsVisible="{Binding Content,
                                                           Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                          <TextBlock Text="{Binding FormattedTime}" FontSize="10"
-                                     Foreground="{Binding TimeColor}"
-                                     HorizontalAlignment="Right"/>
+                          <!-- Footer row: Copy button + timestamp.
+                               MarkdownView renders each paragraph /
+                               list-item as a separate SelectableText-
+                               Block, so cross-block selection isn't
+                               possible (Avalonia limitation). The
+                               Copy button below sidesteps that — one
+                               click puts the entire raw message on
+                               the clipboard. Tag carries the VM so
+                               the code-behind handler can read
+                               Content without binding gymnastics. -->
+                          <StackPanel Orientation="Horizontal" Spacing="8"
+                                      HorizontalAlignment="Right">
+                            <!-- #130: feedback row. Visible only on
+                                 assistant messages, only in the
+                                 "none" state (replaced with a single
+                                 badge after the medic clicks one). -->
+                            <Button Content="✓"
+                                    FontSize="11"
+                                    Padding="6,2"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    CornerRadius="4"
+                                    Foreground="{Binding TimeColor}"
+                                    Cursor="Hand"
+                                    Tag="{Binding}"
+                                    Click="OnAcceptFeedbackClicked"
+                                    IsVisible="{Binding ShowFeedbackButtons}"
+                                    ToolTip.Tip="Mark as accurate — feeds positive sample to skill evolution">
+                              <Button.Styles>
+                                <Style Selector="Button:pointerover /template/ ContentPresenter">
+                                  <Setter Property="Background" Value="#1AFFFFFF"/>
+                                </Style>
+                              </Button.Styles>
+                            </Button>
+                            <Button Content="✗"
+                                    FontSize="11"
+                                    Padding="6,2"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    CornerRadius="4"
+                                    Foreground="{Binding TimeColor}"
+                                    Cursor="Hand"
+                                    Tag="{Binding}"
+                                    Click="OnCorrectFeedbackClicked"
+                                    IsVisible="{Binding ShowFeedbackButtons}"
+                                    ToolTip.Tip="Submit a correction — feeds into skill evolution next cycle">
+                              <Button.Styles>
+                                <Style Selector="Button:pointerover /template/ ContentPresenter">
+                                  <Setter Property="Background" Value="#1AFFFFFF"/>
+                                </Style>
+                              </Button.Styles>
+                            </Button>
+                            <TextBlock Text="✓ Accepted"
+                                       FontSize="10"
+                                       Foreground="{Binding TimeColor}"
+                                       VerticalAlignment="Center"
+                                       IsVisible="{Binding ShowAcceptedBadge}"/>
+                            <TextBlock Text="✗ Corrected"
+                                       FontSize="10"
+                                       Foreground="{Binding TimeColor}"
+                                       VerticalAlignment="Center"
+                                       IsVisible="{Binding ShowCorrectedBadge}"/>
+                            <Button Content="Copy"
+                                    FontSize="10"
+                                    Padding="6,2"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    CornerRadius="4"
+                                    Foreground="{Binding TimeColor}"
+                                    Cursor="Hand"
+                                    Tag="{Binding}"
+                                    Click="OnCopyMessageClicked"
+                                    ToolTip.Tip="Copy this message">
+                              <Button.Styles>
+                                <Style Selector="Button:pointerover /template/ ContentPresenter">
+                                  <Setter Property="Background" Value="#1AFFFFFF"/>
+                                </Style>
+                              </Button.Styles>
+                            </Button>
+                            <TextBlock Text="{Binding FormattedTime}" FontSize="10"
+                                       Foreground="{Binding TimeColor}"
+                                       VerticalAlignment="Center"/>
+                          </StackPanel>
                         </StackPanel>
                       </Border>
-                      <Border Width="28" Height="28" CornerRadius="14"
-                              Background="{StaticResource AccentClaudeBrush}"
-                              IsVisible="{Binding IsUser}"
-                              VerticalAlignment="Top">
-                        <TextBlock Text="U" FontSize="12" FontWeight="Bold"
-                                   Foreground="{StaticResource TextOnAccentBrush}"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"/>
-                      </Border>
+                      <!-- No user avatar — macOS Messages convention.
+                           A right-aligned System Blue bubble is enough
+                           to communicate "this is me"; an avatar circle
+                           just adds noise. -->
+                      <Panel IsVisible="False"/>
                     </StackPanel>
                   </StackPanel>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>
-          </Panel>
+            </StackPanel>
+          </Border>        <!-- close centred MaxWidth=780 Border -->
         </ScrollViewer>
 
         <!-- Drag-over overlay: shows a tinted hint while files are
              being dragged into the chat column. Visibility bound to
-             ChatViewModel.IsDraggingOverChat (set in code-behind on
-             DragEnter / cleared on DragLeave / Drop). -->
-        <Border Grid.Row="0"
-                Background="#CC2A1F4D"
+             ChatViewModel.IsDraggingOverChat. macOS standard: System
+             Blue tinted overlay (~30 % opacity surface base + 60 %
+             blue border) so the user reads it as "drop target", not
+             a brand swatch. Lives in Row 1 (the messages area) so it
+             doesn't extend over the toolbar. -->
+        <Border Grid.Row="1"
+                Background="#CC1E1E1E"
                 BorderThickness="2"
-                BorderBrush="{StaticResource BrandAccentBrush}"
+                BorderBrush="{StaticResource SystemBlueBrush}"
                 CornerRadius="10"
                 Margin="16"
                 IsVisible="{Binding IsDraggingOverChat}"
@@ -335,13 +396,18 @@
           </StackPanel>
         </Border>
 
-        <!-- Typing indicator -->
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8"
+        <!-- Typing indicator. Pulsing dot avatars are a calmer cue
+             than a coloured initial — matches Apple Mail's "...typing"
+             style. Row 2 in the 4-row chat layout (toolbar / messages
+             / typing / input). -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8"
                     Margin="32,4,32,8" IsVisible="{Binding IsTyping}">
           <Border Width="20" Height="20" CornerRadius="10"
-                  Background="{StaticResource BrandAccentBrush}">
-            <TextBlock Text="R" FontSize="10" FontWeight="Bold"
-                       Foreground="{StaticResource TextOnAccentBrush}"
+                  Background="{StaticResource SurfaceRaisedBrush}"
+                  BorderBrush="{StaticResource DividerBrush}"
+                  BorderThickness="1">
+            <TextBlock Text="N" FontSize="10" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimaryBrush}"
                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
           <TextBlock Text="Agent is thinking…" FontSize="12"
@@ -349,12 +415,113 @@
                      VerticalAlignment="Center"/>
         </StackPanel>
 
-        <!-- Input bar -->
-        <Border Grid.Row="2" BorderThickness="0,1,0,0"
+        <!-- Input bar (Row 3).
+             Outer Border spans the full chat column (gives us a clean
+             hairline + matching background). The INNER StackPanel is
+             centred at MaxWidth=780 so it aligns with the conversation
+             column above; on wide windows you get symmetric margins
+             on both sides instead of an attach button hugging the
+             far left edge and Send hugging the far right. -->
+        <Border Grid.Row="3" BorderThickness="0,1,0,0"
                 BorderBrush="{StaticResource DividerBrush}"
                 Padding="20,14"
                 Background="{StaticResource SurfaceBaseBrush}">
-          <StackPanel Spacing="8">
+          <!-- HorizontalAlignment intentionally left at Stretch (the
+               default). MaxWidth + Stretch gives us "fill up to 780 px,
+               then cap and self-centre via parent". HorizontalAlignment
+               Center would size to content instead, leaving the input
+               looking shrunken. -->
+          <StackPanel Spacing="8"
+                      MaxWidth="780">
+            <!-- #172 background tasks panel moved to MainWindow as a
+                 floating bottom-left overlay (user feedback: 'don't
+                 put it in the chat main window'). See MainWindow.axaml
+                 search for "background tasks overlay". -->
+
+            <!-- #159: inline DICOM preview. Visible after the medic
+                 clicks a chip's "Preview" button. Image is fetched
+                 from /api/v1/dicom/.../render — eager cache (#158)
+                 makes scrolls ~5 ms after the first slice. Mouse
+                 wheel on the image steps slices; slider beneath
+                 jumps absolute position. "Pop out" launches the
+                 full standalone HTML viewer in Brave/Vivaldi/Safari
+                 for ROI + chat-sidebar interaction. -->
+            <Border IsVisible="{Binding IsPreviewVisible}"
+                    CornerRadius="10"
+                    BorderBrush="{StaticResource DividerBrush}"
+                    BorderThickness="1"
+                    Background="{StaticResource SurfaceCardBrush}"
+                    Padding="12">
+              <Grid RowDefinitions="Auto,Auto,Auto,Auto">
+                <!-- Title row: study description + close button -->
+                <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                  <Button DockPanel.Dock="Right"
+                          Content="✕"
+                          Background="Transparent"
+                          BorderThickness="0"
+                          Padding="6,2"
+                          FontSize="14"
+                          Foreground="{StaticResource TextSecondaryBrush}"
+                          Command="{Binding ClosePreviewCommand}"
+                          ToolTip.Tip="Close preview"/>
+                  <Button DockPanel.Dock="Right"
+                          Content="↗ Pop out (full viewer)"
+                          Padding="10,4" FontSize="11"
+                          Margin="0,0,6,0"
+                          Classes="ghost"
+                          Foreground="{StaticResource AccentBrush}"
+                          Command="{Binding PopOutDicomViewerCommand}"
+                          ToolTip.Tip="Open this study in the full standalone DICOM viewer (Brave / Safari)"/>
+                  <TextBlock Text="{Binding PreviewLabel}"
+                             FontSize="12" FontWeight="SemiBold"
+                             VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis"
+                             Foreground="{StaticResource TextPrimaryBrush}"/>
+                </DockPanel>
+                <!-- Image — scroll-wheel handler wired in code-behind. -->
+                <Border Grid.Row="1"
+                        Background="#000"
+                        CornerRadius="6"
+                        x:Name="PreviewImageHolder">
+                  <Image Source="{Binding PreviewBitmap}"
+                         Stretch="Uniform"
+                         MaxHeight="380"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center"/>
+                </Border>
+                <!-- Slice slider -->
+                <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto"
+                      Margin="0,8,0,4">
+                  <TextBlock Grid.Column="0"
+                             Text="Slice" FontSize="11" Margin="0,0,8,0"
+                             VerticalAlignment="Center"
+                             Foreground="{StaticResource TextSecondaryBrush}"/>
+                  <Slider Grid.Column="1"
+                          Minimum="0"
+                          Maximum="{Binding PreviewSliceCount}"
+                          Value="{Binding PreviewSliceIdx, Mode=TwoWay}"
+                          TickFrequency="1"
+                          IsSnapToTickEnabled="True"/>
+                  <TextBlock Grid.Column="2"
+                             FontSize="11" Margin="8,0,0,0"
+                             VerticalAlignment="Center"
+                             Foreground="{StaticResource TextSecondaryBrush}">
+                    <Run Text="{Binding PreviewSliceIdx}"/><Run Text=" / "/><Run Text="{Binding PreviewSliceCount}"/>
+                  </TextBlock>
+                </Grid>
+                <!-- Window preset selector -->
+                <DockPanel Grid.Row="3">
+                  <TextBlock DockPanel.Dock="Left"
+                             Text="W/L" FontSize="11" Margin="0,0,8,0"
+                             VerticalAlignment="Center"
+                             Foreground="{StaticResource TextSecondaryBrush}"/>
+                  <ComboBox ItemsSource="{Binding PreviewWindowPresets}"
+                            SelectedItem="{Binding PreviewWindowPreset, Mode=TwoWay}"
+                            FontSize="11" MinWidth="160"
+                            HorizontalAlignment="Left"/>
+                </DockPanel>
+              </Grid>
+            </Border>
             <ItemsControl ItemsSource="{Binding PendingAttachments}"
                           IsVisible="{Binding HasPendingAttachments}">
               <ItemsControl.ItemsPanel>
@@ -364,22 +531,82 @@
               </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                  <Border CornerRadius="999" Padding="10,4"
+                  <!-- #125: chip auto-switches between "image chip"
+                       (thumbnail + name) and "file chip" (📎 + name +
+                       size). Image branch uses CornerRadius=8 because
+                       a 999-radius pill wraps oddly around an 80-px
+                       square; file branch keeps the pill aesthetic. -->
+                  <Border CornerRadius="8"
+                          Padding="6,4"
                           Margin="0,0,8,4"
                           Background="{StaticResource SurfaceCardBrush}"
                           BorderBrush="{StaticResource DividerBrush}"
                           BorderThickness="1">
-                    <StackPanel Orientation="Horizontal" Spacing="6"
+                    <StackPanel Orientation="Horizontal" Spacing="8"
                                 VerticalAlignment="Center">
-                      <TextBlock Text="📎" FontSize="11" VerticalAlignment="Center"/>
-                      <TextBlock Text="{Binding Name}" FontSize="12"
-                                 FontWeight="SemiBold"
-                                 Foreground="{StaticResource TextPrimaryBrush}"
-                                 VerticalAlignment="Center"
-                                 TextTrimming="CharacterEllipsis" MaxWidth="220"/>
-                      <TextBlock Text="{Binding DisplaySize}" FontSize="11"
-                                 Foreground="{StaticResource TextSecondaryBrush}"
+                      <!-- Image thumbnail branch (visible only for image MIME) -->
+                      <Image Source="{Binding Thumbnail}"
+                             IsVisible="{Binding IsImage}"
+                             Width="80" Height="80"
+                             Stretch="UniformToFill"/>
+                      <!-- File icon branch (visible for everything else) -->
+                      <TextBlock Text="📎" FontSize="11"
+                                 IsVisible="{Binding !IsImage}"
                                  VerticalAlignment="Center"/>
+                      <StackPanel Orientation="Vertical" Spacing="2"
+                                  VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Name}" FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="220"/>
+                        <TextBlock Text="{Binding DisplaySize}" FontSize="11"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   VerticalAlignment="Center"/>
+                        <!-- #152: DICOM prerender verdict shown as a
+                             second line on the chip so the medic
+                             sees ingest succeeded BEFORE hitting
+                             Send. Visibility driven by non-empty
+                             DicomBadge so non-medical uploads aren't
+                             cluttered with a generic "no badge" row.
+                             #158: while DicomStatus == "prerendering"
+                             the badge text shows the current stage
+                             label, and a ProgressBar below tracks
+                             percent completion in real time. -->
+                        <TextBlock Text="{Binding DicomBadge}" FontSize="10"
+                                   IsVisible="{Binding DicomBadge,
+                                              Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                   Foreground="{StaticResource AccentBrush}"
+                                   VerticalAlignment="Center"
+                                   ToolTip.Tip="Server prerender status — green = ready for agent, ⚠ = open in viewer"/>
+                        <ProgressBar IsVisible="{Binding IsProgressVisible}"
+                                     Value="{Binding ProgressPercent}"
+                                     Minimum="0" Maximum="100"
+                                     Height="3" Width="220"
+                                     Margin="0,2,0,0"
+                                     ShowProgressText="False"
+                                     Foreground="{StaticResource AccentBrush}"
+                                     Background="{StaticResource DividerBrush}"/>
+                      </StackPanel>
+                      <!-- #157: large Preview button — primary CTA on
+                           the chip when a DICOM study was
+                           successfully ingested. Auto-pop was removed;
+                           the medic explicitly clicks to launch the
+                           3D viewer in their preferred browser
+                           (Brave/Safari fallback per #156). Sized
+                           bigger than the ✕ remove button so it's
+                           the obvious next action, with accent fill
+                           so it reads as a primary call-to-action
+                           rather than secondary chrome. -->
+                      <Button Content="🩻  Preview"
+                              FontSize="13" FontWeight="SemiBold"
+                              Padding="14,8"
+                              IsVisible="{Binding DicomRendered}"
+                              Classes="accent"
+                              Command="{Binding $parent[ItemsControl].DataContext.OpenDicomViewerCommand}"
+                              CommandParameter="{Binding}"
+                              ToolTip.Tip="Open this study in the 3D DICOM viewer"
+                              VerticalAlignment="Center"/>
                       <Button Content="✕" FontSize="11" Padding="4,0"
                               Background="Transparent" BorderThickness="0"
                               Foreground="{StaticResource TextSecondaryBrush}"
@@ -399,15 +626,13 @@
                        Foreground="{StaticResource ErrorBrush}" FontSize="11"
                        TextWrapping="Wrap"/>
 
-            <!-- Sync-status strip above the chat input. Always visible
-                 (even when the right-rail Brain panel is collapsed) so
-                 the user gets an at-a-glance signal that their writes
-                 are landing. Stays subtle when healthy; turns warning-
-                 coloured when degraded so it can't be missed.
-                 Bound to OverallStatus so any of the existing fault
-                 states (degraded / daemon down / busy) light it up. -->
-            <Border IsVisible="{Binding Cognition.Brain.Health.OverallStatus,
-                                Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+            <!-- Sync-status strip above the chat input.
+                 Hidden when healthy — a permanent "healthy · 0
+                 queued" pill is noise. Only surfaces when something
+                 needs attention (daemon down / degraded / busy). Bound
+                 to IsDegraded so the strip self-clears the moment the
+                 system recovers, without needing a converter. -->
+            <Border IsVisible="{Binding Cognition.Brain.Health.IsDegraded}"
                     Padding="8,4" CornerRadius="4"
                     Background="{StaticResource SurfaceMutedBrush}"
                     Margin="0,0,0,4">
@@ -433,55 +658,78 @@
             </Border>
 
             <DockPanel>
+              <!-- Attach button — ghost. Tighter padding than before so
+                   the input row reads as a single composer, not three
+                   competing widgets. -->
               <Button DockPanel.Dock="Left" Content="📎"
                       Command="{Binding AttachFilesCommand}"
                       Classes="ghost"
-                      FontSize="16" Padding="8,6"
-                      Margin="0,0,8,0" VerticalAlignment="Bottom"
+                      FontSize="15" Padding="6,4"
+                      Margin="0,0,6,0" VerticalAlignment="Bottom"
                       ToolTip.Tip="Attach files"/>
+              <!-- Send — rectangular filled accent (HIG primary CTA);
+                   pill was visually heavier than the surrounding chat
+                   chrome. -->
               <Button DockPanel.Dock="Right" Content="Send"
                       Command="{Binding SendMessageCommand}"
-                      Classes="accent pill"
-                      Padding="20,10" FontSize="14"
-                      Margin="8,0,0,0" VerticalAlignment="Bottom"/>
+                      Classes="accent"
+                      FontSize="13"
+                      Margin="6,0,0,0" VerticalAlignment="Bottom"/>
               <TextBox Text="{Binding InputText, Mode=TwoWay}"
                        Watermark="Type a message…  (Shift+Enter for newline)"
                        Classes="chat" FontSize="14"
                        AcceptsReturn="False" TextWrapping="Wrap"
                        MinHeight="40" MaxHeight="120"
-                       x:Name="InputBox"
-                       KeyDown="InputBox_KeyDown"/>
+                       x:Name="InputBox"/>
+              <!-- KeyDown handler wired in code-behind via
+                   WireUpInputBoxKeyHandler() so we can use
+                   RoutingStrategies.Tunnel. The XAML attribute syntax
+                   gives us a Bubble handler, which fires AFTER
+                   TextBox's internal Cmd-V/Cmd-C key bindings have
+                   already eaten the event. Tunnel handler catches it
+                   in the routing-down phase, before TextBox sees it. -->
             </DockPanel>
           </StackPanel>
         </Border>
       </Grid>
 
-      <!-- Splitter between chat surface and cognition column.
-           Hidden when the cognition panel is hidden (no point dragging
-           an invisible panel). -->
-      <GridSplitter Grid.Column="3" Width="4"
-                    ResizeBehavior="PreviousAndNext"
-                    ResizeDirection="Columns"
-                    Background="{StaticResource DividerBrush}"
-                    HorizontalAlignment="Stretch"
-                    IsVisible="{Binding Cognition.IsHidden,
-                                Converter={x:Static BoolConverters.Not}}"/>
+      <!-- GridSplitter removed — see ColumnDefinitions comment. The
+           cognition column is now a fixed 400 px; resize will come
+           back as a discrete toggle later, not a freeform drag. -->
 
-      <!-- ═════ FAR-RIGHT: ALWAYS-ON COGNITION COLUMN ═══════════════
+      <!-- ═════ RIGHT (col 1): ALWAYS-ON COGNITION COLUMN ═══════════
            Live mirror of the agent's "head + hand": what it's
            thinking right now, what it has learned (compactions /
            extractions / skills / persona evolutions), what it has
            anchored on BSC, and the live Greenfield bucket tree.
            Refreshes every 2s — no clicks needed.
 
+           Width is set on the COLUMN TRACK (CognitionColumn,
+           clamped 320–800 by code-behind drag handler). No Width on
+           the Border itself — that lets the track drive the visual
+           width without competing.
+
            Visibility bound to Cognition.IsHidden — toggle from the
            top bar's Cmd+Shift+\\ button.
            ════════════════════════════════════════════════════════ -->
-      <Border Grid.Column="4"
-              Width="380"
+
+      <!-- Splitter handle (col 1). 6 px-wide drag gutter. Manual
+           pointer handling in code-behind (OnSplitterPointer*) updates
+           CognitionColumn.Width with strict clamping — bypasses
+           Avalonia 11.3 GridSplitter's broken MaxWidth respect.
+           Hidden when cognition panel is hidden so it doesn't dangle. -->
+      <Border Grid.Column="1"
+              x:Name="ChatCognitionSplitter"
+              Width="6"
+              Background="{StaticResource DividerBrush}"
+              Cursor="SizeWestEast"
+              IsHitTestVisible="True"
+              IsVisible="{Binding Cognition.IsHidden,
+                          Converter={x:Static BoolConverters.Not}}"/>
+
+      <Border Grid.Column="2"
               Background="{StaticResource SurfaceMutedBrush}"
-              BorderThickness="1,0,0,0"
-              BorderBrush="{StaticResource DividerBrush}"
+              BorderThickness="0"
               IsVisible="{Binding Cognition.IsHidden,
                           Converter={x:Static BoolConverters.Not}}">
         <Grid RowDefinitions="Auto,*">
@@ -509,8 +757,23 @@
             </StackPanel>
           </Border>
 
-          <!-- Body: stacked sections, scrollable -->
-          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+          <!-- Body: stacked sections, vertical-scroll only. Horizontal
+               scroll deliberately Disabled — the cognition column is
+               a fixed 400 px and every section is sized to fit:
+                 * Section 1 brain cards: WrapPanel of 66-px cards,
+                   wraps to 2 rows on the 400-px column.
+                 * Section 2 timeline: 320-px Canvas centered, fits.
+                 * Section 3 DAG: centered, MinWidth=240 fits.
+               If we leave Auto on this ScrollViewer, ANY child that
+               sets HorizontalAlignment=Stretch (e.g. an earlier rev
+               of Section 3 DAG) measures with infinite width, demands
+               way more than 400 px, and the user sees an empty column
+               with the actual content scrolled offscreen to the right.
+               That's exactly the bug just reported ("需要向右滚动很
+               多才能看到 section 2 和 3 的图表"). -->
+          <ScrollViewer Grid.Row="1"
+                        VerticalScrollBarVisibility="Auto"
+                        HorizontalScrollBarVisibility="Disabled">
             <StackPanel Margin="12,10,12,12" Spacing="14">
 
               <!-- ═════════════════════════════════════════════════
@@ -767,8 +1030,16 @@
                          (rightly) think the views disagreed. Episodes
                          is the raw turn record; Skills is the
                          in-the-loop strategy delta. -->
+                    <!-- Centered, fixed-ish layout. HorizontalAlignment
+                         is Center (NOT Stretch) so the inner Grid
+                         doesn't push its parent ScrollViewer to claim
+                         infinite width — that was the cause of the
+                         "scroll right to see content" bug. The inner
+                         `*` filler column still keeps Chat-turn
+                         centred between Episodes and Heuristics. -->
                     <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto"
-                          Width="280">
+                          HorizontalAlignment="Center"
+                          Width="320">
                       <!-- Episodes leaf (left) -->
                       <Border Grid.Column="0"
                               Padding="6,3" CornerRadius="5"
@@ -1654,7 +1925,12 @@
               </StackPanel>
 
               <!-- Section 4: Working directory (Greenfield bucket tree) -->
-              <StackPanel Spacing="6">
+              <!-- #134: Greenfield sync disabled by default while we
+                   transition to an S3-compatible backend for durable
+                   storage. The whole section is hidden until the new
+                   backend lands; ViewModels stay wired so re-enabling
+                   is a one-line change. -->
+              <StackPanel Spacing="6" IsVisible="False">
                 <TextBlock Text="WORK DIRECTORY"
                            FontSize="10" FontWeight="Bold"
                            Foreground="{StaticResource TextTertiaryBrush}"
@@ -2034,7 +2310,7 @@
                             <ItemsControl.ItemTemplate>
                               <DataTemplate>
                                 <Border Margin="0,4,0,0" Padding="10,8" CornerRadius="6"
-                                        Background="{StaticResource SurfaceBrush}">
+                                        Background="{StaticResource SurfaceMutedBrush}">
                                   <StackPanel Spacing="2">
                                     <TextBlock Text="{Binding Headline}"
                                                FontSize="12"

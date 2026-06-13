@@ -306,11 +306,16 @@ public partial class JustLearnedItemViewModel : ObservableObject
 /// </summary>
 public partial class InstalledSkillViewModel : ObservableObject
 {
-    public string Name { get; }
-    public string Title { get; }
-    public string Description { get; }
-    public string Version { get; }
-    public string Author { get; }
+    // Init to "" so CommunityToolkit's [ObservableObject] generator —
+    // which can synthesise additional ctors — doesn't trip CS8618 on
+    // the non-null analysis. The "real" constructor below always
+    // assigns these from src.* anyway; the default is only here to
+    // satisfy the analyzer.
+    public string Name { get; } = "";
+    public string Title { get; } = "";
+    public string Description { get; } = "";
+    public string Version { get; } = "";
+    public string Author { get; } = "";
     public bool HasReferences { get; }
 
     public InstalledSkillViewModel(InstalledSkillSummary src)
@@ -467,6 +472,14 @@ public partial class ChainHealthViewModel : ObservableObject
         }
     }
 
+    /// <summary>True iff the system is in any non-healthy state.
+    /// Bound to the chat surface's sync-status strip IsVisible —
+    /// healthy is the common case and we don't want a permanent
+    /// "healthy · queue 0" pill cluttering the composer area.
+    /// The Brain panel itself shows the verbose status; the strip is
+    /// only for when the user needs to know something's wrong.</summary>
+    public bool IsDegraded => OverallStatus != "healthy";
+
     public string QueueLabel
     {
         get
@@ -608,6 +621,7 @@ public partial class ChainHealthViewModel : ObservableObject
         _previouslyDegraded = nowDegraded;
 
         OnPropertyChanged(nameof(OverallStatus));
+        OnPropertyChanged(nameof(IsDegraded));
         OnPropertyChanged(nameof(QueueLabel));
         OnPropertyChanged(nameof(DegradedReason));
         OnPropertyChanged(nameof(BscDegradedReason));

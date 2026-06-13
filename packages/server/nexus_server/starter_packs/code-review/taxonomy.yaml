@@ -1,0 +1,30 @@
+# Code Review taxonomy — shared vocabulary across every reviewer.
+# Each finding the pipeline emits MUST use these severity + category
+# + status labels verbatim. The Judge (gatekeeper) parses them.
+
+severity:
+  CRITICAL: "Will produce wrong output, lose data, or expose secrets at runtime. Blocks merge."
+  HIGH:     "Likely to bite in production within weeks — race, common nil deref, missing auth check, broken retry. Blocks merge unless explicitly acknowledged."
+  MEDIUM:   "Latent risk or maintainability hazard — broken abstraction, unbounded queue, missing test for new branch. Should fix but won't block."
+  LOW:      "Style, naming, comment freshness, micro-perf. Nice to have."
+  NIT:      "Reviewer-taste only. Author may ignore without justification."
+
+category:
+  CORRECTNESS:   "Logic bug, off-by-one, wrong branch, mis-ordered ops."
+  CONCURRENCY:   "Race, deadlock, missing lock, broken async / await contract."
+  SECURITY:      "Injection, auth bypass, secret leak, SSRF, traversal, weak crypto."
+  PERFORMANCE:   "Unnecessary O(n²), blocking call in hot path, allocation in tight loop."
+  RESOURCE:      "Leak — file handle, socket, goroutine, subscription, listener."
+  ERROR_HANDLING:"Swallowed exception, missing retry, unstructured panic/log."
+  API_DESIGN:    "Public surface ambiguity — wrong default, broken backwards-compat, leaky abstraction."
+  TESTABILITY:   "Untestable structure — hidden side effects, hard-coded clock, untyped contract."
+  STYLE:         "Naming, comments, formatting, conventions for the codebase."
+
+status:
+  OPEN:         "Finding stands; needs a patch in this iteration."
+  PATCHED:      "Summarizer included a concrete suggested patch."
+  ACKNOWLEDGED: "Author / reviewer agreed it's intentional or out-of-scope. Must include one-line justification."
+  BLOCKED:      "CRITICAL or HIGH finding that has neither PATCHED nor ACKNOWLEDGED — Judge MUST loop on these."
+
+# Required output sections (every reviewer emits this; numbering survives across steps):
+finding_id_format: "[F<n>]  e.g. [F1], [F2]  — sequential per run, never reused"

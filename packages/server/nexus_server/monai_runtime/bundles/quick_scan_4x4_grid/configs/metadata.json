@@ -1,0 +1,55 @@
+{
+  "schema": "https://github.com/Project-MONAI/MONAI-extra-test-data/raw/main/data/schema/bundle_schema.json",
+  "version": "0.3.0",
+  "format_version": "1.0.0",
+  "monai_version": "1.6.0",
+  "name": "quick_scan_4x4_grid",
+  "description": "Nexus Quick scan — Gemini-Flash triage on 4x4 grids of key slices from a 3D DICOM volume. Wraps existing Quick scan pipeline as a MONAI Bundle for uniform provenance footprint per ADR-002 Rev-6. Stage 2C of the modality-routing DICOM ingester; swaps in to remote MONAI VISTA-3D at M10 inference companion.",
+  "authors": [
+    "Nexus team"
+  ],
+  "copyright": "Copyright 2026 — internal Nexus model wrapping. The wrapped Gemini Flash model is proprietary to Google; this wrapper bundle is licensed Apache-2.0.",
+  "license": "Apache-2.0",
+  "task": "triage_3d_volume",
+  "modalities": [
+    "CT",
+    "MR",
+    "PET-CT",
+    "MG"
+  ],
+  "network_data_format": {
+    "inputs": {
+      "grid_image": {
+        "type": "image",
+        "format": "png",
+        "modality": "synthesised_4x4_grid",
+        "num_channels": 3,
+        "spatial_shape": [
+          512,
+          512
+        ],
+        "dtype": "uint8",
+        "description": "4x4 grid of key slices, rendered from the DICOM volume with modality-appropriate window/level"
+      }
+    },
+    "outputs": {
+      "triage_report": {
+        "type": "text",
+        "format": "markdown",
+        "description": "Structured triage notes per slice range, with verdict/finding/urgency fields and immutable disclaimer"
+      }
+    }
+  },
+  "intended_use": "Preliminary screening only. Radiologist review required. The wrapped LLM is non-deterministic; outputs are stored verbatim in ingestion_llm_response events per ADR-002 Rev-8.",
+  "limitations": [
+    "Caption-only; loses what Gemini Flash misses (Rev-9 §5.5.1 failure mode 1)",
+    "No pixel-level reasoning across studies (Rev-9 §5.5.1 failure mode 2)",
+    "No visual-similarity retrieval substrate (Rev-9 §5.5.1 failure mode 3)",
+    "Replaced by remote MONAI VISTA-3D at inference companion (M10)"
+  ],
+  "references": [
+    "ADR-002 Rev-6 (MONAI lightweight)",
+    "ADR-002 Rev-9 (multimodal imaging memory)",
+    "design/m3-memory-architecture.md §5.1 stage 2C"
+  ]
+}

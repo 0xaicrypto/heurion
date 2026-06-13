@@ -60,6 +60,11 @@ class DigitalTwin:
 
         self._thread_id: str = ""
         self._messages: list[dict] = []
+        # #127 — vision parts for the current turn, surfaced so sub-agents
+        # invoked via the delegate tool can re-attach them to their own
+        # one-shot call. Set at the top of chat(), cleared in its
+        # finally block. None outside an active turn.
+        self._active_turn_images: list[dict] | None = None
         self._turn_count: int = 0
 
         # Live thinking telemetry — pub/sub fired during chat() so the
@@ -616,6 +621,86 @@ class DigitalTwin:
             coro.close()
             logger.debug("No event loop for background task %s", label)
 
+    def _enqueue_vector_embed(
+        self,
+        user_id: str,
+        user_msg_idx: int,
+        user_msg_text: str,
+        assistant_msg_idx: int,
+        assistant_msg_text: str,
+        distilled: list[dict],
+    ) -> None:
+        """#136 — fire-and-forget this turn's chunks to the vector index.
+
+        The actual work happens in a background task spawned via
+        :meth:`_bg_task` so the chat response never blocks on the
+        embedding API. If the server-side vector_index module isn't
+        available (running in pure-SDK mode without nexus_server),
+        we no-op silently — embedding is a layer above the SDK.
+
+        Per-chunk routing:
+          * ``user_message`` / ``assistant_response`` →
+            source_kind="chat", source_id=f"event-{idx}". Lets
+            semantic_search filter by kind when the caller only
+            wants chat hits, not file content.
+          * ``attachment_distilled`` → source_kind based on MIME:
+            "caption" for image/* (so medical-imaging callers can
+            filter scope to images only), "attachment" otherwise.
+            source_id is the file_id when available — stable across
+            sessions so re-uploading the same file via sha256-dedupe
+            doesn't double-index.
+        """
+        # Lazy import — vector_index lives in nexus_server, not the SDK.
+        # The SDK is published independently of the server; a SDK-only
+        # consumer (e.g. a downstream agent) won't have it. ImportError
+        # is the no-op signal.
+        try:
+            from nexus_server.vector_index import upsert_chunks
+        except ImportError:
+            return
+
+        async def _embed_all():
+            # Each upsert is independent — one failing shouldn't take
+            # the others down. Errors are EmbeddingUnavailable when
+            # the API is unreachable; demoted to debug since the
+            # chat already succeeded.
+            jobs: list[tuple[str, str, str]] = []
+            if user_msg_text:
+                jobs.append((
+                    "chat", f"event-{user_msg_idx}", user_msg_text,
+                ))
+            if assistant_msg_text:
+                jobs.append((
+                    "chat", f"event-{assistant_msg_idx}", assistant_msg_text,
+                ))
+            for d in distilled:
+                summary = d.get("summary") or ""
+                if not summary:
+                    continue
+                mime = d.get("mime", "") or ""
+                kind = "caption" if mime.startswith("image/") else "attachment"
+                # Stable source_id: prefer file_id (cross-session
+                # dedup); fall back to filename when no upload route
+                # was used (legacy inline path).
+                source_id = d.get("file_id") or d.get("name") or "anon"
+                jobs.append((kind, source_id, summary))
+
+            for kind, source_id, text in jobs:
+                try:
+                    await upsert_chunks(
+                        user_id=user_id,
+                        source_kind=kind,
+                        source_id=source_id,
+                        text=text,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.debug(
+                        "vector embed failed for %s/%s: %s",
+                        kind, source_id, e,
+                    )
+
+        self._bg_task("vector_embed_turn", _embed_all())
+
     async def _init_chain_client_async(self) -> None:
         """Initialize chain_client in background (non-blocking startup)."""
         try:
@@ -886,6 +971,9 @@ class DigitalTwin:
         attachment_chips: str = "",
         attachments_meta: Optional[list[dict]] = None,
         folded_user_message: Optional[str] = None,
+        images: Optional[list[dict]] = None,
+        referenced_file_ids: Optional[list[str]] = None,
+        distilled_attachments: Optional[list[dict]] = None,
     ) -> str:
         """Run one chat turn.
 
@@ -916,6 +1004,13 @@ class DigitalTwin:
         """
         if not self._initialized:
             await self._initialize()
+
+        # #127 — stash the current turn's images so the delegate tool
+        # (if the agent calls it) can re-attach them to the sub-agent's
+        # call. Setting unconditionally is safe: subsequent turns just
+        # overwrite, and tools only ever read this during the same
+        # turn that's currently executing.
+        self._active_turn_images = list(images) if images else None
 
         # ── Session switch (multi-thread) ─────────────────────────────
         # Fast path: caller didn't override or asked for the same
@@ -975,12 +1070,47 @@ class DigitalTwin:
         persisted_meta = (
             {"attachments": attachments_meta} if attachments_meta else None
         )
-        self.event_log.append(
+        user_msg_idx = self.event_log.append(
             "user_message",
             persisted_user_msg,
             session_id=self._thread_id,
             metadata=persisted_meta,
         )
+
+        # #136 — write attachment_distilled events to the event log
+        # so Memory Fix B (memory_evolver scans this event_type) and
+        # Memory Fix C (search_past_chats lexical hits) actually have
+        # something to consume. Previously the summaries were returned
+        # to the desktop client and dropped — the Phase Q persistence
+        # path was killed in Phase B without a replacement. We add
+        # them here, between user_message and assistant_response, so
+        # the chronological story is "user attached → file got
+        # distilled → assistant replied".
+        distilled_idx_by_source_id: dict[str, int] = {}
+        if distilled_attachments:
+            for d in distilled_attachments:
+                d_summary = d.get("summary") or ""
+                if not d_summary:
+                    continue
+                d_meta = {
+                    "name": d.get("name", ""),
+                    "mime": d.get("mime", ""),
+                    "size_bytes": d.get("size_bytes", 0),
+                    "source": d.get("source", ""),
+                    "file_id": d.get("file_id", ""),
+                }
+                d_idx = self.event_log.append(
+                    "attachment_distilled",
+                    d_summary,
+                    session_id=self._thread_id,
+                    metadata=d_meta,
+                )
+                # Index by file_id when available (stable across
+                # sessions) so the embed step below can use it as the
+                # vector index's source_id. Fall back to event idx as
+                # the source_id string when no file_id exists.
+                key = d.get("file_id") or f"event-{d_idx}"
+                distilled_idx_by_source_id[key] = d_idx
 
         # Build the chip+text version used for LLM context only.
         chip_prefixed_user_msg = user_message
@@ -1165,6 +1295,16 @@ class DigitalTwin:
             "DATA — don't ask the user to re-upload just because the skill's example shows a "
             "file path. The skill's prompts are guidance for general use; the live conversation "
             "context wins.",
+            "CRITICAL — workflows are function calls, not narration: if you have run_workflow "
+            "available AND the user's request matches an installed workflow (e.g. 'write me a "
+            "Twitter thread' → Content Studio, 'review this PR' → Code Review, 'help me research "
+            "X' → Research Brief, 'polish my paper' → Paper Polish), you MUST emit a function "
+            "call to run_workflow. Saying '我将启动 Content Studio' / 'I'll run the pipeline' "
+            "in plain text WITHOUT an actual function_call is a BUG — the workflow never starts "
+            "and the user sees nothing happen. Check the run_workflow tool's INSTALLED WORKFLOWS "
+            "block before deciding; if the request matches, the call is mandatory. After a "
+            "successful run_workflow function_call, your text reply must be at most one short "
+            "sentence (the inline progress card carries everything the user needs to see).",
         ]
         installed = self.skills.names
         if installed:
@@ -1211,7 +1351,17 @@ class DigitalTwin:
             folded_user_message if folded_user_message is not None
             else chip_prefixed_user_msg
         )
-        self._messages.append({"role": "user", "content": llm_input_msg})
+        # #123 — vision parts (image_base64 bytes) ride alongside the
+        # text on the same user dict. The SDK's
+        # _messages_to_gemini_contents picks them up and emits an
+        # inline_data Blob part per image. Stripped from the dict
+        # below right after self.llm.chat(...) returns so they don't
+        # leak into subsequent turn contexts (token cost + Gemini
+        # gets confused by stale visual material).
+        user_msg_entry: dict = {"role": "user", "content": llm_input_msg}
+        if images:
+            user_msg_entry["images"] = list(images)
+        self._messages.append(user_msg_entry)
 
         # Live "drafting reply" cursor — flips to "replied" once the
         # LLM call returns. The desktop animates the in-progress dot
@@ -1251,6 +1401,18 @@ class DigitalTwin:
                     self._messages[i]["content"] = chip_prefixed_user_msg
                     break
 
+        # #123 — strip image parts off the most recent user entry now
+        # that the LLM call is done. Images are deliberately one-shot:
+        # leaving them on _messages would mean every subsequent turn
+        # in this conversation re-uploads ~1 MB of pixels to Gemini
+        # for no benefit, and Gemini gets confused by visual context
+        # the user isn't referring to anymore. Runs even when there
+        # were no images on this turn (cheap no-op).
+        for i in range(len(self._messages) - 1, -1, -1):
+            if self._messages[i].get("role") == "user":
+                self._messages[i].pop("images", None)
+                break
+
         self._messages.append({"role": "assistant", "content": response})
         self._turn_count += 1
 
@@ -1271,8 +1433,49 @@ class DigitalTwin:
         soft_score = post.details.get("soft_compliance", 1.0)
         self.drift.update(hard_score, soft_score, "chat")
 
-        # DPM: Append assistant response to event log (instant, no LLM)
-        self.event_log.append("assistant_response", response, session_id=self._thread_id)
+        # DPM: Append assistant response to event log (instant, no LLM).
+        # #128: stamp referenced_file_ids on the assistant_response so
+        # downstream feedback / search can bind this reply back to the
+        # specific attachments the user just sent. Without this, an
+        # "✗ correct" gesture later has to guess which file it's
+        # correcting — we'd be back to fragile time-window heuristics.
+        # The list comes straight from the chat-request attachments
+        # (text + image alike); empty/None leaves the metadata absent.
+        assistant_meta: Optional[dict] = None
+        if referenced_file_ids:
+            assistant_meta = {"referenced_file_ids": list(referenced_file_ids)}
+        assistant_msg_idx = self.event_log.append(
+            "assistant_response",
+            response,
+            session_id=self._thread_id,
+            metadata=assistant_meta,
+        )
+
+        # #136 — fire-and-forget embed of this turn's chunks.
+        # We send three categories to the vector index:
+        #   1. user_message  → source_kind="chat", source_id=f"event-{idx}"
+        #   2. assistant_response → same shape
+        #   3. each attachment_distilled → source_kind="caption" for
+        #      images (more specific so semantic_search can scope to
+        #      images only), "attachment" otherwise. source_id is
+        #      the file_id when available — stable across sessions so
+        #      re-seeing the same file dedupes correctly.
+        #
+        # Wrapped in a fire-and-forget asyncio task because (a) we
+        # never want to block the chat response on an embedding API
+        # round trip, (b) failures are fine: search_chunks would just
+        # return fewer hits, and the lexical fallback still works.
+        try:
+            self._enqueue_vector_embed(
+                user_id=self.config.owner or self.config.agent_id,
+                user_msg_idx=user_msg_idx,
+                user_msg_text=persisted_user_msg,
+                assistant_msg_idx=assistant_msg_idx,
+                assistant_msg_text=response,
+                distilled=distilled_attachments or [],
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.debug("vector embed enqueue failed: %s", e)
 
         # Phase J episodic memory — keep the EpisodesStore in sync
         # with the active thread so the desktop "Episodes" namespace

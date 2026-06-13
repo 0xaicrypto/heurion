@@ -1,0 +1,32 @@
+{
+  "name": "Content Studio",
+  "description": "5-agent content pipeline. Strategist → Researcher → Writer → Editor → Publisher. Pick a topic, an audience, and a platform; get publish-ready content in one pass.",
+  "definition": {
+    "inputs": [
+      { "key": "topic",    "label": "Topic",    "type": "text",   "required": true,  "options": [] },
+      { "key": "audience", "label": "Audience", "type": "text",   "required": true,  "options": [] },
+      {
+        "key": "platform",
+        "label": "Platform",
+        "type": "select",
+        "required": true,
+        "options": ["Twitter/X thread", "LinkedIn", "Blog post", "Newsletter"]
+      }
+    ],
+    "steps": [
+      { "skill": "content-strategist", "label": "Strategist" },
+      { "skill": "content-researcher", "label": "Researcher",
+        "tools": ["web_search", "read_url"], "timeout_seconds": 240 },
+      { "skill": "content-writer",     "label": "Writer",
+        "verifier": {
+          "skill": "content-quality-verifier",
+          "criteria": "Hook is a punchy statement (not a question). Every claim has a citable basis from the researcher's sources. No filler intros. Tone matches the audience.",
+          "max_retries": 1
+        }
+      },
+      { "skill": "content-editor",     "label": "Editor" },
+      { "skill": "content-publisher",  "label": "Publisher" }
+    ],
+    "metadata": { "source": "starter-pack:content-studio" }
+  }
+}
