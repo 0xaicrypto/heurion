@@ -341,57 +341,131 @@ source "$VENV/bin/activate"
 ok "venv: $(python3 --version) at $(which python3)"
 
 # Idempotent: if everything is already importable, skip pip install.
-if python3 -c 'import uvicorn, fastapi, pydantic, nexus_server, PyInstaller' >/dev/null 2>&1 \
-   && [ "$CLEAN" != true ]; then
-  ok "all Python deps already installed — skipping pip install"
-else
-  say "upgrading pip"
-  python3 -m pip install --upgrade pip >/dev/null 2>&1 || true
+# Design note (post-U3.4 hardening):
+#
+# We USED TO have a "skip pip install when these N modules are
+# importable" shortcut here. It failed catastrophically when a new
+# dep was added to pyproject.toml without being added to the
+# hardcoded import list — the warm venv passed the check, pip
+# install was skipped, PyInstaller bundled a binary without the new
+# module, and users got "ModuleNotFoundError" on first launch with
+# no obvious fix path.
+#
+# Correct design: ALWAYS run ``pip install -e`` on every sibling
+# package. pip itself decides what to (re)install based on
+# pyproject.toml — adding a new dep there is the only step
+# required, no script edit needed. Cost when warm:
+#   * pyinstaller   ~0.5s ("Requirement already satisfied")
+#   * sdk/nexus/server -e installs   ~1s each, mostly metadata read
+# Total ~3.5s — cheaper than diagnosing one missing-module bug.
 
-  # Local sibling packages — install in dep order: nexus-core (sdk) →
-  # nexus → nexus-server. pip MUST see siblings as already-installed
-  # before resolving nexus-server's deps (they aren't on PyPI).
-  SIBLINGS=(
-    "$REPO_ROOT/packages/sdk"     # nexus-core
-    "$REPO_ROOT/packages/nexus"   # nexus
-    "$SERVER_ROOT"                # nexus-server (depends on above)
-  )
+say "upgrading pip"
+python3 -m pip install --upgrade pip >/dev/null 2>&1 || true
 
-  install_log="$(mktemp -t nexus-pip.XXXXXX.log)"
-  trap "rm -f '$install_log'" EXIT
+# Local sibling packages — install in dep order: nexus-core (sdk) →
+# nexus → nexus-server. pip MUST see siblings as already-installed
+# before resolving nexus-server's deps (they aren't on PyPI).
+SIBLINGS=(
+  "$REPO_ROOT/packages/sdk"     # nexus-core
+  "$REPO_ROOT/packages/nexus"   # nexus
+  "$SERVER_ROOT"                # nexus-server (depends on above)
+)
 
-  say "installing tooling (pyinstaller) + 3 monorepo packages (editable)"
-  say "  log: $install_log"
+install_log="$(mktemp -t nexus-pip.XXXXXX.log)"
+trap "rm -f '$install_log'" EXIT
 
-  if ! python3 -m pip install "pyinstaller>=6.0" >"$install_log" 2>&1; then
-    echo "pyinstaller install failed:"
-    tail -25 "$install_log"
-    die "pip install pyinstaller failed"
-  fi
+say "syncing tooling (pyinstaller) + 3 monorepo packages (editable)"
+say "  log: $install_log"
 
-  for sibling in "${SIBLINGS[@]}"; do
-    if [ ! -f "$sibling/pyproject.toml" ]; then
-      warn "skipping $sibling (no pyproject.toml)"
-      continue
-    fi
-    name="$(basename "$sibling")"
-    say "  installing $name (editable)"
-    if ! python3 -m pip install -e "$sibling" >>"$install_log" 2>&1; then
-      echo "FAILED installing $name — last 30 lines of pip log:"
-      tail -30 "$install_log"
-      die "pip install -e $name failed"
-    fi
-    ok "    $name installed"
-  done
-
-  # Sanity check — fast fail before PyInstaller
-  if ! python3 -c 'import uvicorn, fastapi, pydantic, nexus_server' 2>/dev/null; then
-    echo "Sanity check failed. Last 30 lines of pip log:"
-    tail -30 "$install_log"
-    die "uvicorn / fastapi / pydantic / nexus_server not importable"
-  fi
-  ok "deps OK: uvicorn fastapi pydantic nexus_server"
+if ! python3 -m pip install "pyinstaller>=6.0" >"$install_log" 2>&1; then
+  echo "pyinstaller install failed:"
+  tail -25 "$install_log"
+  die "pip install pyinstaller failed"
 fi
+
+for sibling in "${SIBLINGS[@]}"; do
+  if [ ! -f "$sibling/pyproject.toml" ]; then
+    warn "skipping $sibling (no pyproject.toml)"
+    continue
+  fi
+  name="$(basename "$sibling")"
+  if ! python3 -m pip install -e "$sibling" >>"$install_log" 2>&1; then
+    echo "FAILED installing $name — last 30 lines of pip log:"
+    tail -30 "$install_log"
+    die "pip install -e $name failed"
+  fi
+done
+ok "pip deps in sync with pyproject.toml"
+
+# Sanity check — read pyproject.toml and verify every dep listed
+# there is actually importable. Drives the failure mode from
+# "find out at first launch" to "fail the build now". Without this,
+# a typo in pyproject.toml or a pip-install failure that exit-0'd
+# (e.g. partial install when offline) would ship a broken .dmg.
+say "verifying every pyproject.toml dep is importable"
+verify_script="$(mktemp -t nexus-verify-deps.XXXXXX.py)"
+trap "rm -f '$verify_script'" EXIT
+cat > "$verify_script" <<'PYCHK'
+"""Verify every pyproject.toml dep is INSTALLED in the active venv.
+
+We use importlib.metadata (pip's own source of truth) rather than
+importlib.import_module because:
+
+  * PyPI package names and import names don't always match
+    (pillow → PIL, scikit-image → skimage, pyjwt → jwt, …).
+  * Plugin packages (pylibjpeg-libjpeg, pylibjpeg-openjpeg) register
+    with their parent and are NOT meant to be imported by user code.
+  * The question "did pip install succeed?" maps cleanly to
+    "is the distribution present in site-packages' metadata?"
+
+This makes the check robust against package-name vs import-name
+divergence and resilient as the dep list grows.
+"""
+import re, sys
+import importlib.metadata as _md
+
+PYPROJECT = sys.argv[1]
+text = open(PYPROJECT).read()
+
+# Parse the dependencies list. We tolerate "name>=1.0", "name[extra]",
+# "name ; marker", etc.
+in_block = False
+deps = []
+for line in text.splitlines():
+    s = line.strip()
+    if s.startswith("dependencies"):
+        in_block = True
+        continue
+    if not in_block:
+        continue
+    if s == "]" or s.startswith("["):
+        break
+    m = re.match(r'^"([A-Za-z0-9_\-\.]+)', s)
+    if m:
+        deps.append(m.group(1))
+
+failed = []
+for d in deps:
+    # Strip [extras] and any version pin; we only check the base name.
+    base = re.sub(r"\[.*\]", "", d).strip()
+    try:
+        _md.distribution(base)
+    except _md.PackageNotFoundError:
+        failed.append(d)
+
+if failed:
+    print("⊘ packages missing from venv after pip install:", file=sys.stderr)
+    for d in failed:
+        print(f"   {d}", file=sys.stderr)
+    print("\nRun `pip install -e packages/server` from the venv, or "
+          "rebuild with --clean.", file=sys.stderr)
+    sys.exit(1)
+print(f"✓ {len(deps)} pyproject.toml deps verified present in venv")
+PYCHK
+if ! python3 "$verify_script" "$SERVER_ROOT/pyproject.toml"; then
+  die "pyproject.toml lists deps that aren't importable in this venv — pip install incomplete. Re-run with --clean to rebuild venv from scratch."
+fi
+ok "deps OK"
 
 # ═════════════════════════════════════════════════════════════════════
 # Stage 3: PyInstaller — bundle the backend
@@ -755,6 +829,21 @@ export VITE_NEXUS_BUILD_TIME="$NEXUS_BUILD_TIME"
 # Cargo env vars — readable in Rust via std::env::var or env! macro.
 export NEXUS_BUILD_ID NEXUS_VERSION NEXUS_GIT_SHA NEXUS_BUILD_TIME
 
+# Refresh Cargo.lock so we pick up macOS-26-compatible tao/wry patch
+# releases as Tauri ships them. Without this step, a long-running
+# Cargo.lock could be stuck on tao 0.35.x / wry 0.55.x — which
+# (confirmed 2026-06-14) panic inside the NSApplicationDelegate's
+# did_finish_launching callback on macOS 26.5.1 (Tahoe), aborting
+# the .app before our setup() ever runs. ``cargo update -p tauri``
+# only re-resolves the tauri sub-tree (tao / wry / tauri-plugin-*)
+# so it's cheap; we don't pull every workspace dep.
+say "refreshing tauri sub-tree in Cargo.lock"
+(
+  cd "$DESKTOP_ROOT/src-tauri"
+  cargo update -p tauri 2>&1 | sed 's|^|    cargo: |' || \
+    warn "cargo update -p tauri failed (continuing with locked versions)"
+)
+
 pnpm tauri:build
 
 # ═════════════════════════════════════════════════════════════════════
@@ -782,6 +871,56 @@ if [ "$SIGN" = false ]; then
   echo "    xattr -dr com.apple.quarantine /Applications/Nexus.app"
   echo
 fi
-ok "open the .dmg, drag Nexus into Applications, launch."
+
+# ── Auto-install when an existing install is present ─────────────────
+# The #1 source of "rebuilt but still see old code" confusion is that
+# the build writes to target/release/bundle/.../Nexus.app but the user
+# is running /Applications/Nexus.app from a previous install. If the
+# previous install exists, quit it + replace it + relaunch so the
+# medic doesn't have to drag anything. Skip in --no-install mode and
+# when no prior install exists (let the first install be deliberate).
+NEW_APP="$APP_DIR/Nexus.app"
+INSTALL_TARGET="/Applications/Nexus.app"
+if [ -d "$NEW_APP" ] && [ -d "$INSTALL_TARGET" ] && [ "${NO_INSTALL:-0}" != "1" ]; then
+  step "Auto-install — replacing /Applications/Nexus.app"
+  # Quit any running instance first; the OS holds files open and the
+  # subsequent rm would fail (or worse, succeed leaving a half-state).
+  osascript -e 'quit app "Nexus"' >/dev/null 2>&1 || true
+  sleep 1
+  # SIGTERM first (graceful), then SIGKILL the holdouts. The previous
+  # gentle `pkill` left :8001 squatted long enough for the new
+  # sidecar's bind() to fail with EADDRINUSE — log evidence in user
+  # report 2026-06-13 22:03. Now: TERM → wait → KILL → wait for port.
+  pkill -TERM -f nexus-server >/dev/null 2>&1 || true
+  sleep 1
+  pkill -KILL -f nexus-server >/dev/null 2>&1 || true
+  # Final belt: anyone still holding :8001 (could be a stray uvicorn
+  # from `pnpm dev` or a previous crash with TIME_WAIT) → kill -9.
+  for _i in 1 2 3 4 5; do
+    pids="$(lsof -ti tcp:8001 2>/dev/null || true)"
+    if [ -z "$pids" ]; then break; fi
+    say "killing pid(s) on tcp:8001 → $pids"
+    echo "$pids" | xargs kill -9 2>/dev/null || true
+    sleep 1
+  done
+  if rm -rf "$INSTALL_TARGET" 2>/dev/null && \
+     cp -R "$NEW_APP" "$INSTALL_TARGET" 2>/dev/null; then
+    xattr -dr com.apple.quarantine "$INSTALL_TARGET" 2>/dev/null || true
+    ok "installed → $INSTALL_TARGET"
+    # Verify the build_info inside the now-installed app matches the
+    # one we just produced. If they diverge, something went wrong.
+    if [ -f "$INSTALL_TARGET/Contents/Resources/resources/server.build_info" ]; then
+      installed_id="$(grep '^build_id:' "$INSTALL_TARGET/Contents/Resources/resources/server.build_info" | cut -d' ' -f2-)"
+      ok "installed build_id: $installed_id"
+    fi
+    open "$INSTALL_TARGET" 2>/dev/null && ok "launched" || true
+  else
+    warn "auto-install failed — drag $NEW_APP into /Applications manually"
+  fi
+elif [ ! -d "$INSTALL_TARGET" ]; then
+  ok "first install — open the .dmg and drag Nexus into Applications"
+else
+  ok "open the .dmg, drag Nexus into Applications, launch (NO_INSTALL=1 set)"
+fi
 
 popd >/dev/null

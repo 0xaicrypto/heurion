@@ -6,7 +6,7 @@
  *       Imaging/Labs remain stubs (U2/U3+).
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppState } from './store';
 import { Button, Card, Chip, Section, EmptyState, Input } from './components/ui';
 import {
@@ -15,7 +15,10 @@ import {
   TierIndicator,
   ConflictInlineBanner,
 } from './components/memory-ui';
-import { api, ApiError } from './lib/api-client';
+import {
+  api, ApiError,
+  type ChatSessionInfo, type QuickScanProgress,
+} from './lib/api-client';
 import { MODE_LABELS, patientDisplayLabel, cn } from './lib/util';
 import type {
   CitationRef,
@@ -349,13 +352,20 @@ function StudyPreviewCard({ study }: { study: StudyInfo }) {
 
   return (
     <a
-      // Deep link to the backend's static Cornerstone viewer (mounted
-      // at /dicom-viewer/?studyId=…). The browser opens it in a new
-      // tab — full interactive viewing is out-of-scope for this card.
-      href={`${api.baseUrl}/dicom-viewer/?studyId=${encodeURIComponent(study.studyId)}`}
-      target="_blank"
-      rel="noreferrer"
-      className="block overflow-hidden rounded-md border border-border bg-surface transition-colors hover:border-border-strong"
+      // Open the bundled Cornerstone viewer as a NEW TAURI WINDOW —
+      // critical: the system browser has no access to the JWT in
+      // sessionStorage, so the viewer's /api/v1/dicom/* fetches 401
+      // and the page sits at "Loading…" forever. Going through
+      // ``api.openDicomViewer`` spawns a separate WebviewWindow with
+      // the token in the URL query so the page authenticates
+      // correctly. Outside Tauri (pnpm dev) it falls back to
+      // window.open + dev FastAPI.
+      onClick={(e) => {
+        e.preventDefault();
+        api.openDicomViewer(study.studyId);
+      }}
+      href="#viewer"  // visual cursor; click handler does the real work
+      className="block cursor-pointer overflow-hidden rounded-md border border-border bg-surface transition-colors hover:border-border-strong"
     >
       <div className="relative aspect-square w-full bg-black">
         {imgUrl ? (
@@ -405,15 +415,33 @@ interface ChatMsg {
   citations?: CitationRef[];
   elapsedMs?: number;
   streaming?: boolean;
+  /** Human filenames for the files the medic attached on the user
+   *  turn (when role==='user'). We don't keep the file_ids here —
+   *  they're audit-visible in twin_event_log; this is purely for
+   *  the chat-pane chip render. */
+  attachedFileNames?: string[];
 }
 
 export function EncounterMode() {
-  const p = useAppState((s) => s.activePatient);
+  const p              = useAppState((s) => s.activePatient);
+  const activeSessionId = useAppState((s) => s.activeSessionId);
+  const setActiveSessionId = useAppState((s) => s.setActiveSessionId);
+  const showToast      = useAppState((s) => s.showToast);
   const [draft, setDraft] = useState('');
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [sending, setSending] = useState(false);
   const [backendStatus, setBackendStatus] =
     useState<'ok' | 'unreachable' | 'unhealthy' | 'checking'>('checking');
+
+  // Chat sessions ─────────────────────────────────────────────────
+  const [sessions, setSessions] = useState<ChatSessionInfo[]>([]);
+  const [showSessionList, setShowSessionList] = useState(false);
+
+  // Files staged for the next send (paste / drop). Each carries the
+  // server-assigned file_id once the upload completes; pending uploads
+  // show a spinner chip until the id arrives.
+  const [attachments, setAttachments] =
+    useState<Array<{ key: string; name: string; sizeBytes: number; fileId: string | null; failed?: string }>>([]);
 
   // Probe the backend once on mount. A failed probe lets us tell the
   // medic "backend not running" instead of the opaque "TypeError: Load
@@ -424,13 +452,138 @@ export function EncounterMode() {
     return () => { cancelled = true; };
   }, []);
 
+  // Load the user's sessions on mount + after each send-back-to-default
+  // (so a freshly-created session is visible in the picker).
+  const refreshSessions = useCallback(async () => {
+    try {
+      const list = await api.listSessions(false);
+      setSessions(list);
+    } catch {
+      /* sessions are nice-to-have — don't blow up the chat pane */
+    }
+  }, []);
+  useEffect(() => { refreshSessions(); }, [refreshSessions]);
+
+  // Load chat history when the active session changes. Empty
+  // activeSessionId === Default chat (the synthetic wrap-around for
+  // pre-sessions messages).
+  useEffect(() => {
+    let cancelled = false;
+    setMsgs([]);
+    api.listSessionMessages(activeSessionId, 200).then(
+      (rows) => {
+        if (cancelled) return;
+        setMsgs(rows.map((r): ChatMsg => ({
+          role:   r.role === 'agent' ? 'agent' : 'user',
+          text:   r.text,
+          ts:     formatRelativeTs(r.ts),
+          reasoning: [],
+          citations: [],
+        })));
+      },
+      () => { /* history is nice-to-have — empty pane is fine */ },
+    );
+    return () => { cancelled = true; };
+  }, [activeSessionId]);
+
   if (!p) return <EmptyState title="No patient selected" />;
 
+  async function startNewSession() {
+    try {
+      const s = await api.createSession('New chat');
+      setActiveSessionId(s.id);
+      await refreshSessions();
+      showToast('Started a new chat', 'success');
+    } catch (e) {
+      showToast(`Could not create session: ${String(e)}`, 'error');
+    }
+  }
+
+  async function uploadOne(file: File): Promise<string | null> {
+    try {
+      const r = await api.uploadFile(file, file.name, {
+        patientHash: p?.patientHash,
+      });
+      return r.fileId;
+    } catch (e) {
+      showToast(`Upload failed: ${String(e)}`, 'error');
+      return null;
+    }
+  }
+
+  // Attach one or more File objects (paste / drop / picker). Each gets
+  // a placeholder chip immediately so the UI feels responsive; the
+  // chip transitions to "ready" when its upload completes.
+  function acceptFiles(files: FileList | File[]) {
+    const arr = Array.from(files);
+    if (arr.length === 0) return;
+    const placeholders = arr.map((f) => ({
+      key: `${f.name}-${f.size}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: f.name,
+      sizeBytes: f.size,
+      fileId: null as string | null,
+    }));
+    setAttachments((prev) => [...prev, ...placeholders]);
+
+    arr.forEach((file, idx) => {
+      const key = placeholders[idx].key;
+      uploadOne(file).then((fid) => {
+        setAttachments((prev) => prev.map((a) =>
+          a.key === key ? { ...a, fileId: fid, failed: fid ? undefined : 'upload failed' } : a,
+        ));
+      });
+    });
+  }
+
+  // Clipboard paste handler — captures pasted images (screen-grab /
+  // copy-image-from-browser / image off Slack etc.) and dropped /
+  // copied files. e.clipboardData.files covers both image bitmaps
+  // and arbitrary files dragged from Finder.
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = e.clipboardData?.files;
+    if (files && files.length > 0) {
+      e.preventDefault();
+      acceptFiles(files);
+    }
+    // Otherwise let the default text paste through.
+  }
+
+  // Drag-drop directly onto the textarea — same effect as paste.
+  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    if (e.dataTransfer?.files?.length) acceptFiles(e.dataTransfer.files);
+  }
+
+  function removeAttachment(key: string) {
+    setAttachments((prev) => prev.filter((a) => a.key !== key));
+  }
+
   async function send() {
-    if (!draft.trim() || sending) return;
+    if (sending) return;
+    // Allow send-with-attachments only — i.e. an image-with-no-text
+    // counts as a valid turn.
+    if (!draft.trim() && attachments.length === 0) return;
+
+    // Wait for all in-flight uploads to settle so the file_ids we
+    // pass to sendChat are real — a half-uploaded paste shouldn't
+    // silently drop the file.
+    const pending = attachments.filter((a) => a.fileId === null && !a.failed);
+    if (pending.length > 0) {
+      showToast(`Waiting for ${pending.length} upload(s)…`, 'info');
+      return;
+    }
+    const fileIds = attachments
+      .filter((a) => a.fileId)
+      .map((a) => a.fileId as string);
+    const stagedAttachments = [...attachments];
+
     const userText = draft;
     setDraft('');
-    setMsgs((m) => [...m, { role: 'user', text: userText, ts: 'now' }]);
+    setAttachments([]);
+    setMsgs((m) => [...m, {
+      role: 'user', text: userText, ts: 'now',
+      attachedFileNames: stagedAttachments.map((a) => a.name),
+    } as ChatMsg]);
     setSending(true);
 
     const startTs = Date.now();
@@ -447,7 +600,7 @@ export function EncounterMode() {
       });
 
     try {
-      for await (const chunk of api.sendChat(userText, 'sess-encounter', p!.patientHash)) {
+      for await (const chunk of api.sendChat(userText, activeSessionId, p!.patientHash, fileIds)) {
         switch (chunk.type) {
           case 'tier_classified':
             update({ tier: chunk.tier });
@@ -506,10 +659,74 @@ export function EncounterMode() {
     }
   }
 
+  const activeSessionTitle = (() => {
+    if (!activeSessionId) return 'Default chat';
+    const s = sessions.find((x) => x.id === activeSessionId);
+    return s?.title ?? 'New chat';
+  })();
+
   return (
     <div className="mx-auto flex h-full max-w-2xl flex-col px-10 py-6">
       <div className="mb-4 flex items-center justify-between border-b border-border pb-3 text-caption text-text-secondary">
-        <span>{patientDisplayLabel(p)}</span>
+        <div className="flex items-center gap-3">
+          <span>{patientDisplayLabel(p)}</span>
+          <span className="text-text-tertiary">·</span>
+          {/* Session picker — click to open the dropdown of all
+              non-archived sessions (the Default chat is always last). */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowSessionList((v) => !v)}
+              className="flex items-center gap-1 rounded-sm border border-border px-2 py-0.5 hover:bg-surface-2"
+              title="Switch chat session"
+            >
+              <span className="max-w-[180px] truncate">{activeSessionTitle}</span>
+              <span className="text-text-tertiary">▾</span>
+            </button>
+            {showSessionList && (
+              <div className="absolute left-0 top-full z-10 mt-1 max-h-72 w-64 overflow-y-auto rounded-md border border-border bg-surface-1 py-1 shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => {
+                    startNewSession();
+                    setShowSessionList(false);
+                  }}
+                  className="block w-full px-3 py-1.5 text-left text-caption hover:bg-surface-2"
+                >
+                  + New chat
+                </button>
+                <div className="my-1 border-t border-border" />
+                {sessions.length === 0 ? (
+                  <div className="px-3 py-1.5 text-caption text-text-tertiary">
+                    No saved sessions yet
+                  </div>
+                ) : sessions.map((s) => (
+                  <button
+                    key={s.id || '__default__'}
+                    type="button"
+                    onClick={() => {
+                      setActiveSessionId(s.id);
+                      setShowSessionList(false);
+                    }}
+                    className={cn(
+                      'block w-full px-3 py-1.5 text-left text-caption hover:bg-surface-2',
+                      s.id === activeSessionId && 'bg-surface-2 font-medium',
+                    )}
+                  >
+                    <div className="truncate">
+                      {s.isDefault ? `${s.title} (legacy)` : s.title}
+                    </div>
+                    {s.lastMessageAt && (
+                      <div className="truncate text-[10px] text-text-tertiary">
+                        {s.messageCount} msgs · {s.lastMessageAt}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
         <span>{msgs.length} messages</span>
       </div>
 
@@ -568,18 +785,77 @@ export function EncounterMode() {
                 </span>
               ))}
             </p>
+            {/* Attached-file chips on user turns. Read-only — the
+                actual bytes are in uploads + (for DICOM) the imaging
+                tab; this row is just to show the medic what they
+                sent. */}
+            {m.role === 'user' && m.attachedFileNames && m.attachedFileNames.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {m.attachedFileNames.map((name, fi) => (
+                  <span
+                    key={fi}
+                    className="rounded-sm border border-border bg-surface-1 px-1.5 py-0.5 text-[10px] text-text-tertiary"
+                  >
+                    📎 {name}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
 
-      <div className="mt-4 border-t border-border pt-4">
+      {/* Composer — paste / drop aware. Drag a file onto the textarea
+          OR Cmd+V a screen capture / image off the web, and it gets
+          uploaded + attached to the next send. */}
+      <div className="mt-4 border-t border-border pt-4" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
+        {/* Pending attachments — show chips above the input so the
+            medic can verify what's going out before they press Send. */}
+        {attachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1">
+            {attachments.map((a) => (
+              <span
+                key={a.key}
+                className={cn(
+                  'flex items-center gap-1 rounded-sm border px-2 py-0.5 text-caption',
+                  a.failed
+                    ? 'border-retract/40 bg-retract/10 text-retract'
+                    : a.fileId
+                    ? 'border-confirmed/40 bg-confirmed/10 text-confirmed'
+                    : 'border-border bg-surface-1 text-text-tertiary',
+                )}
+              >
+                {a.failed ? '✕' : a.fileId ? '✓' : '⟳'} {a.name}
+                <span className="text-[10px] text-text-tertiary">
+                  ({formatBytes(a.sizeBytes)})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(a.key)}
+                  className="ml-1 text-text-tertiary hover:text-retract"
+                  aria-label={`remove ${a.name}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2">
-          <Input
+          <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && send()}
-            placeholder="Ask anything about this patient…"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            onPaste={onPaste}
+            placeholder="Ask anything about this patient… (paste images or drop files here)"
             disabled={sending}
+            rows={2}
+            className="flex-1 resize-none rounded-md border border-border bg-bg px-3 py-2 text-body text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
           />
           <Button variant="primary" onClick={send} disabled={sending}
                   className="!px-5 !py-2">
@@ -589,6 +865,20 @@ export function EncounterMode() {
       </div>
     </div>
   );
+}
+
+/** Render a backend Unix-seconds timestamp as a short relative string
+ *  ("3m ago" / "2h ago" / "Jun 14"). Used by the chat-history hydration
+ *  path; live messages keep their server-issued ``"now"`` label. */
+function formatRelativeTs(ts: number): string {
+  if (!ts) return '';
+  const now = Date.now() / 1000;
+  const dt = Math.max(0, now - ts);
+  if (dt < 60)       return `${Math.floor(dt)}s ago`;
+  if (dt < 60 * 60)  return `${Math.floor(dt / 60)}m ago`;
+  if (dt < 60 * 60 * 24) return `${Math.floor(dt / 3600)}h ago`;
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 /* ─────────────── Memory mode (layered, per m3-memory-architecture.md) ─────────────── */
@@ -1479,6 +1769,26 @@ interface UploadJob {
   parsePercent: number;
   parseStudyId: string | null;
   parseError: string | null;
+  // Memorization (Layer 1 graph ingester) — runs after parse finishes.
+  // status is '' until the prerender completes, then 'pending' briefly,
+  // then 'ok' / 'error'. summary is "N graph events" on success or
+  // "ExcType: msg" on failure. Surfaced inline below the parse state
+  // so the medic can see when ingestion fails (e.g. missing LLM key,
+  // crashed extractor) instead of just an empty Memory tab.
+  memoryStatus: '' | 'pending' | 'ok' | 'error';
+  memorySummary: string;
+  // Tier A — Quick scan (Gemini Flash triage). Runs AFTER the
+  // ingester succeeds; emits finding nodes the medic can see in
+  // Patient → Active findings and Memory · L1 · Findings.
+  quickScanStatus: '' | 'pending' | 'ok' | 'error';
+  quickScanSummary: string;
+  // Live progress for an in-flight Quick scan (null when not running
+  // or when the server's TTL pruned it). Updated from each
+  // prerender-progress poll while status === 'pending'.
+  quickScanProgress: QuickScanProgress | null;
+  // True for rows hydrated from the history endpoint (no active
+  // upload pipeline). Stops the row from rendering progress bars.
+  fromHistory?: boolean;
 }
 
 function newJob(file: File): UploadJob {
@@ -1495,6 +1805,11 @@ function newJob(file: File): UploadJob {
     parsePercent: 0,
     parseStudyId: null,
     parseError: null,
+    memoryStatus: '',
+    memorySummary: '',
+    quickScanStatus: '',
+    quickScanSummary: '',
+    quickScanProgress: null,
   };
 }
 
@@ -1511,6 +1826,135 @@ export function ImagingMode() {
   const refreshPatients = useAppState((s) => s.refreshPatients);
   const [jobs, setJobs]   = useState<UploadJob[]>([]);
   const [dragOver, setDragOver] = useState(false);
+
+  // Hydrate historical uploads on mount + whenever the active patient
+  // changes — so the medic sees their past CTs / PDFs / lab reports
+  // for THIS patient (or every patient if none selected) instead of
+  // a blank list that only fills with in-session uploads.
+  useEffect(() => {
+    let cancelled = false;
+    api.listUploads({ patientHash: p?.patientHash, limit: 50 }).then(
+      (rows) => {
+        if (cancelled) return;
+        const fromHistory: UploadJob[] = rows.map((r) => ({
+          id:            `history:${r.fileId}`,
+          fileName:      r.name,
+          sizeBytes:     r.sizeBytes,
+          uploadedBytes: r.sizeBytes,
+          uploadedTotal: r.sizeBytes,
+          uploadDone:    true,
+          fileId:        r.fileId,
+          parseState:    (r.dicomStudyId ? 'done' : 'idle') as UploadJob['parseState'],
+          parseStage:    '',
+          parsePercent:  100,
+          parseStudyId:  r.dicomStudyId || null,
+          parseError:    null,
+          memoryStatus:  (r.memoryStatus as UploadJob['memoryStatus']) || '',
+          memorySummary: r.memorySummary || '',
+          quickScanStatus:  (r.quickScanStatus as UploadJob['quickScanStatus']) || '',
+          quickScanSummary: r.quickScanSummary || '',
+          // History rows never have an in-flight scan attached — the
+          // server's progress dict gets TTL-pruned long before history
+          // hydration. Live polls (runJob / pollForJobProgress) fill
+          // this in when a retry kicks off.
+          quickScanProgress: null,
+          fromHistory:   true,
+        }));
+        // Merge: keep any in-session jobs (they're newer) above history.
+        setJobs((prev) => {
+          const activeIds = new Set(prev.map((j) => j.fileId).filter(Boolean));
+          const merged = [
+            ...prev,
+            ...fromHistory.filter((h) => !activeIds.has(h.fileId)),
+          ];
+          return merged;
+        });
+      },
+      () => { /* silent — history is nice-to-have, not blocking */ },
+    );
+    return () => { cancelled = true; };
+  }, [p?.patientHash]);
+
+  // Update a single row by id. Same shape as runJob's local helper,
+  // hoisted so the retry handler below can reuse it (the retry runs
+  // outside the runJob closure, against a job from history).
+  const updateById = (id: string, mut: Partial<UploadJob>) =>
+    setJobs((js) => js.map((j) => (j.id === id ? { ...j, ...mut } : j)));
+
+  /**
+   * Poll the prerender progress endpoint for one job's fileId until
+   * quick_scan + memory both reach a terminal state, or 60s elapses.
+   *
+   * Used by the manual Retry path — duplicates the polling loop in
+   * runJob() but starts from an already-existing fileId instead of a
+   * fresh upload. Doing it standalone keeps runJob() readable and lets
+   * a retry kick in for history rows (which never went through
+   * runJob in this React session).
+   */
+  const pollForJobProgress = async (job: UploadJob) => {
+    if (!job.fileId) return;
+    let ticks = 0;
+    while (ticks++ < 30) {  // ~60s @ 2s
+      await new Promise((res) => setTimeout(res, 2000));
+      try {
+        const pr = await api.getPrerenderProgress(job.fileId);
+        updateById(job.id, {
+          parseState:        pr.state as UploadJob['parseState'],
+          parseStage:        pr.stage,
+          parsePercent:      pr.percent,
+          parseStudyId:      pr.studyId || job.parseStudyId,
+          parseError:        pr.error || null,
+          memoryStatus:      (pr.memoryStatus as UploadJob['memoryStatus']) || '',
+          memorySummary:     pr.memorySummary || '',
+          quickScanStatus:   (pr.quickScanStatus as UploadJob['quickScanStatus']) || '',
+          quickScanSummary:  pr.quickScanSummary || '',
+          quickScanProgress: pr.quickScanProgress ?? null,
+        });
+        const scanDone = pr.quickScanStatus === 'ok' || pr.quickScanStatus === 'error';
+        if (scanDone) break;
+      } catch {
+        /* transient — keep polling */
+      }
+    }
+  };
+
+  /**
+   * Manual Retry handler for the 🔍 Quick scan failed row. Marks the
+   * job pending locally so the Retry button hides immediately, hits the
+   * backend retry endpoint, then polls for completion.
+   *
+   * Backend contract: ``POST /api/v1/dicom/studies/{study_id}/quick-scan``
+   * also flips uploads.quick_scan_status='pending' so any other client
+   * polling the same fileId sees the in-progress state.
+   */
+  const retryQuickScan = async (job: UploadJob) => {
+    if (!job.parseStudyId) {
+      showToast('Cannot retry — no study id on this upload', 'error');
+      return;
+    }
+    updateById(job.id, {
+      quickScanStatus: 'pending',
+      quickScanSummary: '',
+      // Clear any stale streaming snapshot from the previous run so
+      // the UI doesn't briefly show last attempt's "8/75 grids ·
+      // lung window" before the fresh poll lands.
+      quickScanProgress: null,
+    });
+    try {
+      await api.triggerQuickScan(job.parseStudyId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      updateById(job.id, {
+        quickScanStatus: 'error',
+        quickScanSummary: msg,
+      });
+      showToast(`Retry failed: ${msg}`, 'error');
+      return;
+    }
+    showToast('🔍 Quick scan retry enqueued', 'info');
+    // Fire-and-forget — UI updates as polling sees the new statuses.
+    pollForJobProgress(job);
+  };
 
   // Run one upload job to completion: stream upload → poll parse.
   const runJob = async (job: UploadJob, file: File) => {
@@ -1550,13 +1994,26 @@ export function ImagingMode() {
         try {
           const pr = await api.getPrerenderProgress(r.fileId);
           update({
-            parseState:   pr.state as UploadJob['parseState'],
-            parseStage:   pr.stage,
-            parsePercent: pr.percent,
-            parseStudyId: pr.studyId || null,
-            parseError:   pr.error || null,
+            parseState:        pr.state as UploadJob['parseState'],
+            parseStage:        pr.stage,
+            parsePercent:      pr.percent,
+            parseStudyId:      pr.studyId || null,
+            parseError:        pr.error || null,
+            memoryStatus:      (pr.memoryStatus as UploadJob['memoryStatus']) || '',
+            memorySummary:     pr.memorySummary || '',
+            quickScanStatus:   (pr.quickScanStatus as UploadJob['quickScanStatus']) || '',
+            quickScanSummary:  pr.quickScanSummary || '',
+            quickScanProgress: pr.quickScanProgress ?? null,
           });
-          if (pr.state === 'done' || pr.state === 'error') break;
+          if (pr.state === 'error') break;
+          // Keep polling until BOTH the ingester AND Quick scan reach a
+          // terminal state — that's the moment the medic has the full
+          // post-upload picture. Cap at ~60s of grace to avoid
+          // infinite loops if either path hangs.
+          const ingestDone = pr.memoryStatus === 'ok'   || pr.memoryStatus === 'error';
+          const scanDone   = pr.quickScanStatus === 'ok' || pr.quickScanStatus === 'error';
+          if (pr.state === 'done' && ingestDone && scanDone) break;
+          if (pr.state === 'done' && ticks >= 30) break;  // ~60s grace
         } catch {
           // transient — keep polling
         }
@@ -1653,7 +2110,11 @@ export function ImagingMode() {
           </h2>
           <div className="space-y-2">
             {jobs.map((j) => (
-              <UploadJobRow key={j.id} job={j} />
+              <UploadJobRow
+                key={j.id}
+                job={j}
+                onRetryQuickScan={retryQuickScan}
+              />
             ))}
           </div>
         </div>
@@ -1662,7 +2123,113 @@ export function ImagingMode() {
   );
 }
 
-function UploadJobRow({ job }: { job: UploadJob }) {
+/** One-line header for the streaming Quick scan progress.
+ *
+ * Examples:
+ *   "rendering 23/75 grids · lung window"     (during Stage 0)
+ *   "triaging 41/75 grids · mediastinum"      (during Stage 1)
+ *   "errors: 12/41 — check Gemini API key"    (mid-scan, lots of errors)
+ *
+ * Surfacing errors mid-flight is intentional: if every grid errors
+ * out, we want the medic to know within 5 s of clicking Retry, not
+ * after the full 25 s wait for the worker to finish.
+ */
+function quickScanProgressHeader(p: QuickScanProgress): string {
+  if (p.stage === 'rendering') {
+    const tag = p.current_preset ? ` · ${p.current_preset} window` : '';
+    return `rendering ${p.rendered_grids}/${p.total_grids || '?'} grids${tag}`;
+  }
+  if (p.stage === 'triaging') {
+    if (p.errors > 0 && p.errors >= Math.max(1, p.triaged_grids - p.errors)) {
+      return `errors: ${p.errors}/${p.triaged_grids} — check GEMINI_API_KEY`;
+    }
+    const tag = p.current_preset ? ` · ${p.current_preset}` : '';
+    return `triaging ${p.triaged_grids}/${p.total_grids || '?'} grids${tag}`;
+  }
+  if (p.stage === 'complete') return 'finishing up…';
+  if (p.stage === 'error')    return `failed: ${p.last_error ?? 'see log'}`;
+  return 'starting…';
+}
+
+/** The expandable progress block under the running "Quick scan:…"
+ *  line. Renders the recent-findings tail and an unobtrusive bar.
+ *  Layout intentionally compact so a chest-CT triple-window scan
+ *  (75 grids over ~25 s) doesn't push the next upload card off-screen. */
+function QuickScanProgressBlock({ progress }: { progress: QuickScanProgress }) {
+  const recent = (progress.recent || []).slice(-3);
+  const total  = progress.total_grids || 1;
+  // Use the slower of the two counters (rendering or triaging) so the
+  // bar advances monotonically — once triaging starts, rendered_grids
+  // is already at total.
+  const done = progress.stage === 'triaging'
+    ? progress.triaged_grids
+    : progress.rendered_grids;
+  const pct = Math.min(100, (done / total) * 100);
+
+  return (
+    <div className="mt-1.5 selectable">
+      {/* Thin progress bar. */}
+      <div className="h-0.5 w-full overflow-hidden rounded-full bg-border/40">
+        <div
+          className={cn(
+            'h-full transition-all duration-200',
+            progress.errors > 0 && progress.errors >= Math.max(1, progress.triaged_grids - progress.errors)
+              ? 'bg-retract' : 'bg-accent',
+          )}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+
+      {/* Recent findings tail. Empty when every grid so far has been
+          clean — render a calm "no findings yet" instead of nothing
+          so the medic knows the scan IS reading the slices. */}
+      {recent.length === 0 ? (
+        <div className="mt-1 text-[10px] text-text-tertiary">
+          {progress.stage === 'rendering'
+            ? `Preparing 4×4 PNG grids of ${progress.scan_count ?? '?'} slices…`
+            : 'No findings flagged so far.'}
+        </div>
+      ) : (
+        <ul className="mt-1 space-y-0.5 text-[10px]">
+          {recent.map((r, i) => (
+            <li
+              key={`${r.slice_start}-${r.slice_end}-${r.window}-${i}`}
+              className={cn(
+                'font-mono',
+                r.verdict === 'error'      && 'text-retract',
+                r.verdict === 'suspicious' && 'text-caution',
+                r.verdict === 'unsure'     && 'text-text-secondary',
+              )}
+            >
+              <span className="text-text-tertiary">
+                slices {r.slice_start}–{r.slice_end} [{r.window}]:
+              </span>{' '}
+              {r.verdict === 'error'
+                ? (r.error || 'API error')
+                : (r.finding || r.verdict)}
+              {r.urgency && r.verdict !== 'error' && (
+                <span className="ml-1 text-text-tertiary">({r.urgency})</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function UploadJobRow({
+  job,
+  onRetryQuickScan,
+}: {
+  job: UploadJob;
+  /** When provided AND the job's Quick scan failed AND we have a
+   *  study id, the UploadJobRow renders a Retry link next to the
+   *  red "Quick scan failed: …" text. Click → ImagingMode flips
+   *  the row back to ``pending`` and polls the prerender progress
+   *  endpoint until the worker finishes. */
+  onRetryQuickScan?: (job: UploadJob) => void;
+}) {
   const uploadPct = job.uploadedTotal > 0
     ? Math.min(100, (job.uploadedBytes / job.uploadedTotal) * 100)
     : 0;
@@ -1709,6 +2276,66 @@ function UploadJobRow({ job }: { job: UploadJob }) {
             )}
             style={{ width: `${barPct}%` }}
           />
+        </div>
+      )}
+      {/* Memory ingestion result — shows up under the parse row once
+          the prerender + dicom_ingester finish. "Memory: 6 graph events"
+          on success; "Memory failed: <reason>" on error. Never silent. */}
+      {(job.memoryStatus === 'ok' || job.memoryStatus === 'error' || job.memoryStatus === 'pending') && (
+        <div className={cn(
+          'mt-2 text-caption',
+          job.memoryStatus === 'ok'      && 'text-confirmed',
+          job.memoryStatus === 'error'   && 'text-retract',
+          job.memoryStatus === 'pending' && 'text-text-tertiary',
+        )}>
+          {job.memoryStatus === 'ok'      && `Memory: ${job.memorySummary || 'updated'}`}
+          {job.memoryStatus === 'pending' && 'Memory: ingesting…'}
+          {job.memoryStatus === 'error'   && `Memory failed: ${job.memorySummary || 'unknown error'}`}
+        </div>
+      )}
+      {/* Tier A — Quick scan result. AI initial read; flagged findings
+          land in Memory · L1 · Findings (unconfirmed) so the medic can
+          accept/reject. Decision support only. */}
+      {(job.quickScanStatus === 'ok' || job.quickScanStatus === 'error' || job.quickScanStatus === 'pending') && (
+        <div className="mt-1 text-caption">
+          <div className={cn(
+            'flex items-center gap-2',
+            job.quickScanStatus === 'ok'      && (job.quickScanSummary.includes('flagged') ? 'text-caution' : 'text-confirmed'),
+            job.quickScanStatus === 'error'   && 'text-retract',
+            job.quickScanStatus === 'pending' && 'text-text-tertiary',
+          )}>
+            <span>
+              {job.quickScanStatus === 'pending' && (
+                job.quickScanProgress
+                  ? `🔍 Quick scan: ${quickScanProgressHeader(job.quickScanProgress)}`
+                  : '🔍 Quick scan: starting…'
+              )}
+              {job.quickScanStatus === 'ok'      && `🔍 Quick scan: ${job.quickScanSummary}`}
+              {job.quickScanStatus === 'error'   && `🔍 Quick scan failed: ${job.quickScanSummary}`}
+            </span>
+            {/* Retry button — only on error, and only when we have a
+                study id to retry against. Hidden during pending so the
+                medic doesn't double-click and stack background tasks. */}
+            {job.quickScanStatus === 'error' && job.parseStudyId && onRetryQuickScan && (
+              <button
+                type="button"
+                onClick={() => onRetryQuickScan(job)}
+                className="rounded-sm border border-retract/40 px-1.5 py-0.5 text-[10px] text-retract hover:bg-retract/10"
+                title="Re-run Gemini Flash triage on this study"
+              >
+                Retry
+              </button>
+            )}
+          </div>
+
+          {/* Live streaming progress — only while pending AND we have
+              a server snapshot. Renders the running grid counter +
+              the last few non-clean findings inline so the medic sees
+              the scan "thinking" instead of a 25-second blank
+              spinner. */}
+          {job.quickScanStatus === 'pending' && job.quickScanProgress && (
+            <QuickScanProgressBlock progress={job.quickScanProgress} />
+          )}
         </div>
       )}
       {isError && job.parseError && (

@@ -47,6 +47,13 @@ class ChatRequest(BaseModel):
     text: str
     session_id: str
     patient_hash: Optional[str] = None
+    # File IDs the medic attached to this turn (pasted images, dropped
+    # PDFs, etc.). Front end uploads each via /api/v1/files/upload first,
+    # then references them here. The server enriches the question with
+    # each attachment's name + extracted text (when available) so the
+    # downstream LLM sees them. Images get a name-only mention until we
+    # ship vision-API plumbing through ``llm_gateway.call_llm``.
+    attachments: list[str] = []
 
 
 def _sse(event: dict) -> str:
@@ -60,7 +67,12 @@ async def chat(
     current_user: str = Depends(get_current_user),
 ):
     """Stream a chat turn as SSE events. See module docstring for shape."""
-    if not req.text.strip():
+    # A turn is valid if EITHER the medic typed something OR they
+    # attached at least one file. Pasting a screenshot with no text
+    # ("what is this?") should not be rejected — that's a legitimate
+    # "tell me about this" intent. We synthesise a generic prompt
+    # downstream when text is empty.
+    if not req.text.strip() and not (req.attachments or []):
         raise HTTPException(status_code=400, detail="empty message")
 
     async def event_stream() -> AsyncIterator[str]:
@@ -68,10 +80,152 @@ async def chat(
             init_event_sourcing_schema(conn)
             store = Store(conn)
 
+            # Resolve attachments → text + image-bytes per file. Three
+            # tracks downstream:
+            #
+            #   A. Text-extractable (txt / md / csv / pdf / docx / etc.):
+            #      pull from uploads.extracted_text, OR on-demand-extract
+            #      from disk_path via nexus_core.distiller.extract_text
+            #      and cache back to the row. Text goes into the prompt
+            #      preamble.
+            #
+            #   B. Image (png / jpeg / tiff / webp / gif): collect the
+            #      raw bytes for the multimodal Gemini call in
+            #      yield_t3_llm. The LLM gets Part.from_bytes so it
+            #      actually SEES the screenshot the medic pasted —
+            #      previously the chat just echoed "I can't view this
+            #      file" because we never fed bytes through.
+            #
+            #   C. Anything else: name-only mention in the preamble so
+            #      the LLM at least acknowledges the attachment exists.
+            attachment_meta: list[dict] = []
+            attachment_preamble_parts: list[str] = []
+            attachment_images: list[tuple[str, str, bytes]] = []  # (name, mime, raw)
+            for fid in (req.attachments or []):
+                try:
+                    row = conn.execute(
+                        "SELECT name, mime, extracted_text, disk_path "
+                        "FROM uploads "
+                        "WHERE user_id = ? AND file_id = ?",
+                        (current_user, fid),
+                    ).fetchone()
+                except Exception:  # noqa: BLE001
+                    row = None
+                if not row:
+                    continue
+                name = str(row[0] or fid)
+                mime = str(row[1] or "")
+                etext = str(row[2] or "").strip()
+                disk_path = str(row[3] or "")
+
+                is_image = mime.startswith("image/")
+
+                # Track A — on-demand text extraction if not cached.
+                if not etext and not is_image and disk_path:
+                    try:
+                        from pathlib import Path as _Path
+                        p = _Path(disk_path)
+                        if p.is_file():
+                            raw = p.read_bytes()
+                            from nexus_server.files import (
+                                _bytes_to_text, _save_extracted_text,
+                            )
+                            text_out = _bytes_to_text(raw, name, mime)
+                            if text_out:
+                                etext = text_out.strip()
+                                _save_extracted_text(fid, etext)
+                    except Exception as e:  # noqa: BLE001
+                        logger.debug(
+                            "lazy extract for %s failed: %s", fid[:8], e,
+                        )
+
+                # Track B — collect image bytes for the vision call.
+                if is_image and disk_path:
+                    try:
+                        from pathlib import Path as _Path
+                        p = _Path(disk_path)
+                        if p.is_file():
+                            raw = p.read_bytes()
+                            # Cap each image at 4 MB so a pathologically
+                            # huge paste doesn't OOM the LLM call. Real
+                            # screenshots / photos are well under this.
+                            if len(raw) <= 4 * 1024 * 1024:
+                                attachment_images.append((name, mime, raw))
+                            else:
+                                logger.warning(
+                                    "image %s exceeds 4MB (%d bytes) — "
+                                    "skipping vision pass",
+                                    name, len(raw),
+                                )
+                    except Exception as e:  # noqa: BLE001
+                        logger.debug(
+                            "image read for %s failed: %s", fid[:8], e,
+                        )
+
+                attachment_meta.append({
+                    "file_id": fid, "name": name, "mime": mime,
+                    "has_text": bool(etext),
+                    "is_image": is_image,
+                })
+
+                if etext:
+                    # Cap each attachment's inlined text so a 500-page PDF
+                    # doesn't blow the prompt context. 8 KB per attachment
+                    # × 5 attachments = 40 KB of preamble — well within
+                    # Gemini 2.5 Flash's 1M-token window.
+                    snippet = etext[:8000]
+                    attachment_preamble_parts.append(
+                        f"--- {name} ({mime}) ---\n{snippet}"
+                    )
+                elif is_image:
+                    attachment_preamble_parts.append(
+                        f"--- {name} ({mime}) ---\n"
+                        f"(image attached — see it inline in the model's "
+                        f"input. Describe what's shown if relevant to "
+                        f"the question.)"
+                    )
+                else:
+                    attachment_preamble_parts.append(
+                        f"--- {name} ({mime or 'unknown'}) ---\n"
+                        f"(binary file — no text content extractable. "
+                        f"Tell the medic what format it is and ask for "
+                        f"clarification if their question depends on "
+                        f"the contents.)"
+                    )
+
+            # Synthesise a default question when the medic pasted only
+            # files (no text). Gives the LLM something concrete to do
+            # AND tells it explicitly to look at the attachments.
+            base_question = req.text.strip()
+            if not base_question:
+                if attachment_images:
+                    base_question = (
+                        "What does the attached image show? Please describe "
+                        "it in clinical terms relevant to this patient."
+                    )
+                else:
+                    base_question = (
+                        "Summarise the attached file(s) and tell me anything "
+                        "clinically relevant for this patient."
+                    )
+
+            question_for_retrieval = base_question
+            if attachment_preamble_parts:
+                question_for_retrieval = (
+                    "The medic attached the following file(s) to this turn:\n\n"
+                    + "\n\n".join(attachment_preamble_parts)
+                    + "\n\n--- QUESTION ---\n"
+                    + base_question
+                )
+
             # 1. Persist the user message + announce turn
             user_idx = store.emit_and_apply(
                 kind=EventKind.USER_MESSAGE,
-                payload={"text": req.text, "session_id": req.session_id},
+                payload={
+                    "text":        req.text,
+                    "session_id":  req.session_id,
+                    "attachments": [a["file_id"] for a in attachment_meta],
+                },
                 apply_fn=_h_user_message,
                 user_id=current_user, patient_hash=req.patient_hash,
             )
@@ -79,6 +233,7 @@ async def chat(
                 "type": "turn_started",
                 "event_idx": user_idx,
                 "patient_hash": req.patient_hash,
+                "attachments": attachment_meta,
             })
 
             # 2. Run retrieval — yields RetrievalChunk events
@@ -88,7 +243,8 @@ async def chat(
                 conn,
                 user_id=current_user,
                 patient_hash=req.patient_hash,
-                question=req.text,
+                question=question_for_retrieval,
+                attachment_images=attachment_images,
             ):
                 if chunk.kind == "final_answer_chunk":
                     collected_answer.append(chunk.data.get("text", ""))
@@ -129,6 +285,7 @@ async def chat(
                         user_id=current_user,
                         patient_hash=req.patient_hash,
                         session_id=req.session_id,
+                        source_event_idx=assistant_idx,
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("chat_ingester failed (non-fatal): %s", exc)
@@ -138,8 +295,16 @@ async def chat(
 
 def _run_chat_ingester_safe(
     *, user_id: str, patient_hash: str, session_id: str,
+    source_event_idx: int,
 ) -> None:
     """Run the chat_ingester for one encounter and log how it went.
+
+    ``source_event_idx`` MUST be a real existing event_idx (typically
+    the just-committed ASSISTANT_RESPONSE). chat_ingester passes it as
+    ``caused_by`` on the INGESTION_STARTED event, and the event_log
+    has a FK from caused_by → events.event_idx. Passing 0 produces
+    "FOREIGN KEY constraint failed" and the whole ingest aborts.
+
     Idempotent: re-running on the same encounter just produces a
     second batch of NODE_ADDED events (the handler dedupes by
     (user_id, patient_hash, evidence_quote))."""
@@ -162,7 +327,7 @@ def _run_chat_ingester_safe(
             user_id=user_id,
             patient_hash=patient_hash,
             encounter_id=session_id or "(no-session)",
-            source_event_idx=0,   # not used by current handlers
+            source_event_idx=source_event_idx,
         )
         logger.info(
             "chat_ingester: user=%s patient=%s emitted %d node(s)",

@@ -27,13 +27,14 @@ RUN pip install --no-cache-dir uv==0.4.30
 WORKDIR /build
 
 # Copy ONLY pyproject + lock first so dep resolution is cached
-# independently of source code changes.
+# independently of source code changes. (Per-package READMEs were
+# removed — root README.md is the single source of doc truth, and
+# pip is happy as long as pyproject.toml's readme field doesn't
+# point at a missing file.)
 COPY packages/sdk/pyproject.toml      packages/sdk/pyproject.toml
-COPY packages/sdk/README.md           packages/sdk/README.md
 COPY packages/nexus/pyproject.toml    packages/nexus/pyproject.toml
-COPY packages/nexus/README.md         packages/nexus/README.md
 COPY packages/server/pyproject.toml   packages/server/pyproject.toml
-COPY packages/server/README.md        packages/server/README.md
+COPY README.md                        README.md
 
 # Install all three packages editable into a single venv.
 RUN python -m venv /opt/venv \

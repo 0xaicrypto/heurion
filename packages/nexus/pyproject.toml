@@ -9,7 +9,7 @@ include = ["nexus*"]
 name = "nexus"
 version = "0.1.0"
 description = "Nexus: Self-evolving digital twin agent framework on BNB Chain (formerly rune-nexus)"
-readme = "README.md"
+# Per-package READMEs were consolidated into the root README.md.
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 dependencies = [

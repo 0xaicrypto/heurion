@@ -364,12 +364,24 @@ def _gather_patient_context(
     conn: sqlite3.Connection, user_id: str, patient_hash: str,
 ) -> str:
     """Build a compact text block of the patient's graph for LLM grounding.
-    Includes findings, medications, recent studies, and semantic facts —
-    everything the LLM needs to ground its answer in the medic's record."""
+
+    Each item is prefixed with ``[Nxx]`` where ``xx`` is the node_id —
+    so the LLM can cite back to specific findings via the same
+    syntax the chat surface already understands as citation chips
+    (``CitationChip2`` + ``contextRailContent.citation``). Without
+    the inline IDs the LLM can only describe findings in prose; the
+    right-rail provenance card stays empty and the medic has no
+    one-click drill-down.
+
+    Includes findings, medications, recent studies, semantic facts,
+    measurements, and differential diagnoses — everything T3 retrieval
+    grounds on.
+    """
     parts: list[str] = []
     try:
         rows = conn.execute(
-            "SELECT node_type, content_json FROM clinical_graph_nodes "
+            "SELECT node_id, node_type, content_json "
+            "FROM clinical_graph_nodes "
             "WHERE user_id = ? AND patient_hash = ? "
             "  AND node_type IN ('finding','med','ddx','study','semantic_fact','measurement') "
             "ORDER BY weight DESC LIMIT 40",
@@ -380,7 +392,7 @@ def _gather_patient_context(
     if not rows:
         return ""
     by_kind: dict[str, list[str]] = {}
-    for ntype, raw in rows:
+    for node_id, ntype, raw in rows:
         try:
             content = json.loads(raw)
         except json.JSONDecodeError:
@@ -390,7 +402,12 @@ def _gather_patient_context(
         if "size_cm" in content:    extra = f" ({content['size_cm']} cm)"
         elif "study_date" in content: extra = f" on {content['study_date']}"
         elif "value" in content:    extra = f" = {content['value']}"
-        by_kind.setdefault(ntype, []).append(f"{label}{extra}")
+        # ``[Nxx]`` prefix so the LLM can cite this node by id in its
+        # answer (matches the citation-chip protocol the desktop's
+        # chat pane consumes).
+        by_kind.setdefault(ntype, []).append(
+            f"[N{int(node_id)}] {label}{extra}"
+        )
     label_map = {
         "finding": "Active findings",
         "med": "Medications",
@@ -410,6 +427,7 @@ async def yield_t3_llm(
     user_id: str,
     patient_hash: Optional[str],
     question: str,
+    attachment_images: Optional[list[tuple[str, str, bytes]]] = None,
 ) -> AsyncIterator[RetrievalChunk]:
     """T3 — real LLM-grounded answer. Replaces the placeholder.
 
@@ -418,7 +436,10 @@ async def yield_t3_llm(
          TierIndicator + ReasoningPane have something to render).
       2. Pull patient context from clinical_graph_nodes.
       3. Call llm_gateway.call_llm with a clinician-grounded system
-         prompt + the patient context.
+         prompt + the patient context. When ``attachment_images`` is
+         non-empty, bypass the gateway and call google.genai directly
+         with ``Part.from_bytes`` for each image — the gateway path
+         is still text-only.
       4. Emit the LLM's answer as a single final_answer_chunk + a
          citations event with any nodes we grounded on.
     """
@@ -458,22 +479,46 @@ async def yield_t3_llm(
         "so explicitly. Always recommend professional review for any "
         "decision-bearing output. Do NOT include hedging boilerplate; "
         "the medic is qualified."
+        "\n\n"
+        "CITATION PROTOCOL: every item in the PATIENT CONTEXT below "
+        "is prefixed with a tag like ``[N42]``. When you mention or "
+        "rely on that item in your answer, append the same tag right "
+        "after the relevant phrase, e.g. \"8 mm RUL nodule [N42] "
+        "needs follow-up.\" Use only IDs that appear in the context "
+        "block — never invent one. These tags drive the desktop's "
+        "citation chips and right-rail drill-down."
     )
     if context_block:
         system_prompt += "\n\nPATIENT CONTEXT (from the local clinical graph):\n" + context_block
 
     try:
-        from nexus_server import llm_gateway
-        content, model, _stop, _tools = await llm_gateway.call_llm(
-            messages=[{"role": "user", "content": question}],
-            system_prompt=system_prompt,
-            model=None,            # use config.DEFAULT_LLM_MODEL
-            temperature=0.4,
-            max_tokens=1024,
-            tools=None,
-        )
-        logger.info("yield_t3_llm: model=%s answer_chars=%d", model, len(content))
-        answer = content.strip() or "(no response)"
+        if attachment_images:
+            # Vision path — Gemini multimodal direct call. Each image
+            # passes as a Part.from_bytes alongside the prompt text.
+            # We pin the model to the same Flash 2.5 Quick scan uses
+            # (cheap + supports vision). Live API-key read so
+            # Settings · LLM changes take effect without restart.
+            answer = await _t3_call_with_images(
+                question=question,
+                system_prompt=system_prompt,
+                images=attachment_images,
+            )
+            logger.info(
+                "yield_t3_llm: vision path, images=%d answer_chars=%d",
+                len(attachment_images), len(answer),
+            )
+        else:
+            from nexus_server import llm_gateway
+            content, model, _stop, _tools = await llm_gateway.call_llm(
+                messages=[{"role": "user", "content": question}],
+                system_prompt=system_prompt,
+                model=None,            # use config.DEFAULT_LLM_MODEL
+                temperature=0.4,
+                max_tokens=1024,
+                tools=None,
+            )
+            logger.info("yield_t3_llm: model=%s answer_chars=%d", model, len(content))
+            answer = content.strip() or "(no response)"
     except Exception as exc:  # noqa: BLE001
         logger.exception("LLM call failed in yield_t3_llm")
         answer = (
@@ -482,11 +527,128 @@ async def yield_t3_llm(
         )
 
     yield RetrievalChunk("final_answer_chunk", {"text": answer})
+
+    # Refine the citations event to only include node IDs the LLM
+    # actually mentioned in its answer. Falling back to the full
+    # ``cited_node_ids`` set (every graph_node we sent in context)
+    # would over-attribute — the right-rail drill-down should reflect
+    # nodes the answer relies on, not nodes that happened to be in
+    # the prompt.
+    answered_node_ids: list[int] = []
+    seen: set[int] = set()
+    for m in re.finditer(r"\[N(\d+)\]", answer):
+        try:
+            nid = int(m.group(1))
+        except ValueError:
+            continue
+        # Only emit citations for nodes the LLM had legitimate access
+        # to — drops hallucinated IDs that don't exist in the patient
+        # graph.
+        if nid not in seen and nid in set(cited_node_ids):
+            seen.add(nid)
+            answered_node_ids.append(nid)
+    # Backstop: if the LLM didn't cite any tag (e.g. very short
+    # answer / non-clinical chitchat), keep the original behaviour
+    # so the right-rail still has *something* to drill into.
+    if not answered_node_ids:
+        answered_node_ids = cited_node_ids[:6]
+
     yield RetrievalChunk(
         "citations",
-        {"refs": [{"node_id": nid, "kind": "graph_node"} for nid in cited_node_ids]},
+        {"refs": [{"node_id": nid, "kind": "graph_node"} for nid in answered_node_ids]},
     )
     yield RetrievalChunk("turn_complete", {})
+
+
+async def _t3_call_with_images(
+    *,
+    question: str,
+    system_prompt: str,
+    images: list[tuple[str, str, bytes]],
+) -> str:
+    """Direct google.genai multimodal call — bypasses llm_gateway
+    (which is text-only). Mirrors the call pattern Quick scan uses in
+    ``quick_scan._gemini_triage_grid``.
+
+    The model is pinned to ``gemini-2.5-flash`` for cost (text+vision
+    Flash is ~10× cheaper than Pro). We could route to Pro for
+    "important" images later, but Flash already handles screenshots /
+    photos well.
+
+    Returns the answer text. Raises on API error so the caller's
+    try/except can format a useful user-facing message.
+    """
+    # Live API-key read so Settings · LLM updates take effect on the
+    # next chat turn without restarting the sidecar.
+    from nexus_server.quick_scan import _live_gemini_api_key
+    api_key = _live_gemini_api_key()
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY not configured — set it in Settings · LLM "
+            "before attaching images to chat."
+        )
+
+    # Build the multipart prompt. system_prompt is folded into the
+    # user content because google-genai's generate_content() doesn't
+    # accept system_instructions on every client version uniformly.
+    full_prompt = f"{system_prompt}\n\n--- USER QUESTION ---\n{question}"
+
+    try:
+        from google import genai
+        from google.genai import types as gtypes
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"google-genai SDK unavailable: {exc}")
+
+    client = genai.Client(api_key=api_key)
+    parts: list = []
+    for name, mime, raw in images:
+        # Gemini accepts image/png, image/jpeg, image/webp, image/heic,
+        # image/heif. TIFF (common in pathology / mammography /
+        # radiology PDF exports) is NOT in the supported list — we
+        # transparently transcode to PNG via Pillow so the medic can
+        # paste a TIFF and have it Just Work.
+        norm_mime = mime
+        norm_bytes = raw
+        if mime.lower() in ("image/tiff", "image/tif") or \
+                name.lower().endswith((".tif", ".tiff")):
+            try:
+                from PIL import Image as _PILImage
+                import io as _io
+                im = _PILImage.open(_io.BytesIO(raw))
+                # Multi-page TIFF: keep only the first page — Gemini
+                # would treat additional pages as separate images
+                # without context glue.
+                if hasattr(im, "n_frames") and im.n_frames > 1:
+                    im.seek(0)
+                if im.mode not in ("RGB", "L"):
+                    im = im.convert("RGB")
+                buf = _io.BytesIO()
+                im.save(buf, format="PNG", optimize=True)
+                norm_bytes = buf.getvalue()
+                norm_mime = "image/png"
+                logger.info(
+                    "transcoded TIFF %s (%d bytes) → PNG (%d bytes)",
+                    name, len(raw), len(norm_bytes),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "TIFF transcode for %s failed (%s) — forwarding "
+                    "raw bytes; Gemini may reject", name, e,
+                )
+        parts.append(gtypes.Part.from_bytes(data=norm_bytes, mime_type=norm_mime))
+    parts.append(full_prompt)
+
+    import asyncio as _asyncio
+    loop = _asyncio.get_event_loop()
+    resp = await loop.run_in_executor(
+        None,
+        lambda: client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=parts,
+        ),
+    )
+    text = (getattr(resp, "text", "") or "").strip()
+    return text or "(model returned no text)"
 
 
 async def retrieve_async(
@@ -495,11 +657,32 @@ async def retrieve_async(
     user_id: str,
     patient_hash: Optional[str],
     question: str,
+    attachment_images: Optional[list[tuple[str, str, bytes]]] = None,
 ) -> AsyncIterator[RetrievalChunk]:
     """Async retrieval dispatcher. T1/T2 share their synchronous
     implementations (they're pure SQL/template), so we adapt them via
     a sync-iterator → async-iterator bridge. T3 uses yield_t3_llm,
-    which actually calls the LLM gateway."""
+    which actually calls the LLM gateway.
+
+    ``attachment_images`` carries any pasted/dropped image bytes the
+    medic attached to this turn (list of ``(name, mime, bytes)``).
+    They flow to T3 only — Gemini Flash 2.5 with ``Part.from_bytes``
+    multimodal — so the LLM literally sees the screenshot instead of
+    just being told "an image is attached". T1/T2 are template/SQL
+    paths and ignore them.
+    """
+    # If the medic attached images, force T3 — the visual content
+    # has to land in front of the multimodal model, and T1's cached
+    # views / T2's templated answer have no path to surface it.
+    has_images = bool(attachment_images)
+    if has_images:
+        async for chunk in yield_t3_llm(
+            conn, user_id=user_id, patient_hash=patient_hash,
+            question=question, attachment_images=attachment_images,
+        ):
+            yield chunk
+        return
+
     choice = classify(conn, user_id=user_id, patient_hash=patient_hash, question=question)
     logger.info(
         "retrieve_async: user=%s patient=%s tier=%s reason=%s",

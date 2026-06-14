@@ -10,6 +10,7 @@ import {
   SettingsDataView,
 } from './components/full-screen-overlays';
 import { LoginView } from './login';
+import { BootGate } from './boot-gate';
 import {
   TodayMode, PatientMode, EncounterMode,
   ImagingMode, LabsMode, MemoryMode, ReportMode,
@@ -142,5 +143,15 @@ export default function App() {
   // Avoid a one-frame login flicker before hydrate completes.
   if (!bootHydrated) return null;
 
-  return token ? <MainShell /> : <LoginView />;
+  // BootGate blocks the LoginView/MainShell render until the FastAPI
+  // sidecar's /healthz returns 200. Without this, the user could fill
+  // in the login form during the 3–15 s Alembic-migration window and
+  // see a "Cannot reach server" error fired against a half-booted
+  // process. The gate has a 15 s soft deadline + early bail when the
+  // sidecar exits, so it can never strand the UI.
+  return (
+    <BootGate>
+      {token ? <MainShell /> : <LoginView />}
+    </BootGate>
+  );
 }

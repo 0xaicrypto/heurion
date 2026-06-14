@@ -645,7 +645,7 @@ class SendEmailNowTool(BaseTool):
                 "STATUS: direct SMTP configured (DEV MODE). Sends go "
                 "straight to the SMTP server — no relay, no audit. "
                 "For production deploys, configure NEXUS_RELAY_URL "
-                "instead (see packages/relay/README.md)."
+                "instead (see packages/relay/)."
             )
         else:
             status_line = (
@@ -742,7 +742,7 @@ class SendEmailNowTool(BaseTool):
                     "(NEXUS_SMTP_HOST + NEXUS_SMTP_USER + "
                     "NEXUS_SMTP_PASSWORD) is configured. For "
                     "production deploys use a relay — see "
-                    "packages/relay/README.md."
+                    "packages/relay/."
                 ),
             )
 

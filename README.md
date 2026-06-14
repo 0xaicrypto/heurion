@@ -257,21 +257,28 @@ ROADMAP.md                     What's next
 
 ## Quickstart
 
-```bash
-# Server
-cd packages/server
-uv sync
-cp .env.example .env       # GEMINI_API_KEY (required) + chain creds (optional)
-uv run nexus-server
+**End user**: download the latest `.dmg` from Releases, drag `Nexus.app`
+to `/Applications`, launch. That's it — the installer ships with all
+Python deps, the Tauri shell, default LLM keys, and the schema-migration
+runner. First launch creates the database; subsequent launches apply
+any pending migrations automatically.
 
-# Desktop (separate terminal, requires .NET 8+)
-cd packages/desktop
-dotnet run --project RuneDesktop.UI
+**Developer building from source on macOS**:
+
+```bash
+cd packages/desktop-v2
+./scripts/build-macos.sh
 ```
 
+That single command bootstraps every prerequisite (Xcode CLT, Homebrew,
+Python 3.12, pnpm, Rust), installs all monorepo packages editable, runs
+PyInstaller + Tauri, auto-installs the resulting `.app` into
+`/Applications/`, and relaunches. See
+[`ENGINEERING_STANDARDS.md`](ENGINEERING_STANDARDS.md) §1 — there are no
+"step 2: manually run X" instructions by design.
+
 For a fully on-chain setup (BSC testnet + Greenfield), see
-[`docs/concepts/modes.md`](docs/concepts/modes.md) and
-[`packages/server/README.md`](packages/server/README.md).
+[`docs/concepts/modes.md`](docs/concepts/modes.md).
 
 The legacy `demo/` folder has been retired — the per-package test suites
 are the canonical reference for how each layer is meant to be used:
@@ -297,8 +304,7 @@ pytest packages/server/tests/     # 122 tests
 | Read the on-chain protocol spec | [`docs/BEP-nexus.md`](docs/BEP-nexus.md) |
 | Read the falsifiable-evolution design | [`docs/design/nexus-architecture.md`](docs/design/nexus-architecture.md) |
 | Read the RLM-based projection design | [`docs/design/nexus-architecture.md`](docs/design/nexus-architecture.md) |
-| Build the desktop locally | [`packages/desktop/README.md`](packages/desktop/README.md) |
-| Run the server locally | [`packages/server/README.md`](packages/server/README.md) |
+| Build & run everything locally | `cd packages/desktop-v2 && ./scripts/build-macos.sh` (or `./scripts/dev-loop.sh` for hot-reload) |
 | Add a new tool the agent can call | [`docs/how-to/add-a-tool.md`](docs/how-to/add-a-tool.md) |
 | Add a new behaviour rule | [`docs/how-to/add-a-contract-rule.md`](docs/how-to/add-a-contract-rule.md) |
 

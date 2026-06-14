@@ -6,15 +6,22 @@
  *   - Sign-in = POST /api/v1/auth/register {display_name} → {jwt_token}
  *   - No password (passkey + persistent user_id ships U2+)
  *
+ * U3.4: when the sidecar fails to start, we used to leave the user
+ * staring at a useless "Cannot reach server" red box with zero way to
+ * see WHY. This file now polls the Tauri ``get_sidecar_diagnostics``
+ * IPC every 2 s and renders the last ~60 lines of raw sidecar output
+ * inline. The panel auto-expands on the first signin error.
+ *
  * The "Continue without server" escape hatch stays — if the sidecar
  * fails to start we still want the dev to be able to poke around the UI.
  */
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Button, Input } from './components/ui';
 import { useAppState } from './store';
-import { api, ApiError } from './lib/api-client';
+import { api, ApiError, type SidecarDiagnostics } from './lib/api-client';
 import { BUILD_ID } from './lib/build-info';
+import { SidecarDiagPanel, summariseDiag } from './components/sidecar-diag-panel';
 
 export function LoginView() {
   const setToken           = useAppState((s) => s.setToken);
@@ -28,6 +35,43 @@ export function LoginView() {
   const [busy, setBusy]               = useState(false);
   const [error, setError]             = useState<string | null>(null);
   const [allowMock, setAllowMock]     = useState(false);
+
+  // Sidecar diagnostics polling. Cheap — the IPC reads from an in-memory
+  // ring buffer + serialises ~60 small strings. Auto-expands the first
+  // time signin errors out.
+  const [diag, setDiag]         = useState<SidecarDiagnostics | null>(null);
+  const [showDiag, setShowDiag] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const d = await api.getSidecarDiagnostics();
+        if (!cancelled) setDiag(d);
+      } catch {
+        // tauriInvoke returned null / not in Tauri — silently no-op.
+      }
+    };
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (error) setShowDiag(true);
+  }, [error]);
+
+  // Auto-expand the diag panel the moment the sidecar dies, even before
+  // the user tries to sign in. Without this, a sidecar that crashes
+  // at startup is invisible until the first click — which is precisely
+  // the moment we want the user to already see the error so they don't
+  // waste a "what's wrong?" round-trip with us.
+  useEffect(() => {
+    if (diag && diag.pid != null && !diag.alive) setShowDiag(true);
+  }, [diag?.alive, diag?.pid]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -66,6 +110,19 @@ export function LoginView() {
     }
   }
 
+  async function tryRestartSidecar() {
+    try {
+      setError(null);
+      const ok = await api.restartSidecar();
+      showToast(
+        ok ? 'Sidecar restart issued' : 'Restart not available in this build',
+        ok ? 'success' : 'info',
+      );
+    } catch (e) {
+      showToast(`Restart failed: ${String(e)}`, 'error');
+    }
+  }
+
   function continueWithoutServer() {
     setToken('dev-mock-token');
     showToast('Continuing in offline / mock mode', 'info');
@@ -73,7 +130,7 @@ export function LoginView() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg">
-      <div className="w-full max-w-sm px-6 py-12">
+      <div className="w-full max-w-md px-6 py-12">
         <div className="mb-10 text-center">
           <h1 className="font-display text-display text-text-primary">Nexus</h1>
           <p className="mt-2 text-body text-text-secondary">
@@ -131,6 +188,46 @@ export function LoginView() {
             </button>
           )}
         </form>
+
+        {/* Sidecar diagnostics — present even when login is fine, so a
+            user can click in and watch the backend boot if curious.
+            Auto-expands on any signin failure. */}
+        {diag && (
+          <div className="mt-6 rounded-sm border border-border bg-surface-1">
+            <button
+              type="button"
+              onClick={() => setShowDiag((s) => !s)}
+              className="flex w-full items-center justify-between px-3 py-2 text-caption text-text-secondary hover:text-text-primary"
+              aria-expanded={showDiag}
+            >
+              <span>
+                <span className="font-medium">Backend diagnostics</span>
+                <span className="ml-2 text-text-tertiary">— {summariseDiag(diag)}</span>
+              </span>
+              <span className="font-mono">{showDiag ? '▴' : '▾'}</span>
+            </button>
+            {showDiag && (
+              <div className="border-t border-border px-3 pb-3 pt-1">
+                <SidecarDiagPanel diag={diag} />
+                <div className="mt-3 flex items-center gap-3 text-[10px] text-text-tertiary">
+                  <button
+                    type="button"
+                    onClick={tryRestartSidecar}
+                    className="rounded-sm border border-border px-2 py-1 hover:bg-surface-2"
+                    title="Kill the sidecar process and respawn it"
+                  >
+                    Restart sidecar
+                  </button>
+                  <span>
+                    {diag.alive
+                      ? 'Sidecar is up. If sign-in still fails, the server may be mid-boot — wait a few seconds and try again.'
+                      : 'Sidecar is not running. Check the log above for the failure reason, then click Restart sidecar.'}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <p className="mt-10 text-center text-caption text-text-tertiary">
           By signing in you agree to use Nexus as decision-support only,

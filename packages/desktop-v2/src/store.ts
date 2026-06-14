@@ -26,6 +26,13 @@ interface AppState {
   activePatient: PatientCard | null;
   activeMode: ModeKind;
   patients: PatientCard[];
+  // Currently-open chat session id. Empty string === synthetic
+  // "Default chat" (wraps pre-sessions chat history). Persisted to
+  // sessionStorage so the medic stays on the same thread across
+  // page reloads but a fresh launch (where sessionStorage is wiped
+  // along with the JWT) starts in Default.
+  activeSessionId: string;
+  setActiveSessionId: (id: string) => void;
 
   // Layout ───────────────────────────────────────────
   sidebarCollapsed: boolean;
@@ -87,10 +94,11 @@ interface AppState {
   dismissToast: () => void;
 }
 
-const TOKEN_KEY  = 'nexus.auth.token';
-const NAME_KEY   = 'nexus.auth.displayName';
-const THEME_KEY  = 'nexus.theme';
-const HIDDEN_KEY = 'nexus.patients.hidden';
+const TOKEN_KEY   = 'nexus.auth.token';
+const NAME_KEY    = 'nexus.auth.displayName';
+const THEME_KEY   = 'nexus.theme';
+const HIDDEN_KEY  = 'nexus.patients.hidden';
+const SESSION_ID_KEY = 'nexus.chat.session_id';
 
 function readHiddenPatients(): Set<string> {
   try {
@@ -118,9 +126,32 @@ function readStoredTheme(): Theme {
   return 'dark';
 }
 
+/**
+ * Token is held in ``sessionStorage`` (NOT localStorage) so that
+ * closing the Nexus window clears it. This is per user requirement
+ * 2026-06-14: "登陆之后，关闭desktop，应该首先自动登出，下次重新打开
+ * 需要重新登陆".
+ *
+ * Persistence behaviour by storage tier:
+ *
+ *   sessionStorage (per-window-lifetime)
+ *     - ``nexus.auth.token``   — JWT
+ *     - ``nexus.auth.user_id`` — cached for silent 401 recovery
+ *       (read inside api-client.ts; mirrored here so logout clears
+ *       both in one shot)
+ *
+ *   localStorage (persists across restarts)
+ *     - displayName  → pre-fills the login form on next launch.
+ *     - theme        → light/dark mode preference.
+ *     - hidden patients → client-side hide list.
+ *
+ * Minimise / focus changes don't kill the webview, so sessionStorage
+ * survives them. Only window-close, app-quit, or a sidecar respawn
+ * clears it — which is the desired UX.
+ */
 function readStoredToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    return sessionStorage.getItem(TOKEN_KEY);
   } catch {
     return null;
   }
@@ -133,8 +164,11 @@ export const useAppState = create<AppState>((set, get) => ({
 
   setToken: (t) => {
     try {
-      if (t) localStorage.setItem(TOKEN_KEY, t);
-      else localStorage.removeItem(TOKEN_KEY);
+      // sessionStorage, not localStorage — see readStoredToken's
+      // docstring for the rationale (closing the window must
+      // log the user out).
+      if (t) sessionStorage.setItem(TOKEN_KEY, t);
+      else sessionStorage.removeItem(TOKEN_KEY);
     } catch { /* ignore */ }
     api.setToken(t);
     set({ token: t });
@@ -150,16 +184,21 @@ export const useAppState = create<AppState>((set, get) => ({
 
   logout: () => {
     try {
-      localStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(TOKEN_KEY);
       // Keep displayName so the next sign-in pre-fills it. The
-      // ApiClient still has the cached user_id, so signing back in is
-      // one click.
+      // ApiClient still has the cached user_id in sessionStorage,
+      // which goes away on window close — so a manual /logout +
+      // re-sign-in inside the same window stays one click, but
+      // closing the app forces a full re-login (the user_id is
+      // also wiped with the session).
     } catch { /* ignore */ }
     api.setToken(null);
+    try { sessionStorage.removeItem(SESSION_ID_KEY); } catch { /* ignore */ }
     set({
       token: null,
       activePatient: null,
       activeMode: 'today',
+      activeSessionId: '',
       commandPaletteOpen: false,
       newPatientDialogOpen: false,
       // Drop the cached LLM status — next sign-in re-probes.
@@ -174,6 +213,18 @@ export const useAppState = create<AppState>((set, get) => ({
   // (Used to default to MOCK_PATIENTS which caused fake-patient flash on
   // every launch and confused medics into thinking real data existed.)
   patients: [],
+  activeSessionId: '',  // hydrateAppState reads from sessionStorage
+  setActiveSessionId: (id) => {
+    try {
+      // sessionStorage — same tier as auth state; closing the window
+      // wipes it so the next launch starts on Default chat. Medic
+      // who explicitly reopens an old session after re-login picks
+      // it from the sidebar.
+      if (id) sessionStorage.setItem(SESSION_ID_KEY, id);
+      else sessionStorage.removeItem(SESSION_ID_KEY);
+    } catch { /* ignore */ }
+    set({ activeSessionId: id });
+  },
 
   sidebarCollapsed: false,
   contextRailOpen: false,
@@ -327,7 +378,17 @@ export function hydrateAppState() {
   const theme = readStoredTheme();
   let displayName: string | null = null;
   try { displayName = localStorage.getItem(NAME_KEY); } catch { /* ignore */ }
+  // Restore the last-active session id from sessionStorage. Lives in
+  // the same tier as the JWT — closing the window wipes both. Within
+  // a session, this stops a page reload from kicking the medic back
+  // to Default chat.
+  let activeSessionId = '';
+  try {
+    activeSessionId = sessionStorage.getItem(SESSION_ID_KEY) ?? '';
+  } catch { /* ignore */ }
   applyThemeToDOM(theme);
   if (token) api.setToken(token);
-  useAppState.setState({ token, displayName, theme, bootHydrated: true });
+  useAppState.setState({
+    token, displayName, theme, activeSessionId, bootHydrated: true,
+  });
 }

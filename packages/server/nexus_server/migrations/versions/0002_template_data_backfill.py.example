@@ -1,0 +1,68 @@
+# Rename to 0002_<your_slug>.py when you actually need a data migration.
+# This file is .example so Alembic doesn't pick it up as a real
+# migration (Alembic only scans *.py).
+"""Template — data backfill / transformation migration.
+
+Revision ID: 0002
+Revises: 0001
+Create Date: <fill-in>
+
+Use this template when you need to:
+  * Backfill a freshly-added column (UPDATE … SET … WHERE … IS NULL).
+  * Transform existing rows (e.g. dedup, split a JSON column into
+    separate cols, normalise a string).
+  * Drop rows that have become obsolete.
+
+Pattern: every UPDATE/INSERT should be **idempotent** — if the
+migration runs twice (e.g. user reinstalls without nuking
+alembic_version) the result must be the same.
+"""
+from __future__ import annotations
+
+from alembic import op
+import sqlalchemy as sa
+
+revision = "0002"
+down_revision = "0001"
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
+    bind = op.get_bind()
+
+    # ── Example 1: backfill a new column from another column ──
+    bind.execute(sa.text("""
+        UPDATE uploads
+           SET memory_status = 'pending'
+         WHERE memory_status = ''
+           AND dicom_status = 'rendered'
+           AND patient_hash != ''
+    """))
+
+    # ── Example 2: bulk INSERT seeded reference data ──
+    # op.bulk_insert(
+    #     sa.table(
+    #         "reference_knowledge",
+    #         sa.column("kind", sa.String),
+    #         sa.column("key", sa.String),
+    #         sa.column("value_json", sa.String),
+    #     ),
+    #     [{"kind": "lab_range", "key": "creatinine",
+    #       "value_json": '{"low":0.6,"high":1.2,"unit":"mg/dL"}'},
+    #      ...],
+    # )
+
+    # ── Example 3: idempotent transformation ──
+    # bind.execute(sa.text("""
+    #     UPDATE patients
+    #        SET initials = UPPER(initials)
+    #      WHERE initials != UPPER(initials)
+    # """))
+
+
+def downgrade() -> None:
+    # Data migrations are usually NOT reversible (you can't un-uppercase
+    # initials and know which were already capitalised). Document the
+    # reversal manually if needed; default = no-op.
+    pass

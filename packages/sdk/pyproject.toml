@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "nexus-core"
 version = "0.4.0"
 description = "Nexus SDK — Persistent, Verifiable Agent Infrastructure on BNB Chain (formerly bnbchain-agent)"
-readme = "README.md"
+# Per-package READMEs were consolidated into the root README.md.
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 dependencies = [

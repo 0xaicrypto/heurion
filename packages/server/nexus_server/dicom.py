@@ -754,17 +754,35 @@ def render_grid_png(
     rows: int = 4,
     cols: int = 4,
     cell_size: int = 256,
+    slice_start: Optional[int] = None,
+    slice_end:   Optional[int] = None,
 ) -> bytes:
-    """N×M thumbnail grid sampled uniformly across the series.
+    """N×M thumbnail grid uniformly sampled across a slice range.
 
-    #154 — bumped cell_size 128 → 256 (16 thumbs × 256² = 1024×1024
-    PNG). At 128 px per cell the anatomy was too blurry for Gemini's
-    vision model to extract usable features — likely why the agent
-    kept saying "empty" on real medical archives. 256 px keeps each
-    thumb above the 224 px threshold most ViT-style encoders need
-    to see structure, while staying well under Gemini's per-image
-    cap (3072 px). Total PNG size also stays sane (typically <2 MB
-    for 16 grayscale slices).
+    cell_size:
+      #154 — bumped 128 → 256 (16 thumbs × 256² = 1024×1024 PNG). At
+      128 px per cell the anatomy was too blurry for Gemini's vision
+      model to extract usable features. 256 px keeps each thumb above
+      the 224 px threshold most ViT-style encoders need to see
+      structure, while staying well under Gemini's per-image cap of
+      3072 px. Quick scan now passes 384 explicitly (1536² grid) for
+      sub-cm finding detection — see ``quick_scan.QUICK_SCAN_CELL_SIZE``.
+
+    slice_start / slice_end:
+      #196 — added so Quick scan can render *dense* per-range grids
+      (e.g. 16 consecutive slices = ~1.6 cm of anatomy per grid)
+      instead of "16 thumbs spread over the whole 500-slice volume".
+
+      When both are provided, sampling is uniform over the half-open
+      range ``[slice_start, slice_end + 1)``. When either is None the
+      sampler falls back to the full series — the original behaviour
+      callers like ``llm_gateway`` rely on.
+
+      Bug history (2026-06-14): quick_scan.py was already trying to
+      pass ``slice_start=s, slice_end=e`` but the signature didn't
+      accept them, so every call raised TypeError and fell back to
+      a SINGLE whole-series grid — making the whole "scan 25 grids of
+      16 slices each" pipeline collapse to one 16-thumbnail overview.
     """
     import numpy as np
     import pydicom
@@ -775,12 +793,26 @@ def render_grid_png(
 
     n_cells = rows * cols
     count = len(series.instances)
-    # Uniformly sample indices including endpoints
-    if count <= n_cells:
-        sampled = list(range(count))
+
+    # Determine the sampling window. Clamp to valid bounds + fall back
+    # to whole-series sampling when the caller didn't specify a range.
+    if slice_start is not None and slice_end is not None:
+        lo = max(0, int(slice_start))
+        hi = min(count - 1, int(slice_end))
+        if hi < lo:
+            # Empty / inverted range — match the whole-series fallback
+            # rather than raise; callers in batched flows can ignore
+            # the empty PNG and move on.
+            lo, hi = 0, count - 1
     else:
-        step = (count - 1) / (n_cells - 1)
-        sampled = [int(round(i * step)) for i in range(n_cells)]
+        lo, hi = 0, count - 1
+
+    span = hi - lo + 1
+    if span <= n_cells:
+        sampled = list(range(lo, hi + 1))
+    else:
+        step = (span - 1) / (n_cells - 1)
+        sampled = [lo + int(round(i * step)) for i in range(n_cells)]
 
     grid_img = Image.new("L", (cols * cell_size, rows * cell_size), 0)
     wl_acc: Optional[float] = None
@@ -888,12 +920,19 @@ def init_dicom_index() -> None:
 
 def persist_study(
     user_id: str, upload_file_id: str, study: DicomStudy, extract_dir: Path,
+    *, patient_hash_override: str = "",
 ) -> str:
     """Persist a parsed DicomStudy + all series + all instances.
 
     Returns the internal ``study_id`` (UUID). Existing studies
     (same user, same StudyInstanceUID) UPDATE rather than INSERT to
     handle re-uploads cleanly.
+
+    ``patient_hash_override``: when non-empty, used INSTEAD of the
+    PatientID-derived ``study.patient_hash`` for the dicom_studies row.
+    The desktop sets this when the medic has a patient open in the
+    Imaging tab — uploading then attaches the study to THAT patient
+    rather than minting a new one from the DICOM tag.
     """
     study_id = str(uuid.uuid4())
     now_ms = int(time.time() * 1000)
@@ -923,6 +962,16 @@ def persist_study(
                 (upload_file_id, str(extract_dir), study_id),
             )
         else:
+            # Honor the desktop's per-upload patient binding. When the
+            # medic has a patient open, the upload form carries that
+            # patient's hash and we use it directly for the dicom_studies
+            # row — avoiding a stale row + retroactive UPDATE race that
+            # the sidebar's polling can briefly observe.
+            effective_patient_hash = (
+                patient_hash_override.strip()
+                if patient_hash_override and patient_hash_override.strip()
+                else study.patient_hash
+            )
             conn.execute("""
                 INSERT INTO dicom_studies
                 (study_id, user_id, upload_file_id, study_instance_uid,
@@ -932,7 +981,7 @@ def persist_study(
             """, (
                 study_id, user_id, upload_file_id, study.study_instance_uid,
                 study.study_date, study.study_description, study.modality,
-                study.patient_hash, study.patient_age_group, study.patient_sex,
+                effective_patient_hash, study.patient_age_group, study.patient_sex,
                 str(extract_dir), now_ms,
             ))
 
@@ -1243,6 +1292,7 @@ def prerender_archive_for_upload(
     upload_mime: str,
     upload_size: int,
     disk_path: Path,
+    patient_hash_override: str = "",
 ) -> dict:
     """Synchronously detect+parse+render+persist a DICOM archive at
     upload time so chat-time becomes a cheap disk-read.
@@ -1381,7 +1431,10 @@ def prerender_archive_for_upload(
     out["instance_count"] = study.total_instances
 
     try:
-        study_id = persist_study(user_id, upload_file_id, study, extract_root)
+        study_id = persist_study(
+            user_id, upload_file_id, study, extract_root,
+            patient_hash_override=patient_hash_override,
+        )
         out["study_id"] = study_id
     except Exception as e:  # noqa: BLE001
         logger.warning(

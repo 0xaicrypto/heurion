@@ -331,6 +331,41 @@ Layer 2 extraction is **opt-in per fact_kind** during M0–M5 phases (see §9 re
 
 DICOM ingester is rewritten per Rev-6; chat / lab ingesters preserve v2 design. **All ingesters write through the store-layer `emit_and_apply()` per Rev-8 / §16.12** — no ingester writes to projection tables directly. The pseudocode below shows the protocol; concrete pipelines for each modality follow.
 
+> **§5 runtime status (U3.3 — live in `main` as of this commit).** The
+> ingester wiring previously existed only as classes in
+> `nexus_server/memorization/`; nothing in production code called them.
+> They are now invoked at the following points and the Memory tab
+> populates as a result of any of these actions:
+>
+> | trigger | invoker | nodes emitted |
+> |---|---|---|
+> | `ASSISTANT_RESPONSE` event commits in chat_router_v2 | `_run_chat_ingester_safe` | `finding`, `med`, `ddx`, `measurement`, `semantic_fact` (verbatim-quoted from the chat turn) |
+> | DICOM zip prerender finishes in `_run_dicom_prerender_async` | `_run_dicom_ingester_safe` | `patient`, `study`, `series`, `key_image`, `anatomical_region` |
+> | Quick scan (Gemini Flash triage) fires post-ingest | `_run_quick_scan_after_ingest` | `finding` (confidence 0.5–0.6, status `unconfirmed`, source `quick_scan`) |
+>
+> Extractor used by `_run_chat_ingester_safe`:
+> `memorization.llm_extractor.llm_chat_extractor` — wraps
+> `llm_gateway.call_llm` (default provider per `ServerConfig`,
+> `gemini-2.5-flash` by default). Output JSON parsed → each entity
+> validated to have a verbatim `evidence_quote` substring of the source
+> text (entities failing this drop, do not save).
+>
+> Quick scan's flagged regions are surfaced to the medic in three
+> places simultaneously: the Imaging tab upload row (transient), the
+> Patient tab's *Active findings* section (durable), and Memory · L1 ·
+> Findings (durable). Status `unconfirmed` means the medic still has
+> to accept/reject — see §6.3 (medic confirmation gate). Same gate
+> applies whether the finding originated from a chat turn or a
+> Quick scan.
+>
+> Failure modes are propagated to the desktop, never swallowed. The
+> uploads row carries `memory_status` + `memory_summary` +
+> `quick_scan_status` + `quick_scan_summary`; the
+> `GET /files/{id}/prerender-progress` endpoint surfaces all four.
+> The Imaging tab renders them as inline status lines below each
+> upload card, so an LLM-call failure ("No module named nexus_core")
+> shows up as `Memory failed: …` instead of the row going silent.
+
 ### 5.0 Ingester pattern (universal — per Rev-8)
 
 Every ingester operation follows this shape:
@@ -1191,7 +1226,64 @@ Three invariants govern all migrations:
 2. **Every record carries `_schema_version`.** Forward migration is automatic on app upgrade; backward migration is best-effort and tested for the last 3 minor versions.
 3. **`twin_event_log` is migration-immutable.** Columns may be added; existing event content is never rewritten.
 
-Migrations live in `nexus_server/migrations/NNN_*.py`. Each implements `up()` and `down()`. App boot reads `_schema_version` from a dedicated table, runs all unapplied `up()` migrations. Down migrations exist for rollback safety; not exercised at runtime unless explicitly invoked.
+#### 16.6.1 Implementation — Alembic-managed main DB (U3.4)
+
+Migrations live in `packages/server/nexus_server/migrations/versions/NNNN_*.py`. We use **Alembic** as the runner + version tracker (`alembic_version` table), but every migration body is **hand-written raw SQL** via `op.execute()` — there is no SQLAlchemy ORM layer in `nexus_server` and we don't add one.
+
+Both **schema** changes (`ALTER`/`CREATE`/`DROP`) and **data** changes (`UPDATE`/backfill/`INSERT`) flow through the same framework. A migration file can mix both when they're conceptually one change ("add column and backfill it"). When the backfill is expensive (large row count, LLM-driven extraction), split into two migrations — the schema half lands fast on every install, the data half re-runs cheaply via `WHERE <not yet backfilled>` idempotency.
+
+Boot pipeline (`main.py::lifespan`):
+
+```
+config.validate()
+   ↓
+alembic.command.upgrade(cfg, "head")          ← runs all pending NNNN_*.py
+   ↓                                            in a single transaction each;
+init_db()    ← belt-and-suspenders                failure raises → uvicorn refuses
+   ↓                                              to start → desktop shows
+twin reaper / vector index / async worker         "Backend down" banner
+```
+
+`render_as_batch=True` in `env.py` lets Alembic transparently rewrite SQLite tables when the change isn't expressible via plain `ALTER` (DROP COLUMN, CHANGE TYPE) — Alembic does CREATE NEW TABLE + INSERT SELECT + DROP OLD + RENAME under the hood.
+
+**Failure mode the design refuses to allow:** a server that boots into a half-migrated DB. Either every pending migration applies cleanly or startup aborts. Half-states are debuggable for two minutes; let-the-app-run-with-broken-schema is debuggable for weeks.
+
+#### 16.6.2 Adding a migration
+
+```bash
+# Schema change example: add a column
+cp packages/server/nexus_server/migrations/versions/0002_template_data_backfill.py.example \
+   packages/server/nexus_server/migrations/versions/0003_add_lab_panel_col.py
+
+# Edit the file: revision = "0003"; down_revision = "0002" (or "0001"
+# if you tag onto the initial); then write upgrade():
+def upgrade():
+    op.execute("ALTER TABLE labs ADD COLUMN panel TEXT NOT NULL DEFAULT ''")
+    op.execute("CREATE INDEX idx_labs_panel ON labs(user_id, panel)")
+    # Schema + data in one transaction:
+    op.execute("UPDATE labs SET panel = 'cmp7' WHERE analyte IN ('Na','K','Cl','CO2','BUN','Cr','glu')")
+
+# That's it. Next ./scripts/build-macos.sh ships it; every user's
+# next launch runs it once and stamps alembic_version=0003.
+```
+
+#### 16.6.3 Event-log schema — out-of-band
+
+`twin_event_log` is **per-user**, lives at `~/.nexus_server/twins/<user_id>/event_log/user-XXX.db`, and carries its own `event_log_schema_version` row (read by `twin_event_log.py` on connection open). We deliberately **do not** put the event log under Alembic for three reasons:
+
+- **Per-user files**: maintaining an `alembic_version` for N user DBs adds startup time proportional to user count.
+- **Append-only by design**: schema almost never changes; `event_kind_version` (§4.3) handles payload evolution without table changes.
+- **Replay safety**: any operation that touches the canonical log must preserve byte-identical replay. Alembic's automatic batch-rewrite would violate that.
+
+When event-log schema must change (rare; v2 → v3 only added columns), the upgrade is hand-coded in `twin_event_log.py` and gated by the version row.
+
+#### 16.6.4 Rollback policy
+
+`downgrade()` is implemented in every Alembic migration BUT **never runs in production**. Why:
+
+- Reverting a deployed migration usually requires data loss (which rows did the new code touch? we don't know).
+- Forward fixes are cheaper to reason about: write `NNNN+1_revert_NNNN.py` that's an explicit "undo what NNNN did to the state we have now".
+- `alembic downgrade` is a developer tool — useful during migration authoring, not as a recovery mechanism.
 
 ### 16.7 Embedding rotation — lazy migration
 

@@ -31,16 +31,24 @@ green() { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
 red()   { printf "\033[1;31m✗ %s\033[0m\n" "$*" >&2; }
 
 # ── 1. Stop running Nexus ────────────────────────────────────────────
+# Aggressive teardown — graceful TERM first, then SIGKILL the holdouts.
+# Port :8001 sometimes lingers in TIME_WAIT or under a stray uvicorn
+# spawned by `pnpm dev`; the wait-loop below guarantees it's free
+# before the rebuild produces a new sidecar.
 cyan "stopping any running Nexus"
 osascript -e 'quit app "Nexus"' >/dev/null 2>&1 || true
 sleep 1
-pkill -f nexus-server >/dev/null 2>&1 || true
+pkill -TERM -f nexus-server >/dev/null 2>&1 || true
+sleep 1
+pkill -KILL -f nexus-server >/dev/null 2>&1 || true
 
-# Free the port even if a zombie is squatting.
-if lsof -ti tcp:8001 >/dev/null 2>&1; then
-  cyan "killing process on tcp:8001"
-  lsof -ti tcp:8001 | xargs kill -9 2>/dev/null || true
-fi
+for _i in 1 2 3 4 5; do
+  pids="$(lsof -ti tcp:8001 2>/dev/null || true)"
+  if [ -z "$pids" ]; then break; fi
+  cyan "killing pid(s) on tcp:8001 → $pids"
+  echo "$pids" | xargs kill -9 2>/dev/null || true
+  sleep 1
+done
 
 # ── 2. Remove previous install ───────────────────────────────────────
 if [ -d "/Applications/Nexus.app" ]; then

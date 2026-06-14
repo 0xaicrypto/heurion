@@ -195,6 +195,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         BUILD_INFO["build"], BUILD_INFO["version"], BUILD_INFO["built_at"],
     )
     config.validate()
+    # U3.4 — Alembic migrations BEFORE init_db, because the runner's
+    # 0001_initial migration delegates back to init_db. Calling
+    # alembic upgrade head first means:
+    #   * Fresh install   → 0001 runs init_db + all init_*_table, sets
+    #                       alembic_version = "0001".
+    #   * Upgrade install → 0001 already applied (alembic_version says
+    #                       so) → skipped. Any new 0002/3/... ALTERs
+    #                       or data backfills run now.
+    # On failure we ABORT startup — broken schema is worse than a
+    # missing server (the medic gets a clear "backend down" banner).
+    try:
+        from nexus_server.migrations.runner import run_migrations
+        head = run_migrations()
+        logger.info("DB migrations applied; head=%s", head)
+    except Exception as exc:
+        logger.exception("DB migration failed — refusing to start: %s", exc)
+        raise
+    # init_db remains as a belt-and-suspenders idempotent call for
+    # any tables not yet captured in 0001 (e.g. modules that lazy-init
+    # on first request). Once every init_*_table is mirrored in a
+    # migration, this line can be removed.
     init_db()
 
     # #135 — semantic memory index. Idempotent; safe to call every boot.

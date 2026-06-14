@@ -258,6 +258,71 @@ replay(conn, from_event_idx=0)
 Verified by the golden replay CI test
 (`test_drop_replay_roundtrip_byte_identical`). PR cannot merge red.
 
+### 4.5 Two storage tiers + migration policy (U3.4)
+
+Two SQLite locations, with different volatility and different schema-
+management strategies. This is load-bearing and worth knowing cold.
+
+```
+~/Library/Application Support/Nexus/                ← the "main" DB
+└── nexus_server.db
+    ├── alembic_version                              ← schema track
+    ├── users / patients / dicom_studies / uploads
+    ├── clinical_graph_nodes / edges / cached_views
+    ├── nexus_sessions / nexus_workflows / ...
+    └── ~30 tables — ALL projections (Rev-8). Drop-and-replay safe.
+
+~/.nexus_server/twins/                              ← per-user event log
+├── <user_id_1>/event_log/user-abc12345.db
+│   ├── event_log_schema_version                    ← schema track
+│   └── twin_event_log                              ← single table; the
+└── <user_id_2>/...                                   canonical source
+                                                      (Rev-8). NEVER
+                                                      dropped.
+```
+
+**Main DB — Alembic-managed.** The whole schema is owned by versioned
+migrations under `packages/server/nexus_server/migrations/versions/`.
+On every server startup:
+
+```
+lifespan() → run_migrations()
+              ↓
+            alembic.command.upgrade(cfg, "head")
+              ↓  scans versions/NNNN_*.py
+              ↓  compares alembic_version
+              ↓  runs each pending migration in a transaction
+              ↓  raises on failure → uvicorn refuses to start
+```
+
+Both **schema** changes (ALTER/CREATE/DROP) and **data** changes
+(UPDATE/backfill/INSERT) use the same framework — a single migration
+file can mix both. Pattern in
+`migrations/versions/0002_template_data_backfill.py.example`. Failure
+of either kind blocks startup so users never see a half-migrated DB.
+
+**Event log — manual version tracking.** Each user's
+`twin_event_log.db` has its own `event_log_schema_version` row, bumped
+by `twin_event_log.py`'s hand-rolled compatibility checks. Why not
+Alembic too:
+
+- Per-user files (1 file × N users); Alembic doesn't model that.
+- Schema almost never changes (event_kind_version handles payload
+  evolution, see §4.3).
+- Replay invariant means we'd rather migrate event_log rarely +
+  defensively than every release.
+
+**Failure modes the design refuses to allow:**
+
+| Scenario | What happens |
+|---|---|
+| New build's migration crashes mid-run | Transaction rolls back → next startup retries from same revision → user sees "Backend down" until you ship a fix |
+| User reinstalls onto an older DB | Alembic detects current rev, runs only the deltas, never re-runs an applied migration |
+| User wipes `nexus_server.db` | Next launch: 0001 runs from scratch, all tables created, alembic_version stamped |
+| Event log schema bumps | Handled by `event_log_schema_version` check on open; bumps require a hand-written upgrade in `twin_event_log.py` |
+| Projection diverges from event log | `test_drop_replay_roundtrip_byte_identical` catches it pre-merge; runtime, `replay_projections.py` regenerates |
+
+
 Unknown `(kind, version)` → `UnknownEventKindError`. Silent skip is
 forbidden (Rev-8 R23 mitigation).
 
@@ -289,6 +354,62 @@ Gemini-Flash quick-scan wrapped in a Bundle. When the inference
 companion ships, the Bundle's backend changes from
 `gemini_flash_quick_scan` to `remote_monai_vista3d`. Graph schema and
 downstream consumers unchanged.
+
+### 5.1 Runtime wiring (as of U3.3)
+
+What actually fires when a medic drops a DICOM zip with a patient
+open in the desktop:
+
+```
+POST /api/v1/files/upload (multipart, file_id minted)
+  │
+  ├─→  inserts row into uploads (patient_hash from explicit override,
+  │    session-bound fallback, or empty for DICOM-self-bound)
+  │
+  └─→  BackgroundTasks: _run_dicom_prerender_async
+         │
+         ├─→  parse archive → render PNG slices → uploads.dicom_status = "rendered"
+         │
+         ├─→  _run_dicom_ingester_safe(study_id, force_patient_hash)
+         │       loads parsed study → DicomIngester.ingest()
+         │       writes Layer 1 graph nodes:
+         │         patient / study / series / key_image / anatomical_region
+         │       uploads.memory_status = "ok" | "error"
+         │       uploads.memory_summary = "N graph events" | "ExcType: msg"
+         │
+         └─→  _run_quick_scan_after_ingest(user_id, study_id)
+                 fires Gemini-Flash quick_scan over the 4×4 thumbnail
+                 grid; emits one `finding` node per flagged region
+                 (confidence=0.5–0.6, status="unconfirmed")
+                 uploads.quick_scan_status  = "ok" | "error"
+                 uploads.quick_scan_summary = "N flagged finding(s)" | …
+```
+
+Both steps surface via `GET /api/v1/files/{id}/prerender-progress`
+which the desktop's Imaging tab polls (memory_status, memory_summary,
+quick_scan_status, quick_scan_summary). On the medic's side this
+renders inline below the upload row:
+
+```
+Memory: 12 graph events            ← uploads.memory_summary
+🔍 Quick scan: 2 flagged finding(s)  ← uploads.quick_scan_summary
+```
+
+Failure modes are NEVER silent. If `dicom_ingester` crashes
+("No module named 'nexus_core'" mid-PyInstaller) the exception text
+flows up to the same row as `Memory failed: ModuleNotFoundError: …`.
+Same for Quick scan.
+
+**Chat ingester** runs from the `ASSISTANT_RESPONSE` post-commit hook
+in `chat_router_v2`. Uses `memorization.llm_extractor` which is a
+Gemini-backed wrapper over `chat_ingester.ChatIngester`. Output:
+`finding` / `med` / `ddx` / `measurement` / `semantic_fact` nodes
+with verbatim `evidence_quote` (validated against the source text;
+non-verbatim entities are dropped, not silently saved).
+
+**Upload history** lives at `GET /api/v1/files/uploads?patient_hash=…`
+— the Imaging tab hydrates the medic's prior uploads on mount so they
+don't disappear at the end of a session.
 
 ---
 

@@ -44,29 +44,35 @@ const envBase =
 const baseUrl = envBase && envBase.length > 0 ? envBase : 'http://127.0.0.1:8001';
 
 // ─────────────────────────────────────────────────────────────────────
-// Persistent user_id storage (M0)
+// Per-session user_id storage (M0)
 // ─────────────────────────────────────────────────────────────────────
-// We persist the user_id minted by /auth/register so subsequent launches
-// reuse the same account via /auth/login instead of minting a fresh one
-// every time. localStorage in WKWebView is per-app and survives across
-// app launches; it gets wiped only if the OS user clears the app's data.
+// We stash the user_id minted by /auth/register so silent re-auth on a
+// 401 (e.g. JWT expiry) can call /auth/login without re-prompting the
+// user. Storage tier is ``sessionStorage`` — same as the JWT (see
+// ``store.ts::readStoredToken`` for the rationale).
 //
-// U2+: switch to @tauri-apps/plugin-stronghold so the id is sealed in
-// the OS keychain. For M0, localStorage is sufficient.
+// Closing the Nexus window wipes sessionStorage → next launch has
+// neither token nor user_id → LoginView is shown and the medic must
+// re-enter their name. This matches the user-stated UX:
+//   "登陆之后，关闭desktop，应该首先自动登出，下次重新打开需要重新登陆."
+//
+// U2+: switch to @tauri-apps/plugin-stronghold so the user_id can
+// optionally be sealed in the OS keychain for users who explicitly
+// opt into "remember me".
 
 const STORAGE_KEY_USER_ID = 'nexus.auth.user_id';
 
 function readUserId(): string | null {
   try {
-    return localStorage.getItem(STORAGE_KEY_USER_ID);
+    return sessionStorage.getItem(STORAGE_KEY_USER_ID);
   } catch {
-    return null;  // SSR / privacy modes where localStorage is unavailable
+    return null;  // SSR / privacy modes where sessionStorage is unavailable
   }
 }
 
 function writeUserId(id: string): void {
   try {
-    localStorage.setItem(STORAGE_KEY_USER_ID, id);
+    sessionStorage.setItem(STORAGE_KEY_USER_ID, id);
   } catch {
     /* no-op — sign-in still works for this session, just won't persist */
   }
@@ -74,7 +80,7 @@ function writeUserId(id: string): void {
 
 function clearUserId(): void {
   try {
-    localStorage.removeItem(STORAGE_KEY_USER_ID);
+    sessionStorage.removeItem(STORAGE_KEY_USER_ID);
   } catch {
     /* no-op */
   }
@@ -115,7 +121,7 @@ class _ApiClient {
       if (!r.ok) return null;
       const body = (await r.json()) as LoginResp;
       this.token = body.jwt_token;
-      try { localStorage.setItem('nexus.auth.token', body.jwt_token); } catch { /* ignore */ }
+      try { sessionStorage.setItem('nexus.auth.token', body.jwt_token); } catch { /* ignore */ }
       return body.jwt_token;
     } catch {
       return null;
@@ -142,7 +148,7 @@ class _ApiClient {
         // wipe the token so App.tsx bounces to LoginView on its next
         // store read. (The store-level subscription picks this up.)
         this.token = null;
-        try { localStorage.removeItem('nexus.auth.token'); } catch { /* ignore */ }
+        try { sessionStorage.removeItem('nexus.auth.token'); } catch { /* ignore */ }
         // Dispatch a one-time event the App can listen for to force a
         // logout + login-screen render.
         try {
@@ -537,23 +543,272 @@ class _ApiClient {
     percent: number;
     studyId: string;
     error: string;
+    /** Layer 1 graph ingestion status — '' / 'pending' / 'ok' / 'error'. */
+    memoryStatus: string;
+    /** Human one-liner — "6 graph events" on success, "ExcType: msg" on error. */
+    memorySummary: string;
+    /** Tier A Quick scan (Gemini Flash triage) status. */
+    quickScanStatus: string;
+    /** "N flagged" / "no findings" / error text. */
+    quickScanSummary: string;
+    /** Live progress dict while quickScanStatus === 'pending'. ``null``
+     *  when no scan is running OR when one finished more than 1h ago
+     *  (TTL-pruned server-side). Schema matches
+     *  ``QuickScanProgress`` below. */
+    quickScanProgress: QuickScanProgress | null;
   }> {
     interface Raw {
       state: string; stage: string; current: number; total: number;
       percent: number; study_id: string; preview_dir: string; error: string;
+      memory_status?: string; memory_summary?: string;
+      quick_scan_status?: string; quick_scan_summary?: string;
+      quick_scan_progress?: QuickScanProgress | null;
     }
     const r = await this.fetch<Raw>(
       `/api/v1/files/${encodeURIComponent(fileId)}/prerender-progress`,
     );
     return {
-      state:   r.state as any,
-      stage:   r.stage,
-      current: r.current,
-      total:   r.total,
-      percent: r.percent,
-      studyId: r.study_id,
-      error:   r.error,
+      state:         r.state as any,
+      stage:         r.stage,
+      current:       r.current,
+      total:         r.total,
+      percent:       r.percent,
+      studyId:          r.study_id,
+      error:            r.error,
+      memoryStatus:     r.memory_status      ?? '',
+      memorySummary:    r.memory_summary     ?? '',
+      quickScanStatus:  r.quick_scan_status  ?? '',
+      quickScanSummary: r.quick_scan_summary ?? '',
+      quickScanProgress: r.quick_scan_progress ?? null,
     };
+  }
+
+  /** List the user's uploads, newest first. Optional patient filter
+   *  scopes to one patient's uploads. Used by the Imaging tab to render
+   *  historical uploads after the in-memory session list is gone. */
+  async listUploads(opts?: { patientHash?: string; limit?: number }): Promise<{
+    fileId: string; name: string; mime: string; sizeBytes: number;
+    createdAt: string; patientHash: string;
+    dicomStatus: string; dicomStudyId: string;
+    memoryStatus: string; memorySummary: string;
+    quickScanStatus: string; quickScanSummary: string;
+  }[]> {
+    interface Raw {
+      file_id: string; name: string; mime: string; size_bytes: number;
+      created_at: string; patient_hash: string;
+      dicom_status: string; dicom_study_id: string;
+      memory_status: string; memory_summary: string;
+      quick_scan_status: string; quick_scan_summary: string;
+    }
+    const q = new URLSearchParams();
+    if (opts?.patientHash) q.set('patient_hash', opts.patientHash);
+    if (opts?.limit)       q.set('limit',        String(opts.limit));
+    const qs = q.toString();
+    const raw = await this.fetch<Raw[]>(
+      `/api/v1/files/uploads${qs ? `?${qs}` : ''}`,
+    );
+    return raw.map((r) => ({
+      fileId:            r.file_id,
+      name:              r.name,
+      mime:              r.mime,
+      sizeBytes:         r.size_bytes,
+      createdAt:         r.created_at,
+      patientHash:       r.patient_hash,
+      dicomStatus:       r.dicom_status,
+      dicomStudyId:      r.dicom_study_id,
+      memoryStatus:      r.memory_status,
+      memorySummary:     r.memory_summary,
+      quickScanStatus:   r.quick_scan_status,
+      quickScanSummary:  r.quick_scan_summary,
+    }));
+  }
+
+  /* ─────────────────────────── sessions ─────────────────────────── */
+
+  /** List the user's chat sessions, newest activity first. The
+   *  synthetic "Default chat" session is appended when the user has
+   *  any pre-sessions chat history (id === ''). */
+  async listSessions(includeArchived = false): Promise<ChatSessionInfo[]> {
+    interface RawRow {
+      id: string; title: string; created_at: string;
+      last_message_at: string | null; message_count: number;
+      archived: boolean; is_default?: boolean;
+    }
+    interface RawResp { sessions: RawRow[] }
+    const qs = includeArchived ? '?include_archived=true' : '';
+    const r = await this.fetch<RawResp>(`/api/v1/sessions${qs}`);
+    return r.sessions.map((s) => ({
+      id:             s.id,
+      title:          s.title,
+      createdAt:      s.created_at,
+      lastMessageAt:  s.last_message_at,
+      messageCount:   s.message_count,
+      archived:       s.archived,
+      isDefault:      !!s.is_default,
+    }));
+  }
+
+  /** Create a fresh chat session. Title defaults to "New chat" so the
+   *  sidebar has something to show until the auto-titler kicks in. */
+  async createSession(title?: string): Promise<ChatSessionInfo> {
+    interface RawRow {
+      id: string; title: string; created_at: string;
+      last_message_at: string | null; message_count: number;
+      archived: boolean; is_default?: boolean;
+    }
+    const r = await this.fetch<RawRow>('/api/v1/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ title: title ?? 'New chat' }),
+    });
+    return {
+      id: r.id, title: r.title, createdAt: r.created_at,
+      lastMessageAt: r.last_message_at, messageCount: r.message_count,
+      archived: r.archived, isDefault: !!r.is_default,
+    };
+  }
+
+  /** Rename a session. Server rejects on the synthetic Default chat. */
+  async renameSession(sessionId: string, title: string): Promise<ChatSessionInfo> {
+    interface RawRow {
+      id: string; title: string; created_at: string;
+      last_message_at: string | null; message_count: number;
+      archived: boolean; is_default?: boolean;
+    }
+    const r = await this.fetch<RawRow>(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}`,
+      { method: 'PATCH', body: JSON.stringify({ title }) },
+    );
+    return {
+      id: r.id, title: r.title, createdAt: r.created_at,
+      lastMessageAt: r.last_message_at, messageCount: r.message_count,
+      archived: r.archived, isDefault: !!r.is_default,
+    };
+  }
+
+  /** Soft-archive a session (hidden from default list, kept in event_log). */
+  async archiveSession(sessionId: string): Promise<void> {
+    await this.fetch(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  /** Pull the chat history for one session — messages newest-first as
+   *  stored, returned oldest-first so the UI can render top-down. */
+  async listSessionMessages(sessionId: string, limit = 200): Promise<ChatMessageRow[]> {
+    interface RawRow {
+      event_idx: number;
+      event_kind: string;
+      ts: number;
+      payload: { text?: string; session_id?: string; attachments?: string[] };
+    }
+    interface RawResp { messages?: RawRow[]; events?: RawRow[] }
+    // The backend's /agent/messages endpoint returns history filtered
+    // by session_id. We re-shape into the role-oriented form the chat
+    // pane expects.
+    const r = await this.fetch<RawResp>(
+      `/api/v1/agent/messages?session_id=${encodeURIComponent(sessionId)}&limit=${limit}`,
+    );
+    const rows = r.messages ?? r.events ?? [];
+    return rows.map((row) => ({
+      eventIdx: row.event_idx,
+      role: row.event_kind === 'user_message' ? 'user'
+          : row.event_kind === 'assistant_response' ? 'agent'
+          : 'system',
+      text: String(row.payload?.text ?? ''),
+      ts: row.ts,
+      attachments: Array.isArray(row.payload?.attachments) ? row.payload!.attachments! : [],
+    }));
+  }
+
+  /**
+   * Open the bundled DICOM viewer for the given study.
+   *
+   * Why this isn't ``window.open`` to the system browser anymore:
+   *
+   *   The system browser has NO access to the JWT (which lives in
+   *   sessionStorage of the Tauri webview). The viewer's fetches to
+   *   /api/v1/dicom/* therefore 401 — the page sits at "Loading…"
+   *   forever. We saw this in the field 2026-06-14.
+   *
+   *   We now spawn a new Tauri ``WebviewWindow`` and pass the JWT in
+   *   the URL query (``&token=…``). The viewer's static HTML already
+   *   reads ``params.get('token')`` so no server-side change is
+   *   needed. Token-in-URL is acceptable here because:
+   *     * the URL never leaves the local machine (loopback only),
+   *     * the JWT TTL is ~1h, and
+   *     * the only consumer is our own bundled HTML page.
+   *
+   * Outside Tauri (``pnpm dev`` in a regular browser tab) we fall
+   * back to ``window.open`` so dev mode still works.
+   */
+  async openDicomViewer(studyId: string): Promise<void> {
+    const token = this.token ?? '';
+    const url = `${baseUrl}/dicom-viewer/?studyId=${encodeURIComponent(studyId)}` +
+      (token ? `&token=${encodeURIComponent(token)}` : '');
+
+    // Try the Tauri path first — gives us a real desktop window with
+    // a chrome titlebar instead of a system-browser tab.
+    try {
+      const mod = await import('@tauri-apps/api/webviewWindow');
+      const WebviewWindow = (mod as { WebviewWindow?: typeof import('@tauri-apps/api/webviewWindow').WebviewWindow }).WebviewWindow;
+      if (WebviewWindow) {
+        // Window label must match the capability allowlist (``dicom-*``).
+        // Append the first 8 chars of the study id so opening two
+        // studies side-by-side produces two distinct windows instead
+        // of focus-stealing into one.
+        const label = `dicom-${studyId.slice(0, 8)}`;
+        const existing = await (WebviewWindow as unknown as {
+          getByLabel: (l: string) => Promise<unknown | null>
+        }).getByLabel(label).catch(() => null);
+        if (existing) {
+          // Already open — just focus it.
+          try {
+            await (existing as { setFocus: () => Promise<void> }).setFocus();
+          } catch { /* best-effort focus */ }
+          return;
+        }
+        // Build a new window. The chrome title carries the study id
+        // short-hash so a power-user can tell which study they're
+        // looking at from Mission Control.
+        new WebviewWindow(label, {
+          url,
+          title: `DICOM viewer · ${studyId.slice(0, 8)}`,
+          width:  1280,
+          height:  900,
+          minWidth:  900,
+          minHeight: 600,
+          resizable: true,
+        });
+        return;
+      }
+    } catch {
+      /* Tauri import failed — fall through to window.open */
+    }
+    // pnpm dev / browser fallback. Token still goes in the URL so
+    // the viewer page can authenticate against the dev FastAPI on
+    // 8001. In a stock browser the URL appears in history; acceptable
+    // for dev.
+    window.open(url, '_blank', 'noopener');
+  }
+
+  /**
+   * Manual retry of the Tier-A Quick scan for an existing study.
+   *
+   * Calls ``POST /api/v1/dicom/studies/{study_id}/quick-scan`` which:
+   *   1. Marks the matching ``uploads.quick_scan_status='pending'``.
+   *   2. Re-runs Gemini Flash triage in a background task.
+   *   3. Writes back ``ok`` + summary, or ``error`` + traceback.
+   *
+   * Returns immediately after enqueueing. The caller is responsible
+   * for polling ``getPrerenderProgress(fileId)`` to surface the
+   * in-progress / completion states in the UploadJobRow.
+   */
+  async triggerQuickScan(studyId: string): Promise<{ status: string; study_id: string }> {
+    return this.fetch(
+      `/api/v1/dicom/studies/${encodeURIComponent(studyId)}/quick-scan`,
+      { method: 'POST' },
+    );
   }
 
   async listPatients() {
@@ -859,6 +1114,23 @@ class _ApiClient {
     return r === 'restarted';
   }
 
+  /**
+   * Pull the sidecar's structured diagnostics — ring buffer of recent
+   * stdout/stderr lines + alive/exit status + the on-disk log path.
+   *
+   * Used by LoginView when ``/health`` is unreachable: instead of just
+   * showing "Cannot reach server" we render the last ~30 lines of
+   * actual server output so the user can see WHY (PyInstaller import
+   * error, port collision, missing key, Alembic exception, etc.).
+   *
+   * Returns ``null`` when not running under Tauri (the IPC isn't
+   * registered) — callers should fall back to "see the logs" copy.
+   */
+  async getSidecarDiagnostics(): Promise<SidecarDiagnostics | null> {
+    const r = await tauriInvoke<SidecarDiagnostics>('get_sidecar_diagnostics');
+    return r ?? null;
+  }
+
   /* ────────────────────────── chat (SSE) ────────────────────────── */
 
   /**
@@ -871,11 +1143,15 @@ class _ApiClient {
     text: string,
     sessionId: string,
     patientHash: string | null,
+    attachments: string[] = [],
   ): AsyncIterable<ChatStreamChunk> {
     const r = await fetch(`${baseUrl}/api/v1/agent/chat`, {
       method: 'POST',
       headers: this.headers({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ text, session_id: sessionId, patient_hash: patientHash }),
+      body: JSON.stringify({
+        text, session_id: sessionId, patient_hash: patientHash,
+        attachments,
+      }),
     });
     if (!r.ok || !r.body) {
       throw new ApiError(r.status, await r.text().catch(() => r.statusText),
@@ -934,6 +1210,115 @@ export class ApiError extends Error {
   constructor(public status: number, body: string, public path: string) {
     super(`API ${status} on ${path}: ${body}`);
   }
+}
+
+/** Shape returned by the Tauri `get_sidecar_diagnostics` IPC. Mirrors
+ *  the JSON built in `src-tauri/src/lib.rs::SidecarDiag::snapshot`. */
+export interface SidecarDiagLine {
+  /** Unix-seconds at capture time. */
+  ts: number;
+  /** One of "stdout", "stderr", "sys" — sys is our own annotation. */
+  stream: 'stdout' | 'stderr' | 'sys';
+  text: string;
+}
+
+/** One row in the sessions sidebar. ``id`` is empty for the synthetic
+ *  Default chat (which wraps pre-session-feature chat history); the
+ *  UI hides rename / archive on that one. */
+export interface ChatSessionInfo {
+  id: string;
+  title: string;
+  createdAt: string;
+  lastMessageAt: string | null;
+  messageCount: number;
+  archived: boolean;
+  isDefault: boolean;
+}
+
+/** One persisted chat row as returned by ``listSessionMessages``.
+ *  Includes attachments so the UI can re-render the pasted-file chips
+ *  when the medic reopens an old session. */
+export interface ChatMessageRow {
+  eventIdx: number;
+  role: 'user' | 'agent' | 'system';
+  text: string;
+  ts: number;
+  attachments: string[];
+}
+
+/**
+ * Live progress snapshot for an in-flight Quick scan. Returned by the
+ * server's ``/api/v1/files/{fileId}/prerender-progress`` endpoint
+ * under ``quickScanProgress`` while the scan is running, so the
+ * desktop's Imaging card can stream "Triaging 15/75 grids · lung
+ * window" + the recent findings tail instead of the static "Quick
+ * scan: running…" placeholder.
+ *
+ * Shape mirrors the server side's ``_quick_scan_progress`` dict —
+ * see ``packages/server/nexus_server/quick_scan.py::_set_quick_scan_progress``.
+ */
+export interface QuickScanProgress {
+  /** Coarse phase. ``rendering`` → still building 4×4 PNG grids;
+   *  ``triaging`` → grids built, Gemini Flash calls in flight;
+   *  ``complete`` → both done (uploads.quick_scan_status will be ok/error);
+   *  ``error`` → study load / render aborted (last_error has detail). */
+  stage: 'rendering' | 'triaging' | 'complete' | 'error';
+  /** Unix seconds when the scan kicked off. */
+  started_at: number;
+  /** Wall-clock since started_at; the server updates this on every push. */
+  elapsed_s: number;
+  /** Final expected grid count (n_presets × n_per_preset). 0 until the
+   *  worker reaches Stage 0. */
+  total_grids: number;
+  /** Grids rendered to PNG so far. Catches up to total_grids before
+   *  ``triaged_grids`` starts moving. */
+  rendered_grids: number;
+  /** Gemini Flash returns processed. The most user-facing counter. */
+  triaged_grids: number;
+  /** Cumulative API-error count over all grids. UI uses this to
+   *  decide whether to colour the running progress red. */
+  errors: number;
+  /** Window presets the scanner picked for this study, in order
+   *  (e.g. ``['lung','mediastinum','bone']`` for chest CT). */
+  presets: string[];
+  /** Window currently being scanned, or '' between presets. */
+  current_preset: string;
+  /** Modality / body part / volume size — copied from the study at
+   *  scan start so the UI can render "CT WHOLEBODY · 482 slices". */
+  modality?: string;
+  body_part?: string;
+  scan_count?: number;
+  total_slices?: number;
+  /** Bounded ring of non-clean grid results (~last 8). Each entry is
+   *  a flat record the UI renders as one bullet. */
+  recent: Array<{
+    slice_start: number;
+    slice_end:   number;
+    window:      string;
+    verdict:     'suspicious' | 'unsure' | 'error' | string;
+    finding:     string;
+    urgency:     string;
+    error:       string;
+  }>;
+  /** Populated on terminal failure paths (study not loadable, etc.). */
+  last_error?: string;
+  /** Final summary_counts dict; only present after stage === 'complete'. */
+  summary_counts?: Record<string, number>;
+}
+
+export interface SidecarDiagnostics {
+  /** PID of the most-recently-tracked sidecar child; null before first spawn. */
+  pid: number | null;
+  /** True between spawn() and the matching Terminated event. */
+  alive: boolean;
+  /** Set when the sidecar died; null while still running. */
+  last_exit_code: number | null;
+  /** Unix seconds at the last spawn() (0 if never spawned). */
+  started_at: number;
+  /** Absolute path of the on-disk sidecar log (~/Library/Logs/Nexus/sidecar.log). */
+  log_path: string;
+  /** Ring buffer; newest line last. */
+  lines: SidecarDiagLine[];
 }
 
 export const api = new _ApiClient();

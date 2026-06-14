@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "nexus-server"
 version = "0.1.0"
 description = "Nexus FastAPI server: multi-tenant HTTP frontend for the Nexus DigitalTwin"
-readme = "README.md"
+# Per-package READMEs were consolidated into the root README.md.
 requires-python = ">=3.10"
 authors = [
     {name = "Nexus Team", email = "team@nexus.ai"}
@@ -27,6 +27,12 @@ dependencies = [
     # missing) but a hard dep here so a fresh `uv sync` Just Works for
     # the typical product flow where users attach papers / PDFs.
     "pypdf>=4.0",
+    # U3.4 — Alembic-based schema migrations. We do NOT use SQLAlchemy
+    # models; migrations are hand-rolled raw SQL via op.execute(). Only
+    # the migration runner + version tracking come from Alembic. See
+    # nexus_server/migrations/ for the env.py + versions/.
+    "alembic>=1.13",
+    "sqlalchemy>=2.0",   # alembic hard-deps on this; we only use its Engine
     # Required by FastAPI to parse multipart/form-data on the
     # /api/v1/files/upload endpoint (UploadFile depends on it). Without
     # this, FastAPI raises at route-registration time, breaking every

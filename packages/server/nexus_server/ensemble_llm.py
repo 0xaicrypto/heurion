@@ -53,7 +53,7 @@ class ProviderResult:
 
 
 async def _call_gemini(
-    system_prompt: str, user_prompt: str, *, model: str = "gemini-2.0-flash-exp",
+    system_prompt: str, user_prompt: str, *, model: str = "gemini-2.5-flash",
 ) -> ProviderResult:
     """Reuse the existing nexus_core Gemini path — never duplicates
     the gateway logic, just adds a thin wrapper for ensemble use."""

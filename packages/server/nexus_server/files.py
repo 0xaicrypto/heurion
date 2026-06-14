@@ -33,8 +33,10 @@ Storage model — three layers, no in-memory state:
 
 from __future__ import annotations
 
+import json
 import logging
 import mimetypes
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -163,6 +165,12 @@ def _ensure_uploads_table() -> None:
             # belong to. Empty when the medic uploads outside any
             # patient context.
             "patient_hash TEXT NOT NULL DEFAULT ''",
+            # NOTE: memory_status / memory_summary / quick_scan_status /
+            # quick_scan_summary previously lived here as inline ALTER
+            # TABLE statements. They were moved to a proper Alembic
+            # migration (versions/0002_add_ingester_status.py) per
+            # ENGINEERING_STANDARDS.md rule 2. Don't add new columns
+            # to this list — write a new versions/NNNN_*.py instead.
         ):
             try:
                 conn.execute(f"ALTER TABLE uploads ADD COLUMN {col_def}")
@@ -392,6 +400,34 @@ class PrerenderProgressResponse(BaseModel):
     study_id:     str   # populated once the study has been persisted
     preview_dir:  str   # absolute path under the user uploads dir
     error:        str   # populated only when state == "error"
+    # U3.3 — Layer 1 ingestion result. Set after the prerender-derived
+    # study runs through dicom_ingester:
+    #   ''       — not run yet (or non-DICOM upload)
+    #   'pending'— prerender finished but ingester hasn't completed
+    #   'ok'     — graph nodes emitted; ``memory_summary`` is "N graph events"
+    #   'error'  — ingester crashed; ``memory_summary`` is "ExcType: message"
+    # The desktop's Imaging upload card reads this so an ingester
+    # failure is visible to the medic instead of silently producing
+    # an empty Memory tab.
+    memory_status:  str = ""
+    memory_summary: str = ""
+    # Tier A — Quick scan (Gemini Flash triage) result. Same status
+    # vocabulary as memory_status. quick_scan_summary is a short
+    # human string the Imaging upload row renders inline.
+    quick_scan_status:  str = ""
+    quick_scan_summary: str = ""
+    # Live progress dict for an IN-FLIGHT Quick scan. Populated by
+    # ``quick_scan._set_quick_scan_progress`` after each grid render
+    # and after each Gemini Flash return. Schema (see
+    # ``nexus_server/quick_scan.py:_set_quick_scan_progress``):
+    #   { stage, current_preset, presets, total_grids, rendered_grids,
+    #     triaged_grids, errors, recent: [...], elapsed_s, ... }
+    # ``None`` when no scan has run for this file's study (e.g. before
+    # the prerender finishes, or 1h+ after a completed scan when the
+    # progress dict has TTL-pruned). The desktop's UploadJobRow shows
+    # the live block under "Quick scan: running…" while
+    # quick_scan_status == 'pending'.
+    quick_scan_progress: Optional[dict] = None
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -814,6 +850,24 @@ def _run_dicom_prerender_async(
         from nexus_server.dicom import (
             prerender_archive_for_upload, _set_prerender_progress,
         )
+        # If the medic bound this upload to a patient at upload time
+        # (force_patient_hash), the uploads row already has that hash —
+        # forward it into prerender so the dicom_studies INSERT uses it
+        # directly. Eliminates the race window where the sidebar's
+        # /api/v1/dicom/patients poll could observe a DICOM-PatientID-
+        # derived hash between the INSERT and the post-ingest rebind.
+        forced_hash = ""
+        if force_patient_hash:
+            try:
+                with get_db_connection() as _conn:
+                    _row = _conn.execute(
+                        "SELECT patient_hash FROM uploads WHERE file_id = ?",
+                        (file_id,),
+                    ).fetchone()
+                    if _row and _row[0]:
+                        forced_hash = str(_row[0])
+            except Exception:  # noqa: BLE001
+                pass
         prerender = prerender_archive_for_upload(
             user_id=user_id,
             upload_file_id=file_id,
@@ -821,6 +875,7 @@ def _run_dicom_prerender_async(
             upload_mime=mime,
             upload_size=size_bytes,
             disk_path=disk_path,
+            patient_hash_override=forced_hash,
         )
         new_status = prerender.get("status", "") or ""
         new_study_id = prerender.get("study_id", "") or ""
@@ -843,6 +898,102 @@ def _run_dicom_prerender_async(
         # files endpoint return non-DICOM + DICOM uploads together
         # under one patient bucket (the medic's mental model is
         # "this patient's files," not "this study's PNGs").
+        # Best-effort: feed the parsed study into the DicomIngester so
+        # Layer 1 graph nodes (patient + study + key_image + …) appear
+        # in clinical_graph_nodes. Without this, Memory tab stays at 0
+        # and yield_t3_llm has no PATIENT CONTEXT to ground in.
+        #
+        # Failure mode handling: don't silently swallow. Persist the
+        # error string onto the upload row so the desktop's progress
+        # poll surfaces it ("Memory failed: <reason>") instead of the
+        # Imaging mode card showing "Imported" while Memory stays at 0.
+        # Helper for incremental status writes. We commit AFTER EACH
+        # phase change instead of one big UPDATE at the end so the
+        # desktop's 2-second poll sees:
+        #   memory_status='pending'    (ingester running, ~10s)
+        #   memory_status='ok'         (graph nodes emitted)
+        #   quick_scan_status='pending'(Gemini calls running, ~30s)
+        #   quick_scan_status='ok'/'error' + summary
+        #
+        # Without these intermediate commits the row sat at empty
+        # strings for the full ~45-second pipeline and the UploadJobRow
+        # rendered nothing under the "Imported" badge — medic just
+        # saw a quiet card and assumed nothing was happening.
+        def _bump(
+            *, m_status=None, m_summary=None,
+            qs_status=None, qs_summary=None,
+        ):
+            sets, args = [], []
+            if m_status is not None:
+                sets.append("memory_status = ?");      args.append(m_status)
+            if m_summary is not None:
+                sets.append("memory_summary = ?");     args.append(m_summary)
+            if qs_status is not None:
+                sets.append("quick_scan_status = ?");  args.append(qs_status)
+            if qs_summary is not None:
+                sets.append("quick_scan_summary = ?"); args.append(qs_summary)
+            if not sets:
+                return
+            args.append(file_id)
+            try:
+                with get_db_connection() as conn:
+                    conn.execute(
+                        f"UPDATE uploads SET {', '.join(sets)} WHERE file_id = ?",
+                        args,
+                    )
+                    conn.commit()
+            except Exception:  # noqa: BLE001
+                pass
+
+        memory_status = "pending"
+        memory_summary = ""
+        if new_status == "rendered" and new_study_id:
+            # Mark pending IMMEDIATELY so the next desktop poll surfaces
+            # "Memory: ingesting…" — without this the row showed only
+            # "Imported" for 10+ seconds while the ingester worked.
+            _bump(m_status="pending", m_summary="")
+            try:
+                summary = _run_dicom_ingester_safe(
+                    user_id=user_id,
+                    study_id=new_study_id,
+                    file_id=file_id,
+                    force_patient_hash=force_patient_hash,
+                )
+                memory_status  = "ok"
+                memory_summary = summary
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("dicom_ingester failed (%s)", exc)
+                memory_status  = "error"
+                memory_summary = f"{type(exc).__name__}: {exc}"[:480]
+            _bump(m_status=memory_status, m_summary=memory_summary)
+
+        # Tier A — automatic Quick scan after ingestion. Reuses the
+        # existing Gemini Flash worker; on success the worker emits an
+        # assistant_response event with metadata.kind="quick_scan_report"
+        # AND we also write finding nodes here so Memory · L1 · Findings
+        # populates. Result string lands on the uploads row for the
+        # progress endpoint to surface.
+        quick_scan_status = ""
+        quick_scan_summary = ""
+        if new_status == "rendered" and new_study_id and memory_status == "ok":
+            quick_scan_status = "pending"
+            # Same trick — commit pending BEFORE the long Gemini sweep
+            # so the desktop's poll sees the in-progress state +
+            # streams quick_scan_progress under the "Quick scan:
+            # running…" line.
+            _bump(qs_status="pending", qs_summary="")
+            try:
+                qs_summary = _run_quick_scan_after_ingest(
+                    user_id=user_id, study_id=new_study_id,
+                )
+                quick_scan_status  = "ok"
+                quick_scan_summary = qs_summary
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("quick_scan failed (%s)", exc)
+                quick_scan_status  = "error"
+                quick_scan_summary = f"{type(exc).__name__}: {exc}"[:480]
+            _bump(qs_status=quick_scan_status, qs_summary=quick_scan_summary)
+
         new_patient_hash = ""
         if new_status == "rendered" and new_study_id and not force_patient_hash:
             # Only derive patient_hash from the DICOM PatientID tag
@@ -1040,10 +1191,55 @@ async def prerender_progress(
     """
     from nexus_server.dicom import get_prerender_progress
     p = get_prerender_progress(file_id)
+
+    # Tack on the ingester result (Layer 1 graph status) from the
+    # uploads row. It's set by _run_dicom_prerender_async AFTER
+    # prerender finishes so the desktop's upload card can render
+    # "Imported · Memory: 6 graph events" or "Memory failed: …".
+    memory_status = ""
+    memory_summary = ""
+    quick_scan_status = ""
+    quick_scan_summary = ""
+    upload_study_id = ""
+    try:
+        with get_db_connection() as conn:
+            row = conn.execute(
+                "SELECT memory_status, memory_summary, "
+                "quick_scan_status, quick_scan_summary, dicom_study_id "
+                "FROM uploads "
+                "WHERE user_id = ? AND file_id = ?",
+                (current_user, file_id),
+            ).fetchone()
+            if row:
+                memory_status      = str(row[0] or "")
+                memory_summary     = str(row[1] or "")
+                quick_scan_status  = str(row[2] or "")
+                quick_scan_summary = str(row[3] or "")
+                upload_study_id    = str(row[4] or "")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Live progress for an in-flight Quick scan. Keyed by study_id —
+    # whichever study this file is rendered into. The desktop polls
+    # this endpoint every 2 s while quick_scan_status == 'pending', so
+    # the medic sees the running tally + recent findings stream.
+    qs_progress: Optional[dict] = None
+    if upload_study_id:
+        try:
+            from nexus_server.quick_scan import get_quick_scan_progress
+            qs_progress = get_quick_scan_progress(upload_study_id)
+        except Exception:  # noqa: BLE001
+            qs_progress = None
+
     if p is None:
         return PrerenderProgressResponse(
             state="unknown", stage="", current=0, total=0,
-            percent=0.0, study_id="", preview_dir="", error="",
+            percent=0.0,
+            study_id=upload_study_id, preview_dir="", error="",
+            memory_status=memory_status, memory_summary=memory_summary,
+            quick_scan_status=quick_scan_status,
+            quick_scan_summary=quick_scan_summary,
+            quick_scan_progress=qs_progress,
         )
     total = max(0, int(p.get("total") or 0))
     current = max(0, int(p.get("current") or 0))
@@ -1056,10 +1252,82 @@ async def prerender_progress(
         current=current,
         total=total,
         percent=round(pct, 1),
-        study_id=str(p.get("study_id") or ""),
+        study_id=str(p.get("study_id") or upload_study_id),
         preview_dir=str(p.get("preview_dir") or ""),
         error=str(p.get("error") or ""),
+        memory_status=memory_status,
+        memory_summary=memory_summary,
+        quick_scan_status=quick_scan_status,
+        quick_scan_summary=quick_scan_summary,
+        quick_scan_progress=qs_progress,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Upload history — list endpoint for the Imaging tab
+# ─────────────────────────────────────────────────────────────────────
+
+
+class UploadHistoryRow(BaseModel):
+    file_id:            str
+    name:               str
+    mime:               str
+    size_bytes:         int
+    created_at:         str
+    patient_hash:       str
+    dicom_status:       str
+    dicom_study_id:     str
+    memory_status:      str
+    memory_summary:     str
+    quick_scan_status:  str
+    quick_scan_summary: str
+
+
+@router.get("/uploads", response_model=list[UploadHistoryRow])
+async def list_uploads(
+    current_user: str = Depends(get_current_user),
+    limit: int = 100,
+    patient_hash: str = "",
+) -> list[UploadHistoryRow]:
+    """List the user's uploads, newest first. Used by the Imaging tab to
+    render historical uploads (the in-memory job list only survives
+    the current session). Optional ``patient_hash`` filter scopes to
+    one patient's uploads."""
+    _ensure_uploads_table()
+    rows: list[UploadHistoryRow] = []
+    where = "user_id = ?"
+    params: list = [current_user]
+    if patient_hash:
+        where += " AND patient_hash = ?"
+        params.append(patient_hash)
+    try:
+        with get_db_connection() as conn:
+            for r in conn.execute(
+                f"SELECT file_id, name, mime, size_bytes, created_at, "
+                f"patient_hash, dicom_status, dicom_study_id, "
+                f"memory_status, memory_summary, "
+                f"quick_scan_status, quick_scan_summary "
+                f"FROM uploads WHERE {where} "
+                f"ORDER BY created_at DESC LIMIT ?",
+                tuple(params) + (max(1, min(500, limit)),),
+            ).fetchall():
+                rows.append(UploadHistoryRow(
+                    file_id=str(r[0] or ""),
+                    name=str(r[1] or ""),
+                    mime=str(r[2] or ""),
+                    size_bytes=int(r[3] or 0),
+                    created_at=str(r[4] or ""),
+                    patient_hash=str(r[5] or ""),
+                    dicom_status=str(r[6] or ""),
+                    dicom_study_id=str(r[7] or ""),
+                    memory_status=str(r[8] or ""),
+                    memory_summary=str(r[9] or ""),
+                    quick_scan_status=str(r[10] or ""),
+                    quick_scan_summary=str(r[11] or ""),
+                ))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("list_uploads failed: %s", exc)
+    return rows
 
 
 async def _record_upload_in_curated_memory(
@@ -1610,3 +1878,392 @@ def list_recent_files_for_prompt(
             "has_text":   bool(text),
         })
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────
+# DICOM ingester bridge — runs after prerender to populate Layer 1 graph
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _run_dicom_ingester_safe(
+    *, user_id: str, study_id: str, file_id: str = "",
+    force_patient_hash: bool = False,
+) -> str:
+    """Load the freshly-prerendered study from disk + feed it to the
+    DicomIngester. Wraps the §5.1 pipeline so post-upload memorization
+    happens automatically (Layer 1 graph nodes — patient/study/series/
+    key_image — appear in clinical_graph_nodes).
+
+    ``force_patient_hash``: when true, the upload was bound to an
+    EXISTING patient by the medic. We honor that by passing the bound
+    patient_hash to the ingester instead of the DICOM-derived one.
+
+    Returns a short human-readable summary string for the upload row's
+    ``memory_summary`` column (rendered by the desktop's Imaging
+    upload card). Raises on any failure — the caller wraps and
+    persists the exception text.
+
+    Idempotent: the underlying _h_dicom_uploaded handler dedupes via
+    (user_id, study_uid, sha256).
+    """
+    from nexus_server.dicom import load_study
+    from nexus_server.event_sourcing import Store, init_event_sourcing_schema
+    from nexus_server.memorization.dicom_ingester import (
+        DicomIngester, StudyInput, KeySliceInput,
+    )
+
+    parsed = load_study(user_id, study_id)
+    if parsed is None:
+        raise RuntimeError(f"load_study returned None for study_id={study_id[:8]}")
+
+    # Honor the override binding.
+    patient_hash = parsed.patient_hash or ""
+    if force_patient_hash:
+        # The synchronous upload-time INSERT wrote the override into
+        # uploads.patient_hash. Reuse the same value here so the graph
+        # nodes are tagged with the chosen patient.
+        with get_db_connection() as conn:
+            row = conn.execute(
+                "SELECT patient_hash FROM uploads "
+                "WHERE user_id = ? AND dicom_study_id = ? LIMIT 1",
+                (user_id, study_id),
+            ).fetchone()
+            if row and row[0]:
+                patient_hash = row[0]
+
+    if not patient_hash:
+        return "skipped — no patient binding"
+
+    # Compose a StudyInput. We don't have rendered PNG bytes handy
+    # here without re-reading the prerender cache; pass an empty
+    # key_slices list. The ingester still emits the study + series +
+    # patient nodes which is the part Memory mode reads. Key-image
+    # nodes can be backfilled by a later pass.
+    primary_series = parsed.series[0] if parsed.series else None
+    study_input = StudyInput(
+        study_uid=parsed.study_instance_uid or study_id,
+        series_uid=(primary_series.series_instance_uid if primary_series else ""),
+        modality=parsed.modality or "",
+        body_part=(primary_series.body_part if primary_series else None),
+        study_date=parsed.study_date or "",
+        # DicomSeries has `.instances: list[DicomInstance]` + a
+        # `.slice_count` @property — there is no `instance_count`
+        # attribute. (Caught at runtime by my own ingester crash; the
+        # error surfaced cleanly in the Imaging upload row, exactly as
+        # the new failure-surfacing path intended.)
+        frame_count=sum(len(s.instances) for s in parsed.series),
+        # DicomStudy is the in-memory parsed object — it has no
+        # `extract_dir`. That lives on the dicom_studies SQL TABLE,
+        # accessed via SELECT in load_study() callers. For the
+        # ingester StudyInput we only need a path *if* downstream
+        # MONAI routing wants to re-open the file; for U3.3 Tier A
+        # we pass empty (event_sourcing handlers ignore it).
+        dicom_file_path="",
+        dicom_sha256="",
+        file_size_bytes=0,
+        key_slices=[],
+    )
+
+    with get_db_connection() as conn:
+        init_event_sourcing_schema(conn)
+        store = Store(conn)
+        ingester = DicomIngester(store=store, conn=conn)
+        # Let exceptions PROPAGATE — the caller (the prerender task)
+        # wants the error text so it can persist it for the UI.
+        summary = ingester.ingest(
+            user_id=user_id,
+            patient_hash=patient_hash,
+            study=study_input,
+        )
+        logger.info(
+            "dicom_ingester complete: user=%s patient=%s study=%s summary=%s",
+            user_id, patient_hash[:12], study_id[:8], summary,
+        )
+        # Summary shape per dicom_ingester.ingest's return type is a
+        # dict of event counts. Render it as a one-line string for the
+        # uploads.memory_summary column.
+        if isinstance(summary, dict):
+            nodes_total = sum(int(v) for v in summary.values() if isinstance(v, int))
+            return f"{nodes_total} graph events"
+        return str(summary)[:120]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Tier A — Quick scan after DICOM ingest
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _run_quick_scan_after_ingest(*, user_id: str, study_id: str) -> str:
+    """Drive nexus_server.quick_scan's worker synchronously + return a
+    short human-readable summary for the upload row.
+
+    The Quick scan worker emits its own assistant_response event with
+    metadata.kind="quick_scan_report" into twin_event_log. We ALSO
+    convert its flagged findings into `finding` graph nodes here so
+    Memory · L1 · Findings populates (the same node type that comes
+    out of chat_ingester — keeps Encounter's PATIENT CONTEXT able to
+    reference them).
+
+    Returns "N flagged" / "no findings" / error-text.
+    """
+    from nexus_server import quick_scan
+    from nexus_server.event_sourcing import (
+        EventKind, Store, init_event_sourcing_schema,
+    )
+    from nexus_server.event_sourcing.handlers import _h_node_added
+
+    # The worker is sync-wrappable (it drives its own asyncio loop).
+    quick_scan._run_quick_scan_sync(user_id, study_id)
+
+    # After the worker returns, fetch the report from the SDK's per-user
+    # EventLog. quick_scan._emit_report wrote ``twin.event_log.append(
+    # "assistant_response", body, metadata={"kind":"quick_scan_report",
+    # "findings":[...], ...})`` — that lands as a row in the SDK's
+    # ``events`` table (schema: nexus_core/memory/event_log.py — columns
+    # ``idx, timestamp, event_type, content, metadata, agent_id,
+    # session_id``).
+    #
+    # Bug history (2026-06-14): this used to SELECT FROM twin_event_log
+    # with columns ``kind`` and ``payload``. Those names belong to the
+    # MAIN DB's canonical event store (event_sourcing.schema.py), NOT
+    # the SDK's per-user EventLog. Running the query against the wrong
+    # table threw ``OperationalError: no such table: twin_event_log``
+    # which the parent ``process_dicom_upload_async`` caught and
+    # surfaced as "🔍 Quick scan failed: …" on the upload card — even
+    # though the actual triage worker had succeeded.
+    try:
+        from nexus_server.twin_event_log import _open_readonly
+    except Exception:
+        _open_readonly = None  # type: ignore[assignment]
+
+    report_findings: list[dict] = []
+    # Also capture summary_counts so we can distinguish "all grids
+    # came back clean" (medically interesting — image is genuinely
+    # unremarkable) from "every Gemini call errored" (likely a dead
+    # API key / network / quota issue — UI should NOT call this
+    # 'no findings').
+    summary_counts: dict = {}
+    if _open_readonly is not None:
+        evt_db = _open_readonly(user_id)
+        if evt_db is not None:
+            try:
+                rows = evt_db.execute(
+                    "SELECT metadata FROM events "
+                    "WHERE event_type = 'assistant_response' "
+                    "ORDER BY idx DESC LIMIT 20"
+                ).fetchall()
+                for (raw,) in rows:
+                    try:
+                        meta = json.loads(raw or "{}")
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(meta, dict):
+                        continue
+                    if meta.get("kind") != "quick_scan_report":
+                        continue
+                    if (meta.get("study_id") or "") != study_id:
+                        continue
+                    report_findings = list(meta.get("findings") or [])
+                    summary_counts = dict(meta.get("summary_counts") or {})
+                    break
+            except sqlite3.OperationalError as exc:
+                # Defensive: a stale SDK DB or a future schema rename
+                # shouldn't take down the Quick scan workflow. Log,
+                # continue with empty findings — the actual triage
+                # report still lives in the SDK EventLog and the chat
+                # view can render it from there.
+                logger.warning(
+                    "post-scan event lookup failed (user=%s): %s",
+                    user_id, exc,
+                )
+            finally:
+                evt_db.close()
+
+    flagged = [
+        f for f in report_findings
+        if f.get("verdict") not in ("clean", "", None)
+    ]
+
+    # Resolve the patient_hash for this study via the uploads row
+    # (which respects the upload-time force binding).
+    patient_hash = ""
+    try:
+        with get_db_connection() as conn:
+            row = conn.execute(
+                "SELECT patient_hash FROM uploads "
+                "WHERE user_id = ? AND dicom_study_id = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (user_id, study_id),
+            ).fetchone()
+            if row and row[0]:
+                patient_hash = str(row[0])
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Emit one `finding` node per flagged region, unconfirmed.
+    if flagged and patient_hash:
+        try:
+            with get_db_connection() as conn:
+                init_event_sourcing_schema(conn)
+                store = Store(conn)
+                for f in flagged:
+                    text = str(f.get("finding") or "").strip()
+                    if not text:
+                        continue
+                    urgency = str(f.get("urgency") or "").lower()
+                    confidence = 0.6 if urgency == "critical" else 0.5
+                    store.emit_and_apply(
+                        kind=EventKind.NODE_ADDED,
+                        payload={
+                            "node_type": "finding",
+                            "content": {
+                                "label": text[:200],
+                                "source": "quick_scan",
+                                "study_id": study_id,
+                                "urgency": urgency,
+                                "status": "unconfirmed",
+                            },
+                            "evidence_quote": text[:480],
+                            "confidence": confidence,
+                            "encounter_id": f"quick_scan:{study_id[:8]}",
+                            "extraction_model": "gemini-2.5-flash",
+                            "extraction_prompt_id": "quick_scan_v1",
+                            "source_kind": "study",
+                            "source_ref": study_id,
+                        },
+                        apply_fn=_h_node_added,
+                        user_id=user_id,
+                        patient_hash=patient_hash,
+                    )
+                conn.commit()
+            logger.info(
+                "quick_scan: wrote %d finding node(s) for study=%s patient=%s",
+                len(flagged), study_id[:8], patient_hash[:12],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("quick_scan finding-node emit failed: %s", exc)
+            # Don't fail the whole quick_scan because of node-emit
+            # trouble — the assistant_response event is already in
+            # the log. Surface a partial-ok message.
+            return f"{len(flagged)} flagged · graph emit failed: {exc}"
+
+    if flagged:
+        return f"{len(flagged)} flagged finding(s)"
+
+    # No flagged findings — but distinguish "everything came back clean"
+    # from "every Gemini call errored". The summary_counts dict (emitted
+    # by quick_scan._summarise_counts) has separate counters for each
+    # verdict bucket: clean / unsure / critical / moderate / incidental
+    # / error.
+    #
+    # When errors dominate we RAISE rather than return a string — that
+    # bubbles up to the caller's try/except and forces
+    # ``quick_scan_status='error'`` on the uploads row. Without that
+    # flip, the UI badge stays green ("Quick scan: ok") even though
+    # the message says "scan failed", AND the Retry button (which
+    # only renders on ``status='error'``) never appears — leaving the
+    # medic stuck on a misleading "no findings" with no way out.
+    #
+    # Typical causes: expired GEMINI_API_KEY (most common — Google
+    # rotates demo keys), Gemini quota / billing block, network outage.
+    err_n   = int(summary_counts.get("error", 0) or 0)
+    clean_n = int(summary_counts.get("clean", 0) or 0)
+    total_n = sum(int(v or 0) for v in summary_counts.values())
+    if err_n > 0 and err_n >= max(1, clean_n):
+        # Concise error string — the caller writes
+        # ``f"{type(exc).__name__}: {exc}"`` into uploads.quick_scan_summary
+        # so we trim the message to keep the upload card readable.
+        # Likely causes hint goes in the message; the diag panel /
+        # server.log have the full Gemini traceback for triage.
+        raise RuntimeError(
+            f"scan failed on {err_n}/{total_n} grids — "
+            f"check GEMINI_API_KEY in Settings · LLM (or network)."
+        )
+
+    if total_n > 0:
+        return f"no flagged findings (scan complete, {clean_n}/{total_n} clean)"
+    if report_findings:
+        return "no flagged findings (scan complete)"
+    return "no findings"
+
+
+def retry_quick_scan_for_study(user_id: str, study_id: str) -> None:
+    """Re-run Quick scan for an existing study, then write status back.
+
+    Used by the manual retry button on the desktop's Imaging card when a
+    Tier-A Quick scan failed. Behaves identically to the auto-fire path
+    inside ``process_dicom_upload_async``:
+
+      1. Find the uploads row matching ``(user_id, dicom_study_id)``.
+      2. Mark its ``quick_scan_status='pending'`` so the existing
+         prerender-progress poll on the frontend sees the in-progress
+         state (and the Retry button hides itself).
+      3. Run the full ``_run_quick_scan_after_ingest`` pipeline
+         synchronously (it itself spawns the Gemini worker via
+         ``asyncio.run`` internally).
+      4. Capture the result string + write back
+         ``quick_scan_status='ok'`` (or ``'error'`` on exception) and
+         the matching summary.
+
+    Idempotent: re-trying a row that's already ``ok`` re-runs the scan
+    and overwrites the row. Re-trying a row whose ``dicom_study_id``
+    no longer exists in uploads is a no-op (logs a warning).
+
+    Designed to be invoked from FastAPI ``BackgroundTasks`` so the
+    HTTP request returns immediately; the heavy lift happens off-band.
+    """
+    file_id: Optional[str] = None
+    try:
+        with get_db_connection() as conn:
+            row = conn.execute(
+                "SELECT file_id FROM uploads "
+                "WHERE user_id = ? AND dicom_study_id = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (user_id, study_id),
+            ).fetchone()
+            if row is None:
+                logger.warning(
+                    "retry_quick_scan: no uploads row for "
+                    "user=%s study=%s",
+                    user_id, study_id[:8],
+                )
+                return
+            file_id = str(row[0])
+            conn.execute(
+                "UPDATE uploads SET "
+                "quick_scan_status = 'pending', quick_scan_summary = '' "
+                "WHERE file_id = ?",
+                (file_id,),
+            )
+            conn.commit()
+    except sqlite3.Error as exc:
+        logger.exception(
+            "retry_quick_scan: failed to mark pending (%s)", exc,
+        )
+        return
+
+    new_status: str
+    new_summary: str
+    try:
+        new_summary = _run_quick_scan_after_ingest(
+            user_id=user_id, study_id=study_id,
+        )
+        new_status = "ok"
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("retry_quick_scan worker failed (%s)", exc)
+        new_status = "error"
+        new_summary = f"{type(exc).__name__}: {exc}"[:480]
+
+    try:
+        with get_db_connection() as conn:
+            conn.execute(
+                "UPDATE uploads SET "
+                "quick_scan_status = ?, quick_scan_summary = ? "
+                "WHERE file_id = ?",
+                (new_status, new_summary, file_id),
+            )
+            conn.commit()
+    except sqlite3.Error as exc:
+        logger.exception(
+            "retry_quick_scan: failed to write back status (%s)", exc,
+        )

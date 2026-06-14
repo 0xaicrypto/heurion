@@ -9,11 +9,11 @@
 // fast and show "Cannot reach server. Is the backend running?" so
 // the medic can restart the app.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, RunEvent, State};
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
@@ -23,6 +23,107 @@ use tauri_plugin_shell::{
 /// Holds a handle to the running sidecar so we can shut it down
 /// cleanly on app exit. None until startup has spawned it.
 struct SidecarState(Mutex<Option<CommandChild>>);
+
+/// One captured line of sidecar stdout/stderr, kept in memory so the
+/// frontend can ask for the tail at any time (including from the
+/// LoginView's "Cannot reach server" diagnostic panel — without this,
+/// a startup crash leaves the user with zero clue what went wrong).
+#[derive(Clone, serde::Serialize)]
+struct DiagLine {
+    /// Unix-seconds wall-clock at capture time.
+    ts: u64,
+    /// "stdout" | "stderr" | "sys"  (sys = synthesized events like
+    /// "spawn ok pid=...", "sidecar terminated code=...").
+    stream: &'static str,
+    text: String,
+}
+
+/// Diagnostics shared between the spawn task and the get_sidecar_diagnostics
+/// IPC. Held behind an Arc<Mutex<>> so the async drain task and the IPC
+/// can race on it without lifetime grief.
+///
+/// The struct also remembers the path of the dedicated sidecar log file —
+/// frontends surface this string in the diagnostic panel so the user can
+/// `tail -f` it from a terminal without guessing.
+#[derive(Default)]
+struct SidecarDiagInner {
+    /// Last N captured lines (FIFO; ring buffer of 400 entries).
+    buffer: VecDeque<DiagLine>,
+    /// Most-recently-spawned child pid, or None before first spawn.
+    pid: Option<u32>,
+    /// Last sidecar exit code as reported by CommandEvent::Terminated.
+    /// None means "still running" (or "never spawned"); look at `pid`
+    /// to disambiguate.
+    last_exit_code: Option<i32>,
+    /// True between spawn() and the corresponding Terminated event.
+    alive: bool,
+    /// Unix-seconds at the last spawn() — distinguishes "just rebooted"
+    /// from "been running for hours" in the diag panel.
+    started_at: u64,
+    /// Absolute path of the on-disk log file ($LOGDIR/Nexus/sidecar.log).
+    log_path: PathBuf,
+}
+
+#[derive(Clone, Default)]
+struct SidecarDiag(Arc<Mutex<SidecarDiagInner>>);
+
+impl SidecarDiag {
+    /// Max in-memory ring-buffer size. 400 lines is enough to catch a
+    /// PyInstaller startup traceback (typically 30–80 lines) plus a
+    /// minute of normal uvicorn output afterwards.
+    const RING_CAP: usize = 400;
+
+    fn push(&self, stream: &'static str, text: String) {
+        let mut g = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(), // poisoned — recover anyway
+        };
+        if g.buffer.len() == Self::RING_CAP {
+            g.buffer.pop_front();
+        }
+        let line = DiagLine { ts: unix_now_secs_u64(), stream, text };
+        // Also append to the on-disk log so users can `tail -f` it. We
+        // intentionally write through every event — a small perf cost
+        // we trade for the property "if Nexus crashed, the log is on
+        // disk up to the last line we observed".
+        if let Ok(mut f) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&g.log_path)
+        {
+            let _ = writeln!(f, "{} [{}] {}", line.ts, line.stream, line.text);
+        }
+        g.buffer.push_back(line);
+    }
+
+    fn mark_spawned(&self, pid: u32) {
+        let mut g = self.0.lock().unwrap();
+        g.pid = Some(pid);
+        g.alive = true;
+        g.last_exit_code = None;
+        g.started_at = unix_now_secs_u64();
+    }
+
+    fn mark_exited(&self, code: Option<i32>) {
+        let mut g = self.0.lock().unwrap();
+        g.alive = false;
+        g.last_exit_code = code;
+    }
+
+    fn snapshot(&self) -> serde_json::Value {
+        let g = self.0.lock().unwrap();
+        serde_json::json!({
+            "pid":            g.pid,
+            "alive":          g.alive,
+            "last_exit_code": g.last_exit_code,
+            "started_at":     g.started_at,
+            "log_path":       g.log_path.to_string_lossy(),
+            // Newest-last; UI typically renders this top-down with the
+            // newest line at the bottom (matches `tail -f` mental model).
+            "lines":          g.buffer.iter().collect::<Vec<_>>(),
+        })
+    }
+}
 
 /// Build identity baked in at compile time by `scripts/build-macos.sh`
 /// (which exports NEXUS_BUILD_ID before invoking `pnpm tauri:build`).
@@ -55,14 +156,36 @@ pub fn run() {
                 .build(),
         )
         .manage(SidecarState(Mutex::new(None)))
+        .manage::<SidecarDiag>(SidecarDiag::default())
         .invoke_handler(tauri::generate_handler![
             server_health,
             llm_env_status,
             llm_env_write,
             restart_sidecar,
+            get_sidecar_diagnostics,
         ])
         .setup(|app| {
             log::info!("Nexus desktop v{} starting", BUILD_ID);
+            // Initialise the diag state with the resolved log path
+            // BEFORE the first spawn, so push() has somewhere to write
+            // even if the very first stdout chunk arrives mid-setup.
+            let diag: State<SidecarDiag> = app.handle().state();
+            let log_path = sidecar_log_path();
+            // Best-effort: create parent dir + open the file once so
+            // subsequent appends from push() succeed silently. Any
+            // failure here just means the in-memory ring still works
+            // — the panel will still show useful info.
+            if let Some(parent) = log_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            {
+                let mut g = diag.0.lock().unwrap();
+                g.log_path = log_path.clone();
+            }
+            diag.push("sys", format!(
+                "Nexus desktop v{} starting; sidecar log at {}",
+                BUILD_ID, log_path.display(),
+            ));
             spawn_backend_sidecar(app.handle())?;
             Ok(())
         })
@@ -115,6 +238,45 @@ fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
+}
+
+/// Where we persist raw sidecar stdout/stderr for `tail -f`. We pick a
+/// path the user can predict (and that survives an app restart) so the
+/// LoginView's diagnostic panel can show it as a copy-pasteable string.
+///
+/// Conventions:
+///   macOS:   ~/Library/Logs/Nexus/sidecar.log
+///   Linux:   ~/.local/state/Nexus/sidecar.log  (XDG state dir)
+///   Windows: %APPDATA%\Nexus\logs\sidecar.log
+///
+/// Distinct from tauri-plugin-log's `nexus.log` (which holds the Tauri
+/// front-end's own log::info!/warn! entries with their prefixes). This
+/// file is the *raw* server stream, suitable for grep'ing tracebacks.
+fn sidecar_log_path() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        if let Some(home) = dirs_home() {
+            return home.join("Library").join("Logs").join("Nexus").join("sidecar.log");
+        }
+    }
+    if cfg!(target_os = "windows") {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            return PathBuf::from(appdata).join("Nexus").join("logs").join("sidecar.log");
+        }
+    }
+    if let Some(home) = dirs_home() {
+        return home.join(".local").join("state").join("Nexus").join("sidecar.log");
+    }
+    PathBuf::from("sidecar.log")
+}
+
+/// Unix-seconds (u64) — used by SidecarDiag's ring buffer entries so the
+/// frontend can format them locally as relative timestamps ("3s ago").
+fn unix_now_secs_u64() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Parse a dotenv file into a flat KEY→VALUE map. Mirrors v1's start.sh
@@ -308,9 +470,15 @@ fn unix_now_secs() -> String {
 }
 
 /// Launch the bundled nexus-server binary. Streams its stdout/stderr
-/// into the Tauri log so the medic / debugger can see backend startup.
+/// into the Tauri log AND into the SidecarDiag ring buffer + on-disk
+/// log file so the LoginView's "Cannot reach server" diagnostic panel
+/// can show the user exactly why the backend didn't come up.
 fn spawn_backend_sidecar(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("spawning nexus-server sidecar");
+
+    let diag: State<SidecarDiag> = app.state();
+    let diag_clone = diag.inner().clone();
+    diag.push("sys", "preparing sidecar spawn".to_string());
 
     // v1-parity key handling: read $RUNE_HOME/.env and inject every
     // KEY=VALUE pair into the sidecar's environment, matching what
@@ -321,23 +489,41 @@ fn spawn_backend_sidecar(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
     // unreachable" because the chat request fails before turn_started).
     let rh = rune_home();
     let env_path = rh.join(".env");
+    diag.push("sys", format!("rune_home = {}", rh.display()));
+    diag.push("sys", format!("env file  = {}", env_path.display()));
 
     // Seed (first install) or delta-merge (every launch) the user .env
     // from the bundled default. This is what makes "reinstall the .dmg
     // and the new keys / new server code flow in" work — the keys side
     // happens here; the code side happens because the .dmg ships a
     // fresh PyInstaller binary at src-tauri/binaries/nexus-server-*.
-    if let Err(e) = seed_or_merge_user_env(app, &env_path) {
-        log::warn!("env seed/merge failed: {e}");
+    match seed_or_merge_user_env(app, &env_path) {
+        Ok(n) => diag.push("sys", format!("env seed/merge ok ({n} new key(s))")),
+        Err(e) => {
+            log::warn!("env seed/merge failed: {e}");
+            diag.push("sys", format!("env seed/merge failed: {e}"));
+        }
     }
 
     let user_env = load_user_env(&env_path);
+    diag.push("sys", format!("env loaded: {} key(s)", user_env.len()));
     log::info!("rune_home: {}", rh.display());
 
-    let mut sidecar = app
-        .shell()
-        .sidecar("nexus-server")
-        .map_err(|e| format!("failed to resolve sidecar: {e}"))?
+    let mut sidecar = match app.shell().sidecar("nexus-server") {
+        Ok(c) => c,
+        Err(e) => {
+            // This is the single most useful failure mode to surface
+            // explicitly: the bundled binary path didn't resolve.
+            // Usually means the PyInstaller build never ran, or the
+            // triple in `binaries/nexus-server-<triple>` doesn't
+            // match this Mac (e.g. Apple Silicon binary on Intel).
+            let msg = format!("failed to resolve sidecar binary: {e}");
+            log::error!("{msg}");
+            diag.push("sys", msg.clone());
+            return Err(msg.into());
+        }
+    };
+    sidecar = sidecar
         .env("NEXUS_HOST", "127.0.0.1")
         .env("NEXUS_PORT", "8001")
         // CORS: the bundled webview runs from tauri://localhost (or
@@ -349,7 +535,12 @@ fn spawn_backend_sidecar(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
         .env("CORS_ALLOW_ORIGINS", "*")
         // RUNE_HOME so the sidecar's settings router knows where to
         // read/write the .env when the medic updates a key.
-        .env("RUNE_HOME", rh.to_string_lossy().to_string());
+        .env("RUNE_HOME", rh.to_string_lossy().to_string())
+        // Python: force unbuffered output so every print / traceback
+        // line reaches our drain immediately. Without this, PyInstaller
+        // can buffer up to 8 KiB and a crash that prints just one
+        // exception line leaves us with an empty diag panel.
+        .env("PYTHONUNBUFFERED", "1");
 
     for (k, v) in user_env {
         // Don't overwrite the loopback host/port we just set above.
@@ -359,10 +550,20 @@ fn spawn_backend_sidecar(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
         sidecar = sidecar.env(k, v);
     }
 
-    let (mut rx, child) = sidecar.spawn()
-        .map_err(|e| format!("failed to spawn sidecar: {e}"))?;
+    let (mut rx, child) = match sidecar.spawn() {
+        Ok(p) => p,
+        Err(e) => {
+            let msg = format!("spawn() failed: {e}");
+            log::error!("{msg}");
+            diag.push("sys", msg.clone());
+            return Err(msg.into());
+        }
+    };
 
-    log::info!("nexus-server sidecar pid={}", child.pid());
+    let pid = child.pid();
+    log::info!("nexus-server sidecar pid={}", pid);
+    diag.push("sys", format!("sidecar spawned, pid={pid}"));
+    diag.mark_spawned(pid);
 
     // Stash the child so we can kill it on exit.
     let state: State<SidecarState> = app.state();
@@ -371,23 +572,37 @@ fn spawn_backend_sidecar(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
         *guard = Some(child);
     }
 
-    // Drain stdout/stderr → app log. Critical for debugging Python
-    // startup failures (missing PyInstaller hidden import etc.) —
-    // without this, a sidecar that crashes shows zero diagnostic.
+    // Drain stdout/stderr → both app log AND the SidecarDiag ring buffer
+    // / on-disk file. The two destinations serve different audiences:
+    //   - log:: → tauri-plugin-log → ~/Library/Logs/<bundle>/nexus.log
+    //     (mixed front+back, useful for engineers tailing the tauri
+    //     side too)
+    //   - diag.push() → ~/Library/Logs/Nexus/sidecar.log (raw server
+    //     stream only, what the LoginView panel shows)
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(line) => {
-                    log::info!("[server] {}", String::from_utf8_lossy(&line));
+                    let s = String::from_utf8_lossy(&line).to_string();
+                    log::info!("[server] {s}");
+                    diag_clone.push("stdout", s);
                 }
                 CommandEvent::Stderr(line) => {
-                    log::warn!("[server] {}", String::from_utf8_lossy(&line));
+                    let s = String::from_utf8_lossy(&line).to_string();
+                    log::warn!("[server] {s}");
+                    diag_clone.push("stderr", s);
                 }
                 CommandEvent::Error(msg) => {
                     log::error!("[server] sidecar error: {msg}");
+                    diag_clone.push("sys", format!("error: {msg}"));
                 }
                 CommandEvent::Terminated(payload) => {
                     log::error!("[server] sidecar terminated: code={:?}", payload.code);
+                    diag_clone.push(
+                        "sys",
+                        format!("sidecar terminated, exit code={:?}", payload.code),
+                    );
+                    diag_clone.mark_exited(payload.code);
                 }
                 _ => {}
             }
@@ -403,6 +618,25 @@ fn spawn_backend_sidecar(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
 #[tauri::command]
 fn server_health() -> Result<String, String> {
     Ok("ok".to_string())
+}
+
+/// Structured diagnostics for the LoginView "Cannot reach server" panel.
+///
+/// Returns:
+///   {
+///     "pid":            u32 | null,         currently-tracked pid
+///     "alive":          bool,                spawned and not yet Terminated
+///     "last_exit_code": i32 | null,          set when the sidecar died
+///     "started_at":     u64,                 unix seconds at last spawn
+///     "log_path":       string,              path the user can `tail -f`
+///     "lines":          DiagLine[],          ring buffer, newest last
+///   }
+///
+/// The frontend uses this both during login (when health probe fails)
+/// and from Settings · Diagnostics (a future tab) for ad-hoc inspection.
+#[tauri::command]
+fn get_sidecar_diagnostics(diag: State<SidecarDiag>) -> serde_json::Value {
+    diag.snapshot()
 }
 
 /// Direct read of the user's .env state, bypassing the FastAPI server.
@@ -522,6 +756,10 @@ fn llm_env_write(updates: HashMap<String, String>) -> Result<serde_json::Value, 
 fn restart_sidecar(app: AppHandle) -> Result<String, String> {
     log::info!("restart_sidecar: killing current child");
     {
+        let diag: State<SidecarDiag> = app.state();
+        diag.push("sys", "restart_sidecar invoked — killing current child".to_string());
+    }
+    {
         let state: State<SidecarState> = app.state();
         // Same E0597 dance as the exit handler at the top of this
         // file: ``state.0.lock()`` returns a Result whose Err variant
@@ -540,4 +778,134 @@ fn restart_sidecar(app: AppHandle) -> Result<String, String> {
     std::thread::sleep(std::time::Duration::from_millis(400));
     spawn_backend_sidecar(&app).map_err(|e| format!("respawn failed: {e}"))?;
     Ok("restarted".to_string())
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Tests — `cargo test -p nexus-desktop-v2`
+// ──────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_log_path(suffix: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("nexus-sidecar-test-{suffix}-{}.log", unix_now_secs_u64()));
+        p
+    }
+
+    /// `SidecarDiag::push` must:
+    ///   1. Append to the in-memory ring buffer.
+    ///   2. Tag the entry with the stream marker we passed in.
+    ///   3. Write the same line to the on-disk log file.
+    /// Without (3), the LoginView diagnostic panel would show a useful
+    /// tail but `tail -f` would show nothing — defeating the point of
+    /// surfacing the path to the user.
+    #[test]
+    fn push_writes_to_buffer_and_disk() {
+        let diag = SidecarDiag::default();
+        let path = tmp_log_path("push");
+        {
+            let mut g = diag.0.lock().unwrap();
+            g.log_path = path.clone();
+        }
+
+        diag.push("stderr", "boom: ModuleNotFoundError: alembic".into());
+
+        let g = diag.0.lock().unwrap();
+        assert_eq!(g.buffer.len(), 1);
+        let line = &g.buffer[0];
+        assert_eq!(line.stream, "stderr");
+        assert!(line.text.contains("ModuleNotFoundError"));
+        drop(g);
+
+        let on_disk = fs::read_to_string(&path).expect("log file written");
+        assert!(on_disk.contains("[stderr]"));
+        assert!(on_disk.contains("ModuleNotFoundError"));
+        let _ = fs::remove_file(&path);
+    }
+
+    /// Once the ring buffer hits RING_CAP it must drop the OLDEST line,
+    /// not refuse new ones. A common failure mode for sidecar tracebacks
+    /// is "thousands of repeating retry lines" — without a bounded ring
+    /// the diag IPC would leak memory until the user quits the app.
+    #[test]
+    fn ring_buffer_rotates_at_cap() {
+        let diag = SidecarDiag::default();
+        // Don't write to disk in this test — set log_path to a path that
+        // can't be opened (parent doesn't exist + no create perm) so
+        // push() short-circuits the file write but still mutates the
+        // ring. The `if let Ok(...)` in push() makes file IO best-effort.
+        {
+            let mut g = diag.0.lock().unwrap();
+            g.log_path = PathBuf::from("/this/dir/does/not/exist/x.log");
+        }
+        for i in 0..(SidecarDiag::RING_CAP + 25) {
+            diag.push("stdout", format!("line-{i}"));
+        }
+        let g = diag.0.lock().unwrap();
+        assert_eq!(g.buffer.len(), SidecarDiag::RING_CAP,
+                   "ring buffer must cap at RING_CAP, not grow unbounded");
+        let oldest = &g.buffer[0];
+        // We pushed RING_CAP+25 lines, so the oldest remaining is line-25.
+        assert_eq!(oldest.text, "line-25");
+        let newest = g.buffer.back().unwrap();
+        assert_eq!(newest.text, format!("line-{}", SidecarDiag::RING_CAP + 24));
+    }
+
+    /// `mark_spawned` then `mark_exited` must update the structured
+    /// fields the frontend renders ("EXITED · code 1 · 3s ago"). The
+    /// diag panel reads these for the one-line status summary; if they
+    /// don't update, the user sees a stale "running" claim next to a
+    /// dead sidecar.
+    #[test]
+    fn lifecycle_marks_update_status_fields() {
+        let diag = SidecarDiag::default();
+        {
+            let mut g = diag.0.lock().unwrap();
+            g.log_path = tmp_log_path("lifecycle");
+        }
+
+        diag.mark_spawned(42);
+        {
+            let g = diag.0.lock().unwrap();
+            assert_eq!(g.pid, Some(42));
+            assert!(g.alive);
+            assert_eq!(g.last_exit_code, None);
+            assert!(g.started_at > 0);
+        }
+
+        diag.mark_exited(Some(1));
+        {
+            let g = diag.0.lock().unwrap();
+            assert!(!g.alive);
+            assert_eq!(g.last_exit_code, Some(1));
+            // pid stays — the LoginView still wants to show "pid 42 exited"
+            assert_eq!(g.pid, Some(42));
+        }
+    }
+
+    /// `snapshot()` must return all the JSON keys the TypeScript
+    /// `SidecarDiagnostics` interface expects. If anyone renames a
+    /// field, this test fires before the frontend silently breaks.
+    #[test]
+    fn snapshot_has_all_documented_keys() {
+        let diag = SidecarDiag::default();
+        diag.push("sys", "hello".into());
+
+        let v = diag.snapshot();
+        let obj = v.as_object().expect("snapshot returns an object");
+        for key in ["pid", "alive", "last_exit_code", "started_at",
+                    "log_path", "lines"] {
+            assert!(obj.contains_key(key),
+                    "snapshot is missing key '{key}' — frontend will break");
+        }
+        let lines = obj["lines"].as_array().expect("lines is an array");
+        assert_eq!(lines.len(), 1);
+        let line = lines[0].as_object().expect("each line is an object");
+        for key in ["ts", "stream", "text"] {
+            assert!(line.contains_key(key),
+                    "DiagLine is missing key '{key}'");
+        }
+    }
 }

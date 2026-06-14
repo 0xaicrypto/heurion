@@ -316,31 +316,113 @@ async def get_citation(
     """The data behind one citation chip.
 
     Used by the right-rail provenance card and the hover preview.
+
+    Two-tier resolution:
+
+      1. If ``node_provenance`` has a row for ``node_id`` (the canonical
+         path — required for finding / measurement / semantic_fact
+         nodes per Rev-2), return it verbatim.
+
+      2. Otherwise, fall back to a SYNTHESIZED provenance derived from
+         ``clinical_graph_nodes`` itself: source_kind = the node_type,
+         source_ref = the originating_event_idx, evidence_quote = a
+         best-effort short string from the node's ``content_json``.
+
+         This covers nodes that don't strictly require provenance
+         (study, patient, key_image, encounter…) but that the right-
+         rail still tries to render when the user clicks a citation
+         chip. Returning 404 here was strictly correct per the
+         contract but produced a red "Failed to load" message in the
+         Memory UI even for healthy DICOM imports — every study node
+         clicked through this 404.
+
+         The synthesized row is clearly marked (extracted_by_user =
+         "system:synthesized") so downstream consumers can tell it
+         apart from real LLM/ingester-stamped provenance.
+
+      3. Only after BOTH fail do we 404 — true "no such node".
     """
     with get_db_connection() as conn:
         conn.row_factory = sqlite3.Row
         _ensure_schema(conn)
+
+        # ── Tier 1: real provenance row.
         row = conn.execute(
             "SELECT * FROM node_provenance "
             "WHERE user_id = ? AND node_id = ? LIMIT 1",
             (current_user, node_id),
         ).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail="no provenance for node")
-        return ProvenanceOut(
-            node_id=row["node_id"],
-            source_kind=row["source_kind"],
-            source_ref=row["source_ref"],
-            source_locator=json.loads(row["source_locator_json"]),
-            evidence_quote=row["evidence_quote"],
-            extraction_model=row["extraction_model"],
-            extraction_prompt_id=row["extraction_prompt_id"],
-            confidence=row["confidence"],
-            redaction_version=row["redaction_version"],
-            extracted_at=row["extracted_at"],
-            extracted_by_user=row["extracted_by_user"],
-            superseded_by_node=row["superseded_by_node"],
-            retracted_at=row["retracted_at"],
+        if row is not None:
+            return ProvenanceOut(
+                node_id=row["node_id"],
+                source_kind=row["source_kind"],
+                source_ref=row["source_ref"],
+                source_locator=json.loads(row["source_locator_json"]),
+                evidence_quote=row["evidence_quote"],
+                extraction_model=row["extraction_model"],
+                extraction_prompt_id=row["extraction_prompt_id"],
+                confidence=row["confidence"],
+                redaction_version=row["redaction_version"],
+                extracted_at=row["extracted_at"],
+                extracted_by_user=row["extracted_by_user"],
+                superseded_by_node=row["superseded_by_node"],
+                retracted_at=row["retracted_at"],
+            )
+
+        # ── Tier 2: synthesise from the node row itself.
+        node_row = conn.execute(
+            "SELECT node_id, node_type, content_json, "
+            "       originating_event_idx, created_at "
+            "FROM clinical_graph_nodes "
+            "WHERE user_id = ? AND node_id = ? LIMIT 1",
+            (current_user, node_id),
+        ).fetchone()
+        if node_row is not None:
+            try:
+                content = json.loads(node_row["content_json"] or "{}")
+            except json.JSONDecodeError:
+                content = {}
+            # Build a one-line evidence quote from the node payload —
+            # prefer obvious user-facing fields (study_uid, body_part,
+            # name, label) in priority order; fall back to the dict
+            # repr capped at 240 chars so the UI doesn't show MB of
+            # JSON.
+            evidence_parts = []
+            for k in ("label", "name", "study_uid", "modality",
+                      "body_part", "summary", "text"):
+                v = content.get(k)
+                if v:
+                    evidence_parts.append(f"{k}={v}")
+            evidence = (
+                " · ".join(evidence_parts)
+                if evidence_parts
+                else (json.dumps(content, sort_keys=True)[:240])
+            )
+            return ProvenanceOut(
+                node_id=node_row["node_id"],
+                source_kind=node_row["node_type"] or "node",
+                source_ref=str(node_row["originating_event_idx"] or node_row["node_id"]),
+                source_locator={
+                    "kind":           "event_log",
+                    "event_idx":      node_row["originating_event_idx"],
+                    "node_type":      node_row["node_type"],
+                    "content_keys":   sorted(content.keys()),
+                },
+                evidence_quote=evidence,
+                extraction_model="(synthesized)",
+                extraction_prompt_id="(synthesized)",
+                confidence=1.0,
+                redaction_version="0",
+                extracted_at=int(node_row["created_at"] or 0),
+                extracted_by_user="system:synthesized",
+                superseded_by_node=None,
+                retracted_at=None,
+            )
+
+        # ── Tier 3: node truly doesn't exist.
+        raise HTTPException(
+            status_code=404,
+            detail="no such node",
         )
 
 

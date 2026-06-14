@@ -36,7 +36,7 @@ from nexus_server.event_sourcing.handlers import _h_snapshot_taken
 
 logger = logging.getLogger(__name__)
 
-# Path conventions per INSTALL.md + design v3 §16.3
+# Path conventions per nexus-architecture design v3 §16.3
 DEFAULT_ARCHIVE_ROOT = pathlib.Path.home() / "Documents" / "Nexus Archive"
 
 # Retention policy
@@ -74,8 +74,7 @@ def take_snapshot(
 
     # Write a temp tar.gz (zstd would be nicer but stdlib doesn't ship
     # one without `zstandard` package — use gzip as the always-available
-    # baseline; INSTALL.md mentions zstd as the target compression once
-    # we add the dep).
+    # baseline; zstd is the target compression once we add the dep).
     target = target.with_suffix(".tar.gz")
 
     with tempfile.NamedTemporaryFile(
