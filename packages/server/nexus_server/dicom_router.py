@@ -101,6 +101,7 @@ class PatientCard(BaseModel):
 @router.get("/patients", response_model=list[PatientCard])
 async def list_patients(
     current_user: str = Depends(get_current_user),
+    include: str = "active",
 ) -> list[PatientCard]:
     """#174/#190 — aggregate the user's patients for the left-rail
     navigator. UNIONs two sources:
@@ -127,6 +128,10 @@ async def list_patients(
     except Exception as _init_e:  # noqa: BLE001
         logger.warning("[diag] init_patients_table failed: %s", _init_e)
 
+    # F-merge-patients-db — `dicom_studies` stays in dicom_index.db,
+    # `patients` now lives in the SHARED rune_server.db. We can't JOIN
+    # across SQLite files, so we open both connections and merge in
+    # Python (same pattern as patients_router.list_patients_full).
     conn = _index_db()
     try:
         # #190 — simplified query. Pulls all study rows for this user
@@ -152,29 +157,46 @@ async def list_patients(
             """,
             (current_user,),
         ).fetchall()
-        try:
-            manual_rows = conn.execute(
-                """
+    finally:
+        conn.close()
+
+    # F-archive-frontend — three modes via ?include= query:
+    #   active   (default) → archived_at IS NULL       (the picker case)
+    #   archived           → archived_at IS NOT NULL   (Settings "restore" view)
+    #   all                → no filter                 (admin/debug)
+    if include == "archived":
+        archive_clause = "AND archived_at IS NOT NULL"
+    elif include == "all":
+        archive_clause = ""
+    else:
+        archive_clause = "AND archived_at IS NULL"
+    try:
+        from nexus_server.database import get_db_connection
+        with get_db_connection() as _shared_conn:
+            manual_rows = _shared_conn.execute(
+                f"""
                 SELECT
                     patient_hash,
                     age_group,
                     sex,
                     created_at,
                     COALESCE(initials, ''),
-                    COALESCE(mrn, '')
+                    COALESCE(mrn, ''),
+                    archived_at
                 FROM patients
-                WHERE user_id = ?
+                WHERE user_id = ? {archive_clause}
                 """,
                 (current_user,),
             ).fetchall()
-        except Exception as _patients_err:  # noqa: BLE001
-            # patients table doesn't exist yet (fresh DB, schema
-            # init hasn't run) — fall back to dicom-only behaviour.
-            logger.warning("[diag] patients query failed: %s",
-                           _patients_err)
-            manual_rows = []
-    finally:
-        conn.close()
+    except Exception as _patients_err:  # noqa: BLE001
+        # patients table doesn't exist yet (fresh DB, schema
+        # init hasn't run) — fall back to dicom-only behaviour.
+        # Same path used when the archived_at column is missing
+        # on a very old DB (init_patients_table adds it but the
+        # ALTER may not have run yet on this connection).
+        logger.warning("[diag] patients query failed: %s",
+                       _patients_err)
+        manual_rows = []
 
     # Aggregate dicom rows per patient_hash in Python. Since
     # raw_dicom is ordered DESC by created_at, the first row we see
@@ -214,13 +236,47 @@ async def list_patients(
         for d in dicom_agg.values()
     ]
 
+    # F-archive-frontend — build a set of archived hashes so DICOM-
+    # only patients (where the only signal that they're "archived"
+    # is the patients table row) get filtered consistently.
+    # ``patients.archived_at`` is on the SHARED DB (rune_server.db),
+    # not dicom_index.db, so we open get_db_connection separately.
+    archived_hashes: set[str] = set()
+    if include == "active" or include == "archived":
+        try:
+            from nexus_server.database import get_db_connection
+            with get_db_connection() as _shared_conn:
+                if include == "archived":
+                    rows = _shared_conn.execute(
+                        "SELECT patient_hash FROM patients "
+                        "WHERE user_id = ? AND archived_at IS NOT NULL",
+                        (current_user,),
+                    ).fetchall()
+                else:
+                    rows = _shared_conn.execute(
+                        "SELECT patient_hash FROM patients "
+                        "WHERE user_id = ? AND archived_at IS NOT NULL",
+                        (current_user,),
+                    ).fetchall()
+                archived_hashes = {r[0] for r in rows}
+        except Exception:  # noqa: BLE001
+            archived_hashes = set()
+
     # Merge by patient_hash. DICOM data wins for study/modality fields;
     # manual data fills in age_group / sex if DICOM didn't have them
     # (e.g. anonymized PACS export).
     by_hash: dict[str, dict] = {}
     for r in dicom_rows:
-        by_hash[r[0]] = {
-            "patient_hash":      r[0],
+        ph = r[0]
+        # Active mode: skip DICOM patient if hash is archived.
+        # Archived mode: only INCLUDE DICOM patient if hash IS archived.
+        # All mode: pass through.
+        if include == "active" and ph in archived_hashes:
+            continue
+        if include == "archived" and ph not in archived_hashes:
+            continue
+        by_hash[ph] = {
+            "patient_hash":      ph,
             "patient_age_group": r[1] or "",
             "patient_sex":       r[2] or "",
             "study_count":       int(r[3] or 0),
@@ -341,8 +397,13 @@ async def debug_all_patients() -> dict:
                 })
         except Exception as e:  # noqa: BLE001
             out["dicom_studies_error"] = f"{type(e).__name__}: {e}"
-        try:
-            for r in conn.execute(
+    finally:
+        conn.close()
+    # F-merge-patients-db — `patients` moved to the shared DB.
+    try:
+        from nexus_server.database import get_db_connection
+        with get_db_connection() as _shared_conn:
+            for r in _shared_conn.execute(
                 """
                 SELECT user_id, patient_hash, initials, mrn, age_group, sex,
                        created_at
@@ -358,10 +419,8 @@ async def debug_all_patients() -> dict:
                     "sex":          r[5],
                     "created_at":   r[6],
                 })
-        except Exception as e:  # noqa: BLE001
-            out["patients_error"] = f"{type(e).__name__}: {e}"
-    finally:
-        conn.close()
+    except Exception as e:  # noqa: BLE001
+        out["patients_error"] = f"{type(e).__name__}: {e}"
     logger.info("[diag] __debug/all-patients → dicom=%d manual=%d",
                 len(out["dicom_studies"]), len(out["patients"]))
     return out

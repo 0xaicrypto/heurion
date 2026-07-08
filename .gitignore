@@ -51,7 +51,9 @@ coverage.xml
 # Jupyter
 .ipynb_checkpoints/
 
-# ─── .NET / C# (Avalonia desktop) ────────────────────────────────────
+# ─── .NET / C# (legacy Avalonia desktop, git tag legacy/avalonia-final) ─
+# Kept so a checkout of the legacy tag doesn't pollute working tree
+# with bin/obj. The packages/desktop tree itself is no longer in main.
 bin/
 obj/
 *.user

@@ -27,6 +27,7 @@ This module adds:
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from typing import Optional
@@ -37,6 +38,7 @@ from pydantic import BaseModel, Field
 from nexus_server.auth import get_current_user
 from nexus_server.dicom import _hash_patient_id, _index_db_path
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/dicom", tags=["patients"])
 
@@ -53,9 +55,32 @@ def _conn() -> sqlite3.Connection:
 
 
 def init_patients_table() -> None:
-    """Idempotent schema setup. Called from the app's startup hook
-    (alongside init_dicom_index)."""
-    with _conn() as c:
+    """F-merge-patients-db — ``patients`` table now lives in the
+    SHARED rune_server.db, not dicom_index.db.
+
+    Why the move: ``patients`` is queried from FIVE places (this
+    router, dicom_router, retrieval_tiers, session_takeaway,
+    scheduler, research/patient_facts) — most opened the SHARED db
+    connection and silently got "no such table" because the table
+    was actually in dicom_index.db. F13 + F-roster-db-split were
+    both one-off symptoms of the same architectural debt. This
+    consolidation kills that whole class of bug.
+
+    DICOM aggregate tables (dicom_studies / dicom_series /
+    dicom_instances) stay in dicom_index.db — they're large bulk
+    indexed data, and the separation is justified for them.
+
+    One-shot migration:
+      1. CREATE TABLE IF NOT EXISTS in the SHARED db (new home)
+      2. If the OLD dicom_index.db still has a populated patients
+         table → COPY rows into the new home (INSERT OR IGNORE
+         so re-runs are no-ops) → DROP the old table
+      3. Idempotent: safe to call every boot
+    """
+    from nexus_server.database import get_db_connection
+
+    # Step 1 — create canonical table in the SHARED db.
+    with get_db_connection() as c:
         c.execute(
             """
             CREATE TABLE IF NOT EXISTS patients (
@@ -75,6 +100,7 @@ def init_patients_table() -> None:
                 notes           TEXT NOT NULL DEFAULT '',
                 created_at      INTEGER NOT NULL,
                 updated_at      INTEGER NOT NULL,
+                archived_at     INTEGER,
                 PRIMARY KEY (user_id, patient_hash)
             )
             """
@@ -83,6 +109,125 @@ def init_patients_table() -> None:
             "CREATE INDEX IF NOT EXISTS idx_patients_user "
             "ON patients(user_id, created_at DESC)"
         )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_patients_active "
+            "ON patients(user_id, updated_at DESC) "
+            "WHERE archived_at IS NULL"
+        )
+        # Defensive: archived_at column ALTER for any pre-existing
+        # SHARED-db patients table that was created before this
+        # column existed (legacy intermediate states).
+        try:
+            cols = {row[1] for row in c.execute(
+                "PRAGMA table_info(patients)"
+            ).fetchall()}
+            if "archived_at" not in cols:
+                c.execute(
+                    "ALTER TABLE patients ADD COLUMN archived_at INTEGER"
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        c.commit()
+
+    # Step 2 — one-shot data migration from dicom_index.db.
+    # Safe to run every boot: INSERT OR IGNORE makes it idempotent
+    # and the DROP only happens after the COPY commits.
+    _migrate_patients_from_index_db()
+
+
+def _migrate_patients_from_index_db() -> None:
+    """One-shot copy of the legacy dicom_index.db.patients into
+    nexus_server.db.patients. Drops the old table after successful
+    copy. Idempotent — no-op once the migration has happened.
+
+    Why a separate function: this is the kind of code I want to be
+    able to test in isolation. If a future test fixture stuffs rows
+    into the old dicom_index.db location to assert migration works,
+    it can call this directly.
+    """
+    from nexus_server.database import get_db_connection
+
+    # Quick check: does old table even exist?
+    try:
+        idx_conn = sqlite3.connect(_index_db_path())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("patients migration: can't open dicom_index.db: %s", exc)
+        return
+    try:
+        legacy_present = bool(
+            idx_conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='patients'"
+            ).fetchone()
+        )
+        if not legacy_present:
+            return  # nothing to migrate; common case after first boot
+        try:
+            legacy_rows = idx_conn.execute(
+                "SELECT patient_hash, user_id, initials, mrn, age_group, "
+                "       age_value, sex, chief_complaint, notes, "
+                "       created_at, updated_at, "
+                "       COALESCE(archived_at, NULL) "
+                "FROM patients"
+            ).fetchall()
+        except sqlite3.Error:
+            # Old schema without archived_at column — query without it.
+            try:
+                legacy_rows = [
+                    (*r, None)
+                    for r in idx_conn.execute(
+                        "SELECT patient_hash, user_id, initials, mrn, "
+                        "       age_group, age_value, sex, chief_complaint, "
+                        "       notes, created_at, updated_at "
+                        "FROM patients"
+                    ).fetchall()
+                ]
+            except sqlite3.Error as exc:
+                logger.warning(
+                    "patients migration: legacy table unreadable: %s", exc,
+                )
+                return
+
+        if not legacy_rows:
+            # Empty table — just drop it.
+            try:
+                idx_conn.execute("DROP TABLE patients")
+                idx_conn.commit()
+            except sqlite3.Error:
+                pass
+            return
+
+        with get_db_connection() as shared:
+            shared.executemany(
+                "INSERT OR IGNORE INTO patients "
+                "(patient_hash, user_id, initials, mrn, age_group, "
+                " age_value, sex, chief_complaint, notes, "
+                " created_at, updated_at, archived_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                legacy_rows,
+            )
+            shared.commit()
+
+        # COPY succeeded — drop the legacy table so future code
+        # paths that accidentally open dicom_index.db get a clean
+        # "no such table" rather than stale rows.
+        try:
+            idx_conn.execute("DROP TABLE patients")
+            idx_conn.commit()
+        except sqlite3.Error as exc:
+            logger.warning(
+                "patients migration: copy ok but DROP failed: %s — "
+                "next boot will skip migration (table exists) and "
+                "data is still safe", exc,
+            )
+
+        logger.info(
+            "patients migration: moved %d rows from dicom_index.db "
+            "to nexus_server.db; dropped legacy table.",
+            len(legacy_rows),
+        )
+    finally:
+        idx_conn.close()
 
 
 def _age_to_group(age: int) -> str:
@@ -191,7 +336,9 @@ async def register_manual_patient(
     age_group = _age_to_group(req.age)
     now = int(time.time())
 
-    with _conn() as c:
+    # F-merge-patients-db — patients table now lives in nexus_server.db.
+    from nexus_server.database import get_db_connection
+    with get_db_connection() as c:
         # UPSERT — re-registering with new fields refreshes the row
         # rather than failing.
         existing = c.execute(
@@ -258,6 +405,97 @@ class DeletePatientResponse(BaseModel):
     deleted: dict[str, int]   # per-table row counts removed
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# F-roster-active-only — Archive / Unarchive endpoints
+# ───────────────────────────────────────────────────────────────────────────
+#
+# Archiving is a server-side soft hide. The patient row stays — all
+# clinical_graph_nodes, chat history, takeaways are preserved exactly
+# as-is — but every "list patients" / "patient roster" path filters
+# ``WHERE archived_at IS NULL``. The medic can un-archive at any
+# time to bring the patient back.
+#
+# This is what the user means by "active vs archive" in cross-patient
+# chat: ARCHIVED patients should NEVER appear in the cross-patient
+# system prompt's PATIENT ROSTER block. We achieve that by filtering
+# at the gather function (retrieval_tiers._gather_patient_roster).
+
+class _ArchiveResponse(BaseModel):
+    patient_hash: str
+    archived_at: int
+
+
+@router.post(
+    "/patients/{patient_hash}/archive",
+    response_model=_ArchiveResponse,
+)
+async def archive_patient(
+    patient_hash: str,
+    current_user: str = Depends(get_current_user),
+) -> _ArchiveResponse:
+    """Soft-hide the patient. Picker + cross-patient roster stop
+    showing them; DB rows are untouched."""
+    import time as _time
+    now_ms = int(_time.time() * 1000)
+    # F-merge-patients-db — read from the SHARED db.
+    from nexus_server.database import get_db_connection
+    with get_db_connection() as c:
+        cur = c.execute(
+            "UPDATE patients SET archived_at = ?, updated_at = ? "
+            "WHERE user_id = ? AND patient_hash = ? "
+            "  AND archived_at IS NULL",
+            (now_ms, now_ms, current_user, patient_hash),
+        )
+        c.commit()
+        if cur.rowcount == 0:
+            # Either already archived OR not found. Both => 404 so
+            # the UI can refresh-and-retry cleanly.
+            raise HTTPException(
+                status_code=404,
+                detail="patient not found or already archived",
+            )
+    logger.info(
+        "archive_patient: user=%s patient=%s archived_at=%d",
+        current_user, patient_hash[:12], now_ms,
+    )
+    return _ArchiveResponse(patient_hash=patient_hash, archived_at=now_ms)
+
+
+@router.post(
+    "/patients/{patient_hash}/unarchive",
+    response_model=_ArchiveResponse,
+)
+async def unarchive_patient(
+    patient_hash: str,
+    current_user: str = Depends(get_current_user),
+) -> _ArchiveResponse:
+    """Restore an archived patient — flips ``archived_at`` back to
+    NULL. The patient reappears in the picker + cross-patient roster
+    immediately. Data was never touched, so all chat history /
+    findings come back unchanged."""
+    import time as _time
+    now_ms = int(_time.time() * 1000)
+    from nexus_server.database import get_db_connection
+    with get_db_connection() as c:
+        cur = c.execute(
+            "UPDATE patients SET archived_at = NULL, updated_at = ? "
+            "WHERE user_id = ? AND patient_hash = ? "
+            "  AND archived_at IS NOT NULL",
+            (now_ms, current_user, patient_hash),
+        )
+        c.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="patient not found or not currently archived",
+            )
+    logger.info(
+        "unarchive_patient: user=%s patient=%s",
+        current_user, patient_hash[:12],
+    )
+    return _ArchiveResponse(patient_hash=patient_hash, archived_at=0)
+
+
 @router.delete(
     "/patients/{patient_hash}",
     response_model=DeletePatientResponse,
@@ -266,6 +504,17 @@ async def delete_patient(
     patient_hash: str,
     current_user: str = Depends(get_current_user),
 ) -> DeletePatientResponse:
+    # Diagnostic log: every "delete worked but the patient is still
+    # there" report has historically been one of three things —
+    # (a) user_id drift between upload-time and delete-time,
+    # (b) row in dicom_index.db but DELETE was hitting rune_server.db,
+    # (c) stale sidecar binary still serving the old endpoint code.
+    # Print enough at INFO to disambiguate (b) and (c) on the fly, and
+    # enough at INFO + the row counts in the return to disambiguate (a).
+    logger.info(
+        "delete_patient: enter user_id=%s patient_hash=%s",
+        current_user, patient_hash[:12],
+    )
     """Forget a patient. Scoped to the calling user — we never cross the
     (user_id, patient_hash) tuple, so one medic deleting "patient #3"
     cannot affect another medic with the same hash.
@@ -303,8 +552,9 @@ async def delete_patient(
             # the user just hasn't generated any rows for it.
             return 0
 
-    # ── Patients-router-local DB (manual registry) ───────────────
-    with _conn() as conn:
+    # ── Patients (now in SHARED db, F-merge-patients-db) ──
+    from nexus_server.database import get_db_connection
+    with get_db_connection() as conn:
         deleted["patients"] = _delete(
             conn, "patients",
             "user_id = ? AND patient_hash = ?",
@@ -312,15 +562,44 @@ async def delete_patient(
         )
         conn.commit()
 
-    # ── Shared DB (uploads, sessions, dicom_studies, etc.) ───────
-    try:
-        from nexus_server.database import get_db_connection
-        with get_db_connection() as conn:
-            deleted["dicom_studies"] = _delete(
-                conn, "dicom_studies",
-                "user_id = ? AND patient_hash = ?",
-                (current_user, patient_hash),
+    # ── DICOM index DB (dicom_studies + dicom_series + dicom_instances) ──
+    # dicom_studies still lives in `_index_db_path()` (dicom_index.db).
+    # The previous version of this function deleted `dicom_studies` from
+    # the wrong file, so the row stayed visible in the list endpoint
+    # forever — the medic saw "delete succeeded" but the patient never
+    # disappeared. These three must hit dicom_index.db.
+    with _conn() as conn:
+        deleted["dicom_studies"] = _delete(
+            conn, "dicom_studies",
+            "user_id = ? AND patient_hash = ?",
+            (current_user, patient_hash),
+        )
+        # Series + instances are FK-referenced to dicom_studies. We
+        # walked dicom_studies above; any referenced rows are now
+        # orphaned, so clean them up explicitly (SQLite doesn't enforce
+        # FK cascades unless PRAGMA foreign_keys=ON, which we don't
+        # rely on here).
+        try:
+            cur = conn.execute(
+                "DELETE FROM dicom_series "
+                "WHERE study_id NOT IN (SELECT study_id FROM dicom_studies)",
             )
+            deleted["dicom_series_orphans"] = cur.rowcount or 0
+        except sqlite3.Error:
+            deleted["dicom_series_orphans"] = 0
+        try:
+            cur = conn.execute(
+                "DELETE FROM dicom_instances "
+                "WHERE study_id NOT IN (SELECT study_id FROM dicom_studies)",
+            )
+            deleted["dicom_instances_orphans"] = cur.rowcount or 0
+        except sqlite3.Error:
+            deleted["dicom_instances_orphans"] = 0
+        conn.commit()
+
+    # ── Shared DB (uploads, patient_memory, clinical_graph_nodes, sessions) ──
+    try:
+        with get_db_connection() as conn:
             deleted["uploads"] = _delete(
                 conn, "uploads",
                 "user_id = ? AND patient_hash = ?",
@@ -336,33 +615,77 @@ async def delete_patient(
                 "user_id = ? AND patient_hash = ?",
                 (current_user, patient_hash),
             )
+            # Layer 1 provenance — the audit edges that anchor each
+            # node to its source quote. If we drop the nodes but
+            # leave provenance behind, the next clinical_graph_nodes
+            # for a re-registered patient with the same hash inherits
+            # stale evidence pointers. Belt + braces.
+            deleted["node_provenance"] = _delete(
+                conn, "node_provenance",
+                "user_id = ? AND patient_hash = ?",
+                (current_user, patient_hash),
+            )
+            deleted["clinical_graph_edges"] = _delete(
+                conn, "clinical_graph_edges",
+                "user_id = ? AND patient_hash = ?",
+                (current_user, patient_hash),
+            )
+            # Layer 2 — practitioner observations tied to this patient.
+            # The aggregated practitioner_facts row is keyed on
+            # (user_id, fact_kind, pattern_key) and intentionally
+            # un-tied to a specific patient — that's the privacy
+            # invariant of Layer 2 (patterns generalise across cases).
+            # So we touch observations only. distinct_patient_count
+            # will adjust at the next distill pass.
+            deleted["practitioner_observations"] = _delete(
+                conn, "practitioner_observations",
+                "user_id = ? AND patient_hash = ?",
+                (current_user, patient_hash),
+            )
+            # Layer 2b — chat takeaways scoped to this patient. After
+            # the medic deletes the patient, these qualitative
+            # insights are about a record they explicitly chose to
+            # forget; keeping them would be confusing AND would
+            # surface in cross-research chats as "Nexus learned X
+            # about a patient who no longer exists." Drop them.
+            deleted["chat_takeaways"] = _delete(
+                conn, "chat_takeaways",
+                "user_id = ? AND scope_kind = 'patient' AND scope_ref = ?",
+                (current_user, patient_hash),
+            )
             # Sessions: un-bind, don't delete — chat history is its own
-            # source of record.
-            try:
-                cur = conn.execute(
-                    "UPDATE sessions SET patient_hash = '' "
-                    "WHERE user_id = ? AND patient_hash = ?",
-                    (current_user, patient_hash),
-                )
-                deleted["sessions_unbound"] = cur.rowcount or 0
-            except sqlite3.Error:
-                deleted["sessions_unbound"] = 0
+            # source of record. Try both legacy `sessions` and
+            # canonical `nexus_sessions` table names since the rename
+            # is in flight.
+            for table in ("sessions", "nexus_sessions"):
+                try:
+                    cur = conn.execute(
+                        f"UPDATE {table} SET patient_hash = '' "
+                        f"WHERE user_id = ? AND patient_hash = ?",
+                        (current_user, patient_hash),
+                    )
+                    deleted[f"{table}_unbound"] = cur.rowcount or 0
+                except sqlite3.Error:
+                    pass  # table doesn't exist on this deployment
             conn.commit()
-    except Exception:
-        # Shared DB unavailable — partial delete is acceptable, the
-        # manual-patients row is the most visible one.
-        pass
-
-    total = sum(v for v in deleted.values() if v >= 0)
-    if total == 0:
-        # Nothing matched — return 404 so the desktop can show "already
-        # gone" instead of pretending success.
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=404,
-            detail=f"no rows for patient_hash={patient_hash[:8]}… belong to this user",
+    except Exception as exc:
+        # Shared DB unavailable / schema mismatch / etc. Log instead of
+        # silently swallowing — the previous `pass` made every "delete
+        # found nothing" bug look identical to "DB literally fine but
+        # no rows for this user", and the UI got a 404 with no clue.
+        logger.warning(
+            "delete_patient: shared DB block raised for user=%s phash=%s: %s",
+            current_user, patient_hash[:8], exc,
         )
 
+    # Idempotent delete: returning 404 when no projection rows match
+    # confused the UI in the common case where a patient appeared in
+    # the sidebar via a stale projection but the DELETE couldn't see
+    # the row (e.g. user_id drift across rebuilds, or the row only
+    # lives in twin_event_log which we intentionally don't touch).
+    # "Forget this patient" is a soft-projection-delete contract; if
+    # the projection is already absent, that's success, not failure.
+    # The UI re-fetches the list right after and the patient is gone.
     return DeletePatientResponse(
         patient_hash=patient_hash,
         deleted=deleted,
@@ -388,11 +711,23 @@ async def list_patients_full(
     """
     init_patients_table()
 
-    with _conn() as c:
+    # F-merge-patients-db — patients now lives in the shared db, while
+    # dicom_studies stays in dicom_index.db. Open one conn per file and
+    # merge in Python (we already did Python aggregation for dicom; the
+    # only "loss" vs. a SQL JOIN is one extra round-trip on a 2-table
+    # call, which is fine here).
+    from nexus_server.database import get_db_connection
+    with get_db_connection() as c:
+        # F-roster-active-only — default filter to active patients.
+        # Archived ones live in DB (recoverable) but don't surface in
+        # the picker / cross-patient chat / Today bar.
         manual_rows = c.execute(
-            "SELECT * FROM patients WHERE user_id = ?",
+            "SELECT * FROM patients "
+            "WHERE user_id = ? AND archived_at IS NULL",
             (current_user,),
         ).fetchall()
+
+    with _conn() as c:
         # #190/#193 — pull raw rows + aggregate in Python.
         # SQLite doesn't expose outer SELECT aliases inside subqueries
         # so the previous `(SELECT … WHERE … = phash)` correlated

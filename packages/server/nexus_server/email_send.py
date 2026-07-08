@@ -311,11 +311,21 @@ async def _post_to_relay(
             )
         sent_to = data.get("sent_to") or []
         quota   = data.get("daily_quota_remaining", "?")
+        # Be honest with the medic about what "sent" means here:
+        # relay's SMTP server returned 250-Accepted — but acceptance ≠
+        # delivery. Gmail in particular can accept then silently
+        # quarantine messages from accounts it's rate-limiting or
+        # flagging. Telling the medic "Sent" full stop sets them up
+        # to be confused when zhao@gmail.com calls saying "nothing
+        # arrived". Surface the 1-5 min delivery window + spam-check
+        # hint up front.
         return SendResult(
             ok=True, transport="relay", status_code=200,
             message=(
-                f"Sent via relay. To: {', '.join(sent_to)}. "
-                f"Quota remaining today: {quota}."
+                f"已交付 relay (To: {', '.join(sent_to)}). "
+                f"今日剩余配额: {quota}. "
+                f"投递通常在 1-5 分钟到达;若 10 分钟仍未收到,"
+                f"请收件人检查垃圾邮件夹,或联系运维查 relay 日志。"
             ),
             sent_to=sent_to,
         )

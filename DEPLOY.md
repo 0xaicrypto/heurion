@@ -11,7 +11,7 @@ The end state: agents run on your VPS, persist their state across container rebu
 - A VPS with a public IP and root or sudo access. **Tested:** DigitalOcean ($6/mo droplet), Hetzner CX11 (€4.5/mo), AWS t3.small. Anything with ≥ 1 GB RAM, ≥ 10 GB disk, Ubuntu 22.04+ works.
 - Open ports **80** (ACME challenge) and **443** (HTTPS) on the VPS firewall. The desktop never connects to port 8001 directly — Caddy fronts everything.
 - A Gemini API key (free tier from [aistudio.google.com](https://aistudio.google.com/apikey)). Anthropic / OpenAI optional.
-- The desktop client compiled locally (`packages/desktop` — `dotnet run --project RuneDesktop.UI`).
+- The desktop client built locally (`cd packages/desktop-v2 && pnpm install && pnpm tauri:dev` for hot-reload, or `./scripts/build-macos.sh` to install the bundled `.app`). The legacy Avalonia client at git tag `legacy/avalonia-final` is no longer maintained.
 
 ---
 
@@ -87,38 +87,35 @@ Watch the Caddy logs for `certificate obtained successfully` — if you see `acm
 
 ```bash
 curl -fsSL https://<your-hostname>/healthz
-# → {"status":"ok"}  (or whatever main.py exposes)
+# → HTTP 200 with a JSON HealthCheckResponse body (see main.py).
 ```
 
 ---
 
 ## Pointing the desktop at the remote server
 
-The desktop reads its server URL from a JSON settings file. Edit it once and you're done.
+Desktop v2 reads the server base URL from the `VITE_NEXUS_API`
+build-time env. Two ways to point it at a remote VPS:
 
-**macOS:**
+**Option A — rebuild with the remote baked in:**
+```bash
+cd packages/desktop-v2
+VITE_NEXUS_API=https://1-2-3-4.nip.io pnpm tauri:build
 ```
-~/Library/Application Support/RuneDesktop/settings.json
-```
+The resulting `.app` (or `.dmg`) talks to that URL exclusively. Use this
+when distributing to other users.
 
-**Linux:**
+**Option B — runtime override via the `.env` file Tauri reads at boot:**
+On macOS the bundled `.app` reads `~/Library/Application Support/RuneProtocol/.env`
+on startup. Add:
 ```
-~/.config/RuneDesktop/settings.json
+VITE_NEXUS_API=https://1-2-3-4.nip.io
 ```
+then restart the app. The same file is where `GEMINI_API_KEY` and the
+other LLM keys live (Tauri injects them into the sidecar's environment
+on spawn — see `packages/desktop-v2/src-tauri/src/lib.rs`).
 
-**Windows:**
-```
-%APPDATA%\RuneDesktop\settings.json
-```
-
-Set:
-```json
-{
-  "ServerUrl": "https://1-2-3-4.nip.io"
-}
-```
-
-Restart the desktop. The login screen now hits the remote. The first user to register becomes their own agent.
+The first user to register on the remote becomes their own agent.
 
 ---
 

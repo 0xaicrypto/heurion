@@ -8,13 +8,16 @@ import { Search, Plus, User, ChevronLeft, ChevronRight, PanelRight, Trash2 } fro
 import * as Dialog from '@radix-ui/react-dialog';
 import { useAppState } from '../store';
 import { api, ApiError } from '../lib/api-client';
-import { cn, MODE_LABELS, patientDisplayLabel, type ModeKind, type PatientCard } from '../lib/util';
+import { cn, patientDisplayLabel, type ModeKind, type PatientCard } from '../lib/util';
+import { useT, useModeLabel } from '../lib/i18n';
 import { Button, Chip, StatusDot, Input } from './ui';
 import { AccountMenu } from './overlays';
+import { IdentityPicker } from './identity-picker';
 
 /* ───────────── GlobalHeader (48px) ───────────── */
 
 export function GlobalHeader() {
+  const t = useT();
   const openCommandPalette  = useAppState((s) => s.openCommandPalette);
   const openNewPatientDialog = useAppState((s) => s.openNewPatientDialog);
 
@@ -28,13 +31,13 @@ export function GlobalHeader() {
       <div className="no-drag flex items-center gap-1">
         <button
           className="rounded-sm p-1.5 text-text-tertiary hover:bg-accent-subtle hover:text-text-primary"
-          aria-label="Back"
+          aria-label={t('header.back')}
         >
           <ChevronLeft size={16} />
         </button>
         <button
           className="rounded-sm p-1.5 text-text-tertiary hover:bg-accent-subtle hover:text-text-primary"
-          aria-label="Forward"
+          aria-label={t('header.forward')}
         >
           <ChevronRight size={16} />
         </button>
@@ -50,7 +53,7 @@ export function GlobalHeader() {
           )}
         >
           <Search size={12} />
-          <span>Search…</span>
+          <span>{t('header.search')}</span>
           <span className="ml-6 font-mono text-[10px]">⌘K</span>
         </button>
       </div>
@@ -66,14 +69,19 @@ export function GlobalHeader() {
           onClick={openNewPatientDialog}
         >
           <Plus size={14} />
-          New patient
+          {t('header.newPatient')}
         </Button>
+
+        {/* F26.2 — Multi-identity picker. The pill renders the current
+            identity's emoji + name; click to dropdown the full list +
+            "add new" footer. See components/identity-picker.tsx. */}
+        <IdentityPicker />
 
         <AccountMenu
           trigger={
             <button
               className="rounded-sm p-1.5 text-text-tertiary hover:bg-accent-subtle hover:text-text-primary"
-              aria-label="Account"
+              aria-label={t('header.account')}
             >
               <User size={16} />
             </button>
@@ -87,6 +95,7 @@ export function GlobalHeader() {
 /* ───────────── PatientsSidebar (260px) ───────────── */
 
 export function PatientsSidebar() {
+  const t = useT();
   const patients         = useAppState((s) => s.patients);
   const activePatient    = useAppState((s) => s.activePatient);
   const setActivePatient = useAppState((s) => s.setActivePatient);
@@ -95,6 +104,23 @@ export function PatientsSidebar() {
   if (collapsed) {
     return (
       <aside className="flex h-full w-14 shrink-0 flex-col items-center gap-2 border-r border-border bg-bg pt-3">
+        {/* F-today-back — collapsed icon for the return entry. */}
+        <button
+          type="button"
+          onClick={() => {
+            setActivePatient(null);
+            useAppState.getState().setActiveMode('today');
+          }}
+          className={cn(
+            'flex h-9 w-9 items-center justify-center rounded-sm text-[14px]',
+            !activePatient
+              ? 'bg-accent-subtle text-accent'
+              : 'text-text-secondary hover:bg-accent-subtle',
+          )}
+          title="工作台首页 / 今日"
+        >
+          ←
+        </button>
         {patients.slice(0, 8).map((p) => (
           <button
             key={p.patientHash}
@@ -121,14 +147,39 @@ export function PatientsSidebar() {
   const others = patients.filter((p) => !pinned.includes(p));
 
   return (
-    <aside className="flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-bg">
-      <div className="border-b border-border p-3">
-        <Input placeholder="Filter patients…" className="!text-caption" />
+    // Use the Research palette so the patient sidebar shares one visual
+    // language with research-workspace.tsx StudiesSidebar (rw-bg /
+    // rw-border / accent-bd active state). Without this the two
+    // workspaces feel like two different apps.
+    <aside className="flex h-full w-[260px] shrink-0 flex-col border-r border-rw-border bg-rw-bg">
+      <div className="border-b border-rw-border p-3 space-y-2">
+        {/* F-today-back — explicit return entry. Without this the medic
+            gets stuck inside PatientMode after clicking a sidebar
+            patient. Clicking 工作台首页 clears the active patient AND
+            switches the mode back to today, mirroring the "back to
+            inbox" affordance every email client has. */}
+        <button
+          type="button"
+          onClick={() => {
+            setActivePatient(null);
+            useAppState.getState().setActiveMode('today');
+          }}
+          className={cn(
+            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-caption transition',
+            !activePatient
+              ? 'bg-rw-accent-bg text-rw-accent border border-rw-accent-bd'
+              : 'text-rw-t2 hover:bg-rw-surface border border-transparent',
+          )}
+        >
+          <span aria-hidden>←</span>
+          <span>工作台首页 / 今日</span>
+        </button>
+        <Input placeholder={t('sidebar.filter')} className="!text-caption" />
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-3">
         {pinned.length > 0 && (
-          <PatientGroup title="Pinned today">
+          <PatientGroup title={t('sidebar.pinned')}>
             {pinned.map((p) => (
               <PatientRow
                 key={p.patientHash}
@@ -141,7 +192,7 @@ export function PatientsSidebar() {
         )}
 
         {others.length > 0 && (
-          <PatientGroup title="All">
+          <PatientGroup title={t('sidebar.all')}>
             {others.map((p) => (
               <PatientRow
                 key={p.patientHash}
@@ -158,9 +209,12 @@ export function PatientsSidebar() {
 }
 
 function PatientGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  // SMALL-CAPS section heading matches the "RESEARCH / MY STUDIES"
+  // headings in research-workspace.tsx — same hierarchy treatment on
+  // both sides of the segmented control.
   return (
     <div className="mb-4">
-      <div className="px-2 pb-1.5 text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
+      <div className="px-2 pb-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-rw-t4">
         {title}
       </div>
       <div className="flex flex-col gap-0.5">{children}</div>
@@ -175,6 +229,7 @@ function PatientRow({
   selected: boolean;
   onClick: () => void;
 }) {
+  const t = useT();
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   // Render as a wrapper div with the click handler instead of a <button>
@@ -189,11 +244,13 @@ function PatientRow({
         if (e.key === 'Enter' || e.key === ' ') onClick();
       }}
       className={cn(
-        'group flex w-full cursor-pointer items-center justify-between rounded-sm px-2 py-2 text-left',
+        // Selected row uses the rw-accent treatment — same as the
+        // active study card in StudiesSidebar (research-workspace.tsx).
+        'group flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-2 text-left border',
         'transition-colors duration-80',
         selected
-          ? 'bg-accent-subtle text-text-primary'
-          : 'hover:bg-accent-subtle text-text-secondary hover:text-text-primary',
+          ? 'bg-rw-accent-bg text-rw-t1 border-rw-accent-bd'
+          : 'border-transparent text-rw-t2 hover:bg-rw-surface hover:text-rw-t1',
       )}
     >
       <div className="min-w-0 flex-1">
@@ -213,7 +270,7 @@ function PatientRow({
           {patient.latestModality || '—'}
         </Chip>
         <button
-          aria-label={`Delete ${patientDisplayLabel(patient)}`}
+          aria-label={`${t('patient.deleteBtn')} ${patientDisplayLabel(patient)}`}
           onClick={(e) => {
             // Don't let the row's click handler also fire.
             e.stopPropagation();
@@ -224,7 +281,7 @@ function PatientRow({
             'text-text-tertiary hover:bg-retract/10 hover:text-retract',
             'group-hover:opacity-100 focus:opacity-100',
           )}
-          title="Delete patient"
+          title={t('patient.deleteBtn')}
         >
           <Trash2 size={12} />
         </button>
@@ -251,6 +308,7 @@ function DeletePatientDialog({
   onOpenChange: (v: boolean) => void;
   patient: PatientCard;
 }) {
+  const t = useT();
   const refreshPatients  = useAppState((s) => s.refreshPatients);
   const activePatient    = useAppState((s) => s.activePatient);
   const setActivePatient = useAppState((s) => s.setActivePatient);
@@ -324,7 +382,7 @@ function DeletePatientDialog({
         >
           <Dialog.Title asChild>
             <h2 className="mb-2 font-display text-section text-text-primary">
-              Delete patient?
+              {t('patient.deleteBtn')}？
             </h2>
           </Dialog.Title>
           <Dialog.Description className="mb-4 text-body text-text-secondary">
@@ -344,7 +402,7 @@ function DeletePatientDialog({
           )}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
-              Cancel
+              {t('newPatient.cancel')}
             </Button>
             <Button
               variant="primary"
@@ -352,7 +410,7 @@ function DeletePatientDialog({
               disabled={busy}
               className="!bg-retract hover:!bg-retract/90"
             >
-              {busy ? 'Deleting…' : 'Delete patient'}
+              {busy ? t('patient.deleting') : t('patient.deleteBtn')}
             </Button>
           </div>
         </Dialog.Content>
@@ -368,6 +426,8 @@ const MODES_VISIBLE_WITH_PATIENT: ModeKind[] = [
 ];
 
 export function ModeTabs() {
+  const t = useT();
+  const modeLabel         = useModeLabel();
   const activePatient     = useAppState((s) => s.activePatient);
   const activeMode        = useAppState((s) => s.activeMode);
   const setActiveMode     = useAppState((s) => s.setActiveMode);
@@ -378,20 +438,23 @@ export function ModeTabs() {
   }
 
   return (
-    <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-bg px-4">
-      <div className="flex items-center gap-1">
+    <div className="flex h-12 shrink-0 items-center justify-between border-b border-rw-border bg-rw-bg px-4">
+      <div className="flex flex-wrap items-center gap-1">
         {MODES_VISIBLE_WITH_PATIENT.map((m) => (
+          // Patient mode pills — same shape as Research StudyHeader's
+          // tab pills (see research-workspace.tsx :281), so the two
+          // workspaces share one segmented-tab visual language.
           <button
             key={m}
             onClick={() => setActiveMode(m)}
             className={cn(
-              'rounded-sm px-3 py-1.5 text-caption transition-colors duration-80',
+              'rounded-md px-3 py-1.5 text-[13px] transition border',
               activeMode === m
-                ? 'bg-surface text-text-primary border border-border'
-                : 'text-text-secondary hover:text-text-primary',
+                ? 'bg-rw-accent-bg text-rw-accent border-rw-accent-bd'
+                : 'text-rw-t2 border-transparent hover:bg-rw-surface',
             )}
           >
-            {MODE_LABELS[m]}
+            {modeLabel(m)}
           </button>
         ))}
       </div>
@@ -399,7 +462,7 @@ export function ModeTabs() {
       <button
         onClick={toggleContextRail}
         className="rounded-sm p-1.5 text-text-tertiary hover:bg-accent-subtle hover:text-text-primary"
-        title="Context (⌘.)"
+        title={t('header.contextRail')}
       >
         <PanelRight size={16} />
       </button>

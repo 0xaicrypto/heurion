@@ -506,6 +506,39 @@ function LlmSettingsBody() {
   const [openaiKey,    setOpenaiKey]    = useState('');
   const [anthropicKey, setAnthropicKey] = useState('');
 
+  // ── Test-Key state (F12) ─────────────────────────────────────────
+  // Triggers a real live call against the in-process active provider
+  // key. Lets the medic answer "is my saved key actually accepted by
+  // Google/OpenAI/Anthropic?" without having to start a chat and
+  // wait for the error path.
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<Awaited<
+    ReturnType<typeof api.testLlmKey>
+  > | null>(null);
+
+  const runTest = async () => {
+    if (testing) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await api.testLlmKey();
+      setTestResult(r);
+    } catch (e) {
+      // Endpoint missing (stale binary) or transport failure —
+      // synthesise an "other" result so the chip still renders with
+      // an actionable message.
+      setTestResult({
+        ok: false,
+        provider: provider,
+        model: model,
+        error: e instanceof Error ? e.message : String(e),
+        diagnosis: 'other',
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const refresh = async () => {
     try {
       const s = await api.getLlmSettings();
@@ -530,6 +563,9 @@ function LlmSettingsBody() {
         hasOpenaiKey:    false,
         hasAnthropicKey: false,
         advisory: null,
+        activeKeySource: 'none',
+        activeKeyPreview: '',
+        activeKeyLength:  0,
       });
       setProvider('gemini');
       setModel('gemini-2.5-flash');
@@ -718,6 +754,106 @@ function LlmSettingsBody() {
             Empty fields are ignored — only the keys you fill in get
             written. Keys never leave the local machine; the server only
             uses them to call the upstream provider directly.
+          </p>
+        </Card>
+      </div>
+
+      {/* ─── Active key diagnostic + Test (F12 / F16) ─────────────
+          The single most useful Q after "did my save succeed?" is
+          "is the key actually valid?" — answer it with a live call. */}
+      <div className="px-6 pb-5">
+        <h2 className="mb-3 text-caption font-medium uppercase tracking-wider text-text-tertiary">
+          活跃 Key · 实时校验
+        </h2>
+        <Card>
+          <div className="flex items-start gap-4 flex-wrap">
+            <div className="flex-1 min-w-[240px] space-y-1">
+              <div className="text-caption text-text-secondary">
+                Active provider: <span className="font-mono text-text-primary">{status.provider}</span>
+                {' · '}
+                model: <span className="font-mono text-text-primary">{status.model}</span>
+              </div>
+              <div className="text-caption text-text-secondary">
+                Key source:{' '}
+                {status.activeKeySource === 'db' && (
+                  <Chip variant="confirmed">database (saved settings)</Chip>
+                )}
+                {status.activeKeySource === 'env' && (
+                  <Chip variant="neutral">.env / shell</Chip>
+                )}
+                {(status.activeKeySource === 'none' || !status.activeKeySource) && (
+                  <Chip variant="caution">no key</Chip>
+                )}
+              </div>
+              {status.activeKeyPreview && (
+                <div className="text-caption text-text-secondary">
+                  Loaded key: <span className="font-mono text-text-primary">{status.activeKeyPreview}</span>
+                  {' '}
+                  <span className="text-text-tertiary">({status.activeKeyLength} chars)</span>
+                </div>
+              )}
+            </div>
+            <Button
+              variant="subtle"
+              onClick={runTest}
+              disabled={testing || !(
+                (status.provider === 'gemini'    && status.hasGeminiKey)    ||
+                (status.provider === 'openai'    && status.hasOpenaiKey)    ||
+                (status.provider === 'anthropic' && status.hasAnthropicKey)
+              )}
+            >
+              {testing ? '正在测试…' : 'Test Key now ↗'}
+            </Button>
+          </div>
+
+          {testResult && (
+            <div className="mt-3">
+              {testResult.ok ? (
+                <div className="rounded-md border border-confirmed/40 bg-confirmed/5 px-3 py-2 text-caption text-confirmed">
+                  ✓ Key 工作正常 · {testResult.provider}/{testResult.model}
+                  {testResult.latencyMs != null && (
+                    <span className="text-text-tertiary">
+                      {' '}· round-trip {testResult.latencyMs}ms
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-md border border-retract/40 bg-retract/5 px-3 py-2 text-caption text-retract space-y-1">
+                  <div>
+                    ✗ Key 调用失败
+                    {testResult.diagnosis && (
+                      <span className="ml-2 font-mono text-[11px]">
+                        [{testResult.diagnosis}]
+                      </span>
+                    )}
+                  </div>
+                  {testResult.error && (
+                    <div className="font-mono text-[11px] text-retract/80 break-all">
+                      {testResult.error}
+                    </div>
+                  )}
+                  {testResult.diagnosis === 'key_invalid' && (
+                    <div className="text-text-secondary">
+                      → 上面输入框里粘贴一个新的 Gemini/OpenAI/Anthropic key,然后 Save。
+                    </div>
+                  )}
+                  {testResult.diagnosis === 'quota_exceeded' && (
+                    <div className="text-text-secondary">
+                      → 配额已耗尽 / 触发速率限制。等几分钟,或者切换到另一个 provider。
+                    </div>
+                  )}
+                  {testResult.diagnosis === 'network' && (
+                    <div className="text-text-secondary">
+                      → 无法连接上游 API。检查代理/防火墙。
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          <p className="mt-3 text-caption text-text-tertiary">
+            "Test" 会向当前 provider 发一个最小的 ping 请求(temperature 0、max_tokens 4),
+            如果 key 有效会立刻返回。建议保存新 key 后点一下确认。
           </p>
         </Card>
       </div>

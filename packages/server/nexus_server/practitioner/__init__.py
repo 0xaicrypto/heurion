@@ -20,6 +20,10 @@ from nexus_server.practitioner.extractor import (
     extract_from_encounter,
     stub_practitioner_extractor,
 )
+from nexus_server.practitioner.heuristic_extractor import (
+    heuristic_practitioner_extractor,
+    extract_from_user_text,
+)
 from nexus_server.practitioner.distiller import (
     DistillerResult,
     distill,

@@ -311,8 +311,22 @@ def _check_recipients(addrs: list[str]) -> Optional[str]:
 def _send_via_smtp(
     to_list: list[str], cc_list: list[str],
     subject: str, body: str,
-) -> None:
-    """Throws on failure. Caller's try/except converts to HTTP error."""
+) -> dict:
+    """Send and return a diagnostic blob.
+
+    Returns ``{"ehlo_response", "auth_response", "send_message_refused"}``
+    so the caller can stash it in the audit log. ``smtplib.send_message``
+    returning an empty dict means the SMTP server accepted ALL
+    recipients — but acceptance is NOT delivery. Gmail in particular
+    often returns 250-Accepted and then silently quarantines the
+    message (rate-limit, "suspicious activity", reputation downgrade).
+    The diagnostic blob is the most we can capture at the relay tier;
+    real delivery confirmation requires postmaster bounce processing
+    on the operator side.
+
+    Throws on outright failure. Caller's try/except converts to HTTP
+    error.
+    """
     msg = email.message.EmailMessage()
     msg["From"]    = SMTP_FROM
     msg["To"]      = ", ".join(to_list)
@@ -321,15 +335,71 @@ def _send_via_smtp(
     msg["Subject"] = subject
     msg.set_content(body)
 
+    diag: dict = {"ehlo_response": "", "auth_response": "", "send_message_refused": {}}
     ctx = ssl.create_default_context()
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as s:
-        s.ehlo()
+        ehlo_code, ehlo_msg = s.ehlo()
         s.starttls(context=ctx)
-        s.ehlo()
-        s.login(SMTP_USER, SMTP_PASSWORD)
+        ehlo_code2, ehlo_msg2 = s.ehlo()
+        diag["ehlo_response"] = f"{ehlo_code} → {ehlo_code2}"
+        # Login returns a (code, msg) tuple on success; we log it so
+        # operators can see Gmail's exact auth-accept message.
+        try:
+            auth_code, auth_msg = s.login(SMTP_USER, SMTP_PASSWORD)
+            diag["auth_response"] = f"{auth_code} {auth_msg!r}"
+        except smtplib.SMTPAuthenticationError:
+            raise
         refused = s.send_message(msg, to_addrs=to_list + cc_list)
+        diag["send_message_refused"] = refused or {}
         if refused:
             raise smtplib.SMTPRecipientsRefused(refused)
+        # Final NOOP — gives Gmail one last chance to surface a transient
+        # issue (rare but seen for accounts being throttled).
+        try:
+            noop_code, noop_msg = s.noop()
+            diag["noop_response"] = f"{noop_code} {noop_msg!r}"
+        except smtplib.SMTPException as exc:
+            diag["noop_response"] = f"noop_error: {exc}"
+    return diag
+
+
+def _smtp_preflight() -> dict:
+    """Lightweight verification that SMTP login currently works.
+
+    Connects + STARTTLS + LOGIN + NOOP, then closes — does NOT send a
+    real message. Used by the /preflight endpoint so operators (and
+    the desktop's debug pane in a later phase) can verify the relay
+    is healthy without burning quota or polluting the audit log.
+    """
+    out: dict = {"smtp_configured": bool(SMTP_USER and SMTP_PASSWORD)}
+    if not (SMTP_USER and SMTP_PASSWORD):
+        out["ok"] = False
+        out["error"] = "SMTP_USER / SMTP_PASSWORD not configured on relay"
+        return out
+    ctx = ssl.create_default_context()
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+            s.ehlo()
+            s.starttls(context=ctx)
+            s.ehlo()
+            code, msg = s.login(SMTP_USER, SMTP_PASSWORD)
+            out["login"] = f"{code} {msg!r}"
+            code, msg = s.noop()
+            out["noop"]  = f"{code} {msg!r}"
+        out["ok"] = True
+    except smtplib.SMTPAuthenticationError as exc:
+        out["ok"] = False
+        out["error"] = (
+            f"SMTP_AUTH_FAILED — Gmail rejected the App Password "
+            f"(rotate via Google Account → Security → App passwords): {exc}"
+        )
+    except smtplib.SMTPException as exc:
+        out["ok"] = False
+        out["error"] = f"SMTP_EXCEPTION: {exc}"
+    except OSError as exc:
+        out["ok"] = False
+        out["error"] = f"network: {exc}"
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -407,7 +477,7 @@ async def send_email_endpoint(
 
     # Actually send
     try:
-        _send_via_smtp(to_list, cc_list, req.subject, req.body)
+        send_diag = _send_via_smtp(to_list, cc_list, req.subject, req.body)
     except smtplib.SMTPAuthenticationError as e:
         _log_send(
             req.nexus_user_id, to_list, cc_list,
@@ -443,20 +513,42 @@ async def send_email_endpoint(
             detail=f"Network error reaching SMTP: {e}",
         )
 
+    diag_summary = (
+        f"auth={send_diag.get('auth_response','')} "
+        f"refused={send_diag.get('send_message_refused', {})} "
+        f"noop={send_diag.get('noop_response','')}"
+    )
     _log_send(
         req.nexus_user_id, to_list, cc_list,
         req.subject, len(req.body), "ok",
-        client_ip, "",
+        client_ip, diag_summary,
     )
     logger.info(
-        "send ok: user=%s to=%s subject=%r body=%dB ip=%s",
-        req.nexus_user_id, to_list, req.subject[:80], len(req.body), client_ip,
+        "send ok: user=%s to=%s subject=%r body=%dB ip=%s diag=%s",
+        req.nexus_user_id, to_list, req.subject[:80], len(req.body),
+        client_ip, diag_summary,
     )
     return SendEmailResponse(
         status="sent",
         sent_to=to_list + cc_list,
         daily_quota_remaining=max(0, DAILY_LIMIT_PER_USER - (sent_today + 1)),
     )
+
+
+@app.get("/preflight")
+async def preflight_endpoint(
+    x_nexus_relay_key: Optional[str] = Header(default=None),
+) -> dict:
+    """Verify the relay can authenticate to its upstream SMTP server
+    WITHOUT sending a real message. Useful when ``send-email`` keeps
+    returning 200 but recipients aren't getting anything — preflight
+    tells you whether the relay→Gmail link itself is healthy.
+
+    Returns ``{"ok": bool, "error": str|null, "login": "<smtp resp>",
+    "noop": "<smtp resp>"}``. Quota is NOT consumed.
+    """
+    _require_api_key(x_nexus_relay_key)
+    return _smtp_preflight()
 
 
 @app.get("/audit")

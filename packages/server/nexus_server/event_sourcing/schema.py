@@ -262,6 +262,55 @@ CREATE INDEX IF NOT EXISTS idx_po_patient
 
 
 -- ════════════════════════════════════════════════════════════════════
+-- Layer 2b — Session takeaways (LLM-distilled qualitative insights)
+--
+-- Where Layer-2 ``practitioner_facts`` captures discrete, enumerable
+-- patterns via regex (style: terse_imperative, workflow: compare_to_
+-- prior, …), THIS table captures the soft stuff a regex can never
+-- catch: how the medic REASONS through a case, which factors they
+-- weight, how they hedge, when they distrust a guideline. These are
+-- short LLM-distilled summaries (1-3 sentences) extracted from chat
+-- transcripts after each turn (with cadence — see session_takeaway.py).
+--
+-- Privacy: strictly per-user. Same scope sentinel rules as Layer 2 —
+-- non-patient chats are tagged with ``__cross_research__`` / ``__study:
+-- xxxxxxxx__`` so insights stay grouped within their conversational
+-- context. The ``scope_kind`` column makes filtering trivial:
+--   ``patient`` / ``research`` / ``cross_research`` / ``other``
+--
+-- On retrieval, the top-K most-recent takeaways for the current scope
+-- (plus a few cross-scope ones to bridge contexts) are injected into
+-- the next turn's system prompt under "PRIOR INSIGHTS".
+-- ════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS chat_takeaways (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT    NOT NULL,
+    scope_kind      TEXT    NOT NULL,            -- 'patient' | 'research' | 'cross_research' | 'other'
+    scope_ref       TEXT    NOT NULL,            -- patient_hash | study_id | sentinel
+    session_id      TEXT    NOT NULL,
+    text            TEXT    NOT NULL,            -- 1-3 sentence insight, in source language
+    tag             TEXT,                        -- 'clinical_reasoning' | 'preference' | 'tool_use' | 'decision_rationale' | 'disagreement'
+    confidence      REAL    NOT NULL DEFAULT 0.7,
+    distilled_at    INTEGER NOT NULL,            -- unix seconds
+    source_event_idx INTEGER,                    -- last event_idx covered by this distillation
+    -- The LLM extractor's raw output is archived in INGESTION_LLM_RESPONSE
+    -- events; this column just back-references for audit.
+    medic_acked_at  INTEGER,                     -- nullable; set when medic clicks ✓ in the review panel
+    medic_rejected_at INTEGER                    -- nullable; set when medic clicks ✕ (insight excluded from future prompts)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ct_user_recent
+    ON chat_takeaways(user_id, distilled_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ct_scope
+    ON chat_takeaways(user_id, scope_kind, scope_ref, distilled_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ct_active
+    ON chat_takeaways(user_id, scope_kind, scope_ref)
+    WHERE medic_rejected_at IS NULL;
+
+
+-- ════════════════════════════════════════════════════════════════════
 -- Layer 3 — Reference knowledge (universal, version-pinned, public)
 -- Populated by offline loaders from RadLex / RxNorm / ACR-AC etc.
 -- ════════════════════════════════════════════════════════════════════
@@ -292,6 +341,7 @@ PROJECTION_TABLES: tuple[str, ...] = (
     "cached_views",
     "practitioner_facts",
     "practitioner_observations",
+    "chat_takeaways",
     "reference_knowledge",
 )
 

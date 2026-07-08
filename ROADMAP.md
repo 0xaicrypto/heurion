@@ -6,22 +6,34 @@ prioritised.
 
 ## Now
 
-### Reorg Phase A — docs (this commit)
+### Reorg Phase A — docs resync
 
-`README.md`, `ARCHITECTURE.md`, `HISTORY.md`, `docs/concepts/*.md`,
-`docs/how-to/*.md`. Zero code change. Done.
+- Phase A1 — initial docs pass (Phase A description, ASCII diagrams).
+  **Done** (earlier commits).
+- Phase A2 — resync with desktop-v2 + clinical pivot (M0..M4, DICOM,
+  MONAI, event-sourcing graph, research workspace). **Done in this
+  cycle**: ARCHITECTURE.md rewritten; README five-minute tour + repo
+  layout updated; DEPLOY.md desktop section pointed at desktop-v2;
+  HISTORY.md still needs Phase G..O and the clinical pivot written up
+  (tracked below in **Next**).
 
 ### Reorg Phase B — delete dead code
 
-- `git rm -rf packages/desktop/RuneDesktop.Sync/`
-- Delete `nexus_server/sync_hub.py` + `/sync/push` `/sync/pull`
-  endpoints (desktop is thin client now, no callers).
-- Delete `nexus_server/sync_anchor.py` retry daemon (already opt-in,
-  no production users).
-- Delete the `sync_events` table + `_build_on_event` mirror writes
+- **Done**: removed `packages/desktop` (legacy Avalonia client); git
+  tag `legacy/avalonia-final` preserves the last commit. Also dropped
+  `packages/desktop/RuneDesktop.Sync/` by extension.
+- **Done earlier**: `nexus_server/sync_hub.py` + `/sync/push` `/sync/pull`
+  endpoints retired; `nexus_server/memory_service.py` placeholder
+  removed (ImportError tombstone in earlier phase).
+- **Kept as legacy read view**: `nexus_server/sync_anchor.py` — the
+  Phase A retry daemon was deleted in Phase B, but `enqueue_anchor`
+  and `list_anchors_for_user` are still consumed by `agent_state.py`
+  to expose pre-S4 chain activity. Do not delete unless those callers
+  are migrated to `twin_chain_events` first.
+- **Open**: the `sync_events` table + `_build_on_event` mirror writes
   (S5 made `/agent/*` endpoints read from twin's own EventLog; the
-  mirror is no longer consulted on the read path).
-- Delete `nexus_server/memory_service.py` placeholder.
+  mirror is no longer consulted on the read path, but the table is
+  still being written).
 
 ### Reorg Phase C — server internal grouping
 

@@ -35,6 +35,73 @@
     --accent-subtle: rgba(26, 115, 232, 0.16);
   }
 
+  /*
+   * ─── Research Workspace tokens ─────────────────────────────────
+   * Extracted from docs/design/visual-mock/Research Workspace.dc.html.
+   * Lives under its own (rw-*) namespace so it can coexist with the
+   * patient-side palette without clashes. The workspace renders dark
+   * even when the rest of the app is light — research-first is meant
+   * to feel premium and focused.
+   */
+  :root,
+  html.dark {
+    --rw-bg: #181a1e;
+    --rw-bg-deep: #14151a;
+    --rw-surface: #1e2026;
+    --rw-surface-2: #232631;
+    --rw-surface-3: #2a2d38;
+    --rw-border: #373943;
+    --rw-border-soft: #262931;
+    --rw-t1: #ffffff;
+    --rw-t2: #c4c5cb;
+    --rw-t3: #8c8f9b;
+    --rw-t4: #5c5f6a;
+    --rw-accent: #46c0d6;
+    --rw-accent-2: #7fdceb;
+    --rw-accent-bg: rgba(70, 192, 214, 0.13);
+    --rw-accent-bd: rgba(70, 192, 214, 0.45);
+    --rw-brand: #ffe900;
+    --rw-green: #18dc7e;
+    --rw-green-bg: rgba(24, 220, 126, 0.13);
+    --rw-red: #f8545f;
+    --rw-red-bg: rgba(248, 84, 95, 0.13);
+    --rw-orange: #ff8a38;
+    --rw-orange-bg: rgba(255, 138, 56, 0.13);
+    --rw-blue: #3ca0e6;
+    --rw-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --rw-display: "Space Grotesk", system-ui, -apple-system, sans-serif;
+  }
+
+  /* Wrap any Research Workspace tree in <div class="rw-root"> so its
+     palette + font override the surrounding theme. */
+  .rw-root {
+    background: var(--rw-bg);
+    color: var(--rw-t1);
+    font-family: var(--rw-display);
+    -webkit-font-smoothing: antialiased;
+  }
+  .rw-root *::selection {
+    background: var(--rw-accent);
+    color: #06252c;
+  }
+  .rw-root ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .rw-root ::-webkit-scrollbar-thumb {
+    background: #2a2d36;
+    border-radius: 6px;
+    border: 2px solid var(--rw-bg);
+  }
+  .rw-root ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Pull in Space Grotesk + IBM Plex Mono via Google Fonts. Production
+     builds copy the .ttf from docs/design/visual-mock/fonts/ if offline
+     fonts are required (see vite.config.ts). */
+  @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
   html,
   body,
   #root {
@@ -95,27 +162,15 @@
   }
 }
 
-/* ── Report export (PDF via window.print) ──────────────────────────── */
-/* When ReportMode triggers exportPdf() it toggles .report-print-mode  */
-/* on <body>; this stylesheet then hides the app shell and lays the    */
-/* preview block out as a single printable page.                       */
-@media print {
-  body.report-print-mode * {
-    visibility: hidden;
-  }
-  body.report-print-mode .report-print,
-  body.report-print-mode .report-print * {
-    visibility: visible;
-  }
-  body.report-print-mode .report-print {
-    position: absolute;
-    inset: 0 auto auto 0;
-    width: 100%;
-    color: #000 !important;
-    background: #fff !important;
-    padding: 24mm 18mm;
-    font-size: 11pt;
-    line-height: 1.4;
-  }
-  @page { margin: 0; }
-}
+/* ── Report export — server-side PDF, no more @media print ────────────
+ * Was: a print-only stylesheet scoping the page to .report-print and
+ * calling window.print() from ReportMode.exportPdf. window.print() is
+ * a no-op in WKWebView (Tauri's renderer on macOS), so the user got
+ * no file and no feedback. Now ReportMode posts to
+ * /api/v1/report/pdf, the server renders via reportlab Platypus, and
+ * the UI surfaces the resulting file path in a "Last report" card.
+ *
+ * The .report-print class is still used as the LAYOUT class for the
+ * on-screen preview pane (right rail in ReportMode); only the print
+ * stylesheet is gone.
+ */

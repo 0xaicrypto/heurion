@@ -1,9 +1,14 @@
 import { create } from 'zustand';
-import type { ModeKind, PatientCard } from './lib/util';
+import type { ModeKind, PatientCard, StudySummary, Workspace } from './lib/util';
 // (MOCK_PATIENTS no longer imported — initial state is empty list,
 // real data comes from refreshPatients() after login.)
-import { api } from './lib/api-client';
+import { api, type Identity } from './lib/api-client';
 import type { LlmStatus } from './lib/types';
+import {
+  readStoredLocale,
+  writeStoredLocale,
+  type Locale,
+} from './lib/i18n';
 
 export type Theme = 'dark' | 'light';
 
@@ -22,10 +27,32 @@ interface AppState {
   setDisplayName: (name: string | null) => void;
   logout: () => void;
 
+  // F26.2 — Multi-identity (USER_MANAGEMENT.md §4-§6).
+  // ``activeUserId`` is the source of truth for which user's data the
+  // workspace is showing. ``identities`` drives the picker dropdown.
+  // ``resetForIdentitySwitch`` is the surgical reset that drops the
+  // current workspace state but preserves theme/locale/UI prefs so
+  // the medic doesn't lose their layout when switching accounts.
+  activeUserId: string | null;
+  identities:   Identity[];
+  setActiveUserId: (id: string | null) => void;
+  setIdentities:   (list: Identity[]) => void;
+  resetForIdentitySwitch: () => void;
+
   // Active selection ─────────────────────────────────
   activePatient: PatientCard | null;
   activeMode: ModeKind;
   patients: PatientCard[];
+
+  // Research Workspace (decisions D1 + D14) ─────────
+  // The app boots into 'research' on a fresh install; persisted to
+  // localStorage afterwards. See docs/design/RESEARCH_WORKSPACE_DESIGN.md.
+  activeWorkspace:    Workspace;
+  studies:            StudySummary[];
+  activeStudyId:      string | null;
+  setActiveWorkspace: (w: Workspace) => void;
+  setActiveStudyId:   (sid: string | null) => void;
+  refreshStudies:     () => Promise<void>;
   // Currently-open chat session id. Empty string === synthetic
   // "Default chat" (wraps pre-sessions chat history). Persisted to
   // sessionStorage so the medic stays on the same thread across
@@ -38,6 +65,14 @@ interface AppState {
   sidebarCollapsed: boolean;
   contextRailOpen: boolean;
   theme: Theme;
+
+  // i18n ─────────────────────────────────────────────
+  // ``locale`` is consumed by ``useT()`` in lib/i18n. Default is
+  // zh-CN per the target audience (Chinese-speaking clinicians).
+  // Persisted to localStorage under 'nexus.locale' so it survives
+  // close-and-reopen.
+  locale: Locale;
+  setLocale: (l: Locale) => void;
 
   // Dialogs / overlays ───────────────────────────────
   commandPaletteOpen: boolean;
@@ -56,11 +91,13 @@ interface AppState {
   // U1.1 — patients/projection refresh
   refreshPatients: () => Promise<void>;
 
-  // U3.3 — client-side hide list for patients the user deleted while
-  // the backend's DELETE endpoint isn't deployed yet. Survives reloads
-  // via localStorage; cleared once the upstream list no longer
-  // contains the hash (convergence).
-  hidePatient: (hash: string) => void;
+  // F-archive-frontend — soft archive backed by the server's
+  // ``POST /patients/{hash}/archive`` endpoint. Survives reinstall,
+  // syncs across devices when sync ships, AND is what the
+  // cross-patient roster filter consults, so the AI no longer sees
+  // hidden patients in chat context. The legacy localStorage hide
+  // list is auto-migrated to server-side archive on first launch.
+  hidePatient: (hash: string) => Promise<void>;
   unhideAllPatients: () => Promise<void>;
 
   // U3.3 — Settings · LLM status. Polled once after login so we can
@@ -125,6 +162,58 @@ function writeHiddenPatients(s: Set<string>) {
   } catch { /* ignore */ }
 }
 
+/**
+ * F-archive-frontend — one-shot migration from legacy localStorage
+ * hide list to server-side ``archived_at``.
+ *
+ * Runs (lazily) on every refreshPatients call until the localStorage
+ * key is empty. For each hash in the old list:
+ *   - POST /patients/{hash}/archive
+ *   - on success, remove from the local set
+ *
+ * If the backend can't reach the patient (already gone, hash not on
+ * THIS user, etc.) we still drop the entry from localStorage — it's
+ * not a recoverable state anyway. After the set is empty we remove
+ * the key entirely so this function is a no-op on every subsequent
+ * call.
+ *
+ * Idempotent + crash-safe: a half-completed migration just resumes
+ * on the next refreshPatients call.
+ */
+async function _migrateHiddenToArchive(): Promise<void> {
+  const hidden = readHiddenPatients();
+  if (hidden.size === 0) {
+    // Clear the empty array entry too so the next call short-
+    // circuits without even reading.
+    try { localStorage.removeItem(HIDDEN_KEY); } catch { /* ignore */ }
+    return;
+  }
+  console.info(
+    '[archive-migration] migrating %d hidden patient(s) to server-side archive',
+    hidden.size,
+  );
+  const remaining = new Set(hidden);
+  for (const hash of hidden) {
+    try {
+      await api.archivePatient(hash);
+      remaining.delete(hash);
+    } catch (e) {
+      // 404 = patient already gone OR not this user's. Drop from
+      // legacy list anyway — it's terminal either way.
+      const status = (e as any)?.status;
+      if (status === 404) {
+        remaining.delete(hash);
+      } else {
+        console.warn(
+          '[archive-migration] failed for %s; will retry next refresh',
+          hash.slice(0, 8), e,
+        );
+      }
+    }
+  }
+  writeHiddenPatients(remaining);
+}
+
 function readStoredTheme(): Theme {
   try {
     const v = localStorage.getItem(THEME_KEY);
@@ -170,6 +259,9 @@ export const useAppState = create<AppState>((set, get) => ({
   token: null,
   displayName: null,
   bootHydrated: false,
+  // F26.2 — multi-identity state hydrated from /auth/local-bootstrap
+  activeUserId: null,
+  identities: [],
 
   setToken: (t) => {
     try {
@@ -189,6 +281,47 @@ export const useAppState = create<AppState>((set, get) => ({
       else localStorage.removeItem(NAME_KEY);
     } catch { /* ignore */ }
     set({ displayName: name });
+  },
+
+  setActiveUserId: (id) => set({ activeUserId: id }),
+  setIdentities:   (list) => set({ identities: list }),
+
+  /**
+   * F26.2 — surgical reset for switching to another identity (§8.2).
+   *
+   * Drops everything that's tied to the previous user_id:
+   *   - patient list & active patient
+   *   - active study / workspace selection
+   *   - chat session pointer (a session belongs to one user_id)
+   *   - LLM status cache (Settings · LLM is per-user via DB hydrate)
+   *   - any other transient state showing data from the old user
+   *
+   * KEEPS (UI prefs, machine-level state):
+   *   - theme / locale / sidebarCollapsed (the medic's layout)
+   *   - bootHydrated (we're past first-mount)
+   *   - identities list itself (just changing pointer, not list)
+   *
+   * Caller MUST set the new JWT via setToken() BEFORE invoking this —
+   * otherwise the immediate refreshPatients() / refreshStudies()
+   * triggered downstream will use stale credentials.
+   */
+  resetForIdentitySwitch: () => {
+    try { sessionStorage.removeItem(SESSION_ID_KEY); } catch { /* ignore */ }
+    set({
+      activePatient: null,
+      activeMode: 'today',
+      activeSessionId: '',
+      patients: [],
+      studies: [],
+      activeStudyId: null,
+      activeWorkspace: 'research',
+      commandPaletteOpen: false,
+      newPatientDialogOpen: false,
+      llmStatus: null,
+      llmStatusChecked: false,
+      contextRailContent: { kind: 'closed' },
+      contextRailOpen: false,
+    });
   },
 
   logout: () => {
@@ -222,6 +355,31 @@ export const useAppState = create<AppState>((set, get) => ({
   // (Used to default to MOCK_PATIENTS which caused fake-patient flash on
   // every launch and confused medics into thinking real data existed.)
   patients: [],
+
+  // Research Workspace state — default to 'research' on fresh install
+  // (decision D14). Persisted to localStorage in the setter.
+  activeWorkspace: ((): Workspace => {
+    try {
+      const v = localStorage.getItem('nexus.activeWorkspace');
+      if (v === 'patient' || v === 'research') return v;
+    } catch { /* ignore */ }
+    return 'research';
+  })(),
+  studies: [],
+  activeStudyId: null,
+  setActiveWorkspace: (w) => {
+    try { localStorage.setItem('nexus.activeWorkspace', w); } catch { /* ignore */ }
+    set({ activeWorkspace: w });
+  },
+  setActiveStudyId: (sid) => set({ activeStudyId: sid }),
+  refreshStudies: async () => {
+    try {
+      const list = await api.listStudies();
+      set({ studies: list });
+    } catch (e) {
+      console.warn('refreshStudies failed', e);
+    }
+  },
   activeSessionId: '',  // hydrateAppState reads from sessionStorage
   setActiveSessionId: (id) => {
     try {
@@ -239,6 +397,15 @@ export const useAppState = create<AppState>((set, get) => ({
   contextRailOpen: false,
   theme: 'dark',
 
+  // Hydrated from localStorage on store create — same pattern as
+  // displayName, hidden patients, etc. A missing / corrupt value
+  // falls back to DEFAULT_LOCALE inside readStoredLocale.
+  locale: readStoredLocale(),
+  setLocale: (l: Locale) => {
+    writeStoredLocale(l);
+    set({ locale: l });
+  },
+
   commandPaletteOpen: false,
   newPatientDialogOpen: false,
   toast: null,
@@ -248,11 +415,24 @@ export const useAppState = create<AppState>((set, get) => ({
     set({ contextRailContent: { kind: 'citation', nodeId }, contextRailOpen: true }),
   closeContextRail: () => set({ contextRailContent: { kind: 'closed' }, contextRailOpen: false }),
 
-  setActivePatient: (p) =>
+  setActivePatient: (p) => {
+    // Switching patients MUST clear the active chat session id —
+    // otherwise EncounterMode loads the previous patient's messages
+    // when the medic clicks on a new patient (sessions are not
+    // patient-scoped on the backend; cross-patient leakage is the
+    // observable symptom — "Default chat · 12 messages" showing the
+    // wrong patient's history). Clearing it forces the next render
+    // to fall through to the per-patient derived default (see
+    // EncounterMode `effectiveSessionId`).
+    try {
+      sessionStorage.removeItem(SESSION_ID_KEY);
+    } catch { /* ignore */ }
     set({
       activePatient: p,
       activeMode: p ? 'patient' : 'today',
-    }),
+      activeSessionId: '',
+    });
+  },
 
   // Refresh the patients list from backend.
   practitionerOverlayOpen: false,
@@ -276,38 +456,79 @@ export const useAppState = create<AppState>((set, get) => ({
 
   refreshPatients: async () => {
     try {
+      // F-archive-frontend — server's /patients endpoint now already
+      // filters ``WHERE archived_at IS NULL``, so no client-side
+      // filter is needed. The localStorage ``nexus.patients.hidden``
+      // list is migrated to server-side archive on first launch
+      // (see _migrateHiddenToArchive below).
       const list = await api.listPatients();
-      // Apply the client-side hide list: when the backend's DELETE
-      // endpoint is missing (stale binary), we still want delete to
-      // appear to work for the user. The next time the backend gains
-      // the endpoint, the real DELETE wipes the rows and the hide
-      // list converges automatically (filtered-out entries are gone
-      // from the upstream too).
-      const hidden = readHiddenPatients();
-      const filtered = hidden.size === 0
-        ? list
-        : list.filter((p) => !hidden.has(p.patientHash));
-      set({ patients: filtered });
+      set({ patients: list });
+
+      // One-shot legacy migration: any patient_hash still in the
+      // old localStorage hide list gets archived on the backend.
+      // After it succeeds, clear localStorage so we don't try again.
+      void _migrateHiddenToArchive();
     } catch (e) {
       console.warn('refreshPatients failed; keeping current list', e);
     }
   },
 
-  hidePatient: (hash: string) => {
-    const next = new Set(readHiddenPatients());
-    next.add(hash);
-    writeHiddenPatients(next);
-    set((s) => ({
-      patients: s.patients.filter((p) => p.patientHash !== hash),
-    }));
-  },
-  unhideAllPatients: async () => {
-    writeHiddenPatients(new Set());
-    // Refresh from backend so anything we'd hidden returns.
+  /**
+   * F-archive-frontend — hide a patient by archiving on the server.
+   *
+   * Optimistically removes the patient from the in-memory list so
+   * the UI updates instantly. The POST then makes it stick across
+   * reinstall / other devices. On failure we revert + refresh.
+   */
+  hidePatient: async (hash: string) => {
+    const before = useAppState.getState().patients;
+    set({ patients: before.filter((p) => p.patientHash !== hash) });
     try {
+      await api.archivePatient(hash);
+      // Sync — server is authoritative now, refresh to get any
+      // sequence-number / sort-order changes.
       const list = await api.listPatients();
       set({ patients: list });
-    } catch { /* keep current */ }
+    } catch (e) {
+      console.warn('archivePatient failed; rolling back', e);
+      set({ patients: before });
+      // Surface a toast so the medic isn't confused.
+      useAppState.getState().showToast(
+        '隐藏失败：服务器无法响应,请稍后重试',
+        'error',
+      );
+    }
+  },
+
+  /**
+   * F-archive-frontend — bulk restore. Fetches the list of archived
+   * patients then unarchives each. Used by Settings → 恢复隐藏患者.
+   * Idempotent + best-effort per patient (one failing patient
+   * doesn't abort the whole pass).
+   */
+  unhideAllPatients: async () => {
+    try {
+      const archived = await api.listArchivedPatients();
+      let restored = 0;
+      for (const a of archived) {
+        try {
+          await api.unarchivePatient(a.patientHash);
+          restored += 1;
+        } catch { /* skip this one */ }
+      }
+      const list = await api.listPatients();
+      set({ patients: list });
+      useAppState.getState().showToast(
+        `已恢复 ${restored} 位隐藏患者`,
+        'success',
+      );
+    } catch (e) {
+      console.warn('unhideAllPatients failed', e);
+      useAppState.getState().showToast(
+        '恢复失败：服务器无法响应,请稍后重试',
+        'error',
+      );
+    }
   },
 
   llmStatus: null,

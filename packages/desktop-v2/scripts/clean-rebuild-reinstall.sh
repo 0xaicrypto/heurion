@@ -103,16 +103,19 @@ echo
 echo "  ── Build identity ──"
 cat "$RES/server.build_info" | sed 's|^|    |'
 
-# LLM keys check
+# LLM keys check (post-F17: NONE should ship)
 echo
 echo "  ── LLM keys shipped ──"
-if ! grep -q "^GEMINI_API_KEY=." "$RES/default.env"; then
-  red "  GEMINI_API_KEY not set in bundled default.env"
+LEAKED_KEYS="$(grep -E "^(GEMINI|OPENAI|ANTHROPIC|TAVILY|JINA)_API_KEY=." \
+  "$RES/default.env" 2>/dev/null || true)"
+if [ -n "$LEAKED_KEYS" ]; then
+  red "  ✗ bundled default.env contains real API keys — refusing to ship"
+  red "  These should be empty stubs. Build-macos.sh strips them; if you"
+  red "  see this, the strip step was bypassed or the file was hand-edited:"
+  echo "$LEAKED_KEYS" | sed -E 's|^([A-Z_]+)=(....).*|    \1=\2…(REAL KEY!)|'
   exit 1
 fi
-grep -E "^(GEMINI|OPENAI|ANTHROPIC|TAVILY)_API_KEY=" "$RES/default.env" \
-  | sed -E 's|^([A-Z_]+)=(....).*|    \1=\2…(redacted)|'
-green "  bundled keys verified"
+green "  no LLM keys in bundle (medic configures via Settings · LLM)"
 
 # ── 5. Open the .dmg ─────────────────────────────────────────────────
 echo

@@ -64,7 +64,8 @@ export type ModeKind =
   | 'imaging'
   | 'labs'
   | 'memory'
-  | 'report';
+  | 'report'
+  | 'research'; // Research Workspace — see docs/design/RESEARCH_WORKSPACE_DESIGN.md
 
 export const MODE_LABELS: Record<ModeKind, string> = {
   today: 'Today',
@@ -74,7 +75,40 @@ export const MODE_LABELS: Record<ModeKind, string> = {
   labs: 'Labs',
   memory: 'Memory',
   report: 'Report',
+  research: 'Research',
 };
+
+// Workspace = top-level Patient vs Research toggle (decisions D1 + D14).
+// The active workspace lives in the Zustand store; the patient-side
+// modes above keep their existing per-patient meaning.
+export type Workspace = 'patient' | 'research';
+
+// Research Workspace shapes returned by /api/v1/research/* endpoints.
+export interface StudySummary {
+  studyId:        string;
+  displayName:    string;
+  shortCode:      string;
+  phase:          string;
+  status:         string;
+  targetN:        number | null;
+  enrolledCount:  number;
+  candidateCount: number;
+  createdAt:      number;
+  updatedAt:      number;
+}
+
+export interface StudyMembership {
+  studyId:           string;
+  studyShortCode:    string;
+  studyDisplayName:  string;
+  status:            string;
+  enrollmentSeq:     number | null;
+  arm:               string | null;
+  enrolledAt:        number | null;
+  withdrawnAt:       number | null;
+  withdrawalReason:  string | null;
+  consentSignedAt:   number | null;
+}
 
 /* MOCK_PATIENTS removed — store initial state is now empty [] and
  * refreshPatients() calls api.listPatients() after login. If you need

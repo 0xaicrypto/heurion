@@ -30,18 +30,27 @@ import type {
 // baseUrl resolution:
 //   1. Build-time VITE_NEXUS_API env, if set (lets ops point at a remote
 //      backend without rebuilding the binary).
-//   2. http://127.0.0.1:8001 — the sidecar default (src-tauri/lib.rs
-//      sets NEXUS_HOST=127.0.0.1, NEXUS_PORT=8001 when spawning).
+//   2. http://localhost:8001 — the sidecar default (src-tauri/lib.rs
+//      sets NEXUS_HOST=localhost, NEXUS_PORT=8001 when spawning).
+//
+// Why ``localhost`` and not ``127.0.0.1`` (F19): WebAuthn / passkey
+// requires the page's effective domain to be a DNS name — IP literals
+// are rejected by Chromium/WebKit ("127.0.0.1 is an invalid domain"
+// when the registrar tries to create a credential against rp.id =
+// "localhost"). The Tauri WebviewWindow that hosts the passkey page
+// navigates to ``${baseUrl}/auth/passkey-page``, so baseUrl HAS to
+// use the DNS name. Everything else (REST chat, file uploads) works
+// over either name; sticking to ``localhost`` end-to-end keeps the
+// origin consistent so CORS and CSP rules don't have to allowlist
+// both.
 //
 // We CANNOT default to "" (relative URL) because in a bundled .dmg the
 // frontend is served from tauri://localhost — relative URLs resolve
-// against THAT origin and never reach the Python sidecar. In `pnpm
-// tauri dev` we still use 127.0.0.1:8001 (no Vite proxy needed since
-// the backend's CORS allows it).
+// against THAT origin and never reach the Python sidecar.
 const envBase =
   (import.meta as unknown as { env?: { VITE_NEXUS_API?: string } }).env
     ?.VITE_NEXUS_API;
-const baseUrl = envBase && envBase.length > 0 ? envBase : 'http://127.0.0.1:8001';
+const baseUrl = envBase && envBase.length > 0 ? envBase : 'http://localhost:8001';
 
 // ─────────────────────────────────────────────────────────────────────
 // Persistent user_id storage
@@ -93,6 +102,16 @@ function clearUserId(): void {
     /* no-op */
   }
 }
+
+// F24 — the OS Keychain / localStorage helpers are gone. The backend
+// owns identity persistence via POST /api/v1/auth/local-bootstrap,
+// which reads/writes $RUNE_HOME/identity.json. No frontend storage,
+// no Tauri IPC, no permission prompts.
+//
+// ``readUserId`` / ``writeUserId`` / ``clearUserId`` (defined above)
+// are kept ONLY as a legacy escape hatch for the manual ``login()``
+// flow used by LoginView's display-name form; that path still works
+// for the rare case where the medic explicitly switches accounts.
 
 class _ApiClient {
   private token: string | null = null;
@@ -195,6 +214,22 @@ class _ApiClient {
       });
       return r.ok ? 'ok' : 'unhealthy';
     } catch {
+      // F-tab-switch-race fallback — WebKit has a 6-concurrent-per-
+      // origin fetch limit. Long-running background SSEs (the AI
+      // continuing to think while the medic switched tabs) can
+      // occupy all 6 slots, starving the health probe and making
+      // it falsely time out → "Backend unreachable" banner even
+      // though the sidecar is fine.
+      //
+      // Tauri's ``server_health`` IPC command bypasses WebKit's
+      // HTTP stack entirely — it hits the sidecar through the
+      // shell-plugin process bridge. If that returns ok, the
+      // sidecar IS healthy and the fetch-side failure is just
+      // connection-slot starvation, not a real outage.
+      try {
+        const ipc = await tauriInvoke<{ ok: boolean }>('server_health');
+        if (ipc && ipc.ok) return 'ok';
+      } catch { /* IPC also failed; fall through */ }
       return 'unreachable';
     }
   }
@@ -246,13 +281,29 @@ class _ApiClient {
         });
         return { access_token: r.jwt_token };
       } catch (err) {
-        // 404 = user_id no longer exists on this backend (DB reset, or
-        // user switched servers). 400 = malformed cached id. Either way,
-        // fall through to fresh register. For other errors (5xx, network)
-        // bubble up so the UI can show a real message.
-        if (err instanceof ApiError && (err.status === 404 || err.status === 400)) {
+        // Per F18 — fall back to /register on a WIDER set of failures:
+        //   404 → user_id not found (DB reset / switched servers)
+        //   400 → malformed cached id (corrupt localStorage)
+        //   5xx → backend lost the users table / mid-migration crash
+        //         (this used to leave the user PERMANENTLY locked at
+        //          the login screen with a "Server error" toast — no
+        //          recovery path because we never re-tried as a fresh
+        //          register. Now we clear the cached id and let Path B
+        //          mint a new account.)
+        // Anything else (network drop, abort) still bubbles up to the
+        // UI so the medic sees an honest "backend unreachable" rather
+        // than a confusing silent re-register.
+        const isRecoverable =
+          err instanceof ApiError && (
+            err.status === 404 ||
+            err.status === 400 ||
+            err.status >= 500
+          );
+        if (isRecoverable) {
+          // Clear cached id so Path B mints a fresh account instead of
+          // re-sending the same dead identifier on the next attempt.
           clearUserId();
-          // fallthrough
+          // fallthrough to Path B
         } else {
           throw err;
         }
@@ -268,10 +319,157 @@ class _ApiClient {
     return { access_token: r.jwt_token };
   }
 
-  /** Clear the cached user_id. Used by Settings → "Sign out / forget me". */
+  /** Clear the cached user_id. Used by Settings → "Sign out / forget me".
+   *  Only touches localStorage; the authoritative identity now lives
+   *  in $RUNE_HOME/identity.json on the backend and must be wiped
+   *  there (delete the file from Finder, or call a future
+   *  /auth/local-bootstrap?reset=true). */
   forgetUserId() {
     clearUserId();
     this.token = null;
+  }
+
+  /**
+   * F24 + F26.1 — zero-friction silent sign-in.
+   *
+   * Single HTTP call. Backend's /local-bootstrap reads/creates
+   * ``$RUNE_HOME/identity.json``, rebuilds from users table on
+   * corruption (§4.4), auto-migrates v1→v2, and returns the active
+   * identity + the full picker list.
+   */
+  async autoLogin(): Promise<{
+    access_token:    string;
+    isNewAccount:    boolean;
+    recoveredFromDb: boolean;
+    activeUserId:    string;
+    identities:      Identity[];
+  }> {
+    interface Raw {
+      user_id:            string;
+      jwt_token:          string;
+      expires_in_seconds: number;
+      is_new_account:     boolean;
+      identities:         IdentityRaw[];
+      schema_version:     number;
+      recovered_from_db:  boolean;
+    }
+    const r = await this.fetch<Raw>('/api/v1/auth/local-bootstrap', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    writeUserId(r.user_id);
+    return {
+      access_token:    r.jwt_token,
+      isNewAccount:    r.is_new_account,
+      recoveredFromDb: r.recovered_from_db,
+      activeUserId:    r.user_id,
+      identities:      r.identities.map(_castIdentity),
+    };
+  }
+
+  /* ────────────────────── identities CRUD ──────────────────────── */
+
+  async listIdentities(): Promise<{
+    identities:   Identity[];
+    activeUserId: string | null;
+  }> {
+    interface Raw {
+      identities:     IdentityRaw[];
+      active_user_id: string | null;
+      schema_version: number;
+    }
+    const r = await this.fetch<Raw>('/api/v1/auth/identities');
+    return {
+      identities:   r.identities.map(_castIdentity),
+      activeUserId: r.active_user_id,
+    };
+  }
+
+  /** Create a new identity AND switch to it. The desktop must reset
+   *  its zustand state on receipt of the new JWT (the workspace's
+   *  visible patients / sessions belong to a different user_id now). */
+  async createIdentity(input: {
+    displayName: string;
+    avatarEmoji?: string;
+  }): Promise<{
+    access_token: string;
+    user_id:      string;
+    identity:     Identity;
+  }> {
+    interface Raw {
+      user_id:            string;
+      jwt_token:          string;
+      expires_in_seconds: number;
+      identity:           IdentityRaw;
+    }
+    const r = await this.fetch<Raw>('/api/v1/auth/identities', {
+      method: 'POST',
+      body: JSON.stringify({
+        display_name: input.displayName,
+        avatar_emoji: input.avatarEmoji ?? '🩺',
+      }),
+    });
+    writeUserId(r.user_id);
+    return {
+      access_token: r.jwt_token,
+      user_id:      r.user_id,
+      identity:     _castIdentity(r.identity),
+    };
+  }
+
+  /** Switch to an existing identity. Caller resets its state on
+   *  receipt of the new JWT. */
+  async activateIdentity(userId: string): Promise<{
+    access_token: string;
+    user_id:      string;
+  }> {
+    interface Raw {
+      user_id:            string;
+      jwt_token:          string;
+      expires_in_seconds: number;
+    }
+    const r = await this.fetch<Raw>(
+      `/api/v1/auth/identities/${encodeURIComponent(userId)}/activate`,
+      { method: 'POST', body: JSON.stringify({}) },
+    );
+    writeUserId(r.user_id);
+    return { access_token: r.jwt_token, user_id: r.user_id };
+  }
+
+  /** Rename / change emoji. Auth scoped to the calling identity. */
+  async patchIdentity(userId: string, patch: {
+    displayName?: string;
+    avatarEmoji?: string;
+  }): Promise<Identity> {
+    interface Raw extends IdentityRaw {}
+    const body: Record<string, string> = {};
+    if (patch.displayName != null) body.display_name = patch.displayName;
+    if (patch.avatarEmoji != null) body.avatar_emoji = patch.avatarEmoji;
+    const r = await this.fetch<Raw>(
+      `/api/v1/auth/identities/${encodeURIComponent(userId)}`,
+      { method: 'PATCH', body: JSON.stringify(body) },
+    );
+    return _castIdentity(r);
+  }
+
+  /** Soft delete (90-day grace, then GC). Picker hides immediately. */
+  async deleteIdentity(userId: string): Promise<void> {
+    await this.fetch<void>(
+      `/api/v1/auth/identities/${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  /** HARD wipe — irreversible. UI must require explicit 2-step
+   *  confirmation; the magic token below is the deliberate friction. */
+  async wipeIdentity(userId: string): Promise<void> {
+    await this.fetch<void>(
+      `/api/v1/auth/identities/${encodeURIComponent(userId)}/wipe`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ confirm_token: 'I-UNDERSTAND-WIPE' }),
+      },
+    );
   }
 
   /* ────────────────────────── patients ────────────────────────── */
@@ -465,6 +663,79 @@ class _ApiClient {
       { method: 'DELETE' },
     );
     return { patientHash: r.patient_hash, deleted: r.deleted };
+  }
+
+  /**
+   * F-archive-frontend — server-side soft hide.
+   *
+   * Replaces the previous localStorage-based ``hidePatient``
+   * mechanism (which only filtered client-side and meant the
+   * cross-patient chat's roster STILL saw the patient — the AI
+   * would happily volunteer info about a "hidden" patient).
+   *
+   * Server flips ``patients.archived_at`` to now-ms. Every "list
+   * patients" path on the server (including the cross-patient
+   * roster injected into the LLM system prompt) filters
+   * ``WHERE archived_at IS NULL``, so the AI truly no longer
+   * sees the patient. DB rows are untouched; the medic can
+   * unarchive at any time to bring everything back.
+   */
+  async archivePatient(patientHash: string): Promise<{
+    patientHash: string;
+    archivedAt: number;
+  }> {
+    interface Raw { patient_hash: string; archived_at: number }
+    const r = await this.fetch<Raw>(
+      `/api/v1/dicom/patients/${encodeURIComponent(patientHash)}/archive`,
+      { method: 'POST', body: JSON.stringify({}) },
+    );
+    return { patientHash: r.patient_hash, archivedAt: r.archived_at };
+  }
+
+  /** Restore an archived patient. Idempotent on already-active rows
+   *  (returns 404, which we treat as already-active in the store). */
+  async unarchivePatient(patientHash: string): Promise<{
+    patientHash: string;
+  }> {
+    interface Raw { patient_hash: string; archived_at: number }
+    const r = await this.fetch<Raw>(
+      `/api/v1/dicom/patients/${encodeURIComponent(patientHash)}/unarchive`,
+      { method: 'POST', body: JSON.stringify({}) },
+    );
+    return { patientHash: r.patient_hash };
+  }
+
+  /** List ARCHIVED patients (for the "restore" UI in Settings).
+   *  Adds ``?include=archived`` so server returns ONLY archived.
+   *  This is a small dedicated endpoint to keep the default
+   *  /patients list lean — most callers want active only. */
+  async listArchivedPatients(): Promise<Array<{
+    patientHash: string;
+    initials: string;
+    mrn: string;
+    sex: string;
+    ageGroup: string;
+    archivedAt: number;
+  }>> {
+    interface Raw {
+      patient_hash: string;
+      initials: string;
+      mrn: string;
+      sex: string;
+      age_group: string;
+      archived_at: number;
+    }
+    const list = await this.fetch<Raw[]>(
+      '/api/v1/dicom/patients?include=archived',
+    );
+    return list.map((r) => ({
+      patientHash: r.patient_hash,
+      initials:    r.initials,
+      mrn:         r.mrn,
+      sex:         r.sex,
+      ageGroup:    r.age_group,
+      archivedAt:  r.archived_at,
+    }));
   }
 
   /** Upload a DICOM zip (or any file) via multipart. Returns the
@@ -702,31 +973,87 @@ class _ApiClient {
   }
 
   /** Pull the chat history for one session — messages newest-first as
-   *  stored, returned oldest-first so the UI can render top-down. */
+   *  stored, returned oldest-first so the UI can render top-down.
+   *
+   *  Backend shape (as of S5 thin-client refactor, see
+   *  ``packages/server/nexus_server/agent_state.py::ChatMessageView``):
+   *
+   *      { messages: [{
+   *          role: "user" | "assistant",
+   *          content: string,
+   *          timestamp: ISO-8601 string,
+   *          sync_id: number,
+   *          attachments: [{ name, mime, size_bytes }],
+   *          message_kind: "text" | "workflow_run",
+   *          metadata: object
+   *        }],
+   *        total: number }
+   *
+   *  Bug history (2026-06-14)
+   *  ────────────────────────
+   *  This parser was coded against the OLD raw-event-log shape
+   *  (``row.event_kind`` + ``row.payload.text``). After the S5
+   *  pivot the backend returns the higher-level ChatMessageView,
+   *  so every parsed row degraded to ``role='system'`` (which the
+   *  renderer then coerced to 'user') with an empty ``text``. The
+   *  symptom was 6 history rows all labelled "You" and visually
+   *  empty — the original turns were intact in the DB, just never
+   *  extracted by this method.
+   */
   async listSessionMessages(sessionId: string, limit = 200): Promise<ChatMessageRow[]> {
-    interface RawRow {
-      event_idx: number;
-      event_kind: string;
-      ts: number;
-      payload: { text?: string; session_id?: string; attachments?: string[] };
+    // Match server's ChatMessageView wire format exactly. Any field
+    // marked optional here is something we tolerate missing (older
+    // sidecar builds before .dmg upgrade) — required-side fields
+    // mirror the Pydantic model.
+    interface RawAttachment {
+      name: string;
+      mime?: string;
+      size_bytes?: number;
     }
-    interface RawResp { messages?: RawRow[]; events?: RawRow[] }
-    // The backend's /agent/messages endpoint returns history filtered
-    // by session_id. We re-shape into the role-oriented form the chat
-    // pane expects.
+    interface RawRow {
+      role: string;                  // "user" | "assistant"
+      content: string;
+      timestamp: string;             // ISO-8601
+      sync_id: number;
+      attachments?: RawAttachment[];
+      message_kind?: string;
+      metadata?: Record<string, unknown>;
+    }
+    interface RawResp { messages: RawRow[]; total: number }
     const r = await this.fetch<RawResp>(
       `/api/v1/agent/messages?session_id=${encodeURIComponent(sessionId)}&limit=${limit}`,
     );
-    const rows = r.messages ?? r.events ?? [];
-    return rows.map((row) => ({
-      eventIdx: row.event_idx,
-      role: row.event_kind === 'user_message' ? 'user'
-          : row.event_kind === 'assistant_response' ? 'agent'
-          : 'system',
-      text: String(row.payload?.text ?? ''),
-      ts: row.ts,
-      attachments: Array.isArray(row.payload?.attachments) ? row.payload!.attachments! : [],
-    }));
+    const rows = r.messages ?? [];
+    return rows.map((row): ChatMessageRow => {
+      // Map server roles to the UI's 3-way taxonomy. Anything not
+      // "user" / "assistant" gets bucketed as 'system' so unknown
+      // future kinds don't silently render in the wrong bubble.
+      let role: ChatMessageRow['role'];
+      if (row.role === 'assistant') role = 'agent';
+      else if (row.role === 'user') role = 'user';
+      else role = 'system';
+
+      // ISO-8601 timestamp → unix seconds. Falls back to 0 on parse
+      // failure rather than crashing the whole map() — a single bad
+      // row shouldn't black-hole the entire history pane.
+      let ts = 0;
+      try {
+        const t = Date.parse(row.timestamp);
+        if (!Number.isNaN(t)) ts = Math.floor(t / 1000);
+      } catch { /* leave ts=0 */ }
+
+      return {
+        eventIdx:    row.sync_id,
+        role,
+        text:        String(row.content ?? ''),
+        ts,
+        attachments: (row.attachments ?? []).map((a) => ({
+          name:      a.name,
+          mime:      a.mime ?? 'application/octet-stream',
+          sizeBytes: a.size_bytes ?? 0,
+        })),
+      };
+    });
   }
 
   /**
@@ -858,8 +1185,17 @@ class _ApiClient {
       studies: any[]; semantic_facts: any[];
       unresolved_conflict_count: number;
     }
+    // 20s hard timeout. F21: medic reported "AbortError: Fetch is
+    // aborted" with 8s — the projection endpoint was waiting on the
+    // SQLite write lock because session_takeaway was holding a conn
+    // open for a 10-15s LLM call after each chat turn (F10). Until
+    // we move LLM calls off the shared conn (WAL + separate worker
+    // pool), give projection a longer ceiling so the medic doesn't
+    // see a spurious "load failed" while the in-process post-turn
+    // work is finishing.
     const r = await this.fetch<Raw>(
       `/api/v1/memory/patient/${encodeURIComponent(patientHash)}/projection`,
+      { signal: AbortSignal.timeout(20000) },
     );
     const cast = (n: any) => ({
       nodeId: n.node_id, nodeType: n.node_type, content: n.content,
@@ -873,6 +1209,67 @@ class _ApiClient {
       studies: r.studies.map(cast),
       semanticFacts: r.semantic_facts.map(cast),
       unresolvedConflictCount: r.unresolved_conflict_count,
+    };
+  }
+
+  /** Diagnostic snapshot of the ingestion pipeline for one patient.
+   *  Lets the medic see WHY 当前发现 is empty without having to grep
+   *  server logs. The ``diagnosis`` field is a single-sentence
+   *  plain-Chinese summary the UI can render directly. */
+  async getIngestDebug(patientHash: string): Promise<{
+    ingestionStarted:   number;
+    ingestionCompleted: number;
+    nodeAddedEvents:    number;
+    clinicalGraphNodes: number;
+    latestLlmResponse: {
+      model?: string;
+      promptId?: string;
+      latencyMs?: number;
+      ts?: number;
+      rawOutputHead?: string;
+      rawOutputChars?: number;
+    };
+    latestCompleted: {
+      emittedNodeCount?: number;
+      errors?: string[];
+      ts?: number;
+    };
+    diagnosis: string;
+  }> {
+    interface Raw {
+      user_id: string;
+      patient_hash: string;
+      ingestion_started: number;
+      ingestion_completed: number;
+      node_added_events: number;
+      clinical_graph_nodes: number;
+      latest_llm_response: any;
+      latest_completed: any;
+      diagnosis: string;
+    }
+    const r = await this.fetch<Raw>(
+      `/api/v1/memory/patient/${encodeURIComponent(patientHash)}/ingest_debug`,
+      { signal: AbortSignal.timeout(5000) },
+    );
+    return {
+      ingestionStarted:   r.ingestion_started,
+      ingestionCompleted: r.ingestion_completed,
+      nodeAddedEvents:    r.node_added_events,
+      clinicalGraphNodes: r.clinical_graph_nodes,
+      latestLlmResponse: {
+        model:          r.latest_llm_response?.model,
+        promptId:       r.latest_llm_response?.prompt_id,
+        latencyMs:      r.latest_llm_response?.latency_ms,
+        ts:             r.latest_llm_response?.ts,
+        rawOutputHead:  r.latest_llm_response?.raw_output_head,
+        rawOutputChars: r.latest_llm_response?.raw_output_chars,
+      },
+      latestCompleted: {
+        emittedNodeCount: r.latest_completed?.emitted_node_count,
+        errors:           r.latest_completed?.errors,
+        ts:               r.latest_completed?.ts,
+      },
+      diagnosis: r.diagnosis,
     };
   }
 
@@ -944,6 +1341,70 @@ class _ApiClient {
     );
   }
 
+  /* ──────────────────── Layer 2b · session takeaways ──────────────── */
+
+  /** Per-user qualitative insights distilled by ``session_takeaway``.
+   *  Optionally filter by scope (patient / research / cross_research /
+   *  other) + scope_ref. Sorted newest first. Excludes rejected. */
+  async listTakeaways(opts: {
+    scopeKind?: 'patient' | 'research' | 'cross_research' | 'other';
+    scopeRef?: string;
+    limit?: number;
+  } = {}): Promise<Array<{
+    id:            number;
+    scopeKind:     string;
+    scopeRef:      string;
+    sessionId:     string;
+    text:          string;
+    tag:           string | null;
+    confidence:    number;
+    distilledAt:   number;
+    medicAckedAt:  number | null;
+  }>> {
+    const q = new URLSearchParams();
+    if (opts.scopeKind) q.set('scope_kind', opts.scopeKind);
+    if (opts.scopeRef) q.set('scope_ref', opts.scopeRef);
+    if (opts.limit) q.set('limit', String(opts.limit));
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    interface Raw {
+      takeaways: any[];
+      count: number;
+    }
+    // F-loading-timeouts: 6s hard cap. Without this, if the sidecar
+    // wasn't ready when the request fired (boot-race), the fetch
+    // hung forever and the drawer stayed on "加载中..." until the
+    // medic closed + reopened. Now: 6s → throw → caller renders an
+    // error state with a retry button.
+    const r = await this.fetch<Raw>(`/api/v1/memory/takeaways${qs}`, {
+      signal: AbortSignal.timeout(6000),
+    });
+    return r.takeaways.map((t) => ({
+      id:           t.id,
+      scopeKind:    t.scope_kind,
+      scopeRef:     t.scope_ref,
+      sessionId:    t.session_id,
+      text:         t.text,
+      tag:          t.tag ?? null,
+      confidence:   t.confidence,
+      distilledAt:  t.distilled_at,
+      medicAckedAt: t.medic_acked_at ?? null,
+    }));
+  }
+
+  async ackTakeaway(id: number) {
+    return this.fetch(
+      `/api/v1/memory/takeaways/${id}/ack`,
+      { method: 'POST' },
+    );
+  }
+
+  async rejectTakeaway(id: number) {
+    return this.fetch(
+      `/api/v1/memory/takeaways/${id}/reject`,
+      { method: 'POST' },
+    );
+  }
+
   /* ────────────────────────── export / restore ────────────────────────── */
 
   /**
@@ -1000,9 +1461,22 @@ class _ApiClient {
       has_openai_key: boolean;
       has_anthropic_key: boolean;
       advisory: string | null;
+      active_key_source?: string | null;
+      active_key_preview?: string | null;
+      active_key_length?: number | null;
     }
     try {
-      const r = await this.fetch<Raw>('/api/v1/settings/llm');
+      // 5-second hard timeout. If the sidecar isn't running / is
+      // still booting / has crashed, ``this.fetch`` would otherwise
+      // hang the WHOLE Settings · LLM panel on the "Loading…"
+      // spinner forever — the medic can't update their API key,
+      // every chat fails, every ingester fails, the Memory tab
+      // stays at 0, and the entire app feels broken end-to-end.
+      // After 5s we surrender to the Tauri IPC fallback (reads the
+      // same .env from disk) so the form always renders.
+      const r = await this.fetch<Raw>('/api/v1/settings/llm', {
+        signal: AbortSignal.timeout(5000),
+      });
       return {
         provider:        r.provider as LlmStatus['provider'],
         model:           r.model,
@@ -1012,9 +1486,16 @@ class _ApiClient {
         hasOpenaiKey:    r.has_openai_key,
         hasAnthropicKey: r.has_anthropic_key,
         advisory:        r.advisory,
+        activeKeySource: (r.active_key_source ?? null) as LlmStatus['activeKeySource'],
+        activeKeyPreview: r.active_key_preview ?? '',
+        activeKeyLength:  r.active_key_length ?? 0,
       };
     } catch (e) {
-      // Backend 404 / 5xx → try Tauri's direct-from-disk read.
+      // Backend 404 / 5xx / timeout → try Tauri's direct-from-disk
+      // read so the form is always usable. The IPC fallback can't
+      // tell us source / preview (it just reads .env), so those
+      // fields default to "env" / "" — the medic still gets the
+      // form, just without the load-source confirmation badge.
       const ipc = await tauriInvoke<Raw>('llm_env_status');
       if (ipc) {
         return {
@@ -1026,10 +1507,50 @@ class _ApiClient {
           hasOpenaiKey:    ipc.has_openai_key,
           hasAnthropicKey: ipc.has_anthropic_key,
           advisory:        ipc.advisory,
+          activeKeySource: 'env',
+          activeKeyPreview: '',
+          activeKeyLength:  0,
         };
       }
       throw e;
     }
+  }
+
+  /** Live-test the in-process active provider key — sends a tiny
+   *  generation through the server and reports either ✓ + latency or
+   *  the verbatim upstream error + a classified diagnosis. THE
+   *  canonical answer to "is my saved key actually valid?" — checks
+   *  reachability + acceptance, not just presence. */
+  async testLlmKey(): Promise<{
+    ok: boolean;
+    provider: string;
+    model: string;
+    latencyMs?: number;
+    error?: string;
+    diagnosis?: 'key_missing' | 'key_invalid' | 'quota_exceeded'
+              | 'network' | 'other';
+  }> {
+    interface Raw {
+      ok: boolean;
+      provider: string;
+      model: string;
+      latency_ms?: number | null;
+      error?: string | null;
+      diagnosis?: string | null;
+    }
+    const r = await this.fetch<Raw>('/api/v1/settings/llm/test', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    return {
+      ok:        r.ok,
+      provider:  r.provider,
+      model:     r.model,
+      latencyMs: r.latency_ms ?? undefined,
+      error:     r.error ?? undefined,
+      diagnosis: (r.diagnosis ?? undefined) as
+        'key_missing' | 'key_invalid' | 'quota_exceeded' | 'network' | 'other' | undefined,
+    };
   }
 
   async putLlmSettings(input: {
@@ -1052,6 +1573,9 @@ class _ApiClient {
         has_openai_key: boolean;
         has_anthropic_key: boolean;
         advisory: string | null;
+        active_key_source?: string | null;
+        active_key_preview?: string | null;
+        active_key_length?: number | null;
       };
     }
     const body: Record<string, string> = {};
@@ -1077,6 +1601,9 @@ class _ApiClient {
           hasOpenaiKey:    r.status.has_openai_key,
           hasAnthropicKey: r.status.has_anthropic_key,
           advisory:        r.status.advisory,
+          activeKeySource: (r.status.active_key_source ?? null) as LlmStatus['activeKeySource'],
+          activeKeyPreview: r.status.active_key_preview ?? '',
+          activeKeyLength:  r.status.active_key_length ?? 0,
         },
       };
     } catch (e) {
@@ -1110,6 +1637,9 @@ class _ApiClient {
           hasOpenaiKey:    ipc.status.has_openai_key,
           hasAnthropicKey: ipc.status.has_anthropic_key,
           advisory:        ipc.status.advisory,
+          activeKeySource: 'env',
+          activeKeyPreview: '',
+          activeKeyLength:  0,
         },
       };
     }
@@ -1137,6 +1667,287 @@ class _ApiClient {
   async getSidecarDiagnostics(): Promise<SidecarDiagnostics | null> {
     const r = await tauriInvoke<SidecarDiagnostics>('get_sidecar_diagnostics');
     return r ?? null;
+  }
+
+  /* ────────────────────────── report PDF ────────────────────────── */
+
+  /** POST /api/v1/report/pdf — build a clinical report PDF.
+   *  Replaces the broken window.print() flow that worked under no
+   *  browser inside Tauri's WKWebView. The server renders via reportlab
+   *  Platypus and writes to <Archive>/Reports/<hash>-<ts>.pdf, then
+   *  returns the path so ReportMode's "Last report" card can show it
+   *  and open the containing folder. */
+  async exportReportPdf(input: {
+    patientHash: string;
+    patientLabel: string;
+    patientSex: string;
+    patientAgeGroup: string;
+    latestModality: string;
+    latestStudyDt: string;
+    clinicalInfo: string;
+    impression: string;
+    recommendation: string;
+    findings: Array<{ nodeId?: number; label: string; urgency?: string }>;
+    differentials: Array<{ nodeId?: number; label: string; urgency?: string }>;
+    locale: 'zh-CN' | 'en-US';
+  }): Promise<{
+    path: string;
+    bytes: number;
+    createdAt: number;
+    patientHash: string;
+    locale: string;
+  }> {
+    interface Raw {
+      path: string;
+      bytes: number;
+      created_at: number;
+      patient_hash: string;
+      locale: string;
+    }
+    // Server-side schema uses snake_case (NodeRef.node_id /
+    // patient_hash) — translate at the boundary to keep the JS-side
+    // camelCase consistent everywhere else.
+    const body = {
+      patient_hash:        input.patientHash,
+      patient_label:       input.patientLabel,
+      patient_sex:         input.patientSex,
+      patient_age_group:   input.patientAgeGroup,
+      latest_modality:     input.latestModality,
+      latest_study_dt:     input.latestStudyDt,
+      clinical_info:       input.clinicalInfo,
+      impression:          input.impression,
+      recommendation:      input.recommendation,
+      findings: input.findings.map((n) => ({
+        node_id: n.nodeId ?? null,
+        label:   n.label,
+        urgency: n.urgency ?? null,
+      })),
+      differentials: input.differentials.map((n) => ({
+        node_id: n.nodeId ?? null,
+        label:   n.label,
+        urgency: n.urgency ?? null,
+      })),
+      locale: input.locale,
+    };
+    const r = await this.fetch<Raw>('/api/v1/report/pdf', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    return {
+      path:         r.path,
+      bytes:        r.bytes,
+      createdAt:    r.created_at,
+      patientHash:  r.patient_hash,
+      locale:       r.locale,
+    };
+  }
+
+  /* ────────────────────────── passkey ────────────────────────── */
+
+  /** Run the v1-style passkey ceremony from desktop-v2.
+   *
+   *  Architecture
+   *  ────────────
+   *  v1's .NET desktop launched the system browser at /auth/passkey-page,
+   *  then ran an HttpListener on an ephemeral port to capture the
+   *  callback redirect. v2 doesn't have an HttpListener primitive in
+   *  Tauri's Rust runtime, so we reuse the EXISTING sidecar as both the
+   *  page server AND the callback receiver:
+   *
+   *    1. Mint a UUID ``session_id`` locally.
+   *    2. Open a Tauri WebviewWindow at
+   *       ``/auth/passkey-page?mode=login&callback=…/passkey/bounce/<session_id>``.
+   *    3. User completes the WebAuthn ceremony in the popup window.
+   *    4. The page's success path navigates to the callback URL with
+   *       ``?token=<jwt>`` appended (v1's redirect contract).
+   *    5. The sidecar's ``/passkey/bounce`` endpoint stashes the token
+   *       in an in-memory dict keyed by session_id.
+   *    6. We poll ``/passkey/poll/<session_id>`` every 500 ms until the
+   *       token lands or the 5-minute timeout fires.
+   *    7. On ``ready``, return the token to the caller (LoginView) and
+   *       close the popup.
+   *
+   *  Security
+   *  ────────
+   *  Token never leaves the loopback interface — the bounce URL hits
+   *  the local FastAPI sidecar, and the poll request comes from this
+   *  same Tauri webview. session_id is UUIDv4 (~3e36 brute-force space)
+   *  with a 5-min TTL. The token is popped on first poll-read, so even
+   *  a stolen session_id can't be replayed.
+   */
+  async passkeyAuth(
+    mode: 'login' | 'signup',
+    displayName: string = '',
+  ): Promise<{ token: string }> {
+    const sessionId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2) + Date.now().toString(36);
+    // The callback URL the passkey_page.py JS will redirect to. Path-
+    // based session_id so v1's ``callback + "?token=" + jwt`` doesn't
+    // collide with a pre-existing query string.
+    const callback = `${baseUrl}/api/v1/auth/passkey/bounce/${encodeURIComponent(sessionId)}`;
+    const params = new URLSearchParams({
+      mode,
+      callback,
+    });
+    if (mode === 'signup' && displayName.trim()) {
+      params.set('display_name', displayName.trim());
+    }
+    const pageUrl = `${baseUrl}/auth/passkey-page?${params.toString()}`;
+
+    // Try the Tauri path — opens a real desktop popup. Outside Tauri
+    // (pnpm dev in a browser) fall back to window.open so devs can
+    // still exercise the flow without a Tauri build.
+    let popupClose: (() => void) | null = null;
+    try {
+      const mod = await import('@tauri-apps/api/webviewWindow');
+      const WebviewWindow = (mod as { WebviewWindow?: typeof import('@tauri-apps/api/webviewWindow').WebviewWindow }).WebviewWindow;
+      if (WebviewWindow) {
+        const label = `passkey-${sessionId.slice(0, 8)}`;
+        const win = new WebviewWindow(label, {
+          url: pageUrl,
+          title: mode === 'login' ? 'Sign in with passkey' : 'Sign up with passkey',
+          width: 520,
+          height: 700,
+          resizable: false,
+          focus: true,
+        });
+        popupClose = async () => {
+          try { await win.close(); } catch { /* already closed */ }
+        };
+      }
+    } catch {
+      /* not in Tauri runtime — fall through */
+    }
+    if (!popupClose) {
+      // Browser dev mode: open in a new tab. User closes manually
+      // after sign-in; the polling loop still captures the token.
+      const w = window.open(pageUrl, '_blank',
+        'width=520,height=700,resizable=no');
+      popupClose = () => { try { w?.close(); } catch { /* ignore */ } };
+    }
+
+    // Poll until ready or timeout. 500ms × 600 polls = 5 minutes.
+    const POLL_INTERVAL_MS = 500;
+    const MAX_POLLS = 600;
+    let polls = 0;
+    while (polls < MAX_POLLS) {
+      polls++;
+      try {
+        const r = await this.fetch<{ status: string; token: string | null }>(
+          `/api/v1/auth/passkey/poll/${encodeURIComponent(sessionId)}`,
+        );
+        if (r.status === 'ready' && r.token) {
+          popupClose();
+          return { token: r.token };
+        }
+      } catch {
+        /* sidecar transient blip — keep polling */
+      }
+      await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS));
+    }
+    popupClose();
+    throw new Error(
+      'Passkey sign-in timed out. The popup window stayed open for ' +
+      '5 minutes without completing. Close it and try again.',
+    );
+  }
+
+  /* ────────────────────────── scheduled tasks ────────────────────────── */
+
+  /** POST /api/v1/schedule/confirm — the user confirmed a scheduled
+   *  task (proposed by chat heuristic or composed manually from the
+   *  UI). Creates the row + emits SCHEDULED_TASK_CREATED. */
+  async confirmScheduledTask(input: {
+    kind: 'send_email';
+    payload: Record<string, unknown>;
+    fireAt: number;            // unix sec
+    userTz: string;            // IANA zone
+    recurrenceCron?: string | null;
+    sessionId?: string | null;
+    patientHash?: string | null;
+    proposalId?: string | null;
+  }): Promise<ScheduledTaskView> {
+    interface Raw {
+      task_id: string;
+      user_id: string;
+      patient_hash: string | null;
+      session_id: string | null;
+      kind: string;
+      payload: Record<string, unknown>;
+      fire_at: number;
+      user_tz: string;
+      recurrence_cron: string | null;
+      status: string;
+      last_run_at: number | null;
+      last_error: string | null;
+      result: Record<string, unknown> | null;
+      created_at: number;
+      updated_at: number;
+      cancelled_at: number | null;
+    }
+    const r = await this.fetch<Raw>('/api/v1/schedule/confirm', {
+      method: 'POST',
+      body: JSON.stringify({
+        kind:            input.kind,
+        payload:         input.payload,
+        fire_at:         input.fireAt,
+        user_tz:         input.userTz,
+        recurrence_cron: input.recurrenceCron ?? null,
+        session_id:      input.sessionId      ?? null,
+        patient_hash:    input.patientHash    ?? null,
+        proposal_id:     input.proposalId     ?? null,
+      }),
+    });
+    return rawScheduledTaskToView(r);
+  }
+
+  /** GET /api/v1/schedule/list — list this user's scheduled tasks.
+   *  status: optional filter ('pending' | 'done' | 'error' | 'cancelled'). */
+  async listScheduledTasks(
+    status?: 'pending' | 'done' | 'error' | 'cancelled' | 'running',
+    limit = 100,
+  ): Promise<ScheduledTaskView[]> {
+    interface Raw {
+      tasks: Array<{
+        task_id: string;
+        user_id: string;
+        patient_hash: string | null;
+        session_id: string | null;
+        kind: string;
+        payload: Record<string, unknown>;
+        fire_at: number;
+        user_tz: string;
+        recurrence_cron: string | null;
+        status: string;
+        last_run_at: number | null;
+        last_error: string | null;
+        result: Record<string, unknown> | null;
+        created_at: number;
+        updated_at: number;
+        cancelled_at: number | null;
+      }>;
+    }
+    const q = status
+      ? `?status_filter=${encodeURIComponent(status)}&limit=${limit}`
+      : `?limit=${limit}`;
+    const r = await this.fetch<Raw>(`/api/v1/schedule/list${q}`);
+    return r.tasks.map(rawScheduledTaskToView);
+  }
+
+  /** DELETE /api/v1/schedule/{task_id} — soft cancel. Idempotent. */
+  async cancelScheduledTask(taskId: string): Promise<ScheduledTaskView> {
+    const r = await this.fetch<{
+      task_id: string; user_id: string;
+      patient_hash: string | null; session_id: string | null;
+      kind: string; payload: Record<string, unknown>;
+      fire_at: number; user_tz: string;
+      recurrence_cron: string | null; status: string;
+      last_run_at: number | null; last_error: string | null;
+      result: Record<string, unknown> | null;
+      created_at: number; updated_at: number; cancelled_at: number | null;
+    }>(`/api/v1/schedule/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
+    return rawScheduledTaskToView(r);
   }
 
   /* ────────────────────────── email ────────────────────────── */
@@ -1218,6 +2029,27 @@ class _ApiClient {
     sessionId: string,
     patientHash: string | null,
     attachments: string[] = [],
+    /**
+     * Research Workspace scope (optional). When provided, the backend
+     * resolves the cohort from study_enrollments + screening_evaluations
+     * and reshapes the system prompt to be cohort-aware + load external
+     * knowledge tools. See chat_router_v2.ChatScope.
+     */
+    scope?: {
+      kind: 'patient' | 'research' | 'cross_patient';
+      studyId?: string | null;
+      focusPatientHash?: string | null;
+    },
+    /**
+     * F-tab-switch-race — caller-provided abort signal. When the
+     * medic switches tabs mid-stream, the chat component's unmount
+     * cleanup aborts the controller; this frees WebKit's
+     * limited-per-origin connection slot (6 concurrent fetches max)
+     * so the next ``api.health()`` probe on remount doesn't get
+     * stuck behind the abandoned SSE and falsely show "Backend
+     * unreachable".
+     */
+    abortSignal?: AbortSignal,
   ): AsyncIterable<ChatStreamChunk> {
     const r = await fetch(`${baseUrl}/api/v1/agent/chat`, {
       method: 'POST',
@@ -1225,7 +2057,13 @@ class _ApiClient {
       body: JSON.stringify({
         text, session_id: sessionId, patient_hash: patientHash,
         attachments,
+        scope: scope ? {
+          kind: scope.kind,
+          study_id: scope.studyId ?? null,
+          focus_patient_hash: scope.focusPatientHash ?? null,
+        } : undefined,
       }),
+      signal: abortSignal,
     });
     if (!r.ok || !r.body) {
       throw new ApiError(r.status, await r.text().catch(() => r.statusText),
@@ -1235,26 +2073,460 @@ class _ApiClient {
     const reader = r.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let idx: number;
-      // SSE messages are separated by blank lines.
-      while ((idx = buf.indexOf('\n\n')) !== -1) {
-        const raw = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        for (const line of raw.split('\n')) {
-          if (line.startsWith('data: ')) {
-            try {
-              yield JSON.parse(line.slice(6)) as ChatStreamChunk;
-            } catch {
-              /* malformed payload; skip */
+    // Hook abort → cancel the reader so the `for await` loop terminates
+    // cleanly. Without this, ``signal.abort()`` only aborts the request
+    // metadata; the body stream keeps draining in the background until
+    // the server closes it (could be minutes).
+    if (abortSignal) {
+      abortSignal.addEventListener('abort', () => {
+        try { reader.cancel(); } catch { /* already cancelled */ }
+      }, { once: true });
+    }
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx: number;
+        // SSE messages are separated by blank lines.
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const raw = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          for (const line of raw.split('\n')) {
+            if (line.startsWith('data: ')) {
+              try {
+                yield JSON.parse(line.slice(6)) as ChatStreamChunk;
+              } catch {
+                /* malformed payload; skip */
+              }
             }
           }
         }
       }
+    } finally {
+      // Defensive: if we exit the loop normally (done=true) OR via a
+      // for-await break OR via an aborted reader.cancel(), make sure
+      // the underlying fetch reader is fully released. WebKit on
+      // macOS keeps holding the connection slot otherwise.
+      try { reader.releaseLock(); } catch { /* ok */ }
     }
+  }
+
+  // ───────────────────────────────────────────────────────────────
+  // Research Workspace — /api/v1/research/* (design §6)
+  // ───────────────────────────────────────────────────────────────
+
+  async listStudies(includeArchived = false) {
+    interface Raw {
+      study_id: string;
+      display_name: string;
+      short_code: string;
+      phase: string;
+      status: string;
+      target_n: number | null;
+      enrolled_count: number;
+      candidate_count: number;
+      created_at: number;
+      updated_at: number;
+    }
+    const qs = includeArchived ? '?include_archived=true' : '';
+    const raw = await this.fetch<Raw[]>(`/api/v1/research/studies${qs}`);
+    return raw.map((r) => ({
+      studyId: r.study_id,
+      displayName: r.display_name,
+      shortCode: r.short_code,
+      phase: r.phase,
+      status: r.status,
+      targetN: r.target_n,
+      enrolledCount: r.enrolled_count,
+      candidateCount: r.candidate_count,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  async createStudy(body: {
+    displayName: string;
+    shortCode: string;
+    phase?: string;
+    targetN?: number | null;
+    primaryEndpoint?: string;
+    secondaryEndpoints?: string[];
+    inclusion?: Array<{ id: string; text: string; kind: string;
+                       rule_dsl?: string; llm_prompt?: string }>;
+    exclusion?: Array<{ id: string; text: string; kind: string;
+                       rule_dsl?: string; llm_prompt?: string }>;
+    schedule?: Array<{ label: string; offset_days: number;
+                       assessments: string[] }>;
+  }) {
+    return this.fetch<unknown>('/api/v1/research/studies', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        display_name: body.displayName,
+        short_code:   body.shortCode,
+        phase:        body.phase ?? '',
+        target_n:     body.targetN ?? null,
+        primary_endpoint: body.primaryEndpoint,
+        secondary_endpoints: body.secondaryEndpoints ?? [],
+        inclusion: body.inclusion ?? [],
+        exclusion: body.exclusion ?? [],
+        schedule:  body.schedule ?? [],
+      }),
+    });
+  }
+
+  async getResearchStudy(studyId: string) {
+    return this.fetch<unknown>(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}`,
+    );
+  }
+
+  /**
+   * Parse a previously-uploaded .docx protocol and return a draft
+   * { inclusion, exclusion, schedule, protocol_summary, notes } for the
+   * "New Study → Import .docx" review step.
+   *
+   * The upstream file must already be in /files (upload via uploadFile);
+   * pass the returned file_id as `uploadFileId`.
+   *
+   * Backend: POST /api/v1/research/studies/{study_id}/protocol/import.
+   * Goes through `_ApiClient.fetch` so it picks up baseUrl + bearer +
+   * silent re-auth like every other call. (Before this method existed,
+   * the only call site used a relative `fetch('/api/v1/...')` which the
+   * Tauri bundle resolved to `tauri://localhost/...` and WebKit threw
+   * `The string did not match the expected pattern` on parse — never
+   * reaching the sidecar.)
+   */
+  async importStudyProtocol(
+    studyId: string,
+    uploadFileId: string,
+  ): Promise<{
+    draft: {
+      inclusion?: Array<Record<string, unknown>>;
+      exclusion?: Array<Record<string, unknown>>;
+      schedule?:  Array<Record<string, unknown>>;
+      protocol_summary?: string;
+      notes?: string[];
+    };
+  }> {
+    return this.fetch(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}/protocol/import`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ upload_file_id: uploadFileId }),
+      },
+    );
+  }
+
+  async patchResearchStudy(studyId: string, body: Record<string, unknown>) {
+    return this.fetch<unknown>(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    );
+  }
+
+  // ─── Safety / observations ──────────────────────────────────────
+  // The Research Workspace "安全性" tab needs three reads and three
+  // writes against the per-study observation stream:
+  //   GET    /observations            — full list (filterable)
+  //   GET    /safety/stop-rule-status — aggregated DLT counter + cap
+  //   POST   /observations            — manual entry (medic typing in
+  //                                      an AE candidate; the SOAP →
+  //                                      AE auto-extractor is Phase 2)
+  //   POST   /observations/{id}/confirm — medic locks AE grade / DLT flag
+  //   POST   /observations/{id}/unlink — medic marks a row as 误判
+  // Schemas mirror research_router.py:ObservationRow.
+
+  async listStudyObservations(
+    studyId: string,
+    opts?: { patientHash?: string; category?: string },
+  ): Promise<Array<{
+    observation_id: string;
+    study_id: string;
+    patient_hash: string;
+    created_at: number;
+    category: string;
+    ae_grade: string | null;
+    ae_grade_confirmed: boolean;
+    is_dlt: boolean | null;
+    source_kind: string;
+    source_node_id: string | null;
+    source_text_excerpt: string | null;
+    linked_assessment_visit_id: string | null;
+    medic_confirmed_at: number | null;
+    unlinked_at: number | null;
+    unlink_reason: string | null;
+  }>> {
+    const qs = new URLSearchParams();
+    if (opts?.patientHash) qs.set('patient_hash', opts.patientHash);
+    if (opts?.category)    qs.set('category',     opts.category);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return this.fetch(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}/observations${suffix}`,
+    );
+  }
+
+  async recordStudyObservation(
+    studyId: string,
+    body: {
+      patientHash: string;
+      category: string;
+      aeGrade?: string;
+      isDlt?: boolean;
+      sourceTextExcerpt?: string;
+      linkedAssessmentVisitId?: string;
+    },
+  ): Promise<{ observation_id: string }> {
+    return this.fetch(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}/observations`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          patient_hash:               body.patientHash,
+          category:                   body.category,
+          ae_grade:                   body.aeGrade,
+          is_dlt:                     body.isDlt,
+          source_text_excerpt:        body.sourceTextExcerpt,
+          linked_assessment_visit_id: body.linkedAssessmentVisitId,
+        }),
+      },
+    );
+  }
+
+  async confirmStudyObservation(
+    studyId: string, obsId: string,
+    body: { aeGrade?: string; isDlt?: boolean; notes?: string },
+  ): Promise<{ status: string }> {
+    return this.fetch(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}/observations/${encodeURIComponent(obsId)}/confirm`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ae_grade: body.aeGrade,
+          is_dlt:   body.isDlt,
+          notes:    body.notes,
+        }),
+      },
+    );
+  }
+
+  async unlinkStudyObservation(
+    studyId: string, obsId: string, reason = '',
+  ): Promise<{ status: string }> {
+    return this.fetch(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}/observations/${encodeURIComponent(obsId)}/unlink`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      },
+    );
+  }
+
+  async getStopRuleStatus(studyId: string): Promise<{
+    dlt_observed: number;
+    dlt_cap: number | null;
+    run_in_n: number | null;
+    triggered: boolean;
+    note: string;
+  }> {
+    return this.fetch(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}/safety/stop-rule-status`,
+    );
+  }
+
+  /**
+   * Install a starter pack of canonical research protocols (3 real-world
+   * Chinese oncology trials shipped with the server, see
+   * ``packages/server/nexus_server/research/starter_protocols.py``).
+   * Used by the empty-state CTA so the medic has *something* to look
+   * at without having to import a .docx first.
+   *
+   * Pass ``starterIds = null`` to install all; pass an explicit list to
+   * pick a subset. ``overwrite=false`` is idempotent — re-clicking the
+   * button after installation is a no-op.
+   */
+  async installResearchStarters(
+    starterIds: string[] | null = null,
+    overwrite = false,
+  ): Promise<{ installed: string[]; count: number }> {
+    return this.fetch(
+      `/api/v1/research/starters/install`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ starter_ids: starterIds, overwrite }),
+      },
+    );
+  }
+
+  async archiveResearchStudy(studyId: string) {
+    return this.fetch<unknown>(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async getRoster(studyId: string, includeWithdrawn = false) {
+    const qs = includeWithdrawn ? '?include_withdrawn=true' : '';
+    return this.fetch<unknown[]>(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}/roster${qs}`,
+    );
+  }
+
+  async enrollPatient(
+    studyId: string,
+    body: { patientHash: string; arm?: string; consentSignedAt?: number;
+            notes?: string },
+  ) {
+    return this.fetch<unknown>(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}/enrollments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          patient_hash: body.patientHash,
+          arm: body.arm,
+          consent_signed_at: body.consentSignedAt,
+          notes: body.notes,
+        }),
+      },
+    );
+  }
+
+  async withdrawPatient(studyId: string, patientHash: string, reason = '') {
+    return this.fetch<unknown>(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}` +
+      `/enrollments/${encodeURIComponent(patientHash)}`,
+      {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      },
+    );
+  }
+
+  async listCandidates(studyId: string, decision?: string) {
+    const qs = decision ? `?decision=${encodeURIComponent(decision)}` : '';
+    return this.fetch<unknown[]>(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}/eligibility${qs}`,
+    );
+  }
+
+  async rescanEligibility(studyId: string) {
+    return this.fetch<{ status: string; patients_evaluated?: number }>(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}/eligibility/rescan`,
+      { method: 'POST' },
+    );
+  }
+
+  async decideScreening(
+    studyId: string, patientHash: string,
+    body: { decision: 'invited' | 'enrolled' | 'excluded' | 'snoozed' | 'pending';
+            reason?: string; snoozeUntil?: number },
+  ) {
+    return this.fetch<unknown>(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}` +
+      `/screenings/${encodeURIComponent(patientHash)}/decision`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          decision: body.decision,
+          reason: body.reason,
+          snooze_until: body.snoozeUntil,
+        }),
+      },
+    );
+  }
+
+  async getPatientStudies(patientHash: string) {
+    interface Raw {
+      study_id: string;
+      study_short_code: string;
+      study_display_name: string;
+      status: string;
+      enrollment_seq: number | null;
+      arm: string | null;
+      enrolled_at: number | null;
+      withdrawn_at: number | null;
+      withdrawal_reason: string | null;
+      consent_signed_at: number | null;
+    }
+    const raw = await this.fetch<Raw[]>(
+      `/api/v1/patients/${encodeURIComponent(patientHash)}/studies`,
+    );
+    return raw.map((r) => ({
+      studyId: r.study_id,
+      studyShortCode: r.study_short_code,
+      studyDisplayName: r.study_display_name,
+      status: r.status,
+      enrollmentSeq: r.enrollment_seq,
+      arm: r.arm,
+      enrolledAt: r.enrolled_at,
+      withdrawnAt: r.withdrawn_at,
+      withdrawalReason: r.withdrawal_reason,
+      consentSignedAt: r.consent_signed_at,
+    }));
+  }
+
+  async getResearchStudyOverview(studyId: string) {
+    return this.fetch<{
+      study_id: string;
+      enrolled_count: number;
+      target_n: number | null;
+      candidate_count: number;
+      attention_count: number;
+      median_followup_months: number;
+      status: string;
+      primary_endpoint: string | null;
+    }>(`/api/v1/research/studies/${encodeURIComponent(studyId)}/overview`);
+  }
+
+  async getResearchScheduleGantt(studyId: string) {
+    return this.fetch<{
+      timepoints: Array<{label: string; offset_days: number; visit_id: string}>;
+      rows: Array<{
+        patient_hash: string;
+        enrollment_seq: number;
+        enrollment_status: string;
+        enrolled_at: number;
+        cells: Array<{
+          timepoint: string;
+          status: 'planned' | 'in_progress' | 'completed' | 'missed' | 'overdue' | 'future';
+          kinds: string[];
+          due_at?: number;
+          completed_at?: number;
+        }>;
+      }>;
+    }>(`/api/v1/research/studies/${encodeURIComponent(studyId)}/schedule/gantt`);
+  }
+
+  async getResearchRecentActivity(studyId: string, days = 7, limit = 30) {
+    return this.fetch<Array<{
+      when_ms: number;
+      kind: string;
+      text: string;
+      patient_hash: string;
+    }>>(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}/recent-activity` +
+      `?days=${days}&limit=${limit}`,
+    );
+  }
+
+  async generateInterimReport(studyId: string) {
+    return this.fetch<{ status: string; file_id?: string }>(
+      `/api/v1/research/studies/${encodeURIComponent(studyId)}/reports/interim`,
+      { method: 'POST' },
+    );
   }
 }
 
@@ -1279,6 +2551,37 @@ async function tauriInvoke<T>(
   }
   return null;
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// F26.2 — Identity types for the picker UI
+// ─────────────────────────────────────────────────────────────────────
+
+export interface Identity {
+  userId:       string;
+  displayName:  string;
+  avatarEmoji:  string;
+  createdAt:    string;
+  lastActiveAt: string | null;
+}
+
+interface IdentityRaw {
+  user_id:        string;
+  display_name:   string;
+  avatar_emoji:   string;
+  created_at:     string;
+  last_active_at: string | null;
+}
+
+function _castIdentity(r: IdentityRaw): Identity {
+  return {
+    userId:       r.user_id,
+    displayName:  r.display_name,
+    avatarEmoji:  r.avatar_emoji,
+    createdAt:    r.created_at,
+    lastActiveAt: r.last_active_at ?? null,
+  };
+}
+
 
 export class ApiError extends Error {
   constructor(public status: number, body: string, public path: string) {
@@ -1309,6 +2612,16 @@ export interface ChatSessionInfo {
   isDefault: boolean;
 }
 
+/** One attachment metadata blob carried on a persisted ChatMessageRow.
+ *  Mirrors the server's ``AttachmentInfo`` (agent_state.py:74). The
+ *  desktop renders these as chips alongside the message bubble; the
+ *  bytes themselves stay on the server. */
+export interface ChatAttachmentInfo {
+  name: string;
+  mime: string;
+  sizeBytes: number;
+}
+
 /** One persisted chat row as returned by ``listSessionMessages``.
  *  Includes attachments so the UI can re-render the pasted-file chips
  *  when the medic reopens an old session. */
@@ -1316,8 +2629,11 @@ export interface ChatMessageRow {
   eventIdx: number;
   role: 'user' | 'agent' | 'system';
   text: string;
+  /** Unix seconds. Parsed from server's ISO-8601 timestamp; 0 on parse
+   *  failure (single-row defensive default so one bad ts doesn't black-
+   *  hole the whole history pane). */
   ts: number;
-  attachments: string[];
+  attachments: ChatAttachmentInfo[];
 }
 
 /**
@@ -1422,6 +2738,77 @@ export interface EmailSendResult {
   sentTo:     string[];
   /** HTTP code from the relay if transport='relay'; 0 for SMTP. */
   statusCode: number;
+}
+
+/** Scheduled task — projection row shape the UI consumes. Mirrors
+ *  ``scheduler.ScheduledTask.to_dict`` on the server. snake_case →
+ *  camelCase at the boundary so everything inside the UI stays JS-ish. */
+export interface ScheduledTaskView {
+  taskId:         string;
+  userId:         string;
+  patientHash:    string | null;
+  sessionId:      string | null;
+  kind:           'send_email';
+  payload:        Record<string, unknown>;
+  fireAt:         number;       // unix seconds (UTC)
+  userTz:         string;       // IANA zone (display)
+  recurrenceCron: string | null;
+  status:         'pending' | 'running' | 'done' | 'error' | 'cancelled';
+  lastRunAt:      number | null;
+  lastError:      string | null;
+  result:         Record<string, unknown> | null;
+  createdAt:      number;
+  updatedAt:      number;
+  cancelledAt:    number | null;
+}
+
+/** SSE event the chat pane receives mid-turn when the heuristic
+ *  extractor detected a future-intent. UI renders an inline
+ *  confirmation card; medic clicks Confirm → POST /schedule/confirm. */
+export interface ScheduleProposalView {
+  proposalId:     string;
+  kind:           'send_email';
+  fireAt:         number;
+  userTz:         string;
+  summary:        string;       // human one-liner; safe to display
+  payload:        Record<string, unknown>;
+  recurrenceCron: string | null;
+  sessionId:      string | null;
+  patientHash:    string | null;
+  needsUserInput: string[];     // e.g. ['to','subject','body']
+}
+
+function rawScheduledTaskToView(r: {
+  task_id: string; user_id: string;
+  patient_hash: string | null; session_id: string | null;
+  kind: string; payload: Record<string, unknown>;
+  fire_at: number; user_tz: string;
+  recurrence_cron: string | null;
+  status: string;
+  last_run_at: number | null;
+  last_error: string | null;
+  result: Record<string, unknown> | null;
+  created_at: number; updated_at: number;
+  cancelled_at: number | null;
+}): ScheduledTaskView {
+  return {
+    taskId:         r.task_id,
+    userId:         r.user_id,
+    patientHash:    r.patient_hash,
+    sessionId:      r.session_id,
+    kind:           r.kind as 'send_email',
+    payload:        r.payload,
+    fireAt:         r.fire_at,
+    userTz:         r.user_tz,
+    recurrenceCron: r.recurrence_cron,
+    status:         r.status as ScheduledTaskView['status'],
+    lastRunAt:      r.last_run_at,
+    lastError:      r.last_error,
+    result:         r.result,
+    createdAt:      r.created_at,
+    updatedAt:      r.updated_at,
+    cancelledAt:    r.cancelled_at,
+  };
 }
 
 export const api = new _ApiClient();

@@ -75,6 +75,23 @@ dependencies = [
     # error if the binary is missing, so the agent's chat turn
     # never crashes — it just falls back to vision.
     "pytesseract>=0.3",
+    # Report PDF export — ReportMode's Export-PDF button calls
+    # /api/v1/report/pdf which builds a clinical report via reportlab's
+    # Platypus framework. Chose reportlab over weasyprint because it's
+    # pure-Python (no Pango/Cairo native dylibs to bundle through
+    # PyInstaller — we've already burned days on PyInstaller native-lib
+    # bundling issues for macOS 26 / alembic.ini path resolution).
+    # ~10 MB wheel, ships cleanly in the .app.
+    "reportlab>=4.0",
+    # Research Workspace report generators (Phase 4). python-docx
+    # renders the interim report .docx, openpyxl writes the
+    # de-identified cohort .xlsx, matplotlib draws the KM curve PNG +
+    # CONSORT diagram. Hard deps so the .dmg ships them automatically;
+    # without them research.reports falls back to markdown / SVG-only,
+    # which is degraded UX for the doctor.
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "matplotlib>=3.8",
 ]
 
 [project.optional-dependencies]

@@ -321,10 +321,198 @@ def list_messages(
         that don't care about thread boundaries).
       * ``""``    — return only messages with empty session_id (the
         synthetic "default" session for pre-multi-session chat history).
-      * any other — strict equality match against ``events.session_id``.
+      * any other — strict equality match against session_id stored in
+        the event payload.
     Total count respects the same filter so the sidebar's count badges
     are coherent with what the user sees.
+
+    Phase 2a unification (docs/design/EVENT_LOG_UNIFICATION.md):
+    the canonical source of truth is the SHARED ``twin_event_log`` table
+    in rune_server.db, written by every chat_router_v2 turn via
+    ``Store.emit_and_apply``. The per-user file at
+    ``~/.nexus_server/twins/{user_id}/.../events.db`` is now a
+    deprecated mirror — we read it as a fallback for older rows that
+    predate the migration, but the primary read is the shared table.
     """
+    # ── Primary path: shared twin_event_log (canonical) ─────────────
+    try:
+        shared_msgs, shared_total = _list_messages_shared(
+            user_id=user_id,
+            limit=limit,
+            before_idx=before_idx,
+            session_id=session_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "list_messages: shared-table query failed for %s: %s "
+            "— falling back to per-user file",
+            user_id, exc,
+        )
+        shared_msgs, shared_total = [], 0
+
+    # ── Fallback path: per-user file (Phase 2a tolerates old rows) ──
+    # Some legacy chat threads + the workflow_run cards (until Phase 2b
+    # migrates them too) still live only in the per-user file. We merge
+    # the two streams oldest-first so the UI sees one coherent
+    # timeline. De-dupe by (sync_id, role, content) so the dual-write
+    # E14 band-aid doesn't produce visible doubles.
+    legacy_msgs, legacy_total = _list_messages_per_user_file(
+        user_id=user_id,
+        limit=limit,
+        before_idx=before_idx,
+        session_id=session_id,
+    )
+    if not legacy_msgs:
+        return shared_msgs, shared_total
+
+    if not shared_msgs:
+        return legacy_msgs, legacy_total
+
+    # Both populated → union + dedupe + cap to ``limit`` newest.
+    seen: set[tuple] = set()
+    merged: list[dict] = []
+    # Build a dedupe key tolerant of either-side-only rows:
+    #   primary key = (sync_id) since both tables use shared idx now
+    #   (Phase 2a writes go to both, idx values are SHARED-table idxs);
+    # for legacy-only rows the sync_id is a per-user idx which won't
+    # collide with shared idxs in practice (different counters). Add a
+    # secondary fingerprint of (role, content[:40], timestamp[:19]) to
+    # catch dual-writes that did populate both with the same idx.
+    def _key(m: dict) -> tuple:
+        return (
+            m.get("sync_id"),
+            m.get("role"),
+            (m.get("content") or "")[:40],
+            (m.get("timestamp") or "")[:19],
+        )
+    for m in shared_msgs + legacy_msgs:
+        k = _key(m)
+        if k in seen:
+            continue
+        seen.add(k)
+        merged.append(m)
+    # Sort oldest-first by timestamp string (ISO-8601 sorts correctly).
+    merged.sort(key=lambda m: m.get("timestamp") or "")
+    if len(merged) > limit:
+        merged = merged[-limit:]
+    return merged, max(shared_total, legacy_total)
+
+
+def _list_messages_shared(
+    *,
+    user_id: str,
+    limit: int,
+    before_idx: Optional[int],
+    session_id: Optional[str],
+) -> tuple[list[dict], int]:
+    """Phase 2a — read chat history from the shared ``twin_event_log``.
+
+    session_id lives inside ``payload_json`` (string field) on the shared
+    table — extracted with SQLite's ``json_extract``. The shared schema
+    indexes on ``(user_id, ts)`` so the WHERE clause is cheap; the
+    session-id filter adds a `json_extract` predicate that SQLite
+    evaluates row-by-row (acceptable for chat-volume tables).
+    """
+    from nexus_server.database import get_db_connection
+    # Chat-substrate event kinds the desktop renders. workflow_run is
+    # included so future Phase 2b migrations show up the moment they
+    # land; until then the legacy path still handles existing
+    # workflow_run cards.
+    chat_kinds = ("user_message", "assistant_response", "workflow_run")
+    placeholders = ",".join("?" * len(chat_kinds))
+
+    where = f"user_id = ? AND event_kind IN ({placeholders})"
+    params: list = [user_id, *chat_kinds]
+    if before_idx is not None:
+        where += " AND event_idx < ?"
+        params.append(int(before_idx))
+    if session_id is not None:
+        # COALESCE catches both NULL session_id (legacy) and missing
+        # JSON key. Equal-empty-string semantics match the per-user
+        # filter so default-session callers see the same rows.
+        where += (
+            " AND COALESCE(json_extract(payload_json, '$.session_id'), '') = ?"
+        )
+        params.append(session_id)
+
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT event_idx, event_kind, payload_json, ts
+            FROM twin_event_log
+            WHERE {where}
+            ORDER BY event_idx DESC
+            LIMIT ?
+            """,
+            (*params, int(limit)),
+        ).fetchall()
+        # Total count: same filter, no pagination.
+        total_where = f"user_id = ? AND event_kind IN ({placeholders})"
+        total_params: list = [user_id, *chat_kinds]
+        if session_id is not None:
+            total_where += (
+                " AND COALESCE(json_extract(payload_json, '$.session_id'), '') = ?"
+            )
+            total_params.append(session_id)
+        total = int(conn.execute(
+            f"SELECT COUNT(*) FROM twin_event_log WHERE {total_where}",
+            total_params,
+        ).fetchone()[0])
+
+    # Newest-first → oldest-first for the renderer.
+    rows = list(reversed(rows))
+    msgs: list[dict] = []
+    for r in rows:
+        event_idx, event_kind, payload_json, ts_us = r
+        payload = _safe_json(payload_json) if payload_json else {}
+        text = payload.get("text", "") or ""
+        attachments = payload.get("attachments") or []
+        if not isinstance(attachments, list):
+            attachments = []
+        # Strip injected context-blocks from user_message — same defence
+        # the per-user reader runs (see _strip_leaked_context_blocks).
+        if event_kind == "user_message":
+            text = _strip_leaked_context_blocks(text)
+        if event_kind == "user_message":
+            role, kind = "user", "text"
+        elif event_kind == "workflow_run":
+            role, kind = "assistant", "workflow_run"
+        else:
+            role, kind = "assistant", "text"
+        # Microseconds (int) → ISO-8601 for the wire.
+        try:
+            iso = _ts_to_iso(int(ts_us) / 1_000_000.0)
+        except Exception:  # noqa: BLE001
+            iso = _ts_to_iso(0.0)
+        # Repackage metadata field for the desktop. The per-user reader
+        # had a `metadata` JSON column; here we synthesise it from
+        # payload entries that aren't `text`/`session_id`/`attachments`.
+        meta = {
+            k: v for (k, v) in payload.items()
+            if k not in ("text", "session_id", "attachments")
+        }
+        msgs.append({
+            "role":         role,
+            "content":      text,
+            "timestamp":    iso,
+            "sync_id":      int(event_idx),
+            "attachments":  attachments,
+            "message_kind": kind,
+            "metadata":     meta,
+        })
+    return msgs, total
+
+
+def _list_messages_per_user_file(
+    *,
+    user_id: str,
+    limit: int,
+    before_idx: Optional[int],
+    session_id: Optional[str],
+) -> tuple[list[dict], int]:
+    """Legacy reader — per-user SQLite file. Kept for fallback during
+    Phase 2a so any pre-migration rows (and unmigrated workflow_run
+    cards) still appear in the timeline."""
     conn = _open_readonly(user_id)
     if conn is None:
         return [], 0

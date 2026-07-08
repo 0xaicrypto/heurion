@@ -12,11 +12,12 @@ import * as Dialog from '@radix-ui/react-dialog';
 import * as Popover from '@radix-ui/react-popover';
 import {
   Search, X, Plus, LogOut, Sun, Moon, User, Settings as SettingsIcon,
-  Send, Mail, AlertTriangle, CheckCircle,
+  Send, Mail, AlertTriangle, CheckCircle, Globe,
 } from 'lucide-react';
 import { Button, Input, Chip } from './ui';
 import { useAppState } from '../store';
-import { cn, MODE_LABELS, patientDisplayLabel, type PatientCard, type ModeKind } from '../lib/util';
+import { cn, patientDisplayLabel, type PatientCard, type ModeKind } from '../lib/util';
+import { useT, useModeLabel, type Locale } from '../lib/i18n';
 import { api, ApiError, type EmailTransportStatus } from '../lib/api-client';
 
 /* ───────────── CommandPalette (⌘K) ───────────── */
@@ -31,6 +32,8 @@ interface PaletteAction {
 }
 
 export function CommandPalette() {
+  const t = useT();
+  const modeLabel = useModeLabel();
   const open       = useAppState((s) => s.commandPaletteOpen);
   const close      = useAppState((s) => s.closeCommandPalette);
   const patients   = useAppState((s) => s.patients);
@@ -76,8 +79,8 @@ export function CommandPalette() {
       (['patient', 'encounter', 'imaging', 'labs', 'memory', 'report'] as ModeKind[]).forEach((m) => {
         list.push({
           kind: 'mode',
-          label: `Open ${MODE_LABELS[m]}`,
-          hint: `for ${patientDisplayLabel(activePatient)}`,
+          label: t('palette.openMode', { mode: modeLabel(m) }),
+          hint: t('palette.forPatient', { patient: patientDisplayLabel(activePatient) }),
           mode: m,
           onRun: () => {
             setMode(m);
@@ -90,7 +93,7 @@ export function CommandPalette() {
     // Global actions
     list.push({
       kind: 'action',
-      label: 'New patient',
+      label: t('palette.actionNewPatient'),
       hint: '⌘N',
       onRun: () => {
         close();
@@ -99,8 +102,8 @@ export function CommandPalette() {
     });
     list.push({
       kind: 'action',
-      label: 'Compose email',
-      hint: 'send via relay / SMTP',
+      label: t('palette.actionEmail'),
+      hint: t('palette.actionEmailHint'),
       onRun: () => {
         close();
         openCompose();
@@ -108,7 +111,7 @@ export function CommandPalette() {
     });
     list.push({
       kind: 'action',
-      label: 'Back to Today',
+      label: t('palette.actionToday'),
       onRun: () => {
         setPatient(null);
         close();
@@ -116,7 +119,8 @@ export function CommandPalette() {
     });
 
     return list;
-  }, [patients, activePatient, setPatient, setMode, close, openNew, openCompose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patients, activePatient, setPatient, setMode, close, openNew, openCompose, t, modeLabel]);
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -164,18 +168,18 @@ export function CommandPalette() {
                 setCursor(0);
               }}
               onKeyDown={onKeyDown}
-              placeholder="Search patients, jump to mode, run action…"
+              placeholder={t('palette.placeholder')}
               className="flex-1 bg-transparent text-body text-text-primary placeholder:text-text-tertiary focus:outline-none"
             />
             <kbd className="rounded-sm border border-border px-1.5 py-0.5 font-mono text-[10px] text-text-tertiary">
-              esc
+              {t('palette.esc')}
             </kbd>
           </div>
 
           <ul className="max-h-[50vh] overflow-y-auto py-2">
             {filtered.length === 0 && (
               <li className="px-4 py-6 text-center text-caption text-text-tertiary">
-                No matches
+                {t('palette.noMatches')}
               </li>
             )}
             {filtered.map((a, i) => (
@@ -209,6 +213,7 @@ export function CommandPalette() {
 /* ───────────── NewPatientDialog ───────────── */
 
 export function NewPatientDialog() {
+  const t = useT();
   const open  = useAppState((s) => s.newPatientDialogOpen);
   const close = useAppState((s) => s.closeNewPatientDialog);
   const showToast       = useAppState((s) => s.showToast);
@@ -303,11 +308,11 @@ export function NewPatientDialog() {
           <div className="mb-4 flex items-center justify-between">
             <Dialog.Title asChild>
               <h2 className="font-display text-section text-text-primary">
-                New patient
+                {t('newPatient.title')}
               </h2>
             </Dialog.Title>
             <Dialog.Close
-              aria-label="Close"
+              aria-label={t('newPatient.cancel')}
               className="rounded-sm p-1 text-text-tertiary hover:bg-accent-subtle hover:text-text-primary"
             >
               <X size={16} />
@@ -315,32 +320,30 @@ export function NewPatientDialog() {
           </div>
 
           <Dialog.Description className="mb-5 text-caption text-text-secondary">
-            A PHI-safe hash is minted on the server. Enter either initials
-            (e.g. <span className="font-mono">J.D.</span>) <strong>or</strong> an MRN —
-            one of the two is required so the server has something to hash.
+            {t('newPatient.intro')}
           </Dialog.Description>
 
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1.5 block text-caption font-medium text-text-secondary">
-                  Initials
+                  {t('newPatient.initials')}
                 </label>
                 <Input
                   value={initials}
                   onChange={(e) => setInitials(e.target.value)}
-                  placeholder="J.D."
+                  placeholder={t('newPatient.initialsPlaceholder')}
                   disabled={busy}
                 />
               </div>
               <div>
                 <label className="mb-1.5 block text-caption font-medium text-text-secondary">
-                  MRN <span className="text-text-tertiary">(or initials)</span>
+                  {t('newPatient.mrn')} <span className="text-text-tertiary">{t('newPatient.mrnHint')}</span>
                 </label>
                 <Input
                   value={mrn}
                   onChange={(e) => setMrn(e.target.value)}
-                  placeholder="MRN-12345"
+                  placeholder={t('newPatient.mrnPlaceholder')}
                   disabled={busy}
                 />
               </div>
@@ -348,7 +351,7 @@ export function NewPatientDialog() {
 
             <div>
               <label className="mb-1.5 block text-caption font-medium text-text-secondary">
-                Sex
+                {t('newPatient.sex')}
               </label>
               <div className="flex gap-2">
                 {(['F', 'M'] as const).map((s) => (
@@ -362,7 +365,7 @@ export function NewPatientDialog() {
                         : 'border-border text-text-secondary hover:border-border-strong',
                     )}
                   >
-                    {s === 'F' ? 'Female' : 'Male'}
+                    {s === 'F' ? t('newPatient.female') : t('newPatient.male')}
                   </button>
                 ))}
               </div>
@@ -370,12 +373,12 @@ export function NewPatientDialog() {
 
             <div>
               <label className="mb-1.5 block text-caption font-medium text-text-secondary">
-                Age <span className="text-text-tertiary">(years — server buckets to age group)</span>
+                {t('newPatient.age')} <span className="text-text-tertiary">{t('newPatient.ageHint')}</span>
               </label>
               <Input
                 value={age}
                 onChange={(e) => setAge(e.target.value)}
-                placeholder="65"
+                placeholder={t('newPatient.agePlaceholder')}
                 inputMode="numeric"
                 disabled={busy}
               />
@@ -383,12 +386,12 @@ export function NewPatientDialog() {
 
             <div>
               <label className="mb-1.5 block text-caption font-medium text-text-secondary">
-                Reason for visit <span className="text-text-tertiary">(optional)</span>
+                {t('newPatient.reason')} <span className="text-text-tertiary">{t('newPatient.reasonHint')}</span>
               </label>
               <Input
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="Chest pain, follow-up CT, …"
+                placeholder={t('newPatient.reasonPlaceholder')}
                 disabled={busy}
               />
             </div>
@@ -402,14 +405,14 @@ export function NewPatientDialog() {
 
           <div className="mt-6 flex justify-end gap-2">
             <Button variant="subtle" onClick={close} disabled={busy}>
-              Cancel
+              {t('newPatient.cancel')}
             </Button>
             <Button
               variant="primary"
               onClick={onCreate}
               disabled={busy || (!initials.trim() && !mrn.trim())}
             >
-              {busy ? 'Creating…' : 'Create patient'}
+              {busy ? t('newPatient.creating') : t('newPatient.create')}
             </Button>
           </div>
         </Dialog.Content>
@@ -421,6 +424,7 @@ export function NewPatientDialog() {
 /* ───────────── AccountMenu (avatar popover) ───────────── */
 
 export function AccountMenu({ trigger }: { trigger: ReactNode }) {
+  const t = useT();
   const theme       = useAppState((s) => s.theme);
   const toggleTheme = useAppState((s) => s.toggleTheme);
   const logout      = useAppState((s) => s.logout);
@@ -428,6 +432,14 @@ export function AccountMenu({ trigger }: { trigger: ReactNode }) {
   const openSettings = useAppState((s) => s.openSettingsOverlay);
   const openCompose  = useAppState((s) => s.openEmailComposer);
   const displayName = useAppState((s) => s.displayName);
+  const locale      = useAppState((s) => s.locale);
+  const setLocale   = useAppState((s) => s.setLocale);
+  // Toggle between the two supported locales. We pick the OTHER locale
+  // as the label so the row reads as "click here to switch to X".
+  const nextLocale: Locale = locale === 'zh-CN' ? 'en-US' : 'zh-CN';
+  const nextLocaleLabel = nextLocale === 'zh-CN'
+    ? t('account.languageZh')
+    : t('account.languageEn');
 
   return (
     <Popover.Root>
@@ -443,34 +455,40 @@ export function AccountMenu({ trigger }: { trigger: ReactNode }) {
         >
           <MenuRow
             icon={<User size={14} />}
-            label={displayName ?? 'Signed in'}
-            hint="signed in"
+            label={displayName ?? t('account.signedIn')}
+            hint={t('account.signedInHint')}
           />
           <MenuDivider />
           <MenuRow
             icon={<SettingsIcon size={14} />}
-            label="Settings · Data"
+            label={t('account.settingsData')}
             onClick={openSettings}
           />
           <MenuRow
             icon={<Mail size={14} />}
-            label="Compose email…"
+            label={t('account.composeEmail')}
             onClick={() => openCompose()}
           />
           <MenuRow
             icon={<User size={14} />}
-            label="Nexus has learned"
+            label={t('account.hasLearned')}
             onClick={openPractitioner}
           />
           <MenuRow
             icon={theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
-            label={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            label={theme === 'dark' ? t('account.lightMode') : t('account.darkMode')}
             onClick={toggleTheme}
+          />
+          <MenuRow
+            icon={<Globe size={14} />}
+            label={nextLocaleLabel}
+            hint={t('account.language')}
+            onClick={() => setLocale(nextLocale)}
           />
           <MenuDivider />
           <MenuRow
             icon={<LogOut size={14} />}
-            label="Sign out"
+            label={t('account.signOut')}
             onClick={logout}
             destructive
           />
@@ -573,6 +591,7 @@ export function ToastStrip() {
  * the medic without UI rewriting.
  */
 export function EmailComposerDialog() {
+  const t       = useT();
   const open    = useAppState((s) => s.emailComposerOpen);
   const close   = useAppState((s) => s.closeEmailComposer);
   const prefill = useAppState((s) => s.emailComposerPrefill);
@@ -649,7 +668,10 @@ export function EmailComposerDialog() {
       });
       if (r.ok) {
         setStatus({ kind: 'ok', text: r.message });
-        toast(`Email sent · ${r.sentTo.join(', ') || 'recipients confirmed'}`, 'success');
+        toast(
+          t('email.sentToast', { to: r.sentTo.join(', ') || '—' }),
+          'success',
+        );
         // Auto-close after a beat so the medic sees the green strip
         // briefly. 1.2s matches Memory tab's confirm pattern.
         setTimeout(() => { if (!sending) close(); }, 1200);
@@ -694,12 +716,11 @@ export function EmailComposerDialog() {
             <div>
               <Dialog.Title asChild>
                 <h2 className="font-display text-section flex items-center gap-2">
-                  <Mail size={18} /> Compose email
+                  <Mail size={18} /> {t('email.title')}
                 </h2>
               </Dialog.Title>
               <Dialog.Description className="mt-1 text-caption text-text-secondary">
-                Sends through your configured transport — relay first if
-                set, otherwise direct SMTP.
+                {t('email.tagline')}
               </Dialog.Description>
             </div>
             <Dialog.Close
@@ -713,42 +734,32 @@ export function EmailComposerDialog() {
           {/* Transport banner — only when there's something to say. */}
           {probing && (
             <div className="mb-4 rounded-sm border border-border bg-bg px-3 py-2 text-caption text-text-secondary">
-              Checking transport configuration…
+              {t('email.probing')}
             </div>
           )}
           {!probing && transport && !transport.configured && (
             <div className="mb-4 flex items-start gap-2 rounded-sm border border-caution/40 bg-caution/10 px-3 py-2 text-caption text-caution">
               <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-              <div>
-                No email transport is configured. Configure
-                {' '}<code className="font-mono">NEXUS_RELAY_URL</code>{' '}
-                +
-                {' '}<code className="font-mono">NEXUS_RELAY_API_KEY</code>{' '}
-                (recommended) or
-                {' '}<code className="font-mono">NEXUS_SMTP_*</code>{' '}
-                in
-                {' '}<code className="font-mono">$RUNE_HOME/.env</code>,
-                then reopen.
-              </div>
+              <div>{t('email.notConfigured')}</div>
             </div>
           )}
           {!probing && transport?.configured && (
             <div className="mb-4 rounded-sm border border-border bg-bg px-3 py-2 text-caption text-text-secondary">
-              Sending via{' '}
+              {t('email.sendingVia')}{' '}
               <strong className="text-text-primary">
                 {transport.relayConfigured
-                  ? `relay (${transport.relayUrlHost || '?'})`
-                  : 'direct SMTP'}
+                  ? t('email.viaRelay', { host: transport.relayUrlHost || '?' })
+                  : t('email.viaSmtp')}
               </strong>
               {transport.defaultFrom && (
                 <>
-                  {' · from '}
+                  {' · '}
                   <span className="font-mono">{transport.defaultFrom}</span>
                 </>
               )}
               {transport.allowedRecipients.length > 0 && (
                 <div className="mt-1">
-                  Allow-list active · {transport.allowedRecipients.length} recipient(s)
+                  {t('email.allowList', { count: transport.allowedRecipients.length })}
                 </div>
               )}
             </div>
@@ -757,19 +768,19 @@ export function EmailComposerDialog() {
           <div className="space-y-4">
             <div>
               <label className="mb-1.5 block text-caption font-medium text-text-secondary">
-                To <span className="text-text-tertiary">(comma-separated)</span>
+                {t('email.to')} <span className="text-text-tertiary">{t('email.toHint')}</span>
               </label>
               <Input
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
-                placeholder="colleague@hospital.org"
+                placeholder={t('email.toPlaceholder')}
                 disabled={sending}
               />
             </div>
 
             <div>
               <label className="mb-1.5 block text-caption font-medium text-text-secondary">
-                Cc <span className="text-text-tertiary">(optional)</span>
+                {t('email.cc')} <span className="text-text-tertiary">{t('email.ccHint')}</span>
               </label>
               <Input
                 value={cc}
@@ -781,19 +792,19 @@ export function EmailComposerDialog() {
 
             <div>
               <label className="mb-1.5 block text-caption font-medium text-text-secondary">
-                Subject
+                {t('email.subject')}
               </label>
               <Input
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
-                placeholder="CT findings · Mr Patel"
+                placeholder={t('email.subjectPlaceholder')}
                 disabled={sending}
               />
             </div>
 
             <div>
               <label className="mb-1.5 block text-caption font-medium text-text-secondary">
-                Body
+                {t('email.body')}
               </label>
               <textarea
                 value={body}
@@ -812,7 +823,7 @@ export function EmailComposerDialog() {
 
             {badAddrs.length > 0 && (
               <div className="rounded-sm border border-caution/40 bg-caution/10 px-3 py-2 text-caption text-caution">
-                Not a valid email address: {badAddrs.join(', ')}
+                {t('email.invalidAddr', { addrs: badAddrs.join(', ') })}
               </div>
             )}
 
@@ -833,21 +844,24 @@ export function EmailComposerDialog() {
           <div className="mt-6 flex items-center justify-between">
             <div className="text-caption text-text-tertiary">
               {toList.length === 0
-                ? 'Enter at least one recipient'
-                : `${toList.length} recipient${toList.length === 1 ? '' : 's'}${
-                    ccList.length ? ` + ${ccList.length} cc` : ''
-                  }`}
+                ? t('email.noRecipient')
+                : t('email.recipients', {
+                    toCount: toList.length,
+                    extra: ccList.length
+                      ? t('email.ccExtra', { ccCount: ccList.length })
+                      : '',
+                  })}
             </div>
             <div className="flex gap-2">
               <Button variant="subtle" onClick={close} disabled={sending}>
-                Cancel
+                {t('email.cancel')}
               </Button>
               <Button
                 variant="primary"
                 onClick={handleSend}
                 disabled={!canSend}
               >
-                <Send size={14} /> {sending ? 'Sending…' : 'Send'}
+                <Send size={14} /> {sending ? t('email.sending') : t('email.send')}
               </Button>
             </div>
           </div>

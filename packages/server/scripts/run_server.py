@@ -5,9 +5,9 @@ When packaged via Tauri sidecar, this gets launched on app startup and
 binds the FastAPI server to 127.0.0.1:8001. Logs go to
 ``~/Library/Logs/Nexus/server.log``.
 
-If you want to run the backend without Tauri (development), the regular
-``uvicorn nexus_server.main:app`` invocation still works — this script
-exists for the bundled-binary path only.
+If you want to run the backend without Tauri (development), use
+``uvicorn nexus_server.main:create_app --factory --port 8001`` — this
+script exists for the bundled-binary path only.
 """
 
 from __future__ import annotations
@@ -107,6 +107,17 @@ def main() -> int:
     from nexus_server.main import create_app
     fastapi_app = create_app()
 
+    # F-bind-127: server binds to ``127.0.0.1`` (deterministic IPv4
+    # loopback), NOT the DNS name ``localhost``. On macOS / many Linux
+    # configs ``localhost`` resolves to BOTH ``127.0.0.1`` and ``::1``;
+    # uvicorn binds to only one of them (whichever resolves first),
+    # and if the browser tries the other we get "Backend unreachable".
+    #
+    # The frontend's baseUrl is still ``http://localhost:8001`` — the
+    # browser's DNS resolver picks ``127.0.0.1`` for ``localhost``
+    # (universal default), so it lands on the IPv4 socket we just
+    # bound. This combo keeps WebAuthn-friendliness (origin = DNS
+    # name) AND deterministic server binding.
     host = os.environ.get("NEXUS_HOST", "127.0.0.1")
     port = int(os.environ.get("NEXUS_PORT", "8001"))
     log.info("listening on %s:%d", host, port)

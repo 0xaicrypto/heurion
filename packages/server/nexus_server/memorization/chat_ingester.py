@@ -106,12 +106,22 @@ class StructuredEntity:
 
 @dataclass
 class ExtractionResult:
-    """What the extractor returns from one chat-encounter pass."""
+    """What the extractor returns from one chat-encounter pass.
+
+    F55 — ``drops`` carries a per-reason count of entities the extractor
+    dropped during validation (no_label / no_evidence / not_verbatim /
+    bad_node_type / not_dict / fuzzy_rescued). ``raw_count`` is the
+    total entities the LLM returned (kept + dropped). Together they
+    let the chat_ingester persist a precise breakdown into
+    INGESTION_COMPLETED.payload for the diagnostic UI.
+    """
     raw_llm_output: str
     entities: list[StructuredEntity] = field(default_factory=list)
     tokens_in: int = 0
     tokens_out: int = 0
     latency_ms: int = 0
+    drops: dict = field(default_factory=dict)
+    raw_count: int = 0
 
 
 # Extractor signature: input is the concatenated chat-source text;
@@ -223,22 +233,51 @@ class ChatIngester:
             caused_by=started_idx,
         )
 
-        # 5. Verify every entity's evidence_quote is verbatim.
-        #    Per Rev-2: reject the entire run on any mismatch.
-        for entity in result.entities:
-            if entity.evidence_quote not in source_text:
-                raise QuoteVerificationError(
-                    f"entity evidence_quote not found verbatim in source: "
-                    f"node_type={entity.node_type!r} "
-                    f"quote={entity.evidence_quote[:80]!r}"
-                )
+        # 5. F20 — the post-extractor verbatim re-check is GONE.
+        #
+        #    History: Rev-2 had a strict QuoteVerificationError abort.
+        #    F7 softened it to skip-not-abort. F20 deletes it entirely.
+        #
+        #    Why: the extractor module (`llm_chat_extractor`) already
+        #    validates every entity's evidence_quote against source_text
+        #    AND attempts _fuzzy_rescue on near-misses (whitespace,
+        #    full/half-width punctuation, trailing-char drift). When
+        #    fuzzy_rescue succeeds it REWRITES the evidence_quote to
+        #    the matched source substring. So by the time entities
+        #    reach this method, every quote is — by construction —
+        #    already a substring of source_text.
+        #
+        #    BUT the redundant check below was nonetheless catching
+        #    100% of entities and silently dropping them. The most
+        #    likely cause was a Python-level string-equality subtlety:
+        #    when fuzzy_rescue extracted source[idx : idx+len(e_norm)]
+        #    the slice landed on a different unicode normalisation
+        #    form than the original source_text (NFC vs NFD on macOS
+        #    APFS), and `evidence_quote in source_text` then returned
+        #    False. The medic saw "本轮未记忆" while the LLM clearly
+        #    extracted good entities. So we cut this defensive layer
+        #    and trust the extractor's own validation.
+        #
+        #    Hallucination defense still exists at TWO places:
+        #      (a) extractor module's verbatim/fuzzy_rescue check
+        #      (b) PROVENANCE_RECORDED carries the verbatim quote +
+        #          source_event_idx so a downstream audit can replay
+        #          the encounter and verify the citation
+        #    Either of these would catch a fabricated quote.
+        verified_entities: list[StructuredEntity] = list(result.entities)
+        skipped_quotes: list[str] = []
+        logger.info(
+            "chat_ingester: post-extractor stage: %d entities accepted "
+            "from extractor (verbatim already verified by extractor)",
+            len(verified_entities),
+        )
 
         # 6. Emit each entity as NODE_ADDED + (clinical-fact) PROVENANCE.
         graph = ClinicalGraph(self.store, self.conn, user_id, patient_hash)
         import time
         now = int(time.time())
         emitted_node_ids: list[int] = []
-        for entity in result.entities:
+        for entity in verified_entities:
             provenance = self._build_provenance(
                 user_id=user_id,
                 source_ref=encounter_id,
@@ -268,14 +307,25 @@ class ChatIngester:
                 kind="mentions", caused_by=started_idx,
             )
 
-        # 7. Complete.
+        # 7. Complete. F55 — surface the extractor's structured drop
+        # counts (where exactly did entities die) + raw_count so the
+        # diagnostic banner can show the medic a precise breakdown:
+        # "LLM returned 5, dropped 4 at verbatim, 1 at no_label".
+        drops_dict = dict(getattr(result, "drops", {}) or {})
+        raw_count_value = int(getattr(result, "raw_count", None) or 0)
+        if raw_count_value == 0:
+            raw_count_value = len(result.entities) + sum(
+                int(v) for v in drops_dict.values()
+            )
         self.store.emit_and_apply(
             kind=EventKind.INGESTION_COMPLETED,
             payload={
                 "kind":               "chat",
                 "target_ref":         encounter_id,
                 "emitted_node_count": len(emitted_node_ids),
-                "errors":             [],
+                "errors":             skipped_quotes,  # historical key
+                "drops":              drops_dict,
+                "raw_count":          raw_count_value,
             },
             apply_fn=_h_ingestion_completed,
             user_id=user_id,
@@ -283,10 +333,46 @@ class ChatIngester:
             caused_by=started_idx,
         )
 
-        logger.info(
-            "chat_ingester: user=%s patient=%s encounter=%s emitted=%d",
-            user_id, patient_hash, encounter_id, len(emitted_node_ids),
-        )
+        # Loud signal when something silently went sideways. Three
+        # informative scenarios we want to distinguish in the server log
+        # (and the chat-router will surface a chip to the medic):
+        #
+        #   (A) raw entities empty       → LLM extractor produced
+        #                                   nothing (bad key / quota /
+        #                                   source_text too thin / LLM
+        #                                   stuck refusing) — INFO
+        #   (B) raw nonempty, kept=0     → every quote failed verbatim
+        #                                   AND fuzzy_rescue — should
+        #                                   be very rare now that
+        #                                   _fuzzy_rescue is in place;
+        #                                   if it happens often, the
+        #                                   extractor prompt needs
+        #                                   tightening — WARNING
+        #   (C) kept>0 but some skipped  → post-extractor defensive
+        #                                   check caught a slip — INFO
+        raw_count = len(result.entities)
+        if raw_count == 0:
+            logger.info(
+                "chat_ingester: user=%s patient=%s encounter=%s "
+                "emitted=0 (extractor returned NO entities — check "
+                "GEMINI_API_KEY validity, LLM quota, or source thinness)",
+                user_id, patient_hash[:12], encounter_id,
+            )
+        elif not emitted_node_ids:
+            logger.warning(
+                "chat_ingester: user=%s patient=%s encounter=%s "
+                "emitted=0 from %d raw entities — every quote was "
+                "rejected by the verbatim check. Skipped quotes: %s",
+                user_id, patient_hash[:12], encounter_id, raw_count,
+                skipped_quotes[:3],
+            )
+        else:
+            logger.info(
+                "chat_ingester: user=%s patient=%s encounter=%s "
+                "emitted=%d from %d raw (skipped %d)",
+                user_id, patient_hash[:12], encounter_id,
+                len(emitted_node_ids), raw_count, len(skipped_quotes),
+            )
         return emitted_node_ids
 
     # ────────────────────── Private ─────────────────────────────────

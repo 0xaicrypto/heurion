@@ -3,7 +3,7 @@
 ## Project Structure
 
 ```
-bnbchain_agent/
+nexus_core/
   memory/             # DPM: EventLog (SQLite+FTS5) + CuratedMemory
     event_log.py      #   Append-only event log with full-text search
     curated.py        #   Hermes-style MEMORY.md + USER.md
@@ -19,6 +19,8 @@ bnbchain_agent/
     client.py         #   MCPClient (stdio), MCPManager, MCPServerConfig
   skills/             # Skill management
     manager.py        #   Install from GitHub, LobeHub Skills, LobeHub MCP
+  llm/                # LLM client + provider plumbing
+    client.py         #   LLMClient (Anthropic / OpenAI / Gemini + tool loop)
   core/               # Abstract interfaces
     providers.py      #   StorageBackend + 5-provider AgentRuntime ABCs
     models.py         #   Checkpoint, MemoryEntry, Artifact, Social models
@@ -51,7 +53,18 @@ bnbchain_agent/
   state.py            # StateManager
   chain.py            # BSCClient (BSC contracts)
   keystore.py         # Keystore (encrypted wallet)
+  anchor.py           # ContentAnchor (per-event sha256 → BSC state root)
+  rlm.py              # Recursive Language Model projection (RLM)
+  evolution.py        # 4-evolver self-evolution glue
+  thinking.py         # ThinkingEmitter (broadcast cognition events)
+  versioned.py        # Snapshot/restore primitives for typed stores
+  distiller.py        # distill() — compact event log into a snapshot
+  migrations/         # Schema migrations for EventLog & curated memory
 ```
+
+> The package was renamed from `bnbchain_agent` to `nexus_core` during
+> Phase D. Older docs / forks that still import `bnbchain_agent` should
+> do a one-shot find-and-replace.
 
 ## Layered Architecture
 
@@ -101,7 +114,7 @@ Enterprise properties: deterministic replay, auditable rationale (2 LLM calls vs
 When the event log grows beyond 30K chars, the compactor triggers a background projection and writes the result back to the EventLog as a `memory_compact` event. This event is persisted like any other, and its state root is anchored on-chain.
 
 ```python
-from bnbchain_agent.memory import EventLogCompactor
+from nexus_core.memory import EventLogCompactor
 
 compactor = EventLogCompactor(event_log, curated_memory, projection_fn=my_llm)
 

@@ -773,6 +773,18 @@ EOF
         SERVER_PRIVATE_KEY=*) continue ;;
         ENVIRONMENT=*|LOG_LEVEL=*) continue ;;
         CORS_ALLOW_ORIGINS=*) continue ;;  # Tauri sets this on spawn
+        # ── F17 — strip per-user LLM secrets from the bundled .env ──
+        # These are the keys the medic configures in Settings · LLM;
+        # shipping the dev's personal copy bakes a shared API key
+        # into every .dmg (cost theft + rate-limit grief + leak if
+        # someone unpacks the bundle). Replace with empty stubs so
+        # the structure (DEFAULT_LLM_PROVIDER/MODEL header) survives
+        # but no live keys go out the door.
+        GEMINI_API_KEY=*)    echo "GEMINI_API_KEY="    ; continue ;;
+        OPENAI_API_KEY=*)    echo "OPENAI_API_KEY="    ; continue ;;
+        ANTHROPIC_API_KEY=*) echo "ANTHROPIC_API_KEY=" ; continue ;;
+        TAVILY_API_KEY=*)    echo "TAVILY_API_KEY="    ; continue ;;
+        JINA_API_KEY=*)      echo "JINA_API_KEY="      ; continue ;;
       esac
       echo "$line"
     done < "$SERVER_DOTENV"

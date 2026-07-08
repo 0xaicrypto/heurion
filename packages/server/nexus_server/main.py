@@ -131,6 +131,80 @@ config = get_config()
 
 
 # ───────────────────────────────────────────────────────────────────────────
+# F26.3 — Soft-deleted identity GC
+# ───────────────────────────────────────────────────────────────────────────
+
+_SOFT_DELETE_RETENTION_DAYS = 90
+
+
+def _gc_soft_deleted_identities() -> None:
+    """Hard-delete users + every user-scoped projection where the row
+    was soft-deleted more than ``_SOFT_DELETE_RETENTION_DAYS`` ago.
+
+    Runs at server boot. Idempotent — no rows over the threshold ⇒
+    no-op. The 90-day window is the medic's grace period to undelete
+    (see §6.4); after that we're contractually committed to actually
+    forget the data.
+    """
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+    from nexus_server.database import get_db_connection
+
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(days=_SOFT_DELETE_RETENTION_DAYS)).isoformat()
+
+    with get_db_connection() as conn:
+        try:
+            stale = conn.execute(
+                "SELECT id FROM users "
+                "WHERE deleted_at IS NOT NULL AND deleted_at < ?",
+                (cutoff,),
+            ).fetchall()
+        except sqlite3.Error:
+            # users.deleted_at may not exist on a partial migration
+            # (first boot on an old DB). The init_db ALTER above
+            # adds it idempotently, but if we got here before that
+            # ran, just skip — next boot will catch it.
+            return
+
+        if not stale:
+            return
+
+        user_ids = [r[0] for r in stale]
+        logger.warning(
+            "identity GC: hard-deleting %d users past %d-day retention",
+            len(user_ids), _SOFT_DELETE_RETENTION_DAYS,
+        )
+        for uid in user_ids:
+            # Mirror the cascade in routes.wipe_identity. Wrap each
+            # table delete so one missing table doesn't abort the
+            # whole sweep (partial schema during migration).
+            for table in (
+                "clinical_graph_nodes", "clinical_graph_edges",
+                "node_provenance", "practitioner_observations",
+                "practitioner_facts", "chat_takeaways",
+                "patient_memory", "patients", "uploads",
+                "twin_event_log",
+            ):
+                try:
+                    conn.execute(
+                        f"DELETE FROM {table} WHERE user_id = ?", (uid,),
+                    )
+                except sqlite3.Error:
+                    pass
+            try:
+                conn.execute(
+                    "UPDATE sessions SET patient_hash = '' "
+                    "WHERE user_id = ?", (uid,),
+                )
+            except sqlite3.Error:
+                pass
+            conn.execute("DELETE FROM users WHERE id = ?", (uid,))
+        conn.commit()
+        logger.info("identity GC: complete (%d users gone)", len(user_ids))
+
+
+# ───────────────────────────────────────────────────────────────────────────
 # Response Models
 # ───────────────────────────────────────────────────────────────────────────
 
@@ -217,6 +291,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # on first request). Once every init_*_table is mirrored in a
     # migration, this line can be removed.
     init_db()
+
+    # Hydrate any DB-persisted LLM settings (API keys, provider, model)
+    # into os.environ + ServerConfig BEFORE anything that reads
+    # `config.GEMINI_API_KEY` etc. runs. .env values that were exported
+    # by the Tauri sidecar at launch still win (we don't overwrite
+    # non-empty env keys); the DB only fills the gaps. This is what
+    # lets a freshly-installed bundle pick up keys the medic saved
+    # months ago without forcing them to retype.
+    try:
+        from nexus_server.settings_router import hydrate_env_from_db
+        hydrate_env_from_db()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "hydrate_env_from_db failed: %s — falling back to .env only",
+            exc,
+        )
+
+    # F26.3 — soft-deleted users 90-day GC. Idempotent + cheap (one
+    # SQL DELETE bounded by deleted_at). Run on every boot rather
+    # than scheduling a cron — boots are infrequent enough (~1/day
+    # per medic) and the cost of running on every boot is negligible.
+    try:
+        _gc_soft_deleted_identities()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("identity GC failed: %s", exc)
 
     # #135 — semantic memory index. Idempotent; safe to call every boot.
     # If sqlite-vec isn't installed (broken venv) we log and continue —
@@ -333,9 +432,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 "TwinManager reaper failed to start (twin path disabled): %s", e
             )
 
+    # Scheduled Tasks Phase 1 — spawn the worker that polls
+    # scheduled_tasks every 30s for due rows. Best-effort init: if
+    # the table is missing (migration didn't run) the worker logs +
+    # keeps polling, and the next migration will unblock it.
+    scheduler_task = None
+    scheduler_stop = None
+    try:
+        from nexus_server import scheduler as _sched
+        scheduler_task, scheduler_stop = _sched.start_worker()
+        logger.info("scheduled-tasks worker started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "scheduled-tasks worker failed to start: %s — confirm/list "
+            "endpoints still work but no task will ever fire", e,
+        )
+
     try:
         yield
     finally:
+        # Stop the scheduled-tasks worker cleanly.
+        if scheduler_stop is not None and scheduler_task is not None:
+            scheduler_stop.set()
+            try:
+                await _asyncio.wait_for(scheduler_task, timeout=5.0)
+            except _asyncio.TimeoutError:
+                logger.warning(
+                    "scheduled-tasks worker did not stop in 5s; cancelling."
+                )
+                scheduler_task.cancel()
+                try:
+                    await scheduler_task
+                except _asyncio.CancelledError:
+                    pass
         # Shutdown
         logger.info("Shutting down Nexus API Server")
         if daemon_task is not None and stop_event is not None:
@@ -595,6 +724,26 @@ def create_app() -> FastAPI:
     # tells it whether the operator has configured a backend.
     from nexus_server import email_router as _email_router
     app.include_router(_email_router.router)
+    # ReportMode PDF export — POST /api/v1/report/pdf builds a clinical
+    # report via reportlab Platypus, writes it to $ARCHIVE_DIR/Reports/,
+    # returns the path so the UI's "Last report" card can show it +
+    # an Open Folder button. Replaces the broken window.print()
+    # mechanism that produced no file and no path feedback in WKWebView.
+    from nexus_server import report_pdf_router as _report_pdf_router
+    app.include_router(_report_pdf_router.router)
+    # Scheduled Tasks Phase 1 — POST /api/v1/schedule/extract picks
+    # schedule intent out of chat text (heuristic-only); /confirm
+    # lands a row in scheduled_tasks; /list + DELETE serve the
+    # Calendar UI. The worker that fires tasks at fire_at is started
+    # below in lifespan().
+    from nexus_server import scheduler_router as _scheduler_router
+    app.include_router(_scheduler_router.router)
+    # Research Workspace — /api/v1/research/* and the Patient →
+    # Studies derived endpoint /api/v1/patients/{hash}/studies (D18).
+    # See docs/design/RESEARCH_WORKSPACE_DESIGN.md.
+    from nexus_server import research_router as _research_router
+    app.include_router(_research_router.router)
+    app.include_router(_research_router.patients_studies_router)
 
     # #143 — serve the Cornerstone3D viewer.html as a static page.
     # Desktop launches the user's default browser at

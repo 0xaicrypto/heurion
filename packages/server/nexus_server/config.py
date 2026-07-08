@@ -36,10 +36,16 @@ class ServerConfig:
         os.getenv("JWT_EXPIRATION_HOURS", "24")
     )
 
-    # WebAuthn
+    # WebAuthn — F19. The passkey page is served from the sidecar at
+    # http://localhost:8001/auth/passkey-page (NOT :3000, that's the
+    # Vite dev server which never serves the passkey page). The
+    # expected origin during attestation verification MUST match the
+    # actual page origin or the ceremony fails. Default updated to
+    # the sidecar's port; can still be overridden via env for hosted
+    # deployments.
     WEBAUTHN_RP_ID: str = os.getenv("WEBAUTHN_RP_ID", "localhost")
     WEBAUTHN_RP_NAME: str = os.getenv("WEBAUTHN_RP_NAME", "Nexus")
-    WEBAUTHN_ORIGIN: str = os.getenv("WEBAUTHN_ORIGIN", "http://localhost:3000")
+    WEBAUTHN_ORIGIN: str = os.getenv("WEBAUTHN_ORIGIN", "http://localhost:8001")
 
     # LLM Configuration
     DEFAULT_LLM_PROVIDER: str = os.getenv(

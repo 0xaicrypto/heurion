@@ -66,10 +66,11 @@ PASSKEY_PAGE_HTML = """<!DOCTYPE html>
 
         .logo {
             /* Matches the desktop app icon (Nexus.icns): dark-navy
-               rounded square + BNB-yellow N. Kept in sync with
-               packages/desktop/RuneDesktop.UI/Assets/nexus-logo.svg
-               so the login modal and the app's dock icon present a
-               single coherent identity. */
+               rounded square + BNB-yellow N. Kept in sync with the
+               Tauri app's icon source in
+               packages/desktop-v2/src-tauri/icons/source.svg so the
+               login modal and the app's dock icon present a single
+               coherent identity. */
             width: 72px;
             height: 72px;
             margin: 0 auto 16px;

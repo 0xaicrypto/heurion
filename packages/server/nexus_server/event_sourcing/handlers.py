@@ -72,15 +72,21 @@ def _payload(event: dict[str, Any]) -> dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────
 
 def _h_user_message(cur: sqlite3.Cursor, event: dict[str, Any]) -> None:
-    """USER_MESSAGE — chat substrate. No projection write; the canonical
-    record is the event itself. Chat UI reads from event_log directly via
-    twin_event_log read helpers."""
+    """USER_MESSAGE — chat substrate. No projection write needed; the
+    event itself is the canonical record and ``twin_event_log.list_messages``
+    (Phase 2a) reads it directly from the shared ``twin_event_log`` table.
+
+    The earlier dual-write that mirrored to a per-user SQLite file has
+    been removed — see ``docs/design/EVENT_LOG_UNIFICATION.md``. If you
+    need to re-introduce per-user files (e.g. for chain backup), do it
+    as a derived export job, not a synchronous handler side effect.
+    """
     pass
 
 
 def _h_assistant_response(cur: sqlite3.Cursor, event: dict[str, Any]) -> None:
-    """ASSISTANT_RESPONSE — chat substrate. Same as USER_MESSAGE: the
-    verbatim text is in the event; no further projection."""
+    """ASSISTANT_RESPONSE — same as USER_MESSAGE: no projection write,
+    the shared event log is the source of truth."""
     pass
 
 
@@ -453,6 +459,56 @@ def _h_redaction_policy_changed(cur, event):  pass
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Scheduled tasks (Phase 1)
+# ─────────────────────────────────────────────────────────────────────
+#
+# Replay handlers are no-ops — the scheduled_tasks projection is
+# maintained by direct SQL inside ``scheduler.create_task`` /
+# ``cancel_task`` / ``_mark_fired``, not through replay handlers.
+# This mirrors the chat_session / patient_registered tables where
+# the source-of-truth is the projection and the event log is for
+# audit / replay-to-rebuild only.
+#
+# If a future Phase 2 needs full replay-rebuilds for scheduled_tasks
+# (e.g. for the import-bundle path), these stubs become real SQL
+# writes that idempotently re-create the rows.
+
+def _h_scheduled_task_proposed(cur, event):  pass
+def _h_scheduled_task_created(cur, event):   pass
+def _h_scheduled_task_fired(cur, event):     pass
+def _h_scheduled_task_cancelled(cur, event): pass
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Research Workspace — Phase 1+
+#
+# Like scheduled_tasks, the canonical source-of-truth for the
+# research_* tables is the projection itself (written via direct SQL
+# from research_router.py). These handlers exist so:
+#   1. EVENT_REGISTRY coverage check passes
+#   2. A future "rebuild from event log" path works
+#
+# Each is a no-op today; upgrading to replay-rebuild rewrites these
+# as idempotent INSERT-or-UPDATE statements mirroring the router's writes.
+# ─────────────────────────────────────────────────────────────────────
+
+def _h_study_created(cur, event):                   pass
+def _h_study_protocol_updated(cur, event):          pass
+def _h_study_archived(cur, event):                  pass
+def _h_screening_evaluated(cur, event):             pass
+def _h_screening_decision_made(cur, event):         pass
+def _h_study_enrolled(cur, event):                  pass
+def _h_study_withdrawn(cur, event):                 pass
+def _h_study_assessment_planned(cur, event):        pass
+def _h_study_assessment_completed(cur, event):      pass
+def _h_study_assessment_missed(cur, event):         pass
+def _h_study_observation_recorded(cur, event):      pass
+def _h_study_observation_confirmed(cur, event):     pass
+def _h_study_observation_unlinked(cur, event):      pass
+def _h_study_report_generated(cur, event):          pass
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Register all handlers at module import time.
 # ─────────────────────────────────────────────────────────────────────
 
@@ -534,6 +590,32 @@ _REGISTRATIONS: tuple[tuple[EventKind, str, Any], ...] = (
     (EventKind.IMAGE_FEATURE_EXTRACTED,         "1.0", _h_image_feature_extracted),
     (EventKind.IMAGE_ATTACHED_TO_CONTEXT,       "1.0", _h_image_attached_to_context),
     (EventKind.REDACTION_POLICY_CHANGED,        "1.0", _h_redaction_policy_changed),
+
+    # Scheduled tasks (Phase 1) — projection writes go via direct SQL
+    # in scheduler.py; these handlers are no-ops for now (audit-only).
+    (EventKind.SCHEDULED_TASK_PROPOSED,         "1.0", _h_scheduled_task_proposed),
+    (EventKind.SCHEDULED_TASK_CREATED,          "1.0", _h_scheduled_task_created),
+    (EventKind.SCHEDULED_TASK_FIRED,            "1.0", _h_scheduled_task_fired),
+    (EventKind.SCHEDULED_TASK_CANCELLED,        "1.0", _h_scheduled_task_cancelled),
+
+    # Research Workspace (Phase 1+) — projection writes go via direct
+    # SQL in research_router.py; these handlers are no-ops for now
+    # (audit-only). Each event still carries patient_hash for
+    # patient-scoped kinds so per-patient drill-in views work.
+    (EventKind.STUDY_CREATED,                   "1.0", _h_study_created),
+    (EventKind.STUDY_PROTOCOL_UPDATED,          "1.0", _h_study_protocol_updated),
+    (EventKind.STUDY_ARCHIVED,                  "1.0", _h_study_archived),
+    (EventKind.SCREENING_EVALUATED,             "1.0", _h_screening_evaluated),
+    (EventKind.SCREENING_DECISION_MADE,         "1.0", _h_screening_decision_made),
+    (EventKind.STUDY_ENROLLED,                  "1.0", _h_study_enrolled),
+    (EventKind.STUDY_WITHDRAWN,                 "1.0", _h_study_withdrawn),
+    (EventKind.STUDY_ASSESSMENT_PLANNED,        "1.0", _h_study_assessment_planned),
+    (EventKind.STUDY_ASSESSMENT_COMPLETED,      "1.0", _h_study_assessment_completed),
+    (EventKind.STUDY_ASSESSMENT_MISSED,         "1.0", _h_study_assessment_missed),
+    (EventKind.STUDY_OBSERVATION_RECORDED,      "1.0", _h_study_observation_recorded),
+    (EventKind.STUDY_OBSERVATION_CONFIRMED,     "1.0", _h_study_observation_confirmed),
+    (EventKind.STUDY_OBSERVATION_UNLINKED,      "1.0", _h_study_observation_unlinked),
+    (EventKind.STUDY_REPORT_GENERATED,          "1.0", _h_study_report_generated),
 )
 
 

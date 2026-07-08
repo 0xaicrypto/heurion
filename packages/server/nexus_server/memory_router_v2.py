@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import time
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -145,6 +146,243 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 # ─────────────────────────────────────────────────────────────────────
 # Layer 1 — patient projection reads
 # ─────────────────────────────────────────────────────────────────────
+
+@router.get("/patient/{patient_hash}/ingest_debug")
+async def patient_ingest_debug(
+    patient_hash: str,
+    current_user: str = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Diagnostic: for THIS (user, patient), how many ingestion attempts
+    fired, how many entities did the LLM emit, how many landed in the
+    graph, and what were the most recent skip reasons.
+
+    The medic can paste the output (curl from the server console or
+    a small "Debug · ingestion" button) when the 病人 tab's 当前发现
+    stays empty — it answers the exact question "did chat_ingester
+    even run, or did it run and silently drop everything?" without
+    needing to grep server logs.
+    """
+    with get_db_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        _ensure_schema(conn)
+
+        def count(sql: str, params: tuple) -> int:
+            try:
+                row = conn.execute(sql, params).fetchone()
+                return int(row[0]) if row else 0
+            except sqlite3.Error:
+                return 0
+
+        # Count INGESTION_* events scoped to (user, patient)
+        n_started = count(
+            "SELECT COUNT(*) FROM twin_event_log "
+            "WHERE user_id = ? AND patient_hash = ? "
+            "  AND event_kind = 'ingestion_started'",
+            (current_user, patient_hash),
+        )
+        n_completed = count(
+            "SELECT COUNT(*) FROM twin_event_log "
+            "WHERE user_id = ? AND patient_hash = ? "
+            "  AND event_kind = 'ingestion_completed'",
+            (current_user, patient_hash),
+        )
+        n_node_added = count(
+            "SELECT COUNT(*) FROM twin_event_log "
+            "WHERE user_id = ? AND patient_hash = ? "
+            "  AND event_kind = 'node_added'",
+            (current_user, patient_hash),
+        )
+        n_graph_nodes = count(
+            "SELECT COUNT(*) FROM clinical_graph_nodes "
+            "WHERE user_id = ? AND patient_hash = ?",
+            (current_user, patient_hash),
+        )
+        # Latest INGESTION_LLM_RESPONSE — read the raw LLM output so
+        # the medic can SEE what the extractor returned (vs guessing).
+        latest_llm: dict[str, Any] = {}
+        try:
+            row = conn.execute(
+                "SELECT payload_json, ts FROM twin_event_log "
+                "WHERE user_id = ? AND patient_hash = ? "
+                "  AND event_kind = 'ingestion_llm_response' "
+                "ORDER BY event_idx DESC LIMIT 1",
+                (current_user, patient_hash),
+            ).fetchone()
+            if row:
+                import json as _json
+                payload = _json.loads(row[0])
+                raw = payload.get("raw_output_text", "")
+                latest_llm = {
+                    "model":          payload.get("model"),
+                    "prompt_id":      payload.get("prompt_id"),
+                    "latency_ms":     payload.get("latency_ms"),
+                    "ts":             row[1],
+                    "raw_output_head": raw[:400],   # cap so the response stays small
+                    "raw_output_chars": len(raw),
+                }
+        except sqlite3.Error:
+            pass
+        # Latest INGESTION_COMPLETED — has the skipped quote list now.
+        latest_completed: dict[str, Any] = {}
+        try:
+            row = conn.execute(
+                "SELECT payload_json, ts FROM twin_event_log "
+                "WHERE user_id = ? AND patient_hash = ? "
+                "  AND event_kind = 'ingestion_completed' "
+                "ORDER BY event_idx DESC LIMIT 1",
+                (current_user, patient_hash),
+            ).fetchone()
+            if row:
+                import json as _json
+                p = _json.loads(row[0])
+                latest_completed = {
+                    "emitted_node_count": p.get("emitted_node_count"),
+                    "errors":             p.get("errors") or [],
+                    # F55 — drops dict + raw_count surfaced from the
+                    # extractor for precise diagnosis ("which step
+                    # killed which entity").
+                    "drops":              p.get("drops") or {},
+                    "raw_count":          p.get("raw_count") or 0,
+                    "ts":                 row[1],
+                }
+        except sqlite3.Error:
+            pass
+        return {
+            "user_id":              current_user,
+            "patient_hash":         patient_hash,
+            "ingestion_started":    n_started,
+            "ingestion_completed":  n_completed,
+            "node_added_events":    n_node_added,
+            "clinical_graph_nodes": n_graph_nodes,
+            "latest_llm_response":  latest_llm,
+            "latest_completed":     latest_completed,
+            # Plain-English summary the UI can render directly.
+            "diagnosis": _diagnose_ingest_state(
+                n_started, n_completed, n_node_added, n_graph_nodes,
+                latest_llm, latest_completed,
+            ),
+        }
+
+
+def _diagnose_ingest_state(
+    n_started: int, n_completed: int, n_node_added: int,
+    n_graph_nodes: int, latest_llm: dict, latest_completed: dict,
+) -> str:
+    """Plain-English summary of what the ingestion pipeline did. Read
+    in priority order so the most actionable diagnosis surfaces first.
+
+    Sub-cases for ``ingestion_completed > 0 AND node_added == 0``:
+      (A) extractor LLM call raised an exception — raw_output_text
+          starts with "(extractor error: ...)". Most common cause:
+          API key invalid for ``gemini-2.5-flash`` (the model the
+          extractor pins; main chat might use a different model and
+          succeed even when extractor fails).
+      (B) LLM returned prose / refusal instead of JSON — raw output
+          has no JSON structure. Usually a safety filter, or Gemini
+          decided to "comply with the medical advice rule" rather
+          than the JSON-only instruction.
+      (C) LLM returned valid JSON but empty list — extractor judged
+          this turn as "nothing clinical to extract" (often happens
+          on short user messages like "重试", "你好").
+      (D) LLM returned entities but ALL got dropped at verbatim
+          check — extractor paraphrased every evidence_quote and
+          fuzzy_rescue couldn't recover. Now that F7 logs the
+          skipped quotes in INGESTION_COMPLETED.errors we can see
+          them directly.
+    """
+    if n_started == 0:
+        return ("chat_ingester 从未对这位病人触发过 — 检查聊天时 "
+                "patient_hash 是否传给了 /api/v1/agent/chat,以及主聊天 "
+                "调用是否在 SSE 流末尾正常 turn_complete。")
+    if n_started > 0 and n_completed == 0:
+        return ("chat_ingester 启动后从未完成 — 多半在 LLM 调用阶段抛 "
+                "异常 (API key 无效 / quota / 网络)。看 server 日志中 "
+                "包含 'chat_ingester failed' 的 WARNING 行。")
+    if n_completed > 0 and n_node_added == 0:
+        raw_head = (latest_llm.get("raw_output_head") or "").strip()
+        # Case (A) — extractor LLM call raised. We stamped the
+        # raw_output_text as "(extractor error: ...)" in llm_extractor.py.
+        if raw_head.startswith("(extractor error:"):
+            return (
+                "★ extractor LLM 调用抛出异常 — 主聊天能跑,但抽取这一 "
+                "步失败。最常见原因:GEMINI_API_KEY 对 gemini-2.5-flash "
+                "无权限 (extractor 把模型硬编码在那里,而主聊天可能用 "
+                "了另一个模型);或者 quota 已耗。完整错误见 raw_output_head: "
+                + raw_head[:300]
+            )
+
+        # F55 — Read the persisted drops dict from INGESTION_COMPLETED.
+        # The extractor now writes a structured per-reason count
+        # (no_label / no_evidence / not_verbatim / not_dict /
+        # bad_node_type / fuzzy_rescued) so we can render the exact
+        # breakdown instead of guessing.
+        drops_dict = latest_completed.get("drops") or {}
+        raw_count = int(latest_completed.get("raw_count") or 0)
+
+        # F55 fix — strip ```json fence before JSON-shape detection so
+        # the diagnosis below doesn't fall through to "raw_output 为空"
+        # when the LLM wrapped the response in markdown fences.
+        head_naked = raw_head
+        if head_naked.startswith("```"):
+            head_naked = head_naked.lstrip("`")
+            if head_naked.lower().startswith("json"):
+                head_naked = head_naked[4:]
+            head_naked = head_naked.lstrip()
+
+        # Case (D) — entities found but all dropped. Use the precise
+        # drops dict if available (post-F55 ingest); fall back to the
+        # legacy "errors" list for older event payloads.
+        skipped_quotes = latest_completed.get("errors") or []
+        if raw_count > 0 or drops_dict or skipped_quotes:
+            # Build human breakdown.
+            reasons = []
+            for key, label in [
+                ("not_verbatim",  "verbatim 校验失败(quote 不在 source)"),
+                ("no_evidence",   "缺 evidence_quote"),
+                ("no_label",      "缺 label"),
+                ("bad_node_type", "node_type 不在白名单"),
+                ("not_dict",      "结构不是 dict"),
+            ]:
+                v = int(drops_dict.get(key) or 0)
+                if v > 0:
+                    reasons.append(f"{label} × {v}")
+            rescued = int(drops_dict.get("fuzzy_rescued") or 0)
+            if reasons:
+                msg = (
+                    f"LLM 返回 {raw_count} 条实体,全部被验证步骤过滤: "
+                    + "; ".join(reasons)
+                )
+                if rescued:
+                    msg += f" (其中 {rescued} 条 fuzzy_rescue 救回但仍未落地)"
+                if skipped_quotes:
+                    msg += f" — 示例被丢 quote: {skipped_quotes[:2]}"
+                return msg
+
+        # Case (C) — JSON returned with empty/missing entities.
+        if head_naked.startswith("{") and '"entities"' in head_naked:
+            return (
+                "LLM 返回了合法 JSON 但 entities 字段为空 — 这次对话被 "
+                "判定为没有临床实体可提取。如果你刚才发的是 SOAP 但仍 "
+                "为空,把 raw_output_head 贴给我;否则可能是消息太短/非 "
+                "临床内容。"
+            )
+        # Case (B) — non-JSON response.
+        if raw_head and "{" not in raw_head:
+            return (
+                "LLM 调用成功但返回不是 JSON — extractor 提示词没有被 "
+                "理解 (safety filter / refusal / 用错模型)。raw output "
+                "开头: " + raw_head[:200]
+            )
+        return (
+            "INGESTION_COMPLETED 已发出但没有 NODE_ADDED — "
+            "raw_output_head: " + raw_head[:200]
+        )
+    if n_node_added > 0 and n_graph_nodes == 0:
+        return ("NODE_ADDED 事件已发出但 clinical_graph_nodes 没有行 — "
+                "handler 投影失败,或者 user_id/patient_hash 列对不上 "
+                "(rare,通常意味着 DB 迁移问题)。")
+    return f"链路正常:已写入 {n_graph_nodes} 个图节点,共 {n_started} 次摄取。"
+
 
 @router.get("/patient/{patient_hash}/projection")
 async def get_patient_projection(
@@ -512,6 +750,88 @@ async def practitioner_pending_count(
             (current_user,),
         ).fetchone()[0]
         return {"count": int(n or 0)}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Layer 2b — Session takeaways (LLM-distilled qualitative insights)
+# ─────────────────────────────────────────────────────────────────────
+
+@router.get("/takeaways")
+async def list_takeaways(
+    scope_kind: Optional[str] = Query(None, description="patient|research|cross_research|other"),
+    scope_ref: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: str = Depends(get_current_user),
+) -> dict[str, Any]:
+    """List the medic's session takeaways. Optionally filter by scope.
+
+    Drives the "Nexus 学到 N 条" panel on each chat surface. Returns
+    rows sorted newest-first. Rejected (medic_rejected_at NOT NULL)
+    are excluded — they were explicitly removed from the prompt path,
+    so the medic doesn't want to see them again either.
+    """
+    with get_db_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        _ensure_schema(conn)
+        sql = (
+            "SELECT id, scope_kind, scope_ref, session_id, text, tag, "
+            "       confidence, distilled_at, medic_acked_at "
+            "FROM chat_takeaways "
+            "WHERE user_id = ? AND medic_rejected_at IS NULL"
+        )
+        params: list = [current_user]
+        if scope_kind:
+            sql += " AND scope_kind = ?"
+            params.append(scope_kind)
+        if scope_ref:
+            sql += " AND scope_ref = ?"
+            params.append(scope_ref)
+        sql += " ORDER BY distilled_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+        return {
+            "takeaways": [dict(r) for r in rows],
+            "count": len(rows),
+        }
+
+
+@router.post("/takeaways/{takeaway_id}/ack")
+async def ack_takeaway(
+    takeaway_id: int,
+    current_user: str = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Stamp ``medic_acked_at`` so the UI can dim "new" insights."""
+    now = int(time.time())
+    with get_db_connection() as conn:
+        _ensure_schema(conn)
+        conn.execute(
+            "UPDATE chat_takeaways SET medic_acked_at = ? "
+            "WHERE user_id = ? AND id = ? "
+            "  AND medic_rejected_at IS NULL",
+            (now, current_user, takeaway_id),
+        )
+        conn.commit()
+        return {"ok": True, "id": takeaway_id, "acked_at": now}
+
+
+@router.post("/takeaways/{takeaway_id}/reject")
+async def reject_takeaway(
+    takeaway_id: int,
+    current_user: str = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Stamp ``medic_rejected_at`` so this insight stops being injected
+    into future system prompts. We KEEP the row (audit) but the
+    fetch_prior_insights filter drops it."""
+    now = int(time.time())
+    with get_db_connection() as conn:
+        _ensure_schema(conn)
+        conn.execute(
+            "UPDATE chat_takeaways SET medic_rejected_at = ? "
+            "WHERE user_id = ? AND id = ?",
+            (now, current_user, takeaway_id),
+        )
+        conn.commit()
+        return {"ok": True, "id": takeaway_id, "rejected_at": now}
 
 
 @router.post("/practitioner/{fact_kind}/{pattern_key:path}/confirm")

@@ -18,12 +18,44 @@ config = get_config()
 def get_db_connection() -> Generator[sqlite3.Connection, None, None]:
     """Get a database connection context manager.
 
+    F21 — enable WAL + busy_timeout so readers don't block on the
+    long-running write transactions that ``session_takeaway`` and
+    ``chat_ingester`` hold open during their LLM round-trips
+    (10-30s each). Without these PRAGMAs the medic saw "AbortError:
+    Fetch is aborted" on the 病人 / 记忆 tabs while the post-turn
+    work was still completing.
+
+      - ``journal_mode=WAL``: readers and writers no longer block
+        each other; a writer commits in WAL and snapshot reads
+        proceed without waiting. Persistent across connections —
+        only the FIRST conn after the DB is opened needs to set it,
+        but PRAGMA is idempotent so calling it on every conn is
+        cheap and safe.
+      - ``busy_timeout=5000``: if a write IS contended (rare in WAL
+        but possible during checkpoint), wait up to 5s instead of
+        immediately erroring with SQLITE_BUSY.
+      - ``synchronous=NORMAL``: safe with WAL + acceptable durability
+        for a local-only clinical workstation (we accept that a
+        crash mid-write may lose the last 1-2 committed transactions
+        in exchange for ~3x write throughput). The event log is
+        append-only so even a torn write is auto-recovered.
+
     Yields:
-        SQLite connection with row factory enabled.
+        SQLite connection with row factory + WAL PRAGMAs applied.
     """
     db_path = config.DATABASE_URL.replace("sqlite:///", "")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+    except sqlite3.Error:
+        # PRAGMA failure is non-fatal — fall back to default journal
+        # mode. The medic will still see longer waits but the conn
+        # is usable. We don't want a transient file-lock collision
+        # at boot to kill the whole connection.
+        pass
     try:
         yield conn
     finally:
@@ -102,6 +134,16 @@ def init_db() -> None:
         "subscription_state":    ("TEXT", "NULL"),
         "trial_ends_at":         ("TIMESTAMP", "NULL"),
         "subscription_renews_at":("TIMESTAMP", "NULL"),
+        # F26.1 — multi-identity (USER_MANAGEMENT.md §4) :
+        # avatar_emoji  per-identity single emoji for picker (default 🩺)
+        # deleted_at    soft-delete timestamp; queries WHERE deleted_at
+        #               IS NULL by default. 90-day GC job hard-deletes
+        #               (see F26.3 distiller).
+        # last_active_at  refreshed on every successful /auth/login or
+        #               /identities/{id}/activate; drives picker sort.
+        "avatar_emoji":          ("TEXT", "'🩺'"),
+        "deleted_at":            ("TIMESTAMP", "NULL"),
+        "last_active_at":        ("TIMESTAMP", "NULL"),
     }
     for col, (typ, default) in billing_cols.items():
         if col not in existing_cols:
@@ -419,6 +461,33 @@ def init_db() -> None:
             "ALTER TABLE nexus_workflow_run_steps "
             "ADD COLUMN iteration INTEGER NOT NULL DEFAULT 0"
         )
+
+    # ── user_settings ───────────────────────────────────────────────
+    # Persistent key/value store for LLM API keys + per-user prefs.
+    # Lives in rune_server.db (NOT the .env file) so:
+    #   - Reinstalling Nexus.app keeps keys (db is at $RUNE_HOME/data
+    #     or wherever DATABASE_URL points, both survive .app removal).
+    #   - Upgrading the bundle keeps keys (same reason).
+    #   - Operators can grep / dump / migrate keys with one SQL query.
+    # .env still gets written for backward-compat with the v1 bootstrap
+    # that reads .env at sidecar launch (see lib.rs::load_user_env);
+    # but the DB row is the SOURCE OF TRUTH from now on.
+    #
+    # ``user_id = '_global'`` is the operator-owned default that applies
+    # to anyone who hasn't set a per-user override. Per-user override
+    # is a Phase-2 feature (multi-tenant SaaS); current desktop use
+    # writes/reads _global only.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id    TEXT NOT NULL,
+            key        TEXT NOT NULL,
+            value      TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, key)
+        )
+        """
+    )
 
     conn.commit()
     conn.close()

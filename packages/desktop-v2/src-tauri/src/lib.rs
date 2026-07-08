@@ -216,8 +216,9 @@ pub fn run() {
 /// a medic who already ran the v1 installer doesn't have to re-enter
 /// keys — Settings · LLM in v2 reads and writes the same file.
 fn rune_home() -> PathBuf {
-    // Mirror packages/desktop/scripts/local-backend/start.sh:24:
-    //   RUNE_HOME="$HOME/Library/Application Support/RuneProtocol"
+    // RUNE_HOME = "$HOME/Library/Application Support/RuneProtocol" on
+    // macOS — same path the legacy Avalonia installer wrote to (see git
+    // tag legacy/avalonia-final), so existing users keep their .env.
     // On non-macOS we fall back to a portable XDG path so the same
     // logic works under `pnpm tauri:dev` on Linux.
     if cfg!(target_os = "macos") {
@@ -481,12 +482,13 @@ fn spawn_backend_sidecar(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
     diag.push("sys", "preparing sidecar spawn".to_string());
 
     // v1-parity key handling: read $RUNE_HOME/.env and inject every
-    // KEY=VALUE pair into the sidecar's environment, matching what
-    // packages/desktop/scripts/local-backend/start.sh does. Without
-    // this step, the bundled .app launched from Finder/Dock sees an
-    // empty os.environ and config.GEMINI_API_KEY = None, which makes
-    // every LLM-using endpoint 500 (the medic sees "Backend
-    // unreachable" because the chat request fails before turn_started).
+    // KEY=VALUE pair into the sidecar's environment, matching what the
+    // legacy Avalonia installer's start.sh did (see git tag
+    // legacy/avalonia-final). Without this step, the bundled .app
+    // launched from Finder/Dock sees an empty os.environ and
+    // config.GEMINI_API_KEY = None, which makes every LLM-using
+    // endpoint 500 (the medic sees "Backend unreachable" because the
+    // chat request fails before turn_started).
     let rh = rune_home();
     let env_path = rh.join(".env");
     diag.push("sys", format!("rune_home = {}", rh.display()));
@@ -524,6 +526,21 @@ fn spawn_backend_sidecar(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
         }
     };
     sidecar = sidecar
+        // F-bind-127 — bind to deterministic IPv4 loopback. F19
+        // experimented with the DNS name ``localhost`` to please
+        // WebAuthn, but on macOS / dual-stack systems ``localhost``
+        // can resolve to BOTH 127.0.0.1 (IPv4) and ::1 (IPv6).
+        // uvicorn binds to whichever the resolver returns first; if
+        // the browser then tries the other address we get an opaque
+        // "Backend unreachable" splash.
+        //
+        // Solution: server binds 127.0.0.1 (deterministic); frontend
+        // baseUrl is still ``http://localhost:8001`` (DNS name). The
+        // browser's resolver maps ``localhost`` to 127.0.0.1 (default
+        // priority on macOS / Win / most Linux) and hits the bound
+        // socket. WebAuthn remains happy because the page's effective
+        // domain is still ``localhost`` (the URL), regardless of the
+        // socket address.
         .env("NEXUS_HOST", "127.0.0.1")
         .env("NEXUS_PORT", "8001")
         // CORS: the bundled webview runs from tauri://localhost (or
@@ -779,6 +796,19 @@ fn restart_sidecar(app: AppHandle) -> Result<String, String> {
     spawn_backend_sidecar(&app).map_err(|e| format!("respawn failed: {e}"))?;
     Ok("restarted".to_string())
 }
+
+
+// F24 — the previous OS-Keychain implementation was removed in favour
+// of a backend-managed identity file at ``$RUNE_HOME/identity.json``.
+// Reasoning: storing a UUID user_id in macOS Keychain triggered a
+// permission dialog on first launch (one system prompt the medic
+// doesn't expect from a local clinical tool). The user_id isn't
+// secret in the password sense — it's an opaque identifier scoped
+// to the backend's own user-data directory, which is already private
+// to the macOS user account at the filesystem level. Backend handles
+// the read/write in packages/server/nexus_server/auth/routes.py
+// (POST /api/v1/auth/local-bootstrap). Frontend just makes that HTTP
+// call — no Tauri IPC, no keychain dependency, no permission prompt.
 
 // ──────────────────────────────────────────────────────────────────────
 // Tests — `cargo test -p nexus-desktop-v2`

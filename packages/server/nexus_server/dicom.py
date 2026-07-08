@@ -956,10 +956,27 @@ def persist_study(
             conn.execute(
                 "DELETE FROM dicom_series WHERE study_id = ?", (study_id,),
             )
+            # Bug fix (2026-06-15, P0 patient safety):
+            # When the same StudyInstanceUID is re-uploaded under a NEW
+            # patient binding (medic switched patients between uploads,
+            # PACS with stable UIDs, teaching example, etc), the prior
+            # `dicom_studies.patient_hash` MUST be overwritten with the
+            # new override. Previously this UPDATE silently dropped
+            # `patient_hash_override`, so the row stayed bound to the
+            # OLD patient and findings landed on the wrong record.
+            # See: docs/design/IMAGING_PATIENT_ISOLATION_BUGFIX.md (Bug #2)
+            effective_patient_hash = (
+                patient_hash_override.strip()
+                if patient_hash_override and patient_hash_override.strip()
+                else (study.patient_hash or "")
+            )
             conn.execute(
                 "UPDATE dicom_studies SET upload_file_id = ?, "
-                "extract_dir = ? WHERE study_id = ?",
-                (upload_file_id, str(extract_dir), study_id),
+                "extract_dir = ?, "
+                "patient_hash = COALESCE(NULLIF(?, ''), patient_hash) "
+                "WHERE study_id = ?",
+                (upload_file_id, str(extract_dir),
+                 effective_patient_hash, study_id),
             )
         else:
             # Honor the desktop's per-upload patient binding. When the

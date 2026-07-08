@@ -3,7 +3,7 @@
 #
 # Boots two long-running processes in the same terminal:
 #
-#   ① uvicorn nexus_server.main:app --reload      (port 8001)
+#   ① uvicorn nexus_server.main:create_app --factory --reload      (port 8001)
 #      Auto-reloads on any Python file change.
 #      Has every U3.3 endpoint (DELETE patient, /settings/llm,
 #      /export/bundle) live from source.
@@ -68,7 +68,7 @@ cyan "starting nexus_server (auto-reload) → $SERVER_LOG"
     . "$RUNE_HOME/.env"
     set +a
   fi
-  exec python3 -m uvicorn nexus_server.main:app \
+  exec python3 -m uvicorn nexus_server.main:create_app --factory \
         --host 127.0.0.1 --port 8001 --reload \
         --reload-dir nexus_server
 ) >"$SERVER_LOG" 2>&1 &

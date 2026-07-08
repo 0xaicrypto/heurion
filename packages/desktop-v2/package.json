@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Nexus desktop — clinical workflow agent. Tauri 2.0 + React 18 + TypeScript. Supersedes packages/desktop (Avalonia).",
+  "description": "Nexus desktop — clinical workflow agent. Tauri 2.0 + React 18 + TypeScript. (The legacy Avalonia client lives at git tag legacy/avalonia-final.)",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -27,6 +27,8 @@
     "lucide-react": "^0.460.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0",
     "zustand": "^5.0.1"
   },
   "pnpm": {

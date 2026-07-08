@@ -1,7 +1,8 @@
 /**
  * LoginView — centred single-form, Claude Desktop aesthetic.
  *
- * M0 auth model (matches packages/desktop's LoginViewModel):
+ * M0 auth model (carried over from the legacy Avalonia LoginViewModel,
+ * see git tag legacy/avalonia-final):
  *   - Single field: display name
  *   - Sign-in = POST /api/v1/auth/register {display_name} → {jwt_token}
  *   - No password (passkey + persistent user_id ships U2+)
@@ -22,8 +23,10 @@ import { useAppState } from './store';
 import { api, ApiError, type SidecarDiagnostics } from './lib/api-client';
 import { BUILD_ID } from './lib/build-info';
 import { SidecarDiagPanel, summariseDiag } from './components/sidecar-diag-panel';
+import { useT } from './lib/i18n';
 
 export function LoginView() {
+  const t                  = useT();
   const setToken           = useAppState((s) => s.setToken);
   const setStoreDisplayName= useAppState((s) => s.setDisplayName);
   const storedName         = useAppState((s) => s.displayName);
@@ -35,6 +38,10 @@ export function LoginView() {
   const [busy, setBusy]               = useState(false);
   const [error, setError]             = useState<string | null>(null);
   const [allowMock, setAllowMock]     = useState(false);
+  // Separate busy flag for the passkey flow — the name-only Sign in
+  // button doesn't share lockout (medic could legitimately abandon
+  // a stalled passkey ceremony + try the name flow).
+  const [passkeyBusy, setPasskeyBusy] = useState<'login' | 'signup' | null>(null);
 
   // Sidecar diagnostics polling. Cheap — the IPC reads from an in-memory
   // ring buffer + serialises ~60 small strings. Auto-expands the first
@@ -128,13 +135,46 @@ export function LoginView() {
     showToast('Continuing in offline / mock mode', 'info');
   }
 
+  /** Passkey login or signup. Opens a Tauri WebviewWindow at the
+   *  sidecar's /auth/passkey-page, runs the WebAuthn ceremony there,
+   *  and uses the bounce+poll bridge to deliver the JWT back to React.
+   *  See ``api.passkeyAuth`` docstring for the full architecture. */
+  async function onPasskey(mode: 'login' | 'signup') {
+    setError(null);
+    setPasskeyBusy(mode);
+    try {
+      const r = await api.passkeyAuth(mode, displayName);
+      setToken(r.token);
+      // Persist the typed name for next launch's prefill if signup
+      // produced it; on login the name from this form may not match
+      // what the server has for the registered passkey, so we only
+      // overwrite if the medic typed one.
+      if (displayName.trim()) {
+        setStoreDisplayName(displayName.trim());
+      }
+      showToast(t('login.signIn'), 'success');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 5-min timeout phrasing is friendlier than the raw error.
+      if (msg.includes('timed out')) {
+        setError(t('login.passkey.cancelled'));
+      } else {
+        setError(t('login.passkey.error', { error: msg }));
+      }
+      // Surface diagnostics in case sidecar / page is broken.
+      setAllowMock(true);
+    } finally {
+      setPasskeyBusy(null);
+    }
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg">
       <div className="w-full max-w-md px-6 py-12">
         <div className="mb-10 text-center">
           <h1 className="font-display text-display text-text-primary">Nexus</h1>
           <p className="mt-2 text-body text-text-secondary">
-            Clinical workflow agent
+            {t('login.title')}
           </p>
         </div>
 
@@ -144,7 +184,7 @@ export function LoginView() {
               htmlFor="displayName"
               className="mb-1.5 block text-caption font-medium text-text-secondary"
             >
-              Your name
+              {t('newPatient.initials')}
             </label>
             <Input
               id="displayName"
@@ -154,12 +194,11 @@ export function LoginView() {
               autoFocus
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Dr. JZ"
+              placeholder={t('login.namePlaceholder')}
               disabled={busy}
             />
             <p className="mt-1.5 text-caption text-text-tertiary">
-              M0: no password — a fresh user_id is minted on every sign-in.
-              Passkey support ships later.
+              {t('login.help')}
             </p>
           </div>
 
@@ -172,11 +211,49 @@ export function LoginView() {
           <Button
             type="submit"
             variant="primary"
-            disabled={busy}
+            disabled={busy || passkeyBusy !== null}
             className="w-full"
           >
-            {busy ? 'Signing in…' : 'Sign in'}
+            {busy ? t('login.signingIn') : t('login.signIn')}
           </Button>
+
+          {/* Passkey buttons — split into "sign in with existing" and
+              "sign up new" because WebAuthn's register and
+              authenticate ceremonies are distinct (one needs a name;
+              the other matches against existing credentials). */}
+          <div className="flex items-center gap-2 pt-2 text-caption text-text-tertiary">
+            <div className="h-px flex-1 bg-border" />
+            <span>{t('login.passkey.divider')}</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+          <Button
+            type="button"
+            variant="subtle"
+            disabled={busy || passkeyBusy !== null}
+            className="w-full"
+            onClick={() => onPasskey('login')}
+          >
+            🔑 {passkeyBusy === 'login'
+              ? t('login.passkey.signingIn')
+              : t('login.passkey.signIn')}
+          </Button>
+          <p className="-mt-1 text-[11px] text-text-tertiary">
+            {t('login.passkey.signinHint')}
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={busy || passkeyBusy !== null || !displayName.trim()}
+            className="w-full"
+            onClick={() => onPasskey('signup')}
+          >
+            {passkeyBusy === 'signup'
+              ? t('login.passkey.signingIn')
+              : t('login.passkey.signUp')}
+          </Button>
+          <p className="-mt-1 text-[11px] text-text-tertiary">
+            {t('login.passkey.signupHint')}
+          </p>
 
           {allowMock && (
             <button
@@ -184,7 +261,7 @@ export function LoginView() {
               onClick={continueWithoutServer}
               className="w-full pt-2 text-caption text-text-tertiary underline-offset-2 hover:text-text-secondary hover:underline"
             >
-              Continue without server (dev / mock mode)
+              {t('login.devMock')}
             </button>
           )}
         </form>
@@ -201,7 +278,7 @@ export function LoginView() {
               aria-expanded={showDiag}
             >
               <span>
-                <span className="font-medium">Backend diagnostics</span>
+                <span className="font-medium">{t('login.diag.title')}</span>
                 <span className="ml-2 text-text-tertiary">— {summariseDiag(diag)}</span>
               </span>
               <span className="font-mono">{showDiag ? '▴' : '▾'}</span>
@@ -214,9 +291,9 @@ export function LoginView() {
                     type="button"
                     onClick={tryRestartSidecar}
                     className="rounded-sm border border-border px-2 py-1 hover:bg-surface-2"
-                    title="Kill the sidecar process and respawn it"
+                    title={t('settings.llm.restartHint')}
                   >
-                    Restart sidecar
+                    {t('settings.llm.restart')}
                   </button>
                   <span>
                     {diag.alive

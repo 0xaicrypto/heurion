@@ -1,11 +1,35 @@
 # Nexus
 
-> **Runtime is temporary; identity is eternal.**
+> **An AI for research should accumulate, not reset.**
+> *Runtime is temporary; identity is eternal.*
 
-Nexus is a platform for **persistent, self-evolving AI agents** anchored on
-BNB Chain. Each user owns one *Digital Twin* — a private agent that
-accumulates memories, learns skills, and rewrites its own persona over
-time, while every change is auditable on-chain.
+Nexus is a **research-first clinical AI workstation** for oncology
+investigators, built on top of a persistent self-evolving agent
+platform anchored on BNB Chain.
+
+The product is organised around the trials a physician is running, not
+around isolated patient chats:
+
+- The app's home is a **Research Workspace** — a list of studies, each
+  with its own roster, eligibility inbox, visit schedule, safety stream,
+  and a cross-patient Research Chat scoped to that protocol.
+- Each patient is reachable as a drill-in *within* a study, with a
+  per-patient Patient Chat for individual clinical decisions.
+- Every enrollment, screening verdict, AE confirmation, and protocol
+  deviation is an *event* on a per-patient append-only log; nothing is
+  ever silently deleted or overwritten.
+- The agent's memory (Episodes / Facts / Skills / Persona / Knowledge)
+  accumulates the physician's heuristics over time, with each edit
+  graded by a Verdict Runner and reversible if it regresses.
+
+The canonical product spec is
+[`docs/design/RESEARCH_WORKSPACE_DESIGN.md`](docs/design/RESEARCH_WORKSPACE_DESIGN.md);
+the high-fidelity UI mock lives at
+[`docs/design/visual-mock/`](docs/design/visual-mock/).
+
+The rest of this README describes the **platform** that powers that
+product — the four-layer architecture and the immortality / auditability
+properties that make it possible.
 
 Models will be replaced. The agent isn't.
 
@@ -60,26 +84,31 @@ going well.
 
 ```
 ┌─────────────────────────┐
-│  Desktop (Avalonia C#)  │   thin client — JWT only
-└────────────┬────────────┘
-             │ HTTPS
+│  Desktop v2             │   Tauri 2.0 + React + TS
+│   (packages/desktop-v2) │   spawns the server as a sidecar on
+└────────────┬────────────┘   127.0.0.1:8001
+             │ HTTP + JWT, SSE for /agent/chat
 ┌────────────▼────────────┐
-│  Server (FastAPI)       │   passkey auth, multi-tenant
-│   one DigitalTwin per   │   /chat /messages /timeline
-│   logged-in user        │   /memory/namespaces
-│                         │   /evolution/verdicts
+│  Server (FastAPI)       │   passkey + JWT auth, multi-tenant
+│   (packages/server)     │   plus the clinical workflow stack:
+│   one DigitalTwin per   │   patients, DICOM, MONAI, clinical
+│   logged-in user        │   event-sourcing graph, research
+│                         │   workspace, billing, scheduler,
+│                         │   vector index
 └────────────┬────────────┘
              │
 ┌────────────▼────────────┐
-│  Nexus framework        │   9-step chat loop
-│   DigitalTwin           │   ProjectionMemory (DPM)
-│   EvolutionEngine       │   4 evolvers + VerdictRunner
+│  Nexus framework        │   9-step chat loop (legacy /llm/chat)
+│   (packages/nexus)      │   ProjectionMemory (DPM)
+│   DigitalTwin           │   EvolutionEngine (4 evolvers +
+│                         │   VerdictRunner)
 └────────────┬────────────┘
              │
 ┌────────────▼────────────┐
 │  nexus_core SDK         │   AgentRuntime facade
-│   EventLog + 5 stores   │   ContractEngine + DriftScore
-│   ChainBackend          │   BSCClient
+│   (packages/sdk)        │   EventLog + 5 stores
+│   ChainBackend          │   ContractEngine + DriftScore
+│                         │   BSCClient
 └────────────┬────────────┘
              │
              ▼
@@ -87,24 +116,32 @@ going well.
          (anchor)
 ```
 
-A user installs the desktop, signs in with a passkey, and starts chatting.
-On the first message:
+A second `packages/relay` Python service (Fly.io) handles webhook /
+outbound-email tasks the desktop sidecar can't reliably run.
 
-1. **Server** lazily creates a `DigitalTwin` for that user and bootstraps
-   on-chain identity: mints an ERC-8004 token and sets
-   `activeRuntime` on the AgentStateExtension contract to this server's
-   wallet.
-2. **Twin** runs its [9-step chat flow](docs/concepts/data-flow.md):
-   ABC pre-check → append user message to EventLog → project relevant
-   memory → call LLM with tools → ABC post-check → DriftScore update →
-   append assistant response → fire background self-evolution.
-3. **SDK** persists the new EventLog rows to its durable store and,
-   after every compaction, anchors the new state root on BSC. Reads are
-   served from the local SQLite mirror so chat latency is unaffected.
-4. **Desktop** receives the response over HTTP and re-fetches its
-   panels in the background — Brain (learning + chain status), Pressure
-   Dashboard (which evolver is about to fire), Evolution timeline,
-   Activity stream.
+A user installs the desktop, signs in, and starts chatting. The desktop
+runs two chat flows depending on context:
+
+- **Cross-patient / patient / research** (current default) →
+  `POST /api/v1/agent/chat` returns a Server-Sent Event stream of
+  `turn_started → tier_classified → reasoning_chunk* → final_answer_chunk* →
+  citations → turn_complete`. The server's tier classifier picks the
+  retrieval depth, `retrieval_tiers.retrieve_async` runs cohort / patient
+  retrieval + (optionally) Tavily web search, then the LLM synthesises
+  the final answer while citations are streamed alongside.
+- **Legacy bridge** (used by CLI, integration tests, the legacy Avalonia
+  client) → `POST /api/v1/llm/chat` runs the original 9-step DigitalTwin
+  flow: ABC pre-check → append user message to EventLog → project
+  relevant memory → call LLM with tools → ABC post-check → DriftScore
+  update → append assistant response → background self-evolution.
+
+On the first message of a brand-new account, the server lazily creates a
+`DigitalTwin` for that user and (in chain mode) bootstraps on-chain
+identity: mints an ERC-8004 token and sets `activeRuntime` on the
+AgentStateExtension contract to this server's wallet. The SDK persists
+new EventLog rows to its durable local store and, after every
+compaction, anchors the new state root on BSC. Reads are served from
+the local SQLite mirror so chat latency is unaffected.
 
 The "self-evolving" part is real and observable in two places:
 
@@ -234,21 +271,26 @@ of the architecture. See
 
 ```
 packages/
-  sdk/      nexus_core/        Infrastructure primitives (no agent concept)
-  nexus/    nexus/             DigitalTwin + 4 evolvers + VerdictRunner
-  server/   nexus_server/      FastAPI multi-tenant frontend
-  desktop/  RuneDesktop.*/     Avalonia C# thin client
+  sdk/         nexus_core/         Infrastructure primitives (no agent concept)
+  nexus/       nexus/              DigitalTwin + 4 evolvers + VerdictRunner
+  server/      nexus_server/       FastAPI multi-tenant frontend + clinical stack
+  desktop-v2/  src/ + src-tauri/   Tauri 2.0 + React + TS thin client
+  relay/       main.py             Stand-alone Python service (webhooks, email)
 
 docs/
-  BEP-nexus.md                 The chain-anchor protocol spec
-  concepts/                    DPM, ABC, identity, modes, data-flow
-  design/                      Falsifiable evolution, recursive projection
-  how-to/                      Add a tool, add a contract rule
+  BEP-nexus.md                     The chain-anchor protocol spec
+  concepts/                        DPM, ABC, identity, modes, data-flow
+  design/                          Falsifiable evolution, recursive projection
+  how-to/                          Add a tool, add a contract rule
 
-ARCHITECTURE.md                How the layers fit together
-HISTORY.md                     How we got here (Phases A–P)
-ROADMAP.md                     What's next
+ARCHITECTURE.md                    How the layers fit together
+HISTORY.md                         How we got here (Phases A–F, ongoing)
+ROADMAP.md                         What's next
 ```
+
+The legacy Avalonia desktop (`packages/desktop`) lives at git tag
+`legacy/avalonia-final`; it was removed from `main` once desktop-v2
+reached parity.
 
 ---
 
@@ -281,10 +323,14 @@ The legacy `demo/` folder has been retired — the per-package test suites
 are the canonical reference for how each layer is meant to be used:
 
 ```bash
-pytest packages/sdk/tests/        # 334 tests (+3 skipped)
-pytest packages/nexus/tests/      # 249 tests
-pytest packages/server/tests/     # 122 tests
+pytest packages/sdk/tests/
+pytest packages/nexus/tests/
+pytest packages/server/tests/
 ```
+
+(The total runs to a couple of thousand tests; per-package counts shift
+on every PR, so we no longer pin numbers in docs — check CI for the
+current snapshot.)
 
 ---
 
@@ -311,9 +357,9 @@ pytest packages/server/tests/     # 122 tests
 
 Test phase. APIs and on-chain schemas may still break; contracts are on
 BSC testnet only. The core loop — chat, evolution, verdicts, rollback,
-chain anchoring — is implemented end-to-end and covered by 705 tests
-across SDK / framework / server. See [`ROADMAP.md`](ROADMAP.md) for
-what's next.
+chain anchoring — is implemented end-to-end and covered by a thorough
+test suite across SDK / framework / server (see CI for the live count).
+See [`ROADMAP.md`](ROADMAP.md) for what's next.
 
 ---
 

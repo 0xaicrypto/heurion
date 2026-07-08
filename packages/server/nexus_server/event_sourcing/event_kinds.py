@@ -109,6 +109,38 @@ class EventKind(str, Enum):
     IMAGE_ATTACHED_TO_CONTEXT          = "image_attached_to_context"
     REDACTION_POLICY_CHANGED           = "redaction_policy_changed"
 
+    # ─ Scheduled tasks (calendar / future-action delegation) ──────
+    # See docs/design/scheduled-tasks-and-calendar.md. Lifecycle:
+    #
+    #   PROPOSED   — heuristic / LLM identified a future-intent in a
+    #                chat turn; awaiting user Confirm. AUDIT only.
+    #   CREATED    — user confirmed; projection inserts the row;
+    #                worker becomes eligible to fire it.
+    #   FIRED      — worker executed; carries result_json + status.
+    #   CANCELLED  — user cancelled via UI (soft-delete).
+    SCHEDULED_TASK_PROPOSED            = "scheduled_task_proposed"
+    SCHEDULED_TASK_CREATED             = "scheduled_task_created"
+    SCHEDULED_TASK_FIRED               = "scheduled_task_fired"
+    SCHEDULED_TASK_CANCELLED           = "scheduled_task_cancelled"
+
+    # ─ Research Workspace (Phase 1+) ───────────────────────────────
+    # See docs/design/RESEARCH_WORKSPACE_DESIGN.md. Each event projects
+    # into the research_* tables introduced by migration 0004.
+    STUDY_CREATED                      = "study_created"
+    STUDY_PROTOCOL_UPDATED             = "study_protocol_updated"
+    STUDY_ARCHIVED                     = "study_archived"
+    SCREENING_EVALUATED                = "screening_evaluated"
+    SCREENING_DECISION_MADE            = "screening_decision_made"
+    STUDY_ENROLLED                     = "study_enrolled"
+    STUDY_WITHDRAWN                    = "study_withdrawn"
+    STUDY_ASSESSMENT_PLANNED           = "study_assessment_planned"
+    STUDY_ASSESSMENT_COMPLETED         = "study_assessment_completed"
+    STUDY_ASSESSMENT_MISSED            = "study_assessment_missed"
+    STUDY_OBSERVATION_RECORDED         = "study_observation_recorded"
+    STUDY_OBSERVATION_CONFIRMED        = "study_observation_confirmed"
+    STUDY_OBSERVATION_UNLINKED         = "study_observation_unlinked"
+    STUDY_REPORT_GENERATED             = "study_report_generated"
+
 
 @dataclass(frozen=True)
 class EventSpec:
@@ -344,6 +376,110 @@ _r(EventSpec(EventKind.IMAGE_ATTACHED_TO_CONTEXT, "1.0",
 _r(EventSpec(EventKind.REDACTION_POLICY_CHANGED, "1.0",
    required_fields=("modality", "old_policy_version", "new_policy_version"),
    optional_fields=("summary",)))
+
+# Scheduled tasks (Phase 1: send_email kind only, one-shot).
+# Audit chain: PROPOSED → (user confirms in UI) → CREATED → FIRED.
+# Cancellation is independent (medic can cancel any pending CREATED).
+# patient_scoped=False — many tasks are cross-patient ("remind me to
+# write the monthly QA summary"). Per-task patient_hash lives inside
+# the payload so it stays optional.
+_r(EventSpec(EventKind.SCHEDULED_TASK_PROPOSED, "1.0",
+   required_fields=("proposal_id", "kind", "payload_json",
+                    "fire_at", "user_tz", "summary"),
+   optional_fields=("session_id", "patient_hash", "recurrence_cron"),
+   description=(
+       "Heuristic / LLM proposed a future-intent in a chat turn. "
+       "Awaiting Confirm. Audit-only — not yet active.")))
+_r(EventSpec(EventKind.SCHEDULED_TASK_CREATED, "1.0",
+   required_fields=("task_id", "kind", "payload_json",
+                    "fire_at", "user_tz"),
+   optional_fields=("session_id", "patient_hash", "recurrence_cron",
+                    "proposal_id"),
+   description=(
+       "User confirmed a proposed task. Projection inserts the row; "
+       "worker is now eligible to fire it.")))
+_r(EventSpec(EventKind.SCHEDULED_TASK_FIRED, "1.0",
+   required_fields=("task_id", "status"),
+   optional_fields=("result_json", "error", "elapsed_ms",
+                    "next_fire_at"),
+   description=(
+       "Worker executed the task. status ∈ {done, error}; "
+       "next_fire_at set for recurrence_cron tasks.")))
+_r(EventSpec(EventKind.SCHEDULED_TASK_CANCELLED, "1.0",
+   required_fields=("task_id",),
+   optional_fields=("reason",),
+   description="User cancelled a pending task via UI."))
+
+# Research Workspace
+_r(EventSpec(EventKind.STUDY_CREATED, "1.0",
+   required_fields=("study_id", "display_name", "short_code"),
+   optional_fields=("phase", "target_n", "protocol_doc_id", "primary_endpoint"),
+   description="New research study created by the doctor."))
+_r(EventSpec(EventKind.STUDY_PROTOCOL_UPDATED, "1.0",
+   required_fields=("study_id",),
+   optional_fields=("inclusion_json", "exclusion_json",
+                    "schedule_json", "stop_rules_json",
+                    "arms_json", "protocol_summary",
+                    "primary_endpoint", "secondary_endpoints_json"),
+   description="Doctor edited the protocol rules/schedule."))
+_r(EventSpec(EventKind.STUDY_ARCHIVED, "1.0",
+   required_fields=("study_id",),
+   optional_fields=("reason",),
+   description="Study archived (soft-deleted)."))
+_r(EventSpec(EventKind.SCREENING_EVALUATED, "1.0",
+   required_fields=("study_id", "per_criterion_json", "overall_status"),
+   optional_fields=("llm_recommendation_json", "triggered_by"),
+   patient_scoped=True,
+   description="Eligibility engine evaluated a candidate."))
+_r(EventSpec(EventKind.SCREENING_DECISION_MADE, "1.0",
+   required_fields=("study_id", "decision"),
+   optional_fields=("reason", "snooze_until"),
+   patient_scoped=True,
+   description="Doctor decided invite/excluded/snoozed for a candidate."))
+_r(EventSpec(EventKind.STUDY_ENROLLED, "1.0",
+   required_fields=("study_id", "enrollment_seq"),
+   optional_fields=("arm", "consent_signed_at", "notes"),
+   patient_scoped=True,
+   description="Doctor confirmed patient enrollment."))
+_r(EventSpec(EventKind.STUDY_WITHDRAWN, "1.0",
+   required_fields=("study_id",),
+   optional_fields=("reason",),
+   patient_scoped=True,
+   description="Patient withdrawn from study."))
+_r(EventSpec(EventKind.STUDY_ASSESSMENT_PLANNED, "1.0",
+   required_fields=("study_id", "visit_id", "assessment_kind", "due_at"),
+   patient_scoped=True,
+   description="Schedule expansion created a planned assessment."))
+_r(EventSpec(EventKind.STUDY_ASSESSMENT_COMPLETED, "1.0",
+   required_fields=("study_id", "visit_id", "assessment_kind"),
+   optional_fields=("source_node_ids", "notes"),
+   patient_scoped=True,
+   description="Assessment marked as complete (manual or auto-linked)."))
+_r(EventSpec(EventKind.STUDY_ASSESSMENT_MISSED, "1.0",
+   required_fields=("study_id", "visit_id", "assessment_kind"),
+   patient_scoped=True,
+   description="Scheduler detected an overdue assessment."))
+_r(EventSpec(EventKind.STUDY_OBSERVATION_RECORDED, "1.0",
+   required_fields=("observation_id", "study_id", "category", "source_kind"),
+   optional_fields=("source_node_id", "source_text_excerpt",
+                    "llm_classification_json", "ae_grade",
+                    "linked_assessment_visit_id"),
+   patient_scoped=True,
+   description="Adhoc observation auto-mirrored from a SOAP / lab / finding."))
+_r(EventSpec(EventKind.STUDY_OBSERVATION_CONFIRMED, "1.0",
+   required_fields=("observation_id",),
+   optional_fields=("ae_grade", "is_dlt", "notes"),
+   patient_scoped=True,
+   description="Doctor confirmed AE grade / DLT status on an observation."))
+_r(EventSpec(EventKind.STUDY_OBSERVATION_UNLINKED, "1.0",
+   required_fields=("observation_id",),
+   optional_fields=("reason",),
+   patient_scoped=True,
+   description="Doctor marked an auto-mirror as false match."))
+_r(EventSpec(EventKind.STUDY_REPORT_GENERATED, "1.0",
+   required_fields=("study_id", "report_kind", "file_id"),
+   optional_fields=("rendered_at",),
+   description="Interim/final/CONSORT report rendered to a file."))
 
 
 # ─────────────────────────────────────────────────────────────────────

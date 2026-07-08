@@ -92,11 +92,44 @@ export interface LlmStatus {
   hasOpenaiKey: boolean;
   hasAnthropicKey: boolean;
   advisory: string | null;
+  /** Where the active provider's key came from. Lets the medic
+   *  answer "did my DB-saved key actually load?" without grepping
+   *  server logs. Server only knows 3 sources right now. */
+  activeKeySource?: 'db' | 'env' | 'none' | null;
+  /** First 6 + last 4 of the active provider's key with bullets in
+   *  the middle. Confirms "yes that's the key I expect" — never the
+   *  full secret. Example: ``AIzaSy••••••••KlMn``. Empty if none. */
+  activeKeyPreview?: string;
+  activeKeyLength?: number;
 }
 
+export interface LlmTestResult {
+  ok: boolean;
+  provider: string;
+  model: string;
+  latencyMs?: number;
+  error?: string;
+  /** Server-side classification of the failure. UI uses this to
+   *  pick the right colour + remediation hint. */
+  diagnosis?: 'key_missing' | 'key_invalid' | 'quota_exceeded'
+            | 'network' | 'other' | null;
+}
+
+/** Citation reference. Comes in two flavours:
+ *  - kind='graph_node' carries node_id → CitationChip [Nxx] → ContextRail
+ *    opens the patient-graph node panel.
+ *  - kind='web_source' carries w_id + url + title → WebCitationChip [Wxx] →
+ *    ContextRail opens a web-source panel with the snippet preview. */
 export interface CitationRef {
-  node_id: number;
-  kind: string;
+  kind:    string;          // 'graph_node' | 'web_source'
+  // graph_node fields
+  node_id?: number;
+  // web_source fields
+  w_id?:    number;
+  url?:     string;
+  title?:   string;
+  domain?:  string;
+  snippet?: string;
 }
 
 export type ChatStreamChunk =
@@ -109,5 +142,55 @@ export type ChatStreamChunk =
   | { type: 'final_answer_chunk'; text: string }
   | { type: 'citations'; refs: CitationRef[] }
   | { type: 'conflict_in_answer'; conflict_id: string; finding_label: string }
+  /** Tavily web-search started. UI renders a transient
+   *  "🔎 Searching {provider}…" card under the agent reply. */
+  | { type: 'web_search_started'; query: string; provider: string }
+  /** Tavily returned. UI lists the cited sources before the LLM
+   *  synthesis chunks land — gives the medic a quick preview of
+   *  what got grounded. */
+  | {
+      type: 'web_search_results';
+      count: number;
+      results: Array<{
+        w_id:    number;
+        url:     string;
+        title:   string;
+        snippet: string;
+        domain:  string;
+        score?:  number;
+      }>;
+    }
   | { type: 'turn_complete'; assistant_event_idx?: number }
+  /** chat_ingester (Layer 1 patient graph) outcome for this turn.
+   *  Drives the "✓ 已记忆 N 项 / 本轮未记忆" chip below the agent
+   *  reply so the medic can see at a glance whether their SOAP
+   *  text landed in the patient's structured graph. Three states:
+   *    - ok=true, node_count>0 → success
+   *    - ok=false, raw_count=0 → extractor never returned (API key /
+   *      quota / source too thin)
+   *    - ok=false, raw_count>0 → extractor returned entities but
+   *      none survived the verbatim quote check */
+  | {
+      type: 'memory_ingested';
+      ok: boolean;
+      node_count: number;
+      raw_count: number;
+      error?: string;
+    }
+  /** Heuristic / LLM detected a future-action intent in the medic's
+   *  message. UI renders an inline confirmation card; user clicks
+   *  Confirm to actually persist via POST /api/v1/schedule/confirm. */
+  | {
+      type: 'scheduled_task_proposed';
+      proposal_id:     string;
+      kind:            'send_email';
+      fire_at:         number;
+      user_tz:         string;
+      summary:         string;
+      payload:         Record<string, unknown>;
+      recurrence_cron: string | null;
+      session_id:      string | null;
+      patient_hash:    string | null;
+      needs_user_input: string[];
+    }
   | { type: 'error'; message: string };

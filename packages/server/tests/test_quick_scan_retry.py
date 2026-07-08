@@ -94,7 +94,7 @@ def test_retry_quick_scan_for_study_flips_to_pending_then_ok(
     # worker started — that's the contract the frontend's poll relies on.
     seen_pending: list[str] = []
 
-    def fake_run(*, user_id: str, study_id: str) -> str:
+    def fake_run(*, user_id: str, study_id: str, file_id: str = "") -> str:
         with sqlite3.connect(db) as c:
             row = c.execute(
                 "SELECT quick_scan_status FROM uploads WHERE file_id = 'file-abc'"
@@ -134,7 +134,7 @@ def test_retry_quick_scan_for_study_writes_error_on_exception(
 
     from nexus_server import files
 
-    def fake_run(*, user_id: str, study_id: str) -> str:
+    def fake_run(*, user_id: str, study_id: str, file_id: str = "") -> str:
         raise RuntimeError("Gemini API rate-limited")
 
     monkeypatch.setattr(files, "_run_quick_scan_after_ingest", fake_run)

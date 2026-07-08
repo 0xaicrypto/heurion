@@ -6,10 +6,18 @@
  *       Imaging/Labs remain stubs (U2/U3+).
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Mail } from 'lucide-react';
 import { useAppState } from './store';
 import { Button, Card, Chip, Section, EmptyState, Input } from './components/ui';
+import { ChatMarkdown } from './components/chat-markdown';
+// F-thinking-uniform — every bubble now uses the wrapper pair
+// (StreamingFooter for the persistent footer, StreamingCursor for
+// the inline blink). The bare ThinkingIndicator is no longer
+// imported here; consumers that need a standalone label can call
+// StreamingFooter with the ``label`` override.
+import { StreamingFooter, StreamingCursor } from './components/thinking-indicator';
+import { TakeawaysButton } from './components/takeaways-button';
 import {
   CitationChip2,
   ReasoningPane,
@@ -20,7 +28,8 @@ import {
   api, ApiError,
   type ChatSessionInfo, type QuickScanProgress,
 } from './lib/api-client';
-import { MODE_LABELS, patientDisplayLabel, cn } from './lib/util';
+import { patientDisplayLabel, cn } from './lib/util';
+import { useT, useModeLabel } from './lib/i18n';
 import type {
   CitationRef,
   GraphNodeOut,
@@ -33,6 +42,8 @@ import type {
 /* ─────────────── Today ─────────────── */
 
 export function TodayMode() {
+  const t = useT();
+  const locale = useAppState((s) => s.locale);
   const patients = useAppState((s) => s.patients);
   const setActivePatient = useAppState((s) => s.setActivePatient);
   const refreshPatients = useAppState((s) => s.refreshPatients);
@@ -54,9 +65,13 @@ export function TodayMode() {
   const needsLlmSetup = llmChecked && llmStatus && llmStatus.advisory;
 
   const hour = new Date().getHours();
-  const greeting =
-    hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-  const today = new Date().toLocaleDateString('en-US', {
+  // Use the active locale's intl rules for the date stamp. The greeting
+  // word itself lives in the dictionary so zh-CN ("早上好" / "下午好" /
+  // "晚上好") is a natural string rather than a forced literal.
+  const greetingKey =
+    hour < 12 ? 'today.welcome' : 'today.welcome';
+  const greeting = t(greetingKey);
+  const today = new Date().toLocaleDateString(locale, {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   });
 
@@ -71,16 +86,14 @@ export function TodayMode() {
         <div className="mt-8">
           <Card className="!p-5 !border-caution/50 !bg-caution/5">
             <div className="text-caption font-medium text-caution">
-              Set up an LLM API key to enable chat & reasoning
+              {t('today.llmAdvisoryTitle')}
             </div>
             <p className="mt-2 text-body text-text-secondary">
-              {llmStatus!.advisory} Keys are stored locally at
-              {' '}<span className="font-mono">{llmStatus!.envFilePath}</span>{' '}
-              — the same file v1 used. They never leave your machine.
+              {llmStatus!.advisory} {t('settings.llm.envPath', { path: llmStatus!.envFilePath })}
             </p>
             <div className="mt-3">
               <Button variant="primary" onClick={openSettings}>
-                Open Settings · LLM →
+                {t('today.llmAdvisoryCta')}
               </Button>
             </div>
           </Card>
@@ -91,19 +104,19 @@ export function TodayMode() {
         <div className="mt-8">
           <Card className="!p-5 border-accent/40">
             <div className="text-caption font-medium text-accent">
-              Nexus has learned {pendingCount} new pattern{pendingCount > 1 ? 's' : ''}
+              {t('practitioner.title')} · {pendingCount}
             </div>
             <p className="mt-2 text-body text-text-secondary">
-              Review and confirm via your avatar → "Nexus has learned".
+              {t('practitioner.intro')}
             </p>
           </Card>
         </div>
       )}
 
-      <Section title="Pinned today">
+      <Section title={t('today.pinned')}>
         {patients.length === 0 ? (
           <p className="text-caption text-text-tertiary">
-            No patients on file yet. Click "⊕ New patient" in the header to start.
+            {t('sidebar.empty')}
           </p>
         ) : (
           <div className="space-y-1">
@@ -128,9 +141,126 @@ export function TodayMode() {
         )}
       </Section>
 
-      <Section title="Ask Nexus about any patient">
-        <Input placeholder="Type a question or paste an MRN…" />
+      <Section title={t('today.ask')}>
+        <CrossPatientChat />
       </Section>
+    </div>
+  );
+}
+
+
+/**
+ * Cross-patient "ask Nexus about any patient" chat.
+ *
+ * Until 2026-06, the Today screen had a bare <Input> with no
+ * onChange/onSubmit — typing did nothing. This component wires it to
+ * api.sendChat with patient_hash=null so the agent answers in cohort
+ * scope (across all patients the medic has access to). The visual mock
+ * intends this to be the gateway to research-style cross-patient
+ * Q&A; deeper questions naturally upgrade the user into Research
+ * workspace via the suggestions strip below the answer.
+ */
+function CrossPatientChat() {
+  const t = useT();
+  const setActiveWorkspace = useAppState((s) => s.setActiveWorkspace);
+  const [q, setQ]                 = useState('');
+  const [answer, setAnswer]       = useState('');
+  const [busy, setBusy]           = useState(false);
+  const [err, setErr]             = useState<string | null>(null);
+
+  // Use a long-lived session for the Today bar so follow-ups stick
+  // (medic asks "and that patient's last CT?" expecting context).
+  const [sessionId] = useState<string>(() => {
+    const k = 'nexus.todayChat.sessionId';
+    try {
+      const cur = localStorage.getItem(k);
+      if (cur) return cur;
+    } catch { /* ignore */ }
+    const fresh = `today-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    try { localStorage.setItem(k, fresh); } catch { /* ignore */ }
+    return fresh;
+  });
+
+  const send = async () => {
+    const text = q.trim();
+    if (!text || busy) return;
+    setErr(null);
+    setAnswer('');
+    setBusy(true);
+    try {
+      // patient_hash=null → cross-patient (cohort) scope on the backend.
+      for await (const chunk of api.sendChat(text, sessionId, null)) {
+        // chat_router_v2 SSE shape: `type` discriminator + payload fields
+        // (see ChatStreamChunk in lib/types.ts and chat_router_v2.py).
+        // We only render the assembled text here; tier/citation metadata
+        // isn't surfaced in this compact widget (Research Chat shows it).
+        if (chunk.type === 'final_answer_chunk' && chunk.text) {
+          setAnswer((prev) => prev + chunk.text);
+        }
+      }
+    } catch (e) {
+      const ae = e as ApiError;
+      setErr(ae?.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-end">
+        {/* Per-user qualitative insights, no scope filter here — the
+            Today bar is the "across everything" surface, so we surface
+            ALL takeaways the medic accumulated. */}
+        <TakeawaysButton tone="base" />
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.currentTarget.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }}}
+          placeholder={t('today.askPlaceholder')}
+          disabled={busy}
+        />
+        <Button variant="primary" onClick={send}
+                disabled={busy || !q.trim()}>
+          {busy ? '…' : '↑'}
+        </Button>
+      </div>
+
+      {(answer || err || busy) && (
+        <Card className="!p-4 !bg-surface">
+          {answer && (
+            <div className="text-body text-text-primary">
+              <ChatMarkdown text={answer} />
+              {busy && <StreamingCursor tone="base" />}
+            </div>
+          )}
+          {/* F-thinking-uniform: persistent footer that stays visible
+              while busy=true regardless of whether the answer text
+              has started arriving. */}
+          <StreamingFooter
+            streaming={busy}
+            hasText={!!(answer && answer.length > 0)}
+            tone="base"
+            label={answer ? undefined : '正在跨患者检索 + 思考'}
+          />
+
+          {err && (
+            <div className="text-caption text-retract mt-2">出错：{err}</div>
+          )}
+          {!busy && answer && (
+            <div className="mt-3 pt-3 border-t border-border flex items-center gap-2 text-caption text-text-tertiary">
+              <span>需要更深入分析？</span>
+              <button
+                onClick={() => setActiveWorkspace('research')}
+                className="underline hover:text-accent">
+                打开 Research 工作台 →
+              </button>
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }
@@ -169,7 +299,95 @@ function buildFindingsEmailBody(
   return lines.join('\n');
 }
 
+/**
+ * IngestDiagnosisBanner — explains WHY 当前发现 is empty.
+ *
+ * When chat_ingester doesn't surface any findings for a patient
+ * (despite the medic just pasting a full SOAP) the medic's only
+ * cue used to be the silent "暂无活跃发现" line — that pushed all
+ * debugging into "open the terminal, tail the server log". This
+ * banner pulls /memory/patient/{hash}/ingest_debug and renders the
+ * server-side diagnosis inline:
+ *   - never triggered → patient_hash plumbing
+ *   - LLM call raised → API key / quota / model permissions
+ *   - LLM returned prose → safety filter / refusal
+ *   - LLM returned empty → source thinness
+ *   - all entities dropped → verbatim check too strict
+ *
+ * Collapsed by default to avoid clutter when the call is loading;
+ * expands on click to show raw_output_head from the last extractor
+ * call — that one string is usually enough to pin down the
+ * root cause.
+ */
+function IngestDiagnosisBanner({ patientHash }: { patientHash: string }) {
+  const [info, setInfo] = useState<Awaited<
+    ReturnType<typeof api.getIngestDebug>
+  > | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showRaw, setShowRaw] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getIngestDebug(patientHash).then(
+      (r) => { if (!cancelled) setInfo(r); },
+      (e) => { if (!cancelled) setError(String(e?.message || e)); },
+    );
+    return () => { cancelled = true; };
+  }, [patientHash]);
+
+  if (error) {
+    // Backend missing the endpoint (stale binary) — silently no-op.
+    return null;
+  }
+  if (!info) return null;
+  // If the medic hasn't even chatted yet, no need for a diagnosis
+  // banner — the empty state is correct by definition.
+  if (info.ingestionStarted === 0) return null;
+
+  return (
+    <div className="mt-3 rounded-md border border-caution/30 bg-caution/5 p-3">
+      <div className="flex items-start gap-2">
+        <span aria-hidden className="text-caution">⚠</span>
+        <div className="flex-1 min-w-0">
+          <div className="text-caption font-medium text-caution">
+            诊断: 为什么这位病人没有"当前发现"?
+          </div>
+          <div className="mt-1 text-caption text-text-secondary">
+            {info.diagnosis}
+          </div>
+          <div className="mt-2 text-[11px] font-mono text-text-tertiary">
+            triggered={info.ingestionStarted}
+            {' · '}completed={info.ingestionCompleted}
+            {' · '}node_added_events={info.nodeAddedEvents}
+            {' · '}graph_rows={info.clinicalGraphNodes}
+          </div>
+          {info.latestLlmResponse?.rawOutputHead && (
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => setShowRaw((v) => !v)}
+                className="text-[11px] underline text-text-tertiary hover:text-text-primary"
+              >
+                {showRaw ? '收起 LLM 原始返回' : '查看 LLM 原始返回 (前 400 字)'}
+              </button>
+              {showRaw && (
+                <pre className="mt-1 max-h-48 overflow-auto rounded bg-bg p-2
+                                text-[10px] leading-snug text-text-secondary
+                                whitespace-pre-wrap break-all">
+                  {info.latestLlmResponse.rawOutputHead}
+                </pre>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 export function PatientMode() {
+  const t = useT();
   const p = useAppState((s) => s.activePatient);
   const setActiveMode = useAppState((s) => s.setActiveMode);
   const openEmail = useAppState((s) => s.openEmailComposer);
@@ -189,7 +407,7 @@ export function PatientMode() {
     return () => { cancelled = true; };
   }, [p]);
 
-  if (!p) return <EmptyState title="No patient selected" />;
+  if (!p) return <EmptyState title={t('patient.noSelection')} />;
 
   return (
     <div className="mx-auto max-w-3xl px-10 py-12 selectable">
@@ -200,7 +418,7 @@ export function PatientMode() {
         <div className="mt-2 flex items-center gap-2 text-body text-text-secondary">
           <span>{p.sex || '—'}</span><span>·</span><span>{p.ageGroup || '—'}</span>
           <span>·</span>
-          <span>{proj?.studies.length ?? '—'} studies</span>
+          <span>{t('patient.studies', { count: proj?.studies.length ?? 0 })}</span>
         </div>
       </div>
 
@@ -212,26 +430,29 @@ export function PatientMode() {
       )}
 
       {loading && (
-        <p className="text-caption text-text-tertiary">Loading projection…</p>
+        <p className="text-caption text-text-tertiary">{t('patient.loading')}</p>
       )}
       {error && (
-        <p className="text-caption text-retract">Failed to load: {error}</p>
+        <p className="text-caption text-retract">{t('patient.loadFailed', { error })}</p>
       )}
 
       {proj && (
         <>
-          <Section title="Active findings">
+          <Section title={t('patient.activeFindings')}>
             {proj.findings.length === 0 ? (
-              <p className="text-caption text-text-tertiary">
-                No active findings yet.
-              </p>
+              <>
+                <p className="text-caption text-text-tertiary">
+                  {t('patient.findingsEmpty')}
+                </p>
+                <IngestDiagnosisBanner patientHash={p.patientHash} />
+              </>
             ) : (
               <>
                 <ul className="space-y-1 text-body text-text-primary">
                   {proj.findings.map((f) => (
                     <li key={f.nodeId} className="flex items-center gap-2">
                       <span>•</span>
-                      <span>{(f.content as any).label ?? '(unlabeled)'}</span>
+                      <span>{(f.content as any).label ?? t('patient.unlabeled')}</span>
                       {(f.content as any).size_cm != null && (
                         <Chip variant="neutral">
                           {(f.content as any).size_cm} cm
@@ -245,24 +466,23 @@ export function PatientMode() {
                   <Button
                     variant="subtle"
                     onClick={() => openEmail({
-                      subject: `Findings · ${patientDisplayLabel(p)}`,
+                      subject: `${t('patient.activeFindings')} · ${patientDisplayLabel(p)}`,
                       body: buildFindingsEmailBody(p, proj),
                     })}
                   >
-                    <Mail size={14} /> Email findings to a colleague
+                    <Mail size={14} /> {t('patient.emailFindings')}
                   </Button>
                   <span className="text-caption text-text-tertiary">
-                    Opens Compose with the findings list prefilled. PHI: the
-                    pseudonymous label is used; no MRN, no DOB.
+                    {t('patient.emailHint')}
                   </span>
                 </div>
               </>
             )}
           </Section>
 
-          <Section title="Medications">
+          <Section title={t('patient.medications')}>
             {proj.medications.length === 0 ? (
-              <p className="text-caption text-text-tertiary">No medications recorded.</p>
+              <p className="text-caption text-text-tertiary">{t('patient.medsEmpty')}</p>
             ) : (
               <ul className="space-y-1 text-body text-text-primary">
                 {proj.medications.map((m) => (
@@ -272,17 +492,18 @@ export function PatientMode() {
             )}
           </Section>
 
-          <Section title="Recent imaging">
+          <Section title={t('patient.recentImaging')}>
             <RecentImagingSection patientHash={p.patientHash} />
           </Section>
         </>
       )}
 
-      <div className="mt-10 flex justify-end">
-        <Button variant="primary" onClick={() => setActiveMode('encounter')}>
-          Open with Nexus →
-        </Button>
-      </div>
+      {/* The bottom "Open in Nexus →" CTA was removed: it only mirrored
+          the 问诊 tab in ModeTabs above, and labelling it "Open in
+          Nexus" when the user is already inside Nexus made no sense.
+          If we want a deliberate "start an encounter" CTA later, attach
+          it to a specific action (e.g. open a new chat with a draft
+          question), not just a tab switch. */}
     </div>
   );
 }
@@ -471,9 +692,168 @@ interface ChatMsg {
    *  they're audit-visible in twin_event_log; this is purely for
    *  the chat-pane chip render. */
   attachedFileNames?: string[];
+  /** Heuristic detected a future-action intent — render an inline
+   *  confirmation card under the agent reply. Clearing this (Confirm,
+   *  Cancel, or after persist) takes it off the message. */
+  proposal?: ChatProposal | null;
+  /** T4 web-search results — Tavily returned this set of sources;
+   *  the LLM grounded its answer in them. UI renders an inline card
+   *  listing title + domain + link under the agent reply. */
+  webResults?: Array<{
+    w_id: number;
+    url: string;
+    title: string;
+    snippet: string;
+    domain: string;
+  }>;
+  /** chat_ingester outcome surfaced from the server. Lets the medic
+   *  see at a glance whether this turn's clinical entities landed in
+   *  Layer-1 memory — without this they have no idea why the 病人
+   *  tab's "当前发现" stayed empty. */
+  memoryIngested?: {
+    ok: boolean;
+    nodeCount: number;
+    rawCount: number;
+    error?: string;
+  };
+}
+
+/** Local copy of ScheduleProposalView with stage flags for UI state. */
+interface ChatProposal {
+  proposalId:     string;
+  kind:           'send_email';
+  fireAt:         number;
+  userTz:         string;
+  summary:        string;
+  payload:        Record<string, unknown>;
+  recurrenceCron: string | null;
+  sessionId:      string | null;
+  patientHash:    string | null;
+  needsUserInput: string[];
+  /** UI state — 'editing' / 'submitting' / 'done' / 'cancelled' */
+  uiState:        'editing' | 'submitting' | 'done' | 'cancelled';
+  /** Inline error message if /confirm rejected. */
+  errorMsg?:      string;
+}
+
+/**
+ * Inline confirmation card for a chat-detected scheduled-task
+ * proposal. Renders under the agent's message bubble. Medic edits
+ * the to/subject/body inline (Phase 1 only handles send_email),
+ * picks Confirm → POST /schedule/confirm, or Cancel → mark dismissed
+ * (no persistence; the SCHEDULED_TASK_PROPOSED event was already
+ * audit-logged for false-positive rate analysis).
+ *
+ * Phase 1 keeps the time picker minimal — just shows fire_at as
+ * read-only. Editing time-of-day is a Phase 2 task that ties into
+ * a real datetime picker; for now medic can cancel + re-prompt
+ * the chat with a different phrasing.
+ */
+function ScheduleProposalCard({
+  proposal,
+  onConfirm,
+  onCancel,
+}: {
+  proposal: ChatProposal;
+  onConfirm: (edited: { to: string; subject: string; body: string }) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  const locale = useAppState((s) => s.locale);
+  // Pre-fill 'to' from heuristic; medic can edit.
+  const initialTo = Array.isArray(proposal.payload.to)
+    ? (proposal.payload.to as string[]).join(', ')
+    : '';
+  const initialSubject = String(proposal.payload.subject ?? '');
+  const initialBody    = String(proposal.payload.body    ?? '');
+  const [to, setTo]           = useState(initialTo);
+  const [subject, setSubject] = useState(initialSubject);
+  const [body, setBody]       = useState(initialBody);
+
+  const fireDate = new Date(proposal.fireAt * 1000);
+  const fireLabel = `${fireDate.toLocaleString(locale)} (${proposal.userTz})`;
+  const disabled = proposal.uiState === 'submitting' || proposal.uiState === 'done';
+
+  return (
+    <div className="mt-3 rounded-md border border-accent/40 bg-accent-subtle/30 p-3 text-caption">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-text-primary">📅 {t('sched.proposalTitle')}</span>
+        <span className="text-text-tertiary">·</span>
+        <span className="text-text-secondary">
+          {proposal.kind === 'send_email' ? t('sched.kind.sendEmail') : proposal.kind}
+        </span>
+      </div>
+      <p className="mb-3 text-text-secondary">{t('sched.proposalIntro')}</p>
+
+      <div className="mb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-text-secondary">
+        <span className="text-text-tertiary">{t('sched.fireAt')}</span>
+        <span className="text-text-primary">{fireLabel}</span>
+      </div>
+
+      <label className="mb-1 mt-2 block text-text-tertiary">{t('sched.to')}</label>
+      <input
+        type="text"
+        value={to}
+        onChange={(e) => setTo(e.target.value)}
+        disabled={disabled}
+        placeholder={t('sched.recipientPlaceholder')}
+        className="mb-2 w-full rounded-sm border border-border bg-bg px-2 py-1 text-body text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+      />
+
+      <label className="mb-1 block text-text-tertiary">{t('sched.subject')}</label>
+      <input
+        type="text"
+        value={subject}
+        onChange={(e) => setSubject(e.target.value)}
+        disabled={disabled}
+        placeholder={t('sched.subjectPlaceholder')}
+        className="mb-2 w-full rounded-sm border border-border bg-bg px-2 py-1 text-body text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+      />
+
+      <label className="mb-1 block text-text-tertiary">{t('sched.body')}</label>
+      <textarea
+        rows={3}
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        disabled={disabled}
+        placeholder={t('sched.bodyPlaceholder')}
+        className="mb-2 w-full resize-y rounded-sm border border-border bg-bg px-2 py-1 text-body text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+      />
+
+      {proposal.errorMsg && (
+        <div className="mb-2 rounded-sm border border-retract/40 bg-retract/10 px-2 py-1 text-retract">
+          {proposal.errorMsg}
+        </div>
+      )}
+
+      {proposal.uiState === 'done' ? (
+        <div className="rounded-sm border border-confirmed/40 bg-confirmed/10 px-2 py-1 text-confirmed">
+          ✓ {t('sched.scheduledToast', { when: fireLabel })}
+        </div>
+      ) : proposal.uiState === 'cancelled' ? (
+        <div className="text-text-tertiary">{t('sched.cancel')}</div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <Button
+            variant="primary"
+            disabled={disabled || !to.trim() || !subject.trim() || !body.trim()}
+            onClick={() => onConfirm({ to, subject, body })}
+          >
+            {proposal.uiState === 'submitting'
+              ? t('sched.scheduling')
+              : t('sched.confirm')}
+          </Button>
+          <Button variant="subtle" onClick={onCancel} disabled={disabled}>
+            {t('sched.cancel')}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function EncounterMode() {
+  const t = useT();
   const p              = useAppState((s) => s.activePatient);
   const activeSessionId = useAppState((s) => s.activeSessionId);
   const setActiveSessionId = useAppState((s) => s.setActiveSessionId);
@@ -484,6 +864,14 @@ export function EncounterMode() {
   const [backendStatus, setBackendStatus] =
     useState<'ok' | 'unreachable' | 'unhealthy' | 'checking'>('checking');
 
+  // F-tab-switch-race — AbortController for the in-flight SSE.
+  // Component unmount (tab switch) aborts → reader cancels → WebKit
+  // connection slot is freed before the next mount runs api.health().
+  // Without this, the next health probe couldn't get a connection
+  // (6-concurrent limit) and false-positively reported "Backend
+  // unreachable" even though the sidecar was healthy.
+  const chatAbortRef = useRef<AbortController | null>(null);
+
   // Chat sessions ─────────────────────────────────────────────────
   const [sessions, setSessions] = useState<ChatSessionInfo[]>([]);
   const [showSessionList, setShowSessionList] = useState(false);
@@ -492,7 +880,7 @@ export function EncounterMode() {
   // server-assigned file_id once the upload completes; pending uploads
   // show a spinner chip until the id arrives.
   const [attachments, setAttachments] =
-    useState<Array<{ key: string; name: string; sizeBytes: number; fileId: string | null; failed?: string }>>([]);
+    useState<Array<{ key: string; name: string; sizeBytes: number; fileId: string | null; failed?: string; previewUrl?: string; isImage?: boolean }>>([]);
 
   // Probe the backend once on mount. A failed probe lets us tell the
   // medic "backend not running" instead of the opaque "TypeError: Load
@@ -502,6 +890,24 @@ export function EncounterMode() {
     api.health().then((s) => { if (!cancelled) setBackendStatus(s); });
     return () => { cancelled = true; };
   }, []);
+
+  // F-tab-switch-race — the medic explicitly wants the AI to keep
+  // thinking even when they switch tabs (ChatGPT-style: send,
+  // navigate away, come back later, see the answer). So we do NOT
+  // abort the SSE on unmount. The chat_router persists the assistant
+  // response to twin_event_log as soon as the turn completes; on
+  // remount, the listSessionMessages history-load hydrates it back.
+  //
+  // The AbortController is still plumbed through sendChat (above)
+  // for explicit user-cancel UX in the future ("Stop generating"
+  // button), but the auto-abort-on-unmount behaviour is gone.
+  //
+  // Downside: ChatMsg state lives in this component, so an in-flight
+  // streaming response isn't visible mid-stream on remount until the
+  // next chunk OR the post-turn history-pull arrives. The proper
+  // fix is to lift the per-session chat array into zustand keyed by
+  // (patient_hash, session_id) — punted to a follow-up because it
+  // touches every chat surface; this comment is the anchor for it.
 
   // Load the user's sessions on mount + after each send-back-to-default
   // (so a freshly-created session is visible in the picker).
@@ -515,13 +921,34 @@ export function EncounterMode() {
   }, []);
   useEffect(() => { refreshSessions(); }, [refreshSessions]);
 
-  // Load chat history when the active session changes. Empty
-  // activeSessionId === Default chat (the synthetic wrap-around for
-  // pre-sessions messages).
+  // Effective session id for THIS encounter.
+  //
+  // Sessions are not patient-scoped on the backend — the medic's
+  // `activeSessionId` is just a string. If we used `activeSessionId`
+  // directly, switching patients would still load whatever session was
+  // last opened (cross-patient bleed: 张三's 12-message history showing
+  // up under 李四). To fix, we derive a per-patient default whenever the
+  // medic hasn't explicitly picked a named session, mirroring the
+  // Research Chat pattern (`research-${studyId}`):
+  //
+  //   activeSessionId is empty  →  use `patient-${patientHash}`
+  //   activeSessionId is set    →  trust the medic's pick (named sessions
+  //                                may legitimately cross patients in
+  //                                multi-patient discussions)
+  //
+  // setActivePatient in store.ts also clears activeSessionId on switch,
+  // so the default below is what loads after a sidebar click.
+  const effectiveSessionId = activeSessionId
+    || (p ? `patient-${p.patientHash}` : '');
+
+  // Load chat history whenever the effective session changes — that
+  // covers both "medic picked a new session" and "medic switched
+  // patients (so the derived default changed)".
   useEffect(() => {
     let cancelled = false;
     setMsgs([]);
-    api.listSessionMessages(activeSessionId, 200).then(
+    if (!effectiveSessionId) return;
+    api.listSessionMessages(effectiveSessionId, 200).then(
       (rows) => {
         if (cancelled) return;
         setMsgs(rows.map((r): ChatMsg => ({
@@ -535,9 +962,9 @@ export function EncounterMode() {
       () => { /* history is nice-to-have — empty pane is fine */ },
     );
     return () => { cancelled = true; };
-  }, [activeSessionId]);
+  }, [effectiveSessionId]);
 
-  if (!p) return <EmptyState title="No patient selected" />;
+  if (!p) return <EmptyState title={t('encounter.noSelection')} />;
 
   async function startNewSession() {
     try {
@@ -568,12 +995,21 @@ export function EncounterMode() {
   function acceptFiles(files: FileList | File[]) {
     const arr = Array.from(files);
     if (arr.length === 0) return;
-    const placeholders = arr.map((f) => ({
-      key: `${f.name}-${f.size}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
-      name: f.name,
-      sizeBytes: f.size,
-      fileId: null as string | null,
-    }));
+    const placeholders = arr.map((f) => {
+      const isImage = (f.type || '').startsWith('image/');
+      return {
+        key: `${f.name}-${f.size}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+        name: f.name,
+        sizeBytes: f.size,
+        fileId: null as string | null,
+        // Image attachments get a local blob URL so the chip can show
+        // a thumbnail. The chat surface is the medic's working
+        // memory — they should *see* what they just dropped before
+        // pressing send, not be told "you dropped a 230K thing".
+        previewUrl: isImage ? URL.createObjectURL(f) : undefined,
+        isImage,
+      };
+    });
     setAttachments((prev) => [...prev, ...placeholders]);
 
     arr.forEach((file, idx) => {
@@ -606,7 +1042,17 @@ export function EncounterMode() {
   }
 
   function removeAttachment(key: string) {
-    setAttachments((prev) => prev.filter((a) => a.key !== key));
+    // Revoke any blob URL the thumbnail was using to avoid leaking
+    // bitmap memory in the WebView (every paste-then-remove of a
+    // multi-MB screenshot otherwise stays resident until the page
+    // is closed).
+    setAttachments((prev) => {
+      const found = prev.find((a) => a.key === key);
+      if (found?.previewUrl) {
+        try { URL.revokeObjectURL(found.previewUrl); } catch { /* ignore */ }
+      }
+      return prev.filter((a) => a.key !== key);
+    });
   }
 
   async function send() {
@@ -650,8 +1096,18 @@ export function EncounterMode() {
         return [...m.slice(0, -1), { ...last, ...mut, elapsedMs: Date.now() - startTs }];
       });
 
+    // F-tab-switch-race — bind this turn's SSE to a fresh
+    // AbortController. The unmount-cleanup useEffect will call
+    // ``ctrl.abort()`` if the medic switches tabs mid-stream.
+    const ctrl = new AbortController();
+    chatAbortRef.current = ctrl;
+
     try {
-      for await (const chunk of api.sendChat(userText, activeSessionId, p!.patientHash, fileIds)) {
+      for await (const chunk of api.sendChat(
+        userText, effectiveSessionId, p!.patientHash, fileIds,
+        undefined,        // scope (none for patient-bound chat)
+        ctrl.signal,
+      )) {
         switch (chunk.type) {
           case 'tier_classified':
             update({ tier: chunk.tier });
@@ -677,8 +1133,63 @@ export function EncounterMode() {
           case 'citations':
             update({ citations: chunk.refs });
             break;
+          case 'web_search_started':
+            setMsgs((m) => {
+              const last = m[m.length - 1];
+              return [
+                ...m.slice(0, -1),
+                {
+                  ...last,
+                  reasoning: [
+                    ...(last.reasoning ?? []),
+                    `🔎 Searching ${chunk.provider}…`,
+                  ],
+                },
+              ];
+            });
+            break;
+          case 'web_search_results':
+            // Attach the result list to the message; UI renders the
+            // sources card under the agent bubble before the LLM
+            // synthesis chunks fill in the final answer text.
+            update({ webResults: chunk.results });
+            break;
+          case 'scheduled_task_proposed':
+            // Heuristic detected a future-action intent. Attach the
+            // proposal to the current agent message so the UI renders
+            // a confirmation card under it. Default fields are filled
+            // from the proposal; the medic edits + confirms in the card.
+            update({
+              proposal: {
+                proposalId:     chunk.proposal_id,
+                kind:           chunk.kind,
+                fireAt:         chunk.fire_at,
+                userTz:         chunk.user_tz,
+                summary:        chunk.summary,
+                payload:        chunk.payload,
+                recurrenceCron: chunk.recurrence_cron,
+                sessionId:      chunk.session_id,
+                patientHash:    chunk.patient_hash,
+                needsUserInput: chunk.needs_user_input,
+                uiState:        'editing',
+              },
+            });
+            break;
           case 'turn_complete':
             update({ streaming: false });
+            // Note: 病人 tab re-pulls the projection on next open via
+            // its useEffect; we don't share state across tabs here so
+            // there's no in-place refresh from this chat surface.
+            break;
+          case 'memory_ingested':
+            update({
+              memoryIngested: {
+                ok:        !!chunk.ok,
+                nodeCount: Number(chunk.node_count) || 0,
+                rawCount:  Number(chunk.raw_count) || 0,
+                error:     chunk.error || '',
+              },
+            });
             break;
           case 'error':
             update({ text: `[error: ${chunk.message}]`, streaming: false });
@@ -688,6 +1199,19 @@ export function EncounterMode() {
         }
       }
     } catch (err) {
+      // F-tab-switch-race — AbortError is a deliberate user action
+      // (medic switched tabs / sent a new turn / closed the chat).
+      // Treat it as a clean cancel: no "connection error" message,
+      // no backendStatus update, no toast.
+      const isAbort =
+        (err instanceof DOMException && err.name === 'AbortError') ||
+        (err as any)?.name === 'AbortError' ||
+        ctrl.signal.aborted;
+      if (isAbort) {
+        update({ streaming: false });
+        return;
+      }
+
       // Turn "TypeError: Load failed" into something the medic can act on.
       // The Tauri/WebKit fetch wrapper throws TypeError when the TCP
       // socket can't even be opened — almost always: backend sidecar
@@ -700,13 +1224,18 @@ export function EncounterMode() {
         api.health().then(setBackendStatus);
         message =
           'Backend is unreachable. Make sure the nexus-server sidecar is ' +
-          'running (or launch FastAPI on http://127.0.0.1:8001 when using `pnpm dev`).';
+          'running (or launch FastAPI on http://localhost:8001 when using `pnpm dev`).';
       } else {
         message = String(err);
       }
       update({ text: `[connection error: ${message}]`, streaming: false });
     } finally {
       setSending(false);
+      // Clear the in-flight ref so the next send / next unmount
+      // doesn't try to abort an already-completed stream.
+      if (chatAbortRef.current === ctrl) {
+        chatAbortRef.current = null;
+      }
     }
   }
 
@@ -778,13 +1307,22 @@ export function EncounterMode() {
             )}
           </div>
         </div>
-        <span>{msgs.length} messages</span>
+        <div className="flex items-center gap-3">
+          {p && (
+            <TakeawaysButton
+              scopeKind="patient"
+              scopeRef={p.patientHash}
+              tone="base"
+            />
+          )}
+          <span>{msgs.length} messages</span>
+        </div>
       </div>
 
       {backendStatus === 'unreachable' && (
         <div className="mb-3 flex items-center justify-between rounded-md border border-retract/40 bg-retract/5 px-3 py-2 text-caption text-retract">
           <span>
-            Backend unreachable at <span className="font-mono">127.0.0.1:8001</span>.
+            Backend unreachable at <span className="font-mono">localhost:8001</span>.
             The nexus-server sidecar isn't responding — `pnpm tauri:dev` or
             launch the FastAPI server.
           </span>
@@ -827,15 +1365,185 @@ export function EncounterMode() {
             {m.role === 'agent' && m.reasoning && m.reasoning.length > 0 && (
               <ReasoningPane steps={m.reasoning} defaultOpen={m.streaming} />
             )}
-            <p className="text-body leading-relaxed text-text-primary whitespace-pre-wrap">
-              {m.text || (m.streaming ? '…' : '')}
-              {m.citations?.map((c, ci) => (
-                <span key={c.node_id}>
-                  {' '}
-                  <CitationChip2 index={ci + 1} nodeId={c.node_id} />
-                </span>
-              ))}
-            </p>
+            {/* F-thinking-uniform: render text + inline cursor + footer
+                indicator. The footer keeps the medic informed AFTER
+                the first chunk arrives (reasoning / citations are
+                often still streaming for 5-15s after first text). */}
+            <div className="text-body leading-relaxed text-text-primary">
+              {m.text && <ChatMarkdown text={m.text} />}
+              {m.streaming && m.text && <StreamingCursor tone="base" />}
+              {m.citations?.map((c, ci) => {
+                // Two kinds: graph_node (patient memory) and
+                // web_source (Tavily search result). Each opens a
+                // different ContextRail panel — graph_node uses the
+                // existing /memory/citation lookup, web_source has
+                // the URL + snippet directly on the ref.
+                if (c.kind === 'web_source' && c.w_id != null) {
+                  return (
+                    <span key={`w-${c.w_id}-${ci}`}>{' '}
+                      <a
+                        href={c.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-sm border border-accent/40 bg-accent/10 px-1 py-0.5 font-mono text-[10px] text-accent hover:bg-accent/20"
+                        title={c.title ?? c.url}
+                      >
+                        W{c.w_id}
+                      </a>
+                    </span>
+                  );
+                }
+                if (c.node_id != null) {
+                  return (
+                    <span key={`n-${c.node_id}-${ci}`}>{' '}
+                      <CitationChip2 index={ci + 1} nodeId={c.node_id} />
+                    </span>
+                  );
+                }
+                return null;
+              })}
+            </div>
+            {/* F-thinking-uniform: persistent footer indicator. Lives
+                BELOW the body so it's visible even while body is
+                full of text / citations / web cards. */}
+            {m.role === 'agent' && (
+              <StreamingFooter
+                streaming={m.streaming}
+                hasText={!!(m.text && m.text.length > 0)}
+                tone="base"
+              />
+            )}
+            {/* Memory-ingest chip. Surfaces what chat_ingester did
+                with this turn so the medic doesn't have to wonder why
+                "当前发现/用药" stayed empty. Three states:
+                  - 已记忆 N 项     (ok=true, nodeCount>0)
+                  - 本轮未记忆     (raw=0, likely API key/quota)
+                  - LLM 提取了 N 但全部被丢弃 (raw>0, kept=0 — prompt issue)  */}
+            {m.role === 'agent' && m.memoryIngested && (
+              <div className="mt-2 text-caption">
+                {m.memoryIngested.ok && m.memoryIngested.nodeCount > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-sm
+                                    border border-confirmed/30 bg-confirmed/10
+                                    px-2 py-0.5 text-confirmed">
+                    ✓ 已记忆 {m.memoryIngested.nodeCount} 项 · 病人 / 记忆 已更新
+                  </span>
+                )}
+                {!m.memoryIngested.ok && m.memoryIngested.rawCount === 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-sm
+                                    border border-caution/30 bg-caution/10
+                                    px-2 py-0.5 text-caution"
+                        title={m.memoryIngested.error || '提取器未返回任何实体，多半是 LLM API key/quota 问题，请检查 Settings · LLM'}>
+                    ⚠ 本轮未记忆（提取器无返回）
+                  </span>
+                )}
+                {!m.memoryIngested.ok && m.memoryIngested.rawCount > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-sm
+                                    border border-caution/30 bg-caution/10
+                                    px-2 py-0.5 text-caution"
+                        title="LLM 提取出了实体，但每一条的 evidence_quote 都通不过 verbatim 校验（连 fuzzy_rescue 也救不回来）。多半是 extractor 提示词需要再宽松一些。">
+                    ⚠ LLM 提取了 {m.memoryIngested.rawCount} 条但全部被弃用
+                  </span>
+                )}
+              </div>
+            )}
+            {/* Web search results card — renders once Tavily returns
+                a payload, BEFORE the LLM synthesis chunks land. Gives
+                the medic a preview of what got grounded so the wait
+                feels productive instead of opaque. */}
+            {m.role === 'agent' && m.webResults && m.webResults.length > 0 && (
+              <div className="mt-3 rounded-md border border-border bg-surface/40 p-3 text-caption">
+                <div className="mb-2 text-text-secondary">
+                  🔎 {m.webResults.length} source{m.webResults.length === 1 ? '' : 's'}
+                </div>
+                <ul className="space-y-1.5">
+                  {m.webResults.map((r) => (
+                    <li key={r.w_id} className="flex items-start gap-2">
+                      <span className="mt-0.5 font-mono text-[10px] text-accent">[W{r.w_id}]</span>
+                      <div className="min-w-0 flex-1">
+                        <a
+                          href={r.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block truncate text-text-primary hover:underline"
+                          title={r.url}
+                        >
+                          {r.title}
+                        </a>
+                        <div className="truncate text-[11px] text-text-tertiary">
+                          {r.domain}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {/* Scheduled-task confirmation card. Renders under the
+                agent message that carries the proposal. The card calls
+                back into setMsgs to update its own state — confirmation
+                stamps the proposal as 'done' and ALSO leaves it
+                attached so the medic sees the green "scheduled" line
+                until they cancel the session. */}
+            {m.role === 'agent' && m.proposal && (
+              <ScheduleProposalCard
+                proposal={m.proposal}
+                onConfirm={async (edited) => {
+                  // Phase 1: only send_email is supported. Pack edits
+                  // into the payload and POST /schedule/confirm.
+                  const toList = edited.to
+                    .split(',').map((s) => s.trim()).filter(Boolean);
+                  // Move to 'submitting' for the spinner.
+                  setMsgs((arr) => arr.map((mm, mi) =>
+                    mi === i && mm.proposal
+                      ? { ...mm, proposal: { ...mm.proposal, uiState: 'submitting', errorMsg: undefined } }
+                      : mm
+                  ));
+                  try {
+                    const userTz = (() => {
+                      try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+                      catch { return 'UTC'; }
+                    })();
+                    await api.confirmScheduledTask({
+                      kind: 'send_email',
+                      payload: {
+                        to: toList,
+                        subject: edited.subject,
+                        body: edited.body,
+                      },
+                      fireAt: m.proposal!.fireAt,
+                      userTz,
+                      sessionId: m.proposal!.sessionId,
+                      patientHash: m.proposal!.patientHash,
+                      proposalId: m.proposal!.proposalId,
+                    });
+                    setMsgs((arr) => arr.map((mm, mi) =>
+                      mi === i && mm.proposal
+                        ? { ...mm, proposal: { ...mm.proposal, uiState: 'done' } }
+                        : mm
+                    ));
+                    showToast(t('sched.scheduledToast', {
+                      when: new Date(m.proposal!.fireAt * 1000).toLocaleString(),
+                    }), 'success');
+                  } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    setMsgs((arr) => arr.map((mm, mi) =>
+                      mi === i && mm.proposal
+                        ? { ...mm, proposal: { ...mm.proposal, uiState: 'editing', errorMsg: msg } }
+                        : mm
+                    ));
+                  }
+                }}
+                onCancel={() => {
+                  // Dismiss the card; the SCHEDULED_TASK_PROPOSED audit
+                  // event was already emitted server-side. No persist call.
+                  setMsgs((arr) => arr.map((mm, mi) =>
+                    mi === i && mm.proposal
+                      ? { ...mm, proposal: { ...mm.proposal, uiState: 'cancelled' } }
+                      : mm
+                  ));
+                }}
+              />
+            )}
             {/* Attached-file chips on user turns. Read-only — the
                 actual bytes are in uploads + (for DICOM) the imaging
                 tab; this row is just to show the medic what they
@@ -863,33 +1571,72 @@ export function EncounterMode() {
         {/* Pending attachments — show chips above the input so the
             medic can verify what's going out before they press Send. */}
         {attachments.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-1">
-            {attachments.map((a) => (
-              <span
-                key={a.key}
-                className={cn(
-                  'flex items-center gap-1 rounded-sm border px-2 py-0.5 text-caption',
-                  a.failed
-                    ? 'border-retract/40 bg-retract/10 text-retract'
-                    : a.fileId
-                    ? 'border-confirmed/40 bg-confirmed/10 text-confirmed'
-                    : 'border-border bg-surface-1 text-text-tertiary',
-                )}
-              >
-                {a.failed ? '✕' : a.fileId ? '✓' : '⟳'} {a.name}
-                <span className="text-[10px] text-text-tertiary">
-                  ({formatBytes(a.sizeBytes)})
-                </span>
-                <button
-                  type="button"
-                  onClick={() => removeAttachment(a.key)}
-                  className="ml-1 text-text-tertiary hover:text-retract"
-                  aria-label={`remove ${a.name}`}
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {attachments.map((a) => {
+              const stateCls = a.failed
+                ? 'border-retract/40 bg-retract/10 text-retract'
+                : a.fileId
+                ? 'border-confirmed/40 bg-confirmed/10 text-confirmed'
+                : 'border-border bg-surface-1 text-text-tertiary';
+              const stateBadge = a.failed ? '✕' : a.fileId ? '✓' : '⟳';
+              if (a.previewUrl) {
+                // Image: render a 56px thumbnail with state badge +
+                // remove button overlaid. Lets the medic confirm the
+                // CT screenshot / lab result image they just dropped
+                // BEFORE pressing send.
+                return (
+                  <div
+                    key={a.key}
+                    className={cn(
+                      'relative w-14 h-14 rounded overflow-hidden border',
+                      stateCls,
+                    )}
+                    title={`${a.name} · ${formatBytes(a.sizeBytes)}`}
+                  >
+                    <img src={a.previewUrl} alt={a.name}
+                         className="w-full h-full object-cover" />
+                    <span className="absolute top-0.5 left-0.5 px-1 py-0
+                                     rounded bg-black/60 text-white
+                                     text-[10px] leading-tight">
+                      {stateBadge}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(a.key)}
+                      className="absolute top-0.5 right-0.5 w-4 h-4
+                                 rounded-full bg-black/60 text-white
+                                 text-[10px] leading-none flex items-center
+                                 justify-center hover:bg-black/80"
+                      aria-label={`remove ${a.name}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              }
+              return (
+                <span
+                  key={a.key}
+                  className={cn(
+                    'flex items-center gap-1 rounded-sm border px-2 py-0.5 text-caption',
+                    stateCls,
+                  )}
                 >
-                  ×
-                </button>
-              </span>
-            ))}
+                  {stateBadge} {a.name}
+                  <span className="text-[10px] text-text-tertiary">
+                    ({formatBytes(a.sizeBytes)})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(a.key)}
+                    className="ml-1 text-text-tertiary hover:text-retract"
+                    aria-label={`remove ${a.name}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              );
+            })}
           </div>
         )}
         <div className="flex gap-2">
@@ -943,36 +1690,39 @@ interface LayerMeta {
   blurb: string;           // one-line explanation of what this layer holds.
 }
 
-const LAYERS: LayerMeta[] = [
-  {
-    key: 'L1',
-    title: 'Layer 1 · Patient graph',
-    scope: 'per patient · PHI',
-    blurb:
-      'Audit-grade clinical graph for THIS patient. Every node carries provenance back to a study, chat turn, or lab. Derived from twin_event_log; rebuildable byte-identical.',
-  },
-  {
-    key: 'L2',
-    title: 'Layer 2 · You (practitioner)',
-    scope: 'per medic · cross-patient · PHI-stripped',
-    blurb:
-      'Patterns Nexus has learned about how YOU read — phrasing, workflow, thresholds, suggestion calibration. Aggregated across ≥N patients, only active after you confirm.',
-  },
-  {
-    key: 'L3',
-    title: 'Layer 3 · Universal reference',
-    scope: 'shared · read-only · versioned',
-    blurb:
-      'NCCN / ACR-AC guidelines, RxNorm, RadLex, SNOMED-CT, ICD/CPT, lab reference ranges. Not learned — ingested from external sources; schema lives now, population is a separate workstream.',
-  },
-  {
-    key: 'meta',
-    title: 'Meta-layer · Evolution',
-    scope: 'agent self-tuning · telemetry-driven',
-    blurb:
-      'Prompt versions, tier classifier thresholds, evidence-rank tuning, cached-view recipes, conflict thresholds. The agent modifying itself, fed by telemetry across all four layers.',
-  },
-];
+/** Build the layered Memory-mode meta from the active locale.
+ *  We expose this as a hook (not a frozen constant) so the strings
+ *  are re-evaluated on locale change. The shape stays identical to
+ *  the original LAYERS constant — only the source of strings moves. */
+function useLayers(): LayerMeta[] {
+  const t = useT();
+  return [
+    {
+      key: 'L1',
+      title: t('memory.layer1.title'),
+      scope: t('memory.layer1.tag'),
+      blurb: t('memory.layer1.empty'),
+    },
+    {
+      key: 'L2',
+      title: t('memory.layer2.title'),
+      scope: t('memory.layer2.tag'),
+      blurb: t('memory.layer2.intro'),
+    },
+    {
+      key: 'L3',
+      title: t('memory.layer3.title'),
+      scope: t('memory.layer3.tag'),
+      blurb: t('memory.layer3.empty'),
+    },
+    {
+      key: 'meta',
+      title: t('memory.meta.title'),
+      scope: t('memory.meta.tag'),
+      blurb: t('memory.meta.tag'),
+    },
+  ];
+}
 
 /* node_type → human label + visual variant for L1 grouping */
 const NODE_KIND_LABEL: Record<string, string> = {
@@ -1124,6 +1874,7 @@ const FACT_KIND_LABEL: Record<string, string> = {
 };
 
 function L2Practitioner() {
+  const t = useT();
   const [cands, setCands] = useState<PractitionerCandidate[] | null>(null);
   const [err,   setErr]   = useState<string | null>(null);
   const openOverlay = useAppState((s) => s.openPractitionerOverlay);
@@ -1138,17 +1889,15 @@ function L2Practitioner() {
   }, []);
 
   if (err) {
-    return <p className="text-caption text-retract">Failed to load: {err}</p>;
+    return <p className="text-caption text-retract">{t('patient.loadFailed', { error: err })}</p>;
   }
   if (!cands) {
-    return <p className="text-caption text-text-tertiary">Loading practitioner facts…</p>;
+    return <p className="text-caption text-text-tertiary">{t('patient.loading')}</p>;
   }
   if (cands.length === 0) {
     return (
       <p className="text-caption text-text-tertiary">
-        Nothing yet. Nexus needs to see a pattern across ≥5 patients before
-        anything reaches here, and you'll be asked to confirm before it
-        activates.
+        {t('memory.layer2.empty')}
       </p>
     );
   }
@@ -1280,6 +2029,8 @@ function RetrievalTierLegend() {
 }
 
 export function MemoryMode() {
+  const t = useT();
+  const layers = useLayers();
   const p = useAppState((s) => s.activePatient);
   const setActiveMode = useAppState((s) => s.setActiveMode);
   const [proj, setProj] = useState<PatientProjection | null>(null);
@@ -1297,7 +2048,7 @@ export function MemoryMode() {
     return () => { cancelled = true; };
   }, [p]);
 
-  if (!p) return <EmptyState title="No patient selected" />;
+  if (!p) return <EmptyState title={t('memory.noSelection')} />;
 
   const l1Count = proj
     ? proj.findings.length + proj.medications.length + proj.differentials.length +
@@ -1307,13 +2058,8 @@ export function MemoryMode() {
   return (
     <div className="mx-auto max-w-4xl px-10 py-12 selectable">
       <h1 className="font-display text-display text-text-primary">
-        Memory · {patientDisplayLabel(p)}
+        {t('memory.title')} · {patientDisplayLabel(p)}
       </h1>
-      <p className="mt-2 text-caption text-text-secondary">
-        Four-layer memory per <span className="font-mono">docs/design/m3-memory-architecture.md</span>.
-        Layer 1 is this patient; Layer 2 is you across patients; Layer 3 is
-        the world; meta-layer is how Nexus tunes itself.
-      </p>
 
       {proj && proj.unresolvedConflictCount > 0 && (
         <div className="mt-4">
@@ -1325,25 +2071,25 @@ export function MemoryMode() {
       )}
 
       {error && (
-        <p className="mt-4 text-caption text-retract">Failed to load: {error}</p>
+        <p className="mt-4 text-caption text-retract">{t('patient.loadFailed', { error })}</p>
       )}
 
       <div className="mt-8">
-        <LayerBand meta={LAYERS[0]} count={l1Count}>
+        <LayerBand meta={layers[0]} count={l1Count}>
           {!proj
-            ? <p className="text-caption text-text-tertiary">Loading patient graph…</p>
+            ? <p className="text-caption text-text-tertiary">{t('patient.loading')}</p>
             : <L1PatientGraph proj={proj} />}
         </LayerBand>
 
-        <LayerBand meta={LAYERS[1]} defaultOpen={false}>
+        <LayerBand meta={layers[1]} defaultOpen={false}>
           <L2Practitioner />
         </LayerBand>
 
-        <LayerBand meta={LAYERS[2]} defaultOpen={false}>
+        <LayerBand meta={layers[2]} defaultOpen={false}>
           <L3Reference />
         </LayerBand>
 
-        <LayerBand meta={LAYERS[3]} defaultOpen={false}>
+        <LayerBand meta={layers[3]} defaultOpen={false}>
           <MetaLayer />
         </LayerBand>
       </div>
@@ -1565,11 +2311,55 @@ function ReportToggleList({
   );
 }
 
+/** Last PDF the medic just exported. Renders the "Last report" card
+ *  with path + Open Folder + size + timestamp so the medic always
+ *  knows where the file went — fix for the previous window.print()
+ *  flow that produced no file path and no UI feedback. */
+interface LastReport {
+  path: string;
+  bytes: number;
+  createdAt: number;
+}
+
+/** Open a path in the OS file manager. We dynamic-import the Tauri
+ *  shell plugin so this file still loads under `pnpm dev` outside
+ *  the Tauri shell (where the import would throw). Mirrors the same
+ *  helper used by Settings · Data export. */
+async function openPathInOsShell(path: string): Promise<boolean> {
+  try {
+    const mod = await import('@tauri-apps/plugin-shell');
+    if (mod && typeof mod.open === 'function') {
+      await mod.open(path);
+      return true;
+    }
+  } catch {
+    /* not in Tauri runtime */
+  }
+  return false;
+}
+
+/** Human-readable byte size — matches the helper in
+ *  components/full-screen-overlays.tsx for symmetric "Last export"
+ *  / "Last report" card display. */
+function humanBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 export function ReportMode() {
+  const t = useT();
+  const locale = useAppState((s) => s.locale);
   const p = useAppState((s) => s.activePatient);
   const showToast = useAppState((s) => s.showToast);
   const [proj, setProj] = useState<PatientProjection | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // PDF export state — shows in the export rail's "Last report" card
+  // after a successful export. Survives until next export or mode
+  // change; not persisted (the card is a transient hint, not history).
+  const [exporting, setExporting] = useState(false);
+  const [lastReport, setLastReport] = useState<LastReport | null>(null);
 
   const [draft, setDraft] = useState<ReportDraft>(() => ({
     clinicalInfo: '',
@@ -1604,9 +2394,9 @@ export function ReportMode() {
 
   const patientLabel = useMemo(() => (p ? patientDisplayLabel(p) : ''), [p]);
 
-  if (!p) return <EmptyState title="No patient selected" />;
-  if (error) return <p className="p-10 text-caption text-retract">Failed: {error}</p>;
-  if (!proj) return <p className="p-10 text-caption text-text-tertiary">Loading projection…</p>;
+  if (!p) return <EmptyState title={t('report.noSelection')} />;
+  if (error) return <p className="p-10 text-caption text-retract">{t('patient.loadFailed', { error })}</p>;
+  if (!proj) return <p className="p-10 text-caption text-text-tertiary">{t('patient.loading')}</p>;
 
   const toggle = (set: Set<number>, id: number) => {
     const next = new Set(set);
@@ -1615,14 +2405,57 @@ export function ReportMode() {
   };
 
   // Exports ───────────────────────────────────────────────────────────
-  const exportPdf = () => {
-    // Use the browser's print pipeline — print-only stylesheet in
-    // index.css scopes the page to .report-print.
-    document.body.classList.add('report-print-mode');
-    setTimeout(() => {
-      window.print();
-      document.body.classList.remove('report-print-mode');
-    }, 50);
+  //
+  // PDF: hits the server's POST /api/v1/report/pdf which renders via
+  // reportlab and writes to <Archive>/Reports/<hash>-<ts>.pdf. The
+  // server returns {path, bytes, createdAt} so we can populate the
+  // "Last report" card below and reveal the file in the OS finder.
+  //
+  // Why server-side render: WKWebView (Tauri's renderer) doesn't
+  // surface a usable print dialog to the embedding app. window.print()
+  // was a silent no-op in production and produced no path feedback,
+  // which is exactly the symptom the medic reported 2026-06-14.
+  const exportPdf = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const r = await api.exportReportPdf({
+        patientHash:     p.patientHash,
+        patientLabel:    patientLabel,
+        patientSex:      p.sex ?? '',
+        patientAgeGroup: p.ageGroup ?? '',
+        latestModality:  p.latestModality ?? '',
+        latestStudyDt:   p.latestStudyDate ?? '',
+        clinicalInfo:    draft.clinicalInfo,
+        impression:      draft.impression,
+        recommendation:  draft.recommendation,
+        findings: proj.findings
+          .filter((f) => draft.selectedFindings.has(f.nodeId))
+          .map((f) => ({
+            nodeId:  f.nodeId,
+            label:   String((f.content as any).label ?? `node ${f.nodeId}`),
+            urgency: String((f.content as any).urgency ?? ''),
+          })),
+        differentials: proj.differentials
+          .filter((d) => draft.selectedDdx.has(d.nodeId))
+          .map((d) => ({
+            nodeId:  d.nodeId,
+            label:   String((d.content as any).label ?? `node ${d.nodeId}`),
+            urgency: '',
+          })),
+        locale: locale,
+      });
+      setLastReport({ path: r.path, bytes: r.bytes, createdAt: r.createdAt });
+      showToast(
+        t('report.exportedToast', { size: humanBytes(r.bytes) }),
+        'success',
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      showToast(t('report.exportFailed', { error: msg }), 'error');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const exportFhir = () => {
@@ -1776,20 +2609,53 @@ export function ReportMode() {
         </div>
 
         <div className="mt-4 space-y-2">
-          <Button variant="primary" className="w-full" onClick={exportPdf}>
-            Export PDF
+          <Button
+            variant="primary"
+            className="w-full"
+            onClick={exportPdf}
+            disabled={exporting}
+          >
+            {exporting ? t('report.exporting') : t('report.exportPdf')}
           </Button>
           <Button variant="subtle" className="w-full" onClick={exportFhir}>
-            Export FHIR DiagnosticReport
+            {t('report.exportFhir')}
           </Button>
           <Button variant="subtle" className="w-full" onClick={exportSr}>
-            Export DICOM SR (JSON)
+            {t('report.exportSr')}
           </Button>
-          <p className="pt-1 text-[11px] text-text-tertiary">
-            PDF uses the system print pipeline. FHIR is a R4 DiagnosticReport.
-            DICOM SR ships as the content tree; backend M3.2 renders the
-            real .dcm.
-          </p>
+
+          {/* Last-report card — appears after a successful PDF export
+              so the medic always knows where the file went. Mirrors
+              the lastExport card in Settings · Data so the two
+              export flows feel consistent. */}
+          {lastReport && (
+            <div className="mt-3 rounded-sm border border-confirmed/40 bg-confirmed/5 px-3 py-2 text-caption">
+              <div className="text-confirmed">
+                {t('report.lastExport', {
+                  size: humanBytes(lastReport.bytes),
+                  when: new Date(lastReport.createdAt * 1000).toLocaleString(locale),
+                })}
+              </div>
+              <div className="mt-1 flex items-center gap-3 text-text-secondary">
+                <span className="truncate font-mono" title={lastReport.path}>
+                  {lastReport.path}
+                </span>
+                <button
+                  onClick={async () => {
+                    const ok = await openPathInOsShell(lastReport.path);
+                    if (!ok) {
+                      try { await navigator.clipboard.writeText(lastReport.path); }
+                      catch { /* ignore */ }
+                      showToast(`${lastReport.path}`, 'info');
+                    }
+                  }}
+                  className="shrink-0 rounded-sm border border-border px-2 py-0.5 hover:bg-accent-subtle"
+                >
+                  {t('report.openFolder')}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </aside>
     </div>
@@ -1798,9 +2664,19 @@ export function ReportMode() {
 
 /* ─────────────── Remaining stubs ─────────────── */
 
-function ModeStub({ mode, note }: { mode: keyof typeof MODE_LABELS; note: string }) {
-  return <EmptyState title={`${MODE_LABELS[mode]} mode`} description={note} />;
+function ModeStub({ mode, note }: { mode: ModeKindForStub; note: string }) {
+  const modeLabel = useModeLabel();
+  const t = useT();
+  return (
+    <EmptyState
+      title={t('empty.modeStub', { mode: modeLabel(mode) })}
+      description={note}
+    />
+  );
 }
+// Local alias; ModeKind is exported from ../lib/util but importing it
+// here would duplicate the type and risk drift if a new mode is added.
+type ModeKindForStub = 'today' | 'patient' | 'encounter' | 'imaging' | 'labs' | 'memory' | 'report';
 
 /* ─────────────── Imaging mode (DICOM zip upload) ─────────────── */
 
@@ -1872,6 +2748,12 @@ function formatBytes(n: number): string {
 }
 
 export function ImagingMode() {
+  // ImagingMode has many static strings (upload zone, history rows,
+  // Quick-scan status). Translation rolls in progressively — for
+  // now we just call useT() so the locale subscription is registered
+  // and future t() calls work without a reload. Strings inside this
+  // mode will move from literals to t() keys in a follow-up pass.
+  useT();
   const p             = useAppState((s) => s.activePatient);
   const showToast     = useAppState((s) => s.showToast);
   const refreshPatients = useAppState((s) => s.refreshPatients);
@@ -2396,5 +3278,6 @@ function UploadJobRow({
   );
 }
 export function LabsMode() {
-  return <ModeStub mode="labs" note="Lab trends + reference ranges — U3." />;
+  const t = useT();
+  return <ModeStub mode="labs" note={t('labs.stub')} />;
 }

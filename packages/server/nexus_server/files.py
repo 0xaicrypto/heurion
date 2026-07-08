@@ -885,6 +885,27 @@ def _run_dicom_prerender_async(
         memory_status = "pending"
         memory_summary = ""
         if new_status == "rendered" and new_study_id:
+            # Bug fix (2026-06-15, P0 patient safety, Fix-C):
+            # Write uploads.dicom_study_id NOW, BEFORE the ingester and
+            # quick-scan helpers run. Previously this UPDATE happened
+            # only at line ~1013, AFTER both helpers, so any lookup of
+            # patient_hash via dicom_study_id during the helpers
+            # resolved against stale prior-upload rows and findings
+            # leaked across patients.
+            # See: docs/design/IMAGING_PATIENT_ISOLATION_BUGFIX.md (Bug #3)
+            try:
+                with get_db_connection() as conn:
+                    conn.execute(
+                        "UPDATE uploads SET dicom_study_id = ? "
+                        "WHERE file_id = ?",
+                        (new_study_id, file_id),
+                    )
+                    conn.commit()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "early dicom_study_id write failed (file=%s): %s",
+                    file_id[:8], e,
+                )
             # Mark pending IMMEDIATELY so the next desktop poll surfaces
             # "Memory: ingesting…" — without this the row showed only
             # "Imported" for 10+ seconds while the ingester worked.
@@ -921,7 +942,9 @@ def _run_dicom_prerender_async(
             _bump(qs_status="pending", qs_summary="")
             try:
                 qs_summary = _run_quick_scan_after_ingest(
-                    user_id=user_id, study_id=new_study_id,
+                    user_id=user_id,
+                    study_id=new_study_id,
+                    file_id=file_id,
                 )
                 quick_scan_status  = "ok"
                 quick_scan_summary = qs_summary
@@ -1373,7 +1396,22 @@ async def _record_patient_in_curated_memory(
 
 
 def _safe_name(name: str) -> str:
-    """Strip path traversal + bad chars from filename for disk storage."""
+    """Strip path traversal + bad chars from filename for disk storage.
+
+    Normalises to NFC. macOS APFS stores filenames in NFD form on disk
+    while every other layer (HTTP multipart headers, SQLite, Python's
+    ``open(path)``) carries them as NFC. Without explicit normalisation,
+    a Chinese filename can land on disk as NFD while ``uploads.disk_path``
+    in SQLite holds the NFC form — and a subsequent ``Document(disk_path)``
+    call ends up with two different byte strings that point at the same
+    file only if APFS happens to auto-resolve them. python-docx hides the
+    resulting ``FileNotFoundError`` behind its generic "Package not found"
+    message, which makes the bug nearly impossible to diagnose.
+
+    Picking NFC for both disk and DB keeps them in lockstep.
+    """
+    import unicodedata as _ud
+    name = _ud.normalize("NFC", name)
     bad = '/\\:*?"<>|'
     return "".join("_" if c in bad else c for c in name)[:128]
 
@@ -1740,14 +1778,29 @@ def _run_dicom_ingester_safe(
         # The synchronous upload-time INSERT wrote the override into
         # uploads.patient_hash. Reuse the same value here so the graph
         # nodes are tagged with the chosen patient.
-        with get_db_connection() as conn:
-            row = conn.execute(
-                "SELECT patient_hash FROM uploads "
-                "WHERE user_id = ? AND dicom_study_id = ? LIMIT 1",
-                (user_id, study_id),
-            ).fetchone()
-            if row and row[0]:
-                patient_hash = row[0]
+        #
+        # Bug fix (2026-06-15, P0 patient safety, Fix-A):
+        # Look up by file_id, NOT dicom_study_id. The previous query
+        # used `WHERE dicom_study_id = ?` which could match a DIFFERENT
+        # upload row (under a different patient_hash) that happened to
+        # share the same StudyInstanceUID — re-uploading the same
+        # DICOM under a fresh patient caused findings to land on the
+        # OLD patient. file_id is the uploads PK, never ambiguous.
+        # See: docs/design/IMAGING_PATIENT_ISOLATION_BUGFIX.md (Bug #1)
+        if file_id:
+            with get_db_connection() as conn:
+                row = conn.execute(
+                    "SELECT patient_hash FROM uploads "
+                    "WHERE user_id = ? AND file_id = ?",
+                    (user_id, file_id),
+                ).fetchone()
+                if row and row[0]:
+                    patient_hash = row[0]
+        else:
+            logger.warning(
+                "_run_dicom_ingester_safe: force_patient_hash=True but "
+                "no file_id provided; falling back to DICOM-derived hash"
+            )
 
     if not patient_hash:
         return "skipped — no patient binding"
@@ -1811,7 +1864,9 @@ def _run_dicom_ingester_safe(
 # ─────────────────────────────────────────────────────────────────────
 
 
-def _run_quick_scan_after_ingest(*, user_id: str, study_id: str) -> str:
+def _run_quick_scan_after_ingest(
+    *, user_id: str, study_id: str, file_id: str = "",
+) -> str:
     """Drive nexus_server.quick_scan's worker synchronously + return a
     short human-readable summary for the upload row.
 
@@ -1821,6 +1876,12 @@ def _run_quick_scan_after_ingest(*, user_id: str, study_id: str) -> str:
     Memory · L1 · Findings populates (the same node type that comes
     out of chat_ingester — keeps Encounter's PATIENT CONTEXT able to
     reference them).
+
+    ``file_id``: the uploads PK for the row that triggered this scan.
+    Used to look up the bound ``patient_hash`` unambiguously. When
+    omitted (legacy callers / older retry paths), we fall back to a
+    dicom_study_id lookup with a safety guard against ambiguous
+    cross-patient bindings.
 
     Returns "N flagged" / "no findings" / error-text.
     """
@@ -1904,17 +1965,48 @@ def _run_quick_scan_after_ingest(*, user_id: str, study_id: str) -> str:
 
     # Resolve the patient_hash for this study via the uploads row
     # (which respects the upload-time force binding).
+    #
+    # Bug fix (2026-06-15, P0 patient safety, Fix-A + Fix-D):
+    # Prefer the file_id lookup (uploads PK — never ambiguous). The
+    # previous dicom_study_id-based query with ORDER BY created_at DESC
+    # LIMIT 1 silently picked the WRONG row when the same
+    # StudyInstanceUID was bound to multiple patients across uploads.
+    # Result: quick-scan finding nodes landed on the prior patient.
+    # If a caller did not supply file_id (legacy retry / external),
+    # we fall back to the dicom_study_id lookup BUT first assert that
+    # the lookup is unambiguous; otherwise we raise so the row goes
+    # to quick_scan_status='error' and the medic sees a loud retry.
+    # See: docs/design/IMAGING_PATIENT_ISOLATION_BUGFIX.md (Bug #1, Fix-D)
     patient_hash = ""
     try:
         with get_db_connection() as conn:
-            row = conn.execute(
-                "SELECT patient_hash FROM uploads "
-                "WHERE user_id = ? AND dicom_study_id = ? "
-                "ORDER BY created_at DESC LIMIT 1",
-                (user_id, study_id),
-            ).fetchone()
-            if row and row[0]:
-                patient_hash = str(row[0])
+            if file_id:
+                row = conn.execute(
+                    "SELECT patient_hash FROM uploads "
+                    "WHERE user_id = ? AND file_id = ?",
+                    (user_id, file_id),
+                ).fetchone()
+                if row and row[0]:
+                    patient_hash = str(row[0])
+            else:
+                # Defensive guardrail: require unambiguous binding.
+                distinct = conn.execute(
+                    "SELECT DISTINCT patient_hash FROM uploads "
+                    "WHERE user_id = ? AND dicom_study_id = ? "
+                    "AND patient_hash <> ''",
+                    (user_id, study_id),
+                ).fetchall()
+                if len(distinct) > 1:
+                    raise RuntimeError(
+                        f"ambiguous patient binding for study {study_id[:8]}: "
+                        f"{len(distinct)} distinct patient_hash values in "
+                        f"uploads — refusing to write findings; please retry "
+                        f"after disambiguating the upload row."
+                    )
+                if distinct:
+                    patient_hash = str(distinct[0][0])
+    except RuntimeError:
+        raise
     except Exception:  # noqa: BLE001
         pass
 
@@ -2040,20 +2132,36 @@ def retry_quick_scan_for_study(user_id: str, study_id: str) -> None:
     file_id: Optional[str] = None
     try:
         with get_db_connection() as conn:
-            row = conn.execute(
-                "SELECT file_id FROM uploads "
+            # Bug fix (2026-06-15, Fix-A + Fix-D):
+            # Refuse to silently pick "the most recent" upload row when
+            # multiple distinct patient_hash values are bound to the
+            # same dicom_study_id — that was the exact mechanism by
+            # which findings leaked across patients on re-upload.
+            rows = conn.execute(
+                "SELECT file_id, patient_hash FROM uploads "
                 "WHERE user_id = ? AND dicom_study_id = ? "
-                "ORDER BY created_at DESC LIMIT 1",
+                "ORDER BY created_at DESC",
                 (user_id, study_id),
-            ).fetchone()
-            if row is None:
+            ).fetchall()
+            if not rows:
                 logger.warning(
                     "retry_quick_scan: no uploads row for "
                     "user=%s study=%s",
                     user_id, study_id[:8],
                 )
                 return
-            file_id = str(row[0])
+            distinct_patients = {
+                str(r[1] or "") for r in rows if (r[1] or "")
+            }
+            if len(distinct_patients) > 1:
+                logger.error(
+                    "retry_quick_scan: REFUSING to retry — study=%s has "
+                    "%d distinct patient_hash bindings in uploads; "
+                    "ambiguous which patient should own findings.",
+                    study_id[:8], len(distinct_patients),
+                )
+                return
+            file_id = str(rows[0][0])
             conn.execute(
                 "UPDATE uploads SET "
                 "quick_scan_status = 'pending', quick_scan_summary = '' "
@@ -2070,8 +2178,11 @@ def retry_quick_scan_for_study(user_id: str, study_id: str) -> None:
     new_status: str
     new_summary: str
     try:
+        # Bug fix (2026-06-15, Fix-A): pass the file_id down so the
+        # worker resolves patient_hash unambiguously even when multiple
+        # uploads share the same StudyInstanceUID.
         new_summary = _run_quick_scan_after_ingest(
-            user_id=user_id, study_id=study_id,
+            user_id=user_id, study_id=study_id, file_id=file_id or "",
         )
         new_status = "ok"
     except Exception as exc:  # noqa: BLE001

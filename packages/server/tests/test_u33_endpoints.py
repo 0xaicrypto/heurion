@@ -336,9 +336,12 @@ class TestDeletePatient:
         # Insert a manual row directly (the existing register endpoint
         # uses a hash derived from initials/mrn — for the delete test
         # we don't need that, we just need a row to exist).
-        from nexus_server.patients_router import _conn
+        # F-merge-patients-db — `patients` is now in the shared DB.
+        from nexus_server.database import get_db_connection
+        from nexus_server.patients_router import init_patients_table
+        init_patients_table()
         ph = "abc1234567890def"
-        with _conn() as c:
+        with get_db_connection() as c:
             c.execute(
                 "INSERT INTO patients(patient_hash, user_id, initials, "
                 "mrn, age_group, age_value, sex, chief_complaint, "
@@ -362,9 +365,12 @@ class TestDeletePatient:
     def test_scopes_to_caller(self, client, monkeypatch):
         """Deleting under user A must not touch user B's row with the
         same patient_hash."""
-        from nexus_server.patients_router import _conn
+        # F-merge-patients-db — `patients` now lives in the shared DB.
+        from nexus_server.database import get_db_connection
+        from nexus_server.patients_router import init_patients_table
+        init_patients_table()
         ph = "shared_hash_xyz"
-        with _conn() as c:
+        with get_db_connection() as c:
             c.execute(
                 "INSERT INTO patients(patient_hash, user_id, initials, "
                 "mrn, age_group, age_value, sex, chief_complaint, "
@@ -386,7 +392,7 @@ class TestDeletePatient:
         assert r.json()["deleted"]["patients"] == 1
 
         # OTHER_USER's row must still be there.
-        with _conn() as c:
+        with get_db_connection() as c:
             row = c.execute(
                 "SELECT initials FROM patients WHERE user_id=? AND patient_hash=?",
                 ("OTHER_USER", ph),

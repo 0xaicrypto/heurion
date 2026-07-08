@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Demo: seed a test patient + verify backend M0 features end-to-end.
 
-Run me after `uvicorn nexus_server.main:app --port 8001` is up. I will:
+Run me after `uvicorn nexus_server.main:create_app --factory --port 8001`
+is up. I will:
 
   1. Open the same SQLite DB the server uses and seed:
      - one patient (via PATIENT_REGISTERED event)

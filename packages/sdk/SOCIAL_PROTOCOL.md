@@ -576,7 +576,7 @@ AgentRuntime (Facade) — now bundles 5 providers:
 ### 6.4 New Components (SDK Extensions)
 
 ```
-bnbchain_agent/
+nexus_core/
     core/
         models.py               # + Impression, ImpressionDimensions,
                                 #   ImpressionSummary, NetworkStats
@@ -901,7 +901,7 @@ EvolvableResource(type="gossip_strategy") = {
 ### 7.5 SDK Component Layout
 
 ```
-bnbchain_agent/
+nexus_core/
     core/
         models.py               # + CandidateState, EvalResult, ResourceVersion,
                                 #   ExecutionTrace, Hypothesis, Modification
