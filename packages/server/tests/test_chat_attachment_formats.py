@@ -41,12 +41,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 
 def test_chat_endpoint_allows_empty_text_when_attachments_present():
-    """Source-level: the empty-message guard in chat_router_v2 must
+    """Source-level: the empty-message guard in chat_router must
     require BOTH text empty AND attachments empty before raising 400.
     Pasting an image with no caption is a legitimate turn."""
     src = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "nexus_server" / "chat_router_v2.py"
+        / "nexus_server" / "chat_router.py"
     ).read_text()
 
     # Locate the empty-message guard. Must check attachments too.
@@ -54,7 +54,7 @@ def test_chat_endpoint_allows_empty_text_when_attachments_present():
         r"if not req\.text\.strip\(\)[\s\S]{0,200}HTTPException",
         src,
     )
-    assert m, "empty-message guard not found in chat_router_v2"
+    assert m, "empty-message guard not found in chat_router"
     guard = m.group(0)
     assert "req.attachments" in guard or "attachments" in guard, (
         "empty-message guard rejects pure-attachment turns. Should "
@@ -134,13 +134,13 @@ def test_chat_router_lazy_extracts_pdf_from_disk_path():
     is what fixes "你能读pdf" returning a name-only fallback."""
     src = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "nexus_server" / "chat_router_v2.py"
+        / "nexus_server" / "chat_router.py"
     ).read_text()
 
     # The on-demand extract block must run when etext is missing AND
     # the file is not an image.
     assert "_bytes_to_text" in src, (
-        "chat_router_v2 doesn't call _bytes_to_text — PDFs / docx "
+        "chat_router doesn't call _bytes_to_text — PDFs / docx "
         "uploads sit with empty extracted_text forever and the LLM "
         "gets no content from them."
     )
@@ -167,10 +167,10 @@ def test_chat_router_collects_image_bytes_into_attachment_images():
     kwarg. Without this the LLM never sees the screenshot."""
     src = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "nexus_server" / "chat_router_v2.py"
+        / "nexus_server" / "chat_router.py"
     ).read_text()
     assert "attachment_images" in src, (
-        "chat_router_v2 has no attachment_images list — vision call "
+        "chat_router has no attachment_images list — vision call "
         "never gets the bytes."
     )
     # And the retrieve_async call must pass it through.

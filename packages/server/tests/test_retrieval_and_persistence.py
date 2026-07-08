@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from nexus_server.auth.routes import get_current_user
-from nexus_server import chat_router_v2
+from nexus_server import chat_router
 from nexus_server.cached_views import build_view
 from nexus_server.event_sourcing import EventKind, Store, init_event_sourcing_schema
 from nexus_server.event_sourcing.handlers import _h_node_added, _h_patient_registered
@@ -144,10 +144,10 @@ class TestChatSSE:
                 conn.commit()
                 conn.close()
 
-        monkeypatch.setattr(chat_router_v2, "get_db_connection", fake_conn)
+        monkeypatch.setattr(chat_router, "get_db_connection", fake_conn)
 
         a = FastAPI()
-        a.include_router(chat_router_v2.router)
+        a.include_router(chat_router.router)
 
         async def fake_user():
             return "dr_test"

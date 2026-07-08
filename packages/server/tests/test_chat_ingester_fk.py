@@ -2,7 +2,7 @@
 Regression test: chat_ingester FK constraint.
 
 Bug history (2026-06-13 log):
-    chat_router_v2 invoked _run_chat_ingester_safe with
+    chat_router invoked _run_chat_ingester_safe with
     ``source_event_idx=0``. That gets passed to ChatIngester.
     ingest_encounter → emit_and_apply with caused_by=0. The
     event_log table has a FK from caused_by → events.event_idx;
@@ -12,7 +12,7 @@ Bug history (2026-06-13 log):
 This test asserts:
   1. `_run_chat_ingester_safe` accepts the new keyword arg
      ``source_event_idx`` (regression on the signature itself).
-  2. chat_router_v2 actually passes the assistant_idx through,
+  2. chat_router actually passes the assistant_idx through,
      not a literal 0 (source-level grep).
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 def test_run_chat_ingester_safe_requires_source_event_idx():
     """The helper MUST accept source_event_idx as a kw-only param."""
-    from nexus_server.chat_router_v2 import _run_chat_ingester_safe
+    from nexus_server.chat_router import _run_chat_ingester_safe
 
     sig = inspect.signature(_run_chat_ingester_safe)
     params = sig.parameters
@@ -52,21 +52,21 @@ def test_run_chat_ingester_safe_requires_source_event_idx():
 
 
 def test_chat_router_passes_assistant_idx_to_ingester():
-    """Source-level guard: chat_router_v2 invokes
+    """Source-level guard: chat_router invokes
     ``_run_chat_ingester_safe(...)`` with ``source_event_idx=assistant_idx``
     — not literal 0, not None, not a stale variable."""
     src = (pathlib.Path(__file__).resolve().parents[1]
-           / "nexus_server" / "chat_router_v2.py").read_text()
+           / "nexus_server" / "chat_router.py").read_text()
 
     # Grab the call site.
     call = re.search(
         r"_run_chat_ingester_safe\s*\([^)]*\)",
         src, re.DOTALL,
     )
-    assert call, "chat_router_v2 no longer calls _run_chat_ingester_safe"
+    assert call, "chat_router no longer calls _run_chat_ingester_safe"
     body = call.group(0)
     assert "source_event_idx=assistant_idx" in body, (
-        "chat_router_v2's call to _run_chat_ingester_safe must pass "
+        "chat_router's call to _run_chat_ingester_safe must pass "
         "source_event_idx=assistant_idx (the just-committed "
         "ASSISTANT_RESPONSE event_idx). Found call body:\n" + body
     )

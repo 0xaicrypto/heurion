@@ -39,7 +39,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 def test_chat_request_model_accepts_attachments():
     """Pydantic schema must allow + default the attachments list."""
-    from nexus_server.chat_router_v2 import ChatRequest
+    from nexus_server.chat_router import ChatRequest
     req = ChatRequest(
         text="check the labs",
         session_id="session_abc",
@@ -66,7 +66,7 @@ def test_chat_router_source_threads_attachments_into_event_stream():
     """
     src = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "nexus_server" / "chat_router_v2.py"
+        / "nexus_server" / "chat_router.py"
     ).read_text()
 
     # The attachments → preamble assembly must reference the uploads
@@ -123,7 +123,7 @@ def test_chat_attachments_resolve_to_preamble_and_persist(
     from nexus_server.auth.routes import get_current_user  # noqa: F401
     from nexus_server.config import ServerConfig
     from nexus_server.migrations.runner import run_migrations
-    from nexus_server import chat_router_v2, retrieval_tiers
+    from nexus_server import chat_router, retrieval_tiers
 
     db = tmp_path / "chat.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db}")
@@ -167,17 +167,17 @@ def test_chat_attachments_resolve_to_preamble_and_persist(
         yield RetrievalChunk("final_answer_chunk", {"text": "ok"})
         yield RetrievalChunk("turn_complete", {})
 
-    # IMPORTANT: chat_router_v2 imports retrieve_async at module top,
+    # IMPORTANT: chat_router imports retrieve_async at module top,
     # so monkeypatching the source module doesn't reach the bound name.
     # Patch on the router module itself.
     monkeypatch.setattr(retrieval_tiers, "retrieve_async", fake_retrieve)
-    monkeypatch.setattr(chat_router_v2, "retrieve_async", fake_retrieve)
+    monkeypatch.setattr(chat_router, "retrieve_async", fake_retrieve)
 
     # Drive the route function directly. ``chat()`` returns a
     # StreamingResponse whose body iterator is the async generator we
     # care about. We invoke the route handler with a fake request +
     # collect every SSE chunk into ``body``.
-    req = chat_router_v2.ChatRequest(
+    req = chat_router.ChatRequest(
         text="What do the labs and screenshot show?",
         session_id="session_abc",
         patient_hash="p1",
@@ -185,7 +185,7 @@ def test_chat_attachments_resolve_to_preamble_and_persist(
     )
 
     async def run_route():
-        resp = await chat_router_v2.chat(req, current_user="u1")
+        resp = await chat_router.chat(req, current_user="u1")
         chunks: list[str] = []
         async for raw in resp.body_iterator:
             if isinstance(raw, bytes):
@@ -254,7 +254,7 @@ def test_chat_attachment_missing_file_silently_skipped(
     import asyncio
     from nexus_server.config import ServerConfig
     from nexus_server.migrations.runner import run_migrations
-    from nexus_server import chat_router_v2, retrieval_tiers
+    from nexus_server import chat_router, retrieval_tiers
 
     db = tmp_path / "chat2.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db}")
@@ -267,15 +267,15 @@ def test_chat_attachment_missing_file_silently_skipped(
         yield RetrievalChunk("turn_complete", {})
 
     monkeypatch.setattr(retrieval_tiers, "retrieve_async", fake_retrieve)
-    monkeypatch.setattr(chat_router_v2, "retrieve_async", fake_retrieve)
+    monkeypatch.setattr(chat_router, "retrieve_async", fake_retrieve)
 
-    req = chat_router_v2.ChatRequest(
+    req = chat_router.ChatRequest(
         text="hi", session_id="session_x",
         attachments=["does-not-exist"],
     )
 
     async def run_route():
-        resp = await chat_router_v2.chat(req, current_user="u1")
+        resp = await chat_router.chat(req, current_user="u1")
         async for _ in resp.body_iterator:
             pass
 

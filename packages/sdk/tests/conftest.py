@@ -30,7 +30,12 @@ from nexus_core.flush import FlushPolicy
 
 
 def _has_module(name: str) -> bool:
-    return importlib.util.find_spec(name) is not None
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ModuleNotFoundError:
+        # find_spec("google.adk") raises (not returns None) when the
+        # parent package "google" itself is absent.
+        return False
 
 
 _ADK_AVAILABLE = _has_module("google.adk")

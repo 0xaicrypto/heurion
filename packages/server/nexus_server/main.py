@@ -116,7 +116,7 @@ from pydantic import BaseModel
 
 from nexus_server import (
     agent_state, auth, billing_routes, chain_proxy, files, llm_gateway,
-    memory_router, sessions_router, thinking_stream, user_profile,
+    sessions_router, thinking_stream, user_profile,
     workflows_router,
 )
 # Phase C: passkey_page moved into the ``auth`` domain package.
@@ -523,9 +523,8 @@ def create_app() -> FastAPI:
     # can hold multiple parallel conversations with the same agent.
     app.include_router(sessions_router.router)
     app.include_router(workflows_router.router)
-    # Phase C-2: /api/v1/agent/memory — user-facing memory management
-    # (view, edit, pause, reset). Backs the AccountView "Memory" tab.
-    app.include_router(memory_router.router)
+    # NOTE: the legacy /api/v1/agent/memory router (memory_router.py, v1)
+    # was retired — no frontend/CLI callers; memory_router_v2 is canonical.
     # Live agent thinking stream (Server-Sent Events). The desktop's
     # cognition panel opens a long-lived connection and renders typed
     # reasoning steps (memory recall, tool calls, Gemini thinking
@@ -559,7 +558,7 @@ def create_app() -> FastAPI:
     # POST /api/v1/agent/chat returns Server-Sent Events with the
     # tier_classified / reasoning_chunk / final_answer_chunk / citations /
     # turn_complete sequence the desktop's Encounter mode subscribes to.
-    from nexus_server import chat_router_v2 as _chat_v2
+    from nexus_server import chat_router as _chat_v2
     app.include_router(_chat_v2.router)
     # #213 — MONAI Label OHIF bridge (Rev-6/Rev-9). Captures medic
     # corrections from OHIF viewer annotations into event_log.
