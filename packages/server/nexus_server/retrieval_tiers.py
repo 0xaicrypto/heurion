@@ -91,10 +91,10 @@ def classify(
         from nexus_server import web_search
         if web_search.looks_like_web_question(q) and web_search.is_configured():
             return TierChoice(Tier.T4, "matched web-intent pattern")
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
         # web_search import / probe should never break tier classification
         # — if the module is broken we silently degrade to T1-T3.
-        pass
+        logger.debug("web-intent probe failed: %s", e)
 
     # ── T1 — canned view pattern match
     for view_kind, patterns in CANNED_VIEW_PATTERNS.items():

@@ -6,6 +6,9 @@
 """
 
 import hashlib
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def agent_id_to_int(agent_id: str) -> int:
@@ -20,15 +23,15 @@ def agent_id_to_int(agent_id: str) -> int:
     # Try as plain integer first
     try:
         return int(agent_id)
-    except (ValueError, TypeError):
-        pass
+    except (ValueError, TypeError) as e:
+        logger.debug("agent_id is not a plain integer: %s", e)
 
     # Try as hex
     if isinstance(agent_id, str) and agent_id.startswith("0x"):
         try:
             return int(agent_id, 16)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as e:
+            logger.debug("agent_id is not valid hex: %s", e)
 
     # Fallback: deterministic hash
     return int.from_bytes(

@@ -17,12 +17,15 @@ install just like any user-driven creation.
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from typing import Optional
 
 from nexus_server.database import get_db_connection
 from nexus_server.event_sourcing import EventKind, Store
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -313,8 +316,8 @@ def install_all_starters(user_id: str) -> list[str]:
     for sid in STARTER_PROTOCOLS:
         try:
             out.append(install_starter(user_id, sid))
-        except RuntimeError:
-            pass  # already present — keep going
+        except RuntimeError as e:
+            logger.debug("starter already installed: %s", e)  # already present — keep going
     return out
 
 
@@ -405,6 +408,6 @@ def _write_protocol(user_id: str, proto: dict, *, overwrite: bool) -> str:
                 user_id=user_id,
             )
             conn.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("recording study creation event failed: %s", exc)
     return study_id_actual

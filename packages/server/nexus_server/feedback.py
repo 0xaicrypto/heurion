@@ -154,8 +154,8 @@ def _read_assistant_event(
     finally:
         try:
             conn.close()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("closing connection failed: %s", exc)
 
     if not row:
         return None, None, None

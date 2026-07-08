@@ -89,8 +89,8 @@ def run_migrations() -> str:
     try:
         from nexus_server.config import get_config
         cfg.set_main_option("sqlalchemy.url", get_config().DATABASE_URL)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("setting sqlalchemy.url failed: %s", e)
 
     logger.info("running Alembic upgrade head (cfg=%s)", cfg_file)
     try:

@@ -622,8 +622,8 @@ def _maybe_rewrite_dicom_archive_to_pngs(
             from pathlib import Path as _Path
             if disk_path and _Path(disk_path).exists():
                 looks_dicom_here = looks_like_dicom_archive(_Path(disk_path))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("DICOM archive check failed: %s", exc)
         medical_name_hints = (
             "dicom", "dcm", "ct", "mr", "mri", "pet", "xr",
             "ultrasound", "us-", "study", "scan", "imag",
@@ -651,8 +651,8 @@ def _maybe_rewrite_dicom_archive_to_pngs(
                         )
                     elif stage:
                         progress_hint = f" Current stage: {stage}."
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("reading prerender progress failed: %s", exc)
             return [type(att)(
                 name=att.name,
                 mime=att.mime,
@@ -2369,8 +2369,8 @@ async def llm_chat(
                 try:
                     from nexus_server import workflows as _wf
                     installed_names = [w.name for w in _wf.list_workflows(current_user)]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("listing workflows failed: %s", exc)
                 workflows_hint = (
                     f"Installed workflows: {', '.join(installed_names)}.\n"
                     if installed_names else

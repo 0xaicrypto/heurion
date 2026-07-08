@@ -409,13 +409,13 @@ class ThinkingEmitter:
                         self._blob_writer(blob_path, content_bytes),
                         name=f"thinking_blob_t{ev.turn_id}_s{ev.seq}",
                     )
-                except RuntimeError:
+                except RuntimeError as exc:
                     # No running event loop (e.g. emit called from a
                     # sync test). Skip the blob upload — the EventLog
                     # row still has the hash + preview, recovery code
                     # can re-upload later if the row's blob_path
                     # turns up empty in the store.
-                    pass
+                    logger.debug("no running loop; skipping blob upload: %s", exc)
                 except Exception as e:  # noqa: BLE001
                     logger.debug("thinking blob schedule failed: %s", e)
 
@@ -457,8 +457,8 @@ class ThinkingEmitter:
         sub.close()
         try:
             self._subs.remove(sub)
-        except ValueError:
-            pass
+        except ValueError as e:
+            logger.debug("subscription already removed: %s", e)
         logger.debug(
             "ThinkingEmitter: subscriber %s closed (total=%d)",
             sub.id, len(self._subs),

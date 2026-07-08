@@ -228,8 +228,8 @@ def hydrate_env_from_db() -> None:
         if hasattr(ServerConfig, k):
             try:
                 setattr(ServerConfig, k, v)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.debug("setting ServerConfig.%s failed: %s", k, e)
         filled.append(k)
         _KEY_SOURCE[k] = "db"
     logger.info(
@@ -323,8 +323,8 @@ def _write_env(updates: dict[str, str]) -> Path:
     # Tighten perms — file holds API keys.
     try:
         os.chmod(path, 0o600)
-    except OSError:
-        pass
+    except OSError as e:
+        logger.debug("chmod settings file failed: %s", e)
     return path
 
 

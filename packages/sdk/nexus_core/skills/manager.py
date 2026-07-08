@@ -487,8 +487,8 @@ class SkillManager:
                     description = (
                         fm.get("description") or fm.get("summary") or ""
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("fetching SKILL.md failed: %s", e)
                 return {
                     "identifier": f"anthropic:{name}",
                     "name": str(title),
@@ -592,8 +592,8 @@ class SkillManager:
                     description = (
                         fm.get("description") or fm.get("summary") or ""
                     )
-                except Exception:
-                    pass  # missing SKILL.md → still keep the dir, just no desc
+                except Exception as e:
+                    logger.debug("fetching SKILL.md failed: %s", e)  # missing SKILL.md → still keep the dir, just no desc
                 return {
                     "identifier": f"gemini:{name}",
                     "name": str(title),

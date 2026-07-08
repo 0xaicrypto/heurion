@@ -16,7 +16,11 @@ versions/NNNN_*.py file.
 """
 from __future__ import annotations
 
+import logging
+
 from alembic import op
+
+logger = logging.getLogger(__name__)
 
 # revision identifiers, used by Alembic.
 revision = "0001"
@@ -52,23 +56,23 @@ def upgrade() -> None:
     try:
         from nexus_server.patients_router import init_patients_table
         init_patients_table()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("init_patients_table failed: %s", e)
 
     # uploads + memory_status etc.
     try:
         from nexus_server.files import _ensure_uploads_table
         _ensure_uploads_table()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("_ensure_uploads_table failed: %s", e)
 
     # sessions / nexus_workflows / nexus_workflow_runs / async_tasks —
     # nexus_server.database.init_db() is the one-shot bootstrap that
     # creates all the "platform" tables. Cheap, idempotent.
     try:
         _db_mod.init_db()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("init_db failed: %s", e)
 
 
 def downgrade() -> None:

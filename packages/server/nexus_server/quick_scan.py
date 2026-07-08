@@ -230,9 +230,9 @@ def _live_gemini_api_key() -> str:
                             val = val[1:-1]
                         if val:
                             return val
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as e:
             # Fall through — the cached config is still valid.
-            pass
+            logger.debug("reading env file for GEMINI_API_KEY failed: %s", e)
 
     env_val = (os.environ.get("GEMINI_API_KEY") or "").strip()
     if env_val:
@@ -760,8 +760,8 @@ def _parse_loose_json(text: str) -> Optional[dict]:
     # Try direct parse first.
     try:
         return json.loads(text)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("direct JSON parse failed: %s", e)
     # Fall back to first {...} match.
     m = _JSON_BLOCK_RE.search(text)
     if not m:
@@ -866,13 +866,13 @@ def _emit_failure_report(user_id: str, study_id: str, err: str) -> None:
                     "disclaimer": DISCLAIMER,
                 },
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("emitting quick-scan failure report failed: %s", e)
 
     try:
         _asyncio.run(_emit())
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("emitting quick-scan failure report failed: %s", e)
 
 
 def _format_report_markdown(report: QuickScanReport) -> str:

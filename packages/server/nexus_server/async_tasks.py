@@ -388,16 +388,16 @@ async def _execute_one(task: dict) -> None:
                 description=description,
                 error=f"{type(e).__name__}: {e}",
             )
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("failure email send failed: %s", exc)
         try:
             await _emit_completion_event(
                 user_id, session_id, task_id, description,
                 ok=False, error=f"{type(e).__name__}: {e}",
                 email_to=email_to,
             )
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("completion event emit failed: %s", exc)
         return
 
     subject = _make_subject(description)

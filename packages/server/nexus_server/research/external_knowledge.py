@@ -300,8 +300,8 @@ def oa_pdf_lookup(doi: str, *, email: str = "ops@rune-protocol.app") -> Optional
     if cached:
         try:
             return json.loads(cached).get("url")
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.debug("decoding cached unpaywall entry failed: %s", e)
     url = f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}?email={email}"
     raw = _http_get(url)
     if not raw:
@@ -537,8 +537,8 @@ def ctcae_v5_lookup(term: str) -> Optional[dict]:
             for k, v in full.items():
                 if k.lower() == term.lower() or term.lower() in k.lower():
                     return v
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            logger.debug("loading CTCAE v5 data failed: %s", e)
     for k, v in _CTCAE_V5_MINI.items():
         if k.lower() == term.lower() or term.lower() in k.lower():
             return v

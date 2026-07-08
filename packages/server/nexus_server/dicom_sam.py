@@ -143,15 +143,15 @@ def ensure_models_downloaded(progress_cb=None) -> None:
                         if progress_cb:
                             try:
                                 progress_cb(done, total, target.name)
-                            except Exception:  # noqa: BLE001
-                                pass
+                            except Exception as exc:  # noqa: BLE001
+                                logger.debug("progress callback failed: %s", exc)
             tmp.replace(target)
         except Exception as e:  # noqa: BLE001
             if tmp.exists():
                 try:
                     tmp.unlink()
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.debug("removing partial download failed: %s", exc)
             raise RuntimeError(
                 f"SAM model download failed for {target.name}: {e}",
             ) from e

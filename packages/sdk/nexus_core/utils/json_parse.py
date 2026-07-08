@@ -16,8 +16,11 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def extract_balanced(text: str, open_ch: str, close_ch: str) -> str | None:
@@ -69,15 +72,15 @@ def robust_json_parse(raw: str) -> Any:
     # First attempt: vanilla parse
     try:
         return json.loads(text)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        logger.debug("vanilla JSON parse failed: %s", e)
 
     # Repair: remove trailing commas before ] or }
     repaired = re.sub(r",\s*([}\]])", r"\1", text)
     try:
         return json.loads(repaired)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        logger.debug("trailing-comma repair parse failed: %s", e)
 
     # Repair: find outermost balanced bracket pair
     pairs = [("[", "]"), ("{", "}")]
@@ -92,8 +95,8 @@ def robust_json_parse(raw: str) -> Any:
             continue
         try:
             return json.loads(candidate)
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.debug("balanced-extract parse failed: %s", e)
 
         # Last resort for arrays: truncate at the last complete object
         if open_ch == "[":
@@ -102,8 +105,8 @@ def robust_json_parse(raw: str) -> Any:
                 truncated = candidate[:last_close + 1] + "]"
                 try:
                     return json.loads(truncated)
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as e:
+                    logger.debug("array truncation parse failed: %s", e)
 
         # Last resort for objects: find last complete array/value and close
         if open_ch == "{":
@@ -112,15 +115,15 @@ def robust_json_parse(raw: str) -> Any:
                 truncated = candidate[:last_arr_close + 1] + "}"
                 try:
                     return json.loads(truncated)
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as e:
+                    logger.debug("object truncation parse failed: %s", e)
 
             last_obj_close = candidate.rfind("}")
             if last_obj_close > 1:
                 truncated = candidate[:last_obj_close + 1] + "]}"
                 try:
                     return json.loads(truncated)
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as e:
+                    logger.debug("object close-out parse failed: %s", e)
 
     raise json.JSONDecodeError("Could not repair JSON", text, 0)

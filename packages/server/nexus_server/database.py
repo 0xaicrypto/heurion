@@ -50,12 +50,12 @@ def get_db_connection() -> Generator[sqlite3.Connection, None, None]:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
         conn.execute("PRAGMA synchronous=NORMAL;")
-    except sqlite3.Error:
+    except sqlite3.Error as e:
         # PRAGMA failure is non-fatal — fall back to default journal
         # mode. The medic will still see longer waits but the conn
         # is usable. We don't want a transient file-lock collision
         # at boot to kill the whole connection.
-        pass
+        logger.debug("PRAGMA setup failed: %s", e)
     try:
         yield conn
     finally:

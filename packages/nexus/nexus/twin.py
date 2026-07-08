@@ -890,8 +890,8 @@ class DigitalTwin:
         if self.on_event:
             try:
                 self.on_event(event_type, detail or {})
-            except Exception:
-                pass  # never let event callbacks break the main flow
+            except Exception as e:
+                logger.debug("event callback failed: %s", e)  # never let event callbacks break the main flow
 
     # ── Identity Context for LLM ───────────────────────────────
 
@@ -1819,8 +1819,8 @@ class DigitalTwin:
                 f"{old_id} -> {new_session_id}",
                 session_id=new_session_id,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("session_switched event append failed: %s", exc)
 
     async def new_session(self) -> str:
         from . import twin_commands
@@ -1857,8 +1857,8 @@ class DigitalTwin:
         before_count = 0
         try:
             before_count = self.event_log.count(session_id=session_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("counting session events failed: %s", exc)
 
         # Audit-trail event. We intentionally tag it with session_id
         # so it shows up in twin_event_log queries scoped to this
@@ -2083,8 +2083,8 @@ class DigitalTwin:
 
         try:
             await self.llm.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("LLM close during shutdown: %s", exc)
 
         # ── 4. Close MCP server connections ──
         if self.tools:

@@ -26,11 +26,11 @@ config = context.config
 if config.config_file_name is not None:
     try:
         fileConfig(config.config_file_name)
-    except Exception:
+    except Exception as e:
         # File-based logging config is a nice-to-have. If it explodes
         # (PyInstaller path resolution sometimes does), fall back to
         # the parent process's logging config.
-        pass
+        logger.debug("fileConfig failed: %s", e)
 
 
 def _resolve_db_url() -> str:
@@ -106,8 +106,8 @@ def run_migrations_online() -> None:
         # transaction_per_migration already committed.
         try:
             connection.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("explicit commit after migrations failed: %s", e)
 
 
 if context.is_offline_mode():

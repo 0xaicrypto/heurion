@@ -332,8 +332,8 @@ class EvolutionEngine:
             knowledge_ctx = self.knowledge.get_context_from_cache(query)
             if knowledge_ctx:
                 parts.append(knowledge_ctx)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("compiled knowledge lookup failed: %s", e)
 
         # ── 2 + 4 in PARALLEL: memory recall + social context ──
         # Both may hit slow I/O on cold start. Running them in parallel
@@ -356,8 +356,8 @@ class EvolutionEngine:
                 memory_result = results[0]
             if not isinstance(results[1], BaseException):
                 social_result = results[1]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("memory/social context gather failed: %s", e)
 
         if memory_result:
             parts.append("\n## Relevant Memories")
@@ -410,8 +410,8 @@ class EvolutionEngine:
                         parts.append(f"\n## Learned Strategy for '{word}'")
                         parts.append(strategy)
                         break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("strategy lookup failed: %s", e)
 
         if social_result:
             parts.append(social_result)

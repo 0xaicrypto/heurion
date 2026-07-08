@@ -329,8 +329,8 @@ class LLMClient:
                                 "arguments": tool_call.arguments,
                             },
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("emitting tool_call event failed: %s", e)
                 tool_t0 = _time.time()
                 try:
                     result = await asyncio.wait_for(
@@ -365,8 +365,8 @@ class LLMClient:
                             },
                             duration_ms=int((_time.time() - tool_t0) * 1000),
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("emitting tool_result event failed: %s", e)
                 tool_calls_log.append({
                     "tool": tool_call.name,
                     "args": tool_call.arguments,
@@ -472,8 +472,8 @@ class LLMClient:
                 gen_kwargs["thinking_config"] = types.ThinkingConfig(
                     include_thoughts=True,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("ThinkingConfig unavailable: %s", exc)
         config = types.GenerateContentConfig(**gen_kwargs)
 
         def _call():
@@ -970,10 +970,10 @@ class LLMClient:
                 gen_kwargs["thinking_config"] = types.ThinkingConfig(
                     include_thoughts=True,
                 )
-            except Exception:
+            except Exception as exc:
                 # Older google-genai versions don't have ThinkingConfig
                 # — fall through and treat thinking as best-effort.
-                pass
+                logger.debug("ThinkingConfig unavailable: %s", exc)
         config = types.GenerateContentConfig(**gen_kwargs)
 
         def _call():

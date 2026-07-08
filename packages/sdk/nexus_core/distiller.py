@@ -203,8 +203,8 @@ def extract_text(
     try:
         decoded = raw.decode("utf-8")
         return decoded[:DISTILL_INPUT_CHAR_BUDGET], "text"
-    except UnicodeDecodeError:
-        pass
+    except UnicodeDecodeError as exc:
+        logger.debug("input is not UTF-8 text: %s", exc)
 
     return (
         f"[binary attachment {name!r} ({mime}, {len(raw)} bytes); "

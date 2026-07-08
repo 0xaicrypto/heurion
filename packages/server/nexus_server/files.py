@@ -170,8 +170,8 @@ def _ensure_uploads_table() -> None:
         ):
             try:
                 conn.execute(f"ALTER TABLE uploads ADD COLUMN {col_def}")
-            except Exception:
-                pass  # column already exists
+            except Exception as e:
+                logger.debug("adding uploads column failed: %s", e)  # column already exists
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_uploads_user "
             "ON uploads(user_id, created_at DESC)"
@@ -535,8 +535,8 @@ async def upload_file(
                     out.close()
                     try:
                         disk_path.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                    except OSError as exc:
+                        logger.debug("removing partial upload failed: %s", exc)
                     raise HTTPException(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                         detail=(
@@ -552,8 +552,8 @@ async def upload_file(
         # Mid-stream error (disk full, connection drop). Clean up.
         try:
             disk_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.debug("removing partial upload failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Upload stream failed: {e}",
@@ -662,8 +662,8 @@ async def upload_file(
             _set_prerender_progress(
                 file_id, state="queued", stage="queued", total=1,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("init prerender progress failed: %s", exc)
     else:
         dicom_status = ""
         dicom_prerender_active = False
@@ -803,8 +803,8 @@ def _run_dicom_prerender_async(
                     ).fetchone()
                     if _row and _row[0]:
                         forced_hash = str(_row[0])
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as err:  # noqa: BLE001
+                logger.debug("reading forced patient_hash failed: %s", err)
         prerender = prerender_archive_for_upload(
             user_id=user_id,
             upload_file_id=file_id,
@@ -879,8 +879,8 @@ def _run_dicom_prerender_async(
                         args,
                     )
                     conn.commit()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("updating upload row failed: %s", e)
 
         memory_status = "pending"
         memory_summary = ""
@@ -965,8 +965,8 @@ def _run_dicom_prerender_async(
                 from nexus_server.dicom import load_study
                 _study = load_study(user_id, new_study_id)
                 new_patient_hash = (_study.patient_hash if _study else "") or ""
-            except Exception:
-                pass
+            except Exception as err:
+                logger.debug("deriving patient_hash from study failed: %s", err)
         try:
             with get_db_connection() as conn:
                 conn.execute(
@@ -1123,8 +1123,8 @@ def _run_dicom_prerender_async(
                 file_id, state="error", stage="task_crashed",
                 error=f"{type(e).__name__}: {e}",
             )
-        except Exception:
-            pass
+        except Exception as err:
+            logger.debug("setting prerender error status failed: %s", err)
 
 
 @router.get(
@@ -1176,8 +1176,8 @@ async def prerender_progress(
                 quick_scan_status  = str(row[2] or "")
                 quick_scan_summary = str(row[3] or "")
                 upload_study_id    = str(row[4] or "")
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        logger.debug("reading upload status columns failed: %s", e)
 
     # Live progress for an in-flight Quick scan. Keyed by study_id —
     # whichever study this file is rendered into. The desktop polls
@@ -1315,8 +1315,8 @@ async def _record_upload_in_curated_memory(
     try:
         if pause_marker.exists():
             return
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("checking curated-memory pause marker failed: %s", exc)
 
     size_hint = format_size_hint(size_bytes)
 
@@ -1368,8 +1368,8 @@ async def _record_patient_in_curated_memory(
     try:
         if (cm._dir / ".paused").exists():
             return
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("checking curated-memory pause marker failed: %s", exc)
 
     # Re-use the same patient context formatter so the memory entry
     # is consistent with what the agent sees in-chat — no chance of
@@ -1459,8 +1459,8 @@ def resolve_files(user_id: str, file_ids: list[str]) -> list[dict]:
                 effective_disk = norm_path
                 try:
                     size_bytes = np.stat().st_size
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.debug("stat of normalized image failed: %s", e)
         out.append({
             "file_id":            fid,
             "name":               name,
@@ -2007,8 +2007,8 @@ def _run_quick_scan_after_ingest(
                     patient_hash = str(distinct[0][0])
     except RuntimeError:
         raise
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        logger.debug("resolving patient_hash from uploads failed: %s", e)
 
     # Emit one `finding` node per flagged region, unconfirmed.
     if flagged and patient_hash:

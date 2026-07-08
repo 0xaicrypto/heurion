@@ -220,8 +220,8 @@ async def patient_ingest_debug(
                     "raw_output_head": raw[:400],   # cap so the response stays small
                     "raw_output_chars": len(raw),
                 }
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as e:
+            logger.debug("reading latest LLM extraction event failed: %s", e)
         # Latest INGESTION_COMPLETED — has the skipped quote list now.
         latest_completed: dict[str, Any] = {}
         try:
@@ -245,8 +245,8 @@ async def patient_ingest_debug(
                     "raw_count":          p.get("raw_count") or 0,
                     "ts":                 row[1],
                 }
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as e:
+            logger.debug("reading latest ingestion event failed: %s", e)
         return {
             "user_id":              current_user,
             "patient_hash":         patient_hash,

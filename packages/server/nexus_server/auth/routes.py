@@ -431,10 +431,10 @@ def _rotate_identity_backup(id_file) -> None:
         for old in baks[3:]:
             try:
                 old.unlink()
-            except OSError:
-                pass
-    except OSError:
-        pass
+            except OSError as e:
+                logger.debug("pruning old identity backup failed: %s", e)
+    except OSError as e:
+        logger.debug("identity backup rotation failed: %s", e)
 
 
 def _write_identity_atomic(id_file, content: dict) -> None:
@@ -455,8 +455,8 @@ def _write_identity_atomic(id_file, content: dict) -> None:
     os.replace(tmp.name, id_file)
     try:
         os.chmod(id_file, 0o600)
-    except OSError:
-        pass
+    except OSError as e:
+        logger.debug("chmod identity file failed: %s", e)
 
 
 def _read_identity_file(id_file) -> "dict | None":
@@ -1050,15 +1050,15 @@ async def wipe_identity(
                 conn.execute(
                     f"DELETE FROM {table} WHERE user_id = ?", (user_id,),
                 )
-            except sqlite3.Error:
-                pass  # table may not exist on a partial schema
+            except sqlite3.Error as e:
+                logger.debug("delete from %s failed: %s", table, e)  # table may not exist on a partial schema
         try:
             conn.execute(
                 "UPDATE sessions SET patient_hash = '' WHERE user_id = ?",
                 (user_id,),
             )
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as e:
+            logger.debug("clearing session patient_hash failed: %s", e)
         # Finally the users row itself.
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()

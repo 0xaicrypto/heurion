@@ -441,8 +441,8 @@ def _safe_parse_json(content: str) -> Optional[dict]:
     # First try as-is.
     try:
         return json.loads(content)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        logger.debug("direct JSON parse failed: %s", e)
     # Find the largest balanced {...} substring as a fallback.
     start = content.find("{")
     end   = content.rfind("}")

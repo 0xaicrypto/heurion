@@ -190,15 +190,15 @@ def _gc_soft_deleted_identities() -> None:
                     conn.execute(
                         f"DELETE FROM {table} WHERE user_id = ?", (uid,),
                     )
-                except sqlite3.Error:
-                    pass
+                except sqlite3.Error as e:
+                    logger.debug("delete from %s failed: %s", table, e)
             try:
                 conn.execute(
                     "UPDATE sessions SET patient_hash = '' "
                     "WHERE user_id = ?", (uid,),
                 )
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as e:
+                logger.debug("clearing session patient_hash failed: %s", e)
             conn.execute("DELETE FROM users WHERE id = ?", (uid,))
         conn.commit()
         logger.info("identity GC: complete (%d users gone)", len(user_ids))
@@ -225,8 +225,8 @@ def _read_build_info() -> dict[str, str]:
                     continue
                 k, _, v = line.partition("=")
                 out[k.strip()] = v.strip()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        logger.debug("reading build info failed: %s", e)
     return out
 
 
@@ -463,8 +463,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 scheduler_task.cancel()
                 try:
                     await scheduler_task
-                except _asyncio.CancelledError:
-                    pass
+                except _asyncio.CancelledError as err:
+                    logger.debug("scheduler task cancelled during shutdown: %s", err)
         # Shutdown
         logger.info("Shutting down Nexus API Server")
         if daemon_task is not None and stop_event is not None:
@@ -478,8 +478,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 daemon_task.cancel()
                 try:
                     await daemon_task
-                except _asyncio.CancelledError:
-                    pass
+                except _asyncio.CancelledError as err:
+                    logger.debug("anchor retry daemon cancelled during shutdown: %s", err)
 
         if twin_stop_event is not None:
             try:

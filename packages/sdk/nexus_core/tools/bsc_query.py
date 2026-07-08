@@ -144,8 +144,8 @@ class BscQueryTool(BaseTool):
                     self._w3_testnet.middleware_onion.inject(
                         ExtraDataToPOAMiddleware, layer=0,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("PoA middleware injection failed: %s", exc)
             return self._w3_testnet
         # mainnet (default)
         if self._w3_mainnet is None:
@@ -155,8 +155,8 @@ class BscQueryTool(BaseTool):
                 self._w3_mainnet.middleware_onion.inject(
                     ExtraDataToPOAMiddleware, layer=0,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("PoA middleware injection failed: %s", exc)
         return self._w3_mainnet
 
     # ── Public surface ────────────────────────────────────────────────

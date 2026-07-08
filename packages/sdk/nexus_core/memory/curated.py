@@ -65,8 +65,8 @@ class CuratedMemory:
             os.close(fd)
             try:
                 os.unlink(tmp)
-            except OSError:
-                pass
+            except OSError as e:
+                logger.debug("removing tmp file failed: %s", e)
             raise
 
     def _format(self, entries: list[str]) -> str:

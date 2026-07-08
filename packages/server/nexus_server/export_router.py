@@ -191,8 +191,8 @@ async def export_bundle(user_id: str = Depends(get_current_user)):
         try:
             if bundle_path.exists():
                 bundle_path.unlink()
-        except OSError:
-            pass
+        except OSError as e:
+            logger.debug("removing partial bundle failed: %s", e)
         logger.exception("export bundle failed")
         raise HTTPException(status_code=500, detail=f"export failed: {exc}") from exc
 

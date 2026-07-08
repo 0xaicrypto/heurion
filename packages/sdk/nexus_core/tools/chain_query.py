@@ -194,8 +194,8 @@ class ChainQueryTool(BaseTool):
             try:
                 from web3.middleware import ExtraDataToPOAMiddleware
                 w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("PoA middleware injection failed: %s", exc)
             self._w3[rpc] = w3
         return self._w3[rpc]
 

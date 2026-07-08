@@ -377,8 +377,8 @@ async def debug_all_patients() -> dict:
     try:
         from nexus_server.patients_router import init_patients_table
         init_patients_table()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("init_patients_table failed: %s", exc)
     out: dict = {"dicom_studies": [], "patients": []}
     conn = _index_db()
     try:
@@ -601,8 +601,8 @@ async def render_endpoint(
                             media_type="image/png",
                             headers={"X-Nexus-Cache": "eager"},
                         )
-                    except OSError:
-                        pass   # fall through to live render
+                    except OSError as exc:
+                        logger.debug("reading cached render failed: %s", exc)  # fall through to live render
         except Exception as e:  # noqa: BLE001
             logger.debug("eager cache lookup failed for %s: %s", study_id, e)
 

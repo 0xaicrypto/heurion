@@ -751,8 +751,8 @@ async def get_chain_status(
             last_anchor = None
         try:
             health_dict = backend.chain_health_snapshot()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("chain health snapshot failed: %s", exc)
 
     namespace_specs = [
         ("persona",   "persona_store"),
@@ -1646,8 +1646,8 @@ def _build_just_learned(twin, last_anchor_at, limit: int = 12) -> list[JustLearn
                     f.created_at, facts.current_version(),
                     getattr(facts, "_versioned", None),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("listing recent facts failed: %s", exc)
 
     skills = getattr(twin, "skills_memory", None)
     if skills is not None:
@@ -1660,8 +1660,8 @@ def _build_just_learned(twin, last_anchor_at, limit: int = 12) -> list[JustLearn
                     skills.current_version(),
                     getattr(skills, "_versioned", None),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("listing recent skills failed: %s", exc)
 
     knowledge = getattr(twin, "knowledge", None)
     if knowledge is not None:
@@ -1673,8 +1673,8 @@ def _build_just_learned(twin, last_anchor_at, limit: int = 12) -> list[JustLearn
                     knowledge.current_version(),
                     getattr(knowledge, "_versioned", None),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("listing recent knowledge failed: %s", exc)
 
     persona = getattr(twin, "persona_store", None)
     if persona is not None:
@@ -1689,8 +1689,8 @@ def _build_just_learned(twin, last_anchor_at, limit: int = 12) -> list[JustLearn
                     entry.get("version"),
                     getattr(persona, "_versioned", None),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("listing persona history failed: %s", exc)
 
     episodes = getattr(twin, "episodes", None)
     if episodes is not None:
@@ -1704,8 +1704,8 @@ def _build_just_learned(twin, last_anchor_at, limit: int = 12) -> list[JustLearn
                     episodes.current_version(),
                     getattr(episodes, "_versioned", None),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("listing recent episodes failed: %s", exc)
 
     out.sort(key=lambda x: x.timestamp, reverse=True)
     return out[:limit]

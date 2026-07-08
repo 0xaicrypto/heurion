@@ -241,8 +241,8 @@ def bootstrap_chain_identity(user_id: str) -> Optional[int]:
         except Exception:
             try:
                 conn.rollback()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("rollback failed: %s", exc)
             raise
 
     logger.info(
@@ -750,8 +750,8 @@ async def shutdown_all(stop_event: asyncio.Event,
             reaper_task.cancel()
             try:
                 await reaper_task
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as e:
+                logger.debug("reaper task cancelled during shutdown: %s", e)
 
     async with _lock:
         uids = list(_sessions.keys())

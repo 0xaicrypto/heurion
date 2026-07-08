@@ -195,8 +195,8 @@ def merge_orphan_into(orphan_user_id: str, current_user_id: str) -> int:
             session_id = ""
             try:
                 session_id = r["session_id"] or ""
-            except (KeyError, IndexError):
-                pass
+            except (KeyError, IndexError) as exc:
+                logger.debug("reading session_id column failed: %s", exc)
             import json as _json
             meta = {}
             try:

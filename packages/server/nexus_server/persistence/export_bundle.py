@@ -193,8 +193,8 @@ def _export_patient(
     for n in nodes:
         try:
             n["content"] = json.loads(n.pop("content_json"))
-        except (json.JSONDecodeError, KeyError):
-            pass
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.debug("decoding node content_json failed: %s", e)
 
     graph = {
         "_meta": {
@@ -234,8 +234,8 @@ def _export_patient(
             if isinstance(row_dict["source_locator"], str):
                 try:
                     row_dict["source_locator"] = json.loads(row_dict["source_locator"])
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as e:
+                    logger.debug("decoding source_locator failed: %s", e)
             f.write(json.dumps(row_dict, ensure_ascii=False) + "\n")
     _record_file(prov_path, manifest)
 
@@ -279,8 +279,8 @@ def _export_event_log(
             if isinstance(event["payload"], str):
                 try:
                     event["payload"] = json.loads(event["payload"])
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as e:
+                    logger.debug("decoding event payload failed: %s", e)
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
             count += 1
     _record_file(out_path, manifest)
@@ -319,8 +319,8 @@ def _export_practitioner(
             if isinstance(row_dict["pattern_value"], str):
                 try:
                     row_dict["pattern_value"] = json.loads(row_dict["pattern_value"])
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as e:
+                    logger.debug("decoding pattern_value failed: %s", e)
             f.write(json.dumps(row_dict, ensure_ascii=False) + "\n")
             fact_count += 1
     _record_file(facts_path, manifest)

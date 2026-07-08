@@ -107,8 +107,8 @@ def _parse_json_safe(raw: str) -> dict[str, Any]:
     # Layer 1
     try:
         return json.loads(s)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        logger.debug("direct JSON parse failed: %s", e)
     # Layer 2 — fence strip
     fenced = s
     if fenced.startswith("```"):
@@ -116,8 +116,8 @@ def _parse_json_safe(raw: str) -> dict[str, Any]:
         fenced = re.sub(r"\s*```$", "", fenced)
         try:
             return json.loads(fenced)
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.debug("fenced JSON parse failed: %s", e)
     # Layer 3 — greedy bracket match. Find first '{' and last '}', try
     # to parse what's between. Doesn't handle nested escaped braces in
     # weird strings but the extractor JSON is shallow enough that it
@@ -127,8 +127,8 @@ def _parse_json_safe(raw: str) -> dict[str, Any]:
     if first >= 0 and last > first:
         try:
             return json.loads(s[first : last + 1])
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.debug("bracket-match JSON parse failed: %s", e)
     logger.warning(
         "extractor LLM output isn't JSON even after fence-strip + "
         "bracket-recover: %r",

@@ -161,8 +161,8 @@ class EventLogCompactor:
                 if ev.event_type == "memory_compact":
                     last_fired_at = float(ev.timestamp)
                     break
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.debug("scanning recent events failed: %s", e)
         if delta == 0:
             status = "fired_recently" if last_fired_at else "idle"
         elif delta >= self._interval:

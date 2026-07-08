@@ -130,8 +130,8 @@ def looks_normalizable(name: str, mime: str) -> bool:
             if any(decoded.endswith(ext) or ext in decoded
                    for ext in NORMALIZE_EXTS):
                 return True
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.debug("decoding MIME filename failed: %s", e)
     # Last resort: scan the literal lowered name for any known
     # extension as a substring (catches uncommon path-style names).
     for ext in NORMALIZE_EXTS:
@@ -186,8 +186,8 @@ def transcode_to_jpeg(
     }
     try:
         out["src_bytes"] = source_path.stat().st_size
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.debug("stat of source file failed: %s", exc)
 
     try:
         from PIL import Image, ImageOps
@@ -208,15 +208,15 @@ def transcode_to_jpeg(
             from PIL.Image import Image as _PILImage
             if hasattr(img, "n_frames"):
                 out["page_count"] = int(img.n_frames)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("multi-page detection failed: %s", exc)
         # EXIF-aware orientation correction. Phone photos in HEIC /
         # JPG often have an EXIF rotate tag that, if ignored,
         # displays the image sideways. Apply once.
         try:
             img = ImageOps.exif_transpose(img)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("EXIF transpose failed: %s", exc)
 
         # 16-bit grayscale TIFF (pathology, medical) → JPEG needs 8-bit.
         # Use auto-contrast so the JPEG conversion doesn't crush
@@ -282,8 +282,8 @@ def transcode_to_jpeg(
         try:
             tmp = dest_path.with_suffix(dest_path.suffix + ".tmp")
             tmp.unlink(missing_ok=True)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("removing tmp file failed: %s", exc)
     return out
 
 

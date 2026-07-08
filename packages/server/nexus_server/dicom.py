@@ -261,8 +261,8 @@ def _patient_salt() -> bytes:
     if salt_path.exists():
         try:
             return salt_path.read_bytes()
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.debug("reading patient salt failed: %s", exc)
     salt = os.urandom(32)
     try:
         salt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -270,8 +270,8 @@ def _patient_salt() -> bytes:
         # 600: medic-only readable
         try:
             os.chmod(salt_path, 0o600)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.debug("chmod patient salt failed: %s", exc)
     except OSError as e:
         logger.warning(
             "patient_salt persist failed (%s) — using ephemeral salt; "

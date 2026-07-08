@@ -577,8 +577,8 @@ async def _tick_research_assessments(get_conn) -> int:
                 (now_ms - REMINDER_GRACE_MS,),
             )
             conn.commit()
-    except sqlite3.Error:
-        pass
+    except sqlite3.Error as e:
+        logger.warning("marking overdue assessments as missed failed: %s", e)
 
     return fired
 

@@ -329,8 +329,8 @@ class Keystore:
         rpc_url = None
         try:
             rpc_url = self.sdk.network.get("rpc_url", "") or None
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("reading RPC URL from SDK failed: %s", e)
         if not rpc_url:
             rpc_url = BSC_TESTNET_RPC if is_testnet else BSC_MAINNET_RPC
 

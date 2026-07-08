@@ -236,8 +236,8 @@ def _simple_yaml_parse(text: str) -> dict:
     # Try JSON first (contract files may be JSON)
     try:
         return json.loads(text)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        logger.debug("JSON parse of contract failed: %s", e)
 
     # Simple key-value YAML parsing
     result = {}
@@ -272,8 +272,8 @@ def _simple_yaml_parse(text: str) -> dict:
                 else:
                     try:
                         value = float(value) if "." in value else int(value)
-                    except ValueError:
-                        pass
+                    except ValueError as e:
+                        logger.debug("parsing scalar as number failed: %s", e)
                 current[key] = value
             else:
                 current[key] = {}

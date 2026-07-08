@@ -951,8 +951,8 @@ async def get_recent_activity(
                     "text": f"完成访视: 患者 {r[0][:6]} · {r[1]} · {r[2]}",
                     "patient_hash": r[0],
                 })
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as e:
+            logger.debug("listing completed visits failed: %s", e)
         # observations
         try:
             for r in conn.execute(
@@ -972,8 +972,8 @@ async def get_recent_activity(
                     "text": f"观察事件: 患者 {r[0][:6]} · {r[1]}{(' · ' + grade) if grade else ''}",
                     "patient_hash": r[0],
                 })
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as e:
+            logger.debug("listing observation events failed: %s", e)
 
     items.sort(key=lambda it: it["when_ms"], reverse=True)
     return items[:limit]
@@ -1685,9 +1685,9 @@ async def install_starters(
                 installed.append(install_starter(
                     user_id, sid, overwrite=req.overwrite,
                 ))
-            except RuntimeError:
+            except RuntimeError as e:
                 # Already present + overwrite=False — skip silently
-                pass
+                logger.debug("starter install skipped: %s", e)
     return {"installed": installed, "count": len(installed)}
 
 

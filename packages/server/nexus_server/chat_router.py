@@ -583,8 +583,8 @@ def _run_chat_ingester_safe(
                     raw_count = len(parsed.get("entities", []))
                 except Exception:  # noqa: BLE001
                     raw_count = 0
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.debug("ingestion diagnostics collection failed: %s", e)
 
         logger.info(
             "chat_ingester: user=%s patient=%s emitted %d node(s) "

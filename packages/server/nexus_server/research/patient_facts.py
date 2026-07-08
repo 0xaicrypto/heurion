@@ -214,8 +214,8 @@ def get_patient_facts(
         if row and row[0]:
             facts.informed_consent_signed_at = int(row[0])
             facts.informed_consent_signed = True
-    except sqlite3.Error:
-        pass
+    except sqlite3.Error as e:
+        logger.debug("consent lookup failed: %s", e)
 
     return facts
 
@@ -245,8 +245,8 @@ def _merge_node_into_facts(
     if nt in ("ecog", "performance_status"):
         try:
             facts.ecog = int(val) if val is not None else None
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("parsing ECOG value failed: %s", e)
 
     elif nt == "stage" or kind == "stage":
         s = (content.get("value") or content.get("label") or "").upper()
@@ -285,8 +285,8 @@ def _merge_node_into_facts(
             if n is not None:
                 try:
                     facts.first_line_cycles = int(n)
-                except (TypeError, ValueError):
-                    pass
+                except (TypeError, ValueError) as e:
+                    logger.debug("parsing first-line cycle count failed: %s", e)
             mod = _norm(content.get("modality"))
             if mod:
                 facts.first_line_modality = mod
@@ -354,6 +354,6 @@ def list_known_patient_hashes(conn: sqlite3.Connection, user_id: str) -> list[st
         for (h,) in extra:
             if h and h not in out:
                 out.append(h)
-    except sqlite3.Error:
-        pass
+    except sqlite3.Error as e:
+        logger.debug("listing graph patient hashes failed: %s", e)
     return out

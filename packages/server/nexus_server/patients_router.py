@@ -125,8 +125,8 @@ def init_patients_table() -> None:
                 c.execute(
                     "ALTER TABLE patients ADD COLUMN archived_at INTEGER"
                 )
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.debug("adding archived_at column failed: %s", e)
         c.commit()
 
     # Step 2 — one-shot data migration from dicom_index.db.
@@ -193,8 +193,8 @@ def _migrate_patients_from_index_db() -> None:
             try:
                 idx_conn.execute("DROP TABLE patients")
                 idx_conn.commit()
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as e:
+                logger.debug("dropping legacy patients table failed: %s", e)
             return
 
         with get_db_connection() as shared:
@@ -388,8 +388,8 @@ async def register_manual_patient(
                     (patient_hash, current_user, req.session_id),
                 )
                 conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("binding session to patient failed: %s", e)
 
     return RegisterManualPatientResponse(
         patient_hash=patient_hash,
@@ -665,8 +665,8 @@ async def delete_patient(
                         (current_user, patient_hash),
                     )
                     deleted[f"{table}_unbound"] = cur.rowcount or 0
-                except sqlite3.Error:
-                    pass  # table doesn't exist on this deployment
+                except sqlite3.Error as e:
+                    logger.debug("clearing patient_hash in %s failed: %s", table, e)  # table doesn't exist on this deployment
             conn.commit()
     except Exception as exc:
         # Shared DB unavailable / schema mismatch / etc. Log instead of
