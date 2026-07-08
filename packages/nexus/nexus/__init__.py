@@ -16,8 +16,8 @@ Nexus-specific. The other names below (``BaseTool``, ``ToolResult``,
 ``ToolCall``, ``ToolRegistry``, ``MCPManager``, ``MCPServerConfig``,
 ``SkillManager``) are convenience re-exports from
 :mod:`nexus_core` so callers don't have to remember the package
-split. The submodule shims (``nexus.tools.web_search``,
-``nexus.skills.manager``, ``nexus.mcp.client``) were tombstoned —
+split. The legacy submodule shims (``nexus.tools.web_search``,
+``nexus.skills.manager``, ``nexus.mcp.client``) have been removed —
 import those directly from ``nexus_core.*``.
 """
 

@@ -59,7 +59,6 @@ HTTP / browser ─┤  FastAPI app (main.py)    │
 | `twin_event_log.py` | Read-only views over each user's twin EventLog SQLite. Used by `agent_state` to serve `/agent/{messages,memories,timeline}` without instantiating a twin. | – |
 | `agent_state.py` | The read API surface | `/api/v1/agent/{state,timeline,memories,messages}`, `/api/v1/sync/anchors` |
 | `user_profile.py` | Profile management | `/api/v1/profile/*` |
-| `chat/` `chain/` `twins/` `views/` (Phase C navigation) | Facade `__init__.py` only — re-export the canonical top-level modules under domain-grouped names. The leaf placeholder files are tombstones with no callers. | – |
 
 ## Test
 
