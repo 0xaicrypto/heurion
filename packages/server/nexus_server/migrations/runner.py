@@ -80,7 +80,16 @@ def run_migrations() -> str:
         raise RuntimeError(str(exc)) from exc
     cfg_file = mdir / "alembic.ini"
 
-    cfg = Config(str(cfg_file))
+    # In-memory Config — deliberately NOT Config(str(cfg_file)).
+    # Alembic parses ini files with configparser using the process
+    # locale encoding; inside the packaged sidecar the locale can be
+    # C/ASCII, and any non-ASCII byte in the ini (an em dash in a
+    # comment was enough) crashes startup with UnicodeDecodeError.
+    # The only option we actually need from the file is
+    # script_location, so we build the config programmatically and
+    # never read the ini at runtime. (alembic.ini stays in the tree
+    # for developers running the alembic CLI directly.)
+    cfg = Config()
     # script_location → the directory holding env.py + versions/
     cfg.set_main_option("script_location", str(mdir))
     # DB URL is resolved inside env.py from ServerConfig; the
@@ -98,9 +107,15 @@ def run_migrations() -> str:
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"DB migration failed: {exc}") from exc
 
-    # Report current head for the startup log.
-    head = current_revision()
-    logger.info("DB at revision: %s", head or "(empty)")
+    # Report current head for the startup log. Purely informational —
+    # a failure here must never abort startup (the upgrade itself
+    # already succeeded above).
+    try:
+        head = current_revision()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("post-migration revision check failed: %s", exc)
+        head = None
+    logger.info("DB at revision: %s", head or "(unknown)")
     return head or ""
 
 
