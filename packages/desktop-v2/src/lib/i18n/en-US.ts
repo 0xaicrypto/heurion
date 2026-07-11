@@ -827,6 +827,9 @@ export const en = {
   'skills.discover.installFailed': 'Install failed: {error}',
   'skills.discover.unavailable':   'Search is unavailable — check your network connection and try again.',
   'skills.discover.error':         'Search failed: {error}',
+
+  // Writing Studio — TipTap editor (P2). New keys go at the dict END.
+  'writing.chip.deidentified':     'De-identified',
 };
 
 /** ``Dict`` is the contract every locale file must satisfy: same set

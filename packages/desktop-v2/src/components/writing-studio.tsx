@@ -3,21 +3,31 @@
  *
  * Three columns (mock1_writing_panel.svg):
  *   left   — document list (create / select / delete)
- *   center — title + plain <textarea> markdown editor with {{ref:ID}}
- *            placeholder tokens, polish toolbar, streamed diff card,
+ *   center — title + TipTap editor ({{ref:ID}} tokens as inline
+ *            refChip atoms), polish toolbar, streamed diff card,
  *            status bar (autosave / word count)
  *   right  — 引用与来源 reference chips + 快照历史 snapshots
  *
  * Flows:
  *   @ / ＋引用   → ReferencePickerModal (mock2) → POST /docs/{id}/references
- *                  → insert {{ref:ID}} at the cursor.
+ *                  → insert a refChip atom at the caret.
  *   选中润色     → activated toolbar row → POST /docs/{id}/polish (SSE)
  *                  → word-level diff card (mock3) with per-hunk ✓/✗.
  *   导出 docx    → POST /docs/{id}/export; on 422 phi_unresolved the
  *                  PHI gate modal (mock4) collects per-finding
  *                  resolutions and re-posts.
  *
- * Editor is deliberately a plain textarea (TipTap chips are P2). The
+ * Editor (P2): TipTap. The SERVER CONTRACT IS UNCHANGED — the document
+ * body is still a plain string with {{ref:ID}} tokens and '\n'
+ * paragraph breaks (PUT /docs/{id} {body}). lib/writing-doc-serial.ts
+ * converts string ⇄ TipTap JSON; tokens hydrate into inline refChip
+ * atoms (components/ref-chip.tsx). All starter-kit marks/blocks that
+ * can't serialize to that string (bold/italic/headings/lists/…) are
+ * DISABLED — only document/paragraph/text/undoRedo survive — so
+ * nothing unserializable can enter the doc. draft.body in the store
+ * remains the serialized string (re-serialized on every editor
+ * update), which keeps autosave, word count, polish offsets, snapshots
+ * and the PHI export flow operating on the exact wire format. The
  * read-only 预览 toggle renders {{ref:ID}} tokens as inline chips.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -25,6 +35,8 @@ import {
   AlertTriangle, AtSign, Check, Download, Eye, PenLine, Plus,
   RefreshCw, RotateCcw, Sparkles, Trash2, X,
 } from 'lucide-react';
+import { EditorContent, useEditor, type Editor } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
 import {
   api, ApiError,
   type WritingDocMeta, type WritingPhiFinding, type WritingPhiResolution,
@@ -40,10 +52,12 @@ import { CopyButton } from './copy-button';
 import {
   applyDiff, changeCount, diffWords, type DiffSegment,
 } from '../lib/word-diff';
+import {
+  parseBodyToDoc, REF_TOKEN_RE, serializeDocToBody, type SerialDocNode,
+} from '../lib/writing-doc-serial';
+import { RefChip, RefChipProvider, refChipLeafText } from './ref-chip';
 
 /* ───────────────────────── helpers ───────────────────────── */
-
-const REF_TOKEN_RE = /\{\{ref:([^}]+)\}\}/g;
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return e.serverMessage || e.message;
@@ -66,6 +80,63 @@ function fmtDateTime(iso: string): string {
  *  placeholder tokens and whitespace are excluded. */
 function wordCount(body: string): number {
   return body.replace(REF_TOKEN_RE, '').replace(/\s+/g, '').length;
+}
+
+/* ── TipTap doc ⇄ serialized-string offset mapping ──────────────
+ *
+ * Polish still works on START/END INDICES INTO THE SERIALIZED STRING
+ * (the same string autosave PUTs), so ProseMirror positions must map
+ * onto string offsets. ``doc.textBetween(a, b, '\n', refChipLeafText)``
+ * emits exactly the serialized form of the [a, b) range — '\n' between
+ * textblocks (matching serializeDocToBody's join('\n'), incl. empty
+ * paragraphs) and each refChip atom as its {{ref:ID}} token — so a
+ * position's string offset is just the length of the prefix. */
+
+type PMDoc = Editor['state']['doc'];
+
+/** Editor doc → wire string. Same result as
+ *  ``doc.textBetween(0, size, '\n', refChipLeafText)`` — routed through
+ *  the pure (unit-tested) serializer for a single source of truth. */
+function serializePmDoc(doc: PMDoc): string {
+  return serializeDocToBody(doc.toJSON() as SerialDocNode);
+}
+
+/** ProseMirror position → offset into the serialized body string. */
+function pmPosToOffset(doc: PMDoc, pos: number): number {
+  return doc.textBetween(0, pos, '\n', refChipLeafText).length;
+}
+
+/** Inverse of ``pmPosToOffset`` — walks the doc counting serialized
+ *  chars. Offsets landing INSIDE a chip token clamp to just after the
+ *  chip (atoms are indivisible). Out-of-range clamps to doc end. */
+function offsetToPmPos(doc: PMDoc, offset: number): number {
+  if (offset <= 0) return 1; // start of the first paragraph's content
+  let str = 0;        // serialized chars consumed so far
+  let result = -1;
+  let firstBlock = true;
+  doc.descendants((node, pos) => {
+    if (result !== -1) return false;
+    if (node.isTextblock) {
+      if (!firstBlock) str += 1; // the '\n' before this paragraph
+      firstBlock = false;
+      if (str >= offset) { result = pos + 1; return false; }
+      return true; // descend into inline content
+    }
+    if (node.isText) {
+      const len = node.text?.length ?? 0;
+      if (str + len >= offset) { result = pos + (offset - str); return false; }
+      str += len;
+      return false;
+    }
+    if (node.isLeaf) {
+      const len = refChipLeafText(node).length;
+      if (str + len >= offset) { result = pos + node.nodeSize; return false; }
+      str += len;
+      return false;
+    }
+    return true;
+  });
+  return result !== -1 ? result : Math.max(doc.content.size - 1, 1);
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -106,8 +177,8 @@ interface PolishState {
 }
 
 interface PickerRequest {
-  /** Body offset where the token goes. */
-  pos: number;
+  /** ProseMirror position where the chip goes. */
+  pmPos: number;
   /** True when triggered by typing '@' — that char gets replaced. */
   replaceAt: boolean;
 }
@@ -138,8 +209,9 @@ export function WritingStudio() {
   const lastSavedRef = useRef<{ docId: string; title: string; body: string } | null>(null);
 
   // Editor UI state
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
+  /** Selection as OFFSETS INTO THE SERIALIZED BODY STRING (kept in
+   *  sync from TipTap's selection via pmPosToOffset). */
   const [sel, setSel] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
   const [picker, setPicker] = useState<PickerRequest | null>(null);
 
@@ -153,6 +225,113 @@ export function WritingStudio() {
   const [exporting, setExporting] = useState(false);
   const [includeSources, setIncludeSources] = useState(true);
   const [phiFindings, setPhiFindings] = useState<WritingPhiFinding[] | null>(null);
+
+  /* ── TipTap editor ────────────────────────────────────────────
+   *
+   * One instance per document (deps: [activeDocId]) so ⌘Z history
+   * never leaks across docs. ``lastEditorBodyRef`` holds the
+   * serialized string of what the editor currently contains — the
+   * draft→editor sync effect below only rehydrates when the store
+   * draft diverges from it (doc load, snapshot restore, polish
+   * apply), never while the medic is typing. */
+
+  const lastEditorBodyRef = useRef<string | null>(null);
+
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        // Server contract is a plain {{ref:ID}}-tokenized string —
+        // every mark/block that can't serialize to it is DISABLED.
+        // Survivors: document, paragraph, text, undoRedo (⌘Z),
+        // dropcursor/gapcursor (cosmetic).
+        blockquote: false,
+        bold: false,
+        bulletList: false,
+        code: false,
+        codeBlock: false,
+        hardBreak: false,
+        heading: false,
+        horizontalRule: false,
+        italic: false,
+        link: false,
+        listItem: false,
+        listKeymap: false,
+        orderedList: false,
+        strike: false,
+        trailingNode: false,
+        underline: false,
+      }),
+      RefChip,
+    ],
+    content: parseBodyToDoc(
+      useAppState.getState().writingDrafts[activeDocId ?? '']?.body ?? ''),
+    editorProps: {
+      attributes: { spellcheck: 'false' },
+      // '@' at the caret → ReferencePickerModal (mock2). We don't
+      // block the keystroke: the literal '@' lands in the doc (and
+      // STAYS there if the picker is cancelled — same semantics as
+      // the old textarea); on confirm the chip replaces it. The
+      // setTimeout lets the char insert before the modal mounts.
+      handleKeyDown: (view, event) => {
+        if (event.key === '@' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+          const pmPos = view.state.selection.from;
+          window.setTimeout(() => setPicker({ pmPos, replaceAt: true }), 0);
+        }
+        return false;
+      },
+    },
+    onCreate: ({ editor: ed }) => {
+      lastEditorBodyRef.current = serializePmDoc(ed.state.doc);
+    },
+    // Serialize on EVERY update (throttled to onUpdate itself — docs
+    // are small; the 1.5 s autosave debounce does the real batching)
+    // so draft.body in the store is always the exact wire string.
+    onUpdate: ({ editor: ed }) => {
+      const body = serializePmDoc(ed.state.doc);
+      lastEditorBodyRef.current = body;
+      const st = useAppState.getState();
+      if (!activeDocId || st.activeWritingDocId !== activeDocId) return;
+      const prev = st.writingDrafts[activeDocId];
+      if (prev?.body !== body) {
+        st.setWritingDraft(activeDocId, { title: prev?.title ?? '', body });
+      }
+    },
+    onSelectionUpdate: ({ editor: ed }) => {
+      const { from, to } = ed.state.selection;
+      const start = pmPosToOffset(ed.state.doc, from);
+      const selected = ed.state.doc.textBetween(from, to, '\n', refChipLeafText);
+      setSel({ start, end: start + selected.length });
+    },
+  }, [activeDocId]);
+
+  /** Replace the editor doc from a serialized body string, OUTSIDE
+   *  undo history (hydrations aren't medic edits — snapshots are the
+   *  revert path). Optional caret as a string offset. */
+  const applyBodyToEditor = useCallback(
+    (ed: Editor, body: string, caretOffset?: number) => {
+      lastEditorBodyRef.current = body;
+      const newDoc = ed.schema.nodeFromJSON(parseBodyToDoc(body));
+      const tr = ed.state.tr
+        .replaceWith(0, ed.state.doc.content.size, newDoc.content)
+        .setMeta('addToHistory', false);
+      ed.view.dispatch(tr);
+      if (caretOffset !== undefined) {
+        ed.commands.setTextSelection(Math.min(
+          offsetToPmPos(ed.state.doc, caretOffset),
+          Math.max(ed.state.doc.content.size - 1, 1),
+        ));
+      }
+    }, []);
+
+  // Store draft changed under the editor (doc fetch landed, snapshot
+  // restored) → rehydrate. No-op while typing: onUpdate already set
+  // lastEditorBodyRef to the same string it wrote to the store.
+  const draftBodyForSync = draft?.body;
+  useEffect(() => {
+    if (!editor || editor.isDestroyed || draftBodyForSync === undefined) return;
+    if (lastEditorBodyRef.current === draftBodyForSync) return;
+    applyBodyToEditor(editor, draftBodyForSync);
+  }, [editor, draftBodyForSync, applyBodyToEditor]);
 
   /* ── doc list ─────────────────────────────────────────────── */
 
@@ -309,47 +488,40 @@ export function WritingStudio() {
   }
 
   /* ── @ trigger + reference insert ─────────────────────────── */
-
-  function onBodyChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    const el = e.target;
-    const v = el.value;
-    const pos = el.selectionStart ?? v.length;
-    const prev = draft?.body ?? '';
-    // Open the picker when the single char just typed is '@' (cheap
-    // heuristic: length grew by exactly 1 and the char before the
-    // caret is '@'). The '@' stays in the body until an insert
-    // replaces it — cancelling the picker keeps the literal '@'.
-    if (activeDocId && v.length === prev.length + 1 && pos > 0 && v[pos - 1] === '@') {
-      setPicker({ pos: pos - 1, replaceAt: true });
-    }
-    setDraftBody(v);
-  }
+  // The '@' keydown trigger itself lives in the editor's
+  // handleKeyDown (see useEditor above).
 
   function openPickerFromToolbar() {
-    if (!activeDocId) return;
-    const el = textareaRef.current;
-    const pos = el ? (el.selectionStart ?? (draft?.body.length ?? 0)) : (draft?.body.length ?? 0);
-    setPicker({ pos, replaceAt: false });
+    if (!activeDocId || !editor) return;
+    setPicker({ pmPos: editor.state.selection.from, replaceAt: false });
   }
 
   function onReferenceInserted(ref: WritingReference) {
-    if (!activeDocId || !picker || draft === undefined) { setPicker(null); return; }
-    const token = `{{ref:${ref.refId}}}`;
-    const body = draft.body;
-    const start = Math.min(picker.pos, body.length);
-    const end = picker.replaceAt ? Math.min(start + 1, body.length) : start;
-    const newBody = body.slice(0, start) + token + body.slice(end);
-    setDraftBody(newBody);
+    if (!activeDocId || !picker || !editor || editor.isDestroyed) {
+      setPicker(null);
+      return;
+    }
+    const max = editor.state.doc.content.size;
+    const pos = Math.max(1, Math.min(picker.pmPos, Math.max(max - 1, 1)));
+    // Replace the typed '@' only if it is still there (defensive —
+    // the picker is modal, but don't eat an arbitrary char).
+    const replaceAt = picker.replaceAt
+      && pos + 1 <= max
+      && editor.state.doc.textBetween(pos, pos + 1) === '@';
+    // One chained transaction = ONE history step: ⌘Z removes the chip
+    // (and restores the '@' it replaced). Caret lands after the chip.
+    editor
+      .chain()
+      .focus()
+      .insertContentAt(
+        replaceAt ? { from: pos, to: pos + 1 } : pos,
+        { type: RefChip.name, attrs: { refId: ref.refId } },
+      )
+      .run();
     setReferences((rs) => [...rs, ref]);
     setDocs((ds) => ds.map((d) => d.id === activeDocId
       ? { ...d, refCount: d.refCount + 1 } : d));
     setPicker(null);
-    // Put the caret right after the inserted token.
-    const caret = start + token.length;
-    window.setTimeout(() => {
-      const el = textareaRef.current;
-      if (el) { el.focus(); el.setSelectionRange(caret, caret); }
-    }, 0);
   }
 
   /* ── polish ───────────────────────────────────────────────── */
@@ -423,6 +595,12 @@ export function WritingStudio() {
     }
     const newBody = body.slice(0, start) + merged + body.slice(end);
     const newDraft = { title: draft.title, body: newBody };
+    // Rehydrate the editor from the spliced string FIRST (sets
+    // lastEditorBodyRef so the sync effect no-ops) with the caret at
+    // the end of the merged region, then persist the draft.
+    if (editor && !editor.isDestroyed) {
+      applyBodyToEditor(editor, newBody, start + merged.length);
+    }
     setDraftBody(newBody);
     setPolish(null);
     const docId = activeDocId;
@@ -553,23 +731,30 @@ export function WritingStudio() {
               {previewMode ? (
                 <PreviewBody body={draft.body} references={references} />
               ) : (
-                <textarea
-                  ref={textareaRef}
-                  value={draft.body}
-                  onChange={onBodyChange}
-                  onSelect={(e) => {
-                    const el = e.target as HTMLTextAreaElement;
-                    setSel({
-                      start: el.selectionStart ?? 0,
-                      end:   el.selectionEnd ?? 0,
-                    });
-                  }}
-                  placeholder={t('writing.editor.bodyPlaceholder')}
-                  spellCheck={false}
-                  className="min-h-[280px] w-full flex-1 resize-none bg-transparent py-4
-                             font-mono text-[13.5px] leading-7 text-rw-t1 outline-none
-                             placeholder:text-rw-t4"
-                />
+                <div className="relative min-h-[280px] w-full flex-1">
+                  {/* TipTap ships no placeholder in starter-kit v3 —
+                      a pointer-transparent overlay is enough here. */}
+                  {draft.body === '' && (
+                    <div
+                      aria-hidden
+                      className="pointer-events-none absolute left-0 top-4 font-mono
+                                 text-[13.5px] leading-7 text-rw-t4"
+                    >
+                      {t('writing.editor.bodyPlaceholder')}
+                    </div>
+                  )}
+                  <RefChipProvider references={references}>
+                    <EditorContent
+                      editor={editor}
+                      className="h-full w-full
+                                 [&_.ProseMirror]:min-h-[280px] [&_.ProseMirror]:w-full
+                                 [&_.ProseMirror]:bg-transparent [&_.ProseMirror]:py-4
+                                 [&_.ProseMirror]:font-mono [&_.ProseMirror]:text-[13.5px]
+                                 [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-rw-t1
+                                 [&_.ProseMirror]:outline-none [&_.ProseMirror_p]:m-0"
+                    />
+                  </RefChipProvider>
+                </div>
               )}
 
               {/* polish toolbar — activates on non-empty selection */}

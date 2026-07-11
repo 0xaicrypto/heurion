@@ -842,4 +842,7 @@ export const zh: Dict = {
   'skills.discover.installFailed': '安装失败：{error}',
   'skills.discover.unavailable':   '搜索暂不可用 — 请检查网络连接后重试。',
   'skills.discover.error':         '搜索失败：{error}',
+
+  // Writing Studio — TipTap 编辑器（P2）。新键统一追加在字典末尾。
+  'writing.chip.deidentified':     '已脱敏',
 };
