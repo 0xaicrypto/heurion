@@ -13,7 +13,7 @@ import * as Popover from '@radix-ui/react-popover';
 import {
   Search, X, LogOut, Sun, Moon, User, Settings as SettingsIcon,
   Send, Mail, AlertTriangle, CheckCircle, Globe,
-  CheckCircle2, AlertCircle, Info,
+  CheckCircle2, AlertCircle, Info, Zap,
 } from 'lucide-react';
 import { Button, Input, Chip } from './ui';
 import { useAppState } from '../store';
@@ -438,6 +438,8 @@ export function AccountMenu({ trigger }: { trigger: ReactNode }) {
   // server independently enforces role=admin on every admin endpoint.
   const role           = useAppState((s) => s.role);
   const openAdminUsers = useAppState((s) => s.openAdminUsersOverlay);
+  // F-skills — 技能与插件 manager entry (all users, not admin-gated).
+  const openSkillsManager = useAppState((s) => s.openSkillsManager);
   const locale      = useAppState((s) => s.locale);
   const setLocale   = useAppState((s) => s.setLocale);
   // Toggle between the two supported locales. We pick the OTHER locale
@@ -479,6 +481,11 @@ export function AccountMenu({ trigger }: { trigger: ReactNode }) {
             icon={<User size={14} />}
             label={t('account.hasLearned')}
             onClick={openPractitioner}
+          />
+          <MenuRow
+            icon={<Zap size={14} />}
+            label={t('account.skills')}
+            onClick={openSkillsManager}
           />
           {role === 'admin' && (
             <MenuRow

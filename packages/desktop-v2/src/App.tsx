@@ -6,6 +6,7 @@ import { useGlobalShortcuts } from './lib/keyboard';
 import { GlobalHeader, PatientsSidebar, ModeTabs } from './components/layout';
 import { CommandPalette, NewPatientDialog, ToastStrip, EmailComposerDialog } from './components/overlays';
 import { AdminUsersView } from './components/admin-users';
+import { SkillsManagerModal } from './components/skills-manager';
 import { ContextRailContent } from './components/memory-ui';
 import {
   PractitionerHasLearnedView,
@@ -162,13 +163,20 @@ function WorkspaceBody() {
 function MainShell() {
   const token            = useAppState((s) => s.token);
   const refreshLlmStatus = useAppState((s) => s.refreshLlmStatus);
+  const refreshSkills    = useAppState((s) => s.refreshSkills);
 
   // Probe the LLM settings once we have a token. This is the "on
   // startup, if there's no API key, remind the user" hook the medic
   // asked for. Re-probe whenever the token changes (sign-in flow).
+  // F-skills — hydrate the installed-skills cache in the same pass so
+  // the composer's "/" menu is instant. Token changes on identity
+  // switch too, so the new user's list replaces the (cleared) cache.
   useEffect(() => {
-    if (token) refreshLlmStatus();
-  }, [token, refreshLlmStatus]);
+    if (token) {
+      refreshLlmStatus();
+      void refreshSkills();
+    }
+  }, [token, refreshLlmStatus, refreshSkills]);
 
   return (
     <div className="flex h-screen flex-col bg-bg text-text-primary">
@@ -185,6 +193,9 @@ function MainShell() {
       <PractitionerHasLearnedView />
       <SettingsDataView />
       <EmailComposerDialog />
+      {/* F-skills — 技能与插件 manager (all users; opened from the
+          AccountMenu entry or the composer "/" menu's manage row). */}
+      <SkillsManagerModal />
       {/* Admin-only user management (renders null unless role==='admin') */}
       <AdminUsersView />
       <ToastStrip />

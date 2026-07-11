@@ -871,6 +871,7 @@ async def yield_t3_llm(
     attachment_images: Optional[list[tuple[str, str, bytes]]] = None,
     research_scope: Optional[dict] = None,
     session_id: Optional[str] = None,
+    skills_block: str = "",
 ) -> AsyncIterator[RetrievalChunk]:
     """T3 — real LLM-grounded answer.
 
@@ -1212,6 +1213,14 @@ async def yield_t3_llm(
             + external_block + persona_extension
         )
 
+    # ── ACTIVE SKILLS (per-user skills management) ───────────────────
+    # Composed by skills_router.build_skills_block: explicit "/" skill
+    # invocations from the composer + every enabled auto_apply skill.
+    # Appended LAST so skill instructions can override tone/format
+    # defaults without touching the safety rules above.
+    if skills_block:
+        system_prompt += "\n\n" + skills_block
+
     answer_buf: list[str] = []   # accumulates full answer for citation extraction
     try:
         if attachment_images:
@@ -1445,6 +1454,7 @@ async def yield_t4_web(
     patient_hash: Optional[str],
     question: str,
     session_id: Optional[str] = None,
+    skills_block: str = "",
 ) -> AsyncIterator[RetrievalChunk]:
     """T4 — web-grounded clinical answer.
 
@@ -1486,7 +1496,7 @@ async def yield_t4_web(
         )
         async for chunk in yield_t3_llm(
             conn, user_id=user_id, patient_hash=patient_hash,
-            question=question,
+            question=question, skills_block=skills_block,
         ):
             yield chunk
         return
@@ -1626,6 +1636,10 @@ async def yield_t4_web(
     if insights_block:
         system_prompt += "\n\n" + insights_block
 
+    # ACTIVE SKILLS — same wire as the T3 path (see yield_t3_llm).
+    if skills_block:
+        system_prompt += "\n\n" + skills_block
+
     # Stream the LLM answer. Same gateway as T3 — text-only since web
     # results have no image attachments.
     answer_buf: list[str] = []
@@ -1734,6 +1748,8 @@ async def retrieve_async(
     attachment_images: Optional[list[tuple[str, str, bytes]]] = None,
     research_scope: Optional[dict] = None,
     session_id: Optional[str] = None,
+    skills_block: str = "",
+    force_t3: bool = False,
 ) -> AsyncIterator[RetrievalChunk]:
     """Async retrieval dispatcher.
 
@@ -1764,6 +1780,7 @@ async def retrieve_async(
             question=question, attachment_images=attachment_images,
             research_scope=research_scope,
             session_id=session_id,
+            skills_block=skills_block,
         ):
             yield chunk
         return
@@ -1777,6 +1794,19 @@ async def retrieve_async(
             question=question, attachment_images=None,
             research_scope=research_scope,
             session_id=session_id,
+            skills_block=skills_block,
+        ):
+            yield chunk
+        return
+
+    # Explicit skill invocation forces the LLM path: a "/" skill from
+    # the composer must always reach the model, never a T1/T2 template
+    # short-circuit (those never see the system prompt).
+    if force_t3:
+        async for chunk in yield_t3_llm(
+            conn, user_id=user_id, patient_hash=patient_hash,
+            question=question, session_id=session_id,
+            skills_block=skills_block,
         ):
             yield chunk
         return
@@ -1798,12 +1828,12 @@ async def retrieve_async(
     elif choice.tier == Tier.T4:
         async for chunk in yield_t4_web(
             conn, user_id=user_id, patient_hash=patient_hash, question=question,
-            session_id=session_id,
+            session_id=session_id, skills_block=skills_block,
         ):
             yield chunk
     else:
         async for chunk in yield_t3_llm(
             conn, user_id=user_id, patient_hash=patient_hash, question=question,
-            session_id=session_id,
+            session_id=session_id, skills_block=skills_block,
         ):
             yield chunk

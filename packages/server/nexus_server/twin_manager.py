@@ -462,6 +462,20 @@ async def _create_twin(user_id: str):
             logger.warning(
                 "%s tools not registered for %s: %s", label, user_id, e,
             )
+
+    # ── Skill enabled/disabled overlay (skills_router prefs) ─────────
+    # Twin's SkillManager loads EVERYTHING on disk at construction; the
+    # user may have disabled some skills via POST /skills/{name}/toggle.
+    # Drop those from the in-memory cache so the legacy /llm/chat
+    # system prompt (twin.skills.get_prompt_context) never includes
+    # them. Files stay on disk — re-enable reloads without reinstall.
+    try:
+        from nexus_server.skills_router import apply_disabled_overlay
+        apply_disabled_overlay(twin, user_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "skill prefs overlay not applied for %s: %s", user_id, e,
+        )
     return twin
 
 

@@ -1501,6 +1501,9 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
   // row above the composer (single error style, UI_UX_REVIEW §3).
   const [sendError, setSendError] = useState<string | null>(null);
   const [roster, setRoster]       = useState<Array<{patient_hash: string; enrollment_seq: number}>>([]);
+  // F-skills — skills picked from the composer's "/" menu; applied to
+  // the next turn only, then cleared on send.
+  const [skills, setSkills]       = useState<string[]>([]);
 
   // Session ID = study scoped. Different studies have different chats.
   const sessionId = useMemo(() => `research-${studyId}`, [studyId]);
@@ -1644,13 +1647,16 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
       role: 'user', text, attachedFileNames: stagedNames,
     };
     setMessages((m) => [...m, userMsg, { role: 'agent', text: '', streaming: true }]);
+    // F-skills — one-turn application; clear the chips on send.
+    const turnSkills = skills;
+    setSkills([]);
 
     try {
       for await (const chunk of api.sendChat(text, sessionId, focus, fileIds, {
         kind: 'research',
         studyId,
         focusPatientHash: focus,
-      })) {
+      }, undefined, { skills: turnSkills })) {
         // Canonical SSE shape uses `type` discriminator (see
         // ChatStreamChunk in lib/types.ts). Two extra payloads the
         // research scope carries that aren't in the public union yet:
@@ -1821,6 +1827,8 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
           onPickFiles={acceptFiles}
           error={sendError}
           onDismissError={() => setSendError(null)}
+          selectedSkills={skills}
+          onSkillsChange={setSkills}
           above={
             <>
               {focus && (
@@ -2843,6 +2851,9 @@ function CrossResearchChat() {
   const [busy, setBusy] = useState(false);
   // F-unified-chat — inline alert row above the composer (§3).
   const [sendError, setSendError] = useState<string | null>(null);
+  // F-skills — skills picked from the composer's "/" menu; applied to
+  // the next turn only, then cleared on send.
+  const [skills, setSkills] = useState<string[]>([]);
 
   // Per-user, persistent across study selections. Sticking a fixed
   // session id means the cross-research chat history is recoverable
@@ -3075,12 +3086,15 @@ function CrossResearchChat() {
       { role: 'user', text, attachedFileNames: stagedNames },
       { role: 'agent', text: '', streaming: true },
     ]);
+    // F-skills — one-turn application; clear the chips on send.
+    const turnSkills = skills;
+    setSkills([]);
     try {
       for await (const chunk of api.sendChat(text, sessionId, null, fileIds, {
         kind:  'research',
         // Intentionally no studyId — that's what makes this "cross".
         focusPatientHash: null,
-      })) {
+      }, undefined, { skills: turnSkills })) {
         if (chunk.type === 'final_answer_chunk' && chunk.text) {
           setMessages((m) => {
             const next = m.slice();
@@ -3222,6 +3236,8 @@ function CrossResearchChat() {
           onPickFiles={acceptFiles}
           error={sendError}
           onDismissError={() => setSendError(null)}
+          selectedSkills={skills}
+          onSkillsChange={setSkills}
           above={
             <>
               {/* F-unified-chat-files — workspace-wide cross-research lib */}

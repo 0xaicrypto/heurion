@@ -592,6 +592,45 @@ def init_db() -> None:
         "ON doc_snapshots(user_id, doc_id, id DESC)"
     )
 
+    # ── user_skill_prefs (skills management API) ────────────────────
+    # Per-user enabled/disabled + auto_apply overlay on installed
+    # skills. The skills themselves live on disk under the user's twin
+    # dir ({TWIN_BASE_DIR}/{user_id}/skills/); this table only carries
+    # preferences, so dropping a row falls back to the default
+    # (installed ⇒ enabled, auto_apply off). ``source`` records where
+    # the install came from ('official' | 'github' | 'local') for the
+    # desktop's skills panel. See skills_router.py.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_skill_prefs (
+            user_id    TEXT NOT NULL,
+            skill_name TEXT NOT NULL,
+            enabled    INTEGER NOT NULL DEFAULT 1,
+            auto_apply INTEGER NOT NULL DEFAULT 0,
+            source     TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, skill_name)
+        )
+        """
+    )
+    # Idempotent column backfill for tables created before auto_apply /
+    # source existed (mirrors the guard in skills_router._ensure_schema).
+    skill_pref_cols = {
+        r[1] for r in cursor.execute(
+            "PRAGMA table_info(user_skill_prefs)"
+        ).fetchall()
+    }
+    if "auto_apply" not in skill_pref_cols:
+        cursor.execute(
+            "ALTER TABLE user_skill_prefs "
+            "ADD COLUMN auto_apply INTEGER NOT NULL DEFAULT 0"
+        )
+    if "source" not in skill_pref_cols:
+        cursor.execute(
+            "ALTER TABLE user_skill_prefs "
+            "ADD COLUMN source TEXT NOT NULL DEFAULT ''"
+        )
+
     conn.commit()
     conn.close()
     logger.info("Database initialized")

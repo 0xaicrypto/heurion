@@ -795,6 +795,15 @@ def create_app() -> FastAPI:
     # docs/design/WRITING_STUDIO_DESIGN.docx.
     from nexus_server import writing_router as _writing_router
     app.include_router(_writing_router.router)
+    # Skills management — /api/v1/skills: list / search / install /
+    # uninstall / toggle. Skills live in the user's twin dir
+    # ({TWIN_BASE_DIR}/{user_id}/skills/); enabled/auto_apply prefs in
+    # user_skill_prefs. Enabled skills flow into BOTH chat paths — the
+    # v2 tiered chat via skills_router.build_skills_block (see
+    # chat_router) and the legacy twin path via the live-twin cache
+    # sync + apply_disabled_overlay in twin_manager.
+    from nexus_server import skills_router as _skills_router
+    app.include_router(_skills_router.router)
 
     # #143 — serve the Cornerstone3D viewer.html as a static page.
     # Desktop launches the user's default browser at

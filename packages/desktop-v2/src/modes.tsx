@@ -186,6 +186,9 @@ function CrossPatientChat() {
   const [answer, setAnswer]       = useState('');
   const [busy, setBusy]           = useState(false);
   const [err, setErr]             = useState<string | null>(null);
+  // F-skills — skills picked from the composer's "/" menu; applied to
+  // the next turn only, then cleared.
+  const [skills, setSkills]       = useState<string[]>([]);
 
   // Use a long-lived session for the Today bar so follow-ups stick
   // (medic asks "and that patient's last CT?" expecting context).
@@ -206,9 +209,15 @@ function CrossPatientChat() {
     setErr(null);
     setAnswer('');
     setBusy(true);
+    // F-skills — one-turn application; clear the chips on send.
+    const turnSkills = skills;
+    setSkills([]);
     try {
       // patient_hash=null → cross-patient (cohort) scope on the backend.
-      for await (const chunk of api.sendChat(text, sessionId, null)) {
+      for await (const chunk of api.sendChat(
+        text, sessionId, null, [], undefined, undefined,
+        { skills: turnSkills },
+      )) {
         // chat_router_v2 SSE shape: `type` discriminator + payload fields
         // (see ChatStreamChunk in lib/types.ts and chat_router_v2.py).
         // We only render the assembled text here; tier/citation metadata
@@ -250,6 +259,8 @@ function CrossPatientChat() {
         placeholder={t('today.askPlaceholder')}
         error={err}
         onDismissError={() => setErr(null)}
+        selectedSkills={skills}
+        onSkillsChange={setSkills}
       />
 
       {(answer || busy) && (
@@ -944,6 +955,10 @@ export function EncounterMode() {
     [storeSetAttachments, effectiveSessionId],
   );
 
+  // F-skills — skills picked from the composer's "/" menu; applied to
+  // the next turn only, then cleared on send.
+  const [skills, setSkills] = useState<string[]>([]);
+
   // F-chat-state-persist — read msgs + streaming for THIS session.
   // Both come from the zustand store keyed by sessionId, so when the
   // medic returns to a tab whose stream is still in flight, the
@@ -1143,6 +1158,9 @@ export function EncounterMode() {
     const userText = draft;
     setDraft('');
     setAttachments([]);
+    // F-skills — one-turn application; clear the chips on send.
+    const turnSkills = skills;
+    setSkills([]);
     const sid = effectiveSessionId;
     // A fresh send clears the previous inline error for this thread.
     setChatError(sid, null);
@@ -1178,6 +1196,7 @@ export function EncounterMode() {
         userText, effectiveSessionId, p!.patientHash, fileIds,
         undefined,        // scope (none for patient-bound chat)
         ctrl.signal,
+        { skills: turnSkills },
       )) {
         switch (chunk.type) {
           case 'tier_classified':
@@ -1751,6 +1770,8 @@ export function EncounterMode() {
           onPickFiles={acceptFiles}
           error={chatError}
           onDismissError={() => setChatError(effectiveSessionId, null)}
+          selectedSkills={skills}
+          onSkillsChange={setSkills}
         />
       </div>
     </div>

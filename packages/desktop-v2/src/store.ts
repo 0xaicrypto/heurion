@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { ModeKind, PatientCard, StudySummary, Workspace } from './lib/util';
 // (MOCK_PATIENTS no longer imported — initial state is empty list,
 // real data comes from refreshPatients() after login.)
-import { api, type Identity } from './lib/api-client';
+import { api, type Identity, type Skill } from './lib/api-client';
 import type { ChatMsg, LlmStatus } from './lib/types';
 import {
   readStoredLocale,
@@ -242,6 +242,20 @@ interface AppState {
    *  (backward-compatible with the old single-slot signature). */
   dismissToast: (id?: number) => void;
 
+  // F-skills — installed skills cache. Hydrated once after login
+  // (MainShell effect, next to refreshLlmStatus) and after every
+  // install / uninstall / toggle in the manager, so the composer's
+  // "/" menu reads from memory instantly instead of fetching on
+  // every keystroke. Cleared on logout / identity switch.
+  skills: Skill[];
+  skillsLoaded: boolean;
+  refreshSkills: () => Promise<void>;
+  // Skills & plugins manager modal — opened from the "/" menu's
+  // 管理技能与插件… row and from the AccountMenu entry.
+  skillsManagerOpen: boolean;
+  openSkillsManager: () => void;
+  closeSkillsManager: () => void;
+
   // UI_UX_REVIEW_2026-07 §3 — unified chat error surface.
   // Per-session send/stream error, keyed like chatMsgsBySession.
   // Errors used to be spliced into the message text ("[error: …]");
@@ -469,6 +483,11 @@ export const useAppState = create<AppState>((set, get) => ({
       // Writing Studio — docs belong to the outgoing identity.
       activeWritingDocId: null,
       writingDrafts:      {},
+      // F-skills — installed skills are per-user; drop the cache so
+      // the incoming identity's list is fetched fresh.
+      skills:            [],
+      skillsLoaded:      false,
+      skillsManagerOpen: false,
     });
   },
 
@@ -506,6 +525,10 @@ export const useAppState = create<AppState>((set, get) => ({
       // Writing Studio — see resetForIdentitySwitch.
       activeWritingDocId: null,
       writingDrafts:      {},
+      // F-skills — see resetForIdentitySwitch.
+      skills:            [],
+      skillsLoaded:      false,
+      skillsManagerOpen: false,
     });
   },
 
@@ -825,6 +848,24 @@ export const useAppState = create<AppState>((set, get) => ({
     set((s) => ({
       toasts: id === undefined ? [] : s.toasts.filter((t) => t.id !== id),
     })),
+
+  // F-skills — see interface block.
+  skills: [],
+  skillsLoaded: false,
+  refreshSkills: async () => {
+    try {
+      const list = await api.listSkills();
+      set({ skills: list, skillsLoaded: true });
+    } catch (e) {
+      // Older sidecars don't have /api/v1/skills yet — mark loaded so
+      // the "/" menu shows its empty state instead of a spinner.
+      console.warn('refreshSkills failed', e);
+      set({ skillsLoaded: true });
+    }
+  },
+  skillsManagerOpen: false,
+  openSkillsManager: () => set({ skillsManagerOpen: true }),
+  closeSkillsManager: () => set({ skillsManagerOpen: false }),
 
   // UI_UX_REVIEW_2026-07 §3 — see interface block.
   chatErrorBySession: {},

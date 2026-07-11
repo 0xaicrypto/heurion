@@ -74,6 +74,13 @@ class ChatRequest(BaseModel):
     # Research Workspace scope (optional). When omitted, the existing
     # patient-scope semantics apply.
     scope: Optional[ChatScope] = None
+    # Explicit per-message skill invocation (the "/" menu in the
+    # composer). Each name must be an installed + enabled skill for
+    # this user — unknown / disabled names are silently dropped.
+    # Independent of this list, skills flagged auto_apply=1 in
+    # user_skill_prefs are injected on EVERY v2 turn. See
+    # skills_router.build_skills_block.
+    skills: list[str] = []
 
 
 def _sse(event: dict) -> str:
@@ -311,6 +318,34 @@ async def chat(
                     "focus_patient_hash": req.scope.focus_patient_hash or "",
                 })
 
+            # 1.7 — Skills injection (per-user skills management).
+            # Compose the ACTIVE SKILLS system-prompt block: explicit
+            # "/" invocations from req.skills (installed+enabled only;
+            # others silently dropped) + every enabled auto_apply
+            # skill. When an explicit invocation resolved, force the
+            # T3 LLM path so the skill always reaches the model
+            # (T1/T2 template answers never see the system prompt).
+            skills_block = ""
+            applied_skills: list[str] = []
+            force_t3 = False
+            try:
+                from nexus_server.skills_router import build_skills_block
+                skills_block, applied_skills = build_skills_block(
+                    current_user, req.skills or [],
+                )
+                force_t3 = bool(
+                    set(req.skills or []) & set(applied_skills)
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "skills block build failed (non-fatal): %s", exc,
+                )
+            if applied_skills:
+                yield _sse({
+                    "type": "skills_applied",
+                    "skills": applied_skills,
+                })
+
             # 2. Run retrieval — yields RetrievalChunk events
             collected_answer: list[str] = []
             collected_refs: list[dict] = []
@@ -325,6 +360,8 @@ async def chat(
                 attachment_images=attachment_images,
                 research_scope=research_scope_dict,
                 session_id=req.session_id,
+                skills_block=skills_block,
+                force_t3=force_t3,
             ):
                 if chunk.kind == "final_answer_chunk":
                     collected_answer.append(chunk.data.get("text", ""))

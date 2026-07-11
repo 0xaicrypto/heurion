@@ -1946,6 +1946,78 @@ class _ApiClient {
     };
   }
 
+  /* ────────────────────── skills / plugins ─────────────────────── */
+
+  /** GET /api/v1/skills — every skill installed for this user. */
+  async listSkills(): Promise<Skill[]> {
+    interface RawSkill {
+      name: string; description: string; source: string;
+      enabled: boolean; installed_at: string; invocable: boolean;
+    }
+    const r = await this.fetch<{ skills: RawSkill[] }>('/api/v1/skills');
+    return (r.skills ?? []).map((s) => ({
+      name:        s.name,
+      description: s.description,
+      source:      s.source,
+      enabled:     s.enabled,
+      installedAt: s.installed_at,
+      invocable:   s.invocable,
+    }));
+  }
+
+  /** GET /api/v1/skills/search — discover installable skills.
+   *  Throws ApiError with ``code === 'search_unavailable'`` (502) when
+   *  the upstream registry / GitHub is unreachable. */
+  async searchSkills(
+    q: string,
+    source?: 'official' | 'github',
+  ): Promise<SkillSearchResult[]> {
+    interface RawResult {
+      identifier: string; name: string; description: string;
+      source: string; installed: boolean;
+    }
+    const qs = new URLSearchParams({ q });
+    if (source) qs.set('source', source);
+    const r = await this.fetch<{ results: RawResult[] }>(
+      `/api/v1/skills/search?${qs.toString()}`,
+    );
+    return (r.results ?? []).map((x) => ({
+      identifier:  x.identifier,
+      name:        x.name,
+      description: x.description,
+      source:      x.source,
+      installed:   x.installed,
+    }));
+  }
+
+  /** POST /api/v1/skills/install — 409 ``already_installed`` when the
+   *  skill is already present (callers may treat that as success). */
+  async installSkill(
+    identifier: string,
+  ): Promise<{ ok: boolean; skill: { name: string; description: string } }> {
+    return this.fetch<{ ok: boolean; skill: { name: string; description: string } }>(
+      '/api/v1/skills/install',
+      { method: 'POST', body: JSON.stringify({ identifier }) },
+    );
+  }
+
+  /** DELETE /api/v1/skills/{name}. */
+  async uninstallSkill(name: string): Promise<void> {
+    await this.fetch<{ ok: boolean }>(
+      `/api/v1/skills/${encodeURIComponent(name)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  /** POST /api/v1/skills/{name}/toggle → the effective enabled state. */
+  async toggleSkill(name: string, enabled: boolean): Promise<boolean> {
+    const r = await this.fetch<{ ok: boolean; enabled: boolean }>(
+      `/api/v1/skills/${encodeURIComponent(name)}/toggle`,
+      { method: 'POST', body: JSON.stringify({ enabled }) },
+    );
+    return r.enabled;
+  }
+
   /* ────────────────────────── chat (SSE) ────────────────────────── */
 
   /**
@@ -1980,6 +2052,13 @@ class _ApiClient {
      * unreachable".
      */
     abortSignal?: AbortSignal,
+    /**
+     * F-skills — per-turn request options. ``skills`` carries the names
+     * the medic picked from the composer's "/" menu; the v2 chat router
+     * loads those skills for this turn (unknown fields are dropped
+     * safely by older servers).
+     */
+    opts?: { skills?: string[] },
   ): AsyncIterable<ChatStreamChunk> {
     const r = await fetch(`${baseUrl}/api/v1/agent/chat`, {
       method: 'POST',
@@ -1992,6 +2071,9 @@ class _ApiClient {
           study_id: scope.studyId ?? null,
           focus_patient_hash: scope.focusPatientHash ?? null,
         } : undefined,
+        skills: opts?.skills && opts.skills.length > 0
+          ? opts.skills
+          : undefined,
       }),
       signal: abortSignal,
     });
@@ -3120,6 +3202,34 @@ export interface WritingPhiResolution {
   end: number;
   action: 'replace' | 'ignore';
   replacement?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Skills / plugins types — wire shapes for /api/v1/skills*.
+// ─────────────────────────────────────────────────────────────────────
+
+/** One installed skill as returned by ``GET /api/v1/skills``. */
+export interface Skill {
+  name:        string;
+  description: string;
+  /** Where the skill came from — 'official', 'github', … */
+  source:      string;
+  /** Disabled skills stay installed but are hidden from the "/" menu. */
+  enabled:     boolean;
+  /** ISO-8601 server timestamp. */
+  installedAt: string;
+  /** Whether this skill can be applied to a chat turn. */
+  invocable:   boolean;
+}
+
+/** One row of ``GET /api/v1/skills/search`` (the Discover tab). */
+export interface SkillSearchResult {
+  /** Stable install handle — pass to ``installSkill``. */
+  identifier:  string;
+  name:        string;
+  description: string;
+  source:      string;
+  installed:   boolean;
 }
 
 export const api = new _ApiClient();
