@@ -21,6 +21,7 @@ import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Fragment, useState, type ReactNode, isValidElement, cloneElement } from 'react';
+import { CopyButton } from './copy-button';
 
 /** F-unified-chat-files — minimal file-chip metadata used by ChatMarkdown
  *  to inflate `[F1]` tokens that the LLM emits in answers into a
@@ -210,10 +211,24 @@ export function ChatMarkdown({ text, tone = 'agent', fileMap }: ChatMarkdownProp
             const isBlock = /^language-/.test(className || '')
               || String(children).includes('\n');
             if (isBlock) {
+              // Raw text of the block for the copy button. Children is
+              // normally a single string; join defensively for arrays.
+              const raw = Array.isArray(children)
+                ? children.join('')
+                : String(children ?? '');
               return (
-                <pre className="my-2 overflow-x-auto rounded-md
-                                bg-black/30 p-2 text-[12px] font-mono">
+                <pre className="group relative my-2 overflow-x-auto rounded-md
+                                bg-black/30 p-2 pr-8 text-[12px] font-mono">
                   <code className={className} {...rest}>{children}</code>
+                  {/* Code-block copy — same shared CopyButton as the
+                      per-message one; tone follows the bubble tone. */}
+                  <CopyButton
+                    text={raw}
+                    tone={tone === 'inverse' ? 'rw' : 'base'}
+                    className="absolute right-1 top-1 opacity-0
+                               group-hover:opacity-100 focus-visible:opacity-100
+                               transition-opacity"
+                  />
                 </pre>
               );
             }

@@ -15,6 +15,12 @@ export default {
         bg: 'var(--bg)',
         surface: 'var(--surface)',
         'surface-elevated': 'var(--surface-elevated)',
+        // Aliases — ~15 call sites already use `bg-surface-1` /
+        // `bg-surface-2`, which silently compiled to nothing because
+        // the tokens didn't exist. Map them onto the same CSS vars as
+        // surface / surface-elevated (additive fix; call sites stay).
+        'surface-1': 'var(--surface)',
+        'surface-2': 'var(--surface-elevated)',
         'text-primary': 'var(--text-primary)',
         'text-secondary': 'var(--text-secondary)',
         'text-tertiary': 'var(--text-tertiary)',

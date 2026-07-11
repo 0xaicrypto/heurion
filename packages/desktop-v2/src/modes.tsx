@@ -11,7 +11,9 @@ import { Mail } from 'lucide-react';
 import { useAppState } from './store';
 import { Button, Card, Chip, Section, EmptyState, Input } from './components/ui';
 import { ChatMarkdown, type FileChipRef } from './components/chat-markdown';
+import { CopyButton } from './components/copy-button';
 import { ChatFileChipStrip, useChatFiles } from './components/chat-file-lib';
+import { useAutoScroll } from './lib/use-auto-scroll';
 // F-thinking-uniform — every bubble now uses the wrapper pair
 // (StreamingFooter for the persistent footer, StreamingCursor for
 // the inline blink). The bare ThinkingIndicator is no longer
@@ -231,7 +233,18 @@ function CrossPatientChat() {
       </div>
 
       {(answer || err || busy) && (
-        <Card className="!p-4 !bg-surface">
+        <Card className="!p-4 !bg-surface group relative">
+          {/* Per-message copy — raw markdown, top-right of the answer
+              card, hover-revealed. Hidden while the answer is still
+              streaming (busy). */}
+          {answer && !busy && (
+            <CopyButton
+              text={answer}
+              tone="base"
+              className="absolute right-2 top-2 opacity-0 group-hover:opacity-100
+                         focus-visible:opacity-100 transition-opacity"
+            />
+          )}
           {answer && (
             <div className="text-body text-text-primary">
               <ChatMarkdown text={answer} />
@@ -921,6 +934,12 @@ export function EncounterMode() {
   const sending = useAppState((s) =>
     !!s.chatStreamingBySession[effectiveSessionId]);
 
+  // Keep the list pinned to the latest turn while streaming — but only
+  // when the medic is already near the bottom (see use-auto-scroll.ts).
+  const { containerRef, bottomRef, onScroll } = useAutoScroll(
+    [msgs.length, msgs[msgs.length - 1]?.text],
+  );
+
   // Load chat history whenever the effective session changes — that
   // covers both "medic picked a new session" and "medic switched
   // patients (so the derived default changed)".
@@ -1341,7 +1360,8 @@ export function EncounterMode() {
         </div>
       )}
 
-      <div className="flex-1 space-y-6 overflow-y-auto py-4 selectable">
+      <div ref={containerRef} onScroll={onScroll}
+           className="flex-1 space-y-6 overflow-y-auto py-4 selectable">
         {msgs.length === 0 && (
           <p className="text-center text-caption text-text-tertiary">
             Ask Nexus anything about this patient. The agent uses the
@@ -1350,7 +1370,7 @@ export function EncounterMode() {
           </p>
         )}
         {msgs.map((m, i) => (
-          <div key={i}>
+          <div key={i} className="group relative">
             <div className="mb-1 flex items-baseline gap-2">
               <span className="text-caption font-medium text-text-primary">
                 {m.role === 'user' ? 'You' : 'Nexus'}
@@ -1358,6 +1378,17 @@ export function EncounterMode() {
               <span className="text-caption text-text-tertiary">{m.ts}</span>
               {m.tier && (
                 <TierIndicator tier={m.tier} elapsedMs={m.elapsedMs} />
+              )}
+              {/* Per-message copy — raw markdown, right end of the
+                  role-label row, hover-revealed. Hidden while this
+                  message is still streaming. */}
+              {m.text && !m.streaming && (
+                <CopyButton
+                  text={m.text}
+                  tone="base"
+                  className="ml-auto self-center opacity-0 group-hover:opacity-100
+                             focus-visible:opacity-100 transition-opacity"
+                />
               )}
             </div>
             {m.role === 'agent' && m.reasoning && m.reasoning.length > 0 && (
@@ -1567,6 +1598,9 @@ export function EncounterMode() {
             )}
           </div>
         ))}
+        {/* Auto-scroll anchor — useAutoScroll scrolls this into view
+            when new chunks land AND the medic is near the bottom. */}
+        <div ref={bottomRef} />
       </div>
 
       {/* Composer — paste / drop aware. Drag a file onto the textarea

@@ -21,7 +21,9 @@ import { api } from '../lib/api-client';
 import { useAppState } from '../store';
 import type { StudySummary } from '../lib/util';
 import { ChatMarkdown, type FileChipRef } from './chat-markdown';
+import { CopyButton } from './copy-button';
 import { ChatFileChipStrip, useChatFiles } from './chat-file-lib';
+import { useAutoScroll } from '../lib/use-auto-scroll';
 import { StreamingFooter, StreamingCursor } from './thinking-indicator';
 import { TakeawaysButton } from './takeaways-button';
 
@@ -1425,6 +1427,12 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
   // Session ID = study scoped. Different studies have different chats.
   const sessionId = useMemo(() => `research-${studyId}`, [studyId]);
 
+  // Pin the list to the latest turn while streaming, but only when the
+  // medic is already near the bottom (see lib/use-auto-scroll.ts).
+  const { containerRef, bottomRef, onScroll } = useAutoScroll(
+    [messages.length, messages[messages.length - 1]?.text],
+  );
+
   // Pull a roster snapshot for the 🎯 focus picker.
   useEffect(() => {
     api.getRoster(studyId).then((r) => setRoster(r as never)).catch(console.warn);
@@ -1638,7 +1646,8 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+      <div ref={containerRef} onScroll={onScroll}
+           className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
         {messages.length === 0 && (
           <div className="text-center text-sm text-rw-t3 italic py-10">
             <div className="text-2xl mb-2">💬</div>
@@ -1651,7 +1660,7 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i}>
+          <div key={i} className="group relative">
             <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[78%] rounded-lg px-4 py-2.5 text-sm
                 ${m.role === 'user'
@@ -1669,6 +1678,19 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
                 {m.streaming && m.text && <StreamingCursor tone="rw" />}
               </div>
             </div>
+            {/* Per-message copy — raw markdown, below-right of the
+                bubble on the bubble's side, hover-revealed. Hidden
+                while this message is still streaming. */}
+            {m.text && !m.streaming && (
+              <div className={`mt-0.5 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <CopyButton
+                  text={m.text}
+                  tone="rw"
+                  className="opacity-0 group-hover:opacity-100
+                             focus-visible:opacity-100 transition-opacity"
+                />
+              </div>
+            )}
             {m.role === 'agent' && (
               <StreamingFooter
                 streaming={m.streaming}
@@ -1700,6 +1722,9 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
             )}
           </div>
         ))}
+        {/* Auto-scroll anchor — useAutoScroll scrolls this into view
+            when new chunks land AND the medic is near the bottom. */}
+        <div ref={bottomRef} />
       </div>
 
       <div className="px-6 py-3 border-t border-rw-border">
@@ -2733,6 +2758,12 @@ function CrossResearchChat() {
   // (and SOAPs / earlier turns inform the next answer).
   const sessionId = 'research-workspace-cross';
 
+  // Pin the panel to the latest turn while streaming, but only when
+  // the medic is already near the bottom (see lib/use-auto-scroll.ts).
+  const { containerRef, bottomRef, onScroll } = useAutoScroll(
+    [messages.length, messages[messages.length - 1]?.text],
+  );
+
   // Hydrate from history once on mount. Same pattern as ChatTab and
   // EncounterMode — without this the medic loses every prior cross-
   // research thread when the EmptyState unmounts and remounts.
@@ -3017,12 +3048,13 @@ function CrossResearchChat() {
           </div>
        </div>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto px-6 pt-2 pb-1">
+      <div ref={containerRef} onScroll={onScroll}
+           className="flex-1 min-h-0 overflow-y-auto px-6 pt-2 pb-1">
        <div className="max-w-3xl mx-auto">
         {messages.length > 0 && (
           <div className="space-y-3 mb-3 pr-2">
             {messages.map((m, i) => (
-              <div key={i}>
+              <div key={i} className="group relative">
                 <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm
                     ${m.role === 'user'
@@ -3038,6 +3070,19 @@ function CrossResearchChat() {
                     {m.streaming && m.text && <StreamingCursor tone="rw" />}
                   </div>
                 </div>
+                {/* Per-message copy — raw markdown, below-right of the
+                    bubble on the bubble's side, hover-revealed. Hidden
+                    while this message is still streaming. */}
+                {m.text && !m.streaming && (
+                  <div className={`mt-0.5 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <CopyButton
+                      text={m.text}
+                      tone="rw"
+                      className="opacity-0 group-hover:opacity-100
+                                 focus-visible:opacity-100 transition-opacity"
+                    />
+                  </div>
+                )}
                 {m.role === 'agent' && (
                   <StreamingFooter
                     streaming={m.streaming}
@@ -3065,6 +3110,9 @@ function CrossResearchChat() {
             ))}
           </div>
         )}
+        {/* Auto-scroll anchor — useAutoScroll scrolls this into view
+            when new chunks land AND the medic is near the bottom. */}
+        <div ref={bottomRef} />
        </div>
       </div>
       {/* Composer sticks at the bottom of the panel regardless of how
