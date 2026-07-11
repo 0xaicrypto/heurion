@@ -271,7 +271,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # $RUNE_HOME isn't writable we silently continue with stderr only.
     _crash_dump_path = None
     try:
-        _rune_home = _os.environ.get("RUNE_HOME")
+        # The Tauri sidecar exports RUNE_HOME_EXPORT (same var the log
+        # path resolver uses); plain RUNE_HOME kept as a fallback for
+        # manual runs. Reading only RUNE_HOME here meant the dump never
+        # fired inside the bundle.
+        _rune_home = (_os.environ.get("RUNE_HOME_EXPORT")
+                      or _os.environ.get("RUNE_HOME"))
         if _rune_home:
             _crash_dir = Path(_rune_home) / "logs"
             _crash_dir.mkdir(parents=True, exist_ok=True)
