@@ -262,9 +262,13 @@ async def main_loop(args):
             "gemini": "GEMINI_API_KEY",
             "anthropic": "ANTHROPIC_API_KEY",
             "openai": "OPENAI_API_KEY",
+            "kimi": "KIMI_API_KEY",
         }
         env_var = env_map.get(provider, "GEMINI_API_KEY")
         api_key = _env(env_var, "")
+        if not api_key and provider == "kimi":
+            # Moonshot's own docs use MOONSHOT_API_KEY — accept it too.
+            api_key = _env("MOONSHOT_API_KEY", "")
 
     if not api_key:
         env_var = env_map.get(provider, "GEMINI_API_KEY")
@@ -390,7 +394,7 @@ def cli_main():
     parser.add_argument("--owner", default="", help="Owner name (env: TWIN_OWNER)")
     parser.add_argument("--agent-id", default="", help="Rune agent ID (env: TWIN_AGENT_ID)")
     parser.add_argument(
-        "--provider", default="", choices=["gemini", "openai", "anthropic", ""],
+        "--provider", default="", choices=["gemini", "openai", "anthropic", "kimi", ""],
         help="LLM provider (env: TWIN_LLM_PROVIDER)",
     )
     parser.add_argument("--api-key", default="", help="LLM API key (env: GEMINI_API_KEY)")

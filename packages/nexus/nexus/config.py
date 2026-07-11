@@ -70,6 +70,10 @@ class TwinConfig:
                 self.llm_model = "gemini-2.5-flash"
             elif self.llm_provider == LLMProvider.ANTHROPIC:
                 self.llm_model = "claude-sonnet-4-20250514"
+            elif self.llm_provider == LLMProvider.KIMI:
+                # Moonshot AI Kimi (OpenAI-compatible endpoint).
+                # kimi-k2.7-code-highspeed is the low-latency variant.
+                self.llm_model = "kimi-k2.7-code"
             else:
                 self.llm_model = "gpt-4o"
 

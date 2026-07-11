@@ -59,6 +59,15 @@ class ServerConfig:
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
+    # Moonshot AI Kimi (OpenAI-compatible). KIMI_API_KEY is canonical;
+    # MOONSHOT_API_KEY (Moonshot's own docs) accepted as fallback.
+    KIMI_API_KEY: Optional[str] = (
+        os.getenv("KIMI_API_KEY") or os.getenv("MOONSHOT_API_KEY")
+    )
+    # Endpoint override for Kimi; defaults to Moonshot's public API.
+    KIMI_BASE_URL: str = os.getenv(
+        "KIMI_BASE_URL", "https://api.moonshot.ai/v1"
+    )
 
     # Tool API Keys (for server-side tool execution)
     TAVILY_API_KEY: Optional[str] = os.getenv("TAVILY_API_KEY")
@@ -232,7 +241,8 @@ class ServerConfig:
 
         if not self.GEMINI_API_KEY and \
            not self.OPENAI_API_KEY and \
-           not self.ANTHROPIC_API_KEY:
+           not self.ANTHROPIC_API_KEY and \
+           not self.KIMI_API_KEY:
             import warnings
             warnings.warn(
                 "No LLM API keys configured. LLM endpoints will fail.",

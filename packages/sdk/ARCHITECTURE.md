@@ -20,7 +20,7 @@ nexus_core/
   skills/             # Skill management
     manager.py        #   Install from GitHub, LobeHub Skills, LobeHub MCP
   llm/                # LLM client + provider plumbing
-    client.py         #   LLMClient (Anthropic / OpenAI / Gemini + tool loop)
+    client.py         #   LLMClient (Anthropic / OpenAI / Gemini / Kimi + tool loop)
   core/               # Abstract interfaces
     providers.py      #   StorageBackend + 5-provider AgentRuntime ABCs
     models.py         #   Checkpoint, MemoryEntry, Artifact, Social models

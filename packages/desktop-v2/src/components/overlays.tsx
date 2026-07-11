@@ -433,6 +433,11 @@ export function AccountMenu({ trigger }: { trigger: ReactNode }) {
   const openSettings = useAppState((s) => s.openSettingsOverlay);
   const openCompose  = useAppState((s) => s.openEmailComposer);
   const displayName = useAppState((s) => s.displayName);
+  // Admin-only 用户管理 entry — role comes from the login/register
+  // response (persisted in sessionStorage alongside the JWT). The
+  // server independently enforces role=admin on every admin endpoint.
+  const role           = useAppState((s) => s.role);
+  const openAdminUsers = useAppState((s) => s.openAdminUsersOverlay);
   const locale      = useAppState((s) => s.locale);
   const setLocale   = useAppState((s) => s.setLocale);
   // Toggle between the two supported locales. We pick the OTHER locale
@@ -475,6 +480,14 @@ export function AccountMenu({ trigger }: { trigger: ReactNode }) {
             label={t('account.hasLearned')}
             onClick={openPractitioner}
           />
+          {role === 'admin' && (
+            <MenuRow
+              icon={<SettingsIcon size={14} />}
+              label={t('account.adminUsers')}
+              hint="admin"
+              onClick={openAdminUsers}
+            />
+          )}
           <MenuRow
             icon={theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
             label={theme === 'dark' ? t('account.lightMode') : t('account.darkMode')}

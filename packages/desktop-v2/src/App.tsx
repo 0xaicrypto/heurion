@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useAppState } from './store';
-import { api } from './lib/api-client';
 import { useT } from './lib/i18n';
 import { useGlobalShortcuts } from './lib/keyboard';
 import { GlobalHeader, PatientsSidebar, ModeTabs } from './components/layout';
 import { CommandPalette, NewPatientDialog, ToastStrip, EmailComposerDialog } from './components/overlays';
+import { AdminUsersView } from './components/admin-users';
 import { ContextRailContent } from './components/memory-ui';
 import {
   PractitionerHasLearnedView,
@@ -179,6 +179,8 @@ function MainShell() {
       <PractitionerHasLearnedView />
       <SettingsDataView />
       <EmailComposerDialog />
+      {/* Admin-only user management (renders null unless role==='admin') */}
+      <AdminUsersView />
       <ToastStrip />
     </div>
   );
@@ -186,103 +188,40 @@ function MainShell() {
 
 export default function App() {
   const token         = useAppState((s) => s.token);
-  const setToken      = useAppState((s) => s.setToken);
-  const setActiveUserId = useAppState((s) => s.setActiveUserId);
-  const setIdentities   = useAppState((s) => s.setIdentities);
   const bootHydrated  = useAppState((s) => s.bootHydrated);
   const logout        = useAppState((s) => s.logout);
   const showToast     = useAppState((s) => s.showToast);
-  const [autoLoginAttempted, setAutoLoginAttempted] = useState(false);
-  const [autoLoginFailed, setAutoLoginFailed] = useState(false);
+  const t             = useT();
 
   useGlobalShortcuts();
 
-  // The api-client fires this when a 401 fails to recover via the
-  // cached user_id (e.g. server's user table got reset, or first
-  // sign-in on a new machine). Wiping the token bounces us to the
-  // LoginView via the conditional render below.
+  // The api-client fires this on any 401 outside the auth endpoints
+  // (expired / invalid JWT — there is no silent re-auth path with
+  // password auth). Wiping the token bounces us to the LoginView via
+  // the conditional render below.
   useEffect(() => {
     const handler = () => logout();
     window.addEventListener('nexus:auth-expired', handler);
     return () => window.removeEventListener('nexus:auth-expired', handler);
   }, [logout]);
 
-  // F22 (Path C) — silent auto-login on app boot. Reads user_id from
-  // the OS keychain (or legacy localStorage) and POSTs /auth/login;
-  // if no credential exists yet, mints a fresh account via
-  // /auth/register and stores the new user_id in keychain.
-  //
-  // On a healthy install the medic NEVER sees the LoginView — they
-  // launch the app, the sidecar boots, the auto-login fires, the
-  // workspace renders. The LoginView only shows if auto-login fails
-  // (sidecar unreachable / network / keychain hang) so the medic
-  // can troubleshoot or fall back to the manual passkey flow.
-  //
-  // F23 — DEADLINE. The very first build that observed a blank
-  // window had Rust's keyring crate either panicking or blocking on
-  // a macOS Keychain access prompt. tauriInvoke didn't time out, the
-  // promise never settled, and the inner conditional rendered
-  // ``null`` forever. We now race autoLogin against a 10 s deadline
-  // and treat the deadline as a failure that falls through to
-  // LoginView — the medic always gets SOME interactive surface.
+  // Global 403 account_disabled handler — an admin disabled this
+  // account while its session was live. The api-client detects the
+  // error-envelope code and fires this event; we log out and tell
+  // the user why (instead of a wall of failing requests).
   useEffect(() => {
-    if (token) return;                  // already signed in
-    if (autoLoginAttempted) return;     // try once per mount
+    const handler = () => {
+      logout();
+      showToast(t('auth.disabledToast'), 'error');
+    };
+    window.addEventListener('nexus:account-disabled', handler);
+    return () => window.removeEventListener('nexus:account-disabled', handler);
+  }, [logout, showToast, t]);
 
-    let cancelled = false;
-    setAutoLoginAttempted(true);
-
-    const DEADLINE_MS = 10_000;
-    const deadline = new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`auto-login deadline (${DEADLINE_MS}ms)`)),
-        DEADLINE_MS,
-      ),
-    );
-
-    Promise.race([api.autoLogin(), deadline]).then(
-      (r) => {
-        if (cancelled) return;
-        setToken(r.access_token);
-        // F26.2 — populate picker state from bootstrap response so
-        // the avatar dropdown is ready the moment the medic clicks it.
-        setActiveUserId(r.activeUserId);
-        setIdentities(r.identities);
-        if (r.isNewAccount) {
-          showToast('Welcome to Nexus — a fresh account was created on this device.', 'info');
-        } else if (r.recoveredFromDb) {
-          // §4.4.5 — banner explaining the rebuild so the medic
-          // understands "all data is back" rather than panicking.
-          showToast(
-            `Nexus 检测到 identity.json 异常（已从数据库重建）。恢复了 ${r.identities.length} 个身份。`,
-            'info',
-          );
-        }
-      },
-      (e) => {
-        if (cancelled) return;
-        console.warn('[auto-login] failed; falling back to LoginView:', e);
-        setAutoLoginFailed(true);
-      },
-    );
-    return () => { cancelled = true; };
-  }, [token, autoLoginAttempted, setToken, setActiveUserId, setIdentities, showToast]);
-
-  // F23 — second safety net. The useEffect above sets autoLoginFailed
-  // on its own deadline, but if THAT mechanism somehow also fails
-  // (e.g. setTimeout starved by main-thread block), this dumb timer
-  // bounces the user to the LoginView after 12 s of black screen.
-  // Belt + braces.
-  useEffect(() => {
-    if (token || autoLoginFailed) return;
-    const t = setTimeout(() => {
-      if (!token && !autoLoginFailed) {
-        console.warn('[auto-login] hard fallback: 12 s elapsed with no token — forcing LoginView');
-        setAutoLoginFailed(true);
-      }
-    }, 12_000);
-    return () => clearTimeout(t);
-  }, [token, autoLoginFailed]);
+  // 2026-07 auth rework: the silent bootstrap sign-in endpoint is
+  // gone — accounts are username+password now, so a fresh window goes
+  // straight to LoginView. The JWT still survives page reloads within
+  // one window via sessionStorage (hydrateAppState).
 
   // Avoid a one-frame login flicker before hydrate completes.
   if (!bootHydrated) return null;

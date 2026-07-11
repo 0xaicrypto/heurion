@@ -57,35 +57,10 @@ const baseUrl = envBase && envBase.length > 0 ? envBase : 'http://localhost:8001
 // ─────────────────────────────────────────────────────────────────────
 // The user_id is the medic's stable identifier — NOT auth. Auth is
 // the JWT (in sessionStorage; wiped on window close per the
-// "auto-logout on close" UX).
-//
-// We keep user_id in localStorage so that:
-//
-//   1. Closing the desktop and reopening it asks the medic to sign
-//      in again (no JWT → LoginView).
-//   2. On sign-in, the cached user_id flows into /auth/login, the
-//      server returns a fresh JWT bound to the SAME user_id, and the
-//      medic's previously uploaded patients / memory / sessions are
-//      all visible again.
-//
-// Before this fix user_id lived in sessionStorage alongside the JWT
-// — closing the window minted a fresh user_id on next sign-in, so
-// every restart looked like a brand-new install with no patients
-// and an empty Memory tab. The DB still had the old user's data, it
-// was just no longer reachable from the desktop.
-//
-// U2+: optionally seal the user_id in the OS keychain via
-// @tauri-apps/plugin-stronghold for users who turn on "remember me".
+// "auto-logout on close" UX). We keep the last-seen user_id in
+// localStorage purely as a diagnostic / display convenience.
 
 const STORAGE_KEY_USER_ID = 'nexus.auth.user_id';
-
-function readUserId(): string | null {
-  try {
-    return localStorage.getItem(STORAGE_KEY_USER_ID);
-  } catch {
-    return null;  // SSR / privacy modes where localStorage is unavailable
-  }
-}
 
 function writeUserId(id: string): void {
   try {
@@ -103,22 +78,18 @@ function clearUserId(): void {
   }
 }
 
-// F24 — the OS Keychain / localStorage helpers are gone. The backend
-// owns identity persistence via POST /api/v1/auth/local-bootstrap,
-// which reads/writes $RUNE_HOME/identity.json. No frontend storage,
-// no Tauri IPC, no permission prompts.
-//
-// ``readUserId`` / ``writeUserId`` / ``clearUserId`` (defined above)
-// are kept ONLY as a legacy escape hatch for the manual ``login()``
-// flow used by LoginView's display-name form; that path still works
-// for the rare case where the medic explicitly switches accounts.
-
 class _ApiClient {
   private token: string | null = null;
+  /** Role from the most recent register/login/claim response. The
+   *  authoritative persisted copy lives in the zustand store
+   *  (``useAppState().role``); this mirror lets non-React callers
+   *  gate admin requests without a store import. */
+  private role: UserRole | null = null;
 
   setToken(t: string | null) { this.token = t; }
   hasToken() { return this.token !== null; }
   getToken() { return this.token; }
+  getRole() { return this.role; }
 
   /** Base URL the client posts to — useful when the UI needs to build
    *  a non-fetch URL (e.g. an <a href> to /dicom-viewer/). */
@@ -131,30 +102,6 @@ class _ApiClient {
     return h;
   }
 
-  /** Called once on 401 — silently re-auth with the cached user_id so
-   *  the medic doesn't have to retype their display name after the
-   *  server rotates JWT secrets (rebuilds, restart, 24h expiry, etc.).
-   *  Returns the new token, or null if cached id is unknown to backend. */
-  private async silentReauth(): Promise<string | null> {
-    const cachedUserId = readUserId();
-    if (!cachedUserId) return null;
-    try {
-      interface LoginResp { jwt_token: string; expires_in_seconds: number; }
-      const r = await fetch(`${baseUrl}/api/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ user_id: cachedUserId }),
-      });
-      if (!r.ok) return null;
-      const body = (await r.json()) as LoginResp;
-      this.token = body.jwt_token;
-      try { sessionStorage.setItem('nexus.auth.token', body.jwt_token); } catch { /* ignore */ }
-      return body.jwt_token;
-    } catch {
-      return null;
-    }
-  }
-
   private async fetch<T>(path: string, init?: RequestInit): Promise<T> {
     const doFetch = async (): Promise<Response> => {
       const h = this.headers(init?.headers);
@@ -162,31 +109,34 @@ class _ApiClient {
       return fetch(`${baseUrl}${path}`, { ...init, headers: h });
     };
 
-    let r = await doFetch();
+    const r = await doFetch();
 
-    // 401 → try one silent re-auth + retry. Skip the dance for the
-    // auth endpoints themselves so we don't recurse.
-    if (r.status === 401 && !path.startsWith('/api/v1/auth/')) {
-      const newToken = await this.silentReauth();
-      if (newToken) {
-        r = await doFetch();
-      } else {
-        // Cached user_id is no longer recognised by this backend —
-        // wipe the token so App.tsx bounces to LoginView on its next
-        // store read. (The store-level subscription picks this up.)
+    if (!r.ok) {
+      const text = await r.text().catch(() => '');
+      const err = new ApiError(r.status, text || r.statusText, path);
+
+      // Password auth means there is no silent re-auth path any more:
+      // a 401 outside the auth endpoints = expired / invalid JWT →
+      // wipe the token and bounce to LoginView. App.tsx listens for
+      // the event and performs the store-level logout.
+      if (r.status === 401 && !path.startsWith('/api/v1/auth/')) {
         this.token = null;
+        this.role = null;
         try { sessionStorage.removeItem('nexus.auth.token'); } catch { /* ignore */ }
-        // Dispatch a one-time event the App can listen for to force a
-        // logout + login-screen render.
         try {
           window.dispatchEvent(new CustomEvent('nexus:auth-expired'));
         } catch { /* SSR */ }
       }
-    }
 
-    if (!r.ok) {
-      const text = await r.text().catch(() => '');
-      throw new ApiError(r.status, text || r.statusText, path);
+      // 403 account_disabled — an admin disabled this account while a
+      // session was live. Globally handled: App.tsx logs out + toasts.
+      if (r.status === 403 && err.code === 'account_disabled') {
+        try {
+          window.dispatchEvent(new CustomEvent('nexus:account-disabled'));
+        } catch { /* SSR */ }
+      }
+
+      throw err;
     }
     return r.json() as Promise<T>;
   }
@@ -237,125 +187,166 @@ class _ApiClient {
   /* ────────────────────────── auth ────────────────────────── */
 
   /**
-   * M0 auth mode — single-input "sign in", no password.
+   * Username + password auth (2026-07 server rework).
    *
    * Backend endpoints:
-   *   POST /api/v1/auth/register {display_name} → {user_id, jwt_token}
-   *   POST /api/v1/auth/login    {user_id}      → {jwt_token}
+   *   POST /api/v1/auth/register {username, password, display_name?}
+   *     → 201 {user_id, jwt_token, created_at, role, expires_in_seconds}
+   *   POST /api/v1/auth/login    {username, password}
+   *     → 200 {jwt_token, expires_in_seconds, user_id, role, display_name}
+   *   POST /api/v1/auth/claim    {username, password}
+   *     → one-time set-password for legacy passwordless accounts;
+   *       200 with the same shape as /login.
    *
-   * Flow:
-   *   1. First-time on this machine OR no cached user_id → register a
-   *      new account with the display name. Persist user_id locally
-   *      under STORAGE_KEY_USER_ID so the next launch reuses it.
-   *   2. Subsequent launches → call /login with the cached user_id.
-   *      If the backend's user table got reset (404 from /login),
-   *      transparently fall back to /register and persist the new id.
-   *
-   * Storage: localStorage in M0. WKWebView persists this per-app in
-   * ~/Library/WebKit/... — survives across launches, gets wiped only
-   * if the OS user nukes the app's webview data. U2+: switch to
-   * @tauri-apps/plugin-stronghold for OS keychain storage.
-   *
-   * `_password` is kept in the signature so existing call sites
-   * compile unchanged; we ignore it.
+   * Errors arrive as the envelope
+   *   {"error": {"code": "...", "message": "..."}, "status_code": N}
+   * which ``ApiError`` parses — route on ``err.code``:
+   *   register: 409 username_taken · 422 validation · 429 rate_limited
+   *   login:    401 invalid_credentials · 409 claim_required
+   *             · 403 account_disabled · 429 rate_limited
+   *   claim:    404 user_not_found · 409 already_claimed
    */
-  async login(displayName: string, _password: string): Promise<{
-    access_token:  string;
-    user_id:       string;
-    isNewAccount:  boolean;
-    activeUserId:  string;
-    identities:    Identity[];
-  }> {
-    // F-multiuser-isolation — display_name is the login key.
-    //
-    // Old behaviour (the bug medic reported "换名字看到老数据"):
-    //   1) Read cached user_id from sessionStorage
-    //   2) POST /auth/login with that id → ignore the typed name
-    //   3) Same data every login regardless of name
-    //
-    // New behaviour:
-    //   POST /auth/login-by-name → backend matches trimmed +
-    //   casefolded display_name against users table:
-    //     - hit → activate that identity, return its JWT
-    //     - miss → create a brand-new identity, return its JWT
-    //   Either way the response carries the full identities list so
-    //   the picker dropdown is ready immediately.
-    //
-    //   Caller is responsible for calling
-    //   ``useAppState.getState().resetForIdentitySwitch()`` BEFORE
-    //   replacing the token whenever ``user_id`` differs from the
-    //   previously-active one — otherwise the workspace would briefly
-    //   show the previous identity's patients / studies / chat state
-    //   with the new JWT, before the next refresh wipes them.
+  async register(input: {
+    username:     string;
+    password:     string;
+    displayName?: string;
+  }): Promise<AuthSession> {
     interface Raw {
       user_id:            string;
       jwt_token:          string;
+      created_at:         string;
+      role:               string;
       expires_in_seconds: number;
-      identity:           IdentityRaw;
-      identities:         IdentityRaw[];
-      schema_version:     number;
-      is_new_account:     boolean;
     }
-    const r = await this.fetch<Raw>('/api/v1/auth/login-by-name', {
+    const body: Record<string, string> = {
+      username: input.username,
+      password: input.password,
+    };
+    if (input.displayName && input.displayName.trim()) {
+      body.display_name = input.displayName.trim();
+    }
+    const r = await this.fetch<Raw>('/api/v1/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ display_name: displayName }),
+      body: JSON.stringify(body),
     });
     writeUserId(r.user_id);
+    this.token = r.jwt_token;
+    this.role  = _castRole(r.role);
     return {
-      access_token:  r.jwt_token,
-      user_id:       r.user_id,
-      isNewAccount:  r.is_new_account,
-      activeUserId:  r.user_id,
-      identities:    r.identities.map(_castIdentity),
+      token:            r.jwt_token,
+      userId:           r.user_id,
+      role:             this.role,
+      displayName:      input.displayName?.trim() || input.username,
+      expiresInSeconds: r.expires_in_seconds,
     };
   }
 
-  /** Clear the cached user_id. Used by Settings → "Sign out / forget me".
-   *  Only touches localStorage; the authoritative identity now lives
-   *  in $RUNE_HOME/identity.json on the backend and must be wiped
-   *  there (delete the file from Finder, or call a future
-   *  /auth/local-bootstrap?reset=true). */
+  async login(username: string, password: string): Promise<AuthSession> {
+    interface Raw {
+      jwt_token:          string;
+      expires_in_seconds: number;
+      user_id:            string;
+      role:               string;
+      display_name:       string | null;
+    }
+    const r = await this.fetch<Raw>('/api/v1/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+    writeUserId(r.user_id);
+    this.token = r.jwt_token;
+    this.role  = _castRole(r.role);
+    return {
+      token:            r.jwt_token,
+      userId:           r.user_id,
+      role:             this.role,
+      displayName:      r.display_name || username,
+      expiresInSeconds: r.expires_in_seconds,
+    };
+  }
+
+  /** One-time set-password for a legacy passwordless account. The
+   *  login screen routes here when /login returns 409 claim_required. */
+  async claim(username: string, password: string): Promise<AuthSession> {
+    interface Raw {
+      jwt_token:          string;
+      expires_in_seconds: number;
+      user_id:            string;
+      role:               string;
+      display_name:       string | null;
+    }
+    const r = await this.fetch<Raw>('/api/v1/auth/claim', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+    writeUserId(r.user_id);
+    this.token = r.jwt_token;
+    this.role  = _castRole(r.role);
+    return {
+      token:            r.jwt_token,
+      userId:           r.user_id,
+      role:             this.role,
+      displayName:      r.display_name || username,
+      expiresInSeconds: r.expires_in_seconds,
+    };
+  }
+
+  /** Clear the cached user_id + in-memory credentials. Used by
+   *  Settings → "Sign out / forget me". */
   forgetUserId() {
     clearUserId();
     this.token = null;
+    this.role = null;
   }
 
-  /**
-   * F24 + F26.1 — zero-friction silent sign-in.
-   *
-   * Single HTTP call. Backend's /local-bootstrap reads/creates
-   * ``$RUNE_HOME/identity.json``, rebuilds from users table on
-   * corruption (§4.4), auto-migrates v1→v2, and returns the active
-   * identity + the full picker list.
-   */
-  async autoLogin(): Promise<{
-    access_token:    string;
-    isNewAccount:    boolean;
-    recoveredFromDb: boolean;
-    activeUserId:    string;
-    identities:      Identity[];
-  }> {
-    interface Raw {
-      user_id:            string;
-      jwt_token:          string;
-      expires_in_seconds: number;
-      is_new_account:     boolean;
-      identities:         IdentityRaw[];
-      schema_version:     number;
-      recovered_from_db:  boolean;
+  /* ────────────────────── admin · user management ────────────────── */
+  // All four require a JWT whose role=admin; the server answers
+  // 403 admin_required otherwise. Disabling yourself is rejected
+  // with 400 cannot_disable_self.
+
+  async adminListUsers(): Promise<AdminUser[]> {
+    interface RawUser {
+      user_id:       string;
+      username:      string;
+      role:          string;
+      created_at:    string | number | null;
+      disabled_at:   string | number | null;
+      last_login_at: string | number | null;
+      has_password:  boolean;
+      has_passkey:   boolean;
     }
-    const r = await this.fetch<Raw>('/api/v1/auth/local-bootstrap', {
-      method: 'POST',
-      body: JSON.stringify({}),
-    });
-    writeUserId(r.user_id);
-    return {
-      access_token:    r.jwt_token,
-      isNewAccount:    r.is_new_account,
-      recoveredFromDb: r.recovered_from_db,
-      activeUserId:    r.user_id,
-      identities:      r.identities.map(_castIdentity),
-    };
+    const r = await this.fetch<{ users: RawUser[] }>('/api/v1/admin/users');
+    return (r.users ?? []).map((u) => ({
+      userId:      u.user_id,
+      username:    u.username,
+      role:        _castRole(u.role),
+      createdAt:   u.created_at ?? null,
+      disabledAt:  u.disabled_at ?? null,
+      lastLoginAt: u.last_login_at ?? null,
+      hasPassword: !!u.has_password,
+      hasPasskey:  !!u.has_passkey,
+    }));
+  }
+
+  async adminDisableUser(userId: string): Promise<void> {
+    await this.fetch<unknown>(
+      `/api/v1/admin/users/${encodeURIComponent(userId)}/disable`,
+      { method: 'POST', body: JSON.stringify({}) },
+    );
+  }
+
+  async adminEnableUser(userId: string): Promise<void> {
+    await this.fetch<unknown>(
+      `/api/v1/admin/users/${encodeURIComponent(userId)}/enable`,
+      { method: 'POST', body: JSON.stringify({}) },
+    );
+  }
+
+  async adminResetPassword(userId: string, newPassword: string): Promise<void> {
+    await this.fetch<unknown>(
+      `/api/v1/admin/users/${encodeURIComponent(userId)}/reset-password`,
+      { method: 'POST', body: JSON.stringify({ new_password: newPassword }) },
+    );
   }
 
   /* ─────────────────── F-unified-chat-files — chat file lib ──────── */
@@ -456,7 +447,11 @@ class _ApiClient {
     };
   }
 
-  /* ────────────────────── identities CRUD ──────────────────────── */
+  /* ────────────────────── identities (read-only list) ────────────── */
+  // 2026-07 auth rework: the server-side "create identity" and
+  // "switch identity" endpoints are GONE — accounts are now
+  // username+password, so switching = log out + sign in as the other
+  // account. Only the read/patch/delete surface remains.
 
   async listIdentities(): Promise<{
     identities:   Identity[];
@@ -472,57 +467,6 @@ class _ApiClient {
       identities:   r.identities.map(_castIdentity),
       activeUserId: r.active_user_id,
     };
-  }
-
-  /** Create a new identity AND switch to it. The desktop must reset
-   *  its zustand state on receipt of the new JWT (the workspace's
-   *  visible patients / sessions belong to a different user_id now). */
-  async createIdentity(input: {
-    displayName: string;
-    avatarEmoji?: string;
-  }): Promise<{
-    access_token: string;
-    user_id:      string;
-    identity:     Identity;
-  }> {
-    interface Raw {
-      user_id:            string;
-      jwt_token:          string;
-      expires_in_seconds: number;
-      identity:           IdentityRaw;
-    }
-    const r = await this.fetch<Raw>('/api/v1/auth/identities', {
-      method: 'POST',
-      body: JSON.stringify({
-        display_name: input.displayName,
-        avatar_emoji: input.avatarEmoji ?? '🩺',
-      }),
-    });
-    writeUserId(r.user_id);
-    return {
-      access_token: r.jwt_token,
-      user_id:      r.user_id,
-      identity:     _castIdentity(r.identity),
-    };
-  }
-
-  /** Switch to an existing identity. Caller resets its state on
-   *  receipt of the new JWT. */
-  async activateIdentity(userId: string): Promise<{
-    access_token: string;
-    user_id:      string;
-  }> {
-    interface Raw {
-      user_id:            string;
-      jwt_token:          string;
-      expires_in_seconds: number;
-    }
-    const r = await this.fetch<Raw>(
-      `/api/v1/auth/identities/${encodeURIComponent(userId)}/activate`,
-      { method: 'POST', body: JSON.stringify({}) },
-    );
-    writeUserId(r.user_id);
-    return { access_token: r.jwt_token, user_id: r.user_id };
   }
 
   /** Rename / change emoji. Auth scoped to the calling identity. */
@@ -2680,10 +2624,91 @@ function _castIdentity(r: IdentityRaw): Identity {
 }
 
 
+/** Parse the server's error envelope
+ *  ``{"error": {"code": "...", "message": "..."}, "status_code": N}``.
+ *  Non-envelope bodies (plain-text 500s, proxy pages, FastAPI 422
+ *  ``{"detail": ...}``) degrade gracefully to code='' + raw body. */
+function parseErrorEnvelope(body: string): { code: string; message: string } {
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: { code?: unknown; message?: unknown };
+      detail?: unknown;
+    };
+    if (parsed && typeof parsed === 'object') {
+      if (parsed.error && typeof parsed.error === 'object') {
+        return {
+          code:    String(parsed.error.code ?? ''),
+          message: String(parsed.error.message ?? body),
+        };
+      }
+      // FastAPI validation errors (422) come as {"detail": [...]}.
+      if (parsed.detail !== undefined) {
+        return {
+          code: 'validation_error',
+          message: typeof parsed.detail === 'string'
+            ? parsed.detail
+            : JSON.stringify(parsed.detail),
+        };
+      }
+    }
+  } catch { /* not JSON */ }
+  return { code: '', message: body };
+}
+
 export class ApiError extends Error {
-  constructor(public status: number, body: string, public path: string) {
-    super(`API ${status} on ${path}: ${body}`);
+  /** HTTP status. */
+  public readonly status: number;
+  /** Request path (for logs). */
+  public readonly path: string;
+  /** Machine-routable error code from the envelope — e.g.
+   *  'invalid_credentials', 'claim_required', 'username_taken',
+   *  'account_disabled', 'rate_limited', 'user_not_found',
+   *  'already_claimed', 'cannot_disable_self', 'admin_required'.
+   *  '' when the body wasn't envelope-shaped. */
+  public readonly code: string;
+  /** Human-readable message from the envelope (falls back to raw body). */
+  public readonly serverMessage: string;
+
+  constructor(status: number, body: string, path: string) {
+    const env = parseErrorEnvelope(body);
+    super(`API ${status} on ${path}: ${env.message || body}`);
+    this.status = status;
+    this.path = path;
+    this.code = env.code;
+    this.serverMessage = env.message;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Auth types (2026-07 username+password rework)
+// ─────────────────────────────────────────────────────────────────────
+
+export type UserRole = 'admin' | 'user';
+
+function _castRole(r: unknown): UserRole {
+  return r === 'admin' ? 'admin' : 'user';
+}
+
+/** Normalised result of register / login / claim. */
+export interface AuthSession {
+  token:            string;
+  userId:           string;
+  role:             UserRole;
+  displayName:      string;
+  expiresInSeconds: number;
+}
+
+/** One row of GET /api/v1/admin/users. Timestamps come back as ISO
+ *  strings (or epoch numbers on older builds); null = never/active. */
+export interface AdminUser {
+  userId:      string;
+  username:    string;
+  role:        UserRole;
+  createdAt:   string | number | null;
+  disabledAt:  string | number | null;
+  lastLoginAt: string | number | null;
+  hasPassword: boolean;
+  hasPasskey:  boolean;
 }
 
 /** Shape returned by the Tauri `get_sidecar_diagnostics` IPC. Mirrors

@@ -1,7 +1,9 @@
 """
 LLM abstraction — pluggable language model interface.
 
-Supports Google Gemini (default), OpenAI GPT, and Anthropic Claude.
+Supports Google Gemini (default), OpenAI GPT, Anthropic Claude, and
+Moonshot AI Kimi (OpenAI-compatible; rides the OpenAI code path with
+base_url https://api.moonshot.ai/v1).
 
 Tool Use:
   When tools are provided, chat() returns text as before — tool calls are
@@ -20,7 +22,13 @@ import logging
 import uuid
 from typing import Any, Optional, TYPE_CHECKING
 
-from .providers import LLMProvider
+from .providers import (
+    LLMProvider,
+    KIMI_DEFAULT_BASE_URL,
+    KIMI_DEFAULT_MODEL,
+    resolve_kimi_api_key,
+    resolve_kimi_base_url,
+)
 
 if TYPE_CHECKING:
     from nexus_core.tools.base import ToolCall, ToolRegistry, ToolResult
@@ -104,10 +112,27 @@ LLM_CALL_TIMEOUT_SECONDS = 90.0
 class LLMClient:
     """Unified LLM client interface with function calling support."""
 
-    def __init__(self, provider: LLMProvider, api_key: str, model: str):
+    def __init__(
+        self,
+        provider: LLMProvider,
+        api_key: str,
+        model: str,
+        base_url: Optional[str] = None,
+    ):
         self.provider = provider
         self.api_key = api_key
-        self.model = model
+        # Kimi (Moonshot AI) is OpenAI-compatible — it rides the OpenAI
+        # code path with a different base_url + model default. Resolve
+        # both here so callers can pass provider=KIMI with empty
+        # model / key and get sane env-driven behaviour.
+        if provider == LLMProvider.KIMI:
+            self.model = model or KIMI_DEFAULT_MODEL
+            self.base_url = base_url or resolve_kimi_base_url()
+            if not self.api_key:
+                self.api_key = resolve_kimi_api_key()
+        else:
+            self.model = model
+            self.base_url = base_url
         self._client = None
 
     def _ensure_client(self):
@@ -127,9 +152,18 @@ class LLMClient:
             except ImportError:
                 raise ImportError("pip install anthropic")
         else:
+            # OpenAI — and any OpenAI-compatible provider (Kimi). A
+            # custom ``base_url`` (explicit arg, or KIMI_BASE_URL /
+            # Moonshot default for provider=KIMI) points the client at
+            # the compatible endpoint; everything else (chat,
+            # streaming-free completions, tool calling) reuses the
+            # stock OpenAI code path below.
             try:
                 import openai
-                self._client = openai.AsyncOpenAI(api_key=self.api_key)
+                kwargs = {"api_key": self.api_key}
+                if self.base_url:
+                    kwargs["base_url"] = self.base_url
+                self._client = openai.AsyncOpenAI(**kwargs)
             except ImportError:
                 raise ImportError("pip install openai")
 

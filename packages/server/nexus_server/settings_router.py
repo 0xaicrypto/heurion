@@ -62,6 +62,7 @@ ALLOWED_KEYS = {
     "GEMINI_API_KEY",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    "KIMI_API_KEY",
     # T4 web-grounded retrieval. Lives here (not under a separate
     # /settings/web endpoint) because the medic perceives "API keys
     # for the AI integrations" as one config surface. Tavily key
@@ -117,6 +118,7 @@ _KEYS_PERSISTED = (
     "GEMINI_API_KEY",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    "KIMI_API_KEY",
 )
 
 
@@ -382,6 +384,7 @@ class LlmStatusResponse(BaseModel):
     has_gemini_key: bool
     has_openai_key: bool
     has_anthropic_key: bool
+    has_kimi_key: bool = False
     # Free-form note rendered under the form — e.g. tells the user the
     # active provider has no key configured.
     advisory: Optional[str] = None
@@ -401,12 +404,13 @@ class LlmStatusResponse(BaseModel):
 
 class LlmUpdateRequest(BaseModel):
     provider: Optional[str] = Field(
-        default=None, description="One of: gemini | openai | anthropic",
+        default=None, description="One of: gemini | openai | anthropic | kimi",
     )
     model: Optional[str] = Field(default=None)
     gemini_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
+    kimi_api_key: Optional[str] = None
 
 
 class LlmUpdateResponse(BaseModel):
@@ -452,6 +456,7 @@ def _make_status() -> LlmStatusResponse:
     has_gemini    = bool(cfg.GEMINI_API_KEY)
     has_openai    = bool(cfg.OPENAI_API_KEY)
     has_anthropic = bool(cfg.ANTHROPIC_API_KEY)
+    has_kimi      = bool(cfg.KIMI_API_KEY)
     advisory: Optional[str] = None
     if provider == "gemini" and not has_gemini:
         advisory = "Active provider is Gemini but GEMINI_API_KEY is not set."
@@ -459,6 +464,8 @@ def _make_status() -> LlmStatusResponse:
         advisory = "Active provider is OpenAI but OPENAI_API_KEY is not set."
     elif provider == "anthropic" and not has_anthropic:
         advisory = "Active provider is Anthropic but ANTHROPIC_API_KEY is not set."
+    elif provider == "kimi" and not has_kimi:
+        advisory = "Active provider is Kimi but KIMI_API_KEY is not set."
 
     # Map the active provider to the env-var name that holds its key,
     # then pull the runtime value + source for the diagnostic block.
@@ -466,6 +473,7 @@ def _make_status() -> LlmStatusResponse:
         "gemini":    "GEMINI_API_KEY",
         "openai":    "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
+        "kimi":      "KIMI_API_KEY",
     }.get(provider)
     active_key = getattr(cfg, _provider_key_var) if _provider_key_var else None
     active_source: Optional[str] = None
@@ -487,6 +495,7 @@ def _make_status() -> LlmStatusResponse:
         has_gemini_key=has_gemini,
         has_openai_key=has_openai,
         has_anthropic_key=has_anthropic,
+        has_kimi_key=has_kimi,
         advisory=advisory,
         active_key_source=active_source,
         active_key_preview=_mask_key(active_key) if active_key else "",
@@ -511,7 +520,7 @@ async def put_llm_settings(
     updates: dict[str, str] = {}
     if body.provider is not None:
         p = body.provider.strip().lower()
-        if p not in {"gemini", "openai", "anthropic"}:
+        if p not in {"gemini", "openai", "anthropic", "kimi"}:
             raise HTTPException(status_code=400, detail=f"unknown provider: {p}")
         updates["DEFAULT_LLM_PROVIDER"] = p
     if body.model is not None and body.model.strip():
@@ -522,6 +531,8 @@ async def put_llm_settings(
         updates["OPENAI_API_KEY"] = body.openai_api_key.strip()
     if body.anthropic_api_key is not None and body.anthropic_api_key.strip():
         updates["ANTHROPIC_API_KEY"] = body.anthropic_api_key.strip()
+    if body.kimi_api_key is not None and body.kimi_api_key.strip():
+        updates["KIMI_API_KEY"] = body.kimi_api_key.strip()
 
     if not updates:
         raise HTTPException(status_code=400, detail="no settings provided")
@@ -597,6 +608,7 @@ async def test_llm_key(_: str = Depends(get_current_user)):
         "gemini":    cfg.GEMINI_API_KEY,
         "openai":    cfg.OPENAI_API_KEY,
         "anthropic": cfg.ANTHROPIC_API_KEY,
+        "kimi":      cfg.KIMI_API_KEY,
     }.get(provider)
     if not active_key:
         return LlmTestResponse(

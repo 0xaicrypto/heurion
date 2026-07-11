@@ -11,6 +11,7 @@ import { api, ApiError } from '../lib/api-client';
 import { cn, patientDisplayLabel, type ModeKind, type PatientCard } from '../lib/util';
 import { useT, useModeLabel } from '../lib/i18n';
 import { Button, Chip, StatusDot, Input } from './ui';
+import { useHeadWindow } from './windowed-list';
 import { AccountMenu } from './overlays';
 import { IdentityPicker } from './identity-picker';
 
@@ -101,6 +102,19 @@ export function PatientsSidebar() {
   const setActivePatient = useAppState((s) => s.setActivePatient);
   const collapsed        = useAppState((s) => s.sidebarCollapsed);
 
+  const pinned = patients.filter((p) => Date.now() / 1000 - p.lastSeenAt < 86400);
+  const others = patients.filter((p) => !pinned.includes(p));
+
+  // UI_UX_REVIEW §6 — windowed "All" list. Only the first slice is
+  // mounted; "show more" extends the window. (react-window couldn't be
+  // added; this fallback keeps DOM size O(visible) for large rosters.)
+  // NOTE: hook must run before the `collapsed` early return.
+  const {
+    visible: visibleOthers,
+    hiddenCount: hiddenOthers,
+    showMore: showMoreOthers,
+  } = useHeadWindow(others, 40, 200);
+
   if (collapsed) {
     return (
       <aside className="flex h-full w-14 shrink-0 flex-col items-center gap-2 border-r border-border bg-bg pt-3">
@@ -117,7 +131,7 @@ export function PatientsSidebar() {
               ? 'bg-accent-subtle text-accent'
               : 'text-text-secondary hover:bg-accent-subtle',
           )}
-          title="工作台首页 / 今日"
+          title={t('sidebar.home')}
         >
           ←
         </button>
@@ -142,9 +156,6 @@ export function PatientsSidebar() {
       </aside>
     );
   }
-
-  const pinned = patients.filter((p) => Date.now() / 1000 - p.lastSeenAt < 86400);
-  const others = patients.filter((p) => !pinned.includes(p));
 
   return (
     // Use the Research palette so the patient sidebar shares one visual
@@ -172,7 +183,7 @@ export function PatientsSidebar() {
           )}
         >
           <span aria-hidden>←</span>
-          <span>工作台首页 / 今日</span>
+          <span>{t('sidebar.home')}</span>
         </button>
         <Input placeholder={t('sidebar.filter')} className="!text-caption" />
       </div>
@@ -193,7 +204,7 @@ export function PatientsSidebar() {
 
         {others.length > 0 && (
           <PatientGroup title={t('sidebar.all')}>
-            {others.map((p) => (
+            {visibleOthers.map((p) => (
               <PatientRow
                 key={p.patientHash}
                 patient={p}
@@ -201,6 +212,16 @@ export function PatientsSidebar() {
                 onClick={() => setActivePatient(p)}
               />
             ))}
+            {hiddenOthers > 0 && (
+              <button
+                type="button"
+                onClick={showMoreOthers}
+                className="mx-1 mt-1 rounded-md border border-rw-border px-2 py-1.5
+                           text-caption text-rw-t3 hover:bg-rw-surface hover:text-rw-t1"
+              >
+                {t('list.showMore', { count: hiddenOthers })}
+              </button>
+            )}
           </PatientGroup>
         )}
       </div>

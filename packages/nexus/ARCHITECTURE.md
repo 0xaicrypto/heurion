@@ -78,6 +78,7 @@ Unified interface across providers:
 | Gemini | gemini-2.5-flash | google-genai native |
 | OpenAI | gpt-4o | openai tools API |
 | Anthropic | claude-sonnet-4-20250514 | anthropic tools API |
+| Kimi (Moonshot AI) | kimi-k2.7-code | openai tools API (OpenAI-compatible, base_url https://api.moonshot.ai/v1, key: KIMI_API_KEY or MOONSHOT_API_KEY) |
 
 JSON mode deliberately NOT used for Gemini (truncates at ~277 chars). `robust_json_parse()` from SDK handles formatting.
 

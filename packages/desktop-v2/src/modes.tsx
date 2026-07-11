@@ -11,17 +11,18 @@ import { Mail } from 'lucide-react';
 import {
   useAppState, EMPTY_DRAFT_ATTACHMENTS, type DraftAttachment,
 } from './store';
-import { Button, Card, Chip, Section, EmptyState, Input } from './components/ui';
-import { ChatMarkdown, type FileChipRef } from './components/chat-markdown';
-import { CopyButton } from './components/copy-button';
+import { Button, Card, Chip, Section, EmptyState } from './components/ui';
+import { type FileChipRef } from './components/chat-markdown';
+// F-unified-chat (UI_UX_REVIEW §3) — the shared message row + composer
+// used by all four chat surfaces. MessageRow owns the role-label
+// header, hover CopyButton, ChatMarkdown body, streaming cursor and
+// footer; ChatComposer owns the auto-growing textarea + send button +
+// inline error alert row.
+import { MessageRow } from './components/chat-message';
+import { ChatComposer } from './components/chat-composer';
+import { useTailWindow } from './components/windowed-list';
 import { ChatFileChipStrip, useChatFiles } from './components/chat-file-lib';
 import { useAutoScroll } from './lib/use-auto-scroll';
-// F-thinking-uniform — every bubble now uses the wrapper pair
-// (StreamingFooter for the persistent footer, StreamingCursor for
-// the inline blink). The bare ThinkingIndicator is no longer
-// imported here; consumers that need a standalone label can call
-// StreamingFooter with the ``label`` override.
-import { StreamingFooter, StreamingCursor } from './components/thinking-indicator';
 import { TakeawaysButton } from './components/takeaways-button';
 import {
   CitationChip2,
@@ -236,62 +237,44 @@ function CrossPatientChat() {
             ALL takeaways the medic accumulated. */}
         <TakeawaysButton tone="base" />
       </div>
-      <div className="flex items-center gap-2">
-        <Input
-          value={q}
-          onChange={(e) => setQ(e.currentTarget.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }}}
-          placeholder={t('today.askPlaceholder')}
-          disabled={busy}
-        />
-        <Button variant="primary" onClick={send}
-                disabled={busy || !q.trim()}>
-          {busy ? '…' : '↑'}
-        </Button>
-      </div>
+      {/* F-unified-chat — shared ChatComposer; errors surface in the
+          composer's inline alert row (single error style across all
+          four chat surfaces). */}
+      <ChatComposer
+        value={q}
+        onChange={setQ}
+        onSend={send}
+        disabled={busy}
+        sendDisabled={!q.trim()}
+        tone="base"
+        placeholder={t('today.askPlaceholder')}
+        error={err}
+        onDismissError={() => setErr(null)}
+      />
 
-      {(answer || err || busy) && (
-        <Card className="!p-4 !bg-surface group relative">
-          {/* Per-message copy — raw markdown, top-right of the answer
-              card, hover-revealed. Hidden while the answer is still
-              streaming (busy). */}
-          {answer && !busy && (
-            <CopyButton
-              text={answer}
-              tone="base"
-              className="absolute right-2 top-2 opacity-0 group-hover:opacity-100
-                         focus-visible:opacity-100 transition-opacity"
-            />
-          )}
-          {answer && (
-            <div className="text-body text-text-primary">
-              <ChatMarkdown text={answer} />
-              {busy && <StreamingCursor tone="base" />}
-            </div>
-          )}
-          {/* F-thinking-uniform: persistent footer that stays visible
-              while busy=true regardless of whether the answer text
-              has started arriving. */}
-          <StreamingFooter
-            streaming={busy}
-            hasText={!!(answer && answer.length > 0)}
+      {(answer || busy) && (
+        <Card className="!p-4 !bg-surface">
+          {/* F-unified-chat — same MessageRow paradigm as the other
+              chat surfaces (role label + hover copy + markdown body
+              + streaming footer). */}
+          <MessageRow
+            role="agent"
+            text={answer}
             tone="base"
-            label={answer ? undefined : '正在跨患者检索 + 思考'}
-          />
-
-          {err && (
-            <div className="text-caption text-retract mt-2">出错：{err}</div>
-          )}
-          {!busy && answer && (
-            <div className="mt-3 pt-3 border-t border-border flex items-center gap-2 text-caption text-text-tertiary">
-              <span>需要更深入分析？</span>
-              <button
-                onClick={() => setActiveWorkspace('research')}
-                className="underline hover:text-accent">
-                打开 Research 工作台 →
-              </button>
-            </div>
-          )}
+            streaming={busy}
+            footerLabel={t('today.crossThinking')}
+          >
+            {!busy && answer && (
+              <div className="mt-3 pt-3 border-t border-border flex items-center gap-2 text-caption text-text-tertiary">
+                <span>{t('today.deeperPrompt')}</span>
+                <button
+                  onClick={() => setActiveWorkspace('research')}
+                  className="underline hover:text-accent">
+                  {t('today.openResearch')}
+                </button>
+              </div>
+            )}
+          </MessageRow>
         </Card>
       )}
     </div>
@@ -971,11 +954,28 @@ export function EncounterMode() {
   const sending = useAppState((s) =>
     !!s.chatStreamingBySession[effectiveSessionId]);
 
+  // F-unified-chat — per-session stream error. Rendered as the inline
+  // alert row above the composer (never spliced into message text).
+  const chatError = useAppState((s) =>
+    s.chatErrorBySession[effectiveSessionId] ?? null);
+  const setChatError = useAppState((s) => s.setChatError);
+
   // Keep the list pinned to the latest turn while streaming — but only
   // when the medic is already near the bottom (see use-auto-scroll.ts).
   const { containerRef, bottomRef, onScroll } = useAutoScroll(
     [msgs.length, msgs[msgs.length - 1]?.text],
   );
+
+  // UI_UX_REVIEW §6 — long-history windowing. Only the newest slice
+  // is mounted; "load earlier" reveals older turns. (react-window was
+  // not adoptable here — variable-height rows + no dependency — so
+  // this is the sanctioned fallback.)
+  const {
+    visible: visibleMsgs,
+    hiddenCount: hiddenMsgCount,
+    offset: msgWindowOffset,
+    showEarlier,
+  } = useTailWindow(msgs, 60, 100);
 
   // Load chat history whenever the effective session changes — that
   // covers both "medic picked a new session" and "medic switched
@@ -1144,6 +1144,8 @@ export function EncounterMode() {
     setDraft('');
     setAttachments([]);
     const sid = effectiveSessionId;
+    // A fresh send clears the previous inline error for this thread.
+    setChatError(sid, null);
     appendChatMsg(sid, {
       role: 'user', text: userText, ts: 'now',
       attachedFileNames: stagedAttachments.map((a) => a.name),
@@ -1246,7 +1248,10 @@ export function EncounterMode() {
             });
             break;
           case 'error':
-            update({ text: `[error: ${chunk.message}]`, streaming: false });
+            // F-unified-chat — errors go to the inline alert row above
+            // the composer, NOT into the message text.
+            setChatError(sid, chunk.message);
+            update({ streaming: false });
             break;
           default:
             break;
@@ -1282,7 +1287,11 @@ export function EncounterMode() {
       } else {
         message = String(err);
       }
-      update({ text: `[connection error: ${message}]`, streaming: false });
+      // F-unified-chat — surface in the inline alert row above the
+      // composer instead of splicing "[connection error: …]" into the
+      // message text.
+      setChatError(sid, message);
+      update({ streaming: false });
     } finally {
       setChatStreaming(sid, false);
       // Clear the in-flight controller so the next send / next
@@ -1369,7 +1378,7 @@ export function EncounterMode() {
               tone="base"
             />
           )}
-          <span>{msgs.length} messages</span>
+          <span>{t('encounter.messages', { count: msgs.length })}</span>
         </div>
       </div>
 
@@ -1401,43 +1410,45 @@ export function EncounterMode() {
            className="flex-1 space-y-6 overflow-y-auto py-4 selectable">
         {msgs.length === 0 && (
           <p className="text-center text-caption text-text-tertiary">
-            Ask Nexus anything about this patient. The agent uses the
-            backend's tier-classified retrieval (T1 cached / T2 single-shot
-            / T3 multi-turn streamed).
+            {t('encounter.emptyHint')}
           </p>
         )}
-        {msgs.map((m, i) => (
-          <div key={i} className="group relative">
-            <div className="mb-1 flex items-baseline gap-2">
-              <span className="text-caption font-medium text-text-primary">
-                {m.role === 'user' ? 'You' : 'Nexus'}
-              </span>
-              <span className="text-caption text-text-tertiary">{m.ts}</span>
-              {m.tier && (
-                <TierIndicator tier={m.tier} elapsedMs={m.elapsedMs} />
-              )}
-              {/* Per-message copy — raw markdown, right end of the
-                  role-label row, hover-revealed. Hidden while this
-                  message is still streaming. */}
-              {m.text && !m.streaming && (
-                <CopyButton
-                  text={m.text}
-                  tone="base"
-                  className="ml-auto self-center opacity-0 group-hover:opacity-100
-                             focus-visible:opacity-100 transition-opacity"
-                />
-              )}
-            </div>
-            {m.role === 'agent' && m.reasoning && m.reasoning.length > 0 && (
-              <ReasoningPane steps={m.reasoning} defaultOpen={m.streaming} />
-            )}
-            {/* F-thinking-uniform: render text + inline cursor + footer
-                indicator. The footer keeps the medic informed AFTER
-                the first chunk arrives (reasoning / citations are
-                often still streaming for 5-15s after first text). */}
-            <div className="text-body leading-relaxed text-text-primary">
-              {m.text && <ChatMarkdown text={m.text} fileMap={fileMap} />}
-              {m.streaming && m.text && <StreamingCursor tone="base" />}
+        {/* UI_UX_REVIEW §6 — windowed history: only the newest slice
+            is mounted; the button reveals older turns. */}
+        {hiddenMsgCount > 0 && (
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={showEarlier}
+              className="rounded-sm border border-border px-3 py-1 text-caption
+                         text-text-secondary hover:bg-accent-subtle"
+            >
+              {t('chat.loadEarlier', { count: hiddenMsgCount })}
+            </button>
+          </div>
+        )}
+        {visibleMsgs.map((m, vi) => {
+          // Real index into the FULL msgs array — the schedule-proposal
+          // mutate handlers below key off it.
+          const i = msgWindowOffset + vi;
+          return (
+          <MessageRow
+            key={i}
+            role={m.role}
+            text={m.text}
+            ts={m.ts}
+            tone="base"
+            streaming={m.streaming}
+            fileMap={fileMap}
+            headerExtra={m.tier
+              ? <TierIndicator tier={m.tier} elapsedMs={m.elapsedMs} />
+              : undefined}
+            preContent={m.role === 'agent' && m.reasoning && m.reasoning.length > 0
+              ? <ReasoningPane steps={m.reasoning} defaultOpen={m.streaming} />
+              : undefined}
+          >
+            {m.role === 'agent' && m.citations && m.citations.length > 0 && (
+            <div className="mt-1 text-body leading-relaxed text-text-primary">
               {m.citations?.map((c, ci) => {
                 // Two kinds: graph_node (patient memory) and
                 // web_source (Tavily search result). Each opens a
@@ -1469,15 +1480,6 @@ export function EncounterMode() {
                 return null;
               })}
             </div>
-            {/* F-thinking-uniform: persistent footer indicator. Lives
-                BELOW the body so it's visible even while body is
-                full of text / citations / web cards. */}
-            {m.role === 'agent' && (
-              <StreamingFooter
-                streaming={m.streaming}
-                hasText={!!(m.text && m.text.length > 0)}
-                tone="base"
-              />
             )}
             {/* Memory-ingest chip. Surfaces what chat_ingester did
                 with this turn so the medic doesn't have to wonder why
@@ -1633,8 +1635,9 @@ export function EncounterMode() {
                 ))}
               </div>
             )}
-          </div>
-        ))}
+          </MessageRow>
+          );
+        })}
         {/* Auto-scroll anchor — useAutoScroll scrolls this into view
             when new chunks land AND the medic is near the bottom. */}
         <div ref={bottomRef} />
@@ -1642,8 +1645,9 @@ export function EncounterMode() {
 
       {/* Composer — paste / drop aware. Drag a file onto the textarea
           OR Cmd+V a screen capture / image off the web, and it gets
-          uploaded + attached to the next send. */}
-      <div className="mt-4 border-t border-border pt-4" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
+          uploaded + attached to the next send. Drop handling lives on
+          the shared ChatComposer below. */}
+      <div className="mt-4 border-t border-border pt-4">
         {/* F-unified-chat-files — persistent file library for THIS
             patient. Lives above the composer so the medic always sees
             which files the AI has access to (📂 chip + click for
@@ -1730,27 +1734,24 @@ export function EncounterMode() {
             })}
           </div>
         )}
-        <div className="flex gap-2">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            onPaste={onPaste}
-            placeholder="Ask anything about this patient… (paste images or drop files here)"
-            disabled={sending}
-            rows={2}
-            className="flex-1 resize-none rounded-md border border-border bg-bg px-3 py-2 text-body text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
-          />
-          <Button variant="primary" onClick={send} disabled={sending}
-                  className="!px-5 !py-2">
-            {sending ? '…' : 'Send'}
-          </Button>
-        </div>
+        {/* F-unified-chat — shared ChatComposer (auto-growing 1-6 row
+            textarea, Enter=send / Shift+Enter=newline, paperclip attach,
+            inline error alert row). Upload pipeline stays local:
+            acceptFiles / onPaste / onDrop are this surface's own. */}
+        <ChatComposer
+          value={draft}
+          onChange={setDraft}
+          onSend={send}
+          disabled={sending}
+          sendDisabled={!draft.trim() && attachments.length === 0}
+          tone="base"
+          placeholder={t('encounter.composer.placeholder')}
+          onPaste={onPaste}
+          onDrop={onDrop}
+          onPickFiles={acceptFiles}
+          error={chatError}
+          onDismissError={() => setChatError(effectiveSessionId, null)}
+        />
       </div>
     </div>
   );

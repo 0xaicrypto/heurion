@@ -47,10 +47,26 @@ interface AppState {
   // Auth ─────────────────────────────────────────────
   token: string | null;
   displayName: string | null;     // remembered across launches; used by avatar pill
+  // Role from the register/login/claim response. Persisted in
+  // sessionStorage alongside the JWT (same lifetime: window close =
+  // logout = role gone). Gates the admin-only UI (用户管理 entry +
+  // AdminUsersView). null = signed out / unknown.
+  role: 'admin' | 'user' | null;
+  // One-shot username prefill for the login screen. Set by the
+  // account switcher ("switch to X" logs out and prefills X), read
+  // once by LoginView. Never persisted.
+  loginPrefillUsername: string | null;
   bootHydrated: boolean;          // true after we've tried to read token from storage
   setToken: (t: string | null) => void;
   setDisplayName: (name: string | null) => void;
+  setRole: (r: 'admin' | 'user' | null) => void;
+  setLoginPrefillUsername: (u: string | null) => void;
   logout: () => void;
+
+  // Admin · user management overlay (visible only when role==='admin')
+  adminUsersOverlayOpen: boolean;
+  openAdminUsersOverlay: () => void;
+  closeAdminUsersOverlay: () => void;
 
   // F26.2 — Multi-identity (USER_MANAGEMENT.md §4-§6).
   // ``activeUserId`` is the source of truth for which user's data the
@@ -212,9 +228,19 @@ interface AppState {
   /** Dismiss one toast by id, or every toast when called bare
    *  (backward-compatible with the old single-slot signature). */
   dismissToast: (id?: number) => void;
+
+  // UI_UX_REVIEW_2026-07 §3 — unified chat error surface.
+  // Per-session send/stream error, keyed like chatMsgsBySession.
+  // Errors used to be spliced into the message text ("[error: …]");
+  // now they render as an inline alert row above the composer. Kept
+  // in the store (not component state) so an error raised while the
+  // Encounter pane is unmounted is still visible on remount.
+  chatErrorBySession: Record<string, string | null>;
+  setChatError: (sessionId: string, error: string | null) => void;
 }
 
 const TOKEN_KEY   = 'nexus.auth.token';
+const ROLE_KEY    = 'nexus.auth.role';
 const NAME_KEY    = 'nexus.auth.displayName';
 const THEME_KEY   = 'nexus.theme';
 const HIDDEN_KEY  = 'nexus.patients.hidden';
@@ -332,8 +358,11 @@ function readStoredToken(): string | null {
 export const useAppState = create<AppState>((set, get) => ({
   token: null,
   displayName: null,
+  role: null,
+  loginPrefillUsername: null,
   bootHydrated: false,
-  // F26.2 — multi-identity state hydrated from /auth/local-bootstrap
+  // Multi-identity display state (picker dropdown); hydrated from
+  // GET /auth/identities after sign-in.
   activeUserId: null,
   identities: [],
 
@@ -356,6 +385,22 @@ export const useAppState = create<AppState>((set, get) => ({
     } catch { /* ignore */ }
     set({ displayName: name });
   },
+
+  setRole: (r) => {
+    try {
+      // Same sessionStorage tier as the JWT — closing the window
+      // wipes both, so a stale role can never outlive its token.
+      if (r) sessionStorage.setItem(ROLE_KEY, r);
+      else sessionStorage.removeItem(ROLE_KEY);
+    } catch { /* ignore */ }
+    set({ role: r });
+  },
+
+  setLoginPrefillUsername: (u) => set({ loginPrefillUsername: u }),
+
+  adminUsersOverlayOpen: false,
+  openAdminUsersOverlay: () => set({ adminUsersOverlayOpen: true }),
+  closeAdminUsersOverlay: () => set({ adminUsersOverlayOpen: false }),
 
   setActiveUserId: (id) => set({ activeUserId: id }),
   setIdentities:   (list) => set({ identities: list }),
@@ -381,7 +426,12 @@ export const useAppState = create<AppState>((set, get) => ({
    */
   resetForIdentitySwitch: () => {
     try { sessionStorage.removeItem(SESSION_ID_KEY); } catch { /* ignore */ }
+    try { sessionStorage.removeItem(ROLE_KEY); } catch { /* ignore */ }
     set({
+      // Role belongs to the OUTGOING identity — cleared here; the
+      // caller sets the new role right after via setRole().
+      role: null,
+      adminUsersOverlayOpen: false,
       activePatient: null,
       activeMode: 'today',
       activeSessionId: '',
@@ -418,8 +468,11 @@ export const useAppState = create<AppState>((set, get) => ({
     } catch { /* ignore */ }
     api.setToken(null);
     try { sessionStorage.removeItem(SESSION_ID_KEY); } catch { /* ignore */ }
+    try { sessionStorage.removeItem(ROLE_KEY); } catch { /* ignore */ }
     set({
       token: null,
+      role: null,
+      adminUsersOverlayOpen: false,
       activePatient: null,
       activeMode: 'today',
       activeSessionId: '',
@@ -739,6 +792,13 @@ export const useAppState = create<AppState>((set, get) => ({
     set((s) => ({
       toasts: id === undefined ? [] : s.toasts.filter((t) => t.id !== id),
     })),
+
+  // UI_UX_REVIEW_2026-07 §3 — see interface block.
+  chatErrorBySession: {},
+  setChatError: (sessionId, error) =>
+    set((s) => ({
+      chatErrorBySession: { ...s.chatErrorBySession, [sessionId]: error },
+    })),
 }));
 
 // Module-level toast id sequence (see showToast).
@@ -761,6 +821,14 @@ export function hydrateAppState() {
   const theme = readStoredTheme();
   let displayName: string | null = null;
   try { displayName = localStorage.getItem(NAME_KEY); } catch { /* ignore */ }
+  // Role rides in the same sessionStorage tier as the JWT so a page
+  // reload inside one window keeps the admin menu entry alive, while
+  // window-close (which wipes the token) also wipes the role.
+  let role: 'admin' | 'user' | null = null;
+  try {
+    const r = sessionStorage.getItem(ROLE_KEY);
+    if (r === 'admin' || r === 'user') role = r;
+  } catch { /* ignore */ }
   // Restore the last-active session id from sessionStorage. Lives in
   // the same tier as the JWT — closing the window wipes both. Within
   // a session, this stops a page reload from kicking the medic back
@@ -772,6 +840,7 @@ export function hydrateAppState() {
   applyThemeToDOM(theme);
   if (token) api.setToken(token);
   useAppState.setState({
-    token, displayName, theme, activeSessionId, bootHydrated: true,
+    token, displayName, role: token ? role : null,
+    theme, activeSessionId, bootHydrated: true,
   });
 }

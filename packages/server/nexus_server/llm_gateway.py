@@ -1,6 +1,7 @@
 """LLM Gateway router with tool execution loop.
 
-Routes requests to configured LLM providers (Gemini, OpenAI, Anthropic).
+Routes requests to configured LLM providers (Gemini, OpenAI, Anthropic,
+Kimi/Moonshot AI — OpenAI-compatible).
 When the LLM returns tool calls (web search, URL read, file generate),
 the server executes them and feeds results back until a final text response.
 """
@@ -1414,6 +1415,8 @@ async def call_llm(
             return await call_openai(msgs, system_prompt, model, temperature, max_tokens, tools)
         elif provider == "anthropic":
             return await call_anthropic(msgs, system_prompt, model, temperature, max_tokens, tools)
+        elif provider == "kimi":
+            return await call_kimi(msgs, system_prompt, model, temperature, max_tokens, tools)
         else:
             raise ValueError(f"Unknown LLM provider: {provider}")
 
@@ -1633,7 +1636,48 @@ async def call_openai(messages, system_prompt, model, temperature, max_tokens, t
         raise ValueError("OPENAI_API_KEY not configured")
 
     client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+    return await _call_openai_compatible(
+        client, "openai", "OpenAI",
+        messages, system_prompt, model, temperature, max_tokens, tools,
+    )
 
+
+async def call_kimi(messages, system_prompt, model, temperature, max_tokens, tools):
+    """Call Moonshot AI Kimi — OpenAI-compatible Chat Completions API.
+
+    Same wire protocol as OpenAI (chat, tool calling, finish_reason
+    "length" on truncation), just a different base_url + key. Key is
+    KIMI_API_KEY (MOONSHOT_API_KEY accepted as fallback in config);
+    endpoint defaults to https://api.moonshot.ai/v1, overridable via
+    KIMI_BASE_URL.
+    """
+    try:
+        from openai import AsyncOpenAI
+    except ImportError:
+        raise ValueError("openai not installed. Install with: pip install openai")
+
+    if not config.KIMI_API_KEY:
+        raise ValueError(
+            "KIMI_API_KEY not configured (MOONSHOT_API_KEY is also accepted)"
+        )
+
+    client = AsyncOpenAI(
+        api_key=config.KIMI_API_KEY,
+        base_url=config.KIMI_BASE_URL,
+    )
+    return await _call_openai_compatible(
+        client, "kimi", "Kimi",
+        messages, system_prompt, model, temperature, max_tokens, tools,
+    )
+
+
+async def _call_openai_compatible(
+    client, provider_label, display_name,
+    messages, system_prompt, model, temperature, max_tokens, tools,
+):
+    """Shared Chat Completions round-trip for OpenAI and any
+    OpenAI-compatible provider (Kimi). ``provider_label`` is used for
+    usage metering; ``display_name`` only for log lines."""
     chat_messages = []
     if system_prompt:
         chat_messages.append({"role": "system", "content": system_prompt})
@@ -1670,15 +1714,15 @@ async def call_openai(messages, system_prompt, model, temperature, max_tokens, t
             )
             if _is_max_tokens_truncation(choice.finish_reason):
                 logger.warning(
-                    "OpenAI (gateway) response truncated by max_tokens "
+                    "%s (gateway) response truncated by max_tokens "
                     "(finish_reason=%s, text_chars=%d)",
-                    choice.finish_reason, len(content),
+                    display_name, choice.finish_reason, len(content),
                 )
                 content = (content or "") + _TRUNCATION_MARKER
-        _record_call_usage_safe("openai", model, response, "openai")
+        _record_call_usage_safe(provider_label, model, response, "openai")
         return content, model, stop_reason, tool_calls
     except Exception as e:
-        logger.error("OpenAI API error: %s", e)
+        logger.error("%s API error: %s", display_name, e)
         raise
 
 

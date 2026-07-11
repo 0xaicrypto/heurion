@@ -1,36 +1,30 @@
 /**
- * IdentityPicker — F26.2 (USER_MANAGEMENT.md §6.2)
+ * IdentityPicker — account switcher (2026-07 auth rework).
  *
- * Avatar dropdown for switching between local identities on this Mac.
- * Renders the current identity's emoji + display_name as a clickable
- * pill in the global header. Click → dropdown listing all identities
- * with relative-time "last active" + an "add new identity" footer.
+ * The old server-side "create identity" / "switch identity" endpoints
+ * are GONE — accounts are username+password now, so "switching" means
+ * signing in as the other account.
  *
- * Switching flow:
- *   1. POST /auth/identities/{user_id}/activate → new JWT
- *   2. setToken(new_jwt)                         ← in-memory rotation
- *   3. resetForIdentitySwitch()                  ← drop old user's
- *                                                  patients/sessions/
- *                                                  cached UI state
- *   4. refreshPatients() / refreshStudies()      ← repopulate from
- *                                                  the new user
- *   5. Close the dropdown
- *
- * Identity creation flow ("+ 添加新身份"):
- *   - Opens a tiny inline form asking for display_name (required)
- *   - No password, no email — just a name. Backend creates row +
- *     immediately makes it active. Same switch flow as above.
- *
- * No "settings / manage" entry here — that lives in
- * full-screen-overlays.tsx (F26.3). This picker is the FAST switch.
+ * What this component does today:
+ *   - Renders the signed-in account's emoji + display name as a pill
+ *     in the global header.
+ *   - Dropdown lists the accounts known to this device (from
+ *     GET /auth/identities — still available, read-only).
+ *   - Clicking another account LOGS OUT and routes to the login
+ *     screen with that account's name prefilled in the username
+ *     field (best-effort: for most accounts username == the name
+ *     they registered with).
+ *   - "Sign in with another account…" logs out with an empty prefill
+ *     so the medic can log in or register fresh.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useAppState } from '../store';
 import { api, type Identity } from '../lib/api-client';
 import { cn } from '../lib/util';
+import { useT } from '../lib/i18n';
 
-function formatRelative(iso: string | null): string {
-  if (!iso) return '从未';
+function formatRelative(iso: string | null, never: string): string {
+  if (!iso) return never;
   const ms = Date.now() - new Date(iso).getTime();
   if (Number.isNaN(ms)) return '—';
   const min = Math.floor(ms / 60_000);
@@ -45,20 +39,15 @@ function formatRelative(iso: string | null): string {
 }
 
 export function IdentityPicker() {
+  const t                = useT();
   const identities       = useAppState((s) => s.identities);
   const activeUserId     = useAppState((s) => s.activeUserId);
-  const setToken         = useAppState((s) => s.setToken);
-  const setActiveUserId  = useAppState((s) => s.setActiveUserId);
   const setIdentities    = useAppState((s) => s.setIdentities);
-  const resetForSwitch   = useAppState((s) => s.resetForIdentitySwitch);
-  const refreshPatients  = useAppState((s) => s.refreshPatients);
-  const refreshStudies   = useAppState((s) => s.refreshStudies);
+  const logout           = useAppState((s) => s.logout);
+  const setPrefill       = useAppState((s) => s.setLoginPrefillUsername);
   const showToast        = useAppState((s) => s.showToast);
 
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [addingNew, setAddingNew] = useState(false);
-  const [newName, setNewName] = useState('');
   const dropdownRef = useRef<HTMLDivElement | null>(null);
 
   // Close on outside click — standard dropdown pattern.
@@ -68,86 +57,52 @@ export function IdentityPicker() {
       if (!dropdownRef.current) return;
       if (!dropdownRef.current.contains(e.target as Node)) {
         setOpen(false);
-        setAddingNew(false);
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
+  // Refresh the read-only identities list whenever the dropdown opens
+  // so last_active_at is current. Best-effort; the cached list still
+  // renders if the fetch fails.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await api.listIdentities();
+        if (!cancelled) setIdentities(list.identities);
+      } catch { /* keep cached list */ }
+    })();
+    return () => { cancelled = true; };
+  }, [open, setIdentities]);
+
   const active: Identity | null =
     identities.find((i) => i.userId === activeUserId) ?? null;
 
-  async function handleSwitch(target: Identity) {
-    if (target.userId === activeUserId) {
-      setOpen(false);
-      return;
-    }
-    if (busy) return;
-    setBusy(true);
-    try {
-      const r = await api.activateIdentity(target.userId);
-      // Order matters: reset state BEFORE setting token so any
-      // in-flight requests using the old token don't pollute the new
-      // user's projection caches.
-      resetForSwitch();
-      setToken(r.access_token);
-      setActiveUserId(r.user_id);
-      // Refresh the identity list so last_active_at flips to "刚刚".
-      try {
-        const list = await api.listIdentities();
-        setIdentities(list.identities);
-      } catch { /* non-fatal */ }
-      // Repopulate the new user's data.
-      await Promise.all([refreshPatients(), refreshStudies()]);
-      showToast(`已切换到 ${target.avatarEmoji} ${target.displayName}`, 'success');
-      setOpen(false);
-    } catch (e) {
-      showToast(
-        `切换失败：${e instanceof Error ? e.message : String(e)}`,
-        'error',
-      );
-    } finally {
-      setBusy(false);
-    }
+  /** Switching accounts = sign out + prefill the login form. There is
+   *  no server-side "activate" any more — the other account's
+   *  password (or passkey) is required. */
+  function handleSwitch(target: Identity) {
+    setOpen(false);
+    if (target.userId === activeUserId) return;
+    setPrefill(target.displayName);
+    logout();
+    showToast(t('switcher.signedOutToSwitch', { name: target.displayName }), 'info');
   }
 
-  async function handleAddNew() {
-    const name = newName.trim();
-    if (!name) {
-      showToast('请输入名字', 'error');
-      return;
-    }
-    if (busy) return;
-    setBusy(true);
-    try {
-      const r = await api.createIdentity({ displayName: name });
-      resetForSwitch();
-      setToken(r.access_token);
-      setActiveUserId(r.user_id);
-      // Re-fetch so the new identity is in the list with proper
-      // last_active_at.
-      try {
-        const list = await api.listIdentities();
-        setIdentities(list.identities);
-      } catch { /* non-fatal */ }
-      await Promise.all([refreshPatients(), refreshStudies()]);
-      showToast(`已创建身份 ${r.identity.displayName}`, 'success');
-      setNewName('');
-      setAddingNew(false);
-      setOpen(false);
-    } catch (e) {
-      showToast(
-        `创建失败：${e instanceof Error ? e.message : String(e)}`,
-        'error',
-      );
-    } finally {
-      setBusy(false);
-    }
+  /** "Add" = sign out with a blank login form (register tab is one
+   *  click away on the login screen). */
+  function handleAdd() {
+    setOpen(false);
+    setPrefill(null);
+    logout();
+    showToast(t('switcher.signedOutToAdd'), 'info');
   }
 
   // Render the trigger pill: emoji + name. Click → toggle dropdown.
-  // We render even with no identities loaded (renders "—") to avoid
+  // We render even with no identities loaded (renders "…") to avoid
   // layout shift during boot.
   const triggerLabel =
     active ? `${active.avatarEmoji} ${active.displayName}` : '🩺 …';
@@ -162,7 +117,7 @@ export function IdentityPicker() {
           'px-2.5 py-1 text-caption text-text-secondary',
           'hover:border-border-strong hover:bg-surface-1',
         )}
-        title="切换身份 / 添加新身份"
+        title={t('switcher.switch')}
       >
         <span>{triggerLabel}</span>
         <span className="text-text-tertiary">▾</span>
@@ -173,12 +128,12 @@ export function IdentityPicker() {
                         rounded-md border border-border bg-surface-1 shadow-lg">
           <div className="px-3 py-2 text-[10px] uppercase tracking-wider
                           text-text-tertiary border-b border-border">
-            本机身份
+            {t('switcher.title')}
           </div>
           <div className="max-h-72 overflow-y-auto py-1">
             {identities.length === 0 && (
               <div className="px-3 py-2 text-caption text-text-tertiary">
-                暂无身份（启动出错？）
+                {t('switcher.empty')}
               </div>
             )}
             {identities.map((i) => (
@@ -186,12 +141,14 @@ export function IdentityPicker() {
                 key={i.userId}
                 type="button"
                 onClick={() => handleSwitch(i)}
-                disabled={busy}
                 className={cn(
                   'flex w-full items-center gap-2 px-3 py-2 text-left',
-                  'text-caption hover:bg-surface-2 disabled:opacity-50',
+                  'text-caption hover:bg-surface-2',
                   i.userId === activeUserId && 'bg-surface-2',
                 )}
+                title={i.userId === activeUserId
+                  ? undefined
+                  : t('switcher.switchHint')}
               >
                 <span className="text-base">{i.avatarEmoji}</span>
                 <div className="min-w-0 flex-1">
@@ -200,8 +157,10 @@ export function IdentityPicker() {
                   </div>
                   <div className="truncate text-[10px] text-text-tertiary">
                     {i.userId === activeUserId
-                      ? '当前活跃'
-                      : `上次活跃 ${formatRelative(i.lastActiveAt)}`}
+                      ? t('switcher.current')
+                      : t('switcher.lastActive', {
+                          when: formatRelative(i.lastActiveAt, t('switcher.never')),
+                        })}
                   </div>
                 </div>
                 {i.userId === activeUserId && (
@@ -212,61 +171,18 @@ export function IdentityPicker() {
           </div>
 
           <div className="border-t border-border">
-            {!addingNew ? (
-              <button
-                type="button"
-                onClick={() => setAddingNew(true)}
-                disabled={busy}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left
-                           text-caption text-accent hover:bg-surface-2
-                           disabled:opacity-50"
-              >
-                <span>+</span>
-                <span>添加新身份</span>
-              </button>
-            ) : (
-              <div className="space-y-2 px-3 py-2">
-                <input
-                  type="text"
-                  autoFocus
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleAddNew();
-                    if (e.key === 'Escape') {
-                      setAddingNew(false);
-                      setNewName('');
-                    }
-                  }}
-                  placeholder="新身份的名字"
-                  className="w-full rounded-sm border border-border bg-bg
-                             px-2 py-1 text-caption text-text-primary"
-                  disabled={busy}
-                />
-                <div className="flex gap-1.5">
-                  <button
-                    type="button"
-                    onClick={handleAddNew}
-                    disabled={busy || !newName.trim()}
-                    className="flex-1 rounded-sm bg-accent px-2 py-1
-                               text-caption text-white hover:bg-accent-hover
-                               disabled:opacity-50"
-                  >
-                    {busy ? '创建中…' : '创建'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setAddingNew(false); setNewName(''); }}
-                    disabled={busy}
-                    className="rounded-sm border border-border px-2 py-1
-                               text-caption text-text-secondary
-                               hover:bg-surface-2 disabled:opacity-50"
-                  >
-                    取消
-                  </button>
-                </div>
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={handleAdd}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left
+                         text-caption text-accent hover:bg-surface-2"
+            >
+              <span>+</span>
+              <span>{t('switcher.add')}</span>
+            </button>
+            <p className="px-3 pb-2 text-[10px] leading-relaxed text-text-tertiary">
+              {t('switcher.switchHint')}
+            </p>
           </div>
         </div>
       )}

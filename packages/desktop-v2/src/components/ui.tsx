@@ -12,7 +12,13 @@ import { cn } from '../lib/util';
 
 /* ───────────── Button (3 variants) ───────────── */
 
-type ButtonVariant = 'primary' | 'subtle' | 'ghost';
+type ButtonVariant =
+  | 'primary' | 'subtle' | 'ghost'
+  // Research-workspace (always-dark `rw-*` palette) variants — added
+  // per UI_UX_REVIEW_2026-07 §10 so research-workspace.tsx composes
+  // this Button instead of forking dozens of hand-written class
+  // strings. Same component, different tone.
+  | 'rw-primary' | 'rw-secondary' | 'rw-danger';
 
 export function Button({
   variant = 'subtle',
@@ -20,21 +26,33 @@ export function Button({
   children,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
+  // NOTE: radius / weight live on the variant (not here) because the
+  // rw palette uses rounded-md while the base palette uses rounded-sm,
+  // and Tailwind can't resolve that conflict via class order.
   const base =
-    'inline-flex items-center justify-center gap-2 rounded-sm font-medium ' +
+    'inline-flex items-center justify-center gap-2 ' +
     'transition-colors duration-80 ease-out-soft focus-visible:focus-ring ' +
     'disabled:opacity-50 disabled:pointer-events-none';
   const variants: Record<ButtonVariant, string> = {
     primary:
-      'bg-accent text-white hover:bg-accent-hover active:bg-accent-press ' +
+      'rounded-sm font-medium bg-accent text-white hover:bg-accent-hover active:bg-accent-press ' +
       'px-6 py-[13px] text-[15px]',
     subtle:
-      'bg-transparent border border-border text-text-primary ' +
+      'rounded-sm font-medium bg-transparent border border-border text-text-primary ' +
       'hover:bg-accent-subtle hover:border-border-strong ' +
       'px-[18px] py-[10px] text-[14px]',
     ghost:
-      'bg-transparent text-text-secondary hover:text-text-primary ' +
+      'rounded-sm font-medium bg-transparent text-text-secondary hover:text-text-primary ' +
       'hover:bg-accent-subtle px-[14px] py-[9px] text-[14px]',
+    'rw-primary':
+      'rounded-md font-medium bg-rw-accent text-[#06252c] hover:bg-rw-accent-2 ' +
+      'px-3 py-1.5 text-xs disabled:opacity-60',
+    'rw-secondary':
+      'rounded-md bg-rw-surface border border-rw-border text-rw-t2 ' +
+      'hover:border-rw-accent-bd px-3 py-1.5 text-xs',
+    'rw-danger':
+      'rounded-md font-medium bg-rw-red-bg border border-rw-red text-rw-red ' +
+      'hover:bg-rw-red hover:text-white px-3 py-1.5 text-sm',
   };
   return (
     <button className={cn(base, variants[variant], className)} {...rest}>

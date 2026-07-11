@@ -22,25 +22,48 @@ import {
   useAppState, EMPTY_DRAFT_ATTACHMENTS, type DraftAttachment,
 } from '../store';
 import type { StudySummary } from '../lib/util';
-import { ChatMarkdown, type FileChipRef } from './chat-markdown';
-import { CopyButton } from './copy-button';
+import { type FileChipRef } from './chat-markdown';
+// F-unified-chat (UI_UX_REVIEW §3) — shared message row + composer,
+// same layout as Encounter / Today, rw palette via tone="rw".
+import { MessageRow } from './chat-message';
+import { ChatComposer } from './chat-composer';
+// UI_UX_REVIEW §5 — Radix-backed Modal replaces the four hand-rolled
+// fixed-inset overlays (focus trap + Esc + overlay-click for free).
+import { Modal } from './modal';
+// UI_UX_REVIEW §6 — windowing fallback for the roster table.
+import { useHeadWindow } from './windowed-list';
+// UI_UX_REVIEW §10 — shared Button primitive (rw-* variants).
+import { Button } from './ui';
 import { ChatFileChipStrip, useChatFiles } from './chat-file-lib';
 import { useAutoScroll } from '../lib/use-auto-scroll';
-import { StreamingFooter, StreamingCursor } from './thinking-indicator';
 import { TakeawaysButton } from './takeaways-button';
+import { useT } from '../lib/i18n';
+import type { Dict } from '../lib/i18n/en-US';
 
 type Tab = 'overview' | 'eligibility' | 'roster' | 'safety'
          | 'schedule' | 'chat' | 'reports';
 
-const TAB_LABELS: Record<Tab, string> = {
-  overview:    '概览',
-  eligibility: '入排清单',
-  roster:      '入组名单',
-  safety:      '安全性',
-  schedule:    '进度计划',
-  chat:        '研究对话',
-  reports:     '报告导出',
+// UI_UX_REVIEW §7 — tab labels resolve through the i18n dictionary.
+const TAB_LABEL_KEYS: Record<Tab, keyof Dict> = {
+  overview:    'research.tab.overview',
+  eligibility: 'research.tab.eligibility',
+  roster:      'research.tab.roster',
+  safety:      'research.tab.safety',
+  schedule:    'research.tab.schedule',
+  chat:        'research.tab.chat',
+  reports:     'research.tab.reports',
 };
+
+/** Locale-reactive tab labels — replaces the old hardcoded-Chinese
+ *  `TAB_LABELS` constant. */
+function useTabLabels(): Record<Tab, string> {
+  const t = useT();
+  const out = {} as Record<Tab, string>;
+  for (const k of Object.keys(TAB_LABEL_KEYS) as Tab[]) {
+    out[k] = t(TAB_LABEL_KEYS[k]);
+  }
+  return out;
+}
 
 
 // ════════════════════════════════════════════════════════════════════
@@ -48,10 +71,12 @@ const TAB_LABELS: Record<Tab, string> = {
 // ════════════════════════════════════════════════════════════════════
 
 export function ResearchWorkspace() {
+  const t = useT();
   const studies          = useAppState((s) => s.studies);
   const refreshStudies   = useAppState((s) => s.refreshStudies);
   const activeStudyId    = useAppState((s) => s.activeStudyId);
   const setActiveStudyId = useAppState((s) => s.setActiveStudyId);
+  const showToast        = useAppState((s) => s.showToast);
   const [newOpen, setNewOpen] = useState(false);
   // Pending delete is held at the workspace level so we can render the
   // confirmation dialog over the entire pane (not just the sidebar row).
@@ -69,9 +94,13 @@ export function ResearchWorkspace() {
       await refreshStudies();
       setPendingDelete(null);
     } catch (e) {
-      // Surface the failure in the dialog; don't close it.
+      // Surface the failure via toast (UI_UX_REVIEW §5 — no alert());
+      // keep the dialog open so the medic can retry.
       console.warn('archiveResearchStudy failed', e);
-      alert(`删除失败：${(e as Error).message || String(e)}`);
+      showToast(
+        t('research.archiveFailed', { error: (e as Error).message || String(e) }),
+        'error',
+      );
     } finally {
       setDeleting(false);
     }
@@ -124,46 +153,40 @@ function DeleteStudyDialog(props: {
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const t = useT();
   const s = props.study;
   const hasEnrolled = s.enrolledCount > 0;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-         onClick={props.onCancel}>
-      <div className="w-[440px] rounded-lg border border-rw-border bg-rw-surface
-                      p-5 shadow-2xl font-rw-display"
-           onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-rw-t1 text-base font-semibold">归档研究</h2>
-        <p className="mt-2 text-sm text-rw-t2 leading-relaxed">
-          确认归档 <span className="text-rw-t1 font-medium">{s.displayName}</span>?
-        </p>
-        <ul className="mt-3 text-[12px] text-rw-t3 space-y-1 list-disc pl-4">
-          <li>研究从侧栏隐藏,但所有事件、入组、筛查记录都保留(GCP 合规)</li>
-          {hasEnrolled && (
-            <li className="text-rw-orange">
-              已有 {s.enrolledCount} 例入组 — 这些患者的 timeline 不受影响
-            </li>
-          )}
-          <li>需要时可以联系工程恢复</li>
-        </ul>
-        <div className="mt-5 flex justify-end gap-2">
-          <button onClick={props.onCancel}
-                  disabled={props.busy}
-                  className="px-3 py-1.5 rounded-md text-sm text-rw-t2
-                             border border-rw-border hover:bg-rw-surface-2
-                             disabled:opacity-50">
-            取消
-          </button>
-          <button onClick={props.onConfirm}
-                  disabled={props.busy}
-                  className="px-3 py-1.5 rounded-md text-sm font-medium
-                             bg-rw-red-bg border border-rw-red text-rw-red
-                             hover:bg-rw-red hover:text-white
-                             disabled:opacity-50">
-            {props.busy ? '归档中…' : '归档'}
-          </button>
-        </div>
+    <Modal
+      open
+      onClose={props.onCancel}
+      title={t('research.dialog.archiveTitle')}
+      tone="rw"
+      width={440}
+    >
+      <p className="text-sm text-rw-t2 leading-relaxed">
+        {t('research.dialog.archiveConfirm', { name: s.displayName })}
+      </p>
+      <ul className="mt-3 text-[12px] text-rw-t3 space-y-1 list-disc pl-4">
+        <li>{t('research.dialog.archiveKeep')}</li>
+        {hasEnrolled && (
+          <li className="text-rw-orange">
+            {t('research.dialog.archiveEnrolled', { count: s.enrolledCount })}
+          </li>
+        )}
+        <li>{t('research.dialog.archiveRestore')}</li>
+      </ul>
+      <div className="mt-5 flex justify-end gap-2">
+        <Button variant="rw-secondary" onClick={props.onCancel}
+                disabled={props.busy} className="!text-sm">
+          {t('research.cancel')}
+        </Button>
+        <Button variant="rw-danger" onClick={props.onConfirm}
+                disabled={props.busy}>
+          {props.busy ? t('research.dialog.archiving') : t('research.dialog.archive')}
+        </Button>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -179,6 +202,7 @@ function StudiesSidebar(props: {
   onNew: () => void;
   onDelete: (s: StudySummary) => void;
 }) {
+  const t = useT();
   const inboxCount = props.studies.reduce((n, s) => n + s.candidateCount, 0);
   return (
     <aside className="w-[252px] shrink-0 border-r border-rw-border bg-rw-bg-deep flex flex-col">
@@ -190,7 +214,7 @@ function StudiesSidebar(props: {
                      hover:bg-rw-accent/10 transition flex items-center justify-center gap-1"
           style={{width: 'calc(100% - 24px)'}}
         >
-          <span className="text-base leading-none">+</span> 新建研究
+          <span className="text-base leading-none">+</span> {t('research.sidebar.new')}
         </button>
       </SidebarSection>
 
@@ -198,7 +222,7 @@ function StudiesSidebar(props: {
         <div className="px-1 flex flex-col gap-0.5">
           {props.studies.length === 0 && (
             <div className="px-3 py-4 text-xs text-rw-t4 italic">
-              暂无研究 — 点上方 “新建研究” 或安装 starter
+              {t('research.sidebar.empty')}
             </div>
           )}
           {props.studies.map((s) => (
@@ -230,14 +254,14 @@ function StudiesSidebar(props: {
         >
           <span className={props.activeStudyId === null ? 'text-rw-accent' : 'text-rw-t3'}>
             💬
-          </span> 跨研究对话
+          </span> {t('research.sidebar.crossChat')}
         </button>
         <button className="w-full mx-1 px-3 py-2 rounded-md text-sm
                           hover:bg-rw-surface flex items-center justify-between
                           text-rw-t2 border border-transparent"
                 style={{width:'calc(100% - 8px)'}}>
           <span className="flex items-center gap-2">
-            <span className="text-rw-t3">⌬</span> 入排候选 Inbox
+            <span className="text-rw-t3">⌬</span> {t('research.sidebar.inbox')}
           </span>
           {inboxCount > 0 && (
             <span className="px-1.5 py-0.5 rounded-full bg-rw-red text-white text-[10px] font-mono">
@@ -249,7 +273,7 @@ function StudiesSidebar(props: {
                           hover:bg-rw-surface flex items-center gap-2 text-rw-t2
                           border border-transparent"
                 style={{width:'calc(100% - 8px)'}}>
-          <span className="text-rw-t3">○</span> 未分组患者
+          <span className="text-rw-t3">○</span> {t('research.sidebar.ungrouped')}
         </button>
       </SidebarSection>
 
@@ -277,6 +301,7 @@ function StudySidebarRow(props: {
   onClick: () => void;
   onDelete: () => void;
 }) {
+  const t = useT();
   const s = props.study;
   const pct = s.targetN ? Math.min(100, Math.round(s.enrolledCount/s.targetN*100)) : 0;
   // The card itself is the click target; the trash icon is a nested
@@ -316,9 +341,9 @@ function StudySidebarRow(props: {
         </div>
       )}
       <button
-        aria-label={`归档 ${s.displayName}`}
+        aria-label={`${t('research.sidebar.archiveStudy')} ${s.displayName}`}
         onClick={(e) => { e.stopPropagation(); props.onDelete(); }}
-        title="归档研究"
+        title={t('research.sidebar.archiveStudy')}
         className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100
                    focus:opacity-100 transition rounded p-0.5
                    text-rw-t4 hover:text-rw-red hover:bg-rw-surface-2"
@@ -356,6 +381,7 @@ interface StudyData {
 }
 
 function StudyDetail({studyId}: {studyId: string}) {
+  const t = useT();
   const [tab, setTab] = useState<Tab>('overview');
   const [study, setStudy] = useState<StudyData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -369,10 +395,10 @@ function StudyDetail({studyId}: {studyId: string}) {
   }, [studyId]);
 
   if (loading && !study) {
-    return <div className="p-8 text-rw-t3">载入研究中…</div>;
+    return <div className="p-8 text-rw-t3">{t('research.loadingStudy')}</div>;
   }
   if (!study) {
-    return <div className="p-8 text-rw-red">未找到研究</div>;
+    return <div className="p-8 text-rw-red">{t('research.notFound')}</div>;
   }
 
   return (
@@ -392,6 +418,9 @@ function StudyDetail({studyId}: {studyId: string}) {
 }
 
 function StudyHeader(props: {study: StudyData; tab: Tab; setTab: (t: Tab) => void}) {
+  const t = useT();
+  // Locale-reactive tab labels (TAB_LABELS uses t() via useTabLabels).
+  const TAB_LABELS = useTabLabels();
   const s = props.study;
   return (
     <header className="px-6 pt-5 pb-3 border-b border-rw-border bg-rw-bg">
@@ -408,14 +437,8 @@ function StudyHeader(props: {study: StudyData; tab: Tab; setTab: (t: Tab) => voi
           {s.status}
         </span>
         <div className="flex-1" />
-        <button className="px-3 py-1.5 rounded-md bg-rw-surface border border-rw-border
-                          text-xs text-rw-t2 hover:border-rw-accent-bd transition">
-          ↧ 导出
-        </button>
-        <button className="px-2 py-1.5 rounded-md bg-rw-surface border border-rw-border
-                          text-xs text-rw-t2 hover:border-rw-accent-bd transition">
-          ⚙
-        </button>
+        <Button variant="rw-secondary">↧ {t('research.export')}</Button>
+        <Button variant="rw-secondary" className="!px-2">⚙</Button>
       </div>
       <div className="mt-3 flex flex-wrap gap-1">
         {(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
@@ -438,6 +461,7 @@ function StudyHeader(props: {study: StudyData; tab: Tab; setTab: (t: Tab) => voi
 // ════════════════════════════════════════════════════════════════════
 
 function OverviewTab({study}: {study: StudyData}) {
+  const t = useT();
   const [overview, setOverview] = useState<{
     enrolled_count: number; target_n: number | null;
     candidate_count: number; attention_count: number;
@@ -470,33 +494,33 @@ function OverviewTab({study}: {study: StudyData}) {
   return (
     <div className="px-6 py-5 space-y-5">
       <div className="grid grid-cols-4 gap-3">
-        <KPICard label="入组进度"
+        <KPICard label={t('research.kpi.enrollment')}
                  value={targetN ? `${enrolled}/${targetN}` : `${enrolled}`}
                  sub={overview?.status || study.status} tone="accent"/>
-        <KPICard label="候选总数" value={cand}
+        <KPICard label={t('research.kpi.candidates')} value={cand}
                  sub="eligibility_inbox" tone="default"/>
-        <KPICard label="待医生" value={attn}
-                 sub="未决候选" tone="orange"/>
-        <KPICard label="中位随访"
+        <KPICard label={t('research.kpi.pendingMedic')} value={attn}
+                 sub={t('research.kpi.pendingSub')} tone="orange"/>
+        <KPICard label={t('research.kpi.followup')}
                  value={followup > 0 ? followup.toFixed(1) : '—'}
-                 suffix={followup > 0 ? '月' : undefined}
-                 sub={enrolled > 0 ? `n=${enrolled}` : '尚无入组'} tone="default"/>
+                 suffix={followup > 0 ? t('research.kpi.months') : undefined}
+                 sub={enrolled > 0 ? `n=${enrolled}` : t('research.kpi.noEnrollment')} tone="default"/>
       </div>
 
-      <Card title="入组进度" right={`${pct}%`}>
+      <Card title={t('research.overview.progressTitle')} right={`${pct}%`}>
         <div className="h-2 w-full rounded-full bg-rw-surface-3 overflow-hidden">
           <div className="h-2 bg-rw-accent rounded-full" style={{width:`${pct}%`}} />
         </div>
         <div className="mt-3 text-xs text-rw-t3">
-          主要终点：<span className="text-rw-t1">
-            {overview?.primary_endpoint || study.primary_endpoint || '尚未设定'}
+          {t('research.overview.primaryEndpoint')}<span className="text-rw-t1">
+            {overview?.primary_endpoint || study.primary_endpoint || t('research.overview.endpointUnset')}
           </span>
         </div>
       </Card>
 
-      <Card title="近 7 天动态">
+      <Card title={t('research.overview.activityTitle')}>
         {activity.length === 0 ? (
-          <div className="text-sm text-rw-t3 italic">最近 7 天暂无活动 — 入组、写病程、上传影像后会自动产生。</div>
+          <div className="text-sm text-rw-t3 italic">{t('research.overview.activityEmpty')}</div>
         ) : (
           <ActivityFeed items={activity.map(a => ({
             when: fmtWhen(a.when_ms), text: a.text, kind: a.kind,
@@ -524,6 +548,7 @@ interface ScreeningRow {
 }
 
 function EligibilityTab({studyId}: {studyId: string; study: StudyData}) {
+  const t = useT();
   const [rows, setRows] = useState<ScreeningRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [invite, setInvite] = useState<ScreeningRow | null>(null);
@@ -557,27 +582,25 @@ function EligibilityTab({studyId}: {studyId: string; study: StudyData}) {
     <div className="px-6 py-5 space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-medium text-rw-t1">
-          候选患者（<span className="font-rw-mono">{rows.length}</span>）
+          {t('research.elig.title')}（<span className="font-rw-mono">{rows.length}</span>）
         </h2>
         <div className="flex items-center gap-2">
           <label className="text-xs text-rw-t3 flex items-center gap-2">
             <span className="w-8 h-4 rounded-full bg-rw-accent relative">
               <span className="absolute right-0.5 top-0.5 w-3 h-3 rounded-full bg-white"/>
             </span>
-            自动扫描已开启
+            {t('research.elig.autoScan')}
           </label>
-          <button onClick={rescan} disabled={busy}
-            className="px-3 py-1.5 rounded-md bg-rw-surface border border-rw-border
-                       text-xs text-rw-t2 hover:border-rw-accent-bd">
-            {busy ? '重新扫描中…' : '重新扫描'}
-          </button>
+          <Button variant="rw-secondary" onClick={rescan} disabled={busy}>
+            {busy ? t('research.elig.rescanning') : t('research.elig.rescan')}
+          </Button>
         </div>
       </div>
 
       {rows.length === 0 && (
         <div className="text-sm text-rw-t3 italic py-6 text-center
                         border border-dashed border-rw-border rounded-lg">
-          暂无待筛候选 — 触发 “重新扫描” 让 eligibility 引擎对所有患者重评估
+          {t('research.elig.empty')}
         </div>
       )}
 
@@ -602,6 +625,7 @@ function CandidateCard(props: {
   onSkip: () => void;
   onSnooze: () => void;
 }) {
+  const t = useT();
   const {row} = props;
   const crits = useMemo(() => Object.entries(row.per_criterion), [row]);
   return (
@@ -610,7 +634,7 @@ function CandidateCard(props: {
         <div>
           <div className="flex items-center gap-2">
             <span className="font-medium text-rw-t1">
-              患者 #{row.patient_hash.slice(0,6)}
+              {t('research.patientN', { id: row.patient_hash.slice(0,6) })}
             </span>
             <span className="px-1.5 py-0.5 rounded text-[10px] font-rw-mono
                              bg-rw-accent-bg text-rw-accent uppercase">
@@ -619,21 +643,17 @@ function CandidateCard(props: {
           </div>
         </div>
         <div className="flex gap-1.5">
-          <button onClick={props.onInvite}
-            className="px-3 py-1.5 rounded-md bg-rw-accent text-[#06252c]
-                       text-xs font-medium hover:bg-rw-accent-2">
-            邀请入组
-          </button>
-          <button onClick={props.onSkip}
-            className="px-3 py-1.5 rounded-md bg-rw-surface-2 border border-rw-border
-                       text-xs text-rw-t2 hover:border-rw-red">
-            跳过
-          </button>
-          <button onClick={props.onSnooze}
-            className="px-3 py-1.5 rounded-md bg-rw-surface-2 border border-rw-border
-                       text-xs text-rw-t2 hover:border-rw-orange">
-            稍后提醒
-          </button>
+          <Button variant="rw-primary" onClick={props.onInvite}>
+            {t('research.elig.invite')}
+          </Button>
+          <Button variant="rw-secondary" onClick={props.onSkip}
+                  className="!bg-rw-surface-2 hover:!border-rw-red">
+            {t('research.elig.skip')}
+          </Button>
+          <Button variant="rw-secondary" onClick={props.onSnooze}
+                  className="!bg-rw-surface-2 hover:!border-rw-orange">
+            {t('research.elig.snooze')}
+          </Button>
         </div>
       </div>
 
@@ -668,11 +688,13 @@ function CandidateCard(props: {
           <div className="flex items-start gap-2">
             <span className="text-rw-accent">🤖</span>
             <div className="flex-1 text-[12px] text-rw-t2 leading-relaxed">
-              <span className="font-medium text-rw-t1">LLM 综合建议：</span>
+              <span className="font-medium text-rw-t1">{t('research.elig.llmAdvice')}</span>
               {row.llm_recommendation.narrative}
               {typeof row.llm_recommendation.overall_confidence === 'number' && (
                 <span className="ml-2 text-rw-t3 font-rw-mono">
-                  (置信度 {row.llm_recommendation.overall_confidence.toFixed(2)})
+                  {t('research.elig.confidence', {
+                    value: row.llm_recommendation.overall_confidence.toFixed(2),
+                  })}
                 </span>
               )}
             </div>
@@ -689,6 +711,7 @@ function CandidateCard(props: {
 // ════════════════════════════════════════════════════════════════════
 
 function RosterTab({studyId}: {studyId: string}) {
+  const t = useT();
   const [rows, setRows] = useState<Array<{
     patient_hash: string; enrollment_seq: number; status: string;
     arm: string | null; enrolled_at: number;
@@ -697,36 +720,40 @@ function RosterTab({studyId}: {studyId: string}) {
     api.getRoster(studyId).then((r) => setRows(r as never)).catch(console.warn);
   }, [studyId]);
 
+  // UI_UX_REVIEW §6 — windowed table body ("show more" row) instead of
+  // mounting every enrollment at once. react-window wasn't adoptable
+  // (see components/windowed-list.tsx).
+  const { visible, hiddenCount, showMore } = useHeadWindow(rows, 50, 200);
+
   return (
     <div className="px-6 py-5 space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-medium text-rw-t1">
-          入组名单（<span className="font-rw-mono">{rows.length}</span>）
+          {t('research.roster.title')}（<span className="font-rw-mono">{rows.length}</span>）
         </h2>
-        <button className="px-3 py-1.5 rounded-md bg-rw-surface border border-rw-border
-                          text-xs text-rw-t2 hover:border-rw-accent-bd">
-          + 手动添加
-        </button>
+        <Button variant="rw-secondary">
+          {t('research.roster.addManual')}
+        </Button>
       </div>
       <div className="rounded-lg border border-rw-border overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-rw-surface-2 text-[11px] uppercase tracking-wider text-rw-t3">
             <tr>
               <th className="text-left px-4 py-2 font-rw-mono">#</th>
-              <th className="text-left px-4 py-2">患者</th>
-              <th className="text-left px-4 py-2">Arm</th>
-              <th className="text-left px-4 py-2">入组日期</th>
-              <th className="text-left px-4 py-2">治疗阶段</th>
-              <th className="text-left px-4 py-2">末次随访</th>
+              <th className="text-left px-4 py-2">{t('research.roster.colPatient')}</th>
+              <th className="text-left px-4 py-2">{t('research.roster.colArm')}</th>
+              <th className="text-left px-4 py-2">{t('research.roster.colEnrolled')}</th>
+              <th className="text-left px-4 py-2">{t('research.roster.colPhase')}</th>
+              <th className="text-left px-4 py-2">{t('research.roster.colLastFu')}</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {visible.map((r, i) => (
               <tr key={r.patient_hash}
                   className={`border-t border-rw-border-soft hover:bg-rw-surface-2 ${i % 2 ? 'bg-rw-surface/40' : ''}`}>
                 <td className="px-4 py-2 font-rw-mono text-rw-accent">#{r.enrollment_seq}</td>
                 <td className="px-4 py-2 text-rw-t1">
-                  患者 {r.patient_hash.slice(0,8)}…
+                  {t('research.roster.patientRow', { id: `${r.patient_hash.slice(0,8)}…` })}
                 </td>
                 <td className="px-4 py-2 text-rw-t2">{r.arm || '—'}</td>
                 <td className="px-4 py-2 text-rw-t3 font-rw-mono text-xs">
@@ -736,9 +763,22 @@ function RosterTab({studyId}: {studyId: string}) {
                 <td className="px-4 py-2 text-rw-t3">—</td>
               </tr>
             ))}
+            {hiddenCount > 0 && (
+              <tr className="border-t border-rw-border-soft">
+                <td colSpan={6} className="py-2 text-center">
+                  <button
+                    type="button"
+                    onClick={showMore}
+                    className="text-xs text-rw-accent hover:underline"
+                  >
+                    {t('list.showMore', { count: hiddenCount })}
+                  </button>
+                </td>
+              </tr>
+            )}
             {rows.length === 0 && (
               <tr><td colSpan={6}
-                className="py-6 text-center text-rw-t3 italic">尚无入组患者</td></tr>
+                className="py-6 text-center text-rw-t3 italic">{t('research.roster.empty')}</td></tr>
             )}
           </tbody>
         </table>
@@ -790,6 +830,7 @@ function fmtTs(ms: number): string {
 }
 
 function SafetyTab({studyId}: {studyId: string}) {
+  const t = useT();
   const [observations, setObservations] = useState<Observation[] | null>(null);
   const [stopRule,     setStopRule]     = useState<StopRuleStatus | null>(null);
   const [filter,       setFilter]       = useState<'all' | 'g3+' | string>('all');
@@ -833,7 +874,7 @@ function SafetyTab({studyId}: {studyId: string}) {
 
   return (
     <div className="px-6 py-5 space-y-4">
-      <Card title="Stop-rule 状态 · run-in 队列">
+      <Card title={t('research.safety.stopRule')}>
         {stopRule ? (
           <>
             <div className="flex items-center gap-3">
@@ -844,7 +885,7 @@ function SafetyTab({studyId}: {studyId: string}) {
               <span className="text-xs font-rw-mono text-rw-t2 whitespace-nowrap">
                 {stopRule.dlt_observed}
                 {stopRule.dlt_cap !== null && ` / ${stopRule.dlt_cap}`} DLT
-                {stopRule.dlt_cap === null && ' (未配置)'}
+                {stopRule.dlt_cap === null && t('research.safety.notConfigured')}
               </span>
             </div>
             <p className={`mt-2 text-xs ${stopRule.triggered ? 'text-rw-red' : 'text-rw-t3'}`}>
@@ -852,13 +893,13 @@ function SafetyTab({studyId}: {studyId: string}) {
             </p>
           </>
         ) : (
-          <p className="text-xs text-rw-t3">载入中…</p>
+          <p className="text-xs text-rw-t3">{t('research.loading')}</p>
         )}
       </Card>
 
       <div className="flex items-center justify-between">
         <h2 className="text-base font-medium text-rw-t1">
-          安全性 / 观察事件流
+          {t('research.safety.feedTitle')}
           {observations && (
             <span className="ml-2 text-[11px] font-rw-mono text-rw-t4">
               {filtered.length}/{observations.length}
@@ -869,14 +910,14 @@ function SafetyTab({studyId}: {studyId: string}) {
           <button onClick={() => setRecordOpen(true)}
             className="px-2.5 py-1 rounded-md bg-rw-accent-bg border border-rw-accent-bd
                        text-rw-accent hover:bg-rw-accent/10 transition">
-            + 记录 AE
+            {t('research.safety.recordAe')}
           </button>
           <select
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             className="bg-rw-surface border border-rw-border rounded-md px-2 py-1 text-xs">
-            <option value="all">全部</option>
-            <option value="g3+">仅 ≥G3</option>
+            <option value="all">{t('research.safety.filterAll')}</option>
+            <option value="g3+">{t('research.safety.filterG3')}</option>
             {categories.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
@@ -884,8 +925,8 @@ function SafetyTab({studyId}: {studyId: string}) {
 
       {error && (
         <div className="rounded-md border border-rw-red bg-rw-red-bg p-3 text-sm text-rw-red">
-          载入失败：{error}
-          <button onClick={reload} className="ml-2 underline">重试</button>
+          {t('research.safety.loadFailed', { error })}
+          <button onClick={reload} className="ml-2 underline">{t('research.retry')}</button>
         </div>
       )}
 
@@ -895,10 +936,9 @@ function SafetyTab({studyId}: {studyId: string}) {
         <div className="rounded-lg border border-dashed border-rw-border bg-rw-surface-2
                         p-8 text-center text-sm text-rw-t3">
           <div className="text-2xl mb-2">🩺</div>
-          <div className="text-rw-t2">本研究暂无安全性事件</div>
+          <div className="text-rw-t2">{t('research.safety.empty')}</div>
           <div className="mt-1 text-[11px] text-rw-t4">
-            点上方 "+ 记录 AE" 手动录入,或等 Patient Mode 的 SOAP 病程自动镜像
-            <br/>(SOAP → AE 自动抽取在 Phase 2 上线)
+            {t('research.safety.emptyHint')}
           </div>
         </div>
       )}
@@ -922,7 +962,13 @@ function SafetyTab({studyId}: {studyId: string}) {
 function ObservationItem({obs, studyId, onChanged}: {
   obs: Observation; studyId: string; onChanged: () => Promise<void> | void;
 }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
+  // UI_UX_REVIEW §5 — the unlink reason is collected via a small Modal
+  // form instead of window.prompt() (which has no styling, no i18n,
+  // and is blocked in some webviews).
+  const [unlinkOpen,   setUnlinkOpen]   = useState(false);
+  const [unlinkReason, setUnlinkReason] = useState('');
 
   // Helper actions hit the canonical mutation endpoints; on success
   // we re-pull the entire list so the DLT counter above also refreshes.
@@ -942,12 +988,12 @@ function ObservationItem({obs, studyId, onChanged}: {
       setBusy(false);
     }
   }
-  async function unlink() {
-    const reason = window.prompt('解除关联(标记为误判)的原因:', '');
-    if (reason === null) return;  // cancelled
+  async function doUnlink() {
     setBusy(true);
     try {
-      await api.unlinkStudyObservation(studyId, obs.observation_id, reason);
+      await api.unlinkStudyObservation(studyId, obs.observation_id, unlinkReason);
+      setUnlinkOpen(false);
+      setUnlinkReason('');
       await onChanged();
     } finally {
       setBusy(false);
@@ -960,7 +1006,7 @@ function ObservationItem({obs, studyId, onChanged}: {
       <header className="flex items-center justify-between text-xs text-rw-t3">
         <span className="font-rw-mono">{fmtTs(obs.created_at)}</span>
         {obs.linked_assessment_visit_id && (
-          <span>关联到访视：{obs.linked_assessment_visit_id}</span>
+          <span>{t('research.safety.linkedVisit', { id: obs.linked_assessment_visit_id })}</span>
         )}
       </header>
       <div className="flex items-center gap-2 text-sm">
@@ -976,26 +1022,30 @@ function ObservationItem({obs, studyId, onChanged}: {
         {obs.is_dlt && <Pill tone="red">DLT</Pill>}
       </div>
       <div className="grid grid-cols-[100px_1fr] gap-x-3 gap-y-1 text-[12px]">
-        <div className="text-rw-t3">类别</div>
+        <div className="text-rw-t3">{t('research.safety.category')}</div>
         <div className="text-rw-t2">
           {obs.category}
           {obs.source_kind !== 'manual' && (
-            <span className="text-rw-t4 italic ml-1">（{obs.source_kind} 自动归类）</span>
+            <span className="text-rw-t4 italic ml-1">
+              {t('research.safety.autoCategorized', { kind: obs.source_kind })}
+            </span>
           )}
         </div>
-        <div className="text-rw-t3">来源</div>
+        <div className="text-rw-t3">{t('research.safety.source')}</div>
         <div className="text-rw-t2">
-          {obs.source_kind === 'manual' ? '医生手动录入' : `Patient Mode · ${obs.source_kind}`}
+          {obs.source_kind === 'manual'
+            ? t('research.safety.manualEntry')
+            : `Patient Mode · ${obs.source_kind}`}
         </div>
         {obs.source_text_excerpt && (
           <>
-            <div className="text-rw-t3">摘录</div>
+            <div className="text-rw-t3">{t('research.safety.excerpt')}</div>
             <div className="text-rw-t2 italic">"{obs.source_text_excerpt}"</div>
           </>
         )}
       </div>
       <div className="pt-2 flex items-center gap-2 text-xs flex-wrap">
-        <span className="text-rw-t3">AE 分级</span>
+        <span className="text-rw-t3">{t('research.safety.aeGrade')}</span>
         {GRADES.map((g) => (
           <button
             key={g}
@@ -1012,17 +1062,48 @@ function ObservationItem({obs, studyId, onChanged}: {
           </button>
         ))}
         {!obs.ae_grade_confirmed && (
-          <span className="text-rw-t4 italic ml-1">← 待医生确认</span>
+          <span className="text-rw-t4 italic ml-1">{t('research.safety.awaitConfirm')}</span>
         )}
         {obs.ae_grade_confirmed && obs.medic_confirmed_at && (
           <span className="text-rw-t4 ml-1">✓ {fmtTs(obs.medic_confirmed_at)}</span>
         )}
         <span className="flex-1" />
-        <button onClick={unlink} disabled={busy}
+        <button onClick={() => setUnlinkOpen(true)} disabled={busy}
           className="text-rw-t2 text-[11px] hover:text-rw-red disabled:opacity-50">
-          解除关联（误判）
+          {t('research.safety.unlink')}
         </button>
       </div>
+      {unlinkOpen && (
+        <Modal
+          open
+          onClose={() => setUnlinkOpen(false)}
+          title={t('research.safety.unlinkTitle')}
+          tone="rw"
+          width={420}
+        >
+          <label className="block text-xs text-rw-t3 mb-1">
+            {t('research.safety.unlinkReason')}
+          </label>
+          <textarea
+            value={unlinkReason}
+            onChange={(e) => setUnlinkReason(e.target.value)}
+            rows={3}
+            autoFocus
+            className="w-full bg-rw-bg border border-rw-border rounded-md
+                       px-2 py-1.5 text-sm text-rw-t1"
+          />
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="rw-secondary"
+                    onClick={() => setUnlinkOpen(false)} disabled={busy}>
+              {t('research.cancel')}
+            </Button>
+            <Button variant="rw-danger" onClick={doUnlink} disabled={busy}
+                    className="!text-xs">
+              {t('research.safety.unlink')}
+            </Button>
+          </div>
+        </Modal>
+      )}
     </article>
   );
 }
@@ -1035,6 +1116,7 @@ function RecordObservationDialog({studyId, onCancel, onSaved}: {
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const t = useT();
   const [roster,        setRoster]        = useState<Array<{
     patient_hash: string; enrollment_seq: number;
   }>>([]);
@@ -1056,7 +1138,7 @@ function RecordObservationDialog({studyId, onCancel, onSaved}: {
 
   async function save() {
     if (!patientHash || !category.trim()) {
-      setErr('患者 + 类别 必填');
+      setErr(t('research.safety.required'));
       return;
     }
     setBusy(true); setErr(null);
@@ -1077,22 +1159,24 @@ function RecordObservationDialog({studyId, onCancel, onSaved}: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-         onClick={onCancel}>
-      <div className="w-[520px] rounded-lg border border-rw-border bg-rw-surface
-                      p-5 shadow-2xl font-rw-display space-y-3"
-           onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-rw-t1 text-base font-semibold">记录 AE / 观察事件</h2>
-        <p className="text-[11px] text-rw-t3 -mt-1">
-          仅录入 — 录入后默认 <span className="text-rw-t2">未确认</span>;医生在事件流里点 G1-G5 按钮才正式确认。
+    <Modal
+      open
+      onClose={onCancel}
+      title={t('research.safety.recordTitle')}
+      tone="rw"
+      width={520}
+    >
+      <div className="space-y-3">
+        <p className="text-[11px] text-rw-t3">
+          {t('research.safety.recordIntro')}
         </p>
 
         <div>
-          <label className="text-xs text-rw-t3 block mb-1">患者(入组列表)</label>
+          <label className="text-xs text-rw-t3 block mb-1">{t('research.safety.patientLabel')}</label>
           <select value={patientHash}
             onChange={(e) => setPatientHash(e.target.value)}
             className="w-full bg-rw-bg border border-rw-border rounded-md px-2 py-1.5 text-sm text-rw-t1">
-            {roster.length === 0 && <option value="">(暂无入组患者)</option>}
+            {roster.length === 0 && <option value="">{t('research.safety.noRoster')}</option>}
             {roster.map((r) => (
               <option key={r.patient_hash} value={r.patient_hash}>
                 #{r.enrollment_seq} · {r.patient_hash.slice(0, 12)}
@@ -1102,55 +1186,54 @@ function RecordObservationDialog({studyId, onCancel, onSaved}: {
         </div>
 
         <div>
-          <label className="text-xs text-rw-t3 block mb-1">类别 / category</label>
+          <label className="text-xs text-rw-t3 block mb-1">{t('research.safety.categoryLabel')}</label>
           <input value={category}
             onChange={(e) => setCategory(e.target.value)}
-            placeholder="如 肺部毒性、疲劳 / Constitutional、肝功能异常 …"
+            placeholder={t('research.safety.categoryPlaceholder')}
             className="w-full bg-rw-bg border border-rw-border rounded-md px-2 py-1.5 text-sm text-rw-t1"/>
         </div>
 
         <div className="flex items-center gap-3">
           <div>
-            <label className="text-xs text-rw-t3 block mb-1">建议分级</label>
+            <label className="text-xs text-rw-t3 block mb-1">{t('research.safety.gradeLabel')}</label>
             <select value={aeGrade}
               onChange={(e) => setAeGrade(e.target.value)}
               className="bg-rw-bg border border-rw-border rounded-md px-2 py-1.5 text-sm text-rw-t1">
-              <option value="">(未定)</option>
+              <option value="">{t('research.safety.gradeUnset')}</option>
               {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
             </select>
           </div>
           <label className="flex items-center gap-1.5 text-xs text-rw-t2 mt-5">
             <input type="checkbox" checked={isDlt}
               onChange={(e) => setIsDlt(e.target.checked)} />
-            视为 DLT(计入 stop-rule)
+            {t('research.safety.dltLabel')}
           </label>
         </div>
 
         <div>
-          <label className="text-xs text-rw-t3 block mb-1">摘录 / 原文片段(可选)</label>
+          <label className="text-xs text-rw-t3 block mb-1">{t('research.safety.excerptLabel')}</label>
           <textarea value={excerpt}
             onChange={(e) => setExcerpt(e.target.value)}
             rows={3}
-            placeholder="比如 SOAP 原文里的关键句"
+            placeholder={t('research.safety.excerptPlaceholder')}
             className="w-full bg-rw-bg border border-rw-border rounded-md px-2 py-1.5 text-sm text-rw-t1"/>
         </div>
 
         {err && <div className="text-xs text-rw-red">{err}</div>}
 
         <div className="flex justify-end gap-2 pt-1">
-          <button onClick={onCancel} disabled={busy}
-            className="px-3 py-1.5 rounded-md text-sm text-rw-t2 border border-rw-border
-                       hover:bg-rw-surface-2 disabled:opacity-50">
-            取消
-          </button>
-          <button onClick={save} disabled={busy || !patientHash || !category.trim()}
-            className="px-3 py-1.5 rounded-md text-sm font-medium
-                       bg-rw-accent text-[#06252c] disabled:opacity-50">
-            {busy ? '保存中…' : '保存'}
-          </button>
+          <Button variant="rw-secondary" onClick={onCancel} disabled={busy}
+                  className="!text-sm">
+            {t('research.cancel')}
+          </Button>
+          <Button variant="rw-primary" onClick={save}
+                  disabled={busy || !patientHash || !category.trim()}
+                  className="!text-sm">
+            {busy ? t('research.saving') : t('research.save')}
+          </Button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -1178,6 +1261,7 @@ interface GanttData {
 }
 
 function ScheduleTab({studyId}: {studyId: string}) {
+  const t = useT();
   const [data, setData] = useState<GanttData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -1213,14 +1297,14 @@ function ScheduleTab({studyId}: {studyId: string}) {
 
   return (
     <div className="px-6 py-5 space-y-4">
-      <h2 className="text-base font-medium text-rw-t1">访视计划甘特图</h2>
+      <h2 className="text-base font-medium text-rw-t1">{t('research.schedule.title')}</h2>
       {loading && (
-        <div className="text-sm text-rw-t3 italic">载入中…</div>
+        <div className="text-sm text-rw-t3 italic">{t('research.loading')}</div>
       )}
       {!loading && (!data || data.rows.length === 0) && (
         <div className="rounded-lg border border-dashed border-rw-border bg-rw-surface
                         p-8 text-center text-sm text-rw-t3 italic">
-          暂无访视数据 — 入组患者后 schedule 会自动展开。
+          {t('research.schedule.empty')}
         </div>
       )}
       {!loading && data && data.rows.length > 0 && (
@@ -1231,7 +1315,7 @@ function ScheduleTab({studyId}: {studyId: string}) {
               <div className="grid gap-1 px-4 py-2 border-b border-rw-border-soft
                               text-[11px] uppercase tracking-wider text-rw-t3 font-rw-mono"
                    style={{gridTemplateColumns: `200px repeat(${data.timepoints.length}, minmax(48px, 1fr))`}}>
-                <div>患者</div>
+                <div>{t('research.schedule.patient')}</div>
                 {data.timepoints.map((tp) => (
                   <div key={tp.visit_id} className="text-center"
                        title={`${tp.label} (offset ${tp.offset_days}d)`}>
@@ -1253,7 +1337,9 @@ function ScheduleTab({studyId}: {studyId: string}) {
                       #{r.enrollment_seq} · {r.patient_hash.slice(0,8)}…
                       <span className="ml-2 text-rw-t4 text-[10px] font-rw-mono">W{weeks}</span>
                       {r.enrollment_status === 'withdrawn' && (
-                        <span className="ml-1 text-[9px] text-rw-orange font-rw-mono">退出</span>
+                        <span className="ml-1 text-[9px] text-rw-orange font-rw-mono">
+                          {t('research.schedule.withdrawn')}
+                        </span>
                       )}
                     </div>
                     {r.cells.map((c, i) => {
@@ -1275,12 +1361,12 @@ function ScheduleTab({studyId}: {studyId: string}) {
             </div>
           </div>
           <div className="text-[11px] text-rw-t3 flex gap-4 px-2 flex-wrap">
-            <span><span className="text-rw-green">✓</span> 已完成</span>
-            <span><span className="text-rw-accent">●</span> 当前/计划</span>
-            <span><span className="text-rw-t4">○</span> 未来</span>
-            <span><span className="text-rw-red">!</span> 已逾期</span>
-            <span><span className="text-rw-red">✗</span> 已 missed</span>
-            <span className="text-rw-t4 italic ml-auto">点单元格 → 打开 visit checklist (TODO)</span>
+            <span><span className="text-rw-green">✓</span> {t('research.schedule.legendDone')}</span>
+            <span><span className="text-rw-accent">●</span> {t('research.schedule.legendPlanned')}</span>
+            <span><span className="text-rw-t4">○</span> {t('research.schedule.legendFuture')}</span>
+            <span><span className="text-rw-red">!</span> {t('research.schedule.legendOverdue')}</span>
+            <span><span className="text-rw-red">✗</span> {t('research.schedule.legendMissed')}</span>
+            <span className="text-rw-t4 italic ml-auto">{t('research.schedule.legendTodo')}</span>
           </div>
         </>
       )}
@@ -1397,6 +1483,7 @@ function _makeChatAttachment(file: File): ChatAttachment {
 }
 
 function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
+  const t = useT();
   // F-unified-chat-files — research-scope library, one per study.
   const chatFiles = useChatFiles('research', studyId);
   const fileMap: Record<string, FileChipRef> = {};
@@ -1410,6 +1497,9 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
   const [focus, setFocus]         = useState<string | null>(null);
   const [messages, setMessages]   = useState<ChatMessage[]>([]);
   const [busy, setBusy]           = useState<boolean>(false);
+  // F-unified-chat — send/stream errors render as the inline alert
+  // row above the composer (single error style, UI_UX_REVIEW §3).
+  const [sendError, setSendError] = useState<string | null>(null);
   const [roster, setRoster]       = useState<Array<{patient_hash: string; enrollment_seq: number}>>([]);
 
   // Session ID = study scoped. Different studies have different chats.
@@ -1501,7 +1591,7 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
     });
   }
 
-  function onPaste(e: React.ClipboardEvent<HTMLInputElement>) {
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const files = e.clipboardData?.files;
     if (files && files.length > 0) {
       e.preventDefault();
@@ -1544,6 +1634,7 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
     const stagedNames = attachments.map((a) => a.name);
 
     setBusy(true);
+    setSendError(null);
     setInput('');
     setAttachments([]);
     // F-history-attachments — capture attached names on the user turn
@@ -1596,12 +1687,13 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
         }
       }
     } catch (e) {
+      // F-unified-chat — route to the inline alert row above the
+      // composer; drop the empty placeholder bubble if no text landed.
+      setSendError((e as Error).message || String(e));
       setMessages((m) => {
         const next = m.slice();
         const last = next[next.length - 1];
-        if (last && last.role === 'agent') {
-          last.text = `(出错：${(e as Error).message || String(e)})`;
-        }
+        if (last && last.role === 'agent' && !last.text) next.pop();
         return next;
       });
     } finally {
@@ -1621,18 +1713,20 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
          onDragOver={(e) => e.preventDefault()}>
       <div className="px-6 py-3 border-b border-rw-border-soft flex items-center gap-3 flex-wrap">
         <span className="text-xs text-rw-t3">
-          scope: <span className="text-rw-accent font-rw-mono">
-            {study.enrolled_count} 入组 + {study.candidate_count} 候选
+          {t('research.chat.scope')} <span className="text-rw-accent font-rw-mono">
+            {t('research.chat.scopeValue', {
+              enrolled: study.enrolled_count, candidates: study.candidate_count,
+            })}
           </span>
         </span>
         <span className="px-2 py-0.5 rounded text-[10px] font-rw-mono uppercase tracking-wider
                          bg-rw-accent-bg text-rw-accent border border-rw-accent-bd">
-          + 文献
+          {t('research.chat.literature')}
         </span>
         {focus && (
           <span className="px-2 py-0.5 rounded text-[10px] font-rw-mono
                            bg-rw-orange-bg text-rw-orange border border-rw-orange">
-            🎯 聚焦 {focus.slice(0, 8)}
+            🎯 {t('research.chat.focus', { id: focus.slice(0, 8) })}
             <button onClick={() => setFocus(null)} className="ml-1.5 hover:text-rw-t1">×</button>
           </span>
         )}
@@ -1646,7 +1740,7 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
           <select value={focus || ''}
             onChange={(e) => setFocus(e.target.value || null)}
             className="bg-rw-surface border border-rw-border rounded-md px-2 py-1 text-xs text-rw-t2">
-            <option value="">— 不聚焦（cohort 模式） —</option>
+            <option value="">{t('research.chat.noFocus')}</option>
             {roster.map((r) => (
               <option key={r.patient_hash} value={r.patient_hash}>
                 #{r.enrollment_seq} · {r.patient_hash.slice(0, 8)}
@@ -1661,65 +1755,39 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
         {messages.length === 0 && (
           <div className="text-center text-sm text-rw-t3 italic py-10">
             <div className="text-2xl mb-2">💬</div>
-            cohort-aware AI 已就位 — 试试问：
+            {t('research.chat.emptyTitle')}
             <ul className="mt-3 text-[12px] inline-block text-left space-y-1">
-              <li>· 入组 ≥3 月的患者中谁达到 mPFS？</li>
-              <li>· 对 G2 IO 肺炎，我们用过什么剂量？</li>
-              <li>· 我们的 mPFS 趋势与 PACIFIC、CheckMate-816 对比？</li>
+              <li>· {t('research.chat.example1')}</li>
+              <li>· {t('research.chat.example2')}</li>
+              <li>· {t('research.chat.example3')}</li>
             </ul>
           </div>
         )}
+        {/* F-unified-chat — same MessageRow paradigm as Encounter /
+            Today (role-label header + markdown body), rw palette. */}
         {messages.map((m, i) => (
-          <div key={i} className="group relative">
-            <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[78%] rounded-lg px-4 py-2.5 text-sm
-                ${m.role === 'user'
-                  ? 'bg-rw-accent text-[#06252c]'
-                  : 'bg-rw-surface text-rw-t1 border border-rw-border'}`}>
-                {/* F-thinking-uniform: ChatMarkdown if text, otherwise
-                    nothing in body — the StreamingFooter below the
-                    bubble carries the "still working" signal so the
-                    medic always sees ONE indicator while busy. */}
-                {m.text && (
-                  <ChatMarkdown text={m.text}
-                                tone={m.role === 'user' ? 'inverse' : 'agent'}
-                                fileMap={fileMap} />
-                )}
-                {m.streaming && m.text && <StreamingCursor tone="rw" />}
-              </div>
-            </div>
-            {/* Per-message copy — raw markdown, below-right of the
-                bubble on the bubble's side, hover-revealed. Hidden
-                while this message is still streaming. */}
-            {m.text && !m.streaming && (
-              <div className={`mt-0.5 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <CopyButton
-                  text={m.text}
-                  tone="rw"
-                  className="opacity-0 group-hover:opacity-100
-                             focus-visible:opacity-100 transition-opacity"
-                />
-              </div>
-            )}
-            {m.role === 'agent' && (
-              <StreamingFooter
-                streaming={m.streaming}
-                hasText={!!(m.text && m.text.length > 0)}
-                tone="rw"
-              />
-            )}
+          <MessageRow
+            key={i}
+            role={m.role}
+            text={m.text}
+            tone="rw"
+            streaming={m.streaming}
+            fileMap={fileMap}
+          >
             {m.scope_info && (
               <div className="text-[10px] text-rw-t4 mt-1 font-rw-mono pl-1">
-                ← scope resolved · cohort {m.scope_info.cohort_size} 例
+                {t('research.chat.scopeResolved', { count: m.scope_info.cohort_size })}
                 {m.scope_info.focus_patient_hash &&
-                  ` · 聚焦 ${m.scope_info.focus_patient_hash.slice(0,8)}`}
+                  t('research.chat.focusSuffix', {
+                    id: m.scope_info.focus_patient_hash.slice(0,8),
+                  })}
               </div>
             )}
             {/* F-history-attachments — render attachment chips on user
                 turns so the medic sees which files they sent, both
                 fresh in this session AND on history reload. */}
             {m.role === 'user' && m.attachedFileNames && m.attachedFileNames.length > 0 && (
-              <div className="mt-1 flex flex-wrap gap-1 justify-end">
+              <div className="mt-1 flex flex-wrap gap-1">
                 {m.attachedFileNames.map((name, fi) => (
                   <span
                     key={fi}
@@ -1730,7 +1798,7 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
                 ))}
               </div>
             )}
-          </div>
+          </MessageRow>
         ))}
         {/* Auto-scroll anchor — useAutoScroll scrolls this into view
             when new chunks land AND the medic is near the bottom. */}
@@ -1738,53 +1806,48 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
       </div>
 
       <div className="px-6 py-3 border-t border-rw-border">
-        {focus && (
-          <div className="mb-2 text-[11px] text-rw-orange flex items-center gap-1.5">
-            🎯 写入将归属于 {focus.slice(0,8)} —
-            <button onClick={() => setFocus(null)}
-                    className="underline hover:text-rw-accent">取消聚焦</button>
-          </div>
-        )}
-        {/* F-unified-chat-files — research-scope file library */}
-        <div className="mb-2">
-          <ChatFileChipStrip
-            scopeKind="research"
-            scopeRef={studyId}
-            controller={chatFiles}
-            tone="rw"
-          />
-        </div>
-        <AttachmentChipsRow
-          attachments={attachments}
-          onRemove={removeAttachment}
+        {/* F-unified-chat — shared ChatComposer; focus banner + file
+            library + pending-attachment chips ride in the `above`
+            slot, errors in the inline alert row. */}
+        <ChatComposer
+          value={input}
+          onChange={setInput}
+          onSend={send}
+          disabled={busy}
+          sendDisabled={!input.trim() && attachments.length === 0}
+          tone="rw"
+          placeholder={t('research.chat.placeholder')}
+          onPaste={onPaste}
+          onPickFiles={acceptFiles}
+          error={sendError}
+          onDismissError={() => setSendError(null)}
+          above={
+            <>
+              {focus && (
+                <div className="mb-2 text-[11px] text-rw-orange flex items-center gap-1.5">
+                  🎯 {t('research.chat.writeAttribution', { id: focus.slice(0,8) })}
+                  <button onClick={() => setFocus(null)}
+                          className="underline hover:text-rw-accent">
+                    {t('research.chat.unfocus')}
+                  </button>
+                </div>
+              )}
+              {/* F-unified-chat-files — research-scope file library */}
+              <div className="mb-2">
+                <ChatFileChipStrip
+                  scopeKind="research"
+                  scopeRef={studyId}
+                  controller={chatFiles}
+                  tone="rw"
+                />
+              </div>
+              <AttachmentChipsRow
+                attachments={attachments}
+                onRemove={removeAttachment}
+              />
+            </>
+          }
         />
-        <div className="flex items-center gap-2 rounded-lg border border-rw-border
-                        bg-rw-surface px-3 py-2">
-          <label className="cursor-pointer text-rw-t3 hover:text-rw-accent text-base leading-none"
-                 title="附件（也可粘贴/拖拽）">
-            📎
-            <input type="file" multiple hidden
-              onChange={(e) => {
-                if (e.target.files) acceptFiles(e.target.files);
-                // Reset so picking the same file twice re-fires onChange.
-                e.target.value = '';
-              }}
-            />
-          </label>
-          <input value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onPaste={onPaste}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }}}
-            disabled={busy}
-            placeholder="提问、summarize、find candidates、draft Table 1…（可粘贴/拖拽文件）"
-            className="flex-1 bg-transparent text-sm text-rw-t1 placeholder:text-rw-t4 outline-none"
-          />
-          <button onClick={send} disabled={busy || (!input.trim() && attachments.length === 0)}
-            className="px-3 py-1 rounded-md bg-rw-accent text-[#06252c] text-xs font-medium
-                       disabled:opacity-60">
-            {busy ? '…' : '发送'}
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -1796,6 +1859,7 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
 // ════════════════════════════════════════════════════════════════════
 
 function ReportsTab({studyId}: {studyId: string}) {
+  const t = useT();
   const [busy, setBusy] = useState<string | null>(null);
   const [history, setHistory] = useState<Array<{when:string;name:string;fid?:string}>>([
     {when:'2026-04-30', name:'Interim safety report (n=8)'},
@@ -1806,32 +1870,32 @@ function ReportsTab({studyId}: {studyId: string}) {
     try {
       const r = await api.generateInterimReport(studyId);
       setHistory(h => [{when: new Date().toISOString().slice(0,10),
-        name: kind + ' (新)', fid: r.file_id}, ...h]);
+        name: t('research.reports.newSuffix', { kind }), fid: r.file_id}, ...h]);
     } finally { setBusy(null); }
   };
   return (
     <div className="px-6 py-5 space-y-5">
-      <Card title="快捷操作">
+      <Card title={t('research.reports.quickActions')}>
         <div className="grid grid-cols-2 gap-3">
-          <QuickAction icon="📊" title="Interim 报告 (.docx)"
-            sub="Table 1 / AE / KM / CONSORT 一次生成"
+          <QuickAction icon="📊" title={t('research.reports.interimTitle')}
+            sub={t('research.reports.interimSub')}
             busy={busy === 'interim'}
             onClick={() => gen('interim')} />
-          <QuickAction icon="📤" title="脱敏数据集 (.xlsx)"
-            sub="一行 = 一位患者 × 一次访视；PHI 已脱敏"
+          <QuickAction icon="📤" title={t('research.reports.xlsxTitle')}
+            sub={t('research.reports.xlsxSub')}
             onClick={() => gen('xlsx')} />
-          <QuickAction icon="📐" title="CONSORT 图 (.svg)"
-            sub="入组流图 — 自动从 screen / enroll / withdraw 计数"
+          <QuickAction icon="📐" title={t('research.reports.consortTitle')}
+            sub={t('research.reports.consortSub')}
             onClick={() => gen('consort')} />
-          <QuickAction icon="✍" title="手稿草稿 (.docx)"
-            sub="IMRaD 结构 + 文献占位 + 引用脚注"
+          <QuickAction icon="✍" title={t('research.reports.manuscriptTitle')}
+            sub={t('research.reports.manuscriptSub')}
             onClick={() => gen('manuscript')} />
         </div>
       </Card>
 
-      <Card title="已生成报告">
+      <Card title={t('research.reports.generated')}>
         {history.length === 0 && (
-          <div className="text-sm text-rw-t3 italic">暂无</div>
+          <div className="text-sm text-rw-t3 italic">{t('research.reports.none')}</div>
         )}
         {history.map((h, i) => (
           <div key={i} className="flex items-center justify-between
@@ -1841,10 +1905,14 @@ function ReportsTab({studyId}: {studyId: string}) {
               <div className="text-[11px] text-rw-t4 font-rw-mono">{h.when}</div>
             </div>
             <div className="flex gap-2">
-              <button className="px-3 py-1 rounded-md bg-rw-surface-2 border border-rw-border
-                                text-xs text-rw-t2 hover:border-rw-accent-bd">打开</button>
-              <button className="px-3 py-1 rounded-md bg-rw-surface-2 border border-rw-border
-                                text-xs text-rw-t2 hover:border-rw-accent-bd">导出 CSV</button>
+              <Button variant="rw-secondary"
+                      className="!bg-rw-surface-2 !px-3 !py-1">
+                {t('research.reports.open')}
+              </Button>
+              <Button variant="rw-secondary"
+                      className="!bg-rw-surface-2 !px-3 !py-1">
+                {t('research.reports.exportCsv')}
+              </Button>
             </div>
           </div>
         ))}
@@ -1857,6 +1925,7 @@ function QuickAction({icon, title, sub, onClick, busy}: {
   icon: string; title: string; sub: string;
   onClick: () => void; busy?: boolean;
 }) {
+  const t = useT();
   return (
     <button onClick={onClick} disabled={busy}
       className="text-left rounded-lg border border-rw-border bg-rw-surface
@@ -1864,7 +1933,7 @@ function QuickAction({icon, title, sub, onClick, busy}: {
       <div className="text-2xl mb-1">{icon}</div>
       <div className="text-sm font-medium text-rw-t1">{title}</div>
       <div className="text-[11px] text-rw-t3 mt-0.5">{sub}</div>
-      {busy && <div className="mt-1 text-[10px] text-rw-accent">生成中…</div>}
+      {busy && <div className="mt-1 text-[10px] text-rw-accent">{t('research.reports.generating')}</div>}
     </button>
   );
 }
@@ -1878,6 +1947,7 @@ function InviteModal(props: {
   row: ScreeningRow; studyId: string;
   onClose: () => void; onConfirmed: () => void;
 }) {
+  const t = useT();
   const [consentDate, setConsentDate] = useState<string>(new Date().toISOString().slice(0,10));
   const [emailConsent, setEmailConsent] = useState<boolean>(false);
   const [arm, setArm] = useState<string>('');
@@ -1897,45 +1967,47 @@ function InviteModal(props: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">
-      <div className="rw-root w-[460px] rounded-xl bg-rw-bg border border-rw-border p-5 space-y-3">
-        <h3 className="text-base font-semibold text-rw-t1">
-          邀请入组 · 患者 #{props.row.patient_hash.slice(0,6)}
-        </h3>
+    <Modal
+      open
+      onClose={props.onClose}
+      title={t('research.invite.title', { id: props.row.patient_hash.slice(0,6) })}
+      tone="rw"
+      width={460}
+    >
+      <div className="space-y-3">
         <p className="text-xs text-rw-t3">
-          确认后将写入 study_enrollments，并按协议自动展开访视计划。
+          {t('research.invite.intro')}
         </p>
         <label className="block">
-          <span className="text-[11px] text-rw-t3">知情同意签署时间</span>
+          <span className="text-[11px] text-rw-t3">{t('research.invite.consentDate')}</span>
           <input type="date" value={consentDate}
             onChange={(e) => setConsentDate(e.target.value)}
             className="mt-0.5 w-full bg-rw-surface border border-rw-border rounded-md
                        px-3 py-1.5 text-sm text-rw-t1"/>
         </label>
         <label className="block">
-          <span className="text-[11px] text-rw-t3">分配 Arm（多臂研究时填）</span>
+          <span className="text-[11px] text-rw-t3">{t('research.invite.armLabel')}</span>
           <input value={arm} onChange={(e) => setArm(e.target.value)}
-            placeholder="留空 = 单臂"
+            placeholder={t('research.invite.armPlaceholder')}
             className="mt-0.5 w-full bg-rw-surface border border-rw-border rounded-md
                        px-3 py-1.5 text-sm text-rw-t1"/>
         </label>
         <label className="flex items-center gap-2 text-sm text-rw-t2 pt-1">
           <input type="checkbox" checked={emailConsent}
             onChange={(e) => setEmailConsent(e.target.checked)} />
-          患者同意通过邮件接收随访提醒
+          {t('research.invite.emailConsent')}
         </label>
         <div className="flex justify-end gap-2 pt-2">
-          <button onClick={props.onClose}
-            className="px-3 py-1.5 rounded-md bg-rw-surface-2 border border-rw-border
-                       text-xs text-rw-t2">取消</button>
-          <button onClick={confirm} disabled={busy}
-            className="px-3 py-1.5 rounded-md bg-rw-accent text-[#06252c] text-xs font-medium
-                       disabled:opacity-60">
-            {busy ? '入组中…' : '确认入组'}
-          </button>
+          <Button variant="rw-secondary" onClick={props.onClose}
+                  className="!bg-rw-surface-2">
+            {t('research.cancel')}
+          </Button>
+          <Button variant="rw-primary" onClick={confirm} disabled={busy}>
+            {busy ? t('research.invite.confirming') : t('research.invite.confirm')}
+          </Button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -1955,33 +2027,37 @@ function NewStudyDialog(props: {
   onCancel: () => void;
   onCreated: (studyId: string) => void;
 }) {
+  const t = useT();
   const [mode, setMode] = useState<'manual' | 'docx'>('manual');
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">
-      <div className="rw-root w-[640px] max-h-[88vh] rounded-xl bg-rw-bg
-                      border border-rw-border flex flex-col overflow-hidden">
-        <header className="px-5 pt-4 pb-3 border-b border-rw-border-soft flex items-center justify-between">
-          <h3 className="text-base font-semibold text-rw-t1">新建研究</h3>
-          <div className="inline-flex bg-rw-surface border border-rw-border rounded-md p-0.5 gap-0.5">
-            <button onClick={() => setMode('manual')}
-              className={`px-3 py-1 text-xs rounded ${
-                mode === 'manual' ? 'bg-rw-accent text-[#06252c] font-medium'
-                                   : 'text-rw-t2 hover:bg-rw-surface-2'}`}>
-              手动填写
-            </button>
-            <button onClick={() => setMode('docx')}
-              className={`px-3 py-1 text-xs rounded ${
-                mode === 'docx'   ? 'bg-rw-accent text-[#06252c] font-medium'
-                                   : 'text-rw-t2 hover:bg-rw-surface-2'}`}>
-              导入 .docx
-            </button>
-          </div>
-        </header>
-        {mode === 'manual'
-          ? <NewStudyManualPane onCancel={props.onCancel} onCreated={props.onCreated} />
-          : <NewStudyDocxPane   onCancel={props.onCancel} onCreated={props.onCreated} />}
-      </div>
-    </div>
+    <Modal
+      open
+      onClose={props.onCancel}
+      title={t('research.new.title')}
+      tone="rw"
+      width={640}
+      padded={false}
+      headerExtra={
+        <div className="inline-flex bg-rw-surface border border-rw-border rounded-md p-0.5 gap-0.5">
+          <button onClick={() => setMode('manual')}
+            className={`px-3 py-1 text-xs rounded ${
+              mode === 'manual' ? 'bg-rw-accent text-[#06252c] font-medium'
+                                 : 'text-rw-t2 hover:bg-rw-surface-2'}`}>
+            {t('research.new.manual')}
+          </button>
+          <button onClick={() => setMode('docx')}
+            className={`px-3 py-1 text-xs rounded ${
+              mode === 'docx'   ? 'bg-rw-accent text-[#06252c] font-medium'
+                                 : 'text-rw-t2 hover:bg-rw-surface-2'}`}>
+            {t('research.new.docx')}
+          </button>
+        </div>
+      }
+    >
+      {mode === 'manual'
+        ? <NewStudyManualPane onCancel={props.onCancel} onCreated={props.onCreated} />
+        : <NewStudyDocxPane   onCancel={props.onCancel} onCreated={props.onCreated} />}
+    </Modal>
   );
 }
 
@@ -1990,6 +2066,7 @@ function NewStudyManualPane(props: {
   onCancel: () => void;
   onCreated: (studyId: string) => void;
 }) {
+  const t = useT();
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [phase, setPhase] = useState('II');
@@ -1999,7 +2076,7 @@ function NewStudyManualPane(props: {
   const [err, setErr] = useState<string|null>(null);
 
   const submit = async () => {
-    if (!name.trim() || !code.trim()) { setErr('显示名与简称都是必填'); return; }
+    if (!name.trim() || !code.trim()) { setErr(t('research.new.required')); return; }
     setBusy(true);
     try {
       const r = await api.createStudy({
@@ -2008,7 +2085,7 @@ function NewStudyManualPane(props: {
         primaryEndpoint: endpoint || undefined,
       });
       const sid = (r as {study_id?: string}).study_id;
-      if (sid) props.onCreated(sid); else setErr('后端未返回 study_id');
+      if (sid) props.onCreated(sid); else setErr(t('research.new.noStudyId'));
     } catch (e) { setErr(String((e as Error).message || e)); }
     finally { setBusy(false); }
   };
@@ -2016,40 +2093,41 @@ function NewStudyManualPane(props: {
   return (
     <>
       <div className="px-5 py-4 space-y-3 overflow-y-auto">
-        <Field label="显示名">
+        <Field label={t('research.new.nameLabel')}>
           <input value={name} onChange={(e) => setName(e.target.value)}
                  className="w-full bg-rw-surface border border-rw-border rounded-md px-3 py-1.5 text-sm text-rw-t1"/>
         </Field>
-        <Field label="简称（如 HybridRT-IV）">
+        <Field label={t('research.new.codeLabel')}>
           <input value={code} onChange={(e) => setCode(e.target.value)}
                  className="w-full bg-rw-surface border border-rw-border rounded-md px-3 py-1.5 text-sm text-rw-t1"/>
         </Field>
-        <Field label="期次">
+        <Field label={t('research.new.phaseLabel')}>
           <select value={phase} onChange={(e) => setPhase(e.target.value)}
             className="w-full bg-rw-surface border border-rw-border rounded-md px-3 py-1.5 text-sm text-rw-t1">
             <option>I</option><option>I/II</option><option>II</option>
             <option>III</option><option>IV</option>
           </select>
         </Field>
-        <Field label="目标入组数（可选）">
+        <Field label={t('research.new.targetLabel')}>
           <input value={target} onChange={(e) => setTarget(e.target.value)} inputMode="numeric"
                  placeholder="e.g. 35"
                  className="w-full bg-rw-surface border border-rw-border rounded-md px-3 py-1.5 text-sm text-rw-t1"/>
         </Field>
-        <Field label="主要终点（可选）">
+        <Field label={t('research.new.endpointLabel')}>
           <input value={endpoint} onChange={(e) => setEndpoint(e.target.value)}
-                 placeholder="e.g. ≥G3 放射性肺炎发生率"
+                 placeholder={t('research.new.endpointPlaceholder')}
                  className="w-full bg-rw-surface border border-rw-border rounded-md px-3 py-1.5 text-sm text-rw-t1"/>
         </Field>
         {err && <div className="text-xs text-rw-red">{err}</div>}
       </div>
       <footer className="px-5 py-3 border-t border-rw-border-soft flex justify-end gap-2">
-        <button onClick={props.onCancel}
-          className="px-3 py-1.5 rounded-md bg-rw-surface-2 border border-rw-border text-xs text-rw-t2">取消</button>
-        <button onClick={submit} disabled={busy}
-          className="px-3 py-1.5 rounded-md bg-rw-accent text-[#06252c] text-xs font-medium disabled:opacity-60">
-          {busy ? '建中…' : '建立研究'}
-        </button>
+        <Button variant="rw-secondary" onClick={props.onCancel}
+                className="!bg-rw-surface-2">
+          {t('research.cancel')}
+        </Button>
+        <Button variant="rw-primary" onClick={submit} disabled={busy}>
+          {busy ? t('research.new.creating') : t('research.new.create')}
+        </Button>
       </footer>
     </>
   );
@@ -2087,6 +2165,7 @@ function NewStudyDocxPane(props: {
   onCancel: () => void;
   onCreated: (studyId: string) => void;
 }) {
+  const t = useT();
   // 3 stages: pick file → parsing → batch confirm
   const [stage, setStage] = useState<'pick'|'parsing'|'confirm'>('pick');
   const [name, setName] = useState('');
@@ -2118,7 +2197,7 @@ function NewStudyDocxPane(props: {
       // layer never produced a response — sidecar isn't running, was
       // restarted mid-request, or the host doesn't resolve.
       if (msg === 'Load failed' || msg.includes('network error')) {
-        return `[${step}] 后端无响应（sidecar 可能未启动或刚刚崩溃）— ${msg}`;
+        return t('research.docx.backendDown', { step, error: msg });
       }
       return `[${step}] ${msg}`;
     };
@@ -2128,7 +2207,7 @@ function NewStudyDocxPane(props: {
     try {
       up = await api.uploadFile(file, file.name);
     } catch (e) {
-      setErr(_classify('1/3 上传文件', e));
+      setErr(_classify(t('research.docx.step1'), e));
       setStage('pick');
       return;
     }
@@ -2147,9 +2226,9 @@ function NewStudyDocxPane(props: {
         phase, targetN: null, primaryEndpoint: endpoint || undefined,
       });
       sid = (created as {study_id?: string}).study_id;
-      if (!sid) throw new Error('后端未返回 study_id');
+      if (!sid) throw new Error(t('research.new.noStudyId'));
     } catch (e) {
-      setErr(_classify('2/3 建立草稿', e));
+      setErr(_classify(t('research.docx.step2'), e));
       setStage('pick');
       return;
     }
@@ -2199,14 +2278,14 @@ function NewStudyDocxPane(props: {
       (window as unknown as {__rwDraftStudyId?: string}).__rwDraftStudyId = sid;
       setStage('confirm');
     } catch (e) {
-      setErr(_classify('3/3 解析协议', e));
+      setErr(_classify(t('research.docx.step3'), e));
       setStage('pick');
     }
   };
 
   const confirm = async () => {
     const sid = (window as unknown as {__rwDraftStudyId?: string}).__rwDraftStudyId;
-    if (!sid) { setErr('内部错误：study_id 丢失'); return; }
+    if (!sid) { setErr(t('research.docx.lostStudyId')); return; }
     setBusy(true);
     try {
       await api.patchResearchStudy(sid, {
@@ -2231,16 +2310,16 @@ function NewStudyDocxPane(props: {
         {stage === 'pick' && (
           <div className="space-y-3">
             <p className="text-sm text-rw-t2">
-              上传研究方案 .docx — LLM 自动抽取入排标准、访视计划，然后由您逐项 review、confirm 入库。
+              {t('research.docx.intro')}
             </p>
             <FilePicker
               accept=".docx,.doc"
               onPick={onFile}
-              caption="拖入或点击选择协议文件 (.docx)"
+              caption={t('research.docx.pickCaption')}
             />
             {err && <div className="text-xs text-rw-red">{err}</div>}
             <div className="text-[11px] text-rw-t4">
-              注：解析过程中会同步建好基础信息的 draft，下一步可调整。
+              {t('research.docx.note')}
             </div>
           </div>
         )}
@@ -2248,52 +2327,51 @@ function NewStudyDocxPane(props: {
         {stage === 'parsing' && (
           <div className="py-10 text-center">
             <div className="inline-block w-6 h-6 border-2 border-rw-accent border-t-transparent rounded-full animate-spin"/>
-            <div className="mt-3 text-sm text-rw-t2">正在抽取协议规则…</div>
-            <div className="mt-1 text-[11px] text-rw-t4">通常 10–30 秒</div>
+            <div className="mt-3 text-sm text-rw-t2">{t('research.docx.parsing')}</div>
+            <div className="mt-1 text-[11px] text-rw-t4">{t('research.docx.parsingHint')}</div>
           </div>
         )}
 
         {stage === 'confirm' && (
           <div className="space-y-4">
             <div className="text-xs text-rw-t3 italic">
-              D7：以下是 LLM 抽取的草案。<strong>整张表必须有医生显式 confirm 动作才入库。</strong>
-              逐条修改 kind、规则、或删除条目；末尾点 “建立研究” 一次性 commit。
+              {t('research.docx.confirmIntro')}
             </div>
 
             <details open className="rounded-md border border-rw-border bg-rw-surface">
               <summary className="px-3 py-2 text-sm text-rw-t1 cursor-pointer flex items-center justify-between">
-                <span>基础信息</span>
-                <span className="text-[11px] text-rw-t3">必填</span>
+                <span>{t('research.docx.basicInfo')}</span>
+                <span className="text-[11px] text-rw-t3">{t('research.docx.requiredTag')}</span>
               </summary>
               <div className="p-3 space-y-2 border-t border-rw-border-soft">
-                <Field label="显示名">
+                <Field label={t('research.new.nameLabel')}>
                   <input value={name} onChange={e => setName(e.target.value)}
                     className="w-full bg-rw-surface-2 border border-rw-border rounded-md px-3 py-1.5 text-sm text-rw-t1"/>
                 </Field>
-                <Field label="简称">
+                <Field label={t('research.new.codeShort')}>
                   <input value={code} onChange={e => setCode(e.target.value)}
                     className="w-full bg-rw-surface-2 border border-rw-border rounded-md px-3 py-1.5 text-sm text-rw-t1"/>
                 </Field>
                 <div className="grid grid-cols-3 gap-2">
-                  <Field label="期次">
+                  <Field label={t('research.new.phaseLabel')}>
                     <select value={phase} onChange={e => setPhase(e.target.value)}
                       className="w-full bg-rw-surface-2 border border-rw-border rounded-md px-2 py-1.5 text-sm text-rw-t1">
                       <option>I</option><option>I/II</option><option>II</option>
                       <option>III</option><option>IV</option>
                     </select>
                   </Field>
-                  <Field label="目标入组">
+                  <Field label={t('research.new.targetShort')}>
                     <input value={target} onChange={e => setTarget(e.target.value)}
                       inputMode="numeric"
                       className="w-full bg-rw-surface-2 border border-rw-border rounded-md px-2 py-1.5 text-sm text-rw-t1"/>
                   </Field>
-                  <Field label="主要终点">
+                  <Field label={t('research.new.endpointShort')}>
                     <input value={endpoint} onChange={e => setEndpoint(e.target.value)}
                       className="w-full bg-rw-surface-2 border border-rw-border rounded-md px-2 py-1.5 text-sm text-rw-t1"/>
                   </Field>
                 </div>
                 {summary && (
-                  <Field label="协议摘要（LLM）">
+                  <Field label={t('research.docx.summaryLabel')}>
                     <textarea value={summary} onChange={e => setSummary(e.target.value)}
                       rows={3}
                       className="w-full bg-rw-surface-2 border border-rw-border rounded-md px-2 py-1.5 text-xs text-rw-t2"/>
@@ -2302,9 +2380,9 @@ function NewStudyDocxPane(props: {
               </div>
             </details>
 
-            <CritGroup title="入选标准" tone="green"
+            <CritGroup title={t('research.docx.inclusion')} tone="green"
               items={inclusion} setItems={setInclusion}/>
-            <CritGroup title="排除标准" tone="red"
+            <CritGroup title={t('research.docx.exclusion')} tone="red"
               items={exclusion} setItems={setExclusion}/>
             <ScheduleGroup items={schedule} setItems={setSchedule}/>
 
@@ -2320,16 +2398,16 @@ function NewStudyDocxPane(props: {
       </div>
 
       <footer className="px-5 py-3 border-t border-rw-border-soft flex justify-end gap-2">
-        <button onClick={props.onCancel}
-          className="px-3 py-1.5 rounded-md bg-rw-surface-2 border border-rw-border text-xs text-rw-t2">
-          取消
-        </button>
+        <Button variant="rw-secondary" onClick={props.onCancel}
+                className="!bg-rw-surface-2">
+          {t('research.cancel')}
+        </Button>
         {stage === 'confirm' && (
-          <button onClick={confirm} disabled={busy}
-            className="px-3 py-1.5 rounded-md bg-rw-accent text-[#06252c] text-xs font-medium disabled:opacity-60">
-            {busy ? 'commit 中…' : '建立研究 · 写入 ' +
-              `${inclusion.length} 入选 / ${exclusion.length} 排除 / ${schedule.length} 访视`}
-          </button>
+          <Button variant="rw-primary" onClick={confirm} disabled={busy}>
+            {busy ? t('research.docx.committing') : t('research.docx.commit', {
+              inc: inclusion.length, exc: exclusion.length, sched: schedule.length,
+            })}
+          </Button>
         )}
       </footer>
     </>
@@ -2373,6 +2451,7 @@ function CritGroup(props: {
   items: CritDef[];
   setItems: (v: CritDef[]) => void;
 }) {
+  const t = useT();
   const update = (i: number, patch: Partial<CritDef>) => {
     const next = props.items.slice();
     next[i] = { ...next[i], ...patch };
@@ -2406,7 +2485,7 @@ function CritGroup(props: {
           <span className="text-rw-t3 ml-1">({props.items.length})</span>
           {pendingCount > 0 && (
             <span className="ml-2 text-[11px] font-rw-mono text-rw-orange">
-              {pendingCount} 待确认
+              {t('research.crit.pending', { count: pendingCount })}
             </span>
           )}
         </span>
@@ -2414,16 +2493,16 @@ function CritGroup(props: {
           {pendingCount > 0 && (
             <button onClick={(e) => { e.preventDefault(); allConfirm(); }}
               className="text-[11px] text-rw-accent hover:underline">
-              全部确认
+              {t('research.crit.confirmAll')}
             </button>
           )}
           <button onClick={(e) => { e.preventDefault(); add(); }}
-            className="text-[11px] text-rw-accent hover:underline">+ 添加</button>
+            className="text-[11px] text-rw-accent hover:underline">{t('research.crit.add')}</button>
         </span>
       </summary>
       <div className="p-3 space-y-2 border-t border-rw-border-soft">
         {props.items.length === 0 && (
-          <div className="text-[11px] text-rw-t4 italic">无 — 点 “+ 添加” 手动新增</div>
+          <div className="text-[11px] text-rw-t4 italic">{t('research.crit.empty')}</div>
         )}
         {props.items.map((c, i) => (
           <CriterionRow key={c.id || i} item={c} index={i}
@@ -2456,6 +2535,7 @@ function CriterionRow({item: c, onUpdate, onRemove}: {
   onUpdate: (patch: Partial<CritDef>) => void;
   onRemove: () => void;
 }) {
+  const t = useT();
   const [advanced, setAdvanced] = useState(false);
   const kindColour =
     c.kind === 'auto-rule' ? 'text-rw-accent border-rw-accent-bd' :
@@ -2470,7 +2550,7 @@ function CriterionRow({item: c, onUpdate, onRemove}: {
       <div className="flex items-start gap-2">
         <button
           onClick={() => onUpdate({ confirmed: !confirmed })}
-          title={confirmed ? '取消确认' : '确认这一条'}
+          title={confirmed ? t('research.crit.unconfirm') : t('research.crit.confirmThis')}
           className={`shrink-0 mt-0.5 w-5 h-5 rounded border flex items-center justify-center
                       text-[11px] font-bold transition
                       ${confirmed
@@ -2481,37 +2561,37 @@ function CriterionRow({item: c, onUpdate, onRemove}: {
         </button>
         <input value={c.text}
           onChange={e => onUpdate({ text: e.target.value, confirmed: false })}
-          placeholder="条目原文"
+          placeholder={t('research.crit.textPlaceholder')}
           className="flex-1 bg-transparent border-b border-rw-border-soft px-1 py-0.5
                      text-[12px] text-rw-t1 focus:outline-none focus:border-rw-accent-bd"/>
         <span className={`shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-rw-mono ${kindColour}`}
               title={
-                c.kind === 'auto-rule' ? '机器规则自动判定(不需 LLM)' :
-                c.kind === 'auto-llm'  ? 'LLM 读病历自动判定' :
-                                          '医生每次手动确认'
+                c.kind === 'auto-rule' ? t('research.crit.kindRuleHint') :
+                c.kind === 'auto-llm'  ? t('research.crit.kindLlmHint') :
+                                          t('research.crit.kindManualHint')
               }>
           {c.kind}
         </span>
         <button onClick={() => setAdvanced(!advanced)}
           className="text-rw-t4 hover:text-rw-accent text-[10px]"
-          title="改判定方式 / 规则表达式">
-          {advanced ? '收起' : '高级'}
+          title={t('research.crit.kindLabel')}>
+          {advanced ? t('research.crit.collapse') : t('research.crit.advanced')}
         </button>
         <button onClick={onRemove}
           className="text-rw-t4 hover:text-rw-red text-[11px]"
-          title="删除这一条">✕</button>
+          title={t('research.crit.delete')}>✕</button>
       </div>
       {advanced && (
         <div className="pl-7 space-y-1.5">
           <div className="flex items-center gap-2 text-[11px]">
-            <span className="text-rw-t3">判定方式:</span>
+            <span className="text-rw-t3">{t('research.crit.kindLabel')}</span>
             <select value={c.kind}
               onChange={e => onUpdate({ kind: e.target.value as CritDef['kind'] })}
               className="bg-rw-surface border border-rw-border rounded px-1.5 py-0.5
                          text-[11px] text-rw-t2 font-rw-mono">
-              <option value="auto-rule">auto-rule(机器规则)</option>
-              <option value="auto-llm">auto-llm(LLM 判定)</option>
-              <option value="manual">manual(医生手动)</option>
+              <option value="auto-rule">{t('research.crit.kindRuleOpt')}</option>
+              <option value="auto-llm">{t('research.crit.kindLlmOpt')}</option>
+              <option value="manual">{t('research.crit.kindManualOpt')}</option>
             </select>
           </div>
           {c.kind === 'auto-rule' && (
@@ -2524,7 +2604,7 @@ function CriterionRow({item: c, onUpdate, onRemove}: {
           {c.kind === 'auto-llm' && (
             <input value={c.llm_prompt || ''}
               onChange={e => onUpdate({ llm_prompt: e.target.value })}
-              placeholder="llm_prompt — 描述 LLM 该如何判断这条"
+              placeholder={t('research.crit.llmPromptPlaceholder')}
               className="w-full bg-transparent border-b border-rw-border-soft px-1 py-0.5
                          text-[11px] text-rw-orange focus:outline-none focus:border-rw-accent-bd"/>
           )}
@@ -2539,6 +2619,7 @@ function ScheduleGroup(props: {
   items: ScheduleDef[];
   setItems: (v: ScheduleDef[]) => void;
 }) {
+  const t = useT();
   const update = (i: number, patch: Partial<ScheduleDef>) => {
     const next = props.items.slice();
     next[i] = { ...next[i], ...patch };
@@ -2558,13 +2639,13 @@ function ScheduleGroup(props: {
   return (
     <details open className="rounded-md border border-rw-border bg-rw-surface">
       <summary className="px-3 py-2 text-sm text-rw-t1 cursor-pointer flex items-center justify-between">
-        <span>访视计划 <span className="text-rw-t3 ml-1">({props.items.length})</span></span>
+        <span>{t('research.sched.groupTitle')} <span className="text-rw-t3 ml-1">({props.items.length})</span></span>
         <button onClick={(e) => { e.preventDefault(); add(); }}
-          className="text-[11px] text-rw-accent hover:underline">+ 添加</button>
+          className="text-[11px] text-rw-accent hover:underline">{t('research.crit.add')}</button>
       </summary>
       <div className="p-3 space-y-2 border-t border-rw-border-soft">
         {props.items.length === 0 && (
-          <div className="text-[11px] text-rw-t4 italic">无访视</div>
+          <div className="text-[11px] text-rw-t4 italic">{t('research.sched.empty')}</div>
         )}
         {props.items.map((v, i) => (
           <div key={i}
@@ -2674,6 +2755,7 @@ function EmptyState() {
   // Showing a curl command in a clinical-facing UI is absurd — the
   // medic isn't going to open a terminal. Replace with a real button
   // that calls the same endpoint. Refresh the studies list on success.
+  const t = useT();
   const refreshStudies = useAppState((s) => s.refreshStudies);
   const setActiveStudyId = useAppState((s) => s.setActiveStudyId);
   const studies = useAppState((s) => s.studies);
@@ -2704,21 +2786,22 @@ function EmptyState() {
           <h3 className="text-lg font-semibold text-rw-t1 mb-1">Research Workspace</h3>
           <p className="text-sm">
             {studies.length === 0
-              ? '从左侧"+ 新建研究"开始 — 或一键导入 3 个真实研究协议作为起步样本。'
-              : '从左侧选一个研究查看详情,或在下方对话框跨所有研究提问。'}
+              ? t('research.empty.introNone')
+              : t('research.empty.introSome')}
           </p>
           {studies.length === 0 && (
             <div className="mt-5 flex flex-col items-center gap-2">
-              <button onClick={install} disabled={busy}
-                className="px-4 py-2 rounded-md bg-rw-accent text-[#06252c] text-sm font-medium
-                           hover:opacity-90 disabled:opacity-50 transition">
-                {busy ? '正在安装样例协议…' : '安装样例协议(3 个真实研究)'}
-              </button>
+              <Button variant="rw-primary" onClick={install} disabled={busy}
+                      className="!px-4 !py-2 !text-sm">
+                {busy ? t('research.empty.installing') : t('research.empty.install')}
+              </Button>
               {err && (
-                <div className="text-xs text-rw-red mt-1">安装失败:{err}</div>
+                <div className="text-xs text-rw-red mt-1">
+                  {t('research.empty.installFailed', { error: err })}
+                </div>
               )}
               <div className="text-[11px] text-rw-t4 mt-1">
-                包含:Hybrid RT NSCLC · ES-SCLC 全残留病灶大分割 · 8Gy 免疫点火
+                {t('research.empty.starters')}
               </div>
             </div>
           )}
@@ -2740,6 +2823,7 @@ function EmptyState() {
 // patients across all of this user's studies" via retrieval_tiers'
 // research scope branch.
 function CrossResearchChat() {
+  const t = useT();
   // F-unified-chat-files — workspace-wide cross-research library.
   const crossFiles = useChatFiles('cross_research', '__workspace__');
   const fileMap: Record<string, FileChipRef> = {};
@@ -2757,6 +2841,8 @@ function CrossResearchChat() {
     attachedFileNames?: string[];
   }>>([]);
   const [busy, setBusy] = useState(false);
+  // F-unified-chat — inline alert row above the composer (§3).
+  const [sendError, setSendError] = useState<string | null>(null);
 
   // Per-user, persistent across study selections. Sticking a fixed
   // session id means the cross-research chat history is recoverable
@@ -2938,7 +3024,7 @@ function CrossResearchChat() {
     });
   }
 
-  function onPaste(e: React.ClipboardEvent<HTMLInputElement>) {
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const files = e.clipboardData?.files;
     if (files && files.length > 0) {
       e.preventDefault();
@@ -2980,6 +3066,7 @@ function CrossResearchChat() {
     const stagedNames = attachments.map((a) => a.name);
 
     setBusy(true);
+    setSendError(null);
     setInput('');
     setAttachments([]);
     setMessages((m) => [
@@ -3006,12 +3093,13 @@ function CrossResearchChat() {
         }
       }
     } catch (e) {
+      // F-unified-chat — route to the inline alert row above the
+      // composer; drop the empty placeholder bubble if no text landed.
+      setSendError((e as Error).message || String(e));
       setMessages((m) => {
         const next = m.slice();
         const last = next[next.length - 1];
-        if (last && last.role === 'agent') {
-          last.text = `(出错：${(e as Error).message || String(e)})`;
-        }
+        if (last && last.role === 'agent' && !last.text) next.pop();
         return next;
       });
     } finally {
@@ -3042,7 +3130,7 @@ function CrossResearchChat() {
         aria-valuenow={effectivePanelHeight}
         aria-valuemin={_PANEL_HEIGHT_MIN}
         aria-valuemax={_PANEL_HEIGHT_MAX}
-        title="拖动调整高度"
+        title={t('research.chat.dragHint')}
         className="group h-2 -mt-1 flex items-center justify-center
                    cursor-row-resize hover:bg-rw-accent/10 transition"
       >
@@ -3061,7 +3149,7 @@ function CrossResearchChat() {
           <span className="text-[10px] tracking-[0.18em] uppercase text-rw-t4 font-rw-mono">
             Cross-research
           </span>
-          <span className="text-xs text-rw-t3">跨所有研究提问</span>
+          <span className="text-xs text-rw-t3">{t('research.chat.crossTitle')}</span>
           <div className="ml-auto flex items-center gap-3">
             <TakeawaysButton
               scopeKind="cross_research"
@@ -3069,7 +3157,7 @@ function CrossResearchChat() {
               tone="rw"
             />
             <span className="text-[10px] font-rw-mono text-rw-t4">
-              {effectivePanelHeight}px · 拖动顶部调节
+              {t('research.chat.heightNote', { px: effectivePanelHeight })}
             </span>
           </div>
        </div>
@@ -3079,49 +3167,23 @@ function CrossResearchChat() {
        <div className="max-w-3xl mx-auto">
         {messages.length > 0 && (
           <div className="space-y-3 mb-3 pr-2">
+            {/* F-unified-chat — same MessageRow paradigm as every other
+                chat surface (role-label header + markdown body). */}
             {messages.map((m, i) => (
-              <div key={i} className="group relative">
-                <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm
-                    ${m.role === 'user'
-                      ? 'bg-rw-accent text-[#06252c]'
-                      : 'bg-rw-surface text-rw-t1 border border-rw-border'}`}>
-                    {/* F-thinking-uniform: same pattern as ChatTab —
-                        text body + inline cursor + footer below. */}
-                    {m.text && (
-                      <ChatMarkdown text={m.text}
-                                    tone={m.role === 'user' ? 'inverse' : 'agent'}
-                                    fileMap={fileMap} />
-                    )}
-                    {m.streaming && m.text && <StreamingCursor tone="rw" />}
-                  </div>
-                </div>
-                {/* Per-message copy — raw markdown, below-right of the
-                    bubble on the bubble's side, hover-revealed. Hidden
-                    while this message is still streaming. */}
-                {m.text && !m.streaming && (
-                  <div className={`mt-0.5 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <CopyButton
-                      text={m.text}
-                      tone="rw"
-                      className="opacity-0 group-hover:opacity-100
-                                 focus-visible:opacity-100 transition-opacity"
-                    />
-                  </div>
-                )}
-                {m.role === 'agent' && (
-                  <StreamingFooter
-                    streaming={m.streaming}
-                    hasText={!!(m.text && m.text.length > 0)}
-                    tone="rw"
-                  />
-                )}
+              <MessageRow
+                key={i}
+                role={m.role}
+                text={m.text}
+                tone="rw"
+                streaming={m.streaming}
+                fileMap={fileMap}
+              >
                 {/* F-history-attachments — render attached file chips
                     on user turns so the medic can see which files
                     they sent, both in fresh sessions AND after
                     history reload. */}
                 {m.role === 'user' && m.attachedFileNames && m.attachedFileNames.length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-1 justify-end">
+                  <div className="mt-1 flex flex-wrap gap-1">
                     {m.attachedFileNames.map((name, fi) => (
                       <span
                         key={fi}
@@ -3132,7 +3194,7 @@ function CrossResearchChat() {
                     ))}
                   </div>
                 )}
-              </div>
+              </MessageRow>
             ))}
           </div>
         )}
@@ -3146,46 +3208,38 @@ function CrossResearchChat() {
           visually distinct from the scrolling pane. */}
       <div className="flex-shrink-0 border-t border-rw-border/50 bg-rw-bg-deep px-6 pt-2 pb-3">
        <div className="max-w-3xl mx-auto">
-        {/* F-unified-chat-files — workspace-wide cross-research lib */}
-        <div className="mb-2">
-          <ChatFileChipStrip
-            scopeKind="cross_research"
-            scopeRef="__workspace__"
-            controller={crossFiles}
-            tone="rw"
-          />
-        </div>
-        <AttachmentChipsRow
-          attachments={attachments}
-          onRemove={removeAttachment}
+        {/* F-unified-chat — shared ChatComposer; file library +
+            pending-attachment chips ride in the `above` slot. */}
+        <ChatComposer
+          value={input}
+          onChange={setInput}
+          onSend={send}
+          disabled={busy}
+          sendDisabled={!input.trim() && attachments.length === 0}
+          tone="rw"
+          placeholder={t('research.chat.crossPlaceholder')}
+          onPaste={onPaste}
+          onPickFiles={acceptFiles}
+          error={sendError}
+          onDismissError={() => setSendError(null)}
+          above={
+            <>
+              {/* F-unified-chat-files — workspace-wide cross-research lib */}
+              <div className="mb-2">
+                <ChatFileChipStrip
+                  scopeKind="cross_research"
+                  scopeRef="__workspace__"
+                  controller={crossFiles}
+                  tone="rw"
+                />
+              </div>
+              <AttachmentChipsRow
+                attachments={attachments}
+                onRemove={removeAttachment}
+              />
+            </>
+          }
         />
-        <div className="flex items-center gap-2 rounded-lg border border-rw-border
-                        bg-rw-surface px-3 py-2">
-          <label className="cursor-pointer text-rw-t3 hover:text-rw-accent text-base leading-none"
-                 title="附件(也可粘贴/拖拽)">
-            📎
-            <input type="file" multiple hidden
-              onChange={(e) => {
-                if (e.target.files) acceptFiles(e.target.files);
-                e.target.value = '';
-              }}
-            />
-          </label>
-          <input value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onPaste={onPaste}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }}}
-            disabled={busy}
-            placeholder="跨所有研究提问 — 例如「这周哪些研究有新的 ≥G3 AE?」/ 「哪位患者命中多个研究?」(可粘贴/拖拽文件)"
-            className="flex-1 bg-transparent text-sm text-rw-t1 placeholder:text-rw-t4 outline-none"
-          />
-          <button onClick={send}
-                  disabled={busy || (!input.trim() && attachments.length === 0)}
-            className="px-3 py-1 rounded-md bg-rw-accent text-[#06252c] text-xs font-medium
-                       disabled:opacity-60">
-            {busy ? '…' : '发送'}
-          </button>
-        </div>
        </div>
       </div>
     </div>

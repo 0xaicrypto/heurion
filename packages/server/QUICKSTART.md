@@ -11,7 +11,7 @@
 ```bash
 cd packages/server
 pip install -e ".[dev]"
-# Optional: openai + anthropic providers
+# Optional: openai + anthropic providers (openai also powers kimi/Moonshot AI)
 pip install -e ".[llm-extra]"
 ```
 
