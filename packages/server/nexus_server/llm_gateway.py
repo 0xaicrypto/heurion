@@ -1678,7 +1678,7 @@ async def call_kimi(messages, system_prompt, model, temperature, max_tokens, too
             "KIMI_API_KEY not configured (MOONSHOT_API_KEY is also accepted)"
         )
 
-    explicit_override = bool(os.getenv("KIMI_BASE_URL", "").strip())
+    explicit_override = bool(_os.getenv("KIMI_BASE_URL", "").strip())
     base = _kimi_resolved_base or config.KIMI_BASE_URL
 
     async def _attempt(base_url: str):
@@ -1703,7 +1703,7 @@ async def call_kimi(messages, system_prompt, model, temperature, max_tokens, too
         result = await _attempt(sibling)
         _kimi_resolved_base = sibling
         # Let the SDK/twin path resolve the same region.
-        os.environ["KIMI_BASE_URL"] = sibling
+        _os.environ["KIMI_BASE_URL"] = sibling
         logger.info("Kimi region resolved to %s (cached for process)", sibling)
         return result
 
