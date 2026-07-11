@@ -95,27 +95,32 @@ def upgrade() -> None:
     # rows that already carry a patient_hash onto kind='patient' so
     # they auto-appear in the patient chat's file library without the
     # medic re-attaching them. Rows without patient_hash stay as ''
-    # (legacy / unattached).
-    bind.exec_driver_sql(
-        "UPDATE uploads "
-        "   SET lib_scope_kind = 'patient', "
-        "       lib_scope_ref  = patient_hash "
-        " WHERE lib_scope_kind = '' "
-        "   AND patient_hash IS NOT NULL "
-        "   AND patient_hash != ''"
-    )
+    # (legacy / unattached). Guard: truly ancient uploads tables may
+    # not have a patient_hash column at all — skip the backfill then
+    # (those rows are legacy/unattached by definition).
+    if _column_exists(bind, "uploads", "patient_hash"):
+        bind.exec_driver_sql(
+            "UPDATE uploads "
+            "   SET lib_scope_kind = 'patient', "
+            "       lib_scope_ref  = patient_hash "
+            " WHERE lib_scope_kind = '' "
+            "   AND patient_hash IS NOT NULL "
+            "   AND patient_hash != ''"
+        )
 
     # Backfill: existing rows have text_extraction_status='pending' from
     # the default. If extracted_text is already non-empty, mark as
     # 'text_layer' so we don't redundantly re-extract on every chat
     # turn. We can't tell text_layer vs vision_ocr retrospectively, but
     # it doesn't matter — the badge just reflects "we have text".
-    bind.exec_driver_sql(
-        "UPDATE uploads "
-        "   SET text_extraction_status = 'text_layer' "
-        " WHERE text_extraction_status = 'pending' "
-        "   AND extracted_text != ''"
-    )
+    # Same guard as above: legacy uploads tables may lack the column.
+    if _column_exists(bind, "uploads", "extracted_text"):
+        bind.exec_driver_sql(
+            "UPDATE uploads "
+            "   SET text_extraction_status = 'text_layer' "
+            " WHERE text_extraction_status = 'pending' "
+            "   AND extracted_text != ''"
+        )
 
 
 def downgrade() -> None:

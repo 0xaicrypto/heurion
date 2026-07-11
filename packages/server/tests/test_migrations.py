@@ -105,9 +105,9 @@ def test_fresh_db_upgrades_to_head(tmp_path, monkeypatch):
     # alembic_version should now exist and be at the latest revision
     head = _current_head(str(db))
     assert head is not None, "alembic_version row missing after upgrade"
-    # As of U3.4 the latest revision is 0002. Update this assertion when
-    # adding 0003 etc. — the failure tells you to add a new test.
-    assert head == "0002", f"expected head=0002, got {head!r}"
+    # Latest revision — update when adding a new migration; the
+    # failure tells you to extend the assertions below too.
+    assert head == "0005", f"expected head=0005, got {head!r}"
 
     # uploads table exists with the columns 0002 was supposed to add
     cols = _table_columns(str(db), "uploads")
