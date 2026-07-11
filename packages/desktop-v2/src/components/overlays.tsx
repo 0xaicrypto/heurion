@@ -11,8 +11,9 @@ import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Popover from '@radix-ui/react-popover';
 import {
-  Search, X, Plus, LogOut, Sun, Moon, User, Settings as SettingsIcon,
+  Search, X, LogOut, Sun, Moon, User, Settings as SettingsIcon,
   Send, Mail, AlertTriangle, CheckCircle, Globe,
+  CheckCircle2, AlertCircle, Info,
 } from 'lucide-react';
 import { Button, Input, Chip } from './ui';
 import { useAppState } from '../store';
@@ -536,36 +537,49 @@ function MenuDivider() {
 /* ───────────── Toast strip ───────────── */
 
 export function ToastStrip() {
-  const toast = useAppState((s) => s.toast);
+  const toasts  = useAppState((s) => s.toasts);
   const dismiss = useAppState((s) => s.dismissToast);
 
-  if (!toast) return null;
+  // Queue semantics: everything stays in the store (each toast owns
+  // its 4s auto-dismiss timer); we render at most the 3 newest,
+  // stacked bottom-up so the freshest toast sits closest to the
+  // corner the eye already tracks.
+  const visible = toasts.slice(-3);
 
   const variants = {
     info:    'border-border-strong text-text-primary',
     success: 'border-confirmed/60 text-confirmed',
     error:   'border-retract/60 text-retract',
   };
+  const icons = {
+    info:    Info,
+    success: CheckCircle2,
+    error:   AlertCircle,
+  } as const;
 
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-40">
-      <button
-        onClick={dismiss}
-        className={cn(
-          'pointer-events-auto flex items-center gap-3 rounded-md border bg-surface px-4 py-2.5',
-          'shadow-lg transition-opacity duration-150',
-          variants[toast.kind],
-        )}
-      >
-        <Plus
-          size={14}
-          className={cn(
-            'shrink-0',
-            toast.kind === 'error' && 'rotate-45',
-          )}
-        />
-        <span className="text-body">{toast.text}</span>
-      </button>
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2"
+    >
+      {visible.map((toast) => {
+        const Icon = icons[toast.kind];
+        return (
+          <button
+            key={toast.id}
+            onClick={() => dismiss(toast.id)}
+            className={cn(
+              'pointer-events-auto flex items-center gap-3 rounded-md border bg-surface px-4 py-2.5',
+              'shadow-lg transition-opacity duration-150',
+              variants[toast.kind],
+            )}
+          >
+            <Icon size={14} className="shrink-0" />
+            <span className="text-body">{toast.text}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

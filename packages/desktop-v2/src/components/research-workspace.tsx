@@ -16,9 +16,11 @@
  *   D18  患者研究归属派生 (Drill-in 视图显示研究 chip)
  *   D19-D22  engine_config (Settings 弹框暴露这些旋钮)
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api-client';
-import { useAppState } from '../store';
+import {
+  useAppState, EMPTY_DRAFT_ATTACHMENTS, type DraftAttachment,
+} from '../store';
 import type { StudySummary } from '../lib/util';
 import { ChatMarkdown, type FileChipRef } from './chat-markdown';
 import { CopyButton } from './copy-button';
@@ -1303,23 +1305,14 @@ interface ChatMessage {
   attachedFileNames?: string[];
 }
 
-interface ChatAttachment {
-  key: string;
-  name: string;
-  sizeBytes: number;
-  fileId: string | null;
-  failed?: string;
-  /** ``image/*`` MIME types get a local blob URL so the chip can
-   *  render a real thumbnail in the composer (the way a chat app
-   *  should — showing only "image.png 230K" is hostile UX when the
-   *  medic just dropped a screenshot of a CT and wants to confirm
-   *  it's the right one before sending). For non-image files this
-   *  is undefined. */
-  previewUrl?: string;
-  /** Cached so the chip render path doesn't have to re-parse the
-   *  mime on every render. */
-  isImage?: boolean;
-}
+/**
+ * F-draft-persist — attachment chips are now the store-level
+ * ``DraftAttachment`` (structurally identical to the old local
+ * interface: plain metadata + server fileId; ``previewUrl`` is a
+ * page-lifetime blob URL for image thumbnails, no raw File handles).
+ * Aliased so the rest of this file reads unchanged.
+ */
+type ChatAttachment = DraftAttachment;
 
 // Shared chip renderer used by the per-study Research ChatTab AND the
 // workspace-level CrossResearchChat. Lives at module scope so the two
@@ -1416,16 +1409,33 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
   // Persist focus across tab switches; per-study session id stays put
   const [focus, setFocus]         = useState<string | null>(null);
   const [messages, setMessages]   = useState<ChatMessage[]>([]);
-  const [input, setInput]         = useState<string>('');
   const [busy, setBusy]           = useState<boolean>(false);
   const [roster, setRoster]       = useState<Array<{patient_hash: string; enrollment_seq: number}>>([]);
-  // Files staged for the next turn. Same UX contract as Patient Chat
-  // (see modes.tsx PatientMode): chip appears immediately on paste /
-  // drop / picker; fileId fills in when /files/upload returns.
-  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
 
   // Session ID = study scoped. Different studies have different chats.
   const sessionId = useMemo(() => `research-${studyId}`, [studyId]);
+
+  // F-draft-persist — composer text + staged attachment chips live in
+  // the zustand store keyed by this study's sessionId (same key the
+  // chat history uses), so switching tab / study mid-composition
+  // keeps the draft. Same UX contract as Patient Chat: chip appears
+  // immediately on paste / drop / picker; fileId fills in when
+  // /files/upload returns.
+  const input = useAppState((s) => s.drafts[sessionId] ?? '');
+  const storeSetDraft = useAppState((s) => s.setDraft);
+  const setInput = useCallback(
+    (text: string) => storeSetDraft(sessionId, text),
+    [storeSetDraft, sessionId],
+  );
+  const attachments = useAppState((s) =>
+    s.draftAttachments[sessionId]
+      ?? (EMPTY_DRAFT_ATTACHMENTS as DraftAttachment[]));
+  const storeSetAttachments = useAppState((s) => s.setDraftAttachments);
+  const setAttachments = useCallback(
+    (atts: ChatAttachment[] | ((prev: ChatAttachment[]) => ChatAttachment[])) =>
+      storeSetAttachments(sessionId, atts),
+    [storeSetAttachments, sessionId],
+  );
 
   // Pin the list to the latest turn while streaming, but only when the
   // medic is already near the bottom (see lib/use-auto-scroll.ts).
@@ -2739,7 +2749,6 @@ function CrossResearchChat() {
       textExtractionStatus: f.textExtractionStatus,
     };
   }
-  const [input,    setInput]    = useState('');
   const [messages, setMessages] = useState<Array<{
     role: 'user' | 'agent';
     text: string;
@@ -2748,15 +2757,32 @@ function CrossResearchChat() {
     attachedFileNames?: string[];
   }>>([]);
   const [busy, setBusy] = useState(false);
-  // Attachment chip strip — same UX contract as the patient chat
-  // (modes.tsx PatientMode) and per-study Research ChatTab. Each chip
-  // shows a placeholder immediately; ✓ once the upload settles.
-  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
 
   // Per-user, persistent across study selections. Sticking a fixed
   // session id means the cross-research chat history is recoverable
   // (and SOAPs / earlier turns inform the next answer).
   const sessionId = 'research-workspace-cross';
+
+  // F-draft-persist — composer text + attachment chips keyed by the
+  // fixed cross-research sessionId (same key as the chat history),
+  // so EmptyState unmount/remount keeps the half-typed question.
+  // Chip strip UX contract matches PatientMode + per-study ChatTab:
+  // placeholder immediately; ✓ once the upload settles.
+  const input = useAppState((s) => s.drafts[sessionId] ?? '');
+  const storeSetDraft = useAppState((s) => s.setDraft);
+  const setInput = useCallback(
+    (text: string) => storeSetDraft(sessionId, text),
+    [storeSetDraft],
+  );
+  const attachments = useAppState((s) =>
+    s.draftAttachments[sessionId]
+      ?? (EMPTY_DRAFT_ATTACHMENTS as DraftAttachment[]));
+  const storeSetAttachments = useAppState((s) => s.setDraftAttachments);
+  const setAttachments = useCallback(
+    (atts: ChatAttachment[] | ((prev: ChatAttachment[]) => ChatAttachment[])) =>
+      storeSetAttachments(sessionId, atts),
+    [storeSetAttachments],
+  );
 
   // Pin the panel to the latest turn while streaming, but only when
   // the medic is already near the bottom (see lib/use-auto-scroll.ts).

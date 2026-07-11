@@ -19,8 +19,8 @@ import io
 import pytest
 
 
-def _register(client) -> str:
-    reg = client.post("/api/v1/auth/register", json={"display_name": "Uploader"})
+def _register(client, name: str = "Uploader") -> str:
+    reg = client.post("/api/v1/auth/register", json={"username": name, "password": "Str0ng-Pass-123"})
     assert reg.status_code in (200, 201), reg.text
     return reg.json()["jwt_token"]
 
@@ -134,7 +134,7 @@ def test_resolve_files_scopes_to_owner(client):
     file_id = resp.json()["file_id"]
 
     # User B looks it up. resolve_files must come back empty.
-    tok_b = _register(client)
+    tok_b = _register(client, "UploaderB")
     me_b = client.get(
         "/api/v1/chain/me",
         headers={"Authorization": f"Bearer {tok_b}"},
@@ -314,7 +314,7 @@ async def test_resolve_scopes_to_owner(client):
         headers={"Authorization": f"Bearer {tok_a}"},
     )
 
-    tok_b = _register(client)
+    tok_b = _register(client, "UploaderB")
     me_b = client.get(
         "/api/v1/chain/me",
         headers={"Authorization": f"Bearer {tok_b}"},

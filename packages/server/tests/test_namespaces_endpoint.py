@@ -85,7 +85,7 @@ def test_namespaces_endpoint_returns_all_five(client, tmp_path):
 
     twin_manager._test_override = twin
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "NSUser"})
+        reg = client.post("/api/v1/auth/register", json={"username": "NSUser", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
 
         resp = client.get(
@@ -123,7 +123,7 @@ def test_namespaces_endpoint_includes_items_by_default(client, tmp_path):
     _populate(twin)
     twin_manager._test_override = twin
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "ItemsUser"})
+        reg = client.post("/api/v1/auth/register", json={"username": "ItemsUser", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
 
         resp = client.get(
@@ -153,7 +153,7 @@ def test_namespaces_endpoint_can_omit_items(client, tmp_path):
     _populate(twin)
     twin_manager._test_override = twin
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "ItemsOffUser"})
+        reg = client.post("/api/v1/auth/register", json={"username": "ItemsOffUser", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
 
         resp = client.get(

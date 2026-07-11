@@ -82,7 +82,7 @@ def test_endpoint_returns_empty_when_no_events(client, tmp_path):
     log = EventLog(base_dir=str(tmp_path / "elog1"), agent_id="agent-1")
     twin_manager._test_override = FakeTwin(log)
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "EvoEmpty"})
+        reg = client.post("/api/v1/auth/register", json={"username": "EvoEmpty", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.get(
             "/api/v1/agent/evolution/verdicts",
@@ -110,7 +110,7 @@ def test_endpoint_classifies_kinds_and_pending(client, tmp_path):
 
     twin_manager._test_override = FakeTwin(log)
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "EvoPending"})
+        reg = client.post("/api/v1/auth/register", json={"username": "EvoPending", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.get(
             "/api/v1/agent/evolution/verdicts",
@@ -143,7 +143,7 @@ def test_endpoint_surfaces_revert_rows(client, tmp_path):
 
     twin_manager._test_override = FakeTwin(log)
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "EvoRevert"})
+        reg = client.post("/api/v1/auth/register", json={"username": "EvoRevert", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.get(
             "/api/v1/agent/evolution/verdicts",
@@ -214,7 +214,7 @@ def test_manual_revert_rolls_back_persona_and_emits_events(client, tmp_path):
 
     twin_manager._test_override = FakeTwinWithStore(log, persona_store)
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "EvoManualRev"})
+        reg = client.post("/api/v1/auth/register", json={"username": "EvoManualRev", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.post(
             "/api/v1/agent/evolution/edit-revertme/revert",
@@ -245,7 +245,7 @@ def test_manual_approve_pins_kept_decision(client, tmp_path):
 
     twin_manager._test_override = FakeTwin(log)
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "EvoManualAppr"})
+        reg = client.post("/api/v1/auth/register", json={"username": "EvoManualAppr", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.post(
             "/api/v1/agent/evolution/edit-keepme/approve",
@@ -269,7 +269,7 @@ def test_manual_decisions_are_idempotent(client, tmp_path):
     _emit_proposal(log, "edit-idem")
     twin_manager._test_override = FakeTwin(log)
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "EvoIdem"})
+        reg = client.post("/api/v1/auth/register", json={"username": "EvoIdem", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         h = {"Authorization": f"Bearer {token}"}
 
@@ -301,7 +301,7 @@ def test_manual_revert_404_for_unknown_edit_id(client, tmp_path):
     log = EventLog(base_dir=str(tmp_path / "elog_404"), agent_id="agent-1")
     twin_manager._test_override = FakeTwin(log)
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "Evo404"})
+        reg = client.post("/api/v1/auth/register", json={"username": "Evo404", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.post(
             "/api/v1/agent/evolution/does-not-exist/revert",

@@ -33,7 +33,7 @@ from nexus_server.database import get_db_connection
 
 def _register(client, name: str = "Sync Tester") -> tuple[str, str]:
     reg = client.post(
-        "/api/v1/auth/register", json={"display_name": name},
+        "/api/v1/auth/register", json={"username": name, "password": "Str0ng-Pass-123"},
     )
     token = reg.json()["jwt_token"]
     user_id = client.get(

@@ -144,6 +144,19 @@ def init_db() -> None:
         "avatar_emoji":          ("TEXT", "'🩺'"),
         "deleted_at":            ("TIMESTAMP", "NULL"),
         "last_active_at":        ("TIMESTAMP", "NULL"),
+        # Password auth redesign (2026-07):
+        # password_hash  bcrypt hash. NULL = legacy account that has not
+        #                been claimed yet (see /auth/claim).
+        # role           'admin' | 'user'. First registered user = admin.
+        # disabled_at    set by an admin to lock the account out; JWTs
+        #                of disabled users are rejected in
+        #                get_current_user.
+        # last_login_at  updated on every successful password login /
+        #                claim; surfaced in GET /api/v1/admin/users.
+        "password_hash":         ("TEXT", "NULL"),
+        "role":                  ("TEXT NOT NULL", "'user'"),
+        "disabled_at":           ("TEXT", "NULL"),
+        "last_login_at":         ("TEXT", "NULL"),
     }
     for col, (typ, default) in billing_cols.items():
         if col not in existing_cols:
@@ -156,6 +169,23 @@ def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS idx_users_status_created "
         "ON users(status, created_at DESC)"
     )
+
+    # Usernames (display_name) must be unique among live accounts now
+    # that they are the password-login key. Legacy DBs may contain
+    # duplicates from the old passwordless register — in that case the
+    # index creation fails and we fall back to the check-before-insert
+    # guard in /auth/register (which is always active anyway).
+    try:
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique "
+            "ON users(lower(display_name)) WHERE deleted_at IS NULL"
+        )
+    except sqlite3.Error as e:
+        logger.warning(
+            "unique username index not created (legacy duplicate "
+            "display_names?): %s — register falls back to "
+            "check-before-insert", e,
+        )
 
     # Phase B: ``sync_events`` table dropped.
     #

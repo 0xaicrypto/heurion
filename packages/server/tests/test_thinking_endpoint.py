@@ -33,7 +33,7 @@ def _seed(user_id: str, *event_types: str) -> list[int]:
 
 
 def _register(client) -> str:
-    reg = client.post("/api/v1/auth/register", json={"display_name": "Thinker"})
+    reg = client.post("/api/v1/auth/register", json={"username": "Thinker", "password": "Str0ng-Pass-123"})
     body = reg.json()
     # The desktop's user_id is what the server uses to scope the per-user
     # event log. Pull the JWT for the auth header.

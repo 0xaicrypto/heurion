@@ -87,7 +87,7 @@ def test_learning_summary_returns_seven_day_timeline(client, tmp_path):
 
     twin_manager._test_override = twin
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "LS"})
+        reg = client.post("/api/v1/auth/register", json={"username": "LS", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.get(
             "/api/v1/agent/learning_summary",
@@ -115,7 +115,7 @@ def test_learning_summary_just_learned_merges_namespaces(client, tmp_path):
 
     twin_manager._test_override = twin
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "LS2"})
+        reg = client.post("/api/v1/auth/register", json={"username": "LS2", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.get(
             "/api/v1/agent/learning_summary?window=14d",
@@ -143,7 +143,7 @@ def test_learning_summary_chain_status_present_on_each_item(client, tmp_path):
 
     twin_manager._test_override = twin
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "LS3"})
+        reg = client.post("/api/v1/auth/register", json={"username": "LS3", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.get(
             "/api/v1/agent/learning_summary",
@@ -162,7 +162,7 @@ def test_learning_summary_invalid_window_falls_back_to_7d(client, tmp_path):
 
     twin_manager._test_override = twin
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "LS4"})
+        reg = client.post("/api/v1/auth/register", json={"username": "LS4", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.get(
             "/api/v1/agent/learning_summary?window=garbage",

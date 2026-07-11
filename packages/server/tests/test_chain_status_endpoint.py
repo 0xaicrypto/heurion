@@ -77,7 +77,7 @@ def test_chain_status_empty_twin_all_local(client, tmp_path):
     twin = FakeTwin(base_dir=str(tmp_path / "twin"), backend=backend)
     twin_manager._test_override = twin
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "CS"})
+        reg = client.post("/api/v1/auth/register", json={"username": "CS", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
 
         resp = client.get(
@@ -112,7 +112,7 @@ def test_chain_status_committed_no_anchor_is_mirrored(client, tmp_path):
 
     twin_manager._test_override = twin
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "CS2"})
+        reg = client.post("/api/v1/auth/register", json={"username": "CS2", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.get(
             "/api/v1/agent/chain_status",
@@ -145,7 +145,7 @@ def test_chain_status_anchor_after_commit_promotes_to_anchored(client, tmp_path)
 
     twin_manager._test_override = twin
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "CS3"})
+        reg = client.post("/api/v1/auth/register", json={"username": "CS3", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.get(
             "/api/v1/agent/chain_status",
@@ -172,7 +172,7 @@ def test_chain_status_health_card_surfaces_backend_signals(client, tmp_path):
     twin = FakeTwin(base_dir=str(tmp_path / "twin"), backend=backend)
     twin_manager._test_override = twin
     try:
-        reg = client.post("/api/v1/auth/register", json={"display_name": "CS4"})
+        reg = client.post("/api/v1/auth/register", json={"username": "CS4", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.get(
             "/api/v1/agent/chain_status",

@@ -108,7 +108,7 @@ def test_delete_removes_row():
 
 def _register(client, name: str = "Workflow Tester") -> tuple[str, str]:
     """Register a fresh user, returning (jwt_token, user_id)."""
-    reg = client.post("/api/v1/auth/register", json={"display_name": name})
+    reg = client.post("/api/v1/auth/register", json={"username": name, "password": "Str0ng-Pass-123"})
     assert reg.status_code in (200, 201), reg.text
     token = reg.json()["jwt_token"]
     me = client.get(

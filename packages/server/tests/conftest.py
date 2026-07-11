@@ -23,6 +23,12 @@ os.environ["WEBAUTHN_ORIGIN"] = "http://localhost:8001"
 os.environ["NEXUS_USE_TWIN"] = "0"
 os.environ["NEXUS_DISABLE_TWIN_REAPER"] = "1"
 
+# Auth redesign: the per-IP+username rate limiter (5/min on
+# login/claim/register) would trip across the hundreds of register
+# calls the suite makes from the single TestClient IP. Disabled here;
+# test_auth_password re-enables it locally to test the 429 path.
+os.environ["NEXUS_AUTH_RATELIMIT_DISABLED"] = "1"
+
 # S5 isolation: ``twin_event_log._db_path`` defaults to
 # ~/.nexus_server/twins/{user_id}/event_log/{agent_id}.db. The S5 tests
 # seed events via ``_test_append_event`` which creates real SQLite

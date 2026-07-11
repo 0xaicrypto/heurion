@@ -88,7 +88,7 @@ class FakeTwin:
 
 
 def _register(client) -> str:
-    reg = client.post("/api/v1/auth/register", json={"display_name": "PressureUser"})
+    reg = client.post("/api/v1/auth/register", json={"username": "PressureUser", "password": "Str0ng-Pass-123"})
     return reg.json()["jwt_token"]
 
 

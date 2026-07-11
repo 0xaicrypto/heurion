@@ -26,7 +26,7 @@ class TestHealthCheck:
 
 class TestAuthRegister:
     def test_register_returns_jwt(self, client):
-        resp = client.post("/api/v1/auth/register", json={"display_name": "TestUser"})
+        resp = client.post("/api/v1/auth/register", json={"username": "TestUser", "password": "Str0ng-Pass-123"})
         assert resp.status_code == 201
         data = resp.json()
         assert "jwt_token" in data
@@ -34,19 +34,19 @@ class TestAuthRegister:
         assert len(data["jwt_token"]) > 20
 
     def test_register_empty_name_rejected(self, client):
-        resp = client.post("/api/v1/auth/register", json={"display_name": ""})
+        resp = client.post("/api/v1/auth/register", json={"username": "", "password": "Str0ng-Pass-123"})
         assert resp.status_code == 422
 
     def test_register_missing_name_rejected(self, client):
         resp = client.post("/api/v1/auth/register", json={})
         assert resp.status_code == 422
 
-    def test_register_twice_same_name_creates_different_users(self, client):
-        r1 = client.post("/api/v1/auth/register", json={"display_name": "Alice"})
-        r2 = client.post("/api/v1/auth/register", json={"display_name": "Alice"})
+    def test_register_twice_same_name_conflicts(self, client):
+        # Usernames are the login key now — duplicates are rejected.
+        r1 = client.post("/api/v1/auth/register", json={"username": "Alice", "password": "Str0ng-Pass-123"})
+        r2 = client.post("/api/v1/auth/register", json={"username": "Alice", "password": "Str0ng-Pass-123"})
         assert r1.status_code == 201
-        assert r2.status_code == 201
-        assert r1.json()["user_id"] != r2.json()["user_id"]
+        assert r2.status_code == 409
 
 
 # ── Auth: JWT Validation ──────────────────────────────────────────────
@@ -54,7 +54,7 @@ class TestAuthRegister:
 
 class TestAuthJWT:
     def _get_token(self, client):
-        resp = client.post("/api/v1/auth/register", json={"display_name": "JWTUser"})
+        resp = client.post("/api/v1/auth/register", json={"username": "JWTUser", "password": "Str0ng-Pass-123"})
         return resp.json()["jwt_token"]
 
     def test_protected_endpoint_without_token_returns_401(self, client):
@@ -89,7 +89,7 @@ class TestAuthJWT:
 
 class TestLLMGateway:
     def _get_token(self, client):
-        resp = client.post("/api/v1/auth/register", json={"display_name": "LLMUser"})
+        resp = client.post("/api/v1/auth/register", json={"username": "LLMUser", "password": "Str0ng-Pass-123"})
         return resp.json()["jwt_token"]
 
     def test_chat_returns_correct_format(self, client):
@@ -293,7 +293,7 @@ class TestPasskeyLoginFinish:
     """
 
     def _register_user(self, client, name="PasskeyUser"):
-        resp = client.post("/api/v1/auth/register", json={"display_name": name})
+        resp = client.post("/api/v1/auth/register", json={"username": name, "password": "Str0ng-Pass-123"})
         assert resp.status_code == 201
         return resp.json()
 
@@ -394,7 +394,7 @@ class TestEnvLoading:
 
 class TestToolLoop:
     def _get_token(self, client):
-        resp = client.post("/api/v1/auth/register", json={"display_name": "ToolUser"})
+        resp = client.post("/api/v1/auth/register", json={"username": "ToolUser", "password": "Str0ng-Pass-123"})
         return resp.json()["jwt_token"]
 
     def test_tool_loop_max_rounds_safety(self, client):
@@ -449,7 +449,7 @@ class TestToolLoop:
         try:
             reg = client.post(
                 "/api/v1/auth/register",
-                json={"display_name": "TwinUser"},
+                json={"username": "TwinUser", "password": "Str0ng-Pass-123"},
             )
             token = reg.json()["jwt_token"]
 
@@ -498,7 +498,7 @@ class TestToolLoop:
         try:
             reg = client.post(
                 "/api/v1/auth/register",
-                json={"display_name": "FallbackUser"},
+                json={"username": "FallbackUser", "password": "Str0ng-Pass-123"},
             )
             token = reg.json()["jwt_token"]
 
@@ -557,7 +557,7 @@ class TestToolLoop:
         # Register a fresh user (no chain_agent_id yet)
         reg = client.post(
             "/api/v1/auth/register",
-            json={"display_name": "UnregisteredChainUser"},
+            json={"username": "UnregisteredChainUser", "password": "Str0ng-Pass-123"},
         )
         user_id = reg.json()["user_id"]
 
@@ -598,7 +598,7 @@ class TestToolLoop:
 
         reg = client.post(
             "/api/v1/auth/register",
-            json={"display_name": "AutoRegisterUser"},
+            json={"username": "AutoRegisterUser", "password": "Str0ng-Pass-123"},
         )
         user_id = reg.json()["user_id"]
 
@@ -653,7 +653,7 @@ class TestToolLoop:
 
         reg = client.post(
             "/api/v1/auth/register",
-            json={"display_name": "RegisteredChainUser"},
+            json={"username": "RegisteredChainUser", "password": "Str0ng-Pass-123"},
         )
         user_id = reg.json()["user_id"]
 
@@ -788,7 +788,7 @@ class TestToolLoop:
 class TestUserPersistence:
     def test_registered_user_persists_across_requests(self, client):
         """User data should persist in the database."""
-        reg = client.post("/api/v1/auth/register", json={"display_name": "PersistUser"})
+        reg = client.post("/api/v1/auth/register", json={"username": "PersistUser", "password": "Str0ng-Pass-123"})
         user_id = reg.json()["user_id"]
 
         # Verify user can be found via login/finish
@@ -800,8 +800,8 @@ class TestUserPersistence:
 
     def test_multiple_users_isolated(self, client):
         """Different users get different JWT tokens."""
-        r1 = client.post("/api/v1/auth/register", json={"display_name": "User1"})
-        r2 = client.post("/api/v1/auth/register", json={"display_name": "User2"})
+        r1 = client.post("/api/v1/auth/register", json={"username": "User1", "password": "Str0ng-Pass-123"})
+        r2 = client.post("/api/v1/auth/register", json={"username": "User2", "password": "Str0ng-Pass-123"})
         assert r1.json()["jwt_token"] != r2.json()["jwt_token"]
         assert r1.json()["user_id"] != r2.json()["user_id"]
 
@@ -823,7 +823,7 @@ class TestLLMChatAttachments:
     """
 
     def _get_token(self, client):
-        resp = client.post("/api/v1/auth/register", json={"display_name": "AttUser"})
+        resp = client.post("/api/v1/auth/register", json={"username": "AttUser", "password": "Str0ng-Pass-123"})
         return resp.json()["jwt_token"]
 
     def _patched_call_llm(self, captured: list):
@@ -1063,7 +1063,7 @@ class TestChainProxy:
     actually uses BSCClient when one is injected."""
 
     def _get_token_and_user(self, client):
-        resp = client.post("/api/v1/auth/register", json={"display_name": "ChainUser"})
+        resp = client.post("/api/v1/auth/register", json={"username": "ChainUser", "password": "Str0ng-Pass-123"})
         d = resp.json()
         return d["jwt_token"], d["user_id"]
 
@@ -1190,7 +1190,7 @@ class TestChainProxy:
             # We can't easily reset chain_agent_id; just register a NEW user
             r2 = client.post(
                 "/api/v1/auth/register",
-                json={"display_name": "OmittedNameUser"},
+                json={"username": "OmittedNameUser", "password": "Str0ng-Pass-123"},
             )
             tok2 = r2.json()["jwt_token"]
             r3 = client.post(
@@ -1241,7 +1241,7 @@ class TestSyncAnchor:
     S6/Round 2-A this test class goes with it."""
 
     def _get_token_and_user(self, client):
-        resp = client.post("/api/v1/auth/register", json={"display_name": "AnchorUser"})
+        resp = client.post("/api/v1/auth/register", json={"username": "AnchorUser", "password": "Str0ng-Pass-123"})
         d = resp.json()
         return d["jwt_token"], d["user_id"]
 
@@ -1447,7 +1447,7 @@ class TestSyncAnchor:
         # log-line agent_id ``user-{user_id[:8]}`` matches.
         reg = client.post(
             "/api/v1/auth/register",
-            json={"display_name": "ChainActivityUser"},
+            json={"username": "ChainActivityUser", "password": "Str0ng-Pass-123"},
         )
         token = reg.json()["jwt_token"]
         user_id = reg.json()["user_id"]
@@ -1509,7 +1509,7 @@ class TestSyncAnchor:
 
         reg = client.post(
             "/api/v1/auth/register",
-            json={"display_name": "MsgPivotUser"},
+            json={"username": "MsgPivotUser", "password": "Str0ng-Pass-123"},
         )
         token = reg.json()["jwt_token"]
         user_id = reg.json()["user_id"]
@@ -1542,7 +1542,7 @@ class TestSyncAnchor:
     def test_agent_state_endpoint_basics(self, client):
         """/api/v1/agent/state returns the snapshot the desktop sidebar
         binds to: chain id, on_chain flag, anchor counts, server_time."""
-        reg = client.post("/api/v1/auth/register", json={"display_name": "AgentX"})
+        reg = client.post("/api/v1/auth/register", json={"username": "AgentX", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.get(
             "/api/v1/agent/state",
@@ -1572,7 +1572,7 @@ class TestSyncAnchor:
         from nexus_server import sync_anchor as sa
         from nexus_server import twin_event_log
         from datetime import datetime, timezone
-        reg = client.post("/api/v1/auth/register", json={"display_name": "TLUser"})
+        reg = client.post("/api/v1/auth/register", json={"username": "TLUser", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         user_id = reg.json()["user_id"]
 
@@ -1653,7 +1653,7 @@ class TestSyncAnchor:
 
         reg = client.post(
             "/api/v1/auth/register",
-            json={"display_name": "TwinMemoryUser"},
+            json={"username": "TwinMemoryUser", "password": "Str0ng-Pass-123"},
         )
         user_id = reg.json()["user_id"]
         token = reg.json()["jwt_token"]
@@ -1733,7 +1733,7 @@ class TestChainMeEndpoint:
     """The /api/v1/chain/me convenience endpoint."""
 
     def test_me_returns_user_info_when_no_chain_agent(self, client):
-        reg = client.post("/api/v1/auth/register", json={"display_name": "Me"})
+        reg = client.post("/api/v1/auth/register", json={"username": "Me", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         resp = client.get(
             "/api/v1/chain/me",
@@ -1747,7 +1747,7 @@ class TestChainMeEndpoint:
 
     def test_me_reflects_chain_agent_id_after_registration(self, client):
         from nexus_server.database import get_db_connection
-        reg = client.post("/api/v1/auth/register", json={"display_name": "Reg"})
+        reg = client.post("/api/v1/auth/register", json={"username": "Reg", "password": "Str0ng-Pass-123"})
         token = reg.json()["jwt_token"]
         user_id = reg.json()["user_id"]
         with get_db_connection() as conn:

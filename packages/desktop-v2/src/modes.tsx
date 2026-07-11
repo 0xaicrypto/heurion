@@ -8,7 +8,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Mail } from 'lucide-react';
-import { useAppState } from './store';
+import {
+  useAppState, EMPTY_DRAFT_ATTACHMENTS, type DraftAttachment,
+} from './store';
 import { Button, Card, Chip, Section, EmptyState, Input } from './components/ui';
 import { ChatMarkdown, type FileChipRef } from './components/chat-markdown';
 import { CopyButton } from './components/copy-button';
@@ -164,10 +166,22 @@ export function TodayMode() {
  * Q&A; deeper questions naturally upgrade the user into Research
  * workspace via the suggestions strip below the answer.
  */
+// F-draft-persist — single fixed store key for the Today bar's
+// composer (there's exactly one such bar in the whole app).
+const CROSS_PATIENT_DRAFT_KEY = 'today-cross-patient';
+
 function CrossPatientChat() {
   const t = useT();
   const setActiveWorkspace = useAppState((s) => s.setActiveWorkspace);
-  const [q, setQ]                 = useState('');
+  // F-draft-persist — the Today-bar question lives in the store under
+  // a single fixed key (this surface has exactly one composer), so
+  // navigating to a patient and back doesn't eat a half-typed query.
+  const q            = useAppState((s) => s.drafts[CROSS_PATIENT_DRAFT_KEY] ?? '');
+  const storeSetDraft = useAppState((s) => s.setDraft);
+  const setQ = useCallback(
+    (text: string) => storeSetDraft(CROSS_PATIENT_DRAFT_KEY, text),
+    [storeSetDraft],
+  );
   const [answer, setAnswer]       = useState('');
   const [busy, setBusy]           = useState(false);
   const [err, setErr]             = useState<string | null>(null);
@@ -202,6 +216,10 @@ function CrossPatientChat() {
           setAnswer((prev) => prev + chunk.text);
         }
       }
+      // Stream finished cleanly — clear the persisted draft. On error
+      // we deliberately keep it so the medic can retry without
+      // retyping.
+      setQ('');
     } catch (e) {
       const ae = e as ApiError;
       setErr(ae?.message || String(e));
@@ -829,7 +847,8 @@ export function EncounterMode() {
   const activeSessionId = useAppState((s) => s.activeSessionId);
   const setActiveSessionId = useAppState((s) => s.setActiveSessionId);
   const showToast      = useAppState((s) => s.showToast);
-  const [draft, setDraft] = useState('');
+  // (draft + attachments moved into the zustand store, keyed by
+  // effectiveSessionId — declared below once that key is derived.)
   const [backendStatus, setBackendStatus] =
     useState<'ok' | 'unreachable' | 'unhealthy' | 'checking'>('checking');
 
@@ -865,12 +884,6 @@ export function EncounterMode() {
   // Chat sessions ─────────────────────────────────────────────────
   const [sessions, setSessions] = useState<ChatSessionInfo[]>([]);
   const [showSessionList, setShowSessionList] = useState(false);
-
-  // Files staged for the next send (paste / drop). Each carries the
-  // server-assigned file_id once the upload completes; pending uploads
-  // show a spinner chip until the id arrives.
-  const [attachments, setAttachments] =
-    useState<Array<{ key: string; name: string; sizeBytes: number; fileId: string | null; failed?: string; previewUrl?: string; isImage?: boolean }>>([]);
 
   // Probe the backend once on mount. A failed probe lets us tell the
   // medic "backend not running" instead of the opaque "TypeError: Load
@@ -923,6 +936,30 @@ export function EncounterMode() {
   // so the default below is what loads after a sidebar click.
   const effectiveSessionId = activeSessionId
     || (p ? `patient-${p.patientHash}` : '');
+
+  // F-draft-persist — composer text + staged attachments live in the
+  // zustand store keyed by effectiveSessionId (the exact key chat
+  // messages use), so switching tabs / patients / sessions mid-
+  // composition keeps each thread's half-typed draft and pending
+  // file chips intact. Attachment objects are plain metadata (name /
+  // size / server fileId / blob-URL thumbnail) — no raw File handles
+  // — so parking them in the in-memory store is safe; blob URLs stay
+  // valid for the page lifetime, which matches the store's lifetime.
+  const draft = useAppState((s) => s.drafts[effectiveSessionId] ?? '');
+  const storeSetDraft = useAppState((s) => s.setDraft);
+  const setDraft = useCallback(
+    (text: string) => storeSetDraft(effectiveSessionId, text),
+    [storeSetDraft, effectiveSessionId],
+  );
+  const attachments = useAppState((s) =>
+    s.draftAttachments[effectiveSessionId]
+      ?? (EMPTY_DRAFT_ATTACHMENTS as DraftAttachment[]));
+  const storeSetAttachments = useAppState((s) => s.setDraftAttachments);
+  const setAttachments = useCallback(
+    (atts: DraftAttachment[] | ((prev: DraftAttachment[]) => DraftAttachment[])) =>
+      storeSetAttachments(effectiveSessionId, atts),
+    [storeSetAttachments, effectiveSessionId],
+  );
 
   // F-chat-state-persist — read msgs + streaming for THIS session.
   // Both come from the zustand store keyed by sessionId, so when the

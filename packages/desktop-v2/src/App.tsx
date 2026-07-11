@@ -110,7 +110,7 @@ function WorkspaceSwitcher() {
       title={sub}
       className={`px-3.5 py-1 text-sm rounded-md transition-colors ${
         ws === key
-          ? 'bg-[#46C0D6] text-[#06252c] shadow-sm font-medium'
+          ? 'bg-rw-accent text-[#06252c] shadow-sm font-medium'
           : 'text-text-secondary hover:bg-gray-100 dark:hover:bg-gray-800'
       }`}
     >

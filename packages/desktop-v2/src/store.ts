@@ -18,6 +18,31 @@ export interface ToastMsg {
   kind: 'info' | 'success' | 'error';
 }
 
+/**
+ * F-draft-persist — a file staged in a chat composer. Plain
+ * serializable metadata + the server-assigned fileId once the upload
+ * settles. ``previewUrl`` is a blob: URL (page-lifetime only) used for
+ * image thumbnails — valid for as long as this in-memory store lives,
+ * which is exactly the lifetime we persist drafts for.
+ *
+ * Shape is the union of EncounterMode's inline attachment type and
+ * research-workspace.tsx's ChatAttachment, which were already
+ * structurally identical.
+ */
+export interface DraftAttachment {
+  key: string;
+  name: string;
+  sizeBytes: number;
+  fileId: string | null;
+  failed?: string;
+  previewUrl?: string;
+  isImage?: boolean;
+}
+
+/** Stable empty array so zustand selectors over draftAttachments
+ *  don't return a fresh [] on every store update. */
+export const EMPTY_DRAFT_ATTACHMENTS: readonly DraftAttachment[] = [];
+
 interface AppState {
   // Auth ─────────────────────────────────────────────
   token: string | null;
@@ -86,6 +111,26 @@ interface AppState {
   ) => void;
   setChatStreaming:   (sessionId: string, streaming: boolean) => void;
 
+  // F-draft-persist ──────────────────────────────────
+  // Composer drafts (text + staged attachments) live in the store so
+  // switching tabs / patients / studies mid-composition doesn't eat
+  // the medic's half-typed question. Keyed the same way chat messages
+  // are:
+  //   - Encounter chat:      effectiveSessionId (per session/patient)
+  //   - Research ChatTab:    `research-${studyId}` (per study)
+  //   - CrossResearchChat:   'research-workspace-cross'
+  //   - Today CrossPatient:  'today-cross-patient'
+  // Cleared on successful send by the owning component; wiped
+  // wholesale on logout / identity switch (same policy as
+  // chatMsgsBySession).
+  drafts: Record<string, string>;
+  setDraft: (key: string, text: string) => void;
+  draftAttachments: Record<string, DraftAttachment[]>;
+  setDraftAttachments: (
+    key: string,
+    atts: DraftAttachment[] | ((prev: DraftAttachment[]) => DraftAttachment[]),
+  ) => void;
+
   // Layout ───────────────────────────────────────────
   sidebarCollapsed: boolean;
   contextRailOpen: boolean;
@@ -102,7 +147,9 @@ interface AppState {
   // Dialogs / overlays ───────────────────────────────
   commandPaletteOpen: boolean;
   newPatientDialogOpen: boolean;
-  toast: ToastMsg | null;
+  // Toast queue — newest last. ToastStrip renders up to 3 stacked;
+  // each toast auto-dismisses on its own timer.
+  toasts: ToastMsg[];
 
   // Context rail content — UX v2 §7.1
   contextRailContent:
@@ -162,7 +209,9 @@ interface AppState {
   closeNewPatientDialog: () => void;
 
   showToast: (text: string, kind?: ToastMsg['kind']) => void;
-  dismissToast: () => void;
+  /** Dismiss one toast by id, or every toast when called bare
+   *  (backward-compatible with the old single-slot signature). */
+  dismissToast: (id?: number) => void;
 }
 
 const TOKEN_KEY   = 'nexus.auth.token';
@@ -351,6 +400,9 @@ export const useAppState = create<AppState>((set, get) => ({
       // user's drafted message buffer.
       chatMsgsBySession:      {},
       chatStreamingBySession: {},
+      // F-draft-persist — same policy for composer drafts.
+      drafts:           {},
+      draftAttachments: {},
     });
   },
 
@@ -379,6 +431,9 @@ export const useAppState = create<AppState>((set, get) => ({
       // F-chat-state-persist — see resetForIdentitySwitch.
       chatMsgsBySession:      {},
       chatStreamingBySession: {},
+      // F-draft-persist — see resetForIdentitySwitch.
+      drafts:           {},
+      draftAttachments: {},
     });
   },
 
@@ -459,6 +514,19 @@ export const useAppState = create<AppState>((set, get) => ({
       },
     })),
 
+  // F-draft-persist — see interface block for key conventions.
+  drafts:           {},
+  draftAttachments: {},
+  setDraft: (key, text) =>
+    set((s) => ({ drafts: { ...s.drafts, [key]: text } })),
+  setDraftAttachments: (key, atts) =>
+    set((s) => {
+      const prev = s.draftAttachments[key]
+        ?? (EMPTY_DRAFT_ATTACHMENTS as DraftAttachment[]);
+      const next = typeof atts === 'function' ? atts(prev) : atts;
+      return { draftAttachments: { ...s.draftAttachments, [key]: next } };
+    }),
+
   sidebarCollapsed: false,
   contextRailOpen: false,
   theme: 'dark',
@@ -474,7 +542,7 @@ export const useAppState = create<AppState>((set, get) => ({
 
   commandPaletteOpen: false,
   newPatientDialogOpen: false,
-  toast: null,
+  toasts: [],
 
   contextRailContent: { kind: 'closed' },
   openContextRailForCitation: (nodeId) =>
@@ -657,16 +725,24 @@ export const useAppState = create<AppState>((set, get) => ({
   closeNewPatientDialog: () => set({ newPatientDialogOpen: false }),
 
   showToast: (text, kind = 'info') => {
-    const id = Date.now();
-    set({ toast: { id, text, kind } });
-    // Auto-dismiss after 4s
+    // Monotonic counter, not Date.now() — two toasts fired in the
+    // same millisecond (common: a loop of failures) must not share
+    // an id or one auto-dismiss timer would eat both.
+    const id = ++_toastSeq;
+    set((s) => ({ toasts: [...s.toasts, { id, text, kind }] }));
+    // Auto-dismiss after 4s — per toast, so a burst drains in order.
     setTimeout(() => {
-      const current = get().toast;
-      if (current && current.id === id) set({ toast: null });
+      set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
     }, 4000);
   },
-  dismissToast: () => set({ toast: null }),
+  dismissToast: (id) =>
+    set((s) => ({
+      toasts: id === undefined ? [] : s.toasts.filter((t) => t.id !== id),
+    })),
 }));
+
+// Module-level toast id sequence (see showToast).
+let _toastSeq = 0;
 
 /** Apply theme by toggling .dark class on <html>. Call at boot + on toggle. */
 export function applyThemeToDOM(theme: Theme) {

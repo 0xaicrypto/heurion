@@ -667,6 +667,10 @@ def create_app() -> FastAPI:
 
     # Include routers with API prefixes
     app.include_router(auth.router)
+    # Admin console — user list / disable / enable / reset-password.
+    # Every route requires role='admin' via require_admin.
+    from nexus_server import admin_router as _admin_router
+    app.include_router(_admin_router.router)
     app.include_router(passkey_page.router)
     app.include_router(llm_gateway.router)
     app.include_router(chain_proxy.router)

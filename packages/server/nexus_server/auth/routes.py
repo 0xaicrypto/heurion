@@ -1,9 +1,9 @@
 """Authentication router and utilities.
 
 Handles JWT and WebAuthn authentication flows:
-  - User registration (simple display_name)
-  - JWT login
-  - WebAuthn passkey registration and login
+  - User registration (username + password, bcrypt-hashed)
+  - Password login (+ one-time /claim flow for legacy accounts)
+  - WebAuthn passkey registration and login (optional second method)
   - JWT token creation and verification
 """
 
@@ -18,8 +18,9 @@ from base64 import b64encode
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import bcrypt
 import jwt
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -37,18 +38,49 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 # ───────────────────────────────────────────────────────────────────────────
 
 
+# Trivially guessable passwords rejected outright even when they pass
+# the >= 8 chars length gate.
+_COMMON_PASSWORDS = {
+    "password", "password1", "password123", "12345678", "123456789",
+    "1234567890", "qwertyui", "qwerty123", "11111111", "00000000",
+    "letmein12", "iloveyou", "aa345678",
+}
+
+
+def _validate_password(v: str) -> str:
+    """Shared password policy: min 8 chars, not blank, not common."""
+    if not v or not v.strip():
+        raise ValueError("Password cannot be empty")
+    if len(v) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    if v.lower() in _COMMON_PASSWORDS:
+        raise ValueError("Password is too common")
+    return v
+
+
+def _validate_username(v: str) -> str:
+    v = (v or "").strip()
+    if not v:
+        raise ValueError("Username cannot be empty")
+    return v
+
+
 class UserRegisterRequest(BaseModel):
-    """User registration request."""
+    """User registration request (username + password)."""
 
-    display_name: str = Field(..., min_length=1, max_length=255)
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=8, max_length=256)
+    display_name: Optional[str] = Field(default=None, max_length=255)
 
-    @field_validator("display_name")
+    @field_validator("username")
     @classmethod
-    def validate_display_name(cls, v: str) -> str:
-        """Validate display name."""
-        if not v.strip():
-            raise ValueError("Display name cannot be empty")
-        return v.strip()
+    def validate_username(cls, v: str) -> str:
+        return _validate_username(v)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        return _validate_password(v)
 
 
 class UserRegisterResponse(BaseModel):
@@ -57,12 +89,20 @@ class UserRegisterResponse(BaseModel):
     user_id: str
     jwt_token: str
     created_at: str
+    role: str = "user"
+    expires_in_seconds: int = 0
 
 
 class UserLoginRequest(BaseModel):
-    """User login request."""
+    """User login request (username + password)."""
 
-    user_id: str = Field(..., min_length=1)
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=256)
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        return _validate_username(v)
 
 
 class UserLoginResponse(BaseModel):
@@ -70,6 +110,27 @@ class UserLoginResponse(BaseModel):
 
     jwt_token: str
     expires_in_seconds: int
+    user_id: str = ""
+    role: str = "user"
+    display_name: str = ""
+
+
+class UserClaimRequest(BaseModel):
+    """One-time account claim: set a password on a legacy
+    (password_hash IS NULL) account."""
+
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=8, max_length=256)
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        return _validate_username(v)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        return _validate_password(v)
 
 
 class WebAuthnRegisterStartRequest(BaseModel):
@@ -245,7 +306,128 @@ async def get_current_user(
             detail="Invalid or expired token",
         )
 
+    # Reject tokens of deleted / admin-disabled accounts. The JWT
+    # itself stays cryptographically valid until expiry, so this DB
+    # check is the only thing standing between a disabled user and
+    # the API.
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT disabled_at, deleted_at FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+    if row is None or row["deleted_at"] is not None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+    if row["disabled_at"] is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "account_disabled",
+                    "message": "This account has been disabled."},
+        )
+
     return user_id
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Password Helpers
+# ───────────────────────────────────────────────────────────────────────────
+
+# Pre-computed hash used to equalise timing when the username doesn't
+# exist: we still run one bcrypt verify so "user not found" and "wrong
+# password" take roughly the same time.
+_DUMMY_PASSWORD_HASH = bcrypt.hashpw(
+    b"nexus-dummy-password-for-timing", bcrypt.gensalt(rounds=12)
+)
+
+
+def hash_password(password: str) -> str:
+    """bcrypt-hash a plaintext password for storage."""
+    return bcrypt.hashpw(
+        password.encode("utf-8"), bcrypt.gensalt(rounds=12)
+    ).decode("utf-8")
+
+
+def verify_password(password: str, password_hash: Optional[str]) -> bool:
+    """Constant-ish-time password check. When ``password_hash`` is
+    None/empty we verify against a dummy hash and return False, so
+    the caller's timing doesn't leak whether the account exists."""
+    try:
+        if not password_hash:
+            bcrypt.checkpw(password.encode("utf-8"), _DUMMY_PASSWORD_HASH)
+            return False
+        return bcrypt.checkpw(
+            password.encode("utf-8"), password_hash.encode("utf-8")
+        )
+    except (ValueError, TypeError):
+        return False
+
+
+def _find_user_by_username(conn, username: str):
+    """Case-insensitive (casefold, CJK-safe) username lookup over live
+    users. Returns a sqlite3.Row or None. Table is tiny (tens of rows)
+    so the Python-side scan is fine — SQLite's LIKE is ASCII-only."""
+    typed_fold = (username or "").strip().casefold()
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT id, display_name, jwt_secret, password_hash, role, "
+        "       disabled_at, created_at "
+        "FROM users WHERE deleted_at IS NULL"
+    ).fetchall()
+    for r in rows:
+        if (r["display_name"] or "").strip().casefold() == typed_fold:
+            return r
+    return None
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Auth Rate Limiting (in-memory, per IP + username)
+# ───────────────────────────────────────────────────────────────────────────
+
+_AUTH_RATE_LIMIT = 5          # attempts
+_AUTH_RATE_WINDOW = 60.0      # seconds
+_AUTH_ATTEMPTS: dict[str, list[float]] = {}
+_AUTH_ATTEMPTS_LOCK = threading.Lock()
+
+
+def _check_auth_rate_limit(request: Optional[Request], scope: str,
+                           key: str) -> None:
+    """Sliding-window limiter for login / claim / register.
+
+    Keyed by (client IP, scope, casefolded username) so a brute-force
+    against one account is throttled without collateral damage to
+    other accounts behind the same NAT. Raises 429 when exceeded.
+    Set ``NEXUS_AUTH_RATELIMIT_DISABLED=1`` to bypass (test suites).
+    """
+    if os.environ.get("NEXUS_AUTH_RATELIMIT_DISABLED") == "1":
+        return
+    ip = "unknown"
+    if request is not None and request.client is not None:
+        ip = request.client.host or "unknown"
+    bucket = f"{ip}|{scope}|{(key or '').strip().casefold()}"
+    now = time.time()
+    with _AUTH_ATTEMPTS_LOCK:
+        attempts = [
+            t for t in _AUTH_ATTEMPTS.get(bucket, [])
+            if now - t < _AUTH_RATE_WINDOW
+        ]
+        if len(attempts) >= _AUTH_RATE_LIMIT:
+            _AUTH_ATTEMPTS[bucket] = attempts
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"code": "rate_limited",
+                        "message": "Too many attempts. Try again in a "
+                                   "minute."},
+            )
+        attempts.append(now)
+        _AUTH_ATTEMPTS[bucket] = attempts
+        # Opportunistic GC so the dict can't grow unbounded.
+        if len(_AUTH_ATTEMPTS) > 10_000:
+            cutoff = now - _AUTH_RATE_WINDOW
+            for k in [k for k, v in _AUTH_ATTEMPTS.items()
+                      if not v or v[-1] < cutoff]:
+                _AUTH_ATTEMPTS.pop(k, None)
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -267,102 +449,217 @@ def generate_webauthn_challenge() -> str:
 # ───────────────────────────────────────────────────────────────────────────
 
 
+def _touch_login_timestamps(user_id: str) -> None:
+    """Best-effort update of last_login_at / last_active_at."""
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        with get_db_connection() as conn:
+            conn.execute(
+                "UPDATE users SET last_login_at = ?, last_active_at = ?, "
+                "updated_at = ? WHERE id = ?",
+                (now, now, now, user_id),
+            )
+            conn.commit()
+    except sqlite3.Error as exc:
+        logger.debug("touch_login_timestamps failed: %s", exc)
+
+
 @router.post(
     "/register",
     response_model=UserRegisterResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def register_user(
-    request: UserRegisterRequest,
+    body: UserRegisterRequest,
+    request: Request,
 ) -> UserRegisterResponse:
-    """Register a new user.
+    """Register a new user with username + password.
 
-    Args:
-        request: Registration request with display_name
-
-    Returns:
-        user_id and JWT token
-
-    Raises:
-        HTTPException: If registration fails
+    Username is unique (case-insensitive) among live accounts. The
+    FIRST user ever registered on this server gets role='admin'.
     """
+    _check_auth_rate_limit(request, "register", body.username)
+
+    username = body.username.strip()
+    display_name = (body.display_name or "").strip() or username
     user_id = str(uuid.uuid4())
     jwt_secret = str(uuid.uuid4())
+    password_hash = hash_password(body.password)
     now = datetime.now(timezone.utc).isoformat()
 
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
+    with get_db_connection() as conn:
+        # Check-before-insert guard (the UNIQUE index in init_db is
+        # best-effort on legacy DBs with pre-existing duplicates).
+        if _find_user_by_username(conn, username) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "username_taken",
+                        "message": "This username is already registered."},
+            )
+        # First ever account on this server becomes the admin.
+        n_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        role = "admin" if n_users == 0 else "user"
+        try:
+            conn.execute(
                 """
                 INSERT INTO users
-                (id, display_name, jwt_secret, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                (id, display_name, jwt_secret, password_hash, role,
+                 created_at, updated_at, last_login_at, last_active_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, request.display_name, jwt_secret, now, now),
+                (user_id, display_name, jwt_secret, password_hash, role,
+                 now, now, now, now),
             )
             conn.commit()
+        except sqlite3.IntegrityError:
+            # UNIQUE index race — same username inserted concurrently.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "username_taken",
+                        "message": "This username is already registered."},
+            )
 
-        token, _ = create_jwt_token(user_id, jwt_secret)
-        logger.info(f"User registered: {user_id}")
+    token, expires_in = create_jwt_token(user_id, jwt_secret)
+    logger.info("User registered: %s (role=%s)", user_id[:8], role)
 
-        return UserRegisterResponse(
-            user_id=user_id,
-            jwt_token=token,
-            created_at=now,
-        )
-    except Exception as e:
-        logger.error(f"Registration error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Registration failed",
-        )
+    return UserRegisterResponse(
+        user_id=user_id,
+        jwt_token=token,
+        created_at=now,
+        role=role,
+        expires_in_seconds=expires_in,
+    )
 
 
 @router.post("/login", response_model=UserLoginResponse)
-async def login_user(request: UserLoginRequest) -> UserLoginResponse:
-    """Login user and return JWT token.
+async def login_user(
+    body: UserLoginRequest,
+    request: Request,
+) -> UserLoginResponse:
+    """Password login. Errors:
 
-    Args:
-        request: Login request with user_id
-
-    Returns:
-        JWT token
-
-    Raises:
-        HTTPException: If user not found
+      * 401 invalid_credentials — unknown username OR wrong password
+        (indistinguishable on purpose; bcrypt-verify runs either way).
+      * 409 claim_required — account exists but has no password yet
+        (legacy passwordless account); client should route to /claim.
+      * 403 account_disabled — admin disabled this account.
     """
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT jwt_secret FROM users WHERE id = ?",
-                (request.user_id,),
-            )
-            row = cursor.fetchone()
+    _check_auth_rate_limit(request, "login", body.username)
 
-        if not row:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found",
-            )
+    with get_db_connection() as conn:
+        row = _find_user_by_username(conn, body.username)
 
-        jwt_secret = row[0]
-        token, expires_in = create_jwt_token(request.user_id, jwt_secret)
-        logger.info(f"User logged in: {request.user_id}")
-
-        return UserLoginResponse(
-            jwt_token=token,
-            expires_in_seconds=expires_in,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Login error: {e}")
+    if row is None:
+        # Equalise timing with the wrong-password path.
+        verify_password(body.password, None)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Login failed",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_credentials",
+                    "message": "Invalid username or password."},
         )
+
+    if row["password_hash"] is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "claim_required",
+                    "message": "This account has no password yet. "
+                               "Set one via /api/v1/auth/claim."},
+        )
+
+    if not verify_password(body.password, row["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_credentials",
+                    "message": "Invalid username or password."},
+        )
+
+    if row["disabled_at"] is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "account_disabled",
+                    "message": "This account has been disabled."},
+        )
+
+    token, expires_in = create_jwt_token(row["id"], row["jwt_secret"])
+    _touch_login_timestamps(row["id"])
+    logger.info("User logged in: %s", row["id"][:8])
+
+    return UserLoginResponse(
+        jwt_token=token,
+        expires_in_seconds=expires_in,
+        user_id=row["id"],
+        role=row["role"] or "user",
+        display_name=row["display_name"] or "",
+    )
+
+
+@router.post("/claim", response_model=UserLoginResponse)
+async def claim_account(
+    body: UserClaimRequest,
+    request: Request,
+) -> UserLoginResponse:
+    """One-time claim of a legacy passwordless account.
+
+    Allowed ONLY when the user exists AND password_hash IS NULL.
+    Sets the password and returns a JWT. After the claim, /login is
+    the only way in (this endpoint returns 409 already_claimed).
+    """
+    _check_auth_rate_limit(request, "claim", body.username)
+
+    with get_db_connection() as conn:
+        row = _find_user_by_username(conn, body.username)
+
+    if row is None:
+        verify_password(body.password, None)  # timing equalisation
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "user_not_found",
+                    "message": "No such account to claim."},
+        )
+
+    if row["password_hash"] is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "already_claimed",
+                    "message": "This account already has a password. "
+                               "Use /api/v1/auth/login."},
+        )
+
+    if row["disabled_at"] is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "account_disabled",
+                    "message": "This account has been disabled."},
+        )
+
+    password_hash = hash_password(body.password)
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_connection() as conn:
+        cur = conn.execute(
+            "UPDATE users SET password_hash = ?, updated_at = ? "
+            "WHERE id = ? AND password_hash IS NULL",
+            (password_hash, now, row["id"]),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            # Race: someone claimed it between SELECT and UPDATE.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "already_claimed",
+                        "message": "This account already has a password."},
+            )
+
+    token, expires_in = create_jwt_token(row["id"], row["jwt_secret"])
+    _touch_login_timestamps(row["id"])
+    logger.info("Legacy account claimed: %s", row["id"][:8])
+
+    return UserLoginResponse(
+        jwt_token=token,
+        expires_in_seconds=expires_in,
+        user_id=row["id"],
+        role=row["role"] or "user",
+        display_name=row["display_name"] or "",
+    )
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -379,23 +676,6 @@ class IdentityInfo(BaseModel):
     avatar_emoji: str
     created_at: str
     last_active_at: Optional[str] = None
-
-
-class LocalBootstrapResponse(BaseModel):
-    """Result of the silent bootstrap. Same shape as login + a flag
-    telling the desktop whether this was the first-ever boot (so the
-    UI can flash a one-time welcome toast), plus the full identity
-    list so the picker can render without a second round-trip."""
-    user_id: str
-    jwt_token: str
-    expires_in_seconds: int
-    is_new_account: bool
-    # F26.1 — full picker context, populated from identity.json v2.
-    identities: list[IdentityInfo] = []
-    schema_version: int = CURRENT_IDENTITY_SCHEMA
-    # True when §4.4 recovery rebuilt identity.json from the users
-    # table — UI can flash the "recovered N identities" banner.
-    recovered_from_db: bool = False
 
 
 def _identity_file_path():
@@ -550,24 +830,9 @@ def _migrate_v1_to_v2(v1_doc: dict) -> dict:
     }
 
 
-def _touch_user_last_active(user_id: str) -> None:
-    """Bump users.last_active_at for picker ordering. Best-effort."""
-    try:
-        now = datetime.now(timezone.utc).isoformat()
-        with get_db_connection() as conn:
-            conn.execute(
-                "UPDATE users SET last_active_at = ?, updated_at = ? "
-                "WHERE id = ?",
-                (now, now, user_id),
-            )
-            conn.commit()
-    except sqlite3.Error as exc:
-        logger.debug("touch_user_last_active failed: %s", exc)
-
-
 def _resolve_identity_state() -> "tuple[dict, bool]":
     """The §4.4 recovery decision tree, wrapped into a single helper
-    that both local_bootstrap and the /identities endpoints use.
+    that the /identities endpoints use.
 
     Returns ``(state_dict, recovered_from_db_flag)``. ``state_dict``
     has the v2 shape and is freshly written to disk if anything was
@@ -670,146 +935,6 @@ def _resolve_identity_state() -> "tuple[dict, bool]":
     }, False
 
 
-def _create_identity_row(display_name: str, avatar_emoji: str = "🩺",
-                         ) -> tuple[str, str, str]:
-    """Insert a new users row. Returns ``(user_id, jwt_secret, iso_now)``."""
-    user_id = str(uuid.uuid4())
-    jwt_secret = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
-    with get_db_connection() as conn:
-        conn.execute(
-            "INSERT INTO users (id, display_name, avatar_emoji, "
-            "                   jwt_secret, created_at, updated_at, "
-            "                   last_active_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (user_id, display_name.strip() or "Doctor",
-             avatar_emoji or "🩺", jwt_secret, now, now, now),
-        )
-        conn.commit()
-    return user_id, jwt_secret, now
-
-
-@router.post("/local-bootstrap", response_model=LocalBootstrapResponse)
-async def local_bootstrap() -> LocalBootstrapResponse:
-    """F24 — zero-friction silent sign-in for the local desktop bundle.
-
-    Behaviour
-    ---------
-    Stable identity is stored at ``$RUNE_HOME/identity.json``:
-
-      {"user_id": "<uuid>", "created_at": "<iso8601>"}
-
-    Flow per request:
-      1. If ``identity.json`` exists AND the user_id is still present
-         in the ``users`` table → mint a fresh JWT and return.
-         (``is_new_account = false``).
-      2. Otherwise → create a new user row with display_name "Doctor",
-         write a fresh ``identity.json``, return a fresh JWT.
-         (``is_new_account = true``).
-
-    Why this design (vs OS Keychain / WebAuthn / display-name form):
-
-      - Zero system permission prompts. macOS Keychain access showed
-        a "Nexus wants to access Keychain" dialog on first launch —
-        intrusive for a local clinical tool. The identity.json file
-        lives in the user's own home dir (``~/Library/Application
-        Support/RuneProtocol/``) which is already isolated per macOS
-        user account at the filesystem layer.
-
-      - No frontend storage. The desktop just calls this once on
-        boot — no localStorage, no Tauri command, no IPC. If the
-        Mac is reinstalled or the app moved between machines, the
-        backend re-bootstraps automatically.
-
-      - Survives app reinstall. ``$RUNE_HOME`` is outside the .app
-        bundle (see settings_router._rune_home), so wiping
-        /Applications/Nexus.app keeps the identity intact.
-
-      - PHI-safe. The user_id is a UUID — no name, no email, no
-        biometric. The display_name "Doctor" is just a placeholder
-        the medic can rename in Settings later.
-
-    Recovery (§4.4)
-    ---------------
-    If ``identity.json`` is missing or corrupt, we rebuild from the
-    ``users`` table (the authoritative source). No data is orphaned;
-    every undeleted user_id surfaces again in the picker.
-
-    Schema versions
-    ---------------
-    v1 (legacy): ``{"user_id": ..., "created_at": ..., "schema_version": 1}``
-    v2 (current): full identity list + active pointer (see §4.1).
-    v1 → v2 migration is automatic + idempotent on every call.
-    """
-    state, recovered = _resolve_identity_state()
-
-    if not state["identities"]:
-        # §4.4.3 — truly fresh install. Create one identity.
-        user_id, jwt_secret, now = _create_identity_row("Doctor", "🩺")
-        identity_entry = {
-            "user_id":       user_id,
-            "display_name":  "Doctor",
-            "avatar_emoji":  "🩺",
-            "created_at":    now,
-            "last_active_at": now,
-        }
-        _persist_identity_file(user_id, [identity_entry])
-        token, expires_in = create_jwt_token(user_id, jwt_secret)
-        logger.info(
-            "local-bootstrap: created NEW identity user_id=%s", user_id[:8],
-        )
-        return LocalBootstrapResponse(
-            user_id=user_id,
-            jwt_token=token,
-            expires_in_seconds=expires_in,
-            is_new_account=True,
-            identities=[IdentityInfo(**identity_entry)],
-            schema_version=CURRENT_IDENTITY_SCHEMA,
-            recovered_from_db=False,
-        )
-
-    # Reuse the active identity.
-    active = state["active_user_id"]
-    with get_db_connection() as conn:
-        row = conn.execute(
-            "SELECT jwt_secret FROM users "
-            "WHERE id = ? AND deleted_at IS NULL",
-            (active,),
-        ).fetchone()
-    if not row:
-        # Race: identity got soft-deleted between resolve and now.
-        # Pick the next one or fail loud.
-        if state["identities"]:
-            active = state["identities"][0]["user_id"]
-            with get_db_connection() as conn:
-                row = conn.execute(
-                    "SELECT jwt_secret FROM users WHERE id = ? "
-                    "AND deleted_at IS NULL",
-                    (active,),
-                ).fetchone()
-        if not row:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="local-bootstrap: no valid identity after resolve",
-            )
-    jwt_secret = row[0]
-    token, expires_in = create_jwt_token(active, jwt_secret)
-    _touch_user_last_active(active)
-    logger.info(
-        "local-bootstrap: reused identity user_id=%s (n=%d, recovered=%s)",
-        active[:8], len(state["identities"]), recovered,
-    )
-    return LocalBootstrapResponse(
-        user_id=active,
-        jwt_token=token,
-        expires_in_seconds=expires_in,
-        is_new_account=False,
-        identities=[IdentityInfo(**i) for i in state["identities"]],
-        schema_version=CURRENT_IDENTITY_SCHEMA,
-        recovered_from_db=recovered,
-    )
-
-
 # ───────────────────────────────────────────────────────────────────────────
 # F26.1 — Multi-identity CRUD endpoints (§5.1)
 # ───────────────────────────────────────────────────────────────────────────
@@ -829,219 +954,6 @@ async def list_identities() -> IdentitiesListResponse:
         identities=[IdentityInfo(**i) for i in state["identities"]],
         active_user_id=state["active_user_id"],
         schema_version=CURRENT_IDENTITY_SCHEMA,
-    )
-
-
-# ───────────────────────────────────────────────────────────────────────────
-# F-multiuser-isolation — display_name-based login/register
-# ───────────────────────────────────────────────────────────────────────────
-# Background: the medic on a fresh / shared Mac reported "input different
-# username every login, but I keep seeing the SAME data". Root cause: the
-# old ``api.login(name, "")`` ignored the typed name. It first tried
-# Path A (POST /auth/login with the LOCALSTORAGE-cached user_id) and only
-# fell to /register when the cached id was completely missing. So every
-# launch on the same Mac silently re-activated the same UUID. Display name
-# was cosmetic.
-#
-# This endpoint makes display-name the actual login key the medic expects:
-#   * If a user with this display_name already exists → activate that
-#     identity (return its JWT, update identity.json's active_user_id).
-#   * If no match → create a new identity with that name.
-#
-# Match is case-insensitive + trimmed, mirroring how a Mac user thinks
-# about "Doctor Jin" vs "doctor jin". Avatar/emoji default to 🩺 for
-# brand-new identities; existing identities keep their stored emoji.
-
-class LoginByNameRequest(BaseModel):
-    display_name: str = Field(..., min_length=1, max_length=64)
-
-
-class LoginByNameResponse(BaseModel):
-    user_id: str
-    jwt_token: str
-    expires_in_seconds: int
-    identity: "IdentityInfo"
-    identities: list["IdentityInfo"]   # full picker context
-    schema_version: int
-    is_new_account: bool               # true if we just created this name
-
-
-@router.post("/login-by-name", response_model=LoginByNameResponse)
-async def login_by_name(req: LoginByNameRequest) -> LoginByNameResponse:
-    """Login OR create a new identity based on the typed display_name.
-
-    The medic types their name on LoginView. We:
-      1. Trim + casefold the input.
-      2. Scan ``users`` (deleted_at IS NULL) for an existing match.
-      3a. Match found → activate it, mint JWT, return.
-      3b. No match → create a new identity, mint JWT, return.
-
-    Either way the response includes the full ``identities`` list so the
-    desktop's picker dropdown is ready immediately without a follow-up
-    /identities GET.
-    """
-    typed = (req.display_name or "").strip()
-    if not typed:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="display_name is required",
-        )
-
-    typed_fold = typed.casefold()
-    matched_user_id: Optional[str] = None
-    matched_jwt_secret: Optional[str] = None
-    with get_db_connection() as conn:
-        conn.row_factory = sqlite3.Row
-        # Case-insensitive lookup. SQLite's default LIKE is case-
-        # insensitive only for ASCII; medic names may contain CJK
-        # (中文 / 한글 / etc.) so we casefold in Python after a
-        # broad fetch. Users table is tiny (≤ tens of rows in any
-        # realistic deployment) so this is fine.
-        rows = conn.execute(
-            "SELECT id, display_name, jwt_secret FROM users "
-            "WHERE deleted_at IS NULL"
-        ).fetchall()
-        for r in rows:
-            if (r["display_name"] or "").strip().casefold() == typed_fold:
-                matched_user_id = r["id"]
-                matched_jwt_secret = r["jwt_secret"]
-                break
-
-    if matched_user_id is None:
-        # 3b — new identity.
-        user_id, jwt_secret, _now = _create_identity_row(typed, "🩺")
-        is_new = True
-    else:
-        # 3a — reuse existing identity.
-        user_id = matched_user_id
-        jwt_secret = matched_jwt_secret or ""
-        is_new = False
-
-    # Refresh identity.json: rebuild from DB, set THIS user active.
-    _, identities = _rebuild_identity_from_db()
-    _persist_identity_file(user_id, identities)
-
-    # Touch last_active_at so the picker sorts this identity first.
-    now_iso = datetime.now(timezone.utc).isoformat()
-    with get_db_connection() as conn:
-        conn.execute(
-            "UPDATE users SET last_active_at = ? WHERE id = ?",
-            (now_iso, user_id),
-        )
-        conn.commit()
-
-    token, expires_in = create_jwt_token(user_id, jwt_secret)
-    this_identity = next(
-        (i for i in identities if i["user_id"] == user_id), None,
-    )
-    if this_identity is None:
-        # _rebuild_identity_from_db didn't see it — possible on a brand-
-        # new row right before the SELECT cache refreshed. Synthesize a
-        # minimal entry; client only needs user_id + display_name.
-        this_identity = {
-            "user_id":       user_id,
-            "display_name":  typed,
-            "avatar_emoji":  "🩺",
-            "created_at":    now_iso,
-            "last_active_at": now_iso,
-        }
-        identities.append(this_identity)
-
-    logger.info(
-        "login_by_name: %s user_id=%s display=%r (total identities=%d)",
-        "CREATED" if is_new else "ACTIVATED",
-        user_id[:8], typed, len(identities),
-    )
-    return LoginByNameResponse(
-        user_id=user_id,
-        jwt_token=token,
-        expires_in_seconds=expires_in,
-        identity=IdentityInfo(**this_identity),
-        identities=[IdentityInfo(**i) for i in identities],
-        schema_version=CURRENT_IDENTITY_SCHEMA,
-        is_new_account=is_new,
-    )
-
-
-
-class CreateIdentityRequest(BaseModel):
-    display_name: str = Field(..., min_length=1, max_length=64)
-    avatar_emoji: Optional[str] = Field(default="🩺", max_length=8)
-
-
-class CreateIdentityResponse(BaseModel):
-    user_id: str
-    jwt_token: str
-    expires_in_seconds: int
-    identity: IdentityInfo
-
-
-@router.post("/identities", response_model=CreateIdentityResponse,
-             status_code=status.HTTP_201_CREATED)
-async def create_identity(req: CreateIdentityRequest) -> CreateIdentityResponse:
-    """Add a new identity AND make it active. Returns its JWT so the
-    desktop can immediately switch to the new identity without a
-    separate /activate round-trip."""
-    display = (req.display_name or "").strip() or "Doctor"
-    emoji = (req.avatar_emoji or "🩺").strip() or "🩺"
-    user_id, jwt_secret, now = _create_identity_row(display, emoji)
-
-    # Refresh state from DB and re-persist with this user as active.
-    _, identities = _rebuild_identity_from_db()
-    _persist_identity_file(user_id, identities)
-
-    token, expires_in = create_jwt_token(user_id, jwt_secret)
-    new_entry = next(
-        (i for i in identities if i["user_id"] == user_id),
-        {"user_id": user_id, "display_name": display,
-         "avatar_emoji": emoji, "created_at": now, "last_active_at": now},
-    )
-    logger.info(
-        "create_identity: new user_id=%s display=%r", user_id[:8], display,
-    )
-    return CreateIdentityResponse(
-        user_id=user_id,
-        jwt_token=token,
-        expires_in_seconds=expires_in,
-        identity=IdentityInfo(**new_entry),
-    )
-
-
-class ActivateIdentityResponse(BaseModel):
-    user_id: str
-    jwt_token: str
-    expires_in_seconds: int
-
-
-@router.post("/identities/{user_id}/activate",
-             response_model=ActivateIdentityResponse)
-async def activate_identity(user_id: str) -> ActivateIdentityResponse:
-    """Switch the active identity. Returns a fresh JWT for the new user.
-    Caller must reset its own state (zustand) on receipt."""
-    with get_db_connection() as conn:
-        row = conn.execute(
-            "SELECT jwt_secret FROM users "
-            "WHERE id = ? AND deleted_at IS NULL",
-            (user_id,),
-        ).fetchone()
-    if not row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="identity not found or has been deleted",
-        )
-    jwt_secret = row[0]
-
-    # Update active_user_id in identity.json.
-    _, identities = _rebuild_identity_from_db()
-    _persist_identity_file(user_id, identities)
-    _touch_user_last_active(user_id)
-
-    token, expires_in = create_jwt_token(user_id, jwt_secret)
-    logger.info("activate_identity: switched to user_id=%s", user_id[:8])
-    return ActivateIdentityResponse(
-        user_id=user_id,
-        jwt_token=token,
-        expires_in_seconds=expires_in,
     )
 
 

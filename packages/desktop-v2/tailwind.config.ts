@@ -42,7 +42,8 @@ export default {
         unread: '#1A73E8',
 
         // Research Workspace palette (rw-*). See index.css.
-        // Always dark — independent of the global light/dark theme.
+        // Theme-aware: :root carries the light values, html.dark the
+        // original dark ones.
         rw: {
           bg: 'var(--rw-bg)',
           'bg-deep': 'var(--rw-bg-deep)',

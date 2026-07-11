@@ -6,7 +6,7 @@ import pytest
 
 def _register(client) -> str:
     reg = client.post(
-        "/api/v1/auth/register", json={"display_name": "FilesUser"},
+        "/api/v1/auth/register", json={"username": "FilesUser", "password": "Str0ng-Pass-123"},
     )
     return reg.json()["jwt_token"]
 
