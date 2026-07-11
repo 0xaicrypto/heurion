@@ -577,13 +577,20 @@ function LlmSettingsBody() {
 
   useEffect(() => { refresh(); }, []);
 
-  const save = async () => {
+  const save = async (override?: {
+    provider: 'gemini' | 'openai' | 'anthropic' | 'kimi';
+    model?: string;
+  }) => {
     if (saving) return;
     setSaving(true);
+    const prov = override?.provider ?? provider;
+    const mod  = override ? (override.model || DEFAULT_MODEL_FOR[prov])
+                          : (model || DEFAULT_MODEL_FOR[provider]);
+    if (override) { setProvider(prov); setModel(mod); }
     try {
       const r = await api.putLlmSettings({
-        provider,
-        model: model || DEFAULT_MODEL_FOR[provider],
+        provider: prov,
+        model: mod,
         geminiApiKey:    geminiKey || undefined,
         openaiApiKey:    openaiKey || undefined,
         anthropicApiKey: anthropicKey || undefined,
@@ -643,6 +650,28 @@ function LlmSettingsBody() {
       ? <Chip variant="confirmed">on file</Chip>
       : <Chip variant="neutral">not set</Chip>;
 
+  /** Right side of each API-key row: key presence + active-provider
+   *  indicator or a one-click "use this provider" switch. */
+  const keyRowRight = (
+    p: 'gemini' | 'openai' | 'anthropic' | 'kimi',
+    have: boolean,
+  ) => (
+    <span className="flex items-center gap-2">
+      {status?.provider === p ? (
+        <Chip variant="confirmed">✓ 使用中</Chip>
+      ) : have ? (
+        <button
+          onClick={() => save({ provider: p })}
+          disabled={saving}
+          className="rounded-sm border border-accent/50 px-2 py-0.5 text-caption text-accent hover:bg-accent-subtle disabled:opacity-50"
+        >
+          设为当前
+        </button>
+      ) : null}
+      {keyChip(have)}
+    </span>
+  );
+
   return (
     <>
       <div className="px-6 py-5 italic text-caption text-text-secondary">
@@ -671,7 +700,7 @@ function LlmSettingsBody() {
       {/* Provider + model */}
       <div className="px-6 pb-5">
         <h2 className="mb-3 text-caption font-medium uppercase tracking-wider text-text-tertiary">
-          Provider
+          Provider（当前使用的模型）
         </h2>
         <Card>
           <div className="mb-3 flex gap-2">
@@ -718,7 +747,7 @@ function LlmSettingsBody() {
             <div>
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-caption text-text-primary">Gemini</span>
-                {keyChip(status.hasGeminiKey)}
+                {keyRowRight('gemini', status.hasGeminiKey)}
               </div>
               <Input
                 type="password"
@@ -731,7 +760,7 @@ function LlmSettingsBody() {
             <div>
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-caption text-text-primary">OpenAI</span>
-                {keyChip(status.hasOpenaiKey)}
+                {keyRowRight('openai', status.hasOpenaiKey)}
               </div>
               <Input
                 type="password"
@@ -744,7 +773,7 @@ function LlmSettingsBody() {
             <div>
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-caption text-text-primary">Anthropic</span>
-                {keyChip(status.hasAnthropicKey)}
+                {keyRowRight('anthropic', status.hasAnthropicKey)}
               </div>
               <Input
                 type="password"
@@ -757,7 +786,7 @@ function LlmSettingsBody() {
             <div>
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-caption text-text-primary">Kimi (Moonshot)</span>
-                {keyChip(status.hasKimiKey)}
+                {keyRowRight('kimi', status.hasKimiKey)}
               </div>
               <Input
                 type="password"
@@ -881,7 +910,7 @@ function LlmSettingsBody() {
         <Button variant="ghost" onClick={refresh} disabled={saving}>
           Refresh
         </Button>
-        <Button variant="primary" onClick={save} disabled={saving}>
+        <Button variant="primary" onClick={() => save()} disabled={saving}>
           {saving ? 'Saving…' : 'Save'}
         </Button>
       </div>

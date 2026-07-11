@@ -23,6 +23,11 @@ dependencies = [
     "nexus-core>=0.4.0",
     "nexus>=0.1.0",
     "google-genai>=1.0.0",
+    # OpenAI SDK is required for BOTH the openai provider and the Kimi
+    # (Moonshot) provider — Kimi rides the OpenAI-compatible API via
+    # AsyncOpenAI(base_url=...). Hard dep so provider switching in the
+    # settings UI Just Works without a manual pip install.
+    "openai>=1.0",
     "httpx>=0.25.0",
     # Used by attachment_distiller to pull text out of PDF uploads. Soft
     # dependency in code (the distiller falls back to a binary stub if
