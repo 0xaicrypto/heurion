@@ -862,13 +862,17 @@ class LLMClient:
             else:
                 full_messages.append({"role": msg["role"], "content": msg.get("content", "")})
 
-        response = await self._client.chat.completions.create(
-            model=self.model,
-            messages=full_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            tools=openai_tools,
-        )
+        tool_kwargs = {
+            "model": self.model,
+            "messages": full_messages,
+            "max_tokens": max_tokens,
+            "tools": openai_tools,
+        }
+        # Kimi models (e.g. kimi-k2.7-code) reject any temperature
+        # other than 1 — omit the parameter for Kimi (API default).
+        if self.provider != LLMProvider.KIMI:
+            tool_kwargs["temperature"] = temperature
+        response = await self._client.chat.completions.create(**tool_kwargs)
 
         choice = response.choices[0]
         message = choice.message
@@ -1220,12 +1224,17 @@ class LLMClient:
         if system:
             full_messages.append({"role": "system", "content": system})
         full_messages.extend(messages)
-        response = await self._client.chat.completions.create(
-            model=self.model,
-            messages=full_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        once_kwargs = {
+            "model": self.model,
+            "messages": full_messages,
+            "max_tokens": max_tokens,
+        }
+        # Kimi models (e.g. kimi-k2.7-code) reject any temperature
+        # other than 1 with 400 "invalid temperature" — omit the
+        # parameter and let the API use the model default.
+        if self.provider != LLMProvider.KIMI:
+            once_kwargs["temperature"] = temperature
+        response = await self._client.chat.completions.create(**once_kwargs)
         choice = response.choices[0]
         text = choice.message.content
         finish_reason = getattr(choice, "finish_reason", None)

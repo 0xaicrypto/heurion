@@ -1681,11 +1681,16 @@ async def call_kimi(messages, system_prompt, model, temperature, max_tokens, too
     explicit_override = bool(_os.getenv("KIMI_BASE_URL", "").strip())
     base = _kimi_resolved_base or config.KIMI_BASE_URL
 
+    # kimi-k2.7-code (and possibly other Kimi models) rejects any
+    # temperature other than 1 with 400 "invalid temperature: only 1
+    # is allowed for this model". Omit the parameter entirely and let
+    # the API apply the model's own default — deterministic-ish output
+    # is achieved via prompting for these models, not temperature.
     async def _attempt(base_url: str):
         client = AsyncOpenAI(api_key=config.KIMI_API_KEY, base_url=base_url)
         return await _call_openai_compatible(
             client, "kimi", "Kimi",
-            messages, system_prompt, model, temperature, max_tokens, tools,
+            messages, system_prompt, model, None, max_tokens, tools,
         )
 
     try:
