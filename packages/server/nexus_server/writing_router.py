@@ -1348,17 +1348,42 @@ async def doc_chat(
             attachment_sections.append((a_name, section))
 
         # Last N turns, chronological, EXCLUDING the message being sent
-        # now (it's appended below as the live user turn).
-        hist_rows = conn.execute(
-            "SELECT role, text FROM doc_chat_messages "
-            "WHERE user_id = ? AND doc_id = ? "
-            "ORDER BY created_at DESC, rowid DESC LIMIT ?",
-            (current_user, doc_id, _CHAT_HISTORY_WINDOW),
-        ).fetchall()
-        history = [
-            {"role": str(r["role"]), "content": str(r["text"] or "")}
-            for r in reversed(hist_rows)
-        ]
+        # now (it's appended below as the live user turn). Routed
+        # through context_builder.get_session_history (context redesign
+        # phase 1) with a doc-scoped fetcher so the writing chat shares
+        # the same window + rolling-summary mechanics as the v2 chat.
+        # Session key: "doc:{doc_id}" — no summariser writes rows for
+        # it yet (phase 2), so today this behaves exactly like the old
+        # last-12 query.
+        from nexus_server import context_builder
+        from nexus_server.context_builder import RetrievalBlock
+
+        def _doc_history_fetcher(
+            _uid: str, _sid: str, limit: int,
+        ) -> tuple[list[dict], int]:
+            rows_ = conn.execute(
+                "SELECT role, text FROM doc_chat_messages "
+                "WHERE user_id = ? AND doc_id = ? "
+                "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (current_user, doc_id, limit),
+            ).fetchall()
+            total_ = conn.execute(
+                "SELECT COUNT(*) FROM doc_chat_messages "
+                "WHERE user_id = ? AND doc_id = ?",
+                (current_user, doc_id),
+            ).fetchone()[0]
+            return (
+                [
+                    {"role": str(r["role"]), "content": str(r["text"] or "")}
+                    for r in reversed(rows_)
+                ],
+                int(total_),
+            )
+
+        history = context_builder.get_session_history(
+            current_user, f"doc:{doc_id}", window=_CHAT_HISTORY_WINDOW,
+            fetcher=_doc_history_fetcher,
+        )
 
         # Persist the user message immediately — it must survive even
         # if the LLM call fails.
@@ -1371,45 +1396,66 @@ async def doc_chat(
         )
         conn.commit()
 
-    system_prompt = (
+    # ── Layer S — persona + output contract + FULL doc body. The full
+    # body stays untrimmable in phase 1 (phase 2 will budget it).
+    base_system = (
         _CHAT_PERSONA + "\n\n" + _CHAT_OUTPUT_CONTRACT
         + f"\n\n文档标题：{title or '（未命名）'}"
         + "\n当前文档正文（{{ref:ID}} 为引用占位符，必须原样保留）：\n"
         + (prev_body if prev_body else "（正文为空）")
     )
-    if snapshots:
-        system_prompt += (
-            "\n\n以下是本文档的引用数据（已脱敏），写作时只能使用这些"
-            "数据中的数值：\n" + "\n---\n".join(snapshots)
-        )
 
-    # ── USER ATTACHMENTS ─────────────────────────────────────────────
-    # Per-turn 📎 uploads from the writing composer. Injected AFTER the
-    # reference snapshots (they are additional source material, ranked
-    # below the doc's curated references) and BEFORE the skills block
-    # (skills may override tone/format and must stay last).
+    # ── Layer R — reference snapshots + per-turn 📎 attachments.
+    # References outrank attachments (curated source material beats
+    # ad-hoc uploads), so under budget pressure attachments drop first.
+    r_blocks: list[RetrievalBlock] = []
+    if snapshots:
+        r_blocks.append(RetrievalBlock(
+            text=("以下是本文档的引用数据（已脱敏），写作时只能使用这些"
+                  "数据中的数值：\n" + "\n---\n".join(snapshots)),
+            priority=80, tag="doc_references",
+        ))
     for a_name, a_text in attachment_sections:
-        system_prompt += f"\n\n## 用户附件: {a_name}\n{a_text}"
+        r_blocks.append(RetrievalBlock(
+            text=f"## 用户附件: {a_name}\n{a_text}",
+            priority=50, tag="attachment",
+        ))
 
     # ── ACTIVE SKILLS ────────────────────────────────────────────────
     # Same injection as chat_router: explicit "/" invocations from
     # req.skills (installed+enabled only; others silently dropped) +
-    # every enabled auto_apply skill. Appended LAST so skill
-    # instructions can override tone/format defaults without touching
-    # the co-writing output contract above. Non-fatal on failure.
+    # every enabled auto_apply skill. Rides as system_tail — appended
+    # LAST so skill instructions can override tone/format defaults
+    # without touching the co-writing output contract above, but
+    # budgeted as Layer S (never trimmed). Non-fatal on failure.
+    skills_block = ""
     try:
         from nexus_server.skills_router import build_skills_block
         skills_block, _applied_skills = build_skills_block(
             current_user, req.skills or [],
         )
-        if skills_block:
-            system_prompt += "\n\n" + skills_block
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "doc chat: skills block build failed (non-fatal): %s", exc,
         )
 
-    messages = history + [{"role": "user", "content": req.message}]
+    # Assemble + budget via context_builder (memory layer explicitly
+    # skipped — cross-session memory in the writing chat is phase 2).
+    bundle = context_builder.build(
+        system_text=base_system,
+        memory_text="",
+        retrieval_blocks=r_blocks,
+        history=history,
+        current_user_message=req.message,
+        system_tail=skills_block,
+    )
+    system_prompt = bundle.system_text
+    messages = bundle.messages
+    logger.info(
+        "doc chat context: doc=%s tokens≈%d history=%d blocks=%d dropped=%s",
+        doc_id[:8], bundle.token_estimate,
+        max(0, len(messages) - 1), len(r_blocks), bundle.dropped,
+    )
 
     async def event_stream() -> AsyncIterator[str]:
         try:

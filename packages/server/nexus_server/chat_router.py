@@ -6,6 +6,17 @@ POST /api/v1/agent/chat — streams Server-Sent Events:
   search_results_summary | image_attached]* → final_answer_chunk* →
   citations → turn_complete
 
+Context redesign phase 1 adds an additive ``context_info`` frame after
+``tier_classified`` on the LLM-backed tiers (T3/T4)::
+
+  {type:'context_info', history_msgs, summary_included,
+   retrieval_blocks, dropped_history, dropped_blocks, token_estimate}
+
+It is emitted by retrieval_tiers (via context_builder.build) and
+passed through here like every other RetrievalChunk. Existing clients
+ignore unknown frame types (the desktop api-client switch has a
+``default: break``), so this is wire-compatible.
+
 Every turn:
 1. user_message event written to event_log
 2. retrieval_tiers.retrieve() yields tier-specific events
@@ -459,6 +470,23 @@ async def chat(
                 "type": "turn_complete",
                 "assistant_event_idx": assistant_idx,
             })
+
+            # 3.5 — Rolling session summary (context redesign phase 1).
+            #    When this session has outgrown the 12-message history
+            #    window by >= 6 messages and the stored summary is
+            #    stale, fire an out-of-band task that re-summarises the
+            #    fallen-out messages into chat_session_summaries. The
+            #    turn NEVER waits on it — a stale/missing summary just
+            #    means the next turn's window behaves like today.
+            try:
+                from nexus_server import context_builder
+                context_builder.schedule_session_summary_update(
+                    current_user, req.session_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "session summary schedule failed (non-fatal): %s", exc,
+                )
 
             # 4. Fire the chat_ingester so this turn's clinical entities
             #    populate Layer 1 of the patient graph. Without this, the

@@ -382,46 +382,15 @@ def _recent_history_messages(
     *,
     max_turns: int = 12,
 ) -> list[dict]:
-    """Pull the last ~12 messages of this chat session as a list of
-    ``{role, content}`` dicts ready to prepend to the LLM messages
-    array.
-
-    Why this exists: without conversation history, the LLM only sees
-    the current turn's question. If the medic typed a full SOAP note
-    in turn 1 (e.g. "65y/M IIIB NSCLC ECOG 1 …") and asks a follow-up
-    in turn 2, the LLM has no idea about the SOAP — and the anti-
-    fabrication guard correctly refuses to invent. Threading recent
-    history through fixes that: the LLM sees what the medic already
-    said, and the anti-fabrication rule's permitted source A
-    ("CONVERSATION HISTORY") becomes real.
-
-    Best-effort: missing session, lookup failures, etc. all degrade
-    gracefully to "no history" rather than blowing up the turn.
+    """DEPRECATED shim — context redesign phase 1 moved session-history
+    assembly into ``context_builder.get_session_history`` (same last-12
+    window, plus the rolling summary of everything that fell out of
+    it). Kept as a delegate so any external caller keeps working.
     """
-    if not session_id:
-        return []
-    try:
-        from nexus_server import twin_event_log
-        raw, _total = twin_event_log.list_messages(
-            user_id, max_turns, before_idx=None, session_id=session_id,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("history fetch failed for session=%s: %s", session_id, exc)
-        return []
-    out: list[dict] = []
-    for m in raw:
-        role = m.get("role") or ""
-        # Map server roles ("assistant"/"user") to OpenAI/Anthropic-
-        # compatible roles. Drop anything else (system / tool) — the
-        # gateway adds its own system prompt and tool outputs aren't
-        # part of the user-visible thread.
-        if role not in ("user", "assistant"):
-            continue
-        content = (m.get("content") or "").strip()
-        if not content:
-            continue
-        out.append({"role": role, "content": content})
-    return out
+    from nexus_server import context_builder
+    return context_builder.get_session_history(
+        user_id, session_id, window=max_turns,
+    )
 
 
 def _gather_study_protocol(
@@ -991,8 +960,25 @@ async def yield_t3_llm(
         "down — a chip on a tag you invented opens a 404 panel and "
         "destroys medic trust."
     )
+    # ── Context redesign phase 1 — S/M/R/H layering ──────────────────
+    # The base persona above is Layer S. Everything data-shaped below
+    # (patient context, file library, practitioner profile, insights,
+    # roster, research blocks) becomes a priority-tagged Layer-R block
+    # routed through context_builder.build, which adds Layer M (cross-
+    # session curated memory) and Layer H (windowed history + rolling
+    # summary) and trims to the token budget. See context_builder's
+    # module docstring for ordering + trimming rules.
+    from nexus_server import context_builder
+    from nexus_server.context_builder import RetrievalBlock
+
+    r_blocks: list[RetrievalBlock] = []
+
     if context_block:
-        system_prompt += "\n\nPATIENT CONTEXT (from the local clinical graph):\n" + context_block
+        r_blocks.append(RetrievalBlock(
+            text=("PATIENT CONTEXT (from the local clinical graph):\n"
+                  + context_block),
+            priority=100, tag="patient_context",
+        ))
     # F-unified-chat-files — patient-scope file library. Files
     # uploaded inside this patient's chat are scoped to their hash
     # and surface here as [F1] [F2] for the LLM to cite.
@@ -1002,7 +988,10 @@ async def yield_t3_llm(
             conn, user_id, 'patient', patient_hash,
         )
         if _patient_file_block:
-            system_prompt += _patient_file_block
+            r_blocks.append(RetrievalBlock(
+                text=_patient_file_block.strip(),
+                priority=90, tag="patient_files",
+            ))
     else:
         # Without this explicit empty marker, the LLM tends to confuse
         # "no context provided" with "answer from training knowledge"
@@ -1034,11 +1023,12 @@ async def yield_t3_llm(
         logger.debug("practitioner composer skipped: %s", exc)
         practitioner_block = ""
     if practitioner_block:
-        system_prompt += (
-            "\n\nPRACTITIONER PROFILE (per-user, medic-confirmed; "
-            "treat as soft defaults, not hard rules):\n"
-            + practitioner_block
-        )
+        r_blocks.append(RetrievalBlock(
+            text=("PRACTITIONER PROFILE (per-user, medic-confirmed; "
+                  "treat as soft defaults, not hard rules):\n"
+                  + practitioner_block),
+            priority=60, tag="practitioner_profile",
+        ))
 
     # ── PRIOR INSIGHTS (Layer 2b — session_takeaway read-back) ───────
     # LLM-distilled qualitative observations of how this medic reasons.
@@ -1071,7 +1061,9 @@ async def yield_t3_llm(
         logger.debug("session_takeaway read skipped: %s", exc)
         insights_block = ""
     if insights_block:
-        system_prompt += "\n\n" + insights_block
+        r_blocks.append(RetrievalBlock(
+            text=insights_block.strip(), priority=55, tag="prior_insights",
+        ))
 
     # F-cross-patient-retrieval — inject the patient roster ANYTIME
     # the turn is not bound to a specific patient. This covers:
@@ -1086,7 +1078,9 @@ async def yield_t3_llm(
     if not patient_hash:
         roster = _gather_patient_roster(conn, user_id, limit=30)
         if roster:
-            system_prompt += "\n\n" + roster
+            r_blocks.append(RetrievalBlock(
+                text=roster.strip(), priority=70, tag="patient_roster",
+            ))
 
     # Research scope augmentation — bias the persona toward cohort
     # reasoning, expose external knowledge tools, and inject a brief
@@ -1208,18 +1202,53 @@ async def yield_t3_llm(
         file_block = _gather_file_lib(
             conn, user_id, _lib_scope_kind, _lib_scope_ref,
         )
-        system_prompt = (
-            system_prompt + cohort_block + file_block
-            + external_block + persona_extension
-        )
+        # Cohort + protocol + external-tool blocks are turn data →
+        # Layer R. The persona extension is behavioural rules → it
+        # stays in Layer S (never trimmed).
+        r_blocks.append(RetrievalBlock(
+            text=cohort_block.strip(), priority=95, tag="research_scope",
+        ))
+        if file_block:
+            r_blocks.append(RetrievalBlock(
+                text=file_block.strip(), priority=90, tag="research_files",
+            ))
+        r_blocks.append(RetrievalBlock(
+            text=external_block.strip(), priority=65, tag="external_tools",
+        ))
+        system_prompt = system_prompt + persona_extension
 
-    # ── ACTIVE SKILLS (per-user skills management) ───────────────────
-    # Composed by skills_router.build_skills_block: explicit "/" skill
-    # invocations from the composer + every enabled auto_apply skill.
-    # Appended LAST so skill instructions can override tone/format
-    # defaults without touching the safety rules above.
-    if skills_block:
-        system_prompt += "\n\n" + skills_block
+    # ── Layer assembly + budgeting (context redesign phase 1) ────────
+    # Layer H: windowed session history + rolling summary (replaces the
+    # legacy _recent_history_messages fixed window). Layer M: cross-
+    # session curated memory read straight from the twin's
+    # curated_memory files (no twin instantiation). The ACTIVE SKILLS
+    # block rides as system_tail — budget-wise part of Layer S (never
+    # trimmed), physically appended last so skill instructions keep
+    # their override-the-defaults semantics.
+    history = context_builder.get_session_history(user_id, session_id)
+    bundle = context_builder.build(
+        system_text=system_prompt,
+        user_id=user_id,
+        retrieval_blocks=r_blocks,
+        history=history,
+        current_user_message=question,
+        system_tail=skills_block or "",
+    )
+    system_prompt = bundle.system_text
+
+    # Debug frame for the desktop (additive — clients ignore unknown
+    # SSE frame types; the api-client switch has a default: break).
+    yield RetrievalChunk("context_info", {
+        "history_msgs": max(
+            0,
+            len(bundle.messages) - 1 - (1 if bundle.summary_included else 0),
+        ),
+        "summary_included": bundle.summary_included,
+        "retrieval_blocks": len(r_blocks),
+        "dropped_history": bundle.dropped.get("history_msgs", 0),
+        "dropped_blocks": bundle.dropped.get("retrieval_blocks", 0),
+        "token_estimate": bundle.token_estimate,
+    })
 
     answer_buf: list[str] = []   # accumulates full answer for citation extraction
     try:
@@ -1248,13 +1277,13 @@ async def yield_t3_llm(
             )
         else:
             from nexus_server import llm_gateway
-            # Prepend recent conversation history so the LLM sees what
-            # the medic already typed (SOAP, follow-up Qs). Without
-            # this, an answer based on context from turn N−1 is
-            # impossible — the LLM only sees turn N's question.
-            history = _recent_history_messages(user_id, session_id)
+            # bundle.messages = windowed history (+ rolling summary
+            # when the session outgrew the window) + the current user
+            # message. Without history, an answer based on context
+            # from turn N−1 is impossible — the LLM only sees turn
+            # N's question.
             content, model, _stop, _tools = await llm_gateway.call_llm(
-                messages=history + [{"role": "user", "content": question}],
+                messages=bundle.messages,
                 system_prompt=system_prompt,
                 model=None,            # use config.DEFAULT_LLM_MODEL
                 temperature=0.4,
@@ -1267,8 +1296,12 @@ async def yield_t3_llm(
                 max_tokens=4096,
                 tools=None,
             )
-            logger.info("yield_t3_llm: model=%s answer_chars=%d history=%d",
-                        model, len(content), len(history))
+            logger.info(
+                "yield_t3_llm: model=%s answer_chars=%d history=%d "
+                "tokens≈%d dropped=%s",
+                model, len(content), len(bundle.messages) - 1,
+                bundle.token_estimate, bundle.dropped,
+            )
             text = content.strip()
             if not text:
                 # Empty LLM body — distinguish from a successful empty
@@ -1585,23 +1618,31 @@ async def yield_t4_web(
         "Always recommend professional review for any decision-bearing "
         "output."
     )
+    # ── Context redesign phase 1 — same S/M/R/H layering as T3 ──────
+    from nexus_server import context_builder
+    from nexus_server.context_builder import RetrievalBlock
+
+    r_blocks: list[RetrievalBlock] = []
     if patient_block:
-        system_prompt += (
-            "\n\nPATIENT CONTEXT (from the local clinical graph):\n"
-            + patient_block
-        )
+        r_blocks.append(RetrievalBlock(
+            text=("PATIENT CONTEXT (from the local clinical graph):\n"
+                  + patient_block),
+            priority=100, tag="patient_context",
+        ))
     else:
+        # Tiny anti-fabrication trigger — rides in Layer S so it can
+        # never be trimmed away.
         system_prompt += (
             "\n\nPATIENT CONTEXT (from the local clinical graph):\n"
             "<no record yet for this patient — no findings, no studies, "
             "no medications, no notes have been ingested>"
         )
     if web_block:
-        system_prompt += (
-            "\n\nWEB CONTEXT (cited clinical sources — every snippet has "
-            "a [Wxx] tag for inline citation):\n"
-            + web_block
-        )
+        r_blocks.append(RetrievalBlock(
+            text=("WEB CONTEXT (cited clinical sources — every snippet has "
+                  "a [Wxx] tag for inline citation):\n" + web_block),
+            priority=98, tag="web_context",
+        ))
 
     # PRACTITIONER PROFILE (same wire as T3 — per-user, medic-confirmed).
     try:
@@ -1611,11 +1652,12 @@ async def yield_t4_web(
         logger.debug("practitioner composer skipped (T4 path): %s", exc)
         practitioner_block = ""
     if practitioner_block:
-        system_prompt += (
-            "\n\nPRACTITIONER PROFILE (per-user, medic-confirmed; "
-            "treat as soft defaults, not hard rules):\n"
-            + practitioner_block
-        )
+        r_blocks.append(RetrievalBlock(
+            text=("PRACTITIONER PROFILE (per-user, medic-confirmed; "
+                  "treat as soft defaults, not hard rules):\n"
+                  + practitioner_block),
+            priority=60, tag="practitioner_profile",
+        ))
 
     # PRIOR INSIGHTS (Layer 2b — same wire as T3 path). T4 path here
     # is patient-bound (we only enter T4 from a patient context), so
@@ -1634,20 +1676,44 @@ async def yield_t4_web(
         logger.debug("session_takeaway read skipped (T4 path): %s", exc)
         insights_block = ""
     if insights_block:
-        system_prompt += "\n\n" + insights_block
+        r_blocks.append(RetrievalBlock(
+            text=insights_block.strip(), priority=55, tag="prior_insights",
+        ))
 
-    # ACTIVE SKILLS — same wire as the T3 path (see yield_t3_llm).
-    if skills_block:
-        system_prompt += "\n\n" + skills_block
+    # Layer assembly + budgeting — same wire as the T3 path. The
+    # skills block rides as system_tail (Layer S budget-wise, appended
+    # last for override semantics).
+    history = context_builder.get_session_history(user_id, session_id)
+    bundle = context_builder.build(
+        system_text=system_prompt,
+        user_id=user_id,
+        retrieval_blocks=r_blocks,
+        history=history,
+        current_user_message=question,
+        system_tail=skills_block or "",
+    )
+    system_prompt = bundle.system_text
+
+    # Debug frame (additive; unknown SSE types are ignored by clients).
+    yield RetrievalChunk("context_info", {
+        "history_msgs": max(
+            0,
+            len(bundle.messages) - 1 - (1 if bundle.summary_included else 0),
+        ),
+        "summary_included": bundle.summary_included,
+        "retrieval_blocks": len(r_blocks),
+        "dropped_history": bundle.dropped.get("history_msgs", 0),
+        "dropped_blocks": bundle.dropped.get("retrieval_blocks", 0),
+        "token_estimate": bundle.token_estimate,
+    })
 
     # Stream the LLM answer. Same gateway as T3 — text-only since web
     # results have no image attachments.
     answer_buf: list[str] = []
     try:
         from nexus_server import llm_gateway
-        history = _recent_history_messages(user_id, session_id)
         content, model, _stop, _tools = await llm_gateway.call_llm(
-            messages=history + [{"role": "user", "content": question}],
+            messages=bundle.messages,
             system_prompt=system_prompt,
             model=None,
             temperature=0.4,
