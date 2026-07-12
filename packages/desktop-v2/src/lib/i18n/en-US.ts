@@ -858,6 +858,14 @@ export const en = {
   // Selection → chat quote (选中内容 chip above the writing composer).
   'writing.selection.quoteLabel': 'Selected text',
   'writing.selection.dismiss':   'Clear selection quote',
+
+  // Context-transparency chip on assistant turns (context_info SSE
+  // frame). New keys go at the dict END.
+  'chat.contextInfo.chip':    'Context',
+  'chat.contextInfo.history': 'History: {count} msgs (early summary {summary})',
+  'chat.contextInfo.blocks':  'Data blocks: {count}',
+  'chat.contextInfo.dropped': '⚠ Trimmed to fit budget: {history} history msgs · {blocks} data blocks',
+  'chat.contextInfo.tokens':  '≈ {count} tokens',
 };
 
 /** ``Dict`` is the contract every locale file must satisfy: same set

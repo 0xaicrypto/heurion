@@ -136,6 +136,18 @@ export interface CitationRef {
 export type ChatStreamChunk =
   | { type: 'turn_started'; event_idx: number; patient_hash: string | null }
   | { type: 'tier_classified'; tier: TierKind; view_kind?: string; anchor?: string }
+  /** Context-transparency debug frame — emitted right after
+   *  tier_classified. Field names mirror the server exactly
+   *  (see nexus_server/retrieval_tiers.py `context_info`). */
+  | {
+      type: 'context_info';
+      history_msgs: number;
+      summary_included: boolean;
+      retrieval_blocks: number;
+      dropped_history: number;
+      dropped_blocks: number;
+      token_estimate: number;
+    }
   | { type: 'reasoning_chunk'; text: string }
   | { type: 'search_query'; tool: string; query: string }
   | { type: 'search_results_summary'; count: number; preview: string }
@@ -218,6 +230,20 @@ export interface ChatProposal {
   errorMsg?:      string;
 }
 
+/** Client-side (camelCase) shape of the `context_info` SSE frame.
+ *  Attached to the in-flight assistant ChatMsg so the UI can render
+ *  the context-transparency chip. Client-session only — history
+ *  loads won't have it, and that's expected. Plain object, so it
+ *  serializes fine through the zustand store. */
+export interface ContextInfo {
+  historyMsgs: number;
+  summaryIncluded: boolean;
+  retrievalBlocks: number;
+  droppedHistory: number;
+  droppedBlocks: number;
+  tokenEstimate: number;
+}
+
 export interface ChatMsg {
   role: 'user' | 'agent';
   text: string;
@@ -242,4 +268,8 @@ export interface ChatMsg {
     rawCount: number;
     error?: string;
   };
+  /** Context-transparency data from the `context_info` SSE frame.
+   *  Present only on assistant turns streamed in THIS client
+   *  session (not persisted server-side / not on history reload). */
+  contextInfo?: ContextInfo;
 }

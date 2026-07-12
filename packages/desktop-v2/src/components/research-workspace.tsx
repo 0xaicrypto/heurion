@@ -22,6 +22,7 @@ import {
   useAppState, EMPTY_DRAFT_ATTACHMENTS, type DraftAttachment,
 } from '../store';
 import type { StudySummary } from '../lib/util';
+import type { ContextInfo } from '../lib/types';
 import { type FileChipRef } from './chat-markdown';
 // F-unified-chat (UI_UX_REVIEW §3) — shared message row + composer,
 // same layout as Encounter / Today, rw palette via tone="rw".
@@ -1389,6 +1390,9 @@ interface ChatMessage {
    *  Without this, history-load drops the 📎 chip and the medic
    *  can't see which files they sent. */
   attachedFileNames?: string[];
+  /** Context-transparency data from the `context_info` SSE frame.
+   *  Client-session only — history reloads won't have it. */
+  contextInfo?: ContextInfo;
 }
 
 /**
@@ -1675,6 +1679,25 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
           });
           continue;
         }
+        if (chunk.type === 'context_info') {
+          // Context-transparency frame — stash on the in-flight agent
+          // message so MessageRow renders the 上下文 chip.
+          const ci: ContextInfo = {
+            historyMsgs:     Number(chunk.history_msgs) || 0,
+            summaryIncluded: !!chunk.summary_included,
+            retrievalBlocks: Number(chunk.retrieval_blocks) || 0,
+            droppedHistory:  Number(chunk.dropped_history) || 0,
+            droppedBlocks:   Number(chunk.dropped_blocks) || 0,
+            tokenEstimate:   Number(chunk.token_estimate) || 0,
+          };
+          setMessages((m) => {
+            const next = m.slice();
+            const last = next[next.length - 1];
+            if (last && last.role === 'agent') last.contextInfo = ci;
+            return next;
+          });
+          continue;
+        }
         const sr = chunk as unknown as {
           type?: string;
           cohort_size?: number;
@@ -1781,6 +1804,7 @@ function ChatTab({studyId, study}: {studyId: string; study: StudyData}) {
             tone="rw"
             streaming={m.streaming}
             fileMap={fileMap}
+            contextInfo={m.role === 'agent' ? m.contextInfo : undefined}
           >
             {m.scope_info && (
               <div className="text-[10px] text-rw-t4 mt-1 font-rw-mono pl-1">
@@ -2849,6 +2873,8 @@ function CrossResearchChat() {
     streaming?: boolean;
     /** F-history-attachments — preserve file names across history reload */
     attachedFileNames?: string[];
+    /** Context-transparency data (context_info SSE frame) — client-session only. */
+    contextInfo?: ContextInfo;
   }>>([]);
   const [busy, setBusy] = useState(false);
   // F-unified-chat — inline alert row above the composer (§3).
@@ -3106,6 +3132,23 @@ function CrossResearchChat() {
             }
             return next;
           });
+        } else if (chunk.type === 'context_info') {
+          // Context-transparency frame — stash on the in-flight agent
+          // message so MessageRow renders the 上下文 chip.
+          const ci: ContextInfo = {
+            historyMsgs:     Number(chunk.history_msgs) || 0,
+            summaryIncluded: !!chunk.summary_included,
+            retrievalBlocks: Number(chunk.retrieval_blocks) || 0,
+            droppedHistory:  Number(chunk.dropped_history) || 0,
+            droppedBlocks:   Number(chunk.dropped_blocks) || 0,
+            tokenEstimate:   Number(chunk.token_estimate) || 0,
+          };
+          setMessages((m) => {
+            const next = m.slice();
+            const last = next[next.length - 1];
+            if (last && last.role === 'agent') last.contextInfo = ci;
+            return next;
+          });
         }
       }
     } catch (e) {
@@ -3193,6 +3236,7 @@ function CrossResearchChat() {
                 tone="rw"
                 streaming={m.streaming}
                 fileMap={fileMap}
+                contextInfo={m.role === 'agent' ? m.contextInfo : undefined}
               >
                 {/* F-history-attachments — render attached file chips
                     on user turns so the medic can see which files

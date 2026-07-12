@@ -873,4 +873,12 @@ export const zh: Dict = {
   // 选中内容 → 写作对话引用条。
   'writing.selection.quoteLabel': '选中内容',
   'writing.selection.dismiss':   '清除选中引用',
+
+  // 助手消息的上下文透明度小标签（context_info SSE 帧）。
+  // 新键统一追加在字典末尾。
+  'chat.contextInfo.chip':    '上下文',
+  'chat.contextInfo.history': '历史消息 {count} 条（含早期摘要 {summary}）',
+  'chat.contextInfo.blocks':  '数据块 {count} 个',
+  'chat.contextInfo.dropped': '⚠ 因超出预算裁剪：历史 {history} 条 · 数据块 {blocks} 个',
+  'chat.contextInfo.tokens':  '≈ {count} tokens',
 };

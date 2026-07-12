@@ -1202,6 +1202,21 @@ export function EncounterMode() {
           case 'tier_classified':
             update({ tier: chunk.tier });
             break;
+          case 'context_info':
+            // Context-transparency frame (arrives right after
+            // tier_classified). Stash it on the in-flight assistant
+            // message; the MessageRow renders the 上下文 chip from it.
+            update({
+              contextInfo: {
+                historyMsgs:     Number(chunk.history_msgs) || 0,
+                summaryIncluded: !!chunk.summary_included,
+                retrievalBlocks: Number(chunk.retrieval_blocks) || 0,
+                droppedHistory:  Number(chunk.dropped_history) || 0,
+                droppedBlocks:   Number(chunk.dropped_blocks) || 0,
+                tokenEstimate:   Number(chunk.token_estimate) || 0,
+              },
+            });
+            break;
           case 'reasoning_chunk':
             updateLastChatMsg(sid, (last) => ({
               reasoning: [...(last.reasoning ?? []), chunk.text],
@@ -1462,6 +1477,7 @@ export function EncounterMode() {
             headerExtra={m.tier
               ? <TierIndicator tier={m.tier} elapsedMs={m.elapsedMs} />
               : undefined}
+            contextInfo={m.role === 'agent' ? m.contextInfo : undefined}
             preContent={m.role === 'agent' && m.reasoning && m.reasoning.length > 0
               ? <ReasoningPane steps={m.reasoning} defaultOpen={m.streaming} />
               : undefined}

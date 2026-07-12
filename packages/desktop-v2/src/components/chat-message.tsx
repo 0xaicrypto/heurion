@@ -21,12 +21,14 @@
  *   - streaming: inline cursor while text is arriving + the shared
  *     StreamingFooter under agent turns.
  */
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { Info } from 'lucide-react';
 import { ChatMarkdown, type FileChipRef } from './chat-markdown';
 import { CopyButton } from './copy-button';
 import { StreamingFooter, StreamingCursor } from './thinking-indicator';
 import { useT } from '../lib/i18n';
 import { cn } from '../lib/util';
+import type { ContextInfo } from '../lib/types';
 
 export type ChatTone = 'base' | 'rw';
 
@@ -45,6 +47,81 @@ const TONE = {
   },
 } as const;
 
+/**
+ * ContextInfoChip — context-transparency affordance for assistant
+ * turns. Hover-revealed (same group-hover pattern as CopyButton)
+ * Info-icon chip at the right end of the header row; click toggles a
+ * compact anchored panel breaking down what the server actually put
+ * in the LLM context for this turn (history msgs, retrieval blocks,
+ * budget trims, token estimate). Data comes from the `context_info`
+ * SSE frame — client-session only, so old/history-loaded messages
+ * simply don't render the chip.
+ */
+function ContextInfoChip({
+  info,
+  tone = 'base',
+}: {
+  info: ContextInfo;
+  tone?: ChatTone;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const trimmed = info.droppedHistory > 0 || info.droppedBlocks > 0;
+  const chipCls = tone === 'rw'
+    ? 'text-rw-t3 hover:text-rw-t1'
+    : 'text-text-tertiary hover:text-text-secondary';
+  const panelCls = tone === 'rw'
+    ? 'border-rw-border bg-rw-surface text-rw-t2'
+    : 'border-border bg-surface-1 text-text-secondary';
+  const cautionCls = tone === 'rw' ? 'text-rw-orange' : 'text-caution';
+  return (
+    <span className="relative self-center">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title={t('chat.contextInfo.chip')}
+        className={cn(
+          'flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] transition-opacity',
+          chipCls,
+          open
+            ? 'opacity-100'
+            : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
+        )}
+      >
+        <Info className="h-3 w-3" aria-hidden />
+        {t('chat.contextInfo.chip')}
+      </button>
+      {open && (
+        <div
+          className={cn(
+            'absolute right-0 top-full z-20 mt-1 w-max max-w-[280px] space-y-0.5',
+            'rounded-md border px-3 py-2 text-caption shadow-lg',
+            panelCls,
+          )}
+        >
+          <div>
+            {t('chat.contextInfo.history', {
+              count: info.historyMsgs,
+              summary: info.summaryIncluded ? '✓' : '–',
+            })}
+          </div>
+          <div>{t('chat.contextInfo.blocks', { count: info.retrievalBlocks })}</div>
+          {trimmed && (
+            <div className={cautionCls}>
+              {t('chat.contextInfo.dropped', {
+                history: info.droppedHistory,
+                blocks: info.droppedBlocks,
+              })}
+            </div>
+          )}
+          <div>{t('chat.contextInfo.tokens', { count: info.tokenEstimate })}</div>
+        </div>
+      )}
+    </span>
+  );
+}
+
 export function MessageRow({
   role,
   text,
@@ -57,6 +134,7 @@ export function MessageRow({
   headerExtra,
   preContent,
   footerLabel,
+  contextInfo,
 }: {
   role: 'user' | 'agent';
   text: string;
@@ -76,6 +154,10 @@ export function MessageRow({
   preContent?: ReactNode;
   /** Custom StreamingFooter label while no text has arrived yet. */
   footerLabel?: string;
+  /** Context-transparency data (context_info SSE frame) — when
+   *  present, renders the hover-revealed 上下文 chip next to the
+   *  CopyButton on agent turns. */
+  contextInfo?: ContextInfo;
 }) {
   const t = useT();
   const c = TONE[tone];
@@ -89,15 +171,23 @@ export function MessageRow({
         </span>
         {ts && <span className={c.ts}>{ts}</span>}
         {headerExtra}
-        {/* Per-message copy — raw markdown, right end of the header
-            row, hover-revealed. Hidden while streaming. */}
-        {copy && !streaming && (
-          <CopyButton
-            text={copy}
-            tone={tone}
-            className="ml-auto self-center opacity-0 group-hover:opacity-100
-                       focus-visible:opacity-100 transition-opacity"
-          />
+        {/* Right end of the header row — hover-revealed extras:
+            context-transparency chip + per-message copy (raw
+            markdown; hidden while streaming). */}
+        {(contextInfo || (copy && !streaming)) && (
+          <span className="ml-auto flex items-center gap-1 self-center">
+            {contextInfo && role === 'agent' && (
+              <ContextInfoChip info={contextInfo} tone={tone} />
+            )}
+            {copy && !streaming && (
+              <CopyButton
+                text={copy}
+                tone={tone}
+                className="opacity-0 group-hover:opacity-100
+                           focus-visible:opacity-100 transition-opacity"
+              />
+            )}
+          </span>
         )}
       </div>
       {preContent}
