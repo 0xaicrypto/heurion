@@ -337,6 +337,99 @@ class ToggleRequest(BaseModel):
     auto_apply: Optional[bool] = None
 
 
+# ── Offline curated catalog (source=official fallback) ───────────────
+#
+# Static snapshot of the canonical anthropics/skills document-creation
+# set (the /skills folder as of 2026-07). Served when the live GitHub
+# listing is unreachable — 国内 (GFW) / offline deployments — so the
+# 发现 tab still surfaces the flagship skills instead of a bare 502.
+# Search works offline; INSTALL still needs network (or a
+# NEXUS_GITHUB_MIRROR mirror — see the SDK skills manager docstring).
+_OFFICIAL_FALLBACK_CATALOG: list[dict] = [
+    {
+        "identifier": "anthropic:docx",
+        "name": "docx",
+        "description": ("Create, edit, and analyze Word documents "
+                        "(.docx) — formatting, tracked changes, "
+                        "document generation."),
+    },
+    {
+        "identifier": "anthropic:pdf",
+        "name": "pdf",
+        "description": ("Read, create, merge, split, and fill PDF "
+                        "files; extract text and tables."),
+    },
+    {
+        "identifier": "anthropic:pptx",
+        "name": "pptx",
+        "description": ("Create and edit PowerPoint presentations "
+                        "(.pptx) — slides, layouts, speaker notes."),
+    },
+    {
+        "identifier": "anthropic:xlsx",
+        "name": "xlsx",
+        "description": ("Create, edit, and analyze Excel spreadsheets "
+                        "(.xlsx) with formulas and charts."),
+    },
+]
+
+
+def _fallback_official_results(q: str, installed_names: set[str]) -> list[dict]:
+    """Filter the static catalog by ``q`` (case-insensitive substring
+    over identifier + name + description; empty q = everything) and
+    project to the search response shape. Each row is flagged
+    ``cached: True`` so the client can show an 离线目录 badge."""
+    ql = (q or "").strip().lower()
+    out: list[dict] = []
+    for row in _OFFICIAL_FALLBACK_CATALOG:
+        haystack = " ".join(
+            (row["identifier"], row["name"], row["description"])
+        ).lower()
+        if ql and ql not in haystack:
+            continue
+        out.append({
+            "identifier":  row["identifier"],
+            "name":        row["name"],
+            "description": row["description"],
+            "source":      "official",
+            "installed":   _identifier_to_name(row["identifier"])
+                           in installed_names,
+            "cached":      True,
+        })
+    return out
+
+
+def _is_network_error(exc: BaseException) -> bool:
+    """Best-effort 'GitHub is unreachable' classifier for install
+    failures. Walks the exception chain: OS-level errors (URLError,
+    socket, TLS, proxy-tunnel failures are all OSError subclasses)
+    count as network — EXCEPT HTTPError, which means the remote
+    answered (404 missing skill / 403 rate-limit ≠ blocked network)
+    unless it's a gateway-side 5xx. Falls back to message keywords for
+    wrapped RuntimeErrors."""
+    import urllib.error
+
+    seen: set[int] = set()
+    e: Optional[BaseException] = exc
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if isinstance(e, urllib.error.HTTPError):
+            return e.code in (502, 503, 504)
+        if isinstance(e, (OSError, TimeoutError)):
+            return True
+        msg = str(e).lower()
+        if any(hint in msg for hint in (
+            "tunnel connection failed", "connection refused",
+            "connection reset", "connection aborted", "timed out",
+            "timeout", "unreachable", "proxy", "getaddrinfo",
+            "name resolution", "temporary failure", "ssl",
+            "eof occurred", "remote end closed", "network",
+        )):
+            return True
+        e = e.__cause__ or e.__context__
+    return False
+
+
 def _identifier_to_name(identifier: str) -> str:
     """Best-effort skill name from an install identifier — used only
     for the pre-install duplicate check. The authoritative name comes
@@ -391,8 +484,13 @@ async def search_skills(
 ):
     """Marketplace search proxy. ``source=official`` hits the canonical
     anthropics/skills catalog; ``source=github`` searches repos tagged
-    with the ``claude-skills`` topic. Network failure → 502
-    ``search_unavailable`` (never a raw 500)."""
+    with the ``claude-skills`` topic.
+
+    Network failure: ``source=official`` falls back to the built-in
+    static catalog (rows carry ``cached: true``) so the Discover tab
+    keeps working behind the GFW / offline; ``source=github`` has no
+    offline equivalent → 502 ``search_unavailable`` (never a raw 500).
+    """
     if source not in ("official", "github"):
         raise HTTPException(
             status_code=422,
@@ -416,6 +514,14 @@ async def search_skills(
         raise
     except Exception as e:  # noqa: BLE001
         logger.warning("skill search failed (source=%s q=%r): %s", source, q, e)
+        if source == "official":
+            # GitHub unreachable → serve the built-in snapshot instead
+            # of a 502. Install still needs network / a mirror.
+            logger.info(
+                "official skill search unreachable — serving the "
+                "built-in cached catalog",
+            )
+            return {"results": _fallback_official_results(q, installed_names)}
         raise HTTPException(
             status_code=502,
             detail={"code": "search_unavailable",
@@ -471,6 +577,16 @@ async def install_skill(
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("skill install failed (%r): %s", identifier, e)
+        if _is_network_error(e):
+            # GitHub blocked (GFW) / offline — unlike search there is
+            # no offline fallback for install, so point the user at
+            # the mirror setting.
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "install_network",
+                        "message": ("GitHub 无法访问——请在设置的 .env 中"
+                                    "配置 NEXUS_GITHUB_MIRROR 镜像后重试")},
+            )
         raise HTTPException(
             status_code=502,
             detail={"code": "install_failed", "message": str(e)[:300]},

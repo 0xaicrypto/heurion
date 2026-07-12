@@ -678,7 +678,21 @@ export function WritingStudio() {
         docId, { message: text, refIds: includedRefIds, skills, attachments },
       )) {
         const g = useAppState.getState();
-        if (frame.type === 'reply_chunk') {
+        if (frame.type === 'context_info') {
+          // Context-transparency frame (first frame of the stream) —
+          // stash it on the in-flight assistant message, exactly like
+          // EncounterMode; MessageRow renders the 上下文 chip from it.
+          g.updateLastWritingChatMsg(docId, {
+            contextInfo: {
+              historyMsgs:     Number(frame.history_msgs) || 0,
+              summaryIncluded: !!frame.summary_included,
+              retrievalBlocks: Number(frame.retrieval_blocks) || 0,
+              droppedHistory:  Number(frame.dropped_history) || 0,
+              droppedBlocks:   Number(frame.dropped_blocks) || 0,
+              tokenEstimate:   Number(frame.token_estimate) || 0,
+            },
+          });
+        } else if (frame.type === 'reply_chunk') {
           g.updateLastWritingChatMsg(docId, (last) => ({
             text: last.text + frame.text,
           }));
@@ -1644,6 +1658,7 @@ function WritingChatPanel({
               ts={m.createdAt ? fmtDateTime(m.createdAt) : undefined}
               tone="base"
               streaming={streaming && isLast && m.role === 'assistant'}
+              contextInfo={m.role === 'assistant' ? m.contextInfo : undefined}
             >
               {m.role === 'assistant' && m.docApplied && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">

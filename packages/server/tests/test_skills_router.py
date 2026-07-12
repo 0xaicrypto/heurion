@@ -330,6 +330,131 @@ def test_search_bad_source_422(client):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Offline fallback — official search serves the built-in catalog when
+# GitHub is unreachable (GFW); install failures map to install_network
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _patch_official_search_down(monkeypatch):
+    from nexus_core.skills.manager import SkillManager
+
+    async def boom(self, query, limit=10):
+        raise OSError("Tunnel connection failed: 403 Forbidden")
+
+    monkeypatch.setattr(SkillManager, "search_anthropic_official", boom)
+
+
+def test_search_official_unreachable_falls_back_to_cached_catalog(
+    client, monkeypatch,
+):
+    _patch_official_search_down(monkeypatch)
+    user = _register(client, "alice")
+    r = client.get("/api/v1/skills/search?q=&source=official",
+                   headers=_auth(user))
+    assert r.status_code == 200
+    results = r.json()["results"]
+    ids = {x["identifier"] for x in results}
+    assert {"anthropic:docx", "anthropic:pdf",
+            "anthropic:pptx", "anthropic:xlsx"} <= ids
+    for row in results:
+        assert row["source"] == "official"
+        assert row["cached"] is True
+        assert row["installed"] is False
+        assert row["name"]
+        assert row["description"]
+
+
+def test_search_official_fallback_filters_by_q(client, monkeypatch):
+    _patch_official_search_down(monkeypatch)
+    user = _register(client, "alice")
+
+    r = client.get("/api/v1/skills/search?q=pdf&source=official",
+                   headers=_auth(user))
+    assert r.status_code == 200
+    results = r.json()["results"]
+    assert [x["identifier"] for x in results] == ["anthropic:pdf"]
+    assert results[0]["cached"] is True
+
+    # Description terms match too; nonsense terms match nothing.
+    r = client.get("/api/v1/skills/search?q=spreadsheet&source=official",
+                   headers=_auth(user))
+    assert [x["identifier"] for x in r.json()["results"]] == ["anthropic:xlsx"]
+    r = client.get("/api/v1/skills/search?q=zzz-no-match&source=official",
+                   headers=_auth(user))
+    assert r.json()["results"] == []
+
+
+def test_search_official_fallback_marks_installed(client, monkeypatch):
+    _patch_official_search_down(monkeypatch)
+    # Fake installer whose frontmatter name matches the identifier tail
+    # ('pdf') so the installed-overlay lookup lines up.
+    _patch_install(monkeypatch, body=SKILL_BODY.replace("haiku-mode", "pdf"))
+    user = _register(client, "alice")
+    _install(client, user, identifier="anthropic:pdf")  # installs 'pdf'
+
+    r = client.get("/api/v1/skills/search?q=&source=official",
+                   headers=_auth(user))
+    by_id = {x["identifier"]: x for x in r.json()["results"]}
+    assert by_id["anthropic:pdf"]["installed"] is True
+    assert by_id["anthropic:docx"]["installed"] is False
+
+
+def test_search_github_unreachable_still_502(client, monkeypatch):
+    """Only source=official has an offline catalog — github keeps the
+    502 search_unavailable contract."""
+    from nexus_core.skills.manager import SkillManager
+
+    async def boom(self, query, limit=10):
+        raise OSError("Tunnel connection failed: 403 Forbidden")
+
+    monkeypatch.setattr(SkillManager, "search_github_topic", boom)
+    user = _register(client, "alice")
+    r = client.get("/api/v1/skills/search?q=x&source=github",
+                   headers=_auth(user))
+    assert r.status_code == 502
+    assert _err_code(r) == "search_unavailable"
+
+
+def test_install_network_failure_maps_to_install_network(
+    client, monkeypatch,
+):
+    from nexus_core.skills.manager import SkillManager
+
+    async def net_boom(self, source):
+        raise OSError("Tunnel connection failed: 403 Forbidden")
+
+    monkeypatch.setattr(SkillManager, "install", net_boom)
+    user = _register(client, "alice")
+    r = client.post("/api/v1/skills/install",
+                    json={"identifier": "anthropic:pdf"},
+                    headers=_auth(user))
+    assert r.status_code == 502
+    assert _err_code(r) == "install_network"
+    body = r.json()
+    detail = body.get("error", body.get("detail"))
+    # The message must point the user at the mirror env var.
+    assert "NEXUS_GITHUB_MIRROR" in detail["message"]
+
+
+def test_install_non_network_failure_stays_install_failed(
+    client, monkeypatch,
+):
+    from nexus_core.skills.manager import SkillManager
+
+    async def boom(self, source):
+        raise RuntimeError(
+            "x/y is a multi-skill repo with 3 skills: a, b, c. Pick one."
+        )
+
+    monkeypatch.setattr(SkillManager, "install", boom)
+    user = _register(client, "alice")
+    r = client.post("/api/v1/skills/install",
+                    json={"identifier": "x/y"}, headers=_auth(user))
+    assert r.status_code == 502
+    assert _err_code(r) == "install_failed"
+
+
+# ─────────────────────────────────────────────────────────────────────
 # v2 chat prompt injection
 # ─────────────────────────────────────────────────────────────────────
 

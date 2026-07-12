@@ -1240,6 +1240,12 @@ async def doc_chat(
 ):
     """One co-writing turn. Streams SSE frames:
 
+        {type:'context_info', history_msgs, summary_included,
+         retrieval_blocks, dropped_history,
+         dropped_blocks, token_estimate}      — context-transparency
+                                                frame (same fields as
+                                                the v2 chat's), first
+                                                frame of every stream
         {type:'reply_chunk', text}            — conversational reply
         {type:'doc_started'}                  — <doc> block opened
         {type:'doc_chunk', text}              — doc body text
@@ -1396,10 +1402,25 @@ async def doc_chat(
         )
         conn.commit()
 
-    # ── Layer S — persona + output contract + FULL doc body. The full
-    # body stays untrimmable in phase 1 (phase 2 will budget it).
+    # ── Layer M — cross-session curated memory (context parity with
+    # the v2 chat path). Injected right after the co-writing persona /
+    # output contract and BEFORE the doc body, so remembered
+    # preferences (tone, terminology, …) shape the writing without
+    # diluting the output contract. Non-fatal on failure.
+    memory_block = ""
+    try:
+        memory_block = context_builder.get_memory_projection(current_user)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "doc chat: memory projection failed (non-fatal): %s", exc,
+        )
+
+    # ── Layer S — persona + output contract + memory + FULL doc body.
+    # The full body stays untrimmable in phase 1 (phase 2 will budget
+    # it).
     base_system = (
         _CHAT_PERSONA + "\n\n" + _CHAT_OUTPUT_CONTRACT
+        + (("\n\n" + memory_block) if memory_block else "")
         + f"\n\n文档标题：{title or '（未命名）'}"
         + "\n当前文档正文（{{ref:ID}} 为引用占位符，必须原样保留）：\n"
         + (prev_body if prev_body else "（正文为空）")
@@ -1458,6 +1479,23 @@ async def doc_chat(
     )
 
     async def event_stream() -> AsyncIterator[str]:
+        # Context-transparency frame — same field names as the v2
+        # chat's retrieval_tiers `context_info` frame. Emitted before
+        # any reply_chunk so the client can stash it on the in-flight
+        # assistant message (the 上下文 chip).
+        yield _sse({
+            "type": "context_info",
+            "history_msgs": max(
+                0,
+                len(bundle.messages) - 1
+                - (1 if bundle.summary_included else 0),
+            ),
+            "summary_included": bundle.summary_included,
+            "retrieval_blocks": len(r_blocks),
+            "dropped_history": bundle.dropped.get("history_msgs", 0),
+            "dropped_blocks": bundle.dropped.get("retrieval_blocks", 0),
+            "token_estimate": bundle.token_estimate,
+        })
         try:
             # Same dispatch helper as polish — late import + module
             # attribute call so tests can monkeypatch

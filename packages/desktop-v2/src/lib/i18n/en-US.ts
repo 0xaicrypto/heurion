@@ -866,6 +866,11 @@ export const en = {
   'chat.contextInfo.blocks':  'Data blocks: {count}',
   'chat.contextInfo.dropped': '⚠ Trimmed to fit budget: {history} history msgs · {blocks} data blocks',
   'chat.contextInfo.tokens':  '≈ {count} tokens',
+
+  // Skills Discover — offline catalog fallback + GitHub mirror hint.
+  // New keys go at the dict END.
+  'skills.discover.offlineCatalog': 'Offline catalog',
+  'skills.discover.installNetwork': 'GitHub is unreachable — set NEXUS_GITHUB_MIRROR in the settings .env, then retry.',
 };
 
 /** ``Dict`` is the contract every locale file must satisfy: same set

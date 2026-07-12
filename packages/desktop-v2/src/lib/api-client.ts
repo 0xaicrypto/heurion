@@ -1967,14 +1967,16 @@ class _ApiClient {
 
   /** GET /api/v1/skills/search — discover installable skills.
    *  Throws ApiError with ``code === 'search_unavailable'`` (502) when
-   *  the upstream registry / GitHub is unreachable. */
+   *  the upstream registry / GitHub is unreachable — except for
+   *  source=official, where the server falls back to a built-in
+   *  offline catalog and marks each row ``cached: true``. */
   async searchSkills(
     q: string,
     source?: 'official' | 'github',
   ): Promise<SkillSearchResult[]> {
     interface RawResult {
       identifier: string; name: string; description: string;
-      source: string; installed: boolean;
+      source: string; installed: boolean; cached?: boolean;
     }
     const qs = new URLSearchParams({ q });
     if (source) qs.set('source', source);
@@ -1987,6 +1989,7 @@ class _ApiClient {
       description: x.description,
       source:      x.source,
       installed:   x.installed,
+      cached:      x.cached === true,
     }));
   }
 
@@ -3258,6 +3261,18 @@ export interface WritingChatMessage {
  *  done is the PRE-revision snapshot (restore = undo the revision);
  *  the server emits it as an integer row id. */
 export type WritingChatFrame =
+  /** Context-transparency frame — first frame of every stream. Field
+   *  names mirror the server exactly (same shape as the v2 chat's
+   *  `context_info` frame in nexus_server/retrieval_tiers.py). */
+  | {
+      type: 'context_info';
+      history_msgs: number;
+      summary_included: boolean;
+      retrieval_blocks: number;
+      dropped_history: number;
+      dropped_blocks: number;
+      token_estimate: number;
+    }
   | { type: 'reply_chunk'; text: string }
   | { type: 'doc_started' }
   | { type: 'doc_chunk'; text: string }
@@ -3298,6 +3313,10 @@ export interface SkillSearchResult {
   description: string;
   source:      string;
   installed:   boolean;
+  /** True when the row came from the server's built-in OFFLINE
+   *  catalog (GitHub unreachable) rather than the live listing —
+   *  the Discover tab shows an 离线目录 badge. */
+  cached?:     boolean;
 }
 
 export const api = new _ApiClient();

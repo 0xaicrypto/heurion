@@ -675,6 +675,116 @@ def test_chat_attachment_numbers_not_provenance_warned(
     assert types[-1] == "done"
 
 
+# ─────────────────────────────────────────────────────────────────────
+# v2-chat context parity — context_info frame + Layer-M memory
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_chat_emits_context_info_frame_before_reply(client, monkeypatch):
+    """Every co-writing stream starts with a context_info frame carrying
+    the same fields as the v2 chat's retrieval_tiers frame."""
+    user = _register(client, "alice")
+    doc = _create_doc(client, user)
+    _mock_llm(monkeypatch, "好的。")
+
+    frames = _chat(client, user, doc["id"], "你好")
+    types = [f["type"] for f in frames]
+    assert types[0] == "context_info"
+    assert types.index("context_info") < types.index("reply_chunk")
+
+    info = frames[0]
+    assert set(info) == {
+        "type", "history_msgs", "summary_included", "retrieval_blocks",
+        "dropped_history", "dropped_blocks", "token_estimate",
+    }
+    # Fresh doc, no refs/attachments, first turn.
+    assert info["history_msgs"] == 0
+    assert info["summary_included"] is False
+    assert info["retrieval_blocks"] == 0
+    assert info["dropped_history"] == 0
+    assert info["dropped_blocks"] == 0
+    assert info["token_estimate"] > 0
+
+
+def test_chat_context_info_counts_history_refs_and_attachments(
+    client, monkeypatch,
+):
+    user = _register(client, "alice")
+    patient_hash = _register_patient(client, user)
+    doc = _create_doc(client, user)
+    ref_id = _add_reference(client, user, doc["id"], patient_hash)
+    _seed_upload(user["user_id"], "file-ctx", "ctx.txt", "附件内容。")
+
+    # Turn 1 seeds two history rows (user + assistant).
+    _mock_llm(monkeypatch, "第一轮。")
+    _chat(client, user, doc["id"], "第一个问题")
+
+    _mock_llm(monkeypatch, "第二轮。")
+    r = client.post(
+        f"/api/v1/docs/{doc['id']}/chat",
+        json={
+            "message": "第二个问题",
+            "ref_ids": [ref_id],
+            "attachments": [{"file_id": "file-ctx", "name": "ctx.txt"}],
+        },
+        headers=_auth(user),
+    )
+    assert r.status_code == 200, r.text
+    info = _sse_frames(r.text)[0]
+    assert info["type"] == "context_info"
+    # 1 ref block + 1 attachment block.
+    assert info["retrieval_blocks"] == 2
+    # The prior user+assistant turn rode along as history.
+    assert info["history_msgs"] == 2
+    assert info["dropped_history"] == 0
+    assert info["dropped_blocks"] == 0
+
+
+def _write_curated_memory(user, text):
+    import os
+    import pathlib
+    d = (pathlib.Path(os.environ["NEXUS_TWIN_BASE_DIR"])
+         / user["user_id"] / "curated_memory")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "MEMORY.md").write_text(text, encoding="utf-8")
+
+
+def test_chat_memory_projection_injected_after_persona_before_body(
+    client, monkeypatch,
+):
+    """Layer-M parity: when the user's curated memory files exist, the
+    projection lands in the co-writing system prompt — after the
+    persona/output contract, before the doc body."""
+    user = _register(client, "alice")
+    doc = _create_doc(client, user)
+    client.put(f"/api/v1/docs/{doc['id']}", json={"body": "原始正文。"},
+               headers=_auth(user))
+    _write_curated_memory(user, "偏好使用 RECIST 1.1 评估标准")
+
+    mock = _mock_llm(monkeypatch, "好的。")
+    frames = _chat(client, user, doc["id"], "润色一下")
+    assert frames[-1]["type"] == "done"
+
+    args, _ = mock.call_args
+    system_prompt = args[1]
+    assert "## Your Memory" in system_prompt
+    assert "RECIST 1.1" in system_prompt
+    # Position: after the co-writing contract, before the doc body.
+    assert (system_prompt.index("输出规则")
+            < system_prompt.index("## Your Memory")
+            < system_prompt.index("原始正文。"))
+    # Co-writing contract intact.
+    assert "<doc>" in system_prompt
+
+
+def test_chat_no_curated_memory_no_memory_section(client, monkeypatch):
+    user = _register(client, "alice")
+    doc = _create_doc(client, user)
+    mock = _mock_llm(monkeypatch, "好的。")
+    _chat(client, user, doc["id"], "你好")
+    assert "## Your Memory" not in mock.call_args[0][1]
+
+
 def test_chat_deleting_doc_clears_transcript(client, monkeypatch):
     user = _register(client, "alice")
     doc = _create_doc(client, user)

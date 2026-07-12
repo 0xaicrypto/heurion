@@ -23,6 +23,17 @@ allow-list) are read for Phase 1 workflow support.
 
 Skills are installed to a local directory and loaded into the LLM system
 prompt.
+
+GitHub mirror (``NEXUS_GITHUB_MIRROR``)
+=======================================
+Every marketplace fetch (search listings, SKILL.md metadata, install
+downloads) goes to ``api.github.com`` / ``raw.githubusercontent.com``,
+which are unreachable from mainland China (GFW). Set the
+``NEXUS_GITHUB_MIRROR`` env var to a ghproxy-style mirror base (e.g.
+``https://ghproxy.net/``) and :func:`_mirror` rewrites each GitHub URL
+by prefixing it — ``https://ghproxy.net/https://raw.githubusercontent.
+com/...`` (the ghproxy convention). Unset = URLs pass through
+unchanged. 国内网络访问 GitHub 需设置镜像。
 """
 
 from __future__ import annotations
@@ -41,6 +52,73 @@ from typing import Any, Optional
 from urllib.parse import quote as urllib_quote
 
 logger = logging.getLogger(__name__)
+
+
+# ── GitHub mirror support (NEXUS_GITHUB_MIRROR) ────────────────────
+# Hosts the skills marketplace talks to. Only URLs on these hosts are
+# rewritten — a mirror must never see non-GitHub traffic.
+_GITHUB_HOSTS = frozenset({
+    "github.com",
+    "api.github.com",
+    "raw.githubusercontent.com",
+    "codeload.github.com",
+    "objects.githubusercontent.com",
+    "gist.githubusercontent.com",
+})
+
+
+def _mirror(url: str) -> str:
+    """Rewrite a GitHub URL through the configured mirror, if any.
+
+    When the ``NEXUS_GITHUB_MIRROR`` env var is set (e.g.
+    ``https://ghproxy.net/``) and ``url`` points at a GitHub host,
+    returns ``mirror.rstrip('/') + '/' + url`` — the ghproxy
+    convention of prefixing the FULL original URL. Otherwise returns
+    ``url`` unchanged.
+
+    NOTE: fetch sites use :func:`_fetch_bytes`, which tries the DIRECT
+    URL first and only falls back to the mirrored URL when the direct
+    attempt fails — a configured mirror never slows down networks that
+    can reach GitHub. 国内网络直连失败时自动回退镜像。
+    """
+    mirror = os.environ.get("NEXUS_GITHUB_MIRROR", "").strip()
+    if not mirror:
+        return url
+    try:
+        host = url.split("//", 1)[1].split("/", 1)[0].lower()
+    except IndexError:
+        return url
+    if host not in _GITHUB_HOSTS:
+        return url
+    return mirror.rstrip("/") + "/" + url
+
+
+def _fetch_bytes(url: str, timeout: float = 10.0) -> bytes:
+    """HTTP GET with direct-first / mirror-fallback semantics.
+
+    1. Try the original URL directly.
+    2. On ANY failure, if NEXUS_GITHUB_MIRROR is configured and the
+       URL is a GitHub host (``_mirror`` returns a different URL),
+       retry once through the mirror.
+    3. Otherwise re-raise the original error.
+    """
+    import urllib.request
+
+    def _get(u: str) -> bytes:
+        req = urllib.request.Request(
+            u, headers={"User-Agent": "rune-nexus/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read()
+
+    try:
+        return _get(url)
+    except Exception:
+        mirrored = _mirror(url)
+        if mirrored == url:
+            raise
+        logger.info("direct GitHub fetch failed, retrying via mirror")
+        return _get(mirrored)
 
 
 # Process-level latch so we attempt the Node bootstrap at most once
@@ -628,11 +706,12 @@ class SkillManager:
 
     @staticmethod
     def _http_get_text(url: str) -> str:
-        """HTTP GET returning text, with the User-Agent GitHub requires."""
-        import urllib.request
-        req = urllib.request.Request(url, headers={"User-Agent": "rune-nexus/1.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.read().decode("utf-8", errors="replace")
+        """HTTP GET returning text, with the User-Agent GitHub requires.
+
+        Direct-first; falls back to NEXUS_GITHUB_MIRROR only when the
+        direct fetch fails (see :func:`_fetch_bytes`).
+        """
+        return _fetch_bytes(url, timeout=10).decode("utf-8", errors="replace")
 
     async def search_github_topic(
         self, query: str, limit: int = 10,
@@ -980,26 +1059,24 @@ class SkillManager:
         We use ``urlopen`` (which DOES accept timeout) + a streamed
         copy to disk instead, so any single download is bounded.
         """
-        import urllib.request
-        import shutil
-
         def _do_download() -> None:
-            req = urllib.request.Request(
-                url, headers={"User-Agent": "rune-nexus/1.0"},
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp, \
-                 open(dest, "wb") as out:
-                shutil.copyfileobj(resp, out)
+            # Direct-first; NEXUS_GITHUB_MIRROR fallback on failure —
+            # install downloads (SKILL.md + reference files) work
+            # behind the GFW with a mirror set, without slowing down
+            # networks that reach GitHub directly.
+            data = _fetch_bytes(url, timeout=timeout)
+            dest.write_bytes(data)
 
         await asyncio.to_thread(_do_download)
 
     def _http_get_json(self, url: str) -> Any:
-        """Simple HTTP GET returning JSON."""
-        import urllib.request
+        """Simple HTTP GET returning JSON.
+
+        Direct-first; falls back to NEXUS_GITHUB_MIRROR only when the
+        direct fetch fails (see :func:`_fetch_bytes`).
+        """
         import json
-        req = urllib.request.Request(url, headers={"User-Agent": "rune-nexus/1.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode())
+        return json.loads(_fetch_bytes(url, timeout=10).decode())
 
     def install_local(self, path: str | Path) -> InstalledSkill:
         """Install a skill from a local directory.

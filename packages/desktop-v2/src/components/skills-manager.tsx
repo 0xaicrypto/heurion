@@ -322,6 +322,10 @@ function DiscoverTab() {
         // Someone (another window?) beat us to it — treat as success.
         setJustInstalled((prev) => new Set(prev).add(r.identifier));
         await refreshSkills();
+      } else if (e instanceof ApiError && e.code === 'install_network') {
+        // GitHub unreachable (GFW / offline) — actionable hint: point
+        // the user at the NEXUS_GITHUB_MIRROR .env setting.
+        setError(t('skills.discover.installNetwork'));
       } else {
         setError(t('skills.discover.installFailed', {
           error: e instanceof Error ? e.message : String(e),
@@ -365,6 +369,17 @@ function DiscoverTab() {
       <div className="flex items-center gap-1.5">
         {sourceChip('official', t('skills.source.official'))}
         {sourceChip('github', t('skills.source.github'))}
+        {/* Subtle offline-catalog badge — the current results came
+            from the server's built-in snapshot because GitHub was
+            unreachable (cached: true rows). */}
+        {!searching && results.some((r) => r.cached) && (
+          <span
+            title={t('skills.discover.installNetwork')}
+            className="ml-auto rounded-full border border-border px-2 py-0.5 text-caption text-text-tertiary"
+          >
+            {t('skills.discover.offlineCatalog')}
+          </span>
+        )}
       </div>
 
       {error && (

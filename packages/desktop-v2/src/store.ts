@@ -3,7 +3,7 @@ import type { ModeKind, PatientCard, StudySummary, Workspace } from './lib/util'
 // (MOCK_PATIENTS no longer imported — initial state is empty list,
 // real data comes from refreshPatients() after login.)
 import { api, type Identity, type Skill } from './lib/api-client';
-import type { ChatMsg, LlmStatus } from './lib/types';
+import type { ChatMsg, ContextInfo, LlmStatus } from './lib/types';
 import {
   readStoredLocale,
   writeStoredLocale,
@@ -302,6 +302,10 @@ export interface WritingChatMsg {
   /** True when this assistant turn rewrote the document. */
   docApplied: boolean;
   createdAt?: string;
+  /** Context-transparency data from the `context_info` SSE frame —
+   *  same chip as EncounterMode. Present only on assistant turns
+   *  streamed in THIS client session (not on history reload). */
+  contextInfo?: ContextInfo;
 }
 
 const TOKEN_KEY   = 'nexus.auth.token';
