@@ -1,37 +1,74 @@
-# Nexus
+# Heurion
+
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
+[![Node](https://img.shields.io/badge/node-22+-green.svg)](https://nodejs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
+[![Status](https://img.shields.io/badge/status-test%20phase-orange.svg)](ROADMAP.md)
+[![Deploy](https://img.shields.io/badge/deploy-Docker%20%7C%20SaaS-2496ed.svg?logo=docker&logoColor=white)](docs/adr/ADR-003-web-ui-saas-pivot.md)
 
 > **An AI for research should accumulate, not reset.**
 > *Runtime is temporary; identity is eternal.*
 
-Nexus is a **research-first clinical AI workstation** for oncology
+> **面向研究的 AI 应当积累，而非重置。**
+> *运行时可逝；身份永恒。*
+
+Heurion is a **research-first clinical AI workstation** for oncology
 investigators, built on top of a persistent self-evolving agent
-platform anchored on BNB Chain.
+platform.
+
+Heurion 是一个**以研究为先导的临床 AI 工作站**，面向肿瘤研究者，构建在持久化自我进化智能体平台之上。
+
+> **Note:** Internal code packages still use the `nexus` prefix
+> (`nexus_core`, `nexus`, `nexus_server`) for import stability. The
+> public product, domain, and user-facing branding are **Heurion**.
+>
+> **说明：** 内部代码包仍使用 `nexus` 前缀（`nexus_core`、`nexus`、
+> `nexus_server`）以保持导入稳定性。公开产品、域名和用户可见品牌为
+> **Heurion**。
 
 The product is organised around the trials a physician is running, not
 around isolated patient chats:
 
+产品围绕医生正在开展的试验组织，而非孤立的医患对话：
+
 - The app's home is a **Research Workspace** — a list of studies, each
   with its own roster, eligibility inbox, visit schedule, safety stream,
   and a cross-patient Research Chat scoped to that protocol.
+- 应用首页是**研究工作台**——研究列表，每项研究拥有独立的入组名单、受试者筛选收件箱、访视日程、安全性信息流，以及限定于该方案的患者间研究对话。
 - Each patient is reachable as a drill-in *within* a study, with a
   per-patient Patient Chat for individual clinical decisions.
+- 每位患者可在研究中逐层下钻查看，并配有面向个体临床决策的患者对话。
 - Every enrollment, screening verdict, AE confirmation, and protocol
   deviation is an *event* on a per-patient append-only log; nothing is
   ever silently deleted or overwritten.
+- 每次入组、筛选结论、不良事件确认和方案偏离，都是每位患者只追加日志中的*事件*；没有任何内容会被静默删除或覆盖。
 - The agent's memory (Episodes / Facts / Skills / Persona / Knowledge)
   accumulates the physician's heuristics over time, with each edit
   graded by a Verdict Runner and reversible if it regresses.
+- 智能体的记忆（片段 / 事实 / 技能 / 人格 / 知识）会随时间积累医生的启发式经验，每次编辑都由裁决运行器评分，若出现退化则可回滚。
 
 The canonical product spec is
 [`docs/design/RESEARCH_WORKSPACE_DESIGN.md`](docs/design/RESEARCH_WORKSPACE_DESIGN.md);
 the high-fidelity UI mock lives at
 [`docs/design/visual-mock/`](docs/design/visual-mock/).
+The SaaS pivot decision is recorded in
+[`docs/adr/ADR-003-web-ui-saas-pivot.md`](docs/adr/ADR-003-web-ui-saas-pivot.md).
+
+产品规范见 [`docs/design/RESEARCH_WORKSPACE_DESIGN.md`](docs/design/RESEARCH_WORKSPACE_DESIGN.md)；
+高保真 UI 原型见 [`docs/design/visual-mock/`](docs/design/visual-mock/)；
+SaaS 转型决策见 [`docs/adr/ADR-003-web-ui-saas-pivot.md`](docs/adr/ADR-003-web-ui-saas-pivot.md)。
 
 The rest of this README describes the **platform** that powers that
 product — the four-layer architecture and the immortality / auditability
 properties that make it possible.
 
+本文档其余部分介绍支撑该产品的**平台**——四层架构以及使其成为可能的永生 / 可审计特性。
+
 Models will be replaced. The agent isn't.
+
+模型会被替换，智能体不会。
 
 ---
 
@@ -42,7 +79,7 @@ those tokens vanish, the next session starts from zero. A persona that
 "remembers" you is just a system prompt; a "skill" the agent learned is
 just a few lines of context the operator chose to keep.
 
-A Nexus agent is the opposite. It has:
+A Heurion agent is the opposite. It has:
 
 1. **An identity that outlives any single LLM.** Each agent is registered
    on BSC under [ERC-8004](docs/concepts/identity.md). The token id is
@@ -84,7 +121,10 @@ going well.
 
 ```
 ┌─────────────────────────┐
-│  Desktop v2             │   Tauri 2.0 + React + TS
+│  Web UI                 │   React + Vite + Tailwind + i18n
+│   (packages/web)        │   browser-first SaaS; mobile-ready
+├─────────────────────────┤
+│  Desktop v2             │   Tauri 2.0 + React + TS (frozen)
 │   (packages/desktop-v2) │   spawns the server as a sidecar on
 └────────────┬────────────┘   127.0.0.1:8001
              │ HTTP + JWT, SSE for /agent/chat
@@ -98,7 +138,7 @@ going well.
 └────────────┬────────────┘
              │
 ┌────────────▼────────────┐
-│  Nexus framework        │   9-step chat loop (legacy /llm/chat)
+│  Heurion framework      │   9-step chat loop (legacy /llm/chat)
 │   (packages/nexus)      │   ProjectionMemory (DPM)
 │   DigitalTwin           │   EvolutionEngine (4 evolvers +
 │                         │   VerdictRunner)
@@ -119,41 +159,17 @@ going well.
 A second `packages/relay` Python service (Fly.io) handles webhook /
 outbound-email tasks the desktop sidecar can't reliably run.
 
-A user installs the desktop, signs in, and starts chatting. The desktop
-runs two chat flows depending on context:
+A user opens the web app, signs in, and starts chatting. The web UI
+supports both light and dark modes, Chinese and English, and works on
+desktop and mobile.
 
-- **Cross-patient / patient / research** (current default) →
-  `POST /api/v1/agent/chat` returns a Server-Sent Event stream of
-  `turn_started → tier_classified → reasoning_chunk* → final_answer_chunk* →
-  citations → turn_complete`. The server's tier classifier picks the
-  retrieval depth, `retrieval_tiers.retrieve_async` runs cohort / patient
-  retrieval + (optionally) Tavily web search, then the LLM synthesises
-  the final answer while citations are streamed alongside.
-- **Legacy bridge** (used by CLI, integration tests, the legacy Avalonia
-  client) → `POST /api/v1/llm/chat` runs the original 9-step DigitalTwin
-  flow: ABC pre-check → append user message to EventLog → project
-  relevant memory → call LLM with tools → ABC post-check → DriftScore
-  update → append assistant response → background self-evolution.
+### 中文概览
 
-On the first message of a brand-new account, the server lazily creates a
-`DigitalTwin` for that user and (in chain mode) bootstraps on-chain
-identity: mints an ERC-8004 token and sets `activeRuntime` on the
-AgentStateExtension contract to this server's wallet. The SDK persists
-new EventLog rows to its durable local store and, after every
-compaction, anchors the new state root on BSC. Reads are served from
-the local SQLite mirror so chat latency is unaffected.
-
-The "self-evolving" part is real and observable in two places:
-
-- **Brain panel** answers *"is my agent learning, and is what it
-  learned safely on chain?"* — namespace counts + 7-day timeline +
-  data-flow pipeline + just-learned feed + chain-health card, with
-  every item tagged ● local · ● persisted · ● anchored
-  on BSC.
-- **Evolution panel** shows the falsifiable loop: every persona /
-  memory / skill edit recorded as a proposal, then graded as a
-  verdict, and (when something regresses) auto-reverted with full
-  traceability.
+Heurion 采用四层架构：浏览器端 React 界面（`packages/web`，新方向）、
+桌面端 Tauri 客户端（`packages/desktop-v2`，已冻结）、FastAPI 服务端
+（`packages/server`）、Heurion 框架层（`packages/nexus`）以及底层 SDK
+（`packages/sdk`）。所有临床工作流、记忆、进化与链上锚定都通过这一
+栈实现。Web UI 支持明暗主题、中英文切换，并适配移动端。
 
 ---
 
@@ -203,7 +219,7 @@ edit.
 
 The empirical lesson from the AHE paper is that *predicted* regressions
 are essentially noise — agents are bad at forecasting which task kinds
-their own edits will break. So Nexus only ever rolls back on
+their own edits will break. So Heurion only ever rolls back on
 **observed** regressions, never predicted ones. The contract is:
 
 ```
@@ -258,7 +274,8 @@ that pin the canonical encoding live in
 | `nexus_core` (SDK) | BSC web3, append-only logs, contract spec parsing, LLM provider abstraction | agents, users, HTTP, JWT |
 | `nexus` (framework) | DigitalTwin lifecycle, 9-step chat flow, evolution scheduling, projection mode | HTTP, JWT, multi-tenancy |
 | `nexus_server` | FastAPI routes, username + password (bcrypt) + JWT auth, one twin per user, view-shape APIs | how chat works inside a turn (delegated to `twin.chat()`) |
-| `RuneDesktop.*` | Avalonia views, view models, JWT lifetime | persistence (server is the source of truth) |
+| `packages/web` | React views, i18n, dark mode, responsive layout | persistence (server is the source of truth) |
+| `packages/desktop-v2` | Tauri views, view models, JWT lifetime | persistence (server is the source of truth) |
 
 Imports flow strictly downward — SDK never imports framework, framework
 never imports server, etc. This is the single most important property
@@ -274,13 +291,15 @@ packages/
   sdk/         nexus_core/         Infrastructure primitives (no agent concept)
   nexus/       nexus/              DigitalTwin + 4 evolvers + VerdictRunner
   server/      nexus_server/       FastAPI multi-tenant frontend + clinical stack
-  desktop-v2/  src/ + src-tauri/   Tauri 2.0 + React + TS thin client
+  web/         src/                Browser-first React SaaS UI
+  desktop-v2/  src/ + src-tauri/   Tauri 2.0 + React + TS thin client (frozen)
   relay/       main.py             Stand-alone Python service (webhooks, email)
 
 docs/
   BEP-nexus.md                     The chain-anchor protocol spec
   concepts/                        DPM, ABC, identity, modes, data-flow
   design/                          Falsifiable evolution, recursive projection
+  adr/                             Architecture decision records
   how-to/                          Add a tool, add a contract rule
 
 ARCHITECTURE.md                    How the layers fit together
@@ -296,7 +315,20 @@ reached parity.
 
 ## Quickstart
 
-**End user**: download the latest `.dmg` from Releases, drag `Nexus.app`
+### Web UI (SaaS / self-hosted)
+
+```bash
+cd packages/web
+pnpm install
+pnpm build        # produces dist/ served by the backend
+```
+
+The FastAPI server serves the built static files at `/`. For a full
+self-hosted deployment, see [`scripts/deploy_setup.sh`](scripts/deploy_setup.sh).
+
+### Desktop v2 (frozen, macOS)
+
+**End user**: download the latest `.dmg` from Releases, drag `Heurion.app`
 to `/Applications`, launch. That's it — the installer ships with all
 Python deps, the Tauri shell, default LLM keys, and the schema-migration
 runner. First launch creates the database; subsequent launches apply
@@ -337,7 +369,7 @@ current snapshot.)
 ## Where to read next
 
 | You want to… | Read this |
-|---|---|
+|---|---|---|
 | Understand the system end-to-end | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | See exactly what happens when a user sends a message | [`docs/concepts/data-flow.md`](docs/concepts/data-flow.md) |
 | Understand the memory model | [`docs/concepts/dpm.md`](docs/concepts/dpm.md) |
@@ -347,7 +379,10 @@ current snapshot.)
 | Read the on-chain protocol spec | [`docs/BEP-nexus.md`](docs/BEP-nexus.md) |
 | Read the falsifiable-evolution design | [`docs/design/nexus-architecture.md`](docs/design/nexus-architecture.md) |
 | Read the RLM-based projection design | [`docs/design/nexus-architecture.md`](docs/design/nexus-architecture.md) |
-| Build & run everything locally | `cd packages/desktop-v2 && ./scripts/build-macos.sh` (or `./scripts/dev-loop.sh` for hot-reload) |
+| Read the Web UI / SaaS pivot decision | [`docs/adr/ADR-003-web-ui-saas-pivot.md`](docs/adr/ADR-003-web-ui-saas-pivot.md) |
+| Read the Web UI redesign proposal | [`docs/design/web-ui-redesign.md`](docs/design/web-ui-redesign.md) |
+| Build & run the web UI locally | `cd packages/web && pnpm dev` |
+| Build & run the desktop on macOS | `cd packages/desktop-v2 && ./scripts/build-macos.sh` (or `./scripts/dev-loop.sh` for hot-reload) |
 | Add a new tool the agent can call | [`docs/how-to/add-a-tool.md`](docs/how-to/add-a-tool.md) |
 | Add a new behaviour rule | [`docs/how-to/add-a-contract-rule.md`](docs/how-to/add-a-contract-rule.md) |
 
@@ -359,7 +394,16 @@ Test phase. APIs and on-chain schemas may still break; contracts are on
 BSC testnet only. The core loop — chat, evolution, verdicts, rollback,
 chain anchoring — is implemented end-to-end and covered by a thorough
 test suite across SDK / framework / server (see CI for the live count).
-See [`ROADMAP.md`](ROADMAP.md) for what's next.
+The web UI is under active development as the new primary client; the
+desktop-v2 Tauri client is frozen. See [`ROADMAP.md`](ROADMAP.md) for
+what's next.
+
+### 状态
+
+测试阶段。API 和链上模式仍可能变动；合约目前仅在 BSC 测试网。核心
+循环——对话、进化、裁决、回滚、链上锚定——已实现端到端，并通过 SDK /
+框架 / 服务端全面测试覆盖。Web UI 正在积极开发为新主客户端；
+desktop-v2 Tauri 客户端已冻结。后续计划见 [`ROADMAP.md`](ROADMAP.md)。
 
 ---
 
@@ -372,7 +416,7 @@ See [`ROADMAP.md`](ROADMAP.md) for what's next.
 - RFC 8785: JSON Canonicalization Scheme
 
 > The arXiv IDs above are the design references the implementation is
-> based on. Where Nexus deviates from a paper (e.g. the AHE
+> based on. Where Heurion deviates from a paper (e.g. the AHE
 > "predictions are noise" finding driving our never-revert-on-prediction
 > rule), the deviation is documented in the matching design doc under
 > `docs/design/`.

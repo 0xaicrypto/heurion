@@ -21,7 +21,7 @@ EXAMPLE_FILE=".env.production.example"
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"
-echo "  Nexus server deploy bootstrap"
+echo "  Heurion server deploy bootstrap"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 

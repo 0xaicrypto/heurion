@@ -52,6 +52,44 @@ env:
   IMAGE_NAME: nexus-server
 
 jobs:
+  # ── 0. Build the browser UI so the Docker image can bake it in ─────
+  web-build:
+    name: Build web UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: '9'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: packages/web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint + type check + build
+        run: |
+          pnpm lint
+          pnpm exec tsc --noEmit
+          pnpm build
+
+      - name: Upload web dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: packages/web/dist
+          retention-days: 1
+
   # ── 1. Smoke import + packaging regressions ───────────────────────
   smoke:
     name: Smoke (import + package-data)
@@ -107,6 +145,7 @@ jobs:
   # ── 3. Docker build → run → /healthz probe + in-container smoke ────
   docker-build:
     name: Docker build + healthz
+    needs: [web-build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -135,6 +174,12 @@ jobs:
       # Compute tags. PR builds get tagged but not pushed (push step
       # is conditional on main). The short SHA gives an immutable tag
       # for rollback; `latest` follows main.
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: packages/web/dist
+
       - name: Compute image tags
         id: image
         run: |
@@ -230,6 +275,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: packages/web/dist
+
       - name: Compute image tags
         id: image
         run: |
@@ -264,7 +315,7 @@ jobs:
       # be added on the GitHub side later if we want manual approval
       # before each deploy lands.
       name: production
-      url: https://nexus.globalnexus.uk/healthz
+      url: https://heurion.org/healthz
     steps:
       - name: Configure SSH
         uses: webfactory/ssh-agent@v0.9.0

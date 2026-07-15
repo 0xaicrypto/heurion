@@ -1,0 +1,71 @@
+# Web UI CI — ensures code quality for packages/web on every change.
+#
+# Runs on PRs and pushes to main. Verifies:
+#   - pnpm install succeeds
+#   - TypeScript compiles
+#   - ESLint passes
+#   - Production build succeeds
+#
+# This workflow does NOT deploy; deployment of the web bundle is handled
+# by the server deploy pipeline, which bakes packages/web/dist into the
+# Docker image.
+
+name: Web UI CI
+
+on:
+  pull_request:
+    paths:
+      - 'packages/web/**'
+      - '.github/workflows/web-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/web/**'
+      - '.github/workflows/web-ci.yml'
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9'
+
+jobs:
+  build-and-lint:
+    name: Build + lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: packages/web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm exec tsc --noEmit
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+      - name: Upload build artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: packages/web/dist
+          retention-days: 1

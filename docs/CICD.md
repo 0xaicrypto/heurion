@@ -11,15 +11,23 @@ git push origin main
 
 `.github/workflows/deploy-server.yml` runs:
 
-1. **smoke** — Python imports + ABI-in-wheel + create_app() + 6 more checks
-2. **pytest** — server + SDK tests
-3. **docker-build** — builds the image, boots it, polls `/healthz`,
-   re-runs the smoke script INSIDE the image
-4. **publish** — pushes `ghcr.io/<owner>/nexus-server:sha-<short>` and
+1. **web-build** — installs `packages/web` deps, runs lint + TypeScript
+   check + production build, uploads `dist/` as an artifact
+2. **smoke** — Python imports + ABI-in-wheel + create_app() + 6 more checks
+3. **pytest** — server + SDK tests
+4. **docker-build** — downloads the web `dist/` artifact, builds the
+   image, boots it, polls `/healthz`, re-runs the smoke script INSIDE
+   the image
+5. **publish** — pushes `ghcr.io/<owner>/nexus-server:sha-<short>` and
    `:latest` to GHCR (only on main)
-5. **deploy** — SSH to the VPS, runs `scripts/deploy/vps_deploy.sh`,
+6. **deploy** — SSH to the VPS, runs `scripts/deploy/vps_deploy.sh`,
    which pulls the new image, recreates the container, polls
    `/healthz`, and rolls back to the previous image on failure
+
+There is also `.github/workflows/web-ci.yml`, which runs on every PR and
+push that touches `packages/web/**`. It performs the same lint + type
+check + build steps so regressions in the browser UI are caught before
+they reach main.
 
 Total: ~5 minutes warm cache, ~20 minutes cold cache (first build of
 the day or after a Dockerfile change).
@@ -110,7 +118,7 @@ git push   # CI runs, deploy auto-triggers if main passes
 
 GitHub Actions UI shows the run in the **Actions** tab. The deploy
 job is gated to the **production** environment, so it shows up in the
-deployments list with a permalink to `https://nexus.globalnexus.uk/healthz`.
+deployments list with a permalink to `https://heurion.org/healthz`.
 
 ### Re-running a deploy without a new commit
 
@@ -213,7 +221,7 @@ expectations (e.g. a new required env var was added in code).
   Actions notifications config. Today the only signal is "the Actions
   tab has a red X".
 - **Smoke tests against the deployed instance** — extend `vps_deploy.sh`
-  to hit `https://nexus.globalnexus.uk/healthz` AND a couple of
+  to hit `https://heurion.org/healthz` AND a couple of
   authenticated endpoints with a CI bot account before declaring
   success. Catches issues that only surface behind Caddy or with TLS.
 - **Image signing** — sign images with cosign + verify on pull, so a

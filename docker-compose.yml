@@ -1,4 +1,4 @@
-# Nexus server — production deployment via docker compose.
+# Heurion server — production deployment via docker compose.
 #
 # Two services:
 #   1. nexus-server — the FastAPI app. Persistent state on /data volume.
@@ -42,6 +42,11 @@ services:
       # installs new skills + MCP servers here at chat time, so
       # losing this volume = losing all learned tools.
       - nexus-data:/data
+      # Web UI dist is built outside Docker (locally or in CI) and
+      # mounted here so the 1 GB droplet does not OOM building Node
+      # inside the image. Update packages/web/dist and restart the
+      # container to deploy front-end changes.
+      - ./packages/web/dist:/app/packages/web/dist:ro
     networks:
       - nexus-net
     # No `ports:` here — Caddy is the only thing the host exposes.

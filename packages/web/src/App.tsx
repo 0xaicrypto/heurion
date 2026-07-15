@@ -4,6 +4,13 @@ import { api } from '@/lib/api-client';
 import { ChatPage } from '@/routes/chat';
 import { LandingPage } from '@/routes/landing';
 import { LoginPage } from '@/routes/login';
+import { TodayPage } from '@/routes/today';
+import { PatientsLayout, PatientSummaryPage, PatientChatPage } from '@/routes/patients';
+import { SettingsPage } from '@/routes/settings';
+import { AdminUsersPage } from '@/routes/admin/users';
+import { ResearchPage } from '@/routes/research';
+import { WritingPage } from '@/routes/writing';
+import { SkillsPage } from '@/routes/skills';
 import { useAuthStore } from '@/stores/auth';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -43,7 +50,15 @@ export default function App() {
           path="/app"
           element={
             <RequireAuth>
-              <Navigate to="/app/chat" replace />
+              <Navigate to="/app/today" replace />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/app/today"
+          element={
+            <RequireAuth>
+              <TodayPage />
             </RequireAuth>
           }
         />
@@ -52,6 +67,58 @@ export default function App() {
           element={
             <RequireAuth>
               <ChatPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/app/patients"
+          element={
+            <RequireAuth>
+              <PatientsLayout />
+            </RequireAuth>
+          }
+        >
+          <Route index element={<PatientSummaryPage />} />
+          <Route path=":hash" element={<PatientSummaryPage />} />
+          <Route path=":hash/chat" element={<PatientChatPage />} />
+        </Route>
+        <Route
+          path="/app/research"
+          element={
+            <RequireAuth>
+              <ResearchPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/app/writing"
+          element={
+            <RequireAuth>
+              <WritingPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/app/skills"
+          element={
+            <RequireAuth>
+              <SkillsPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/app/settings"
+          element={
+            <RequireAuth>
+              <SettingsPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/app/admin/users"
+          element={
+            <RequireAuth>
+              <AdminUsersPage />
             </RequireAuth>
           }
         />

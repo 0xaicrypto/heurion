@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/auth';
+import { Button, Input } from '@/components/ui';
 
 export function LoginPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const isRegister = searchParams.get('mode') === 'register';
@@ -16,7 +19,7 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated) navigate('/app/chat', { replace: true });
+    if (isAuthenticated) navigate('/app/today', { replace: true });
   }, [isAuthenticated, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -28,11 +31,11 @@ export function LoginPage() {
         ? await api.register({ username, password, displayName })
         : await api.login(username, password);
       setSession(session);
-      navigate('/app/chat', { replace: true });
+      navigate('/app/today', { replace: true });
     } catch (err) {
       if (err instanceof ApiError) setError(err.messageText);
       else if (err instanceof Error) setError(err.message);
-      else setError('Unexpected error');
+      else setError(t('auth.unexpectedError'));
     } finally {
       setLoading(false);
     }
@@ -44,75 +47,56 @@ export function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-md space-y-6 rounded-2xl bg-white p-8 shadow-lg">
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="w-full max-w-md space-y-6 rounded-2xl border border-border bg-surface-elevated p-8 shadow-lg">
         <div className="text-center">
-          <h1 className="text-2xl font-bold">{isRegister ? 'Create account' : 'Welcome back'}</h1>
-          <p className="mt-2 text-sm text-slate-500">
-            {isRegister ? 'Sign up to start using Nexus' : 'Sign in to your Nexus account'}
+          <h1 className="text-2xl font-bold text-text-primary">
+            {isRegister ? t('auth.createAccount') : t('auth.welcomeBack')}
+          </h1>
+          <p className="mt-2 text-sm text-text-secondary">
+            {isRegister ? t('auth.signUpPrompt') : t('auth.signInPrompt')}
           </p>
         </div>
 
         {error && (
-          <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+          <div className="rounded-lg bg-error/10 px-4 py-3 text-sm text-error">{error}</div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {isRegister && (
             <div>
-              <label className="block text-sm font-medium text-slate-700">Display name</label>
-              <input
+              <label className="block text-sm font-medium text-text-secondary">{t('auth.displayName')}</label>
+              <Input
                 type="text"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-nexus-500 focus:outline-none focus:ring-1 focus:ring-nexus-500"
-                placeholder="Optional"
+                placeholder={t('auth.displayNamePlaceholder')}
               />
             </div>
           )}
           <div>
-            <label className="block text-sm font-medium text-slate-700">Username</label>
-            <input
-              type="text"
-              required
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-nexus-500 focus:outline-none focus:ring-1 focus:ring-nexus-500"
-            />
+            <label className="block text-sm font-medium text-text-secondary">{t('auth.username')}</label>
+            <Input type="text" required value={username} onChange={(e) => setUsername(e.target.value)} />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700">Password</label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-nexus-500 focus:outline-none focus:ring-1 focus:ring-nexus-500"
-            />
+            <label className="block text-sm font-medium text-text-secondary">{t('auth.password')}</label>
+            <Input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-lg bg-nexus-600 px-4 py-2 font-semibold text-white hover:bg-nexus-700 disabled:opacity-50"
-          >
-            {loading ? 'Please wait…' : isRegister ? 'Sign up' : 'Sign in'}
-          </button>
+          <Button type="submit" isLoading={loading} className="w-full">
+            {isRegister ? t('common.register') : t('common.login')}
+          </Button>
         </form>
 
-        <p className="text-center text-sm text-slate-500">
-          {isRegister ? 'Already have an account?' : "Don't have an account?"}{' '}
-          <button
-            type="button"
-            onClick={toggleMode}
-            className="font-medium text-nexus-600 hover:underline"
-          >
-            {isRegister ? 'Sign in' : 'Sign up'}
+        <p className="text-center text-sm text-text-secondary">
+          {isRegister ? t('auth.alreadyHaveAccount') : t('auth.noAccount')}{' '}
+          <button type="button" onClick={toggleMode} className="font-medium text-accent hover:underline">
+            {isRegister ? t('common.login') : t('common.register')}
           </button>
         </p>
 
         <p className="text-center text-sm">
-          <Link to="/" className="text-slate-400 hover:text-slate-600">
-            ← Back to home
+          <Link to="/" className="text-text-tertiary hover:text-text-secondary">
+            ← {t('common.back')}
           </Link>
         </p>
       </div>

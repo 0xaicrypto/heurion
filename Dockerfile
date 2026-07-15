@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 #
-# Nexus server — single-image deploy (Python + Node).
+# Heurion server — single-image deploy (Python + Node).
 #
 # Two stages:
 #   1. builder  — installs Python deps via uv into a venv. Pre-cached
