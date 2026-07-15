@@ -123,6 +123,7 @@ ENV NEXUS_TWIN_BASE_DIR=/data/twins \
     UPLOAD_DIR=/data/uploads \
     NEXUS_CACHE_DIR=/data/cache \
     DATABASE_URL=sqlite:////data/db/nexus_server.db \
+    NEXUS_WEB_DIST=/app/packages/web/dist \
     SERVER_HOST=0.0.0.0 \
     SERVER_PORT=8001
 
