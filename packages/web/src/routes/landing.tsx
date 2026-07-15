@@ -63,7 +63,7 @@ export function LandingPage() {
                 </Button>
               </Link>
               <a
-                href="https://github.com/0xaicrypto/nexus"
+                href="https://github.com/0xaicrypto/heurion"
                 target="_blank"
                 rel="noreferrer"
               >
