@@ -1,23 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, Outlet, useParams } from 'react-router-dom';
 import { Plus, Search, User } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { Button, Input, Card, Badge } from '@/components/ui';
+import { Alert, Button, Input, Card, Badge, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
-
-interface Patient {
-  hash: string;
-  name: string;
-  age?: number;
-  gender?: string;
-  lastVisit?: string;
-}
-
-const demoPatients: Patient[] = [
-  { hash: 'p1', name: '张三', age: 58, gender: '男', lastVisit: '2026-07-10' },
-  { hash: 'p2', name: '李四', age: 42, gender: '女', lastVisit: '2026-07-08' },
-];
+import { api, ApiError } from '@/lib/api-client';
+import type { Patient } from '@/lib/types';
 
 function PatientList({
   patients,
@@ -29,7 +18,7 @@ function PatientList({
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
 
-  const filtered = patients.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
+  const filtered = patients.filter((p) => (p.initials || p.patient_hash).toLowerCase().includes(query.toLowerCase()));
 
   return (
     <div className="flex h-full w-64 flex-col border-r border-border bg-surface">
@@ -52,12 +41,12 @@ function PatientList({
       </div>
       <ul className="flex-1 overflow-y-auto px-3">
         {filtered.map((p) => (
-          <li key={p.hash}>
+          <li key={p.patient_hash}>
             <NavLink
-              to={`/app/patients/${p.hash}`}
+              to={`/app/patients/${p.patient_hash}`}
               className={cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2 transition-colors',
-                selectedHash === p.hash
+                selectedHash === p.patient_hash
                   ? 'bg-accent/10 text-accent'
                   : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary',
               )}
@@ -66,9 +55,11 @@ function PatientList({
                 <User size={14} />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{p.name}</p>
+                <p className="truncate text-sm font-medium">{p.initials || p.patient_hash.slice(0, 8)}</p>
                 <p className="text-xs text-text-tertiary">
-                  {p.age}岁 · {p.gender}
+                  {p.age_value != null ? t('common.yearsOld', { age: p.age_value }) : null}
+                  {p.age_value != null && p.sex ? ' / ' : ''}
+                  {p.sex || ''}
                 </p>
               </div>
             </NavLink>
@@ -82,12 +73,12 @@ function PatientList({
 function PatientTabs({ hash }: { hash?: string }) {
   const { t } = useTranslation();
   const tabs = [
-    { to: `/app/patients/${hash}`, label: t('patient.summary') },
-    { to: `/app/patients/${hash}/chat`, label: t('patient.chat') },
-    { to: '#', label: t('patient.imaging') },
-    { to: '#', label: t('patient.labs') },
-    { to: '#', label: t('patient.memory') },
-    { to: '#', label: t('patient.report') },
+    { to: `/app/patients/${hash}`, label: t('patient.summary'), disabled: false },
+    { to: `/app/patients/${hash}/chat`, label: t('patient.chat'), disabled: false },
+    { to: '#', label: t('patient.imaging'), disabled: true },
+    { to: '#', label: t('patient.labs'), disabled: true },
+    { to: '#', label: t('patient.memory'), disabled: true },
+    { to: '#', label: t('patient.report'), disabled: true },
   ];
 
   return (
@@ -96,13 +87,16 @@ function PatientTabs({ hash }: { hash?: string }) {
         <NavLink
           key={tab.label}
           to={tab.to}
+          aria-disabled={tab.disabled}
           end={tab.to === `/app/patients/${hash}`}
           className={({ isActive }) =>
             cn(
               'border-b-2 px-3 py-3 text-sm font-medium transition-colors',
               isActive
                 ? 'border-accent text-accent'
-                : 'border-transparent text-text-secondary hover:text-text-primary',
+                : tab.disabled
+                  ? 'border-transparent text-text-tertiary cursor-default'
+                  : 'border-transparent text-text-secondary hover:text-text-primary',
             )
           }
         >
@@ -115,12 +109,36 @@ function PatientTabs({ hash }: { hash?: string }) {
 
 export function PatientsLayout() {
   const { hash } = useParams<{ hash?: string }>();
+  const { t } = useTranslation();
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.listPatients()
+      .then(setPatients)
+      .catch((err) => setError(err instanceof ApiError ? err.messageText : t('patient.loadPatientsError')))
+      .finally(() => setLoading(false));
+  }, [t]);
 
   return (
     <AppShell>
       <div className="flex h-full">
-        <PatientList patients={demoPatients} selectedHash={hash} />
+        {loading ? (
+          <div className="flex h-full w-64 flex-col border-r border-border bg-surface p-3 gap-3">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : (
+          <PatientList patients={patients} selectedHash={hash} />
+        )}
         <div className="flex min-w-0 flex-1 flex-col">
+          {error && (
+            <div className="p-3">
+              <Alert variant="error">{error}</Alert>
+            </div>
+          )}
           <Outlet />
         </div>
       </div>
@@ -144,26 +162,28 @@ export function PatientSummaryPage() {
     );
   }
 
-  const patient = demoPatients.find((p) => p.hash === hash);
-
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       <div className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
         <div className="flex items-center gap-3">
-          <h1 className="font-semibold text-text-primary">{patient?.name || hash}</h1>
-          <Badge>{patient?.age}岁 · {patient?.gender}</Badge>
+          <h1 className="font-semibold text-text-primary">{hash}</h1>
+          <Badge>
+            {t('common.yearsOld', { age: '?' })} / {'?'}
+          </Badge>
         </div>
         <Button size="sm">{t('patient.chat')}</Button>
       </div>
       <PatientTabs hash={hash} />
       <main className="space-y-6 p-6">
         <Card className="p-6">
-          <h3 className="mb-2 font-semibold text-text-primary">临床摘要</h3>
-          <p className="text-sm text-text-secondary">暂无结构化摘要。开始问诊以提取信息。</p>
+          <h3 className="mb-2 font-semibold text-text-primary">{t('patient.clinicalSummary')}</h3>
+          <p className="text-sm text-text-secondary">{t('patient.noStructuredSummary')}</p>
         </Card>
         <Card className="p-6">
-          <h3 className="mb-2 font-semibold text-text-primary">最近活动</h3>
-          <p className="text-sm text-text-secondary">上次访问：{patient?.lastVisit || '—'}</p>
+          <h3 className="mb-2 font-semibold text-text-primary">{t('patient.recentActivity')}</h3>
+          <p className="text-sm text-text-secondary">
+            {t('patient.lastVisit')}: {t('patient.unavailable')}
+          </p>
         </Card>
       </main>
     </div>

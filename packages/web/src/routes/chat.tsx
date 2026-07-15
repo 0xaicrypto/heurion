@@ -5,7 +5,7 @@ import { api, ApiError } from '@/lib/api-client';
 import type { ChatStreamChunk, LlmStatus } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
 import { AppShell } from '@/components/layout/AppShell';
-import { Button, Textarea } from '@/components/ui';
+import { Alert, Button, Textarea } from '@/components/ui';
 
 interface Message {
   id: string;
@@ -42,7 +42,12 @@ export function ChatPage() {
   }, [isAuthenticated, navigate, clearSession, t]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = bottomRef.current;
+    if (!el) return;
+    const parent = el.parentElement;
+    if (!parent) return;
+    const isNearBottom = parent.scrollHeight - parent.scrollTop - parent.clientHeight < 150;
+    if (isNearBottom) el.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   const handleSend = async () => {
@@ -107,7 +112,7 @@ export function ChatPage() {
       <div className="flex h-full flex-col">
         <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
           <div className="flex items-center gap-3">
-            <h1 className="font-semibold text-text-primary">{t('nav.today')}</h1>
+            <h1 className="font-semibold text-text-primary">{t('chat.title')}</h1>
             {llmStatus && (
               <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary border border-border">
                 {llmStatus.provider}/{llmStatus.model}
@@ -136,7 +141,7 @@ export function ChatPage() {
                       : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
                   }`}
                 >
-                  {m.text || (m.isStreaming ? <span className="animate-pulse">●</span> : null)}
+                  {m.text || (m.isStreaming ? <span className="animate-pulse" role="status" aria-label={t('chat.streaming')}>●</span> : null)}
                 </div>
               </div>
             ))}
@@ -146,7 +151,7 @@ export function ChatPage() {
 
         {error && (
           <div className="mx-auto w-full max-w-3xl px-4 pb-2">
-            <div className="rounded-lg bg-error/10 px-4 py-2 text-sm text-error">{error}</div>
+            <Alert variant="error">{error}</Alert>
           </div>
         )}
 

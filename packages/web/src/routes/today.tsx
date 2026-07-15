@@ -8,6 +8,10 @@ export function TodayPage() {
   const { t } = useTranslation();
   const { displayName } = useAuthStore();
 
+  const hour = new Date().getHours();
+  const timeGreeting = hour < 12 ? t('today.morning') : hour < 18 ? t('today.afternoon') : t('today.evening');
+  const greeting = t('today.greeting', { time: timeGreeting, name: displayName || '' });
+
   return (
     <AppShell>
       <div className="flex h-full flex-col overflow-y-auto">
@@ -17,10 +21,8 @@ export function TodayPage() {
 
         <main className="space-y-6 p-6">
           <div>
-            <h2 className="text-2xl font-bold text-text-primary">
-              {t('today.greeting', { name: displayName || t('common.login') })}
-            </h2>
-            <p className="text-text-secondary">{t('chat.contextHint')}</p>
+            <h2 className="text-2xl font-bold text-text-primary">{greeting}</h2>
+            <p className="text-text-secondary">{t('today.subtitle')}</p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

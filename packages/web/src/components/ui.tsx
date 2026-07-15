@@ -135,8 +135,24 @@ export function Avatar({ name, className }: { name: string; className?: string }
         'flex h-8 w-8 items-center justify-center rounded-full bg-accent/10 text-xs font-medium text-accent',
         className,
       )}
+      role="img"
+      aria-label={name}
     >
       {initials || '?'}
     </div>
   );
+}
+
+export function Alert({ className, variant = 'error', children }: { className?: string; variant?: 'error' | 'warning' | 'success'; children: React.ReactNode }) {
+  return (
+    <div className={cn('rounded-lg px-4 py-3 text-sm', {
+      'bg-error/10 text-error': variant === 'error',
+      'bg-warning/10 text-warning': variant === 'warning',
+      'bg-success/10 text-success': variant === 'success',
+    }, className)}>{children}</div>
+  );
+}
+
+export function Skeleton({ className }: { className?: string }) {
+  return <div className={cn('animate-pulse rounded bg-surface', className)} />;
 }

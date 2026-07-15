@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/auth';
-import { Button, Input } from '@/components/ui';
+import { Alert, Button, Input } from '@/components/ui';
 
 export function LoginPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const isRegister = searchParams.get('mode') === 'register';
+
+  const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/app/today';
 
   const { isAuthenticated, setSession } = useAuthStore();
   const [username, setUsername] = useState('');
@@ -19,8 +22,8 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated) navigate('/app/today', { replace: true });
-  }, [isAuthenticated, navigate]);
+    if (isAuthenticated) navigate(from, { replace: true });
+  }, [isAuthenticated, navigate, from]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,7 +34,7 @@ export function LoginPage() {
         ? await api.register({ username, password, displayName })
         : await api.login(username, password);
       setSession(session);
-      navigate('/app/today', { replace: true });
+      navigate(from, { replace: true });
     } catch (err) {
       if (err instanceof ApiError) setError(err.messageText);
       else if (err instanceof Error) setError(err.message);
@@ -58,9 +61,7 @@ export function LoginPage() {
           </p>
         </div>
 
-        {error && (
-          <div className="rounded-lg bg-error/10 px-4 py-3 text-sm text-error">{error}</div>
-        )}
+        {error && <Alert variant="error">{error}</Alert>}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {isRegister && (

@@ -46,7 +46,7 @@ export function LandingPage() {
           <div className="mx-auto max-w-3xl text-center">
             <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-3 py-1 text-xs font-medium text-text-secondary">
               <span className="h-2 w-2 rounded-full bg-success" />
-              {isZh ? 'Clinical AI Twin v0.1' : 'Clinical AI Twin v0.1'}
+              {t('landing.versionBadge')}
             </div>
             <h1 className="text-4xl font-extrabold tracking-tight text-text-primary sm:text-6xl">
               {t('landing.heroTitle')}
@@ -118,11 +118,7 @@ export function LandingPage() {
           <div className="flex flex-col items-center gap-8 md:flex-row md:justify-between">
             <div>
               <h2 className="text-2xl font-bold text-text-primary">{t('landing.trustTitle')}</h2>
-              <p className="mt-2 text-text-secondary">
-                {isZh
-                  ? '安全、可解释、可审计——为医疗场景设计的 AI 基础设施。'
-                  : 'Secure, explainable, and auditable AI infrastructure for healthcare.'}
-              </p>
+              <p className="mt-2 text-text-secondary">{t('landing.trustDescription')}</p>
             </div>
             <ul className="space-y-3">
               <TrustItem text={t('landing.trust1')} />

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   LayoutDashboard,
+  MessageSquare,
   Users,
   FlaskConical,
   FileText,
@@ -30,6 +31,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: '/app/today', labelKey: 'nav.today', icon: <LayoutDashboard size={18} /> },
+  { to: '/app/chat', labelKey: 'nav.chat', icon: <MessageSquare size={18} /> },
   { to: '/app/patients', labelKey: 'nav.patients', icon: <Users size={18} /> },
   { to: '/app/research', labelKey: 'nav.research', icon: <FlaskConical size={18} /> },
   { to: '/app/writing', labelKey: 'nav.writing', icon: <FileText size={18} /> },
@@ -168,14 +170,14 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
         )}
       >
-        <div className="flex h-14 items-center gap-2 border-b border-border px-4">
+        <header className="flex h-14 items-center gap-2 border-b border-border px-4">
           <div className="h-6 w-6 rounded-md bg-accent" />
           <Link to="/app/today" className="text-lg font-bold text-text-primary">
             {t('appName')}
           </Link>
-        </div>
+        </header>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-3">
+        <nav aria-label="Main navigation" className="flex-1 overflow-y-auto px-3 py-3">
           <ul className="space-y-1">
             {visibleItems.map((item) => (
               <li key={item.to}>

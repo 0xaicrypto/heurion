@@ -5,7 +5,7 @@
  * Expand as more desktop-v2 features migrate to packages/web.
  */
 
-import type { AuthSession, ChatStreamChunk, LlmStatus, LlmTestResult, PublicConfig } from './types';
+import type { AuthSession, ChatStreamChunk, LlmStatus, LlmTestResult, LlmUpdateInput, LlmUpdateResult, Patient, PatientDetail, PublicConfig, UserProfile } from './types';
 
 export const CLIENT_API_VERSION = 1;
 
@@ -208,6 +208,36 @@ class ApiClient {
 
   async testLlm(): Promise<LlmTestResult> {
     return this.fetch<LlmTestResult>('/api/v1/settings/llm/test', { method: 'POST' });
+  }
+
+  async updateLlmSettings(input: LlmUpdateInput): Promise<LlmUpdateResult> {
+    return this.fetch<LlmUpdateResult>('/api/v1/settings/llm', {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    });
+  }
+
+  /* ────────────────────────── user profile ────────────────────────── */
+
+  async getUserProfile(): Promise<UserProfile> {
+    return this.fetch<UserProfile>('/api/v1/user/profile');
+  }
+
+  async updateUserProfile(data: Partial<Pick<UserProfile, 'display_name' | 'organization' | 'intended_use'>>): Promise<UserProfile> {
+    return this.fetch<UserProfile>('/api/v1/user/profile', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  /* ────────────────────────── patients ────────────────────────── */
+
+  async listPatients(): Promise<Patient[]> {
+    return this.fetch<Patient[]>('/api/v1/dicom/patients/full');
+  }
+
+  async getPatientDetail(hash: string): Promise<PatientDetail> {
+    return this.fetch<PatientDetail>(`/api/v1/dicom/patients/${hash}/detail`);
   }
 
   /* ────────────────────────── chat (SSE) ────────────────────────── */

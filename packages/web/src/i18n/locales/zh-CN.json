@@ -6,7 +6,7 @@
     "navGetStarted": "免费开始",
     "heroTitle": "为临床工作者打造的",
     "heroHighlight": "自我进化数字分身",
-    "heroSubtitle": "Nexus 从每次问诊中学习，记住关键信息，并在您的授权下采取行动——云端部署，任何设备皆可访问。",
+    "heroSubtitle": "Heurion 从每次问诊中学习，记住关键信息，并在您的授权下采取行动——云端部署，任何设备皆可访问。",
     "heroCtaPrimary": "免费开始使用",
     "heroCtaSecondary": "在 GitHub 上查看",
     "feature1Title": "患者为中心的工作流",
@@ -18,18 +18,21 @@
     "feature4Title": "自托管友好",
     "feature4Desc": "数据完全由您掌控。支持私有部署，也提供云端 SaaS 版本。",
     "trustTitle": "值得信赖的临床 AI 基础设施",
+    "trustDescription": "安全、可解释、可审计——为医疗场景设计的 AI 基础设施。",
     "trust1": "数据隐私优先设计",
     "trust2": "可审计的推理与引用",
     "trust3": "符合医疗场景的角色权限控制",
     "ctaTitle": "准备好提升您的临床效率？",
     "ctaSubtitle": "立即注册，体验新一代临床智能助手。",
     "ctaButton": "立即开始",
-    "footer": "© {{year}} Nexus. 保留所有权利。"
+    "versionBadge": "Clinical AI Twin v0.1",
+    "footer": "© {{year}} Heurion. 保留所有权利。"
   },
   "common": {
     "ok": "确定",
     "cancel": "取消",
     "save": "保存",
+    "saved": "已保存",
     "delete": "删除",
     "edit": "编辑",
     "close": "关闭",
@@ -46,11 +49,23 @@
     "login": "登录",
     "register": "注册",
     "theme": "主题",
-    "language": "语言"
+    "language": "语言",
+    "comingSoon": "即将推出",
+    "optional": "可选",
+    "error": "错误",
+    "errorBoundary": "出现错误",
+    "errorBoundaryHint": "请刷新页面重试",
+    "yearsOld": "{{age}}岁",
+    "noKey": "未配置密钥",
+    "keySourceLabel": "密钥来源：{{source}}",
+    "testConnection": "测试连接",
+    "connectionOk": "连接正常",
+    "connectionFailed": "连接失败"
   },
   "nav": {
     "today": "今日",
     "patients": "患者",
+    "chat": "对话",
     "research": "研究",
     "writing": "写作",
     "skills": "技能",
@@ -60,8 +75,8 @@
   "auth": {
     "welcomeBack": "欢迎回来",
     "createAccount": "创建账户",
-    "signInPrompt": "登录以继续使用 Nexus",
-    "signUpPrompt": "注册以开始使用 Nexus",
+    "signInPrompt": "登录以继续使用 Heurion",
+    "signUpPrompt": "注册以开始使用 Heurion",
     "username": "用户名",
     "password": "密码",
     "displayName": "显示名称",
@@ -72,7 +87,11 @@
   },
   "today": {
     "title": "今日概览",
-    "greeting": "早安，{{name}}",
+    "greeting": "{{time}}，{{name}}",
+    "morning": "早安",
+    "afternoon": "下午好",
+    "evening": "晚上好",
+    "subtitle": "您最近的临床 AI 活动概览",
     "activePatients": "活跃患者",
     "pendingReports": "待处理报告",
     "unresolvedConflicts": "未解决冲突",
@@ -82,12 +101,15 @@
     "empty": "暂无活动，开始一次问诊或上传影像吧。"
   },
   "chat": {
+    "title": "对话",
     "placeholder": "输入消息…",
     "startConversation": "开始与你的分身对话",
     "contextHint": "它会记住跨轮次的上下文",
     "llmStatus": "模型状态",
     "reasoning": "推理过程",
-    "citations": "引用来源"
+    "citations": "引用来源",
+    "streaming": "正在生成回复…",
+    "scrollToBottom": "滚动到底部"
   },
   "patient": {
     "summary": "摘要",
@@ -98,13 +120,55 @@
     "report": "报告",
     "newPatient": "新建患者",
     "noPatientSelected": "未选择患者",
-    "selectPatient": "从左侧选择一位患者，或新建患者"
+    "selectPatient": "从左侧选择一位患者，或新建患者",
+    "clinicalSummary": "临床摘要",
+    "noStructuredSummary": "暂无结构化摘要。开始问诊以提取信息。",
+    "recentActivity": "最近活动",
+    "lastVisit": "上次访问",
+    "unavailable": "—",
+    "loadingPatients": "加载患者列表…",
+    "loadPatientsError": "加载患者列表失败"
   },
   "settings": {
     "title": "设置",
     "profile": "个人资料",
     "llm": "语言模型",
     "data": "数据",
-    "admin": "管理"
+    "admin": "管理",
+    "displayNameLabel": "显示名称",
+    "organization": "机构",
+    "intendedUse": "使用场景",
+    "intendedUsePlaceholder": "例如：肿瘤临床研究",
+    "userId": "用户 ID",
+    "currentProvider": "当前服务商",
+    "changeProvider": "更换服务商 / 密钥",
+    "provider": "服务商",
+    "apiKeyLabel": "API 密钥（留空保留当前）",
+    "test": "测试",
+    "settingsSaved": "设置已保存",
+    "saveFailed": "保存失败",
+    "loadFailed": "加载失败",
+    "testFailed": "测试失败",
+    "profileLoadFailed": "加载个人资料失败",
+    "profileSaveFailed": "保存个人资料失败"
+  },
+  "admin": {
+    "title": "管理",
+    "comingSoon": "用户管理功能即将推出。"
+  },
+  "research": {
+    "title": "研究",
+    "comingSoon": "研究工作台功能即将推出。"
+  },
+  "writing": {
+    "title": "写作",
+    "comingSoon": "写作工作室功能即将推出。"
+  },
+  "skills": {
+    "title": "技能",
+    "comingSoon": "技能管理功能即将推出。"
+  },
+  "placeholder": {
+    "comingSoon": "即将推出"
   }
 }

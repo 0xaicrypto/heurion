@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api-client';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ChatPage } from '@/routes/chat';
 import { LandingPage } from '@/routes/landing';
 import { LoginPage } from '@/routes/login';
@@ -43,87 +44,89 @@ export default function App() {
   return (
     <>
       <AuthEvents />
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="/app"
-          element={
-            <RequireAuth>
-              <Navigate to="/app/today" replace />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/app/today"
-          element={
-            <RequireAuth>
-              <TodayPage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/app/chat"
-          element={
-            <RequireAuth>
-              <ChatPage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/app/patients"
-          element={
-            <RequireAuth>
-              <PatientsLayout />
-            </RequireAuth>
-          }
-        >
-          <Route index element={<PatientSummaryPage />} />
-          <Route path=":hash" element={<PatientSummaryPage />} />
-          <Route path=":hash/chat" element={<PatientChatPage />} />
-        </Route>
-        <Route
-          path="/app/research"
-          element={
-            <RequireAuth>
-              <ResearchPage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/app/writing"
-          element={
-            <RequireAuth>
-              <WritingPage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/app/skills"
-          element={
-            <RequireAuth>
-              <SkillsPage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/app/settings"
-          element={
-            <RequireAuth>
-              <SettingsPage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/app/admin/users"
-          element={
-            <RequireAuth>
-              <AdminUsersPage />
-            </RequireAuth>
-          }
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <ErrorBoundary>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/app"
+            element={
+              <RequireAuth>
+                <Navigate to="/app/today" replace />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/today"
+            element={
+              <RequireAuth>
+                <TodayPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/chat"
+            element={
+              <RequireAuth>
+                <ChatPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/patients"
+            element={
+              <RequireAuth>
+                <PatientsLayout />
+              </RequireAuth>
+            }
+          >
+            <Route index element={<PatientSummaryPage />} />
+            <Route path=":hash" element={<PatientSummaryPage />} />
+            <Route path=":hash/chat" element={<PatientChatPage />} />
+          </Route>
+          <Route
+            path="/app/research"
+            element={
+              <RequireAuth>
+                <ResearchPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/writing"
+            element={
+              <RequireAuth>
+                <WritingPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/skills"
+            element={
+              <RequireAuth>
+                <SkillsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/settings"
+            element={
+              <RequireAuth>
+                <SettingsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/admin/users"
+            element={
+              <RequireAuth>
+                <AdminUsersPage />
+              </RequireAuth>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </ErrorBoundary>
     </>
   );
 }
