@@ -16,25 +16,6 @@
 # so the "agent installs its own tools without code changes" promise
 # actually holds.
 
-# ── Stage 0: web UI build (Node + pnpm) ──────────────────────────────
-FROM node:22-slim AS web-builder
-
-WORKDIR /build
-
-# Copy package manifests first for layer caching.
-COPY packages/web/package.json       packages/web/package.json
-COPY packages/web/pnpm-lock.yaml     packages/web/pnpm-lock.yaml
-
-# Install pnpm and dependencies. Approve esbuild postinstall so Vite can
-# bundle TypeScript without failing on ignored build scripts.
-RUN corepack enable && corepack prepare pnpm@latest --activate \
- && cd packages/web && pnpm approve-builds esbuild \
- && pnpm install --frozen-lockfile
-
-# Copy the web source and build the static bundle.
-COPY packages/web/. packages/web/.
-RUN cd packages/web && pnpm build
-
 # ── Stage 1: build (Python deps via uv) ───────────────────────────────
 FROM python:3.11-slim-bookworm AS builder
 
@@ -122,9 +103,10 @@ ENV PATH="/opt/venv/bin:$PATH" \
 COPY --from=builder --chown=nexus:nexus /build /app
 WORKDIR /app
 
-# Web UI static bundle built in stage 0. The server serves this at /
-# when NEXUS_WEB_DIST points here (see nexus_server/main.py).
-COPY --from=web-builder --chown=nexus:nexus /build/packages/web/dist /app/packages/web/dist
+# Web UI static bundle. This is built outside Docker (e.g. locally or in
+# CI) and copied into the image. The server serves it at /; see
+# nexus_server/main.py for the mount logic.
+COPY --chown=nexus:nexus packages/web/dist /app/packages/web/dist
 
 # Persistent state lives under /data — this is the ONLY directory the
 # host needs to back up. Layout:

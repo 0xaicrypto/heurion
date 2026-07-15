@@ -13,6 +13,9 @@
 **/build
 **/*.egg-info
 
+# Web UI dist is built outside Docker and must be copied into the image.
+!packages/web/dist
+
 # Node stuff that creeps into the SDK skills tree during local dev
 **/node_modules
 
