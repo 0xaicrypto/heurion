@@ -63,7 +63,7 @@ def reset_llm_config(monkeypatch):
     AND null out the live singleton fields. Restored when the test
     exits via monkeypatch's teardown for env + an explicit teardown for
     config attributes."""
-    for k in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+    for k in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("DEFAULT_LLM_PROVIDER", "gemini")
 
@@ -75,12 +75,14 @@ def reset_llm_config(monkeypatch):
         "GEMINI_API_KEY":        ServerConfig.GEMINI_API_KEY,
         "OPENAI_API_KEY":        ServerConfig.OPENAI_API_KEY,
         "ANTHROPIC_API_KEY":     ServerConfig.ANTHROPIC_API_KEY,
+        "DEEPSEEK_API_KEY":      ServerConfig.DEEPSEEK_API_KEY,
         "DEFAULT_LLM_PROVIDER":  ServerConfig.DEFAULT_LLM_PROVIDER,
         "DEFAULT_LLM_MODEL":     ServerConfig.DEFAULT_LLM_MODEL,
     }
     ServerConfig.GEMINI_API_KEY    = None   # type: ignore[assignment]
     ServerConfig.OPENAI_API_KEY    = None   # type: ignore[assignment]
     ServerConfig.ANTHROPIC_API_KEY = None   # type: ignore[assignment]
+    ServerConfig.DEEPSEEK_API_KEY  = None   # type: ignore[assignment]
     ServerConfig.DEFAULT_LLM_PROVIDER = "gemini"
     yield ServerConfig
     for k, v in snapshot.items():

@@ -66,6 +66,12 @@ class ServerConfig:
         "KIMI_BASE_URL", "https://api.moonshot.ai/v1"
     )
 
+    # DeepSeek (OpenAI-compatible Chat Completions API).
+    DEEPSEEK_API_KEY: Optional[str] = os.getenv("DEEPSEEK_API_KEY")
+    DEEPSEEK_BASE_URL: str = os.getenv(
+        "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"
+    )
+
     # Tool API Keys (for server-side tool execution)
     TAVILY_API_KEY: Optional[str] = os.getenv("TAVILY_API_KEY")
     JINA_API_KEY: Optional[str] = os.getenv("JINA_API_KEY")

@@ -1427,6 +1427,8 @@ async def call_llm(
             return await call_anthropic(msgs, system_prompt, model, temperature, max_tokens, tools)
         elif provider == "kimi":
             return await call_kimi(msgs, system_prompt, model, temperature, max_tokens, tools)
+        elif provider == "deepseek":
+            return await call_deepseek(msgs, system_prompt, model, temperature, max_tokens, tools)
         else:
             raise ValueError(f"Unknown LLM provider: {provider}")
 
@@ -1649,6 +1651,26 @@ async def call_openai(messages, system_prompt, model, temperature, max_tokens, t
     client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
     return await _call_openai_compatible(
         client, "openai", "OpenAI",
+        messages, system_prompt, model, temperature, max_tokens, tools,
+    )
+
+
+async def call_deepseek(messages, system_prompt, model, temperature, max_tokens, tools):
+    """Call DeepSeek API — OpenAI-compatible Chat Completions endpoint."""
+    try:
+        from openai import AsyncOpenAI
+    except ImportError:
+        raise ValueError("openai not installed. Install with: pip install openai")
+
+    if not config.DEEPSEEK_API_KEY:
+        raise ValueError("DEEPSEEK_API_KEY not configured")
+
+    client = AsyncOpenAI(
+        api_key=config.DEEPSEEK_API_KEY,
+        base_url=config.DEEPSEEK_BASE_URL,
+    )
+    return await _call_openai_compatible(
+        client, "deepseek", "DeepSeek",
         messages, system_prompt, model, temperature, max_tokens, tools,
     )
 

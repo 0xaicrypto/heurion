@@ -23,8 +23,11 @@ import uuid
 from typing import TYPE_CHECKING, Optional
 
 from .providers import (
+    DEEPSEEK_DEFAULT_MODEL,
     KIMI_DEFAULT_MODEL,
     LLMProvider,
+    resolve_deepseek_api_key,
+    resolve_deepseek_base_url,
     resolve_kimi_api_key,
     resolve_kimi_base_url,
 )
@@ -120,15 +123,21 @@ class LLMClient:
     ):
         self.provider = provider
         self.api_key = api_key
-        # Kimi (Moonshot AI) is OpenAI-compatible — it rides the OpenAI
-        # code path with a different base_url + model default. Resolve
-        # both here so callers can pass provider=KIMI with empty
-        # model / key and get sane env-driven behaviour.
+        # Kimi (Moonshot AI) and DeepSeek are OpenAI-compatible — they
+        # ride the OpenAI code path with a different base_url + model
+        # default. Resolve both here so callers can pass provider=KIMI
+        # or provider=DEEPSEEK with empty model / key and get sane
+        # env-driven behaviour.
         if provider == LLMProvider.KIMI:
             self.model = model or KIMI_DEFAULT_MODEL
             self.base_url = base_url or resolve_kimi_base_url()
             if not self.api_key:
                 self.api_key = resolve_kimi_api_key()
+        elif provider == LLMProvider.DEEPSEEK:
+            self.model = model or DEEPSEEK_DEFAULT_MODEL
+            self.base_url = base_url or resolve_deepseek_base_url()
+            if not self.api_key:
+                self.api_key = resolve_deepseek_api_key()
         else:
             self.model = model
             self.base_url = base_url

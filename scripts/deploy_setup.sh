@@ -82,18 +82,58 @@ else
     echo "✓ SERVER_SECRET already set (kept)"
 fi
 
-# ── Step 5: GEMINI_API_KEY ───────────────────────────────────────────
-CURRENT_GEMINI=$(grep -E '^GEMINI_API_KEY=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)
-if [ -z "$CURRENT_GEMINI" ]; then
-    read -rp "Gemini API key (get one from https://aistudio.google.com/apikey): " GEMINI
-    if [ -n "$GEMINI" ]; then
-        set_env "GEMINI_API_KEY" "$GEMINI"
-        echo "✓ Gemini API key saved"
+# ── Step 5: LLM provider + API key ───────────────────────────────────
+# Default to Gemini for backward compat, but allow the operator to pick
+# any supported provider at first-deploy time.
+CURRENT_PROVIDER=$(grep -E '^DEFAULT_LLM_PROVIDER=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)
+CURRENT_PROVIDER=${CURRENT_PROVIDER:-gemini}
+
+read -rp "Default LLM provider [$CURRENT_PROVIDER] (gemini|openai|anthropic|kimi|deepseek): " PROVIDER
+PROVIDER=${PROVIDER:-$CURRENT_PROVIDER}
+if [ -n "$PROVIDER" ]; then
+    set_env "DEFAULT_LLM_PROVIDER" "$PROVIDER"
+    echo "✓ DEFAULT_LLM_PROVIDER=$PROVIDER"
+fi
+
+case "$PROVIDER" in
+    gemini)
+        KEY_VAR="GEMINI_API_KEY"; PROMPT_URL="https://aistudio.google.com/apikey" ;;
+    openai)
+        KEY_VAR="OPENAI_API_KEY"; PROMPT_URL="https://platform.openai.com/api-keys" ;;
+    anthropic)
+        KEY_VAR="ANTHROPIC_API_KEY"; PROMPT_URL="https://console.anthropic.com/settings/keys" ;;
+    kimi)
+        KEY_VAR="KIMI_API_KEY"; PROMPT_URL="https://platform.moonshot.ai" ;;
+    deepseek)
+        KEY_VAR="DEEPSEEK_API_KEY"; PROMPT_URL="https://platform.deepseek.com/api_keys" ;;
+    *)
+        echo "⚠ unknown provider '$PROVIDER' — skipping key prompt"
+        KEY_VAR=""
+        ;;
+esac
+
+if [ -n "$KEY_VAR" ]; then
+    CURRENT_KEY=$(grep -E "^${KEY_VAR}=" "$ENV_FILE" | head -1 | cut -d= -f2- || true)
+    if [ -z "$CURRENT_KEY" ]; then
+        read -rp "$KEY_VAR (get one from $PROMPT_URL): " API_KEY
+        if [ -n "$API_KEY" ]; then
+            set_env "$KEY_VAR" "$API_KEY"
+            echo "✓ $KEY_VAR saved"
+        else
+            echo "⚠ skipped — set $KEY_VAR in $ENV_FILE before first chat"
+        fi
     else
-        echo "⚠ skipped — set GEMINI_API_KEY in $ENV_FILE before first chat"
+        echo "✓ $KEY_VAR already set (kept)"
     fi
-else
-    echo "✓ GEMINI_API_KEY already set (kept)"
+fi
+
+# DeepSeek also needs its base_url configurable; seed the default if absent.
+if [ "$PROVIDER" = "deepseek" ]; then
+    CURRENT_DS_BASE=$(grep -E '^DEEPSEEK_BASE_URL=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)
+    if [ -z "$CURRENT_DS_BASE" ]; then
+        set_env "DEEPSEEK_BASE_URL" "https://api.deepseek.com/v1"
+        echo "✓ DEEPSEEK_BASE_URL set to default"
+    fi
 fi
 
 # ── Step 6: build + start ────────────────────────────────────────────
