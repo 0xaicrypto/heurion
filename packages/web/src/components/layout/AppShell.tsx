@@ -239,9 +239,11 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
         </div>
 
         <div
-          className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-accent/50 transition-colors"
-          style={{ width: 4, cursor: 'col-resize' }}
+          className="absolute right-0 top-0 h-full cursor-col-resize transition-colors z-10"
+          style={{ width: 6, background: 'hsl(var(--border))', opacity: 0.3 }}
           onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.6'; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.3'; }}
         />
       </aside>
     </>
@@ -297,9 +299,11 @@ export function AppShell({ children, rail, breadcrumb }: { children: React.React
           {rail && (
             <div className="hidden md:flex">
               <div
-                className="w-1 cursor-col-resize hover:bg-accent/50 transition-colors shrink-0"
-                style={{ width: 4, cursor: 'col-resize' }}
+                className="cursor-col-resize transition-colors shrink-0 z-10"
+                style={{ width: 6, background: 'hsl(var(--border))', opacity: 0.3 }}
                 onMouseDown={(e) => { e.preventDefault(); setIsRailResizing(true); }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.6'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.3'; }}
               />
               <aside className="border-l border-border bg-surface" style={{ width: railWidth }}>{rail}</aside>
             </div>

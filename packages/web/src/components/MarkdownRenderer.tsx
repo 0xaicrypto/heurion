@@ -11,7 +11,7 @@ export function MarkdownRenderer({ content, className }: Props) {
   const parts = content.split(/(```[\s\S]*?```)/g);
 
   return (
-    <div className={cn('prose prose-sm dark:prose-invert max-w-none break-words', className)}>
+    <div className={cn('max-w-none break-words', className)}>
       {parts.map((part, i) => {
         if (part.startsWith('```') && part.endsWith('```')) {
           const langEnd = part.indexOf('\n');
