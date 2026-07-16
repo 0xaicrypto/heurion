@@ -369,15 +369,15 @@ class ApiClient {
 
   /* ────────────────────────── research ────────────────────────── */
 
-  async listStudies(): Promise<Array<{study_id: string; title: string; status: string; protocol_id?: string; created_at: string}>> {
+  async listStudies(): Promise<Array<{study_id: string; display_name: string; status: string; short_code?: string; created_at: string}>> {
     return this.fetch('/api/v1/research/studies');
   }
 
-  async createStudy(data: {title: string; protocol_id?: string}): Promise<{study_id: string; title: string; status: string}> {
+  async createStudy(data: {display_name: string; short_code: string}): Promise<{study_id: string; display_name: string; status: string}> {
     return this.fetch('/api/v1/research/studies', { method: 'POST', body: JSON.stringify(data) });
   }
 
-  async getStudy(studyId: string): Promise<{study_id: string; title: string; status: string; protocol_id?: string; created_at: string; updated_at?: string; description?: string}> {
+  async getStudy(studyId: string): Promise<{study_id: string; display_name: string; status: string; short_code?: string; created_at: string; updated_at?: string; description?: string}> {
     return this.fetch(`/api/v1/research/studies/${studyId}`);
   }
 
@@ -452,39 +452,39 @@ class ApiClient {
   /* ────────────────────────── writing ────────────────────────── */
 
   async listDocs(): Promise<{docs: Array<{id: string; title: string; updated_at: string; ref_count: number}>}> {
-    return this.fetch('/api/v1/docs/docs');
+    return this.fetch('/api/v1/docs');
   }
 
   async createDoc(title: string): Promise<{id: string; title: string; body: string; created_at: string; updated_at: string}> {
-    return this.fetch('/api/v1/docs/docs', { method: 'POST', body: JSON.stringify({ title }) });
+    return this.fetch('/api/v1/docs', { method: 'POST', body: JSON.stringify({ title }) });
   }
 
   async getDoc(docId: string): Promise<{id: string; title: string; body: string; created_at: string; updated_at: string}> {
-    return this.fetch(`/api/v1/docs/docs/${docId}`);
+    return this.fetch(`/api/v1/docs/${docId}`);
   }
 
   async updateDoc(docId: string, data: {title: string; body: string}): Promise<{id: string; title: string; body: string; updated_at: string}> {
-    return this.fetch(`/api/v1/docs/docs/${docId}`, { method: 'PUT', body: JSON.stringify(data) });
+    return this.fetch(`/api/v1/docs/${docId}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
   async getDocSnapshots(docId: string): Promise<{snapshots: Array<{snapshot_id: string; created_at: string; body_preview: string}>}> {
-    return this.fetch(`/api/v1/docs/docs/${docId}/snapshots`);
+    return this.fetch(`/api/v1/docs/${docId}/snapshots`);
   }
 
   async restoreSnapshot(docId: string, snapshotId: string): Promise<{id: string; body: string}> {
-    return this.fetch(`/api/v1/docs/docs/${docId}/snapshots/${snapshotId}/restore`, { method: 'POST' });
+    return this.fetch(`/api/v1/docs/${docId}/snapshots/${snapshotId}/restore`, { method: 'POST' });
   }
 
   async runPhiScan(docId: string): Promise<{findings: Array<{start: number; end: number; text: string; suggestion: string}>}> {
-    return this.fetch(`/api/v1/docs/docs/${docId}/phi-scan`, { method: 'POST' });
+    return this.fetch(`/api/v1/docs/${docId}/phi-scan`, { method: 'POST' });
   }
 
   async exportDocx(docId: string): Promise<{docx_path: string; size_bytes: number}> {
-    return this.fetch(`/api/v1/docs/docs/${docId}/export`, { method: 'POST' });
+    return this.fetch(`/api/v1/docs/${docId}/export`, { method: 'POST' });
   }
 
   async *polishDoc(docId: string, selection: string, instruction?: string): AsyncIterable<{text: string; done?: boolean}> {
-    const r = await fetch(`/api/v1/docs/docs/${docId}/polish`, {
+    const r = await fetch(`/api/v1/docs/${docId}/polish`, {
       method: 'POST',
       headers: this.headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ selection, instruction }),
@@ -513,11 +513,11 @@ class ApiClient {
   }
 
   async sendDocChat(docId: string, text: string): Promise<{response_text: string}> {
-    return this.fetch(`/api/v1/docs/docs/${docId}/chat`, { method: 'POST', body: JSON.stringify({ text }) });
+    return this.fetch(`/api/v1/docs/${docId}/chat`, { method: 'POST', body: JSON.stringify({ text }) });
   }
 
   async addDocReference(docId: string, data: {kind: string; content: string; source_patient_hash?: string; label?: string}): Promise<{reference_id: string}> {
-    return this.fetch(`/api/v1/docs/docs/${docId}/references`, { method: 'POST', body: JSON.stringify(data) });
+    return this.fetch(`/api/v1/docs/${docId}/references`, { method: 'POST', body: JSON.stringify(data) });
   }
 
   /* ────────────────────────── chat (SSE) ────────────────────────── */

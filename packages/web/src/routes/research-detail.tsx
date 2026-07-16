@@ -9,9 +9,9 @@ import type { Patient } from '@/lib/types';
 
 interface StudyDetail {
   study_id: string;
-  title: string;
+  display_name: string;
   status: string;
-  protocol_id?: string;
+  short_code?: string;
   created_at: string;
   updated_at?: string;
   description?: string;
@@ -356,7 +356,7 @@ export function ResearchDetailPage() {
           <Button variant="ghost" size="sm" onClick={() => navigate('/app/research')}>
             <ArrowLeft size={16} />
           </Button>
-          <h1 className="font-semibold text-text-primary">{study.title}</h1>
+          <h1 className="font-semibold text-text-primary">{study.display_name}</h1>
           <Badge variant={statusVariant(study.status)}>{study.status}</Badge>
         </header>
 
@@ -391,10 +391,10 @@ export function ResearchDetailPage() {
                   <div className="text-xs text-text-tertiary">Study ID</div>
                   <div className="font-mono text-sm text-text-secondary">{study.study_id}</div>
                 </div>
-                {study.protocol_id && (
+                {study.short_code && (
                   <div>
-                    <div className="text-xs text-text-tertiary">Protocol ID</div>
-                    <div className="text-sm text-text-primary">{study.protocol_id}</div>
+                    <div className="text-xs text-text-tertiary">Short Code</div>
+                    <div className="text-sm text-text-primary">{study.short_code}</div>
                   </div>
                 )}
                 <div>
