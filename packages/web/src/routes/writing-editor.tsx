@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, Eye, FilePlus, FileText, History, MessageSquare, RotateCcw, ShieldAlert, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, Download, Eye, FilePlus, FileText, History, MessageSquare, Paperclip, RotateCcw, ShieldAlert, Sparkles, X } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
@@ -69,6 +69,8 @@ export function WritingEditorPage() {
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
+  const [chatUploadingFile, setChatUploadingFile] = useState(false);
+  const [chatAttachedFiles, setChatAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
 
   const [refDialogOpen, setRefDialogOpen] = useState(false);
   const [refForm, setRefForm] = useState({ kind: 'guideline', content: '', label: '', source_patient_hash: '' });
@@ -78,6 +80,7 @@ export function WritingEditorPage() {
 
   const polishRef = useRef<HTMLDivElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!docId) return;
@@ -277,6 +280,29 @@ export function WritingEditorPage() {
     } finally {
       setChatLoading(false);
     }
+  };
+
+  const handleChatPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of Array.from(items)) {
+      if (item.kind === 'file') {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        setChatUploadingFile(true);
+        try { const result = await api.uploadFile(file); setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]); } catch { /* ignore */ }
+        finally { setChatUploadingFile(false); }
+      }
+    }
+  };
+
+  const handleChatFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setChatUploadingFile(true);
+    try { const result = await api.uploadFile(f); setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]); } catch { /* ignore */ }
+    finally { setChatUploadingFile(false); }
   };
 
   const handleAddReference = async () => {
@@ -586,35 +612,55 @@ export function WritingEditorPage() {
                 {chatMessages.map((m, i) => (
                   <div
                     key={i}
-                    className={cn(
-                      'rounded-lg px-3 py-2 text-sm',
-                      m.role === 'user'
-                        ? 'bg-accent/10 text-text-primary ml-4'
-                        : 'bg-surface-elevated border border-border text-text-secondary mr-4',
-                    )}
+                    className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
-                    {m.text}
+                    <div
+                      className={`max-w-[90%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
+                        m.role === 'user'
+                          ? 'bg-accent text-white'
+                          : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
+                      }`}
+                    >
+                      <MarkdownRenderer content={m.text || ''} />
+                      {m._done === false && !m.text && (
+                        <span className="animate-pulse">●</span>
+                      )}
+                    </div>
                   </div>
                 ))}
                 {chatLoading && (
-                  <div className="rounded-lg bg-surface-elevated border border-border px-3 py-2 text-sm text-text-tertiary mr-4">
-                    <span className="inline-block w-2 h-2 rounded-full bg-accent animate-pulse mr-1" />
-                    Thinking...
+                  <div className="flex justify-start">
+                    <div className="rounded-2xl border border-border bg-surface-elevated px-3 py-2 text-sm shadow-sm">
+                      <span className="animate-pulse">●</span>
+                    </div>
                   </div>
                 )}
                 <div ref={chatEndRef} />
               </div>
               <div className="border-t border-border p-3">
+                {chatAttachedFiles.length > 0 && (
+                  <div className="mb-2 flex gap-1 flex-wrap">
+                    {chatAttachedFiles.map((f) => (
+                      <span key={f.fileId} className="inline-flex items-center rounded-full bg-surface-elevated border border-border px-2 py-0.5 text-xs text-text-secondary">{f.name}</span>
+                    ))}
+                  </div>
+                )}
                 <div className="flex gap-2">
-                  <input
-                    type="text"
+                  <input ref={chatFileRef} type="file" onChange={handleChatFile} className="hidden" disabled={chatUploadingFile} />
+                  <Button variant="ghost" size="sm" onClick={() => chatFileRef.current?.click()} disabled={chatLoading || chatUploadingFile} isLoading={chatUploadingFile} className="shrink-0">
+                    <Paperclip size={16} />
+                  </Button>
+                  <Textarea
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendChat(); } }}
+                    onPaste={handleChatPaste}
                     placeholder="Ask a question..."
-                    className="flex-1 rounded-lg border border-border bg-surface-elevated px-3 py-1.5 text-sm text-text-primary placeholder:text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    rows={1}
+                    className="min-h-0 flex-1 resize-none py-1.5"
+                    style={{ maxHeight: '120px' }}
                   />
-                  <Button size="sm" onClick={handleSendChat} disabled={chatLoading || !chatInput.trim()}>
+                  <Button size="sm" onClick={handleSendChat} disabled={chatLoading || !chatInput.trim()} className="shrink-0">
                     Send
                   </Button>
                 </div>
