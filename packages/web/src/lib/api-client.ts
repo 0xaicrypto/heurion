@@ -5,7 +5,7 @@
  * Expand as more desktop-v2 features migrate to packages/web.
  */
 
-import type { AuthSession, ChatStreamChunk, LlmStatus, LlmTestResult, LlmUpdateInput, LlmUpdateResult, Patient, PatientDetail, PublicConfig, UserProfile } from './types';
+import type { AdminUser, AgentState, AuthSession, ChatMessage, ChatSession, ChatStreamChunk, LlmStatus, LlmTestResult, LlmUpdateInput, LlmUpdateResult, MemoryProjection, Patient, PatientDetail, PublicConfig, SendChatOptions, TimelineEvent, UserProfile } from './types';
 
 export const CLIENT_API_VERSION = 1;
 
@@ -240,6 +240,66 @@ class ApiClient {
     return this.fetch<PatientDetail>(`/api/v1/dicom/patients/${hash}/detail`);
   }
 
+  /* ────────────────────────── sessions ────────────────────────── */
+
+  async listSessions(includeArchived = false): Promise<{ sessions: ChatSession[] }> {
+    return this.fetch<{ sessions: ChatSession[] }>(`/api/v1/sessions?include_archived=${includeArchived}`);
+  }
+
+  async createSession(title: string): Promise<ChatSession> {
+    return this.fetch<ChatSession>('/api/v1/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ title }),
+    });
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    return this.fetch<void>(`/api/v1/sessions/${sessionId}`, { method: 'DELETE' });
+  }
+
+  /* ────────────────────────── agent state ────────────────────────── */
+
+  async getAgentState(limit?: number): Promise<AgentState> {
+    const q = limit ? `?limit=${limit}` : '';
+    return this.fetch<AgentState>('/api/v1/agent/state' + q);
+  }
+
+  async getTimeline(limit = 20): Promise<{ items: TimelineEvent[] }> {
+    return this.fetch<{ items: TimelineEvent[] }>(`/api/v1/agent/timeline?limit=${limit}`);
+  }
+
+  async getMessages(sessionId?: string, limit = 50): Promise<{ messages: ChatMessage[]; total: number }> {
+    const q = sessionId ? `?session_id=${sessionId}&limit=${limit}` : `?limit=${limit}`;
+    return this.fetch<{ messages: ChatMessage[]; total: number }>(`/api/v1/agent/messages${q}`);
+  }
+
+  /* ────────────────────────── memory ────────────────────────── */
+
+  async getMemoryProjection(patientHash: string): Promise<MemoryProjection> {
+    return this.fetch<MemoryProjection>(`/api/v1/memory/patient/${patientHash}/projection`);
+  }
+
+  /* ────────────────────────── admin ────────────────────────── */
+
+  async listUsers(): Promise<{ users: AdminUser[] }> {
+    return this.fetch<{ users: AdminUser[] }>('/api/v1/admin/users');
+  }
+
+  async disableUser(userId: string): Promise<{ user_id: string; disabled_at: string; ok: boolean }> {
+    return this.fetch(`/api/v1/admin/users/${userId}/disable`, { method: 'POST' });
+  }
+
+  async enableUser(userId: string): Promise<{ user_id: string; disabled_at: null; ok: boolean }> {
+    return this.fetch(`/api/v1/admin/users/${userId}/enable`, { method: 'POST' });
+  }
+
+  async resetUserPassword(userId: string, newPassword: string): Promise<{ user_id: string; ok: boolean }> {
+    return this.fetch(`/api/v1/admin/users/${userId}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ new_password: newPassword }),
+    });
+  }
+
   /* ────────────────────────── chat (SSE) ────────────────────────── */
 
   async *sendChat(
@@ -247,10 +307,25 @@ class ApiClient {
     sessionId: string,
     abortSignal?: AbortSignal,
   ): AsyncIterable<ChatStreamChunk> {
+    return yield* this.sendChatFull({ text, sessionId }, abortSignal);
+  }
+
+  async *sendChatFull(
+    opts: SendChatOptions,
+    abortSignal?: AbortSignal,
+  ): AsyncIterable<ChatStreamChunk> {
+    const body: Record<string, unknown> = {
+      text: opts.text,
+      session_id: opts.sessionId || '',
+      patient_hash: opts.patientHash ?? null,
+    };
+    if (opts.attachments) body.attachments = opts.attachments;
+    if (opts.scope) body.scope = opts.scope;
+    if (opts.skills) body.skills = opts.skills;
     const r = await fetch('/api/v1/agent/chat', {
       method: 'POST',
       headers: this.headers({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ text, session_id: sessionId, patient_hash: null }),
+      body: JSON.stringify(body),
       signal: abortSignal,
     });
     if (!r.ok || !r.body) {

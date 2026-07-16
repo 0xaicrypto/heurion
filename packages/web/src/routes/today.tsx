@@ -1,16 +1,33 @@
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Activity, FileText, AlertCircle, UserPlus, FilePlus } from 'lucide-react';
+import { Activity, AlertCircle, FilePlus, FileText, UserPlus } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useAuthStore } from '@/stores/auth';
-import { Button, Card } from '@/components/ui';
+import { api } from '@/lib/api-client';
+import type { AgentState, TimelineEvent } from '@/lib/types';
+import { Alert, Button, Card, Skeleton } from '@/components/ui';
 
 export function TodayPage() {
   const { t } = useTranslation();
   const { displayName } = useAuthStore();
+  const [state, setState] = useState<AgentState | null>(null);
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const hour = new Date().getHours();
   const timeGreeting = hour < 12 ? t('today.morning') : hour < 18 ? t('today.afternoon') : t('today.evening');
   const greeting = t('today.greeting', { time: timeGreeting, name: displayName || '' });
+
+  useEffect(() => {
+    Promise.all([
+      api.getAgentState().catch(() => null),
+      api.getTimeline(10).then((r) => r.items).catch(() => []),
+    ])
+      .then(([s, t]) => { setState(s); setTimeline(t); })
+      .catch(() => setError('Failed to load dashboard'))
+      .finally(() => setLoading(false));
+  }, []);
 
   return (
     <AppShell>
@@ -25,41 +42,51 @@ export function TodayPage() {
             <p className="text-text-secondary">{t('today.subtitle')}</p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Card className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                  <Activity size={20} />
+          {error && <Alert variant="error">{error}</Alert>}
+
+          {loading ? (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <Skeleton className="h-20 rounded-xl" />
+              <Skeleton className="h-20 rounded-xl" />
+              <Skeleton className="h-20 rounded-xl" />
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <Card className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                    <Activity size={20} />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-text-primary">{state?.memory_count ?? 0}</p>
+                    <p className="text-sm text-text-secondary">{t('today.activePatients')}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-2xl font-bold text-text-primary">0</p>
-                  <p className="text-sm text-text-secondary">{t('today.activePatients')}</p>
+              </Card>
+              <Card className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10 text-warning">
+                    <FileText size={20} />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-text-primary">{state?.total_anchor_count ?? 0}</p>
+                    <p className="text-sm text-text-secondary">{t('today.pendingReports')}</p>
+                  </div>
                 </div>
-              </div>
-            </Card>
-            <Card className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10 text-warning">
-                  <FileText size={20} />
+              </Card>
+              <Card className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-error/10 text-error">
+                    <AlertCircle size={20} />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-text-primary">{state?.failed_anchor_count ?? 0}</p>
+                    <p className="text-sm text-text-secondary">{t('today.unresolvedConflicts')}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-2xl font-bold text-text-primary">0</p>
-                  <p className="text-sm text-text-secondary">{t('today.pendingReports')}</p>
-                </div>
-              </div>
-            </Card>
-            <Card className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-error/10 text-error">
-                  <AlertCircle size={20} />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-text-primary">0</p>
-                  <p className="text-sm text-text-secondary">{t('today.unresolvedConflicts')}</p>
-                </div>
-              </div>
-            </Card>
-          </div>
+              </Card>
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-3">
             <Button>
@@ -74,7 +101,26 @@ export function TodayPage() {
 
           <Card className="p-6">
             <h3 className="mb-4 font-semibold text-text-primary">{t('today.recentActivity')}</h3>
-            <p className="text-sm text-text-tertiary">{t('today.empty')}</p>
+            {loading ? (
+              <div className="space-y-3">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-1/2" />
+              </div>
+            ) : timeline.length === 0 ? (
+              <p className="text-sm text-text-tertiary">{t('today.empty')}</p>
+            ) : (
+              <ul className="space-y-3">
+                {timeline.slice(0, 15).map((ev, i) => (
+                  <li key={ev.sync_id || i} className="flex items-start gap-3 text-sm">
+                    <span className="mt-0.5 shrink-0 text-xs text-text-tertiary tabular-nums">
+                      {new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    <span className="text-text-secondary">{ev.summary}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Card>
         </main>
       </div>

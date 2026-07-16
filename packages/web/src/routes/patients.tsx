@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { NavLink, Outlet, useParams } from 'react-router-dom';
-import { Plus, Search, User } from 'lucide-react';
+import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Plus, Search, User } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { Alert, Button, Input, Card, Badge, Skeleton } from '@/components/ui';
+import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/api-client';
-import type { Patient } from '@/lib/types';
+import type { ChatStreamChunk, MemoryFinding, MemoryProjection, Patient, PatientDetail } from '@/lib/types';
 
 function PatientList({
   patients,
@@ -70,35 +70,26 @@ function PatientList({
   );
 }
 
-function PatientTabs({ hash }: { hash?: string }) {
+function PatientTabs({ hash, active }: { hash?: string; active: 'summary' | 'chat' }) {
   const { t } = useTranslation();
   const tabs = [
-    { to: `/app/patients/${hash}`, label: t('patient.summary'), disabled: false },
-    { to: `/app/patients/${hash}/chat`, label: t('patient.chat'), disabled: false },
-    { to: '#', label: t('patient.imaging'), disabled: true },
-    { to: '#', label: t('patient.labs'), disabled: true },
-    { to: '#', label: t('patient.memory'), disabled: true },
-    { to: '#', label: t('patient.report'), disabled: true },
+    { to: `/app/patients/${hash}`, label: t('patient.summary'), key: 'summary' as const },
+    { to: `/app/patients/${hash}/chat`, label: t('patient.chat'), key: 'chat' as const },
   ];
 
   return (
     <nav className="flex gap-1 border-b border-border px-6">
       {tabs.map((tab) => (
         <NavLink
-          key={tab.label}
+          key={tab.key}
           to={tab.to}
-          aria-disabled={tab.disabled}
-          end={tab.to === `/app/patients/${hash}`}
-          className={({ isActive }) =>
-            cn(
-              'border-b-2 px-3 py-3 text-sm font-medium transition-colors',
-              isActive
-                ? 'border-accent text-accent'
-                : tab.disabled
-                  ? 'border-transparent text-text-tertiary cursor-default'
-                  : 'border-transparent text-text-secondary hover:text-text-primary',
-            )
-          }
+          end
+          className={cn(
+            'border-b-2 px-3 py-3 text-sm font-medium transition-colors',
+            active === tab.key
+              ? 'border-accent text-accent'
+              : 'border-transparent text-text-secondary hover:text-text-primary',
+          )}
         >
           {tab.label}
         </NavLink>
@@ -149,6 +140,27 @@ export function PatientsLayout() {
 export function PatientSummaryPage() {
   const { t } = useTranslation();
   const { hash } = useParams<{ hash?: string }>();
+  const navigate = useNavigate();
+  const [detail, setDetail] = useState<PatientDetail | null>(null);
+  const [projection, setProjection] = useState<MemoryProjection | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hash) return;
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      api.getPatientDetail(hash).catch(() => null),
+      api.getMemoryProjection(hash).catch(() => null),
+    ])
+      .then(([d, p]) => {
+        setDetail(d);
+        setProjection(p);
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.messageText : String(err)))
+      .finally(() => setLoading(false));
+  }, [hash]);
 
   if (!hash) {
     return (
@@ -162,44 +174,293 @@ export function PatientSummaryPage() {
     );
   }
 
+  if (loading) {
+    return (
+      <div className="flex h-full flex-col overflow-y-auto">
+        <div className="flex h-14 items-center border-b border-border bg-surface px-6 gap-3">
+          <Skeleton className="h-5 w-24" />
+          <Skeleton className="h-5 w-16" />
+        </div>
+        <PatientTabs hash={hash} active="summary" />
+        <div className="space-y-6 p-6">
+          <Skeleton className="h-32 w-full rounded-xl" />
+          <Skeleton className="h-20 w-full rounded-xl" />
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex h-full flex-col">
+        <PatientTabs hash={hash} active="summary" />
+        <div className="flex flex-1 items-center justify-center">
+          <Alert variant="error">{error}</Alert>
+        </div>
+      </div>
+    );
+  }
+
+  const findings = projection?.findings || [];
+  const meds = projection?.medications || [];
+  const timeline = projection?.timeline || [];
+
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       <div className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
         <div className="flex items-center gap-3">
-          <h1 className="font-semibold text-text-primary">{hash}</h1>
-          <Badge>
-            {t('common.yearsOld', { age: '?' })} / {'?'}
-          </Badge>
+          <Button variant="ghost" size="sm" onClick={() => navigate('/app/patients')}>
+            <ArrowLeft size={16} />
+          </Button>
+          <h1 className="font-semibold text-text-primary">{detail?.initials || hash}</h1>
+          {(detail?.age_value != null || detail?.sex) && (
+            <Badge>
+              {detail.age_value != null ? t('common.yearsOld', { age: detail.age_value }) : ''}
+              {detail.age_value != null && detail.sex ? ' / ' : ''}
+              {detail.sex || ''}
+            </Badge>
+          )}
         </div>
-        <Button size="sm">{t('patient.chat')}</Button>
+        <Button size="sm" onClick={() => navigate(`/app/patients/${hash}/chat`)}>{t('patient.chat')}</Button>
       </div>
-      <PatientTabs hash={hash} />
+      <PatientTabs hash={hash} active="summary" />
       <main className="space-y-6 p-6">
         <Card className="p-6">
-          <h3 className="mb-2 font-semibold text-text-primary">{t('patient.clinicalSummary')}</h3>
-          <p className="text-sm text-text-secondary">{t('patient.noStructuredSummary')}</p>
+          <h3 className="mb-3 font-semibold text-text-primary">{t('patient.clinicalSummary')}</h3>
+          {findings.length === 0 && meds.length === 0 ? (
+            <p className="text-sm text-text-secondary">{t('patient.noStructuredSummary')}</p>
+          ) : (
+            <div className="space-y-4">
+              {findings.length > 0 && (
+                <div>
+                  <h4 className="mb-2 text-xs font-semibold uppercase text-text-tertiary">
+                    Findings ({findings.length})
+                  </h4>
+                  <ul className="space-y-2">
+                    {findings.slice(0, 10).map((f) => (
+                      <FindingItem key={f.node_id} finding={f} />
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {meds.length > 0 && (
+                <div>
+                  <h4 className="mb-2 text-xs font-semibold uppercase text-text-tertiary">
+                    Medications ({meds.length})
+                  </h4>
+                  <ul className="space-y-2">
+                    {meds.slice(0, 10).map((m) => (
+                      <FindingItem key={m.node_id} finding={m} />
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </Card>
+
         <Card className="p-6">
-          <h3 className="mb-2 font-semibold text-text-primary">{t('patient.recentActivity')}</h3>
-          <p className="text-sm text-text-secondary">
-            {t('patient.lastVisit')}: {t('patient.unavailable')}
-          </p>
+          <h3 className="mb-3 font-semibold text-text-primary">{t('patient.recentActivity')}</h3>
+          {timeline.length === 0 ? (
+            <p className="text-sm text-text-secondary">
+              {t('patient.lastVisit')}: {detail?.last_seen_at || t('patient.unavailable')}
+            </p>
+          ) : (
+            <ul className="space-y-3">
+              {timeline.slice(0, 15).map((ev, i) => (
+                <li key={ev.event_id || i} className="flex gap-3 text-sm">
+                  <span className="shrink-0 text-xs text-text-tertiary">
+                    {new Date(ev.timestamp).toLocaleDateString()}
+                  </span>
+                  <span className="text-text-secondary">{ev.content}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
       </main>
     </div>
   );
 }
 
+function FindingItem({ finding }: { finding: MemoryFinding }) {
+  return (
+    <li className="rounded-lg border border-border bg-surface p-3 text-sm">
+      <p className="text-text-primary">{finding.content}</p>
+      <p className="mt-1 text-xs text-text-tertiary">{finding.node_type} · {finding.node_id.slice(0, 8)}</p>
+    </li>
+  );
+}
+
+/* ────────────────────────── Patient Chat Page ────────────────────────── */
+
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  reasoning?: string;
+  isStreaming?: boolean;
+  tier?: string;
+}
+
 export function PatientChatPage() {
   const { t } = useTranslation();
   const { hash } = useParams<{ hash: string }>();
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState('');
+  const abortRef = useRef<AbortController | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const s = `patient-${hash}-${Date.now()}`;
+    setSessionId(s);
+  }, [hash]);
+
+  useEffect(() => {
+    const el = bottomRef.current;
+    if (!el) return;
+    const parent = el.parentElement;
+    if (!parent) return;
+    const nearBottom = parent.scrollHeight - parent.scrollTop - parent.clientHeight < 150;
+    if (nearBottom) el.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSend = async () => {
+  if (!input.trim() || loading) return;
+  const text = input.trim();
+  setInput('');
+  setError(null);
+
+  const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', text };
+  const assistantMsg: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', isStreaming: true };
+  setMessages((prev) => [...prev, userMsg, assistantMsg]);
+  setLoading(true);
+
+  abortRef.current = new AbortController();
+  try {
+    for await (const chunk of api.sendChatFull(
+      { text, sessionId, patientHash: hash || null },
+      abortRef.current.signal,
+    )) {
+      setMessages((prev) => {
+        const newMessages = [...prev];
+        const last = newMessages[newMessages.length - 1];
+        if (!last || last.role !== 'assistant') return prev;
+        newMessages[newMessages.length - 1] = applyChunk(last, chunk);
+        return newMessages;
+      });
+    }
+  } catch (err) {
+    if (err instanceof ApiError) setError(err.messageText);
+    else if (err instanceof Error && err.name !== 'AbortError') setError(err.message);
+    setMessages((prev) => {
+      const newMsgs = [...prev];
+      const last = newMsgs[newMsgs.length - 1];
+      if (last?.role === 'assistant') newMsgs[newMsgs.length - 1] = { ...last, isStreaming: false };
+      return newMsgs;
+    });
+  } finally {
+    setLoading(false);
+    abortRef.current = null;
+  }
+};
+
+  const handleStop = () => abortRef.current?.abort();
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+  };
+
+  if (!hash) {
+    return (
+      <div className="flex h-full items-center justify-center text-text-tertiary">
+        <p>No patient selected</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">
-      <PatientTabs hash={hash} />
-      <div className="flex flex-1 items-center justify-center text-text-tertiary">
-        <p>{t('patient.chat')} — {hash}</p>
-      </div>
+      <PatientTabs hash={hash} active="chat" />
+      {messages.length === 0 && (
+        <div className="flex flex-1 items-center justify-center px-6 text-center">
+          <div>
+            <p className="text-lg text-text-tertiary">{t('chat.startConversation')}</p>
+            <p className="text-sm text-text-tertiary">{t('chat.contextHint')}</p>
+          </div>
+        </div>
+      )}
+      <main className="flex-1 overflow-y-auto px-4 py-6">
+        <div className="mx-auto max-w-3xl space-y-4">
+          {messages.map((m) => (
+            <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                m.role === 'user'
+                  ? 'bg-accent text-white'
+                  : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
+              }`}>
+                {m.tier && <div className="mb-1 text-xs opacity-70">Tier: {m.tier}</div>}
+                {m.reasoning && (
+                  <details className="mb-2">
+                    <summary className="cursor-pointer text-xs text-text-tertiary">{t('chat.reasoning')}</summary>
+                    <p className="mt-1 whitespace-pre-wrap text-xs text-text-tertiary">{m.reasoning}</p>
+                  </details>
+                )}
+                {m.text || (m.isStreaming ? (
+                  <span role="status" aria-label={t('chat.streaming')} className="animate-pulse">●</span>
+                ) : null)}
+              </div>
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+      </main>
+      {error && (
+        <div className="mx-auto w-full max-w-3xl px-4 pb-2">
+          <Alert variant="error">{error}</Alert>
+        </div>
+      )}
+      <footer className="border-t border-border bg-surface px-4 py-4">
+        <div className="mx-auto flex max-w-3xl gap-2">
+          <Textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={t('chat.placeholder')}
+            disabled={loading}
+            rows={1}
+            className="min-h-0 flex-1 resize-none py-3"
+            style={{ maxHeight: '160px' }}
+          />
+          {loading ? (
+            <Button onClick={handleStop} variant="secondary" className="shrink-0">{t('common.stop')}</Button>
+          ) : (
+            <Button onClick={handleSend} disabled={!input.trim()} className="shrink-0">{t('common.send')}</Button>
+          )}
+        </div>
+      </footer>
     </div>
   );
+}
+
+function applyChunk(msg: ChatMessage, chunk: ChatStreamChunk): ChatMessage {
+  switch (chunk.type) {
+    case 'tier_classified':
+      return { ...msg, tier: chunk.tier };
+    case 'reasoning_chunk':
+      return { ...msg, reasoning: (msg.reasoning || '') + chunk.text };
+    case 'final_answer_chunk':
+      return { ...msg, text: msg.text + chunk.text };
+    case 'turn_complete':
+      return { ...msg, isStreaming: false };
+    case 'error':
+      return { ...msg, text: msg.text || `Error: ${chunk.message}`, isStreaming: false };
+    default:
+      return msg;
+  }
 }

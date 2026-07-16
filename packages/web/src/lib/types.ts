@@ -106,10 +106,101 @@ export interface PatientDetail extends Patient {
   archive?: { archived_at?: string };
 }
 
+export interface ChatSession {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at?: string;
+  archived?: boolean;
+  is_default?: boolean;
+  message_count?: number;
+}
+
+export interface AgentState {
+  user_id: string;
+  chain_agent_id?: string;
+  chain_register_tx?: string;
+  network?: string;
+  on_chain: boolean;
+  memory_count: number;
+  anchored_count: number;
+  pending_anchor_count: number;
+  failed_anchor_count: number;
+  total_anchor_count: number;
+  last_anchor?: string;
+  last_chain_event?: string;
+  server_time: string;
+}
+
+export interface TimelineEvent {
+  kind: string;
+  timestamp: string;
+  summary: string;
+  sync_id?: string;
+  anchor_id?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface MemoryFinding {
+  node_id: string;
+  node_type: string;
+  content: string;
+  weight?: number;
+  encounter_id?: string;
+  updated_at?: string;
+}
+
+export interface MemoryTimelineEvent {
+  event_id: string;
+  event_type: string;
+  content: string;
+  timestamp: string;
+}
+
+export interface MemoryProjection {
+  findings?: MemoryFinding[];
+  medications?: MemoryFinding[];
+  timeline?: MemoryTimelineEvent[];
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  sync_id?: string;
+  attachments?: unknown[];
+  message_kind?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AdminUser {
+  user_id: string;
+  username: string;
+  role: string;
+  created_at: string;
+  disabled_at?: string | null;
+  last_login_at?: string;
+  has_password: boolean;
+}
+
+export interface SendChatOptions {
+  text: string;
+  sessionId?: string;
+  patientHash?: string | null;
+  attachments?: unknown[];
+  scope?: { kind: string; ref: string };
+  skills?: string[];
+}
+
 export type ChatStreamChunk =
   | { type: 'turn_started'; event_idx: number; patient_hash: string | null }
   | { type: 'tier_classified'; tier: 'T1' | 'T2' | 'T3'; view_kind?: string; anchor?: string }
+  | { type: 'context_info'; text: string; kind?: string }
   | { type: 'reasoning_chunk'; text: string }
+  | { type: 'search_query'; query: string }
+  | { type: 'search_results_summary'; text: string }
+  | { type: 'image_attached'; url?: string; study_id?: string; caption?: string }
   | { type: 'final_answer_chunk'; text: string }
+  | { type: 'citations'; items: { text: string; source?: string }[] }
   | { type: 'turn_complete'; assistant_event_idx?: number }
   | { type: 'error'; message: string };
