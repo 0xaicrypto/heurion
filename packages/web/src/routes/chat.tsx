@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
+import { Paperclip } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
 import type { ChatStreamChunk, LlmStatus } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
 import { AppShell } from '@/components/layout/AppShell';
-import { Alert, Button, Textarea } from '@/components/ui';
+import { Alert, Button, Badge, Textarea } from '@/components/ui';
 
 interface Message {
   id: string;
@@ -22,10 +23,14 @@ export function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -42,6 +47,17 @@ export function ChatPage() {
   }, [isAuthenticated, navigate, clearSession, t]);
 
   useEffect(() => {
+    api.getMessages('', 50).then((r) => {
+      const msgs: Message[] = r.messages.map((m) => ({
+        id: crypto.randomUUID(),
+        role: m.role,
+        text: m.content,
+      }));
+      if (msgs.length > 0) setMessages(msgs);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     const el = bottomRef.current;
     if (!el) return;
     const parent = el.parentElement;
@@ -55,6 +71,7 @@ export function ChatPage() {
     const userText = input.trim();
     setInput('');
     setError(null);
+    setTimeout(() => inputRef.current?.focus(), 50);
 
     const userMessage: Message = { id: crypto.randomUUID(), role: 'user', text: userText };
     const assistantMessage: Message = {
@@ -69,7 +86,7 @@ export function ChatPage() {
 
     abortRef.current = new AbortController();
     try {
-      for await (const chunk of api.sendChat(userText, '', abortRef.current.signal)) {
+      for await (const chunk of api.sendChatFull({ text: userText, sessionId: '', attachments: attachedFiles.map((a) => ({ name: a.name, file_id: a.fileId })) }, abortRef.current.signal)) {
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (!last || last.role !== 'assistant') return prev;
@@ -98,6 +115,20 @@ export function ChatPage() {
 
   const handleStop = () => {
     abortRef.current?.abort();
+  };
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setUploadingFile(true);
+    try {
+      const result = await api.uploadFile(f);
+      setAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+    } catch (err) {
+      // silently fail
+    } finally {
+      setUploadingFile(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -156,26 +187,53 @@ export function ChatPage() {
         )}
 
         <footer className="border-t border-border bg-surface px-4 py-4">
-          <div className="mx-auto flex max-w-3xl gap-2">
-            <Textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={t('chat.placeholder')}
-              disabled={loading}
-              rows={1}
-              className="min-h-0 flex-1 resize-none py-3"
-              style={{ maxHeight: '160px' }}
-            />
-            {loading ? (
-              <Button onClick={handleStop} variant="secondary">
-                {t('common.stop')}
-              </Button>
-            ) : (
-              <Button onClick={handleSend} disabled={!input.trim()}>
-                {t('common.send')}
-              </Button>
+          <div className="mx-auto flex max-w-3xl flex-col gap-2">
+            {attachedFiles.length > 0 && (
+              <div className="flex gap-2 flex-wrap">
+                {attachedFiles.map((f) => (
+                  <Badge key={f.fileId} variant="default">{f.name}</Badge>
+                ))}
+              </div>
             )}
+            <div className="flex gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                onChange={handleFile}
+                className="hidden"
+                disabled={uploadingFile}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading || uploadingFile}
+                isLoading={uploadingFile}
+                className="shrink-0"
+              >
+                <Paperclip size={16} />
+              </Button>
+              <Textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={t('chat.placeholder')}
+                disabled={loading}
+                rows={1}
+                className="min-h-0 flex-1 resize-none py-3"
+                style={{ maxHeight: '160px' }}
+              />
+              {loading ? (
+                <Button onClick={handleStop} variant="secondary">
+                  {t('common.stop')}
+                </Button>
+              ) : (
+                <Button onClick={handleSend} disabled={!input.trim()}>
+                  {t('common.send')}
+                </Button>
+              )}
+            </div>
           </div>
         </footer>
       </div>

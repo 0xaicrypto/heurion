@@ -279,6 +279,38 @@ class ApiClient {
     return this.fetch<MemoryProjection>(`/api/v1/memory/patient/${patientHash}/projection`);
   }
 
+  /* ────────────────────────── files ────────────────────────── */
+
+  async uploadFile(file: File, patientHash?: string): Promise<{ file_id: string; name: string; mime: string; size_bytes: number }> {
+    const form = new FormData();
+    form.append('file', file);
+    if (patientHash) form.append('patient_hash', patientHash);
+    const h = this.headers();
+    h.delete('Content-Type');
+    const r = await fetch('/api/v1/files/upload', { method: 'POST', headers: h, body: form });
+    if (!r.ok) {
+      const text = await r.text().catch(() => '');
+      throw new ApiError(r.status, text || r.statusText, '/api/v1/files/upload');
+    }
+    return r.json();
+  }
+
+  /* ────────────────────────── patient registration ────────────────────────── */
+
+  async registerPatient(data: {
+    initials?: string;
+    mrn?: string;
+    age?: number;
+    sex?: string;
+    chief_complaint?: string;
+    notes?: string;
+  }): Promise<{ patient_hash: string }> {
+    return this.fetch('/api/v1/dicom/patients/register-manual', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   /* ────────────────────────── admin ────────────────────────── */
 
   async listUsers(): Promise<{ users: AdminUser[] }> {
@@ -298,6 +330,44 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ new_password: newPassword }),
     });
+  }
+
+  /* ────────────────────────── research ────────────────────────── */
+
+  async listStudies(): Promise<Array<{study_id: string; title: string; status: string; protocol_id?: string; created_at: string}>> {
+    return this.fetch('/api/v1/research/studies');
+  }
+
+  async createStudy(data: {title: string; protocol_id?: string}): Promise<{study_id: string; title: string; status: string}> {
+    return this.fetch('/api/v1/research/studies', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  /* ────────────────────────── skills ────────────────────────── */
+
+  async listSkills(): Promise<{skills: Array<{name: string; title: string; description: string; version: string; author: string; enabled?: boolean}>}> {
+    return this.fetch('/api/v1/skills');
+  }
+
+  async searchSkills(query: string): Promise<{results: Array<{identifier: string; name: string; description: string; version: string; author: string}>}> {
+    return this.fetch(`/api/v1/skills/search?query=${encodeURIComponent(query)}`);
+  }
+
+  async installSkill(identifier: string): Promise<{name: string}> {
+    return this.fetch('/api/v1/skills/install', { method: 'POST', body: JSON.stringify({ identifier }) });
+  }
+
+  async toggleSkill(name: string, enabled: boolean): Promise<{name: string; enabled: boolean}> {
+    return this.fetch(`/api/v1/skills/${name}/toggle`, { method: 'POST', body: JSON.stringify({ enabled }) });
+  }
+
+  /* ────────────────────────── writing ────────────────────────── */
+
+  async listDocs(): Promise<{docs: Array<{id: string; title: string; updated_at: string; ref_count: number}>}> {
+    return this.fetch('/api/v1/docs/docs');
+  }
+
+  async createDoc(title: string): Promise<{id: string; title: string; body: string; created_at: string; updated_at: string}> {
+    return this.fetch('/api/v1/docs/docs', { method: 'POST', body: JSON.stringify({ title }) });
   }
 
   /* ────────────────────────── chat (SSE) ────────────────────────── */
