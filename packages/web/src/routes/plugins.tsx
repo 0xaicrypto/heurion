@@ -1,35 +1,106 @@
-import { useEffect, useState } from 'react';
-import { Download, Package, Play, Puzzle } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Download, Globe, Package, Puzzle, Search, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api-client';
-import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
+import { Alert, Badge, Button, Card, Input, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
-interface Workflow {
-  workflow_id: string;
-  name: string;
-  description?: string;
-  created_at: string;
-  archived?: boolean;
-}
+const SOURCES = [
+  { key: 'official', label: 'Anthropic', icon: <Globe size={14} />, desc: 'Official Claude skill catalog' },
+  { key: 'github', label: 'GitHub', icon: <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 1C5.925 1 1 5.925 1 12c0 4.867 3.154 8.993 7.533 10.45.55.101.733-.238.733-.529 0-.262-.01-1.13-.015-2.05-3.065.665-3.71-1.47-3.71-1.47-.501-1.273-1.224-1.613-1.224-1.613-.999-.683.076-.669.076-.669 1.105.078 1.687 1.135 1.687 1.135.982 1.682 2.576 1.197 3.204.916.1-.712.384-1.197.698-1.472-2.448-.278-5.021-1.224-5.021-5.45 0-1.204.43-2.188 1.135-2.96-.114-.278-.492-1.397.108-2.912 0 0 .925-.297 3.03 1.13A10.56 10.56 0 0 1 12 6.843c.937.005 1.88.127 2.762.372 2.103-1.427 3.027-1.13 3.027-1.13.602 1.515.224 2.634.11 2.912.706.772 1.134 1.756 1.134 2.96 0 4.235-2.577 5.168-5.03 5.44.395.34.747 1.01.747 2.037 0 1.472-.014 2.657-.014 3.02 0 .293.182.633.74.526C19.85 20.99 23 16.866 23 12c0-6.075-4.925-11-11-11Z" /></svg>, desc: 'Community skills from GitHub' },
+  { key: 'all', label: 'All Sources', icon: <Package size={14} />, desc: 'Combined catalog search' },
+];
 
-interface Pack {
-  pack_id: string;
+interface SkillResult {
+  identifier: string;
   name: string;
   description: string;
-  workflow_count: number;
+  source: string;
+  installed: boolean;
 }
 
-interface WorkflowRun {
-  run_id: string;
-  workflow_id: string;
-  status: string;
-  started_at: string;
-  completed_at?: string;
+interface InstalledSkill {
+  name: string;
+  title: string;
+  description: string;
+  version?: string;
+  author?: string;
+  enabled?: boolean;
 }
 
 export function PluginsPage() {
-  const [tab, setTab] = useState<'installed' | 'marketplace' | 'runs'>('installed');
+  const [tab, setTab] = useState<'installed' | 'market'>('market');
+  const [source, setSource] = useState('official');
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<SkillResult[]>([]);
+  const [marketLoading, setMarketLoading] = useState(false);
+  const [marketError, setMarketError] = useState<string | null>(null);
+
+  const [installed, setInstalled] = useState<InstalledSkill[]>([]);
+  const [installedLoading, setInstalledLoading] = useState(true);
+  const [installing, setInstalling] = useState<string | null>(null);
+
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const loadInstalled = useCallback(async () => {
+    setInstalledLoading(true);
+    try {
+      const r = await api.listSkills();
+      setInstalled(r.skills);
+    } catch { /* ignore */ }
+    finally { setInstalledLoading(false); }
+  }, []);
+
+  useEffect(() => { loadInstalled(); }, [loadInstalled]);
+
+  const doSearch = useCallback(async (q: string, src: string) => {
+    setMarketLoading(true);
+    setMarketError(null);
+    try {
+      const r = await api.searchSkills(q, src);
+      setResults(r.results || []);
+    } catch (err) {
+      setMarketError(err instanceof ApiError ? err.messageText : 'Search failed');
+      setResults([]);
+    } finally {
+      setMarketLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => doSearch(query, source), 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [query, source, doSearch]);
+
+  const toggle = async (name: string, enabled: boolean) => {
+    try { await api.toggleSkill(name, !enabled); loadInstalled(); } catch { /* ignore */ }
+  };
+
+  const handleInstall = async (identifier: string) => {
+    setInstalling(identifier);
+    try {
+      await api.installSkill(identifier);
+      loadInstalled();
+      doSearch(query, source);
+    } catch (err) {
+      setMarketError(err instanceof ApiError ? err.messageText : 'Install failed');
+    } finally {
+      setInstalling(null);
+    }
+  };
+
+  const handleUninstall = async (name: string) => {
+    try {
+      await api.uninstallSkill(name);
+      loadInstalled();
+      doSearch(query, source);
+    } catch (err) {
+      setMarketError(err instanceof ApiError ? err.messageText : 'Uninstall failed');
+    }
+  };
+
+  const installedNames = new Set(installed.map((s) => s.name));
 
   return (
     <AppShell>
@@ -37,207 +108,135 @@ export function PluginsPage() {
         <header className="flex h-14 items-center border-b border-border bg-surface px-6">
           <h1 className="font-semibold text-text-primary">Plugins</h1>
           <div className="ml-6 flex gap-1">
-            {(['installed', 'marketplace', 'runs'] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={cn(
-                  'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
-                  tab === t ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:text-text-primary',
-                )}
-              >
-                {t === 'installed' ? 'Installed' : t === 'marketplace' ? 'Marketplace' : 'Runs'}
-              </button>
-            ))}
+            <button onClick={() => setTab('market')} className={cn('rounded-lg px-3 py-1.5 text-sm font-medium transition-colors', tab === 'market' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:text-text-primary')}>
+              Marketplace
+            </button>
+            <button onClick={() => setTab('installed')} className={cn('rounded-lg px-3 py-1.5 text-sm font-medium transition-colors', tab === 'installed' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:text-text-primary')}>
+              Installed ({installed.length})
+            </button>
           </div>
         </header>
 
         <main className="p-6">
-          {tab === 'installed' && <InstalledWorkflows />}
-          {tab === 'marketplace' && <MarketplacePacks />}
-          {tab === 'runs' && <RunHistory />}
+          {marketError && <Alert variant="error" className="mb-4">{marketError}</Alert>}
+
+          {tab === 'market' && (
+            <div>
+              {/* Source tabs */}
+              <div className="mb-4 flex gap-2">
+                {SOURCES.map((s) => (
+                  <button
+                    key={s.key}
+                    onClick={() => setSource(s.key)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
+                      source === s.key
+                        ? 'border-accent bg-accent/10 text-accent'
+                        : 'border-border text-text-secondary hover:border-border-strong',
+                    )}
+                    title={s.desc}
+                  >
+                    {s.icon}
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Search bar */}
+              <div className="relative mb-4 max-w-md">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-text-tertiary" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={query ? `Searching "${query}"…` : 'Search available plugins…'}
+                  className="pl-10"
+                />
+              </div>
+
+              {/* Results */}
+              {marketLoading ? (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <Skeleton className="h-36 rounded-xl" /><Skeleton className="h-36 rounded-xl" /><Skeleton className="h-36 rounded-xl" />
+                </div>
+              ) : results.length === 0 ? (
+                <Card className="p-8 text-center">
+                  <Puzzle size={32} className="mx-auto mb-3 text-text-tertiary" />
+                  <p className="text-text-secondary">{query ? 'No matching plugins found' : `${SOURCES.find((s) => s.key === source)?.label || 'This'} catalog has no plugins available`}</p>
+                </Card>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {results.map((skill) => {
+                    const isInstalled = installedNames.has(skill.name);
+                    return (
+                      <Card key={skill.identifier} className="flex flex-col p-4">
+                        <div className="flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <h3 className="font-medium text-text-primary truncate">{skill.name}</h3>
+                            <Badge variant="default" className="shrink-0 text-xs">
+                              {skill.source}
+                            </Badge>
+                          </div>
+                          <p className="mt-2 text-xs text-text-tertiary line-clamp-3">{skill.description || 'No description'}</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          className="mt-3 w-full"
+                          variant={isInstalled ? 'secondary' : 'primary'}
+                          onClick={() => handleInstall(skill.identifier)}
+                          isLoading={installing === skill.identifier}
+                        >
+                          {isInstalled ? 'Installed ✓' : <><Download size={14} className="mr-1.5" /> Install</>}
+                        </Button>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'installed' && (
+            <div>
+              {installedLoading ? (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <Skeleton className="h-32 rounded-xl" /><Skeleton className="h-32 rounded-xl" />
+                </div>
+              ) : installed.length === 0 ? (
+                <Card className="p-8 text-center">
+                  <Package size={32} className="mx-auto mb-3 text-text-tertiary" />
+                  <p className="text-text-secondary">No plugins installed yet. Browse the Marketplace.</p>
+                  <Button size="sm" className="mt-4" onClick={() => setTab('market')}>Browse Marketplace</Button>
+                </Card>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {installed.map((skill) => (
+                    <Card key={skill.name} className="flex flex-col p-4">
+                      <div className="flex-1">
+                        <div className="flex items-start justify-between">
+                          <h3 className="font-medium text-text-primary truncate">{skill.title || skill.name}</h3>
+                          <Badge variant={skill.enabled ? 'success' : 'default'} className="shrink-0">
+                            {skill.enabled ? 'Active' : 'Disabled'}
+                          </Badge>
+                        </div>
+                        <p className="mt-2 text-xs text-text-tertiary line-clamp-2">{skill.description || 'No description'}</p>
+                        {skill.version && <p className="mt-1 text-xs text-text-tertiary/60">v{skill.version}{skill.author ? ` · ${skill.author}` : ''}</p>}
+                      </div>
+                      <div className="mt-3 flex gap-2">
+                        <Button size="sm" variant="secondary" className="flex-1" onClick={() => toggle(skill.name, !!skill.enabled)}>
+                          {skill.enabled ? <><ToggleRight size={14} className="mr-1" /> Disable</> : <><ToggleLeft size={14} className="mr-1" /> Enable</>}
+                        </Button>
+                        <Button size="sm" variant="ghost" className="shrink-0 text-error" onClick={() => handleUninstall(skill.name)}>
+                          <Trash2 size={14} />
+                        </Button>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </main>
       </div>
     </AppShell>
-  );
-}
-
-function InstalledWorkflows() {
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.listWorkflows()
-      .then((r) => setWorkflows(r.workflows))
-      .catch((err) => setError(err instanceof ApiError ? err.messageText : 'Failed to load'))
-      .finally(() => setLoading(false));
-  }, []);
-
-  if (loading) return <SkeletonGrid />;
-  if (error) return <Alert variant="error">{error}</Alert>;
-  if (workflows.length === 0) {
-    return (
-      <Card className="p-8 text-center">
-        <Puzzle size={32} className="mx-auto mb-3 text-text-tertiary" />
-        <p className="text-text-secondary">No plugins installed yet. Check the Marketplace tab.</p>
-      </Card>
-    );
-  }
-
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {workflows.map((w) => (
-        <Card key={w.workflow_id} className="p-4">
-          <div className="flex items-start justify-between">
-            <div className="min-w-0 flex-1">
-              <h3 className="font-medium text-text-primary truncate">{w.name}</h3>
-              <p className="mt-1 text-xs text-text-tertiary">{w.description || 'No description'}</p>
-            </div>
-          </div>
-          <div className="mt-3 flex items-center justify-between">
-            <span className="font-mono text-xs text-text-tertiary">{w.workflow_id}</span>
-            {w.archived ? <Badge variant="warning">archived</Badge> : <Badge variant="success">active</Badge>}
-          </div>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function MarketplacePacks() {
-  const [packs, setPacks] = useState<Pack[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [installing, setInstalling] = useState<string | null>(null);
-  const [installed, setInstalled] = useState<string | null>(null);
-
-  const load = () => {
-    setLoading(true);
-    api.listWorkflowPacks()
-      .then((r) => setPacks(r.packs))
-      .catch((err) => setError(err instanceof ApiError ? err.messageText : 'Failed to load'))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => { load(); }, []);
-
-  const install = async (packId: string) => {
-    setInstalling(packId);
-    try {
-      await api.installWorkflowPack(packId);
-      setInstalled(packId);
-      setTimeout(() => setInstalled(null), 3000);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : 'Install failed');
-    } finally {
-      setInstalling(null);
-    }
-  };
-
-  if (loading) return <SkeletonGrid />;
-  if (error) return <Alert variant="error">{error}</Alert>;
-  if (packs.length === 0) {
-    return (
-      <Card className="p-8 text-center">
-        <Package size={32} className="mx-auto mb-3 text-text-tertiary" />
-        <p className="text-text-secondary">No packs available.</p>
-      </Card>
-    );
-  }
-
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {packs.map((pack) => (
-        <Card key={pack.pack_id} className="flex flex-col p-4">
-          <div className="flex-1">
-            <h3 className="font-medium text-text-primary">{pack.name}</h3>
-            <p className="mt-1 text-xs text-text-tertiary line-clamp-3">{pack.description}</p>
-            <div className="mt-2">
-              <Badge>{pack.workflow_count} workflow{pack.workflow_count !== 1 ? 's' : ''}</Badge>
-            </div>
-          </div>
-          <Button
-            size="sm"
-            className="mt-3 w-full"
-            onClick={() => install(pack.pack_id)}
-            isLoading={installing === pack.pack_id}
-            variant={installed === pack.pack_id ? 'secondary' : 'primary'}
-          >
-            {installed === pack.pack_id ? (
-              'Installed ✓'
-            ) : (
-              <>
-                <Download size={14} className="mr-1.5" />
-                Install
-              </>
-            )}
-          </Button>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function RunHistory() {
-  const [runs, setRuns] = useState<WorkflowRun[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = () => {
-    setLoading(true);
-    api.getWorkflowRuns()
-      .then((r) => setRuns(r.runs))
-      .catch((err) => setError(err instanceof ApiError ? err.messageText : 'Failed to load'))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => { load(); }, []);
-
-  const statusVariant = (s: string): 'default' | 'success' | 'warning' | 'error' => {
-    switch (s) {
-      case 'completed': return 'success';
-      case 'running': return 'warning';
-      case 'failed': return 'error';
-      default: return 'default';
-    }
-  };
-
-  if (loading) return <SkeletonGrid />;
-  if (error) return <Alert variant="error">{error}</Alert>;
-  if (runs.length === 0) {
-    return (
-      <Card className="p-8 text-center">
-        <Play size={32} className="mx-auto mb-3 text-text-tertiary" />
-        <p className="text-text-secondary">No runs yet.</p>
-      </Card>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      {runs.map((r) => (
-        <Card key={r.run_id} className="flex items-center justify-between p-4">
-          <div>
-            <p className="font-medium text-sm text-text-primary">{r.workflow_id}</p>
-            <p className="text-xs text-text-tertiary">
-              {new Date(r.started_at).toLocaleString()}
-              {r.completed_at && ` → ${new Date(r.completed_at).toLocaleTimeString()}`}
-            </p>
-          </div>
-          <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function SkeletonGrid() {
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <Skeleton className="h-40 rounded-xl" />
-      <Skeleton className="h-40 rounded-xl" />
-      <Skeleton className="h-40 rounded-xl" />
-    </div>
   );
 }

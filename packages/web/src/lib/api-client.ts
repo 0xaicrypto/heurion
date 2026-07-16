@@ -441,8 +441,9 @@ class ApiClient {
     return this.fetch('/api/v1/skills');
   }
 
-  async searchSkills(query: string): Promise<{results: Array<{identifier: string; name: string; description: string; version: string; author: string}>}> {
-    return this.fetch(`/api/v1/skills/search?query=${encodeURIComponent(query)}`);
+  async searchSkills(query: string, source = 'official'): Promise<{results: Array<{identifier: string; name: string; description: string; source: string; installed: boolean; version?: string; author?: string}>}> {
+    const q = query ? `&query=${encodeURIComponent(query)}` : '';
+    return this.fetch(`/api/v1/skills/search?source=${source}${q}`);
   }
 
   async installSkill(identifier: string): Promise<{name: string}> {

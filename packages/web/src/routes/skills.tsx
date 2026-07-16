@@ -18,8 +18,10 @@ interface SearchResult {
   identifier: string;
   name: string;
   description: string;
-  version: string;
-  author: string;
+  version?: string;
+  author?: string;
+  source?: string;
+  installed?: boolean;
 }
 
 export function SkillsPage() {
