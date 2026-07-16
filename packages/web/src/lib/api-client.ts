@@ -555,6 +555,25 @@ class ApiClient {
     return this.fetch(`/api/v1/docs/${docId}/references`, { method: 'POST', body: JSON.stringify(data) });
   }
 
+  /* ────────────────────────── workflows / plugins ────────────────────────── */
+
+  async listWorkflows(): Promise<{workflows: Array<{workflow_id: string; name: string; description?: string; created_at: string; archived?: boolean}>}> {
+    return this.fetch('/api/v1/workflows');
+  }
+
+  async listWorkflowPacks(): Promise<{packs: Array<{pack_id: string; name: string; description: string; workflow_count: number}>}> {
+    return this.fetch('/api/v1/workflows/packs');
+  }
+
+  async installWorkflowPack(packId: string): Promise<{workflow_id: string; name: string}> {
+    return this.fetch(`/api/v1/workflows/packs/${packId}/install`, { method: 'POST' });
+  }
+
+  async getWorkflowRuns(workflowId?: string, limit = 50): Promise<{runs: Array<{run_id: string; workflow_id: string; status: string; started_at: string; completed_at?: string}>}> {
+    const q = workflowId ? `?workflow_id=${workflowId}&limit=${limit}` : `?limit=${limit}`;
+    return this.fetch(`/api/v1/workflows/runs${q}`);
+  }
+
   /* ────────────────────────── chat (SSE) ────────────────────────── */
 
   async *sendChat(

@@ -19,6 +19,7 @@ import { ResearchDetailPage } from '@/routes/research-detail';
 import { WritingPage } from '@/routes/writing';
 import { WritingEditorPage } from '@/routes/writing-editor';
 import { SkillsPage } from '@/routes/skills';
+import { PluginsPage } from '@/routes/plugins';
 import { useAuthStore } from '@/stores/auth';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -140,6 +141,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <SkillsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/plugins"
+            element={
+              <RequireAuth>
+                <PluginsPage />
               </RequireAuth>
             }
           />
