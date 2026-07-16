@@ -180,6 +180,7 @@ export function PatientSummaryPage() {
       .then(([d, p]) => {
         setDetail(d);
         setProjection(p);
+        if (!d && !p) setError('Patient not found');
       })
       .catch((err) => setError(err instanceof ApiError ? err.messageText : String(err)))
       .finally(() => setLoading(false));
