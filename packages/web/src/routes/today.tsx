@@ -1,19 +1,24 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { Activity, AlertCircle, FilePlus, FileText, UserPlus } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
+import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/lib/api-client';
-import type { AgentState, TimelineEvent } from '@/lib/types';
+import type { AgentState, Patient, TimelineEvent } from '@/lib/types';
 import { Alert, Button, Card, Skeleton } from '@/components/ui';
 
 export function TodayPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { displayName } = useAuthStore();
   const [state, setState] = useState<AgentState | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [newPatientOpen, setNewPatientOpen] = useState(false);
 
   const hour = new Date().getHours();
   const timeGreeting = hour < 12 ? t('today.morning') : hour < 18 ? t('today.afternoon') : t('today.evening');
@@ -23,8 +28,9 @@ export function TodayPage() {
     Promise.all([
       api.getAgentState().catch(() => null),
       api.getTimeline(10).then((r) => r.items).catch(() => []),
+      api.listPatients().catch(() => [] as Patient[]),
     ])
-      .then(([s, t]) => { setState(s); setTimeline(t); })
+      .then(([s, t, p]) => { setState(s); setTimeline(t); setPatients(p); })
       .catch(() => setError('Failed to load dashboard'))
       .finally(() => setLoading(false));
   }, []);
@@ -58,7 +64,7 @@ export function TodayPage() {
                     <Activity size={20} />
                   </div>
                   <div>
-                    <p className="text-2xl font-bold text-text-primary">{state?.memory_count ?? 0}</p>
+                    <p className="text-2xl font-bold text-text-primary">{patients.length}</p>
                     <p className="text-sm text-text-secondary">{t('today.activePatients')}</p>
                   </div>
                 </div>
@@ -88,12 +94,28 @@ export function TodayPage() {
             </div>
           )}
 
+          {!loading && patients.length === 0 && (
+            <Card className="p-8 text-center">
+              <div className="mb-4 flex justify-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-accent/10">
+                  <UserPlus size={28} className="text-accent" />
+                </div>
+              </div>
+              <h3 className="mb-1 text-lg font-semibold text-text-primary">Create your first patient to get started</h3>
+              <p className="mb-4 text-sm text-text-secondary">Register a patient to begin using Nexus features including chat, memory, and research.</p>
+              <Button onClick={() => setNewPatientOpen(true)}>
+                <UserPlus size={16} className="mr-2" />
+                {t('today.newPatient')}
+              </Button>
+            </Card>
+          )}
+
           <div className="flex flex-wrap gap-3">
-            <Button>
+            <Button onClick={() => setNewPatientOpen(true)}>
               <UserPlus size={16} className="mr-2" />
               {t('today.newPatient')}
             </Button>
-            <Button variant="secondary">
+            <Button variant="secondary" onClick={() => navigate('/app/writing')}>
               <FilePlus size={16} className="mr-2" />
               {t('today.newDocument')}
             </Button>
@@ -124,6 +146,11 @@ export function TodayPage() {
           </Card>
         </main>
       </div>
+      <NewPatientDialog
+        open={newPatientOpen}
+        onClose={() => setNewPatientOpen(false)}
+        onCreated={(patientHash) => { setNewPatientOpen(false); navigate(`/app/patients/${patientHash}`); }}
+      />
     </AppShell>
   );
 }

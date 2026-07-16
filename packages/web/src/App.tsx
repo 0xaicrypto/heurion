@@ -10,7 +10,9 @@ import { PatientsLayout, PatientSummaryPage, PatientChatPage } from '@/routes/pa
 import { SettingsPage } from '@/routes/settings';
 import { AdminUsersPage } from '@/routes/admin/users';
 import { ResearchPage } from '@/routes/research';
+import { ResearchDetailPage } from '@/routes/research-detail';
 import { WritingPage } from '@/routes/writing';
+import { WritingEditorPage } from '@/routes/writing-editor';
 import { SkillsPage } from '@/routes/skills';
 import { useAuthStore } from '@/stores/auth';
 
@@ -93,10 +95,26 @@ export default function App() {
             }
           />
           <Route
+            path="/app/research/:studyId"
+            element={
+              <RequireAuth>
+                <ResearchDetailPage />
+              </RequireAuth>
+            }
+          />
+          <Route
             path="/app/writing"
             element={
               <RequireAuth>
                 <WritingPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/writing/:docId"
+            element={
+              <RequireAuth>
+                <WritingEditorPage />
               </RequireAuth>
             }
           />

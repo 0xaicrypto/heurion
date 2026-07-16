@@ -15,6 +15,7 @@ import {
   Monitor,
   Globe,
   LogOut,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
@@ -172,9 +173,16 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
       >
         <header className="flex h-14 items-center gap-2 border-b border-border px-4">
           <div className="h-6 w-6 rounded-md bg-accent" />
-          <Link to="/app/today" className="text-lg font-bold text-text-primary">
+          <Link to="/app/today" className="flex-1 text-lg font-bold text-text-primary">
             {t('appName')}
           </Link>
+          <IconButton
+            className="lg:hidden"
+            onClick={onClose}
+            aria-label="Close menu"
+          >
+            <X size={20} />
+          </IconButton>
         </header>
 
         <nav aria-label="Main navigation" className="flex-1 overflow-y-auto px-3 py-3">
@@ -213,7 +221,7 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
   );
 }
 
-export function AppShell({ children, rail }: { children: React.ReactNode; rail?: React.ReactNode }) {
+export function AppShell({ children, rail, breadcrumb }: { children: React.ReactNode; rail?: React.ReactNode; breadcrumb?: React.ReactNode }) {
   const { t } = useTranslation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
@@ -233,6 +241,12 @@ export function AppShell({ children, rail }: { children: React.ReactNode; rail?:
           </IconButton>
           <span className="font-semibold text-text-primary">{t('appName')}</span>
         </header>
+
+        {breadcrumb && (
+          <nav className="flex items-center gap-2 border-b border-border bg-surface px-4 py-2 text-sm text-text-secondary lg:px-6">
+            {breadcrumb}
+          </nav>
+        )}
 
         <div className="flex flex-1 overflow-hidden">
           <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">{children}</main>

@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Paperclip, Plus, Search, User } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Paperclip, Plus, Search, User } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
+import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/api-client';
@@ -11,9 +12,11 @@ import type { ChatStreamChunk, MemoryFinding, MemoryProjection, Patient, Patient
 function PatientList({
   patients,
   selectedHash,
+  onCreatePatient,
 }: {
   patients: Patient[];
   selectedHash?: string;
+  onCreatePatient: () => void;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
@@ -24,9 +27,9 @@ function PatientList({
     <div className="flex h-full w-64 flex-col border-r border-border bg-surface">
       <div className="flex h-14 items-center justify-between border-b border-border px-3">
         <h2 className="font-semibold text-text-primary">{t('nav.patients')}</h2>
-        <Button size="sm" variant="ghost">
-          <Plus size={16} />
-        </Button>
+          <Button size="sm" variant="ghost" onClick={onCreatePatient}>
+            <Plus size={16} />
+          </Button>
       </div>
       <div className="p-3">
         <div className="relative">
@@ -101,16 +104,24 @@ function PatientTabs({ hash, active }: { hash?: string; active: 'summary' | 'cha
 export function PatientsLayout() {
   const { hash } = useParams<{ hash?: string }>();
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [newPatientOpen, setNewPatientOpen] = useState(false);
 
-  useEffect(() => {
+  const loadPatients = useCallback(() => {
+    setLoading(true);
+    setError(null);
     api.listPatients()
       .then(setPatients)
       .catch((err) => setError(err instanceof ApiError ? err.messageText : t('patient.loadPatientsError')))
       .finally(() => setLoading(false));
   }, [t]);
+
+  useEffect(() => {
+    loadPatients();
+  }, [loadPatients]);
 
   return (
     <AppShell>
@@ -122,7 +133,7 @@ export function PatientsLayout() {
             <Skeleton className="h-10 w-full" />
           </div>
         ) : (
-          <PatientList patients={patients} selectedHash={hash} />
+          <PatientList patients={patients} selectedHash={hash} onCreatePatient={() => setNewPatientOpen(true)} />
         )}
         <div className="flex min-w-0 flex-1 flex-col">
           {error && (
@@ -133,6 +144,11 @@ export function PatientsLayout() {
           <Outlet />
         </div>
       </div>
+      <NewPatientDialog
+        open={newPatientOpen}
+        onClose={() => setNewPatientOpen(false)}
+        onCreated={(patientHash) => { loadPatients(); navigate(`/app/patients/${patientHash}`); }}
+      />
     </AppShell>
   );
 }
@@ -207,6 +223,11 @@ export function PatientSummaryPage() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
+      <nav className="flex items-center gap-1 border-b border-border bg-surface px-6 py-2 text-sm text-text-secondary">
+        <NavLink to="/app/patients" className="hover:text-text-primary">Patients</NavLink>
+        <ChevronRight size={14} className="text-text-tertiary" />
+        <span className="text-text-primary">{detail?.initials || hash}</span>
+      </nav>
       <div className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => navigate('/app/patients')}>

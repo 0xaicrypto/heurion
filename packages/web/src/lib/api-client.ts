@@ -342,6 +342,10 @@ class ApiClient {
     return this.fetch('/api/v1/research/studies', { method: 'POST', body: JSON.stringify(data) });
   }
 
+  async getStudy(studyId: string): Promise<{study_id: string; title: string; status: string; protocol_id?: string; created_at: string; updated_at?: string; description?: string}> {
+    return this.fetch(`/api/v1/research/studies/${studyId}`);
+  }
+
   /* ────────────────────────── skills ────────────────────────── */
 
   async listSkills(): Promise<{skills: Array<{name: string; title: string; description: string; version: string; author: string; enabled?: boolean}>}> {
@@ -368,6 +372,10 @@ class ApiClient {
 
   async createDoc(title: string): Promise<{id: string; title: string; body: string; created_at: string; updated_at: string}> {
     return this.fetch('/api/v1/docs/docs', { method: 'POST', body: JSON.stringify({ title }) });
+  }
+
+  async getDoc(docId: string): Promise<{id: string; title: string; body: string; created_at: string; updated_at: string}> {
+    return this.fetch(`/api/v1/docs/docs/${docId}`);
   }
 
   /* ────────────────────────── chat (SSE) ────────────────────────── */
