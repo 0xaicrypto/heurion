@@ -184,6 +184,8 @@ function ProfileSkeleton() {
 
 function LlmSection() {
   const { t } = useTranslation();
+  const { role } = useAuthStore();
+  const isAdmin = role === 'admin';
   const [status, setStatus] = useState<LlmStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -296,79 +298,83 @@ function LlmSection() {
         </Card>
       )}
 
-      <Card className="space-y-4 p-4">
-            <h3 className="font-medium text-text-primary">{t('settings.changeProvider')}</h3>
-
-        <div>
-              <label className="block text-sm font-medium text-text-secondary mb-1">{t('settings.provider')}</label>
-          <div className="flex flex-wrap gap-2">
-            {PROVIDERS.map((p) => (
-              <button
-                key={p.value}
-                onClick={() => setProvider(p.value)}
-                className={cn(
-                  'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
-                  provider === p.value
-                    ? 'border-accent bg-accent/10 text-accent'
-                    : 'border-border text-text-secondary hover:border-border-strong',
-                )}
-              >
-                {p.label}
-                {status && hasKey(status, p.value) && (
-                  <Key size={12} className="ml-1 inline text-success" />
-                )}
-              </button>
-            ))}
+      {isAdmin ? (
+        <Card className="space-y-4 p-4">
+          <h3 className="font-medium text-text-primary">{t('settings.changeProvider')}</h3>
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-1">{t('settings.provider')}</label>
+            <div className="flex flex-wrap gap-2">
+              {PROVIDERS.map((p) => (
+                <button
+                  key={p.value}
+                  onClick={() => setProvider(p.value)}
+                  className={cn(
+                    'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
+                    provider === p.value
+                      ? 'border-accent bg-accent/10 text-accent'
+                      : 'border-border text-text-secondary hover:border-border-strong',
+                  )}
+                >
+                  {p.label}
+                  {status && hasKey(status, p.value) && (
+                    <Key size={12} className="ml-1 inline text-success" />
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-
-        <div>
-              <label className="block text-sm font-medium text-text-secondary mb-1">
-                {t('settings.apiKeyLabel')}
-              </label>
-          <Input
-            type="password"
-            value={keyInput}
-            onChange={(e) => setKeyInput(e.target.value)}
-            placeholder="sk-..."
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={handleSaveLlm} isLoading={savingLlm} size="sm">
-            <Server size={14} className="mr-1.5" />
-            {t('common.save')}
-          </Button>
-          <Button variant="secondary" onClick={handleTest} isLoading={testing} size="sm">
-            <Zap size={14} className="mr-1.5" />
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-1">
+              {t('settings.apiKeyLabel')}
+            </label>
+            <Input
+              type="password"
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+              placeholder="sk-..."
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={handleSaveLlm} isLoading={savingLlm} size="sm">
+              <Server size={14} className="mr-1.5" />
+              {t('common.save')}
+            </Button>
+            <Button variant="secondary" onClick={handleTest} isLoading={testing} size="sm">
+              <Zap size={14} className="mr-1.5" />
               {t('settings.test')}
-          </Button>
-          {savedMsg && (
-            <span className="flex items-center gap-1 text-sm text-success">
-              <Check size={14} /> {savedMsg}
-            </span>
-          )}
-        </div>
-
-        {testResult && (
-          <div
-            className={cn(
-              'rounded-lg px-4 py-3 text-sm',
-              testResult.ok ? 'bg-success/10 text-success' : 'bg-error/10 text-error',
+            </Button>
+            {savedMsg && (
+              <span className="flex items-center gap-1 text-sm text-success">
+                <Check size={14} /> {savedMsg}
+              </span>
             )}
-          >
-            <div className="font-medium">
-                {testResult.ok ? t('common.connectionOk') : t('common.connectionFailed')}
-              {testResult.latencyMs ? ` (${testResult.latencyMs}ms)` : ''}
-            </div>
-            <div className="text-xs opacity-80">
-              {testResult.provider}/{testResult.model}
-              {testResult.error ? ` — ${testResult.error}` : ''}
-              {testResult.diagnosis ? ` [${testResult.diagnosis}]` : ''}
-            </div>
           </div>
-        )}
-      </Card>
+          {testResult && (
+            <div
+              className={cn(
+                'rounded-lg px-4 py-3 text-sm',
+                testResult.ok ? 'bg-success/10 text-success' : 'bg-error/10 text-error',
+              )}
+            >
+              <div className="font-medium">
+                {testResult.ok ? t('common.connectionOk') : t('common.connectionFailed')}
+                {testResult.latencyMs ? ` (${testResult.latencyMs}ms)` : ''}
+              </div>
+              <div className="text-xs opacity-80">
+                {testResult.provider}/{testResult.model}
+                {testResult.error ? ` — ${testResult.error}` : ''}
+                {testResult.diagnosis ? ` [${testResult.diagnosis}]` : ''}
+              </div>
+            </div>
+          )}
+        </Card>
+      ) : (
+        <Card className="p-4">
+          <p className="text-sm text-text-tertiary text-center">
+            {t('appName')} AI provider is configured by the server administrator.
+          </p>
+        </Card>
+      )}
     </div>
   );
 }
