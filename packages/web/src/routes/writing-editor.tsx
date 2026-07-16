@@ -425,6 +425,9 @@ export function WritingEditorPage() {
             <Button size="sm" onClick={handleSave} isLoading={saving} disabled={saving}>
               Save
             </Button>
+            <Button size="sm" variant="secondary" onClick={handleExportDocx}>
+              <Download size={14} className="mr-1" /> DOCX
+            </Button>
           </div>
         </header>
 
@@ -607,7 +610,11 @@ export function WritingEditorPage() {
               <SkillsBar active={activeSkills} onToggle={(name) => setActiveSkills((prev) => prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name])} />
               <div className="flex-1 overflow-y-auto p-3 space-y-3">
                 {chatMessages.length === 0 && (
-                  <p className="text-sm text-text-tertiary text-center mt-4">Ask questions about this document.</p>
+                  <p className="text-sm text-text-tertiary text-center mt-4 leading-relaxed">
+                    Ask the AI to write or research content.<br />
+                    It will update this document automatically.<br />
+                    <span className="text-xs">e.g. "Write a clinical review on..."</span>
+                  </p>
                 )}
                 {chatMessages.map((m, i) => (
                   <div
