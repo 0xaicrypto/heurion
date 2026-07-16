@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ChevronRight, Paperclip, Plus, Search, User } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Paperclip, Plus, Search, Trash2, User } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { SkillsBar } from '@/components/SkillsBar';
@@ -16,10 +16,12 @@ function PatientList({
   patients,
   selectedHash,
   onCreatePatient,
+  onDelete,
 }: {
   patients: Patient[];
   selectedHash?: string;
   onCreatePatient: () => void;
+  onDelete?: (hash: string) => void;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
@@ -47,11 +49,11 @@ function PatientList({
       </div>
       <ul className="flex-1 overflow-y-auto px-3">
         {filtered.map((p) => (
-          <li key={p.patient_hash}>
+          <li key={p.patient_hash} className="flex items-center group">
             <NavLink
               to={`/app/patients/${p.patient_hash}`}
               className={cn(
-                'flex items-center gap-3 rounded-lg px-3 py-2 transition-colors',
+                'flex flex-1 items-center gap-3 rounded-lg px-3 py-2 transition-colors',
                 selectedHash === p.patient_hash
                   ? 'bg-accent/10 text-accent'
                   : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary',
@@ -69,6 +71,15 @@ function PatientList({
                 </p>
               </div>
             </NavLink>
+            {onDelete && (
+              <button
+                onClick={(e) => { e.preventDefault(); onDelete(p.patient_hash); }}
+                className="shrink-0 rounded p-1 text-text-tertiary opacity-0 group-hover:opacity-100 hover:text-error hover:bg-error/10 transition-all"
+                title="Delete patient"
+              >
+                <Trash2 size={14} />
+              </button>
+            )}
           </li>
         ))}
       </ul>
@@ -126,6 +137,17 @@ export function PatientsLayout() {
       .finally(() => setLoading(false));
   }, [t]);
 
+  const handleDeletePatient = async (patientHash: string) => {
+    if (!confirm('Delete this patient and all associated data? This cannot be undone.')) return;
+    try {
+      await api.deletePatient(patientHash);
+      if (hash === patientHash) navigate('/app/patients');
+      loadPatients();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : 'Delete failed');
+    }
+  };
+
   useEffect(() => {
     loadPatients();
   }, [loadPatients]);
@@ -140,7 +162,7 @@ export function PatientsLayout() {
             <Skeleton className="h-10 w-full" />
           </div>
         ) : (
-          <PatientList patients={patients} selectedHash={hash} onCreatePatient={() => setNewPatientOpen(true)} />
+          <PatientList patients={patients} selectedHash={hash} onCreatePatient={() => setNewPatientOpen(true)} onDelete={handleDeletePatient} />
         )}
         <div className="flex min-w-0 flex-1 flex-col">
           {error && (
@@ -251,6 +273,13 @@ export function PatientSummaryPage() {
           )}
         </div>
         <Button size="sm" onClick={() => navigate(`/app/patients/${hash}/chat`)}>{t('patient.chat')}</Button>
+        <button
+          onClick={() => { if (confirm('Delete this patient?')) { api.deletePatient(hash).then(() => navigate('/app/patients')).catch(() => {}); } }}
+          className="ml-2 rounded p-1.5 text-text-tertiary hover:text-error hover:bg-error/10 transition-colors"
+          title="Delete patient"
+        >
+          <Trash2 size={16} />
+        </button>
       </div>
       <PatientTabs hash={hash} active="summary" />
       <main className="space-y-6 p-6">

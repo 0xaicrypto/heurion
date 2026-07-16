@@ -240,6 +240,14 @@ class ApiClient {
     return this.fetch<PatientDetail>(`/api/v1/dicom/patients/${hash}/detail`);
   }
 
+  async deletePatient(hash: string): Promise<{ patient_hash: string; deleted: Record<string, number> }> {
+    return this.fetch(`/api/v1/dicom/patients/${hash}`, { method: 'DELETE' });
+  }
+
+  async archivePatient(hash: string): Promise<{ patient_hash: string; archived_at: string }> {
+    return this.fetch(`/api/v1/dicom/patients/${hash}/archive`, { method: 'POST' });
+  }
+
   async getPatientStudies(patientHash: string): Promise<Array<{study_id: string; modality: string; body_part?: string; series_count: number; created_at: string}>> {
     return this.fetch(`/api/v1/dicom/patients/${patientHash}/studies`);
   }
