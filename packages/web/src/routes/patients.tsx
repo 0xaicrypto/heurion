@@ -313,9 +313,13 @@ export function PatientSummaryPage() {
 }
 
 function FindingItem({ finding }: { finding: MemoryFinding }) {
+  const text = typeof finding.content === 'string' ? finding.content
+    : finding.content && typeof finding.content === 'object'
+      ? (finding.content as Record<string,string>).label || (finding.content as Record<string,string>).canonical_en || JSON.stringify(finding.content)
+      : String(finding.content || '');
   return (
     <li className="rounded-lg border border-border bg-surface p-3 text-sm">
-      <p className="text-text-primary">{finding.content}</p>
+      <p className="text-text-primary">{text}</p>
       <p className="mt-1 text-xs text-text-tertiary">{finding.node_type} · {finding.node_id.slice(0, 8)}</p>
     </li>
   );
