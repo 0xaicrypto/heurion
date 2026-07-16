@@ -6,7 +6,8 @@ import { useAuthStore } from '@/stores/auth';
 import { Alert, Button, Input } from '@/components/ui';
 
 export function LoginPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isZh = i18n.language.startsWith('zh');
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -94,6 +95,12 @@ export function LoginPage() {
             {isRegister ? t('common.login') : t('common.register')}
           </button>
         </p>
+
+        {isRegister && (
+          <p className="text-center text-xs text-text-tertiary">
+            {isZh ? '首个注册账户将自动获得管理员权限。' : 'The first registered account gets administrator privileges.'}
+          </p>
+        )}
 
         <p className="text-center text-sm">
           <Link to="/" className="text-text-tertiary hover:text-text-secondary">

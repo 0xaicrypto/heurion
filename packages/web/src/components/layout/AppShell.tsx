@@ -131,7 +131,7 @@ function LanguageMenu() {
 
 function UserMenu() {
   const { t } = useTranslation();
-  const { displayName, clearSession } = useAuthStore();
+  const { displayName, role, clearSession } = useAuthStore();
   const navigate = useNavigate();
 
   const logout = () => {
@@ -142,7 +142,12 @@ function UserMenu() {
   return (
     <div className="flex items-center gap-2 px-3 py-2">
       <Avatar name={displayName || 'User'} />
-      <span className="flex-1 truncate text-sm font-medium text-text-primary">{displayName || 'User'}</span>
+      <div className="flex-1 min-w-0">
+        <span className="block truncate text-sm font-medium text-text-primary">{displayName || 'User'}</span>
+        {role === 'admin' && (
+          <span className="text-xs text-accent font-medium">Administrator</span>
+        )}
+      </div>
       <IconButton onClick={logout} aria-label={t('common.logout')} title={t('common.logout')}>
         <LogOut size={18} />
       </IconButton>
