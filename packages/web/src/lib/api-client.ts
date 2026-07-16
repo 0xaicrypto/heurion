@@ -557,6 +557,12 @@ class ApiClient {
     } finally { try { reader.releaseLock(); } catch { /* ignore */ } }
   }
 
+  /* ────────────────────────── sandbox ────────────────────────── */
+
+  async executeSandbox(language: string, code: string): Promise<{ok: boolean; stdout: string; stderr: string; runtime_ms: number; language: string; error: string}> {
+    return this.fetch('/api/v1/sandbox/execute', { method: 'POST', body: JSON.stringify({ language, code }) });
+  }
+
   async addDocReference(docId: string, data: {kind: string; content: string; source_patient_hash?: string; label?: string}): Promise<{reference_id: string}> {
     return this.fetch(`/api/v1/docs/${docId}/references`, { method: 'POST', body: JSON.stringify(data) });
   }

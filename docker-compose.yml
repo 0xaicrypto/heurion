@@ -47,6 +47,10 @@ services:
       # inside the image. Update packages/web/dist and restart the
       # container to deploy front-end changes.
       - ./packages/web/dist:/app/packages/web/dist:ro
+      # Server Python code is mounted from the host so we can patch
+      # backend routes (new routers, tools, etc.) without rebuilding
+      # the Docker image on the 1 GB droplet.
+      - ./packages/server/nexus_server:/opt/venv/lib/python3.11/site-packages/nexus_server:ro
     networks:
       - nexus-net
     # No `ports:` here — Caddy is the only thing the host exposes.

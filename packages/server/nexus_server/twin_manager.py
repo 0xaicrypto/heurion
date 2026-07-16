@@ -455,6 +455,8 @@ async def _create_twin(user_id: str):
         # #169: defer_to_background — schedule long-running tasks for
         # async execution + email notification.
         ("nexus_server.tools_async",    "register_async_tools",    "AsyncTasks"),
+        # Sandbox code execution tool.
+        ("nexus_server.sandbox_router", "register_sandbox_tool",  "Sandbox"),
     )
     for module_path, fn_name, label in _USER_SCOPED_TOOL_REGISTRARS:
         try:

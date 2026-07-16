@@ -842,6 +842,9 @@ def create_app() -> FastAPI:
     from nexus_server import skills_router as _skills_router
     app.include_router(_skills_router.router)
 
+    from nexus_server import sandbox_router as _sandbox_router
+    app.include_router(_sandbox_router.router)
+
     # #143 — serve the Cornerstone3D viewer.html as a static page.
     # Desktop launches the user's default browser at
     # http://localhost:8001/dicom-viewer/?studyId=…&token=… when the
