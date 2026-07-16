@@ -73,11 +73,15 @@ function PatientList({
   );
 }
 
-function PatientTabs({ hash, active }: { hash?: string; active: 'summary' | 'chat' }) {
+function PatientTabs({ hash, active }: { hash?: string; active: 'summary' | 'chat' | 'imaging' | 'labs' | 'memory' | 'report' }) {
   const { t } = useTranslation();
   const tabs = [
     { to: `/app/patients/${hash}`, label: t('patient.summary'), key: 'summary' as const },
     { to: `/app/patients/${hash}/chat`, label: t('patient.chat'), key: 'chat' as const },
+    { to: `/app/patients/${hash}/imaging`, label: 'Imaging', key: 'imaging' as const },
+    { to: `/app/patients/${hash}/labs`, label: 'Labs', key: 'labs' as const },
+    { to: `/app/patients/${hash}/memory`, label: 'Memory', key: 'memory' as const },
+    { to: `/app/patients/${hash}/report`, label: 'Report', key: 'report' as const },
   ];
 
   return (

@@ -240,6 +240,29 @@ class ApiClient {
     return this.fetch<PatientDetail>(`/api/v1/dicom/patients/${hash}/detail`);
   }
 
+  async getPatientStudies(patientHash: string): Promise<Array<{study_id: string; modality: string; body_part?: string; series_count: number; created_at: string}>> {
+    return this.fetch(`/api/v1/dicom/patients/${patientHash}/studies`);
+  }
+
+  async getDicomStudy(studyId: string): Promise<{study_id: string; modality: string; body_part?: string; series_count: number; slice_count?: number; created_at: string; series?: Array<{series_uid: string; series_description?: string; slice_count: number}>}> {
+    return this.fetch(`/api/v1/dicom/studies/${studyId}`);
+  }
+
+  async getUploads(patientHash?: string, limit = 100): Promise<Array<{file_id: string; name: string; mime: string; size_bytes: number; created_at: string; patient_hash?: string; dicom_status?: string; dicom_study_id?: string}>> {
+    const q = patientHash ? `?patient_hash=${patientHash}&limit=${limit}` : `?limit=${limit}`;
+    return this.fetch(`/api/v1/files/uploads${q}`);
+  }
+
+  async triggerQuickScan(studyId: string): Promise<{job_id: string; status: string}> {
+    return this.fetch(`/api/v1/dicom/studies/${studyId}/quick-scan`, { method: 'POST' });
+  }
+
+  /* ────────────────────────── report ────────────────────────── */
+
+  async generateReport(data: {patient_hash: string; patient_label?: string; patient_sex?: string; patient_age_group?: string; clinical_info?: string; impression?: string; recommendation?: string}): Promise<{pdf_path: string; size_bytes: number; filename: string}> {
+    return this.fetch('/api/v1/report/pdf', { method: 'POST', body: JSON.stringify(data) });
+  }
+
   /* ────────────────────────── sessions ────────────────────────── */
 
   async listSessions(includeArchived = false): Promise<{ sessions: ChatSession[] }> {
@@ -277,6 +300,18 @@ class ApiClient {
 
   async getMemoryProjection(patientHash: string): Promise<MemoryProjection> {
     return this.fetch<MemoryProjection>(`/api/v1/memory/patient/${patientHash}/projection`);
+  }
+
+  async getFindings(patientHash: string): Promise<Array<{node_id: string; node_type: string; content: string; weight?: number; encounter_id?: string; updated_at?: string}>> {
+    return this.fetch(`/api/v1/memory/patient/${patientHash}/findings`);
+  }
+
+  async getMedications(patientHash: string): Promise<Array<{node_id: string; node_type: string; content: string; weight?: number; encounter_id?: string; updated_at?: string}>> {
+    return this.fetch(`/api/v1/memory/patient/${patientHash}/medications`);
+  }
+
+  async getMemoryTimeline(patientHash: string): Promise<Array<{event_id: string; event_type: string; content: string; timestamp: string}>> {
+    return this.fetch(`/api/v1/memory/patient/${patientHash}/timeline`);
   }
 
   /* ────────────────────────── files ────────────────────────── */

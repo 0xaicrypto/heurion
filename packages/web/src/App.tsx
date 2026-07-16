@@ -7,6 +7,11 @@ import { LandingPage } from '@/routes/landing';
 import { LoginPage } from '@/routes/login';
 import { TodayPage } from '@/routes/today';
 import { PatientsLayout, PatientSummaryPage, PatientChatPage } from '@/routes/patients';
+import { ImagingPage } from '@/routes/imaging';
+import { LabsPage } from '@/routes/labs';
+import { MemoryGraphPage } from '@/routes/memory-graph';
+import { ReportPage } from '@/routes/report-page';
+import { ViewerPage } from '@/routes/viewer';
 import { SettingsPage } from '@/routes/settings';
 import { AdminUsersPage } from '@/routes/admin/users';
 import { ResearchPage } from '@/routes/research';
@@ -85,7 +90,19 @@ export default function App() {
             <Route index element={<PatientSummaryPage />} />
             <Route path=":hash" element={<PatientSummaryPage />} />
             <Route path=":hash/chat" element={<PatientChatPage />} />
+            <Route path=":hash/imaging" element={<ImagingPage />} />
+            <Route path=":hash/labs" element={<LabsPage />} />
+            <Route path=":hash/memory" element={<MemoryGraphPage />} />
+            <Route path=":hash/report" element={<ReportPage />} />
           </Route>
+          <Route
+            path="/app/viewer/:studyId"
+            element={
+              <RequireAuth>
+                <ViewerPage />
+              </RequireAuth>
+            }
+          />
           <Route
             path="/app/research"
             element={
