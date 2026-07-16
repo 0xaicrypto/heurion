@@ -99,6 +99,38 @@ def _sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
+def _get_patient_context_block(conn, user_id: str, patient_hash: str) -> str:
+    """Build a patient demographics block for the chat context."""
+    try:
+        rows = conn.execute(
+            "SELECT initials, mrn, age_value, age_group, sex, chief_complaint "
+            "FROM patients WHERE user_id = ? AND patient_hash = ? AND archived_at IS NULL",
+            (user_id, patient_hash),
+        ).fetchall()
+        if not rows:
+            return ""
+        row = rows[0]
+        parts = ["[Current Patient Context]"]
+        if row[0]:
+            parts.append(f"Name: {row[0]}")
+        if row[1]:
+            parts.append(f"MRN: {row[1]}")
+        age_str = ""
+        if row[2] is not None:
+            age_str = f"{row[2]} years"
+        if row[3]:
+            age_str += f" ({row[3]})"
+        if age_str:
+            parts.append(f"Age: {age_str.strip()}")
+        if row[4]:
+            parts.append(f"Sex: {row[4]}")
+        if row[5]:
+            parts.append(f"Chief Complaint: {row[5]}")
+        return "\n".join(parts) + "\n"
+    except Exception:
+        return ""
+
+
 @router.post("/chat")
 async def chat(
     req: ChatRequest,
@@ -257,6 +289,12 @@ async def chat(
                     + "\n\n--- QUESTION ---\n"
                     + base_question
                 )
+
+            # Inject patient demographics into the question context
+            if req.patient_hash:
+                patient_block = _get_patient_context_block(conn, current_user, req.patient_hash)
+                if patient_block:
+                    question_for_retrieval = patient_block + "\n\n" + question_for_retrieval
 
             # 1. Persist the user message + announce turn
             user_idx = store.emit_and_apply(
