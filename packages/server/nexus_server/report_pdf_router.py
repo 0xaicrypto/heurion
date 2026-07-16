@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from nexus_server.auth import get_current_user
@@ -179,5 +180,33 @@ async def export_report_pdf(
         bytes        = size_bytes,
         created_at   = int(os.path.getmtime(out)),
         patient_hash = req.patient_hash,
-        locale       = req.locale,
+        locale       = req.locale or "zh-CN",
+    )
+
+
+@router.get("/pdf/{patient_hash}")
+async def download_report_pdf(
+    patient_hash: str,
+    current_user: str = Depends(get_current_user),
+):
+    """Download the most recently generated PDF report for a patient."""
+    archive = _archive_dir(current_user)
+    out_dir = reports_dir(archive)
+    try:
+        candidates = sorted(
+            out_dir.glob(f"{patient_hash[:12]}-*.pdf"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except Exception:
+        candidates = []
+    if not candidates:
+        raise HTTPException(status_code=404, detail="No report found for this patient")
+    latest = candidates[0]
+    if not latest.exists():
+        raise HTTPException(status_code=404, detail="Report file not found")
+    return FileResponse(
+        path=str(latest),
+        filename=latest.name,
+        media_type="application/pdf",
     )

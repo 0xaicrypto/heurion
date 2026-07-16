@@ -259,8 +259,13 @@ class ApiClient {
 
   /* ────────────────────────── report ────────────────────────── */
 
-  async generateReport(data: {patient_hash: string; patient_label?: string; patient_sex?: string; patient_age_group?: string; clinical_info?: string; impression?: string; recommendation?: string}): Promise<{pdf_path: string; size_bytes: number; filename: string}> {
+  async generateReport(data: {patient_hash: string; patient_label?: string; patient_sex?: string; patient_age_group?: string; clinical_info?: string; impression?: string; recommendation?: string}): Promise<{path: string; bytes: number; created_at: number; patient_hash: string; locale: string}> {
     return this.fetch('/api/v1/report/pdf', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  downloadReportUrl(patientHash: string): string {
+    const base = typeof window !== 'undefined' ? window.location.origin : '';
+    return `${base}/api/v1/report/pdf/${patientHash}`;
   }
 
   /* ────────────────────────── sessions ────────────────────────── */

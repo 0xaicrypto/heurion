@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { FileDown, FileText } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
-import { Alert, Badge, Button, Card, Skeleton, Textarea } from '@/components/ui';
+import { Alert, Button, Card, Skeleton, Textarea } from '@/components/ui';
 import type { PatientDetail } from '@/lib/types';
 
 export function ReportPage() {
@@ -14,7 +14,7 @@ export function ReportPage() {
   const [recommendation, setRecommendation] = useState('');
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ pdf_path: string; size_bytes: number; filename: string } | null>(null);
+  const [result, setResult] = useState<{ path: string; bytes: number; created_at: number; patient_hash: string } | null>(null);
 
   useEffect(() => {
     if (!hash) return;
@@ -131,18 +131,21 @@ export function ReportPage() {
         </div>
       )}
 
-      {result && (
+      {result && hash && (
         <Card className="p-6">
           <div className="flex items-start gap-4">
             <FileText size={24} className="shrink-0 text-success" />
             <div className="min-w-0 flex-1">
               <p className="font-medium text-text-primary">Report Generated Successfully</p>
-              <p className="text-sm text-text-secondary">Filename: {result.filename}</p>
               <p className="text-sm text-text-tertiary">
-                Path: {result.pdf_path} · {(result.size_bytes / 1024).toFixed(1)} KB
+                {(result.bytes / 1024).toFixed(1)} KB · {new Date(result.created_at * 1000).toLocaleString()}
               </p>
             </div>
-            <Badge variant="success">PDF Ready</Badge>
+            <a href={api.downloadReportUrl(hash)} target="_blank" rel="noreferrer">
+              <Button size="sm">
+                <FileDown size={14} className="mr-1" /> Download PDF
+              </Button>
+            </a>
           </div>
         </Card>
       )}
