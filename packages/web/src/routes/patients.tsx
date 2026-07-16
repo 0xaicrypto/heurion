@@ -7,7 +7,8 @@ import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/api-client';
-import type { ChatStreamChunk, MemoryFinding, MemoryProjection, Patient, PatientDetail } from '@/lib/types';
+import { useChatStore } from '@/stores/chat';
+import type { MemoryFinding, MemoryProjection, Patient, PatientDetail } from '@/lib/types';
 
 function PatientList({
   patients,
@@ -317,51 +318,32 @@ function FindingItem({ finding }: { finding: MemoryFinding }) {
   );
 }
 
-/* ────────────────────────── Patient Chat Page ────────────────────────── */
-
-interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
-  reasoning?: string;
-  isStreaming?: boolean;
-  tier?: string;
-  citations?: Array<{text: string; source?: string}>;
-}
-
 export function PatientChatPage() {
   const { t } = useTranslation();
   const { hash } = useParams<{ hash: string }>();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const store = useChatStore();
+  const sessionId = hash ? `patient-${hash}` : '';
+  const session = store.sessions[sessionId];
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState('');
   const [uploadingFile, setUploadingFile] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
-  const [messageCitations, setMessageCitations] = useState<Record<string, Array<{text: string; source?: string}>>>({});
-  const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    const s = `patient-${hash}-${Date.now()}`;
-    setSessionId(s);
-  }, [hash]);
-
-  useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !hash) return;
+    const existing = store.sessions[sessionId]?.messages?.length;
+    if (existing) return;
     api.getMessages(sessionId, 50).then((r) => {
-      const msgs: ChatMessage[] = r.messages.map((m) => ({
+      const msgs = r.messages.map((m) => ({
         id: crypto.randomUUID(),
         role: m.role,
         text: m.content,
-        reasoning: '',
       }));
-      if (msgs.length > 0) setMessages(msgs);
+      if (msgs.length > 0) store.setMessages(sessionId, msgs);
     }).catch(() => {});
-  }, [sessionId, hash]);
+  }, [sessionId, hash, store]);
 
   useEffect(() => {
     const el = bottomRef.current;
@@ -370,53 +352,22 @@ export function PatientChatPage() {
     if (!parent) return;
     const nearBottom = parent.scrollHeight - parent.scrollTop - parent.clientHeight < 150;
     if (nearBottom) el.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [session?.messages]);
 
   const handleSend = async () => {
-  if (!input.trim() || loading) return;
-  const text = input.trim();
-  setInput('');
-  setError(null);
-  setTimeout(() => inputRef.current?.focus(), 50);
-
-  const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', text };
-  const assistantMsg: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', isStreaming: true };
-  setMessages((prev) => [...prev, userMsg, assistantMsg]);
-  setLoading(true);
-
-  abortRef.current = new AbortController();
-  try {
-    for await (const chunk of api.sendChatFull(
-      { text, sessionId, patientHash: hash || null, attachments: attachedFiles.map((a) => ({ name: a.name, file_id: a.fileId })) },
-      abortRef.current.signal,
-    )) {
-      if (chunk.type === 'citations') {
-        setMessageCitations(prev => ({ ...prev, [assistantMsg.id]: chunk.items }));
-      }
-      setMessages((prev) => {
-        const newMessages = [...prev];
-        const last = newMessages[newMessages.length - 1];
-        if (!last || last.role !== 'assistant') return prev;
-        newMessages[newMessages.length - 1] = applyChunk(last, chunk);
-        return newMessages;
-      });
-    }
-  } catch (err) {
-    if (err instanceof ApiError) setError(err.messageText);
-    else if (err instanceof Error && err.name !== 'AbortError') setError(err.message);
-    setMessages((prev) => {
-      const newMsgs = [...prev];
-      const last = newMsgs[newMsgs.length - 1];
-      if (last?.role === 'assistant') newMsgs[newMsgs.length - 1] = { ...last, isStreaming: false };
-      return newMsgs;
+    if (!input.trim() || !sessionId || session?.loading) return;
+    const text = input.trim();
+    setInput('');
+    setError(null);
+    await store.sendMessage(sessionId, {
+      text,
+      sessionId,
+      patientHash: hash || null,
+      attachments: attachedFiles.map((a) => ({ name: a.name, file_id: a.fileId })),
     });
-  } finally {
-    setLoading(false);
-    abortRef.current = null;
-  }
-};
+  };
 
-  const handleStop = () => abortRef.current?.abort();
+  const handleStop = () => store.stopStream(sessionId);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -432,6 +383,24 @@ export function PatientChatPage() {
     }
   };
 
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of Array.from(items)) {
+      if (item.kind === 'file') {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        setUploadingFile(true);
+        try {
+          const result = await api.uploadFile(file, hash || undefined);
+          setAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+        } catch { /* ignore */ }
+        finally { setUploadingFile(false); }
+      }
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
@@ -443,6 +412,8 @@ export function PatientChatPage() {
       </div>
     );
   }
+
+  const messages = session?.messages || [];
 
   return (
     <div className="flex h-full flex-col">
@@ -471,9 +442,9 @@ export function PatientChatPage() {
                     <p className="mt-1 whitespace-pre-wrap text-xs text-text-tertiary">{m.reasoning}</p>
                   </details>
                 )}
-                {(m.citations && m.citations.length > 0 ? m.citations : messageCitations[m.id]) && (
+                {m.citations && m.citations.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
-                    {(m.citations && m.citations.length > 0 ? m.citations : messageCitations[m.id]).map((c, i) => (
+                    {m.citations.map((c, i) => (
                       <span key={i} className="inline-flex rounded-full bg-surface px-2 py-0.5 text-xs text-text-tertiary border border-border">
                         {c.source ? `[${c.source}] ` : ''}{c.text.slice(0, 60)}
                       </span>
@@ -515,24 +486,24 @@ export function PatientChatPage() {
               variant="ghost"
               size="sm"
               onClick={() => fileInputRef.current?.click()}
-              disabled={loading || uploadingFile}
+              disabled={session?.loading || uploadingFile}
               isLoading={uploadingFile}
               className="shrink-0"
             >
               <Paperclip size={16} />
             </Button>
             <Textarea
-              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               placeholder={t('chat.placeholder')}
-              disabled={loading}
+              disabled={session?.loading}
               rows={1}
               className="min-h-0 flex-1 resize-none py-3"
               style={{ maxHeight: '160px' }}
             />
-            {loading ? (
+            {session?.loading ? (
               <Button onClick={handleStop} variant="secondary" className="shrink-0">{t('common.stop')}</Button>
             ) : (
               <Button onClick={handleSend} disabled={!input.trim()} className="shrink-0">{t('common.send')}</Button>
@@ -544,21 +515,4 @@ export function PatientChatPage() {
   );
 }
 
-function applyChunk(msg: ChatMessage, chunk: ChatStreamChunk): ChatMessage {
-  switch (chunk.type) {
-    case 'tier_classified':
-      return { ...msg, tier: chunk.tier };
-    case 'reasoning_chunk':
-      return { ...msg, reasoning: (msg.reasoning || '') + chunk.text };
-    case 'final_answer_chunk':
-      return { ...msg, text: msg.text + chunk.text };
-    case 'citations':
-      return { ...msg, citations: chunk.items };
-    case 'turn_complete':
-      return { ...msg, isStreaming: false };
-    case 'error':
-      return { ...msg, text: msg.text || `Error: ${chunk.message}`, isStreaming: false };
-    default:
-      return msg;
-  }
-}
+

@@ -3,33 +3,26 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Paperclip } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
-import type { ChatStreamChunk, LlmStatus } from '@/lib/types';
+import type { LlmStatus } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
+import { useChatStore } from '@/stores/chat';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Button, Badge, Textarea } from '@/components/ui';
-
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
-  isStreaming?: boolean;
-}
 
 export function ChatPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { isAuthenticated, clearSession } = useAuthStore();
+  const { isAuthenticated, clearSession, userId } = useAuthStore();
+  const store = useChatStore();
+  const sessionId = `global-${userId || 'anonymous'}`;
+  const session = store.sessions[sessionId];
 
-  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -47,15 +40,17 @@ export function ChatPage() {
   }, [isAuthenticated, navigate, clearSession, t]);
 
   useEffect(() => {
-    api.getMessages('', 50).then((r) => {
-      const msgs: Message[] = r.messages.map((m) => ({
+    const existing = store.sessions[sessionId]?.messages?.length;
+    if (existing) return;
+    api.getMessages(sessionId, 50).then((r) => {
+      const msgs = r.messages.map((m) => ({
         id: crypto.randomUUID(),
         role: m.role,
         text: m.content,
       }));
-      if (msgs.length > 0) setMessages(msgs);
+      if (msgs.length > 0) store.setMessages(sessionId, msgs);
     }).catch(() => {});
-  }, []);
+  }, [sessionId, store]);
 
   useEffect(() => {
     const el = bottomRef.current;
@@ -64,58 +59,21 @@ export function ChatPage() {
     if (!parent) return;
     const isNearBottom = parent.scrollHeight - parent.scrollTop - parent.clientHeight < 150;
     if (isNearBottom) el.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [session?.messages]);
 
   const handleSend = async () => {
-    if (!input.trim() || loading) return;
-    const userText = input.trim();
+    if (!input.trim() || session?.loading) return;
+    const text = input.trim();
     setInput('');
     setError(null);
-    setTimeout(() => inputRef.current?.focus(), 50);
-
-    const userMessage: Message = { id: crypto.randomUUID(), role: 'user', text: userText };
-    const assistantMessage: Message = {
-      id: crypto.randomUUID(),
-      role: 'assistant',
-      text: '',
-      isStreaming: true,
-    };
-
-    setMessages((prev) => [...prev, userMessage, assistantMessage]);
-    setLoading(true);
-
-    abortRef.current = new AbortController();
-    try {
-      for await (const chunk of api.sendChatFull({ text: userText, sessionId: '', attachments: attachedFiles.map((a) => ({ name: a.name, file_id: a.fileId })) }, abortRef.current.signal)) {
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (!last || last.role !== 'assistant') return prev;
-          const next = applyChunk(last, chunk);
-          return [...prev.slice(0, -1), next];
-        });
-      }
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.messageText);
-      } else if (err instanceof Error && err.name !== 'AbortError') {
-        setError(err.message);
-      }
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last && last.role === 'assistant') {
-          return [...prev.slice(0, -1), { ...last, isStreaming: false }];
-        }
-        return prev;
-      });
-    } finally {
-      setLoading(false);
-      abortRef.current = null;
-    }
+    await store.sendMessage(sessionId, {
+      text,
+      sessionId,
+      attachments: attachedFiles.map((a) => ({ name: a.name, file_id: a.fileId })),
+    });
   };
 
-  const handleStop = () => {
-    abortRef.current?.abort();
-  };
+  const handleStop = () => store.stopStream(sessionId);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -131,12 +89,32 @@ export function ChatPage() {
     }
   };
 
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of Array.from(items)) {
+      if (item.kind === 'file') {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        setUploadingFile(true);
+        try {
+          const result = await api.uploadFile(file);
+          setAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+        } catch { /* ignore */ }
+        finally { setUploadingFile(false); }
+      }
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
+
+  const messages = session?.messages || [];
 
   return (
     <AppShell>
@@ -207,24 +185,24 @@ export function ChatPage() {
                 variant="ghost"
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={loading || uploadingFile}
+                disabled={session?.loading || uploadingFile}
                 isLoading={uploadingFile}
                 className="shrink-0"
               >
                 <Paperclip size={16} />
               </Button>
               <Textarea
-                ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={t('chat.placeholder')}
-                disabled={loading}
+                disabled={session?.loading || false}
                 rows={1}
                 className="min-h-0 flex-1 resize-none py-3"
                 style={{ maxHeight: '160px' }}
               />
-              {loading ? (
+              {session?.loading ? (
                 <Button onClick={handleStop} variant="secondary">
                   {t('common.stop')}
                 </Button>
@@ -241,15 +219,4 @@ export function ChatPage() {
   );
 }
 
-function applyChunk(message: Message, chunk: ChatStreamChunk): Message {
-  switch (chunk.type) {
-    case 'final_answer_chunk':
-      return { ...message, text: message.text + chunk.text };
-    case 'turn_complete':
-      return { ...message, isStreaming: false };
-    case 'error':
-      return { ...message, text: message.text || `Error: ${chunk.message}`, isStreaming: false };
-    default:
-      return message;
-  }
-}
+

@@ -302,16 +302,24 @@ class ApiClient {
     return this.fetch<MemoryProjection>(`/api/v1/memory/patient/${patientHash}/projection`);
   }
 
-  async getFindings(patientHash: string): Promise<Array<{node_id: string; node_type: string; content: string; weight?: number; encounter_id?: string; updated_at?: string}>> {
-    return this.fetch(`/api/v1/memory/patient/${patientHash}/findings`);
+  async getFindings(patientHash: string): Promise<Array<{node_id: number; node_type: string; content: unknown; weight?: number; encounter_id?: string; updated_at?: number}>> {
+    const r = await this.fetch<{findings: Array<{node_id: number; node_type: string; content: unknown; weight?: number; encounter_id?: string; updated_at?: number}>}>(`/api/v1/memory/patient/${patientHash}/findings`);
+    return r.findings || [];
   }
 
-  async getMedications(patientHash: string): Promise<Array<{node_id: string; node_type: string; content: string; weight?: number; encounter_id?: string; updated_at?: string}>> {
-    return this.fetch(`/api/v1/memory/patient/${patientHash}/medications`);
+  async getMedications(patientHash: string): Promise<Array<{node_id: number; node_type: string; content: unknown; weight?: number; encounter_id?: string; updated_at?: number}>> {
+    const r = await this.fetch<{medications: Array<{node_id: number; node_type: string; content: unknown; weight?: number; encounter_id?: string; updated_at?: number}>}>(`/api/v1/memory/patient/${patientHash}/medications`);
+    return r.medications || [];
   }
 
-  async getMemoryTimeline(patientHash: string): Promise<Array<{event_id: string; event_type: string; content: string; timestamp: string}>> {
-    return this.fetch(`/api/v1/memory/patient/${patientHash}/timeline`);
+  async getMemoryTimeline(patientHash: string): Promise<Array<{event_id: number; event_type: string; content: string; timestamp: number}>> {
+    const r = await this.fetch<{entries: Array<{encounter_id?: string; node_count?: number; last_touched?: number; event_id?: number; event_type?: string; content?: string; timestamp?: number}>}>(`/api/v1/memory/patient/${patientHash}/timeline`);
+    return (r.entries || []).map((e, i) => ({
+      event_id: e.event_id || i,
+      event_type: e.event_type || 'encounter',
+      content: e.event_type ? (e.content || '') : `Encounter ${e.encounter_id || ''} (${e.node_count || 0} nodes)`,
+      timestamp: e.timestamp || e.last_touched || 0,
+    }));
   }
 
   /* ────────────────────────── files ────────────────────────── */
