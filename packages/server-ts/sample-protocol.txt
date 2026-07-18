@@ -1,0 +1,152 @@
+PROTOCOL TITLE: A Phase II, Open-Label Study of Pembrolizumab Combined with
+Chemotherapy in Treatment-Naïve Patients with Advanced Non-Small Cell Lung Cancer
+
+STUDY ID: NSCLC-2024-PEM-002
+VERSION: 2.0
+DATE: 2026-07-18
+
+──────────────────────────────────────────────────────────
+
+1. OBJECTIVES
+
+Primary Objective:
+- To evaluate the objective response rate (ORR) of pembrolizumab combined
+  with platinum-based chemotherapy in treatment-naïve patients with
+  advanced NSCLC.
+
+Secondary Objectives:
+- To assess progression-free survival (PFS) at 12 months
+- To evaluate overall survival (OS) at 24 months
+- To characterize the safety and tolerability profile
+- To explore biomarker correlates (PD-L1 TPS, TMB) with clinical outcomes
+
+──────────────────────────────────────────────────────────
+
+2. INCLUSION CRITERIA
+
+Patients must meet ALL of the following:
+
+  1. Histologically or cytologically confirmed stage IIIB/IV NSCLC
+  2. Age ≥ 18 years
+  3. ECOG performance status 0-1
+  4. Measurable disease per RECIST v1.1
+  5. No prior systemic therapy for advanced NSCLC
+  6. Adequate organ function:
+     - ANC ≥ 1,500/μL
+     - Platelets ≥ 100,000/μL
+     - Hemoglobin ≥ 9.0 g/dL
+     - Creatinine clearance ≥ 60 mL/min
+     - Total bilirubin ≤ 1.5 × ULN
+     - AST/ALT ≤ 2.5 × ULN (≤ 5 × ULN if liver metastases)
+  7. PD-L1 TPS ≥ 1% by IHC (22C3 assay)
+  8. Life expectancy ≥ 3 months
+  9. Signed informed consent
+
+──────────────────────────────────────────────────────────
+
+3. EXCLUSION CRITERIA
+
+  1. EGFR mutation, ALK rearrangement, or ROS1 fusion positive
+  2. Active autoimmune disease requiring systemic treatment
+     within the past 2 years
+  3. History of interstitial lung disease or pneumonitis
+  4. Active CNS metastases (treated, stable CNS metastases allowed)
+  5. Prior treatment with anti-PD-1, anti-PD-L1, or anti-CTLA-4
+  6. Active infection requiring systemic antibiotics
+  7. Pregnancy or breastfeeding
+  8. Known HIV, active Hepatitis B or C
+  9. Major surgery within 28 days of first dose
+  10. Uncontrolled hypertension (> 160/100 mmHg)
+
+──────────────────────────────────────────────────────────
+
+4. TREATMENT PLAN
+
+Arm A (Experimental): Pembrolizumab + Chemotherapy
+  - Pembrolizumab 200 mg IV every 3 weeks (Q3W)
+  - Carboplatin AUC 5 IV Q3W for 4 cycles
+  - Pemetrexed 500 mg/m² IV Q3W for 4 cycles
+  - Maintenance: Pembrolizumab 200 mg IV Q3W + Pemetrexed 500 mg/m² IV Q3W
+
+Treatment continues until:
+  - Disease progression (per RECIST v1.1)
+  - Unacceptable toxicity
+  - Patient withdrawal of consent
+  - Maximum 35 cycles of pembrolizumab (approximately 2 years)
+
+──────────────────────────────────────────────────────────
+
+5. SAFETY MONITORING
+
+Adverse Event Assessment:
+  - CTCAE v5.0 grading for all AEs
+  - Weekly during Cycle 1, then every 3 weeks
+  - DLT evaluation window: first 21 days (Cycle 1)
+
+Dose-Limiting Toxicity (DLT) Definition:
+  - Grade 4 neutropenia lasting > 7 days
+  - Febrile neutropenia (ANC < 1,000/μL + fever > 38.5°C)
+  - Grade 4 thrombocytopenia or Grade 3 with bleeding
+  - Grade ≥ 3 non-hematologic toxicity (except nausea, vomiting,
+    diarrhea controlled with supportive care)
+  - Grade ≥ 2 pneumonitis
+  - Any treatment-related death
+
+Stopping Rules:
+  - DLT rate exceeds 33% in first 12 patients
+  - Any Grade 5 (fatal) adverse event
+  - ≥ 3 Grade 4 treatment-related AEs
+
+──────────────────────────────────────────────────────────
+
+6. ASSESSMENT SCHEDULE
+
+Screening (Day -28 to -1):
+  - Informed consent, medical history, physical exam, vital signs
+  - ECOG PS, CBC, chemistry panel, coagulation
+  - Tumor assessment (CT/MRI per RECIST v1.1)
+  - PD-L1 IHC testing (archival or fresh biopsy)
+  - Pregnancy test (if applicable)
+
+Treatment Visits (Every 3 weeks):
+  - Physical exam, vital signs, ECOG PS
+  - CBC, chemistry panel
+  - AE assessment (CTCAE v5.0)
+  - Concomitant medications review
+
+Tumor Assessments:
+  - Every 9 weeks (± 7 days) for first 12 months
+  - Every 12 weeks thereafter
+  - Confirmation of CR/PR required ≥ 4 weeks after initial response
+
+End of Treatment (within 30 days of last dose):
+  - Physical exam, vital signs, ECOG PS
+  - CBC, chemistry panel, coagulation
+  - Tumor assessment
+  - AE resolution assessment
+
+Follow-up:
+  - Safety follow-up: 30 days after last dose
+  - Survival follow-up: every 3 months for 2 years
+
+──────────────────────────────────────────────────────────
+
+7. STATISTICAL CONSIDERATIONS
+
+Sample Size:
+  - Target enrollment: 60 patients
+  - Simon's two-stage optimal design
+  - Stage 1: 25 patients (≥ 7 responses → proceed to Stage 2)
+  - Stage 2: 35 additional patients
+  - Total: 60 patients
+
+Primary Endpoint Analysis:
+  - ORR estimated with 95% exact binomial confidence interval
+  - Null hypothesis: ORR ≤ 30% (historical chemotherapy alone)
+  - Alternative hypothesis: ORR ≥ 50%
+  - One-sided α = 0.05, power = 80%
+
+Secondary Endpoint Analysis:
+  - PFS and OS estimated using Kaplan-Meier method
+  - Median and 95% CI reported
+  - Exploratory: Cox proportional hazards for biomarker subgroups

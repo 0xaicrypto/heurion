@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import { ResearchService } from './research.service'
 import { createStudySchema, enrollPatientSchema } from './research.dto'
+import { extractRulesFromProtocol, getPendingRules, confirmRule, rejectRule, getConfirmationStatus } from './protocol-extractor.js'
 
 const service = new ResearchService()
 
@@ -98,6 +99,41 @@ export async function researchRouter(app: FastifyInstance) {
     const { studyId } = request.params as any
     const { text } = request.body as any
     if (!text) return reply.status(400).send({ error: 'text required' })
+    // Trigger AI extraction in background
+    extractRulesFromProtocol(studyId, text).catch(() => {})
     return service.importProtocol(studyId, text)
+  })
+
+  // Extraction: AI extracts rules from protocol
+  app.post('/api/v1/research/studies/:studyId/extract-rules', async (request, reply) => {
+    const { studyId } = request.params as any
+    const { text } = request.body as any
+    if (!text) return reply.status(400).send({ error: 'text required' })
+    const rules = await extractRulesFromProtocol(studyId, text)
+    return { study_id: studyId, rules, status: getConfirmationStatus(studyId) }
+  })
+
+  // List pending extracted rules
+  app.get('/api/v1/research/studies/:studyId/protocol-rules', async (request) => {
+    const { studyId } = request.params as any
+    return {
+      rules: getPendingRules(studyId),
+      status: getConfirmationStatus(studyId),
+    }
+  })
+
+  // Doctor confirms a rule
+  app.post('/api/v1/research/studies/:studyId/protocol-rules/:ruleId/confirm', async (request, reply) => {
+    const { studyId, ruleId } = request.params as any
+    const rule = confirmRule(studyId, ruleId)
+    if (!rule) return reply.status(404).send({ error: 'Rule not found' })
+    return { rule, status: getConfirmationStatus(studyId) }
+  })
+
+  // Doctor rejects a rule
+  app.delete('/api/v1/research/studies/:studyId/protocol-rules/:ruleId', async (request, reply) => {
+    const { studyId, ruleId } = request.params as any
+    const ok = rejectRule(studyId, ruleId)
+    return { rejected: ok, study_id: studyId, status: getConfirmationStatus(studyId) }
   })
 }
