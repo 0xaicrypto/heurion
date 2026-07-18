@@ -106,7 +106,7 @@ export async function calendarRouter(app: FastifyInstance) {
     const header = request.headers.authorization || ''
     const rawToken = header.replace('Bearer ', '')
     const host = request.headers.host || 'heurion.org'
-    const proto = request.headers['x-forwarded-proto'] || 'https'
+    const proto = 'https'
     return {
       url: `${proto}://${host}/api/v1/calendar/export.ics?token=${rawToken}`,
       instructions: 'Apple: Calendar → File → New Calendar Subscription → paste URL\nGoogle: Settings → Add Calendar → From URL → paste URL',
