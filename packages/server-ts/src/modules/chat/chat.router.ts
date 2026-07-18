@@ -38,14 +38,16 @@ export async function chatRouter(app: FastifyInstance) {
 
       // #2: Read attachment content
       let attachmentText = ''
-      const attachments = body.attachments || []
-      for (const att of attachments) {
-        const fid = att.file_id || att.fileId || ''
+      const rawAttachments = body.attachments || []
+      for (const att of rawAttachments) {
+        // Accept both string (file_id) and object ({ file_id, fileId, name })
+        const fid = typeof att === 'string' ? att : (att.file_id || att.fileId || '')
+        const name = typeof att === 'string' ? fid.split('_').slice(1).join('_') : (att.name || '')
         if (fid) {
           const content = readAttachmentContent(userId, fid)
           if (content) {
             attachmentText += content
-            send({ type: 'context_info', text: `Attachment read: ${(att.name || fid).slice(0, 30)}`, kind: 'attachment' })
+            send({ type: 'context_info', text: `Attachment: ${name.slice(0, 30)}`, kind: 'attachment' })
           }
         }
       }
