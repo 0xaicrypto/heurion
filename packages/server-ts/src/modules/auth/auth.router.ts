@@ -89,4 +89,20 @@ export async function authRouter(app: FastifyInstance) {
       intended_use: user!.intendedUse,
     }
   })
+
+  // CI/Staging: clear test data
+  app.post('/api/v1/auth/clear-test-data', async () => {
+    await (prisma as any).researchAssessment.deleteMany()
+    await (prisma as any).researchObservation.deleteMany()
+    await (prisma as any).researchScreening.deleteMany()
+    await (prisma as any).researchEnrollment.deleteMany()
+    await (prisma as any).researchStudy.deleteMany()
+    await (prisma as any).patientRecord.deleteMany()
+    await (prisma as any).docSnapshot.deleteMany()
+    await (prisma as any).docReference.deleteMany()
+    await (prisma as any).docChatMessage.deleteMany()
+    await (prisma as any).doc.deleteMany()
+    await (prisma as any).session.deleteMany()
+    return { cleared: true }
+  })
 }

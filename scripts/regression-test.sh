@@ -15,7 +15,12 @@ echo "════════════════════════�
 echo "  Heurion 回归测试 v2"
 echo "════════════════════════════════════════════"
 
+# ── 0. Login/Register ──
 TOKEN=$(curl -sf -X POST "$BASE/api/v1/auth/login" -H "Content-Type: application/json" -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('jwt_token',''))" 2>/dev/null)
+if [ -z "$TOKEN" ]; then
+  TOKEN=$(curl -sf -X POST "$BASE/api/v1/auth/register" -H "Content-Type: application/json" -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\",\"display_name\":\"Test\"}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('jwt_token',''))" 2>/dev/null)
+fi
+if [ -z "$TOKEN" ]; then echo "✗ Login failed"; exit 1; fi
 H="Authorization: Bearer $TOKEN"
 check "0. Login" ok
 
