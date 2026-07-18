@@ -1,17 +1,15 @@
-# Heurion Server CI/CD — typecheck + test + deploy
+# Heurion CI/CD — staging gate before production
 
 name: Deploy Server
 
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
 
 jobs:
   typecheck:
-    name: Type Check (tsc --noEmit)
+    name: Type Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +20,7 @@ jobs:
       - run: cd packages/server-ts && pnpm install --frozen-lockfile && npx prisma generate && npx tsc --noEmit
 
   test:
-    name: Tests (vitest)
+    name: Unit Tests
     needs: [typecheck]
     runs-on: ubuntu-latest
     steps:
@@ -31,13 +29,28 @@ jobs:
         with: { version: '9' }
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
-      - run: cd packages/server-ts && pnpm install --frozen-lockfile
-      - run: cd packages/server-ts && npx prisma generate && npx vitest run
+      - run: cd packages/server-ts && pnpm install --frozen-lockfile && npx prisma generate && npx vitest run
+
+  staging:
+    name: Staging + Regression
+    needs: [typecheck, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+      - name: Deploy to staging
+        env:
+          DEEPSEEK_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} 'DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY bash -s' < scripts/deploy-staging.sh
+      - name: Run regression
+        run: ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} 'cd ~/heurion && bash scripts/regression-test.sh http://localhost:8002'
 
   deploy:
-    name: Deploy to VPS
-    needs: [typecheck, test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Deploy to Production
+    needs: [staging]
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -47,13 +60,7 @@ jobs:
       - uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
-      - name: Deploy
+      - name: Deploy production
         env:
           DEEPSEEK_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            DEEPSEEK_KEY="$DEEPSEEK_KEY" "bash -s" < scripts/deploy.sh
-      - name: Wait for server
-        run: sleep 10
-      - name: Regression Test
-        run: bash scripts/regression-test.sh https://heurion.org
+        run: ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} 'DEEPSEEK_KEY=$DEEPSEEK_KEY bash -s' < scripts/deploy.sh
