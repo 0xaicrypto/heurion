@@ -52,4 +52,18 @@ export async function settingsRouter(app: FastifyInstance) {
     if (body.kimi_api_key) await setSetting(userId, 'kimi_api_key', body.kimi_api_key)
     return { ok: true, written_keys: Object.keys(body).filter(k => k.endsWith('_api_key')) }
   })
+
+  // Calendar integration
+  app.get('/api/v1/settings/calendar', async (request) => {
+    const header = request.headers.authorization || ''
+    const rawToken = header.replace('Bearer ', '')
+    const { signToken, verifyToken } = await import('../../common/jwt.js')
+    const payload = verifyToken(rawToken)
+    const calToken = signToken(payload, '720h')
+    return {
+      calendar_url: `https://heurion.org/api/v1/calendar/export.ics?token=${calToken}`,
+      instructions: 'Apple: File → New Calendar Subscription\nGoogle: Add Calendar → From URL',
+      expires_in_days: 30,
+    }
+  })
 }
