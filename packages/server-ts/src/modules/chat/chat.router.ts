@@ -40,7 +40,14 @@ export async function chatRouter(app: FastifyInstance) {
       let attachmentText = ''
       const attachments = body.attachments || []
       for (const att of attachments) {
-        if (att.file_id) attachmentText += readAttachmentContent(userId, att.file_id)
+        const fid = att.file_id || att.fileId || ''
+        if (fid) {
+          const content = readAttachmentContent(userId, fid)
+          if (content) {
+            attachmentText += content
+            send({ type: 'context_info', text: `Attachment read: ${(att.name || fid).slice(0, 30)}`, kind: 'attachment' })
+          }
+        }
       }
 
       const fullMessage = attachmentText ? `${attachmentText}\n\nUser query: ${body.text}` : body.text
