@@ -67,6 +67,14 @@ check "7.2 Import protocol" ok
 RULES=$(curl -sf -X POST "$BASE/api/v1/research/studies/$SID/extract-rules" -H "$H" -H "Content-Type: application/json" -d '{"text":"INCLUSION: Stage IIIB/IV NSCLC, PD-L1>=1%. EXCLUSION: EGFR/ALK positive."}' | python3 -c "import sys,json; print(json.load(sys.stdin)['status']['total'])" 2>/dev/null)
 check "7.3 Extract rules" "$([ "${RULES:-0}" -gt 0 ] && echo ok || echo 'FAIL')"
 
+# 7b. Enroll patient + verify roster/schedule/safety
+curl -sf -X POST "$BASE/api/v1/research/studies/$SID/enrollments" -H "$H" -H "Content-Type: application/json" -d "{\"patient_hash\":\"$HASH\",\"arm\":\"Arm A\"}" > /dev/null 2>&1
+check "7.4 Enroll patient" ok
+check "7.5 Roster has entry" "$([ $(curl -sf "$BASE/api/v1/research/studies/$SID/roster" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null) -ge 1 ] && echo ok || echo 'FAIL')"
+check "7.6 Schedule tab data" "$(curl -sf "$BASE/api/v1/research/studies/$SID/assessments" -H "$H" | python3 -c "import sys,json; print('ok' if isinstance(json.load(sys.stdin), list) else 'FAIL')" 2>/dev/null)"
+check "7.7 Safety status" "$(curl -sf "$BASE/api/v1/research/studies/$SID/safety/stop-rule-status" -H "$H" | python3 -c "import sys,json; print('ok' if 'triggered_rules' in json.load(sys.stdin) else 'FAIL')" 2>/dev/null)"
+check "7.8 Eligibility list" "$(curl -sf "$BASE/api/v1/research/studies/$SID/eligibility" -H "$H" | python3 -c "import sys,json; print('ok' if 'screenings' in json.load(sys.stdin) else 'FAIL')" 2>/dev/null)"
+
 # ═══ 8. Chat with Patient + Research Context ═══
 CHAT2=$(curl -sf -N -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"ZQ这个患者什么诊断？符合NSCLC001吗？\",\"patient_hash\":\"$HASH\"}" 2>/dev/null)
 # Parse SSE to extract all final_answer text
