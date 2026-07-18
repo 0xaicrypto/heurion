@@ -221,8 +221,8 @@ export async function analyzeWithGeminiVision(userId: string, fileId: string): P
     return ''
   }
 }
+function getDicomPath(userId: string, fileId: string): string {
   const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
-  // Try exact match first, then .dcm extension
   let p = path.join(dir, fileId)
   if (fs.existsSync(p)) return p
   p = path.join(dir, fileId + '.dcm')

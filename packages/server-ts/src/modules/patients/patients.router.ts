@@ -4,7 +4,7 @@ import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
-import { quickScanDicom, renderDicomSlice } from './dicom-scanner.js'
+import { quickScanDicom, renderDicomSlice, analyzeWithGeminiVision } from './dicom-scanner.js'
 import { getUserContext } from '../chat/user-context.js'
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
@@ -139,7 +139,29 @@ export async function patientsRouter(app: FastifyInstance) {
     const userId = request.user!.userId
     const findings = quickScanDicom(userId, studyId)
 
-    // Update patient with scan findings
+    // Gemini Vision analysis (async, fire-and-forget)
+    analyzeWithGeminiVision(userId, studyId).then(aiFindings => {
+      if (!aiFindings) return
+      findings.push({ type: 'ai_analysis', content: aiFindings })
+      // Update patient profile
+      const text = aiFindings.slice(0, 300)
+      if (text.length > 5) {
+        ;(prisma as any).patientRecord.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 1 })
+          .then((patients: any[]) => {
+            if (patients.length > 0) {
+              const existing = patients[0].chiefComplaint || ''
+              if (!existing.includes(text.slice(0, 50))) {
+                ;(prisma as any).patientRecord.update({
+                  where: { hash: patients[0].hash },
+                  data: { chiefComplaint: (existing + '\n[AI Vision] ' + text).trim(), updatedAt: new Date().toISOString() }
+                }).catch(() => {})
+              }
+            }
+          }).catch(() => {})
+      }
+    }).catch(() => {})
+
+    // Update patient with scan data
     const text = findings.filter((f: any) => f.type !== 'meta' && f.type !== 'error')
       .map((f: any) => f.content).join(' | ')
     if (text && text.length > 5) {
