@@ -1,0 +1,18 @@
+const { PrismaClient } = require('@prisma/client')
+const prisma = new PrismaClient()
+async function main() {
+  await prisma.researchAssessment.deleteMany()
+  await prisma.researchObservation.deleteMany()
+  await prisma.researchScreening.deleteMany()
+  await prisma.researchEnrollment.deleteMany()
+  await prisma.researchStudy.deleteMany()
+  await prisma.patientRecord.deleteMany()
+  await prisma.docSnapshot.deleteMany()
+  await prisma.docReference.deleteMany()
+  await prisma.docChatMessage.deleteMany()
+  await prisma.doc.deleteMany()
+  await prisma.session.deleteMany()
+  console.log('All data cleared')
+  await prisma.$disconnect()
+}
+main()

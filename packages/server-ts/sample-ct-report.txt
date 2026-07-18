@@ -1,0 +1,129 @@
+REFERRING PHYSICIAN: Dr. Zhang Wei
+INSTITUTION: Heurion Oncology Center
+ACQUISITION DATE: 2026-07-15 09:34:22
+STUDY_UID: 1.2.840.113619.2.416.2678099241.17524
+ACCESSION_NUMBER: CT-20260715-0042
+
+═══════════════════════════════════════════════
+           RADIOLOGY REPORT — CHEST CT
+═══════════════════════════════════════════════
+
+CLINICAL INDICATION:
+  58 y/o male, 30 pack-year smoking history, persistent cough
+  x 3 weeks, intermittent right-sided chest pain. Rule out
+  malignancy. Evaluate mediastinal lymphadenopathy.
+
+TECHNIQUE:
+  Multidetector CT of the chest performed with intravenous
+  contrast (100 mL Omnipaque 350). Axial images acquired at
+  1.25 mm slice thickness with coronal and sagittal
+  reconstructions. Lung window (WL: -600, WW: 1500) and
+  mediastinal window (WL: 40, WW: 400) reviewed.
+
+COMPARISON: None (baseline study)
+
+───────────────────────────────────────────────
+FINDINGS:
+
+LUNG PARENCHYMA:
+  Right Upper Lobe:
+  — Dominant mass in the apical segment (RUL-S1):
+    Size: 34 × 28 × 31 mm (AP × TR × CC)
+    Morphology: Irregular, spiculated margins
+    Attenuation: Soft tissue density, heterogeneous
+      enhancement (pre: 35 HU → post: 72 HU)
+    Internal characteristics: No calcification, no
+      cavitation, no air bronchogram
+    Pleural relationship: Visceral pleural retraction
+      ("pleural tag") present; no chest wall invasion
+    Distance from carina: 4.8 cm
+
+  — Additional finding in RUL posterior segment (S2):
+    Wedge-shaped ground-glass opacity (GGO), ~18 × 12 mm
+    No consolidation. Suggestive of post-obstructive
+    atelectasis vs. early lymphangitic spread.
+
+  Right Middle Lobe: Clear
+  Right Lower Lobe: Clear
+  Left Lung: Clear, no nodules > 4 mm
+
+MEDIASTINUM / HILA:
+  — Station 4R (right lower paratracheal):
+    2 nodes, largest 16 × 12 mm, rounded, heterogeneous
+  — Station 7 (subcarinal):
+    1 node, 18 × 14 mm, confluent with adjacent node
+  — Station 10R (right hilar):
+    1 node, 13 × 11 mm
+  — No pathologic enlargement at stations 2R, 4L, 5, 6,
+    8, 9. Station 1 (low cervical): normal.
+
+PLEURA / PERICARDIUM:
+  — No pleural effusion
+  — No pericardial effusion
+  — No pleural thickening or plaques
+  — Costophrenic angles clear bilaterally
+
+CHEST WALL / BONES:
+  — No rib destruction
+  — No vertebral body lesions
+  — No soft tissue masses in chest wall
+
+UPPER ABDOMEN (visualized):
+  — Liver: No hypodense lesions
+  — Adrenal glands: Normal bilaterally, no nodules
+  — Kidneys: Normal
+  — No ascites
+
+───────────────────────────────────────────────
+IMPRESSION:
+
+1. PRIMARY FINDING: 3.4 cm spiculated mass in RUL
+   apical segment with heterogeneous enhancement and
+   pleural retraction. Imaging features highly
+   suspicious for primary lung adenocarcinoma.
+   BI-RADS equivalent: Not applicable. Lung-RADS: 4X
+
+2. LYMPHADENOPATHY: Multistation mediastinal and hilar
+   lymphadenopathy (Stations 4R, 7, 10R) with
+   enlargement up to 1.8 cm. Suspicious for nodal
+   metastases (N2 disease).
+
+3. SECONDARY FINDING: Focal GGO in RUL posterior
+   segment, likely post-obstructive.
+
+4. TNM STAGING (AJCC 8th Edition, CT-based):
+   Primary Tumor (T): cT2a (size 34 mm, visceral pleura
+   involvement)
+   Regional Nodes (N): cN2 (ipsilateral mediastinal,
+   subcarinal)
+   Metastasis (M): cM0 (no distant metastases on CT)
+   OVERALL STAGE: cT2aN2M0 — Stage IIIA
+
+5. RECOMMENDATIONS:
+   — CT-guided percutaneous core needle biopsy of RUL
+     mass for histopathologic confirmation
+   — EBUS-TBNA of Station 7 (subcarinal) and/or
+     Station 4R nodes for pathologic staging
+   — PET-CT for complete staging (metabolic activity,
+     occult distant metastases)
+   — Brain MRI for CNS staging (per NCCN guidelines
+     for Stage IIIA)
+   — Pulmonary function tests (PFTs) prior to surgical
+     or radiation planning
+   — Molecular testing on biopsy specimen: EGFR, ALK,
+     ROS1, BRAF, MET exon 14, RET, NTRK, KRAS, PD-L1
+     IHC (22C3), TMB
+
+RECOMMENDED FOLLOW-UP:
+   Biopsy results within 1 week; multidisciplinary tumor
+   board discussion for treatment planning.
+
+SIGNATURE LINE:
+   Dictated and electronically signed by:
+   Li Ming, MD, PhD — Attending Radiologist
+   Board Certified: Diagnostic Radiology
+   Date: 2026-07-15 14:22:15
+
+═══════════════════════════════════════════════
+         END OF REPORT — CONFIDENTIAL
+═══════════════════════════════════════════════
