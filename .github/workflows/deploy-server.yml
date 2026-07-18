@@ -40,35 +40,13 @@ jobs:
       - uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
-      - name: Deploy staging + run regression
+      - name: Deploy staging + regression
         env:
-          DK: ${{ secrets.DEEPSEEK_API_KEY }}
-          GK: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "bash -s" << ENDRUN
-set -e
-cd ~/heurion && git pull origin main
-cd packages/server-ts
-cat > .env << ENVEOF
-DATABASE_URL="file:./staging.db"
-SERVER_PORT=8002
-SERVER_SECRET=staging-\$(openssl rand -hex 8)
-DEEPSEEK_API_KEY=${DK}
-GEMINI_API_KEY=${GK}
-CORS_ALLOW_ORIGINS=*
-TWIN_BASE_DIR=.nexus/staging-twins
-ENVEOF
-pnpm install --frozen-lockfile
-npx prisma generate
-npx prisma db push --accept-data-loss
-pm2 delete heurion-staging 2>/dev/null || true
-pm2 start npx --name heurion-staging -- tsx src/main.ts
-pm2 save
-sleep 3
-curl -fsS http://localhost:8002/healthz
-echo "Staging OK — running regression"
-bash scripts/regression-test.sh http://localhost:8002
-ENDRUN
+          scp -o StrictHostKeyChecking=no scripts/deploy-staging.sh scripts/regression-test.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:~/heurion/scripts/
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd ~/heurion && DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY bash scripts/deploy-staging.sh && bash scripts/regression-test.sh http://localhost:8002"
 
   deploy:
     name: Deploy to Production
