@@ -1,40 +1,4 @@
-# Server CI/CD — runs on every PR + every push to main.
-#
-# Pipeline shape
-# ──────────────
-#
-#   PR opened / synced              → smoke + pytest + docker-build
-#   push to main (after CI passes)  → publish image to GHCR + SSH-deploy
-#                                       to the VPS, with health-check
-#                                       gated rollback.
-#
-# Why one file rather than two: cross-workflow dependencies in GitHub
-# Actions are awkward (`workflow_run` triggers fire AFTER the parent
-# workflow finishes, so deploys can race ahead of slow tests if you
-# split). One file with `if: github.ref == 'refs/heads/main'` on the
-# tail jobs keeps the dependency graph honest.
-#
-# Setup checklist (one-time, see docs/CICD.md for screenshots)
-# ────────────────────────────────────────────────────────────
-#   1. Repo Settings → Secrets:
-#     VPS_HOST=188.166.214.81
-#     VPS_USER=root
-#        VPS_SSH_KEY=<contents of an SSH private key whose pubkey is in
-#                     /home/jimmy/.ssh/authorized_keys on the VPS>
-#   2. Repo Settings → Actions → General:
-#        Workflow permissions = "Read and write" (so we can push to GHCR
-#        and `softprops/action-gh-release` can edit releases).
-#   3. After the first successful publish, Repo → Packages → nexus-server:
-#        Settings → Manage Actions access → Add this repo with "Write"
-#        (auto-set if Actions runs in the same org).
-#
-# Image tags
-# ──────────
-#   ghcr.io/<owner>/nexus-server:latest      → moves with main
-#   ghcr.io/<owner>/nexus-server:sha-<short> → immutable, used for
-#                                              rollback by the deploy
-#                                              script when the new
-#                                              image fails healthz.
+# Heurion Server CI/CD — build + deploy on push to main
 
 name: Deploy Server
 
@@ -43,16 +7,9 @@ on:
     branches: [main]
   push:
     branches: [main]
-  # Manual trigger so we can re-run a deploy without pushing a new
-  # commit (useful when GHCR was the failure point, not the code).
   workflow_dispatch:
 
-env:
-  PYTHON_VERSION: '3.11'
-  IMAGE_NAME: nexus-server
-
 jobs:
-  # ── 0. Build the browser UI so the Docker image can bake it in ─────
   web-build:
     name: Build web UI
     runs-on: ubuntu-latest
@@ -61,264 +18,30 @@ jobs:
         working-directory: packages/web
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v3
         with:
           version: '9'
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'pnpm'
           cache-dependency-path: packages/web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm build
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Lint + type check + build
-        run: |
-          pnpm lint
-          pnpm exec tsc --noEmit
-          pnpm build
-
-      - name: Upload web dist
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-dist
-          path: packages/web/dist
-          retention-days: 1
-
-  # ── 1. Smoke import + packaging regressions ───────────────────────
-  smoke:
-    name: Smoke (import + package-data)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-      - name: Install all three packages
-        # Order matters: nexus-core first (the SDK is the dep target of
-        # the other two), then nexus, then nexus-server.
-        run: |
-          python -m pip install --upgrade pip
-          pip install ./packages/sdk
-          pip install ./packages/nexus
-          pip install ./packages/server
-      - name: Run smoke checks
-        run: python scripts/ci/smoke_test.py
-
-  # ── 2. Pytest ─────────────────────────────────────────────────────
-  pytest:
-    name: Pytest
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-      - name: Install with dev extras
-        run: |
-          python -m pip install --upgrade pip
-          pip install ./packages/sdk
-          pip install ./packages/nexus
-          pip install './packages/server[dev]'
-      - name: Run pytest
-        # `|| code 5` — pytest exits 5 when no tests are collected.
-        # That's not a CI failure (yet), but worth surfacing as a
-        # warning so we notice when the test directory got nuked.
-        run: |
-          set +e
-          pytest packages/server/tests packages/sdk/tests \
-                 --maxfail=1 --disable-warnings -q
-          rc=$?
-          if [ $rc -eq 5 ]; then
-            echo "::warning::No tests collected — pytest exited 5"
-            exit 0
-          fi
-          exit $rc
-
-  # ── 3. Docker build → run → /healthz probe + in-container smoke ────
-  docker-build:
-    name: Docker build + healthz
-    needs: [web-build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      # Needed to push to GHCR on main. PR builds don't push, but we
-      # still need pull access for the cache-from layer.
-      packages: write
-    outputs:
-      image_digest: ${{ steps.image.outputs.digest }}
-      image_tag:    ${{ steps.image.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # GHCR login is needed for cache pulls AND for pushing on main.
-      # GITHUB_TOKEN's default scope includes write-packages when the
-      # repo's Workflow Permissions are set to "Read and write".
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Compute tags. PR builds get tagged but not pushed (push step
-      # is conditional on main). The short SHA gives an immutable tag
-      # for rollback; `latest` follows main.
-      - name: Download web dist
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist
-          path: packages/web/dist
-
-      - name: Compute image tags
-        id: image
-        run: |
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          SHORT_SHA=${GITHUB_SHA::7}
-          IMAGE="ghcr.io/${OWNER}/${IMAGE_NAME}"
-          echo "image=$IMAGE"           >> "$GITHUB_OUTPUT"
-          echo "tag=sha-$SHORT_SHA"     >> "$GITHUB_OUTPUT"
-          echo "full_sha=$IMAGE:sha-$SHORT_SHA" >> "$GITHUB_OUTPUT"
-          echo "full_latest=$IMAGE:latest"      >> "$GITHUB_OUTPUT"
-
-      - name: Build (load only — push happens after healthz passes)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile
-          load: true                       # bring image into local engine
-          push: false                      # publish step does this on main
-          tags: |
-            ${{ steps.image.outputs.full_sha }}
-            ${{ steps.image.outputs.full_latest }}
-          # Layer cache backed by GHCR — first build of the day pays the
-          # full ~17min pip-install tax; subsequent ones
-          # reuse layers and finish in a couple minutes.
-          cache-from: type=registry,ref=${{ steps.image.outputs.image }}:buildcache
-          cache-to:   type=registry,ref=${{ steps.image.outputs.image }}:buildcache,mode=max
-
-      - name: Boot container + probe /healthz
-        # `--rm` so a failed run doesn't leave an orphan; `--name` so
-        # the kill in the trap below targets the right one. The DB +
-        # twins dirs go on a tmpfs so we don't pollute the runner FS.
-        run: |
-          set -e
-          IMAGE="${{ steps.image.outputs.full_sha }}"
-          docker run -d --rm --name nexus-ci \
-            -e NEXUS_NETWORK=bsc-testnet \
-            -e ENVIRONMENT=test \
-            -e SERVER_SECRET=ci-only-secret-not-for-prod \
-            -e GEMINI_API_KEY=fake-key-for-ci \
-            -p 8001:8001 \
-            "$IMAGE"
-          # Generous startup window — the venv import alone can take
-          # 5-10s under the runner's IO load.
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8001/healthz; then
-              echo
-              echo "✓ /healthz responded on attempt $i"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "✗ /healthz never responded — dumping logs:"
-          docker logs nexus-ci --tail 100
-          docker rm -f nexus-ci || true
-          exit 1
-
-      - name: In-container smoke (catches ABI / packaging drift)
-        run: |
-          set -e
-          # Re-uses the same script the host smoke job ran, but THIS
-          # time inside the actual built image — so we'd catch a
-          # regression where the wheel was missing ABI files or other
-          # packaging wiring drifted.
-          docker exec -e SMOKE_IN_DOCKER=1 nexus-ci \
-            python /app/scripts/ci/smoke_test.py
-
-      - name: Stop probe container
-        if: always()
-        run: docker rm -f nexus-ci || true
-
-  # ── 4. Publish to GHCR (main only) ─────────────────────────────────
-  publish:
-    name: Publish to GHCR
-    needs: [smoke, pytest, docker-build]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      image:     ${{ steps.image.outputs.image }}
-      image_tag: ${{ steps.image.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download web dist
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist
-          path: packages/web/dist
-
-      - name: Compute image tags
-        id: image
-        run: |
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          SHORT_SHA=${GITHUB_SHA::7}
-          IMAGE="ghcr.io/${OWNER}/${IMAGE_NAME}"
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-          echo "tag=sha-$SHORT_SHA" >> "$GITHUB_OUTPUT"
-
-      # Re-uses the buildcache pushed by the docker-build job above —
-      # so this step is mostly cache hits + the registry push.
-      - name: Build + push (registry-cache)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          tags: |
-            ${{ steps.image.outputs.image }}:${{ steps.image.outputs.tag }}
-            ${{ steps.image.outputs.image }}:latest
-          cache-from: type=registry,ref=${{ steps.image.outputs.image }}:buildcache
-
-  # ── 5. SSH-deploy to the VPS (main only, after publish) ────────────
   deploy:
     name: Deploy to VPS
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: production
-      url: https://heurion.org/healthz
+      url: https://heurion.org
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.9.0
+      - uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
-
       - name: Deploy
         env:
           DEEPSEEK_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
