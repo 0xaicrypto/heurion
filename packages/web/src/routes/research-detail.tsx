@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, CalendarDays, Check, FlaskConical, Plus, X } from 'lucide-react';
+import { ArrowLeft, CalendarDays, Check, FlaskConical, Plus, Upload, X } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api-client';
@@ -759,6 +759,7 @@ function ProtocolTab({ studyId }: { studyId: string }) {
   const [loading, setLoading] = useState(true)
   const [importText, setImportText] = useState('')
   const [importing, setImporting] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const loadRules = () => {
     setLoading(true)
@@ -769,6 +770,14 @@ function ProtocolTab({ studyId }: { studyId: string }) {
   }
 
   useEffect(() => { loadRules() }, [studyId])
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const text = await file.text()
+    setImportText(text.slice(0, 20000))
+    if (fileRef.current) fileRef.current.value = ''
+  }
 
   const handleImport = async () => {
     if (!importText.trim()) return
@@ -795,10 +804,18 @@ function ProtocolTab({ studyId }: { studyId: string }) {
       <div className="rounded-xl border border-border bg-surface-elevated p-4">
         <h3 className="mb-2 text-sm font-semibold text-text-primary">Import Protocol</h3>
         <textarea value={importText} onChange={e => setImportText(e.target.value)}
-          placeholder="Paste protocol text here (INCLUSION: ..., EXCLUSION: ...)"
-          className="mb-2 min-h-[80px] w-full rounded-lg border border-border bg-surface p-2 text-xs text-text-primary"
-          rows={4} />
-        <Button size="sm" onClick={handleImport} isLoading={importing}>Import & Extract Rules</Button>
+          placeholder="Paste protocol text or upload a file (.txt, .docx text)"
+          className="mb-2 min-h-[120px] w-full rounded-lg border border-border bg-surface p-2 text-xs text-text-primary"
+          rows={5} />
+        <div className="flex gap-2">
+          <Button size="sm" onClick={handleImport} isLoading={importing} disabled={!importText.trim()}>
+            Import & Extract Rules
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()}>
+            <Upload size={14} className="mr-1" /> Upload File
+          </Button>
+          <input ref={fileRef} type="file" accept=".txt,.md,.csv" onChange={handleFileUpload} className="hidden" />
+        </div>
       </div>
 
       {loading ? <Skeleton className="h-32 w-full rounded-xl" /> : (

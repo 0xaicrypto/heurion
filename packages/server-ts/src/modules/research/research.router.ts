@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
+import prisma from '../../common/prisma'
 import { ResearchService } from './research.service'
 import { createStudySchema, enrollPatientSchema } from './research.dto'
 import { extractRulesFromProtocol, getPendingRules, confirmRule, rejectRule, getConfirmationStatus } from './protocol-extractor.js'
@@ -122,11 +123,35 @@ export async function researchRouter(app: FastifyInstance) {
     }
   })
 
-  // Doctor confirms a rule
+  // Doctor confirms a rule — also generate assessments for schedule rules
   app.post('/api/v1/research/studies/:studyId/protocol-rules/:ruleId/confirm', async (request, reply) => {
     const { studyId, ruleId } = request.params as any
     const rule = confirmRule(studyId, ruleId)
     if (!rule) return reply.status(404).send({ error: 'Rule not found' })
+
+    // Generate assessment from confirmed schedule rule
+    if (rule.category === 'schedule') {
+      const match = rule.rule.match(/^(.+?)\s*\((.+?)\):\s*(.+)$/)
+      if (match) {
+        const study = await service.getStudy(request.user!.userId, studyId)
+        const studyStart = study ? new Date(study.createdAt) : new Date()
+        const days = parseTimingForRule(match[2], studyStart)
+        if (days !== null) {
+          const dueDate = new Date(studyStart)
+          dueDate.setDate(dueDate.getDate() + days)
+          const crypto = await import('crypto')
+          await (prisma as any).researchAssessment.create({
+            data: {
+              id: `asmt_${crypto.randomBytes(8).toString('hex')}`,
+              studyId, patientHash: '',
+              visit: match[1].trim(), title: match[1].trim(),
+              dueAt: dueDate.toISOString(),
+            },
+          })
+        }
+      }
+    }
+
     return { rule, status: getConfirmationStatus(studyId) }
   })
 
@@ -136,4 +161,16 @@ export async function researchRouter(app: FastifyInstance) {
     const ok = rejectRule(studyId, ruleId)
     return { rejected: ok, study_id: studyId, status: getConfirmationStatus(studyId) }
   })
+}
+
+function parseTimingForRule(timing: string, studyStart: Date): number | null {
+  const dayMatch = timing.match(/Day\s+(-?\d+)/)
+  if (dayMatch) return parseInt(dayMatch[1])
+  const weekMatch = timing.match(/every\s+(\d+)\s*week/i)
+  if (weekMatch) return parseInt(weekMatch[1]) * 7
+  const monthMatch = timing.match(/every\s+(\d+)\s*month/i)
+  if (monthMatch) return parseInt(monthMatch[1]) * 30
+  const cycleDay = timing.match(/cycle.*?Day\s+(\d+)/i)
+  if (cycleDay) return parseInt(cycleDay[1])
+  return null
 }
