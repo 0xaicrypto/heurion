@@ -74,6 +74,12 @@ CHAT2_TEXT=$(echo "$CHAT2" | grep 'final_answer' | sed 's/^data: //' | python3 -
 check "8.1 Chat references patient" "$(echo "$CHAT2_TEXT" | python3 -c "import sys; t=sys.stdin.read().lower(); print('ok' if 'nsclc' in t or '肺癌' in t or '腺癌' in t or 'zq' in t else 'FAIL')")"
 check "8.2 Chat references study" "$(echo "$CHAT2_TEXT" | python3 -c "import sys; t=sys.stdin.read().lower(); print('ok' if 'nsclc001' in t or '研究' in t else 'FAIL')")"
 
+# 8b. 问诊 — AI must reference actual patient data from profile
+CHAT3=$(curl -sf -N -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"ZQ的诊断是什么？分期？有什么发现？请引用患者资料回答\",\"patient_hash\":\"$HASH\"}" 2>/dev/null)
+CHAT3_TEXT=$(echo "$CHAT3" | grep 'final_answer' | sed 's/^data: //' | python3 -c "import sys,json; print(''.join(json.loads(l.strip()).get('text','') for l in sys.stdin if l.strip()))" 2>/dev/null)
+check "8.3 问诊: references diagnosis" "$(echo "$CHAT3_TEXT" | python3 -c "import sys; t=sys.stdin.read().lower(); print('ok' if any(w in t for w in ['nsclc','腺癌','iiia','结节','cea','诊断','肿瘤','stage']) else 'FAIL')")"
+check "8.4 问诊: references findings" "$(echo "$CHAT3_TEXT" | python3 -c "import sys; t=sys.stdin.read().lower(); print('ok' if any(w in t for w in ['ct','影像','结节','cea','淋巴结','rul','cm']) else 'FAIL')")"
+
 # ═══ 9. Skills ═══
 check "9.1 Skills catalog" "$([ $(curl -sf "$BASE/api/v1/skills" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('skills',[])))" 2>/dev/null) -ge 8 ] && echo ok || echo 'FAIL')"
 curl -sf -X POST "$BASE/api/v1/skills/install" -H "$H" -H "Content-Type: application/json" -d '{"identifier":"official/clinical-summary"}' > /dev/null 2>&1
