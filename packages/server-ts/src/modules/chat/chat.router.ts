@@ -114,9 +114,12 @@ export async function chatRouter(app: FastifyInstance) {
       // #2: Extract takeaway + evolve facts + analyze patient chat
       ctx.orchestrator.postTurn(userId, sid, body.text).catch(() => {})
 
-      // Step 2: Analyze patient chat for clinical findings
+      // Step 2: Analyze patient chat + attachments for clinical findings
       if (patientHash) {
-        analyzeChatForPatient(userId, patientHash, `User: ${body.text}\nAI: ${fullResponse}`)
+        const analysisText = attachmentText
+          ? `[FILE CONTENT]\n${attachmentText}\n[CHAT]\nUser: ${body.text}\nAI: ${fullResponse}`
+          : `User: ${body.text}\nAI: ${fullResponse}`
+        analyzeChatForPatient(userId, patientHash, analysisText)
           .then(findings => updatePatientFromFindings(userId, patientHash, findings))
           .catch(() => {})
       }
