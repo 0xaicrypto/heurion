@@ -35,6 +35,7 @@ model User {
   settings      UserSetting[]
   chatTakeaways ChatTakeaway[]
   studies       ResearchStudy[]
+  patients      PatientRecord[]
   @@map("users")
 }
 
@@ -228,4 +229,20 @@ model ResearchAssessment {
   study ResearchStudy @relation(fields: [studyId], references: [id])
   @@index([studyId, patientHash])
   @@map("research_assessments")
+}
+
+model PatientRecord {
+  hash          String  @id
+  userId        String  @map("user_id")
+  initials      String  @default("")
+  age           Int     @default(0)
+  sex           String  @default("")
+  chiefComplaint String @default("") @map("chief_complaint")
+  source        String  @default("manual")
+  createdAt     String  @map("created_at")
+  updatedAt     String  @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("patient_records")
 }

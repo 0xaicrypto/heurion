@@ -1,81 +1,87 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
+import prisma from '../../common/prisma.js'
+import crypto from 'crypto'
+
+function uid() { return crypto.randomBytes(8).toString('hex') }
 
 export async function patientsRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
-  // ── DICOM patients list (frontend: /api/v1/dicom/patients/full) ──
+  // ── List patients (frontend: /api/v1/dicom/patients/full) ──
   app.get('/api/v1/dicom/patients/full', async (request) => {
-    return []  // no patients yet — data lives in Python event-sourcing
+    const records = await (prisma as any).patientRecord.findMany({
+      where: { userId: request.user!.userId },
+      orderBy: { createdAt: 'desc' },
+    })
+    return records.map((r: any) => ({
+      patient_hash: r.hash,
+      initials: r.initials,
+      age_value: r.age || undefined,
+      age_group: r.age ? (r.age < 18 ? 'pediatric' : r.age > 65 ? 'geriatric' : 'adult') : undefined,
+      sex: r.sex || undefined,
+      chief_complaint: r.chiefComplaint || undefined,
+      created_at: r.createdAt,
+      study_count: 0,
+      source: r.source || 'manual',
+    }))
   })
 
-  // ── DICOM patient detail ──
-  app.get('/api/v1/dicom/patients/:hash/detail', async (request) => {
+  // ── Patient detail ──
+  app.get('/api/v1/dicom/patients/:hash/detail', async (request, reply) => {
     const { hash } = request.params as any
+    const r = await (prisma as any).patientRecord.findFirst({ where: { hash, userId: request.user!.userId } })
+    if (!r) return reply.status(404).send({ error: 'Patient not found' })
     return {
-      patient_hash: hash,
-      initials: 'PT',
-      created_at: new Date().toISOString(),
+      patient_hash: r.hash, initials: r.initials,
+      age_value: r.age || undefined, sex: r.sex || undefined,
+      chief_complaint: r.chiefComplaint || undefined,
+      created_at: r.createdAt, updated_at: r.updatedAt,
       study_count: 0,
     }
   })
 
-  // ── DICOM patient delete ──
+  // ── Register manual ──
+  app.post('/api/v1/dicom/patients/register-manual', async (request) => {
+    const body = request.body as any
+    const hash = `patient_${uid()}`
+    const now = new Date().toISOString()
+    await (prisma as any).patientRecord.create({
+      data: {
+        hash, userId: request.user!.userId,
+        initials: body.initials || '',
+        age: body.age || 0,
+        sex: body.sex || '',
+        chiefComplaint: body.chief_complaint || '',
+        source: 'manual', createdAt: now, updatedAt: now,
+      },
+    })
+    return { patient_hash: hash, initials: body.initials, created_at: now }
+  })
+
+  // ── Delete ──
   app.delete('/api/v1/dicom/patients/:hash', async (request) => {
+    const { hash } = request.params as any
+    await (prisma as any).patientRecord.deleteMany({ where: { hash, userId: request.user!.userId } })
     return { deleted: true }
   })
 
-  // ── DICOM patient studies ──
+  // ── Studies (stub) ──
   app.get('/api/v1/dicom/patients/:patientHash/studies', async () => {
     return { studies: [] }
   })
 
-  // ── DICOM study detail ──
   app.get('/api/v1/dicom/studies/:studyId', async (request) => {
-    const { studyId } = request.params as any
-    return { study_id: studyId, patient_hash: '', modality: 'CT', series: [] }
+    return { study_id: (request.params as any).studyId, patient_hash: '', modality: 'CT', series: [] }
   })
 
-  // ── DICOM render slice (stub) ──
-  app.get('/api/v1/dicom/studies/:studyId/series/:seriesIdx/render', async (request, reply) => {
+  app.get('/api/v1/dicom/studies/:studyId/series/:seriesIdx/render', async (_req, reply) => {
     reply.header('Content-Type', 'image/png')
     return Buffer.alloc(1)
   })
 
-  // ── Memory projection (frontend: /api/v1/memory/patient/:hash/projection) ──
-  app.get('/api/v1/memory/patient/:patientHash/projection', async (request) => {
-    return { findings: [], medications: [], timeline: [] }
-  })
-
-  // ── Memory findings ──
-  app.get('/api/v1/memory/patient/:patientHash/findings', async () => {
-    return { findings: [] }
-  })
-
-  // ── Memory timeline ──
-  app.get('/api/v1/memory/patient/:patientHash/timeline', async () => {
-    return { entries: [] }
-  })
-
-  // ── Manual patient register ──
-  app.post('/api/v1/dicom/patients/register-manual', async (request) => {
-    const body = request.body as any
-    const hash = `patient_${Math.random().toString(36).slice(2, 10)}`
-    return { patient_hash: hash, initials: body.initials || 'PT', created_at: new Date().toISOString() }
-  })
-
-  // ── Quick scan ──
-  app.post('/api/v1/dicom/studies/:studyId/quick-scan', async () => {
-    return { ok: true, status: 'queued' }
-  })
-
-  // ── Report PDF ──
-  app.post('/api/v1/report/pdf', async (request) => {
-    return { hash: `report_${Math.random().toString(36).slice(2, 8)}` }
-  })
-
-  // ── File uploads list ──
-  app.get('/api/v1/files/uploads', async () => {
-    return []
-  })
+  // ── Memory ──
+  app.get('/api/v1/memory/patient/:patientHash/projection', async () => ({ findings: [], medications: [], timeline: [] }))
+  app.get('/api/v1/memory/patient/:patientHash/findings', async () => ({ findings: [] }))
+  app.get('/api/v1/memory/patient/:patientHash/timeline', async () => ({ entries: [] }))
 }

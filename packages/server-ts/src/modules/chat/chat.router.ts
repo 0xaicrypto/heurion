@@ -2,7 +2,20 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import { getUserContext } from './user-context.js'
-import { deepseekStream, deepseekChat, getApiKey } from '../../common/llm.js'
+import { deepseekStream, getApiKey } from '../../common/llm.js'
+import fs from 'fs'
+import path from 'path'
+
+// #2: Read uploaded file content for chat context
+function readAttachmentContent(userId: string, fileId: string): string {
+  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+  const filepath = path.join(dir, fileId)
+  if (!fs.existsSync(filepath)) return ''
+  const buffer = fs.readFileSync(filepath)
+  const text = buffer.toString('utf-8').slice(0, 5000)  // 5KB limit
+  const name = (fileId.split('_').slice(1).join('_') || fileId)
+  return `\n[ATTACHMENT: ${name}]\n${text}\n[/ATTACHMENT]\n`
+}
 
 export async function chatRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
@@ -23,6 +36,15 @@ export async function chatRouter(app: FastifyInstance) {
     try {
       send({ type: 'turn_started', event_idx: ctx.eventLog.count() + 1, patient_hash: patientHash })
 
+      // #2: Read attachment content
+      let attachmentText = ''
+      const attachments = body.attachments || []
+      for (const att of attachments) {
+        if (att.file_id) attachmentText += readAttachmentContent(userId, att.file_id)
+      }
+
+      const fullMessage = attachmentText ? `${attachmentText}\n\nUser query: ${body.text}` : body.text
+
       // #2: Weighted attention context projection
       const projected = await ctx.orchestrator['projection'].project({
         userId, patientHash, sessionId: sid,
@@ -40,7 +62,7 @@ export async function chatRouter(app: FastifyInstance) {
         if (evt.eventType === 'user_message') messages.push({ role: 'user', content: evt.content })
         else if (evt.eventType === 'assistant_response') messages.push({ role: 'assistant', content: evt.content })
       }
-      messages.push({ role: 'user', content: body.text })
+      messages.push({ role: 'user' as const, content: fullMessage })
 
       // Stream response
       let fullResponse = ''
