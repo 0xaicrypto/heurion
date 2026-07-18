@@ -12,10 +12,14 @@ import prisma from '../../common/prisma'
  * User subscribes once, calendar auto-updates on each refresh.
  */
 export async function calendarRouter(app: FastifyInstance) {
-  app.addHook('preHandler', authGuard)
-
+  // Public route — uses token in URL query param (Apple Calendar can't send custom headers)
   app.get('/api/v1/calendar/export.ics', async (request, reply) => {
-    const userId = request.user!.userId
+    const token = (request.query as any).token || ''
+    if (!token) return { error: 'token required' }
+    // Verify the token to get userId
+    const { verifyToken } = await import('../../common/jwt.js')
+    let userId: string
+    try { userId = verifyToken(token).userId } catch { return { error: 'invalid token' } }
     const now = new Date()
     const lines: string[] = [
       'BEGIN:VCALENDAR',
@@ -89,6 +93,18 @@ export async function calendarRouter(app: FastifyInstance) {
     reply.header('Content-Type', 'text/calendar; charset=utf-8')
     reply.header('Content-Disposition', 'inline; filename=heurion.ics')
     return lines.join('\r\n')
+  })
+
+  // Helper: get calendar subscription URL with embedded token
+  app.get('/api/v1/calendar/subscribe-url', { preHandler: [authGuard] }, async (request) => {
+    const header = request.headers.authorization || ''
+    const rawToken = header.replace('Bearer ', '')
+    const host = request.headers.host || 'heurion.org'
+    const proto = request.headers['x-forwarded-proto'] || 'https'
+    return {
+      url: `${proto}://${host}/api/v1/calendar/export.ics?token=${rawToken}`,
+      instructions: 'Apple: Calendar → File → New Calendar Subscription → paste URL\nGoogle: Settings → Add Calendar → From URL → paste URL',
+    }
   })
 }
 
