@@ -120,4 +120,41 @@ describe('Documents', () => {
     })
     expect(res.statusCode).toBe(404)
   })
+
+  test('doc chat endpoint responds with SSE', async () => {
+    const app = await getApp()
+    const create = await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Chat Test', body: 'Test content' },
+    })
+    const docId = JSON.parse(create.payload).id
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/chat`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ message: 'Summarize this doc' }),
+    })
+    expect(res.statusCode).toBe(200)
+    // SSE response should start with data: prefix
+    expect(res.payload.startsWith('data: ')).toBe(true)
+  })
+
+  test('doc polish endpoint responds with SSE', async () => {
+    const app = await getApp()
+    const create = await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Polish Test', body: 'Need polish' },
+    })
+    const docId = JSON.parse(create.payload).id
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/polish`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ selection: 'Need polish' }),
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.payload.startsWith('data: ')).toBe(true)
+  })
 })

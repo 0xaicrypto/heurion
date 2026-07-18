@@ -87,9 +87,9 @@ export async function documentsRouter(app: FastifyInstance) {
     const send = (d: any) => reply.raw.write(`data: ${JSON.stringify(d)}\n\n`)
     try {
       for await (const chunk of deepseekStream([{ role: 'user', content: prompt }], apiKey)) {
-        send({ type: 'polish_chunk', text: chunk })
+        send({ text: chunk })
       }
-      send({ type: 'polish_complete' })
+      send({ done: true })
     } catch (err: any) {
       send({ type: 'error', message: err.message })
     } finally {
@@ -115,9 +115,9 @@ export async function documentsRouter(app: FastifyInstance) {
         { role: 'user' as const, content: message || 'Help me with this document.' },
       ]
       for await (const chunk of deepseekStream(messages, apiKey)) {
-        send({ type: 'final_answer_chunk', text: chunk })
+        send({ type: 'reply_chunk', text: chunk })
       }
-      send({ type: 'turn_complete' })
+      send({ type: 'done' })
     } catch (err: any) {
       send({ type: 'error', message: err.message })
     } finally {
