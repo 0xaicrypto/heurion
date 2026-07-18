@@ -701,12 +701,7 @@ export function ResearchDetailPage() {
           )}
 
           {tab === 'protocol' && (
-            <div className="max-w-2xl space-y-4">
-              <div className="flex flex-col items-center justify-center rounded-xl border border-border py-16 text-center">
-                <FlaskConical size={36} className="mb-3 text-text-tertiary" />
-                <p className="text-text-tertiary">Protocol import/extract coming soon</p>
-              </div>
-            </div>
+            <ProtocolTab studyId={studyId} />
           )}
         </main>
 
@@ -756,4 +751,86 @@ export function ResearchDetailPage() {
       </div>
     </AppShell>
   );
+}
+
+function ProtocolTab({ studyId }: { studyId: string }) {
+  const [rules, setRules] = useState<Array<{ id: string; category: string; rule: string; confirmed: boolean }>>([])
+  const [status, setStatus] = useState({ total: 0, confirmed: 0, pending: 0 })
+  const [loading, setLoading] = useState(true)
+  const [importText, setImportText] = useState('')
+  const [importing, setImporting] = useState(false)
+
+  const loadRules = () => {
+    setLoading(true)
+    api.fetch(`/api/v1/research/studies/${studyId}/protocol-rules`)
+      .then((data: any) => { setRules(data.rules); setStatus(data.status) })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { loadRules() }, [studyId])
+
+  const handleImport = async () => {
+    if (!importText.trim()) return
+    setImporting(true)
+    try {
+      await api.fetch(`/api/v1/research/studies/${studyId}/import-protocol`, { method: 'POST', body: JSON.stringify({ text: importText }) })
+      await api.fetch(`/api/v1/research/studies/${studyId}/extract-rules`, { method: 'POST', body: JSON.stringify({ text: importText }) })
+      loadRules()
+      setImportText('')
+    } catch {} finally { setImporting(false) }
+  }
+
+  const handleConfirm = async (ruleId: string) => {
+    await api.fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}/confirm`, { method: 'POST' })
+    loadRules()
+  }
+  const handleReject = async (ruleId: string) => {
+    await api.fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}`, { method: 'DELETE' })
+    loadRules()
+  }
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      <div className="rounded-xl border border-border bg-surface-elevated p-4">
+        <h3 className="mb-2 text-sm font-semibold text-text-primary">Import Protocol</h3>
+        <textarea value={importText} onChange={e => setImportText(e.target.value)}
+          placeholder="Paste protocol text here (INCLUSION: ..., EXCLUSION: ...)"
+          className="mb-2 min-h-[80px] w-full rounded-lg border border-border bg-surface p-2 text-xs text-text-primary"
+          rows={4} />
+        <Button size="sm" onClick={handleImport} isLoading={importing}>Import & Extract Rules</Button>
+      </div>
+
+      {loading ? <Skeleton className="h-32 w-full rounded-xl" /> : (
+        <div className="rounded-xl border border-border bg-surface-elevated p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-text-primary">Extracted Rules</h3>
+            <span className="text-xs text-text-tertiary">{status.confirmed}/{status.total} confirmed</span>
+          </div>
+          {rules.length === 0 ? (
+            <p className="text-sm text-text-tertiary">Import a protocol to extract rules</p>
+          ) : (
+            <div className="space-y-2">
+              {rules.map(r => (
+                <div key={r.id} className={`flex items-start gap-3 rounded-lg p-2 ${r.confirmed ? 'bg-green-50/10' : 'bg-surface'}`}>
+                  <Badge variant={r.category === 'inclusion' ? 'success' : r.category === 'exclusion' ? 'error' : r.category === 'safety' ? 'warning' : 'default'}>
+                    {r.category}
+                  </Badge>
+                  <span className="flex-1 text-xs text-text-primary">{r.rule}</span>
+                  {r.confirmed ? (
+                    <span className="text-xs text-green-500">✓</span>
+                  ) : (
+                    <div className="flex gap-1">
+                      <button onClick={() => handleConfirm(r.id)} className="rounded px-2 py-0.5 text-xs text-green-500 hover:bg-green-50/10">✓</button>
+                      <button onClick={() => handleReject(r.id)} className="rounded px-2 py-0.5 text-xs text-red-400 hover:bg-red-50/10">✗</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
