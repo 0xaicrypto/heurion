@@ -28,7 +28,33 @@ export async function filesRouter(app: FastifyInstance) {
     }
   })
 
-  // ── List ──
+  // ── Uploads list (imaging page) ──
+  app.get('/api/v1/files/uploads', async (request) => {
+    const userId = request.user!.userId
+    const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+    if (!fs.existsSync(dir)) return []
+
+    const { patient_hash, limit } = request.query as any
+    const files = fs.readdirSync(dir)
+      .map(f => {
+        const stat = fs.statSync(path.join(dir, f))
+        return {
+          file_id: f,
+          name: f.split('_').slice(1).join('_') || f,
+          mime: f.endsWith('.dcm') ? 'application/dicom' : f.endsWith('.txt') ? 'text/plain' : 'application/octet-stream',
+          size_bytes: stat.size,
+          created_at: stat.birthtime.toISOString(),
+          patient_hash: patient_hash || null,
+          dicom_status: f.endsWith('.dcm') ? 'indexed' : 'none',
+          dicom_study_id: f.endsWith('.dcm') ? f.replace('.dcm', '') : null,
+        }
+      })
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+    return limit ? files.slice(0, parseInt(limit as string)) : files
+  })
+
+  // ── List all files ──
   app.get('/api/v1/files', async (request) => {
     const userId = request.user!.userId
     const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')

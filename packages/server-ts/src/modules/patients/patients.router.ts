@@ -2,6 +2,8 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
+import fs from 'fs'
+import path from 'path'
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
 
@@ -67,8 +69,24 @@ export async function patientsRouter(app: FastifyInstance) {
   })
 
   // ── Studies (stub) ──
-  app.get('/api/v1/dicom/patients/:patientHash/studies', async () => {
-    return { studies: [] }
+  app.get('/api/v1/dicom/patients/:patientHash/studies', async (request) => {
+    // Return uploaded files as DICOM studies for this patient
+    const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', (request as any).user?.userId || '', 'uploads')
+    const files: Array<{study_id: string; modality: string; series_count: number; created_at: string}> = []
+    if (fs.existsSync(dir)) {
+      for (const f of fs.readdirSync(dir)) {
+        if (f.endsWith('.dcm')) {
+          files.push({
+            study_id: f.replace('.dcm', ''),
+            modality: 'CT',
+            series_count: 1,
+            created_at: new Date().toISOString(),
+          })
+        }
+      }
+    }
+    // Frontend expects a bare array, not { studies: [...] }
+    return files
   })
 
   app.get('/api/v1/dicom/studies/:studyId', async (request) => {
