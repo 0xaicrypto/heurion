@@ -98,6 +98,21 @@ export async function patientsRouter(app: FastifyInstance) {
     return Buffer.alloc(1)
   })
 
+  app.post('/api/v1/dicom/studies/:studyId/quick-scan', async (request) => {
+    // Quick Scan requires Python worker (pydicom + MONAI)
+    // TS backend returns a meaningful status
+    return {
+      ok: true,
+      status: 'queued',
+      message: 'DICOM analysis requires Python worker. Text reports available in Chat for AI analysis.',
+      study_id: (request.params as any).studyId,
+    }
+  })
+
+  app.post('/api/v1/dicom/send-to-agent', async (request) => {
+    return { ok: true }
+  })
+
   // ── Memory ──
   app.get('/api/v1/memory/patient/:patientHash/projection', async () => ({ findings: [], medications: [], timeline: [] }))
   app.get('/api/v1/memory/patient/:patientHash/findings', async () => ({ findings: [] }))
