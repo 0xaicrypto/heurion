@@ -58,7 +58,8 @@ export async function settingsRouter(app: FastifyInstance) {
     const header = request.headers.authorization || ''
     const rawToken = header.replace('Bearer ', '')
     const { signToken, verifyToken } = await import('../../common/jwt.js')
-    const payload = verifyToken(rawToken)
+    const raw = verifyToken(rawToken)
+    const payload = { userId: raw.userId, role: raw.role, displayName: raw.displayName }
     const calToken = signToken(payload, '720h')
     return {
       calendar_url: `https://heurion.org/api/v1/calendar/export.ics?token=${calToken}`,
