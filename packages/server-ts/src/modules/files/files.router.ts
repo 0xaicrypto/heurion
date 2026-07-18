@@ -83,7 +83,48 @@ export async function filesRouter(app: FastifyInstance) {
     return (limit ? files.slice(0, parseInt(limit)) : files)
   })
 
-  // ── Delete ──
+  // ── File content preview (Labs page) ──
+  app.get('/api/v1/files/:fileId/content', async (request, reply) => {
+    const { fileId } = request.params as any
+    const userId = request.user!.userId
+    const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads', fileId)
+
+    if (!fs.existsSync(filepath)) {
+      return reply.status(404).send({ error: 'File not found' })
+    }
+
+    const stat = fs.statSync(filepath)
+    const isText = fileId.endsWith('.txt') || fileId.includes('report') || fileId.includes('lab')
+    const isDicom = fileId.endsWith('.dcm')
+
+    if (isDicom) {
+      const { quickScanDicom } = await import('../patients/dicom-scanner.js')
+      const findings = quickScanDicom(userId, fileId)
+      return {
+        file_id: fileId,
+        type: 'dicom',
+        size_bytes: stat.size,
+        findings: findings.filter((f: any) => f.type !== 'meta' && f.type !== 'error'),
+      }
+    }
+
+    if (isText) {
+      const text = fs.readFileSync(filepath, 'utf-8').slice(0, 10000)
+      return {
+        file_id: fileId,
+        type: 'text',
+        size_bytes: stat.size,
+        content: text,
+      }
+    }
+
+    return {
+      file_id: fileId,
+      type: 'binary',
+      size_bytes: stat.size,
+      content: `Binary file (${stat.size} bytes)`,
+    }
+  })
   app.delete('/api/v1/files/:fileId', async (request, reply) => {
     const { fileId } = request.params as any
     const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', request.user!.userId, 'uploads', fileId)
