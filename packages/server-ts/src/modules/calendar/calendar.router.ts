@@ -106,10 +106,13 @@ export async function calendarRouter(app: FastifyInstance) {
     const header = request.headers.authorization || ''
     const rawToken = header.replace('Bearer ', '')
     const host = request.headers.host || 'heurion.org'
-    const proto = 'https'
+    // Generate a dedicated calendar token with 30-day expiry
+    const { signToken, verifyToken } = await import('../../common/jwt.js')
+    const payload = verifyToken(rawToken)
+    const calToken = signToken({ userId: payload.userId, role: payload.role, displayName: payload.displayName }, '720h')
     return {
-      url: `${proto}://${host}/api/v1/calendar/export.ics?token=${rawToken}`,
-      instructions: 'Apple: Calendar → File → New Calendar Subscription → paste URL\nGoogle: Settings → Add Calendar → From URL → paste URL',
+      url: `https://${host}/api/v1/calendar/export.ics?token=${calToken}`,
+      instructions: 'Apple: Calendar → File → New Calendar Subscription → paste URL\nGoogle: Settings → Add Calendar → From URL → paste URL\nToken valid for 30 days.',
     }
   })
 }

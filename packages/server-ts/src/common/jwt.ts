@@ -7,10 +7,10 @@ export interface JwtPayload {
   displayName: string
 }
 
-export function signToken(payload: JwtPayload): string {
+export function signToken(payload: JwtPayload, expiresIn?: string): string {
   return jwt.sign(payload, config.secret, {
     algorithm: config.jwtAlgorithm,
-    expiresIn: `${config.jwtExpirationHours}h`,
+    expiresIn: expiresIn || `${config.jwtExpirationHours}h`,
   })
 }
 
