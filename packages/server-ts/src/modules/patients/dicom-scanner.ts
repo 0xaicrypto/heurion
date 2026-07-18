@@ -135,7 +135,13 @@ export function renderDicomSlice(userId: string, fileId: string): Buffer | null 
 }
 
 function getDicomPath(userId: string, fileId: string): string {
-  return path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads', fileId)
+  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+  // Try exact match first, then .dcm extension
+  let p = path.join(dir, fileId)
+  if (fs.existsSync(p)) return p
+  p = path.join(dir, fileId + '.dcm')
+  if (fs.existsSync(p)) return p
+  return p
 }
 
 function crc32(buf: Buffer): number {

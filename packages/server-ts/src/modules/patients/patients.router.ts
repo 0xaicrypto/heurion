@@ -79,7 +79,7 @@ export async function patientsRouter(app: FastifyInstance) {
       for (const f of fs.readdirSync(dir)) {
         if (f.endsWith('.dcm')) {
           files.push({
-            study_id: f.replace('.dcm', ''),
+            study_id: f, // Keep .dcm extension so viewer/render can find the file
             modality: 'CT',
             series_count: 1,
             created_at: new Date().toISOString(),
