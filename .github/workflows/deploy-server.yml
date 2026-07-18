@@ -306,7 +306,6 @@ jobs:
   # ── 5. SSH-deploy to the VPS (main only, after publish) ────────────
   deploy:
     name: Deploy TS Server to VPS
-    needs: [web-build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
