@@ -1,15 +1,43 @@
-# Heurion Server CI/CD — deploy on push to main
+# Heurion Server CI/CD — typecheck + test + deploy
 
 name: Deploy Server
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
 
 jobs:
+  typecheck:
+    name: Type Check (tsc --noEmit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with: { version: '9' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
+      - run: cd packages/server-ts && pnpm install --frozen-lockfile && npx prisma generate && npx tsc --noEmit
+
+  test:
+    name: Tests (vitest)
+    needs: [typecheck]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with: { version: '9' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
+      - run: cd packages/server-ts && pnpm install --frozen-lockfile
+      - run: cd packages/server-ts && npx prisma generate && npx vitest run
+
   deploy:
     name: Deploy to VPS
+    needs: [typecheck, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: production
