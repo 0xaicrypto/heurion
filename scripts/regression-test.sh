@@ -130,6 +130,7 @@ else
   else
     check "13.2 Doctor confirms rule" "no rules"
   fi
+fi
 
 # ═══ 14. Timeline ═══
 check "14. Timeline has events" "$(curl -sf "$BASE/api/v1/agent/timeline?limit=20" -H "$H" | python3 -c "import sys,json; print('ok' if len(json.load(sys.stdin)['items'])>0 else 'FAIL')" 2>/dev/null)"
