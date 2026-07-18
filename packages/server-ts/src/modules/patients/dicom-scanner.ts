@@ -1,14 +1,12 @@
 import fs from 'fs'
 import path from 'path'
-import { createRequire } from 'module'
 
 let dicomParser: any = null
 let sharp: any = null
 try {
-  const require = createRequire(import.meta.url)
   dicomParser = require('dicom-parser')
   sharp = require('sharp')
-} catch { /* optional */ }
+} catch { /* optional, tsx handles require() */ }
 
 export interface DicomFinding {
   type: string
