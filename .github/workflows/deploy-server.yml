@@ -53,3 +53,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             DEEPSEEK_KEY="$DEEPSEEK_KEY" "bash -s" < scripts/deploy.sh
+      - name: Wait for server
+        run: sleep 10
+      - name: Regression Test
+        run: bash scripts/regression-test.sh https://heurion.org
