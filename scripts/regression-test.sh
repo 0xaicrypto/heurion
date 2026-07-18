@@ -86,10 +86,31 @@ check "10.1 Create document" "$([ -n "$DID" ] && echo ok || echo 'FAIL')"
 check "10.2 Document content" "$(curl -sf "$BASE/api/v1/docs/$DID" -H "$H" | python3 -c "import sys,json; print('ok' if 'IIIA' in json.load(sys.stdin).get('body','') else 'FAIL')" 2>/dev/null)"
 
 # ═══ 11. Calendar ═══
-check "11. Calendar iCal" "$(curl -sf "$BASE/api/v1/calendar/export.ics?token=$TOKEN" | python3 -c "import sys; t=sys.stdin.read(); print('ok' if 'VCALENDAR' in t else 'FAIL')" 2>/dev/null)"
+CAL=$(curl -sf "$BASE/api/v1/calendar/export.ics?token=$TOKEN" 2>/dev/null)
+check "11.1 Calendar iCal format" "$(echo "$CAL" | python3 -c "import sys; t=sys.stdin.read(); print('ok' if 'VCALENDAR' in t else 'FAIL')" 2>/dev/null)"
+CAL_EVENTS=$(echo "$CAL" | python3 -c "import sys; print(sys.stdin.read().count('BEGIN:VEVENT'))" 2>/dev/null)
+check "11.2 Calendar has events" "$([ "${CAL_EVENTS:-0}" -gt 0 ] && echo ok || echo 'FAIL: 0 events')"
 
-# ═══ 12. Timeline ═══
-check "12. Timeline has events" "$(curl -sf "$BASE/api/v1/agent/timeline?limit=20" -H "$H" | python3 -c "import sys,json; print('ok' if len(json.load(sys.stdin)['items'])>0 else 'FAIL')" 2>/dev/null)"
+# ═══ 12. File content (Labs) ═══
+LAB_ID=$(curl -sf "$BASE/api/v1/files/uploads?patient_hash=$HASH" -H "$H" | python3 -c "import sys,json; [print(f['file_id']) for f in json.load(sys.stdin) if 'lab' in f['name'].lower()][:1]" 2>/dev/null)
+FILE_CONTENT=$(curl -sf "$BASE/api/v1/files/$LAB_ID/content" -H "$H" | python3 -c "import sys,json; j=json.load(sys.stdin); print('ok' if j.get('type')=='text' else 'FAIL')" 2>/dev/null)
+check "12.1 File content viewable" "$FILE_CONTENT"
+
+# ═══ 13. Rule Confirmation ═══
+RULES_LIST=$(curl -sf "$BASE/api/v1/research/studies/$SID/protocol-rules" -H "$H" 2>/dev/null)
+RULE_COUNT=$(echo "$RULES_LIST" | python3 -c "import sys,json; print(json.load(sys.stdin)['status']['total'])" 2>/dev/null)
+check "13.1 Rules extracted" "$([ "${RULE_COUNT:-0}" -gt 0 ] && echo ok || echo 'FAIL')"
+
+FIRST_RULE=$(echo "$RULES_LIST" | python3 -c "import sys,json; print(json.load(sys.stdin)['rules'][0]['id'])" 2>/dev/null)
+if [ -n "$FIRST_RULE" ]; then
+  CONFIRM=$(curl -sf -X POST "$BASE/api/v1/research/studies/$SID/protocol-rules/$FIRST_RULE/confirm" -H "$H" 2>/dev/null)
+  check "13.2 Doctor confirms rule" "$(echo "$CONFIRM" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin)['rule']['confirmed'] else 'FAIL')" 2>/dev/null)"
+else
+  check "13.2 Doctor confirms rule" "no rules"
+fi
+
+# ═══ 14. Timeline ═══
+check "14. Timeline has events" "$(curl -sf "$BASE/api/v1/agent/timeline?limit=20" -H "$H" | python3 -c "import sys,json; print('ok' if len(json.load(sys.stdin)['items'])>0 else 'FAIL')" 2>/dev/null)"
 
 echo ""
 echo "════════════════════════════════════════════"

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { FileText, Upload, ClipboardList } from 'lucide-react';
+import { FileText, Upload, ClipboardList, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 
@@ -30,6 +30,9 @@ export function LabsPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [viewingFile, setViewingFile] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<string>('');
+  const [viewLoading, setViewLoading] = useState(false);
 
   const loadFiles = useCallback(() => {
     if (!hash) return;
@@ -61,6 +64,22 @@ export function LabsPage() {
     }
   };
 
+  const handleViewFile = async (fileId: string) => {
+    setViewingFile(fileId);
+    setViewLoading(true);
+    try {
+      const res = await fetch(`/api/v1/files/${fileId}/content`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` },
+      });
+      const data = await res.json();
+      setFileContent(data.content || data.findings?.map((f: any) => f.content).join('\n') || '');
+    } catch {
+      setFileContent('Failed to load file content');
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
   if (!hash) {
     return (
       <div className="flex h-full items-center justify-center text-text-tertiary">
@@ -88,6 +107,27 @@ export function LabsPage() {
         />
       </div>
 
+      {viewingFile && (
+        <div className="mb-4 rounded-xl border border-border bg-surface-elevated p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-text-primary">
+              {files.find((f) => f.file_id === viewingFile)?.name || 'File Preview'}
+            </h3>
+            <button onClick={() => { setViewingFile(null); setFileContent(''); }}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary hover:bg-surface">
+              <X size={16} />
+            </button>
+          </div>
+          {viewLoading ? (
+            <Skeleton className="h-32 w-full rounded-lg" />
+          ) : (
+            <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-surface p-3 text-xs text-text-secondary font-mono leading-relaxed">
+              {fileContent || '(Empty file)'}
+            </pre>
+          )}
+        </div>
+      )}
+
       {error && (
         <div className="mb-4">
           <Alert variant="error">{error}</Alert>
@@ -109,7 +149,11 @@ export function LabsPage() {
       ) : (
         <div className="space-y-2">
           {files.map((f) => (
-            <Card key={f.file_id} className="flex items-center gap-4 p-4">
+            <Card
+              key={f.file_id}
+              className="flex cursor-pointer items-center gap-4 p-4 hover:bg-surface transition-colors"
+              onClick={() => handleViewFile(f.file_id)}
+            >
               <FileText size={20} className="shrink-0 text-text-tertiary" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-text-primary">{f.name}</p>

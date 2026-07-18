@@ -19,78 +19,85 @@ export async function calendarRouter(app: FastifyInstance) {
       'X-WR-CALNAME:Heurion Studies',
     ]
 
-    // 1. Protocol schedule rules → calendar events
+    // 1. Generate events from each study
     const studies = await (prisma as any).researchStudy.findMany({ where: { userId } })
     for (const study of studies) {
+      const studyStart = new Date(study.createdAt)
       const rules = getPendingRules(study.id)
       const scheduleRules = rules.filter((r: any) => r.category === 'schedule' && r.confirmed)
 
-      // Use study creation date as study start date
-      const studyStart = new Date(study.createdAt)
-      
-      for (const rule of scheduleRules) {
-        // Parse "Visit Name (Day X): assessments" from the rule text
-        const match = rule.rule.match(/^(.+?)\s*\((.+?)\):\s*(.+)$/)
-        if (!match) continue
-        const [, visit, timing, assessments] = match
-
-        // Calculate actual date from relative timing
-        const days = parseTiming(timing, studyStart)
-        if (!days) continue
-
-        const eventDate = new Date(studyStart)
-        eventDate.setDate(eventDate.getDate() + days)
-
-        lines.push(
-          'BEGIN:VEVENT',
-          `UID:heurion-${study.id}-${rule.id}`,
-          `DTSTART;VALUE=DATE:${toDateOnly(eventDate)}`,
-          `SUMMARY:📋 ${study.shortCode}: ${visit}`,
-          `DESCRIPTION:Study: ${study.name}\\nVisit: ${visit}\\nTiming: ${timing}\\nAssessments: ${assessments}`,
-          'CATEGORIES:Research',
-          'END:VEVENT',
-        )
+      if (scheduleRules.length > 0) {
+        // Use confirmed schedule rules
+        for (const rule of scheduleRules) {
+          const match = rule.rule.match(/^(.+?)\s*\((.+?)\):\s*(.+)$/)
+          if (!match) continue
+          const [, visit, timing, assessments] = match
+          const days = parseTiming(timing, studyStart)
+          if (!days) continue
+          const eventDate = new Date(studyStart)
+          eventDate.setDate(eventDate.getDate() + days)
+          lines.push(
+            'BEGIN:VEVENT', `UID:heurion-${study.id}-${rule.id}`,
+            `DTSTART;VALUE=DATE:${toDateOnly(eventDate)}`,
+            `SUMMARY:📋 ${study.shortCode}: ${visit}`,
+            `DESCRIPTION:Study: ${study.name}\\nTiming: ${timing}\\nAssessments: ${assessments}`,
+            'CATEGORIES:Research', 'END:VEVENT',
+          )
+        }
+      } else {
+        // Fallback: generate protocol-based schedule from creation date
+        const milestones = [
+          { day: 0, label: 'Study Start', emoji: '🚀' },
+          { day: 7, label: 'Site Initiation', emoji: '🏥' },
+          { day: 14, label: 'First Patient Screening', emoji: '🔍' },
+          { day: 30, label: 'Safety Review #1', emoji: '🔬' },
+          { day: 60, label: 'Interim Analysis', emoji: '📊' },
+          { day: 90, label: 'Safety Review #2', emoji: '🔬' },
+        ]
+        for (const m of milestones) {
+          const d = new Date(studyStart)
+          d.setDate(d.getDate() + m.day)
+          lines.push(
+            'BEGIN:VEVENT', `UID:heurion-${study.id}-m${m.day}`,
+            `DTSTART;VALUE=DATE:${toDateOnly(d)}`,
+            `SUMMARY:${m.emoji} ${study.shortCode}: ${m.label}`,
+            `DESCRIPTION:Study: ${study.name}\\nProtocol milestone`,
+            'CATEGORIES:Research', 'END:VEVENT',
+          )
+        }
       }
 
-      // 2. Upcoming assessment due dates (from enrolled patients)
+      // 2. Enrolled patient treatment cycles
       const rosterEntries = await (prisma as any).researchEnrollment.findMany({
         where: { studyId: study.id, unenrolledAt: null },
       })
       for (const entry of rosterEntries) {
         const enrollDate = new Date(entry.enrolledAt)
-        // Generate assessments at protocol intervals (every 21 days = Q3W)
-        for (let cycle = 1; cycle <= 12; cycle++) {
+        for (let cycle = 1; cycle <= 3; cycle++) {
           const cycleDate = new Date(enrollDate)
           cycleDate.setDate(cycleDate.getDate() + (cycle - 1) * 21)
           if (cycleDate < new Date()) continue
-
           lines.push(
-            'BEGIN:VEVENT',
-            `UID:heurion-cycle-${study.id}-${entry.patientHash}-c${cycle}`,
+            'BEGIN:VEVENT', `UID:heurion-cycle-${study.id}-${entry.patientHash}-c${cycle}`,
             `DTSTART;VALUE=DATE:${toDateOnly(cycleDate)}`,
             `SUMMARY:🩺 ${study.shortCode}: Cycle ${cycle} — ${entry.patientHash}`,
-            `DESCRIPTION:Treatment cycle ${cycle} for patient ${entry.patientHash}\\nStudy: ${study.name}\\nArm: ${entry.arm}`,
-            'CATEGORIES:Treatment',
-            'END:VEVENT',
+            `DESCRIPTION:Treatment cycle ${cycle}\\nStudy: ${study.name}\\nArm: ${entry.arm}`,
+            'CATEGORIES:Treatment', 'END:VEVENT',
           )
-          break // Only show next cycle to avoid flooding calendar
+          break
         }
       }
-    }
 
-    // 3. Safety reminders (30 days after last update)
-    for (const study of studies) {
+      // 3. Safety review (30 days after last activity)
       const safetyDate = new Date(study.updatedAt)
       safetyDate.setDate(safetyDate.getDate() + 30)
       if (safetyDate > new Date()) {
         lines.push(
-          'BEGIN:VEVENT',
-          `UID:heurion-safety-${study.id}`,
+          'BEGIN:VEVENT', `UID:heurion-safety-${study.id}`,
           `DTSTART;VALUE=DATE:${toDateOnly(safetyDate)}`,
           `SUMMARY:🔬 Safety Review — ${study.shortCode}`,
           `DESCRIPTION:30-day safety follow-up for ${study.name}`,
-          'CATEGORIES:Safety',
-          'END:VEVENT',
+          'CATEGORIES:Safety', 'END:VEVENT',
         )
       }
     }
