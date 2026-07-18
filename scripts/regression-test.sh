@@ -61,10 +61,10 @@ check "6.2 Memory export works" "$(curl -sf "$BASE/api/v1/memory/export" -H "$H"
 SID=$(curl -sf -X POST "$BASE/api/v1/research/studies" -H "$H" -H "Content-Type: application/json" -d '{"display_name":"NSCLC Immunotherapy Phase II","short_code":"NSCLC001"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('study_id',''))" 2>/dev/null)
 check "7.1 Create study" "$([ -n "$SID" ] && echo ok || echo 'FAIL')"
 
-curl -sf -X POST "$BASE/api/v1/research/studies/$SID/import-protocol" -H "$H" -H "Content-Type: application/json" -d '{"text":"INCLUSION: Stage IIIB/IV NSCLC, PD-L1>=1%. EXCLUSION: EGFR/ALK positive, autoimmune disease."}' > /dev/null 2>&1
+curl -sf -X POST "$BASE/api/v1/research/studies/$SID/import-protocol" -H "$H" -H "Content-Type: application/json" -d '{"text":"INCLUSION: Stage IIIB/IV NSCLC, PD-L1>=1%, ECOG 0-1\nEXCLUSION: EGFR/ALK positive, autoimmune disease\nSAFETY: DLT evaluation Cycle 1, Grade 4 neutropenia >7 days, DLT rate >33%\nSCHEDULE: Screening (Day -28 to -1): consent, CT, labs. Cycle 1 Day 1 (Day 1 of 21-day cycle): CBC, chemistry. Cycle 1 Day 8 (Day 8): vital signs, CBC. Follow-up (Day 30): safety check"}' > /dev/null 2>&1
 check "7.2 Import protocol" ok
 
-RULES=$(curl -sf -X POST "$BASE/api/v1/research/studies/$SID/extract-rules" -H "$H" -H "Content-Type: application/json" -d '{"text":"INCLUSION: Stage IIIB/IV NSCLC, PD-L1>=1%. EXCLUSION: EGFR/ALK positive."}' | python3 -c "import sys,json; print(json.load(sys.stdin)['status']['total'])" 2>/dev/null)
+RULES=$(curl -sf -X POST "$BASE/api/v1/research/studies/$SID/extract-rules" -H "$H" -H "Content-Type: application/json" -d '{"text":"INCLUSION: Stage IIIB/IV NSCLC, PD-L1>=1%, ECOG 0-1\nEXCLUSION: EGFR/ALK positive, autoimmune disease\nSAFETY: DLT evaluation Cycle 1, Grade 4 neutropenia >7 days, DLT rate >33%\nSCHEDULE: Screening (Day -28 to -1): consent, CT, labs. Cycle 1 Day 1 (Day 1 of 21-day cycle): CBC, chemistry. Cycle 1 Day 8 (Day 8): vital signs, CBC. Follow-up (Day 30): safety check"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['status']['total'])" 2>/dev/null)
 check "7.3 Extract rules" "$([ "${RULES:-0}" -gt 0 ] && echo ok || echo 'FAIL')"
 
 # 7b. Enroll patient + verify roster/schedule/safety
@@ -115,13 +115,21 @@ RULES_LIST=$(curl -sf "$BASE/api/v1/research/studies/$SID/protocol-rules" -H "$H
 RULE_COUNT=$(echo "$RULES_LIST" | python3 -c "import sys,json; print(json.load(sys.stdin)['status']['total'])" 2>/dev/null)
 check "13.1 Rules extracted" "$([ "${RULE_COUNT:-0}" -gt 0 ] && echo ok || echo 'FAIL')"
 
-FIRST_RULE=$(echo "$RULES_LIST" | python3 -c "import sys,json; print(json.load(sys.stdin)['rules'][0]['id'])" 2>/dev/null)
-if [ -n "$FIRST_RULE" ]; then
-  CONFIRM=$(curl -sf -X POST "$BASE/api/v1/research/studies/$SID/protocol-rules/$FIRST_RULE/confirm" -H "$H" 2>/dev/null)
-  check "13.2 Doctor confirms rule" "$(echo "$CONFIRM" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin)['rule']['confirmed'] else 'FAIL')" 2>/dev/null)"
+# Confirm ALL schedule rules to generate assessments
+SCHEDULE_RULE=$(echo "$RULES_LIST" | python3 -c "import sys,json; rules=json.load(sys.stdin)['rules']; [print(r['id']) for r in rules if r['category']=='schedule']" 2>/dev/null)
+if [ -n "$SCHEDULE_RULE" ]; then
+  for rid in $SCHEDULE_RULE; do
+    curl -sf -X POST "$BASE/api/v1/research/studies/$SID/protocol-rules/$rid/confirm" -H "$H" > /dev/null 2>&1
+  done
+  check "13.2 Schedule rules confirmed" ok
 else
-  check "13.2 Doctor confirms rule" "no rules"
-fi
+  FIRST_RULE=$(echo "$RULES_LIST" | python3 -c "import sys,json; print(json.load(sys.stdin)['rules'][0]['id'])" 2>/dev/null)
+  if [ -n "$FIRST_RULE" ]; then
+    CONFIRM=$(curl -sf -X POST "$BASE/api/v1/research/studies/$SID/protocol-rules/$FIRST_RULE/confirm" -H "$H" 2>/dev/null)
+    check "13.2 Doctor confirms rule" "$(echo "$CONFIRM" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin)['rule']['confirmed'] else 'FAIL')" 2>/dev/null)"
+  else
+    check "13.2 Doctor confirms rule" "no rules"
+  fi
 
 # ═══ 14. Timeline ═══
 check "14. Timeline has events" "$(curl -sf "$BASE/api/v1/agent/timeline?limit=20" -H "$H" | python3 -c "import sys,json; print('ok' if len(json.load(sys.stdin)['items'])>0 else 'FAIL')" 2>/dev/null)"

@@ -763,7 +763,8 @@ function ProtocolTab({ studyId }: { studyId: string }) {
 
   const loadRules = () => {
     setLoading(true)
-    api.fetch(`/api/v1/research/studies/${studyId}/protocol-rules`)
+    fetch(`/api/v1/research/studies/${studyId}/protocol-rules`, { headers: { Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` } })
+      .then(r => r.json())
       .then((data: any) => { setRules(data.rules); setStatus(data.status) })
       .catch(() => {})
       .finally(() => setLoading(false))
@@ -782,20 +783,25 @@ function ProtocolTab({ studyId }: { studyId: string }) {
   const handleImport = async () => {
     if (!importText.trim()) return
     setImporting(true)
+    const h = { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` }
     try {
-      await api.fetch(`/api/v1/research/studies/${studyId}/import-protocol`, { method: 'POST', body: JSON.stringify({ text: importText }) })
-      await api.fetch(`/api/v1/research/studies/${studyId}/extract-rules`, { method: 'POST', body: JSON.stringify({ text: importText }) })
+      await fetch(`/api/v1/research/studies/${studyId}/import-protocol`, { method: 'POST', headers: h, body: JSON.stringify({ text: importText }) })
+      await fetch(`/api/v1/research/studies/${studyId}/extract-rules`, { method: 'POST', headers: h, body: JSON.stringify({ text: importText }) })
       loadRules()
       setImportText('')
     } catch {} finally { setImporting(false) }
   }
 
   const handleConfirm = async (ruleId: string) => {
-    await api.fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}/confirm`, { method: 'POST' })
+    await fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}/confirm`, {
+      method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` }
+    })
     loadRules()
   }
   const handleReject = async (ruleId: string) => {
-    await api.fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}`, { method: 'DELETE' })
+    await fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` }
+    })
     loadRules()
   }
 
