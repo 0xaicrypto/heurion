@@ -47,9 +47,13 @@ export async function skillsRouter(app: FastifyInstance) {
   app.get('/api/v1/skills', async (request) => {
     const prefs = await (prisma as any).userSkillPref.findMany({ where: { userId: request.user!.userId } })
     const installed = new Map(prefs.map((p: any) => [p.skillName, p]))
-    const skills = CATALOG
-      .filter(s => installed.has(s.name))
-      .map(s => ({ name: s.name, title: s.name, description: s.description, version: s.version, author: s.author, enabled: (installed.get(s.name) as any)?.enabled !== 0 }))
+    // Return ALL skills with installed flag — so page shows full catalog
+    const skills = CATALOG.map(s => ({
+      name: s.name, title: s.name,
+      description: s.description, version: s.version, author: s.author,
+      enabled: installed.has(s.name) ? (installed.get(s.name) as any)?.enabled !== 0 : false,
+      installed: installed.has(s.name),
+    }))
     return { skills }
   })
 

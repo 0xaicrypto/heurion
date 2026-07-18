@@ -16,7 +16,7 @@ export async function authRouter(app: FastifyInstance) {
     const now = new Date().toISOString()
     const userCount = await prisma.user.count()
     const role = userCount === 0 ? 'admin' : 'user'
-    const displayName = body.displayName || body.username
+    const displayName = body.display_name || body.displayName || body.username
 
     await prisma.user.create({
       data: {

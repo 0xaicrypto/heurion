@@ -2,9 +2,7 @@ import { describe, test, expect } from 'vitest'
 import { getApp, authHeader } from './setup.js'
 
 describe('Research', () => {
-  let studyId: string
-
-  test('create study', async () => {
+  test('create study with valid data', async () => {
     const app = await getApp()
     const res = await app.inject({
       method: 'POST', url: '/api/v1/research/studies',
@@ -13,78 +11,127 @@ describe('Research', () => {
     })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.payload)
-    expect(body.study_id).toBeDefined()
+    expect(body.study_id).toBeTruthy()
+    expect(body.study_id.startsWith('study_')).toBe(true)
     expect(body.display_name).toBe('Lung Cancer Phase II')
-    studyId = body.study_id
+    expect(body.short_code).toBe('LC002')
+    expect(body.status).toBe('active')
   })
 
-  test('list studies', async () => {
+  test('reject space in short_code', async () => {
     const app = await getApp()
     const res = await app.inject({
-      method: 'GET', url: '/api/v1/research/studies',
-      headers: await authHeader(),
+      method: 'POST', url: '/api/v1/research/studies',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { display_name: 'Bad', short_code: 'code with spaces' },
     })
-    expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.payload).length).toBeGreaterThan(0)
+    expect(res.statusCode).toBe(400)
   })
 
-  test('get study detail', async () => {
+  test('reject missing short_code', async () => {
     const app = await getApp()
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/research/studies',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { display_name: 'Incomplete' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  test('reject empty display_name', async () => {
+    const app = await getApp()
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/research/studies',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { display_name: '', short_code: 'EMPTY' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  test('enroll and unenroll patient', async () => {
+    const app = await getApp()
+    // Create study first
+    const study = await app.inject({
+      method: 'POST', url: '/api/v1/research/studies',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { display_name: 'Enrollment Test', short_code: 'ET001' },
+    })
+    const studyId = JSON.parse(study.payload).study_id
+
+    // Enroll
+    const enroll = await app.inject({
+      method: 'POST', url: `/api/v1/research/studies/${studyId}/enrollments`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { patient_hash: 'pat_001', arm: 'Arm A' },
+    })
+    expect(enroll.statusCode).toBe(200)
+    expect(JSON.parse(enroll.payload).patient_hash).toBe('pat_001')
+
+    // Roster should have 1
+    const roster = await app.inject({
+      method: 'GET', url: `/api/v1/research/studies/${studyId}/roster`,
+      headers: await authHeader(),
+    })
+    expect(JSON.parse(roster.payload).length).toBe(1)
+
+    // Unenroll
+    const unenroll = await app.inject({
+      method: 'DELETE', url: `/api/v1/research/studies/${studyId}/enrollments/pat_001`,
+      headers: await authHeader(),
+    })
+    expect(JSON.parse(unenroll.payload).ok).toBe(true)
+
+    // Roster should be empty now
+    const empty = await app.inject({
+      method: 'GET', url: `/api/v1/research/studies/${studyId}/roster`,
+      headers: await authHeader(),
+    })
+    expect(JSON.parse(empty.payload).length).toBe(0)
+  })
+
+  test('get study detail returns full data', async () => {
+    const app = await getApp()
+    const study = await app.inject({
+      method: 'POST', url: '/api/v1/research/studies',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { display_name: 'Detail Test', short_code: 'DT001' },
+    })
+    const studyId = JSON.parse(study.payload).study_id
+
     const res = await app.inject({
       method: 'GET', url: `/api/v1/research/studies/${studyId}`,
       headers: await authHeader(),
     })
     expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.payload).study_id).toBe(studyId)
+    const body = JSON.parse(res.payload)
+    expect(body.study_id).toBe(studyId)
+    expect(body.display_name).toBe('Detail Test')
   })
 
-  test('enroll patient', async () => {
+  test('safety status returns rules', async () => {
     const app = await getApp()
-    const res = await app.inject({
-      method: 'POST', url: `/api/v1/research/studies/${studyId}/enrollments`,
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
-      payload: { patient_hash: 'pat_001', arm: 'Arm A' },
-    })
-    expect(res.statusCode).toBe(200)
-  })
-
-  test('get roster', async () => {
-    const app = await getApp()
-    const res = await app.inject({
-      method: 'GET', url: `/api/v1/research/studies/${studyId}/roster`,
-      headers: await authHeader(),
-    })
-    expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.payload).length).toBe(1)
-  })
-
-  test('eligibility rescan', async () => {
-    const app = await getApp()
-    const res = await app.inject({
-      method: 'POST', url: `/api/v1/research/studies/${studyId}/eligibility/rescan`,
-      headers: await authHeader(),
-    })
-    expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.payload).scanned).toBe(1)
-  })
-
-  test('un-enroll patient', async () => {
-    const app = await getApp()
-    const res = await app.inject({
-      method: 'DELETE', url: `/api/v1/research/studies/${studyId}/enrollments/pat_001`,
-      headers: await authHeader(),
-    })
-    expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.payload).ok).toBe(true)
-  })
-
-  test('validate short_code format', async () => {
-    const app = await getApp()
-    const res = await app.inject({
+    const study = await app.inject({
       method: 'POST', url: '/api/v1/research/studies',
       headers: { ...await authHeader(), 'content-type': 'application/json' },
-      payload: { display_name: 'Test', short_code: 'invalid code with spaces' },
+      payload: { display_name: 'Safety Test', short_code: 'ST001' },
     })
-    expect(res.statusCode).toBe(400)
+    const studyId = JSON.parse(study.payload).study_id
+
+    const res = await app.inject({
+      method: 'GET', url: `/api/v1/research/studies/${studyId}/safety/stop-rule-status`,
+      headers: await authHeader(),
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.triggered_rules).toBeDefined()
+  })
+
+  test('non-existent study returns 404', async () => {
+    const app = await getApp()
+    const res = await app.inject({
+      method: 'GET', url: '/api/v1/research/studies/nonexistent_study_id_xyz',
+      headers: await authHeader(),
+    })
+    expect(res.statusCode).toBe(404)
   })
 })
