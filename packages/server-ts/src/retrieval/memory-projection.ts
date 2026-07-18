@@ -221,16 +221,19 @@ export class MemoryProjection {
 
   private async buildPatientContext(userId: string, patientHash: string): Promise<string> {
     try {
-      // Try clinical_graph_nodes first
-      let nodes = await (prisma as any).$queryRawUnsafe(
-        `SELECT node_type, content_json, weight, updated_at
-         FROM clinical_graph_nodes
-         WHERE user_id = ? AND patient_hash = ?
-         ORDER BY weight DESC LIMIT 25`,
-        userId, patientHash
-      ) as Array<{ node_type: string; content_json: string; weight: number; updated_at: number }>
+      // Try clinical_graph_nodes first (may not exist)
+      let nodes: Array<{ node_type: string; content_json: string; weight: number; updated_at: number }> | null = null
+      try {
+        nodes = await (prisma as any).$queryRawUnsafe(
+          `SELECT node_type, content_json, weight, updated_at
+           FROM clinical_graph_nodes
+           WHERE user_id = ? AND patient_hash = ?
+           ORDER BY weight DESC LIMIT 25`,
+          userId, patientHash
+        )
+      } catch { /* table may not exist */ }
 
-      // Fallback: read from patient_records if graph is empty
+      // Fallback: read from patient_records
       if (!nodes || !nodes.length) {
         const patient = await (prisma as any).patientRecord.findFirst({
           where: { hash: patientHash, userId },
