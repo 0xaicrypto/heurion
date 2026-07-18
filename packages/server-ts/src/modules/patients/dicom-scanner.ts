@@ -1,9 +1,13 @@
 import fs from 'fs'
 import path from 'path'
+import { createRequire } from 'module'
 
 // Pure TypeScript DICOM parser — no Python needed
 let dicomParser: any = null
-try { dicomParser = require('dicom-parser') } catch { /* optional */ }
+try {
+  const require = createRequire(import.meta.url)
+  dicomParser = require('dicom-parser')
+} catch { /* optional */ }
 
 export interface DicomFinding {
   type: string

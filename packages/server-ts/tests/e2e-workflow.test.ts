@@ -100,6 +100,19 @@ describe('Doctor Workflow — Realistic E2E', () => {
     expect(stat.size).toBeGreaterThan(100)  // 513KB DICOM
   })
 
+  test('Step 2: DICOM Quick Scan endpoint works', async () => {
+    const app = await getApp()
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/dicom/studies/${dicomFileId}/quick-scan`,
+      headers: await authHeader(),
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.findings).toBeDefined()
+    // Quick scan returns findings (parser-dependent; may be empty or error type)
+    expect(Array.isArray(body.findings)).toBe(true)
+  })
+
   test('Step 2: 上传放射科 CT 文字报告', async () => {
     const app = await getApp()
     const ctPath = path.join(TEST_DIR, userId, 'uploads', ctFileId)
