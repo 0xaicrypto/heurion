@@ -26,6 +26,8 @@ ENVEOF
 rm -rf node_modules/.prisma node_modules/.pnpm/@prisma+client*
 pnpm install --frozen-lockfile
 npx prisma generate
+# Diagnostic: confirm generated client reflects schema changes
+node -e "const pc=require('@prisma/client'); const m=pc.Prisma.dmmf.datamodel.models.find(x=>x.name==='PatientRecord'); console.log('PatientRecord fields:', m ? m.fields.map(f=>f.name) : 'NOT FOUND');"
 npx prisma db push --accept-data-loss
 
 pm2 delete heurion-staging 2>/dev/null || true
