@@ -70,9 +70,10 @@ export async function documentsRouter(app: FastifyInstance) {
     const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
     if (!existing) return reply.status(404).send({ error: 'Document not found' })
     // Delete dependent records first (SQLite without FK cascade)
-    await (prisma as any).docSnapshot.deleteMany({ where: { docId, userId } })
-    await (prisma as any).docReference.deleteMany({ where: { docId, userId } })
-    await (prisma as any).docChatMessage.deleteMany({ where: { docId, userId } })
+    const snapDel = await (prisma as any).docSnapshot.deleteMany({ where: { docId } })
+    const refDel = await (prisma as any).docReference.deleteMany({ where: { docId } })
+    const chatDel = await (prisma as any).docChatMessage.deleteMany({ where: { docId } })
+    request.log.info({ docId, snapDel, refDel, chatDel }, 'deleted doc dependents')
     await (prisma as any).doc.delete({ where: { id: docId } })
     return { deleted: true }
   })
