@@ -30,11 +30,14 @@ for NAME in heurion.org www.heurion.org; do
   fi
 done
 
-# 2. SSL mode — Flexible (Cloudflare ↔ origin over HTTP)
+# 2. SSL mode — Full (Cloudflare ↔ origin over HTTPS)
+# Flexible causes Cloudflare to speak HTTP to the origin, but Caddy/nginx
+# redirects HTTP to HTTPS, producing "invalid or incomplete response" errors
+# on POST requests such as /api/v1/auth/login.
 curl -sf -X PATCH "$API/settings/ssl" \
   -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"value":"flexible"}' > /dev/null
-echo "  SSL: flexible"
+  -d '{"value":"full"}' > /dev/null
+echo "  SSL: full"
 
 # 3. Always HTTPS
 curl -sf -X PATCH "$API/settings/always_use_https" \

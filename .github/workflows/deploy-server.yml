@@ -48,9 +48,58 @@ jobs:
           scp -o StrictHostKeyChecking=no scripts/deploy-staging.sh scripts/regression-test.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:~/heurion/scripts/
           ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd ~/heurion && DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY bash scripts/deploy-staging.sh && bash scripts/regression-test.sh http://localhost:8002"
 
+  cloudflare-ssl:
+    name: Ensure Cloudflare SSL Mode
+    needs: [staging]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set Cloudflare SSL/TLS to Full
+        env:
+          CF_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+        run: |
+          if [ -z "$CF_TOKEN" ] || [ -z "$ZONE_ID" ]; then
+            echo "⚠️ CF_API_TOKEN or CF_ZONE_ID not set; skipping Cloudflare SSL check."
+            exit 0
+          fi
+
+          API="https://api.cloudflare.com/client/v4/zones/$ZONE_ID/settings/ssl"
+
+          # Read current mode (non-failing curl so we can log the response).
+          GET_RESP=$(curl -sS "$API" -H "Authorization: Bearer $CF_TOKEN")
+          GET_SUCCESS=$(echo "$GET_RESP" | jq -r '.success' 2>/dev/null || echo "false")
+
+          if [ "$GET_SUCCESS" != "true" ]; then
+            echo "⚠️ Could not read current Cloudflare SSL mode:"
+            echo "$GET_RESP" | jq -r '.errors[]? | .message' 2>/dev/null || echo "$GET_RESP"
+            echo "Continuing deploy; please check CF_API_TOKEN permissions."
+            exit 0
+          fi
+
+          CURRENT=$(echo "$GET_RESP" | jq -r '.result.value')
+          if [ "$CURRENT" = "full" ] || [ "$CURRENT" = "strict" ]; then
+            echo "✓ Cloudflare SSL mode is already: $CURRENT"
+            exit 0
+          fi
+
+          echo "⚠️ Cloudflare SSL mode is '$CURRENT'; changing to 'full' to avoid origin redirect errors on login."
+          PATCH_RESP=$(curl -sS -X PATCH "$API" \
+            -H "Authorization: Bearer $CF_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"value":"full"}')
+
+          PATCH_SUCCESS=$(echo "$PATCH_RESP" | jq -r '.success' 2>/dev/null || echo "false")
+          if [ "$PATCH_SUCCESS" = "true" ]; then
+            echo "✓ Cloudflare SSL mode updated to: full"
+          else
+            echo "⚠️ Failed to update Cloudflare SSL mode:"
+            echo "$PATCH_RESP" | jq -r '.errors[]? | .message' 2>/dev/null || echo "$PATCH_RESP"
+            echo "Continuing deploy; please update the SSL mode manually in Cloudflare dashboard."
+          fi
+
   deploy:
     name: Deploy to Production
-    needs: [staging]
+    needs: [staging, cloudflare-ssl]
     runs-on: ubuntu-latest
     environment:
       name: production
