@@ -39,8 +39,11 @@ fi
 check "0. Clear data" ok
 
 # ═══ 1. Patient Onboarding ═══
-HASH=$(curl -sf -X POST "$BASE/api/v1/dicom/patients/register-manual" -H "$H" -H "Content-Type: application/json" -d '{"name":"张强","initials":"ZQ","age":58,"sex":"M","chief_complaint":"咳嗽胸痛3周"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('patient_hash',''))" 2>/dev/null)
-check "1.1 Create patient" "$([ -n "$HASH" ] && echo ok || echo 'FAIL')"
+CREATE_RESP=$(curl -sS -w "\n%{http_code}" -X POST "$BASE/api/v1/dicom/patients/register-manual" -H "$H" -H "Content-Type: application/json" -d '{"name":"张强","initials":"ZQ","age":58,"sex":"M","chief_complaint":"咳嗽胸痛3周"}')
+CREATE_STATUS=$(echo "$CREATE_RESP" | tail -n1)
+CREATE_BODY=$(echo "$CREATE_RESP" | sed '$d')
+HASH=$(echo "$CREATE_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('patient_hash',''))" 2>/dev/null)
+check "1.1 Create patient" "$([ -n "$HASH" ] && echo ok || echo "FAIL status=$CREATE_STATUS body=$CREATE_BODY")"
 DETAIL_RES="$(curl -sf "$BASE/api/v1/dicom/patients/$HASH/detail" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('initials')=='ZQ' else 'FAIL')" 2>/dev/null)" < /dev/null
 NAME_RES="$(curl -sf "$BASE/api/v1/dicom/patients/$HASH/detail" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('name')=='张强' else 'FAIL')" 2>/dev/null)" < /dev/null
 check "1.2 Patient detail" "$DETAIL_RES"
