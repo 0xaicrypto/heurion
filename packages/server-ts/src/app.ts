@@ -13,6 +13,7 @@ import { settingsRouter } from './modules/settings/settings.router.js'
 import { filesRouter } from './modules/files/files.router.js'
 import { adminRouter } from './modules/admin/admin.router.js'
 import { calendarRouter } from './modules/calendar/calendar.router.js'
+import { medicalRecordsRouter } from './modules/medical-records/medical-records.router.js'
 import { stubRouter } from './modules/stubs/stubs.router.js'
 import { ZodError } from 'zod'
 
@@ -50,6 +51,7 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(adminRouter)
   await app.register(calendarRouter)
   await app.register(patientsRouter)
+  await app.register(medicalRecordsRouter)
   await app.register(stubRouter)
 
   return app

@@ -11,6 +11,7 @@ import { ImagingPage } from '@/routes/imaging';
 import { LabsPage } from '@/routes/labs';
 import { MemoryGraphPage } from '@/routes/memory-graph';
 import { ReportPage } from '@/routes/report-page';
+import { MedicalRecordsPage } from '@/routes/medical-records';
 import { ViewerPage } from '@/routes/viewer';
 import { SettingsPage } from '@/routes/settings';
 import { AdminUsersPage } from '@/routes/admin/users';
@@ -95,6 +96,7 @@ export default function App() {
             <Route path=":hash/labs" element={<LabsPage />} />
             <Route path=":hash/memory" element={<MemoryGraphPage />} />
             <Route path=":hash/report" element={<ReportPage />} />
+            <Route path=":hash/records" element={<MedicalRecordsPage />} />
           </Route>
           <Route
             path="/app/viewer/:studyId"

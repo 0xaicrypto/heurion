@@ -6,9 +6,13 @@ PASSWORD="hz123456"
 PASS=0; FAIL=0
 SAMPLE_DIR="packages/server-ts"
 
+# Prevent commands inside command substitutions from accidentally reading this script via stdin.
+exec < /dev/null
+
 check() {
-  if [ "$2" = "ok" ]; then echo "  ✓ $1"; PASS=$((PASS+1))
-  else echo "  ✗ $1 — $2"; FAIL=$((FAIL+1)); fi
+  result="$(printf '%s' "$2" | tr -d '\n\r')"
+  if [ "$result" = "ok" ]; then echo "  ✓ $1"; PASS=$((PASS+1))
+  else echo "  ✗ $1 — $result"; FAIL=$((FAIL+1)); fi
 }
 
 echo "════════════════════════════════════════════"
@@ -35,9 +39,12 @@ fi
 check "0. Clear data" ok
 
 # ═══ 1. Patient Onboarding ═══
-HASH=$(curl -sf -X POST "$BASE/api/v1/dicom/patients/register-manual" -H "$H" -H "Content-Type: application/json" -d '{"initials":"ZQ","age":58,"sex":"M","chief_complaint":"咳嗽胸痛3周"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('patient_hash',''))" 2>/dev/null)
+HASH=$(curl -sf -X POST "$BASE/api/v1/dicom/patients/register-manual" -H "$H" -H "Content-Type: application/json" -d '{"name":"张强","initials":"ZQ","age":58,"sex":"M","chief_complaint":"咳嗽胸痛3周"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('patient_hash',''))" 2>/dev/null)
 check "1.1 Create patient" "$([ -n "$HASH" ] && echo ok || echo 'FAIL')"
-check "1.2 Patient detail" "$(curl -sf "$BASE/api/v1/dicom/patients/$HASH/detail" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('initials')=='ZQ' else 'FAIL')" 2>/dev/null)"
+DETAIL_RES="$(curl -sf "$BASE/api/v1/dicom/patients/$HASH/detail" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('initials')=='ZQ' else 'FAIL')" 2>/dev/null)" < /dev/null
+NAME_RES="$(curl -sf "$BASE/api/v1/dicom/patients/$HASH/detail" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('name')=='张强' else 'FAIL')" 2>/dev/null)" < /dev/null
+check "1.2 Patient detail" "$DETAIL_RES"
+check "1.2b Patient name stored" "$NAME_RES"
 check "1.3 Patient count=1" "$([ $(curl -sf "$BASE/api/v1/dicom/patients/full" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null) = 1 ] && echo ok || echo 'FAIL')"
 
 # ═══ 2. Imaging Upload + DICOM Scan ═══
@@ -72,10 +79,11 @@ check "6.2 Memory export works" "$(curl -sf "$BASE/api/v1/memory/export" -H "$H"
 SID=$(curl -sf -X POST "$BASE/api/v1/research/studies" -H "$H" -H "Content-Type: application/json" -d '{"display_name":"NSCLC Immunotherapy Phase II","short_code":"NSCLC001"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('study_id',''))" 2>/dev/null)
 check "7.1 Create study" "$([ -n "$SID" ] && echo ok || echo 'FAIL')"
 
-curl -sf -X POST "$BASE/api/v1/research/studies/$SID/import-protocol" -H "$H" -H "Content-Type: application/json" -d '{"text":"INCLUSION: Stage IIIB/IV NSCLC, PD-L1>=1%, ECOG 0-1\nEXCLUSION: EGFR/ALK positive, autoimmune disease\nSAFETY: DLT evaluation Cycle 1, Grade 4 neutropenia >7 days, DLT rate >33%\nSCHEDULE: Screening (Day -28 to -1): consent, CT, labs. Cycle 1 Day 1 (Day 1 of 21-day cycle): CBC, chemistry. Cycle 1 Day 8 (Day 8): vital signs, CBC. Follow-up (Day 30): safety check"}' > /dev/null 2>&1
+PROTOCOL_TEXT='INCLUSION: Stage IIIB/IV NSCLC, PD-L1>=1%, ECOG 0-1\nEXCLUSION: EGFR/ALK positive, autoimmune disease\nSAFETY: DLT evaluation Cycle 1, Grade 4 neutropenia >7 days, DLT rate >33%\nSCHEDULE: Screening (Day -28 to -1): consent, CT, labs. Cycle 1 Day 1 (Day 1 of 21-day cycle): CBC, chemistry. Cycle 1 Day 8 (Day 8): vital signs, CBC. Follow-up (Day 30): safety check'
+curl -sf -X POST "$BASE/api/v1/research/studies/$SID/import-protocol" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"$PROTOCOL_TEXT\"}" > /dev/null 2>&1
 check "7.2 Import protocol" ok
 
-RULES=$(curl -sf -X POST "$BASE/api/v1/research/studies/$SID/extract-rules" -H "$H" -H "Content-Type: application/json" -d '{"text":"INCLUSION: Stage IIIB/IV NSCLC, PD-L1>=1%, ECOG 0-1\nEXCLUSION: EGFR/ALK positive, autoimmune disease\nSAFETY: DLT evaluation Cycle 1, Grade 4 neutropenia >7 days, DLT rate >33%\nSCHEDULE: Screening (Day -28 to -1): consent, CT, labs. Cycle 1 Day 1 (Day 1 of 21-day cycle): CBC, chemistry. Cycle 1 Day 8 (Day 8): vital signs, CBC. Follow-up (Day 30): safety check"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['status']['total'])" 2>/dev/null)
+RULES=$(curl -sf -X POST "$BASE/api/v1/research/studies/$SID/extract-rules" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"$PROTOCOL_TEXT\"}" | python3 -c "import sys,json; print(json.load(sys.stdin)['status']['total'])" 2>/dev/null)
 check "7.3 Extract rules" "$([ "${RULES:-0}" -gt 0 ] && echo ok || echo 'FAIL')"
 
 # 7b. Enroll patient + verify roster/schedule/safety
@@ -98,6 +106,12 @@ CHAT3=$(curl -sf -N -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: 
 CHAT3_TEXT=$(echo "$CHAT3" | grep 'final_answer' | sed 's/^data: //' | python3 -c "import sys,json; print(''.join(json.loads(l.strip()).get('text','') for l in sys.stdin if l.strip()))" 2>/dev/null)
 check "8.3 问诊: references diagnosis" "$(echo "$CHAT3_TEXT" | python3 -c "import sys; t=sys.stdin.read().lower(); print('ok' if any(w in t for w in ['nsclc','腺癌','iiia','结节','cea','诊断','肿瘤','stage']) else 'FAIL')")"
 check "8.4 问诊: references findings" "$(echo "$CHAT3_TEXT" | python3 -c "import sys; t=sys.stdin.read().lower(); print('ok' if any(w in t for w in ['ct','影像','结节','cea','淋巴结','rul','cm']) else 'FAIL')")"
+
+# 8c. Chat should see patient basic demographics (name/age/sex)
+CHAT4=$(curl -sf -N -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"患者名字是什么？年龄和性别呢？\",\"patient_hash\":\"$HASH\"}" 2>/dev/null)
+CHAT4_TEXT=$(echo "$CHAT4" | grep 'final_answer' | sed 's/^data: //' | python3 -c "import sys,json; print(''.join(json.loads(l.strip()).get('text','') for l in sys.stdin if l.strip()))" 2>/dev/null)
+check "8.5 Chat knows patient name" "$(echo "$CHAT4_TEXT" | python3 -c "import sys; t=sys.stdin.read(); print('ok' if '张强' in t or 'ZQ' in t else 'FAIL')")"
+check "8.6 Chat knows patient age/sex" "$(echo "$CHAT4_TEXT" | python3 -c "import sys; t=sys.stdin.read().lower(); print('ok' if ('58' in t or '58岁' in t) and ('男' in t or 'm' in t) else 'FAIL')")"
 
 # ═══ 9. Skills ═══
 check "9.1 Skills catalog" "$([ $(curl -sf "$BASE/api/v1/skills" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('skills',[])))" 2>/dev/null) -ge 8 ] && echo ok || echo 'FAIL')"
@@ -187,6 +201,15 @@ fi
 
 # ═══ 14. Timeline ═══
 check "14. Timeline has events" "$(curl -sf "$BASE/api/v1/agent/timeline?limit=20" -H "$H" | python3 -c "import sys,json; print('ok' if len(json.load(sys.stdin)['items'])>0 else 'FAIL')" 2>/dev/null)"
+
+# ═══ 15. Medical Records ═══
+MR=$(curl -sf -X POST "$BASE/api/v1/medical-records" -H "$H" -H "Content-Type: application/json" -d "{\"patient_hash\":\"$HASH\",\"title\":\"Initial Visit\",\"sections\":{\"chief_complaint\":\"咳嗽胸痛3周\",\"diagnosis\":\"疑似肺癌待排\",\"treatment_plan\":\"进一步检查\"}}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+check "15.1 Create medical record" "$([ -n "$MR" ] && echo ok || echo 'FAIL')"
+RECORD_COUNT=$(curl -sf "$BASE/api/v1/medical-records?patient_hash=$HASH" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('records',[])))" 2>/dev/null)
+check "15.2 List medical records" "$([ "${RECORD_COUNT:-0}" -ge 1 ] && echo ok || echo 'FAIL')"
+check "15.3 Get medical record" "$(curl -sf "$BASE/api/v1/medical-records/$MR" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('title')=='Initial Visit' else 'FAIL')" 2>/dev/null)"
+check "15.4 Update medical record" "$(curl -sf -X PUT "$BASE/api/v1/medical-records/$MR" -H "$H" -H "Content-Type: application/json" -d '{"title":"Follow-up Visit"}' | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('title')=='Follow-up Visit' else 'FAIL')" 2>/dev/null)"
+check "15.5 Delete medical record" "$(curl -sf -X DELETE "$BASE/api/v1/medical-records/$MR" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('deleted') else 'FAIL')" 2>/dev/null)"
 
 echo ""
 echo "════════════════════════════════════════════"

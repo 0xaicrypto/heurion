@@ -244,6 +244,26 @@ class ApiClient {
     return this.fetch(`/api/v1/dicom/patients/${hash}`, { method: 'DELETE' });
   }
 
+  async listMedicalRecords(patientHash: string): Promise<{records: Array<{id: string; patient_hash: string; title: string; sections: Record<string, string>; created_at: string; updated_at: string}>}> {
+    return this.fetch(`/api/v1/medical-records?patient_hash=${encodeURIComponent(patientHash)}`);
+  }
+
+  async getMedicalRecord(id: string): Promise<{id: string; patient_hash: string; title: string; sections: Record<string, string>; created_at: string; updated_at: string}> {
+    return this.fetch(`/api/v1/medical-records/${id}`);
+  }
+
+  async createMedicalRecord(data: {patient_hash: string; title: string; sections: Record<string, string>}): Promise<{id: string; patient_hash: string; title: string; sections: Record<string, string>; created_at: string; updated_at: string}> {
+    return this.fetch('/api/v1/medical-records', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async updateMedicalRecord(id: string, data: {title?: string; sections?: Record<string, string>}): Promise<{id: string; patient_hash: string; title: string; sections: Record<string, string>; created_at: string; updated_at: string}> {
+    return this.fetch(`/api/v1/medical-records/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  async deleteMedicalRecord(id: string): Promise<{deleted: boolean}> {
+    return this.fetch(`/api/v1/medical-records/${id}`, { method: 'DELETE' });
+  }
+
   async archivePatient(hash: string): Promise<{ patient_hash: string; archived_at: string }> {
     return this.fetch(`/api/v1/dicom/patients/${hash}/archive`, { method: 'POST' });
   }
@@ -354,13 +374,14 @@ class ApiClient {
   /* ────────────────────────── patient registration ────────────────────────── */
 
   async registerPatient(data: {
+    name?: string;
     initials?: string;
     mrn?: string;
     age?: number;
     sex?: string;
     chief_complaint?: string;
     notes?: string;
-  }): Promise<{ patient_hash: string }> {
+  }): Promise<{ patient_hash: string; name?: string; initials?: string }> {
     return this.fetch('/api/v1/dicom/patients/register-manual', {
       method: 'POST',
       body: JSON.stringify(data),

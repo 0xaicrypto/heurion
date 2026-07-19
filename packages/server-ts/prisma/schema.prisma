@@ -234,6 +234,7 @@ model ResearchAssessment {
 model PatientRecord {
   hash          String  @id
   userId        String  @map("user_id")
+  name          String  @default("")
   initials      String  @default("")
   age           Int     @default(0)
   sex           String  @default("")
@@ -245,4 +246,18 @@ model PatientRecord {
   user User @relation(fields: [userId], references: [id])
   @@index([userId, createdAt(sort: Desc)])
   @@map("patient_records")
+}
+
+model MedicalRecord {
+  id          String @id
+  patientHash String @map("patient_hash")
+  userId      String @map("user_id")
+  title       String @default("")
+  sections    String @default("{}")
+  createdAt   String @map("created_at")
+  updatedAt   String @map("updated_at")
+
+  @@index([patientHash, createdAt(sort: Desc)])
+  @@index([userId, patientHash])
+  @@map("medical_records")
 }

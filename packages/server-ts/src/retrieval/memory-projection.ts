@@ -234,27 +234,38 @@ export class MemoryProjection {
       } catch { /* table may not exist */ }
 
       // Fallback: read from patient_records
+      let patientBasicInfo = ''
       if (!nodes || !nodes.length) {
         const patient = await (prisma as any).patientRecord.findFirst({
           where: { hash: patientHash, userId },
         })
-        if (patient && patient.chiefComplaint) {
-          // Parse [tag] content format from chief_complaint
-          const tags = (patient.chiefComplaint as string).match(/\[(\w+)\]\s*([^\[\]]+)/g) || []
-          nodes = tags.map((t: string) => {
-            const m = t.match(/\[(\w+)\]\s*(.+)/)
-            return {
-              node_type: (m?.[1] || 'finding').replace(/_/g, ' '),
-              content_json: JSON.stringify({ text: (m?.[2] || t).trim() }),
-              weight: 5, updated_at: Date.now(),
-            }
-          })
+        if (patient) {
+          const demographics = [
+            patient.name ? `Name: ${patient.name}` : null,
+            patient.initials ? `Initials: ${patient.initials}` : null,
+            patient.age ? `Age: ${patient.age}` : null,
+            patient.sex ? `Sex: ${patient.sex}` : null,
+          ].filter(Boolean).join(', ')
+          if (demographics) patientBasicInfo = `### Demographics\n${demographics}`
+
+          if (patient.chiefComplaint) {
+            // Parse [tag] content format from chief_complaint
+            const tags = (patient.chiefComplaint as string).match(/\[(\w+)\]\s*([^\[\]]+)/g) || []
+            nodes = tags.map((t: string) => {
+              const m = t.match(/\[(\w+)\]\s*(.+)/)
+              return {
+                node_type: (m?.[1] || 'finding').replace(/_/g, ' '),
+                content_json: JSON.stringify({ text: (m?.[2] || t).trim() }),
+                weight: 5, updated_at: Date.now(),
+              }
+            })
+          }
         }
       }
 
-      if (!nodes || !nodes.length) return ''
+      if ((!nodes || !nodes.length) && !patientBasicInfo) return ''
 
-      const lines = nodes.map(n => {
+      const lines = (nodes || []).map(n => {
         try {
           const c = JSON.parse(n.content_json)
           const text = c.text || c.content || c.summary || ''
@@ -272,9 +283,11 @@ export class MemoryProjection {
         byType[type].push(line)
       }
 
-      return Object.entries(byType)
+      const findingsText = Object.entries(byType)
         .map(([type, items]) => `### ${type}\n${items.join('\n')}`)
         .join('\n\n')
+
+      return [patientBasicInfo, findingsText].filter(Boolean).join('\n\n')
     } catch {
       return ''
     }

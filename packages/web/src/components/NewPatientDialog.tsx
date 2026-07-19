@@ -12,6 +12,7 @@ interface NewPatientDialogProps {
 
 export function NewPatientDialog({ open, onClose, onCreated }: NewPatientDialogProps) {
   const navigate = useNavigate();
+  const [name, setName] = useState('');
   const [initials, setInitials] = useState('');
   const [age, setAge] = useState('');
   const [sex, setSex] = useState('');
@@ -23,17 +24,19 @@ export function NewPatientDialog({ open, onClose, onCreated }: NewPatientDialogP
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!initials.trim()) return;
+    if (!name.trim() && !initials.trim()) return;
     setLoading(true);
     setError(null);
     try {
       const result = await api.registerPatient({
-        initials: initials.trim(),
+        name: name.trim() || undefined,
+        initials: initials.trim() || undefined,
         age: age ? parseInt(age, 10) : undefined,
         sex: sex || undefined,
         chief_complaint: chiefComplaint.trim() || undefined,
       });
       onClose();
+      setName('');
       setInitials('');
       setAge('');
       setSex('');
@@ -76,12 +79,19 @@ export function NewPatientDialog({ open, onClose, onCreated }: NewPatientDialogP
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-text-secondary mb-1">Initials *</label>
+            <label className="block text-sm font-medium text-text-secondary mb-1">Full Name</label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. John Doe"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-1">Initials</label>
             <Input
               value={initials}
               onChange={(e) => setInitials(e.target.value)}
               placeholder="e.g. JD"
-              required
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -121,7 +131,7 @@ export function NewPatientDialog({ open, onClose, onCreated }: NewPatientDialogP
             <Button type="button" variant="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!initials.trim() || loading} isLoading={loading}>
+            <Button type="submit" disabled={(!name.trim() && !initials.trim()) || loading} isLoading={loading}>
               Create Patient
             </Button>
           </div>

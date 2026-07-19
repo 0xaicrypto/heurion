@@ -86,6 +86,7 @@ export interface UserProfile {
 
 export interface Patient {
   patient_hash: string;
+  name?: string;
   initials?: string;
   mrn?: string;
   age_value?: number;

@@ -26,7 +26,9 @@ function PatientList({
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
 
-  const filtered = patients.filter((p) => (p.initials || p.patient_hash).toLowerCase().includes(query.toLowerCase()));
+  const filtered = patients.filter((p) =>
+    (p.name || p.initials || p.patient_hash).toLowerCase().includes(query.toLowerCase())
+  );
 
   return (
     <div className="flex h-full w-64 flex-col border-r border-border bg-surface">
@@ -63,7 +65,8 @@ function PatientList({
                 <User size={14} />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{p.initials || p.patient_hash.slice(0, 8)}</p>
+                <p className="truncate text-sm font-medium">{p.name || p.initials || p.patient_hash.slice(0, 8)}</p>
+                {p.name && p.initials && <p className="text-xs text-text-tertiary">{p.initials}</p>}
                 <p className="text-xs text-text-tertiary">
                   {p.age_value != null ? t('common.yearsOld', { age: p.age_value }) : null}
                   {p.age_value != null && p.sex ? ' / ' : ''}
@@ -87,7 +90,7 @@ function PatientList({
   );
 }
 
-function PatientTabs({ hash, active }: { hash?: string; active: 'summary' | 'chat' | 'imaging' | 'labs' | 'memory' | 'report' }) {
+export function PatientTabs({ hash, active }: { hash?: string; active: 'summary' | 'chat' | 'imaging' | 'labs' | 'memory' | 'report' | 'records' }) {
   const { t } = useTranslation();
   const tabs = [
     { to: `/app/patients/${hash}`, label: t('patient.summary'), key: 'summary' as const },
@@ -96,6 +99,7 @@ function PatientTabs({ hash, active }: { hash?: string; active: 'summary' | 'cha
     { to: `/app/patients/${hash}/labs`, label: 'Labs', key: 'labs' as const },
     { to: `/app/patients/${hash}/memory`, label: 'Memory', key: 'memory' as const },
     { to: `/app/patients/${hash}/report`, label: 'Report', key: 'report' as const },
+    { to: `/app/patients/${hash}/records`, label: 'Records', key: 'records' as const },
   ];
 
   return (
@@ -256,14 +260,14 @@ export function PatientSummaryPage() {
       <nav className="flex items-center gap-1 border-b border-border bg-surface px-6 py-2 text-sm text-text-secondary">
         <NavLink to="/app/patients" className="hover:text-text-primary">Patients</NavLink>
         <ChevronRight size={14} className="text-text-tertiary" />
-        <span className="text-text-primary">{detail?.initials || hash}</span>
+        <span className="text-text-primary">{detail?.name || detail?.initials || hash}</span>
       </nav>
       <div className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => navigate('/app/patients')}>
             <ArrowLeft size={16} />
           </Button>
-          <h1 className="font-semibold text-text-primary">{detail?.initials || hash}</h1>
+          <h1 className="font-semibold text-text-primary">{detail?.name || detail?.initials || hash}</h1>
           {(detail?.age_value != null || detail?.sex) && (
             <Badge>
               {detail.age_value != null ? t('common.yearsOld', { age: detail.age_value }) : ''}
