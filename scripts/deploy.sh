@@ -10,11 +10,20 @@ git reset --hard origin/main
 
 cd packages/server-ts
 
-[ -f .env ] || cat > .env << ENVEOF
+# Preserve the existing SERVER_SECRET so users don't get logged out on
+# every deploy. Generate a new one only on first deploy.
+if [ -f .env ] && grep -q '^SERVER_SECRET=' .env; then
+  EXISTING_SECRET=$(grep '^SERVER_SECRET=' .env | head -1 | cut -d= -f2-)
+else
+  EXISTING_SECRET=""
+fi
+SERVER_SECRET="${EXISTING_SECRET:-$(openssl rand -hex 32)}"
+
+cat > .env << ENVEOF
 DATABASE_URL="file:./nexus_server.db"
 SERVER_HOST=0.0.0.0
 SERVER_PORT=8001
-SERVER_SECRET=$(openssl rand -hex 32)
+SERVER_SECRET=${SERVER_SECRET}
 DEEPSEEK_API_KEY=${DEEPSEEK_KEY:-sk-edc3839a3dd44babaf33dc16d0761dc3}
 CORS_ALLOW_ORIGINS=*
 ENVEOF
@@ -24,7 +33,8 @@ pnpm install --frozen-lockfile
 npx prisma generate
 npx prisma db push --accept-data-loss
 which pm2 || npm install -g pm2
-pm2 restart heurion 2>/dev/null || pm2 start npx --name heurion -- tsx src/main.ts
+pm2 delete heurion 2>/dev/null || true
+pm2 start npx --name heurion -- tsx src/main.ts
 pm2 save
 
 # Robust health check: retry instead of a single attempt.

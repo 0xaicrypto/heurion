@@ -8,6 +8,7 @@ git fetch origin main
 git reset --hard origin/main
 cd packages/server-ts
 
+# Always overwrite .env so staging uses the correct port/config.
 cp -f .env.staging .env 2>/dev/null || cat > .env << ENVEOF
 DATABASE_URL="file:./staging.db"
 SERVER_HOST=0.0.0.0
