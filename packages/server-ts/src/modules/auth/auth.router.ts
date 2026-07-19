@@ -90,19 +90,23 @@ export async function authRouter(app: FastifyInstance) {
     }
   })
 
-  // CI/Staging: clear test data
-  app.post('/api/v1/auth/clear-test-data', async () => {
-    await (prisma as any).researchAssessment.deleteMany()
-    await (prisma as any).researchObservation.deleteMany()
-    await (prisma as any).researchScreening.deleteMany()
-    await (prisma as any).researchEnrollment.deleteMany()
-    await (prisma as any).researchStudy.deleteMany()
-    await (prisma as any).patientRecord.deleteMany()
-    await (prisma as any).docSnapshot.deleteMany()
-    await (prisma as any).docReference.deleteMany()
-    await (prisma as any).docChatMessage.deleteMany()
-    await (prisma as any).doc.deleteMany()
-    await (prisma as any).session.deleteMany()
+  // CI/Staging: clear test data for the authenticated user only
+  app.post('/api/v1/auth/clear-test-data', { preHandler: authGuard }, async (request) => {
+    const userId = request.user!.userId
+    // Delete research data linked to this user's studies.
+    const studyIds = await (prisma as any).researchStudy.findMany({ where: { userId }, select: { id: true } })
+    const studyIdList = studyIds.map((s: any) => s.id)
+    if (studyIdList.length > 0) {
+      await (prisma as any).researchAssessment.deleteMany({ where: { studyId: { in: studyIdList } } })
+      await (prisma as any).researchObservation.deleteMany({ where: { studyId: { in: studyIdList } } })
+      await (prisma as any).researchScreening.deleteMany({ where: { studyId: { in: studyIdList } } })
+      await (prisma as any).researchEnrollment.deleteMany({ where: { studyId: { in: studyIdList } } })
+      await (prisma as any).researchStudy.deleteMany({ where: { id: { in: studyIdList } } })
+    }
+    // Patient records, docs (with cascade snapshots/refs/chat), and sessions for this user only.
+    await (prisma as any).patientRecord.deleteMany({ where: { userId } })
+    await (prisma as any).doc.deleteMany({ where: { userId } })
+    await (prisma as any).session.deleteMany({ where: { userId } })
     return { cleared: true }
   })
 }
