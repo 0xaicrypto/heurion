@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
-import { deepseekStream, getApiKey } from '../../common/llm.js'
+import { deepseekStream, deepseekChat, getApiKey } from '../../common/llm.js'
 import crypto from 'crypto'
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
@@ -37,14 +37,28 @@ export async function documentsRouter(app: FastifyInstance) {
   app.put('/api/v1/docs/:docId', async (request, reply) => {
     const { docId } = request.params as any
     const { title, body } = request.body as any
-    const data: any = { updatedAt: new Date().toISOString() }
+    const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId: request.user!.userId } })
+    if (!existing) return reply.status(404).send({ error: 'Document not found' })
+
+    const now = new Date().toISOString()
+    const data: any = { updatedAt: now }
     if (title !== undefined) data.title = title
-    if (body !== undefined) data.body = body
-    try {
-      await (prisma as any).doc.update({ where: { id: docId }, data })
-    } catch {
-      return reply.status(404).send({ error: 'Document not found' })
+
+    // Snapshot before body changes so users can restore previous versions.
+    if (body !== undefined && body !== existing.body) {
+      await (prisma as any).docSnapshot.create({
+        data: {
+          docId,
+          userId: request.user!.userId,
+          body: existing.body,
+          label: 'Manual save',
+          createdAt: now,
+        },
+      })
+      data.body = body
     }
+
+    await (prisma as any).doc.update({ where: { id: docId }, data })
     const doc = await (prisma as any).doc.findFirst({ where: { id: docId } })
     return { id: doc!.id, title: doc!.title, body: doc!.body, created_at: doc!.createdAt, updated_at: doc!.updatedAt }
   })
@@ -69,14 +83,18 @@ export async function documentsRouter(app: FastifyInstance) {
   app.post('/api/v1/docs/:docId/phi-scan', async (request) => {
     const doc = await (prisma as any).doc.findFirst({ where: { id: (request.params as any).docId, userId: request.user!.userId } })
     if (!doc) return { findings: [] }
-    const findings: Array<{ kind: string; text: string; start: number; end: number }> = []
+    const suggestions: Record<string, string> = {
+      SSN: 'Potential Social Security Number — consider removing or replacing with a surrogate ID.',
+      Name: 'Potential patient name — consider using initials or a de-identified label.',
+    }
+    const findings: Array<{ kind: string; text: string; start: number; end: number; suggestion: string }> = []
     for (const { regex, kind } of [
       { regex: /\b\d{3}-\d{2}-\d{4}\b/g, kind: 'SSN' },
       { regex: /\b[A-Z][a-z]+ [A-Z][a-z]+\b/g, kind: 'Name' },
     ]) {
       let match
       while ((match = regex.exec(doc.body)) !== null) {
-        findings.push({ kind, text: match[0], start: match.index, end: match.index + match[0].length })
+        findings.push({ kind, text: match[0], start: match.index, end: match.index + match[0].length, suggestion: suggestions[kind] || 'Review for potential PHI.' })
       }
     }
     return { findings }
@@ -101,29 +119,87 @@ export async function documentsRouter(app: FastifyInstance) {
     }
   })
 
-  // #3: Doc Chat SSE — uses DeepSeek, same pattern as main chat
+  // #3: Doc Chat SSE — structured output that can edit the document
   app.post('/api/v1/docs/:docId/chat', async (request, reply) => {
     const { docId } = request.params as any
     const { message } = request.body as any
-    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId: request.user!.userId } })
+    const userId = request.user!.userId
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    if (!doc) return reply.status(404).send({ error: 'Document not found' })
+
     const apiKey = getApiKey()
     reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
     const send = (d: any) => reply.raw.write(`data: ${JSON.stringify(d)}\n\n`)
+
     try {
       send({ type: 'turn_started' })
-      const systemPrompt = doc
-        ? `You are helping edit a clinical document titled "${doc.title}". Current content:\n\n${doc.body}\n\nAnswer questions about this document and suggest edits.`
-        : 'You are a clinical document assistant.'
-      const messages = [
-        { role: 'system' as const, content: systemPrompt },
-        { role: 'user' as const, content: message || 'Help me with this document.' },
-      ]
-      for await (const chunk of deepseekStream(messages, apiKey)) {
+
+      const structuredPrompt = `You are helping edit a clinical document titled "${doc.title}".
+
+Current document content:
+${doc.body}
+
+User request: ${message || 'Help me with this document.'}
+
+Respond using EXACTLY this format:
+
+REPLY:
+<your concise, helpful response to the user>
+
+UPDATED_DOCUMENT:
+<the complete updated document content>
+
+Instructions:
+- If the user wants you to modify the document, write the full new document content after UPDATED_DOCUMENT:.
+- If no changes are needed, repeat the current document content exactly after UPDATED_DOCUMENT:.
+- Do not wrap the document content in markdown code fences.
+- The REPLY section should briefly explain what you changed or answer the user's question.`
+
+      const fullResponse = await deepseekChat([
+        { role: 'system' as const, content: 'You are a precise clinical document editor.' },
+        { role: 'user' as const, content: structuredPrompt },
+      ], apiKey)
+
+      const parsed = parseDocChatResponse(fullResponse, doc.body)
+
+      // Stream reply to client
+      for (const chunk of chunkText(parsed.reply, 80)) {
         send({ type: 'reply_chunk', text: chunk })
       }
-      send({ type: 'done' })
+
+      let docBody: string | undefined
+      if (parsed.updatedBody && parsed.updatedBody !== doc.body) {
+        const now = new Date().toISOString()
+        // Snapshot before AI edit
+        await (prisma as any).docSnapshot.create({
+          data: {
+            docId,
+            userId,
+            body: doc.body,
+            label: 'Before AI edit',
+            createdAt: now,
+          },
+        })
+        // Update document
+        await (prisma as any).doc.update({
+          where: { id: docId },
+          data: { body: parsed.updatedBody, updatedAt: now },
+        })
+        docBody = parsed.updatedBody
+      }
+
+      // Persist chat messages
+      const msgNow = new Date().toISOString()
+      await (prisma as any).docChatMessage.create({
+        data: { id: `dcm_${uid()}`, docId, userId, role: 'user', text: message || '', docApplied: 0, createdAt: msgNow },
+      })
+      await (prisma as any).docChatMessage.create({
+        data: { id: `dcm_${uid()}`, docId, userId, role: 'assistant', text: parsed.reply, docApplied: docBody ? 1 : 0, createdAt: msgNow },
+      })
+
+      send({ type: 'done', doc_body: docBody })
     } catch (err: any) {
-      send({ type: 'error', message: err.message })
+      send({ type: 'error', message: err.message || 'Chat failed' })
     } finally {
       reply.raw.end()
     }
@@ -132,4 +208,22 @@ export async function documentsRouter(app: FastifyInstance) {
   app.post('/api/v1/docs/:docId/export', async (_req, reply) => {
     return reply.status(501).send({ error: 'DOCX export requires Python worker' })
   })
+}
+
+function parseDocChatResponse(response: string, currentBody: string): { reply: string; updatedBody: string } {
+  const replyMatch = response.match(/REPLY:\s*([\s\S]*?)(?=UPDATED_DOCUMENT:|$)/)
+  const docMatch = response.match(/UPDATED_DOCUMENT:\s*([\s\S]*?)$/)
+
+  const reply = replyMatch ? replyMatch[1].trim() : response.trim()
+  const updatedBody = docMatch ? docMatch[1].trim() : currentBody
+
+  return { reply, updatedBody }
+}
+
+function chunkText(text: string, size: number): string[] {
+  const chunks: string[] = []
+  for (let i = 0; i < text.length; i += size) {
+    chunks.push(text.slice(i, i + size))
+  }
+  return chunks
 }

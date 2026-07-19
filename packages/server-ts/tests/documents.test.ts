@@ -93,9 +93,10 @@ describe('Documents', () => {
     const findings = JSON.parse(res.payload).findings
     expect(findings.some((f: any) => f.kind === 'SSN')).toBe(true)
     expect(findings.some((f: any) => f.kind === 'Name')).toBe(true)
+    expect(findings.every((f: any) => typeof f.suggestion === 'string' && f.suggestion.length > 0)).toBe(true)
   })
 
-  test('document snapshots exist after updates', async () => {
+  test('save creates a snapshot when body changes', async () => {
     const app = await getApp()
     const create = await app.inject({
       method: 'POST', url: '/api/v1/docs',
@@ -104,12 +105,21 @@ describe('Documents', () => {
     })
     const docId = JSON.parse(create.payload).id
 
+    // First update
+    await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: 'First draft content.' },
+    })
+
     const res = await app.inject({
       method: 'GET', url: `/api/v1/docs/${docId}/snapshots`,
       headers: await authHeader(),
     })
     expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.payload).snapshots).toBeDefined()
+    const snapshots = JSON.parse(res.payload).snapshots
+    expect(snapshots.length).toBeGreaterThanOrEqual(1)
+    expect(snapshots[0].body).toBe('')
   })
 
   test('non-existent document returns 404', async () => {

@@ -110,6 +110,22 @@ curl -sf -X PUT "$BASE/api/v1/docs/$DID" -H "$H" -H "Content-Type: application/j
 check "10.1 Create document" "$([ -n "$DID" ] && echo ok || echo 'FAIL')"
 check "10.2 Document content" "$(curl -sf "$BASE/api/v1/docs/$DID" -H "$H" | python3 -c "import sys,json; print('ok' if 'IIIA' in json.load(sys.stdin).get('body','') else 'FAIL')" 2>/dev/null)"
 
+# Doc chat should edit the document automatically.
+DOC_CHAT_BODY=$(curl -sS -N -X POST "$BASE/api/v1/docs/$DID/chat" -H "$H" -H "Content-Type: application/json" -d '{"message":"Append the exact line CONFIRMED_DOC_CHAT_EDIT to the document."}' | python3 -c "
+import sys, json
+body = None
+for line in sys.stdin:
+    if line.startswith('data: '):
+        try:
+            d = json.loads(line[6:])
+            if d.get('type') == 'done':
+                body = d.get('doc_body')
+        except Exception:
+            pass
+print(body or '')
+" 2>/dev/null)
+check "10.3 Doc Chat edits document" "$(echo "$DOC_CHAT_BODY" | python3 -c "import sys; t=sys.stdin.read(); print('ok' if 'CONFIRMED_DOC_CHAT_EDIT' in t else 'FAIL')" 2>/dev/null)"
+
 # ═══ 11. Calendar ═══
 CAL=$(curl -sf "$BASE/api/v1/calendar/export.ics?token=$TOKEN" 2>/dev/null)
 check "11.1 Calendar iCal format" "$(echo "$CAL" | python3 -c "import sys; t=sys.stdin.read(); print('ok' if 'VCALENDAR' in t else 'FAIL')" 2>/dev/null)"

@@ -270,6 +270,7 @@ export function WritingEditorPage() {
           });
           if (chunk.doc_body) {
             setDoc((prev) => prev ? { ...prev, body: chunk.doc_body as string } : prev);
+            setBody(chunk.doc_body as string);
           }
         } else if (chunk.type === 'error') {
           setChatMessages((prev) => [...prev, { role: 'assistant', text: 'Error: ' + (chunk.message || 'Unknown') }]);
