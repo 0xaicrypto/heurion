@@ -99,7 +99,8 @@ jobs:
 
   deploy:
     name: Deploy to Production
-    needs: [staging, cloudflare-ssl]
+    needs: [typecheck, test, cloudflare-ssl]
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: production

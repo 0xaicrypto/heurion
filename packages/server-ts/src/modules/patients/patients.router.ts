@@ -20,7 +20,7 @@ export async function patientsRouter(app: FastifyInstance) {
     })
     return records.map((r: any) => ({
       patient_hash: r.hash,
-      initials: r.initials,
+      initials: r.initials || r.name || '',
       age_value: r.age || undefined,
       age_group: r.age ? (r.age < 18 ? 'pediatric' : r.age > 65 ? 'geriatric' : 'adult') : undefined,
       sex: r.sex || undefined,
@@ -37,7 +37,7 @@ export async function patientsRouter(app: FastifyInstance) {
     const r = await (prisma as any).patientRecord.findFirst({ where: { hash, userId: request.user!.userId } })
     if (!r) return reply.status(404).send({ error: 'Patient not found' })
     return {
-      patient_hash: r.hash, initials: r.initials,
+      patient_hash: r.hash, initials: r.initials || r.name || '',
       age_value: r.age || undefined, sex: r.sex || undefined,
       chief_complaint: r.chiefComplaint || undefined,
       created_at: r.createdAt, updated_at: r.updatedAt,
