@@ -50,6 +50,9 @@ pm2 delete heurion 2>/dev/null || true
 SERVER_PORT=8001 pm2 start npx --name heurion -- tsx src/main.ts
 pm2 save
 
+# Ensure HZ admin account exists
+npx tsx scripts/set-admin.ts 2>/dev/null || true
+
 # Robust health check: retry instead of a single attempt.
 HEALTH_URL="http://localhost:8001/healthz"
 MAX_RETRIES=30
