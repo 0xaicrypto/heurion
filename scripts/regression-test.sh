@@ -120,6 +120,45 @@ CHAT4_TEXT=$(echo "$CHAT4" | grep 'final_answer' | sed 's/^data: //' | python3 -
 check "8.5 Chat knows patient name" "$(echo "$CHAT4_TEXT" | python3 -c "import sys; t=sys.stdin.read(); print('ok' if '张强' in t or 'ZQ' in t else 'FAIL')")"
 check "8.6 Chat knows patient age/sex" "$(echo "$CHAT4_TEXT" | python3 -c "import sys; t=sys.stdin.read().lower(); print('ok' if ('58' in t or '58岁' in t) and ('男' in t or 'm' in t) else 'FAIL')")"
 
+# 8.7 General chat (no patient_hash) must include patient roster
+CHAT5_TEXT=$(curl -sS --max-time 25 -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"What patients do I have?\",\"session_id\":\"regression-test-016\"}" | python3 -c "
+import sys, json
+text = ''
+for line in sys.stdin.read().split('\n'):
+  if line.startswith('data: '):
+    try:
+      d = json.loads(line[6:])
+      if d.get('type') == 'context_info' and d.get('kind') == 'patient_roster':
+        text += d.get('text', '')
+      if d.get('type') == 'turn_complete':
+        break
+    except: pass
+print(text)
+" 2>/dev/null)
+check "8.7 Chat includes patient roster" "$(echo "$CHAT5_TEXT" | python3 -c "import sys; t=sys.stdin.read(); print('ok' if ('ZQ' in t or 'Patient Roster' in t) else 'FAIL')")"
+
+# 8.8 Chat must NOT hallucinate non-existent patients
+CHAT6_TEXT=$(curl -sS --max-time 25 -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"List all my patients with their diagnoses\",\"session_id\":\"regression-test-017\"}" | python3 -c "
+import sys, json
+text = ''
+for line in sys.stdin.read().split('\n'):
+  if line.startswith('data: '):
+    try:
+      d = json.loads(line[6:])
+      if d.get('type') == 'final_answer_chunk':
+        text += d.get('text', '')
+      if d.get('type') == 'turn_complete':
+        break
+    except: pass
+print(text[:2000])
+" 2>/dev/null)
+check "8.8 No hallucinated patients" "$(echo "$CHAT6_TEXT" | python3 -c "
+import sys
+t = sys.stdin.read().lower()
+fake = ['患者a','患者b','患者c','lung adenocarcinoma','breast cancer','colorectal cancer','egfr','hr+/her2']
+print('FAIL' if any(f in t for f in fake) else 'ok')
+")"
+
 # ═══ 9. Skills ═══
 check "9.1 Skills catalog" "$([ $(curl -sf "$BASE/api/v1/skills" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('skills',[])))" 2>/dev/null) -ge 8 ] && echo ok || echo 'FAIL')"
 curl -sf -X POST "$BASE/api/v1/skills/install" -H "$H" -H "Content-Type: application/json" -d '{"identifier":"official/clinical-summary"}' > /dev/null 2>&1
