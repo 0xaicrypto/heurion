@@ -3,7 +3,7 @@ import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
 import { deepseekStream, deepseekChat, getApiKey } from '../../common/llm.js'
 import crypto from 'crypto'
-import { Document, Packer, Paragraph, TextRun } from 'docx'
+import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx'
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
 
@@ -230,25 +230,15 @@ Instructions:
     }
   })
 
-  app.post('/api/v1/docs/:docId/export', async (request, reply) => {
+   app.post('/api/v1/docs/:docId/export', async (request, reply) => {
     const { docId } = request.params as any
     const userId = request.user!.userId
     const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
 
+    const children = parseMarkdownToDocx(doc.title || 'Untitled', doc.body || '')
     const docx = new Document({
-      sections: [{
-        properties: {},
-        children: [
-          new Paragraph({
-            children: [new TextRun({ text: doc.title || 'Untitled', bold: true, size: 32 })],
-          }),
-          new Paragraph({ children: [] }),
-          ...(doc.body || '').split('\n').map((line: string) =>
-            new Paragraph({ children: [new TextRun(line)] })
-          ),
-        ],
-      }],
+      sections: [{ properties: {}, children }],
     })
 
     const buffer = await Packer.toBuffer(docx)
@@ -260,6 +250,166 @@ Instructions:
       .header('Content-Disposition', `attachment; filename="${asciiName}.docx"; filename*=UTF-8''${encoded}.docx`)
       .send(buffer)
   })
+
+function parseMarkdownToDocx(title: string, body: string): any[] {
+  const children: any[] = []
+
+  // Title
+  children.push(new Paragraph({
+    spacing: { after: 200 },
+    children: [new TextRun({ text: title, bold: true, size: 32 })],
+    heading: HeadingLevel.TITLE,
+  }))
+
+  // Parse body
+  const lines = body.split('\n')
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+
+    // Code block
+    if (line.startsWith('```')) {
+      i++
+      const codeLines: string[] = []
+      while (i < lines.length && !lines[i].startsWith('```')) {
+        codeLines.push(lines[i])
+        i++
+      }
+      i++ // skip closing ```
+      if (codeLines.length > 0) {
+        children.push(new Paragraph({
+          spacing: { before: 80, after: 80 },
+          border: { left: { style: 'single', size: 4, color: 'CCCCCC' } },
+          indent: { left: 400 },
+          children: [new TextRun({ text: codeLines.join('\n'), font: 'Consolas', size: 18 })],
+        }))
+      }
+      continue
+    }
+
+    // Heading
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)/)
+    if (headingMatch) {
+      const level = headingMatch[1].length
+      const text = parseInlineMarkdown(headingMatch[2])
+      children.push(new Paragraph({
+        spacing: { before: 240, after: 120 },
+        children: text,
+        heading: (['', HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3, HeadingLevel.HEADING_3, HeadingLevel.HEADING_3, HeadingLevel.HEADING_3] as any)[level] || HeadingLevel.HEADING_1,
+      }))
+      i++
+      continue
+    }
+
+    // Unordered list
+    if (/^[-*+]\s/.test(line)) {
+      const listItems: string[] = []
+      while (i < lines.length && /^[-*+]\s/.test(lines[i])) {
+        listItems.push(lines[i].replace(/^[-*+]\s/, ''))
+        i++
+      }
+      for (const item of listItems) {
+        children.push(new Paragraph({
+          spacing: { before: 40, after: 40 },
+          bullet: { level: 0 },
+          indent: { left: 400 },
+          children: parseInlineMarkdown(item),
+        }))
+      }
+      continue
+    }
+
+    // Ordered list
+    if (/^\d+[.)]\s/.test(line)) {
+      const listItems: string[] = []
+      while (i < lines.length && /^\d+[.)]\s/.test(lines[i])) {
+        listItems.push(lines[i].replace(/^\d+[.)]\s/, ''))
+        i++
+      }
+      let num = 1
+      for (const item of listItems) {
+        children.push(new Paragraph({
+          spacing: { before: 40, after: 40 },
+          numbering: { reference: 'ordered', level: 0 },
+          indent: { left: 400 },
+          children: [new TextRun({ text: `${num}. ` }), ...parseInlineMarkdown(item)],
+        }))
+        num++
+      }
+      continue
+    }
+
+    // Horizontal rule
+    if (/^[-*_]{3,}$/.test(line)) {
+      children.push(new Paragraph({
+        spacing: { before: 200, after: 200 },
+        border: { bottom: { style: 'single', size: 6, color: 'CCCCCC' } },
+        children: [],
+      }))
+      i++
+      continue
+    }
+
+    // Empty line → paragraph break
+    if (!line.trim()) {
+      children.push(new Paragraph({ spacing: { before: 60 }, children: [] }))
+      i++
+      continue
+    }
+
+    // Regular paragraph
+    children.push(new Paragraph({
+      spacing: { before: 60, after: 60 },
+      children: parseInlineMarkdown(line),
+    }))
+    i++
+  }
+
+  return children
+}
+
+function parseInlineMarkdown(text: string): any[] {
+  const runs: any[] = []
+  let remaining = text
+  // Bold **text** or __text__
+  const boldRegex = /\*\*(.+?)\*\*|__(.+?)__/g
+  // Italic *text* or _text_
+  const italicRegex = /\*(.+?)\*|_(.+?)_/g
+  // Inline code `text`
+  const codeRegex = /`([^`]+)`/g
+
+  type Token = { type: 'bold' | 'italic' | 'code'; text: string; start: number; end: number }
+  const tokens: Token[] = []
+
+  for (const match of remaining.matchAll(boldRegex)) {
+    tokens.push({ type: 'bold', text: match[1] || match[2], start: match.index!, end: match.index! + match[0].length })
+  }
+  for (const match of remaining.matchAll(codeRegex)) {
+    tokens.push({ type: 'code', text: match[1], start: match.index!, end: match.index! + match[0].length })
+  }
+  for (const match of remaining.matchAll(italicRegex)) {
+    if (!tokens.some(t => t.start <= match.index! && t.end >= match.index! + match[0].length)) {
+      tokens.push({ type: 'italic', text: match[1] || match[2], start: match.index!, end: match.index! + match[0].length })
+    }
+  }
+
+  if (tokens.length === 0) return [new TextRun(remaining)]
+
+  tokens.sort((a, b) => a.start - b.start)
+  let pos = 0
+  for (const tok of tokens) {
+    if (pos < tok.start) runs.push(new TextRun(remaining.slice(pos, tok.start)))
+    const opts: any = {}
+    if (tok.type === 'bold') opts.bold = true
+    if (tok.type === 'italic') opts.italics = true
+    if (tok.type === 'code') opts.font = 'Consolas'
+    runs.push(new TextRun({ text: tok.text, ...opts }))
+    pos = tok.end
+  }
+  if (pos < remaining.length) runs.push(new TextRun(remaining.slice(pos)))
+
+  return runs.length > 0 ? runs : [new TextRun(remaining)]
+}
 
   // ── References ──
   app.post('/api/v1/docs/:docId/references', async (request, reply) => {
