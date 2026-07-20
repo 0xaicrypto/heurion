@@ -54,15 +54,14 @@ export async function patientsRouter(app: FastifyInstance) {
     await (prisma as any).patientRecord.create({
       data: {
         hash, userId: request.user!.userId,
-        name: body.name || '',
-        initials: body.initials || '',
+        initials: body.name || body.initials || '',
         age: body.age || 0,
         sex: body.sex || '',
         chiefComplaint: body.chief_complaint || '',
         source: 'manual', createdAt: now, updatedAt: now,
       },
     })
-    return { patient_hash: hash, name: body.name || '', initials: body.initials, created_at: now }
+    return { patient_hash: hash, name: body.name || '', initials: body.initials || '', created_at: now }
   })
 
   // ── Delete ──
