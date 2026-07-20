@@ -90,8 +90,13 @@ export async function authRouter(app: FastifyInstance) {
     }
   })
 
-  // CI/Staging: clear test data for the authenticated user only
-  app.post('/api/v1/auth/clear-test-data', { preHandler: authGuard }, async (request) => {
+  // CI/Staging: clear test data for the authenticated user only.
+  // Must NOT run on production — only localhost/staging hostnames accepted.
+  app.post('/api/v1/auth/clear-test-data', { preHandler: authGuard }, async (request, reply) => {
+    const host = (request.headers.host || '').split(':')[0]
+    if (host !== 'localhost' && host !== '127.0.0.1' && !host.startsWith('staging')) {
+      return reply.status(403).send({ error: 'clear-test-data is only available on staging' })
+    }
     const userId = request.user!.userId
     // Delete research data linked to this user's studies.
     const studyIds = await (prisma as any).researchStudy.findMany({ where: { userId }, select: { id: true } })
