@@ -181,7 +181,7 @@ check "11.2 Calendar has events" "$([ "${CAL_EVENTS:-0}" -gt 0 ] && echo ok || e
 
 # ═══ 12. File content (Labs) ═══
 LAB_ID=$(curl -sf "$BASE/api/v1/files/uploads?patient_hash=$HASH" -H "$H" | python3 -c "import sys,json; [print(f['file_id']) for f in json.load(sys.stdin) if 'lab' in f['name'].lower()][:1]" 2>/dev/null)
-FILE_CONTENT=$(curl -sf "$BASE/api/v1/files/$LAB_ID/content" -H "$H" | python3 -c "import sys,json; j=json.load(sys.stdin); print('ok' if j.get('type')=='text' else 'FAIL')" 2>/dev/null)
+FILE_CONTENT=$(curl -sf "$BASE/api/v1/files/$LAB_ID/content" -H "$H" | python3 -c "import sys,json; j=json.load(sys.stdin); print('ok' if j.get('content','') else 'FAIL')" 2>/dev/null)
 check "12.1 File content viewable" "$FILE_CONTENT"
 
 # ═══ 13. Rule Confirmation ═══
