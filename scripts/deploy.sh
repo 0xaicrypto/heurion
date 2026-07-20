@@ -49,8 +49,11 @@ pm2 save
 
 # Robust health check: retry instead of a single attempt.
 HEALTH_URL="http://localhost:8001/healthz"
-MAX_RETRIES=15
-RETRY_DELAY=2
+MAX_RETRIES=30
+RETRY_DELAY=3
+
+# Give server time to initialize before first check
+sleep 5
 
 for i in $(seq 1 $MAX_RETRIES); do
   if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
@@ -64,8 +67,10 @@ done
 if ! curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
   echo ""
   echo "❌ Production health check failed after ${MAX_RETRIES} attempts."
+  echo "--- Checking port/listening ---"
+  ss -tlnp 2>/dev/null | grep 8001 || netstat -tlnp 2>/dev/null | grep 8001 || echo "No listener on 8001"
   echo "--- PM2 logs for heurion ---"
-  pm2 logs heurion --lines 100 --nostream || true
+  pm2 logs heurion --lines 50 --nostream || true
   echo "--- Process status ---"
   pm2 describe heurion || true
   exit 1
