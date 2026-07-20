@@ -7,6 +7,7 @@ cd ~/heurion || { git clone https://github.com/0xaicrypto/heurion.git ~/heurion 
 # leftover from a previous failed deploy and should not block updates.
 git fetch origin main
 git reset --hard origin/main
+echo "Deploying: $(git log -1 --oneline)"
 
 cd packages/server-ts
 
@@ -33,7 +34,12 @@ which pnpm || npm install -g pnpm@10
 # cache a stale generated client even after schema changes, causing runtime
 # "Unknown argument" errors.
 rm -rf node_modules/.prisma node_modules/.pnpm/@prisma+client*
-pnpm install
+# Force fresh Prisma client — pnpm store can cache stale generated code
+# even after rm -rf node_modules. Full clean + npm bypasses the store.
+pnpm store prune --force 2>/dev/null || true
+rm -rf node_modules package-lock.json
+pnpm install --prefer-offline
+# Explicitly regenerate Prisma client + push schema
 npx prisma generate
 npx prisma db push --accept-data-loss
 which pm2 || npm install -g pm2

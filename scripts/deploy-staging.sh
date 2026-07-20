@@ -6,6 +6,7 @@ cd ~/heurion
 # leftover from a previous failed deploy and should not block updates.
 git fetch origin main
 git reset --hard origin/main
+echo "Deploying: $(git log -1 --oneline)"
 cd packages/server-ts
 
 # Always overwrite .env so staging uses the correct port/config.
