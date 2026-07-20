@@ -50,7 +50,7 @@ jobs:
 
   cloudflare-ssl:
     name: Ensure Cloudflare SSL Mode
-    needs: [staging]
+    needs: [typecheck, test]
     runs-on: ubuntu-latest
     steps:
       - name: Set Cloudflare SSL/TLS to Full
