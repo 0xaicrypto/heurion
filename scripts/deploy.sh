@@ -43,6 +43,9 @@ pnpm install --prefer-offline
 npx prisma generate
 npx prisma db push --accept-data-loss
 which pm2 || npm install -g pm2
+# Kill any process holding port 8001 (stale from previous deploy)
+kill $(lsof -ti:8001) 2>/dev/null || fuser -k 8001/tcp 2>/dev/null || true
+sleep 2
 pm2 delete heurion 2>/dev/null || true
 pm2 start npx --name heurion -- tsx src/main.ts
 pm2 save
