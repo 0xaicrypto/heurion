@@ -29,7 +29,7 @@ npx prisma generate
 npx prisma db push --accept-data-loss
 
 pm2 delete heurion-staging 2>/dev/null || true
-pm2 start npx --name heurion-staging -- tsx src/main.ts
+SERVER_PORT=8002 pm2 start npx --name heurion-staging -- tsx src/main.ts
 pm2 save
 
 # Robust health check: retry instead of a single attempt.
