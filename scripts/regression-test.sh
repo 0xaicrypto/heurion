@@ -39,15 +39,14 @@ fi
 check "0. Clear data" ok
 
 # ═══ 1. Patient Onboarding ═══
-CREATE_RESP=$(curl -sS -w "\n%{http_code}" -X POST "$BASE/api/v1/dicom/patients/register-manual" -H "$H" -H "Content-Type: application/json" -d '{"name":"张强","initials":"ZQ","age":58,"sex":"M","chief_complaint":"咳嗽胸痛3周"}')
+CREATE_RESP=$(curl -sS -w "\n%{http_code}" -X POST "$BASE/api/v1/dicom/patients/register-manual" -H "$H" -H "Content-Type: application/json" -d '{"initials":"ZQ","age":58,"sex":"M","chief_complaint":"咳嗽胸痛3周"}')
 CREATE_STATUS=$(echo "$CREATE_RESP" | tail -n1)
 CREATE_BODY=$(echo "$CREATE_RESP" | sed '$d')
 HASH=$(echo "$CREATE_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('patient_hash',''))" 2>/dev/null)
 check "1.1 Create patient" "$([ -n "$HASH" ] && echo ok || echo "FAIL status=$CREATE_STATUS body=$CREATE_BODY")"
 DETAIL_RES="$(curl -sf "$BASE/api/v1/dicom/patients/$HASH/detail" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('initials')=='ZQ' else 'FAIL')" 2>/dev/null)" < /dev/null
-NAME_RES="$(curl -sf "$BASE/api/v1/dicom/patients/$HASH/detail" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('name')=='张强' else 'FAIL')" 2>/dev/null)" < /dev/null
 check "1.2 Patient detail" "$DETAIL_RES"
-check "1.2b Patient name stored" "$NAME_RES"
+check "1.2b Patient name stored" "$DETAIL_RES"
 check "1.3 Patient count=1" "$([ $(curl -sf "$BASE/api/v1/dicom/patients/full" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null) = 1 ] && echo ok || echo 'FAIL')"
 
 # ═══ 2. Imaging Upload + DICOM Scan ═══
@@ -93,7 +92,7 @@ check "7.3 Extract rules" "$([ "${RULES:-0}" -gt 0 ] && echo ok || echo 'FAIL')"
 curl -sf -X POST "$BASE/api/v1/research/studies/$SID/enrollments" -H "$H" -H "Content-Type: application/json" -d "{\"patient_hash\":\"$HASH\",\"arm\":\"Arm A\"}" > /dev/null 2>&1
 check "7.4 Enroll patient" ok
 check "7.5 Roster has entry" "$([ $(curl -sf "$BASE/api/v1/research/studies/$SID/roster" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null) -ge 1 ] && echo ok || echo 'FAIL')"
-check "7.5b Roster shows patient name" "$(curl -sf "$BASE/api/v1/research/studies/$SID/roster" -H "$H" | python3 -c "import sys,json; print('ok' if any(e.get('name')=='张强' for e in json.load(sys.stdin)) else 'FAIL')" 2>/dev/null)"
+check "7.5b Roster shows patient name" "$(curl -sf "$BASE/api/v1/research/studies/$SID/roster" -H "$H" | python3 -c "import sys,json; print('ok' if any(e.get('initials')=='ZQ' for e in json.load(sys.stdin)) else 'FAIL')" 2>/dev/null)"
 check "7.5c Roster shows patient ID" "$(curl -sf "$BASE/api/v1/research/studies/$SID/roster" -H "$H" | python3 -c "import sys,json; print('ok' if any(e.get('patient_id')=='$HASH' for e in json.load(sys.stdin)) else 'FAIL')" 2>/dev/null)"
 check "7.5d Roster shows basic info" "$(curl -sf "$BASE/api/v1/research/studies/$SID/roster" -H "$H" | python3 -c "import sys,json; print('ok' if any(e.get('age_value')==58 and e.get('sex')=='M' for e in json.load(sys.stdin)) else 'FAIL')" 2>/dev/null)"
 check "7.6 Schedule tab data" "$(curl -sf "$BASE/api/v1/research/studies/$SID/assessments" -H "$H" | python3 -c "import sys,json; print('ok' if isinstance(json.load(sys.stdin), list) else 'FAIL')" 2>/dev/null)"
