@@ -53,7 +53,25 @@ export async function chatRouter(app: FastifyInstance) {
         }
       }
 
-      const fullMessage = attachmentText ? `${attachmentText}\n\nUser query: ${body.text}` : body.text
+      let fullMessage = attachmentText ? `${attachmentText}\n\nUser query: ${body.text}` : body.text
+
+      // Inject patient demographics into chat context
+      if (patientHash) {
+        const patient = await (prisma as any).patientRecord.findFirst({
+          where: { hash: patientHash, userId },
+        })
+        if (patient) {
+          const parts: string[] = ['## Current Patient Context']
+          if (patient.initials) parts.push(`- Name: ${patient.initials}`)
+          if (patient.age) parts.push(`- Age: ${patient.age}`)
+          if (patient.sex) parts.push(`- Sex: ${patient.sex}`)
+          if (patient.chiefComplaint) parts.push(`- Chief Complaint: ${patient.chiefComplaint}`)
+          if (parts.length > 1) {
+            send({ type: 'context_info', text: parts.join('\n'), kind: 'patient_context' })
+            fullMessage = parts.join('\n') + '\n\n' + fullMessage
+          }
+        }
+      }
 
       // #2: Weighted attention context projection
       const projected = await ctx.orchestrator['projection'].project({
