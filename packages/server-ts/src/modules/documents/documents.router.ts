@@ -144,11 +144,25 @@ export async function documentsRouter(app: FastifyInstance) {
     try {
       send({ type: 'turn_started' })
 
+      // Load document references to provide context to the AI
+      const refs = await (prisma as any).docReference.findMany({
+        where: { userId, docId },
+        orderBy: { createdAt: 'asc' },
+      })
+      let refContext = ''
+      if (refs && refs.length > 0) {
+        refContext = '\n\n## Reference Materials (uploaded documents and references)\n'
+        for (const r of refs) {
+          const content = (r.snapshot || r.body || '').toString().slice(0, 8000)
+          refContext += `\n### ${r.label || r.id}\n${content}\n`
+        }
+      }
+
       const structuredPrompt = `You are helping edit a clinical document titled "${doc.title}".
 
 Current document content:
 ${doc.body}
-
+${refContext}
 User request: ${message || 'Help me with this document.'}
 
 Respond using EXACTLY this format:
@@ -160,6 +174,7 @@ UPDATED_DOCUMENT:
 <the complete updated document content>
 
 Instructions:
+- Use the reference materials above as authoritative sources.
 - If the user wants you to modify the document, write the full new document content after UPDATED_DOCUMENT:.
 - If no changes are needed, repeat the current document content exactly after UPDATED_DOCUMENT:.
 - Do not wrap the document content in markdown code fences.

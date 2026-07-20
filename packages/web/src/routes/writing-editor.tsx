@@ -339,6 +339,9 @@ export function WritingEditorPage() {
         label: f.name,
       });
       setError(null);
+      // Open chat panel with suggested prompt
+      setChatOpen(true);
+      setChatInput(`I uploaded "${f.name}". Please analyze it and draft content.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : 'Upload failed');
     }
