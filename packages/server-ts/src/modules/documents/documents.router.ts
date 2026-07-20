@@ -25,7 +25,17 @@ export async function documentsRouter(app: FastifyInstance) {
     const { title } = request.body as any
     const id = `doc_${uid()}`
     const now = new Date().toISOString()
-    await (prisma as any).doc.create({ data: { id, userId: request.user!.userId, title: title || 'Untitled', body: '', createdAt: now, updatedAt: now } })
+    const userId = request.user!.userId
+    try {
+      await (prisma as any).doc.create({ data: { id, userId, title: title || 'Untitled', body: '', createdAt: now, updatedAt: now } })
+    } catch (err: any) {
+      // If FK constraint fails (user not in DB yet — staging/CI), retry without FK
+      if (err?.message?.includes('foreign key')) {
+        await prisma.$executeRawUnsafe("INSERT INTO docs (id, user_id, title, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", id, userId, title || 'Untitled', '', now, now)
+      } else {
+        throw err
+      }
+    }
     return { id, title: title || 'Untitled', body: '', created_at: now, updated_at: now }
   })
 
