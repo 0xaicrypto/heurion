@@ -34,6 +34,7 @@ which pnpm || npm install -g pnpm@10
 # "Unknown argument" errors.
 rm -rf node_modules/.prisma node_modules/.pnpm/@prisma+client*
 pnpm install --frozen-lockfile
+rm -rf node_modules/.prisma node_modules/@prisma
 npx prisma generate
 npx prisma db push --accept-data-loss
 which pm2 || npm install -g pm2

@@ -34,6 +34,7 @@ TWIN_BASE_DIR=.nexus/twins
 ENDENV
 
 pnpm install --frozen-lockfile
+rm -rf node_modules/.prisma node_modules/@prisma
 npx prisma generate
 npx prisma db push --accept-data-loss
 
