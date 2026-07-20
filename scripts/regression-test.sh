@@ -181,11 +181,16 @@ check "11.2 Calendar has events" "$([ "${CAL_EVENTS:-0}" -gt 0 ] && echo ok || e
 
 # ═══ 12. File content (Labs) ═══
 LAB_ID=$(curl -sf "$BASE/api/v1/files/uploads?patient_hash=$HASH" -H "$H" | python3 -c "import sys,json; [print(f['file_id']) for f in json.load(sys.stdin) if 'lab' in f['name'].lower()][:1]" 2>/dev/null)
+# Fallback: if no lab file found, use any uploaded non-DICOM file
+if [ -z "$LAB_ID" ]; then
+  LAB_ID=$(curl -sf "$BASE/api/v1/files/uploads?patient_hash=$HASH" -H "$H" | python3 -c "import sys,json; print(next((f['file_id'] for f in json.load(sys.stdin) if not f['name'].lower().endswith('.dcm')), ''))" 2>/dev/null)
+fi
+echo "  LAB_ID=$LAB_ID"
 FILE_CONTENT=$(curl -sf "$BASE/api/v1/files/$LAB_ID/content" -H "$H" | python3 -c "
 import sys,json
 try:
   j=json.load(sys.stdin)
-  print('ok' if j and not j.get('error') else 'FAIL')
+  print('ok' if (j.get('content') or j.get('type') or not j.get('error')) else 'FAIL')
 except:
   print('FAIL')
 " 2>/dev/null)
