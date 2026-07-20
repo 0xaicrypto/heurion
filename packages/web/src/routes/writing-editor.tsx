@@ -486,9 +486,23 @@ export function WritingEditorPage() {
             onClick={handlePhiScan}
             disabled={phiScanning}
             isLoading={phiScanning}
-          >
-            <ShieldAlert size={14} className="mr-1" /> Scan PHI
-          </Button>
+            >
+              <ShieldAlert size={14} className="mr-1" /> Scan PHI
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => docUploadRef.current?.click()}
+            >
+              <FileText size={14} className="mr-1" /> Upload
+            </Button>
+            <input
+              ref={docUploadRef}
+              type="file"
+              accept=".pdf,.docx,.doc,.txt,.md"
+              onChange={handleDocUpload}
+              className="hidden"
+            />
           <Button
             variant="ghost"
             size="sm"
@@ -638,20 +652,6 @@ export function WritingEditorPage() {
                           >
                             <RotateCcw size={14} className="mr-1" /> Restore
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => docUploadRef.current?.click()}
-            >
-              <FileText size={14} className="mr-1" /> Upload
-            </Button>
-            <input
-              ref={docUploadRef}
-              type="file"
-              accept=".pdf,.docx,.doc,.txt,.md"
-              onChange={handleDocUpload}
-              className="hidden"
-            />
                         </div>
                       ))}
                     </div>
