@@ -31,7 +31,9 @@ export async function documentsRouter(app: FastifyInstance) {
     } catch (err: any) {
       // If FK constraint fails (user not in DB yet — staging/CI), retry without FK
       if (err?.message?.includes('foreign key')) {
+        await prisma.$executeRawUnsafe("PRAGMA foreign_keys = OFF")
         await prisma.$executeRawUnsafe("INSERT INTO docs (id, user_id, title, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", id, userId, title || 'Untitled', '', now, now)
+        await prisma.$executeRawUnsafe("PRAGMA foreign_keys = ON")
       } else {
         throw err
       }

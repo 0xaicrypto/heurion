@@ -26,11 +26,17 @@ rm -rf node_modules
 pnpm store prune --force 2>/dev/null || true
 pnpm install
 npx prisma generate
+# Force-recreate staging database to avoid FK constraint issues from old data
+rm -f staging.db staging.db-journal 2>/dev/null || true
 npx prisma db push --accept-data-loss
 
 pm2 delete heurion-staging 2>/dev/null || true
 SERVER_PORT=8002 pm2 start npx --name heurion-staging -- tsx src/main.ts
 pm2 save
+
+# Ensure HZ user exists in fresh staging DB
+sleep 3
+npx tsx scripts/set-admin.ts 2>/dev/null || true
 
 # Robust health check: retry instead of a single attempt.
 HEALTH_URL="http://localhost:8002/healthz"
