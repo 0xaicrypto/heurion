@@ -4,6 +4,14 @@ const path = require('path')
 const prisma = new PrismaClient()
 
 async function main() {
+  // Safety: refuse to run on production database
+  const dbUrl = process.env.DATABASE_URL || ''
+  if (dbUrl.includes('nexus_server.db') && !dbUrl.includes('staging')) {
+    console.error('REFUSED: clear-data.js must not run against production database (nexus_server.db). Use staging.db or set CLEAR_TEST_OVERRIDE=1')
+    if (process.env.CLEAR_TEST_OVERRIDE !== '1') {
+      process.exit(1)
+    }
+  }
   const targetUser = process.argv[2] || process.env.CLEAR_TEST_USER || 'HZ'
   const user = await prisma.user.findFirst({ where: { displayName: targetUser } })
   if (!user) {
