@@ -234,7 +234,6 @@ model ResearchAssessment {
 model PatientRecord {
   hash          String  @id
   userId        String  @map("user_id")
-  name          String  @default("")
   initials      String  @default("")
   age           Int     @default(0)
   sex           String  @default("")
