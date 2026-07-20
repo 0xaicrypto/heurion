@@ -22,6 +22,7 @@ ENVEOF
 
 # Force fresh Prisma Client install/generation
 rm -rf node_modules
+pnpm store prune --force 2>/dev/null || true
 pnpm install
 npx prisma generate
 npx prisma db push --accept-data-loss
