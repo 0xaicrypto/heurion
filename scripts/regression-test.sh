@@ -37,13 +37,7 @@ H="Authorization: Bearer $TOKEN"
 check "0. Login" ok
 
 # ═══ 0. Clear data ═══
-# Staging uses API to clear, production uses SSH
-if echo "$BASE" | grep -q "localhost\|127.0.0.1"; then
-  # Staging: clear via API (no SSH needed)
-  curl -sf -X POST "$BASE/api/v1/auth/clear-test-data" -H "$H" > /dev/null 2>&1 || true
-else
-  ssh -o StrictHostKeyChecking=no -i ~/.ssh/heurion-do root@174.138.31.245 "cd ~/heurion/packages/server-ts && node scripts/clear-data.js $USERNAME" 2>/dev/null
-fi
+curl -sf -X POST "$BASE/api/v1/auth/clear-test-data" -H "$H" > /dev/null 2>&1 || true
 check "0. Clear data" ok
 
 # ═══ 1. Patient Onboarding ═══
