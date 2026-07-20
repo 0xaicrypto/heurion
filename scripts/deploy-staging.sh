@@ -20,15 +20,10 @@ CORS_ALLOW_ORIGINS=*
 TWIN_BASE_DIR=.nexus/staging-twins
 ENVEOF
 
-# Force fresh Prisma Client install/generation; pnpm's isolated store can
-# cache a stale generated client even after schema changes, causing runtime
-# "Unknown argument" errors.
-rm -rf node_modules/.prisma node_modules/.pnpm/@prisma+client* node_modules/@prisma
-pnpm store prune --force 2>/dev/null || true
-pnpm install --no-frozen-lockfile
+# Force fresh Prisma Client install/generation
+rm -rf node_modules
+pnpm install
 npx prisma generate
-# Diagnostic: confirm generated client reflects schema changes
-node -e "const pc=require('@prisma/client'); const m=pc.Prisma.dmmf.datamodel.models.find(x=>x.name==='PatientRecord'); console.log('PatientRecord fields:', m ? m.fields.map(f=>f.name) : 'NOT FOUND');"
 npx prisma db push --accept-data-loss
 
 pm2 delete heurion-staging 2>/dev/null || true
