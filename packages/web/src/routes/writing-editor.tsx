@@ -314,7 +314,11 @@ export function WritingEditorPage() {
         const file = item.getAsFile();
         if (!file) continue;
         setChatUploadingFile(true);
-        try { const result = await api.uploadFile(file); setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]); } catch { /* ignore */ }
+        try {
+          const result = await api.uploadFile(file);
+          setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+          if (docId) api.addDocReference(docId, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
+        } catch { /* ignore */ }
         finally { setChatUploadingFile(false); }
       }
     }
@@ -324,7 +328,11 @@ export function WritingEditorPage() {
     const f = e.target.files?.[0];
     if (!f) return;
     setChatUploadingFile(true);
-    try { const result = await api.uploadFile(f); setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]); } catch { /* ignore */ }
+    try {
+      const result = await api.uploadFile(f);
+      setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+      if (docId) api.addDocReference(docId, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
+    } catch { /* ignore */ }
     finally { setChatUploadingFile(false); }
   };
 
