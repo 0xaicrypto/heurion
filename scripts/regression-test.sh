@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Heurion 完整回归测试 v2 — 覆盖所有用户场景
-BASE="${1:-https://heurion.org}"
+BASE="${1:-}"
+if [ -z "$BASE" ]; then
+  echo "Usage: $0 <base-url>  (e.g., http://localhost:8002 for staging)"
+  exit 1
+fi
+if ! echo "$BASE" | grep -q "localhost\|127.0.0.1\|staging"; then
+  echo "ERROR: regression tests must target localhost or staging, not production"
+  exit 1
+fi
 USERNAME="HZ"
 PASSWORD="hz123456"
 PASS=0; FAIL=0
