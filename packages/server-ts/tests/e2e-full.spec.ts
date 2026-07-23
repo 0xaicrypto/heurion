@@ -21,31 +21,38 @@ test.use({ storageState: undefined })
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(60000)
 
-  // Call API directly via Playwright's request context — no browser needed
+  // Call API directly via Playwright's request context
   const apiCtx = await request.newContext({ baseURL: BASE })
-  let jwt: string
+  let jwt: string, userId: string, displayName: string, role: string
   const loginRes = await apiCtx.post('/api/v1/auth/login', {
     data: { username: DOCTOR.username, password: DOCTOR.password },
   })
-  const body = await loginRes.json()
+  let body = await loginRes.json()
   if (body.jwt_token) {
-    jwt = body.jwt_token
+    jwt = body.jwt_token; userId = body.user_id; displayName = body.display_name; role = body.role
   } else {
     const regRes = await apiCtx.post('/api/v1/auth/register', {
       data: { username: DOCTOR.username, password: DOCTOR.password, display_name: DOCTOR.displayName },
     })
-    jwt = (await regRes.json()).jwt_token
+    body = await regRes.json()
+    jwt = body.jwt_token; userId = body.user_id; displayName = body.display_name; role = body.role
   }
   await apiCtx.dispose()
 
-  // Inject token into browser via localStorage
+  // Inject token + Zustand-compatible state into browser
   const page = await browser.newPage()
   await page.goto(`${BASE}/login`, { timeout: 10000, waitUntil: 'domcontentloaded' })
-  await page.evaluate((token) => {
-    localStorage.setItem('nexus.auth.token', token)
-    localStorage.setItem('nexus.auth.display_name', 'Dr. E2E')
-  }, jwt)
-  // Navigate to today to trigger Zustand rehydration
+  await page.evaluate(({ jwt: t, userId: uid, displayName: dn, role: r }) => {
+    // Raw API token
+    localStorage.setItem('nexus.auth.token', t)
+    localStorage.setItem('nexus.auth.user_id', uid)
+    localStorage.setItem('nexus.auth.display_name', dn)
+    // Zustand persist state (key = "nexus-auth", format from partialize)
+    localStorage.setItem('nexus-auth', JSON.stringify({
+      state: { token: t, userId: uid, displayName: dn, role: r, isAuthenticated: true },
+      version: 0,
+    }))
+  }, { jwt, userId, displayName, role })
   await page.goto(`${BASE}/app/today`, { timeout: 10000, waitUntil: 'domcontentloaded' })
   await page.waitForTimeout(1000)
   await page.context().storageState({ path: '/tmp/e2e-state.json' })
@@ -55,14 +62,17 @@ test.beforeAll(async ({ browser }) => {
 // ── 1. Authentication ───────────────────────────────────
 
 test.describe('1. Authentication', () => {
-  test('1.1 Reuse saved session', async ({ page }) => {
+  test.use({ storageState: '/tmp/e2e-state.json' })
+
+  test('1.1 Saved session stays on today', async ({ page }) => {
     await page.goto(`${BASE}/app/today`, { timeout: 10000, waitUntil: 'domcontentloaded' })
     await page.waitForTimeout(1000)
-    // Should stay on today — already authenticated
     await expect(page).toHaveURL(/\/app\/today/)
   })
+})
 
-  test('1.2 Protected routes redirect to login', async ({ page }) => {
+test.describe('1b. Unauth Redirect', () => {
+  test('1.2 Redirects to login', async ({ page }) => {
     await page.goto(`${BASE}/app/patients`)
     await page.waitForURL('**/login', { timeout: 10000 })
     await expect(page).toHaveURL(/\/login/)
