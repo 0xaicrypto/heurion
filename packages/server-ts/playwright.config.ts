@@ -18,6 +18,13 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
   },
   projects: [
-    { name: 'chromium', use: { browserName: 'chromium' } },
+    {
+      name: 'chromium',
+      use: { browserName: 'chromium' },
+      // Fallback DNS override if /etc/hosts not writable on VPS
+      launchOptions: {
+        args: ['--host-rules=MAP staging.heurion.org localhost'],
+      },
+    },
   ],
 })
