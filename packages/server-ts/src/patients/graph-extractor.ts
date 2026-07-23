@@ -35,19 +35,19 @@ export function extractEntities(text: string): ClinicalEntity[] {
     }
   }
 
-  // Lab values
-  const labPattern = /([A-Za-z\u4e00-\u9fa5]+)\s*[：:]\s*(\d+\.?\d*)\s*([a-zA-Z/%]+)?/g
-  for (const m of text.matchAll(labPattern)) {
+  // Lab values — match WORD VALUE UNIT format
+  for (const m of text.matchAll(/([A-Za-z\u4e00-\u9fa5]{2,})\s*[：:]\s*(\d+\.?\d*)\s*([a-zA-Z/%]*)?/g)) {
     entities.push({ type: 'lab_result', content: `${m[1]} ${m[2]}${m[3] || ''}`, confidence: 0.9 })
   }
+  // Lab values without colon: CEA 3.2, WBC 7.5
+  for (const m of text.matchAll(/\b(CEA|WBC|CRP|Hb|PLT|ALT|AST|BUN|Cr|Glucose|血糖|白细胞|血小板)\s+(\d+\.?\d*)\s*([a-zA-Z/%]*)?/gi)) {
+    entities.push({ type: 'lab_result', content: `${m[1]} ${m[2]}${m[3] || ''}`, confidence: 0.85 })
+  }
 
-  // Imaging
-  if (/(CT|MRI|PET|X-ray|超声|CT扫描|核磁|PET-CT)/i.test(text)) {
-    const nodMatch = text.match(/(\d+\.?\d*\s*(?:mm|cm|毫米|厘米)?\s*(?:nodule|结节|mass|肿块|lesion|病灶))/i)
-    if (nodMatch) entities.push({ type: 'imaging', content: nodMatch[0], confidence: 0.85 })
-
-    const effMatch = text.match(/(no|without|未见|无)\s*(pleural|胸膜|心包)?\s*(effusion|积液|渗出)/i)
-    if (effMatch) entities.push({ type: 'imaging', content: effMatch[0], confidence: 0.8 })
+  // Imaging — nodule/mass with size
+  for (const m of text.matchAll(/(?:(\d+\.?\d*\s*(?:mm|cm|毫米|厘米))\s*)?(nodule|结节|mass|肿块|lesion|病灶)(?:\s*(\d+\.?\d*\s*(?:mm|cm|毫米|厘米)))?/gi)) {
+    const size = m[1] || m[3] || ''
+    entities.push({ type: 'imaging', content: `${m[2]}${size ? ' ' + size : ''}`, confidence: 0.85 })
   }
 
   // EGFR/mutation
