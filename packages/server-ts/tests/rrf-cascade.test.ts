@@ -17,8 +17,7 @@ describe('P7 — RRF Fusion', () => {
 
     const merged = rrfFusion([sqlResults, vectorResults, graphResults], 10)
     expect(merged.length).toBeGreaterThan(0)
-    // SQL patient info should rank high (low rank number = high priority)
-    expect(merged[0].source).toBe('sql')
+    expect(merged[0].sources).toContain('sql')
   })
 
   test('deduplicates by content', () => {
@@ -30,7 +29,7 @@ describe('P7 — RRF Fusion', () => {
     ]
     const merged = rrfFusion([results1, results2], 10)
     expect(merged.length).toBe(1)
-    expect(merged[0].score).toBeGreaterThan(1) // RRF score merge
+    expect(merged[0].sources.length).toBe(2)
   })
 
   test('respects topK limit', () => {
