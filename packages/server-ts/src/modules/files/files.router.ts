@@ -18,19 +18,23 @@ export async function filesRouter(app: FastifyInstance) {
     const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', request.user!.userId, 'uploads')
     fs.mkdirSync(dir, { recursive: true })
 
-    // Check for existing file with same hash (dedup)
-    const existing = await (prisma as any).fileIndex.findFirst({
-      where: { userId: request.user!.userId, sha256 },
-    })
-    if (existing && !existing.deletedAt) {
-      return {
-        file_id: existing.id,
-        name: data.filename,
-        mime: data.mimetype,
-        size_bytes: existing.sizeBytes,
-        patient_hash: (data.fields as any)?.patient_hash?.value || existing.patientHash || null,
-        dedup: true,
+    // Try dedup via FileIndex (may not exist in older DBs)
+    try {
+      const existing = await (prisma as any).fileIndex.findFirst({
+        where: { userId: request.user!.userId, sha256 },
+      })
+      if (existing && !existing.deletedAt) {
+        return {
+          file_id: existing.id,
+          name: data.filename,
+          mime: data.mimetype,
+          size_bytes: existing.sizeBytes,
+          patient_hash: (data.fields as any)?.patient_hash?.value || existing.patientHash || null,
+          dedup: true,
+        }
       }
+    } catch {
+      // FileIndex table not available — fall through to normal upload
     }
 
     const fileId = `${Date.now()}_${data.filename}`
