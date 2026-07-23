@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Calendar, Clock, Trash2 } from 'lucide-react';
+import { Calendar, Clock, Trash2, Download, Link2 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api-client';
 import { Alert, Button, Card, Skeleton, Badge } from '@/components/ui';
@@ -56,6 +56,18 @@ export function SchedulePage() {
           <Calendar size={20} className="text-text-secondary" />
           <h1 className="text-lg font-semibold text-text-primary">Schedule</h1>
           <Badge variant="default">{tasks.length}</Badge>
+          <div className="ml-auto flex gap-2">
+            <a href={api.getCalendarExportUrl()} target="_blank" rel="noreferrer">
+              <Button size="sm" variant="ghost">
+                <Download size={14} className="mr-1" /> Export .ics
+              </Button>
+            </a>
+            <a href={api.getCalendarSubscribeUrl()} target="_blank" rel="noreferrer">
+              <Button size="sm" variant="ghost">
+                <Link2 size={14} className="mr-1" /> Subscribe
+              </Button>
+            </a>
+          </div>
         </div>
 
         {loading ? (

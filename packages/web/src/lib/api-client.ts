@@ -535,6 +535,22 @@ class ApiClient {
     return this.fetch(`/api/v1/research/studies/${studyId}/assessments/${visitId}/complete`, { method: 'POST', body: JSON.stringify({ notes }) });
   }
 
+  async importProtocol(studyId: string, text: string): Promise<{study_id: string; protocol: string}> {
+    return this.fetch(`/api/v1/research/studies/${studyId}/import-protocol`, { method: 'POST', body: JSON.stringify({ text }) });
+  }
+
+  async extractRules(studyId: string, text: string): Promise<{study_id: string; rules: Array<{category: string; rule: string}>; status: {total: number; confirmed: number}}> {
+    return this.fetch(`/api/v1/research/studies/${studyId}/extract-rules`, { method: 'POST', body: JSON.stringify({ text }) });
+  }
+
+  async confirmRule(studyId: string, ruleId: string): Promise<{rule: {id: string; confirmed: boolean}}> {
+    return this.fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}/confirm`, { method: 'POST' });
+  }
+
+  async getProtocolRules(studyId: string): Promise<{rules: Array<{id: string; category: string; rule: string; confirmed: boolean}>; status: {total: number; confirmed: number}}> {
+    return this.fetch(`/api/v1/research/studies/${studyId}/protocol-rules`);
+  }
+
   /* ────────────────────────── skills ────────────────────────── */
 
   async listSkills(): Promise<{skills: Array<{name: string; title: string; description: string; version: string; author: string; enabled?: boolean}>}> {
@@ -674,6 +690,38 @@ class ApiClient {
 
   async getFacts(): Promise<{facts: Array<{id: string; category: string; importance: number; content: string; count: number; createdAt: number; updatedAt: number; lastSeenAt: number}>}> {
     return this.fetch('/api/v1/facts');
+  }
+
+  /* ────────────────────────── calendar ────────────────────────── */
+
+  getCalendarExportUrl(): string {
+    return `/api/v1/calendar/export.ics`;
+  }
+
+  getCalendarSubscribeUrl(): string {
+    return `/api/v1/calendar/subscribe-url`;
+  }
+
+  /* ────────────────────────── memory import/export ────────────────────────── */
+
+  async exportMemory(): Promise<{exported_at: string; facts: number; episodes: number; knowledge: number}> {
+    return this.fetch('/api/v1/memory/export');
+  }
+
+  async importMemory(data: {facts?: object[]; episodes?: object[]}): Promise<{imported: number}> {
+    return this.fetch('/api/v1/memory/import', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  /* ────────────────────────── chat projection ────────────────────────── */
+
+  async getChatProjection(): Promise<{budget: Array<{layer: string; tokens: number; items: number}>}> {
+    return this.fetch('/api/v1/chat/projection');
+  }
+
+  /* ────────────────────────── feedback ────────────────────────── */
+
+  async sendFeedback(data: {kind: string; message: string; metadata?: Record<string,unknown>}): Promise<{ok: boolean}> {
+    return this.fetch('/feedback', { method: 'POST', body: JSON.stringify(data) });
   }
 
   /* ────────────────────────── sandbox ────────────────────────── */
