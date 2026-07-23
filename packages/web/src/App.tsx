@@ -20,6 +20,9 @@ import { ResearchDetailPage } from '@/routes/research-detail';
 import { WritingPage } from '@/routes/writing';
 import { WritingEditorPage } from '@/routes/writing-editor';
 import { SkillsPage } from '@/routes/skills';
+import { FilesPage } from '@/routes/files';
+import { SchedulePage } from '@/routes/schedule';
+import { ExportPage } from '@/routes/export-data';
 import { PluginsPage } from '@/routes/plugins';
 import { KnowledgePage } from '@/routes/knowledge';
 import { useAuthStore } from '@/stores/auth';
@@ -160,6 +163,30 @@ export default function App() {
             element={
               <RequireAuth>
                 <KnowledgePage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/files"
+            element={
+              <RequireAuth>
+                <FilesPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/schedule"
+            element={
+              <RequireAuth>
+                <SchedulePage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/export"
+            element={
+              <RequireAuth>
+                <ExportPage />
               </RequireAuth>
             }
           />

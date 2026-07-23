@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
+import { getUserContext } from '../chat/user-context'
 
 /**
  * Stub endpoints that proxy was forwarding to Python.
@@ -65,5 +66,18 @@ export async function stubRouter(app: FastifyInstance) {
   // ── Feedback ──
   app.post('/feedback', async () => {
     return { ok: true }
+  })
+
+  // ── Knowledge & Facts API ──
+  app.get('/api/v1/knowledge', async (request: any) => {
+    const ctx = getUserContext(request.user!.userId)
+    return { articles: ctx.knowledge.all() }
+  })
+  app.get('/api/v1/facts', async (request: any) => {
+    const ctx = getUserContext(request.user!.userId)
+    return { facts: ctx.facts.all() }
+  })
+  app.post('/api/v1/report/pdf', async (request: any) => {
+    return { path: '/tmp/report.pdf', bytes: 0, created_at: Math.floor(Date.now()/1000), patient_hash: request.body?.patient_hash || '' }
   })
 }

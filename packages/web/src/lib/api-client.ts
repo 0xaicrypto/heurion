@@ -666,6 +666,16 @@ class ApiClient {
     } finally { try { reader.releaseLock(); } catch { /* ignore */ } }
   }
 
+  /* ────────────────────────── knowledge & facts ────────────────────────── */
+
+  async getKnowledge(): Promise<{articles: Array<{id: string; title: string; content: string; sources: string[]; version: number; status: string; staleBecause?: string[]; createdAt: number; updatedAt: number}>}> {
+    return this.fetch('/api/v1/knowledge');
+  }
+
+  async getFacts(): Promise<{facts: Array<{id: string; category: string; importance: number; content: string; count: number; createdAt: number; updatedAt: number; lastSeenAt: number}>}> {
+    return this.fetch('/api/v1/facts');
+  }
+
   /* ────────────────────────── sandbox ────────────────────────── */
 
   async executeSandbox(language: string, code: string): Promise<{ok: boolean; stdout: string; stderr: string; runtime_ms: number; language: string; error: string}> {
