@@ -28,7 +28,7 @@ export async function filesRouter(app: FastifyInstance) {
         name: data.filename,
         mime: data.mimetype,
         size_bytes: existing.sizeBytes,
-        patient_hash: data.fields?.patient_hash?.value || existing.patientHash || null,
+        patient_hash: (data.fields as any)?.patient_hash?.value || existing.patientHash || null,
         dedup: true,
       }
     }
