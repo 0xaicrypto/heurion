@@ -38,8 +38,10 @@ npx prisma generate
 rm -f staging.db staging.db-journal 2>/dev/null || true
 npx prisma db push --accept-data-loss
 
-# Start staging server
+# Start staging server (kill any previous process holding port)
 pm2 delete heurion-staging 2>/dev/null || true
+kill $(lsof -ti:8002) 2>/dev/null || fuser -k 8002/tcp 2>/dev/null || true
+sleep 2
 SERVER_PORT=8002 pm2 start npx --name heurion-staging -- tsx src/main.ts
 pm2 save
 
