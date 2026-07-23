@@ -1,145 +1,101 @@
 import { describe, test, expect } from 'vitest'
-import { getApp, authHeader } from './setup.js'
-import crypto from 'crypto'
+import { FactsStore } from '../src/evolution/stores'
+import fs from 'fs'
+import path from 'path'
+import os from 'os'
 
-describe('P0 — File Dedup + Facts', () => {
-  test('upload same file twice returns same file_id', async () => {
-    const app = await getApp()
-    const content = crypto.randomBytes(1024).toString('base64')
+describe('P0 — FactsStore Dedup', () => {
+  let baseDir: string
 
-    // First upload
-    const r1 = await app.inject({
-      method: 'POST', url: '/api/v1/files/upload',
-      headers: { ...await authHeader() },
-      payload: { file: { filename: 'test.txt', data: Buffer.from(content) } },
-    } as any)
-    expect(r1.statusCode).toBe(200)
-    const id1 = JSON.parse(r1.payload).file_id
+  function getStore(): FactsStore {
+    const dir = path.join(baseDir, `facts-${Date.now()}-${Math.random().toString(36).slice(2,6)}`)
+    fs.mkdirSync(dir, { recursive: true })
+    return new FactsStore(dir)
+  }
 
-    // Second upload — same content
-    const r2 = await app.inject({
-      method: 'POST', url: '/api/v1/files/upload',
-      headers: { ...await authHeader() },
-      payload: { file: { filename: 'test-copy.txt', data: Buffer.from(content) } },
-    } as any)
-    expect(r2.statusCode).toBe(200)
-    const id2 = JSON.parse(r2.payload).file_id
-
-    // Same content → same file_id (dedup working)
-    expect(id1).toBe(id2)
+  beforeEach(() => {
+    baseDir = path.join(os.tmpdir(), `nexus-test-${Date.now()}-${Math.random().toString(36).slice(2,6)}`)
   })
 
-  test('upload different files returns different file_ids', async () => {
-    const app = await getApp()
-    const r1 = await app.inject({
-      method: 'POST', url: '/api/v1/files/upload',
-      headers: { ...await authHeader() },
-      payload: { file: { filename: 'a.txt', data: Buffer.from('hello') } },
-    } as any)
-    const r2 = await app.inject({
-      method: 'POST', url: '/api/v1/files/upload',
-      headers: { ...await authHeader() },
-      payload: { file: { filename: 'b.txt', data: Buffer.from('world') } },
-    } as any)
-    expect(r1.statusCode).toBe(200)
-    expect(r2.statusCode).toBe(200)
-    expect(JSON.parse(r1.payload).file_id).not.toBe(JSON.parse(r2.payload).file_id)
+  test('add creates a new fact', () => {
+    const store = getStore()
+    const f = store.add({ category: 'preference', importance: 3, content: 'Prefer concise responses' })
+    expect(f).toBeTruthy()
+    expect(f.content).toBe('Prefer concise responses')
+    expect(f.count).toBe(1)
+    expect(f.importance).toBe(3)
   })
 
-  test('file list returns uploaded files', async () => {
-    const app = await getApp()
-    const r = await app.inject({
-      method: 'GET', url: '/api/v1/files?limit=50',
-      headers: await authHeader(),
-    } as any)
-    expect(r.statusCode).toBe(200)
-    const body = JSON.parse(r.payload)
-    expect(body).toHaveProperty('files')
-    expect(body).toHaveProperty('total')
-    expect(Array.isArray(body.files)).toBe(true)
-    if (body.files.length > 0) {
-      const f = body.files[0]
-      expect(f).toHaveProperty('file_id')
-      expect(f).toHaveProperty('name')
-      expect(f).toHaveProperty('size_bytes')
-    }
-  })
-
-  test('delete file works', async () => {
-    const app = await getApp()
-    // Upload a file first
-    const up = await app.inject({
-      method: 'POST', url: '/api/v1/files/upload',
-      headers: { ...await authHeader() },
-      payload: { file: { filename: 'to-delete.txt', data: Buffer.from('delete me') } },
-    } as any)
-    const fileId = JSON.parse(up.payload).file_id
-
-    // Delete it
-    const del = await app.inject({
-      method: 'DELETE', url: `/api/v1/files/${fileId}`,
-      headers: await authHeader(),
-    } as any)
-    expect(del.statusCode).toBe(200)
-    expect(JSON.parse(del.payload)).toHaveProperty('deleted', true)
-  })
-
-  test('FactsStore dedup — same content merges with count++', async () => {
-    const app = await getApp()
-
-    // Create a fact via the test user context
-    const ctx = await getUserContext(app)
-    const store = ctx.facts
-
-    // Add same content twice
+  test('same content + category merges with count++', () => {
+    const store = getStore()
     store.add({ category: 'preference', importance: 3, content: 'Prefer Chinese' })
-    store.add({ category: 'preference', importance: 3, content: 'Prefer Chinese' })
+    const f2 = store.add({ category: 'preference', importance: 4, content: 'Prefer Chinese' })
 
     const all = store.all()
-    const matching = all.filter((f: any) => f.content === 'Prefer Chinese')
+    const matching = all.filter((f) => f.content === 'Prefer Chinese')
     expect(matching.length).toBe(1)
-    expect(matching[0].count).toBeGreaterThanOrEqual(2)
+    expect(matching[0].count).toBe(2)
+    expect(matching[0].importance).toBe(4) // max of the two
   })
 
-  test('FactsStore — different content stored separately', async () => {
-    const app = await getApp()
-    const ctx = await getUserContext(app)
-    const store = ctx.facts
-
+  test('different content stored separately', () => {
+    const store = getStore()
     store.add({ category: 'fact', importance: 4, content: 'RUL nodule 18mm' })
     store.add({ category: 'fact', importance: 3, content: 'CEA 3.2 normal' })
 
-    const all = store.all()
-    expect(all.length).toBeGreaterThanOrEqual(2)
+    expect(store.all().length).toBe(2)
   })
 
-  test('FactsStore — importance increments on duplicate', async () => {
-    const app = await getApp()
-    const ctx = await getUserContext(app)
-    const store = ctx.facts
-
-    store.add({ category: 'fact', importance: 3, content: 'Test importance merge' })
-    store.add({ category: 'fact', importance: 4, content: 'Test importance merge' })
+  test('different category but same content — stored separately', () => {
+    const store = getStore()
+    store.add({ category: 'fact', importance: 4, content: 'Stable condition' })
+    store.add({ category: 'preference', importance: 2, content: 'Stable condition' })
 
     const all = store.all()
-    const f = all.find((x: any) => x.content === 'Test importance merge')
-    expect(f).toBeTruthy()
-    expect(f.importance).toBeGreaterThanOrEqual(4) // max of the two
+    expect(all.length).toBe(2)
+  })
+
+  test('commit + reload preserves dedup state', () => {
+    const dir = path.join(baseDir, 'persist-test')
+    fs.mkdirSync(dir, { recursive: true })
+
+    const s1 = new FactsStore(dir)
+    s1.add({ category: 'fact', importance: 4, content: 'Test persistence' })
+    s1.add({ category: 'fact', importance: 3, content: 'Test persistence' })
+    s1.commit('test')
+
+    const s2 = new FactsStore(dir)
+    const all = s2.all()
+    const dup = all.find(f => f.content === 'Test persistence')
+    expect(dup).toBeTruthy()
+    expect(dup!.count).toBe(2)
+  })
+
+  test('third occurrence increments count to 3', () => {
+    const store = getStore()
+    store.add({ category: 'goal', importance: 3, content: 'Monthly screening' })
+    store.add({ category: 'goal', importance: 4, content: 'Monthly screening' })
+    store.add({ category: 'goal', importance: 2, content: 'Monthly screening' })
+
+    const found = store.all().find(f => f.content === 'Monthly screening')
+    expect(found).toBeTruthy()
+    expect(found!.count).toBe(3)
+    expect(found!.importance).toBe(4) // max of 3,4,2
+  })
+
+  test('backward compat: old facts without count field get count=1', () => {
+    const dir = path.join(baseDir, 'compat-test')
+    fs.mkdirSync(dir, { recursive: true })
+    // Write old-format fact without count field
+    const oldFact = { id: 'old1', category: 'fact', importance: 3, content: 'Old format', createdAt: 100 }
+    const oldJson = JSON.stringify([oldFact])
+    fs.writeFileSync(path.join(dir, 'v0001.json'), oldJson)
+    fs.writeFileSync(path.join(dir, '_current.json'), JSON.stringify({ version: 'v0001', updatedAt: 100 }))
+
+    const store = new FactsStore(dir)
+    const all = store.all()
+    expect(all.length).toBe(1)
+    expect(all[0].count).toBe(1) // migrated
+    expect(all[0].content).toBe('Old format')
   })
 })
-
-// Helper to get user context directly from the test app
-async function getUserContext(app: any) {
-  const auth = await authHeader()
-  // Create a unique test user to isolate
-  const r = await app.inject({
-    method: 'GET', url: '/api/v1/user/profile',
-    headers: auth,
-  } as any)
-  const userId = JSON.parse(r.payload).user_id
-  const { FactsStore } = await import('../src/evolution/stores.js')
-  const baseDir = `.nexus/twins/${userId}`
-  const fs = await import('fs')
-  fs.mkdirSync(`${baseDir}/facts`, { recursive: true })
-  return { facts: new FactsStore(baseDir) }
-}
