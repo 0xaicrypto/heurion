@@ -1,7 +1,7 @@
-# Heurion 产品设计 v2.1 — 个人知识库 + 持续学习 Agent
+# Heurion 产品设计 v2.2 — 个人知识库 + 持续学习 Agent + 自主进化
 
-**Status:** Design proposal (revised)  
-**更新:** 2026-07-20  
+**Status:** Design proposal (v2.2 — extended)  
+**更新:** 2026-07-23  
 
 ---
 
@@ -314,8 +314,200 @@ interface KnowledgeSource {
 | **P6** | 向量检索: sqlite-vec 集成 | — | 语义搜索 Facts/Knowledge | 🔴 |
 | **P7** | GraphRAG: 混合检索 + RRF融合 | — | 多路融合 + 重排 | 🔴 |
 | **P8** | Knowledge 级联更新 | 文章 stale 状态 UI | 依赖追踪 + 自动标记 | 🔴 |
+| **P9** | **外部化学习 (Nightly Agent)** | Review Inbox (待审核 Facts) | Gaps 队列 + 夜间搜索 + 双轨抽取 | ⭐ |
+| **P10** | **动态工具引擎 (Auto-Tool)** | 自适应格式提示 + ToolStore | Coding Agent + 沙盒 + 工具注册 | ⭐ |
 
 ---
+
+## 9. P9 — 外部化学习（Nightly Learning Agent）
+
+### 9.1 问题
+
+当前系统只从用户主动交互中学习（对话、上传）。如果用户的知识库在某个领域有盲区，系统无法自主填补。
+
+### 9.2 架构：盲区探测 → 异步检索 → 人机确认
+
+```
+用户查询
+  ↓
+P3 Router 检索
+  ├─ 命中 → 正常返回
+  └─ 未命中（无相关实体/知识）→ 标记为 KnowledgeGap
+       ↓
+   KnowledgeGap Queue (Prisma model)
+       ↓ (夜间或闲时)
+   Nightly Agent 消费队列
+       ├─ 搜索: PubMed / NCCN / 用户配置的指南源
+       ├─ 下载文献 → P5 双轨抽取 → 候选 Facts
+       └─ 存入 PendingFactsStore (status='pending')
+            ↓
+   用户次日登录 → Today Dashboard Inbox
+    "昨晚发现 3 个知识盲区，为您提取了 5 条候选 Facts"
+    [确认全部] [逐条审核] [忽略]
+        ↓ 确认
+    迁移到 FactsStore (status='active') → 触发 Knowledge 合成
+```
+
+### 9.3 安全约束
+
+| 约束 | 说明 |
+|---|---|
+| **搜索源白名单** | 仅限配置的学术/临床源（PubMed, NCCN, UpToDate），不调用通用搜索 |
+| **Pending 隔离** | PendingFact 独立存储，不与 Active Facts 混合 |
+| **来源追溯** | 每条候选 Fact 标注 `source_url` + `source_excerpt` + `extraction_confidence` |
+| **分级审核** | 高置信度+低风险 → 一键确认；低置信度+高风险 → 强制校验原文 |
+| **不自动生效** | 用户未确认的 Pending Facts 永远不会进入知识库 |
+
+### 9.4 数据结构
+
+```typescript
+interface KnowledgeGap {
+  id: string
+  userId: string
+  query: string          // 原始查询
+  context?: string       // 上下文（哪个患者、哪篇文章）
+  detectedAt: string
+  resolvedAt?: string    // 夜間 Agent 处理后
+  candidateCount?: number
+  status: 'pending' | 'resolved' | 'dismissed'
+}
+
+interface PendingFact {
+  id: string
+  userId: string
+  gapId: string
+  category: 'preference' | 'fact' | 'constraint' | 'goal' | 'context'
+  content: string
+  importance: number      // 1-5
+  confidence: number      // 0-1, 抽取置信度
+  risk: 'low' | 'medium' | 'high'
+  sourceUrl: string
+  sourceExcerpt: string
+  status: 'pending' | 'confirmed' | 'rejected'
+  createdAt: string
+}
+```
+
+### 9.5 UI：Review Inbox
+
+```
+┌──────────────────────────────────────────┐
+│  📨 Review Inbox (3 pending)      [全部]  │
+├──────────────────────────────────────────┤
+│  🟢 Low Risk                             │
+│  "NSCLC NCCN 指南已更新至 v5.2026"        │
+│  来源: nccn.org/guidelines/nsclc         │
+│  置信度: 0.95  风险: low                 │
+│  [✓ 确认]  [✗ 拒绝]                      │
+│                                          │
+│  🟡 Medium Risk                          │
+│  "Osimertinib 推荐剂量 80mg daily"       │
+│  来源: pubmed.ncbi.nlm.nih.gov/38901234   │
+│  置信度: 0.82  风险: medium              │
+│  [查看原文] [✓ 确认] [✗ 拒绝]             │
+│                                          │
+│  🔴 High Risk                            │
+│  "PD-L1 ≥ 50% 单药免疫优于联合化疗"       │
+│  来源: pubmed.ncbi.nlm.nih.gov/38912345   │
+│  置信度: 0.71  风险: high                │
+│  ⚠️  请校验原文后手动确认                  │
+│  [查看原文] [手动确认] [✗ 拒绝]            │
+└──────────────────────────────────────────┘
+```
+
+---
+
+## 10. P10 — 动态工具引擎（Auto-Tool Creation）
+
+### 10.1 问题
+
+当前系统处理文件格式是硬编码的（PDF/Word/DICOM）。遇到未知格式直接报错，无法自适应。
+
+### 10.2 架构：异常触发 → Coding Agent → 沙盒测试 → 工具注册
+
+```
+文件上传
+  ↓
+P0 文件处理管道
+  ├─ 已知格式 → 正常提取
+  └─ UnsupportedFormatException → 触发 Auto-Tool Pipeline
+       ↓
+   Coding Agent (LLM + 文件样本)
+       1. 分析文件头特征、magic bytes
+       2. 推断格式 → 编写 Python 解析脚本
+       3. 沙盒试运行 (P10 sandbox, 30s timeout)
+          ├─ 失败 → 读 stderr → Self-Correction (最多 3 轮)
+          └─ 成功 → 提取出结构化数据
+       ↓
+   工具封装
+       1. 生成 Tool Description（MCP 兼容）
+       2. 存入 ToolStore (Prisma)
+       3. Router 热更新可用工具列表
+       ↓
+   下次同类文件 → Router 自动路由到新工具
+```
+
+### 10.3 安全约束
+
+| 约束 | 说明 |
+|---|---|
+| **沙盒隔离** | 复用 `POST /api/v1/sandbox/execute` — 30s timeout, 64KB output, 独立 tempdir |
+| **多重样本验证** | 脚本必须在 ≥3 个不同样本上通过才能注册为工具 |
+| **无网络权限** | Coding Agent 生成的脚本在沙盒中无网络访问 |
+| **人工审核开关** | 生成的工具默认 `disabled`，需用户在 Plugins 页手动启用 |
+
+### 10.4 数据结构
+
+```typescript
+interface ToolRecord {
+  id: string
+  userId: string
+  name: string              // "dicom_private_tag_parser"
+  description: string        // "Parses private DICOM tags from Siemens CT scanners"
+  language: 'python' | 'bash'
+  script: string             // The actual code
+  inputFormat: string        // e.g., ".dcm" or magic bytes signature
+  createdFrom: string        // Source file that triggered creation
+  testedOn: string[]         // File IDs of test samples
+  testResults: Array<{ fileId: string; passed: boolean; output?: string }>
+  successRate: number        // 0-1
+  enabled: boolean           // Default false until reviewed
+  createdAt: string
+}
+```
+
+### 10.5 P3 Router 扩展
+
+```
+P3 Router
+  ↓ Load tools from ToolStore WHERE enabled=true
+  ↓ Add to available routes:
+  │
+  ├─ SQL route (patients, studies, etc.)
+  ├─ Vector route (Facts, Knowledge)
+  ├─ Graph route (clinical_graph)
+  └─ Tool route (dynamic, per-user)
+       ↓ Match: input file signature → tool
+       ↓ Return: extracted structured data
+```
+
+---
+
+## 11. 实施路线图（v2.2 全量）
+
+| Phase | 内容 | 前/后端 | 状态 |
+|---|---|---|---|
+| **P0** | Facts去重 + 文件去重 | ✅ 已部署 | ✅ |
+| **P1** | KnowledgeStore + Takeaway | ✅ 已部署 | ✅ |
+| **P2** | Persona动态合成 + 文件注入Chat | ✅ 已部署 | ✅ |
+| **P3** | Query Router | ⬜ | 🔴 |
+| **P4** | 上下文压缩 | ⬜ | 🔴 |
+| **P5** | 双轨图谱抽取 (NLP+LLM) | ⬜ | 🔴 |
+| **P6** | 向量检索 (sqlite-vec) | ⬜ | 🔴 |
+| **P7** | GraphRAG 融合 (RRF) | ⬜ | 🔴 |
+| **P8** | Knowledge 级联更新 | ⬜ | 🔴 |
+| **P9** | 外部化学习 (Nightly Agent) | ⭐ | 🔴 |
+| **P10** | 动态工具引擎 (Auto-Tool) | ⭐ | 🔴 |
 
 ## 9. UI/UX 设计
 
