@@ -28,7 +28,6 @@ export function classifyQuery(query: string): QueryIntent {
   // SQL — patient demographic queries
   if (/(患者|patient)/i.test(q) && /(年龄|性别|名字|姓名|主诉|多大|叫什么|age|sex|name|gender)/i.test(q)) return 'sql'
   if (/(list|列表|有几个|count|how many|哪些|all)/i.test(q) && /(patient|患者)/i.test(q)) return 'sql'
-  if (sqlPatterns.some(p => p.test(q))) return 'sql'
 
   // Semantic/clinical — these need vector search of Knowledge/Facts
   const vectorPatterns = [
