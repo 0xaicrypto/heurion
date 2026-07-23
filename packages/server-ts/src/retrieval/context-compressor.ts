@@ -35,37 +35,30 @@ export function rankByAttention<T extends { importance: number; lastSeenAt: numb
 
 /**
  * Deduplicate clinical findings by merging same entity across time.
- * "RUL nodule 18mm (CT 4/10)" + "RUL nodule 18mm (CT 7/15)" → "RUL nodule: 18mm (2 scans)"
  */
 export function deduplicateFindings(findings: string[]): string[] {
   if (findings.length === 0) return []
-
-  const entityMap = new Map<string, { value: string; count: number; dates: string[] }>()
+  const groups = new Map<string, string[]>()
 
   for (const f of findings) {
-    // Extract entity name (before first parenthesis or colon)
-    const entity = f.split(/[(:]/)[0].trim().toLowerCase()
-    const existing = entityMap.get(entity)
-    if (existing) {
-      existing.count++
-      const dateMatch = f.match(/\(([^)]+)\)/)
-      if (dateMatch) existing.dates.push(dateMatch[1])
-    } else {
-      const dateMatch = f.match(/\(([^)]+)\)/)
-      entityMap.set(entity, {
-        value: entity.replace(/\b\w/g, c => c.toUpperCase()),
-        count: 1,
-        dates: dateMatch ? [dateMatch[1]] : [],
-      })
-    }
+    // Extract key: first word(s) before numbers
+    const key = f.replace(/\s*\(.*/, '').replace(/\s*\d+.*$/, '').trim().toLowerCase()
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(f)
   }
 
-  return Array.from(entityMap.entries()).map(([key, info]) => {
-    if (info.count > 1) {
-      return `${info.value}: ${findings.find(f => f.toLowerCase().startsWith(key))?.match(/\d+[a-z]*\s*(?:mm|cm|mg|ng)?/i)?.[0] || ''} (${info.count} scans)`
+  const result: string[] = []
+  for (const [key, items] of groups) {
+    if (items.length === 1) {
+      result.push(items[0])
+    } else {
+      // Extract the value (number + unit) from first item
+      const valueMatch = items[0].match(/\d+[a-z]*\s*(?:mm|cm|mg|ng|kg|g|mL|L|%|°)?/i)
+      const value = valueMatch ? valueMatch[0] : ''
+      result.push(`${key}: ${value} (${items.length} entries)`)
     }
-    return findings.find(f => f.toLowerCase().startsWith(key)) || info.value
-  })
+  }
+  return result
 }
 
 /**
