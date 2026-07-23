@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
-import { getUserContext } from './user-context.js'
+import { getUserContext, buildPersona, buildFileContext } from './user-context.js'
 import { deepseekStream, getApiKey } from '../../common/llm.js'
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
 import fs from 'fs'
@@ -93,10 +93,31 @@ export async function chatRouter(app: FastifyInstance) {
         fullMessage = '## Patient Roster\nNo patients registered yet.\n\n' + fullMessage
       }
 
+      // Inject recent file context for the patient
+      if (patientHash) {
+        try {
+          const recentFiles = await (prisma as any).fileIndex.findMany({
+            where: { userId, patientHash, deletedAt: null },
+            orderBy: { createdAt: 'desc' },
+            take: 5,
+          })
+          if (recentFiles.length > 0) {
+            const fileCtx = buildFileContext(recentFiles)
+            send({ type: 'context_info', text: fileCtx, kind: 'file_context' })
+            fullMessage = fileCtx + '\n\n' + fullMessage
+          }
+        } catch {
+          // FileIndex table may not exist yet
+        }
+      }
+
+      // Build dynamic persona from user's accumulated knowledge
+      const persona = buildPersona(ctx.facts, ctx.knowledge)
+
       // #2: Weighted attention context projection
       const projected = await ctx.orchestrator['projection'].project({
         userId, patientHash, sessionId: sid,
-        persona: 'You are Heurion, a clinical AI assistant for oncology research. Be concise, evidence-based, and reference relevant patient data and accumulated knowledge. Only reference patients that appear in the Patient Roster above. Do not invent or hallucinate patient names, diagnoses, or clinical details.',
+        persona,
         facts: ctx.facts.all(), episodes: ctx.episodes.all(), skills: ctx.skills.all(),
       })
       send({ type: 'context_info', text: projected.budget.map((b: any) => `${b.layer}: ${b.tokens}t/${b.items}i`).join(' | '), kind: 'projection' })
