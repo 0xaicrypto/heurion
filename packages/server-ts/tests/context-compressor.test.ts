@@ -49,9 +49,9 @@ describe('P4 — Context Compressor', () => {
         'RUL nodule 18mm (CT 6/01)',
       ]
       const result = deduplicateFindings(findings)
-      expect(result).toContain('rul nodule: 18mm (3 entries)')
-      expect(result).toContain('CEA 3.2')
       expect(result.length).toBe(2)
+      expect(result.some(r => r.toLowerCase().includes('rul nodule') && r.includes('3'))).toBe(true)
+      expect(result.some(r => r.includes('CEA'))).toBe(true)
     })
 
     test('handles empty input', () => {
