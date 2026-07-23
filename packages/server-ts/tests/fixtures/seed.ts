@@ -48,13 +48,8 @@ async function main() {
       age: 45,
       sex: 'M',
       chief_complaint:
-        '[diagnosis] Non-small cell lung adenocarcinoma, Stage IIIA (T2N2M0)\n' +
-        '[imaging] CT chest: 4.2cm RUL mass with mediastinal adenopathy\n' +
-        '[pathology] Adenocarcinoma, EGFR exon 19 deletion\n' +
-        '[medication] Osimertinib 80mg PO daily, completed 4 cycles cisplatin/pemetrexed\n' +
-        '[response] Partial response per RECIST 1.1 (-38% target lesions)\n' +
-        '[history] 30 pack-year smoking history, cough + hemoptysis x 3 months\n' +
-        '[plan] Continue TKI, re-stage CT in 3 months',
+        'Persistent cough with hemoptysis, weight loss. Suspected lung malignancy.\n' +
+        '[plan] Re-stage CT in 3 months. Continue current management.',
     }),
     token,
   })
@@ -70,13 +65,8 @@ async function main() {
       age: 62,
       sex: 'F',
       chief_complaint:
-        '[diagnosis] Invasive ductal carcinoma, left breast, ER+/PR+/HER2-, Stage IIB\n' +
-        '[imaging] Mammogram: 3.1cm irregular mass UOQ left breast\n' +
-        '[pathology] IDC grade 2, ER 90%+, PR 70%+, HER2 1+, Ki-67 15%\n' +
-        '[surgery] Breast-conserving surgery + SLNB (1/3 nodes positive)\n' +
-        '[medication] Letrozole 2.5mg PO daily\n' +
-        '[treatment] Adjuvant RT 50 Gy/25 fractions completed\n' +
-        '[plan] No evidence of recurrence at 6 months',
+        'Palpable left breast mass found on self-exam. Confirmed malignancy.\n' +
+        '[plan] Continue letrozole, follow-up in 6 months.',
     }),
     token,
   })

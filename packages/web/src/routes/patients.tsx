@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ChevronRight, Paperclip, Plus, Search, Trash2, User } from 'lucide-react';
+import { ArrowLeft, ChevronRight, FileText, Paperclip, Plus, Search, Trash2, User } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { SkillsBar } from '@/components/SkillsBar';
@@ -254,6 +254,13 @@ export function PatientSummaryPage() {
   const findings = projection?.findings || [];
   const meds = projection?.medications || [];
   const timeline = projection?.timeline || [];
+  const mr = projection?.medical_record;
+  const hasMr = mr && (
+    mr.sections.diagnosis ||
+    mr.sections.treatment_plan ||
+    mr.sections.progress_notes ||
+    mr.sections.chief_complaint
+  );
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -287,11 +294,44 @@ export function PatientSummaryPage() {
       </div>
       <PatientTabs hash={hash} active="summary" />
       <main className="space-y-6 p-6">
-        <Card className="p-6">
-          <h3 className="mb-3 font-semibold text-text-primary">{t('patient.clinicalSummary')}</h3>
-          {findings.length === 0 && meds.length === 0 ? (
+        {/* ── Medical Record Summary (primary source) ── */}
+        {hasMr ? (
+          <Card className="p-6 border-l-4 border-l-accent">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-semibold text-text-primary">
+                <FileText size={16} className="mr-2 inline text-accent" />
+                {mr!.title}
+              </h3>
+              <span className="text-xs text-text-tertiary">
+                {new Date(mr!.updated_at).toLocaleDateString()}
+              </span>
+            </div>
+            <div className="space-y-3">
+              {mr!.sections.diagnosis && (
+                <SectionBlock label="Diagnosis" content={mr!.sections.diagnosis} />
+              )}
+              {mr!.sections.treatment_plan && (
+                <SectionBlock label="Treatment Plan" content={mr!.sections.treatment_plan} />
+              )}
+              {mr!.sections.chief_complaint && (
+                <SectionBlock label="Chief Complaint" content={mr!.sections.chief_complaint} />
+              )}
+              {mr!.sections.progress_notes && (
+                <SectionBlock label="Progress Notes" content={mr!.sections.progress_notes} />
+              )}
+              {mr!.sections.physical_exam && (
+                <SectionBlock label="Physical Exam" content={mr!.sections.physical_exam.slice(0, 200)} />
+              )}
+            </div>
+          </Card>
+        ) : findings.length === 0 && meds.length === 0 ? (
+          <Card className="p-6">
+            <h3 className="mb-3 font-semibold text-text-primary">{t('patient.clinicalSummary')}</h3>
             <p className="text-sm text-text-secondary">{t('patient.noStructuredSummary')}</p>
-          ) : (
+          </Card>
+        ) : (
+          <Card className="p-6">
+            <h3 className="mb-3 font-semibold text-text-primary">{t('patient.clinicalSummary')}</h3>
             <div className="space-y-4">
               {findings.length > 0 && (
                 <div>
@@ -318,8 +358,8 @@ export function PatientSummaryPage() {
                 </div>
               )}
             </div>
-          )}
-        </Card>
+          </Card>
+        )}
 
         <Card className="p-6">
           <h3 className="mb-3 font-semibold text-text-primary">{t('patient.recentActivity')}</h3>
@@ -341,6 +381,16 @@ export function PatientSummaryPage() {
           )}
         </Card>
       </main>
+    </div>
+  );
+}
+
+function SectionBlock({ label, content }: { label: string; content: string }) {
+  const truncated = content.length > 300 ? content.slice(0, 300) + '…' : content;
+  return (
+    <div>
+      <h4 className="text-xs font-semibold uppercase text-text-tertiary mb-1">{label}</h4>
+      <p className="text-sm text-text-secondary whitespace-pre-wrap">{truncated}</p>
     </div>
   );
 }

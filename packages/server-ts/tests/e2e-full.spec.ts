@@ -88,11 +88,12 @@ test.describe('3. Patients', () => {
     await expect(page.locator('body')).toContainText(/adenocarcinoma|lung|NSCLC/i, { timeout: 8000 })
   })
 
-  test('3.3 Patient detail shows structured summary', async ({ page }) => {
+  test('3.3 Patient summary shows medical record', async ({ page }) => {
     await page.goto(`${BASE}/app/patients`)
     await page.getByText(PATIENT_NAME).first().click({ timeout: 10000 })
-    // Verify clinical summary card has findings
-    await expect(page.locator('body')).toContainText(/diagnosis|imaging|medication|therapy/i, { timeout: 8000 })
+    // Medical record should be primary data source in summary
+    await expect(page.locator('body')).toContainText(/Initial Consultation|Diagnosis|Treatment Plan/i, { timeout: 8000 })
+    await expect(page.locator('body')).toContainText(/adenocarcinoma|NSCLC|osimertinib/i, { timeout: 5000 })
   })
 
   test('3.4 Create new patient via dialog', async ({ page }) => {
@@ -224,13 +225,12 @@ test.describe('3c. Encounter (问诊)', () => {
     }
   })
 
-  test('3c.3 Encounter extracts findings into patient summary', async ({ page }) => {
-    // Go back to summary tab to verify encounter data was stored
+  test('3c.3 Summary reflects medical record as primary source after encounter', async ({ page }) => {
     await page.goto(`${BASE}/app/patients`)
     await page.getByText(PATIENT_NAME).first().click({ timeout: 10000 })
     await page.waitForTimeout(1000)
-    // Summary tab should show clinical data from previous encounters
-    await expect(page.locator('body')).toContainText(/adenocarcinoma|NSCLC|lung|EGFR|cancer/i, { timeout: 8000 })
+    // Medical record should be the primary summary, not just auto-extracted tags
+    await expect(page.locator('body')).toContainText(/Initial Consultation|Diagnosis|Treatment Plan/i, { timeout: 8000 })
   })
 })
 

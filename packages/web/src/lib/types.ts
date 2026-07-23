@@ -158,10 +158,29 @@ export interface MemoryTimelineEvent {
   timestamp: string;
 }
 
+export interface MedicalRecordSections {
+  chief_complaint?: string;
+  diagnosis?: string;
+  treatment_plan?: string;
+  physical_exam?: string;
+  history_of_present_illness?: string;
+  past_medical_history?: string;
+  family_history?: string;
+  progress_notes?: string;
+}
+
+export interface MedicalRecordSummary {
+  id: string;
+  title: string;
+  updated_at: string;
+  sections: MedicalRecordSections;
+}
+
 export interface MemoryProjection {
   findings?: MemoryFinding[];
   medications?: MemoryFinding[];
   timeline?: MemoryTimelineEvent[];
+  medical_record?: MedicalRecordSummary | null;
 }
 
 export interface ChatMessage {
