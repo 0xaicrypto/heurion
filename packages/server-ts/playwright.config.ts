@@ -18,12 +18,6 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
   },
   projects: [
-    {
-      name: 'chromium',
-      use: { browserName: 'chromium' },
-      launchOptions: {
-        args: ['--host-rules=MAP staging.heurion.org localhost'],
-      },
-    },
+    { name: 'chromium', use: { browserName: 'chromium' } },
   ],
 })

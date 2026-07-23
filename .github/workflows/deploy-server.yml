@@ -74,6 +74,7 @@ jobs:
       - name: Run Playwright E2E on staging
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
+            sudo grep -q 'staging.heurion.org' /etc/hosts 2>/dev/null || echo '127.0.0.1 staging.heurion.org' | sudo tee -a /etc/hosts
             export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
             cd ~/heurion/packages/server-ts
             npx tsx tests/fixtures/seed.ts http://localhost:8002

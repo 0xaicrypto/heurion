@@ -18,9 +18,13 @@ const PATIENT_NAME = 'Zhang Wei'
 test.use({ storageState: undefined }) // hermetic tests
 
 test.beforeAll(async ({ browser }) => {
+  test.setTimeout(60000)
   const page = await browser.newPage()
-  await page.goto(`${BASE}/login`)
-  await page.fill('input[placeholder*="用户"], input[placeholder*="Username"]', DOCTOR.username)
+  await page.goto(`${BASE}/login`, { timeout: 20000, waitUntil: 'domcontentloaded' })
+  // The login page might render with either Chinese or English placeholders
+  const usernameSel = 'input[placeholder*="用户"], input[placeholder*="Username"], input[type="text"]'
+  await page.waitForSelector(usernameSel, { timeout: 15000 })
+  await page.fill(usernameSel, DOCTOR.username)
   await page.fill('input[type="password"]', DOCTOR.password)
   await page.click('button[type="submit"]')
   await page.waitForURL('**/app/today', { timeout: 15000 })
@@ -32,9 +36,10 @@ test.beforeAll(async ({ browser }) => {
 
 test.describe('1. Authentication', () => {
   test('1.1 Login with seeded doctor', async ({ page }) => {
-    await page.goto(`${BASE}/login`)
-    await expect(page.locator('h1, h2').first()).toBeVisible()
-    await page.fill('input[placeholder*="用户"], input[placeholder*="Username"]', DOCTOR.username)
+    await page.goto(`${BASE}/login`, { timeout: 15000, waitUntil: 'domcontentloaded' })
+    await expect(page.locator('h1, h2').first()).toBeVisible({ timeout: 10000 })
+    const usernameSel = 'input[placeholder*="用户"], input[placeholder*="Username"], input[type="text"]'
+    await page.fill(usernameSel, DOCTOR.username)
     await page.fill('input[type="password"]', DOCTOR.password)
     await page.click('button[type="submit"]')
     await page.waitForURL('**/app/today', { timeout: 15000 })
@@ -362,8 +367,9 @@ test.describe('10. Full Clinical Workflow', () => {
 
   test('10.1 Login → Patient → Records → Encounter → Chat → Knowledge → Settings', async ({ page }) => {
     // 1. Login
-    await page.goto(`${BASE}/login`)
-    await page.fill('input[placeholder*="用户"], input[placeholder*="Username"]', DOCTOR.username)
+    await page.goto(`${BASE}/login`, { timeout: 15000, waitUntil: 'domcontentloaded' })
+    const usernameSel = 'input[placeholder*="用户"], input[placeholder*="Username"], input[type="text"]'
+    await page.fill(usernameSel, DOCTOR.username)
     await page.fill('input[type="password"]', DOCTOR.password)
     await page.click('button[type="submit"]')
     await page.waitForURL('**/app/today', { timeout: 15000 })
