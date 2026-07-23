@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'vitest'
+import { describe, test, expect, beforeEach } from 'vitest'
 import { FactsStore } from '../src/evolution/stores'
 import fs from 'fs'
 import path from 'path'
