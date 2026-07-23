@@ -21,15 +21,24 @@ CORS_ALLOW_ORIGINS=*
 TWIN_BASE_DIR=.nexus/staging-twins
 ENVEOF
 
-# Force fresh Prisma Client install/generation
+# Build web frontend first so Fastify can serve it on startup
+cd ~/heurion/packages/web
+pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+pnpm build
+cp -rf dist ~/heurion/packages/server-ts/web-dist
+chmod -R +rx ~/heurion/packages/server-ts/web-dist
+chmod +rx /root /root/heurion /root/heurion/packages /root/heurion/packages/web 2>/dev/null || true
+
+# Install backend deps and set up DB
+cd ~/heurion/packages/server-ts
 rm -rf node_modules
 pnpm store prune --force 2>/dev/null || true
 pnpm install
 npx prisma generate
-# Force-recreate staging database to avoid FK constraint issues from old data
 rm -f staging.db staging.db-journal 2>/dev/null || true
 npx prisma db push --accept-data-loss
 
+# Start staging server
 pm2 delete heurion-staging 2>/dev/null || true
 SERVER_PORT=8002 pm2 start npx --name heurion-staging -- tsx src/main.ts
 pm2 save
@@ -41,15 +50,7 @@ npx tsx scripts/set-admin.ts 2>/dev/null || true
 # Pre-install Playwright browser one-time for E2E tests
 npx playwright install chromium 2>/dev/null || true
 
-# Build web frontend for staging UI (Nginx serves dist/ for staging.heurion.org)
-cd ~/heurion/packages/web
-pnpm install --frozen-lockfile 2>/dev/null || pnpm install
-pnpm build
-chmod -R +rx dist
-chmod +rx /root /root/heurion /root/heurion/packages /root/heurion/packages/web 2>/dev/null || true
-cd ~/heurion/packages/server-ts
-
-echo "Staging ready on port 8002 (web via Nginx)"
+echo "Staging serving web+API on port 8002"
 
 # Robust health check: retry instead of a single attempt.
 HEALTH_URL="http://localhost:8002/healthz"

@@ -10,21 +10,12 @@ export default defineConfig({
   expect: { timeout: 10000 },
   retries: 1,
   use: {
-    // E2E runs on VPS via SSH, hitting Nginx directly to skip Cloudflare.
-    // Chromium --host-rules maps staging.heurion.org → localhost (self-signed SSL).
-    baseURL: process.env.BASE_URL || 'https://staging.heurion.org',
+    // Staging serves web UI + API on port 8002 (via @fastify/static SPA fallback).
+    baseURL: process.env.BASE_URL || 'http://localhost:8002',
     headless: true,
     viewport: { width: 1280, height: 800 },
-    ignoreHTTPSErrors: true,
   },
   projects: [
-    {
-      name: 'chromium',
-      use: { browserName: 'chromium' },
-      // Fallback DNS override if /etc/hosts not writable on VPS
-      launchOptions: {
-        args: ['--host-rules=MAP staging.heurion.org localhost'],
-      },
-    },
+    { name: 'chromium', use: { browserName: 'chromium' } },
   ],
 })

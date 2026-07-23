@@ -1,6 +1,8 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import fastifyCors from '@fastify/cors'
 import fastifyMultipart from '@fastify/multipart'
+import fastifyStatic from '@fastify/static'
+import { existsSync, readFileSync } from 'fs'
 import { config } from './config.js'
 import { authRouter } from './modules/auth/auth.router.js'
 import { chatRouter } from './modules/chat/chat.router.js'
@@ -53,6 +55,20 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(patientsRouter)
   await app.register(medicalRecordsRouter)
   await app.register(stubRouter)
+
+  // ── Serve web frontend for staging/testing (SPA fallback on non-/api routes) ──
+  const webDistDir = process.env.WEB_DIST_DIR || './web-dist'
+  if (existsSync(webDistDir)) {
+    await app.register(fastifyStatic, { root: webDistDir, prefix: '/', wildcard: false })
+    app.setNotFoundHandler((req: FastifyRequest, reply: FastifyReply) => {
+      if (req.url.startsWith('/api/') || req.url.startsWith('/healthz')) {
+        reply.status(404).send({ error: 'Not found' })
+      } else {
+        reply.header('Content-Type', 'text/html')
+        reply.send(readFileSync(`${webDistDir}/index.html`, 'utf-8'))
+      }
+    })
+  }
 
   return app
 }

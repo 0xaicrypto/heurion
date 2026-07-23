@@ -11,7 +11,7 @@
  */
 import { test, expect } from '@playwright/test'
 
-const BASE = process.env.BASE_URL || 'https://staging.heurion.org'
+const BASE = process.env.BASE_URL || 'http://localhost:8002'
 const DOCTOR = { username: 'e2e-doctor', password: 'test123456' }
 const PATIENT_NAME = 'Zhang Wei'
 
