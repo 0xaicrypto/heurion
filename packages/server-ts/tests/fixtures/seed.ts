@@ -44,7 +44,7 @@ async function main() {
     method: 'POST',
     body: JSON.stringify({
       name: 'Zhang Wei',
-      initials: 'ZW',
+      initials: 'Zhang Wei',
       age: 45,
       sex: 'M',
       chief_complaint:
@@ -61,7 +61,7 @@ async function main() {
     method: 'POST',
     body: JSON.stringify({
       name: 'Li Xia',
-      initials: 'LX',
+      initials: 'Li Xia',
       age: 62,
       sex: 'F',
       chief_complaint:
