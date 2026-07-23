@@ -744,7 +744,7 @@ class ApiClient {
   /* ────────────────────────── file manager ────────────────────────── */
 
   async listFiles(limit = 200): Promise<{files: Array<{file_id: string; name: string; mime: string; size_bytes: number; created_at: string}>}> {
-    return this.fetch(`/api/v1/files/list?limit=${limit}`);
+    return this.fetch(`/api/v1/files?limit=${limit}`);
   }
 
   async deleteFile(fileId: string): Promise<void> {

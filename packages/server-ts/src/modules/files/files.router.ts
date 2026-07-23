@@ -70,17 +70,18 @@ export async function filesRouter(app: FastifyInstance) {
         const stat = fs.statSync(path.join(dir, f))
         const parts = f.split('_')
         return {
-          id: f,
-          filename: parts.slice(1).join('_') || f,
-          contentType: 'application/octet-stream',
-          sizeBytes: stat.size,
-          patientHash: patientHash || null,
-          createdAt: stat.birthtime.toISOString(),
+          file_id: f,
+          name: parts.slice(1).join('_') || f,
+          mime: f.endsWith('.dcm') ? 'application/dicom' : f.endsWith('.txt') ? 'text/plain' : f.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream',
+          size_bytes: stat.size,
+          patient_hash: patientHash || null,
+          created_at: stat.birthtime.toISOString(),
         }
       })
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
-    return (limit ? files.slice(0, parseInt(limit)) : files)
+    const result = limit ? files.slice(0, parseInt(limit as string)) : files
+    return { files: result, total: result.length }
   })
 
   // ── File content preview (Labs page) ──
