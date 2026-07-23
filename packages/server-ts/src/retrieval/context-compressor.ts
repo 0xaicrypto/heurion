@@ -8,7 +8,7 @@
  *
  * Target: 53% token reduction while maintaining semantics.
  */
-import type { Fact } from '../../evolution/stores'
+import type { Fact } from '../evolution/stores'
 
 /** Attention score: importance × e^(-0.3 × daysAgo) */
 function attentionScore(fact: Fact, now: number): number {
