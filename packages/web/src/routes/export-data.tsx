@@ -49,7 +49,7 @@ export function ExportPage() {
           <Card className="p-6 text-center">
             <FileArchive size={48} className="mx-auto mb-4 text-text-tertiary" />
             <p className="mb-1 text-sm text-text-primary">
-              Export a bundled archive of your Nexus data.
+              Export a bundled archive of your Heurion data.
             </p>
             <p className="mb-4 text-xs text-text-tertiary">
               This will create a timestamped bundle containing patients, studies, messages, documents, and more.

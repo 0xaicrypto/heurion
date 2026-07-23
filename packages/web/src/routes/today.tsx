@@ -102,7 +102,7 @@ export function TodayPage() {
                 </div>
               </div>
               <h3 className="mb-1 text-lg font-semibold text-text-primary">Create your first patient to get started</h3>
-              <p className="mb-4 text-sm text-text-secondary">Register a patient to begin using Nexus features including chat, memory, and research.</p>
+              <p className="mb-4 text-sm text-text-secondary">Register a patient to begin using Heurion features including chat, memory, and research.</p>
               <Button onClick={() => setNewPatientOpen(true)}>
                 <UserPlus size={16} className="mr-2" />
                 {t('today.newPatient')}

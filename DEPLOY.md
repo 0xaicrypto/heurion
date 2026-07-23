@@ -1,4 +1,4 @@
-# Deploying Nexus to a remote server
+# Deploying Heurion to a remote server
 
 Step-by-step guide to deploy the Nexus server to a Linux VPS (Docker + Caddy + automatic HTTPS) and point the desktop client at it.
 
@@ -29,8 +29,8 @@ If you later get a real domain, change `HOSTNAME` in `.env.production`, re-run `
 
 ```bash
 # On the VPS:
-git clone <your-fork-of-this-repo> /opt/nexus
-cd /opt/nexus
+git clone <your-fork-of-this-repo> /opt/heurion
+cd /opt/heurion
 ./scripts/deploy_setup.sh
 ```
 
@@ -59,8 +59,8 @@ newgrp docker   # or log out + back in
 ### 2. Clone + configure
 
 ```bash
-git clone <your-fork> /opt/nexus
-cd /opt/nexus
+git clone <your-fork> /opt/heurion
+cd /opt/heurion
 cp .env.production.example .env.production
 nano .env.production
 ```
@@ -120,7 +120,7 @@ The first user to register on the remote becomes their own agent.
 ## Layout & persistence
 
 ```
-/opt/nexus/                   # checked-out repo
+/opt/heurion/                # checked-out repo
 ├── Dockerfile
 ├── docker-compose.yml
 ├── Caddyfile

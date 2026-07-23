@@ -93,7 +93,7 @@ pnpm exec vite --host
 
 | Layer | Package | Stack | Responsibility |
 |-------|---------|-------|----------------|
-| **Web UI** | `packages/web` | React 18 + Vite 5 + Tailwind | 22 routes, i18n, dark mode |
+| **Web UI** | `packages/web` | React 18 + Vite 5 + Tailwind | 25+ routes, i18n (zh-CN/en), dark mode |
 | **SDK** | `packages/sdk-client` | TypeScript | 10 typed modules for browser/CLI |
 | **Server** | `packages/server-ts` | Fastify 4 + Prisma 5 + SQLite | Auth, Chat SSE, Research, Docs, Skills, Admin |
 | **Python** | `packages/server` + `sdk` | FastAPI + pydicom + MONAI | DICOM rendering, inference, event sourcing |
@@ -168,14 +168,62 @@ All responses use `snake_case` field names. Key endpoints:
 
 ---
 
+
+## Knowledge Base
+
+The self-evolving knowledge pipeline (P0–P10) enables Heurion to build a
+personal knowledge base and clinical memory from every interaction:
+
+| Phase | Component | Purpose |
+|-------|-----------|---------|
+| P0 | File Dedup + FactsStore | SHA-256 files; fact-level deduplication |
+| P1 | KnowledgeStore | Activate entries; track stale/inactive knowledge |
+| P2 | Dynamic Persona | Inject file context + accumulated facts into chat |
+| P3 | Query Router | Rule-based classifier — route queries to best source |
+| P4 | Context Compressor | 3-level pipeline (extract → rank → truncate) |
+| P5 | Graph Extractor | Dual-track entity extraction (NLP + LLM) |
+| P6 | Semantic Search | TF-IDF vector search across knowledge base |
+| P7 | RRF Fusion | Reciprocal rank fusion across multiple sources |
+| P8 | Knowledge Cascade | Stale marking + propagation across entries |
+| P9 | Knowledge Gap | Queue unanswered questions as Pending Facts |
+| P10 | ToolStore | Auto-create tools from accumulated knowledge patterns |
+
+API: `GET /api/v1/knowledge`, `GET /api/v1/facts`, `POST /api/v1/facts`
+
+---
+
+## CI/CD Pipeline
+
+Every push to `main` triggers:
+
+```
+TypeCheck → Unit Tests → Staging + Regression → Cloudflare SSL → Deploy
+                    │                          │
+                    └── 30+ vitest unit tests  └── https://heurion.org
+```
+
+- **Staging gate**: deploys to `localhost:8002` on VPS, then runs
+  **61 API regression tests**. Production deploy blocked on failure.
+- **Playwright E2E**: 20+ browser tests simulating full user workflows
+  (login → patient → chat → knowledge → settings).
+
+---
+
 ## Test Plan
 
-44 test cases covering all modules — see [`packages/server-ts/TEST_PLAN.md`](packages/server-ts/TEST_PLAN.md).
+- **61 regression tests** — every API module, auth guard, edge case
+- **30+ unit tests** — vitest for FactsStore, KnowledgeStore, query-router,
+  context-compressor, graph-extractor, semantic-search, RRF-fusion
+- **20+ E2E tests** — Playwright browser tests with CI integration
 
-Run the test suite:
+Run locally:
 ```bash
-pnpm test                    # SDK tests
-pnpm test                    # Server integration tests
+cd packages/server-ts
+npx vitest run               # unit tests
+npx playwright test          # E2E browser tests
+
+# Or via CI scripts:
+bash scripts/regression-test.sh http://localhost:8002
 ```
 
 ---
@@ -274,6 +322,38 @@ for await (const chunk of h.chat.sendMessage({ text: '分析这个病例' })) {
   if (chunk.type === 'final_answer_chunk') console.log(chunk.text)
 }
 ```
+
+---
+
+
+## 知识库
+
+自进化知识管线 (P0–P10) 从每次交互中积累个人知识库：
+
+| 阶段 | 组件 | 用途 |
+|------|------|------|
+| P0 | 文件去重 + FactsStore | SHA-256 文件去重 + 事实级去重 |
+| P1 | KnowledgeStore | 激活记录；追踪陈旧/不活跃知识 |
+| P2 | 动态 Persona | 将文件上下文 + 已积累事实注入对话 |
+| P3 | Query Router | 规则分类器 — 将查询路由到最佳数据源 |
+| P4 | Context Compressor | 三级压缩管线 (提取 → 排序 → 截断) |
+| P5 | Graph Extractor | 双轨实体提取 (NLP + LLM) |
+| P6 | Semantic Search | TF-IDF 向量搜索知识库 |
+| P7 | RRF Fusion | 多源倒数排序融合 |
+| P8 | Knowledge Cascade | 陈旧标记 + 级联传播 |
+| P9 | Knowledge Gap | 未解问题排队为 Pending Facts |
+| P10 | ToolStore | 从知识模式自动创建工具 |
+
+API: `GET /api/v1/knowledge`, `GET /api/v1/facts`, `POST /api/v1/facts`
+
+---
+
+## CI/CD 流水线
+
+推送到 `main` 触发 5 阶段流水线：类型检查 → 单元测试 → 预发 + 回归 → Cloudflare SSL → 部署。
+
+- **预发关口**: 部署到 VPS 的 `localhost:8002`，运行 **61 项 API 回归测试**，全部通过后方可部署生产环境。
+- **Playwright E2E**: 20+ 浏览器测试，模拟完整用户流程（登录 → 患者 → 聊天 → 知识库 → 设置）。
 
 ---
 
