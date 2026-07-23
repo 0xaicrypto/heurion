@@ -48,6 +48,20 @@ jobs:
           scp -o StrictHostKeyChecking=no scripts/deploy-staging.sh scripts/regression-test.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:~/heurion/scripts/
           ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd ~/heurion && DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY bash scripts/deploy-staging.sh && bash scripts/regression-test.sh http://localhost:8002"
 
+  playwright-e2e:
+    name: E2E Browser Tests
+    needs: [staging]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+      - name: Run Playwright E2E on staging
+        run: |
+          scp -o StrictHostKeyChecking=no tests/e2e-full.spec.ts playwright.config.ts ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:~/heurion/packages/server-ts/tests/
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd ~/heurion/packages/server-ts && npx playwright install chromium 2>/dev/null || npm i -g playwright && npx playwright install chromium && npx playwright test --config=playwright.config.ts --base-url=http://localhost:8002 2>&1 || echo 'WARN: E2E tests not blocking deploy yet'"
+
   cloudflare-ssl:
     name: Ensure Cloudflare SSL Mode
     needs: [typecheck, test]
