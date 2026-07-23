@@ -65,6 +65,10 @@ check "3.1 Upload lab report" "$([ -n "$LAB" ] && echo ok || echo 'FAIL')"
 check "3.2 Upload CT text report" "$([ -n "$CTR" ] && echo ok || echo 'FAIL')"
 check "3.3 Labs list has files" "$([ $(curl -sf "$BASE/api/v1/files/uploads?patient_hash=$HASH" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null) -ge 3 ] && echo ok || echo 'FAIL')"
 
+# 3.4 File dedup: upload same file twice returns same file_id
+DUP_ID=$(curl -sf -X POST "$BASE/api/v1/files/upload" -H "$H" -F "file=@$SAMPLE_DIR/sample-lab-report.txt" -F "patient_hash=$HASH" | python3 -c "import sys,json; print(json.load(sys.stdin).get('file_id',''))" 2>/dev/null)
+check "3.4 File dedup — same file" "$([ "$LAB" = "$DUP_ID" ] && echo ok || echo 'FAIL: got $DUP_ID expected $LAB')"
+
 # ═══ 4. AI Chat Analysis ═══
 CHAT1=$(curl -sf -N -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"分析CT和实验室结果，简短回答\",\"patient_hash\":\"$HASH\",\"attachments\":[\"$CTR\",\"$LAB\"]}" 2>/dev/null)
 check "4.1 Chat SSE complete" "$(echo "$CHAT1" | grep -q 'turn_complete' && echo ok || echo 'FAIL')"

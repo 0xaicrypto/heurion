@@ -3,32 +3,66 @@ import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import fs from 'fs'
 import path from 'path'
+import crypto from 'crypto'
 
 export async function filesRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
-  // ── Upload ──
+  // ── Upload (with SHA-256 dedup) ──
   app.post('/api/v1/files/upload', async (request, reply) => {
     const data = await request.file()
     if (!data) return reply.status(400).send({ error: 'No file uploaded' })
 
+    const buffer = await data.toBuffer()
+    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex')
     const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', request.user!.userId, 'uploads')
     fs.mkdirSync(dir, { recursive: true })
-    const filename = `${Date.now()}_${data.filename}`
-    const filepath = path.join(dir, filename)
 
-    const buffer = await data.toBuffer()
+    // Check for existing file with same hash (dedup)
+    const existing = await (prisma as any).fileIndex.findFirst({
+      where: { userId: request.user!.userId, sha256 },
+    })
+    if (existing && !existing.deletedAt) {
+      return {
+        file_id: existing.id,
+        name: data.filename,
+        mime: data.mimetype,
+        size_bytes: existing.sizeBytes,
+        patient_hash: data.fields?.patient_hash?.value || existing.patientHash || null,
+        dedup: true,
+      }
+    }
+
+    const fileId = `${Date.now()}_${data.filename}`
+    const filepath = path.join(dir, fileId)
     fs.writeFileSync(filepath, buffer)
 
     // Read patient_hash from form data
     const patientHash = (data.fields?.patient_hash as any)?.value || ''
 
+    // Persist file index for dedup + listing
+    try {
+      await (prisma as any).fileIndex.upsert({
+        where: { sha256_userId: { sha256, userId: request.user!.userId } },
+        update: { name: data.filename, sizeBytes: buffer.length, updatedAt: new Date().toISOString() },
+        create: {
+          id: fileId, userId: request.user!.userId, sha256,
+          name: data.filename, mime: data.mimetype, sizeBytes: buffer.length,
+          patientHash: patientHash || null,
+          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        },
+      })
+    } catch {
+      // FileIndex table may not exist yet; continue without dedup persistence
+    }
+
     return {
-      file_id: filename,
+      file_id: fileId,
       name: data.filename,
       mime: data.mimetype,
       size_bytes: buffer.length,
       patient_hash: patientHash || null,
+      dedup: false,
     }
   })
 

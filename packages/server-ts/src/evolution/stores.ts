@@ -7,8 +7,11 @@ export interface Fact {
   category: 'preference' | 'fact' | 'constraint' | 'goal' | 'context'
   importance: number  // 1-5
   content: string
-  ttl?: number        // optional expiry
+  count: number        // how many times this fact has been observed
+  ttl?: number         // optional expiry
   createdAt: number
+  updatedAt: number
+  lastSeenAt: number
 }
 
 export interface Episode {
@@ -47,14 +50,38 @@ export class FactsStore {
     fs.mkdirSync(dir, { recursive: true })
     this.store = new VersionedStore(dir)
     const current = this.store.current()
-    if (current && Array.isArray(current)) this.working = current
+    if (current && Array.isArray(current)) {
+      this.working = current.map((f: any) => ({
+        ...f,
+        count: f.count || 1,
+        updatedAt: f.updatedAt || f.createdAt || 0,
+        lastSeenAt: f.lastSeenAt || f.createdAt || 0,
+      }))
+    }
   }
 
   all(): Fact[] { return [...this.working] }
   currentVersion() { return this.store.currentVersion() }
 
-  add(fact: Omit<Fact, 'id' | 'createdAt'>): Fact {
-    const f: Fact = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, ...fact, createdAt: Date.now() }
+  add(fact: Omit<Fact, 'id' | 'createdAt' | 'updatedAt' | 'lastSeenAt' | 'count'>): Fact {
+    const now = Date.now()
+    // Dedup: merge with existing fact of same content + category
+    const existing = this.working.find(f => f.content === fact.content && f.category === fact.category)
+    if (existing) {
+      existing.count = (existing.count || 1) + 1
+      existing.importance = Math.max(existing.importance, fact.importance || 1)
+      existing.updatedAt = now
+      existing.lastSeenAt = now
+      return existing
+    }
+    const f: Fact = {
+      id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
+      ...fact,
+      count: 1,
+      createdAt: now,
+      updatedAt: now,
+      lastSeenAt: now,
+    }
     this.working.push(f)
     return f
   }
