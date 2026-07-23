@@ -20,11 +20,9 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: {
-        browserName: 'chromium',
-        launchOptions: {
-          args: ['--host-rules=MAP staging.heurion.org localhost'],
-        },
+      use: { browserName: 'chromium' },
+      launchOptions: {
+        args: ['--host-rules=MAP staging.heurion.org localhost'],
       },
     },
   ],

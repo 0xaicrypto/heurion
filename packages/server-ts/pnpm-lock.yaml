@@ -57,6 +57,9 @@ importers:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.43
+      playwright:
+        specifier: ^1.40.0
+        version: 1.61.1
       prisma:
         specifier: ^5.0.0
         version: 5.22.0
