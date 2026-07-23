@@ -82,7 +82,57 @@ async function main() {
   })
   console.log('[seed] Patient Li Xia:', (p2Res as any).patient_hash || 'exists')
 
-  // 4. Create a document
+  // 4. Create a medical record for Zhang Wei
+  if (zhangWeiHash) {
+    const mrRes = await api('/api/v1/medical-records', {
+      method: 'POST',
+      body: JSON.stringify({
+        patient_hash: zhangWeiHash,
+        title: `Initial Consultation — ${new Date().toISOString().slice(0, 10)}`,
+        sections: {
+          chief_complaint: 'Persistent dry cough for 3 months with recent hemoptysis. Fatigue and unintentional weight loss of 4 kg.',
+          history_of_present_illness:
+            '45yo male, 30 pack-year smoking history, no prior lung disease.\n' +
+            'Symptoms onset 3 months ago: initially dry cough, progressed to blood-streaked sputum 2 weeks ago.\n' +
+            'Associated: dyspnea on exertion (climbing 2 flights), night sweats, fatigue.\n' +
+            'No fever, no chest pain at rest.',
+          past_medical_history: 'Hypertension (5 years, controlled on amlodipine 5mg).\nType 2 DM (3 years, metformin 500mg BID).\nNo prior surgeries.',
+          family_history: 'Father: lung cancer at 68 (smoker), deceased.\nMother: breast cancer at 55, post-mastectomy alive.\nBrother: healthy.',
+          physical_exam:
+            'VS: BP 138/86, HR 92, RR 20, SpO2 94% RA, Temp 37.1\n' +
+            'General: Alert, mildly cachectic, no acute distress\n' +
+            'Chest: Decreased breath sounds RUL, no wheezes or crackles\n' +
+            'CV: Regular rate and rhythm, no murmurs\n' +
+            'Abdomen: Soft, non-tender, no organomegaly\n' +
+            'LN: No palpable cervical or supraclavicular adenopathy\n' +
+            'ECOG PS: 1',
+          diagnosis:
+            '1. Non-small cell lung adenocarcinoma, Stage IIIA (T2N2M0)\n' +
+            '   - EGFR exon 19 deletion confirmed\n' +
+            '   - PD-L1 TPS 5%\n' +
+            '2. Hypertension, controlled\n' +
+            '3. Type 2 DM\n' +
+            '4. Mild anemia (likely anemia of chronic disease)',
+          treatment_plan:
+            '1. Osimertinib 80mg PO daily (start 2026-05-01)\n' +
+            '2. Cisplatin 75mg/m² + Pemetrexed 500mg/m² q3w × 4 cycles (completed 2026-06-15)\n' +
+            '3. Dexamethasone 8mg PO BID day before/day of/day after chemo\n' +
+            '4. Continue amlodipine 5mg and metformin 500mg BID\n' +
+            '5. Folic acid 1mg daily, vitamin B12 1000mcg IM q9w\n' +
+            '6. Re-stage CT chest/abdomen with contrast in 3 months\n' +
+            '7. Monitor CBC, CMP, LFTs before each clinic visit\n' +
+            '8. Smoking cessation counseling provided, nicotine patch 21mg started',
+          progress_notes:
+            '2026-07-14: Re-staging CT shows PR (−38%), CEA 8.1→4.2. Tolerating osimertinib well — grade 1 rash, grade 1 diarrhea managed with loperamide.\n' +
+            'Plan: Continue osimertinib. Next CT in 3 months. Continue smoking cessation.',
+        },
+      }),
+      token,
+    })
+    console.log('[seed] Medical record created:', (mrRes as any).id || 'exists')
+  }
+
+  // 5. Create a document
   await api('/api/v1/docs', {
     method: 'POST',
     body: JSON.stringify({ title: `Treatment Summary — Zhang Wei (${new Date().toISOString().slice(0, 10)})` }),
@@ -123,7 +173,7 @@ async function main() {
     }
   })
 
-  // 5. Create knowledge entries via facts import
+  // 6. Create knowledge entries via facts import
   await api('/api/v1/memory/import', {
     method: 'POST',
     body: JSON.stringify({
@@ -155,7 +205,7 @@ async function main() {
   })
   console.log('[seed] Knowledge facts imported')
 
-  // 6. Upload test files (lab report, imaging report)
+  // 7. Upload test files (lab report, imaging report)
   const LAB_REPORT =
     'CLINICAL LABORATORY REPORT\n' +
     'Patient: Zhang Wei | MRN: MRN-2026-0042\n' +
