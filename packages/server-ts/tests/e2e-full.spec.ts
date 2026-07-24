@@ -15,8 +15,6 @@ const BASE = process.env.BASE_URL || 'http://localhost:8002'
 const DOCTOR = { username: 'e2e-doctor', password: 'test123456', displayName: 'Dr. E2E' }
 const PATIENT_NAME = 'Zhang Wei'
 
-test.use({ storageState: undefined })
-
 // Pre-authenticate via API and save browser state
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(60000)
@@ -72,6 +70,7 @@ test.describe('1. Authentication', () => {
 })
 
 test.describe('1b. Unauth Redirect', () => {
+  test.use({ storageState: undefined })
   test('1.2 Redirects to login', async ({ page }) => {
     await page.goto(`${BASE}/app/patients`)
     await page.waitForURL('**/login', { timeout: 10000 })
