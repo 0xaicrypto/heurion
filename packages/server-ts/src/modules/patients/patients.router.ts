@@ -20,7 +20,8 @@ export async function patientsRouter(app: FastifyInstance) {
     })
     return records.map((r: any) => ({
       patient_hash: r.hash,
-      initials: r.initials || r.name || '',
+      name: r.name || undefined,
+      initials: r.initials,
       age_value: r.age || undefined,
       age_group: r.age ? (r.age < 18 ? 'pediatric' : r.age > 65 ? 'geriatric' : 'adult') : undefined,
       sex: r.sex || undefined,
@@ -37,7 +38,7 @@ export async function patientsRouter(app: FastifyInstance) {
     const r = await (prisma as any).patientRecord.findFirst({ where: { hash, userId: request.user!.userId } })
     if (!r) return reply.status(404).send({ error: 'Patient not found' })
     return {
-      patient_hash: r.hash, initials: r.initials || r.name || '',
+      patient_hash: r.hash, name: r.name || undefined, initials: r.initials,
       age_value: r.age || undefined, sex: r.sex || undefined,
       chief_complaint: r.chiefComplaint || undefined,
       created_at: r.createdAt, updated_at: r.updatedAt,
@@ -53,14 +54,15 @@ export async function patientsRouter(app: FastifyInstance) {
     await (prisma as any).patientRecord.create({
       data: {
         hash, userId: request.user!.userId,
-        initials: body.initials || body.name || '',
+        name: body.name || '',
+        initials: body.initials || '',
         age: body.age || 0,
         sex: body.sex || '',
         chiefComplaint: body.chief_complaint || '',
         source: 'manual', createdAt: now, updatedAt: now,
       },
     })
-    return { patient_hash: hash, name: body.name || '', initials: body.initials || '', created_at: now }
+    return { patient_hash: hash, name: body.name || '', initials: body.initials, created_at: now }
   })
 
   // ── Delete ──
@@ -189,61 +191,18 @@ export async function patientsRouter(app: FastifyInstance) {
     const { patientHash } = request.params as any
     const userId = request.user!.userId
 
+    // Get patient record
     const patient = await (prisma as any).patientRecord.findFirst({ where: { hash: patientHash, userId } })
-    if (!patient) return { findings: [], medications: [], timeline: [], medical_record: null }
+    if (!patient) return { findings: [], medications: [], timeline: [] }
 
+    // Parse findings from chief_complaint
+    const complaint = patient.chiefComplaint || ''
     const findings: Array<{ node_id: string; node_type: string; content: string }> = []
     const medications: Array<{ node_id: string; node_type: string; content: string }> = []
     const timeline: Array<{ event_id: string; event_type: string; content: string; timestamp: string }> = []
 
-    // ── 1. Pull structured data from latest medical record (primary source) ──
-    const latestMr = await (prisma as any).medicalRecord.findFirst({
-      where: { patientHash, userId },
-      orderBy: { updatedAt: 'desc' },
-    })
-    let medicalRecord: {
-      id: string; title: string; updated_at: string;
-      sections: { chief_complaint?: string; diagnosis?: string; treatment_plan?: string;
-                   physical_exam?: string; history_of_present_illness?: string;
-                   past_medical_history?: string; family_history?: string; progress_notes?: string }
-    } | null = null
-
-    if (latestMr) {
-      const sections = typeof latestMr.sections === 'string'
-        ? JSON.parse(latestMr.sections) : (latestMr.sections || {})
-      medicalRecord = {
-        id: latestMr.id,
-        title: latestMr.title,
-        updated_at: latestMr.updatedAt,
-        sections,
-      }
-      // Map structured sections to findings (these take priority over chief_complaint tags)
-      const sectionFindings: Array<[string, string]> = [
-        ['chief_complaint', sections.chief_complaint],
-        ['diagnosis', sections.diagnosis],
-        ['treatment_plan', sections.treatment_plan],
-        ['physical_exam', sections.physical_exam],
-        ['history_of_present_illness', sections.history_of_present_illness],
-        ['past_medical_history', sections.past_medical_history],
-        ['family_history', sections.family_history],
-        ['progress_notes', sections.progress_notes],
-      ]
-      for (const [type, content] of sectionFindings) {
-        if (content && content.trim()) {
-          findings.push({ node_id: `mr_${type}`, node_type: type, content: content.trim() })
-        }
-      }
-      timeline.push({
-        event_id: `mr_${latestMr.id}`,
-        event_type: 'medical_record_updated',
-        content: `Medical record "${latestMr.title}" updated`,
-        timestamp: latestMr.updatedAt,
-      })
-    }
-
-    // ── 2. Parse chief_complaint tags (supplementary, legacy) ──
-    const complaint = patient.chiefComplaint || ''
     if (complaint) {
+      // Extract [diagnosis], [imaging], [lab_result] etc. from the complaint text
       const tags = complaint.match(/\[(\w+)\]\s*([^\[\]]+)/g) || []
       for (const tag of tags) {
         const m = tag.match(/\[(\w+)\]\s*(.+)/)
@@ -252,21 +211,18 @@ export async function patientsRouter(app: FastifyInstance) {
         if (type === 'medication') {
           medications.push({ node_id: `med_${medications.length}`, node_type: 'medication', content: content.trim() })
         } else {
-          // Skip if medical record already covers this type
-          const alreadyCovered = findings.some(f => f.node_id === `mr_${type}`)
-          if (!alreadyCovered) {
-            findings.push({ node_id: `f_${findings.length}`, node_type: type, content: content.trim() })
-          }
+          findings.push({ node_id: `f_${findings.length}`, node_type: type, content: content.trim() })
         }
       }
+      // Timeline entry for creation
       timeline.push({
         event_id: 'create', event_type: 'patient_created',
-        content: `Patient profile created`,
+        content: `Patient profile updated with ${findings.length} findings`,
         timestamp: patient.createdAt,
       })
     }
 
-    // ── 3. Chat events from event log ──
+    // Also get chat events for this patient
     const ctx = getUserContext(userId)
     const events = ctx.eventLog.query({ limit: 50 })
     for (const evt of events) {
@@ -280,7 +236,7 @@ export async function patientsRouter(app: FastifyInstance) {
       }
     }
 
-    return { findings, medications, timeline, medical_record: medicalRecord }
+    return { findings, medications, timeline }
   })
 
   app.get('/api/v1/memory/patient/:patientHash/findings', async (request) => {
