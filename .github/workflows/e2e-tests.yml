@@ -34,9 +34,15 @@ jobs:
 
             cd ~/heurion/packages/server-ts
 
-            # Restart staging server to pick up web-dist
+            # Restart staging server to pick up web-dist + latest code
             pm2 restart heurion-staging 2>/dev/null || pm2 start npx --name heurion-staging -- tsx src/main.ts
-            sleep 3
+            # Wait for server to become healthy
+            for i in \$(seq 1 20); do
+              curl -sf http://127.0.0.1:8002/healthz >/dev/null 2>&1 && break
+              echo \"  waiting for staging... \$i\"
+              sleep 3
+            done
+            curl -sf http://127.0.0.1:8002/healthz || { echo 'STAGING DOWN'; pm2 logs heurion-staging --lines 50 --nostream; exit 1; }
 
             # Seed test data
             npx tsx tests/fixtures/seed.ts http://127.0.0.1:8002
