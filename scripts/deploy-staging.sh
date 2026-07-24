@@ -21,7 +21,6 @@ ENVEOF
 
 # Install backend deps and set up DB
 rm -rf node_modules
-pnpm store prune --force 2>/dev/null || true
 pnpm install
 npx prisma generate
 rm -f staging.db staging.db-journal 2>/dev/null || true
