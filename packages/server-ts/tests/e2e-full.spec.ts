@@ -102,6 +102,8 @@ test.describe('3. Patients', () => {
   test.use({ storageState: '/tmp/e2e-state.json' })
 
   test('3.1 Patients API returns seeded data', async ({ page }) => {
+    await page.goto(`${BASE}/app/patients`, { timeout: 10000, waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(1000)
     const result = await page.evaluate(async () => {
       const res = await fetch('/api/v1/dicom/patients/full')
       return res.json()
@@ -111,7 +113,8 @@ test.describe('3. Patients', () => {
   })
 
   test('3.2 Patient detail API works', async ({ page }) => {
-    // Get patient list first to find a hash
+    await page.goto(`${BASE}/app/patients`, { timeout: 10000, waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(1000)
     const patients: any[] = await page.evaluate(async () => {
       const res = await fetch('/api/v1/dicom/patients/full')
       return res.json()
@@ -126,6 +129,8 @@ test.describe('3. Patients', () => {
   })
 
   test('3.3 Medical record in projection API', async ({ page }) => {
+    await page.goto(`${BASE}/app/patients`, { timeout: 10000, waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(1000)
     const patients: any[] = await page.evaluate(async () => {
       const res = await fetch('/api/v1/dicom/patients/full')
       return res.json()
@@ -157,13 +162,13 @@ test.describe('3b. Medical Records', () => {
   test.use({ storageState: '/tmp/e2e-state.json' })
 
   test('3b.1 Medical records API returns seeded data', async ({ page }) => {
-    // Get patient hash first
+    await page.goto(`${BASE}/app/patients`, { timeout: 10000, waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(1000)
     const patients: any[] = await page.evaluate(async () => {
       const res = await fetch('/api/v1/dicom/patients/full')
       return res.json()
     })
     expect(patients.length).toBeGreaterThan(0)
-    // Query medical records for first patient
     const records = await page.evaluate(async (hash: string) => {
       const res = await fetch(`/api/v1/medical-records?patient_hash=${hash}`)
       return res.json()
@@ -174,6 +179,8 @@ test.describe('3b. Medical Records', () => {
   })
 
   test('3b.2 Medical record has structured sections', async ({ page }) => {
+    await page.goto(`${BASE}/app/patients`, { timeout: 10000, waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(1000)
     const patients: any[] = await page.evaluate(async () => {
       const res = await fetch('/api/v1/dicom/patients/full')
       return res.json()
@@ -197,7 +204,8 @@ test.describe('3c. Encounter', () => {
   test.use({ storageState: '/tmp/e2e-state.json' })
 
   test('3c.1 Patient chat tab navigable', async ({ page }) => {
-    // Get patient hash, then navigate to chat
+    await page.goto(`${BASE}/app/patients`, { timeout: 10000, waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(1000)
     const patients: any[] = await page.evaluate(async () => {
       const res = await fetch('/api/v1/dicom/patients/full')
       return res.json()

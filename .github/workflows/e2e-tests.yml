@@ -47,7 +47,10 @@ jobs:
             # Seed test data
             npx tsx tests/fixtures/seed.ts http://127.0.0.1:8002
 
-            # Install chromium browser (one-time)
+            # npm install playwright (npm creates flat node_modules that workers can find)
+            npm install playwright --no-save --no-audit --no-fund 2>/dev/null
+
+            # Install chromium browser
             npx playwright install chromium 2>/dev/null || true
 
             # Run tests
