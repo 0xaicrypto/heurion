@@ -1,0 +1,26 @@
+name: E2E Browser Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'  # every 6 hours
+
+jobs:
+  e2e:
+    name: Run E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+      - name: Seed data + run E2E
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
+            export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
+            cd ~/heurion/packages/server-ts
+            git fetch origin main && git reset --hard origin/main
+            npx tsx tests/fixtures/seed.ts http://localhost:8002
+            npx playwright install chromium --with-deps 2>/dev/null || true
+            npx playwright test --config=playwright.config.ts
+          "
