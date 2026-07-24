@@ -20,7 +20,7 @@ jobs:
             export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
             cd ~/heurion/packages/server-ts
             git fetch origin main && git reset --hard origin/main
-            npx tsx tests/fixtures/seed.ts http://localhost:8002
+            npx tsx tests/fixtures/seed.ts http://127.0.0.1:8002
             npx playwright install chromium --with-deps 2>/dev/null || true
             npx playwright test --config=playwright.config.ts
           "
