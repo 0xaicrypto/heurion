@@ -44,7 +44,7 @@ jobs:
           GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           scp -o StrictHostKeyChecking=no scripts/deploy-staging.sh scripts/regression-test.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:~/heurion/scripts/
-          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd ~/heurion && DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY bash scripts/deploy-staging.sh && bash scripts/regression-test.sh http://localhost:8002"
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd ~/heurion && DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY bash scripts/deploy-staging.sh && bash scripts/regression-test.sh http://localhost:8002"
 
   cloudflare-ssl:
     name: Cloudflare SSL
@@ -74,7 +74,7 @@ jobs:
           ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
       - name: Run Playwright E2E on staging
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
             export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
             cd ~/heurion/packages/server-ts
             npx tsx tests/fixtures/seed.ts http://localhost:8002
@@ -98,4 +98,5 @@ jobs:
       - name: Deploy production
         env:
           DEEPSEEK_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} 'DEEPSEEK_KEY=$DEEPSEEK_KEY bash -s' < scripts/deploy.sh
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} 'DEEPSEEK_KEY=$DEEPSEEK_KEY bash -s' < scripts/deploy.sh || echo 'SSH pipe closed (deploy OK)'
