@@ -49,22 +49,6 @@ pm2 save
 sleep 3
 npx tsx scripts/set-admin.ts 2>/dev/null || true
 
-# Ensure playwright CLI wrapper exists in .bin (pnpm v10 may not create it)
-if [ ! -f node_modules/.bin/playwright ]; then
-  PW_DIR=$(find node_modules/.pnpm -maxdepth 1 -type d -name 'playwright@*' -not -name '*-core*' 2>/dev/null | head -1)
-  if [ -n "$PW_DIR" ]; then
-    mkdir -p node_modules/.bin
-    cat > node_modules/.bin/playwright << WRAPPER
-#!/bin/sh
-basedir=\$(dirname "\$(echo "\$0" | sed -e 's,\\\\,/,g')")
-exec node "\$basedir/../$PW_DIR/node_modules/playwright/cli.js" "\$@"
-WRAPPER
-    chmod +x node_modules/.bin/playwright
-  fi
-fi
-# Pre-install Playwright browser using local CLI
-[ -x node_modules/.bin/playwright ] && node_modules/.bin/playwright install chromium 2>/dev/null || true
-
 echo "Staging serving web+API on port 8002"
 
 # Robust health check: retry instead of a single attempt.
