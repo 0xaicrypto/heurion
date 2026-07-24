@@ -78,12 +78,9 @@ jobs:
             export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
             cd ~/heurion/packages/server-ts
             npx tsx tests/fixtures/seed.ts http://localhost:8002
-            echo '--- playwright binary ---'
-            which playwright || echo 'not found in PATH'
-            ls -la node_modules/.bin/playwright 2>/dev/null || echo 'not found in .bin'
-            ls node_modules/.pnpm/*/node_modules/playwright/*.js 2>/dev/null || echo 'no playwright in .pnpm'
-            echo '--- running tests ---'
-            npx playwright test --config=playwright.config.ts
+            PW_CLI=\$(find node_modules/.pnpm -path '*/playwright/cli.js' -not -path '*/playwright-core/*' 2>/dev/null | head -1)
+            echo \"PW_CLI=\$PW_CLI\"
+            [ -n \"\$PW_CLI\" ] && node \"\$PW_CLI\" test --config=playwright.config.ts || echo 'Playwright CLI not found'
           "
 
   deploy:
