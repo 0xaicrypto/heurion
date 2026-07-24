@@ -3,7 +3,7 @@ name: E2E Browser Tests
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'  # every 6 hours
+    - cron: '0 */6 * * *'
 
 jobs:
   e2e:
@@ -20,7 +20,30 @@ jobs:
             export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
             cd ~/heurion/packages/server-ts
             git fetch origin main && git reset --hard origin/main
+
+            # Build web frontend so staging server can serve it via @fastify/static
+            (cd ~/heurion/packages/web && pnpm install --frozen-lockfile 2>/dev/null || pnpm install) &
+            WEB_PID=\$!
+
+            # Install backend deps (includes playwright)
+            pnpm install --prefer-offline
+
+            # Wait for web build
+            wait \$WEB_PID 2>/dev/null || true
+            cd ~/heurion/packages/web && pnpm build && cp -rf dist ~/heurion/packages/server-ts/web-dist
+
+            cd ~/heurion/packages/server-ts
+
+            # Restart staging server to pick up web-dist
+            pm2 restart heurion-staging 2>/dev/null || pm2 start npx --name heurion-staging -- tsx src/main.ts
+            sleep 3
+
+            # Seed test data
             npx tsx tests/fixtures/seed.ts http://127.0.0.1:8002
-            npx playwright install chromium --with-deps 2>/dev/null || true
+
+            # Install chromium browser (one-time)
+            npx playwright install chromium 2>/dev/null || true
+
+            # Run tests
             npx playwright test --config=playwright.config.ts
           "
