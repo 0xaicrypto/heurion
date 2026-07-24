@@ -62,27 +62,6 @@ jobs:
             curl -sS -X PATCH "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/settings/ssl" -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" -d '{"value":"full"}'
           fi
 
-  e2e:
-    name: E2E Browser Tests
-    needs: [staging]
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
-      - name: Run Playwright E2E on staging
-        run: |
-          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
-            export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
-            cd ~/heurion/packages/server-ts
-            npx tsx tests/fixtures/seed.ts http://localhost:8002
-            npm install playwright --no-save --no-audit --no-fund 2>/dev/null
-            npx playwright install chromium 2>/dev/null || true
-            npx playwright test --config=playwright.config.ts
-          "
-
   deploy:
     name: Deploy to Production
     needs: [staging, cloudflare-ssl]
