@@ -101,9 +101,11 @@ test.describe('2. Navigation', () => {
 test.describe('3. Patients', () => {
   test.use({ storageState: '/tmp/e2e-state.json' })
 
-  test('3.1 Patients API returns seeded data', async ({ page }) => {
-    await page.goto(`${BASE}/app/patients`, { timeout: 10000, waitUntil: 'domcontentloaded' })
-    await page.waitForTimeout(2000)
+  test('3.1 Patients page loads (session valid)', async ({ page }) => {
+    await page.goto(`${BASE}/app/patients`, { timeout: 10000, waitUntil: 'networkidle' })
+    // If not redirected to login, session is valid
+    await expect(page).not.toHaveURL(/\/login/)
+    // Now verify data via API
     const result = await page.evaluate(async () => {
       const res = await fetch('/api/v1/dicom/patients/full')
       return res.json()
@@ -162,8 +164,8 @@ test.describe('3b. Medical Records', () => {
   test.use({ storageState: '/tmp/e2e-state.json' })
 
   test('3b.1 Medical records API returns seeded data', async ({ page }) => {
-    await page.goto(`${BASE}/app/patients`, { timeout: 10000, waitUntil: 'domcontentloaded' })
-    await page.waitForTimeout(1000)
+    await page.goto(`${BASE}/app/patients`, { timeout: 10000, waitUntil: 'networkidle' })
+    await expect(page).not.toHaveURL(/\/login/)
     const patients: any[] = await page.evaluate(async () => {
       const res = await fetch('/api/v1/dicom/patients/full')
       return res.json()
