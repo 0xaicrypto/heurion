@@ -7,7 +7,6 @@ git reset --hard origin/main
 echo "Deploying: $(git log -1 --oneline)"
 cd packages/server-ts
 
-# Always overwrite .env so staging uses the correct port/config.
 cp -f .env.staging .env 2>/dev/null || cat > .env << ENVEOF
 DATABASE_URL="file:./staging.db"
 SERVER_HOST=0.0.0.0
@@ -19,30 +18,22 @@ CORS_ALLOW_ORIGINS=*
 TWIN_BASE_DIR=.nexus/staging-twins
 ENVEOF
 
-# Install backend deps and set up DB
 rm -rf node_modules
 pnpm install
 npx prisma generate
 rm -f staging.db staging.db-journal 2>/dev/null || true
 npx prisma db push --accept-data-loss
 
-# Start staging server
 pm2 delete heurion-staging 2>/dev/null || true
 kill $(lsof -ti:8002) 2>/dev/null || fuser -k 8002/tcp 2>/dev/null || true
 sleep 2
 SERVER_PORT=8002 pm2 start npx --name heurion-staging -- tsx src/main.ts
 pm2 save
 
-# Ensure HZ user exists in fresh staging DB
 sleep 3
 npx tsx scripts/set-admin.ts 2>/dev/null || true
 
-# Build web frontend in background (nice-to-have, don't block API)
-( cd ~/heurion/packages/web && (pnpm install --frozen-lockfile 2>/dev/null || pnpm install) && pnpm build && cp -rf dist ~/heurion/packages/server-ts/web-dist && chmod -R +rx ~/heurion/packages/server-ts/web-dist ) &
-
-echo "Staging API ready on port 8002"
-
-# Robust health check
+# Health check
 HEALTH_URL="http://localhost:8002/healthz"
 MAX_RETRIES=15
 RETRY_DELAY=2
@@ -55,7 +46,6 @@ for i in $(seq 1 $MAX_RETRIES); do
   sleep $RETRY_DELAY
 done
 
-echo ""
 echo "❌ STAGING health check failed after ${MAX_RETRIES} attempts."
 pm2 logs heurion-staging --lines 100 --nostream || true
 pm2 describe heurion-staging || true
