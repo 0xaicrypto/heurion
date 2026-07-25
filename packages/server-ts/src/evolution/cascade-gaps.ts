@@ -45,6 +45,24 @@ export function resolveGap(userId: string, gapId: string): boolean {
 }
 
 /**
+ * When new facts arrive, auto-resolve any pending gaps that match by keyword.
+ */
+export function autoResolveGaps(userId: string, newFacts: Array<{ content: string }>): string[] {
+  const gaps = gapStore.get(userId) || []
+  const resolved: string[] = []
+  for (const gap of gaps) {
+    if (gap.status !== 'pending') continue
+    const words = gap.query.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3)
+    const matched = newFacts.some(f => words.some(w => f.content.toLowerCase().includes(w)))
+    if (matched) {
+      gap.status = 'resolved'
+      resolved.push(gap.id)
+    }
+  }
+  return resolved
+}
+
+/**
  * P10 — Tool Store (for auto-created tools)
  */
 

@@ -3,7 +3,7 @@ import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../ev
 import { ContractEngine } from '../../core/contracts'
 import { MemoryProjection } from '../../retrieval/memory-projection'
 import { deepseekChat, getApiKey } from '../../common/llm.js'
-import { detectGap } from '../../evolution/cascade-gaps.js'
+import { detectGap, autoResolveGaps } from '../../evolution/cascade-gaps.js'
 
 export class ChatOrchestrator {
   private projection: MemoryProjection
@@ -90,6 +90,10 @@ export class ChatOrchestrator {
             agentId: userId, sessionId,
           })
           console.log(`[EVOLVE] Extracted ${facts.length} facts (turn ${totalTurns})`)
+
+          // Auto-resolve pending gaps that match new facts
+          const resolved = autoResolveGaps(userId, facts)
+          if (resolved.length > 0) console.log(`[GAP] Auto-resolved ${resolved.length} gaps`)
 
           // Auto-generate knowledge article when 3+ facts accumulate
           const allFacts = this.factsStore.all()
