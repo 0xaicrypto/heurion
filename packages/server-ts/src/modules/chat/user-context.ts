@@ -50,7 +50,7 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
       return est > 2000 ? { passed: false, violations: [`Too long (${est} tokens)`], score: 0.5 } : { passed: true, violations: [], score: 1 }
     },
   })
-  const ctx = { eventLog, facts, episodes, skills, knowledge, orchestrator: new ChatOrchestrator(eventLog, facts, episodes, skills, contracts), lastAccess: Date.now() }
+  const ctx = { eventLog, facts, episodes, skills, knowledge, orchestrator: new ChatOrchestrator(eventLog, facts, episodes, skills, knowledge, contracts), lastAccess: Date.now() }
   contexts.set(userId, ctx)
   return ctx
 }

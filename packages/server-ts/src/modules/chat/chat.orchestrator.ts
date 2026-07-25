@@ -1,8 +1,9 @@
 import { EventLog, Event } from '../../core/event-log'
-import { FactsStore, EpisodesStore, SkillsStore } from '../../evolution/stores'
+import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../evolution/stores'
 import { ContractEngine } from '../../core/contracts'
 import { MemoryProjection } from '../../retrieval/memory-projection'
 import { deepseekChat, getApiKey } from '../../common/llm.js'
+import { detectGap } from '../../evolution/cascade-gaps.js'
 
 export class ChatOrchestrator {
   private projection: MemoryProjection
@@ -12,6 +13,7 @@ export class ChatOrchestrator {
     private factsStore: FactsStore,
     private episodesStore: EpisodesStore,
     private skillsStore: SkillsStore,
+    private knowledgeStore: KnowledgeStore,
     private contracts: ContractEngine,
   ) {
     this.projection = new MemoryProjection(eventLog)
@@ -88,6 +90,40 @@ export class ChatOrchestrator {
             agentId: userId, sessionId,
           })
           console.log(`[EVOLVE] Extracted ${facts.length} facts (turn ${totalTurns})`)
+
+          // Auto-generate knowledge article when 3+ facts accumulate
+          const allFacts = this.factsStore.all()
+          if (allFacts.length >= 3 && allFacts.length % 5 === 0) {
+            try {
+              const factList = allFacts.slice(-10).map(f => `[${f.category}] ${f.content}`).join('\n')
+              const articlePrompt = `Synthesize these clinical facts into a concise knowledge article (1-2 paragraphs):\n\n${factList}\n\nReturn JSON: { "title": "...", "content": "..." }`
+              const articleResult = await deepseekChat([{ role: 'user', content: articlePrompt }], apiKey)
+              const jsonMatch2 = articleResult.match(/\{[\s\S]*\}/)
+              if (jsonMatch2) {
+                const article = JSON.parse(jsonMatch2[0])
+                if (article.title && article.content) {
+                  this.knowledgeStore.add({
+                    title: article.title,
+                    content: article.content,
+                    sources: allFacts.slice(-10).map((f: any) => f.id),
+                  })
+                  this.knowledgeStore.commit()
+                  console.log(`[KNOWLEDGE] Article generated: ${article.title}`)
+                }
+              }
+            } catch (err) {
+              console.log('[KNOWLEDGE] Article generation skipped:', (err as Error).message.slice(0, 100))
+            }
+          }
+        }
+
+        // Detect knowledge gaps — queries with no matching facts
+        const relatedFacts = this.factsStore.all().filter(f =>
+          userMessage.toLowerCase().split(/\s+/).some(w => w.length > 3 && f.content.toLowerCase().includes(w))
+        )
+        if (relatedFacts.length === 0 && userMessage.length > 15) {
+          detectGap(userMessage, userId, 0, conversation.slice(0, 300))
+          console.log(`[GAP] Detected: "${userMessage.slice(0, 80)}"`)
         }
       } catch (err) {
         console.log('[EVOLVE] Fact extraction skipped:', (err as Error).message.slice(0, 100))
