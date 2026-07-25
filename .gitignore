@@ -166,5 +166,4 @@ screenshots/
 
 # ─── Production deploy artifacts (generated at build time) ─────────────
 dist/
-!packages/web/dist/
 packages/server-ts/.env
