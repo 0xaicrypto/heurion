@@ -391,7 +391,7 @@ if [ -n "$TMP_PATIENT" ]; then
   check "16.21 Temp patient fact created" ok
   # Delete the temp patient (triggers cascade)
   curl -sf -X DELETE "$BASE/api/v1/dicom/patients/$TMP_PATIENT" -H "$H" > /dev/null 2>&1
-  CASCADE_CHECK=$(curl -sf "$BASE/api/v1/facts" -H "$H" | python3 -c "import sys,json; facts=json.load(sys.stdin)['facts']; tmp_facts=[f for f in facts if 'TMP patient' in f['content']]; print('ok' if tmp_facts and tmp_facts[0].get('sourceType')=='general' and not tmp_facts[0].get('patientHash') else 'FAIL: src='+str(tmp_facts[0].get('sourceType','?'))+' ph='+str(tmp_facts[0].get('patientHash','?')) if tmp_facts else 'not found')" 2>/dev/null)
+  CASCADE_CHECK=$(curl -sf "$BASE/api/v1/facts" -H "$H" | python3 -c "import sys,json; facts=json.load(sys.stdin)['facts']; tmp_facts=[f for f in facts if 'TMP patient' in f['content']]; print('ok' if tmp_facts and tmp_facts[0].get('sourceType')=='general' and not tmp_facts[0].get('patientHash') else 'FAIL')" 2>/dev/null)
   check "16.22 Cascade cleanup on patient delete" "$CASCADE_CHECK"
 else
   check "16.21 Temp patient fact created" "no patient"

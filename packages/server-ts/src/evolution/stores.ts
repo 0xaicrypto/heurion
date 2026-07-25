@@ -73,15 +73,20 @@ export class FactsStore {
   /** Mutate facts in-place matching a predicate, then commit. Returns count changed. */
   updateWhere(predicate: (f: Fact) => boolean, patch: Partial<Pick<Fact, 'patientHash' | 'studyId' | 'sourceType' | 'content' | 'category' | 'importance'>>): number {
     let changed = 0
-    const has = (key: keyof typeof patch) => Object.prototype.hasOwnProperty.call(patch, key)
     for (const f of this.working) {
       if (predicate(f)) {
-        if (has('patientHash')) f.patientHash = patch.patientHash
-        if (has('studyId')) f.studyId = patch.studyId
-        if (patch.sourceType) f.sourceType = patch.sourceType
-        if (patch.content) f.content = patch.content
-        if (patch.category) f.category = patch.category
-        if (patch.importance) f.importance = patch.importance
+        if ('patientHash' in patch) {
+          if (patch.patientHash === undefined) delete (f as any).patientHash
+          else f.patientHash = patch.patientHash
+        }
+        if ('studyId' in patch) {
+          if (patch.studyId === undefined) delete (f as any).studyId
+          else f.studyId = patch.studyId
+        }
+        if ('sourceType' in patch) f.sourceType = patch.sourceType!
+        if ('content' in patch) f.content = patch.content!
+        if ('category' in patch) f.category = patch.category!
+        if ('importance' in patch) f.importance = patch.importance!
         f.updatedAt = Date.now()
         changed++
       }
