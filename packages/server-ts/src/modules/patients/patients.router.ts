@@ -70,12 +70,10 @@ export async function patientsRouter(app: FastifyInstance) {
     await (prisma as any).patientRecord.deleteMany({ where: { hash, userId } })
     // Nullify patientHash on related facts (keep knowledge, remove broken ref)
     const ctx = getUserContext(userId)
-    const facts = ctx.facts.all()
-    let changed = false
-    for (const f of facts) {
-      if (f.patientHash === hash) { f.patientHash = undefined; f.sourceType = 'general'; changed = true }
-    }
-    if (changed) ctx.facts.commit()
+    ctx.facts.updateWhere(
+      (f: any) => f.patientHash === hash,
+      { patientHash: undefined as any, sourceType: 'general' },
+    )
     return { deleted: true }
   })
 

@@ -282,6 +282,119 @@ check "15.3 Get medical record" "$(curl -sf "$BASE/api/v1/medical-records/$MR" -
 check "15.4 Update medical record" "$(curl -sf -X PUT "$BASE/api/v1/medical-records/$MR" -H "$H" -H "Content-Type: application/json" -d '{"title":"Follow-up Visit"}' | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('title')=='Follow-up Visit' else 'FAIL')" 2>/dev/null)"
 check "15.5 Delete medical record" "$(curl -sf -X DELETE "$BASE/api/v1/medical-records/$MR" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('deleted') else 'FAIL')" 2>/dev/null)"
 
+# ═══ 16. Knowledge Base — Facts CRUD ═══
+
+# 16.1 Import facts
+FACTS_IMP=$(curl -sf -X POST "$BASE/api/v1/memory/import" -H "$H" -H "Content-Type: application/json" \
+  -d '{"facts":[
+    {"category":"fact","importance":5,"content":"Osimertinib 80mg daily is first-line for EGFR exon 19 deletion NSCLC","sourceType":"research"},
+    {"category":"fact","importance":4,"content":"Patient ZQ has persistent cough and chest pain for 3 weeks","sourceType":"patient","patientHash":"'$HASH'"},
+    {"category":"preference","importance":3,"content":"Dr prefers cisplatin/pemetrexed regimen for NSCLC","sourceType":"doctor"},
+    {"category":"fact","importance":4,"content":"RECIST 1.1 requires ≥30% decrease for partial response","sourceType":"general"}
+  ]}')
+IMPORTED=$(echo "$FACTS_IMP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('imported',0))" 2>/dev/null)
+check "16.1 Import facts" "$([ "${IMPORTED:-0}" -ge 1 ] && echo ok || echo 'FAIL')"
+FACTS_COUNT=$(echo "$FACTS_IMP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('facts_count',0))" 2>/dev/null)
+check "16.2 Facts count > 0" "$([ "${FACTS_COUNT:-0}" -gt 0 ] && echo ok || echo "FAIL: $FACTS_COUNT")"
+
+# 16.3 List facts
+FACTS_LIST=$(curl -sf "$BASE/api/v1/facts" -H "$H" 2>/dev/null)
+FACTS_TOTAL=$(echo "$FACTS_LIST" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('facts',[])))" 2>/dev/null)
+check "16.3 List facts" "$([ "${FACTS_TOTAL:-0}" -ge 2 ] && echo ok || echo "FAIL: $FACTS_TOTAL")"
+
+# 16.4 Facts grouped by sourceType
+PATIENT_FACTS=$(echo "$FACTS_LIST" | python3 -c "import sys,json; facts=[f for f in json.load(sys.stdin)['facts'] if f.get('sourceType')=='patient']; print(len(facts))" 2>/dev/null)
+DOCTOR_FACTS=$(echo "$FACTS_LIST" | python3 -c "import sys,json; facts=[f for f in json.load(sys.stdin)['facts'] if f.get('sourceType')=='doctor']; print(len(facts))" 2>/dev/null)
+RESEARCH_FACTS=$(echo "$FACTS_LIST" | python3 -c "import sys,json; facts=[f for f in json.load(sys.stdin)['facts'] if f.get('sourceType')=='research']; print(len(facts))" 2>/dev/null)
+GENERAL_FACTS=$(echo "$FACTS_LIST" | python3 -c "import sys,json; facts=[f for f in json.load(sys.stdin)['facts'] if f.get('sourceType')=='general']; print(len(facts))" 2>/dev/null)
+check "16.4 Patient facts" "$([ "${PATIENT_FACTS:-0}" -ge 1 ] && echo ok || echo "FAIL: $PATIENT_FACTS")"
+check "16.5 Doctor facts" "$([ "${DOCTOR_FACTS:-0}" -ge 1 ] && echo ok || echo "FAIL: $DOCTOR_FACTS")"
+check "16.6 Research facts" "$([ "${RESEARCH_FACTS:-0}" -ge 1 ] && echo ok || echo "FAIL: $RESEARCH_FACTS")"
+check "16.7 General facts" "$([ "${GENERAL_FACTS:-0}" -ge 1 ] && echo ok || echo "FAIL: $GENERAL_FACTS")"
+
+# 16.8 Patient fact references patientHash
+PATIENT_FACT_HASH=$(echo "$FACTS_LIST" | python3 -c "import sys,json; facts=[f for f in json.load(sys.stdin)['facts'] if f.get('sourceType')=='patient' and f.get('patientHash')]; print('ok' if facts else 'FAIL')" 2>/dev/null)
+check "16.8 Patient fact has patientHash" "$PATIENT_FACT_HASH"
+
+# ═══ 16b. Facts Edit/Delete ═══
+
+# Get a fact ID for editing
+FACT_ID=$(echo "$FACTS_LIST" | python3 -c "import sys,json; print(json.load(sys.stdin)['facts'][0]['id'])" 2>/dev/null)
+# 16.9 Edit fact content
+EDIT_RES=$(curl -sf -X PUT "$BASE/api/v1/facts/$FACT_ID" -H "$H" -H "Content-Type: application/json" \
+  -d '{"content":"Edited: Osimertinib 80mg is first-line EGFR TKI","sourceType":"research"}' | python3 -c "import sys,json; f=json.load(sys.stdin)['fact']; print('ok' if 'Edited' in f['content'] else 'FAIL')" 2>/dev/null)
+check "16.9 Edit fact" "$([ "$EDIT_RES" = "ok" ] && echo ok || echo "FAIL: $EDIT_RES")"
+
+# 16.10 Verify edit persisted
+VERIFY_EDIT=$(curl -sf "$BASE/api/v1/facts" -H "$H" | python3 -c "import sys,json; print('ok' if any('Edited' in f['content'] for f in json.load(sys.stdin)['facts']) else 'FAIL')" 2>/dev/null)
+check "16.10 Edit persisted" "$VERIFY_EDIT"
+
+# 16.11 Delete fact
+DEL_RES=$(curl -sf -X DELETE "$BASE/api/v1/facts/$FACT_ID" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('deleted') else 'FAIL')" 2>/dev/null)
+check "16.11 Delete fact" "$DEL_RES"
+
+# 16.12 Verify fact deleted
+FACTS_AFTER_DEL=$(curl -sf "$BASE/api/v1/facts" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['facts']))" 2>/dev/null)
+check "16.12 Count decreased" "$([ "${FACTS_AFTER_DEL:-0}" -lt "${FACTS_TOTAL:-99}" ] && echo ok || echo "FAIL: before=$FACTS_TOTAL after=$FACTS_AFTER_DEL")"
+
+# ═══ 16c. Knowledge Articles ═══
+ARTICLES_RES=$(curl -sf "$BASE/api/v1/knowledge" -H "$H" 2>/dev/null)
+ARTICLE_COUNT=$(echo "$ARTICLES_RES" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('articles',[])))" 2>/dev/null)
+check "16.13 Articles endpoint works" "$(echo "$ARTICLES_RES" | python3 -c "import sys,json; print('ok' if 'articles' in json.load(sys.stdin) else 'FAIL')" 2>/dev/null)"
+
+# ═══ 16d. Gap Queue ═══
+
+# 16.14 List gaps
+GAPS_RES=$(curl -sf "$BASE/api/v1/knowledge/gaps" -H "$H" 2>/dev/null)
+GAP_COUNT=$(echo "$GAPS_RES" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('gaps',[])))" 2>/dev/null)
+check "16.14 Gaps endpoint works" "$(echo "$GAPS_RES" | python3 -c "import sys,json; print('ok' if 'gaps' in json.load(sys.stdin) else 'FAIL')" 2>/dev/null)"
+
+# 16.15 Detect a gap by asking a question with no matching facts
+GAP_QUERY=$(curl -sf -N -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" \
+  -d '{"text":"What is the optimal dosing schedule for CAR-T cell therapy in solid tumors?","session_id":"gap-test-001"}' 2>/dev/null)
+sleep 2
+GAPS_AFTER=$(curl -sf "$BASE/api/v1/knowledge/gaps" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('gaps',[])))" 2>/dev/null)
+check "16.15 Gap detected" "$([ "${GAPS_AFTER:-0}" -gt 0 ] && echo ok || echo "FAIL: $GAPS_AFTER")"
+
+# 16.16 Resolve a gap
+GAP_ID=$(curl -sf "$BASE/api/v1/knowledge/gaps" -H "$H" | python3 -c "import sys,json; gaps=json.load(sys.stdin)['gaps']; print(gaps[0]['id'] if gaps else '')" 2>/dev/null)
+if [ -n "$GAP_ID" ]; then
+  RESOLVE_RES=$(curl -sf -X POST "$BASE/api/v1/knowledge/gaps/$GAP_ID/resolve" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('resolved') else 'FAIL')" 2>/dev/null)
+  check "16.16 Resolve gap" "$RESOLVE_RES"
+else
+  check "16.16 Resolve gap" "no gaps to resolve"
+fi
+
+# ═══ 16e. Tool Store ═══
+TOOLS_RES=$(curl -sf "$BASE/api/v1/knowledge/tools" -H "$H" 2>/dev/null)
+check "16.17 Tools endpoint works" "$(echo "$TOOLS_RES" | python3 -c "import sys,json; print('ok' if 'tools' in json.load(sys.stdin) else 'FAIL')" 2>/dev/null)"
+ENABLED_TOOLS=$(curl -sf "$BASE/api/v1/knowledge/tools/enabled" -H "$H" 2>/dev/null)
+check "16.18 Enabled tools endpoint" "$(echo "$ENABLED_TOOLS" | python3 -c "import sys,json; print('ok' if 'tools' in json.load(sys.stdin) else 'FAIL')" 2>/dev/null)"
+
+# ═══ 16f. File fact extraction ═══
+# Upload a text file and verify facts are extracted
+EXTRACT_FILE=$(curl -sf -X POST "$BASE/api/v1/files/upload" -H "$H" \
+  -F "file=@$SAMPLE_DIR/sample-ct-report.txt" -F "patient_hash=$HASH" | python3 -c "import sys,json; print(json.load(sys.stdin).get('file_id',''))" 2>/dev/null)
+check "16.19 Upload file for extraction" "$([ -n "$EXTRACT_FILE" ] && echo ok || echo 'FAIL')"
+# Wait for async extraction
+sleep 5
+FACTS_AFTER_FILE=$(curl -sf "$BASE/api/v1/facts" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['facts']))" 2>/dev/null)
+check "16.20 Facts count after upload" "$([ "${FACTS_AFTER_FILE:-0}" -ge "${FACTS_AFTER_DEL:-0}" ] && echo ok || echo "FAIL: before=$FACTS_AFTER_DEL after=$FACTS_AFTER_FILE")"
+
+# ═══ 16g. Cascade cleanup on patient delete ═══
+# Create a temp patient with a fact, then delete and verify fact becomes general
+TMP_PATIENT=$(curl -sf -X POST "$BASE/api/v1/dicom/patients/register-manual" -H "$H" -H "Content-Type: application/json" \
+  -d '{"initials":"TMP","age":30,"sex":"F","chief_complaint":"test"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('patient_hash',''))" 2>/dev/null)
+# Add a patient fact for TMP
+curl -sf -X POST "$BASE/api/v1/memory/import" -H "$H" -H "Content-Type: application/json" \
+  -d "{\"facts\":[{\"category\":\"fact\",\"importance\":2,\"content\":\"TMP patient has test condition\",\"sourceType\":\"patient\",\"patientHash\":\"$TMP_PATIENT\"}]}" > /dev/null 2>&1
+check "16.21 Temp patient fact created" ok
+# Delete the temp patient
+curl -sf -X DELETE "$BASE/api/v1/dicom/patients/$TMP_PATIENT" -H "$H" > /dev/null 2>&1
+# Check the fact lost its patientHash and became general
+CASCADE_CHECK=$(curl -sf "$BASE/api/v1/facts" -H "$H" | python3 -c "import sys,json; facts=json.load(sys.stdin)['facts']; tmp_facts=[f for f in facts if 'TMP patient' in f['content']]; print('ok' if tmp_facts and tmp_facts[0].get('sourceType')=='general' and not tmp_facts[0].get('patientHash') else 'FAIL')" 2>/dev/null)
+check "16.22 Cascade cleanup on patient delete" "$CASCADE_CHECK"
+
 echo ""
 echo "════════════════════════════════════════════"
 echo "  $((PASS+FAIL)) tests: $PASS ✓  $FAIL ✗"

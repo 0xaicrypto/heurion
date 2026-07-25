@@ -70,6 +70,25 @@ export class FactsStore {
   all(): Fact[] { return [...this.working] }
   currentVersion() { return this.store.currentVersion() }
 
+  /** Mutate facts in-place matching a predicate, then commit. Returns count changed. */
+  updateWhere(predicate: (f: Fact) => boolean, patch: Partial<Pick<Fact, 'patientHash' | 'studyId' | 'sourceType' | 'content' | 'category' | 'importance'>>): number {
+    let changed = 0
+    for (const f of this.working) {
+      if (predicate(f)) {
+        if (patch.patientHash !== undefined) f.patientHash = patch.patientHash
+        if (patch.studyId !== undefined) f.studyId = patch.studyId
+        if (patch.sourceType) f.sourceType = patch.sourceType
+        if (patch.content) f.content = patch.content
+        if (patch.category) f.category = patch.category
+        if (patch.importance) f.importance = patch.importance
+        f.updatedAt = Date.now()
+        changed++
+      }
+    }
+    if (changed > 0) this.commit()
+    return changed
+  }
+
   add(fact: Omit<Fact, 'id' | 'createdAt' | 'updatedAt' | 'lastSeenAt' | 'count'>): Fact {
     const now = Date.now()
     const existing = this.working.find(f => f.content === fact.content && f.category === fact.category)
