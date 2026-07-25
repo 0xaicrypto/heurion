@@ -189,7 +189,7 @@ describe('Settings 功能', () => {
     const res = await app.inject({
       method: 'PUT', url: '/api/v1/settings/llm',
       headers: { ...await authHeader(), 'content-type': 'application/json' },
-      payload: { provider: 'deepseek', model: 'deepseek-chat' },
+      payload: { provider: 'deepseek', model: 'deepseek-v4-pro' },
     })
     expect(JSON.parse(res.payload).ok).toBe(true)
   })

@@ -1,6 +1,6 @@
 // DeepSeek LLM client — OpenAI-compatible Chat Completions API
 const DEEPSEEK_BASE = 'https://api.deepseek.com/v1'
-const DEEPSEEK_MODEL = 'deepseek-chat'
+const DEEPSEEK_MODEL = 'deepseek-v4-pro'
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
