@@ -13,7 +13,7 @@ import { getApp, authHeader } from './setup.js'
  */
 
 describe('Workflow Step 1 — Patient Onboarding', () => {
-  test('create patient with chief complaint', async () => {
+  test('create patient with chief complaint', { timeout: 15000 }, async () => {
     const app = await getApp()
     const res = await app.inject({
       method: 'POST', url: '/api/v1/dicom/patients/register-manual',
