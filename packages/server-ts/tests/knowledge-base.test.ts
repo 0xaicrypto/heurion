@@ -83,6 +83,28 @@ describe('P0 — FactsStore Dedup', () => {
     expect(found!.importance).toBe(4) // max of 3,4,2
   })
 
+  test('updateWhere clears patientHash and changes sourceType on patient delete', () => {
+    const store = getStore()
+    const fact = store.add({
+      category: 'fact',
+      importance: 2,
+      content: 'TMP patient has test condition',
+      sourceType: 'patient',
+      patientHash: 'patient_tmp_123',
+    })
+    expect(fact.patientHash).toBe('patient_tmp_123')
+
+    const changed = store.updateWhere(
+      f => f.patientHash === 'patient_tmp_123',
+      { patientHash: undefined, sourceType: 'general' },
+    )
+    expect(changed).toBe(1)
+
+    const updated = store.all()[0]
+    expect(updated.patientHash).toBeUndefined()
+    expect(updated.sourceType).toBe('general')
+  })
+
   // Backward compat test skipped — VersionedStore handles migration differently
   test.skip('backward compat: old facts without count field get count=1', () => {
     const dir = path.join(baseDir, 'compat-test')
