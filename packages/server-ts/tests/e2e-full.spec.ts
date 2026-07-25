@@ -9,7 +9,7 @@
  *
  * Run: npx playwright test --config=playwright.config.ts
  */
-import { test, expect, request } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8002'
 const DOCTOR = { username: 'e2e-doctor', password: 'test123456', displayName: 'Dr. E2E' }
@@ -19,23 +19,25 @@ const PATIENT_NAME = 'Zhang Wei'
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(60000)
 
-  // Call API directly via Playwright's request context
-  const apiCtx = await request.newContext({ baseURL: BASE })
-  let jwt: string, userId: string, displayName: string, role: string
-  const loginRes = await apiCtx.post('/api/v1/auth/login', {
-    data: { username: DOCTOR.username, password: DOCTOR.password },
+  // Call API with plain fetch (avoids Playwright request fixture issues on pnpm)
+  const res = await fetch(`${BASE}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: DOCTOR.username, password: DOCTOR.password }),
   })
-  let body = await loginRes.json()
+  let body = await res.json()
+  let jwt: string, userId: string, displayName: string, role: string
   if (body.jwt_token) {
     jwt = body.jwt_token; userId = body.user_id; displayName = body.display_name; role = body.role
   } else {
-    const regRes = await apiCtx.post('/api/v1/auth/register', {
-      data: { username: DOCTOR.username, password: DOCTOR.password, display_name: DOCTOR.displayName },
+    const regRes = await fetch(`${BASE}/api/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: DOCTOR.username, password: DOCTOR.password, display_name: DOCTOR.displayName }),
     })
     body = await regRes.json()
     jwt = body.jwt_token; userId = body.user_id; displayName = body.display_name; role = body.role
   }
-  await apiCtx.dispose()
 
   // Inject token + Zustand-compatible state into browser
   const page = await browser.newPage()

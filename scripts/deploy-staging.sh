@@ -19,7 +19,7 @@ TWIN_BASE_DIR=.nexus/staging-twins
 ENVEOF
 
 rm -rf node_modules
-pnpm install
+pnpm install --prefer-offline
 npx prisma generate
 rm -f staging.db staging.db-journal 2>/dev/null || true
 npx prisma db push --accept-data-loss
