@@ -147,3 +147,5 @@ contracts/typechain-types/
 _attic/
 scratch/
 TODO.local.md
+packages/server-ts/web-dist/
+packages/server-ts/test-results/
