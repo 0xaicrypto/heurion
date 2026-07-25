@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
+import { fetchGitHubSkills, type GitHubSkill } from './github-skills.js'
 
 // #3: Expanded skill catalog (30+ skills)
 const CATALOG = [
@@ -108,5 +109,22 @@ export async function skillsRouter(app: FastifyInstance) {
     const { name } = request.params as any
     try { await (prisma as any).userSkillPref.delete({ where: { userId_skillName: { userId: request.user!.userId, skillName: name } } }) } catch { /* ok */ }
     return { uninstalled: true }
+  })
+
+  // ── GitHub Claude Skills marketplace ──
+  app.get('/api/v1/skills/github', async (request) => {
+    const { query } = request.query as any
+    const q = (query || '').toLowerCase()
+    const skills = await fetchGitHubSkills()
+    const prefs = await (prisma as any).userSkillPref.findMany({ where: { userId: request.user!.userId } })
+    const installed = new Set(prefs.map((p: any) => p.skillName))
+    const filtered = skills
+      .filter(s => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))
+      .map(s => ({
+        identifier: s.identifier, name: s.name, description: s.description,
+        source: 'github', repo: s.repo, author: s.author,
+        installed: installed.has(s.name), version: s.version,
+      }))
+    return { skills: filtered, total: filtered.length, source: 'github' }
   })
 }
