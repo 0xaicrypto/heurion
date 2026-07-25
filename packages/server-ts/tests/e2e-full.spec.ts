@@ -10,7 +10,7 @@
 import { test, expect } from '@playwright/test'
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8002'
-const DOCTOR = { username: 'e2e-doctor', password: 'test123456' }
+const DOCTOR = { username: 'hz', password: 'hz123456' }
 
 async function login(page: any) {
   await page.goto(`${BASE}/login`, { timeout: 10000, waitUntil: 'domcontentloaded' })
