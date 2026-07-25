@@ -3,7 +3,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { api } from '@/lib/api-client';
 import { Button, Card, Skeleton, Badge } from '@/components/ui';
 import { cn } from '@/lib/utils';
-import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock } from 'lucide-react';
+import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText } from 'lucide-react';
 
 interface Article {
   id: string; title: string; content: string; sources: string[];
@@ -22,13 +22,14 @@ interface Tool {
   enabled: boolean; createdAt: number;
 }
 
-type Tab = 'articles' | 'facts' | 'gaps' | 'tools';
+type Tab = 'articles' | 'facts' | 'gaps' | 'tools' | 'files';
 
 const TABS: { key: Tab; label: string; icon: typeof BookOpen }[] = [
   { key: 'articles', label: 'Articles', icon: BookOpen },
   { key: 'facts', label: 'Facts', icon: Brain },
   { key: 'gaps', label: 'Pending', icon: Clock },
   { key: 'tools', label: 'Tools', icon: Wrench },
+  { key: 'files', label: 'Files', icon: FileText },
 ];
 
 export function KnowledgePage() {
@@ -37,6 +38,7 @@ export function KnowledgePage() {
   const [facts, setFacts] = useState<Fact[]>([]);
   const [gaps, setGaps] = useState<Gap[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
+  const [files, setFiles] = useState<Array<{file_id: string; name: string; mime: string; size_bytes: number; created_at: string}>>([]);
   const [loading, setLoading] = useState(true);
 
   const loadAll = () => {
@@ -46,6 +48,7 @@ export function KnowledgePage() {
       api.getFacts().then(r => setFacts(r.facts)).catch(() => {}),
       api.getKnowledgeGaps().then(r => setGaps(r.gaps)).catch(() => {}),
       api.getKnowledgeTools().then(r => setTools(r.tools)).catch(() => {}),
+      api.listFiles().then(r => setFiles(r.files)).catch(() => {}),
     ]).finally(() => setLoading(false));
   };
 
@@ -226,6 +229,31 @@ export function KnowledgePage() {
                           </div>
                           {t.description && <p className="mt-1 text-xs text-text-tertiary line-clamp-2">{t.description}</p>}
                           <p className="mt-1 text-xs text-text-tertiary">{new Date(t.createdAt).toLocaleDateString()}</p>
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+              {/* ── Files ── */}
+              {tab === 'files' && (
+                <div className="space-y-3">
+                  {files.length === 0 && (
+                    <Card className="p-8 text-center">
+                      <FileText size={32} className="mx-auto mb-3 text-text-tertiary" />
+                      <p className="text-text-secondary">No uploaded files.</p>
+                      <p className="mt-1 text-sm text-text-tertiary">Upload files via chat or the Files page.</p>
+                    </Card>
+                  )}
+                  {files.map(f => (
+                    <Card key={f.file_id} className="p-4">
+                      <div className="flex items-center gap-3">
+                        <FileText size={18} className="text-text-tertiary shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-text-primary truncate">{f.name}</p>
+                          <p className="text-xs text-text-tertiary">
+                            {f.mime} · {(f.size_bytes / 1024).toFixed(1)} KB · {new Date(f.created_at).toLocaleDateString()}
+                          </p>
                         </div>
                       </div>
                     </Card>
