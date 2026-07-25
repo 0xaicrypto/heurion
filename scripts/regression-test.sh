@@ -389,7 +389,10 @@ if [ -n "$TMP_PATIENT" ]; then
   curl -sf -X POST "$BASE/api/v1/memory/import" -H "$H" -H "Content-Type: application/json" \
     -d "{\"facts\":[{\"category\":\"fact\",\"importance\":2,\"content\":\"TMP patient has test condition\",\"sourceType\":\"patient\",\"patientHash\":\"$TMP_PATIENT\"}]}" > /dev/null 2>&1
   check "16.21 Temp patient fact created" ok
-  # 16.22 cascade cleanup skipped (verified via unit test)
+  # Delete the temp patient (triggers cascade cleanup)
+  curl -sf -X DELETE "$BASE/api/v1/dicom/patients/$TMP_PATIENT" -H "$H" > /dev/null 2>&1
+  CASCADE_CHECK=$(curl -sf "$BASE/api/v1/facts" -H "$H" | python3 -c "import sys,json; facts=json.load(sys.stdin)['facts']; tmp_facts=[f for f in facts if 'TMP patient' in f['content']]; print('ok' if tmp_facts and tmp_facts[0].get('sourceType')=='general' and not tmp_facts[0].get('patientHash') else 'FAIL')" 2>/dev/null)
+  check "16.22 Cascade cleanup" "$CASCADE_CHECK"
 else
   check "16.21 Temp patient fact created" "no patient"
   check "16.22 Cascade cleanup on patient delete" "skipped"

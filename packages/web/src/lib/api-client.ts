@@ -726,6 +726,13 @@ class ApiClient {
     return this.fetch('/api/v1/knowledge/gaps');
   }
 
+  /* ────────────────────────── skills marketplace ────────────────────────── */
+
+  async searchGitHubSkills(query?: string): Promise<{skills: Array<{identifier: string; name: string; description: string; source: string; repo: string; author: string; installed: boolean; version: string}>; total: number}> {
+    const qs = query ? `?query=${encodeURIComponent(query)}` : ''
+    return this.fetch(`/api/v1/skills/github${qs}`);
+  }
+
   async resolveKnowledgeGap(gapId: string): Promise<{resolved: boolean}> {
     return this.fetch(`/api/v1/knowledge/gaps/${gapId}/resolve`, { method: 'POST' });
   }

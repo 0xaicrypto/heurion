@@ -1,82 +1,71 @@
 import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { Search, Puzzle, Download, Trash2 } from 'lucide-react';
+import { Download, Trash2, Package, Power, PowerOff, RotateCcw, Globe } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Button, Input, Card, Badge, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api-client';
+import { cn } from '@/lib/utils';
 
-interface InstalledSkill {
-  name: string;
-  title: string;
-  description: string;
-  version: string;
-  author: string;
-  enabled?: boolean;
+interface Skill {
+  name: string; title?: string; description: string; version?: string;
+  author?: string; source?: string; enabled?: boolean; installed?: boolean;
+  identifier?: string; repo?: string;
 }
 
-interface SearchResult {
-  identifier: string;
-  name: string;
-  description: string;
-  version?: string;
-  author?: string;
-  source?: string;
-  installed?: boolean;
-}
+type Tab = 'builtin' | 'github';
+
+const CATEGORIES: Record<string, { label: string; icon: string }> = {
+  clinical:   { label: 'Clinical', icon: '🏥' },
+  imaging:    { label: 'Imaging', icon: '🩻' },
+  medication: { label: 'Medication', icon: '💊' },
+  research:   { label: 'Research', icon: '🔬' },
+  writing:    { label: 'Writing', icon: '📝' },
+  quality:    { label: 'Quality', icon: '✅' },
+  communication: { label: 'Communication', icon: '📨' },
+};
 
 export function SkillsPage() {
-  const { t } = useTranslation();
-  const [skills, setSkills] = useState<InstalledSkill[]>([]);
+  const [tab, setTab] = useState<Tab>('builtin');
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [ghSkills, setGhSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ghLoading, setGhLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [searching, setSearching] = useState(false);
+  const [ghQuery, setGhQuery] = useState('');
   const [installing, setInstalling] = useState<string | null>(null);
   const [uninstalling, setUninstalling] = useState<string | null>(null);
 
   const loadSkills = () => {
     setLoading(true);
-    setError(null);
     api.listSkills()
-      .then((r) => setSkills(r.skills))
-      .catch((err) => setError(err instanceof ApiError ? err.messageText : String(err)))
+      .then(r => setSkills(r.skills))
+      .catch(err => setError(err instanceof ApiError ? err.messageText : String(err)))
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => {
-    loadSkills();
-  }, []);
+  useEffect(() => { loadSkills(); }, []);
 
-  const handleSearch = async () => {
-    if (!query.trim()) return;
-    setSearching(true);
-    try {
-      const r = await api.searchSkills(query.trim(), 'official');
-      setSearchResults(r.results);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err));
-    } finally {
-      setSearching(false);
-    }
+  const loadGitHub = () => {
+    setGhLoading(true);
+    api.searchGitHubSkills(ghQuery || undefined)
+      .then(r => setGhSkills(r.skills))
+      .catch(err => setError(err instanceof ApiError ? err.messageText : String(err)))
+      .finally(() => setGhLoading(false));
   };
+
+  useEffect(() => { if (tab === 'github') loadGitHub(); }, [tab]);
 
   const handleInstall = async (identifier: string) => {
     setInstalling(identifier);
-    try {
-      await api.installSkill(identifier);
-      loadSkills();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err));
-    } finally {
-      setInstalling(null);
-    }
+    try { await api.installSkill(identifier); loadSkills(); loadGitHub(); }
+    catch (err) { setError(err instanceof ApiError ? err.messageText : String(err)); }
+    finally { setInstalling(null); }
   };
 
   const handleToggle = async (name: string, enabled: boolean) => {
     try {
       const r = await api.toggleSkill(name, !enabled);
-      setSkills((prev) => prev.map((s) => (s.name === r.name ? { ...s, enabled: r.enabled } : s)));
+      setSkills(prev => prev.map(s => s.name === r.name ? { ...s, enabled: r.enabled } : s));
+      setGhSkills(prev => prev.map(s => s.name === r.name ? { ...s, installed: true, enabled: r.enabled } : s));
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     }
@@ -84,136 +73,149 @@ export function SkillsPage() {
 
   const handleUninstall = async (name: string) => {
     setUninstalling(name);
-    try {
-      await api.uninstallSkill(name);
-      loadSkills();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err));
-    } finally {
-      setUninstalling(null);
-    }
+    try { await api.uninstallSkill(name); loadSkills(); loadGitHub(); }
+    catch (err) { setError(err instanceof ApiError ? err.messageText : String(err)); }
+    finally { setUninstalling(null); }
   };
+
+  const installedSet = new Set(skills.filter(s => s.installed).map(s => s.name));
 
   return (
     <AppShell>
       <div className="flex h-full flex-col">
-        <header className="flex h-14 items-center border-b border-border bg-surface px-6">
-          <h1 className="font-semibold text-text-primary">{t('skills.title', 'Skills')}</h1>
+        <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
+          <h1 className="font-semibold text-text-primary">Skills Marketplace</h1>
+          <Button size="sm" variant="ghost" onClick={loadSkills}><RotateCcw size={14} className="mr-1" /> Refresh</Button>
         </header>
 
-        <div className="border-b border-border bg-surface px-6 py-3">
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-tertiary" />
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
-                placeholder={t('skills.searchPlaceholder', 'Search skills...')}
-                className="pl-9"
-              />
-            </div>
-            <Button onClick={handleSearch} disabled={!query.trim() || searching} isLoading={searching}>
-              {t('common.search', 'Search')}
-            </Button>
-          </div>
-        </div>
+        <nav className="flex border-b border-border bg-surface px-6">
+          {([['builtin', 'Built-in', Package], ['github', 'Community', Globe]] as [Tab, string, typeof Package][]).map(([key, label, Icon]) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={cn(
+                'flex items-center gap-1.5 px-4 py-2.5 text-sm border-b-2 -mb-px transition-colors',
+                tab === key ? 'border-accent text-accent font-medium' : 'border-transparent text-text-secondary hover:text-text-primary'
+              )}
+            ><Icon size={14} />{label}</button>
+          ))}
+        </nav>
 
-        {error && (
-          <div className="px-6 pt-4">
-            <Alert variant="error">{error}</Alert>
-          </div>
+        {error && <div className="px-6 pt-4"><Alert variant="error">{error}</Alert></div>}
+
+        {/* Built-in Tab */}
+        {tab === 'builtin' && (
+          <main className="flex-1 overflow-y-auto p-6">
+            {loading ? (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {Array.from({ length: 9 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
+              </div>
+            ) : (
+              <div className="space-y-8">
+                {Object.entries(CATEGORIES).map(([cat, { label, icon }]) => {
+                  const catSkills = skills.filter(s => (s as any).identifier?.startsWith?.(`official/${cat}`) || (s as any).identifier?.startsWith?.(`github/${cat}`) || (s as any).identifier?.startsWith?.(`anthropic/${cat}`))
+                  if (catSkills.length === 0) return null
+                  return (
+                    <section key={cat}>
+                      <h2 className="mb-3 text-sm font-semibold text-text-secondary flex items-center gap-2">
+                        <span>{icon}</span> {label} <Badge variant="default">{catSkills.length}</Badge>
+                      </h2>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {catSkills.map(s => (
+                          <Card key={s.name} className={cn('p-4 flex flex-col justify-between', s.enabled && 'ring-1 ring-accent/30')}>
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <h3 className="font-medium text-sm text-text-primary">{s.name}</h3>
+                                {s.enabled && <Badge variant="success" className="text-[10px]">On</Badge>}
+                              </div>
+                              <p className="text-xs text-text-tertiary line-clamp-2">{s.description}</p>
+                              <p className="mt-1 text-[10px] text-text-tertiary">v{s.version} · {s.author}</p>
+                            </div>
+                            <div className="flex gap-2 mt-3">
+                              {!s.installed ? (
+                                <Button size="sm" className="w-full" onClick={() => handleInstall((s as any).identifier || s.name)} isLoading={installing === (s as any).identifier}>
+                                  <Download size={14} className="mr-1" /> Install
+                                </Button>
+                              ) : (
+                                <>
+                                  <Button size="sm" variant={s.enabled ? 'secondary' : 'primary'} className="flex-1" onClick={() => handleToggle(s.name, !!s.enabled)}>
+                                    {s.enabled ? <PowerOff size={14} className="mr-1" /> : <Power size={14} className="mr-1" />}
+                                    {s.enabled ? 'Disable' : 'Enable'}
+                                  </Button>
+                                  <Button size="sm" variant="danger" onClick={() => handleUninstall(s.name)} isLoading={uninstalling === s.name}>
+                                    <Trash2 size={14} />
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </Card>
+                        ))}
+                      </div>
+                    </section>
+                  )
+                })}
+              </div>
+            )}
+          </main>
         )}
 
-        <main className="flex-1 overflow-y-auto p-6 space-y-6">
-          {searchResults.length > 0 && (
-            <section>
-              <h2 className="mb-3 text-sm font-semibold text-text-secondary">
-                {t('skills.searchResults', 'Search Results')}
-              </h2>
+        {/* GitHub Tab */}
+        {tab === 'github' && (
+          <main className="flex-1 overflow-y-auto p-6 flex flex-col">
+            <div className="flex gap-2 mb-4">
+              <Input
+                value={ghQuery}
+                onChange={e => setGhQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') loadGitHub(); }}
+                placeholder="Search community skills..."
+                className="flex-1"
+              />
+              <Button onClick={loadGitHub} disabled={ghLoading} isLoading={ghLoading}>Search</Button>
+            </div>
+
+            {ghLoading ? (
               <div className="space-y-3">
-                {searchResults.map((r) => (
-                  <Card key={r.identifier} className="p-4">
+                {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}
+              </div>
+            ) : ghSkills.length === 0 ? (
+              <div className="flex flex-col items-center justify-center flex-1">
+                <Globe size={48} className="mb-3 text-text-tertiary" />
+                <p className="text-text-tertiary">Loading community skills from GitHub...</p>
+                <Button size="sm" variant="ghost" className="mt-3" onClick={loadGitHub}><RotateCcw size={14} className="mr-1" /> Retry</Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {ghSkills.map(s => (
+                  <Card key={s.identifier || s.name} className="p-4">
                     <div className="flex items-start justify-between">
-                      <div>
-                        <h3 className="font-medium text-text-primary">{r.name}</h3>
-                        <p className="text-sm text-text-secondary">{r.description}</p>
-                        <p className="mt-1 text-xs text-text-tertiary">
-                          v{r.version} · {r.author}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-medium text-sm text-text-primary">{s.name}</h3>
+                          <Badge variant="default" className="text-[10px]">{s.source}</Badge>
+                          {installedSet.has(s.name) && <Badge variant="success" className="text-[10px]">Installed</Badge>}
+                        </div>
+                        <p className="text-xs text-text-secondary mt-1 line-clamp-2">{s.description}</p>
+                        <p className="mt-1 text-[10px] text-text-tertiary">
+                          {s.version} · {s.author}{s.repo ? ` · ${s.repo}` : ''}
                         </p>
                       </div>
                       <Button
                         size="sm"
-                        onClick={() => handleInstall(r.identifier)}
-                        disabled={installing === r.identifier}
-                        isLoading={installing === r.identifier}
+                        className="ml-3 shrink-0"
+                        onClick={() => handleInstall(s.identifier!)}
+                        disabled={installedSet.has(s.name) || installing === s.identifier}
+                        isLoading={installing === s.identifier}
                       >
-                        <Download size={14} className="mr-1" /> {t('skills.install', 'Install')}
+                        <Download size={14} className="mr-1" />
+                        {installedSet.has(s.name) ? 'Installed' : 'Install'}
                       </Button>
                     </div>
                   </Card>
                 ))}
               </div>
-            </section>
-          )}
-
-          <section>
-            <h2 className="mb-3 text-sm font-semibold text-text-secondary">
-              {t('skills.installed', 'Installed Skills')}
-            </h2>
-            {loading ? (
-              <div className="space-y-3">
-                <Skeleton className="h-20 w-full rounded-xl" />
-                <Skeleton className="h-20 w-full rounded-xl" />
-                <Skeleton className="h-20 w-full rounded-xl" />
-              </div>
-            ) : skills.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-border py-12 text-center">
-                <Puzzle size={36} className="mb-3 text-text-tertiary" />
-                <p className="text-text-tertiary">{t('skills.noSkills', 'No skills installed')}</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {skills.map((s) => (
-                  <Card key={s.name} className="p-4">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-medium text-text-primary">{s.title || s.name}</h3>
-                          <Badge variant={s.enabled ? 'success' : 'default'}>
-                            {s.enabled ? t('skills.enabled', 'Enabled') : t('skills.disabled', 'Disabled')}
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-text-secondary">{s.description}</p>
-                        <p className="mt-1 text-xs text-text-tertiary">
-                          v{s.version} · {s.author}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          variant={s.enabled ? 'secondary' : 'primary'}
-                          onClick={() => handleToggle(s.name, !!s.enabled)}
-                        >
-                          {s.enabled ? t('skills.disable', 'Disable') : t('skills.enable', 'Enable')}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          onClick={() => handleUninstall(s.name)}
-                          disabled={uninstalling === s.name}
-                          isLoading={uninstalling === s.name}
-                        >
-                          <Trash2 size={14} />
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
             )}
-          </section>
-        </main>
+          </main>
+        )}
       </div>
     </AppShell>
   );
