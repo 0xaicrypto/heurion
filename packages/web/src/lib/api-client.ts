@@ -712,6 +712,20 @@ class ApiClient {
     return this.fetch('/api/v1/memory/import', { method: 'POST', body: JSON.stringify(data) });
   }
 
+  /* ────────────────────────── knowledge gaps + tools ────────────────────────── */
+
+  async getKnowledgeGaps(): Promise<{gaps: Array<{id: string; query: string; context: string; status: string; detectedAt: number}>}> {
+    return this.fetch('/api/v1/knowledge/gaps');
+  }
+
+  async resolveKnowledgeGap(gapId: string): Promise<{resolved: boolean}> {
+    return this.fetch(`/api/v1/knowledge/gaps/${gapId}/resolve`, { method: 'POST' });
+  }
+
+  async getKnowledgeTools(): Promise<{tools: Array<{id: string; name: string; description: string; language: string; enabled: boolean; createdAt: number}>}> {
+    return this.fetch('/api/v1/knowledge/tools');
+  }
+
   /* ────────────────────────── chat projection ────────────────────────── */
 
   async getChatProjection(): Promise<{budget: Array<{layer: string; tokens: number; items: number}>}> {
