@@ -688,8 +688,16 @@ class ApiClient {
     return this.fetch('/api/v1/knowledge');
   }
 
-  async getFacts(): Promise<{facts: Array<{id: string; category: string; importance: number; content: string; count: number; createdAt: number; updatedAt: number; lastSeenAt: number}>}> {
+  async getFacts(): Promise<{facts: Array<{id: string; category: string; importance: number; content: string; count: number; sourceType: string; patientHash?: string; studyId?: string; createdAt: number; updatedAt: number; lastSeenAt: number}>}> {
     return this.fetch('/api/v1/facts');
+  }
+
+  async updateFact(id: string, patch: Partial<{content: string; category: string; importance: number; sourceType: string}>): Promise<{fact: object}> {
+    return this.fetch(`/api/v1/facts/${id}`, { method: 'PUT', body: JSON.stringify(patch) });
+  }
+
+  async deleteFact(id: string): Promise<{deleted: boolean}> {
+    return this.fetch(`/api/v1/facts/${id}`, { method: 'DELETE' });
   }
 
   /* ────────────────────────── calendar ────────────────────────── */

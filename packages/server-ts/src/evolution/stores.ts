@@ -8,6 +8,9 @@ export interface Fact {
   importance: number  // 1-5
   content: string
   count: number        // how many times this fact has been observed
+  patientHash?: string  // linked patient
+  studyId?: string      // linked research study
+  sourceType: 'patient' | 'doctor' | 'research' | 'general'
   ttl?: number         // optional expiry
   createdAt: number
   updatedAt: number
@@ -69,7 +72,6 @@ export class FactsStore {
 
   add(fact: Omit<Fact, 'id' | 'createdAt' | 'updatedAt' | 'lastSeenAt' | 'count'>): Fact {
     const now = Date.now()
-    // Dedup: merge with existing fact of same content + category
     const existing = this.working.find(f => f.content === fact.content && f.category === fact.category)
     if (existing) {
       existing.count = (existing.count || 1) + 1
@@ -81,6 +83,7 @@ export class FactsStore {
     const f: Fact = {
       id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
       ...fact,
+      sourceType: fact.sourceType || 'general',
       count: 1,
       createdAt: now,
       updatedAt: now,

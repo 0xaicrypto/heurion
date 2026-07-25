@@ -51,22 +51,28 @@ export class ChatOrchestrator {
   }
 
   // #2: Extract facts automatically using DeepSeek
-  async postTurn(userId: string, sessionId: string, userMessage: string) {
+  async postTurn(userId: string, sessionId: string, userMessage: string, patientHash?: string) {
     const recentEvents = this.eventLog.query({ sessionId, limit: 6 }).reverse()
     const conversation = recentEvents
       .map(e => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${e.content.slice(0, 300)}`)
       .join('\n')
 
-    // Extract takeaway as episode summary
     const turnCount = this.eventLog.query({ sessionId }).length
     this.episodesStore.upsert(sessionId, userMessage.slice(0, 150), turnCount)
 
-    // Every 5 turns, extract facts from conversation with DeepSeek
     const totalTurns = this.eventLog.count()
     if (totalTurns % 5 === 0 && totalTurns > 0) {
       try {
         const apiKey = getApiKey()
-        const extractionPrompt = `Extract key facts, preferences, and knowledge from this conversation. Return ONLY a JSON array of objects with: category (preference/fact/constraint/goal/context), importance (1-5), content (short sentence).\n\n${conversation}\n\n[JSON array]:`
+        const patientCtx = patientHash
+          ? '\nCurrent context: discussing patient ' + patientHash + '. Facts about this patient should have sourceType: "patient" and patientHash set.'
+          : ''
+        const extractionPrompt = `Extract key facts from this clinical conversation. Return ONLY a JSON array of objects with:
+- category: preference/fact/constraint/goal/context
+- importance: 1-5
+- content: short sentence
+- sourceType: "patient" (if about a specific patient), "doctor" (if about doctor's preference/workflow), "research" (if about studies/trials), "general" (otherwise)
+${patientCtx}\n\n${conversation}\n\n[JSON array]:`
 
         const result = await deepseekChat([{ role: 'user', content: extractionPrompt }], apiKey)
         const jsonMatch = result.match(/\[[\s\S]*\]/)
@@ -78,6 +84,8 @@ export class ChatOrchestrator {
                 category: f.category,
                 importance: Math.min(5, Math.max(1, f.importance || 3)),
                 content: f.content,
+                sourceType: f.sourceType || 'general',
+                patientHash: f.sourceType === 'patient' ? (patientHash || undefined) : undefined,
               })
             }
           }

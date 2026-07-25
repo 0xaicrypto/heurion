@@ -3,7 +3,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { api } from '@/lib/api-client';
 import { Button, Card, Skeleton, Badge } from '@/components/ui';
 import { cn } from '@/lib/utils';
-import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText } from 'lucide-react';
+import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X } from 'lucide-react';
 
 interface Article {
   id: string; title: string; content: string; sources: string[];
@@ -12,7 +12,8 @@ interface Article {
 }
 interface Fact {
   id: string; category: string; importance: number; content: string;
-  count: number; createdAt: number; updatedAt: number; lastSeenAt: number;
+  count: number; sourceType?: string; patientHash?: string; studyId?: string;
+  createdAt: number; updatedAt: number; lastSeenAt: number;
 }
 interface Gap {
   id: string; query: string; context: string; status: string; detectedAt: number;
@@ -40,6 +41,9 @@ export function KnowledgePage() {
   const [tools, setTools] = useState<Tool[]>([]);
   const [files, setFiles] = useState<Array<{file_id: string; name: string; mime: string; size_bytes: number; created_at: string}>>([]);
   const [loading, setLoading] = useState(true);
+  const [editingFact, setEditingFact] = useState<Fact | null>(null);
+  const [editContent, setEditContent] = useState('');
+  const [editSource, setEditSource] = useState('general');
 
   const loadAll = () => {
     setLoading(true);
@@ -59,6 +63,18 @@ export function KnowledgePage() {
 
   const resolveGap = async (gapId: string) => {
     await api.resolveKnowledgeGap(gapId).catch(() => {});
+    loadAll();
+  };
+
+  const deleteFact = async (id: string) => {
+    await api.deleteFact(id).catch(() => {});
+    loadAll();
+  };
+
+  const saveFact = async () => {
+    if (!editingFact) return;
+    await api.updateFact(editingFact.id, { content: editContent, sourceType: editSource }).catch(() => {});
+    setEditingFact(null);
     loadAll();
   };
 
@@ -145,7 +161,52 @@ export function KnowledgePage() {
 
               {/* ── Facts ── */}
               {tab === 'facts' && (
-                <div className="space-y-3">
+                <div className="space-y-6">
+                  {(['patient', 'doctor', 'research', 'general'] as const).map(sourceType => {
+                    const groupFacts = facts.filter(f => f.sourceType === sourceType || (!f.sourceType && sourceType === 'general'))
+                    if (groupFacts.length === 0) return null
+                    const Icon = sourceType === 'patient' ? User : sourceType === 'doctor' ? Stethoscope : sourceType === 'research' ? FlaskConical : Globe
+                    const label = sourceType === 'patient' ? 'Patient Facts' : sourceType === 'doctor' ? 'Doctor & Preferences' : sourceType === 'research' ? 'Research & Studies' : 'General'
+                    return (
+                      <div key={sourceType}>
+                        <h3 className="flex items-center gap-2 mb-3 text-sm font-semibold text-text-secondary">
+                          <Icon size={16} /> {label} ({groupFacts.length})
+                        </h3>
+                        <div className="space-y-2">
+                          {groupFacts.map(f => (
+                            <Card key={f.id} className="p-3">
+                              <div className="flex items-start gap-3">
+                                <div className={cn(
+                                  'mt-0.5 px-1.5 py-0.5 rounded text-xs font-medium shrink-0',
+                                  f.category === 'fact' ? 'bg-blue-500/10 text-blue-500' :
+                                  f.category === 'preference' ? 'bg-purple-500/10 text-purple-500' :
+                                  f.category === 'constraint' ? 'bg-orange-500/10 text-orange-500' :
+                                  f.category === 'goal' ? 'bg-green-500/10 text-green-500' :
+                                  'bg-slate-500/10 text-slate-500'
+                                )}>{f.category}</div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-text-primary">{f.content}</p>
+                                  <p className="mt-1 text-xs text-text-tertiary">
+                                    Importance: {f.importance} · Seen {f.count}x · {new Date(f.updatedAt).toLocaleDateString()}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    className="p-1 rounded hover:bg-surface-elevated text-text-tertiary hover:text-text-primary"
+                                    onClick={() => { setEditingFact(f); setEditContent(f.content); setEditSource(f.sourceType || 'general'); }}
+                                  ><Edit3 size={14} /></button>
+                                  <button
+                                    className="p-1 rounded hover:bg-surface-elevated text-text-tertiary hover:text-error"
+                                    onClick={() => deleteFact(f.id)}
+                                  ><Trash2 size={14} /></button>
+                                </div>
+                              </div>
+                            </Card>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
                   {facts.length === 0 && (
                     <Card className="p-8 text-center">
                       <Brain size={32} className="mx-auto mb-3 text-text-tertiary" />
@@ -153,26 +214,33 @@ export function KnowledgePage() {
                       <p className="mt-1 text-sm text-text-tertiary">Facts are extracted from conversations and imported data.</p>
                     </Card>
                   )}
-                  {facts.map(f => (
-                    <Card key={f.id} className="p-4">
-                      <div className="flex items-start gap-3">
-                        <div className={cn(
-                          'mt-0.5 px-1.5 py-0.5 rounded text-xs font-medium shrink-0',
-                          f.category === 'fact' ? 'bg-blue-500/10 text-blue-500' :
-                          f.category === 'preference' ? 'bg-purple-500/10 text-purple-500' :
-                          f.category === 'constraint' ? 'bg-orange-500/10 text-orange-500' :
-                          f.category === 'goal' ? 'bg-green-500/10 text-green-500' :
-                          'bg-slate-500/10 text-slate-500'
-                        )}>{f.category}</div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-text-primary">{f.content}</p>
-                          <p className="mt-1 text-xs text-text-tertiary">
-                            Importance: {f.importance} · Seen {f.count}x · {new Date(f.updatedAt).toLocaleDateString()}
-                          </p>
-                        </div>
+
+                  {/* Edit modal */}
+                  {editingFact && (
+                    <Card className="p-4 border-accent">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="font-medium text-sm">Edit Fact</h3>
+                        <button onClick={() => setEditingFact(null)}><X size={16} className="text-text-tertiary" /></button>
+                      </div>
+                      <textarea
+                        className="w-full rounded border border-border bg-surface-elevated p-2 text-sm mb-3 h-20"
+                        value={editContent}
+                        onChange={e => setEditContent(e.target.value)}
+                      />
+                      <div className="flex items-center gap-3 mb-3">
+                        {(['patient', 'doctor', 'research', 'general'] as const).map(s => (
+                          <label key={s} className="flex items-center gap-1 text-xs">
+                            <input type="radio" name="sourceType" value={s} checked={editSource === s} onChange={() => setEditSource(s)} />
+                            {s}
+                          </label>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={saveFact}><Check size={14} className="mr-1" /> Save</Button>
+                        <Button size="sm" variant="secondary" onClick={() => setEditingFact(null)}>Cancel</Button>
                       </div>
                     </Card>
-                  ))}
+                  )}
                 </div>
               )}
 
