@@ -7,7 +7,7 @@
  * Idempotent — safe to run repeatedly.
  */
 const BASE = process.argv[2] || 'http://127.0.0.1:8002'
-const DOCTOR = { username: 'e2e-doctor', password: 'test123456', displayName: 'Dr. E2E' }
+const DOCTOR = { username: 'e2e-doctor', password: 'test123456', displayName: 'e2e-doctor' }
 
 async function api(path: string, opts: RequestInit & { token?: string } = {}) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
