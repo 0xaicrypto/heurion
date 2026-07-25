@@ -287,4 +287,4 @@ echo "════════════════════════�
 echo "  $((PASS+FAIL)) tests: $PASS ✓  $FAIL ✗"
 echo "  $BASE"
 echo "════════════════════════════════════════════"
-[ "$FAIL" -le 15 ] || exit 1
+[ "$FAIL" -eq 0 ] || exit 1
