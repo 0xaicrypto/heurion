@@ -323,6 +323,15 @@ export function KnowledgePage() {
                             {f.mime} · {(f.size_bytes / 1024).toFixed(1)} KB · {new Date(f.created_at).toLocaleDateString()}
                           </p>
                         </div>
+                        <button
+                          className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-error"
+                          onClick={async () => {
+                            if (confirm(`Delete ${f.name}?`)) {
+                              await api.deleteFile(f.file_id).catch(() => {});
+                              loadAll();
+                            }
+                          }}
+                        ><Trash2 size={14} /></button>
                       </div>
                     </Card>
                   ))}

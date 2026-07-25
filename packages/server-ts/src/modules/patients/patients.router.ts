@@ -66,7 +66,16 @@ export async function patientsRouter(app: FastifyInstance) {
   // ── Delete ──
   app.delete('/api/v1/dicom/patients/:hash', async (request) => {
     const { hash } = request.params as any
-    await (prisma as any).patientRecord.deleteMany({ where: { hash, userId: request.user!.userId } })
+    const userId = request.user!.userId
+    await (prisma as any).patientRecord.deleteMany({ where: { hash, userId } })
+    // Nullify patientHash on related facts (keep knowledge, remove broken ref)
+    const ctx = getUserContext(userId)
+    const facts = ctx.facts.all()
+    let changed = false
+    for (const f of facts) {
+      if (f.patientHash === hash) { f.patientHash = undefined; f.sourceType = 'general'; changed = true }
+    }
+    if (changed) ctx.facts.commit()
     return { deleted: true }
   })
 

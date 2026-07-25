@@ -1,6 +1,8 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
+import { getUserContext } from '../chat/user-context.js'
+import { deepseekChat, getApiKey } from '../../common/llm.js'
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
@@ -43,6 +45,36 @@ export async function filesRouter(app: FastifyInstance) {
 
     // Read patient_hash from form data
     const patientHash = (data.fields?.patient_hash as any)?.value || ''
+
+    // Extract facts from text files (fire-and-forget)
+    const isText = data.mimetype?.startsWith('text/') || data.filename?.endsWith('.txt') || data.filename?.endsWith('.md')
+    if (isText && buffer.length < 50000) {
+      const text = buffer.toString('utf-8')
+      const ctx = getUserContext(request.user!.userId)
+      ;(async () => {
+        try {
+          const apiKey = getApiKey()
+          const prompt = `Extract key facts from this clinical document. Return ONLY a JSON array of objects with: category (fact/preference/constraint/goal/context), importance (1-5), content (short sentence), sourceType (patient/doctor/research/general).\n\n${text.slice(0, 4000)}\n\n[JSON array]:`
+          const result = await deepseekChat([{ role: 'user', content: prompt }], apiKey)
+          const jsonMatch = result.match(/\[[\s\S]*\]/)
+          if (jsonMatch) {
+            const facts = JSON.parse(jsonMatch[0])
+            let added = 0
+            for (const f of facts) {
+              if (f.category && f.content) {
+                ctx.facts.add({
+                  category: f.category, importance: Math.min(5, Math.max(1, f.importance || 3)),
+                  content: f.content, sourceType: f.sourceType || 'research',
+                  patientHash: patientHash || undefined,
+                })
+                added++
+              }
+            }
+            if (added > 0) { ctx.facts.commit(); console.log(`[FILE] Extracted ${added} facts from ${data.filename}`) }
+          }
+        } catch (err) { console.log('[FILE] Fact extraction skipped:', (err as Error).message.slice(0, 80)) }
+      })()
+    }
 
     // Persist file index for dedup + listing
     try {
@@ -167,6 +199,13 @@ export async function filesRouter(app: FastifyInstance) {
   app.delete('/api/v1/files/:fileId', async (request, reply) => {
     const { fileId } = request.params as any
     const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', request.user!.userId, 'uploads', fileId)
+    // Soft-delete in FileIndex
+    try {
+      await (prisma as any).fileIndex.updateMany({
+        where: { id: fileId, userId: request.user!.userId },
+        data: { deletedAt: new Date().toISOString() },
+      })
+    } catch { /* FileIndex may not exist */ }
     if (fs.existsSync(filepath)) {
       fs.unlinkSync(filepath)
       return { deleted: true }
