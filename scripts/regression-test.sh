@@ -382,19 +382,21 @@ FACTS_AFTER_FILE=$(curl -sf "$BASE/api/v1/facts" -H "$H" | python3 -c "import sy
 check "16.20 Facts count after upload" "$([ "${FACTS_AFTER_FILE:-0}" -ge "${FACTS_AFTER_DEL:-0}" ] && echo ok || echo "FAIL: before=$FACTS_AFTER_DEL after=$FACTS_AFTER_FILE")"
 
 # ═══ 16g. Cascade cleanup on patient delete ═══
-# Create a temp patient with a fact, then delete and verify fact becomes general
 TMP_PATIENT=$(curl -sf -X POST "$BASE/api/v1/dicom/patients/register-manual" -H "$H" -H "Content-Type: application/json" \
   -d '{"initials":"TMP","age":30,"sex":"F","chief_complaint":"test"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('patient_hash',''))" 2>/dev/null)
-# Add a patient fact for TMP
-curl -sf -X POST "$BASE/api/v1/memory/import" -H "$H" -H "Content-Type: application/json" \
-  -d "{\"facts\":[{\"category\":\"fact\",\"importance\":2,\"content\":\"TMP patient has test condition\",\"sourceType\":\"patient\",\"patientHash\":\"$TMP_PATIENT\"}]}" > /dev/null 2>&1
-check "16.21 Temp patient fact created" ok
-# Delete the temp patient
-curl -sf -X DELETE "$BASE/api/v1/dicom/patients/$TMP_PATIENT" -H "$H" > /dev/null 2>&1
-# Check the fact lost its patientHash and became general
-FACTS_JSON=$(curl -sf "$BASE/api/v1/facts" -H "$H")
-CASCADE_CHECK=$(echo "$FACTS_JSON" | python3 -c "import sys,json; facts=json.load(sys.stdin)['facts']; tmp_facts=[f for f in facts if 'TMP patient' in f['content']]; print('ok' if tmp_facts and tmp_facts[0].get('sourceType')=='general' and not tmp_facts[0].get('patientHash') else 'FAIL')" 2>/dev/null)
-check "16.22 Cascade cleanup on patient delete" "$CASCADE_CHECK"
+if [ -n "$TMP_PATIENT" ]; then
+  # Add a patient fact for TMP
+  curl -sf -X POST "$BASE/api/v1/memory/import" -H "$H" -H "Content-Type: application/json" \
+    -d "{\"facts\":[{\"category\":\"fact\",\"importance\":2,\"content\":\"TMP patient has test condition\",\"sourceType\":\"patient\",\"patientHash\":\"$TMP_PATIENT\"}]}" > /dev/null 2>&1
+  check "16.21 Temp patient fact created" ok
+  # Delete the temp patient (triggers cascade)
+  curl -sf -X DELETE "$BASE/api/v1/dicom/patients/$TMP_PATIENT" -H "$H" > /dev/null 2>&1
+  CASCADE_CHECK=$(curl -sf "$BASE/api/v1/facts" -H "$H" | python3 -c "import sys,json; facts=json.load(sys.stdin)['facts']; tmp_facts=[f for f in facts if 'TMP patient' in f['content']]; print('ok' if tmp_facts and tmp_facts[0].get('sourceType')=='general' and not tmp_facts[0].get('patientHash') else 'FAIL: src='+str(tmp_facts[0].get('sourceType','?'))+' ph='+str(tmp_facts[0].get('patientHash','?')) if tmp_facts else 'not found')" 2>/dev/null)
+  check "16.22 Cascade cleanup on patient delete" "$CASCADE_CHECK"
+else
+  check "16.21 Temp patient fact created" "no patient"
+  check "16.22 Cascade cleanup on patient delete" "skipped"
+fi
 
 echo ""
 echo "════════════════════════════════════════════"
