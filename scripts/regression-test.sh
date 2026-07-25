@@ -394,7 +394,6 @@ curl -sf -X DELETE "$BASE/api/v1/dicom/patients/$TMP_PATIENT" -H "$H" > /dev/nul
 # Check the fact lost its patientHash and became general
 FACTS_JSON=$(curl -sf "$BASE/api/v1/facts" -H "$H")
 CASCADE_CHECK=$(echo "$FACTS_JSON" | python3 -c "import sys,json; facts=json.load(sys.stdin)['facts']; tmp_facts=[f for f in facts if 'TMP patient' in f['content']]; print('ok' if tmp_facts and tmp_facts[0].get('sourceType')=='general' and not tmp_facts[0].get('patientHash') else 'FAIL')" 2>/dev/null)
-echo "DEBUG 16.22 TMP_PATIENT=$TMP_PATIENT facts=$FACTS_JSON"
 check "16.22 Cascade cleanup on patient delete" "$CASCADE_CHECK"
 
 echo ""

@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
-import { getUserContext } from '../chat/user-context'
+import { getUserContext } from '../chat/user-context.js'
 import { getPendingGaps, resolveGap, getUserTools, getEnabledTools } from '../../evolution/cascade-gaps.js'
 
 /**
