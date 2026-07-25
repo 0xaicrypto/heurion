@@ -149,3 +149,22 @@ scratch/
 TODO.local.md
 packages/server-ts/web-dist/
 packages/server-ts/test-results/
+packages/server-ts/playwright-report/
+
+# ─── Playwright / E2E artifacts ────────────────────────────────────────
+test-results/
+playwright-report/
+playwright/.cache/
+*.png
+screenshots/
+
+# ─── Large generated / intermediate files ──────────────────────────────
+*.map
+*.tsbuildinfo
+.eslintcache
+.cache/
+
+# ─── Production deploy artifacts (generated at build time) ─────────────
+dist/
+!packages/web/dist/
+packages/server-ts/.env
