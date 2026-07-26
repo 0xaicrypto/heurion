@@ -24,7 +24,10 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
 def get_redis():
     import redis
 
-    return redis.from_url(REDIS_URL, decode_responses=True)
+    # socket_timeout must be larger than the longest BRPOP timeout we use,
+    # otherwise redis-py raises TimeoutError while waiting for the server to
+    # unblock. 30 seconds gives plenty of headroom for the 5-second poll loop.
+    return redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=30)
 
 
 def _update_job(
