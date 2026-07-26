@@ -104,7 +104,7 @@ S3-compatible bucket. DigitalOcean Spaces is the recommended backend.
 
 1. In the DigitalOcean Control Panel, go to **Spaces Object Storage** →
    **Access Keys** and create a key with **Read/Write/Delete (Objects)**
-   permission on the bucket you will use (e.g. `heurion-execution-output`).
+   permission on the bucket `heurion-execution-output` in `sgp1`.
 2. Store the credentials in GitHub Secrets for the `0xaicrypto/heurion` repo:
    - `S3_ENDPOINT` — e.g. `https://sgp1.digitaloceanspaces.com`
    - `S3_BUCKET` — e.g. `heurion-execution-output`
