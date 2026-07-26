@@ -128,18 +128,25 @@ ${patientCtx}\n\n${conversation}\n\n[JSON array]:`
             }
           }
         }
-
-        // Detect knowledge gaps — queries with no matching facts
-        const relatedFacts = this.factsStore.all().filter(f =>
-          userMessage.toLowerCase().split(/\s+/).some(w => w.length > 3 && f.content.toLowerCase().includes(w))
-        )
-        if (relatedFacts.length === 0 && userMessage.length > 15) {
-          detectGap(userMessage, userId, 0, conversation.slice(0, 300))
-          console.log(`[GAP] Detected: "${userMessage.slice(0, 80)}"`)
-        }
       } catch (err) {
         console.log('[EVOLVE] Fact extraction skipped:', (err as Error).message.slice(0, 100))
       }
+    }
+
+    // Detect knowledge gaps on every turn — queries with no matching facts
+    try {
+      const relatedFacts = this.factsStore.all().filter(f =>
+        userMessage.toLowerCase().split(/\s+/)
+          .map(w => w.replace(/[^\p{L}\p{N}]/gu, ''))
+          .filter(Boolean)
+          .some(w => w.length > 3 && f.content.toLowerCase().includes(w))
+      )
+      if (relatedFacts.length === 0 && userMessage.length > 15) {
+        detectGap(userMessage, userId, 0, conversation.slice(0, 300))
+        console.log(`[GAP] Detected: "${userMessage.slice(0, 80)}"`)
+      }
+    } catch (err) {
+      console.log('[GAP] Detection skipped:', (err as Error).message.slice(0, 100))
     }
   }
 }

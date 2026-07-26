@@ -71,6 +71,7 @@ export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): stri
     'Be concise, evidence-based, and reference relevant patient data and accumulated knowledge.',
     'Only reference patients that appear in the Patient Roster above.',
     'Do not invent or hallucinate patient names, diagnoses, or clinical details.',
+    'When stating a diagnosis, use only the exact terminology present in the patient profile or source documents. Do not infer or upgrade to a more specific diagnosis (for example, do not say "lung adenocarcinoma" if the profile only indicates NSCLC or a suspicious nodule).',
   ]
 
   if (prefs.length > 0) {
