@@ -116,7 +116,13 @@
 - **启用**：Plugin Manager 开始路由对应 tool calls。
 - **禁用**：保留配置，停止路由，但 tools 仍可见（标记为 disabled）。
 
-### 6.5 卸载（Uninstall）
+### 6.5 升级（Upgrade）
+
+- **单版本策略**（已决策）：每个插件在同一 workspace 下只保留一个版本。
+- 升级时：拉取新版本镜像 → 停止旧实例 → 启动新实例 → 保留用户配置（向后兼容时）。
+- 若新版本 breaking changes，提示用户重新配置。
+
+### 6.6 卸载（Uninstall）
 
 - 停止插件运行实例。
 - 删除镜像/代码包。
@@ -124,7 +130,7 @@
 - 从 registry 移除 tools。
 
 ```
-Discover → Install → Configure → Enable → [Disable] → Uninstall
+Discover → Install → Configure → Enable → [Upgrade] → [Disable] → Uninstall
 ```
 
 ---
@@ -146,7 +152,46 @@ Plugin Manager 是插件市场的核心控制面：
 
 ---
 
-## 8. Tool Registry 聚合
+## 8. Plugin Runtime 架构
+
+插件运行时可以采用多种形式，Plugin Manager 根据 manifest 中的 `runtime.type` 进行调度。
+
+### 8.1 Python Container（MVP 主力）
+
+- 每个插件一个 Docker 容器镜像。
+- 通过 HTTP/gRPC 暴露 tool invocation endpoint。
+- 适合 MedSci-Sidecar、Slack Connector 等绝大多数插件。
+
+```yaml
+runtime:
+  type: container
+  image: heurion/plugin-medsci-sidecar:1.0.0
+  port: 8080
+```
+
+### 8.2 WASM Runtime（长期探索）
+
+- 插件编译为 WASM 模块，在 WASM runtime 中执行。
+- 启动更快、资源占用更低、隔离性更好。
+- 生态和工具链目前弱于 Python container，作为实验性支持。
+
+```yaml
+runtime:
+  type: wasm
+  module: plugin.wasm
+```
+
+### 8.3 调度策略
+
+| 类型 | MVP 支持 | 默认启用 | 说明 |
+|---|---|---|---|
+| container | ✅ | ✅ | 主力 runtime |
+| process | ✅ | ❌ | 仅本地桌面版 |
+| wasm | 实验性 | ❌ | 后续逐步完善 |
+
+---
+
+## 9. Tool Registry 聚合
 
 Plugin Manager 需要向主 Agent 暴露一个统一的 tool list：
 
@@ -167,9 +212,9 @@ Plugin Manager Tool Registry
 
 ---
 
-## 9. 安全模型
+## 10. 安全模型
 
-### 9.1 权限声明（Manifest Permissions）
+### 10.1 权限声明（Manifest Permissions）
 
 每个插件必须在 manifest 中声明所需权限：
 
@@ -184,7 +229,7 @@ permissions:
   - execute_code: false
 ```
 
-### 9.2 用户授权
+### 10.2 用户授权
 
 安装插件时，用户必须明确同意权限范围。敏感权限需要二次确认：
 
@@ -192,7 +237,7 @@ permissions:
 - `network_egress` → 列出允许访问的域名
 - `execute_code: true` → 明确告知会执行代码
 
-### 9.3 沙箱执行
+### 10.3 沙箱执行
 
 | 部署模式 | 沙箱方案 |
 |---|---|
@@ -200,13 +245,22 @@ permissions:
 | 更强隔离 | gVisor / Firecracker microVM |
 | 本地桌面 | 独立进程 + 系统级权限限制 |
 
-### 9.4 Secret 管理
+### 10.4 Plugin 间通信
+
+**已决策：v1.0 不支持 Plugin 间直接通信。**
+
+- 每个插件只能与 Plugin Manager 通信。
+- 避免权限提升、循环依赖和调试复杂度。
+- 如果一个插件需要另一个插件的能力，应通过主 Agent 编排。
+- 未来若需要，通过 Plugin Manager 中转并引入显式依赖声明。
+
+### 10.5 Secret 管理
 
 - API token、密码等使用 Vault / AWS Secrets Manager / 自研 secret store。
 - Secret 只在 runtime 启动时注入环境变量，不进入主 Agent prompt。
 - Secret 不可被插件代码回传给外部（ egress 白名单控制）。
 
-### 9.5 审计日志
+### 10.6 审计日志
 
 每次插件调用记录：
 
@@ -220,16 +274,16 @@ permissions:
 
 ---
 
-## 10. 与现有 Skills 市场的关系
+## 11. 与现有 Skills 市场的关系
 
-### 10.1 用户界面层
+### 11.1 用户界面层
 
 Marketplace UI 分为两个 Tab：
 
 - **Skills**：prompt-based skills，纯文本能力。
 - **Plugins**：runtime plugins，代码/连接器能力。
 
-### 10.2 实现层
+### 11.2 实现层
 
 - Plugin 可以包含 0 个或多个 Skill。
 - 安装 Plugin 时，自动注册其 tools；可选注册其 skills。
@@ -246,7 +300,7 @@ Plugin: heurion/medsci-sidecar
     └── when_to_use_sidecar.md   # 可选
 ```
 
-### 10.3 主 Agent Prompt
+### 11.3 主 Agent Prompt
 
 System prompt 需要同时注入：
 
@@ -267,7 +321,7 @@ System prompt 需要同时注入：
 
 ---
 
-## 11. 与 MedSci-Sidecar 的关系
+## 12. 与 MedSci-Sidecar 的关系
 
 MedSci-Sidecar 是 **第一个官方 Execution Plugin**：
 
@@ -291,9 +345,71 @@ plugin:
 
 ---
 
-## 12. Marketplace 后端设计
+## 13. UI Plugin 机制
 
-### 12.1 数据模型
+**已决策：UI Plugin 采用 React 组件动态加载。**
+
+### 13.1 为什么选 React 动态加载？
+
+- Heurion 前端本身就是 React（web）/ Tauri + React（desktop）。
+- 体验最自然，插件 UI 可以无缝融入现有布局。
+- 比 iframe 更轻、性能更好。
+
+### 13.2 安全边界
+
+React 动态加载的最大风险是**插件代码可以访问整个前端上下文**。必须通过以下机制隔离：
+
+| 机制 | 说明 |
+|---|---|
+| **ESM 沙箱** | 插件 UI 以 ES Module 形式加载，运行在独立作用域 |
+| **Props 白名单** | 只传入 plugin 声明需要的 context（如 patient_hash），不暴露全局 state |
+| **CSS 隔离** | 强制 Shadow DOM 或 CSS-in-JS 命名空间，防止样式污染 |
+| **权限声明** | UI plugin 必须声明需要访问哪些前端路由/数据 |
+| **运行时校验** | 对插件 bundle 做签名/哈希校验，防止篡改 |
+
+### 13.3 UI 扩展点
+
+| 扩展点 | 说明 |
+|---|---|
+| `panel` | 在患者/研究详情页新增一个 Tab 或侧边栏面板 |
+| `settings_page` | 在插件设置页新增配置界面 |
+| `toolbar_action` | 在聊天/文档工具栏新增按钮 |
+| `dashboard_card` | 在首页 dashboard 新增卡片 |
+
+### 13.4 暂不支持的方案
+
+- **iframe**：体验割裂，性能差，仅作为未来第三方不可信插件的备选。
+- **Web Component**：标准化但 Heurion 是 React 生态，接入成本高。
+
+---
+
+## 14. 第三方插件审核机制
+
+**已决策：自动化安全扫描 + 人工抽检。**
+
+### 14.1 自动化扫描
+
+- **静态分析**：扫描 manifest 权限声明、可疑网络域名、危险函数调用。
+- **镜像扫描**：检查容器镜像 CVE 漏洞、恶意软件。
+- **Secret 检测**：确保示例代码中没有硬编码凭据。
+- **PHI 检测**：扫描插件是否在不声明 `phi_access` 的情况下处理患者数据。
+
+### 14.2 人工抽检
+
+- 新上架插件首次必须人工审核。
+- 更新版本：小版本自动化通过，大版本人工抽检。
+- 高风险权限（`phi_access=true`、`execute_code=true`）必须人工复核。
+
+### 14.3 运行时监控
+
+- 插件上线后持续监控异常行为（如 egress 越权、资源占用异常）。
+- 发现问题可立即下架或禁用。
+
+---
+
+## 15. Marketplace 后端设计
+
+### 15.1 数据模型
 
 | 实体 | 说明 |
 |---|---|
@@ -303,7 +419,7 @@ plugin:
 | `plugin_tool` | 插件注册的 tools（冗余缓存，便于快速查询） |
 | `plugin_audit_log` | 插件调用审计日志 |
 
-### 12.2 API 端点
+### 15.2 API 端点
 
 | 端点 | 说明 |
 |---|---|
@@ -320,7 +436,7 @@ plugin:
 
 ---
 
-## 13. 商业化考虑
+## 16. 商业化考虑
 
 | 维度 | 方案 |
 |---|---|
@@ -332,21 +448,23 @@ plugin:
 
 ---
 
-## 14. Roadmap
+## 17. Roadmap
 
 | 阶段 | 目标 | 关键交付 |
 |---|---|---|
 | **MVP (6-8 周)** | Plugin 基础设施 + 第一个插件 | Plugin Manager、manifest 规范、MedSci-Sidecar plugin |
-| **v1.0 (3-4 月)** | Marketplace UI + 官方连接器 | Slack、GitHub、Notion connector |
-| **v2.0 (4-6 月)** | 第三方插件 + 审核机制 | 开发者文档、插件 SDK、上架审核流程 |
-| **v3.0 (6-12 月)** | UI Plugin + Automation | 前端扩展机制、定时任务、触发器 |
+| **v1.0 (3-4 月)** | Marketplace UI + 官方连接器 + UI Plugin 基础 | Slack、GitHub、Notion connector、React UI 扩展机制 |
+| **v2.0 (4-6 月)** | 第三方插件 + 审核机制 + WASM 实验性支持 | 开发者文档、插件 SDK、上架审核流程 |
+| **v3.0 (6-12 月)** | Automation + 高级 UI 扩展 | 定时任务、触发器、更丰富的 UI 扩展点 |
 
 ---
 
-## 15. 待决策事项
+## 18. 已决策事项
 
-1. **Plugin runtime 技术栈**：Python container（推荐）还是 WASM/WASI（更轻但生态弱）？
-2. **Plugin 间通信**：是否允许插件互相调用？如果允许，如何鉴权？
-3. **UI Plugin 机制**：前端扩展用 iframe、Web Component 还是直接注入 React 组件？
-4. **第三方插件审核**：人工审核还是自动化安全扫描？
-5. **插件版本管理**：是否支持多版本共存？升级策略是什么？
+| # | 问题 | 决策 |
+|---|---|---|
+| 1 | Plugin runtime 技术栈 | **Python container 为主，WASM 作为实验性支持**。 |
+| 2 | Plugin 间通信 | **v1.0 不支持**。插件只能与 Plugin Manager 通信。 |
+| 3 | UI Plugin 机制 | **React 组件动态加载**，通过 ESM 沙箱 + Props 白名单隔离。 |
+| 4 | 第三方插件审核 | **自动化安全扫描 + 人工抽检**。高风险权限必须人工复核。 |
+| 5 | 插件版本管理 | **单版本策略**。升级即替换，保留配置（向后兼容时）。 |

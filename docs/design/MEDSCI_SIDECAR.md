@@ -119,7 +119,7 @@ templates/
 
 模板来源：
 - **系统模板**：内置，所有用户可用。
-- **租户模板**：按 workspace/team 隔离，管理员可上传。
+- **租户模板**：按 workspace/team 隔离，**workspace 管理员可上传**（已决策）。
 - **用户模板**：个人用户可上传（后续版本）。
 
 ### 6.3 占位符规范
@@ -209,7 +209,12 @@ Sidecar 返回：
 - 每个任务在独立容器/沙箱中执行，限制：
   - CPU：1 vCPU
   - 内存：512MB - 1GB
-  - 执行时间：默认 30 秒，最长 5 分钟
+  - 执行时间：按工具区分（已决策）
+    - `generate_docx` / `render_table`：30 秒
+    - `generate_pptx`：60 秒
+    - `render_plot`：60 秒
+    - `convert_to_pdf`：120 秒
+  - 最长不超过 5 分钟
   - 无网络 egress（除上传文件到内部存储）
 - 容器执行完后立即销毁，临时目录清空。
 
@@ -217,7 +222,7 @@ Sidecar 返回：
 
 - 生成文件上传到租户隔离的 Object Storage bucket/prefix。
 - 文件访问通过 Heurion 鉴权链路，不允许匿名下载。
-- 临时文件保留 7 天后自动清理（可配置）。
+- 生成文件默认保留 **30 天**后自动清理（可配置；商业化后按套餐调整）。
 
 ### 9.4 审计
 
@@ -250,8 +255,8 @@ Sidecar 返回：
 |---|---|---|
 | DOCX 生成 | `python-docx` + `docxtpl` | 成熟，支持模板占位符 |
 | PPTX 生成 | `python-pptx` | 成熟，支持版式、图片、表格 |
-| 图表渲染 | `matplotlib` / `plotly` / `seaborn` | 矢量/PDF/PNG 输出 |
-| PDF 转换 | `LibreOffice headless` 或 `pypandoc` | 可靠，容器化成熟 |
+| 图表渲染 | `matplotlib` + `plotly` + `seaborn`（已决策：两者都支持） | matplotlib 适合静态出版图；plotly 适合交互式探索 |
+| PDF 转换 | `pypandoc` 起步，`LibreOffice headless` 作为高保真选项（已决策） | pandoc 轻量足够大多数场景；LibreOffice 处理复杂版式 |
 | 服务端框架 | FastAPI / 轻量 gRPC | 与 Heurion Python 后端一致 |
 | 容器运行时 | Docker / Kubernetes | 云平台标准 |
 | 沙箱 | gVisor / Firecracker（后续） |  stronger isolation |
@@ -282,10 +287,12 @@ Sidecar 返回：
 
 ---
 
-## 14. 待决策事项
+## 14. 已决策事项
 
-1. **模板上传权限**：是否允许普通用户上传模板，还是仅管理员/系统模板？
-2. **PDF 转换引擎**：用 LibreOffice（重但准）还是 pandoc（轻但格式有限）？
-3. **图表渲染库**：`matplotlib`（静态）还是 `plotly`（可交互，但导出 PDF 重）？
-4. **执行超时**：默认 30 秒是否足够？复杂 PPT 可能需要更长时间。
-5. **文件保留期**：生成文件默认保留 7 天、30 天还是永久？
+| # | 问题 | 决策 |
+|---|---|---|
+| 1 | 模板上传权限 | **workspace 管理员可上传租户模板**，个人用户模板后续版本支持。 |
+| 2 | PDF 转换引擎 | **`pypandoc` 起步，`LibreOffice headless` 作为高保真选项**。 |
+| 3 | 图表渲染库 | **`matplotlib` 和 `plotly` 都支持**。matplotlib 用于静态出版图，plotly 用于交互式图表。 |
+| 4 | 执行超时 | **按工具区分**：docx/table 30s，pptx/plot 60s，pdf 转换 120s，最长不超过 5 分钟。 |
+| 5 | 文件保留期 | **默认 30 天**自动清理；商业化后按套餐调整。 |

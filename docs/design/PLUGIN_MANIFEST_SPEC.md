@@ -233,9 +233,12 @@ my-plugin/
 
 ### 6.2 Tool 命名规范
 
-- 全局唯一，建议格式：`{plugin_id}:{tool_name}` 或 `{plugin_id}_{tool_name}`。
-- 示例：`heurion/medsci-sidecar:generate_docx` 或 `heurion_medsci-sidecar_generate_docx`。
+**已决策：采用 `{plugin_id}:{tool_name}` 格式。**
+
+- 全局唯一，格式：`{plugin_id}:{tool_name}`。
+- 示例：`heurion/medsci-sidecar:generate_docx`。
 - Tool name 只能包含小写字母、数字、下划线、连字符。
+- `plugin_id` 与 manifest 中的 `plugin.id` 一致。
 
 ### 6.3 Tool 调用协议
 
@@ -375,6 +378,8 @@ Content-Type: application/json
 
 ## 10. Dependencies 规范
 
+**已决策：v1.0 支持插件依赖其他插件，安装时自动安装依赖插件。**
+
 ```json
 {
   "dependencies": {
@@ -387,6 +392,19 @@ Content-Type: application/json
   }
 }
 ```
+
+### 10.1 依赖安装规则
+
+1. **自动安装**：安装插件 A 时，若 A 依赖插件 B，系统自动先安装 B。
+2. **版本冲突**：若已安装 B 但版本不满足，提示用户升级或降级。
+3. **循环依赖**：安装前检测循环依赖，发现则拒绝安装。
+4. **权限继承**：依赖插件的权限也需要用户单独授权，不自动继承。
+5. **卸载保护**：若插件 B 被其他插件依赖，卸载时提示需先卸载依赖方。
+
+### 10.2 依赖声明限制
+
+- v1.0 仅支持 `plugins` 类型依赖。
+- `heurion` 版本依赖用于兼容性检查，不触发自动安装。
 
 ---
 
@@ -570,9 +588,9 @@ Content-Type: application/json
 
 | 版本 | 变更 |
 |---|---|
-| `1.0.0` | 初始版本，支持 container/process runtime、tools、skills、settings、permissions |
-| `1.1.0`（未来）| 增加 UI extension、automation triggers |
-| `2.0.0`（未来）| 增加 WASM runtime、plugin-to-plugin 调用 |
+| `1.0.0` | 初始版本，支持 container/process runtime、tools、skills、settings、permissions、UI extension、plugin dependencies |
+| `1.1.0`（未来）| 增加 automation triggers、更多 UI 扩展点 |
+| `2.0.0`（未来）| 增加 WASM runtime、plugin-to-plugin 调用（若业务需要） |
 
 ---
 
@@ -587,3 +605,15 @@ Plugin Manager 安装插件时必须校验：
 5. `permissions` 中 `phi_access: true` 的插件需要额外审批。
 6. `runtime.image` 必须来自允许的 registry。
 7. `settings.schema` 中 `secret` 字段必须加密存储。
+
+---
+
+## 15. 已决策事项
+
+| # | 问题 | 决策 |
+|---|---|---|
+| 1 | Tool 命名格式 | **采用 `{plugin_id}:{tool_name}`**。 |
+| 2 | 插件依赖声明 | **v1.0 支持**，安装时自动安装依赖插件，需防循环依赖。 |
+| 3 | UI 扩展 | **进入 v1.0 manifest**，支持 `panels`、`settings_pages` 等扩展点。 |
+| 4 | Plugin 间通信 | **v1.0 manifest 不支持**，保留到 2.0.0。 |
+| 5 | Runtime 类型 | **container 为主，process 为辅，wasm 为实验性**。 |
