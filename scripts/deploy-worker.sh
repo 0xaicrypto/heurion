@@ -36,7 +36,7 @@ EOF
 cat > secrets/gemini_key.txt <<EOF
 ${GEMINI_KEY:-}
 EOF
-chmod 600 secrets/*.txt
+chmod 644 secrets/*.txt
 
 # Pull the requested image tag and restart the stack.
 export WORKER_IMAGE_TAG="$IMAGE_TAG"
