@@ -7,8 +7,6 @@
 # Secrets are mounted under /run/secrets/ and sourced by the entrypoint.
 # Do NOT commit the ./secrets/ directory.
 
-version: "3.8"
-
 services:
   redis:
     image: redis:7-alpine
@@ -67,7 +65,10 @@ networks:
 secrets:
   server_secret:
     file: ./secrets/server_secret.txt
+    mode: "0444"
   deepseek_key:
     file: ./secrets/deepseek_key.txt
+    mode: "0444"
   gemini_key:
     file: ./secrets/gemini_key.txt
+    mode: "0444"
