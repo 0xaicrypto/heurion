@@ -97,6 +97,25 @@ cd ~/heurion
 WORKER_IMAGE_TAG=<sha> SERVER_SECRET=... DEEPSEEK_KEY=sk-... GEMINI_KEY=sk-... bash scripts/deploy-worker.sh
 ```
 
+### Object Storage (DigitalOcean Spaces)
+
+The Execution Plane uploads generated files (DOCX, PPTX, PDFs, plots) to an
+S3-compatible bucket. DigitalOcean Spaces is the recommended backend.
+
+1. In the DigitalOcean Control Panel, go to **Spaces Object Storage** →
+   **Access Keys** and create a key with **Read/Write/Delete (Objects)**
+   permission on the bucket you will use (e.g. `heurion-execution-output`).
+2. Store the credentials in GitHub Secrets for the `0xaicrypto/heurion` repo:
+   - `S3_ENDPOINT` — e.g. `https://sgp1.digitaloceanspaces.com`
+   - `S3_BUCKET` — e.g. `heurion-execution-output`
+   - `S3_REGION` — e.g. `sgp1`
+   - `S3_ACCESS_KEY_ID`
+   - `S3_SECRET_ACCESS_KEY`
+3. Re-run the `deploy-execution-plane` job or push a new commit.
+
+> Spaces access keys cannot be created through the DigitalOcean API or CLI,
+> so this step must be done in the control panel.
+
 ## Rollback
 
 ```bash
@@ -129,9 +148,22 @@ pm2 logs heurion --lines 50
 
 Common: missing env var, Prisma migration needed, port conflict.
 
+### Execution Plane worker won't start
+
+```bash
+ssh root@<worker-vps-ip>
+cd ~/heurion
+docker compose -f docker-compose.worker.yml logs --tail=50 heurion-worker
+```
+
+Common causes:
+- Missing `S3_*` credentials when the worker tries to upload a file.
+- `SERVER_SECRET` mismatch between Control Plane and worker (JWT validation fails).
+- Worker firewall blocks the Control Plane's private IP on port 8001.
+
 ### Health check fails
 
 `scripts/deploy.sh` polls `/healthz` for up to 30s. If it never responds:
 - Check Nginx config: `nginx -t && systemctl restart nginx`
 - Check PM2 status: `pm2 status`
-- Check env vars: `pm2 env 0 | grep -i key`
+- Check env vars: `pm2 env 0 | grep -i key
