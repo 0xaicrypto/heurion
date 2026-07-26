@@ -48,32 +48,65 @@
 ## 4. 总体架构
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Heurion Web / Desktop                    │
-│              （Plugin Marketplace UI、设置页）               │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│                  Heurion API Gateway                         │
-│         （鉴权、限流、审计、路由到 Plugin Manager）           │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│                   Plugin Manager                             │
-│   - 插件生命周期管理（安装/启用/禁用/卸载）                    │
-│   - Tool registry 聚合                                       │
-│   - 权限校验                                                 │
-│   - 调用路由                                                 │
-│   - 审计日志                                                 │
-└───────┬───────────────┬───────────────┬─────────────────────┘
-        │               │               │
-        ▼               ▼               ▼
-   Connector      Execution        Data Source
-   Plugins        Plugins          Plugins
-   (Slack,        (MedSci-         (PubMed,
-    GitHub,        Sidecar,         HIS,
-    Jira...)       R/Python...)     PACS...)
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Heurion Web / Desktop                       │
+│                  （Plugin Marketplace UI、设置页）                   │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │
+┌──────────────────────────────────▼──────────────────────────────────┐
+│                    Heurion API Gateway (Control Plane)              │
+│         （鉴权、限流、审计、路由到 Plugin Manager）                  │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │ enqueue job
+┌──────────────────────────────────▼──────────────────────────────────┐
+│                    Async Job Queue (Redis / RabbitMQ / SQLite)      │
+│   - 插件 tool 调用任务                                              │
+│   - 重试、超时、优先级                                              │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │ poll job
+┌──────────────────────────────────▼──────────────────────────────────┐
+│                    Execution Plane (Sandbox VPS / Worker Pool)      │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │                   Plugin Manager                              │  │
+│  │   - 插件生命周期管理（安装/启用/禁用/卸载）                    │  │
+│  │   - Tool registry 聚合                                        │  │
+│  │   - 权限校验                                                  │  │
+│  │   - 调用路由                                                  │  │
+│  │   - 审计日志                                                  │  │
+│  └───────┬───────────────┬───────────────┬─────────────────────┘  │
+│          │               │               │                         │
+│          ▼               ▼               ▼                         │
+│     Connector      Execution        Data Source                    │
+│     Plugins        Plugins          Plugins                        │
+│     (Slack,        (MedSci-         (PubMed,                      │
+│      GitHub,        Sidecar,         HIS,                          │
+│      Jira...)       R/Python...)     PACS...)                      │
+│  └───────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+### 4.1 控制面 vs 执行面
+
+| 维度 | Control Plane | Execution Plane |
+|---|---|---|
+| 位置 | 主生产 VPS | 独立 sandbox VPS / worker 节点 |
+| 职责 | HTTP API、Plugin Manager、Job Queue、数据库 | 运行插件容器、执行 tool、渲染文件 |
+| 公网暴露 | 是（通过 Caddy/Load Balancer） | 否（仅内网通信） |
+| 安全级别 | 标准 | 高隔离、受限 egress |
+| 扩容方式 | 垂直扩容 | 水平扩容 worker 实例 |
+
+### 4.2 Worker Pipeline
+
+插件 tool 调用通过异步 worker pipeline 执行：
+
+1. 主 Agent 识别需要调用插件 tool。
+2. Control Plane 的 Plugin Manager 校验权限，将 job 入队。
+3. Execution Plane 的 worker 从队列取出 job。
+4. worker 启动对应插件 runtime（容器/WASM），注入必要 secrets。
+5. 插件执行完成后，将结果/文件写入 Object Storage。
+6. worker 将 job 状态更新为完成，Control Plane 返回结果给用户。
+
+这种设计让长时间运行的插件任务不会阻塞主 HTTP API。
 
 ---
 
@@ -256,9 +289,25 @@ permissions:
 
 ### 10.5 Secret 管理
 
-- API token、密码等使用 Vault / AWS Secrets Manager / 自研 secret store。
-- Secret 只在 runtime 启动时注入环境变量，不进入主 Agent prompt。
-- Secret 不可被插件代码回传给外部（ egress 白名单控制）。
+DigitalOcean 没有独立的托管 Secrets Manager。推荐方案：
+
+1. **Docker Secrets（Droplet 方案，首选）**
+   - 使用 Docker Swarm / Docker Compose secrets。
+   - 插件 API token、LLM key、JWT secret 存为 secret，挂载到 `/run/secrets/`。
+   - Secret 只在 runtime 启动时注入，不进入主 Agent prompt。
+
+2. **DigitalOcean App Platform Secrets**
+   - 若 Execution Plane 部署在 App Platform，使用其内置 Secrets。
+   - 适合 serverless plugin worker。
+
+3. **自托管 HashiCorp Vault**
+   - 在 DigitalOcean Droplet 上部署 Vault。
+   - 动态凭证、审计、细粒度访问控制。
+
+**通用规则**：
+- Secret 不进入主 Agent prompt。
+- Secret 不可被插件代码回传给外部（egress 白名单控制）。
+- Plugin Manager 负责将插件需要的 secret 安全注入 runtime。
 
 ### 10.6 审计日志
 

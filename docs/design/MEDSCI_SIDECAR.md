@@ -37,35 +37,71 @@ MedSci-Sidecar 是 Heurion 的**执行型插件（Execution Plugin）**，负责
 ## 3. 总体架构
 
 ```
-┌─────────────────────────────────────────────┐
-│          用户浏览器 / 桌面客户端              │
-└───────────────────┬─────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────┐
-│      Heurion API Gateway + 主 Agent         │
-│   - 意图识别                                 │
-│   - 调用 Sidecar tool                       │
-│   - 返回 file_id 给用户                      │
-└───────────────────┬─────────────────────────┘
-                    │ HTTP / gRPC
-┌───────────────────▼─────────────────────────┐
-│         Plugin Manager                      │
-│   - 路由 tool call 到对应 plugin            │
-│   - 鉴权、审计、限流                         │
-└───────────────────┬─────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────┐
-│      MedSci-Sidecar Container               │
-│   - 模板渲染                                 │
-│   - DOCX/PPTX/PDF 生成                       │
-│   - 图表绘制                                 │
-└───────────────────┬─────────────────────────┘
-                    │ 上传输出文件
-┌───────────────────▼─────────────────────────┐
-│      Object Storage (S3/MinIO)              │
-│   - 生成的文件按 tenant 隔离                 │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         用户浏览器 / 桌面客户端                      │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │
+┌──────────────────────────────────▼──────────────────────────────────┐
+│                    Heurion API Gateway + 主 Agent                   │
+│   - 意图识别                                                         │
+│   - 调用 Sidecar tool                                               │
+│   - 返回 file_id 给用户                                              │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │ enqueue job
+┌──────────────────────────────────▼──────────────────────────────────┐
+│                    Async Job Queue (Redis / RabbitMQ / SQLite)      │
+│   - 保存待执行的 Sidecar 任务                                        │
+│   - 支持重试、超时、优先级                                            │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │ poll job
+┌──────────────────────────────────▼──────────────────────────────────┐
+│                    Execution Plane (Sandbox VPS / Worker Pool)      │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │   Plugin Manager                                              │  │
+│  │   - 路由 tool call 到 MedSci-Sidecar                          │  │
+│  │   - 鉴权、审计、限流                                           │  │
+│  └───────────────────────────────┬───────────────────────────────┘  │
+│                                  │
+│  ┌───────────────────────────────▼───────────────────────────────┐  │
+│  │   MedSci-Sidecar Container                                    │  │
+│  │   - 模板渲染                                                   │  │
+│  │   - DOCX/PPTX/PDF 生成                                         │  │
+│  │   - 图表绘制                                                   │  │
+│  └───────────────────────────────┬───────────────────────────────┘  │
+│                                  │ 上传输出文件
+│  ┌───────────────────────────────▼───────────────────────────────┐  │
+│  │   Object Storage (S3 / DigitalOcean Spaces / MinIO)           │  │
+│  │   - 生成的文件按 tenant 隔离                                   │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+### 3.1 为什么需要 Worker Pipeline？
+
+MedSci-Sidecar 的执行是**异步、资源密集、可能失败**的，不适合直接在 HTTP 请求中同步完成：
+
+| 问题 | 同步 HTTP | Worker Pipeline |
+|---|---|---|
+| 执行时间 | 受 HTTP timeout 限制（通常 30-120s） | 可运行数分钟 |
+| 资源峰值 | 阻塞主 API 进程 | 在独立 worker 上运行 |
+| 失败处理 | 只能返回错误 | 可重试、可降级 |
+| 并发控制 | 困难 | 通过队列限流 |
+| 可观测性 | 差 | 独立日志、指标、审计 |
+
+### 3.2 Execution Plane 部署
+
+Execution Plane 推荐部署在**独立的 VPS / 节点**上：
+
+- 与 Control Plane 通过 VPC / WireGuard / 内网通信。
+- 不直接暴露公网，只接受来自 Job Queue 或 Control Plane 的请求。
+- 可按需横向扩展 worker 实例。
+
+示例：DigitalOcean 上两台 Droplet：
+
+| 节点 | 角色 | 规格 |
+|---|---|---|
+| `heurion-control` | Control Plane + Job Queue | 2 vCPU / 4 GB |
+| `heurion-worker` | Execution Plane + Sandbox | 2 vCPU / 4 GB（可扩容） |
 
 ---
 
@@ -233,6 +269,26 @@ Sidecar 返回：
 - `status` (success / failure)
 - `output_file_id`
 - `error_message`（失败时，不含敏感数据）
+
+### 9.5 Secret 管理
+
+DigitalOcean 没有独立的托管 Secrets Manager。推荐按以下优先级：
+
+1. **Docker Secrets（Droplet 方案，首选）**
+   - 使用 Docker Swarm 或 Docker Compose secrets。
+   - 将 `SERVER_SECRET`、LLM API key、插件 token 存为 secret，挂载到 `/run/secrets/`。
+   - 不进入镜像，不进入环境变量，支持权限控制。
+
+2. **DigitalOcean App Platform Secrets**
+   - 若 Execution Plane 部署在 App Platform，使用其内置 Secrets/Env 功能。
+   - 适合 serverless/plugin worker 形态。
+
+3. **自托管 HashiCorp Vault**
+   - 在 DigitalOcean Droplet 上部署 Vault。
+   - 动态凭证、细粒度 ACL、审计日志。
+   - 适合企业级多租户场景。
+
+**MVP 推荐**：Docker Secrets on DigitalOcean Droplets。Control Plane 和 Execution Plane 各自维护自己的 secrets，插件凭据由 Plugin Manager 注入 worker runtime。
 
 ---
 

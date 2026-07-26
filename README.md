@@ -30,20 +30,77 @@ Unlike stateless chatbots, Heurion's agent:
 ## Architecture
 
 ```
-┌──────────────────────┐
-│   Web UI             │  React + Vite + Tailwind + i18n
-│   packages/web        │  Light/dark mode; Chinese/English
-├──────────────────────┤
-│   @heurion/sdk       │  Typed client — 10 modules, browser + CLI ready
-│   packages/sdk-client │  AsyncGenerator-based SSE streaming
-├──────────────────────┤
-│   Server (TS)        │  Fastify + Prisma + SQLite
-│   packages/server-ts  │  10 feature modules; SSR chat with DeepSeek
-├──────────────────────┤
-│   Python Worker       │  DICOM parsing, MONAI inference, event sourcing
-│   packages/server      │  Clinical graph, vector search, OCR
-└──────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                           Client Layer                              │
+├─────────────────────────────────────────────────────────────────────┤
+│   Web UI (packages/web)                                             │
+│   React + Vite + Tailwind + i18n (zh-CN/en), light/dark mode        │
+├─────────────────────────────────────────────────────────────────────┤
+│   @heurion/sdk (packages/sdk-client)                                │
+│   Typed client — 10 modules, browser + CLI ready                    │
+│   AsyncGenerator-based SSE streaming                                │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │ HTTPS / SSE
+┌──────────────────────────────────┼──────────────────────────────────┐
+│                       Control Plane (Production VPS)                │
+│  ┌───────────────────────────────┴───────────────────────────────┐  │
+│  │   Server (TS) — packages/server-ts                             │  │
+│  │   Fastify + Prisma + SQLite                                    │  │
+│  │   Auth, Chat SSE, Research, Docs, Skills, Admin, Plugin Mgmt   │  │
+│  └───────────────────────────────┬───────────────────────────────┘  │
+│                                  │ enqueue job
+│  ┌───────────────────────────────▼───────────────────────────────┐  │
+│  │   Async Job Queue (Redis / RabbitMQ / SQLite queue)            │  │
+│  │   - Plugin tool invocations                                    │  │
+│  │   - Sidecar document rendering                                 │  │
+│  │   - File format conversion                                     │  │
+│  └───────────────────────────────┬───────────────────────────────┘  │
+└──────────────────────────────────┼──────────────────────────────────┘
+                                   │ poll / push result
+┌──────────────────────────────────▼──────────────────────────────────┐
+│                      Execution Plane (Sandbox VPS)                  │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │   Plugin Worker Pool                                          │  │
+│  │   ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ │  │
+│  │   │ Connector   │ │ Execution   │ │ UI Plugin               │ │  │
+│  │   │ (Slack...)  │ │ (Sidecar...)│ │ (React dynamic load)    │ │  │
+│  │   └─────────────┘ └─────────────┘ └─────────────────────────┘ │  │
+│  │   - Docker containers / WASM runtime                          │  │
+│  │   - Restricted network egress                                 │  │
+│  │   - Per-tenant file system isolation                          │  │
+│  └───────────────────────────────┬───────────────────────────────┘  │
+│                                  │ upload output
+│  ┌───────────────────────────────▼───────────────────────────────┐  │
+│  │   Object Storage (S3 / DigitalOcean Spaces / MinIO)           │  │
+│  │   Generated files, tenant-isolated                            │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
+├─────────────────────────────────────────────────────────────────────┤
+│   Python Worker (packages/server)                                   │
+│   FastAPI + pydicom + MONAI — DICOM parsing, inference, OCR,        │
+│   clinical graph, vector search, event sourcing                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+### Why separate the Execution Plane?
+
+- **Security**: plugin code and document rendering run in a restricted sandbox; a compromised plugin cannot access the main production database.
+- **Resource isolation**: rendering PPTX / PDF / plots can spike CPU and memory; the main API server stays responsive.
+- **Compliance**: egress, PHI access, and code execution are auditable on a dedicated worker host.
+- **Scalability**: worker nodes can scale independently based on queue depth.
+
+### Plugin & Sidecar Architecture
+
+Heurion now has two extension mechanisms:
+
+- **Skills Market**: prompt-based abilities injected into the system prompt (existing).
+- **Plugin Market**: runtime plugins that register tools, connectors, and UI extensions.
+
+The first official plugin is **MedSci-Sidecar** — it generates DOCX, PPTX, tables, and plots from templates and structured data. See:
+
+- [`docs/design/PLUGIN_MARKETPLACE.md`](docs/design/PLUGIN_MARKETPLACE.md)
+- [`docs/design/PLUGIN_MANIFEST_SPEC.md`](docs/design/PLUGIN_MANIFEST_SPEC.md)
+- [`docs/design/MEDSCI_SIDECAR.md`](docs/design/MEDSCI_SIDECAR.md)
 
 ---
 
@@ -199,13 +256,16 @@ Every push to `main` triggers:
 ```
 TypeCheck → Unit Tests → Staging + Regression → Cloudflare SSL → Deploy
                     │                          │
-                    └── 30+ vitest unit tests  └── https://heurion.org
+                    └── 30+ vitest unit tests  └── Control Plane + Execution Plane
 ```
 
 - **Staging gate**: deploys to `localhost:8002` on VPS, then runs
-  **61 API regression tests**. Production deploy blocked on failure.
-- **Playwright E2E**: 20+ browser tests simulating full user workflows
-  (login → patient → chat → knowledge → settings).
+  **regression tests**. Production deploy blocked on failure.
+- **Two-plane deploy**: Control Plane (main API) and Execution Plane (plugin/sandbox worker)
+  are built and deployed independently. The Execution Plane image is rebuilt when
+  `packages/plugin-worker` or plugin manifests change.
+- **Playwright E2E**: browser tests simulating full user workflows
+  (login → patient → chat → knowledge → settings → plugin tools).
 
 ---
 
@@ -259,20 +319,77 @@ Heurion 是一个面向肿瘤研究者的**自我进化型临床 AI 工作站**�
 ## 架构
 
 ```
-┌──────────────────────┐
-│   Web UI             │  React + Vite + Tailwind + i18n
-│   packages/web        │  明暗主题；中英文切换
-├──────────────────────┤
-│   @heurion/sdk       │  类型化客户端 — 10 个模块，浏览器/CLI 通用
-│   packages/sdk-client │  AsyncGenerator 流式 SSE
-├──────────────────────┤
-│   Server (TS)        │  Fastify + Prisma + SQLite
-│   packages/server-ts  │  10 个功能模块；DeepSeek 实时对话
-├──────────────────────┤
-│   Python Worker       │  DICOM 解析、MONAI 推理、事件溯源
-│   packages/server      │  临床图谱、向量搜索、OCR
-└──────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                           客户端层                                   │
+├─────────────────────────────────────────────────────────────────────┤
+│   Web UI (packages/web)                                             │
+│   React + Vite + Tailwind + i18n（中英文/明暗主题）                  │
+├─────────────────────────────────────────────────────────────────────┤
+│   @heurion/sdk (packages/sdk-client)                                │
+│   类型化客户端 — 10 个模块，浏览器/CLI 通用                          │
+│   AsyncGenerator 流式 SSE                                           │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │ HTTPS / SSE
+┌──────────────────────────────────┼──────────────────────────────────┐
+│                       控制面 (Production VPS)                       │
+│  ┌───────────────────────────────┴───────────────────────────────┐  │
+│  │   Server (TS) — packages/server-ts                             │  │
+│  │   Fastify + Prisma + SQLite                                    │  │
+│  │   认证、Chat SSE、研究、文档、技能、管理员、插件管理            │  │
+│  └───────────────────────────────┬───────────────────────────────┘  │
+│                                  │ 入队任务
+│  ┌───────────────────────────────▼───────────────────────────────┐  │
+│  │   异步任务队列（Redis / RabbitMQ / SQLite queue）                │  │
+│  │   - 插件 tool 调用                                             │  │
+│  │   - Sidecar 文档渲染                                           │  │
+│  │   - 文件格式转换                                               │  │
+│  └───────────────────────────────┬───────────────────────────────┘  │
+└──────────────────────────────────┼──────────────────────────────────┘
+                                   │ 轮询/推送结果
+┌──────────────────────────────────▼──────────────────────────────────┐
+│                       执行面 (Sandbox VPS)                          │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │   Plugin Worker 池                                            │  │
+│  │   ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ │  │
+│  │   │ Connector   │ │ Execution   │ │ UI Plugin               │ │  │
+│  │   │ (Slack...)  │ │ (Sidecar...)│ │ (React 动态加载)        │ │  │
+│  │   └─────────────┘ └─────────────┘ └─────────────────────────┘ │  │
+│  │   - Docker 容器 / WASM runtime                                │  │
+│  │   - 受限的出站网络                                           │  │
+│  │   - 按租户隔离的文件系统                                     │  │
+│  └───────────────────────────────┬───────────────────────────────┘  │
+│                                  │ 上传输出
+│  ┌───────────────────────────────▼───────────────────────────────┐  │
+│  │   对象存储（S3 / DigitalOcean Spaces / MinIO）                 │  │
+│  │   生成的文件，按租户隔离                                       │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
+├─────────────────────────────────────────────────────────────────────┤
+│   Python Worker (packages/server)                                   │
+│   FastAPI + pydicom + MONAI — DICOM 解析、推理、OCR、               │
+│   临床图谱、向量搜索、事件溯源                                      │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+### 为什么执行面要独立？
+
+- **安全**：插件代码和文档渲染在受限沙箱中运行；被攻破的插件无法访问主生产数据库。
+- **资源隔离**：渲染 PPTX / PDF / 图表会突发占用 CPU 和内存；主 API 服务器保持响应。
+- **合规**：出站网络、PHI 访问、代码执行都在独立 worker 主机上可审计。
+- **可扩展**：worker 节点可按队列深度独立扩容。
+
+### 插件与 Sidecar 架构
+
+Heurion 现在有两种扩展机制：
+
+- **Skills 市场**：基于 prompt 的能力，注入到 system prompt（已有）。
+- **Plugin 市场**：运行时插件，可注册 tools、connectors 和 UI 扩展。
+
+第一个官方插件是 **MedSci-Sidecar** —— 基于模板和结构化数据生成 DOCX、PPTX、表格和图表。详见：
+
+- [`docs/design/PLUGIN_MARKETPLACE.md`](docs/design/PLUGIN_MARKETPLACE.md)
+- [`docs/design/PLUGIN_MANIFEST_SPEC.md`](docs/design/PLUGIN_MANIFEST_SPEC.md)
+- [`docs/design/MEDSCI_SIDECAR.md`](docs/design/MEDSCI_SIDECAR.md)
 
 ---
 
@@ -352,17 +469,80 @@ API: `GET /api/v1/knowledge`, `GET /api/v1/facts`, `POST /api/v1/facts`
 
 推送到 `main` 触发 5 阶段流水线：类型检查 → 单元测试 → 预发 + 回归 → Cloudflare SSL → 部署。
 
-- **预发关口**: 部署到 VPS 的 `localhost:8002`，运行 **61 项 API 回归测试**，全部通过后方可部署生产环境。
-- **Playwright E2E**: 20+ 浏览器测试，模拟完整用户流程（登录 → 患者 → 聊天 → 知识库 → 设置）。
+- **预发关口**: 部署到 VPS 的 `localhost:8002`，运行回归测试，全部通过后方可部署生产环境。
+- **双平面部署**: Control Plane（主 API）与 Execution Plane（插件/sandbox worker）独立构建、独立部署。当 `packages/plugin-worker` 或插件 manifest 变更时，重新构建 Execution Plane 镜像。
+- **Playwright E2E**: 浏览器测试，模拟完整用户流程（登录 → 患者 → 聊天 → 知识库 → 设置 → 插件工具）。
 
 ---
 
-## 部署
+## 部署拓扑
 
-CI/CD 通过 GitHub Actions 自动部署到 Digital Ocean。
-推送到 `main` 分支即触发 `scripts/deploy.sh`。
+生产环境建议至少 **两台 DigitalOcean Droplets**（或等价 VM）：
+
+| 节点 | 职责 | 示例规格 |
+|---|---|---|
+| **Control Plane** | 主 API、Web UI、数据库、Plugin Manager、Job Queue | 2 vCPU / 4 GB RAM |
+| **Execution Plane** | Plugin Worker、Sandbox、MedSci-Sidecar | 2 vCPU / 4 GB RAM（可弹性扩容） |
+
+两者通过内部网络（VPC / WireGuard）通信，Execution Plane **不直接暴露公网**。
+
+```
+Internet
+   │
+   ▼
+┌──────────────┐     VPC / private network     ┌──────────────────┐
+│   Caddy      │◄─────────────────────────────►│  Control Plane   │
+│  (HTTPS)     │                               │  :8001 main API  │
+└──────┬───────┘                               │  Plugin Manager  │
+       │                                       │  Job Queue       │
+       ▼                                       └────────┬─────────┘
+┌──────────────┐                                        │ enqueue
+│   Web UI     │                                        │
+└──────────────┘                                        ▼
+                                               ┌──────────────────┐
+                                               │  Execution Plane │
+                                               │  :8002 worker    │
+                                               │  sandbox plugins │
+                                               └──────────────────┘
+```
+
+## Secret 管理
+
+DigitalOcean 目前没有独立的托管 Secrets Manager（对应 AWS Secrets Manager）。推荐方案按优先级：
+
+1. **Docker Secrets + Docker Swarm**（VPS 方案，推荐）
+   - 将插件 API token、JWT secret、LLM key 存为 Docker secrets。
+   - secrets 挂载为 `/run/secrets/<name>`，不进入镜像或 env。
+   - 适合当前 Droplet + Docker Compose / Swarm 部署。
+
+2. **DigitalOcean App Platform Secrets**（Serverless 方案）
+   - 若将 Execution Plane 部署到 App Platform，可直接使用其环境变量/Secrets 功能。
+   - 适合未来把插件 worker 拆分为 serverless functions。
+
+3. **自托管 HashiCorp Vault**（企业方案）
+   - 在 DigitalOcean Droplet 上部署 Vault。
+   - 动态凭证、审计、细粒度访问控制。
+   - 运维成本较高，建议用户量/插件量大时引入。
+
+**当前推荐**：Docker Secrets on DigitalOcean Droplets。迁移到 App Platform 或 Vault 时，接口层保持不变。
+
+## CI/CD
+
+GitHub Actions 自动部署到 DigitalOcean：
+
+```
+TypeCheck → Unit Tests → Staging + Regression → Cloudflare SSL → Deploy
+```
+
+- **Staging**: 部署到 `localhost:8002` 在 VPS 上运行回归测试。
+- **Production**: `scripts/deploy.sh` 部署 Control Plane；Execution Plane 通过独立的 worker 部署脚本或 Docker Swarm stack 更新。
 
 ```bash
-# 手动部署
-ssh root@<vps-ip> "bash -s" < scripts/deploy.sh
+# 手动部署 Control Plane
+ssh root@<control-vps-ip> "bash -s" < scripts/deploy.sh
+
+# 手动部署 Execution Plane（当前通过 Docker Compose/Swarm 部署 worker stack）
+ssh root@<worker-vps-ip> "cd ~/heurion && docker compose -f docker-compose.worker.yml pull && docker compose -f docker-compose.worker.yml up -d"
 ```
+
+> `docker-compose.worker.yml` 是 Execution Plane 的独立编排文件，与 Control Plane 解耦。
