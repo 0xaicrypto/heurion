@@ -364,7 +364,7 @@ check "16.15 Gap detected" "$([ "${GAPS_AFTER:-0}" -gt 0 ] && echo ok || echo "F
 # 16.16 Resolve a gap
 GAP_ID=$(curl -sf "$BASE/api/v1/knowledge/gaps" -H "$H" | python3 -c "import sys,json; gaps=json.load(sys.stdin)['gaps']; print(gaps[0]['id'] if gaps else '')" 2>/dev/null)
 if [ -n "$GAP_ID" ]; then
-  RESOLVE_RES=$(curl -sf -X POST "$BASE/api/v1/knowledge/gaps/$GAP_ID/resolve" -H "$H" | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('resolved') else 'FAIL')" 2>/dev/null)
+  RESOLVE_RES=$(curl -sf -X POST "$BASE/api/v1/knowledge/gaps/$GAP_ID/answer" -H "$H" -H "Content-Type: application/json" -d '{"answer":"Optimal dosing is protocol-specific"}' | python3 -c "import sys,json; print('ok' if json.load(sys.stdin).get('status')=='answered' else 'FAIL')" 2>/dev/null)
   check "16.16 Resolve gap" "$RESOLVE_RES"
 else
   check "16.16 Resolve gap" "no gaps to resolve"
@@ -400,6 +400,70 @@ else
   check "16.21 Temp patient fact created" "no patient"
   check "16.22 Cascade cleanup on patient delete" "skipped"
 fi
+
+# ═══ 17. Query Router & Knowledge Commands ═══
+# 17.1 Normal patient query still works
+CHAT_QR=$(curl -sf -N -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"ZQ今年几岁？\",\"patient_hash\":\"$HASH\"}" 2>/dev/null)
+check "17.1 Normal patient query still works" "$(echo "$CHAT_QR" | grep -q 'turn_complete' && echo ok || echo 'FAIL')"
+
+# 17.2 Router metadata is emitted
+CHAT_QR=$(curl -sf -N -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"ZQ今年几岁？\",\"patient_hash\":\"$HASH\"}" 2>/dev/null)
+check "17.2 Router metadata emitted" "$(echo "$CHAT_QR" | grep -q 'Router:' && echo ok || echo 'FAIL')"
+
+# 17.3 kb_remember command handled without LLM
+CHAT_KB=$(curl -sf -N -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d '{"text":"记住：ZQ对osimertinib不耐受"}' 2>/dev/null)
+check "17.3 kb_remember command handled" "$(echo "$CHAT_KB" | grep -q '已记录' && echo ok || echo 'FAIL')"
+
+# 17.4 kb_search command handled without LLM
+CHAT_SEARCH=$(curl -sf -N -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d '{"text":"搜索我的知识库关于osimertinib"}' 2>/dev/null)
+check "17.4 kb_search command handled" "$(echo "$CHAT_SEARCH" | grep -qE '找到|没有找到' && echo ok || echo 'FAIL')"
+
+# 17.5 kb_gaps command handled without LLM
+CHAT_GAPS=$(curl -sf -N -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d '{"text":"查看我的未解问题"}' 2>/dev/null)
+check "17.5 kb_gaps command handled" "$(echo "$CHAT_GAPS" | grep -qE '未解问题|没有未解问题' && echo ok || echo 'FAIL')"
+
+# ═══ 18. Knowledge Gap REST API ═══
+# 18.1 List knowledge gaps
+check "18.1 List knowledge gaps" "$(curl -sf "$BASE/api/v1/knowledge/gaps" -H "$H" | python3 -c "import sys,json; print('ok' if 'gaps' in json.load(sys.stdin) else 'FAIL')" 2>/dev/null)"
+
+# 18.2 Create and answer a gap
+GAP_CREATE=$(curl -sf -X POST "$BASE/api/v1/knowledge/gaps" -H "$H" -H "Content-Type: application/json" -d '{"content":"测试回归未解问题"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+if [ -n "$GAP_CREATE" ]; then
+  GAP_ANSWER=$(curl -sf -X POST "$BASE/api/v1/knowledge/gaps/$GAP_CREATE/answer" -H "$H" -H "Content-Type: application/json" -d '{"answer":"测试答案"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)
+  check "18.2 Resolve knowledge gap" "$([ "$GAP_ANSWER" = "answered" ] && echo ok || echo 'FAIL')"
+else
+  check "18.2 Resolve knowledge gap" "FAIL: gap not created"
+fi
+
+# 18.3 Ignore a gap
+GAP_IGNORE=$(curl -sf -X POST "$BASE/api/v1/knowledge/gaps" -H "$H" -H "Content-Type: application/json" -d '{"content":"另一个测试问题"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+if [ -n "$GAP_IGNORE" ]; then
+  IGNORE_RES=$(curl -sf -X POST "$BASE/api/v1/knowledge/gaps/$GAP_IGNORE/ignore" -H "$H" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)
+  check "18.3 Ignore knowledge gap" "$([ "$IGNORE_RES" = "ignored" ] && echo ok || echo 'FAIL')"
+else
+  check "18.3 Ignore knowledge gap" "FAIL: gap not created"
+fi
+
+# 18.4 Filter gaps by status
+OPEN_COUNT=$(curl -sf "$BASE/api/v1/knowledge/gaps?status=open" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('gaps',[])))" 2>/dev/null)
+IGNORED_COUNT=$(curl -sf "$BASE/api/v1/knowledge/gaps?status=ignored" -H "$H" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('gaps',[])))" 2>/dev/null)
+check "18.4 Filter gaps by status" "$([ "$OPEN_COUNT" -ge 0 ] && [ "$IGNORED_COUNT" -ge 1 ] && echo ok || echo "FAIL: open=$OPEN_COUNT ignored=$IGNORED_COUNT")"
+
+# 18.5 Gap dashboard
+check "18.5 Gap dashboard" "$(curl -sf "$BASE/api/v1/knowledge/gaps/dashboard" -H "$H" | python3 -c "import sys,json; j=json.load(sys.stdin); print('ok' if 'total' in j and 'open' in j and 'answered' in j and 'ignored' in j else 'FAIL')" 2>/dev/null)"
+
+# 18.6 Sidecar feedback extracts candidates without auto-saving
+SIDECAR_FB=$(curl -sf -X POST "$BASE/api/v1/knowledge/sidecar/feedback" -H "$H" -H "Content-Type: application/json" \
+  -d '{"output":"EGFR exon 19 deletion detected in 45% of samples. PD-L1 TPS = 80%.","saveAll":false}' 2>/dev/null)
+check "18.6 Sidecar feedback candidates" "$(echo "$SIDECAR_FB" | python3 -c "import sys,json; j=json.load(sys.stdin); print('ok' if len(j.get('candidates',[]))>0 and len(j.get('saved',[]))==0 else 'FAIL')" 2>/dev/null)"
+
+# 18.7 Sidecar feedback saveAll persists facts
+SIDECAR_SAVED=$(curl -sf -X POST "$BASE/api/v1/knowledge/sidecar/feedback" -H "$H" -H "Content-Type: application/json" \
+  -d '{"output":"EGFR exon 19 deletion detected in 45% of samples. PD-L1 TPS = 80%.","saveAll":true}' 2>/dev/null)
+check "18.7 Sidecar feedback saveAll" "$(echo "$SIDECAR_SAVED" | python3 -c "import sys,json; j=json.load(sys.stdin); print('ok' if len(j.get('saved',[]))>0 else 'FAIL')" 2>/dev/null)"
+
+# 18.8 Telemetry dashboard records events
+check "18.8 Telemetry dashboard" "$(curl -sf "$BASE/api/v1/knowledge/telemetry/dashboard" -H "$H" | python3 -c "import sys,json; j=json.load(sys.stdin); print('ok' if 'totalEvents' in j and 'router' in j and 'gaps' in j else 'FAIL')" 2>/dev/null)"
 
 echo ""
 echo "════════════════════════════════════════════"

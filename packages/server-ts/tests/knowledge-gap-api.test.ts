@@ -1,26 +1,28 @@
-import { describe, test, expect, beforeEach } from 'vitest'
-import { getApp, authHeader, getToken } from './setup.js'
-import prisma from '../src/common/prisma'
-
-async function clearGaps() {
-  try {
-    await (prisma as any).knowledgeGap.deleteMany({})
-  } catch {
-    // table may not exist in some test configurations
-  }
-}
+import { describe, test, expect } from 'vitest'
+import { getApp } from './setup.js'
 
 describe('Knowledge Gap API', () => {
-  beforeEach(async () => {
-    await clearGaps()
-  })
+  async function freshUser() {
+    const app = await getApp()
+    const username = `kgapi_user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const register = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      headers: { 'content-type': 'application/json' },
+      payload: { username, password: 'test123456', display_name: 'Gap API User' },
+    })
+    const token = JSON.parse(register.payload).jwt_token
+    const userId = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString()).userId
+    return { token, userId, headers: { authorization: `Bearer ${token}` } }
+  }
 
   test('GET /api/v1/knowledge/gaps returns empty list', async () => {
     const app = await getApp()
+    const { headers } = await freshUser()
     const res = await app.inject({
       method: 'GET',
       url: '/api/v1/knowledge/gaps',
-      headers: await authHeader(),
+      headers,
     })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.payload)
@@ -30,10 +32,11 @@ describe('Knowledge Gap API', () => {
 
   test('POST /api/v1/knowledge/gaps creates a gap', async () => {
     const app = await getApp()
+    const { headers } = await freshUser()
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/knowledge/gaps',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers: { ...headers, 'content-type': 'application/json' },
       payload: { content: '测试未解问题', source: 'user' },
     })
     expect(res.statusCode).toBe(200)
@@ -46,10 +49,11 @@ describe('Knowledge Gap API', () => {
 
   test('POST /api/v1/knowledge/gaps requires content', async () => {
     const app = await getApp()
+    const { headers } = await freshUser()
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/knowledge/gaps',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers: { ...headers, 'content-type': 'application/json' },
       payload: {},
     })
     expect(res.statusCode).toBe(400)
@@ -57,14 +61,12 @@ describe('Knowledge Gap API', () => {
 
   test('POST /api/v1/knowledge/gaps/:id/answer resolves gap and creates fact', async () => {
     const app = await getApp()
-    const token = await getToken()
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
-    const userId = payload.userId
+    const { headers, userId } = await freshUser()
 
     const create = await app.inject({
       method: 'POST',
       url: '/api/v1/knowledge/gaps',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers: { ...headers, 'content-type': 'application/json' },
       payload: { content: 'Q1', source: 'user' },
     })
     const gap = JSON.parse(create.payload)
@@ -72,7 +74,7 @@ describe('Knowledge Gap API', () => {
     const answer = await app.inject({
       method: 'POST',
       url: `/api/v1/knowledge/gaps/${gap.id}/answer`,
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers: { ...headers, 'content-type': 'application/json' },
       payload: { answer: 'A1' },
     })
     expect(answer.statusCode).toBe(200)
@@ -91,10 +93,11 @@ describe('Knowledge Gap API', () => {
 
   test('POST /api/v1/knowledge/gaps/:id/answer requires answer', async () => {
     const app = await getApp()
+    const { headers } = await freshUser()
     const create = await app.inject({
       method: 'POST',
       url: '/api/v1/knowledge/gaps',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers: { ...headers, 'content-type': 'application/json' },
       payload: { content: 'Q1', source: 'user' },
     })
     const gap = JSON.parse(create.payload)
@@ -102,7 +105,7 @@ describe('Knowledge Gap API', () => {
     const answer = await app.inject({
       method: 'POST',
       url: `/api/v1/knowledge/gaps/${gap.id}/answer`,
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers: { ...headers, 'content-type': 'application/json' },
       payload: {},
     })
     expect(answer.statusCode).toBe(400)
@@ -110,10 +113,11 @@ describe('Knowledge Gap API', () => {
 
   test('POST /api/v1/knowledge/gaps/:id/ignore marks gap ignored', async () => {
     const app = await getApp()
+    const { headers } = await freshUser()
     const create = await app.inject({
       method: 'POST',
       url: '/api/v1/knowledge/gaps',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers: { ...headers, 'content-type': 'application/json' },
       payload: { content: 'Q1', source: 'user' },
     })
     const gap = JSON.parse(create.payload)
@@ -121,7 +125,7 @@ describe('Knowledge Gap API', () => {
     const ignore = await app.inject({
       method: 'POST',
       url: `/api/v1/knowledge/gaps/${gap.id}/ignore`,
-      headers: await authHeader(),
+      headers,
     })
     expect(ignore.statusCode).toBe(200)
     const body = JSON.parse(ignore.payload)
@@ -130,18 +134,19 @@ describe('Knowledge Gap API', () => {
 
   test('GET /api/v1/knowledge/gaps filters by status', async () => {
     const app = await getApp()
+    const { headers } = await freshUser()
 
     await app.inject({
       method: 'POST',
       url: '/api/v1/knowledge/gaps',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers: { ...headers, 'content-type': 'application/json' },
       payload: { content: 'Open Q', source: 'user' },
     })
 
     const create2 = await app.inject({
       method: 'POST',
       url: '/api/v1/knowledge/gaps',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers: { ...headers, 'content-type': 'application/json' },
       payload: { content: 'Ignored Q', source: 'user' },
     })
     const gap2 = JSON.parse(create2.payload)
@@ -149,13 +154,13 @@ describe('Knowledge Gap API', () => {
     await app.inject({
       method: 'POST',
       url: `/api/v1/knowledge/gaps/${gap2.id}/ignore`,
-      headers: await authHeader(),
+      headers,
     })
 
     const openRes = await app.inject({
       method: 'GET',
       url: '/api/v1/knowledge/gaps?status=open',
-      headers: await authHeader(),
+      headers,
     })
     const openBody = JSON.parse(openRes.payload)
     expect(openBody.gaps.length).toBe(1)
@@ -164,7 +169,7 @@ describe('Knowledge Gap API', () => {
     const ignoredRes = await app.inject({
       method: 'GET',
       url: '/api/v1/knowledge/gaps?status=ignored',
-      headers: await authHeader(),
+      headers,
     })
     const ignoredBody = JSON.parse(ignoredRes.payload)
     expect(ignoredBody.gaps.length).toBe(1)
@@ -173,10 +178,11 @@ describe('Knowledge Gap API', () => {
 
   test('answering non-existent gap returns 404', async () => {
     const app = await getApp()
+    const { headers } = await freshUser()
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/knowledge/gaps/nonexistent_id/answer',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers: { ...headers, 'content-type': 'application/json' },
       payload: { answer: 'A1' },
     })
     expect(res.statusCode).toBe(404)

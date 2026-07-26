@@ -4,8 +4,10 @@ import { EventLog } from '../../core/event-log'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../evolution/stores'
 import { ContractEngine } from '../../core/contracts'
 import { ChatOrchestrator } from './chat.orchestrator.js'
+import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 
 const TTL_MS = 30 * 60 * 1000 // 30 minutes idle → evict
+const telemetry = new PrismaTelemetryService()
 const GC_INTERVAL_MS = 5 * 60 * 1000
 
 interface UserContext {
@@ -50,7 +52,7 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
       return est > 2000 ? { passed: false, violations: [`Too long (${est} tokens)`], score: 0.5 } : { passed: true, violations: [], score: 1 }
     },
   })
-  const ctx = { eventLog, facts, episodes, skills, knowledge, orchestrator: new ChatOrchestrator(eventLog, facts, episodes, skills, knowledge, contracts), lastAccess: Date.now() }
+  const ctx = { eventLog, facts, episodes, skills, knowledge, orchestrator: new ChatOrchestrator(eventLog, facts, episodes, skills, knowledge, contracts, telemetry), lastAccess: Date.now() }
   contexts.set(userId, ctx)
   return ctx
 }

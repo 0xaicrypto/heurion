@@ -37,6 +37,7 @@ model User {
   studies       ResearchStudy[]
   patients      PatientRecord[]
   knowledgeGaps KnowledgeGap[]
+  telemetryEvents TelemetryEvent[]
   @@map("users")
 }
 
@@ -279,5 +280,23 @@ model KnowledgeGap {
   user User @relation(fields: [userId], references: [id])
   @@index([userId, status, createdAt(sort: Desc)])
   @@index([workspaceId, status])
+  @@index([workspaceId, source])
+  @@index([workspaceId, createdAt(sort: Desc)])
   @@map("knowledge_gaps")
+}
+
+model TelemetryEvent {
+  id          String  @id @default(cuid())
+  userId      String  @map("user_id")
+  workspaceId String  @map("workspace_id")
+  category    String
+  action      String
+  metadata    String?
+  createdAt   String  @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+  @@index([userId, category, createdAt(sort: Desc)])
+  @@index([workspaceId, category, createdAt(sort: Desc)])
+  @@index([category, createdAt(sort: Desc)])
+  @@map("telemetry_events")
 }

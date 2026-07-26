@@ -3,10 +3,10 @@ import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../ev
 import { ContractEngine } from '../../core/contracts'
 import { MemoryProjection } from '../../retrieval/memory-projection'
 import { deepseekChat, getApiKey } from '../../common/llm.js'
-import { detectGap, autoResolveGaps } from '../../evolution/cascade-gaps.js'
 import { router, RouterResult } from '../../retrieval/query-router'
 import { handleKnowledgeCommand, CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
+import { type TelemetryService, NoopTelemetryService } from '../knowledge/telemetry.service.js'
 
 export interface TurnResult {
   userEvent: Event
@@ -27,6 +27,7 @@ export class ChatOrchestrator {
     private skillsStore: SkillsStore,
     private knowledgeStore: KnowledgeStore,
     private contracts: ContractEngine,
+    private telemetry: TelemetryService = new NoopTelemetryService(),
   ) {
     this.projection = new MemoryProjection(eventLog)
   }
@@ -44,6 +45,18 @@ export class ChatOrchestrator {
     })
 
     const routeResult = await router(message)
+
+    await this.telemetry.record({
+      userId,
+      workspaceId: userId,
+      category: 'router',
+      action: routeResult.intent,
+      metadata: {
+        ruleHit: routeResult.ruleHit,
+        llmFallback: routeResult.llmFallback,
+        llmCalls: routeResult.cost.llmCalls,
+      },
+    }).catch(() => {})
 
     // Knowledge commands are handled directly without calling the chat LLM
     if (routeResult.intent === 'knowledge_command') {
@@ -133,6 +146,17 @@ export class ChatOrchestrator {
     const result = await handleKnowledgeCommand(ctx, message)
     const response = this.formatCommandResult(result)
 
+    await this.telemetry.record({
+      userId,
+      workspaceId: userId,
+      category: 'kb_command',
+      action: result.type === 'error' ? 'error' : (result.type.replace(/^kb_/, '')),
+      metadata: {
+        commandType: result.type,
+        hadError: result.type === 'error',
+      },
+    }).catch(() => {})
+
     this.eventLog.append({
       timestamp: Date.now() / 1000,
       eventType: 'assistant_response',
@@ -216,7 +240,7 @@ ${patientCtx}\n\n${conversation}\n\n[JSON array]:`
           console.log(`[EVOLVE] Extracted ${facts.length} facts (turn ${totalTurns})`)
 
           // Auto-resolve pending gaps that match new facts
-          const resolved = autoResolveGaps(userId, facts)
+          const resolved = await this.autoResolveGapsFromFacts(userId, facts)
           if (resolved.length > 0) console.log(`[GAP] Auto-resolved ${resolved.length} gaps`)
 
           // Auto-generate knowledge article when 3+ facts accumulate
@@ -258,11 +282,51 @@ ${patientCtx}\n\n${conversation}\n\n[JSON array]:`
           .some(w => w.length > 3 && f.content.toLowerCase().includes(w))
       )
       if (relatedFacts.length === 0 && userMessage.length > 15) {
-        detectGap(userMessage, userId, 0, conversation.slice(0, 300))
+        await this.gapService.create({
+          userId,
+          workspaceId: userId,
+          content: userMessage.slice(0, 200),
+          source: 'chat',
+          sourceId: sessionId,
+        })
+        await this.telemetry.record({
+          userId,
+          workspaceId: userId,
+          category: 'gap',
+          action: 'created',
+          metadata: { source: 'chat', sourceId: sessionId },
+        }).catch(() => {})
         console.log(`[GAP] Detected: "${userMessage.slice(0, 80)}"`)
       }
     } catch (err) {
       console.log('[GAP] Detection skipped:', (err as Error).message.slice(0, 100))
     }
+  }
+
+  /**
+   * Auto-resolve open gaps when new facts match their query keywords.
+   */
+  private async autoResolveGapsFromFacts(
+    userId: string,
+    newFacts: Array<{ content: string }>,
+  ): Promise<string[]> {
+    const { gaps: openGaps } = await this.gapService.list({ workspaceId: userId, status: 'open' })
+    const resolved: string[] = []
+    for (const gap of openGaps) {
+      const words = gap.content.toLowerCase().split(/\s+/).filter(w => w.length > 3)
+      const matched = newFacts.some(f => words.some(w => f.content.toLowerCase().includes(w)))
+      if (matched) {
+        await this.gapService.resolve(gap.id, `Auto-resolved by fact extraction`)
+        await this.telemetry.record({
+          userId,
+          workspaceId: userId,
+          category: 'gap',
+          action: 'auto_resolved',
+          metadata: { gapId: gap.id },
+        }).catch(() => {})
+        resolved.push(gap.id)
+      }
+    }
+    return resolved
   }
 }

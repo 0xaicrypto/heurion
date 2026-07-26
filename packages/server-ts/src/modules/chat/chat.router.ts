@@ -7,11 +7,13 @@ import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/cl
 import { router } from '../../retrieval/query-router.js'
 import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
+import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import fs from 'fs'
 import path from 'path'
 
 // #2: Read uploaded file content for chat context
 const gapService = new PrismaKnowledgeGapService()
+const telemetry = new PrismaTelemetryService()
 
 function formatCommandResult(result: CommandResult): string {
   switch (result.type) {
@@ -65,6 +67,17 @@ export async function chatRouter(app: FastifyInstance) {
 
       // ── P3: Route the query before building expensive context ──
       const routeResult = await router(body.text)
+      await telemetry.record({
+        userId,
+        workspaceId: userId,
+        category: 'router',
+        action: routeResult.intent,
+        metadata: {
+          ruleHit: routeResult.ruleHit,
+          llmFallback: routeResult.llmFallback,
+          llmCalls: routeResult.cost.llmCalls,
+        },
+      }).catch(() => {})
       send({ type: 'context_info', text: `Router: ${routeResult.intent} (ruleHit=${routeResult.ruleHit}, llmFallback=${routeResult.llmFallback})`, kind: 'router' })
 
       // Knowledge commands are handled directly without calling the chat LLM
@@ -77,6 +90,17 @@ export async function chatRouter(app: FastifyInstance) {
           gapService,
         }, body.text)
         const response = formatCommandResult(kbResult)
+
+        await telemetry.record({
+          userId,
+          workspaceId: userId,
+          category: 'kb_command',
+          action: kbResult.type === 'error' ? 'error' : kbResult.type.replace(/^kb_/, ''),
+          metadata: {
+            commandType: kbResult.type,
+            hadError: kbResult.type === 'error',
+          },
+        }).catch(() => {})
 
         ctx.eventLog.append({
           timestamp: Date.now() / 1000, eventType: 'user_message', content: body.text,
