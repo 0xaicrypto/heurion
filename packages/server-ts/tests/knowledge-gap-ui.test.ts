@@ -250,7 +250,9 @@ describe('KnowledgeGapService — unit', () => {
     const facts = new FactsStore(path.join(os.tmpdir(), `kgap-facts-${Date.now()}`))
     facts.add({ category: 'fact', importance: 5, content: 'EGFR exon 19 deletion is common', sourceType: 'general' })
 
-    const suggestions = await service.suggestAnswer(page.gaps[0].id, facts.all(), [])
+    const egfrGap = page.gaps.find(g => g.content.includes('EGFR'))
+    expect(egfrGap).toBeDefined()
+    const suggestions = await service.suggestAnswer(egfrGap!.id, facts.all(), [])
     expect(suggestions.length).toBeGreaterThan(0)
   })
 })
