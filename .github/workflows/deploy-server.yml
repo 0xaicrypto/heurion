@@ -118,8 +118,12 @@ jobs:
           EXECUTION_PLANE_URL: ${{ secrets.EXECUTION_PLANE_URL }}
           WORKER_API_TOKEN: ${{ secrets.WORKER_API_TOKEN }}
         run: |
+          printf 'DEEPSEEK_KEY=%s\nGEMINI_KEY=%s\nSERVER_SECRET=%s\nEXECUTION_PLANE_URL=%s\nWORKER_API_TOKEN=%s\n' \
+            "$DEEPSEEK_KEY" "$GEMINI_KEY" "$SERVER_SECRET" "$EXECUTION_PLANE_URL" "$WORKER_API_TOKEN" > /tmp/heurion-deploy.env
+          scp -o StrictHostKeyChecking=no /tmp/heurion-deploy.env ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/heurion-deploy.env
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            'DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY SERVER_SECRET="$SERVER_SECRET" EXECUTION_PLANE_URL="$EXECUTION_PLANE_URL" WORKER_API_TOKEN="$WORKER_API_TOKEN" bash -s' < scripts/deploy.sh || echo 'SSH pipe closed (deploy OK)'
+            'set -a; source /tmp/heurion-deploy.env; rm -f /tmp/heurion-deploy.env; bash -s' < scripts/deploy.sh || echo 'SSH pipe closed (deploy OK)'
+          rm -f /tmp/heurion-deploy.env
 
   deploy-execution-plane:
     name: Deploy Execution Plane
@@ -146,6 +150,9 @@ jobs:
           S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
           WORKER_API_TOKEN: ${{ secrets.WORKER_API_TOKEN }}
         run: |
-          scp -o StrictHostKeyChecking=no scripts/deploy-worker.sh docker-compose.worker.yml ${{ secrets.WORKER_VPS_USER }}@${{ secrets.WORKER_VPS_HOST }}:~/heurion/
+          printf 'WORKER_IMAGE_TAG=%s\nSERVER_SECRET=%s\nDEEPSEEK_KEY=%s\nGEMINI_KEY=%s\nS3_ENDPOINT=%s\nS3_BUCKET=%s\nS3_REGION=%s\nS3_ACCESS_KEY_ID=%s\nS3_SECRET_ACCESS_KEY=%s\nWORKER_API_TOKEN=%s\n' \
+            "$WORKER_IMAGE_TAG" "$SERVER_SECRET" "$DEEPSEEK_KEY" "$GEMINI_KEY" "$S3_ENDPOINT" "$S3_BUCKET" "$S3_REGION" "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" "$WORKER_API_TOKEN" > /tmp/heurion-worker-deploy.env
+          scp -o StrictHostKeyChecking=no /tmp/heurion-worker-deploy.env scripts/deploy-worker.sh docker-compose.worker.yml ${{ secrets.WORKER_VPS_USER }}@${{ secrets.WORKER_VPS_HOST }}:~/heurion/
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.WORKER_VPS_USER }}@${{ secrets.WORKER_VPS_HOST }} \
-            "cd ~/heurion && WORKER_IMAGE_TAG=$WORKER_IMAGE_TAG SERVER_SECRET='$SERVER_SECRET' DEEPSEEK_KEY='$DEEPSEEK_KEY' GEMINI_KEY='$GEMINI_KEY' S3_ENDPOINT='$S3_ENDPOINT' S3_BUCKET='$S3_BUCKET' S3_REGION='$S3_REGION' S3_ACCESS_KEY_ID='$S3_ACCESS_KEY_ID' S3_SECRET_ACCESS_KEY='$S3_SECRET_ACCESS_KEY' WORKER_API_TOKEN='$WORKER_API_TOKEN' bash deploy-worker.sh"
+            'cd ~/heurion && set -a; source heurion-worker-deploy.env; rm -f heurion-worker-deploy.env; bash deploy-worker.sh'
+          rm -f /tmp/heurion-worker-deploy.env
