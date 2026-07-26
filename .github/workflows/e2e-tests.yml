@@ -7,8 +7,6 @@ on:
         description: 'Target port (8002=staging, 8001=prod)'
         required: false
         default: '8002'
-  schedule:
-    - cron: '0 */6 * * *'
 
 jobs:
   e2e:
