@@ -37,48 +37,37 @@ Unlike stateless chatbots, Heurion's agent:
 │   React + Vite + Tailwind + i18n (zh-CN/en), light/dark mode        │
 ├─────────────────────────────────────────────────────────────────────┤
 │   @heurion/sdk (packages/sdk-client)                                │
-│   Typed client — 10 modules, browser + CLI ready                    │
+│   Typed client — browser + CLI ready                                │
 │   AsyncGenerator-based SSE streaming                                │
 └──────────────────────────────────┬──────────────────────────────────┘
-                                   │ HTTPS / SSE
-┌──────────────────────────────────┼──────────────────────────────────┐
+                                    │ HTTPS / SSE
+┌──────────────────────────────────▼──────────────────────────────────┐
 │                       Control Plane (Production VPS)                │
-│  ┌───────────────────────────────┴───────────────────────────────┐  │
+│  ┌───────────────────────────────────────────────────────────────┐  │
 │  │   Server (TS) — packages/server-ts                             │  │
 │  │   Fastify + Prisma + SQLite                                    │  │
 │  │   Auth, Chat SSE, Research, Docs, Skills, Admin, Plugin Mgmt   │  │
-│  └───────────────────────────────┬───────────────────────────────┘  │
-│                                  │ enqueue job
-│  ┌───────────────────────────────▼───────────────────────────────┐  │
-│  │   Async Job Queue (Redis / RabbitMQ / SQLite queue)            │  │
-│  │   - Plugin tool invocations                                    │  │
-│  │   - Sidecar document rendering                                 │  │
-│  │   - File format conversion                                     │  │
+│  │   Enqueues Sidecar jobs, proxies file downloads                │  │
 │  └───────────────────────────────┬───────────────────────────────┘  │
 └──────────────────────────────────┼──────────────────────────────────┘
-                                   │ poll / push result
+                                    │ enqueue job (Redis)
 ┌──────────────────────────────────▼──────────────────────────────────┐
 │                      Execution Plane (Sandbox VPS)                  │
 │  ┌───────────────────────────────────────────────────────────────┐  │
-│  │   Plugin Worker Pool                                          │  │
+│  │   Worker Image (packages/server + Dockerfile.worker)           │  │
+│  │   FastAPI + Redis consumer + heurion_worker package            │  │
 │  │   ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ │  │
 │  │   │ Connector   │ │ Execution   │ │ UI Plugin               │ │  │
-│  │   │ (Slack...)  │ │ (Sidecar...)│ │ (React dynamic load)    │ │  │
-│  │   └─────────────┘ └─────────────┘ └─────────────────────────┘ │  │
-│  │   - Docker containers / WASM runtime                          │  │
-│  │   - Restricted network egress                                 │  │
-│  │   - Per-tenant file system isolation                          │  │
-│  └───────────────────────────────┬───────────────────────────────┘  │
-│                                  │ upload output
-│  ┌───────────────────────────────▼───────────────────────────────┐  │
-│  │   Object Storage (S3 / DigitalOcean Spaces / MinIO)           │  │
-│  │   Generated files, tenant-isolated                            │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
-├─────────────────────────────────────────────────────────────────────┤
-│   Python Worker (packages/server)                                   │
-│   FastAPI + pydicom + MONAI — DICOM parsing, inference, OCR,        │
-│   clinical graph, vector search, event sourcing                     │
+│  │   │ (Slack...)  │ │ (MedSci-   │ │ (React dynamic load)    │ │  │
+│  │   │             │ │  Sidecar...)│ │                         │ │  │
+│  │   └─────────────┘ └──────┬──────┘ └─────────────────────────┘ │  │
+│  │                          │ upload output                       │  │
+│  └──────────────────────────┼────────────────────────────────────┘  │
+│                             │                                         │
+│  ┌──────────────────────────▼────────────────────────────────────┐  │
+│  │   Object Storage (S3 / DigitalOcean Spaces / MinIO)            │  │
+│  │   Generated DOCX/PPTX/PNG, tenant-isolated                     │  │
+│  └────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -96,11 +85,14 @@ Heurion now has two extension mechanisms:
 - **Skills Market**: prompt-based abilities injected into the system prompt (existing).
 - **Plugin Market**: runtime plugins that register tools, connectors, and UI extensions.
 
-The first official plugin is **MedSci-Sidecar** — it generates DOCX, PPTX, tables, and plots from templates and structured data. See:
+The first official plugin is **MedSci-Sidecar** — it generates DOCX, PPTX, tables, and plots from templates and structured data. Jobs are enqueued on Redis, rendered in the Execution Plane, and uploaded to tenant-isolated object storage.
 
 - [`docs/design/PLUGIN_MARKETPLACE.md`](docs/design/PLUGIN_MARKETPLACE.md)
 - [`docs/design/PLUGIN_MANIFEST_SPEC.md`](docs/design/PLUGIN_MANIFEST_SPEC.md)
 - [`docs/design/MEDSCI_SIDECAR.md`](docs/design/MEDSCI_SIDECAR.md)
+- Worker implementation: `packages/server/heurion_worker/`
+- System templates: `packages/server/heurion_worker/templates/`
+- Render API: `POST /api/v1/execution/render` · Job status: `GET /api/v1/execution/jobs/:id` · Download: `GET /api/v1/execution/files/:fileId/download`
 
 ---
 
@@ -130,9 +122,10 @@ compressed into summaries; facts are ranked by importance × recency decay.
 ## Quickstart
 
 ```bash
-# Terminal 1 — TypeScript backend
+# Terminal 1 — Control Plane (TypeScript backend)
 cd packages/server-ts
 cp .env.example .env
+# Edit .env: set DEEPSEEK_API_KEY and, if you have a worker, EXECUTION_PLANE_URL.
 npx prisma db push
 npx tsx src/main.ts
 # → http://localhost:8001
@@ -142,6 +135,15 @@ cd packages/web
 pnpm install
 pnpm exec vite --host
 # → http://localhost:5173
+
+# Optional Terminal 3 — Execution Plane (Sidecar worker) on a separate port
+# Requires Redis and S3-compatible object storage (e.g. DigitalOcean Spaces).
+cd packages/server
+cp .env.example .env
+# Edit .env: set REDIS_URL, WORKER_API_TOKEN, S3_*.
+uvicorn nexus_server.main:create_app --host 0.0.0.0 --port 8002 --factory
+# In another process:
+# REDIS_URL=redis://localhost:6379/0 python -m heurion_worker.consumer
 ```
 
 ---
@@ -150,12 +152,13 @@ pnpm exec vite --host
 
 | Layer | Package | Stack | Responsibility |
 |-------|---------|-------|----------------|
-| **Web UI** | `packages/web` | React 18 + Vite 5 + Tailwind | 25+ routes, i18n (zh-CN/en), dark mode |
-| **SDK** | `packages/sdk-client` | TypeScript | 10 typed modules for browser/CLI |
-| **Server** | `packages/server-ts` | Fastify 4 + Prisma 5 + SQLite | Auth, Chat SSE, Research, Docs, Skills, Admin |
-| **Python** | `packages/server` + `sdk` | FastAPI + pydicom + MONAI | DICOM rendering, inference, event sourcing |
+| **Web UI** | `packages/web` | React 18 + Vite 5 + Tailwind | Browser app, i18n (zh-CN/en), dark mode |
+| **SDK** | `packages/sdk-client` | TypeScript | Typed client for browser/CLI |
+| **Control Plane** | `packages/server-ts` | Fastify 4 + Prisma 5 + SQLite | Auth, Chat SSE, Research, Docs, Skills, Admin, Plugin/Execution mgmt |
+| **Execution Plane** | `packages/server` | FastAPI + Python | DICOM/inference worker, MedSci-Sidecar rendering, Redis consumer |
+| **Core SDK** | `packages/sdk` + `packages/nexus` | Python | DigitalTwin, on-chain identity, event sourcing |
 
-### Server modules (10 feature domains)
+### Control Plane modules (10+ feature domains)
 
 ```
 modules/
@@ -164,11 +167,22 @@ modules/
 ├── patients/      Patient CRUD, DICOM, memory graph
 ├── research/      Studies, roster, eligibility, safety analysis
 ├── documents/     Writing studio, AI polish, PHI scanner
-├── skills/        28-skill marketplace with pagination
+├── skills/        Skill marketplace with pagination
 ├── settings/      LLM provider configuration
 ├── files/         Upload, clipboard paste support
 ├── admin/         User management
+├── execution/     Sidecar job enqueue/status/download proxy
 └── stubs/         Fallback endpoints
+```
+
+### Execution Plane (`packages/server/heurion_worker/`)
+
+```
+heurion_worker/
+├── consumer.py    Redis job consumer
+├── sidecar.py     DOCX/PPTX/table/plot renderers
+├── storage.py     S3/Spaces upload + presigned download URLs
+└── templates/     Bundled system templates (DOCX/PPTX)
 ```
 
 ### SDK modules (10 typed clients)
@@ -222,6 +236,9 @@ All responses use `snake_case` field names. Key endpoints:
 | GET | `/api/v1/skills/search?source=all&page=1` | Skills |
 | GET | `/api/v1/admin/users` | Admin |
 | GET | `/api/v1/memory/export` | Memory |
+| POST | `/api/v1/execution/render` | Execution — enqueue Sidecar render job |
+| GET | `/api/v1/execution/jobs/:id` | Execution — poll job status |
+| GET | `/api/v1/execution/files/:fileId/download` | Execution — get presigned file URL |
 
 ---
 
@@ -311,16 +328,17 @@ Tests: [`docs/design/KB_EVOLUTION_TESTS.md`](docs/design/KB_EVOLUTION_TESTS.md)
 Every push to `main` triggers:
 
 ```
-TypeCheck → Unit Tests → Staging + Regression → Cloudflare SSL → Deploy
-                    │                          │
-                    └── 30+ vitest unit tests  └── Control Plane + Execution Plane
+TypeCheck → Unit Tests → Staging + Regression → Cloudflare SSL → Deploy Control Plane → Deploy Execution Plane
 ```
 
-- **Staging gate**: deploys to `localhost:8002` on VPS, then runs
-  **regression tests**. Production deploy blocked on failure.
-- **Two-plane deploy**: Control Plane (main API) and Execution Plane (plugin/sandbox worker)
-  are built and deployed independently. The Execution Plane image is rebuilt when
-  `packages/plugin-worker` or plugin manifests change.
+- **Staging gate**: deploys to `localhost:8002` on the Control Plane VPS, then runs
+  **regression tests**. Production deploy is blocked on failure.
+- **Two-plane deploy**: Control Plane (`packages/server-ts`) and Execution Plane
+  (`Dockerfile.worker` built from `packages/server`) are deployed in sequence.
+  The worker image is pushed to GHCR and rolled out via `docker-compose.worker.yml`.
+- **Secrets**: CI secrets (`SERVER_SECRET`, `EXECUTION_PLANE_URL`, `WORKER_API_TOKEN`,
+  `S3_*`, LLM keys) are transferred to each VPS via a temporary env file that is
+  removed immediately after sourcing.
 - **Playwright E2E**: browser tests simulating full user workflows
   (login → patient → chat → knowledge → settings → plugin tools).
 
@@ -339,9 +357,60 @@ cd packages/server-ts
 npx vitest run               # unit tests
 npx playwright test          # E2E browser tests
 
+# Worker-specific tests (no DB/conftest side effects):
+PYTHONPATH=../server pytest ../server/tests_worker/test_heurion_worker.py
+
 # Or via CI scripts:
 bash scripts/regression-test.sh http://localhost:8002
 ```
+
+---
+
+## Deployment Topology
+
+Production runs on at least two DigitalOcean Droplets (or equivalent VMs):
+
+| Node | Role | Example spec |
+|---|---|---|
+| **Control Plane** | Main API, Web UI, SQLite DB, Plugin Manager, Job Queue | 2 vCPU / 4 GB RAM |
+| **Execution Plane** | Plugin Worker, Sandbox, MedSci-Sidecar | 2 vCPU / 4 GB RAM (horizontally scalable) |
+
+The two planes communicate over a private network (VPC / WireGuard). The Execution Plane
+is not exposed to the public internet; only the Control Plane can reach it on port `8001`.
+
+```
+Internet
+   │
+   ▼
+┌──────────────┐     VPC / private network     ┌──────────────────┐
+│   Nginx      │◄─────────────────────────────►│  Control Plane   │
+│  (HTTPS)     │                               │  :8001 main API  │
+└──────┬───────┘                               │  Plugin Manager  │
+       │                                       │  Job Queue       │
+       ▼                                       └────────┬─────────┘
+┌──────────────┐                                        │ enqueue
+│   Web UI     │                                        │
+└──────────────┘                                        ▼
+                                               ┌──────────────────┐
+                                               │  Execution Plane │
+                                               │  :8001 worker    │
+                                               │  sandbox plugins │
+                                               └──────────────────┘
+```
+
+---
+
+## Secret Management
+
+- **CI**: GitHub Actions secrets (`SERVER_SECRET`, `EXECUTION_PLANE_URL`,
+  `WORKER_API_TOKEN`, `S3_*`, LLM keys, SSH keys).
+- **VPS runtime**: each deploy writes a per-service `.env` file on the host
+  (`packages/server-ts/.env` for Control Plane, `/root/heurion/.env` for the worker).
+  These files are host-only and never committed.
+- **Worker stack**: Docker Compose mounts secrets under `/run/secrets/` for
+  `SERVER_SECRET`, LLM keys, and plugin tokens.
+- **Future**: migrate to DigitalOcean App Platform Secrets or HashiCorp Vault
+  without changing the service interfaces.
 
 ---
 
@@ -383,48 +452,37 @@ Heurion 是一个面向肿瘤研究者的**自我进化型临床 AI 工作站**�
 │   React + Vite + Tailwind + i18n（中英文/明暗主题）                  │
 ├─────────────────────────────────────────────────────────────────────┤
 │   @heurion/sdk (packages/sdk-client)                                │
-│   类型化客户端 — 10 个模块，浏览器/CLI 通用                          │
+│   类型化客户端 — 浏览器/CLI 通用                                    │
 │   AsyncGenerator 流式 SSE                                           │
 └──────────────────────────────────┬──────────────────────────────────┘
-                                   │ HTTPS / SSE
-┌──────────────────────────────────┼──────────────────────────────────┐
+                                    │ HTTPS / SSE
+┌──────────────────────────────────▼──────────────────────────────────┐
 │                       控制面 (Production VPS)                       │
-│  ┌───────────────────────────────┴───────────────────────────────┐  │
+│  ┌───────────────────────────────────────────────────────────────┐  │
 │  │   Server (TS) — packages/server-ts                             │  │
 │  │   Fastify + Prisma + SQLite                                    │  │
-│  │   认证、Chat SSE、研究、文档、技能、管理员、插件管理            │  │
-│  └───────────────────────────────┬───────────────────────────────┘  │
-│                                  │ 入队任务
-│  ┌───────────────────────────────▼───────────────────────────────┐  │
-│  │   异步任务队列（Redis / RabbitMQ / SQLite queue）                │  │
-│  │   - 插件 tool 调用                                             │  │
-│  │   - Sidecar 文档渲染                                           │  │
-│  │   - 文件格式转换                                               │  │
+│  │   认证、Chat SSE、研究、文档、技能、管理员、插件/执行管理      │  │
+│  │   入队 Sidecar 任务、代理文件下载                              │  │
 │  └───────────────────────────────┬───────────────────────────────┘  │
 └──────────────────────────────────┼──────────────────────────────────┘
-                                   │ 轮询/推送结果
+                                    │ 入队任务（Redis）
 ┌──────────────────────────────────▼──────────────────────────────────┐
 │                       执行面 (Sandbox VPS)                          │
 │  ┌───────────────────────────────────────────────────────────────┐  │
-│  │   Plugin Worker 池                                            │  │
+│  │   Worker 镜像（packages/server + Dockerfile.worker）            │  │
+│  │   FastAPI + Redis 消费者 + heurion_worker 包                   │  │
 │  │   ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ │  │
 │  │   │ Connector   │ │ Execution   │ │ UI Plugin               │ │  │
-│  │   │ (Slack...)  │ │ (Sidecar...)│ │ (React 动态加载)        │ │  │
-│  │   └─────────────┘ └─────────────┘ └─────────────────────────┘ │  │
-│  │   - Docker 容器 / WASM runtime                                │  │
-│  │   - 受限的出站网络                                           │  │
-│  │   - 按租户隔离的文件系统                                     │  │
-│  └───────────────────────────────┬───────────────────────────────┘  │
-│                                  │ 上传输出
-│  ┌───────────────────────────────▼───────────────────────────────┐  │
+│  │   │ (Slack...)  │ │ (MedSci-   │ │ (React 动态加载)        │ │  │
+│  │   │             │ │  Sidecar...)│ │                         │ │  │
+│  │   └─────────────┘ └──────┬──────┘ └─────────────────────────┘ │  │
+│  │                          │ 上传输出                           │  │
+│  └──────────────────────────┼────────────────────────────────────┘  │
+│                             │                                         │
+│  ┌──────────────────────────▼────────────────────────────────────┐  │
 │  │   对象存储（S3 / DigitalOcean Spaces / MinIO）                 │  │
-│  │   生成的文件，按租户隔离                                       │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
-├─────────────────────────────────────────────────────────────────────┤
-│   Python Worker (packages/server)                                   │
-│   FastAPI + pydicom + MONAI — DICOM 解析、推理、OCR、               │
-│   临床图谱、向量搜索、事件溯源                                      │
+│  │   生成的 DOCX/PPTX/PNG，按租户隔离                             │  │
+│  └────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -442,11 +500,14 @@ Heurion 现在有两种扩展机制：
 - **Skills 市场**：基于 prompt 的能力，注入到 system prompt（已有）。
 - **Plugin 市场**：运行时插件，可注册 tools、connectors 和 UI 扩展。
 
-第一个官方插件是 **MedSci-Sidecar** —— 基于模板和结构化数据生成 DOCX、PPTX、表格和图表。详见：
+第一个官方插件是 **MedSci-Sidecar** —— 基于模板和结构化数据生成 DOCX、PPTX、表格和图表。任务通过 Redis 入队，在执行面渲染，并上传到按租户隔离的对象存储。
 
 - [`docs/design/PLUGIN_MARKETPLACE.md`](docs/design/PLUGIN_MARKETPLACE.md)
 - [`docs/design/PLUGIN_MANIFEST_SPEC.md`](docs/design/PLUGIN_MANIFEST_SPEC.md)
 - [`docs/design/MEDSCI_SIDECAR.md`](docs/design/MEDSCI_SIDECAR.md)
+- 工作器实现：`packages/server/heurion_worker/`
+- 系统模板：`packages/server/heurion_worker/templates/`
+- 渲染 API：`POST /api/v1/execution/render` · 任务状态：`GET /api/v1/execution/jobs/:id` · 下载：`GET /api/v1/execution/files/:fileId/download`
 
 ---
 
@@ -466,9 +527,10 @@ Heurion 现在有两种扩展机制：
 ## 快速开始
 
 ```bash
-# Terminal 1 — TypeScript 后端
+# Terminal 1 — 控制面（TypeScript 后端）
 cd packages/server-ts
 cp .env.example .env
+# 编辑 .env：设置 DEEPSEEK_API_KEY；如有 worker，再设置 EXECUTION_PLANE_URL。
 npx prisma db push
 npx tsx src/main.ts
 
@@ -476,6 +538,15 @@ npx tsx src/main.ts
 cd packages/web
 pnpm install
 pnpm exec vite --host
+
+# 可选 Terminal 3 — 执行面（Sidecar worker），跑在另一个端口
+# 需要 Redis 和 S3 兼容对象存储（如 DigitalOcean Spaces）。
+cd packages/server
+cp .env.example .env
+# 编辑 .env：设置 REDIS_URL、WORKER_API_TOKEN、S3_*。
+uvicorn nexus_server.main:create_app --host 0.0.0.0 --port 8002 --factory
+# 另一个进程启动消费者：
+# REDIS_URL=redis://localhost:6379/0 python -m heurion_worker.consumer
 ```
 
 ---
@@ -499,6 +570,25 @@ for await (const chunk of h.chat.sendMessage({ text: '分析这个病例' })) {
 
 ---
 
+## API 速查
+
+所有响应字段均为 `snake_case`。常用接口：
+
+| 方法 | 路径 | 模块 |
+|------|------|------|
+| POST | `/api/v1/auth/login` | 认证 |
+| POST | `/api/v1/agent/chat` | 聊天（SSE） |
+| GET | `/api/v1/dicom/patients/full` | 患者 |
+| POST | `/api/v1/research/studies` | 研究 |
+| GET | `/api/v1/docs` | 文档 |
+| GET | `/api/v1/skills/search?source=all&page=1` | 技能 |
+| GET | `/api/v1/admin/users` | 管理员 |
+| GET | `/api/v1/memory/export` | 记忆 |
+| POST | `/api/v1/execution/render` | 执行 — 入队 Sidecar 渲染任务 |
+| GET | `/api/v1/execution/jobs/:id` | 执行 — 查询任务状态 |
+| GET | `/api/v1/execution/files/:fileId/download` | 执行 — 获取文件预签名下载链接 |
+
+---
 
 ## 知识库
 
@@ -524,10 +614,11 @@ API: `GET /api/v1/knowledge`, `GET /api/v1/facts`, `POST /api/v1/facts`
 
 ## CI/CD 流水线
 
-推送到 `main` 触发 5 阶段流水线：类型检查 → 单元测试 → 预发 + 回归 → Cloudflare SSL → 部署。
+推送到 `main` 触发：类型检查 → 单元测试 → 预发 + 回归 → Cloudflare SSL → 部署控制面 → 部署执行面。
 
-- **预发关口**: 部署到 VPS 的 `localhost:8002`，运行回归测试，全部通过后方可部署生产环境。
-- **双平面部署**: Control Plane（主 API）与 Execution Plane（插件/sandbox worker）独立构建、独立部署。当 `packages/plugin-worker` 或插件 manifest 变更时，重新构建 Execution Plane 镜像。
+- **预发关口**: 部署到 Control Plane VPS 的 `localhost:8002`，运行回归测试，全部通过后方可部署生产环境。
+- **双平面部署**: Control Plane（`packages/server-ts`）与 Execution Plane（`Dockerfile.worker` 构建自 `packages/server`）按顺序独立部署。worker 镜像推送到 GHCR，再通过 `docker-compose.worker.yml` 滚动更新。
+- **Secrets**: CI secrets（`SERVER_SECRET`、`EXECUTION_PLANE_URL`、`WORKER_API_TOKEN`、`S3_*`、LLM keys）通过临时 env 文件传到各 VPS，source 后立即删除。
 - **Playwright E2E**: 浏览器测试，模拟完整用户流程（登录 → 患者 → 聊天 → 知识库 → 设置 → 插件工具）。
 
 ---
@@ -548,7 +639,7 @@ Internet
    │
    ▼
 ┌──────────────┐     VPC / private network     ┌──────────────────┐
-│   Caddy      │◄─────────────────────────────►│  Control Plane   │
+│   Nginx      │◄─────────────────────────────►│  Control Plane   │
 │  (HTTPS)     │                               │  :8001 main API  │
 └──────┬───────┘                               │  Plugin Manager  │
        │                                       │  Job Queue       │
@@ -558,47 +649,25 @@ Internet
 └──────────────┘                                        ▼
                                                ┌──────────────────┐
                                                │  Execution Plane │
-                                               │  :8002 worker    │
+                                               │  :8001 worker    │
                                                │  sandbox plugins │
                                                └──────────────────┘
 ```
 
 ## Secret 管理
 
-DigitalOcean 目前没有独立的托管 Secrets Manager（对应 AWS Secrets Manager）。推荐方案按优先级：
+- **CI**: GitHub Actions secrets（`SERVER_SECRET`、`EXECUTION_PLANE_URL`、`WORKER_API_TOKEN`、`S3_*`、LLM keys、SSH keys）。
+- **VPS 运行时**: 每次部署在宿主机写入服务级 `.env` 文件（控制面为 `packages/server-ts/.env`，worker 为 `/root/heurion/.env`）。这些文件仅存在于宿主机，不进入仓库。
+- **Worker stack**: Docker Compose 将 `SERVER_SECRET`、LLM keys、插件 token 以 secrets 形式挂载到 `/run/secrets/`。
+- **未来**: 可迁移到 DigitalOcean App Platform Secrets 或 HashiCorp Vault，服务接口保持不变。
 
-1. **Docker Secrets + Docker Swarm**（VPS 方案，推荐）
-   - 将插件 API token、JWT secret、LLM key 存为 Docker secrets。
-   - secrets 挂载为 `/run/secrets/<name>`，不进入镜像或 env。
-   - 适合当前 Droplet + Docker Compose / Swarm 部署。
-
-2. **DigitalOcean App Platform Secrets**（Serverless 方案）
-   - 若将 Execution Plane 部署到 App Platform，可直接使用其环境变量/Secrets 功能。
-   - 适合未来把插件 worker 拆分为 serverless functions。
-
-3. **自托管 HashiCorp Vault**（企业方案）
-   - 在 DigitalOcean Droplet 上部署 Vault。
-   - 动态凭证、审计、细粒度访问控制。
-   - 运维成本较高，建议用户量/插件量大时引入。
-
-**当前推荐**：Docker Secrets on DigitalOcean Droplets。迁移到 App Platform 或 Vault 时，接口层保持不变。
-
-## CI/CD
-
-GitHub Actions 自动部署到 DigitalOcean：
-
-```
-TypeCheck → Unit Tests → Staging + Regression → Cloudflare SSL → Deploy
-```
-
-- **Staging**: 部署到 `localhost:8002` 在 VPS 上运行回归测试。
-- **Production**: `scripts/deploy.sh` 部署 Control Plane；Execution Plane 通过独立的 worker 部署脚本或 Docker Swarm stack 更新。
+手动部署命令：
 
 ```bash
-# 手动部署 Control Plane
+# Control Plane
 ssh root@<control-vps-ip> "bash -s" < scripts/deploy.sh
 
-# 手动部署 Execution Plane（当前通过 Docker Compose/Swarm 部署 worker stack）
+# Execution Plane
 ssh root@<worker-vps-ip> "cd ~/heurion && docker compose -f docker-compose.worker.yml pull && docker compose -f docker-compose.worker.yml up -d"
 ```
 
