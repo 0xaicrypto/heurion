@@ -4,9 +4,21 @@ import { ContractEngine } from '../../core/contracts'
 import { MemoryProjection } from '../../retrieval/memory-projection'
 import { deepseekChat, getApiKey } from '../../common/llm.js'
 import { detectGap, autoResolveGaps } from '../../evolution/cascade-gaps.js'
+import { router, RouterResult } from '../../retrieval/query-router'
+import { handleKnowledgeCommand, CommandResult } from '../knowledge/knowledge-command-handler.js'
+import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
+
+export interface TurnResult {
+  userEvent: Event
+  response: string
+  budget: any[]
+  route?: RouterResult
+  kbCommand?: boolean
+}
 
 export class ChatOrchestrator {
   private projection: MemoryProjection
+  private gapService = new PrismaKnowledgeGapService()
 
   constructor(
     private eventLog: EventLog,
@@ -23,7 +35,7 @@ export class ChatOrchestrator {
     userId: string; message: string; sessionId: string
     patientHash: string | null; persona: string
     llmCall: (systemPrompt: string, userMessage: string) => Promise<string>
-  }): Promise<{ userEvent: Event; response: string; budget: any[] }> {
+  }): Promise<TurnResult> {
     const { userId, message, sessionId, patientHash, persona, llmCall } = params
 
     const userEvent = this.eventLog.append({
@@ -31,10 +43,19 @@ export class ChatOrchestrator {
       metadata: { patientHash }, agentId: userId, sessionId,
     })
 
-    const projected = await this.projection.project({
-      userId, patientHash, sessionId,
-      persona, facts: this.factsStore.all(), episodes: this.episodesStore.all(), skills: this.skillsStore.all(),
+    const routeResult = await router(message)
+
+    // Knowledge commands are handled directly without calling the chat LLM
+    if (routeResult.intent === 'knowledge_command') {
+      return this.handleKnowledgeCommandTurn({ userId, message, sessionId, patientHash, userEvent, routeResult })
+    }
+
+    // For other intents, select context sources based on the route
+    const context = this.buildProjectionContext({
+      userId, patientHash, sessionId, persona, routeResult,
     })
+
+    const projected = await this.projection.project(context)
 
     const preCheck = this.contracts.preCheck(message)
     if (preCheck.violations.length > 0) console.warn('pre-check violations:', preCheck.violations)
@@ -47,7 +68,102 @@ export class ChatOrchestrator {
       metadata: { contractPassed: postCheck.passed }, agentId: userId, sessionId,
     })
 
-    return { userEvent, response, budget: projected.budget }
+    return { userEvent, response, budget: projected.budget, route: routeResult, kbCommand: false }
+  }
+
+  private buildProjectionContext(params: {
+    userId: string
+    patientHash: string | null
+    sessionId: string
+    persona: string
+    routeResult: RouterResult
+  }) {
+    const { userId, patientHash, sessionId, persona, routeResult } = params
+
+    // Default: include all accumulated memory (mixed / fallback)
+    let facts = this.factsStore.all()
+    let episodes = this.episodesStore.all()
+    let skills = this.skillsStore.all()
+
+    if (routeResult.intent === 'sql') {
+      // Factual patient queries: rely on patient context from SQL, skip accumulated memory
+      facts = []
+      episodes = []
+      skills = []
+    } else if (routeResult.intent === 'vector') {
+      // Guideline / knowledge questions: skip episodic chat history, keep facts + knowledge
+      episodes = []
+      skills = []
+    } else if (routeResult.intent === 'file') {
+      // File references are handled upstream; keep minimal context here
+      facts = []
+      episodes = []
+      skills = []
+    }
+
+    return {
+      userId,
+      patientHash,
+      sessionId,
+      persona,
+      facts,
+      episodes,
+      skills,
+    }
+  }
+
+  private async handleKnowledgeCommandTurn(params: {
+    userId: string
+    message: string
+    sessionId: string
+    patientHash: string | null
+    userEvent: Event
+    routeResult: RouterResult
+  }): Promise<TurnResult> {
+    const { userId, message, sessionId, patientHash, userEvent, routeResult } = params
+
+    const ctx = {
+      workspaceId: userId,
+      userId,
+      factsStore: this.factsStore,
+      knowledgeStore: this.knowledgeStore,
+      gapService: this.gapService,
+    }
+
+    const result = await handleKnowledgeCommand(ctx, message)
+    const response = this.formatCommandResult(result)
+
+    this.eventLog.append({
+      timestamp: Date.now() / 1000,
+      eventType: 'assistant_response',
+      content: response,
+      metadata: { kbCommand: true, commandType: result.type },
+      agentId: userId,
+      sessionId,
+    })
+
+    return { userEvent, response, budget: [], route: routeResult, kbCommand: true }
+  }
+
+  private formatCommandResult(result: CommandResult): string {
+    switch (result.type) {
+      case 'kb_search_result':
+        return result.summary
+      case 'kb_remembered':
+        return `✅ 已记录为 Fact #${result.factId}（置信度 ${Math.round(result.confidence * 100)}%）`
+      case 'kb_pending_confirmation':
+        return `⚠️ 请确认是否记录："${result.candidate}"（置信度 ${Math.round(result.confidence * 100)}%）`
+      case 'kb_summary':
+        return result.summary
+      case 'kb_gaps':
+        if (result.gaps.length === 0) return '当前没有未解问题。'
+        return `未解问题（${result.gaps.length}）：\n` +
+          result.gaps.map((g, i) => `${i + 1}. ${g.content}`).join('\n')
+      case 'error':
+        return `❌ ${result.message}`
+      default:
+        return '命令已处理。'
+    }
   }
 
   // #2: Extract facts automatically using DeepSeek

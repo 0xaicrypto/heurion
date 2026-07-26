@@ -4,10 +4,36 @@ import prisma from '../../common/prisma'
 import { getUserContext, buildPersona, buildFileContext } from './user-context.js'
 import { deepseekStream, getApiKey } from '../../common/llm.js'
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
+import { router } from '../../retrieval/query-router.js'
+import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
+import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
 import fs from 'fs'
 import path from 'path'
 
 // #2: Read uploaded file content for chat context
+const gapService = new PrismaKnowledgeGapService()
+
+function formatCommandResult(result: CommandResult): string {
+  switch (result.type) {
+    case 'kb_search_result':
+      return result.summary
+    case 'kb_remembered':
+      return `✅ 已记录为 Fact #${result.factId}（置信度 ${Math.round(result.confidence * 100)}%）`
+    case 'kb_pending_confirmation':
+      return `⚠️ 请确认是否记录："${result.candidate}"（置信度 ${Math.round(result.confidence * 100)}%）`
+    case 'kb_summary':
+      return result.summary
+    case 'kb_gaps':
+      if (result.gaps.length === 0) return '当前没有未解问题。'
+      return `未解问题（${result.gaps.length}）：\n` +
+        result.gaps.map((g, i) => `${i + 1}. ${g.content}`).join('\n')
+    case 'error':
+      return `❌ ${result.message}`
+    default:
+      return '命令已处理。'
+  }
+}
+
 function readAttachmentContent(userId: string, fileId: string): string {
   const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
   const filepath = path.join(dir, fileId)
@@ -36,6 +62,36 @@ export async function chatRouter(app: FastifyInstance) {
 
     try {
       send({ type: 'turn_started', event_idx: ctx.eventLog.count() + 1, patient_hash: patientHash })
+
+      // ── P3: Route the query before building expensive context ──
+      const routeResult = await router(body.text)
+      send({ type: 'context_info', text: `Router: ${routeResult.intent} (ruleHit=${routeResult.ruleHit}, llmFallback=${routeResult.llmFallback})`, kind: 'router' })
+
+      // Knowledge commands are handled directly without calling the chat LLM
+      if (routeResult.intent === 'knowledge_command') {
+        const kbResult = await handleKnowledgeCommand({
+          workspaceId: userId,
+          userId,
+          factsStore: ctx.facts,
+          knowledgeStore: ctx.knowledge,
+          gapService,
+        }, body.text)
+        const response = formatCommandResult(kbResult)
+
+        ctx.eventLog.append({
+          timestamp: Date.now() / 1000, eventType: 'user_message', content: body.text,
+          metadata: { patientHash, kbCommand: true }, agentId: userId, sessionId: sid,
+        })
+        ctx.eventLog.append({
+          timestamp: Date.now() / 1000, eventType: 'assistant_response', content: response,
+          metadata: { kbCommand: true, commandType: kbResult.type }, agentId: userId, sessionId: sid,
+        })
+
+        send({ type: 'final_answer_chunk', text: response })
+        send({ type: 'citations', items: [] })
+        send({ type: 'turn_complete', assistant_event_idx: ctx.eventLog.count() })
+        return
+      }
 
       // #2: Read attachment content
       let attachmentText = ''
@@ -114,11 +170,14 @@ export async function chatRouter(app: FastifyInstance) {
       // Build dynamic persona from user's accumulated knowledge
       const persona = buildPersona(ctx.facts, ctx.knowledge)
 
-      // #2: Weighted attention context projection
+      // #2: Weighted attention context projection (filtered by router intent)
+      const projectionInputs = selectProjectionInputs(routeResult, ctx)
       const projected = await ctx.orchestrator['projection'].project({
         userId, patientHash, sessionId: sid,
         persona,
-        facts: ctx.facts.all(), episodes: ctx.episodes.all(), skills: ctx.skills.all(),
+        facts: projectionInputs.facts,
+        episodes: projectionInputs.episodes,
+        skills: projectionInputs.skills,
       })
       send({ type: 'context_info', text: projected.budget.map((b: any) => `${b.layer}: ${b.tokens}t/${b.items}i`).join(' | '), kind: 'projection' })
 
@@ -238,4 +297,29 @@ export async function chatRouter(app: FastifyInstance) {
     })
     return result
   })
+}
+
+/**
+ * Select which accumulated-memory layers to inject based on the router intent.
+ * This keeps per-turn context cost predictable.
+ */
+function selectProjectionInputs(
+  routeResult: Awaited<ReturnType<typeof router>>,
+  ctx: Awaited<ReturnType<typeof getUserContext>>,
+) {
+  switch (routeResult.intent) {
+    case 'sql':
+      // Factual queries: rely on SQL-retrieved patient/study context; skip accumulated memory
+      return { facts: [], episodes: [], skills: [] }
+    case 'vector':
+      // Knowledge questions: keep facts/knowledge, skip episodic chat history
+      return { facts: ctx.facts.all(), episodes: [], skills: [] }
+    case 'file':
+      // File queries: context comes from attachments; skip accumulated memory
+      return { facts: [], episodes: [], skills: [] }
+    case 'mixed':
+    default:
+      // Ambiguous or summary questions: keep full context
+      return { facts: ctx.facts.all(), episodes: ctx.episodes.all(), skills: ctx.skills.all() }
+  }
 }
