@@ -148,11 +148,11 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
       where.source = options.source
     }
 
-    const rows = await (prisma as any).knowledgeGap.findMany({
+    const rows: any[] = await (prisma as any).knowledgeGap.findMany({
       where,
       orderBy: { createdAt: 'desc' },
     })
-    let gaps = rows.map(mapPrismaToGap)
+    let gaps: KnowledgeGap[] = rows.map(mapPrismaToGap)
     if (options.q) {
       gaps = gaps.filter(g => g.content.toLowerCase().includes(options.q!.toLowerCase()))
     }
@@ -202,8 +202,8 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
   }
 
   async getStats(workspaceId: string): Promise<GapStats> {
-    const rows = await (prisma as any).knowledgeGap.findMany({ where: { workspaceId } })
-    const gaps = rows.map(mapPrismaToGap)
+    const rows: any[] = await (prisma as any).knowledgeGap.findMany({ where: { workspaceId } })
+    const gaps: KnowledgeGap[] = rows.map(mapPrismaToGap)
     const total = gaps.length
     const open = gaps.filter(g => g.status === 'open').length
     const answered = gaps.filter(g => g.status === 'answered').length

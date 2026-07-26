@@ -100,19 +100,20 @@ export class PrismaTelemetryService implements TelemetryService {
   }
 
   async query(filter: TelemetryFilter): Promise<TelemetryEvent[]> {
-    const where: any = { workspaceId: filter.workspaceId }
-    if (filter.category) where.category = filter.category
-    if (filter.action) where.action = filter.action
-    if (filter.from || filter.to) {
+    const { workspaceId, category, action, from, to, limit } = filter
+    const where: any = { workspaceId }
+    if (category) where.category = category
+    if (action) where.action = action
+    if (from || to) {
       where.createdAt = {}
-      if (filter.from) where.createdAt.gte = filter.from
-      if (filter.to) where.createdAt.lte = filter.to
+      if (from) where.createdAt.gte = from
+      if (to) where.createdAt.lte = to
     }
 
-    const rows = await (prisma as any).telemetryEvent.findMany({
+    const rows: any[] = await (prisma as any).telemetryEvent.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      take: filter.limit ?? 100,
+      take: limit ?? 100,
     })
 
     return rows.map((r: any) => ({
@@ -201,13 +202,14 @@ export class InMemoryTelemetryService implements TelemetryService {
   }
 
   async query(filter: TelemetryFilter): Promise<TelemetryEvent[]> {
-    let results = this.events.filter(e => e.workspaceId === filter.workspaceId)
-    if (filter.category) results = results.filter(e => e.category === filter.category)
-    if (filter.action) results = results.filter(e => e.action === filter.action)
-    if (filter.from) results = results.filter(e => e.createdAt >= filter.from)
-    if (filter.to) results = results.filter(e => e.createdAt <= filter.to)
+    const { workspaceId, category, action, from, to, limit } = filter
+    let results = this.events.filter(e => e.workspaceId === workspaceId)
+    if (category) results = results.filter(e => e.category === category)
+    if (action) results = results.filter(e => e.action === action)
+    if (from) results = results.filter(e => e.createdAt >= from)
+    if (to) results = results.filter(e => e.createdAt <= to)
     results.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    return results.slice(0, filter.limit ?? 100)
+    return results.slice(0, limit ?? 100)
   }
 
   async dashboard(workspaceId: string, from?: string, to?: string): Promise<TelemetryDashboard> {

@@ -10,7 +10,7 @@ export interface Fact {
   count: number        // how many times this fact has been observed
   patientHash?: string  // linked patient
   studyId?: string      // linked research study
-  sourceType: 'patient' | 'doctor' | 'research' | 'general'
+  sourceType: 'patient' | 'doctor' | 'research' | 'general' | 'sidecar'
   ttl?: number         // optional expiry
   createdAt: number
   updatedAt: number
