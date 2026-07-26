@@ -90,12 +90,15 @@ Chat/Upload 触发
   │   │   → 文件索引查询 (FileIndex)
   │   ├─ "XX指南怎么说？"
   │   │   → 向量检索 (Knowledge/Facts)
+  │   ├─ "搜索知识库/记住/这个很重要"
+  │   │   → 显式知识库命令 (Explicit KB Command)
   │   └─ 以上都不匹配
   │       ↓
   └─ 分类器（LLM 轻量层: 单次调用，<200ms）
        ├─ 意图: factual_query → SQL
        ├─ 意图: semantic_search → 向量检索
        ├─ 意图: relational_query → 图遍历
+       ├─ 意图: knowledge_command → 显式知识库命令
        └─ 意图: mixed → SQL + 向量 + 图 → RRF 融合
 ```
 
@@ -103,6 +106,143 @@ Chat/Upload 触发
 - 简单查询延迟: <10ms (规则命中)
 - 复杂查询延迟: <250ms (LLM 分类 + 检索)
 - 并行检索减少: ~70% 的查询单路即可满足
+
+### 3.3 成本控制的实现策略
+
+为控制运行成本，Router 采用 **规则优先、LLM 兜底** 的两层架构：
+
+1. **规则层命中 80% 以上查询，零 LLM 成本**
+   - 关键词映射（年龄、姓名、CT、化验、指南、总结、搜索）
+   - 正则模式匹配（患者 ID、文件引用、时间范围）
+   - 当前会话缓存：同一 session 内相似问题直接复用路由结果
+
+2. **LLM 层仅处理模糊或混合意图**
+   - 使用便宜模型（如 DeepSeek-chat / gpt-4o-mini）做分类
+   - 输入仅包含用户问题 + 当前 session 类型，输出 JSON：`{ intent, sources[], confidence }`
+   - confidence < 0.7 时降级为 "mixed"，走安全兜底检索
+
+3. **Source-level 白名单**
+   - 每个意图只打开必要的 source，避免全量注入
+   - 例：factual_query 只注入 patient SQL 结果，不检索 Facts/Knowledge
+
+4. **成本对比估算**
+
+| 方案 | 每轮平均 LLM 调用 | 平均注入 Token | 说明 |
+|---|---|---|---|
+| 现状（全量注入）| 1 | ~3,500 | 所有 source 都注入 |
+| Router（规则优先）| 1 + 0.2 次分类 | ~1,800 | 80% 查询规则命中 |
+| Router + 上下文压缩 | 1 + 0.2 次分类 | ~900 | 进一步压缩注入 |
+
+> 结论：Router 在提升质量的同时，**反而能降低上下文 token 成本**。
+
+### 3.4 显式知识库命令（Explicit KB Commands）
+
+除了 Router 的自动决策，系统支持用户主动触发知识库操作。这些命令**按需触发，不增加日常对话基线成本**。
+
+#### 支持的命令
+
+| 用户表达示例 | 命令类型 | 系统行为 | 成本 |
+|---|---|---|---|
+| "搜索我的知识库关于 NSCLC" | `kb_search` | 向量检索 Knowledge + Facts，返回摘要 | 1 embedding + 1 次总结 LLM |
+| "记住：ZQ 对 osimertinib 不耐受" | `kb_remember` | 立即提取 Fact，写入 `FactsStore` | 1 次小 LLM 提取 |
+| "根据我的知识库总结 EGFR 治疗经验" | `kb_summarize` | 检索相关知识 → 生成综述 | 1 检索 + 1 生成 LLM |
+| "这个很重要，存到知识库" | `kb_remember` | 提取当前上下文/文件为 Fact | 1 次小 LLM 提取 |
+| "查看我的未解问题" | `kb_gaps` | 返回 Knowledge Gap 列表 | 仅数据库查询 |
+| "解答这个 gap" | `kb_resolve_gap` | 用户补充答案，更新 Gap 状态 | 1 次数据库更新 |
+
+#### 实现位置
+
+```
+chat.orchestrator.ts
+  ↓
+Router 识别到 knowledge_command
+  ↓
+调用 KnowledgeCommandHandler
+  ├─ kb_search → memory-projection.ts + embedding search
+  ├─ kb_remember → factExtractor.ts (immediate mode)
+  ├─ kb_summarize → retrieve facts → LLM summarize
+  ├─ kb_gaps → KnowledgeGapService.list()
+  └─ kb_resolve_gap → KnowledgeGapService.resolve(gapId, answer)
+```
+
+#### 与被动 Facts 提取的关系
+
+- **被动提取**：每 5 轮深度提取，适合自然对话中的潜在事实
+- **主动命令**：用户明确要保存/查询时触发，补充被动提取的延迟和不足
+- 两者写入同一个 `FactsStore`，共享置信度/人工确认流程
+
+### 3.5 Knowledge Gap 用户可见化
+
+Knowledge Gap 是系统自动识别的"未解问题"，是产品"自我进化"叙事的核心。该功能**实现成本低，运行成本几乎为零**。
+
+#### 数据来源
+
+- `detectGap` 在 chat orchestrator 中自动识别（已存在）
+- 用户主动标记："我不知道这个"、"这个问题还没答案"
+- Sidecar 输出反馈：生成报告时发现缺少关键数据
+
+#### 数据模型
+
+```prisma
+model KnowledgeGap {
+  id          String   @id @default(cuid())
+  workspaceId String
+  content     String   // 问题文本
+  source      String   // chat / user / sidecar
+  sourceId    String?  // 关联 chat_id / file_id
+  status      String   // open / answered / ignored
+  answerId    String?  // 关联 Fact/Knowledge id
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+```
+
+#### API
+
+```
+GET  /api/v1/knowledge/gaps            # 列出 gaps
+POST /api/v1/knowledge/gaps/:id/answer # 用户回答，转为 Fact
+POST /api/v1/knowledge/gaps/:id/ignore # 忽略
+```
+
+#### UI 入口
+
+- **Today Dashboard**: "未解问题" 卡片
+- **Knowledge 页面**: 单独 "Gaps" tab
+- **Chat**: 当系统识别到新 gap 时，显示 "记录为未解问题" 提示
+
+### 3.6 Sidecar 输出回写知识库（选择性）
+
+MedSci-Sidecar 生成的报告、文献分析、病例总结等输出，可能包含高价值医学事实。默认**不自动写入知识库**，避免无差别提取带来的成本。
+
+#### 触发条件
+
+| 场景 | 是否自动提取 | 说明 |
+|---|---|---|
+| 用户说 "把这份报告存到知识库" | 是（用户触发） | 成本低，价值明确 |
+| 生成病例总结后，用户勾选 "保存发现" | 是（UI 触发） | 用户授权后提取 |
+| 运行流行病学分析 | 否 | 数据量太大，需用户确认 |
+| 默认 Sidecar 输出 | 否 | 避免每轮 Sidecar 都多一次 LLM 调用 |
+
+#### 提取流程
+
+```
+Sidecar 输出（report / summary / analysis）
+  ↓
+用户触发 "保存到知识库" 或 UI 勾选
+  ↓
+factExtractor.ts（轻量 prompt）
+  ↓
+提取核心医学事实 → FactsStore
+  ↓
+置信度 < 0.85 → 进入人工确认队列
+```
+
+#### 成本分析
+
+- 自动全提取：每次 Sidecar 调用后 +1 次 LLM（成本明显增加）
+- 用户触发：按需付费，成本完全可控
+- 推荐：**默认关闭，UI 显式开启**
 
 ---
 
@@ -500,12 +640,15 @@ P3 Router
 | **P0** | Facts去重 + 文件去重 | ✅ 已部署 | ✅ |
 | **P1** | KnowledgeStore + Takeaway | ✅ 已部署 | ✅ |
 | **P2** | Persona动态合成 + 文件注入Chat | ✅ 已部署 | ✅ |
-| **P3** | Query Router | ⬜ | 🔴 |
+| **P3** | Query Router（规则优先 + LLM 兜底）| ⬜ | 🔴 优先级最高，控制成本 |
+| **P3.1** | 显式知识库命令（搜索/记住/总结/Gap）| ⬜ | 🔴 优先级最高，零基线成本 |
+| **P3.2** | Knowledge Gap 用户可见面板 | ⬜ | 🔴 优先级最高，纯 UI |
 | **P4** | 上下文压缩 | ⬜ | 🔴 |
 | **P5** | 双轨图谱抽取 (NLP+LLM) | ⬜ | 🔴 |
 | **P6** | 向量检索 (sqlite-vec) | ⬜ | 🔴 |
 | **P7** | GraphRAG 融合 (RRF) | ⬜ | 🔴 |
 | **P8** | Knowledge 级联更新 | ⬜ | 🔴 |
+| **P8.1** | Sidecar 输出选择性回写知识库 | ⬜ | 🟡 用户触发时启用 |
 | **P9** | 外部化学习 (Nightly Agent) | ⭐ | 🔴 |
 | **P10** | 动态工具引擎 (Auto-Tool) | ⭐ | 🔴 |
 
@@ -556,6 +699,14 @@ P3 Router
 │  ┌──────────────────────────────────────────┐   │
 │  │ ⚠️ "NSCLC EGFR管理" → stale (Fact更新)    │   │
 │  │ ✅ "免疫治疗综述" v3 → current             │   │
+│  └──────────────────────────────────────────┘   │
+│                                                  │
+│  ❓ Knowledge Gaps (3)                          │
+│  ┌──────────────────────────────────────────┐   │
+│  │ • ZQ 对 osimertinib 的实际耐受性？        │   │
+│  │ • 本院 EGFR 突变患者的中位 PFS？          │   │
+│  │ • 免疫治疗相关肺炎的处理流程？             │   │
+│  │   [查看全部] [回答] [忽略]                 │   │
 │  └──────────────────────────────────────────┘   │
 │                                                  │
 │  📁 Recent Files                                │
@@ -629,6 +780,49 @@ P3 Router
 └──────────────────────────────────────────────┘
 ```
 
+### 9.6 Knowledge Gap 页面
+
+```
+┌──────────────────────────────────────────────┐
+│  Knowledge Gaps (5 open / 12 total)   [+ New] │
+├──────────────────────────────────────────────┤
+│  Filter: [Open] [Answered] [Ignored] [All]   │
+│                                              │
+│  ┌────────────────────────────────────────┐  │
+│  │ ❓ ZQ 对 osimertinib 的实际耐受性？     │  │
+│  │    来源: Chat #128 · 2 天前            │  │
+│  │    [回答...] [忽略] [查看上下文]        │  │
+│  └────────────────────────────────────────┘  │
+│  ┌────────────────────────────────────────┐  │
+│  │ ✅ 本院 EGFR 突变患者的中位 PFS？       │  │
+│  │    已转为 Fact #89 · 1 天前            │  │
+│  │    答案: "47例患者中位 PFS 14.2 月"     │  │
+│  │    [编辑] [查看 Fact]                   │  │
+│  └────────────────────────────────────────┘  │
+└──────────────────────────────────────────────┘
+```
+
+### 9.7 Chat 中的显式命令示例
+
+```
+👤: 搜索我的知识库关于 NSCLC 免疫治疗
+🤖: [Router: knowledge_command → kb_search]
+    找到 3 条相关知识：
+    1. "PD-L1 ≥50% 一线免疫单药" (Knowledge #12)
+    2. "免疫相关肺炎处理" (Fact #56)
+    3. "本院 23 例免疫治疗经验" (Facts #78-89)
+
+👤: 记住：ZL 对青霉素过敏
+🤖: [Router: knowledge_command → kb_remember]
+    ✅ 已记录为 Fact #91，置信度 0.92
+
+👤: Sidecar 报告里 EGFR 突变比例很高，存到知识库
+🤖: [Router: knowledge_command → kb_remember]
+    ✅ 已提取 2 条事实，待你确认：
+    • "47例 NSCLC 中 EGFR 突变占 38.3%"
+    • "EGFR 突变患者一线治疗以 osimertinib 为主"
+```
+
 ---
 
 ## 10. 关键指标
@@ -637,7 +831,10 @@ P3 Router
 |---|---|---|
 | 文件去重率 | > 30% | 相同SHA-256 / 总上传 |
 | Facts 提取准确率 | > 80% | 确认/拒绝比例 |
-| Router 命中率 | > 70% 单路命中 | 规则层命中比例 |
+| Router 规则命中率 | > 80% | 规则层命中 / 总查询 |
+| Router 单路满足率 | > 70% | 单路检索满足 / 总查询 |
 | 上下文 token 节省 | > 40% | 压缩前/后对比 |
+| 显式命令使用率 | > 15% | 用户触发 KB 命令 / 总会话 |
+| Knowledge Gap 转化率 | > 30% | 被回答的 Gap / 总 Gap |
 | NLP 抽取覆盖率 | > 75% | 轨1处理 / 总文本 |
 | Knowledge stale 检测时间 | < 10min | 扫描间隔 |

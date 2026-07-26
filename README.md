@@ -229,14 +229,16 @@ All responses use `snake_case` field names. Key endpoints:
 ## Knowledge Base
 
 The self-evolving knowledge pipeline (P0–P10) enables Heurion to build a
-personal knowledge base and clinical memory from every interaction:
+personal knowledge base and clinical memory from every interaction.
+
+### Pipeline
 
 | Phase | Component | Purpose |
 |-------|-----------|---------|
 | P0 | File Dedup + FactsStore | SHA-256 files; fact-level deduplication |
 | P1 | KnowledgeStore | Activate entries; track stale/inactive knowledge |
 | P2 | Dynamic Persona | Inject file context + accumulated facts into chat |
-| P3 | Query Router | Rule-based classifier — route queries to best source |
+| P3 | Query Router | Rule-first classifier — route queries to best source |
 | P4 | Context Compressor | 3-level pipeline (extract → rank → truncate) |
 | P5 | Graph Extractor | Dual-track entity extraction (NLP + LLM) |
 | P6 | Semantic Search | TF-IDF vector search across knowledge base |
@@ -245,7 +247,59 @@ personal knowledge base and clinical memory from every interaction:
 | P9 | Knowledge Gap | Queue unanswered questions as Pending Facts |
 | P10 | ToolStore | Auto-create tools from accumulated knowledge patterns |
 
-API: `GET /api/v1/knowledge`, `GET /api/v1/facts`, `POST /api/v1/facts`
+### Cost-controlled retrieval (P3)
+
+To keep inference costs low, the Query Router uses a **rule-first, LLM-fallback**
+strategy:
+
+- **Rule layer** (`< 5ms`, zero LLM cost): keyword/pattern routing for factual,
+  file, and guideline queries.
+- **LLM layer**: only for ambiguous or mixed-intent questions; uses a cheap
+  classifier model.
+- **Source whitelist**: each route opens only the sources it needs, avoiding the
+  expensive "dump everything into context" approach.
+
+This usually *reduces* average per-turn cost because fewer tokens are injected
+into the LLM context.
+
+### Explicit knowledge commands
+
+Users can trigger knowledge-base operations directly from chat. These commands
+are **opt-in** and do not increase baseline conversation cost:
+
+| Command | Example | Behavior |
+|---------|---------|----------|
+| `kb_search` | "搜索我的知识库关于 NSCLC" | Semantic search across Knowledge + Facts |
+| `kb_remember` | "记住：ZQ 对 osimertinib 不耐受" | Extract and save a fact immediately |
+| `kb_summarize` | "根据我的知识库总结 EGFR 经验" | Retrieve relevant facts and synthesize |
+| `kb_gaps` | "查看我的未解问题" | List auto-detected Knowledge Gaps |
+| `kb_resolve_gap` | "回答这个 gap" | Convert a user answer into a fact |
+
+### Knowledge Gap UI
+
+Knowledge Gaps are user-visible "unanswered questions" automatically detected
+from chat or marked by the user. They surface in:
+
+- **Today Dashboard**: a quick list of open gaps with answer/ignore actions.
+- **Knowledge → Gaps tab**: full gap management page.
+- **Chat**: inline prompts when a new gap is detected.
+
+Making gaps visible turns passive memory accumulation into an active,
+user-guided evolution loop.
+
+### Sidecar output feedback
+
+MedSci-Sidecar reports can contain high-value clinical findings, but they are
+**not automatically extracted** into the knowledge base. Instead:
+
+- The user can say "save this to the knowledge base" in chat.
+- The UI can offer a ☑️ "Save key findings" checkbox after a Sidecar run.
+- Only user-authorized outputs are run through the fact extractor.
+
+This keeps Sidecar execution costs predictable and avoids noisy auto-ingestion.
+
+API: `GET /api/v1/knowledge`, `GET /api/v1/facts`, `POST /api/v1/facts`,
+`GET /api/v1/knowledge/gaps`
 
 ---
 
