@@ -38,6 +38,12 @@ ${GEMINI_KEY:-}
 EOF
 chmod 644 secrets/*.txt
 
+# Write non-secret runtime env for docker compose.
+cat > .env <<EOF
+WORKER_API_TOKEN=${WORKER_API_TOKEN:-}
+REDIS_URL=redis://redis:6379/0
+EOF
+
 # Pull the requested image tag and restart the stack.
 export WORKER_IMAGE_TAG="$IMAGE_TAG"
 docker compose -f docker-compose.worker.yml pull

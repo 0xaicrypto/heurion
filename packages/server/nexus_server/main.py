@@ -733,6 +733,9 @@ def create_app() -> FastAPI:
     # can hold multiple parallel conversations with the same agent.
     app.include_router(sessions_router.router)
     app.include_router(workflows_router.router)
+    # Execution Plane: job enqueue/status for the Sidecar worker.
+    from nexus_server import execution_router
+    app.include_router(execution_router.router)
     # NOTE: the legacy /api/v1/agent/memory router (memory_router.py, v1)
     # was retired — no frontend/CLI callers; memory_router_v2 is canonical.
     # Live agent thinking stream (Server-Sent Events). The desktop's

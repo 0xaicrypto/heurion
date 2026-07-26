@@ -21,14 +21,15 @@ chmod +rx /root /root/heurion /root/heurion/packages /root/heurion/packages/web 
 
 cd ~/heurion/packages/server-ts
 
-# Preserve the existing SERVER_SECRET so users don't get logged out on
-# every deploy. Generate a new one only on first deploy.
-if [ -f .env ] && grep -q '^SERVER_SECRET=' .env; then
-  EXISTING_SECRET=$(grep '^SERVER_SECRET=' .env | head -1 | cut -d= -f2-)
+# Use the SERVER_SECRET injected by CI if provided; otherwise preserve the
+# existing secret so users don't get logged out on every deploy.
+if [ -n "${SERVER_SECRET:-}" ]; then
+  echo "Using SERVER_SECRET from deployment environment"
+elif [ -f .env ] && grep -q '^SERVER_SECRET=' .env; then
+  SERVER_SECRET=$(grep '^SERVER_SECRET=' .env | head -1 | cut -d= -f2-)
 else
-  EXISTING_SECRET=""
+  SERVER_SECRET=$(openssl rand -hex 32)
 fi
-SERVER_SECRET="${EXISTING_SECRET:-$(openssl rand -hex 32)}"
 
 cat > .env << ENVEOF
 DATABASE_URL="file:./nexus_server.db"
@@ -37,6 +38,8 @@ SERVER_PORT=8001
 SERVER_SECRET=${SERVER_SECRET}
 DEEPSEEK_API_KEY=${DEEPSEEK_KEY:-}
 GEMINI_API_KEY=${GEMINI_KEY:-}
+EXECUTION_PLANE_URL=${EXECUTION_PLANE_URL:-}
+WORKER_API_TOKEN=${WORKER_API_TOKEN:-}
 CORS_ALLOW_ORIGINS=*
 ENVEOF
 

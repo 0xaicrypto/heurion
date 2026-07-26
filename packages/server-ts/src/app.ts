@@ -18,6 +18,7 @@ import { calendarRouter } from './modules/calendar/calendar.router.js'
 import { medicalRecordsRouter } from './modules/medical-records/medical-records.router.js'
 import { stubRouter } from './modules/stubs/stubs.router.js'
 import { knowledgeRouter } from './modules/knowledge/knowledge.router.js'
+import { executionRouter } from './modules/execution/execution.router.js'
 import { ZodError } from 'zod'
 
 export async function createApp(): Promise<FastifyInstance> {
@@ -57,6 +58,7 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(medicalRecordsRouter)
   await app.register(knowledgeRouter)
   await app.register(stubRouter)
+  await app.register(executionRouter)
 
   // ── Serve web frontend for staging/testing (SPA fallback on non-/api routes) ──
   const webDistDir = process.env.WEB_DIST_DIR || './web-dist'

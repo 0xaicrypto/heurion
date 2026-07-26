@@ -114,8 +114,12 @@ jobs:
         env:
           DEEPSEEK_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SERVER_SECRET: ${{ secrets.SERVER_SECRET }}
+          EXECUTION_PLANE_URL: ${{ secrets.EXECUTION_PLANE_URL }}
+          WORKER_API_TOKEN: ${{ secrets.WORKER_API_TOKEN }}
         run: |
-          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} 'DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY bash -s' < scripts/deploy.sh || echo 'SSH pipe closed (deploy OK)'
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            'DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY SERVER_SECRET="$SERVER_SECRET" EXECUTION_PLANE_URL="$EXECUTION_PLANE_URL" WORKER_API_TOKEN="$WORKER_API_TOKEN" bash -s' < scripts/deploy.sh || echo 'SSH pipe closed (deploy OK)'
 
   deploy-execution-plane:
     name: Deploy Execution Plane
