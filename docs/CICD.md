@@ -12,23 +12,32 @@ git push origin main
 `.github/workflows/deploy-server.yml` runs:
 
 1. **typecheck** — `tsc --noEmit` on `packages/server-ts`
-2. **test** — `vitest run` (30+ unit tests)
-3. **staging** — deploys to staging on VPS via `scripts/deploy-staging.sh`,
-   then runs `scripts/regression-test.sh` against `http://localhost:8002`
-   (61 API regression tests). **Deploy to production is blocked on failure.**
-4. **cloudflare-ssl** — ensures Cloudflare SSL mode is "Full"
-5. **deploy** — runs `scripts/deploy.sh` on VPS, which `git pull`s,
-   installs deps, runs Prisma generate, restarts PM2, and health-checks
+2. **test** — `vitest run` (245+ unit tests)
+3. **build-worker-image** — builds the Execution Plane worker image
+   (`Dockerfile.worker`) and pushes it to GHCR.
+4. **staging** — deploys the Control Plane to staging on VPS via
+   `scripts/deploy-staging.sh`, then runs `scripts/regression-test.sh`
+   against `http://localhost:8002`. **Deploy to production is blocked on failure.**
+5. **cloudflare-ssl** — ensures Cloudflare SSL mode is "Full"
+6. **deploy** — runs `scripts/deploy.sh` on the Control Plane VPS, which
+   `git pull`s, installs deps, runs Prisma generate, restarts PM2, and
+   health-checks.
+7. **deploy-execution-plane** — runs `scripts/deploy-worker.sh` on the
+   sandbox worker VPS to pull the new worker image and restart
+   `docker-compose.worker.yml`.
 
-Total: ~3 minutes.
+Total: ~5 minutes.
 
 ## VPS layout
+
+### Control Plane
 
 ```
 ~/heurion/
 ├── packages/server-ts/   # TypeScript backend (PM2)
 │   ├── prisma/           # SQLite DB + schema
 │   └── data/             # uploads, twins, cache
+├── packages/web/dist     # Web UI static build
 ├── scripts/
 │   ├── deploy.sh         # Production deploy
 │   ├── deploy-staging.sh # Staging deploy (port 8002)
@@ -40,6 +49,20 @@ Total: ~3 minutes.
   and `https://staging.heurion.org:443` → `localhost:8002` (staging)
 - **PM2** manages server processes: `heurion` (prod) and `heurion-staging`
 - **Cloudflare** handles SSL termination + CDN
+
+### Execution Plane (separate sandbox VPS)
+
+```
+~/heurion/
+├── docker-compose.worker.yml   # MedSci-Sidecar / plugin worker
+├── scripts/deploy-worker.sh    # Worker deploy script
+└── secrets/                    # Docker Secrets (not committed)
+```
+
+- **Docker Compose** runs the worker container + Redis job queue.
+- **Docker Secrets** mount LLM keys and `SERVER_SECRET` under `/run/secrets/`.
+- The worker is **not** exposed to the public internet; only the Control Plane
+  can reach it (restrict via worker host firewall / VPC).
 
 ## Deploying
 
@@ -62,8 +85,16 @@ bash scripts/deploy.sh
 ```bash
 ssh root@174.138.31.245
 cd ~/heurion
-DEEPSEEK_KEY=sk-... bash scripts/deploy-staging.sh
+DEEPSEEK_KEY=sk-... GEMINI_KEY=sk-... bash scripts/deploy-staging.sh
 bash scripts/regression-test.sh http://localhost:8002
+```
+
+### Execution Plane deploy
+
+```bash
+ssh root@<worker-vps-ip>
+cd ~/heurion
+WORKER_IMAGE_TAG=<sha> SERVER_SECRET=... DEEPSEEK_KEY=sk-... GEMINI_KEY=sk-... bash scripts/deploy-worker.sh
 ```
 
 ## Rollback

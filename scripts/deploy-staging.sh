@@ -18,6 +18,7 @@ CORS_ALLOW_ORIGINS=*
 TWIN_BASE_DIR=.nexus/staging-twins
 ENVEOF
 
+which pnpm || npm install -g pnpm@10
 rm -rf node_modules
 pnpm install --prefer-offline
 npx prisma generate

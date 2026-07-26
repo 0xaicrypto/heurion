@@ -1,0 +1,73 @@
+# Heurion Execution Plane — MedSci-Sidecar / plugin worker sandbox.
+#
+# Runs on a separate VPS from the TypeScript Control Plane.
+# The worker pulls jobs from Redis (or is called by the Control Plane over
+# the internal network) and uploads generated files to object storage.
+#
+# Secrets are mounted under /run/secrets/ and sourced by the entrypoint.
+# Do NOT commit the ./secrets/ directory.
+
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: heurion-worker-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    networks:
+      - nexus-worker-net
+    command: redis-server --appendonly yes
+
+  heurion-worker:
+    image: ghcr.io/0xaicrypto/heurion-worker:${WORKER_IMAGE_TAG:-latest}
+    container_name: heurion-worker
+    restart: unless-stopped
+    ports:
+      # Bind to all interfaces so the Control Plane (on a separate VPS) can
+      # reach the worker. Restrict access with the worker host firewall.
+      - "8001:8001"
+    environment:
+      - HEURION_WORKER_MODE=sidecar
+      - REDIS_URL=redis://redis:6379/0
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8001
+      # Object storage for generated files (S3 / DigitalOcean Spaces / MinIO)
+      - S3_ENDPOINT=${S3_ENDPOINT:-}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - S3_REGION=${S3_REGION:-}
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
+    secrets:
+      - server_secret
+      - deepseek_key
+      - gemini_key
+    depends_on:
+      - redis
+    volumes:
+      - worker-data:/data
+    networks:
+      - nexus-worker-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8001/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  worker-data:
+  redis-data:
+
+networks:
+  nexus-worker-net:
+    driver: bridge
+
+secrets:
+  server_secret:
+    file: ./secrets/server_secret.txt
+  deepseek_key:
+    file: ./secrets/deepseek_key.txt
+  gemini_key:
+    file: ./secrets/gemini_key.txt

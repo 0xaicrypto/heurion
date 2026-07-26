@@ -9,7 +9,17 @@ git fetch origin main 2>/dev/null || { sleep 3; git fetch origin main; }
 git reset --hard origin/main
 echo "Deploying: $(git log -1 --oneline)"
 
-cd packages/server-ts
+which pnpm || npm install -g pnpm@10
+
+# Build web frontend before restarting the API so Nginx never serves a
+# stale or missing dist during the cut-over.
+cd ~/heurion/packages/web
+pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+pnpm build
+chmod -R +rx dist
+chmod +rx /root /root/heurion /root/heurion/packages /root/heurion/packages/web 2>/dev/null || true
+
+cd ~/heurion/packages/server-ts
 
 # Preserve the existing SERVER_SECRET so users don't get logged out on
 # every deploy. Generate a new one only on first deploy.
@@ -25,11 +35,11 @@ DATABASE_URL="file:./nexus_server.db"
 SERVER_HOST=0.0.0.0
 SERVER_PORT=8001
 SERVER_SECRET=${SERVER_SECRET}
-DEEPSEEK_API_KEY=${DEEPSEEK_KEY:-sk-edc3839a3dd44babaf33dc16d0761dc3}
+DEEPSEEK_API_KEY=${DEEPSEEK_KEY:-}
+GEMINI_API_KEY=${GEMINI_KEY:-}
 CORS_ALLOW_ORIGINS=*
 ENVEOF
 
-which pnpm || npm install -g pnpm@10
 # Force fresh Prisma Client install/generation; pnpm's isolated store can
 # cache a stale generated client even after schema changes, causing runtime
 # "Unknown argument" errors.
@@ -81,13 +91,6 @@ if ! curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
   pm2 describe heurion || true
   exit 1
 fi
-
-# Build web frontend
-cd ~/heurion/packages/web
-pnpm install --frozen-lockfile 2>/dev/null || pnpm install
-pnpm build
-chmod -R +rx dist
-chmod +rx /root /root/heurion /root/heurion/packages /root/heurion/packages/web 2>/dev/null || true
 
 # Configure nginx as the public-facing reverse proxy
 NGINX_CONF="/etc/nginx/sites-available/heurion"

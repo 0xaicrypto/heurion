@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  REGISTRY: ghcr.io
+  WORKER_IMAGE_NAME: ghcr.io/0xaicrypto/heurion-worker
+
 jobs:
   typecheck:
     name: Type Check
@@ -12,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v3
-        with: { version: '9' }
+        with: { version: '10' }
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
       - run: cd packages/server-ts && pnpm install --frozen-lockfile && npx prisma generate && npx tsc --noEmit
@@ -24,10 +28,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v3
-        with: { version: '9' }
+        with: { version: '10' }
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
       - run: cd packages/server-ts && pnpm install --frozen-lockfile && npx prisma generate && npx vitest run
+
+  build-worker-image:
+    name: Build Worker Image
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract short SHA
+        id: vars
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Build and push worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.worker
+          push: true
+          tags: |
+            ${{ env.WORKER_IMAGE_NAME }}:${{ steps.vars.outputs.sha }}
+            ${{ env.WORKER_IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   staging:
     name: Staging + Regression
@@ -48,7 +84,7 @@ jobs:
 
   cloudflare-ssl:
     name: Cloudflare SSL
-    needs: [typecheck, test]
+    needs: [staging]
     runs-on: ubuntu-latest
     steps:
       - name: Set Cloudflare SSL to Full
@@ -64,7 +100,7 @@ jobs:
 
   deploy:
     name: Deploy to Production
-    needs: [staging, cloudflare-ssl]
+    needs: [staging, cloudflare-ssl, build-worker-image]
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -77,5 +113,34 @@ jobs:
       - name: Deploy production
         env:
           DEEPSEEK_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} 'DEEPSEEK_KEY=$DEEPSEEK_KEY bash -s' < scripts/deploy.sh || echo 'SSH pipe closed (deploy OK)'
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} 'DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY bash -s' < scripts/deploy.sh || echo 'SSH pipe closed (deploy OK)'
+
+  deploy-execution-plane:
+    name: Deploy Execution Plane
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.WORKER_VPS_SSH_KEY }}
+      - name: Extract short SHA
+        id: vars
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Deploy worker stack
+        env:
+          WORKER_IMAGE_TAG: ${{ steps.vars.outputs.sha }}
+          SERVER_SECRET: ${{ secrets.SERVER_SECRET }}
+          DEEPSEEK_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          S3_REGION: ${{ secrets.S3_REGION }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+        run: |
+          scp -o StrictHostKeyChecking=no scripts/deploy-worker.sh docker-compose.worker.yml ${{ secrets.WORKER_VPS_USER }}@${{ secrets.WORKER_VPS_HOST }}:~/heurion/
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.WORKER_VPS_USER }}@${{ secrets.WORKER_VPS_HOST }} \
+            "cd ~/heurion && WORKER_IMAGE_TAG=$WORKER_IMAGE_TAG SERVER_SECRET='$SERVER_SECRET' DEEPSEEK_KEY='$DEEPSEEK_KEY' GEMINI_KEY='$GEMINI_KEY' S3_ENDPOINT='$S3_ENDPOINT' S3_BUCKET='$S3_BUCKET' S3_REGION='$S3_REGION' S3_ACCESS_KEY_ID='$S3_ACCESS_KEY_ID' S3_SECRET_ACCESS_KEY='$S3_SECRET_ACCESS_KEY' bash scripts/deploy-worker.sh"

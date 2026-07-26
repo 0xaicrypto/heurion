@@ -1,0 +1,94 @@
+# syntax=docker/dockerfile:1.6
+#
+# Heurion Execution Plane worker image.
+#
+# Derived from the root Dockerfile but:
+#   - Does NOT bake the web UI dist (worker is API-only).
+#   - Adds an entrypoint that reads Docker Secrets from /run/secrets into env.
+#
+# This image runs on the sandbox VPS and hosts the MedSci-Sidecar / plugin
+# runtime, separate from the TypeScript Control Plane.
+
+# ── Stage 1: build (Python deps via uv) ───────────────────────────────
+FROM python:3.11-slim-bookworm AS builder
+
+RUN pip install --no-cache-dir uv==0.4.30
+
+WORKDIR /build
+
+COPY packages/sdk/pyproject.toml      packages/sdk/pyproject.toml
+COPY packages/nexus/pyproject.toml    packages/nexus/pyproject.toml
+COPY packages/server/pyproject.toml   packages/server/pyproject.toml
+COPY README.md                        README.md
+
+RUN python -m venv /opt/venv \
+ && /opt/venv/bin/pip install --no-cache-dir --upgrade pip wheel
+
+COPY packages/sdk    packages/sdk
+COPY packages/nexus  packages/nexus
+COPY packages/server packages/server
+
+RUN /opt/venv/bin/pip install --no-cache-dir \
+        ./packages/sdk \
+        ./packages/nexus \
+        ./packages/server
+
+# ── Stage 2: runtime (slim + Node + non-root user) ───────────────────
+FROM python:3.11-slim-bookworm AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+        gnupg \
+ && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && apt-get purge -y --auto-remove gnupg \
+ && rm -rf /var/lib/apt/lists/* \
+ && node --version && npm --version
+
+RUN useradd --create-home --uid 1000 --shell /bin/bash nexus
+
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1
+
+COPY --from=builder --chown=nexus:nexus /build /app
+WORKDIR /app
+
+# Worker does not serve the web UI, but the Python code may reference the
+# directory. Create an empty placeholder to keep the runtime happy.
+RUN mkdir -p /app/packages/web/dist && chown -R nexus:nexus /app/packages/web/dist
+
+RUN mkdir -p /data/db /data/twins /data/uploads /data/cache /data/tmp \
+ && chown -R nexus:nexus /data
+VOLUME ["/data"]
+
+ENV NEXUS_TWIN_BASE_DIR=/data/twins \
+    UPLOAD_DIR=/data/uploads \
+    NEXUS_CACHE_DIR=/data/cache \
+    DATABASE_URL=sqlite:////data/db/nexus_server.db \
+    NEXUS_WEB_DIST=/app/packages/web/dist \
+    SERVER_HOST=0.0.0.0 \
+    SERVER_PORT=8001 \
+    HEURION_WORKER_MODE=sidecar
+
+# Docker Secrets entrypoint
+COPY --chown=root:root scripts/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
+RUN chmod +x /usr/local/bin/worker-entrypoint.sh
+
+USER nexus
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl --fail --silent http://127.0.0.1:8001/healthz || \
+        curl --fail --silent http://127.0.0.1:8001/docs || exit 1
+
+EXPOSE 8001
+
+ENTRYPOINT ["/usr/local/bin/worker-entrypoint.sh"]
+CMD ["uvicorn", "nexus_server.main:create_app", \
+     "--host", "0.0.0.0", \
+     "--port", "8001", \
+     "--proxy-headers", \
+     "--forwarded-allow-ips", "*", \
+     "--factory"]
