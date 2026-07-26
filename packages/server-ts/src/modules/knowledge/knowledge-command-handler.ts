@@ -166,7 +166,7 @@ async function handleSummarize(ctx: CommandContext, payload: string): Promise<Co
 
 async function handleGaps(ctx: CommandContext): Promise<CommandResult> {
   const filter: GapFilter = { workspaceId: ctx.workspaceId, status: 'open' }
-  const gaps = ctx.gapService.list(filter)
+  const gaps = await ctx.gapService.list(filter)
   return { type: 'kb_gaps', gaps }
 }
 

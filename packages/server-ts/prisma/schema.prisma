@@ -36,6 +36,7 @@ model User {
   chatTakeaways ChatTakeaway[]
   studies       ResearchStudy[]
   patients      PatientRecord[]
+  knowledgeGaps KnowledgeGap[]
   @@map("users")
 }
 
@@ -260,4 +261,23 @@ model MedicalRecord {
   @@index([patientHash, createdAt(sort: Desc)])
   @@index([userId, patientHash])
   @@map("medical_records")
+}
+
+model KnowledgeGap {
+  id          String  @id @default(cuid())
+  userId      String  @map("user_id")
+  workspaceId String  @map("workspace_id")
+  content     String
+  source      String
+  sourceId    String? @map("source_id")
+  status      String  @default("open")
+  answerId    String? @map("answer_id")
+  answerText  String? @map("answer_text")
+  createdAt   String  @map("created_at")
+  updatedAt   String  @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+  @@index([userId, status, createdAt(sort: Desc)])
+  @@index([workspaceId, status])
+  @@map("knowledge_gaps")
 }

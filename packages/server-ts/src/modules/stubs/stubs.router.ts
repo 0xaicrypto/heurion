@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import { getUserContext } from '../chat/user-context.js'
-import { getPendingGaps, resolveGap, getUserTools, getEnabledTools } from '../../evolution/cascade-gaps.js'
+import { getUserTools, getEnabledTools } from '../../evolution/cascade-gaps.js'
 
 /**
  * Stub endpoints that proxy was forwarding to Python.
@@ -97,14 +97,6 @@ export async function stubRouter(app: FastifyInstance) {
     const ok = ctx.facts.remove(request.params.id)
     if (ok) ctx.facts.commit()
     return { deleted: ok }
-  })
-  // ── Gap Queue ──
-  app.get('/api/v1/knowledge/gaps', async (request: any) => {
-    return { gaps: getPendingGaps(request.user!.userId) }
-  })
-  app.post('/api/v1/knowledge/gaps/:gapId/resolve', async (request: any) => {
-    const ok = resolveGap(request.user!.userId, request.params.gapId)
-    return ok ? { resolved: true } : { error: 'Gap not found', statusCode: 404 }
   })
   // ── Tool Store ──
   app.get('/api/v1/knowledge/tools', async (request: any) => {
