@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["execution"])
+file_router = APIRouter(prefix="/api/v1/files", tags=["files"])
 
 WORKER_TOKEN = os.environ.get("WORKER_API_TOKEN", "")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
@@ -76,6 +77,30 @@ def get_job(job_id: str, token: str = Depends(verify_worker_token)):
     if not record:
         raise HTTPException(status_code=404, detail="Job not found")
     return _to_response(record)
+
+
+@file_router.get("/{file_id}/download")
+def download_file(file_id: str, token: str = Depends(verify_worker_token)):
+    """Return a time-limited presigned URL for a rendered Sidecar output file."""
+    from heurion_worker.storage import get_download_url
+
+    r = _get_redis()
+    mapping = r.hgetall(f"heurion:file:{file_id}")
+    if not mapping or not mapping.get("storage_key"):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+        url = get_download_url(mapping["storage_key"])
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to generate download URL: {exc}")
+
+    return {
+        "file_id": file_id,
+        "file_name": mapping.get("file_name", ""),
+        "mime_type": mapping.get("mime_type", ""),
+        "download_url": url,
+        "expires_in": 300,
+    }
 
 
 def _to_response(record: dict[str, str]) -> JobResponse:

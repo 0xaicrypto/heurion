@@ -88,6 +88,15 @@ def run():
             try:
                 result = _handle(job_id, record)
                 _update_job(r, job_id, "completed", result=result)
+                if result and result.get("file_id") and result.get("storage_key"):
+                    r.hset(
+                        f"heurion:file:{result['file_id']}",
+                        mapping={
+                            "storage_key": result["storage_key"],
+                            "file_name": result.get("file_name", ""),
+                            "mime_type": result.get("mime_type", ""),
+                        },
+                    )
                 logger.info("Job %s completed", job_id)
             except Exception as exc:
                 logger.exception("Job %s failed", job_id)

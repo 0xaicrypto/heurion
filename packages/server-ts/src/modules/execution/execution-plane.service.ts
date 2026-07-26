@@ -17,9 +17,18 @@ export interface ExecutionJobStatus {
   result?: Record<string, unknown>
 }
 
+export interface FileDownloadUrl {
+  file_id: string
+  file_name: string
+  mime_type: string
+  download_url: string
+  expires_in: number
+}
+
 export interface ExecutionPlaneService {
   enqueue(job: ExecutionJob): Promise<ExecutionJobStatus>
   getStatus(jobId: string): Promise<ExecutionJobStatus | null>
+  getDownloadUrl(fileId: string): Promise<FileDownloadUrl | null>
 }
 
 const WORKER_URL = process.env.EXECUTION_PLANE_URL?.replace(/\/$/, '')
@@ -58,6 +67,18 @@ class HttpExecutionPlaneService implements ExecutionPlaneService {
     }
     return res.json() as Promise<ExecutionJobStatus>
   }
+
+  async getDownloadUrl(fileId: string): Promise<FileDownloadUrl | null> {
+    const res = await fetch(`${WORKER_URL}/api/v1/files/${fileId}/download`, {
+      headers: { 'x-worker-token': WORKER_TOKEN! },
+    })
+    if (res.status === 404) return null
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`Execution Plane download failed: ${res.status} ${text}`)
+    }
+    return res.json() as Promise<FileDownloadUrl>
+  }
 }
 
 class StubExecutionPlaneService implements ExecutionPlaneService {
@@ -77,6 +98,10 @@ class StubExecutionPlaneService implements ExecutionPlaneService {
 
   async getStatus(jobId: string): Promise<ExecutionJobStatus | null> {
     return this.jobs.get(jobId) ?? null
+  }
+
+  async getDownloadUrl(_fileId: string): Promise<FileDownloadUrl | null> {
+    return null
   }
 }
 

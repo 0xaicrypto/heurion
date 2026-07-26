@@ -90,3 +90,17 @@ def upload_output(
         "storage_key": key,
         "download_url": download_url,
     }
+
+
+def get_download_url(storage_key: str, expires_in: int = 300) -> str:
+    """Generate a time-limited presigned URL for an object in object storage."""
+    bucket = os.environ.get("S3_BUCKET", "")
+    if not bucket:
+        raise RuntimeError("S3_BUCKET is not configured")
+
+    client = get_s3_client()
+    return client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": storage_key},
+        ExpiresIn=expires_in,
+    )
