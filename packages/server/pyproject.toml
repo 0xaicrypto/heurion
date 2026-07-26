@@ -98,8 +98,12 @@ dependencies = [
     # without them research.reports falls back to markdown / SVG-only,
     # which is degraded UX for the doctor.
     "python-docx>=1.1",
+    "docxtpl>=0.6",
+    "python-pptx>=0.6",
     "openpyxl>=3.1",
     "matplotlib>=3.8",
+    "plotly>=5.0",
+    "boto3>=1.28",
 ]
 
 [project.optional-dependencies]
@@ -142,7 +146,7 @@ nexus = { workspace = true }
 # blew up with ModuleNotFoundError. `find` recursively picks up every
 # directory containing __init__.py, so new subpackages auto-ship.
 where = ["."]
-include = ["nexus_server*"]
+include = ["nexus_server*", "heurion_worker*"]
 
 # Ship the starter pack assets (workflow.json + skill .md files) as
 # data alongside the Python code. Without this, ``starter_packs.py``
@@ -177,6 +181,9 @@ include = ["nexus_server*"]
     # Without it the Docker image (non-editable install) crash-loops
     # on startup with "alembic.ini missing".
     "migrations/alembic.ini",
+]
+"heurion_worker" = [
+    "templates/**/*",
 ]
 
 [tool.black]

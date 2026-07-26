@@ -59,7 +59,7 @@ services:
     image: ghcr.io/0xaicrypto/heurion-worker:${WORKER_IMAGE_TAG:-latest}
     container_name: heurion-worker-consumer
     restart: unless-stopped
-    command: ["python", "-m", "nexus_server.execution_consumer"]
+    command: ["python", "-m", "heurion_worker.consumer"]
     environment:
       - REDIS_URL=redis://redis:6379/0
       - S3_ENDPOINT=${S3_ENDPOINT:-}

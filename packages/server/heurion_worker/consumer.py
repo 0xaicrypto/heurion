@@ -1,30 +1,39 @@
 """Execution Plane consumer — polls Redis for Sidecar jobs and runs them.
 
-Run as a standalone process inside the worker stack:
-
-    python -m nexus_server.execution_consumer
-
-For now the handlers are stubs; they will be replaced with real DOCX/PPTX/PDF
-rendering once the Sidecar template system lands.
+This module intentionally lives outside the ``nexus_server`` package so that
+importing it does **not** trigger FastAPI app creation or other Control Plane
+side effects.
 """
 
+from __future__ import annotations
+
 import json
+import logging
 import os
 import time
-import logging
+from typing import Any
+
+from heurion_worker.sidecar import dispatch
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("execution-consumer")
+logger = logging.getLogger("heurion-worker.consumer")
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
 
 
 def get_redis():
     import redis
+
     return redis.from_url(REDIS_URL, decode_responses=True)
 
 
-def _update_job(r, job_id: str, status: str, result: dict | None = None, error: str = ""):
+def _update_job(
+    r,
+    job_id: str,
+    status: str,
+    result: dict[str, Any] | None = None,
+    error: str = "",
+):
     now = str(time.time())
     fields = {"status": status, "updated_at": now}
     if result is not None:
@@ -34,26 +43,28 @@ def _update_job(r, job_id: str, status: str, result: dict | None = None, error: 
     r.hset(f"heurion:job:{job_id}", mapping=fields)
 
 
-def _handle(job_id: str, record: dict) -> dict:
+def _parse_payload(record: dict[str, str]) -> dict[str, Any]:
+    raw = record.get("payload", "")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        logger.warning("Job payload is not valid JSON, using empty dict")
+        return {}
+
+
+def _handle(job_id: str, record: dict[str, str]) -> dict:
     job_type = record.get("type", "")
-    payload = {}
-    if record.get("payload"):
-        try:
-            payload = json.loads(record["payload"])
-        except Exception:
-            pass
+    payload = _parse_payload(record)
 
     logger.info("Processing job %s of type %s", job_id, job_type)
 
-    # Stub handlers — replace with real Sidecar rendering in phase 3.
-    if job_type == "sidecar.generate_docx":
-        return {"file_id": f"docx_{job_id}", "status": "completed"}
-    if job_type == "sidecar.generate_pptx":
-        return {"file_id": f"pptx_{job_id}", "status": "completed"}
-    if job_type == "sidecar.render_table":
-        return {"file_id": f"table_{job_id}", "status": "completed"}
+    # Non-sidecar jobs are acknowledged but not rendered.
+    if not job_type.startswith("sidecar."):
+        return {"acknowledged": True, "type": job_type}
 
-    return {"acknowledged": True, "type": job_type, "payload": payload}
+    return dispatch(job_type, payload)
 
 
 def run():
