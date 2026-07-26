@@ -44,7 +44,9 @@ class HttpExecutionPlaneService implements ExecutionPlaneService {
       },
       body: JSON.stringify({
         type: job.type,
-        payload: job.payload,
+        // Sidecar handlers read tenant isolation from the payload; merge it in
+        // so the worker can build the correct S3 object prefix.
+        payload: { ...job.payload, tenant: job.tenant ?? {} },
         tenant: job.tenant ?? {},
         callback_url: job.callbackUrl,
       }),

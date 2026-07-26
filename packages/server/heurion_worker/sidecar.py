@@ -36,6 +36,7 @@ def _tenant_prefix(payload: dict[str, Any]) -> str:
     """Extract a tenant/workspace prefix from the job payload.
 
     Falls back to ``default`` so the object store layout is always valid.
+    Accepts both snake_case (worker-native) and camelCase (Control Plane) keys.
     """
     tenant = payload.get("tenant") or {}
     if isinstance(tenant, str):
@@ -43,8 +44,13 @@ def _tenant_prefix(payload: dict[str, Any]) -> str:
             tenant = json.loads(tenant)
         except Exception:
             tenant = {}
-    workspace_id = tenant.get("workspace_id") or tenant.get("id") or "default"
-    user_id = tenant.get("user_id") or "anonymous"
+    workspace_id = (
+        tenant.get("workspace_id")
+        or tenant.get("workspaceId")
+        or tenant.get("id")
+        or "default"
+    )
+    user_id = tenant.get("user_id") or tenant.get("userId") or "anonymous"
     return f"{workspace_id}/{user_id}"
 
 
