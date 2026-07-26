@@ -61,8 +61,8 @@ export function classifyQuery(query: string): QueryIntent {
   // Sidecar / document rendering — generate DOCX/PPTX/table/plot
   const sidecarPatterns = [
     /(病例总结|case summary|出院小结|discharge summary|研究报告|research report)/,
-    /(生成|生成一个|给我|导出|export|create|make|generate).*(docx|word|pptx|ppt|powerpoint|表格|table|图表|chart|plot|图)/,
-    /(docx|word|pptx|ppt|powerpoint|表格|table|图表|chart|plot|图).*?(生成|给我|导出|create|make|generate)/,
+    /(生成|创建|制作|做|生成一个|给我|导出|export|create|make|generate).*(docx|word|pptx|ppt|powerpoint|幻灯片|表格|table|图表|chart|plot|图)/,
+    /(docx|word|pptx|ppt|powerpoint|幻灯片|表格|table|图表|chart|plot|图).*?(生成|创建|制作|做|给我|导出|create|make|generate)/,
   ]
   if (sidecarPatterns.some(p => p.test(q))) return 'sidecar'
 
