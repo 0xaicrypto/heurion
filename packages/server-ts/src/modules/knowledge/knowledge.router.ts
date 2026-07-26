@@ -161,6 +161,33 @@ export async function knowledgeRouter(app: FastifyInstance) {
     return updated
   })
 
+  // Create a knowledge article directly (e.g. from a Sidecar-generated document)
+  app.post('/api/v1/knowledge/articles', async (request, reply) => {
+    const userId = request.user!.userId
+    const body = request.body as any
+    if (!body?.title || !body?.content) {
+      return reply.status(400).send({ error: 'title and content required' })
+    }
+
+    const ctx = getUserContext(userId)
+    const article = ctx.knowledge.add({
+      title: String(body.title),
+      content: String(body.content),
+      sources: Array.isArray(body.sources) ? body.sources.map(String) : ['sidecar'],
+    })
+    ctx.knowledge.commit()
+
+    await telemetry.record({
+      userId,
+      workspaceId: userId,
+      category: 'kb_command',
+      action: 'article_created',
+      metadata: { articleId: article.id, source: 'sidecar' },
+    }).catch(() => {})
+
+    return article
+  })
+
   // Sidecar output feedback: extract candidates and optionally save facts
   app.post('/api/v1/knowledge/sidecar/feedback', async (request, reply) => {
     const userId = request.user!.userId

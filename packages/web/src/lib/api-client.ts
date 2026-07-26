@@ -688,6 +688,14 @@ class ApiClient {
     return this.fetch('/api/v1/knowledge');
   }
 
+  async createKnowledgeArticle(data: {title: string; content: string; sources?: string[]}): Promise<{id: string}> {
+    return this.fetch('/api/v1/knowledge/articles', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async deleteKnowledgeArticles(ids: string[]): Promise<{deleted: number}> {
+    return this.fetch('/api/v1/knowledge/articles', { method: 'DELETE', body: JSON.stringify({ ids }) });
+  }
+
   async getFacts(): Promise<{facts: Array<{id: string; category: string; importance: number; content: string; count: number; sourceType: string; patientHash?: string; studyId?: string; createdAt: number; updatedAt: number; lastSeenAt: number}>}> {
     return this.fetch('/api/v1/facts');
   }
@@ -698,6 +706,10 @@ class ApiClient {
 
   async deleteFact(id: string): Promise<{deleted: boolean}> {
     return this.fetch(`/api/v1/facts/${id}`, { method: 'DELETE' });
+  }
+
+  async deleteFacts(ids: string[]): Promise<{deleted: number}> {
+    return this.fetch('/api/v1/knowledge/facts', { method: 'DELETE', body: JSON.stringify({ ids }) });
   }
 
   /* ────────────────────────── calendar ────────────────────────── */
@@ -720,10 +732,18 @@ class ApiClient {
     return this.fetch('/api/v1/memory/import', { method: 'POST', body: JSON.stringify(data) });
   }
 
+  async getExecutionFileDownload(fileId: string): Promise<{ file_id: string; file_name: string; mime_type: string; download_url: string; expires_in: number }> {
+    return this.fetch(`/api/v1/execution/files/${fileId}/download`);
+  }
+
   /* ────────────────────────── knowledge gaps + tools ────────────────────────── */
 
   async getKnowledgeGaps(): Promise<{gaps: Array<{id: string; query: string; context: string; status: string; detectedAt: number}>}> {
     return this.fetch('/api/v1/knowledge/gaps');
+  }
+
+  async deleteKnowledgeGaps(ids: string[]): Promise<{deleted: number}> {
+    return this.fetch('/api/v1/knowledge/gaps', { method: 'DELETE', body: JSON.stringify({ ids }) });
   }
 
   /* ────────────────────────── skills marketplace ────────────────────────── */
@@ -739,6 +759,10 @@ class ApiClient {
 
   async getKnowledgeTools(): Promise<{tools: Array<{id: string; name: string; description: string; language: string; enabled: boolean; createdAt: number}>}> {
     return this.fetch('/api/v1/knowledge/tools');
+  }
+
+  async deleteKnowledgeTools(ids: string[]): Promise<{deleted: number}> {
+    return this.fetch('/api/v1/knowledge/tools', { method: 'DELETE', body: JSON.stringify({ ids }) });
   }
 
   /* ────────────────────────── chat projection ────────────────────────── */
@@ -836,6 +860,10 @@ class ApiClient {
 
   async deleteFile(fileId: string): Promise<void> {
     return this.fetch(`/api/v1/files/${fileId}`, { method: 'DELETE' });
+  }
+
+  async deleteFiles(ids: string[]): Promise<{deleted: number}> {
+    return this.fetch('/api/v1/files/bulk', { method: 'DELETE', body: JSON.stringify({ ids }) });
   }
 
   /* ────────────────────────── chat (SSE) ────────────────────────── */

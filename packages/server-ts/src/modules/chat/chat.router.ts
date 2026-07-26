@@ -163,16 +163,36 @@ export async function chatRouter(app: FastifyInstance) {
           agentId: userId,
           sessionId: sid,
         })
+        const sidecarMeta: Record<string, unknown> = { sidecar: true, jobId: sidecarResult.job?.job_id }
+        if (sidecarResult.file) {
+          sidecarMeta.file = {
+            fileId: sidecarResult.file.fileId,
+            fileName: sidecarResult.file.fileName,
+            mimeType: sidecarResult.file.mimeType,
+          }
+          sidecarMeta.knowledgePayload = sidecarResult.file.knowledgePayload
+        }
         ctx.eventLog.append({
           timestamp: Date.now() / 1000,
           eventType: 'assistant_response',
           content: sidecarResult.text,
-          metadata: { sidecar: true, jobId: sidecarResult.job?.job_id },
+          metadata: sidecarMeta,
           agentId: userId,
           sessionId: sid,
         })
 
         send({ type: 'final_answer_chunk', text: sidecarResult.text })
+        if (sidecarResult.file) {
+          send({
+            type: 'sidecar_file',
+            file_id: sidecarResult.file.fileId,
+            file_name: sidecarResult.file.fileName,
+            mime_type: sidecarResult.file.mimeType,
+            download_url: sidecarResult.file.downloadUrl,
+            expires_in: sidecarResult.file.expiresIn,
+            knowledge_payload: sidecarResult.file.knowledgePayload,
+          })
+        }
         send({ type: 'citations', items: [] })
         send({ type: 'turn_complete', assistant_event_idx: ctx.eventLog.count() })
         return

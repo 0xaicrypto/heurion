@@ -37,6 +37,25 @@ function detectJobType(text: string): {
   return { type: 'sidecar.generate_docx', templateId: 'case_summary', outputName: 'Case_Summary' }
 }
 
+/**
+ * Detect pure capability questions like "Can you create a PPT?" / "你可以创建ppt文件吗？"
+ * so we can answer them with instructions instead of rendering an empty file.
+ */
+function isCapabilityQuestion(text: string): boolean {
+  const q = text.trim().toLowerCase().replace(/[?？]/g, '')
+  if (!q || q.length > 45) return false
+  return [
+    /你可以.*创建.*ppt/,
+    /你能.*做.*ppt/,
+    /可以.*做.*ppt/,
+    /支持.*ppt/,
+    /can you create.*ppt/,
+    /could you make.*ppt/,
+    /can you generate.*ppt/,
+    /do you support.*ppt/,
+  ].some(p => p.test(q))
+}
+
 async function buildPayload(
   text: string,
   patient: SidecarHandlerOptions['patient'],
@@ -47,7 +66,9 @@ async function buildPayload(
     ? `Patient context:\n- Initials: ${patient.initials || 'N/A'}\n- Age: ${patient.age || 'N/A'}\n- Sex: ${patient.sex || 'N/A'}\n- Diagnosis: ${patient.diagnosis || 'N/A'}\n- Chief Complaint: ${patient.chiefComplaint || 'N/A'}`
     : 'No specific patient context.'
 
-  const prompt = `${patientBlock}\n\nUser request: "${text}"\n\nWe need to render a medical document using the "${templateId}" template. Return ONLY a JSON object with keys that match the template placeholders. Common placeholders include: patient_initials, age, sex, diagnosis, findings_html, treatment_plan, generated_at. Use the current date for generated_at. If the request does not provide enough detail, use concise clinically plausible placeholders.\n\nJSON object:`
+  const prompt = type === 'sidecar.generate_pptx'
+    ? `${patientBlock}\n\nUser request: "${text}"\n\nCreate a PowerPoint presentation. Return ONLY a JSON object with these keys:\n- title: presentation title\n- subtitle: subtitle or conference/institution\n- presenter: presenter name or institution\n- date: date string\n- slides: an array of 5-12 slides, each with { title, content }. Content should be concise, bullet-style text suitable for a clinical or academic presentation.\n\nIf the request does not provide enough detail, fill in clinically plausible placeholder content.\n\nJSON object:`
+    : `${patientBlock}\n\nUser request: "${text}"\n\nWe need to render a medical document using the "${templateId}" template. Return ONLY a JSON object with keys that match the template placeholders. Common placeholders include: patient_initials, age, sex, diagnosis, findings_html, treatment_plan, generated_at. Use the current date for generated_at. If the request does not provide enough detail, use concise clinically plausible placeholders.\n\nJSON object:`
 
   let data: Record<string, unknown> = {}
   try {
@@ -109,13 +130,73 @@ async function pollJob(jobId: string, maxWaitMs = 30000, intervalMs = 1000): Pro
   return service.getStatus(jobId)
 }
 
+export interface SidecarFileInfo {
+  fileId: string
+  fileName: string
+  mimeType: string
+  downloadUrl: string
+  expiresIn: number
+  knowledgePayload?: {
+    title: string
+    content: string
+  }
+}
+
+function buildKnowledgePayload(
+  type: string,
+  data: Record<string, unknown>,
+  outputName: string,
+): { title: string; content: string } | undefined {
+  if (type === 'sidecar.generate_pptx') {
+    const slides = Array.isArray(data.slides) ? data.slides : []
+    const title = String(data.title || outputName)
+    const content = slides
+      .map((s: any) => `## ${s.title || ''}\n${s.content || ''}`)
+      .join('\n\n')
+    return { title, content: content || String(data.subtitle || '-') }
+  }
+
+  if (type === 'sidecar.generate_docx') {
+    const title = String(data.title || outputName)
+    const parts: string[] = []
+    if (data.patient_initials) parts.push(`Patient: ${data.patient_initials}`)
+    if (data.diagnosis) parts.push(`Diagnosis: ${data.diagnosis}`)
+    if (data.findings_html) parts.push(`Findings: ${data.findings_html}`)
+    if (data.treatment_plan) parts.push(`Plan: ${data.treatment_plan}`)
+    const content = parts.join('\n\n') || String(data.content || '-')
+    return { title, content }
+  }
+
+  if (type === 'sidecar.render_table') {
+    const title = String(data.title || outputName)
+    const headers = Array.isArray(data.headers) ? data.headers : []
+    const rows = Array.isArray(data.rows) ? data.rows : []
+    const content = [
+      title,
+      '',
+      headers.join(' | '),
+      rows.map((r: any) => (Array.isArray(r) ? r.join(' | ') : String(r))).join('\n'),
+    ].join('\n')
+    return { title, content }
+  }
+
+  return undefined
+}
+
 export async function handleSidecarRequest(options: SidecarHandlerOptions): Promise<{
   text: string
   job?: ExecutionJobStatus
+  file?: SidecarFileInfo
 }> {
   if (!process.env.EXECUTION_PLANE_URL || !process.env.WORKER_API_TOKEN) {
     return {
       text: 'Sidecar rendering is not configured on this instance. Please set EXECUTION_PLANE_URL and WORKER_API_TOKEN.',
+    }
+  }
+
+  if (isCapabilityQuestion(options.text)) {
+    return {
+      text: '可以。请告诉我主题、患者或大致内容，我就可以用 Sidecar 渲染生成可下载的 .pptx 文件。',
     }
   }
 
@@ -153,7 +234,14 @@ export async function handleSidecarRequest(options: SidecarHandlerOptions): Prom
   }
 
   return {
-    text: `Rendered "${fileName}". Download (expires in ${download.expires_in}s): ${download.download_url}`,
+    text: `Rendered "${fileName}".`,
     job: final,
+    file: {
+      fileId,
+      fileName,
+      mimeType: download.mime_type,
+      downloadUrl: download.download_url,
+      expiresIn: download.expires_in,
+    },
   }
 }

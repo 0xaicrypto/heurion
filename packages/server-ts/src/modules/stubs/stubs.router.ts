@@ -1,7 +1,10 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import { getUserContext } from '../chat/user-context.js'
-import { getUserTools, getEnabledTools } from '../../evolution/cascade-gaps.js'
+import { getUserTools, getEnabledTools, deleteUserTool } from '../../evolution/cascade-gaps.js'
+import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
+
+const gapService = new PrismaKnowledgeGapService()
 
 /**
  * Stub endpoints that proxy was forwarding to Python.
@@ -98,6 +101,54 @@ export async function stubRouter(app: FastifyInstance) {
     if (ok) ctx.facts.commit()
     return { deleted: ok }
   })
+
+  // ── Bulk deletes ──
+  app.delete('/api/v1/knowledge/articles', async (request: any) => {
+    const ctx = getUserContext(request.user!.userId)
+    const ids = (request.body as any)?.ids
+    if (!Array.isArray(ids)) return { deleted: 0 }
+    let deleted = 0
+    for (const id of ids) {
+      if (ctx.knowledge.remove(String(id))) deleted++
+    }
+    if (deleted > 0) ctx.knowledge.commit()
+    return { deleted }
+  })
+  app.delete('/api/v1/knowledge/facts', async (request: any) => {
+    const ctx = getUserContext(request.user!.userId)
+    const ids = (request.body as any)?.ids
+    if (!Array.isArray(ids)) return { deleted: 0 }
+    let deleted = 0
+    for (const id of ids) {
+      if (ctx.facts.remove(String(id))) deleted++
+    }
+    if (deleted > 0) ctx.facts.commit()
+    return { deleted }
+  })
+  app.delete('/api/v1/knowledge/gaps', async (request: any) => {
+    const userId = request.user!.userId
+    const ids = (request.body as any)?.ids
+    if (!Array.isArray(ids)) return { deleted: 0 }
+    let deleted = 0
+    for (const id of ids) {
+      const gap = await gapService.getById(String(id))
+      if (gap && gap.userId === userId) {
+        if (await gapService.delete(gap.id)) deleted++
+      }
+    }
+    return { deleted }
+  })
+  app.delete('/api/v1/knowledge/tools', async (request: any) => {
+    const userId = request.user!.userId
+    const ids = (request.body as any)?.ids
+    if (!Array.isArray(ids)) return { deleted: 0 }
+    let deleted = 0
+    for (const id of ids) {
+      if (deleteUserTool(userId, String(id))) deleted++
+    }
+    return { deleted }
+  })
+
   // ── Tool Store ──
   app.get('/api/v1/knowledge/tools', async (request: any) => {
     return { tools: getUserTools(request.user!.userId) }

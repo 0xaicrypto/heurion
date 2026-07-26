@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { api } from '@/lib/api-client';
 import type { ChatStreamChunk, SendChatOptions } from '@/lib/types';
 
-interface ChatMessage {
+export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   text: string;
@@ -10,6 +10,18 @@ interface ChatMessage {
   isStreaming?: boolean;
   tier?: string;
   citations?: Array<{ text: string; source?: string }>;
+  download?: {
+    fileId: string;
+    fileName: string;
+    mimeType: string;
+    url: string;
+    expiresIn: number;
+  };
+  knowledgePayload?: {
+    title: string;
+    content: string;
+  };
+  addedToKnowledge?: boolean;
 }
 
 interface SessionState {
@@ -38,6 +50,18 @@ function applyChunk(msg: ChatMessage, chunk: ChatStreamChunk): ChatMessage {
       return { ...msg, text: msg.text + chunk.text };
     case 'citations':
       return { ...msg, citations: chunk.items };
+    case 'sidecar_file':
+      return {
+        ...msg,
+        download: {
+          fileId: chunk.file_id,
+          fileName: chunk.file_name,
+          mimeType: chunk.mime_type,
+          url: chunk.download_url,
+          expiresIn: chunk.expires_in,
+        },
+        knowledgePayload: chunk.knowledge_payload,
+      };
     case 'turn_complete':
       return { ...msg, isStreaming: false };
     case 'error':

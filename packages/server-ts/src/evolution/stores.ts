@@ -241,6 +241,12 @@ export class KnowledgeStore {
     return this.working[idx]
   }
 
+  remove(id: string): boolean {
+    const before = this.working.length
+    this.working = this.working.filter(a => a.id !== id)
+    return this.working.length < before
+  }
+
   markStale(id: string, changedSources: string[]): boolean {
     const article = this.working.find(a => a.id === id)
     if (!article) return false

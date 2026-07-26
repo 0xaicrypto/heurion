@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api } from '@/lib/api-client';
-import { Button, Card, Skeleton, Badge } from '@/components/ui';
+import { Button, Card, Skeleton, Badge, Input } from '@/components/ui';
 import { cn } from '@/lib/utils';
-import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X } from 'lucide-react';
+import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface Article {
   id: string; title: string; content: string; sources: string[];
@@ -23,6 +23,10 @@ interface Tool {
   enabled: boolean; createdAt: number;
 }
 
+interface UploadedFile {
+  file_id: string; name: string; mime: string; size_bytes: number; created_at: string;
+}
+
 type Tab = 'articles' | 'facts' | 'gaps' | 'tools' | 'files';
 
 const TABS: { key: Tab; label: string; icon: typeof BookOpen }[] = [
@@ -33,17 +37,55 @@ const TABS: { key: Tab; label: string; icon: typeof BookOpen }[] = [
   { key: 'files', label: 'Files', icon: FileText },
 ];
 
+const SOURCE_TYPES = ['patient', 'doctor', 'research', 'general'] as const;
+type SourceType = typeof SOURCE_TYPES[number];
+
+const PAGE_SIZE = 10;
+
+function normalizeSearch(text: string): string {
+  return text.toLowerCase().trim();
+}
+
+function usePagination<T>(items: T[], page: number, pageSize = PAGE_SIZE) {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+  return { page: safePage, totalPages, start, end: start + pageItems.length, pageItems };
+}
+
 export function KnowledgePage() {
   const [tab, setTab] = useState<Tab>('articles');
   const [articles, setArticles] = useState<Article[]>([]);
   const [facts, setFacts] = useState<Fact[]>([]);
   const [gaps, setGaps] = useState<Gap[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
-  const [files, setFiles] = useState<Array<{file_id: string; name: string; mime: string; size_bytes: number; created_at: string}>>([]);
+  const [files, setFiles] = useState<UploadedFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingFact, setEditingFact] = useState<Fact | null>(null);
   const [editContent, setEditContent] = useState('');
-  const [editSource, setEditSource] = useState('general');
+  const [editSource, setEditSource] = useState<SourceType>('general');
+
+  // Filters
+  const [articleFilter, setArticleFilter] = useState('');
+  const [factFilter, setFactFilter] = useState('');
+  const [gapFilter, setGapFilter] = useState('');
+  const [toolFilter, setToolFilter] = useState('');
+  const [fileFilter, setFileFilter] = useState('');
+
+  // Pagination
+  const [articlePage, setArticlePage] = useState(1);
+  const [factPage, setFactPage] = useState(1);
+  const [gapPage, setGapPage] = useState(1);
+  const [toolPage, setToolPage] = useState(1);
+  const [filePage, setFilePage] = useState(1);
+
+  // Selections
+  const [selectedArticles, setSelectedArticles] = useState<Set<string>>(new Set());
+  const [selectedFacts, setSelectedFacts] = useState<Set<string>>(new Set());
+  const [selectedGaps, setSelectedGaps] = useState<Set<string>>(new Set());
+  const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
   const loadAll = () => {
     setLoading(true);
@@ -61,6 +103,42 @@ export function KnowledgePage() {
   const staleCount = articles.filter(a => a.status === 'stale').length;
   const pendingCount = gaps.filter(g => g.status === 'pending').length;
 
+  const filteredArticles = useMemo(() => {
+    const q = normalizeSearch(articleFilter);
+    if (!q) return articles;
+    return articles.filter(a => normalizeSearch(a.title).includes(q) || normalizeSearch(a.content).includes(q));
+  }, [articles, articleFilter]);
+
+  const filteredFacts = useMemo(() => {
+    const q = normalizeSearch(factFilter);
+    if (!q) return facts;
+    return facts.filter(f => normalizeSearch(f.content).includes(q));
+  }, [facts, factFilter]);
+
+  const filteredGaps = useMemo(() => {
+    const q = normalizeSearch(gapFilter);
+    if (!q) return gaps;
+    return gaps.filter(g => normalizeSearch(g.query).includes(q) || normalizeSearch(g.context).includes(q));
+  }, [gaps, gapFilter]);
+
+  const filteredTools = useMemo(() => {
+    const q = normalizeSearch(toolFilter);
+    if (!q) return tools;
+    return tools.filter(t => normalizeSearch(t.name).includes(q) || normalizeSearch(t.description).includes(q));
+  }, [tools, toolFilter]);
+
+  const filteredFiles = useMemo(() => {
+    const q = normalizeSearch(fileFilter);
+    if (!q) return files;
+    return files.filter(f => normalizeSearch(f.name).includes(q));
+  }, [files, fileFilter]);
+
+  const articlePagination = usePagination(filteredArticles, articlePage);
+  const factPagination = usePagination(filteredFacts, factPage);
+  const gapPagination = usePagination(filteredGaps, gapPage);
+  const toolPagination = usePagination(filteredTools, toolPage);
+  const filePagination = usePagination(filteredFiles, filePage);
+
   const resolveGap = async (gapId: string) => {
     await api.resolveKnowledgeGap(gapId).catch(() => {});
     loadAll();
@@ -76,6 +154,109 @@ export function KnowledgePage() {
     await api.updateFact(editingFact.id, { content: editContent, sourceType: editSource }).catch(() => {});
     setEditingFact(null);
     loadAll();
+  };
+
+  const toggleSelection = (set: React.Dispatch<React.SetStateAction<Set<string>>>, id: string) => {
+    set(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllOnPage = (ids: string[], set: React.Dispatch<React.SetStateAction<Set<string>>>, checked: boolean) => {
+    set(prev => {
+      const next = new Set(prev);
+      ids.forEach(id => {
+        if (checked) next.add(id);
+        else next.delete(id);
+      });
+      return next;
+    });
+  };
+
+  const handleBulkDelete = async (label: string, ids: string[], deleteFn: (ids: string[]) => Promise<{deleted: number}>) => {
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} selected ${label}?`)) return;
+    await deleteFn(ids).catch(() => {});
+    loadAll();
+  };
+
+  const renderPagination = (
+    page: number,
+    totalPages: number,
+    setPage: (p: number) => void,
+    start: number,
+    total: number,
+  ) => (
+    <div className="flex items-center justify-between border-t border-border pt-3">
+      <p className="text-xs text-text-tertiary">
+        Showing {total === 0 ? 0 : start + 1}–{Math.min(start + PAGE_SIZE, total)} of {total}
+      </p>
+      <div className="flex items-center gap-1">
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setPage(page - 1)}
+          disabled={page <= 1}
+        ><ChevronLeft size={14} /></Button>
+        <span className="text-sm text-text-secondary px-2">{page} / {totalPages}</span>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setPage(page + 1)}
+          disabled={page >= totalPages}
+        ><ChevronRight size={14} /></Button>
+      </div>
+    </div>
+  );
+
+  const renderToolbar = (
+    filter: string,
+    setFilter: (v: string) => void,
+    setPage: (p: number) => void,
+    selected: Set<string>,
+    setSelected: React.Dispatch<React.SetStateAction<Set<string>>>,
+    pageIds: string[],
+    label: string,
+    deleteFn: (ids: string[]) => Promise<{deleted: number}>,
+    placeholder: string,
+  ) => {
+    const allSelected = pageIds.length > 0 && pageIds.every(id => selected.has(id));
+    const someSelected = pageIds.some(id => selected.has(id)) && !allSelected;
+    return (
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <Input
+          type="text"
+          placeholder={placeholder}
+          value={filter}
+          onChange={e => { setFilter(e.target.value); setPage(1); }}
+          className="sm:w-80"
+        />
+        <div className="flex items-center gap-3">
+          {selected.size > 0 && (
+            <span className="text-xs text-text-secondary">{selected.size} selected</span>
+          )}
+          <Button
+            size="sm"
+            variant="danger"
+            disabled={selected.size === 0}
+            onClick={() => handleBulkDelete(label, Array.from(selected), deleteFn).then(() => setSelected(new Set()))}
+          ><Trash2 size={14} className="mr-1" /> Delete selected</Button>
+          <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="rounded border-border"
+              checked={allSelected}
+              ref={el => { if (el) el.indeterminate = someSelected; }}
+              onChange={e => selectAllOnPage(pageIds, setSelected, e.target.checked)}
+            />
+            Select all on page
+          </label>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -113,7 +294,7 @@ export function KnowledgePage() {
           ))}
         </nav>
 
-        <main className="p-6">
+        <main className="p-6 space-y-4">
           {loading ? (
             <div className="space-y-4">
               <Skeleton className="h-20 w-full rounded-xl" />
@@ -125,18 +306,35 @@ export function KnowledgePage() {
               {/* ── Articles ── */}
               {tab === 'articles' && (
                 <div className="space-y-4">
-                  {articles.length === 0 && (
+                  {renderToolbar(
+                    articleFilter,
+                    setArticleFilter,
+                    setArticlePage,
+                    selectedArticles,
+                    setSelectedArticles,
+                    articlePagination.pageItems.map(a => a.id),
+                    'articles',
+                    api.deleteKnowledgeArticles,
+                    'Filter articles by title or content...',
+                  )}
+                  {articlePagination.pageItems.length === 0 && (
                     <Card className="p-8 text-center">
                       <BookOpen size={32} className="mx-auto mb-3 text-text-tertiary" />
                       <p className="text-text-secondary">No knowledge articles yet.</p>
                       <p className="mt-1 text-sm text-text-tertiary">Articles are auto-generated when 3+ related facts accumulate.</p>
                     </Card>
                   )}
-                  {articles.map(a => (
+                  {articlePagination.pageItems.map(a => (
                     <Card key={a.id} className={cn('p-4', a.status === 'stale' && 'border-warning/50')}>
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="rounded border-border mr-2"
+                              checked={selectedArticles.has(a.id)}
+                              onChange={() => toggleSelection(setSelectedArticles, a.id)}
+                            />
                             <h3 className="font-medium text-text-primary truncate">{a.title || 'Untitled'}</h3>
                             <Badge variant="default">v{a.version || 1}</Badge>
                             {a.status === 'stale' && <Badge variant="warning"><AlertTriangle size={10} className="mr-1" /> Stale</Badge>}
@@ -156,17 +354,29 @@ export function KnowledgePage() {
                       </div>
                     </Card>
                   ))}
+                  {renderPagination(articlePagination.page, articlePagination.totalPages, setArticlePage, articlePagination.start, filteredArticles.length)}
                 </div>
               )}
 
               {/* ── Facts ── */}
               {tab === 'facts' && (
                 <div className="space-y-6">
-                  {(['patient', 'doctor', 'research', 'general'] as const).map(sourceType => {
-                    const groupFacts = facts.filter(f => f.sourceType === sourceType || (!f.sourceType && sourceType === 'general'))
-                    if (groupFacts.length === 0) return null
-                    const Icon = sourceType === 'patient' ? User : sourceType === 'doctor' ? Stethoscope : sourceType === 'research' ? FlaskConical : Globe
-                    const label = sourceType === 'patient' ? 'Patient Facts' : sourceType === 'doctor' ? 'Doctor & Preferences' : sourceType === 'research' ? 'Research & Studies' : 'General'
+                  {renderToolbar(
+                    factFilter,
+                    setFactFilter,
+                    setFactPage,
+                    selectedFacts,
+                    setSelectedFacts,
+                    factPagination.pageItems.map(f => f.id),
+                    'facts',
+                    api.deleteFacts,
+                    'Filter facts by content...',
+                  )}
+                  {SOURCE_TYPES.map(sourceType => {
+                    const groupFacts = factPagination.pageItems.filter(f => f.sourceType === sourceType || (!f.sourceType && sourceType === 'general'));
+                    if (groupFacts.length === 0) return null;
+                    const Icon = sourceType === 'patient' ? User : sourceType === 'doctor' ? Stethoscope : sourceType === 'research' ? FlaskConical : Globe;
+                    const label = sourceType === 'patient' ? 'Patient Facts' : sourceType === 'doctor' ? 'Doctor & Preferences' : sourceType === 'research' ? 'Research & Studies' : 'General';
                     return (
                       <div key={sourceType}>
                         <h3 className="flex items-center gap-2 mb-3 text-sm font-semibold text-text-secondary">
@@ -175,90 +385,113 @@ export function KnowledgePage() {
                         <div className="space-y-2">
                           {groupFacts.map(f => (
                             <Card key={f.id} className="p-3">
-                              <div className="flex items-start gap-3">
-                                <div className={cn(
-                                  'mt-0.5 px-1.5 py-0.5 rounded text-xs font-medium shrink-0',
-                                  f.category === 'fact' ? 'bg-blue-500/10 text-blue-500' :
-                                  f.category === 'preference' ? 'bg-purple-500/10 text-purple-500' :
-                                  f.category === 'constraint' ? 'bg-orange-500/10 text-orange-500' :
-                                  f.category === 'goal' ? 'bg-green-500/10 text-green-500' :
-                                  'bg-slate-500/10 text-slate-500'
-                                )}>{f.category}</div>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm text-text-primary">{f.content}</p>
-                                  <p className="mt-1 text-xs text-text-tertiary">
-                                    Importance: {f.importance} · Seen {f.count}x · {new Date(f.updatedAt).toLocaleDateString()}
-                                  </p>
+                              {editingFact?.id === f.id ? (
+                                <div className="space-y-3">
+                                  <div className="flex items-center justify-between">
+                                    <h4 className="text-sm font-medium text-text-primary">Edit Fact</h4>
+                                    <button onClick={() => setEditingFact(null)}><X size={16} className="text-text-tertiary" /></button>
+                                  </div>
+                                  <textarea
+                                    className="w-full rounded-lg border border-border bg-surface-elevated p-2 text-sm h-20"
+                                    value={editContent}
+                                    onChange={e => setEditContent(e.target.value)}
+                                  />
+                                  <div className="flex flex-wrap items-center gap-3">
+                                    {SOURCE_TYPES.map(s => (
+                                      <label key={s} className="flex items-center gap-1 text-xs text-text-secondary">
+                                        <input type="radio" name="sourceType" value={s} checked={editSource === s} onChange={() => setEditSource(s)} />
+                                        {s}
+                                      </label>
+                                    ))}
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button size="sm" onClick={saveFact}><Check size={14} className="mr-1" /> Save</Button>
+                                    <Button size="sm" variant="secondary" onClick={() => setEditingFact(null)}>Cancel</Button>
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <button
-                                    className="p-1 rounded hover:bg-surface-elevated text-text-tertiary hover:text-text-primary"
-                                    onClick={() => { setEditingFact(f); setEditContent(f.content); setEditSource(f.sourceType || 'general'); }}
-                                  ><Edit3 size={14} /></button>
-                                  <button
-                                    className="p-1 rounded hover:bg-surface-elevated text-text-tertiary hover:text-error"
-                                    onClick={() => deleteFact(f.id)}
-                                  ><Trash2 size={14} /></button>
+                              ) : (
+                                <div className="flex items-start gap-3">
+                                  <input
+                                    type="checkbox"
+                                    className="rounded border-border mt-1.5"
+                                    checked={selectedFacts.has(f.id)}
+                                    onChange={() => toggleSelection(setSelectedFacts, f.id)}
+                                  />
+                                  <div className={cn(
+                                    'mt-0.5 px-1.5 py-0.5 rounded text-xs font-medium shrink-0',
+                                    f.category === 'fact' ? 'bg-blue-500/10 text-blue-500' :
+                                    f.category === 'preference' ? 'bg-purple-500/10 text-purple-500' :
+                                    f.category === 'constraint' ? 'bg-orange-500/10 text-orange-500' :
+                                    f.category === 'goal' ? 'bg-green-500/10 text-green-500' :
+                                    'bg-slate-500/10 text-slate-500'
+                                  )}>{f.category}</div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-text-primary">{f.content}</p>
+                                    <p className="mt-1 text-xs text-text-tertiary">
+                                      Importance: {f.importance} · Seen {f.count}x · {new Date(f.updatedAt).toLocaleDateString()}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                      className="p-1 rounded hover:bg-surface-elevated text-text-tertiary hover:text-text-primary"
+                                      onClick={() => { setEditingFact(f); setEditContent(f.content); setEditSource((f.sourceType as SourceType) || 'general'); }}
+                                    ><Edit3 size={14} /></button>
+                                    <button
+                                      className="p-1 rounded hover:bg-surface-elevated text-text-tertiary hover:text-error"
+                                      onClick={() => deleteFact(f.id)}
+                                    ><Trash2 size={14} /></button>
+                                  </div>
                                 </div>
-                              </div>
+                              )}
                             </Card>
                           ))}
                         </div>
                       </div>
-                    )
+                    );
                   })}
-                  {facts.length === 0 && (
+                  {filteredFacts.length === 0 && (
                     <Card className="p-8 text-center">
                       <Brain size={32} className="mx-auto mb-3 text-text-tertiary" />
                       <p className="text-text-secondary">No facts stored yet.</p>
                       <p className="mt-1 text-sm text-text-tertiary">Facts are extracted from conversations and imported data.</p>
                     </Card>
                   )}
-
-                  {/* Edit modal */}
-                  {editingFact && (
-                    <Card className="p-4 border-accent">
-                      <div className="flex items-center justify-between mb-3">
-                        <h3 className="font-medium text-sm">Edit Fact</h3>
-                        <button onClick={() => setEditingFact(null)}><X size={16} className="text-text-tertiary" /></button>
-                      </div>
-                      <textarea
-                        className="w-full rounded border border-border bg-surface-elevated p-2 text-sm mb-3 h-20"
-                        value={editContent}
-                        onChange={e => setEditContent(e.target.value)}
-                      />
-                      <div className="flex items-center gap-3 mb-3">
-                        {(['patient', 'doctor', 'research', 'general'] as const).map(s => (
-                          <label key={s} className="flex items-center gap-1 text-xs">
-                            <input type="radio" name="sourceType" value={s} checked={editSource === s} onChange={() => setEditSource(s)} />
-                            {s}
-                          </label>
-                        ))}
-                      </div>
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={saveFact}><Check size={14} className="mr-1" /> Save</Button>
-                        <Button size="sm" variant="secondary" onClick={() => setEditingFact(null)}>Cancel</Button>
-                      </div>
-                    </Card>
-                  )}
+                  {filteredFacts.length > 0 && renderPagination(factPagination.page, factPagination.totalPages, setFactPage, factPagination.start, filteredFacts.length)}
                 </div>
               )}
 
               {/* ── Gaps / Pending ── */}
               {tab === 'gaps' && (
-                <div className="space-y-3">
-                  {gaps.length === 0 && (
+                <div className="space-y-4">
+                  {renderToolbar(
+                    gapFilter,
+                    setGapFilter,
+                    setGapPage,
+                    selectedGaps,
+                    setSelectedGaps,
+                    gapPagination.pageItems.map(g => g.id),
+                    'gaps',
+                    api.deleteKnowledgeGaps,
+                    'Filter gaps by query or context...',
+                  )}
+                  {gapPagination.pageItems.length === 0 && (
                     <Card className="p-8 text-center">
                       <Lightbulb size={32} className="mx-auto mb-3 text-text-tertiary" />
                       <p className="text-text-secondary">No pending knowledge gaps.</p>
                       <p className="mt-1 text-sm text-text-tertiary">Gaps appear when queries don't match existing knowledge.</p>
                     </Card>
                   )}
-                  {gaps.map(g => (
+                  {gapPagination.pageItems.map(g => (
                     <Card key={g.id} className="p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="rounded border-border mr-2"
+                              checked={selectedGaps.has(g.id)}
+                              onChange={() => toggleSelection(setSelectedGaps, g.id)}
+                            />
                             <h3 className="font-medium text-sm text-text-primary truncate">{g.query}</h3>
                             <Badge variant={g.status === 'pending' ? 'warning' : 'default'}>{g.status}</Badge>
                           </div>
@@ -273,24 +506,42 @@ export function KnowledgePage() {
                       </div>
                     </Card>
                   ))}
+                  {renderPagination(gapPagination.page, gapPagination.totalPages, setGapPage, gapPagination.start, filteredGaps.length)}
                 </div>
               )}
 
               {/* ── Tools ── */}
               {tab === 'tools' && (
-                <div className="space-y-3">
-                  {tools.length === 0 && (
+                <div className="space-y-4">
+                  {renderToolbar(
+                    toolFilter,
+                    setToolFilter,
+                    setToolPage,
+                    selectedTools,
+                    setSelectedTools,
+                    toolPagination.pageItems.map(t => t.id),
+                    'tools',
+                    api.deleteKnowledgeTools,
+                    'Filter tools by name or description...',
+                  )}
+                  {toolPagination.pageItems.length === 0 && (
                     <Card className="p-8 text-center">
                       <Wrench size={32} className="mx-auto mb-3 text-text-tertiary" />
                       <p className="text-text-secondary">No auto-generated tools yet.</p>
                       <p className="mt-1 text-sm text-text-tertiary">Tools are created automatically from knowledge patterns.</p>
                     </Card>
                   )}
-                  {tools.map(t => (
+                  {toolPagination.pageItems.map(t => (
                     <Card key={t.id} className={cn('p-4', !t.enabled && 'opacity-60')}>
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="rounded border-border mr-2"
+                              checked={selectedTools.has(t.id)}
+                              onChange={() => toggleSelection(setSelectedTools, t.id)}
+                            />
                             <h3 className="font-medium text-sm text-text-primary">{t.name}</h3>
                             <Badge variant="default">{t.language}</Badge>
                             {!t.enabled && <Badge>Disabled</Badge>}
@@ -301,21 +552,40 @@ export function KnowledgePage() {
                       </div>
                     </Card>
                   ))}
+                  {renderPagination(toolPagination.page, toolPagination.totalPages, setToolPage, toolPagination.start, filteredTools.length)}
                 </div>
               )}
+
               {/* ── Files ── */}
               {tab === 'files' && (
-                <div className="space-y-3">
-                  {files.length === 0 && (
+                <div className="space-y-4">
+                  {renderToolbar(
+                    fileFilter,
+                    setFileFilter,
+                    setFilePage,
+                    selectedFiles,
+                    setSelectedFiles,
+                    filePagination.pageItems.map(f => f.file_id),
+                    'files',
+                    api.deleteFiles,
+                    'Filter files by name...',
+                  )}
+                  {filePagination.pageItems.length === 0 && (
                     <Card className="p-8 text-center">
                       <FileText size={32} className="mx-auto mb-3 text-text-tertiary" />
                       <p className="text-text-secondary">No uploaded files.</p>
                       <p className="mt-1 text-sm text-text-tertiary">Upload files via chat or the Files page.</p>
                     </Card>
                   )}
-                  {files.map(f => (
+                  {filePagination.pageItems.map(f => (
                     <Card key={f.file_id} className="p-4">
                       <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          className="rounded border-border"
+                          checked={selectedFiles.has(f.file_id)}
+                          onChange={() => toggleSelection(setSelectedFiles, f.file_id)}
+                        />
                         <FileText size={18} className="text-text-tertiary shrink-0" />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-text-primary truncate">{f.name}</p>
@@ -335,6 +605,7 @@ export function KnowledgePage() {
                       </div>
                     </Card>
                   ))}
+                  {renderPagination(filePagination.page, filePagination.totalPages, setFilePage, filePagination.start, filteredFiles.length)}
                 </div>
               )}
             </>

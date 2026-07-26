@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Paperclip, Copy, Check } from 'lucide-react';
+import { Paperclip, Copy, Check, Download, FileText } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
 import type { LlmStatus } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, type ChatMessage } from '@/stores/chat';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
@@ -26,6 +26,10 @@ export function ChatPage() {
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [kbChecked, setKbChecked] = useState<Record<string, boolean>>({});
+  const [kbAdded, setKbAdded] = useState<Record<string, boolean>>({});
+  const [downloadUrls, setDownloadUrls] = useState<Record<string, string>>({});
+  const [downloadLoading, setDownloadLoading] = useState<Record<string, boolean>>({});
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -51,6 +55,17 @@ export function ChatPage() {
         id: crypto.randomUUID(),
         role: m.role,
         text: m.content,
+        download:
+          m.metadata?.sidecar && (m.metadata?.file as any)
+            ? {
+                fileId: (m.metadata.file as any).fileId as string,
+                fileName: (m.metadata.file as any).fileName as string,
+                mimeType: (m.metadata.file as any).mimeType as string,
+                url: '',
+                expiresIn: 0,
+              }
+            : undefined,
+        knowledgePayload: (m.metadata?.knowledgePayload as { title: string; content: string }) ?? undefined,
       }));
       if (msgs.length > 0) store.setMessages(sessionId, msgs);
     }).catch(() => {});
@@ -88,6 +103,32 @@ export function ChatPage() {
     } catch {
       // ignore
     }
+  };
+
+  const handleAddToKnowledge = async (msg: ChatMessage) => {
+    if (!msg.knowledgePayload) return;
+    await api.createKnowledgeArticle(msg.knowledgePayload).catch(() => {});
+    setKbAdded(prev => ({ ...prev, [msg.id]: true }));
+  };
+
+  const resolveDownloadUrl = async (fileId: string) => {
+    if (downloadUrls[fileId]) return downloadUrls[fileId];
+    setDownloadLoading(prev => ({ ...prev, [fileId]: true }));
+    try {
+      const info = await api.getExecutionFileDownload(fileId);
+      setDownloadUrls(prev => ({ ...prev, [fileId]: info.download_url }));
+      return info.download_url;
+    } catch {
+      return '';
+    } finally {
+      setDownloadLoading(prev => ({ ...prev, [fileId]: false }));
+    }
+  };
+
+  const handleDownloadClick = async (msg: ChatMessage) => {
+    if (!msg.download) return;
+    const url = msg.download.url || await resolveDownloadUrl(msg.download.fileId);
+    if (url) window.open(url, '_blank');
   };
 
   const toggleSkill = (name: string) => {
@@ -184,6 +225,52 @@ export function ChatPage() {
                     </button>
                   )}
                   <MarkdownRenderer content={m.text || ''} />
+                  {m.download && (
+                    <div className="mt-3 rounded-lg border border-border bg-surface p-3">
+                      <div className="flex items-center gap-2 text-sm text-text-primary">
+                        <FileText size={16} className="text-text-tertiary shrink-0" />
+                        <span className="truncate">{m.download.fileName}</span>
+                        <span className="text-xs text-text-tertiary shrink-0">{m.download.mimeType}</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <Button
+                          size="sm"
+                          isLoading={downloadLoading[m.download.fileId]}
+                          onClick={() => handleDownloadClick(m)}
+                        >
+                          <Download size={14} className="mr-1" />
+                          {t('common.download', 'Download')}
+                        </Button>
+                        {m.knowledgePayload && !kbAdded[m.id] && (
+                          <>
+                            <label className="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                className="rounded border-border"
+                                checked={kbChecked[m.id] || false}
+                                onChange={(e) => setKbChecked(prev => ({ ...prev, [m.id]: e.target.checked }))}
+                              />
+                              加入知识库
+                            </label>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={!kbChecked[m.id]}
+                              onClick={() => handleAddToKnowledge(m)}
+                            >
+                              确认
+                            </Button>
+                          </>
+                        )}
+                        {kbAdded[m.id] && (
+                          <span className="flex items-center gap-1 text-xs text-success">
+                            <Check size={12} />
+                            已加入知识库
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   {m.isStreaming ? <span className="animate-pulse" role="status" aria-label={t('chat.streaming')}>●</span> : null}
                 </div>
               </div>

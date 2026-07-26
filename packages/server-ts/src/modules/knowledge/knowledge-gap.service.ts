@@ -69,6 +69,7 @@ export interface KnowledgeGapService {
   create(input: CreateGapInput): Promise<KnowledgeGap>
   list(options: GapListOptions): Promise<PaginatedGaps>
   getById(id: string): Promise<KnowledgeGap | null>
+  delete(id: string): Promise<boolean>
   resolve(id: string, answer: string): Promise<KnowledgeGap | null>
   ignore(id: string): Promise<KnowledgeGap | null>
   getStats(workspaceId: string): Promise<GapStats>
@@ -170,6 +171,15 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
   async getById(id: string): Promise<KnowledgeGap | null> {
     const row = await (prisma as any).knowledgeGap.findUnique({ where: { id } })
     return row ? mapPrismaToGap(row) : null
+  }
+
+  async delete(id: string): Promise<boolean> {
+    try {
+      await (prisma as any).knowledgeGap.delete({ where: { id } })
+      return true
+    } catch {
+      return false
+    }
   }
 
   async resolve(id: string, answer: string): Promise<KnowledgeGap | null> {
@@ -304,6 +314,12 @@ export class InMemoryKnowledgeGapService implements KnowledgeGapService {
 
   async getById(id: string): Promise<KnowledgeGap | null> {
     return this.gaps.find(g => g.id === id) || null
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const before = this.gaps.length
+    this.gaps = this.gaps.filter(g => g.id !== id)
+    return this.gaps.length < before
   }
 
   async resolve(id: string, answer: string): Promise<KnowledgeGap | null> {

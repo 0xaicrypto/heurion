@@ -248,6 +248,61 @@ All responses use `snake_case` field names. Key endpoints:
 The self-evolving knowledge pipeline (P0–P10) enables Heurion to build a
 personal knowledge base and clinical memory from every interaction.
 
+### Four-layer memory + one projection
+
+Everything you do on the platform is accumulated in four layers:
+
+| Layer | What it is | Example |
+|---|---|---|
+| **Raw input** | Full conversation logs, uploaded files, confirmations | Every message you send to the agent |
+| **Facts** | Structured snippets with importance and timestamp | "ZQ is intolerant to osimertinib", "Doctor prefers imaging first" |
+| **Knowledge** | Synthesized articles when ≥3 related facts accumulate | "ZQ's EGFR treatment experience" |
+| **Persona** | Dynamic identity generated before each chat | "You are an oncology research AI; the doctor focuses on NSCLC..." |
+
+When you type a new question, the system first runs the **Query Router** so it
+does not blindly dump all memory into the LLM context:
+
+| Question type | Router intent | What memory is used |
+|---|---|---|
+| "What is ZL's age/sex?" | `sql` | Query patient DB only; no historical facts |
+| "Latest NSCLC guidelines?" | `vector` | Knowledge / Facts; no chat history |
+| "Search my knowledge base..." | `knowledge_command` | Direct knowledge-base command |
+| "Generate a Word case summary for ZQ" | `sidecar` | Execution Plane render; no LLM chat |
+| General clinical discussion | `mixed` | Combine all relevant memory layers |
+
+For questions that need accumulated memory, the system builds a **Memory
+Projection** — a ranked system prompt assembled from the layers above:
+
+1. **Persona** — dynamic identity from your facts, goals, and knowledge titles.
+2. **Current patient context** — if a patient is selected, their clinical graph
+   is injected with highest priority.
+3. **Recent turns (Layer 1)** — last 3 full user/assistant exchanges, uncompressed.
+4. **Session summaries (Layer 2)** — recent episodes from the last 7 days,
+   compressed to ~100 tokens each.
+5. **Weighted facts / knowledge (Layer 3)** — ranked by  
+   `attention = importance × e^(-0.3 × days_ago)`.  
+   A 5-importance old fact can outrank a 1-importance new fact; 7-day-old facts
+   decay to ~12%, 30-day-old facts are nearly ignored. Deduplicated and
+   truncated to the token budget.
+6. **Skills (Layer 4)** — validated skills and strategies (e.g. "this doctor
+   checks CT before discussing treatment").
+
+Key principles:
+
+- **Not full recall** — the LLM never sees 500 turns; only the highest-attention
+  subset is injected.
+- **Patient-first** — selected patient information is always included.
+- **Rules first, LLM fallback** — ~80% of queries are classified by rules in
+  <1ms; only ambiguous questions use the LLM classifier.
+- **Continuous writes** — every 5 turns the system extracts new facts, detects
+  knowledge gaps, and auto-generates knowledge articles when enough related
+  facts accumulate. Those new items are available in the next turn.
+
+> In short: Heurion routes your question to the right source, then compresses
+> **patient context + recent conversation + high-weight facts/knowledge + your
+> preferences** into a focused system prompt. Memory is not a raw replay of
+> history — it is a clinically-weighted context window.
+
 ### Pipeline
 
 | Phase | Component | Purpose |
@@ -592,7 +647,52 @@ for await (const chunk of h.chat.sendMessage({ text: '分析这个病例' })) {
 
 ## 知识库
 
-自进化知识管线 (P0–P10) 从每次交互中积累个人知识库：
+自进化知识管线 (P0–P10) 从每次交互中积累个人知识库。
+
+### 四层记忆 + 一次投影
+
+你在平台上做的所有事，会按四层沉淀下来：
+
+| 层级 | 是什么 | 举例 |
+|---|---|---|
+| **原始输入** | 完整对话日志、上传文件、确认 | 你跟 Agent 说的每句话 |
+| **Facts** | 结构化小片段，带重要性和时间戳 | “ZQ 对 osimertinib 不耐受”、“医生偏好先查影像” |
+| **Knowledge** | 同主题 Facts ≥3 条时自动合成的综述 | “ZQ 的 EGFR 治疗经验” |
+| **Persona** | 每次聊天前临时生成的“系统人设” | “你是肿瘤科研 AI，已知医生关注 NSCLC…” |
+
+输入新问题后，系统会先走 **Query Router（查询路由）**，避免把所有记忆无脑塞进 LLM：
+
+| 问题类型 | 路由决定 | 引用什么记忆 |
+|---|---|---|
+| “ZL 的年龄/性别？” | `sql` | 只查患者数据库，不引用历史 Facts |
+| “NSCLC 最新指南怎么说？” | `vector` | 引用 Knowledge / Facts，不引用闲聊历史 |
+| “搜索我的知识库…” | `knowledge_command` | 直接走知识库命令 |
+| “生成 ZQ 病例总结 Word” | `sidecar` | 直接调用 Execution Plane 渲染 |
+| 普通临床讨论 | `mixed` | 综合引用多层记忆 |
+
+对于需要引用记忆的问题，系统会把上面四层内容按优先级拼成一份
+**system prompt（记忆投影）** 送给 LLM：
+
+1. **Persona（固定）** —— 从你的人格化 Facts、目标、Knowledge 标题动态生成，告诉 AI“你是谁、你关心什么”。
+2. **当前患者上下文（最高优先级）** —— 如果你选中了患者，系统会把该患者的临床图谱/基本信息加进来。
+3. **最近 N 轮完整对话（Layer 1）** —— 默认保留最近 3 轮（user + assistant），不压缩，保证上下文连贯。
+4. **近期会话摘要 Episodes（Layer 2）** —— 最近 7 天的会话会被压缩成 100 tokens 左右的摘要，例如“上周讨论过 ZQ 的进展”。
+5. **加权 Facts / Knowledge（Layer 3）** —— 按 `attention = 重要性 × e^(-0.3 × 天数)` 排序：
+   - 重要性 5 分的老事实 > 重要性 1 分的新事实；
+   - 7 天前的事实权重降到约 12%，30 天前几乎忽略；
+   - 再去重、截断，只保留预算内的内容。
+6. **Skills（Layer 4）** —— 你积累并验证过的技能/策略，例如“该医生习惯先看 CT 再谈方案”。
+
+引用逻辑的关键原则：
+
+- **不是全量引用** —— 不会让 LLM 把 500 轮对话都看一遍，而是按注意力评分筛选。
+- **患者优先** —— 只要你选中了患者，该患者的信息会强制进入上下文。
+- **规则优先、LLM 兜底** —— 80% 的常见查询用规则路由（零 LLM 成本），只有模糊问题才用 LLM 分类。
+- **记忆是持续写入的** —— 每 5 轮自动提取一次 Facts；检测到未解问题就生成 Knowledge Gap；Facts 足够多时自动生成 Knowledge 文章；这些新内容下一轮就能被引用。
+
+> 一句话总结：下一轮聊天时，Heurion 会根据你的问题类型，先决定“该查数据库、查知识库、还是直接渲染文档”，然后把 **患者信息 + 近期对话 + 高权重 Facts/Knowledge + 你的偏好** 压缩成一份 system prompt 交给 LLM。记忆不是简单的历史记录回放，而是按重要性和时效性加权后的“临床上下文”。
+
+### 知识管线
 
 | 阶段 | 组件 | 用途 |
 |------|------|------|

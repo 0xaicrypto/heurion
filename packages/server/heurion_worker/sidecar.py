@@ -85,32 +85,74 @@ def generate_docx(payload: dict[str, Any]) -> dict:
 
 
 def generate_pptx(payload: dict[str, Any]) -> dict:
-    """Render a PowerPoint presentation from a template + structured data."""
+    """Render a PowerPoint presentation from structured slide data.
+
+    If a template file named ``{template_id}.pptx`` exists under
+    ``templates/pptx/`` it is used as a starting point; otherwise a blank
+    presentation is created and populated dynamically. The payload's
+    ``data`` should contain ``title``, ``subtitle``, ``presenter``,
+    ``date`` and a ``slides`` array of ``{title, content}`` objects.
+    """
     from pptx import Presentation
+    from pptx.util import Inches, Pt
 
     template_id = payload.get("template_id", "academic_presentation")
     data = payload.get("data", {})
-    output_name = payload.get("output_name") or template_id
+    output_name = payload.get("output_name") or data.get("title") or template_id
 
     template_path = _template_dir() / "pptx" / f"{template_id}.pptx"
-    if not template_path.exists():
-        available = [p.stem for p in (_template_dir() / "pptx").glob("*.pptx")]
-        raise RuntimeError(f"Template '{template_id}' not found. Available: {available}")
+    if template_path.exists():
+        prs = Presentation(str(template_path))
+    else:
+        # Fallback: build a clean 16:9 presentation from scratch.
+        prs = Presentation()
+        prs.slide_width = Inches(13.333)
+        prs.slide_height = Inches(7.5)
 
-    prs = Presentation(str(template_path))
+    slides = data.get("slides") or []
+    if not slides:
+        # If the caller did not provide a slide list, synthesize a single
+        # summary slide from whatever fields are available.
+        slides = [
+            {
+                "title": data.get("section_title", "Summary"),
+                "content": data.get("content") or data.get("findings_html") or "-",
+            }
+        ]
 
-    # Minimal MVP substitution: replace text placeholders of the form {{key}}
-    # across all slides. Full table/chart population comes later.
-    for slide in prs.slides:
-        for shape in slide.shapes:
-            if not shape.has_text_frame:
-                continue
-            for paragraph in shape.text_frame.paragraphs:
-                for run in paragraph.runs:
-                    for key, value in data.items():
-                        placeholder = f"{{{{{key}}}}}"
-                        if placeholder in run.text:
-                            run.text = run.text.replace(placeholder, str(value))
+    # Ensure a title slide exists. If the template already has one, reuse it;
+    # otherwise add a title slide at the front.
+    title = str(data.get("title", output_name))
+    subtitle = str(data.get("subtitle", ""))
+    presenter = str(data.get("presenter", ""))
+    date_str = str(data.get("date", data.get("generated_at", "")))
+
+    if len(prs.slides) == 0:
+        title_layout = prs.slide_layouts[0]
+        slide = prs.slides.add_slide(title_layout)
+    else:
+        slide = prs.slides[0]
+
+    if slide.shapes.title:
+        slide.shapes.title.text = title
+    if len(slide.placeholders) > 1:
+        subtitle_text = "\n".join(filter(None, [subtitle, presenter, date_str]))
+        slide.placeholders[1].text = subtitle_text
+
+    # Use a Title and Content layout for the remaining slides.
+    content_layout = prs.slide_layouts[1]
+    for item in slides:
+        slide = prs.slides.add_slide(content_layout)
+        if slide.shapes.title:
+            slide.shapes.title.text = str(item.get("title", ""))
+        if len(slide.placeholders) > 1:
+            tf = slide.placeholders[1].text_frame
+            tf.clear()
+            tf.text = str(item.get("content", ""))
+            # Make body text readable on a projector.
+            for paragraph in tf.paragraphs:
+                paragraph.font.size = Pt(20)
+                paragraph.space_after = Pt(12)
 
     file_id = _make_file_id("pptx")
     file_name = f"{output_name}.pptx"

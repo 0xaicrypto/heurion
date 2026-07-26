@@ -64,6 +64,31 @@ def test_render_table(mock_upload):
     assert result["file_name"] == "table_1.docx"
 
 
+def test_generate_pptx(mock_upload):
+    result = sidecar.generate_pptx(
+        {
+            "template_id": "academic_presentation",
+            "output_name": "Tumor_Biology_Progress",
+            "data": {
+                "title": "Recent Advances in Tumor Biology",
+                "subtitle": "NSCLC Research Update",
+                "presenter": "Dr. Heurion",
+                "date": "2026-07-27",
+                "slides": [
+                    {"title": "Background", "content": "Tumor heterogeneity drives resistance."},
+                    {"title": "Key Findings", "content": "EGFR T790M and C797S mutations are major resistance mechanisms."},
+                    {"title": "Conclusion", "content": "Combination strategies are needed."},
+                ],
+            },
+            "tenant": {"workspace_id": "ws_1", "user_id": "u_1"},
+        }
+    )
+
+    assert result["file_name"] == "Tumor_Biology_Progress.pptx"
+    assert result["mime_type"].endswith("presentationml.presentation")
+    assert result["size_bytes"] > 0
+
+
 def test_render_plot(mock_upload):
     result = sidecar.render_plot(
         {

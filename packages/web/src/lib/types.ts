@@ -220,6 +220,7 @@ export type ChatStreamChunk =
   | { type: 'search_query'; query: string }
   | { type: 'search_results_summary'; text: string }
   | { type: 'image_attached'; url?: string; study_id?: string; caption?: string }
+  | { type: 'sidecar_file'; file_id: string; file_name: string; mime_type: string; download_url: string; expires_in: number; knowledge_payload?: { title: string; content: string } }
   | { type: 'final_answer_chunk'; text: string }
   | { type: 'citations'; items: { text: string; source?: string }[] }
   | { type: 'turn_complete'; assistant_event_idx?: number }

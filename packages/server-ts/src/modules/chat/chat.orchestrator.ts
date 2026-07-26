@@ -197,10 +197,13 @@ export class ChatOrchestrator {
       .map(e => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${e.content.slice(0, 300)}`)
       .join('\n')
 
-    const turnCount = this.eventLog.query({ sessionId }).length
+    // A "turn" is one complete user-message + assistant-response pair.
+    // EventLog stores each as a separate event, so divide by 2.
+    const sessionEvents = this.eventLog.query({ sessionId })
+    const turnCount = Math.floor(sessionEvents.length / 2)
     this.episodesStore.upsert(sessionId, userMessage.slice(0, 150), turnCount)
 
-    const totalTurns = this.eventLog.count()
+    const totalTurns = turnCount
     if (totalTurns % 5 === 0 && totalTurns > 0) {
       try {
         const apiKey = getApiKey()

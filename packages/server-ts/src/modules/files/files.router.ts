@@ -196,6 +196,29 @@ export async function filesRouter(app: FastifyInstance) {
       content: `Binary file (${stat.size} bytes)`,
     }
   })
+  app.delete('/api/v1/files/bulk', async (request) => {
+    const userId = request.user!.userId
+    const ids = (request.body as any)?.ids
+    if (!Array.isArray(ids)) return { deleted: 0 }
+    const baseDir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+    let deleted = 0
+    for (const rawId of ids) {
+      const fileId = String(rawId)
+      const filepath = path.join(baseDir, fileId)
+      try {
+        await (prisma as any).fileIndex.updateMany({
+          where: { id: fileId, userId },
+          data: { deletedAt: new Date().toISOString() },
+        })
+      } catch { /* FileIndex may not exist */ }
+      if (fs.existsSync(filepath)) {
+        fs.unlinkSync(filepath)
+        deleted++
+      }
+    }
+    return { deleted }
+  })
+
   app.delete('/api/v1/files/:fileId', async (request, reply) => {
     const { fileId } = request.params as any
     const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', request.user!.userId, 'uploads', fileId)

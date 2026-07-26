@@ -105,6 +105,15 @@ export function enableTool(userId: string, toolId: string): boolean {
   return false
 }
 
+export function deleteUserTool(userId: string, toolId: string): boolean {
+  const tools = toolStore.get(userId) || []
+  const idx = tools.findIndex(t => t.id === toolId)
+  if (idx === -1) return false
+  tools.splice(idx, 1)
+  toolStore.set(userId, tools)
+  return true
+}
+
 export function getEnabledTools(userId: string): ToolRecord[] {
   return getUserTools(userId).filter(t => t.enabled)
 }
