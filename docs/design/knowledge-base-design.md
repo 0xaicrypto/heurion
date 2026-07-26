@@ -825,6 +825,16 @@ P3 Router
 
 ---
 
+## 10. 测试设计
+
+TDD 测试用例详见 [`KB_EVOLUTION_TESTS.md`](./KB_EVOLUTION_TESTS.md)，覆盖：
+
+- Query Router 单元测试与回归测试
+- 显式知识库命令 Handler 单元测试
+- Knowledge Gap Service/API 测试
+- Chat Orchestrator 集成回归测试
+- 成本可观测性测试
+
 ## 10. 关键指标
 
 | 指标 | 目标 | 测量方式 |

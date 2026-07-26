@@ -301,6 +301,9 @@ This keeps Sidecar execution costs predictable and avoids noisy auto-ingestion.
 API: `GET /api/v1/knowledge`, `GET /api/v1/facts`, `POST /api/v1/facts`,
 `GET /api/v1/knowledge/gaps`
 
+Design: [`docs/design/knowledge-base-design.md`](docs/design/knowledge-base-design.md)  
+Tests: [`docs/design/KB_EVOLUTION_TESTS.md`](docs/design/KB_EVOLUTION_TESTS.md)
+
 ---
 
 ## CI/CD Pipeline
