@@ -9,8 +9,8 @@
  * for observability.
  */
 
-export type QueryIntent = 'sql' | 'vector' | 'file' | 'knowledge_command' | 'mixed'
-export type RouteKind = 'sql' | 'vector' | 'file' | 'knowledge_command'
+export type QueryIntent = 'sql' | 'vector' | 'file' | 'knowledge_command' | 'sidecar' | 'mixed'
+export type RouteKind = 'sql' | 'vector' | 'file' | 'knowledge_command' | 'sidecar'
 
 export type KnowledgeCommandType =
   | 'kb_search'
@@ -57,6 +57,14 @@ export function classifyQuery(query: string): QueryIntent {
       (q.includes('uploaded') && q.includes('file'))) {
     return 'file'
   }
+
+  // Sidecar / document rendering — generate DOCX/PPTX/table/plot
+  const sidecarPatterns = [
+    /(病例总结|case summary|出院小结|discharge summary|研究报告|research report)/,
+    /(生成|生成一个|给我|导出|export|create|make|generate).*(docx|word|pptx|ppt|powerpoint|表格|table|图表|chart|plot|图)/,
+    /(docx|word|pptx|ppt|powerpoint|表格|table|图表|chart|plot|图).*?(生成|给我|导出|create|make|generate)/,
+  ]
+  if (sidecarPatterns.some(p => p.test(q))) return 'sidecar'
 
   // SQL — patient demographic queries
   const hasDemographic = /(年龄|性别|名字|姓名|主诉|多大|叫什么|age|sex|name|gender)/i.test(q)
@@ -160,7 +168,7 @@ export async function classifyQueryLLM(
 
   try {
     const intent = await classifier.classify(query)
-    if (['sql', 'vector', 'file', 'knowledge_command', 'mixed'].includes(intent)) {
+    if (['sql', 'vector', 'file', 'knowledge_command', 'sidecar', 'mixed'].includes(intent)) {
       return intent
     }
     return 'mixed'
@@ -179,6 +187,7 @@ export function routeQuery(_query: string, intent: QueryIntent): RouteKind[] {
     case 'vector':            return ['vector']
     case 'file':              return ['file']
     case 'knowledge_command': return ['knowledge_command']
+    case 'sidecar':           return ['sidecar']
     case 'mixed':             return ['sql', 'vector']
     default:                  return ['sql', 'vector']
   }

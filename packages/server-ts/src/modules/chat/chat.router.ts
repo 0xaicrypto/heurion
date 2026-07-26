@@ -6,6 +6,7 @@ import { deepseekStream, getApiKey } from '../../common/llm.js'
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
 import { router } from '../../retrieval/query-router.js'
 import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
+import { handleSidecarRequest } from '../execution/sidecar-chat-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import fs from 'fs'
@@ -112,6 +113,66 @@ export async function chatRouter(app: FastifyInstance) {
         })
 
         send({ type: 'final_answer_chunk', text: response })
+        send({ type: 'citations', items: [] })
+        send({ type: 'turn_complete', assistant_event_idx: ctx.eventLog.count() })
+        return
+      }
+
+      // Sidecar document rendering — handled directly without streaming LLM output
+      if (routeResult.intent === 'sidecar') {
+        let patient: any = null
+        if (patientHash) {
+          patient = await (prisma as any).patientRecord.findFirst({
+            where: { hash: patientHash, userId },
+          })
+        }
+
+        send({ type: 'context_info', text: 'Sidecar: rendering document...', kind: 'sidecar' })
+        const sidecarResult = await handleSidecarRequest({
+          userId,
+          workspaceId: userId,
+          text: body.text,
+          patient: patient
+            ? {
+                initials: patient.initials,
+                age: patient.age,
+                sex: patient.sex,
+                diagnosis: patient.diagnosis,
+                chiefComplaint: patient.chiefComplaint,
+              }
+            : null,
+        })
+
+        await telemetry.record({
+          userId,
+          workspaceId: userId,
+          category: 'sidecar',
+          action: 'render',
+          metadata: {
+            jobId: sidecarResult.job?.job_id,
+            status: sidecarResult.job?.status,
+            hadError: sidecarResult.job?.status === 'failed',
+          },
+        }).catch(() => {})
+
+        ctx.eventLog.append({
+          timestamp: Date.now() / 1000,
+          eventType: 'user_message',
+          content: body.text,
+          metadata: { patientHash, sidecar: true },
+          agentId: userId,
+          sessionId: sid,
+        })
+        ctx.eventLog.append({
+          timestamp: Date.now() / 1000,
+          eventType: 'assistant_response',
+          content: sidecarResult.text,
+          metadata: { sidecar: true, jobId: sidecarResult.job?.job_id },
+          agentId: userId,
+          sessionId: sid,
+        })
+
+        send({ type: 'final_answer_chunk', text: sidecarResult.text })
         send({ type: 'citations', items: [] })
         send({ type: 'turn_complete', assistant_event_idx: ctx.eventLog.count() })
         return

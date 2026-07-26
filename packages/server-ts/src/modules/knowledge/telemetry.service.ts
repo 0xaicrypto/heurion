@@ -9,7 +9,7 @@
 
 import prisma from '../../common/prisma'
 
-export type TelemetryCategory = 'router' | 'kb_command' | 'gap'
+export type TelemetryCategory = 'router' | 'kb_command' | 'gap' | 'sidecar'
 
 export interface TelemetryInput {
   userId: string
