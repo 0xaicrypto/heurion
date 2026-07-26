@@ -5,9 +5,10 @@
 set -e
 
 REPO_URL="https://github.com/0xaicrypto/heurion.git"
-DEPLOY_DIR="${DEPLOY_DIR:-~/heurion}"
+DEPLOY_DIR="${DEPLOY_DIR:-$HOME/heurion}"
 IMAGE_TAG="${WORKER_IMAGE_TAG:-latest}"
 
+echo "Deploy directory: $DEPLOY_DIR"
 cd "$DEPLOY_DIR" 2>/dev/null || {
   git clone "$REPO_URL" "$DEPLOY_DIR"
   cd "$DEPLOY_DIR"
@@ -38,11 +39,19 @@ ${GEMINI_KEY:-}
 EOF
 chmod 644 secrets/*.txt
 
-# Write non-secret runtime env for docker compose.
+# Write runtime env for docker compose. The token is considered secret, but it is
+# needed by the worker API for Control Plane authentication. Keep this file on the
+# worker host only (it is not committed).
 cat > .env <<EOF
 WORKER_API_TOKEN=${WORKER_API_TOKEN:-}
 REDIS_URL=redis://redis:6379/0
+S3_ENDPOINT=${S3_ENDPOINT:-}
+S3_BUCKET=${S3_BUCKET:-}
+S3_REGION=${S3_REGION:-}
+S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
+S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
 EOF
+chmod 600 .env
 
 # Pull the requested image tag and restart the stack.
 export WORKER_IMAGE_TAG="$IMAGE_TAG"
