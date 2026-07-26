@@ -9,6 +9,8 @@
  * for observability.
  */
 
+import { deepseekChat, getApiKey } from '../common/llm.js'
+
 export type QueryIntent = 'sql' | 'vector' | 'file' | 'knowledge_command' | 'sidecar' | 'mixed'
 export type RouteKind = 'sql' | 'vector' | 'file' | 'knowledge_command' | 'sidecar'
 
@@ -157,6 +159,44 @@ export function parseKnowledgeCommand(query: string): { command: KnowledgeComman
 }
 
 /**
+ * Default LLM fallback classifier. Invoked when the rule layer returns 'mixed'
+ * and no custom classifier is supplied. Uses a cheap single-call prompt to
+ * understand intent instead of relying solely on keyword patterns.
+ */
+export const defaultLLMClassifier: LLMClassifier = {
+  async classify(query: string): Promise<QueryIntent> {
+    const apiKey = getApiKey()
+    if (!apiKey) return 'mixed'
+
+    const safeQuery = query.replace(/"/g, '\\"')
+    const prompt = `You are the intent classifier for a clinical AI assistant.
+Available intents:
+- sql: factual patient database queries (age, sex, list patients, etc.)
+- vector: clinical/guideline/literature questions
+- file: file or attachment references
+- knowledge_command: explicit knowledge-base commands (remember, search, summarize, gaps)
+- sidecar: requests to generate documents, presentations, tables, or plots
+- mixed: anything else or ambiguous
+
+Return ONLY the intent label, nothing else.
+
+Query: "${safeQuery}"
+Intent:`
+
+    try {
+      const raw = await deepseekChat([{ role: 'user', content: prompt }], apiKey)
+      const intent = raw.trim().toLowerCase().split(/\s+/)[0]
+      if (['sql', 'vector', 'file', 'knowledge_command', 'sidecar', 'mixed'].includes(intent)) {
+        return intent as QueryIntent
+      }
+      return 'mixed'
+    } catch {
+      return 'mixed'
+    }
+  },
+}
+
+/**
  * LLM fallback classifier. Only invoked when rule layer returns 'mixed'.
  * Returns a safe 'mixed' if the classifier is unavailable or uncertain.
  */
@@ -203,8 +243,9 @@ export async function router(query: string, options: RouterOptions = {}): Promis
   let llmFallback = false
   let llmCalls = 0
 
-  if (ruleIntent === 'mixed' && options.llmClassifier) {
-    finalIntent = await classifyQueryLLM(query, options.llmClassifier)
+  if (ruleIntent === 'mixed') {
+    const classifier = options.llmClassifier ?? defaultLLMClassifier
+    finalIntent = await classifyQueryLLM(query, classifier)
     llmFallback = true
     llmCalls = 1
   }
