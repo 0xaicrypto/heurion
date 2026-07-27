@@ -243,9 +243,8 @@ export async function router(query: string, options: RouterOptions = {}): Promis
   let llmFallback = false
   let llmCalls = 0
 
-  if (ruleIntent === 'mixed') {
-    const classifier = options.llmClassifier ?? defaultLLMClassifier
-    finalIntent = await classifyQueryLLM(query, classifier)
+  if (ruleIntent === 'mixed' && options.llmClassifier) {
+    finalIntent = await classifyQueryLLM(query, options.llmClassifier)
     llmFallback = true
     llmCalls = 1
   }

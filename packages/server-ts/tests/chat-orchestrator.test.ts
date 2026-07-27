@@ -194,6 +194,10 @@ describe('ChatOrchestrator — postTurn regressions', () => {
       await orchestrator.postTurn('user_1', 'session_1', `turn ${i}`)
     }
 
-    expect(deepseekChat).toHaveBeenCalledTimes(1)
+    // Only count the fact-extraction LLM call, not any router classifier calls.
+    const extractionCalls = deepseekChat.mock.calls.filter(
+      (call) => typeof call[0][0]?.content === 'string' && call[0][0].content.includes('Extract key facts'),
+    )
+    expect(extractionCalls).toHaveLength(1)
   })
 })

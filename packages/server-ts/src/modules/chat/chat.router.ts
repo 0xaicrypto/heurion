@@ -4,7 +4,7 @@ import prisma from '../../common/prisma'
 import { getUserContext, buildPersona, buildFileContext } from './user-context.js'
 import { deepseekStream, getApiKey } from '../../common/llm.js'
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
-import { router } from '../../retrieval/query-router.js'
+import { router, defaultLLMClassifier } from '../../retrieval/query-router.js'
 import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { handleSidecarRequest } from '../execution/sidecar-chat-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
@@ -67,7 +67,10 @@ export async function chatRouter(app: FastifyInstance) {
       send({ type: 'turn_started', event_idx: ctx.eventLog.count() + 1, patient_hash: patientHash })
 
       // ── P3: Route the query before building expensive context ──
-      const routeResult = await router(body.text)
+      // Use the default LLM classifier for ambiguous queries so the router
+      // understands intent (e.g. "write an introduction about radiotherapy")
+      // instead of relying solely on keyword patterns.
+      const routeResult = await router(body.text, { llmClassifier: defaultLLMClassifier })
       await telemetry.record({
         userId,
         workspaceId: userId,

@@ -3,6 +3,7 @@ import { deepseekChat } from '../src/common/llm.js'
 import {
   classifyQuery,
   classifyQueryLLM,
+  defaultLLMClassifier,
   parseKnowledgeCommand,
   routeQuery,
   router,
@@ -137,18 +138,17 @@ describe('P3 — Query Router', () => {
       expect(result.cost.llmCalls).toBe(0)
     })
 
-    test('mixed without classifier invokes default LLM classifier', async () => {
-      vi.mocked(deepseekChat).mockResolvedValueOnce('vector')
-      const result = await router('帮我看看那个病人最近咋样')
-      expect(result.intent).toBe('vector')
-      expect(result.llmFallback).toBe(true)
-      expect(result.cost.llmCalls).toBe(1)
-    })
-
-    test('default classifier returns mixed on invalid/empty LLM output', async () => {
-      vi.mocked(deepseekChat).mockResolvedValueOnce('unknown intent')
+    test('mixed without classifier stays mixed with no LLM cost', async () => {
       const result = await router('帮我看看那个病人最近咋样')
       expect(result.intent).toBe('mixed')
+      expect(result.llmFallback).toBe(false)
+      expect(result.cost.llmCalls).toBe(0)
+    })
+
+    test('default LLM classifier can be passed explicitly', async () => {
+      vi.mocked(deepseekChat).mockResolvedValueOnce('vector')
+      const result = await router('帮我看看那个病人最近咋样', { llmClassifier: defaultLLMClassifier })
+      expect(result.intent).toBe('vector')
       expect(result.llmFallback).toBe(true)
       expect(result.cost.llmCalls).toBe(1)
     })
