@@ -1,6 +1,12 @@
 {
   "appName": "Heurion",
   "tagline": "Your self-evolving digital twin",
+  "marketing": {
+    "navMemory": "Memory",
+    "navSidecar": "Sidecar",
+    "navKnowledge": "Knowledge",
+    "navSecurity": "Security"
+  },
   "landing": {
     "navLogin": "Log in",
     "navGetStarted": "Get started free",

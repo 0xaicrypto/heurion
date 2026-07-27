@@ -1,6 +1,12 @@
 {
   "appName": "Heurion",
   "tagline": "自我进化的数字分身",
+  "marketing": {
+    "navMemory": "记忆",
+    "navSidecar": "Sidecar",
+    "navKnowledge": "知识库",
+    "navSecurity": "安全"
+  },
   "landing": {
     "navLogin": "登录",
     "navGetStarted": "免费开始",

@@ -10,6 +10,10 @@ import { PatientsLayout, PatientSummaryPage, PatientChatPage } from '@/routes/pa
 import { ImagingPage } from '@/routes/imaging';
 import { LabsPage } from '@/routes/labs';
 import { MemoryGraphPage } from '@/routes/memory-graph';
+import { MemoryPage } from '@/routes/memory';
+import { SidecarPage } from '@/routes/sidecar';
+import { KnowledgeLandingPage } from '@/routes/knowledge-landing';
+import { SecurityPage } from '@/routes/security';
 import { ReportPage } from '@/routes/report-page';
 import { MedicalRecordsPage } from '@/routes/medical-records';
 import { ViewerPage } from '@/routes/viewer';
@@ -61,6 +65,10 @@ export default function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/memory" element={<MemoryPage />} />
+          <Route path="/sidecar" element={<SidecarPage />} />
+          <Route path="/knowledge" element={<KnowledgeLandingPage />} />
+          <Route path="/security" element={<SecurityPage />} />
           <Route
             path="/app"
             element={
