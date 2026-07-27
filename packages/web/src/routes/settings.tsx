@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Check, X, Zap, Key, Server, RefreshCw, Activity, BarChart3 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api-client';
-import type { LlmStatus, LlmTestResult, ProviderKind, UserProfile, LlmUpdateInput, TelemetryDashboard, QueueMetrics } from '@/lib/types';
+import type { LlmStatus, LlmTestResult, ProviderKind, UserProfile, LlmUpdateInput, QueueMetrics, LlmCostDashboard } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
 import { Button, Input, Card, Badge, Alert } from '@/components/ui';
 import { cn } from '@/lib/utils';
@@ -387,7 +387,9 @@ function LlmSection() {
 
 function ObservabilitySection() {
   const { t } = useTranslation();
-  const [dashboard, setDashboard] = useState<TelemetryDashboard | null>(null);
+  const { role } = useAuthStore();
+  const isAdmin = role === 'admin';
+  const [llmCost, setLlmCost] = useState<LlmCostDashboard | null>(null);
   const [queue, setQueue] = useState<{ type: string; metrics: QueueMetrics } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -396,18 +398,18 @@ function ObservabilitySection() {
     setLoading(true);
     setError(null);
     try {
-      const [dash, q] = await Promise.all([
-        api.getKnowledgeTelemetryDashboard(),
+      const [cost, q] = await Promise.all([
+        isAdmin ? api.getAdminLlmCostDashboard() : Promise.resolve(null),
         api.getEvolutionQueueMetrics(),
       ]);
-      setDashboard(dash);
+      setLlmCost(cost);
       setQueue(q);
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : t('settings.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [t, isAdmin]);
 
   useEffect(() => {
     load();
@@ -426,22 +428,22 @@ function ObservabilitySection() {
         </Button>
       </div>
 
-      {dashboard && (
+      {isAdmin && llmCost && (
         <Card className="space-y-4 p-4">
           <div className="flex items-center gap-2 font-medium text-text-primary">
             <BarChart3 size={18} />
             LLM Cost
           </div>
           <div className="grid grid-cols-3 gap-4">
-            <Stat label={t('settings.totalCalls')} value={dashboard.llmCost.totalCalls} />
-            <Stat label={t('settings.totalTokens')} value={dashboard.llmCost.totalTokens} />
-            <Stat label={t('settings.totalCost')} value={`$${dashboard.llmCost.totalCostUsd.toFixed(4)}`} />
+            <Stat label={t('settings.totalCalls')} value={llmCost.totalCalls} />
+            <Stat label={t('settings.totalTokens')} value={llmCost.totalTokens} />
+            <Stat label={t('settings.totalCost')} value={`$${llmCost.totalCostUsd.toFixed(4)}`} />
           </div>
-          {Object.keys(dashboard.llmCost.byModel).length > 0 && (
+          {Object.keys(llmCost.byModel).length > 0 && (
             <div>
               <h4 className="mb-2 text-sm font-medium text-text-secondary">{t('settings.byModel')}</h4>
               <div className="space-y-1">
-                {Object.entries(dashboard.llmCost.byModel).map(([model, m]) => (
+                {Object.entries(llmCost.byModel).map(([model, m]) => (
                   <div key={model} className="flex justify-between border-b border-border pb-1 text-sm text-text-secondary">
                     <span>{model}</span>
                     <span>{m.calls} calls · {m.tokens} tokens · ${m.costUsd.toFixed(4)}</span>

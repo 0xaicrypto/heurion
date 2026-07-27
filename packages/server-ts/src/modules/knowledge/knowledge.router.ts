@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { authGuard } from '../../common/auth.guard'
+import { authGuard, adminGuard } from '../../common/auth.guard'
 import { PrismaKnowledgeGapService, type GapSource } from './knowledge-gap.service'
 import { getUserContext } from '../chat/user-context.js'
 import { SidecarFeedbackService, type SidecarOutputType } from './sidecar-feedback.service.js'
@@ -358,6 +358,12 @@ export async function knowledgeRouter(app: FastifyInstance) {
         limit: parseQueryInt(q.limit, 100),
       }),
     }
+  })
+
+  // Global LLM cost dashboard — admin only
+  app.get('/api/v1/admin/telemetry/llm-cost', { preHandler: adminGuard }, async (request) => {
+    const q = request.query as any
+    return telemetry.llmCostDashboard(q.from, q.to)
   })
 }
 

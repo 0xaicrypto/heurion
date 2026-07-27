@@ -5,7 +5,7 @@
  * Expand as more desktop-v2 features migrate to packages/web.
  */
 
-import type { AdminUser, AgentState, Article, AuthSession, ChatMessage, ChatSession, ChatStreamChunk, LlmStatus, LlmTestResult, LlmUpdateInput, LlmUpdateResult, MemoryProjection, Patient, PatientDetail, PublicConfig, QueueMetrics, SendChatOptions, TelemetryDashboard, TimelineEvent, UserProfile } from './types';
+import type { AdminUser, AgentState, Article, AuthSession, ChatMessage, ChatSession, ChatStreamChunk, LlmCostDashboard, LlmStatus, LlmTestResult, LlmUpdateInput, LlmUpdateResult, MemoryProjection, Patient, PatientDetail, PublicConfig, QueueMetrics, SendChatOptions, TelemetryDashboard, TimelineEvent, UserProfile } from './types';
 
 export const CLIENT_API_VERSION = 1;
 
@@ -710,6 +710,14 @@ class ApiClient {
     if (to) params.set('to', to);
     const qs = params.toString();
     return this.fetch(`/api/v1/knowledge/telemetry/dashboard${qs ? `?${qs}` : ''}`);
+  }
+
+  async getAdminLlmCostDashboard(from?: string, to?: string): Promise<LlmCostDashboard> {
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    const qs = params.toString();
+    return this.fetch(`/api/v1/admin/telemetry/llm-cost${qs ? `?${qs}` : ''}`);
   }
 
   async getEvolutionQueueMetrics(): Promise<{type: string; metrics: QueueMetrics}> {

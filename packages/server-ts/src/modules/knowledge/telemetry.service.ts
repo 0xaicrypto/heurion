@@ -68,6 +68,7 @@ export interface TelemetryService {
   record(input: TelemetryInput): Promise<void>
   query(filter: TelemetryFilter): Promise<TelemetryEvent[]>
   dashboard(workspaceId: string, from?: string, to?: string): Promise<TelemetryDashboard>
+  llmCostDashboard(from?: string, to?: string): Promise<LlmCostDashboard>
 }
 
 function safeJsonStringify(value: unknown): string | undefined {
@@ -194,6 +195,18 @@ export class PrismaTelemetryService implements TelemetryService {
     }
   }
 
+  async llmCostDashboard(from?: string, to?: string): Promise<LlmCostDashboard> {
+    const where: any = { category: 'llm_cost' }
+    if (from || to) {
+      where.createdAt = {}
+      if (from) where.createdAt.gte = from
+      if (to) where.createdAt.lte = to
+    }
+
+    const rows = await (prisma as any).telemetryEvent.findMany({ where })
+    return this.aggregateLlmCost(rows)
+  }
+
   private aggregateLlmCost(rows: any[]): LlmCostDashboard {
     const costRows = rows.filter((r: any) => r.category === 'llm_cost')
     const byAction: Record<string, number> = {}
@@ -303,6 +316,13 @@ export class InMemoryTelemetryService implements TelemetryService {
     }
   }
 
+  async llmCostDashboard(from?: string, to?: string): Promise<LlmCostDashboard> {
+    let rows = this.events.filter(e => e.category === 'llm_cost')
+    if (from) rows = rows.filter(e => e.createdAt >= from)
+    if (to) rows = rows.filter(e => e.createdAt <= to)
+    return this.aggregateLlmCost(rows)
+  }
+
   private aggregateLlmCost(rows: TelemetryEvent[]): LlmCostDashboard {
     const costRows = rows.filter(r => r.category === 'llm_cost')
     const byAction: Record<string, number> = {}
@@ -348,5 +368,8 @@ export class NoopTelemetryService implements TelemetryService {
       gaps: { created: 0, answered: 0, ignored: 0, autoResolved: 0, resolutionRate: 0 },
       llmCost: { totalCalls: 0, totalTokens: 0, totalCostUsd: 0, byAction: {}, byModel: {} },
     }
+  }
+  async llmCostDashboard(_from?: string, _to?: string): Promise<LlmCostDashboard> {
+    return { totalCalls: 0, totalTokens: 0, totalCostUsd: 0, byAction: {}, byModel: {} }
   }
 }
