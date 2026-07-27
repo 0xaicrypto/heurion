@@ -4,6 +4,82 @@ import { ContractEngine } from '../../core/contracts'
 import { MemoryProjection } from '../../retrieval/memory-projection'
 import { deepseekChat, getApiKey } from '../../common/llm.js'
 import { router, RouterResult } from '../../retrieval/query-router'
+
+function extractKeywords(query: string): string[] {
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .map(w => w.replace(/[^\p{L}\p{N}]/gu, ''))
+    .filter(w => w.length > 3)
+}
+
+function matchesKeywords(text: string, keywords: string[]): boolean {
+  if (keywords.length === 0 || !text) return false
+  const t = text.toLowerCase()
+  return keywords.some(k => t.includes(k))
+}
+
+function daysAgo(timestamp?: number): number {
+  if (!timestamp) return 999
+  return (Date.now() / 1000 - timestamp) / 86400
+}
+
+function filterFacts(facts: any[], query: string, patientHash?: string): any[] {
+  if (facts.length <= 20) return facts
+  const keywords = extractKeywords(query)
+  const scored = facts.map(f => {
+    let score = 0
+    if ((f.importance || 3) >= 4) score += 100
+    if (patientHash && f.patientHash === patientHash) score += 80
+    if (matchesKeywords(f.content, keywords)) score += 60
+    score += Math.max(0, 30 - daysAgo(f.lastSeenAt || f.createdAt) * 3)
+    return { f, score }
+  })
+  const baseline = scored.filter(s => s.score >= 80).map(s => s.f)
+  const rest = scored
+    .filter(s => s.score < 80)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(0, 30 - baseline.length))
+    .map(s => s.f)
+  return [...baseline, ...rest]
+}
+
+function filterKnowledge(articles: any[], query: string): any[] {
+  if (articles.length <= 10) return articles
+  const keywords = extractKeywords(query)
+  const scored = articles.map(a => {
+    let score = 0
+    const text = `${a.title || ''} ${a.content || ''}`
+    if (matchesKeywords(text, keywords)) score += 80
+    if (a.status === 'stale') score -= 20
+    score += Math.max(0, 20 - daysAgo(a.updatedAt || a.createdAt))
+    return { a, score }
+  })
+  return scored
+    .filter(s => s.score > 20)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 15)
+    .map(s => s.a)
+}
+
+function filterSkills(skills: any[], query: string): any[] {
+  if (skills.length <= 10) return skills
+  const keywords = extractKeywords(query)
+  return skills
+    .filter(s => matchesKeywords(`${s.name || ''} ${s.description || ''}`, keywords))
+    .slice(0, 10)
+}
+
+function filterEpisodes(episodes: any[], query: string): any[] {
+  if (episodes.length <= 5) return episodes
+  const keywords = extractKeywords(query)
+  const recent = episodes
+    .slice()
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .slice(0, 5)
+  const matched = episodes.filter(e => matchesKeywords(e.summary || '', keywords) && !recent.includes(e))
+  return [...recent, ...matched].slice(0, 10)
+}
 import { handleKnowledgeCommand, CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
 import { type TelemetryService, NoopTelemetryService } from '../knowledge/telemetry.service.js'
@@ -65,7 +141,7 @@ export class ChatOrchestrator {
 
     // For other intents, select context sources based on the route
     const context = this.buildProjectionContext({
-      userId, patientHash, sessionId, persona, routeResult,
+      userId, message, patientHash, sessionId, persona, routeResult,
     })
 
     const projected = await this.projection.project(context)
@@ -86,12 +162,13 @@ export class ChatOrchestrator {
 
   private buildProjectionContext(params: {
     userId: string
+    message: string
     patientHash: string | null
     sessionId: string
     persona: string
     routeResult: RouterResult
   }) {
-    const { userId, patientHash, sessionId, persona, routeResult } = params
+    const { userId, message, patientHash, sessionId, persona, routeResult } = params
 
     // Default: include all accumulated memory (mixed / fallback)
     let facts = this.factsStore.all()
@@ -104,7 +181,8 @@ export class ChatOrchestrator {
       episodes = []
       skills = []
     } else if (routeResult.intent === 'vector') {
-      // Guideline / knowledge questions: skip episodic chat history, keep facts + knowledge
+      // Guideline / knowledge questions: skip episodic chat history, keep filtered facts
+      facts = filterFacts(facts, message, patientHash || undefined)
       episodes = []
       skills = []
     } else if (routeResult.intent === 'file') {
@@ -112,6 +190,11 @@ export class ChatOrchestrator {
       facts = []
       episodes = []
       skills = []
+    } else {
+      // Mixed / fallback: keep high-signal memory but trim noise by query relevance
+      facts = filterFacts(facts, message, patientHash || undefined)
+      skills = filterSkills(skills, message)
+      episodes = filterEpisodes(episodes, message)
     }
 
     return {
