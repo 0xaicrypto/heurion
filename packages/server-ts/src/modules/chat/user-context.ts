@@ -21,6 +21,14 @@ interface UserContext {
 const contexts = new Map<string, UserContext>()
 let gcTimer: ReturnType<typeof setInterval> | null = null
 
+export function evictUserContext(userId: string): void {
+  const ctx = contexts.get(userId)
+  if (ctx) {
+    try { ctx.eventLog.close() } catch { /* ignore */ }
+    contexts.delete(userId)
+  }
+}
+
 function ensureGC() {
   if (gcTimer) return
   gcTimer = setInterval(() => {

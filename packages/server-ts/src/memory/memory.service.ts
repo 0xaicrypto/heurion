@@ -190,14 +190,10 @@ export class MemoryService {
     const propagation = this.curation.propagateFactChange(stableId)
     this.applyPropagationToLegacy(propagation)
 
-    if (this.policy.factDelete === 'hard') {
-      // In hard mode we still keep the graph node superseded for audit; only legacy is removed
-      this.legacyFacts.remove(stableId)
-      this.legacyFacts.commit()
-    } else {
-      this.legacyFacts.updateWhere(f => f.id === stableId, { content: `[deleted] ${current.content}` })
-      this.legacyFacts.commit()
-    }
+    // Remove the fact from the legacy projection immediately so list counts drop.
+    // The graph node remains superseded for audit/versioning.
+    this.legacyFacts.remove(stableId)
+    this.legacyFacts.commit()
 
     this.appendEvent('memory_fact_deleted', `Deleted fact ${stableId}`, {
       factId: stableId,

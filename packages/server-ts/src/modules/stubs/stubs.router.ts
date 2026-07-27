@@ -84,18 +84,37 @@ export async function stubRouter(app: FastifyInstance) {
   app.put('/api/v1/facts/:id', async (request: any) => {
     const ctx = getUserContext(request.user!.userId)
     const patch = request.body as any
-    const fact = ctx.memory.editFact(request.params.id, {
+    const id = request.params.id as string
+    let fact = ctx.memory.editFact(id, {
       content: patch.content,
       category: patch.category,
       importance: patch.importance,
       sourceType: patch.sourceType,
     })
+    // Fallback for legacy facts that were created before MemoryService (raw id).
+    if (!fact && !id.startsWith('fact_')) {
+      const changed = ctx.facts.updateWhere(f => f.id === id, {
+        content: patch.content,
+        category: patch.category,
+        importance: patch.importance,
+        sourceType: patch.sourceType,
+      })
+      if (changed > 0) {
+        fact = ctx.facts.all().find(f => f.id === id) as any
+      }
+    }
     if (!fact) return { error: 'Not found' }
     return { fact }
   })
   app.delete('/api/v1/facts/:id', async (request: any) => {
     const ctx = getUserContext(request.user!.userId)
-    const ok = ctx.memory.deleteFact(request.params.id)
+    const id = request.params.id as string
+    let ok = ctx.memory.deleteFact(id)
+    // Fallback for legacy facts with raw ids.
+    if (!ok && !id.startsWith('fact_')) {
+      ok = ctx.facts.remove(id)
+      if (ok) ctx.facts.commit()
+    }
     return { deleted: ok }
   })
 
@@ -116,8 +135,14 @@ export async function stubRouter(app: FastifyInstance) {
     if (!Array.isArray(ids)) return { deleted: 0 }
     let deleted = 0
     for (const id of ids) {
-      if (ctx.memory.deleteFact(String(id))) deleted++
+      const sid = String(id)
+      if (ctx.memory.deleteFact(sid)) {
+        deleted++
+      } else if (!sid.startsWith('fact_') && ctx.facts.remove(sid)) {
+        deleted++
+      }
     }
+    ctx.facts.commit()
     return { deleted }
   })
   app.delete('/api/v1/knowledge/gaps', async (request: any) => {

@@ -1,9 +1,12 @@
 import { FastifyInstance } from 'fastify'
 import bcrypt from 'bcryptjs'
+import fs from 'fs'
+import path from 'path'
 import prisma from '../../common/prisma'
 import { signToken } from '../../common/jwt'
 import { authGuard, adminGuard } from '../../common/auth.guard'
 import { loginSchema, registerSchema } from './auth.dto'
+import { evictUserContext } from '../chat/user-context.js'
 
 export async function authRouter(app: FastifyInstance) {
   app.post('/api/v1/auth/register', async (request, reply) => {
@@ -112,6 +115,16 @@ export async function authRouter(app: FastifyInstance) {
     await (prisma as any).patientRecord.deleteMany({ where: { userId } })
     await (prisma as any).doc.deleteMany({ where: { userId } })
     await (prisma as any).session.deleteMany({ where: { userId } })
+
+    // Wipe the on-disk twin directory so file-based memory stores are also reset.
+    evictUserContext(userId)
+    const twinDir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId)
+    try {
+      fs.rmSync(twinDir, { recursive: true, force: true })
+    } catch {
+      // Best-effort: continue even if directory is missing or locked.
+    }
+
     return { cleared: true }
   })
 }
