@@ -12,20 +12,20 @@ export function LandingPage() {
     tagline: isZh ? '运行时短暂，进化永恒' : 'Runtime is temporary. Evolution is eternal.',
     title: isZh ? '自我进化的临床 AI 工作站' : 'Self-Evolving Clinical AI Workstation',
     subtitle: isZh
-      ? 'Heurion 为肿瘤研究者打造。每次问诊、文件与确认都会沉淀为可复用的记忆；系统先理解意图，再投影最相关的上下文，让 AI 真正“记得”而不是“重置”。'
-      : 'Built for oncology researchers. Every encounter, file, and confirmation becomes reusable memory. The system understands intent first, then projects only the most relevant context — so the AI remembers instead of resets.',
+      ? 'Heurion 为肿瘤研究者打造。每次问诊、文件与确认都会沉淀为可版本化、可传播、可导出的统一记忆图；异步进化引擎自动提取事实、合成知识，让 AI 真正“记得”并随你一起成长。'
+      : 'Built for oncology researchers. Every encounter, file, and confirmation becomes a versioned, propagating, exportable Memory Graph. An asynchronous Evolution Engine extracts facts and synthesizes knowledge — so the AI remembers and grows with you.',
     startFree: isZh ? '免费开始使用' : 'Start Free',
     github: 'GitHub',
 
     pillarsTitle: isZh ? '三大核心能力' : 'Three core capabilities',
     pillars: [
       {
-        to: '/memory',
+        to: '/memory-graph',
         icon: <Brain size={28} />,
-        title: isZh ? '四层记忆' : 'Four-layer memory',
+        title: isZh ? '统一记忆图' : 'Unified Memory Graph',
         desc: isZh
-          ? '原始输入 → Facts → Knowledge → 动态 Persona。自动提取、加权衰减、按需投影。'
-          : 'Raw input → Facts → Knowledge → dynamic Persona. Auto-extracted, time-decayed, and projected on demand.',
+          ? 'Facts、Articles、Gaps、Skills、Entities、Documents 作为节点与关系共存；版本化、可审计、可导出。'
+          : 'Facts, Articles, Gaps, Skills, Entities, and Documents live as nodes and relations; versioned, auditable, and exportable.',
       },
       {
         to: '/sidecar',
@@ -40,8 +40,8 @@ export function LandingPage() {
         icon: <BookOpen size={28} />,
         title: isZh ? '可进化知识库' : 'Evolving knowledge base',
         desc: isZh
-          ? 'Articles / Facts / Gaps / Tools / Files 分标签管理，支持搜索、分页、内联编辑与批量删除。'
-          : 'Articles, Facts, Gaps, Tools, and Files in searchable tabs with pagination, inline editing, and bulk delete.',
+          ? 'Articles 自动标记 stale、可重新生成；Facts 编辑会级联传播；支持版本历史与影响范围查看。'
+          : 'Articles auto-mark stale and can be regenerated; fact edits cascade; version history and impact views included.',
       },
     ],
 
@@ -50,20 +50,20 @@ export function LandingPage() {
       ? '传统聊天机器人在每次对话后重置。医生不得不反复提供患者背景、研究偏好和既往结论。Heurion 把原始输入提炼成结构化记忆，并在下一轮自动引用，减少重复劳动，降低幻觉风险。'
       : 'Traditional chatbots reset after every conversation. Doctors repeatedly provide patient background, research preferences, and prior conclusions. Heurion distills raw inputs into structured memory and recalls it automatically in the next turn, cutting repetition and reducing hallucinations.',
 
-    loopTitle: isZh ? '六步进化闭环' : 'The 6-stage evolution loop',
+    loopTitle: isZh ? '异步进化管线' : 'Async evolution pipeline',
     loopSteps: [
       { n: '01', title: 'INGEST', desc: isZh ? '追加到不可变事件日志' : 'Append to immutable event log' },
       { n: '02', title: 'EXTRACT', desc: isZh ? 'LLM 提取事实与洞察' : 'LLM extracts facts & insights' },
-      { n: '03', title: 'GRAPH', desc: isZh ? '积累患者临床发现' : 'Accumulate clinical findings' },
-      { n: '04', title: 'DISTILL', desc: isZh ? '跨患者模式蒸馏' : 'Cross-patient pattern distillation' },
-      { n: '05', title: 'EVOLVE', desc: isZh ? '自主自我改进' : 'Autonomous self-improvement' },
-      { n: '06', title: 'RETRIEVE', desc: isZh ? '加权注意力上下文投影' : 'Weighted attention projection' },
+      { n: '03', title: 'LINK', desc: isZh ? '去重并链接文档/实体' : 'Deduplicate and link documents/entities' },
+      { n: '04', title: 'SYNTHESIZE', desc: isZh ? '相关事实合成 Article' : 'Synthesize articles from related facts' },
+      { n: '05', title: 'CURATE', desc: isZh ? '用户编辑自动传播' : 'Propagate user edits to dependents' },
+      { n: '06', title: 'RETRIEVE', desc: isZh ? '语义 + 图混合检索' : 'Semantic + graph hybrid retrieval' },
     ],
 
-    routerTitle: isZh ? '先路由，再投影' : 'Route first, then project',
+    routerTitle: isZh ? '先路由，再混合检索' : 'Route first, then retrieve',
     routerBody: isZh
-      ? 'Query Router 的规则层在 <1ms 内判断问题是“查患者数据库”、“搜知识库”、“渲染文档”还是“普通讨论”，只打开必要的记忆来源，避免把所有历史塞进 LLM。'
-      : 'The Query Router\'s rule layer decides in <1ms whether a question needs the patient DB, knowledge base, document rendering, or general discussion — opening only the required memory sources.',
+      ? 'Query Router 在 <1ms 内判定意图，随后通过 Embedding 召回 + 图关系扩展 + RRF 重排，把最相关的 Facts、Articles 与 Gaps 注入上下文，避免把所有历史塞进 LLM。'
+      : 'The Query Router classifies intent in <1ms, then retrieves the most relevant facts, articles, and gaps via embedding recall, graph expansion, and RRF reranking — without dumping all history into the LLM.',
 
     securityTitle: isZh ? '安全与隔离' : 'Security & isolation',
     securityBody: isZh
@@ -203,11 +203,12 @@ export function LandingPage() {
             <div className="order-2 lg:order-1">
               <Card className="p-6">
                 <div className="space-y-4">
-                  {[
+                  {                  [
                     isZh ? '控制面 / 执行面双平面隔离' : 'Control / execution plane isolation',
                     isZh ? '租户隔离的对象存储' : 'Tenant-isolated object storage',
                     isZh ? '患者上下文强制注入当前会话' : 'Patient context always injected into the current turn',
                     isZh ? '版本化事实与知识，可审计、可导出' : 'Versioned facts & knowledge, auditable & exportable',
+                    isZh ? '不可变 EventLog + .hma 归档导出' : 'Immutable EventLog + .hma archive export',
                   ].map((text, idx) => (
                     <div key={idx} className="flex items-center gap-3 text-text-secondary">
                       <Layers size={18} className="text-success shrink-0" />

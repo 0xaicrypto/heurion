@@ -22,8 +22,9 @@ typed SDK to create an AI that grows smarter with every interaction.
 Unlike stateless chatbots, Heurion's agent:
 - **Remembers** across sessions — every conversation builds accumulated knowledge
 - **Evolves** autonomously — automatically extracts facts, preferences, and insights
-- **Projects relevant context** — three-layer attention decay ensures the right information is available
-- **Accumulates clinical expertise** — facts, episodes, and skills version controlled and auditable
+- **Projects relevant context** — semantic retrieval + graph traversal inject only the most relevant memory
+- **Accumulates clinical expertise** — facts, articles, and skills are versioned, auditable, and exportable
+- **Propagates changes** — editing or deleting a fact automatically marks dependent knowledge as stale
 
 ---
 
@@ -98,157 +99,109 @@ The first official plugin is **MedSci-Sidecar** — it generates DOCX, PPTX, tab
 
 ## Evolution & Knowledge Base
 
-Heurion is a self-evolving clinical AI: every interaction is ingested, facts are
-extracted, knowledge is distilled, and the next turn retrieves only the most
-relevant context.
+Heurion is a self-evolving clinical AI. Every interaction is ingested as an
+immutable event, projected into a unified **Memory Graph**, and asynchronously
+distilled into facts, articles, and gaps by the **Evolution Engine**.
 
-### The 6-stage evolution loop
+### Memory Graph: one model for all memory
 
-Every conversation flows through:
+All memory entities live in a single graph:
+
+| Node type | What it is | Example |
+|---|---|---|
+| **Fact** | Structured snippet with importance, confidence, and source | "ZQ is intolerant to osimertinib" |
+| **Article** | Synthesized knowledge linked to source fact versions | "ZQ's EGFR treatment experience" |
+| **Gap** | Unanswered question waiting for a fact/article answer | "Best first-line for EGFR ex20ins?" |
+| **Skill** | Learned strategy for recurring tasks | "This doctor checks CT before treatment" |
+| **Entity** | Canonical patient/medication/biomarker/study concept | "Osimertinib" |
+| **Document** | Uploaded file with extracted fact provenance | "CT_7-15.pdf" |
+
+Relations connect them: `derives_from`, `depends_on`, `answers`, `mentions`,
+`supersedes`, `related_to`.
+
+### EventLog is the source of truth
+
+All memory writes flow through:
 
 ```
-  ┌──────────────────────────────────────────┐
-  │                                          │
-  ▼                                          │
-1. INGEST  ──  Append to immutable event log │
-2. EXTRACT ──  LLM extracts facts & insights │
-3. GRAPH   ──  Accumulate clinical findings  │
-4. DISTILL ──  Cross-patient patterns        │
-5. EVOLVE  ──  Autonomous self-improvement   │
-6. RETRIEVE ── Weighted attention projection │
-  │                                          │
-  └─────────── Feed back to next turn ───────┘
+Runtime handlers  →  MemoryService  →  EventLog.append()
+                                          ↓
+                                Memory Graph (projection)
+                                          ↓
+                              Evolution Engine (async)
 ```
 
-**Weighted attention**: recent interactions get full detail; older ones are
-compressed into summaries; facts are ranked by importance × recency decay.
+- The EventLog is append-only and migration-immutable.
+- The Memory Graph is a projection that can be rebuilt from the EventLog.
+- User edits, imports, and system extractions are all events.
 
-### Four-layer memory + one projection
+### Versioning & curation
 
-Everything you do on the platform is accumulated in four layers:
+Facts and articles are versioned:
 
-| Layer | What it is | Example |
+- Editing a fact creates **v2**; v1 is kept with `status='superseded'` and a
+  `supersedes` relation.
+- Articles record the exact fact versions they were generated from.
+- When a fact is edited or deleted, dependent articles are automatically marked
+  `stale` with `staleBecause`.
+- Deleting a document superseded facts derived from it; articles depending on
+  those facts become stale.
+
+This makes the knowledge base auditable and self-correcting.
+
+### Asynchronous Evolution Engine
+
+The Evolution Engine runs outside the chat hot path (BullMQ + Redis, with an
+in-memory fallback):
+
+1. **Extract** — LLM extracts facts from chat turns and documents.
+2. **Deduplicate & Link** — merges duplicates and links facts to
+   documents/entities.
+3. **Auto-resolve gaps** — checks whether a new fact answers an open gap.
+4. **Synthesize** — when enough related facts accumulate, generates an article.
+5. **Curate** — propagates user edits and deletions to dependents.
+
+Benefits: retries, dead-letter queues, independent scaling, and no blocking chat
+latency.
+
+### Semantic retrieval
+
+For accumulated-memory queries, retrieval is now hybrid:
+
+1. **Query Router** decides intent (`sql`, `vector`, `graph`,
+   `knowledge_command`, `mixed`).
+2. **Embedding recall** retrieves top-K facts/articles/gaps.
+3. **Graph expansion** follows 1–2 hops of relations.
+4. **RRF rerank** fuses semantic and graph signals.
+5. **Context compressor** truncates to the token budget.
+
+Embedding is currently provided by DeepSeek embedding, with `contentHash`
+caching and batching to keep costs low.
+
+### Heurion Memory Archive (.hma)
+
+Users can export and import their entire memory:
+
+- `.hma` is a self-contained ZIP/TAR with EventLog, Memory Graph, projections,
+  and files.
+- Export: `POST /api/v1/memory/export`
+- Import: `POST /api/v1/memory/import` with `mode=merge` or `mode=replace`
+- UI located in **Settings → Data**.
+
+### Memory API
+
+| Method | Path | Purpose |
 |---|---|---|
-| **Raw input** | Full conversation logs, uploaded files, confirmations | Every message you send to the agent |
-| **Facts** | Structured snippets with importance and timestamp | "ZQ is intolerant to osimertinib", "Doctor prefers imaging first" |
-| **Knowledge** | Synthesized articles when ≥3 related facts accumulate | "ZQ's EGFR treatment experience" |
-| **Persona** | Dynamic identity generated before each chat | "You are an oncology research AI; the doctor focuses on NSCLC..." |
+| POST | `/api/v1/memory/export` | Start memory export job |
+| GET | `/api/v1/memory/export/:jobId` | Export progress / download |
+| POST | `/api/v1/memory/import` | Start memory import job |
+| GET | `/api/v1/memory/import/:jobId` | Import report |
+| GET | `/api/v1/memory/nodes/:id/versions` | Version history |
+| GET | `/api/v1/memory/articles/:id/impact` | Downstream fact impact |
+| POST | `/api/v1/memory/articles/:id/regenerate` | Regenerate stale article |
+| POST | `/api/v1/memory/curation/replay` | Replay EventLog (admin) |
 
-When you type a new question, the system first runs the **Query Router** so it
-does not blindly dump all memory into the LLM context:
-
-| Question type | Router intent | What memory is used |
-|---|---|---|
-| "What is ZL's age/sex?" | `sql` | Query patient DB only; no historical facts |
-| "Latest NSCLC guidelines?" | `vector` | Knowledge / Facts; no chat history |
-| "Search my knowledge base..." | `knowledge_command` | Direct knowledge-base command |
-| "Generate a Word case summary for ZQ" | `sidecar` | Execution Plane render; no LLM chat |
-| General clinical discussion | `mixed` | Combine all relevant memory layers |
-
-For questions that need accumulated memory, the system builds a **Memory
-Projection** — a ranked system prompt assembled from the layers above:
-
-1. **Persona** — dynamic identity from your facts, goals, and knowledge titles.
-2. **Current patient context** — if a patient is selected, their clinical graph
-   is injected with highest priority.
-3. **Recent turns (Layer 1)** — last 3 full user/assistant exchanges, uncompressed.
-4. **Session summaries (Layer 2)** — recent episodes from the last 7 days,
-   compressed to ~100 tokens each.
-5. **Weighted facts / knowledge (Layer 3)** — ranked by  
-   `attention = importance × e^(-0.3 × days_ago)`.  
-   A 5-importance old fact can outrank a 1-importance new fact; 7-day-old facts
-   decay to ~12%, 30-day-old facts are nearly ignored. Deduplicated and
-   truncated to the token budget.
-6. **Skills (Layer 4)** — validated skills and strategies (e.g. "this doctor
-   checks CT before discussing treatment").
-
-Key principles:
-
-- **Not full recall** — the LLM never sees 500 turns; only the highest-attention
-  subset is injected.
-- **Patient-first** — selected patient information is always included.
-- **Rules first, LLM fallback** — ~80% of queries are classified by rules in
-  <1ms; only ambiguous questions use the LLM classifier.
-- **Continuous writes** — every 5 turns the system extracts new facts, detects
-  knowledge gaps, and auto-generates knowledge articles when enough related
-  facts accumulate. Those new items are available in the next turn.
-
-> In short: Heurion routes your question to the right source, then compresses
-> **patient context + recent conversation + high-weight facts/knowledge + your
-> preferences** into a focused system prompt. Memory is not a raw replay of
-> history — it is a clinically-weighted context window.
-
-### Pipeline
-
-| Phase | Component | Purpose |
-|-------|-----------|---------|
-| P0 | File Dedup + FactsStore | SHA-256 files; fact-level deduplication |
-| P1 | KnowledgeStore | Activate entries; track stale/inactive knowledge |
-| P2 | Dynamic Persona | Inject file context + accumulated facts into chat |
-| P3 | Query Router | Rule-first classifier — route queries to best source |
-| P4 | Context Compressor | 3-level pipeline (extract → rank → truncate) |
-| P5 | Graph Extractor | Dual-track entity extraction (NLP + LLM) |
-| P6 | Semantic Search | TF-IDF vector search across knowledge base |
-| P7 | RRF Fusion | Reciprocal rank fusion across multiple sources |
-| P8 | Knowledge Cascade | Stale marking + propagation across entries |
-| P9 | Knowledge Gap | Queue unanswered questions as Pending Facts |
-| P10 | ToolStore | Auto-create tools from accumulated knowledge patterns |
-
-### Cost-controlled retrieval (P3)
-
-To keep inference costs low, the Query Router uses a **rule-first, LLM-fallback**
-strategy:
-
-- **Rule layer** (`< 5ms`, zero LLM cost): keyword/pattern routing for factual,
-  file, and guideline queries.
-- **LLM layer**: only for ambiguous or mixed-intent questions; uses a cheap
-  classifier model.
-- **Source whitelist**: each route opens only the sources it needs, avoiding the
-  expensive "dump everything into context" approach.
-
-This usually *reduces* average per-turn cost because fewer tokens are injected
-into the LLM context.
-
-### Explicit knowledge commands
-
-Users can trigger knowledge-base operations directly from chat. These commands
-are **opt-in** and do not increase baseline conversation cost:
-
-| Command | Example | Behavior |
-|---------|---------|----------|
-| `kb_search` | "搜索我的知识库关于 NSCLC" | Semantic search across Knowledge + Facts |
-| `kb_remember` | "记住：ZQ 对 osimertinib 不耐受" | Extract and save a fact immediately |
-| `kb_summarize` | "根据我的知识库总结 EGFR 经验" | Retrieve relevant facts and synthesize |
-| `kb_gaps` | "查看我的未解问题" | List auto-detected Knowledge Gaps |
-| `kb_resolve_gap` | "回答这个 gap" | Convert a user answer into a fact |
-
-### Knowledge Gap UI
-
-Knowledge Gaps are user-visible "unanswered questions" automatically detected
-from chat or marked by the user. They surface in:
-
-- **Today Dashboard**: a quick list of open gaps with answer/ignore actions.
-- **Knowledge → Gaps tab**: full gap management page.
-- **Chat**: inline prompts when a new gap is detected.
-
-Making gaps visible turns passive memory accumulation into an active,
-user-guided evolution loop.
-
-### Sidecar output feedback
-
-MedSci-Sidecar reports can contain high-value clinical findings, but they are
-**not automatically extracted** into the knowledge base. Instead:
-
-- The user can say "save this to the knowledge base" in chat.
-- The UI can offer a ☑️ "Save key findings" checkbox after a Sidecar run.
-- Only user-authorized outputs are run through the fact extractor.
-
-This keeps Sidecar execution costs predictable and avoids noisy auto-ingestion.
-
-API: `GET /api/v1/knowledge`, `GET /api/v1/facts`, `POST /api/v1/facts`,
-`GET /api/v1/knowledge/gaps`
-
-Design: [`docs/design/knowledge-base-design.md`](docs/design/knowledge-base-design.md)  
+Design: [`docs/design/MEMORY_KNOWLEDGE_EVOLUTION_REFACTOR.md`](docs/design/MEMORY_KNOWLEDGE_EVOLUTION_REFACTOR.md)  
 Tests: [`docs/design/KB_EVOLUTION_TESTS.md`](docs/design/KB_EVOLUTION_TESTS.md)
 
 ---
@@ -307,6 +260,9 @@ modules/
 ├── admin/         User management
 ├── execution/     Sidecar job enqueue/status/download proxy
 └── stubs/         Fallback endpoints
+
+memory/            Unified Memory Graph, versioning, curation, archive export/import
+evolution/         Async BullMQ worker + queue metrics; extract/synthesize/gap stages
 ```
 
 ### Execution Plane (`packages/server/heurion_worker/`)
@@ -332,6 +288,10 @@ heurion.settings.getLlmStatus()
 heurion.files.upload(file)
 heurion.admin.listUsers()
 heurion.memory.getProjection(patientHash)
+heurion.memory.export(options)
+heurion.memory.import(file, mode)
+heurion.memory.getNodeVersions(nodeId)
+heurion.memory.regenerateArticle(articleId)
 ```
 
 ---
@@ -369,7 +329,11 @@ All responses use `snake_case` field names. Key endpoints:
 | GET | `/api/v1/docs` | Documents |
 | GET | `/api/v1/skills/search?source=all&page=1` | Skills |
 | GET | `/api/v1/admin/users` | Admin |
-| GET | `/api/v1/memory/export` | Memory |
+| GET | `/api/v1/memory/export` | Memory — start export job |
+| POST | `/api/v1/memory/import` | Memory — start import job (merge/replace) |
+| GET | `/api/v1/memory/nodes/:id/versions` | Memory — version history |
+| GET | `/api/v1/memory/articles/:id/impact` | Memory — downstream impact |
+| POST | `/api/v1/memory/articles/:id/regenerate` | Memory — regenerate stale article |
 | POST | `/api/v1/execution/render` | Execution — enqueue Sidecar render job |
 | GET | `/api/v1/execution/jobs/:id` | Execution — poll job status |
 | GET | `/api/v1/execution/files/:fileId/download` | Execution — get presigned file URL |
@@ -490,8 +454,9 @@ Heurion 是一个面向肿瘤研究者的**自我进化型临床 AI 工作站**�
 与传统无状态聊天机器人不同，Heurion 的智能体：
 - **跨会话记忆** — 每次对话都积累知识
 - **自主进化** — 自动提取事实、偏好和洞察
-- **加权注意力投影** — 三层衰减确保正确信息在上下文中
-- **积累临床经验** — 事实、会话和技能均版本化管理、可审计
+- **语义 + 图检索** — 只把最相关的记忆注入上下文
+- **积累临床经验** — 事实、文章和技能均版本化管理、可审计、可导出
+- **变化自动传播** — 编辑或删除 Fact 会自动标记依赖的知识为 stale
 
 ---
 
@@ -566,124 +531,97 @@ Heurion 现在有两种扩展机制：
 
 ## 进化与知识库
 
-Heurion 是一个自进化的临床 AI：每一次交互都会被摄取、提取事实、蒸馏知识，并在下一轮只检索最相关的上下文。
+Heurion 是一个自进化的临床 AI。每一次交互都会被摄取为不可变事件，投影到统一的 **Memory Graph**，再由 **Evolution Engine** 异步提炼为 Facts、Articles 与 Gaps。
 
-### 六步进化闭环
+### Memory Graph：统一的记忆模型
 
-每次对话走完整六步闭环：
+所有记忆实体都存在于同一张图：
 
-1. **INGEST** — 事件追加到不可变日志
-2. **EXTRACT** — LLM 提取事实和洞察  
-3. **GRAPH** — 积累患者临床数据
-4. **DISTILL** — 跨患者模式蒸馏
-5. **EVOLVE** — 自主自我改进
-6. **RETRIEVE** — 加权注意力上下文投影，输入下一轮对话
-
-### 四层记忆 + 一次投影
-
-你在平台上做的所有事，会按四层沉淀下来：
-
-| 层级 | 是什么 | 举例 |
+| 节点类型 | 说明 | 示例 |
 |---|---|---|
-| **原始输入** | 完整对话日志、上传文件、确认 | 你跟 Agent 说的每句话 |
-| **Facts** | 结构化小片段，带重要性和时间戳 | “ZQ 对 osimertinib 不耐受”、“医生偏好先查影像” |
-| **Knowledge** | 同主题 Facts ≥3 条时自动合成的综述 | “ZQ 的 EGFR 治疗经验” |
-| **Persona** | 每次聊天前临时生成的“系统人设” | “你是肿瘤科研 AI，已知医生关注 NSCLC…” |
+| **Fact** | 带重要性、置信度与来源的结构化片段 | “ZQ 对 osimertinib 不耐受” |
+| **Article** | 链接到来源 Fact 版本的综述 | “ZQ 的 EGFR 治疗经验” |
+| **Gap** | 等待 Fact/Article 回答的未解问题 | “EGFR ex20ins 最佳一线方案？” |
+| **Skill** | 对重复任务习得的策略 | “该医生习惯先看 CT 再谈方案” |
+| **Entity** | 患者/药物/生物标志物/研究等规范概念 | “Osimertinib” |
+| **Document** | 上传文件及其提取出的 Fact 来源 | “CT_7-15.pdf” |
 
-输入新问题后，系统会先走 **Query Router（查询路由）**，避免把所有记忆无脑塞进 LLM：
+关系：`derives_from`、`depends_on`、`answers`、`mentions`、`supersedes`、`related_to`。
 
-| 问题类型 | 路由决定 | 引用什么记忆 |
+### EventLog 是唯一真相源
+
+所有记忆写入都经过：
+
+```
+运行时处理器 → MemoryService → EventLog.append()
+                                      ↓
+                            Memory Graph（投影）
+                                      ↓
+                          Evolution Engine（异步）
+```
+
+- EventLog 只追加、不可变。
+- Memory Graph 是可以从 EventLog 重建的投影。
+- 用户编辑、导入、系统提取都是事件。
+
+### 版本化与级联传播
+
+Fact 与 Article 均支持版本：
+
+- 编辑 Fact 会生成 **v2**，v1 保留为 `superseded`，并建立 `supersedes` 关系。
+- Article 记录生成时所依赖的 Fact 版本快照。
+- 当 Fact 被编辑或删除时，依赖它的 Article 自动标记为 `stale`，并记录 `staleBecause`。
+- 删除 Document 会使从它提取的 Fact 被 `superseded`，进而使相关 Article stale。
+
+这让知识库可审计、可自愈。
+
+### 异步 Evolution Engine
+
+进化逻辑从聊天热路径中解耦，运行在 BullMQ + Redis 队列上（本地无 Redis 时回退到同进程）：
+
+1. **Extract** — 从聊天轮次与文件中提取 Fact。
+2. **Deduplicate & Link** — 合并重复项，链接 Document/Entity。
+3. **Auto-resolve gaps** — 检查新 Fact 是否回答了某个 Open Gap。
+4. **Synthesize** — 相关 Fact 足够多时生成 Article。
+5. **Curate** — 将用户的编辑/删除传播到依赖项。
+
+好处：支持重试、死信队列、独立扩缩容，且不阻塞聊天响应。
+
+### 语义检索
+
+针对需要引用记忆的问题，检索改为混合式：
+
+1. **Query Router** 判定意图：`sql`、`vector`、`graph`、`knowledge_command`、`mixed`。
+2. **Embedding 召回** 取 Top-K Facts/Articles/Gaps。
+3. **图扩展** 沿关系走 1–2 跳。
+4. **RRF 重排** 融合语义与图信号。
+5. **Context Compressor** 截断到 token 预算。
+
+Embedding 当前由 DeepSeek embedding 提供，并通过 `contentHash` 缓存与批量调用控制成本。
+
+### Heurion Memory Archive（.hma）
+
+用户可以整体导出/导入记忆：
+
+- `.hma` 是自包含的 ZIP/TAR，含 EventLog、Memory Graph、投影表与原始文件。
+- 导出：`POST /api/v1/memory/export`
+- 导入：`POST /api/v1/memory/import`，支持 `mode=merge` 或 `mode=replace`
+- UI 入口：**设置 → 数据**。
+
+### 记忆 API
+
+| 方法 | 路径 | 用途 |
 |---|---|---|
-| “ZL 的年龄/性别？” | `sql` | 只查患者数据库，不引用历史 Facts |
-| “NSCLC 最新指南怎么说？” | `vector` | 引用 Knowledge / Facts，不引用闲聊历史 |
-| “搜索我的知识库…” | `knowledge_command` | 直接走知识库命令 |
-| “生成 ZQ 病例总结 Word” | `sidecar` | 直接调用 Execution Plane 渲染 |
-| 普通临床讨论 | `mixed` | 综合引用多层记忆 |
+| POST | `/api/v1/memory/export` | 发起导出任务 |
+| GET | `/api/v1/memory/export/:jobId` | 查询进度/下载 |
+| POST | `/api/v1/memory/import` | 发起导入任务 |
+| GET | `/api/v1/memory/import/:jobId` | 导入报告 |
+| GET | `/api/v1/memory/nodes/:id/versions` | 节点版本历史 |
+| GET | `/api/v1/memory/articles/:id/impact` | 下游影响分析 |
+| POST | `/api/v1/memory/articles/:id/regenerate` | 重新生成 stale article |
+| POST | `/api/v1/memory/curation/replay` | 重放 EventLog（管理员） |
 
-对于需要引用记忆的问题，系统会把上面四层内容按优先级拼成一份
-**system prompt（记忆投影）** 送给 LLM：
-
-1. **Persona（固定）** —— 从你的人格化 Facts、目标、Knowledge 标题动态生成，告诉 AI“你是谁、你关心什么”。
-2. **当前患者上下文（最高优先级）** —— 如果你选中了患者，系统会把该患者的临床图谱/基本信息加进来。
-3. **最近 N 轮完整对话（Layer 1）** —— 默认保留最近 3 轮（user + assistant），不压缩，保证上下文连贯。
-4. **近期会话摘要 Episodes（Layer 2）** —— 最近 7 天的会话会被压缩成 100 tokens 左右的摘要，例如“上周讨论过 ZQ 的进展”。
-5. **加权 Facts / Knowledge（Layer 3）** —— 按 `attention = 重要性 × e^(-0.3 × 天数)` 排序：
-   - 重要性 5 分的老事实 > 重要性 1 分的新事实；
-   - 7 天前的事实权重降到约 12%，30 天前几乎忽略；
-   - 再去重、截断，只保留预算内的内容。
-6. **Skills（Layer 4）** —— 你积累并验证过的技能/策略，例如“该医生习惯先看 CT 再谈方案”。
-
-引用逻辑的关键原则：
-
-- **不是全量引用** —— 不会让 LLM 把 500 轮对话都看一遍，而是按注意力评分筛选。
-- **患者优先** —— 只要你选中了患者，该患者的信息会强制进入上下文。
-- **规则优先、LLM 兜底** —— 80% 的常见查询用规则路由（零 LLM 成本），只有模糊问题才用 LLM 分类。
-- **记忆是持续写入的** —— 每 5 轮自动提取一次 Facts；检测到未解问题就生成 Knowledge Gap；Facts 足够多时自动生成 Knowledge 文章；这些新内容下一轮就能被引用。
-
-> 一句话总结：下一轮聊天时，Heurion 会根据你的问题类型，先决定“该查数据库、查知识库、还是直接渲染文档”，然后把 **患者信息 + 近期对话 + 高权重 Facts/Knowledge + 你的偏好** 压缩成一份 system prompt 交给 LLM。记忆不是简单的历史记录回放，而是按重要性和时效性加权后的“临床上下文”。
-
-### 知识管线
-
-| 阶段 | 组件 | 用途 |
-|------|------|------|
-| P0 | 文件去重 + FactsStore | SHA-256 文件去重 + 事实级去重 |
-| P1 | KnowledgeStore | 激活记录；追踪陈旧/不活跃知识 |
-| P2 | 动态 Persona | 将文件上下文 + 已积累事实注入对话 |
-| P3 | Query Router | 规则分类器 — 将查询路由到最佳数据源 |
-| P4 | Context Compressor | 三级压缩管线 (提取 → 排序 → 截断) |
-| P5 | Graph Extractor | 双轨实体提取 (NLP + LLM) |
-| P6 | Semantic Search | TF-IDF 向量搜索知识库 |
-| P7 | RRF Fusion | 多源倒数排序融合 |
-| P8 | Knowledge Cascade | 陈旧标记 + 级联传播 |
-| P9 | Knowledge Gap | 未解问题排队为 Pending Facts |
-| P10 | ToolStore | 从知识模式自动创建工具 |
-
-### 成本受控检索（P3）
-
-为了控制推理成本，Query Router 采用 **规则优先、LLM 兜底** 策略：
-
-- **规则层**（< 5ms，零 LLM 成本）：通过关键词/模式路由事实、文件、指南类查询。
-- **LLM 层**：仅用于意图模糊或混合的问题，使用廉价的分类模型。
-- **源白名单**：每条路由只打开它需要的来源，避免“把所有内容都塞进上下文”的昂贵做法。
-
-这通常 *降低* 平均单轮成本，因为注入 LLM 上下文的 token 更少。
-
-### 显式知识命令
-
-用户可以直接在聊天中触发知识库操作。这些命令是 **可选的**，不会增加基础对话成本：
-
-| 命令 | 示例 | 行为 |
-|------|------|------|
-| `kb_search` | “搜索我的知识库关于 NSCLC” | 在 Knowledge + Facts 中语义搜索 |
-| `kb_remember` | “记住：ZQ 对 osimertinib 不耐受” | 立即提取并保存一条 Fact |
-| `kb_summarize` | “根据我的知识库总结 EGFR 经验” | 检索相关 Facts 并综合成总结 |
-| `kb_gaps` | “查看我的未解问题” | 列出自动检测到的 Knowledge Gap |
-| `kb_resolve_gap` | “回答这个 gap” | 把用户答案转换成一条 Fact |
-
-### 知识缺口 UI
-
-Knowledge Gap 是用户可见的“未解问题”，可由系统自动检测或用户手动标记。它们会出现在：
-
-- **今日看板**：快速查看未解问题，支持回答/忽略。
-- **知识库 → Gaps 标签页**：完整的缺口管理页面。
-- **聊天**：检测到新缺口时给出内联提示。
-
-让缺口可见，把被动的记忆积累变成了主动的、用户引导的进化循环。
-
-### Sidecar 输出反馈
-
-MedSci-Sidecar 报告可能包含高价值临床发现，但它们 **不会自动提取** 进知识库。相反：
-
-- 用户可以在聊天中说“保存到知识库”。
-- UI 可以在 Sidecar 运行后提供 ☑️ “保存关键发现” 复选框。
-- 只有用户授权的输出才会经过事实提取器。
-
-这让 Sidecar 执行成本可预测，并避免噪声自动入库。
-
-API: `GET /api/v1/knowledge`, `GET /api/v1/facts`, `POST /api/v1/facts`,
-`GET /api/v1/knowledge/gaps`
-
-设计文档：[`docs/design/knowledge-base-design.md`](docs/design/knowledge-base-design.md)  
+设计文档：[`docs/design/MEMORY_KNOWLEDGE_EVOLUTION_REFACTOR.md`](docs/design/MEMORY_KNOWLEDGE_EVOLUTION_REFACTOR.md)  
 测试文档：[`docs/design/KB_EVOLUTION_TESTS.md`](docs/design/KB_EVOLUTION_TESTS.md)
 
 ---
@@ -747,7 +685,11 @@ for await (const chunk of h.chat.sendMessage({ text: '分析这个病例' })) {
 | GET | `/api/v1/docs` | 文档 |
 | GET | `/api/v1/skills/search?source=all&page=1` | 技能 |
 | GET | `/api/v1/admin/users` | 管理员 |
-| GET | `/api/v1/memory/export` | 记忆 |
+| GET | `/api/v1/memory/export` | 记忆 — 发起导出任务 |
+| POST | `/api/v1/memory/import` | 记忆 — 发起导入任务（merge/replace） |
+| GET | `/api/v1/memory/nodes/:id/versions` | 记忆 — 版本历史 |
+| GET | `/api/v1/memory/articles/:id/impact` | 记忆 — 下游影响分析 |
+| POST | `/api/v1/memory/articles/:id/regenerate` | 记忆 — 重新生成 stale article |
 | POST | `/api/v1/execution/render` | 执行 — 入队 Sidecar 渲染任务 |
 | GET | `/api/v1/execution/jobs/:id` | 执行 — 查询任务状态 |
 | GET | `/api/v1/execution/files/:fileId/download` | 执行 — 获取文件预签名下载链接 |

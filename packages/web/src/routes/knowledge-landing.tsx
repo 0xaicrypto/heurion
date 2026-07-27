@@ -11,25 +11,25 @@ export function KnowledgeLandingPage() {
   const T = {
     title: isZh ? '可进化的知识库' : 'Evolving knowledge base',
     subtitle: isZh
-      ? 'Heurion 把聊天中沉淀的事实变成可管理、可检索、可补全的知识。不是静态文档库，而是会自己长大的临床记忆。'
-      : 'Heurion turns facts accumulated in chat into manageable, searchable, and completable knowledge. Not a static document library, but a clinical memory that grows on its own.',
+      ? 'Heurion 把聊天与文件中沉淀的事实变成可管理、可检索、可补全的知识。Article 会记录来源 Fact 版本，Fact 变更自动传播，知识库会自己长大、也会自己纠正。'
+      : 'Heurion turns facts from chat and files into manageable, searchable, and completable knowledge. Articles record source fact versions; fact changes propagate; the knowledge base grows and corrects itself.',
 
     tabsTitle: isZh ? '五大标签，统一入口' : 'Five tabs, one entry point',
     tabs: [
       {
         icon: <BookOpen size={22} />,
         title: 'Articles',
-        desc: isZh ? '由 Facts 自动合成的综述文章，支持版本与失效检测。' : 'Synthesis articles generated from facts, with versioning and staleness detection.',
+        desc: isZh ? '由 Facts 自动合成的综述文章；支持版本历史、失效(stale)标记、重新生成与影响范围。' : 'Synthesis articles from facts; version history, stale badges, regenerate, and impact views.',
       },
       {
         icon: <Brain size={22} />,
         title: 'Facts',
-        desc: isZh ? '结构化记忆片段，可按来源类型、患者、研究筛选与内联编辑。' : 'Structured memory snippets filterable by source type, patient, or study, with inline editing.',
+        desc: isZh ? '结构化记忆片段；编辑/删除会级联传播到依赖的 Articles，支持版本历史与影响分析。' : 'Structured memory snippets; edits/deletes cascade to dependent articles, with version history and impact analysis.',
       },
       {
         icon: <Lightbulb size={22} />,
         title: 'Gaps',
-        desc: isZh ? '系统识别出的未解问题，支持回答、忽略或批量关闭。' : 'Unanswered questions identified by the system; answer, ignore, or close in bulk.',
+        desc: isZh ? '系统识别出的未解问题；可由 Fact 或 Article 回答，也可忽略或批量关闭。' : 'Unanswered questions identified by the system; answer with a fact or article, ignore, or close in bulk.',
       },
       {
         icon: <Wrench size={22} />,
@@ -39,22 +39,22 @@ export function KnowledgeLandingPage() {
       {
         icon: <FileText size={22} />,
         title: 'Files',
-        desc: isZh ? '上传文件与 Sidecar 生成结果，按租户隔离存储。' : 'Uploaded files and Sidecar outputs stored with tenant isolation.',
+        desc: isZh ? '上传文件与 Sidecar 生成结果，按租户隔离存储；删除文件会级联处理来源 Facts。' : 'Uploaded files and Sidecar outputs stored with tenant isolation; deleting a file cascades to its derived facts.',
       },
     ],
 
     featuresTitle: isZh ? '管理功能' : 'Management features',
     features: [
       { icon: <Search size={20} />, title: isZh ? '搜索过滤' : 'Search & filter', desc: isZh ? '每个标签页都有独立关键词过滤，快速定位内容。' : 'Each tab has independent keyword filtering to locate content quickly.' },
-      { icon: <RotateCcw size={20} />, title: isZh ? '分页浏览' : 'Pagination', desc: isZh ? '默认每页 10 条，避免长列表卡顿。' : 'Default 10 items per page to keep long lists smooth.' },
+      { icon: <RotateCcw size={20} />, title: isZh ? '版本历史与重新生成' : 'Version history & regenerate', desc: isZh ? '查看 Fact/Article 的版本链；stale 文章可一键重新生成。' : 'Browse version chains for facts and articles; regenerate stale articles in one click.' },
       { icon: <Trash2 size={20} />, title: isZh ? '多选批量删除' : 'Bulk delete', desc: isZh ? '勾选多项后一键删除，减少重复操作。' : 'Select multiple items and delete them in one go.' },
-      { icon: <Edit3 size={20} />, title: isZh ? '内联编辑' : 'Inline editing', desc: isZh ? 'Facts 可直接在列表里修改内容并保存。' : 'Facts can be edited directly in the list and saved.' },
+      { icon: <Edit3 size={20} />, title: isZh ? '内联编辑与影响分析' : 'Inline editing & impact', desc: isZh ? 'Facts 可直接编辑；保存前预览会影响哪些 Articles。' : 'Edit facts inline; preview which articles will be affected before saving.' },
     ],
 
-    evolveTitle: isZh ? '从 Facts 到 Articles 的进化' : 'Evolution from Facts to Articles',
+    evolveTitle: isZh ? '从 Facts 到 Articles 的异步进化' : 'Async evolution from Facts to Articles',
     evolveBody: isZh
-      ? '聊天每满 5 轮自动提取 Facts；当同一主题积累 ≥3 条相关 Facts，系统会生成一篇 Knowledge Article。Articles 不是孤立文档，而是指向来源 Facts 的“活”知识。'
-      : 'Facts are extracted automatically every 5 chat turns. When ≥3 related facts accumulate on one topic, the system generates a Knowledge Article. Articles are not isolated documents — they are "living" knowledge linked to their source facts.',
+      ? 'Evolution Engine 在聊天路径之外运行：自动提取 Facts、去重链接、尝试回答 Gaps；当同一主题积累足够相关 Facts 时合成 Article。Article 记录来源 Fact 版本，Fact 变更会通过 Curation 自动标记依赖 Article 为 stale。'
+      : 'The Evolution Engine runs outside the chat path: it auto-extracts facts, deduplicates and links them, tries to answer gaps, and synthesizes an article when enough related facts accumulate. Articles record source fact versions, and fact changes automatically mark dependent articles stale via Curation.',
 
     gapTitle: isZh ? 'Knowledge Gap：让未解问题显式化' : 'Knowledge Gap: make the unknown visible',
     gapBody: isZh
