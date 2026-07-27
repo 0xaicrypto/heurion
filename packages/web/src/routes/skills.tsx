@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Download, Trash2, Package, Power, PowerOff, RotateCcw, Globe } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Button, Input, Card, Badge, Skeleton } from '@/components/ui';
@@ -44,15 +44,15 @@ export function SkillsPage() {
 
   useEffect(() => { loadSkills(); }, []);
 
-  const loadGitHub = () => {
+  const loadGitHub = useCallback(() => {
     setGhLoading(true);
     api.searchGitHubSkills(ghQuery || undefined)
       .then(r => setGhSkills(r.skills))
       .catch(err => setError(err instanceof ApiError ? err.messageText : String(err)))
       .finally(() => setGhLoading(false));
-  };
+  }, [ghQuery]);
 
-  useEffect(() => { if (tab === 'github') loadGitHub(); }, [tab]);
+  useEffect(() => { if (tab === 'github') loadGitHub(); }, [tab, loadGitHub]);
 
   const handleInstall = async (identifier: string) => {
     setInstalling(identifier);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router-dom';
 import { FileText, Plus, Save, Trash2, X } from 'lucide-react';
@@ -41,7 +41,7 @@ export function MedicalRecordsPage() {
     sections: {},
   });
 
-  const loadRecords = async () => {
+  const loadRecords = useCallback(async () => {
     if (!hash) return;
     setLoading(true);
     setError(null);
@@ -53,11 +53,11 @@ export function MedicalRecordsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [hash]);
 
   useEffect(() => {
     loadRecords();
-  }, [hash]);
+  }, [loadRecords]);
 
   const resetForm = () => {
     setForm({ title: '', sections: {} });

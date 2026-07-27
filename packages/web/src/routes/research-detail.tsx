@@ -838,16 +838,16 @@ function ProtocolTab({ studyId }: { studyId: string }) {
   const [importing, setImporting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const loadRules = () => {
+  const loadRules = useCallback(() => {
     setLoading(true)
     fetch(`/api/v1/research/studies/${studyId}/protocol-rules`, { headers: { Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` } })
       .then(r => r.json())
       .then((data: any) => { setRules(data.rules); setStatus(data.status) })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }
+  }, [studyId])
 
-  useEffect(() => { loadRules() }, [studyId])
+  useEffect(() => { loadRules() }, [loadRules])
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -866,7 +866,7 @@ function ProtocolTab({ studyId }: { studyId: string }) {
       await fetch(`/api/v1/research/studies/${studyId}/extract-rules`, { method: 'POST', headers: h, body: JSON.stringify({ text: importText }) })
       loadRules()
       setImportText('')
-    } catch {} finally { setImporting(false) }
+    } catch { /* ignore import errors */ } finally { setImporting(false) }
   }
 
   const handleConfirm = async (ruleId: string) => {
