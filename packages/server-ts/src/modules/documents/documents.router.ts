@@ -125,12 +125,17 @@ export async function documentsRouter(app: FastifyInstance) {
   // #3: AI Polish SSE — uses DeepSeek
   app.post('/api/v1/docs/:docId/polish', async (request, reply) => {
     const { selection, instruction } = request.body as any
+    const userId = request.user!.userId
     const apiKey = getApiKey()
     const prompt = `Polish the following clinical text${instruction ? ` with instruction: "${instruction}"` : ''}. Keep the meaning but improve clarity and professionalism:\n\n${selection || ''}`
     reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
     const send = (d: any) => reply.raw.write(`data: ${JSON.stringify(d)}\n\n`)
     try {
-      for await (const chunk of deepseekStream([{ role: 'user', content: prompt }], apiKey)) {
+      for await (const chunk of deepseekStream([{ role: 'user', content: prompt }], apiKey, {
+        model: 'deepseek-chat',
+        maxTokens: 2048,
+        telemetryContext: { userId, workspaceId: userId, action: 'document.polish' },
+      })) {
         send({ text: chunk })
       }
       send({ done: true })
@@ -195,7 +200,11 @@ Instructions:
       const fullResponse = await deepseekChat([
         { role: 'system' as const, content: 'You are a precise clinical document editor.' },
         { role: 'user' as const, content: structuredPrompt },
-      ], apiKey)
+      ], apiKey, {
+        model: 'deepseek-chat',
+        maxTokens: 4096,
+        telemetryContext: { userId, workspaceId: userId, action: 'document.chat' },
+      })
 
       const parsed = parseDocChatResponse(fullResponse, doc.body)
 

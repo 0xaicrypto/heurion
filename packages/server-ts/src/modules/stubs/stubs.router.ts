@@ -84,21 +84,18 @@ export async function stubRouter(app: FastifyInstance) {
   app.put('/api/v1/facts/:id', async (request: any) => {
     const ctx = getUserContext(request.user!.userId)
     const patch = request.body as any
-    const facts = ctx.facts.all()
-    const idx = facts.findIndex((f: any) => f.id === request.params.id)
-    if (idx === -1) return { error: 'Not found' }
-    if (patch.content) facts[idx].content = patch.content
-    if (patch.category) facts[idx].category = patch.category
-    if (patch.importance) facts[idx].importance = patch.importance
-    if (patch.sourceType) facts[idx].sourceType = patch.sourceType
-    facts[idx].updatedAt = Date.now()
-    ctx.facts.commit()
-    return { fact: facts[idx] }
+    const fact = ctx.memory.editFact(request.params.id, {
+      content: patch.content,
+      category: patch.category,
+      importance: patch.importance,
+      sourceType: patch.sourceType,
+    })
+    if (!fact) return { error: 'Not found' }
+    return { fact }
   })
   app.delete('/api/v1/facts/:id', async (request: any) => {
     const ctx = getUserContext(request.user!.userId)
-    const ok = ctx.facts.remove(request.params.id)
-    if (ok) ctx.facts.commit()
+    const ok = ctx.memory.deleteFact(request.params.id)
     return { deleted: ok }
   })
 
@@ -109,9 +106,8 @@ export async function stubRouter(app: FastifyInstance) {
     if (!Array.isArray(ids)) return { deleted: 0 }
     let deleted = 0
     for (const id of ids) {
-      if (ctx.knowledge.remove(String(id))) deleted++
+      if (ctx.memory.deleteArticle(String(id))) deleted++
     }
-    if (deleted > 0) ctx.knowledge.commit()
     return { deleted }
   })
   app.delete('/api/v1/knowledge/facts', async (request: any) => {
@@ -120,9 +116,8 @@ export async function stubRouter(app: FastifyInstance) {
     if (!Array.isArray(ids)) return { deleted: 0 }
     let deleted = 0
     for (const id of ids) {
-      if (ctx.facts.remove(String(id))) deleted++
+      if (ctx.memory.deleteFact(String(id))) deleted++
     }
-    if (deleted > 0) ctx.facts.commit()
     return { deleted }
   })
   app.delete('/api/v1/knowledge/gaps', async (request: any) => {

@@ -1,4 +1,4 @@
-import { deepseekChat, getApiKey } from '../../common/llm.js'
+import { deepseekChat, getApiKey, type LlmTelemetryContext } from '../../common/llm.js'
 import { createExecutionPlaneService, type ExecutionJobStatus } from './execution-plane.service.js'
 
 const service = createExecutionPlaneService()
@@ -14,6 +14,7 @@ export interface SidecarHandlerOptions {
     diagnosis?: string | null
     chiefComplaint?: string | null
   } | null
+  telemetryContext?: LlmTelemetryContext
 }
 
 function detectJobType(text: string): {
@@ -59,6 +60,7 @@ function isCapabilityQuestion(text: string): boolean {
 async function buildPayload(
   text: string,
   patient: SidecarHandlerOptions['patient'],
+  telemetryContext?: LlmTelemetryContext,
 ): Promise<Record<string, unknown>> {
   const { type, templateId, outputName } = detectJobType(text)
 
@@ -73,7 +75,15 @@ async function buildPayload(
   let data: Record<string, unknown> = {}
   try {
     const apiKey = getApiKey()
-    const raw = await deepseekChat([{ role: 'user', content: prompt }], apiKey)
+    const raw = await deepseekChat(
+      [{ role: 'user', content: prompt }],
+      apiKey,
+      {
+        model: 'deepseek-chat',
+        maxTokens: 2048,
+        telemetryContext,
+      },
+    )
     const match = raw.match(/\{[\s\S]*\}/)
     if (match) {
       data = JSON.parse(match[0])
@@ -200,7 +210,7 @@ export async function handleSidecarRequest(options: SidecarHandlerOptions): Prom
     }
   }
 
-  const payload = await buildPayload(options.text, options.patient)
+  const payload = await buildPayload(options.text, options.patient, options.telemetryContext)
   const { type } = detectJobType(options.text)
 
   const job = await service.enqueue({

@@ -203,6 +203,61 @@ export interface AdminUser {
   has_password: boolean;
 }
 
+export interface Article {
+  id: string;
+  title: string;
+  content: string;
+  sources: string[];
+  version: number;
+  status: 'current' | 'stale' | 'superseded';
+  staleBecause?: string[];
+  impact?: ArticleImpact[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ArticleImpact {
+  factId: string;
+  status: string;
+  content: string;
+  message: string;
+}
+
+export interface LlmCostDashboard {
+  totalCalls: number;
+  totalTokens: number;
+  totalCostUsd: number;
+  byAction: Record<string, number>;
+  byModel: Record<string, { calls: number; tokens: number; costUsd: number }>;
+}
+
+export interface TelemetryDashboard {
+  totalEvents: number;
+  router: {
+    byIntent: Record<string, number>;
+    llmFallbackRate: number;
+    ruleHitRate: number;
+  };
+  kbCommands: Record<string, number>;
+  gaps: {
+    created: number;
+    answered: number;
+    ignored: number;
+    autoResolved: number;
+    resolutionRate: number;
+  };
+  llmCost: LlmCostDashboard;
+}
+
+export interface QueueMetrics {
+  waiting: number;
+  active: number;
+  completed: number;
+  failed: number;
+  delayed: number;
+  paused: number;
+}
+
 export interface SendChatOptions {
   text: string;
   sessionId?: string;

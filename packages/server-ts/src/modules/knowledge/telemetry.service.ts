@@ -9,7 +9,7 @@
 
 import prisma from '../../common/prisma'
 
-export type TelemetryCategory = 'router' | 'kb_command' | 'gap' | 'sidecar'
+export type TelemetryCategory = 'router' | 'kb_command' | 'gap' | 'sidecar' | 'llm_cost'
 
 export interface TelemetryInput {
   userId: string
@@ -38,6 +38,14 @@ export interface TelemetryFilter {
   limit?: number
 }
 
+export interface LlmCostDashboard {
+  totalCalls: number
+  totalTokens: number
+  totalCostUsd: number
+  byAction: Record<string, number>
+  byModel: Record<string, { calls: number; tokens: number; costUsd: number }>
+}
+
 export interface TelemetryDashboard {
   totalEvents: number
   router: {
@@ -53,6 +61,7 @@ export interface TelemetryDashboard {
     autoResolved: number
     resolutionRate: number
   }
+  llmCost: LlmCostDashboard
 }
 
 export interface TelemetryService {
@@ -170,6 +179,8 @@ export class PrismaTelemetryService implements TelemetryService {
     const closed = resolved + gaps.ignored
     gaps.resolutionRate = closed > 0 ? resolved / closed : 0
 
+    const llmCost = this.aggregateLlmCost(rows)
+
     return {
       totalEvents: rows.length,
       router: {
@@ -179,6 +190,37 @@ export class PrismaTelemetryService implements TelemetryService {
       },
       kbCommands,
       gaps,
+      llmCost,
+    }
+  }
+
+  private aggregateLlmCost(rows: any[]): LlmCostDashboard {
+    const costRows = rows.filter((r: any) => r.category === 'llm_cost')
+    const byAction: Record<string, number> = {}
+    const byModel: Record<string, { calls: number; tokens: number; costUsd: number }> = {}
+    let totalTokens = 0
+    let totalCostUsd = 0
+
+    for (const r of costRows) {
+      byAction[r.action] = (byAction[r.action] || 0) + 1
+      const meta = safeJsonParse(r.metadata) || {}
+      const model = String(meta.model || 'unknown')
+      const tokens = typeof meta.totalTokens === 'number' ? meta.totalTokens : 0
+      const cost = typeof meta.costUsd === 'number' ? meta.costUsd : 0
+      if (!byModel[model]) byModel[model] = { calls: 0, tokens: 0, costUsd: 0 }
+      byModel[model].calls += 1
+      byModel[model].tokens += tokens
+      byModel[model].costUsd += cost
+      totalTokens += tokens
+      totalCostUsd += cost
+    }
+
+    return {
+      totalCalls: costRows.length,
+      totalTokens,
+      totalCostUsd,
+      byAction,
+      byModel,
     }
   }
 }
@@ -240,6 +282,8 @@ export class InMemoryTelemetryService implements TelemetryService {
     const resolved = answered + autoResolved
     const closed = resolved + ignored
 
+    const llmCost = this.aggregateLlmCost(rows)
+
     return {
       totalEvents: rows.length,
       router: {
@@ -255,6 +299,37 @@ export class InMemoryTelemetryService implements TelemetryService {
         autoResolved,
         resolutionRate: closed > 0 ? resolved / closed : 0,
       },
+      llmCost,
+    }
+  }
+
+  private aggregateLlmCost(rows: TelemetryEvent[]): LlmCostDashboard {
+    const costRows = rows.filter(r => r.category === 'llm_cost')
+    const byAction: Record<string, number> = {}
+    const byModel: Record<string, { calls: number; tokens: number; costUsd: number }> = {}
+    let totalTokens = 0
+    let totalCostUsd = 0
+
+    for (const r of costRows) {
+      byAction[r.action] = (byAction[r.action] || 0) + 1
+      const meta = r.metadata || {}
+      const model = String(meta.model || 'unknown')
+      const tokens = typeof meta.totalTokens === 'number' ? meta.totalTokens : 0
+      const cost = typeof meta.costUsd === 'number' ? meta.costUsd : 0
+      if (!byModel[model]) byModel[model] = { calls: 0, tokens: 0, costUsd: 0 }
+      byModel[model].calls += 1
+      byModel[model].tokens += tokens
+      byModel[model].costUsd += cost
+      totalTokens += tokens
+      totalCostUsd += cost
+    }
+
+    return {
+      totalCalls: costRows.length,
+      totalTokens,
+      totalCostUsd,
+      byAction,
+      byModel,
     }
   }
 }
@@ -271,6 +346,7 @@ export class NoopTelemetryService implements TelemetryService {
       router: { byIntent: {}, llmFallbackRate: 0, ruleHitRate: 0 },
       kbCommands: {},
       gaps: { created: 0, answered: 0, ignored: 0, autoResolved: 0, resolutionRate: 0 },
+      llmCost: { totalCalls: 0, totalTokens: 0, totalCostUsd: 0, byAction: {}, byModel: {} },
     }
   }
 }

@@ -19,10 +19,32 @@ import { medicalRecordsRouter } from './modules/medical-records/medical-records.
 import { stubRouter } from './modules/stubs/stubs.router.js'
 import { knowledgeRouter } from './modules/knowledge/knowledge.router.js'
 import { executionRouter } from './modules/execution/execution.router.js'
+import { PrismaTelemetryService } from './modules/knowledge/telemetry.service.js'
+import { setLlmTelemetryService } from './common/llm.js'
+import {
+  createDefaultEvolutionQueue,
+  type EvolutionQueue,
+} from './modules/evolution/evolution.queue.js'
+import { processEvolutionTurn } from './modules/evolution/evolution.worker.js'
+import { evolutionRouter } from './modules/evolution/evolution.router.js'
 import { ZodError } from 'zod'
 
-export async function createApp(): Promise<FastifyInstance> {
+export interface AppOptions {
+  evolutionQueue?: EvolutionQueue
+}
+
+export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance> {
   const app = require('fastify')({ logger: true })
+
+  // ── Wire up LLM cost telemetry once per process ──
+  setLlmTelemetryService(new PrismaTelemetryService())
+
+  // ── Evolution queue (BullMQ/Redis in prod, in-memory in tests/offline) ──
+  const evolutionQueue = opts.evolutionQueue ?? (await createDefaultEvolutionQueue())
+  if ('setProcessor' in evolutionQueue) {
+    ;(evolutionQueue as any).setProcessor(processEvolutionTurn)
+  }
+  ;(app as any).evolutionQueue = evolutionQueue
 
   // ── Global error handler ──
   app.setErrorHandler((err: Error, _req: FastifyRequest, reply: FastifyReply) => {
@@ -46,7 +68,7 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(authRouter)
   await app.register(sessionRouter)
   await app.register(agentRouter)
-  await app.register(chatRouter)
+  await app.register(chatRouter, { evolutionQueue })
   await app.register(researchRouter)
   await app.register(documentsRouter)
   await app.register(skillsRouter)
@@ -57,6 +79,7 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(patientsRouter)
   await app.register(medicalRecordsRouter)
   await app.register(knowledgeRouter)
+  await app.register(evolutionRouter, { evolutionQueue })
   await app.register(stubRouter)
   await app.register(executionRouter)
 

@@ -1,6 +1,8 @@
 import { describe, test, expect, beforeEach } from 'vitest'
 import { ruleBasedSidecarExtractor, SidecarFeedbackService } from '../src/modules/knowledge/sidecar-feedback.service'
-import { FactsStore } from '../src/evolution/stores'
+import { FactsStore, KnowledgeStore } from '../src/evolution/stores'
+import { EventLog } from '../src/core/event-log'
+import { MemoryService } from '../src/memory/memory.service'
 import { getApp, authHeader } from './setup.js'
 import fs from 'fs'
 import path from 'path'
@@ -46,8 +48,11 @@ describe('Sidecar feedback — service', () => {
   function makeService() {
     const baseDir = path.join(os.tmpdir(), `sidecar-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
     fs.mkdirSync(baseDir, { recursive: true })
+    const eventLog = new EventLog(baseDir)
     const facts = new FactsStore(baseDir)
-    return { service: new SidecarFeedbackService(facts), facts }
+    const knowledge = new KnowledgeStore(baseDir)
+    const memory = new MemoryService({ eventLog, baseDir, legacyFacts: facts, legacyKnowledge: knowledge, ownerId: 'u1' })
+    return { service: new SidecarFeedbackService(memory), facts, memory }
   }
 
   test('saveAll false returns candidates without persisting', async () => {

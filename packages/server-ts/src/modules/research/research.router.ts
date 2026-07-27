@@ -147,9 +147,14 @@ export async function researchRouter(app: FastifyInstance) {
   app.post('/api/v1/research/studies/:studyId/import-protocol', async (request, reply) => {
     const { studyId } = request.params as any
     const { text } = request.body as any
+    const userId = request.user!.userId
     if (!text) return reply.status(400).send({ error: 'text required' })
     // Trigger AI extraction in background
-    extractRulesFromProtocol(studyId, text).catch(() => {})
+    extractRulesFromProtocol(studyId, text, {
+      userId,
+      workspaceId: userId,
+      action: 'research.extract_protocol',
+    }).catch(() => {})
     return service.importProtocol(studyId, text)
   })
 
@@ -157,8 +162,13 @@ export async function researchRouter(app: FastifyInstance) {
   app.post('/api/v1/research/studies/:studyId/extract-rules', async (request, reply) => {
     const { studyId } = request.params as any
     const { text } = request.body as any
+    const userId = request.user!.userId
     if (!text) return reply.status(400).send({ error: 'text required' })
-    const rules = await extractRulesFromProtocol(studyId, text)
+    const rules = await extractRulesFromProtocol(studyId, text, {
+      userId,
+      workspaceId: userId,
+      action: 'research.extract_protocol',
+    })
     return { study_id: studyId, rules, status: getConfirmationStatus(studyId) }
   })
 

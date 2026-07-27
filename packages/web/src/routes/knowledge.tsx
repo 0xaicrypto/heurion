@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api } from '@/lib/api-client';
-import { Button, Card, Skeleton, Badge, Input } from '@/components/ui';
+import { Button, Card, Skeleton, Badge, Input, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
+import type { Article } from '@/lib/types';
 import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X, ChevronLeft, ChevronRight } from 'lucide-react';
 
-interface Article {
-  id: string; title: string; content: string; sources: string[];
-  version: number; status: string; staleBecause?: string[];
-  createdAt: number; updatedAt: number;
-}
 interface Fact {
   id: string; category: string; importance: number; content: string;
   count: number; sourceType?: string; patientHash?: string; studyId?: string;
@@ -66,6 +62,11 @@ export function KnowledgePage() {
   const [editContent, setEditContent] = useState('');
   const [editSource, setEditSource] = useState<SourceType>('general');
 
+  const [editingArticle, setEditingArticle] = useState<Article | null>(null);
+  const [editArticleTitle, setEditArticleTitle] = useState('');
+  const [editArticleContent, setEditArticleContent] = useState('');
+  const [articleBusy, setArticleBusy] = useState<Set<string>>(new Set());
+
   // Filters
   const [articleFilter, setArticleFilter] = useState('');
   const [factFilter, setFactFilter] = useState('');
@@ -90,7 +91,7 @@ export function KnowledgePage() {
   const loadAll = () => {
     setLoading(true);
     Promise.all([
-      api.getKnowledge().then(r => setArticles(r.articles)).catch(() => {}),
+      api.getKnowledgeArticles().then(r => setArticles(r.articles)).catch(() => {}),
       api.getFacts().then(r => setFacts(r.facts)).catch(() => {}),
       api.getKnowledgeGaps().then(r => setGaps(r.gaps)).catch(() => {}),
       api.getKnowledgeTools().then(r => setTools(r.tools)).catch(() => {}),
@@ -153,6 +154,23 @@ export function KnowledgePage() {
     if (!editingFact) return;
     await api.updateFact(editingFact.id, { content: editContent, sourceType: editSource }).catch(() => {});
     setEditingFact(null);
+    loadAll();
+  };
+
+  const regenerateArticle = async (id: string) => {
+    setArticleBusy(prev => new Set(prev).add(id));
+    await api.regenerateKnowledgeArticle(id).catch(() => {});
+    setArticleBusy(prev => { const next = new Set(prev); next.delete(id); return next; });
+    loadAll();
+  };
+
+  const saveArticle = async () => {
+    if (!editingArticle) return;
+    const patch: {title?: string; content?: string} = {};
+    if (editArticleTitle.trim()) patch.title = editArticleTitle.trim();
+    if (editArticleContent.trim()) patch.content = editArticleContent.trim();
+    await api.updateKnowledgeArticle(editingArticle.id, patch).catch(() => {});
+    setEditingArticle(null);
     loadAll();
   };
 
@@ -348,16 +366,58 @@ export function KnowledgePage() {
                             {new Date(a.updatedAt || a.createdAt).toLocaleDateString()}
                             {a.sources?.length > 0 && ` · ${a.sources.length} sources`}
                           </p>
-                          {a.status === 'stale' && a.staleBecause && (
-                            <p className="mt-1 text-xs text-warning">Dependent facts updated: {a.staleBecause.join(', ')}</p>
+                          {a.status === 'stale' && a.impact && a.impact.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {a.impact.map((impact, idx) => (
+                                <p key={idx} className="text-xs text-warning">{impact.message}</p>
+                              ))}
+                            </div>
                           )}
                         </div>
-                        {a.status === 'stale' && (
-                          <Button size="sm" variant="secondary" className="ml-3"><RotateCcw size={14} className="mr-1" /> Regenerate</Button>
-                        )}
+                        <div className="flex items-center gap-1 ml-3 shrink-0">
+                          <button
+                            className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-text-primary"
+                            onClick={() => { setEditingArticle(a); setEditArticleTitle(a.title || ''); setEditArticleContent(a.content || ''); }}
+                            title="Edit article"
+                          ><Edit3 size={14} /></button>
+                          {a.status === 'stale' && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              isLoading={articleBusy.has(a.id)}
+                              onClick={() => regenerateArticle(a.id)}
+                            ><RotateCcw size={14} className="mr-1" /> Regenerate</Button>
+                          )}
+                        </div>
                       </div>
                     </Card>
                   ))}
+
+                  {/* Article edit modal */}
+                  {editingArticle && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                      <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto p-5">
+                        <div className="flex items-center justify-between mb-4">
+                          <h3 className="text-lg font-semibold text-text-primary">Edit Article</h3>
+                          <button onClick={() => setEditingArticle(null)}><X size={18} className="text-text-tertiary" /></button>
+                        </div>
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-sm font-medium text-text-secondary mb-1">Title</label>
+                            <Input value={editArticleTitle} onChange={e => setEditArticleTitle(e.target.value)} />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-text-secondary mb-1">Content</label>
+                            <Textarea value={editArticleContent} onChange={e => setEditArticleContent(e.target.value)} rows={12} />
+                          </div>
+                          <div className="flex gap-2 pt-2">
+                            <Button size="sm" onClick={saveArticle}><Check size={14} className="mr-1" /> Save</Button>
+                            <Button size="sm" variant="secondary" onClick={() => setEditingArticle(null)}>Cancel</Button>
+                          </div>
+                        </div>
+                      </Card>
+                    </div>
+                  )}
                   {renderPagination(articlePagination.page, articlePagination.totalPages, setArticlePage, articlePagination.start, filteredArticles.length)}
                 </div>
               )}

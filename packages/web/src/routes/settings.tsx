@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, X, Zap, Key, Server } from 'lucide-react';
+import { Check, X, Zap, Key, Server, RefreshCw, Activity, BarChart3 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api-client';
-import type { LlmStatus, LlmTestResult, ProviderKind, UserProfile, LlmUpdateInput } from '@/lib/types';
+import type { LlmStatus, LlmTestResult, ProviderKind, UserProfile, LlmUpdateInput, TelemetryDashboard, QueueMetrics } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
 import { Button, Input, Card, Badge, Alert } from '@/components/ui';
 import { cn } from '@/lib/utils';
@@ -16,7 +16,7 @@ const PROVIDERS: { value: ProviderKind; label: string }[] = [
   { value: 'kimi', label: 'Kimi' },
 ];
 
-type Tab = 'profile' | 'llm';
+type Tab = 'profile' | 'llm' | 'observability';
 
 export function SettingsPage() {
   const { t } = useTranslation();
@@ -37,11 +37,15 @@ export function SettingsPage() {
               <TabButton active={tab === 'llm'} onClick={() => setTab('llm')}>
                 {t('settings.llm')}
               </TabButton>
+              <TabButton active={tab === 'observability'} onClick={() => setTab('observability')}>
+                {t('settings.observability')}
+              </TabButton>
             </ul>
           </nav>
           <main className="flex-1 p-6">
             {tab === 'profile' && <ProfileSection />}
             {tab === 'llm' && <LlmSection />}
+            {tab === 'observability' && <ObservabilitySection />}
           </main>
         </div>
       </div>
@@ -375,6 +379,112 @@ function LlmSection() {
           </p>
         </Card>
       )}
+    </div>
+  );
+}
+
+/* ────────────────────────── Observability Section ────────────────────────── */
+
+function ObservabilitySection() {
+  const { t } = useTranslation();
+  const [dashboard, setDashboard] = useState<TelemetryDashboard | null>(null);
+  const [queue, setQueue] = useState<{ type: string; metrics: QueueMetrics } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [dash, q] = await Promise.all([
+        api.getKnowledgeTelemetryDashboard(),
+        api.getEvolutionQueueMetrics(),
+      ]);
+      setDashboard(dash);
+      setQueue(q);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : t('settings.loadFailed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (loading) return <ObservabilitySkeleton />;
+  if (error) return <Alert variant="error">{error}</Alert>;
+
+  return (
+    <div className="max-w-3xl space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-text-primary">{t('settings.observability')}</h2>
+        <Button size="sm" variant="secondary" onClick={load}>
+          <RefreshCw size={14} className="mr-1.5" />
+          {t('common.refresh')}
+        </Button>
+      </div>
+
+      {dashboard && (
+        <Card className="space-y-4 p-4">
+          <div className="flex items-center gap-2 font-medium text-text-primary">
+            <BarChart3 size={18} />
+            LLM Cost
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <Stat label={t('settings.totalCalls')} value={dashboard.llmCost.totalCalls} />
+            <Stat label={t('settings.totalTokens')} value={dashboard.llmCost.totalTokens} />
+            <Stat label={t('settings.totalCost')} value={`$${dashboard.llmCost.totalCostUsd.toFixed(4)}`} />
+          </div>
+          {Object.keys(dashboard.llmCost.byModel).length > 0 && (
+            <div>
+              <h4 className="mb-2 text-sm font-medium text-text-secondary">{t('settings.byModel')}</h4>
+              <div className="space-y-1">
+                {Object.entries(dashboard.llmCost.byModel).map(([model, m]) => (
+                  <div key={model} className="flex justify-between border-b border-border pb-1 text-sm text-text-secondary">
+                    <span>{model}</span>
+                    <span>{m.calls} calls · {m.tokens} tokens · ${m.costUsd.toFixed(4)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {queue && (
+        <Card className="space-y-4 p-4">
+          <div className="flex items-center gap-2 font-medium text-text-primary">
+            <Activity size={18} />
+            Evolution Queue ({queue.type})
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <Stat label={t('settings.waiting')} value={queue.metrics.waiting} />
+            <Stat label={t('settings.active')} value={queue.metrics.active} />
+            <Stat label={t('settings.failed')} value={queue.metrics.failed} />
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-border bg-background p-3 text-center">
+      <div className="text-2xl font-bold text-accent">{value}</div>
+      <div className="mt-1 text-xs text-text-tertiary">{label}</div>
+    </div>
+  );
+}
+
+function ObservabilitySkeleton() {
+  return (
+    <div className="max-w-3xl space-y-6">
+      <div className="h-6 w-32 animate-pulse rounded bg-surface" />
+      <div className="h-40 animate-pulse rounded-xl bg-surface" />
+      <div className="h-32 animate-pulse rounded-xl bg-surface" />
     </div>
   );
 }

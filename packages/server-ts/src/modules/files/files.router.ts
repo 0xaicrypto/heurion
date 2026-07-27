@@ -48,29 +48,59 @@ export async function filesRouter(app: FastifyInstance) {
 
     // Extract facts from text files (fire-and-forget)
     const isText = data.mimetype?.startsWith('text/') || data.filename?.endsWith('.txt') || data.filename?.endsWith('.md')
+    const ctx = getUserContext(request.user!.userId)
+    const docNode = ctx.memory.addDocument({
+      fileId,
+      sha256,
+      name: data.filename,
+      mimeType: data.mimetype || 'application/octet-stream',
+      patientHash: patientHash || undefined,
+    })
     if (isText && buffer.length < 50000) {
       const text = buffer.toString('utf-8')
-      const ctx = getUserContext(request.user!.userId)
       ;(async () => {
         try {
           const apiKey = getApiKey()
           const prompt = `Extract key facts from this clinical document. Return ONLY a JSON array of objects with: category (fact/preference/constraint/goal/context), importance (1-5), content (short sentence), sourceType (patient/doctor/research/general).\n\n${text.slice(0, 4000)}\n\n[JSON array]:`
-          const result = await deepseekChat([{ role: 'user', content: prompt }], apiKey)
+          const result = await deepseekChat(
+            [{ role: 'user', content: prompt }],
+            apiKey,
+            {
+              model: 'deepseek-chat',
+              maxTokens: 2048,
+              telemetryContext: {
+                userId: request.user!.userId,
+                workspaceId: request.user!.userId,
+                action: 'file.extract_facts',
+              },
+            },
+          )
           const jsonMatch = result.match(/\[[\s\S]*\]/)
           if (jsonMatch) {
             const facts = JSON.parse(jsonMatch[0])
             let added = 0
             for (const f of facts) {
               if (f.category && f.content) {
-                ctx.facts.add({
-                  category: f.category, importance: Math.min(5, Math.max(1, f.importance || 3)),
-                  content: f.content, sourceType: f.sourceType || 'research',
+                const factNode = ctx.memory.addFact({
+                  category: f.category,
+                  importance: Math.min(5, Math.max(1, f.importance || 3)),
+                  content: f.content,
+                  sourceType: f.sourceType || 'research',
                   patientHash: patientHash || undefined,
+                  provenance: { sourceKind: 'document', sourceRef: fileId },
+                })
+                ctx.memory.graph.addRelation({
+                  id: `rel_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                  sourceId: docNode.id,
+                  targetId: factNode.id,
+                  relation: 'derives_from',
+                  createdAt: Date.now(),
                 })
                 added++
               }
             }
-            if (added > 0) { ctx.facts.commit(); console.log(`[FILE] Extracted ${added} facts from ${data.filename}`) }
+            ctx.memory.graph.commit()
+            if (added > 0) { console.log(`[FILE] Extracted ${added} facts from ${data.filename}`) }
           }
         } catch (err) { console.log('[FILE] Fact extraction skipped:', (err as Error).message.slice(0, 80)) }
       })()
@@ -200,6 +230,7 @@ export async function filesRouter(app: FastifyInstance) {
     const userId = request.user!.userId
     const ids = (request.body as any)?.ids
     if (!Array.isArray(ids)) return { deleted: 0 }
+    const ctx = getUserContext(userId)
     const baseDir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
     let deleted = 0
     for (const rawId of ids) {
@@ -213,6 +244,7 @@ export async function filesRouter(app: FastifyInstance) {
       } catch { /* FileIndex may not exist */ }
       if (fs.existsSync(filepath)) {
         fs.unlinkSync(filepath)
+        ctx.memory.deleteDocument(fileId)
         deleted++
       }
     }
@@ -221,16 +253,19 @@ export async function filesRouter(app: FastifyInstance) {
 
   app.delete('/api/v1/files/:fileId', async (request, reply) => {
     const { fileId } = request.params as any
-    const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', request.user!.userId, 'uploads', fileId)
+    const userId = request.user!.userId
+    const ctx = getUserContext(userId)
+    const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads', fileId)
     // Soft-delete in FileIndex
     try {
       await (prisma as any).fileIndex.updateMany({
-        where: { id: fileId, userId: request.user!.userId },
+        where: { id: fileId, userId },
         data: { deletedAt: new Date().toISOString() },
       })
     } catch { /* FileIndex may not exist */ }
     if (fs.existsSync(filepath)) {
       fs.unlinkSync(filepath)
+      ctx.memory.deleteDocument(fileId)
       return { deleted: true }
     }
     return reply.status(404).send({ error: 'File not found' })

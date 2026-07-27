@@ -9,7 +9,7 @@
  * for observability.
  */
 
-import { deepseekChat, getApiKey } from '../common/llm.js'
+import { deepseekChat, getApiKey, type LlmTelemetryContext } from '../common/llm.js'
 
 export type QueryIntent = 'sql' | 'vector' | 'file' | 'knowledge_command' | 'sidecar' | 'mixed'
 export type RouteKind = 'sql' | 'vector' | 'file' | 'knowledge_command' | 'sidecar'
@@ -40,6 +40,12 @@ export interface RouterOptions {
 
 export interface LLMClassifier {
   classify(query: string): Promise<QueryIntent>
+}
+
+export interface LLMClassifierContext {
+  userId: string
+  workspaceId: string
+  action?: string
 }
 
 /**
@@ -158,18 +164,9 @@ export function parseKnowledgeCommand(query: string): { command: KnowledgeComman
   return { command: 'unknown', payload: '' }
 }
 
-/**
- * Default LLM fallback classifier. Invoked when the rule layer returns 'mixed'
- * and no custom classifier is supplied. Uses a cheap single-call prompt to
- * understand intent instead of relying solely on keyword patterns.
- */
-export const defaultLLMClassifier: LLMClassifier = {
-  async classify(query: string): Promise<QueryIntent> {
-    const apiKey = getApiKey()
-    if (!apiKey) return 'mixed'
-
-    const safeQuery = query.replace(/"/g, '\\"')
-    const prompt = `You are the intent classifier for a clinical AI assistant.
+function buildClassifierPrompt(query: string): string {
+  const safeQuery = query.replace(/"/g, '\\"')
+  return `You are the intent classifier for a clinical AI assistant.
 Available intents:
 - sql: factual patient database queries (age, sex, list patients, etc.)
 - vector: clinical/guideline/literature questions
@@ -182,19 +179,45 @@ Return ONLY the intent label, nothing else.
 
 Query: "${safeQuery}"
 Intent:`
-
-    try {
-      const raw = await deepseekChat([{ role: 'user', content: prompt }], apiKey)
-      const intent = raw.trim().toLowerCase().split(/\s+/)[0]
-      if (['sql', 'vector', 'file', 'knowledge_command', 'sidecar', 'mixed'].includes(intent)) {
-        return intent as QueryIntent
-      }
-      return 'mixed'
-    } catch {
-      return 'mixed'
-    }
-  },
 }
+
+/**
+ * Build the default LLM fallback classifier with optional telemetry context.
+ * Invoked when the rule layer returns 'mixed' and no custom classifier is supplied.
+ * Uses a cheap single-call prompt to understand intent instead of relying solely on keyword patterns.
+ */
+export function createDefaultLLMClassifier(context?: LlmTelemetryContext): LLMClassifier {
+  return {
+    async classify(query: string): Promise<QueryIntent> {
+      const apiKey = getApiKey()
+      if (!apiKey) return 'mixed'
+
+      try {
+        const raw = await deepseekChat(
+          [{ role: 'user', content: buildClassifierPrompt(query) }],
+          apiKey,
+          {
+            model: 'deepseek-chat',
+            maxTokens: 50,
+            telemetryContext: context,
+          },
+        )
+        const intent = raw.trim().toLowerCase().split(/\s+/)[0]
+        if (['sql', 'vector', 'file', 'knowledge_command', 'sidecar', 'mixed'].includes(intent)) {
+          return intent as QueryIntent
+        }
+        return 'mixed'
+      } catch {
+        return 'mixed'
+      }
+    },
+  }
+}
+
+/**
+ * Default LLM fallback classifier without telemetry context (for tests / simple callers).
+ */
+export const defaultLLMClassifier: LLMClassifier = createDefaultLLMClassifier()
 
 /**
  * LLM fallback classifier. Only invoked when rule layer returns 'mixed'.

@@ -83,6 +83,7 @@ function filterEpisodes(episodes: any[], query: string): any[] {
 import { handleKnowledgeCommand, CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
 import { type TelemetryService, NoopTelemetryService } from '../knowledge/telemetry.service.js'
+import type { MemoryService } from '../../memory/memory.service.js'
 
 export interface TurnResult {
   userEvent: Event
@@ -95,6 +96,7 @@ export interface TurnResult {
 export class ChatOrchestrator {
   private projection: MemoryProjection
   private gapService = new PrismaKnowledgeGapService()
+  memory?: MemoryService
 
   constructor(
     private eventLog: EventLog,
@@ -224,6 +226,7 @@ export class ChatOrchestrator {
       factsStore: this.factsStore,
       knowledgeStore: this.knowledgeStore,
       gapService: this.gapService,
+      memory: (this as any).memory,
     }
 
     const result = await handleKnowledgeCommand(ctx, message)
@@ -329,22 +332,35 @@ ${conversation}
 
 [JSON array]:`
 
-        const result = await deepseekChat([{ role: 'user', content: extractionPrompt }], apiKey)
+        const result = await deepseekChat(
+          [{ role: 'user', content: extractionPrompt }],
+          apiKey,
+          {
+            model: 'deepseek-chat',
+            maxTokens: 2048,
+            telemetryContext: { userId, workspaceId: userId, action: 'chat.extract_facts' },
+          },
+        )
         const jsonMatch = result.match(/\[[\s\S]*\]/)
         if (jsonMatch) {
           const facts = JSON.parse(jsonMatch[0])
           for (const f of facts) {
             if (f.category && f.content) {
-              this.factsStore.add({
+              const factInput = {
                 category: f.category,
                 importance: Math.min(5, Math.max(1, f.importance || 3)),
                 content: f.content,
                 sourceType: f.sourceType || 'general',
                 patientHash: f.sourceType === 'patient' ? (patientHash || undefined) : undefined,
-              })
+              }
+              if (this.memory) {
+                this.memory.addFact(factInput, 'system')
+              } else {
+                this.factsStore.add(factInput)
+              }
             }
           }
-          this.factsStore.commit()
+          if (!this.memory) this.factsStore.commit()
           this.eventLog.append({
             timestamp: Date.now() / 1000,
             eventType: 'evolution',
@@ -359,13 +375,15 @@ ${conversation}
           if (resolved.length > 0) console.log(`[GAP] Auto-resolved ${resolved.length} gaps`)
 
           // Auto-generate knowledge article when 3+ facts accumulate
-          const allFacts = this.factsStore.all()
+          const allFacts = this.memory
+            ? this.memory.graph.getCurrentNodesByType('fact').filter((n): n is import('../../memory/memory.types').FactNode => n.type === 'fact')
+            : this.factsStore.all()
           if (allFacts.length >= 3 && allFacts.length % 5 === 0) {
             try {
               const articleFacts = allFacts.slice(-10)
               const factList = articleFacts
                 .map((f) => {
-                  const date = f.createdAt ? new Date(f.createdAt * 1000).toISOString().slice(0, 10) : 'unknown'
+                  const date = f.createdAt ? new Date(f.createdAt).toISOString().slice(0, 10) : 'unknown'
                   const source = [f.sourceType, f.patientHash, f.studyId].filter(Boolean).join(' / ') || 'general'
                   return `[importance=${f.importance ?? 3}] [${f.category}] [${source}] [${date}] ${f.content}`
                 })
@@ -378,17 +396,33 @@ Facts to synthesize:
 ${factList}
 
 Return ONLY JSON: { "title": "...", "content": "..." }`
-              const articleResult = await deepseekChat([{ role: 'user', content: articlePrompt }], apiKey)
+              const articleResult = await deepseekChat(
+                [{ role: 'user', content: articlePrompt }],
+                apiKey,
+                {
+                  model: 'deepseek-chat',
+                  maxTokens: 2048,
+                  telemetryContext: { userId, workspaceId: userId, action: 'chat.generate_article' },
+                },
+              )
               const jsonMatch2 = articleResult.match(/\{[\s\S]*\}/)
               if (jsonMatch2) {
                 const article = JSON.parse(jsonMatch2[0])
                 if (article.title && article.content) {
-                  this.knowledgeStore.add({
-                    title: article.title,
-                    content: article.content,
-                    sources: articleFacts.map((f: any) => f.id),
-                  })
-                  this.knowledgeStore.commit()
+                  if (this.memory) {
+                    this.memory.addArticle({
+                      title: article.title,
+                      content: article.content,
+                      sourceFactStableIds: articleFacts.map((f: any) => f.stableId || f.id),
+                    })
+                  } else {
+                    this.knowledgeStore.add({
+                      title: article.title,
+                      content: article.content,
+                      sources: articleFacts.map((f: any) => f.id),
+                    })
+                    this.knowledgeStore.commit()
+                  }
                   console.log(`[KNOWLEDGE] Article generated: ${article.title}`)
                 }
               }
@@ -404,7 +438,10 @@ Return ONLY JSON: { "title": "...", "content": "..." }`
 
     // Detect knowledge gaps on every turn — queries with no matching facts
     try {
-      const relatedFacts = this.factsStore.all().filter(f =>
+      const factList = this.memory
+        ? this.memory.graph.getCurrentNodesByType('fact').filter((n): n is import('../../memory/memory.types').FactNode => n.type === 'fact')
+        : this.factsStore.all()
+      const relatedFacts = factList.filter(f =>
         userMessage.toLowerCase().split(/\s+/)
           .map(w => w.replace(/[^\p{L}\p{N}]/gu, ''))
           .filter(Boolean)

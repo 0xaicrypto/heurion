@@ -12,7 +12,9 @@ import os from 'os'
 
 vi.mock('../src/common/llm.js', () => ({
   deepseekChat: vi.fn(),
+  deepseekStream: vi.fn(),
   getApiKey: () => 'test-key',
+  setLlmTelemetryService: vi.fn(),
 }))
 
 function createTestOrchestrator(telemetry: InMemoryTelemetryService) {
@@ -83,6 +85,31 @@ describe('Telemetry — InMemory service', () => {
     expect(dash.gaps.answered).toBe(1)
     expect(dash.gaps.ignored).toBe(1)
     expect(dash.gaps.resolutionRate).toBe(0.5)
+  })
+
+  test('dashboard aggregates llm cost by action and model', async () => {
+    await telemetry.record({
+      userId: 'u1', workspaceId: 'u1', category: 'llm_cost', action: 'chat.main',
+      metadata: { model: 'deepseek-chat', promptTokens: 10, completionTokens: 5, totalTokens: 15, costUsd: 0.0001 },
+    })
+    await telemetry.record({
+      userId: 'u1', workspaceId: 'u1', category: 'llm_cost', action: 'file.extract_facts',
+      metadata: { model: 'deepseek-chat', promptTokens: 20, completionTokens: 10, totalTokens: 30, costUsd: 0.0002 },
+    })
+    await telemetry.record({
+      userId: 'u1', workspaceId: 'u1', category: 'llm_cost', action: 'chat.main',
+      metadata: { model: 'deepseek-v4-pro', promptTokens: 100, completionTokens: 50, totalTokens: 150, costUsd: 0.01 },
+    })
+
+    const dash = await telemetry.dashboard('u1')
+    expect(dash.llmCost.totalCalls).toBe(3)
+    expect(dash.llmCost.totalTokens).toBe(195)
+    expect(dash.llmCost.totalCostUsd).toBeCloseTo(0.0103, 4)
+    expect(dash.llmCost.byAction['chat.main']).toBe(2)
+    expect(dash.llmCost.byAction['file.extract_facts']).toBe(1)
+    expect(dash.llmCost.byModel['deepseek-chat'].calls).toBe(2)
+    expect(dash.llmCost.byModel['deepseek-chat'].tokens).toBe(45)
+    expect(dash.llmCost.byModel['deepseek-v4-pro'].costUsd).toBeCloseTo(0.01, 4)
   })
 })
 

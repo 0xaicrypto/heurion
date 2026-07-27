@@ -4,6 +4,7 @@ import { PrismaKnowledgeGapService, type GapSource } from './knowledge-gap.servi
 import { getUserContext } from '../chat/user-context.js'
 import { SidecarFeedbackService, type SidecarOutputType } from './sidecar-feedback.service.js'
 import { PrismaTelemetryService } from './telemetry.service.js'
+import { deepseekChat, getApiKey } from '../../common/llm.js'
 
 const gapService = new PrismaKnowledgeGapService()
 const telemetry = new PrismaTelemetryService()
@@ -104,13 +105,14 @@ export async function knowledgeRouter(app: FastifyInstance) {
     }
 
     const ctx = getUserContext(userId)
-    const fact = ctx.facts.add({
+    const fact = ctx.memory.addFact({
       category: 'fact',
       importance: 4,
       content: body.answer,
       sourceType: 'doctor',
-    })
-    ctx.facts.commit()
+    }, 'user')
+    // Best-effort link to a memory gap node (gap may only exist in Prisma).
+    ctx.memory.answerGap(id, fact)
 
     const updated = await gapService.resolve(id, body.answer)
     if (!updated) {
@@ -122,15 +124,16 @@ export async function knowledgeRouter(app: FastifyInstance) {
       workspaceId: userId,
       category: 'gap',
       action: 'answered',
-      metadata: { gapId: id, factId: fact.id },
+      metadata: { gapId: id, factId: fact.stableId },
     }).catch(() => {})
 
     return {
       ...updated,
-      answerId: fact.id,
+      answerId: fact.stableId,
       status: 'answered',
     }
   })
+
 
   // Resolve a knowledge gap without requiring an explicit answer (UI quick-resolve)
   app.post('/api/v1/knowledge/gaps/:id/resolve', async (request, reply) => {
@@ -199,22 +202,104 @@ export async function knowledgeRouter(app: FastifyInstance) {
     }
 
     const ctx = getUserContext(userId)
-    const article = ctx.knowledge.add({
+    const article = ctx.memory.addArticle({
       title: String(body.title),
       content: String(body.content),
-      sources: Array.isArray(body.sources) ? body.sources.map(String) : ['sidecar'],
+      sourceFactStableIds: Array.isArray(body.sources) ? body.sources.map(String) : [],
+      sourceDocuments: body.sourceId ? [String(body.sourceId)] : [],
     })
-    ctx.knowledge.commit()
 
     await telemetry.record({
       userId,
       workspaceId: userId,
       category: 'kb_command',
       action: 'article_created',
-      metadata: { articleId: article.id, source: 'sidecar' },
+      metadata: { articleId: article.stableId, source: 'sidecar' },
     }).catch(() => {})
 
-    return article
+    return {
+      id: article.stableId,
+      title: article.title,
+      content: article.content,
+      sources: article.sourceFacts.map(s => s.stableId),
+      version: article.version,
+      status: article.status,
+      createdAt: article.createdAt,
+      updatedAt: article.updatedAt,
+    }
+  })
+
+  // List knowledge articles with stale/impact metadata
+  app.get('/api/v1/knowledge/articles', async (request) => {
+    const userId = request.user!.userId
+    const ctx = getUserContext(userId)
+    const articles = ctx.memory.graph.getCurrentNodesByType('article')
+      .filter((n): n is import('../../memory/memory.types').ArticleNode => n.type === 'article')
+      .map(a => serializeArticle(a, ctx.memory))
+    return { articles }
+  })
+
+  // Get a single article with impact details
+  app.get('/api/v1/knowledge/articles/:id', async (request, reply) => {
+    const userId = request.user!.userId
+    const { id } = request.params as { id: string }
+    const ctx = getUserContext(userId)
+    const article = ctx.memory.graph.getLatestByStableId(id)
+    if (!article || article.type !== 'article' || article.status === 'superseded') {
+      return reply.status(404).send({ error: 'article not found' })
+    }
+    return serializeArticle(article as import('../../memory/memory.types').ArticleNode, ctx.memory)
+  })
+
+  // Regenerate a stale article from its current source facts
+  app.post('/api/v1/knowledge/articles/:id/regenerate', async (request, reply) => {
+    const userId = request.user!.userId
+    const { id } = request.params as { id: string }
+    const ctx = getUserContext(userId)
+    const article = ctx.memory.graph.getLatestByStableId(id) as import('../../memory/memory.types').ArticleNode | undefined
+    if (!article || article.type !== 'article' || article.status === 'superseded') {
+      return reply.status(404).send({ error: 'article not found' })
+    }
+
+    const regenerated = await regenerateArticleWithLlm(article, ctx.memory, userId)
+    if (!regenerated) {
+      return reply.status(500).send({ error: 'failed to regenerate article' })
+    }
+
+    await telemetry.record({
+      userId,
+      workspaceId: userId,
+      category: 'kb_command',
+      action: 'article_regenerated',
+      metadata: { articleId: regenerated.stableId, previousVersion: article.id },
+    }).catch(() => {})
+
+    return serializeArticle(regenerated, ctx.memory)
+  })
+
+  // Manually edit an article
+  app.put('/api/v1/knowledge/articles/:id', async (request, reply) => {
+    const userId = request.user!.userId
+    const { id } = request.params as { id: string }
+    const body = request.body as any
+    const ctx = getUserContext(userId)
+    const edited = ctx.memory.editArticle(id, {
+      title: body?.title,
+      content: body?.content,
+    }, 'user')
+    if (!edited) {
+      return reply.status(404).send({ error: 'article not found' })
+    }
+
+    await telemetry.record({
+      userId,
+      workspaceId: userId,
+      category: 'kb_command',
+      action: 'article_edited',
+      metadata: { articleId: edited.stableId },
+    }).catch(() => {})
+
+    return serializeArticle(edited, ctx.memory)
   })
 
   // Sidecar output feedback: extract candidates and optionally save facts
@@ -226,7 +311,7 @@ export async function knowledgeRouter(app: FastifyInstance) {
     }
 
     const ctx = getUserContext(userId)
-    const service = new SidecarFeedbackService(ctx.facts)
+    const service = new SidecarFeedbackService(ctx.memory)
     const result = await service.process({
       userId,
       workspaceId: userId,
@@ -274,4 +359,78 @@ export async function knowledgeRouter(app: FastifyInstance) {
       }),
     }
   })
+}
+
+function serializeArticle(article: import('../../memory/memory.types').ArticleNode, memory: import('../../memory/memory.service').MemoryService) {
+  const impact = (article.staleBecause || []).map(factStableId => {
+    const fact = memory.graph.getLatestByStableId(factStableId) as import('../../memory/memory.types').FactNode | undefined
+    return {
+      factId: factStableId,
+      status: fact?.status || 'unknown',
+      content: fact?.content || '',
+      message: `依赖的 Fact ${factStableId} 已更新`,
+    }
+  })
+
+  return {
+    id: article.stableId,
+    title: article.title,
+    content: article.content,
+    status: article.status,
+    version: article.version,
+    sources: article.sourceFacts.map(s => s.stableId),
+    staleBecause: article.staleBecause || [],
+    impact,
+    createdAt: article.createdAt,
+    updatedAt: article.updatedAt,
+  }
+}
+
+async function regenerateArticleWithLlm(
+  article: import('../../memory/memory.types').ArticleNode,
+  memory: import('../../memory/memory.service').MemoryService,
+  userId: string,
+): Promise<import('../../memory/memory.types').ArticleNode | null> {
+  const sourceFacts = article.sourceFacts
+    .map(s => memory.graph.getLatestByStableId(s.stableId))
+    .filter((n): n is import('../../memory/memory.types').FactNode => n?.type === 'fact' && n.status !== 'superseded')
+
+  let title = article.title
+  let content = article.content
+
+  if (sourceFacts.length > 0) {
+    const factList = sourceFacts
+      .map(f => `[importance=${f.importance ?? 3}] [${f.category}] ${f.content}`)
+      .join('\n')
+    const prompt = `You are synthesizing clinical findings for an oncology researcher.
+Synthesize the following facts into a concise, clinically actionable knowledge article.
+Keep it to 1-2 paragraphs and a short title.
+
+Facts:
+${factList}
+
+Return ONLY JSON: { "title": "...", "content": "..." }`
+    try {
+      const raw = await deepseekChat(
+        [{ role: 'user', content: prompt }],
+        getApiKey(),
+        {
+          model: 'deepseek-chat',
+          maxTokens: 2048,
+          telemetryContext: { userId, workspaceId: userId, action: 'article.regenerate' },
+        },
+      )
+      const jsonMatch = raw.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0])
+        if (parsed.title) title = String(parsed.title)
+        if (parsed.content) content = String(parsed.content)
+      }
+    } catch {
+      // Fall back to keeping existing title/content but still bumping the version.
+    }
+  }
+
+  const edited = memory.editArticle(article.stableId, { title, content }, 'system')
+  return edited
 }

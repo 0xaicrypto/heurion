@@ -5,7 +5,7 @@
  * Expand as more desktop-v2 features migrate to packages/web.
  */
 
-import type { AdminUser, AgentState, AuthSession, ChatMessage, ChatSession, ChatStreamChunk, LlmStatus, LlmTestResult, LlmUpdateInput, LlmUpdateResult, MemoryProjection, Patient, PatientDetail, PublicConfig, SendChatOptions, TimelineEvent, UserProfile } from './types';
+import type { AdminUser, AgentState, Article, AuthSession, ChatMessage, ChatSession, ChatStreamChunk, LlmStatus, LlmTestResult, LlmUpdateInput, LlmUpdateResult, MemoryProjection, Patient, PatientDetail, PublicConfig, QueueMetrics, SendChatOptions, TelemetryDashboard, TimelineEvent, UserProfile } from './types';
 
 export const CLIENT_API_VERSION = 1;
 
@@ -684,12 +684,36 @@ class ApiClient {
 
   /* ────────────────────────── knowledge & facts ────────────────────────── */
 
-  async getKnowledge(): Promise<{articles: Array<{id: string; title: string; content: string; sources: string[]; version: number; status: string; staleBecause?: string[]; createdAt: number; updatedAt: number}>}> {
-    return this.fetch('/api/v1/knowledge');
+  async getKnowledgeArticles(): Promise<{articles: Article[]}> {
+    return this.fetch('/api/v1/knowledge/articles');
+  }
+
+  async getKnowledgeArticle(id: string): Promise<Article> {
+    return this.fetch(`/api/v1/knowledge/articles/${id}`);
   }
 
   async createKnowledgeArticle(data: {title: string; content: string; sources?: string[]}): Promise<{id: string}> {
     return this.fetch('/api/v1/knowledge/articles', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async regenerateKnowledgeArticle(id: string): Promise<Article> {
+    return this.fetch(`/api/v1/knowledge/articles/${id}/regenerate`, { method: 'POST' });
+  }
+
+  async updateKnowledgeArticle(id: string, data: {title?: string; content?: string}): Promise<Article> {
+    return this.fetch(`/api/v1/knowledge/articles/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  async getKnowledgeTelemetryDashboard(from?: string, to?: string): Promise<TelemetryDashboard> {
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    const qs = params.toString();
+    return this.fetch(`/api/v1/knowledge/telemetry/dashboard${qs ? `?${qs}` : ''}`);
+  }
+
+  async getEvolutionQueueMetrics(): Promise<{type: string; metrics: QueueMetrics}> {
+    return this.fetch('/api/v1/evolution/queue');
   }
 
   async deleteKnowledgeArticles(ids: string[]): Promise<{deleted: number}> {

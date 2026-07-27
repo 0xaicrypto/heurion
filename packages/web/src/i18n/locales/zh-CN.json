@@ -66,7 +66,8 @@
     "keySourceLabel": "密钥来源：{{source}}",
     "testConnection": "测试连接",
     "connectionOk": "连接正常",
-    "connectionFailed": "连接失败"
+    "connectionFailed": "连接失败",
+    "refresh": "刷新"
   },
   "nav": {
     "today": "今日",
@@ -143,6 +144,14 @@
     "llm": "语言模型",
     "data": "数据",
     "admin": "管理",
+    "observability": "可观测性",
+    "totalCalls": "总调用次数",
+    "totalTokens": "总 tokens",
+    "totalCost": "预估花费（美元）",
+    "byModel": "按模型",
+    "waiting": "等待中",
+    "active": "执行中",
+    "failed": "失败",
     "displayNameLabel": "显示名称",
     "organization": "机构",
     "intendedUse": "使用场景",

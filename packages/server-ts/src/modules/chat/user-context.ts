@@ -5,6 +5,7 @@ import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../ev
 import { ContractEngine } from '../../core/contracts'
 import { ChatOrchestrator } from './chat.orchestrator.js'
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
+import { MemoryService } from '../../memory/memory.service.js'
 
 const TTL_MS = 30 * 60 * 1000 // 30 minutes idle → evict
 const telemetry = new PrismaTelemetryService()
@@ -12,6 +13,7 @@ const GC_INTERVAL_MS = 5 * 60 * 1000
 
 interface UserContext {
   eventLog: EventLog; facts: FactsStore; episodes: EpisodesStore; skills: SkillsStore; knowledge: KnowledgeStore
+  memory: MemoryService
   orchestrator: ChatOrchestrator
   lastAccess: number
 }
@@ -52,7 +54,16 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
       return est > 2000 ? { passed: false, violations: [`Too long (${est} tokens)`], score: 0.5 } : { passed: true, violations: [], score: 1 }
     },
   })
-  const ctx = { eventLog, facts, episodes, skills, knowledge, orchestrator: new ChatOrchestrator(eventLog, facts, episodes, skills, knowledge, contracts, telemetry), lastAccess: Date.now() }
+  const memory = new MemoryService({
+    eventLog,
+    baseDir,
+    legacyFacts: facts,
+    legacyKnowledge: knowledge,
+    ownerId: userId,
+  })
+  const orchestrator = new ChatOrchestrator(eventLog, facts, episodes, skills, knowledge, contracts, telemetry)
+  orchestrator.memory = memory
+  const ctx = { eventLog, facts, episodes, skills, knowledge, memory, orchestrator, lastAccess: Date.now() }
   contexts.set(userId, ctx)
   return ctx
 }

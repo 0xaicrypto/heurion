@@ -2,13 +2,14 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import { getUserContext, buildPersona, buildFileContext } from './user-context.js'
-import { deepseekStream, getApiKey } from '../../common/llm.js'
+import { deepseekStream, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
-import { router, defaultLLMClassifier } from '../../retrieval/query-router.js'
+import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
 import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { handleSidecarRequest } from '../execution/sidecar-chat-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
+import { type EvolutionQueue } from '../evolution/evolution.queue.js'
 import fs from 'fs'
 import path from 'path'
 
@@ -47,7 +48,11 @@ function readAttachmentContent(userId: string, fileId: string): string {
   return `\n[ATTACHMENT: ${name}]\n${text}\n[/ATTACHMENT]\n`
 }
 
-export async function chatRouter(app: FastifyInstance) {
+export interface ChatRouterOptions {
+  evolutionQueue?: EvolutionQueue
+}
+
+export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions = {}) {
   app.addHook('preHandler', authGuard)
 
   app.post('/api/v1/agent/chat', async (request, reply) => {
@@ -70,7 +75,13 @@ export async function chatRouter(app: FastifyInstance) {
       // Use the default LLM classifier for ambiguous queries so the router
       // understands intent (e.g. "write an introduction about radiotherapy")
       // instead of relying solely on keyword patterns.
-      const routeResult = await router(body.text, { llmClassifier: defaultLLMClassifier })
+      const routeResult = await router(body.text, {
+        llmClassifier: createDefaultLLMClassifier({
+          userId,
+          workspaceId: userId,
+          action: 'router.classify',
+        }),
+      })
       await telemetry.record({
         userId,
         workspaceId: userId,
@@ -144,6 +155,7 @@ export async function chatRouter(app: FastifyInstance) {
                 chiefComplaint: patient.chiefComplaint,
               }
             : null,
+          telemetryContext: { userId, workspaceId: userId, action: 'sidecar.build_payload' },
         })
 
         await telemetry.record({
@@ -322,7 +334,11 @@ export async function chatRouter(app: FastifyInstance) {
       let fullResponse = ''
       send({ type: 'reasoning_chunk', text: 'Thinking...' })
 
-      for await (const chunk of deepseekStream(messages, apiKey)) {
+      for await (const chunk of deepseekStream(messages, apiKey, {
+        model: DEEPSEEK_PREMIUM_MODEL,
+        maxTokens: 4096,
+        telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
+      })) {
         fullResponse += chunk
         send({ type: 'final_answer_chunk', text: chunk })
       }
@@ -337,15 +353,20 @@ export async function chatRouter(app: FastifyInstance) {
         metadata: {}, agentId: userId, sessionId: sid,
       })
 
-      // #2: Extract takeaway + evolve facts + analyze patient chat
-      ctx.orchestrator.postTurn(userId, sid, body.text, patientHash).catch(() => {})
+      // #2: Extract takeaway + evolve facts + analyze patient chat (async evolution worker)
+      if (opts.evolutionQueue) {
+        opts.evolutionQueue.add({ userId, sessionId: sid, userMessage: body.text, patientHash: patientHash || undefined }).catch(() => {})
+      }
 
-      // Step 2: Analyze patient chat + attachments for clinical findings
-      if (patientHash) {
-        const analysisText = attachmentText
-          ? `[FILE CONTENT]\n${attachmentText}\n[CHAT]\nUser: ${body.text}\nAI: ${fullResponse}`
-          : `User: ${body.text}\nAI: ${fullResponse}`
-        analyzeChatForPatient(userId, patientHash, analysisText)
+      // Step 2: Analyze attached files for clinical findings only.
+      // Chat-only turns skip this to avoid an extra LLM call on every message.
+      if (patientHash && attachmentText) {
+        const analysisText = `[FILE CONTENT]\n${attachmentText}\n[CHAT]\nUser: ${body.text}\nAI: ${fullResponse}`
+        analyzeChatForPatient(userId, patientHash, analysisText, {
+          userId,
+          workspaceId: userId,
+          action: 'clinical.analysis',
+        })
           .then(findings => updatePatientFromFindings(userId, patientHash, findings))
           .catch(() => {})
       }
@@ -387,7 +408,20 @@ export async function chatRouter(app: FastifyInstance) {
     if (!data) return reply.status(400).send({ error: 'No data provided' })
     let imported = 0
     if (data.facts && Array.isArray(data.facts)) {
-      for (const f of data.facts) { ctx.facts.add(f); imported++ }
+      for (const f of data.facts) {
+        ctx.memory.addFact(
+          {
+            content: f.content,
+            category: f.category,
+            importance: f.importance,
+            sourceType: f.sourceType,
+            patientHash: f.patientHash,
+            studyId: f.studyId,
+          },
+          'import',
+        )
+        imported++
+      }
     }
     if (data.episodes && Array.isArray(data.episodes)) {
       for (const e of data.episodes) { ctx.episodes.upsert(e.sessionId || '', e.summary || '', e.turnCount || 0); imported++ }

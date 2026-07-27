@@ -1,4 +1,4 @@
-import { deepseekChat, getApiKey } from '../../common/llm.js'
+import { deepseekChat, getApiKey, type LlmTelemetryContext } from '../../common/llm.js'
 import prisma from '../../common/prisma.js'
 import fs from 'fs'
 import path from 'path'
@@ -15,7 +15,7 @@ export interface ClinicalFinding {
 }
 
 export async function analyzeUploadForPatient(
-  userId: string, fileId: string
+  userId: string, fileId: string, telemetryContext?: LlmTelemetryContext
 ): Promise<ClinicalFinding[]> {
   const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
   const filepath = path.join(dir, fileId)
@@ -29,7 +29,15 @@ Document:
 ${text}`
 
   try {
-    const result = await deepseekChat([{ role: 'user', content: prompt }], getApiKey())
+    const result = await deepseekChat(
+      [{ role: 'user', content: prompt }],
+      getApiKey(),
+      {
+        model: 'deepseek-chat',
+        maxTokens: 1024,
+        telemetryContext,
+      },
+    )
     const match = result.match(/\[[\s\S]*\]/)
     return match ? JSON.parse(match[0]) : []
   } catch {
@@ -65,7 +73,7 @@ export async function updatePatientFromFindings(
 }
 
 export async function analyzeChatForPatient(
-  userId: string, patientHash: string, messages: string
+  userId: string, patientHash: string, messages: string, telemetryContext?: LlmTelemetryContext
 ): Promise<ClinicalFinding[]> {
   const prompt = `Extract clinical findings from this doctor-patient conversation. Return ONLY a JSON array:
 [{"finding_type": "diagnosis|lab_result|imaging|medication|symptom", "content": "short finding", "confidence": 0.0-1.0}]
@@ -74,7 +82,15 @@ Conversation:
 ${messages.slice(0, 3000)}`
 
   try {
-    const result = await deepseekChat([{ role: 'user', content: prompt }], getApiKey())
+    const result = await deepseekChat(
+      [{ role: 'user', content: prompt }],
+      getApiKey(),
+      {
+        model: 'deepseek-chat',
+        maxTokens: 1024,
+        telemetryContext,
+      },
+    )
     const match = result.match(/\[[\s\S]*\]/)
     return match ? JSON.parse(match[0]) : []
   } catch {

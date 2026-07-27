@@ -8,6 +8,7 @@
 import { parseKnowledgeCommand, type KnowledgeCommandType } from '../../retrieval/query-router'
 import { FactsStore, KnowledgeStore, type Fact, type KnowledgeArticle } from '../../evolution/stores'
 import { type KnowledgeGap, type KnowledgeGapService, type GapFilter } from './knowledge-gap.service'
+import type { MemoryService } from '../../memory/memory.service.js'
 
 export interface LLMSummarizer {
   summarize(text: string): Promise<string>
@@ -19,6 +20,8 @@ export interface CommandContext {
   factsStore: FactsStore
   knowledgeStore: KnowledgeStore
   gapService: KnowledgeGapService
+  /** Unified memory service — preferred write path. */
+  memory?: MemoryService
   /** Optional LLM for kb_summarize. If absent, returns concatenated text. */
   llm?: LLMSummarizer
 }
@@ -119,6 +122,16 @@ async function handleRemember(ctx: CommandContext, payload: string): Promise<Com
       candidate: extracted.content,
       confidence: extracted.confidence,
     }
+  }
+
+  if (ctx.memory) {
+    const fact = ctx.memory.addFact({
+      category: 'fact',
+      importance: 4,
+      content: extracted.content,
+      sourceType: 'doctor',
+    }, 'user')
+    return { type: 'kb_remembered', factId: fact.stableId, confidence: extracted.confidence }
   }
 
   const fact = ctx.factsStore.add({

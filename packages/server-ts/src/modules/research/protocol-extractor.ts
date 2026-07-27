@@ -1,4 +1,4 @@
-import { deepseekChat, getApiKey } from '../../common/llm.js'
+import { deepseekChat, getApiKey, type LlmTelemetryContext } from '../../common/llm.js'
 
 export interface ProtocolRule {
   id: string
@@ -16,7 +16,7 @@ const pendingRules = new Map<string, ProtocolRule[]>()
  * Returns proposed rules organized by category.
  */
 export async function extractRulesFromProtocol(
-  studyId: string, protocolText: string
+  studyId: string, protocolText: string, telemetryContext?: LlmTelemetryContext
 ): Promise<ProtocolRule[]> {
   const prompt = `Extract structured clinical trial rules from this protocol. Return ONLY a JSON object with these keys:
 
@@ -31,7 +31,15 @@ Protocol text:
 ${protocolText.slice(0, 8000)}`
 
   try {
-    const result = await deepseekChat([{ role: 'user', content: prompt }], getApiKey())
+    const result = await deepseekChat(
+      [{ role: 'user', content: prompt }],
+      getApiKey(),
+      {
+        model: 'deepseek-chat',
+        maxTokens: 2048,
+        telemetryContext,
+      },
+    )
     const match = result.match(/\{[\s\S]*\}/)
     if (!match) return []
 

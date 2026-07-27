@@ -8,13 +8,14 @@
  *   can be plugged in for higher-quality extraction when budget allows.
  */
 
-import { FactsStore, type Fact } from '../../evolution/stores'
+import type { MemoryService } from '../../memory/memory.service.js'
+import type { FactNode } from '../../memory/memory.types'
 
 export type SidecarOutputType = 'report' | 'summary' | 'analysis' | 'unknown'
 
 export interface ExtractedFactCandidate {
   content: string
-  category: Fact['category']
+  category: FactNode['category']
   importance: number
   confidence: number
   sourceType: 'sidecar'
@@ -31,7 +32,7 @@ export interface SidecarFeedbackInput {
 
 export interface SidecarFeedbackResult {
   candidates: ExtractedFactCandidate[]
-  saved: Fact[]
+  saved: FactNode[]
   gapsCreated: number
 }
 
@@ -71,7 +72,7 @@ function splitSentences(text: string): string[] {
     .filter(s => s.length >= 10 && s.length <= 400)
 }
 
-function pickCategory(sentence: string): Fact['category'] {
+function pickCategory(sentence: string): FactNode['category'] {
   const lower = sentence.toLowerCase()
   if (/\b(prefer|倾向于|偏好|习惯)\b/.test(lower)) return 'preference'
   if (/\b(must|should|必须|应该|禁忌|avoid|禁止)\b/.test(lower)) return 'constraint'
@@ -121,32 +122,34 @@ export const ruleBasedSidecarExtractor: SidecarFactExtractor = {
 
 /**
  * Service that processes Sidecar outputs and optionally writes facts.
+ *
+ * Writes through the unified MemoryService so facts are versioned and
+ * downstream articles are marked stale when sources change.
  */
 export class SidecarFeedbackService {
   constructor(
-    private factsStore: FactsStore,
+    private memory: MemoryService,
     private extractor: SidecarFactExtractor = ruleBasedSidecarExtractor,
   ) {}
 
   async process(input: SidecarFeedbackInput): Promise<SidecarFeedbackResult> {
     const candidates = await this.extractor.extract(input.output, input.outputType)
 
-    const saved: Fact[] = []
+    const saved: FactNode[] = []
     if (input.saveAll) {
       for (const c of candidates) {
         // Only persist high-confidence candidates without manual confirmation.
         if (c.confidence >= 0.5) {
           saved.push(
-            this.factsStore.add({
+            this.memory.addFact({
               category: c.category,
               importance: c.importance,
               content: c.content,
-              sourceType: c.sourceType,
-            }),
+              sourceType: 'sidecar',
+            }, 'sidecar'),
           )
         }
       }
-      if (saved.length > 0) this.factsStore.commit()
     }
 
     // If nothing useful was extracted, create a knowledge-gap hint so the user
