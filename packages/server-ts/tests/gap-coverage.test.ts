@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { getApp, authHeader, getToken } from './setup.js'
+import { getApp, authHeader, getAuthUserId } from './setup.js'
 import fs from 'fs'
 import path from 'path'
 
@@ -13,9 +13,7 @@ const SAMPLE_DIR = process.cwd()
 describe('文件上传与患者关联', () => {
   test('upload stores file on disk', async () => {
     const app = await getApp()
-    const token = await getToken()
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
-    const userId = payload.userId
+    const userId = await getAuthUserId()
 
     // Write a test file to upload dir (simulating multipart upload)
     const dir = path.join(TEST_DIR, userId, 'uploads')
@@ -38,9 +36,7 @@ describe('患者 Profile 更新验证', () => {
     const hash = JSON.parse(create.payload).patient_hash
 
     // Upload DICOM to test user's upload dir
-    const token = await getToken()
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
-    const userId = payload.userId
+    const userId = await getAuthUserId()
     const dir = path.join(TEST_DIR, userId, 'uploads')
     fs.mkdirSync(dir, { recursive: true })
     const src = path.join(SAMPLE_DIR, 'sample-chest-ct.dcm')
@@ -68,9 +64,7 @@ describe('患者 Profile 更新验证', () => {
 describe('Admin 管理操作', () => {
   test('disable and enable user', async () => {
     const app = await getApp()
-    const token = await getToken()
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
-    const userId = payload.userId
+    const userId = await getAuthUserId()
 
     // Disable (should work for admin)
     const disable = await app.inject({
@@ -90,9 +84,7 @@ describe('Admin 管理操作', () => {
 
   test('reset password requires new_password', async () => {
     const app = await getApp()
-    const token = await getToken()
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
-    const userId = payload.userId
+    const userId = await getAuthUserId()
 
     const res = await app.inject({
       method: 'POST', url: `/api/v1/admin/users/${userId}/reset-password`,
