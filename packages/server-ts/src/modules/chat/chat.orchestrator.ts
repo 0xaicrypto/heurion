@@ -250,8 +250,22 @@ ${patientCtx}\n\n${conversation}\n\n[JSON array]:`
           const allFacts = this.factsStore.all()
           if (allFacts.length >= 3 && allFacts.length % 5 === 0) {
             try {
-              const factList = allFacts.slice(-10).map(f => `[${f.category}] ${f.content}`).join('\n')
-              const articlePrompt = `Synthesize these clinical facts into a concise knowledge article (1-2 paragraphs):\n\n${factList}\n\nReturn JSON: { "title": "...", "content": "..." }`
+              const articleFacts = allFacts.slice(-10)
+              const factList = articleFacts
+                .map((f) => {
+                  const date = f.createdAt ? new Date(f.createdAt * 1000).toISOString().slice(0, 10) : 'unknown'
+                  const source = [f.sourceType, f.patientHash, f.studyId].filter(Boolean).join(' / ') || 'general'
+                  return `[importance=${f.importance ?? 3}] [${f.category}] [${source}] [${date}] ${f.content}`
+                })
+                .join('\n')
+              const articlePrompt = `You are synthesizing clinical findings for an oncology researcher.
+Emphasize patient-specific facts, high-importance findings (importance 4-5), and connections across source types (patient / doctor preference / research / general).
+Keep the article concise (1-2 paragraphs) and clinically actionable.
+
+Facts to synthesize:
+${factList}
+
+Return ONLY JSON: { "title": "...", "content": "..." }`
               const articleResult = await deepseekChat([{ role: 'user', content: articlePrompt }], apiKey)
               const jsonMatch2 = articleResult.match(/\{[\s\S]*\}/)
               if (jsonMatch2) {
@@ -260,7 +274,7 @@ ${patientCtx}\n\n${conversation}\n\n[JSON array]:`
                   this.knowledgeStore.add({
                     title: article.title,
                     content: article.content,
-                    sources: allFacts.slice(-10).map((f: any) => f.id),
+                    sources: articleFacts.map((f: any) => f.id),
                   })
                   this.knowledgeStore.commit()
                   console.log(`[KNOWLEDGE] Article generated: ${article.title}`)
