@@ -233,11 +233,31 @@ export function routeQuery(_query: string, intent: QueryIntent): RouteKind[] {
   }
 }
 
+const ROUTE_CACHE_TTL_MS = 5 * 60 * 1000
+const routeCache = new Map<string, { result: RouterResult; expires: number }>()
+
+function normalizeQuery(query: string): string {
+  return query.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+/** Clear the in-memory route cache. Useful in tests. */
+export function clearRouteCache(): void {
+  routeCache.clear()
+}
+
 /**
  * Full router: classify + route + cost metadata.
  * Async because it may call the optional LLM fallback classifier.
+ * Results are cached for 5 minutes to avoid paying for repeated classifications.
  */
 export async function router(query: string, options: RouterOptions = {}): Promise<RouterResult> {
+  const normalized = normalizeQuery(query)
+  const cacheKey = `${options.llmClassifier ? 'llm' : 'rule'}:${normalized}`
+  const cached = routeCache.get(cacheKey)
+  if (cached && cached.expires > Date.now()) {
+    return cached.result
+  }
+
   const ruleIntent = classifyQuery(query)
   let finalIntent = ruleIntent
   let llmFallback = false
@@ -249,11 +269,14 @@ export async function router(query: string, options: RouterOptions = {}): Promis
     llmCalls = 1
   }
 
-  return {
+  const result: RouterResult = {
     intent: finalIntent,
     routes: routeQuery(query, finalIntent),
     ruleHit: ruleIntent !== 'mixed',
     llmFallback,
     cost: { llmCalls },
   }
+
+  routeCache.set(cacheKey, { result, expires: Date.now() + ROUTE_CACHE_TTL_MS })
+  return result
 }

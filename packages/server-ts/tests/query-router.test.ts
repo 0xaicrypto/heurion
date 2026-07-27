@@ -1,8 +1,9 @@
-import { describe, test, expect, vi } from 'vitest'
+import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { deepseekChat } from '../src/common/llm.js'
 import {
   classifyQuery,
   classifyQueryLLM,
+  clearRouteCache,
   defaultLLMClassifier,
   parseKnowledgeCommand,
   routeQuery,
@@ -16,6 +17,10 @@ vi.mock('../src/common/llm.js', () => ({
 }))
 
 describe('P3 — Query Router', () => {
+  beforeEach(() => {
+    clearRouteCache()
+    vi.clearAllMocks()
+  })
   describe('classifyQuery — rule layer', () => {
     test('patient age/name query → sql', () => {
       expect(classifyQuery('ZL 的年龄是多少？')).toBe('sql')
@@ -151,6 +156,16 @@ describe('P3 — Query Router', () => {
       expect(result.intent).toBe('vector')
       expect(result.llmFallback).toBe(true)
       expect(result.cost.llmCalls).toBe(1)
+    })
+
+    test('caches LLM classification results for repeated queries', async () => {
+      vi.mocked(deepseekChat).mockResolvedValueOnce('sql')
+      const q = '那个患者最近咋样'
+      const r1 = await router(q, { llmClassifier: defaultLLMClassifier })
+      const r2 = await router(q, { llmClassifier: defaultLLMClassifier })
+      expect(r1.intent).toBe('sql')
+      expect(r2.intent).toBe('sql')
+      expect(deepseekChat).toHaveBeenCalledTimes(1)
     })
 
     test('mixed with classifier invokes LLM fallback', async () => {
