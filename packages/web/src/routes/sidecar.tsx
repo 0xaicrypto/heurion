@@ -9,10 +9,10 @@ export function SidecarPage() {
   const isZh = i18n.language.startsWith('zh');
 
   const T = {
-    title: isZh ? 'MedSci-Sidecar：从聊天到文档' : 'MedSci-Sidecar: from chat to document',
+    title: isZh ? '智能报告助手：从聊天到文档' : 'Smart Report Assistant: from chat to document',
     subtitle: isZh
-      ? '一句话把临床讨论变成可交付的文档、表格或图表。Sidecar 在执行面独立渲染，不阻塞聊天流。'
-      : 'Turn a clinical discussion into a deliverable document, table, or chart with one sentence. Sidecar renders independently in the execution plane without blocking the chat stream.',
+      ? '一句话把临床讨论变成可交付的文档、表格或图表。报告助手在执行面独立渲染，不阻塞聊天流。'
+      : 'Turn a clinical discussion into a deliverable document, table, or chart with one sentence. The report assistant renders independently in the execution plane without blocking the chat stream.',
 
     outputsTitle: isZh ? '支持生成的内容' : 'Supported outputs',
     outputs: [
@@ -42,7 +42,7 @@ export function SidecarPage() {
     flowSteps: [
       {
         title: isZh ? '1. 意图识别' : '1. Intent recognition',
-        desc: isZh ? 'Query Router 识别“生成/创建/导出”等 Sidecar 请求，避免普通聊天误触发。' : 'The Query Router detects Sidecar requests like "generate / create / export" so normal chat is not mis-triggered.',
+        desc: isZh ? 'Query Router 识别“生成/创建/导出”等报告请求，避免普通聊天误触发。' : 'The Query Router detects report-generation requests like "generate / create / export" so normal chat is not mis-triggered.',
       },
       {
         title: isZh ? '2. 执行面渲染' : '2. Execution-plane rendering',
@@ -56,13 +56,13 @@ export function SidecarPage() {
 
     capabilityTitle: isZh ? '能力检测，避免空转' : 'Capability detection prevents empty runs',
     capabilityBody: isZh
-      ? '如果用户只是问“你可以创建 PPT 吗？”，Sidecar 不会真的生成空文件，而是返回可用格式与使用示例。'
-      : 'If a user merely asks "Can you create a PPT?", Sidecar returns available formats and examples instead of generating an empty file.',
+      ? '如果用户只是问“你可以创建 PPT 吗？”，报告助手不会真的生成空文件，而是返回可用格式与使用示例。'
+      : 'If a user merely asks "Can you create a PPT?", the report assistant returns available formats and examples instead of generating an empty file.',
 
     kbTitle: isZh ? '一键加入知识库' : 'One-click knowledge ingestion',
     kbBody: isZh
-      ? '生成文件时，Sidecar 同时输出 knowledgePayload。聊天界面的下载卡片提供“加入知识库”选项，把文档结构化为 Facts 或 Articles。'
-      : 'When generating a file, Sidecar also emits a knowledgePayload. The chat download card offers an "Add to knowledge base" option to turn the document into Facts or Articles.',
+      ? '生成文件时，报告助手同时输出 knowledgePayload。聊天界面的下载卡片提供“加入知识库”选项，把文档结构化为 Facts 或 Articles。'
+      : 'When generating a file, the report assistant also emits a knowledgePayload. The chat download card offers an "Add to knowledge base" option to turn the document into Facts or Articles.',
 
     ctaTitle: isZh ? '在聊天里试试' : 'Try it in chat',
     ctaBody: isZh ? '登录后打开 Chat，输入“生成一份 NSCLC 免疫治疗进展的 PPTX”。' : 'Log in, open Chat, and type "Generate a PPTX on NSCLC immunotherapy advances".',

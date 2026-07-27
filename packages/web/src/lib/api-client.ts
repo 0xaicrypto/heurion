@@ -744,6 +744,22 @@ class ApiClient {
     return this.fetch('/api/v1/knowledge/facts', { method: 'DELETE', body: JSON.stringify({ ids }) });
   }
 
+  async getNodeVersions(id: string): Promise<{versions: any[]}> {
+    return this.fetch(`/api/v1/memory/nodes/${id}/versions`);
+  }
+
+  async getArticleImpact(id: string): Promise<{impact: any[]}> {
+    return this.fetch(`/api/v1/memory/articles/${id}/impact`);
+  }
+
+  async getMemoryGraph(patientHash?: string, includeSuperseded?: boolean): Promise<{nodes: any[]; relations: any[]}> {
+    const params = new URLSearchParams();
+    if (patientHash) params.set('patient_hash', patientHash);
+    if (includeSuperseded) params.set('include_superseded', 'true');
+    const qs = params.toString();
+    return this.fetch(`/api/v1/memory/graph${qs ? `?${qs}` : ''}`);
+  }
+
   /* ────────────────────────── calendar ────────────────────────── */
 
   getCalendarExportUrl(): string {

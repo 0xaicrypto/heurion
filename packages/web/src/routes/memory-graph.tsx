@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { Brain, ClipboardCopy, Clock, Pill } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Brain, ClipboardCopy, Clock, GitGraph, Pill } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 
@@ -47,6 +47,7 @@ function badgeColors(variant: string): { bg: string; text: string } {
 }
 
 export function MemoryGraphPage() {
+  const navigate = useNavigate();
   const { hash } = useParams<{ hash: string }>();
   const [findings, setFindings] = useState<MemoryNode[]>([]);
   const [medications, setMedications] = useState<MemoryNode[]>([]);
@@ -111,6 +112,12 @@ export function MemoryGraphPage() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto p-6">
+      <div className="mb-4 flex items-center justify-end">
+        <Button size="sm" variant="secondary" onClick={() => navigate(`/app/memory-graph?patient=${encodeURIComponent(hash)}`)}>
+          <GitGraph size={14} className="mr-1" /> Visual graph
+        </Button>
+      </div>
+
       <section className="mb-8">
         <div className="mb-3 flex items-center gap-2">
           <Brain size={20} className="text-accent" />

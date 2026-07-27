@@ -39,7 +39,7 @@ export function KnowledgeLandingPage() {
       {
         icon: <FileText size={22} />,
         title: 'Files',
-        desc: isZh ? '上传文件与 Sidecar 生成结果，按租户隔离存储；删除文件会级联处理来源 Facts。' : 'Uploaded files and Sidecar outputs stored with tenant isolation; deleting a file cascades to its derived facts.',
+        desc: isZh ? '上传文件与报告助手生成结果，按租户隔离存储；删除文件会级联处理来源 Facts。' : 'Uploaded files and report-assistant outputs stored with tenant isolation; deleting a file cascades to its derived facts.',
       },
     ],
 

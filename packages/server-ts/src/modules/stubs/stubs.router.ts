@@ -3,6 +3,7 @@ import { authGuard } from '../../common/auth.guard.js'
 import { getUserContext } from '../chat/user-context.js'
 import { getUserTools, getEnabledTools, deleteUserTool } from '../../evolution/cascade-gaps.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
+import type { MemoryNode } from '../../memory/memory.types.js'
 
 const gapService = new PrismaKnowledgeGapService()
 
@@ -116,6 +117,74 @@ export async function stubRouter(app: FastifyInstance) {
       if (ok) ctx.facts.commit()
     }
     return { deleted: ok }
+  })
+
+  // ── Memory versioning & impact ──
+  app.get('/api/v1/memory/nodes/:id/versions', async (request: any) => {
+    const ctx = getUserContext(request.user!.userId)
+    const versions = ctx.memory.graph.getVersions(request.params.id as string)
+    return { versions }
+  })
+  app.get('/api/v1/memory/articles/:id/impact', async (request: any) => {
+    const ctx = getUserContext(request.user!.userId)
+    const article = ctx.memory.graph.getLatestByStableId(request.params.id as string) as any
+    if (!article || article.type !== 'article') return { error: 'Not found' }
+    return { impact: article.impact || [] }
+  })
+
+  // ── Memory graph (Cytoscape) ──
+  app.get('/api/v1/memory/graph', async (request: any) => {
+    const ctx = getUserContext(request.user!.userId)
+    const q = request.query as any
+    const includeSuperseded = q.include_superseded === 'true' || q.include_superseded === true
+    const patientHash = q.patient_hash as string | undefined
+
+    let nodes = includeSuperseded
+      ? Array.from(ctx.memory.graph.getNodesByType('fact'))
+          .concat(Array.from(ctx.memory.graph.getNodesByType('article')))
+          .concat(Array.from(ctx.memory.graph.getNodesByType('gap')))
+          .concat(Array.from(ctx.memory.graph.getNodesByType('document')))
+          .concat(Array.from(ctx.memory.graph.getNodesByType('entity')))
+          .concat(Array.from(ctx.memory.graph.getNodesByType('skill')))
+      : ctx.memory.graph.getCurrentNodes()
+
+    // Deduplicate by stableId (prefer current/stale over superseded)
+    const seen = new Map<string, MemoryNode>()
+    for (const n of nodes) {
+      const existing = seen.get(n.stableId)
+      if (!existing || (existing.status === 'superseded' && n.status !== 'superseded')) {
+        seen.set(n.stableId, n)
+      }
+    }
+    nodes = Array.from(seen.values())
+
+    if (patientHash) {
+      const relatedStableIds = new Set<string>()
+      for (const n of nodes) {
+        if ((n as any).patientHash === patientHash) relatedStableIds.add(n.stableId)
+      }
+      // Expand one hop via relations
+      const allRelations = Array.from((ctx.memory.graph as any).relations || []) as any[]
+      for (const r of allRelations) {
+        if (relatedStableIds.has(r.sourceId) || relatedStableIds.has(r.targetId)) {
+          relatedStableIds.add(r.sourceId)
+          relatedStableIds.add(r.targetId)
+        }
+      }
+      nodes = nodes.filter(n => relatedStableIds.has(n.stableId))
+    }
+
+    const nodeStableIds = new Set(nodes.map(n => n.stableId))
+    // Build relation list from all relations, filtering to visible nodes
+    const allRelations = Array.from((ctx.memory.graph as any).relations || []) as any[]
+    const visibleRelations = allRelations.filter(
+      (r: any) => nodeStableIds.has(r.sourceId) && nodeStableIds.has(r.targetId),
+    )
+
+    return {
+      nodes: nodes.map(n => ({ ...n })),
+      relations: visibleRelations.map(r => ({ ...r })),
+    }
   })
 
   // ── Bulk deletes ──

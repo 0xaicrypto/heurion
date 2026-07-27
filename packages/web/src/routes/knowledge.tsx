@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
 import { api } from '@/lib/api-client';
 import { Button, Card, Skeleton, Badge, Input, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import type { Article } from '@/lib/types';
-import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X, ChevronLeft, ChevronRight, GitGraph } from 'lucide-react';
 
 interface Fact {
   id: string; category: string; importance: number; content: string;
@@ -51,6 +52,7 @@ function usePagination<T>(items: T[], page: number, pageSize = PAGE_SIZE) {
 }
 
 export function KnowledgePage() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('articles');
   const [articles, setArticles] = useState<Article[]>([]);
   const [facts, setFacts] = useState<Fact[]>([]);
@@ -295,7 +297,12 @@ export function KnowledgePage() {
               <Badge variant="default"><Clock size={12} className="mr-1" /> {pendingCount} pending</Badge>
             )}
           </div>
-          <Button size="sm" variant="ghost" onClick={loadAll}><RotateCcw size={14} className="mr-1" /> Refresh</Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={() => navigate('/app/memory-graph')}>
+              <GitGraph size={14} className="mr-1" /> Graph
+            </Button>
+            <Button size="sm" variant="ghost" onClick={loadAll}><RotateCcw size={14} className="mr-1" /> Refresh</Button>
+          </div>
         </header>
 
         <nav className="flex border-b border-border bg-surface px-6">

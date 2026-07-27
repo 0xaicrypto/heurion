@@ -15,7 +15,7 @@ describe('Marketing subpages', () => {
 
   it('SidecarPage lists supported outputs and workflow', () => {
     render(<SidecarPage />);
-    expect(screen.getByRole('heading', { name: /medsci-sidecar/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /smart report assistant/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /supported outputs/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /intent recognition/i })).toBeInTheDocument();
   });

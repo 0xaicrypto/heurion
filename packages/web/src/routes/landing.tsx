@@ -30,7 +30,7 @@ export function LandingPage() {
       {
         to: '/sidecar',
         icon: <FileText size={28} />,
-        title: isZh ? 'MedSci-Sidecar' : 'MedSci-Sidecar',
+        title: isZh ? '智能报告助手' : 'Smart Report Assistant',
         desc: isZh
           ? '一句话生成病例总结 DOCX、学术汇报 PPTX、基线表格与统计图，文件链接刷新不丢。'
           : 'Generate case-summary DOCX, academic PPTX, baseline tables, and plots from one sentence — with refresh-safe file links.',
@@ -183,7 +183,7 @@ export function LandingPage() {
               {[
                 { q: isZh ? '“ZL 的年龄/性别？”' : '"What is ZL\'s age/sex?"', r: 'sql' },
                 { q: isZh ? '“NSCLC 最新指南怎么说？”' : '"Latest NSCLC guidelines?"', r: 'vector' },
-                { q: isZh ? '“生成 ZQ 病例总结 Word”' : '"Generate a Word case summary for ZQ"', r: 'sidecar' },
+                { q: isZh ? '“生成 ZQ 病例总结 Word”' : '"Generate a Word case summary for ZQ"', r: 'reports' },
                 { q: isZh ? '普通临床讨论' : 'General clinical discussion', r: 'mixed' },
               ].map((item, idx) => (
                 <div key={idx} className="flex items-center justify-between rounded-lg border border-border bg-background px-4 py-3">

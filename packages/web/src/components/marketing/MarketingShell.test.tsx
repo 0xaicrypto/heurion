@@ -14,7 +14,7 @@ describe('MarketingShell', () => {
 
     const nav = screen.getByTestId('marketing-nav');
     expect(within(nav).getByRole('link', { name: /memory/i })).toHaveAttribute('href', '/memory');
-    expect(within(nav).getByRole('link', { name: /sidecar/i })).toHaveAttribute('href', '/sidecar');
+    expect(within(nav).getByRole('link', { name: /reports/i })).toHaveAttribute('href', '/sidecar');
     expect(within(nav).getByRole('link', { name: /knowledge/i })).toHaveAttribute('href', '/knowledge');
     expect(within(nav).getByRole('link', { name: /security/i })).toHaveAttribute('href', '/security');
     expect(screen.getByTestId('content')).toBeInTheDocument();

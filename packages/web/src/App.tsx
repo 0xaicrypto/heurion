@@ -10,6 +10,7 @@ import { PatientsLayout, PatientSummaryPage, PatientChatPage } from '@/routes/pa
 import { ImagingPage } from '@/routes/imaging';
 import { LabsPage } from '@/routes/labs';
 import { MemoryGraphPage } from '@/routes/memory-graph';
+import { MemoryGraphVizPage } from '@/routes/memory-graph-viz';
 import { MemoryPage } from '@/routes/memory';
 import { SidecarPage } from '@/routes/sidecar';
 import { KnowledgeLandingPage } from '@/routes/knowledge-landing';
@@ -171,6 +172,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <KnowledgePage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/memory-graph"
+            element={
+              <RequireAuth>
+                <MemoryGraphVizPage />
               </RequireAuth>
             }
           />

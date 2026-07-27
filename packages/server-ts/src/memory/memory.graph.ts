@@ -64,6 +64,10 @@ export class MemoryGraph {
     return this.getNodesByType(type).filter(n => n.status !== 'superseded')
   }
 
+  getCurrentNodes(): MemoryNode[] {
+    return Array.from(this.nodes.values()).filter(n => n.status !== 'superseded')
+  }
+
   /** Returns the latest version of a node by stableId, preferring current/stale over superseded. */
   getLatestByStableId(stableId: string): MemoryNode | undefined {
     const versions = Array.from(this.nodes.values())

@@ -8,7 +8,7 @@ describe('LandingPage', () => {
 
     expect(screen.getByRole('heading', { name: /self-evolving clinical ai workstation/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /unified memory graph/i })).toHaveAttribute('href', '/memory-graph');
-    expect(screen.getByRole('link', { name: /medsci-sidecar/i })).toHaveAttribute('href', '/sidecar');
+    expect(screen.getByRole('link', { name: /smart report assistant/i })).toHaveAttribute('href', '/sidecar');
     expect(screen.getByRole('link', { name: /evolving knowledge base/i })).toHaveAttribute('href', '/knowledge');
     expect(screen.getByText(/route first, then retrieve/i)).toBeInTheDocument();
     expect(screen.getByText(/security & isolation/i)).toBeInTheDocument();

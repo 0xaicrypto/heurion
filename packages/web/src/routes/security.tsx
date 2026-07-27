@@ -26,8 +26,8 @@ export function SecurityPage() {
         icon: <Cpu size={24} />,
         title: isZh ? '执行面 Execution Plane' : 'Execution Plane',
         desc: isZh
-          ? '运行 FastAPI + Redis + heurion_worker：Sidecar 渲染、插件沙箱、对象存储上传。与主数据库隔离。'
-          : 'Runs FastAPI + Redis + heurion_worker: Sidecar rendering, plugin sandbox, and object-storage upload. Isolated from the main database.',
+          ? '运行 FastAPI + Redis + heurion_worker：报告渲染、插件沙箱、对象存储上传。与主数据库隔离。'
+          : 'Runs FastAPI + Redis + heurion_worker: report rendering, plugin sandbox, and object-storage upload. Isolated from the main database.',
       },
     ],
 
@@ -51,7 +51,7 @@ export function SecurityPage() {
       {
         icon: <FileKey size={22} />,
         title: isZh ? '最小权限' : 'Least privilege',
-        desc: isZh ? '插件与 Sidecar 只拥有完成任务所需的最小访问范围。' : 'Plugins and Sidecar workers have only the minimum access needed to complete their tasks.',
+        desc: isZh ? '插件与报告助手只拥有完成任务所需的最小访问范围。' : 'Plugins and report-assistant workers have only the minimum access needed to complete their tasks.',
       },
     ],
 
