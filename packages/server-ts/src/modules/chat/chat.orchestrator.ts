@@ -194,7 +194,7 @@ export class ChatOrchestrator {
   async postTurn(userId: string, sessionId: string, userMessage: string, patientHash?: string) {
     const recentEvents = this.eventLog.query({ sessionId, limit: 6 }).reverse()
     const conversation = recentEvents
-      .map(e => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${e.content.slice(0, 300)}`)
+      .map(e => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${e.content.slice(0, 500)}`)
       .join('\n')
 
     // A "turn" is one complete user-message + assistant-response pair.
@@ -207,15 +207,44 @@ export class ChatOrchestrator {
     if (totalTurns % 5 === 0 && totalTurns > 0) {
       try {
         const apiKey = getApiKey()
-        const patientCtx = patientHash
-          ? '\nCurrent context: discussing patient ' + patientHash + '. Facts about this patient should have sourceType: "patient" and patientHash set.'
-          : ''
-        const extractionPrompt = `Extract key facts from this clinical conversation. Return ONLY a JSON array of objects with:
-- category: preference/fact/constraint/goal/context
-- importance: 1-5
-- content: short sentence
-- sourceType: "patient" (if about a specific patient), "doctor" (if about doctor's preference/workflow), "research" (if about studies/trials), "general" (otherwise)
-${patientCtx}\n\n${conversation}\n\n[JSON array]:`
+
+        // Gather context so extracted facts are grounded and not duplicated.
+        const existingFacts = this.factsStore.all()
+        const relatedFacts = existingFacts
+          .filter(f =>
+            (patientHash && f.patientHash === patientHash) ||
+            userMessage.toLowerCase().split(/\s+/).some(w => w.length > 3 && f.content.toLowerCase().includes(w))
+          )
+          .slice(0, 10)
+
+        const episode = this.episodesStore.all().find(e => e.sessionId === sessionId)
+        const contextLines: string[] = []
+        if (patientHash) {
+          contextLines.push(`Current patient: ${patientHash}`)
+          contextLines.push('Facts about this patient should use sourceType: "patient" and include the patientHash.')
+        }
+        if (episode) {
+          contextLines.push(`Session summary so far: ${episode.summary}`)
+        }
+        if (relatedFacts.length > 0) {
+          contextLines.push('Existing related facts (avoid duplicating these unless new details are added):')
+          relatedFacts.forEach(f => {
+            contextLines.push(`- [${f.sourceType || 'general'}] ${f.content}`)
+          })
+        }
+        const contextBlock = contextLines.length > 0 ? `\n${contextLines.join('\n')}\n` : ''
+
+        const extractionPrompt = `You are a clinical fact extractor for an oncology research assistant.
+Extract key, grounded facts from the conversation below. Return ONLY a JSON array of objects with:
+- category: preference / fact / constraint / goal / context
+- importance: 1-5 (5 = critical for future decisions)
+- content: short, self-contained sentence
+- sourceType: "patient" (about the current patient), "doctor" (clinician preference/workflow), "research" (studies/trials), "general" (anything else)
+${contextBlock}
+Conversation:
+${conversation}
+
+[JSON array]:`
 
         const result = await deepseekChat([{ role: 'user', content: extractionPrompt }], apiKey)
         const jsonMatch = result.match(/\[[\s\S]*\]/)

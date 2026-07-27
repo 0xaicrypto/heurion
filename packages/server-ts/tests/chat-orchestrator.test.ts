@@ -196,7 +196,7 @@ describe('ChatOrchestrator — postTurn regressions', () => {
 
     // Only count the fact-extraction LLM call, not any router classifier calls.
     const extractionCalls = deepseekChat.mock.calls.filter(
-      (call) => typeof call[0][0]?.content === 'string' && call[0][0].content.includes('Extract key facts'),
+      (call) => typeof call[0][0]?.content === 'string' && call[0][0].content.includes('clinical fact extractor'),
     )
     expect(extractionCalls).toHaveLength(1)
   })
