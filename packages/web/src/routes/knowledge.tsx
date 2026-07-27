@@ -179,7 +179,12 @@ export function KnowledgePage() {
   const handleBulkDelete = async (label: string, ids: string[], deleteFn: (ids: string[]) => Promise<{deleted: number}>) => {
     if (ids.length === 0) return;
     if (!confirm(`Delete ${ids.length} selected ${label}?`)) return;
-    await deleteFn(ids).catch(() => {});
+    try {
+      await deleteFn(ids);
+    } catch (err) {
+      console.error(`Failed to delete ${label}:`, err);
+      alert(`Failed to delete ${label}. See console for details.`);
+    }
     loadAll();
   };
 
@@ -314,7 +319,7 @@ export function KnowledgePage() {
                     setSelectedArticles,
                     articlePagination.pageItems.map(a => a.id),
                     'articles',
-                    api.deleteKnowledgeArticles,
+                    (ids: string[]) => api.deleteKnowledgeArticles(ids),
                     'Filter articles by title or content...',
                   )}
                   {articlePagination.pageItems.length === 0 && (
@@ -369,7 +374,7 @@ export function KnowledgePage() {
                     setSelectedFacts,
                     factPagination.pageItems.map(f => f.id),
                     'facts',
-                    api.deleteFacts,
+                    (ids: string[]) => api.deleteFacts(ids),
                     'Filter facts by content...',
                   )}
                   {SOURCE_TYPES.map(sourceType => {
@@ -471,7 +476,7 @@ export function KnowledgePage() {
                     setSelectedGaps,
                     gapPagination.pageItems.map(g => g.id),
                     'gaps',
-                    api.deleteKnowledgeGaps,
+                    (ids: string[]) => api.deleteKnowledgeGaps(ids),
                     'Filter gaps by query or context...',
                   )}
                   {gapPagination.pageItems.length === 0 && (
@@ -521,7 +526,7 @@ export function KnowledgePage() {
                     setSelectedTools,
                     toolPagination.pageItems.map(t => t.id),
                     'tools',
-                    api.deleteKnowledgeTools,
+                    (ids: string[]) => api.deleteKnowledgeTools(ids),
                     'Filter tools by name or description...',
                   )}
                   {toolPagination.pageItems.length === 0 && (
@@ -567,7 +572,7 @@ export function KnowledgePage() {
                     setSelectedFiles,
                     filePagination.pageItems.map(f => f.file_id),
                     'files',
-                    api.deleteFiles,
+                    (ids: string[]) => api.deleteFiles(ids),
                     'Filter files by name...',
                   )}
                   {filePagination.pageItems.length === 0 && (
