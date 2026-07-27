@@ -738,7 +738,7 @@ class ApiClient {
 
   /* ────────────────────────── knowledge gaps + tools ────────────────────────── */
 
-  async getKnowledgeGaps(): Promise<{gaps: Array<{id: string; query: string; context: string; status: string; detectedAt: number}>}> {
+  async getKnowledgeGaps(): Promise<{gaps: Array<{id: string; content: string; status: 'open' | 'answered' | 'ignored'; source: string; createdAt: string; updatedAt: string}>}> {
     return this.fetch('/api/v1/knowledge/gaps');
   }
 

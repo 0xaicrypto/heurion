@@ -16,7 +16,7 @@ interface Fact {
   createdAt: number; updatedAt: number; lastSeenAt: number;
 }
 interface Gap {
-  id: string; query: string; context: string; status: string; detectedAt: number;
+  id: string; content: string; status: 'open' | 'answered' | 'ignored'; source: string; createdAt: string; updatedAt: string;
 }
 interface Tool {
   id: string; name: string; description: string; language: string;
@@ -101,7 +101,7 @@ export function KnowledgePage() {
   useEffect(() => { loadAll(); }, []);
 
   const staleCount = articles.filter(a => a.status === 'stale').length;
-  const pendingCount = gaps.filter(g => g.status === 'pending').length;
+  const pendingCount = gaps.filter(g => g.status === 'open').length;
 
   const filteredArticles = useMemo(() => {
     const q = normalizeSearch(articleFilter);
@@ -118,7 +118,7 @@ export function KnowledgePage() {
   const filteredGaps = useMemo(() => {
     const q = normalizeSearch(gapFilter);
     if (!q) return gaps;
-    return gaps.filter(g => normalizeSearch(g.query).includes(q) || normalizeSearch(g.context).includes(q));
+    return gaps.filter(g => normalizeSearch(g.content).includes(q));
   }, [gaps, gapFilter]);
 
   const filteredTools = useMemo(() => {
@@ -180,12 +180,13 @@ export function KnowledgePage() {
     if (ids.length === 0) return;
     if (!confirm(`Delete ${ids.length} selected ${label}?`)) return;
     try {
-      await deleteFn(ids);
+      const result = await deleteFn(ids);
+      console.log(`[KB] Deleted ${result.deleted} ${label}`, ids);
+      await loadAll();
     } catch (err) {
       console.error(`Failed to delete ${label}:`, err);
       alert(`Failed to delete ${label}. See console for details.`);
     }
-    loadAll();
   };
 
   const renderPagination = (
@@ -229,7 +230,6 @@ export function KnowledgePage() {
     placeholder: string,
   ) => {
     const allSelected = pageIds.length > 0 && pageIds.every(id => selected.has(id));
-    const someSelected = pageIds.some(id => selected.has(id)) && !allSelected;
     return (
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Input
@@ -254,8 +254,7 @@ export function KnowledgePage() {
               type="checkbox"
               className="rounded border-border"
               checked={allSelected}
-              ref={el => { if (el) el.indeterminate = someSelected; }}
-              onChange={e => selectAllOnPage(pageIds, setSelected, e.target.checked)}
+              onChange={() => selectAllOnPage(pageIds, setSelected, !allSelected)}
             />
             Select all on page
           </label>
@@ -486,31 +485,34 @@ export function KnowledgePage() {
                       <p className="mt-1 text-sm text-text-tertiary">Gaps appear when queries don't match existing knowledge.</p>
                     </Card>
                   )}
-                  {gapPagination.pageItems.map(g => (
-                    <Card key={g.id} className="p-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              className="rounded border-border mr-2"
-                              checked={selectedGaps.has(g.id)}
-                              onChange={() => toggleSelection(setSelectedGaps, g.id)}
-                            />
-                            <h3 className="font-medium text-sm text-text-primary truncate">{g.query}</h3>
-                            <Badge variant={g.status === 'pending' ? 'warning' : 'default'}>{g.status}</Badge>
+                  {gapPagination.pageItems.map(g => {
+                    const statusLabel = g.status === 'open' ? 'Pending' : g.status === 'answered' ? 'Answered' : 'Ignored';
+                    const statusVariant = g.status === 'open' ? 'warning' : g.status === 'answered' ? 'success' : 'default';
+                    return (
+                      <Card key={g.id} className="p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                className="rounded border-border mr-2"
+                                checked={selectedGaps.has(g.id)}
+                                onChange={() => toggleSelection(setSelectedGaps, g.id)}
+                              />
+                              <h3 className="font-medium text-sm text-text-primary truncate">{g.content}</h3>
+                              <Badge variant={statusVariant}>{statusLabel}</Badge>
+                            </div>
+                            <p className="mt-1 text-xs text-text-tertiary">{new Date(g.createdAt).toLocaleDateString()}</p>
                           </div>
-                          {g.context && <p className="mt-1 text-xs text-text-tertiary line-clamp-2">{g.context}</p>}
-                          <p className="mt-1 text-xs text-text-tertiary">{new Date(g.detectedAt).toLocaleDateString()}</p>
+                          {g.status === 'open' && (
+                            <Button size="sm" variant="secondary" className="ml-3" onClick={() => resolveGap(g.id)}>
+                              <Check size={14} className="mr-1" /> Resolve
+                            </Button>
+                          )}
                         </div>
-                        {g.status === 'pending' && (
-                          <Button size="sm" variant="secondary" className="ml-3" onClick={() => resolveGap(g.id)}>
-                            <Check size={14} className="mr-1" /> Resolve
-                          </Button>
-                        )}
-                      </div>
-                    </Card>
-                  ))}
+                      </Card>
+                    );
+                  })}
                   {renderPagination(gapPagination.page, gapPagination.totalPages, setGapPage, gapPagination.start, filteredGaps.length)}
                 </div>
               )}

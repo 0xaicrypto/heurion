@@ -132,6 +132,35 @@ export async function knowledgeRouter(app: FastifyInstance) {
     }
   })
 
+  // Resolve a knowledge gap without requiring an explicit answer (UI quick-resolve)
+  app.post('/api/v1/knowledge/gaps/:id/resolve', async (request, reply) => {
+    const userId = request.user!.userId
+    const { id } = request.params as { id: string }
+
+    const gap = await gapService.getById(id)
+    if (!gap) {
+      return reply.status(404).send({ error: 'gap not found' })
+    }
+    if (gap.userId !== userId) {
+      return reply.status(403).send({ error: 'forbidden' })
+    }
+
+    const updated = await gapService.resolve(id, 'Resolved from knowledge base UI')
+    if (!updated) {
+      return reply.status(500).send({ error: 'failed to resolve gap' })
+    }
+
+    await telemetry.record({
+      userId,
+      workspaceId: userId,
+      category: 'gap',
+      action: 'resolved',
+      metadata: { gapId: id },
+    }).catch(() => {})
+
+    return updated
+  })
+
   // Ignore a knowledge gap
   app.post('/api/v1/knowledge/gaps/:id/ignore', async (request, reply) => {
     const userId = request.user!.userId
