@@ -46,6 +46,7 @@ class JobResponse(BaseModel):
     status: str
     created_at: float
     result: dict[str, Any] | None = None
+    error: str | None = None
 
 
 @router.post("", response_model=JobResponse)
@@ -110,9 +111,11 @@ def _to_response(record: dict[str, str]) -> JobResponse:
             result = json.loads(record["result"])
         except Exception:
             result = {"value": record["result"]}
+    error = record.get("error") or None
     return JobResponse(
         job_id=record["job_id"],
         status=record.get("status", "unknown"),
         created_at=float(record.get("created_at", 0)),
         result=result if result else None,
+        error=error,
     )
