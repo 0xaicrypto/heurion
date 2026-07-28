@@ -104,6 +104,7 @@ dependencies = [
     "matplotlib>=3.8",
     "plotly>=5.0",
     "boto3>=1.28",
+    "docker>=7.0",
 ]
 
 [project.optional-dependencies]

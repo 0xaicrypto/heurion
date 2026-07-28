@@ -6,37 +6,43 @@ import { Alert, Badge, Button, Card, Input, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
 const SOURCES = [
-  { key: 'official', label: 'Anthropic', icon: <Globe size={14} />, desc: 'Official Claude skill catalog' },
-  { key: 'github', label: 'GitHub', icon: <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 1C5.925 1 1 5.925 1 12c0 4.867 3.154 8.993 7.533 10.45.55.101.733-.238.733-.529 0-.262-.01-1.13-.015-2.05-3.065.665-3.71-1.47-3.71-1.47-.501-1.273-1.224-1.613-1.224-1.613-.999-.683.076-.669.076-.669 1.105.078 1.687 1.135 1.687 1.135.982 1.682 2.576 1.197 3.204.916.1-.712.384-1.197.698-1.472-2.448-.278-5.021-1.224-5.021-5.45 0-1.204.43-2.188 1.135-2.96-.114-.278-.492-1.397.108-2.912 0 0 .925-.297 3.03 1.13A10.56 10.56 0 0 1 12 6.843c.937.005 1.88.127 2.762.372 2.103-1.427 3.027-1.13 3.027-1.13.602 1.515.224 2.634.11 2.912.706.772 1.134 1.756 1.134 2.96 0 4.235-2.577 5.168-5.03 5.44.395.34.747 1.01.747 2.037 0 1.472-.014 2.657-.014 3.02 0 .293.182.633.74.526C19.85 20.99 23 16.866 23 12c0-6.075-4.925-11-11-11Z" /></svg>, desc: 'Community skills from GitHub' },
+  { key: 'official', label: 'Official', icon: <Globe size={14} />, desc: 'Heurion official plugins' },
   { key: 'all', label: 'All Sources', icon: <Package size={14} />, desc: 'Combined catalog search' },
 ];
 
-interface SkillResult {
-  identifier: string;
+interface CatalogPlugin {
+  id: string;
   name: string;
+  version: string;
   description: string;
-  source: string;
+  category: string;
+  author: { name: string };
+  tags: string[];
+  runtime: string;
   installed: boolean;
 }
 
-interface InstalledSkill {
+interface InstalledPlugin {
+  pluginId: string;
   name: string;
-  title: string;
+  version: string;
   description: string;
-  version?: string;
-  author?: string;
-  enabled?: boolean;
+  author: string;
+  enabled: boolean;
+  installedAt: string;
+  updatedAt: string;
+  config: Record<string, unknown>;
 }
 
 export function PluginsPage() {
   const [tab, setTab] = useState<'installed' | 'market'>('market');
   const [source, setSource] = useState('official');
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SkillResult[]>([]);
+  const [results, setResults] = useState<CatalogPlugin[]>([]);
   const [marketLoading, setMarketLoading] = useState(false);
   const [marketError, setMarketError] = useState<string | null>(null);
 
-  const [installed, setInstalled] = useState<InstalledSkill[]>([]);
+  const [installed, setInstalled] = useState<InstalledPlugin[]>([]);
   const [installedLoading, setInstalledLoading] = useState(true);
   const [installing, setInstalling] = useState<string | null>(null);
 
@@ -45,8 +51,8 @@ export function PluginsPage() {
   const loadInstalled = useCallback(async () => {
     setInstalledLoading(true);
     try {
-      const r = await api.listSkills();
-      setInstalled(r.skills);
+      const r = await api.listInstalledPlugins();
+      setInstalled(r.plugins);
     } catch { /* ignore */ }
     finally { setInstalledLoading(false); }
   }, []);
@@ -57,22 +63,8 @@ export function PluginsPage() {
     setMarketLoading(true);
     setMarketError(null);
     try {
-      if (src === 'all') {
-        const [official, github] = await Promise.all([
-          api.searchSkills(q, 'official').then(r => r.results || []),
-          api.searchSkills(q, 'github').then(r => r.results || []).catch(() => []),
-        ]);
-        const seen = new Set<string>();
-        const combined = [...official, ...github].filter(r => {
-          if (seen.has(r.identifier)) return false;
-          seen.add(r.identifier);
-          return true;
-        });
-        setResults(combined);
-      } else {
-        const r = await api.searchSkills(q, src);
-        setResults(r.results || []);
-      }
+      const r = await api.listPluginCatalog(q, src === 'all' ? undefined : src);
+      setResults(r.plugins);
     } catch (err) {
       setMarketError(err instanceof ApiError ? err.messageText : 'Search failed');
       setResults([]);
@@ -87,14 +79,19 @@ export function PluginsPage() {
     return () => clearTimeout(debounceRef.current);
   }, [query, source, doSearch]);
 
-  const toggle = async (name: string, enabled: boolean) => {
-    try { await api.toggleSkill(name, !enabled); loadInstalled(); } catch { /* ignore */ }
+  const toggle = async (pluginId: string, enabled: boolean) => {
+    try {
+      if (enabled) await api.disablePlugin(pluginId);
+      else await api.enablePlugin(pluginId);
+      loadInstalled();
+      doSearch(query, source);
+    } catch { /* ignore */ }
   };
 
-  const handleInstall = async (identifier: string) => {
-    setInstalling(identifier);
+  const handleInstall = async (pluginId: string) => {
+    setInstalling(pluginId);
     try {
-      await api.installSkill(identifier);
+      await api.installPlugin(pluginId);
       loadInstalled();
       doSearch(query, source);
     } catch (err) {
@@ -104,9 +101,9 @@ export function PluginsPage() {
     }
   };
 
-  const handleUninstall = async (name: string) => {
+  const handleUninstall = async (pluginId: string) => {
     try {
-      await api.uninstallSkill(name);
+      await api.uninstallPlugin(pluginId);
       loadInstalled();
       doSearch(query, source);
     } catch (err) {
@@ -114,13 +111,13 @@ export function PluginsPage() {
     }
   };
 
-  const installedNames = new Set(installed.map((s) => s.name));
+  const installedSet = new Set(installed.map((s) => s.pluginId));
 
   return (
     <AppShell>
       <div className="flex h-full flex-col overflow-y-auto">
         <header className="flex h-14 items-center border-b border-border bg-surface px-6">
-          <h1 className="font-semibold text-text-primary">Plugins</h1>
+          <h1 className="font-semibold text-text-primary">Plugin Marketplace</h1>
           <div className="ml-6 flex gap-1">
             <button onClick={() => setTab('market')} className={cn('rounded-lg px-3 py-1.5 text-sm font-medium transition-colors', tab === 'market' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:text-text-primary')}>
               Marketplace
@@ -179,25 +176,31 @@ export function PluginsPage() {
                 </Card>
               ) : (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {results.map((skill) => {
-                    const isInstalled = installedNames.has(skill.name);
+                  {results.map((plugin) => {
+                    const isInstalled = installedSet.has(plugin.id);
                     return (
-                      <Card key={skill.identifier} className="flex flex-col p-4">
+                      <Card key={plugin.id} className="flex flex-col p-4">
                         <div className="flex-1">
                           <div className="flex items-start justify-between gap-2">
-                            <h3 className="font-medium text-text-primary truncate">{skill.name}</h3>
+                            <h3 className="font-medium text-text-primary truncate">{plugin.name}</h3>
                             <Badge variant="default" className="shrink-0 text-xs">
-                              {skill.source}
+                              {plugin.category}
                             </Badge>
                           </div>
-                          <p className="mt-2 text-xs text-text-tertiary line-clamp-3">{skill.description || 'No description'}</p>
+                          <p className="mt-2 text-xs text-text-tertiary line-clamp-3">{plugin.description || 'No description'}</p>
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {plugin.tags.map((tag) => (
+                              <span key={tag} className="rounded bg-surface px-1.5 py-0.5 text-[10px] text-text-tertiary">{tag}</span>
+                            ))}
+                          </div>
+                          <p className="mt-2 text-xs text-text-tertiary/60">v{plugin.version} · {plugin.author.name} · {plugin.runtime}</p>
                         </div>
                         <Button
                           size="sm"
                           className="mt-3 w-full"
                           variant={isInstalled ? 'secondary' : 'primary'}
-                          onClick={() => handleInstall(skill.identifier)}
-                          isLoading={installing === skill.identifier}
+                          onClick={() => handleInstall(plugin.id)}
+                          isLoading={installing === plugin.id}
                         >
                           {isInstalled ? 'Installed ✓' : <><Download size={14} className="mr-1.5" /> Install</>}
                         </Button>
@@ -223,23 +226,23 @@ export function PluginsPage() {
                 </Card>
               ) : (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {installed.map((skill) => (
-                    <Card key={skill.name} className="flex flex-col p-4">
+                  {installed.map((plugin) => (
+                    <Card key={plugin.pluginId} className="flex flex-col p-4">
                       <div className="flex-1">
                         <div className="flex items-start justify-between">
-                          <h3 className="font-medium text-text-primary truncate">{skill.title || skill.name}</h3>
-                          <Badge variant={skill.enabled ? 'success' : 'default'} className="shrink-0">
-                            {skill.enabled ? 'Active' : 'Disabled'}
+                          <h3 className="font-medium text-text-primary truncate">{plugin.name}</h3>
+                          <Badge variant={plugin.enabled ? 'success' : 'default'} className="shrink-0">
+                            {plugin.enabled ? 'Active' : 'Disabled'}
                           </Badge>
                         </div>
-                        <p className="mt-2 text-xs text-text-tertiary line-clamp-2">{skill.description || 'No description'}</p>
-                        {skill.version && <p className="mt-1 text-xs text-text-tertiary/60">v{skill.version}{skill.author ? ` · ${skill.author}` : ''}</p>}
+                        <p className="mt-2 text-xs text-text-tertiary line-clamp-2">{plugin.description || 'No description'}</p>
+                        <p className="mt-1 text-xs text-text-tertiary/60">v{plugin.version} · {plugin.author}</p>
                       </div>
                       <div className="mt-3 flex gap-2">
-                        <Button size="sm" variant="secondary" className="flex-1" onClick={() => toggle(skill.name, !!skill.enabled)}>
-                          {skill.enabled ? <><ToggleRight size={14} className="mr-1" /> Disable</> : <><ToggleLeft size={14} className="mr-1" /> Enable</>}
+                        <Button size="sm" variant="secondary" className="flex-1" onClick={() => toggle(plugin.pluginId, plugin.enabled)}>
+                          {plugin.enabled ? <><ToggleRight size={14} className="mr-1" /> Disable</> : <><ToggleLeft size={14} className="mr-1" /> Enable</>}
                         </Button>
-                        <Button size="sm" variant="ghost" className="shrink-0 text-error" onClick={() => handleUninstall(skill.name)}>
+                        <Button size="sm" variant="ghost" className="shrink-0 text-error" onClick={() => handleUninstall(plugin.pluginId)}>
                           <Trash2 size={14} />
                         </Button>
                       </div>

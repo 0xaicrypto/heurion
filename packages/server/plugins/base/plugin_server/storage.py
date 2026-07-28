@@ -1,10 +1,10 @@
-"""Object storage upload helpers for the Execution Plane."""
+"""Object storage upload helpers for plugin containers."""
 
 import os
 import logging
 from typing import BinaryIO
 
-logger = logging.getLogger("heurion-worker.storage")
+logger = logging.getLogger("plugin-server.storage")
 
 _S3_CLIENT = None
 
@@ -27,9 +27,6 @@ def get_s3_client():
         raise RuntimeError("S3_ENDPOINT, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are required")
 
     config = Config(
-        # Some S3-compatible providers (e.g. DigitalOcean Spaces) use virtual-
-        # hosted style by default; path-style is simpler for bucket names that
-        # contain dots.
         s3={"addressing_style": "path"},
         retries={"max_attempts": 3, "mode": "standard"},
     )
@@ -52,11 +49,11 @@ def upload_output(
     tenant_prefix: str,
     file_id: str,
 ) -> dict:
-    """Upload a rendered file to object storage.
+    """Upload a rendered file to object storage or a local directory."""
+    local_dir = os.environ.get("PLUGIN_LOCAL_OUTPUT_DIR", "")
+    if local_dir:
+        return _upload_local(file_obj, file_name, mime_type, tenant_prefix, file_id, local_dir)
 
-    The object key is structured as ``tenants/{tenant_prefix}/{file_id}/{file_name}``
-    so that outputs are isolated by workspace/tenant.
-    """
     bucket = os.environ.get("S3_BUCKET", "")
     if not bucket:
         raise RuntimeError("S3_BUCKET is not configured")
@@ -74,8 +71,6 @@ def upload_output(
         ACL="private",
     )
 
-    # Construct a download URL. For S3-compatible providers the bucket is part
-    # of the path because we use path-style addressing.
     endpoint = os.environ.get("S3_ENDPOINT", "").rstrip("/")
     download_url = f"{endpoint}/{bucket}/{key}"
 
@@ -92,18 +87,45 @@ def upload_output(
     }
 
 
-def get_download_url(storage_key: str, expires_in: int = 300) -> str:
-    """Generate a download URL for an object in object storage or a local file."""
-    if os.path.isabs(storage_key) or storage_key.startswith("tenants/"):
-        local_dir = os.environ.get("PLUGIN_LOCAL_OUTPUT_DIR", "")
-        if local_dir:
-            local_path = os.path.join(local_dir, storage_key)
-            if os.path.exists(local_path):
-                url_prefix = os.environ.get("PLUGIN_LOCAL_URL_PREFIX", "")
-                if url_prefix:
-                    return f"{url_prefix.rstrip('/')}/{storage_key}"
-                return os.path.abspath(local_path)
+def _upload_local(
+    file_obj: BinaryIO,
+    file_name: str,
+    mime_type: str,
+    tenant_prefix: str,
+    file_id: str,
+    local_dir: str,
+) -> dict:
+    import pathlib
 
+    out_dir = pathlib.Path(local_dir) / "tenants" / tenant_prefix / file_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / file_name
+
+    file_obj.seek(0)
+    out_path.write_bytes(file_obj.read())
+
+    file_obj.seek(0, os.SEEK_END)
+    size_bytes = file_obj.tell()
+
+    url_prefix = os.environ.get("PLUGIN_LOCAL_URL_PREFIX", "")
+    if url_prefix:
+        download_url = f"{url_prefix.rstrip('/')}/tenants/{tenant_prefix}/{file_id}/{file_name}"
+    else:
+        download_url = out_path.resolve().as_uri()
+
+    logger.info("Saved local plugin output %s (%d bytes)", out_path, size_bytes)
+    return {
+        "file_id": file_id,
+        "file_name": file_name,
+        "mime_type": mime_type,
+        "size_bytes": size_bytes,
+        "storage_key": str(out_path.resolve()),
+        "download_url": download_url,
+    }
+
+
+def get_download_url(storage_key: str, expires_in: int = 300) -> str:
+    """Generate a time-limited presigned URL for an object in object storage."""
     bucket = os.environ.get("S3_BUCKET", "")
     if not bucket:
         raise RuntimeError("S3_BUCKET is not configured")

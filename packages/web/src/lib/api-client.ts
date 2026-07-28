@@ -858,6 +858,52 @@ class ApiClient {
     return this.fetch(`/api/v1/workflows/runs${q}`);
   }
 
+  /* ────────────────────────── plugin marketplace ────────────────────────── */
+
+  async listPluginCatalog(query?: string, source?: string): Promise<{plugins: Array<{id: string; name: string; version: string; description: string; category: string; author: {name: string}; tags: string[]; runtime: string; installed: boolean}>}> {
+    const params = new URLSearchParams();
+    if (query) params.set('query', query);
+    if (source) params.set('source', source);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return this.fetch(`/api/v1/plugins/catalog${qs}`);
+  }
+
+  private pluginPath(id: string) {
+    return id.replace('/', '/');
+  }
+
+  async getPluginCatalogItem(id: string): Promise<{id: string; manifest: Record<string, unknown>; installed: boolean; enabled: boolean}> {
+    return this.fetch(`/api/v1/plugins/catalog/${this.pluginPath(id)}`);
+  }
+
+  async installPlugin(pluginId: string, version?: string): Promise<{pluginId: string; name: string; version: string; description: string; author: string; enabled: boolean; installedAt: string}> {
+    return this.fetch('/api/v1/plugins/install', { method: 'POST', body: JSON.stringify({ pluginId, version }) });
+  }
+
+  async uninstallPlugin(id: string): Promise<{uninstalled: boolean}> {
+    return this.fetch(`/api/v1/plugins/${this.pluginPath(id)}`, { method: 'DELETE' });
+  }
+
+  async enablePlugin(id: string): Promise<{enabled: boolean}> {
+    return this.fetch(`/api/v1/plugins/${this.pluginPath(id)}/enable`, { method: 'POST' });
+  }
+
+  async disablePlugin(id: string): Promise<{enabled: boolean}> {
+    return this.fetch(`/api/v1/plugins/${this.pluginPath(id)}/disable`, { method: 'POST' });
+  }
+
+  async listInstalledPlugins(): Promise<{plugins: Array<{pluginId: string; name: string; version: string; description: string; author: string; enabled: boolean; installedAt: string; updatedAt: string; config: Record<string, unknown>}>}> {
+    return this.fetch('/api/v1/plugins/installed');
+  }
+
+  async getPluginSettings(id: string): Promise<{schema: Record<string, unknown>; values: Record<string, unknown>}> {
+    return this.fetch(`/api/v1/plugins/${this.pluginPath(id)}/settings`);
+  }
+
+  async savePluginSettings(id: string, values: Record<string, unknown>): Promise<{saved: boolean}> {
+    return this.fetch(`/api/v1/plugins/${this.pluginPath(id)}/settings`, { method: 'PUT', body: JSON.stringify(values) });
+  }
+
   /* ────────────────────────── chat (SSE) ────────────────────────── */
 
   async *sendChat(

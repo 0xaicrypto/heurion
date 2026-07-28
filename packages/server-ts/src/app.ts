@@ -19,6 +19,7 @@ import { medicalRecordsRouter } from './modules/medical-records/medical-records.
 import { stubRouter } from './modules/stubs/stubs.router.js'
 import { knowledgeRouter } from './modules/knowledge/knowledge.router.js'
 import { executionRouter } from './modules/execution/execution.router.js'
+import { pluginsRouter } from './modules/plugins/plugins.router.js'
 import { PrismaTelemetryService } from './modules/knowledge/telemetry.service.js'
 import { setLlmTelemetryService } from './common/llm.js'
 import {
@@ -81,6 +82,7 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   await app.register(knowledgeRouter)
   await app.register(evolutionRouter, { evolutionQueue })
   await app.register(stubRouter)
+  await app.register(pluginsRouter)
   await app.register(executionRouter)
 
   // ── Serve web frontend for staging/testing (SPA fallback on non-/api routes) ──

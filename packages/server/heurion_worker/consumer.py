@@ -14,6 +14,7 @@ import time
 from typing import Any
 
 from heurion_worker.sidecar import dispatch
+from heurion_worker.plugin_runner import run as run_plugin
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("heurion-worker.consumer")
@@ -57,9 +58,20 @@ def _parse_payload(record: dict[str, str]) -> dict[str, Any]:
         return {}
 
 
+def _parse_tenant(record: dict[str, str]) -> dict[str, Any]:
+    raw = record.get("tenant", "")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
 def _handle(job_id: str, record: dict[str, str]) -> dict:
     job_type = record.get("type", "")
     payload = _parse_payload(record)
+    tenant = _parse_tenant(record)
 
     logger.info("Processing job %s of type %s", job_id, job_type)
 
@@ -67,7 +79,12 @@ def _handle(job_id: str, record: dict[str, str]) -> dict:
     if not job_type.startswith("sidecar."):
         return {"acknowledged": True, "type": job_type}
 
-    return dispatch(job_type, payload)
+    # New plugin-based execution path.
+    try:
+        return run_plugin(job_type, payload, tenant)
+    except Exception:
+        logger.exception("Plugin runner failed for %s, falling back to legacy dispatch", job_type)
+        return dispatch(job_type, payload)
 
 
 def run():

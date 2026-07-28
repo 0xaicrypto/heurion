@@ -864,6 +864,17 @@ def create_app() -> FastAPI:
             name="dicom-viewer",
         )
 
+    # Plugin Marketplace local output files. When S3 is not configured the
+    # worker writes rendered files to PLUGIN_LOCAL_OUTPUT_DIR; this mount
+    # lets the Control Plane serve them under a stable URL prefix.
+    _plugin_output_dir = os.environ.get("PLUGIN_LOCAL_OUTPUT_DIR", "")
+    if _plugin_output_dir and _Path(_plugin_output_dir).is_dir():
+        app.mount(
+            "/plugin-outputs",
+            _StaticFiles(directory=_plugin_output_dir),
+            name="plugin-outputs",
+        )
+
     # Web UI static files (packages/web/dist). When the dist directory is
     # present, serve it at /. API routes take precedence because they are
     # registered before this route. SPA fallback sends unknown paths to

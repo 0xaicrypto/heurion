@@ -38,6 +38,7 @@ model User {
   patients      PatientRecord[]
   knowledgeGaps KnowledgeGap[]
   telemetryEvents TelemetryEvent[]
+  pluginInstallations PluginInstallation[]
   @@map("users")
 }
 
@@ -299,4 +300,51 @@ model TelemetryEvent {
   @@index([workspaceId, category, createdAt(sort: Desc)])
   @@index([category, createdAt(sort: Desc)])
   @@map("telemetry_events")
+}
+
+model PluginCatalog {
+  id          String @id
+  source      String @default("official")
+  manifest    String
+  createdAt   String @map("created_at")
+  updatedAt   String @map("updated_at")
+
+  installations PluginInstallation[]
+  @@index([source])
+  @@map("plugin_catalog")
+}
+
+model PluginInstallation {
+  id           String  @id @default(cuid())
+  userId       String  @map("user_id")
+  pluginId     String  @map("plugin_id")
+  version      String
+  enabled      Int     @default(1)
+  config       String  @default("{}")
+  installedAt  String  @map("installed_at")
+  updatedAt    String  @map("updated_at")
+
+  user   User          @relation(fields: [userId], references: [id])
+  plugin PluginCatalog @relation(fields: [pluginId], references: [id])
+
+  @@unique([userId, pluginId])
+  @@index([userId, enabled])
+  @@map("plugin_installations")
+}
+
+model PluginAuditLog {
+  id            String  @id @default(cuid())
+  userId        String  @map("user_id")
+  pluginId      String  @map("plugin_id")
+  toolName      String  @map("tool_name")
+  jobId         String  @map("job_id")
+  status        String
+  durationMs    Int     @map("duration_ms")
+  inputSummary  String? @map("input_summary")
+  errorMessage  String? @map("error_message")
+  createdAt     String  @map("created_at")
+
+  @@index([userId, pluginId, createdAt(sort: Desc)])
+  @@index([jobId])
+  @@map("plugin_audit_logs")
 }

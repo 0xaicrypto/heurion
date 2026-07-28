@@ -6,7 +6,7 @@ import { deepseekStream, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
 import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
 import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
-import { handleSidecarRequest } from '../execution/sidecar-chat-handler.js'
+import { handlePluginChatRequest } from '../plugins/plugin-chat-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { type EvolutionQueue } from '../evolution/evolution.queue.js'
@@ -132,7 +132,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
         return
       }
 
-      // Sidecar document rendering — handled directly without streaming LLM output
+      // Plugin-based document rendering — handled directly without streaming LLM output
       if (routeResult.intent === 'sidecar') {
         let patient: any = null
         if (patientHash) {
@@ -141,8 +141,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           })
         }
 
-        send({ type: 'context_info', text: 'Sidecar: rendering document...', kind: 'sidecar' })
-        const sidecarResult = await handleSidecarRequest({
+        const pluginResult = await handlePluginChatRequest({
           userId,
           workspaceId: userId,
           text: body.text,
@@ -155,18 +154,19 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
                 chiefComplaint: patient.chiefComplaint,
               }
             : null,
-          telemetryContext: { userId, workspaceId: userId, action: 'sidecar.build_payload' },
+          telemetryContext: { userId, workspaceId: userId, action: 'plugin.build_payload' },
+          send,
         })
 
         await telemetry.record({
           userId,
           workspaceId: userId,
-          category: 'sidecar',
+          category: 'plugin',
           action: 'render',
           metadata: {
-            jobId: sidecarResult.job?.job_id,
-            status: sidecarResult.job?.status,
-            hadError: sidecarResult.job?.status === 'failed',
+            jobId: pluginResult.job?.job_id,
+            status: pluginResult.job?.status,
+            hadError: pluginResult.job?.status === 'failed',
           },
         }).catch(() => {})
 
@@ -174,38 +174,36 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           timestamp: Date.now() / 1000,
           eventType: 'user_message',
           content: body.text,
-          metadata: { patientHash, sidecar: true },
+          metadata: { patientHash, plugin: true },
           agentId: userId,
           sessionId: sid,
         })
-        const sidecarMeta: Record<string, unknown> = { sidecar: true, jobId: sidecarResult.job?.job_id }
-        if (sidecarResult.file) {
-          sidecarMeta.file = {
-            fileId: sidecarResult.file.fileId,
-            fileName: sidecarResult.file.fileName,
-            mimeType: sidecarResult.file.mimeType,
+        const pluginMeta: Record<string, unknown> = { plugin: true, jobId: pluginResult.job?.job_id }
+        if (pluginResult.file) {
+          pluginMeta.file = {
+            fileId: pluginResult.file.fileId,
+            fileName: pluginResult.file.fileName,
+            mimeType: pluginResult.file.mimeType,
           }
-          sidecarMeta.knowledgePayload = sidecarResult.file.knowledgePayload
         }
         ctx.eventLog.append({
           timestamp: Date.now() / 1000,
           eventType: 'assistant_response',
-          content: sidecarResult.text,
-          metadata: sidecarMeta,
+          content: pluginResult.text,
+          metadata: pluginMeta,
           agentId: userId,
           sessionId: sid,
         })
 
-        send({ type: 'final_answer_chunk', text: sidecarResult.text })
-        if (sidecarResult.file) {
+        send({ type: 'final_answer_chunk', text: pluginResult.text })
+        if (pluginResult.file) {
           send({
             type: 'sidecar_file',
-            file_id: sidecarResult.file.fileId,
-            file_name: sidecarResult.file.fileName,
-            mime_type: sidecarResult.file.mimeType,
-            download_url: sidecarResult.file.downloadUrl,
-            expires_in: sidecarResult.file.expiresIn,
-            knowledge_payload: sidecarResult.file.knowledgePayload,
+            file_id: pluginResult.file.fileId,
+            file_name: pluginResult.file.fileName,
+            mime_type: pluginResult.file.mimeType,
+            download_url: pluginResult.file.downloadUrl,
+            expires_in: pluginResult.file.expiresIn,
           })
         }
         send({ type: 'citations', items: [] })
