@@ -954,6 +954,7 @@ class ApiClient {
     status: 'pending' | 'running' | 'completed' | 'failed' | 'unknown';
     created_at: number;
     result?: Record<string, unknown>;
+    error?: string;
   } | null> {
     return this.fetch(`/api/v1/execution/jobs/${jobId}`);
   }

@@ -88,7 +88,7 @@ export async function handlePluginChatRequest(options: PluginChatHandlerOptions)
     status: final?.status || job.status || 'unknown',
     durationMs,
     inputSummary: buildInputSummary(payload),
-    errorMessage: final?.status === 'failed' ? (final.result?.error as string) || 'plugin execution failed' : '',
+    errorMessage: final?.status === 'failed' ? (final.error as string) || (final.result?.error as string) || 'plugin execution failed' : '',
   }).catch(() => {})
 
   if (!final || final.status !== 'completed') {

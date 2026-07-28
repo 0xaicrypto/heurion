@@ -20,6 +20,7 @@ interface JobStatus {
   status: 'pending' | 'running' | 'completed' | 'failed' | 'unknown';
   created_at: number;
   result?: Record<string, unknown>;
+  error?: string;
 }
 
 const statusOptions = ['', 'pending', 'running', 'completed', 'failed', 'unknown'];
@@ -57,6 +58,7 @@ export function LogsPage() {
   const [limit, setLimit] = useState(50);
   const [offset, setOffset] = useState(0);
 
+  const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   const [selectedJob, setSelectedJob] = useState<JobStatus | null>(null);
   const [jobLoading, setJobLoading] = useState(false);
   const [jobError, setJobError] = useState<string | null>(null);
@@ -92,12 +94,13 @@ export function LogsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pluginId, status, limit, offset]);
 
-  const handleJobClick = async (jobId: string) => {
+  const handleJobClick = async (log: AuditLog) => {
     setJobLoading(true);
     setJobError(null);
     setSelectedJob(null);
+    setSelectedLog(log);
     try {
-      const job = await api.getExecutionJobStatus(jobId);
+      const job = await api.getExecutionJobStatus(log.jobId);
       setSelectedJob(job);
     } catch (err) {
       setJobError(err instanceof ApiError ? err.messageText : 'Failed to load job status');
@@ -203,7 +206,7 @@ export function LogsPage() {
                         <td className="px-4 py-3 text-text-primary">{log.toolName}</td>
                         <td className="px-4 py-3">
                           <button
-                            onClick={() => handleJobClick(log.jobId)}
+                            onClick={() => handleJobClick(log)}
                             className="font-mono text-xs text-accent hover:underline"
                           >
                             {log.jobId}
@@ -257,19 +260,51 @@ export function LogsPage() {
               <Skeleton className="h-4 w-full" />
             </Card>
           )}
-          {selectedJob && (
-            <Card className="p-4 space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="font-medium text-text-primary">Job {selectedJob.job_id}</span>
-                <Badge variant={statusVariant(selectedJob.status)}>{selectedJob.status}</Badge>
+          {selectedLog && (
+            <Card className="p-4 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-text-primary">Job {selectedLog.jobId}</span>
+                <Badge variant={statusVariant(selectedLog.status)}>{selectedLog.status}</Badge>
+                <span className="text-xs text-text-secondary">{selectedLog.durationMs}ms</span>
               </div>
               <div className="text-xs text-text-secondary">
-                Created at: {new Date(selectedJob.created_at * 1000).toLocaleString()}
+                {formatDate(selectedLog.createdAt)} · {selectedLog.pluginId} · {selectedLog.toolName}
               </div>
-              {selectedJob.result && (
-                <pre className="max-h-64 overflow-auto rounded-lg bg-surface p-3 text-xs text-text-primary">
-                  {JSON.stringify(selectedJob.result, null, 2)}
-                </pre>
+
+              {selectedLog.errorMessage && (
+                <div className="rounded-lg bg-error/10 p-3 text-sm text-error">
+                  <span className="font-medium">Audit error:</span>
+                  <p className="mt-1 whitespace-pre-wrap">{selectedLog.errorMessage}</p>
+                </div>
+              )}
+
+              {selectedJob?.error && (
+                <div className="rounded-lg bg-error/10 p-3 text-sm text-error">
+                  <span className="font-medium">Worker error:</span>
+                  <p className="mt-1 whitespace-pre-wrap">{selectedJob.error}</p>
+                </div>
+              )}
+
+              {selectedJob?.result && (
+                <>
+                  <div className="text-xs font-medium text-text-secondary">Result</div>
+                  <pre className="max-h-64 overflow-auto rounded-lg bg-surface p-3 text-xs text-text-primary">
+                    {JSON.stringify(selectedJob.result, null, 2)}
+                  </pre>
+                </>
+              )}
+
+              {selectedLog.inputSummary && (
+                <>
+                  <div className="text-xs font-medium text-text-secondary">Input summary</div>
+                  <pre className="max-h-48 overflow-auto rounded-lg bg-surface p-3 text-xs text-text-primary">
+                    {selectedLog.inputSummary}
+                  </pre>
+                </>
+              )}
+
+              {!selectedJob?.error && !selectedJob?.result && !selectedLog.errorMessage && !selectedLog.inputSummary && (
+                <p className="text-sm text-text-secondary">No detailed information returned for this job.</p>
               )}
             </Card>
           )}

@@ -15,6 +15,7 @@ export interface ExecutionJobStatus {
   status: 'pending' | 'running' | 'completed' | 'failed' | 'unknown'
   created_at: number
   result?: Record<string, unknown>
+  error?: string
 }
 
 export interface FileDownloadUrl {
