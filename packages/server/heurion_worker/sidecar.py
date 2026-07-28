@@ -255,9 +255,13 @@ def render_plot(payload: dict[str, Any]) -> dict:
 
 HANDLERS = {
     "sidecar.generate_docx": generate_docx,
+    "sidecar.heurion/docx.generate_docx": generate_docx,
     "sidecar.generate_pptx": generate_pptx,
+    "sidecar.heurion/pptx.generate_pptx": generate_pptx,
     "sidecar.render_table": render_table,
+    "sidecar.heurion/table.render_table": render_table,
     "sidecar.render_plot": render_plot,
+    "sidecar.heurion/plot.render_plot": render_plot,
 }
 
 
