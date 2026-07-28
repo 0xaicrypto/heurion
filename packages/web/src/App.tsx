@@ -31,6 +31,7 @@ import { ExportPage } from '@/routes/export-data';
 import { PluginsPage } from '@/routes/plugins';
 import { KnowledgePage } from '@/routes/knowledge';
 import { useAuthStore } from '@/stores/auth';
+import { PluginUIProvider } from '@/components/plugins/PluginUIRegistry';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
@@ -63,7 +64,8 @@ export default function App() {
     <>
       <AuthEvents />
       <ErrorBoundary>
-        <Routes>
+        <PluginUIProvider>
+          <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/memory" element={<MemoryPage />} />
@@ -225,6 +227,7 @@ export default function App() {
           />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </PluginUIProvider>
       </ErrorBoundary>
     </>
   );

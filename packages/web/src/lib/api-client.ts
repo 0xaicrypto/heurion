@@ -87,6 +87,10 @@ class ApiClient {
     return this.token;
   }
 
+  getClientApiVersion() {
+    return CLIENT_API_VERSION;
+  }
+
   logout() {
     this.token = null;
     storageRemove(STORAGE_KEY_TOKEN);
@@ -894,6 +898,10 @@ class ApiClient {
 
   async listInstalledPlugins(): Promise<{plugins: Array<{pluginId: string; name: string; version: string; description: string; author: string; enabled: boolean; installedAt: string; updatedAt: string; config: Record<string, unknown>}>}> {
     return this.fetch('/api/v1/plugins/installed');
+  }
+
+  async listInstalledUIPlugins(): Promise<{plugins: Array<{pluginId: string; name: string; ui: {bundle_url: string; integrity?: string; extension_points: Array<{type: string; id: string; target?: string; label?: string}>}}>}> {
+    return this.fetch('/api/v1/plugins/installed-ui');
   }
 
   async getPluginSettings(id: string): Promise<{schema: Record<string, unknown>; values: Record<string, unknown>}> {

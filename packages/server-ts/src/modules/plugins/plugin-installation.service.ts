@@ -112,6 +112,25 @@ function buildDefaultConfig(manifest: PluginManifest): Record<string, unknown> {
   return config
 }
 
+export interface InstalledUIPluginView {
+  pluginId: string
+  name: string
+  ui: PluginManifest['ui']
+}
+
+export async function listInstalledUIPlugins(userId: string): Promise<InstalledUIPluginView[]> {
+  const rows = await prisma.pluginInstallation.findMany({
+    where: { userId, enabled: 1 },
+  })
+  const views: InstalledUIPluginView[] = []
+  for (const row of rows) {
+    const manifest = await getCatalogById(row.pluginId)
+    if (!manifest?.ui) continue
+    views.push({ pluginId: row.pluginId, name: manifest.plugin.name, ui: manifest.ui })
+  }
+  return views
+}
+
 function toView(row: { pluginId: string; enabled: number; version: string; config: string; installedAt: string; updatedAt: string }, manifest: PluginManifest): InstalledPluginView {
   return {
     pluginId: row.pluginId,

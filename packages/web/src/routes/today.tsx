@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Activity, AlertCircle, FilePlus, FileText, UserPlus } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
+import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/lib/api-client';
 import type { AgentState, Patient, TimelineEvent } from '@/lib/types';
@@ -49,6 +50,12 @@ export function TodayPage() {
           </div>
 
           {error && <Alert variant="error">{error}</Alert>}
+
+          <PluginExtensionPoint
+            point="dashboard_card"
+            context={{ userName: displayName }}
+            fallback={null}
+          />
 
           {loading ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

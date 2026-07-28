@@ -16,6 +16,7 @@ import {
   getInstalledPlugin,
   getPluginConfig,
   setPluginConfig,
+  listInstalledUIPlugins,
 } from './plugin-installation.service.js'
 
 export async function pluginsRouter(app: FastifyInstance) {
@@ -150,6 +151,11 @@ export async function pluginsRouter(app: FastifyInstance) {
   app.get('/api/v1/plugins/installed', async (request) => {
     const installed = await listInstalledPlugins(request.user!.userId)
     return { plugins: installed }
+  })
+
+  app.get('/api/v1/plugins/installed-ui', async (request) => {
+    const plugins = await listInstalledUIPlugins(request.user!.userId)
+    return { plugins }
   })
 
   app.get('/api/v1/plugins/:namespace/:name/settings', async (request, reply) => {

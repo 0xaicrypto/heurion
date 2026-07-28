@@ -1,0 +1,29 @@
+{
+  "manifest_version": "1.0",
+  "source": "community",
+  "plugin": {
+    "id": "demo/hello-card",
+    "name": "Hello Card Demo",
+    "version": "0.1.0",
+    "description": "A minimal UI plugin that renders a card on the dashboard.",
+    "category": "ui",
+    "author": { "name": "Heurion Demo", "email": "demo@heurion.ai" },
+    "tags": ["demo", "ui"]
+  },
+  "runtime": {
+    "type": "process",
+    "command": ["echo", "hello"]
+  },
+  "permissions": {},
+  "ui": {
+    "bundle_url": "/plugin-demos/hello-card/index.js",
+    "integrity": "",
+    "extension_points": [
+      { "type": "dashboard_card", "id": "dashboard_card", "label": "Dashboard Card" }
+    ]
+  },
+  "tools": [
+    { "name": "noop", "description": "No-op tool for validation.", "parameters": { "type": "object" } }
+  ],
+  "triggers": []
+}

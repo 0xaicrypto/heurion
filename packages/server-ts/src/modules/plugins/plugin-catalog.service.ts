@@ -35,7 +35,19 @@ export interface PluginManifest {
   tools: PluginTool[]
   triggers?: PluginTrigger[]
   settings?: { schema?: Record<string, unknown> }
-  ui?: Record<string, unknown>
+  ui?: PluginUIManifest
+}
+
+export interface PluginUIManifest {
+  bundle_url: string
+  integrity?: string
+  extension_points: Array<{
+    type: string
+    target?: string
+    id: string
+    label?: string
+  }>
+  permissions?: string[]
 }
 
 export interface PluginTool {

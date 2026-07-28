@@ -206,4 +206,53 @@ describe('Plugin Marketplace', () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  test('installed-ui returns enabled plugins with ui manifests', async () => {
+    const app = await getApp()
+    const headers = { ...await authHeader(), 'content-type': 'application/json' }
+
+    const uiManifest = {
+      ...communityManifest,
+      plugin: {
+        ...communityManifest.plugin,
+        id: 'acme/ui-demo',
+        name: 'UI Demo Plugin',
+      },
+      ui: {
+        bundle_url: '/acme/ui-demo.js',
+        extension_points: [{ type: 'dashboard_card', id: 'dashboard_card', label: 'Dashboard Card' }],
+      },
+    }
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify(uiManifest), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+
+    try {
+      await app.inject({
+        method: 'POST',
+        url: '/api/v1/plugins/install-from-url',
+        headers,
+        payload: { url: 'https://example.com/acme-ui-demo/manifest.json' },
+      })
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/plugins/installed-ui',
+        headers: await authHeader(),
+      })
+      expect(res.statusCode).toBe(200)
+      const body = JSON.parse(res.payload)
+      expect(body.plugins).toBeDefined()
+      const found = body.plugins.find((p: any) => p.pluginId === 'acme/ui-demo')
+      expect(found).toBeDefined()
+      expect(found.ui.bundle_url).toBe('/acme/ui-demo.js')
+      expect(found.ui.extension_points).toHaveLength(1)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
 })
