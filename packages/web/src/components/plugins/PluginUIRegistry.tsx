@@ -451,12 +451,14 @@ export function PluginUIProvider({ children }: { children: React.ReactNode }) {
   return <PluginUIContext.Provider value={value}>{children}</PluginUIContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function usePluginUIRegistry() {
   const ctx = useContext(PluginUIContext);
   if (!ctx) throw new Error('usePluginUIRegistry must be used within PluginUIProvider');
   return ctx;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function usePluginRegistrations(extensionPointId: string): PluginUIRegistration[] {
   const { registrations } = usePluginUIRegistry();
   return useMemo(
@@ -465,6 +467,7 @@ export function usePluginRegistrations(extensionPointId: string): PluginUIRegist
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function usePluginIframeFallbacks(extensionPointId: string): IframeFallbackEntry[] {
   const { iframeFallbacks } = usePluginUIRegistry();
   return useMemo(

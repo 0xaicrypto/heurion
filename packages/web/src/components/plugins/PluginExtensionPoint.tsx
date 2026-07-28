@@ -64,7 +64,6 @@ function PluginHost({
         shadow.appendChild(node);
       })
       .catch((err) => {
-        // eslint-disable-next-line no-console
         console.error(`Plugin ${registration.pluginId} failed to render extension ${registration.extensionPointId}`, err);
         const errorNode = document.createElement('div');
         errorNode.textContent = `Plugin render error`;
