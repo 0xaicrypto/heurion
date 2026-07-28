@@ -1,7 +1,7 @@
 """FastAPI application assembly and entry point.
 
 Creates and configures the main FastAPI application with:
-  - Routers (auth, llm_gateway, chain_proxy, agent_state, files,
+  - Routers (auth, llm_gateway, agent_state, files,
     user_profile) — note ``sync_hub`` was retired in
     Phase B when the desktop became a thin client.
   - CORS middleware
@@ -22,16 +22,8 @@ from pathlib import Path
 #
 # Lookup order (first to set a key wins; later files only fill blanks):
 #   1. cwd .env                — operator/CI override
-#   2. packages/server/.env    — server-specific (SERVER_PRIVATE_KEY, JWT, …)
-#   3. packages/sdk/.env       — network-level fallback (NEXUS_TESTNET_RPC,
-#                                contract addresses) so chain_proxy can find
-#                                network config without duplicating it.
-#
-# Custodial signing key (SERVER_PRIVATE_KEY) is server-only and never read
-# from sdk/.env; sdk/.env is only used here as a network/contract config
-# source. SDK's NEXUS_PRIVATE_KEY may also be present — we let it through
-# into os.environ because SDK code may consult it, but chain_proxy treats
-# it as ignored.
+#   2. packages/server/.env    — server-specific (JWT, LLM keys, …)
+#   3. packages/sdk/.env       — SDK-level fallback if present.
 def _load_dotenv():
     server_pkg = Path(__file__).parent.parent
     sdk_env = server_pkg.parent / "sdk" / ".env"
@@ -269,10 +261,9 @@ class HealthCheckResponse(BaseModel):
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifecycle (startup/shutdown).
 
-    Spins up the TwinManager idle-eviction reaper + chain-activity log
-    handler on startup, drains them on shutdown so the process exits
-    cleanly. Phase B removed the legacy anchor retry daemon — see
-    sync_anchor.py for the tombstone explanation.
+    Spins up the TwinManager idle-eviction reaper on startup and drains
+    it on shutdown so the process exits cleanly. Phase B removed the
+    legacy anchor retry daemon and all BSC/chain integration.
     """
     import asyncio as _asyncio
     import os as _os
@@ -482,10 +473,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             from nexus_server import twin_manager
             twin_reaper_task, twin_stop_event = twin_manager.start_reaper()
-            # Bug 3: capture SDK chain activity into twin_chain_events
-            # so /agent/state and /agent/timeline can surface anchor
-            # successes / failures to the desktop sidebar.
-            twin_manager.install_chain_activity_handler()
         except Exception as e:
             logger.warning(
                 "TwinManager reaper failed to start (twin path disabled): %s", e
@@ -543,7 +530,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if twin_stop_event is not None:
             try:
                 from nexus_server import twin_manager
-                twin_manager.uninstall_chain_activity_handler()
                 await twin_manager.shutdown_all(twin_stop_event, twin_reaper_task)
             except Exception as e:
                 logger.warning("TwinManager shutdown failed: %s", e)

@@ -41,6 +41,37 @@ router = APIRouter(prefix="/api/v1/agent", tags=["agent"])
 sync_router = APIRouter(prefix="/api/v1/sync", tags=["sync"])
 
 
+def list_anchors_for_user(user_id: str, limit: int = 20) -> list[dict]:
+    """Read-only view of legacy sync_anchors rows."""
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT anchor_id, content_hash, bsc_tx_hash, status,
+                   first_sync_id, last_sync_id, event_count, retry_count,
+                   updated_at
+            FROM sync_anchors
+            WHERE user_id = ?
+            ORDER BY anchor_id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+    return [
+        {
+            "anchor_id": r[0],
+            "content_hash": r[1],
+            "bsc_tx_hash": r[2],
+            "status": r[3],
+            "first_sync_id": r[4],
+            "last_sync_id": r[5],
+            "event_count": r[6],
+            "retry_count": r[7],
+            "updated_at": r[8],
+        }
+        for r in rows
+    ]
+
+
 # ───────────────────────────────────────────────────────────────────────────
 # Models
 # ───────────────────────────────────────────────────────────────────────────
@@ -125,32 +156,21 @@ class TimelineResponse(BaseModel):
 class AgentStateSnapshot(BaseModel):
     """Quick state read for the sidebar header / counters.
 
-    The anchor counters are the **union** of two sources:
-      - legacy ``sync_anchors`` rows (pre-S4 history; never grows for
-        new users after S4 retired the /sync/push enqueue path)
-      - new ``twin_chain_events`` rows (post-S4, written by the chain
-        activity log handler in :mod:`twin_manager` whenever twin's
-        ChainBackend commits a BSC anchor)
-
-    For chat-mode users today the meaningful signal lives in
-    twin_chain_events; sync_anchors is only relevant for users whose
-    accounts pre-date S4.
+    The anchor counters reflect the legacy ``sync_anchors`` table
+    (pre-S4 history only; new users never accumulate rows after the
+    /sync/push enqueue path was retired in Phase B).
     """
     user_id: str
-    chain_agent_id: Optional[int]
-    chain_register_tx: Optional[str]
-    network: str
-    on_chain: bool
+    chain_agent_id: Optional[int] = None
+    chain_register_tx: Optional[str] = None
+    network: str = "local"
+    on_chain: bool = False
     memory_count: int
     anchored_count: int
     pending_anchor_count: int
     failed_anchor_count: int
     total_anchor_count: int
     last_anchor: Optional[dict] = None
-    # Last chain activity (success OR failure) — surfaced so the
-    # desktop top bar can show "Last write: 3s ago, ok" or
-    # "Last write: 12s ago, failed: bucket missing" without a separate
-    # round-trip.
     last_chain_event: Optional[dict] = None
     server_time: str
 
@@ -237,51 +257,6 @@ def _build_timeline(user_id: str, limit: int) -> list[TimelineItem]:
             metadata=meta,
         ))
 
-    # Twin chain events (post-S4 — captured by the logging handler in
-    # twin_manager). Surface every entry so the user can see both
-    # successful AND failed BSC anchors right in the activity feed
-    # instead of having to dig through server logs.
-    with get_db_connection() as conn:
-        twin_rows = conn.execute(
-            """
-            SELECT event_id, kind, status, summary, tx_hash, content_hash,
-                   object_path, error, duration_ms, created_at
-            FROM twin_chain_events
-            WHERE user_id = ?
-            ORDER BY event_id DESC
-            LIMIT ?
-            """,
-            (user_id, over),
-        ).fetchall()
-    for (eid, kind, status, summary, txh, chash, opath, err,
-         dur_ms, ts) in twin_rows:
-        if kind == "bsc_anchor" and status == "ok":
-            kind_str = "anchor.committed"
-            display = (
-                f"🔗 BSC anchor committed — tx {txh[:10]+'…' if txh else '?'}"
-            )
-        elif kind == "bsc_anchor" and status == "failed":
-            kind_str = "anchor.failed"
-            display = f"✕ BSC anchor failed: {(err or '')[:120]}"
-        else:
-            # Legacy kinds (rows written before the object-storage
-            # mirror was removed) fall through to a generic rendering.
-            kind_str = f"chain.{kind}.{status}"
-            display = summary or f"{kind} {status}"
-        items.append(TimelineItem(
-            kind=kind_str,
-            timestamp=ts,
-            summary=display,
-            metadata={
-                "tx_hash": txh,
-                "content_hash": chash,
-                "object_path": opath,
-                "error": err,
-                "duration_ms": dur_ms,
-                "twin_event_id": eid,
-            },
-        ))
-
     for (aid, chash, txh, status, first_id, last_id, n, retry, ts) in anch_rows:
         if status == "anchored":
             summary = (
@@ -329,60 +304,6 @@ def _anchor_status_counts(user_id: str) -> dict[str, int]:
     return {r[0]: int(r[1]) for r in rows}
 
 
-def _twin_chain_event_counts(user_id: str) -> dict[str, int]:
-    """Bug 3: counts of chain writes captured from twin's ChainBackend.
-
-    Returns ``{"bsc_anchor_ok", "bsc_anchor_failed", ...}`` keys
-    (``{kind}_{status}``), each an int. Empty/zero for users whose
-    twin hasn't written anything yet.
-    """
-    with get_db_connection() as conn:
-        rows = conn.execute(
-            "SELECT kind, status, COUNT(*) FROM twin_chain_events "
-            "WHERE user_id = ? GROUP BY kind, status",
-            (user_id,),
-        ).fetchall()
-    out: dict[str, int] = {}
-    for kind, status, n in rows:
-        out[f"{kind}_{status}"] = int(n)
-    return out
-
-
-def _last_twin_chain_event(user_id: str, *, status: Optional[str] = None) -> Optional[dict]:
-    """Newest twin_chain_events row, optionally filtered by status."""
-    where = "user_id = ?"
-    params: list = [user_id]
-    if status is not None:
-        where += " AND status = ?"
-        params.append(status)
-    with get_db_connection() as conn:
-        row = conn.execute(
-            f"""
-            SELECT event_id, kind, status, summary, tx_hash, content_hash,
-                   object_path, error, duration_ms, created_at
-            FROM twin_chain_events
-            WHERE {where}
-            ORDER BY event_id DESC
-            LIMIT 1
-            """,
-            params,
-        ).fetchone()
-    if row is None:
-        return None
-    return {
-        "event_id": int(row[0]),
-        "kind": row[1],
-        "status": row[2],
-        "summary": row[3] or "",
-        "tx_hash": row[4],
-        "content_hash": row[5],
-        "object_path": row[6],
-        "error": row[7],
-        "duration_ms": row[8],
-        "created_at": row[9],
-    }
-
-
 # ───────────────────────────────────────────────────────────────────────────
 # Routes
 # ───────────────────────────────────────────────────────────────────────────
@@ -398,59 +319,24 @@ async def get_agent_state(
     from nexus_server.config import get_config
     config = get_config()
 
-    with get_db_connection() as conn:
-        urow = conn.execute(
-            "SELECT chain_agent_id, chain_register_tx FROM users WHERE id = ?",
-            (current_user,),
-        ).fetchone()
-    chain_agent_id = urow[0] if urow else None
-    register_tx = urow[1] if urow else None
-
     legacy = _anchor_status_counts(current_user)
-    twin_counts = _twin_chain_event_counts(current_user)
 
-    # Sum legacy + new sources so the UI sees one unified counter
-    # regardless of which path produced the anchor. After S4 the legacy
-    # bucket only carries pre-existing history; new chat traffic flows
-    # through twin_chain_events.
-    anchored = (
-        legacy.get("anchored", 0)
-        + twin_counts.get("bsc_anchor_ok", 0)
-    )
-    # No "pending" semantic in twin_chain_events (chain writes are
-    # synchronous w.r.t. the BSC tx receipt). Pending only reflects
-    # legacy rows.
-    pending = (
-        legacy.get("pending", 0)
-        + legacy.get("awaiting_registration", 0)
-    )
-    failed = (
-        legacy.get("failed", 0)
-        + legacy.get("failed_permanent", 0)
-        + twin_counts.get("bsc_anchor_failed", 0)
-    )
-    total = (
-        sum(legacy.values())
-        + sum(twin_counts.values())
-    )
+    anchored = legacy.get("anchored", 0)
+    pending = legacy.get("pending", 0) + legacy.get("awaiting_registration", 0)
+    failed = legacy.get("failed", 0) + legacy.get("failed_permanent", 0)
+    total = sum(legacy.values())
 
     anchors = list_anchors_for_user(current_user, limit=1)
     last_anchor = anchors[0] if anchors else None
-    last_chain_event = _last_twin_chain_event(current_user)
 
     return AgentStateSnapshot(
         user_id=current_user,
-        chain_agent_id=chain_agent_id,
-        chain_register_tx=register_tx,
-        network=config.NEXUS_NETWORK,
-        on_chain=chain_agent_id is not None,
         memory_count=memory_compact_count(current_user),
         anchored_count=anchored,
         pending_anchor_count=pending,
         failed_anchor_count=failed,
         total_anchor_count=total,
         last_anchor=last_anchor,
-        last_chain_event=last_chain_event,
         server_time=datetime.now(timezone.utc).isoformat(),
     )
 

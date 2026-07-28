@@ -35,10 +35,9 @@ def _register(client, name: str = "Sync Tester") -> tuple[str, str]:
     reg = client.post(
         "/api/v1/auth/register", json={"username": name, "password": "Str0ng-Pass-123"},
     )
-    token = reg.json()["jwt_token"]
-    user_id = client.get(
-        "/api/v1/chain/me", headers={"Authorization": f"Bearer {token}"},
-    ).json()["user_id"]
+    body = reg.json()
+    token = body["jwt_token"]
+    user_id = body["user_id"]
     return token, user_id
 
 
