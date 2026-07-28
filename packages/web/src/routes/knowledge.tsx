@@ -13,7 +13,7 @@ interface Fact {
   createdAt: number; updatedAt: number; lastSeenAt: number;
 }
 interface Gap {
-  id: string; content: string; status: 'open' | 'answered' | 'ignored'; source: string; createdAt: string; updatedAt: string;
+  id: string; content: string; status: 'open' | 'answered' | 'ignored'; source: string; createdAt: string; updatedAt: string; answerText?: string;
 }
 interface Tool {
   id: string; name: string; description: string; language: string;
@@ -68,6 +68,10 @@ export function KnowledgePage() {
   const [editArticleTitle, setEditArticleTitle] = useState('');
   const [editArticleContent, setEditArticleContent] = useState('');
   const [articleBusy, setArticleBusy] = useState<Set<string>>(new Set());
+
+  // Gap answering
+  const [answeringGapId, setAnsweringGapId] = useState<string | null>(null);
+  const [gapAnswer, setGapAnswer] = useState('');
 
   // Filters
   const [articleFilter, setArticleFilter] = useState('');
@@ -144,6 +148,20 @@ export function KnowledgePage() {
 
   const resolveGap = async (gapId: string) => {
     await api.resolveKnowledgeGap(gapId).catch(() => {});
+    loadAll();
+  };
+
+  const answerGap = async (gapId: string) => {
+    const text = gapAnswer.trim();
+    if (!text) return;
+    await api.answerKnowledgeGap(gapId, text).catch(() => {});
+    setAnsweringGapId(null);
+    setGapAnswer('');
+    loadAll();
+  };
+
+  const ignoreGap = async (gapId: string) => {
+    await api.ignoreKnowledgeGap(gapId).catch(() => {});
     loadAll();
   };
 
@@ -571,12 +589,44 @@ export function KnowledgePage() {
                             </div>
                             <p className="mt-1 text-xs text-text-tertiary">{new Date(g.createdAt).toLocaleDateString()}</p>
                           </div>
-                          {g.status === 'open' && (
-                            <Button size="sm" variant="secondary" className="ml-3" onClick={() => resolveGap(g.id)}>
-                              <Check size={14} className="mr-1" /> Resolve
-                            </Button>
+                          {g.status === 'open' && answeringGapId !== g.id && (
+                            <div className="ml-3 flex flex-shrink-0 items-center gap-2">
+                              <Button size="sm" variant="secondary" onClick={() => { setAnsweringGapId(g.id); setGapAnswer(''); }}>
+                                <Edit3 size={14} className="mr-1" /> Answer
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => ignoreGap(g.id)}>
+                                Ignore
+                              </Button>
+                              <Button size="sm" variant="ghost" className="border border-border" onClick={() => resolveGap(g.id)}>
+                                <Check size={14} className="mr-1" /> Mark resolved
+                              </Button>
+                            </div>
                           )}
                         </div>
+                        {g.status === 'open' && answeringGapId === g.id && (
+                          <div className="mt-3 space-y-2 border-t border-border pt-3">
+                            <Textarea
+                              placeholder="Type the answer or missing information here..."
+                              value={gapAnswer}
+                              onChange={(e) => setGapAnswer(e.target.value)}
+                              rows={3}
+                              className="w-full text-sm"
+                            />
+                            <div className="flex justify-end gap-2">
+                              <Button size="sm" variant="ghost" onClick={() => { setAnsweringGapId(null); setGapAnswer(''); }}>
+                                Cancel
+                              </Button>
+                              <Button size="sm" variant="secondary" disabled={!gapAnswer.trim()} onClick={() => answerGap(g.id)}>
+                                Save answer
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                        {g.status === 'answered' && g.answerText && (
+                          <div className="mt-2 rounded-lg bg-surface-elevated p-2 text-xs text-text-secondary">
+                            <span className="font-medium text-text-primary">Answer:</span> {g.answerText}
+                          </div>
+                        )}
                       </Card>
                     );
                   })}

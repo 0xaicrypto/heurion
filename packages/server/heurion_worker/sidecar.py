@@ -84,6 +84,45 @@ def generate_docx(payload: dict[str, Any]) -> dict:
     )
 
 
+def _branded_logo_path() -> Path:
+    """Resolve the HEURION logo relative to this worker package."""
+    return Path(__file__).resolve().parents[2] / "web" / "public" / "heurion-logo-light.png"
+
+
+def _apply_slide_branding(slide: Any) -> None:
+    """Add the HEURION accent bar and logo to a single slide."""
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.dml.color import RGBColor
+    from pptx.util import Inches
+
+    # Only add branding if the slide does not already contain a branded bar.
+    for shape in slide.shapes:
+        if getattr(shape, "name", "") == "heurion_brand_bar":
+            return
+
+    accent = RGBColor(14, 165, 233)
+    bar = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        left=Inches(0),
+        top=Inches(0),
+        width=Inches(13.333),
+        height=Inches(0.12),
+    )
+    bar.name = "heurion_brand_bar"
+    bar.fill.solid()
+    bar.fill.fore_color.rgb = accent
+    bar.line.fill.background()
+
+    logo_path = _branded_logo_path()
+    if logo_path.exists():
+        slide.shapes.add_picture(
+            str(logo_path),
+            left=Inches(11.1),
+            top=Inches(0.22),
+            width=Inches(1.8),
+        )
+
+
 def generate_pptx(payload: dict[str, Any]) -> dict:
     """Render a PowerPoint presentation from structured slide data.
 
@@ -138,6 +177,7 @@ def generate_pptx(payload: dict[str, Any]) -> dict:
     if len(slide.placeholders) > 1:
         subtitle_text = "\n".join(filter(None, [subtitle, presenter, date_str]))
         slide.placeholders[1].text = subtitle_text
+    _apply_slide_branding(slide)
 
     # Use a Title and Content layout for the remaining slides.
     content_layout = prs.slide_layouts[1]
@@ -153,6 +193,7 @@ def generate_pptx(payload: dict[str, Any]) -> dict:
             for paragraph in tf.paragraphs:
                 paragraph.font.size = Pt(20)
                 paragraph.space_after = Pt(12)
+        _apply_slide_branding(slide)
 
     file_id = _make_file_id("pptx")
     file_name = f"{output_name}.pptx"

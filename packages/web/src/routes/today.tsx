@@ -28,7 +28,7 @@ export function TodayPage() {
   useEffect(() => {
     Promise.all([
       api.getAgentState().catch(() => null),
-      api.getTimeline(10).then((r) => r.items).catch(() => []),
+      api.getActivity(15).then((r) => r.items).catch(() => []),
       api.listPatients().catch(() => [] as Patient[]),
     ])
       .then(([s, t, p]) => { setState(s); setTimeline(t); setPatients(p); })

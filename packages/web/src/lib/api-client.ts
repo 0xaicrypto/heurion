@@ -328,6 +328,10 @@ class ApiClient {
     return this.fetch<{ items: TimelineEvent[] }>(`/api/v1/agent/timeline?limit=${limit}`);
   }
 
+  async getActivity(limit = 20): Promise<{ items: TimelineEvent[] }> {
+    return this.fetch<{ items: TimelineEvent[] }>(`/api/v1/agent/activity?limit=${limit}`);
+  }
+
   async getMessages(sessionId?: string, limit = 50): Promise<{ messages: ChatMessage[]; total: number }> {
     const q = sessionId ? `?session_id=${sessionId}&limit=${limit}` : `?limit=${limit}`;
     return this.fetch<{ messages: ChatMessage[]; total: number }>(`/api/v1/agent/messages${q}`);
@@ -807,6 +811,17 @@ class ApiClient {
 
   async resolveKnowledgeGap(gapId: string): Promise<{resolved: boolean}> {
     return this.fetch(`/api/v1/knowledge/gaps/${gapId}/resolve`, { method: 'POST' });
+  }
+
+  async answerKnowledgeGap(gapId: string, answer: string): Promise<{resolved: boolean}> {
+    return this.fetch(`/api/v1/knowledge/gaps/${gapId}/answer`, {
+      method: 'POST',
+      body: JSON.stringify({ answer }),
+    });
+  }
+
+  async ignoreKnowledgeGap(gapId: string): Promise<{ignored: boolean}> {
+    return this.fetch(`/api/v1/knowledge/gaps/${gapId}/ignore`, { method: 'POST' });
   }
 
   async getKnowledgeTools(): Promise<{tools: Array<{id: string; name: string; description: string; language: string; enabled: boolean; createdAt: number}>}> {

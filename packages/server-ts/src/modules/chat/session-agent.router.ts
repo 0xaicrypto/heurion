@@ -118,6 +118,61 @@ export async function agentRouter(app: FastifyInstance) {
     return { items: items.slice(0, limit) }
   })
 
+  // Activity feed — memory/knowledge base updates (not chat turns)
+  app.get('/api/v1/agent/activity', async (request) => {
+    const ctx = getUserContext(request.user!.userId)
+    const limit = parseInt((request.query as any).limit || '20')
+
+    const memoryEvents = ctx.eventLog.query({ limit: 200 }).filter(e =>
+      e.eventType.startsWith('memory_') || e.eventType.startsWith('kb_'),
+    )
+
+    const labelMap: Record<string, string> = {
+      memory_fact_added: 'Added fact',
+      memory_fact_edited: 'Edited fact',
+      memory_fact_deleted: 'Deleted fact',
+      memory_article_added: 'Added article',
+      memory_article_edited: 'Edited article',
+      memory_article_deleted: 'Deleted article',
+      memory_document_uploaded: 'Uploaded document',
+      memory_document_deleted: 'Deleted document',
+      memory_gap_detected: 'Detected gap',
+      memory_gap_answered: 'Answered gap',
+      memory_patient_deleted: 'Deleted patient data',
+    }
+
+    const items: Array<{ kind: string; timestamp: string; summary: string; sync_id: string }> = []
+
+    for (const evt of memoryEvents) {
+      const meta = evt.metadata || {}
+      const label = labelMap[evt.eventType] || evt.eventType
+      let summary = evt.content
+
+      const nodeId = (meta.factId || meta.articleId || meta.documentId || meta.gapId) as string | undefined
+      if (nodeId) {
+        const node = ctx.memory.graph.getLatestByStableId(nodeId)
+        if (node) {
+          const content = (node as any).content || (node as any).title || ''
+          if (content) {
+            summary = `${label}: ${String(content).slice(0, 120)}${String(content).length > 120 ? '…' : ''}`
+            continue
+          }
+        }
+      }
+
+      summary = `${label}${evt.content ? ` · ${evt.content}` : ''}`
+      items.push({
+        kind: evt.eventType,
+        timestamp: new Date(evt.timestamp * 1000).toISOString(),
+        summary,
+        sync_id: `mem_${evt.idx}`,
+      })
+    }
+
+    items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    return { items: items.slice(0, limit) }
+  })
+
   app.get('/api/v1/agent/messages', async (request) => {
     const ctx = getUserContext(request.user!.userId)
     const sessionId = (request.query as any).session_id

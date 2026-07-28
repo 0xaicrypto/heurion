@@ -204,6 +204,10 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
             mime_type: pluginResult.file.mimeType,
             download_url: pluginResult.file.downloadUrl,
             expires_in: pluginResult.file.expiresIn,
+            knowledge_payload: {
+              title: pluginResult.file.fileName,
+              content: pluginResult.text || `Generated document: ${pluginResult.file.fileName}`,
+            },
           })
         }
         send({ type: 'citations', items: [] })

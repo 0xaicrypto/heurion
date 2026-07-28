@@ -3,6 +3,7 @@ import { createApp } from './app'
 import { config } from './config'
 import { createDefaultEvolutionQueue, BullMqEvolutionQueue, type EvolutionQueue } from './modules/evolution/evolution.queue.js'
 import { startEvolutionWorker } from './modules/evolution/evolution.worker.js'
+import { createGapResearchScheduler, type GapResearchScheduler } from './modules/knowledge/gap-research.service.js'
 
 async function main() {
   const evolutionQueue = await createDefaultEvolutionQueue()
@@ -16,6 +17,19 @@ async function main() {
   if (workerEnabled && evolutionQueue instanceof BullMqEvolutionQueue) {
     worker = startEvolutionWorker(evolutionQueue.name, evolutionQueue.connection)
     console.log('[EVOLUTION] BullMQ worker started')
+  }
+
+  // Start the autonomous gap-research scheduler (periodic web search for open gaps).
+  let gapResearchScheduler: GapResearchScheduler | undefined
+  const gapResearchEnabled = process.env.GAP_RESEARCH_ENABLED !== 'false'
+  if (gapResearchEnabled) {
+    const intervalMs = parseInt(process.env.GAP_RESEARCH_INTERVAL_MS || '300000', 10)
+    gapResearchScheduler = createGapResearchScheduler(intervalMs, {
+      maxPerRun: parseInt(process.env.GAP_RESEARCH_MAX_PER_RUN || '5', 10),
+      minAgeMs: parseInt(process.env.GAP_RESEARCH_MIN_AGE_MS || '60000', 10),
+    })
+    gapResearchScheduler.start()
+    console.log(`[GAP-RESEARCH] Scheduler started (interval ${intervalMs}ms)`)
   }
 
   // Graceful shutdown: stop accepting new jobs, finish in-flight work, then exit.
@@ -32,6 +46,13 @@ async function main() {
       }
     } catch (err) {
       console.error('[SHUTDOWN] Worker close error:', err)
+    }
+
+    try {
+      gapResearchScheduler?.stop()
+      console.log('[SHUTDOWN] Gap research scheduler stopped')
+    } catch (err) {
+      console.error('[SHUTDOWN] Gap research scheduler stop error:', err)
     }
 
     try {

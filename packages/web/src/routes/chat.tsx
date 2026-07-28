@@ -257,7 +257,7 @@ export function ChatPage() {
                                 checked={kbChecked[m.id] || false}
                                 onChange={(e) => setKbChecked(prev => ({ ...prev, [m.id]: e.target.checked }))}
                               />
-                              加入知识库
+                              Add to knowledge base
                             </label>
                             <Button
                               size="sm"
