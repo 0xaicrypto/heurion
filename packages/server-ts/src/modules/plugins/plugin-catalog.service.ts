@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import prisma from '../../common/prisma.js'
+import { validateManifest, type ValidationResult } from './plugin-validation.service.js'
 
 export interface PluginManifest {
   manifest_version: string
@@ -87,12 +88,12 @@ export async function getCatalogById(id: string): Promise<PluginManifest | null>
   return row ? (JSON.parse(row.manifest) as PluginManifest) : null
 }
 
-export async function searchCatalog(options?: { query?: string; source?: string }): Promise<PluginManifest[]> {
+export async function searchCatalog(options?: { query?: string; source?: string }): Promise<Array<PluginManifest & { source: string }>> {
   const rows = await prisma.pluginCatalog.findMany({
     where: options?.source ? { source: options.source } : undefined,
     orderBy: { id: 'asc' },
   })
-  const manifests = rows.map((r) => JSON.parse(r.manifest) as PluginManifest)
+  const manifests = rows.map((r) => ({ ...(JSON.parse(r.manifest) as PluginManifest), source: r.source }))
   const q = options?.query?.trim().toLowerCase()
   if (!q) return manifests
   return manifests.filter((m) => {
@@ -103,4 +104,65 @@ export async function searchCatalog(options?: { query?: string; source?: string 
 
 export function getOfficialCatalog(): PluginManifest[] {
   return loadOfficialCatalog()
+}
+
+export async function validateAndPublishCommunityManifest(
+  manifest: unknown,
+  sourceUrl?: string,
+): Promise<{ manifest: PluginManifest; validation: ValidationResult }> {
+  const validation = validateManifest(manifest)
+  if (!validation.valid) {
+    return { manifest: manifest as PluginManifest, validation }
+  }
+
+  const parsed = manifest as PluginManifest
+  const id = parsed.plugin.id
+
+  await prisma.pluginCatalog.upsert({
+    where: { id },
+    update: {
+      source: 'community',
+      sourceUrl: sourceUrl ?? null,
+      manifest: JSON.stringify(parsed),
+      updatedAt: new Date().toISOString(),
+    },
+    create: {
+      id,
+      source: 'community',
+      sourceUrl: sourceUrl ?? null,
+      manifest: JSON.stringify(parsed),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  })
+
+  return { manifest: parsed, validation }
+}
+
+export async function installPluginFromUrl(url: string): Promise<{ manifest: PluginManifest; validation: ValidationResult }> {
+  let text: string
+  try {
+    const res = await fetch(url, { redirect: 'follow' })
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`)
+    }
+    text = await res.text()
+  } catch (err: any) {
+    return {
+      manifest: {} as PluginManifest,
+      validation: { valid: false, errors: [`Failed to fetch manifest: ${err.message || err}`] },
+    }
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return {
+      manifest: {} as PluginManifest,
+      validation: { valid: false, errors: ['Manifest is not valid JSON'] },
+    }
+  }
+
+  return validateAndPublishCommunityManifest(parsed, url)
 }

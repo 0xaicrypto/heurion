@@ -860,7 +860,7 @@ class ApiClient {
 
   /* ────────────────────────── plugin marketplace ────────────────────────── */
 
-  async listPluginCatalog(query?: string, source?: string): Promise<{plugins: Array<{id: string; name: string; version: string; description: string; category: string; author: {name: string}; tags: string[]; runtime: string; installed: boolean}>}> {
+  async listPluginCatalog(query?: string, source?: string): Promise<{plugins: Array<{id: string; name: string; version: string; description: string; category: string; author: {name: string}; tags: string[]; runtime: string; source: string; installed: boolean}>}> {
     const params = new URLSearchParams();
     if (query) params.set('query', query);
     if (source) params.set('source', source);
@@ -902,6 +902,20 @@ class ApiClient {
 
   async savePluginSettings(id: string, values: Record<string, unknown>): Promise<{saved: boolean}> {
     return this.fetch(`/api/v1/plugins/${this.pluginPath(id)}/settings`, { method: 'PUT', body: JSON.stringify(values) });
+  }
+
+  async validatePluginManifest(manifest: Record<string, unknown>): Promise<{valid: boolean; errors: string[]}> {
+    return this.fetch('/api/v1/plugins/validate-manifest', { method: 'POST', body: JSON.stringify(manifest) });
+  }
+
+  async installPluginFromUrl(url: string): Promise<{valid: boolean; pluginId?: string; installed?: Record<string, unknown>; errors?: string[]; error?: string}> {
+    return this.fetch('/api/v1/plugins/install-from-url', { method: 'POST', body: JSON.stringify({ url }) });
+  }
+
+  async installPluginUpload(file: File): Promise<{valid: boolean; pluginId?: string; installed?: Record<string, unknown>; errors?: string[]; error?: string}> {
+    const formData = new FormData();
+    formData.append('manifest', file);
+    return this.fetch('/api/v1/plugins/install-upload', { method: 'POST', body: formData });
   }
 
   /* ────────────────────────── chat (SSE) ────────────────────────── */

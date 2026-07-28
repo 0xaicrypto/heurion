@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, Globe, Package, Puzzle, Search, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react';
+import { Download, Globe, Package, Puzzle, Search, ToggleLeft, ToggleRight, Trash2, Terminal, Upload, FileJson, Users } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api-client';
-import { Alert, Badge, Button, Card, Input, Skeleton } from '@/components/ui';
+import { Alert, Badge, Button, Card, Input, Skeleton, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
 const SOURCES = [
   { key: 'official', label: 'Official', icon: <Globe size={14} />, desc: 'Heurion official plugins' },
+  { key: 'community', label: 'Community', icon: <Users size={14} />, desc: 'Third-party plugins' },
   { key: 'all', label: 'All Sources', icon: <Package size={14} />, desc: 'Combined catalog search' },
 ];
 
@@ -19,6 +20,7 @@ interface CatalogPlugin {
   author: { name: string };
   tags: string[];
   runtime: string;
+  source: string;
   installed: boolean;
 }
 
@@ -35,7 +37,7 @@ interface InstalledPlugin {
 }
 
 export function PluginsPage() {
-  const [tab, setTab] = useState<'installed' | 'market'>('market');
+  const [tab, setTab] = useState<'installed' | 'market' | 'developer'>('market');
   const [source, setSource] = useState('official');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<CatalogPlugin[]>([]);
@@ -46,6 +48,13 @@ export function PluginsPage() {
   const [installedLoading, setInstalledLoading] = useState(true);
   const [installing, setInstalling] = useState<string | null>(null);
 
+  const [devUrl, setDevUrl] = useState('');
+  const [devManifest, setDevManifest] = useState('');
+  const [devFile, setDevFile] = useState<File | null>(null);
+  const [devLoading, setDevLoading] = useState(false);
+  const [devValidation, setDevValidation] = useState<{ valid: boolean; errors: string[] } | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   const loadInstalled = useCallback(async () => {
@@ -111,6 +120,75 @@ export function PluginsPage() {
     }
   };
 
+  const handleDevUrlInstall = async () => {
+    if (!devUrl.trim()) return;
+    setDevLoading(true);
+    setMarketError(null);
+    setDevValidation(null);
+    try {
+      const r = await api.installPluginFromUrl(devUrl.trim());
+      if (!r.valid) {
+        setDevValidation({ valid: false, errors: r.errors || [] });
+      } else if (r.error) {
+        setMarketError(r.error);
+      } else {
+        setDevUrl('');
+        loadInstalled();
+        setTab('installed');
+      }
+    } catch (err) {
+      setMarketError(err instanceof ApiError ? err.messageText : 'Install from URL failed');
+    } finally {
+      setDevLoading(false);
+    }
+  };
+
+  const handleDevFileInstall = async () => {
+    if (!devFile) return;
+    setDevLoading(true);
+    setMarketError(null);
+    setDevValidation(null);
+    try {
+      const r = await api.installPluginUpload(devFile);
+      if (!r.valid) {
+        setDevValidation({ valid: false, errors: r.errors || [] });
+      } else if (r.error) {
+        setMarketError(r.error);
+      } else {
+        setDevFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        loadInstalled();
+        setTab('installed');
+      }
+    } catch (err) {
+      setMarketError(err instanceof ApiError ? err.messageText : 'Upload install failed');
+    } finally {
+      setDevLoading(false);
+    }
+  };
+
+  const handleValidate = async () => {
+    if (!devManifest.trim()) return;
+    setDevLoading(true);
+    setDevValidation(null);
+    try {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(devManifest);
+      } catch {
+        setDevValidation({ valid: false, errors: ['Manifest is not valid JSON'] });
+        setDevLoading(false);
+        return;
+      }
+      const r = await api.validatePluginManifest(parsed);
+      setDevValidation(r);
+    } catch (err) {
+      setDevValidation({ valid: false, errors: [err instanceof ApiError ? err.messageText : 'Validation failed'] });
+    } finally {
+      setDevLoading(false);
+    }
+  };
+
   const installedSet = new Set(installed.map((s) => s.pluginId));
 
   return (
@@ -124,6 +202,9 @@ export function PluginsPage() {
             </button>
             <button onClick={() => setTab('installed')} className={cn('rounded-lg px-3 py-1.5 text-sm font-medium transition-colors', tab === 'installed' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:text-text-primary')}>
               Installed ({installed.length})
+            </button>
+            <button onClick={() => setTab('developer')} className={cn('rounded-lg px-3 py-1.5 text-sm font-medium transition-colors', tab === 'developer' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:text-text-primary')}>
+              Developer
             </button>
           </div>
         </header>
@@ -193,7 +274,12 @@ export function PluginsPage() {
                               <span key={tag} className="rounded bg-surface px-1.5 py-0.5 text-[10px] text-text-tertiary">{tag}</span>
                             ))}
                           </div>
-                          <p className="mt-2 text-xs text-text-tertiary/60">v{plugin.version} · {plugin.author.name} · {plugin.runtime}</p>
+                          <div className="mt-2 flex items-center gap-2">
+                            <Badge variant={plugin.source === 'official' ? 'success' : 'default'} className="text-[10px]">
+                              {plugin.source}
+                            </Badge>
+                            <span className="text-xs text-text-tertiary/60">v{plugin.version} · {plugin.author.name} · {plugin.runtime}</span>
+                          </div>
                         </div>
                         <Button
                           size="sm"
@@ -250,6 +336,84 @@ export function PluginsPage() {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {tab === 'developer' && (
+            <div className="mx-auto max-w-2xl space-y-6">
+              <Card className="p-6">
+                <div className="mb-4 flex items-center gap-2">
+                  <Terminal size={20} className="text-accent" />
+                  <h2 className="text-lg font-semibold text-text-primary">Install from URL</h2>
+                </div>
+                <p className="mb-4 text-sm text-text-secondary">
+                  Provide a direct URL to a plugin manifest JSON (e.g. a raw GitHub URL).
+                </p>
+                <div className="flex gap-2">
+                  <Input
+                    value={devUrl}
+                    onChange={(e) => setDevUrl(e.target.value)}
+                    placeholder="https://example.com/plugin/manifest.json"
+                    className="flex-1"
+                  />
+                  <Button onClick={handleDevUrlInstall} isLoading={devLoading} disabled={!devUrl.trim()}>
+                    <Download size={14} className="mr-1.5" />
+                    Install
+                  </Button>
+                </div>
+              </Card>
+
+              <Card className="p-6">
+                <div className="mb-4 flex items-center gap-2">
+                  <Upload size={20} className="text-accent" />
+                  <h2 className="text-lg font-semibold text-text-primary">Upload manifest</h2>
+                </div>
+                <p className="mb-4 text-sm text-text-secondary">
+                  Upload a plugin manifest JSON file directly.
+                </p>
+                <div className="flex items-center gap-3">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="application/json,.json"
+                    onChange={(e) => setDevFile(e.target.files?.[0] || null)}
+                    className="block w-full text-sm text-text-secondary file:mr-3 file:rounded-lg file:border-0 file:bg-accent/10 file:px-3 file:py-2 file:text-accent hover:file:bg-accent/20"
+                  />
+                  <Button onClick={handleDevFileInstall} isLoading={devLoading} disabled={!devFile}>
+                    <Upload size={14} className="mr-1.5" />
+                    Install
+                  </Button>
+                </div>
+              </Card>
+
+              <Card className="p-6">
+                <div className="mb-4 flex items-center gap-2">
+                  <FileJson size={20} className="text-accent" />
+                  <h2 className="text-lg font-semibold text-text-primary">Validate manifest</h2>
+                </div>
+                <p className="mb-4 text-sm text-text-secondary">
+                  Paste a manifest JSON to check it before publishing.
+                </p>
+                <Textarea
+                  value={devManifest}
+                  onChange={(e) => setDevManifest(e.target.value)}
+                  placeholder={'{\n  "manifest_version": "1.0.0",\n  "plugin": { ... },\n  "runtime": { ... },\n  "tools": [ ... ]\n}'}
+                  rows={8}
+                  className="mb-3 font-mono text-sm"
+                />
+                <Button variant="secondary" onClick={handleValidate} isLoading={devLoading} disabled={!devManifest.trim()}>
+                  Validate
+                </Button>
+                {devValidation && (
+                  <div className={cn('mt-4 rounded-lg p-3 text-sm', devValidation.valid ? 'bg-success/10 text-success' : 'bg-error/10 text-error')}>
+                    {devValidation.valid ? '✅ Manifest is valid' : (
+                      <ul className="list-inside list-disc space-y-1">
+                        {devValidation.errors.map((err, i) => <li key={i}>{err}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </Card>
             </div>
           )}
         </main>

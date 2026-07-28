@@ -1,6 +1,13 @@
 import type { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
-import { searchCatalog, getCatalogById, seedOfficialCatalog } from './plugin-catalog.service.js'
+import {
+  searchCatalog,
+  getCatalogById,
+  seedOfficialCatalog,
+  installPluginFromUrl,
+  validateAndPublishCommunityManifest,
+} from './plugin-catalog.service.js'
+import { validateManifest } from './plugin-validation.service.js'
 import {
   installPlugin,
   uninstallPlugin,
@@ -37,6 +44,7 @@ export async function pluginsRouter(app: FastifyInstance) {
         author: m.plugin.author,
         tags: m.plugin.tags || [],
         runtime: m.runtime.type,
+        source: m.source,
         installed: installedSet.has(m.plugin.id),
       })),
     }
@@ -69,6 +77,55 @@ export async function pluginsRouter(app: FastifyInstance) {
       return installed
     } catch (err: any) {
       return reply.status(400).send({ error: err.message || 'install failed' })
+    }
+  })
+
+  app.post('/api/v1/plugins/validate-manifest', async (request) => {
+    const result = validateManifest(request.body)
+    return {
+      valid: result.valid,
+      errors: result.errors,
+    }
+  })
+
+  app.post('/api/v1/plugins/install-from-url', async (request, reply) => {
+    const { url } = request.body as { url?: string }
+    if (!url) {
+      return reply.status(400).send({ error: 'url is required' })
+    }
+    const { manifest, validation } = await installPluginFromUrl(url)
+    if (!validation.valid) {
+      return reply.status(400).send({ valid: false, errors: validation.errors })
+    }
+    try {
+      const installed = await installPlugin(request.user!.userId, manifest.plugin.id)
+      return { valid: true, pluginId: manifest.plugin.id, installed }
+    } catch (err: any) {
+      return reply.status(400).send({ valid: true, pluginId: manifest.plugin.id, error: err.message || 'install failed' })
+    }
+  })
+
+  app.post('/api/v1/plugins/install-upload', async (request, reply) => {
+    const data = await request.file()
+    if (!data) {
+      return reply.status(400).send({ error: 'manifest file is required' })
+    }
+    const buffer = await data.toBuffer()
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(buffer.toString('utf-8'))
+    } catch {
+      return reply.status(400).send({ error: 'manifest file is not valid JSON' })
+    }
+    const { manifest, validation } = await validateAndPublishCommunityManifest(parsed)
+    if (!validation.valid) {
+      return reply.status(400).send({ valid: false, errors: validation.errors })
+    }
+    try {
+      const installed = await installPlugin(request.user!.userId, manifest.plugin.id)
+      return { valid: true, pluginId: manifest.plugin.id, installed }
+    } catch (err: any) {
+      return reply.status(400).send({ valid: true, pluginId: manifest.plugin.id, error: err.message || 'install failed' })
     }
   })
 

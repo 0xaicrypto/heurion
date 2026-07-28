@@ -1,6 +1,34 @@
 import { describe, test, expect } from 'vitest'
 import { getApp, authHeader } from './setup.js'
 
+const communityManifest = {
+  manifest_version: '1.0.0',
+  plugin: {
+    id: 'acme/demo',
+    name: 'Demo Community Plugin',
+    version: '1.0.0',
+    description: 'A tiny demo plugin from the community.',
+    category: 'execution',
+    author: { name: 'Acme Corp', email: 'dev@acme.example' },
+    tags: ['demo'],
+  },
+  runtime: {
+    type: 'container',
+    image: 'acme/demo-plugin:1.0.0',
+    port: 8080,
+    resources: { cpu: '1', memory: '256m', max_execution_seconds: 30 },
+  },
+  permissions: { network_egress: { enabled: false }, file_system: { read: false, write: false }, phi_access: false },
+  tools: [
+    {
+      name: 'hello',
+      description: 'Say hello',
+      parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+    },
+  ],
+  triggers: [{ intent: 'demo', patterns: ['demo'] }],
+}
+
 describe('Plugin Marketplace', () => {
   test('catalog is seeded with official plugins', async () => {
     const app = await getApp()
@@ -118,5 +146,64 @@ describe('Plugin Marketplace', () => {
     const jobEnqueued = events.find((e: any) => e.type === 'job_enqueued')
     expect(jobEnqueued).toBeDefined()
     expect(jobEnqueued.job_type).toBe('sidecar.heurion/docx.generate_docx')
+  })
+
+  test('validate manifest rejects invalid plugin', async () => {
+    const app = await getApp()
+    const headers = { ...await authHeader(), 'content-type': 'application/json' }
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/validate-manifest',
+      headers,
+      payload: { plugin: { id: 'bad' } },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.valid).toBe(false)
+    expect(body.errors.length).toBeGreaterThan(0)
+  })
+
+  test('install from URL publishes community plugin and installs it', async () => {
+    const app = await getApp()
+    const headers = { ...await authHeader(), 'content-type': 'application/json' }
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify(communityManifest), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/plugins/install-from-url',
+        headers,
+        payload: { url: 'https://example.com/acme-demo/manifest.json' },
+      })
+      expect(res.statusCode).toBe(200)
+      const body = JSON.parse(res.payload)
+      expect(body.valid).toBe(true)
+      expect(body.pluginId).toBe('acme/demo')
+
+      const catalogRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/plugins/catalog?source=community',
+        headers: await authHeader(),
+      })
+      const catalog = JSON.parse(catalogRes.payload)
+      expect(catalog.plugins.some((p: any) => p.id === 'acme/demo')).toBe(true)
+
+      const installedRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/plugins/installed',
+        headers: await authHeader(),
+      })
+      const installed = JSON.parse(installedRes.payload)
+      expect(installed.plugins.some((p: any) => p.pluginId === 'acme/demo')).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })

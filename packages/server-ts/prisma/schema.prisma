@@ -303,11 +303,12 @@ model TelemetryEvent {
 }
 
 model PluginCatalog {
-  id          String @id
-  source      String @default("official")
+  id          String  @id
+  source      String  @default("official")
+  sourceUrl   String? @map("source_url")
   manifest    String
-  createdAt   String @map("created_at")
-  updatedAt   String @map("updated_at")
+  createdAt   String  @map("created_at")
+  updatedAt   String  @map("updated_at")
 
   installations PluginInstallation[]
   @@index([source])
