@@ -1,6 +1,6 @@
 # Sidecar → Plugins Refactor RFC
 
-**Status:** Phase 1 implemented (backend catalog/install + UI + local plugin runner)  
+**Status:** Phase 1 implemented + production hardening (audit log, secret encryption, Docker network isolation, job-type mapping); Phase 2 third-party install and UI plugin runtime partial  
 **Updated:** 2026-07-28  
 **Deciders:** JZ (architect), product team  
 **Related docs:**
