@@ -18,6 +18,7 @@ import {
   setPluginConfig,
   listInstalledUIPlugins,
 } from './plugin-installation.service.js'
+import { listPluginAuditLogs } from './plugin-audit-log.service.js'
 
 export async function pluginsRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
@@ -176,5 +177,20 @@ export async function pluginsRouter(app: FastifyInstance) {
     const values = request.body as Record<string, unknown>
     await setPluginConfig(request.user!.userId, id, values)
     return { saved: true }
+  })
+
+  app.get('/api/v1/plugins/audit-logs', async (request) => {
+    const { pluginId, status, limit, offset } = request.query as {
+      pluginId?: string
+      status?: string
+      limit?: string
+      offset?: string
+    }
+    return listPluginAuditLogs(request.user!.userId, {
+      pluginId,
+      status,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      offset: offset ? parseInt(offset, 10) : undefined,
+    })
   })
 }

@@ -926,6 +926,38 @@ class ApiClient {
     return this.fetch('/api/v1/plugins/install-upload', { method: 'POST', body: formData });
   }
 
+  async getPluginAuditLogs(options?: {pluginId?: string; status?: string; limit?: number; offset?: number}): Promise<{
+    logs: Array<{
+      id: string;
+      pluginId: string;
+      toolName: string;
+      jobId: string;
+      status: string;
+      durationMs: number;
+      inputSummary?: string;
+      errorMessage?: string;
+      createdAt: string;
+    }>;
+    total: number;
+  }> {
+    const params = new URLSearchParams();
+    if (options?.pluginId) params.set('pluginId', options.pluginId);
+    if (options?.status) params.set('status', options.status);
+    if (options?.limit !== undefined) params.set('limit', String(options.limit));
+    if (options?.offset !== undefined) params.set('offset', String(options.offset));
+    const query = params.toString();
+    return this.fetch(`/api/v1/plugins/audit-logs${query ? `?${query}` : ''}`);
+  }
+
+  async getExecutionJobStatus(jobId: string): Promise<{
+    job_id: string;
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'unknown';
+    created_at: number;
+    result?: Record<string, unknown>;
+  } | null> {
+    return this.fetch(`/api/v1/execution/jobs/${jobId}`);
+  }
+
   /* ────────────────────────── chat (SSE) ────────────────────────── */
 
   async *sendChat(

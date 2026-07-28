@@ -9,6 +9,7 @@ import {
   BookOpen,
   Cpu,
   Puzzle,
+  ScrollText,
   Settings,
   Shield,
   Menu,
@@ -41,6 +42,7 @@ const navItems: NavItem[] = [
   { to: '/app/skills', labelKey: 'nav.skills', icon: <Cpu size={18} /> },
   { to: '/app/knowledge', labelKey: 'nav.knowledge', icon: <BookOpen size={18} /> },
   { to: '/app/plugins', labelKey: 'nav.plugins', icon: <Puzzle size={18} /> },
+  { to: '/app/logs', labelKey: 'nav.logs', icon: <ScrollText size={18} /> },
   { to: '/app/settings', labelKey: 'nav.settings', icon: <Settings size={18} /> },
   { to: '/app/admin/users', labelKey: 'nav.admin', icon: <Shield size={18} />, admin: true },
 ];

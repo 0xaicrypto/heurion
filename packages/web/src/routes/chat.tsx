@@ -225,6 +225,12 @@ export function ChatPage() {
                       {copiedId === m.id ? <Check size={12} /> : <Copy size={12} />}
                     </button>
                   )}
+                  {m.reasoning && (
+                    <details className="mb-2">
+                      <summary className="cursor-pointer text-xs text-text-tertiary">{t('chat.reasoning')}</summary>
+                      <p className="mt-1 whitespace-pre-wrap text-xs text-text-tertiary">{m.reasoning}</p>
+                    </details>
+                  )}
                   <MarkdownRenderer content={m.text || ''} />
                   {m.download && (
                     <div className="mt-3 rounded-lg border border-border bg-surface p-3">

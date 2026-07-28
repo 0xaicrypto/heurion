@@ -45,6 +45,7 @@ function applyChunk(msg: ChatMessage, chunk: ChatStreamChunk): ChatMessage {
     case 'tier_classified':
       return { ...msg, tier: chunk.tier };
     case 'reasoning_chunk':
+    case 'thought':
       return { ...msg, reasoning: (msg.reasoning || '') + chunk.text };
     case 'final_answer_chunk':
       return { ...msg, text: msg.text + chunk.text };

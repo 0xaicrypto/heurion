@@ -11,6 +11,31 @@ export interface PluginAuditInput {
   errorMessage?: string
 }
 
+export interface PluginAuditLogQuery {
+  pluginId?: string
+  status?: string
+  limit?: number
+  offset?: number
+}
+
+export async function listPluginAuditLogs(userId: string, query: PluginAuditLogQuery = {}) {
+  const where: Record<string, unknown> = { userId }
+  if (query.pluginId) where.pluginId = query.pluginId
+  if (query.status) where.status = query.status
+
+  const [logs, total] = await Promise.all([
+    prisma.pluginAuditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: query.limit ?? 50,
+      skip: query.offset ?? 0,
+    }),
+    prisma.pluginAuditLog.count({ where }),
+  ])
+
+  return { logs, total }
+}
+
 export async function recordPluginInvocation(audit: PluginAuditInput): Promise<void> {
   await prisma.pluginAuditLog.create({
     data: {
