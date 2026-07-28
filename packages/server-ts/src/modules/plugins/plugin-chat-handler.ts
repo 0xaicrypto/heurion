@@ -1,5 +1,6 @@
 import { createExecutionPlaneService, type ExecutionJobStatus } from '../execution/execution-plane.service.js'
 import { buildPayload, matchIntent, type PayloadBuildInput } from './plugin-capability.service.js'
+import { buildInputSummary, recordPluginInvocation } from './plugin-audit-log.service.js'
 
 const executionService = createExecutionPlaneService()
 
@@ -75,7 +76,21 @@ export async function handlePluginChatRequest(options: PluginChatHandlerOptions)
 
   send({ type: 'job_status', job_id: job.job_id, status: job.status })
 
+  const startedAt = Date.now()
   const final = await pollJob(job.job_id, send)
+  const durationMs = Date.now() - startedAt
+
+  recordPluginInvocation({
+    userId,
+    pluginId: match.pluginId,
+    toolName: match.toolName,
+    jobId: job.job_id,
+    status: final?.status || job.status || 'unknown',
+    durationMs,
+    inputSummary: buildInputSummary(payload),
+    errorMessage: final?.status === 'failed' ? (final.result?.error as string) || 'plugin execution failed' : '',
+  }).catch(() => {})
+
   if (!final || final.status !== 'completed') {
     return {
       text: `插件任务 ${job.job_id} 当前状态：${final?.status || 'pending'}。你可以稍后通过任务 ID 查询状态。`,

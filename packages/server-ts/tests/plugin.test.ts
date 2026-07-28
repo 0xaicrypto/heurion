@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'vitest'
-import { getApp, authHeader } from './setup.js'
+import prisma from '../src/common/prisma.js'
+import { getApp, authHeader, getAuthUserId } from './setup.js'
 
 const communityManifest = {
   manifest_version: '1.0.0',
@@ -254,5 +255,145 @@ describe('Plugin Marketplace', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+
+  test('plugin chat invocation writes an audit log row', async () => {
+    const app = await getApp()
+    const headers = { ...await authHeader(), 'content-type': 'application/json' }
+    const userId = await getAuthUserId()
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/install',
+      headers,
+      payload: { pluginId: 'heurion/docx' },
+    })
+
+    const chatRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/agent/chat',
+      headers,
+      payload: { text: 'generate a docx report' },
+    })
+    expect(chatRes.statusCode).toBe(200)
+
+    const events = chatRes.payload
+      .split('\n\n')
+      .flatMap((block: string) =>
+        block
+          .split('\n')
+          .filter((line: string) => line.startsWith('data: '))
+          .map((line: string) => {
+            try {
+              return JSON.parse(line.slice('data: '.length))
+            } catch {
+              return null
+            }
+          })
+          .filter(Boolean)
+      )
+    const jobEnqueued = events.find((e: any) => e.type === 'job_enqueued')
+    expect(jobEnqueued).toBeDefined()
+    const jobId = jobEnqueued.job_id
+
+    // The audit log write is async; poll briefly.
+    let audit: any = null
+    for (let i = 0; i < 10; i++) {
+      audit = await prisma.pluginAuditLog.findFirst({
+        where: { userId, jobId },
+      })
+      if (audit) break
+      await new Promise((r) => setTimeout(r, 100))
+    }
+
+    expect(audit).not.toBeNull()
+    expect(audit.pluginId).toBe('heurion/docx')
+    expect(audit.toolName).toBe('generate_docx')
+    expect(audit.status).toBeDefined()
+    expect(audit.durationMs).toBeGreaterThanOrEqual(0)
+  })
+
+  test('secret settings are encrypted at rest and decrypted on read', async () => {
+    const app = await getApp()
+    const headers = { ...await authHeader(), 'content-type': 'application/json' }
+    const userId = await getAuthUserId()
+
+    const secretManifest = {
+      ...communityManifest,
+      plugin: {
+        ...communityManifest.plugin,
+        id: 'acme/secret-demo',
+        name: 'Secret Demo Plugin',
+      },
+      settings: {
+        schema: {
+          type: 'object',
+          properties: {
+            api_token: { type: 'string', format: 'secret', title: 'API Token' },
+            channel: { type: 'string', default: '#general' },
+          },
+        },
+      },
+    }
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify(secretManifest), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+
+    try {
+      await app.inject({
+        method: 'POST',
+        url: '/api/v1/plugins/install-from-url',
+        headers,
+        payload: { url: 'https://example.com/acme-secret-demo/manifest.json' },
+      })
+
+      const putRes = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/plugins/acme/secret-demo/settings',
+        headers,
+        payload: { api_token: 'super-secret-token', channel: '#alerts' },
+      })
+      expect(putRes.statusCode).toBe(200)
+
+      const rawRow = await prisma.pluginInstallation.findUnique({
+        where: { userId_pluginId: { userId, pluginId: 'acme/secret-demo' } },
+      })
+      expect(rawRow).not.toBeNull()
+      const rawConfig = JSON.parse(rawRow!.config)
+      expect(rawConfig.api_token).toMatch(/^enc:/)
+      expect(rawConfig.channel).toBe('#alerts')
+
+      const getRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/plugins/acme/secret-demo/settings',
+        headers: await authHeader(),
+      })
+      expect(getRes.statusCode).toBe(200)
+      const body = JSON.parse(getRes.payload)
+      expect(body.values.api_token).toBe('super-secret-token')
+      expect(body.values.channel).toBe('#alerts')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('execution render endpoint maps old sidecar job types to plugin job types', async () => {
+    const app = await getApp()
+    const headers = { ...await authHeader(), 'content-type': 'application/json' }
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/execution/render',
+      headers,
+      payload: { type: 'sidecar.generate_docx', payload: { template_id: 'case_summary', data: {} } },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.job_id).toBeDefined()
+    expect(body.status).toBeDefined()
   })
 })

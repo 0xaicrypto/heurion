@@ -1,5 +1,10 @@
 import prisma from '../../common/prisma.js'
 import { getCatalogById, type PluginManifest } from './plugin-catalog.service.js'
+import {
+  decryptSettingValue,
+  encryptSettingValue,
+  transformSecretValues,
+} from './plugin-settings-encryption.service.js'
 
 export interface InstalledPluginView {
   pluginId: string
@@ -88,16 +93,20 @@ export async function getPluginConfig(userId: string, pluginId: string): Promise
   })
   if (!row) return {}
   try {
-    return JSON.parse(row.config) as Record<string, unknown>
+    const parsed = JSON.parse(row.config) as Record<string, unknown>
+    const manifest = await getCatalogById(pluginId)
+    return transformSecretValues(parsed, manifest?.settings?.schema, decryptSettingValue)
   } catch {
     return {}
   }
 }
 
 export async function setPluginConfig(userId: string, pluginId: string, config: Record<string, unknown>): Promise<void> {
+  const manifest = await getCatalogById(pluginId)
+  const encryptedConfig = transformSecretValues(config, manifest?.settings?.schema, encryptSettingValue)
   await prisma.pluginInstallation.updateMany({
     where: { userId, pluginId },
-    data: { config: JSON.stringify(config), updatedAt: new Date().toISOString() },
+    data: { config: JSON.stringify(encryptedConfig), updatedAt: new Date().toISOString() },
   })
 }
 
@@ -132,6 +141,7 @@ export async function listInstalledUIPlugins(userId: string): Promise<InstalledU
 }
 
 function toView(row: { pluginId: string; enabled: number; version: string; config: string; installedAt: string; updatedAt: string }, manifest: PluginManifest): InstalledPluginView {
+  const parsedConfig = JSON.parse(row.config || '{}') as Record<string, unknown>
   return {
     pluginId: row.pluginId,
     name: manifest.plugin.name,
@@ -141,6 +151,6 @@ function toView(row: { pluginId: string; enabled: number; version: string; confi
     enabled: row.enabled !== 0,
     installedAt: row.installedAt,
     updatedAt: row.updatedAt,
-    config: JSON.parse(row.config || '{}') as Record<string, unknown>,
+    config: transformSecretValues(parsedConfig, manifest.settings?.schema, decryptSettingValue),
   }
 }

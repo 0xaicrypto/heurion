@@ -12,6 +12,14 @@ const ALLOWED_SIDEcar_TYPES = [
   'sidecar.convert_to_pdf',
 ]
 
+const OLD_TYPE_MAP: Record<string, string> = {
+  'sidecar.generate_docx': 'sidecar.heurion/docx.generate_docx',
+  'sidecar.generate_pptx': 'sidecar.heurion/pptx.generate_pptx',
+  'sidecar.render_table': 'sidecar.heurion/table.render_table',
+  'sidecar.render_plot': 'sidecar.heurion/plot.render_plot',
+  'sidecar.convert_to_pdf': 'sidecar.heurion/pdf.convert_to_pdf',
+}
+
 export async function executionRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
@@ -47,7 +55,7 @@ export async function executionRouter(app: FastifyInstance) {
       return reply.status(400).send({ error: 'invalid or unsupported sidecar render type' })
     }
     const job = await service.enqueue({
-      type: body.type,
+      type: OLD_TYPE_MAP[body.type] ?? body.type,
       payload: body.payload ?? {},
       tenant: { userId: request.user!.userId },
       callbackUrl: body.callbackUrl,

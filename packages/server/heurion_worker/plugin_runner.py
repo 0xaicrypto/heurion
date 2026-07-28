@@ -29,6 +29,11 @@ OLD_TYPE_MAP = {
 
 RUNNER_BACKEND = os.environ.get("PLUGIN_RUNNER", "auto").lower()
 
+try:
+    import docker as docker_sdk
+except Exception:  # pragma: no cover - docker SDK is optional in local dev
+    docker_sdk = None
+
 
 def _load_manifests() -> dict[str, dict[str, Any]]:
     manifest_path = Path(__file__).with_name("plugin_manifests.json")
@@ -90,13 +95,13 @@ def _choose_backend(manifest: dict[str, Any]) -> str:
     if os.environ.get("EXECUTION_PLANE_URL"):
         # If we are proxying to a remote execution plane, let the remote handle it.
         return "docker"
-    try:
-        import docker
-        docker.from_env().ping()
-        return "docker"
-    except Exception:
-        logger.warning("Docker not available, falling back to local plugin runner")
-        return "local"
+    if docker_sdk is not None:
+        try:
+            docker_sdk.from_env().ping()
+            return "docker"
+        except Exception:
+            logger.warning("Docker not available, falling back to local plugin runner")
+    return "local"
 
 
 def _run_local(manifest: dict[str, Any], tool_name: str, payload: dict[str, Any], tenant_prefix: str) -> dict[str, Any]:
@@ -130,8 +135,22 @@ def _run_local(manifest: dict[str, Any], tool_name: str, payload: dict[str, Any]
             os.environ["PLUGIN_TEMPLATE_DIR"] = old_template_dir
 
 
+def _ensure_docker_network(client, network: str, internal: bool) -> None:
+    try:
+        client.networks.get(network)
+    except Exception:
+        logger.info("Creating Docker network %s (internal=%s)", network, internal)
+        client.networks.create(
+            network,
+            driver="bridge",
+            internal=internal,
+            labels={"heurion-managed": "true"},
+        )
+
+
 def _run_docker(manifest: dict[str, Any], tool_name: str, payload: dict[str, Any], tenant_prefix: str) -> dict[str, Any]:
-    import docker as docker_sdk
+    if docker_sdk is None:
+        raise RuntimeError("docker SDK is not available; set PLUGIN_RUNNER=local to use the in-process fallback")
 
     client = docker_sdk.from_env()
     runtime = manifest.get("runtime", {})
@@ -143,6 +162,11 @@ def _run_docker(manifest: dict[str, Any], tool_name: str, payload: dict[str, Any
     timeout = resources.get("max_execution_seconds", 60)
     mem_limit = resources.get("memory", "512Mi")
 
+    permissions = manifest.get("permissions", {})
+    network_egress = permissions.get("network_egress", {}) or {}
+    egress_enabled = bool(network_egress.get("enabled", False))
+    egress_allowlist = network_egress.get("allowlist", []) or []
+
     environment = {
         "S3_ENDPOINT": os.environ.get("S3_ENDPOINT", ""),
         "S3_BUCKET": os.environ.get("S3_BUCKET", ""),
@@ -151,10 +175,17 @@ def _run_docker(manifest: dict[str, Any], tool_name: str, payload: dict[str, Any
         "S3_SECRET_ACCESS_KEY": os.environ.get("S3_SECRET_ACCESS_KEY", ""),
         "TENANT_PREFIX": tenant_prefix,
         "PLUGIN_TOOLS": tool_name,
+        "PLUGIN_NETWORK_EGRESS_ENABLED": "1" if egress_enabled else "0",
+        "PLUGIN_NETWORK_EGRESS_ALLOWLIST": ",".join(egress_allowlist),
     }
     environment.update(runtime.get("env", {}))
 
     network = os.environ.get("PLUGIN_NETWORK", "heurion-plugins")
+    # Disable external egress unless the plugin explicitly requests it.
+    # Per-domain allowlists require an external firewall/proxy; the runner
+    # alone cannot enforce DNS-level egress filtering.
+    _ensure_docker_network(client, network, internal=not egress_enabled)
+
     template_dir = Path(__file__).resolve().parent.parent / "plugins" / "base" / "templates"
 
     container = None
