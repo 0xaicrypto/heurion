@@ -1,16 +1,21 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import { LandingPage } from './landing';
 import { render } from '@/test/render';
 
 describe('LandingPage', () => {
-  it('renders hero, three pillars, and route examples', () => {
+  it('renders hero, pain points, dual-plane sections, and route examples', () => {
     render(<LandingPage />);
 
-    expect(screen.getByRole('heading', { name: /self-evolving clinical ai workstation/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /unified memory graph/i })).toHaveAttribute('href', '/memory-graph');
-    expect(screen.getByRole('link', { name: /smart report assistant/i })).toHaveAttribute('href', '/sidecar');
-    expect(screen.getByRole('link', { name: /evolving knowledge base/i })).toHaveAttribute('href', '/knowledge');
-    expect(screen.getByText(/route first, then retrieve/i)).toBeInTheDocument();
-    expect(screen.getByText(/security & isolation/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /give ai clinical memory and execution/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /three failure modes of medical llms/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /dual-plane architecture: brain \+ hands/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /built for three critical roles/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /why not chatgpt \/ rag\?/i })).toBeInTheDocument();
+
+    const nav = screen.getByTestId('marketing-nav');
+    expect(within(nav).getByRole('link', { name: /memory/i })).toHaveAttribute('href', '/memory');
+    expect(within(nav).getByRole('link', { name: /reports/i })).toHaveAttribute('href', '/sidecar');
+    expect(within(nav).getByRole('link', { name: /knowledge/i })).toHaveAttribute('href', '/knowledge');
+    expect(within(nav).getByRole('link', { name: /security/i })).toHaveAttribute('href', '/security');
   });
 });

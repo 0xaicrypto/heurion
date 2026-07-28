@@ -1,6 +1,20 @@
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, Brain, FileText, BookOpen, Shield, Activity, MessageSquare, Layers } from 'lucide-react';
+import {
+  ArrowRight,
+  Brain,
+  Cpu,
+  FlaskConical,
+  AlertTriangle,
+  Search,
+  Activity,
+  CheckCircle,
+  XCircle,
+  FileText,
+  Users,
+  Lock,
+  Terminal,
+} from 'lucide-react';
 import { Button, Card } from '@/components/ui';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
 
@@ -9,69 +23,117 @@ export function LandingPage() {
   const isZh = i18n.language.startsWith('zh');
 
   const T = {
-    tagline: isZh ? '运行时短暂，进化永恒' : 'Runtime is temporary. Evolution is eternal.',
-    title: isZh ? '自我进化的临床 AI 工作站' : 'Self-Evolving Clinical AI Workstation',
+    tagline: isZh ? '不卖聊天机器人，卖数字化医学科研合伙人' : 'Not a chatbot. A digital medical research partner.',
+    title: isZh ? '让 AI 拥有临床记忆与执行能力' : 'Give AI clinical memory and execution',
     subtitle: isZh
-      ? 'Heurion 为肿瘤研究者打造。每次问诊、文件与确认都会沉淀为可版本化、可传播、可导出的统一记忆图；异步进化引擎自动提取事实、合成知识，让 AI 真正“记得”并随你一起成长。'
-      : 'Built for oncology researchers. Every encounter, file, and confirmation becomes a versioned, propagating, exportable Memory Graph. An asynchronous Evolution Engine extracts facts and synthesizes knowledge — so the AI remembers and grows with you.',
+      ? 'Heurion 用“双平面架构”重建医疗 AI 的大脑与双手：Control Plane 沉淀可溯源、可失效传播的 DAG 记忆；Execution Plane 在隔离沙箱中直接生成 DOCX、PPTX、统计图表。'
+      : 'Heurion rebuilds medical AI with a dual-plane architecture: a Control Plane that builds traceable, stale-propagating DAG memory, and an Execution Plane that generates DOCX, PPTX, and plots inside an isolated sandbox.',
     startFree: isZh ? '免费开始使用' : 'Start Free',
     github: 'GitHub',
 
-    pillarsTitle: isZh ? '三大核心能力' : 'Three core capabilities',
-    pillars: [
+    painsTitle: isZh ? '医疗大模型的三大“绝望时刻”' : 'Three failure modes of medical LLMs',
+    pains: [
       {
-        to: '/memory-graph',
         icon: <Brain size={28} />,
-        title: isZh ? '统一记忆图' : 'Unified Memory Graph',
+        title: isZh ? '金鱼记忆' : 'Goldfish memory',
         desc: isZh
-          ? 'Facts、Articles、Gaps、Skills、Entities、Documents 作为节点与关系共存；版本化、可审计、可导出。'
-          : 'Facts, Articles, Gaps, Skills, Entities, and Documents live as nodes and relations; versioned, auditable, and exportable.',
+          ? '每次打开对话框，AI 都不认识患者。复诊、写总结前，医生得把过去 3 年的化验单、基因突变、影像记录重新粘贴一遍。'
+          : 'Every session starts from scratch. Before a follow-up or summary, doctors must re-paste years of labs, mutations, and imaging.',
       },
       {
-        to: '/sidecar',
-        icon: <FileText size={28} />,
-        title: isZh ? '智能报告助手' : 'Smart Report Assistant',
+        icon: <AlertTriangle size={28} />,
+        title: isZh ? '致命幻觉与黑盒' : 'Hallucination & black box',
         desc: isZh
-          ? '一句话生成病例总结 DOCX、学术汇报 PPTX、基线表格与统计图，文件链接刷新不丢。'
-          : 'Generate case-summary DOCX, academic PPTX, baseline tables, and plots from one sentence — with refresh-safe file links.',
+          ? 'AI 生成的病例总结很漂亮，但医生不敢用：指标可能是编造的，且无法点击追溯到具体日期的病历。'
+          : 'Generated summaries look polished, but doctors cannot trust them: metrics may be invented, and sources cannot be traced.',
       },
       {
-        to: '/knowledge',
-        icon: <BookOpen size={28} />,
-        title: isZh ? '可进化知识库' : 'Evolving knowledge base',
+        icon: <Activity size={28} />,
+        title: isZh ? '高位截瘫：只能聊天' : 'No execution: chat only',
         desc: isZh
-          ? 'Articles 自动标记 stale、可重新生成；Facts 编辑会级联传播；支持版本历史与影响范围查看。'
-          : 'Articles auto-mark stale and can be regenerated; fact edits cascade; version history and impact views included.',
+          ? '“帮我把随访数据清洗一下，画一张 KM 曲线。”通用 AI 只能回答：“抱歉，我是一个语言模型，无法作图。”'
+          : '"Clean this follow-up data and plot a KM curve." Generic AI replies: "Sorry, I am a language model and cannot generate charts."',
       },
     ],
 
-    whyTitle: isZh ? '为什么临床 AI 不能“无状态”？' : 'Why clinical AI cannot be stateless',
-    whyBody: isZh
-      ? '传统聊天机器人在每次对话后重置。医生不得不反复提供患者背景、研究偏好和既往结论。Heurion 把原始输入提炼成结构化记忆，并在下一轮自动引用，减少重复劳动，降低幻觉风险。'
-      : 'Traditional chatbots reset after every conversation. Doctors repeatedly provide patient background, research preferences, and prior conclusions. Heurion distills raw inputs into structured memory and recalls it automatically in the next turn, cutting repetition and reducing hallucinations.',
+    dualPlaneTitle: isZh ? '双平面架构：大脑 + 双手' : 'Dual-Plane Architecture: brain + hands',
+    dualPlaneSubtitle: isZh
+      ? '不要给客户讲枯燥的代码。Heurion 是“会记忆的医学大脑” + “能干脏活累活的隔离双手”。'
+      : 'No code jargon. Heurion is a medical brain that remembers, plus isolated hands that do the dirty work.',
 
-    loopTitle: isZh ? '异步进化管线' : 'Async evolution pipeline',
-    loopSteps: [
-      { n: '01', title: 'INGEST', desc: isZh ? '追加到不可变事件日志' : 'Append to immutable event log' },
-      { n: '02', title: 'EXTRACT', desc: isZh ? 'LLM 提取事实与洞察' : 'LLM extracts facts & insights' },
-      { n: '03', title: 'LINK', desc: isZh ? '去重并链接文档/实体' : 'Deduplicate and link documents/entities' },
-      { n: '04', title: 'SYNTHESIZE', desc: isZh ? '相关事实合成 Article' : 'Synthesize articles from related facts' },
-      { n: '05', title: 'CURATE', desc: isZh ? '用户编辑自动传播' : 'Propagate user edits to dependents' },
-      { n: '06', title: 'RETRIEVE', desc: isZh ? '语义 + 图混合检索' : 'Semantic + graph hybrid retrieval' },
+    controlPlane: {
+      label: isZh ? '🧠 Control Plane · 记忆引擎' : '🧠 Control Plane · Memory Engine',
+      title: isZh ? '绝对理性的医学大脑' : 'A rational medical brain',
+      points: [
+        isZh ? '临床原始输入写入不可变 EventLog' : 'Raw clinical inputs are written to an immutable EventLog',
+        isZh ? '原子 Facts 组合成 Articles，构成 DAG 记忆图谱' : 'Atomic facts compose articles, forming a DAG memory graph',
+        isZh ? '底层数据一改，上层报告自动标红 Stale' : 'When underlying data changes, downstream reports auto-mark stale',
+        isZh ? '发现数据缺失，AI 主动提出 Gaps 而非瞎编' : 'When data is missing, the AI raises gaps instead of hallucinating',
+        isZh ? '每一个结论都能点击追溯到具体日期的病历' : 'Every conclusion is one click away from its source record',
+      ],
+    },
+    executionPlane: {
+      label: isZh ? '⚙️ Execution Plane · 执行沙箱' : '⚙️ Execution Plane · Sandbox',
+      title: isZh ? '干脏活累活的双手' : 'Hands that do the work',
+      points: [
+        isZh ? '自然语言指令触发隔离沙箱' : 'Natural-language commands trigger an isolated sandbox',
+        isZh ? '自动运行 Python / 渲染引擎清洗数据' : 'Python and rendering engines clean data automatically',
+        isZh ? '直接交付 DOCX、PPTX、Table 1、KM 曲线' : 'Directly deliver DOCX, PPTX, Table 1, KM curves',
+        isZh ? '沙箱崩溃不影响核心患者数据库' : 'Sandbox crashes never touch core patient data',
+        isZh ? '数据不出院，算力可本地化部署' : 'Data never leaves the hospital; compute can be on-premise',
+      ],
+    },
+
+    personasTitle: isZh ? '打动三种关键角色' : 'Built for three critical roles',
+    personas: [
+      {
+        icon: <Users size={24} />,
+        role: isZh ? '临床医生 / MDT 负责人' : 'Clinicians / MDT leads',
+        quote: isZh
+          ? '“您下次复诊这位患者时，只需一句话唤醒，系统会自动构建他这三年的患者专属图谱。任何结论都能一键查看依据哪一天的哪份化验单，100% 防幻觉。”'
+          : '"Next time you see the patient, one sentence brings up their multi-year patient graph. Every recommendation is sourced to a specific lab record."',
+      },
+      {
+        icon: <FlaskConical size={24} />,
+        role: isZh ? '医学研究员 / PI / 科研助理' : 'Researchers / PIs / assistants',
+        quote: isZh
+          ? '“Heurion 是带了‘手’的 AI。一句指令就能跑 Python 清洗数据、生成 Table 1、渲染带 KM 生存曲线的学术 PPT，并且反哺到知识库。”'
+          : '"Heurion has hands. One command runs Python, generates Table 1, renders a PPT with KM curves, and feeds the results back into the knowledge base."',
+      },
+      {
+        icon: <Lock size={24} />,
+        role: isZh ? '医院信息科 / 药企合规' : 'Hospital IT / pharma compliance',
+        quote: isZh
+          ? '“Docker Compose 纯本地化部署，敏感数据不出院；不可变 EventLog 让每一次增删改查都有迹可循；双平面隔离让科研计算崩溃也不会触碰核心病历库。”'
+          : '"Docker Compose on-premise keeps sensitive data inside. Immutable EventLog supports audits. Dual-plane isolation protects core records even if research code crashes."',
+      },
     ],
 
-    routerTitle: isZh ? '先路由，再混合检索' : 'Route first, then retrieve',
-    routerBody: isZh
-      ? 'Query Router 在 <1ms 内判定意图，随后通过 Embedding 召回 + 图关系扩展 + RRF 重排，把最相关的 Facts、Articles 与 Gaps 注入上下文，避免把所有历史塞进 LLM。'
-      : 'The Query Router classifies intent in <1ms, then retrieves the most relevant facts, articles, and gaps via embedding recall, graph expansion, and RRF reranking — without dumping all history into the LLM.',
+    battleTitle: isZh ? '竞品攻防：为什么不是 ChatGPT / RAG？' : 'Why not ChatGPT / RAG?',
+    battleCards: [
+      {
+        icon: <XCircle size={24} />,
+        title: isZh ? '通用大模型' : 'General-purpose LLMs',
+        cons: isZh
+          ? '无状态，每次对话都在遗忘；会编造数据；无法执行代码、生成文件。'
+          : 'Stateless; forgets every turn; hallucinates data; cannot execute code or generate files.',
+        pro: isZh
+          ? 'Heurion 通过 DAG 图谱 + Gaps 机制主动发问，每个事实都有版本号可追溯，且能直接交付科研成果。'
+          : 'Heurion uses a DAG graph + gaps mechanism, traces every fact, and delivers research outputs directly.',
+      },
+      {
+        icon: <Search size={24} />,
+        title: isZh ? '传统 RAG 知识库' : 'Traditional RAG knowledge bases',
+        cons: isZh
+          ? '静态切片搜索，文档更新后前后矛盾；没有 Stale 失效传播，全院数据一致性差。'
+          : 'Static chunk search; documents contradict after updates; no stale propagation; poor consistency.',
+        pro: isZh
+          ? 'Heurion 的记忆是“活的生命体”：底层 Facts 修改后，所有依赖它的 Articles 自动标红失效，保证全院一致。'
+          : 'Heurion memory is a living system: when a fact changes, every article that depends on it is auto-marked stale.',
+      },
+    ],
 
-    securityTitle: isZh ? '安全与隔离' : 'Security & isolation',
-    securityBody: isZh
-      ? '控制面与执行面分离，对象存储按租户隔离，插件无法访问主数据库。患者上下文始终注入当前对话，事实与知识版本化、可审计、可导出。'
-      : 'Control and execution planes are separated, object storage is tenant-isolated, and plugins cannot access the main database. Patient context is always injected, and facts/knowledge are versioned, auditable, and exportable.',
-    securityCta: isZh ? '了解安全架构' : 'Explore security',
-
-    ctaTitle: isZh ? '让 AI 从您的每一次诊疗中学习' : 'Let AI learn from every case',
+    ctaTitle: isZh ? '把科室的隐性经验，沉淀为可继承的数据资产' : 'Turn tacit expertise into inheritable data assets',
     ctaSubtitle: isZh
       ? '免费开始，或在您的服务器上自托管完整平台。'
       : 'Start free or self-host the full platform on your own servers.',
@@ -93,7 +155,7 @@ export function LandingPage() {
             <h1 className="text-4xl font-extrabold tracking-tight text-text-primary sm:text-6xl lg:text-7xl">
               {T.title}
             </h1>
-            <p className="mx-auto mt-8 max-w-2xl text-lg leading-relaxed text-text-secondary">
+            <p className="mx-auto mt-8 max-w-3xl text-lg leading-relaxed text-text-secondary sm:text-xl">
               {T.subtitle}
             </p>
             <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -113,138 +175,171 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Pillars */}
+      {/* Pain points */}
       <section className="border-y border-border bg-surface">
         <div className="mx-auto max-w-7xl px-4 py-24">
           <div className="mb-12 text-center">
-            <h2 className="text-3xl font-bold text-text-primary">{T.pillarsTitle}</h2>
+            <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.painsTitle}</h2>
           </div>
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {T.pillars.map((p, idx) => (
-              <Link key={idx} to={p.to} className="group block">
-                <Card className="h-full p-8 transition-all hover:border-accent/30 hover:shadow-md">
-                  <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-xl bg-accent/10 text-accent transition-colors group-hover:bg-accent group-hover:text-white">
-                    {p.icon}
-                  </div>
-                  <h3 className="text-xl font-bold text-text-primary">{p.title}</h3>
-                  <p className="mt-3 leading-relaxed text-text-secondary">{p.desc}</p>
-                  <div className="mt-5 inline-flex items-center text-sm font-medium text-accent">
-                    {isZh ? '了解更多' : 'Learn more'}
-                    <ArrowRight size={16} className="ml-1 transition-transform group-hover:translate-x-1" />
-                  </div>
-                </Card>
-              </Link>
+            {T.pains.map((p, idx) => (
+              <Card key={idx} className="h-full border-error/10 bg-error/5 p-8">
+                <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-xl bg-error/10 text-error">
+                  {p.icon}
+                </div>
+                <h3 className="text-xl font-bold text-text-primary">{p.title}</h3>
+                <p className="mt-3 leading-relaxed text-text-secondary">{p.desc}</p>
+              </Card>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Why stateless fails */}
+      {/* Dual-Plane architecture */}
       <section className="mx-auto max-w-7xl px-4 py-24">
-        <div className="mx-auto max-w-3xl text-center">
-          <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-accent/10 text-accent">
-            <Activity size={24} />
+        <div className="mb-12 text-center">
+          <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.dualPlaneTitle}</h2>
+          <p className="mx-auto mt-4 max-w-2xl text-lg text-text-secondary">{T.dualPlaneSubtitle}</p>
+        </div>
+
+        <div className="grid gap-8 lg:grid-cols-2">
+          {/* Control Plane */}
+          <Card className="relative overflow-hidden border-l-4 border-l-accent p-8">
+            <div className="absolute -right-6 -top-6 h-32 w-32 rounded-full bg-accent/5" />
+            <span className="text-sm font-semibold uppercase tracking-wider text-accent">
+              {T.controlPlane.label}
+            </span>
+            <h3 className="mt-2 text-2xl font-bold text-text-primary">{T.controlPlane.title}</h3>
+            <ul className="mt-6 space-y-4">
+              {T.controlPlane.points.map((pt, idx) => (
+                <li key={idx} className="flex items-start gap-3 text-text-secondary">
+                  <Brain size={18} className="mt-0.5 shrink-0 text-accent" />
+                  <span>{pt}</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+
+          {/* Execution Plane */}
+          <Card className="relative overflow-hidden border-l-4 border-l-nexus-600 p-8">
+            <div className="absolute -right-6 -top-6 h-32 w-32 rounded-full bg-nexus-500/5" />
+            <span className="text-sm font-semibold uppercase tracking-wider text-nexus-600">
+              {T.executionPlane.label}
+            </span>
+            <h3 className="mt-2 text-2xl font-bold text-text-primary">{T.executionPlane.title}</h3>
+            <ul className="mt-6 space-y-4">
+              {T.executionPlane.points.map((pt, idx) => (
+                <li key={idx} className="flex items-start gap-3 text-text-secondary">
+                  <Terminal size={18} className="mt-0.5 shrink-0 text-nexus-600" />
+                  <span>{pt}</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
+
+        {/* Simple architecture diagram */}
+        <div className="mt-12 hidden items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-8 lg:flex">
+          <div className="flex w-56 flex-col items-center rounded-xl border border-accent/30 bg-accent/5 p-5 text-center">
+            <Brain size={32} className="text-accent" />
+            <span className="mt-2 font-semibold text-text-primary">
+              {isZh ? 'Control Plane' : 'Control Plane'}
+            </span>
+            <span className="text-xs text-text-secondary">{isZh ? '记忆 · 溯源 · 合规' : 'Memory · Provenance · Compliance'}</span>
           </div>
-          <h2 className="text-3xl font-bold text-text-primary">{T.whyTitle}</h2>
-          <p className="mt-4 text-lg leading-relaxed text-text-secondary">{T.whyBody}</p>
+          <div className="flex flex-col items-center gap-1 text-text-tertiary">
+            <span className="text-xs uppercase tracking-wider">{isZh ? '可信数据' : 'Trusted data'}</span>
+            <div className="h-px w-24 bg-border" />
+            <span className="text-xs uppercase tracking-wider">{isZh ? '执行结果' : 'Results'}</span>
+          </div>
+          <div className="flex w-56 flex-col items-center rounded-xl border border-nexus-600/30 bg-nexus-500/5 p-5 text-center">
+            <Cpu size={32} className="text-nexus-600" />
+            <span className="mt-2 font-semibold text-text-primary">
+              {isZh ? 'Execution Plane' : 'Execution Plane'}
+            </span>
+            <span className="text-xs text-text-secondary">{isZh ? 'Python · DOCX · PPTX · 图表' : 'Python · DOCX · PPTX · Plots'}</span>
+          </div>
+          <div className="ml-4 flex flex-col gap-2">
+            <div className="flex items-center gap-2 text-sm text-text-secondary">
+              <FileText size={16} className="text-accent" />
+              <span>DOCX / PPTX</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-text-secondary">
+              <Activity size={16} className="text-accent" />
+              <span>{isZh ? '统计图表' : 'Statistical plots'}</span>
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* Evolution loop */}
+      {/* Personas */}
       <section className="bg-surface">
         <div className="mx-auto max-w-7xl px-4 py-24">
           <div className="mb-12 text-center">
-            <h2 className="text-3xl font-bold text-text-primary">{T.loopTitle}</h2>
+            <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.personasTitle}</h2>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {T.loopSteps.map((s) => (
-              <Card key={s.n} className="relative overflow-hidden p-6">
-                <span className="absolute -right-2 -top-4 text-6xl font-bold text-accent/5">{s.n}</span>
-                <h3 className="text-lg font-bold text-accent">{s.title}</h3>
-                <p className="mt-2 text-sm text-text-secondary">{s.desc}</p>
+          <div className="grid gap-6 lg:grid-cols-3">
+            {T.personas.map((p, idx) => (
+              <Card key={idx} className="h-full p-8">
+                <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-accent/10 text-accent">
+                  {p.icon}
+                </div>
+                <h3 className="text-lg font-bold text-text-primary">{p.role}</h3>
+                <p className="mt-4 italic leading-relaxed text-text-secondary">{p.quote}</p>
               </Card>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Router */}
+      {/* Battlecards */}
       <section className="mx-auto max-w-7xl px-4 py-24">
-        <div className="grid items-center gap-12 lg:grid-cols-2">
-          <div>
-            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-accent/10 text-accent">
-              <MessageSquare size={24} />
-            </div>
-            <h2 className="text-3xl font-bold text-text-primary">{T.routerTitle}</h2>
-            <p className="mt-4 text-lg leading-relaxed text-text-secondary">{T.routerBody}</p>
-          </div>
-          <div className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
-            <div className="space-y-3">
-              {[
-                { q: isZh ? '“ZL 的年龄/性别？”' : '"What is ZL\'s age/sex?"', r: 'sql' },
-                { q: isZh ? '“NSCLC 最新指南怎么说？”' : '"Latest NSCLC guidelines?"', r: 'vector' },
-                { q: isZh ? '“生成 ZQ 病例总结 Word”' : '"Generate a Word case summary for ZQ"', r: 'reports' },
-                { q: isZh ? '普通临床讨论' : 'General clinical discussion', r: 'mixed' },
-              ].map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between rounded-lg border border-border bg-background px-4 py-3">
-                  <span className="text-sm text-text-primary">{item.q}</span>
-                  <span className="rounded-md bg-accent/10 px-2 py-1 text-xs font-medium text-accent">{item.r}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+        <div className="mb-12 text-center">
+          <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.battleTitle}</h2>
         </div>
-      </section>
-
-      {/* Security */}
-      <section className="bg-surface">
-        <div className="mx-auto max-w-7xl px-4 py-24">
-          <div className="grid items-center gap-12 lg:grid-cols-2">
-            <div className="order-2 lg:order-1">
-              <Card className="p-6">
-                <div className="space-y-4">
-                  {                  [
-                    isZh ? '控制面 / 执行面双平面隔离' : 'Control / execution plane isolation',
-                    isZh ? '租户隔离的对象存储' : 'Tenant-isolated object storage',
-                    isZh ? '患者上下文强制注入当前会话' : 'Patient context always injected into the current turn',
-                    isZh ? '版本化事实与知识，可审计、可导出' : 'Versioned facts & knowledge, auditable & exportable',
-                    isZh ? '不可变 EventLog + .hma 归档导出' : 'Immutable EventLog + .hma archive export',
-                  ].map((text, idx) => (
-                    <div key={idx} className="flex items-center gap-3 text-text-secondary">
-                      <Layers size={18} className="text-success shrink-0" />
-                      <span>{text}</span>
-                    </div>
-                  ))}
+        <div className="grid gap-6 lg:grid-cols-2">
+          {T.battleCards.map((b, idx) => (
+            <Card key={idx} className="p-8">
+              <div className="mb-4 flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-error/10 text-error">
+                  {b.icon}
                 </div>
-              </Card>
-            </div>
-            <div className="order-1 lg:order-2">
-              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-accent/10 text-accent">
-                <Shield size={24} />
+                <h3 className="text-xl font-bold text-text-primary">{b.title}</h3>
               </div>
-              <h2 className="text-3xl font-bold text-text-primary">{T.securityTitle}</h2>
-              <p className="mt-4 text-lg leading-relaxed text-text-secondary">{T.securityBody}</p>
-              <div className="mt-6">
-                <Link to="/security">
-                  <Button variant="secondary">{T.securityCta}</Button>
-                </Link>
+              <div className="space-y-4">
+                <div className="flex items-start gap-3 rounded-lg bg-error/5 p-4 text-text-secondary">
+                  <XCircle size={18} className="mt-0.5 shrink-0 text-error" />
+                  <span>{b.cons}</span>
+                </div>
+                <div className="flex items-start gap-3 rounded-lg bg-success/5 p-4 text-text-secondary">
+                  <CheckCircle size={18} className="mt-0.5 shrink-0 text-success" />
+                  <span>{b.pro}</span>
+                </div>
               </div>
-            </div>
-          </div>
+            </Card>
+          ))}
         </div>
       </section>
 
       {/* CTA */}
-      <section className="mx-auto max-w-7xl px-4 py-24 text-center">
-        <h2 className="text-3xl font-bold text-text-primary">{T.ctaTitle}</h2>
-        <p className="mx-auto mt-4 max-w-xl text-text-secondary">{T.ctaSubtitle}</p>
-        <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <Link to="/login?mode=register">
-            <Button size="lg" className="px-8">{T.startFree}</Button>
-          </Link>
-          <a href="https://github.com/0xaicrypto/heurion" target="_blank" rel="noreferrer">
-            <Button variant="secondary" size="lg" className="px-8">{T.github}</Button>
-          </a>
+      <section className="relative overflow-hidden border-t border-border bg-surface">
+        <div className="absolute inset-0 bg-gradient-to-r from-accent/5 via-transparent to-accent/5" />
+        <div className="relative mx-auto max-w-7xl px-4 py-24 text-center">
+          <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.ctaTitle}</h2>
+          <p className="mx-auto mt-4 max-w-xl text-text-secondary">{T.ctaSubtitle}</p>
+          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Link to="/login?mode=register">
+              <Button size="lg" className="px-8">
+                {T.startFree}
+                <ArrowRight size={18} className="ml-2" />
+              </Button>
+            </Link>
+            <a href="https://github.com/0xaicrypto/heurion" target="_blank" rel="noreferrer">
+              <Button variant="secondary" size="lg" className="px-8">
+                {T.github}
+              </Button>
+            </a>
+          </div>
         </div>
       </section>
     </MarketingShell>

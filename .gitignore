@@ -157,6 +157,9 @@ playwright-report/
 playwright/.cache/
 *.png
 screenshots/
+# Brand assets in the web public folder must be tracked.
+!packages/web/public/*.png
+!packages/web/public/*.ico
 
 # ─── Large generated / intermediate files ──────────────────────────────
 *.map

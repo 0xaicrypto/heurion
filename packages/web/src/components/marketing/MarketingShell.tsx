@@ -23,8 +23,7 @@ export function MarketingShell({ children }: { children: React.ReactNode }) {
       <nav className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-lg">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4">
           <Link to="/" className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-sm font-bold text-white">H</div>
-            <span className="text-xl font-bold text-text-primary">{t('appName')}</span>
+            <img src="/heurion-logo.png" alt="Heurion" className="h-8 w-auto" />
           </Link>
           <div data-testid="marketing-nav" className="hidden items-center gap-1 sm:flex">
             {subpages.map((item) => (
@@ -67,8 +66,7 @@ export function MarketingShell({ children }: { children: React.ReactNode }) {
         <div className="mx-auto max-w-7xl px-4">
           <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
             <div className="flex items-center gap-2 text-text-secondary">
-              <div className="flex h-6 w-6 items-center justify-center rounded bg-accent text-xs font-bold text-white">H</div>
-              <span className="font-medium">{t('appName')}</span>
+              <img src="/heurion-logo.png" alt="Heurion" className="h-6 w-auto" />
             </div>
             <div className="flex flex-wrap justify-center gap-4 text-sm text-text-tertiary">
               {subpages.map((item) => (

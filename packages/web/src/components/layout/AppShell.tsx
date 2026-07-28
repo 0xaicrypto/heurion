@@ -200,7 +200,7 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
         style={{ width: sidebarWidth }}
       >
         <header className="flex h-14 items-center gap-2 border-b border-border px-4">
-          <div className="h-6 w-6 rounded-md bg-accent" />
+          <img src="/heurion-icon.png" alt="" className="h-7 w-7 rounded-md" />
           <Link to="/app/today" className="flex-1 text-lg font-bold text-text-primary">
             {t('appName')}
           </Link>
@@ -292,6 +292,7 @@ export function AppShell({ children, rail, breadcrumb }: { children: React.React
           <IconButton onClick={() => setMobileOpen(true)} aria-label="Open menu">
             <Menu size={20} />
           </IconButton>
+          <img src="/heurion-icon.png" alt="" className="h-6 w-6 rounded-md" />
           <span className="font-semibold text-text-primary">{t('appName')}</span>
         </header>
 
