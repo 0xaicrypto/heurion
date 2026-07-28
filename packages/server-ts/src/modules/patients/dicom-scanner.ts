@@ -198,7 +198,9 @@ export async function analyzeWithGeminiVision(userId: string, fileId: string): P
     await prisma.$disconnect()
     const apiKey = setting?.value || process.env.GEMINI_API_KEY || ''
 
-    if (!apiKey || apiKey.length < 10) return ''
+    if (!apiKey || apiKey.length < 10) {
+      return 'No API key configured; vision analysis skipped.'
+    }
 
     const resp = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,

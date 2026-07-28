@@ -267,6 +267,38 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
         fullMessage = '## Patient Roster\nNo patients registered yet.\n\n' + fullMessage
       }
 
+      // Deterministic handler for "list my patients" to avoid LLM hallucination
+      const isListPatientsQuery = /list\s+all\s+my\s+patients|my\s+patients\s+by\s+initials|列出所有患者|列出我的患者/i.test(body.text)
+      if (!patientHash && isListPatientsQuery && allPatients.length > 0) {
+        const response = allPatients
+          .map((p: any) => {
+            const diagnosis = p.chiefComplaint?.trim() || 'no recorded diagnosis'
+            return `- ${p.initials || 'Unknown'}: ${diagnosis.split('\n')[0].slice(0, 120)}`
+          })
+          .join('\n')
+
+        ctx.eventLog.append({
+          timestamp: Date.now() / 1000, eventType: 'user_message', content: body.text,
+          metadata: { patientHash }, agentId: userId, sessionId: sid,
+        })
+        ctx.eventLog.append({
+          timestamp: Date.now() / 1000, eventType: 'assistant_response', content: response,
+          metadata: {}, agentId: userId, sessionId: sid,
+        })
+
+        send({ type: 'reasoning_chunk', text: 'Using patient roster directly.' })
+        send({ type: 'final_answer_chunk', text: response })
+        send({ type: 'citations', items: [] })
+        send({ type: 'turn_complete', assistant_event_idx: ctx.eventLog.count() })
+
+        await prisma.session.upsert({
+          where: { id: sid },
+          update: { lastMessageAt: new Date().toISOString(), messageCount: { increment: 1 } },
+          create: { id: sid, userId, title: body.text.slice(0, 50), createdAt: new Date().toISOString() },
+        })
+        return
+      }
+
       // Inject recent file context for the patient
       if (patientHash) {
         try {
