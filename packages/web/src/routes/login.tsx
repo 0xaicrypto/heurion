@@ -54,7 +54,8 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-md space-y-6 rounded-2xl border border-border bg-surface-elevated p-8 shadow-lg">
         <div className="text-center">
-          <img src="/heurion-logo.png" alt="Heurion" className="mx-auto mb-4 h-12 w-auto" />
+          <img src="/heurion-logo.svg" alt="Heurion" className="mx-auto mb-4 h-12 w-auto dark:hidden" />
+          <img src="/heurion-logo-dark.svg" alt="Heurion" className="mx-auto mb-4 hidden h-12 w-auto dark:block" />
           <h1 className="text-2xl font-bold text-text-primary">
             {isRegister ? t('auth.createAccount') : t('auth.welcomeBack')}
           </h1>

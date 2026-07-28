@@ -202,7 +202,8 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
         style={{ width: sidebarWidth }}
       >
         <header className="flex h-14 items-center gap-2 border-b border-border px-4">
-          <img src="/heurion-icon.png" alt="" className="h-7 w-7 rounded-md" />
+          <img src="/heurion-icon.svg" alt="" className="h-7 w-7 dark:hidden" />
+          <img src="/heurion-icon-dark.svg" alt="" className="hidden h-7 w-7 dark:block" />
           <Link to="/app/today" className="flex-1 text-lg font-bold text-text-primary">
             {t('appName')}
           </Link>
