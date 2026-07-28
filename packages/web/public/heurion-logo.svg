@@ -10,5 +10,5 @@
     <circle cx="90" cy="20" r="11"/>
   </g>
   <text x="124" y="64" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="54" font-weight="600" letter-spacing="2" fill="#0F172A">HEURION</text>
-  <text x="126" y="96" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="400" letter-spacing="4" fill="#64748B">CLINICAL AI WORKSTATION</text>
+  <text x="126" y="96" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" letter-spacing="3" fill="#475569">CLINICAL AI WORKSTATION</text>
 </svg>
