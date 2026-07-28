@@ -20,6 +20,7 @@ import { stubRouter } from './modules/stubs/stubs.router.js'
 import { knowledgeRouter } from './modules/knowledge/knowledge.router.js'
 import { executionRouter } from './modules/execution/execution.router.js'
 import { pluginsRouter } from './modules/plugins/plugins.router.js'
+import { externalRouter } from './modules/external/external.router.js'
 import { PrismaTelemetryService } from './modules/knowledge/telemetry.service.js'
 import { setLlmTelemetryService } from './common/llm.js'
 import {
@@ -84,6 +85,7 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   await app.register(stubRouter)
   await app.register(pluginsRouter)
   await app.register(executionRouter)
+  await app.register(externalRouter)
 
   // ── Serve web frontend for staging/testing (SPA fallback on non-/api routes) ──
   const webDistDir = process.env.WEB_DIST_DIR || './web-dist'
