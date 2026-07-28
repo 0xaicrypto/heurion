@@ -81,7 +81,13 @@ def run(job_type: str, payload: dict[str, Any], tenant: dict[str, Any] | None = 
     tenant_prefix = _tenant_prefix(tenant)
 
     if backend == "docker":
-        return _run_docker(manifest, tool_name, payload, tenant_prefix)
+        try:
+            return _run_docker(manifest, tool_name, payload, tenant_prefix)
+        except RuntimeError as exc:
+            if RUNNER_BACKEND == "auto":
+                logger.warning("Docker plugin run failed, falling back to local runner: %s", exc)
+                return _run_local(manifest, tool_name, payload, tenant_prefix)
+            raise
     return _run_local(manifest, tool_name, payload, tenant_prefix)
 
 
