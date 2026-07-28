@@ -110,7 +110,7 @@ export async function stubRouter(app: FastifyInstance) {
   app.delete('/api/v1/facts/:id', async (request: any) => {
     const ctx = getUserContext(request.user!.userId)
     const id = request.params.id as string
-    let ok = ctx.memory.deleteFact(id)
+    let ok = ctx.memory.deleteFact(id).ok
     // Fallback for legacy facts with raw ids.
     if (!ok && !id.startsWith('fact_')) {
       ok = ctx.facts.remove(id)
@@ -163,27 +163,34 @@ export async function stubRouter(app: FastifyInstance) {
       for (const n of nodes) {
         if ((n as any).patientHash === patientHash) relatedStableIds.add(n.stableId)
       }
-      // Expand one hop via relations
-      const allRelations = Array.from((ctx.memory.graph as any).relations || []) as any[]
+      // Expand one hop via relations (relations are stored by node id, not stableId)
+      const allRelations = ctx.memory.graph.relationCount > 0 ? (ctx.memory.graph as any).relations as Array<{ sourceId: string; targetId: string; relation: string; id?: string }> : []
       for (const r of allRelations) {
-        if (relatedStableIds.has(r.sourceId) || relatedStableIds.has(r.targetId)) {
-          relatedStableIds.add(r.sourceId)
-          relatedStableIds.add(r.targetId)
-        }
+        const sourceStable = ctx.memory.graph.getNode(r.sourceId)?.stableId
+        const targetStable = ctx.memory.graph.getNode(r.targetId)?.stableId
+        if (!sourceStable || !targetStable) continue
+        if (relatedStableIds.has(sourceStable)) relatedStableIds.add(targetStable)
+        if (relatedStableIds.has(targetStable)) relatedStableIds.add(sourceStable)
       }
       nodes = nodes.filter(n => relatedStableIds.has(n.stableId))
     }
 
     const nodeStableIds = new Set(nodes.map(n => n.stableId))
-    // Build relation list from all relations, filtering to visible nodes
-    const allRelations = Array.from((ctx.memory.graph as any).relations || []) as any[]
-    const visibleRelations = allRelations.filter(
-      (r: any) => nodeStableIds.has(r.sourceId) && nodeStableIds.has(r.targetId),
-    )
+    // Build relation list from all relations, mapping node ids to stableIds and filtering to visible nodes
+    const allRelations = ctx.memory.graph.relationCount > 0 ? (ctx.memory.graph as any).relations as Array<{ id?: string; sourceId: string; targetId: string; relation: string; createdAt?: number }> : []
+    const visibleRelations = allRelations
+      .map(r => {
+        const sourceStable = ctx.memory.graph.getNode(r.sourceId)?.stableId
+        const targetStable = ctx.memory.graph.getNode(r.targetId)?.stableId
+        if (!sourceStable || !targetStable) return null
+        if (!nodeStableIds.has(sourceStable) || !nodeStableIds.has(targetStable)) return null
+        return { ...r, sourceId: sourceStable, targetId: targetStable }
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
 
     return {
       nodes: nodes.map(n => ({ ...n })),
-      relations: visibleRelations.map(r => ({ ...r })),
+      relations: visibleRelations,
     }
   })
 
@@ -205,7 +212,7 @@ export async function stubRouter(app: FastifyInstance) {
     let deleted = 0
     for (const id of ids) {
       const sid = String(id)
-      if (ctx.memory.deleteFact(sid)) {
+      if (ctx.memory.deleteFact(sid).ok) {
         deleted++
       } else if (!sid.startsWith('fact_') && ctx.facts.remove(sid)) {
         deleted++

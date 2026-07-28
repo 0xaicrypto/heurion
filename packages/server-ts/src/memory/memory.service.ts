@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'crypto'
 import type { EventLog } from '../core/event-log'
 import type { FactsStore, KnowledgeStore } from '../evolution/stores'
 import { MemoryGraph } from './memory.graph'
-import { CurationEngine } from './curation/curation.engine'
+import { CurationEngine, type PropagationResult } from './curation/curation.engine'
 import type {
   AddFactInput,
   AddArticleInput,
@@ -180,9 +180,9 @@ export class MemoryService {
     return edited
   }
 
-  deleteFact(stableId: string, deletedBy: MemoryCreatedBy = 'user'): boolean {
+  deleteFact(stableId: string, deletedBy: MemoryCreatedBy = 'user'): { ok: boolean; propagation?: PropagationResult } {
     const current = this.graph.getLatestByStableId(stableId) as FactNode | undefined
-    if (!current || current.status === 'superseded') return false
+    if (!current || current.status === 'superseded') return { ok: false }
 
     this.graph.markStatus(current.id, 'superseded')
     this.graph.commit()
@@ -200,47 +200,53 @@ export class MemoryService {
       deletedBy,
       propagation,
     })
-    return true
+    return { ok: true, propagation }
   }
 
   /**
-   * Remove patient-specific references from all current facts when a patient is deleted.
-   * The facts are kept as general knowledge; their patientHash is cleared.
+   * Delete all facts tied to a patient when the patient is deleted.
+   * Dependent knowledge articles are marked stale (or superseded if they
+   * no longer have any current source facts).
    */
-  clearPatientReferences(patientHash: string): number {
+  deletePatientReferences(patientHash: string): {
+    deletedFacts: number
+    staleArticles: number
+    supersededArticles: number
+  } {
     const affected = this.graph.getCurrentNodesByType('fact').filter(
       (n): n is FactNode => n.type === 'fact' && n.patientHash === patientHash,
     )
-    if (affected.length === 0) return 0
 
-    const now = Date.now()
-    const stableIds: string[] = []
+    const staleIds = new Set<string>()
+    const supersededIds = new Set<string>()
+
     for (const fact of affected) {
-      const updated: FactNode = {
-        ...fact,
-        patientHash: undefined,
-        sourceType: 'general',
-        updatedAt: now,
+      const { ok, propagation } = this.deleteFact(fact.stableId, 'system')
+      if (!ok) continue
+      if (propagation) {
+        for (const articleId of propagation.staleArticleStableIds) {
+          const article = this.graph.getLatestByStableId(articleId) as ArticleNode | undefined
+          if (!article || article.status === 'superseded') {
+            supersededIds.add(articleId)
+          } else if (article.status === 'stale') {
+            staleIds.add(articleId)
+          }
+        }
       }
-      this.graph.updateNode(fact.id, updated)
-      stableIds.push(fact.stableId)
     }
-    this.graph.commit()
 
-    for (const stableId of stableIds) {
-      this.legacyFacts.updateWhere(
-        f => f.id === stableId,
-        { patientHash: undefined, sourceType: 'general' },
-      )
-    }
-    this.legacyFacts.commit()
-
-    this.appendEvent('memory_patient_refs_cleared', `Cleared patient refs for ${patientHash}`, {
+    this.appendEvent('memory_patient_deleted', `Deleted patient references for ${patientHash}`, {
       patientHash,
-      factCount: affected.length,
-      factIds: stableIds,
+      deletedFacts: affected.length,
+      staleArticles: Array.from(staleIds),
+      supersededArticles: Array.from(supersededIds),
     })
-    return affected.length
+
+    return {
+      deletedFacts: affected.length,
+      staleArticles: staleIds.size,
+      supersededArticles: supersededIds.size,
+    }
   }
 
   // ── Article API ──────────────────────────────────────────────

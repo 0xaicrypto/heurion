@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'vitest'
-import { getApp, authHeader } from './setup.js'
+import { getApp, authHeader, getAuthUserId } from './setup.js'
+import { getUserContext } from '../src/modules/chat/user-context.js'
 
 describe('Patients', () => {
   test('create patient returns hash and persists', async () => {
@@ -95,5 +96,70 @@ describe('Patients', () => {
       headers: await authHeader(),
     })
     expect(res.statusCode).toBe(404)
+  })
+
+  test('delete patient cascades to memory facts and marks dependent articles stale', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const ctx = getUserContext(userId)
+
+    const create = await app.inject({
+      method: 'POST', url: '/api/v1/dicom/patients/register-manual',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { initials: 'CASCADE' },
+    })
+    const hash = JSON.parse(create.payload).patient_hash
+
+    const fact = ctx.memory.addFact(
+      { content: 'Patient-specific fact', category: 'fact', importance: 4, sourceType: 'patient', patientHash: hash },
+      'test',
+    )
+    const article = ctx.memory.addArticle(
+      { title: 'Derived article', content: 'Article body', sourceFactStableIds: [fact.stableId] },
+      'test',
+    )
+
+    expect(ctx.facts.all().some((f: any) => f.id === fact.stableId)).toBe(true)
+    expect(ctx.memory.graph.getLatestByStableId(article.stableId)?.status).toBe('current')
+
+    const del = await app.inject({
+      method: 'DELETE', url: `/api/v1/dicom/patients/${hash}`,
+      headers: await authHeader(),
+    })
+    expect(del.statusCode).toBe(200)
+    const body = JSON.parse(del.payload)
+    expect(body.deletedFacts).toBe(1)
+
+    expect(ctx.facts.all().some((f: any) => f.id === fact.stableId)).toBe(false)
+
+    const articleNode = ctx.memory.graph.getLatestByStableId(article.stableId)
+    expect(articleNode).toBeDefined()
+    expect(['stale', 'superseded']).toContain(articleNode!.status)
+  })
+
+  test('memory graph returns edges mapped to stable ids', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const ctx = getUserContext(userId)
+
+    const fact = ctx.memory.addFact(
+      { content: 'Graph fact', category: 'fact', importance: 3, sourceType: 'general' },
+      'test',
+    )
+    const article = ctx.memory.addArticle(
+      { title: 'Graph article', content: 'Graph body', sourceFactStableIds: [fact.stableId] },
+      'test',
+    )
+
+    const res = await app.inject({
+      method: 'GET', url: '/api/v1/memory/graph',
+      headers: await authHeader(),
+    })
+    expect(res.statusCode).toBe(200)
+    const data = JSON.parse(res.payload)
+
+    const edge = data.relations.find((r: any) => r.sourceId === article.stableId && r.targetId === fact.stableId)
+    expect(edge).toBeDefined()
+    expect(edge.relation).toBe('depends_on')
   })
 })

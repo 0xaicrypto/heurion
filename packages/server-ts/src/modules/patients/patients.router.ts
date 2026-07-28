@@ -67,11 +67,24 @@ export async function patientsRouter(app: FastifyInstance) {
   app.delete('/api/v1/dicom/patients/:hash', async (request) => {
     const { hash } = request.params as any
     const userId = request.user!.userId
+
+    // Remove related structured records first
+    await (prisma as any).medicalRecord.deleteMany({ where: { patientHash: hash, userId } })
+    await (prisma as any).researchAssessment.deleteMany({ where: { patientHash: hash } })
+    try {
+      await (prisma as any).fileIndex.deleteMany({ where: { patientHash: hash, userId } })
+    } catch {
+      // FileIndex table may not exist in older databases
+    }
+
+    // Delete the patient row
     await (prisma as any).patientRecord.deleteMany({ where: { hash, userId } })
-    // Nullify patientHash on related facts (keep knowledge, remove broken ref)
+
+    // Cascade-delete memory facts tied to this patient so dependent articles become stale/superseded
     const ctx = getUserContext(userId)
-    const cleared = ctx.memory.clearPatientReferences(hash)
-    return { deleted: true, clearedFacts: cleared }
+    const cascade = ctx.memory.deletePatientReferences(hash)
+
+    return { deleted: true, ...cascade }
   })
 
   // ── Studies (stub) ──
