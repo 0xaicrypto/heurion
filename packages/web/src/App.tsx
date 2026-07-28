@@ -29,6 +29,7 @@ import { FilesPage } from '@/routes/files';
 import { SchedulePage } from '@/routes/schedule';
 import { ExportPage } from '@/routes/export-data';
 import { PluginsPage } from '@/routes/plugins';
+import { PluginSettingsPage } from '@/routes/plugin-settings';
 import { KnowledgePage } from '@/routes/knowledge';
 import { useAuthStore } from '@/stores/auth';
 import { PluginUIProvider } from '@/components/plugins/PluginUIRegistry';
@@ -166,6 +167,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <PluginsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/plugins/:namespace/:name/settings"
+            element={
+              <RequireAuth>
+                <PluginSettingsPage />
               </RequireAuth>
             }
           />

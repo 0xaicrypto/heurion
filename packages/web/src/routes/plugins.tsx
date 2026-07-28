@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, Globe, Package, Puzzle, Search, ToggleLeft, ToggleRight, Trash2, Terminal, Upload, FileJson, Users } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Download, Globe, Package, Puzzle, Search, Settings, ToggleLeft, ToggleRight, Trash2, Terminal, Upload, FileJson, Users } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api-client';
 import { Alert, Badge, Button, Card, Input, Skeleton, Textarea } from '@/components/ui';
@@ -37,6 +38,7 @@ interface InstalledPlugin {
 }
 
 export function PluginsPage() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<'installed' | 'market' | 'developer'>('market');
   const [source, setSource] = useState('official');
   const [query, setQuery] = useState('');
@@ -327,6 +329,9 @@ export function PluginsPage() {
                       <div className="mt-3 flex gap-2">
                         <Button size="sm" variant="secondary" className="flex-1" onClick={() => toggle(plugin.pluginId, plugin.enabled)}>
                           {plugin.enabled ? <><ToggleRight size={14} className="mr-1" /> Disable</> : <><ToggleLeft size={14} className="mr-1" /> Enable</>}
+                        </Button>
+                        <Button size="sm" variant="secondary" className="shrink-0" onClick={() => navigate(`/app/plugins/${plugin.pluginId}/settings`)}>
+                          <Settings size={14} className="mr-1" /> Configure
                         </Button>
                         <Button size="sm" variant="ghost" className="shrink-0 text-error" onClick={() => handleUninstall(plugin.pluginId)}>
                           <Trash2 size={14} />

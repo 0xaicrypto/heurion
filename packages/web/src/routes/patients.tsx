@@ -6,6 +6,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
+import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/api-client';
@@ -380,6 +381,12 @@ export function PatientSummaryPage() {
             </ul>
           )}
         </Card>
+
+        <PluginExtensionPoint
+          point="patient_detail"
+          context={{ patientHash: hash, patient: detail }}
+          fallback={null}
+        />
       </main>
     </div>
   );
@@ -600,6 +607,12 @@ export function PatientChatPage() {
               rows={1}
               className="min-h-0 flex-1 resize-none py-3"
               style={{ maxHeight: '160px' }}
+            />
+            <PluginExtensionPoint
+              point="chat_toolbar"
+              context={{ sessionId, patientHash: hash }}
+              layout="row"
+              fallback={null}
             />
             {session?.loading ? (
               <Button onClick={handleStop} variant="secondary" className="shrink-0">{t('common.stop')}</Button>

@@ -9,6 +9,7 @@ import { useChatStore, type ChatMessage } from '@/stores/chat';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
+import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { Alert, Button, Badge, Textarea } from '@/components/ui';
 
 export function ChatPage() {
@@ -323,6 +324,12 @@ export function ChatPage() {
                 rows={1}
                 className="min-h-0 flex-1 resize-none py-3"
                 style={{ maxHeight: '160px' }}
+              />
+              <PluginExtensionPoint
+                point="chat_toolbar"
+                context={{ sessionId }}
+                layout="row"
+                fallback={null}
               />
               {session?.loading ? (
                 <Button onClick={handleStop} variant="secondary">
