@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
+import { createApprovalRequest } from '../approvals/approval.service.js'
 import crypto from 'crypto'
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
@@ -110,6 +111,14 @@ export async function medicalRecordEntriesRouter(app: FastifyInstance) {
         updatedAt: now,
       },
     })
+
+    if (body.data.status === 'pending_review') {
+      await createApprovalRequest(userId, {
+        targetType: 'MedicalRecordEntry',
+        targetId: data.id,
+        payload: serializeEntry(data),
+      })
+    }
 
     return serializeEntry(data)
   })
