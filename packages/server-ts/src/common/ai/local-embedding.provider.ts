@@ -18,7 +18,11 @@ export class LocalEmbeddingProvider implements Pick<AiProvider, 'embed'> {
   async embed(texts: string[], options: EmbedOptions = {}): Promise<number[][]> {
     if (!texts.length) return []
 
-    const url = this.config.localEmbeddingUrl || process.env.LOCAL_EMBEDDING_URL || 'http://localhost:8003/embed'
+    const url =
+      this.config.localEmbeddingUrl ||
+      process.env.LOCAL_EMBEDDING_URL ||
+      process.env.EMBEDDING_SERVICE_URL ||
+      'http://localhost:8003/embed'
     const model = options.model || this.config.embeddingModel || 'BAAI/bge-m3'
 
     const resp = await fetch(url, {

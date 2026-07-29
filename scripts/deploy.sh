@@ -31,6 +31,14 @@ else
   SERVER_SECRET=$(openssl rand -hex 32)
 fi
 
+# Preserve optional embedding / OpenAI fallback values from the existing env
+# if they are already configured, otherwise apply safe defaults.
+OPENAI_API_KEY_VALUE=""
+EMBEDDING_FALLBACK_PROVIDER_VALUE="none"
+if [ -f .env ]; then
+  OPENAI_API_KEY_VALUE=$(grep '^OPENAI_API_KEY=' .env | head -1 | cut -d= -f2-)
+  EMBEDDING_FALLBACK_PROVIDER_VALUE=$(grep '^EMBEDDING_FALLBACK_PROVIDER=' .env | head -1 | cut -d= -f2-)
+fi
 cat > .env << ENVEOF
 DATABASE_URL="file:./nexus_server.db"
 SERVER_HOST=0.0.0.0
@@ -41,7 +49,55 @@ GEMINI_API_KEY=${GEMINI_KEY:-}
 EXECUTION_PLANE_URL=${EXECUTION_PLANE_URL:-}
 WORKER_API_TOKEN=${WORKER_API_TOKEN:-}
 CORS_ALLOW_ORIGINS=*
+EMBEDDING_PROVIDER=local
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIMENSIONS=1024
+EMBEDDING_DEVICE=cpu
+EMBEDDING_BATCH_SIZE=32
+EMBEDDING_QUANTIZATION=none
+EMBEDDING_FALLBACK_PROVIDER=${EMBEDDING_FALLBACK_PROVIDER_VALUE:-none}
+LOCAL_EMBEDDING_URL=http://localhost:8003/embed
+OPENAI_API_KEY=${OPENAI_API_KEY_VALUE:-}
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 ENVEOF
+
+# ── Local embedding service (#19) ─────────────────────────────────────
+# The TS server expects a local bge-m3 HTTP service on port 8003.
+# We run it in its own venv because the bare-metal server-ts path does not
+# otherwise need Python. The model cache is persisted under /opt.
+EMBEDDING_VENV=/opt/nexus-embedding
+EMBEDDING_MODEL_DIR=/opt/nexus-embedding-models
+mkdir -p "$EMBEDDING_MODEL_DIR"
+if [ ! -f "$EMBEDDING_VENV/bin/python" ]; then
+  python3 -m venv "$EMBEDDING_VENV"
+fi
+"$EMBEDDING_VENV/bin/pip" install --no-cache-dir -q \
+  fastapi uvicorn pydantic sentence-transformers "optimum[onnxruntime]"
+
+pm2 delete heurion-embedding 2>/dev/null || true
+HF_HOME="$EMBEDDING_MODEL_DIR" \
+SENTENCE_TRANSFORMERS_HOME="$EMBEDDING_MODEL_DIR" \
+  pm2 start "$EMBEDDING_VENV/bin/python" \
+  --name heurion-embedding \
+  -- /root/heurion/packages/server/nexus_server/embedding_server.py
+
+# Wait for the embedding service to load the model before starting API.
+# First boot downloads bge-m3 (~2.2 GB), which can take several minutes.
+EMBEDDING_HEALTH_URL="http://localhost:8003/health"
+EMBEDDING_MAX_RETRIES=120
+for i in $(seq 1 $EMBEDDING_MAX_RETRIES); do
+  if curl -fsS "$EMBEDDING_HEALTH_URL" >/dev/null 2>&1; then
+    echo "✓ Embedding service healthy"
+    break
+  fi
+  echo "  embedding health check attempt $i/$EMBEDDING_MAX_RETRIES failed, retrying in 5s..."
+  sleep 5
+done
+if ! curl -fsS "$EMBEDDING_HEALTH_URL" >/dev/null 2>&1; then
+  echo "❌ Embedding service failed to become healthy"
+  pm2 logs heurion-embedding --lines 50 --nostream || true
+  exit 1
+fi
 
 # Force fresh Prisma Client install/generation; pnpm's isolated store can
 # cache a stale generated client even after schema changes, causing runtime

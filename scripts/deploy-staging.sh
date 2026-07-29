@@ -16,7 +16,49 @@ DEEPSEEK_API_KEY=${DEEPSEEK_KEY}
 GEMINI_API_KEY=${GEMINI_KEY}
 CORS_ALLOW_ORIGINS=*
 TWIN_BASE_DIR=.nexus/staging-twins
+EMBEDDING_PROVIDER=local
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIMENSIONS=1024
+EMBEDDING_DEVICE=cpu
+EMBEDDING_BATCH_SIZE=32
+EMBEDDING_QUANTIZATION=none
+EMBEDDING_FALLBACK_PROVIDER=none
+LOCAL_EMBEDDING_URL=http://localhost:8004/embed
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 ENVEOF
+
+# ── Staging local embedding service (#19) ─────────────────────────────
+EMBEDDING_VENV=/opt/nexus-embedding
+EMBEDDING_MODEL_DIR=/opt/nexus-embedding-models
+mkdir -p "$EMBEDDING_MODEL_DIR"
+if [ ! -f "$EMBEDDING_VENV/bin/python" ]; then
+  python3 -m venv "$EMBEDDING_VENV"
+fi
+"$EMBEDDING_VENV/bin/pip" install --no-cache-dir -q \
+  fastapi uvicorn pydantic sentence-transformers "optimum[onnxruntime]"
+
+pm2 delete heurion-embedding-staging 2>/dev/null || true
+EMBEDDING_SERVER_PORT=8004 HF_HOME="$EMBEDDING_MODEL_DIR" \
+SENTENCE_TRANSFORMERS_HOME="$EMBEDDING_MODEL_DIR" \
+  pm2 start "$EMBEDDING_VENV/bin/python" \
+  --name heurion-embedding-staging \
+  -- /root/heurion/packages/server/nexus_server/embedding_server.py
+
+EMBEDDING_HEALTH_URL="http://localhost:8004/health"
+EMBEDDING_MAX_RETRIES=120
+for i in $(seq 1 $EMBEDDING_MAX_RETRIES); do
+  if curl -fsS "$EMBEDDING_HEALTH_URL" >/dev/null 2>&1; then
+    echo "✓ Staging embedding service healthy"
+    break
+  fi
+  echo "  staging embedding health check attempt $i/$EMBEDDING_MAX_RETRIES failed, retrying in 5s..."
+  sleep 5
+done
+if ! curl -fsS "$EMBEDDING_HEALTH_URL" >/dev/null 2>&1; then
+  echo "❌ Staging embedding service failed to become healthy"
+  pm2 logs heurion-embedding-staging --lines 50 --nostream || true
+  exit 1
+fi
 
 which pnpm || npm install -g pnpm@10
 rm -rf node_modules

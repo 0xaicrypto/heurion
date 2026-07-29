@@ -48,7 +48,7 @@ COPY packages/server packages/server
 RUN /opt/venv/bin/pip install --no-cache-dir \
         ./packages/sdk \
         ./packages/nexus \
-        ./packages/server
+        "./packages/server[embedding]"
 # NOTE: deliberately NOT using `pip install -e ...` (editable) here.
 # Editable installs write the source-tree absolute path into a `.pth`
 # file inside the venv. In multi-stage Docker builds the builder stage's
