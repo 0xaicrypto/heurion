@@ -121,7 +121,10 @@ export function loadAiConfigFromEnv(): AiProviderConfig {
     embeddingModel: process.env.EMBEDDING_MODEL || 'BAAI/bge-m3',
     embeddingDevice: (process.env.EMBEDDING_DEVICE as any) || 'cpu',
     embeddingFallbackProvider: (process.env.EMBEDDING_FALLBACK_PROVIDER as any) || 'none',
-    localEmbeddingUrl: process.env.LOCAL_EMBEDDING_URL || 'http://localhost:8003/embed',
+    localEmbeddingUrl:
+      process.env.LOCAL_EMBEDDING_URL ||
+      process.env.EMBEDDING_SERVICE_URL ||
+      'http://localhost:8003/embed',
     openaiApiKey: process.env.OPENAI_API_KEY,
     openaiEmbeddingModel: process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
   }

@@ -13,6 +13,35 @@
 # routes to your VPS and gets a real Let's Encrypt cert.
 
 services:
+  nexus-embedding-server:
+    # Same image as nexus-server but runs the local embedding microservice.
+    # sentence-transformers + the model cache live in the image /data volume.
+    image: ${NEXUS_IMAGE:-nexus-server:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexus-embedding-server
+    restart: unless-stopped
+    command: ["nexus-embedding-server"]
+    env_file:
+      - .env.production
+    environment:
+      - EMBEDDING_SERVER_HOST=0.0.0.0
+      - EMBEDDING_SERVER_PORT=8003
+      - HF_HOME=/data/embedding-models
+      - SENTENCE_TRANSFORMERS_HOME=/data/embedding-models
+    volumes:
+      - nexus-data:/data
+    networks:
+      - nexus-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+    # No public ports — only reachable on the internal Docker network.
+
   nexus-server:
     # In production, NEXUS_IMAGE is set by scripts/deploy/vps_deploy.sh
     # to a fully-qualified GHCR ref (e.g. ghcr.io/owner/nexus-server:
@@ -37,6 +66,8 @@ services:
       # actual external scheme/host. uvicorn is started with
       # --proxy-headers --forwarded-allow-ips=*  inside the Dockerfile.
       - SERVER_PORT=8001
+      - EMBEDDING_PROVIDER=local
+      - LOCAL_EMBEDDING_URL=http://nexus-embedding-server:8003/embed
     volumes:
       # /data persistence — survives container rebuilds. The agent
       # installs new skills + MCP servers here at chat time, so
@@ -53,6 +84,9 @@ services:
       - ./packages/server/nexus_server:/opt/venv/lib/python3.11/site-packages/nexus_server:ro
     networks:
       - nexus-net
+    depends_on:
+      nexus-embedding-server:
+        condition: service_healthy
     # No `ports:` here — Caddy is the only thing the host exposes.
 
   caddy:
