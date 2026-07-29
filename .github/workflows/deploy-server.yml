@@ -231,7 +231,7 @@ jobs:
         env:
           NEXUS_IMAGE: ${{ env.SERVER_IMAGE_NAME }}:${{ steps.vars.outputs.sha }}
         run: |
-          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p /opt/heurion/packages/web/dist"
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p /opt/heurion/packages/web/dist /opt/heurion/scripts"
           scp -o StrictHostKeyChecking=no -r packages/web/dist/* ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/packages/web/dist/
           scp -o StrictHostKeyChecking=no /tmp/heurion-deploy.env ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/.env.production
           scp -o StrictHostKeyChecking=no docker-compose.yml Caddyfile Dockerfile ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/
