@@ -44,3 +44,24 @@ export class LocalEmbeddingProvider implements Pick<AiProvider, 'embed'> {
     return data.embeddings as number[][]
   }
 }
+
+/**
+ * Wraps a primary embedding provider and falls back to a secondary provider
+ * when the primary fails. Used to keep local bge-m3 as the default while
+ * allowing OpenAI as a safety net.
+ */
+export class ResilientEmbeddingProvider implements Pick<AiProvider, 'embed'> {
+  constructor(
+    private primary: Pick<AiProvider, 'embed'>,
+    private fallback: Pick<AiProvider, 'embed'>,
+  ) {}
+
+  async embed(texts: string[], options: EmbedOptions = {}): Promise<number[][]> {
+    if (!texts.length) return []
+    try {
+      return await this.primary.embed(texts, options)
+    } catch (err) {
+      return this.fallback.embed(texts, options)
+    }
+  }
+}

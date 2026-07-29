@@ -1,8 +1,9 @@
 # Server TS CI — ensures the TypeScript backend builds and Phase 0 tests pass.
 #
 # Runs on PRs and pushes to main that touch packages/server-ts or this workflow.
-# Phase 0 covers the Brain 2.0 ingestion pipeline:
-#   medical-record-entry, approval-audit, ingestion-worker, lab-ingestion, imaging-ingestion
+# Phase 0 covers the Brain 2.0 ingestion pipeline and AI infrastructure:
+#   medical-record-entry, approval-audit, ingestion-worker, lab-ingestion, imaging-ingestion,
+#   ai-provider, protocol-ingestion, local-embedding
 #
 # Deployment remains in deploy-server.yml.
 
@@ -61,4 +62,4 @@ jobs:
         run: pnpm run build
 
       - name: Run Phase 0 regression tests
-        run: pnpm test -- medical-record-entry approval-audit ingestion-worker lab-ingestion imaging-ingestion ai-provider protocol-ingestion
+        run: pnpm test -- medical-record-entry approval-audit ingestion-worker lab-ingestion imaging-ingestion ai-provider protocol-ingestion local-embedding
