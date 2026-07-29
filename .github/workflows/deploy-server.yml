@@ -69,22 +69,18 @@ jobs:
 
   build-server-image:
     name: Build Server Image
-    needs: [test]
+    needs: [test, build-web]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-        with: { version: '10' }
-      - uses: actions/setup-node@v4
+      - name: Download web dist
+        uses: actions/download-artifact@v4
         with:
-          node-version: '22'
-          cache: 'pnpm'
-          cache-dependency-path: packages/web/pnpm-lock.yaml
-      - name: Build web dist
-        run: cd packages/web && pnpm install --frozen-lockfile && pnpm build
+          name: web-dist
+          path: packages/web/dist
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to GHCR
