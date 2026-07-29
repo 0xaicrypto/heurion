@@ -18,6 +18,8 @@ on:
       - '.github/workflows/server-ts-ci.yml'
       - '.github/workflows/deploy-server.yml'
       - 'scripts/deploy*.sh'
+      - 'docker-compose.yml'
+      - 'Dockerfile'
       - '.env.production.example'
   push:
     branches: [main]
@@ -27,6 +29,8 @@ on:
       - '.github/workflows/server-ts-ci.yml'
       - '.github/workflows/deploy-server.yml'
       - 'scripts/deploy*.sh'
+      - 'docker-compose.yml'
+      - 'Dockerfile'
       - '.env.production.example'
   workflow_dispatch:
 
