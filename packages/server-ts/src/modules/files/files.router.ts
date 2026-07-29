@@ -6,6 +6,7 @@ import { deepseekChat, getApiKey } from '../../common/llm.js'
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
+import { extractDocumentText } from '../../lib/document-extractor.js'
 
 export async function filesRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
@@ -195,8 +196,11 @@ export async function filesRouter(app: FastifyInstance) {
     }
 
     const stat = fs.statSync(filepath)
-    const isText = fileId.endsWith('.txt') || fileId.includes('report') || fileId.includes('lab')
-    const isDicom = fileId.endsWith('.dcm')
+    const name = fileId.split('_').slice(1).join('_') || fileId
+    const lowerName = name.toLowerCase()
+    const isDicom = lowerName.endsWith('.dcm')
+    const isPdf = lowerName.endsWith('.pdf')
+    const isText = lowerName.endsWith('.txt') || lowerName.endsWith('.md') || lowerName.endsWith('.csv') || fileId.includes('report') || fileId.includes('lab')
 
     if (isDicom) {
       const { quickScanDicom } = await import('../patients/dicom-scanner.js')
@@ -209,11 +213,12 @@ export async function filesRouter(app: FastifyInstance) {
       }
     }
 
-    if (isText) {
-      const text = fs.readFileSync(filepath, 'utf-8').slice(0, 10000)
+    if (isPdf || isText) {
+      const buffer = fs.readFileSync(filepath)
+      const text = await extractDocumentText(buffer, name, undefined, { maxChars: 10000 })
       return {
         file_id: fileId,
-        type: 'text',
+        type: isPdf ? 'pdf' : 'text',
         size_bytes: stat.size,
         content: text,
       }

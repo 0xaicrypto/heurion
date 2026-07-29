@@ -12,6 +12,7 @@ import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { type EvolutionQueue } from '../evolution/evolution.queue.js'
 import fs from 'fs'
 import path from 'path'
+import { extractTextFromUpload } from '../../lib/document-extractor.js'
 
 // #2: Read uploaded file content for chat context
 const gapService = new PrismaKnowledgeGapService()
@@ -38,13 +39,10 @@ function formatCommandResult(result: CommandResult): string {
   }
 }
 
-function readAttachmentContent(userId: string, fileId: string): string {
-  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
-  const filepath = path.join(dir, fileId)
-  if (!fs.existsSync(filepath)) return ''
-  const buffer = fs.readFileSync(filepath)
-  const text = buffer.toString('utf-8').slice(0, 5000)  // 5KB limit
-  const name = (fileId.split('_').slice(1).join('_') || fileId)
+async function readAttachmentContent(userId: string, fileId: string): Promise<string> {
+  const name = fileId.split('_').slice(1).join('_') || fileId
+  const text = await extractTextFromUpload(userId, fileId, { maxChars: 15000 })
+  if (!text) return ''
   return `\n[ATTACHMENT: ${name}]\n${text}\n[/ATTACHMENT]\n`
 }
 
@@ -223,7 +221,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
         const fid = typeof att === 'string' ? att : (att.file_id || att.fileId || '')
         const name = typeof att === 'string' ? fid.split('_').slice(1).join('_') : (att.name || '')
         if (fid) {
-          const content = readAttachmentContent(userId, fid)
+          const content = await readAttachmentContent(userId, fid)
           if (content) {
             attachmentText += content
             send({ type: 'context_info', text: `Attachment: ${name.slice(0, 30)}`, kind: 'attachment' })
