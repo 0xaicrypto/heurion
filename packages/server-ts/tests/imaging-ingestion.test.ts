@@ -1,23 +1,44 @@
-import { describe, test, expect, vi, beforeAll, afterAll } from 'vitest'
+import { describe, test, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import type { FastifyInstance } from 'fastify'
 import { getApp, authHeader, getAuthUserId } from './setup.js'
 import { createIngestionJob, processIngestionJob } from '../src/modules/ingestion/ingestion.service.js'
 
-vi.mock('../src/modules/ingestion/analyzers/gemini-vision.adapter.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/modules/ingestion/analyzers/gemini-vision.adapter.js')>()
-  return {
-    ...actual,
-    getGeminiApiKey: async () => 'test-gemini-key',
-    geminiVisionAnalyze: vi.fn(async () => JSON.stringify({
-      region: '胸部',
-      modality: 'CT',
-      findings: ['右肺上叶可见小结节，直径约5mm'],
-      impression: '良性结节可能大，建议随访',
-      confidence: 'medium',
-    })),
-  }
+beforeEach(() => {
+  vi.stubEnv('GEMINI_API_KEY', 'test-gemini-key')
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string | URL | Request) => {
+      const target = typeof url === 'string' ? url : url.toString()
+      if (target.includes('generativelanguage.googleapis.com')) {
+        return new Response(
+          JSON.stringify({
+            candidates: [{
+              content: {
+                parts: [{
+                  text: JSON.stringify({
+                    region: '胸部',
+                    modality: 'CT',
+                    findings: ['右肺上叶可见小结节，直径约5mm'],
+                    impression: '良性结节可能大，建议随访',
+                    confidence: 'medium',
+                  }),
+                }],
+              },
+            }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    }),
+  )
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
 
 const dicomSource = path.resolve(import.meta.dirname, '../sample-chest-ct.dcm')

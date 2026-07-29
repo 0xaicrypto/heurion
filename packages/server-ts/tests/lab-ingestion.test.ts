@@ -1,19 +1,35 @@
-import { describe, test, expect, vi } from 'vitest'
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { getApp, authHeader, getAuthUserId } from './setup.js'
 import { createIngestionJob, processIngestionJob } from '../src/modules/ingestion/ingestion.service.js'
 
-vi.mock('../src/common/llm.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/common/llm.js')>()
-  return {
-    ...actual,
-    getApiKey: () => 'test-key',
-    deepseekChat: vi.fn(async () => JSON.stringify({
-      items: [
-        { name: 'WBC', value: '11.2', unit: 'x10^9/L', referenceRange: '4.0-10.0', abnormal: true, interpretation: 'High' },
-        { name: 'Creatinine', value: '1.3', unit: 'mg/dL', referenceRange: '0.6-1.2', abnormal: true, interpretation: 'High' },
-      ],
-    })),
-  }
+beforeEach(() => {
+  vi.stubEnv('DEEPSEEK_API_KEY', 'test-key')
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string | URL | Request) => {
+      const target = typeof url === 'string' ? url : url.toString()
+      if (target.includes('deepseek.com')) {
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify({
+              items: [
+                { name: 'WBC', value: '11.2', unit: 'x10^9/L', referenceRange: '4.0-10.0', abnormal: true, interpretation: 'High' },
+                { name: 'Creatinine', value: '1.3', unit: 'mg/dL', referenceRange: '0.6-1.2', abnormal: true, interpretation: 'High' },
+              ],
+            }) } }],
+            usage: { prompt_tokens: 100, completion_tokens: 80, total_tokens: 180 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    }),
+  )
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
 
 async function createPatient(app: any, initials = 'LAB') {

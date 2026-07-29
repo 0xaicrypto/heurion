@@ -1,5 +1,7 @@
-import { deepseekChat, getApiKey } from '../../../common/llm.js'
+import { createAiProvider } from '../../../common/ai/index.js'
 import type { IngestionAnalyzer, IngestionJob, IngestionResult } from '../ingestion.service.js'
+
+const aiProvider = createAiProvider()
 
 export const labAnalyzer: IngestionAnalyzer = {
   name: 'lab',
@@ -36,10 +38,8 @@ ${text.slice(0, 8000)}
 
 JSON:`
 
-    const apiKey = getApiKey()
-    const raw = await deepseekChat(
+    const chatResult = await aiProvider.chat(
       [{ role: 'user', content: prompt }],
-      apiKey,
       {
         model: 'deepseek-chat',
         maxTokens: 2048,
@@ -50,6 +50,7 @@ JSON:`
         },
       },
     )
+    const raw = chatResult.content
 
     let parsed: { items: any[] }
     try {

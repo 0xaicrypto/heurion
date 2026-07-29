@@ -1,8 +1,10 @@
 import fs from 'fs'
 import path from 'path'
 import zlib from 'zlib'
+import { createAiProvider } from '../../../common/ai/index.js'
 import type { IngestionAnalyzer, IngestionJob, IngestionResult, MedicalRecordEntryDraft } from '../ingestion.service.js'
-import { geminiVisionAnalyze } from './gemini-vision.adapter.js'
+
+const aiProvider = createAiProvider()
 
 let dicomParser: any = null
 try {
@@ -252,12 +254,18 @@ export const imagingAnalyzer: IngestionAnalyzer = {
     let visionText = ''
     if (imageBase64) {
       try {
-        visionText = await geminiVisionAnalyze({
-          prompt: buildVisionPrompt(modality, region),
-          base64Image: imageBase64,
-          mimeType: imageMime,
-          userId: job.userId,
-        })
+        const visionResult = await aiProvider.vision(
+          [{ base64: imageBase64, mimeType: imageMime }],
+          buildVisionPrompt(modality, region),
+          {
+            telemetryContext: {
+              userId: job.userId,
+              workspaceId: job.userId,
+              action: 'ingestion.imaging_analyze',
+            },
+          },
+        )
+        visionText = visionResult.content
       } catch (err: any) {
         return fallbackNote(job, dicomMeta, dicomSummary, `Vision analysis failed: ${err.message}`)
       }
