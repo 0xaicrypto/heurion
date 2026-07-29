@@ -31,16 +31,26 @@ ENVEOF
 EMBEDDING_VENV=/opt/nexus-embedding
 EMBEDDING_MODEL_DIR=/opt/nexus-embedding-models
 mkdir -p "$EMBEDDING_MODEL_DIR"
-# Ensure the venv exists and contains a working pip. Some minimal images ship
-# python3 without ensurepip, and a partially-created venv may exist without pip.
-# Try creating the venv; if it fails (ensurepip missing), install the required
-# packages and retry.
-if ! python3 -m venv --clear "$EMBEDDING_VENV" >/dev/null 2>&1; then
-  apt-get update -qq && apt-get install -y -qq python3-venv python3-pip
-  python3 -m venv --clear "$EMBEDDING_VENV"
+
+REQUIREMENTS=(fastapi uvicorn pydantic sentence-transformers "optimum[onnxruntime]")
+REQ_HASH=$(printf '%s\n' "${REQUIREMENTS[*]}" | sha256sum | awk '{print $1}')
+
+# Create the venv only if it is missing or broken; avoid clearing a working venv
+# on every deploy so the model cache and installed packages stay hot.
+if [ ! -f "$EMBEDDING_VENV/bin/pip" ]; then
+  if ! python3 -m venv --clear "$EMBEDDING_VENV" >/dev/null 2>&1; then
+    apt-get update -qq && apt-get install -y -qq python3-venv python3-pip
+    python3 -m venv --clear "$EMBEDDING_VENV"
+  fi
 fi
-"$EMBEDDING_VENV/bin/pip" install --no-cache-dir -q \
-  fastapi uvicorn pydantic sentence-transformers "optimum[onnxruntime]"
+
+# Reinstall Python deps only when the requirement list changes.
+if [ ! -f "$EMBEDDING_VENV/.requirements-hash" ] || [ "$(cat "$EMBEDDING_VENV/.requirements-hash")" != "$REQ_HASH" ]; then
+  "$EMBEDDING_VENV/bin/pip" install --no-cache-dir -q "${REQUIREMENTS[@]}"
+  echo "$REQ_HASH" > "$EMBEDDING_VENV/.requirements-hash"
+else
+  echo "  embedding Python deps up-to-date, skipping install"
+fi
 
 pm2 delete heurion-embedding-staging 2>/dev/null || true
 EMBEDDING_SERVER_PORT=8004 HF_HOME="$EMBEDDING_MODEL_DIR" \
@@ -66,7 +76,6 @@ if ! curl -fsS "$EMBEDDING_HEALTH_URL" >/dev/null 2>&1; then
 fi
 
 which pnpm || npm install -g pnpm@10
-rm -rf node_modules
 pnpm install --prefer-offline
 npx prisma generate
 rm -f staging.db staging.db-journal 2>/dev/null || true
