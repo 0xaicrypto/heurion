@@ -45,6 +45,18 @@ if command -v pm2 >/dev/null 2>&1; then
   pm2 save 2>/dev/null || true
 fi
 
+# Ensure Docker is installed (fresh VPS may only have bare-metal tooling).
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker not found; installing via official convenience script..."
+  curl -fsSL https://get.docker.com | sh
+  systemctl enable docker >/dev/null 2>&1 || true
+  systemctl start docker >/dev/null 2>&1 || true
+fi
+if ! docker compose version >/dev/null 2>&1; then
+  echo "Docker Compose plugin missing" >&2
+  exit 1
+fi
+
 # Ensure the Docker model cache directory exists on the host. The compose file
 # mounts the nexus-data volume at /data, so this is mainly a safety net.
 mkdir -p /opt/nexus-embedding-models
