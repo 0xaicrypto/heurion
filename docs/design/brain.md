@@ -562,10 +562,347 @@ packages/web/src/
 | # | 问题 | 决策 |
 |---|---|---|
 | 1 | 向量存储选型 | **SQLite + 用户级内存 brute-force**。embedding 存在现有 SQLite 节点表中，查询时加载该用户向量在内存做 cosine similarity。零额外依赖，足够支撑单用户数千节点；规模上来后迁移到 `sqlite-vec` 或 `pgvector`。 |
-| 2 | Embedding 模型 | **API 优先，OpenAI `text-embedding-3-small`，dimensions=512**。成本极低（约 $0.02/1M tokens），质量够用；保留本地模型 fallback 接口供 self-hosted 用户配置。 |
+| 2 | Embedding 模型 | **本地开源模型优先，默认 `BAAI/bge-m3`，dimensions=1024**。原因：Moonshot/Kimi 与 DeepSeek 目前均未公开 Embedding API，且临床数据倾向于本地部署。OpenAI 保留为可选云 fallback；未来若国产 API 推出 embedding，可通过 adapter 切换。 |
 | 3 | MedicalRecordEntry `type` 枚举 | **可扩展**。初始枚举：`lab`、`imaging`、`pathology`、`ecg`、`note`、`diagnosis`、`medication`、`procedure`、`vaccination`、`allergy`。 |
 | 4 | DICOM 分析 | **继续使用 Gemini Vision**。现有 quick-scan 已集成，保持 fire-and-forget 改为同步等待（见 patients.router.ts 修复）。 |
 | 5 | 病例报告共享安全模型 | **限时只读 signed token + 审计日志**。默认 7 天过期，访问记录写入 audit log；可选“院内用户”模式。不开放完全匿名链接。 |
 | 6 | `/learn` 生成的 skill | **必须用户审批**。生成后状态 `pending_review`，医生确认后发布。 |
 | 7 | 记忆预算 token 上限 | **按模型动态调整**。根据当前使用模型的 tokenizer/上下文窗口计算上限。 |
 | 8 | Experience Synthesis 触发 | **手动 + 定时**。用户可点击“整理经验”，系统每晚/每周自动扫描已确认病例和科研结果。 |
+
+---
+
+## 14. AI Provider Strategy
+
+| 能力 | 默认 Provider | 模型 | 决策依据 |
+|---|---|---|---|
+| 聊天 / 推理 / 结构化提取 | **DeepSeek** | `deepseek-v4-pro` / `deepseek-v4-flash` | 已确认使用 DeepSeek；兼容 OpenAI SDK，支持 JSON Mode、Tool Calls。 |
+| 文本 Embedding | **本地开源模型** | 默认 `BAAI/bge-m3`（multilingual，8192 tokens，1024/768 维）；备选 `bge-large-zh-v1.5`、`nomic-embed-text-v1.5` | 满足数据不出院、无外部 API 依赖；中文医学场景下 `bge-m3` 效果与上下文长度兼顾。OpenAI 仍保留为可选云 fallback。 |
+| 视觉 / DICOM / 图片分析 | **Google Gemini Vision** | 当前使用的 vision 模型（如 `gemini-2.0-flash`） | 已有 DICOM quick-scan 集成，继续复用；未来若 DeepSeek/Moonshot 多模态 API 稳定，可评估迁移。 |
+| 本地 / 离线部署 | 可配置 | Ollama / LM Studio / `transformers.js` | 满足数据不出院、内网部署等合规需求。 |
+
+### 14.1 环境变量与抽象
+
+```bash
+DEEPSEEK_API_KEY=...
+DEEPSEEK_BASE_URL=https://api.deepseek.com   # 可选，用于代理/转接
+DEEPSEEK_CHAT_MODEL=deepseek-v4-pro
+
+# 本地/自托管 Embedding（默认）
+EMBEDDING_PROVIDER=local
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIMENSIONS=1024
+EMBEDDING_BATCH_SIZE=32
+EMBEDDING_DEVICE=cpu           # cpu / cuda / mps
+EMBEDDING_QUANTIZATION=none    # none / int8 / onnx
+EMBEDDING_SERVICE_URL=         # 若使用独立微服务则填 URL
+
+# 可选：OpenAI 云 embedding fallback
+OPENAI_API_KEY=...
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_EMBEDDING_DIMENSIONS=1536
+
+GEMINI_API_KEY=...
+GEMINI_VISION_MODEL=gemini-2.0-flash
+```
+
+后端提供统一抽象：
+
+```ts
+interface AiProvider {
+  chat(messages: Message[], options: ChatOptions): Promise<ChatResult>;
+  embed(texts: string[], options: EmbedOptions): Promise<number[][]>;
+  vision(images: ImageInput[], prompt: string): Promise<VisionResult>;
+}
+```
+
+业务代码只依赖 `AiProvider`，不直接调用具体 SDK。切换 provider 只需改配置和 adapter。
+
+### 14.2 本地 Embedding 部署形式
+
+| 部署方式 | 适用场景 | 推荐框架 |
+|---|---|---|
+| 后端进程内加载（`transformers` / `sentence-transformers`） | 单实例、低并发、数据不出院 | Python `sentence-transformers` + FastAPI 微服务；或 Node.js `transformers.js` |
+| 独立 Embedding 微服务 | 多实例共享、需要批量/并发 | `text-embeddings-inference` (TEI)、`infinity`、Ollama |
+| ONNX / OpenVINO 量化 | CPU 机器、内存/速度敏感 | `optimum[onnxruntime]`、OpenVINO |
+| 浏览器端 | 离线 Demo、少量文本 | `transformers.js`（仅轻量模型） |
+
+### 14.3 关键提醒
+
+- **Moonshot/Kimi 目前没有 Embedding API**：设计里不应假设其可用来生成向量；若后续发布，新增一个 `MoonshotEmbeddingAdapter` 即可。
+- **Embedding 与 Chat 解耦**：即使未来 DeepSeek 推出 embedding，也不一定要把 chat 和 embedding 绑定到同一家，保持独立配置最灵活。
+- **模型维度必须固定**：一个部署实例只能使用固定维度的模型；切换模型时需要重新生成全部 embedding。
+
+### 14.4 本地 Embedding 硬件要求参考
+
+| 模型 | 参数量 | FP16 模型大小 | 推荐 RAM | GPU VRAM（可选） | CPU 单条延迟* | 适用场景 |
+|---|---|---|---|---|---|---|
+| `sentence-transformers/all-MiniLM-L6-v2` | ~22 M | ~80 MB | 2 GB | 1 GB | 10-30 ms | 英文/通用，速度极快 |
+| `BAAI/bge-small-zh-v1.5` | ~33 M | ~120 MB | 2 GB | 1 GB | 15-40 ms | 中文通用，轻量 |
+| `nomic-ai/nomic-embed-text-v1.5` | ~137 M | ~550 MB | 4 GB | 2 GB | 30-80 ms | 长文本、英文为主 |
+| `thenlper/gte-base` (或 `bge-base-zh`) | ~110 M | ~400 MB | 4 GB | 2 GB | 30-70 ms | 中文，效果与速度平衡 |
+| **BAAI/bge-m3**（推荐） | ~567 M | ~2.2 GB | 8 GB | 4-6 GB | 80-200 ms | 多语言、8192 tokens、中文医学场景 |
+| `BAAI/bge-large-zh-v1.5` | ~326 M | ~1.3 GB | 6 GB | 3-4 GB | 60-150 ms | 中文，效果优于 bge-m3 在部分任务 |
+| `intfloat/multilingual-e5-large` | ~550 M | ~2.2 GB | 8 GB | 4-6 GB | 80-200 ms | 多语言，对查询/段落模板敏感 |
+
+\* CPU 延迟为普通文本（≤512 tokens）在 4 核 modern CPU 上的粗略估算；实际受 token 长度、批大小、量化、框架影响较大。
+
+#### 选型建议
+
+- **最小可用（开发/POC）**：`bge-small-zh-v1.5`，2 GB RAM，纯 CPU，效果足够跑通流程。
+- **推荐默认（Heurion 生产）**：`bge-m3`，8 GB RAM 或 4 GB+ GPU，支持长病历文本和多语言。
+- **追求极致效果**：`bge-large-zh-v1.5` 或 `multilingual-e5-large`，需要 6-8 GB+ RAM/GPU。
+
+#### 量化与加速
+
+- **INT8 量化**：模型大小和内存减半，CPU 延迟通常降低 30-50%，效果损失 1-3%。
+- **ONNX Runtime / OpenVINO**：CPU 上通常比 PyTorch 快 2-5 倍。
+- **批处理（batching）**：将多条文本一起 encode，GPU/CPU 利用率大幅提升；建议 batch size 16-64。
+
+#### 并发与规模估算
+
+- 若每个医生每天上传/生成 ≤ 100 条文档，单 CPU 实例即可消化。
+- 若医院多科室同时大量上传，建议：
+  - 独立 embedding 微服务（TEI / infinity）；
+  - 1 块 8 GB VRAM 显卡可支撑每秒数十到上百条 embedding；
+  - 或启动多个 ONNX CPU worker 做负载均衡。
+
+---
+
+## 15. Vector Storage Design
+
+本设计用于 **Phase 5（GraphRAG / Embedding）**，但在 Phase 0 预留 schema，避免后续大改。
+
+### 15.1 表结构
+
+```sql
+CREATE TABLE memory_node_embeddings (
+  node_id      TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL,
+  node_type    TEXT NOT NULL,       -- fact / article / gap / skill / document_chunk
+  model        TEXT NOT NULL,       -- 生成该向量的模型标识，例如 "BAAI/bge-m3"
+  vector       TEXT NOT NULL,       -- JSON array of float
+  norm         REAL NOT NULL,       -- 预计算的 L2 norm，加速 cosine
+  updated_at   TEXT NOT NULL        -- ISO 8601
+);
+
+CREATE INDEX idx_embeddings_user_type ON memory_node_embeddings(user_id, node_type);
+CREATE INDEX idx_embeddings_updated   ON memory_node_embeddings(updated_at);
+```
+
+为什么不直接存二进制 blob？SQLite 中 JSON 文本足够小（1024 维 ≈ 8-12 KB），且便于调试、迁移、后续接入 `sqlite-vec`。
+
+### 15.2 检索算法（per-user brute-force）
+
+```ts
+function searchSimilar(
+  userId: string,
+  queryVector: number[],
+  options: { nodeTypes?: string[]; topK?: number; minScore?: number }
+): Promise<Array<{ nodeId: string; score: number }>> {
+  // 1. 加载该用户（可选按 node_type 过滤）的全部向量
+  // 2. 计算 queryVector 与每个 vector 的 cosine similarity
+  //    score = dot(query, v) / (norm(query) * norm(v))
+  // 3. 按 score 降序，取 topK，过滤 minScore
+}
+```
+
+### 15.3 规模预估与升级路径
+
+| 单用户节点数 | 向量内存占用 | 检索延迟 | 策略 |
+|---|---|---|---|
+| < 1,000 | ~10-20 MB | < 50 ms | brute-force，无需索引 |
+| 1,000 - 10,000 | ~100-200 MB | 100-300 ms | brute-force + 缓存热点 query |
+| > 10,000 | > 200 MB | 不可接受 | 迁移到 `sqlite-vec` / `pgvector` / 专用向量库 |
+
+**升级路径：** 保留 `MemoryVectorStore` 接口，实现 `SqliteBruteForceVectorStore` 和 `SqliteVecVectorStore`，通过配置切换。
+
+---
+
+## 16. Ingestion Pipeline Specification
+
+### 16.1 状态机
+
+```
+file_uploaded
+    │
+    ▼
+pending ──► extracting ──► analyzing ──► awaiting_review ──► completed
+    │           │             │                │
+    ▼           ▼             ▼                ▼
+ failed       failed        failed           rejected (医生拒绝)
+```
+
+| 状态 | 含义 |
+|---|---|
+| `pending` | 已收到上传事件，等待 worker 认领 |
+| `extracting` | 正在提取文本 / OCR / DICOM 元数据 |
+| `analyzing` | LLM analyzer 正在生成结构化条目 |
+| `awaiting_review` | 已生成 `pending_review` 的病历条目，等待医生确认 |
+| `completed` | 医生确认或 analyzer 标记为无需确认（仅人工条目） |
+| `rejected` | 医生拒绝该分析结果 |
+| `failed` | 提取或分析失败，超过最大重试次数 |
+
+### 16.2 Analyzer I/O 契约
+
+每个 analyzer 是纯函数：`IngestionJob → IngestionResult`。
+
+```ts
+interface IngestionJob {
+  jobId: string;
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  patientHash?: string;      // 从上传上下文传入
+  studyId?: string;          // 科研文件可关联研究
+  uploadedBy: string;
+  extractedText?: string;    // 由 extraction 阶段产出
+  extractedJson?: unknown;   // DICOM 等结构化元数据
+}
+
+interface IngestionResult {
+  confidence: 'high' | 'medium' | 'low';
+  reasoning: string;         // 简要说明分析依据，用于 UI 展示
+  entries: MedicalRecordEntryDraft[];
+  facts?: FactDraft[];       // 可投影到 Memory Graph
+  suggestedStudyEvents?: StudyEventDraft[];
+  errors?: string[];         // 非致命错误，不会导致 job failed
+}
+```
+
+### 16.3 Analyzer 路由表
+
+| MIME 类型 / 文件特征 | Analyzer | 输出 |
+|---|---|---|
+| `application/pdf`（含文本层） | `PdfReportAnalyzer` | note / lab / imaging 等 |
+| `application/pdf`（扫描件，经 OCR） | `PdfReportAnalyzer` | 同上，置信度可能降低 |
+| `image/*`（化验单、报告照片） | `ImageReportAnalyzer`（Gemini Vision） | note / lab / imaging |
+| `application/dicom` | `DicomAnalyzer`（Gemini Vision） | imaging findings |
+| 科研协议 Word/PDF | `ProtocolAnalyzer` | rules / schedule events |
+| 普通文本 / markdown | `NoteAnalyzer` | note |
+
+### 16.4 重试与幂等
+
+- **重试**：`extracting` 和 `analyzing` 阶段失败时，按指数退避重试最多 3 次；成功后不再重试。
+- **幂等**：`jobId = hash(fileId + analyzerVersion + patientHash + studyId)`。同一文件在上传后 24 小时内重复触发不会创建重复 job；重新上传（文件 hash 变化）会创建新 job。
+- **降级**：LLM 调用失败时，可只生成 `raw_extracted_text` 类型的 `MedicalRecordEntry`，让用户手动整理，而不是完全失败。
+
+### 16.5 通知
+
+- `awaiting_review` 时：在 `Today` 页 widget 和 `Brain > Overview` inbox 中显示。
+- `failed` 时：发送站内通知，并附带错误原因和原始文件链接。
+
+---
+
+## 17. MedicalRecordEntry Schema Detail
+
+Phase 0 落地的核心表，扩展第 6.3 节的接口。
+
+```ts
+interface MedicalRecordEntry {
+  id: string;
+  patientHash: string;
+
+  type: MedicalRecordEntryType;
+  title: string;
+  date: string;              // 医学事件发生时间（用户可修正）
+  content: string;           // 人工可读摘要/正文
+  aiSummary?: string;        // AI 生成的简要摘要
+
+  // 来源
+  sourceFileId?: string;
+  sourceFilePage?: number;   // PDF 页码等
+  sourceStudyId?: string;
+  sourceJobId?: string;      // 关联 ingestion job
+
+  // 原始数据
+  extractedText?: string;    // 从文件提取的原始文本
+  rawJson?: unknown;         // DICOM 元数据、化验结构化 JSON 等
+
+  // 状态与审批
+  status: 'pending_review' | 'confirmed' | 'rejected';
+  createdBy: 'system' | 'user' | 'agent';
+  confirmedAt?: string;
+  confirmedBy?: string;
+  rejectedReason?: string;
+
+  // 版本与关联
+  version: number;
+  previousVersionId?: string;
+  linkedRecordIds: string[]; // 关联的其他 MedicalRecordEntry
+
+  // 元数据
+  createdAt: string;
+  updatedAt: string;
+}
+
+type MedicalRecordEntryType =
+  | 'lab'
+  | 'imaging'
+  | 'pathology'
+  | 'ecg'
+  | 'note'
+  | 'diagnosis'
+  | 'medication'
+  | 'procedure'
+  | 'vaccination'
+  | 'allergy';
+```
+
+### 17.1 索引
+
+```sql
+CREATE INDEX idx_medical_records_patient_date ON medical_record_entries(patient_hash, date DESC);
+CREATE INDEX idx_medical_records_status       ON medical_record_entries(status);
+CREATE INDEX idx_medical_records_type         ON medical_record_entries(type);
+CREATE INDEX idx_medical_records_source_file  ON medical_record_entries(source_file_id);
+CREATE INDEX idx_medical_records_job          ON medical_record_entries(source_job_id);
+```
+
+### 17.2 版本控制
+
+- 用户编辑 `MedicalRecordEntry` 时，不原地覆盖，而是创建新版本，旧记录保留。
+- `previousVersionId` 形成版本链，便于审计与回滚。
+- AI 重新分析同一文件时，如果已存在 `confirmed` 条目，新生成条目仍为 `pending_review`，并提示用户“是否覆盖”。
+
+---
+
+## 18. Approval & Audit Workflow
+
+所有高影响写入统一走“生成 → pending_review → 审批 → 生效”流程。
+
+### 18.1 需要审批的操作
+
+| 操作 | 生成者 | 审批者 | 生效后动作 |
+|---|---|---|---|
+| AI 生成 `MedicalRecordEntry` | Ingestion Worker / Agent | 医生 | 状态变为 `confirmed`，投影到 Memory Graph |
+| `/learn` 生成 Skill | Agent | 医生 | 发布为正式 skill，可被 chat 加载 |
+| Agent 提议更新 Persona | Agent | 医生 | 更新全局/患者偏好 |
+| Agent 提议添加 Fact / Article | Agent | 医生 | 写入 Memory Graph |
+| 科研 Rule 变更 | 用户/Agent | PI 或管理员 | 更新研究协议规则 |
+
+### 18.2 统一审批队列
+
+- 后端表：`approval_requests`。
+- 前端入口：`Today` 页 widget + `Brain > Overview` inbox。
+- 每个审批项显示：类型、来源、生成理由、diff、操作（确认/拒绝/编辑后确认）。
+
+### 18.3 审计日志
+
+所有状态变化写入 `audit_log`：
+
+```ts
+interface AuditLogEntry {
+  id: string;
+  actor: string;             // user id / agent / system
+  action: string;            // e.g. 'medical_record.confirmed'
+  targetType: string;        // 'MedicalRecordEntry' | 'Skill' | 'Persona' | ...
+  targetId: string;
+  before?: unknown;
+  after?: unknown;
+  reason?: string;
+  createdAt: string;
+}
+```
+
+审计日志不可删除、不可修改，保留期限按部署合规要求（默认 7 年）。
