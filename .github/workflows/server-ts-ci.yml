@@ -61,4 +61,4 @@ jobs:
         run: pnpm run build
 
       - name: Run Phase 0 regression tests
-        run: pnpm test -- medical-record-entry approval-audit ingestion-worker lab-ingestion imaging-ingestion
+        run: pnpm test -- medical-record-entry approval-audit ingestion-worker lab-ingestion imaging-ingestion ai-provider
