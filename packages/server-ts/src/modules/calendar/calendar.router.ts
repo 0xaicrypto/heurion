@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
-import { getPendingRules } from '../research/protocol-extractor.js'
+import { getConfirmedRules } from '../research/protocol-extractor.js'
 import prisma from '../../common/prisma'
 
 export async function calendarRouter(app: FastifyInstance) {
@@ -23,8 +23,8 @@ export async function calendarRouter(app: FastifyInstance) {
     const studies = await (prisma as any).researchStudy.findMany({ where: { userId } })
     for (const study of studies) {
       const studyStart = new Date(study.createdAt)
-      const rules = getPendingRules(study.id)
-      const scheduleRules = rules.filter((r: any) => r.category === 'schedule' && r.confirmed)
+      const rules = await getConfirmedRules(study.id)
+      const scheduleRules = rules.filter((r: any) => r.category === 'schedule')
 
       if (scheduleRules.length > 0) {
         // Use confirmed schedule rules

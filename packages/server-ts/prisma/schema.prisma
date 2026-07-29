@@ -176,6 +176,8 @@ model ResearchStudy {
   screenings  ResearchScreening[]
   observations ResearchObservation[]
   assessments ResearchAssessment[]
+  protocolRules StudyProtocolRule[]
+  events      StudyEvent[]
   @@index([userId, updatedAt(sort: Desc)])
   @@map("research_studies")
 }
@@ -235,6 +237,41 @@ model ResearchAssessment {
   study ResearchStudy @relation(fields: [studyId], references: [id])
   @@index([studyId, patientHash])
   @@map("research_assessments")
+}
+
+model StudyProtocolRule {
+  id            String @id
+  studyId       String @map("study_id")
+  category      String
+  rule          String
+  detail        String @default("")
+  status        String @default("pending")
+  version       Int    @default(1)
+  sourceJobId   String? @map("source_job_id")
+  extractedFrom String? @map("extracted_from")
+  createdAt     String @map("created_at")
+  updatedAt     String @map("updated_at")
+
+  study ResearchStudy @relation(fields: [studyId], references: [id])
+  @@index([studyId, category, status])
+  @@index([studyId, status])
+  @@map("study_protocol_rules")
+}
+
+model StudyEvent {
+  id           String @id
+  studyId      String @map("study_id")
+  visit        String
+  timing       String
+  assessments  String @default("[]")
+  status       String @default("pending")
+  sourceRuleId String? @map("source_rule_id")
+  createdAt    String @map("created_at")
+  updatedAt    String @map("updated_at")
+
+  study ResearchStudy @relation(fields: [studyId], references: [id])
+  @@index([studyId, visit])
+  @@map("study_events")
 }
 
 model PatientRecord {

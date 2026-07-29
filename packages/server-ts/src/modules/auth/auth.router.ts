@@ -105,6 +105,8 @@ export async function authRouter(app: FastifyInstance) {
     const studyIds = await (prisma as any).researchStudy.findMany({ where: { userId }, select: { id: true } })
     const studyIdList = studyIds.map((s: any) => s.id)
     if (studyIdList.length > 0) {
+      await (prisma as any).studyEvent.deleteMany({ where: { studyId: { in: studyIdList } } })
+      await (prisma as any).studyProtocolRule.deleteMany({ where: { studyId: { in: studyIdList } } })
       await (prisma as any).researchAssessment.deleteMany({ where: { studyId: { in: studyIdList } } })
       await (prisma as any).researchObservation.deleteMany({ where: { studyId: { in: studyIdList } } })
       await (prisma as any).researchScreening.deleteMany({ where: { studyId: { in: studyIdList } } })
