@@ -8,7 +8,16 @@ The end state: agents run on your VPS, persist their state across container rebu
 
 ## Prerequisites
 
-- A VPS with a public IP and root or sudo access. **Tested:** DigitalOcean ($6/mo droplet), Hetzner CX11 (€4.5/mo), AWS t3.small. Anything with ≥ 1 GB RAM, ≥ 10 GB disk, Ubuntu 22.04+ works.
+- A VPS with a public IP and root or sudo access, running Ubuntu 22.04+.
+  - **Minimum:** 4 GB RAM, 20 GB disk — enough to run the control plane plus
+    the local `bge-m3` embedding model in CPU mode (with swap).
+  - **Recommended:** 8 GB RAM, 40 GB disk — gives the embedding service and
+    Docker image layers room to breathe without swap thrashing.
+  - **GPU (optional):** 4–6 GB VRAM lets `bge-m3` run on CUDA/MPS and
+    drastically improves embedding throughput.
+  - *The old 1 GB droplet guidance no longer applies once the local embedding
+    service is enabled; `bge-m3` alone is ~2.2 GB on disk and needs several
+    gigabytes of RAM at runtime.*
 - Open ports **80** (ACME challenge) and **443** (HTTPS) on the VPS firewall. The desktop never connects to port 8001 directly — Caddy fronts everything.
 - A Gemini API key (free tier from [aistudio.google.com](https://aistudio.google.com/apikey)). Anthropic / OpenAI optional.
 - The desktop client built locally (`cd packages/desktop-v2 && pnpm install && pnpm tauri:dev` for hot-reload, or `./scripts/build-macos.sh` to install the bundled `.app`). The legacy Avalonia client at git tag `legacy/avalonia-final` is no longer maintained.

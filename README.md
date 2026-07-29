@@ -50,6 +50,11 @@ Unlike stateless chatbots, Heurion's agent:
 │  │   Auth, Chat SSE, Research, Docs, Skills, Admin, Plugin Mgmt   │  │
 │  │   Enqueues Sidecar jobs, proxies file downloads                │  │
 │  └───────────────────────────────┬───────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │   Embedding Server (Python) — nexus_server.embedding_server    │  │
+│  │   Local bge-m3 (1024-dim) + OpenAI fallback                    │  │
+│  │   Powers GraphRAG / semantic retrieval                         │  │
+│  └───────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────┼──────────────────────────────────┘
                                     │ enqueue job (Redis)
 ┌──────────────────────────────────▼──────────────────────────────────┐
@@ -389,8 +394,13 @@ Production runs on at least two DigitalOcean Droplets (or equivalent VMs):
 
 | Node | Role | Example spec |
 |---|---|---|
-| **Control Plane** | Main API, Web UI, SQLite DB, Plugin Manager, Job Queue | 2 vCPU / 4 GB RAM |
+| **Control Plane** | Main API, Web UI, SQLite DB, Plugin Manager, Job Queue, **local bge-m3 Embedding Server** | 2–4 vCPU / **8 GB RAM** (4 GB minimum with swap) |
 | **Execution Plane** | Plugin Worker, Sandbox, MedSci-Sidecar | 2 vCPU / 4 GB RAM (horizontally scalable) |
+
+The Control Plane runs the `nexus-embedding-server` container (or process) alongside
+`nexus-server`. `bge-m3` needs ~2.2 GB disk and several gigabytes of RAM; budget
+accordingly or point `EMBEDDING_SERVICE_URL` at an external embedding endpoint to
+offload it.
 
 The two planes communicate over a private network (VPC / WireGuard). The Execution Plane
 is not exposed to the public internet; only the Control Plane can reach it on port `8001`.

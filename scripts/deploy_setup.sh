@@ -138,7 +138,7 @@ fi
 
 # ── Step 6: build + start ────────────────────────────────────────────
 echo ""
-echo "Building Docker images (first run takes ~3–5 min)…"
+echo "Building Docker images (first run takes ~5–10 min; bge-m3 download is ~2.2 GB)…"
 docker compose --env-file .env.production build
 
 echo ""

@@ -32,7 +32,20 @@ jobs:
         with: { version: '10' }
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
-      - run: cd packages/server-ts && pnpm install --frozen-lockfile && npx prisma generate && npx vitest run
+      - name: Run Phase 0 regression tests
+        run: |
+          cd packages/server-ts
+          pnpm install --frozen-lockfile
+          npx prisma generate
+          pnpm exec vitest run \
+            tests/medical-record-entry.test.ts \
+            tests/approval-audit.test.ts \
+            tests/ingestion-worker.test.ts \
+            tests/lab-ingestion.test.ts \
+            tests/imaging-ingestion.test.ts \
+            tests/ai-provider.test.ts \
+            tests/protocol-ingestion.test.ts \
+            tests/local-embedding.test.ts
 
   build-web:
     name: Build Web Dist

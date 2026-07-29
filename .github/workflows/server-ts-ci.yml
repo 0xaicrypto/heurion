@@ -66,4 +66,13 @@ jobs:
         run: pnpm run build
 
       - name: Run Phase 0 regression tests
-        run: pnpm test -- medical-record-entry approval-audit ingestion-worker lab-ingestion imaging-ingestion ai-provider protocol-ingestion local-embedding
+        run: |
+          pnpm exec vitest run \
+            tests/medical-record-entry.test.ts \
+            tests/approval-audit.test.ts \
+            tests/ingestion-worker.test.ts \
+            tests/lab-ingestion.test.ts \
+            tests/imaging-ingestion.test.ts \
+            tests/ai-provider.test.ts \
+            tests/protocol-ingestion.test.ts \
+            tests/local-embedding.test.ts
