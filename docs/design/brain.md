@@ -557,13 +557,15 @@ packages/web/src/
 
 ---
 
-## 13. 剩余开放问题
+## 13. 剩余开放问题（已决策）
 
-1. 向量存储选型：SQLite 扩展 / pgvector / 内存 HNSW？
-2. Embedding 模型：本地模型还是 API？
-3. MedicalRecordEntry 的 `type` 枚举是否要扩展（例如病理、心电图）？
-4. Ingestion 中 DICOM 分析是继续用 Gemini Vision，还是复用 Python legacy pipeline？
-5. 病例报告共享的安全模型：只读 token / 院内用户 / 匿名链接？
-6. `/learn` 生成的 skill 是否默认需要用户审批？（建议：必须审批）
-7. 记忆预算的 token 上限是否按模型动态调整？
-8. Experience Synthesis 触发条件：手动 / 定时 / 里程碑事件？
+| # | 问题 | 决策 |
+|---|---|---|
+| 1 | 向量存储选型 | **SQLite + 用户级内存 brute-force**。embedding 存在现有 SQLite 节点表中，查询时加载该用户向量在内存做 cosine similarity。零额外依赖，足够支撑单用户数千节点；规模上来后迁移到 `sqlite-vec` 或 `pgvector`。 |
+| 2 | Embedding 模型 | **API 优先，OpenAI `text-embedding-3-small`，dimensions=512**。成本极低（约 $0.02/1M tokens），质量够用；保留本地模型 fallback 接口供 self-hosted 用户配置。 |
+| 3 | MedicalRecordEntry `type` 枚举 | **可扩展**。初始枚举：`lab`、`imaging`、`pathology`、`ecg`、`note`、`diagnosis`、`medication`、`procedure`、`vaccination`、`allergy`。 |
+| 4 | DICOM 分析 | **继续使用 Gemini Vision**。现有 quick-scan 已集成，保持 fire-and-forget 改为同步等待（见 patients.router.ts 修复）。 |
+| 5 | 病例报告共享安全模型 | **限时只读 signed token + 审计日志**。默认 7 天过期，访问记录写入 audit log；可选“院内用户”模式。不开放完全匿名链接。 |
+| 6 | `/learn` 生成的 skill | **必须用户审批**。生成后状态 `pending_review`，医生确认后发布。 |
+| 7 | 记忆预算 token 上限 | **按模型动态调整**。根据当前使用模型的 tokenizer/上下文窗口计算上限。 |
+| 8 | Experience Synthesis 触发 | **手动 + 定时**。用户可点击“整理经验”，系统每晚/每周自动扫描已确认病例和科研结果。 |
