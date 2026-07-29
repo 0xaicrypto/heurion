@@ -7,6 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  SERVER_IMAGE_NAME: ghcr.io/0xaicrypto/nexus-server
   WORKER_IMAGE_NAME: ghcr.io/0xaicrypto/heurion-worker
 
 jobs:
@@ -32,6 +33,58 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
       - run: cd packages/server-ts && pnpm install --frozen-lockfile && npx prisma generate && npx vitest run
+
+  build-web:
+    name: Build Web Dist
+    needs: [typecheck]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with: { version: '10' }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: packages/web/pnpm-lock.yaml
+      - run: cd packages/web && pnpm install --frozen-lockfile && pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: packages/web/dist
+          retention-days: 1
+
+  build-server-image:
+    name: Build Server Image
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract short SHA
+        id: vars
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Build and push server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.SERVER_IMAGE_NAME }}:${{ steps.vars.outputs.sha }}
+            ${{ env.SERVER_IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   build-worker-image:
     name: Build Worker Image
@@ -99,31 +152,74 @@ jobs:
           fi
 
   deploy:
-    name: Deploy to Production
-    needs: [staging, cloudflare-ssl, build-worker-image]
+    name: Deploy to Production (Docker Compose)
+    needs: [staging, cloudflare-ssl, build-server-image, build-web]
     runs-on: ubuntu-latest
     environment:
       name: production
       url: https://heurion.org
     steps:
       - uses: actions/checkout@v4
+
+      - name: Extract short SHA
+        id: vars
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: packages/web/dist
+
       - uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
-      - name: Deploy production
+
+      - name: Write production env
         env:
-          DEEPSEEK_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HOSTNAME: heurion.org
           SERVER_SECRET: ${{ secrets.SERVER_SECRET }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           EXECUTION_PLANE_URL: ${{ secrets.EXECUTION_PLANE_URL }}
           WORKER_API_TOKEN: ${{ secrets.WORKER_API_TOKEN }}
         run: |
-          printf 'DEEPSEEK_KEY=%s\nGEMINI_KEY=%s\nSERVER_SECRET=%s\nEXECUTION_PLANE_URL=%s\nWORKER_API_TOKEN=%s\n' \
-            "$DEEPSEEK_KEY" "$GEMINI_KEY" "$SERVER_SECRET" "$EXECUTION_PLANE_URL" "$WORKER_API_TOKEN" > /tmp/heurion-deploy.env
-          scp -o StrictHostKeyChecking=no /tmp/heurion-deploy.env ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/heurion-deploy.env
+          cat > /tmp/heurion-deploy.env <<EOF
+          HOSTNAME=${HOSTNAME}
+          SERVER_HOST=0.0.0.0
+          SERVER_PORT=8001
+          ENVIRONMENT=production
+          LOG_LEVEL=INFO
+          SERVER_SECRET=${SERVER_SECRET}
+          CORS_ALLOW_ORIGINS=https://${HOSTNAME}
+          DEFAULT_LLM_PROVIDER=gemini
+          GEMINI_API_KEY=${GEMINI_API_KEY}
+          DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+          OPENAI_API_KEY=${OPENAI_API_KEY}
+          EXECUTION_PLANE_URL=${EXECUTION_PLANE_URL}
+          WORKER_API_TOKEN=${WORKER_API_TOKEN}
+          EMBEDDING_PROVIDER=local
+          EMBEDDING_MODEL=BAAI/bge-m3
+          EMBEDDING_DIMENSIONS=1024
+          EMBEDDING_DEVICE=cpu
+          EMBEDDING_BATCH_SIZE=32
+          EMBEDDING_QUANTIZATION=none
+          EMBEDDING_FALLBACK_PROVIDER=none
+          LOCAL_EMBEDDING_URL=http://nexus-embedding-server:8003/embed
+          OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+          EOF
+
+      - name: Deploy production via Docker Compose
+        env:
+          NEXUS_IMAGE: ${{ env.SERVER_IMAGE_NAME }}:${{ steps.vars.outputs.sha }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p /opt/heurion/packages/web/dist"
+          scp -o StrictHostKeyChecking=no -r packages/web/dist/* ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/packages/web/dist/
+          scp -o StrictHostKeyChecking=no /tmp/heurion-deploy.env ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/.env.production
+          scp -o StrictHostKeyChecking=no docker-compose.yml Caddyfile Dockerfile ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/
+          scp -o StrictHostKeyChecking=no scripts/deploy-production-compose.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/scripts/
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            'set -a; source /tmp/heurion-deploy.env; rm -f /tmp/heurion-deploy.env; bash -s' < scripts/deploy.sh || echo 'SSH pipe closed (deploy OK)'
-          rm -f /tmp/heurion-deploy.env
+            "cd /opt/heurion && chmod +x scripts/deploy-production-compose.sh && NEXUS_IMAGE=$NEXUS_IMAGE bash scripts/deploy-production-compose.sh"
 
   deploy-execution-plane:
     name: Deploy Execution Plane
