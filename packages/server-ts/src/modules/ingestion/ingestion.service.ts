@@ -1,11 +1,14 @@
 import prisma from '../../common/prisma.js'
 import { createMedicalRecordEntry } from '../medical-records/medical-record-entry.service.js'
 import { extractDocumentText } from '../../lib/document-extractor.js'
+import { analyzerRegistry, registerAnalyzer } from './analyzer-registry.js'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
+
+export { analyzerRegistry, registerAnalyzer }
 
 export interface MedicalRecordEntryDraft {
   type: string
@@ -52,14 +55,8 @@ export interface IngestionAnalyzer {
   analyze(job: IngestionJob): Promise<IngestionResult>
 }
 
-export const analyzerRegistry: Record<string, IngestionAnalyzer> = {}
-
-export function registerAnalyzer(mimeType: string, analyzer: IngestionAnalyzer) {
-  analyzerRegistry[mimeType] = analyzer
-}
-
 // Default note analyzer: creates a single raw note entry from extracted text.
-const noteAnalyzer: IngestionAnalyzer = {
+analyzerRegistry['text/plain'] = {
   name: 'note',
   async analyze(job) {
     return {
@@ -80,8 +77,6 @@ const noteAnalyzer: IngestionAnalyzer = {
   },
 }
 
-registerAnalyzer('text/plain', noteAnalyzer)
-
 export interface CreateIngestionJobInput {
   userId: string
   fileId: string
@@ -90,6 +85,7 @@ export interface CreateIngestionJobInput {
   patientHash?: string
   studyId?: string
   uploadedBy: string
+  extractedText?: string
 }
 
 export async function createIngestionJob(input: CreateIngestionJobInput) {
@@ -118,6 +114,7 @@ export async function createIngestionJob(input: CreateIngestionJobInput) {
       patientHash: input.patientHash,
       studyId: input.studyId,
       uploadedBy: input.uploadedBy,
+      extractedText: input.extractedText,
       status: 'pending',
       retryCount: 0,
       createdAt: now,
@@ -141,18 +138,20 @@ export async function processIngestionJob(id: string) {
 
   // Extraction step
   await updateJobStatus(job.id, 'extracting')
-  try {
-    const extracted = await extractTextForJob(job)
-    await (prisma as any).ingestionJob.update({
-      where: { id: job.id },
-      data: {
-        extractedText: extracted.text,
-        extractedJson: extracted.json ? JSON.stringify(extracted.json) : null,
-        updatedAt: now(),
-      },
-    })
-  } catch (err: any) {
-    return await failJob(job.id, `extraction failed: ${err.message}`)
+  if (!job.extractedText) {
+    try {
+      const extracted = await extractTextForJob(job)
+      await (prisma as any).ingestionJob.update({
+        where: { id: job.id },
+        data: {
+          extractedText: extracted.text,
+          extractedJson: extracted.json ? JSON.stringify(extracted.json) : null,
+          updatedAt: now(),
+        },
+      })
+    } catch (err: any) {
+      return await failJob(job.id, `extraction failed: ${err.message}`)
+    }
   }
 
   // Analysis step with retries
