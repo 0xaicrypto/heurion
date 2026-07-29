@@ -150,48 +150,48 @@ export async function patientsRouter(app: FastifyInstance) {
     return Buffer.alloc(1)
   })
 
+  async function appendChiefComplaint(userId: string, prefix: string, text: string) {
+    if (!text || text.length <= 5) return
+    const patients = await (prisma as any).patientRecord.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 1 })
+    if (patients.length === 0) return
+    const existing = patients[0].chiefComplaint || ''
+    const snippet = text.slice(0, 50)
+    if (existing.includes(snippet)) return
+    await (prisma as any).patientRecord.update({
+      where: { hash: patients[0].hash },
+      data: { chiefComplaint: (existing + `\n[${prefix}] ` + text.slice(0, 300)).trim(), updatedAt: new Date().toISOString() },
+    })
+  }
+
   // #2: Quick Scan + update patient profile
   app.post('/api/v1/dicom/studies/:studyId/quick-scan', async (request) => {
     const studyId = (request.params as any).studyId
     const userId = request.user!.userId
     const findings = quickScanDicom(userId, studyId)
 
-    // Gemini Vision analysis (async, fire-and-forget)
-    analyzeWithGeminiVision(userId, studyId).then(aiFindings => {
-      if (!aiFindings) return
+    // Gemini Vision analysis with timeout — ensure profile is updated before response returns
+    const AI_TIMEOUT_MS = 10000
+    let aiFindings = ''
+    try {
+      aiFindings = await Promise.race([
+        analyzeWithGeminiVision(userId, studyId),
+        new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), AI_TIMEOUT_MS)),
+      ])
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      aiFindings = `Vision analysis ${message}`
+    }
+
+    if (aiFindings) {
       findings.push({ type: 'ai_analysis', content: aiFindings })
-      // Update patient profile
-      const text = aiFindings.slice(0, 300)
-      if (text.length > 5) {
-        ;(prisma as any).patientRecord.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 1 })
-          .then((patients: any[]) => {
-            if (patients.length > 0) {
-              const existing = patients[0].chiefComplaint || ''
-              if (!existing.includes(text.slice(0, 50))) {
-                ;(prisma as any).patientRecord.update({
-                  where: { hash: patients[0].hash },
-                  data: { chiefComplaint: (existing + '\n[AI Vision] ' + text).trim(), updatedAt: new Date().toISOString() }
-                }).catch(() => {})
-              }
-            }
-          }).catch(() => {})
-      }
-    }).catch(() => {})
+      await appendChiefComplaint(userId, 'AI Vision', aiFindings).catch(() => {})
+    }
 
     // Update patient with scan data
-    const text = findings.filter((f: any) => f.type !== 'meta' && f.type !== 'error')
+    const text = findings.filter((f: any) => f.type !== 'meta' && f.type !== 'error' && f.type !== 'ai_analysis')
       .map((f: any) => f.content).join(' | ')
     if (text && text.length > 5) {
-      const allPatients = await (prisma as any).patientRecord.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 1 })
-      if (allPatients.length > 0) {
-        const existing = allPatients[0].chiefComplaint || ''
-        if (!existing.includes(text.slice(0, 50))) {
-          await (prisma as any).patientRecord.update({
-            where: { hash: allPatients[0].hash },
-            data: { chiefComplaint: (existing + '\n[Scan] ' + text.slice(0, 300)).trim(), updatedAt: new Date().toISOString() }
-          })
-        }
-      }
+      await appendChiefComplaint(userId, 'Scan', text).catch(() => {})
     }
 
     return { ok: true, findings, study_id: studyId }
