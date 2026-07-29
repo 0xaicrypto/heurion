@@ -1,6 +1,7 @@
 # Server TS CI — ensures the TypeScript backend builds and Phase 0 tests pass.
 #
-# Runs on PRs and pushes to main that touch packages/server-ts or this workflow.
+# Runs on PRs and pushes to main that touch packages/server-ts, packages/server,
+# deploy scripts, or this workflow.
 # Phase 0 covers the Brain 2.0 ingestion pipeline and AI infrastructure:
 #   medical-record-entry, approval-audit, ingestion-worker, lab-ingestion, imaging-ingestion,
 #   ai-provider, protocol-ingestion, local-embedding
@@ -13,6 +14,7 @@ on:
   pull_request:
     paths:
       - 'packages/server-ts/**'
+      - 'packages/server/**'
       - '.github/workflows/server-ts-ci.yml'
       - '.github/workflows/deploy-server.yml'
       - 'scripts/deploy*.sh'
@@ -21,6 +23,7 @@ on:
     branches: [main]
     paths:
       - 'packages/server-ts/**'
+      - 'packages/server/**'
       - '.github/workflows/server-ts-ci.yml'
       - '.github/workflows/deploy-server.yml'
       - 'scripts/deploy*.sh'
