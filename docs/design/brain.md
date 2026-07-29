@@ -1,4 +1,4 @@
-# Brian 2.0 — 统一记忆中枢设计
+# Brain 2.0 — 统一记忆中枢设计
 
 **状态：** 设计提案 v2.0  
 **日期：** 2026-07-29  
@@ -14,7 +14,7 @@
 
 把 Heurion 从“一个会查资料、能记录 fact 的助手”，升级成**一个会自己记笔记、写手册、整理知识的临床 agent**。
 
-> **代号：Brian 2.0** —— 比 Brain 多一个“i”，代表 intelligent、interactive、iterative。
+> **代号：Brain 2.0**
 
 ---
 
@@ -461,7 +461,19 @@ Plugins 管理入口从侧边栏移除，收进 Settings。
 
 ## 11. 实现阶段
 
-### Phase 1：Backend 基础
+### Phase 0：GraphRAG / Embedding 基础（第一步）
+
+Brain 2.0 的核心不是换 UI，而是让记忆**可被语义检索、可被图遍历**。所以先做底层：
+
+1. 为 facts / articles / gaps / skills 生成 embedding。
+2. 添加向量索引/存储（优先 SQLite 扩展或 pgvector；如果部署受限，可用内存向量索引 + 持久化）。
+3. 实现语义搜索：给定 query，召回相关 nodes。
+4. 实现图遍历检索：从命中节点出发，沿 relations 扩展 1-2 hop。
+5. 更新 `MemoryProjection`：混合检索 = 语义召回 + 图遍历 + importance/recency 重排序。
+
+**Why first：** 没有 GraphRAG，Brain 页面只是数据展示；有了它，患者大脑的全局知识叠加、Graph 聚焦、Skill 推荐才有意义。
+
+### Phase 1：Backend Brain API
 1. 扩展 EventLog schema，支持 `memory_*` / `skill_*` / `persona_*` 事件。
 2. 实现 `BrainService`：统一处理 brain actions，包括审批判定。
 3. 实现 `POST /api/v1/agent/brain/actions`。
@@ -473,7 +485,7 @@ Plugins 管理入口从侧边栏移除，收进 Settings。
 2. 新建 `BrainPage` + 5 个 tab。
 3. 实现 `/app/brain/skills` 列表/查看。
 4. 侧边栏改为 Brain 单一入口。
-5. 删除旧 `/app/knowledge`、`/app/memory*` 路由。
+5. 删除旧 `/app/knowledge`、`/app/memory*` 路由（直接删除，不重定向）。
 
 ### Phase 3：Agent 可写记忆
 1. 给 chat orchestrator 暴露 `brain` tool。
@@ -489,7 +501,7 @@ Plugins 管理入口从侧边栏移除，收进 Settings。
 
 ### Phase 5：Graph 大脑化
 1. 深色主题、神经元节点、突触边。
-2. Compound nodes 脑区聚类。
+2. Compound nodes 脑区聚类（依赖 GraphRAG 的聚类结果）。
 3. 脉冲动画、聚焦交互、HUD。
 
 ### Phase 6：患者路由重构
@@ -500,9 +512,8 @@ Plugins 管理入口从侧边栏移除，收进 Settings。
 ### Phase 7：收尾
 1. Plugins 管理入口移到 `/app/settings/plugins`。
 2. 在 Brain > Skills 中暴露插件提供的 skills/tools。
-3. 旧 `/app/chat` 重定向到 `/app/patient/:hash/chat`（使用最近活跃患者）。
-4. 更新 `web-ui-redesign.md`。
-5. 全量测试。
+3. 更新 `web-ui-redesign.md`。
+4. 全量测试。
 
 ---
 
@@ -519,16 +530,20 @@ Plugins 管理入口从侧边栏移除，收进 Settings。
 
 ## 13. 已确认决策
 
-1. **Skill 存储格式**：作为 memory graph 节点，`content` 字段保存 markdown 全文。
-2. **患者大脑 Persona tab**：允许修改全局 preferences（用户级配置）。
-3. **Graph 3D**：纳入远期路线图，2D 成熟后再启动。
-4. **旧 `/app/chat`**：重定向到 `/app/patient/:hash/chat`，使用最近活跃患者。
-5. **插件前端位置**：管理入口在 `Settings > Plugins`，能力发现和使用入口分别在 `Brain > Skills` 和 `Chat Composer`。
+1. **命名统一**：产品/代码/路由全部使用 `Brain`（不是 Brian）。
+2. **第一步**：GraphRAG / embedding / 语义检索，先做底层再换 UI。
+3. **Skill 存储格式**：作为 memory graph 节点，`content` 字段保存 markdown 全文。
+4. **患者大脑 Persona tab**：允许修改全局 preferences（用户级配置）。
+5. **Graph 3D**：纳入远期路线图，2D 成熟后再启动。
+6. **旧路由处理**：`/app/knowledge`、`/app/memory*` 直接删除，不做重定向。
+7. **插件前端位置**：管理入口在 `Settings > Plugins`，能力发现和使用入口分别在 `Brain > Skills` 和 `Chat Composer`。
 
 ## 14. 剩余开放问题
 
-1. 插件 marketplace 的发现卡片在 Brain > Skills 中占多大比重？
-2. `/learn` 生成的 skill 是否默认需要用户审批，还是低影响 skill 可自动发布？
-3. 记忆预算的 token 上限是否按模型动态调整？
-4. 活跃患者多久未操作后清空，重定向到患者列表？
+1. 向量存储选型：SQLite 扩展 / pgvector / 内存 HNSW？
+2. Embedding 模型：本地模型（如 Xenova）还是 OpenAI/Kimi API？
+3. 插件 marketplace 的发现卡片在 Brain > Skills 中占多大比重？
+4. `/learn` 生成的 skill 是否默认需要用户审批，还是低影响 skill 可自动发布？
+5. 记忆预算的 token 上限是否按模型动态调整？
+6. 活跃患者多久未操作后清空，重定向到患者列表？
 
