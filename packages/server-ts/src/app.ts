@@ -16,6 +16,7 @@ import { filesRouter } from './modules/files/files.router.js'
 import { adminRouter } from './modules/admin/admin.router.js'
 import { calendarRouter } from './modules/calendar/calendar.router.js'
 import { medicalRecordsRouter } from './modules/medical-records/medical-records.router.js'
+import { medicalRecordEntriesRouter } from './modules/medical-records/medical-record-entries.router.js'
 import { stubRouter } from './modules/stubs/stubs.router.js'
 import { knowledgeRouter } from './modules/knowledge/knowledge.router.js'
 import { executionRouter } from './modules/execution/execution.router.js'
@@ -79,6 +80,7 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   await app.register(adminRouter)
   await app.register(calendarRouter)
   await app.register(patientsRouter)
+  await app.register(medicalRecordEntriesRouter)
   await app.register(medicalRecordsRouter)
   await app.register(knowledgeRouter)
   await app.register(evolutionRouter, { evolutionQueue })

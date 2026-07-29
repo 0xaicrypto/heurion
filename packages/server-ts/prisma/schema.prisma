@@ -36,11 +36,13 @@ model User {
   chatTakeaways ChatTakeaway[]
   studies       ResearchStudy[]
   patients      PatientRecord[]
-  knowledgeGaps KnowledgeGap[]
-  telemetryEvents TelemetryEvent[]
-  pluginInstallations PluginInstallation[]
-  externalUserMappings ExternalUserMapping[]
-  @@map("users")
+   knowledgeGaps KnowledgeGap[]
+   telemetryEvents TelemetryEvent[]
+   pluginInstallations PluginInstallation[]
+   externalUserMappings ExternalUserMapping[]
+   medicalRecordEntries MedicalRecordEntry[]
+   approvalRequests ApprovalRequest[]
+   @@map("users")
 }
 
 model Session {
@@ -264,6 +266,102 @@ model MedicalRecord {
   @@index([patientHash, createdAt(sort: Desc)])
   @@index([userId, patientHash])
   @@map("medical_records")
+}
+
+model MedicalRecordEntry {
+  id                String  @id @default(cuid())
+  patientHash       String  @map("patient_hash")
+  userId            String  @map("user_id")
+  type              String
+  title             String
+  date              String
+  content           String
+  aiSummary         String? @map("ai_summary")
+  sourceFileId      String? @map("source_file_id")
+  sourceStudyId     String? @map("source_study_id")
+  sourceJobId       String? @map("source_job_id")
+  extractedText     String? @map("extracted_text")
+  rawJson           String? @map("raw_json")
+  status            String  @default("pending_review")
+  createdBy         String  @map("created_by")
+  confirmedAt       String? @map("confirmed_at")
+  confirmedBy       String? @map("confirmed_by")
+  rejectedReason    String? @map("rejected_reason")
+  version           Int     @default(1)
+  previousVersionId String? @map("previous_version_id")
+  linkedRecordIds   String  @default("[]") @map("linked_record_ids")
+  createdAt         String  @map("created_at")
+  updatedAt         String  @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+  @@index([patientHash, date(sort: Desc)])
+  @@index([status])
+  @@index([type])
+  @@index([sourceFileId])
+  @@index([sourceJobId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("medical_record_entries")
+}
+
+model ApprovalRequest {
+  id         String  @id @default(cuid())
+  userId     String  @map("user_id")
+  targetType String  @map("target_type")
+  targetId   String  @map("target_id")
+  status     String  @default("pending")
+  payload    String
+  diff       String?
+  reason     String?
+  actorId    String? @map("actor_id")
+  createdAt  String  @map("created_at")
+  resolvedAt String? @map("resolved_at")
+
+  user User @relation(fields: [userId], references: [id])
+  @@index([userId, status, createdAt(sort: Desc)])
+  @@index([targetType, targetId])
+  @@map("approval_requests")
+}
+
+model AuditLog {
+  id         String  @id @default(cuid())
+  actor      String
+  action     String
+  targetType String  @map("target_type")
+  targetId   String  @map("target_id")
+  before     String?
+  after      String?
+  reason     String?
+  createdAt  String  @map("created_at")
+
+  @@index([targetType, targetId, createdAt(sort: Desc)])
+  @@index([actor, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+model IngestionJob {
+  id            String  @id @default(cuid())
+  userId        String  @map("user_id")
+  fileId        String  @map("file_id")
+  fileName      String  @map("file_name")
+  mimeType      String  @map("mime_type")
+  patientHash   String? @map("patient_hash")
+  studyId       String? @map("study_id")
+  uploadedBy    String  @map("uploaded_by")
+  extractedText String? @map("extracted_text")
+  extractedJson String? @map("extracted_json")
+  status        String  @default("pending")
+  confidence    String?
+  reasoning     String?
+  resultPayload String? @map("result_payload")
+  retryCount    Int     @default(0) @map("retry_count")
+  failedReason  String? @map("failed_reason")
+  createdAt     String  @map("created_at")
+  updatedAt     String  @map("updated_at")
+
+  @@index([userId, status, createdAt(sort: Desc)])
+  @@index([patientHash, status])
+  @@index([studyId, status])
+  @@map("ingestion_jobs")
 }
 
 model KnowledgeGap {
