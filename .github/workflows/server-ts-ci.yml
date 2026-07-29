@@ -14,11 +14,15 @@ on:
     paths:
       - 'packages/server-ts/**'
       - '.github/workflows/server-ts-ci.yml'
+      - 'scripts/deploy*.sh'
+      - '.env.production.example'
   push:
     branches: [main]
     paths:
       - 'packages/server-ts/**'
       - '.github/workflows/server-ts-ci.yml'
+      - 'scripts/deploy*.sh'
+      - '.env.production.example'
   workflow_dispatch:
 
 env:

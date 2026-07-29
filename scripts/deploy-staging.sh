@@ -32,6 +32,10 @@ EMBEDDING_VENV=/opt/nexus-embedding
 EMBEDDING_MODEL_DIR=/opt/nexus-embedding-models
 mkdir -p "$EMBEDDING_MODEL_DIR"
 if [ ! -f "$EMBEDDING_VENV/bin/python" ]; then
+  # Some minimal Debian/Ubuntu images ship python3 without ensurepip.
+  if ! python3 -m venv --help >/dev/null 2>&1; then
+    apt-get update -qq && apt-get install -y -qq python3-venv
+  fi
   python3 -m venv "$EMBEDDING_VENV"
 fi
 "$EMBEDDING_VENV/bin/pip" install --no-cache-dir -q \
