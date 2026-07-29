@@ -74,14 +74,12 @@ services:
       # losing this volume = losing all learned tools.
       - nexus-data:/data
       # Web UI dist is built outside Docker (locally or in CI) and
-      # mounted here so the 1 GB droplet does not OOM building Node
-      # inside the image. Update packages/web/dist and restart the
-      # container to deploy front-end changes.
+      # mounted here so the droplet does not OOM building Node inside
+      # the image. Update packages/web/dist and restart the container
+      # to deploy front-end changes. Server Python code is baked into
+      # the image; do NOT bind-mount it, or a missing host directory
+      # will shadow the installed package and break imports.
       - ./packages/web/dist:/app/packages/web/dist:ro
-      # Server Python code is mounted from the host so we can patch
-      # backend routes (new routers, tools, etc.) without rebuilding
-      # the Docker image on the 1 GB droplet.
-      - ./packages/server/nexus_server:/opt/venv/lib/python3.11/site-packages/nexus_server:ro
     networks:
       - nexus-net
     depends_on:
