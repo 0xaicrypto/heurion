@@ -70,10 +70,10 @@ EMBEDDING_MODEL_DIR=/opt/nexus-embedding-models
 mkdir -p "$EMBEDDING_MODEL_DIR"
 # Ensure the venv exists and contains a working pip. Some minimal images ship
 # python3 without ensurepip, and a partially-created venv may exist without pip.
-if ! python3 -m venv --help >/dev/null 2>&1; then
+# Try creating the venv; if it fails (ensurepip missing), install the required
+# packages and retry.
+if ! python3 -m venv --clear "$EMBEDDING_VENV" >/dev/null 2>&1; then
   apt-get update -qq && apt-get install -y -qq python3-venv python3-pip
-fi
-if [ ! -f "$EMBEDDING_VENV/bin/pip" ]; then
   python3 -m venv --clear "$EMBEDDING_VENV"
 fi
 "$EMBEDDING_VENV/bin/pip" install --no-cache-dir -q \
