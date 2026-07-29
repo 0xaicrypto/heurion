@@ -92,6 +92,7 @@ fi
 pm2 delete heurion-embedding 2>/dev/null || true
 HF_HOME="$EMBEDDING_MODEL_DIR" \
 SENTENCE_TRANSFORMERS_HOME="$EMBEDDING_MODEL_DIR" \
+PYTHONPATH=/root/heurion/packages/server \
   pm2 start "$EMBEDDING_VENV/bin/python" \
   --name heurion-embedding \
   -- /root/heurion/packages/server/nexus_server/embedding_server.py

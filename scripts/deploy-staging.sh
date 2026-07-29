@@ -55,6 +55,7 @@ fi
 pm2 delete heurion-embedding-staging 2>/dev/null || true
 EMBEDDING_SERVER_PORT=8004 HF_HOME="$EMBEDDING_MODEL_DIR" \
 SENTENCE_TRANSFORMERS_HOME="$EMBEDDING_MODEL_DIR" \
+PYTHONPATH=/root/heurion/packages/server \
   pm2 start "$EMBEDDING_VENV/bin/python" \
   --name heurion-embedding-staging \
   -- /root/heurion/packages/server/nexus_server/embedding_server.py
