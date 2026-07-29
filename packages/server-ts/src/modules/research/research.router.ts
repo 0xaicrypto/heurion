@@ -151,9 +151,7 @@ export async function researchRouter(app: FastifyInstance) {
     if (!text) return reply.status(400).send({ error: 'text required' })
     // Trigger AI extraction in background
     extractRulesFromProtocol(studyId, text, {
-      userId,
-      workspaceId: userId,
-      action: 'research.extract_protocol',
+      telemetryContext: { userId, workspaceId: userId, action: 'research.extract_protocol' },
     }).catch(() => {})
     return service.importProtocol(studyId, text)
   })
@@ -165,70 +163,32 @@ export async function researchRouter(app: FastifyInstance) {
     const userId = request.user!.userId
     if (!text) return reply.status(400).send({ error: 'text required' })
     const rules = await extractRulesFromProtocol(studyId, text, {
-      userId,
-      workspaceId: userId,
-      action: 'research.extract_protocol',
+      telemetryContext: { userId, workspaceId: userId, action: 'research.extract_protocol' },
     })
-    return { study_id: studyId, rules, status: getConfirmationStatus(studyId) }
+    return { study_id: studyId, rules, status: await getConfirmationStatus(studyId) }
   })
 
   // List pending extracted rules
   app.get('/api/v1/research/studies/:studyId/protocol-rules', async (request) => {
     const { studyId } = request.params as any
     return {
-      rules: getPendingRules(studyId),
-      status: getConfirmationStatus(studyId),
+      rules: await getPendingRules(studyId),
+      status: await getConfirmationStatus(studyId),
     }
   })
 
-  // Doctor confirms a rule — also generate assessments for schedule rules
+  // Doctor confirms a rule — schedule rules also generate StudyEvent + assessment
   app.post('/api/v1/research/studies/:studyId/protocol-rules/:ruleId/confirm', async (request, reply) => {
     const { studyId, ruleId } = request.params as any
-    const rule = confirmRule(studyId, ruleId)
+    const rule = await confirmRule(studyId, ruleId)
     if (!rule) return reply.status(404).send({ error: 'Rule not found' })
-
-    // Generate assessment from confirmed schedule rule
-    if (rule.category === 'schedule') {
-      const match = rule.rule.match(/^(.+?)\s*\((.+?)\):\s*(.+)$/)
-      if (match) {
-        const study = await service.getStudy(request.user!.userId, studyId)
-        const studyStart = study ? new Date(study.createdAt) : new Date()
-        const days = parseTimingForRule(match[2], studyStart)
-        if (days !== null) {
-          const dueDate = new Date(studyStart)
-          dueDate.setDate(dueDate.getDate() + days)
-          const crypto = await import('crypto')
-          await (prisma as any).researchAssessment.create({
-            data: {
-              id: `asmt_${crypto.randomBytes(8).toString('hex')}`,
-              studyId, patientHash: '',
-              visit: match[1].trim(), title: match[1].trim(),
-              dueAt: dueDate.toISOString(),
-            },
-          })
-        }
-      }
-    }
-
-    return { rule, status: getConfirmationStatus(studyId) }
+    return { rule, status: await getConfirmationStatus(studyId) }
   })
 
   // Doctor rejects a rule
   app.delete('/api/v1/research/studies/:studyId/protocol-rules/:ruleId', async (request, reply) => {
     const { studyId, ruleId } = request.params as any
-    const ok = rejectRule(studyId, ruleId)
-    return { rejected: ok, study_id: studyId, status: getConfirmationStatus(studyId) }
+    const ok = await rejectRule(studyId, ruleId)
+    return { rejected: ok, study_id: studyId, status: await getConfirmationStatus(studyId) }
   })
-}
-
-function parseTimingForRule(timing: string, studyStart: Date): number | null {
-  const dayMatch = timing.match(/Day\s+(-?\d+)/)
-  if (dayMatch) return parseInt(dayMatch[1])
-  const weekMatch = timing.match(/every\s+(\d+)\s*week/i)
-  if (weekMatch) return parseInt(weekMatch[1]) * 7
-  const monthMatch = timing.match(/every\s+(\d+)\s*month/i)
-  if (monthMatch) return parseInt(monthMatch[1]) * 30
-  const cycleDay = timing.match(/cycle.*?Day\s+(\d+)/i)
-  if (cycleDay) return parseInt(cycleDay[1])
-  return null
 }
