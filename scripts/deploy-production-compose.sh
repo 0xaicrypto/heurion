@@ -15,11 +15,17 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/heurion}"
 REPO_URL="https://github.com/0xaicrypto/heurion.git"
 
 mkdir -p "$DEPLOY_DIR"
-cd "$DEPLOY_DIR" 2>/dev/null || { git clone "$REPO_URL" "$DEPLOY_DIR"; cd "$DEPLOY_DIR"; }
+cd "$DEPLOY_DIR"
 
-git fetch origin main
-git reset --hard origin/main
-echo "Deploying: $(git log -1 --oneline)"
+# CI already scp's the compose files, env, and web dist into /opt/heurion.
+# Only sync from git if this directory happens to be a clone (legacy path).
+if [ -d .git ]; then
+  git fetch origin main
+  git reset --hard origin/main
+  echo "Deploying: $(git log -1 --oneline)"
+else
+  echo "Deploying from CI-provided files in $DEPLOY_DIR"
+fi
 
 if [ ! -f .env.production ]; then
   echo "Missing .env.production — copy it to $DEPLOY_DIR before deploying." >&2
