@@ -24,6 +24,12 @@ __all__ = [
     "app",
 ]
 
-from nexus_server.main import create_app
 
-app = create_app()
+def __getattr__(name: str):
+    """Lazy app creation so importing submodules (e.g. embedding_server)
+    does not pull in the full FastAPI dependency tree."""
+    if name == "app":
+        from nexus_server.main import create_app
+
+        return create_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
