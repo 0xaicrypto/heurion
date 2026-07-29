@@ -49,6 +49,9 @@ htmlcov/
 coverage.xml
 *.cover
 
+# Tesseract.js downloaded language data (auto-fetched at runtime)
+*.traineddata
+
 # Jupyter
 .ipynb_checkpoints/
 

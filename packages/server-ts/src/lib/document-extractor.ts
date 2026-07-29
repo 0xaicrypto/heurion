@@ -1,10 +1,17 @@
 import fs from 'fs'
 import path from 'path'
 import { PDFParse } from 'pdf-parse'
+import { createWorker, type Worker } from 'tesseract.js'
 
 export interface ExtractOptions {
   maxChars?: number
+  ocrPageLimit?: number
+  ocrScale?: number
 }
+
+const OCR_TEXT_THRESHOLD = 100
+const DEFAULT_OCR_PAGE_LIMIT = 5
+const DEFAULT_OCR_SCALE = 2
 
 function isPdf(filename: string, mimeType?: string): boolean {
   const lower = filename.toLowerCase()
@@ -27,26 +34,107 @@ function isText(filename: string, mimeType?: string): boolean {
   return false
 }
 
+let tesseractWorker: Worker | null = null
+let tesseractWorkerPromise: Promise<Worker | null> | null = null
+
+async function getTesseractWorker(): Promise<Worker | null> {
+  if (tesseractWorker) return tesseractWorker
+  if (tesseractWorkerPromise) return tesseractWorkerPromise
+
+  tesseractWorkerPromise = (async () => {
+    try {
+      // eng + chi_sim covers most clinical reports we see
+      tesseractWorker = await createWorker('eng+chi_sim')
+      return tesseractWorker
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn('[document-extractor] Failed to create tesseract worker:', message)
+      return null
+    }
+  })()
+
+  return tesseractWorkerPromise
+}
+
+async function ocrPdfPages(
+  parser: PDFParse,
+  options: Required<Pick<ExtractOptions, 'maxChars' | 'ocrPageLimit' | 'ocrScale'>>,
+): Promise<string> {
+  const worker = await getTesseractWorker()
+  if (!worker) return '[PDF has no text layer and OCR is unavailable]'
+
+  let totalPages = 1
+  try {
+    const info = await parser.getInfo({ parsePageInfo: true })
+    totalPages = info.pages?.length || 1
+  } catch {
+    // ignore
+  }
+  const pagesToOcr = Math.min(totalPages, options.ocrPageLimit)
+  const pageNumbers = Array.from({ length: pagesToOcr }, (_, i) => i + 1)
+
+  try {
+    const screenshot = await parser.getScreenshot({
+      scale: options.ocrScale,
+      imageBuffer: true,
+      partial: pageNumbers,
+    })
+
+    let ocrText = ''
+    for (const page of screenshot.pages) {
+      if (!page.data) continue
+      const result = await worker.recognize(Buffer.from(page.data))
+      if (result.data.text) {
+        ocrText += result.data.text + '\n'
+      }
+      if (ocrText.length >= options.maxChars) break
+    }
+
+    return (ocrText.trim() || '[PDF OCR returned empty text]').slice(0, options.maxChars)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return `[PDF OCR failed: ${message}]`
+  }
+}
+
+async function extractPdfText(
+  buffer: Buffer,
+  options: Required<Pick<ExtractOptions, 'maxChars' | 'ocrPageLimit' | 'ocrScale'>>,
+): Promise<string> {
+  let parser: PDFParse | undefined
+  try {
+    parser = new PDFParse({ data: new Uint8Array(buffer) })
+
+    // Layer 1: try the electronic text layer
+    const textResult = await parser.getText()
+    const text = textResult.text.trim()
+    if (text.length >= OCR_TEXT_THRESHOLD) {
+      return text.slice(0, options.maxChars)
+    }
+
+    // Layer 2: OCR fallback for scanned/image PDFs
+    const ocrText = await ocrPdfPages(parser, options)
+    return ocrText
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return `[PDF extraction failed: ${message}]`
+  } finally {
+    await parser?.destroy().catch(() => {})
+  }
+}
+
 export async function extractDocumentText(
   buffer: Buffer,
   filename: string,
   mimeType?: string,
   options: ExtractOptions = {},
 ): Promise<string> {
-  const { maxChars = 30000 } = options
+  const maxChars = options.maxChars ?? 30000
+  const ocrPageLimit = options.ocrPageLimit ?? DEFAULT_OCR_PAGE_LIMIT
+  const ocrScale = options.ocrScale ?? DEFAULT_OCR_SCALE
 
   if (isPdf(filename, mimeType)) {
-    let parser: PDFParse | undefined
-    try {
-      parser = new PDFParse({ data: new Uint8Array(buffer) })
-      const result = await parser.getText()
-      return result.text.trim().slice(0, maxChars)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      return `[PDF extraction failed: ${message}]`
-    } finally {
-      await parser?.destroy().catch(() => {})
-    }
+    return extractPdfText(buffer, { maxChars, ocrPageLimit, ocrScale })
   }
 
   if (isText(filename, mimeType)) {
