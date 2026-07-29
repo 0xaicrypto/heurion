@@ -7,7 +7,7 @@
 
 import { DeepSeekChatProvider } from './deepseek-chat.provider.js'
 import { GeminiVisionProvider } from './gemini-vision.provider.js'
-import { LocalEmbeddingProvider } from './local-embedding.provider.js'
+import { LocalEmbeddingProvider, ResilientEmbeddingProvider } from './local-embedding.provider.js'
 import { OpenAIEmbeddingProvider } from './openai-embedding.provider.js'
 
 export interface ChatMessage {
@@ -104,6 +104,8 @@ export interface AiProviderConfig {
   geminiVisionModel?: string
   embeddingProvider?: 'local' | 'openai'
   embeddingModel?: string
+  embeddingDevice?: 'cpu' | 'cuda' | 'mps'
+  embeddingFallbackProvider?: 'openai' | 'none'
   localEmbeddingUrl?: string
   openaiApiKey?: string
   openaiEmbeddingModel?: string
@@ -117,6 +119,8 @@ export function loadAiConfigFromEnv(): AiProviderConfig {
     geminiVisionModel: process.env.GEMINI_VISION_MODEL || 'gemini-2.0-flash',
     embeddingProvider: (process.env.EMBEDDING_PROVIDER as any) || 'local',
     embeddingModel: process.env.EMBEDDING_MODEL || 'BAAI/bge-m3',
+    embeddingDevice: (process.env.EMBEDDING_DEVICE as any) || 'cpu',
+    embeddingFallbackProvider: (process.env.EMBEDDING_FALLBACK_PROVIDER as any) || 'none',
     localEmbeddingUrl: process.env.LOCAL_EMBEDDING_URL || 'http://localhost:8003/embed',
     openaiApiKey: process.env.OPENAI_API_KEY,
     openaiEmbeddingModel: process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
@@ -273,10 +277,17 @@ export function createAiProvider(
   const cfg = { ...loadAiConfigFromEnv(), ...config }
   const chatProvider = new DeepSeekChatProvider(cfg)
   const visionProvider = new GeminiVisionProvider(cfg)
-  const embedProvider =
-    cfg.embeddingProvider === 'openai'
-      ? new OpenAIEmbeddingProvider(cfg)
-      : new LocalEmbeddingProvider(cfg)
+  let embedProvider: Pick<AiProvider, 'embed'>
+  if (cfg.embeddingProvider === 'openai') {
+    embedProvider = new OpenAIEmbeddingProvider(cfg)
+  } else {
+    const local = new LocalEmbeddingProvider(cfg)
+    if (cfg.embeddingFallbackProvider === 'openai') {
+      embedProvider = new ResilientEmbeddingProvider(local, new OpenAIEmbeddingProvider(cfg))
+    } else {
+      embedProvider = local
+    }
+  }
 
   const composite = new CompositeAiProvider({ chat: chatProvider, embed: embedProvider, vision: visionProvider })
   return new TelemetryAiProvider(composite, recorder)
