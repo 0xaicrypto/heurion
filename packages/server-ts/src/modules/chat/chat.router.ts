@@ -233,21 +233,34 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
 
       let fullMessage = attachmentText ? `${attachmentText}\n\nUser query: ${body.text}` : body.text
 
-      // Inject patient demographics into chat context
+      // Inject patient demographics + memory findings into chat context
       if (patientHash) {
         const patient = await (prisma as any).patientRecord.findFirst({
           where: { hash: patientHash, userId },
         })
+        const parts: string[] = ['## Current Patient Context']
         if (patient) {
-          const parts: string[] = ['## Current Patient Context']
           if (patient.initials) parts.push(`- Name: ${patient.initials}`)
           if (patient.age) parts.push(`- Age: ${patient.age}`)
           if (patient.sex) parts.push(`- Sex: ${patient.sex}`)
           if (patient.chiefComplaint) parts.push(`- Chief Complaint: ${patient.chiefComplaint}`)
-          if (parts.length > 1) {
-            send({ type: 'context_info', text: parts.join('\n'), kind: 'patient_context' })
-            fullMessage = parts.join('\n') + '\n\n' + fullMessage
+        }
+        // Inject memory facts for this patient as structured findings
+        const patientFacts = ctx.memory.graph.getCurrentNodesByType('fact')
+          .filter((n: any) => (n as any).patientHash === patientHash)
+          .slice(0, 20)
+        if (patientFacts.length > 0) {
+          parts.push('- Clinical Findings:')
+          for (const f of patientFacts) {
+            const cat = (f as any).category || 'fact'
+            const content = (f as any).content || ''
+            const imp = (f as any).importance || 3
+            if (content) parts.push(`  * [${cat}] ${content} (importance: ${imp}/5)`)
           }
+        }
+        if (parts.length > 1) {
+          send({ type: 'context_info', text: parts.join('\n'), kind: 'patient_context' })
+          fullMessage = parts.join('\n') + '\n\n' + fullMessage
         }
       }
 
