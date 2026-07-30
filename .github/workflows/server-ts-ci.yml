@@ -21,6 +21,8 @@ on:
       - 'docker-compose.yml'
       - 'Dockerfile'
       - '.env.production.example'
+      - 'CONTRIBUTING.md'
+      - '.github/ISSUE_TEMPLATE/**'
   push:
     branches: [main]
     paths:
@@ -28,6 +30,8 @@ on:
       - 'packages/server/**'
       - '.github/workflows/server-ts-ci.yml'
       - '.github/workflows/deploy-server.yml'
+      - 'CONTRIBUTING.md'
+      - '.github/ISSUE_TEMPLATE/**'
       - 'scripts/deploy*.sh'
       - 'docker-compose.yml'
       - 'Dockerfile'
