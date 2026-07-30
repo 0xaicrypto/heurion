@@ -29,6 +29,15 @@ from nexus_server.middleware import check_rate_limit
 logger = logging.getLogger(__name__)
 config = get_config()
 
+# Per-provider default models used when none is explicitly provided.
+PROVIDER_DEFAULT_MODELS: dict[str, str] = {
+    "gemini":    "gemini-2.0-flash",
+    "openai":    "gpt-4o",
+    "anthropic": "claude-3-sonnet-20240229",
+    "kimi":      "moonshot-v1-8k",
+    "deepseek":  "deepseek-v4-pro",
+}
+
 router = APIRouter(prefix="/api/v1/llm", tags=["llm"])
 
 # Maximum tool call rounds to prevent infinite loops
@@ -1415,8 +1424,8 @@ async def call_llm(
         MAX_AUTO_CONTINUATIONS,
     )
 
-    model = model or config.DEFAULT_LLM_MODEL
     provider = config.DEFAULT_LLM_PROVIDER
+    model = model or PROVIDER_DEFAULT_MODELS.get(provider, config.DEFAULT_LLM_MODEL)
 
     async def _dispatch(msgs):
         if provider == "gemini":

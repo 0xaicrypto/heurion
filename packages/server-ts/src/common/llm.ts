@@ -1,9 +1,9 @@
 // DeepSeek LLM client — OpenAI-compatible Chat Completions API
 const DEEPSEEK_BASE = 'https://api.deepseek.com/v1'
 /** Default cheap model for classifiers, extractors, and background tasks. */
-export const DEEPSEEK_CHAT_MODEL = process.env.DEEPSEEK_CHAT_MODEL || 'deepseek-chat'
+export const DEEPSEEK_CHAT_MODEL = process.env.DEEPSEEK_CHAT_MODEL || 'deepseek-v4-flash'
 /** Optional premium model for high-stakes chat / document editing. */
-export const DEEPSEEK_PREMIUM_MODEL = process.env.DEEPSEEK_PREMIUM_MODEL || 'deepseek-chat'
+export const DEEPSEEK_PREMIUM_MODEL = process.env.DEEPSEEK_PREMIUM_MODEL || 'deepseek-v4-pro'
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
@@ -48,6 +48,8 @@ function getPricing(model: string): { input: number; output: number } {
   const defaults: Record<string, { input: number; output: number }> = {
     'deepseek-chat': { input: 0.27, output: 1.10 },
     'deepseek-reasoner': { input: 0.55, output: 2.19 },
+    'deepseek-v4-flash': { input: 0.27, output: 1.10 },
+    'deepseek-v4-pro': { input: 0.55, output: 2.19 },
   }
   const envPricing = process.env.LLM_PRICING ? JSON.parse(process.env.LLM_PRICING) : {}
   return (
