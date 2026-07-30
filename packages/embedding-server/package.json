@@ -18,5 +18,8 @@
     "@types/node": "^20.0.0",
     "tsx": "^4.0.0",
     "typescript": "^7.0.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "sharp", "protobufjs"]
   }
 }
