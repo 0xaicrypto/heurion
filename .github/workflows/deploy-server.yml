@@ -237,9 +237,3 @@ jobs:
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             "cd /opt/heurion && chmod +x scripts/deploy-production-compose.sh && NEXUS_IMAGE=$NEXUS_IMAGE EMBEDDING_IMAGE=$EMBEDDING_IMAGE bash scripts/deploy-production-compose.sh"
 
-  deploy-execution-plane:
-    name: Deploy Execution Plane (Python — legacy, pending TS port)
-    if: false
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Execution plane deployment disabled pending Node.js port"
