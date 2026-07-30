@@ -194,6 +194,27 @@ export async function patientsRouter(app: FastifyInstance) {
       await appendChiefComplaint(userId, 'Scan', text).catch(() => {})
     }
 
+    // Store findings as MemoryGraph facts so the LLM can reference them in chat
+    try {
+      const ctx = getUserContext(userId)
+      const docNode = ctx.memory.graph.getLatestByStableId(studyId)
+      const patientHash = (docNode as any)?.patientHash
+      for (const f of findings) {
+        if (f.type === 'meta' || f.type === 'error') continue
+        const content = f.content.slice(0, 200)
+        if (content.length > 5) {
+          ctx.memory.addFact({
+            category: 'fact',
+            importance: 4,
+            content,
+            sourceType: 'patient',
+            patientHash: patientHash || undefined,
+            provenance: { sourceKind: 'document', sourceRef: studyId },
+          }, 'system')
+        }
+      }
+    } catch {}
+
     return { ok: true, findings, study_id: studyId }
   })
 
