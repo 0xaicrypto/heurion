@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import prisma from '../../common/prisma.js'
 import { validateManifest, type ValidationResult } from './plugin-validation.service.js'
@@ -62,7 +62,17 @@ export interface PluginTrigger {
   patterns: string[]
 }
 
-const OFFICIAL_CATALOG_PATH = resolve(process.cwd(), 'data', 'official-plugins.json')
+function resolveOfficialCatalogPath(): string {
+  const candidates = [
+    resolve(process.cwd(), 'data', 'official-plugins.json'),
+  ]
+  for (const p of candidates) {
+    if (existsSync(p)) return p
+  }
+  return candidates[0]
+}
+
+const OFFICIAL_CATALOG_PATH = resolveOfficialCatalogPath()
 
 let cachedCatalog: PluginManifest[] | null = null
 

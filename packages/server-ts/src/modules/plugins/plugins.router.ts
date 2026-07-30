@@ -25,8 +25,8 @@ export async function pluginsRouter(app: FastifyInstance) {
 
   // Seed official catalog on first request (or move to app startup)
   app.addHook('onReady', async () => {
-    await seedOfficialCatalog().catch(() => {
-      // ignore seed errors in tests
+    await seedOfficialCatalog().catch((e) => {
+      console.warn('[plugins] seed official catalog failed (non-fatal):', (e as Error)?.message || e)
     })
   })
 
