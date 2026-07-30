@@ -27,7 +27,7 @@ KIMI_DEFAULT_MODEL = "kimi-k2.7-code"
 
 # ── DeepSeek defaults ───────────────────────────────────────────────
 DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
-DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-pro"
 
 
 def resolve_kimi_api_key() -> str:

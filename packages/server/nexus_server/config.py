@@ -45,10 +45,10 @@ class ServerConfig:
 
     # LLM Configuration
     DEFAULT_LLM_PROVIDER: str = os.getenv(
-        "DEFAULT_LLM_PROVIDER", "anthropic"
+        "DEFAULT_LLM_PROVIDER", "deepseek"
     )
     DEFAULT_LLM_MODEL: str = os.getenv(
-        "DEFAULT_LLM_MODEL", "claude-3-sonnet-20240229"
+        "DEFAULT_LLM_MODEL", "deepseek-v4-pro"
     )
 
     # LLM API Keys
