@@ -27,8 +27,5 @@ dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 [project.scripts]
 nexus = "nexus.cli:cli_main"
 
-[tool.uv.sources]
-nexus-core = { workspace = true }
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

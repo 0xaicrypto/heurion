@@ -141,10 +141,6 @@ dev = [
 nexus-server = "nexus_server.main:run_server"
 nexus-embedding-server = "nexus_server.embedding_server:main"
 
-[tool.uv.sources]
-nexus-core = { workspace = true }
-nexus = { workspace = true }
-
 [tool.setuptools.packages.find]
 # Auto-discover all subpackages (nexus_server, nexus_server.auth, etc).
 # Previously this was a hand-maintained `packages = ["nexus_server"]`,
