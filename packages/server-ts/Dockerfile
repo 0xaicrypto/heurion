@@ -27,4 +27,4 @@ COPY --from=builder /build/package.json ./
 COPY --from=builder /build/prisma ./prisma
 
 EXPOSE 8001
-CMD ["node", "dist/main.js"]
+CMD ["node", "--import", "tsx", "--no-warnings", "dist/main.js"]
