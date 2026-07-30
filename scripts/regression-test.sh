@@ -25,7 +25,7 @@ let d='';
 process.stdin.on('data',c=>d+=c);
 process.stdin.on('end',()=>{
   try{const j=JSON.parse(d);const r=eval(process.argv[1]);console.log(r==null?'':String(r))}
-  catch(e){console.log('PARSE_ERR:'+e.message)}
+  catch(e){console.error('PARSE_ERR:'+e.message)}
 })" "$1"
 }
 # jelen — print length of JSON array
@@ -105,7 +105,7 @@ CREATE_STATUS=$(echo "$CREATE_RESP" | tail -n1)
 CREATE_BODY=$(echo "$CREATE_RESP" | sed '$d')
 HASH=$(echo "$CREATE_BODY" | je 'j.patient_hash||""' 2>/dev/null)
 check "1.1 Create patient" "$([ -n "$HASH" ] && echo ok || echo "FAIL status=$CREATE_STATUS body=$CREATE_BODY")"
-DETAIL_RES="$(curl -sf "$BASE/api/v1/dicom/patients/$HASH/detail" -H "$H" | je "j.initials==='ZQ'?'ok':'FAIL'" < /dev/null 2>/dev/null)"
+DETAIL_RES="$(curl -sf "$BASE/api/v1/dicom/patients/$HASH/detail" -H "$H" | je "j.initials==='ZQ'?'ok':'FAIL'" 2>/dev/null)"
 check "1.2 Patient detail" "$DETAIL_RES"
 check "1.2b Patient name stored" "$DETAIL_RES"
 check "1.3 Patient count=1" "$([ $(curl -sf "$BASE/api/v1/dicom/patients/full" -H "$H" | jelen 2>/dev/null) = 1 ] && echo ok || echo 'FAIL')"
