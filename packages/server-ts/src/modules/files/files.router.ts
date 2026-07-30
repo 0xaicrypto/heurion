@@ -163,7 +163,7 @@ export async function filesRouter(app: FastifyInstance) {
   app.get('/api/v1/files', async (request) => {
     const userId = request.user!.userId
     const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
-    if (!fs.existsSync(dir)) return []
+    if (!fs.existsSync(dir)) return { files: [], total: 0 }
 
     const { patientHash, limit } = request.query as any
     const files = fs.readdirSync(dir)
