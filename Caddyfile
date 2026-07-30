@@ -21,7 +21,7 @@
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	}
 
-	# Pass everything to the FastAPI server. proxy headers + the
+	# Pass everything to the TypeScript server. proxy headers + the
 	# Dockerfile's --proxy-headers flag let uvicorn see the actual
 	# client IP and HTTPS scheme through the reverse proxy.
 	reverse_proxy nexus-server:8001 {

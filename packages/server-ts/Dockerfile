@@ -6,7 +6,7 @@
 FROM node:22-bookworm-slim AS builder
 WORKDIR /build
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10 --activate
 
 COPY . ./
 RUN pnpm install --frozen-lockfile

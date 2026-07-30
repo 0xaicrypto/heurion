@@ -44,5 +44,8 @@
     "tsx": "^4.0.0",
     "typescript": "^7.0.2",
     "vitest": "^1.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "prisma", "@prisma/client", "@prisma/engines", "msgpackr-extract", "tesseract.js"]
   }
 }

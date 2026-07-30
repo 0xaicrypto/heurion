@@ -1,7 +1,7 @@
 # Heurion server — production deployment via docker compose.
 #
 # Two services:
-#   1. nexus-server — the FastAPI app. Persistent state on /data volume.
+#   1. nexus-server — the TypeScript server. Persistent state on /data volume.
 #   2. caddy        — reverse proxy with automatic HTTPS. Uses nip.io
 #                     to get a free Let's Encrypt cert without owning
 #                     a domain (you'll need ${PUBLIC_IP}.nip.io to
