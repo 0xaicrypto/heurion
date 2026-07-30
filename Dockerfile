@@ -3,18 +3,16 @@
 # Heurion server — single-image deploy (Python + Node).
 #
 # Two stages:
-#   1. builder  — installs Python deps via uv into a venv. Pre-cached
-#                 in CI layers so most rebuilds skip dependency resolve.
-#   2. runtime  — slim Debian + Python 3.11 + Node 22 (for MCP installs)
-#                 + a non-root nexus user. App code is copied last so
-#                 source changes don't bust the heavier dep layer.
+#   1. builder  — installs Python deps via pip into a venv.  Dependency
+#                 resolution and source install are split into separate
+#                 layers so a source-only change reuses the cached deps.
+#   2. runtime  — derived from BASE_IMAGE which pre-installs Python 3.11,
+#                 Node 22, uv, and the nexus user.
 #
 # Why Node lives in the runtime image: the agent is supposed to install
 # new MCP servers + skills at chat time via manage_skill / manage_mcp,
 # both of which shell out to `npx`. If Node isn't here, those tools
-# fail with "npx not found" and the user has to redeploy. We ship Node
-# so the "agent installs its own tools without code changes" promise
-# actually holds.
+# fail with "npx not found" and the user has to redeploy.
 #
 # BASE_IMAGE can be overridden in CI to use a pre-built base
 # (ghcr.io/0xaicrypto/nexus-base) that already has Node + uv,
@@ -24,29 +22,53 @@ ARG BASE_IMAGE=python:3.11-slim-bookworm
 # ── Stage 1: build (Python deps via pip) ────────────────────────────
 FROM $BASE_IMAGE AS builder
 
-# pip cache mount avoids re-downloading wheels when deps haven't changed.
-# Even with Docker layer cache misses, wheels survive in the BuildKit
-# cache across builds.
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m venv /opt/venv \
  && /opt/venv/bin/pip install --upgrade pip wheel
 
 WORKDIR /build
 
-# Copy ONLY pyproject + lock first so dep resolution is cached
-# independently of source code changes.
+# ── Layer group: dependency resolution ─────────────────────────────
+# These layers only invalidate when pyproject.toml changes.
+
+# 1a. Copy dependency manifests only.
 COPY packages/sdk/pyproject.toml      packages/sdk/pyproject.toml
 COPY packages/nexus/pyproject.toml    packages/nexus/pyproject.toml
 COPY packages/server/pyproject.toml   packages/server/pyproject.toml
 COPY README.md                        README.md
 
-# Source code is needed for the install to work — copy now.
+# 1b. Create minimal package stubs so pip can resolve and install
+#     dependencies without the real source code.
+RUN mkdir -p packages/sdk/nexus_core \
+             packages/nexus/nexus \
+             packages/server/nexus_server \
+ && touch    packages/sdk/nexus_core/__init__.py \
+             packages/nexus/nexus/__init__.py \
+             packages/server/nexus_server/__init__.py
+
+# 1c. Resolve + download all dependencies, install stub packages.
+#     This layer is cached by type=gha as long as pyproject.toml files
+#     stay the same.  On a cache hit pip install is instant.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /opt/venv/bin/pip install \
+        ./packages/sdk \
+        ./packages/nexus \
+        "./packages/server[embedding]"
+
+# ── Layer group: source snapshots ──────────────────────────────────
+# These layers invalidate on every source change but the --no-deps
+# install is fast (rebuilds wheels, no network).
+
+# 2a. Copy real source (overwrites the stubs created above).
 COPY packages/sdk    packages/sdk
 COPY packages/nexus  packages/nexus
 COPY packages/server packages/server
 
+# 2b. Re-install without dependencies — only replaces stub wheels
+#     with real ones.  Dependencies were already resolved in step 1c
+#     and are unaffected by --no-deps.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    /opt/venv/bin/pip install \
+    /opt/venv/bin/pip install --no-deps \
         ./packages/sdk \
         ./packages/nexus \
         "./packages/server[embedding]"

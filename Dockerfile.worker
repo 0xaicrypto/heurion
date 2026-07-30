@@ -20,14 +20,18 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 WORKDIR /build
 
+# Dependency-resolution layer (cached unless pyproject.toml changes).
 COPY packages/sdk/pyproject.toml      packages/sdk/pyproject.toml
 COPY packages/nexus/pyproject.toml    packages/nexus/pyproject.toml
 COPY packages/server/pyproject.toml   packages/server/pyproject.toml
 COPY README.md                        README.md
 
-COPY packages/sdk    packages/sdk
-COPY packages/nexus  packages/nexus
-COPY packages/server packages/server
+RUN mkdir -p packages/sdk/nexus_core \
+             packages/nexus/nexus \
+             packages/server/nexus_server \
+ && touch    packages/sdk/nexus_core/__init__.py \
+             packages/nexus/nexus/__init__.py \
+             packages/server/nexus_server/__init__.py
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     /opt/venv/bin/pip install \
@@ -35,7 +39,18 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         ./packages/nexus \
         ./packages/server
 
-# ── Stage 2: runtime ───────────────────────────────────
+# Source-snapshot layer (fast --no-deps rebuild).
+COPY packages/sdk    packages/sdk
+COPY packages/nexus  packages/nexus
+COPY packages/server packages/server
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /opt/venv/bin/pip install --no-deps \
+        ./packages/sdk \
+        ./packages/nexus \
+        ./packages/server
+
+# ── Stage 2: runtime ────────────────────────────────────────────────
 FROM $BASE_IMAGE AS runtime
 
 COPY --from=builder /opt/venv /opt/venv
