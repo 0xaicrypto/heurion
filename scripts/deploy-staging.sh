@@ -17,51 +17,22 @@ GEMINI_API_KEY=${GEMINI_KEY}
 CORS_ALLOW_ORIGINS=*
 TWIN_BASE_DIR=.nexus/staging-twins
 EMBEDDING_PROVIDER=local
-EMBEDDING_MODEL=BAAI/bge-m3
-EMBEDDING_DIMENSIONS=1024
-EMBEDDING_DEVICE=cpu
+EMBEDDING_MODEL=Xenova/bge-small-en-v1.5
 EMBEDDING_BATCH_SIZE=32
-EMBEDDING_QUANTIZATION=none
 EMBEDDING_FALLBACK_PROVIDER=none
 LOCAL_EMBEDDING_URL=http://localhost:8004/embed
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 ENVEOF
 
-# ── Staging local embedding service (#19) ─────────────────────────────
-EMBEDDING_VENV=/opt/nexus-embedding
-EMBEDDING_MODEL_DIR=/opt/nexus-embedding-models
-mkdir -p "$EMBEDDING_MODEL_DIR"
-
-REQUIREMENTS=(fastapi uvicorn pydantic sentence-transformers "optimum[onnxruntime]")
-REQ_HASH=$(printf '%s\n' "${REQUIREMENTS[*]}" | sha256sum | awk '{print $1}')
-
-# Create the venv only if it is missing or broken; avoid clearing a working venv
-# on every deploy so the model cache and installed packages stay hot.
-if [ ! -f "$EMBEDDING_VENV/bin/pip" ]; then
-  if ! python3 -m venv --clear "$EMBEDDING_VENV" >/dev/null 2>&1; then
-    apt-get update -qq && apt-get install -y -qq python3-venv python3-pip
-    python3 -m venv --clear "$EMBEDDING_VENV"
-  fi
-fi
-
-# Reinstall Python deps only when the requirement list changes.
-if [ ! -f "$EMBEDDING_VENV/.requirements-hash" ] || [ "$(cat "$EMBEDDING_VENV/.requirements-hash")" != "$REQ_HASH" ]; then
-  "$EMBEDDING_VENV/bin/pip" install --no-cache-dir -q "${REQUIREMENTS[@]}"
-  echo "$REQ_HASH" > "$EMBEDDING_VENV/.requirements-hash"
-else
-  echo "  embedding Python deps up-to-date, skipping install"
-fi
-
+# ── Staging local embedding service (Node.js / Transformers.js) ─────
+cd ~/heurion/packages/embedding-server
+EMBEDDING_SERVER_PORT=8004 npm install 2>/dev/null || npm install
+EMBEDDING_SERVER_PORT=8004 npm run build 2>/dev/null || true
 pm2 delete heurion-embedding-staging 2>/dev/null || true
-EMBEDDING_SERVER_PORT=8004 HF_HOME="$EMBEDDING_MODEL_DIR" \
-SENTENCE_TRANSFORMERS_HOME="$EMBEDDING_MODEL_DIR" \
-PYTHONPATH=/root/heurion/packages/server \
-  pm2 start "$EMBEDDING_VENV/bin/python" \
-  --name heurion-embedding-staging \
-  -- /root/heurion/packages/server/nexus_server/embedding_server.py
+EMBEDDING_SERVER_PORT=8004 pm2 start node --name heurion-embedding-staging -- dist/index.js
 
 EMBEDDING_HEALTH_URL="http://localhost:8004/health"
-EMBEDDING_MAX_RETRIES=120
+EMBEDDING_MAX_RETRIES=60
 for i in $(seq 1 $EMBEDDING_MAX_RETRIES); do
   if curl -fsS "$EMBEDDING_HEALTH_URL" >/dev/null 2>&1; then
     echo "✓ Staging embedding service healthy"
@@ -76,6 +47,7 @@ if ! curl -fsS "$EMBEDDING_HEALTH_URL" >/dev/null 2>&1; then
   exit 1
 fi
 
+cd ~/heurion/packages/server-ts
 which pnpm || npm install -g pnpm@10
 pnpm install --prefer-offline
 npx prisma generate

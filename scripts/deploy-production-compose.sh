@@ -61,8 +61,9 @@ fi
 # mounts the nexus-data volume at /data, so this is mainly a safety net.
 mkdir -p /opt/nexus-embedding-models
 
-# Pull the image tagged by CI and recreate containers.
+# Pull the images tagged by CI and recreate containers.
 export NEXUS_IMAGE="${NEXUS_IMAGE:-ghcr.io/0xaicrypto/nexus-server:latest}"
+export EMBEDDING_IMAGE="${EMBEDDING_IMAGE:-ghcr.io/0xaicrypto/nexus-embedding-server:latest}"
 docker compose --env-file .env.production pull
 docker compose --env-file .env.production up -d --remove-orphans
 

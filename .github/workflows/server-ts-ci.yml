@@ -13,26 +13,22 @@ name: Server TS CI
 on:
   pull_request:
     paths:
-      - 'packages/sdk/**'
-      - 'packages/nexus/**'
       - 'packages/server-ts/**'
-      - 'packages/server/**'
-      - 'Dockerfile'
-      - 'Dockerfile.worker'
-      - 'Dockerfile.base'
+      - 'packages/embedding-server/**'
+      - 'packages/worker/**'
       - '.github/workflows/server-ts-ci.yml'
       - '.github/workflows/deploy-server.yml'
       - 'scripts/deploy*.sh'
       - 'docker-compose.yml'
-      - 'Dockerfile'
-      - '.env.production.example'
+      - 'docker-compose.worker.yml'
       - 'CONTRIBUTING.md'
       - '.github/ISSUE_TEMPLATE/**'
   push:
     branches: [main]
     paths:
       - 'packages/server-ts/**'
-      - 'packages/server/**'
+      - 'packages/embedding-server/**'
+      - 'packages/worker/**'
       - '.github/workflows/server-ts-ci.yml'
       - '.github/workflows/deploy-server.yml'
       - 'CONTRIBUTING.md'

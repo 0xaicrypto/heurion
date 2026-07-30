@@ -15,7 +15,7 @@ echo "=== Configuring Cloudflare for $SERVER_IP ==="
 # 1. DNS records — create or update
 for NAME in heurion.org www.heurion.org; do
   EXISTING=$(curl -sf "$API/dns_records?type=A&name=$NAME" -H "Authorization: Bearer $CF_TOKEN")
-  RECORD_ID=$(echo "$EXISTING" | python3 -c "import sys,json; r=json.load(sys.stdin)['result']; print(r[0]['id'] if r else '')" 2>/dev/null || echo "")
+  RECORD_ID=$(echo "$EXISTING" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d).result;console.log(j&&j[0]?j[0].id:'')}catch(e){console.log('')}})" 2>/dev/null || echo "")
 
   if [ -n "$RECORD_ID" ]; then
     curl -sf -X PATCH "$API/dns_records/$RECORD_ID" \

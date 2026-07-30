@@ -71,7 +71,7 @@ export interface ToolRecord {
   userId: string
   name: string
   description: string
-  language: 'python' | 'bash'
+  language: 'bash'
   script: string
   inputFormat: string
   createdFrom: string

@@ -11,49 +11,11 @@ wallet.json
 mnemonic.txt
 .secrets/
 
-# ─── Python ──────────────────────────────────────────────────────────
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*$py.class
-*.so
-.Python
-*.egg
-*.egg-info/
-dist/
-build/
-develop-eggs/
-eggs/
-.eggs/
-*.manifest
-*.spec
-!packages/server/nexus-server.spec
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Virtual envs
-.venv/
-venv/
-env/
-ENV/
-
-# Test / lint caches
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.tox/
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
-*.cover
-
 # Tesseract.js downloaded language data (auto-fetched at runtime)
 *.traineddata
 
-# Jupyter
-.ipynb_checkpoints/
+# Legacy Python virtual environment (pre-migration artifact)
+.venv/
 
 # ─── .NET / C# (legacy Avalonia desktop, git tag legacy/avalonia-final) ─
 # Kept so a checkout of the legacy tag doesn't pollute working tree
