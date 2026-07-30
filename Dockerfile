@@ -53,11 +53,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         ./packages/nexus \
         ./packages/server
 
-# 1d. Embedding extras (torch + onnxruntime ~1GB) in a separate layer.
-#     Only invalidates when packages/server/pyproject.toml changes,
-#     so source-only edits skip re-downloading these heavy packages.
+# 1d. Embedding extras (sentence-transformers + onnxruntime) in a
+#     separate layer.  Use the PyTorch CPU index so that torch is
+#     installed without ~3 GB of CUDA / nvidia libraries that would
+#     exhaust disk space on smaller VPS instances.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --python /opt/venv/bin/python "./packages/server[embedding]"
+    uv pip install --python /opt/venv/bin/python \
+        --index-url https://download.pytorch.org/whl/cpu \
+        --extra-index-url https://pypi.org/simple \
+        "./packages/server[embedding]"
 
 # ── Layer group: source snapshots ──────────────────────────────────
 # These layers invalidate on every source change but the --no-deps
