@@ -46,8 +46,8 @@ export function SkillsPage() {
 
   const loadGitHub = useCallback(() => {
     setGhLoading(true);
-    api.searchGitHubSkills(ghQuery || undefined)
-      .then(r => setGhSkills(r.skills))
+    api.searchSkills(ghQuery || '', 'github')
+      .then(r => setGhSkills(r.results.map(s => ({ ...s, installed: !!s.installed }))))
       .catch(err => setError(err instanceof ApiError ? err.messageText : String(err)))
       .finally(() => setGhLoading(false));
   }, [ghQuery]);
@@ -78,7 +78,7 @@ export function SkillsPage() {
     finally { setUninstalling(null); }
   };
 
-  const installedSet = new Set(skills.filter(s => s.installed).map(s => s.name));
+  const installedSet = new Set(skills.map(s => s.name));
 
   return (
     <AppShell>

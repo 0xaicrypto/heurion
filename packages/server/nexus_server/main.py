@@ -102,7 +102,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, HTTPException, Request, status
+import json
+
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -723,6 +725,7 @@ def create_app() -> FastAPI:
     from nexus_server import execution_router
     app.include_router(execution_router.router)
     app.include_router(execution_router.file_router)
+    app.include_router(execution_router.user_router)
     # NOTE: the legacy /api/v1/agent/memory router (memory_router.py, v1)
     # was retired — no frontend/CLI callers; memory_router_v2 is canonical.
     # Live agent thinking stream (Server-Sent Events). The desktop's
@@ -830,8 +833,68 @@ def create_app() -> FastAPI:
     from nexus_server import skills_router as _skills_router
     app.include_router(_skills_router.router)
 
+    from nexus_server import plugins_router as _plugins_router
+    app.include_router(_plugins_router.router)
+
     from nexus_server import sandbox_router as _sandbox_router
     app.include_router(_sandbox_router.router)
+
+    # ── Telemetry dashboard + Evolution queue ─────────────────────
+
+    from nexus_server.auth.routes import get_current_user as _get_user
+
+    @app.get("/api/v1/admin/telemetry/llm-cost")
+    async def admin_llm_cost(current_user: str = Depends(_get_user)):
+        from nexus_server.database import get_db_connection
+        with get_db_connection() as conn:
+            try:
+                rows = conn.execute(
+                    "SELECT metadata FROM telemetry_events "
+                    "WHERE category = 'llm_cost' ORDER BY created_at DESC LIMIT 1000"
+                ).fetchall()
+            except Exception:
+                rows = []
+        total_calls = 0
+        total_tokens = 0
+        total_cost = 0.0
+        by_model: dict = {}
+        for r in rows:
+            total_calls += 1
+            try:
+                meta = json.loads(r["metadata"])
+            except Exception:
+                meta = {}
+            model = str(meta.get("model", "unknown"))
+            tokens = int(meta.get("totalTokens", 0))
+            cost = float(meta.get("costUsd", 0))
+            if model not in by_model:
+                by_model[model] = {"calls": 0, "tokens": 0, "costUsd": 0.0}
+            by_model[model]["calls"] += 1
+            by_model[model]["tokens"] += tokens
+            by_model[model]["costUsd"] += cost
+            total_tokens += tokens
+            total_cost += cost
+        return {
+            "totalCalls": total_calls,
+            "totalTokens": total_tokens,
+            "totalCostUsd": total_cost,
+            "byAction": {},
+            "byModel": by_model,
+        }
+
+    @app.get("/api/v1/evolution/queue")
+    async def evolution_queue_metrics(current_user: str = Depends(_get_user)):
+        return {
+            "type": "in-memory",
+            "metrics": {
+                "waiting": 0,
+                "active": 0,
+                "completed": 0,
+                "failed": 0,
+                "delayed": 0,
+                "paused": 0,
+            },
+        }
 
     # #143 — serve the Cornerstone3D viewer.html as a static page.
     # Desktop launches the user's default browser at
@@ -880,6 +943,14 @@ def create_app() -> FastAPI:
         # Files that Vite places at the root of dist (favicon, manifest,
         # source maps, etc.) are served verbatim if they exist.
         _index_html = _web_dist / "index.html"
+
+        @app.api_route("/api/v1/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"], include_in_schema=False)
+        async def api_fallback(rest: str):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=404,
+                content={"error": "route_not_found", "path": f"/api/v1/{rest}"},
+            )
 
         @app.get("/{full_path:path}", include_in_schema=False)
         async def spa_fallback(full_path: str):

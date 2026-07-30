@@ -14,8 +14,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
 
+from nexus_server.auth.routes import get_current_user
+
 router = APIRouter(prefix="/api/v1/jobs", tags=["execution"])
 file_router = APIRouter(prefix="/api/v1/files", tags=["files"])
+
+# User-facing execution endpoints (no worker token required)
+user_router = APIRouter(prefix="/api/v1/execution", tags=["execution"])
 
 WORKER_TOKEN = os.environ.get("WORKER_API_TOKEN", "")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
@@ -119,3 +124,22 @@ def _to_response(record: dict[str, str]) -> JobResponse:
         result=result if result else None,
         error=error,
     )
+
+
+# ── User-facing job status ─────────────────────────────────────────
+
+
+@user_router.get("/jobs/{job_id}")
+async def get_user_job_status(
+    job_id: str,
+    current_user: str = Depends(get_current_user),
+):
+    """Return job status visible to the authenticated user."""
+    try:
+        r = _get_redis()
+        record = r.hgetall(f"heurion:job:{job_id}")
+        if not record:
+            return None
+        return _to_response(record)
+    except Exception:
+        return None
