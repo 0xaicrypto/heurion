@@ -17,3 +17,4 @@ export default defineConfig({
     },
   },
 })
+// TDD: test cases must be written before implementation
