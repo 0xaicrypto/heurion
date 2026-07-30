@@ -13,6 +13,8 @@ name: Server TS CI
 on:
   pull_request:
     paths:
+      - 'packages/sdk/**'
+      - 'packages/nexus/**'
       - 'packages/server-ts/**'
       - 'packages/server/**'
       - 'Dockerfile'
