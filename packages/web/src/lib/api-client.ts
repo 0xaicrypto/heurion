@@ -123,6 +123,11 @@ class ApiClient {
       throw err;
     }
     if (r.status === 204) return undefined as unknown as T;
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('json')) {
+      const text = await r.text().catch(() => '');
+      throw new ApiError(r.status, `Expected JSON but got ${ct}: ${text.slice(0, 200)}`, path);
+    }
     return r.json() as Promise<T>;
   }
 
