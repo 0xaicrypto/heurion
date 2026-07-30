@@ -9,10 +9,14 @@
 # This image runs on the sandbox VPS and hosts the MedSci-Sidecar / plugin
 # runtime, separate from the TypeScript Control Plane.
 
-# ── Stage 1: build (Python deps via uv) ───────────────────────────────
-FROM python:3.11-slim-bookworm AS builder
+ARG BASE_IMAGE=python:3.11-slim-bookworm
 
-RUN pip install --no-cache-dir uv==0.4.30
+# ── Stage 1: build (Python deps via pip) ────────────────────────────
+FROM $BASE_IMAGE AS builder
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m venv /opt/venv \
+ && /opt/venv/bin/pip install --upgrade pip wheel
 
 WORKDIR /build
 
@@ -21,33 +25,18 @@ COPY packages/nexus/pyproject.toml    packages/nexus/pyproject.toml
 COPY packages/server/pyproject.toml   packages/server/pyproject.toml
 COPY README.md                        README.md
 
-RUN python -m venv /opt/venv \
- && /opt/venv/bin/pip install --no-cache-dir --upgrade pip wheel
-
 COPY packages/sdk    packages/sdk
 COPY packages/nexus  packages/nexus
 COPY packages/server packages/server
 
-RUN /opt/venv/bin/pip install --no-cache-dir \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /opt/venv/bin/pip install \
         ./packages/sdk \
         ./packages/nexus \
         ./packages/server
 
-# ── Stage 2: runtime (slim + Node + non-root user) ───────────────────
-FROM python:3.11-slim-bookworm AS runtime
-
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl \
-        ca-certificates \
-        gnupg \
- && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
- && apt-get install -y --no-install-recommends nodejs \
- && apt-get purge -y --auto-remove gnupg \
- && rm -rf /var/lib/apt/lists/* \
- && node --version && npm --version
-
-RUN useradd --create-home --uid 1000 --shell /bin/bash nexus
+# ── Stage 2: runtime ───────────────────────────────────
+FROM $BASE_IMAGE AS runtime
 
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
