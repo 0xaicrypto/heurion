@@ -1,4 +1,5 @@
 import { createExecutionPlaneService, type ExecutionJobStatus } from '../execution/execution-plane.service.js'
+import { handleSidecarRequest } from '../execution/sidecar-chat-handler.js'
 import { buildPayload, matchIntent, type PayloadBuildInput } from './plugin-capability.service.js'
 import { buildInputSummary, recordPluginInvocation } from './plugin-audit-log.service.js'
 
@@ -52,8 +53,27 @@ export async function handlePluginChatRequest(options: PluginChatHandlerOptions)
 
   const match = await matchIntent(userId, text)
   if (!match) {
-    send({ type: 'thought', text: '没有匹配到已安装的报告生成插件。' })
-    return { text: '我没有找到适合处理这个请求的插件。请先在插件市场安装需要的插件。' }
+    send({ type: 'thought', text: '没有匹配到已安装的插件，尝试使用内置渲染引擎…' })
+    const sidecarResult = await handleSidecarRequest({
+      userId,
+      workspaceId,
+      text,
+      patient,
+      telemetryContext,
+    })
+    return {
+      text: sidecarResult.text,
+      job: sidecarResult.job,
+      file: sidecarResult.file
+        ? {
+            fileId: sidecarResult.file.fileId,
+            fileName: sidecarResult.file.fileName,
+            mimeType: sidecarResult.file.mimeType,
+            downloadUrl: sidecarResult.file.downloadUrl,
+            expiresIn: sidecarResult.file.expiresIn,
+          }
+        : undefined,
+    }
   }
 
   send({ type: 'plugin_selected', plugin_id: match.pluginId, tool: match.toolName, intent: match.intent, confidence: match.confidence })

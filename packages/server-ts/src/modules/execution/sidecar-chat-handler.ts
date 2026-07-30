@@ -4,6 +4,7 @@ import { createExecutionPlaneService, type ExecutionJobStatus } from './executio
 const service = createExecutionPlaneService()
 
 export interface SidecarHandlerOptions {
+
   userId: string
   workspaceId?: string
   text: string
