@@ -51,7 +51,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python /opt/venv/bin/python \
         ./packages/sdk \
         ./packages/nexus \
-        "./packages/server[embedding]"
+        ./packages/server
+
+# 1d. Embedding extras (torch + onnxruntime ~1GB) in a separate layer.
+#     Only invalidates when packages/server/pyproject.toml changes,
+#     so source-only edits skip re-downloading these heavy packages.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/venv/bin/python "./packages/server[embedding]"
 
 # ── Layer group: source snapshots ──────────────────────────────────
 # These layers invalidate on every source change but the --no-deps
