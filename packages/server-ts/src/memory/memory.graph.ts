@@ -64,6 +64,14 @@ export class MemoryGraph {
     return this.getNodesByType(type).filter(n => n.status !== 'superseded')
   }
 
+  getAllNodes(): MemoryNode[] {
+    return Array.from(this.nodes.values())
+  }
+
+  getAllRelations(): MemoryRelation[] {
+    return [...this.relations]
+  }
+
   getCurrentNodes(): MemoryNode[] {
     return Array.from(this.nodes.values()).filter(n => n.status !== 'superseded')
   }

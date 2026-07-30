@@ -58,6 +58,9 @@ export WORKER_IMAGE_TAG="$IMAGE_TAG"
 docker compose -f docker-compose.worker.yml pull
 docker compose -f docker-compose.worker.yml up -d --remove-orphans
 
+# Remove unused images (old versions) to keep disk from filling up.
+docker image prune -f
+
 # Wait for healthcheck.
 MAX_RETRIES=15
 RETRY_DELAY=2

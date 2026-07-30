@@ -97,30 +97,47 @@ async function recordUsage(
 }
 
 /**
- * Non-streaming call — used for simple completions
+ * Non-streaming call — used for simple completions and tool calls
  */
 export async function deepseekChat(
   messages: ChatMessage[],
   apiKey: string,
   options: DeepSeekCallOptions = {},
+  tools?: Array<{ type: string; function: { name: string; description: string; parameters: Record<string, unknown> } }>,
 ): Promise<string> {
   const model = options.model || DEEPSEEK_CHAT_MODEL
+  const body: any = {
+    model,
+    messages,
+    max_tokens: options.maxTokens ?? 4096,
+    temperature: options.temperature ?? 0.7,
+  }
+  if (tools && tools.length > 0) {
+    body.tools = tools
+    body.tool_choice = 'auto'
+  }
   const res = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      messages,
-      max_tokens: options.maxTokens ?? 4096,
-      temperature: options.temperature ?? 0.7,
-    }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) {
     const err = await res.text().catch(() => '')
     throw new Error(`DeepSeek API ${res.status}: ${err.slice(0, 200)}`)
   }
   const json = await res.json()
-  const content = json.choices?.[0]?.message?.content || ''
+  const choice = json.choices?.[0]
+
+  // Handle tool_calls
+  if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls) {
+    for (const tc of choice.message.tool_calls) {
+      if (tc.type === 'function') {
+        return `<tool_call>${JSON.stringify({ name: tc.function.name, arguments: JSON.parse(tc.function.arguments) })}</tool_call>`
+      }
+    }
+  }
+
+  const content = choice?.message?.content || ''
 
   const usage = json?.usage
   if (usage && typeof usage.prompt_tokens === 'number' && typeof usage.completion_tokens === 'number') {

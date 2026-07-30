@@ -32,6 +32,9 @@ import {
 } from './modules/evolution/evolution.queue.js'
 import { processEvolutionTurn } from './modules/evolution/evolution.worker.js'
 import { evolutionRouter } from './modules/evolution/evolution.router.js'
+import { workflowsRouter } from './modules/workflows/workflows.router.js'
+import { memorizationRouter } from './modules/memorization/memorization.router.js'
+import { practitionerRouter } from './modules/practitioner/practitioner.router.js'
 import { ZodError } from 'zod'
 
 export interface AppOptions {
@@ -91,6 +94,9 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   await app.register(pluginsRouter)
   await app.register(executionRouter)
   await app.register(externalRouter)
+  await app.register(workflowsRouter)
+  await app.register(memorizationRouter)
+  await app.register(practitionerRouter)
 
   // ── Serve web frontend for staging/testing (SPA fallback on non-/api routes) ──
   const webDistDir = process.env.WEB_DIST_DIR || './web-dist'
