@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import { getUserContext, buildPersona, buildFileContext } from './user-context.js'
-import { deepseekStream, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
+import { deepseekStream, deepseekChat, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
 import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
 import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
@@ -10,6 +10,8 @@ import { handlePluginChatRequest } from '../plugins/plugin-chat-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { type EvolutionQueue } from '../evolution/evolution.queue.js'
+import { ToolRegistry, type ToolContext } from '../../tools/tool-registry.js'
+import type { ToolDefinition } from '../../tools/base-tool.js'
 import fs from 'fs'
 import path from 'path'
 import { extractTextFromUpload } from '../../lib/document-extractor.js'
@@ -362,17 +364,92 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       }
       messages.push({ role: 'user' as const, content: fullMessage })
 
-      // Stream response
-      let fullResponse = ''
-      send({ type: 'reasoning_chunk', text: 'Thinking...' })
+      // Create tool registry for function calling
+      const toolCtx: ToolContext = {
+        userId,
+        memory: ctx.memory,
+        facts: ctx.facts,
+        episodes: ctx.episodes,
+        skills: ctx.skills,
+        knowledge: ctx.knowledge,
+        eventLog: ctx.eventLog,
+      }
+      const toolRegistry = new ToolRegistry(toolCtx)
+      const tools = toolRegistry.definitions
 
-      for await (const chunk of deepseekStream(messages, apiKey, {
-        model: DEEPSEEK_PREMIUM_MODEL,
-        maxTokens: 4096,
-        telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
-      })) {
-        fullResponse += chunk
-        send({ type: 'final_answer_chunk', text: chunk })
+      // Tool-calling loop: try up to 5 rounds of tool calls
+      let fullResponse = ''
+      let currentMessages = [...messages]
+      const MAX_TOOL_ROUNDS = 5
+      let toolRound = 0
+      let finalContent = ''
+
+      while (toolRound < MAX_TOOL_ROUNDS) {
+        toolRound++
+        const callResult = await deepseekChat(
+          currentMessages,
+          apiKey,
+          {
+            model: DEEPSEEK_PREMIUM_MODEL,
+            maxTokens: 4096,
+            telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
+          },
+          tools,
+        )
+
+        if (!callResult) {
+          finalContent = ''
+          break
+        }
+
+        // Parse JSON response — DeepSeek returns plain text; check for function calls in the text
+        const toolCallMatch = callResult.match(/<tool_call>\s*(\{[^}]+})\s*<\/tool_call>/)
+        if (toolCallMatch) {
+          try {
+            const toolCall = JSON.parse(toolCallMatch[1])
+            const toolName = toolCall.name || toolCall.tool
+            const toolArgs = toolCall.arguments || toolCall.args || {}
+
+            send({ type: 'tool_call', tool: toolName, args: toolArgs })
+
+            const result = await toolRegistry.execute(toolName, toolArgs)
+
+            currentMessages.push({ role: 'assistant', content: callResult })
+            currentMessages.push({
+              role: 'user',
+              content: `Tool "${toolName}" returned: ${result.success ? (result.output || 'Success') : `Error: ${result.error}`}`,
+            })
+
+            if (!result.success) {
+              finalContent = `I tried to use ${toolName} but encountered an error: ${result.error}`
+              break
+            }
+            continue
+          } catch { }
+        }
+
+        finalContent = callResult
+        break
+      }
+
+      // Stream the final response
+      send({ type: 'reasoning_chunk', text: 'Thinking...' })
+      if (finalContent) {
+        const chunks = finalContent.match(/.{1,80}/g) || [finalContent]
+        for (const chunk of chunks) {
+          fullResponse += chunk
+          send({ type: 'final_answer_chunk', text: chunk })
+        }
+      } else {
+        // Fallback: use streaming for the response
+        for await (const chunk of deepseekStream(currentMessages, apiKey, {
+          model: DEEPSEEK_PREMIUM_MODEL,
+          maxTokens: 4096,
+          telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
+        })) {
+          fullResponse += chunk
+          send({ type: 'final_answer_chunk', text: chunk })
+        }
       }
 
       // Log to event log

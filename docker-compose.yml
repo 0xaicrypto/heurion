@@ -43,48 +43,27 @@ services:
     # No public ports — only reachable on the internal Docker network.
 
   nexus-server:
-    # In production, NEXUS_IMAGE is set by scripts/deploy/vps_deploy.sh
-    # to a fully-qualified GHCR ref (e.g. ghcr.io/owner/nexus-server:
-    # sha-abc1234). The default falls back to the locally-built
-    # `nexus-server:latest` so existing local-dev workflows
-    # (`docker compose up --build`) keep working without env tweaks.
+    # TypeScript-based Nexus server. Built from packages/server-ts/Dockerfile.
     image: ${NEXUS_IMAGE:-nexus-server:latest}
-    # Keeping `build:` here means `docker compose up --build` still
-    # rebuilds against the local Dockerfile during development. In
-    # production the image: tag wins because we never invoke --build,
-    # so no accidental rebuild on the VPS.
     build:
-      context: .
+      context: packages/server-ts
       dockerfile: Dockerfile
     container_name: nexus-server
     restart: unless-stopped
     env_file:
       - .env.production
     environment:
-      # The reverse proxy is hitting us over plain HTTP on the docker
-      # bridge; X-Forwarded-* headers from Caddy are how we know the
-      # actual external scheme/host. uvicorn is started with
-      # --proxy-headers --forwarded-allow-ips=*  inside the Dockerfile.
       - SERVER_PORT=8001
-      - EMBEDDING_PROVIDER=local
-      - LOCAL_EMBEDDING_URL=http://nexus-embedding-server:8003/embed
+      - DATABASE_URL=file:/data/nexus_server.db
+      - TWIN_BASE_DIR=/data
+      - WEB_DIST_DIR=/app/web-dist
     volumes:
-      # /data persistence — survives container rebuilds. The agent
-      # installs new skills + MCP servers here at chat time, so
-      # losing this volume = losing all learned tools.
+      # /data persistence — DB, memory stores, facts, skills.
       - nexus-data:/data
-      # Web UI dist is built outside Docker (locally or in CI) and
-      # mounted here so the droplet does not OOM building Node inside
-      # the image. Update packages/web/dist and restart the container
-      # to deploy front-end changes. Server Python code is baked into
-      # the image; do NOT bind-mount it, or a missing host directory
-      # will shadow the installed package and break imports.
-      - ./packages/web/dist:/app/packages/web/dist:ro
+      # Web UI dist mounted from host for fast front-end deploys.
+      - ./packages/web/dist:/app/web-dist:ro
     networks:
       - nexus-net
-    depends_on:
-      nexus-embedding-server:
-        condition: service_healthy
     # No `ports:` here — Caddy is the only thing the host exposes.
 
   caddy:

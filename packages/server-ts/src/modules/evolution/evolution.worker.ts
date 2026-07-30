@@ -1,5 +1,7 @@
 import { Worker, type ConnectionOptions } from 'bullmq'
 import { getUserContext } from '../chat/user-context.js'
+import { extractClinicalEntities } from '../memorization/clinical-extractor.service.js'
+import { extractTakeaways } from '../practitioner/session-takeaway.service.js'
 import type { EvolutionJob, EvolutionJobProcessor } from './evolution.queue.js'
 
 export interface EvolutionWorkerOptions {
@@ -16,7 +18,41 @@ export function loadWorkerOptions(): EvolutionWorkerOptions {
 
 export const processEvolutionTurn: EvolutionJobProcessor = async (job) => {
   const ctx = getUserContext(job.userId)
-  await ctx.orchestrator.postTurn(job.userId, job.sessionId, job.userMessage, job.patientHash)
+  const { userId, sessionId, userMessage, patientHash } = job
+
+  await ctx.orchestrator.postTurn(userId, sessionId, userMessage, patientHash)
+
+  if (patientHash && userMessage.length > 50) {
+    try {
+      const recentEvents = ctx.memory.eventLog.query({ sessionId, limit: 6 }).reverse()
+      const conversation = recentEvents
+        .map(e => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${e.content.slice(0, 500)}`)
+        .join('\n')
+
+      if (conversation.length > 100) {
+        extractClinicalEntities(conversation, { maxTokens: 3000 }).catch(() => {})
+      }
+    } catch {}
+  }
+
+  try {
+    const sessionEvents = ctx.memory.eventLog.query({ sessionId })
+    const turnCount = Math.floor(sessionEvents.length / 2)
+    if (turnCount > 0 && turnCount % 5 === 0) {
+      const recentEvents = ctx.memory.eventLog.query({ sessionId, limit: 10 }).reverse()
+      const conversation = recentEvents
+        .map(e => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${e.content.slice(0, 500)}`)
+        .join('\n')
+      if (conversation.length > 200) {
+        extractTakeaways({
+          userId,
+          sessionId,
+          conversationText: conversation,
+          patientHash,
+        }).catch(() => {})
+      }
+    }
+  } catch {}
 }
 
 export function startEvolutionWorker(

@@ -4,6 +4,7 @@ import prisma from '../../common/prisma'
 import { ResearchService } from './research.service'
 import { createStudySchema, enrollPatientSchema } from './research.dto'
 import { extractRulesFromProtocol, getPendingRules, confirmRule, rejectRule, getConfirmationStatus } from './protocol-extractor.js'
+import { screenPatient, screenAllEnrolled } from './eligibility-screening.service.js'
 
 const service = new ResearchService()
 
@@ -190,5 +191,20 @@ export async function researchRouter(app: FastifyInstance) {
     const { studyId, ruleId } = request.params as any
     const ok = await rejectRule(studyId, ruleId)
     return { rejected: ok, study_id: studyId, status: await getConfirmationStatus(studyId) }
+  })
+
+  // Eligibility screening
+  app.post('/api/v1/research/studies/:studyId/screen/:patientHash', async (request, reply) => {
+    const { studyId, patientHash } = request.params as any
+    const userId = request.user!.userId
+    const result = await screenPatient(studyId, patientHash, userId)
+    return result
+  })
+
+  app.post('/api/v1/research/studies/:studyId/screen-all', async (request) => {
+    const { studyId } = request.params as any
+    const userId = request.user!.userId
+    const results = await screenAllEnrolled(studyId, userId)
+    return { screenings: results }
   })
 }

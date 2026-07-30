@@ -66,6 +66,9 @@ export NEXUS_IMAGE="${NEXUS_IMAGE:-ghcr.io/0xaicrypto/nexus-server:latest}"
 docker compose --env-file .env.production pull
 docker compose --env-file .env.production up -d --remove-orphans
 
+# Remove unused images (old versions) to keep disk from filling up.
+docker image prune -f
+
 # Health check against the public HTTPS endpoint.
 HOSTNAME=$(grep '^HOSTNAME=' .env.production | head -1 | cut -d= -f2-)
 if [ -z "$HOSTNAME" ]; then

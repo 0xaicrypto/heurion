@@ -43,7 +43,7 @@ function newNodeId(stableId: string, version: number): string {
 }
 
 export class MemoryService {
-  private eventLog: EventLog
+  public eventLog: EventLog
   private legacyFacts: FactsStore
   private legacyKnowledge: KnowledgeStore
   private ownerId: string

@@ -1,11 +1,28 @@
 import { Worker } from 'bullmq'
 import { createApp } from './app'
 import { config } from './config'
+import { execSync } from 'child_process'
 import { createDefaultEvolutionQueue, BullMqEvolutionQueue, type EvolutionQueue } from './modules/evolution/evolution.queue.js'
 import { startEvolutionWorker } from './modules/evolution/evolution.worker.js'
 import { createGapResearchScheduler, type GapResearchScheduler } from './modules/knowledge/gap-research.service.js'
 
 async function main() {
+  // Run Prisma schema migration at startup
+  try {
+    execSync('npx prisma db push --accept-data-loss --skip-generate', {
+      stdio: 'inherit',
+      env: { ...process.env, DATABASE_URL: config.databaseUrl },
+    })
+    // Generate Prisma client (needed after push)
+    execSync('npx prisma generate', {
+      stdio: 'inherit',
+      env: { ...process.env, DATABASE_URL: config.databaseUrl },
+    })
+    console.log('[DB] Schema synced')
+  } catch (err) {
+    console.warn('[DB] Schema sync failed (non-fatal):', (err as Error)?.message || err)
+  }
+
   const evolutionQueue = await createDefaultEvolutionQueue()
   const app = await createApp({ evolutionQueue })
   await app.listen({ port: config.port, host: config.host })
