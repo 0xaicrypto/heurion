@@ -50,57 +50,23 @@ EXECUTION_PLANE_URL=${EXECUTION_PLANE_URL:-}
 WORKER_API_TOKEN=${WORKER_API_TOKEN:-}
 CORS_ALLOW_ORIGINS=*
 EMBEDDING_PROVIDER=local
-EMBEDDING_MODEL=BAAI/bge-m3
-EMBEDDING_DIMENSIONS=1024
-EMBEDDING_DEVICE=cpu
+EMBEDDING_MODEL=Xenova/bge-small-en-v1.5
 EMBEDDING_BATCH_SIZE=32
-EMBEDDING_QUANTIZATION=none
 EMBEDDING_FALLBACK_PROVIDER=${EMBEDDING_FALLBACK_PROVIDER_VALUE:-none}
 LOCAL_EMBEDDING_URL=http://localhost:8003/embed
 OPENAI_API_KEY=${OPENAI_API_KEY_VALUE:-}
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 ENVEOF
 
-# ── Local embedding service (#19) ─────────────────────────────────────
-# The TS server expects a local bge-m3 HTTP service on port 8003.
-# We run it in its own venv because the bare-metal server-ts path does not
-# otherwise need Python. The model cache is persisted under /opt.
-EMBEDDING_VENV=/opt/nexus-embedding
-EMBEDDING_MODEL_DIR=/opt/nexus-embedding-models
-mkdir -p "$EMBEDDING_MODEL_DIR"
-
-REQUIREMENTS=(fastapi uvicorn pydantic sentence-transformers "optimum[onnxruntime]")
-REQ_HASH=$(printf '%s\n' "${REQUIREMENTS[*]}" | sha256sum | awk '{print $1}')
-
-# Create the venv only if it is missing or broken; avoid clearing a working venv
-# on every deploy so the model cache and installed packages stay hot.
-if [ ! -f "$EMBEDDING_VENV/bin/pip" ]; then
-  if ! python3 -m venv --clear "$EMBEDDING_VENV" >/dev/null 2>&1; then
-    apt-get update -qq && apt-get install -y -qq python3-venv python3-pip
-    python3 -m venv --clear "$EMBEDDING_VENV"
-  fi
-fi
-
-# Reinstall Python deps only when the requirement list changes.
-if [ ! -f "$EMBEDDING_VENV/.requirements-hash" ] || [ "$(cat "$EMBEDDING_VENV/.requirements-hash")" != "$REQ_HASH" ]; then
-  "$EMBEDDING_VENV/bin/pip" install --no-cache-dir -q "${REQUIREMENTS[@]}"
-  echo "$REQ_HASH" > "$EMBEDDING_VENV/.requirements-hash"
-else
-  echo "  embedding Python deps up-to-date, skipping install"
-fi
-
+# ── Local embedding service (Node.js / Transformers.js) ─────────────
+cd ~/heurion/packages/embedding-server
+npm install 2>/dev/null || npm install
+npm run build 2>/dev/null || true
 pm2 delete heurion-embedding 2>/dev/null || true
-HF_HOME="$EMBEDDING_MODEL_DIR" \
-SENTENCE_TRANSFORMERS_HOME="$EMBEDDING_MODEL_DIR" \
-PYTHONPATH=/root/heurion/packages/server \
-  pm2 start "$EMBEDDING_VENV/bin/python" \
-  --name heurion-embedding \
-  -- /root/heurion/packages/server/nexus_server/embedding_server.py
+pm2 start node --name heurion-embedding -- dist/index.js
 
-# Wait for the embedding service to load the model before starting API.
-# First boot downloads bge-m3 (~2.2 GB), which can take several minutes.
 EMBEDDING_HEALTH_URL="http://localhost:8003/health"
-EMBEDDING_MAX_RETRIES=120
+EMBEDDING_MAX_RETRIES=60
 for i in $(seq 1 $EMBEDDING_MAX_RETRIES); do
   if curl -fsS "$EMBEDDING_HEALTH_URL" >/dev/null 2>&1; then
     echo "✓ Embedding service healthy"
@@ -115,6 +81,7 @@ if ! curl -fsS "$EMBEDDING_HEALTH_URL" >/dev/null 2>&1; then
   exit 1
 fi
 
+cd ~/heurion/packages/server-ts
 # Force fresh Prisma Client install/generation; pnpm's isolated store can
 # cache a stale generated client even after schema changes, causing runtime
 # "Unknown argument" errors.

@@ -53,23 +53,8 @@ find . -type d -name "__pycache__" \
 ok "Tier C done"
 
 if [ "$MODE" = "--aggressive" ]; then
-  # ── Tier D: Stale workspaces ───────────────────────────────────────
-  say "Tier D: Removing stale workspaces (--aggressive)"
-
-  if [ -d .venv ] && [ -L .venv/bin/python ]; then
-    py_link="$(readlink .venv/bin/python)"
-    case "$py_link" in
-      *python3.14*)
-        warn "Top-level .venv (Python 3.14) — build uses packages/server/.venv (3.12)"
-        warn "Deleting top-level .venv"
-        rm -rf .venv
-        ok "top-level .venv removed"
-        ;;
-      *)
-        warn "Top-level .venv points to $py_link — not auto-removing"
-        ;;
-    esac
-  fi
+  say "Tier D: No stale workspaces to clean (all Python code has been migrated to TypeScript)"
+fi
 
   ok "Tier D done"
 fi

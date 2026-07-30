@@ -356,14 +356,14 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       })
       let studyContext = ''
       if (studies.length > 0) {
-        studyContext = '\n## Active Research Studies\n'
+        studyContext = '\n## Active Research Studies (ALWAYS use the short_code below to refer to a study when the user mentions it)\n'
         for (const s of studies) {
           studyContext += `- **${s.shortCode}**: ${s.name}\n`
           if (s.protocol) {
-            studyContext += `  Protocol snippet: ${s.protocol.slice(0, 500).replace(/\n/g, ' ')}\n`
+            studyContext += `  Protocol: ${s.protocol.slice(0, 700).replace(/\n/g, ' ')}\n`
           }
         }
-        studyContext += '\nWhen asked about studies, reference these. When asked about details not in context, suggest importing the full protocol.\n'
+        studyContext += '\nIMPORTANT: When the user asks about a specific study (e.g. "NSCLC001" or any short_code), you MUST reference that short_code in your reply. When asked about details not in the protocol snippet above, suggest importing the full protocol.\n'
       }
 
       // #5: Conversation history from event log (last 20 turns)

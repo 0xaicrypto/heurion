@@ -1,0 +1,22 @@
+{
+  "name": "nexus-embedding-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Heurion local embedding server — ONNX via Transformers.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "precache": "tsx src/precache.ts"
+  },
+  "dependencies": {
+    "@xenova/transformers": "^2.17.0",
+    "dotenv": "^16.0.0",
+    "fastify": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -14,31 +14,26 @@
 
 services:
   nexus-embedding-server:
-    # Same image as nexus-server but runs the local embedding microservice.
-    # sentence-transformers + the model cache live in the image /data volume.
-    image: ${NEXUS_IMAGE:-nexus-server:latest}
+    # Node.js embedding server using Transformers.js (ONNX).
+    # Model weights cached at build time in the image.
+    image: ${EMBEDDING_IMAGE:-nexus-embedding-server:latest}
     build:
-      context: .
+      context: packages/embedding-server
       dockerfile: Dockerfile
     container_name: nexus-embedding-server
     restart: unless-stopped
-    command: ["nexus-embedding-server"]
     env_file:
       - .env.production
     environment:
       - EMBEDDING_SERVER_HOST=0.0.0.0
       - EMBEDDING_SERVER_PORT=8003
-      - HF_HOME=/data/embedding-models
-      - SENTENCE_TRANSFORMERS_HOME=/data/embedding-models
-    volumes:
-      - nexus-data:/data
     networks:
       - nexus-net
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8003/health"]
       interval: 30s
       timeout: 5s
-      start_period: 60s
+      start_period: 30s
       retries: 5
     # No public ports — only reachable on the internal Docker network.
 
