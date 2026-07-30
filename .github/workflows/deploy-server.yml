@@ -7,6 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  BASE_IMAGE_NAME: ghcr.io/0xaicrypto/nexus-base
   SERVER_IMAGE_NAME: ghcr.io/0xaicrypto/nexus-server
   WORKER_IMAGE_NAME: ghcr.io/0xaicrypto/heurion-worker
 
@@ -67,9 +68,38 @@ jobs:
           path: packages/web/dist
           retention-days: 1
 
+  build-base-image:
+    name: Build Base Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Always build and push the base image.  When Dockerfile.base
+      # hasn't changed, Docker layer caching (type=gha) makes this
+      # near-instant (a few seconds).
+      - name: Build and push base image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.base
+          push: true
+          tags: ${{ env.BASE_IMAGE_NAME }}:py3.11
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   build-server-image:
     name: Build Server Image
-    needs: [test, build-web]
+    needs: [test, build-web, build-base-image]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -95,6 +125,7 @@ jobs:
       - name: Build and push server image
         uses: docker/build-push-action@v6
         with:
+          build-args: BASE_IMAGE=${{ env.BASE_IMAGE_NAME }}:py3.11
           context: .
           file: ./Dockerfile
           push: true
@@ -106,7 +137,7 @@ jobs:
 
   build-worker-image:
     name: Build Worker Image
-    needs: [test]
+    needs: [test, build-base-image]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -127,6 +158,7 @@ jobs:
       - name: Build and push worker image
         uses: docker/build-push-action@v6
         with:
+          build-args: BASE_IMAGE=${{ env.BASE_IMAGE_NAME }}:py3.11
           context: .
           file: ./Dockerfile.worker
           push: true
