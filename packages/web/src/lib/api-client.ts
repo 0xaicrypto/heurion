@@ -59,7 +59,9 @@ export class ApiError extends Error {
   get messageText(): string {
     try {
       const parsed = JSON.parse(this.body);
-      return parsed.error?.message ?? parsed.message ?? parsed.detail ?? this.body;
+      const err = parsed.error;
+      if (typeof err === 'string') return err;
+      return err?.message ?? parsed.message ?? parsed.detail ?? this.body;
     } catch {
       return this.body || this.statusText;
     }
