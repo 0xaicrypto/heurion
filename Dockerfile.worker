@@ -11,12 +11,10 @@
 
 ARG BASE_IMAGE=python:3.11-slim-bookworm
 
-# ── Stage 1: build (Python deps via pip) ────────────────────────────
+# ── Stage 1: build (Python deps via uv) ────────────────────────────
 FROM $BASE_IMAGE AS builder
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m venv /opt/venv \
- && /opt/venv/bin/pip install --upgrade pip wheel
+RUN uv venv /opt/venv
 
 WORKDIR /build
 
@@ -33,8 +31,8 @@ RUN mkdir -p packages/sdk/nexus_core \
              packages/nexus/nexus/__init__.py \
              packages/server/nexus_server/__init__.py
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    /opt/venv/bin/pip install \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/venv/bin/python \
         ./packages/sdk \
         ./packages/nexus \
         ./packages/server
@@ -44,8 +42,8 @@ COPY packages/sdk    packages/sdk
 COPY packages/nexus  packages/nexus
 COPY packages/server packages/server
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    /opt/venv/bin/pip install --no-deps \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/venv/bin/python --no-deps \
         ./packages/sdk \
         ./packages/nexus \
         ./packages/server

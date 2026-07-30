@@ -3,7 +3,7 @@
 # Heurion server — single-image deploy (Python + Node).
 #
 # Two stages:
-#   1. builder  — installs Python deps via pip into a venv.  Dependency
+#   1. builder  — installs Python deps via uv into a venv.  Dependency
 #                 resolution and source install are split into separate
 #                 layers so a source-only change reuses the cached deps.
 #   2. runtime  — derived from BASE_IMAGE which pre-installs Python 3.11,
@@ -19,12 +19,10 @@
 # skipping their install on every build.
 ARG BASE_IMAGE=python:3.11-slim-bookworm
 
-# ── Stage 1: build (Python deps via pip) ────────────────────────────
+# ── Stage 1: build (Python deps via uv) ────────────────────────────
 FROM $BASE_IMAGE AS builder
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m venv /opt/venv \
- && /opt/venv/bin/pip install --upgrade pip wheel
+RUN uv venv /opt/venv
 
 WORKDIR /build
 
@@ -48,9 +46,9 @@ RUN mkdir -p packages/sdk/nexus_core \
 
 # 1c. Resolve + download all dependencies, install stub packages.
 #     This layer is cached by type=gha as long as pyproject.toml files
-#     stay the same.  On a cache hit pip install is instant.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    /opt/venv/bin/pip install \
+#     stay the same.  On a cache hit uv install is instant.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/venv/bin/python \
         ./packages/sdk \
         ./packages/nexus \
         "./packages/server[embedding]"
@@ -67,8 +65,8 @@ COPY packages/server packages/server
 # 2b. Re-install without dependencies — only replaces stub wheels
 #     with real ones.  Dependencies were already resolved in step 1c
 #     and are unaffected by --no-deps.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    /opt/venv/bin/pip install --no-deps \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/venv/bin/python --no-deps \
         ./packages/sdk \
         ./packages/nexus \
         "./packages/server[embedding]"
