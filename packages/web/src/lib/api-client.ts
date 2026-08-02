@@ -397,15 +397,20 @@ class ApiClient {
 
   /* ────────────────────────── sessions ────────────────────────── */
 
-  async listSessions(includeArchived = false): Promise<{ sessions: ChatSession[] }> {
-    return this.fetch<{ sessions: ChatSession[] }>(`/api/v1/sessions?include_archived=${includeArchived}`);
+  async listSessions(includeArchived = false, scope?: string): Promise<{ sessions: ChatSession[] }> {
+    const qs = scope ? `&scope=${encodeURIComponent(scope)}` : '';
+    return this.fetch<{ sessions: ChatSession[] }>(`/api/v1/sessions?include_archived=${includeArchived}${qs}`);
   }
 
-  async createSession(title: string): Promise<ChatSession> {
+  async createSession(title: string, opts?: { scope?: string; patientHash?: string }): Promise<ChatSession> {
     return this.fetch<ChatSession>('/api/v1/sessions', {
       method: 'POST',
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, scope: opts?.scope, patient_hash: opts?.patientHash }),
     });
+  }
+
+  async closeSession(sessionId: string): Promise<{ id: string; status: string; closed_at?: string }> {
+    return this.fetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}/close`, { method: 'POST' });
   }
 
   async deleteSession(sessionId: string): Promise<void> {

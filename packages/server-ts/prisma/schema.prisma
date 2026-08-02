@@ -49,13 +49,18 @@ model Session {
   id             String   @id
   userId         String   @map("user_id")
   title          String
+  scope          String   @default("global") // 'global' | 'patient'
+  patientHash    String?  @map("patient_hash")
+  status         String   @default("open") // 'open' | 'closed'
   messageCount   Int      @default(0) @map("message_count")
   archived       Int      @default(0)
   createdAt      String   @map("created_at")
   lastMessageAt  String?  @map("last_message_at")
+  closedAt       String?  @map("closed_at")
 
   user User @relation(fields: [userId], references: [id])
-  @@index([userId, archived, lastMessageAt(sort: Desc)])
+  @@index([userId, scope, status, lastMessageAt(sort: Desc)])
+  @@index([patientHash, status])
   @@map("nexus_sessions")
 }
 

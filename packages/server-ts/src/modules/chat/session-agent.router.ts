@@ -8,31 +8,95 @@ export async function sessionRouter(app: FastifyInstance) {
 
   app.get('/api/v1/sessions', async (request) => {
     const includeArchived = (request.query as any).include_archived === '1'
+    const scope = (request.query as any).scope
+    const where: any = { userId: request.user!.userId, archived: includeArchived ? undefined : 0 }
+    if (scope) where.scope = scope
     const rows = await prisma.session.findMany({
-      where: { userId: request.user!.userId, archived: includeArchived ? undefined : 0 },
+      where,
       orderBy: { lastMessageAt: 'desc' },
     })
     return {
       sessions: rows.map(s => ({
         id: s.id, title: s.title,
+        scope: s.scope, patient_hash: s.patientHash,
+        status: s.status,
         created_at: s.createdAt, updated_at: s.lastMessageAt,
+        closed_at: s.closedAt,
         archived: s.archived === 1, message_count: s.messageCount,
       })),
     }
   })
 
   app.post('/api/v1/sessions', async (request) => {
-    const { title } = request.body as any
+    const { title, scope, patient_hash } = request.body as any
     const id = `session_${Math.random().toString(36).slice(2, 10)}`
     const now = new Date().toISOString()
-    await prisma.session.create({ data: { id, userId: request.user!.userId, title: title || 'New Session', createdAt: now } })
-    return { id, title: title || 'New Session', created_at: now, message_count: 0, archived: false }
+    await prisma.session.create({
+      data: {
+        id, userId: request.user!.userId,
+        title: title || 'New Session',
+        scope: scope === 'patient' ? 'patient' : 'global',
+        patientHash: patient_hash || null,
+        status: 'open',
+        createdAt: now,
+      },
+    })
+    return {
+      id, title: title || 'New Session',
+      scope: scope === 'patient' ? 'patient' : 'global',
+      patient_hash: patient_hash || null,
+      status: 'open',
+      created_at: now, message_count: 0, archived: false,
+    }
+  })
+
+  /**
+   * Close a session: status → closed (no more writes) and trigger the
+   * summarize → pending closure (#114). Patient sessions keep their fixed
+   * patient-{hash} id; global sessions are the multi-session scope.
+   */
+  app.post('/api/v1/sessions/:sessionId/close', async (request, reply) => {
+    const { sessionId } = request.params as any
+    const userId = request.user!.userId
+    const now = new Date().toISOString()
+
+    const updated = await prisma.session.updateMany({
+      where: { id: sessionId, userId, status: 'open' },
+      data: { status: 'closed', closedAt: now },
+    })
+    if (updated.count === 0) {
+      const existing = await prisma.session.findFirst({ where: { id: sessionId, userId } })
+      if (!existing) return reply.status(404).send({ error: 'Session not found' })
+      return { id: sessionId, status: existing.status, already: true }
+    }
+
+    // Fire-and-forget: summarize the conversation into the pending queue.
+    summarizeSessionToPending(userId, sessionId).catch((err) => {
+      console.log('[SESSION] summarize skipped:', (err as Error).message.slice(0, 120))
+    })
+
+    return { id: sessionId, status: 'closed', closed_at: now }
   })
 
   app.delete('/api/v1/sessions/:sessionId', async (request) => {
     await prisma.session.deleteMany({ where: { id: (request.params as any).sessionId, userId: request.user!.userId } })
     return {}
   })
+}
+
+async function summarizeSessionToPending(userId: string, sessionId: string): Promise<void> {
+  const { getUserContext } = await import('./user-context.js')
+  const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
+  const ctx = getUserContext(userId)
+  const events = ctx.eventLog.query({ sessionId, limit: 80 }).reverse()
+  const conversation = events
+    .filter((e: any) => e.eventType === 'user_message' || e.eventType === 'assistant_response')
+    .map((e: any) => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
+    .join('\n')
+  if (!conversation.trim()) return
+
+  const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.facts, ctx.episodes, ctx.skills, ctx.knowledge)
+  await gateway.summarize({ conversation, sessionId })
 }
 
 export async function agentRouter(app: FastifyInstance) {
