@@ -1,15 +1,35 @@
 import { saveFile } from '../storage.js'
+import PptxGenJS from 'pptxgenjs'
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const PptxGenJS = require('pptxgenjs') as new () => any
+// pptxgenjs ships CJS with its own typings; the default export is the constructor.
+const PptxGenJSCtor = PptxGenJS as unknown as new () => any
+
+export interface PptxSlide {
+  title?: string
+  bullets?: string[]
+  content?: string
+}
 
 export interface PptxInput {
   title?: string
-  slides?: { title?: string; bullets?: string[]; content?: string }[]
+  slides?: PptxSlide[]
 }
 
-export async function generatePptx(input: PptxInput) {
-  const pres = new PptxGenJS()
+/**
+ * Sidecar/plugin jobs arrive as { template_id, data: {...}, output_name }.
+ * The actual slide content lives under `data`, so unwrap it before rendering
+ * (also tolerates a flat { title, slides } payload for direct callers).
+ */
+function unwrapPayload(payload: any): Record<string, unknown> {
+  if (payload && typeof payload === 'object' && payload.data && typeof payload.data === 'object') {
+    return payload.data
+  }
+  return payload || {}
+}
+
+export async function generatePptx(payload: any) {
+  const input = unwrapPayload(payload) as PptxInput
+  const pres = new PptxGenJSCtor()
 
   if (input.title) {
     const slide = pres.addSlide()
@@ -32,6 +52,6 @@ export async function generatePptx(input: PptxInput) {
     }
   }
 
-  const buffer = Buffer.from(await pres.write({ outputType: 'buffer' }))
+  const buffer = Buffer.from(await pres.write({ outputType: 'nodebuffer' }))
   return saveFile(buffer, 'presentation.pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation')
 }

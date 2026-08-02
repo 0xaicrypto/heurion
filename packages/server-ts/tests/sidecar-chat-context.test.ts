@@ -9,27 +9,34 @@ vi.mock('../src/common/llm.js', () => ({
   DEEPSEEK_PREMIUM_MODEL: 'deepseek-pro',
 }))
 
+const mocks = vi.hoisted(() => ({
+  enqueue: vi.fn(async (job: any) => ({
+    job_id: 'job_1',
+    status: 'pending',
+    created_at: Date.now(),
+    type: job.type,
+    payload: job.payload,
+  })),
+  getStatus: vi.fn(async () => ({
+    job_id: 'job_1',
+    status: 'completed',
+    created_at: Date.now(),
+    result: { file_id: 'file_1', file_name: 'presentation.pptx' },
+  })),
+  getDownloadUrl: vi.fn(async () => ({
+    file_id: 'file_1',
+    file_name: 'presentation.pptx',
+    mime_type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    download_url: 'https://example.test/download/file_1',
+    expires_in: 3600,
+  })),
+}))
+
 vi.mock('../src/modules/execution/execution-plane.service.js', () => ({
   createExecutionPlaneService: () => ({
-    enqueue: vi.fn(async (job: any) => ({
-      job_id: 'job_1',
-      status: 'pending',
-      created_at: Date.now(),
-      type: job.type,
-    })),
-    getStatus: vi.fn(async () => ({
-      job_id: 'job_1',
-      status: 'completed',
-      created_at: Date.now(),
-      result: { file_id: 'file_1', file_name: 'presentation.pptx' },
-    })),
-    getDownloadUrl: vi.fn(async () => ({
-      file_id: 'file_1',
-      file_name: 'presentation.pptx',
-      mime_type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      download_url: 'https://example.test/download/file_1',
-      expires_in: 3600,
-    })),
+    enqueue: mocks.enqueue,
+    getStatus: mocks.getStatus,
+    getDownloadUrl: mocks.getDownloadUrl,
   }),
 }))
 
@@ -84,5 +91,19 @@ describe('sidecar chat handler — conversation context injection', () => {
 
     const prompt = vi.mocked(deepseekChat).mock.calls[0][0].at(-1).content as string
     expect(prompt).not.toContain('Conversation history')
+  })
+
+  test('enqueued payload carries the generated slide content in data.slides', async () => {
+    vi.mocked(deepseekChat).mockResolvedValue(JSON.stringify(pptxJson))
+
+    await handleSidecarRequest({
+      userId: 'u1',
+      text: '请生成一个PPT',
+    })
+
+    const job = mocks.enqueue.mock.calls[0][0] as any
+    expect(job.type).toBe('sidecar.generate_pptx')
+    expect(job.payload.data.title).toBe('Immunotherapy Update')
+    expect(job.payload.data.slides).toEqual([{ title: 'Intro', content: 'Overview of recent trials' }])
   })
 })
