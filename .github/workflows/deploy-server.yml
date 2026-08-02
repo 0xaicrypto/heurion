@@ -5,6 +5,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Only one deploy+regression at a time: staging is a single shared VPS, and
+# concurrent deploys reset the DB while the other run is mid-regression.
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   SERVER_IMAGE_NAME: ghcr.io/0xaicrypto/nexus-server
