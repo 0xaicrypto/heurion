@@ -44,4 +44,42 @@ export async function memorizationRouter(app: FastifyInstance) {
       latency_ms: result.latencyMs,
     }
   })
+
+  /**
+   * Session-end closure: summarize a session's conversation and route the
+   * summary through the pending review queue (#114). Returns the summary
+   * immediately so the runtime can keep using it as context.
+   */
+  app.post('/api/v1/memorization/sessions/:sessionId/summarize', async (request, reply) => {
+    const userId = request.user!.userId
+    const { sessionId } = request.params as any
+    const { patient_hash, limit } = request.body as any
+
+    const ctx = getUserContext(userId)
+    const events = ctx.eventLog.query({ sessionId, limit: parseInt(limit || '80', 10) }).reverse()
+    const conversation = events
+      .filter((e: any) => e.eventType === 'user_message' || e.eventType === 'assistant_response')
+      .map((e: any) => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
+      .join('\n')
+
+    if (!conversation.trim()) {
+      return reply.status(400).send({ error: 'No conversation events found for this session' })
+    }
+
+    const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
+    const gateway = new MemoryGraphGateway(
+      userId,
+      ctx.memory,
+      ctx.facts,
+      ctx.episodes,
+      ctx.skills,
+      ctx.knowledge,
+    )
+    const result = await gateway.summarize({
+      conversation,
+      sessionId,
+      patientHash: patient_hash,
+    })
+    return { ...result, session_id: sessionId }
+  })
 }
