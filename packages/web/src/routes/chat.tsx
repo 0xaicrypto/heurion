@@ -234,7 +234,7 @@ export function ChatPage() {
                       </div>
                     </details>
                   )}
-                  <LlmContent content={m.text || ''} />
+                  <LlmContent content={m.text || ''} className={m.role === 'user' ? 'prose-invert' : undefined} />
                   {m.download && (
                     <div className="mt-3 rounded-lg border border-border bg-surface p-3">
                       <div className="flex items-center gap-2 text-sm text-text-primary">

@@ -735,7 +735,7 @@ export function WritingEditorPage() {
                           : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
                       }`}
                     >
-                      <LlmContent content={m.text || ''} />
+                      <LlmContent content={m.text || ''} className={m.role === 'user' ? 'prose-invert' : undefined} />
                       {m._done === false && !m.text && (
                         <span className="animate-pulse">●</span>
                       )}

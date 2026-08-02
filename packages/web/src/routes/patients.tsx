@@ -556,7 +556,7 @@ export function PatientChatPage() {
                     ))}
                   </div>
                 )}
-                <LlmContent content={m.text || ''} />
+                <LlmContent content={m.text || ''} className={m.role === 'user' ? 'prose-invert' : undefined} />
                 {m.isStreaming ? (
                   <span role="status" aria-label={t('chat.streaming')} className="animate-pulse">●</span>
                 ) : null}
