@@ -4,20 +4,55 @@ export interface EmbeddingConfig {
   model: string
   batchSize: number
   normalize: boolean
+  device: 'cpu' | 'cuda' | 'mps' | 'wasm'
+  quantized: boolean
+  dtype?: 'fp32' | 'fp16' | 'int8'
+}
+
+const SUPPORTED_DEVICES = ['cpu', 'cuda', 'mps', 'wasm'] as const
+const SUPPORTED_DTYPES = ['fp32', 'fp16', 'int8'] as const
+
+export function resolveDevice(value: string | undefined): EmbeddingConfig['device'] {
+  if (value && (SUPPORTED_DEVICES as readonly string[]).includes(value)) {
+    return value as EmbeddingConfig['device']
+  }
+  if (value) {
+    throw new Error(
+      `Unsupported EMBEDDING_DEVICE "${value}". Supported: ${SUPPORTED_DEVICES.join(', ')}. ` +
+        `Dimension/device migration hint: if the model or device changes, re-verify the embedding dimension ` +
+        `(see GET /health) and re-index existing vectors.`,
+    )
+  }
+  return 'cpu'
 }
 
 export class EmbeddingService {
   private modelName: string
   private extractor: FeatureExtractionPipeline | null = null
+  private dimensions: number | null = null
+  private device: EmbeddingConfig['device']
+  private quantized: boolean
+  private dtype?: EmbeddingConfig['dtype']
 
   constructor(private config: EmbeddingConfig) {
     this.modelName = config.model
+    this.device = config.device
+    this.quantized = config.quantized
+    this.dtype = config.dtype
   }
 
   async load(): Promise<void> {
+    const options: Record<string, unknown> = {
+      device: this.device === 'wasm' ? 'cpu' : this.device,
+      quantized: this.quantized,
+    }
+    if (this.dtype && this.dtype !== 'int8') {
+      options.dtype = this.dtype
+    }
     this.extractor = (await pipeline(
       'feature-extraction',
-      this.config.model,
+      this.modelName,
+      options,
     )) as unknown as FeatureExtractionPipeline
   }
 
@@ -41,6 +76,7 @@ export class EmbeddingService {
       allEmbeddings.push(...batchEmbeddings)
     }
 
+    this.dimensions = dimensions
     return { embeddings: allEmbeddings, dimensions }
   }
 
@@ -48,11 +84,20 @@ export class EmbeddingService {
     return this.modelName
   }
 
-  getDimensions(): number {
-    return 768
+  getDimensions(): number | null {
+    // Real dimension once a batch has been embedded; null before first call.
+    return this.dimensions
   }
 
   getDevice(): string {
-    return 'cpu'
+    return this.device
+  }
+
+  getQuantized(): boolean {
+    return this.quantized
+  }
+
+  getDtype(): EmbeddingConfig['dtype'] | undefined {
+    return this.dtype
   }
 }

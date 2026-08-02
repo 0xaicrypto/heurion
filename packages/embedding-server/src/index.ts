@@ -1,5 +1,5 @@
 import Fastify from 'fastify'
-import { EmbeddingService, type EmbeddingConfig } from './embedding.service.js'
+import { EmbeddingService, resolveDevice, type EmbeddingConfig } from './embedding.service.js'
 
 function envBool(value: string | undefined, defaultVal: boolean): boolean {
   if (value === undefined) return defaultVal
@@ -11,6 +11,9 @@ function loadConfig(): EmbeddingConfig & { host: string; port: number } {
     model: process.env.EMBEDDING_MODEL || 'Xenova/bge-small-en-v1.5',
     batchSize: parseInt(process.env.EMBEDDING_BATCH_SIZE || '32', 10),
     normalize: envBool(process.env.EMBEDDING_NORMALIZE, true),
+    device: resolveDevice(process.env.EMBEDDING_DEVICE),
+    quantized: envBool(process.env.EMBEDDING_QUANTIZED, false),
+    dtype: process.env.EMBEDDING_DTYPE as EmbeddingConfig['dtype'] | undefined,
     host: process.env.EMBEDDING_SERVER_HOST || '0.0.0.0',
     port: parseInt(process.env.EMBEDDING_SERVER_PORT || '8003', 10),
   }
@@ -27,7 +30,8 @@ async function main() {
     model: service.getModelName(),
     dimensions: service.getDimensions(),
     device: service.getDevice(),
-    quantization: 'none',
+    quantized: service.getQuantized(),
+    dtype: service.getDtype() || null,
   }))
 
   app.post<{ Body: { texts: string[]; model?: string; normalize?: boolean } }>(

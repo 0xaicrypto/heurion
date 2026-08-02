@@ -7,6 +7,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { extractDocumentText } from '../../lib/document-extractor.js'
+import { createIngestionJob, processIngestionJob } from '../ingestion/ingestion.service.js'
 
 export async function filesRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
@@ -123,6 +124,31 @@ export async function filesRouter(app: FastifyInstance) {
       // FileIndex table may not exist yet; continue without dedup persistence
     }
 
+    // Kick off AI ingestion (analyze → pending_review entries) when the file is
+    // uploaded in a patient context. Runs fire-and-forget; failures leave the
+    // job in a retryable/failed state visible via /api/v1/ingestion/jobs.
+    let ingestionJobId: string | null = null
+    let ingestionStatus: string | null = null
+    if (patientHash) {
+      try {
+        const job = await createIngestionJob({
+          userId: request.user!.userId,
+          fileId,
+          fileName: data.filename,
+          mimeType: data.mimetype || 'application/octet-stream',
+          patientHash,
+          uploadedBy: request.user!.userId,
+        })
+        ingestionJobId = job.id
+        ingestionStatus = job.status
+        processIngestionJob(job.id)
+          .then((processed) => console.log(`[FILE] Ingestion job ${job.id} → ${processed.status}`))
+          .catch((err: Error) => console.log('[FILE] Ingestion processing skipped:', err.message.slice(0, 80)))
+      } catch (err) {
+        console.log('[FILE] Ingestion job creation skipped:', (err as Error).message.slice(0, 80))
+      }
+    }
+
     return {
       file_id: fileId,
       name: data.filename,
@@ -130,6 +156,8 @@ export async function filesRouter(app: FastifyInstance) {
       size_bytes: buffer.length,
       patient_hash: patientHash || null,
       dedup: false,
+      ingestion_job_id: ingestionJobId,
+      ingestion_status: ingestionStatus,
     }
   })
 

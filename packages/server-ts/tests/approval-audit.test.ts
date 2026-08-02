@@ -1,5 +1,38 @@
 import { describe, test, expect } from 'vitest'
 import { getApp, authHeader } from './setup.js'
+import prisma from '../src/common/prisma.js'
+import { signToken } from '../src/common/jwt.js'
+
+async function registerUser(app: any, prefix: string): Promise<{ token: string; userId: string }> {
+  const username = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/register',
+    headers: { 'content-type': 'application/json' },
+    payload: JSON.stringify({ username, password: 'test123456', display_name: username }),
+  })
+  const body = JSON.parse(res.payload)
+  expect(body.jwt_token).toBeTruthy()
+  const payload = JSON.parse(Buffer.from(body.jwt_token.split('.')[1], 'base64').toString())
+  return { token: body.jwt_token, userId: payload.userId }
+}
+
+// The shared test DB is populated by earlier test files, so the admin must be
+// created directly rather than relying on "first registered user is admin".
+async function createAdminToken(): Promise<string> {
+  const now = new Date().toISOString()
+  const admin = await (prisma as any).user.create({
+    data: {
+      id: `user_admin_${Date.now()}`,
+      displayName: 'Test Admin',
+      role: 'admin',
+      status: 'approved',
+      createdAt: now,
+      updatedAt: now,
+    },
+  })
+  return signToken({ userId: admin.id, role: 'admin', displayName: 'Test Admin' })
+}
 
 async function createPatient(app: any, initials = 'AP') {
   const res = await app.inject({
@@ -168,5 +201,158 @@ describe('Approval & Audit', () => {
       headers: await authHeader(),
     })
     expect(JSON.parse(listAfter.payload).requests.some((r: any) => r.id === req.id)).toBe(false)
+  })
+})
+
+describe('Approval permission isolation', () => {
+  test('a non-admin user cannot see or act on another user\'s pending approval', async () => {
+    const app = await getApp()
+
+    // Owner (fresh user A) creates a patient + pending entry
+    const owner = await registerUser(app, 'owner')
+    const ownerHeaders = { authorization: `Bearer ${owner.token}` }
+    const patient = await app.inject({
+      method: 'POST',
+      url: '/api/v1/dicom/patients/register-manual',
+      headers: { ...ownerHeaders, 'content-type': 'application/json' },
+      payload: { initials: 'OA', age: 40, sex: 'M' },
+    })
+    const hash = JSON.parse(patient.payload).patient_hash
+    const entry = await app.inject({
+      method: 'POST',
+      url: `/api/v1/patients/${hash}/medical-records`,
+      headers: { ...ownerHeaders, 'content-type': 'application/json' },
+      payload: {
+        type: 'lab',
+        title: 'Owner CBC',
+        content: 'WBC 10.2',
+        status: 'pending_review',
+        createdBy: 'system',
+      },
+    })
+    const entryId = JSON.parse(entry.payload).id
+
+    // Non-admin stranger (user B)
+    const stranger = await registerUser(app, 'stranger')
+    const strangerHeaders = { authorization: `Bearer ${stranger.token}` }
+
+    // B's pending list does not contain A's request
+    const list = await app.inject({
+      method: 'GET',
+      url: '/api/v1/approvals/pending',
+      headers: strangerHeaders,
+    })
+    const requests = JSON.parse(list.payload).requests
+    expect(requests.some((r: any) => r.targetId === entryId)).toBe(false)
+
+    // B cannot confirm A's approval
+    const pending = await app.inject({
+      method: 'GET',
+      url: '/api/v1/approvals/pending',
+      headers: ownerHeaders,
+    })
+    const ownerReq = JSON.parse(pending.payload).requests.find((r: any) => r.targetId === entryId)
+    const denied = await app.inject({
+      method: 'POST',
+      url: `/api/v1/approvals/${ownerReq.id}/confirm`,
+      headers: strangerHeaders,
+    })
+    expect(denied.statusCode).toBe(404)
+
+    // B cannot reject A's approval either
+    const rejected = await app.inject({
+      method: 'POST',
+      url: `/api/v1/approvals/${ownerReq.id}/reject`,
+      headers: { ...strangerHeaders, 'content-type': 'application/json' },
+      payload: { reason: 'not mine' },
+    })
+    expect(rejected.statusCode).toBe(404)
+
+    // B's audit query does not leak A's audit rows
+    const audit = await app.inject({
+      method: 'GET',
+      url: '/api/v1/audit',
+      headers: strangerHeaders,
+    })
+    const logs = JSON.parse(audit.payload).logs
+    expect(logs.length).toBe(0)
+
+    // A can still see their own approval as pending
+    const stillPending = await app.inject({
+      method: 'GET',
+      url: '/api/v1/approvals/pending',
+      headers: ownerHeaders,
+    })
+    expect(JSON.parse(stillPending.payload).requests.some((r: any) => r.id === ownerReq.id)).toBe(true)
+  })
+
+  test('admin can see and confirm any user\'s pending approval', async () => {
+    const app = await getApp()
+
+    const owner = await registerUser(app, 'owner2')
+    const ownerHeaders = { authorization: `Bearer ${owner.token}` }
+    const patient = await app.inject({
+      method: 'POST',
+      url: '/api/v1/dicom/patients/register-manual',
+      headers: { ...ownerHeaders, 'content-type': 'application/json' },
+      payload: { initials: 'OB', age: 35, sex: 'F' },
+    })
+    const hash = JSON.parse(patient.payload).patient_hash
+    const entry = await app.inject({
+      method: 'POST',
+      url: `/api/v1/patients/${hash}/medical-records`,
+      headers: { ...ownerHeaders, 'content-type': 'application/json' },
+      payload: {
+        type: 'lab',
+        title: 'Owner CBC 2',
+        content: 'WBC 11.2',
+        status: 'pending_review',
+        createdBy: 'system',
+      },
+    })
+    const entryId = JSON.parse(entry.payload).id
+
+    // Admin sees the pending request created by another user
+    const adminToken = await createAdminToken()
+    const adminHeaders = { authorization: `Bearer ${adminToken}` }
+    const list = await app.inject({
+      method: 'GET',
+      url: '/api/v1/approvals/pending',
+      headers: adminHeaders,
+    })
+
+    const req = JSON.parse(list.payload).requests.find((r: any) => r.targetId === entryId)
+    expect(req).toBeDefined()
+
+    // Admin confirms it → entry becomes confirmed
+    const confirmed = await app.inject({
+      method: 'POST',
+      url: `/api/v1/approvals/${req.id}/confirm`,
+      headers: adminHeaders,
+    })
+    expect(confirmed.statusCode).toBe(200)
+    expect(JSON.parse(confirmed.payload).status).toBe('approved')
+
+    const entryAfter = await app.inject({
+      method: 'GET',
+      url: `/api/v1/patients/${hash}/medical-records/${entryId}`,
+      headers: ownerHeaders,
+    })
+    expect(JSON.parse(entryAfter.payload).status).toBe('confirmed')
+
+    // Admin audit feed contains the cross-user action; owner audit still scoped
+    const adminAudit = await app.inject({
+      method: 'GET',
+      url: '/api/v1/audit',
+      headers: adminHeaders,
+    })
+    expect(JSON.parse(adminAudit.payload).logs.some((l: any) => l.targetId === entryId)).toBe(true)
+
+    const ownerAudit = await app.inject({
+      method: 'GET',
+      url: '/api/v1/audit',
+      headers: ownerHeaders,
+    })
+    expect(JSON.parse(ownerAudit.payload).logs.some((l: any) => l.targetId === entryId)).toBe(false)
   })
 })

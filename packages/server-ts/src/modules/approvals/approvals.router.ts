@@ -17,16 +17,18 @@ export async function approvalsRouter(app: FastifyInstance) {
 
   app.get('/api/v1/approvals/pending', async (request) => {
     const userId = request.user!.userId
+    const isAdmin = request.user!.role === 'admin'
     const { targetType } = request.query as any
-    const requests = await listPendingApprovals(userId, targetType)
+    const requests = await listPendingApprovals(userId, targetType, isAdmin)
     return { requests }
   })
 
   app.post('/api/v1/approvals/:id/confirm', async (request, reply) => {
     const userId = request.user!.userId
+    const isAdmin = request.user!.role === 'admin'
     const { id } = request.params as any
     try {
-      const result = await confirmApproval(userId, id)
+      const result = await confirmApproval(userId, id, isAdmin)
       return result
     } catch (err: any) {
       return reply.status(404).send({ error: err.message })
@@ -35,13 +37,14 @@ export async function approvalsRouter(app: FastifyInstance) {
 
   app.post('/api/v1/approvals/:id/reject', async (request, reply) => {
     const userId = request.user!.userId
+    const isAdmin = request.user!.role === 'admin'
     const { id } = request.params as any
     const parsed = rejectSchema.safeParse(request.body)
     if (!parsed.success) {
       return reply.status(400).send({ error: parsed.error.format() })
     }
     try {
-      const result = await rejectApproval(userId, id, parsed.data.reason)
+      const result = await rejectApproval(userId, id, parsed.data.reason, isAdmin)
       return result
     } catch (err: any) {
       if (err.message === 'rejectedReason required') {
@@ -53,7 +56,9 @@ export async function approvalsRouter(app: FastifyInstance) {
 
   app.get('/api/v1/audit', async (request) => {
     const { targetType, targetId, actor } = request.query as any
-    const logs = await listAuditLogs({ targetType, targetId, actor })
+    const userId = request.user!.userId
+    const isAdmin = request.user!.role === 'admin'
+    const logs = await listAuditLogs({ targetType, targetId, actor }, userId, isAdmin)
     return { logs }
   })
 }
