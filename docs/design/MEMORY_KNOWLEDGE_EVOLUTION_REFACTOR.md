@@ -5,9 +5,6 @@
 **负责人：** JZ  
 **相关文档：**
 - `docs/design/knowledge-base-design.md`（v2.2 产品设计）
-- `docs/design/m3-memory-architecture.md`（M3 四层记忆架构）
-- `docs/design/EVENT_LOG_UNIFICATION.md`（事件日志统一）
-- `docs/adr/ADR-002-m3-memory-merge.md`（M3 分层采用 ADR）
 - `packages/server-ts/src/evolution/stores.ts`（当前 Facts/Knowledge/Episodes/Skills Store）
 - `packages/server-ts/src/core/event-log.ts`（当前 JSONL EventLog）
 

@@ -4,7 +4,7 @@
 **日期：** 2026-07-29  
 **范围：** `packages/web`、`packages/server-ts`  
 **相关文档：**
-- `docs/design/web-ui-redesign.md`（浏览器优先的 UI 架构）
+- `docs/adr/ADR-003-web-ui-saas-pivot.md`（浏览器优先的 UI 架构决策）
 - `docs/design/MEMORY_KNOWLEDGE_EVOLUTION_REFACTOR.md`（记忆/知识/进化系统重构）
 - `docs/design/knowledge-base-design.md`（知识库产品设计）
 
@@ -517,7 +517,7 @@ packages/web/src/
 
 ### Phase 8：收尾
 
-1. 更新 `web-ui-redesign.md`。
+1. 归档设计提案（web 已上线，见 ADR-003）。
 2. 性能优化（大 PDF OCR、向量索引）。
 3. 全量测试。
 

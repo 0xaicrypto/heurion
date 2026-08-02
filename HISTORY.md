@@ -6,6 +6,11 @@ glossary so those tags aren't insider knowledge.
 
 If you grep `S4` in source, this is where you land.
 
+> **Note**: an early version of this product included a blockchain
+> anchoring layer (external ledger / object storage / identity registration)
+> that has since been removed. History entries below that touched that layer
+> are condensed accordingly.
+
 ## Phase 0 — origins
 
 - SDK (`nexus_core`) and Nexus (`nexus`) existed first as a
@@ -39,16 +44,15 @@ saw — invisible state divergence.
 the twin's error in the body. The legacy path remains compiled in but
 is reachable only when `USE_TWIN=0` (test-only).
 
-### S2 — TwinManager auto-elects chain mode
+### S2 — TwinManager auto-elects sync mode
 
-Before S2, `TwinManager._create_twin` always built local-mode twins —
-even if `SERVER_PRIVATE_KEY` was configured. Greenfield + BSC anchoring
-went through a separate (legacy) server-side pipeline.
+Before S2, `TwinManager._create_twin` always built local-mode twins.
+Sync + anchoring went through a separate (legacy) server-side
+pipeline.
 
-**S2 added `_resolve_chain_kwargs(user_id)`**. When server has a private
-key AND the user has an ERC-8004 token, the twin is built in chain mode
-with its bucket name `nexus-agent-{token_id}` baked in. This is the
-moment chain anchoring moved into Nexus.
+**S2 moved the sync/anchoring responsibility into Nexus** when the
+server has the required credentials configured. This is the moment the
+duplicate server-side sync layer started being retired.
 
 ### S3 — delete `memory_service.py`
 
@@ -65,13 +69,12 @@ fails loudly.
 ### S4 — retire `sync_anchor` + `sync_hub.push`
 
 Before S4 every desktop `/sync/push` triggered `enqueue_anchor`, which
-asynchronously wrote to Greenfield + anchored on BSC. After S2 chain-mode
-twin's ChainBackend already does that on every `event_log.append` —
-double-anchoring waste.
+asynchronously wrote the state snapshot. After S2 the twin's own backend
+already does that on every `event_log.append` — double-write waste.
 
 **S4 stopped enqueuing new anchors via `/sync/push`.** The retry daemon
-became opt-in (`RUNE_ENABLE_RETRY_DAEMON=1`). `list_anchors_for_user`
-remains as a read-only view of pre-S4 history.
+became opt-in. `list_anchors_for_user` remains as a read-only view of
+pre-S4 history.
 
 ### S5 — `/agent/state` & friends read from twin's event_log
 
@@ -85,18 +88,18 @@ module `twin_event_log.py` opens each user's `events.db` read-only via
 overhead per request. The `sync_events` mirror is still written for
 back-compat but no production read path consults it.
 
-### S6 — twin auto-registers identity
+### S6 — twin identity bootstrapping
 
-Before S6 the desktop called `POST /api/v1/chain/register-agent` during
-onboarding to mint an ERC-8004 token. If they skipped it, the twin
-would also try (background task), creating duplicate registrations.
+Before S6 the desktop called a server endpoint during onboarding to
+register the agent identity; if skipped, the twin would also try
+(background task), creating duplicate registrations.
 
-**S6 introduced `bootstrap_chain_identity(user_id)`** in `twin_manager`
-as the single canonical registration entry point. The endpoint
-`/chain/register-agent` is marked deprecated and now delegates to it.
-DigitalTwin gained `cached_agent_id` parameter so when the server has
-already registered, the twin pre-seeds its identity cache and skips its
-own background registration.
+**S6 introduced `bootstrap_identity(user_id)`** in `twin_manager` as
+the single canonical registration entry point. The legacy endpoint is
+marked deprecated and now delegates to it. DigitalTwin gained a
+`cached_agent_id` parameter so when the server has already registered,
+the twin pre-seeds its identity cache and skips its own background
+registration.
 
 ## The Round 2 series (desktop thin-client)
 
@@ -131,49 +134,46 @@ Killed `RuneEngine`, `JwtPayload.ExtractUserId`, the `MainViewModel`'s
 per-user data directory tree, the `_build_system_prompt` /
 `_build_context_messages` logic (server-side twin owns prompt
 construction now). `MainViewModel` is ~140 lines and just does:
-set token → reset chat VM → background chain-registration check.
+set token → reset chat VM → background identity check.
 
 ## Bug 1 / 2 / 3 (post-S6 stability fixes)
 
-A user reported "Greenfield put failed" spamming logs. Diagnosis surfaced
+A user reported sync failures spamming logs. Diagnosis surfaced
 three intertwined bugs:
 
-### Bug 1 — Greenfield bucket auto-create missing for twin
+### Bug 1 — bucket auto-create missing for twin
 
-`ensure_bucket()` lived in SDK's `Greenfield` class but was only called
-from server's legacy `_RealAnchorBackend.put_json`. Chain-mode twin's
-ChainBackend went straight to PUT without checking — the very first
-write for a freshly-registered agent failed with "No such bucket".
+`ensure_bucket()` lived in SDK but was only called from server's legacy
+sync path. The twin's own backend went straight to PUT without checking
+— the very first write for a freshly-registered agent failed with
+"No such bucket".
 
 **Fix**: added `_ensure_bucket_once()` (lazy + locked + cached) at the
-top of `_put_greenfield` and `_get_greenfield` in SDK. All future SDK
-consumers benefit, zero server changes needed.
+top of the sync write path in SDK. All future SDK consumers benefit,
+zero server changes needed.
 
-### Bug 2 — twin double-registers ERC-8004 identity
+### Bug 2 — twin double-registers identity
 
-`bootstrap_chain_identity` (server, S6) registered token A. Then
+`bootstrap_identity` (server, S6) registered identity A. Then
 `twin._register_identity` (Nexus, separate code path) ran in background
-and registered token B because its local cache file was empty. The
-bucket name was locked to A but twin's chain client also believed it
-owned B.
+and registered identity B because its local cache file was empty.
 
 **Fix**: added `cached_agent_id: Optional[int]` parameter to
 `DigitalTwin.create`. When server pre-registered, it passes the token
 in; twin pre-seeds its identity cache file and skips its own background
 register.
 
-### Bug 3 — UI silent on chain failures
+### Bug 3 — UI silent on sync failures
 
-`/agent/state` showed "0 anchored / 0 pending" for chat-mode users even
-when twin was successfully writing BSC anchors. After S4 the legacy
+`/agent/state` showed "0 anchored / 0 pending" for users even when the
+twin was successfully writing snapshots. After S4 the legacy
 `sync_anchors` table no longer accumulates rows for chat traffic, but
 the UI only read from there.
 
-**Fix**: new `twin_chain_events` table populated by a logging.Handler
-that subscribes to `rune.backend.chain` and `rune.greenfield` loggers,
-parses `[WRITE][BSC] Anchor OK ...` and `Greenfield put failed: ...`,
+**Fix**: a dedicated event table populated by a logging.Handler that
+subscribes to the sync/backend loggers, parses the write result lines,
 attributes by agent_id, persists. `/agent/state` and `/agent/timeline`
-union legacy sync_anchors with new twin_chain_events.
+union legacy sync_anchors with the new event table.
 
 ## Layer-leakage cleanup
 
@@ -192,11 +192,11 @@ from SDK and only owns `record_distilled_event`.
 
 ### Network short-form helper hoisted
 
-Three modules (`twin_manager`, `chain_proxy`, `sync_anchor`) each had
-their own `"mainnet" in network_str` substring check. A typo
-(`bsc_mainnet` with underscore) silently fell back to testnet.
+Three modules each had their own `"mainnet" in network_str` substring
+check. A typo (`bsc_mainnet` with underscore) silently fell back to
+testnet.
 
-**Moved**: `config.network_short` property + `RUNE_NETWORK` whitelist
+**Moved**: `config.network_short` property + network whitelist
 validation in `config.validate()`. Misconfig now fails on startup.
 
 ## Naming legacy
@@ -204,7 +204,7 @@ validation in `config.validate()`. Misconfig now fails on startup.
 The codebase started branded "Rune" everywhere — class names (`Rune`,
 `RuneProvider`, `RuneChainClient`), Python modules (`nexus`,
 `nexus_server`), C# projects (`RuneDesktop.*`), env vars (`RUNE_*`),
-logger namespaces (`rune.backend.chain`).
+logger namespaces.
 
 The naming reorg is **deferred** — see thread "去 Rune 化" for the
 proposed mapping (`nexus` → `nexus`, `nexus_server` → `nexus_server`,

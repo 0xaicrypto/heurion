@@ -249,7 +249,7 @@ uvicorn nexus_server.main:create_app --host 0.0.0.0 --port 8002 --factory
 | **SDK** | `packages/sdk-client` | TypeScript | Typed client for browser/CLI |
 | **Control Plane** | `packages/server-ts` | Fastify 4 + Prisma 5 + SQLite | Auth, Chat SSE, Research, Docs, Skills, Admin, Plugin/Execution mgmt |
 | **Execution Plane** | `packages/server` | FastAPI + Python | DICOM/inference worker, MedSci-Sidecar rendering, Redis consumer |
-| **Core SDK** | `packages/sdk` + `packages/nexus` | Python | DigitalTwin, on-chain identity, event sourcing |
+| **Core SDK** | `packages/sdk` + `packages/nexus` | Python | DigitalTwin, identity, event sourcing |
 
 ### Control Plane modules (10+ feature domains)
 

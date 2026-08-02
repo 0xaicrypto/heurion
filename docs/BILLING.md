@@ -72,7 +72,7 @@ configure:
 ## 5. Server env vars
 
 Add these to `packages/server/.env` (or your deployment's secret
-store). All keys live in `$HOME/Library/Application Support/RuneProtocol/.env`
+store). All keys live in `$HOME/Library/Application Support/Heurion/.env`
 on a packaged Nexus.app install — the desktop's setup.sh merges them
 on first launch.
 

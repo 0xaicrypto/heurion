@@ -71,7 +71,7 @@
 | 4.2 | 切到"今日"workspace 或左下角 Inbox | 应该有"今日待办 X 项"提示,内含张三的下一次访视(如距今 7 天内) |
 | 4.3 | 回到该研究 → 进度计划 → 点某个即将到来的访视点 | 弹出 VisitChecklistModal,列出该次访视协议要做的所有动作(查血常规、CT、PRO 问卷…) |
 
-**⚠️ 当前缺口**:VisitChecklistModal **还没实现**(visual-mock README 标 ✗)。点了应该没反应或报错 —— 留作下一轮。
+**⚠️ 当前缺口**:VisitChecklistModal **还没实现**。点了应该没反应或报错 —— 留作下一轮。
 
 ---
 
