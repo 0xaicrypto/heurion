@@ -18,6 +18,8 @@ export interface PayloadBuildInput {
     diagnosis?: string | null
     chiefComplaint?: string | null
   } | null
+  /** Prior conversation messages in this session, injected as context. */
+  history?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
   telemetryContext?: LlmTelemetryContext
 }
 
@@ -94,7 +96,10 @@ async function buildPayloadWithLlm(
     : 'No specific patient context.'
 
   const schemaJson = JSON.stringify(tool.parameters, null, 2)
-  const prompt = `${patientBlock}\n\nUser request: "${input.text}"\n\nYou are preparing arguments for the "${manifest.plugin.name}" plugin tool "${tool.name}".\nReturn ONLY a JSON object that conforms to this schema:\n${schemaJson}\n\nIf the request does not provide enough detail, use clinically plausible placeholders. Do not include markdown or explanation.\n\nJSON object:`
+  const historyBlock = input.history && input.history.length > 0
+    ? `\n\nConversation history (earlier messages in this chat; use them as context for the request):\n${input.history.map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`).join('\n')}`
+    : ''
+  const prompt = `${patientBlock}${historyBlock}\n\nUser request: "${input.text}"\n\nYou are preparing arguments for the "${manifest.plugin.name}" plugin tool "${tool.name}".\nReturn ONLY a JSON object that conforms to this schema:\n${schemaJson}\n\nBase the arguments on the conversation history and patient context above when available; if the request does not provide enough detail, use clinically plausible placeholders. Do not include markdown or explanation.\n\nJSON object:`
 
   const raw = await deepseekChat([{ role: 'user', content: prompt }], apiKey, {
     model: 'deepseek-chat',

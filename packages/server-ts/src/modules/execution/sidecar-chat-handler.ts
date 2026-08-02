@@ -3,6 +3,11 @@ import { createExecutionPlaneService, type ExecutionJobStatus } from './executio
 
 const service = createExecutionPlaneService()
 
+export interface ChatHistoryMessage {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+}
+
 export interface SidecarHandlerOptions {
 
   userId: string
@@ -15,6 +20,8 @@ export interface SidecarHandlerOptions {
     diagnosis?: string | null
     chiefComplaint?: string | null
   } | null
+  /** Prior conversation messages in this session, injected as context. */
+  history?: ChatHistoryMessage[]
   telemetryContext?: LlmTelemetryContext
 }
 
@@ -58,9 +65,21 @@ function isCapabilityQuestion(text: string): boolean {
   ].some(p => p.test(q))
 }
 
+function buildHistoryBlock(history?: ChatHistoryMessage[]): string {
+  if (!history || history.length === 0) return ''
+  const lines = history
+    .map((m) => {
+      const who = m.role === 'assistant' ? 'Assistant' : 'User'
+      return `${who}: ${m.content}`
+    })
+    .join('\n')
+  return `\n\nConversation history (earlier messages in this chat; use them as context for the request):\n${lines}`
+}
+
 async function buildPayload(
   text: string,
   patient: SidecarHandlerOptions['patient'],
+  history: SidecarHandlerOptions['history'],
   telemetryContext?: LlmTelemetryContext,
 ): Promise<Record<string, unknown>> {
   const { type, templateId, outputName } = detectJobType(text)
@@ -69,9 +88,20 @@ async function buildPayload(
     ? `Patient context:\n- Initials: ${patient.initials || 'N/A'}\n- Age: ${patient.age || 'N/A'}\n- Sex: ${patient.sex || 'N/A'}\n- Diagnosis: ${patient.diagnosis || 'N/A'}\n- Chief Complaint: ${patient.chiefComplaint || 'N/A'}`
     : 'No specific patient context.'
 
+  const historyBlock = buildHistoryBlock(history)
+
   const prompt = type === 'sidecar.generate_pptx'
-    ? `${patientBlock}\n\nUser request: "${text}"\n\nCreate a PowerPoint presentation. Return ONLY a JSON object with these keys:\n- title: presentation title\n- subtitle: subtitle or conference/institution\n- presenter: presenter name or institution\n- date: date string\n- slides: an array of 5-12 slides, each with { title, content }. Content should be concise, bullet-style text suitable for a clinical or academic presentation.\n\nIf the request does not provide enough detail, fill in clinically plausible placeholder content.\n\nJSON object:`
-    : `${patientBlock}\n\nUser request: "${text}"\n\nWe need to render a medical document using the "${templateId}" template. Return ONLY a JSON object with keys that match the template placeholders. Common placeholders include: patient_initials, age, sex, diagnosis, findings_html, treatment_plan, generated_at. Use the current date for generated_at. If the request does not provide enough detail, use concise clinically plausible placeholders.\n\nJSON object:`
+    ? `${patientBlock}${historyBlock}\n\nUser request: "${text}"\n\nCreate a PowerPoint presentation. Return ONLY a JSON object with these keys:
+- title: presentation title
+- subtitle: subtitle or conference/institution
+- presenter: presenter name or institution
+- date: date string
+- slides: an array of 5-12 slides, each with { title, content }. Content should be concise, bullet-style text suitable for a clinical or academic presentation.
+
+Base the presentation content on the conversation history and patient context above when available; if the request does not provide enough detail, fill in clinically plausible placeholder content.
+
+JSON object:`
+    : `${patientBlock}${historyBlock}\n\nUser request: "${text}"\n\nWe need to render a medical document using the "${templateId}" template. Return ONLY a JSON object with keys that match the template placeholders. Common placeholders include: patient_initials, age, sex, diagnosis, findings_html, treatment_plan, generated_at. Use the current date for generated_at. Use the conversation history and patient context above when available; if the request does not provide enough detail, use concise clinically plausible placeholders.\n\nJSON object:`
 
   let data: Record<string, unknown> = {}
   try {
@@ -211,7 +241,7 @@ export async function handleSidecarRequest(options: SidecarHandlerOptions): Prom
     }
   }
 
-  const payload = await buildPayload(options.text, options.patient, options.telemetryContext)
+  const payload = await buildPayload(options.text, options.patient, options.history, options.telemetryContext)
   const { type } = detectJobType(options.text)
 
   const job = await service.enqueue({

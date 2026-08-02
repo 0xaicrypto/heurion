@@ -141,6 +141,15 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           })
         }
 
+        // Conversation history from event log (same source as the normal chat path)
+        const history = ctx.eventLog.query({ sessionId: sid, limit: 40 })
+          .reverse()
+          .filter((evt: any) => evt.eventType === 'user_message' || evt.eventType === 'assistant_response')
+          .map((evt: any) => ({
+            role: evt.eventType === 'assistant_response' ? ('assistant' as const) : ('user' as const),
+            content: evt.content,
+          }))
+
         const pluginResult = await handlePluginChatRequest({
           userId,
           workspaceId: userId,
@@ -154,6 +163,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
                 chiefComplaint: patient.chiefComplaint,
               }
             : null,
+          history,
           telemetryContext: { userId, workspaceId: userId, action: 'plugin.build_payload' },
           send,
         })
