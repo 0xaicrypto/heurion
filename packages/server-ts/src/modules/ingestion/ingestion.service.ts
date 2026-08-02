@@ -231,8 +231,8 @@ async function extractTextForJob(job: any): Promise<{ text: string; json?: any }
   }
 
   // Try to locate the uploaded file on disk. This is a best-effort default.
-  const uploadDir = process.env.UPLOAD_DIR || './uploads'
-  const filePath = path.join(uploadDir, job.userId, job.fileId)
+  const uploadBase = process.env.UPLOAD_DIR || path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', job.userId, 'uploads')
+  const filePath = path.join(uploadBase, job.fileId)
 
   if (job.mimeType === 'application/dicom') {
     return extractDicomSummary(filePath)

@@ -27,8 +27,9 @@ export async function createApprovalRequest(
   })
 }
 
-export async function listPendingApprovals(userId: string, targetType?: string) {
-  const where: any = { userId, status: 'pending' }
+export async function listPendingApprovals(userId: string, targetType?: string, isAdmin = false) {
+  const where: any = { status: 'pending' }
+  if (!isAdmin) where.userId = userId
   if (targetType) where.targetType = targetType
   const rows = await (prisma as any).approvalRequest.findMany({
     where,
@@ -37,17 +38,17 @@ export async function listPendingApprovals(userId: string, targetType?: string) 
   return rows.map(serializeApproval)
 }
 
-export async function getApprovalRequest(userId: string, id: string) {
-  const row = await (prisma as any).approvalRequest.findFirst({
-    where: { id, userId },
-  })
+export async function getApprovalRequest(userId: string, id: string, isAdmin = false) {
+  const where: any = { id }
+  if (!isAdmin) where.userId = userId
+  const row = await (prisma as any).approvalRequest.findFirst({ where })
   return row ? serializeApproval(row) : null
 }
 
-export async function confirmApproval(userId: string, id: string) {
-  const req = await (prisma as any).approvalRequest.findFirst({
-    where: { id, userId, status: 'pending' },
-  })
+export async function confirmApproval(userId: string, id: string, isAdmin = false) {
+  const where: any = { id, status: 'pending' }
+  if (!isAdmin) where.userId = userId
+  const req = await (prisma as any).approvalRequest.findFirst({ where })
   if (!req) throw new Error('Approval request not found')
 
   const now = new Date().toISOString()
@@ -73,11 +74,11 @@ export async function confirmApproval(userId: string, id: string) {
   return serializeApproval(updated)
 }
 
-export async function rejectApproval(userId: string, id: string, reason: string) {
+export async function rejectApproval(userId: string, id: string, reason: string, isAdmin = false) {
   if (!reason) throw new Error('rejectedReason required')
-  const req = await (prisma as any).approvalRequest.findFirst({
-    where: { id, userId, status: 'pending' },
-  })
+  const where: any = { id, status: 'pending' }
+  if (!isAdmin) where.userId = userId
+  const req = await (prisma as any).approvalRequest.findFirst({ where })
   if (!req) throw new Error('Approval request not found')
 
   const now = new Date().toISOString()
@@ -125,8 +126,9 @@ async function applyTargetUpdate(
   throw new Error(`Unsupported approval target type: ${targetType}`)
 }
 
-export async function listAuditLogs(filters: { targetType?: string; targetId?: string; actor?: string }) {
+export async function listAuditLogs(filters: { targetType?: string; targetId?: string; actor?: string }, viewerUserId?: string, isAdmin = false) {
   const where: any = {}
+  if (!isAdmin && viewerUserId) where.actor = viewerUserId
   if (filters.targetType) where.targetType = filters.targetType
   if (filters.targetId) where.targetId = filters.targetId
   if (filters.actor) where.actor = filters.actor
