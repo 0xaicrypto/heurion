@@ -96,6 +96,7 @@ The first official plugin is **MedSci-Sidecar** — it generates DOCX, PPTX, tab
 - [`docs/design/PLUGIN_MARKETPLACE.md`](docs/design/PLUGIN_MARKETPLACE.md)
 - [`docs/design/PLUGIN_MANIFEST_SPEC.md`](docs/design/PLUGIN_MANIFEST_SPEC.md)
 - [`docs/design/MEDSCI_SIDECAR.md`](docs/design/MEDSCI_SIDECAR.md)
+- Memory lifecycle (context, extraction, compaction, approval): [`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMORY_LIFECYCLE.md)
 - Worker implementation: `packages/server/heurion_worker/`
 - System templates: `packages/server/heurion_worker/templates/`
 - Render API: `POST /api/v1/execution/render` · Job status: `GET /api/v1/execution/jobs/:id` · Download: `GET /api/v1/execution/files/:fileId/download`
@@ -206,7 +207,7 @@ Users can export and import their entire memory:
 | POST | `/api/v1/memory/articles/:id/regenerate` | Regenerate stale article |
 | POST | `/api/v1/memory/curation/replay` | Replay EventLog (admin) |
 
-Design: [`docs/design/MEMORY_KNOWLEDGE_EVOLUTION_REFACTOR.md`](docs/design/MEMORY_KNOWLEDGE_EVOLUTION_REFACTOR.md)  
+Design: [`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMORY_LIFECYCLE.md)  
 Tests: [`docs/design/KB_EVOLUTION_TESTS.md`](docs/design/KB_EVOLUTION_TESTS.md)
 
 ---
@@ -248,7 +249,7 @@ uvicorn nexus_server.main:create_app --host 0.0.0.0 --port 8002 --factory
 | **SDK** | `packages/sdk-client` | TypeScript | Typed client for browser/CLI |
 | **Control Plane** | `packages/server-ts` | Fastify 4 + Prisma 5 + SQLite | Auth, Chat SSE, Research, Docs, Skills, Admin, Plugin/Execution mgmt |
 | **Execution Plane** | `packages/server` | FastAPI + Python | DICOM/inference worker, MedSci-Sidecar rendering, Redis consumer |
-| **Core SDK** | `packages/sdk` + `packages/nexus` | Python | DigitalTwin, on-chain identity, event sourcing |
+| **Core SDK** | `packages/sdk` + `packages/nexus` | Python | DigitalTwin, identity, event sourcing |
 
 ### Control Plane modules (10+ feature domains)
 
@@ -631,7 +632,7 @@ Embedding 当前由 DeepSeek embedding 提供，并通过 `contentHash` 缓存�
 | POST | `/api/v1/memory/articles/:id/regenerate` | 重新生成 stale article |
 | POST | `/api/v1/memory/curation/replay` | 重放 EventLog（管理员） |
 
-设计文档：[`docs/design/MEMORY_KNOWLEDGE_EVOLUTION_REFACTOR.md`](docs/design/MEMORY_KNOWLEDGE_EVOLUTION_REFACTOR.md)  
+设计文档：[`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMORY_LIFECYCLE.md)  
 测试文档：[`docs/design/KB_EVOLUTION_TESTS.md`](docs/design/KB_EVOLUTION_TESTS.md)
 
 ---

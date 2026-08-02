@@ -96,7 +96,39 @@ export interface TurnResult {
 export class ChatOrchestrator {
   private projection: MemoryProjection
   private gapService = new PrismaKnowledgeGapService()
-  memory?: MemoryService
+
+  /**
+   * Route an AI-extracted fact into the pending review queue instead of
+   * writing the memory graph directly (BRAIN2_MEMORY_LIFECYCLE §5.2).
+   */
+  async proposeFact(
+    userId: string,
+    patientHash: string | undefined,
+    input: { category: string; importance: number; content: string; sourceType: string; patientHash?: string },
+  ): Promise<void> {
+    try {
+      const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
+      const gateway = new MemoryGraphGateway(
+        userId,
+        this.memory!,
+        this.factsStore,
+        this.episodesStore,
+        this.skillsStore,
+        this.knowledgeStore,
+      )
+      await gateway.propose({
+        scopeType: patientHash ? 'patient' : 'global',
+        patientHash: input.patientHash || patientHash,
+        kind: 'fact',
+        content: input.content,
+        importance: input.importance,
+        confidence: 'medium',
+        reason: `AI extraction (${input.category}, source: ${input.sourceType})`,
+      })
+    } catch (err) {
+      console.log('[EVOLVE] Proposal write skipped:', (err as Error).message.slice(0, 120))
+    }
+  }  memory?: MemoryService
 
   constructor(
     private eventLog: EventLog,
@@ -344,6 +376,7 @@ ${conversation}
         const jsonMatch = result.match(/\[[\s\S]*\]/)
         if (jsonMatch) {
           const facts = JSON.parse(jsonMatch[0])
+          const proposed: string[] = []
           for (const f of facts) {
             if (f.category && f.content) {
               const factInput = {
@@ -353,22 +386,20 @@ ${conversation}
                 sourceType: f.sourceType || 'general',
                 patientHash: f.sourceType === 'patient' ? (patientHash || undefined) : undefined,
               }
-              if (this.memory) {
-                this.memory.addFact(factInput, 'system')
-              } else {
-                this.factsStore.add(factInput)
-              }
+              // AI extraction always goes through the pending review queue
+              // (BRAIN2_MEMORY_LIFECYCLE §5.2 — no direct write path).
+              proposed.push(f.content)
+              await this.proposeFact(userId, patientHash, factInput)
             }
           }
-          if (!this.memory) this.factsStore.commit()
           this.eventLog.append({
             timestamp: Date.now() / 1000,
             eventType: 'evolution',
-            content: `🧠 Extracted ${facts.length} new facts`,
-            metadata: { factCount: facts.length, categories: [...new Set(facts.map((f: any) => f.category))] },
+            content: `🧠 Proposed ${proposed.length} new facts for review`,
+            metadata: { factCount: proposed.length, categories: [...new Set(facts.map((f: any) => f.category))] },
             agentId: userId, sessionId,
           })
-          console.log(`[EVOLVE] Extracted ${facts.length} facts (turn ${totalTurns})`)
+          console.log(`[EVOLVE] Proposed ${proposed.length} facts for review (turn ${totalTurns})`)
 
           // Auto-resolve pending gaps that match new facts
           const resolved = await this.autoResolveGapsFromFacts(userId, facts)
@@ -409,21 +440,31 @@ Return ONLY JSON: { "title": "...", "content": "..." }`
               if (jsonMatch2) {
                 const article = JSON.parse(jsonMatch2[0])
                 if (article.title && article.content) {
-                  if (this.memory) {
-                    this.memory.addArticle({
-                      title: article.title,
-                      content: article.content,
-                      sourceFactStableIds: articleFacts.map((f: any) => f.stableId || f.id),
+                  // Synthesized articles also go through the pending review
+                  // queue (BRAIN2_MEMORY_LIFECYCLE §5.4).
+                  try {
+                    const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
+                    const gateway = new MemoryGraphGateway(
+                      userId,
+                      this.memory!,
+                      this.factsStore,
+                      this.episodesStore,
+                      this.skillsStore,
+                      this.knowledgeStore,
+                    )
+                    await gateway.propose({
+                      scopeType: patientHash ? 'patient' : 'global',
+                      patientHash,
+                      kind: 'article',
+                      content: `${article.title}\n\n${article.content}`,
+                      importance: 3,
+                      confidence: 'medium',
+                      reason: `AI synthesis from ${articleFacts.length} facts`,
                     })
-                  } else {
-                    this.knowledgeStore.add({
-                      title: article.title,
-                      content: article.content,
-                      sources: articleFacts.map((f: any) => f.id),
-                    })
-                    this.knowledgeStore.commit()
+                    console.log(`[KNOWLEDGE] Article proposed for review: ${article.title}`)
+                  } catch (err) {
+                    console.log('[KNOWLEDGE] Article proposal skipped:', (err as Error).message.slice(0, 100))
                   }
-                  console.log(`[KNOWLEDGE] Article generated: ${article.title}`)
                 }
               }
             } catch (err) {

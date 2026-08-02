@@ -4,9 +4,7 @@
 > **作者**: AI 助理；2026-06-15
 > **目标读者**: PI 钱东医生及其团队、Rune/Nexus 工程团队
 > **关联文档**:
-> - `docs/design/IMAGING_PATIENT_ISOLATION_BUGFIX.md`（同期提交的 P0 Bug 报告）
-> - `docs/design/m3-memory-architecture.md`（现有记忆架构）
-> - `docs/concepts/data-flow.md`（DigitalTwin 9-step chat loop）
+> - `docs/design/brain.md`（Brain 2.0 记忆中枢设计）
 
 ---
 
@@ -761,7 +759,7 @@ UI 引用脚注示例：`[3] Antonia SJ et al., NEJM 2017, "Durvalumab after che
 
 ##### 与 DigitalTwin Memory 的集成（医生 review 补充）
 
-医生 review 问"如何从 agent 的 memory 中获取经验，以及跟现有的 memory 设计如何兼容"。这是 Rune 区别于一般 RAG 工具的关键能力：DigitalTwin 已经在按用户长期积累五个 namespace 的经验（详见 `docs/design/m3-memory-architecture.md` 与 `docs/concepts/dpm.md`）。Research Chat **不重做** memory，而是**复用同一个 twin 的 memory，按 research scope 投影读写**。
+医生 review 问"如何从 agent 的 memory 中获取经验，以及跟现有的 memory 设计如何兼容"。这是 Rune 区别于一般 RAG 工具的关键能力：DigitalTwin 已经在按用户长期积累五个 namespace 的经验。Research Chat **不重做** memory，而是**复用同一个 twin 的 memory，按 research scope 投影读写**。
 
 **Step 0 — 现有 memory 架构回顾**
 

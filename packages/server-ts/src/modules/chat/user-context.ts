@@ -6,6 +6,7 @@ import { ContractEngine } from '../../core/contracts'
 import { ChatOrchestrator } from './chat.orchestrator.js'
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { MemoryService } from '../../memory/memory.service.js'
+import { registerProposalApplier } from '../../memory/memory-gateway.js'
 
 const TTL_MS = 30 * 60 * 1000 // 30 minutes idle → evict
 const telemetry = new PrismaTelemetryService()
@@ -73,6 +74,36 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
   orchestrator.memory = memory
   const ctx = { eventLog, facts, episodes, skills, knowledge, memory, orchestrator, lastAccess: Date.now() }
   contexts.set(userId, ctx)
+
+  // Register the per-user memory proposal applier for the approval flow.
+  registerProposalApplier((applierUserId, proposal) => {
+    if (applierUserId !== userId) return null
+    if (proposal.kind === 'fact') {
+      return memory.addFact(
+        {
+          content: proposal.content,
+          category: 'fact',
+          importance: proposal.importance,
+          patientHash: proposal.patientHash || undefined,
+          sourceType: proposal.scopeType === 'patient' ? 'patient' : 'general',
+          provenance: { sourceKind: 'proposal', sourceRef: proposal.id },
+        },
+        'system',
+      )
+    }
+    if (proposal.kind === 'article') {
+      return memory.addArticle(
+        {
+          title: proposal.content.split('\n')[0].slice(0, 120) || '知识文章',
+          content: proposal.content,
+          provenance: { sourceKind: 'proposal', sourceRef: proposal.id },
+        },
+        'system',
+      )
+    }
+    return null
+  })
+
   return ctx
 }
 

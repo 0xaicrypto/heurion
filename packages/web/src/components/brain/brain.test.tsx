@@ -80,6 +80,7 @@ describe('IngestionInbox', () => {
   it('renders pending entries from multiple patients with type filter', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [pendingRequest, secondRequest] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     render(<IngestionInbox />);
@@ -95,6 +96,7 @@ describe('IngestionInbox', () => {
   it('filters rows by type', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [pendingRequest, secondRequest] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     render(<IngestionInbox />);
@@ -109,6 +111,7 @@ describe('IngestionInbox', () => {
   it('confirms a single entry and removes it from the list', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [pendingRequest, secondRequest] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     const onChanged = vi.fn();
@@ -127,6 +130,7 @@ describe('IngestionInbox', () => {
   it('rejects via dialog with reason', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [pendingRequest] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     render(<IngestionInbox />);
@@ -146,6 +150,7 @@ describe('IngestionInbox', () => {
   it('batch confirms selected entries', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [pendingRequest, secondRequest] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     render(<IngestionInbox />);
@@ -166,6 +171,7 @@ describe('IngestionInbox', () => {
   it('shows empty state when nothing pending', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     render(<IngestionInbox />);
@@ -175,7 +181,10 @@ describe('IngestionInbox', () => {
   });
 
   it('renders error without crashing', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'boom' }, 500));
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ error: 'boom' }, 500))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
+      .mockResolvedValueOnce(jsonResponse([]));
 
     render(<IngestionInbox />);
 
@@ -251,6 +260,7 @@ describe('BrainPage', () => {
     fetchMock.mockImplementation((url: unknown) => {
       const u = String(url)
       if (u.includes('/brain/stats')) return Promise.resolve(jsonResponse({ pending: 12, confirmedToday: 5, totalEntries: 247 }))
+      if (u.includes('/approvals/pending') && u.includes('MemoryProposal')) return Promise.resolve(jsonResponse({ requests: [] }))
       if (u.includes('/approvals/pending')) return Promise.resolve(jsonResponse({ requests: [pendingRequest] }))
       if (u.includes('/audit')) return Promise.resolve(jsonResponse({ logs: [] }))
       return Promise.resolve(jsonResponse(mockPatients()))

@@ -157,7 +157,9 @@
     "activityConfirmed": "确认了 {{title}}",
     "activityRejected": "拒绝了 {{title}}",
     "activityAnalyzed": "AI 分析了 {{title}}",
-    "noEntries": "暂无待审批条目"
+    "noEntries": "暂无待审批条目",
+    "targetFilter": "按目标筛选",
+    "allTargets": "全部目标"
   },
   "chat": {
     "title": "对话",
