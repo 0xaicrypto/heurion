@@ -203,6 +203,30 @@ expand() 按需加载（§4.3，未实现）←── 工具输出限量（T1）
 KB 设计 §4.3 的"分层加载 expand()"从未实现（现有命令只有 remember / search / summarize / gaps）。
 建议将 `expand(article)` 并入 S1（#106），实现统一的按需加载工具族。
 
+### KB 提取更新时机的优化（2026-08-02 补充）
+
+当前实际触发时机与 v2.2 设计（T+0s/T+1s/T+30s）不符，且存在结构性缺陷：
+
+| 项 | 实际触发 | 输入 | 问题 |
+|---|---|---|---|
+| Episodes | 每轮 | `userMessage.slice(0,150)` | 不是摘要，只是消息前缀——layer2 摘要质量差的根源 |
+| Facts | 每 5 轮（`turnCount % 5`） | 最近 6 条事件 | 短会话（<5 轮）永不提取；无增量游标，跨轮重复提取 |
+| Articles | facts 数 `% 5 === 0` | 最近 10 条 facts（`slice(-10)`） | 边界触发（3→5→10→15），重叠事实重复合成 |
+| Gaps | 仅显式 kb_gaps 命令 | — | 无自动检测 |
+| Persona | 每轮全量重建 | 全部 facts | 无变化也重算（R1 的落点） |
+| Takeaways / 临床实体 | 5 轮块 / message>50 字符 | 最近事件 | 同 5 轮粒度问题 |
+
+优化方案：
+
+- **K1（P0）增量游标 `extracted_upto_idx`**：每个 session 记录已提取到的事件 idx，每次只提取新增段。同时解决短会话不提取、长会话重复提取、Article 重复合成。
+- **K2（P0）事件驱动触发替代"每 5 轮"**：新事件落库后，增量内容 ≥ 阈值（300 字符）或含关键信号（记住/诊断/方案）→ 触发提取；2 秒内多个触发去抖合并。
+- **K3（P1）Episodes 增量 LLM 摘要**：`extracted_upto_idx` 增量段 + 旧摘要 → flash 模型更新，替换 `slice(0,150)` 占位。
+- **K4（P1）Article 合成改为"新增 facts"驱动**：以 `sourceFactStableIds` 为增量键，同类别新增 facts ≥ 3 才合成（对齐 v2.2 T+30s 语义），合成后标记已用事实。
+- **K5（P2）Persona 缓存**：facts/articles commit 版本变化才重建（R1 的落地）。
+- **K6（P2）Gap 自动检测**：facts 提取后，问题形态且未被 facts 覆盖的用户消息 → 自动创建 gap（与 autoResolveGapsFromFacts 形成闭环）。
+
+与 R1/R2 的协同：这套提取管道是 R1 Context Source 的**变更生产者**——facts 变化 → snapshot 更新 → 下一轮只发增量；K3 的会话摘要即 R2 锚定压缩的会话级前身。
+
 ---
 
 ## 7. 不建议照搬的部分
