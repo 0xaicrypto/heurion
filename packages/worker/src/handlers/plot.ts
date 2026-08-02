@@ -9,6 +9,36 @@ export interface PlotInput {
   height?: number
 }
 
+/**
+ * Sidecar jobs send the legacy plot contract:
+ * { plot_type, title, x_label, y_label, series: [{ x, y, label }] }.
+ * Normalize it into the SVG-renderer model (labels + datasets) and also
+ * tolerate the direct { type, labels, datasets } shape for direct callers.
+ */
+function toPlotInput(payload: any): PlotInput {
+  const p = payload || {}
+  const series = Array.isArray(p.series)
+    ? p.series
+    : Array.isArray(p.datasets)
+      ? p.datasets.map((ds: any) => ({ x: p.labels || [], y: ds.data || [], label: ds.label }))
+      : []
+  const labels: string[] = Array.isArray(p.labels)
+    ? p.labels.map(String)
+    : (series[0]?.x || []).map(String)
+  const datasets: PlotInput['datasets'] = series.map((s: any) => ({
+    label: String(s?.label || ''),
+    data: Array.isArray(s?.y) ? (s.y as number[]) : [],
+  }))
+  return {
+    type: (p.plot_type || p.type || 'bar') as PlotInput['type'],
+    title: p.title ? String(p.title) : undefined,
+    labels,
+    datasets,
+    width: p.width,
+    height: p.height,
+  }
+}
+
 function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
@@ -175,7 +205,8 @@ function generatePieSvg(input: PlotInput, w: number, h: number): string {
   </svg>`
 }
 
-export async function renderPlot(input: PlotInput) {
+export async function renderPlot(payload: any) {
+  const input = toPlotInput(payload)
   const w = input.width || 600
   const h = input.height || 400
   let svg: string
