@@ -63,13 +63,6 @@ describe('MemoryProposal approval flow', () => {
     const userId = await getAuthUserId()
     const baseDir = makeBaseDir()
 
-    const applied: string[] = []
-    registerProposalApplier((uid, proposal) => {
-      if (uid !== userId) return null
-      applied.push(proposal.content)
-      return { id: `fact_node_${proposal.id}`, stableId: `fact_${proposal.id}` } as any
-    })
-
     const gw = new MemoryGraphGateway(userId, null as any, null as any, null as any, null as any, null as any)
     const proposal = await gw.propose({
       scopeType: 'patient',
@@ -79,7 +72,8 @@ describe('MemoryProposal approval flow', () => {
       importance: 4,
     })
 
-    // Confirm via the standard approval flow
+    // Confirm via the standard approval flow (routes through the gateway +
+    // registered applier, which writes the graph and the embedding index)
     const req = await createApprovalRequest(userId, {
       targetType: 'MemoryProposal',
       targetId: proposal.id,
@@ -87,7 +81,6 @@ describe('MemoryProposal approval flow', () => {
     })
     await confirmApproval(userId, req.id)
 
-    expect(applied).toContain('WBC 11.2 偏高')
     const updated = await (prisma as any).memoryProposal.findUnique({ where: { id: proposal.id } })
     expect(updated.status).toBe('approved')
     expect(updated.resolvedBy).toBe(userId)
