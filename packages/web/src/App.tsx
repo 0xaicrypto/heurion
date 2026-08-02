@@ -32,6 +32,7 @@ import { ExportPage } from '@/routes/export-data';
 import { PluginsPage } from '@/routes/plugins';
 import { PluginSettingsPage } from '@/routes/plugin-settings';
 import { LogsPage } from '@/routes/logs';
+import { AuditPage } from '@/routes/audit';
 import { KnowledgePage } from '@/routes/knowledge';
 import { useAuthStore } from '@/stores/auth';
 import { PluginUIProvider } from '@/components/plugins/PluginUIRegistry';
@@ -193,6 +194,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <LogsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/audit"
+            element={
+              <RequireAuth>
+                <AuditPage />
               </RequireAuth>
             }
           />

@@ -359,6 +359,10 @@ class ApiClient {
     return this.fetch('/api/v1/brain/stats');
   }
 
+  async getEmbeddingStatus(): Promise<{ok: boolean; url: string; model?: string; dimensions?: number | null; device?: string; quantized?: boolean; dtype?: string | null}> {
+    return this.fetch('/api/v1/settings/embedding');
+  }
+
   async archivePatient(hash: string): Promise<{ patient_hash: string; archived_at: string }> {
     return this.fetch(`/api/v1/dicom/patients/${hash}/archive`, { method: 'POST' });
   }

@@ -67,4 +67,21 @@ export async function settingsRouter(app: FastifyInstance) {
       expires_in_days: 30,
     }
   })
+
+  // Embedding server health — proxied so the browser never needs direct
+  // access to the internal embedding container.
+  app.get('/api/v1/settings/embedding', async (request, reply) => {
+    const base = process.env.LOCAL_EMBEDDING_URL || 'http://localhost:8003'
+    const healthUrl = base.replace(/\/embed$/, '/health')
+    try {
+      const res = await fetch(healthUrl, { signal: AbortSignal.timeout(3000) })
+      if (!res.ok) {
+        return reply.status(502).send({ error: `Embedding server returned ${res.status}` })
+      }
+      const info = await res.json()
+      return { ok: true, url: base, ...info }
+    } catch (err: any) {
+      return reply.status(502).send({ error: `Embedding server unreachable: ${err.message}` })
+    }
+  })
 }

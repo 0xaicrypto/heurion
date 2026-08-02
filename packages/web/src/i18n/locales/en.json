@@ -81,7 +81,8 @@
     "logs": "Logs",
     "settings": "Settings",
     "admin": "Admin",
-    "brain": "Brain"
+    "brain": "Brain",
+    "audit": "Audit"
   },
   "auth": {
     "welcomeBack": "Welcome back",
@@ -216,7 +217,14 @@
     "loadFailed": "Failed to load",
     "testFailed": "Failed to test",
     "profileLoadFailed": "Failed to load profile",
-    "profileSaveFailed": "Failed to save profile"
+    "profileSaveFailed": "Failed to save profile",
+    "embedding": "Embedding",
+    "embeddingUnreachable": "Embedding server unreachable",
+    "embeddingOnline": "Online",
+    "embeddingDimensions": "Dimensions",
+    "embeddingDevice": "Device",
+    "embeddingQuantized": "INT8 quantized",
+    "embeddingHint": "Dimensions appear after the first embed; change model/device in the embedding server env and re-verify dimensions here."
   },
   "admin": {
     "title": "Admin",
@@ -236,5 +244,46 @@
   },
   "placeholder": {
     "comingSoon": "Coming Soon"
+  },
+  "labs": {
+    "ingestionStatus": "AI Analysis Status",
+    "jobs": "jobs",
+    "retries": "retries",
+    "pendingReview": "Pending review",
+    "failed": "Failed"
+  },
+  "audit": {
+    "title": "Audit Log",
+    "filterType": "Filter by target type",
+    "allTypes": "All target types",
+    "filterAction": "Filter by action",
+    "allActions": "All actions",
+    "records": "records",
+    "empty": "No audit records found",
+    "actor": "Actor",
+    "reason": "Reason",
+    "diff": "Before / after"
+  },
+  "medicalRecords": {
+    "title": "Medical Records",
+    "newEntry": "New Entry",
+    "editEntry": "Edit Entry",
+    "type": "Type",
+    "fieldTitle": "Title",
+    "titlePlaceholder": "e.g. CBC",
+    "date": "Date",
+    "content": "Content",
+    "filterStatus": "Filter by status",
+    "allStatus": "All statuses",
+    "filterType": "Filter by type",
+    "allTypes": "All types",
+    "noEntries": "No medical record entries yet",
+    "noEntriesHint": "Lab results, imaging analyses and AI drafts appear here as a timeline",
+    "aiDraft": "AI",
+    "confirmedBy": "Confirmed by",
+    "rejectedReason": "Reason",
+    "viewContent": "View content",
+    "rawText": "Raw extracted text",
+    "confirmDelete": "Delete this entry?"
   }
 }
