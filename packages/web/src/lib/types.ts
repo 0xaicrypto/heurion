@@ -296,6 +296,27 @@ export interface BrainStats {
   totalEntries: number;
 }
 
+export type MemoryProposalKind = 'fact' | 'article' | 'episode_summary' | 'compaction_summary';
+
+export interface MemoryProposal {
+  id: string;
+  userId: string;
+  scopeType: string;
+  patientHash?: string | null;
+  studyId?: string | null;
+  kind: MemoryProposalKind;
+  content: string;
+  importance: number;
+  confidence: string;
+  reason?: string | null;
+  sourceRange?: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  rejectedReason?: string | null;
+  createdAt: string;
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
+}
+
 export interface MemoryProjection {
   findings?: MemoryFinding[];
   medications?: MemoryFinding[];
