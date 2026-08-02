@@ -353,7 +353,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       const persona = buildPersona(ctx.facts, ctx.knowledge)
 
       // #2: Weighted attention context projection (filtered by router intent)
-      const projectionInputs = selectProjectionInputs(routeResult, ctx)
+      const projectionInputs = selectProjectionInputs(routeResult, ctx, patientHash)
       const projected = await ctx.orchestrator['projection'].project({
         userId, patientHash, sessionId: sid,
         persona,
@@ -609,6 +609,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
 function selectProjectionInputs(
   routeResult: Awaited<ReturnType<typeof router>>,
   ctx: Awaited<ReturnType<typeof getUserContext>>,
+  patientHash?: string | null,
 ) {
   switch (routeResult.intent) {
     case 'sql':
@@ -616,13 +617,35 @@ function selectProjectionInputs(
       return { facts: [], episodes: [], skills: [] }
     case 'vector':
       // Knowledge questions: keep facts/knowledge, skip episodic chat history
-      return { facts: ctx.facts.all(), episodes: [], skills: [] }
+      return { facts: isolateFactsByScope(ctx.facts.all(), patientHash), episodes: [], skills: [] }
     case 'file':
       // File queries: context comes from attachments; skip accumulated memory
       return { facts: [], episodes: [], skills: [] }
     case 'mixed':
     default:
-      // Ambiguous or summary questions: keep full context
-      return { facts: ctx.facts.all(), episodes: ctx.episodes.all(), skills: ctx.skills.all() }
+      // Ambiguous or summary questions: keep full context (patient-isolated)
+      return {
+        facts: isolateFactsByScope(ctx.facts.all(), patientHash),
+        episodes: ctx.episodes.all(),
+        skills: ctx.skills.all(),
+      }
   }
+}
+
+/**
+ * Patient isolation for the facts layer (BRAIN2_MEMORY_LIFECYCLE §4.2):
+ * in a patient-scoped chat only that patient's facts are injected in full;
+ * cross-patient facts appear only when importance >= 4 (limited, tagged).
+ */
+function isolateFactsByScope(allFacts: any[], patientHash?: string | null): any[] {
+  if (!patientHash) return allFacts
+  const own = allFacts.filter((f) => f.patientHash === patientHash)
+  const cross = allFacts
+    .filter((f) => f.patientHash && f.patientHash !== patientHash && (f.importance ?? 3) >= 4)
+    .slice(0, 5)
+    .map((f) => ({
+      ...f,
+      content: `[patient: ${f.patientHash}] ${f.content}`,
+    }))
+  return [...own, ...cross]
 }

@@ -375,6 +375,29 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+model MemoryProposal {
+  id             String  @id @default(cuid())
+  userId         String  @map("user_id")
+  scopeType      String  @map("scope_type") // 'patient' | 'global' | 'study'
+  patientHash    String? @map("patient_hash")
+  studyId        String? @map("study_id")
+  kind           String  // fact | article | episode_summary | compaction_summary
+  content        String
+  importance     Int     @default(3)
+  confidence     String  @default("medium") // high | medium | low
+  reason         String?
+  sourceRange    String? @map("source_range")
+  status         String  @default("pending") // pending | approved | rejected
+  rejectedReason String? @map("rejected_reason")
+  createdAt      String  @map("created_at")
+  resolvedAt     String? @map("resolved_at")
+  resolvedBy     String? @map("resolved_by")
+
+  @@index([userId, status, createdAt(sort: Desc)])
+  @@index([scopeType, patientHash, status])
+  @@map("memory_proposals")
+}
+
 model IngestionJob {
   id            String  @id @default(cuid())
   userId        String  @map("user_id")
