@@ -5,7 +5,7 @@ import { ArrowLeft, ChevronRight, FileText, Paperclip, Plus, Search, Trash2, Use
 import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { SkillsBar } from '@/components/SkillsBar';
-import { LlmContent } from '@/components/LlmContent';
+import { LlmContent, StreamingLlmContent } from '@/components/LlmContent';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
@@ -556,7 +556,7 @@ export function PatientChatPage() {
                     ))}
                   </div>
                 )}
-                <LlmContent content={m.text || ''} className={m.role === 'user' ? 'prose-invert' : undefined} />
+                <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
                 {m.isStreaming ? (
                   <span role="status" aria-label={t('chat.streaming')} className="animate-pulse">●</span>
                 ) : null}

@@ -4,7 +4,7 @@ import { ArrowLeft, Download, Eye, FilePlus, FileText, History, MessageSquare, P
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
-import { LlmContent } from '@/components/LlmContent';
+import { StreamingLlmContent } from '@/components/LlmContent';
 import { Alert, Button, Card, Skeleton, Textarea } from '@/components/ui';
 import { api, ApiError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
@@ -735,7 +735,7 @@ export function WritingEditorPage() {
                           : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
                       }`}
                     >
-                      <LlmContent content={m.text || ''} className={m.role === 'user' ? 'prose-invert' : undefined} />
+                      <StreamingLlmContent content={m.text || ''} isStreaming={!m._done} className={m.role === 'user' ? 'prose-invert' : undefined} />
                       {m._done === false && !m.text && (
                         <span className="animate-pulse">●</span>
                       )}

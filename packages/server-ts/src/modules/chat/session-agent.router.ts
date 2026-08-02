@@ -51,9 +51,9 @@ export async function sessionRouter(app: FastifyInstance) {
   })
 
   /**
-   * Close a session: status → closed (no more writes) and trigger the
-   * summarize → pending closure (#114). Patient sessions keep their fixed
-   * patient-{hash} id; global sessions are the multi-session scope.
+   * Close a session: summarize the conversation into the pending queue
+   * (sync, so the summary is durable before cleanup), then remove the
+   * session's event-log data. status → closed, no more writes.
    */
   app.post('/api/v1/sessions/:sessionId/close', async (request, reply) => {
     const { sessionId } = request.params as any
@@ -70,12 +70,27 @@ export async function sessionRouter(app: FastifyInstance) {
       return { id: sessionId, status: existing.status, already: true }
     }
 
-    // Fire-and-forget: summarize the conversation into the pending queue.
-    summarizeSessionToPending(userId, sessionId).catch((err) => {
-      console.log('[SESSION] summarize skipped:', (err as Error).message.slice(0, 120))
-    })
+    // 1) Summarize synchronously so the pending review gets the content
+    //    before we wipe the event log.
+    let summary = ''
+    try {
+      const result = await summarizeSessionToPending(userId, sessionId)
+      summary = result
+    } catch (err) {
+      console.log('[SESSION] summarize failed:', (err as Error).message.slice(0, 120))
+    }
 
-    return { id: sessionId, status: 'closed', closed_at: now }
+    // 2) Clean up the session's event-log data.
+    let cleaned = 0
+    try {
+      const { getUserContext } = await import('./user-context.js')
+      const ctx = getUserContext(userId)
+      cleaned = ctx.eventLog.deleteSession(sessionId)
+    } catch (err) {
+      console.log('[SESSION] event cleanup failed:', (err as Error).message.slice(0, 120))
+    }
+
+    return { id: sessionId, status: 'closed', closed_at: now, summarized: summary.length > 0, cleaned_events: cleaned }
   })
 
   app.delete('/api/v1/sessions/:sessionId', async (request) => {
@@ -84,7 +99,7 @@ export async function sessionRouter(app: FastifyInstance) {
   })
 }
 
-async function summarizeSessionToPending(userId: string, sessionId: string): Promise<void> {
+async function summarizeSessionToPending(userId: string, sessionId: string): Promise<string> {
   const { getUserContext } = await import('./user-context.js')
   const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
   const ctx = getUserContext(userId)
@@ -93,10 +108,11 @@ async function summarizeSessionToPending(userId: string, sessionId: string): Pro
     .filter((e: any) => e.eventType === 'user_message' || e.eventType === 'assistant_response')
     .map((e: any) => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
     .join('\n')
-  if (!conversation.trim()) return
+  if (!conversation.trim()) return ''
 
   const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.facts, ctx.episodes, ctx.skills, ctx.knowledge)
-  await gateway.summarize({ conversation, sessionId })
+  const result = await gateway.summarize({ conversation, sessionId })
+  return result.summary
 }
 
 export async function agentRouter(app: FastifyInstance) {

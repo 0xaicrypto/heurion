@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { LlmContent } from '@/components/LlmContent';
+import { LlmContent, StreamingLlmContent } from '@/components/LlmContent';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -61,5 +61,25 @@ describe('LlmContent auto-detection', () => {
   it('renders empty content as nothing', () => {
     const { container } = render(<LlmContent content="" />);
     expect(container.textContent).toBe('');
+  });
+});
+
+describe('StreamingLlmContent (U1)', () => {
+  it('renders lightweight partial text while streaming, full markdown after', () => {
+    const { container, rerender } = render(
+      <StreamingLlmContent content="开始 **加粗** 内容" isStreaming />,
+    );
+    // Streaming phase: no heavy markdown parse (no h2 even if marker present)
+    expect(container.querySelector('strong')).not.toBeNull();
+
+    rerender(<StreamingLlmContent content="# 标题\n\n- 条目" isStreaming={false} />);
+    // After streaming: full markdown rendering
+    expect(container.querySelector('h1')).not.toBeNull();
+    expect(container.querySelectorAll('li').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('shows a pulsing placeholder while streaming empty text', () => {
+    const { container } = render(<StreamingLlmContent content="" isStreaming />);
+    expect(container.textContent).toContain('●');
   });
 });
