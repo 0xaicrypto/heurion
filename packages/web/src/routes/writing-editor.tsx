@@ -6,7 +6,7 @@ import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { Alert, Button, Card, Skeleton, Textarea } from '@/components/ui';
 import { api, ApiError } from '@/lib/api-client';
-import { cn } from '@/lib/utils';
+import { cn, normalizeLlmText } from '@/lib/utils';
 
 interface DocDetail {
   id: string;
@@ -734,7 +734,7 @@ export function WritingEditorPage() {
                           : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
                       }`}
                     >
-                      <MarkdownRenderer content={m.text || ''} />
+                      <MarkdownRenderer content={normalizeLlmText(m.text || '')} />
                       {m._done === false && !m.text && (
                         <span className="animate-pulse">●</span>
                       )}
