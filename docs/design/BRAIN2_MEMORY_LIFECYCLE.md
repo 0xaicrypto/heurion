@@ -199,6 +199,51 @@ scope 规则:
 取代现在"压缩时才总结"的隐式时机。压缩（长会话中途）与关闭（会话终点）走同一条
 summarize 路径。患者会话的"关闭"仅作为问诊结束的总结时机，不引入多会话管理。
 
+### 4.5 写入时 embedding + 读取时语义检索（与 gateway 的关系）
+
+embedding **不是平行系统，而是 MemoryGraphGateway 的内部实现细节**——对上层透明。
+
+```
+写入（审核通过后）:
+  applyApproved(proposal)
+    → MemoryService.addFact()            → graph 节点 v1（版本化）
+    → EmbeddingIndex.upsert(nodeId, embed(content))   ← 写入时 embedding
+  - 模型: bge-m3（本地服务，1024 维）
+  - 存储: vector_index 表（sqlite-vec，per-user 分区）
+  - 版本联动: fact 编辑 → contentHash 变化 → embedding 重算（旧版本保留审计）
+  - 只给 facts/articles 建向量；documents 走文件引用
+
+读取（按需语义检索，Tier 2）:
+  retrieve(scope, query)
+    → embed(query)                        ← 查询实时 embed（同模型）
+    → 与 scope 内向量余弦相似度 top-k（患者隔离: 默认只搜本 scope）
+  - search_node 工具升级: substring → 余弦相似度
+  - 基线 readContext（Tier 1）不经过 embedding
+
+维护:
+  删除 → embedding 标记 superseded
+  语义去重（写入前）: propose 时 embed(content) 与 scope 内已有
+    事实相似度 > 0.95 → 标记重复，跳过审核队列
+```
+
+**embedding 解决什么**：语义等价召回（"药物过敏史"↔"对磺胺过敏"、同义表达）、
+相关度排序（top-k 截断）、无分词依赖。**不替代**：attention 基线（重要性/新近度）、
+患者 scope 过滤、压缩摘要——互补不冲突。
+
+**与统一接口的关系**：
+
+```
+MemoryGraphGateway（唯一接口）
+├── readContext(scope)        → 基线，无 embedding
+├── retrieve(scope, query)    → 内部: embed(query) + cosine top-k   ← 新增（或升级 search_node）
+├── propose() → pending → 审核
+├── applyApproved(proposal)   → 内部: 写 graph 节点 + upsert embedding（同一次操作）
+├── listPending / rejectProposal
+```
+
+关键约束：**没审核过的事实不会进入语义检索**（propose 不建向量，applyApproved 才建）——
+保证 RAG 只检索可信记忆。R1（hash 增量）与 R2（压缩摘要）不依赖 embedding。
+
 ---
 
 ## 5. 记忆提取管道（K1–K6 修订版）
