@@ -104,6 +104,39 @@ export async function rejectApproval(userId: string, id: string, reason: string,
   return serializeApproval(updated)
 }
 
+async function applyProposalViaGateway(userId: string, row: any): Promise<any> {
+  const { getUserContext } = await import('../chat/user-context.js')
+  const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
+  const ctx = getUserContext(userId)
+  const gateway = new MemoryGraphGateway(
+    userId,
+    ctx.memory,
+    ctx.facts,
+    ctx.episodes,
+    ctx.skills,
+    ctx.knowledge,
+  )
+  const proposal = {
+    id: row.id,
+    userId: row.userId,
+    scopeType: row.scopeType,
+    patientHash: row.patientHash,
+    studyId: row.studyId,
+    kind: row.kind,
+    content: row.content,
+    importance: row.importance,
+    confidence: row.confidence,
+    reason: row.reason,
+    sourceRange: row.sourceRange,
+    status: row.status,
+    rejectedReason: row.rejectedReason,
+    createdAt: row.createdAt,
+    resolvedAt: row.resolvedAt,
+    resolvedBy: row.resolvedBy,
+  }
+  return gateway.applyApproved(proposal)
+}
+
 async function applyTargetUpdate(
   targetType: string,
   targetId: string,
@@ -124,7 +157,6 @@ async function applyTargetUpdate(
     return
   }
   if (targetType === 'MemoryProposal') {
-    const { getProposalApplier } = await import('../../memory/memory-gateway.js')
     const row = await (prisma as any).memoryProposal.findFirst({
       where: { id: targetId },
     })
@@ -139,26 +171,7 @@ async function applyTargetUpdate(
       return
     }
 
-    const applier = getProposalApplier()
-    if (!applier) throw new Error('Memory proposal applier not registered')
-    const node = applier(row.userId, {
-      id: row.id,
-      userId: row.userId,
-      scopeType: row.scopeType,
-      patientHash: row.patientHash,
-      studyId: row.studyId,
-      kind: row.kind,
-      content: row.content,
-      importance: row.importance,
-      confidence: row.confidence,
-      reason: row.reason,
-      sourceRange: row.sourceRange,
-      status: row.status,
-      rejectedReason: row.rejectedReason,
-      createdAt: row.createdAt,
-      resolvedAt: row.resolvedAt,
-      resolvedBy: row.resolvedBy,
-    })
+    const node = await applyProposalViaGateway(row.userId, row)
     if (!node) throw new Error('Memory proposal could not be applied')
     await (prisma as any).memoryProposal.update({
       where: { id: targetId },

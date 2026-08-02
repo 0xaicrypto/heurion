@@ -1,7 +1,9 @@
 import prisma from '../common/prisma.js'
+import path from 'path'
 import type { MemoryService } from './memory.service.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores'
 import type { MemoryNode } from './memory.types'
+import { EmbeddingIndex, normalizeVector } from './embedding-index.js'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -60,8 +62,27 @@ export interface ContextBundle {
 }
 
 /**
+ * Resolves the per-user memory stores. Registered once by the user-context
+ * layer; the default proposal applier (below) uses it to apply approved
+ * proposals to the graph.
+ */
+export type ContextResolver = (userId: string) => {
+  memory: MemoryService
+  facts: FactsStore
+  episodes: EpisodesStore
+  skills: SkillsStore
+  knowledge: KnowledgeStore
+} | null
+
+let contextResolver: ContextResolver | null = null
+
+export function registerContextResolver(fn: ContextResolver): void {
+  contextResolver = fn
+}
+
+/**
  * Applies an approved memory proposal to the per-user memory graph.
- * Registered by the user-context layer (which owns MemoryService instances).
+ * Overridable for tests; default implementation uses the context resolver.
  */
 export type ProposalApplier = (userId: string, proposal: MemoryProposalRow) => MemoryNode | null
 
@@ -75,6 +96,36 @@ export function getProposalApplier(): ProposalApplier | null {
   return proposalApplier
 }
 
+// Default applier: fact/article → memory service write via the resolver.
+export function defaultProposalApplier(userId: string, proposal: MemoryProposalRow): MemoryNode | null {
+  const ctx = contextResolver?.(userId)
+  if (!ctx) return null
+  if (proposal.kind === 'fact') {
+    return ctx.memory.addFact(
+      {
+        content: proposal.content,
+        category: 'fact',
+        importance: proposal.importance,
+        patientHash: proposal.patientHash || undefined,
+        sourceType: proposal.scopeType === 'patient' ? 'patient' : 'general',
+        provenance: { sourceKind: 'proposal', sourceRef: proposal.id },
+      },
+      'system',
+    )
+  }
+  if (proposal.kind === 'article') {
+    return ctx.memory.addArticle(
+      {
+        title: proposal.content.split('\n')[0].slice(0, 120) || '知识文章',
+        content: proposal.content,
+        provenance: { sourceKind: 'proposal', sourceRef: proposal.id },
+      },
+      'system',
+    )
+  }
+  return null
+}
+
 // ── Gateway ────────────────────────────────────────────────────
 
 /**
@@ -86,6 +137,9 @@ export function getProposalApplier(): ProposalApplier | null {
  * write path for extracted memories (design: BRAIN2_MEMORY_LIFECYCLE §3, §5.2).
  */
 export class MemoryGraphGateway {
+  private _embeddingIndex: EmbeddingIndex | null = null
+  private _embed: ((texts: string[]) => Promise<number[][]>) | null = null
+
   constructor(
     private userId: string,
     private memory: MemoryService,
@@ -93,15 +147,77 @@ export class MemoryGraphGateway {
     private episodes: EpisodesStore,
     private skills: SkillsStore,
     private knowledge: KnowledgeStore,
+    private embedFn?: (texts: string[]) => Promise<number[][]>,
   ) {}
+
+  private embeddingIndex(): EmbeddingIndex {
+    if (!this._embeddingIndex) {
+      const baseDir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', this.userId)
+      this._embeddingIndex = new EmbeddingIndex(baseDir)
+    }
+    return this._embeddingIndex
+  }
+
+  private async embedder(): Promise<(texts: string[]) => Promise<number[][]>> {
+    if (this.embedFn) return this.embedFn
+    if (!this._embed) {
+      const { createAiProvider } = await import('../common/ai/ai-provider.js')
+      const provider = createAiProvider()
+      this._embed = (texts: string[]) => provider.embed(texts)
+    }
+    return this._embed
+  }
+
+  /** Embed text; returns null when the embedding service is unavailable. */
+  private async embedOrNull(text: string): Promise<number[] | null> {
+    try {
+      const embed = await this.embedder()
+      const vecs = await embed([text])
+      return vecs[0] ?? null
+    } catch (err) {
+      console.log('[MEMORY] Embedding unavailable:', (err as Error).message.slice(0, 120))
+      return null
+    }
+  }
 
   /**
    * Create a pending memory proposal. This is the ONLY entry point for
    * extracted/summarized memories — nothing writes the graph directly.
    * Also enqueues an approval request so the existing Today/Brain review
-   * inbox picks it up unchanged.
+   * inbox picks it up unchanged. Semantic dedup: content that is too similar
+   * (>= 0.95) to an existing record in the same scope is skipped.
    */
   async propose(input: ProposalInput): Promise<MemoryProposalRow> {
+    // Semantic dedup against reviewed memories in the same scope.
+    const contentVec = await this.embedOrNull(input.content)
+    if (contentVec) {
+      const similar = this.embeddingIndex().findMostSimilar(contentVec, {
+        patientHash: input.patientHash,
+        studyId: input.studyId,
+      })
+      if (similar && similar.score >= 0.95) {
+        const now = new Date().toISOString()
+        return {
+          id: `dup_${now}`,
+          userId: this.userId,
+          scopeType: input.scopeType,
+          patientHash: input.patientHash || null,
+          studyId: input.studyId || null,
+          kind: input.kind,
+          content: input.content,
+          importance: input.importance ?? 3,
+          confidence: input.confidence ?? 'medium',
+          reason: input.reason || null,
+          sourceRange: input.sourceRange || null,
+          status: 'rejected',
+          rejectedReason: `语义重复（与 ${similar.record.stableId} 相似度 ${similar.score.toFixed(2)}）`,
+          createdAt: now,
+          resolvedAt: now,
+          resolvedBy: 'system',
+        }
+      }
+    }
+
     const now = new Date().toISOString()
     const row = await (prisma as any).memoryProposal.create({
       data: {
@@ -151,13 +267,70 @@ export class MemoryGraphGateway {
   }
 
   /**
-   * Apply an approved proposal to the memory graph (versioned write).
-   * Uses the registered applier (which owns the per-user MemoryService).
+   * Apply an approved proposal to the memory graph (versioned write) and
+   * index its embedding (reviewed memories only enter RAG, §4.5).
    */
-  applyApproved(proposal: MemoryProposalRow): MemoryNode | null {
+  async applyApproved(proposal: MemoryProposalRow): Promise<MemoryNode | null> {
     const applier = getProposalApplier()
     if (!applier) return null
-    return applier(this.userId, proposal)
+    const node = applier(this.userId, proposal)
+    if (node) {
+      // Index the embedding (reviewed memories only enter RAG, §4.5).
+      try {
+        const vec = await this.embedOrNull(proposal.content)
+        if (vec) {
+          this.embeddingIndex().upsert({
+            nodeId: node.id,
+            stableId: node.stableId,
+            type: proposal.kind === 'article' ? 'article' : 'fact',
+            patientHash: proposal.patientHash || (node as any).patientHash || undefined,
+            studyId: proposal.studyId || (node as any).studyId || undefined,
+            contentHash: (node as any).contentHash || proposal.content.slice(0, 16),
+            vector: vec,
+            model: 'bge-m3',
+            norm: normalizeVector(vec),
+            updatedAt: Date.now(),
+          })
+        }
+      } catch (err) {
+        console.log('[MEMORY] Embedding index write skipped:', (err as Error).message.slice(0, 120))
+      }
+    }
+    return node
+  }
+
+  /**
+   * Semantic retrieval (Tier 2). Embeds the query and cosine-scans the
+   * reviewed-memory index within the scope (patient isolation by default).
+   * Returns node content previews so callers can inject them as context.
+   */
+  async retrieve(
+    query: string,
+    scope: MemoryScope,
+    opts: { topK?: number; minScore?: number; includeCrossPatient?: boolean } = {},
+  ): Promise<Array<{ stableId: string; content: string; type: string; score: number }>> {
+    const vec = await this.embedOrNull(query)
+    if (!vec) return []
+    const hits = this.embeddingIndex().search(vec, {
+      patientHash: scope.patientHash,
+      studyId: scope.studyId,
+      includeCrossPatient: opts.includeCrossPatient,
+      topK: opts.topK ?? 5,
+      minScore: opts.minScore ?? 0.35,
+    })
+    return hits.map((h) => {
+      let content = h.record.contentHash
+      try {
+        const node = this.memory?.graph.getLatestByStableId(h.record.stableId) as any
+        if (node?.content) content = node.content
+      } catch { /* keep hash preview */ }
+      return {
+        stableId: h.record.stableId,
+        content,
+        type: h.record.type,
+        score: h.score,
+      }
+    })
   }
 
   async rejectProposal(proposalId: string, reason: string, actorId: string): Promise<boolean> {

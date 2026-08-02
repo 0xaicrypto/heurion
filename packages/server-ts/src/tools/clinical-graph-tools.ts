@@ -31,11 +31,40 @@ export class SearchNodeTool extends BaseTool {
     const allNodes = this.ctx.memory.graph.getAllNodes()
     const q = query.toLowerCase()
 
-    let candidates = allNodes.filter(n =>
-      (n as any).patientHash === patientHash &&
-      (entityType ? n.type === entityType : true) &&
-      (JSON.stringify(n).toLowerCase().includes(q))
-    )
+    // Tier 2: semantic retrieval over reviewed memories first (embedding
+    // index, patient-isolated). Falls back to substring matching when the
+    // embedding service is unavailable.
+    let semanticHits: Array<{ stableId: string; content: string; type: string; score: number }> = []
+    try {
+      const { MemoryGraphGateway } = await import('../memory/memory-gateway.js')
+      const gateway = new MemoryGraphGateway(
+        this.ctx.userId,
+        this.ctx.memory,
+        this.ctx.facts,
+        this.ctx.episodes,
+        this.ctx.skills,
+        this.ctx.knowledge,
+      )
+      semanticHits = await gateway.retrieve(query, { patientHash }, { topK, minScore: 0.35 })
+    } catch {
+      semanticHits = []
+    }
+
+    let candidates: any[] = []
+    if (semanticHits.length > 0) {
+      const byStable = new Map(allNodes.map((n) => [n.stableId, n]))
+      candidates = semanticHits
+        .filter((h) => !entityType || h.type === entityType)
+        .map((h) => byStable.get(h.stableId))
+        .filter((n): n is any => Boolean(n))
+    } else {
+      // Fallback: substring match over graph nodes (patient-scoped)
+      candidates = allNodes.filter(n =>
+        (n as any).patientHash === patientHash &&
+        (entityType ? n.type === entityType : true) &&
+        (JSON.stringify(n).toLowerCase().includes(q))
+      ).slice(0, topK)
+    }
 
     const hits = candidates.slice(0, topK).map(n => {
       const connected = allNodes.filter(other =>
@@ -58,7 +87,7 @@ export class SearchNodeTool extends BaseTool {
 
     return {
       success: true,
-      output: JSON.stringify({ hits, total: candidates.length }, null, 2),
+      output: JSON.stringify({ hits, total: candidates.length, semantic: semanticHits.length > 0 }, null, 2),
     }
   }
 }
