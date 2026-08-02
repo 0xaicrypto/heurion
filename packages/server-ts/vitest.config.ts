@@ -6,6 +6,7 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts'],
     globalSetup: ['tests/globalSetup.ts'],
+    setupFiles: ['tests/setup-cleanup.ts'],
     testTimeout: 10000,
     // Tests share one SQLite file (file:./test.db). Run files sequentially so
     // globalSetup's DB reset and the "first registered user is admin" invariant

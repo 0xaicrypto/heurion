@@ -646,8 +646,29 @@ class ApiClient {
     return this.fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}/confirm`, { method: 'POST' });
   }
 
-  async getProtocolRules(studyId: string): Promise<{rules: Array<{id: string; category: string; rule: string; confirmed: boolean}>; status: {total: number; confirmed: number}}> {
+  async getProtocolRules(studyId: string): Promise<{rules: Array<{id: string; category: string; rule: string; confirmed: boolean}>; status: {total: number; confirmed: number; pending: number; rejected: number}}> {
     return this.fetch(`/api/v1/research/studies/${studyId}/protocol-rules`);
+  }
+
+  async importProtocolFile(studyId: string, file: File): Promise<{
+    study_id: string;
+    file_id: string;
+    file_name: string;
+    text_length: number;
+    rules: Array<{id: string; category: string; rule: string; confirmed: boolean}>;
+    status: {total: number; confirmed: number; pending: number; rejected: number};
+  }> {
+    const form = new FormData();
+    form.append('file', file);
+    const h = this.headers();
+    h.delete('Content-Type');
+    const path = `/api/v1/research/studies/${encodeURIComponent(studyId)}/protocol-file`;
+    const r = await fetch(path, { method: 'POST', headers: h, body: form });
+    if (!r.ok) {
+      const text = await r.text().catch(() => '');
+      throw new ApiError(r.status, text || r.statusText, path);
+    }
+    return r.json();
   }
 
   /* ────────────────────────── skills ────────────────────────── */
