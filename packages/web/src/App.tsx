@@ -6,6 +6,7 @@ import { ChatPage } from '@/routes/chat';
 import { LandingPage } from '@/routes/landing';
 import { LoginPage } from '@/routes/login';
 import { TodayPage } from '@/routes/today';
+import { BrainPage } from '@/routes/brain';
 import { PatientsLayout, PatientSummaryPage, PatientChatPage } from '@/routes/patients';
 import { ImagingPage } from '@/routes/imaging';
 import { LabsPage } from '@/routes/labs';
@@ -87,6 +88,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <TodayPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/brain"
+            element={
+              <RequireAuth>
+                <BrainPage />
               </RequireAuth>
             }
           />

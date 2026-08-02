@@ -321,3 +321,5 @@ function serializeJob(r: any): IngestionJob {
     updatedAt: r.updatedAt,
   }
 }
+
+export { serializeJob }

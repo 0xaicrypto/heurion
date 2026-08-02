@@ -134,17 +134,34 @@ export async function listAuditLogs(filters: { targetType?: string; targetId?: s
     where,
     orderBy: { createdAt: 'desc' },
   })
-  return rows.map((r: any) => ({
-    id: r.id,
-    actor: r.actor,
-    action: r.action,
-    targetType: r.targetType,
-    targetId: r.targetId,
-    before: r.before ? JSON.parse(r.before) : null,
-    after: r.after ? JSON.parse(r.after) : null,
-    reason: r.reason,
-    createdAt: r.createdAt,
-  }))
+
+  const entryIds = rows
+    .filter((r: any) => r.targetType === 'MedicalRecordEntry')
+    .map((r: any) => r.targetId)
+  const entries = entryIds.length > 0
+    ? await (prisma as any).medicalRecordEntry.findMany({
+        where: { id: { in: entryIds } },
+        select: { id: true, patientHash: true, title: true, type: true },
+      })
+    : []
+  const entryByTarget = new Map(entries.map((e: any) => [e.id, e]))
+
+  return rows.map((r: any) => {
+    const base: any = {
+      id: r.id,
+      actor: r.actor,
+      action: r.action,
+      targetType: r.targetType,
+      targetId: r.targetId,
+      before: r.before ? JSON.parse(r.before) : null,
+      after: r.after ? JSON.parse(r.after) : null,
+      reason: r.reason,
+      createdAt: r.createdAt,
+    }
+    const entry = entryByTarget.get(r.targetId)
+    if (entry) base.entry = entry
+    return base
+  })
 }
 
 export async function writeAuditLog(entry: {

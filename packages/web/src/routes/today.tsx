@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Activity, AlertCircle, FilePlus, FileText, UserPlus } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
+import { PendingIngestionsWidget } from '@/components/today/PendingIngestionsWidget';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/lib/api-client';
@@ -17,6 +18,7 @@ export function TodayPage() {
   const [state, setState] = useState<AgentState | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newPatientOpen, setNewPatientOpen] = useState(false);
@@ -82,7 +84,7 @@ export function TodayPage() {
                     <FileText size={20} />
                   </div>
                   <div>
-                    <p className="text-2xl font-bold text-text-primary">{state?.total_anchor_count ?? 0}</p>
+                    <p className="text-2xl font-bold text-text-primary">{pendingCount}</p>
                     <p className="text-sm text-text-secondary">{t('today.pendingReports')}</p>
                   </div>
                 </div>
@@ -116,6 +118,8 @@ export function TodayPage() {
               </Button>
             </Card>
           )}
+
+          <PendingIngestionsWidget onCountChange={setPendingCount} />
 
           <div className="flex flex-wrap gap-3">
             <Button onClick={() => setNewPatientOpen(true)}>

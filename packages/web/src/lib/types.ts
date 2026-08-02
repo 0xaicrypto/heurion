@@ -176,6 +176,126 @@ export interface MedicalRecordSummary {
   sections: MedicalRecordSections;
 }
 
+export type MedicalRecordEntryType =
+  | 'lab'
+  | 'imaging'
+  | 'pathology'
+  | 'ecg'
+  | 'note'
+  | 'diagnosis'
+  | 'medication'
+  | 'procedure'
+  | 'vaccination'
+  | 'allergy';
+
+export type MedicalRecordEntryStatus = 'pending_review' | 'confirmed' | 'rejected';
+
+export interface MedicalRecordEntry {
+  id: string;
+  patientHash: string;
+  type: MedicalRecordEntryType;
+  title: string;
+  date: string;
+  content: string;
+  aiSummary?: string;
+  sourceFileId?: string;
+  sourceStudyId?: string;
+  sourceJobId?: string;
+  extractedText?: string;
+  rawJson?: Record<string, unknown> | null;
+  status: MedicalRecordEntryStatus;
+  createdBy: 'system' | 'user' | 'agent';
+  confirmedAt?: string;
+  confirmedBy?: string;
+  rejectedReason?: string;
+  version: number;
+  previousVersionId?: string;
+  linkedRecordIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MedicalRecordEntryDraft {
+  type: MedicalRecordEntryType;
+  title: string;
+  date?: string;
+  content: string;
+  aiSummary?: string;
+  sourceFileId?: string;
+  sourceStudyId?: string;
+  sourceJobId?: string;
+  extractedText?: string;
+  rawJson?: Record<string, unknown>;
+  status?: MedicalRecordEntryStatus;
+  createdBy?: 'system' | 'user' | 'agent';
+  linkedRecordIds?: string[];
+}
+
+export type IngestionJobStatus =
+  | 'pending'
+  | 'extracting'
+  | 'analyzing'
+  | 'awaiting_review'
+  | 'completed'
+  | 'rejected'
+  | 'failed';
+
+export interface IngestionJob {
+  id: string;
+  userId: string;
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  patientHash?: string;
+  studyId?: string;
+  uploadedBy: string;
+  extractedText?: string;
+  extractedJson?: unknown;
+  status: IngestionJobStatus;
+  confidence?: 'high' | 'medium' | 'low';
+  reasoning?: string;
+  resultPayload?: { entries?: MedicalRecordEntry[] } | null;
+  retryCount: number;
+  failedReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ApprovalRequest {
+  id: string;
+  userId: string;
+  targetType: string;
+  targetId: string;
+  status: ApprovalStatus;
+  payload?: Record<string, unknown> | null;
+  diff?: Record<string, unknown> | null;
+  reason?: string;
+  actorId?: string;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  actor: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+  reason?: string;
+  createdAt: string;
+  entry?: { id: string; patientHash: string; title: string; type: string };
+}
+
+export interface BrainStats {
+  pending: number;
+  confirmedToday: number;
+  totalEntries: number;
+}
+
 export interface MemoryProjection {
   findings?: MemoryFinding[];
   medications?: MemoryFinding[];

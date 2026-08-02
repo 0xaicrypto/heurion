@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   LayoutDashboard,
+  Brain,
   MessageSquare,
   Users,
   FlaskConical,
@@ -35,6 +36,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: '/app/today', labelKey: 'nav.today', icon: <LayoutDashboard size={18} /> },
+  { to: '/app/brain', labelKey: 'nav.brain', icon: <Brain size={18} /> },
   { to: '/app/chat', labelKey: 'nav.chat', icon: <MessageSquare size={18} /> },
   { to: '/app/patients', labelKey: 'nav.patients', icon: <Users size={18} /> },
   { to: '/app/research', labelKey: 'nav.research', icon: <FlaskConical size={18} /> },
