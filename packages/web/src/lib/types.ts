@@ -114,6 +114,10 @@ export interface ChatSession {
   updated_at?: string;
   archived?: boolean;
   is_default?: boolean;
+  scope?: 'global' | 'patient';
+  patient_hash?: string;
+  status?: 'open' | 'closed';
+  closed_at?: string;
   message_count?: number;
 }
 

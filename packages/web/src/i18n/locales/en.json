@@ -170,7 +170,13 @@
     "reasoning": "Reasoning",
     "citations": "Citations",
     "streaming": "Generating response…",
-    "scrollToBottom": "Scroll to bottom"
+    "scrollToBottom": "Scroll to bottom",
+    "newSession": "New Session",
+    "closeSession": "Close",
+    "selectSession": "Session",
+    "defaultSession": "Default session",
+    "closed": "closed",
+    "cannotCloseDefault": "The default session cannot be closed"
   },
   "patient": {
     "summary": "Summary",
