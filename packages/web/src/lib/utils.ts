@@ -28,18 +28,19 @@ export function formatRelativeTime(iso: string, locale?: string): string {
 function recoverBlockBreaks(text: string): string {
   // Interior newline check: a single trailing newline must not disable recovery.
   if (text.slice(1, -1).includes('\n')) return text;
-  // Insert '\n\n' before block markers. Uses capture groups instead of
-  // lookbehind for broad browser compatibility.
-  const breakBefore = (pre: string, marker: string): string =>
-    pre === '' ? marker : `${pre}\n\n${marker}`;
+  // Insert '\n\n' before block markers. Consumes the preceding character
+  // with a lookahead for the marker, then echoes it back — zero-width effect
+  // without lookbehind (broad browser compatibility). Bold closers like
+  // "**x**- item" stay intact.
   return text
     // headings: "text## 标题" → "text\n\n## 标题" (only at marker start)
-    .replace(/(^|[^\n|#])(#{1,6} )/g, (_m, pre: string, marker: string) => breakBefore(pre, marker))
-    // lists / blockquote: "**1. x**- 项" → break before "- 项"
-    // (numbered "1. x" is excluded — collides with bold labels and decimals)
-    .replace(/(^|[^\n|])((?:- |\* |> ))/g, (_m, pre: string, marker: string) => breakBefore(pre, marker))
+    .replace(/(^|[^\n|#])(?=#{1,6} )/g, (_m, pre: string) => `${pre}\n\n`)
+    // dash bullets / blockquote: "**1. x**- 项" → break before "- 项"
+    .replace(/(^|[^\n|])(?=(?:- |> ))/g, (_m, pre: string) => `${pre}\n\n`)
+    // asterisk bullets: exclude a preceding '*' so "**x** text" is untouched
+    .replace(/(^|[^*\n|])(?=\* )/g, (_m, pre: string) => `${pre}\n\n`)
     // thematic break: "text---## x" → "text\n\n---"
-    .replace(/(^|[^\n|])(---(?![0-9A-Za-z_]))/g, (_m, pre: string, marker: string) => breakBefore(pre, marker));
+    .replace(/(^|[^\n|])(?=---(?![0-9A-Za-z_]))/g, (_m, pre: string) => `${pre}\n\n`);
 }
 
 /**

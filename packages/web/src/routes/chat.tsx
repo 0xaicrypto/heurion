@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useChatStore, type ChatMessage } from '@/stores/chat';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
-import { LlmContent } from '@/components/LlmContent';
+import { LlmContent, StreamingLlmContent } from '@/components/LlmContent';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { Alert, Button, Badge, Textarea } from '@/components/ui';
 
@@ -69,7 +69,9 @@ export function ChatPage() {
     }
     try {
       await api.closeSession(sessionId);
-      loadGlobalSessions();
+      // Remove the closed session from the selector and clean up local state.
+      setGlobalSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      store.clearSession(sessionId);
       const next = globalSessions.find((s) => s.id !== sessionId && s.status === 'open');
       setSessionId(next?.id ?? defaultSessionId);
     } catch (err) {
@@ -232,10 +234,8 @@ export function ChatPage() {
               className="h-8 max-w-[220px] rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={t('chat.selectSession', 'Session')}
             >
-              {[{ id: defaultSessionId, title: t('chat.defaultSession', '默认会话'), status: 'open' }, ...globalSessions].map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.title}{s.status === 'closed' ? ` (${t('chat.closed', 'closed')})` : ''}
-                </option>
+              {[{ id: defaultSessionId, title: t('chat.defaultSession', '默认会话'), status: 'open' }, ...globalSessions.filter((s) => s.status !== 'closed')].map((s) => (
+                <option key={s.id} value={s.id}>{s.title}</option>
               ))}
             </select>
             <button
@@ -303,7 +303,7 @@ export function ChatPage() {
                       </div>
                     </details>
                   )}
-                  <LlmContent content={m.text || ''} className={m.role === 'user' ? 'prose-invert' : undefined} />
+                  <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
                   {m.download && (
                     <div className="mt-3 rounded-lg border border-border bg-surface p-3">
                       <div className="flex items-center gap-2 text-sm text-text-primary">
