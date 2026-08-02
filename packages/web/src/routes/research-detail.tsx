@@ -836,14 +836,16 @@ function ProtocolTab({ studyId }: { studyId: string }) {
   const [loading, setLoading] = useState(true)
   const [importText, setImportText] = useState('')
   const [importing, setImporting] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [lastFile, setLastFile] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const loadRules = useCallback(() => {
     setLoading(true)
-    fetch(`/api/v1/research/studies/${studyId}/protocol-rules`, { headers: { Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` } })
-      .then(r => r.json())
-      .then((data: any) => { setRules(data.rules); setStatus(data.status) })
-      .catch(() => {})
+    api.getProtocolRules(studyId)
+      .then((data) => { setRules(data.rules); setStatus(data.status) })
+      .catch((err) => setError(err instanceof ApiError ? err.messageText : String(err)))
       .finally(() => setLoading(false))
   }, [studyId])
 
@@ -852,34 +854,54 @@ function ProtocolTab({ studyId }: { studyId: string }) {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const text = await file.text()
-    setImportText(text.slice(0, 20000))
     if (fileRef.current) fileRef.current.value = ''
+    setUploading(true)
+    setError(null)
+    try {
+      const res = await api.importProtocolFile(studyId, file)
+      setRules(res.rules)
+      setStatus(res.status)
+      setLastFile(res.file_name)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err))
+    } finally {
+      setUploading(false)
+    }
   }
 
   const handleImport = async () => {
     if (!importText.trim()) return
     setImporting(true)
-    const h = { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` }
+    setError(null)
     try {
-      await fetch(`/api/v1/research/studies/${studyId}/import-protocol`, { method: 'POST', headers: h, body: JSON.stringify({ text: importText }) })
-      await fetch(`/api/v1/research/studies/${studyId}/extract-rules`, { method: 'POST', headers: h, body: JSON.stringify({ text: importText }) })
-      loadRules()
+      await api.importProtocol(studyId, importText)
+      await api.extractRules(studyId, importText)
       setImportText('')
-    } catch { /* ignore import errors */ } finally { setImporting(false) }
+      loadRules()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err))
+    } finally {
+      setImporting(false)
+    }
   }
 
   const handleConfirm = async (ruleId: string) => {
-    await fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}/confirm`, {
-      method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` }
-    })
-    loadRules()
+    try {
+      await api.confirmRule(studyId, ruleId)
+      loadRules()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err))
+    }
   }
   const handleReject = async (ruleId: string) => {
-    await fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}`, {
-      method: 'DELETE', headers: { Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` }
-    })
-    loadRules()
+    try {
+      await fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` }
+      })
+      loadRules()
+    } catch {
+      setError('Failed to reject rule')
+    }
   }
 
   return (
@@ -887,25 +909,39 @@ function ProtocolTab({ studyId }: { studyId: string }) {
       <div className="rounded-xl border border-border bg-surface-elevated p-4">
         <h3 className="mb-2 text-sm font-semibold text-text-primary">Import Protocol</h3>
         <textarea value={importText} onChange={e => setImportText(e.target.value)}
-          placeholder="Paste protocol text or upload a file (.txt, .docx text)"
+          placeholder="Paste protocol text here, or upload a file (.txt, .md, .csv, .pdf, .docx) below"
           className="mb-2 min-h-[120px] w-full rounded-lg border border-border bg-surface p-2 text-xs text-text-primary"
           rows={5} />
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={handleImport} isLoading={importing} disabled={!importText.trim()}>
             Import & Extract Rules
           </Button>
-          <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()}>
-            <Upload size={14} className="mr-1" /> Upload File
+          <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()} isLoading={uploading} disabled={uploading}>
+            <Upload size={14} className="mr-1" /> Upload Protocol File
           </Button>
-          <input ref={fileRef} type="file" accept=".txt,.md,.csv" onChange={handleFileUpload} className="hidden" />
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".txt,.md,.csv,.pdf,.docx"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
         </div>
+        {lastFile && (
+          <p className="mt-2 text-xs text-text-tertiary">Last uploaded: {lastFile}</p>
+        )}
+        {error && (
+          <div className="mt-2">
+            <Alert variant="error">{error}</Alert>
+          </div>
+        )}
       </div>
 
       {loading ? <Skeleton className="h-32 w-full rounded-xl" /> : (
         <div className="rounded-xl border border-border bg-surface-elevated p-4">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-text-primary">Extracted Rules</h3>
-            <span className="text-xs text-text-tertiary">{status.confirmed}/{status.total} confirmed</span>
+            <span className="text-xs text-text-tertiary">{status.confirmed}/{status.total} confirmed · {status.pending} pending</span>
           </div>
           {rules.length === 0 ? (
             <p className="text-sm text-text-tertiary">Import a protocol to extract rules</p>

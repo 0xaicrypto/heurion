@@ -5,6 +5,9 @@ import { ResearchService } from './research.service'
 import { createStudySchema, enrollPatientSchema } from './research.dto'
 import { extractRulesFromProtocol, getPendingRules, confirmRule, rejectRule, getConfirmationStatus } from './protocol-extractor.js'
 import { screenPatient, screenAllEnrolled } from './eligibility-screening.service.js'
+import { extractDocumentText } from '../../lib/document-extractor.js'
+import fs from 'fs'
+import path from 'path'
 
 const service = new ResearchService()
 
@@ -167,6 +170,53 @@ export async function researchRouter(app: FastifyInstance) {
       telemetryContext: { userId, workspaceId: userId, action: 'research.extract_protocol' },
     })
     return { study_id: studyId, rules, status: await getConfirmationStatus(studyId) }
+  })
+
+  // Upload a protocol document (.txt/.md/.csv/.pdf/.docx): server-side text
+  // extraction + rule extraction in one step.
+  app.post('/api/v1/research/studies/:studyId/protocol-file', async (request, reply) => {
+    const { studyId } = request.params as any
+    const userId = request.user!.userId
+    const data = await request.file()
+    if (!data) return reply.status(400).send({ error: 'No file uploaded' })
+
+    const buffer = await data.toBuffer()
+    if (buffer.length === 0) return reply.status(400).send({ error: 'Empty file' })
+
+    const SUPPORTED_EXT = /\.(txt|md|csv|pdf|docx)$/i
+    if (!SUPPORTED_EXT.test(data.filename)) {
+      return reply.status(400).send({ error: 'Unsupported file type (supported: .txt/.md/.csv/.pdf/.docx)' })
+    }
+
+    const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+    fs.mkdirSync(dir, { recursive: true })
+    const fileId = `${Date.now()}_${data.filename}`
+    fs.writeFileSync(path.join(dir, fileId), buffer)
+
+    let text = ''
+    try {
+      text = await extractDocumentText(buffer, data.filename, data.mimetype, { maxChars: 50000 })
+    } catch (err: any) {
+      return reply.status(400).send({ error: `Text extraction failed: ${err.message}` })
+    }
+    if (!text.trim()) {
+      return reply.status(400).send({ error: 'Could not extract text from this file (supported: .txt/.md/.csv/.pdf/.docx)' })
+    }
+
+    const rules = await extractRulesFromProtocol(studyId, text, {
+      telemetryContext: { userId, workspaceId: userId, action: 'research.extract_protocol' },
+      sourceJobId: fileId,
+      extractedFrom: data.filename,
+    })
+
+    return {
+      study_id: studyId,
+      file_id: fileId,
+      file_name: data.filename,
+      text_length: text.length,
+      rules,
+      status: await getConfirmationStatus(studyId),
+    }
   })
 
   // List pending extracted rules
