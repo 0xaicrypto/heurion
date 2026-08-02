@@ -8,7 +8,7 @@ import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/components/ui';
-import { cn } from '@/lib/utils';
+import { cn, normalizeLlmText } from '@/lib/utils';
 import { api, ApiError } from '@/lib/api-client';
 import { useChatStore } from '@/stores/chat';
 import type { MemoryFinding, MemoryProjection, Patient, PatientDetail } from '@/lib/types';
@@ -542,7 +542,9 @@ export function PatientChatPage() {
                 {m.reasoning && (
                   <details className="mb-2">
                     <summary className="cursor-pointer text-xs text-text-tertiary">{t('chat.reasoning')}</summary>
-                    <p className="mt-1 whitespace-pre-wrap text-xs text-text-tertiary">{m.reasoning}</p>
+                    <div className="mt-1 max-h-60 overflow-y-auto border-l-2 border-border pl-3">
+                      <MarkdownRenderer content={normalizeLlmText(m.reasoning)} />
+                    </div>
                   </details>
                 )}
                 {m.citations && m.citations.length > 0 && (
@@ -554,7 +556,7 @@ export function PatientChatPage() {
                     ))}
                   </div>
                 )}
-                <MarkdownRenderer content={m.text || ''} />
+                <MarkdownRenderer content={normalizeLlmText(m.text || '')} />
                 {m.isStreaming ? (
                   <span role="status" aria-label={t('chat.streaming')} className="animate-pulse">●</span>
                 ) : null}

@@ -12,17 +12,6 @@ name: Server TS CI
 
 on:
   pull_request:
-    paths:
-      - 'packages/server-ts/**'
-      - 'packages/embedding-server/**'
-      - 'packages/worker/**'
-      - '.github/workflows/server-ts-ci.yml'
-      - '.github/workflows/deploy-server.yml'
-      - 'scripts/deploy*.sh'
-      - 'docker-compose.yml'
-      - 'docker-compose.worker.yml'
-      - 'CONTRIBUTING.md'
-      - '.github/ISSUE_TEMPLATE/**'
   push:
     branches: [main]
     paths:
