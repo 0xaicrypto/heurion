@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Paperclip, Copy, Check, Download, FileText } from 'lucide-react';
+import { Paperclip, Copy, Check, Download, FileText, Plus } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
 import type { LlmStatus } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
@@ -13,13 +13,23 @@ import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint'
 import { Alert, Button, Badge, Textarea } from '@/components/ui';
 
 
+interface ChatSessionItem {
+  id: string;
+  title: string;
+  status: 'open' | 'closed' | undefined;
+  created_at: string;
+  message_count?: number;
+}
+
 export function ChatPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { isAuthenticated, clearSession, userId } = useAuthStore();
   const store = useChatStore();
-  const sessionId = `global-${userId || 'anonymous'}`;
+  const defaultSessionId = `global-${userId || 'anonymous'}`;
+  const [sessionId, setSessionId] = useState<string>(defaultSessionId);
   const session = store.sessions[sessionId];
+  const [globalSessions, setGlobalSessions] = useState<ChatSessionItem[]>([]);
 
   const [input, setInput] = useState('');
   const [uploadingFile, setUploadingFile] = useState(false);
@@ -34,6 +44,38 @@ export function ChatPage() {
   const [downloadLoading, setDownloadLoading] = useState<Record<string, boolean>>({});
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const loadGlobalSessions = useCallback(() => {
+    api.listSessions(false, 'global')
+      .then((r) => setGlobalSessions(r.sessions.map((s) => ({ id: s.id, title: s.title, status: s.status, created_at: s.created_at, message_count: s.message_count }))))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadGlobalSessions();
+  }, [loadGlobalSessions]);
+
+  const handleNewSession = async () => {
+    const res = await api.createSession(t('chat.newSession', 'New Session'), { scope: 'global' });
+    loadGlobalSessions();
+    setSessionId(res.id);
+    store.clearSession(res.id);
+  };
+
+  const handleCloseSession = async () => {
+    if (sessionId === defaultSessionId) {
+      setError(t('chat.cannotCloseDefault', 'The default session cannot be closed'));
+      return;
+    }
+    try {
+      await api.closeSession(sessionId);
+      loadGlobalSessions();
+      const next = globalSessions.find((s) => s.id !== sessionId && s.status === 'open');
+      setSessionId(next?.id ?? defaultSessionId);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    }
+  };
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -184,6 +226,33 @@ export function ChatPage() {
         <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
           <div className="flex items-center gap-3">
             <h1 className="font-semibold text-text-primary">{t('chat.title')}</h1>
+            <select
+              value={sessionId}
+              onChange={(e) => setSessionId(e.target.value)}
+              className="h-8 max-w-[220px] rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={t('chat.selectSession', 'Session')}
+            >
+              {[{ id: defaultSessionId, title: t('chat.defaultSession', '默认会话'), status: 'open' }, ...globalSessions].map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title}{s.status === 'closed' ? ` (${t('chat.closed', 'closed')})` : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={handleNewSession}
+              className="rounded-lg border border-border bg-surface-elevated px-2 py-1 text-xs text-text-secondary hover:bg-surface"
+              title={t('chat.newSession', 'New Session')}
+            >
+              <Plus size={13} className="mr-1 inline" />
+              {t('chat.newSession', 'New Session')}
+            </button>
+            <button
+              onClick={handleCloseSession}
+              className="rounded-lg border border-border bg-surface-elevated px-2 py-1 text-xs text-text-secondary hover:bg-error/10 hover:text-error"
+              title={t('chat.closeSession', 'Close Session')}
+            >
+              {t('chat.closeSession', 'Close')}
+            </button>
             {llmStatus && (
               <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary border border-border">
                 {llmStatus.provider}/{llmStatus.model}

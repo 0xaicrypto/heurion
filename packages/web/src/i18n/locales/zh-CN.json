@@ -170,7 +170,13 @@
     "reasoning": "推理过程",
     "citations": "引用来源",
     "streaming": "正在生成回复…",
-    "scrollToBottom": "滚动到底部"
+    "scrollToBottom": "滚动到底部",
+    "newSession": "新建会话",
+    "closeSession": "关闭",
+    "selectSession": "会话",
+    "defaultSession": "默认会话",
+    "closed": "已关闭",
+    "cannotCloseDefault": "默认会话不能关闭"
   },
   "patient": {
     "summary": "摘要",
