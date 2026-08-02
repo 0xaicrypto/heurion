@@ -5,6 +5,7 @@ import { getUserContext, buildPersona, buildFileContext } from './user-context.j
 import { deepseekStream, deepseekChat, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
 import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
+import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
 import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { handlePluginChatRequest } from '../plugins/plugin-chat-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
@@ -380,15 +381,25 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
         studyContext += '\nIMPORTANT: When the user asks about a specific study (e.g. "NSCLC001" or any short_code), you MUST reference that short_code in your reply. When asked about details not in the protocol snippet above, suggest importing the full protocol.\n'
       }
 
-      // #5: Conversation history from event log (last 20 turns)
-      const history = ctx.eventLog.query({ sessionId: sid, limit: 40 }).reverse()
+      // #5: Conversation history from event log — newest-first under a token
+      // budget (MAX_HISTORY_TOKENS / HISTORY_TURNS env-configurable).
+      const maxHistoryTokens = parseInt(process.env.MAX_HISTORY_TOKENS || '8000', 10)
+      const historyTurns = parseInt(process.env.HISTORY_TURNS || '20', 10)
+      const history = ctx.eventLog.query({ sessionId: sid, limit: historyTurns * 2 }).reverse()
+      const { messages: historyMessages, omittedTurns } = buildHistoryMessages(history, {
+        maxTokens: maxHistoryTokens,
+        maxTurns: historyTurns,
+      })
       const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
         { role: 'system', content: projected.systemPrompt + studyContext },
       ]
-      for (const evt of history) {
-        if (evt.eventType === 'user_message') messages.push({ role: 'user', content: evt.content })
-        else if (evt.eventType === 'assistant_response') messages.push({ role: 'assistant', content: evt.content })
+      if (omittedTurns > 0) {
+        messages.push({
+          role: 'system',
+          content: `[Note: ${omittedTurns} earlier turns of this conversation were omitted to stay within the context budget. Use the session summaries above for older context.]`,
+        })
       }
+      messages.push(...historyMessages)
       messages.push({ role: 'user' as const, content: fullMessage })
 
       // Create tool registry for function calling
