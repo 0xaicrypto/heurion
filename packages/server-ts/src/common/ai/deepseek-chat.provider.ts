@@ -3,6 +3,18 @@ import { AiProviderError } from './ai-provider.js'
 
 const DEEPSEEK_BASE = 'https://api.deepseek.com/v1'
 
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
+const MAX_RETRIES = 2
+
+function isRetryable(err: unknown): boolean {
+  if (!(err instanceof AiProviderError)) return true
+  return err.statusCode === undefined || RETRYABLE_STATUS.has(err.statusCode)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 export class DeepSeekChatProvider implements Pick<AiProvider, 'chat'> {
   constructor(private config: AiProviderConfig = {}) {}
 
@@ -13,6 +25,26 @@ export class DeepSeekChatProvider implements Pick<AiProvider, 'chat'> {
     }
 
     const model = options.model || this.config.deepseekChatModel || 'deepseek-chat'
+
+    let lastError: unknown
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await this.requestChat(apiKey, model, messages, options)
+      } catch (err) {
+        lastError = err
+        if (!isRetryable(err) || attempt === MAX_RETRIES) throw err
+        await sleep(1000 * 2 ** attempt)
+      }
+    }
+    throw lastError
+  }
+
+  private async requestChat(
+    apiKey: string,
+    model: string,
+    messages: ChatMessage[],
+    options: ChatOptions,
+  ): Promise<ChatResult> {
     const resp = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
       method: 'POST',
       headers: {
