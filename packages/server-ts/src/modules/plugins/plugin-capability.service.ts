@@ -85,6 +85,17 @@ export async function buildPayload(
   return fallbackPayload(tool, input)
 }
 
+/**
+ * Content-shape hints for official renderer tools whose `data` parameter is an
+ * open object. The worker renders these shapes, so guide the LLM accordingly.
+ */
+const DATA_SHAPE_HINTS: Record<string, string> = {
+  'heurion/pptx.generate_pptx':
+    'The "data" object must contain: { title: string, subtitle: string, presenter: string, date: string, slides: [{ title: string, content: string }] } where each slide content is concise bullet-style text.',
+  'heurion/docx.generate_docx':
+    'The "data" object must contain: { title: string, sections: [{ heading: string, paragraphs: string[] }] }.',
+}
+
 async function buildPayloadWithLlm(
   tool: PluginTool,
   manifest: PluginManifest,
@@ -99,7 +110,8 @@ async function buildPayloadWithLlm(
   const historyBlock = input.history && input.history.length > 0
     ? `\n\nConversation history (earlier messages in this chat; use them as context for the request):\n${input.history.map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`).join('\n')}`
     : ''
-  const prompt = `${patientBlock}${historyBlock}\n\nUser request: "${input.text}"\n\nYou are preparing arguments for the "${manifest.plugin.name}" plugin tool "${tool.name}".\nReturn ONLY a JSON object that conforms to this schema:\n${schemaJson}\n\nBase the arguments on the conversation history and patient context above when available; if the request does not provide enough detail, use clinically plausible placeholders. Do not include markdown or explanation.\n\nJSON object:`
+  const shapeHint = DATA_SHAPE_HINTS[`${manifest.plugin.id}.${tool.name}`] || ''
+  const prompt = `${patientBlock}${historyBlock}\n\nUser request: "${input.text}"\n\nYou are preparing arguments for the "${manifest.plugin.name}" plugin tool "${tool.name}".\nReturn ONLY a JSON object that conforms to this schema:\n${schemaJson}${shapeHint ? `\n\n${shapeHint}` : ''}\n\nBase the arguments on the conversation history and patient context above when available; if the request does not provide enough detail, use clinically plausible placeholders. Do not include markdown or explanation.\n\nJSON object:`
 
   const raw = await deepseekChat([{ role: 'user', content: prompt }], apiKey, {
     model: 'deepseek-chat',

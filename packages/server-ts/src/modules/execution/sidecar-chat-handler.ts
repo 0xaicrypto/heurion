@@ -76,6 +76,56 @@ function buildHistoryBlock(history?: ChatHistoryMessage[]): string {
   return `\n\nConversation history (earlier messages in this chat; use them as context for the request):\n${lines}`
 }
 
+function buildRenderPrompt(
+  type: string,
+  patientBlock: string,
+  historyBlock: string,
+  text: string,
+): string {
+  const base = `${patientBlock}${historyBlock}\n\nUser request: "${text}"`
+  switch (type) {
+    case 'sidecar.generate_pptx':
+      return `${base}\n\nCreate a PowerPoint presentation. Return ONLY a JSON object with these keys:
+- title: presentation title
+- subtitle: subtitle or conference/institution
+- presenter: presenter name or institution
+- date: date string
+- slides: an array of 5-12 slides, each with { title, content }. Content should be concise, bullet-style text suitable for a clinical or academic presentation.
+
+Base the presentation content on the conversation history and patient context above when available; if the request does not provide enough detail, fill in clinically plausible placeholder content.
+
+JSON object:`
+    case 'sidecar.render_table':
+      return `${base}\n\nRender a medical table. Return ONLY a JSON object with these keys:
+- title: table title
+- headers: array of column header strings
+- rows: array of rows, each an array of cell strings
+
+Base the table content on the conversation history and patient context above when available; if the request does not provide enough detail, use clinically plausible placeholder values.
+
+JSON object:`
+    case 'sidecar.render_plot':
+      return `${base}\n\nRender a statistical plot. Return ONLY a JSON object with these keys:
+- plot_type: "bar", "line" or "pie"
+- title: plot title
+- x_label: x-axis label
+- y_label: y-axis label
+- series: array of { x: number[], y: number[], label: string }
+
+Base the plot data on the conversation history and patient context above when available; if the request does not provide enough detail, use clinically plausible placeholder data.
+
+JSON object:`
+    default:
+      return `${base}\n\nWe need to render a medical document using a document template. Return ONLY a JSON object with these keys:
+- title: document title
+- sections: array of { heading: string, paragraphs: string[] } — e.g. Patient, Diagnosis, Findings, Treatment Plan
+
+Base the document content on the conversation history and patient context above when available; if the request does not provide enough detail, use concise clinically plausible placeholders.
+
+JSON object:`
+  }
+}
+
 async function buildPayload(
   text: string,
   patient: SidecarHandlerOptions['patient'],
@@ -89,19 +139,7 @@ async function buildPayload(
     : 'No specific patient context.'
 
   const historyBlock = buildHistoryBlock(history)
-
-  const prompt = type === 'sidecar.generate_pptx'
-    ? `${patientBlock}${historyBlock}\n\nUser request: "${text}"\n\nCreate a PowerPoint presentation. Return ONLY a JSON object with these keys:
-- title: presentation title
-- subtitle: subtitle or conference/institution
-- presenter: presenter name or institution
-- date: date string
-- slides: an array of 5-12 slides, each with { title, content }. Content should be concise, bullet-style text suitable for a clinical or academic presentation.
-
-Base the presentation content on the conversation history and patient context above when available; if the request does not provide enough detail, fill in clinically plausible placeholder content.
-
-JSON object:`
-    : `${patientBlock}${historyBlock}\n\nUser request: "${text}"\n\nWe need to render a medical document using the "${templateId}" template. Return ONLY a JSON object with keys that match the template placeholders. Common placeholders include: patient_initials, age, sex, diagnosis, findings_html, treatment_plan, generated_at. Use the current date for generated_at. Use the conversation history and patient context above when available; if the request does not provide enough detail, use concise clinically plausible placeholders.\n\nJSON object:`
+  const prompt = buildRenderPrompt(type, patientBlock, historyBlock, text)
 
   let data: Record<string, unknown> = {}
   try {
@@ -199,12 +237,20 @@ function buildKnowledgePayload(
 
   if (type === 'sidecar.generate_docx') {
     const title = String(data.title || outputName)
-    const parts: string[] = []
-    if (data.patient_initials) parts.push(`Patient: ${data.patient_initials}`)
-    if (data.diagnosis) parts.push(`Diagnosis: ${data.diagnosis}`)
-    if (data.findings_html) parts.push(`Findings: ${data.findings_html}`)
-    if (data.treatment_plan) parts.push(`Plan: ${data.treatment_plan}`)
-    const content = parts.join('\n\n') || String(data.content || '-')
+    let content: string
+    if (Array.isArray(data.sections)) {
+      content = (data.sections as any[])
+        .map((s: any) => `${s.heading ? `## ${s.heading}\n` : ''}${Array.isArray(s.paragraphs) ? s.paragraphs.join('\n') : ''}`)
+        .join('\n\n')
+        .trim()
+    } else {
+      const parts: string[] = []
+      if (data.patient_initials) parts.push(`Patient: ${data.patient_initials}`)
+      if (data.diagnosis) parts.push(`Diagnosis: ${data.diagnosis}`)
+      if (data.findings_html) parts.push(`Findings: ${data.findings_html}`)
+      if (data.treatment_plan) parts.push(`Plan: ${data.treatment_plan}`)
+      content = parts.join('\n\n') || String(data.content || '-')
+    }
     return { title, content }
   }
 
