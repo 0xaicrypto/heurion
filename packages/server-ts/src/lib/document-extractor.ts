@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import mammoth from 'mammoth'
 import { PDFParse } from 'pdf-parse'
 import { createWorker, type Worker } from 'tesseract.js'
 
@@ -12,6 +13,13 @@ export interface ExtractOptions {
 const OCR_TEXT_THRESHOLD = 100
 const DEFAULT_OCR_PAGE_LIMIT = 5
 const DEFAULT_OCR_SCALE = 2
+
+const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+
+function isDocx(filename: string, mimeType?: string): boolean {
+  const lower = filename.toLowerCase()
+  return lower.endsWith('.docx') || mimeType === DOCX_MIME_TYPE
+}
 
 function isPdf(filename: string, mimeType?: string): boolean {
   const lower = filename.toLowerCase()
@@ -123,6 +131,16 @@ async function extractPdfText(
   }
 }
 
+async function extractDocxText(buffer: Buffer, maxChars: number): Promise<string> {
+  try {
+    const result = await mammoth.extractRawText({ buffer })
+    return result.value.trim().slice(0, maxChars) || '[DOCX returned empty text]'
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return `[DOCX extraction failed: ${message}]`
+  }
+}
+
 export async function extractDocumentText(
   buffer: Buffer,
   filename: string,
@@ -135,6 +153,10 @@ export async function extractDocumentText(
 
   if (isPdf(filename, mimeType)) {
     return extractPdfText(buffer, { maxChars, ocrPageLimit, ocrScale })
+  }
+
+  if (isDocx(filename, mimeType)) {
+    return extractDocxText(buffer, maxChars)
   }
 
   if (isText(filename, mimeType)) {
