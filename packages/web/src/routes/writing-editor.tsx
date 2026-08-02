@@ -4,9 +4,10 @@ import { ArrowLeft, Download, Eye, FilePlus, FileText, History, MessageSquare, P
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
+import { LlmContent } from '@/components/LlmContent';
 import { Alert, Button, Card, Skeleton, Textarea } from '@/components/ui';
 import { api, ApiError } from '@/lib/api-client';
-import { cn, normalizeLlmText } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 
 interface DocDetail {
   id: string;
@@ -734,7 +735,7 @@ export function WritingEditorPage() {
                           : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
                       }`}
                     >
-                      <MarkdownRenderer content={normalizeLlmText(m.text || '')} />
+                      <LlmContent content={m.text || ''} />
                       {m._done === false && !m.text && (
                         <span className="animate-pulse">●</span>
                       )}

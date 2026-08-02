@@ -5,10 +5,10 @@ import { ArrowLeft, ChevronRight, FileText, Paperclip, Plus, Search, Trash2, Use
 import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { SkillsBar } from '@/components/SkillsBar';
-import { MarkdownRenderer } from '@/components/MarkdownRenderer';
+import { LlmContent } from '@/components/LlmContent';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/components/ui';
-import { cn, normalizeLlmText } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/api-client';
 import { useChatStore } from '@/stores/chat';
 import type { MemoryFinding, MemoryProjection, Patient, PatientDetail } from '@/lib/types';
@@ -543,7 +543,7 @@ export function PatientChatPage() {
                   <details className="mb-2">
                     <summary className="cursor-pointer text-xs text-text-tertiary">{t('chat.reasoning')}</summary>
                     <div className="mt-1 max-h-60 overflow-y-auto border-l-2 border-border pl-3">
-                      <MarkdownRenderer content={normalizeLlmText(m.reasoning)} />
+                      <LlmContent content={m.reasoning} />
                     </div>
                   </details>
                 )}
@@ -556,7 +556,7 @@ export function PatientChatPage() {
                     ))}
                   </div>
                 )}
-                <MarkdownRenderer content={normalizeLlmText(m.text || '')} />
+                <LlmContent content={m.text || ''} />
                 {m.isStreaming ? (
                   <span role="status" aria-label={t('chat.streaming')} className="animate-pulse">●</span>
                 ) : null}

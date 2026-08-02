@@ -8,10 +8,10 @@ import { useAuthStore } from '@/stores/auth';
 import { useChatStore, type ChatMessage } from '@/stores/chat';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
-import { MarkdownRenderer } from '@/components/MarkdownRenderer';
+import { LlmContent } from '@/components/LlmContent';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { Alert, Button, Badge, Textarea } from '@/components/ui';
-import { normalizeLlmText } from '@/lib/utils';
+
 
 export function ChatPage() {
   const { t } = useTranslation();
@@ -230,11 +230,11 @@ export function ChatPage() {
                     <details className="mb-2">
                       <summary className="cursor-pointer text-xs text-text-tertiary">{t('chat.reasoning')}</summary>
                       <div className="mt-1 max-h-60 overflow-y-auto border-l-2 border-border pl-3">
-                        <MarkdownRenderer content={normalizeLlmText(m.reasoning)} />
+                        <LlmContent content={m.reasoning} />
                       </div>
                     </details>
                   )}
-                  <MarkdownRenderer content={normalizeLlmText(m.text || '')} />
+                  <LlmContent content={m.text || ''} />
                   {m.download && (
                     <div className="mt-3 rounded-lg border border-border bg-surface p-3">
                       <div className="flex items-center gap-2 text-sm text-text-primary">
