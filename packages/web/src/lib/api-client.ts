@@ -5,7 +5,7 @@
  * Expand as more desktop-v2 features migrate to packages/web.
  */
 
-import type { AdminUser, AgentState, Article, AuthSession, ChatMessage, ChatSession, ChatStreamChunk, LlmCostDashboard, LlmStatus, LlmTestResult, LlmUpdateInput, LlmUpdateResult, MemoryProjection, Patient, PatientDetail, PublicConfig, QueueMetrics, SendChatOptions, TelemetryDashboard, TimelineEvent, UserProfile } from './types';
+import type { AdminUser, AgentState, ApprovalRequest, Article, AuditLogEntry, AuthSession, BrainStats, ChatMessage, ChatSession, ChatStreamChunk, IngestionJob, LlmCostDashboard, LlmStatus, LlmTestResult, LlmUpdateInput, LlmUpdateResult, MedicalRecordEntry, MedicalRecordEntryDraft, MemoryProjection, Patient, PatientDetail, PublicConfig, QueueMetrics, SendChatOptions, TelemetryDashboard, TimelineEvent, UserProfile } from './types';
 
 export const CLIENT_API_VERSION = 1;
 
@@ -273,6 +273,90 @@ class ApiClient {
 
   async deleteMedicalRecord(id: string): Promise<{deleted: boolean}> {
     return this.fetch(`/api/v1/medical-records/${id}`, { method: 'DELETE' });
+  }
+
+  /* ────────────────────────── medical record entries (Brain 2.0) ────────────────────────── */
+
+  async listMedicalRecordEntries(
+    patientHash: string,
+    filters?: { type?: MedicalRecordEntry['type']; status?: MedicalRecordEntry['status'] },
+  ): Promise<{ records: MedicalRecordEntry[] }> {
+    const params = new URLSearchParams();
+    if (filters?.type) params.set('type', filters.type);
+    if (filters?.status) params.set('status', filters.status);
+    const qs = params.toString();
+    return this.fetch(`/api/v1/patients/${encodeURIComponent(patientHash)}/medical-records${qs ? `?${qs}` : ''}`);
+  }
+
+  async createMedicalRecordEntry(patientHash: string, data: MedicalRecordEntryDraft): Promise<MedicalRecordEntry> {
+    return this.fetch(`/api/v1/patients/${encodeURIComponent(patientHash)}/medical-records`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateMedicalRecordEntry(
+    patientHash: string,
+    id: string,
+    data: Partial<MedicalRecordEntryDraft> & { rejectedReason?: string },
+  ): Promise<MedicalRecordEntry> {
+    return this.fetch(`/api/v1/patients/${encodeURIComponent(patientHash)}/medical-records/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteMedicalRecordEntry(patientHash: string, id: string): Promise<{deleted: boolean}> {
+    return this.fetch(`/api/v1/patients/${encodeURIComponent(patientHash)}/medical-records/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /* ────────────────────────── approvals / audit (Brain 2.0) ────────────────────────── */
+
+  async listPendingApprovals(filters?: { targetType?: string }): Promise<{ requests: ApprovalRequest[] }> {
+    const qs = filters?.targetType ? `?targetType=${encodeURIComponent(filters.targetType)}` : '';
+    return this.fetch(`/api/v1/approvals/pending${qs}`);
+  }
+
+  async confirmApproval(id: string): Promise<ApprovalRequest> {
+    return this.fetch(`/api/v1/approvals/${encodeURIComponent(id)}/confirm`, { method: 'POST' });
+  }
+
+  async rejectApproval(id: string, reason: string): Promise<ApprovalRequest> {
+    return this.fetch(`/api/v1/approvals/${encodeURIComponent(id)}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async listAuditLogs(filters?: { targetType?: string; targetId?: string; actor?: string }): Promise<{ logs: AuditLogEntry[] }> {
+    const params = new URLSearchParams();
+    if (filters?.targetType) params.set('targetType', filters.targetType);
+    if (filters?.targetId) params.set('targetId', filters.targetId);
+    if (filters?.actor) params.set('actor', filters.actor);
+    const qs = params.toString();
+    return this.fetch(`/api/v1/audit${qs ? `?${qs}` : ''}`);
+  }
+
+  /* ────────────────────────── ingestion jobs (Brain 2.0) ────────────────────────── */
+
+  async listIngestionJobs(patientHash?: string, filters?: { status?: IngestionJob['status'] }): Promise<{ jobs: IngestionJob[] }> {
+    const params = new URLSearchParams();
+    if (patientHash) params.set('patient_hash', patientHash);
+    if (filters?.status) params.set('status', filters.status);
+    const qs = params.toString();
+    return this.fetch(`/api/v1/ingestion/jobs${qs ? `?${qs}` : ''}`);
+  }
+
+  async getIngestionJobStatus(jobId: string): Promise<IngestionJob> {
+    return this.fetch(`/api/v1/ingestion/jobs/${encodeURIComponent(jobId)}`);
+  }
+
+  /* ────────────────────────── brain overview (Brain 2.0) ────────────────────────── */
+
+  async getBrainStats(): Promise<BrainStats> {
+    return this.fetch('/api/v1/brain/stats');
   }
 
   async archivePatient(hash: string): Promise<{ patient_hash: string; archived_at: string }> {
