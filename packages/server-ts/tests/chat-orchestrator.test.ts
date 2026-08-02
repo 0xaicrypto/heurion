@@ -197,7 +197,7 @@ describe('ChatOrchestrator — postTurn regressions', () => {
     // Extraction is event-driven (incremental length / key signals), not
     // turn-count based — six trivial turns never trigger it.
     const extractionCalls = deepseekChat.mock.calls.filter(
-      (call) => typeof call[0][0]?.content === 'string' && call[0][0].content.includes('clinical fact extractor'),
+      (call) => typeof call[0][0]?.content === 'string' && call[0][0].content.includes('clinical memory extractor'),
     )
     expect(extractionCalls).toHaveLength(0)
   })
@@ -206,7 +206,16 @@ describe('ChatOrchestrator — postTurn regressions', () => {
     const { deepseekChat } = await import('../src/common/llm.js')
     vi.mocked(deepseekChat).mockResolvedValue('[{"category":"fact","importance":5,"content":"Extracted fact","sourceType":"general"}]')
 
-    const { orchestrator } = createTestOrchestrator()
+    const { orchestrator, eventLog } = createTestOrchestrator()
+
+    eventLog.append({
+      timestamp: Date.now() / 1000,
+      eventType: 'user_message',
+      content: '记住：患者对青霉素过敏',
+      metadata: {},
+      agentId: 'user_1',
+      sessionId: 'session_1',
+    })
 
     await orchestrator.turn({
       userId: 'user_1',
@@ -222,7 +231,7 @@ describe('ChatOrchestrator — postTurn regressions', () => {
     await new Promise((r) => setTimeout(r, 2500))
 
     const extractionCalls = deepseekChat.mock.calls.filter(
-      (call) => typeof call[0][0]?.content === 'string' && call[0][0].content.includes('clinical fact extractor'),
+      (call) => typeof call[0][0]?.content === 'string' && call[0][0].content.includes('clinical memory extractor'),
     )
     expect(extractionCalls.length).toBeGreaterThanOrEqual(1)
   })
