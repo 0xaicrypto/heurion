@@ -174,6 +174,37 @@ opencode：context 面板显示 cache read/write tokens。
 
 ---
 
+## 6.5 与现有知识库的协同
+
+新设计与现有知识库（`docs/design/knowledge-base-design.md` v2.2）是**互补关系**：
+知识库是跨会话的长期事实存储（可版本化、可审批），本设计的优化集中在单会话运行时。
+
+```
+知识库（现有，跨会话）                会话运行时（新设计，单会话）
+Facts / Articles / Persona / Gaps ←── 每轮上下文组装（R1）
+T+1 facts 提取、T+30s 文章合成   ←── 压缩的"安全网"（R2）
+expand() 按需加载（§4.3，未实现）←── 工具输出限量（T1）/ load_skill（S1）
+文章 / gap / feedback 审批流转   ←── 权限规则集（T2）
+```
+
+### 逐项配合
+
+| 新设计项 | 与知识库的配合 |
+|---|---|
+| **R1 增量更新** | KB 是天然 Context Source：`kb/facts`（版本化 `v{N}.json` → hash 变更检测）、`kb/articles`（`status=current`）、`kb/persona`（动态合成，可缓存）。KB §4.2 三级压缩即现有 `context-compressor.ts`，R1 将其正式化为 facts 源的渲染器 |
+| **R2 锚定压缩** | KB 是压缩的安全网：事实提取管道（T+1/T+30s）已把对话沉淀入库，压缩可放心裁剪旧对话。闭环①：压缩摘要（患者重要信息/决策）→ facts 提取（`sourceType: patient`）双保险入库；闭环②：锚定摘要更新时以 KB 文章/事实为基线，避免从零重建 |
+| **T1 输出限量** | KB 查询（search/gaps/article）返回的文章全文是"大输出"典型；配合 KB §4.3 的 `expand()` 按需加载（**该模式目前未实现**），超长文章走限量 + 展开 |
+| **S1 技能加载** | 正交：KB = 陈述性知识（是什么），Skills = 程序性知识（怎么做）。建议统一为按需加载工具族：`expand(article)` + `load_skill(name)` |
+| **T2 权限规则** | KB 已有审批语义（文章 current/stale/superseded、gap resolve/ignore、sidecar feedback saveAll）——规则集可覆盖"谁可确认文章合成 / 谁可 resolve gap"，替换隐式逻辑 |
+| **U3 用量 UI** | 堆叠条应包含 `kb/facts`、`kb/articles` 分段，直观展示知识库上下文占比 |
+
+### 现状缺口
+
+KB 设计 §4.3 的"分层加载 expand()"从未实现（现有命令只有 remember / search / summarize / gaps）。
+建议将 `expand(article)` 并入 S1（#106），实现统一的按需加载工具族。
+
+---
+
 ## 7. 不建议照搬的部分
 
 - **快照/patch 回滚**：临床场景由 MedicalRecordEntry 版本控制 + 审批流程替代，更合规。
