@@ -26,7 +26,7 @@ export async function settingsRouter(app: FastifyInstance) {
     ])
     return {
       provider: (await getSetting(userId, 'llm_provider')) || 'deepseek',
-      model: (await getSetting(userId, 'llm_model')) || 'deepseek-v4-pro',
+      model: (await getSetting(userId, 'llm_model')) || 'deepseek-v4-flash',
       hasGeminiKey: !!gemini, hasOpenaiKey: !!openai, hasAnthropicKey: !!anthropic,
       hasKimiKey: !!kimi, hasDeepseekKey: !!deepseek || !!process.env.DEEPSEEK_API_KEY,
       activeKeySource: deepseek ? 'db' : (process.env.DEEPSEEK_API_KEY ? 'env' : 'none'),
@@ -37,7 +37,7 @@ export async function settingsRouter(app: FastifyInstance) {
   })
 
   app.post('/api/v1/settings/llm/test', async () => {
-    return { ok: true, provider: 'deepseek', model: 'deepseek-v4-pro', latencyMs: 500 }
+    return { ok: true, provider: 'deepseek', model: 'deepseek-v4-flash', latencyMs: 500 }
   })
 
   app.put('/api/v1/settings/llm', async (request) => {
