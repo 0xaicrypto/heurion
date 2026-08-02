@@ -93,6 +93,9 @@ export interface TurnResult {
   kbCommand?: boolean
 }
 
+// K2 debounce: one pending extraction per scope, merged within 2s.
+const pendingExtractions = new Map<string, ReturnType<typeof setTimeout>>()
+
 export class ChatOrchestrator {
   private projection: MemoryProjection
   private gapService = new PrismaKnowledgeGapService()
@@ -308,30 +311,110 @@ export class ChatOrchestrator {
     }
   }
 
-  // #2: Extract facts automatically using DeepSeek
+  // #2: Extract facts automatically using DeepSeek (K1/K2: incremental
+  // cursor + event-driven trigger, debounced 2s per scope).
   async postTurn(userId: string, sessionId: string, userMessage: string, patientHash?: string) {
-    const recentEvents = this.eventLog.query({ sessionId, limit: 6 }).reverse()
-    const conversation = recentEvents
-      .map(e => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${e.content.slice(0, 500)}`)
-      .join('\n')
-
-    // A "turn" is one complete user-message + assistant-response pair.
-    // EventLog stores each as a separate event, so divide by 2.
     const sessionEvents = this.eventLog.query({ sessionId })
     const turnCount = Math.floor(sessionEvents.length / 2)
     this.episodesStore.upsert(sessionId, userMessage.slice(0, 150), turnCount)
 
-    const totalTurns = turnCount
-    if (totalTurns % 5 === 0 && totalTurns > 0) {
-      try {
-        const apiKey = getApiKey()
+    await this.maybeScheduleIncrementalExtraction(userId, sessionId, patientHash)
+
+    // Detect knowledge gaps on every turn — queries with no matching facts
+    try {
+      const factList = this.memory
+        ? this.memory.graph.getCurrentNodesByType('fact').filter((n): n is import('../../memory/memory.types').FactNode => n.type === 'fact')
+        : this.factsStore.all()
+      const relatedFacts = factList.filter(f =>
+        userMessage.toLowerCase().split(/\s+/)
+          .map((w: string) => w.replace(/[^\p{L}\p{N}]/gu, ''))
+          .filter(Boolean)
+          .some((w: string) => w.length > 3 && f.content.toLowerCase().includes(w))
+      )
+      if (relatedFacts.length === 0 && userMessage.length > 15) {
+        await this.gapService.create({
+          userId,
+          workspaceId: userId,
+          content: userMessage.slice(0, 200),
+          source: 'chat',
+          sourceId: sessionId,
+        })
+        await this.telemetry.record({
+          userId,
+          workspaceId: userId,
+          category: 'gap',
+          action: 'created',
+          metadata: { source: 'chat', sourceId: sessionId },
+        }).catch(() => {})
+        console.log(`[GAP] Detected: "${userMessage.slice(0, 80)}"`)
+      }
+    } catch (err) {
+      console.log('[GAP] Detection skipped:', (err as Error).message.slice(0, 100))
+    }
+  }
+
+  /** K1/K2: read the scope cursor, check the incremental segment and
+   *  schedule a debounced extraction when it qualifies. */
+  private async maybeScheduleIncrementalExtraction(
+    userId: string,
+    sessionId: string,
+    patientHash?: string,
+  ): Promise<void> {
+    try {
+      const { getExtractedUptoIdx, scopeKeyOf, shouldExtractIncrement } = await import('../../memory/extraction-cursor.js')
+      const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string } = { userId, scopeType: patientHash ? 'patient' : 'global', patientHash }
+      const fromIdx = await getExtractedUptoIdx(scopeKey)
+      const incremental = this.eventLog
+        .query({ sessionId, afterIdx: fromIdx })
+        .filter((e) => e.eventType === 'user_message' || e.eventType === 'assistant_response')
+        .map((e) => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
+        .join('\n')
+
+      if (!shouldExtractIncrement(incremental)) return
+      const toIdx = this.eventLog.count()
+
+      const mapKey = scopeKeyOf(scopeKey)
+      const existing = pendingExtractions.get(mapKey)
+      if (existing) clearTimeout(existing)
+      pendingExtractions.set(
+        mapKey,
+        setTimeout(() => {
+          pendingExtractions.delete(mapKey)
+          this.runIncrementalExtraction(userId, sessionId, patientHash, fromIdx, toIdx)
+            .catch((err) => console.log('[EVOLVE] Extraction failed:', (err as Error).message.slice(0, 120)))
+        }, 2000).unref?.() as ReturnType<typeof setTimeout>,
+      )
+    } catch (err) {
+      console.log('[EVOLVE] Increment check skipped:', (err as Error).message.slice(0, 120))
+    }
+  }
+
+  private async runIncrementalExtraction(
+    userId: string,
+    sessionId: string,
+    patientHash: string | undefined,
+    fromIdx: number,
+    toIdx: number,
+  ) {
+    const { advanceExtractedUptoIdx, scopeKeyOf } = await import('../../memory/extraction-cursor.js')
+    const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string } = { userId, scopeType: patientHash ? 'patient' : 'global', patientHash }
+    const incrementalEvents = this.eventLog
+      .query({ sessionId, afterIdx: fromIdx })
+      .filter((e) => e.eventType === 'user_message' || e.eventType === 'assistant_response')
+    const conversation = incrementalEvents
+      .map(e => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
+      .join('\n')
+    const totalTurns = toIdx
+
+    try {
+      const apiKey = getApiKey()
 
         // Gather context so extracted facts are grounded and not duplicated.
         const existingFacts = this.factsStore.all()
         const relatedFacts = existingFacts
           .filter(f =>
             (patientHash && f.patientHash === patientHash) ||
-            userMessage.toLowerCase().split(/\s+/).some(w => w.length > 3 && f.content.toLowerCase().includes(w))
+            conversation.toLowerCase().split(/\s+/).some((w: string) => w.length > 3 && f.content.toLowerCase().includes(w))
           )
           .slice(0, 10)
 
@@ -469,44 +552,15 @@ Return ONLY JSON: { "title": "...", "content": "..." }`
               }
             } catch (err) {
               console.log('[KNOWLEDGE] Article generation skipped:', (err as Error).message.slice(0, 100))
-            }
           }
         }
-      } catch (err) {
-        console.log('[EVOLVE] Fact extraction skipped:', (err as Error).message.slice(0, 100))
       }
-    }
-
-    // Detect knowledge gaps on every turn — queries with no matching facts
-    try {
-      const factList = this.memory
-        ? this.memory.graph.getCurrentNodesByType('fact').filter((n): n is import('../../memory/memory.types').FactNode => n.type === 'fact')
-        : this.factsStore.all()
-      const relatedFacts = factList.filter(f =>
-        userMessage.toLowerCase().split(/\s+/)
-          .map(w => w.replace(/[^\p{L}\p{N}]/gu, ''))
-          .filter(Boolean)
-          .some(w => w.length > 3 && f.content.toLowerCase().includes(w))
-      )
-      if (relatedFacts.length === 0 && userMessage.length > 15) {
-        await this.gapService.create({
-          userId,
-          workspaceId: userId,
-          content: userMessage.slice(0, 200),
-          source: 'chat',
-          sourceId: sessionId,
-        })
-        await this.telemetry.record({
-          userId,
-          workspaceId: userId,
-          category: 'gap',
-          action: 'created',
-          metadata: { source: 'chat', sourceId: sessionId },
-        }).catch(() => {})
-        console.log(`[GAP] Detected: "${userMessage.slice(0, 80)}"`)
-      }
+      // Advance the cursor on success (extraction ran; a throw above skips
+      // the advance so the segment is retried).
+      await advanceExtractedUptoIdx(scopeKey, toIdx)
+      console.log(`[EVOLVE] Increment extracted (idx ${fromIdx} → ${toIdx})`)
     } catch (err) {
-      console.log('[GAP] Detection skipped:', (err as Error).message.slice(0, 100))
+      console.log('[EVOLVE] Fact extraction skipped:', (err as Error).message.slice(0, 100))
     }
   }
 

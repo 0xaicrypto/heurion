@@ -380,6 +380,18 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+model KbExtractCursor {
+  id               String @id @default(cuid())
+  userId           String @map("user_id")
+  scopeType        String @map("scope_type") // 'patient' | 'global' | 'study'
+  patientHash      String @default("") @map("patient_hash") // '' = scope-level cursor
+  extractedUptoIdx Int    @map("extracted_upto_idx")
+  updatedAt        String @map("updated_at")
+
+  @@unique([userId, scopeType, patientHash])
+  @@map("kb_extract_cursors")
+}
+
 model MemoryProposal {
   id             String  @id @default(cuid())
   userId         String  @map("user_id")
