@@ -1,5 +1,5 @@
 import { createExecutionPlaneService, type ExecutionJobStatus } from '../execution/execution-plane.service.js'
-import { handleSidecarRequest } from '../execution/sidecar-chat-handler.js'
+import { handleSidecarRequest, type ChatHistoryMessage } from '../execution/sidecar-chat-handler.js'
 import { buildPayload, matchIntent, type PayloadBuildInput } from './plugin-capability.service.js'
 import { buildInputSummary, recordPluginInvocation } from './plugin-audit-log.service.js'
 
@@ -10,6 +10,8 @@ export interface PluginChatHandlerOptions {
   workspaceId?: string
   text: string
   patient?: PayloadBuildInput['patient']
+  /** Prior conversation messages in this session, injected as context. */
+  history?: ChatHistoryMessage[]
   telemetryContext?: { userId: string; workspaceId?: string; action: string }
   send: (event: Record<string, unknown>) => void
 }
@@ -45,6 +47,7 @@ async function pollJob(jobId: string, send: (event: Record<string, unknown>) => 
 export async function handlePluginChatRequest(options: PluginChatHandlerOptions): Promise<PluginChatResult> {
   const { userId, text, patient, send } = options
   const workspaceId = options.workspaceId || userId
+  const history = options.history
   const telemetryContext = options.telemetryContext
     ? { ...options.telemetryContext, workspaceId: options.telemetryContext.workspaceId || workspaceId }
     : undefined
@@ -59,6 +62,7 @@ export async function handlePluginChatRequest(options: PluginChatHandlerOptions)
       workspaceId,
       text,
       patient,
+      history,
       telemetryContext,
     })
     return {
@@ -82,6 +86,7 @@ export async function handlePluginChatRequest(options: PluginChatHandlerOptions)
   const payload = await buildPayload(match.pluginId, match.toolName, {
     text,
     patient,
+    history,
     telemetryContext,
   })
 
