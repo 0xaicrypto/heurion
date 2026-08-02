@@ -85,3 +85,32 @@ describe('MarkdownRenderer', () => {
     expect(container.textContent).toBe('');
   });
 });
+
+describe('normalizeLlmText — single-line block recovery', () => {
+  it('recovers headings, bullets and hr glued onto one line', () => {
+    const out = normalizeLlmText('开头文字---## 一、标题内容**1. 项目**- 子项一- 子项二**2. 项目二**> 引用');
+    expect(out).toContain('开头文字\n\n---\n\n## 一、标题内容');
+    expect(out).toContain('**1. 项目**\n\n- 子项一');
+    expect(out).toContain('\n- 子项二');
+    expect(out).toContain('**2. 项目二**\n\n> 引用');
+  });
+
+  it('renders a single-line pasted markdown block as structured HTML', () => {
+    const { container: c2 } = render(
+      <MarkdownRenderer content={normalizeLlmText('前言---## 标题- 条目A- 条目B')} />,
+    );
+    expect(c2.querySelector('h2')).not.toBeNull();
+    expect(c2.querySelector('hr')).not.toBeNull();
+    expect(c2.querySelectorAll('li').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('leaves multi-line content untouched', () => {
+    const md = '# 标题\n\n- 条目一\n- 条目二\n\n> 引用';
+    expect(normalizeLlmText(md)).toBe(md);
+  });
+
+  it('does not split numbers like 1-5 minutes', () => {
+    const out = normalizeLlmText('每次照射仅 1-5 分钟，剂量 1.8-2 Gy 常规分割。');
+    expect(out).toBe('每次照射仅 1-5 分钟，剂量 1.8-2 Gy 常规分割。');
+  });
+});

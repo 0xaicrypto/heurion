@@ -20,10 +20,30 @@ export function formatRelativeTime(iso: string, locale?: string): string {
 }
 
 /**
+ * Recover block-level markdown structure when pasted/LLM content arrives as
+ * one continuous line (line breaks lost on copy). Inserts breaks before
+ * block markers: headings, list items, blockquotes and thematic breaks.
+ * Fast path: already-multi-line content is left untouched.
+ */
+function recoverBlockBreaks(text: string): string {
+  // Interior newline check: a single trailing newline must not disable recovery.
+  if (text.slice(1, -1).includes('\n')) return text;
+  return text
+    // headings: "text## 标题" → "text\n\n## 标题" (insert only at marker start)
+    .replace(/(?<![#\n|])(?=#{1,6} )/g, '\n\n')
+    // lists / blockquote: "**1. x**- 项" → break before "- 项"
+    // (numbered "1. x" is excluded — it collides with bold labels like
+    // "**1. 门诊评估**" and decimal text; keep those inline)
+    .replace(/(?<![\n|])(?=(?:- |\* |> ))/g, '\n\n')
+    // thematic break: "text---## x" → "text\n\n---"
+    .replace(/(?<![\n|])(?=---(?![\w]))/g, '\n\n');
+}
+
+/**
  * Normalize LLM output before markdown rendering. LLMs commonly emit
  * escape sequences as literal text (`\n`), omit blank lines between list
- * items (which CommonMark then collapses into one paragraph), and pad
- * output with excess blank lines.
+ * items (which CommonMark then collapses into one paragraph), pad output
+ * with excess blank lines, or glue blocks onto a single line.
  */
 export function normalizeLlmText(input: string): string {
   if (!input) return '';
@@ -34,6 +54,9 @@ export function normalizeLlmText(input: string): string {
   text = text.replace(/\\t/g, '\t');
   text = text.replace(/\\"/g, '"');
   text = text.replace(/\\'/g, "'");
+
+  // Recover block markers glued onto a single line (paste / copy artifacts).
+  text = recoverBlockBreaks(text);
 
   // Collapse 3+ consecutive blank lines to 2
   text = text.replace(/\n{3,}/g, '\n\n');
