@@ -96,6 +96,7 @@ The first official plugin is **MedSci-Sidecar** — it generates DOCX, PPTX, tab
 - [`docs/design/PLUGIN_MARKETPLACE.md`](docs/design/PLUGIN_MARKETPLACE.md)
 - [`docs/design/PLUGIN_MANIFEST_SPEC.md`](docs/design/PLUGIN_MANIFEST_SPEC.md)
 - [`docs/design/MEDSCI_SIDECAR.md`](docs/design/MEDSCI_SIDECAR.md)
+- Chat context budget & auto-compaction: [`docs/design/CHAT_CONTEXT_COMPACTION.md`](docs/design/CHAT_CONTEXT_COMPACTION.md)
 - Worker implementation: `packages/server/heurion_worker/`
 - System templates: `packages/server/heurion_worker/templates/`
 - Render API: `POST /api/v1/execution/render` · Job status: `GET /api/v1/execution/jobs/:id` · Download: `GET /api/v1/execution/files/:fileId/download`
