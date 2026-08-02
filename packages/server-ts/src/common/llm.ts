@@ -34,7 +34,7 @@ export interface DeepSeekCallOptions {
 }
 
 interface DeepSeekChunk {
-  choices?: Array<{ delta?: { content?: string; role?: string }; finish_reason?: string | null }>
+  choices?: Array<{ delta?: { content?: string; reasoning_content?: string; role?: string }; finish_reason?: string | null }>
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
 }
 
@@ -98,12 +98,17 @@ async function recordUsage(
 
 /**
  * Non-streaming call — used for simple completions and tool calls
+ *
+ * ``onReasoning`` is invoked (if provided) when the model streams a
+ * reasoning_content field (DeepSeek reasoner models). Callers that
+ * want to surface the thinking process live pass a callback.
  */
 export async function deepseekChat(
   messages: ChatMessage[],
   apiKey: string,
   options: DeepSeekCallOptions = {},
   tools?: Array<{ type: string; function: { name: string; description: string; parameters: Record<string, unknown> } }>,
+  onReasoning?: (text: string) => void,
 ): Promise<string> {
   const model = options.model || DEEPSEEK_CHAT_MODEL
   const body: any = {
@@ -127,6 +132,13 @@ export async function deepseekChat(
   }
   const json = await res.json()
   const choice = json.choices?.[0]
+
+  // Surface the model's reasoning_content (deepseek-reasoner / v4-pro)
+  // to callers that want to display the thinking process live.
+  const reasoning = choice?.message?.reasoning_content
+  if (reasoning && onReasoning) {
+    onReasoning(reasoning)
+  }
 
   // Handle tool_calls
   if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls) {
@@ -152,11 +164,16 @@ export async function deepseekChat(
 
 /**
  * Streaming call — yields chunks via AsyncGenerator
+ *
+ * ``onReasoning`` (if provided) is called for each reasoning_content
+ * delta so callers can stream the thinking process to the client
+ * alongside the final answer.
  */
 export async function* deepseekStream(
   messages: ChatMessage[],
   apiKey: string,
   options: DeepSeekCallOptions = {},
+  onReasoning?: (text: string) => void,
 ): AsyncGenerator<string> {
   const model = options.model || DEEPSEEK_PREMIUM_MODEL
   const res = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
@@ -201,7 +218,12 @@ export async function* deepseekStream(
             finalUsage = chunk.usage
             continue
           }
-          const content = chunk.choices?.[0]?.delta?.content
+          const delta = chunk.choices?.[0]?.delta
+          const reasoningContent = delta?.reasoning_content
+          if (reasoningContent && onReasoning) {
+            onReasoning(reasoningContent)
+          }
+          const content = delta?.content
           if (content) {
             completionChars += content.length
             yield content
