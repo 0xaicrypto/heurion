@@ -416,30 +416,44 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           break
         }
 
-        // Parse JSON response — DeepSeek returns plain text; check for function calls in the text
-        const toolCallMatch = callResult.match(/<tool_call>\s*(\{[^}]+})\s*<\/tool_call>/)
-        if (toolCallMatch) {
-          try {
-            const toolCall = JSON.parse(toolCallMatch[1])
-            const toolName = toolCall.name || toolCall.tool
-            const toolArgs = toolCall.arguments || toolCall.args || {}
+        // Parse JSON response — DeepSeek returns plain text; check for function calls in the text.
+        // Match all <tool_call> blocks (each may contain nested JSON in `arguments`).
+        const toolCallBlocks = callResult.match(/<tool_call>([\s\S]*?)<\/tool_call>/g)
+        if (toolCallBlocks && toolCallBlocks.length > 0) {
+          let executedAny = false
+          let toolError: string | null = null
+          for (const block of toolCallBlocks) {
+            try {
+              const toolCall = JSON.parse(block.replace(/<\/?tool_call>/g, '').trim())
+              const toolName = toolCall.name || toolCall.tool
+              const toolArgs = toolCall.arguments || toolCall.args || {}
+              executedAny = true
 
-            send({ type: 'tool_call', tool: toolName, args: toolArgs })
+              send({ type: 'tool_call', tool: toolName, args: toolArgs })
 
-            const result = await toolRegistry.execute(toolName, toolArgs)
+              const result = await toolRegistry.execute(toolName, toolArgs)
 
-            currentMessages.push({ role: 'assistant', content: callResult })
-            currentMessages.push({
-              role: 'user',
-              content: `Tool "${toolName}" returned: ${result.success ? (result.output || 'Success') : `Error: ${result.error}`}`,
-            })
+              currentMessages.push({ role: 'assistant', content: callResult })
+              currentMessages.push({
+                role: 'user',
+                content: `Tool "${toolName}" returned: ${result.success ? (result.output || 'Success') : `Error: ${result.error}`}`,
+              })
 
-            if (!result.success) {
-              finalContent = `I tried to use ${toolName} but encountered an error: ${result.error}`
+              if (!result.success) {
+                toolError = result.error ?? 'Unknown tool error'
+                break
+              }
+            } catch (err) {
+              console.log('[CHAT] Tool call parse failed:', (err as Error).message)
+            }
+          }
+          if (executedAny) {
+            if (toolError) {
+              finalContent = `I tried to use a tool but encountered an error: ${toolError}`
               break
             }
             continue
-          } catch { }
+          }
         }
 
         finalContent = callResult

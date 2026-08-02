@@ -142,11 +142,13 @@ export async function deepseekChat(
 
   // Handle tool_calls
   if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls) {
+    const blocks: string[] = []
     for (const tc of choice.message.tool_calls) {
       if (tc.type === 'function') {
-        return `<tool_call>${JSON.stringify({ name: tc.function.name, arguments: JSON.parse(tc.function.arguments) })}</tool_call>`
+        blocks.push(`<tool_call>${JSON.stringify({ name: tc.function.name, arguments: JSON.parse(tc.function.arguments) })}</tool_call>`)
       }
     }
+    if (blocks.length > 0) return blocks.join('\n')
   }
 
   const content = choice?.message?.content || ''
