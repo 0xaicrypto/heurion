@@ -99,6 +99,46 @@ describe('DeepSeek chat provider', () => {
     const provider = new DeepSeekChatProvider()
     await expect(provider.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(AiProviderError)
   })
+
+  test('retries transient 429 then succeeds', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn()
+        .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+        .mockResolvedValueOnce(mockJsonResponse({ choices: [{ message: { content: 'recovered' } }] })),
+    )
+    const provider = new DeepSeekChatProvider()
+    const result = await provider.chat([{ role: 'user', content: 'hi' }])
+    expect(result.content).toBe('recovered')
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2)
+  })
+
+  test('retries 500 up to MAX_RETRIES then throws', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 500 })))
+    const provider = new DeepSeekChatProvider()
+    await expect(provider.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(AiProviderError)
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(3)
+  })
+
+  test('does not retry non-transient 400', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('bad request', { status: 400 })))
+    const provider = new DeepSeekChatProvider()
+    await expect(provider.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(AiProviderError)
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
+  })
+
+  test('retries network failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn()
+        .mockRejectedValueOnce(new TypeError('fetch failed'))
+        .mockResolvedValueOnce(mockJsonResponse({ choices: [{ message: { content: 'ok' } }] })),
+    )
+    const provider = new DeepSeekChatProvider()
+    const result = await provider.chat([{ role: 'user', content: 'hi' }])
+    expect(result.content).toBe('ok')
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('Gemini vision provider', () => {
