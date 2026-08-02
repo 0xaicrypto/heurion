@@ -5,7 +5,7 @@
 **范围：** `packages/web`、`packages/server-ts`  
 **相关文档：**
 - `docs/adr/ADR-003-web-ui-saas-pivot.md`（浏览器优先的 UI 架构决策）
-- `docs/design/MEMORY_KNOWLEDGE_EVOLUTION_REFACTOR.md`（记忆/知识/进化系统重构）
+- `docs/design/BRAIN2_MEMORY_LIFECYCLE.md`（记忆生命周期：提取/压缩/审批）
 - `docs/design/knowledge-base-design.md`（知识库产品设计）
 
 ---

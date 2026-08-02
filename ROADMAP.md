@@ -36,7 +36,7 @@ README. Tests split by domain too.
 
 ### Chat context budget & auto-compaction
 
-Design: [`docs/design/CHAT_CONTEXT_COMPACTION.md`](docs/design/CHAT_CONTEXT_COMPACTION.md).
+Design: [`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMORY_LIFECYCLE.md)（§5–§6）. — 原 CHAT_CONTEXT_COMPACTION 已并入
 
 Token-budgeted conversation history with automatic compression:
 

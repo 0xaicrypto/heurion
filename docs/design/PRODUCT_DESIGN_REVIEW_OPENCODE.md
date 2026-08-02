@@ -50,8 +50,7 @@ source 消失走 removal renderer；加载失败 = unavailable（保留旧值，
 - 工具结果序列化进摘要时截断到 2000 字符
 - 摘要生成失败 → 静默跳过，不影响主流程
 
-**Heurion**：#96 是硬裁剪 + 提示占位；`CHAT_CONTEXT_COMPACTION.md` 设计稿用的是
-"生成 JSON 摘要"（decisions/pending/values）。**建议吸收**：
+**Heurion**：#96 是硬裁剪 + 提示占位；`BRAIN2_MEMORY_LIFECYCLE.md` §6 已修订压缩设计（锚定摘要 + 审核闭环）。**建议吸收**：
 - 摘要改为**锚定更新**（存 summary+recent，下次更新而非重建）——省 token 且不丢旧事实
 - 模板映射为临床版：Objective / 患者重要信息 / 决策与理由 / 完成 / 进行中 / 阻塞 / 下一步 / 相关文件与检查
 - 触发用 `MODEL_CONTEXT_WINDOW - max(output, buffer)`，替代固定 8000
@@ -124,7 +123,7 @@ opencode：连续 read/grep/glob 合并为一行 "Gathering context · 5 files"�
 ### U3. 上下文用量圆环 + 构成堆叠条 — 中（与 C5 呼应）
 opencode：顶栏 16px 百分比圆环（hover 显示费用/用量/tokens），详情面板按
 system/user/assistant/tool 分色堆叠条。
-**建议**：按 CHAT_CONTEXT_COMPACTION C5 实现 `context_usage` chunk 后，UI 直接采用
+**建议**：按 BRAIN2_MEMORY_LIFECYCLE 实现 `context_usage` chunk 后，UI 直接采用
 圆环 + 堆叠条；顺带展示 cache read/write（DeepSeek 有 context caching）。
 
 ### U4. Compaction 分隔线 — 低
@@ -164,7 +163,7 @@ opencode：context 面板显示 cache read/write tokens。
 
 | 优先级 | 项 | 预估 |
 |---|---|---|
-| P0 | R1 上下文增量更新、R2 锚定压缩（改 CHAT_CONTEXT_COMPACTION 设计） | 3–4d |
+| P0 | R1 上下文增量更新、R2 锚定压缩（BRAIN2_MEMORY_LIFECYCLE §6） | 3–4d |
 | P0 | U1 流式 markdown 块投影 + 节流 | 2–3d |
 | P1 | T1 工具输出限量、R3 工具调用落库 | 2–3d |
 | P1 | U3 context 圆环 + 堆叠条（C5）、U2 工具折叠 | 2d |
