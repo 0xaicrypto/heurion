@@ -167,32 +167,37 @@ scope.studyId 时:
 
 ### 4.4 会话管理（多会话 + 开启/关闭）
 
-会话是对话窗口，记忆按 scope 聚合跨会话持久。**一个用户在一个 scope 下可有多个会话，会话由用户显式开启/关闭。**
+会话是对话窗口，记忆按 scope 聚合跨会话持久。**多会话仅用于跨患者全局 chat
+（scope='global'）；患者问诊 chat 保持单会话（每个患者一个固定会话）。**
 
 ```
 Session 实体（扩展现有 nexus_sessions 表）:
-  id / userId / scope ('global'|'patient'|'study')
-  patientHash? / studyId?          // scope 为 patient/study 时
-  title                            // 用户可命名（如"8月2日随访"）
+  id / userId / scope ('global' | 'patient')
+  patientHash?                    // scope 为 patient 时（固定一个/患者）
+  title                           // 全局会话可命名（如"肺癌研究讨论"）
   status ('open' | 'closed')
-  extractedUptoIdx                 // 提取游标（§5.1），随会话推进
+  extractedUptoIdx                // 提取游标（§5.1），随会话推进
   createdAt / closedAt / lastMessageAt
 
-生命周期:
-  开启: 用户"新建会话" → POST /api/v1/sessions（scope+title, status=open）
-        会话列表可选择/切换（同一 scope 多个会话并行）
+scope 规则:
+  global: 一个用户可有多个会话，显式开启/关闭/切换
+  patient: 每患者一个固定会话（现有 patient-{hash} 语义保留），
+           关闭患者会话 = 结束问诊（仍触发 summarize，但不可新建多会话）
+  study:  暂不开放（科研 chat 落地后再评估）
+
+生命周期（global 会话）:
+  开启: "新建会话" → POST /api/v1/sessions（title, scope=global, status=open）
   进行: 消息写入该 session 的事件日志；提取游标按 session 推进
-  关闭: 用户"关闭会话" → 状态置 closed（不可再写）
+  关闭: "关闭会话" → status=closed（不可再写）
         → 触发 summarize(sinceIdx) → proposals 进 pending（§6 闭环）
         → 记忆沉淀到 scope（不依赖会话存在）
 
-兼容: 无显式会话时回退 scope 默认会话
-      （保持现有 global-{userId} / patient-{hash} 语义，视为默认会话）
+兼容: 未选择会话时回退默认全局会话（global-{userId}），行为与现状一致
 ```
 
 **关键点**：关闭会话是"会话结束"的明确信号——它触发 summarize → pending 审核，
 取代现在"压缩时才总结"的隐式时机。压缩（长会话中途）与关闭（会话终点）走同一条
-summarize 路径。
+summarize 路径。患者会话的"关闭"仅作为问诊结束的总结时机，不引入多会话管理。
 
 ---
 
