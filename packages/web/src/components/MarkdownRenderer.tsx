@@ -10,7 +10,7 @@ interface Props {
   className?: string;
 }
 
-function CodeBlock({ lang, text }: { lang: string; text: string }) {
+export function CodeBlock({ lang, text }: { lang: string; text: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -20,6 +20,12 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
       setTimeout(() => setCopied(false), 1500);
     } catch { /* clipboard unavailable */ }
   };
+
+  const displayText = lang === 'json'
+    ? (() => {
+        try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
+      })()
+    : text;
 
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-border bg-surface">
@@ -35,7 +41,7 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
         </button>
       </div>
       <pre className="overflow-x-auto p-3 text-sm">
-        <code className="whitespace-pre-wrap font-mono text-text-primary">{text}</code>
+        <code className="whitespace-pre-wrap font-mono text-text-primary">{displayText}</code>
       </pre>
     </div>
   );
