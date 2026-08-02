@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { compactContext, deduplicateFindings, rankByAttention } from '../src/retrieval/context-compressor'
+import { compactContext, deduplicateFindings, rankByAttention, buildHistoryMessages } from '../src/retrieval/context-compressor'
 import type { Fact } from '../src/evolution/stores'
 
 describe('P4 — Context Compressor', () => {
@@ -81,5 +81,56 @@ describe('P4 — Context Compressor', () => {
       const factsIndex = result.indexOf('NSCLC trial')
       expect(prefsIndex).toBeLessThan(factsIndex)
     })
+  })
+})
+
+describe('buildHistoryMessages — token-budgeted history', () => {
+  const events = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      eventType: i % 2 === 0 ? 'user_message' : 'assistant_response',
+      content: i % 2 === 0 ? `用户提问 ${i}` : `回答内容 ${i}`,
+    }))
+
+  test('keeps everything when under budget', () => {
+    const { messages, omittedTurns, tokens } = buildHistoryMessages(events(10), { maxTokens: 5000 })
+    expect(messages.length).toBe(10)
+    expect(omittedTurns).toBe(0)
+    expect(tokens).toBeGreaterThan(0)
+    // Newest first
+    expect(messages[0].content).toContain('9')
+  })
+
+  test('trims oldest turns when over budget', () => {
+    // ~20 turns of long content; small budget forces trimming
+    const long = events(40).map((e) => ({ ...e, content: e.content + '（这是一段很长的临床讨论内容，用于撑大 token 预算，重复填充以便测试裁剪逻辑是否按预期工作）' }))
+    const { messages, omittedTurns, tokens } = buildHistoryMessages(long, { maxTokens: 600, maxTurns: 20 })
+    expect(messages.length).toBeGreaterThan(0)
+    expect(messages.length).toBeLessThan(40)
+    expect(omittedTurns).toBeGreaterThan(0)
+    expect(tokens).toBeLessThanOrEqual(600 + 200) // tolerance for the first oversized msg
+    // Newest (last event) is still included
+    expect(messages[0].content).toContain('39')
+  })
+
+  test('respects maxTurns cap', () => {
+    const { messages } = buildHistoryMessages(events(40), { maxTokens: 100_000, maxTurns: 3 })
+    expect(messages.length).toBe(6) // 3 turns × 2 events
+  })
+
+  test('includes a single oversized message whole', () => {
+    const big = '长'.repeat(10_000)
+    const { messages, tokens } = buildHistoryMessages(
+      [{ eventType: 'user_message', content: big }],
+      { maxTokens: 100 },
+    )
+    expect(messages.length).toBe(1)
+    expect(messages[0].content).toBe(big)
+    expect(tokens).toBeGreaterThan(100)
+  })
+
+  test('empty events produce empty result', () => {
+    const { messages, omittedTurns } = buildHistoryMessages([])
+    expect(messages).toEqual([])
+    expect(omittedTurns).toBe(0)
   })
 })

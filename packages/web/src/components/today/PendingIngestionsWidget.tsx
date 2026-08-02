@@ -31,10 +31,12 @@ export function PendingIngestionsWidget({ limit = 5, onCountChange }: PendingIng
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [approvalsRes, patientsRes] = await Promise.all([
+      const [entriesRes, memoriesRes, patientsRes] = await Promise.all([
         api.listPendingApprovals({ targetType: 'MedicalRecordEntry' }),
+        api.listPendingApprovals({ targetType: 'MemoryProposal' }),
         api.listPatients().catch(() => []),
       ]);
+      const approvalsRes = { requests: [...entriesRes.requests, ...memoriesRes.requests] };
       const patientNames = new Map(patientsRes.map((p) => [p.patient_hash, p.name]));
       const nextRows: PendingRow[] = approvalsRes.requests.map((approval) => {
         const payload = approval.payload as Record<string, unknown> | null;

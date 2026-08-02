@@ -67,6 +67,7 @@ describe('PendingIngestionsWidget', () => {
   it('renders pending entries with patient name, type badge and relative time', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [pendingRequest] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     render(<PendingIngestionsWidget />);
@@ -83,6 +84,7 @@ describe('PendingIngestionsWidget', () => {
   it('shows empty state when nothing is pending', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     render(<PendingIngestionsWidget />);
@@ -91,7 +93,10 @@ describe('PendingIngestionsWidget', () => {
   });
 
   it('renders error inside widget without throwing', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'boom' }, 500));
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ error: 'boom' }, 500))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
+      .mockResolvedValueOnce(jsonResponse([]));
 
     render(<PendingIngestionsWidget />);
 
@@ -101,6 +106,7 @@ describe('PendingIngestionsWidget', () => {
   it('confirm calls confirmApproval and updates count via onCountChange', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [pendingRequest] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     const onCountChange = vi.fn();
@@ -120,6 +126,7 @@ describe('PendingIngestionsWidget', () => {
   it('reject requires reason, then calls rejectApproval with it', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [pendingRequest] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     render(<PendingIngestionsWidget />);
@@ -150,6 +157,7 @@ describe('PendingIngestionsWidget', () => {
     }));
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     render(<PendingIngestionsWidget limit={5} />);

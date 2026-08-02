@@ -157,7 +157,9 @@
     "activityConfirmed": "Confirmed {{title}}",
     "activityRejected": "Rejected {{title}}",
     "activityAnalyzed": "AI analyzed {{title}}",
-    "noEntries": "No pending entries"
+    "noEntries": "No pending entries",
+    "targetFilter": "Filter by target",
+    "allTargets": "All targets"
   },
   "chat": {
     "title": "Chat",

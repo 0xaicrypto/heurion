@@ -1,21 +1,29 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Check, ExternalLink, Inbox, X } from 'lucide-react';
+import { Brain, Check, ExternalLink, Inbox, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 import { RejectReasonDialog } from './RejectReasonDialog';
-import type { ApprovalRequest, MedicalRecordEntry } from '@/lib/types';
+import type { ApprovalRequest, MedicalRecordEntry, MemoryProposal } from '@/lib/types';
 
 interface InboxRow {
   approval: ApprovalRequest;
   entry: MedicalRecordEntry | null;
+  proposal: MemoryProposal | null;
   patientName?: string;
 }
 
 interface IngestionInboxProps {
   onChanged?: () => void;
 }
+
+const kindVariant: Record<string, 'default' | 'success' | 'warning' | 'error'> = {
+  fact: 'success',
+  article: 'warning',
+  episode_summary: 'default',
+  compaction_summary: 'default',
+};
 
 export function IngestionInbox({ onChanged }: IngestionInboxProps) {
   const { t } = useTranslation();
@@ -25,6 +33,7 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [targetFilter, setTargetFilter] = useState<'all' | 'entry' | 'memory'>('all');
   const [operating, setOperating] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectIds, setRejectIds] = useState<string[]>([]);
@@ -32,22 +41,33 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [approvalsRes, patientsRes] = await Promise.all([
+      const [entriesRes, memoriesRes, patientsRes] = await Promise.all([
         api.listPendingApprovals({ targetType: 'MedicalRecordEntry' }),
+        api.listPendingApprovals({ targetType: 'MemoryProposal' }),
         api.listPatients().catch(() => []),
       ]);
       const patientNames = new Map(patientsRes.map((p) => [p.patient_hash, p.name]));
-      setRows(
-        approvalsRes.requests.map((approval) => {
-          const payload = approval.payload as Record<string, unknown> | null;
-          const entry = payload && typeof payload.id === 'string' ? (payload as unknown as MedicalRecordEntry) : null;
-          return {
-            approval,
-            entry,
-            patientName: entry?.patientHash ? patientNames.get(entry.patientHash) : undefined,
-          };
-        }),
-      );
+      const entryRows: InboxRow[] = entriesRes.requests.map((approval) => {
+        const payload = approval.payload as Record<string, unknown> | null;
+        const entry = payload && typeof payload.id === 'string' ? (payload as unknown as MedicalRecordEntry) : null;
+        return {
+          approval,
+          entry,
+          proposal: null,
+          patientName: entry?.patientHash ? patientNames.get(entry.patientHash) : undefined,
+        };
+      });
+      const proposalRows: InboxRow[] = memoriesRes.requests.map((approval) => {
+        const payload = approval.payload as Record<string, unknown> | null;
+        const proposal = payload && typeof payload.kind === 'string' ? (payload as unknown as MemoryProposal) : null;
+        return {
+          approval,
+          entry: null,
+          proposal,
+          patientName: proposal?.patientHash ? patientNames.get(proposal.patientHash) : undefined,
+        };
+      });
+      setRows([...entryRows, ...proposalRows]);
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
@@ -60,12 +80,17 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
   }, [load]);
 
   const filteredRows = useMemo(
-    () => (typeFilter === 'all' ? rows : rows.filter((r) => r.entry?.type === typeFilter)),
-    [rows, typeFilter],
+    () => rows.filter((r) => {
+      if (targetFilter === 'entry' && !r.entry) return false;
+      if (targetFilter === 'memory' && !r.proposal) return false;
+      if (typeFilter === 'all') return true;
+      return r.entry?.type === typeFilter || r.proposal?.kind === typeFilter;
+    }),
+    [rows, typeFilter, targetFilter],
   );
 
   const typeOptions = useMemo(
-    () => Array.from(new Set(rows.map((r) => r.entry?.type).filter((x): x is MedicalRecordEntry['type'] => Boolean(x)))),
+    () => Array.from(new Set(rows.map((r) => r.entry?.type || r.proposal?.kind).filter((x): x is MedicalRecordEntry['type'] | MemoryProposal['kind'] => Boolean(x)))),
     [rows],
   );
 
@@ -148,6 +173,16 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 className="font-semibold text-text-primary">{t('brain.inboxTitle')}</h3>
         <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={targetFilter}
+            onChange={(e) => setTargetFilter(e.target.value as typeof targetFilter)}
+            className="h-8 rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={t('brain.targetFilter', 'Filter by target')}
+          >
+            <option value="all">{t('brain.allTargets', 'All targets')}</option>
+            <option value="entry">MedicalRecordEntry</option>
+            <option value="memory">MemoryProposal</option>
+          </select>
           <label className="flex items-center gap-2 text-sm text-text-secondary">
             <input
               type="checkbox"
@@ -201,8 +236,51 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
         <p className="py-8 text-center text-sm text-text-tertiary">{t('brain.noEntries')}</p>
       ) : (
         <ul className="space-y-3">
-          {filteredRows.map(({ approval, entry, patientName }) => {
+          {filteredRows.map(({ approval, entry, proposal, patientName }) => {
             const patientLabel = patientName || t('brain.unknownPatient');
+            if (proposal) {
+              return (
+                <li key={approval.id} className="rounded-xl border border-border bg-surface p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(approval.id)}
+                        onChange={() => toggleSelect(approval.id)}
+                        className="mt-1 h-4 w-4 shrink-0 accent-accent"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Brain size={14} className="shrink-0 text-text-tertiary" />
+                          <Badge variant={kindVariant[proposal.kind] ?? 'default'}>{proposal.kind}</Badge>
+                          {proposal.patientHash && <span className="truncate text-sm font-medium text-text-primary">{patientLabel}</span>}
+                          <Badge variant="default">{proposal.confidence}</Badge>
+                          <span className="text-xs text-text-tertiary">★ {proposal.importance}</span>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs text-text-secondary">{proposal.content}</p>
+                        {proposal.reason && (
+                          <p className="mt-0.5 text-[11px] text-text-tertiary">{proposal.reason}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button size="sm" onClick={() => confirmIds([approval.id])} disabled={operating}>
+                        <Check size={14} className="mr-1" /> {t('brain.confirm')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-error hover:bg-error/10"
+                        onClick={() => { setRejectIds([approval.id]); setRejectOpen(true); }}
+                        disabled={operating}
+                      >
+                        <X size={14} className="mr-1" /> {t('brain.reject')}
+                      </Button>
+                    </div>
+                  </div>
+                </li>
+              );
+            }
             return (
               <li key={approval.id} className="rounded-xl border border-border bg-surface p-4">
                 <div className="flex items-start justify-between gap-4">
