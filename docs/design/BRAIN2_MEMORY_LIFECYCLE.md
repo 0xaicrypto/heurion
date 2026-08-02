@@ -44,8 +44,7 @@
 │                                                               │
 │  会话进行                                                      │
 │    └─► 事件落库 → 增量提取（K1 游标 + K2 事件驱动）              │
-│          ├─ high 置信度 → 直写 graph（版本化）                  │
-│          └─ medium/low 或 高影响 → pending 待审核队列           │
+│          └─ 全部提取结果 → pending 待审核队列（人工审核）        │
 │                                                               │
 │  压缩 / 会话结束                                               │
 │    └─► MemoryGraph.summarize(sinceIdx)                        │
@@ -108,9 +107,9 @@ export interface MemoryGraphGateway {
   // 审核拒绝：记录原因，不落库
   rejectProposal(proposalId: string, reason: string): Promise<void>
 
-  // 高置信度直写（内部供提取管道调用）
-  commitDirect(input: AddFactInput | AddArticleInput): Promise<MemoryNode>
 }
+// 注：所有记忆写入（fact/article/episode_summary/compaction_summary）
+// 一律经 propose → pending → applyApproved，不设直写路径。
 ```
 
 ### 3.1 现有基础设施映射
@@ -165,6 +164,36 @@ scope.studyId 时:
 - 后续轮：hash 对比 → 变更源以增量 system 消息追加（无变更完全复用）
 - **提取管道（§5）是变更生产者**：facts 落库 → source 版本号变化 → 下一轮增量更新
 
+
+### 4.4 会话管理（多会话 + 开启/关闭）
+
+会话是对话窗口，记忆按 scope 聚合跨会话持久。**一个用户在一个 scope 下可有多个会话，会话由用户显式开启/关闭。**
+
+```
+Session 实体（扩展现有 nexus_sessions 表）:
+  id / userId / scope ('global'|'patient'|'study')
+  patientHash? / studyId?          // scope 为 patient/study 时
+  title                            // 用户可命名（如"8月2日随访"）
+  status ('open' | 'closed')
+  extractedUptoIdx                 // 提取游标（§5.1），随会话推进
+  createdAt / closedAt / lastMessageAt
+
+生命周期:
+  开启: 用户"新建会话" → POST /api/v1/sessions（scope+title, status=open）
+        会话列表可选择/切换（同一 scope 多个会话并行）
+  进行: 消息写入该 session 的事件日志；提取游标按 session 推进
+  关闭: 用户"关闭会话" → 状态置 closed（不可再写）
+        → 触发 summarize(sinceIdx) → proposals 进 pending（§6 闭环）
+        → 记忆沉淀到 scope（不依赖会话存在）
+
+兼容: 无显式会话时回退 scope 默认会话
+      （保持现有 global-{userId} / patient-{hash} 语义，视为默认会话）
+```
+
+**关键点**：关闭会话是"会话结束"的明确信号——它触发 summarize → pending 审核，
+取代现在"压缩时才总结"的隐式时机。压缩（长会话中途）与关闭（会话终点）走同一条
+summarize 路径。
+
 ---
 
 ## 5. 记忆提取管道（K1–K6 修订版）
@@ -174,22 +203,22 @@ scope.studyId 时:
 - 每个 scope 持久化 `extractedUptoIdx`；每次只提取新增事件段
 - 触发：增量内容 ≥ 300 字符，或含关键信号（记住/诊断/方案）；2s 去抖合并
 
-### 5.2 置信度分流（新增，修订 #109）
+### 5.2 全部人工审核（修订 #109）
 
 ```
-提取结果（extractClinicalEntities / deepseek 提取）自带 confidence:
-  high（importance ≥ 4 且无歧义）  → commitDirect 直写 graph
-  medium / low                      → MemoryProposal → pending 队列
-任何诊断/用药/方案类（category ∈ {diagnosis, medication, plan}）
-  → 无论置信度，一律进 pending
+提取结果（extractClinicalEntities / deepseek 提取），无论置信度高低:
+  → MemoryProposal → pending 队列（人工审核）
+审核通过 → applyApproved → graph 版本化更新
 ```
 
-**理由**：诊断/用药类错误不可逆（或代价高），必须人工确认；一般事实直写保持低延迟。
+**理由**：记忆是长期临床事实，任何自动写入（即使高置信度）都存在不可逆风险；
+审核成本通过批量确认 UI（Brain inbox）控制。
 
 ### 5.3 Episodes 增量摘要（K3，#110）
 
 - 会话进行中：每轮以增量段 + 旧摘要 → flash 模型更新 scope 级摘要（替换 `slice(0,150)` 占位）
-- 摘要本身属于"低风险"，直写（`episode_summary` 无需审核），但**压缩摘要**（跨大量历史）走 pending
+- 会话级摘要（`episode_summary`）与压缩摘要（`compaction_summary`）**均进 pending**；
+  不确认的摘要仅用于本轮上下文，不写入长期记忆
 
 ### 5.4 Article 合成（K4，#110）
 
@@ -299,7 +328,7 @@ model MemoryProposal {
 | Issue | 修订内容 |
 |---|---|
 | #99（R2 锚定压缩） | 压缩产物增加 MemoryProposal 审核出口（§6.3）；摘要模板改临床版 |
-| #109（K1+K2） | 增加置信度分流（§5.2）：high 直写 / medium-low 进 pending；诊断用药类强制 pending |
+| #109（K1+K2） | 提取结果一律进 pending（§5.2 全部人工审核），无直写路径 |
 | #110（K3+K4） | Article 合成结果进 pending（§5.4）；摘要改为 scope 级（§5.3） |
 | #98（R1） | 数据源明确为 `readContext`（§4.3）；patient/context source 支持按提及动态加载（全局会话） |
 
@@ -310,6 +339,7 @@ model MemoryProposal {
 | #112 | MemoryGraph 门面：`readContext/summarize/listPending/applyApproved/rejectProposal` + 层3 患者隔离（§3+§4） | P0 |
 | #113 | 审批系统补 Fact/Article target + MemoryProposal 表 + 审计（§7） | P0 |
 | #114 | 压缩/会话结束 → summarize → pending 闭环（§6，与 #99/#109 联动） | P1 |
+| #115 | 多会话管理：Session scope/status 扩展 + 前端会话列表/切换/新建/关闭（§4.4） | P1 |
 
 ### 8.3 不涉及的 issue
 
@@ -324,9 +354,10 @@ model MemoryProposal {
 | G.1 | MemoryProposal 表 + 门面接口骨架（readContext 先接现有 stores） | — | 2d |
 | G.2 | 审批系统 Fact/Article target（`applyTargetUpdate` + 审计） | G.1 | 2d |
 | G.3 | 层3 患者隔离 + readContext 接入 chat（替换 selectProjectionInputs 数据源） | G.1 | 2d |
-| G.4 | 提取管道改造：置信度分流 + pending 写入（#109 修订） | G.1–G.2 | 2d |
+| G.4 | 提取管道改造：全部提取结果进 pending（#109 修订） | G.1–G.2 | 2d |
 | G.5 | 压缩闭环：summarize → pending（#99/#114） | G.2, #99 | 3d |
 | G.6 | UI：Brain inbox 记忆 tab + Today 入口（复用 #48/#49） | G.2–G.5 | 2d |
+| G.7 | 多会话管理：后端 scope/status + 前端列表/切换/关闭（#115） | G.5 | 3d |
 
 总计约 13 个工作日。G.1–G.3 为 P0（门面 + 隔离 + 审批），可先于压缩落地。
 
@@ -336,9 +367,10 @@ model MemoryProposal {
 
 | 层 | 用例 |
 |---|---|
-| 单测 | 门面接口各方法；置信度分流规则；患者隔离过滤（本患者全量/跨患者限量/标记）；审批 Fact target 状态流转 + 审计；proposal 幂等（同范围不重复） |
+| 单测 | 门面接口各方法；提取结果全部进 pending（无直写）；患者隔离过滤（本患者全量/跨患者限量/标记）；审批 Fact target 状态流转 + 审计；proposal 幂等（同范围不重复） |
 | 集成 | 模拟 60 轮会话 → 压缩触发 → 断言：锚定摘要注入 + proposals 进 pending + graph 未直接变更；审核通过 → graph 新版本 + 下次 readContext 可见 |
 | 隔离测试 | 患者 A 会话中注入的 facts 集合与患者 B 无交集（跨患者仅限 importance≥4 且带标记） |
+| 会话管理 | 同 scope 多会话并行；关闭后不可写；关闭触发 summarize→pending；默认会话兼容 |
 | 回归 | 现有 364+ 用例；`/api/v1/agent/chat` SSE 兼容性 |
 
 ---
@@ -347,7 +379,7 @@ model MemoryProposal {
 
 | 风险 | 缓解 |
 |---|---|
-| 审核负担过重 | 置信度分流（high 直写）+ 审核范围配置（默认仅诊断/用药/方案类） |
+| 审核负担过重 | 全部记忆进审核是设计决策（临床合规优先）；通过 Brain inbox 批量确认 + 优先级排序（importance 降序）控制负担 |
 | 压缩摘要进入 pending 但医生长期不审 | 摘要不审仅影响长期记忆，不影响本轮上下文；Brain inbox 提供批量确认 |
 | 门面改造破坏现有注入 | G.3 先做"数据源替换"（readContext 内部仍调现有 stores），行为差异用测试锁定 |
 | 患者隔离误伤"对比患者"场景 | 显式放行：importance≥4 + 预算余量 + 患者标记渲染 |
