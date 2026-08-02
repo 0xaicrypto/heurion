@@ -408,6 +408,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
             telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
           },
           tools,
+          (reasoning) => send({ type: 'reasoning_chunk', text: reasoning }),
         )
 
         if (!callResult) {
@@ -446,7 +447,6 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       }
 
       // Stream the final response
-      send({ type: 'reasoning_chunk', text: 'Thinking...' })
       if (finalContent) {
         const chunks = finalContent.match(/.{1,80}/g) || [finalContent]
         for (const chunk of chunks) {
@@ -459,7 +459,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           model: DEEPSEEK_PREMIUM_MODEL,
           maxTokens: 4096,
           telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
-        })) {
+        }, (reasoning) => send({ type: 'reasoning_chunk', text: reasoning }))) {
           fullResponse += chunk
           send({ type: 'final_answer_chunk', text: chunk })
         }
