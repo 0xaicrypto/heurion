@@ -3,7 +3,7 @@ const DEEPSEEK_BASE = 'https://api.deepseek.com/v1'
 /** Default cheap model for classifiers, extractors, and background tasks. */
 export const DEEPSEEK_CHAT_MODEL = process.env.DEEPSEEK_CHAT_MODEL || 'deepseek-v4-flash'
 /** Optional premium model for high-stakes chat / document editing. */
-export const DEEPSEEK_PREMIUM_MODEL = process.env.DEEPSEEK_PREMIUM_MODEL || 'deepseek-v4-pro'
+export const DEEPSEEK_PREMIUM_MODEL = process.env.DEEPSEEK_PREMIUM_MODEL || 'deepseek-v4-flash'
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
