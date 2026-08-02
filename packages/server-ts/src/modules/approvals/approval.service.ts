@@ -1,6 +1,6 @@
 import prisma from '../../common/prisma.js'
 
-export type ApprovalTargetType = 'MedicalRecordEntry' | 'Skill' | 'Persona' | 'Fact' | 'ResearchRule'
+export type ApprovalTargetType = 'MedicalRecordEntry' | 'MemoryProposal' | 'Skill' | 'Persona' | 'Fact' | 'ResearchRule'
 
 export interface ApprovalRequestInput {
   targetType: ApprovalTargetType
@@ -123,6 +123,49 @@ async function applyTargetUpdate(
     })
     return
   }
+  if (targetType === 'MemoryProposal') {
+    const { getProposalApplier } = await import('../../memory/memory-gateway.js')
+    const row = await (prisma as any).memoryProposal.findFirst({
+      where: { id: targetId },
+    })
+    if (!row) throw new Error('Memory proposal not found')
+
+    // Rejection path: record the reason, do not touch the graph.
+    if (updates.status === 'rejected') {
+      await (prisma as any).memoryProposal.update({
+        where: { id: targetId },
+        data: { status: 'rejected', rejectedReason: updates.rejectedReason, resolvedAt: now, resolvedBy: actorId },
+      })
+      return
+    }
+
+    const applier = getProposalApplier()
+    if (!applier) throw new Error('Memory proposal applier not registered')
+    const node = applier(row.userId, {
+      id: row.id,
+      userId: row.userId,
+      scopeType: row.scopeType,
+      patientHash: row.patientHash,
+      studyId: row.studyId,
+      kind: row.kind,
+      content: row.content,
+      importance: row.importance,
+      confidence: row.confidence,
+      reason: row.reason,
+      sourceRange: row.sourceRange,
+      status: row.status,
+      rejectedReason: row.rejectedReason,
+      createdAt: row.createdAt,
+      resolvedAt: row.resolvedAt,
+      resolvedBy: row.resolvedBy,
+    })
+    if (!node) throw new Error('Memory proposal could not be applied')
+    await (prisma as any).memoryProposal.update({
+      where: { id: targetId },
+      data: { status: 'approved', resolvedAt: now, resolvedBy: actorId },
+    })
+    return
+  }
   throw new Error(`Unsupported approval target type: ${targetType}`)
 }
 
@@ -148,6 +191,17 @@ export async function listAuditLogs(filters: { targetType?: string; targetId?: s
     : []
   const entryByTarget = new Map(entries.map((e: any) => [e.id, e]))
 
+  const proposalIds = rows
+    .filter((r: any) => r.targetType === 'MemoryProposal')
+    .map((r: any) => r.targetId)
+  const proposals = proposalIds.length > 0
+    ? await (prisma as any).memoryProposal.findMany({
+        where: { id: { in: proposalIds } },
+        select: { id: true, kind: true, content: true, importance: true, confidence: true },
+      })
+    : []
+  const proposalByTarget = new Map(proposals.map((p: any) => [p.id, p]))
+
   return rows.map((r: any) => {
     const base: any = {
       id: r.id,
@@ -162,6 +216,8 @@ export async function listAuditLogs(filters: { targetType?: string; targetId?: s
     }
     const entry = entryByTarget.get(r.targetId)
     if (entry) base.entry = entry
+    const proposal = proposalByTarget.get(r.targetId)
+    if (proposal) base.memoryProposal = proposal
     return base
   })
 }

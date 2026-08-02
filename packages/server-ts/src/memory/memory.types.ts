@@ -8,7 +8,7 @@ export type MemoryNodeStatus = 'current' | 'stale' | 'superseded' | 'pending_rev
 export type MemoryCreatedBy = 'system' | 'user' | 'sidecar' | 'import'
 
 export interface Provenance {
-  sourceKind: 'chat' | 'document' | 'sidecar' | 'user' | 'system' | 'import'
+  sourceKind: 'chat' | 'document' | 'sidecar' | 'user' | 'system' | 'import' | 'proposal'
   sourceRef?: string
   sourceLocator?: Record<string, unknown>
   evidenceQuote?: string

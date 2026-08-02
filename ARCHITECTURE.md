@@ -43,17 +43,13 @@ explained in terms of what it adds to the layer below.
                  ▼                             ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │  SDK (packages/sdk, nexus_core)                  — Python            │
-│    Entry points: testnet() / mainnet() / local() → AgentRuntime      │
-│    Storage backends: ChainBackend / LocalBackend / MockBackend       │
+│    Entry points: local() → AgentRuntime                             │
+│    Storage backends: LocalBackend / MockBackend                      │
 │    Memory primitives: EventLog / CuratedMemory / EventLogCompactor   │
 │    Contract primitives: ContractEngine / DriftScore                  │
 │    LLMClient / ToolRegistry / SkillManager / MCPManager              │
-│    BSCClient (web3)                                                  │
 │    distill() / utils                                                 │
-└─────────────────────────┬────────────────────────────────────────────┘
-                          │
-                          ▼
-                       BSC RPC
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 A separate `packages/relay` Python service (Fly.io) provides webhook /
@@ -67,7 +63,7 @@ Imports flow strictly downward. Verified:
 - **SDK** imports from neither Nexus nor Server. (`grep "from nexus\|from nexus_server" packages/sdk/` returns nothing.)
 - **Nexus** imports from SDK only. (`from nexus_core import ...`.)
 - **Server** imports from Nexus + (rarely) SDK directly for utilities like
-  `distill`, `BSCClient`.
+  `distill`.
 - **Desktop v2** talks to Server over HTTP only.
 
 This invariant is the single most important property of the architecture.
@@ -83,9 +79,8 @@ desktop-v2 reached parity; it remains available at git tag
 
 ### SDK — `packages/sdk/nexus_core/`
 
-**Knows about**: BSC web3, append-only event
-logs, content-hash anchoring, curated-memory file format, contract spec
-parsing, LLM provider abstraction, tool function-calling.
+**Knows about**: append-only event logs, curated-memory file format,
+contract spec parsing, LLM provider abstraction, tool function-calling.
 
 **Doesn't know about**: agents, users, HTTP, JWT, multi-tenancy, twins.
 
@@ -95,7 +90,7 @@ parsing, LLM provider abstraction, tool function-calling.
 
 **Why it exists separately from Nexus**: someone could build an entirely
 different agent framework on top of these primitives. The SDK is the
-"contract with BNB Chain"; what you build on top is your business.
+"contract with the runtime"; what you build on top is your business.
 
 ### Nexus — `packages/nexus/nexus/`
 
@@ -105,7 +100,7 @@ compact memory, when to evolve persona, when to learn skills, how to
 project relevant memory for a turn.
 
 **Doesn't know about**: HTTP, JWT, multi-tenancy. It's a Python class. You
-hand it config + private_key, it gives you `.chat()`.
+hand it config, it gives you `.chat()`.
 
 **Public entry point**: `DigitalTwin.create(...)` returns an initialised
 twin. `await twin.chat("hello")` returns the assistant's reply.
@@ -126,9 +121,8 @@ research studies + roster + protocol parser, scheduler, billing
 retrieval, and live thinking streams.
 
 **Doesn't know about**: how the legacy `/llm/chat` turn works inside
-(delegated to `await twin.chat(...)`), how anchoring works (delegated to
-twin's ChainBackend), how memory is structured at the SDK level (it just
-opens twin's SQLite read-only).
+(delegated to `await twin.chat(...)`), how memory is structured at the
+SDK level (it just opens twin's SQLite read-only).
 
 **Public entry point**: `uvicorn nexus_server.main:create_app --factory`
 (the application is built by `create_app()` — there is no top-level
@@ -147,8 +141,7 @@ modes), DICOM viewer launch, file picker UI, polling endpoints for status,
 username + password authentication on launch.
 
 **Doesn't know about**: chat history (pulled from server every login),
-memories (rendered from server), anchors (rendered from server), agent
-identity (read from server).
+memories (rendered from server), agent identity (read from server).
 
 **Why it's a thin client**: server's twin is the single source of truth;
 desktop is a view layer. The bundled `.dmg` launches the FastAPI server
@@ -162,7 +155,7 @@ different flows; new code should target the v2 path.
 
 | Path | Endpoint | Transport | Pipeline | Used by |
 |---|---|---|---|---|
-| Legacy | `POST /api/v1/llm/chat` | JSON request / JSON response | `twin.chat()` 9-step (pre-check → event_log append → project memory → llm.chat → post-check → DriftScore → event_log append → on-event mirror → background evolution) | Tests, CLI, the legacy Avalonia client at tag `legacy/avalonia-final` |
+| Legacy | `POST /api/v1/llm/chat` | JSON request / JSON response | `twin.chat()` 9-step (pre-check → event_log append → project memory → llm.chat → post-check → DriftScore → event_log append → background evolution) | Tests, CLI, the legacy Avalonia client at tag `legacy/avalonia-final` |
 | v2 | `POST /api/v1/agent/chat` | JSON request / SSE response | tier classification → multi-tier retrieval (`retrieval_tiers.retrieve_async`) → reasoning chunks → final answer chunks → citations → turn-complete | Desktop v2's Today / Patient / Research chat panels |
 
 The v2 SSE schema is the typed `ChatStreamChunk` discriminated union
@@ -233,11 +226,6 @@ Server-owned tables (all in `nexus_server.db` under the configured
 | Billing (Stripe) | `billing_*` |
 | Async tasks / progress | `async_tasks` (separate file under `~/.nexus_server/`) |
 | Scheduled future-action proposals | `scheduled_tasks` |
-| Chain mode: durable event store | `NEXUS_CACHE_DIR` local content-addressed store (S3-compatible mirror planned) |
-| Chain mode: state-root hashes | BSC `AgentStateExtension` per token |
-| Identity registration | BSC ERC-8004 IdentityRegistry |
-| Pre-S4 anchor history (read-only) | `sync_anchors` |
-| Twin chain activity log | `twin_chain_events` |
 
 The first `nexus-server` boot calls `init_event_sourcing_schema()` and a
 set of `migrations/` modules to bring the file up to current schema.
@@ -250,22 +238,18 @@ This trips everyone up. There are three identifiers in play:
 |---|---|---|---|
 | `user_id` | UUID string | Server `auth.register` | Per server account |
 | `agent_id` | string `user-{user_id[:8]}` | Server `twin_manager._agent_id_for` | Per twin instance (matches user 1:1) |
-| `token_id` | int (ERC-8004) | BSC `IdentityRegistry.register` | Forever, on-chain |
 
 Mapping:
 
-- `user_id` ←→ `token_id`: stored in `users.chain_agent_id` column.
 - `user_id` → `agent_id`: derived (first 8 chars).
 
 The local SQLite paths are `user_id`/`agent_id`-keyed
-(server's own convention). Chain registrations are token-id keyed
-(forever). See [`docs/concepts/identity.md`](docs/concepts/identity.md)
-for the full mapping diagram.
+(server's own convention).
 
 ## See also
 
 - [`HISTORY.md`](HISTORY.md) — how we got to this architecture (currently
   fronted-up to Phase F; the M0..M4 clinical pivot still needs writing up)
-- [`docs/concepts/`](docs/concepts/) — the core mental models
-- [`docs/how-to/`](docs/how-to/) — step-by-step recipes
+- [`docs/design/brain.md`](docs/design/brain.md) — Brain 2.0 clinical/research memory design
+- [`docs/whitepaper-brain2.md`](docs/whitepaper-brain2.md) — Brain 2.0 whitepaper
 - Per-package READMEs / ARCHITECTUREs at `packages/{layer}/`
