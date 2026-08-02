@@ -188,12 +188,16 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           agentId: userId,
           sessionId: sid,
         })
-        const pluginMeta: Record<string, unknown> = { plugin: true, jobId: pluginResult.job?.job_id }
+        const pluginMeta: Record<string, unknown> = { plugin: true, sidecar: true, jobId: pluginResult.job?.job_id }
         if (pluginResult.file) {
           pluginMeta.file = {
             fileId: pluginResult.file.fileId,
             fileName: pluginResult.file.fileName,
             mimeType: pluginResult.file.mimeType,
+          }
+          pluginMeta.knowledgePayload = {
+            title: pluginResult.file.fileName,
+            content: pluginResult.text || `Generated document: ${pluginResult.file.fileName}`,
           }
         }
         ctx.eventLog.append({
