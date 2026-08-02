@@ -108,7 +108,10 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   if (existsSync(resolvedDistDir)) {
     await app.register(fastifyStatic, { root: resolvedDistDir, prefix: '/', wildcard: false })
     app.setNotFoundHandler((req: FastifyRequest, reply: FastifyReply) => {
-      if (req.url.startsWith('/api/') || req.url.startsWith('/healthz')) {
+      const url = req.url.split('?')[0]
+      // Assets must 404 (never SPA-fallback): a stale/cached HTML response
+      // served as "application/javascript" breaks module loading for days.
+      if (url.startsWith('/assets/') || url.startsWith('/api/') || url.startsWith('/healthz')) {
         reply.status(404).send({ error: 'Not found' })
       } else {
         reply.header('Content-Type', 'text/html')
