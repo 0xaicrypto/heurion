@@ -5,7 +5,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api-client';
 import type { LlmStatus, LlmTestResult, ProviderKind, UserProfile, LlmUpdateInput, QueueMetrics, LlmCostDashboard } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
-import { Button, Input, Card, Badge, Alert } from '@/components/ui';
+import { Button, Input, Card, Badge, Alert, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
 const PROVIDERS: { value: ProviderKind; label: string }[] = [
@@ -16,7 +16,7 @@ const PROVIDERS: { value: ProviderKind; label: string }[] = [
   { value: 'kimi', label: 'Kimi' },
 ];
 
-type Tab = 'profile' | 'llm' | 'observability';
+type Tab = 'profile' | 'llm' | 'embedding' | 'observability';
 
 export function SettingsPage() {
   const { t } = useTranslation();
@@ -37,6 +37,9 @@ export function SettingsPage() {
               <TabButton active={tab === 'llm'} onClick={() => setTab('llm')}>
                 {t('settings.llm')}
               </TabButton>
+              <TabButton active={tab === 'embedding'} onClick={() => setTab('embedding')}>
+                {t('settings.embedding')}
+              </TabButton>
               <TabButton active={tab === 'observability'} onClick={() => setTab('observability')}>
                 {t('settings.observability')}
               </TabButton>
@@ -45,6 +48,7 @@ export function SettingsPage() {
           <main className="flex-1 p-6">
             {tab === 'profile' && <ProfileSection />}
             {tab === 'llm' && <LlmSection />}
+            {tab === 'embedding' && <EmbeddingSection />}
             {tab === 'observability' && <ObservabilitySection />}
           </main>
         </div>
@@ -385,6 +389,72 @@ function LlmSection() {
 
 /* ────────────────────────── Observability Section ────────────────────────── */
 
+/* ────────────────────────── Embedding Section ────────────────────────── */
+
+function EmbeddingSection() {
+  const { t } = useTranslation();
+  const [status, setStatus] = useState<{ ok: boolean; url: string; model?: string; dimensions?: number | null; device?: string; quantized?: boolean; dtype?: string | null } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    api
+      .getEmbeddingStatus()
+      .then((s) => { setStatus(s); setError(null); })
+      .catch((err) => setError(err instanceof ApiError ? err.messageText : t('settings.embeddingUnreachable')))
+      .finally(() => setLoading(false));
+  }, [t]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <Skeleton className="h-40 w-full rounded-xl" />;
+
+  return (
+    <div className="max-w-3xl space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-text-primary">{t('settings.embedding')}</h2>
+        <Button size="sm" variant="secondary" onClick={load}>
+          <RefreshCw size={14} className="mr-1.5" />
+          {t('common.refresh')}
+        </Button>
+      </div>
+
+      {error && <Alert variant="error">{error}</Alert>}
+
+      {status && status.ok && (
+        <Card className="space-y-3 p-4">
+          <div className="flex items-center gap-2">
+            <Badge variant="success">{t('settings.embeddingOnline', 'Online')}</Badge>
+            <span className="text-sm font-medium text-text-primary">{status.model || '—'}</span>
+          </div>
+          <div className="grid gap-2 text-sm sm:grid-cols-2">
+            <div className="rounded-lg bg-surface px-3 py-2">
+              <span className="text-text-tertiary">{t('settings.embeddingDimensions', 'Dimensions')}: </span>
+              <span className="text-text-primary">{status.dimensions ?? '—'}</span>
+            </div>
+            <div className="rounded-lg bg-surface px-3 py-2">
+              <span className="text-text-tertiary">{t('settings.embeddingDevice', 'Device')}: </span>
+              <span className="text-text-primary">{status.device || '—'}</span>
+            </div>
+            <div className="rounded-lg bg-surface px-3 py-2">
+              <span className="text-text-tertiary">{t('settings.embeddingQuantized', 'INT8 quantized')}: </span>
+              <span className="text-text-primary">{status.quantized ? '✓' : '—'}</span>
+            </div>
+            <div className="rounded-lg bg-surface px-3 py-2">
+              <span className="text-text-tertiary">dtype: </span>
+              <span className="text-text-primary">{status.dtype || '—'}</span>
+            </div>
+          </div>
+          <p className="text-xs text-text-tertiary">{status.url}</p>
+          <p className="text-xs text-text-secondary">{t('settings.embeddingHint', 'Dimensions appear after the first embed; change model/device in the embedding server env and re-verify dimensions here.')}</p>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function ObservabilitySection() {
   const { t } = useTranslation();
   const { role } = useAuthStore();
@@ -398,8 +468,7 @@ function ObservabilitySection() {
     setLoading(true);
     setError(null);
     try {
-      const [cost, q] = await Promise.all([
-        isAdmin ? api.getAdminLlmCostDashboard() : Promise.resolve(null),
+      const [cost, q] = await Promise.all([        isAdmin ? api.getAdminLlmCostDashboard() : Promise.resolve(null),
         api.getEvolutionQueueMetrics(),
       ]);
       setLlmCost(cost);

@@ -81,7 +81,8 @@
     "logs": "日志",
     "settings": "设置",
     "admin": "管理",
-    "brain": "大脑"
+    "brain": "大脑",
+    "audit": "审计"
   },
   "auth": {
     "welcomeBack": "欢迎回来",
@@ -216,7 +217,14 @@
     "loadFailed": "加载失败",
     "testFailed": "测试失败",
     "profileLoadFailed": "加载个人资料失败",
-    "profileSaveFailed": "保存个人资料失败"
+    "profileSaveFailed": "保存个人资料失败",
+    "embedding": "Embedding",
+    "embeddingUnreachable": "Embedding server unreachable",
+    "embeddingOnline": "Online",
+    "embeddingDimensions": "Dimensions",
+    "embeddingDevice": "Device",
+    "embeddingQuantized": "INT8 quantized",
+    "embeddingHint": "Dimensions appear after the first embed; change model/device in the embedding server env and re-verify dimensions here."
   },
   "admin": {
     "title": "管理",
@@ -236,5 +244,46 @@
   },
   "placeholder": {
     "comingSoon": "即将推出"
+  },
+  "labs": {
+    "ingestionStatus": "AI 分析状态",
+    "jobs": "个任务",
+    "retries": "次重试",
+    "pendingReview": "待审批",
+    "failed": "失败"
+  },
+  "audit": {
+    "title": "审计日志",
+    "filterType": "按目标类型筛选",
+    "allTypes": "全部目标类型",
+    "filterAction": "按操作筛选",
+    "allActions": "全部操作",
+    "records": "条记录",
+    "empty": "暂无审计记录",
+    "actor": "操作者",
+    "reason": "原因",
+    "diff": "变更前后"
+  },
+  "medicalRecords": {
+    "title": "病历",
+    "newEntry": "新建条目",
+    "editEntry": "编辑条目",
+    "type": "类型",
+    "fieldTitle": "标题",
+    "titlePlaceholder": "如：血常规",
+    "date": "日期",
+    "content": "内容",
+    "filterStatus": "按状态筛选",
+    "allStatus": "全部状态",
+    "filterType": "按类型筛选",
+    "allTypes": "全部类型",
+    "noEntries": "暂无病历条目",
+    "noEntriesHint": "化验结果、影像分析和 AI 草稿会以时间线形式出现在这里",
+    "aiDraft": "AI",
+    "confirmedBy": "确认人",
+    "rejectedReason": "原因",
+    "viewContent": "查看内容",
+    "rawText": "原始提取文本",
+    "confirmDelete": "确定删除该条目？"
   }
 }

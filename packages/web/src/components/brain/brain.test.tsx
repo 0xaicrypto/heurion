@@ -248,22 +248,13 @@ describe('RecentActivityFeed', () => {
 
 describe('BrainPage', () => {
   it('renders stats, inbox and activity feed together', async () => {
-    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })));
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ pending: 12, confirmedToday: 5, totalEntries: 247 }))
-      .mockResolvedValueOnce(jsonResponse({ requests: [pendingRequest] }))
-      .mockResolvedValueOnce(jsonResponse(mockPatients()))
-      .mockResolvedValueOnce(jsonResponse({ logs: [] }))
-      .mockResolvedValueOnce(jsonResponse(mockPatients()));
+    fetchMock.mockImplementation((url: unknown) => {
+      const u = String(url)
+      if (u.includes('/brain/stats')) return Promise.resolve(jsonResponse({ pending: 12, confirmedToday: 5, totalEntries: 247 }))
+      if (u.includes('/approvals/pending')) return Promise.resolve(jsonResponse({ requests: [pendingRequest] }))
+      if (u.includes('/audit')) return Promise.resolve(jsonResponse({ logs: [] }))
+      return Promise.resolve(jsonResponse(mockPatients()))
+    });
 
     render(<BrainPage />);
 

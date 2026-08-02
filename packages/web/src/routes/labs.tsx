@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { FileText, Upload, ClipboardList, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { FileText, Upload, ClipboardList, X, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
+import type { IngestionJob, IngestionJobStatus } from '@/lib/types';
 
 interface UploadEntry {
   file_id: string;
@@ -23,12 +25,29 @@ function formatBytes(bytes: number): string {
 
 const nonDicomMimes = /(pdf|word|spreadsheet|csv|text|excel|powerpoint)/i;
 
+const TERMINAL_STATUSES: IngestionJobStatus[] = ['awaiting_review', 'completed', 'rejected', 'failed'];
+
+function statusVariant(s: IngestionJobStatus): 'default' | 'success' | 'warning' | 'error' {
+  switch (s) {
+    case 'awaiting_review':
+    case 'completed': return 'success';
+    case 'extracting':
+    case 'analyzing':
+    case 'pending': return 'warning';
+    case 'failed':
+    case 'rejected': return 'error';
+  }
+}
+
 export function LabsPage() {
+  const { t } = useTranslation();
   const { hash } = useParams<{ hash: string }>();
   const [files, setFiles] = useState<UploadEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [jobs, setJobs] = useState<IngestionJob[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [viewingFile, setViewingFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>('');
@@ -45,17 +64,41 @@ export function LabsPage() {
       .finally(() => setLoading(false));
   }, [hash]);
 
+  const loadJobs = useCallback(() => {
+    if (!hash) return;
+    api
+      .listIngestionJobs(hash)
+      .then((res) => setJobs(res.jobs))
+      .catch(() => { /* polling — ignore transient errors */ })
+      .finally(() => setJobsLoading(false));
+  }, [hash]);
+
   useEffect(() => {
     loadFiles();
   }, [loadFiles]);
+
+  // Poll ingestion job status while any job is still in flight.
+  useEffect(() => {
+    if (!hash) return;
+    loadJobs();
+    const hasActive = () => jobs.some((j) => !TERMINAL_STATUSES.includes(j.status));
+    const timer = setInterval(() => {
+      loadJobs();
+      if (!hasActive()) clearInterval(timer);
+    }, 3000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hash, loadJobs]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
+    setError(null);
     try {
       await api.uploadFile(file, hash);
       loadFiles();
+      loadJobs();
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
@@ -87,6 +130,8 @@ export function LabsPage() {
       </div>
     );
   }
+
+  const activeJobs = jobs.filter((j) => !TERMINAL_STATUSES.includes(j.status));
 
   return (
     <div className="flex h-full flex-col overflow-y-auto p-6">
@@ -133,6 +178,53 @@ export function LabsPage() {
           <Alert variant="error">{error}</Alert>
         </div>
       )}
+
+      {/* Ingestion job status tracker */}
+      {jobsLoading ? (
+        <Skeleton className="mb-4 h-24 w-full rounded-xl" />
+      ) : jobs.length > 0 ? (
+        <div className="mb-6 rounded-xl border border-border bg-surface-elevated p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+              {activeJobs.length > 0 ? (
+                <Loader2 size={14} className="animate-spin text-accent" />
+              ) : (
+                <CheckCircle2 size={14} className="text-success" />
+              )}
+              {t('labs.ingestionStatus', 'AI Analysis Status')}
+            </h3>
+            <span className="text-xs text-text-tertiary">{jobs.length} {t('labs.jobs', 'jobs')}</span>
+          </div>
+          <ul className="space-y-2">
+            {jobs.slice(0, 6).map((job) => (
+              <li key={job.id} className="flex items-center justify-between gap-3 rounded-lg bg-surface px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-xs font-medium text-text-primary">{job.fileName}</span>
+                    <Badge variant={statusVariant(job.status)}>{job.status}</Badge>
+                    {job.confidence && <Badge variant="default">{job.confidence}</Badge>}
+                  </div>
+                  <p className="mt-0.5 truncate text-xs text-text-tertiary">
+                    {job.failedReason
+                      ? <span className="text-error">{job.failedReason}</span>
+                      : job.reasoning || `${job.retryCount} ${t('labs.retries', 'retries')}`}
+                  </p>
+                </div>
+                {job.status === 'awaiting_review' && (
+                  <Badge variant="success">
+                    <CheckCircle2 size={11} className="mr-1" /> {t('labs.pendingReview', 'Pending review')}
+                  </Badge>
+                )}
+                {job.status === 'failed' && (
+                  <Badge variant="error">
+                    <XCircle size={11} className="mr-1" /> {t('labs.failed', 'Failed')}
+                  </Badge>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="space-y-3">
