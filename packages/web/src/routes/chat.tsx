@@ -58,7 +58,7 @@ export function ChatPage() {
         role: m.role,
         text: m.content,
         download:
-          m.metadata?.sidecar && (m.metadata?.file as any)
+          (m.metadata?.sidecar || m.metadata?.plugin) && (m.metadata?.file as any)
             ? {
                 fileId: (m.metadata.file as any).fileId as string,
                 fileName: (m.metadata.file as any).fileName as string,
