@@ -76,7 +76,7 @@ describe('K1+K2 incremental extraction via chat', () => {
     vi.mocked(deepseekChat).mockImplementation((messages) => {
       const text = JSON.stringify(messages)
       if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
-      if (text.includes('clinical fact extractor')) {
+      if (text.includes('clinical memory extractor')) {
         return Promise.resolve('[{"category":"fact","importance":5,"content":"患者确诊肺癌","sourceType":"patient"}]')
       }
       return Promise.resolve('已记录。')

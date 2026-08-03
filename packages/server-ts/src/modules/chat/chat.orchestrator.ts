@@ -435,12 +435,30 @@ export class ChatOrchestrator {
         }
         const contextBlock = contextLines.length > 0 ? `\n${contextLines.join('\n')}\n` : ''
 
-        const extractionPrompt = `You are a clinical fact extractor for an oncology research assistant.
-Extract key, grounded facts from the conversation below. Return ONLY a JSON array of objects with:
-- category: preference / fact / constraint / goal / context
-- importance: 1-5 (5 = critical for future decisions)
-- content: short, self-contained sentence
-- sourceType: "patient" (about the current patient), "doctor" (clinician preference/workflow), "research" (studies/trials), "general" (anything else)
+        const extractionPrompt = `You are a clinical memory extractor. From the conversation below, extract ONLY facts worth persisting for future reference.
+
+Extract:
+- Patient clinical state (symptoms, signs, course/duration with time)
+- Exam/lab results with values and dates
+- Diagnoses and differential-diagnosis conclusions
+- Treatment decisions, medications and dose changes
+- Allergies and contraindications
+- Explicit patient constraints/preferences that affect future decisions
+
+Do NOT extract:
+- Conversational filler ("用户想学习", "谢谢", "继续", questions being asked)
+- Generic medical advice ("需要做检查", "需考虑X") unless it is a concrete conclusion for this patient
+- System state ("没有资料", "名册为空")
+- General knowledge unrelated to a specific patient
+
+Each fact must be SELF-CONTAINED: include the subject (patient/doctor), time or trend, and concrete values where present.
+- GOOD: "患者 ZQ 发热持续3周伴胸痛咳嗽，亚急性病程（7月末起）"
+- BAD: "针对发热+胸痛需考虑肺部感染、胸膜疾病"
+
+Return ONLY a JSON array:
+[{"content": "self-contained fact", "category": "diagnosis|symptom|exam|medication|allergy|constraint|preference|plan", "importance": 1-5, "sourceType": "patient|doctor|research"}]
+
+Importance: 5 = changes treatment/diagnosis; 4 = important clinical fact; 3 = general; 1-2 = marginal (usually omit).
 ${contextBlock}
 Conversation:
 ${conversation}
