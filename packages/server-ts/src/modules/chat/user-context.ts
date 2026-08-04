@@ -22,6 +22,23 @@ interface UserContext {
 const contexts = new Map<string, UserContext>()
 let gcTimer: ReturnType<typeof setInterval> | null = null
 
+// Per-user memory access for the approval flow. Registered ONCE at module
+// load with a closure over the contexts map — resolving by the requested
+// userId at call time keeps every user's memory strictly isolated (a naive
+// per-getUserContext registration would overwrite the previous user's).
+registerContextResolver((applierUserId) => {
+  const current = contexts.get(applierUserId)
+  if (!current) return null
+  return {
+    memory: current.memory,
+    facts: current.facts,
+    episodes: current.episodes,
+    skills: current.skills,
+    knowledge: current.knowledge,
+  }
+})
+registerProposalApplier(defaultProposalApplier)
+
 export function evictUserContext(userId: string): void {
   const ctx = contexts.get(userId)
   if (ctx) {
@@ -74,21 +91,6 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
   orchestrator.memory = memory
   const ctx = { eventLog, facts, episodes, skills, knowledge, memory, orchestrator, lastAccess: Date.now() }
   contexts.set(userId, ctx)
-
-  // Register the per-user context resolver + default applier once.
-  registerContextResolver((applierUserId) => {
-    if (applierUserId !== userId) return null
-    const current = contexts.get(userId)
-    if (!current) return null
-    return {
-      memory: current.memory,
-      facts: current.facts,
-      episodes: current.episodes,
-      skills: current.skills,
-      knowledge: current.knowledge,
-    }
-  })
-  registerProposalApplier(defaultProposalApplier)
 
   return ctx
 }
