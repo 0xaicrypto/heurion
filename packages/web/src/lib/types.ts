@@ -415,6 +415,8 @@ export interface SendChatOptions {
 
 export type ChatStreamChunk =
   | { type: 'turn_started'; event_idx: number; patient_hash: string | null }
+  | { type: 'compaction_started' }
+  | { type: 'compaction_completed' }
   | { type: 'tier_classified'; tier: 'T1' | 'T2' | 'T3'; view_kind?: string; anchor?: string }
   | { type: 'context_info'; text: string; kind?: string }
   | { type: 'reasoning_chunk'; text: string }

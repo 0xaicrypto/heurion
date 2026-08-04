@@ -6,7 +6,7 @@ import { deepseekStream, deepseekChat, getApiKey, DEEPSEEK_PREMIUM_MODEL } from 
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
 import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
 import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
-import { ensureSessionCompaction } from '../../memory/compaction.js'
+import { ensureSessionCompaction, getInFlightCompaction } from '../../memory/compaction.js'
 import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { handlePluginChatRequest } from '../plugins/plugin-chat-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
@@ -415,27 +415,38 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
         // kbCompaction table may not exist yet
       }
 
-      // R2 — trigger compaction of the dropped segment when the budget
-      // overflows or the turn window is full (fire-and-forget, in-flight
-      // guarded per session so it never re-runs on a covered segment).
-      if (omittedTurns > 0 || history.length >= historyTurns * 2) {
-        if (historyMessages.length > 0) {
-          const oldestRetainedIdx = (history[historyMessages.length - 1] as any)?.idx ?? 0
-          void ensureSessionCompaction(
-            {
-              userId,
-              eventLog: ctx.eventLog,
-              facts: ctx.facts,
-              episodes: ctx.episodes,
-              skills: ctx.skills,
-              knowledge: ctx.knowledge,
-              memory: ctx.memory,
-            },
-            sid,
-            oldestRetainedIdx,
-            patientHash || undefined,
-          )
-        }
+      // R2 — anchored compaction with opencode-style delayed-sync semantics:
+      // the triggering turn fires it async (no reply latency); any LATER turn
+      // that arrives while it is still running awaits it before replying, so
+      // the anchored summary is always injectable. Both cases surface a
+      // compaction_started/compaction_completed event to the UI.
+      const inFlightCompaction = getInFlightCompaction(userId, sid)
+      const shouldTrigger = omittedTurns > 0 || history.length >= historyTurns * 2
+      if (shouldTrigger && historyMessages.length > 0) {
+        const oldestRetainedIdx = (history[historyMessages.length - 1] as any)?.idx ?? 0
+        send({ type: 'compaction_started' })
+        ensureSessionCompaction(
+          {
+            userId,
+            eventLog: ctx.eventLog,
+            facts: ctx.facts,
+            episodes: ctx.episodes,
+            skills: ctx.skills,
+            knowledge: ctx.knowledge,
+            memory: ctx.memory,
+          },
+          sid,
+          oldestRetainedIdx,
+          patientHash || undefined,
+        )
+          .then(() => send({ type: 'compaction_completed' }))
+          .catch(() => {})
+      } else if (inFlightCompaction) {
+        // A compaction from an earlier turn is still running — wait for it
+        // (and its anchored summary) before replying.
+        send({ type: 'compaction_started' })
+        await inFlightCompaction
+        send({ type: 'compaction_completed' })
       }
 
       if (omittedTurns > 0) {

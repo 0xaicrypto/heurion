@@ -34,7 +34,7 @@ describe('approve pending fact via API', () => {
     await app.inject({
       method: 'POST', url: '/api/v1/agent/chat',
       headers: { ...await authHeader(), 'content-type': 'application/json' },
-      payload: JSON.stringify({ text: '诊断结论：患者确诊肺癌，请记录这个诊断方案', session_id: sessionId }),
+      payload: JSON.stringify({ text: '患者确诊肺癌，请记住这个诊断结果并记录', session_id: sessionId }),
     })
     await new Promise((r) => setTimeout(r, 3200))
 

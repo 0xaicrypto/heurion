@@ -167,7 +167,7 @@ export function ChatPage() {
   }, [session?.messages]);
 
   const handleSend = async () => {
-    if (!input.trim() || session?.loading) return;
+    if (!input.trim() || session?.loading || session?.compacting) return;
     const text = input.trim();
     setInput('');
     setDrafts((prev) => { const next = { ...prev }; delete next[sessionId]; return next; });
@@ -414,6 +414,12 @@ export function ChatPage() {
 
         <footer className="border-t border-border bg-surface px-4 py-4">
           <div className="mx-auto flex max-w-3xl flex-col gap-2">
+            {session?.compacting && (
+              <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-text-secondary">
+                <span className="animate-pulse">🧠</span>
+                {t('chat.compacting', '正在压缩会话历史，请稍候…')}
+              </div>
+            )}
             <SkillsBar active={activeSkills} onToggle={toggleSkill} />
             {attachedFiles.length > 0 && (
               <div className="flex gap-2 flex-wrap">
@@ -462,8 +468,8 @@ export function ChatPage() {
                   {t('common.stop')}
                 </Button>
               ) : (
-                <Button onClick={handleSend} disabled={!input.trim()}>
-                  {t('common.send')}
+                <Button onClick={handleSend} disabled={!input.trim() || !!session?.compacting}>
+                  {session?.compacting ? t('chat.compactingShort', '压缩中…') : t('common.send')}
                 </Button>
               )}
             </div>

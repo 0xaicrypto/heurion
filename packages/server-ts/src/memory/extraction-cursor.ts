@@ -55,13 +55,15 @@ export async function advanceExtractedUptoIdx(key: ExtractionCursorKey, idx: num
 }
 
 /**
- * K2 — event-driven trigger decision (Tier 1). Returns true only when the
- * incremental segment contains a strong clinical signal. Volume-based
- * extraction (the old 300-char threshold) moved to compaction time (Tier 2)
- * and session close (Tier 3), where segments are processed once with full
- * context instead of repeatedly.
+ * K2 — event-driven trigger decision (Tier 1). Triggered ONLY by explicit
+ * memory instructions or safety-critical signals. Everything else is
+ * extracted at compaction time (Tier 2) or session close (Tier 3), where
+ * segments are processed once with full context — real-time extraction is
+ * intentionally near-zero (diagnosis/plan/start words are far too common in
+ * clinical conversation to trigger).
  */
 export function shouldExtractIncrement(incrementalText: string): boolean {
-  const SIGNALS = /记住|记得|诊断|方案|确认|停止|剂量|调整|停用|开始|复查|过敏|禁忌/i
+  // Explicit memory instructions + safety-critical allergies/contraindications.
+  const SIGNALS = /记住|记得|保存到知识库|保存记忆|过敏|禁忌/
   return SIGNALS.test(incrementalText)
 }
