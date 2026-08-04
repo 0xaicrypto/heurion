@@ -9,7 +9,7 @@ import {
 } from './approval.service.js'
 
 const rejectSchema = z.object({
-  reason: z.string().min(1),
+  reason: z.string().optional(),
 })
 
 export async function approvalsRouter(app: FastifyInstance) {
@@ -44,7 +44,7 @@ export async function approvalsRouter(app: FastifyInstance) {
       return reply.status(400).send({ error: parsed.error.format() })
     }
     try {
-      const result = await rejectApproval(userId, id, parsed.data.reason, isAdmin)
+      const result = await rejectApproval(userId, id, parsed.data.reason ?? null, isAdmin)
       return result
     } catch (err: any) {
       if (err.message === 'rejectedReason required') {

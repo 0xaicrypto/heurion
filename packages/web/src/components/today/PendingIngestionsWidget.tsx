@@ -96,7 +96,6 @@ export function PendingIngestionsWidget({ limit = 5, onCountChange }: PendingIng
   };
 
   const handleReject = async (approvalId: string) => {
-    if (!rejectReason.trim()) return;
     setOperatingId(approvalId);
     try {
       await api.rejectApproval(approvalId, rejectReason.trim());
@@ -196,7 +195,7 @@ export function PendingIngestionsWidget({ limit = 5, onCountChange }: PendingIng
                         placeholder={t('today.pendingIngestions.rejectReason')}
                         className="h-8 w-44 text-sm"
                       />
-                      <Button size="sm" variant="danger" onClick={() => handleReject(approval.id)} isLoading={busy} disabled={!rejectReason.trim()}>
+                      <Button size="sm" variant="danger" onClick={() => handleReject(approval.id)} isLoading={busy}>
                         {t('today.pendingIngestions.reject')}
                       </Button>
                       <Button size="sm" variant="ghost" onClick={() => { setRejectingId(null); setRejectReason(''); }}>
