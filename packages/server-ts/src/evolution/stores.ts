@@ -278,5 +278,6 @@ export class KnowledgeStore {
   }
 
   all(): KnowledgeArticle[] { return [...this.working] }
+  currentVersion() { return this.store.currentVersion() }
   commit(): string { return this.store.propose(this.working) }
 }

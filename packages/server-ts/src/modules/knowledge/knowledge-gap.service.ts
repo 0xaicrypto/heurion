@@ -123,8 +123,38 @@ function paginate<T>(items: T[], page: number, pageSize: number): { items: T[]; 
  * Production-ready Prisma-backed KnowledgeGapService.
  */
 export class PrismaKnowledgeGapService implements KnowledgeGapService {
+  /**
+   * K6 — create with 7-day dedup: an open gap with the same normalized text
+   * (or heavy keyword overlap) created within the last 7 days suppresses a
+   * duplicate; the existing gap's window is refreshed instead.
+   */
   async create(input: CreateGapInput): Promise<KnowledgeGap> {
     const now = new Date().toISOString()
+    const since = new Date(Date.now() - 7 * 86400_000).toISOString()
+    const recent = await (prisma as any).knowledgeGap.findMany({
+      where: { userId: input.userId, status: 'open', createdAt: { gte: since } },
+    })
+    const norm = (s: string) => s.toLowerCase().replace(/[\s，。,.?!？!?：:；;、\-_]+/g, '')
+    const keywords = (s: string) => new Set(norm(s).split(/[^\p{L}\p{N}]+/u).filter((w: string) => w.length > 1))
+    const targetNorm = norm(input.content)
+    const targetKw = keywords(input.content)
+
+    const dup = recent.find((g: any) => {
+      if (norm(g.content) === targetNorm) return true
+      const kw = keywords(g.content)
+      let overlap = 0
+      for (const k of targetKw) if (kw.has(k)) overlap++
+      return overlap >= 3 && overlap >= Math.min(targetKw.size, kw.size) * 0.6
+    })
+    if (dup) {
+      // Refresh the dedup window so the same question stays suppressed.
+      await (prisma as any).knowledgeGap.update({
+        where: { id: dup.id },
+        data: { updatedAt: now },
+      })
+      return mapPrismaToGap({ ...dup, updatedAt: now })
+    }
+
     const row = await (prisma as any).knowledgeGap.create({
       data: {
         userId: input.userId,

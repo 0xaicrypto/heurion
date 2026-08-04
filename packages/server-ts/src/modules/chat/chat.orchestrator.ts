@@ -13,6 +13,26 @@ function extractKeywords(query: string): string[] {
     .filter(w => w.length > 3)
 }
 
+/** CJK-aware keyword extraction: latin tokens as-is, Chinese via 2-grams
+ *  (split(/\s+/) does not segment Chinese — a whole sentence becomes one
+ *  token and keyword overlap never matches). Stopwords are dropped. */
+function extractCjkKeywords(text: string): string[] {
+  const clean = text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ')
+  const STOP = /^(患者|病人|医生|这个|那个|我们|你们|他们|请问|没有|一下|的话)$/
+  const words = new Set<string>()
+  for (const token of clean.split(/\s+/)) {
+    if (!token) continue
+    if (/[\p{Script=Han}]/u.test(token)) {
+      for (let i = 0; i < token.length - 1; i++) {
+        const bigram = token.slice(i, i + 2)
+        if (!STOP.test(bigram) && /[\p{Script=Han}]/u.test(bigram)) words.add(bigram)
+      }
+    } else if (token.length >= 2 && token.length <= 6) {
+      words.add(token)
+    }
+  }
+  return [...words]
+}
 function matchesKeywords(text: string, keywords: string[]): boolean {
   if (keywords.length === 0 || !text) return false
   const t = text.toLowerCase()
@@ -320,18 +340,18 @@ export class ChatOrchestrator {
 
     await this.maybeScheduleIncrementalExtraction(userId, sessionId, patientHash)
 
-    // Detect knowledge gaps on every turn — queries with no matching facts
+    // K6: Detect knowledge gaps on every turn — question-shaped messages
+    // (containing ?/？/如何/是否/为什么…) not covered by any fact.
     try {
+      const QUESTION_RE = /[?？]|如何|怎样|怎么|为什么|为何|是否|是不是|有没有|是什么|哪些|哪个/
       const factList = this.memory
         ? this.memory.graph.getCurrentNodesByType('fact').filter((n): n is import('../../memory/memory.types').FactNode => n.type === 'fact')
         : this.factsStore.all()
+      const gapKeywords = extractCjkKeywords(userMessage)
       const relatedFacts = factList.filter(f =>
-        userMessage.toLowerCase().split(/\s+/)
-          .map((w: string) => w.replace(/[^\p{L}\p{N}]/gu, ''))
-          .filter(Boolean)
-          .some((w: string) => w.length > 3 && f.content.toLowerCase().includes(w))
+        gapKeywords.some(w => f.content.toLowerCase().includes(w))
       )
-      if (relatedFacts.length === 0 && userMessage.length > 15) {
+      if (relatedFacts.length === 0 && QUESTION_RE.test(userMessage) && userMessage.length > 5) {
         await this.gapService.create({
           userId,
           workspaceId: userId,
