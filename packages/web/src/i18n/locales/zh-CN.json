@@ -123,7 +123,11 @@
       "autoAnalyzed": "自动分析",
       "unknownPatient": "未知患者",
       "loadFailed": "待审批报告加载失败",
-      "operateFailed": "操作失败，请重试"
+      "operateFailed": "操作失败，请重试",
+      "globalScope": "全局记忆",
+      "highImportance": "高重要性",
+      "conflictWarning": "⚠️ 与已确认事实矛盾",
+      "autoExtracted": "自动提取"
     }
   },
   "brain": {
@@ -159,7 +163,8 @@
     "activityAnalyzed": "AI 分析了 {{title}}",
     "noEntries": "暂无待审批条目",
     "targetFilter": "按目标筛选",
-    "allTargets": "全部目标"
+    "allTargets": "全部目标",
+    "conflictWarning": "⚠️ 与已确认事实矛盾"
   },
   "chat": {
     "title": "对话",
