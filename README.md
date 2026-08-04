@@ -16,429 +16,207 @@
 ## What is Heurion?
 
 Heurion is a **self-evolving clinical AI workstation** for oncology researchers.
-It combines persistent agent memory, weighted-attention context projection, and
-typed SDK to create an AI that grows smarter with every interaction.
+Every conversation becomes durable, auditable memory — nothing is written to
+the long-term memory without human review, and nothing important is lost when
+a long session overflows its context budget.
 
-Unlike stateless chatbots, Heurion's agent:
-- **Remembers** across sessions — every conversation builds accumulated knowledge
-- **Evolves** autonomously — automatically extracts facts, preferences, and insights
-- **Projects relevant context** — semantic retrieval + graph traversal inject only the most relevant memory
-- **Accumulates clinical expertise** — facts, articles, and skills are versioned, auditable, and exportable
-- **Propagates changes** — editing or deleting a fact automatically marks dependent knowledge as stale
+Key ideas:
+
+- **Human-reviewed memory lifecycle** — AI extraction *proposes* facts; only
+  approved proposals enter the memory graph (versioned, supersede-aware, audited).
+- **Three-tier extraction** — real-time extraction triggers only on explicit
+  memory instructions or safety-critical signals (allergy/contraindication);
+  the bulk of fact extraction happens at **compaction time** and on **session
+  close**, where full context allows proper aggregation.
+- **Anchored compaction** — long sessions are compacted into structured
+  summaries that stay injectable for continuity; compaction is delayed-sync
+  (a turn arriving mid-compaction waits for it, so the summary is always
+  available) and surfaced to the UI with a progress banner.
+- **Contradiction handling** — facts carry scope identity (patient/study);
+  extraction flags contradictions against same-scope confirmed facts, and
+  approving a contradictory proposal supersedes the old fact (history kept).
+- **Context budget transparency** — the chat header shows history-token usage
+  as a percentage, so the next compaction is always predictable.
+- **Tool-call persistence** — every tool call is persisted as a state machine
+  (pending → running → completed/error) with replay API; outputs are bounded
+  (head+tail truncation with full content saved to disk); doom-loops are
+  detected and warned about.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           Client Layer                              │
-├─────────────────────────────────────────────────────────────────────┤
-│   Web UI (packages/web)                                             │
-│   React + Vite + Tailwind + i18n (zh-CN/en), light/dark mode        │
-├─────────────────────────────────────────────────────────────────────┤
-│   @heurion/sdk (packages/sdk-client)                                │
-│   Typed client — browser + CLI ready                                │
-│   AsyncGenerator-based SSE streaming                                │
-└──────────────────────────────────┬──────────────────────────────────┘
-                                    │ HTTPS / SSE
-┌──────────────────────────────────▼──────────────────────────────────┐
-│                       Control Plane (Production VPS)                │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │   Server (TS) — packages/server-ts                             │  │
-│  │   Fastify + Prisma + SQLite                                    │  │
-│  │   Auth, Chat SSE, Research, Docs, Skills, Admin, Plugin Mgmt   │  │
-│  │   Enqueues Sidecar jobs, proxies file downloads                │  │
-│  └───────────────────────────────┬───────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │   Embedding Server (Python) — nexus_server.embedding_server    │  │
-│  │   Local bge-m3 (1024-dim) + OpenAI fallback                    │  │
-│  │   Powers GraphRAG / semantic retrieval                         │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────┼──────────────────────────────────┘
-                                    │ enqueue job (Redis)
-┌──────────────────────────────────▼──────────────────────────────────┐
-│                      Execution Plane (Sandbox VPS)                  │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │   Worker Image (packages/server + Dockerfile.worker)           │  │
-│  │   FastAPI + Redis consumer + heurion_worker package            │  │
-│  │   ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ │  │
-│  │   │ Connector   │ │ Execution   │ │ UI Plugin               │ │  │
-│  │   │ (Slack...)  │ │ (MedSci-   │ │ (React dynamic load)    │ │  │
-│  │   │             │ │  Sidecar...)│ │                         │ │  │
-│  │   └─────────────┘ └──────┬──────┘ └─────────────────────────┘ │  │
-│  │                          │ upload output                       │  │
-│  └──────────────────────────┼────────────────────────────────────┘  │
-│                             │                                         │
-│  ┌──────────────────────────▼────────────────────────────────────┐  │
-│  │   Object Storage (S3 / DigitalOcean Spaces / MinIO)            │  │
-│  │   Generated DOCX/PPTX/PNG, tenant-isolated                     │  │
-│  └────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                      Client Layer                             │
+│  Web UI (packages/web) — React + Vite + Tailwind + i18n      │
+│  SSE streaming chat, session manager, Brain inbox, Today     │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ HTTPS / SSE
+┌──────────────────────────────▼───────────────────────────────┐
+│                   Production (Docker Compose)                 │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  nexus-server (packages/server-ts) — Fastify + Prisma  │  │
+│  │  + SQLite                                              │  │
+│  │  Auth · Chat SSE · Memory lifecycle · Sessions ·       │  │
+│  │  Patients · Research · Docs · Skills · Approvals ·     │  │
+│  │  Ingestion · Tools · Admin                             │  │
+│  │  Serves the web UI (dist) with no-cache HTML           │  │
+│  └───────────────────────────┬────────────────────────────┘  │
+│  ┌───────────────────────────▼────────────────────────────┐  │
+│  │  nexus-embedding-server — local bge-m3 + per-user      │  │
+│  │  brute-force semantic index (JSONL)                    │  │
+│  └────────────────────────────────────────────────────────┘  │
+│  Caddy reverse proxy (automatic HTTPS) in front            │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ Cloudflare (purged on deploy)
+                               ▼
+                            heurion.org
 ```
 
-### Why separate the Execution Plane?
-
-- **Security**: plugin code and document rendering run in a restricted sandbox; a compromised plugin cannot access the main production database.
-- **Resource isolation**: rendering PPTX / PDF / plots can spike CPU and memory; the main API server stays responsive.
-- **Compliance**: egress, PHI access, and code execution are auditable on a dedicated worker host.
-- **Scalability**: worker nodes can scale independently based on queue depth.
-
-### Plugin & Sidecar Architecture
-
-Heurion now has two extension mechanisms:
-
-- **Skills Market**: prompt-based abilities injected into the system prompt (existing).
-- **Plugin Market**: runtime plugins that register tools, connectors, and UI extensions.
-
-The first official plugin is **MedSci-Sidecar** — it generates DOCX, PPTX, tables, and plots from templates and structured data. Jobs are enqueued on Redis, rendered in the Execution Plane, and uploaded to tenant-isolated object storage.
-
-- [`docs/design/PLUGIN_MARKETPLACE.md`](docs/design/PLUGIN_MARKETPLACE.md)
-- [`docs/design/PLUGIN_MANIFEST_SPEC.md`](docs/design/PLUGIN_MANIFEST_SPEC.md)
-- [`docs/design/MEDSCI_SIDECAR.md`](docs/design/MEDSCI_SIDECAR.md)
-- Memory lifecycle (context, extraction, compaction, approval): [`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMORY_LIFECYCLE.md)
-- Worker implementation: `packages/server/heurion_worker/`
-- System templates: `packages/server/heurion_worker/templates/`
-- Render API: `POST /api/v1/execution/render` · Job status: `GET /api/v1/execution/jobs/:id` · Download: `GET /api/v1/execution/files/:fileId/download`
-
----
-
-## Evolution & Knowledge Base
-
-Heurion is a self-evolving clinical AI. Every interaction is ingested as an
-immutable event, projected into a unified **Memory Graph**, and asynchronously
-distilled into facts, articles, and gaps by the **Evolution Engine**.
-
-### Memory Graph: one model for all memory
-
-All memory entities live in a single graph:
-
-| Node type | What it is | Example |
-|---|---|---|
-| **Fact** | Structured snippet with importance, confidence, and source | "ZQ is intolerant to osimertinib" |
-| **Article** | Synthesized knowledge linked to source fact versions | "ZQ's EGFR treatment experience" |
-| **Gap** | Unanswered question waiting for a fact/article answer | "Best first-line for EGFR ex20ins?" |
-| **Skill** | Learned strategy for recurring tasks | "This doctor checks CT before treatment" |
-| **Entity** | Canonical patient/medication/biomarker/study concept | "Osimertinib" |
-| **Document** | Uploaded file with extracted fact provenance | "CT_7-15.pdf" |
-
-Relations connect them: `derives_from`, `depends_on`, `answers`, `mentions`,
-`supersedes`, `related_to`.
-
-### EventLog is the source of truth
-
-All memory writes flow through:
+### Memory lifecycle (Brain 2.0)
 
 ```
-Runtime handlers  →  MemoryService  →  EventLog.append()
-                                          ↓
-                                Memory Graph (projection)
-                                          ↓
-                              Evolution Engine (async)
+Chat turns / ingestion / session close
+        │
+        ▼
+EventLog (append-only, source of truth)
+        │
+        ▼
+Extraction (three tiers)
+  Tier 1  real-time: explicit instructions (记住/保存…) + allergy/contraindication
+  Tier 2  compaction: dropped segments → aggregated facts + anchored summary
+  Tier 3  session close: flush any segment never extracted
+        │
+        ▼
+MemoryProposal (pending review queue)  ◄── NO direct write path
+        │  approve (human)              │  reject
+        ▼                               ▼
+Memory graph (versioned)            dropped (audited)
+   └─ approving a conflicting proposal supersedes the old fact
 ```
 
-- The EventLog is append-only and migration-immutable.
-- The Memory Graph is a projection that can be rebuilt from the EventLog.
-- User edits, imports, and system extractions are all events.
+### Chat runtime
 
-### Versioning & curation
-
-Facts and articles are versioned:
-
-- Editing a fact creates **v2**; v1 is kept with `status='superseded'` and a
-  `supersedes` relation.
-- Articles record the exact fact versions they were generated from.
-- When a fact is edited or deleted, dependent articles are automatically marked
-  `stale` with `staleBecause`.
-- Deleting a document superseded facts derived from it; articles depending on
-  those facts become stale.
-
-This makes the knowledge base auditable and self-correcting.
-
-### Asynchronous Evolution Engine
-
-The Evolution Engine runs outside the chat hot path (BullMQ + Redis, with an
-in-memory fallback):
-
-1. **Extract** — LLM extracts facts from chat turns and documents.
-2. **Deduplicate & Link** — merges duplicates and links facts to
-   documents/entities.
-3. **Auto-resolve gaps** — checks whether a new fact answers an open gap.
-4. **Synthesize** — when enough related facts accumulate, generates an article.
-5. **Curate** — propagates user edits and deletions to dependents.
-
-Benefits: retries, dead-letter queues, independent scaling, and no blocking chat
-latency.
-
-### Semantic retrieval
-
-For accumulated-memory queries, retrieval is now hybrid:
-
-1. **Query Router** decides intent (`sql`, `vector`, `graph`,
-   `knowledge_command`, `mixed`).
-2. **Embedding recall** retrieves top-K facts/articles/gaps.
-3. **Graph expansion** follows 1–2 hops of relations.
-4. **RRF rerank** fuses semantic and graph signals.
-5. **Context compressor** truncates to the token budget.
-
-Embedding is currently provided by DeepSeek embedding, with `contentHash`
-caching and batching to keep costs low.
-
-### Heurion Memory Archive (.hma)
-
-Users can export and import their entire memory:
-
-- `.hma` is a self-contained ZIP/TAR with EventLog, Memory Graph, projections,
-  and files.
-- Export: `POST /api/v1/memory/export`
-- Import: `POST /api/v1/memory/import` with `mode=merge` or `mode=replace`
-- UI located in **Settings → Data**.
-
-### Memory API
-
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/api/v1/memory/export` | Start memory export job |
-| GET | `/api/v1/memory/export/:jobId` | Export progress / download |
-| POST | `/api/v1/memory/import` | Start memory import job |
-| GET | `/api/v1/memory/import/:jobId` | Import report |
-| GET | `/api/v1/memory/nodes/:id/versions` | Version history |
-| GET | `/api/v1/memory/articles/:id/impact` | Downstream fact impact |
-| POST | `/api/v1/memory/articles/:id/regenerate` | Regenerate stale article |
-| POST | `/api/v1/memory/curation/replay` | Replay EventLog (admin) |
-
-Design: [`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMORY_LIFECYCLE.md)  
-Tests: [`docs/design/KB_EVOLUTION_TESTS.md`](docs/design/KB_EVOLUTION_TESTS.md)
+- **Intent router**: `sql` / `vector` / `file` / `knowledge_command` /
+  `sidecar` / `mixed` — LLM fallback with a safety net (a misclassified
+  `knowledge_command` that doesn't parse degrades to `mixed`).
+- **Context projection**: persona (cached by facts/knowledge versions, K5),
+  patient context, episodes, filtered facts, active skills.
+- **History budget**: 8000 tokens / 20 turns (env-configurable), surfaced to
+  the UI as a usage bar (U3); overflow triggers anchored compaction.
+- **Tool loop**: up to 5 rounds; every call persisted (R3) with per-session
+  seq; outputs bounded (T1, head+tail + full file on disk); doom-loop guard.
+- **Gap detection (K6)**: question-shaped messages not covered by any fact
+  create a knowledge gap (7-day dedup).
 
 ---
 
 ## Quickstart
 
 ```bash
-# Terminal 1 — Control Plane (TypeScript backend)
+# Terminal 1 — backend
 cd packages/server-ts
 cp .env.example .env
-# Edit .env: set DEEPSEEK_API_KEY and, if you have a worker, EXECUTION_PLANE_URL.
+# Edit .env: set DEEPSEEK_API_KEY
 npx prisma db push
 npx tsx src/main.ts
-# → http://localhost:8001
+# → http://localhost:8001 (serves web dist if present)
 
-# Terminal 2 — Web UI
+# Terminal 2 — web UI (dev)
 cd packages/web
 pnpm install
 pnpm exec vite --host
 # → http://localhost:5173
-
-# Optional Terminal 3 — Execution Plane (Sidecar worker) on a separate port
-# Requires Redis and S3-compatible object storage (e.g. DigitalOcean Spaces).
-cd packages/server
-cp .env.example .env
-# Edit .env: set REDIS_URL, WORKER_API_TOKEN, S3_*.
-uvicorn nexus_server.main:create_app --host 0.0.0.0 --port 8002 --factory
-# In another process:
-# REDIS_URL=redis://localhost:6379/0 python -m heurion_worker.consumer
 ```
 
----
+Tests:
 
-## Module Map
-
-| Layer | Package | Stack | Responsibility |
-|-------|---------|-------|----------------|
-| **Web UI** | `packages/web` | React 18 + Vite 5 + Tailwind | Browser app, i18n (zh-CN/en), dark mode |
-| **SDK** | `packages/sdk-client` | TypeScript | Typed client for browser/CLI |
-| **Control Plane** | `packages/server-ts` | Fastify 4 + Prisma 5 + SQLite | Auth, Chat SSE, Research, Docs, Skills, Admin, Plugin/Execution mgmt |
-| **Execution Plane** | `packages/server` | FastAPI + Python | DICOM/inference worker, MedSci-Sidecar rendering, Redis consumer |
-| **Core SDK** | `packages/sdk` + `packages/nexus` | Python | DigitalTwin, identity, event sourcing |
-
-### Control Plane modules (10+ feature domains)
-
-```
-modules/
-├── auth/          Register, login, JWT, profile
-├── chat/          SSE streaming (DeepSeek), sessions, context projection
-├── patients/      Patient CRUD, DICOM, memory graph
-├── research/      Studies, roster, eligibility, safety analysis
-├── documents/     Writing studio, AI polish, PHI scanner
-├── skills/        Skill marketplace with pagination
-├── settings/      LLM provider configuration
-├── files/         Upload, clipboard paste support
-├── admin/         User management
-├── execution/     Sidecar job enqueue/status/download proxy
-└── stubs/         Fallback endpoints
-
-memory/            Unified Memory Graph, versioning, curation, archive export/import
-evolution/         Async BullMQ worker + queue metrics; extract/synthesize/gap stages
-```
-
-### Execution Plane (`packages/server/heurion_worker/`)
-
-```
-heurion_worker/
-├── consumer.py    Redis job consumer
-├── sidecar.py     DOCX/PPTX/table/plot renderers
-├── storage.py     S3/Spaces upload + presigned download URLs
-└── templates/     Bundled system templates (DOCX/PPTX)
-```
-
-### SDK modules (10 typed clients)
-
-```
-heurion.auth.login(username, password)
-heurion.chat.sendMessage({ text })    → AsyncGenerator<SSE chunks>
-heurion.patients.list()
-heurion.research.createStudy(name, code)
-heurion.documents.create(title)
-heurion.skills.search(query, source)
-heurion.settings.getLlmStatus()
-heurion.files.upload(file)
-heurion.admin.listUsers()
-heurion.memory.getProjection(patientHash)
-heurion.memory.export(options)
-heurion.memory.import(file, mode)
-heurion.memory.getNodeVersions(nodeId)
-heurion.memory.regenerateArticle(articleId)
-```
-
----
-
-## SDK Usage
-
-```typescript
-import { HeurionClient, memoryStore } from '@heurion/sdk'
-
-const h = new HeurionClient({
-  baseUrl: 'http://localhost:8001',
-  tokenStore: memoryStore,  // localStorage for browser, file for CLI
-})
-
-await h.auth.login('doctor', 'password')
-
-// SSE streaming chat
-for await (const chunk of h.chat.sendMessage({ text: 'analyze the case' })) {
-  if (chunk.type === 'final_answer_chunk') console.log(chunk.text)
-}
-```
-
----
-
-## API
-
-All responses use `snake_case` field names. Key endpoints:
-
-| Method | Path | Module |
-|--------|------|--------|
-| POST | `/api/v1/auth/login` | Auth |
-| POST | `/api/v1/agent/chat` | Chat (SSE) |
-| GET | `/api/v1/dicom/patients/full` | Patients |
-| POST | `/api/v1/research/studies` | Research |
-| GET | `/api/v1/docs` | Documents |
-| GET | `/api/v1/skills/search?source=all&page=1` | Skills |
-| GET | `/api/v1/admin/users` | Admin |
-| GET | `/api/v1/memory/export` | Memory — start export job |
-| POST | `/api/v1/memory/import` | Memory — start import job (merge/replace) |
-| GET | `/api/v1/memory/nodes/:id/versions` | Memory — version history |
-| GET | `/api/v1/memory/articles/:id/impact` | Memory — downstream impact |
-| POST | `/api/v1/memory/articles/:id/regenerate` | Memory — regenerate stale article |
-| POST | `/api/v1/execution/render` | Execution — enqueue Sidecar render job |
-| GET | `/api/v1/execution/jobs/:id` | Execution — poll job status |
-| GET | `/api/v1/execution/files/:fileId/download` | Execution — get presigned file URL |
-
----
-
-## CI/CD Pipeline
-
-Every push to `main` triggers:
-
-```
-TypeCheck → Unit Tests → Staging + Regression → Cloudflare SSL → Deploy Control Plane → Deploy Execution Plane
-```
-
-- **Staging gate**: deploys to `localhost:8002` on the Control Plane VPS, then runs
-  **regression tests**. Production deploy is blocked on failure.
-- **Two-plane deploy**: Control Plane (`packages/server-ts`) and Execution Plane
-  (`Dockerfile.worker` built from `packages/server`) are deployed in sequence.
-  The worker image is pushed to GHCR and rolled out via `docker-compose.worker.yml`.
-- **Secrets**: CI secrets (`SERVER_SECRET`, `EXECUTION_PLANE_URL`, `WORKER_API_TOKEN`,
-  `S3_*`, LLM keys) are transferred to each VPS via a temporary env file that is
-  removed immediately after sourcing.
-- **Playwright E2E**: browser tests simulating full user workflows
-  (login → patient → chat → knowledge → settings → plugin tools).
-
----
-
-## Test Plan
-
-- **61 regression tests** — every API module, auth guard, edge case
-- **30+ unit tests** — vitest for FactsStore, KnowledgeStore, query-router,
-  context-compressor, graph-extractor, semantic-search, RRF-fusion
-- **20+ E2E tests** — Playwright browser tests with CI integration
-
-Run locally:
 ```bash
-cd packages/server-ts
-npx vitest run               # unit tests
-npx playwright test          # E2E browser tests
-
-# Worker-specific tests (no DB/conftest side effects):
-PYTHONPATH=../server pytest ../server/tests_worker/test_heurion_worker.py
-
-# Or via CI scripts:
+cd packages/server-ts && pnpm vitest run   # 60 files / 430+ tests
+cd packages/web && pnpm test               # 10 files / 73 tests
 bash scripts/regression-test.sh http://localhost:8002
 ```
 
 ---
 
-## Deployment Topology
-
-Production runs on at least two DigitalOcean Droplets (or equivalent VMs):
-
-| Node | Role | Example spec |
-|---|---|---|
-| **Control Plane** | Main API, Web UI, SQLite DB, Plugin Manager, Job Queue, **local bge-m3 Embedding Server** | 2–4 vCPU / **8 GB RAM** (4 GB minimum with swap) |
-| **Execution Plane** | Plugin Worker, Sandbox, MedSci-Sidecar | 2 vCPU / 4 GB RAM (horizontally scalable) |
-
-The Control Plane runs the `nexus-embedding-server` container (or process) alongside
-`nexus-server`. `bge-m3` needs ~2.2 GB disk and several gigabytes of RAM; budget
-accordingly or point `EMBEDDING_SERVICE_URL` at an external embedding endpoint to
-offload it.
-
-The two planes communicate over a private network (VPC / WireGuard). The Execution Plane
-is not exposed to the public internet; only the Control Plane can reach it on port `8001`.
+## Module map (server-ts)
 
 ```
-Internet
-   │
-   ▼
-┌──────────────┐     VPC / private network     ┌──────────────────┐
-│   Nginx      │◄─────────────────────────────►│  Control Plane   │
-│  (HTTPS)     │                               │  :8001 main API  │
-└──────┬───────┘                               │  Plugin Manager  │
-       │                                       │  Job Queue       │
-       ▼                                       └────────┬─────────┘
-┌──────────────┐                                        │ enqueue
-│   Web UI     │                                        │
-└──────────────┘                                        ▼
-                                               ┌──────────────────┐
-                                               │  Execution Plane │
-                                               │  :8001 worker    │
-                                               │  sandbox plugins │
-                                               └──────────────────┘
+src/
+├── modules/
+│   ├── auth/            JWT auth, register/login, roles (first user = admin)
+│   ├── chat/            SSE chat, sessions (multi-session), orchestrator,
+│   │                    user-context (per-user memory), tool loop
+│   ├── approvals/       MemoryProposal & MedicalRecordEntry approvals, audit
+│   ├── ingestion/       File upload → AI analysis → pending review entries
+│   ├── medical-records/ Patient record entries (pending_review flow)
+│   ├── patients/        Patient CRUD + DICOM
+│   ├── research/        Studies, roster, eligibility
+│   ├── documents/       Writing studio, AI polish, PHI scanner
+│   ├── knowledge/       KB commands, knowledge gaps (K6), telemetry
+│   ├── practitioner/    Takeaways, narratives
+│   └── ...              skills, settings, files, admin, calendar, execution
+├── memory/
+│   ├── memory-gateway.ts     single facade: propose/applyApproved/reject/read
+│   ├── compaction.ts         R2 anchored compaction (Tier 2) + delayed-sync
+│   ├── extraction-cursor.ts  K1/K2 per-scope incremental cursor + triggers
+│   ├── knowledge-synthesis.ts K3/K4 episode summaries + article synthesis
+│   ├── embedding-index.ts    per-user semantic index (reviewed memories only)
+│   └── memory.service.ts     versioned graph (supersede + audit)
+├── tools/
+│   ├── tool-registry.ts      registry + uniform output bounding (T1)
+│   ├── tool-output-store.ts  head+tail truncation + disk persistence
+│   ├── doom-loop.ts          same tool+args 3x guard
+│   └── clinical-graph-tools.ts / calendar / memory / ocr / subagent / async
+└── retrieval/
+    ├── query-router.ts       intent classification (rules + LLM fallback)
+    └── context-compressor.ts history budget + omitted-turn accounting
 ```
 
 ---
 
-## Secret Management
+## Key APIs
 
-- **CI**: GitHub Actions secrets (`SERVER_SECRET`, `EXECUTION_PLANE_URL`,
-  `WORKER_API_TOKEN`, `S3_*`, LLM keys, SSH keys).
-- **VPS runtime**: each deploy writes a per-service `.env` file on the host
-  (`packages/server-ts/.env` for Control Plane, `/root/heurion/.env` for the worker).
-  These files are host-only and never committed.
-- **Worker stack**: Docker Compose mounts secrets under `/run/secrets/` for
-  `SERVER_SECRET`, LLM keys, and plugin tokens.
-- **Future**: migrate to DigitalOcean App Platform Secrets or HashiCorp Vault
-  without changing the service interfaces.
+All responses use `snake_case`. Key endpoints:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/v1/auth/register` · `/login` | Auth |
+| POST | `/api/v1/agent/chat` | Chat (SSE) |
+| GET/POST | `/api/v1/sessions` · `POST /api/v1/sessions/:id/close` | Session management |
+| GET | `/api/v1/agent/messages?session_id=` | Message replay (tool events filtered) |
+| GET | `/api/v1/agent/tool-events?session_id=` | Tool-call state machine replay (R3) |
+| GET | `/api/v1/approvals/pending` · POST `/api/v1/approvals/:id/confirm|reject` | Memory review inbox |
+| GET | `/api/v1/knowledge/gaps` · POST | Knowledge gaps (K6) |
+| GET/POST | `/api/v1/dicom/patients/...` | Patients + DICOM |
+| POST | `/api/v1/files/upload` | File upload (paste/clipboard) |
+| GET | `/api/v1/skills/search` | Skills |
+| GET | `/api/v1/admin/users` | Admin |
+| POST | `/api/v1/execution/render` · GET `/api/v1/execution/jobs/:id` | Sidecar jobs |
+
+Design docs: [`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMORY_LIFECYCLE.md) ·
+[`docs/design/PRODUCT_DESIGN_REVIEW_OPENCODE.md`](docs/design/PRODUCT_DESIGN_REVIEW_OPENCODE.md)
+
+---
+
+## CI/CD
+
+Every push to `main`:
+
+```
+TypeCheck → Unit Tests → Build Web → Staging + Regression → Cloudflare SSL
+→ Deploy Production (Docker Compose) → Purge Cloudflare cache
+```
+
+- `main` is protected — changes land via PRs with required checks
+  ("Build + Phase 0 regression", "Build + lint").
+- The deploy wipes stale web assets so a cached HTML can never load an
+  old bundle; the SPA HTML is served `no-cache`; hashed assets are immutable.
+- Production: single VPS, Docker Compose (Caddy + nexus-server +
+  nexus-embedding-server), SQLite, Cloudflare in front (purged post-deploy).
+
+Deployment details: [`DEPLOY.md`](DEPLOY.md)
 
 ---
 
@@ -458,312 +236,64 @@ Internet
 
 ## 什么是 Heurion？
 
-Heurion 是一个面向肿瘤研究者的**自我进化型临床 AI 工作站**。
-它结合了持久化智能体记忆、加权注意力上下文投影和类型化 SDK，
-让 AI 随着每一次交互变得更智能。
+面向肿瘤研究者的**自我进化型临床 AI 工作站**。每一段对话都会沉淀为可审计的长期记忆——记忆写入必须经过**人工审核**，长会话溢出预算时也不会丢失关键信息。
 
-与传统无状态聊天机器人不同，Heurion 的智能体：
-- **跨会话记忆** — 每次对话都积累知识
-- **自主进化** — 自动提取事实、偏好和洞察
-- **语义 + 图检索** — 只把最相关的记忆注入上下文
-- **积累临床经验** — 事实、文章和技能均版本化管理、可审计、可导出
-- **变化自动传播** — 编辑或删除 Fact 会自动标记依赖的知识为 stale
+核心设计：
 
----
+- **人工审核的记忆闭环** — AI 提取只生成"待审核提案"（pending），批准后才进入版本化记忆图谱；无任何直写路径
+- **三级提取策略** — 实时提取仅在显式记忆指令（记住/保存）或安全关键信号（过敏/禁忌）时触发；批量提取集中在**压缩时**与**会话关闭时**（上下文完整，可聚合）
+- **锚定压缩** — 长会话被压缩为结构化摘要持续注入；压缩采用 delayed-sync（压缩期间的新消息等待压缩完成再回复），前端有"压缩中"横幅提示
+- **矛盾检测与取代** — 事实携带患者/范围标识；提取时标注与同范围已确认事实的矛盾，批准矛盾提案时旧事实自动退位（版本保留可审计）
+- **上下文预算透明** — 聊天头部显示历史 token 用量百分比，压缩时机可预期
+- **工具调用可观测** — 每次工具调用落库为状态机（pending → running → completed/error）可回放；输出超限自动截断并落盘；检测死循环调用
 
 ## 架构
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           客户端层                                   │
-├─────────────────────────────────────────────────────────────────────┤
-│   Web UI (packages/web)                                             │
-│   React + Vite + Tailwind + i18n（中英文/明暗主题）                  │
-├─────────────────────────────────────────────────────────────────────┤
-│   @heurion/sdk (packages/sdk-client)                                │
-│   类型化客户端 — 浏览器/CLI 通用                                    │
-│   AsyncGenerator 流式 SSE                                           │
-└──────────────────────────────────┬──────────────────────────────────┘
-                                    │ HTTPS / SSE
-┌──────────────────────────────────▼──────────────────────────────────┐
-│                       控制面 (Production VPS)                       │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │   Server (TS) — packages/server-ts                             │  │
-│  │   Fastify + Prisma + SQLite                                    │  │
-│  │   认证、Chat SSE、研究、文档、技能、管理员、插件/执行管理      │  │
-│  │   入队 Sidecar 任务、代理文件下载                              │  │
-│  └───────────────────────────────┬───────────────────────────────┘  │
-└──────────────────────────────────┼──────────────────────────────────┘
-                                    │ 入队任务（Redis）
-┌──────────────────────────────────▼──────────────────────────────────┐
-│                       执行面 (Sandbox VPS)                          │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │   Worker 镜像（packages/server + Dockerfile.worker）            │  │
-│  │   FastAPI + Redis 消费者 + heurion_worker 包                   │  │
-│  │   ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ │  │
-│  │   │ Connector   │ │ Execution   │ │ UI Plugin               │ │  │
-│  │   │ (Slack...)  │ │ (MedSci-   │ │ (React 动态加载)        │ │  │
-│  │   │             │ │  Sidecar...)│ │                         │ │  │
-│  │   └─────────────┘ └──────┬──────┘ └─────────────────────────┘ │  │
-│  │                          │ 上传输出                           │  │
-│  └──────────────────────────┼────────────────────────────────────┘  │
-│                             │                                         │
-│  ┌──────────────────────────▼────────────────────────────────────┐  │
-│  │   对象存储（S3 / DigitalOcean Spaces / MinIO）                 │  │
-│  │   生成的 DOCX/PPTX/PNG，按租户隔离                             │  │
-│  └────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
-```
+生产为单机 Docker Compose：**Caddy**（自动 HTTPS）→ **nexus-server**（Fastify + Prisma + SQLite，服务后端与前端静态资源，HTML no-cache）→ **nexus-embedding-server**（本地 bge-m3 + 按用户隔离的语义索引）。前置 Cloudflare，部署后自动 purge 缓存。
 
-### 为什么执行面要独立？
-
-- **安全**：插件代码和文档渲染在受限沙箱中运行；被攻破的插件无法访问主生产数据库。
-- **资源隔离**：渲染 PPTX / PDF / 图表会突发占用 CPU 和内存；主 API 服务器保持响应。
-- **合规**：出站网络、PHI 访问、代码执行都在独立 worker 主机上可审计。
-- **可扩展**：worker 节点可按队列深度独立扩容。
-
-### 插件与 Sidecar 架构
-
-Heurion 现在有两种扩展机制：
-
-- **Skills 市场**：基于 prompt 的能力，注入到 system prompt（已有）。
-- **Plugin 市场**：运行时插件，可注册 tools、connectors 和 UI 扩展。
-
-第一个官方插件是 **MedSci-Sidecar** —— 基于模板和结构化数据生成 DOCX、PPTX、表格和图表。任务通过 Redis 入队，在执行面渲染，并上传到按租户隔离的对象存储。
-
-- [`docs/design/PLUGIN_MARKETPLACE.md`](docs/design/PLUGIN_MARKETPLACE.md)
-- [`docs/design/PLUGIN_MANIFEST_SPEC.md`](docs/design/PLUGIN_MANIFEST_SPEC.md)
-- [`docs/design/MEDSCI_SIDECAR.md`](docs/design/MEDSCI_SIDECAR.md)
-- 工作器实现：`packages/server/heurion_worker/`
-- 系统模板：`packages/server/heurion_worker/templates/`
-- 渲染 API：`POST /api/v1/execution/render` · 任务状态：`GET /api/v1/execution/jobs/:id` · 下载：`GET /api/v1/execution/files/:fileId/download`
-
----
-
-## 进化与知识库
-
-Heurion 是一个自进化的临床 AI。每一次交互都会被摄取为不可变事件，投影到统一的 **Memory Graph**，再由 **Evolution Engine** 异步提炼为 Facts、Articles 与 Gaps。
-
-### Memory Graph：统一的记忆模型
-
-所有记忆实体都存在于同一张图：
-
-| 节点类型 | 说明 | 示例 |
-|---|---|---|
-| **Fact** | 带重要性、置信度与来源的结构化片段 | “ZQ 对 osimertinib 不耐受” |
-| **Article** | 链接到来源 Fact 版本的综述 | “ZQ 的 EGFR 治疗经验” |
-| **Gap** | 等待 Fact/Article 回答的未解问题 | “EGFR ex20ins 最佳一线方案？” |
-| **Skill** | 对重复任务习得的策略 | “该医生习惯先看 CT 再谈方案” |
-| **Entity** | 患者/药物/生物标志物/研究等规范概念 | “Osimertinib” |
-| **Document** | 上传文件及其提取出的 Fact 来源 | “CT_7-15.pdf” |
-
-关系：`derives_from`、`depends_on`、`answers`、`mentions`、`supersedes`、`related_to`。
-
-### EventLog 是唯一真相源
-
-所有记忆写入都经过：
+## 记忆生命周期（Brain 2.0）
 
 ```
-运行时处理器 → MemoryService → EventLog.append()
-                                      ↓
-                            Memory Graph（投影）
-                                      ↓
-                          Evolution Engine（异步）
+聊天/文件导入/会话关闭
+        │
+        ▼
+EventLog（只追加，唯一真相源）
+        │
+        ▼
+三级提取
+  一级 实时：显式指令（记住/保存…）+ 过敏/禁忌
+  二级 压缩：被挤出段 → 聚合事实 + 锚定摘要
+  三级 关闭：冲刷从未提取过的段
+        │
+        ▼
+MemoryProposal（待审核队列）◄── 无直写路径
+   │ 批准（人工）                  │ 拒绝
+   ▼                              ▼
+版本化记忆图谱             丢弃（审计留痕）
+   └─ 批准矛盾提案 → 旧事实自动 supersede
 ```
 
-- EventLog 只追加、不可变。
-- Memory Graph 是可以从 EventLog 重建的投影。
-- 用户编辑、导入、系统提取都是事件。
+## 聊天运行时
 
-### 版本化与级联传播
-
-Fact 与 Article 均支持版本：
-
-- 编辑 Fact 会生成 **v2**，v1 保留为 `superseded`，并建立 `supersedes` 关系。
-- Article 记录生成时所依赖的 Fact 版本快照。
-- 当 Fact 被编辑或删除时，依赖它的 Article 自动标记为 `stale`，并记录 `staleBecause`。
-- 删除 Document 会使从它提取的 Fact 被 `superseded`，进而使相关 Article stale。
-
-这让知识库可审计、可自愈。
-
-### 异步 Evolution Engine
-
-进化逻辑从聊天热路径中解耦，运行在 BullMQ + Redis 队列上（本地无 Redis 时回退到同进程）：
-
-1. **Extract** — 从聊天轮次与文件中提取 Fact。
-2. **Deduplicate & Link** — 合并重复项，链接 Document/Entity。
-3. **Auto-resolve gaps** — 检查新 Fact 是否回答了某个 Open Gap。
-4. **Synthesize** — 相关 Fact 足够多时生成 Article。
-5. **Curate** — 将用户的编辑/删除传播到依赖项。
-
-好处：支持重试、死信队列、独立扩缩容，且不阻塞聊天响应。
-
-### 语义检索
-
-针对需要引用记忆的问题，检索改为混合式：
-
-1. **Query Router** 判定意图：`sql`、`vector`、`graph`、`knowledge_command`、`mixed`。
-2. **Embedding 召回** 取 Top-K Facts/Articles/Gaps。
-3. **图扩展** 沿关系走 1–2 跳。
-4. **RRF 重排** 融合语义与图信号。
-5. **Context Compressor** 截断到 token 预算。
-
-Embedding 当前由 DeepSeek embedding 提供，并通过 `contentHash` 缓存与批量调用控制成本。
-
-### Heurion Memory Archive（.hma）
-
-用户可以整体导出/导入记忆：
-
-- `.hma` 是自包含的 ZIP/TAR，含 EventLog、Memory Graph、投影表与原始文件。
-- 导出：`POST /api/v1/memory/export`
-- 导入：`POST /api/v1/memory/import`，支持 `mode=merge` 或 `mode=replace`
-- UI 入口：**设置 → 数据**。
-
-### 记忆 API
-
-| 方法 | 路径 | 用途 |
-|---|---|---|
-| POST | `/api/v1/memory/export` | 发起导出任务 |
-| GET | `/api/v1/memory/export/:jobId` | 查询进度/下载 |
-| POST | `/api/v1/memory/import` | 发起导入任务 |
-| GET | `/api/v1/memory/import/:jobId` | 导入报告 |
-| GET | `/api/v1/memory/nodes/:id/versions` | 节点版本历史 |
-| GET | `/api/v1/memory/articles/:id/impact` | 下游影响分析 |
-| POST | `/api/v1/memory/articles/:id/regenerate` | 重新生成 stale article |
-| POST | `/api/v1/memory/curation/replay` | 重放 EventLog（管理员） |
-
-设计文档：[`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMORY_LIFECYCLE.md)  
-测试文档：[`docs/design/KB_EVOLUTION_TESTS.md`](docs/design/KB_EVOLUTION_TESTS.md)
-
----
+- **意图路由**：`sql` / `vector` / `file` / `knowledge_command` / `sidecar` / `mixed`（LLM 兜底 + 安全网：误判的命令自动降级为混合）
+- **上下文投影**：Persona（按 facts/knowledge 版本缓存，K5）、患者上下文、会话摘要、过滤后的事实、技能
+- **历史预算**：8000 tokens / 20 轮（env 可调），头部进度条可视化（U3），溢出触发锚定压缩
+- **工具循环**：最多 5 轮；每次调用持久化（R3，per-session 序号）；输出限量（T1，head+tail + 完整落盘）；死循环守卫
+- **Gap 检测（K6）**：问题形态且未被任何事实覆盖的消息 → 创建知识缺口（7 天去重）
 
 ## 快速开始
 
 ```bash
-# Terminal 1 — 控制面（TypeScript 后端）
-cd packages/server-ts
-cp .env.example .env
-# 编辑 .env：设置 DEEPSEEK_API_KEY；如有 worker，再设置 EXECUTION_PLANE_URL。
-npx prisma db push
-npx tsx src/main.ts
-
-# Terminal 2 — Web 前端
-cd packages/web
-pnpm install
-pnpm exec vite --host
-
-# 可选 Terminal 3 — 执行面（Sidecar worker），跑在另一个端口
-# 需要 Redis 和 S3 兼容对象存储（如 DigitalOcean Spaces）。
-cd packages/server
-cp .env.example .env
-# 编辑 .env：设置 REDIS_URL、WORKER_API_TOKEN、S3_*。
-uvicorn nexus_server.main:create_app --host 0.0.0.0 --port 8002 --factory
-# 另一个进程启动消费者：
-# REDIS_URL=redis://localhost:6379/0 python -m heurion_worker.consumer
+cd packages/server-ts && cp .env.example .env   # 设置 DEEPSEEK_API_KEY
+npx prisma db push && npx tsx src/main.ts       # → http://localhost:8001
+cd ../web && pnpm install && pnpm exec vite --host   # → http://localhost:5173
 ```
 
----
+测试：`packages/server-ts`（60 文件 / 430+ 用例）、`packages/web`（10 文件 / 73 用例）、`scripts/regression-test.sh`。
 
-## SDK 用法
+## CI/CD
 
-```typescript
-import { HeurionClient, memoryStore } from '@heurion/sdk'
+推送 `main`：类型检查 → 单测 → 构建 Web → 预发 + 回归 → Cloudflare SSL → 生产部署（Docker Compose）→ 清理 Cloudflare 缓存。`main` 受保护，变更走 PR + 必检项。
 
-const h = new HeurionClient({
-  baseUrl: 'http://localhost:8001',
-  tokenStore: memoryStore,
-})
-
-await h.auth.login('doctor', 'password')
-
-for await (const chunk of h.chat.sendMessage({ text: '分析这个病例' })) {
-  if (chunk.type === 'final_answer_chunk') console.log(chunk.text)
-}
-```
-
----
-
-## API 速查
-
-所有响应字段均为 `snake_case`。常用接口：
-
-| 方法 | 路径 | 模块 |
-|------|------|------|
-| POST | `/api/v1/auth/login` | 认证 |
-| POST | `/api/v1/agent/chat` | 聊天（SSE） |
-| GET | `/api/v1/dicom/patients/full` | 患者 |
-| POST | `/api/v1/research/studies` | 研究 |
-| GET | `/api/v1/docs` | 文档 |
-| GET | `/api/v1/skills/search?source=all&page=1` | 技能 |
-| GET | `/api/v1/admin/users` | 管理员 |
-| GET | `/api/v1/memory/export` | 记忆 — 发起导出任务 |
-| POST | `/api/v1/memory/import` | 记忆 — 发起导入任务（merge/replace） |
-| GET | `/api/v1/memory/nodes/:id/versions` | 记忆 — 版本历史 |
-| GET | `/api/v1/memory/articles/:id/impact` | 记忆 — 下游影响分析 |
-| POST | `/api/v1/memory/articles/:id/regenerate` | 记忆 — 重新生成 stale article |
-| POST | `/api/v1/execution/render` | 执行 — 入队 Sidecar 渲染任务 |
-| GET | `/api/v1/execution/jobs/:id` | 执行 — 查询任务状态 |
-| GET | `/api/v1/execution/files/:fileId/download` | 执行 — 获取文件预签名下载链接 |
-
----
-
-## CI/CD 流水线
-
-推送到 `main` 触发：类型检查 → 单元测试 → 预发 + 回归 → Cloudflare SSL → 部署控制面 → 部署执行面。
-
-- **预发关口**: 部署到 Control Plane VPS 的 `localhost:8002`，运行回归测试，全部通过后方可部署生产环境。
-- **双平面部署**: Control Plane（`packages/server-ts`）与 Execution Plane（`Dockerfile.worker` 构建自 `packages/server`）按顺序独立部署。worker 镜像推送到 GHCR，再通过 `docker-compose.worker.yml` 滚动更新。
-- **Secrets**: CI secrets（`SERVER_SECRET`、`EXECUTION_PLANE_URL`、`WORKER_API_TOKEN`、`S3_*`、LLM keys）通过临时 env 文件传到各 VPS，source 后立即删除。
-- **Playwright E2E**: 浏览器测试，模拟完整用户流程（登录 → 患者 → 聊天 → 知识库 → 设置 → 插件工具）。
-
----
-
-## 部署拓扑
-
-生产环境建议至少 **两台 DigitalOcean Droplets**（或等价 VM）：
-
-| 节点 | 职责 | 示例规格 |
-|---|---|---|
-| **Control Plane** | 主 API、Web UI、数据库、Plugin Manager、Job Queue | 2 vCPU / 4 GB RAM |
-| **Execution Plane** | Plugin Worker、Sandbox、MedSci-Sidecar | 2 vCPU / 4 GB RAM（可弹性扩容） |
-
-两者通过内部网络（VPC / WireGuard）通信，Execution Plane **不直接暴露公网**。
-
-```
-Internet
-   │
-   ▼
-┌──────────────┐     VPC / private network     ┌──────────────────┐
-│   Nginx      │◄─────────────────────────────►│  Control Plane   │
-│  (HTTPS)     │                               │  :8001 main API  │
-└──────┬───────┘                               │  Plugin Manager  │
-       │                                       │  Job Queue       │
-       ▼                                       └────────┬─────────┘
-┌──────────────┐                                        │ enqueue
-│   Web UI     │                                        │
-└──────────────┘                                        ▼
-                                               ┌──────────────────┐
-                                               │  Execution Plane │
-                                               │  :8001 worker    │
-                                               │  sandbox plugins │
-                                               └──────────────────┘
-```
-
-## Secret 管理
-
-- **CI**: GitHub Actions secrets（`SERVER_SECRET`、`EXECUTION_PLANE_URL`、`WORKER_API_TOKEN`、`S3_*`、LLM keys、SSH keys）。
-- **VPS 运行时**: 每次部署在宿主机写入服务级 `.env` 文件（控制面为 `packages/server-ts/.env`，worker 为 `/root/heurion/.env`）。这些文件仅存在于宿主机，不进入仓库。
-- **Worker stack**: Docker Compose 将 `SERVER_SECRET`、LLM keys、插件 token 以 secrets 形式挂载到 `/run/secrets/`。
-- **未来**: 可迁移到 DigitalOcean App Platform Secrets 或 HashiCorp Vault，服务接口保持不变。
-
-手动部署命令：
-
-```bash
-# Control Plane
-ssh root@<control-vps-ip> "bash -s" < scripts/deploy.sh
-
-# Execution Plane
-ssh root@<worker-vps-ip> "cd ~/heurion && docker compose -f docker-compose.worker.yml pull && docker compose -f docker-compose.worker.yml up -d"
-```
-
-> `docker-compose.worker.yml` 是 Execution Plane 的独立编排文件，与 Control Plane 解耦。
+设计文档：[`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMORY_LIFECYCLE.md) ·
+[`docs/design/PRODUCT_DESIGN_REVIEW_OPENCODE.md`](docs/design/PRODUCT_DESIGN_REVIEW_OPENCODE.md)
