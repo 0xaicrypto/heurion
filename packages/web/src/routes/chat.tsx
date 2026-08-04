@@ -33,8 +33,16 @@ export function ChatPage() {
   const session = store.sessions[sessionId];
   const [globalSessions, setGlobalSessions] = useState<ChatSessionItem[]>([]);
   const [defaultClosed, setDefaultClosed] = useState(false);
+  const currentSessionTitle =
+    sessionId === defaultSessionId
+      ? t('chat.defaultSession', '默认会话')
+      : (globalSessions.find((s) => s.id === sessionId)?.title ?? t('chat.defaultSession', '默认会话'));
 
   const [input, setInput] = useState('');
+  // Per-session drafts: switching sessions must never leak half-typed text
+  // into another conversation.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
@@ -63,8 +71,7 @@ export function ChatPage() {
     setNewSessionOpen(true);
   };
 
-  const createSessionWithTitle = async (title: string) => {
-    const res = await api.createSession(title, { scope: 'global' });
+  const insertSession = (res: { id: string; title: string; created_at: string }) => {
     // Synchronously prepend the new session so the selector is immediately
     // consistent — no waiting on the async list refresh.
     setGlobalSessions((prev) => [
@@ -73,25 +80,32 @@ export function ChatPage() {
     ]);
     setSessionId(res.id);
     store.clearSession(res.id);
+  };
+
+  const createSessionWithTitle = async (title: string) => {
+    const res = await api.createSession(title, { scope: 'global' });
+    insertSession(res);
     return res;
   };
 
-  const handleSessionCreated = async (title: string) => {
-    try {
-      await createSessionWithTitle(title);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err));
-    }
+  const handleSessionCreated = (session: { id: string; title: string; created_at: string }) => {
+    insertSession(session);
   };
 
   const handleCloseSession = async () => {
+    setConfirmCloseOpen(true);
+  };
+
+  const confirmCloseSession = async () => {
     const closingId = sessionId;
+    setConfirmCloseOpen(false);
     try {
       await api.closeSession(closingId);
       // Remove the closed session from the selector and clean up local state.
       if (closingId === defaultSessionId) setDefaultClosed(true);
       setGlobalSessions((prev) => prev.filter((s) => s.id !== closingId));
       store.clearSession(closingId);
+      setDrafts((prev) => { const next = { ...prev }; delete next[closingId]; return next; });
       // Pick the next open session; if none remains, start a fresh one so
       // the chat stays usable (all sessions can be closed).
       const next = globalSessions.find((s) => s.id !== closingId && s.status === 'open');
@@ -156,6 +170,7 @@ export function ChatPage() {
     if (!input.trim() || session?.loading) return;
     const text = input.trim();
     setInput('');
+    setDrafts((prev) => { const next = { ...prev }; delete next[sessionId]; return next; });
     setError(null);
     await store.sendMessage(sessionId, {
       text,
@@ -254,9 +269,15 @@ export function ChatPage() {
         <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
           <div className="flex items-center gap-3">
             <h1 className="font-semibold text-text-primary">{t('chat.title')}</h1>
-            <select
+              <select
               value={sessionId}
-              onChange={(e) => setSessionId(e.target.value)}
+              onChange={(e) => {
+                // Save the draft of the session we are leaving, restore the
+                // draft of the one we enter.
+                setDrafts((prev) => ({ ...prev, [sessionId]: input }));
+                setInput(drafts[e.target.value] ?? '');
+                setSessionId(e.target.value);
+              }}
               className="h-8 max-w-[220px] rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={t('chat.selectSession', 'Session')}
             >
@@ -424,7 +445,7 @@ export function ChatPage() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
-                placeholder={t('chat.placeholder')}
+                placeholder={`${t('chat.placeholder')} — ${currentSessionTitle}`}
                 disabled={session?.loading || false}
                 rows={1}
                 className="min-h-0 flex-1 resize-none py-3"
@@ -452,8 +473,28 @@ export function ChatPage() {
       <NewSessionDialog
         open={newSessionOpen}
         onClose={() => setNewSessionOpen(false)}
-        onCreate={handleSessionCreated}
+        onCreated={handleSessionCreated}
       />
+      {confirmCloseOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-5 shadow-lg">
+            <div className="mb-3">
+              <h2 className="text-sm font-semibold text-text-primary">{t('chat.confirmCloseTitle', '关闭会话')}</h2>
+            </div>
+            <p className="mb-4 text-sm text-text-secondary">
+              {t('chat.confirmCloseBody', '关闭「{title}」后，该会话的聊天记录将被清除且无法恢复。确定关闭吗？', { title: currentSessionTitle })}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setConfirmCloseOpen(false)}>
+                {t('common.cancel', '取消')}
+              </Button>
+              <Button variant="danger" onClick={confirmCloseSession}>
+                {t('chat.closeSession', 'Close')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

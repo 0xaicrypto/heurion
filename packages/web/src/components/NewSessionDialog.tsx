@@ -1,24 +1,37 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
+import { api, ApiError } from '@/lib/api-client';
+import type { ChatSession } from '@/lib/types';
 import { Button, Input } from '@/components/ui';
 
 interface NewSessionDialogProps {
   open: boolean;
   onClose: () => void;
-  onCreate: (title: string) => void;
+  onCreated: (session: ChatSession) => void;
 }
 
-export function NewSessionDialog({ open, onClose, onCreate }: NewSessionDialogProps) {
+export function NewSessionDialog({ open, onClose, onCreated }: NewSessionDialogProps) {
   const [title, setTitle] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!open) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const name = title.trim();
-    setTitle('');
-    onClose();
-    onCreate(name || 'New Session');
+    setLoading(true);
+    setError(null);
+    try {
+      const session = await api.createSession(name || 'New Session', { scope: 'global' });
+      setTitle('');
+      setLoading(false);
+      onClose();
+      onCreated(session);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : 'Failed to create session');
+      setLoading(false);
+    }
   };
 
   return (
@@ -42,11 +55,14 @@ export function NewSessionDialog({ open, onClose, onCreate }: NewSessionDialogPr
             maxLength={60}
             className="h-9"
           />
+          {error && <div className="text-xs text-error">{error}</div>}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={onClose}>
+            <Button type="button" variant="secondary" onClick={onClose} disabled={loading}>
               取消
             </Button>
-            <Button type="submit">创建</Button>
+            <Button type="submit" disabled={loading}>
+              {loading ? '创建中…' : '创建'}
+            </Button>
           </div>
         </form>
       </div>
