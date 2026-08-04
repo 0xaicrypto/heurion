@@ -113,3 +113,49 @@ describe('multi-session management (#115)', () => {
     expect(res.statusCode).toBe(404)
   })
 })
+
+describe('closing the default global session', () => {
+  test('global-{userId} sessions can be closed even without a Session row', async () => {
+    const app = await getApp()
+    const userId = (await import('./setup.js')).getAuthUserId ? '' : ''
+    const { getAuthUserId } = await import('./setup.js')
+    const uid = await getAuthUserId()
+    const sessionId = `global-${uid}`
+
+    // Seed events so the summarize path has content
+    const { deepseekChat } = await import('../src/common/llm.js')
+    vi.mocked(deepseekChat).mockImplementation((messages) => {
+      const text = JSON.stringify(messages)
+      if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
+      if (text.includes('临床对话摘要器')) return Promise.resolve('## Objective\n测试')
+      return Promise.resolve('ok')
+    })
+    await app.inject({
+      method: 'POST', url: '/api/v1/agent/chat',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ text: 'hello world', session_id: sessionId }),
+    })
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/sessions/${sessionId}/close`,
+      headers: await authHeader(),
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.status).toBe('closed')
+
+    // Events wiped
+    const ctx = (await import('../src/modules/chat/user-context.js')).getUserContext(uid)
+    const remaining = ctx.eventLog.query({ sessionId })
+    expect(remaining.length).toBe(0)
+  }, 30000)
+
+  test('non-global nonexistent sessions still 404', async () => {
+    const app = await getApp()
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/sessions/session_nonexistent/close',
+      headers: await authHeader(),
+    })
+    expect(res.statusCode).toBe(404)
+  })
+})

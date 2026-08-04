@@ -30,6 +30,7 @@ export function ChatPage() {
   const [sessionId, setSessionId] = useState<string>(defaultSessionId);
   const session = store.sessions[sessionId];
   const [globalSessions, setGlobalSessions] = useState<ChatSessionItem[]>([]);
+  const [defaultClosed, setDefaultClosed] = useState(false);
 
   const [input, setInput] = useState('');
   const [uploadingFile, setUploadingFile] = useState(false);
@@ -63,17 +64,21 @@ export function ChatPage() {
   };
 
   const handleCloseSession = async () => {
-    if (sessionId === defaultSessionId) {
-      setError(t('chat.cannotCloseDefault', 'The default session cannot be closed'));
-      return;
-    }
+    const closingId = sessionId;
     try {
-      await api.closeSession(sessionId);
+      await api.closeSession(closingId);
       // Remove the closed session from the selector and clean up local state.
-      setGlobalSessions((prev) => prev.filter((s) => s.id !== sessionId));
-      store.clearSession(sessionId);
-      const next = globalSessions.find((s) => s.id !== sessionId && s.status === 'open');
-      setSessionId(next?.id ?? defaultSessionId);
+      if (closingId === defaultSessionId) setDefaultClosed(true);
+      setGlobalSessions((prev) => prev.filter((s) => s.id !== closingId));
+      store.clearSession(closingId);
+      // Pick the next open session; if none remains, start a fresh one so
+      // the chat stays usable (all sessions can be closed).
+      const next = globalSessions.find((s) => s.id !== closingId && s.status === 'open');
+      if (next) {
+        setSessionId(next.id);
+      } else {
+        await handleNewSession();
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     }
@@ -234,9 +239,11 @@ export function ChatPage() {
               className="h-8 max-w-[220px] rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={t('chat.selectSession', 'Session')}
             >
-              {[{ id: defaultSessionId, title: t('chat.defaultSession', '默认会话'), status: 'open' }, ...globalSessions.filter((s) => s.status !== 'closed')].map((s) => (
-                <option key={s.id} value={s.id}>{s.title}</option>
-              ))}
+              {(defaultClosed ? [] : [{ id: defaultSessionId, title: t('chat.defaultSession', '默认会话'), status: 'open' as const }] as ChatSessionItem[])
+                .concat(globalSessions.filter((s) => s.status !== 'closed'))
+                .map((s) => (
+                  <option key={s.id} value={s.id}>{s.title}</option>
+                ))}
             </select>
             <button
               onClick={handleNewSession}
