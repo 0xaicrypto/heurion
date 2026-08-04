@@ -382,7 +382,7 @@ model MemoryProposal {
 ### 7.3 UI
 
 - Today widget（#49）与 Brain inbox（#48）扩展一个 tab/筛选："记忆待审核"（kind 徽标 + 置信度 + 来源轮次）
-- 拒绝必须填原因（复用 RejectReasonDialog）
+- 拒绝原因**可选**（#149 后放开：空原因允许拒绝，审计留痕为 null）
 - 审批后 memory-graph 页（`memory-graph.tsx`）可见新版本（现有版本化展示直接受益）
 
 ---
@@ -402,14 +402,16 @@ model MemoryProposal {
 
 | Issue | 内容 | 优先级 |
 |---|---|---|
-| #112 | MemoryGraph 门面：`readContext/summarize/listPending/applyApproved/rejectProposal` + 层3 患者隔离（§3+§4） | P0 |
-| #113 | 审批系统补 Fact/Article target + MemoryProposal 表 + 审计（§7） | P0 |
-| #114 | 压缩/会话结束 → summarize → pending 闭环（§6，与 #99/#109 联动） | P1 |
-| #115 | 多会话管理：Session scope/status 扩展 + 前端会话列表/切换/新建/关闭（§4.4） | P1 |
+| #112 | MemoryGraph 门面：`readContext/summarize/listPending/applyApproved/rejectProposal` + 层3 患者隔离（§3+§4） | ✅ 已完成 |
+| #113 | 审批系统补 Fact/Article target + MemoryProposal 表 + 审计（§7） | ✅ 已完成 |
+| #114 | 压缩/会话结束 → summarize → pending 闭环（§6，与 #99/#109 联动） | ✅ 已完成 |
+| #115 | 多会话管理：Session scope/status 扩展 + 前端会话列表/切换/新建/关闭（§4.4） | ✅ 已完成 |
 
-### 8.3 不涉及的 issue
+### 8.3 会话运行时/UI 项（正交）
 
-#100–#108（U1/U2/U3/T1/T2/T4/S1/U4U5O3）为纯会话运行时/UI 项，与本设计正交，保持不变。
+#100–#108（U1/U2/U3/T1/T2/T4/S1/U4U5O3）为纯会话运行时/UI 项，与本设计正交。
+已完成：#99 R2 锚定压缩、#100 U1 流式渲染、#101 T1 工具输出限量、#102 R3 工具持久化、
+#103 U3 上下文用量 UI、#109–#111 K1–K6。剩余：#98 R1、#104 U2、#105 T2、#106 S1、#107 T4、#108 U4U5O3。
 
 ---
 
@@ -417,13 +419,13 @@ model MemoryProposal {
 
 | 阶段 | 内容 | 依赖 | 预估 |
 |---|---|---|---|
-| G.1 | MemoryProposal 表 + 门面接口骨架（readContext 先接现有 stores） | — | 2d |
-| G.2 | 审批系统 Fact/Article target（`applyTargetUpdate` + 审计） | G.1 | 2d |
-| G.3 | 层3 患者隔离 + readContext 接入 chat（替换 selectProjectionInputs 数据源） | G.1 | 2d |
-| G.4 | 提取管道改造：全部提取结果进 pending（#109 修订） | G.1–G.2 | 2d |
-| G.5 | 压缩闭环：summarize → pending（#99/#114） | G.2, #99 | 3d |
-| G.6 | UI：Brain inbox 记忆 tab + Today 入口（复用 #48/#49） | G.2–G.5 | 2d |
-| G.7 | 多会话管理：后端 scope/status + 前端列表/切换/关闭（#115） | G.5 | 3d |
+| G.1 | MemoryProposal 表 + 门面接口骨架（readContext 先接现有 stores） | — | ✅ |
+| G.2 | 审批系统 Fact/Article target（`applyTargetUpdate` + 审计） | G.1 | ✅ |
+| G.3 | 层3 患者隔离 + readContext 接入 chat（替换 selectProjectionInputs 数据源） | G.1 | ✅ |
+| G.4 | 提取管道改造：全部提取结果进 pending（#109 修订） | G.1–G.2 | ✅ |
+| G.5 | 压缩闭环：summarize → pending（#99/#114） | G.2, #99 | ✅ |
+| G.6 | UI：Brain inbox 记忆 tab + Today 入口（复用 #48/#49） | G.2–G.5 | ✅ |
+| G.7 | 多会话管理：后端 scope/status + 前端列表/切换/关闭（#115） | G.5 | ✅ |
 
 总计约 13 个工作日。G.1–G.3 为 P0（门面 + 隔离 + 审批），可先于压缩落地。
 
@@ -459,3 +461,156 @@ model MemoryProposal {
   takeaway = 即时 UI（不变）；facts = §5 提取管道；articles = §5.4（进 pending）
 - KB 的"分层加载 expand()"（§4.3）与 S1 合并为按需加载工具族（#106 已修订）
 - 本设计补齐了 KB v2.2 缺失的**审核环节**——知识从"自动沉淀"升级为"自动建议 + 人工确认"
+
+---
+
+## 13. 记忆系统优化设计（Phase 3 — 治理与正确性）
+
+> 在 G.1–G.7（审核闭环已上线）基础上，针对运行中暴露的三个正确性缺陷与
+> 审计缺口，分三层治理。**核心原则：未审核信息永不跨会话/跨范围泄漏；
+> 已确认信息的选择逻辑可控、可量化、可反馈。**
+
+### 13.1 现状缺陷（核对代码确认）
+
+| # | 缺陷 | 位置 | 影响 |
+|---|------|------|------|
+| F1 | **全局 persona 混入患者 facts**：`buildPersona` 用 `facts.all()` 无 scope 过滤 | `user-context.ts buildPersona` | 患者 A 的偏好进入全局 persona，影响所有会话（正确性 + 隐私） |
+| F2 | **topFacts 按 `count`（旧注意力计数）排序**，非 importance × recency | 同上 | 关键事实可能被挤出 persona，陈旧事实滞留 |
+| F3 | **Article 触发粗糙**：同类目 ≥3 未使用即合成，无时间窗口/聚类 | `knowledge-synthesis.ts maybeSynthesizeArticle` | 频繁合成低质量文章，pending 噪声 |
+| F4 | **审计缺口**：pending 无超期治理；无接受率/引用率/矛盾率指标反馈 | 审批系统 | 无法量化记忆质量，无法驱动提取优化 |
+| F5 | **persona 整体缓存**：任一 fact 变化全量重建 | `buildCachedPersona` | 与 R1（#98 增量更新）目标冲突的中间态 |
+
+### 13.2 第一层：正确性修复（低成本，优先）
+
+**A. Persona 患者隔离（修 F1）**
+
+```
+全局 persona 只取无 patientHash 的 facts：
+  prefs/goals/topFacts ⊆ facts.all().filter(f => !f.patientHash && !f.studyId)
+
+患者相关 facts 仅经 isolateFactsByScope（§4.2）在患者会话注入，
+全局会话不注入任何患者 facts（含"对比患者"场景的显式放行规则不变）。
+```
+
+- 患者级偏好（如"患者 A 拒绝某方案"）不进全局 persona；医生级偏好（"该医生先看 CT"）正常保留
+- 变更点：`buildPersona` 增加 scope 过滤 + 单测锁定
+
+**B. topFacts 排序改 importance × recency（修 F2）**
+
+```
+score(f) = importance(f) × e^(-0.3 × daysAgo(f))
+取 top 5；依赖 facts 的 lastSeenAt/createdAt（已存在）
+```
+
+- 复用 `context-compressor.ts` 的 `attentionScore` 语义，抽为共享函数
+- 效果：近期高重要性事实优先，陈旧低价值事实自然退出
+
+**C. Article 触发加时间窗口与聚类（修 F3）**
+
+```
+触发条件（AND）：
+  1. 同 scope 同类目未使用 facts ≥ 3
+  2. 其中 ≥3 条为最近 7 天确认（createdAt ≥ now-7d）
+  3. 可选：embedding 相似度 ≥ 0.7 聚类（同主题才合成，避免拼盘文章）
+
+触发后：合成 → pending（§5.4 不变）
+```
+
+- 变更点：`maybeSynthesizeArticle` 增加时间窗口过滤；聚类为可选增强（Phase 3 后期）
+
+### 13.3 第二层：审核体验（中成本）
+
+**D. Pending 超期治理**
+
+```
+生命周期：
+  pending 超 7 天：
+    importance ≥ 4 → 保持 pending，Brain inbox 置顶 + 高亮"待关注"
+    importance ≤ 2 → 自动归档为 'stale'（不删除，可手动恢复）
+    （摘要是 'episode_summary'/'compaction_summary' 的 → 7 天未审自动归档）
+```
+
+- 变更点：MemoryProposal 增加 `archivedAt` 字段（或复用 status），
+  每日定时任务（复用 evolution worker）执行归档
+
+**E. Brain inbox 分组与批量确认**
+
+```
+pending 按 scope 分组展示：
+  患者视图：同一患者的所有 pending（facts + 摘要）归组
+  全局视图：医生偏好/知识类归组
+组内批量确认（复用现有 confirmIds 批量能力）
+```
+
+**F. 提取质量反馈（闭环）**
+
+```
+按 category × sourceType 统计 7 天接受率：
+  接受率 < 30% 的类别 → 提取 prompt 注入"近期该类别误报较多，请更严格"提示
+  接受率 > 90% 且数量多 → 提示"可适当增加该类别输出"
+```
+
+- 变更点：`extractAndProposeFacts` 的 prompt 增加动态规则段；
+  统计数据来自 auditLog（已存在，需增加 category 维度）
+
+### 13.4 第三层：审计治理（中高成本，与 R1 联动）
+
+**G. 记忆健康仪表盘**
+
+```
+指标（全部来自现有 telemetry + auditLog）：
+  接受率     approved / (approved + rejected)    （按类别/来源）
+  引用率     graph facts 在 chat 上下文注入中的命中次数 / 事实总数
+  矛盾率     7 天内 conflictsWith 标记数
+  超期数     当前 stale/超期 pending 数
+展示：Admin 或 Brain 页新增"记忆健康" tab
+```
+
+**H. Persona 分段缓存（修 F5，R1 的前置）**
+
+```
+persona 拆为独立段，每段独立版本指纹：
+  prefs / goals / topFacts / knowledge
+任一版本变化 → 仅重建对应段（§4.3 R1 的增量注入的雏形）
+```
+
+### 13.5 数据模型变更
+
+```prisma
+// MemoryProposal 增加：
+archivedAt     String?   // 超期归档时间（第二层 D）
+category       String?   // 提取类别（质量反馈 F 的统计维度，propose 时已带 reason 可解析）
+
+// auditLog 已含 targetType/targetId/actor，无需扩展
+```
+
+### 13.6 测试计划
+
+| 层 | 用例 |
+|---|---|
+| 单测 | persona 隔离：患者 fact 不进全局 persona；医生偏好保留；topFacts 按 importance×recency 排序；article 触发：7 天窗口过滤、聚类过滤 |
+| 集成 | 超期归档：mock createdAt 8 天前 → 低重要性自动归档、高重要性置顶；质量反馈：mock 拒绝率 → prompt 动态段出现 |
+| 回归 | 现有 434+ 用例；persona 缓存指纹（版本变化才重建）不破坏 |
+
+### 13.7 实施计划
+
+| 项 | 内容 | 优先级 | 预估 |
+|---|---|---|---|
+| 13.2A | Persona 患者隔离 | P0 | 0.5d |
+| 13.2B | topFacts 排序优化 | P0 | 0.5d |
+| 13.2C | Article 时间窗口 | P1 | 1d |
+| 13.3D | Pending 超期治理 | P1 | 1.5d |
+| 13.3E | Inbox 分组批量 | P2 | 1d |
+| 13.3F | 提取质量反馈 | P2 | 1.5d |
+| 13.4G | 记忆健康仪表盘 | P3 | 2d |
+| 13.4H | Persona 分段缓存（并入 R1 #98） | P2 | 与 R1 合并 |
+
+---
+
+## 14. 修订历史
+
+| 版本 | 内容 |
+|---|---|
+| v2.0 | 初始设计（G.1–G.7） |
+| v2.1 | 矛盾检测与取代（§5.7）；Tier 1 信号收缩；压缩 delayed-sync；episodes 会话隔离 |
+| v2.2 | §13 记忆系统优化设计（Phase 3 治理）；修订 §7.3 拒绝原因可选、§8/§9 完成状态 |
