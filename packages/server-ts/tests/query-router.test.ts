@@ -150,6 +150,14 @@ describe('P3 — Query Router', () => {
       expect(result.cost.llmCalls).toBe(0)
     })
 
+    test('LLM-misclassified knowledge_command without a parseable command degrades to mixed', async () => {
+      vi.mocked(deepseekChat).mockResolvedValueOnce('knowledge_command')
+      const result = await router('我想了解一下你学习到了那些东西？', { llmClassifier: defaultLLMClassifier })
+      expect(result.intent).toBe('mixed')
+      expect(result.llmFallback).toBe(true)
+      expect(result.routes).toEqual(['sql', 'vector'])
+    })
+
     test('default LLM classifier can be passed explicitly', async () => {
       vi.mocked(deepseekChat).mockResolvedValueOnce('vector')
       const result = await router('帮我看看那个病人最近咋样', { llmClassifier: defaultLLMClassifier })
