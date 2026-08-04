@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Paperclip, Copy, Check, Download, FileText, Plus } from 'lucide-react';
+import { Paperclip, Copy, Check, Download, FileText, Plus, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
 import type { LlmStatus } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
@@ -11,7 +11,7 @@ import { SkillsBar } from '@/components/SkillsBar';
 import { LlmContent, StreamingLlmContent } from '@/components/LlmContent';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
-import { Alert, Button, Badge, Textarea } from '@/components/ui';
+import { Alert, Button, Textarea } from '@/components/ui';
 
 
 interface ChatSessionItem {
@@ -239,18 +239,27 @@ export function ChatPage() {
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;
-    for (const item of Array.from(items)) {
-      if (item.kind === 'file') {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (!file) continue;
-        setUploadingFile(true);
-        try {
-          const result = await api.uploadFile(file);
-          setAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
-        } catch { /* ignore */ }
-        finally { setUploadingFile(false); }
+    const arr = Array.from(items);
+    // Rich-text copies (Word / browser) attach a bitmap (image/png, image/emf)
+    // for non-HTML targets in addition to the real text. When actual text is
+    // present, those attached images are decorations — never treat them as a
+    // pasted file (they would upload as phantom images and even trigger AI
+    // analysis). Only pure file pastes (e.g. a .docx or a screenshot) upload.
+    const hasRichText = arr.some((i) => i.type === 'text/plain' || i.type === 'text/html');
+    for (const item of arr) {
+      if (item.kind !== 'file') continue;
+      if (hasRichText && (item.type.startsWith('image/') || item.type === 'image/emf')) {
+        continue;
       }
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (!file) continue;
+      setUploadingFile(true);
+      try {
+        const result = await api.uploadFile(file);
+        setAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+      } catch { /* ignore */ }
+      finally { setUploadingFile(false); }
     }
   };
 
@@ -424,7 +433,17 @@ export function ChatPage() {
             {attachedFiles.length > 0 && (
               <div className="flex gap-2 flex-wrap">
                 {attachedFiles.map((f) => (
-                  <Badge key={f.fileId} variant="default">{f.name}</Badge>
+                  <span key={f.fileId} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-elevated px-2 py-1 text-xs text-text-secondary">
+                    <FileText size={12} className="shrink-0" />
+                    <span className="max-w-[180px] truncate">{f.name}</span>
+                    <button
+                      onClick={() => setAttachedFiles((prev) => prev.filter((a) => a.fileId !== f.fileId))}
+                      className="rounded p-0.5 text-text-tertiary transition-colors hover:bg-surface hover:text-error"
+                      aria-label={t('chat.removeAttachment', 'Remove attachment')}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
                 ))}
               </div>
             )}
