@@ -45,6 +45,9 @@ export function ChatPage() {
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
+  // Files pasted into the input are attached silently (no badge): the whole
+  // file content is sent to the AI, but the UI shows no attachment chip.
+  const [pastedFiles, setPastedFiles] = useState<Array<{name: string; fileId: string}>>([]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -175,9 +178,10 @@ export function ChatPage() {
     await store.sendMessage(sessionId, {
       text,
       sessionId,
-      attachments: attachedFiles.map((a) => a.fileId),
+      attachments: [...attachedFiles.map((a) => a.fileId), ...pastedFiles.map((a) => a.fileId)],
       skills: activeSkills,
     });
+    setPastedFiles([]);
   };
 
   const handleStop = () => store.stopStream(sessionId);
@@ -257,7 +261,7 @@ export function ChatPage() {
       setUploadingFile(true);
       try {
         const result = await api.uploadFile(file);
-        setAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+        setPastedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
       } catch { /* ignore */ }
       finally { setUploadingFile(false); }
     }
