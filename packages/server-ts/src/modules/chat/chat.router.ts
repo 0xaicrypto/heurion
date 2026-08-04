@@ -6,6 +6,7 @@ import { deepseekStream, deepseekChat, getApiKey, DEEPSEEK_PREMIUM_MODEL } from 
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
 import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
 import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
+import { ensureSessionCompaction } from '../../memory/compaction.js'
 import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { handlePluginChatRequest } from '../plugins/plugin-chat-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
@@ -393,6 +394,49 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
         { role: 'system', content: projected.systemPrompt + studyContext },
       ]
+
+      // R2 — anchored compaction: inject compaction summaries verbatim so
+      // continuity survives budget trimming (BRAIN2_MEMORY_LIFECYCLE §4.3).
+      try {
+        const compactions = await (prisma as any).kbCompaction.findMany({
+          where: { userId, sessionId: sid },
+          orderBy: { coveredUptoIdx: 'desc' },
+          take: 3,
+        })
+        if (compactions.length > 0) {
+          const block = compactions.map((c: any) => c.summary).join('\n---\n')
+          messages.push({
+            role: 'system',
+            content: `[Anchored summaries of earlier turns in this session — use them for continuity (older raw turns were compacted away):\n${block}\n]`,
+          })
+        }
+      } catch {
+        // kbCompaction table may not exist yet
+      }
+
+      // R2 — trigger compaction of the dropped segment when the budget
+      // overflows or the turn window is full (fire-and-forget, in-flight
+      // guarded per session so it never re-runs on a covered segment).
+      if (omittedTurns > 0 || history.length >= historyTurns * 2) {
+        if (historyMessages.length > 0) {
+          const oldestRetainedIdx = (history[historyMessages.length - 1] as any)?.idx ?? 0
+          void ensureSessionCompaction(
+            {
+              userId,
+              eventLog: ctx.eventLog,
+              facts: ctx.facts,
+              episodes: ctx.episodes,
+              skills: ctx.skills,
+              knowledge: ctx.knowledge,
+              memory: ctx.memory,
+            },
+            sid,
+            oldestRetainedIdx,
+            patientHash || undefined,
+          )
+        }
+      }
+
       if (omittedTurns > 0) {
         messages.push({
           role: 'system',
