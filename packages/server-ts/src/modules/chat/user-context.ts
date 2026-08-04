@@ -99,6 +99,26 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
  * Build dynamic Persona from user's accumulated Facts and Knowledge.
  * Used as the system prompt prefix for all chat contexts.
  */
+/**
+ * K5 — persona cache. The persona only depends on facts + knowledge, so it
+ * is rebuilt only when either store's version changes (any commit bumps the
+ * VersionedStore version); identical turns reuse the cached string.
+ */
+const personaCache = new Map<string, { factsVersion: string | null; knowledgeVersion: string | null; persona: string }>()
+
+export function buildCachedPersona(userId: string, facts: FactsStore, knowledge: KnowledgeStore): string {
+  const fv = facts.currentVersion()
+  const kv = knowledge.currentVersion()
+  const cached = personaCache.get(userId)
+  if (cached && cached.factsVersion === fv && cached.knowledgeVersion === kv) {
+    return cached.persona
+  }
+  const persona = buildPersona(facts, knowledge)
+  personaCache.set(userId, { factsVersion: fv, knowledgeVersion: kv, persona })
+  if (personaCache.size > 200) personaCache.clear()
+  return persona
+}
+
 export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): string {
   const allFacts = facts.all()
   const prefs = allFacts.filter(f => f.category === 'preference').sort((a, b) => b.importance - a.importance)

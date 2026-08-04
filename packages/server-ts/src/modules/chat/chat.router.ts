@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
-import { getUserContext, buildPersona, buildFileContext } from './user-context.js'
+import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
 import { deepseekStream, deepseekChat, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
 import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
@@ -350,8 +350,9 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
         }
       }
 
-      // Build dynamic persona from user's accumulated knowledge
-      const persona = buildPersona(ctx.facts, ctx.knowledge)
+      // Build dynamic persona from user's accumulated knowledge (K5: cached
+      // until facts/knowledge versions change).
+      const persona = buildCachedPersona(userId, ctx.facts, ctx.knowledge)
 
       // #2: Weighted attention context projection (filtered by router intent)
       const projectionInputs = selectProjectionInputs(routeResult, ctx, patientHash)
