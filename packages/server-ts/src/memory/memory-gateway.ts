@@ -21,6 +21,8 @@ export interface ProposalInput {
   confidence?: 'high' | 'medium' | 'low'
   reason?: string
   sourceRange?: string
+  /** Same-scope confirmed facts this proposal contradicts (§5.7) */
+  conflictsWith?: Array<{ stableId: string; content: string }>
 }
 
 export interface MemoryProposalRow {
@@ -35,6 +37,7 @@ export interface MemoryProposalRow {
   confidence: string
   reason: string | null
   sourceRange: string | null
+  conflictsWith: string | null
   status: 'pending' | 'approved' | 'rejected'
   rejectedReason: string | null
   createdAt: string
@@ -100,6 +103,21 @@ export function getProposalApplier(): ProposalApplier | null {
 export function defaultProposalApplier(userId: string, proposal: MemoryProposalRow): MemoryNode | null {
   const ctx = contextResolver?.(userId)
   if (!ctx) return null
+  // §5.7: approving a proposal that contradicts same-scope confirmed facts
+  // IS the human verdict — supersede the old memories first (history kept),
+  // then write the new fact.
+  if (proposal.kind === 'fact' && proposal.conflictsWith) {
+    try {
+      const conflicts = JSON.parse(proposal.conflictsWith) as Array<{ stableId: string; content: string }>
+      for (const c of conflicts) {
+        if (ctx.memory.supersedeFact(c.stableId, `Superseded by approved proposal ${proposal.id}`, 'system')) {
+          console.log(`[MEMORY] Superseded conflicting fact ${c.stableId} (approved proposal ${proposal.id})`)
+        }
+      }
+    } catch (err) {
+      console.log('[MEMORY] Conflict supersede skipped:', (err as Error).message.slice(0, 120))
+    }
+  }
   if (proposal.kind === 'fact') {
     return ctx.memory.addFact(
       {
@@ -209,6 +227,7 @@ export class MemoryGraphGateway {
           confidence: input.confidence ?? 'medium',
           reason: input.reason || null,
           sourceRange: input.sourceRange || null,
+          conflictsWith: null,
           status: 'rejected',
           rejectedReason: `语义重复（与 ${similar.record.stableId} 相似度 ${similar.score.toFixed(2)}）`,
           createdAt: now,
@@ -219,6 +238,9 @@ export class MemoryGraphGateway {
     }
 
     const now = new Date().toISOString()
+    // §5.7: conflict markers must point at same-scope confirmed facts —
+    // cross-scope markers (e.g. another patient) are dropped.
+    const conflictsWith = this.filterSameScopeConflicts(input)
     const row = await (prisma as any).memoryProposal.create({
       data: {
         userId: this.userId,
@@ -231,6 +253,7 @@ export class MemoryGraphGateway {
         confidence: input.confidence ?? 'medium',
         reason: input.reason || null,
         sourceRange: input.sourceRange || null,
+        conflictsWith: conflictsWith ? JSON.stringify(conflictsWith) : null,
         status: 'pending',
         createdAt: now,
       },
@@ -264,6 +287,33 @@ export class MemoryGraphGateway {
       orderBy: { createdAt: 'desc' },
     })
     return rows.map(serializeProposal)
+  }
+
+  /**
+   * §5.7 — keep only conflict markers that reference a confirmed fact in the
+   * SAME scope as this proposal. Facts carry scope identity (patientHash /
+   * studyId); cross-scope markers (e.g. a different patient) are not
+   * contradictions and are dropped.
+   */
+  private filterSameScopeConflicts(
+    input: ProposalInput,
+  ): Array<{ stableId: string; content: string }> | null {
+    if (!input.conflictsWith?.length || !this.memory) return input.conflictsWith?.length ? null : null
+    const kept: Array<{ stableId: string; content: string }> = []
+    for (const c of input.conflictsWith) {
+      try {
+        const node = this.memory.graph.getLatestByStableId(c.stableId) as any
+        if (!node || node.type !== 'fact') continue
+        const sameScope =
+          (input.scopeType === 'patient' && node.patientHash === input.patientHash) ||
+          (input.scopeType === 'study' && node.studyId === input.studyId) ||
+          (input.scopeType === 'global' && !node.patientHash && !node.studyId)
+        if (sameScope) kept.push({ stableId: c.stableId, content: c.content || node.content })
+      } catch {
+        // Unknown stableId — drop the marker.
+      }
+    }
+    return kept.length > 0 ? kept : null
   }
 
   /**
@@ -530,6 +580,7 @@ function serializeProposal(r: any): MemoryProposalRow {
     confidence: r.confidence,
     reason: r.reason,
     sourceRange: r.sourceRange,
+    conflictsWith: r.conflictsWith,
     status: r.status,
     rejectedReason: r.rejectedReason,
     createdAt: r.createdAt,

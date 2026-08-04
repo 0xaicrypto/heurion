@@ -404,6 +404,7 @@ model MemoryProposal {
   confidence     String  @default("medium") // high | medium | low
   reason         String?
   sourceRange    String? @map("source_range")
+  conflictsWith  String? @map("conflicts_with") // JSON: [{"stableId","content"}] — same-scope confirmed facts this proposal contradicts
   status         String  @default("pending") // pending | approved | rejected
   rejectedReason String? @map("rejected_reason")
   createdAt      String  @map("created_at")

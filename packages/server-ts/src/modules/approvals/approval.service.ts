@@ -128,6 +128,7 @@ async function applyProposalViaGateway(userId: string, row: any): Promise<any> {
     confidence: row.confidence,
     reason: row.reason,
     sourceRange: row.sourceRange,
+    conflictsWith: row.conflictsWith,
     status: row.status,
     rejectedReason: row.rejectedReason,
     createdAt: row.createdAt,
