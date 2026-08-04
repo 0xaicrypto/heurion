@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { recoverTables } from './table-utils';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -61,6 +62,9 @@ export function normalizeLlmText(input: string): string {
 
   // Recover block markers glued onto a single line (paste / copy artifacts).
   text = recoverBlockBreaks(text);
+
+  // Recover tables: missing delimiter row, missing blank lines, raw HTML.
+  text = recoverTables(text);
 
   // Collapse 3+ consecutive blank lines to 2
   text = text.replace(/\n{3,}/g, '\n\n');
