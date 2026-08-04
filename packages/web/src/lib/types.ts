@@ -314,6 +314,7 @@ export interface MemoryProposal {
   confidence: string;
   reason?: string | null;
   sourceRange?: string | null;
+  conflictsWith?: string | null;
   status: 'pending' | 'approved' | 'rejected';
   rejectedReason?: string | null;
   createdAt: string;

@@ -5,7 +5,7 @@ import { Check, FileText, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
 import { formatRelativeTime } from '@/lib/utils';
 import { Alert, Badge, Button, Card, Input, Skeleton } from '@/components/ui';
-import type { ApprovalRequest, MedicalRecordEntry } from '@/lib/types';
+import type { ApprovalRequest, MedicalRecordEntry, MemoryProposal } from '@/lib/types';
 
 interface PendingIngestionsWidgetProps {
   limit?: number;
@@ -15,8 +15,16 @@ interface PendingIngestionsWidgetProps {
 interface PendingRow {
   approval: ApprovalRequest;
   entry: MedicalRecordEntry | null;
+  proposal: MemoryProposal | null;
   patientName?: string;
 }
+
+const kindVariant: Record<string, 'default' | 'success' | 'warning' | 'error'> = {
+  fact: 'success',
+  article: 'warning',
+  episode_summary: 'default',
+  compaction_summary: 'default',
+};
 
 export function PendingIngestionsWidget({ limit = 5, onCountChange }: PendingIngestionsWidgetProps) {
   const { t, i18n } = useTranslation();
@@ -40,11 +48,13 @@ export function PendingIngestionsWidget({ limit = 5, onCountChange }: PendingIng
       const patientNames = new Map(patientsRes.map((p) => [p.patient_hash, p.name]));
       const nextRows: PendingRow[] = approvalsRes.requests.map((approval) => {
         const payload = approval.payload as Record<string, unknown> | null;
+        const proposal = payload && typeof payload.kind === 'string' ? (payload as unknown as MemoryProposal) : null;
         const entry = payload && typeof payload.id === 'string' ? (payload as unknown as MedicalRecordEntry) : null;
-        const patientHash = entry?.patientHash;
+        const patientHash = proposal?.patientHash ?? entry?.patientHash;
         return {
           approval,
           entry,
+          proposal,
           patientName: patientHash ? patientNames.get(patientHash) : undefined,
         };
       });
@@ -125,24 +135,51 @@ export function PendingIngestionsWidget({ limit = 5, onCountChange }: PendingIng
         <p className="text-sm text-text-tertiary">{t('today.pendingIngestions.processed')}</p>
       ) : (
         <ul className="space-y-3">
-          {visibleRows.map(({ approval, entry, patientName }) => {
-            const patientLabel = patientName || t('today.pendingIngestions.unknownPatient');
+          {visibleRows.map(({ approval, entry, proposal, patientName }) => {
             const busy = operatingId === approval.id;
+            const time = approval.createdAt ? formatRelativeTime(approval.createdAt, i18n.language) : '';
             return (
               <li key={approval.id} className="flex items-center justify-between gap-4 rounded-xl border border-border bg-surface p-4">
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium text-text-primary">{patientLabel}</span>
-                    <span className="text-xs text-text-tertiary">·</span>
-                    <span className="truncate text-sm text-text-secondary">{entry?.title || t('today.pendingIngestions.unknownPatient')}</span>
-                  </div>
-                  <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
-                    {entry?.type && <Badge variant="warning">{entry.type}</Badge>}
-                    <span>
-                      {approval.createdAt ? formatRelativeTime(approval.createdAt, i18n.language) : ''}
-                    </span>
-                    <span>{t('today.pendingIngestions.autoAnalyzed')}</span>
-                  </div>
+                  {entry ? (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium text-text-primary">{patientName || t('today.pendingIngestions.unknownPatient')}</span>
+                        <span className="text-xs text-text-tertiary">·</span>
+                        <span className="truncate text-sm text-text-secondary">{entry.title || t('today.pendingIngestions.unknownPatient')}</span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
+                        {entry.type && <Badge variant="warning">{entry.type}</Badge>}
+                        <span>{time}</span>
+                        <span>{t('today.pendingIngestions.autoAnalyzed')}</span>
+                      </div>
+                    </>
+                  ) : proposal ? (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={kindVariant[proposal.kind] ?? 'default'}>{proposal.kind}</Badge>
+                        <span className="truncate text-sm font-medium text-text-primary">
+                          {proposal.patientHash
+                            ? (patientName || proposal.patientHash)
+                            : t('today.pendingIngestions.globalScope')}
+                        </span>
+                        {proposal.importance >= 4 && (
+                          <Badge variant="error">{t('today.pendingIngestions.highImportance')}</Badge>
+                        )}
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-xs text-text-secondary">{proposal.content}</p>
+                      {proposal.conflictsWith && (
+                        <p className="mt-1 text-xs text-error">{t('today.pendingIngestions.conflictWarning')}</p>
+                      )}
+                      <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
+                        <span>{time}</span>
+                        <span>·</span>
+                        <span>{t('today.pendingIngestions.autoExtracted')}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-sm text-text-secondary">{t('today.pendingIngestions.unknownPatient')}</span>
+                  )}
                 </div>
 
                 <div className="shrink-0">

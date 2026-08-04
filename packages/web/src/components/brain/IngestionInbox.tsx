@@ -258,6 +258,9 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
                           <span className="text-xs text-text-tertiary">★ {proposal.importance}</span>
                         </div>
                         <p className="mt-1 line-clamp-2 text-xs text-text-secondary">{proposal.content}</p>
+                        {proposal.conflictsWith && (
+                          <p className="mt-1 text-xs text-error">{t('brain.conflictWarning')}</p>
+                        )}
                         {proposal.reason && (
                           <p className="mt-0.5 text-[11px] text-text-tertiary">{proposal.reason}</p>
                         )}

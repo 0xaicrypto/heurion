@@ -123,7 +123,11 @@
       "autoAnalyzed": "Auto-analyzed",
       "unknownPatient": "Unknown patient",
       "loadFailed": "Failed to load pending reports",
-      "operateFailed": "Operation failed, please retry"
+      "operateFailed": "Operation failed, please retry",
+      "globalScope": "Global memory",
+      "highImportance": "High importance",
+      "conflictWarning": "⚠️ Contradicts a confirmed fact",
+      "autoExtracted": "Auto-extracted"
     }
   },
   "brain": {
@@ -159,7 +163,8 @@
     "activityAnalyzed": "AI analyzed {{title}}",
     "noEntries": "No pending entries",
     "targetFilter": "Filter by target",
-    "allTargets": "All targets"
+    "allTargets": "All targets",
+    "conflictWarning": "⚠️ Contradicts a confirmed fact"
   },
   "chat": {
     "title": "Chat",
