@@ -106,7 +106,21 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   const webDistDir = process.env.WEB_DIST_DIR || './web-dist'
   const resolvedDistDir = webDistDir.startsWith('/') ? webDistDir : require('path').resolve(webDistDir)
   if (existsSync(resolvedDistDir)) {
-    await app.register(fastifyStatic, { root: resolvedDistDir, prefix: '/', wildcard: false })
+    await app.register(fastifyStatic, {
+      root: resolvedDistDir,
+      prefix: '/',
+      wildcard: false,
+      // Rolling-deploy safety: the HTML entry must never be cached (a stale
+      // HTML referencing a since-removed hashed bundle 404s the app for the
+      // whole cache lifetime). Hashed assets are immutable by content.
+      setHeaders: (res: any, path: string) => {
+        if (path.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
+        } else if (path.includes('/assets/')) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+        }
+      },
+    })
     app.setNotFoundHandler((req: FastifyRequest, reply: FastifyReply) => {
       const url = req.url.split('?')[0]
       // Assets must 404 (never SPA-fallback): a stale/cached HTML response
@@ -115,6 +129,7 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
         reply.status(404).send({ error: 'Not found' })
       } else {
         reply.header('Content-Type', 'text/html')
+        reply.header('Cache-Control', 'no-cache, no-store, must-revalidate')
         reply.send(readFileSync(`${resolvedDistDir}/index.html`, 'utf-8'))
       }
     })
