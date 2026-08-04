@@ -29,6 +29,13 @@ interface SessionState {
   abort: AbortController | null;
   loading: boolean;
   compacting: boolean;
+  contextUsage?: {
+    historyTokens: number;
+    historyBudget: number;
+    historyTurns: number;
+    omittedTurns: number;
+    willCompact: boolean;
+  };
 }
 
 interface ChatStore {
@@ -107,6 +114,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     try {
       for await (const chunk of api.sendChatFull(opts, abort.signal)) {
+        if (chunk.type === 'context_usage') {
+          set((state) => {
+            const s = state.sessions[sessionId];
+            if (!s) return state;
+            return {
+              sessions: {
+                ...state.sessions,
+                [sessionId]: {
+                  ...s,
+                  contextUsage: {
+                    historyTokens: chunk.history_tokens,
+                    historyBudget: chunk.history_budget,
+                    historyTurns: chunk.history_turns,
+                    omittedTurns: chunk.omitted_turns,
+                    willCompact: chunk.will_compact,
+                  },
+                },
+              },
+            };
+          });
+          continue;
+        }
         if (chunk.type === 'compaction_started' || chunk.type === 'compaction_completed') {
           set((state) => {
             const s = state.sessions[sessionId];

@@ -145,3 +145,31 @@ describe('R3 doom-loop detection (unit)', () => {
     expect(detectDoomLoop(h2, 'search_past_chats', { query: 'ZQ' })).toBe(false)
   })
 })
+
+describe('U3 context usage chunk', () => {
+  test('chat SSE payload includes context_usage with budget percentages', async () => {
+    const app = await getApp()
+    const sessionId = `u3_${Date.now()}`
+    let calls = 0
+    vi.mocked(deepseekChat).mockImplementation((messages: any) => {
+      const text = JSON.stringify(messages)
+      if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
+      calls++
+      return Promise.resolve(calls === 1 ? '第一条回复。' : '后续回复。')
+    })
+
+    // 3 turns so history tokens accumulate
+    for (let i = 0; i < 3; i++) {
+      const res = await app.inject({
+        method: 'POST', url: '/api/v1/agent/chat',
+        headers: { ...await authHeader(), 'content-type': 'application/json' },
+        payload: JSON.stringify({ text: `第${i + 1}轮讨论患者情况`, session_id: sessionId }),
+      })
+      expect(res.statusCode).toBe(200)
+      // SSE payload is a text stream of JSON lines
+      expect(res.payload).toContain('"type":"context_usage"')
+      expect(res.payload).toContain('"history_budget":')
+      expect(res.payload).toContain('"will_compact":')
+    }
+  }, 30000)
+})
