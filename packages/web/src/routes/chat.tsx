@@ -316,7 +316,6 @@ export function ChatPage() {
                 {llmStatus.provider}/{llmStatus.model}
               </span>
             )}
-            <ContextUsageIndicator usage={session?.contextUsage} />
             {llmStatus && (
               <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary border border-border">
                 {llmStatus.provider}/{llmStatus.model}
@@ -430,10 +429,17 @@ export function ChatPage() {
 
         <footer className="border-t border-border bg-surface px-4 py-4">
           <div className="mx-auto flex max-w-3xl flex-col gap-2">
-            {session?.compacting && (
-              <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-text-secondary">
-                <span className="animate-pulse">🧠</span>
-                {t('chat.compacting', '正在压缩会话历史，请稍候…')}
+            {(session?.compacting || session?.contextUsage) && (
+              <div className="flex items-center justify-between gap-2">
+                {session?.compacting && (
+                  <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-text-secondary">
+                    <span className="animate-pulse">🧠</span>
+                    {t('chat.compacting', '正在压缩会话历史，请稍候…')}
+                  </div>
+                )}
+                <div className="ml-auto">
+                  <ContextUsageIndicator usage={session?.contextUsage} />
+                </div>
               </div>
             )}
             <SkillsBar active={activeSkills} onToggle={toggleSkill} />
