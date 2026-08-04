@@ -36,6 +36,7 @@ export interface ExtractedFact {
   importance: number
   sourceType: string
   patientHash?: string
+  conflictsWith?: string[]
 }
 
 const EXTRACTION_RULES = `Rules:
@@ -45,16 +46,26 @@ const EXTRACTION_RULES = `Rules:
 4. SELF-CONTAINED: include subject (patient/doctor), time or trend, and concrete values.
    GOOD: "患者 ZQ 发热持续3周伴胸痛咳嗽，亚急性病程（7月末起）"
    BAD: "针对发热+胸痛需考虑肺部感染"
-5. Exclude: conversational filler ("用户想学习", "谢谢"), generic advice ("需要做检查") unless it is a concrete conclusion for this patient, system state ("名册为空"), general knowledge.`
+5. Exclude: conversational filler ("用户想学习", "谢谢"), generic advice ("需要做检查") unless it is a concrete conclusion for this patient, system state ("名册为空"), general knowledge.
+6. CONFLICT: if new information contradicts an existing confirmed fact listed in the context (same subject, opposing or updated conclusion — e.g. allergy vs no-allergy, dose/plan change), set "conflictsWith": [the stableId of the conflicting fact]. Facts of OTHER patients are never conflicts — only facts tagged with the current scope.
+   GOOD: {"content": "患者当前可用青霉素（既往过敏记录有误）", "conflictsWith": ["fact_xxx"]}
+   BAD: flagging a different patient's fact as a conflict.`
 
 function buildContextBlock(ctx: CompactionCtx, patientHash: string | undefined, sessionId: string, conversation: string): string {
+  // §5.7: facts carry scope identity — only same-scope facts (this patient
+  // or user-level global facts) are injected for dedup/conflict judgement.
+  // Other patients' facts are NEVER injected (cross-patient ≠ contradiction).
+  const kw = conversation.toLowerCase().split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}]/gu, '')).filter(w => w.length > 3)
   const existingFacts = ctx.facts.all()
   const relatedFacts = existingFacts
-    .filter(f =>
-      (patientHash && f.patientHash === patientHash) ||
-      conversation.toLowerCase().split(/\s+/).some((w: string) => w.length > 3 && f.content.toLowerCase().includes(w))
-    )
+    .filter(f => {
+      if (f.patientHash) return f.patientHash === patientHash
+      return true
+    })
+    .map(f => ({ f, score: kw.some(w => f.content.toLowerCase().includes(w)) ? 1 : 0 }))
+    .sort((a, b) => b.score - a.score)
     .slice(0, 10)
+    .map(x => x.f)
   const episode = ctx.episodes.all().find(e => e.sessionId === sessionId)
   const contextLines: string[] = []
   if (patientHash) {
@@ -65,9 +76,10 @@ function buildContextBlock(ctx: CompactionCtx, patientHash: string | undefined, 
     contextLines.push(`Session summary so far: ${episode.summary}`)
   }
   if (relatedFacts.length > 0) {
-    contextLines.push('Existing related facts (avoid duplicating these unless new details are added):')
+    contextLines.push('Existing confirmed facts in the SAME scope (use these for dedup AND conflict judgement — never flag a different patient\'s fact):')
     relatedFacts.forEach(f => {
-      contextLines.push(`- [${f.sourceType || 'general'}] ${f.content}`)
+      const tag = f.patientHash ? f.patientHash : 'user-level'
+      contextLines.push(`- [${f.sourceType || 'general'}] [${tag}] (${f.id}) ${f.content}`)
     })
   }
   return contextLines.length > 0 ? `\n${contextLines.join('\n')}\n` : ''
@@ -92,7 +104,7 @@ export async function extractAndProposeFacts(
 ${EXTRACTION_RULES}
 
 Return ONLY a JSON array:
-[{"content": "consolidated fact", "category": "diagnosis|symptom|exam|medication|allergy|constraint|preference|plan", "importance": 1-5, "sourceType": "patient|doctor|research"}]
+[{"content": "consolidated fact", "category": "diagnosis|symptom|exam|medication|allergy|constraint|preference|plan", "importance": 1-5, "sourceType": "patient|doctor|research", "conflictsWith": ["stableId of a same-scope confirmed fact, only when contradicting"]}]
 
 Importance: 5 = changes treatment/diagnosis; 4 = important clinical fact; 3 = general; 1-2 = marginal (omit).
 ${contextBlock}
@@ -126,6 +138,7 @@ ${conversation}
       content: f.content,
       sourceType: f.sourceType || 'general',
       patientHash: f.sourceType === 'patient' ? (patientHash || undefined) : undefined,
+      conflictsWith: Array.isArray(f.conflictsWith) ? f.conflictsWith.map(String) : undefined,
     }
     extracted.push(fact)
     if (gateway) {
@@ -138,6 +151,7 @@ ${conversation}
           importance: fact.importance,
           confidence: 'medium',
           reason: `${opts.reason} (${fact.category}, source: ${fact.sourceType})`,
+          conflictsWith: fact.conflictsWith?.map(stableId => ({ stableId, content: '' })),
         })
       } catch (err) {
         console.log('[EVOLVE] Proposal write skipped:', (err as Error).message.slice(0, 120))
@@ -215,7 +229,7 @@ ${EXTRACTION_RULES}
 3. episodeUpdate — an updated session-summary text (Chinese, bullet points, ≤300 tokens): merge the segment into the existing summary, keep still-true details, drop outdated ones.
 
 Return ONLY JSON:
-{"anchoredSummary": {...}, "facts": [{"content": "...", "category": "...", "importance": 1-5, "sourceType": "patient|doctor|research"}], "episodeUpdate": "..."}
+{"anchoredSummary": {...}, "facts": [{"content": "...", "category": "...", "importance": 1-5, "sourceType": "patient|doctor|research", "conflictsWith": ["stableId of a same-scope confirmed fact, only when contradicting"]}], "episodeUpdate": "..."}
 ${contextBlock}
 Old conversation segment:
 ${conversation}
@@ -260,6 +274,7 @@ ${conversation}
             importance: Math.min(5, Math.max(1, f.importance || 3)),
             confidence: 'medium',
             reason: `Compaction extraction (${f.category}, source: ${f.sourceType || 'general'})`,
+            conflictsWith: Array.isArray(f.conflictsWith) ? f.conflictsWith.map((sid: any) => ({ stableId: String(sid), content: '' })) : undefined,
           })
           proposed++
         } catch (err) {

@@ -283,6 +283,22 @@ MemoryGraphGateway（唯一接口）
 
 - 问题形态消息未被 facts 覆盖 → 自动创建 gap（7 天去重）
 
+### 5.7 矛盾检测与取代（fact 非孤立原则 + 同 scope 规则）
+
+**Fact 不是孤立的：每条 fact 必须携带 scope 标识（patientHash / studyId /
+global），一切"相关/冲突/取代"判定都只在同一 scope 内进行。**
+
+- 跨患者永不构成矛盾：患者 A「青霉素过敏」与患者 B「青霉素可用」是两条独立
+  事实；提取注入、冲突检测、审批取代均以 scope 为边界
+- 提取时（Tier 1/2/3 共用）：注入的"已有 facts"上下文仅含同 scope facts
+  （跨患者 facts 一律排除）；LLM 输出每 fact 可带 `conflictsWith`（指向
+  context 中同 scope 的已确认 fact）
+- propose 时：`conflictsWith` 必须通过 scope 校验，跨 scope 标记丢弃
+- 审批时（applyApproved）：批准带 `conflictsWith` 的 proposal → 对同 scope
+  冲突旧 fact 执行 supersede（版本机制保留历史，`supersedes` 关系 + 审计）；
+  **批准即人工裁决**——只有用户批准，新 fact 才取代旧 fact
+- 语义去重（≥0.95）只挡重复，不挡矛盾；矛盾检测由 LLM + 审批闭环完成
+
 ---
 
 ## 6. 长会话压缩（R2 修订版 — 对接审核闭环）

@@ -114,6 +114,30 @@ export class MemoryService {
     return fact
   }
 
+  /**
+   * Supersede a current fact without replacing it — used when an approved
+   * conflicting proposal (§5.7) wins over the old memory. The old node stays
+   * in the graph (superseded status + audit trail), legacy projection drops
+   * it so lists/counts reflect only active memories.
+   */
+  supersedeFact(stableId: string, reason: string, by: MemoryCreatedBy = 'system'): boolean {
+    const current = this.graph.getLatestByStableId(stableId) as FactNode | undefined
+    if (!current || current.status === 'superseded') return false
+
+    this.graph.markStatus(current.id, 'superseded')
+    this.graph.commit()
+
+    this.legacyFacts.remove(stableId)
+    this.legacyFacts.commit()
+
+    this.appendEvent('memory_fact_superseded', `Superseded fact ${stableId} (${reason})`, {
+      factId: stableId,
+      supersededBy: by,
+      reason,
+    })
+    return true
+  }
+
   editFact(stableId: string, input: EditFactInput, editedBy: MemoryCreatedBy = 'user'): FactNode | null {
     const current = this.graph.getLatestByStableId(stableId) as FactNode | undefined
     if (!current || current.status === 'superseded') return null
