@@ -5,6 +5,7 @@ import { ArrowLeft, ChevronRight, FileText, Paperclip, Plus, Search, Trash2, Use
 import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { SkillsBar } from '@/components/SkillsBar';
+import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import { LlmContent, StreamingLlmContent } from '@/components/LlmContent';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/components/ui';
@@ -441,6 +442,15 @@ export function PatientChatPage() {
       }));
       if (msgs.length > 0) store.setMessages(sessionId, msgs);
     }).catch(() => {});
+    api.getContextUsage(sessionId).then((u) => {
+      store.setContextUsage(sessionId, {
+        historyTokens: u.history_tokens,
+        historyBudget: u.history_budget,
+        historyTurns: u.history_turns,
+        omittedTurns: u.omitted_turns,
+        willCompact: u.will_compact,
+      });
+    }).catch(() => {});
   }, [sessionId, hash, store]);
 
   useEffect(() => {
@@ -453,7 +463,7 @@ export function PatientChatPage() {
   }, [session?.messages]);
 
   const handleSend = async () => {
-    if (!input.trim() || !sessionId || session?.loading) return;
+    if (!input.trim() || !sessionId || session?.loading || session?.compacting) return;
     const text = input.trim();
     setInput('');
     setError(null);
@@ -573,7 +583,16 @@ export function PatientChatPage() {
       )}
       <footer className="border-t border-border bg-surface px-4 py-4">
         <div className="mx-auto flex max-w-3xl flex-col gap-2">
-          <SkillsBar active={activeSkills} onToggle={toggleSkill} />
+          {session?.compacting && (
+            <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-text-secondary">
+              <span className="animate-pulse">🧠</span>
+              {t('chat.compacting', '正在压缩会话历史，请稍候…')}
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-2">
+            <SkillsBar active={activeSkills} onToggle={toggleSkill} />
+            <ContextUsageIndicator usage={session?.contextUsage} />
+          </div>
           {attachedFiles.length > 0 && (
             <div className="flex gap-2 flex-wrap">
               {attachedFiles.map((f) => (
@@ -619,7 +638,9 @@ export function PatientChatPage() {
             {session?.loading ? (
               <Button onClick={handleStop} variant="secondary" className="shrink-0">{t('common.stop')}</Button>
             ) : (
-              <Button onClick={handleSend} disabled={!input.trim()} className="shrink-0">{t('common.send')}</Button>
+              <Button onClick={handleSend} disabled={!input.trim() || !!session?.compacting} className="shrink-0">
+                {session?.compacting ? t('chat.compactingShort', '压缩中…') : t('common.send')}
+              </Button>
             )}
           </div>
         </div>

@@ -44,6 +44,7 @@ interface ChatStore {
   sendMessage: (sessionId: string, opts: SendChatOptions) => Promise<void>;
   stopStream: (sessionId: string) => void;
   clearSession: (sessionId: string) => void;
+  setContextUsage: (sessionId: string, usage: NonNullable<SessionState['contextUsage']>) => void;
   appendMessage: (sessionId: string, msg: ChatMessage) => void;
   setMessages: (sessionId: string, msgs: ChatMessage[]) => void;
 }
@@ -201,6 +202,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const sessions = { ...state.sessions };
       delete sessions[sessionId];
       return { sessions };
+    });
+  },
+
+  setContextUsage: (sessionId: string, usage) => {
+    set((state) => {
+      const s = state.sessions[sessionId] ?? { messages: [], abort: null, loading: false, compacting: false };
+      return { sessions: { ...state.sessions, [sessionId]: { ...s, contextUsage: usage } } };
     });
   },
 

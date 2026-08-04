@@ -11,6 +11,7 @@ import { SkillsBar } from '@/components/SkillsBar';
 import { LlmContent, StreamingLlmContent } from '@/components/LlmContent';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
+import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import { Alert, Button, Textarea } from '@/components/ui';
 
 
@@ -37,9 +38,6 @@ export function ChatPage() {
     sessionId === defaultSessionId
       ? t('chat.defaultSession', '默认会话')
       : (globalSessions.find((s) => s.id === sessionId)?.title ?? t('chat.defaultSession', '默认会话'));
-  const usagePct = session?.contextUsage
-    ? (session.contextUsage.historyTokens / Math.max(1, session.contextUsage.historyBudget)) * 100
-    : 0;
 
   const [input, setInput] = useState('');
   // Per-session drafts: switching sessions must never leak half-typed text
@@ -157,6 +155,16 @@ export function ChatPage() {
         knowledgePayload: (m.metadata?.knowledgePayload as { title: string; content: string }) ?? undefined,
       }));
       if (msgs.length > 0) store.setMessages(sessionId, msgs);
+    }).catch(() => {});
+    // U3: show the context budget immediately for sessions with history.
+    api.getContextUsage(sessionId).then((u) => {
+      store.setContextUsage(sessionId, {
+        historyTokens: u.history_tokens,
+        historyBudget: u.history_budget,
+        historyTurns: u.history_turns,
+        omittedTurns: u.omitted_turns,
+        willCompact: u.will_compact,
+      });
     }).catch(() => {});
   }, [sessionId, store]);
 
@@ -318,26 +326,10 @@ export function ChatPage() {
                 {llmStatus.provider}/{llmStatus.model}
               </span>
             )}
-            {session?.contextUsage && (
-              <div
-                className="flex items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary"
-                title={t('chat.contextUsageTip', '历史上下文预算：压缩在达到 100% 或 {{turns}} 轮时触发', { turns: session.contextUsage.historyTurns })}
-              >
-                <div className="h-1.5 w-20 overflow-hidden rounded-full bg-surface">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      usagePct >= 100 ? 'bg-error' : usagePct >= 80 ? 'bg-warning' : 'bg-success'
-                    }`}
-                    style={{ width: `${Math.min(100, usagePct)}%` }}
-                  />
-                </div>
-                <span className={usagePct >= 100 ? 'text-error' : usagePct >= 80 ? 'text-warning' : undefined}>
-                  {Math.round(usagePct)}%
-                </span>
-                {session.contextUsage.willCompact && (
-                  <span className="text-error">{t('chat.compactingSoon', '即将压缩')}</span>
-                )}
-              </div>
+            {llmStatus && (
+              <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary border border-border">
+                {llmStatus.provider}/{llmStatus.model}
+              </span>
             )}
           </div>
         </header>
@@ -447,10 +439,17 @@ export function ChatPage() {
 
         <footer className="border-t border-border bg-surface px-4 py-4">
           <div className="mx-auto flex max-w-3xl flex-col gap-2">
-            {session?.compacting && (
-              <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-text-secondary">
-                <span className="animate-pulse">🧠</span>
-                {t('chat.compacting', '正在压缩会话历史，请稍候…')}
+            {(session?.compacting || session?.contextUsage) && (
+              <div className="flex items-center justify-between gap-2">
+                {session?.compacting && (
+                  <div className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-text-secondary">
+                    <span className="animate-pulse">🧠</span>
+                    {t('chat.compacting', '正在压缩会话历史，请稍候…')}
+                  </div>
+                )}
+                <div className="ml-auto">
+                  <ContextUsageIndicator usage={session?.contextUsage} />
+                </div>
               </div>
             )}
             <SkillsBar active={activeSkills} onToggle={toggleSkill} />

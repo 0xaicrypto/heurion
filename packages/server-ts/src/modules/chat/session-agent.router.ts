@@ -316,4 +316,26 @@ export async function agentRouter(app: FastifyInstance) {
       total: events.length,
     }
   })
+
+  // U3: current context budget usage for a session, so the UI can show the
+  // indicator immediately on load (without waiting for the next chat turn).
+  app.get('/api/v1/agent/context-usage', async (request) => {
+    const ctx = getUserContext(request.user!.userId)
+    const sessionId = (request.query as any).session_id
+    const maxHistoryTokens = parseInt(process.env.MAX_HISTORY_TOKENS || '8000', 10)
+    const historyTurns = parseInt(process.env.HISTORY_TURNS || '20', 10)
+    const history = ctx.eventLog.query({ sessionId, limit: historyTurns * 2 }).reverse()
+    const { buildHistoryMessages } = await import('../../retrieval/context-compressor.js')
+    const { omittedTurns, tokens } = buildHistoryMessages(history, {
+      maxTokens: maxHistoryTokens,
+      maxTurns: historyTurns,
+    })
+    return {
+      history_tokens: tokens,
+      history_budget: maxHistoryTokens,
+      history_turns: historyTurns,
+      omitted_turns: omittedTurns,
+      will_compact: omittedTurns > 0 || history.length >= historyTurns * 2,
+    }
+  })
 }
