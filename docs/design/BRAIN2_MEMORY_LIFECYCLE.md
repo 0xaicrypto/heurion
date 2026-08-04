@@ -464,11 +464,50 @@ model MemoryProposal {
 
 ---
 
-## 13. 记忆系统优化设计（Phase 3 — 治理与正确性）
+## 13. 记忆系统优化设计（Phase 3 — v3.0 简化模型）
 
-> 在 G.1–G.7（审核闭环已上线）基础上，针对运行中暴露的三个正确性缺陷与
-> 审计缺口，分三层治理。**核心原则：未审核信息永不跨会话/跨范围泄漏；
-> 已确认信息的选择逻辑可控、可量化、可反馈。**
+> 在 G.1–G.7（审核闭环已上线）基础上，针对运行中暴露的**冗余与缺陷**，
+> 收敛为一个可维护的简化模型。**核心原则：未审核信息永不跨会话/跨范围
+> 泄漏；已确认信息的选择逻辑可控、可量化、可反馈。**
+
+### 13.0 简化模型：两形态 + 一路径 + 一闸门
+
+**设计目标是让记忆系统的概念模型足够简单：**
+
+```
+对话
+  │
+  ▼
+EventLog（真相源）
+  │
+  ├─► Session Memory（草稿层：一份 per-session 渐进摘要）
+  │     不审核 · 仅当前会话注入 · 压缩时更新同一份
+  │
+  ├─► 批量提取"未覆盖段"（唯一提取路径，两个触发点）
+  │     ① 压缩时  ② 会话关闭时
+  │     （提取输入 = 对话段 + Session Memory）
+  │
+  ▼
+pending（唯一审核闸门）──► confirm ──► Facts（档案层）
+                        └──► reject ──► 丢弃+审计
+
+Facts：结构化 · 版本化 · 可 supersede · 跨会话注入（患者隔离）
+```
+
+**三个简化项：**
+
+| # | 简化 | 现状 → 目标 | 理由 |
+|---|------|------------|------|
+| S1 | 砍 Tier 1 实时提取 | 三级提取（信号/压缩/关闭）→ **一条批量路径**（压缩/关闭两触发点） | Tier 1 只认"记住/过敏/禁忌"边际价值低；显式指令已由 `kb_remember` 命令直写承接；省一套触发+去抖+游标交互 |
+| S2 | 合并双份摘要 | episodes（K3）+ kbCompaction（R2 anchored）→ **一份 Session Memory** | 压缩一次 LLM 调用已同时产出 episodeUpdate 与 anchoredSummary——同一记忆两处存储、两处注入，纯冗余 |
+| S3 | 提取来源含草稿 | 提取只喂对话段 → 对话段 + Session Memory | 让"摘要审计"天然嵌入提取（C1 需求无需单独机制） |
+
+**必须保留的复杂度（临床正确性的必要投资）：**
+
+- 全部人工审核（唯一闸门）——合规底线
+- 患者隔离（fact 携带 scope）——隐私底线
+- 语义去重（≥0.95）+ 矛盾 supersede——防重复防冲突
+- 压缩防重（游标/锁）——工程机制，用户无感
 
 ### 13.1 现状缺陷（核对代码确认）
 
@@ -480,7 +519,41 @@ model MemoryProposal {
 | F4 | **审计缺口**：pending 无超期治理；无接受率/引用率/矛盾率指标反馈 | 审批系统 | 无法量化记忆质量，无法驱动提取优化 |
 | F5 | **persona 整体缓存**：任一 fact 变化全量重建 | `buildCachedPersona` | 与 R1（#98 增量更新）目标冲突的中间态 |
 
-### 13.2 第一层：正确性修复（低成本，优先）
+### 13.2 简化实施（S1–S3）
+
+**S1 · 砍 Tier 1 实时提取**
+
+```
+移除 shouldExtractIncrement 触发链路（信号正则 + 2s 去抖 + 提取游标交互）。
+显式指令承接：
+  "记住：xxx" / kb_remember → 命令直写（现有，createdBy=user，无需审核）
+所有事实性提取统一走批量路径（S3 的 extractSegment）。
+```
+
+**S2 · Session Memory 合并**
+
+```
+episodes 升级为唯一 Session Memory（summary + recent 结构，opencode 模式）：
+  - 每轮：K3 渐进更新（现状）
+  - 压缩时：episodeUpdate 更新同一份（现状 compaction.ts 已在做），
+    anchoredSummary 不再另存
+  - 注入：只查当前 session 的 episodes（会话隔离已有），
+    删除 chat.router 的 kbCompaction 注入查询
+  - kbCompaction 表停止写入（保留历史，不迁移）
+  - 压缩防重游标 coveredUptoIdx 改为基于事件 idx 的独立游标（语义不变）
+```
+
+**S3 · 归一提取路径**
+
+```
+统一入口 extractSegment(userId, scope, fromIdx, toIdx, ctx)：
+  - 输入：未覆盖事件段 + 当前 session 的 Session Memory
+  - 输出：facts[] → propose pending；episodeUpdate → 更新 Session Memory
+  - 触发点：① 压缩时（溢出段）② 会话关闭时（未覆盖段）
+  - 现有 extractAndProposeFacts / flushUnextracted / 压缩提取合并实现
+```
+
+### 13.3 正确性修复（原第一层）
 
 **A. Persona 患者隔离（修 F1）**
 
@@ -518,7 +591,7 @@ score(f) = importance(f) × e^(-0.3 × daysAgo(f))
 
 - 变更点：`maybeSynthesizeArticle` 增加时间窗口过滤；聚类为可选增强（Phase 3 后期）
 
-### 13.3 第二层：审核体验（中成本）
+### 13.4 审核体验（原第二层）
 
 **D. Pending 超期治理**
 
@@ -527,7 +600,7 @@ score(f) = importance(f) × e^(-0.3 × daysAgo(f))
   pending 超 7 天：
     importance ≥ 4 → 保持 pending，Brain inbox 置顶 + 高亮"待关注"
     importance ≤ 2 → 自动归档为 'stale'（不删除，可手动恢复）
-    （摘要是 'episode_summary'/'compaction_summary' 的 → 7 天未审自动归档）
+    （摘要是 'episode_summary' 的 → 7 天未审自动归档）
 ```
 
 - 变更点：MemoryProposal 增加 `archivedAt` 字段（或复用 status），
@@ -550,10 +623,10 @@ pending 按 scope 分组展示：
   接受率 > 90% 且数量多 → 提示"可适当增加该类别输出"
 ```
 
-- 变更点：`extractAndProposeFacts` 的 prompt 增加动态规则段；
+- 变更点：`extractSegment` 的 prompt 增加动态规则段；
   统计数据来自 auditLog（已存在，需增加 category 维度）
 
-### 13.4 第三层：审计治理（中高成本，与 R1 联动）
+### 13.5 审计治理（原第三层，与 R1 联动）
 
 **G. 记忆健康仪表盘**
 
@@ -574,38 +647,40 @@ persona 拆为独立段，每段独立版本指纹：
 任一版本变化 → 仅重建对应段（§4.3 R1 的增量注入的雏形）
 ```
 
-### 13.5 数据模型变更
+### 13.6 数据模型变更
 
 ```prisma
 // MemoryProposal 增加：
-archivedAt     String?   // 超期归档时间（第二层 D）
+archivedAt     String?   // 超期归档时间（13.4 D）
 category       String?   // 提取类别（质量反馈 F 的统计维度，propose 时已带 reason 可解析）
 
-// auditLog 已含 targetType/targetId/actor，无需扩展
+// kbCompaction 停止写入（S2），保留历史表不迁移；
+// episodes 升级：summary 字段内嵌 recent（或加 recent 列），压缩更新同一行
 ```
 
-### 13.6 测试计划
+### 13.7 测试计划
 
 | 层 | 用例 |
 |---|---|
-| 单测 | persona 隔离：患者 fact 不进全局 persona；医生偏好保留；topFacts 按 importance×recency 排序；article 触发：7 天窗口过滤、聚类过滤 |
-| 集成 | 超期归档：mock createdAt 8 天前 → 低重要性自动归档、高重要性置顶；质量反馈：mock 拒绝率 → prompt 动态段出现 |
-| 回归 | 现有 434+ 用例；persona 缓存指纹（版本变化才重建）不破坏 |
+| 单测 | S1：移除触发后无实时提取路径（shouldExtractIncrement 删除）；S2：压缩只更新 episodes、不写 kbCompaction、注入只查 episodes；S3：extractSegment 覆盖两触发点；persona 隔离（患者 fact 不进全局 persona）；topFacts 排序；article 7 天窗口 |
+| 集成 | 60 轮会话 → 压缩 → 断言：Session Memory 更新一份 + proposals 进 pending + kbCompaction 无新行；审核通过 → graph 新版本 + 下次注入可见 |
+| 回归 | 现有 434+ 用例；SSE 兼容性；会话关闭 flush 不回归 |
 
-### 13.7 实施计划
+### 13.8 实施计划
 
 | 项 | 内容 | 优先级 | 预估 |
 |---|---|---|---|
-| 13.2A | Persona 患者隔离 | P0 | 0.5d |
-| 13.2B | topFacts 排序优化 | P0 | 0.5d |
-| 13.2C | Article 时间窗口 | P1 | 1d |
-| 13.3D | Pending 超期治理 | P1 | 1.5d |
-| 13.3E | Inbox 分组批量 | P2 | 1d |
-| 13.3F | 提取质量反馈 | P2 | 1.5d |
-| 13.4G | 记忆健康仪表盘 | P3 | 2d |
-| 13.4H | Persona 分段缓存（并入 R1 #98） | P2 | 与 R1 合并 |
-
----
+| S2 | Session Memory 合并（episodes 升级 + kbCompaction 停写 + 注入收敛） | P0 | 1d |
+| S1 | 砍 Tier 1 实时提取（kb_remember 承接） | P0 | 0.5d |
+| S3 | 归一提取路径 extractSegment | P0 | 1d |
+| 13.3A | Persona 患者隔离 | P1 | 0.5d |
+| 13.3B | topFacts 排序优化 | P1 | 0.5d |
+| 13.3C | Article 时间窗口 | P1 | 1d |
+| 13.4D | Pending 超期治理 | P2 | 1.5d |
+| 13.4E | Inbox 分组批量 | P2 | 1d |
+| 13.4F | 提取质量反馈 | P2 | 1.5d |
+| 13.5G | 记忆健康仪表盘 | P3 | 2d |
+| 13.5H | Persona 分段缓存（并入 R1 #98） | P2 | 与 R1 合并 |
 
 ## 14. 修订历史
 
@@ -614,3 +689,4 @@ category       String?   // 提取类别（质量反馈 F 的统计维度，prop
 | v2.0 | 初始设计（G.1–G.7） |
 | v2.1 | 矛盾检测与取代（§5.7）；Tier 1 信号收缩；压缩 delayed-sync；episodes 会话隔离 |
 | v2.2 | §13 记忆系统优化设计（Phase 3 治理）；修订 §7.3 拒绝原因可选、§8/§9 完成状态 |
+| v3.0 | §13 重写为简化模型：两形态 + 一路径 + 一闸门（S1 砍 Tier 1、S2 合并 Session Memory、S3 归一提取） |
