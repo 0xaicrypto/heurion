@@ -66,8 +66,16 @@ export async function sessionRouter(app: FastifyInstance) {
     })
     if (updated.count === 0) {
       const existing = await prisma.session.findFirst({ where: { id: sessionId, userId } })
-      if (!existing) return reply.status(404).send({ error: 'Session not found' })
-      return { id: sessionId, status: existing.status, already: true }
+      if (!existing) {
+        // The default global session (global-{userId}) has no Session row —
+        // it is purely an event-log namespace. Allow closing it too:
+        // summarize + wipe events, nothing to update in the table.
+        if (!sessionId.startsWith('global-')) {
+          return reply.status(404).send({ error: 'Session not found' })
+        }
+      } else {
+        return { id: sessionId, status: existing.status, already: true }
+      }
     }
 
     // 1) Summarize synchronously so the pending review gets the content
