@@ -46,12 +46,12 @@ describe('K1 extraction cursor', () => {
 })
 
 describe('K2 event-driven trigger decision', () => {
-  test('content >= 300 chars triggers extraction', () => {
-    expect(shouldExtractIncrement('x'.repeat(300))).toBe(true)
-    expect(shouldExtractIncrement('x'.repeat(299))).toBe(false)
+  test('plain volume no longer triggers (moved to compaction/close tiers)', () => {
+    expect(shouldExtractIncrement('x'.repeat(300))).toBe(false)
+    expect(shouldExtractIncrement('x'.repeat(2000))).toBe(false)
   })
 
-  test('key clinical signals trigger even under the threshold', () => {
+  test('key clinical signals trigger extraction', () => {
     expect(shouldExtractIncrement('记住：患者对青霉素过敏')).toBe(true)
     expect(shouldExtractIncrement('诊断结果已确认')).toBe(true)
     expect(shouldExtractIncrement('调整剂量方案')).toBe(true)

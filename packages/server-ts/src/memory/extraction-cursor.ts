@@ -55,17 +55,13 @@ export async function advanceExtractedUptoIdx(key: ExtractionCursorKey, idx: num
 }
 
 /**
- * K2 — event-driven trigger decision. Returns true when the incremental
- * segment is worth extracting:
- *   a. incremental content length >= threshold (default 300 chars), or
- *   b. contains a key clinical signal (remember/diagnosis/plan/confirm…)
+ * K2 — event-driven trigger decision (Tier 1). Returns true only when the
+ * incremental segment contains a strong clinical signal. Volume-based
+ * extraction (the old 300-char threshold) moved to compaction time (Tier 2)
+ * and session close (Tier 3), where segments are processed once with full
+ * context instead of repeatedly.
  */
-export function shouldExtractIncrement(
-  incrementalText: string,
-  opts: { minChars?: number } = {},
-): boolean {
-  const minChars = opts.minChars ?? 300
-  if (incrementalText.trim().length >= minChars) return true
+export function shouldExtractIncrement(incrementalText: string): boolean {
   const SIGNALS = /记住|记得|诊断|方案|确认|停止|剂量|调整|停用|开始|复查|过敏|禁忌/i
   return SIGNALS.test(incrementalText)
 }

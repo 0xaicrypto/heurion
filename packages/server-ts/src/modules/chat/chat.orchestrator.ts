@@ -404,114 +404,50 @@ export class ChatOrchestrator {
     const conversation = incrementalEvents
       .map(e => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
       .join('\n')
-    const totalTurns = toIdx
 
     try {
-      const apiKey = getApiKey()
+      // Tier-1 extraction — shared with compaction (Tier 2) and close flush
+      // (Tier 3). AI extraction always lands in the pending review queue.
+      const { extractAndProposeFacts } = await import('../../memory/compaction.js')
+      const facts = await extractAndProposeFacts(
+        {
+          userId,
+          eventLog: this.eventLog,
+          facts: this.factsStore,
+          episodes: this.episodesStore,
+          skills: this.skillsStore,
+          knowledge: this.knowledgeStore,
+          memory: this.memory,
+        },
+        patientHash,
+        conversation,
+        { sessionId, reason: 'chat increment' },
+      )
 
-        // Gather context so extracted facts are grounded and not duplicated.
-        const existingFacts = this.factsStore.all()
-        const relatedFacts = existingFacts
-          .filter(f =>
-            (patientHash && f.patientHash === patientHash) ||
-            conversation.toLowerCase().split(/\s+/).some((w: string) => w.length > 3 && f.content.toLowerCase().includes(w))
-          )
-          .slice(0, 10)
+      // Advance the cursor on success (a throw above skips the advance so
+      // the segment is retried).
+      await advanceExtractedUptoIdx(scopeKey, toIdx)
+      console.log(`[EVOLVE] Increment extracted (idx ${fromIdx} → ${toIdx})`)
 
-        const episode = this.episodesStore.all().find(e => e.sessionId === sessionId)
-        const contextLines: string[] = []
-        if (patientHash) {
-          contextLines.push(`Current patient: ${patientHash}`)
-          contextLines.push('Facts about this patient should use sourceType: "patient" and include the patientHash.')
-        }
-        if (episode) {
-          contextLines.push(`Session summary so far: ${episode.summary}`)
-        }
-        if (relatedFacts.length > 0) {
-          contextLines.push('Existing related facts (avoid duplicating these unless new details are added):')
-          relatedFacts.forEach(f => {
-            contextLines.push(`- [${f.sourceType || 'general'}] ${f.content}`)
-          })
-        }
-        const contextBlock = contextLines.length > 0 ? `\n${contextLines.join('\n')}\n` : ''
+      // Auto-resolve pending gaps that match new facts
+      const resolved = await this.autoResolveGapsFromFacts(userId, facts)
+      if (resolved.length > 0) console.log(`[GAP] Auto-resolved ${resolved.length} gaps`)
 
-        const extractionPrompt = `You are a clinical memory extractor. From the conversation below, extract ONLY facts worth persisting for future reference.
-
-Rules:
-1. AGGREGATE: merge related information about the same subject into ONE consolidated fact (e.g. symptoms+course → one disease-course fact; related exam values → one finding fact). Do not split a single topic into multiple fragments.
-2. LIMIT: output at most 5 facts — the most important only.
-3. IMPORTANCE GATE: only facts that affect future decisions (diagnosis, treatment, monitoring, patient safety). Omit marginal details.
-4. SELF-CONTAINED: include subject (patient/doctor), time or trend, and concrete values.
-   GOOD: "患者 ZQ 发热持续3周伴胸痛咳嗽，亚急性病程（7月末起）"
-   BAD: "针对发热+胸痛需考虑肺部感染"
-5. Exclude: conversational filler ("用户想学习", "谢谢"), generic advice ("需要做检查") unless it is a concrete conclusion for this patient, system state ("名册为空"), general knowledge.
-
-Return ONLY a JSON array:
-[{"content": "consolidated fact", "category": "diagnosis|symptom|exam|medication|allergy|constraint|preference|plan", "importance": 1-5, "sourceType": "patient|doctor|research"}]
-
-Importance: 5 = changes treatment/diagnosis; 4 = important clinical fact; 3 = general; 1-2 = marginal (omit).
-${contextBlock}
-Conversation:
-${conversation}
-
-[JSON array]:`
-
-        const result = await deepseekChat(
-          [{ role: 'user', content: extractionPrompt }],
-          apiKey,
-          {
-            model: 'deepseek-chat',
-            maxTokens: 2048,
-            telemetryContext: { userId, workspaceId: userId, action: 'chat.extract_facts' },
-          },
-        )
-        const jsonMatch = result.match(/\[[\s\S]*\]/)
-        if (jsonMatch) {
-          const facts = JSON.parse(jsonMatch[0])
-          const proposed: string[] = []
-          for (const f of facts) {
-            if (f.category && f.content) {
-              const factInput = {
-                category: f.category,
-                importance: Math.min(5, Math.max(1, f.importance || 3)),
-                content: f.content,
-                sourceType: f.sourceType || 'general',
-                patientHash: f.sourceType === 'patient' ? (patientHash || undefined) : undefined,
-              }
-              // AI extraction always goes through the pending review queue
-              // (BRAIN2_MEMORY_LIFECYCLE §5.2 — no direct write path).
-              proposed.push(f.content)
-              await this.proposeFact(userId, patientHash, factInput)
-            }
-          }
-          this.eventLog.append({
-            timestamp: Date.now() / 1000,
-            eventType: 'evolution',
-            content: `🧠 Proposed ${proposed.length} new facts for review`,
-            metadata: { factCount: proposed.length, categories: [...new Set(facts.map((f: any) => f.category))] },
-            agentId: userId, sessionId,
-          })
-          console.log(`[EVOLVE] Proposed ${proposed.length} facts for review (turn ${totalTurns})`)
-
-          // Auto-resolve pending gaps that match new facts
-          const resolved = await this.autoResolveGapsFromFacts(userId, facts)
-          if (resolved.length > 0) console.log(`[GAP] Auto-resolved ${resolved.length} gaps`)
-
-          // Auto-generate knowledge article when 3+ facts accumulate
-          const allFacts = this.memory
-            ? this.memory.graph.getCurrentNodesByType('fact').filter((n): n is import('../../memory/memory.types').FactNode => n.type === 'fact')
-            : this.factsStore.all()
-          if (allFacts.length >= 3 && allFacts.length % 5 === 0) {
-            try {
-              const articleFacts = allFacts.slice(-10)
-              const factList = articleFacts
-                .map((f) => {
-                  const date = f.createdAt ? new Date(f.createdAt).toISOString().slice(0, 10) : 'unknown'
-                  const source = [f.sourceType, f.patientHash, f.studyId].filter(Boolean).join(' / ') || 'general'
-                  return `[importance=${f.importance ?? 3}] [${f.category}] [${source}] [${date}] ${f.content}`
-                })
-                .join('\n')
-              const articlePrompt = `You are synthesizing clinical findings for an oncology researcher.
+      // Auto-generate knowledge article when 3+ facts accumulate
+      const allFacts = this.memory
+        ? this.memory.graph.getCurrentNodesByType('fact').filter((n): n is import('../../memory/memory.types').FactNode => n.type === 'fact')
+        : this.factsStore.all()
+      if (allFacts.length >= 3 && allFacts.length % 5 === 0) {
+        try {
+          const articleFacts = allFacts.slice(-10)
+          const factList = articleFacts
+            .map((f) => {
+              const date = f.createdAt ? new Date(f.createdAt).toISOString().slice(0, 10) : 'unknown'
+              const source = [f.sourceType, f.patientHash, f.studyId].filter(Boolean).join(' / ') || 'general'
+              return `[importance=${f.importance ?? 3}] [${f.category}] [${source}] [${date}] ${f.content}`
+            })
+            .join('\n')
+          const articlePrompt = `You are synthesizing clinical findings for an oncology researcher.
 Emphasize patient-specific facts, high-importance findings (importance 4-5), and connections across source types (patient / doctor preference / research / general).
 Keep the article concise (1-2 paragraphs) and clinically actionable.
 
@@ -519,55 +455,51 @@ Facts to synthesize:
 ${factList}
 
 Return ONLY JSON: { "title": "...", "content": "..." }`
-              const articleResult = await deepseekChat(
-                [{ role: 'user', content: articlePrompt }],
-                apiKey,
-                {
-                  model: 'deepseek-chat',
-                  maxTokens: 2048,
-                  telemetryContext: { userId, workspaceId: userId, action: 'chat.generate_article' },
-                },
-              )
-              const jsonMatch2 = articleResult.match(/\{[\s\S]*\}/)
-              if (jsonMatch2) {
-                const article = JSON.parse(jsonMatch2[0])
-                if (article.title && article.content) {
-                  // Synthesized articles also go through the pending review
-                  // queue (BRAIN2_MEMORY_LIFECYCLE §5.4).
-                  try {
-                    const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
-                    const gateway = new MemoryGraphGateway(
-                      userId,
-                      this.memory!,
-                      this.factsStore,
-                      this.episodesStore,
-                      this.skillsStore,
-                      this.knowledgeStore,
-                    )
-                    await gateway.propose({
-                      scopeType: patientHash ? 'patient' : 'global',
-                      patientHash,
-                      kind: 'article',
-                      content: `${article.title}\n\n${article.content}`,
-                      importance: 3,
-                      confidence: 'medium',
-                      reason: `AI synthesis from ${articleFacts.length} facts`,
-                    })
-                    console.log(`[KNOWLEDGE] Article proposed for review: ${article.title}`)
-                  } catch (err) {
-                    console.log('[KNOWLEDGE] Article proposal skipped:', (err as Error).message.slice(0, 100))
-                  }
-                }
+          const apiKey = getApiKey()
+          const articleResult = await deepseekChat(
+            [{ role: 'user', content: articlePrompt }],
+            apiKey,
+            {
+              model: 'deepseek-chat',
+              maxTokens: 2048,
+              telemetryContext: { userId, workspaceId: userId, action: 'chat.generate_article' },
+            },
+          )
+          const jsonMatch2 = articleResult.match(/\{[\s\S]*\}/)
+          if (jsonMatch2) {
+            const article = JSON.parse(jsonMatch2[0])
+            if (article.title && article.content) {
+              // Synthesized articles also go through the pending review
+              // queue (BRAIN2_MEMORY_LIFECYCLE §5.4).
+              try {
+                const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
+                const gateway = new MemoryGraphGateway(
+                  userId,
+                  this.memory!,
+                  this.factsStore,
+                  this.episodesStore,
+                  this.skillsStore,
+                  this.knowledgeStore,
+                )
+                await gateway.propose({
+                  scopeType: patientHash ? 'patient' : 'global',
+                  patientHash,
+                  kind: 'article',
+                  content: `${article.title}\n\n${article.content}`,
+                  importance: 3,
+                  confidence: 'medium',
+                  reason: `AI synthesis from ${articleFacts.length} facts`,
+                })
+                console.log(`[KNOWLEDGE] Article proposed for review: ${article.title}`)
+              } catch (err) {
+                console.log('[KNOWLEDGE] Article proposal skipped:', (err as Error).message.slice(0, 100))
               }
-            } catch (err) {
-              console.log('[KNOWLEDGE] Article generation skipped:', (err as Error).message.slice(0, 100))
+            }
           }
+        } catch (err) {
+          console.log('[KNOWLEDGE] Article generation skipped:', (err as Error).message.slice(0, 100))
         }
       }
-      // Advance the cursor on success (extraction ran; a throw above skips
-      // the advance so the segment is retried).
-      await advanceExtractedUptoIdx(scopeKey, toIdx)
-      console.log(`[EVOLVE] Increment extracted (idx ${fromIdx} → ${toIdx})`)
 
       // K3: update the session summary from the incremental segment.
       try {
@@ -586,6 +518,32 @@ Return ONLY JSON: { "title": "...", "content": "..." }`
       }
     } catch (err) {
       console.log('[EVOLVE] Fact extraction skipped:', (err as Error).message.slice(0, 100))
+    }
+  }
+
+  /**
+   * Tier 3 — exposed for the session-close flow: extract any conversation
+   * segment not yet covered by the cursor or a compaction.
+   */
+  async extractUnextractedSegment(userId: string, sessionId: string, patientHash?: string): Promise<number> {
+    try {
+      const { flushUnextracted } = await import('../../memory/compaction.js')
+      return await flushUnextracted(
+        {
+          userId,
+          eventLog: this.eventLog,
+          facts: this.factsStore,
+          episodes: this.episodesStore,
+          skills: this.skillsStore,
+          knowledge: this.knowledgeStore,
+          memory: this.memory,
+        },
+        sessionId,
+        patientHash,
+      )
+    } catch (err) {
+      console.log('[FLUSH] skipped:', (err as Error).message.slice(0, 120))
+      return 0
     }
   }
 

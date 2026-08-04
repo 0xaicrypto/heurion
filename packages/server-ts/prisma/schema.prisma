@@ -415,6 +415,20 @@ model MemoryProposal {
   @@map("memory_proposals")
 }
 
+model KbCompaction {
+  id             String @id @default(cuid())
+  userId         String @map("user_id")
+  sessionId      String @map("session_id")
+  summary        String
+  coveredUptoIdx Int    @map("covered_upto_idx") // last event idx covered by this compaction
+  tokenSavings   Int?   @map("token_savings")
+  createdAt      String @map("created_at")
+
+  @@unique([sessionId, coveredUptoIdx])
+  @@index([userId, sessionId, coveredUptoIdx(sort: Desc)])
+  @@map("kb_compactions")
+}
+
 model IngestionJob {
   id            String  @id @default(cuid())
   userId        String  @map("user_id")

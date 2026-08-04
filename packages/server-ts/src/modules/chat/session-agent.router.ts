@@ -64,6 +64,7 @@ export async function sessionRouter(app: FastifyInstance) {
       where: { id: sessionId, userId, status: 'open' },
       data: { status: 'closed', closedAt: now },
     })
+    let patientHash: string | undefined
     if (updated.count === 0) {
       const existing = await prisma.session.findFirst({ where: { id: sessionId, userId } })
       if (!existing) {
@@ -76,6 +77,9 @@ export async function sessionRouter(app: FastifyInstance) {
       } else {
         return { id: sessionId, status: existing.status, already: true }
       }
+    } else {
+      const row = await prisma.session.findFirst({ where: { id: sessionId, userId } })
+      patientHash = row?.patientHash ?? undefined
     }
 
     // 1) Summarize synchronously so the pending review gets the content
@@ -88,6 +92,18 @@ export async function sessionRouter(app: FastifyInstance) {
       console.log('[SESSION] summarize failed:', (err as Error).message.slice(0, 120))
     }
 
+    // 1b) Tier-3 flush: extract any segment not yet covered by the
+    //     incremental cursor or a compaction, before the event log is wiped
+    //     (short sessions must not lose memory).
+    let flushed = 0
+    try {
+      const ctx = getUserContext(userId)
+      flushed = await ctx.orchestrator.extractUnextractedSegment(userId, sessionId, patientHash)
+      if (flushed > 0) console.log(`[SESSION] ${flushed} facts flushed on close`)
+    } catch (err) {
+      console.log('[SESSION] close flush failed:', (err as Error).message.slice(0, 120))
+    }
+
     // 2) Clean up the session's event-log data.
     let cleaned = 0
     try {
@@ -98,7 +114,7 @@ export async function sessionRouter(app: FastifyInstance) {
       console.log('[SESSION] event cleanup failed:', (err as Error).message.slice(0, 120))
     }
 
-    return { id: sessionId, status: 'closed', closed_at: now, summarized: summary.length > 0, cleaned_events: cleaned }
+    return { id: sessionId, status: 'closed', closed_at: now, summarized: summary.length > 0, flushed_facts: flushed, cleaned_events: cleaned }
   })
 
   app.delete('/api/v1/sessions/:sessionId', async (request) => {
