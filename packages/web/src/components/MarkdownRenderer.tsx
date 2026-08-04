@@ -54,17 +54,17 @@ export function MarkdownRenderer({ content, className }: Props) {
     <div
       className={cn(
         'prose prose-sm max-w-none break-words',
+        // In-chat typography scale: base 14px body, headings kept close to
+        // body size (default prose h1/h2 are far too large for a chat bubble).
         'prose-headings:text-text-primary prose-headings:font-semibold',
+        'prose-h1:text-base prose-h2:text-base prose-h3:text-sm prose-h4:text-sm prose-h5:text-sm prose-h6:text-sm',
         'prose-p:text-text-secondary prose-p:leading-relaxed',
         'prose-a:text-accent hover:prose-a:underline',
         'prose-strong:text-text-primary prose-strong:font-semibold',
-        'prose-code:text-text-primary prose-code:bg-surface prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-sm prose-code:font-mono',
+        'prose-code:text-text-primary prose-code:bg-surface prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:font-mono',
         'prose-pre:bg-transparent prose-pre:p-0 prose-pre:rounded-none',
         'prose-ol:text-text-secondary prose-ul:text-text-secondary prose-li:my-1',
         'prose-blockquote:border-l-4 prose-blockquote:border-accent prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-text-secondary',
-        'prose-table:border-collapse prose-table:w-full prose-table:text-sm prose-table:block prose-table:overflow-x-auto',
-        'prose-th:border prose-th:border-border prose-th:bg-surface-elevated prose-th:p-2 prose-th:text-left prose-th:text-text-primary prose-th:font-medium',
-        'prose-td:border prose-td:border-border prose-td:p-2 prose-td:text-text-secondary',
         'prose-hr:border-border',
         className,
       )}
@@ -83,7 +83,7 @@ export function MarkdownRenderer({ content, className }: Props) {
 
             if (inline) {
               return (
-                <code className="rounded bg-surface px-1 py-0.5 text-sm font-mono text-text-primary" {...props}>
+                <code className="rounded bg-surface px-1 py-0.5 text-[13px] font-mono text-text-primary" {...props}>
                   {children}
                 </code>
               );
@@ -96,6 +96,29 @@ export function MarkdownRenderer({ content, className }: Props) {
               <a href={href} target="_blank" rel="noreferrer" className="text-accent underline hover:opacity-80">
                 {children}
               </a>
+            );
+          },
+          // Tables: the wrapper scrolls horizontally; the <table> itself must
+          // keep `display: table` (a block table breaks row/column layout).
+          table({ children }: any) {
+            return (
+              <div className="my-2 overflow-x-auto">
+                <table className="w-full border-collapse text-xs">{children}</table>
+              </div>
+            );
+          },
+          th({ children }: any) {
+            return (
+              <th className="whitespace-nowrap border border-border bg-surface-elevated p-2 text-left font-medium text-text-primary">
+                {children}
+              </th>
+            );
+          },
+          td({ children }: any) {
+            return (
+              <td className="border border-border p-2 align-top text-text-secondary">
+                {children}
+              </td>
             );
           },
         }}
