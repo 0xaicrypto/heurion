@@ -577,6 +577,22 @@ Return ONLY JSON: { "title": "...", "content": "..." }`
       // the advance so the segment is retried).
       await advanceExtractedUptoIdx(scopeKey, toIdx)
       console.log(`[EVOLVE] Increment extracted (idx ${fromIdx} → ${toIdx})`)
+
+      // K3: update the session summary from the incremental segment.
+      try {
+        const { updateEpisodeSummary } = await import('../../memory/knowledge-synthesis.js')
+        const summary = await updateEpisodeSummary({
+          userId,
+          sessionId,
+          patientHash,
+          episodes: this.episodesStore,
+          incrementalText: conversation,
+          turnCount: Math.floor(toIdx / 2),
+        })
+        if (summary) console.log('[SUMMARY] Episode updated')
+      } catch (err) {
+        console.log('[SUMMARY] Update skipped:', (err as Error).message.slice(0, 120))
+      }
     } catch (err) {
       console.log('[EVOLVE] Fact extraction skipped:', (err as Error).message.slice(0, 100))
     }

@@ -134,7 +134,15 @@ async function applyProposalViaGateway(userId: string, row: any): Promise<any> {
     resolvedAt: row.resolvedAt,
     resolvedBy: row.resolvedBy,
   }
-  return gateway.applyApproved(proposal)
+  const node = await gateway.applyApproved(proposal)
+  // K4: once a fact is confirmed, check whether a new knowledge article can
+  // be synthesized from >= 3 unused confirmed facts of the same category.
+  if (node && row.kind === 'fact') {
+    const { maybeSynthesizeArticle } = await import('../../memory/knowledge-synthesis.js')
+    maybeSynthesizeArticle(userId, { patientHash: row.patientHash || undefined, studyId: row.studyId || undefined }, ctx.memory)
+      .catch((err: Error) => console.log('[KNOWLEDGE] Article check skipped:', err.message.slice(0, 120)))
+  }
+  return node
 }
 
 async function applyTargetUpdate(
