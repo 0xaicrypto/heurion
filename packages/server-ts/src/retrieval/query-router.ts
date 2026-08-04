@@ -171,7 +171,7 @@ Available intents:
 - sql: factual patient database queries (age, sex, list patients, etc.)
 - vector: clinical/guideline/literature questions
 - file: file or attachment references
-- knowledge_command: explicit knowledge-base commands (remember, search, summarize, gaps)
+- knowledge_command: ONLY explicit COMMAND-LIKE instructions that START with an action verb (记住, 保存, 搜索知识库, 总结知识库, 查看我的未解问题, 回答gap; english: remember, save, search my knowledge base, summarize, list gaps). Questions and soft requests are NEVER knowledge_command: "我想了解你学到了什么", "你能告诉我记忆里有什么", "what did you learn", "你掌握了哪些信息" → use mixed.
 - sidecar: requests to generate documents, presentations, tables, or plots
 - mixed: anything else or ambiguous
 
@@ -290,6 +290,14 @@ export async function router(query: string, options: RouterOptions = {}): Promis
     finalIntent = await classifyQueryLLM(query, options.llmClassifier)
     llmFallback = true
     llmCalls = 1
+  }
+
+  // Safety net: an LLM-misclassified "knowledge_command" that does not parse
+  // as an explicit command degrades to mixed. Natural-language questions
+  // ("你学到了什么", "我想了解一下…") must never hit the command handler —
+  // they are answered by the normal conversation with injected memory.
+  if (finalIntent === 'knowledge_command' && parseKnowledgeCommand(query).command === 'unknown') {
+    finalIntent = 'mixed'
   }
 
   const result: RouterResult = {
