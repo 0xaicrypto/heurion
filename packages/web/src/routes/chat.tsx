@@ -10,6 +10,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { LlmContent, StreamingLlmContent } from '@/components/LlmContent';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
+import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { Alert, Button, Badge, Textarea } from '@/components/ui';
 
 
@@ -28,6 +29,7 @@ export function ChatPage() {
   const store = useChatStore();
   const defaultSessionId = `global-${userId || 'anonymous'}`;
   const [sessionId, setSessionId] = useState<string>(defaultSessionId);
+  const [newSessionOpen, setNewSessionOpen] = useState(false);
   const session = store.sessions[sessionId];
   const [globalSessions, setGlobalSessions] = useState<ChatSessionItem[]>([]);
   const [defaultClosed, setDefaultClosed] = useState(false);
@@ -56,11 +58,30 @@ export function ChatPage() {
     loadGlobalSessions();
   }, [loadGlobalSessions]);
 
-  const handleNewSession = async () => {
-    const res = await api.createSession(t('chat.newSession', 'New Session'), { scope: 'global' });
-    loadGlobalSessions();
+  const handleNewSession = () => {
+    // User-initiated: let them name the session first.
+    setNewSessionOpen(true);
+  };
+
+  const createSessionWithTitle = async (title: string) => {
+    const res = await api.createSession(title, { scope: 'global' });
+    // Synchronously prepend the new session so the selector is immediately
+    // consistent — no waiting on the async list refresh.
+    setGlobalSessions((prev) => [
+      { id: res.id, title: res.title, status: 'open', created_at: res.created_at, message_count: 0 },
+      ...prev,
+    ]);
     setSessionId(res.id);
     store.clearSession(res.id);
+    return res;
+  };
+
+  const handleSessionCreated = async (title: string) => {
+    try {
+      await createSessionWithTitle(title);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    }
   };
 
   const handleCloseSession = async () => {
@@ -77,7 +98,7 @@ export function ChatPage() {
       if (next) {
         setSessionId(next.id);
       } else {
-        await handleNewSession();
+        await createSessionWithTitle(t('chat.newSession', 'New Session'));
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
@@ -252,8 +273,7 @@ export function ChatPage() {
             >
               <Plus size={13} className="mr-1 inline" />
               {t('chat.newSession', 'New Session')}
-            </button>
-            <button
+            </button>            <button
               onClick={handleCloseSession}
               className="rounded-lg border border-border bg-surface-elevated px-2 py-1 text-xs text-text-secondary hover:bg-error/10 hover:text-error"
               title={t('chat.closeSession', 'Close Session')}
@@ -429,6 +449,11 @@ export function ChatPage() {
           </div>
         </footer>
       </div>
+      <NewSessionDialog
+        open={newSessionOpen}
+        onClose={() => setNewSessionOpen(false)}
+        onCreate={handleSessionCreated}
+      />
     </AppShell>
   );
 }
