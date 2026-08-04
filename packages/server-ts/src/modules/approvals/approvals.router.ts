@@ -9,7 +9,7 @@ import {
 } from './approval.service.js'
 
 const rejectSchema = z.object({
-  reason: z.string().min(1),
+  reason: z.string().optional(),
 })
 
 export async function approvalsRouter(app: FastifyInstance) {

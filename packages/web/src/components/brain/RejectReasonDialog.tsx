@@ -22,9 +22,8 @@ export function RejectReasonDialog({ open, title, onConfirm, onClose, loading }:
   };
 
   const handleConfirm = () => {
-    const trimmed = reason.trim();
-    if (!trimmed) return;
-    onConfirm(trimmed);
+    // Reason is optional — rejecting without a note is allowed.
+    onConfirm(reason.trim());
     setReason('');
   };
 
@@ -57,7 +56,7 @@ export function RejectReasonDialog({ open, title, onConfirm, onClose, loading }:
           <Button type="button" variant="secondary" onClick={onClose}>
             {t('brain.rejectCancel')}
           </Button>
-          <Button variant="danger" onClick={handleConfirm} disabled={!reason.trim()} isLoading={loading}>
+          <Button variant="danger" onClick={handleConfirm} isLoading={loading}>
             {t('brain.reject')}
           </Button>
         </div>

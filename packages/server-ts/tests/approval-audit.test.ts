@@ -156,7 +156,7 @@ describe('Approval & Audit', () => {
     expect(logs.some((l: any) => l.action === 'approval.rejected')).toBe(true)
   })
 
-  test('rejecting without reason returns 400', async () => {
+  test('rejecting without a reason is allowed', async () => {
     const app = await getApp()
     const hash = await createPatient(app)
     const entry = await createPendingEntry(app, hash)
@@ -174,7 +174,8 @@ describe('Approval & Audit', () => {
       headers: { ...await authHeader(), 'content-type': 'application/json' },
       payload: {},
     })
-    expect(reject.statusCode).toBe(400)
+    expect(reject.statusCode).toBe(200)
+    expect(JSON.parse(reject.payload).status).toBe('rejected')
   })
 
   test('resolved approvals do not appear in pending list', async () => {

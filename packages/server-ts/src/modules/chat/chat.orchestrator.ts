@@ -248,10 +248,12 @@ export class ChatOrchestrator {
       episodes = []
       skills = []
     } else {
-      // Mixed / fallback: keep high-signal memory but trim noise by query relevance
+      // Mixed / fallback: keep high-signal memory but trim noise by query
+      // relevance. Episodes are un-reviewed summaries — current session only
+      // (BRAIN2_MEMORY_LIFECYCLE §5.3): a new session must not inherit them.
       facts = filterFacts(facts, message, patientHash || undefined)
       skills = filterSkills(skills, message)
-      episodes = filterEpisodes(episodes, message)
+      episodes = filterEpisodes(episodes, message).filter(e => e.sessionId === sessionId)
     }
 
     return {

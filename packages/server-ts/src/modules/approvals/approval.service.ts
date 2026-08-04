@@ -74,8 +74,8 @@ export async function confirmApproval(userId: string, id: string, isAdmin = fals
   return serializeApproval(updated)
 }
 
-export async function rejectApproval(userId: string, id: string, reason: string, isAdmin = false) {
-  if (!reason) throw new Error('rejectedReason required')
+export async function rejectApproval(userId: string, id: string, reason: string | null, isAdmin = false) {
+  // Reason is OPTIONAL — rejecting without a note is allowed.
   const where: any = { id, status: 'pending' }
   if (!isAdmin) where.userId = userId
   const req = await (prisma as any).approvalRequest.findFirst({ where })
@@ -83,11 +83,11 @@ export async function rejectApproval(userId: string, id: string, reason: string,
 
   const now = new Date().toISOString()
 
-  await applyTargetUpdate(req.targetType, req.targetId, { status: 'rejected', rejectedReason: reason }, userId, now)
+  await applyTargetUpdate(req.targetType, req.targetId, { status: 'rejected', rejectedReason: reason || null }, userId, now)
 
   const updated = await (prisma as any).approvalRequest.update({
     where: { id },
-    data: { status: 'rejected', actorId: userId, reason, resolvedAt: now },
+    data: { status: 'rejected', actorId: userId, reason: reason || null, resolvedAt: now },
   })
 
   await writeAuditLog({
@@ -96,8 +96,8 @@ export async function rejectApproval(userId: string, id: string, reason: string,
     targetType: req.targetType,
     targetId: req.targetId,
     before: { status: 'pending_review' },
-    after: { status: 'rejected', rejectedReason: reason },
-    reason,
+    after: { status: 'rejected', rejectedReason: reason || null },
+    reason: reason || undefined,
     createdAt: now,
   })
 

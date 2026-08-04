@@ -356,7 +356,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       const persona = buildCachedPersona(userId, ctx.facts, ctx.knowledge)
 
       // #2: Weighted attention context projection (filtered by router intent)
-      const projectionInputs = selectProjectionInputs(routeResult, ctx, patientHash)
+      const projectionInputs = selectProjectionInputs(routeResult, ctx, patientHash, sid)
       const projected = await ctx.orchestrator['projection'].project({
         userId, patientHash, sessionId: sid,
         persona,
@@ -725,11 +725,17 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
 /**
  * Select which accumulated-memory layers to inject based on the router intent.
  * This keeps per-turn context cost predictable.
+ *
+ * Episodes (session summaries) are un-reviewed conversation memory — by
+ * design they serve the CURRENT session only (BRAIN2_MEMORY_LIFECYCLE §5.3,
+ * "不确认的摘要仅用于本轮上下文"). A new session must never inherit another
+ * session's un-approved summaries, so episodes are filtered by sessionId.
  */
-function selectProjectionInputs(
+export function selectProjectionInputs(
   routeResult: Awaited<ReturnType<typeof router>>,
   ctx: Awaited<ReturnType<typeof getUserContext>>,
   patientHash?: string | null,
+  sessionId?: string,
 ) {
   switch (routeResult.intent) {
     case 'sql':
@@ -743,10 +749,11 @@ function selectProjectionInputs(
       return { facts: [], episodes: [], skills: [] }
     case 'mixed':
     default:
-      // Ambiguous or summary questions: keep full context (patient-isolated)
+      // Ambiguous or summary questions: keep full context (patient-isolated);
+      // episodes are limited to the current session's un-reviewed summary.
       return {
         facts: isolateFactsByScope(ctx.facts.all(), patientHash),
-        episodes: ctx.episodes.all(),
+        episodes: sessionId ? ctx.episodes.all().filter((e) => e.sessionId === sessionId) : [],
         skills: ctx.skills.all(),
       }
   }
