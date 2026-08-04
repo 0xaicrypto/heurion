@@ -21,8 +21,10 @@ export interface ToolContext {
 
 export class ToolRegistry {
   private tools: Map<string, BaseTool> = new Map()
+  private ctx: ToolContext
 
   constructor(ctx: ToolContext) {
+    this.ctx = ctx
     this.register(new SearchNodeTool(ctx))
     this.register(new SearchEncounterTool(ctx))
     this.register(new SearchPastChatsTool(ctx))
@@ -46,6 +48,25 @@ export class ToolRegistry {
   async execute(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const tool = this.tools.get(name)
     if (!tool) return { success: false, error: `Unknown tool: ${name}` }
-    return tool.execute(args)
+    const result = await tool.execute(args)
+    // T1: bound large outputs uniformly — every tool result that goes back
+    // into the LLM round passes through the limiter.
+    if (result.success && result.output) {
+      try {
+        const { boundToolOutput } = await import('./tool-output-store.js')
+        const { bounded, truncated, filePath } = boundToolOutput(result.output, { userId: this.ctx.userId })
+        if (truncated) {
+          result.output = bounded
+          result.truncated = true
+          result.fullOutputPath = filePath
+          // Opportunistic retention sweep on the way out.
+          const { cleanupToolOutputs } = await import('./tool-output-store.js')
+          cleanupToolOutputs()
+        }
+      } catch (err) {
+        console.log('[TOOLS] Output bounding skipped:', (err as Error).message.slice(0, 100))
+      }
+    }
+    return result
   }
 }
