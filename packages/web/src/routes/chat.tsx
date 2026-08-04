@@ -11,6 +11,7 @@ import { SkillsBar } from '@/components/SkillsBar';
 import { LlmContent, StreamingLlmContent } from '@/components/LlmContent';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
+import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import { Alert, Button, Textarea } from '@/components/ui';
 
 
@@ -37,9 +38,6 @@ export function ChatPage() {
     sessionId === defaultSessionId
       ? t('chat.defaultSession', '默认会话')
       : (globalSessions.find((s) => s.id === sessionId)?.title ?? t('chat.defaultSession', '默认会话'));
-  const usagePct = session?.contextUsage
-    ? (session.contextUsage.historyTokens / Math.max(1, session.contextUsage.historyBudget)) * 100
-    : 0;
 
   const [input, setInput] = useState('');
   // Per-session drafts: switching sessions must never leak half-typed text
@@ -318,26 +316,11 @@ export function ChatPage() {
                 {llmStatus.provider}/{llmStatus.model}
               </span>
             )}
-            {session?.contextUsage && (
-              <div
-                className="flex items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary"
-                title={t('chat.contextUsageTip', '历史上下文预算：压缩在达到 100% 或 {{turns}} 轮时触发', { turns: session.contextUsage.historyTurns })}
-              >
-                <div className="h-1.5 w-20 overflow-hidden rounded-full bg-surface">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      usagePct >= 100 ? 'bg-error' : usagePct >= 80 ? 'bg-warning' : 'bg-success'
-                    }`}
-                    style={{ width: `${Math.min(100, usagePct)}%` }}
-                  />
-                </div>
-                <span className={usagePct >= 100 ? 'text-error' : usagePct >= 80 ? 'text-warning' : undefined}>
-                  {Math.round(usagePct)}%
-                </span>
-                {session.contextUsage.willCompact && (
-                  <span className="text-error">{t('chat.compactingSoon', '即将压缩')}</span>
-                )}
-              </div>
+            <ContextUsageIndicator usage={session?.contextUsage} />
+            {llmStatus && (
+              <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary border border-border">
+                {llmStatus.provider}/{llmStatus.model}
+              </span>
             )}
           </div>
         </header>
