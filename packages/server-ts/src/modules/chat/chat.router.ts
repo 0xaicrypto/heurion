@@ -389,9 +389,19 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       const maxHistoryTokens = parseInt(process.env.MAX_HISTORY_TOKENS || '8000', 10)
       const historyTurns = parseInt(process.env.HISTORY_TURNS || '20', 10)
       const history = ctx.eventLog.query({ sessionId: sid, limit: historyTurns * 2 }).reverse()
-      const { messages: historyMessages, omittedTurns } = buildHistoryMessages(history, {
+      const { messages: historyMessages, omittedTurns, tokens: historyTokens } = buildHistoryMessages(history, {
         maxTokens: maxHistoryTokens,
         maxTurns: historyTurns,
+      })
+      // U3: surface the context budget usage so the user can anticipate the
+      // next compaction (100% of the history budget or the turn window cap).
+      send({
+        type: 'context_usage',
+        history_tokens: historyTokens,
+        history_budget: maxHistoryTokens,
+        history_turns: historyTurns,
+        omitted_turns: omittedTurns,
+        will_compact: omittedTurns > 0 || history.length >= historyTurns * 2,
       })
       const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
         { role: 'system', content: projected.systemPrompt + studyContext },
