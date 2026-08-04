@@ -6,6 +6,7 @@ import { deepseekStream, deepseekChat, getApiKey, DEEPSEEK_PREMIUM_MODEL } from 
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
 import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
 import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
+import { detectDoomLoop } from '../../tools/doom-loop.js'
 import { ensureSessionCompaction, getInFlightCompaction } from '../../memory/compaction.js'
 import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { handlePluginChatRequest } from '../plugins/plugin-chat-handler.js'
@@ -471,6 +472,23 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       const toolRegistry = new ToolRegistry(toolCtx)
       const tools = toolRegistry.definitions
 
+      // R3 — tool-call persistence: per-session sequence numbers continue
+      // across turns (and process restarts) by deriving from the log.
+      const existingToolEvents = ctx.eventLog.query({ sessionId: sid }).filter((e: any) => e.eventType === 'tool_call')
+      let toolSeq = existingToolEvents.length
+      const doomHistory: Array<{ tool: string; argsKey: string }> = []
+
+      const appendToolEvent = (eventType: string, content: string, metadata: Record<string, unknown>) => {
+        ctx.eventLog.append({
+          timestamp: Date.now() / 1000,
+          eventType,
+          content,
+          metadata,
+          agentId: userId,
+          sessionId: sid,
+        })
+      }
+
       // Tool-calling loop: try up to 5 rounds of tool calls
       let fullResponse = ''
       let currentMessages = [...messages]
@@ -510,7 +528,29 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
               const toolArgs = toolCall.arguments || toolCall.args || {}
               executedAny = true
 
+              toolSeq++
+              const seq = toolSeq
+              const argsPreview = String(JSON.stringify(toolArgs) || '').slice(0, 300)
+
+              // R3: persist the state machine — pending → running →
+              // completed/error — plus a tool_result event per call.
+              appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+                tool: toolName, args: argsPreview, status: 'pending', seq,
+              })
+
+              // Doom-loop guard: same tool + identical args 3x consecutively.
+              if (detectDoomLoop(doomHistory, toolName, toolArgs)) {
+                console.warn(`[DOOM-LOOP] tool ${toolName} called 3+ times with identical args (seq ${seq})`)
+                appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+                  tool: toolName, args: argsPreview, status: 'warning', seq,
+                })
+              }
+
               send({ type: 'tool_call', tool: toolName, args: toolArgs })
+
+              appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+                tool: toolName, args: argsPreview, status: 'running', seq,
+              })
 
               const result = await toolRegistry.execute(toolName, toolArgs)
 
@@ -520,7 +560,21 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
                 content: `Tool "${toolName}" returned: ${result.success ? (result.output || 'Success') : `Error: ${result.error}`}`,
               })
 
-              if (!result.success) {
+              if (result.success) {
+                const output = result.output || ''
+                appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+                  tool: toolName, args: argsPreview, status: 'completed', seq,
+                })
+                appendToolEvent('tool_result', output.slice(0, 500), {
+                  toolCallId: seq, success: true, outputTruncated: output.length > 500,
+                })
+              } else {
+                appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+                  tool: toolName, args: argsPreview, status: 'error', seq,
+                })
+                appendToolEvent('tool_result', (result.error || '').slice(0, 500), {
+                  toolCallId: seq, success: false, error: (result.error || '').slice(0, 200),
+                })
                 toolError = result.error ?? 'Unknown tool error'
                 break
               }

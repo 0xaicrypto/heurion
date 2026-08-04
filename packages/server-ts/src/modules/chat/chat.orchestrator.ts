@@ -335,7 +335,9 @@ export class ChatOrchestrator {
   // cursor + event-driven trigger, debounced 2s per scope).
   async postTurn(userId: string, sessionId: string, userMessage: string, patientHash?: string) {
     const sessionEvents = this.eventLog.query({ sessionId })
-    const turnCount = Math.floor(sessionEvents.length / 2)
+    // Turns = user messages only; tool_call/tool_result events (R3) must
+    // not inflate the count.
+    const turnCount = sessionEvents.filter((e) => e.eventType === 'user_message').length
     this.episodesStore.upsert(sessionId, userMessage.slice(0, 150), turnCount)
 
     await this.maybeScheduleIncrementalExtraction(userId, sessionId, patientHash)
@@ -524,13 +526,16 @@ Return ONLY JSON: { "title": "...", "content": "..." }`
       // K3: update the session summary from the incremental segment.
       try {
         const { updateEpisodeSummary } = await import('../../memory/knowledge-synthesis.js')
+        const sessionTurnCount = this.eventLog
+          .query({ sessionId })
+          .filter((e) => e.eventType === 'user_message').length
         const summary = await updateEpisodeSummary({
           userId,
           sessionId,
           patientHash,
           episodes: this.episodesStore,
           incrementalText: conversation,
-          turnCount: Math.floor(toIdx / 2),
+          turnCount: sessionTurnCount,
         })
         if (summary) console.log('[SUMMARY] Episode updated')
       } catch (err) {

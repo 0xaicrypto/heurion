@@ -37,7 +37,9 @@ export const processEvolutionTurn: EvolutionJobProcessor = async (job) => {
 
   try {
     const sessionEvents = ctx.memory.eventLog.query({ sessionId })
-    const turnCount = Math.floor(sessionEvents.length / 2)
+    // Count only user messages as turns — tool_call/tool_result events
+    // (R3) would otherwise inflate sessionEvents.length / 2.
+    const turnCount = sessionEvents.filter((e) => e.eventType === 'user_message').length
     if (turnCount > 0 && turnCount % 5 === 0) {
       const recentEvents = ctx.memory.eventLog.query({ sessionId, limit: 10 }).reverse()
       const conversation = recentEvents
