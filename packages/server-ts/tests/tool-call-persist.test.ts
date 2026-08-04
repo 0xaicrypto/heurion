@@ -173,3 +173,37 @@ describe('U3 context usage chunk', () => {
     }
   }, 30000)
 })
+
+describe('U3 context usage endpoint', () => {
+  test('GET /api/v1/agent/context-usage returns budget fields for a session with history', async () => {
+    const app = await getApp()
+    const sessionId = `u3e_${Date.now()}`
+    let calls = 0
+    vi.mocked(deepseekChat).mockImplementation((messages: any) => {
+      const text = JSON.stringify(messages)
+      if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
+      calls++
+      return Promise.resolve(calls === 1 ? '回复。' : '再回复。')
+    })
+
+    for (let i = 0; i < 2; i++) {
+      await app.inject({
+        method: 'POST', url: '/api/v1/agent/chat',
+        headers: { ...await authHeader(), 'content-type': 'application/json' },
+        payload: JSON.stringify({ text: `第${i + 1}轮`, session_id: sessionId }),
+      })
+    }
+
+    const res = await app.inject({
+      method: 'GET', url: `/api/v1/agent/context-usage?session_id=${sessionId}`,
+      headers: await authHeader(),
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.history_budget).toBeGreaterThan(0)
+    expect(typeof body.history_tokens).toBe('number')
+    expect(body.history_tokens).toBeGreaterThan(0)
+    expect(typeof body.will_compact).toBe('boolean')
+    expect(typeof body.history_turns).toBe('number')
+  }, 30000)
+})

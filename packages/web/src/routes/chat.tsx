@@ -156,6 +156,16 @@ export function ChatPage() {
       }));
       if (msgs.length > 0) store.setMessages(sessionId, msgs);
     }).catch(() => {});
+    // U3: show the context budget immediately for sessions with history.
+    api.getContextUsage(sessionId).then((u) => {
+      store.setContextUsage(sessionId, {
+        historyTokens: u.history_tokens,
+        historyBudget: u.history_budget,
+        historyTurns: u.history_turns,
+        omittedTurns: u.omitted_turns,
+        willCompact: u.will_compact,
+      });
+    }).catch(() => {});
   }, [sessionId, store]);
 
   useEffect(() => {

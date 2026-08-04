@@ -409,6 +409,10 @@ class ApiClient {
     });
   }
 
+  async getContextUsage(sessionId: string): Promise<{ history_tokens: number; history_budget: number; history_turns: number; omitted_turns: number; will_compact: boolean }> {
+    return this.fetch(`/api/v1/agent/context-usage?session_id=${encodeURIComponent(sessionId)}`);
+  }
+
   async closeSession(sessionId: string): Promise<{ id: string; status: string; closed_at?: string }> {
     return this.fetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}/close`, { method: 'POST' });
   }
