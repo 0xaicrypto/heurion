@@ -2,7 +2,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { getApp, authHeader, getAuthUserId } from './setup.js'
 import prisma from '../src/common/prisma.js'
 import { getUserContext } from '../src/modules/chat/user-context.js'
-import { ensureSessionCompaction, flushUnextracted } from '../src/memory/compaction.js'
+import { ensureSessionCompaction, flushUnextracted, getInFlightCompaction } from '../src/memory/compaction.js'
 
 vi.mock('../src/common/llm.js', () => ({
   deepseekChat: vi.fn(),
@@ -129,6 +129,36 @@ describe('R2 anchored compaction', () => {
 
     const compactions = await (prisma as any).kbCompaction.findMany({ where: { userId, sessionId } })
     expect(compactions.length).toBe(0)
+  }, 30000)
+})
+
+describe('R2 delayed-sync in-flight query', () => {
+  test('getInFlightCompaction reports a running compaction and clears after', async () => {
+    const userId = await getAuthUserId()
+    const sessionId = `compact_inflight_${Date.now()}`
+    const ctx = seedEvents(userId, sessionId, 5)
+    const dropped = droppedWindow(ctx, sessionId, 4)
+
+    let resolveLlm: ((v: string) => void) | null = null
+    vi.mocked(deepseekChat).mockImplementation(() => new Promise<string>((resolve) => { resolveLlm = resolve }))
+
+    // Start without awaiting (fire-and-forget as in the router)
+    const promise = ensureSessionCompaction(ctx, sessionId, dropped.firstRetainedIdx, undefined)
+
+    // Wait for the internal prisma lookups to finish and the LLM call to start
+    await new Promise((r) => setTimeout(r, 100))
+
+    // While running → reported as in-flight and awaitable
+    expect(resolveLlm).not.toBeNull()
+    expect(getInFlightCompaction(userId, sessionId)).not.toBeNull()
+
+    resolveLlm!(COMPACTION_JSON)
+    await promise
+
+    // After completion → cleared
+    expect(getInFlightCompaction(userId, sessionId)).toBeNull()
+    const compactions = await (prisma as any).kbCompaction.findMany({ where: { userId, sessionId } })
+    expect(compactions.length).toBe(1)
   }, 30000)
 })
 

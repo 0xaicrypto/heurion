@@ -51,10 +51,17 @@ describe('K2 event-driven trigger decision', () => {
     expect(shouldExtractIncrement('x'.repeat(2000))).toBe(false)
   })
 
-  test('key clinical signals trigger extraction', () => {
+  test('common clinical words no longer trigger real-time extraction', () => {
+    // Real-time extraction is intentionally near-zero: diagnosis/plan/start
+    // words appear in most clinical turns; extraction happens at compaction.
+    expect(shouldExtractIncrement('诊断结果已确认，调整剂量方案')).toBe(false)
+    expect(shouldExtractIncrement('开始复查，停用原来的药')).toBe(false)
+  })
+
+  test('explicit memory instructions and safety signals trigger', () => {
     expect(shouldExtractIncrement('记住：患者对青霉素过敏')).toBe(true)
-    expect(shouldExtractIncrement('诊断结果已确认')).toBe(true)
-    expect(shouldExtractIncrement('调整剂量方案')).toBe(true)
+    expect(shouldExtractIncrement('请记得这个患者对阿司匹林禁忌')).toBe(true)
+    expect(shouldExtractIncrement('保存到知识库：这个方案有效')).toBe(true)
     expect(shouldExtractIncrement('今天天气不错')).toBe(false)
   })
 })

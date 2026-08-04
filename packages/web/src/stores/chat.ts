@@ -28,6 +28,7 @@ interface SessionState {
   messages: ChatMessage[];
   abort: AbortController | null;
   loading: boolean;
+  compacting: boolean;
 }
 
 interface ChatStore {
@@ -78,13 +79,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   getOrCreate: (sessionId: string): SessionState => {
     const existing = get().sessions[sessionId];
     if (existing) return existing;
-    const s: SessionState = { messages: [], abort: null, loading: false };
+    const s: SessionState = { messages: [], abort: null, loading: false, compacting: false };
     set((state) => ({ sessions: { ...state.sessions, [sessionId]: s } }));
     return s;
   },
 
   sendMessage: async (sessionId: string, opts: SendChatOptions) => {
-    const prev = get().sessions[sessionId] || { messages: [], abort: null, loading: false };
+    const prev = get().sessions[sessionId] || { messages: [], abort: null, loading: false, compacting: false };
     // Cancel previous stream
     prev.abort?.abort();
 
@@ -99,12 +100,26 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           messages: [...prev.messages, userMsg, asstMsg],
           abort,
           loading: true,
+          compacting: false,
         },
       },
     }));
 
     try {
       for await (const chunk of api.sendChatFull(opts, abort.signal)) {
+        if (chunk.type === 'compaction_started' || chunk.type === 'compaction_completed') {
+          set((state) => {
+            const s = state.sessions[sessionId];
+            if (!s) return state;
+            return {
+              sessions: {
+                ...state.sessions,
+                [sessionId]: { ...s, compacting: chunk.type === 'compaction_started' },
+              },
+            };
+          });
+          continue;
+        }
         set((state) => {
           const s = state.sessions[sessionId];
           if (!s) return state;
@@ -132,7 +147,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set((state) => {
         const s = state.sessions[sessionId];
         if (!s || s.abort !== abort) return state;
-        return { sessions: { ...state.sessions, [sessionId]: { ...s, loading: false } } };
+        return { sessions: { ...state.sessions, [sessionId]: { ...s, loading: false, compacting: false } } };
       });
     }
   },
@@ -164,7 +179,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set((state) => {
       const s = state.sessions[sessionId];
       const msgs = s ? [...s.messages, msg] : [msg];
-      return { sessions: { ...state.sessions, [sessionId]: { messages: msgs, abort: null, loading: false } } };
+      return { sessions: { ...state.sessions, [sessionId]: { messages: msgs, abort: null, loading: false, compacting: false } } };
     });
   },
 

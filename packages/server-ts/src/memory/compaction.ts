@@ -173,6 +173,16 @@ ${conversation}
 const inFlight = new Map<string, Promise<void>>()
 
 /**
+ * Returns the in-flight compaction promise for a session, or null when none
+ * is running. Used for opencode-style delayed-sync: a turn that arrives
+ * while the previous compaction is still running awaits it before replying,
+ * so the anchored summary is always injectable.
+ */
+export function getInFlightCompaction(userId: string, sessionId: string): Promise<void> | null {
+  return inFlight.get(`${userId}:${sessionId}`) ?? null
+}
+
+/**
  * R2 — entry point called from the chat router when the session budget
  * overflows (omitted turns) or the turn window is full. Compacts the dropped
  * segment [coveredUptoIdx, firstRetainedIdx) if it contains enough content.
