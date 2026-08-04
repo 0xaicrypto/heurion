@@ -280,13 +280,38 @@ export async function agentRouter(app: FastifyInstance) {
   app.get('/api/v1/agent/messages', async (request) => {
     const ctx = getUserContext(request.user!.userId)
     const sessionId = (request.query as any).session_id
-    const events = ctx.eventLog.query({ sessionId, limit: parseInt((request.query as any).limit || '100') }).reverse()
+    // R3: tool_call/tool_result events stay OUT of the chat message stream
+    // so the reconstructed conversation remains structurally compatible.
+    const events = ctx.eventLog
+      .query({ sessionId, limit: parseInt((request.query as any).limit || '100', 10) })
+      .filter((e: any) => e.eventType !== 'tool_call' && e.eventType !== 'tool_result')
+      .reverse()
     return {
       messages: events.map(e => ({
         role: e.eventType === 'user_message' ? 'user' : 'assistant',
         content: e.content,
         timestamp: new Date(e.timestamp * 1000).toISOString(),
         sync_id: String(e.idx), metadata: e.metadata,
+      })),
+      total: events.length,
+    }
+  })
+
+  // R3: replay the persisted tool-call state machine for a session.
+  app.get('/api/v1/agent/tool-events', async (request) => {
+    const ctx = getUserContext(request.user!.userId)
+    const sessionId = (request.query as any).session_id
+    const events = ctx.eventLog
+      .query({ sessionId })
+      .filter((e: any) => e.eventType === 'tool_call' || e.eventType === 'tool_result')
+      .sort((a: any, b: any) => a.idx - b.idx)
+    return {
+      events: events.map(e => ({
+        idx: e.idx,
+        type: e.eventType,
+        content: e.content,
+        metadata: e.metadata || {},
+        timestamp: new Date(e.timestamp * 1000).toISOString(),
       })),
       total: events.length,
     }
