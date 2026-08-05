@@ -1,6 +1,15 @@
-import { describe, test, expect } from 'vitest'
+import { describe, test, expect, vi, beforeAll } from 'vitest'
+import { mockAiProvider } from './helpers/ai-mock.js'
+vi.mock('../src/common/llm.js', () => mockAiProvider())
+import { deepseekChat } from '../src/common/llm.js'
 import prisma from '../src/common/prisma.js'
 import { getApp, authHeader, getAuthUserId } from './setup.js'
+
+beforeAll(() => {
+  vi.mocked(deepseekChat).mockResolvedValue(
+    '<tool_call>{"name":"generate_docx","arguments":{"template_id":"case_summary","data":{}}}</tool_call>',
+  )
+})
 
 const communityManifest = {
   manifest_version: '1.0.0',

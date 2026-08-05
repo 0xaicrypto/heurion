@@ -1,18 +1,12 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockAiProvider } from './helpers/ai-mock.js'
 import { getAuthUserId } from './setup.js'
 import prisma from '../src/common/prisma.js'
 import { getUserContext } from '../src/modules/chat/user-context.js'
 import { getExtractedUptoIdx, advanceExtractedUptoIdx, type ExtractionCursorKey } from '../src/memory/extraction-cursor.js'
 import { extractSegment } from '../src/memory/compaction.js'
 
-vi.mock('../src/common/llm.js', () => ({
-  deepseekChat: vi.fn(),
-  deepseekStream: vi.fn(),
-  getApiKey: () => 'test-key',
-  setLlmTelemetryService: vi.fn(),
-  DEEPSEEK_CHAT_MODEL: 'deepseek-v4-flash',
-  DEEPSEEK_PREMIUM_MODEL: 'deepseek-v4-pro',
-}))
+vi.mock('../src/common/llm.js', () => mockAiProvider())
 
 import { deepseekChat } from '../src/common/llm.js'
 

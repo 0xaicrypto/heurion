@@ -1,18 +1,12 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockAiProvider } from './helpers/ai-mock.js'
 import { getApp, authHeader, getAuthUserId } from './setup.js'
 import fs from 'fs'
 import path from 'path'
 import { renderSvgChart, braggPeakCurve } from '../src/tools/chart-renderer.js'
 import { RenderChartTool } from '../src/tools/render-chart-tool.js'
 
-vi.mock('../src/common/llm.js', () => ({
-  deepseekChat: vi.fn(),
-  deepseekStream: vi.fn(),
-  getApiKey: () => 'test-key',
-  setLlmTelemetryService: vi.fn(),
-  DEEPSEEK_CHAT_MODEL: 'deepseek-v4-flash',
-  DEEPSEEK_PREMIUM_MODEL: 'deepseek-v4-pro',
-}))
+vi.mock('../src/common/llm.js', () => mockAiProvider())
 
 import { deepseekChat } from '../src/common/llm.js'
 

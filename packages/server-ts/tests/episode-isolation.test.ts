@@ -1,15 +1,9 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockAiProvider } from './helpers/ai-mock.js'
 import { selectProjectionInputs } from '../src/modules/chat/chat.router.js'
 import type { RouterResult } from '../src/retrieval/query-router.js'
 
-vi.mock('../src/common/llm.js', () => ({
-  deepseekChat: vi.fn(),
-  deepseekStream: vi.fn(),
-  getApiKey: () => 'test-key',
-  setLlmTelemetryService: vi.fn(),
-  DEEPSEEK_CHAT_MODEL: 'deepseek-v4-flash',
-  DEEPSEEK_PREMIUM_MODEL: 'deepseek-v4-pro',
-}))
+vi.mock('../src/common/llm.js', () => mockAiProvider())
 
 beforeEach(() => { vi.stubEnv('DEEPSEEK_API_KEY', 'test-key') })
 afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks() })

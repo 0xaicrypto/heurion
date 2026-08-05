@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
+import { mockAiProvider } from './helpers/ai-mock.js'
 import { InMemoryTelemetryService, PrismaTelemetryService } from '../src/modules/knowledge/telemetry.service'
 import { ChatOrchestrator } from '../src/modules/chat/chat.orchestrator'
 import { EventLog } from '../src/core/event-log'
@@ -10,12 +11,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
-vi.mock('../src/common/llm.js', () => ({
-  deepseekChat: vi.fn(),
-  deepseekStream: vi.fn(),
-  getApiKey: () => 'test-key',
-  setLlmTelemetryService: vi.fn(),
-}))
+vi.mock('../src/common/llm.js', () => mockAiProvider())
 
 function createTestOrchestrator(telemetry: InMemoryTelemetryService) {
   const baseDir = path.join(os.tmpdir(), `nexus-tel-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)

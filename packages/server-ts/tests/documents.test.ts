@@ -1,5 +1,14 @@
-import { describe, test, expect } from 'vitest'
+import { describe, test, expect, vi, beforeAll } from 'vitest'
+import { mockAiProvider } from './helpers/ai-mock.js'
+vi.mock('../src/common/llm.js', () => mockAiProvider())
+import { deepseekStream } from '../src/common/llm.js'
 import { getApp, authHeader } from './setup.js'
+
+beforeAll(() => {
+  vi.mocked(deepseekStream).mockImplementation(async function* () {
+    yield 'Polished clinical text.'
+  })
+})
 
 describe('Documents', () => {
   test('create document with title', async () => {

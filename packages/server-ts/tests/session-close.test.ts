@@ -1,15 +1,9 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockAiProvider } from './helpers/ai-mock.js'
 import { getApp, authHeader, getAuthUserId } from './setup.js'
 import prisma from '../src/common/prisma.js'
 
-vi.mock('../src/common/llm.js', () => ({
-  deepseekChat: vi.fn(),
-  deepseekStream: vi.fn(),
-  getApiKey: () => 'test-key',
-  setLlmTelemetryService: vi.fn(),
-  DEEPSEEK_CHAT_MODEL: 'deepseek-v4-flash',
-  DEEPSEEK_PREMIUM_MODEL: 'deepseek-v4-pro',
-}))
+vi.mock('../src/common/llm.js', () => mockAiProvider())
 
 beforeEach(() => {
   vi.stubEnv('DEEPSEEK_API_KEY', 'test-key')

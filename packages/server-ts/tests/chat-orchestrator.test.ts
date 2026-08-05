@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
+import { mockAiProvider } from './helpers/ai-mock.js'
 import { ChatOrchestrator } from '../src/modules/chat/chat.orchestrator'
 import { EventLog } from '../src/core/event-log'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../src/evolution/stores'
@@ -7,10 +8,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
-vi.mock('../src/common/llm.js', () => ({
-  deepseekChat: vi.fn(),
-  getApiKey: () => 'test-key',
-}))
+vi.mock('../src/common/llm.js', () => mockAiProvider())
 
 function createTestOrchestrator() {
   const baseDir = path.join(os.tmpdir(), `nexus-orch-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
