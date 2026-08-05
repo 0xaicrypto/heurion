@@ -6,6 +6,8 @@ import type { MemoryNode, MemoryRelation, MemoryGraphState, MemoryNodeType } fro
 export class MemoryGraph {
   private store: VersionedStore
   private nodes: Map<string, MemoryNode> = new Map()
+  /** §5.6 (#199): stableId → latest version — avoids an O(N) scan per lookup. */
+  private latestByStableId: Map<string, MemoryNode> = new Map()
   private relations: MemoryRelation[] = []
 
   constructor(baseDir: string) {
@@ -21,6 +23,7 @@ export class MemoryGraph {
     if (Array.isArray(current.nodes)) {
       for (const node of current.nodes) {
         this.nodes.set(node.id, node)
+        this.indexNode(node)
       }
     }
     if (Array.isArray(current.relations)) {
@@ -31,6 +34,7 @@ export class MemoryGraph {
   /** Re-read the last committed state from disk (dual-store rollback, #192). */
   reload(): void {
     this.nodes.clear()
+    this.latestByStableId.clear()
     this.relations = []
     this.load()
   }
@@ -57,6 +61,14 @@ export class MemoryGraph {
 
   addNode(node: MemoryNode) {
     this.nodes.set(node.id, node)
+    this.indexNode(node)
+  }
+
+  private indexNode(node: MemoryNode): void {
+    const existing = this.latestByStableId.get(node.stableId)
+    if (!existing || node.version > existing.version) {
+      this.latestByStableId.set(node.stableId, node)
+    }
   }
 
   getNode(id: string): MemoryNode | undefined {
@@ -85,11 +97,15 @@ export class MemoryGraph {
 
   /** Returns the latest version of a node by stableId, preferring current/stale over superseded. */
   getLatestByStableId(stableId: string): MemoryNode | undefined {
+    const latest = this.latestByStableId.get(stableId)
+    if (!latest) return undefined
+    // Prefer the newest non-superseded version when the latest is superseded
+    // (edit paths keep the newest node current, but supersede chains exist).
+    if (latest.status !== 'superseded') return latest
     const versions = Array.from(this.nodes.values())
       .filter(n => n.stableId === stableId)
       .sort((a, b) => b.version - a.version)
-    if (versions.length === 0) return undefined
-    return versions.find(n => n.status !== 'superseded') ?? versions[0]
+    return versions.find(n => n.status !== 'superseded') ?? latest
   }
 
   /** Returns all versions for a stableId, newest first. */
@@ -104,6 +120,11 @@ export class MemoryGraph {
     if (!node) return undefined
     const updated = { ...node, ...patch, updatedAt: Date.now() } as MemoryNode
     this.nodes.set(id, updated)
+    // §5.6 (#199): keep the stableId index pointing at the freshest object.
+    const latest = this.latestByStableId.get(node.stableId)
+    if (!latest || latest.id === id || node.version >= latest.version) {
+      this.latestByStableId.set(node.stableId, updated)
+    }
     return updated
   }
 

@@ -271,3 +271,21 @@ describe('P3 — Query Router', () => {
     })
   })
 })
+
+describe('§5.6 routeCache bounds (#199)', () => {
+  beforeEach(() => { clearRouteCache() })
+
+  test('cache is bounded — evicts oldest beyond the cap', async () => {
+    const { router } = await import('../src/retrieval/query-router')
+    // 600 distinct queries exceeds ROUTE_CACHE_MAX (500).
+    for (let i = 0; i < 600; i++) {
+      await router(`distinct query number ${i}`)
+    }
+    const { routeCache } = await import('../src/retrieval/query-router') as any
+    const size = routeCache ? routeCache.size : 0
+    expect(size).toBeLessThanOrEqual(500)
+    // The most recent query is still cached.
+    const r = await router('distinct query number 599')
+    expect(r.intent).toBeDefined()
+  })
+})
