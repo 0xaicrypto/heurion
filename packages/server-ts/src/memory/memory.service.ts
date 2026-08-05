@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'crypto'
 import type { EventLog } from '../core/event-log'
 import type { FactsStore, KnowledgeStore } from '../evolution/stores'
+import type { Fact, KnowledgeArticle } from '../evolution/stores'
 import { MemoryGraph } from './memory.graph'
 import { CurationEngine, type PropagationResult } from './curation/curation.engine'
 import type {
@@ -146,6 +147,10 @@ export class MemoryService {
     const newVersion = current.version + 1
     const nextNodeId = newNodeId(stableId, newVersion)
 
+    // Snapshot legacy before any provisional write so a graph-commit failure
+    // can be compensated with a rollback (dual-store atomicity, #192).
+    const legacyBefore = this.snapshotLegacy()
+
     // Supersede current version
     this.graph.markStatus(current.id, 'superseded')
 
@@ -193,7 +198,14 @@ export class MemoryService {
     // changes must land on disk or they resurrect after a restart.
     const propagation = this.curation.propagateFactChange(stableId)
     this.applyPropagationToLegacy(propagation)
-    this.graph.commit()
+    try {
+      this.graph.commit()
+    } catch (e) {
+      // Dual-store atomicity (#192): legacy commits are provisional until the
+      // graph commits; on failure compensate with a rollback to the snapshot.
+      this.rollbackLegacy(legacyBefore)
+      throw e
+    }
 
     this.appendEvent('memory_fact_edited', `Edited fact ${stableId}`, {
       factId: stableId,
@@ -209,16 +221,27 @@ export class MemoryService {
     const current = this.graph.getLatestByStableId(stableId) as FactNode | undefined
     if (!current || current.status === 'superseded') return { ok: false }
 
+    // Snapshot legacy before any provisional write (dual-store atomicity, #192).
+    const legacyBefore = this.snapshotLegacy()
+
     this.graph.markStatus(current.id, 'superseded')
 
     const propagation = this.curation.propagateFactChange(stableId)
     this.applyPropagationToLegacy(propagation)
-    this.graph.commit()
 
-    // Remove the fact from the legacy projection immediately so list counts drop.
+    // Remove the fact from the legacy projection so list counts drop.
     // The graph node remains superseded for audit/versioning.
     this.legacyFacts.remove(stableId)
     this.legacyFacts.commit()
+
+    try {
+      this.graph.commit()
+    } catch (e) {
+      // Dual-store atomicity (#192): legacy commits are provisional until the
+      // graph commits; on failure compensate with a rollback to the snapshot.
+      this.rollbackLegacy(legacyBefore)
+      throw e
+    }
 
     this.appendEvent('memory_fact_deleted', `Deleted fact ${stableId}`, {
       factId: stableId,
@@ -484,11 +507,22 @@ export class MemoryService {
     const current = this.graph.getLatestByStableId(stableId) as DocumentNode | undefined
     if (!current || current.status === 'superseded') return false
 
+    // Snapshot legacy before any provisional write (dual-store atomicity, #192).
+    const legacyBefore = this.snapshotLegacy()
+
     this.graph.markStatus(current.id, 'superseded')
-    this.graph.commit()
 
     const propagation = this.curation.propagateDocumentDelete(stableId)
     this.applyPropagationToLegacy(propagation)
+
+    try {
+      this.graph.commit()
+    } catch (e) {
+      // Dual-store atomicity (#192): legacy commits are provisional until the
+      // graph commits; on failure compensate with a rollback to the snapshot.
+      this.rollbackLegacy(legacyBefore)
+      throw e
+    }
 
     this.appendEvent('memory_document_deleted', `Deleted document ${stableId}`, {
       documentId: stableId,
@@ -561,6 +595,30 @@ export class MemoryService {
   }
 
   // ── Helpers ──────────────────────────────────────────────────
+
+  /** Roll back all stores to their last committed disk state (#192). */
+  private reloadAll() {
+    this.graph.reload()
+    this.legacyFacts.reload()
+    this.legacyKnowledge.reload()
+  }
+
+  /** Deep-copy of the legacy stores, taken before provisional writes. */
+  private snapshotLegacy() {
+    return {
+      facts: JSON.parse(JSON.stringify(this.legacyFacts.all())) as Fact[],
+      knowledge: JSON.parse(JSON.stringify(this.legacyKnowledge.all())) as KnowledgeArticle[],
+    }
+  }
+
+  /** Compensating write: restore the pre-mutation legacy state, #192. */
+  private rollbackLegacy(snapshot: ReturnType<MemoryService['snapshotLegacy']>) {
+    this.legacyFacts.replaceAll(snapshot.facts)
+    this.legacyKnowledge.replaceAll(snapshot.knowledge)
+    this.legacyFacts.commit()
+    this.legacyKnowledge.commit()
+    this.graph.reload()
+  }
 
   private applyPropagationToLegacy(propagation: {
     staleArticleStableIds: string[]
