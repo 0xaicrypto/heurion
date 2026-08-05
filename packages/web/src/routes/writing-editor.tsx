@@ -4,6 +4,7 @@ import { ArrowLeft, Download, Eye, FilePlus, FileText, History, MessageSquare, P
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
+import { DocEditor } from '@/components/DocEditor';
 import { StreamingLlmContent } from '@/components/LlmContent';
 import { Alert, Button, Card, Skeleton, Textarea } from '@/components/ui';
 import { api, ApiError } from '@/lib/api-client';
@@ -614,13 +615,9 @@ export function WritingEditorPage() {
                     <MarkdownRenderer content={body} />
                   </div>
                 ) : (
-                  <Textarea
-                    ref={bodyRef}
-                    value={body}
-                    onChange={(e) => setBody(e.target.value)}
-                    placeholder="Start writing..."
-                    className="min-h-[300px] resize-none overflow-hidden text-sm"
-                  />
+                  <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
+                    <DocEditor value={body} onChange={setBody} />
+                  </div>
                 )}
               </div>
 
