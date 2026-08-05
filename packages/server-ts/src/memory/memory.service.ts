@@ -95,10 +95,11 @@ export class MemoryService {
       meta: {},
     }
 
-    this.graph.addNode(fact)
-    this.graph.commit()
+    const legacyBefore = this.snapshotLegacy()
 
-    // Dual-write to legacy FactsStore
+    this.graph.addNode(fact)
+
+    // Dual-write to legacy FactsStore (provisional — see commitGraphLast)
     const legacy = this.legacyFacts.add({
       category: fact.category,
       importance: fact.importance ?? 3,
@@ -110,6 +111,8 @@ export class MemoryService {
     })
     legacy.id = stableId
     this.legacyFacts.commit()
+
+    this.commitGraphLast(legacyBefore)
 
     this.appendEvent('memory_fact_added', `Added fact ${stableId}`, { factId: stableId, nodeId })
     return fact
@@ -125,11 +128,14 @@ export class MemoryService {
     const current = this.graph.getLatestByStableId(stableId) as FactNode | undefined
     if (!current || current.status === 'superseded') return false
 
+    const legacyBefore = this.snapshotLegacy()
+
     this.graph.markStatus(current.id, 'superseded')
-    this.graph.commit()
 
     this.legacyFacts.remove(stableId)
     this.legacyFacts.commit()
+
+    this.commitGraphLast(legacyBefore)
 
     this.appendEvent('memory_fact_superseded', `Superseded fact ${stableId} (${reason})`, {
       factId: stableId,
@@ -198,14 +204,7 @@ export class MemoryService {
     // changes must land on disk or they resurrect after a restart.
     const propagation = this.curation.propagateFactChange(stableId)
     this.applyPropagationToLegacy(propagation)
-    try {
-      this.graph.commit()
-    } catch (e) {
-      // Dual-store atomicity (#192): legacy commits are provisional until the
-      // graph commits; on failure compensate with a rollback to the snapshot.
-      this.rollbackLegacy(legacyBefore)
-      throw e
-    }
+    this.commitGraphLast(legacyBefore)
 
     this.appendEvent('memory_fact_edited', `Edited fact ${stableId}`, {
       factId: stableId,
@@ -234,14 +233,7 @@ export class MemoryService {
     this.legacyFacts.remove(stableId)
     this.legacyFacts.commit()
 
-    try {
-      this.graph.commit()
-    } catch (e) {
-      // Dual-store atomicity (#192): legacy commits are provisional until the
-      // graph commits; on failure compensate with a rollback to the snapshot.
-      this.rollbackLegacy(legacyBefore)
-      throw e
-    }
+    this.commitGraphLast(legacyBefore)
 
     this.appendEvent('memory_fact_deleted', `Deleted fact ${stableId}`, {
       factId: stableId,
@@ -357,8 +349,9 @@ export class MemoryService {
       meta: {},
     }
 
+    const legacyBefore = this.snapshotLegacy()
+
     this.graph.addNode(article)
-    this.graph.commit()
 
     const legacy = this.legacyKnowledge.add({
       title: article.title,
@@ -367,6 +360,8 @@ export class MemoryService {
     })
     legacy.id = stableId
     this.legacyKnowledge.commit()
+
+    this.commitGraphLast(legacyBefore)
 
     this.appendEvent('memory_article_added', `Added article ${stableId}`, { articleId: stableId, nodeId })
     return article
@@ -379,6 +374,8 @@ export class MemoryService {
     const now = Date.now()
     const newVersion = current.version + 1
     const nextNodeId = newNodeId(stableId, newVersion)
+
+    const legacyBefore = this.snapshotLegacy()
 
     this.graph.markStatus(current.id, 'superseded')
 
@@ -414,7 +411,6 @@ export class MemoryService {
       relation: 'supersedes',
       createdAt: now,
     })
-    this.graph.commit()
 
     this.legacyKnowledge.update(stableId, {
       title: edited.title,
@@ -422,6 +418,8 @@ export class MemoryService {
       sources: edited.sourceFacts.map(s => s.stableId),
     })
     this.legacyKnowledge.commit()
+
+    this.commitGraphLast(legacyBefore)
 
     this.appendEvent('memory_article_edited', `Edited article ${stableId}`, {
       articleId: stableId,
@@ -436,11 +434,14 @@ export class MemoryService {
     const current = this.graph.getLatestByStableId(stableId) as ArticleNode | undefined
     if (!current || current.status === 'superseded') return false
 
+    const legacyBefore = this.snapshotLegacy()
+
     this.graph.markStatus(current.id, 'superseded')
-    this.graph.commit()
 
     this.legacyKnowledge.remove(stableId)
     this.legacyKnowledge.commit()
+
+    this.commitGraphLast(legacyBefore)
 
     this.appendEvent('memory_article_deleted', `Deleted article ${stableId}`, {
       articleId: stableId,
@@ -515,14 +516,7 @@ export class MemoryService {
     const propagation = this.curation.propagateDocumentDelete(stableId)
     this.applyPropagationToLegacy(propagation)
 
-    try {
-      this.graph.commit()
-    } catch (e) {
-      // Dual-store atomicity (#192): legacy commits are provisional until the
-      // graph commits; on failure compensate with a rollback to the snapshot.
-      this.rollbackLegacy(legacyBefore)
-      throw e
-    }
+    this.commitGraphLast(legacyBefore)
 
     this.appendEvent('memory_document_deleted', `Deleted document ${stableId}`, {
       documentId: stableId,
@@ -618,6 +612,79 @@ export class MemoryService {
     this.legacyFacts.commit()
     this.legacyKnowledge.commit()
     this.graph.reload()
+  }
+
+  /**
+   * Dual-store atomicity (#192): the graph is the last store to commit.
+   * Legacy commits are provisional — on graph-commit failure they are
+   * compensated with a rollback to the snapshot, so the two stores can
+   * never diverge on disk.
+   */
+  private commitGraphLast(legacyBefore: ReturnType<MemoryService['snapshotLegacy']>) {
+    try {
+      this.graph.commit()
+    } catch (e) {
+      this.rollbackLegacy(legacyBefore)
+      throw e
+    }
+  }
+
+  /**
+   * Consistency reconciliation (#192): treat the graph as the source of
+   * truth and rebuild the legacy projection from it. Idempotent — no-ops
+   * when the stores already agree. Safe to call at startup or on demand.
+   * Returns whether a divergence was found and repaired.
+   */
+  reconcileLegacy(): { repaired: boolean; factDiff: number; articleDiff: number } {
+    const currentFacts = this.graph.getCurrentNodesByType('fact') as FactNode[]
+    const currentArticles = this.graph.getCurrentNodesByType('article') as ArticleNode[]
+
+    const projectedFacts = currentFacts.map(f => ({
+      id: f.stableId,
+      category: f.category,
+      importance: f.importance ?? 3,
+      content: f.content,
+      sourceType: (f.sourceType === 'document' ? 'research' : f.sourceType) as any,
+      patientHash: f.patientHash,
+      studyId: f.studyId,
+      count: f.count ?? 1,
+      createdAt: f.createdAt,
+      updatedAt: f.updatedAt,
+      lastSeenAt: f.updatedAt,
+    }))
+
+    const projectedArticles = currentArticles.map(a => ({
+      id: a.stableId,
+      title: a.title,
+      content: a.content,
+      sources: a.sourceFacts.map(s => s.stableId),
+      version: a.version,
+      status: 'current' as const,
+      createdAt: a.createdAt,
+      updatedAt: a.updatedAt,
+    }))
+
+    const legacyFacts = this.legacyFacts.all()
+    const legacyArticles = this.legacyKnowledge.all()
+
+    const factsEqual = legacyFacts.length === projectedFacts.length &&
+      legacyFacts.every((f, i) => f.id === projectedFacts[i].id && f.content === projectedFacts[i].content && f.category === projectedFacts[i].category)
+    const articlesEqual = legacyArticles.length === projectedArticles.length &&
+      legacyArticles.every((a, i) => a.id === projectedArticles[i].id && a.title === projectedArticles[i].title && a.content === projectedArticles[i].content)
+
+    if (factsEqual && articlesEqual) {
+      return { repaired: false, factDiff: 0, articleDiff: 0 }
+    }
+
+    const factDiff = Math.abs(legacyFacts.length - projectedFacts.length) || legacyFacts.filter((f, i) => f.content !== projectedFacts[i]?.content).length
+    const articleDiff = Math.abs(legacyArticles.length - projectedArticles.length) || legacyArticles.filter((a, i) => a.content !== projectedArticles[i]?.content).length
+
+    this.legacyFacts.replaceAll(projectedFacts)
+    this.legacyKnowledge.replaceAll(projectedArticles)
+    this.legacyFacts.commit()
+    this.legacyKnowledge.commit()
+
+    return { repaired: true, factDiff, articleDiff }
   }
 
   private applyPropagationToLegacy(propagation: {
