@@ -204,14 +204,13 @@ describe('Workflow Step 6 — Writing + Citations', () => {
     })
     const docId = JSON.parse(doc.payload).id
 
-    // Doc chat
+    // Doc chat is deprecated (410) — writing chat runs through /agent/chat
     const chat = await app.inject({
       method: 'POST', url: `/api/v1/docs/${docId}/chat`,
       headers: { ...await authHeader(), 'content-type': 'application/json' },
       payload: JSON.stringify({ message: 'Summarize findings' }),
     })
-    expect(chat.statusCode).toBe(200)
-    expect(chat.payload.startsWith('data:')).toBe(true)
+    expect(chat.statusCode).toBe(410)
   })
 
   test('polish document text', async () => {

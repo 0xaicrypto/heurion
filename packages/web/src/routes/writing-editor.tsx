@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Eye, FilePlus, FileText, History, MessageSquare, Paperclip, RotateCcw, ShieldAlert, Sparkles, X } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
@@ -6,6 +7,8 @@ import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor } from '@/components/DocEditor';
 import { StreamingLlmContent } from '@/components/LlmContent';
+import { ToolCalls } from '@/components/ToolCalls';
+import { useChatStore } from '@/stores/chat';
 import { Alert, Button, Card, Skeleton, Textarea } from '@/components/ui';
 import { api, ApiError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
@@ -31,13 +34,10 @@ interface PhiFinding {
   suggestion: string;
 }
 
-interface ChatMessage {
-  role: 'user' | 'assistant';
-  text: string;
-  _done?: boolean;
-}
+
 
 export function WritingEditorPage() {
+  const { t } = useTranslation();
   const { docId } = useParams<{ docId: string }>();
   const navigate = useNavigate();
   const [doc, setDoc] = useState<DocDetail | null>(null);
@@ -71,9 +71,12 @@ export function WritingEditorPage() {
   const [polishLoading, setPolishLoading] = useState(false);
 
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
-  const [chatLoading, setChatLoading] = useState(false);
+  const store = useChatStore();
+  const chatSessionId = docId ? `doc-${docId}` : '';
+  const chatSession = store.sessions[chatSessionId];
+  const chatMessages = chatSession?.messages ?? [];
+  const chatLoading = chatSession?.loading ?? false;
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [chatUploadingFile, setChatUploadingFile] = useState(false);
   const [chatAttachedFiles, setChatAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
@@ -112,7 +115,7 @@ export function WritingEditorPage() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
+  }, [chatSession?.messages]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -254,57 +257,18 @@ export function WritingEditorPage() {
     }
   };
 
-  const handleSendChat = async () => {
+  const handleSendChat = () => {
     if (!docId || !chatInput.trim()) return;
     const text = chatInput.trim();
-    const userMsg: ChatMessage = { role: 'user', text };
-    setChatMessages((prev) => [...prev, userMsg]);
     setChatInput('');
-    setChatLoading(true);
-    try {
-      for await (const chunk of api.sendDocChat(docId, text, activeSkills)) {
-        if (chunk.type === 'reply_chunk' && chunk.text) {
-          setChatMessages((prev) => {
-            const msgs = [...prev];
-            const last = msgs[msgs.length - 1];
-            if (!last || last.role !== 'assistant' || last._done) {
-              msgs.push({ role: 'assistant', text: chunk.text || '' });
-            } else {
-              msgs[msgs.length - 1] = { ...last, text: last.text + (chunk.text || '') };
-            }
-            return msgs;
-          });
-        } else if (chunk.type === 'doc_chunk' && chunk.text) {
-          setChatMessages((prev) => {
-            const msgs = [...prev];
-            const last = msgs[msgs.length - 1];
-            if (last && last.role === 'assistant') {
-              msgs[msgs.length - 1] = { ...last, text: last.text + '\n📄 ' + chunk.text };
-            }
-            return msgs;
-          });
-        } else if (chunk.type === 'done') {
-          setChatMessages((prev) => {
-            const msgs = [...prev];
-            const last = msgs[msgs.length - 1];
-            if (last && last.role === 'assistant') {
-              msgs[msgs.length - 1] = { ...last, _done: true };
-            }
-            return msgs;
-          });
-          if (chunk.doc_body) {
-            setDoc((prev) => prev ? { ...prev, body: chunk.doc_body as string } : prev);
-            setBody(chunk.doc_body as string);
-          }
-        } else if (chunk.type === 'error') {
-          setChatMessages((prev) => [...prev, { role: 'assistant', text: 'Error: ' + (chunk.message || 'Unknown') }]);
-        }
-      }
-    } catch (err) {
-      setChatMessages((prev) => [...prev, { role: 'assistant', text: 'Chat failed: ' + (err instanceof ApiError ? err.messageText : String(err)) }]);
-    } finally {
-      setChatLoading(false);
-    }
+    // §15.4: the writing chat runs through the unified pipeline (session
+    // doc-{docId}); the doc context is injected via the docs/current source.
+    store.sendMessage(`doc-${docId}`, {
+      text,
+      sessionId: `doc-${docId}`,
+      patientHash: null,
+      skills: activeSkills,
+    });
   };
 
   const handleChatPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -720,11 +684,8 @@ export function WritingEditorPage() {
                     <span className="text-xs">e.g. "Write a clinical review on..."</span>
                   </p>
                 )}
-                {chatMessages.map((m, i) => (
-                  <div
-                    key={i}
-                    className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
+                {chatMessages.map((m) => (
+                  <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div
                       className={`max-w-[90%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
                         m.role === 'user'
@@ -732,20 +693,20 @@ export function WritingEditorPage() {
                           : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
                       }`}
                     >
-                      <StreamingLlmContent content={m.text || ''} isStreaming={!m._done} className={m.role === 'user' ? 'prose-invert' : undefined} />
-                      {m._done === false && !m.text && (
-                        <span className="animate-pulse">●</span>
+                      {m.reasoning && (
+                        <details className="mb-2" open>
+                          <summary className="cursor-pointer text-xs text-text-tertiary">{t('chat.reasoning')}</summary>
+                          <div className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-xs leading-relaxed text-text-secondary">
+                            {m.reasoning.slice(0, 20000)}
+                          </div>
+                        </details>
                       )}
+                      {m.toolCalls && m.toolCalls.length > 0 && <ToolCalls calls={m.toolCalls} />}
+                      <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
+                      {m.isStreaming && !m.text && <span className="animate-pulse">●</span>}
                     </div>
                   </div>
                 ))}
-                {chatLoading && (
-                  <div className="flex justify-start">
-                    <div className="rounded-2xl border border-border bg-surface-elevated px-3 py-2 text-sm shadow-sm">
-                      <span className="animate-pulse">●</span>
-                    </div>
-                  </div>
-                )}
                 <div ref={chatEndRef} />
               </div>
               <div className="border-t border-border p-3">

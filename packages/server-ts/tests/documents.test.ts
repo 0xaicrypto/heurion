@@ -131,7 +131,7 @@ describe('Documents', () => {
     expect(res.statusCode).toBe(404)
   })
 
-  test('doc chat endpoint responds with SSE', async () => {
+  test('doc chat endpoint is deprecated (410, §15.4)', async () => {
     const app = await getApp()
     const create = await app.inject({
       method: 'POST', url: '/api/v1/docs',
@@ -145,9 +145,8 @@ describe('Documents', () => {
       headers: { ...await authHeader(), 'content-type': 'application/json' },
       payload: JSON.stringify({ message: 'Summarize this doc' }),
     })
-    expect(res.statusCode).toBe(200)
-    // SSE response should start with data: prefix
-    expect(res.payload.startsWith('data: ')).toBe(true)
+    expect(res.statusCode).toBe(410)
+    expect(JSON.parse(res.payload).message).toContain('agent/chat')
   })
 
   test('doc polish endpoint responds with SSE', async () => {
@@ -235,3 +234,4 @@ describe('Documents', () => {
     expect(get.statusCode).toBe(404)
   })
 })
+
