@@ -1,5 +1,54 @@
 // DeepSeek LLM client — OpenAI-compatible Chat Completions API
 const DEEPSEEK_BASE = 'https://api.deepseek.com/v1'
+export const FRIENDLY_LLM_ERROR = '服务暂时不可用，请稍后重试'
+
+/**
+ * #184 — fetch with timeout + retry (429/5xx, exponential backoff honoring
+ * Retry-After). Timeouts and network failures raise friendly errors instead
+ * of raw strings.
+ */
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  opts: { maxRetries?: number; timeoutMs?: number; delayMs?: number } = {},
+): Promise<Response> {
+  const maxRetries = opts.maxRetries ?? 2
+  const timeoutMs = opts.timeoutMs ?? 60000
+  let lastErr: Error | null = null
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    let controller: AbortController | null = null
+    let timer: ReturnType<typeof setTimeout> | null = null
+    try {
+      controller = new AbortController()
+      timer = setTimeout(() => controller!.abort(), timeoutMs)
+      const res = await fetch(url, { ...init, signal: controller.signal })
+      if (timer) clearTimeout(timer)
+      if (res.status === 429 || res.status >= 500) {
+        lastErr = new Error(`HTTP ${res.status}`)
+        if (attempt < maxRetries) {
+          const retryAfter = parseInt(res.headers.get('retry-after') || '0', 10)
+          const delay = opts.delayMs ?? ((retryAfter || Math.pow(2, attempt)) * 1000)
+          await new Promise((r) => setTimeout(r, delay))
+          continue
+        }
+        throw lastErr
+      }
+      return res
+    } catch (err: any) {
+      if (timer) clearTimeout(timer)
+      lastErr = err
+      if (err?.name === 'AbortError') {
+        throw new Error(`LLM request timed out after ${timeoutMs}ms`)
+      }
+      if (attempt < maxRetries) {
+        const delay = opts.delayMs ?? Math.pow(2, attempt) * 500
+        await new Promise((r) => setTimeout(r, delay))
+      }
+    }
+  }
+  throw lastErr ?? new Error(FRIENDLY_LLM_ERROR)
+}
+
 /** Default cheap model for classifiers, extractors, and background tasks. */
 export const DEEPSEEK_CHAT_MODEL = process.env.DEEPSEEK_CHAT_MODEL || 'deepseek-v4-flash'
 /** Optional premium model for high-stakes chat / document editing. */
@@ -121,14 +170,13 @@ export async function deepseekChat(
     body.tools = tools
     body.tool_choice = 'auto'
   }
-  const res = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
+  const res = await fetchWithRetry(`${DEEPSEEK_BASE}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify(body),
   })
   if (!res.ok) {
-    const err = await res.text().catch(() => '')
-    throw new Error(`DeepSeek API ${res.status}: ${err.slice(0, 200)}`)
+    throw new Error(FRIENDLY_LLM_ERROR)
   }
   const json = await res.json()
   const choice = json.choices?.[0]
@@ -178,7 +226,7 @@ export async function* deepseekStream(
   onReasoning?: (text: string) => void,
 ): AsyncGenerator<string> {
   const model = options.model || DEEPSEEK_PREMIUM_MODEL
-  const res = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
+  const res = await fetchWithRetry(`${DEEPSEEK_BASE}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -191,8 +239,7 @@ export async function* deepseekStream(
     }),
   })
   if (!res.ok) {
-    const err = await res.text().catch(() => '')
-    throw new Error(`DeepSeek API ${res.status}: ${err.slice(0, 200)}`)
+    throw new Error(FRIENDLY_LLM_ERROR)
   }
 
   const reader = res.body!.getReader()
