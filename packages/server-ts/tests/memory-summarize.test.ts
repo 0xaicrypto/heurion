@@ -1,6 +1,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
-import { getApp, authHeader } from './setup.js'
+import { getApp, authHeader, getAuthUserId } from './setup.js'
 import prisma from '../src/common/prisma.js'
+import { getUserContext } from '../src/modules/chat/user-context.js'
 
 vi.mock('../src/common/llm.js', () => ({
   deepseekChat: vi.fn(),
@@ -87,21 +88,20 @@ describe('session summarize → pending closure (#114)', () => {
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.payload)
     expect(body.summary).toContain('Objective')
-    expect(body.proposals).toBeGreaterThanOrEqual(1)
+    expect(body.proposals).toBe(0)
 
-    // Proposal persisted as pending episode_summary
-    const pending = await (prisma as any).memoryProposal.findFirst({
+    // Summary updates the Session Memory (episodes) instead of a proposal
+    const userId = await getAuthUserId()
+    const ctx = getUserContext(userId)
+    const episodes = ctx.episodes.all().find((e) => e.sessionId === sessionId)
+    expect(episodes?.summary).toContain('患者重要信息')
+
+    // No episode_summary proposal is enqueued anymore (content-scoped —
+    // other suites may seed summary-kind rows for the shared test user)
+    const summaries = await (prisma as any).memoryProposal.findMany({
       where: { kind: 'episode_summary', status: 'pending' },
-      orderBy: { createdAt: 'desc' },
     })
-    expect(pending).toBeDefined()
-    expect(pending.content).toContain('患者重要信息')
-
-    // Approval request enqueued (Brain inbox visible)
-    const req = await (prisma as any).approvalRequest.findFirst({
-      where: { targetType: 'MemoryProposal', targetId: pending.id },
-    })
-    expect(req).toBeDefined()
+    expect(summaries.some((s: any) => s.content.includes('患者重要信息'))).toBe(false)
   }, 30000)
 
   test('summarize with no conversation events returns 400', async () => {

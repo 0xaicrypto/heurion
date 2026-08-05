@@ -461,18 +461,18 @@ ${input.conversation.slice(0, 12000)}`
 
     if (!summary.trim()) return { summary: '', proposals: 0 }
 
-    await this.propose({
-      scopeType: input.patientHash ? 'patient' : 'global',
-      patientHash: input.patientHash,
-      kind: 'episode_summary',
-      content: summary,
-      importance: 3,
-      confidence: 'high',
-      reason: `Session summary (${input.sessionId})`,
-      sourceRange: input.sinceIdx ? `sinceIdx=${input.sinceIdx}` : undefined,
-    })
+    // Summaries are Session Memory (draft layer, un-reviewed) — they update
+    // the session's episodes instead of entering the review queue (the
+    // episode_summary proposal was a no-op: approving changed nothing).
+    try {
+      const turnCount = this.episodes.all().find((e: any) => e.sessionId === input.sessionId)?.turnCount ?? 0
+      this.episodes.upsert(input.sessionId, summary, turnCount + 1)
+      this.episodes.commit()
+    } catch (err) {
+      console.log('[MEMORY] Session Memory update skipped:', (err as Error).message.slice(0, 120))
+    }
 
-    return { summary, proposals: 1 }
+    return { summary, proposals: 0 }
   }
 
   // ── Context assembly (readContext) ───────────────────────────
