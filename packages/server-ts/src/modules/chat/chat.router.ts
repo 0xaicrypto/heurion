@@ -98,6 +98,32 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       }).catch(() => {})
       send({ type: 'context_info', text: `Router: ${routeResult.intent} (ruleHit=${routeResult.ruleHit}, llmFallback=${routeResult.llmFallback})`, kind: 'router' })
 
+      // R2: stream a not-yet-shown compaction summary into the conversation.
+      // A compaction evolution event that landed AFTER the last reply is
+      // 'unshown' — push its Session Memory summary as a streamed message.
+      try {
+        const allEvents = ctx.eventLog.query({ sessionId: sid })
+        const lastReply = allEvents
+          .filter((e: any) => e.eventType === 'assistant_response')
+          .sort((a: any, b: any) => b.idx - a.idx)[0]
+        const lastCompaction = allEvents
+          .filter((e: any) => e.eventType === 'evolution' && String(e.content || '').includes('自动压缩'))
+          .sort((a: any, b: any) => b.idx - a.idx)[0]
+        if (lastCompaction && (!lastReply || lastCompaction.idx > lastReply.idx)) {
+          const sessionMemory = ctx.episodes.all().find((e: any) => e.sessionId === sid)
+          const summaryText = sessionMemory?.summary || ''
+          if (summaryText) {
+            const header = `🧠 会话历史已压缩，上下文预算已恢复\n\n${summaryText}`
+            for (const piece of header.match(/.{1,60}/gs) || []) {
+              send({ type: 'compaction_chunk', text: piece })
+            }
+            send({ type: 'compaction_completed' })
+          }
+        }
+      } catch {
+        // compaction summary streaming is best-effort
+      }
+
       // Knowledge commands are handled directly without calling the chat LLM
       if (routeResult.intent === 'knowledge_command') {
         const kbResult = await handleKnowledgeCommand({
@@ -144,10 +170,16 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           })
         }
 
-        // Conversation history from event log (same source as the normal chat path)
+        // Conversation history from event log (same source as the normal
+        // chat path; compacted segments are replaced by the Session Memory).
+        const compacted = await (prisma as any).kbCompaction.findFirst({
+          where: { userId, sessionId: sid },
+          orderBy: { coveredUptoIdx: 'desc' },
+        }).catch(() => null)
+        const compactedUpto = compacted?.coveredUptoIdx ?? 0
         const history = ctx.eventLog.query({ sessionId: sid, limit: 40 })
           .reverse()
-          .filter((evt: any) => evt.eventType === 'user_message' || evt.eventType === 'assistant_response')
+          .filter((evt: any) => evt.idx > compactedUpto && (evt.eventType === 'user_message' || evt.eventType === 'assistant_response'))
           .map((evt: any) => ({
             role: evt.eventType === 'assistant_response' ? ('assistant' as const) : ('user' as const),
             content: evt.content,
@@ -386,9 +418,25 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
 
       // #5: Conversation history from event log — newest-first under a token
       // budget (MAX_HISTORY_TOKENS / HISTORY_TURNS env-configurable).
+      // Compaction replaces the covered segment with the Session Memory
+      // summary — the raw covered events are NOT injected anymore, so the
+      // budget genuinely recovers after a compaction.
       const maxHistoryTokens = parseInt(process.env.MAX_HISTORY_TOKENS || '8000', 10)
       const historyTurns = parseInt(process.env.HISTORY_TURNS || '20', 10)
-      const history = ctx.eventLog.query({ sessionId: sid, limit: historyTurns * 2 }).reverse()
+      let compactedUpto = 0
+      try {
+        const lastCompaction = await (prisma as any).kbCompaction.findFirst({
+          where: { userId, sessionId: sid },
+          orderBy: { coveredUptoIdx: 'desc' },
+        })
+        compactedUpto = lastCompaction?.coveredUptoIdx ?? 0
+      } catch {
+        // kbCompaction may not exist yet
+      }
+      const history = ctx.eventLog
+        .query({ sessionId: sid, limit: historyTurns * 2 })
+        .filter((e: any) => e.idx > compactedUpto)
+        .reverse()
       const { messages: historyMessages, omittedTurns, tokens: historyTokens } = buildHistoryMessages(history, {
         maxTokens: maxHistoryTokens,
         maxTurns: historyTurns,
@@ -416,6 +464,19 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       // that arrives while it is still running awaits it before replying, so
       // the anchored summary is always injectable. Both cases surface a
       // compaction_started/compaction_completed event to the UI.
+      // Compression finished: push the recovered budget so the UI resets the
+      // usage bar immediately (compacted events are no longer injected).
+      const sendCompactionCompleted = async () => {
+        const restored = ctx.eventLog
+          .query({ sessionId: sid, limit: historyTurns * 2 })
+          .filter((e: any) => e.idx > compactedUpto)
+          .reverse()
+        const { tokens: restoredTokens } = buildHistoryMessages(restored, {
+          maxTokens: maxHistoryTokens,
+          maxTurns: historyTurns,
+        })
+        send({ type: 'compaction_completed', history_tokens: restoredTokens, history_budget: maxHistoryTokens, history_turns: historyTurns })
+      }
       const inFlightCompaction = getInFlightCompaction(userId, sid)
       const shouldTrigger = omittedTurns > 0 || history.length >= historyTurns * 2
       if (shouldTrigger && historyMessages.length > 0) {
@@ -435,15 +496,16 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           oldestRetainedIdx,
           patientHash || undefined,
         )
-          .then(() => send({ type: 'compaction_completed' }))
+          .then(() => sendCompactionCompleted())
           .catch(() => {})
       } else if (inFlightCompaction) {
         // A compaction from an earlier turn is still running — wait for it
         // (and its anchored summary) before replying.
         send({ type: 'compaction_started' })
         await inFlightCompaction
-        send({ type: 'compaction_completed' })
+        sendCompactionCompleted()
       }
+
 
       if (omittedTurns > 0) {
         messages.push({

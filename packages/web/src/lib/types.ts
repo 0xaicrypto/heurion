@@ -417,7 +417,8 @@ export type ChatStreamChunk =
   | { type: 'turn_started'; event_idx: number; patient_hash: string | null }
   | { type: 'context_usage'; history_tokens: number; history_budget: number; history_turns: number; omitted_turns: number; will_compact: boolean }
   | { type: 'compaction_started' }
-  | { type: 'compaction_completed' }
+  | { type: 'compaction_chunk'; text: string }
+  | { type: 'compaction_completed'; history_tokens?: number; history_budget?: number; history_turns?: number }
   | { type: 'tier_classified'; tier: 'T1' | 'T2' | 'T3'; view_kind?: string; anchor?: string }
   | { type: 'context_info'; text: string; kind?: string }
   | { type: 'reasoning_chunk'; text: string }

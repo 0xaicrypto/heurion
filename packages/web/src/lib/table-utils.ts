@@ -69,10 +69,19 @@ export function recoverTables(text: string): string {
         block.push(lines[i])
         i++
       }
-      const hasDelimiter = block.some(isDelimiterRow)
-      if (!hasDelimiter && block.length >= 2) {
-        const cols = Math.max(...block.map(columnCount))
-        const sep = `| ${Array.from({ length: cols }, () => '---').join(' | ')} |`
+      const headerCols = columnCount(block[0])
+      const sep = `| ${Array.from({ length: headerCols }, () => '---').join(' | ')} |`
+      if (block.some(isDelimiterRow)) {
+        // Delimiter present but with a mismatched column count breaks GFM
+        // parsing (e.g. 2-col delimiter under a 3-col header). Rewrite ONLY
+        // the mismatched delimiter rows; pad blank lines around the block.
+        const aligned = block.map((l) =>
+          isDelimiterRow(l) && columnCount(l) !== headerCols ? sep : l,
+        )
+        if (out.length > 0 && out[out.length - 1] !== '') out.push('')
+        out.push(...aligned)
+        if (i < lines.length && lines[i] !== '') out.push('')
+      } else if (block.length >= 2) {
         if (out.length > 0 && out[out.length - 1] !== '') out.push('')
         out.push(block[0], sep, ...block.slice(1))
         if (i < lines.length && lines[i] !== '') out.push('')

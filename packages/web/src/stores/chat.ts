@@ -22,6 +22,7 @@ export interface ChatMessage {
     content: string;
   };
   addedToKnowledge?: boolean;
+  _compactionStream?: boolean;
 }
 
 interface SessionState {
@@ -137,16 +138,51 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           });
           continue;
         }
+        if (chunk.type === 'compaction_chunk') {
+          set((state) => {
+            const s = state.sessions[sessionId];
+            if (!s) return state;
+            const msgs = [...s.messages];
+            const last = msgs[msgs.length - 1];
+            if (last?.role === 'assistant' && last._compactionStream) {
+              msgs[msgs.length - 1] = { ...last, text: last.text + chunk.text };
+            } else {
+              msgs.push({
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                text: chunk.text,
+                isStreaming: true,
+                _compactionStream: true,
+              });
+            }
+            return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
+          });
+          continue;
+        }
         if (chunk.type === 'compaction_started' || chunk.type === 'compaction_completed') {
           set((state) => {
             const s = state.sessions[sessionId];
             if (!s) return state;
-            return {
-              sessions: {
-                ...state.sessions,
-                [sessionId]: { ...s, compacting: chunk.type === 'compaction_started' },
-              },
-            };
+            const patch: Partial<SessionState> = { compacting: chunk.type === 'compaction_started' };
+            if (chunk.type === 'compaction_completed') {
+              // End any in-flight compaction stream message.
+              const msgs = [...s.messages];
+              const last = msgs[msgs.length - 1];
+              if (last?.role === 'assistant' && last._compactionStream) {
+                msgs[msgs.length - 1] = { ...last, isStreaming: false };
+                patch.messages = msgs;
+              }
+            }
+            if (chunk.type === 'compaction_completed' && typeof chunk.history_tokens === 'number') {
+              patch.contextUsage = {
+                historyTokens: chunk.history_tokens,
+                historyBudget: chunk.history_budget ?? 0,
+                historyTurns: chunk.history_turns ?? 20,
+                omittedTurns: 0,
+                willCompact: false,
+              };
+            }
+            return { sessions: { ...state.sessions, [sessionId]: { ...s, ...patch } } };
           });
           continue;
         }

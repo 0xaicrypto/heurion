@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { recoverTables } from '../src/lib/table-utils';
+import { recoverTables } from './table-utils';
 
 describe('recoverTables', () => {
   test('B: pipe rows without a delimiter row get one injected', () => {
@@ -54,4 +54,11 @@ describe('recoverTables', () => {
     const input = '| 只有一行 |';
     expect(recoverTables(input)).toBe(input);
   });
+});
+
+test('delimiter column count is aligned to the header (LLM common)', () => {
+  const input = '| 药物 | 剂量 | 备注 |\n|---|---|\n| A | 100mg | 常用 |';
+  const out = recoverTables(input);
+  const lines = out.split('\n');
+  expect(lines[1]).toBe('| --- | --- | --- |');
 });
