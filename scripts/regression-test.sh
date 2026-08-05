@@ -156,6 +156,12 @@ curl -sf -X POST "$BASE/api/v1/research/studies/$SID/import-protocol" -H "$H" -H
 check "7.2 Import protocol" ok
 
 RULES=$(curl -sf -X POST "$BASE/api/v1/research/studies/$SID/extract-rules" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"$PROTOCOL_TEXT\"}" | je 'j.status.total' 2>/dev/null)
+RULES=0
+for _try in 1 2 3; do
+  RULES=$(curl -sf -X POST "$BASE/api/v1/research/studies/$SID/extract-rules" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"$PROTOCOL_TEXT\"}" | je 'j.status.total' 2>/dev/null)
+  if [ "${RULES:-0}" -gt 0 ]; then break; fi
+  sleep 2
+done
 check "7.3 Extract rules" "$([ "${RULES:-0}" -gt 0 ] && echo ok || echo 'FAIL')"
 
 # 7b. Enroll patient + verify roster/schedule/safety
