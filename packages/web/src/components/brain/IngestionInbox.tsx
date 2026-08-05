@@ -94,6 +94,27 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
     [rows],
   );
 
+  // E: group pending by scope — patient groups + a global group.
+  const groupedRows = useMemo(() => {
+    const groups: Array<{ key: string; label: string; rows: typeof filteredRows }> = [];
+    const byPatient = new Map<string, typeof filteredRows>();
+    for (const r of filteredRows) {
+      const hash = r.proposal?.patientHash ?? r.entry?.patientHash;
+      if (!hash) {
+        const g = groups.find((x) => x.key === '__global__');
+        if (g) g.rows.push(r); else groups.push({ key: '__global__', label: t('brain.globalScope', '全局'), rows: [r] });
+        continue;
+      }
+      if (!byPatient.has(hash)) byPatient.set(hash, []);
+      byPatient.get(hash)!.push(r);
+    }
+    for (const [hash, rows] of byPatient) {
+      const name = rows[0]?.patientName || hash;
+      groups.push({ key: hash, label: name, rows });
+    }
+    return groups;
+  }, [filteredRows, t]);
+
   const allVisibleSelected = filteredRows.length > 0 && filteredRows.every((r) => selected.has(r.approval.id));
 
   const toggleSelect = (id: string) => {
@@ -235,8 +256,15 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
       ) : filteredRows.length === 0 ? (
         <p className="py-8 text-center text-sm text-text-tertiary">{t('brain.noEntries')}</p>
       ) : (
-        <ul className="space-y-3">
-          {filteredRows.map(({ approval, entry, proposal, patientName }) => {
+        <div className="space-y-5">
+          {groupedRows.map((group) => (
+            <div key={group.key}>
+              <div className="mb-2 flex items-center gap-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">{group.label}</h4>
+                <span className="text-xs text-text-tertiary">({group.rows.length})</span>
+              </div>
+              <ul className="space-y-3">
+                {group.rows.map(({ approval, entry, proposal, patientName }) => {
             const patientLabel = patientName || t('brain.unknownPatient');
             if (proposal) {
               return (
@@ -338,7 +366,10 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
               </li>
             );
           })}
-        </ul>
+              </ul>
+            </div>
+          ))}
+        </div>
       )}
 
       <RejectReasonDialog

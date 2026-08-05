@@ -85,8 +85,8 @@ describe('IngestionInbox', () => {
 
     render(<IngestionInbox />);
 
-    await waitFor(() => expect(screen.getByText('李小明')).toBeInTheDocument());
-    expect(screen.getByText('张小丽')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText('李小明')[0]).toBeInTheDocument());
+    expect(screen.getAllByText('张小丽')[0]).toBeInTheDocument();
     expect(screen.getByText('血常规检查')).toBeInTheDocument();
     expect(screen.getByText('胸部CT')).toBeInTheDocument();
     expect(screen.getAllByText('pending_review')).toHaveLength(2);
@@ -100,11 +100,11 @@ describe('IngestionInbox', () => {
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     render(<IngestionInbox />);
-    await waitFor(() => expect(screen.getByText('李小明')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText('李小明')[0]).toBeInTheDocument());
 
     fireEvent.change(screen.getByLabelText('按类型筛选'), { target: { value: 'imaging' } });
 
-    expect(screen.getByText('张小丽')).toBeInTheDocument();
+    expect(screen.getAllByText('张小丽')[0]).toBeInTheDocument();
     expect(screen.queryByText('血常规检查')).not.toBeInTheDocument();
   });
 
@@ -116,7 +116,7 @@ describe('IngestionInbox', () => {
 
     const onChanged = vi.fn();
     render(<IngestionInbox onChanged={onChanged} />);
-    await waitFor(() => expect(screen.getByText('李小明')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText('李小明')[0]).toBeInTheDocument());
 
     const confirmSpy = vi.spyOn(api, 'confirmApproval').mockResolvedValue({ ...pendingRequest, status: 'approved' });
 
@@ -134,7 +134,7 @@ describe('IngestionInbox', () => {
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     render(<IngestionInbox />);
-    await waitFor(() => expect(screen.getByText('李小明')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText('李小明')[0]).toBeInTheDocument());
 
     const rejectSpy = vi.spyOn(api, 'rejectApproval').mockResolvedValue({ ...pendingRequest, status: 'rejected' });
 
@@ -154,7 +154,7 @@ describe('IngestionInbox', () => {
       .mockResolvedValueOnce(jsonResponse(mockPatients()));
 
     render(<IngestionInbox />);
-    await waitFor(() => expect(screen.getByText('李小明')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText('李小明')[0]).toBeInTheDocument());
 
     const confirmSpy = vi.spyOn(api, 'confirmApproval').mockResolvedValue({ ...pendingRequest, status: 'approved' });
     const checkboxes = screen.getAllByRole('checkbox');
@@ -271,7 +271,7 @@ describe('BrainPage', () => {
     await waitFor(() => expect(screen.getByText('Brain · 概览')).toBeInTheDocument());
     expect(screen.getByText('12')).toBeInTheDocument();
     expect(screen.getByText('247')).toBeInTheDocument();
-    expect(screen.getByText('李小明')).toBeInTheDocument();
+    expect(screen.getAllByText('李小明')[0]).toBeInTheDocument();
     expect(screen.getByText('暂无活动记录')).toBeInTheDocument();
   });
 });
