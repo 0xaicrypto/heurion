@@ -331,10 +331,11 @@ ${conversation}
   // cursor so the session-close flush never re-extracts it.
   try {
     const { advanceExtractedUptoIdx } = await import('./extraction-cursor.js')
-    const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string } = {
+    const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string; sessionId?: string } = {
       userId: ctx.userId,
       scopeType: patientHash ? 'patient' : 'global',
       patientHash,
+      sessionId,
     }
     await advanceExtractedUptoIdx(scopeKey, target)
   } catch (err) {
@@ -393,17 +394,21 @@ export async function extractSegment(
     console.log('[EXTRACT] Session Memory update skipped:', (err as Error).message.slice(0, 120))
   }
 
-  // 3) Advance the cursor so the segment is never re-extracted.
+  // 3) Advance the cursor to the LAST EVENT THIS SEGMENT actually covered —
+  // never to the global count, or events of OTHER sessions sitting between
+  // fromIdx and toIdx would be permanently skipped (cross-session safety).
   try {
     const { advanceExtractedUptoIdx } = await import('./extraction-cursor.js')
-    const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string } = {
+    const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string; sessionId?: string } = {
       userId: ctx.userId,
       scopeType: patientHash ? 'patient' : 'global',
       patientHash,
+      sessionId,
     }
-    await advanceExtractedUptoIdx(scopeKey, toIdx)
+    const coveredMax = events.length > 0 ? Math.max(...events.map((e: any) => e.idx)) : fromIdx
+    await advanceExtractedUptoIdx(scopeKey, coveredMax)
   } catch (err) {
-    console.log('[EXTRACT] Cursor advance skipped:', (err as Error).message.slice(0, 100))
+    console.log('[EXTRACT] Cursor advance skipped:', (err as Error).message)
   }
 
   return extracted.length
@@ -420,10 +425,11 @@ export async function flushUnextracted(
   patientHash?: string,
 ): Promise<number> {
   const { getExtractedUptoIdx } = await import('./extraction-cursor.js')
-  const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string } = {
+  const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string; sessionId?: string } = {
     userId: ctx.userId,
     scopeType: patientHash ? 'patient' : 'global',
     patientHash,
+    sessionId,
   }
   const cursor = await getExtractedUptoIdx(scopeKey)
   const last = await (prisma as any).kbCompaction.findFirst({
