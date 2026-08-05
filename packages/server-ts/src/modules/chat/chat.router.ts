@@ -5,7 +5,7 @@ import { getUserContext, buildCachedPersona, buildFileContext } from './user-con
 import { deepseekStream, deepseekChat, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
 import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
-import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
+import { buildHistoryMessages, estimateTokens } from '../../retrieval/context-compressor.js'
 import { detectDoomLoop } from '../../tools/doom-loop.js'
 import { ensureSessionCompaction, getInFlightCompaction } from '../../memory/compaction.js'
 import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
@@ -551,6 +551,20 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       messages.push(...historyMessages)
       messages.push({ role: 'user' as const, content: fullMessage })
 
+      // §3.4 (#194): enforce a TOTAL token budget across all assembled
+      // messages. History is trimmed oldest-first; the system prompt is
+      // truncated as a last resort so a pathological projection can never
+      // blow the context window.
+      const maxTotalTokens = parseInt(process.env.MAX_TOTAL_TOKENS || '16000', 10)
+      const trimmedTurns = enforceTotalBudget(messages, maxTotalTokens)
+      if (trimmedTurns > 0) {
+        send({
+          type: 'context_info',
+          text: `Context trimmed: ${trimmedTurns} earlier turns dropped to fit the total token budget.`,
+          kind: 'projection',
+        })
+      }
+
       // Create tool registry for function calling
       const toolCtx: ToolContext = {
         userId,
@@ -851,6 +865,31 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
  * "不确认的摘要仅用于本轮上下文"). A new session must never inherit another
  * session's un-approved summaries, so episodes are filtered by sessionId.
  */
+/**
+ * §3.4 (#194): total context budget enforcement. Trims non-system messages
+ * oldest-first until the estimate fits; falls back to truncating the system
+ * prompt. Returns the number of trimmed messages.
+ */
+export function enforceTotalBudget(
+  msgs: Array<{ role: string; content: string }>,
+  maxTokens: number,
+): number {
+  if (maxTokens <= 0) return 0
+  let tokens = estimateTokens(JSON.stringify(msgs))
+  let trimmed = 0
+  for (let i = 1; i < msgs.length && tokens > maxTokens; ) {
+    msgs.splice(i, 1)
+    trimmed++
+    tokens = estimateTokens(JSON.stringify(msgs))
+  }
+  if (tokens > maxTokens && msgs.length > 0) {
+    // Last resort: truncate the system prompt (keeps the newest user turn).
+    const keepChars = Math.max(500, Math.floor((maxTokens / Math.max(tokens, 1)) * (msgs[0].content.length || 0)))
+    msgs[0].content = msgs[0].content.slice(0, keepChars)
+  }
+  return trimmed
+}
+
 export function selectProjectionInputs(
   routeResult: Awaited<ReturnType<typeof router>>,
   ctx: Awaited<ReturnType<typeof getUserContext>>,
@@ -863,7 +902,7 @@ export function selectProjectionInputs(
       return { facts: [], episodes: [], skills: [] }
     case 'vector':
       // Knowledge questions: keep facts/knowledge, skip episodic chat history
-      return { facts: isolateFactsByScope(ctx.facts.all(), patientHash), episodes: [], skills: [] }
+      return { facts: isolateFactsByScope(ctx.facts.all(), patientHash).slice(0, 50), episodes: [], skills: [] }
     case 'file':
       // File queries: context comes from attachments; skip accumulated memory
       return { facts: [], episodes: [], skills: [] }
@@ -872,7 +911,7 @@ export function selectProjectionInputs(
       // Ambiguous or summary questions: keep full context (patient-isolated);
       // episodes are limited to the current session's un-reviewed summary.
       return {
-        facts: isolateFactsByScope(ctx.facts.all(), patientHash),
+        facts: isolateFactsByScope(ctx.facts.all(), patientHash).slice(0, 50),
         episodes: sessionId ? ctx.episodes.all().filter((e) => e.sessionId === sessionId) : [],
         skills: ctx.skills.all(),
       }
