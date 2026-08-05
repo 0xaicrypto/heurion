@@ -74,15 +74,15 @@ describe('R2 anchored compaction', () => {
 
     await ensureSessionCompaction(ctx, sessionId, dropped.firstRetainedIdx, undefined)
 
-    // Anchored summary persisted (covers the 4 dropped events)
+    // S2: kbCompaction keeps ONLY the cursor (empty summary); the anchored
+    // content lives in the Session Memory (episodes).
     const compactions = await (prisma as any).kbCompaction.findMany({
       where: { userId, sessionId },
       orderBy: { coveredUptoIdx: 'desc' },
     })
     expect(compactions.length).toBe(1)
     expect(compactions[0].coveredUptoIdx).toBe(dropped.lastCoveredIdx)
-    const summary = JSON.parse(compactions[0].summary)
-    expect(summary.patient).toContain('ZQ')
+    expect(compactions[0].summary).toBe('')
 
     // Facts land in the pending review queue
     const proposals = await (prisma as any).memoryProposal.findMany({
@@ -114,6 +114,8 @@ describe('R2 anchored compaction', () => {
 
     const compactions = await (prisma as any).kbCompaction.findMany({ where: { userId, sessionId } })
     expect(compactions.length).toBe(1)
+    // Session Memory holds the anchored content
+    expect(ctx.episodes.all().find(e => e.sessionId === sessionId)?.summary).toContain('ZQ')
   }, 30000)
 
   test('too-short segments are left for the close flush', async () => {
@@ -129,6 +131,27 @@ describe('R2 anchored compaction', () => {
 
     const compactions = await (prisma as any).kbCompaction.findMany({ where: { userId, sessionId } })
     expect(compactions.length).toBe(0)
+  }, 30000)
+})
+
+describe('S2 — no anchored-summary payload in kbCompaction', () => {
+  test('compaction updates Session Memory and writes only an empty cursor row', async () => {
+    const userId = await getAuthUserId()
+    const sessionId = `s2_${Date.now()}`
+    const ctx = seedEvents(userId, sessionId, 5)
+    const dropped = droppedWindow(ctx, sessionId, 4)
+
+    vi.mocked(deepseekChat).mockResolvedValue(COMPACTION_JSON)
+
+    await ensureSessionCompaction(ctx, sessionId, dropped.firstRetainedIdx, undefined)
+
+    const rows = await (prisma as any).kbCompaction.findMany({ where: { userId, sessionId } })
+    expect(rows.length).toBe(1)
+    expect(rows[0].summary).toBe('')
+    // Episode summary updated (K3 merge) — Session Memory is the single store
+    expect(ctx.episodes.all().find(e => e.sessionId === sessionId)?.summary).toContain('ZQ')
+    // No anchoredSummary JSON anywhere
+    expect(JSON.stringify(rows)).not.toContain('"patient"')
   }, 30000)
 })
 

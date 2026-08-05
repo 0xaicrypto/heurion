@@ -57,6 +57,7 @@ model Session {
   createdAt      String   @map("created_at")
   lastMessageAt  String?  @map("last_message_at")
   closedAt       String?  @map("closed_at")
+  compactedUptoIdx Int?   @map("compacted_upto_idx") // S2: compaction cursor (Session Memory)
 
   user User @relation(fields: [userId], references: [id])
   @@index([userId, scope, status, lastMessageAt(sort: Desc)])

@@ -208,6 +208,9 @@ async function runSessionCompaction(
   firstRetainedIdx: number,
   patientHash?: string,
 ): Promise<void> {
+  // S2: kbCompaction keeps ONLY the per-session compaction cursor (no
+  // summary content) — anchored summaries now live in the Session Memory
+  // (episodes). Works for sessions without a Session row (default global).
   const last = await (prisma as any).kbCompaction.findFirst({
     where: { userId: ctx.userId, sessionId },
     orderBy: { coveredUptoIdx: 'desc' },
@@ -300,27 +303,24 @@ ${conversation}
     ctx.episodes.commit()
   }
 
-  // 3) Persist the anchored summary for verbatim injection.
-  const summary = parsed.anchoredSummary
-    ? JSON.stringify(parsed.anchoredSummary, null, 1)
-    : ''
-  if (summary) {
-    await (prisma as any).kbCompaction.create({
-      data: {
-        userId: ctx.userId,
-        sessionId,
-        summary,
-        coveredUptoIdx: target,
-        tokenSavings: null,
-        createdAt: now,
-      },
-    })
-  }
+  // 3) S2: no anchored-summary store — the episodeUpdate already merged the
+  // segment into the Session Memory (episodes). The cursor row advances so
+  // segments are never re-compacted; summary column stays empty.
+  await (prisma as any).kbCompaction.create({
+    data: {
+      userId: ctx.userId,
+      sessionId,
+      summary: '',
+      coveredUptoIdx: target,
+      tokenSavings: null,
+      createdAt: now,
+    },
+  })
 
   ctx.eventLog.append({
     timestamp: Date.now() / 1000,
     eventType: 'evolution',
-    content: `🧠 自动压缩 ${Math.floor(events.length / 2)} 轮对话 → 锚定摘要${summary ? '' : '（跳过）'}${proposed > 0 ? ` + ${proposed} 条事实待审核` : ''}`,
+    content: `🧠 自动压缩 ${Math.floor(events.length / 2)} 轮对话 → Session Memory 更新${proposed > 0 ? ` + ${proposed} 条事实待审核` : ''}`,
     metadata: { compactedTurns: Math.floor(events.length / 2), proposedFacts: proposed, coveredUptoIdx: target },
     agentId: ctx.userId, sessionId,
   })
