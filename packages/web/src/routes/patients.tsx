@@ -550,7 +550,7 @@ export function PatientChatPage() {
               }`}>
                 {m.tier && <div className="mb-1 text-xs opacity-70">Tier: {m.tier}</div>}
                 {m.reasoning && (
-                  <details className="mb-2">
+                  <details className="mb-2" open>
                     <summary className="cursor-pointer text-xs text-text-tertiary">{t('chat.reasoning')}</summary>
                     <div className="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-border pl-3 text-xs leading-relaxed text-text-secondary">
                       {m.reasoning.slice(0, 30000)}
