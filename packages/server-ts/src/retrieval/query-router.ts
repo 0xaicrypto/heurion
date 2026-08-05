@@ -257,6 +257,8 @@ export function routeQuery(_query: string, intent: QueryIntent): RouteKind[] {
 }
 
 const ROUTE_CACHE_TTL_MS = 5 * 60 * 1000
+/** §5.6 (#199): bounded cache — unbounded growth was a slow leak. */
+const ROUTE_CACHE_MAX = 500
 const routeCache = new Map<string, { result: RouterResult; expires: number }>()
 
 function normalizeQuery(query: string): string {
@@ -266,6 +268,22 @@ function normalizeQuery(query: string): string {
 /** Clear the in-memory route cache. Useful in tests. */
 export function clearRouteCache(): void {
   routeCache.clear()
+}
+
+function cacheRoute(key: string, entry: { result: RouterResult; expires: number }): void {
+  routeCache.set(key, entry)
+  if (routeCache.size <= ROUTE_CACHE_MAX) return
+  // Drop expired entries first, then evict the oldest (insertion order).
+  const now = Date.now()
+  for (const [k, v] of [...routeCache]) {
+    if (routeCache.size <= ROUTE_CACHE_MAX) break
+    if (v.expires <= now) routeCache.delete(k)
+  }
+  while (routeCache.size > ROUTE_CACHE_MAX) {
+    const oldest = routeCache.keys().next().value
+    if (oldest === undefined) break
+    routeCache.delete(oldest)
+  }
 }
 
 /**
@@ -308,6 +326,6 @@ export async function router(query: string, options: RouterOptions = {}): Promis
     cost: { llmCalls },
   }
 
-  routeCache.set(cacheKey, { result, expires: Date.now() + ROUTE_CACHE_TTL_MS })
+  cacheRoute(cacheKey, { result, expires: Date.now() + ROUTE_CACHE_TTL_MS })
   return result
 }
