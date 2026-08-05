@@ -22,6 +22,7 @@ export interface ChatMessage {
     content: string;
   };
   addedToKnowledge?: boolean;
+  _compactionNotice?: boolean;
 }
 
 interface SessionState {
@@ -141,12 +142,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           set((state) => {
             const s = state.sessions[sessionId];
             if (!s) return state;
-            return {
-              sessions: {
-                ...state.sessions,
-                [sessionId]: { ...s, compacting: chunk.type === 'compaction_started' },
-              },
-            };
+            const patch: Partial<SessionState> = { compacting: chunk.type === 'compaction_started' };
+            if (chunk.type === 'compaction_completed' && typeof chunk.history_tokens === 'number') {
+              patch.contextUsage = {
+                historyTokens: chunk.history_tokens,
+                historyBudget: chunk.history_budget ?? 0,
+                historyTurns: chunk.history_turns ?? 20,
+                omittedTurns: 0,
+                willCompact: false,
+              };
+              // Visible record in the conversation: history was compacted.
+              patch.messages = [...s.messages, {
+                id: crypto.randomUUID(),
+                role: 'assistant' as const,
+                text: '',
+                isStreaming: false,
+                _compactionNotice: true,
+              }];
+            }
+            return { sessions: { ...state.sessions, [sessionId]: { ...s, ...patch } } };
           });
           continue;
         }
