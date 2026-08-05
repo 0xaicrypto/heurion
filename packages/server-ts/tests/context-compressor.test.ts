@@ -41,7 +41,7 @@ describe('P4 — Context Compressor', () => {
   })
 
   describe('deduplicateFindings', () => {
-    test('merges same entity across time', () => {
+    test('merges same entity across time and keeps every value (§4.4 #195)', () => {
       const findings = [
         'RUL nodule 18mm (CT 4/10)',
         'RUL nodule 18mm (CT 7/15)',
@@ -50,8 +50,22 @@ describe('P4 — Context Compressor', () => {
       ]
       const result = deduplicateFindings(findings)
       expect(result.length).toBe(2)
-      expect(result.some(r => r.toLowerCase().includes('rul nodule') && r.includes('3'))).toBe(true)
+      const rul = result.find(r => r.toLowerCase().includes('rul nodule'))
+      expect(rul).toBeDefined()
+      // Trend preserved: all three values are chained, not just the first.
+      expect(rul!.match(/18mm/g)).toHaveLength(3)
+      expect(rul!.includes('3 entries')).toBe(true)
       expect(result.some(r => r.includes('CEA'))).toBe(true)
+    })
+
+    test('trend values chain distinct readings (BP example §4.4)', () => {
+      const result = deduplicateFindings([
+        'BP 140/90 (门诊 8/1)',
+        'BP 120/80 (门诊 8/5)',
+      ])
+      expect(result[0]).toContain('140/90')
+      expect(result[0]).toContain('120/80')
+      expect(result[0]).toContain('→')
     })
 
     test('handles empty input', () => {

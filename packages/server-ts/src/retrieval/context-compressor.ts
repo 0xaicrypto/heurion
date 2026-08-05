@@ -34,7 +34,8 @@ export function rankByAttention<T extends { importance: number; lastSeenAt: numb
 }
 
 /**
- * Deduplicate clinical findings by merging same entity across time.
+ * Deduplicate clinical findings by merging same entity across time,
+ * keeping every measured value so trends survive (§4.4 #195).
  */
 export function deduplicateFindings(findings: string[]): string[] {
   if (findings.length === 0) return []
@@ -52,10 +53,13 @@ export function deduplicateFindings(findings: string[]): string[] {
     if (items.length === 1) {
       result.push(items[0])
     } else {
-      // Extract the value (number + unit) from first item
-      const valueMatch = items[0].match(/\d+[a-z]*\s*(?:mm|cm|mg|ng|kg|g|mL|L|%|°)?/i)
-      const value = valueMatch ? valueMatch[0] : ''
-      result.push(`${key}: ${value} (${items.length} entries)`)
+      // Keep every measured value — "BP 140/90 → 120/80" shows the trend
+      // instead of dropping all but the first reading.
+      const values = items
+        .map(item => item.match(/\d+(?:\.\d+)?(?:[/.]\d+)?[a-z]*\s*(?:mm|cm|mg|ng|kg|g|mL|L|%|°)?/i)?.[0])
+        .filter((v): v is string => Boolean(v))
+      const trend = values.length > 0 ? `${key}: ${values.join(' → ')}` : key
+      result.push(`${trend} (${items.length} entries)`)
     }
   }
   return result

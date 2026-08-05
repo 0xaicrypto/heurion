@@ -20,16 +20,28 @@ describe('P7 — RRF Fusion', () => {
     expect(merged[0].sources).toContain('sql')
   })
 
-  test('deduplicates by content', () => {
+  test('deduplicates the same fact by source identity (§4.4 #195)', () => {
     const results1: RrfCandidate[] = [
-      { content: 'NSCLC immunotherapy', source: 'vector', sourceId: 'v1', rank: 1 },
+      { content: 'NSCLC immunotherapy', source: 'vector', sourceId: 'fact-1', rank: 1 },
     ]
     const results2: RrfCandidate[] = [
-      { content: 'NSCLC immunotherapy', source: 'graph', sourceId: 'g1', rank: 1 },
+      { content: 'NSCLC immunotherapy', source: 'graph', sourceId: 'fact-1', rank: 1 },
     ]
     const merged = rrfFusion([results1, results2], 10)
     expect(merged.length).toBe(1)
     expect(merged[0].sources.length).toBe(2)
+  })
+
+  test('distinct facts with similar content are never merged (§4.4 #195)', () => {
+    const samePrefix = 'RUL nodule 1'
+    const results: RrfCandidate[][] = [
+      [
+        { content: `${samePrefix}8mm (CT 4/10)`, source: 'vector', sourceId: 'a', rank: 1 },
+        { content: `${samePrefix}2mm (CT 8/5)`, source: 'vector', sourceId: 'b', rank: 2 },
+      ],
+    ]
+    const merged = rrfFusion(results, 10)
+    expect(merged.length).toBe(2)
   })
 
   test('respects topK limit', () => {

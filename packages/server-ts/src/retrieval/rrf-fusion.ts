@@ -23,7 +23,9 @@ const RRF_K = 60
 
 /**
  * Merge multiple ranked lists using Reciprocal Rank Fusion.
- * Deduplicates by content, summing scores for duplicate entries.
+ * Deduplicates by source identity (sourceId + content), so distinct facts
+ * can never collide on similar prefixes (§4.4 #195) while the same fact
+ * retrieved through several sources still merges when its sourceId matches.
  */
 export function rrfFusion(resultLists: RrfCandidate[][], topK = 20): MergedResult[] {
   if (resultLists.length === 0 || resultLists.every(l => l.length === 0)) return []
@@ -32,7 +34,7 @@ export function rrfFusion(resultLists: RrfCandidate[][], topK = 20): MergedResul
 
   for (const list of resultLists) {
     for (const item of list) {
-      const key = item.content.slice(0, 80).toLowerCase()
+      const key = item.sourceId ? `id:${item.sourceId}` : `content:${item.content.toLowerCase()}`
       const existing = scoreMap.get(key)
       if (existing) {
         existing.sources.add(item.source)
