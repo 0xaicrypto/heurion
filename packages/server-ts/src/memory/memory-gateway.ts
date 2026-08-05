@@ -21,6 +21,8 @@ export interface ProposalInput {
   confidence?: 'high' | 'medium' | 'low'
   reason?: string
   sourceRange?: string
+  /** Extraction category (13.4F quality feedback stats). */
+  category?: string
   /** Same-scope confirmed facts this proposal contradicts (§5.7) */
   conflictsWith?: Array<{ stableId: string; content: string }>
 }
@@ -37,6 +39,7 @@ export interface MemoryProposalRow {
   confidence: string
   reason: string | null
   sourceRange: string | null
+  category: string | null
   conflictsWith: string | null
   status: 'pending' | 'approved' | 'rejected'
   rejectedReason: string | null
@@ -227,6 +230,7 @@ export class MemoryGraphGateway {
           confidence: input.confidence ?? 'medium',
           reason: input.reason || null,
           sourceRange: input.sourceRange || null,
+          category: input.category || null,
           conflictsWith: null,
           status: 'rejected',
           rejectedReason: `语义重复（与 ${similar.record.stableId} 相似度 ${similar.score.toFixed(2)}）`,
@@ -253,6 +257,7 @@ export class MemoryGraphGateway {
         confidence: input.confidence ?? 'medium',
         reason: input.reason || null,
         sourceRange: input.sourceRange || null,
+        category: input.category || null,
         conflictsWith: conflictsWith ? JSON.stringify(conflictsWith) : null,
         status: 'pending',
         createdAt: now,
@@ -580,6 +585,7 @@ function serializeProposal(r: any): MemoryProposalRow {
     confidence: r.confidence,
     reason: r.reason,
     sourceRange: r.sourceRange,
+    category: r.category,
     conflictsWith: r.conflictsWith,
     status: r.status,
     rejectedReason: r.rejectedReason,

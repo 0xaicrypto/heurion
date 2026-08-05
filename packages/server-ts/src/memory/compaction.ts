@@ -99,6 +99,14 @@ export async function extractAndProposeFacts(
   if (!conversation.trim()) return []
   const apiKey = getApiKey()
   const contextBlock = buildContextBlock(ctx, patientHash, opts.sessionId, conversation)
+  // 13.4F: dynamic quality guidance from recent acceptance rates.
+  let qualityGuidance = ''
+  try {
+    const { getCategoryQuality, buildQualityGuidance } = await import('./extraction-quality.js')
+    qualityGuidance = buildQualityGuidance(await getCategoryQuality(ctx.userId))
+  } catch {
+    // quality stats are best-effort
+  }
   const prompt = `You are a clinical memory extractor. From the conversation below, extract ONLY facts worth persisting for future reference.
 
 ${EXTRACTION_RULES}
@@ -107,6 +115,7 @@ Return ONLY a JSON array:
 [{"content": "consolidated fact", "category": "diagnosis|symptom|exam|medication|allergy|constraint|preference|plan", "importance": 1-5, "sourceType": "patient|doctor|research", "conflictsWith": ["stableId of a same-scope confirmed fact, only when contradicting"]}]
 
 Importance: 5 = changes treatment/diagnosis; 4 = important clinical fact; 3 = general; 1-2 = marginal (omit).
+${qualityGuidance}
 ${contextBlock}
 Conversation:
 ${conversation}
@@ -151,6 +160,7 @@ ${conversation}
           importance: fact.importance,
           confidence: 'medium',
           reason: `${opts.reason} (${fact.category}, source: ${fact.sourceType})`,
+          category: fact.category,
           conflictsWith: fact.conflictsWith?.map(stableId => ({ stableId, content: '' })),
         })
       } catch (err) {
@@ -287,6 +297,7 @@ ${conversation}
             importance: Math.min(5, Math.max(1, f.importance || 3)),
             confidence: 'medium',
             reason: `Compaction extraction (${f.category}, source: ${f.sourceType || 'general'})`,
+            category: f.category,
             conflictsWith: Array.isArray(f.conflictsWith) ? f.conflictsWith.map((sid: any) => ({ stableId: String(sid), content: '' })) : undefined,
           })
           proposed++
