@@ -1,4 +1,5 @@
 import { EventLog } from '../core/event-log'
+import { makeLogger } from '../common/logger.js'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores'
 import type { MemoryService } from './memory.service.js'
 import { deepseekChat, getApiKey } from '../common/llm.js'
@@ -102,6 +103,8 @@ function parseExtractionResult(result: string): Array<Record<string, any>> | nul
   }
 }
 
+const log = makeLogger('compaction')
+
 export async function extractAndProposeFacts(
   ctx: CompactionCtx,
   patientHash: string | undefined,
@@ -145,7 +148,7 @@ ${conversation}
   if (parsed === null) {
     // #182: retry once with a correction hint — a failed parse must NOT
     // silently drop the segment.
-    console.log('[EXTRACT] Unparseable LLM output, retrying with correction')
+    log.warn('unparseable LLM output, retrying with correction')
     const retryPrompt = `${prompt}\n\n你的上一次输出无法解析为 JSON 数组。请只返回合法的 JSON 数组，不要包含任何其他文本或解释。`
     result = await deepseekChat([{ role: 'user', content: retryPrompt }], apiKey, chatOpts)
     parsed = parseExtractionResult(result)
@@ -184,7 +187,7 @@ ${conversation}
           conflictsWith: fact.conflictsWith?.map(stableId => ({ stableId, content: '' })),
         })
       } catch (err) {
-        console.log('[EVOLVE] Proposal write skipped:', (err as Error).message.slice(0, 120))
+        log.warn('proposal write skipped', { reason: (err as Error).message.slice(0, 120) })
       }
     }
   }
@@ -226,7 +229,7 @@ export function ensureSessionCompaction(
   const key = `${ctx.userId}:${sessionId}`
   if (inFlight.has(key)) return inFlight.get(key)!
   const p = runSessionCompaction(ctx, sessionId, firstRetainedIdx, patientHash)
-    .catch(err => console.log('[COMPACT] failed:', (err as Error).message.slice(0, 120)))
+    .catch((err: any) => log.error('compaction failed', { reason: (err as Error).message.slice(0, 120) }))
     .finally(() => inFlight.delete(key))
   inFlight.set(key, p)
   return p
@@ -322,7 +325,7 @@ ${conversation}
           })
           proposed++
         } catch (err) {
-          console.log('[COMPACT] Fact proposal skipped:', (err as Error).message.slice(0, 100))
+          log.warn('fact proposal skipped', { reason: (err as Error).message.slice(0, 100) })
         }
       }
     }
@@ -359,7 +362,7 @@ ${conversation}
     }
     await advanceExtractedUptoIdx(scopeKey, target)
   } catch (err) {
-    console.log('[COMPACT] Cursor advance skipped:', (err as Error).message.slice(0, 100))
+    log.warn('cursor advance skipped', { reason: (err as Error).message.slice(0, 100) })
   }
 
   ctx.eventLog.append({
@@ -369,7 +372,7 @@ ${conversation}
     metadata: { compactedTurns: Math.floor(events.length / 2), proposedFacts: proposed, coveredUptoIdx: target },
     agentId: ctx.userId, sessionId,
   })
-  console.log(`[COMPACT] session ${sessionId}: compacted idx ≤${target}, ${proposed} facts proposed, ${events.length} events`)
+  log.info('session compacted', { sessionId, compactedUptoIdx: target, proposedFacts: proposed, events: events.length })
 }
 
 /**

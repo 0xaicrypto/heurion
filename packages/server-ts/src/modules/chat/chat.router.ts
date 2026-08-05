@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify'
+import { makeLogger } from '../../common/logger.js'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
@@ -55,6 +56,8 @@ async function readAttachmentContent(userId: string, fileId: string): Promise<st
 export interface ChatRouterOptions {
   evolutionQueue?: EvolutionQueue
 }
+
+const log = makeLogger('chat.router')
 
 export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions = {}) {
   app.addHook('preHandler', authGuard)
@@ -664,7 +667,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
 
               // Doom-loop guard: same tool + identical args 3x consecutively.
               if (detectDoomLoop(doomHistory, toolName, toolArgs)) {
-                console.warn(`[DOOM-LOOP] tool ${toolName} called 3+ times with identical args (seq ${seq})`)
+                log.warn('doom-loop detected', { tool: toolName, seq })
                 appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
                   tool: toolName, args: argsPreview, status: 'warning', seq,
                 })

@@ -4,6 +4,7 @@
  * fixed for multi-user safety, #130).
  */
 import type { MemoryService } from './memory.service.js'
+import { makeLogger } from '../common/logger.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores'
 import type { MemoryProposalRow } from './contracts.js'
 import type { MemoryNode } from './memory.types'
@@ -17,6 +18,8 @@ export type ContextResolver = (userId: string) => {
 } | null
 
 let contextResolver: ContextResolver | null = null
+
+const log = makeLogger('memory.registry')
 
 export function registerContextResolver(fn: ContextResolver): void {
   contextResolver = fn
@@ -46,11 +49,11 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
       const conflicts = JSON.parse(proposal.conflictsWith) as Array<{ stableId: string; content: string }>
       for (const c of conflicts) {
         if (ctx.memory.supersedeFact(c.stableId, `Superseded by approved proposal ${proposal.id}`, 'system')) {
-          console.log(`[MEMORY] Superseded conflicting fact ${c.stableId} (approved proposal ${proposal.id})`)
+          log.info('superseded conflicting fact', { stableId: c.stableId, proposalId: proposal.id })
         }
       }
     } catch (err) {
-      console.log('[MEMORY] Conflict supersede skipped:', (err as Error).message.slice(0, 120))
+      log.warn('conflict supersede skipped', { reason: (err as Error).message.slice(0, 120) })
     }
   }
   if (proposal.kind === 'fact') {
