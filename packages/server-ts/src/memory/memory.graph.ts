@@ -28,6 +28,13 @@ export class MemoryGraph {
     }
   }
 
+  /** Re-read the last committed state from disk (dual-store rollback, #192). */
+  reload(): void {
+    this.nodes.clear()
+    this.relations = []
+    this.load()
+  }
+
   commit(): string {
     const state: MemoryGraphState = {
       nodes: Array.from(this.nodes.values()),

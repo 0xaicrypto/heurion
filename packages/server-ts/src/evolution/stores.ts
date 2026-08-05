@@ -56,15 +56,30 @@ export class FactsStore {
     const dir = path.join(baseDir, 'facts')
     fs.mkdirSync(dir, { recursive: true })
     this.store = new VersionedStore(dir)
+    this.working = this.readFromDisk()
+  }
+
+  private readFromDisk(): Fact[] {
     const current = this.store.current()
     if (current && Array.isArray(current)) {
-      this.working = current.map((f: any) => ({
+      return current.map((f: any) => ({
         ...f,
         count: f.count || 1,
         updatedAt: f.updatedAt || f.createdAt || 0,
         lastSeenAt: f.lastSeenAt || f.createdAt || 0,
       }))
     }
+    return []
+  }
+
+  /** Re-read the last committed state from disk (dual-store rollback, #192). */
+  reload(): void {
+    this.working = this.readFromDisk()
+  }
+
+  /** Replace the in-memory state wholesale (compensating write, #192). */
+  replaceAll(facts: Fact[]): void {
+    this.working = facts.map(f => ({ ...f }))
   }
 
   all(): Fact[] { return [...this.working] }
@@ -201,15 +216,30 @@ export class KnowledgeStore {
     const dir = path.join(baseDir, 'knowledge')
     fs.mkdirSync(dir, { recursive: true })
     this.store = new VersionedStore(dir)
+    this.working = this.readFromDisk()
+  }
+
+  private readFromDisk(): KnowledgeArticle[] {
     const current = this.store.current()
     if (current && Array.isArray(current)) {
-      this.working = current.map((a: any) => ({
+      return current.map((a: any) => ({
         ...a,
         version: a.version || 1,
         status: a.status || 'current',
         updatedAt: a.updatedAt || a.createdAt || 0,
       }))
     }
+    return []
+  }
+
+  /** Re-read the last committed state from disk (dual-store rollback, #192). */
+  reload(): void {
+    this.working = this.readFromDisk()
+  }
+
+  /** Replace the in-memory state wholesale (compensating write, #192). */
+  replaceAll(articles: KnowledgeArticle[]): void {
+    this.working = articles.map(a => ({ ...a }))
   }
 
   add(article: Omit<KnowledgeArticle, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'status'>): KnowledgeArticle {
