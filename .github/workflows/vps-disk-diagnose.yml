@@ -1,0 +1,22 @@
+name: VPS Disk Diagnose
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+      - name: Diagnose disk usage
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
+            echo '=== df ==='; df -h /;
+            echo '=== top dirs ==='; sudo du -xhd1 / 2>/dev/null | sort -rh | head -12;
+            echo '=== docker ==='; sudo docker system df 2>/dev/null;
+            echo '=== images ==='; sudo docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' 2>/dev/null | head -15;
+            echo '=== opt/heurion ==='; sudo du -sh /opt/heurion/* 2>/dev/null | sort -rh | head -8;
+            echo '=== journal ==='; sudo journalctl --disk-usage 2>/dev/null
+          "
