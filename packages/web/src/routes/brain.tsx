@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Brain } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { BrainStatsCards } from '@/components/brain/BrainStatsCards';
+import { MemoryHealthPanel } from '@/components/brain/MemoryHealthPanel';
 import { IngestionInbox } from '@/components/brain/IngestionInbox';
 import { RecentActivityFeed } from '@/components/brain/RecentActivityFeed';
 import { api } from '@/lib/api-client';
@@ -44,6 +45,7 @@ export function BrainPage() {
 
         <main className="space-y-6 p-6">
           <BrainStatsCards stats={stats} loading={statsLoading} />
+          <MemoryHealthPanel />
           <IngestionInbox onChanged={handleChanged} />
           <RecentActivityFeed refreshKey={activityRefreshKey} />
         </main>
