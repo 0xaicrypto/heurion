@@ -84,3 +84,52 @@ describe('K5 persona cache', () => {
     expect(a2).not.toContain('分子分型')
   })
 })
+
+describe('§13.3 persona scope isolation + ranking', () => {
+  let baseDir: string
+
+  beforeEach(() => {
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'persona-scope-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(baseDir, { recursive: true, force: true })
+    vi.restoreAllMocks()
+  })
+
+  test('#1 患者 fact 不进全局 persona；医生偏好保留', () => {
+    const facts = new FactsStore(baseDir)
+    const knowledge = new KnowledgeStore(baseDir)
+    facts.add({ content: '患者A对青霉素过敏', category: 'fact', importance: 5, sourceType: 'patient', patientHash: 'patient_a' })
+    facts.add({ content: '医生偏好先看CT再定方案', category: 'preference', importance: 4, sourceType: 'doctor' })
+    facts.commit()
+
+    const persona = buildPersona(facts, knowledge)
+
+    expect(persona).toContain('先看CT再定方案')
+    expect(persona).not.toContain('青霉素过敏')
+  })
+
+  test('#4 排序：高重要性新近 fact 优先于陈旧低价值', () => {
+    const facts = new FactsStore(baseDir)
+    const knowledge = new KnowledgeStore(baseDir)
+    // 陈旧高价值（10 天前）
+    const oldHigh = facts.add({ content: '旧的但重要的事实', category: 'fact', importance: 5, sourceType: 'doctor' })
+    // 新近中价值（1 小时前）
+    const freshMid = facts.add({ content: '新近中等重要的事实', category: 'fact', importance: 3, sourceType: 'doctor' })
+    facts.commit()
+    // 调整时间戳
+    const now = Date.now()
+    const rows = facts.all()
+    const oldRow = rows.find(f => f.id === oldHigh.id)
+    const freshRow = rows.find(f => f.id === freshMid.id)
+    if (oldRow) oldRow.lastSeenAt = now - 10 * 86400_000
+    if (freshRow) freshRow.lastSeenAt = now - 3600_000
+    facts.commit()
+
+    const persona = buildPersona(facts, knowledge)
+    const topFactsSection = persona.slice(persona.indexOf('Key clinical facts'))
+    // 排序后新近中价值应排在陈旧高价值之前（recency 主导 3 天后的衰减）
+    expect(topFactsSection.indexOf('新近中等重要的事实')).toBeLessThan(topFactsSection.indexOf('旧的但重要的事实'))
+  })
+})

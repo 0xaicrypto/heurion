@@ -119,11 +119,29 @@ export function buildCachedPersona(userId: string, facts: FactsStore, knowledge:
   return persona
 }
 
+/**
+ * §13.3B — importance × recency score (attentionScore semantics):
+ * score = importance × e^(-0.3 × daysAgo). Recency decays ~74% per day.
+ */
+function personaFactScore(f: { importance?: number; lastSeenAt?: number; createdAt?: number }): number {
+  const now = Date.now()
+  const ts = (f.lastSeenAt || f.createdAt || now)
+  const daysAgo = Math.max(0, (now - ts) / 86400_000)
+  return (f.importance ?? 3) * Math.exp(-0.3 * daysAgo)
+}
+
 export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): string {
-  const allFacts = facts.all()
+  // §13.3A: the global persona must never contain patient-scoped facts —
+  // patient preferences/clinical details belong to patient sessions only.
+  const allFacts = facts.all().filter(f => !f.patientHash && !f.studyId)
   const prefs = allFacts.filter(f => f.category === 'preference').sort((a, b) => b.importance - a.importance)
   const goals = allFacts.filter(f => f.category === 'goal').slice(0, 3)
-  const topFacts = allFacts.filter(f => f.category === 'fact').sort((a, b) => b.count - a.count).slice(0, 5)
+  // §13.3B: rank by importance × recency (attentionScore semantics) instead
+  // of the legacy usage counter.
+  const topFacts = allFacts
+    .filter(f => f.category === 'fact')
+    .sort((a, b) => personaFactScore(b) - personaFactScore(a))
+    .slice(0, 5)
   const knowledgeArticles = knowledge.all().filter(k => k.status === 'current').slice(0, 5)
 
   const parts: string[] = [
