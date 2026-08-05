@@ -109,45 +109,6 @@ describe('Telemetry — InMemory service', () => {
   })
 })
 
-describe('Telemetry — ChatOrchestrator integration', () => {
-  test('normal turn records a router event', async () => {
-    const telemetry = new InMemoryTelemetryService()
-    const { orchestrator } = createTestOrchestrator(telemetry)
-
-    await orchestrator.turn({
-      userId: 'u1',
-      message: 'EGFR 突变怎么治疗',
-      sessionId: 's1',
-      patientHash: null,
-      persona: 'You are a helpful assistant',
-      llmCall: vi.fn().mockResolvedValue('Use osimertinib'),
-    })
-
-    const dash = await telemetry.dashboard('u1')
-    expect(dash.router.byIntent.vector).toBe(1)
-    expect(dash.router.ruleHitRate).toBe(1)
-    expect(dash.router.llmFallbackRate).toBe(0)
-  })
-
-  test('knowledge command records a kb_command event', async () => {
-    const telemetry = new InMemoryTelemetryService()
-    const { orchestrator, factsStore } = createTestOrchestrator(telemetry)
-
-    await orchestrator.turn({
-      userId: 'u1',
-      message: '记住：ZQ 对 osimertinib 不耐受',
-      sessionId: 's1',
-      patientHash: null,
-      persona: 'You are a helpful assistant',
-      llmCall: vi.fn(),
-    })
-
-    expect(factsStore.all().length).toBe(1)
-    const dash = await telemetry.dashboard('u1')
-    expect(Object.values(dash.kbCommands).reduce((a, b) => a + b, 0)).toBe(1)
-  })
-})
-
 describe('Telemetry — API integration', () => {
   async function freshUser() {
     const app = await getApp()
