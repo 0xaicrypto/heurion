@@ -90,6 +90,18 @@ function buildContextBlock(ctx: CompactionCtx, patientHash: string | undefined, 
  * this). AI extraction always lands in the pending review queue
  * (BRAIN2_MEMORY_LIFECYCLE §5.2 — no direct write path).
  */
+/** Parse the extraction LLM output as a JSON array; null when unparseable. */
+function parseExtractionResult(result: string): Array<Record<string, any>> | null {
+  const jsonMatch = result.match(/\[[\s\S]*\]/)
+  if (!jsonMatch) return null
+  try {
+    const parsed = JSON.parse(jsonMatch[0])
+    return Array.isArray(parsed) ? (parsed as Array<Record<string, any>>) : null
+  } catch {
+    return null
+  }
+}
+
 export async function extractAndProposeFacts(
   ctx: CompactionCtx,
   patientHash: string | undefined,
@@ -122,19 +134,27 @@ ${conversation}
 
 [JSON array]:`
 
-  const result = await deepseekChat(
-    [{ role: 'user', content: prompt }],
-    apiKey,
-    {
-      model: 'deepseek-chat',
-      maxTokens: 2048,
-      telemetryContext: { userId: ctx.userId, workspaceId: ctx.userId, action: 'chat.extract_facts' },
-    },
-  )
-  const jsonMatch = result.match(/\[[\s\S]*\]/)
-  if (!jsonMatch) return []
+  const chatOpts = {
+    model: 'deepseek-chat',
+    maxTokens: 2048,
+    telemetryContext: { userId: ctx.userId, workspaceId: ctx.userId, action: 'chat.extract_facts' },
+  } as const
 
-  const parsed = JSON.parse(jsonMatch[0]) as Array<Record<string, any>>
+  let result = await deepseekChat([{ role: 'user', content: prompt }], apiKey, chatOpts)
+  let parsed: Array<Record<string, any>> | null = parseExtractionResult(result)
+  if (parsed === null) {
+    // #182: retry once with a correction hint — a failed parse must NOT
+    // silently drop the segment.
+    console.log('[EXTRACT] Unparseable LLM output, retrying with correction')
+    const retryPrompt = `${prompt}\n\n你的上一次输出无法解析为 JSON 数组。请只返回合法的 JSON 数组，不要包含任何其他文本或解释。`
+    result = await deepseekChat([{ role: 'user', content: retryPrompt }], apiKey, chatOpts)
+    parsed = parseExtractionResult(result)
+  }
+  if (parsed === null) {
+    // Still failing: throw so the caller does NOT advance the cursor — the
+    // segment will be retried on the next extraction pass.
+    throw new Error(`Extraction output unparseable (2 attempts): ${result.slice(0, 120)}`)
+  }
   const extracted: ExtractedFact[] = []
   const gateway = ctx.memory
     ? new MemoryGraphGateway(ctx.userId, ctx.memory, ctx.facts, ctx.episodes, ctx.skills, ctx.knowledge)
