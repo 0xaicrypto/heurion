@@ -1,4 +1,5 @@
 import type { EpisodesStore } from '../../evolution/stores'
+import { makeLogger } from '../../common/logger.js'
 
 /**
  * §5.1 (#189): session summarizer extracted from the gateway.
@@ -6,6 +7,8 @@ import type { EpisodesStore } from '../../evolution/stores'
  * session's episodes instead of entering the review queue (the
  * episode_summary proposal was a no-op). LLM failure degrades gracefully.
  */
+const log = makeLogger('memory.session-summarizer')
+
 export class SessionSummarizer {
   constructor(
     private userId: string,
@@ -62,7 +65,7 @@ ${input.conversation.slice(0, 12000)}`
         },
       )) || ''
     } catch (err) {
-      console.log('[MEMORY] Summarize degraded (LLM failed):', (err as Error).message.slice(0, 120))
+      log.warn('summarize degraded (LLM failed)', { reason: (err as Error).message.slice(0, 120) })
       return { summary: '', proposals: 0 }
     }
 
@@ -73,7 +76,7 @@ ${input.conversation.slice(0, 12000)}`
       this.episodes.upsert(input.sessionId, summary, turnCount + 1)
       this.episodes.commit()
     } catch (err) {
-      console.log('[MEMORY] Session Memory update skipped:', (err as Error).message.slice(0, 120))
+      log.warn('session memory update skipped', { reason: (err as Error).message.slice(0, 120) })
     }
 
     return { summary, proposals: 0 }

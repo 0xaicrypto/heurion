@@ -1,4 +1,5 @@
 import { EventLog, Event } from '../../core/event-log'
+import { makeLogger } from '../../common/logger.js'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../evolution/stores'
 import { ContractEngine } from '../../core/contracts'
 import { MemoryProjection } from '../../retrieval/memory-projection'
@@ -28,6 +29,8 @@ import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js
 import { type TelemetryService, NoopTelemetryService } from '../knowledge/telemetry.service.js'
 import type { MemoryService } from '../../memory/memory.service.js'
 
+
+const log = makeLogger('chat.orchestrator')
 
 export class ChatOrchestrator {
   private projection: MemoryProjection
@@ -118,7 +121,7 @@ export class ChatOrchestrator {
         console.log(`[GAP] Detected: "${userMessage.slice(0, 80)}"`)
       }
     } catch (err) {
-      console.log('[GAP] Detection skipped:', (err as Error).message.slice(0, 100))
+      log.warn('gap detection skipped', { reason: (err as Error).message.slice(0, 100) })
     }
   }
 
@@ -143,7 +146,7 @@ export class ChatOrchestrator {
         patientHash,
       )
     } catch (err) {
-      console.log('[FLUSH] skipped:', (err as Error).message.slice(0, 120))
+      log.warn('flush skipped', { reason: (err as Error).message.slice(0, 120) })
       return 0
     }
   }

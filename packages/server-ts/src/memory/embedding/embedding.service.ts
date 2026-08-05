@@ -1,4 +1,5 @@
 import path from 'path'
+import { makeLogger } from '../../common/logger.js'
 import { EmbeddingIndex, normalizeVector } from '../embedding-index.js'
 import type { MemoryService } from '../../memory/memory.service.js'
 import type { MemoryScope } from '../contracts.js'
@@ -8,6 +9,8 @@ import type { MemoryScope } from '../contracts.js'
  * Lazy-loads the embedder/index; concurrent first calls share one
  * creation promise (fixes the double-initialization race).
  */
+const log = makeLogger('memory.embedding.service')
+
 export class EmbeddingService {
   private _embeddingIndex: EmbeddingIndex | null = null
   private _embed: Promise<((texts: string[]) => Promise<number[][]>) | null> | null = null
@@ -51,7 +54,7 @@ export class EmbeddingService {
       const vecs = await embed([text])
       return vecs[0] ?? null
     } catch (err) {
-      console.log('[MEMORY] Embedding unavailable:', (err as Error).message.slice(0, 120))
+      log.warn('embedding unavailable', { reason: (err as Error).message.slice(0, 120) })
       return null
     }
   }
@@ -81,7 +84,7 @@ export class EmbeddingService {
         updatedAt: Date.now(),
       })
     } catch (err) {
-      console.log('[MEMORY] Embedding index write skipped:', (err as Error).message.slice(0, 120))
+      log.warn('embedding index write skipped', { reason: (err as Error).message.slice(0, 120) })
     }
   }
 

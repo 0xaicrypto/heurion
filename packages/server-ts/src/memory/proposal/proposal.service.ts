@@ -1,4 +1,5 @@
 import prisma from '../../common/prisma.js'
+import { makeLogger } from '../../common/logger.js'
 import type { MemoryService } from '../memory.service.js'
 import { sanitizeFactFields } from '../memory.types'
 import type { EmbeddingService } from '../embedding/embedding.service.js'
@@ -11,6 +12,8 @@ import { getProposalApplier } from '../registry.js'
  * The ONLY entry point for extracted/summarized memories: nothing writes
  * the graph directly (design: BRAIN2_MEMORY_LIFECYCLE §3, §5.2).
  */
+const log = makeLogger('memory.proposal.service')
+
 export class ProposalService {
   constructor(
     private userId: string,
@@ -95,7 +98,7 @@ export class ProposalService {
         payload: serializeProposal(row),
       })
     } catch (err) {
-      console.log('[MEMORY] Approval request enqueue skipped:', (err as Error).message.slice(0, 120))
+      log.warn('approval request enqueue skipped', { reason: (err as Error).message.slice(0, 120) })
     }
     return serializeProposal(row)
   }
