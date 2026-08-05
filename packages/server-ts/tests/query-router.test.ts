@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
+import { mockAiProvider } from './helpers/ai-mock.js'
 import { deepseekChat } from '../src/common/llm.js'
 import {
   classifyQuery,
@@ -11,10 +12,7 @@ import {
   type LLMClassifier,
 } from '../src/retrieval/query-router'
 
-vi.mock('../src/common/llm.js', () => ({
-  getApiKey: vi.fn(() => 'test-key'),
-  deepseekChat: vi.fn(),
-}))
+vi.mock('../src/common/llm.js', () => mockAiProvider())
 
 describe('P3 — Query Router', () => {
   beforeEach(() => {

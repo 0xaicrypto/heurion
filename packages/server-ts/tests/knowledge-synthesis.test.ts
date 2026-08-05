@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockAiProvider } from './helpers/ai-mock.js'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -6,14 +7,7 @@ import { EpisodesStore } from '../src/evolution/stores.js'
 import { updateEpisodeSummary, maybeSynthesizeArticle } from '../src/memory/knowledge-synthesis.js'
 import { MemoryGraphGateway, registerProposalApplier } from '../src/memory/memory-gateway.js'
 
-vi.mock('../src/common/llm.js', () => ({
-  deepseekChat: vi.fn(),
-  deepseekStream: vi.fn(),
-  getApiKey: () => 'test-key',
-  setLlmTelemetryService: vi.fn(),
-  DEEPSEEK_CHAT_MODEL: 'deepseek-v4-flash',
-  DEEPSEEK_PREMIUM_MODEL: 'deepseek-v4-pro',
-}))
+vi.mock('../src/common/llm.js', () => mockAiProvider())
 
 import { deepseekChat } from '../src/common/llm.js'
 

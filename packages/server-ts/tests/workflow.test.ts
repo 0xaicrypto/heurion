@@ -1,5 +1,15 @@
-import { describe, test, expect } from 'vitest'
+import { describe, test, expect, vi, beforeAll } from 'vitest'
+import { mockAiProvider } from './helpers/ai-mock.js'
+vi.mock('../src/common/llm.js', () => mockAiProvider())
+import { deepseekChat, deepseekStream } from '../src/common/llm.js'
 import { getApp, authHeader } from './setup.js'
+
+beforeAll(() => {
+  vi.mocked(deepseekChat).mockResolvedValue('OK')
+  vi.mocked(deepseekStream).mockImplementation(async function* () {
+    yield 'done'
+  })
+})
 
 /**
  * 医生工作流集成测试 — 覆盖完整的 6 步业务流程

@@ -1,14 +1,8 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockAiProvider } from './helpers/ai-mock.js'
 import { getApp, authHeader } from './setup.js'
 
-vi.mock('../src/common/llm.js', () => ({
-  deepseekChat: vi.fn(),
-  deepseekStream: vi.fn(),
-  getApiKey: () => 'test-key',
-  setLlmTelemetryService: vi.fn(),
-  DEEPSEEK_CHAT_MODEL: 'deepseek-chat',
-  DEEPSEEK_PREMIUM_MODEL: 'deepseek-pro',
-}))
+vi.mock('../src/common/llm.js', () => mockAiProvider())
 
 const mocks = vi.hoisted(() => ({
   enqueue: vi.fn(async (job: any) => ({
