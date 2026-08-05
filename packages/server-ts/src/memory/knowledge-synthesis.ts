@@ -90,7 +90,13 @@ export async function maybeSynthesizeArticle(
     const best = [...byCategory.entries()].sort((a, b) => b[1].length - a[1].length)[0]
     if (!best || best[1].length < 3) return
 
-    const articleFacts = best[1]
+    // §13.3C: at least 3 candidates must have been confirmed within the last
+    // 7 days — historical facts alone must not trigger a synthesis (noise).
+    const sevenDaysAgo = Date.now() - 7 * 86400_000
+    const recent = best[1].filter((f) => (f.createdAt || 0) >= sevenDaysAgo)
+    if (recent.length < 3) return
+
+    const articleFacts = recent
       .sort((a, b) => (b.importance ?? 3) - (a.importance ?? 3))
       .slice(0, 10)
 
