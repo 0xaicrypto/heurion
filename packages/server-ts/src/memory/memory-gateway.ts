@@ -5,6 +5,7 @@ import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../
 import type { MemoryNode } from './memory.types'
 import { sanitizeFactFields, FACT_CONTENT_MAX } from './memory.types'
 import { EmbeddingIndex, normalizeVector } from './embedding-index.js'
+import { buildPersona } from '../common/persona.js'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -522,7 +523,7 @@ ${input.conversation.slice(0, 12000)}`
       .map((s) => ({ name: s.name, strategy: s.bestStrategy, successCount: s.successCount, taskCount: s.taskCount }))
 
     return {
-      persona: this.buildPersona(),
+      persona: buildPersona(this.facts, this.knowledge),
       patient: scope.patientHash ? this.buildPatientContext(scope.patientHash) : null,
       episodes,
       facts: facts.map((f) => ({
@@ -545,31 +546,6 @@ ${input.conversation.slice(0, 12000)}`
       .filter((f) => f.patientHash && f.patientHash !== patientHash && (f.importance ?? 3) >= 4)
       .slice(0, 5)
     return [...own, ...cross]
-  }
-
-  private buildPersona(): string {
-    const allFacts = this.facts.all()
-    const prefs = allFacts.filter((f) => f.category === 'preference').sort((a, b) => (b.importance ?? 3) - (a.importance ?? 3)).slice(0, 5)
-    const goals = allFacts.filter((f) => f.category === 'goal').slice(0, 3)
-    const articles = this.knowledge.all().filter((k) => k.status === 'current').slice(0, 5)
-
-    const parts = [
-      'You are Heurion, a clinical AI assistant for oncology research.',
-      'Be concise, evidence-based, and reference relevant patient data and accumulated knowledge.',
-    ]
-    if (prefs.length > 0) {
-      parts.push('\nYour accumulated preferences:')
-      for (const p of prefs) parts.push(`- ${p.content} (importance: ${p.importance ?? 3}/5)`)
-    }
-    if (goals.length > 0) {
-      parts.push('\nActive goals:')
-      for (const g of goals) parts.push(`- ${g.content}`)
-    }
-    if (articles.length > 0) {
-      parts.push('\nYour knowledge base includes:')
-      for (const k of articles) parts.push(`- ${k.title}`)
-    }
-    return parts.join('\n')
   }
 
   private buildPatientContext(patientHash: string): { basicInfo: string; findings: string } | null {

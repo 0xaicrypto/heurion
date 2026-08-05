@@ -73,20 +73,8 @@ const DEFAULT_CONFIG: ProjectionConfig = {
 interface ScoredFact { fact: Fact; score: number }
 interface ScoredEpisode { episode: Episode; score: number }
 
-function daysAgo(timestamp: number): number {
-  return (Date.now() - timestamp) / (1000 * 60 * 60 * 24)
-}
-
-function recencyWeight(days: number, lambda: number): number {
-  return Math.exp(-lambda * days)
-}
-
-function estimateTokens(text: string): number {
-  // 粗略估计: 英文 ~4 chars/token, 中文 ~1.5 chars/token
-  const latinChars = (text.match(/[a-zA-Z0-9\s]/g) || []).length
-  const nonLatinChars = text.length - latinChars
-  return Math.ceil(latinChars / 4 + nonLatinChars / 1.5)
-}
+import { daysAgo, recencyWeight } from '../common/attention.js' // §5.4 (#197)
+import { estimateTokens } from '../common/token-estimate.js' // §5.4 (#197)
 
 // ── 上下文投影器 ───────────────────────────────────────
 
