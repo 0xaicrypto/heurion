@@ -373,19 +373,24 @@ export class MemoryGraphGateway {
       topK: opts.topK ?? 5,
       minScore: opts.minScore ?? 0.35,
     })
-    return hits.map((h) => {
+    const results: Array<{ stableId: string; content: string; type: string; score: number }> = []
+    for (const h of hits) {
+      // §2.2 (#183): never surface superseded/deleted facts — an edited or
+      // removed fact must not be fed back to the LLM as context.
       let content = h.record.contentHash
       try {
         const node = this.memory?.graph.getLatestByStableId(h.record.stableId) as any
+        if (node && node.status === 'superseded') continue
         if (node?.content) content = node.content
       } catch { /* keep hash preview */ }
-      return {
+      results.push({
         stableId: h.record.stableId,
         content,
         type: h.record.type,
         score: h.score,
-      }
-    })
+      })
+    }
+    return results
   }
 
   async rejectProposal(proposalId: string, reason: string, actorId: string): Promise<boolean> {
