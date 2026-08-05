@@ -252,7 +252,8 @@ SNAP_ID=$(curl -sf "$BASE/api/v1/docs/$DID/snapshots" -H "$H" | je 'j.snapshots&
 check "10.5 Snapshot exists after edits" "$([ -n \"$SNAP_ID\" ] && echo ok || echo 'FAIL')"
 
 curl -sf -X POST "$BASE/api/v1/docs/$DID/snapshots/$SNAP_ID/restore" -H "$H" > /dev/null 2>&1
-check "10.6 Restore snapshot" "$(curl -sf "$BASE/api/v1/docs/$DID" -H "$H" | je "(j.body||'').includes('58yo M, cT2aN2M0 IIIA NSCLC')?'ok':'FAIL'" 2>/dev/null)"
+SNAP_BODY=$(curl -sf "$BASE/api/v1/docs/$DID/snapshots" -H "$H" | je 'j.snapshots&&j.snapshots.length>0?j.snapshots[0].body:""' 2>/dev/null)
+check "10.6 Restore snapshot" "$(curl -sf "$BASE/api/v1/docs/$DID" -H "$H" | je "(j.body||'')==='$SNAP_BODY'?'ok':'FAIL:'+String((j.body||'').slice(0,20))" 2>/dev/null)"
 
 # Put PHI-laden body for scan
 curl -sf -X PUT "$BASE/api/v1/docs/$DID" -H "$H" -H "Content-Type: application/json" -d '{"body":"Patient John Smith has SSN 123-45-6789."}' > /dev/null 2>&1
