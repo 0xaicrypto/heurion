@@ -150,15 +150,18 @@ export async function patientsRouter(app: FastifyInstance) {
     return Buffer.alloc(1)
   })
 
-  async function appendChiefComplaint(userId: string, prefix: string, text: string) {
-    if (!text || text.length <= 5) return
-    const patients = await (prisma as any).patientRecord.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 1 })
-    if (patients.length === 0) return
-    const existing = patients[0].chiefComplaint || ''
+  // The target patient must be EXPLICIT and owned by the user — a scan
+  // result must never land in the 'latest patient' profile (multi-patient
+  // data integrity, clinical safety).
+  async function appendChiefComplaint(userId: string, patientHash: string | undefined | null, prefix: string, text: string) {
+    if (!patientHash || !text || text.length <= 5) return
+    const patient = await (prisma as any).patientRecord.findFirst({ where: { hash: patientHash, userId } })
+    if (!patient) return
+    const existing = patient.chiefComplaint || ''
     const snippet = text.slice(0, 50)
     if (existing.includes(snippet)) return
     await (prisma as any).patientRecord.update({
-      where: { hash: patients[0].hash },
+      where: { hash: patientHash },
       data: { chiefComplaint: (existing + `\n[${prefix}] ` + text.slice(0, 300)).trim(), updatedAt: new Date().toISOString() },
     })
   }
@@ -167,31 +170,38 @@ export async function patientsRouter(app: FastifyInstance) {
   app.post('/api/v1/dicom/studies/:studyId/quick-scan', async (request) => {
     const studyId = (request.params as any).studyId
     const userId = request.user!.userId
+    const body = (request.body as any) || {}
+    // The scan must be explicitly attached to a patient owned by the user —
+    // no implicit 'latest patient' (clinical data integrity).
+    const patientHash = body.patient_hash || null
     const findings = quickScanDicom(userId, studyId)
 
-    // Gemini Vision analysis with timeout — ensure profile is updated before response returns
+    // Gemini Vision analysis with timeout — AI FAILURES are telemetry only,
+    // never persisted into the patient record as clinical findings.
     const AI_TIMEOUT_MS = 10000
     let aiFindings = ''
+    let aiFailed = false
     try {
       aiFindings = await Promise.race([
         analyzeWithGeminiVision(userId, studyId),
         new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), AI_TIMEOUT_MS)),
       ])
     } catch (err) {
+      aiFailed = true
       const message = err instanceof Error ? err.message : String(err)
-      aiFindings = `Vision analysis ${message}`
+      console.log(`[QUICK-SCAN] Vision analysis failed: ${message}`)
     }
 
-    if (aiFindings) {
+    if (aiFindings && !aiFailed) {
       findings.push({ type: 'ai_analysis', content: aiFindings })
-      await appendChiefComplaint(userId, 'AI Vision', aiFindings).catch(() => {})
+      await appendChiefComplaint(userId, patientHash, 'AI Vision', aiFindings).catch(() => {})
     }
 
     // Update patient with scan data
     const text = findings.filter((f: any) => f.type !== 'meta' && f.type !== 'error' && f.type !== 'ai_analysis')
       .map((f: any) => f.content).join(' | ')
     if (text && text.length > 5) {
-      await appendChiefComplaint(userId, 'Scan', text).catch(() => {})
+      await appendChiefComplaint(userId, patientHash, 'Scan', text).catch(() => {})
     }
 
     // Store findings as MemoryGraph facts so the LLM can reference them in chat

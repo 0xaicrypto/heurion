@@ -189,10 +189,11 @@ export class MemoryService {
     )
     this.legacyFacts.commit()
 
-    this.graph.commit()
-
+    // Propagate FIRST, then commit ONCE — curation's stale/superseded
+    // changes must land on disk or they resurrect after a restart.
     const propagation = this.curation.propagateFactChange(stableId)
     this.applyPropagationToLegacy(propagation)
+    this.graph.commit()
 
     this.appendEvent('memory_fact_edited', `Edited fact ${stableId}`, {
       factId: stableId,
@@ -209,10 +210,10 @@ export class MemoryService {
     if (!current || current.status === 'superseded') return { ok: false }
 
     this.graph.markStatus(current.id, 'superseded')
-    this.graph.commit()
 
     const propagation = this.curation.propagateFactChange(stableId)
     this.applyPropagationToLegacy(propagation)
+    this.graph.commit()
 
     // Remove the fact from the legacy projection immediately so list counts drop.
     // The graph node remains superseded for audit/versioning.

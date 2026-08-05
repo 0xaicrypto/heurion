@@ -247,5 +247,10 @@ export async function* deepseekStream(
 }
 
 export function getApiKey(): string {
-  return process.env.DEEPSEEK_API_KEY || 'sk-edc3839a3dd44babaf33dc16d0761dc3'
+  // Hard-coded keys are forbidden — the key MUST come from the environment.
+  const key = process.env.DEEPSEEK_API_KEY
+  if (!key) {
+    throw new Error('DEEPSEEK_API_KEY is not configured')
+  }
+  return key
 }

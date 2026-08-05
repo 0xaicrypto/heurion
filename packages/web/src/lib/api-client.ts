@@ -384,8 +384,11 @@ class ApiClient {
     return this.fetch(`/api/v1/files/uploads${q}`);
   }
 
-  async triggerQuickScan(studyId: string): Promise<{job_id: string; status: string}> {
-    return this.fetch(`/api/v1/dicom/studies/${studyId}/quick-scan`, { method: 'POST' });
+  async triggerQuickScan(studyId: string, patientHash?: string): Promise<{job_id: string; status: string}> {
+    return this.fetch(`/api/v1/dicom/studies/${studyId}/quick-scan`, {
+      method: 'POST',
+      body: JSON.stringify({ patient_hash: patientHash ?? null }),
+    });
   }
 
   /* ────────────────────────── report ────────────────────────── */
