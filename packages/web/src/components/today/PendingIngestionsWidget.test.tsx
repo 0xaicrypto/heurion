@@ -123,7 +123,7 @@ describe('PendingIngestionsWidget', () => {
     await waitFor(() => expect(screen.getByText('所有报告已处理')).toBeInTheDocument());
   });
 
-  it('reject requires reason, then calls rejectApproval with it', async () => {
+  it('reject works without a reason (reason optional, #149) and with one', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [pendingRequest] }))
       .mockResolvedValueOnce(jsonResponse({ requests: [] }))
@@ -135,15 +135,13 @@ describe('PendingIngestionsWidget', () => {
     const rejectSpy = vi.spyOn(api, 'rejectApproval').mockResolvedValue({ ...pendingRequest, status: 'rejected' });
 
     fireEvent.click(screen.getByRole('button', { name: /拒绝/i }));
-    const input = await screen.findByPlaceholderText('原因（选填）');
+    await screen.findByPlaceholderText('原因（选填）');
     const rejectBtn = screen.getByRole('button', { name: /^拒绝$/ });
-    expect(rejectBtn).toBeDisabled();
-
-    fireEvent.change(input, { target: { value: '重复报告' } });
+    // Empty reason does NOT disable the button anymore
     expect(rejectBtn).toBeEnabled();
     fireEvent.click(rejectBtn);
 
-    await waitFor(() => expect(rejectSpy).toHaveBeenCalledWith('apr_1', '重复报告'));
+    await waitFor(() => expect(rejectSpy).toHaveBeenCalledWith('apr_1', ''));
     await waitFor(() => expect(screen.getByText('所有报告已处理')).toBeInTheDocument());
   });
 
