@@ -2,16 +2,6 @@ import { EventLog, Event } from '../../core/event-log'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../evolution/stores'
 import { ContractEngine } from '../../core/contracts'
 import { MemoryProjection } from '../../retrieval/memory-projection'
-import { deepseekChat, getApiKey } from '../../common/llm.js'
-import { router, RouterResult } from '../../retrieval/query-router'
-
-function extractKeywords(query: string): string[] {
-  return query
-    .toLowerCase()
-    .split(/\s+/)
-    .map(w => w.replace(/[^\p{L}\p{N}]/gu, ''))
-    .filter(w => w.length > 3)
-}
 
 /** CJK-aware keyword extraction: latin tokens as-is, Chinese via 2-grams
  *  (split(/\s+/) does not segment Chinese — a whole sentence becomes one
@@ -33,81 +23,11 @@ function extractCjkKeywords(text: string): string[] {
   }
   return [...words]
 }
-function matchesKeywords(text: string, keywords: string[]): boolean {
-  if (keywords.length === 0 || !text) return false
-  const t = text.toLowerCase()
-  return keywords.some(k => t.includes(k))
-}
-
-import { daysAgo } from '../../common/attention.js' // §5.4 (#197)
-function filterFacts(facts: any[], query: string, patientHash?: string): any[] {
-  if (facts.length <= 20) return facts
-  const keywords = extractKeywords(query)
-  const scored = facts.map(f => {
-    let score = 0
-    if ((f.importance || 3) >= 4) score += 100
-    if (patientHash && f.patientHash === patientHash) score += 80
-    if (matchesKeywords(f.content, keywords)) score += 60
-    score += Math.max(0, 30 - daysAgo(f.lastSeenAt || f.createdAt) * 3)
-    return { f, score }
-  })
-  const baseline = scored.filter(s => s.score >= 80).map(s => s.f)
-  const rest = scored
-    .filter(s => s.score < 80)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, Math.max(0, 30 - baseline.length))
-    .map(s => s.f)
-  return [...baseline, ...rest]
-}
-
-function filterKnowledge(articles: any[], query: string): any[] {
-  if (articles.length <= 10) return articles
-  const keywords = extractKeywords(query)
-  const scored = articles.map(a => {
-    let score = 0
-    const text = `${a.title || ''} ${a.content || ''}`
-    if (matchesKeywords(text, keywords)) score += 80
-    if (a.status === 'stale') score -= 20
-    score += Math.max(0, 20 - daysAgo(a.updatedAt || a.createdAt))
-    return { a, score }
-  })
-  return scored
-    .filter(s => s.score > 20)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 15)
-    .map(s => s.a)
-}
-
-function filterSkills(skills: any[], query: string): any[] {
-  if (skills.length <= 10) return skills
-  const keywords = extractKeywords(query)
-  return skills
-    .filter(s => matchesKeywords(`${s.name || ''} ${s.description || ''}`, keywords))
-    .slice(0, 10)
-}
-
-function filterEpisodes(episodes: any[], query: string): any[] {
-  if (episodes.length <= 5) return episodes
-  const keywords = extractKeywords(query)
-  const recent = episodes
-    .slice()
-    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-    .slice(0, 5)
-  const matched = episodes.filter(e => matchesKeywords(e.summary || '', keywords) && !recent.includes(e))
-  return [...recent, ...matched].slice(0, 10)
-}
 import { handleKnowledgeCommand, CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
 import { type TelemetryService, NoopTelemetryService } from '../knowledge/telemetry.service.js'
 import type { MemoryService } from '../../memory/memory.service.js'
 
-export interface TurnResult {
-  userEvent: Event
-  response: string
-  budget: any[]
-  route?: RouterResult
-  kbCommand?: boolean
-}
 
 export class ChatOrchestrator {
   private projection: MemoryProjection
@@ -144,7 +64,7 @@ export class ChatOrchestrator {
     } catch (err) {
       console.log('[EVOLVE] Proposal write skipped:', (err as Error).message.slice(0, 120))
     }
-  }  memory?: MemoryService
+  }
 
   constructor(
     private eventLog: EventLog,
@@ -154,176 +74,10 @@ export class ChatOrchestrator {
     private knowledgeStore: KnowledgeStore,
     private contracts: ContractEngine,
     private telemetry: TelemetryService = new NoopTelemetryService(),
+    /** §5.2 (#190): constructor-injected — no more (this as any).memory. */
+    private memory?: MemoryService,
   ) {
     this.projection = new MemoryProjection(eventLog)
-  }
-
-  async turn(params: {
-    userId: string; message: string; sessionId: string
-    patientHash: string | null; persona: string
-    llmCall: (systemPrompt: string, userMessage: string) => Promise<string>
-  }): Promise<TurnResult> {
-    const { userId, message, sessionId, patientHash, persona, llmCall } = params
-
-    const userEvent = this.eventLog.append({
-      timestamp: Date.now() / 1000, eventType: 'user_message', content: message,
-      metadata: { patientHash }, agentId: userId, sessionId,
-    })
-
-    const routeResult = await router(message)
-
-    await this.telemetry.record({
-      userId,
-      workspaceId: userId,
-      category: 'router',
-      action: routeResult.intent,
-      metadata: {
-        ruleHit: routeResult.ruleHit,
-        llmFallback: routeResult.llmFallback,
-        llmCalls: routeResult.cost.llmCalls,
-      },
-    }).catch(() => {})
-
-    // Knowledge commands are handled directly without calling the chat LLM
-    if (routeResult.intent === 'knowledge_command') {
-      return this.handleKnowledgeCommandTurn({ userId, message, sessionId, patientHash, userEvent, routeResult })
-    }
-
-    // For other intents, select context sources based on the route
-    const context = this.buildProjectionContext({
-      userId, message, patientHash, sessionId, persona, routeResult,
-    })
-
-    const projected = await this.projection.project(context)
-
-    const preCheck = this.contracts.preCheck(message)
-    if (preCheck.violations.length > 0) console.warn('pre-check violations:', preCheck.violations)
-
-    const response = await llmCall(projected.systemPrompt, message)
-
-    const postCheck = this.contracts.postCheck(message, response)
-    this.eventLog.append({
-      timestamp: Date.now() / 1000, eventType: 'assistant_response', content: response,
-      metadata: { contractPassed: postCheck.passed }, agentId: userId, sessionId,
-    })
-
-    return { userEvent, response, budget: projected.budget, route: routeResult, kbCommand: false }
-  }
-
-  private buildProjectionContext(params: {
-    userId: string
-    message: string
-    patientHash: string | null
-    sessionId: string
-    persona: string
-    routeResult: RouterResult
-  }) {
-    const { userId, message, patientHash, sessionId, persona, routeResult } = params
-
-    // Default: include all accumulated memory (mixed / fallback)
-    let facts = this.factsStore.all()
-    let episodes = this.episodesStore.all()
-    let skills = this.skillsStore.all()
-
-    if (routeResult.intent === 'sql') {
-      // Factual patient queries: rely on patient context from SQL, skip accumulated memory
-      facts = []
-      episodes = []
-      skills = []
-    } else if (routeResult.intent === 'vector') {
-      // Guideline / knowledge questions: skip episodic chat history, keep filtered facts
-      facts = filterFacts(facts, message, patientHash || undefined)
-      episodes = []
-      skills = []
-    } else if (routeResult.intent === 'file') {
-      // File references are handled upstream; keep minimal context here
-      facts = []
-      episodes = []
-      skills = []
-    } else {
-      // Mixed / fallback: keep high-signal memory but trim noise by query
-      // relevance. Episodes are un-reviewed summaries — current session only
-      // (BRAIN2_MEMORY_LIFECYCLE §5.3): a new session must not inherit them.
-      facts = filterFacts(facts, message, patientHash || undefined)
-      skills = filterSkills(skills, message)
-      episodes = filterEpisodes(episodes, message).filter(e => e.sessionId === sessionId)
-    }
-
-    return {
-      userId,
-      patientHash,
-      sessionId,
-      persona,
-      facts,
-      episodes,
-      skills,
-    }
-  }
-
-  private async handleKnowledgeCommandTurn(params: {
-    userId: string
-    message: string
-    sessionId: string
-    patientHash: string | null
-    userEvent: Event
-    routeResult: RouterResult
-  }): Promise<TurnResult> {
-    const { userId, message, sessionId, patientHash, userEvent, routeResult } = params
-
-    const ctx = {
-      workspaceId: userId,
-      userId,
-      factsStore: this.factsStore,
-      knowledgeStore: this.knowledgeStore,
-      gapService: this.gapService,
-      memory: (this as any).memory,
-    }
-
-    const result = await handleKnowledgeCommand(ctx, message)
-    const response = this.formatCommandResult(result)
-
-    await this.telemetry.record({
-      userId,
-      workspaceId: userId,
-      category: 'kb_command',
-      action: result.type === 'error' ? 'error' : (result.type.replace(/^kb_/, '')),
-      metadata: {
-        commandType: result.type,
-        hadError: result.type === 'error',
-      },
-    }).catch(() => {})
-
-    this.eventLog.append({
-      timestamp: Date.now() / 1000,
-      eventType: 'assistant_response',
-      content: response,
-      metadata: { kbCommand: true, commandType: result.type },
-      agentId: userId,
-      sessionId,
-    })
-
-    return { userEvent, response, budget: [], route: routeResult, kbCommand: true }
-  }
-
-  private formatCommandResult(result: CommandResult): string {
-    switch (result.type) {
-      case 'kb_search_result':
-        return result.summary
-      case 'kb_remembered':
-        return `✅ 已记录为 Fact #${result.factId}（置信度 ${Math.round(result.confidence * 100)}%）`
-      case 'kb_pending_confirmation':
-        return `⚠️ 请确认是否记录："${result.candidate}"（置信度 ${Math.round(result.confidence * 100)}%）`
-      case 'kb_summary':
-        return result.summary
-      case 'kb_gaps':
-        if (result.gaps.length === 0) return '当前没有未解问题。'
-        return `未解问题（${result.gaps.length}）：\n` +
-          result.gaps.map((g, i) => `${i + 1}. ${g.content}`).join('\n')
-      case 'error':
-        return `❌ ${result.message}`
-      default:
-        return '命令已处理。'
-    }
   }
 
   // #2: Extract facts automatically using DeepSeek (K1/K2: incremental

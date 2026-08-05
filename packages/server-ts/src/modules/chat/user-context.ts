@@ -90,8 +90,7 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
     legacyKnowledge: knowledge,
     ownerId: userId,
   })
-  const orchestrator = new ChatOrchestrator(eventLog, facts, episodes, skills, knowledge, contracts, telemetry)
-  orchestrator.memory = memory
+  const orchestrator = new ChatOrchestrator(eventLog, facts, episodes, skills, knowledge, contracts, telemetry, memory)
   const ctx = { eventLog, facts, episodes, skills, knowledge, memory, orchestrator, lastAccess: Date.now() }
   contexts.set(userId, ctx)
 
