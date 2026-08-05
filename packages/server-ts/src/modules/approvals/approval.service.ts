@@ -229,6 +229,17 @@ async function applyTargetUpdate(
       return
     }
 
+    // Summaries are context memory, not graph nodes: approving records the
+    // human verdict on the content without a graph write (the applier only
+    // supports fact/article).
+    if (row.kind === 'episode_summary' || row.kind === 'compaction_summary') {
+      await (prisma as any).memoryProposal.update({
+        where: { id: targetId },
+        data: { status: 'approved', resolvedAt: now, resolvedBy: actorId },
+      })
+      return
+    }
+
     const node = await applyProposalViaGateway(row.userId, row)
     if (!node) throw new Error('Memory proposal could not be applied')
     await (prisma as any).memoryProposal.update({

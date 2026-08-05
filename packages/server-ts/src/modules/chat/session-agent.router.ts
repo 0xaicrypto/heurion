@@ -82,17 +82,7 @@ export async function sessionRouter(app: FastifyInstance) {
       patientHash = row?.patientHash ?? undefined
     }
 
-    // 1) Summarize synchronously so the pending review gets the content
-    //    before we wipe the event log.
-    let summary = ''
-    try {
-      const result = await summarizeSessionToPending(userId, sessionId)
-      summary = result
-    } catch (err) {
-      console.log('[SESSION] summarize failed:', (err as Error).message.slice(0, 120))
-    }
-
-    // 1b) Tier-3 flush: extract any segment not yet covered by the
+    // 1) Tier-3 flush: extract any segment not yet covered by the
     //     incremental cursor or a compaction, before the event log is wiped
     //     (short sessions must not lose memory).
     let flushed = 0
@@ -114,29 +104,13 @@ export async function sessionRouter(app: FastifyInstance) {
       console.log('[SESSION] event cleanup failed:', (err as Error).message.slice(0, 120))
     }
 
-    return { id: sessionId, status: 'closed', closed_at: now, summarized: summary.length > 0, flushed_facts: flushed, cleaned_events: cleaned }
+    return { id: sessionId, status: 'closed', closed_at: now, flushed_facts: flushed, cleaned_events: cleaned }
   })
 
   app.delete('/api/v1/sessions/:sessionId', async (request) => {
     await prisma.session.deleteMany({ where: { id: (request.params as any).sessionId, userId: request.user!.userId } })
     return {}
   })
-}
-
-async function summarizeSessionToPending(userId: string, sessionId: string): Promise<string> {
-  const { getUserContext } = await import('./user-context.js')
-  const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
-  const ctx = getUserContext(userId)
-  const events = ctx.eventLog.query({ sessionId, limit: 80 }).reverse()
-  const conversation = events
-    .filter((e: any) => e.eventType === 'user_message' || e.eventType === 'assistant_response')
-    .map((e: any) => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
-    .join('\n')
-  if (!conversation.trim()) return ''
-
-  const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.facts, ctx.episodes, ctx.skills, ctx.knowledge)
-  const result = await gateway.summarize({ conversation, sessionId })
-  return result.summary
 }
 
 export async function agentRouter(app: FastifyInstance) {

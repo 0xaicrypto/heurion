@@ -91,17 +91,14 @@ describe('multi-session management (#115)', () => {
     expect(row.status).toBe('closed')
     expect(row.closedAt).toBeTruthy()
 
-    // Summarize fired async → episode_summary proposal appears (poll briefly)
-    let proposal: any = null
-    for (let i = 0; i < 20; i++) {
-      proposal = await (prisma as any).memoryProposal.findFirst({
-        where: { kind: 'episode_summary', status: 'pending' },
-        orderBy: { createdAt: 'desc' },
-      })
-      if (proposal) break
-      await new Promise((r) => setTimeout(r, 100))
-    }
-    expect(proposal).toBeDefined()
+    // Closing no longer enqueues an episode_summary proposal — summaries
+    // are Session Memory (draft layer), facts flow via the close flush.
+    await new Promise((r) => setTimeout(r, 500))
+    const proposals = await (prisma as any).memoryProposal.findMany({
+      where: { kind: 'episode_summary', status: 'pending' },
+      orderBy: { createdAt: 'desc' },
+    })
+    expect(proposals.some((p: any) => p.content.includes('Objective') || p.content.includes('患者重要信息'))).toBe(false)
   }, 30000)
 
   test('closing a nonexistent session returns 404', async () => {

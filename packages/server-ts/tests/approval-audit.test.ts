@@ -428,3 +428,35 @@ describe('13.4D pending auto-archival', () => {
     expect(requests.some((r: any) => r.targetId === id)).toBe(true)
   }, 30000)
 })
+
+describe('episode_summary approval', () => {
+  test('confirming an episode_summary succeeds without a graph write', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const now = new Date().toISOString()
+    const row = await (prisma as any).memoryProposal.create({
+      data: {
+        userId, scopeType: 'global', kind: 'episode_summary',
+        content: '会话摘要内容（已确认）', importance: 3,
+        confidence: 'medium', status: 'pending', createdAt: now,
+      },
+    })
+    await (prisma as any).approvalRequest.create({
+      data: {
+        id: `apr_sum_${row.id}`, userId, targetType: 'MemoryProposal', targetId: row.id,
+        status: 'pending', createdAt: now,
+        payload: JSON.stringify({ id: row.id, kind: 'episode_summary', importance: 3, content: '会话摘要内容（已确认）', createdAt: now, scopeType: 'global' }),
+      },
+    })
+
+    const confirm = await app.inject({
+      method: 'POST', url: `/api/v1/approvals/apr_sum_${row.id}/confirm`,
+      headers: await authHeader(),
+    })
+    expect(confirm.statusCode).toBe(200)
+    expect(JSON.parse(confirm.payload).status).toBe('approved')
+
+    const after = await (prisma as any).memoryProposal.findFirst({ where: { id: row.id } })
+    expect(after.status).toBe('approved')
+  }, 30000)
+})
