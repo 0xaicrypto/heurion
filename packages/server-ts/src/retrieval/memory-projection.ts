@@ -194,12 +194,17 @@ export class MemoryProjection {
     }
 
     // ── 组装 ──
+    // §4.3 (#188): when citing accumulated knowledge, annotate the source
+    // and confidence so every clinical statement stays traceable.
+    const citationRule = layer3Text
+      ? '\n引用记忆中的事实时，请附带 [置信度, 来源]，例如 [0.9, chat]；不确定的记忆请标注 "不确定"。'
+      : ''
     const sections = [
       params.persona,
       patientContext ? `\n## Patient Context\n${patientContext}` : '',
       layer1Text ? `\n## Recent Conversation\n${layer1Text}` : '',
       layer2Text ? `\n## Recent Sessions\n${layer2Text}` : '',
-      layer3Text ? `\n## Accumulated Knowledge\n${layer3Text}` : '',
+      layer3Text ? `\n## Accumulated Knowledge\n${layer3Text}${citationRule}` : '',
       skillsText ? `\n## Active Skills\n${skillsText}` : '',
     ].filter(Boolean)
 
@@ -300,6 +305,11 @@ export class MemoryProjection {
     const days = Math.round(daysAgo(fact.createdAt))
     // 高注意力 → 完整内容, 低注意力 → 截断
     const content = score > 0.5 ? fact.content : fact.content.slice(0, 80) + '...'
-    return `[${fact.category} ${stars}] ${content} (${days}d ago)`
+    // §4.3 (#188): clinical evidence stays visible — the LLM is asked to
+    // cite memory with [confidence, source] so answers are traceable.
+    const confidence = typeof fact.confidence === 'number' ? `conf ${fact.confidence}` : null
+    const source = fact.provenance?.sourceKind ? `source: ${fact.provenance.sourceKind}` : null
+    const evidence = [confidence, source].filter(Boolean).join(', ')
+    return `[${fact.category} ${stars}] ${content} (${days}d ago${evidence ? ` [${evidence}]` : ''})`
   }
 }
