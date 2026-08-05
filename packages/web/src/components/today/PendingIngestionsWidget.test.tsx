@@ -135,7 +135,7 @@ describe('PendingIngestionsWidget', () => {
     const rejectSpy = vi.spyOn(api, 'rejectApproval').mockResolvedValue({ ...pendingRequest, status: 'rejected' });
 
     fireEvent.click(screen.getByRole('button', { name: /拒绝/i }));
-    const input = await screen.findByPlaceholderText('原因（选填）');
+    await screen.findByPlaceholderText('原因（选填）');
     const rejectBtn = screen.getByRole('button', { name: /^拒绝$/ });
     // Empty reason does NOT disable the button anymore
     expect(rejectBtn).toBeEnabled();
