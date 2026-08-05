@@ -379,6 +379,13 @@ export function ChatPage() {
                     </details>
                   )}
                   {m.toolCalls && m.toolCalls.length > 0 && <ToolCalls calls={m.toolCalls} />}
+                  {m.chart && (
+                    <img
+                      src={m.chart.url}
+                      alt="chart"
+                      className="mt-2 max-h-72 rounded-lg border border-border"
+                    />
+                  )}
                   <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
                   {m.download && (
                     <div className="mt-3 rounded-lg border border-border bg-surface p-3">

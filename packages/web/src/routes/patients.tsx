@@ -569,6 +569,13 @@ export function PatientChatPage() {
                   </div>
                 )}
                 {m.toolCalls && m.toolCalls.length > 0 && <ToolCalls calls={m.toolCalls} />}
+                  {m.chart && (
+                    <img
+                      src={m.chart.url}
+                      alt="chart"
+                      className="mt-2 max-h-72 rounded-lg border border-border"
+                    />
+                  )}
                   <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
                 {m.isStreaming ? (
                   <span role="status" aria-label={t('chat.streaming')} className="animate-pulse">●</span>

@@ -658,6 +658,17 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
                     // non-JSON output — nothing to surface
                   }
                 }
+                // #176: surface generated charts as images in the message.
+                if (toolName === 'render_chart') {
+                  try {
+                    const parsed = JSON.parse(output) as { url?: string; markdown?: string; type?: string }
+                    if (parsed.url) {
+                      send({ type: 'chart_created', url: parsed.url, markdown: parsed.markdown || '', chart_type: parsed.type || '' })
+                    }
+                  } catch {
+                    // non-JSON output — nothing to surface
+                  }
+                }
               } else {
                 appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
                   tool: toolName, args: argsPreview, status: 'error', seq,
