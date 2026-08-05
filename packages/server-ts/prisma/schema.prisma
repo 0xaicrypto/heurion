@@ -385,11 +385,12 @@ model KbExtractCursor {
   id               String @id @default(cuid())
   userId           String @map("user_id")
   scopeType        String @map("scope_type") // 'patient' | 'global' | 'study'
-  patientHash      String @default("") @map("patient_hash") // '' = scope-level cursor
+  patientHash      String @default("") @map("patient_hash") // '' = scope-level
+  sessionId        String @default("") @map("session_id") // '' = scope-level; else per-session (#181)
   extractedUptoIdx Int    @map("extracted_upto_idx")
   updatedAt        String @map("updated_at")
 
-  @@unique([userId, scopeType, patientHash])
+  @@unique([userId, scopeType, patientHash, sessionId])
   @@map("kb_extract_cursors")
 }
 
