@@ -6,7 +6,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { SkillsBar } from '@/components/SkillsBar';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
-import { LlmContent, StreamingLlmContent } from '@/components/LlmContent';
+import { StreamingLlmContent } from '@/components/LlmContent';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
@@ -552,8 +552,9 @@ export function PatientChatPage() {
                 {m.reasoning && (
                   <details className="mb-2">
                     <summary className="cursor-pointer text-xs text-text-tertiary">{t('chat.reasoning')}</summary>
-                    <div className="mt-1 max-h-60 overflow-y-auto border-l-2 border-border pl-3">
-                      <LlmContent content={m.reasoning} />
+                    <div className="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-border pl-3 text-xs leading-relaxed text-text-secondary">
+                      {m.reasoning.slice(0, 30000)}
+                      {m.reasoning.length > 30000 ? '…' : ''}
                     </div>
                   </details>
                 )}

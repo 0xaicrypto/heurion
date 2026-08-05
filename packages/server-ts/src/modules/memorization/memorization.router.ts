@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import { getUserContext } from '../chat/user-context.js'
 import { ChatIngester } from './chat-ingester.service.js'
+import prisma from '../../common/prisma.js'
 
 export async function memorizationRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
@@ -82,4 +83,60 @@ export async function memorizationRouter(app: FastifyInstance) {
     })
     return { ...result, session_id: sessionId }
   })
+
+// 13.5G — memory health metrics.
+app.get('/api/v1/memory/health', async (request) => {
+  const userId = request.user!.userId
+  const ctx = getUserContext(userId)
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString()
+  const nowIso = new Date().toISOString()
+
+  const { getCategoryQuality } = await import('../../memory/extraction-quality.js')
+  const [quality, byCategory, contradictions, staleRows, archivedRows, graphFacts, graphArticles, gaps] = await Promise.all([
+    getCategoryQuality(userId),
+    (prisma as any).memoryProposal.findMany({
+      where: { userId, status: { in: ['approved', 'rejected'] }, resolvedAt: { not: null } },
+      select: { status: true },
+    }),
+    (prisma as any).memoryProposal.count({
+      where: { userId, status: 'pending', conflictsWith: { not: null }, createdAt: { gte: sevenDaysAgo } },
+    }),
+    (prisma as any).memoryProposal.findMany({
+      where: { userId, status: 'pending', archivedAt: null, createdAt: { lt: sevenDaysAgo } },
+      select: { importance: true, kind: true },
+    }),
+    (prisma as any).memoryProposal.count({ where: { userId, archivedAt: { not: null } } }),
+    ctx.memory.graph.getCurrentNodesByType('fact'),
+    ctx.memory.graph.getCurrentNodesByType('article'),
+    (prisma as any).knowledgeGap.count({ where: { userId, status: 'open' } }),
+  ])
+
+  const accepted = byCategory.filter((r: any) => r.status === 'approved').length
+  const rejected = byCategory.filter((r: any) => r.status === 'rejected').length
+  const total = accepted + rejected
+
+  return {
+    generated_at: nowIso,
+    acceptance: {
+      approved: accepted,
+      rejected,
+      rate: total > 0 ? +(accepted / total).toFixed(3) : null,
+      by_category: quality.map((q) => ({ ...q, rate: +q.rate.toFixed(3) })),
+    },
+    contradictions_7d: contradictions,
+    stale: {
+      pending_over_7d: staleRows.length,
+      high_importance_pinned: staleRows.filter((r: any) => r.kind === 'fact' && (r.importance ?? 3) >= 4).length,
+      archived: archivedRows,
+    },
+    scale: {
+      facts: graphFacts.length,
+      articles: graphArticles.length,
+      open_gaps: gaps,
+      pending: staleRows.length + archivedRows,
+      episodes: ctx.episodes.all().length,
+    },
+  }
+})
 }
+

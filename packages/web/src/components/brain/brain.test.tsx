@@ -259,6 +259,7 @@ describe('BrainPage', () => {
   it('renders stats, inbox and activity feed together', async () => {
     fetchMock.mockImplementation((url: unknown) => {
       const u = String(url)
+      if (u.includes('/memory/health')) return Promise.resolve(jsonResponse({ acceptance: { approved: 0, rejected: 0, rate: null, by_category: [] }, contradictions_7d: 0, stale: { pending_over_7d: 0, high_importance_pinned: 0, archived: 0 }, scale: { facts: 0, articles: 0, open_gaps: 0, pending: 0, episodes: 0 } }))
       if (u.includes('/brain/stats')) return Promise.resolve(jsonResponse({ pending: 12, confirmedToday: 5, totalEntries: 247 }))
       if (u.includes('/approvals/pending') && u.includes('MemoryProposal')) return Promise.resolve(jsonResponse({ requests: [] }))
       if (u.includes('/approvals/pending')) return Promise.resolve(jsonResponse({ requests: [pendingRequest] }))

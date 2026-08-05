@@ -355,6 +355,10 @@ class ApiClient {
 
   /* ────────────────────────── brain overview (Brain 2.0) ────────────────────────── */
 
+  async getMemoryHealth(): Promise<any> {
+    return this.fetch('/api/v1/memory/health');
+  }
+
   async getBrainStats(): Promise<BrainStats> {
     return this.fetch('/api/v1/brain/stats');
   }
