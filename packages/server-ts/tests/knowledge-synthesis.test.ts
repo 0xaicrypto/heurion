@@ -120,6 +120,34 @@ describe('K4 — article synthesis from new confirmed facts', () => {
     expect(proposal.content).toContain('感染指标汇总')
   }, 30000)
 
+  test('does not synthesize when all facts are older than 7 days (13.3C)', async () => {
+    const base = makeBaseDir()
+    const { MemoryService } = await import('../src/memory/memory.service.js')
+    const { EventLog } = await import('../src/core/event-log.js')
+    const { FactsStore, KnowledgeStore } = await import('../src/evolution/stores.js')
+
+    const eventLog = new EventLog(base, 'user_1')
+    const facts = new FactsStore(base)
+    const knowledge = new KnowledgeStore(base)
+    const memory = new MemoryService({
+      eventLog, baseDir: base, legacyFacts: facts, legacyKnowledge: knowledge, ownerId: 'user_1',
+    })
+
+    const eightDaysAgo = Date.now() - 8 * 86400_000
+    for (const c of ['WBC 11.2 偏高', 'CRP 68 mg/L 升高', '中性粒细胞比例 85%']) {
+      const node = memory.addFact({ content: c, category: 'exam', importance: 4, patientHash: 'patient_p1', sourceType: 'patient' }, 'system') as any
+      if (node && typeof node.createdAt === 'number') node.createdAt = eightDaysAgo
+    }
+
+    vi.mocked(deepseekChat).mockResolvedValue(JSON.stringify({ title: 'x', content: 'y' }))
+    registerProposalApplier(() => null)
+
+    await maybeSynthesizeArticle('user_1', { patientHash: 'patient_p1' }, memory)
+
+    // No synthesis for historical-only facts
+    expect(deepseekChat).not.toHaveBeenCalled()
+  }, 30000)
+
   test('does not synthesize when facts are already used by an article', async () => {
     const base = makeBaseDir()
     const { MemoryService } = await import('../src/memory/memory.service.js')
