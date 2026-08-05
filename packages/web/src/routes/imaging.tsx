@@ -97,7 +97,7 @@ export function ImagingPage() {
     setScanningStudy(studyId);
     setScanError(null);
     try {
-      await api.triggerQuickScan(studyId);
+      await api.triggerQuickScan(studyId, hash);
     } catch (err) {
       setScanError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
