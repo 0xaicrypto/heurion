@@ -49,7 +49,9 @@ export function PendingIngestionsWidget({ limit = 5, onCountChange }: PendingIng
       const nextRows: PendingRow[] = approvalsRes.requests.map((approval) => {
         const payload = approval.payload as Record<string, unknown> | null;
         const proposal = payload && typeof payload.kind === 'string' ? (payload as unknown as MemoryProposal) : null;
-        const entry = payload && typeof payload.id === 'string' ? (payload as unknown as MedicalRecordEntry) : null;
+        // MemoryProposal payloads also carry an `id` — only treat a payload
+        // as a MedicalRecordEntry when it is NOT a proposal.
+        const entry = !proposal && payload && typeof payload.id === 'string' ? (payload as unknown as MedicalRecordEntry) : null;
         const patientHash = proposal?.patientHash ?? entry?.patientHash;
         return {
           approval,
