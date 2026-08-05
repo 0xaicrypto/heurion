@@ -27,7 +27,42 @@ export async function createApprovalRequest(
   })
 }
 
+/**
+ * 13.4D — auto-archive stale pending proposals:
+ *  - summaries (episode_summary / compaction_summary) and low-importance
+ *    facts (<= 2) pending for > 7 days are archived (hidden from the queue,
+ *    not deleted — a manual reject/approve still works via API).
+ *  - high-importance facts (>= 4) stay pending (pinned, surfaced as
+ *    "待关注" by the frontend from createdAt).
+ * Runs lazily on every pending list (cheap updateMany) — no scheduler needed.
+ */
+export async function archiveStaleProposals(): Promise<number> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString()
+  const stale = await (prisma as any).memoryProposal.findMany({
+    where: { status: 'pending', archivedAt: null, createdAt: { lt: sevenDaysAgo } },
+  })
+  let archived = 0
+  for (const p of stale) {
+    const autoArchive = p.kind !== 'fact' || (p.importance ?? 3) <= 2
+    if (!autoArchive) continue
+    await (prisma as any).memoryProposal.update({
+      where: { id: p.id },
+      data: { archivedAt: new Date().toISOString() },
+    })
+    archived++
+  }
+  return archived
+}
+
 export async function listPendingApprovals(userId: string, targetType?: string, isAdmin = false) {
+  // Lazy archival keeps the queue current without a background job —
+  // awaited so the returned list is always post-archival.
+  try {
+    await archiveStaleProposals()
+  } catch {
+    // archival is best-effort; listing must not fail
+  }
+
   const where: any = { status: 'pending' }
   if (!isAdmin) where.userId = userId
   if (targetType) where.targetType = targetType
@@ -35,7 +70,20 @@ export async function listPendingApprovals(userId: string, targetType?: string, 
     where,
     orderBy: { createdAt: 'desc' },
   })
-  return rows.map(serializeApproval)
+
+  // Exclude archived MemoryProposals (the outer request has no archive flag).
+  const proposalRows = rows.filter((r: any) => r.targetType === 'MemoryProposal')
+  const archivedIds = new Set<string>()
+  if (proposalRows.length > 0) {
+    const archived = await (prisma as any).memoryProposal.findMany({
+      where: { id: { in: proposalRows.map((r: any) => r.targetId) }, archivedAt: { not: null } },
+      select: { id: true },
+    })
+    for (const a of archived) archivedIds.add(a.id)
+  }
+  return rows
+    .filter((r: any) => !(r.targetType === 'MemoryProposal' && archivedIds.has(r.targetId)))
+    .map(serializeApproval)
 }
 
 export async function getApprovalRequest(userId: string, id: string, isAdmin = false) {
