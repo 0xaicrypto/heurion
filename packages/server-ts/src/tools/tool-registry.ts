@@ -5,6 +5,7 @@ import { SearchPastChatsTool } from './memory-tools.js'
 import { DelegateTool } from './subagent-tools.js'
 import { DeferToBackgroundTool } from './async-tools.js'
 import { OCRImageTool } from './ocr-tools.js'
+import { EditDocumentTool } from './edit-document-tool.js'
 import type { MemoryService } from '../memory/memory.service.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores.js'
 import type { EventLog } from '../core/event-log.js'
@@ -17,6 +18,8 @@ export interface ToolContext {
   skills: SkillsStore
   knowledge: KnowledgeStore
   eventLog: EventLog
+  /** Current session id — write tools (edit_document) derive doc-{docId}. */
+  sessionId?: string
 }
 
 export class ToolRegistry {
@@ -31,6 +34,7 @@ export class ToolRegistry {
     this.register(new DelegateTool(ctx))
     this.register(new DeferToBackgroundTool(ctx))
     this.register(new OCRImageTool(ctx))
+    this.register(new EditDocumentTool(ctx))
   }
 
   register(tool: BaseTool): void {

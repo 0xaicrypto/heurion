@@ -546,6 +546,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
         skills: ctx.skills,
         knowledge: ctx.knowledge,
         eventLog: ctx.eventLog,
+        sessionId: sid,
       }
       const toolRegistry = new ToolRegistry(toolCtx)
       const tools = toolRegistry.definitions
@@ -646,6 +647,17 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
                 appendToolEvent('tool_result', output.slice(0, 500), {
                   toolCallId: seq, success: true, outputTruncated: output.length > 500,
                 })
+                // §15.4: surface document write-backs to the writing canvas.
+                if (toolName === 'edit_document') {
+                  try {
+                    const parsed = JSON.parse(output) as { body?: string; summary?: string }
+                    if (typeof parsed.body === 'string') {
+                      send({ type: 'doc_updated', body: parsed.body, summary: parsed.summary || '' })
+                    }
+                  } catch {
+                    // non-JSON output — nothing to surface
+                  }
+                }
               } else {
                 appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
                   tool: toolName, args: argsPreview, status: 'error', seq,

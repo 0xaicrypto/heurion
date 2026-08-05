@@ -31,6 +31,7 @@ interface SessionState {
   abort: AbortController | null;
   loading: boolean;
   compacting: boolean;
+  lastDocBody?: string;
   contextUsage?: {
     historyTokens: number;
     historyBudget: number;
@@ -136,6 +137,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 },
               },
             };
+          });
+          continue;
+        }
+        if (chunk.type === 'doc_updated') {
+          set((state) => {
+            const s = state.sessions[sessionId];
+            if (!s) return state;
+            return { sessions: { ...state.sessions, [sessionId]: { ...s, lastDocBody: chunk.body } } };
           });
           continue;
         }
