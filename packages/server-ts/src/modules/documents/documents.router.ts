@@ -147,111 +147,18 @@ export async function documentsRouter(app: FastifyInstance) {
   })
 
   // #3: Doc Chat SSE — structured output that can edit the document
-  app.post('/api/v1/docs/:docId/chat', async (request, reply) => {
-    const { docId } = request.params as any
-    const { message } = request.body as any
-    const userId = request.user!.userId
-    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
-    if (!doc) return reply.status(404).send({ error: 'Document not found' })
-
-    const apiKey = getApiKey()
-    reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
-    const send = (d: any) => reply.raw.write(`data: ${JSON.stringify(d)}\n\n`)
-
-    try {
-      send({ type: 'turn_started' })
-
-      // Load document references to provide context to the AI
-      const refs = await (prisma as any).docReference.findMany({
-        where: { userId, docId },
-        orderBy: { createdAt: 'asc' },
-      })
-      let refContext = ''
-      if (refs && refs.length > 0) {
-        refContext = '\n\n## Reference Materials (uploaded documents and references)\n'
-        for (const r of refs) {
-          const content = (r.snapshot || r.body || '').toString().slice(0, 8000)
-          refContext += `\n### ${r.label || r.id}\n${content}\n`
-        }
-      }
-
-      const structuredPrompt = `You are helping edit a clinical document titled "${doc.title}".
-
-Current document content:
-${doc.body}
-${refContext}
-User request: ${message || 'Help me with this document.'}
-
-Respond using EXACTLY this format:
-
-REPLY:
-<your concise, helpful response to the user>
-
-UPDATED_DOCUMENT:
-<the complete updated document content>
-
-Instructions:
-- Use the reference materials above as authoritative sources.
-- If the user wants you to modify the document, write the full new document content after UPDATED_DOCUMENT:.
-- If no changes are needed, repeat the current document content exactly after UPDATED_DOCUMENT:.
-- Do not wrap the document content in markdown code fences.
-- The REPLY section should briefly explain what you changed or answer the user's question.`
-
-      const fullResponse = await deepseekChat([
-        { role: 'system' as const, content: 'You are a precise clinical document editor.' },
-        { role: 'user' as const, content: structuredPrompt },
-      ], apiKey, {
-        model: 'deepseek-chat',
-        maxTokens: 4096,
-        telemetryContext: { userId, workspaceId: userId, action: 'document.chat' },
-      })
-
-      const parsed = parseDocChatResponse(fullResponse, doc.body)
-
-      // Stream reply to client
-      for (const chunk of chunkText(parsed.reply, 80)) {
-        send({ type: 'reply_chunk', text: chunk })
-      }
-
-      let docBody: string | undefined
-      if (parsed.updatedBody && parsed.updatedBody !== doc.body) {
-        const now = new Date().toISOString()
-        // Snapshot before AI edit
-        await (prisma as any).docSnapshot.create({
-          data: {
-            docId,
-            userId,
-            body: doc.body,
-            label: 'Before AI edit',
-            createdAt: now,
-          },
-        })
-        // Update document
-        await (prisma as any).doc.update({
-          where: { id: docId },
-          data: { body: parsed.updatedBody, updatedAt: now },
-        })
-        docBody = parsed.updatedBody
-      }
-
-      // Persist chat messages
-      const msgNow = new Date().toISOString()
-      await (prisma as any).docChatMessage.create({
-        data: { id: `dcm_${uid()}`, docId, userId, role: 'user', text: message || '', docApplied: 0, createdAt: msgNow },
-      })
-      await (prisma as any).docChatMessage.create({
-        data: { id: `dcm_${uid()}`, docId, userId, role: 'assistant', text: parsed.reply, docApplied: docBody ? 1 : 0, createdAt: msgNow },
-      })
-
-      send({ type: 'done', doc_body: docBody })
-    } catch (err: any) {
-      send({ type: 'error', message: err.message || 'Chat failed' })
-    } finally {
-      reply.raw.end()
-    }
+  // §15.4: the standalone doc chat is deprecated — writing chat now runs
+  // through the unified /agent/chat pipeline (session doc-{docId}).
+  // §15.4: the standalone doc chat is deprecated — writing chat now runs
+  // through the unified /agent/chat pipeline (session doc-{docId}).
+  app.post('/api/v1/docs/:docId/chat', async (_request, reply) => {
+    return reply.status(410).send({
+      error: 'Gone',
+      message: 'Document chat is now part of the main chat pipeline — use /api/v1/agent/chat with session_id doc-<docId>',
+    })
   })
 
-   app.post('/api/v1/docs/:docId/export', async (request, reply) => {
+  app.post('/api/v1/docs/:docId/export', async (request, reply) => {
     const { docId } = request.params as any
     const userId = request.user!.userId
     const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })

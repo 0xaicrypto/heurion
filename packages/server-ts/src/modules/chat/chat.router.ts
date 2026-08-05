@@ -451,8 +451,29 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
         omitted_turns: omittedTurns,
         will_compact: omittedTurns > 0 || history.length >= historyTurns * 2,
       })
+      // Writing sessions (doc-{docId}) inject the current document + its
+      // references as the docs/current context source (§15.4).
+      let docContext = ''
+      if (sid.startsWith('doc-')) {
+        try {
+          const docId = sid.slice(4)
+          const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+          if (doc) {
+            const refs = await (prisma as any).docReference.findMany({
+              where: { userId, docId },
+              orderBy: { createdAt: 'asc' },
+            })
+            const refBlock = (refs || [])
+              .map((r: any) => `### ${r.label || r.id}\n${String(r.snapshot || r.body || '').slice(0, 4000)}`)
+              .join('\n\n')
+            docContext = `\n\n## Current Document\n标题：${doc.title}\n\n${String(doc.body || '').slice(0, 12000)}\n\n## Reference Materials\n${refBlock || '(none)'}\n\n规则：用户在编辑这份文档。回答用中文；当用户要求修改文档时，调用 edit_document 工具写回完整的新文档内容（markdown）。`
+          }
+        } catch {
+          // doc context is best-effort
+        }
+      }
       const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-        { role: 'system', content: projected.systemPrompt + studyContext },
+        { role: 'system', content: projected.systemPrompt + studyContext + docContext },
       ]
 
       // R2 — anchored compaction: the Session Memory (episodes, current
