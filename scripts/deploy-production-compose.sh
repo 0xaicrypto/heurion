@@ -64,6 +64,11 @@ mkdir -p /opt/nexus-embedding-models
 # Pull the images tagged by CI and recreate containers.
 export NEXUS_IMAGE="${NEXUS_IMAGE:-ghcr.io/0xaicrypto/nexus-server:latest}"
 export EMBEDDING_IMAGE="${EMBEDDING_IMAGE:-ghcr.io/0xaicrypto/nexus-embedding-server:latest}"
+# Free disk before pulling: stale images/build caches accumulate across
+# deployments and have blocked production pulls (no space left on device).
+docker image prune -f 2>/dev/null || true
+docker builder prune -f 2>/dev/null || true
+
 docker compose --env-file .env.production pull
 docker compose --env-file .env.production up -d --remove-orphans
 
