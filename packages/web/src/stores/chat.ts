@@ -24,6 +24,7 @@ export interface ChatMessage {
   addedToKnowledge?: boolean;
   _compactionStream?: boolean;
   toolCalls?: Array<{ tool: string; argsPreview: string }>;
+  chart?: { url: string; chartType?: string };
 }
 
 interface SessionState {
@@ -137,6 +138,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 },
               },
             };
+          });
+          continue;
+        }
+        if (chunk.type === 'chart_created') {
+          set((state) => {
+            const s = state.sessions[sessionId];
+            if (!s) return state;
+            const msgs = [...s.messages];
+            const last = msgs[msgs.length - 1];
+            if (last?.role === 'assistant') {
+              msgs[msgs.length - 1] = { ...last, chart: { url: chunk.url, chartType: chunk.chart_type } };
+            }
+            return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
           });
           continue;
         }

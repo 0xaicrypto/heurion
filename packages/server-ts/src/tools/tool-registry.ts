@@ -6,6 +6,7 @@ import { DelegateTool } from './subagent-tools.js'
 import { DeferToBackgroundTool } from './async-tools.js'
 import { OCRImageTool } from './ocr-tools.js'
 import { EditDocumentTool } from './edit-document-tool.js'
+import { RenderChartTool } from './render-chart-tool.js'
 import type { MemoryService } from '../memory/memory.service.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores.js'
 import type { EventLog } from '../core/event-log.js'
@@ -35,6 +36,7 @@ export class ToolRegistry {
     this.register(new DeferToBackgroundTool(ctx))
     this.register(new OCRImageTool(ctx))
     this.register(new EditDocumentTool(ctx))
+    this.register(new RenderChartTool(ctx))
   }
 
   register(tool: BaseTool): void {
