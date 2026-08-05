@@ -8,6 +8,12 @@ declare module 'fastify' {
 }
 
 export async function authGuard(request: FastifyRequest, reply: FastifyReply) {
+  // #213: <img src> cannot send an Authorization header — the chart
+  // download endpoint accepts a short-lived query token instead.
+  if (request.url.startsWith('/api/v1/files/download/') && (request.query as any)?.token) {
+    return
+  }
+
   const header = request.headers.authorization
   if (!header || !header.startsWith('Bearer ')) {
     return reply.status(401).send({ error: 'Missing authorization header' })

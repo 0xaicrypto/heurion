@@ -69,9 +69,22 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
     const apiKey = getApiKey()
 
     reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
-    const send = (d: unknown) => reply.raw.write(`data: ${JSON.stringify(d)}\n\n`)
+    // #185: stop the LLM work when the client disconnects (no wasted tokens)
+    // and never write to a destroyed socket.
+    const chatAbort = new AbortController()
+    reply.raw.on('close', () => { try { chatAbort.abort() } catch { /* ignore */ } })
+    const send = (d: unknown) => {
+      if (reply.raw.destroyed || reply.raw.writableEnded) return
+      try { reply.raw.write(`data: ${JSON.stringify(d)}\n\n`) } catch { /* socket gone */ }
+    }
 
     try {
+      // #185: persist the user message BEFORE any LLM work — a mid-stream
+      // failure must never lose the turn from the event log.
+      ctx.eventLog.append({
+        timestamp: Date.now() / 1000, eventType: 'user_message', content: body.text,
+        metadata: { patientHash }, agentId: userId, sessionId: sid,
+      })
       send({ type: 'turn_started', event_idx: ctx.eventLog.count() + 1, patient_hash: patientHash })
 
       // ── P3: Route the query before building expensive context ──
@@ -343,10 +356,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           })
           .join('\n')
 
-        ctx.eventLog.append({
-          timestamp: Date.now() / 1000, eventType: 'user_message', content: body.text,
-          metadata: { patientHash }, agentId: userId, sessionId: sid,
-        })
+        // user_message was persisted upfront (#185); only log the reply.
         ctx.eventLog.append({
           timestamp: Date.now() / 1000, eventType: 'assistant_response', content: response,
           metadata: {}, agentId: userId, sessionId: sid,
@@ -588,6 +598,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
             model: DEEPSEEK_PREMIUM_MODEL,
             maxTokens: 4096,
             telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
+            signal: chatAbort.signal,
           },
           tools,
           (reasoning) => send({ type: 'reasoning_chunk', text: reasoning }),
@@ -713,17 +724,14 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           model: DEEPSEEK_PREMIUM_MODEL,
           maxTokens: 4096,
           telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
+          signal: chatAbort.signal,
         }, (reasoning) => send({ type: 'reasoning_chunk', text: reasoning }))) {
           fullResponse += chunk
           send({ type: 'final_answer_chunk', text: chunk })
         }
       }
 
-      // Log to event log
-      ctx.eventLog.append({
-        timestamp: Date.now() / 1000, eventType: 'user_message', content: body.text,
-        metadata: { patientHash }, agentId: userId, sessionId: sid,
-      })
+      // Log the assistant response (user_message was persisted upfront)
       ctx.eventLog.append({
         timestamp: Date.now() / 1000, eventType: 'assistant_response', content: fullResponse,
         metadata: {}, agentId: userId, sessionId: sid,

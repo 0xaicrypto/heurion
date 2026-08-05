@@ -10,7 +10,7 @@ export const FRIENDLY_LLM_ERROR = '服务暂时不可用，请稍后重试'
 export async function fetchWithRetry(
   url: string,
   init: RequestInit,
-  opts: { maxRetries?: number; timeoutMs?: number; delayMs?: number } = {},
+  opts: { maxRetries?: number; timeoutMs?: number; delayMs?: number; signal?: AbortSignal } = {},
 ): Promise<Response> {
   const maxRetries = opts.maxRetries ?? 2
   const timeoutMs = opts.timeoutMs ?? 60000
@@ -21,7 +21,10 @@ export async function fetchWithRetry(
     try {
       controller = new AbortController()
       timer = setTimeout(() => controller!.abort(), timeoutMs)
-      const res = await fetch(url, { ...init, signal: controller.signal })
+      const signal = opts.signal && typeof AbortSignal.any === 'function'
+        ? AbortSignal.any([opts.signal, controller.signal])
+        : controller.signal
+      const res = await fetch(url, { ...init, signal })
       if (timer) clearTimeout(timer)
       if (res.status === 429 || res.status >= 500) {
         lastErr = new Error(`HTTP ${res.status}`)
@@ -80,6 +83,9 @@ export interface DeepSeekCallOptions {
   maxTokens?: number
   temperature?: number
   telemetryContext?: LlmTelemetryContext
+  /** #185: external abort signal (client disconnect) — combined with the
+   *  internal timeout via AbortSignal.any. */
+  signal?: AbortSignal
 }
 
 interface DeepSeekChunk {
@@ -174,7 +180,7 @@ export async function deepseekChat(
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify(body),
-  })
+  }, { signal: options.signal })
   if (!res.ok) {
     throw new Error(FRIENDLY_LLM_ERROR)
   }
@@ -237,7 +243,7 @@ export async function* deepseekStream(
       stream: true,
       stream_options: { include_usage: true },
     }),
-  })
+  }, { signal: options.signal })
   if (!res.ok) {
     throw new Error(FRIENDLY_LLM_ERROR)
   }
