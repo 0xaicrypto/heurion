@@ -303,4 +303,48 @@ export async function filesRouter(app: FastifyInstance) {
     }
     return reply.status(404).send({ error: 'File not found' })
   })
+app.get('/api/v1/files/download/:fileId', async (request, reply) => {
+  const fileId = (request.params as any).fileId
+  const userId = request.user?.userId
+  const queryToken = (request.query as any).token
+
+  // <img> render path: no Authorization header — validate the short-lived
+  // chart token which also carries the file owner.
+  let ownerUserId = userId ?? ''
+  if (!userId) {
+    const fromToken = queryToken ? verifyChartToken(fileId, queryToken) : null
+    if (!fromToken) {
+      return reply.status(401).send({ error: 'Unauthorized' })
+    }
+    ownerUserId = fromToken
+  }
+
+  const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', ownerUserId, 'uploads', fileId)
+  if (!fs.existsSync(filepath)) return reply.status(404).send({ error: 'File not found' })
+
+  const mime = fileId.endsWith('.svg') ? 'image/svg+xml' : 'application/octet-stream'
+  reply.header('Content-Type', mime)
+  reply.header('Cache-Control', 'public, max-age=3600')
+  return reply.send(fs.createReadStream(filepath))
+})
+
+}
+
+// Generated-chart download tokens (#176/#213): <img src> cannot send an
+// Authorization header, so render_chart issues a short-lived query token
+// bound to the file AND its owner (no fileIndex dependency — that model
+// does not exist in the schema).
+const chartTokens = new Map<string, { token: string; exp: number; userId: string }>()
+
+export function issueChartToken(fileId: string, userId: string, ttlMs = 24 * 3600 * 1000): string {
+  const token = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`
+  chartTokens.set(fileId, { token, exp: Date.now() + ttlMs, userId })
+  return token
+}
+
+export function verifyChartToken(fileId: string, token: string): string | null {
+  const entry = chartTokens.get(fileId)
+  if (!entry) return null
+  if (Date.now() > entry.exp) { chartTokens.delete(fileId); return null }
+  return entry.token === token ? entry.userId : null
 }

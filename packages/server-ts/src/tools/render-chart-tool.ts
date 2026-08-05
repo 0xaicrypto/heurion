@@ -58,7 +58,7 @@ export class RenderChartTool extends BaseTool {
       const userId = this.ctx.userId
       const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
       fs.mkdirSync(dir, { recursive: true })
-      const fileId = `file_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      const fileId = `chart_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.svg`
       const filepath = path.join(dir, fileId)
       fs.writeFileSync(filepath, svg, 'utf-8')
 
@@ -76,12 +76,22 @@ export class RenderChartTool extends BaseTool {
         // fileIndex may not exist — the file is still saved
       }
 
+      // <img> tags cannot send an Authorization header — issue a short-lived
+      // query token so the chart renders inside documents and chat.
+      let url = `/api/v1/files/download/${fileId}`
+      try {
+        const { issueChartToken } = await import('../modules/files/files.router.js')
+        url = `${url}?token=${issueChartToken(fileId, userId)}`
+      } catch {
+        // token issuance unavailable — URL still works for API consumers
+      }
+
       return {
         success: true,
         output: JSON.stringify({
           file_id: fileId,
-          url: `/api/v1/files/download/${fileId}`,
-          markdown: `![${esc(input.title || 'chart')}](/api/v1/files/download/${fileId})`,
+          url,
+          markdown: `![${esc(input.title || 'chart')}](${url})`,
           type,
         }),
       }
