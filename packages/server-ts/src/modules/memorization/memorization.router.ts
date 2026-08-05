@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import { getUserContext } from '../chat/user-context.js'
 import { ChatIngester } from './chat-ingester.service.js'
+import { MemoryGraphGateway } from '../../memory/memory-gateway.js'
 import prisma from '../../common/prisma.js'
 
 export async function memorizationRouter(app: FastifyInstance) {
@@ -13,7 +14,17 @@ export async function memorizationRouter(app: FastifyInstance) {
     let ingester = ingesterByUser.get(userId)
     if (!ingester) {
       const ctx = getUserContext(userId)
-      ingester = new ChatIngester(ctx.memory, ctx.eventLog)
+      // §4.5 (#186): the ingester routes through the gateway so every write
+      // lands in the review queue (semantic dedup + human approval).
+      const gateway = new MemoryGraphGateway(
+        userId,
+        ctx.memory,
+        ctx.facts,
+        ctx.episodes,
+        ctx.skills,
+        ctx.knowledge,
+      )
+      ingester = new ChatIngester(ctx.memory, ctx.eventLog, gateway)
       ingesterByUser.set(userId, ingester)
     }
     return ingester

@@ -1,5 +1,6 @@
 import type { MemoryService } from '../../memory/memory.service.js'
 import type { EventLog } from '../../core/event-log.js'
+import type { MemoryGraphGateway } from '../../memory/memory-gateway.js'
 import { extractClinicalEntities, type ClinicalEntity, type ExtractionResult } from './clinical-extractor.service.js'
 
 export interface IngestOptions {
@@ -14,6 +15,7 @@ export class ChatIngester {
   constructor(
     private memory: MemoryService,
     private eventLog: EventLog,
+    private gateway: MemoryGraphGateway,
   ) {}
 
   async ingestEncounter(opts: IngestOptions): Promise<{
@@ -44,6 +46,7 @@ export class ChatIngester {
     })
 
     let emitted = 0
+    let deduped = 0
     for (const entity of result.entities) {
       const category = entity.node_type === 'med' ? 'fact'
         : entity.node_type === 'ddx' ? 'context'
@@ -55,29 +58,35 @@ export class ChatIngester {
         : entity.node_type === 'ddx' ? 'doctor'
         : 'general'
 
-      this.memory.addFact({
-        category: category as 'fact' | 'context',
-        importance: Math.round(entity.confidence * 5),
-        content: entity.content.label,
-        sourceType: sourceType as 'patient' | 'doctor' | 'research' | 'general',
+      // §4.5 (#186): every write goes through the review queue — no direct
+      // addFact path. The gateway also semantically dedups (0.95, same scope).
+      const proposal = await this.gateway.propose({
+        scopeType: patientHash ? 'patient' : 'global',
         patientHash,
-        confidence: entity.confidence,
-        provenance: {
-          sourceKind: 'chat',
-          sourceRef: encounterId,
-          evidenceQuote: entity.evidence_quote,
-        },
-      }, 'system')
-      emitted++
+        kind: 'fact',
+        content: entity.content.label,
+        importance: Math.round(entity.confidence * 5),
+        confidence: entity.confidence >= 0.6 ? 'high' : 'medium',
+        reason: `聊天/手动导入：${entity.content.label}`,
+        sourceRange: entity.evidence_quote || undefined,
+        category,
+        conflictsWith: undefined,
+      })
+      if (proposal.status === 'pending') {
+        emitted++
+      } else {
+        deduped++
+      }
     }
 
     this.eventLog.append({
       timestamp: Date.now() / 1000,
       eventType: 'ingestion_completed',
-      content: `Ingestion complete: ${emitted} entities stored`,
+      content: `Ingestion complete: ${emitted} entities proposed (${deduped} deduped)`,
       metadata: {
         encounterId,
         emittedCount: emitted,
+        dedupedCount: deduped,
         drops: result.drops,
         rawCount: result.rawCount,
       },
