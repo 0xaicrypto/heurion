@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
-import { getApp, authHeader } from './setup.js'
+import { getApp, authHeader, getAuthUserId } from './setup.js'
 import prisma from '../src/common/prisma.js'
 
 vi.mock('../src/common/llm.js', () => ({
@@ -155,4 +155,35 @@ describe('closing the default global session', () => {
     })
     expect(res.statusCode).toBe(404)
   })
+})
+
+describe('#bug2 doc-session isolation', () => {
+  test('writing session (doc-*) never creates a Session row and never lists', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const sessionId = `doc-bug2_${Date.now()}`
+    const { deepseekChat } = await import('../src/common/llm.js')
+    let calls = 0
+    vi.mocked(deepseekChat).mockImplementation((messages: any) => {
+      const text = JSON.stringify(messages)
+      if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
+      calls++
+      return Promise.resolve('写作回复。')
+    })
+
+    await app.inject({
+      method: 'POST', url: '/api/v1/agent/chat',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ text: '帮我校对文档', session_id: sessionId }),
+    })
+
+    // No Session row created for the writing session
+    const row = await (prisma as any).session.findUnique({ where: { id: sessionId } })
+    expect(row).toBeNull()
+
+    // And it never appears in the session list
+    const list = await app.inject({ method: 'GET', url: '/api/v1/sessions', headers: await authHeader() })
+    const sessions = JSON.parse(list.payload).sessions
+    expect(sessions.some((s: any) => s.id === sessionId)).toBe(false)
+  }, 30000)
 })

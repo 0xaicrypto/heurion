@@ -5,6 +5,7 @@ import { Table } from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
+import Image from '@tiptap/extension-image';
 import { markdownToHtml, htmlToMarkdown } from '@/lib/doc-convert';
 import { Button } from '@/components/ui';
 import {
@@ -32,6 +33,7 @@ export function DocEditor({ value, onChange, className }: DocEditorProps) {
       TableRow,
       TableCell,
       TableHeader,
+      Image.configure({ allowBase64: false, inline: false }),
     ],
     content: markdownToHtml(value),
     onUpdate: ({ editor }) => {
@@ -90,7 +92,7 @@ export function DocEditor({ value, onChange, className }: DocEditorProps) {
           <Redo2 size={14} />
         </Button>
       </div>
-      <div className="prose prose-sm max-w-none p-4 [&_.ProseMirror]:min-h-[300px] [&_.ProseMirror]:outline-none [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-1.5 [&_th]:border [&_th]:border-border [&_th]:bg-surface-elevated [&_th]:p-1.5 [&_th]:text-left">
+      <div className="prose prose-sm max-w-none p-4 [&_.ProseMirror]:min-h-[300px] [&_.ProseMirror]:outline-none [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-1.5 [&_th]:border [&_th]:border-border [&_th]:bg-surface-elevated [&_th]:p-1.5 [&_th]:text-left [&_img]:my-2 [&_img]:max-h-72 [&_img]:rounded-lg [&_img]:border [&_img]:border-border">
         <EditorContent editor={editor} />
       </div>
     </div>
