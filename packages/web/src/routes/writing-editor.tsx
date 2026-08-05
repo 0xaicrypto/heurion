@@ -77,6 +77,18 @@ export function WritingEditorPage() {
   const chatSession = store.sessions[chatSessionId];
   const chatMessages = chatSession?.messages ?? [];
   const chatLoading = chatSession?.loading ?? false;
+  const [aiEditNotice, setAiEditNotice] = useState('');
+
+  // §15.4: apply AI document write-backs to the canvas.
+  useEffect(() => {
+    if (!docId || !chatSession?.lastDocBody) return;
+    if (chatSession.lastDocBody === body) return;
+    setBody(chatSession.lastDocBody);
+    setDoc((prev) => (prev ? { ...prev, body: chatSession.lastDocBody as string, updated_at: new Date().toISOString() } : prev));
+    setAiEditNotice('文档已更新（AI 编辑）');
+    const timer = setTimeout(() => setAiEditNotice(''), 4000);
+    return () => clearTimeout(timer);
+  }, [chatSession?.lastDocBody, docId, body]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [chatUploadingFile, setChatUploadingFile] = useState(false);
   const [chatAttachedFiles, setChatAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
@@ -432,6 +444,11 @@ export function WritingEditorPage() {
           >
             <Eye size={14} className="mr-1" /> {preview ? 'Edit' : 'Preview'}
           </Button>
+          {aiEditNotice && (
+            <span className="ml-3 rounded-full border border-success/30 bg-success/5 px-2 py-0.5 text-xs text-success">
+              {aiEditNotice}
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-2">
             <Button
               variant="ghost"
