@@ -616,14 +616,29 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           let executedAny = false
           let toolError: string | null = null
           for (const block of toolCallBlocks) {
+            toolSeq++
+            let toolCall: any = null
             try {
-              const toolCall = JSON.parse(block.replace(/<\/?tool_call>/g, '').trim())
-              const toolName = toolCall.name || toolCall.tool
-              const toolArgs = toolCall.arguments || toolCall.args || {}
-              executedAny = true
+              toolCall = JSON.parse(block.replace(/<\/?tool_call>/g, '').trim())
+            } catch (err) {
+              // §3.3: malformed JSON must not crash the turn — tell the model
+              // to re-emit a valid call instead of dying silently.
+              appendToolEvent('tool_call', 'malformed_arguments', {
+                tool: '?', args: 'parse-failed', status: 'error', seq: toolSeq,
+              })
+              currentMessages.push({ role: 'assistant', content: block })
+              currentMessages.push({
+                role: 'user',
+                content: 'The previous tool call had malformed JSON arguments. Please re-emit the tool call with valid JSON only.',
+              })
+              continue
+            }
+            const toolName = toolCall.name || toolCall.tool
+            const toolArgs = toolCall.arguments || toolCall.args || {}
+            executedAny = true
 
-              toolSeq++
-              const seq = toolSeq
+            toolSeq++
+            const seq = toolSeq
               const argsPreview = String(JSON.stringify(toolArgs) || '').slice(0, 300)
 
               // R3: persist the state machine — pending → running →
@@ -694,9 +709,6 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
                 toolError = result.error ?? 'Unknown tool error'
                 break
               }
-            } catch (err) {
-              console.log('[CHAT] Tool call parse failed:', (err as Error).message)
-            }
           }
           if (executedAny) {
             if (toolError) {
@@ -707,7 +719,10 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           }
         }
 
-        finalContent = callResult
+        // §3.3: never surface raw <tool_call> markers to the user — strip
+        // any unparsed blocks before sending the final answer.
+        const cleaned = (callResult || '').replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim()
+        finalContent = cleaned || 'I was unable to complete that request. Please try again.'
         break
       }
 

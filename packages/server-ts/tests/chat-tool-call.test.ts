@@ -95,13 +95,14 @@ describe('chat tool-call parsing (regression: nested arguments JSON)', () => {
     expect(round2Messages.some((m) => m.content.includes('Tool "search_encounter" returned'))).toBe(true)
   })
 
-  test('malformed tool call falls back to the raw model text instead of crashing', async () => {
+  test('malformed tool call is retried and never leaks raw markers (§3.3 #193)', async () => {
     const app = await getApp()
     const hash = await createPatient(app)
 
     vi.mocked(deepseekChat).mockImplementation((messages: any[]) => {
       const text = messages.map((m: any) => m.content || '').join('\n')
       if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
+      // Keep failing with malformed JSON so the loop exhausts its rounds.
       return Promise.resolve('<tool_call>{"name":"search_node","arguments":broken</tool_call>')
     })
 
@@ -112,7 +113,14 @@ describe('chat tool-call parsing (regression: nested arguments JSON)', () => {
       payload: JSON.stringify({ text: '诊断一下', patient_hash: hash }),
     })
     expect(res.statusCode).toBe(200)
-    // No crash: the raw model text is still delivered (escaped inside SSE JSON).
-    expect(res.payload).toContain('search_node')
+    // No raw <tool_call> marker may reach the user (§3.3).
+    expect(res.payload).not.toContain('<tool_call>')
+    // The model was told to re-emit valid JSON (malformed_arguments retry).
+    const events = res.payload.split('\n').filter((l: string) => l.startsWith('data: ')).map((l: string) => {
+      try { return JSON.parse(l.slice('data: '.length)) } catch { return null }
+    }).filter(Boolean)
+    expect(events.some((e: any) => e.type === 'error')).toBe(false)
+    const finalText = events.filter((e: any) => e.type === 'final_answer_chunk').map((e: any) => e.text).join('')
+    expect(finalText).toContain('unable to complete')
   })
 })
