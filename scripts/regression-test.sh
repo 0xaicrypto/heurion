@@ -155,7 +155,6 @@ PROTOCOL_TEXT='INCLUSION: Stage IIIB/IV NSCLC, PD-L1>=1%, ECOG 0-1\nEXCLUSION: E
 curl -sf -X POST "$BASE/api/v1/research/studies/$SID/import-protocol" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"$PROTOCOL_TEXT\"}" > /dev/null 2>&1
 check "7.2 Import protocol" ok
 
-RULES=$(curl -sf -X POST "$BASE/api/v1/research/studies/$SID/extract-rules" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"$PROTOCOL_TEXT\"}" | je 'j.status.total' 2>/dev/null)
 RULES=0
 for _try in 1 2 3; do
   RULES=$(curl -sf -X POST "$BASE/api/v1/research/studies/$SID/extract-rules" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"$PROTOCOL_TEXT\"}" | je 'j.status.total' 2>/dev/null)
