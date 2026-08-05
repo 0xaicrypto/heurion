@@ -5,6 +5,7 @@ import fs from 'fs'
 export interface Fact {
   id: string
   category: 'preference' | 'fact' | 'constraint' | 'goal' | 'context'
+    | 'diagnosis' | 'symptom' | 'exam' | 'medication' | 'allergy' | 'plan'
   importance: number  // 1-5
   content: string
   count: number        // how many times this fact has been observed

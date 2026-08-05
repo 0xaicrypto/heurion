@@ -43,6 +43,7 @@ export interface MemoryNodeBase {
 export interface FactNode extends MemoryNodeBase {
   type: 'fact'
   category: 'preference' | 'fact' | 'constraint' | 'goal' | 'context'
+    | 'diagnosis' | 'symptom' | 'exam' | 'medication' | 'allergy' | 'plan'
   patientHash?: string
   studyId?: string
   sourceType: 'patient' | 'doctor' | 'research' | 'general' | 'sidecar' | 'document'
