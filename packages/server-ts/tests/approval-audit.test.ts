@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { getApp, authHeader } from './setup.js'
+import { getApp, authHeader, getAuthUserId } from './setup.js'
 import prisma from '../src/common/prisma.js'
 import { signToken } from '../src/common/jwt.js'
 
@@ -356,4 +356,75 @@ describe('Approval permission isolation', () => {
     })
     expect(JSON.parse(ownerAudit.payload).logs.some((l: any) => l.targetId === entryId)).toBe(false)
   })
+})
+
+describe('13.4D pending auto-archival', () => {
+  async function seedProposal(userId: string, kind: string, importance: number, daysAgo: number) {
+    const now = new Date().toISOString()
+    const created = new Date(Date.now() - daysAgo * 86400_000).toISOString()
+    const row = await (prisma as any).memoryProposal.create({
+      data: {
+        userId, scopeType: 'global', kind, content: `proposal ${kind} ${importance}`, importance,
+        confidence: 'medium', status: 'pending', createdAt: created,
+      },
+    })
+    await (prisma as any).approvalRequest.create({
+      data: {
+        id: `apr_seed_${row.id}`,
+        userId, targetType: 'MemoryProposal', targetId: row.id,
+        status: 'pending', createdAt: now,
+        payload: JSON.stringify({ id: row.id, kind, importance, content: `proposal ${kind} ${importance}`, createdAt: created, scopeType: 'global' }),
+      },
+    })
+    return row.id
+  }
+
+  test('low-importance fact older than 7 days auto-archives and leaves the pending list', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const id = await seedProposal(userId, 'fact', 2, 8)
+
+    const list = await app.inject({ method: 'GET', url: '/api/v1/approvals/pending', headers: await authHeader() })
+    const { requests } = JSON.parse(list.payload)
+    expect(requests.some((r: any) => r.targetId === id)).toBe(false)
+
+    const row = await (prisma as any).memoryProposal.findFirst({ where: { id } })
+    expect(row.archivedAt).toBeTruthy()
+  }, 30000)
+
+  test('high-importance fact older than 7 days stays pending (pinned)', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const id = await seedProposal(userId, 'fact', 5, 8)
+
+    const list = await app.inject({ method: 'GET', url: '/api/v1/approvals/pending', headers: await authHeader() })
+    const { requests } = JSON.parse(list.payload)
+    expect(requests.some((r: any) => r.targetId === id)).toBe(true)
+
+    const row = await (prisma as any).memoryProposal.findFirst({ where: { id } })
+    expect(row.archivedAt).toBeNull()
+  }, 30000)
+
+  test('episode_summary older than 7 days auto-archives', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const id = await seedProposal(userId, 'episode_summary', 3, 8)
+
+    const list = await app.inject({ method: 'GET', url: '/api/v1/approvals/pending', headers: await authHeader() })
+    const { requests } = JSON.parse(list.payload)
+    expect(requests.some((r: any) => r.targetId === id)).toBe(false)
+
+    const row = await (prisma as any).memoryProposal.findFirst({ where: { id } })
+    expect(row.archivedAt).toBeTruthy()
+  }, 30000)
+
+  test('fresh proposal is never archived', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const id = await seedProposal(userId, 'fact', 2, 1)
+
+    const list = await app.inject({ method: 'GET', url: '/api/v1/approvals/pending', headers: await authHeader() })
+    const { requests } = JSON.parse(list.payload)
+    expect(requests.some((r: any) => r.targetId === id)).toBe(true)
+  }, 30000)
 })

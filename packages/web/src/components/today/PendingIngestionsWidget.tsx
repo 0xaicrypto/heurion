@@ -167,6 +167,9 @@ export function PendingIngestionsWidget({ limit = 5, onCountChange }: PendingIng
                         {proposal.importance >= 4 && (
                           <Badge variant="error">{t('today.pendingIngestions.highImportance')}</Badge>
                         )}
+                        {proposal.importance >= 4 && proposal.createdAt && Date.now() - new Date(proposal.createdAt).getTime() > 7 * 86400_000 && (
+                          <Badge variant="warning">{t('today.pendingIngestions.needsAttention')}</Badge>
+                        )}
                       </div>
                       <p className="mt-1 line-clamp-2 text-xs text-text-secondary">{proposal.content}</p>
                       {proposal.conflictsWith && (

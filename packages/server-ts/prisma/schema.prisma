@@ -411,6 +411,8 @@ model MemoryProposal {
   createdAt      String  @map("created_at")
   resolvedAt     String? @map("resolved_at")
   resolvedBy     String? @map("resolved_by")
+  archivedAt     String? @map("archived_at") // 13.4D: auto-archived after 7 days (low importance / summaries)
+  category       String? // 13.4F: extraction category for quality feedback stats
 
   @@index([userId, status, createdAt(sort: Desc)])
   @@index([scopeType, patientHash, status])

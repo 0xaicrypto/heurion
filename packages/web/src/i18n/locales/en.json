@@ -127,7 +127,8 @@
       "globalScope": "Global memory",
       "highImportance": "High importance",
       "conflictWarning": "⚠️ Contradicts a confirmed fact",
-      "autoExtracted": "Auto-extracted"
+      "autoExtracted": "Auto-extracted",
+      "needsAttention": "Needs attention"
     }
   },
   "brain": {
