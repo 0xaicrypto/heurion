@@ -9,29 +9,10 @@
  * Target: 53% token reduction while maintaining semantics.
  */
 import type { Fact } from '../evolution/stores'
-
-/** Attention score: importance × e^(-0.3 × daysAgo) */
-function attentionScore(fact: Fact, now: number): number {
-  const daysAgo = Math.max(0, (now - fact.lastSeenAt) / 86400_000)
-  const recency = Math.exp(-0.3 * daysAgo)  // ~74% at 1 day, ~12% at 7 days
-  const importanceMultiplier = 1 + (fact.importance - 1) * 0.3 // 1→1.0, 5→2.2
-  return recency * importanceMultiplier * (fact.count || 1)
-}
-
-/**
- * Rank facts by attention score, return top N.
- */
-export function rankByAttention<T extends { importance: number; lastSeenAt: number; count?: number }>(
-  items: T[],
-  limit = 20,
-): T[] {
-  const now = Date.now()
-  return items
-    .map(item => ({ item, score: attentionScore(item as any, now) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map(x => x.item)
-}
+import { attentionScore, rankByAttention } from '../common/attention.js' // §5.4 (#197)
+import { estimateTokens } from '../common/token-estimate.js' // §5.4 (#197)
+// §5.4 (#197): re-export for existing callers.
+export { rankByAttention }
 
 /**
  * Deduplicate clinical findings by merging same entity across time,
@@ -115,12 +96,6 @@ export function compactContext(
  * Estimate tokens for mixed CJK/Latin text (mirrors memory-projection).
  * English ≈ 4 chars/token, CJK ≈ 1.5 chars/token.
  */
-export function estimateTokens(text: string): number {
-  if (!text) return 0
-  const latinChars = (text.match(/[a-zA-Z0-9\s]/g) || []).length
-  const nonLatinChars = text.length - latinChars
-  return Math.ceil(latinChars / 4 + nonLatinChars / 1.5)
-}
 
 export interface HistoryMessage {
   role: 'user' | 'assistant'

@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest'
 import { enforceTotalBudget, selectProjectionInputs } from '../src/modules/chat/chat.router.js'
-import { estimateTokens } from '../src/retrieval/context-compressor.js'
+import { estimateTokens } from '../src/common/token-estimate.js'
 
 /**
  * §3.4 (#194): total context budget.

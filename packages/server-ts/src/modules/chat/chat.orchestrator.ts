@@ -39,11 +39,7 @@ function matchesKeywords(text: string, keywords: string[]): boolean {
   return keywords.some(k => t.includes(k))
 }
 
-function daysAgo(timestamp?: number): number {
-  if (!timestamp) return 999
-  return (Date.now() / 1000 - timestamp) / 86400
-}
-
+import { daysAgo } from '../../common/attention.js' // §5.4 (#197)
 function filterFacts(facts: any[], query: string, patientHash?: string): any[] {
   if (facts.length <= 20) return facts
   const keywords = extractKeywords(query)
