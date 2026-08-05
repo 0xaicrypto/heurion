@@ -20,7 +20,7 @@ import type {
   MemoryCreatedBy,
   CurationPolicy,
 } from './memory.types'
-import { DEFAULT_CURATION_POLICY } from './memory.types'
+import { DEFAULT_CURATION_POLICY, sanitizeFactFields } from './memory.types'
 
 export interface MemoryServiceOptions {
   eventLog: EventLog
@@ -69,21 +69,31 @@ export class MemoryService {
     const stableId = newStableId('fact')
     const version = 1
     const nodeId = newNodeId(stableId, version)
+    // §4.2 (#187): whitelist categories/source types, bound content length,
+    // auto-mark low-confidence facts as uncertain.
+    const clean = sanitizeFactFields({
+      content: input.content,
+      category: input.category,
+      sourceType: input.sourceType,
+      confidence: input.confidence,
+      uncertain: input.uncertain,
+    })
     const fact: FactNode = {
       id: nodeId,
       stableId,
       type: 'fact',
       ownerId: this.ownerId,
       status: 'current',
-      content: input.content,
-      contentHash: hashContent(input.content),
+      content: clean.content,
+      contentHash: hashContent(clean.content),
       version,
-      category: input.category || 'fact',
+      category: clean.category,
       importance: input.importance ?? 3,
-      sourceType: input.sourceType || 'general',
+      sourceType: clean.sourceType,
       patientHash: input.patientHash,
       studyId: input.studyId,
       confidence: input.confidence ?? 0.8,
+      uncertain: clean.uncertain,
       count: 1,
       createdAt: now,
       updatedAt: now,
