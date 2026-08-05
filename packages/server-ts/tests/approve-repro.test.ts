@@ -1,5 +1,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
-import { getApp, authHeader } from './setup.js'
+import { getApp, authHeader, getAuthUserId } from './setup.js'
+import { getUserContext } from '../src/modules/chat/user-context.js'
+import { MemoryGraphGateway } from '../src/memory/memory-gateway.js'
 
 vi.mock('../src/common/llm.js', () => ({
   deepseekChat: vi.fn(),
@@ -18,25 +20,20 @@ afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks() })
 describe('approve pending fact via API', () => {
   test('confirm a MemoryProposal through the HTTP approval endpoint', async () => {
     const app = await getApp()
-    const sessionId = `apr_${Date.now()}`
+    const userId = await getAuthUserId()
 
-    vi.mocked(deepseekChat).mockImplementation((messages) => {
-      const text = JSON.stringify(messages)
-      if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
-      if (text.includes('clinical memory extractor')) {
-        return Promise.resolve('[{"category":"diagnosis","importance":5,"content":"患者确诊肺癌","sourceType":"patient"}]')
-      }
-      if (text.includes('临床对话摘要器')) return Promise.resolve('## Objective\nx')
-      return Promise.resolve('ok')
+    // S1: no real-time extraction — create the pending proposal directly
+    // through the gateway (the approval flow itself is what's under test).
+    const ctx = getUserContext(userId)
+    const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.facts, ctx.episodes, ctx.skills, ctx.knowledge)
+    await gateway.propose({
+      scopeType: 'global',
+      kind: 'fact',
+      content: '患者确诊肺癌',
+      importance: 5,
+      confidence: 'medium',
+      reason: 'test seed',
     })
-
-    // Seed a conversation with a signal → extraction proposes a fact
-    await app.inject({
-      method: 'POST', url: '/api/v1/agent/chat',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
-      payload: JSON.stringify({ text: '患者确诊肺癌，请记住这个诊断结果并记录', session_id: sessionId }),
-    })
-    await new Promise((r) => setTimeout(r, 3200))
 
     const pending = await app.inject({
       method: 'GET', url: '/api/v1/approvals/pending',

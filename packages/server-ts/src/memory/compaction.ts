@@ -316,6 +316,19 @@ ${conversation}
       createdAt: now,
     },
   })
+  // S3: the compacted segment is fully processed — advance the extraction
+  // cursor so the session-close flush never re-extracts it.
+  try {
+    const { advanceExtractedUptoIdx } = await import('./extraction-cursor.js')
+    const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string } = {
+      userId: ctx.userId,
+      scopeType: patientHash ? 'patient' : 'global',
+      patientHash,
+    }
+    await advanceExtractedUptoIdx(scopeKey, target)
+  } catch (err) {
+    console.log('[COMPACT] Cursor advance skipped:', (err as Error).message.slice(0, 100))
+  }
 
   ctx.eventLog.append({
     timestamp: Date.now() / 1000,
@@ -328,6 +341,64 @@ ${conversation}
 }
 
 /**
+ * S3 — the single extraction entry point. Processes an uncovered event
+ * segment: batch extraction → pending, K3 Session Memory update, cursor
+ * advance. Tier 2 (compaction) and Tier 3 (session close) both funnel here.
+ */
+export async function extractSegment(
+  ctx: CompactionCtx,
+  sessionId: string,
+  patientHash: string | undefined,
+  fromIdx: number,
+  toIdx: number,
+): Promise<number> {
+  const events = ctx.eventLog
+    .query({ sessionId, afterIdx: fromIdx })
+    .filter((e: any) => e.idx <= toIdx && (e.eventType === 'user_message' || e.eventType === 'assistant_response'))
+  if (events.length < 2) return 0
+
+  const conversation = events
+    .map((e: any) => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
+    .join('\n')
+
+  // 1) Batch extraction → pending review queue.
+  const extracted = await extractAndProposeFacts(ctx, patientHash, conversation, {
+    sessionId,
+    reason: 'segment extraction',
+  })
+
+  // 2) K3: update the Session Memory (episodes).
+  try {
+    const { updateEpisodeSummary } = await import('./knowledge-synthesis.js')
+    await updateEpisodeSummary({
+      userId: ctx.userId,
+      sessionId,
+      patientHash,
+      episodes: ctx.episodes,
+      incrementalText: conversation,
+      turnCount: toIdx,
+    })
+  } catch (err) {
+    console.log('[EXTRACT] Session Memory update skipped:', (err as Error).message.slice(0, 120))
+  }
+
+  // 3) Advance the cursor so the segment is never re-extracted.
+  try {
+    const { advanceExtractedUptoIdx } = await import('./extraction-cursor.js')
+    const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string } = {
+      userId: ctx.userId,
+      scopeType: patientHash ? 'patient' : 'global',
+      patientHash,
+    }
+    await advanceExtractedUptoIdx(scopeKey, toIdx)
+  } catch (err) {
+    console.log('[EXTRACT] Cursor advance skipped:', (err as Error).message.slice(0, 100))
+  }
+
+  return extracted.length
+}
+
+/**
  * Tier 3 — session-close flush. Extracts any conversation segment not yet
  * covered by the incremental cursor OR a prior compaction. Called when a
  * session is closed, so short sessions never lose memory.
@@ -337,7 +408,7 @@ export async function flushUnextracted(
   sessionId: string,
   patientHash?: string,
 ): Promise<number> {
-  const { getExtractedUptoIdx, advanceExtractedUptoIdx } = await import('./extraction-cursor.js')
+  const { getExtractedUptoIdx } = await import('./extraction-cursor.js')
   const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string } = {
     userId: ctx.userId,
     scopeType: patientHash ? 'patient' : 'global',
@@ -349,21 +420,8 @@ export async function flushUnextracted(
     orderBy: { coveredUptoIdx: 'desc' },
   })
   const fromIdx = Math.max(cursor, last?.coveredUptoIdx ?? 0)
-  const events = ctx.eventLog
-    .query({ sessionId, afterIdx: fromIdx })
-    .filter((e: any) => e.eventType === 'user_message' || e.eventType === 'assistant_response')
-  if (events.length < 2) return 0
-
-  const conversation = events
-    .map((e: any) => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
-    .join('\n')
   try {
-    const extracted = await extractAndProposeFacts(ctx, patientHash, conversation, {
-      sessionId,
-      reason: 'session close flush',
-    })
-    await advanceExtractedUptoIdx(scopeKey, ctx.eventLog.count())
-    return extracted.length
+    return await extractSegment(ctx, sessionId, patientHash, fromIdx, ctx.eventLog.count())
   } catch (err) {
     console.log('[FLUSH] Extraction skipped:', (err as Error).message.slice(0, 120))
     return 0

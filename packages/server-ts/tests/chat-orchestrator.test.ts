@@ -202,7 +202,7 @@ describe('ChatOrchestrator — postTurn regressions', () => {
     expect(extractionCalls).toHaveLength(0)
   })
 
-  test('a key signal triggers extraction immediately (K1/K2)', async () => {
+  test('postTurn no longer schedules real-time extraction (S1)', async () => {
     const { deepseekChat } = await import('../src/common/llm.js')
     vi.mocked(deepseekChat).mockResolvedValue('[{"category":"fact","importance":5,"content":"Extracted fact","sourceType":"general"}]')
 
@@ -227,12 +227,12 @@ describe('ChatOrchestrator — postTurn regressions', () => {
     })
     await orchestrator.postTurn('user_1', 'session_1', '记住：患者对青霉素过敏')
 
-    // Debounce is 2s — wait for the scheduled extraction.
+    // No debounced extraction fires anymore — Tier 1 is removed (S1).
     await new Promise((r) => setTimeout(r, 2500))
 
     const extractionCalls = deepseekChat.mock.calls.filter(
       (call) => typeof call[0][0]?.content === 'string' && call[0][0].content.includes('clinical memory extractor'),
     )
-    expect(extractionCalls.length).toBeGreaterThanOrEqual(1)
+    expect(extractionCalls).toHaveLength(0)
   })
 })
