@@ -110,6 +110,7 @@ export class MemoryService {
     this.graph.addNode(fact)
 
     // Dual-write to legacy FactsStore (provisional — see commitGraphLast)
+    // §4.3 (#188): carry confidence + provenance so retrieval can cite evidence.
     const legacy = this.legacyFacts.add({
       category: fact.category,
       importance: fact.importance ?? 3,
@@ -118,6 +119,14 @@ export class MemoryService {
       patientHash: fact.patientHash,
       studyId: fact.studyId,
       ttl: undefined,
+      confidence: fact.confidence,
+      provenance: fact.provenance
+        ? {
+            sourceKind: fact.provenance.sourceKind,
+            sourceRef: fact.provenance.sourceRef,
+            evidenceQuote: fact.provenance.evidenceQuote,
+          }
+        : undefined,
     })
     legacy.id = stableId
     this.legacyFacts.commit()

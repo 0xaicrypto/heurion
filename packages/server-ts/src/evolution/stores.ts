@@ -16,6 +16,13 @@ export interface Fact {
   createdAt: number
   updatedAt: number
   lastSeenAt: number
+  /** §4.3 (#188): clinical evidence carried through to retrieval/context. */
+  confidence?: number
+  provenance?: {
+    sourceKind?: string
+    sourceRef?: string
+    evidenceQuote?: string
+  }
 }
 
 export interface Episode {
