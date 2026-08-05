@@ -407,24 +407,9 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
         { role: 'system', content: projected.systemPrompt + studyContext },
       ]
 
-      // R2 — anchored compaction: inject compaction summaries verbatim so
-      // continuity survives budget trimming (BRAIN2_MEMORY_LIFECYCLE §4.3).
-      try {
-        const compactions = await (prisma as any).kbCompaction.findMany({
-          where: { userId, sessionId: sid },
-          orderBy: { coveredUptoIdx: 'desc' },
-          take: 3,
-        })
-        if (compactions.length > 0) {
-          const block = compactions.map((c: any) => c.summary).join('\n---\n')
-          messages.push({
-            role: 'system',
-            content: `[Anchored summaries of earlier turns in this session — use them for continuity (older raw turns were compacted away):\n${block}\n]`,
-          })
-        }
-      } catch {
-        // kbCompaction table may not exist yet
-      }
+      // R2 — anchored compaction: the Session Memory (episodes, current
+      // session only) carries the anchored summary; no separate store.
+      // (Injected via the episodes projection layer above.)
 
       // R2 — anchored compaction with opencode-style delayed-sync semantics:
       // the triggering turn fires it async (no reply latency); any LATER turn
