@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { getApp, authHeader, getAuthUserId } from './setup.js'
 import prisma from '../src/common/prisma.js'
-import { getExtractedUptoIdx, advanceExtractedUptoIdx, shouldExtractIncrement } from '../src/memory/extraction-cursor.js'
+import { getExtractedUptoIdx, advanceExtractedUptoIdx } from '../src/memory/extraction-cursor.js'
 
 vi.mock('../src/common/llm.js', () => ({
   deepseekChat: vi.fn(),
@@ -45,40 +45,11 @@ describe('K1 extraction cursor', () => {
   })
 })
 
-describe('K2 event-driven trigger decision', () => {
-  test('plain volume no longer triggers (moved to compaction/close tiers)', () => {
-    expect(shouldExtractIncrement('x'.repeat(300))).toBe(false)
-    expect(shouldExtractIncrement('x'.repeat(2000))).toBe(false)
-  })
-
-  test('common clinical words no longer trigger real-time extraction', () => {
-    // Real-time extraction is intentionally near-zero: diagnosis/plan/start
-    // words appear in most clinical turns; extraction happens at compaction.
-    expect(shouldExtractIncrement('诊断结果已确认，调整剂量方案')).toBe(false)
-    expect(shouldExtractIncrement('开始复查，停用原来的药')).toBe(false)
-  })
-
-  test('explicit memory instructions and safety signals trigger', () => {
-    expect(shouldExtractIncrement('记住：患者对青霉素过敏')).toBe(true)
-    expect(shouldExtractIncrement('请记得这个患者对阿司匹林禁忌')).toBe(true)
-    expect(shouldExtractIncrement('保存到知识库：这个方案有效')).toBe(true)
-    expect(shouldExtractIncrement('今天天气不错')).toBe(false)
-  })
-})
-
-describe('K1+K2 incremental extraction via chat', () => {
-  test('a short session with a key signal still proposes facts', async () => {
+describe('S1 — no real-time extraction', () => {
+  test('chatting with clinical words produces NO extraction (no Tier 1)', async () => {
     const app = await getApp()
     const userId = await getAuthUserId()
-    const sessionId = `k12_${Date.now()}`
-    const patientHash = `patient_k12_${Date.now()}`
-
-    // Register patient + seed a small conversation (2 turns < 5)
-    await app.inject({
-      method: 'POST', url: '/api/v1/dicom/patients/register-manual',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
-      payload: JSON.stringify({ initials: 'K2', age: 50, sex: 'M' }),
-    })
+    const sessionId = `s1_${Date.now()}`
 
     vi.mocked(deepseekChat).mockImplementation((messages) => {
       const text = JSON.stringify(messages)
@@ -89,25 +60,22 @@ describe('K1+K2 incremental extraction via chat', () => {
       return Promise.resolve('已记录。')
     })
 
+    // "诊断/方案" 等临床词 + 显式"记得"都不会触发实时提取
     await app.inject({
       method: 'POST', url: '/api/v1/agent/chat',
       headers: { ...await authHeader(), 'content-type': 'application/json' },
-      payload: JSON.stringify({ text: '患者确诊肺癌，记得记录', session_id: sessionId, patient_hash: patientHash }),
+      payload: JSON.stringify({ text: '诊断结果已确认，请记得这个方案', session_id: sessionId }),
     })
-
-    // Debounce is 2s — wait for the scheduled extraction
     await new Promise((r) => setTimeout(r, 3200))
 
-    // The fact should be proposed to the pending queue (short session, signal-triggered)
     const proposals = await (prisma as any).memoryProposal.findMany({
       where: { userId, kind: 'fact', status: 'pending' },
       orderBy: { createdAt: 'desc' },
       take: 5,
     })
-    expect(proposals.some((p: any) => p.content.includes('肺癌'))).toBe(true)
-
-    // Cursor advanced past the extracted segment
-    const idx = await getExtractedUptoIdx({ userId, scopeType: 'patient', patientHash })
-    expect(idx).toBeGreaterThan(0)
+    // 无实时提取 → 聊天本身不产生 pending（提取只在压缩/关闭时）
+    expect(proposals.filter((p: any) => p.content.includes('肺癌'))).toHaveLength(0)
   }, 30000)
 })
+
+

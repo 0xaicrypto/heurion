@@ -7,6 +7,10 @@ import prisma from '../common/prisma.js'
  * have been extracted. Extraction pipelines read only the incremental event
  * segment (afterIdx → latest], avoiding both short-session misses (no fixed
  * turn-count gate) and long-session re-extraction.
+ *
+ * S1: real-time extraction is removed — the cursor advances only at
+ * compaction time (Tier 2) and session close (Tier 3), where segments are
+ * processed once with full context.
  */
 
 export interface ExtractionCursorKey {
@@ -54,16 +58,4 @@ export async function advanceExtractedUptoIdx(key: ExtractionCursorKey, idx: num
   })
 }
 
-/**
- * K2 — event-driven trigger decision (Tier 1). Triggered ONLY by explicit
- * memory instructions or safety-critical signals. Everything else is
- * extracted at compaction time (Tier 2) or session close (Tier 3), where
- * segments are processed once with full context — real-time extraction is
- * intentionally near-zero (diagnosis/plan/start words are far too common in
- * clinical conversation to trigger).
- */
-export function shouldExtractIncrement(incrementalText: string): boolean {
-  // Explicit memory instructions + safety-critical allergies/contraindications.
-  const SIGNALS = /记住|记得|保存到知识库|保存记忆|过敏|禁忌/
-  return SIGNALS.test(incrementalText)
-}
+

@@ -113,9 +113,6 @@ export interface TurnResult {
   kbCommand?: boolean
 }
 
-// K2 debounce: one pending extraction per scope, merged within 2s.
-const pendingExtractions = new Map<string, ReturnType<typeof setTimeout>>()
-
 export class ChatOrchestrator {
   private projection: MemoryProjection
   private gapService = new PrismaKnowledgeGapService()
@@ -342,8 +339,6 @@ export class ChatOrchestrator {
     const turnCount = sessionEvents.filter((e) => e.eventType === 'user_message').length
     this.episodesStore.upsert(sessionId, userMessage.slice(0, 150), turnCount)
 
-    await this.maybeScheduleIncrementalExtraction(userId, sessionId, patientHash)
-
     // K6: Detect knowledge gaps on every turn — question-shaped messages
     // (containing ?/？/如何/是否/为什么…) not covered by any fact.
     try {
@@ -377,177 +372,6 @@ export class ChatOrchestrator {
     }
   }
 
-  /** K1/K2: read the scope cursor, check the incremental segment and
-   *  schedule a debounced extraction when it qualifies. */
-  private async maybeScheduleIncrementalExtraction(
-    userId: string,
-    sessionId: string,
-    patientHash?: string,
-  ): Promise<void> {
-    try {
-      const { getExtractedUptoIdx, scopeKeyOf, shouldExtractIncrement } = await import('../../memory/extraction-cursor.js')
-      const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string } = { userId, scopeType: patientHash ? 'patient' : 'global', patientHash }
-      const fromIdx = await getExtractedUptoIdx(scopeKey)
-      const incremental = this.eventLog
-        .query({ sessionId, afterIdx: fromIdx })
-        .filter((e) => e.eventType === 'user_message' || e.eventType === 'assistant_response')
-        .map((e) => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
-        .join('\n')
-
-      if (!shouldExtractIncrement(incremental)) return
-      const toIdx = this.eventLog.count()
-
-      const mapKey = scopeKeyOf(scopeKey)
-      const existing = pendingExtractions.get(mapKey)
-      if (existing) clearTimeout(existing)
-      pendingExtractions.set(
-        mapKey,
-        setTimeout(() => {
-          pendingExtractions.delete(mapKey)
-          this.runIncrementalExtraction(userId, sessionId, patientHash, fromIdx, toIdx)
-            .catch((err) => console.log('[EVOLVE] Extraction failed:', (err as Error).message.slice(0, 120)))
-        }, 2000).unref?.() as ReturnType<typeof setTimeout>,
-      )
-    } catch (err) {
-      console.log('[EVOLVE] Increment check skipped:', (err as Error).message.slice(0, 120))
-    }
-  }
-
-  private async runIncrementalExtraction(
-    userId: string,
-    sessionId: string,
-    patientHash: string | undefined,
-    fromIdx: number,
-    toIdx: number,
-  ) {
-    const { advanceExtractedUptoIdx, scopeKeyOf } = await import('../../memory/extraction-cursor.js')
-    const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string } = { userId, scopeType: patientHash ? 'patient' : 'global', patientHash }
-    const incrementalEvents = this.eventLog
-      .query({ sessionId, afterIdx: fromIdx })
-      .filter((e) => e.eventType === 'user_message' || e.eventType === 'assistant_response')
-    const conversation = incrementalEvents
-      .map(e => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
-      .join('\n')
-
-    try {
-      // Tier-1 extraction — shared with compaction (Tier 2) and close flush
-      // (Tier 3). AI extraction always lands in the pending review queue.
-      const { extractAndProposeFacts } = await import('../../memory/compaction.js')
-      const facts = await extractAndProposeFacts(
-        {
-          userId,
-          eventLog: this.eventLog,
-          facts: this.factsStore,
-          episodes: this.episodesStore,
-          skills: this.skillsStore,
-          knowledge: this.knowledgeStore,
-          memory: this.memory,
-        },
-        patientHash,
-        conversation,
-        { sessionId, reason: 'chat increment' },
-      )
-
-      // Advance the cursor on success (a throw above skips the advance so
-      // the segment is retried).
-      await advanceExtractedUptoIdx(scopeKey, toIdx)
-      console.log(`[EVOLVE] Increment extracted (idx ${fromIdx} → ${toIdx})`)
-
-      // Auto-resolve pending gaps that match new facts
-      const resolved = await this.autoResolveGapsFromFacts(userId, facts)
-      if (resolved.length > 0) console.log(`[GAP] Auto-resolved ${resolved.length} gaps`)
-
-      // Auto-generate knowledge article when 3+ facts accumulate
-      const allFacts = this.memory
-        ? this.memory.graph.getCurrentNodesByType('fact').filter((n): n is import('../../memory/memory.types').FactNode => n.type === 'fact')
-        : this.factsStore.all()
-      if (allFacts.length >= 3 && allFacts.length % 5 === 0) {
-        try {
-          const articleFacts = allFacts.slice(-10)
-          const factList = articleFacts
-            .map((f) => {
-              const date = f.createdAt ? new Date(f.createdAt).toISOString().slice(0, 10) : 'unknown'
-              const source = [f.sourceType, f.patientHash, f.studyId].filter(Boolean).join(' / ') || 'general'
-              return `[importance=${f.importance ?? 3}] [${f.category}] [${source}] [${date}] ${f.content}`
-            })
-            .join('\n')
-          const articlePrompt = `You are synthesizing clinical findings for an oncology researcher.
-Emphasize patient-specific facts, high-importance findings (importance 4-5), and connections across source types (patient / doctor preference / research / general).
-Keep the article concise (1-2 paragraphs) and clinically actionable.
-
-Facts to synthesize:
-${factList}
-
-Return ONLY JSON: { "title": "...", "content": "..." }`
-          const apiKey = getApiKey()
-          const articleResult = await deepseekChat(
-            [{ role: 'user', content: articlePrompt }],
-            apiKey,
-            {
-              model: 'deepseek-chat',
-              maxTokens: 2048,
-              telemetryContext: { userId, workspaceId: userId, action: 'chat.generate_article' },
-            },
-          )
-          const jsonMatch2 = articleResult.match(/\{[\s\S]*\}/)
-          if (jsonMatch2) {
-            const article = JSON.parse(jsonMatch2[0])
-            if (article.title && article.content) {
-              // Synthesized articles also go through the pending review
-              // queue (BRAIN2_MEMORY_LIFECYCLE §5.4).
-              try {
-                const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
-                const gateway = new MemoryGraphGateway(
-                  userId,
-                  this.memory!,
-                  this.factsStore,
-                  this.episodesStore,
-                  this.skillsStore,
-                  this.knowledgeStore,
-                )
-                await gateway.propose({
-                  scopeType: patientHash ? 'patient' : 'global',
-                  patientHash,
-                  kind: 'article',
-                  content: `${article.title}\n\n${article.content}`,
-                  importance: 3,
-                  confidence: 'medium',
-                  reason: `AI synthesis from ${articleFacts.length} facts`,
-                })
-                console.log(`[KNOWLEDGE] Article proposed for review: ${article.title}`)
-              } catch (err) {
-                console.log('[KNOWLEDGE] Article proposal skipped:', (err as Error).message.slice(0, 100))
-              }
-            }
-          }
-        } catch (err) {
-          console.log('[KNOWLEDGE] Article generation skipped:', (err as Error).message.slice(0, 100))
-        }
-      }
-
-      // K3: update the session summary from the incremental segment.
-      try {
-        const { updateEpisodeSummary } = await import('../../memory/knowledge-synthesis.js')
-        const sessionTurnCount = this.eventLog
-          .query({ sessionId })
-          .filter((e) => e.eventType === 'user_message').length
-        const summary = await updateEpisodeSummary({
-          userId,
-          sessionId,
-          patientHash,
-          episodes: this.episodesStore,
-          incrementalText: conversation,
-          turnCount: sessionTurnCount,
-        })
-        if (summary) console.log('[SUMMARY] Episode updated')
-      } catch (err) {
-        console.log('[SUMMARY] Update skipped:', (err as Error).message.slice(0, 120))
-      }
-    } catch (err) {
-      console.log('[EVOLVE] Fact extraction skipped:', (err as Error).message.slice(0, 100))
-    }
-  }
-
   /**
    * Tier 3 — exposed for the session-close flow: extract any conversation
    * segment not yet covered by the cursor or a compaction.
@@ -574,30 +398,5 @@ Return ONLY JSON: { "title": "...", "content": "..." }`
     }
   }
 
-  /**
-   * Auto-resolve open gaps when new facts match their query keywords.
-   */
-  private async autoResolveGapsFromFacts(
-    userId: string,
-    newFacts: Array<{ content: string }>,
-  ): Promise<string[]> {
-    const { gaps: openGaps } = await this.gapService.list({ workspaceId: userId, status: 'open' })
-    const resolved: string[] = []
-    for (const gap of openGaps) {
-      const words = gap.content.toLowerCase().split(/\s+/).filter(w => w.length > 3)
-      const matched = newFacts.some(f => words.some(w => f.content.toLowerCase().includes(w)))
-      if (matched) {
-        await this.gapService.resolve(gap.id, `Auto-resolved by fact extraction`)
-        await this.telemetry.record({
-          userId,
-          workspaceId: userId,
-          category: 'gap',
-          action: 'auto_resolved',
-          metadata: { gapId: gap.id },
-        }).catch(() => {})
-        resolved.push(gap.id)
-      }
-    }
-    return resolved
-  }
+
 }
