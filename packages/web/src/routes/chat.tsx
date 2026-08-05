@@ -343,13 +343,6 @@ export function ChatPage() {
               </div>
             )}
             {messages.map((m) => (
-              m._compactionNotice ? (
-                <div key={m.id} className="flex justify-center">
-                  <span className="rounded-full border border-accent/30 bg-accent/5 px-3 py-1 text-xs text-text-secondary">
-                    🧠 {t('chat.compactionNotice', '会话历史已压缩，上下文预算已恢复')}
-                  </span>
-                </div>
-              ) : (
               <div
                 key={m.id}
                 className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -433,7 +426,6 @@ export function ChatPage() {
                   {m.isStreaming ? <span className="animate-pulse" role="status" aria-label={t('chat.streaming')}>●</span> : null}
                 </div>
               </div>
-              )
             ))}
             <div ref={bottomRef} />
           </div>

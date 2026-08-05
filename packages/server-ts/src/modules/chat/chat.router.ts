@@ -98,6 +98,32 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       }).catch(() => {})
       send({ type: 'context_info', text: `Router: ${routeResult.intent} (ruleHit=${routeResult.ruleHit}, llmFallback=${routeResult.llmFallback})`, kind: 'router' })
 
+      // R2: stream a not-yet-shown compaction summary into the conversation.
+      // A compaction evolution event that landed AFTER the last reply is
+      // 'unshown' — push its Session Memory summary as a streamed message.
+      try {
+        const allEvents = ctx.eventLog.query({ sessionId: sid })
+        const lastReply = allEvents
+          .filter((e: any) => e.eventType === 'assistant_response')
+          .sort((a: any, b: any) => b.idx - a.idx)[0]
+        const lastCompaction = allEvents
+          .filter((e: any) => e.eventType === 'evolution' && String(e.content || '').includes('自动压缩'))
+          .sort((a: any, b: any) => b.idx - a.idx)[0]
+        if (lastCompaction && (!lastReply || lastCompaction.idx > lastReply.idx)) {
+          const sessionMemory = ctx.episodes.all().find((e: any) => e.sessionId === sid)
+          const summaryText = sessionMemory?.summary || ''
+          if (summaryText) {
+            const header = `🧠 会话历史已压缩，上下文预算已恢复\n\n${summaryText}`
+            for (const piece of header.match(/.{1,60}/gs) || []) {
+              send({ type: 'compaction_chunk', text: piece })
+            }
+            send({ type: 'compaction_completed' })
+          }
+        }
+      } catch {
+        // compaction summary streaming is best-effort
+      }
+
       // Knowledge commands are handled directly without calling the chat LLM
       if (routeResult.intent === 'knowledge_command') {
         const kbResult = await handleKnowledgeCommand({
