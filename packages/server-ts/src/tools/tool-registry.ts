@@ -54,7 +54,16 @@ export class ToolRegistry {
   async execute(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const tool = this.tools.get(name)
     if (!tool) return { success: false, error: `Unknown tool: ${name}` }
-    const result = await tool.execute(args)
+
+    // §3.3: a throwing tool must never take down the whole chat turn —
+    // surface the failure to the LLM so it can switch strategy.
+    let result: ToolResult
+    try {
+      result = await tool.execute(this.sanitizeArgs(tool, args))
+    } catch (err) {
+      return { success: false, error: `Tool ${name} failed: ${(err as Error).message.slice(0, 300)}` }
+    }
+
     // T1: bound large outputs uniformly — every tool result that goes back
     // into the LLM round passes through the limiter.
     if (result.success && result.output) {
@@ -74,5 +83,20 @@ export class ToolRegistry {
       }
     }
     return result
+  }
+
+  /**
+   * §3.3: coerce numeric params passed as strings; non-numeric values
+   * become `undefined` so tools fall back to their defaults (no NaN).
+   */
+  private sanitizeArgs(tool: BaseTool, args: Record<string, unknown>): Record<string, unknown> {
+    const sanitized = { ...args }
+    for (const key of ['top_k', 'topK', 'maxResults', 'limit', 'k']) {
+      if (key in sanitized && typeof sanitized[key] !== 'number') {
+        const n = Number(sanitized[key])
+        sanitized[key] = Number.isFinite(n) ? n : undefined
+      }
+    }
+    return sanitized
   }
 }
