@@ -682,6 +682,72 @@ category       String?   // 提取类别（质量反馈 F 的统计维度，prop
 | 13.5G | 记忆健康仪表盘 | P3 | 2d |
 | 13.5H | Persona 分段缓存（并入 R1 #98） | P2 | 与 R1 合并 |
 
+## 15. 写作模块整合升级设计（对话驱动写作）
+
+> **目标：改变写作模式**——从"人工直接编辑 markdown"变为"通过跟 AI 对话完成
+> 写作"。写作页聊天并入统一管道（记忆 + 工具 + 审核闭环），编辑器升级为
+> Lark 式所见即所得画布（TipTap）。
+
+### 15.1 现状问题
+
+| # | 问题 | 位置 |
+|---|------|------|
+| W1 | 写作页 chat 是孤岛：独立端点 `/docs/:id/chat`，单轮、无记忆、无工具、无审核 | documents.router |
+| W2 | 编辑器是 markdown 源码 Textarea，无实时渲染（表格"全是乱的"的根源之一） | writing-editor.tsx |
+| W3 | 写作与记忆系统零整合（不引用已确认 Facts / Session Memory） | — |
+| W4 | LLM 改文档靠 `REPLY + UPDATED_DOCUMENT:` 文本解析（脆弱） | parseDocChatResponse |
+
+### 15.2 目标
+
+1. **写作 = 对话**：用户通过聊天驱动 AI 写/改文档，人工审阅迭代
+2. **三个 chat 统一**（§13 的延续）：写作页聊天 = `/api/v1/agent/chat` 主管道
+3. **Lark 式画布**：TipTap（ProseMirror）WYSIWYG，表格可视化编辑
+
+### 15.3 架构
+
+```
+写作页 = 左：文档画布（TipTap WYSIWYG）｜右：聊天（主管道，默认打开）
+
+数据流：
+  用户消息 → /api/v1/agent/chat（Session Memory + Facts + 工具 + 审核闭环）
+    ├─ docs/current 上下文源（R1 源模型扩展，hash 变化才重发）
+    └─ edit_document 工具（markdown 全文 → 写回 + 自动快照）
+  → 前端 markdown→HTML 转换 → 编辑器实时应用（保留滚动）
+  → 用户审阅（TipTap 表格/格式）→ 继续对话迭代
+
+存储：保持 markdown（AI 友好）
+  加载 / LLM 输出：markdown → HTML（marked）
+  保存：HTML → markdown（turndown，表格/标题/列表基本无损）
+  快照 / PHI 扫描 / DOCX 导出：基于 markdown 文本（现有端点不变）
+```
+
+### 15.4 组件拆解
+
+| 组件 | 说明 | Issue |
+|---|---|---|
+| **DocEditor** | TipTap + StarterKit + Table 扩展；md 导入导出；工具栏（标题/表格/列表/撤销重做）；`setContentFromMarkdown`（AI 更新入口） | #169 |
+| **docs/current 源** | R1 源模型新源：文档标题 + 正文（截断上限）+ 引用材料快照 | #170 |
+| **统一聊天接入** | writing-editor chat → `sendChatFull` + `sessionId=doc-{docId}`（useChatStore）；复用主 chat 渲染组件（streaming / thinking 默认展开 / tool calls） | #170 |
+| **edit_document 工具** | ToolRegistry 注册：LLM 输出完整 markdown → 写回 doc.body（版本化）+ 自动快照 | #171 |
+| **旧端点** | `/docs/:id/chat` 废弃（返回明确提示） | #170 |
+
+### 15.5 测试计划
+
+| 层 | 用例 |
+|---|---|
+| 单测 | DocEditor：md→HTML 渲染（标题/列表/表格）、HTML→md 往返、表格增删行列保存正确、AI 更新不重置滚动；docs/current：hash 变化才重发、截断、引用快照 |
+| 集成 | 写作会话化（两轮上下文连贯）；记忆注入（引用已确认 Facts）；edit_document 写回 + 快照 + 前端应用；压缩/审核闭环 |
+| 回归 | 文档 CRUD / PHI / 快照 / 导出端点不破坏；主 chat 无回归 |
+
+### 15.6 实施计划
+
+| 步骤 | 内容 | 依赖 | 预估 |
+|---|---|---|---|
+| #169 | DocEditor TipTap 画布（md 导入导出 + 表格） | — | 1.5d |
+| #170 | 写作页聊天接入主管道 + docs/current 源 | #169 | 1d |
+| #171 | edit_document 工具 + AI 更新流 | #170 | 1d |
+
+---
 ## 14. 修订历史
 
 | 版本 | 内容 |
@@ -690,3 +756,4 @@ category       String?   // 提取类别（质量反馈 F 的统计维度，prop
 | v2.1 | 矛盾检测与取代（§5.7）；Tier 1 信号收缩；压缩 delayed-sync；episodes 会话隔离 |
 | v2.2 | §13 记忆系统优化设计（Phase 3 治理）；修订 §7.3 拒绝原因可选、§8/§9 完成状态 |
 | v3.0 | §13 重写为简化模型：两形态 + 一路径 + 一闸门（S1 砍 Tier 1、S2 合并 Session Memory、S3 归一提取） |
+| v3.1 | §15 写作模块整合升级（对话驱动写作 + TipTap 画布 + 统一聊天管道）；issues #169–#171 |
