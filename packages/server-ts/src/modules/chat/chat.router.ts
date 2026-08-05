@@ -357,11 +357,15 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
         send({ type: 'citations', items: [] })
         send({ type: 'turn_complete', assistant_event_idx: ctx.eventLog.count() })
 
-        await prisma.session.upsert({
-          where: { id: sid },
-          update: { lastMessageAt: new Date().toISOString(), messageCount: { increment: 1 } },
-          create: { id: sid, userId, title: body.text.slice(0, 50), createdAt: new Date().toISOString() },
-        })
+        // Writing sessions (doc-*) are event-log namespaces, not user-facing
+        // sessions — never create a Session row for them.
+        if (!sid.startsWith('doc-')) {
+          await prisma.session.upsert({
+            where: { id: sid },
+            update: { lastMessageAt: new Date().toISOString(), messageCount: { increment: 1 } },
+            create: { id: sid, userId, title: body.text.slice(0, 50), createdAt: new Date().toISOString() },
+          })
+        }
         return
       }
 
@@ -743,12 +747,14 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           .catch(() => {})
       }
 
-      // Update session
-      await prisma.session.upsert({
-        where: { id: sid },
-        update: { lastMessageAt: new Date().toISOString(), messageCount: { increment: 1 } },
-        create: { id: sid, userId, title: body.text.slice(0, 50), createdAt: new Date().toISOString() },
-      })
+      // Update session (writing doc-* sessions never get a Session row)
+      if (!sid.startsWith('doc-')) {
+        await prisma.session.upsert({
+          where: { id: sid },
+          update: { lastMessageAt: new Date().toISOString(), messageCount: { increment: 1 } },
+          create: { id: sid, userId, title: body.text.slice(0, 50), createdAt: new Date().toISOString() },
+        })
+      }
 
       send({ type: 'citations', items: [] })
       send({ type: 'turn_complete', assistant_event_idx: ctx.eventLog.count() })

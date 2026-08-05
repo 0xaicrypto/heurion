@@ -9,7 +9,12 @@ export async function sessionRouter(app: FastifyInstance) {
   app.get('/api/v1/sessions', async (request) => {
     const includeArchived = (request.query as any).include_archived === '1'
     const scope = (request.query as any).scope
-    const where: any = { userId: request.user!.userId, archived: includeArchived ? undefined : 0 }
+    // Writing sessions (doc-*) are internal namespaces — never list them.
+    const where: any = {
+      userId: request.user!.userId,
+      archived: includeArchived ? undefined : 0,
+      NOT: { id: { startsWith: 'doc-' } },
+    }
     if (scope) where.scope = scope
     const rows = await prisma.session.findMany({
       where,
