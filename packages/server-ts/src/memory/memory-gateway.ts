@@ -3,6 +3,7 @@ import path from 'path'
 import type { MemoryService } from './memory.service.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores'
 import type { MemoryNode } from './memory.types'
+import { sanitizeFactFields, FACT_CONTENT_MAX } from './memory.types'
 import { EmbeddingIndex, normalizeVector } from './embedding-index.js'
 
 // ── Types ──────────────────────────────────────────────────────
@@ -209,8 +210,19 @@ export class MemoryGraphGateway {
    * (>= 0.95) to an existing record in the same scope is skipped.
    */
   async propose(input: ProposalInput): Promise<MemoryProposalRow> {
+    // §4.2 (#187): whitelist + bound fact fields before they enter the queue.
+    let content = input.content
+    let category = input.category || null
+    if (input.kind === 'fact') {
+      const clean = sanitizeFactFields({ content, category: category || undefined, sourceType: undefined, confidence: undefined })
+      content = clean.content
+      category = clean.category
+    } else {
+      content = content.slice(0, FACT_CONTENT_MAX)
+    }
+
     // Semantic dedup against reviewed memories in the same scope.
-    const contentVec = await this.embedOrNull(input.content)
+    const contentVec = await this.embedOrNull(content)
     if (contentVec) {
       const similar = this.embeddingIndex().findMostSimilar(contentVec, {
         patientHash: input.patientHash,
@@ -225,12 +237,12 @@ export class MemoryGraphGateway {
           patientHash: input.patientHash || null,
           studyId: input.studyId || null,
           kind: input.kind,
-          content: input.content,
+          content,
           importance: input.importance ?? 3,
           confidence: input.confidence ?? 'medium',
           reason: input.reason || null,
           sourceRange: input.sourceRange || null,
-          category: input.category || null,
+          category,
           conflictsWith: null,
           status: 'rejected',
           rejectedReason: `语义重复（与 ${similar.record.stableId} 相似度 ${similar.score.toFixed(2)}）`,
@@ -252,12 +264,12 @@ export class MemoryGraphGateway {
         patientHash: input.patientHash || null,
         studyId: input.studyId || null,
         kind: input.kind,
-        content: input.content,
+        content,
         importance: input.importance ?? 3,
         confidence: input.confidence ?? 'medium',
         reason: input.reason || null,
         sourceRange: input.sourceRange || null,
-        category: input.category || null,
+        category,
         conflictsWith: conflictsWith ? JSON.stringify(conflictsWith) : null,
         status: 'pending',
         createdAt: now,

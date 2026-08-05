@@ -48,6 +48,8 @@ export interface FactNode extends MemoryNodeBase {
   sourceType: 'patient' | 'doctor' | 'research' | 'general' | 'sidecar' | 'document'
   count: number
   confidence: number
+  /** §4.2 (#187): auto-marked when confidence < 0.6 — surfaces low-certainty memories in the UI. */
+  uncertain?: boolean
 }
 
 export interface ArticleNode extends MemoryNodeBase {
@@ -159,8 +161,32 @@ export interface AddFactInput {
   patientHash?: string
   studyId?: string
   confidence?: number
+  uncertain?: boolean
   provenance?: Partial<Provenance>
   createdBy?: MemoryCreatedBy
+}
+
+/** §4.2 (#187): whitelists + bounds applied at every fact write path. */
+export const FACT_CATEGORIES: FactNode['category'][] = [
+  'preference', 'fact', 'constraint', 'goal', 'context',
+  'diagnosis', 'symptom', 'exam', 'medication', 'allergy', 'plan',
+]
+export const FACT_SOURCE_TYPES: FactNode['sourceType'][] = ['patient', 'doctor', 'research', 'general', 'sidecar', 'document']
+export const FACT_CONTENT_MAX = 300
+
+export function sanitizeFactFields(input: {
+  content?: string
+  category?: string
+  sourceType?: string
+  confidence?: number
+  uncertain?: boolean
+}): { content: string; category: FactNode['category']; sourceType: FactNode['sourceType']; uncertain: boolean } {
+  return {
+    content: String(input.content || '').slice(0, FACT_CONTENT_MAX),
+    category: (FACT_CATEGORIES as string[]).includes(input.category || '') ? (input.category as FactNode['category']) : 'fact',
+    sourceType: (FACT_SOURCE_TYPES as string[]).includes(input.sourceType || '') ? (input.sourceType as FactNode['sourceType']) : 'general',
+    uncertain: typeof input.confidence === 'number' ? input.confidence < 0.6 : (input.uncertain ?? false),
+  }
 }
 
 export interface EditFactInput {
