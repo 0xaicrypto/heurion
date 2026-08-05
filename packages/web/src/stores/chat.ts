@@ -23,6 +23,7 @@ export interface ChatMessage {
   };
   addedToKnowledge?: boolean;
   _compactionStream?: boolean;
+  toolCalls?: Array<{ tool: string; argsPreview: string }>;
 }
 
 interface SessionState {
@@ -135,6 +136,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 },
               },
             };
+          });
+          continue;
+        }
+        if (chunk.type === 'tool_call') {
+          set((state) => {
+            const s = state.sessions[sessionId];
+            if (!s) return state;
+            const msgs = [...s.messages];
+            const last = msgs[msgs.length - 1];
+            if (last?.role === 'assistant') {
+              let argsPreview = '';
+              try { argsPreview = JSON.stringify(chunk.args ?? {}).slice(0, 120); } catch { /* ignore */ }
+              msgs[msgs.length - 1] = {
+                ...last,
+                toolCalls: [...(last.toolCalls ?? []), { tool: chunk.tool, argsPreview }],
+              };
+            }
+            return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
           });
           continue;
         }

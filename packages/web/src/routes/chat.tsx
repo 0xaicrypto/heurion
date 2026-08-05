@@ -12,6 +12,7 @@ import { StreamingLlmContent } from '@/components/LlmContent';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
+import { ToolCalls } from '@/components/ToolCalls';
 import { Alert, Button, Textarea } from '@/components/ui';
 
 
@@ -377,6 +378,7 @@ export function ChatPage() {
                       </div>
                     </details>
                   )}
+                  {m.toolCalls && m.toolCalls.length > 0 && <ToolCalls calls={m.toolCalls} />}
                   <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
                   {m.download && (
                     <div className="mt-3 rounded-lg border border-border bg-surface p-3">
