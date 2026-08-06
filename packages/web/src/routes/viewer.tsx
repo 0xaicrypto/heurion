@@ -182,7 +182,7 @@ export function ViewerPage() {
       {loading ? (
         <div className="space-y-4 p-6">
           <Skeleton className="h-8 w-full" />
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
             <Skeleton className="h-48 rounded-xl" />
             <Skeleton className="h-48 rounded-xl" />
             <Skeleton className="h-48 rounded-xl" />
@@ -191,7 +191,7 @@ export function ViewerPage() {
       ) : study ? (
         <div className="p-6">
           <Card className="mb-6 p-4">
-            <div className="grid grid-cols-4 gap-4 text-sm">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
               <div>
                 <p className="text-xs text-text-tertiary">Modality</p>
                 <p className="font-medium text-text-primary">{study.modality}</p>

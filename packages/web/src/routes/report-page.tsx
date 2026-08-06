@@ -73,7 +73,7 @@ export function ReportPage() {
       ) : (
         <Card className="mb-6 p-6">
           <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
               <div>
                 <label className="mb-1 block text-xs font-medium text-text-tertiary">Patient</label>
                 <p className="text-sm text-text-primary">{patient?.initials || hash.slice(0, 8)}</p>
