@@ -648,7 +648,7 @@ export function ChatPage() {
               <h2 className="text-sm font-semibold text-text-primary">{t('chat.confirmCloseTitle', '关闭会话')}</h2>
             </div>
             <p className="mb-4 text-sm text-text-secondary">
-              {t('chat.confirmCloseBody', '关闭「{title}」后，该会话的聊天记录将被清除且无法恢复。确定关闭吗？', { title: currentSessionTitle })}
+              {t('chat.confirmCloseBody', '关闭「{{title}}」后，该会话的聊天记录将被清除且无法恢复。确定关闭吗？', { title: currentSessionTitle || '?' })}
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setConfirmCloseOpen(false)}>
