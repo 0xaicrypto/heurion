@@ -28,9 +28,9 @@ export function SettingsPage() {
         <header className="flex h-14 items-center border-b border-border bg-surface px-6">
           <h1 className="font-semibold text-text-primary">{t('settings.title')}</h1>
         </header>
-        <div className="flex">
-          <nav className="w-48 border-r border-border bg-surface px-3 py-4">
-            <ul className="space-y-1">
+        <div className="flex flex-col lg:flex-row">
+          <nav className="border-b border-border bg-surface px-3 py-2 lg:w-48 lg:border-b-0 lg:border-r lg:py-4">
+            <ul className="flex flex-wrap gap-1 lg:flex-col lg:space-y-1">
               <TabButton active={tab === 'profile'} onClick={() => setTab('profile')}>
                 {t('settings.profile')}
               </TabButton>
@@ -45,7 +45,7 @@ export function SettingsPage() {
               </TabButton>
             </ul>
           </nav>
-          <main className="flex-1 p-6">
+          <main className="flex-1 p-4 sm:p-6">
             {tab === 'profile' && <ProfileSection />}
             {tab === 'llm' && <LlmSection />}
             {tab === 'embedding' && <EmbeddingSection />}
@@ -67,7 +67,7 @@ function TabButton({
   children: React.ReactNode;
 }) {
   return (
-    <li>
+    <li className="shrink-0">
       <button
         onClick={onClick}
         className={cn(

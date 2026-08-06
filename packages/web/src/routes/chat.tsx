@@ -346,9 +346,9 @@ export function ChatPage() {
   return (
     <AppShell>
       <div className="flex h-full flex-col">
-        <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
-          <div className="flex items-center gap-3">
-            <h1 className="font-semibold text-text-primary">{t('chat.title')}</h1>
+        <header className="flex min-h-14 flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2 sm:px-6">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <h1 className="shrink-0 font-semibold text-text-primary">{t('chat.title')}</h1>
               <select
               value={sessionId}
               onChange={(e) => {
@@ -358,7 +358,7 @@ export function ChatPage() {
                 setInput(drafts[e.target.value] ?? '');
                 setSessionId(e.target.value);
               }}
-              className="h-8 max-w-[220px] rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              className="h-8 min-w-0 flex-1 max-w-[220px] rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
               aria-label={t('chat.selectSession', 'Session')}
               disabled={!sessionId}
             >
@@ -369,25 +369,21 @@ export function ChatPage() {
             </select>
             <button
               onClick={handleNewSession}
-              className="rounded-lg border border-border bg-surface-elevated px-2 py-1 text-xs text-text-secondary hover:bg-surface"
+              className="shrink-0 rounded-lg border border-border bg-surface-elevated px-2 py-1 text-xs text-text-secondary hover:bg-surface"
               title={t('chat.newSession', 'New Session')}
             >
               <Plus size={13} className="mr-1 inline" />
               {t('chat.newSession', 'New Session')}
-            </button>            <button
+            </button>
+            <button
               onClick={handleCloseSession}
-              className="rounded-lg border border-border bg-surface-elevated px-2 py-1 text-xs text-text-secondary hover:bg-error/10 hover:text-error"
+              className="shrink-0 rounded-lg border border-border bg-surface-elevated px-2 py-1 text-xs text-text-secondary hover:bg-error/10 hover:text-error"
               title={t('chat.closeSession', 'Close Session')}
             >
               {t('chat.closeSession', 'Close')}
             </button>
             {llmStatus && (
-              <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary border border-border">
-                {llmStatus.provider}/{llmStatus.model}
-              </span>
-            )}
-            {llmStatus && (
-              <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary border border-border">
+              <span className="hidden shrink-0 rounded-full border border-border bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary sm:inline">
                 {llmStatus.provider}/{llmStatus.model}
               </span>
             )}
