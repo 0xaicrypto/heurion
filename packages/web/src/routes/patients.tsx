@@ -544,7 +544,7 @@ export function PatientChatPage() {
         <div className="mx-auto max-w-3xl space-y-4">
           {messages.map((m) => (
             <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+              <div className={`max-w-[85%] rounded-md px-4 py-3 text-sm leading-relaxed ${
                 m.role === 'user'
                   ? 'bg-accent text-white'
                   : 'border border-border bg-surface-elevated text-text-primary shadow-sm'

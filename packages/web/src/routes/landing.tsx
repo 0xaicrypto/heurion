@@ -239,7 +239,7 @@ export function LandingPage() {
         </div>
 
         {/* Simple architecture diagram */}
-        <div className="mt-12 hidden items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-8 lg:flex">
+        <div className="mt-12 hidden items-center justify-center gap-4 rounded-lg border border-border bg-surface p-8 lg:flex">
           <div className="flex w-56 flex-col items-center rounded-xl border border-accent/30 bg-accent/5 p-5 text-center">
             <Brain size={32} className="text-accent" />
             <span className="mt-2 font-semibold text-text-primary">

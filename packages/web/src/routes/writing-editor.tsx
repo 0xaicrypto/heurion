@@ -704,7 +704,7 @@ export function WritingEditorPage() {
                 {chatMessages.map((m) => (
                   <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div
-                      className={`max-w-[90%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
+                      className={`max-w-[90%] rounded-md px-3 py-2 text-sm leading-relaxed ${
                         m.role === 'user'
                           ? 'bg-accent text-white'
                           : 'border border-border bg-surface-elevated text-text-primary shadow-sm'

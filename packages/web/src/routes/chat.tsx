@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Paperclip, Copy, Check, Download, FileText, Plus, X, RefreshCw, RotateCcw } from 'lucide-react';
+import { Paperclip, Copy, Check, Download, FileText, Plus, X, RefreshCw, RotateCcw, Quote } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
 import type { LlmStatus } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
@@ -428,7 +428,7 @@ export function ChatPage() {
                   )}
                   <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} group`}>
                     <div
-                      className={`relative max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                      className={`relative max-w-[85%] rounded-md px-4 py-3 text-sm leading-relaxed ${
                         m.role === 'user'
                           ? 'bg-accent text-white'
                           : m._compactionStream
@@ -473,6 +473,26 @@ export function ChatPage() {
                     />
                   )}
                   <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
+                  {m.citations && m.citations.length > 0 && (
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5" aria-label={t('chat.citations', '引用')}>
+                      {m.citations.map((c, i) => {
+                        const isUrl = /^https?:\/\//i.test(c.source || '');
+                        return (
+                          <a
+                            key={i}
+                            href={isUrl ? c.source : undefined}
+                            target={isUrl ? '_blank' : undefined}
+                            rel={isUrl ? 'noreferrer' : undefined}
+                            title={c.text}
+                            className="inline-flex max-w-[220px] items-center gap-1 rounded-md border border-border bg-surface-elevated px-2 py-0.5 text-[11px] text-text-tertiary transition-colors hover:border-accent/50 hover:text-accent"
+                          >
+                            <Quote size={10} className="shrink-0" />
+                            <span className="truncate">{c.text}</span>
+                          </a>
+                        );
+                      })}
+                    </div>
+                  )}
                   {m.download && (
                     <div className="mt-3 rounded-lg border border-border bg-surface p-3">
                       <div className="flex items-center gap-2 text-sm text-text-primary">
