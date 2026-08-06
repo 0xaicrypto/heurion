@@ -64,9 +64,17 @@ export async function patientsRouter(app: FastifyInstance) {
   })
 
   // ── Delete ──
-  app.delete('/api/v1/dicom/patients/:hash', async (request) => {
+  app.delete('/api/v1/dicom/patients/:hash', async (request, reply) => {
     const { hash } = request.params as any
     const userId = request.user!.userId
+
+    // 边界审计（#253）: ownership must be verified BEFORE any cascade —
+    // otherwise user B could delete user A's research assessments by using
+    // A's patient hash.
+    const owned = await (prisma as any).patientRecord.findFirst({ where: { hash, userId } })
+    if (!owned) {
+      return reply.status(404).send({ error: 'Patient not found' })
+    }
 
     // Remove related structured records first
     await (prisma as any).medicalRecord.deleteMany({ where: { patientHash: hash, userId } })

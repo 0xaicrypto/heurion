@@ -116,8 +116,12 @@ export async function sessionRouter(app: FastifyInstance) {
     return { id: sessionId, status: 'closed', closed_at: now, flushed_facts: flushed, cleaned_events: cleaned }
   })
 
-  app.delete('/api/v1/sessions/:sessionId', async (request) => {
-    await prisma.session.deleteMany({ where: { id: (request.params as any).sessionId, userId: request.user!.userId } })
+  app.delete('/api/v1/sessions/:sessionId', async (request, reply) => {
+    // 边界审计（#253）: userId-scoped; a miss must 404, never a silent 200.
+    const deleted = await prisma.session.deleteMany({ where: { id: (request.params as any).sessionId, userId: request.user!.userId } })
+    if (deleted.count === 0) {
+      return reply.status(404).send({ error: 'Session not found' })
+    }
     return {}
   })
 }

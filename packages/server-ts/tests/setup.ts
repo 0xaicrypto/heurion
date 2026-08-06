@@ -44,3 +44,25 @@ export async function getAuthUserId(): Promise<string> {
   const payload = JSON.parse(Buffer.from(t.split('.')[1], 'base64').toString())
   return payload.userId
 }
+
+/**
+ * 边界审计（#253）：注册并登录第二个独立用户，用于跨用户越权断言。
+ * 返回其 auth header + userId。
+ */
+export async function registerSecondUser(): Promise<{ token: string; userId: string }> {
+  const a = await getApp()
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const username = `seconduser_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+    const res = await a.inject({
+      method: 'POST', url: '/api/v1/auth/register',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ username, password: 'test123456', display_name: 'Second User' }),
+    })
+    const body = JSON.parse(res.payload)
+    if (body.jwt_token) {
+      const payload = JSON.parse(Buffer.from(body.jwt_token.split('.')[1], 'base64').toString())
+      return { token: body.jwt_token, userId: payload.userId }
+    }
+  }
+  throw new Error('Failed to register second test user')
+}
