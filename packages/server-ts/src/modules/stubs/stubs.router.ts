@@ -61,11 +61,6 @@ export async function stubRouter(app: FastifyInstance) {
     return { bundle: {}, exported_at: new Date().toISOString() }
   })
 
-  // ── Sandbox ──
-  app.post('/api/v1/sandbox/execute', async (request) => {
-    return { output: '[sandbox stub]', exit_code: 0 }
-  })
-
   // ── Chat files ──
   app.get('/api/v1/chat/files', async (request: any) => {
     const userId = request.user!.userId
@@ -79,33 +74,6 @@ export async function stubRouter(app: FastifyInstance) {
       size_bytes: f.sizeBytes, patient_hash: f.patientHash,
       created_at: f.createdAt,
     })) }
-  })
-
-  // ── Email (stub) ──
-  app.get('/api/v1/email/transport', async () => {
-    return { transports: [] }
-  })
-  app.post('/api/v1/email/send', async (request: any) => {
-    return { ok: true, message_id: `msg_${Date.now()}` }
-  })
-
-  // ── Billing (stub) ──
-  app.post('/api/v1/billing/checkout', async () => {
-    return { url: '', session_id: '' }
-  })
-  app.post('/api/v1/billing/portal', async () => {
-    return { url: '' }
-  })
-  app.post('/api/v1/billing/webhook', async (request: any, reply: any) => {
-    return reply.status(200).send({ received: true })
-  })
-  app.get('/api/v1/billing/subscription', async () => {
-    return { tier: 'beta', status: 'active', current_period_end: null }
-  })
-
-  // ── Feedback ──
-  app.post('/feedback', async () => {
-    return { ok: true }
   })
 
   // ── Memory versioning & impact ──

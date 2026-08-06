@@ -109,3 +109,25 @@ describe('nonexistent resources 404/400 (边界 #253)', () => {
     expect([400, 404]).toContain(toggle.statusCode)
   })
 })
+
+describe('removed stub endpoints are gone (边界 #201)', () => {
+  test('billing/email/sandbox/feedback stubs → 404', async () => {
+    const app = await getApp()
+    const h = await authHeader()
+    const hj = { ...h, 'content-type': 'application/json' }
+    const cases: Array<{ method: string; url: string; body?: string }> = [
+      { method: 'GET', url: '/api/v1/billing/subscription' },
+      { method: 'POST', url: '/api/v1/billing/checkout', body: '{}' },
+      { method: 'POST', url: '/api/v1/billing/webhook', body: '{}' },
+      { method: 'GET', url: '/api/v1/email/transport' },
+      { method: 'POST', url: '/api/v1/email/send', body: '{}' },
+      { method: 'POST', url: '/api/v1/sandbox/execute', body: '{}' },
+      // /feedback was a non-/api stub; it now falls into the SPA fallback
+      // (200 HTML) — deliberately not asserted here.
+    ]
+    for (const c of cases) {
+      const res = await app.inject({ method: c.method as any, url: c.url, headers: c.body ? hj : h, payload: c.body })
+      expect(res.statusCode).toBe(404)
+    }
+  })
+})
