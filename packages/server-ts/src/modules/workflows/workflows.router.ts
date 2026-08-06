@@ -22,9 +22,14 @@ export async function workflowsRouter(app: FastifyInstance) {
     return { workflows: getService().list(userId) }
   })
 
-  app.post('/api/v1/workflows', async (request) => {
+  app.post('/api/v1/workflows', async (request, reply) => {
     const userId = request.user!.userId
-    const body = request.body as any
+    const body = (request.body as any) || {}
+    // 边界审计（#253）: name is required — an empty body must not create
+    // a nameless workflow.
+    if (!body.name || !String(body.name).trim()) {
+      return reply.status(400).send({ error: 'name required' })
+    }
     const wf = getService().create({
       name: body.name,
       description: body.description,

@@ -36,7 +36,14 @@ export async function extractTakeaways(input: TakeawayInput): Promise<Takeaway[]
       apiKey,
       { model: 'deepseek-chat', maxTokens: 1024, temperature: 0.3 },
     )
-    const parsed = JSON.parse(raw)
+    // 边界审计（#253）: a non-JSON LLM reply must degrade to no takeaways,
+    // never a 500.
+    let parsed: any = null
+    try {
+      parsed = JSON.parse(raw || '')
+    } catch {
+      return []
+    }
     const items = Array.isArray(parsed) ? parsed : parsed.takeaways || []
 
     const created: Takeaway[] = []
@@ -51,7 +58,7 @@ export async function extractTakeaways(input: TakeawayInput): Promise<Takeaway[]
           text: item.text,
           tag: item.tag || 'clinical',
           confidence: Math.max(0, Math.min(1, parseFloat(item.confidence) || 0.7)),
-          createdAt: new Date().toISOString(),
+          distilledAt: Math.floor(Date.now() / 1000),
         },
       })
       created.push(takeaway)
@@ -66,7 +73,7 @@ export async function listTakeaways(userId: string, scopeKind?: string, scopeRef
   const where: any = { userId }
   if (scopeKind) where.scopeKind = scopeKind
   if (scopeRef) where.scopeRef = scopeRef
-  return (prisma as any).chatTakeaway.findMany({ where, orderBy: { createdAt: 'desc' } })
+  return (prisma as any).chatTakeaway.findMany({ where, orderBy: { id: 'desc' } })
 }
 
 export async function acknowledgeTakeaway(id: number, userId: string, action: 'accept' | 'reject'): Promise<boolean> {
