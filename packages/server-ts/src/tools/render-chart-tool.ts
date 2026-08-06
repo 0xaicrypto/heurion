@@ -34,6 +34,28 @@ export class RenderChartTool extends BaseTool {
         x_label: { type: 'string' },
         y_label: { type: 'string' },
         description: { type: 'string', description: 'For schematic: what the diagram should convey.' },
+        // #228: real programmatic schematics — no placeholder boxes.
+        template: { type: 'string', enum: ['beam_scan'], description: 'Built-in diagram template (schematic only): beam_scan draws a pencil-beam scanning setup (nozzle → fan beams → GTV/CTV targets → Bragg depth-dose inset).' },
+        elements: {
+          type: 'array',
+          description: 'Custom diagram elements (schematic only, when no template fits): rect/circle/line/arrow/text/beam primitives in a 500x300 canvas.',
+          items: {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', enum: ['rect', 'circle', 'line', 'arrow', 'text', 'beam'] },
+              x: { type: 'number' }, y: { type: 'number' },
+              w: { type: 'number' }, h: { type: 'number' }, r: { type: 'number' },
+              x2: { type: 'number' }, y2: { type: 'number' },
+              text: { type: 'string' },
+              color: { type: 'string' }, fill: { type: 'string' },
+              dashed: { type: 'boolean' },
+              width: { type: 'number', description: 'beam: entry width' },
+              exitWidth: { type: 'number', description: 'beam: exit width' },
+              angle: { type: 'number', description: 'beam: angle in degrees (0 = straight down)' },
+            },
+            required: ['kind', 'x', 'y'],
+          },
+        },
       },
       required: ['type'],
     }
@@ -51,6 +73,8 @@ export class RenderChartTool extends BaseTool {
       x_label: args.x_label ? String(args.x_label) : undefined,
       y_label: args.y_label ? String(args.y_label) : undefined,
       description: args.description ? String(args.description) : undefined,
+      template: args.template === 'beam_scan' ? 'beam_scan' : undefined,
+      elements: Array.isArray(args.elements) ? (args.elements as any[]) : undefined,
     }
 
     try {
