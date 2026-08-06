@@ -65,16 +65,23 @@ mkdir -p /opt/nexus-embedding-models
 # Old layout: DATABASE_URL=file:/data/nexus_server.db (inside nexus-data).
 # New layout: DATABASE_URL=file:/data/db/nexus_server.db (nexus-db-data volume).
 NEXUS_DATA_VOL=$(docker volume ls -q | grep '^heurion_nexus-data$' || true)
+# Create the DB volume UP FRONT — on the first deploy after the #280 change
+# the volume does not exist yet, and if compose creates it afterwards the
+# server boots with a fresh empty DB (data appears lost).
+docker volume create heurion_nexus-db-data 2>/dev/null || true
 NEXUS_DB_VOL=$(docker volume ls -q | grep '^heurion_nexus-db-data$' || true)
 if [ -n "$NEXUS_DATA_VOL" ] && [ -n "$NEXUS_DB_VOL" ]; then
-  DB_PRESENT=$(docker run --rm -v "$NEXUS_DB_VOL":/db alpine sh -c 'ls /db/nexus_server.db 2>/dev/null || true' 2>/dev/null || true)
-  LEGACY_PRESENT=$(docker run --rm -v "$NEXUS_DATA_VOL":/data alpine sh -c 'ls /data/nexus_server.db 2>/dev/null || true' 2>/dev/null || true)
-  if [ -z "$DB_PRESENT" ] && [ -n "$LEGACY_PRESENT" ]; then
-    echo "Migrating SQLite → nexus-db-data volume..."
+  LEGACY_SIZE=$(docker run --rm -v "$NEXUS_DATA_VOL":/data alpine sh -c 'stat -c%s /data/nexus_server.db 2>/dev/null || echo 0' 2>/dev/null || echo 0)
+  DB_SIZE=$(docker run --rm -v "$NEXUS_DB_VOL":/db alpine sh -c 'stat -c%s /db/nexus_server.db 2>/dev/null || echo 0' 2>/dev/null || echo 0)
+  # The legacy copy is the authoritative one while it is larger — this also
+  # repairs the case where the first #280 deploy created an EMPTY db volume
+  # (server booted before the migration ran).
+  if [ "$LEGACY_SIZE" -gt 0 ] && [ "$DB_SIZE" -lt "$LEGACY_SIZE" ]; then
+    echo "Migrating SQLite → nexus-db-data volume (legacy=${LEGACY_SIZE}B, current=${DB_SIZE}B)..."
     docker run --rm -v "$NEXUS_DATA_VOL":/data -v "$NEXUS_DB_VOL":/db alpine sh -c 'cp /data/nexus_server.db /db/nexus_server.db && chown 1000:1000 /db/nexus_server.db'
     echo "✓ DB migrated (legacy copy retained in nexus-data)"
   else
-    echo "DB volume already present — skipping migration"
+    echo "DB volume already current (legacy=${LEGACY_SIZE}B, current=${DB_SIZE}B) — skipping migration"
   fi
 fi
 
