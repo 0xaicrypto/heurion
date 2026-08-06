@@ -58,7 +58,7 @@
     "language": "Language",
     "comingSoon": "Coming soon",
     "optional": "Optional",
-    "error": "Error",
+    "error": "Failed to load",
     "errorBoundary": "Something went wrong",
     "errorBoundaryHint": "Please refresh the page to try again",
     "yearsOld": "{{age}} y/o",
@@ -67,7 +67,8 @@
     "testConnection": "Test connection",
     "connectionOk": "Connection OK",
     "connectionFailed": "Connection failed",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "empty": "No data yet"
   },
   "nav": {
     "today": "Today",

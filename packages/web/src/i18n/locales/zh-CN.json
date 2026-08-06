@@ -58,7 +58,7 @@
     "language": "语言",
     "comingSoon": "即将推出",
     "optional": "可选",
-    "error": "错误",
+    "error": "加载失败",
     "errorBoundary": "出现错误",
     "errorBoundaryHint": "请刷新页面重试",
     "yearsOld": "{{age}}岁",
@@ -67,7 +67,8 @@
     "testConnection": "测试连接",
     "connectionOk": "连接正常",
     "connectionFailed": "连接失败",
-    "refresh": "刷新"
+    "refresh": "刷新",
+    "empty": "暂无数据"
   },
   "nav": {
     "today": "今日",

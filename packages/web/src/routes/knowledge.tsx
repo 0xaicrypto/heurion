@@ -4,6 +4,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { api } from '@/lib/api-client';
 import { Button, Card, Skeleton, Badge, Input, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
+import { EmptyState } from '@/components/ui/EmptyState';
 import type { Article } from '@/lib/types';
 import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X, ChevronLeft, ChevronRight, GitGraph } from 'lucide-react';
 
@@ -364,11 +365,11 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                     'Filter articles by title or content...',
                   )}
                   {articlePagination.pageItems.length === 0 && (
-                    <Card className="p-8 text-center">
-                      <BookOpen size={32} className="mx-auto mb-3 text-text-tertiary" />
-                      <p className="text-text-secondary">No knowledge articles yet.</p>
-                      <p className="mt-1 text-sm text-text-tertiary">Articles are auto-generated when 3+ related facts accumulate.</p>
-                    </Card>
+                    <EmptyState
+                      icon={<BookOpen size={24} />}
+                      title="No knowledge articles yet"
+                      hint="Articles are auto-generated when 3+ related facts accumulate."
+                    />
                   )}
                   {articlePagination.pageItems.map(a => (
                     <Card key={a.id} className={cn('p-4', a.status === 'stale' && 'border-warning/50')}>
@@ -538,11 +539,11 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                     );
                   })}
                   {filteredFacts.length === 0 && (
-                    <Card className="p-8 text-center">
-                      <Brain size={32} className="mx-auto mb-3 text-text-tertiary" />
-                      <p className="text-text-secondary">No facts stored yet.</p>
-                      <p className="mt-1 text-sm text-text-tertiary">Facts are extracted from conversations and imported data.</p>
-                    </Card>
+                    <EmptyState
+                      icon={<Brain size={24} />}
+                      title="No facts stored yet"
+                      hint="Facts are extracted from conversations and imported data."
+                    />
                   )}
                   {filteredFacts.length > 0 && renderPagination(factPagination.page, factPagination.totalPages, setFactPage, factPagination.start, filteredFacts.length)}
                 </div>
@@ -563,11 +564,11 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                     'Filter gaps by query or context...',
                   )}
                   {gapPagination.pageItems.length === 0 && (
-                    <Card className="p-8 text-center">
-                      <Lightbulb size={32} className="mx-auto mb-3 text-text-tertiary" />
-                      <p className="text-text-secondary">No pending knowledge gaps.</p>
-                      <p className="mt-1 text-sm text-text-tertiary">Gaps appear when queries don't match existing knowledge.</p>
-                    </Card>
+                    <EmptyState
+                      icon={<Lightbulb size={24} />}
+                      title="No pending knowledge gaps"
+                      hint="Gaps appear when queries don't match existing knowledge."
+                    />
                   )}
                   {gapPagination.pageItems.map(g => {
                     const statusLabel = g.status === 'open' ? 'Pending' : g.status === 'answered' ? 'Answered' : 'Ignored';
@@ -648,11 +649,11 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                     'Filter tools by name or description...',
                   )}
                   {toolPagination.pageItems.length === 0 && (
-                    <Card className="p-8 text-center">
-                      <Wrench size={32} className="mx-auto mb-3 text-text-tertiary" />
-                      <p className="text-text-secondary">No auto-generated tools yet.</p>
-                      <p className="mt-1 text-sm text-text-tertiary">Tools are created automatically from knowledge patterns.</p>
-                    </Card>
+                    <EmptyState
+                      icon={<Wrench size={24} />}
+                      title="No auto-generated tools yet"
+                      hint="Tools are created automatically from knowledge patterns."
+                    />
                   )}
                   {toolPagination.pageItems.map(t => (
                     <Card key={t.id} className={cn('p-4', !t.enabled && 'opacity-60')}>
