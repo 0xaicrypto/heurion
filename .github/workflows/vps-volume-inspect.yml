@@ -21,8 +21,10 @@ jobs:
             docker volume ls;
             echo "=== nexus-data mount ===";
             docker volume inspect $(docker volume ls -q | grep nexus) 2>/dev/null | grep -E "Name|Mountpoint" | head -6;
-            echo "=== /data contents ===";
-            sudo ls -la /var/lib/docker/volumes/$(docker volume ls -q | grep nexus)/_data/ 2>/dev/null | head -20;
+            echo "=== db-data volume contents ===";
+            sudo ls -la /var/lib/docker/volumes/heurion_nexus-db-data/_data/ 2>/dev/null | head -10;
+            echo "=== nexus-data volume contents ===";
+            sudo ls -la /var/lib/docker/volumes/heurion_nexus-data/_data/ 2>/dev/null | head -14;
             echo "=== df ===";
             df -h / | tail -1
           '
