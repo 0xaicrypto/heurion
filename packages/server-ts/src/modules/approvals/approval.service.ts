@@ -1,4 +1,5 @@
 import prisma from '../../common/prisma.js'
+import { resolvePermission, type PermissionRule } from '../../common/permission.js'
 
 export type ApprovalTargetType = 'MedicalRecordEntry' | 'MemoryProposal' | 'Skill' | 'Persona' | 'Fact' | 'ResearchRule'
 
@@ -9,11 +10,58 @@ export interface ApprovalRequestInput {
   diff?: Record<string, any>
 }
 
+/** Load enabled permission rules, most specific last (later wins). */
+export async function listPermissionRules(): Promise<PermissionRule[]> {
+  try {
+    const rows = await (prisma as any).approvalRule.findMany({
+      where: { enabled: 1 },
+      orderBy: { priority: 'asc' },
+    })
+    return rows.map((r: any) => ({
+      id: r.id,
+      action: r.action,
+      resource: r.resource,
+      effect: r.effect,
+      role: r.role,
+      priority: r.priority,
+    }))
+  } catch {
+    // approval_rules table may not exist in older databases
+    return []
+  }
+}
+
+/**
+ * #105: decide whether an approval request is auto-allowed / denied by the
+ * configured rules, or must go through the review queue.
+ *   allow → the request never enters the queue (auto-approved)
+ *   deny  → the request is rejected outright
+ *   ask   → pending review (default when no rule matches)
+ */
+export async function decideApproval(
+  userId: string,
+  role: string,
+  action: string,
+  resource: string,
+): Promise<'allow' | 'deny' | 'ask'> {
+  const rules = await listPermissionRules()
+  if (rules.length === 0) return 'ask'
+  return resolvePermission(rules, { userId, role, action, resource })
+}
+
 export async function createApprovalRequest(
   userId: string,
   input: ApprovalRequestInput,
 ) {
   const now = new Date().toISOString()
+  // #105: rule-based auto decision before anything enters the queue.
+  const decision = await decideApproval(userId, 'doctor', 'approve', input.targetType)
+  if (decision === 'allow') {
+    return { status: 'auto_allowed', targetType: input.targetType, targetId: input.targetId }
+  }
+  if (decision === 'deny') {
+    return { status: 'auto_denied', targetType: input.targetType, targetId: input.targetId }
+  }
   return await (prisma as any).approvalRequest.create({
     data: {
       userId,
