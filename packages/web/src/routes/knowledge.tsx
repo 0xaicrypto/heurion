@@ -304,7 +304,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
 
   const content = (
       <div className="flex h-full flex-col overflow-y-auto">
-        <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
+        <header className="flex min-h-14 flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2 sm:px-6">
           <div className="flex items-center gap-3">
             <BookOpen size={20} className="text-accent" />
             <h1 className="font-semibold text-text-primary">Knowledge Base</h1>

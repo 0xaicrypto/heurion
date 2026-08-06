@@ -153,7 +153,7 @@ export function MedicalRecordsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
+      <header className="flex min-h-14 flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2 sm:px-6">
         <div className="flex items-center gap-3">
           <FileText size={18} className="text-text-tertiary" />
           <h1 className="font-semibold text-text-primary">{t('medicalRecords.title', 'Medical Records')}</h1>

@@ -503,7 +503,7 @@ function ObservabilitySection() {
             <BarChart3 size={18} />
             LLM Cost
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-3 gap-2 sm:gap-4">
             <Stat label={t('settings.totalCalls')} value={llmCost.totalCalls} />
             <Stat label={t('settings.totalTokens')} value={llmCost.totalTokens} />
             <Stat label={t('settings.totalCost')} value={`$${llmCost.totalCostUsd.toFixed(4)}`} />
@@ -530,7 +530,7 @@ function ObservabilitySection() {
             <Activity size={18} />
             Evolution Queue ({queue.type})
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-3 gap-2 sm:gap-4">
             <Stat label={t('settings.waiting')} value={queue.metrics.waiting} />
             <Stat label={t('settings.active')} value={queue.metrics.active} />
             <Stat label={t('settings.failed')} value={queue.metrics.failed} />

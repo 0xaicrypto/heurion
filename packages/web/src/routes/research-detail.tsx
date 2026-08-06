@@ -386,7 +386,7 @@ export function ResearchDetailPage() {
           <Badge variant={statusVariant(study.status)}>{study.status}</Badge>
         </header>
 
-        <nav className="flex gap-1 border-b border-border px-6">
+        <nav className="flex gap-1 overflow-x-auto border-b border-border px-3 sm:px-6">
           {TABS.map((t) => (
             <button
               key={t.key}

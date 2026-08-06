@@ -517,7 +517,7 @@ export function WritingEditorPage() {
             {polishOpen && (
               <div
                 ref={polishRef}
-                className="absolute top-full left-0 mt-1 z-30 w-80 rounded-xl border border-border bg-surface-elevated p-4 shadow-lg"
+                className="absolute left-0 right-0 top-full z-30 mt-1 w-auto max-w-full rounded-xl border border-border bg-surface-elevated p-4 shadow-lg sm:left-auto sm:right-auto sm:w-80"
               >
                 <textarea
                   value={polishInstruction}
