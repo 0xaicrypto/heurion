@@ -34,6 +34,40 @@ env:
   DATABASE_URL: 'file:./ci.db'
 
 jobs:
+  unit-tests:
+    name: Unit tests (fast)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/server-ts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: packages/server-ts/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm exec prisma generate
+
+      - name: Prepare SQLite database
+        run: pnpm exec prisma db push --accept-data-loss --skip-generate
+
+      - name: Run unit tests (tests/unit, no DB/IO)
+        run: pnpm exec vitest run tests/unit
+
   build-and-test:
     name: Build + Phase 0 regression
     runs-on: ubuntu-latest
@@ -71,11 +105,11 @@ jobs:
       - name: Run Phase 0 regression tests
         run: |
           pnpm exec vitest run \
-            tests/medical-record-entry.test.ts \
-            tests/approval-audit.test.ts \
-            tests/ingestion-worker.test.ts \
-            tests/lab-ingestion.test.ts \
-            tests/imaging-ingestion.test.ts \
-            tests/ai-provider.test.ts \
-            tests/protocol-ingestion.test.ts \
-            tests/local-embedding.test.ts
+            tests/e2e/medical-record-entry.test.ts \
+            tests/e2e/approval-audit.test.ts \
+            tests/e2e/ingestion-worker.test.ts \
+            tests/e2e/lab-ingestion.test.ts \
+            tests/e2e/imaging-ingestion.test.ts \
+            tests/unit/ai-provider.test.ts \
+            tests/e2e/protocol-ingestion.test.ts \
+            tests/unit/local-embedding.test.ts
