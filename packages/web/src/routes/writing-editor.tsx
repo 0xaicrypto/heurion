@@ -118,6 +118,35 @@ export function WritingEditorPage() {
       .finally(() => setLoading(false));
   }, [docId]);
 
+  // #297: doc chat history lives on the server (event log under doc-<id>);
+  // reload it on mount so a refresh doesn't lose the conversation. The
+  // store must NOT be a dependency (same infinite-loop trap as #272).
+  useEffect(() => {
+    if (!chatSessionId) return;
+    const existing = store.sessions[chatSessionId]?.messages?.length;
+    if (existing) return;
+    api.getMessages(chatSessionId, 50).then((r) => {
+      const msgs = r.messages.map((m) => ({
+        id: crypto.randomUUID(),
+        role: m.role,
+        text: m.content,
+        download:
+          (m.metadata?.sidecar || m.metadata?.plugin) && (m.metadata?.file as any)
+            ? {
+                fileId: (m.metadata.file as any).fileId as string,
+                fileName: (m.metadata.file as any).fileName as string,
+                mimeType: (m.metadata.file as any).mimeType as string,
+                url: '',
+                expiresIn: 0,
+              }
+            : undefined,
+        knowledgePayload: (m.metadata?.knowledgePayload as { title: string; content: string }) ?? undefined,
+      }));
+      if (msgs.length > 0) store.setMessages(chatSessionId, msgs);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- store excluded deliberately
+  }, [chatSessionId]);
+
   useEffect(() => {
     if (bodyRef.current) {
       bodyRef.current.style.height = 'auto';
