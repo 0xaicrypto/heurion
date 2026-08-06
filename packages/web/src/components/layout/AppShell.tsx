@@ -33,21 +33,31 @@ interface NavItem {
   labelKey: string;
   icon: React.ReactNode;
   admin?: boolean;
+  /** §11.5 (#221): workflow grouping — 概览/对话/患者工作区/记忆与知识/工具与设置. */
+  section?: 'overview' | 'conversation' | 'patients' | 'memory' | 'tools';
 }
 
+const NAV_SECTIONS: Array<{ key: NavItem['section']; labelKey: string }> = [
+  { key: 'overview', labelKey: 'nav.sectionOverview' },
+  { key: 'conversation', labelKey: 'nav.sectionConversation' },
+  { key: 'patients', labelKey: 'nav.sectionPatients' },
+  { key: 'memory', labelKey: 'nav.sectionMemory' },
+  { key: 'tools', labelKey: 'nav.sectionTools' },
+];
+
 const navItems: NavItem[] = [
-  { to: '/app/today', labelKey: 'nav.today', icon: <LayoutDashboard size={18} /> },
-  { to: '/app/memory', labelKey: 'nav.memoryKnowledge', icon: <Brain size={18} /> },
-  { to: '/app/chat', labelKey: 'nav.chat', icon: <MessageSquare size={18} /> },
-  { to: '/app/patients', labelKey: 'nav.patients', icon: <Users size={18} /> },
-  { to: '/app/research', labelKey: 'nav.research', icon: <FlaskConical size={18} /> },
-  { to: '/app/writing', labelKey: 'nav.writing', icon: <FileText size={18} /> },
-  { to: '/app/skills', labelKey: 'nav.skills', icon: <Cpu size={18} /> },
-  { to: '/app/plugins', labelKey: 'nav.plugins', icon: <Puzzle size={18} /> },
-  { to: '/app/audit', labelKey: 'nav.audit', icon: <ShieldCheck size={18} /> },
-  { to: '/app/logs', labelKey: 'nav.logs', icon: <ScrollText size={18} /> },
-  { to: '/app/settings', labelKey: 'nav.settings', icon: <Settings size={18} /> },
-  { to: '/app/admin/users', labelKey: 'nav.admin', icon: <Shield size={18} />, admin: true },
+  { to: '/app/today', labelKey: 'nav.today', icon: <LayoutDashboard size={18} />, section: 'overview' },
+  { to: '/app/chat', labelKey: 'nav.chat', icon: <MessageSquare size={18} />, section: 'conversation' },
+  { to: '/app/patients', labelKey: 'nav.patients', icon: <Users size={18} />, section: 'patients' },
+  { to: '/app/research', labelKey: 'nav.research', icon: <FlaskConical size={18} />, section: 'patients' },
+  { to: '/app/writing', labelKey: 'nav.writing', icon: <FileText size={18} />, section: 'patients' },
+  { to: '/app/memory', labelKey: 'nav.memoryKnowledge', icon: <Brain size={18} />, section: 'memory' },
+  { to: '/app/skills', labelKey: 'nav.skills', icon: <Cpu size={18} />, section: 'tools' },
+  { to: '/app/plugins', labelKey: 'nav.plugins', icon: <Puzzle size={18} />, section: 'tools' },
+  { to: '/app/audit', labelKey: 'nav.audit', icon: <ShieldCheck size={18} />, section: 'tools' },
+  { to: '/app/logs', labelKey: 'nav.logs', icon: <ScrollText size={18} />, section: 'tools' },
+  { to: '/app/settings', labelKey: 'nav.settings', icon: <Settings size={18} />, section: 'tools' },
+  { to: '/app/admin/users', labelKey: 'nav.admin', icon: <Shield size={18} />, admin: true, section: 'tools' },
 ];
 
 function ThemeMenu() {
@@ -220,33 +230,45 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
         </header>
 
         <nav aria-label="Main navigation" className="flex-1 overflow-y-auto px-3 py-3">
-          <ul className="space-y-1">
-            {visibleItems.map((item) => (
-              <li key={item.to}>
-                <NavLink
-                  to={item.to}
-                  onClick={onClose}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                      isActive
-                        ? 'bg-accent/10 text-accent'
-                        : 'text-text-secondary hover:bg-surface hover:text-text-primary',
-                    )
-                  }
-                >
-                  {({ isActive }) => (
-                    <>
-                      {item.icon}
-                      {t(item.labelKey)}
-                      {/* §11.4 (#221): the logo's lit dot marks the current page */}
-                      {isActive && <StatusDot tone="active" className="ml-auto" />}
-                    </>
-                  )}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
+          {/* §11.5 (#221): workflow-grouped navigation */}
+          {NAV_SECTIONS.map((section) => {
+            const items = visibleItems.filter((i) => i.section === section.key);
+            if (items.length === 0) return null;
+            return (
+              <div key={section.key} className="mb-3">
+                <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
+                  {t(section.labelKey)}
+                </p>
+                <ul className="space-y-0.5">
+                  {items.map((item) => (
+                    <li key={item.to}>
+                      <NavLink
+                        to={item.to}
+                        onClick={onClose}
+                        className={({ isActive }) =>
+                          cn(
+                            'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                            isActive
+                              ? 'bg-accent/10 text-accent'
+                              : 'text-text-secondary hover:bg-surface hover:text-text-primary',
+                          )
+                        }
+                      >
+                        {({ isActive }) => (
+                          <>
+                            {item.icon}
+                            {t(item.labelKey)}
+                            {/* §11.4 (#221): the logo's lit dot marks the current page */}
+                            {isActive && <StatusDot tone="active" className="ml-auto" />}
+                          </>
+                        )}
+                      </NavLink>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
         </nav>
 
         <div className="border-t border-border p-2">

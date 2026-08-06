@@ -83,7 +83,12 @@
     "admin": "Admin",
     "brain": "Brain",
     "audit": "Audit",
-    "memoryKnowledge": "Memory & Knowledge"
+    "memoryKnowledge": "Memory & Knowledge",
+    "sectionOverview": "Overview",
+    "sectionConversation": "Conversation",
+    "sectionPatients": "Patient Workspace",
+    "sectionMemory": "Memory & Knowledge",
+    "sectionTools": "Tools & Settings"
   },
   "auth": {
     "welcomeBack": "Welcome back",
