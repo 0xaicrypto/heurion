@@ -512,6 +512,28 @@ check "18.7 Sidecar feedback saveAll" "$(echo "$SIDECAR_SAVED" | je "(j.saved||[
 # 18.8 Telemetry dashboard records events
 check "18.8 Telemetry dashboard" "$(curl -sf "$BASE/api/v1/knowledge/telemetry/dashboard" -H "$H" | je "'totalEvents' in j&&'router' in j&&'gaps' in j?'ok':'FAIL'" 2>/dev/null)"
 
+# ── Group 19 — 边界条件（缺查询参数不得泄漏跨会话数据，见 #251/#252）──
+
+# 19.1 messages 缺 session_id → 空（曾返回全部会话消息）
+BOUNDARY_MSGS=$(curl -sf "$BASE/api/v1/agent/messages" -H "$H" 2>/dev/null)
+check "19.1 messages w/o session_id empty" "$(echo "$BOUNDARY_MSGS" | je "Array.isArray(j.messages)&&j.messages.length===0&&j.total===0?'ok':'FAIL'" 2>/dev/null)"
+
+# 19.2 tool-events 缺 session_id → 空（曾返回全部会话工具事件）
+BOUNDARY_TOOLS=$(curl -sf "$BASE/api/v1/agent/tool-events" -H "$H" 2>/dev/null)
+check "19.2 tool-events w/o session_id empty" "$(echo "$BOUNDARY_TOOLS" | je "Array.isArray(j.events)&&j.events.length===0&&j.total===0?'ok':'FAIL'" 2>/dev/null)"
+
+# 19.3 context-usage 缺 session_id → 零预算（曾跨会话聚合）
+BOUNDARY_CTX=$(curl -sf "$BASE/api/v1/agent/context-usage" -H "$H" 2>/dev/null)
+check "19.3 context-usage w/o session_id zeroed" "$(echo "$BOUNDARY_CTX" | je "j.history_tokens===0&&j.omitted_turns===0?'ok':'FAIL'" 2>/dev/null)"
+
+# 19.4 chat 缺 text → 400
+BOUNDARY_CHAT_400=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d '{"session_id":"boundary_400"}' 2>/dev/null)
+check "19.4 chat without text 400" "$([ "$BOUNDARY_CHAT_400" = "400" ] && echo ok || echo FAIL)"
+
+# 19.5 sessions 列表不含遗留 global-* 默认会话
+BOUNDARY_SESS=$(curl -sf "$BASE/api/v1/sessions" -H "$H" 2>/dev/null)
+check "19.5 no legacy global-* sessions listed" "$(echo "$BOUNDARY_SESS" | je "j.sessions.every(s=>!s.id.startsWith('global-'))?'ok':'FAIL'" 2>/dev/null)"
+
 echo ""
 echo "════════════════════════════════════════════"
 echo "  $((PASS+FAIL)) tests: $PASS ✓  $FAIL ✗"
