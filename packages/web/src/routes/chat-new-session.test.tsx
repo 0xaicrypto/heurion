@@ -78,3 +78,25 @@ describe('first message after creating a session (bug repro)', () => {
     });
   });
 });
+
+describe('session restore after refresh (bug repro)', () => {
+  test('existing open session is auto-selected on mount', async () => {
+    const { api } = await import('@/lib/api-client');
+    (api.listSessions as any).mockResolvedValue({
+      sessions: [
+        { id: 'session_persist1', title: '持久会话', status: 'open', created_at: new Date().toISOString(), message_count: 2 },
+      ],
+    });
+
+    render(<ChatPage />);
+
+    // The session should be restored automatically — input becomes usable
+    // (not the 'no session' placeholder) and its title shows in the header.
+    await waitFor(() => {
+      expect(screen.queryByPlaceholderText(/请先新建一个会话|Create a session first/)).not.toBeInTheDocument();
+    });
+    const input = screen.getByPlaceholderText(/输入|message/i) as HTMLTextAreaElement;
+    expect(input.disabled).toBe(false);
+    expect(screen.getByText('持久会话')).toBeInTheDocument();
+  });
+});

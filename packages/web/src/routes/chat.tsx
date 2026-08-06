@@ -81,7 +81,18 @@ export function ChatPage() {
 
   const loadGlobalSessions = useCallback(() => {
     api.listSessions(false, 'global')
-      .then((r) => setGlobalSessions(r.sessions.map((s) => ({ id: s.id, title: s.title, status: s.status, created_at: s.created_at, message_count: s.message_count }))))
+      .then((r) => {
+        const sessions = r.sessions.map((s) => ({ id: s.id, title: s.title, status: s.status, created_at: s.created_at, message_count: s.message_count }));
+        setGlobalSessions(sessions);
+        // After a refresh / returning to the page, restore the most recent
+        // open session so conversations don't appear to vanish (the
+        // selector stays disabled while nothing is selected).
+        setSessionId((prev) => {
+          if (prev) return prev;
+          const open = sessions.filter((s) => s.status !== 'closed');
+          return open.length > 0 ? open[0].id : '';
+        });
+      })
       .catch(() => {});
   }, []);
 
