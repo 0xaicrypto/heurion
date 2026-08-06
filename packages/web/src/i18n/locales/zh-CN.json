@@ -182,7 +182,9 @@
     "selectSession": "会话",
     "defaultSession": "默认会话",
     "closed": "已关闭",
-    "cannotCloseDefault": "默认会话不能关闭"
+    "cannotCloseDefault": "默认会话不能关闭",
+    "noSession": "还没有会话",
+    "noSessionHint": "创建一个新会话开始对话，或直接在下方输入第一条消息。"
   },
   "patient": {
     "summary": "摘要",
