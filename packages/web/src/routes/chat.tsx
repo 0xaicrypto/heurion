@@ -13,6 +13,7 @@ import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint'
 import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import { ToolCalls } from '@/components/ToolCalls';
+import { StatusDot } from '@/components/ui/StatusDot';
 import { Alert, Button, Textarea } from '@/components/ui';
 
 /** §10.3 (#220): group separator when a gap exceeds this many minutes. */
@@ -518,7 +519,7 @@ export function ChatPage() {
                       </div>
                     </div>
                   )}
-                  {m.isStreaming ? <span className="animate-pulse" role="status" aria-label={t('chat.streaming')}>●</span> : null}
+                  {m.isStreaming ? <StatusDot tone="active" pulse title={t('chat.streaming')} className="ml-1" /> : null}
                   {isLastAssistant && !isFailed && (
                     <button
                       onClick={handleRegenerate}
