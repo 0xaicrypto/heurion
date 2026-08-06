@@ -1,0 +1,28 @@
+name: VPS Volume Inspect (one-off)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+      - name: Inspect volumes and data layout
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '
+            echo "=== compose services ===";
+            docker compose -f /opt/heurion/docker-compose.yml config --services 2>/dev/null || true;
+            echo "=== volumes ===";
+            docker volume ls;
+            echo "=== nexus-data mount ===";
+            docker volume inspect $(docker volume ls -q | grep nexus) 2>/dev/null | grep -E "Name|Mountpoint" | head -6;
+            echo "=== /data contents ===";
+            sudo ls -la /var/lib/docker/volumes/$(docker volume ls -q | grep nexus)/_data/ 2>/dev/null | head -20;
+            echo "=== df ===";
+            df -h / | tail -1
+          '
