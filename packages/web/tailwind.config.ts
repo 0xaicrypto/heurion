@@ -20,6 +20,8 @@ export default {
         warning: 'hsl(var(--warning))',
         error: 'hsl(var(--error))',
         ring: 'hsl(var(--ring))',
+        /* §11.3 (#221): clinical semantic palette */
+        'clinical-low-conf': 'hsl(var(--clinical-low-conf))',
         nexus: {
           50: '#f0f9ff',
           100: '#e0f2fe',
@@ -33,6 +35,13 @@ export default {
           900: '#0c4a6e',
           950: '#082f49',
         },
+      },
+      /* §11.3 (#221): radius language — 8/12/16 professional rounding */
+      borderRadius: {
+        sm: 'var(--radius-sm)',
+        md: 'var(--radius-md)',
+        lg: 'var(--radius-lg)',
+        full: '999px',
       },
     },
   },

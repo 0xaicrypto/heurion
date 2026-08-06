@@ -18,6 +18,11 @@
     --warning: 45 93% 47%;
     --error: 0 84% 60%;
     --ring: 199 89% 48%;
+    /* §11.3 (#221): clinical semantic palette + radius language */
+    --clinical-low-conf: 215 20% 55%;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
   }
 
   .dark {
@@ -35,6 +40,10 @@
     --warning: 45 93% 55%;
     --error: 0 91% 71%;
     --ring: 199 95% 64%;
+    --clinical-low-conf: 215 20% 70%;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
   }
 
   html {

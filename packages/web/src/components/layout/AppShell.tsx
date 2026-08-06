@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
 import { Avatar, IconButton } from '@/components/ui';
+import { StatusDot } from '@/components/ui/StatusDot';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 interface NavItem {
@@ -234,8 +235,14 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
                     )
                   }
                 >
-                  {item.icon}
-                  {t(item.labelKey)}
+                  {({ isActive }) => (
+                    <>
+                      {item.icon}
+                      {t(item.labelKey)}
+                      {/* §11.4 (#221): the logo's lit dot marks the current page */}
+                      {isActive && <StatusDot tone="active" className="ml-auto" />}
+                    </>
+                  )}
                 </NavLink>
               </li>
             ))}
