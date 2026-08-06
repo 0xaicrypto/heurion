@@ -79,10 +79,24 @@ export class GapResearchService {
   private async researchGap(gap: KnowledgeGap): Promise<void> {
     const searchResult = await this.provider.search(gap.content)
 
+    // #254: "no results" is temporary and search-dependent — persisting it
+    // as a fact pollutes the memory graph and makes the AI conclude "no
+    // literature supports this". Leave the gap open for a later retry.
+    if (!searchResult.found) {
+      await telemetry.record({
+        userId: gap.userId,
+        workspaceId: gap.workspaceId,
+        category: 'gap',
+        action: 'auto_skipped_no_results',
+        metadata: { gapId: gap.id, reason: searchResult.text.slice(0, 120) },
+      }).catch(() => {})
+      return
+    }
+
     const ctx = getUserContext(gap.userId)
     const fact = ctx.memory.addFact(
       {
-        content: searchResult,
+        content: searchResult.text,
         category: 'fact',
         importance: 4,
         sourceType: 'research',
@@ -97,7 +111,7 @@ export class GapResearchService {
       // Gap may only exist in Prisma; continue to resolve via the service.
     }
 
-    const updated = await this.gapService.resolve(gap.id, searchResult)
+    const updated = await this.gapService.resolve(gap.id, searchResult.text)
     if (!updated) {
       throw new Error('gap disappeared during research')
     }

@@ -7,18 +7,29 @@
  * the same interface and registering them in createDefaultWebSearchProvider.
  */
 
+export interface WebSearchResult {
+  /** Human-readable text (article list, or a message when nothing was found). */
+  text: string
+  /** false when the search found nothing authoritative — callers must NOT
+   *  persist "no results" as durable knowledge (#254). */
+  found: boolean
+}
+
 export interface WebSearchProvider {
   readonly name: string
-  search(query: string): Promise<string>
+  search(query: string): Promise<WebSearchResult>
 }
 
 export class PlaceholderSearchProvider implements WebSearchProvider {
   readonly name = 'placeholder'
 
-  async search(query: string): Promise<string> {
-    return `External web search is not configured for this environment. ` +
-      `The system would normally search authoritative sources for "${query}" ` +
-      `and summarize the findings into a fact. Please configure a real search provider.`
+  async search(query: string): Promise<WebSearchResult> {
+    return {
+      found: false,
+      text: `External web search is not configured for this environment. ` +
+        `The system would normally search authoritative sources for "${query}" ` +
+        `and summarize the findings into a fact. Please configure a real search provider.`,
+    }
   }
 }
 
@@ -41,7 +52,7 @@ export class PubMedSearchProvider implements WebSearchProvider {
   readonly name = 'pubmed'
   private baseUrl = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils'
 
-  async search(query: string): Promise<string> {
+  async search(query: string): Promise<WebSearchResult> {
     const term = encodeURIComponent(query)
     const searchUrl = `${this.baseUrl}/esearch.fcgi?db=pubmed&term=${term}&retmax=3&retmode=json`
 
@@ -52,7 +63,7 @@ export class PubMedSearchProvider implements WebSearchProvider {
     const searchData = (await searchRes.json()) as PubMedSearchResult
     const ids = searchData.esearchresult?.idlist || []
     if (ids.length === 0) {
-      return `No PubMed articles found for "${query}".`
+      return { found: false, text: `No PubMed articles found for "${query}".` }
     }
 
     const summaryUrl = `${this.baseUrl}/esummary.fcgi?db=pubmed&id=${ids.join(',')}&retmode=json`
@@ -74,10 +85,10 @@ export class PubMedSearchProvider implements WebSearchProvider {
     }
 
     if (articles.length === 0) {
-      return `PubMed returned article IDs for "${query}" but no summaries were available.`
+      return { found: false, text: `PubMed returned article IDs for "${query}" but no summaries were available.` }
     }
 
-    return `PubMed search results for "${query}":\n\n${articles.join('\n\n')}`
+    return { found: true, text: `PubMed search results for "${query}":\n\n${articles.join('\n\n')}` }
   }
 }
 
@@ -86,16 +97,20 @@ export class CompositeWebSearchProvider implements WebSearchProvider {
 
   constructor(private providers: WebSearchProvider[]) {}
 
-  async search(query: string): Promise<string> {
+  async search(query: string): Promise<WebSearchResult> {
     const errors: string[] = []
     for (const provider of this.providers) {
       try {
-        return await provider.search(query)
+        const result = await provider.search(query)
+        // A provider that searched successfully but found nothing is a
+        // definitive "no results" — do not fall through to the placeholder.
+        if (result.found || !errors.length) return result
+        errors.push(`${provider.name}: no results`)
       } catch (err) {
         errors.push(`${provider.name}: ${(err as Error).message}`)
       }
     }
-    return `Web search failed.\n\n${errors.join('\n')}`
+    return { found: false, text: `Web search failed.\n\n${errors.join('\n')}` }
   }
 }
 
