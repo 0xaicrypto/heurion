@@ -6,7 +6,7 @@ import { ChatPage } from '@/routes/chat';
 import { LandingPage } from '@/routes/landing';
 import { LoginPage } from '@/routes/login';
 import { TodayPage } from '@/routes/today';
-import { BrainPage } from '@/routes/brain';
+import { MemoryKnowledgePage } from '@/routes/memory-knowledge';
 import { PatientsLayout, PatientSummaryPage, PatientChatPage } from '@/routes/patients';
 import { ImagingPage } from '@/routes/imaging';
 import { LabsPage } from '@/routes/labs';
@@ -33,7 +33,6 @@ import { PluginsPage } from '@/routes/plugins';
 import { PluginSettingsPage } from '@/routes/plugin-settings';
 import { LogsPage } from '@/routes/logs';
 import { AuditPage } from '@/routes/audit';
-import { KnowledgePage } from '@/routes/knowledge';
 import { useAuthStore } from '@/stores/auth';
 import { PluginUIProvider } from '@/components/plugins/PluginUIRegistry';
 
@@ -93,12 +92,21 @@ export default function App() {
             }
           />
           <Route
-            path="/app/brain"
+            path="/app/memory"
             element={
               <RequireAuth>
-                <BrainPage />
+                <MemoryKnowledgePage />
               </RequireAuth>
             }
+          />
+          {/* #230: legacy URLs redirect into the unified view */}
+          <Route
+            path="/app/brain"
+            element={<Navigate to="/app/memory" replace />}
+          />
+          <Route
+            path="/app/knowledge"
+            element={<Navigate to="/app/memory?tab=knowledge" replace />}
           />
           <Route
             path="/app/chat"
@@ -205,14 +213,7 @@ export default function App() {
               </RequireAuth>
             }
           />
-          <Route
-            path="/app/knowledge"
-            element={
-              <RequireAuth>
-                <KnowledgePage />
-              </RequireAuth>
-            }
-          />
+
           <Route
             path="/app/memory-graph"
             element={

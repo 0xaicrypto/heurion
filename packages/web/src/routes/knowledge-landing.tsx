@@ -62,7 +62,7 @@ export function KnowledgeLandingPage() {
       : 'When a user asks something with no matching facts, the system creates a Gap. Instead of silently hallucinating, it records "I don\'t know" and waits for you to answer, search, or validate later.',
 
     ctaTitle: isZh ? '去知识库看看' : 'Browse the knowledge base',
-    ctaBody: isZh ? '登录后进入 /app/knowledge，查看您的 Articles、Facts 与 Gaps。' : 'Log in and go to /app/knowledge to see your Articles, Facts, and Gaps.',
+    ctaBody: isZh ? '登录后进入「记忆与知识」，查看您的 Articles、Facts 与 Gaps。' : 'Log in and open Memory & Knowledge to see your Articles, Facts, and Gaps.',
   };
 
   return (
@@ -170,7 +170,7 @@ export function KnowledgeLandingPage() {
           <h2 className="text-2xl font-bold text-text-primary">{T.ctaTitle}</h2>
           <p className="mx-auto mt-3 max-w-xl text-text-secondary">{T.ctaBody}</p>
           <div className="mt-6">
-            <Link to="/app/knowledge" className="inline-flex items-center font-medium text-accent hover:underline">
+            <Link to="/app/memory?tab=knowledge" className="inline-flex items-center font-medium text-accent hover:underline">
               {isZh ? '打开知识库' : 'Open knowledge base'}
               <ArrowRight size={16} className="ml-1" />
             </Link>

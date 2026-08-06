@@ -82,7 +82,8 @@
     "settings": "设置",
     "admin": "管理",
     "brain": "大脑",
-    "audit": "审计"
+    "audit": "审计",
+    "memoryKnowledge": "记忆与知识"
   },
   "auth": {
     "welcomeBack": "欢迎回来",
