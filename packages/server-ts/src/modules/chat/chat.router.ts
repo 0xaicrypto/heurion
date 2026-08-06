@@ -490,8 +490,29 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           // doc context is best-effort
         }
       }
+      // R1 (#98): assemble the system prompt from typed context segments —
+      // hash-snapshot per user so stable segments stay byte-identical
+      // (provider prompt-cache friendly) and changes are diffable.
+      let systemPrompt = projected.systemPrompt + studyContext + docContext
+      try {
+        const { computeSegments, saveSnapshot, loadSnapshot, renderSystemPrompt } = await import('../../memory/context-sources.js')
+        const prev = loadSnapshot(userId)
+        const segments: Array<{ key: string; text: string }> = [
+          ...(projected.segments || []),
+          ...(studyContext ? [{ key: 'study_context', text: studyContext }] : []),
+          ...(docContext ? [{ key: 'document_context', text: docContext }] : []),
+        ]
+        const { state, diff } = computeSegments(userId, segments, prev)
+        saveSnapshot(userId, state)
+        if (diff.changed.length > 0 || diff.removed.length > 0) {
+          log.info('context segments diffed', { changed: diff.changed, removed: diff.removed })
+        }
+        systemPrompt = renderSystemPrompt('', state)
+      } catch {
+        // snapshot/diff pipeline is best-effort — fall back to direct join
+      }
       const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-        { role: 'system', content: projected.systemPrompt + studyContext + docContext },
+        { role: 'system', content: systemPrompt },
       ]
 
       // R2 — anchored compaction: the Session Memory (episodes, current
