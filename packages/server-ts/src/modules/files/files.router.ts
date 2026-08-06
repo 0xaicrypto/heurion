@@ -14,7 +14,13 @@ export async function filesRouter(app: FastifyInstance) {
 
   // ── Upload (with SHA-256 dedup) ──
   app.post('/api/v1/files/upload', async (request, reply) => {
-    const data = await request.file()
+    // 边界审计（#253）: non-multipart requests must 400, not 500.
+    let data: any
+    try {
+      data = await request.file()
+    } catch {
+      return reply.status(400).send({ error: 'Expected multipart/form-data upload' })
+    }
     if (!data) return reply.status(400).send({ error: 'No file uploaded' })
 
     const buffer = await data.toBuffer()
