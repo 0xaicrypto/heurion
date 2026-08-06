@@ -185,7 +185,9 @@
     "cannotCloseDefault": "默认会话不能关闭",
     "noSession": "还没有会话",
     "noSessionHint": "创建一个新会话开始对话，或直接在下方输入第一条消息。",
-    "confirmCloseBody": "关闭「{{title}}」后，该会话的聊天记录将被清除且无法恢复。确定关闭吗？"
+    "confirmCloseBody": "关闭「{{title}}」后，该会话的聊天记录将被清除且无法恢复。确定关闭吗？",
+    "needSession": "请先新建一个会话",
+    "noSessionSelected": "未选择会话"
   },
   "patient": {
     "summary": "摘要",
