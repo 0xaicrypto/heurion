@@ -139,6 +139,14 @@ describe('closing the default global session', () => {
     const ctx = (await import('../../src/modules/chat/user-context.js')).getUserContext(uid)
     const remaining = ctx.eventLog.query({ sessionId })
     expect(remaining.length).toBe(0)
+
+    // Legacy default-session rows are deleted outright and never listed.
+    const prisma = (await import('../../src/common/prisma.js')).default
+    const row = await prisma.session.findFirst({ where: { id: sessionId } })
+    expect(row).toBeNull()
+    const list = await app.inject({ method: 'GET', url: '/api/v1/sessions', headers: await authHeader() })
+    const listed = JSON.parse(list.payload).sessions as Array<{ id: string }>
+    expect(listed.some((s) => s.id === sessionId)).toBe(false)
   }, 30000)
 
   test('non-global nonexistent sessions still 404', async () => {

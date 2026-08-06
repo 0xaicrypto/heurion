@@ -788,8 +788,10 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
           .catch(() => {})
       }
 
-      // Update session (writing doc-* sessions never get a Session row)
-      if (!sid.startsWith('doc-')) {
+      // Update session (writing doc-* sessions never get a Session row;
+      // legacy global-* default sessions must never be recreated — the
+      // default-session concept was removed).
+      if (!sid.startsWith('doc-') && !sid.startsWith('global-')) {
         await prisma.session.upsert({
           where: { id: sid },
           update: { lastMessageAt: new Date().toISOString(), messageCount: { increment: 1 } },
