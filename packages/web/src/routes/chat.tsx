@@ -589,7 +589,7 @@ export function ChatPage() {
           </div>
         )}
 
-        <footer className="border-t border-border bg-surface px-4 py-4">
+        <footer className="border-t border-border bg-surface px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <div className="mx-auto flex max-w-3xl flex-col gap-2">
             {(session?.compacting || session?.contextUsage) && (
               <div className="flex items-center justify-between gap-2">

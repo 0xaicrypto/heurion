@@ -26,7 +26,7 @@ export function MarketingShell({ children }: { children: React.ReactNode }) {
             <img src="/heurion-logo.svg" alt="Heurion" className="h-8 w-auto dark:hidden" />
             <img src="/heurion-logo-dark.svg" alt="Heurion" className="hidden h-8 w-auto dark:block" />
           </Link>
-          <div data-testid="marketing-nav" className="hidden items-center gap-1 sm:flex">
+          <div data-testid="marketing-nav" className="flex items-center gap-1 overflow-x-auto sm:flex">
             {subpages.map((item) => (
               <NavLink
                 key={item.to}
