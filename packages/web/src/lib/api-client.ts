@@ -972,16 +972,6 @@ class ApiClient {
 
   /* ────────────────────────── feedback ────────────────────────── */
 
-  async sendFeedback(data: {kind: string; message: string; metadata?: Record<string,unknown>}): Promise<{ok: boolean}> {
-    return this.fetch('/feedback', { method: 'POST', body: JSON.stringify(data) });
-  }
-
-  /* ────────────────────────── sandbox ────────────────────────── */
-
-  async executeSandbox(language: string, code: string): Promise<{ok: boolean; stdout: string; stderr: string; runtime_ms: number; language: string; error: string}> {
-    return this.fetch('/api/v1/sandbox/execute', { method: 'POST', body: JSON.stringify({ language, code }) });
-  }
-
   async getDocReferences(docId: string): Promise<{references: Array<{reference_id: string; kind: string; label: string; content: string; source_patient_hash: string; created_at: string}>}> {
     return this.fetch(`/api/v1/docs/${docId}/references`);
   }
