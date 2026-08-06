@@ -145,6 +145,7 @@ export function ChatPage() {
   }, [isAuthenticated, navigate, clearSession, t]);
 
   useEffect(() => {
+    if (!sessionId) return; // no session selected — nothing to load
     const existing = store.sessions[sessionId]?.messages?.length;
     if (existing) return;
     api.getMessages(sessionId, 50).then((r) => {
@@ -323,7 +324,7 @@ export function ChatPage() {
     }
   };
 
-  const messages = session?.messages || [];
+  const messages = sessionId ? (session?.messages || []) : [];
 
   return (
     <AppShell>

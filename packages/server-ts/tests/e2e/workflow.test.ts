@@ -108,6 +108,24 @@ describe('Workflow Step 2 — Patient Chat + Finding Extraction', () => {
     expect(body.messages).toBeDefined()
     expect(body.total).toBeGreaterThanOrEqual(0)
   })
+
+  test('messages without a session_id return empty (never leak other sessions)', async () => {
+    const app = await getApp()
+    // Seed a session with messages first, then query without session_id.
+    await app.inject({
+      method: 'POST', url: '/api/v1/agent/chat',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ text: 'secret message', session_id: 'leak_check_session' }),
+    })
+    const res = await app.inject({
+      method: 'GET', url: '/api/v1/agent/messages',
+      headers: await authHeader(),
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.messages).toEqual([])
+    expect(body.total).toBe(0)
+  })
 })
 
 describe('Workflow Step 3-4 — Research Import + Create', () => {
