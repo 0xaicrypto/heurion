@@ -90,7 +90,7 @@ export interface DeepSeekCallOptions {
 
 interface DeepSeekChunk {
   choices?: Array<{ delta?: { content?: string; reasoning_content?: string; role?: string }; finish_reason?: string | null }>
-  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number }
 }
 
 let telemetryRecorder: LlmTelemetryRecorder | undefined
@@ -134,10 +134,14 @@ async function recordUsage(
   options: DeepSeekCallOptions,
   promptTokens: number,
   completionTokens: number,
+  cacheHitTokens = 0,
+  cacheMissTokens = 0,
 ): Promise<void> {
   const totalTokens = promptTokens + completionTokens
   const costUsd = estimateCost(model, promptTokens, completionTokens)
-  console.log(`[LLM] model=${model} prompt=${promptTokens} completion=${completionTokens} total=${totalTokens} costUsd≈${costUsd.toFixed(6)}`)
+  // O3 (#108): surface DeepSeek cache usage so cache effectiveness is visible.
+  const cachePct = promptTokens > 0 ? Math.round((cacheHitTokens / promptTokens) * 100) : 0
+  console.log(`[LLM] model=${model} prompt=${promptTokens} (cache hit ${cacheHitTokens}/${cachePct}%) completion=${completionTokens} total=${totalTokens} costUsd≈${costUsd.toFixed(6)}`)
   if (options.telemetryContext && telemetryRecorder) {
     await telemetryRecorder
       .record({
@@ -145,7 +149,7 @@ async function recordUsage(
         workspaceId: options.telemetryContext.workspaceId,
         category: 'llm_cost',
         action: options.telemetryContext.action,
-        metadata: { model, promptTokens, completionTokens, totalTokens, costUsd },
+        metadata: { model, promptTokens, completionTokens, totalTokens, costUsd, cacheHitTokens, cacheMissTokens, cacheHitPct: cachePct },
       })
       .catch(() => {})
   }
@@ -209,7 +213,7 @@ export async function deepseekChat(
 
   const usage = json?.usage
   if (usage && typeof usage.prompt_tokens === 'number' && typeof usage.completion_tokens === 'number') {
-    await recordUsage(model, options, usage.prompt_tokens, usage.completion_tokens)
+    await recordUsage(model, options, usage.prompt_tokens, usage.completion_tokens, usage.prompt_cache_hit_tokens || 0, usage.prompt_cache_miss_tokens || 0)
   } else {
     const pTokens = approximateTokensFromChars(promptChars(messages))
     const cTokens = approximateTokensFromChars(content.length)
@@ -252,7 +256,7 @@ export async function* deepseekStream(
   const decoder = new TextDecoder()
   let buffer = ''
   let completionChars = 0
-  let finalUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined
+  let finalUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number } | undefined
 
   try {
     while (true) {
@@ -291,7 +295,7 @@ export async function* deepseekStream(
   }
 
   if (finalUsage && typeof finalUsage.prompt_tokens === 'number' && typeof finalUsage.completion_tokens === 'number') {
-    await recordUsage(model, options, finalUsage.prompt_tokens, finalUsage.completion_tokens)
+    await recordUsage(model, options, finalUsage.prompt_tokens, finalUsage.completion_tokens, finalUsage.prompt_cache_hit_tokens || 0, finalUsage.prompt_cache_miss_tokens || 0)
   } else {
     const pTokens = approximateTokensFromChars(promptChars(messages))
     const cTokens = approximateTokensFromChars(completionChars)
