@@ -83,7 +83,12 @@
     "admin": "管理",
     "brain": "大脑",
     "audit": "审计",
-    "memoryKnowledge": "记忆与知识"
+    "memoryKnowledge": "记忆与知识",
+    "sectionOverview": "概览",
+    "sectionConversation": "对话",
+    "sectionPatients": "患者工作区",
+    "sectionMemory": "记忆与知识",
+    "sectionTools": "工具与设置"
   },
   "auth": {
     "welcomeBack": "欢迎回来",
