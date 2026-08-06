@@ -61,17 +61,24 @@ export async function researchRouter(app: FastifyInstance) {
     return { ...toStudy(s), description: '' }
   })
 
-  app.get('/api/v1/research/studies/:studyId/roster', async (request) => {
+  app.get('/api/v1/research/studies/:studyId/roster', async (request, reply) => {
     const studyId = (request.params as any).studyId
     const userId = request.user!.userId
+    // 边界审计（#253）: the study must exist and belong to the caller —
+    // otherwise this leaked other users' rosters and returned 200 for
+    // nonexistent studies.
+    const study = await service.getStudy(userId, studyId)
+    if (!study) return reply.status(404).send({ error: 'Study not found' })
     const enrollments = await service.getRoster(studyId)
     const patientMap = await getPatientMap(enrollments.map((e: any) => e.patientHash), userId)
     return enrollments.map((e: any) => toRoster(e, patientMap.get(e.patientHash)))
   })
 
-  app.get('/api/v1/research/studies/:studyId/enrollments', async (request) => {
+  app.get('/api/v1/research/studies/:studyId/enrollments', async (request, reply) => {
     const studyId = (request.params as any).studyId
     const userId = request.user!.userId
+    const study = await service.getStudy(userId, studyId)
+    if (!study) return reply.status(404).send({ error: 'Study not found' })
     const enrollments = await service.getRoster(studyId)
     const patientMap = await getPatientMap(enrollments.map((e: any) => e.patientHash), userId)
     return enrollments.map((e: any) => toRoster(e, patientMap.get(e.patientHash)))
