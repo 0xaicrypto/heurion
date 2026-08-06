@@ -9,7 +9,7 @@ import { RecentActivityFeed } from '@/components/brain/RecentActivityFeed';
 import { api } from '@/lib/api-client';
 import type { BrainStats } from '@/lib/types';
 
-export function BrainPage() {
+export function BrainPage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useTranslation();
   const [stats, setStats] = useState<BrainStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -35,21 +35,24 @@ export function BrainPage() {
     setActivityRefreshKey((k) => k + 1);
   };
 
-  return (
-    <AppShell>
-      <div className="flex h-full flex-col overflow-y-auto">
-        <header className="flex h-14 items-center gap-2 border-b border-border bg-surface px-6">
-          <Brain size={18} className="text-text-tertiary" />
-          <h1 className="font-semibold text-text-primary">{t('brain.title')}</h1>
-        </header>
+  const content = (
+    <div className="flex h-full flex-col overflow-y-auto">
+      <header className="flex h-14 items-center gap-2 border-b border-border bg-surface px-6">
+        <Brain size={18} className="text-text-tertiary" />
+        <h1 className="font-semibold text-text-primary">{t('brain.title')}</h1>
+      </header>
 
-        <main className="space-y-6 p-6">
-          <BrainStatsCards stats={stats} loading={statsLoading} />
-          <MemoryHealthPanel />
-          <IngestionInbox onChanged={handleChanged} />
-          <RecentActivityFeed refreshKey={activityRefreshKey} />
-        </main>
-      </div>
-    </AppShell>
+      <main className="space-y-6 p-6">
+        <BrainStatsCards stats={stats} loading={statsLoading} />
+        <MemoryHealthPanel />
+        <IngestionInbox onChanged={handleChanged} />
+        <RecentActivityFeed refreshKey={activityRefreshKey} />
+      </main>
+    </div>
   );
+
+  // #230: embedded mode drops the AppShell so the page can live inside the
+  // unified Memory & Knowledge tab view.
+  if (embedded) return content;
+  return <AppShell>{content}</AppShell>;
 }

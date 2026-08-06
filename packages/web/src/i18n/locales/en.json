@@ -82,7 +82,8 @@
     "settings": "Settings",
     "admin": "Admin",
     "brain": "Brain",
-    "audit": "Audit"
+    "audit": "Audit",
+    "memoryKnowledge": "Memory & Knowledge"
   },
   "auth": {
     "welcomeBack": "Welcome back",

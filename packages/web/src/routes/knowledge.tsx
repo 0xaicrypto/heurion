@@ -51,7 +51,7 @@ function usePagination<T>(items: T[], page: number, pageSize = PAGE_SIZE) {
   return { page: safePage, totalPages, start, end: start + pageItems.length, pageItems };
 }
 
-export function KnowledgePage() {
+export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('articles');
   const [articles, setArticles] = useState<Article[]>([]);
@@ -301,8 +301,7 @@ export function KnowledgePage() {
     );
   };
 
-  return (
-    <AppShell>
+  const content = (
       <div className="flex h-full flex-col overflow-y-auto">
         <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
           <div className="flex items-center gap-3">
@@ -736,6 +735,9 @@ export function KnowledgePage() {
           )}
         </main>
       </div>
-    </AppShell>
   );
+
+  // #230: embedded mode drops the AppShell for the unified tab view.
+  if (embedded) return content;
+  return <AppShell>{content}</AppShell>;
 }

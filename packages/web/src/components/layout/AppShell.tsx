@@ -7,7 +7,6 @@ import {
   Users,
   FlaskConical,
   FileText,
-  BookOpen,
   Cpu,
   Puzzle,
   ScrollText,
@@ -37,13 +36,12 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: '/app/today', labelKey: 'nav.today', icon: <LayoutDashboard size={18} /> },
-  { to: '/app/brain', labelKey: 'nav.brain', icon: <Brain size={18} /> },
+  { to: '/app/memory', labelKey: 'nav.memoryKnowledge', icon: <Brain size={18} /> },
   { to: '/app/chat', labelKey: 'nav.chat', icon: <MessageSquare size={18} /> },
   { to: '/app/patients', labelKey: 'nav.patients', icon: <Users size={18} /> },
   { to: '/app/research', labelKey: 'nav.research', icon: <FlaskConical size={18} /> },
   { to: '/app/writing', labelKey: 'nav.writing', icon: <FileText size={18} /> },
   { to: '/app/skills', labelKey: 'nav.skills', icon: <Cpu size={18} /> },
-  { to: '/app/knowledge', labelKey: 'nav.knowledge', icon: <BookOpen size={18} /> },
   { to: '/app/plugins', labelKey: 'nav.plugins', icon: <Puzzle size={18} /> },
   { to: '/app/audit', labelKey: 'nav.audit', icon: <ShieldCheck size={18} /> },
   { to: '/app/logs', labelKey: 'nav.logs', icon: <ScrollText size={18} /> },
