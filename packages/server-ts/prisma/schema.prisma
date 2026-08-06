@@ -604,3 +604,18 @@ model ExternalJobMapping {
   @@index([externalUserId])
   @@map("external_job_mappings")
 }
+
+// #105: configurable permission rules — allow/deny/ask per action/resource/role.
+model ApprovalRule {
+  id        String @id @default(cuid())
+  action    String @map("action") // 'approve' | 'reject' | 'view'
+  resource  String @map("resource") // 'MedicalRecordEntry' | 'Skill' | 'MemoryProposal' | '*'
+  effect    String @map("effect") // 'allow' | 'deny' | 'ask'
+  role      String @default("*") @map("role") // 'admin' | 'doctor' | 'pi' | '*'
+  priority  Int    @default(0) @map("priority")
+  enabled   Int    @default(1) @map("enabled")
+  createdAt String @map("created_at")
+  updatedAt String @map("updated_at")
+  @@index([action, resource, role])
+  @@map("approval_rules")
+}
