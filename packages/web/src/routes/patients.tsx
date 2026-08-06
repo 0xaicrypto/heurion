@@ -34,7 +34,7 @@ function PatientList({
   );
 
   return (
-    <div className="flex h-full w-64 flex-col border-r border-border bg-surface">
+    <div className="flex h-full w-full flex-col border-r border-border bg-surface lg:w-64">
       <div className="flex h-14 items-center justify-between border-b border-border px-3">
         <h2 className="font-semibold text-text-primary">{t('nav.patients')}</h2>
           <Button size="sm" variant="ghost" onClick={onCreatePatient}>
@@ -106,14 +106,14 @@ export function PatientTabs({ hash, active }: { hash?: string; active: 'summary'
   ];
 
   return (
-    <nav className="flex gap-1 border-b border-border px-6">
+    <nav className="flex gap-1 overflow-x-auto border-b border-border px-3 sm:px-6">
       {tabs.map((tab) => (
         <NavLink
           key={tab.key}
           to={tab.to}
           end
           className={cn(
-            'border-b-2 px-3 py-3 text-sm font-medium transition-colors',
+            'whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium transition-colors',
             active === tab.key
               ? 'border-accent text-accent'
               : 'border-transparent text-text-secondary hover:text-text-primary',
@@ -162,14 +162,31 @@ export function PatientsLayout() {
   return (
     <AppShell>
       <div className="flex h-full">
-        {loading ? (
-          <div className="flex h-full w-64 flex-col border-r border-border bg-surface p-3 gap-3">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
+        {/* Desktop: always-visible sidebar */}
+        <div className="hidden h-full lg:block">
+          {loading ? (
+            <div className="flex h-full w-64 flex-col border-r border-border bg-surface p-3 gap-3">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          ) : (
+            <PatientList patients={patients} selectedHash={hash} onCreatePatient={() => setNewPatientOpen(true)} onDelete={handleDeletePatient} />
+          )}
+        </div>
+        {/* Mobile: list is full-width until a patient is opened */}
+        {!hash && (
+          <div className="flex h-full w-full lg:hidden">
+            {loading ? (
+              <div className="flex h-full w-full flex-col border-r border-border bg-surface p-3 gap-3">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            ) : (
+              <PatientList patients={patients} selectedHash={hash} onCreatePatient={() => setNewPatientOpen(true)} onDelete={handleDeletePatient} />
+            )}
           </div>
-        ) : (
-          <PatientList patients={patients} selectedHash={hash} onCreatePatient={() => setNewPatientOpen(true)} onDelete={handleDeletePatient} />
         )}
         <div className="flex min-w-0 flex-1 flex-col">
           {error && (

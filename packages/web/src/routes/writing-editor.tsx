@@ -685,7 +685,7 @@ export function WritingEditorPage() {
           </main>
 
           {chatOpen && (
-            <aside className="w-80 flex shrink-0 flex-col bg-surface">
+            <aside className="fixed inset-0 z-40 flex w-full flex-col bg-surface md:static md:inset-auto md:z-auto md:w-80 md:shrink-0">
               <div className="flex h-10 items-center justify-between border-b border-border px-3">
                 <span className="text-sm font-medium text-text-secondary">Doc Chat</span>
                 <button onClick={() => setChatOpen(false)} className="text-text-tertiary hover:text-text-primary">
