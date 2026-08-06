@@ -28,4 +28,6 @@ COPY --from=builder /build/prisma ./prisma
 COPY --from=builder /build/data ./data
 
 EXPOSE 8001
-CMD ["node", "--import", "tsx", "--no-warnings", "dist/main.js"]
+# #280: the SQLite DB lives on its own volume at /data/db — ensure the
+# parent directory exists before Prisma opens the file.
+CMD ["sh", "-c", "mkdir -p /data/db && exec node --import tsx --no-warnings dist/main.js"]

@@ -61,6 +61,23 @@ fi
 # mounts the nexus-data volume at /data, so this is mainly a safety net.
 mkdir -p /opt/nexus-embedding-models
 
+# #280: migrate the SQLite database onto its own volume (idempotent).
+# Old layout: DATABASE_URL=file:/data/nexus_server.db (inside nexus-data).
+# New layout: DATABASE_URL=file:/data/db/nexus_server.db (nexus-db-data volume).
+NEXUS_DATA_VOL=$(docker volume ls -q | grep '^heurion_nexus-data$' || true)
+NEXUS_DB_VOL=$(docker volume ls -q | grep '^heurion_nexus-db-data$' || true)
+if [ -n "$NEXUS_DATA_VOL" ] && [ -n "$NEXUS_DB_VOL" ]; then
+  DB_PRESENT=$(docker run --rm -v "$NEXUS_DB_VOL":/db alpine sh -c 'ls /db/nexus_server.db 2>/dev/null || true' 2>/dev/null || true)
+  LEGACY_PRESENT=$(docker run --rm -v "$NEXUS_DATA_VOL":/data alpine sh -c 'ls /data/nexus_server.db 2>/dev/null || true' 2>/dev/null || true)
+  if [ -z "$DB_PRESENT" ] && [ -n "$LEGACY_PRESENT" ]; then
+    echo "Migrating SQLite → nexus-db-data volume..."
+    docker run --rm -v "$NEXUS_DATA_VOL":/data -v "$NEXUS_DB_VOL":/db alpine sh -c 'cp /data/nexus_server.db /db/nexus_server.db && chown 1000:1000 /db/nexus_server.db'
+    echo "✓ DB migrated (legacy copy retained in nexus-data)"
+  else
+    echo "DB volume already present — skipping migration"
+  fi
+fi
+
 # Pull the images tagged by CI and recreate containers.
 export NEXUS_IMAGE="${NEXUS_IMAGE:-ghcr.io/0xaicrypto/nexus-server:latest}"
 export EMBEDDING_IMAGE="${EMBEDDING_IMAGE:-ghcr.io/0xaicrypto/nexus-embedding-server:latest}"
