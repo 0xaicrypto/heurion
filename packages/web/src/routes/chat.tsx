@@ -145,6 +145,10 @@ export function ChatPage() {
       });
   }, [isAuthenticated, navigate, clearSession, t]);
 
+  // Load history + context budget exactly once per session id. NOTE: the
+  // store must NOT be a dependency here — setContextUsage below updates the
+  // store, which would re-run this effect → an infinite request/render loop
+  // (observed: first message in a brand-new session never got a reply).
   useEffect(() => {
     if (!sessionId) return; // no session selected — nothing to load
     const existing = store.sessions[sessionId]?.messages?.length;
@@ -178,7 +182,8 @@ export function ChatPage() {
         willCompact: u.will_compact,
       });
     }).catch(() => {});
-  }, [sessionId, store]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- store must not be a dependency (setContextUsage would re-trigger this effect forever).
+  }, [sessionId]);
 
   useEffect(() => {
     const el = bottomRef.current;

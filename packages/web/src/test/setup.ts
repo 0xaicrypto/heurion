@@ -17,3 +17,19 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
     }),
   });
 }
+
+// zustand persist (auth store) needs a working localStorage in jsdom.
+if (typeof globalThis.localStorage === 'undefined' || typeof globalThis.localStorage.setItem !== 'function') {
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v); },
+      removeItem: (k: string) => { store.delete(k); },
+      clear: () => { store.clear(); },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() { return store.size; },
+    },
+  });
+}
