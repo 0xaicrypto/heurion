@@ -44,14 +44,14 @@ jobs:
           pnpm install --frozen-lockfile
           npx prisma generate
           pnpm exec vitest run \
-            tests/medical-record-entry.test.ts \
-            tests/approval-audit.test.ts \
-            tests/ingestion-worker.test.ts \
-            tests/lab-ingestion.test.ts \
-            tests/imaging-ingestion.test.ts \
-            tests/ai-provider.test.ts \
-            tests/protocol-ingestion.test.ts \
-            tests/local-embedding.test.ts
+            tests/e2e/medical-record-entry.test.ts \
+            tests/e2e/approval-audit.test.ts \
+            tests/e2e/ingestion-worker.test.ts \
+            tests/e2e/lab-ingestion.test.ts \
+            tests/e2e/imaging-ingestion.test.ts \
+            tests/unit/ai-provider.test.ts \
+            tests/e2e/protocol-ingestion.test.ts \
+            tests/unit/local-embedding.test.ts
 
   build-web:
     name: Build Web Dist
