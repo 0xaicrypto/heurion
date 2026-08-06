@@ -50,18 +50,15 @@ interface ChatSessionItem {
 export function ChatPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { isAuthenticated, clearSession, userId } = useAuthStore();
+  const { isAuthenticated, clearSession } = useAuthStore();
   const store = useChatStore();
-  const defaultSessionId = `global-${userId || 'anonymous'}`;
-  const [sessionId, setSessionId] = useState<string>(defaultSessionId);
+  // No implicit default session — the user creates one explicitly.
+  const [sessionId, setSessionId] = useState<string>('');
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const session = store.sessions[sessionId];
   const [globalSessions, setGlobalSessions] = useState<ChatSessionItem[]>([]);
-  const [defaultClosed, setDefaultClosed] = useState(false);
   const currentSessionTitle =
-    sessionId === defaultSessionId
-      ? t('chat.defaultSession', '默认会话')
-      : (globalSessions.find((s) => s.id === sessionId)?.title ?? t('chat.defaultSession', '默认会话'));
+    globalSessions.find((s) => s.id === sessionId)?.title ?? '';
 
   const [input, setInput] = useState('');
   // Per-session drafts: switching sessions must never leak half-typed text
@@ -127,18 +124,13 @@ export function ChatPage() {
     try {
       await api.closeSession(closingId);
       // Remove the closed session from the selector and clean up local state.
-      if (closingId === defaultSessionId) setDefaultClosed(true);
       setGlobalSessions((prev) => prev.filter((s) => s.id !== closingId));
       store.clearSession(closingId);
       setDrafts((prev) => { const next = { ...prev }; delete next[closingId]; return next; });
-      // Pick the next open session; if none remains, start a fresh one so
-      // the chat stays usable (all sessions can be closed).
+      // Pick the next open session; if none remains, show the empty state
+      // (no implicit default session).
       const next = globalSessions.find((s) => s.id !== closingId && s.status === 'open');
-      if (next) {
-        setSessionId(next.id);
-      } else {
-        await createSessionWithTitle(t('chat.newSession', 'New Session'));
-      }
+      setSessionId(next ? next.id : '');
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     }
@@ -204,12 +196,23 @@ export function ChatPage() {
   const handleSend = async () => {
     if (!input.trim() || session?.loading || session?.compacting) return;
     const text = input.trim();
+    // No session yet? Create one on the fly so the first message just works.
+    let sid = sessionId;
+    if (!sid) {
+      try {
+        const res = await createSessionWithTitle(text.slice(0, 50) || t('chat.newSession', 'New Session'));
+        sid = res.id;
+      } catch (err) {
+        setError(err instanceof ApiError ? err.messageText : String(err));
+        return;
+      }
+    }
     setInput('');
-    setDrafts((prev) => { const next = { ...prev }; delete next[sessionId]; return next; });
+    setDrafts((prev) => { const next = { ...prev }; delete next[sid]; return next; });
     setError(null);
-    await store.sendMessage(sessionId, {
+    await store.sendMessage(sid, {
       text,
-      sessionId,
+      sessionId: sid,
       attachments: attachedFiles.map((a) => a.fileId),
       skills: activeSkills,
     });
@@ -351,9 +354,7 @@ export function ChatPage() {
               className="h-8 max-w-[220px] rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={t('chat.selectSession', 'Session')}
             >
-              {(defaultClosed ? [] : [{ id: defaultSessionId, title: t('chat.defaultSession', '默认会话'), status: 'open' as const }] as ChatSessionItem[])
-                .concat(globalSessions.filter((s) => s.status !== 'closed'))
-                .map((s) => (
+              {globalSessions.filter((s) => s.status !== 'closed').map((s) => (
                   <option key={s.id} value={s.id}>{s.title}</option>
                 ))}
             </select>
@@ -388,8 +389,21 @@ export function ChatPage() {
           <div className="mx-auto max-w-3xl space-y-6">
             {messages.length === 0 && (
               <div className="py-20 text-center text-text-tertiary">
-                <p className="text-lg">{t('chat.startConversation')}</p>
-                <p className="text-sm">{t('chat.contextHint')}</p>
+                {sessionId ? (
+                  <>
+                    <p className="text-lg">{t('chat.startConversation')}</p>
+                    <p className="text-sm">{t('chat.contextHint')}</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-lg">{t('chat.noSession', '还没有会话')}</p>
+                    <p className="text-sm mb-5">{t('chat.noSessionHint', '创建一个新会话开始对话，或直接在下方输入第一条消息。')}</p>
+                    <Button onClick={handleNewSession} variant="secondary">
+                      <Plus size={14} className="mr-1.5" />
+                      {t('chat.newSession', 'New Session')}
+                    </Button>
+                  </>
+                )}
               </div>
             )}
             {messages.map((m, idx) => {
@@ -597,7 +611,7 @@ export function ChatPage() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
-                placeholder={`${t('chat.placeholder')} — ${currentSessionTitle}`}
+                placeholder={currentSessionTitle ? `${t('chat.placeholder')} — ${currentSessionTitle}` : t('chat.placeholder')}
                 disabled={session?.loading || false}
                 rows={1}
                 className="min-h-0 flex-1 resize-none py-3"

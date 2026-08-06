@@ -182,7 +182,9 @@
     "selectSession": "Session",
     "defaultSession": "Default session",
     "closed": "closed",
-    "cannotCloseDefault": "The default session cannot be closed"
+    "cannotCloseDefault": "The default session cannot be closed",
+    "noSession": "No session yet",
+    "noSessionHint": "Create a new session to start, or just type your first message below."
   },
   "patient": {
     "summary": "Summary",
