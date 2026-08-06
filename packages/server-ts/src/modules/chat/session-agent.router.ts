@@ -263,6 +263,11 @@ export async function agentRouter(app: FastifyInstance) {
   app.get('/api/v1/agent/messages', async (request) => {
     const ctx = getUserContext(request.user!.userId)
     const sessionId = (request.query as any).session_id
+    // No session selected → nothing to return (an empty session_id would
+    // otherwise leak every session's messages).
+    if (!sessionId) {
+      return { messages: [], total: 0 }
+    }
     // R3: tool_call/tool_result events stay OUT of the chat message stream
     // so the reconstructed conversation remains structurally compatible.
     const events = ctx.eventLog
