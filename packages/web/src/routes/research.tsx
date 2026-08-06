@@ -82,7 +82,7 @@ export function ResearchPage() {
           {showForm && (
             <Card className="space-y-4 p-4">
               <h3 className="font-medium text-text-primary">Create Study</h3>
-              <div className="flex gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <div className="flex-1">
                   <label className="mb-1 block text-xs font-medium text-text-secondary">Name *</label>
                   <Input

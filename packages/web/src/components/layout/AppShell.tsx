@@ -212,7 +212,7 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
           'fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border bg-surface transition-transform lg:static lg:translate-x-0',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
         )}
-        style={{ width: sidebarWidth }}
+        style={{ width: `min(${sidebarWidth}px, 85vw)` }}
       >
         <header className="flex h-14 items-center gap-2 border-b border-border px-4">
           <img src="/heurion-icon.svg" alt="" className="h-7 w-7 dark:hidden" />
@@ -280,7 +280,7 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
         </div>
 
         <div
-          className="absolute right-0 top-0 h-full cursor-col-resize transition-colors z-10"
+          className="absolute right-0 top-0 z-10 hidden h-full cursor-col-resize transition-colors lg:block"
           style={{ width: 6, background: 'hsl(var(--border))', opacity: 0.3 }}
           onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); }}
           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.6'; }}
@@ -318,7 +318,7 @@ export function AppShell({ children, rail, breadcrumb }: { children: React.React
   }, [isRailResizing]);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
+    <div className="flex h-dvh w-full overflow-hidden bg-background">
       <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -341,7 +341,7 @@ export function AppShell({ children, rail, breadcrumb }: { children: React.React
           {rail && (
             <div className="hidden md:flex">
               <div
-                className="cursor-col-resize transition-colors shrink-0 z-10"
+                className="hidden shrink-0 cursor-col-resize transition-colors z-10 lg:block"
                 style={{ width: 6, background: 'hsl(var(--border))', opacity: 0.3 }}
                 onMouseDown={(e) => { e.preventDefault(); setIsRailResizing(true); }}
                 onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.6'; }}
