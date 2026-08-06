@@ -6,6 +6,7 @@
  */
 
 import { DeepSeekChatProvider } from './deepseek-chat.provider.js'
+import { resolveChatProvider } from './openai-compatible-chat.provider.js'
 import { GeminiVisionProvider } from './gemini-vision.provider.js'
 import { LocalEmbeddingProvider, ResilientEmbeddingProvider } from './local-embedding.provider.js'
 import { OpenAIEmbeddingProvider } from './openai-embedding.provider.js'
@@ -98,6 +99,8 @@ export class AiProviderError extends Error {
 }
 
 export interface AiProviderConfig {
+  /** #202: runtime LLM provider selection (DEFAULT_LLM_PROVIDER env). */
+  llmProvider?: string
   deepseekApiKey?: string
   deepseekChatModel?: string
   geminiApiKey?: string
@@ -113,6 +116,7 @@ export interface AiProviderConfig {
 
 export function loadAiConfigFromEnv(): AiProviderConfig {
   return {
+    llmProvider: process.env.DEFAULT_LLM_PROVIDER || 'deepseek',
     deepseekApiKey: process.env.DEEPSEEK_API_KEY,
     deepseekChatModel: process.env.DEEPSEEK_CHAT_MODEL || 'deepseek-chat',
     geminiApiKey: process.env.GEMINI_API_KEY,
@@ -278,7 +282,9 @@ export function createAiProvider(
   recorder?: TelemetryRecorder,
 ): AiProvider {
   const cfg = { ...loadAiConfigFromEnv(), ...config }
-  const chatProvider = new DeepSeekChatProvider(cfg)
+  // #202: runtime provider selection — DEFAULT_LLM_PROVIDER env drives the
+  // chat adapter (deepseek default, backward compatible).
+  const chatProvider = resolveChatProvider(cfg)
   const visionProvider = new GeminiVisionProvider(cfg)
   let embedProvider: Pick<AiProvider, 'embed'>
   if (cfg.embeddingProvider === 'openai') {

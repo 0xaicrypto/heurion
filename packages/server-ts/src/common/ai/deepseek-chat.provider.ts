@@ -6,12 +6,12 @@ const DEEPSEEK_BASE = 'https://api.deepseek.com/v1'
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
 const MAX_RETRIES = 2
 
-function isRetryable(err: unknown): boolean {
+export function isRetryable(err: unknown): boolean {
   if (!(err instanceof AiProviderError)) return true
   return err.statusCode === undefined || RETRYABLE_STATUS.has(err.statusCode)
 }
 
-function sleep(ms: number): Promise<void> {
+export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
