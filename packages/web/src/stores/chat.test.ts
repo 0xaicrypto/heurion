@@ -17,7 +17,6 @@ describe('chat store — regenerate (§10.3 #220)', () => {
   });
 
   test('regenerate drops the stale reply and re-runs the last user turn', async () => {
-    const store = useChatStore.getState();
     const base: ChatMessage[] = [
       { id: 'u1', role: 'user', text: '第一问', createdAt: 1000 },
       { id: 'a1', role: 'assistant', text: '旧回答', createdAt: 2000 },
@@ -53,6 +52,7 @@ describe('chat store — regenerate (§10.3 #220)', () => {
     // Force an error path: make the stream throw.
     const { api } = await import('@/lib/api-client');
     (api.sendChatFull as any).mockImplementationOnce(async function* () {
+      yield 'boom';
       throw new Error('llm down');
     });
     await store.sendMessage('s1', { sessionId: 's1', text: 'hi', attachments: [], skills: [] });
