@@ -6,6 +6,7 @@ import { BrainStatsCards } from '@/components/brain/BrainStatsCards';
 import { MemoryHealthPanel } from '@/components/brain/MemoryHealthPanel';
 import { IngestionInbox } from '@/components/brain/IngestionInbox';
 import { RecentActivityFeed } from '@/components/brain/RecentActivityFeed';
+import { ManualMemoryAdd } from '@/components/brain/ManualMemoryAdd';
 import { api } from '@/lib/api-client';
 import type { BrainStats } from '@/lib/types';
 
@@ -45,6 +46,8 @@ export function BrainPage({ embedded = false }: { embedded?: boolean }) {
       <main className="space-y-6 p-6">
         <BrainStatsCards stats={stats} loading={statsLoading} />
         <MemoryHealthPanel />
+        {/* #200: manual memory add → pending review queue */}
+        <ManualMemoryAdd onAdded={handleChanged} />
         <IngestionInbox onChanged={handleChanged} />
         <RecentActivityFeed refreshKey={activityRefreshKey} />
       </main>

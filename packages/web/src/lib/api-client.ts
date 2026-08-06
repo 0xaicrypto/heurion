@@ -363,6 +363,19 @@ class ApiClient {
     return this.fetch('/api/v1/brain/stats');
   }
 
+  /** #200: manually add a memory — lands in the pending review queue. */
+  async proposeMemory(data: { content: string; category?: string; importance?: number; patientHash?: string }): Promise<{ status: 'pending' | 'rejected'; id: string; reason?: string }> {
+    return this.fetch('/api/v1/memorization/propose', {
+      method: 'POST',
+      body: JSON.stringify({
+        content: data.content,
+        category: data.category,
+        importance: data.importance,
+        patient_hash: data.patientHash,
+      }),
+    });
+  }
+
   async getEmbeddingStatus(): Promise<{ok: boolean; url: string; model?: string; dimensions?: number | null; device?: string; quantized?: boolean; dtype?: string | null}> {
     return this.fetch('/api/v1/settings/embedding');
   }

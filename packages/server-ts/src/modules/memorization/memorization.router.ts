@@ -44,6 +44,41 @@ export async function memorizationRouter(app: FastifyInstance) {
     return result
   })
 
+  /**
+   * #200: manual memory add — user-written facts enter the pending review
+   * queue (never a direct graph write).
+   */
+  app.post('/api/v1/memorization/propose', async (request, reply) => {
+    const { content, category, importance, source_type, patient_hash } = request.body as any
+    if (!content || !String(content).trim()) {
+      return reply.status(400).send({ error: 'content required' })
+    }
+    const userId = request.user!.userId
+    const ctx = getUserContext(userId)
+    const gateway = new MemoryGraphGateway(
+      userId,
+      ctx.memory,
+      ctx.facts,
+      ctx.episodes,
+      ctx.skills,
+      ctx.knowledge,
+    )
+    const proposal = await gateway.propose({
+      scopeType: patient_hash ? 'patient' : 'global',
+      patientHash: patient_hash || undefined,
+      kind: 'fact',
+      content: String(content).trim(),
+      importance: Math.min(5, Math.max(1, parseInt(importance, 10) || 3)),
+      confidence: 'medium',
+      reason: `手动添加：${String(content).trim().slice(0, 40)}`,
+      category: category || 'fact',
+    })
+    if (proposal.status === 'rejected') {
+      return { status: 'rejected', reason: proposal.rejectedReason, id: proposal.id }
+    }
+    return { status: 'pending', id: proposal.id }
+  })
+
   app.post('/api/v1/memorization/extract', async (request, reply) => {
     const { text } = request.body as any
     if (!text) return reply.status(400).send({ error: 'text required' })
