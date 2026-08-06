@@ -106,6 +106,26 @@ if [ -n "$NEXUS_DATA_VOL" ] && [ -n "$NEXUS_FILES_VOL" ]; then
     if [ "$moved" -eq 0 ]; then echo "  nothing to migrate (all present or none)"; fi'
 fi
 
+# #290: install backup tooling + schedule cron jobs when S3 is configured.
+if grep -q '^S3_ACCESS_KEY=' .env.production 2>/dev/null; then
+  if ! command -v rclone >/dev/null 2>&1; then
+    echo "Installing rclone..."
+    curl -fsSL https://rclone.org/install.sh | sudo bash 2>/dev/null || curl -fsSL https://rclone.org/install.sh | bash
+  fi
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    sudo apt-get install -y sqlite3 >/dev/null 2>&1 || true
+  fi
+  chmod +x "$DEPLOY_DIR/scripts/backup-to-s3.sh" 2>/dev/null || true
+  # Daily 02:10 DB+memory backup; weekly Sun 03:10 files backup.
+  ( crontab -l 2>/dev/null | grep -v 'backup-to-s3.sh' || true
+    echo "10 2 * * * cd $DEPLOY_DIR && set -a && . ./.env.production && set +a && bash scripts/backup-to-s3.sh daily >> /var/log/heurion-backup.log 2>&1"
+    echo "10 3 * * 0 cd $DEPLOY_DIR && set -a && . ./.env.production && set +a && bash scripts/backup-to-s3.sh weekly >> /var/log/heurion-backup.log 2>&1"
+  ) | crontab -
+  echo "✓ S3 backup scheduled (daily 02:10, weekly Sun 03:10)"
+else
+  echo "S3 backup not configured — skipping backup setup"
+fi
+
 # Pull the images tagged by CI and recreate containers.
 export NEXUS_IMAGE="${NEXUS_IMAGE:-ghcr.io/0xaicrypto/nexus-server:latest}"
 export EMBEDDING_IMAGE="${EMBEDDING_IMAGE:-ghcr.io/0xaicrypto/nexus-embedding-server:latest}"
