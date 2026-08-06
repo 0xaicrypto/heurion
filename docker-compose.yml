@@ -49,12 +49,14 @@ services:
       - .env.production
     environment:
       - SERVER_PORT=8001
-      - DATABASE_URL=file:/data/nexus_server.db
+      - DATABASE_URL=file:/data/db/nexus_server.db
       - TWIN_BASE_DIR=/data
       - WEB_DIST_DIR=/app/web-dist
     volumes:
-      # /data persistence — DB, memory stores, facts, skills.
+      # /data persistence — memory stores, facts, skills, uploads (#281).
       - nexus-data:/data
+      # #280: SQLite on its own volume — independent backups + fault isolation.
+      - nexus-db-data:/data/db
       # Web UI dist mounted from host for fast front-end deploys.
       - ./packages/web/dist:/app/web-dist:ro
     networks:
@@ -85,6 +87,9 @@ volumes:
   nexus-data:
     # Named volume — `docker volume inspect nexus-data` shows the host
     # path. For backups: `tar czf nexus-backup.tgz <that path>`.
+  nexus-db-data:
+    # #280: SQLite database on its own volume — backup/restore the DB
+    # independently from file storage.
   caddy-data:
   caddy-config:
 
