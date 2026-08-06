@@ -85,6 +85,27 @@ if [ -n "$NEXUS_DATA_VOL" ] && [ -n "$NEXUS_DB_VOL" ]; then
   fi
 fi
 
+# #281: migrate per-user memory files onto their own volume (idempotent).
+# Old layout: user memory at /data/{userId} (TWIN_BASE_DIR=/data).
+# New layout: /data/twins/{userId} (TWIN_BASE_DIR=/data/twins, nexus-files-data volume).
+NEXUS_FILES_VOL=$(docker volume ls -q | grep '^heurion_nexus-files-data$' || true)
+docker volume create heurion_nexus-files-data 2>/dev/null || true
+NEXUS_FILES_VOL=$(docker volume ls -q | grep '^heurion_nexus-files-data$' || true)
+if [ -n "$NEXUS_DATA_VOL" ] && [ -n "$NEXUS_FILES_VOL" ]; then
+  echo "Migrating per-user memory files → nexus-files-data volume..."
+  docker run --rm -v "$NEXUS_DATA_VOL":/data -v "$NEXUS_FILES_VOL":/twins alpine sh -c '
+    mkdir -p /twins
+    moved=0
+    for d in /data/user_*; do
+      [ -d "$d" ] || continue
+      name=$(basename "$d")
+      if [ ! -e "/twins/$name" ]; then
+        cp -r "$d" "/twins/$name" && echo "  migrated $name" && moved=$((moved+1))
+      fi
+    done
+    if [ "$moved" -eq 0 ]; then echo "  nothing to migrate (all present or none)"; fi'
+fi
+
 # Pull the images tagged by CI and recreate containers.
 export NEXUS_IMAGE="${NEXUS_IMAGE:-ghcr.io/0xaicrypto/nexus-server:latest}"
 export EMBEDDING_IMAGE="${EMBEDDING_IMAGE:-ghcr.io/0xaicrypto/nexus-embedding-server:latest}"

@@ -50,13 +50,17 @@ services:
     environment:
       - SERVER_PORT=8001
       - DATABASE_URL=file:/data/db/nexus_server.db
-      - TWIN_BASE_DIR=/data
+      # #281: user memory files live under /data/twins on their own volume.
+      - TWIN_BASE_DIR=/data/twins
       - WEB_DIST_DIR=/app/web-dist
     volumes:
-      # /data persistence — memory stores, facts, skills, uploads (#281).
+      # /data persistence — cache, embedding models, misc (#281 remainder).
       - nexus-data:/data
       # #280: SQLite on its own volume — independent backups + fault isolation.
       - nexus-db-data:/data/db
+      # #281: per-user memory files (facts/knowledge/embeddings/events) on
+      # their own volume — independent backups from the DB.
+      - nexus-files-data:/data/twins
       # Web UI dist mounted from host for fast front-end deploys.
       - ./packages/web/dist:/app/web-dist:ro
     networks:
@@ -90,6 +94,8 @@ volumes:
   nexus-db-data:
     # #280: SQLite database on its own volume — backup/restore the DB
     # independently from file storage.
+  nexus-files-data:
+    # #281: per-user memory files on their own volume.
   caddy-data:
   caddy-config:
 
