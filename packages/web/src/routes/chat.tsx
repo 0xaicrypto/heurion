@@ -418,12 +418,21 @@ export function ChatPage() {
                       <span className="h-px flex-1 bg-border/60" />
                     </div>
                   )}
+                  {m._compactionStream && (
+                    <div className="my-3 flex items-center gap-3" aria-label={t('chat.compactionDivider', '压缩历史记录')}>
+                      <span className="h-px flex-1 bg-border/60" />
+                      <span className="text-xs text-text-tertiary">{t('chat.compactionDivider', '— 压缩历史记录 —')}</span>
+                      <span className="h-px flex-1 bg-border/60" />
+                    </div>
+                  )}
                   <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} group`}>
                     <div
                       className={`relative max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                         m.role === 'user'
                           ? 'bg-accent text-white'
-                          : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
+                          : m._compactionStream
+                            ? 'border border-border/50 bg-surface-elevated/60 text-xs text-text-tertiary'
+                            : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
                       }`}
                     >
                       {m.createdAt && (
