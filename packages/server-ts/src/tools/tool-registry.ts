@@ -6,6 +6,7 @@ import { DelegateTool } from './subagent-tools.js'
 import { DeferToBackgroundTool } from './async-tools.js'
 import { OCRImageTool } from './ocr-tools.js'
 import { EditDocumentTool } from './edit-document-tool.js'
+import { LoadSkillTool } from './skill-tools.js'
 import { RenderChartTool } from './render-chart-tool.js'
 import type { MemoryService } from '../memory/memory.service.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores.js'
@@ -25,6 +26,8 @@ export interface ToolContext {
 
 export class ToolRegistry {
   private tools: Map<string, BaseTool> = new Map()
+  /** #107: tool name → current registration version (bumped on replace). */
+  private versions: Map<string, number> = new Map()
   private ctx: ToolContext
 
   constructor(ctx: ToolContext) {
@@ -37,10 +40,23 @@ export class ToolRegistry {
     this.register(new OCRImageTool(ctx))
     this.register(new EditDocumentTool(ctx))
     this.register(new RenderChartTool(ctx))
+    this.register(new LoadSkillTool(ctx))
   }
 
+  /**
+   * Register a tool. Re-registering the same name bumps its version —
+   * callers that captured an old instance get a clear 'stale' error (#107).
+   */
   register(tool: BaseTool): void {
+    const existing = this.tools.get(tool.name)
+    const nextVersion = existing ? (this.versions.get(tool.name) ?? 1) + 1 : 1
     this.tools.set(tool.name, tool)
+    this.versions.set(tool.name, nextVersion)
+  }
+
+  /** #107: the version a tool instance was registered at (1 = first). */
+  versionOf(name: string): number {
+    return this.versions.get(name) ?? 0
   }
 
   get definitions(): ToolDefinition[] {
@@ -51,8 +67,20 @@ export class ToolRegistry {
     return this.tools.get(name)
   }
 
-  async execute(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  /**
+   * Execute a tool. When the caller passes the version of a previously
+   * captured definition and the tool has been replaced since, return a
+   * stale-tool error instead of silently running the new definition (#107).
+   */
+  async execute(name: string, args: Record<string, unknown>, expectedVersion?: number): Promise<ToolResult> {
     const tool = this.tools.get(name)
+    if (!tool) return { success: false, error: `Unknown tool: ${name}` }
+    if (expectedVersion !== undefined && this.versions.get(name) !== expectedVersion) {
+      return {
+        success: false,
+        error: `Stale tool call: ${name} was updated, retry with the current definition`,
+      }
+    }
     if (!tool) return { success: false, error: `Unknown tool: ${name}` }
 
     // §3.3: a throwing tool must never take down the whole chat turn —
