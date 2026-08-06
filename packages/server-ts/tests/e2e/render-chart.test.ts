@@ -36,6 +36,47 @@ describe('#176 render_chart', () => {
     expect(svg).toContain('<rect')
   })
 
+  test('#228 beam_scan schematic draws real elements, not a placeholder', () => {
+    const svg = renderSvgChart({ type: 'schematic', template: 'beam_scan', title: '图4：笔束扫描', description: '像喷墨打印机一样逐点打印剂量' })
+    expect(svg).toContain('<svg')
+    // Real drawn parts: nozzle, fan beams, targets, depth-dose curve.
+    expect(svg).toContain('喷嘴')
+    expect(svg).toContain('扫描束流')
+    expect(svg).toContain('GTV')
+    expect(svg).toContain('CTV')
+    expect(svg).toContain('布拉格峰')
+    // The old empty-shell marker must be gone.
+    expect(svg).not.toContain('SVG 占位')
+    expect(svg).not.toContain('generate_image')
+  })
+
+  test('#228 custom schematic elements render as real primitives', () => {
+    const svg = renderSvgChart({
+      type: 'schematic',
+      title: '照射野示意',
+      elements: [
+        { kind: 'rect', x: 60, y: 80, w: 120, h: 40, text: '机头', fill: '#e0f2fe' },
+        { kind: 'beam', x: 120, y: 120, h: 120, width: 30, exitWidth: 12, text: '射束', color: '#0ea5e9' },
+        { kind: 'circle', x: 120, y: 240, r: 22, text: '靶区', fill: '#fee2e2' },
+        { kind: 'arrow', x: 250, y: 60, x2: 330, y2: 60, text: '', color: '#64748b' },
+      ],
+    })
+    expect(svg).toContain('<polygon') // beam trapezoid
+    expect(svg).toContain('机头')
+    expect(svg).toContain('射束')
+    expect(svg).toContain('靶区')
+    expect(svg).not.toContain('SVG 占位')
+  })
+
+  test('#228 tool schema accepts template and elements', async () => {
+    const userId = await getAuthUserId()
+    const tool = new RenderChartTool({ userId, sessionId: 'doc-x' })
+    const result = await tool.execute({ type: 'schematic', template: 'beam_scan', title: '笔束扫描示意' })
+    expect(result.success).toBe(true)
+    const out = JSON.parse(result.output as string)
+    expect(out.markdown).toContain('![笔束扫描示意]')
+  }, 30000)
+
   test('tool saves SVG attachment and returns URL', async () => {
     const userId = await getAuthUserId()
     const tool = new RenderChartTool({ userId, sessionId: 'doc-x' })
