@@ -25,6 +25,10 @@ jobs:
             sudo ls -la /var/lib/docker/volumes/heurion_nexus-db-data/_data/ 2>/dev/null | head -10;
             echo "=== nexus-data volume contents ===";
             sudo ls -la /var/lib/docker/volumes/heurion_nexus-data/_data/ 2>/dev/null | head -14;
+            echo "=== nexus-data/twins contents ===";
+            sudo ls /var/lib/docker/volumes/heurion_nexus-data/_data/twins/ 2>/dev/null | head -8;
+            echo "=== a user dir sample ===";
+            sudo ls /var/lib/docker/volumes/heurion_nexus-data/_data/user_xl5ac9ty0s/ 2>/dev/null | head -8;
             echo "=== df ===";
             df -h / | tail -1
           '
