@@ -99,6 +99,8 @@ export class MemoryProjection {
     skills: LearnedSkill[]
   }): Promise<{
     systemPrompt: string
+    /** R1 (#98): per-layer typed context segments for hash-diffing. */
+    segments: Array<{ key: string; text: string }>
     budget: { layer: string; tokens: number; items: number }[]
   }> {
     const budget: { layer: string; tokens: number; items: number }[] = []
@@ -198,6 +200,17 @@ export class MemoryProjection {
 
     return {
       systemPrompt: sections.join('\n'),
+      // R1 (#98): typed context segments — each layer maps to a stable
+      // segment key so the chat pipeline can hash-snapshot them (provider
+      // prompt-cache friendly) and diff changes between turns.
+      segments: [
+        { key: 'persona', text: params.persona },
+        ...(patientContext ? [{ key: 'patient_context', text: patientContext }] : []),
+        ...(layer1Text ? [{ key: 'recent_conversation', text: layer1Text }] : []),
+        ...(layer2Text ? [{ key: 'recent_sessions', text: layer2Text }] : []),
+        ...(layer3Text ? [{ key: 'accumulated_knowledge', text: layer3Text }] : []),
+        ...(skillsText ? [{ key: 'active_skills', text: skillsText }] : []),
+      ],
       budget: [
         { layer: 'persona', tokens: personaTokens, items: 1 },
         { layer: 'patient', tokens: patientTokens, items: params.patientHash ? 1 : 0 },
