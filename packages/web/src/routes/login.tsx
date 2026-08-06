@@ -52,7 +52,7 @@ export function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="w-full max-w-md space-y-6 rounded-2xl border border-border bg-surface-elevated p-8 shadow-lg">
+      <div className="w-full max-w-md space-y-6 rounded-lg border border-border bg-surface-elevated p-8 shadow-lg">
         <div className="text-center">
           <img src="/heurion-logo.svg" alt="Heurion" className="mx-auto mb-4 h-12 w-auto dark:hidden" />
           <img src="/heurion-logo-dark.svg" alt="Heurion" className="mx-auto mb-4 hidden h-12 w-auto dark:block" />
