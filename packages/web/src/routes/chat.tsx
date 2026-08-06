@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Paperclip, Copy, Check, Download, FileText, Plus, X } from 'lucide-react';
+import { Paperclip, Copy, Check, Download, FileText, Plus, X, RefreshCw, RotateCcw } from 'lucide-react';
 import { api, ApiError } from '@/lib/api-client';
 import type { LlmStatus } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
@@ -14,6 +14,29 @@ import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import { ToolCalls } from '@/components/ToolCalls';
 import { Alert, Button, Textarea } from '@/components/ui';
+
+/** §10.3 (#220): group separator when a gap exceeds this many minutes. */
+const TIME_GROUP_GAP_MS = 5 * 60 * 1000;
+
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDay(ts: number): string {
+  return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function needsDaySeparator(prev?: ChatMessage, cur?: ChatMessage): boolean {
+  if (!cur?.createdAt) return false;
+  if (!prev?.createdAt) return true;
+  return new Date(cur.createdAt).toDateString() !== new Date(prev.createdAt).toDateString();
+}
+
+function needsTimeGroupSeparator(prev?: ChatMessage, cur?: ChatMessage): boolean {
+  if (!cur?.createdAt || !prev?.createdAt) return false;
+  return cur.createdAt - prev.createdAt > TIME_GROUP_GAP_MS;
+}
 
 
 interface ChatSessionItem {
@@ -194,6 +217,32 @@ export function ChatPage() {
 
   const handleStop = () => store.stopStream(sessionId);
 
+  /** §10.3 (#220): re-run the last user turn. */
+  const handleRegenerate = async () => {
+    if (session?.loading || session?.compacting) return;
+    setError(null);
+    await store.regenerate(sessionId, {
+      sessionId,
+      text: '',
+      attachments: [],
+      skills: activeSkills,
+    });
+  };
+
+  /** §10.3 (#220): retry a failed turn — same text as the last user message. */
+  const handleRetry = async () => {
+    const msgs = session?.messages ?? [];
+    const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
+    if (!lastUser || session?.loading || session?.compacting) return;
+    setError(null);
+    await store.regenerate(sessionId, {
+      sessionId,
+      text: lastUser.text,
+      attachments: [],
+      skills: activeSkills,
+    });
+  };
+
   const handleCopy = async (id: string, text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -343,19 +392,40 @@ export function ChatPage() {
                 <p className="text-sm">{t('chat.contextHint')}</p>
               </div>
             )}
-            {messages.map((m) => (
-              <div
-                key={m.id}
-                className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`group relative max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                    m.role === 'user'
-                      ? 'bg-accent text-white'
-                      : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
-                  }`}
-                >
-                  {!m.isStreaming && (
+            {messages.map((m, idx) => {
+              const prevMsg = idx > 0 ? messages[idx - 1] : undefined;
+              const isLastAssistant = m.role === 'assistant' && idx === messages.length - 1 && !m.isStreaming;
+              const isFailed = m.failed || (m.role === 'assistant' && !m.isStreaming && (m.text || '').startsWith('Error:'));
+              return (
+                <div key={m.id}>
+                  {needsDaySeparator(prevMsg, m) && (
+                    <div className="my-4 flex items-center justify-center">
+                      <span className="rounded-full border border-border bg-surface-elevated px-3 py-0.5 text-xs text-text-tertiary">
+                        {m.createdAt ? formatDay(m.createdAt) : ''}
+                      </span>
+                    </div>
+                  )}
+                  {needsTimeGroupSeparator(prevMsg, m) && !needsDaySeparator(prevMsg, m) && (
+                    <div className="my-3 flex items-center gap-3">
+                      <span className="h-px flex-1 bg-border/60" />
+                      <span className="text-xs text-text-tertiary">{m.createdAt ? formatTime(m.createdAt) : ''}</span>
+                      <span className="h-px flex-1 bg-border/60" />
+                    </div>
+                  )}
+                  <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} group`}>
+                    <div
+                      className={`relative max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                        m.role === 'user'
+                          ? 'bg-accent text-white'
+                          : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
+                      }`}
+                    >
+                      {m.createdAt && (
+                        <span className="pointer-events-none absolute -top-1.5 right-2 text-[10px] text-text-tertiary/70">
+                          {formatTime(m.createdAt)}
+                        </span>
+                      )}
+                      {!m.isStreaming && (
                     <button
                       onClick={() => handleCopy(m.id, m.text || '')}
                       className={`absolute -top-2 -right-2 rounded-full border border-border p-1 shadow-sm opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 ${
@@ -434,9 +504,33 @@ export function ChatPage() {
                     </div>
                   )}
                   {m.isStreaming ? <span className="animate-pulse" role="status" aria-label={t('chat.streaming')}>●</span> : null}
+                  {isLastAssistant && !isFailed && (
+                    <button
+                      onClick={handleRegenerate}
+                      className="absolute -bottom-2.5 left-2 flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-tertiary opacity-0 shadow-sm transition-opacity hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
+                      title={t('chat.regenerate', '重新生成')}
+                      aria-label={t('chat.regenerate', '重新生成')}
+                    >
+                      <RefreshCw size={11} />
+                      {t('chat.regenerate', '重新生成')}
+                    </button>
+                  )}
+                  {isLastAssistant && isFailed && (
+                    <button
+                      onClick={handleRetry}
+                      className="absolute -bottom-2.5 left-2 flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-tertiary opacity-0 shadow-sm transition-opacity hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
+                      title={t('chat.retry', '重试')}
+                      aria-label={t('chat.retry', '重试')}
+                    >
+                      <RotateCcw size={11} />
+                      {t('chat.retry', '重试')}
+                    </button>
+                  )}
                 </div>
-              </div>
-            ))}
+                </div>
+                </div>
+              );
+            })}
             <div ref={bottomRef} />
           </div>
         </main>

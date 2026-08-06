@@ -25,6 +25,10 @@ export interface ChatMessage {
   _compactionStream?: boolean;
   toolCalls?: Array<{ tool: string; argsPreview: string }>;
   chart?: { url: string; chartType?: string };
+  /** Epoch ms — powers timestamps + grouping (§10.3 #220). */
+  createdAt?: number;
+  /** Set when the turn failed — renders a retry affordance. */
+  failed?: boolean;
 }
 
 interface SessionState {
@@ -46,6 +50,8 @@ interface ChatStore {
   sessions: Record<string, SessionState>;
   getOrCreate: (sessionId: string) => SessionState;
   sendMessage: (sessionId: string, opts: SendChatOptions) => Promise<void>;
+  /** §10.3 (#220): re-run the last user turn — drops its stale reply first. */
+  regenerate: (sessionId: string, opts: SendChatOptions) => Promise<void>;
   stopStream: (sessionId: string) => void;
   clearSession: (sessionId: string) => void;
   setContextUsage: (sessionId: string, usage: NonNullable<SessionState['contextUsage']>) => void;
@@ -102,8 +108,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     prev.abort?.abort();
 
     const abort = new AbortController();
-    const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: opts.text };
-    const asstMsg: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', isStreaming: true };
+    const now = Date.now();
+    const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: opts.text, createdAt: now };
+    const asstMsg: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', isStreaming: true, createdAt: now };
 
     set((state) => ({
       sessions: {
@@ -247,7 +254,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const msgs = [...s.messages];
         const last = msgs[msgs.length - 1];
         if (last?.role === 'assistant') {
-          msgs[msgs.length - 1] = { ...last, isStreaming: false, text: last.text || `Error: ${String(err)}` };
+          msgs[msgs.length - 1] = {
+            ...last,
+            isStreaming: false,
+            failed: true,
+            text: last.text || `Error: ${String(err)}`,
+          };
         }
         return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
       });
@@ -273,6 +285,27 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         },
       },
     }));
+  },
+
+  regenerate: async (sessionId: string, opts: SendChatOptions) => {
+    const s = get().sessions[sessionId];
+    if (!s || s.loading || s.compacting) return;
+    // Find the last user message; drop it and everything after (its stale
+    // reply) — sendMessage re-appends a fresh user + assistant pair.
+    const lastUserIdx = s.messages.map((m) => m.role).lastIndexOf('user');
+    if (lastUserIdx === -1) return;
+    const userMsg = s.messages[lastUserIdx];
+    const prev: SessionState = {
+      ...s,
+      messages: s.messages.slice(0, lastUserIdx),
+    };
+    set((state) => ({
+      sessions: { ...state.sessions, [sessionId]: prev },
+    }));
+    await get().sendMessage(sessionId, {
+      ...opts,
+      text: userMsg.text,
+    });
   },
 
   clearSession: (sessionId: string) => {
