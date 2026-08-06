@@ -289,6 +289,11 @@ export async function agentRouter(app: FastifyInstance) {
   app.get('/api/v1/agent/tool-events', async (request) => {
     const ctx = getUserContext(request.user!.userId)
     const sessionId = (request.query as any).session_id
+    // Boundary guard: without a session_id the EventLog query would return
+    // every session's tool events (same leak class as #251).
+    if (!sessionId) {
+      return { events: [], total: 0 }
+    }
     const events = ctx.eventLog
       .query({ sessionId })
       .filter((e: any) => e.eventType === 'tool_call' || e.eventType === 'tool_result')
@@ -310,6 +315,17 @@ export async function agentRouter(app: FastifyInstance) {
   app.get('/api/v1/agent/context-usage', async (request) => {
     const ctx = getUserContext(request.user!.userId)
     const sessionId = (request.query as any).session_id
+    // Boundary guard: without a session_id this would aggregate history
+    // across every session (same leak class as #251).
+    if (!sessionId) {
+      return {
+        history_tokens: 0,
+        history_budget: parseInt(process.env.MAX_HISTORY_TOKENS || '8000', 10),
+        history_turns: parseInt(process.env.HISTORY_TURNS || '20', 10),
+        omitted_turns: 0,
+        will_compact: false,
+      }
+    }
     const maxHistoryTokens = parseInt(process.env.MAX_HISTORY_TOKENS || '8000', 10)
     const historyTurns = parseInt(process.env.HISTORY_TURNS || '20', 10)
     const history = ctx.eventLog.query({ sessionId, limit: historyTurns * 2 }).reverse()
