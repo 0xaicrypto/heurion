@@ -9,17 +9,19 @@ export async function sessionRouter(app: FastifyInstance) {
   app.get('/api/v1/sessions', async (request) => {
     const includeArchived = (request.query as any).include_archived === '1'
     const scope = (request.query as any).scope
-    // Writing sessions (doc-*) are internal namespaces — never list them.
+    // Writing sessions (doc-*) are internal namespaces — never list them;
+    // legacy global-* default sessions were removed as a concept.
     const where: any = {
       userId: request.user!.userId,
       archived: includeArchived ? undefined : 0,
       NOT: { id: { startsWith: 'doc-' } },
     }
     if (scope) where.scope = scope
-    const rows = await prisma.session.findMany({
+    const allRows = await prisma.session.findMany({
       where,
       orderBy: { lastMessageAt: 'desc' },
     })
+    const rows = allRows.filter((s: any) => !String(s.id).startsWith('global-'))
     return {
       sessions: rows.map(s => ({
         id: s.id, title: s.title,
@@ -73,10 +75,12 @@ export async function sessionRouter(app: FastifyInstance) {
     if (updated.count === 0) {
       const existing = await prisma.session.findFirst({ where: { id: sessionId, userId } })
       if (!existing) {
-        // The default global session (global-{userId}) has no Session row —
-        // it is purely an event-log namespace. Allow closing it too:
-        // summarize + wipe events, nothing to update in the table.
-        if (!sessionId.startsWith('global-')) {
+        // Legacy global-* default-session namespaces: the concept was
+        // removed — closing one deletes its row outright so it can never
+        // reappear in the session list.
+        if (sessionId.startsWith('global-')) {
+          await prisma.session.deleteMany({ where: { id: sessionId, userId } })
+        } else {
           return reply.status(404).send({ error: 'Session not found' })
         }
       } else {
