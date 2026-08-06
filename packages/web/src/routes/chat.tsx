@@ -104,12 +104,6 @@ export function ChatPage() {
     store.clearSession(res.id);
   };
 
-  const createSessionWithTitle = async (title: string) => {
-    const res = await api.createSession(title, { scope: 'global' });
-    insertSession(res);
-    return res;
-  };
-
   const handleSessionCreated = (session: { id: string; title: string; created_at: string }) => {
     insertSession(session);
   };
@@ -195,24 +189,19 @@ export function ChatPage() {
 
   const handleSend = async () => {
     if (!input.trim() || session?.loading || session?.compacting) return;
-    const text = input.trim();
-    // No session yet? Create one on the fly so the first message just works.
-    let sid = sessionId;
-    if (!sid) {
-      try {
-        const res = await createSessionWithTitle(text.slice(0, 50) || t('chat.newSession', 'New Session'));
-        sid = res.id;
-      } catch (err) {
-        setError(err instanceof ApiError ? err.messageText : String(err));
-        return;
-      }
+    // No session? Require an explicit creation — never auto-create one
+    // behind the user's back.
+    if (!sessionId) {
+      setNewSessionOpen(true);
+      return;
     }
+    const text = input.trim();
     setInput('');
-    setDrafts((prev) => { const next = { ...prev }; delete next[sid]; return next; });
+    setDrafts((prev) => { const next = { ...prev }; delete next[sessionId]; return next; });
     setError(null);
-    await store.sendMessage(sid, {
+    await store.sendMessage(sessionId, {
       text,
-      sessionId: sid,
+      sessionId,
       attachments: attachedFiles.map((a) => a.fileId),
       skills: activeSkills,
     });
@@ -351,9 +340,11 @@ export function ChatPage() {
                 setInput(drafts[e.target.value] ?? '');
                 setSessionId(e.target.value);
               }}
-              className="h-8 max-w-[220px] rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-8 max-w-[220px] rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
               aria-label={t('chat.selectSession', 'Session')}
+              disabled={!sessionId}
             >
+              {sessionId === '' && <option value="">{t('chat.noSessionSelected', '未选择会话')}</option>}
               {globalSessions.filter((s) => s.status !== 'closed').map((s) => (
                   <option key={s.id} value={s.id}>{s.title}</option>
                 ))}
@@ -611,8 +602,10 @@ export function ChatPage() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
-                placeholder={currentSessionTitle ? `${t('chat.placeholder')} — ${currentSessionTitle}` : t('chat.placeholder')}
-                disabled={session?.loading || false}
+                placeholder={!sessionId
+                  ? t('chat.needSession', '请先新建一个会话')
+                  : (currentSessionTitle ? `${t('chat.placeholder')} — ${currentSessionTitle}` : t('chat.placeholder'))}
+                disabled={session?.loading || !sessionId || false}
                 rows={1}
                 className="min-h-0 flex-1 resize-none py-3"
                 style={{ maxHeight: '160px' }}
@@ -626,6 +619,11 @@ export function ChatPage() {
               {session?.loading ? (
                 <Button onClick={handleStop} variant="secondary">
                   {t('common.stop')}
+                </Button>
+              ) : !sessionId ? (
+                <Button onClick={handleNewSession}>
+                  <Plus size={14} className="mr-1" />
+                  {t('chat.newSession', 'New Session')}
                 </Button>
               ) : (
                 <Button onClick={handleSend} disabled={!input.trim() || !!session?.compacting}>
