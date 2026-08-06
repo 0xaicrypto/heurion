@@ -52,6 +52,7 @@ describe('chat store — regenerate (§10.3 #220)', () => {
     // Force an error path: make the stream throw.
     const { api } = await import('@/lib/api-client');
     (api.sendChatFull as any).mockImplementationOnce(async function* () {
+      yield 'boom';
       throw new Error('llm down');
     });
     await store.sendMessage('s1', { sessionId: 's1', text: 'hi', attachments: [], skills: [] });
