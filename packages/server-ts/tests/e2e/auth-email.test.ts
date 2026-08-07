@@ -93,6 +93,59 @@ describe('auth email verification (#283)', () => {
     expect(again.statusCode).toBe(400) // throttled
   }, 30000)
 
+  test('register with optional email + code binds and verifies it', async () => {
+    const app = await getApp()
+    const username = 'reg_email_' + Date.now()
+    const email = `reg_${Date.now()}@example.com`
+
+    await app.inject({
+      method: 'POST', url: '/api/v1/auth/send-code',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ email, purpose: 'register' }),
+    })
+    expect(lastCode).toBeTruthy()
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/auth/register',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ username, password: 'secure123', email, code: lastCode }),
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.jwt_token).toBeTruthy()
+
+    const user = await prisma.user.findUnique({ where: { displayName: username } })
+    expect(user?.email).toBe(email)
+    expect(user?.emailVerified).toBe(1)
+
+    // The verified email can sign in directly.
+    const login = await app.inject({
+      method: 'POST', url: '/api/v1/auth/login',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ username: email, password: 'secure123' }),
+    })
+    expect(login.statusCode).toBe(200)
+    expect(JSON.parse(login.payload).user_id).toBe(body.user_id)
+  }, 30000)
+
+  test('register with email but wrong code is rejected', async () => {
+    const app = await getApp()
+    const email = `badcode_${Date.now()}@example.com`
+
+    await app.inject({
+      method: 'POST', url: '/api/v1/auth/send-code',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ email, purpose: 'register' }),
+    })
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/auth/register',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ username: 'badcode_' + Date.now(), password: 'secure123', email, code: '000000' }),
+    })
+    expect(res.statusCode).toBe(400)
+  }, 30000)
+
   test('reset-password flow resets and lets the new password login', async () => {
     const app = await getApp()
     const h = await authHeader()

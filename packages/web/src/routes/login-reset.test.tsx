@@ -9,7 +9,7 @@ vi.mock('@/lib/api-client', () => ({
     sendVerificationCode: vi.fn().mockResolvedValue({ ok: true }),
     resetPassword: vi.fn().mockResolvedValue({ ok: true }),
     login: vi.fn(),
-    register: vi.fn(),
+    register: vi.fn().mockResolvedValue({ jwt_token: 't', user_id: 'u' }),
   },
   ApiError: class ApiError extends Error {},
 }));
@@ -61,5 +61,28 @@ describe('LoginPage reset-password flow', () => {
     fireEvent.click(screen.getByText('Reset password'));
 
     expect(await screen.findByText('Password must be at least 8 characters')).toBeTruthy();
+  });
+
+  it('register with email sends a code and submits email+code', async () => {
+    const { api } = await import('@/lib/api-client');
+    render(<LoginPage />, { initialEntries: ['/login?mode=register'] });
+
+    fireEvent.change(screen.getByLabelText('Email (optional, recommended)'), { target: { value: 'newdoc@example.com' } });
+    fireEvent.click(screen.getByText('Send code'));
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('6-digit code')).toBeTruthy();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText('6-digit code'), { target: { value: '123456' } });
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'newdoc' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secure123' } });
+    fireEvent.click(screen.getByText('Sign up'));
+
+    await waitFor(() => {
+      expect(api.register).toHaveBeenCalledWith(
+        expect.objectContaining({ username: 'newdoc', password: 'secure123', email: 'newdoc@example.com', code: '123456' }),
+      );
+    });
   });
 });

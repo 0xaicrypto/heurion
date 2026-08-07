@@ -120,6 +120,8 @@
     "resetPassword": "Reset password",
     "resetDone": "Password reset — sign in with the new password.",
     "backToLogin": "Back to sign in",
+    "registerEmailLabel": "Email (optional, recommended)",
+    "registerEmailHint": "Once verified, you can sign in and recover your password with this email",
     "emailBinding": "Bind email",
     "emailBindingHint": "Log in and recover your password with this email (phone is optional)"
   },

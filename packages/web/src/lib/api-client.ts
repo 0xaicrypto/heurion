@@ -155,12 +155,16 @@ class ApiClient {
     username: string;
     password: string;
     displayName?: string;
+    email?: string;
+    code?: string;
   }): Promise<AuthSession> {
     const body: Record<string, string> = {
       username: input.username,
       password: input.password,
     };
     if (input.displayName?.trim()) body.display_name = input.displayName.trim();
+    if (input.email?.trim()) body.email = input.email.trim();
+    if (input.code) body.code = input.code;
 
     const r = await this.fetch<{
       user_id: string;
