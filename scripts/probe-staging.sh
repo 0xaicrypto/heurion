@@ -13,9 +13,12 @@ PATIENT=$(curl -s "$BASE/api/v1/dicom/patients/full" -H "Authorization: Bearer $
 echo "patient: $PATIENT"
 
 printf '{"text":"ping","patient_hash":"%s"}' "$PATIENT" > /tmp/chat.json
-echo "--- chat SSE (first 800 chars) ---"
-curl -sN -m 90 -X POST "$BASE/api/v1/agent/chat" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' --data-binary @/tmp/chat.json | head -c 800
-echo
+echo "--- chat SSE (full) ---"
+curl -sN -m 90 -X POST "$BASE/api/v1/agent/chat" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' --data-binary @/tmp/chat.json > /tmp/chat_sse.txt
+wc -c /tmp/chat_sse.txt
+grep -c "data:" /tmp/chat_sse.txt || true
+grep -oE '"type":"[a-z_]+"' /tmp/chat_sse.txt | sort | uniq -c
+tail -c 1200 /tmp/chat_sse.txt
 echo "--- last 25 lines staging error log ---"
 tail -25 ~/.pm2/logs/heurion-staging-error.log 2>/dev/null || tail -25 /root/.pm2/logs/heurion-staging-error.log 2>/dev/null || true
 echo "--- last 12 error-ish lines staging out log ---"
