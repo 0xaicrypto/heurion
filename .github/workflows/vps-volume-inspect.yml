@@ -37,6 +37,10 @@ jobs:
             sudo journalctl -u docker --no-pager -n 200 2>/dev/null | grep -iE "verification code|Resend failed|bind-email" | tail -8 || true;
             sudo ls -t /opt/heurion/logs 2>/dev/null | head -3 || true;
             docker logs nexus-server --tail 100 2>&1 | grep -iE "verification code|resend|bind" | tail -8 || true;
+            echo "=== staging LLM errors ===";
+            sudo tail -100 /root/.pm2/logs/heurion-staging-error.log 2>/dev/null | grep -iE "error|401|invalid|fail" | tail -6 || tail -100 ~/.pm2/logs/heurion-staging-error.log 2>/dev/null | grep -iE "error|401|invalid|fail" | tail -6 || true;
+            echo "=== staging env ===";
+            grep -E "DEFAULT_LLM_PROVIDER|DEFAULT_LLM_MODEL|OPENCODE_API_KEY" /root/heurion/packages/server-ts/.env 2>/dev/null || grep -E "DEFAULT_LLM_PROVIDER|DEFAULT_LLM_MODEL|OPENCODE_API_KEY" ~/heurion/packages/server-ts/.env 2>/dev/null | sed 's/OPENCODE_API_KEY=.*/OPENCODE_API_KEY=***/' || true;
             echo "=== df ===";
             df -h / | tail -1
           '
