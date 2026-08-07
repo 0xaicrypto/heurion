@@ -76,7 +76,7 @@ describe('auth email verification (#283)', () => {
     expect(user).not.toBeNull()
   }, 30000)
 
-  test('wrong code is rejected; send-code throttles', async () => {
+  test('wrong code is rejected; send-code throttles; attempts lock after 5', async () => {
     const app = await getApp()
     const h = await authHeader()
     const hj = { ...h, 'content-type': 'application/json' }
@@ -91,6 +91,21 @@ describe('auth email verification (#283)', () => {
 
     const again = await app.inject({ method: 'POST', url: '/api/v1/auth/send-code', headers: hj, payload: JSON.stringify({ email, purpose: 'bind' }) })
     expect(again.statusCode).toBe(400) // throttled
+
+    // #343: each wrong attempt counts; after 5 the code locks even with the
+    // correct value.
+    for (let i = 0; i < 4; i++) {
+      const attempt = await app.inject({
+        method: 'POST', url: '/api/v1/auth/bind-email',
+        headers: hj, payload: JSON.stringify({ email, code: '111111' }),
+      })
+      expect(attempt.statusCode).toBe(400)
+    }
+    const locked = await app.inject({
+      method: 'POST', url: '/api/v1/auth/bind-email',
+      headers: hj, payload: JSON.stringify({ email, code: lastCode }),
+    })
+    expect(locked.statusCode).toBe(400)
   }, 30000)
 
   test('register with optional email + code binds and verifies it', async () => {
