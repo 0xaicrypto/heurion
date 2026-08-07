@@ -821,6 +821,13 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       }
 
       send({ type: 'citations', items: [] })
+      // #298: suggest saving a reusable procedure as a skill.
+      try {
+        const { looksLikeProcedure } = await import('../skills/skill-capture.service.js')
+        if (looksLikeProcedure(fullResponse) && !sid.startsWith('doc-')) {
+          send({ type: 'skill_capture_suggest', text: '这个流程我帮你整理成了技能，下次可以直接调用。要保存吗？' })
+        }
+      } catch { /* best-effort */ }
       send({ type: 'turn_complete', assistant_event_idx: ctx.eventLog.count() })
     } catch (err: any) {
       send({ type: 'error', message: err.message || 'Chat failed' })

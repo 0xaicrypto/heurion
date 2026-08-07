@@ -364,6 +364,19 @@ class ApiClient {
   }
 
   /** #200: manually add a memory — lands in the pending review queue. */
+  // #298: skill capture — draft/refine/confirm from a conversation.
+  async captureSkill(conversation: string, sessionId?: string): Promise<{ draft_id: string; name: string; description: string; steps: string[]; prompt: string }> {
+    return this.fetch('/api/v1/skills/capture', { method: 'POST', body: JSON.stringify({ conversation, session_id: sessionId }) });
+  }
+
+  async refineSkill(draftId: string, instruction: string): Promise<{ name: string; description: string; steps: string[]; prompt: string }> {
+    return this.fetch(`/api/v1/skills/capture/${draftId}/refine`, { method: 'POST', body: JSON.stringify({ instruction }) });
+  }
+
+  async confirmSkill(draftId: string): Promise<{ status: string }> {
+    return this.fetch(`/api/v1/skills/capture/${draftId}/confirm`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
   async proposeMemory(data: { content: string; category?: string; importance?: number; patientHash?: string }): Promise<{ status: 'pending' | 'rejected'; id: string; reason?: string }> {
     return this.fetch('/api/v1/memorization/propose', {
       method: 'POST',

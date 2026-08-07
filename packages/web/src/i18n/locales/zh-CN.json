@@ -267,7 +267,13 @@
   },
   "skills": {
     "title": "技能",
-    "comingSoon": "技能管理功能即将推出。"
+    "comingSoon": "技能管理功能即将推出。",
+    "captureHint": "这个流程可以保存为技能，要保存吗？",
+    "captureTitle": "保存为技能",
+    "captureSubtitle": "AI 已把你的操作整理成可复用流程，下次可直接调用。",
+    "refineHint": "用一句话修改，如\"下次别忘了加上复发风险\"",
+    "refine": "调整",
+    "captureSaved": "技能已保存，下次对话可直接调用"
   },
   "placeholder": {
     "comingSoon": "即将推出"

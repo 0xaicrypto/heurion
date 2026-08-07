@@ -267,7 +267,13 @@
   },
   "skills": {
     "title": "Skills",
-    "comingSoon": "Skills manager coming soon."
+    "comingSoon": "Skills manager coming soon.",
+    "captureHint": "Save this workflow as a skill?",
+    "captureTitle": "Save as skill",
+    "captureSubtitle": "AI turned your workflow into a reusable procedure.",
+    "refineHint": "Adjust in one sentence, e.g. \"don't forget the recurrence risk\"",
+    "refine": "Adjust",
+    "captureSaved": "Skill saved — reusable in future conversations"
   },
   "placeholder": {
     "comingSoon": "Coming Soon"

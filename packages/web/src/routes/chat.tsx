@@ -14,6 +14,7 @@ import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import { ToolCalls } from '@/components/ToolCalls';
 import { StatusDot } from '@/components/ui/StatusDot';
+import { SkillCapturePrompt } from '@/components/SkillCapturePrompt';
 import { Alert, Button, Textarea } from '@/components/ui';
 
 /** §10.3 (#220): group separator when a gap exceeds this many minutes. */
@@ -591,6 +592,20 @@ export function ChatPage() {
 
         <footer className="border-t border-border bg-surface px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <div className="mx-auto flex max-w-3xl flex-col gap-2">
+            {/* #298: offer to capture a reusable procedure as a skill */}
+            {session?.skillCapture && messages.length > 1 && (
+              <SkillCapturePrompt
+                conversation={messages.slice(-4).map((m) => `${m.role === 'user' ? '医生' : 'AI'}: ${m.text}`).join('\n')}
+                sessionId={sessionId}
+                onDone={() => {
+                  useChatStore.setState((st) => {
+                    const s = st.sessions[sessionId];
+                    if (!s) return st;
+                    return { sessions: { ...st.sessions, [sessionId]: { ...s, skillCapture: undefined } } };
+                  });
+                }}
+              />
+            )}
             {(session?.compacting || session?.contextUsage) && (
               <div className="flex items-center justify-between gap-2">
                 {session?.compacting && (

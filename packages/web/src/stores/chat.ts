@@ -44,6 +44,8 @@ interface SessionState {
     omittedTurns: number;
     willCompact: boolean;
   };
+  /** #298: skill-capture suggestion shown after a procedural reply. */
+  skillCapture?: { text: string };
 }
 
 interface ChatStore {
@@ -166,6 +168,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             const s = state.sessions[sessionId];
             if (!s) return state;
             return { sessions: { ...state.sessions, [sessionId]: { ...s, lastDocBody: chunk.body } } };
+          });
+          continue;
+        }
+        if (chunk.type === 'skill_capture_suggest') {
+          set((state) => {
+            const s = state.sessions[sessionId];
+            if (!s) return state;
+            return { sessions: { ...state.sessions, [sessionId]: { ...s, skillCapture: { text: chunk.text } } } };
           });
           continue;
         }
