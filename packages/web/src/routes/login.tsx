@@ -12,6 +12,7 @@ export function LoginPage() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const isRegister = searchParams.get('mode') === 'register';
+  const isReset = searchParams.get('mode') === 'reset';
 
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/app/today';
 
@@ -21,6 +22,13 @@ export function LoginPage() {
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // ── reset-password flow (mode=reset) ──────────────────────────────
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetCode, setResetCode] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetStep, setResetStep] = useState<'input' | 'code'>('input');
+  const [resetDone, setResetDone] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) navigate(from, { replace: true });
@@ -50,6 +58,44 @@ export function LoginPage() {
     setError(null);
   };
 
+  const handleSendReset = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail)) {
+      setError(t('auth.invalidEmail', '邮箱格式不正确'));
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      await api.sendVerificationCode(resetEmail, 'reset');
+      setResetStep('code');
+    } catch (err) {
+      if (err instanceof ApiError) setError(err.messageText);
+      else if (err instanceof Error) setError(err.message);
+      else setError(t('auth.unexpectedError'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (resetPassword.length < 8) {
+      setError(t('auth.passwordTooShort', '密码至少 8 位'));
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      await api.resetPassword(resetEmail, resetCode, resetPassword);
+      setResetDone(true);
+    } catch (err) {
+      if (err instanceof ApiError) setError(err.messageText);
+      else if (err instanceof Error) setError(err.message);
+      else setError(t('auth.unexpectedError'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-md space-y-6 rounded-lg border border-border bg-surface-elevated p-8 shadow-lg">
@@ -66,6 +112,68 @@ export function LoginPage() {
 
         {error && <Alert variant="error">{error}</Alert>}
 
+        {isReset ? (
+          <div className="space-y-4">
+            {resetDone ? (
+              <div className="space-y-4">
+                <div className="rounded-lg border border-success/30 bg-success/5 px-4 py-3 text-sm text-text-primary">
+                  {t('auth.resetDone', '密码已重置，请使用新密码登录。')}
+                </div>
+                <Button className="w-full" onClick={() => { setSearchParams({}); setResetDone(false); }}>
+                  {t('common.login')}
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-text-secondary">{t('auth.resetEmailLabel', '绑定邮箱')}</label>
+                  <Input
+                    type="email"
+                    required
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    disabled={resetStep === 'code'}
+                    placeholder="you@example.com"
+                  />
+                </div>
+                {resetStep === 'input' ? (
+                  <Button className="w-full" onClick={handleSendReset} isLoading={loading}>
+                    {t('auth.sendCode', '发送验证码')}
+                  </Button>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-text-secondary">{t('auth.codePlaceholder', '6 位验证码')}</label>
+                      <Input
+                        value={resetCode}
+                        onChange={(e) => setResetCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        placeholder={t('auth.codePlaceholder', '6 位验证码')}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-text-secondary">{t('auth.newPassword', '新密码')}</label>
+                      <Input
+                        type="password"
+                        required
+                        value={resetPassword}
+                        onChange={(e) => setResetPassword(e.target.value)}
+                        placeholder={t('auth.passwordMinHint', '至少 8 位')}
+                      />
+                    </div>
+                    <Button className="w-full" onClick={handleResetPassword} isLoading={loading}>
+                      {t('auth.resetPassword', '重置密码')}
+                    </Button>
+                  </>
+                )}
+                <p className="text-center text-sm">
+                  <button type="button" onClick={() => setSearchParams({})} className="text-text-tertiary hover:text-text-secondary">
+                    ← {t('auth.backToLogin', '返回登录')}
+                  </button>
+                </p>
+              </>
+            )}
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           {isRegister && (
             <div>
@@ -90,13 +198,28 @@ export function LoginPage() {
             {isRegister ? t('common.register') : t('common.login')}
           </Button>
         </form>
+        )}
 
+        {!isReset && (
         <p className="text-center text-sm text-text-secondary">
           {isRegister ? t('auth.alreadyHaveAccount') : t('auth.noAccount')}{' '}
           <button type="button" onClick={toggleMode} className="font-medium text-accent hover:underline">
             {isRegister ? t('common.login') : t('common.register')}
           </button>
         </p>
+        )}
+
+        {!isRegister && !isReset && (
+          <p className="text-center text-sm">
+            <button
+              type="button"
+              onClick={() => { setSearchParams({ mode: 'reset' }); setError(null); }}
+              className="text-text-tertiary hover:text-text-secondary"
+            >
+              {t('auth.forgotPassword', '忘记密码？')}
+            </button>
+          </p>
+        )}
 
         {isRegister && (
           <p className="text-center text-xs text-text-tertiary">
