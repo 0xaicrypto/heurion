@@ -205,6 +205,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           EXECUTION_PLANE_URL: ${{ secrets.EXECUTION_PLANE_URL }}
           WORKER_API_TOKEN: ${{ secrets.WORKER_API_TOKEN }}
         run: |
@@ -220,6 +221,10 @@ jobs:
           GEMINI_API_KEY=${GEMINI_API_KEY}
           DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
           OPENAI_API_KEY=${OPENAI_API_KEY}
+          # #283: email verification delivery (Resend) — falls back to
+          # console logging in dev when unset.
+          RESEND_API_KEY=${RESEND_API_KEY}
+          EMAIL_FROM=Heurion <no-reply@heurion.org>
           EXECUTION_PLANE_URL=${EXECUTION_PLANE_URL}
           WORKER_API_TOKEN=${WORKER_API_TOKEN}
           EMBEDDING_PROVIDER=local
