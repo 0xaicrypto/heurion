@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, X, Zap, Key, Server, RefreshCw, Activity, BarChart3, Mail } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Check, X, Zap, Key, Server, RefreshCw, Activity, BarChart3, Mail, ScrollText, ShieldCheck } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api-client';
 import { EmailBindCard } from '@/components/EmailBindCard';
+import { AuditSection } from '@/routes/audit';
+import { LogsSection } from '@/routes/logs';
 import type { LlmStatus, LlmTestResult, ProviderKind, UserProfile, LlmUpdateInput, QueueMetrics, LlmCostDashboard } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
 import { Button, Input, Card, Badge, Alert, Skeleton } from '@/components/ui';
@@ -17,11 +20,20 @@ const PROVIDERS: { value: ProviderKind; label: string }[] = [
   { value: 'kimi', label: 'Kimi' },
 ];
 
-type Tab = 'profile' | 'llm' | 'embedding' | 'observability';
+type Tab = 'profile' | 'llm' | 'embedding' | 'observability' | 'audit' | 'logs';
+
+const TAB_ALIASES: Record<string, Tab> = { audit: 'audit', logs: 'logs' };
 
 export function SettingsPage() {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<Tab>('llm');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlTab = searchParams.get('tab');
+  const [tab, setTab] = useState<Tab>(TAB_ALIASES[urlTab || ''] || 'llm');
+
+  const selectTab = (next: Tab) => {
+    setTab(next);
+    setSearchParams(next === 'llm' ? {} : { tab: next }, { replace: true });
+  };
 
   return (
     <AppShell>
@@ -32,17 +44,25 @@ export function SettingsPage() {
         <div className="flex flex-col lg:flex-row">
           <nav className="border-b border-border bg-surface px-3 py-2 lg:w-48 lg:border-b-0 lg:border-r lg:py-4">
             <ul className="flex flex-wrap gap-1 lg:flex-col lg:space-y-1">
-              <TabButton active={tab === 'profile'} onClick={() => setTab('profile')}>
+              <TabButton active={tab === 'profile'} onClick={() => selectTab('profile')}>
                 {t('settings.profile')}
               </TabButton>
-              <TabButton active={tab === 'llm'} onClick={() => setTab('llm')}>
+              <TabButton active={tab === 'llm'} onClick={() => selectTab('llm')}>
                 {t('settings.llm')}
               </TabButton>
-              <TabButton active={tab === 'embedding'} onClick={() => setTab('embedding')}>
+              <TabButton active={tab === 'embedding'} onClick={() => selectTab('embedding')}>
                 {t('settings.embedding')}
               </TabButton>
-              <TabButton active={tab === 'observability'} onClick={() => setTab('observability')}>
+              <TabButton active={tab === 'observability'} onClick={() => selectTab('observability')}>
                 {t('settings.observability')}
+              </TabButton>
+              <TabButton active={tab === 'audit'} onClick={() => selectTab('audit')}>
+                <ShieldCheck size={14} className="mr-1 inline" />
+                {t('nav.audit', 'Audit')}
+              </TabButton>
+              <TabButton active={tab === 'logs'} onClick={() => selectTab('logs')}>
+                <ScrollText size={14} className="mr-1 inline" />
+                {t('nav.logs', 'Logs')}
               </TabButton>
             </ul>
           </nav>
@@ -51,6 +71,8 @@ export function SettingsPage() {
             {tab === 'llm' && <LlmSection />}
             {tab === 'embedding' && <EmbeddingSection />}
             {tab === 'observability' && <ObservabilitySection />}
+            {tab === 'audit' && <AuditSection />}
+            {tab === 'logs' && <LogsSection />}
           </main>
         </div>
       </div>

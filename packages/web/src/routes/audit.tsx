@@ -9,7 +9,8 @@ import type { AuditLogEntry } from '@/lib/types';
 
 const KNOWN_ACTIONS = ['approval.confirmed', 'approval.rejected'];
 
-export function AuditPage() {
+/** #341: section body — reused by SettingsPage's audit tab. */
+export function AuditSection() {
   const { t, i18n } = useTranslation();
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,14 +36,7 @@ export function AuditPage() {
   const filtered = action === 'all' ? logs : logs.filter((l) => l.action === action);
 
   return (
-    <AppShell>
-      <div className="flex h-full flex-col overflow-y-auto">
-        <header className="flex h-14 items-center gap-2 border-b border-border bg-surface px-6">
-          <ScrollText size={18} className="text-text-tertiary" />
-          <h1 className="font-semibold text-text-primary">{t('audit.title', 'Audit Log')}</h1>
-        </header>
-
-        <main className="space-y-4 p-6">
+    <main className="space-y-4 p-6">
           <div className="flex flex-wrap items-center gap-3">
             <select
               value={targetType}
@@ -117,7 +111,21 @@ export function AuditPage() {
               ))}
             </div>
           )}
-        </main>
+    </main>
+  );
+}
+
+/** Standalone page — kept for the legacy /app/audit route (redirects to settings tab). */
+export function AuditPage() {
+  const { t } = useTranslation();
+  return (
+    <AppShell>
+      <div className="flex h-full flex-col overflow-y-auto">
+        <header className="flex h-14 items-center gap-2 border-b border-border bg-surface px-6">
+          <ScrollText size={18} className="text-text-tertiary" />
+          <h1 className="font-semibold text-text-primary">{t('audit.title', 'Audit Log')}</h1>
+        </header>
+        <AuditSection />
       </div>
     </AppShell>
   );

@@ -9,8 +9,6 @@ import {
   FileText,
   Cpu,
   Puzzle,
-  ScrollText,
-  ShieldCheck,
   Settings,
   Shield,
   Menu,
@@ -54,8 +52,6 @@ const navItems: NavItem[] = [
   { to: '/app/memory', labelKey: 'nav.memoryKnowledge', icon: <Brain size={18} />, section: 'memory' },
   { to: '/app/skills', labelKey: 'nav.skills', icon: <Cpu size={18} />, section: 'tools' },
   { to: '/app/plugins', labelKey: 'nav.plugins', icon: <Puzzle size={18} />, section: 'tools' },
-  { to: '/app/audit', labelKey: 'nav.audit', icon: <ShieldCheck size={18} />, section: 'tools' },
-  { to: '/app/logs', labelKey: 'nav.logs', icon: <ScrollText size={18} />, section: 'tools' },
   { to: '/app/settings', labelKey: 'nav.settings', icon: <Settings size={18} />, section: 'tools' },
   { to: '/app/admin/users', labelKey: 'nav.admin', icon: <Shield size={18} />, admin: true, section: 'tools' },
 ];
