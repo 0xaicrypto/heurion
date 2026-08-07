@@ -67,8 +67,12 @@ npx prisma db push --accept-data-loss
 pm2 delete heurion-staging 2>/dev/null || true
 pkill -f "tsx src/main.ts" 2>/dev/null || true
 kill $(lsof -ti:8002) 2>/dev/null || fuser -k 8002/tcp 2>/dev/null || true
-for i in $(seq 1 10); do
-  if ! curl -fsS http://localhost:8002/healthz >/dev/null 2>&1; then break; fi
+# Orphaned node processes survive pm2 delete — kill whoever holds :8002 by PID.
+for pid in $(ss -ltnp 2>/dev/null | grep ':8002' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u); do
+  kill -9 "$pid" 2>/dev/null || true
+done
+for i in $(seq 1 15); do
+  if ! ss -ltn 2>/dev/null | grep -q ':8002'; then break; fi
   sleep 2
 done
 sleep 2
