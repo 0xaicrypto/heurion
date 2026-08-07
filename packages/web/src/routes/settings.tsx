@@ -161,7 +161,18 @@ function ProfileSection() {
       <Card className="space-y-2 p-4">
         <label className="block text-sm font-medium text-text-secondary">{t('auth.emailBinding', '绑定邮箱')}</label>
         <p className="text-xs text-text-tertiary">{t('auth.emailBindingHint', '绑定后可凭邮箱登录与找回密码（手机为可选字段）')}</p>
-        <EmailBindCard compact onBound={() => api.getUserProfile().then(setProfile).catch(() => {})} />
+        {profile?.email ? (
+          <div className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm">
+            <Mail size={14} className="shrink-0 text-text-tertiary" />
+            <span className="min-w-0 flex-1 truncate text-text-primary">{profile.email}</span>
+            <span className="flex items-center gap-1 text-xs text-success">
+              <Check size={12} />
+              {t('auth.verified', '已验证')}
+            </span>
+          </div>
+        ) : (
+          <EmailBindCard compact onBound={() => api.getUserProfile().then(setProfile).catch(() => {})} />
+        )}
       </Card>
 
       <Card className="space-y-4 p-4">

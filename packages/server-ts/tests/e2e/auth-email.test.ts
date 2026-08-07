@@ -53,6 +53,17 @@ describe('auth email verification (#283)', () => {
     expect(bound.statusCode).toBe(200)
     expect(JSON.parse(bound.payload).email_verified).toBe(true)
 
+    // #336: profile reflects the bound email so the frontend banner
+    // disappears after refresh and settings can display the binding.
+    const prof = await app.inject({
+      method: 'GET', url: '/api/v1/user/profile',
+      headers: h,
+    })
+    expect(prof.statusCode).toBe(200)
+    const profileBody = JSON.parse(prof.payload)
+    expect(profileBody.email).toBe(email)
+    expect(profileBody.email_verified).toBe(true)
+
     // Login by email (identifier lookup) with the same password.
     const user = await prisma.user.findUnique({ where: { id: userId } })
     const login = await app.inject({

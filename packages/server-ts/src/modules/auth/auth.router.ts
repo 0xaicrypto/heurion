@@ -146,6 +146,9 @@ export async function authRouter(app: FastifyInstance) {
       intended_use: user.intendedUse,
       status: user.status,
       tier: user.tier,
+      email: user.email,
+      email_verified: user.emailVerified === 1,
+      phone: user.phone,
     }
   })
 
