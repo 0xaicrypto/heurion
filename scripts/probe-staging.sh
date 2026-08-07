@@ -23,3 +23,7 @@ echo "--- last 25 lines staging error log ---"
 tail -25 ~/.pm2/logs/heurion-staging-error.log 2>/dev/null || tail -25 /root/.pm2/logs/heurion-staging-error.log 2>/dev/null || true
 echo "--- last 12 error-ish lines staging out log ---"
 tail -400 ~/.pm2/logs/heurion-staging-out.log 2>/dev/null | grep -iE "error|fail|401|400|500|abort|timeout|LLM|llm" | tail -12 || tail -400 /root/.pm2/logs/heurion-staging-out.log 2>/dev/null | grep -iE "error|fail|401|400|500|abort|timeout|LLM|llm" | tail -12 || true
+echo "--- production LLM env ---"
+sudo docker exec nexus-server env 2>/dev/null | grep -E "DEFAULT_LLM|OPENCODE" || docker exec nexus-server env 2>/dev/null | grep -E "DEFAULT_LLM|OPENCODE" || true
+echo "--- production server error logs (LLM) ---"
+sudo docker logs nexus-server --tail 120 2>&1 | grep -iE "error|LLM|401|500|abort|timeout|openai|deepseek" | tail -15 || docker logs nexus-server --tail 120 2>&1 | grep -iE "error|LLM|401|500|abort|timeout|openai|deepseek" | tail -15 || true
