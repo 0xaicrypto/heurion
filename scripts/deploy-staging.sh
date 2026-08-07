@@ -7,7 +7,11 @@ git reset --hard origin/main
 echo "Deploying: $(git log -1 --oneline)"
 cd packages/server-ts
 
-cp -f .env.staging .env 2>/dev/null || cat > .env << ENVEOF
+# A leftover untracked .env.staging would hijack DATABASE_URL and make
+# db push hit an arbitrary historical DB (observed: unique-constraint
+# failure on a stale DB). Always generate .env fresh.
+rm -f .env.staging
+cat > .env << ENVEOF
 DATABASE_URL="file:./staging.db"
 SERVER_HOST=0.0.0.0
 SERVER_PORT=8002
@@ -51,6 +55,9 @@ cd ~/heurion/packages/server-ts
 which pnpm || npm install -g pnpm@10
 pnpm install --prefer-offline
 npx prisma generate
+# #284: clear duplicate display_names before the unique constraint applies
+# (harmless no-op when the DB is fresh).
+npx tsx scripts/dedupe-display-names.ts 2>/dev/null || true
 rm -f staging.db staging.db-journal 2>/dev/null || true
 npx prisma db push --accept-data-loss
 
