@@ -9,7 +9,7 @@ import { router, createDefaultLLMClassifier } from '../../retrieval/query-router
 import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
 import { estimateTokens } from '../../common/token-estimate.js'
 import { detectDoomLoop } from '../../tools/doom-loop.js'
-import { ensureSessionCompaction, getInFlightCompaction } from '../../memory/compaction.js'
+import { ensureSessionCompaction, getInFlightCompaction } from '../../memory/compaction/index.js'
 import { handleKnowledgeCommand, type CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { handlePluginChatRequest } from '../plugins/plugin-chat-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'

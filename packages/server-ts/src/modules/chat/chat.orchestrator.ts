@@ -131,7 +131,7 @@ export class ChatOrchestrator {
    */
   async extractUnextractedSegment(userId: string, sessionId: string, patientHash?: string): Promise<number> {
     try {
-      const { flushUnextracted } = await import('../../memory/compaction.js')
+      const { flushUnextracted } = await import('../../memory/compaction/index.js')
       return await flushUnextracted(
         {
           userId,

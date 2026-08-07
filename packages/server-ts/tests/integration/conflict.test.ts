@@ -113,7 +113,7 @@ describe('§5.7 conflict detection & supersede', () => {
       `[{"content":"患者可用青霉素（既往过敏记录有误）","category":"allergy","importance":5,"sourceType":"patient","conflictsWith":["${oldFact.stableId}"]}]`,
     )
 
-    const { extractAndProposeFacts } = await import('../../src/memory/compaction.js')
+    const { extractAndProposeFacts } = await import('../../src/memory/compaction/index.js')
     const extracted = await extractAndProposeFacts({ ...ctx, userId }, patientHash, 'USER: 患者其实可用青霉素，之前记错了\nAI: 已了解', {
       sessionId,
       reason: 'test conflict',

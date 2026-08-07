@@ -3,7 +3,7 @@ import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getApp, authHeader, getAuthUserId } from '../setup.js'
 import prisma from '../../src/common/prisma.js'
 import { getUserContext } from '../../src/modules/chat/user-context.js'
-import { ensureSessionCompaction, flushUnextracted, getInFlightCompaction } from '../../src/memory/compaction.js'
+import { ensureSessionCompaction, flushUnextracted, getInFlightCompaction } from '../../src/memory/compaction/index.js'
 
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
 

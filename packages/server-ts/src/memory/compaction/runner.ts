@@ -1,110 +1,24 @@
-import { EventLog } from '../core/event-log'
-import { makeLogger } from '../common/logger.js'
-import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores'
-import type { MemoryService } from './memory.service.js'
-import { deepseekChat, getApiKey } from '../common/llm.js'
-import prisma from '../common/prisma.js'
-import { MemoryGraphGateway } from './memory-gateway.js'
+import { makeLogger } from '../../common/logger.js'
+import { deepseekChat, getApiKey } from '../../common/llm.js'
+import prisma from '../../common/prisma.js'
+import { MemoryGraphGateway } from '../memory-gateway.js'
+import {
+  EXTRACTION_RULES,
+  MIN_COMPACT_EVENTS,
+  MIN_EXTRACT_EVENTS,
+  MAX_EVENT_CHARS,
+  buildContextBlock,
+  parseExtractionResult,
+  type CompactionCtx,
+  type ExtractedFact,
+} from './budget.js'
 
 /**
- * R2 — anchored compaction (BRAIN2_MEMORY_LIFECYCLE §4.3, issue #99).
- *
- * When a long session overflows the context budget, the dropped segment is
- * compacted ONCE into:
- *   1. an anchored summary (persisted → injected verbatim into later turns),
- *   2. batch fact proposals (pending review queue),
- *   3. an episode-summary update (K3 merge).
- *
- * Tier-2 of the three-tier extraction strategy:
- *   Tier 1 — signal-driven incremental extraction (K1/K2, strong signals only)
- *   Tier 2 — compaction-time batch extraction (this module)
- *   Tier 3 — session-close flush (flushUnextracted)
+ * #353: compaction/extraction runner — Tier 2 (compaction-time batch) and
+ * Tier 3 (session-close flush) both funnel through here. In-flight state
+ * lives in state.ts; prompt/context shaping in budget.ts.
  */
-
-export interface CompactionCtx {
-  userId: string
-  eventLog: EventLog
-  facts: FactsStore
-  episodes: EpisodesStore
-  skills: SkillsStore
-  knowledge: KnowledgeStore
-  memory?: MemoryService
-}
-
-export interface ExtractedFact {
-  content: string
-  category: string
-  importance: number
-  sourceType: string
-  patientHash?: string
-  conflictsWith?: string[]
-}
-
-const EXTRACTION_RULES = `Rules:
-1. AGGREGATE: merge related information about the same subject into ONE consolidated fact (e.g. symptoms+course → one disease-course fact; related exam values → one finding fact). Do not split a single topic into multiple fragments.
-2. LIMIT: output at most 5 facts — the most important only.
-3. IMPORTANCE GATE: only facts that affect future decisions (diagnosis, treatment, monitoring, patient safety). Omit marginal details.
-4. SELF-CONTAINED: include subject (patient/doctor), time or trend, and concrete values.
-   GOOD: "患者 ZQ 发热持续3周伴胸痛咳嗽，亚急性病程（7月末起）"
-   BAD: "针对发热+胸痛需考虑肺部感染"
-5. Exclude: conversational filler ("用户想学习", "谢谢"), generic advice ("需要做检查") unless it is a concrete conclusion for this patient, system state ("名册为空"), general knowledge.
-6. CONFLICT: if new information contradicts an existing confirmed fact listed in the context (same subject, opposing or updated conclusion — e.g. allergy vs no-allergy, dose/plan change), set "conflictsWith": [the stableId of the conflicting fact]. Facts of OTHER patients are never conflicts — only facts tagged with the current scope.
-   GOOD: {"content": "患者当前可用青霉素（既往过敏记录有误）", "conflictsWith": ["fact_xxx"]}
-   BAD: flagging a different patient's fact as a conflict.`
-
-function buildContextBlock(ctx: CompactionCtx, patientHash: string | undefined, sessionId: string, conversation: string): string {
-  // §5.7: facts carry scope identity — only same-scope facts (this patient
-  // or user-level global facts) are injected for dedup/conflict judgement.
-  // Other patients' facts are NEVER injected (cross-patient ≠ contradiction).
-  const kw = conversation.toLowerCase().split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}]/gu, '')).filter(w => w.length > 3)
-  const existingFacts = ctx.facts.all()
-  const relatedFacts = existingFacts
-    .filter(f => {
-      if (f.patientHash) return f.patientHash === patientHash
-      return true
-    })
-    .map(f => ({ f, score: kw.some(w => f.content.toLowerCase().includes(w)) ? 1 : 0 }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 10)
-    .map(x => x.f)
-  const episode = ctx.episodes.all().find(e => e.sessionId === sessionId)
-  const contextLines: string[] = []
-  if (patientHash) {
-    contextLines.push(`Current patient: ${patientHash}`)
-    contextLines.push('Facts about this patient should use sourceType: "patient" and include the patientHash.')
-  }
-  if (episode) {
-    contextLines.push(`Session summary so far: ${episode.summary}`)
-  }
-  if (relatedFacts.length > 0) {
-    contextLines.push('Existing confirmed facts in the SAME scope (use these for dedup AND conflict judgement — never flag a different patient\'s fact):')
-    relatedFacts.forEach(f => {
-      const tag = f.patientHash ? f.patientHash : 'user-level'
-      contextLines.push(`- [${f.sourceType || 'general'}] [${tag}] (${f.id}) ${f.content}`)
-    })
-  }
-  return contextLines.length > 0 ? `\n${contextLines.join('\n')}\n` : ''
-}
-
-/**
- * Shared extraction call (Tier 1 incremental and Tier 3 close-flush both use
- * this). AI extraction always lands in the pending review queue
- * (BRAIN2_MEMORY_LIFECYCLE §5.2 — no direct write path).
- */
-/** Parse the extraction LLM output as a JSON array; null when unparseable. */
-function parseExtractionResult(result: string): Array<Record<string, any>> | null {
-  const jsonMatch = result.match(/\[[\s\S]*\]/)
-  if (!jsonMatch) return null
-  try {
-    const parsed = JSON.parse(jsonMatch[0])
-    return Array.isArray(parsed) ? (parsed as Array<Record<string, any>>) : null
-  } catch {
-    return null
-  }
-}
-
 const log = makeLogger('compaction')
-
 export async function extractAndProposeFacts(
   ctx: CompactionCtx,
   patientHash: string | undefined,
@@ -117,7 +31,7 @@ export async function extractAndProposeFacts(
   // 13.4F: dynamic quality guidance from recent acceptance rates.
   let qualityGuidance = ''
   try {
-    const { getCategoryQuality, buildQualityGuidance } = await import('./extraction-quality.js')
+    const { getCategoryQuality, buildQualityGuidance } = await import('../extraction-quality.js')
     qualityGuidance = buildQualityGuidance(await getCategoryQuality(ctx.userId))
   } catch {
     // quality stats are best-effort
@@ -200,42 +114,7 @@ ${conversation}
   })
   return extracted
 }
-
-// Per-session in-flight guard: compaction is an async side-effect of a turn,
-// never re-entrant, and fires at most once per covered segment.
-const inFlight = new Map<string, Promise<void>>()
-
-/**
- * Returns the in-flight compaction promise for a session, or null when none
- * is running. Used for opencode-style delayed-sync: a turn that arrives
- * while the previous compaction is still running awaits it before replying,
- * so the anchored summary is always injectable.
- */
-export function getInFlightCompaction(userId: string, sessionId: string): Promise<void> | null {
-  return inFlight.get(`${userId}:${sessionId}`) ?? null
-}
-
-/**
- * R2 — entry point called from the chat router when the session budget
- * overflows (omitted turns) or the turn window is full. Compacts the dropped
- * segment [coveredUptoIdx, firstRetainedIdx) if it contains enough content.
- */
-export function ensureSessionCompaction(
-  ctx: CompactionCtx,
-  sessionId: string,
-  firstRetainedIdx: number,
-  patientHash?: string,
-): Promise<void> {
-  const key = `${ctx.userId}:${sessionId}`
-  if (inFlight.has(key)) return inFlight.get(key)!
-  const p = runSessionCompaction(ctx, sessionId, firstRetainedIdx, patientHash)
-    .catch((err: any) => log.error('compaction failed', { reason: (err as Error).message.slice(0, 120) }))
-    .finally(() => inFlight.delete(key))
-  inFlight.set(key, p)
-  return p
-}
-
-async function runSessionCompaction(
+export async function runSessionCompaction(
   ctx: CompactionCtx,
   sessionId: string,
   firstRetainedIdx: number,
@@ -353,7 +232,7 @@ ${conversation}
   // S3: the compacted segment is fully processed — advance the extraction
   // cursor so the session-close flush never re-extracts it.
   try {
-    const { advanceExtractedUptoIdx } = await import('./extraction-cursor.js')
+    const { advanceExtractedUptoIdx } = await import('../extraction-cursor.js')
     const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string; sessionId?: string } = {
       userId: ctx.userId,
       scopeType: patientHash ? 'patient' : 'global',
@@ -404,7 +283,7 @@ export async function extractSegment(
 
   // 2) K3: update the Session Memory (episodes).
   try {
-    const { updateEpisodeSummary } = await import('./knowledge-synthesis.js')
+    const { updateEpisodeSummary } = await import('../knowledge-synthesis.js')
     await updateEpisodeSummary({
       userId: ctx.userId,
       sessionId,
@@ -421,7 +300,7 @@ export async function extractSegment(
   // never to the global count, or events of OTHER sessions sitting between
   // fromIdx and toIdx would be permanently skipped (cross-session safety).
   try {
-    const { advanceExtractedUptoIdx } = await import('./extraction-cursor.js')
+    const { advanceExtractedUptoIdx } = await import('../extraction-cursor.js')
     const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string; sessionId?: string } = {
       userId: ctx.userId,
       scopeType: patientHash ? 'patient' : 'global',
@@ -447,7 +326,7 @@ export async function flushUnextracted(
   sessionId: string,
   patientHash?: string,
 ): Promise<number> {
-  const { getExtractedUptoIdx } = await import('./extraction-cursor.js')
+  const { getExtractedUptoIdx } = await import('../extraction-cursor.js')
   const scopeKey: { userId: string; scopeType: 'patient' | 'global'; patientHash?: string; sessionId?: string } = {
     userId: ctx.userId,
     scopeType: patientHash ? 'patient' : 'global',
