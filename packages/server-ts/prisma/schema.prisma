@@ -652,7 +652,9 @@ model VerificationCode {
   expiresAt String @map("expires_at")
   usedAt    String? @map("used_at")
   attempts  Int    @default(0) @map("attempts")
+  ip        String? @map("ip") // #344: sender IP for per-IP rate limiting
   createdAt String @map("created_at")
   @@index([target, purpose, usedAt])
+  @@index([ip, createdAt])
   @@map("verification_codes")
 }
