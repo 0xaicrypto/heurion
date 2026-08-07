@@ -4,7 +4,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { Plus, FileText } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Button, Input, Card, Skeleton } from '@/components/ui';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 
 interface Doc {
   id: string;

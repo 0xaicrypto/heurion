@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Activity } from 'lucide-react';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/utils';
 import { Card, Skeleton } from '@/components/ui';
 import type { AuditLogEntry } from '@/lib/types';

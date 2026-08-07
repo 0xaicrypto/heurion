@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Download, Trash2, Package, Power, PowerOff, RotateCcw, Globe } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Button, Input, Card, Badge, Skeleton } from '@/components/ui';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 interface Skill {

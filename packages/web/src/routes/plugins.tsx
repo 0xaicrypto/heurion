@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Download, Globe, Package, Puzzle, Search, Settings, ToggleLeft, ToggleRight, Trash2, Terminal, Upload, FileJson, Users } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { Alert, Badge, Button, Card, Input, Skeleton, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
 

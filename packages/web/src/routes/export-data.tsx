@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Download, FileArchive } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { Alert, Button, Card } from '@/components/ui';
 
 interface ExportResult {

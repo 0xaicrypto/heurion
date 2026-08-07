@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { PluginUIProvider, usePluginRegistrations } from './PluginUIRegistry';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 
 function createLocalStorageMock(): Storage {
   const store: Record<string, string> = {};

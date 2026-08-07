@@ -7,7 +7,7 @@ import {
   RotateCcw, X, Filter, Eye, EyeOff, Maximize2,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { Alert, Badge, Button, Card, Input, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
 

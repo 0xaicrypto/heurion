@@ -10,7 +10,7 @@ import { StreamingLlmContent } from '@/components/LlmContent';
 import { ToolCalls } from '@/components/ToolCalls';
 import { useChatStore } from '@/stores/chat';
 import { Alert, Button, Card, Skeleton, Textarea } from '@/components/ui';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 interface DocDetail {

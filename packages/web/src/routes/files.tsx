@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { File, FileText, Image, Trash2 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { Alert, Button, Card, Skeleton, Badge } from '@/components/ui';
 
 interface FileItem {

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PlusCircle, Check, AlertTriangle } from 'lucide-react';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import { Button, Input } from '@/components/ui';
 
 const CATEGORIES = [

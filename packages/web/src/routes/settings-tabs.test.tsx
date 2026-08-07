@@ -4,7 +4,7 @@ import { render } from '@/test/render';
 import { SettingsPage } from './settings';
 import { useAuthStore } from '@/stores/auth';
 
-vi.mock('@/lib/api-client', () => ({
+vi.mock('@/lib/api', () => ({
   api: {
     getUserProfile: vi.fn().mockResolvedValue({ user_id: 'u1', display_name: 'T' }),
     updateUserProfile: vi.fn(),

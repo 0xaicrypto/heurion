@@ -5,7 +5,7 @@ import { IngestionInbox } from './IngestionInbox';
 import { BrainStatsCards } from './BrainStatsCards';
 import { RecentActivityFeed } from './RecentActivityFeed';
 import { BrainPage } from '@/routes/brain';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import i18n from '@/i18n';
 
 interface MockResponse {

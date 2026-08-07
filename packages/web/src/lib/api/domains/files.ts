@@ -1,0 +1,23 @@
+import { MemoryApi } from './memory.js';
+
+
+import { ApiError } from './core.js';
+
+export class FilesApi extends MemoryApi {
+  /* ────────────────────────── files ────────────────────────── */
+
+  async uploadFile(file: File, patientHash?: string): Promise<{ file_id: string; name: string; mime: string; size_bytes: number }> {
+    const form = new FormData();
+    form.append('file', file);
+    if (patientHash) form.append('patient_hash', patientHash);
+    const h = this.headers();
+    h.delete('Content-Type');
+    const r = await fetch('/api/v1/files/upload', { method: 'POST', headers: h, body: form });
+    if (!r.ok) {
+      const text = await r.text().catch(() => '');
+      throw new ApiError(r.status, text || r.statusText, '/api/v1/files/upload');
+    }
+    return r.json();
+  }
+
+}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Activity, AlertTriangle, Archive, CheckCircle2, Database } from 'lucide-react';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import { Card, Skeleton } from '@/components/ui';
 
 interface HealthResponse {

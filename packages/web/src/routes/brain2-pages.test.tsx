@@ -5,7 +5,7 @@ import { render } from '@/test/render';
 import { MedicalRecordsPage } from '@/routes/medical-records';
 import { LabsPage } from '@/routes/labs';
 import { AuditPage } from '@/routes/audit';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import i18n from '@/i18n';
 
 interface MockResponse {

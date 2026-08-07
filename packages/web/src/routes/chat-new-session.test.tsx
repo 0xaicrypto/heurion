@@ -9,7 +9,7 @@ import { useAuthStore } from '@/stores/auth';
 vi.mock('@/components/plugins/PluginExtensionPoint', () => ({
   PluginExtensionPoint: () => null,
 }));
-vi.mock('@/lib/api-client', () => ({
+vi.mock('@/lib/api', () => ({
   ApiError: class ApiError extends Error {},
   api: {
     listSessions: vi.fn().mockResolvedValue({ sessions: [] }),
@@ -81,7 +81,7 @@ describe('first message after creating a session (bug repro)', () => {
 
 describe('session restore after refresh (bug repro)', () => {
   test('existing open session is auto-selected on mount', async () => {
-    const { api } = await import('@/lib/api-client');
+    const { api } = await import('@/lib/api');
     (api.listSessions as any).mockResolvedValue({
       sessions: [
         { id: 'session_persist1', title: '持久会话', status: 'open', created_at: new Date().toISOString(), message_count: 2 },

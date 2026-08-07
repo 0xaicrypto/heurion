@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import { Alert, Button, Input } from '@/components/ui';
-import { ResendControl } from '@/hooks/useCountdown';
+import { ResendControl } from '@/components/ResendControl';
 
 export function LoginPage() {
   const { t, i18n } = useTranslation();

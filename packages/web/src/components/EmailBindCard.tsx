@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Mail, X, Check } from 'lucide-react';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import { Button, Input } from '@/components/ui';
-import { ResendControl } from '@/hooks/useCountdown';
+import { ResendControl } from '@/components/ResendControl';
 
 /**
  * #285: bind an email address — used both as a non-blocking first-login

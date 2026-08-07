@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ChatPage } from '@/routes/chat';
 import { LandingPage } from '@/routes/landing';
