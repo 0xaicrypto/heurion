@@ -90,3 +90,28 @@ describe('session persists after refresh (bug repro)', () => {
     expect(found.message_count).toBeGreaterThanOrEqual(1)
   })
 })
+
+describe('doc-* session history is queryable (#297)', () => {
+  test('writing chat messages survive a refresh (queryable by session_id)', async () => {
+    const app = await getApp()
+    const h = await authHeader()
+    const hj = { ...h, 'content-type': 'application/json' }
+    const docId = `doc_reload_${Date.now()}`
+
+    const chat = await app.inject({
+      method: 'POST', url: '/api/v1/agent/chat',
+      headers: hj,
+      payload: JSON.stringify({ text: '请修改文档标题', session_id: docId }),
+    })
+    expect(chat.statusCode).toBe(200)
+
+    // Simulate a page refresh: query the event log by session_id.
+    const msgs = await app.inject({
+      method: 'GET', url: `/api/v1/agent/messages?session_id=${docId}`,
+      headers: h,
+    })
+    const body = JSON.parse(msgs.payload)
+    expect(body.total).toBeGreaterThanOrEqual(2) // user + assistant
+    expect(body.messages.some((m: any) => m.content.includes('请修改文档标题'))).toBe(true)
+  })
+})
