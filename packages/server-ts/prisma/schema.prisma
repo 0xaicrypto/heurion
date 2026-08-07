@@ -9,11 +9,14 @@ datasource db {
 
 model User {
   id              String    @id
-  displayName     String    @map("display_name")
+  displayName     String    @unique @map("display_name")
   passwordHash    String?   @map("password_hash")
   role            String    @default("user")
   status          String    @default("approved")
-  email           String?
+  // #284: unique identity fields — email is verified, phone is storage-only.
+  email           String?   @unique
+  emailVerified   Int       @default(0) @map("email_verified")
+  phone           String?   @unique
   organization    String?
   intendedUse     String?   @map("intended_use")
   isAdmin         Int       @default(0) @map("is_admin")
@@ -634,4 +637,18 @@ model CapturedSkill {
   updatedAt String @map("updated_at")
   @@index([userId, status])
   @@map("captured_skills")
+}
+
+// #284: email verification codes (register/bind/reset-password).
+model VerificationCode {
+  id        String @id @default(cuid())
+  target    String @map("target") // email address
+  code      String @map("code")
+  purpose   String @map("purpose") // 'register' | 'bind' | 'reset'
+  expiresAt String @map("expires_at")
+  usedAt    String? @map("used_at")
+  attempts  Int    @default(0) @map("attempts")
+  createdAt String @map("created_at")
+  @@index([target, purpose, usedAt])
+  @@map("verification_codes")
 }

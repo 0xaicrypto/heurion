@@ -9,7 +9,7 @@ describe('Knowledge Gap API', () => {
       method: 'POST',
       url: '/api/v1/auth/register',
       headers: { 'content-type': 'application/json' },
-      payload: { username, password: 'test123456', display_name: 'Gap API User' },
+      payload: { username, password: 'test123456', display_name: `Gap API User ${Math.random().toString(36).slice(2, 6)}` },
     })
     const token = JSON.parse(register.payload).jwt_token
     const userId = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString()).userId

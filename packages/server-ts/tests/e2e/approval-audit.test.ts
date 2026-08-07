@@ -24,14 +24,14 @@ async function createAdminToken(): Promise<string> {
   const admin = await (prisma as any).user.create({
     data: {
       id: `user_admin_${Date.now()}`,
-      displayName: 'Test Admin',
+      displayName: `Test Admin ${Math.random().toString(36).slice(2, 6)}`,
       role: 'admin',
       status: 'approved',
       createdAt: now,
       updatedAt: now,
     },
   })
-  return signToken({ userId: admin.id, role: 'admin', displayName: 'Test Admin' })
+  return signToken({ userId: admin.id, role: 'admin', displayName: admin.displayName })
 }
 
 async function createPatient(app: any, initials = 'AP') {

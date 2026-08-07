@@ -22,7 +22,8 @@ export async function getToken(): Promise<string> {
       const res = await a.inject({
         method: 'POST', url: '/api/v1/auth/register',
         headers: { 'content-type': 'application/json' },
-        payload: JSON.stringify({ username, password: 'test123456', display_name: 'Test Admin' }),
+        // display_name must be unique too (#284) — randomize it.
+        payload: JSON.stringify({ username, password: 'test123456', display_name: `Test Admin ${Math.random().toString(36).slice(2, 6)}` }),
       })
       const body = JSON.parse(res.payload)
       if (body.jwt_token) {
@@ -56,7 +57,7 @@ export async function registerSecondUser(): Promise<{ token: string; userId: str
     const res = await a.inject({
       method: 'POST', url: '/api/v1/auth/register',
       headers: { 'content-type': 'application/json' },
-      payload: JSON.stringify({ username, password: 'test123456', display_name: 'Second User' }),
+      payload: JSON.stringify({ username, password: 'test123456', display_name: `Second User ${Math.random().toString(36).slice(2, 6)}` }),
     })
     const body = JSON.parse(res.payload)
     if (body.jwt_token) {

@@ -33,7 +33,7 @@ describe('K6 gap auto-detection', () => {
     const res = await app.inject({
       method: 'POST', url: '/api/v1/auth/register',
       headers: { 'content-type': 'application/json' },
-      payload: JSON.stringify({ username, password: 'test123456', display_name: 'K6 Tester' }),
+      payload: JSON.stringify({ username, password: 'test123456', display_name: `K6 Tester ${Math.random().toString(36).slice(2, 6)}` }),
     })
     const body = JSON.parse(res.payload)
     const payload = JSON.parse(Buffer.from(body.jwt_token.split('.')[1], 'base64').toString())
