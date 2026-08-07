@@ -1,5 +1,9 @@
 generator client {
   provider = "prisma-client-js"
+  // Ship both engine binaries — the Docker runtime openssl flavor can vary
+  // across base images (observed: generated for 1.1.x, runtime required
+  // 3.0.x). "native" covers local dev.
+  binaryTargets = ["native", "debian-openssl-3.0.x", "debian-openssl-1.1.x"]
 }
 
 datasource db {
