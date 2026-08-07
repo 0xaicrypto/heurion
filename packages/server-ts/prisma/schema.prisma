@@ -619,3 +619,19 @@ model ApprovalRule {
   @@index([action, resource, role])
   @@map("approval_rules")
 }
+
+// #298: skills captured from real conversations — structured, reusable.
+model CapturedSkill {
+  id        String @id @default(cuid())
+  userId    String @map("user_id")
+  name      String
+  description String @default("")
+  steps     String @default("") // JSON array of step descriptions
+  prompt    String @default("") // full reusable prompt/template
+  sourceSession String? @map("source_session") // session the skill came from
+  status    String @default("draft") // 'draft' | 'confirmed'
+  createdAt String @map("created_at")
+  updatedAt String @map("updated_at")
+  @@index([userId, status])
+  @@map("captured_skills")
+}

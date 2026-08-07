@@ -127,4 +127,51 @@ export async function skillsRouter(app: FastifyInstance) {
       }))
     return { skills: filtered, total: filtered.length, source: 'github' }
   })
+
+// ── #298: skill capture — draft/refine/confirm from conversation ──────
+
+app.post('/api/v1/skills/capture', async (request, reply) => {
+  const { conversation, session_id } = request.body as any
+  if (!conversation || !String(conversation).trim()) {
+    return reply.status(400).send({ error: 'conversation required' })
+  }
+  const userId = request.user!.userId
+  const { captureSkillDraft, saveDraft } = await import('./skill-capture.service.js')
+  const draft = await captureSkillDraft(userId, String(conversation))
+  if (!draft.name) {
+    return reply.status(422).send({ error: 'No reusable procedure found in the conversation' })
+  }
+  const draftId = await saveDraft(userId, draft, session_id)
+  return { draft_id: draftId, ...draft }
+})
+
+app.post('/api/v1/skills/capture/:id/refine', async (request, reply) => {
+  const { instruction } = request.body as any
+  if (!instruction || !String(instruction).trim()) {
+    return reply.status(400).send({ error: 'instruction required' })
+  }
+  const userId = request.user!.userId
+  const { refineSkillDraft } = await import('./skill-capture.service.js')
+  try {
+    const draft = await refineSkillDraft(userId, (request.params as any).id, String(instruction))
+    return draft
+  } catch (err: any) {
+    return reply.status(404).send({ error: err.message })
+  }
+})
+
+app.post('/api/v1/skills/capture/:id/confirm', async (request, reply) => {
+  const userId = request.user!.userId
+  const { confirmSkillDraft } = await import('./skill-capture.service.js')
+  const ok = await confirmSkillDraft(userId, (request.params as any).id)
+  if (!ok) return reply.status(404).send({ error: 'Draft not found or already confirmed' })
+  return { status: 'confirmed' }
+})
+
+app.get('/api/v1/skills/captured', async (request) => {
+  const userId = request.user!.userId
+  const { listCapturedSkills } = await import('./skill-capture.service.js')
+  const status = (request.query as any).status as string | undefined
+  return { skills: await listCapturedSkills(userId, status) }
+})
 }
