@@ -14,6 +14,17 @@ export async function authRouter(app: FastifyInstance) {
     const existing = await prisma.user.findFirst({ where: { displayName: body.username } })
     if (existing) return reply.status(409).send({ error: 'Username taken' })
 
+    // #283: optional email binding at registration — when provided, the
+    // code must verify (purpose=register) before the account is created.
+    const email = body.email ? String(body.email).trim().toLowerCase() : undefined
+    if (email) {
+      const { verifyCode } = await import('./verification.service.js')
+      const ok = await verifyCode(email, String(body.code || ''), 'register')
+      if (!ok) return reply.status(400).send({ error: '验证码无效或已过期' })
+      const taken = await prisma.user.findFirst({ where: { email } })
+      if (taken) return reply.status(409).send({ error: 'Email already bound to another account' })
+    }
+
     const hash = await bcrypt.hash(body.password, 10)
     const id = `user_${Math.random().toString(36).slice(2, 12)}`
     const now = new Date().toISOString()
@@ -24,6 +35,8 @@ export async function authRouter(app: FastifyInstance) {
     await prisma.user.create({
       data: {
         id, displayName, passwordHash: hash, role,
+        email: email ?? null,
+        emailVerified: email ? 1 : 0,
         createdAt: now, updatedAt: now,
       },
     })

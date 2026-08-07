@@ -20,6 +20,9 @@ export function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regCode, setRegCode] = useState('');
+  const [regCodeSent, setRegCodeSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -40,10 +43,34 @@ export function LoginPage() {
     setLoading(true);
     try {
       const session = isRegister
-        ? await api.register({ username, password, displayName })
+        ? await api.register({
+            username,
+            password,
+            displayName,
+            ...(regEmail ? { email: regEmail, code: regCode } : {}),
+          })
         : await api.login(username, password);
       setSession(session);
       navigate(from, { replace: true });
+    } catch (err) {
+      if (err instanceof ApiError) setError(err.messageText);
+      else if (err instanceof Error) setError(err.message);
+      else setError(t('auth.unexpectedError'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSendRegCode = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(regEmail)) {
+      setError(t('auth.invalidEmail', '邮箱格式不正确'));
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      await api.sendVerificationCode(regEmail, 'register');
+      setRegCodeSent(true);
     } catch (err) {
       if (err instanceof ApiError) setError(err.messageText);
       else if (err instanceof Error) setError(err.message);
@@ -186,13 +213,46 @@ export function LoginPage() {
               />
             </div>
           )}
+          {isRegister && (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-text-secondary">
+                {t('auth.registerEmailLabel', '邮箱（可选，推荐）')}
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  type="email"
+                  value={regEmail}
+                  onChange={(e) => setRegEmail(e.target.value)}
+                  placeholder={t('auth.emailPlaceholder', 'you@example.com')}
+                  className="flex-1"
+                  aria-label={t('auth.registerEmailLabel', '邮箱（可选，推荐）')}
+                />
+                {regEmail && !regCodeSent && (
+                  <Button type="button" size="sm" onClick={handleSendRegCode} isLoading={loading} className="shrink-0">
+                    {t('auth.sendCode', '发送验证码')}
+                  </Button>
+                )}
+              </div>
+              {regCodeSent && (
+                <Input
+                  value={regCode}
+                  onChange={(e) => setRegCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder={t('auth.codePlaceholder', '6 位验证码')}
+                  className="mt-1"
+                />
+              )}
+              {regCodeSent && (
+                <p className="text-xs text-text-tertiary">{t('auth.registerEmailHint', '验证后可用该邮箱登录和找回密码')}</p>
+              )}
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-text-secondary">{t('auth.username')}</label>
-            <Input type="text" required value={username} onChange={(e) => setUsername(e.target.value)} />
+            <Input type="text" required value={username} onChange={(e) => setUsername(e.target.value)} aria-label={t('auth.username')} />
           </div>
           <div>
             <label className="block text-sm font-medium text-text-secondary">{t('auth.password')}</label>
-            <Input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+            <Input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} aria-label={t('auth.password')} />
           </div>
           <Button type="submit" isLoading={loading} className="w-full">
             {isRegister ? t('common.register') : t('common.login')}
