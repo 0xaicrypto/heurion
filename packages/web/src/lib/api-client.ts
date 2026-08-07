@@ -244,6 +244,13 @@ class ApiClient {
     return this.fetch('/api/v1/auth/bind-email', { method: 'POST', body: JSON.stringify({ email, code }) });
   }
 
+  async resetPassword(email: string, code: string, newPassword: string): Promise<{ ok: boolean }> {
+    return this.fetch('/api/v1/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ email, code, new_password: newPassword }),
+    });
+  }
+
   async updateUserProfile(data: Partial<Pick<UserProfile, 'display_name' | 'organization' | 'intended_use'>>): Promise<UserProfile> {
     return this.fetch<UserProfile>('/api/v1/user/profile', {
       method: 'PATCH',
