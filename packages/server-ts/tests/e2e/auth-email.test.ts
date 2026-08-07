@@ -161,6 +161,28 @@ describe('auth email verification (#283)', () => {
     expect(res.statusCode).toBe(400)
   }, 30000)
 
+  test('per-IP send-code cap rejects the 6th send from one IP (#344)', async () => {
+    const app = await getApp()
+    const h = await authHeader()
+    const hj = { ...h, 'content-type': 'application/json' }
+    const ip = '203.0.113.77'
+    const stamp = Date.now()
+
+    let accepted = 0
+    let rejected = false
+    for (let i = 0; i < 8; i++) {
+      const res = await app.inject({
+        method: 'POST', url: '/api/v1/auth/send-code',
+        headers: { ...hj, 'x-forwarded-for': ip },
+        payload: JSON.stringify({ email: `ip_${stamp}_${i}@example.com`, purpose: 'bind' }),
+      })
+      if (res.statusCode === 200) accepted++
+      if (res.statusCode === 400) rejected = true
+    }
+    expect(accepted).toBe(5)
+    expect(rejected).toBe(true)
+  }, 30000)
+
   test('reset-password flow resets and lets the new password login', async () => {
     const app = await getApp()
     const h = await authHeader()

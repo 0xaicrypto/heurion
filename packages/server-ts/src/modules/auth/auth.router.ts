@@ -89,7 +89,7 @@ export async function authRouter(app: FastifyInstance) {
     const { email, purpose } = request.body as any
     const { sendVerificationCode } = await import('./verification.service.js')
     try {
-      const res = await sendVerificationCode(String(email || ''), (String(purpose || 'bind') as 'bind' | 'register' | 'reset'))
+      const res = await sendVerificationCode(String(email || ''), (String(purpose || 'bind') as 'bind' | 'register' | 'reset'), request.ip)
       return res
     } catch (err: any) {
       return reply.status(400).send({ error: err.message || 'Failed to send code' })

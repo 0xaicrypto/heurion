@@ -9,6 +9,10 @@ import prisma from '../../common/prisma.js'
 const CODE_TTL_MS = 10 * 60 * 1000
 const RESEND_THROTTLE_MS = 60 * 1000
 const MAX_ATTEMPTS = 5
+// #344: per-IP guard — at most 5 send-code calls per 10 minutes per IP,
+// independent of target, so an attacker cannot spray many mailboxes.
+const IP_WINDOW_MS = 10 * 60 * 1000
+const IP_MAX_SENDS = 5
 const PURPOSES = ['register', 'bind', 'reset'] as const
 export type VerificationPurpose = (typeof PURPOSES)[number]
 
@@ -51,7 +55,7 @@ async function deliverEmail(email: string, code: string, purpose: string): Promi
 }
 
 /** Send a code (throttled). Throws on invalid input / throttle / send failure. */
-export async function sendVerificationCode(email: string, purpose: VerificationPurpose): Promise<{ ok: true; expires_in: number }> {
+export async function sendVerificationCode(email: string, purpose: VerificationPurpose, ip?: string): Promise<{ ok: true; expires_in: number }> {
   const target = normalizeEmail(email)
   if (!isValidEmail(target)) throw new Error('Invalid email')
   if (!PURPOSES.includes(purpose)) throw new Error('Invalid purpose')
@@ -66,6 +70,19 @@ export async function sendVerificationCode(email: string, purpose: VerificationP
     throw new Error('请稍后再试（60 秒内只能发送一次）')
   }
 
+  // #344: per-IP cap — reject when this IP sent too many codes recently.
+  if (ip) {
+    const recentByIp = await (prisma as any).verificationCode.count({
+      where: {
+        ip,
+        createdAt: { gte: new Date(now - IP_WINDOW_MS).toISOString() },
+      },
+    })
+    if (recentByIp >= IP_MAX_SENDS) {
+      throw new Error('发送过于频繁，请稍后再试')
+    }
+  }
+
   const code = generateCode()
   await (prisma as any).verificationCode.create({
     data: {
@@ -74,6 +91,7 @@ export async function sendVerificationCode(email: string, purpose: VerificationP
       purpose,
       expiresAt: new Date(now + CODE_TTL_MS).toISOString(),
       createdAt: new Date(now).toISOString(),
+      ip: ip || null,
     },
   })
   await deliverEmail(target, code, purpose)
