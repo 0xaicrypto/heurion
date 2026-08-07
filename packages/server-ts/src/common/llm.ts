@@ -1,5 +1,12 @@
-// DeepSeek LLM client — OpenAI-compatible Chat Completions API
-const DEEPSEEK_BASE = 'https://api.deepseek.com/v1'
+// DeepSeek LLM client — OpenAI-compatible Chat Completions API.
+// #202: the whole file honors DEFAULT_LLM_PROVIDER — when set to
+// `opencode`, traffic goes to the OpenCode Go gateway with its own key
+// (chat.router and friends use these helpers, so the provider switch must
+// cover them, not just resolveChatProvider).
+const LLM_PROVIDER = (process.env.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase()
+const DEEPSEEK_BASE = LLM_PROVIDER === 'opencode'
+  ? 'https://opencode.ai/zen/go/v1'
+  : 'https://api.deepseek.com/v1'
 export const FRIENDLY_LLM_ERROR = '服务暂时不可用，请稍后重试'
 
 /**
@@ -305,9 +312,11 @@ export async function* deepseekStream(
 
 export function getApiKey(): string {
   // Hard-coded keys are forbidden — the key MUST come from the environment.
-  const key = process.env.DEEPSEEK_API_KEY
+  const key = LLM_PROVIDER === 'opencode'
+    ? process.env.OPENCODE_API_KEY
+    : process.env.DEEPSEEK_API_KEY
   if (!key) {
-    throw new Error('DEEPSEEK_API_KEY is not configured')
+    throw new Error(`${LLM_PROVIDER === 'opencode' ? 'OPENCODE_API_KEY' : 'DEEPSEEK_API_KEY'} is not configured`)
   }
   return key
 }
