@@ -4,7 +4,7 @@ import { render } from '@/test/render';
 import { LoginPage } from './login';
 import { useAuthStore } from '@/stores/auth';
 
-vi.mock('@/lib/api-client', () => ({
+vi.mock('@/lib/api', () => ({
   api: {
     sendVerificationCode: vi.fn().mockResolvedValue({ ok: true }),
     resetPassword: vi.fn().mockResolvedValue({ ok: true }),
@@ -64,7 +64,7 @@ describe('LoginPage reset-password flow', () => {
   });
 
   it('register with email sends a code and submits email+code', async () => {
-    const { api } = await import('@/lib/api-client');
+    const { api } = await import('@/lib/api');
     render(<LoginPage />, { initialEntries: ['/login?mode=register'] });
 
     fireEvent.change(screen.getByLabelText('Email (optional, recommended)'), { target: { value: 'newdoc@example.com' } });

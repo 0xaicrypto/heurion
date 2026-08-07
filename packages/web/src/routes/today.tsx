@@ -8,7 +8,7 @@ import { PendingIngestionsWidget } from '@/components/today/PendingIngestionsWid
 import { EmailBindBanner } from '@/components/EmailBindCard';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { useAuthStore } from '@/stores/auth';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import type { AgentState, Patient, TimelineEvent } from '@/lib/types';
 import { Alert, Button, Card, Skeleton } from '@/components/ui';
 

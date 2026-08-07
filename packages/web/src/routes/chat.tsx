@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Paperclip, Copy, Check, Download, FileText, Plus, X, RefreshCw, RotateCcw, Quote } from 'lucide-react';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import type { LlmStatus } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore, type ChatMessage } from '@/stores/chat';

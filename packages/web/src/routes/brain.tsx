@@ -7,7 +7,7 @@ import { MemoryHealthPanel } from '@/components/brain/MemoryHealthPanel';
 import { IngestionInbox } from '@/components/brain/IngestionInbox';
 import { RecentActivityFeed } from '@/components/brain/RecentActivityFeed';
 import { ManualMemoryAdd } from '@/components/brain/ManualMemoryAdd';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import type { BrainStats } from '@/lib/types';
 
 export function BrainPage({ embedded = false }: { embedded?: boolean }) {

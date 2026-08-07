@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Brain, ClipboardCopy, Clock, GitGraph, Pill } from 'lucide-react';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 
 interface MemoryNode {

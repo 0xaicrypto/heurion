@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ScrollText } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Badge, Card, Skeleton } from '@/components/ui';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/utils';
 import type { AuditLogEntry } from '@/lib/types';
 

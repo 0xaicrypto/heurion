@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { MessageSquare, Activity, BookOpen, Brain, ArrowRight, Layers, Clock, Zap } from 'lucide-react';
 import { Card, Skeleton } from '@/components/ui';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
 
 interface MemoryStats {

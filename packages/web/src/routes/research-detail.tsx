@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, CalendarDays, Check, FlaskConical, Plus, Upload, X } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { Patient } from '@/lib/types';
 

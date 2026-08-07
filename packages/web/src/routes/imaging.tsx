@@ -9,7 +9,7 @@ import {
   Upload,
   Zap,
 } from 'lucide-react';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { Alert, Button, Card, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
 

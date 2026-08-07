@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check, KeyRound, Shield, UserX, UserCheck, X } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import type { AdminUser } from '@/lib/types';
 import { Alert, Skeleton, Badge } from '@/components/ui';
 import { cn } from '@/lib/utils';

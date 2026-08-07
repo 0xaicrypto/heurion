@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import type { ChatSession } from '@/lib/types';
 import { Button, Input } from '@/components/ui';
 

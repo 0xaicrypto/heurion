@@ -4,7 +4,7 @@ import { useParams } from 'react-router-dom';
 import { Check, FileText, History, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { Alert, Badge, Button, Card, Input, Skeleton, Textarea } from '@/components/ui';
 import { PatientTabs } from '@/routes/patients';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import type { MedicalRecordEntry, MedicalRecordEntryType } from '@/lib/types';
 import { cn } from '@/lib/utils';
 

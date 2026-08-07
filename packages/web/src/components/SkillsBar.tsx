@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Cpu, X } from 'lucide-react';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 interface SkillInfo {

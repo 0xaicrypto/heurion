@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, ApiError } from './api-client';
+import { api, ApiError } from './api';
 import type { ApprovalRequest, AuditLogEntry, IngestionJob, MedicalRecordEntry } from './types';
 
 interface MockResponse {

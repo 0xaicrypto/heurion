@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { useChatStore, type ChatMessage } from '@/stores/chat';
 
-vi.mock('@/lib/api-client', () => ({
+vi.mock('@/lib/api', () => ({
   api: {
     sendChatFull: vi.fn(async function* () {
       yield { type: 'final_answer_chunk', text: 'done' };
@@ -50,7 +50,7 @@ describe('chat store — regenerate (§10.3 #220)', () => {
     const store = useChatStore.getState();
     store.getOrCreate('s1');
     // Force an error path: make the stream throw.
-    const { api } = await import('@/lib/api-client');
+    const { api } = await import('@/lib/api');
     (api.sendChatFull as any).mockImplementationOnce(async function* () {
       yield 'boom';
       throw new Error('llm down');

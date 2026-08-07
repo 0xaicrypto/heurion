@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 
 export interface PluginUIRegistration {
   pluginId: string;

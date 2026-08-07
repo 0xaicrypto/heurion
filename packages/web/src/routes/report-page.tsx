@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { FileDown, FileText } from 'lucide-react';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { Alert, Button, Card, Skeleton, Textarea } from '@/components/ui';
 import type { PatientDetail } from '@/lib/types';
 

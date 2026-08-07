@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import { render } from '@/test/render';
 import { PendingIngestionsWidget } from './PendingIngestionsWidget';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import i18n from '@/i18n';
 
 interface MockResponse {

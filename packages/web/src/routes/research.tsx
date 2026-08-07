@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, FlaskConical } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Button, Input, Card, Badge, Skeleton } from '@/components/ui';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 interface Study {

@@ -4,7 +4,7 @@ import { ArrowLeft, Save } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { Alert, Button, Card, Input, Skeleton } from '@/components/ui';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 interface SchemaProperty {

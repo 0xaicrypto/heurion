@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { FileText, Upload, ClipboardList, X, Loader2, CheckCircle2, XCircle } from 'lucide-react';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 import type { IngestionJob, IngestionJobStatus } from '@/lib/types';
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import { Button, Card, Skeleton, Badge, Input, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { EmptyState } from '@/components/ui/EmptyState';

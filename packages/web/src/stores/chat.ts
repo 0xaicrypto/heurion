@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { api } from '@/lib/api-client';
+import { api } from '@/lib/api';
 import type { ChatStreamChunk, SendChatOptions } from '@/lib/types';
 
 export interface ChatMessage {

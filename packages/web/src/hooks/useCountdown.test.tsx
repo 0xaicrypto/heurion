@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { render } from '@/test/render';
-import { ResendControl } from '@/hooks/useCountdown';
+import { ResendControl } from '@/components/ResendControl';
 
-vi.mock('@/lib/api-client', () => ({ api: {}, ApiError: class ApiError extends Error {} }));
+vi.mock('@/lib/api', () => ({ api: {}, ApiError: class ApiError extends Error {} }));
 
 describe('ResendControl (#352)', () => {
   beforeEach(() => {

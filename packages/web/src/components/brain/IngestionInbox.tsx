@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Brain, Check, ExternalLink, Inbox, X } from 'lucide-react';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 import { RejectReasonDialog } from './RejectReasonDialog';
 import type { ApprovalRequest, MedicalRecordEntry, MemoryProposal } from '@/lib/types';

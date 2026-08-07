@@ -11,7 +11,7 @@ import { StreamingLlmContent } from '@/components/LlmContent';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { useChatStore } from '@/stores/chat';
 import type { MemoryFinding, MemoryProjection, Patient, PatientDetail } from '@/lib/types';
 

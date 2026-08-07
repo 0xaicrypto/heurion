@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { ArrowLeft, ChevronLeft, ChevronRight, Image as ImageIcon, Layers } from 'lucide-react';
-import { api, ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
