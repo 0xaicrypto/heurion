@@ -115,3 +115,32 @@ describe('doc-* session history is queryable (#297)', () => {
     expect(body.messages.some((m: any) => m.content.includes('请修改文档标题'))).toBe(true)
   })
 })
+
+describe('writing sessions never leak into memory extraction (bug repro)', () => {
+  test('doc-* session content does not become global facts', async () => {
+    const app = await getApp()
+    const h = await authHeader()
+    const hj = { ...h, 'content-type': 'application/json' }
+    const docId = `doc_leak_${Date.now()}`
+
+    // A long writing conversation that would normally trigger compaction
+    // (history >= HISTORY_TURNS*2 = 40 events).
+    for (let i = 0; i < 25; i++) {
+      const res = await app.inject({
+        method: 'POST', url: '/api/v1/agent/chat',
+        headers: hj,
+        payload: JSON.stringify({ text: `写作内容片段 ${i}：关于实验设计的详细讨论`, session_id: docId }),
+      })
+      expect(res.statusCode).toBe(200)
+    }
+
+    // Core leak guard: the doc session must have no evolution/compaction
+    // events, and no memory proposals may have been created from it.
+    const userId = await (await import('../setup.js')).getAuthUserId()
+    const events = (await import('../../src/modules/chat/user-context.js')).getUserContext(userId)
+      .eventLog.query({ sessionId: docId })
+    expect(events.filter((e: any) => e.eventType === 'evolution')).toHaveLength(0)
+    const proposals = await (prisma as any).memoryProposal.findMany({})
+    expect(proposals.some((p: any) => p.content.includes('写作内容片段'))).toBe(false)
+  }, 60000)
+})

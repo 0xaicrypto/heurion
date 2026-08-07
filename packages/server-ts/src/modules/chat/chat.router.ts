@@ -538,7 +538,11 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
         send({ type: 'compaction_completed', history_tokens: restoredTokens, history_budget: maxHistoryTokens, history_turns: historyTurns })
       }
       const inFlightCompaction = getInFlightCompaction(userId, sid)
-      const shouldTrigger = omittedTurns > 0 || history.length >= historyTurns * 2
+      // Writing sessions (doc-*) are workspaces, not clinical dialogues —
+      // their content must never leak into memory extraction (observed:
+      // doc content became global facts that patient chats then cited).
+      const isWritingSession = sid.startsWith('doc-')
+      const shouldTrigger = !isWritingSession && (omittedTurns > 0 || history.length >= historyTurns * 2)
       if (shouldTrigger && historyMessages.length > 0) {
         const oldestRetainedIdx = (history[historyMessages.length - 1] as any)?.idx ?? 0
         send({ type: 'compaction_started' })
@@ -792,7 +796,9 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
       })
 
       // #2: Extract takeaway + evolve facts + analyze patient chat (async evolution worker)
-      if (opts.evolutionQueue) {
+      // Writing sessions (doc-*) are excluded — their content must not
+      // become global memory (leak into patient chats).
+      if (opts.evolutionQueue && !sid.startsWith('doc-')) {
         opts.evolutionQueue.add({ userId, sessionId: sid, userMessage: body.text, patientHash: patientHash || undefined }).catch(() => {})
       }
 
