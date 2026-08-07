@@ -44,6 +44,11 @@ jobs:
             sudo tail -100 /root/.pm2/logs/heurion-staging-error.log 2>/dev/null | grep -iE "error|401|invalid|fail" | tail -6 || tail -100 ~/.pm2/logs/heurion-staging-error.log 2>/dev/null | grep -iE "error|401|invalid|fail" | tail -6 || true;
             echo "=== staging out log (chat) ===";
             sudo tail -200 /root/.pm2/logs/heurion-staging-out.log 2>/dev/null | grep -iE "chat|stream|turn|llm|deepseek|token" | tail -10 || tail -200 ~/.pm2/logs/heurion-staging-out.log 2>/dev/null | grep -iE "chat|stream|turn|llm|deepseek|token" | tail -10 || true;
+            echo "=== live chat probe ===";
+            TOKEN=$(curl -s -X POST http://localhost:8002/api/v1/auth/login -H "Content-Type: application/json" -d '{"email":"admin@heurion.org","password":"admin1234"}' | grep -oE '"[at]oken[^,]*"' | head -1 | grep -oE 'eyJ[A-Za-z0-9._-]+' | head -1);
+            echo "token: ${TOKEN:0:12}...";
+            curl -sN -m 60 -X POST http://localhost:8002/api/v1/agent/chat -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"text":"ping","patient_hash":"__probe__"}' 2>/dev/null | head -c 600;
+            echo;
             echo "=== staging env ===";
             grep -E "DEFAULT_LLM_PROVIDER|DEFAULT_LLM_MODEL|OPENCODE_API_KEY" /root/heurion/packages/server-ts/.env 2>/dev/null || grep -E "DEFAULT_LLM_PROVIDER|DEFAULT_LLM_MODEL|OPENCODE_API_KEY" ~/heurion/packages/server-ts/.env 2>/dev/null | sed 's/OPENCODE_API_KEY=.*/OPENCODE_API_KEY=***/' || true;
             echo "=== df ===";
