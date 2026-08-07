@@ -135,6 +135,9 @@ fi
 
 # ═══ 4. AI Chat Analysis ═══
 CHAT1=$(curl -sf -N -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d "{\"text\":\"分析CT和实验室结果，简短回答\",\"patient_hash\":\"$HASH\",\"attachments\":[\"$CTR\",\"$LAB\"]}" 2>/dev/null)
+if ! echo "$CHAT1" | grep -q 'turn_complete'; then
+  echo "  [chat dump] $(echo "$CHAT1" | head -c 800)"
+fi
 check "4.1 Chat SSE complete" "$(echo "$CHAT1" | grep -q 'turn_complete' && echo ok || echo 'FAIL')"
 sleep 3
 check "4.2 Chat→Profile update" "$(curl -sf "$BASE/api/v1/dicom/patients/$HASH/detail" -H "$H" | je "(j.chief_complaint||'').length>200?'ok':'FAIL:'+String((j.chief_complaint||'').length)+'chars'" 2>/dev/null)"
