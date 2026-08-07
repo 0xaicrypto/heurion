@@ -8,12 +8,12 @@ describe('Auth', () => {
     const res = await app.inject({
       method: 'POST', url: '/api/v1/auth/register',
       headers: { 'content-type': 'application/json' },
-      payload: { username, password: 'secure123', display_name: 'Test User' },
+      payload: { username, password: 'secure123', display_name: `Test User ${Math.random().toString(36).slice(2, 6)}` },
     })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.payload)
     expect(body.jwt_token).toBeTruthy()
-    expect(body.display_name).toBe('Test User')
+    expect(body.display_name).toMatch(/^Test User /)
   })
 
   test('register duplicate username fails', async () => {

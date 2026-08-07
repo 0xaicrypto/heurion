@@ -42,7 +42,17 @@ export async function authRouter(app: FastifyInstance) {
 
   app.post('/api/v1/auth/login', async (request, reply) => {
     const body = loginSchema.parse(request.body)
-    const user = await prisma.user.findFirst({ where: { displayName: body.username } })
+    // #283: identifier lookup — email OR phone OR displayName.
+    const identifier = String(body.username || '').trim().toLowerCase()
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { displayName: body.username },
+          { email: identifier },
+          { phone: body.username },
+        ],
+      },
+    })
     if (!user || !user.passwordHash) return reply.status(401).send({ error: 'Invalid credentials' })
     if (user.disabledAt) return reply.status(403).send({ error: 'Account disabled' })
 
@@ -58,6 +68,69 @@ export async function authRouter(app: FastifyInstance) {
       role: user.role,
       display_name: user.displayName,
     }
+  })
+
+  // ── #283: email verification (send code / bind / reset) ────────────
+
+  app.post('/api/v1/auth/send-code', async (request, reply) => {
+    const { email, purpose } = request.body as any
+    const { sendVerificationCode } = await import('./verification.service.js')
+    try {
+      const res = await sendVerificationCode(String(email || ''), (String(purpose || 'bind') as 'bind' | 'register' | 'reset'))
+      return res
+    } catch (err: any) {
+      return reply.status(400).send({ error: err.message || 'Failed to send code' })
+    }
+  })
+
+  app.post('/api/v1/auth/bind-email', { preHandler: [authGuard] }, async (request, reply) => {
+    const { email, code } = request.body as any
+    const { verifyCode, isValidEmail } = await import('./verification.service.js')
+    if (!isValidEmail(String(email || ''))) return reply.status(400).send({ error: 'Invalid email' })
+    const ok = await verifyCode(String(email), String(code || ''), 'bind')
+    if (!ok) return reply.status(400).send({ error: '验证码无效或已过期' })
+
+    const userId = request.user!.userId
+    const taken = await prisma.user.findFirst({ where: { email: String(email).trim().toLowerCase() } })
+    if (taken && taken.id !== userId) return reply.status(409).send({ error: 'Email already bound to another account' })
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { email: String(email).trim().toLowerCase(), emailVerified: 1, updatedAt: new Date().toISOString() },
+    })
+    return { ok: true, email: String(email).trim().toLowerCase(), email_verified: true }
+  })
+
+  app.post('/api/v1/auth/bind-phone', { preHandler: [authGuard] }, async (request, reply) => {
+    const { phone } = request.body as any
+    if (!phone || !/^\+?[0-9]{6,15}$/.test(String(phone))) {
+      return reply.status(400).send({ error: 'Invalid phone' })
+    }
+    const userId = request.user!.userId
+    const taken = await prisma.user.findFirst({ where: { phone: String(phone) } })
+    if (taken && taken.id !== userId) return reply.status(409).send({ error: 'Phone already bound to another account' })
+    await prisma.user.update({
+      where: { id: userId },
+      data: { phone: String(phone), updatedAt: new Date().toISOString() },
+    })
+    return { ok: true, phone: String(phone) }
+  })
+
+  app.post('/api/v1/auth/reset-password', async (request, reply) => {
+    const { email, code, new_password } = request.body as any
+    const { verifyCode } = await import('./verification.service.js')
+    if (!new_password || String(new_password).length < 8) {
+      return reply.status(400).send({ error: 'Password must be at least 8 characters' })
+    }
+    const ok = await verifyCode(String(email || ''), String(code || ''), 'reset')
+    if (!ok) return reply.status(400).send({ error: '验证码无效或已过期' })
+
+    const user = await prisma.user.findFirst({ where: { email: String(email).trim().toLowerCase() } })
+    if (!user) return reply.status(404).send({ error: 'No account with this email' })
+
+    const hash = await bcrypt.hash(String(new_password), 10)
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hash, updatedAt: new Date().toISOString() } })
+    return { ok: true }
   })
 
   app.get('/api/v1/user/profile', { preHandler: [authGuard] }, async (request) => {

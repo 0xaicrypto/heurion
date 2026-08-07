@@ -94,7 +94,7 @@ describe('Sidecar feedback — API', () => {
       method: 'POST',
       url: '/api/v1/auth/register',
       headers: { 'content-type': 'application/json' },
-      payload: { username, password: 'test123456', display_name: 'Sidecar User' },
+      payload: { username, password: 'test123456', display_name: `Sidecar User ${Math.random().toString(36).slice(2, 6)}` },
     })
     const token = JSON.parse(register.payload).jwt_token
     return { token, headers: { authorization: `Bearer ${token}` } }
