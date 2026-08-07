@@ -5,6 +5,7 @@ import { Activity, AlertCircle, FilePlus, FileText, UserPlus } from 'lucide-reac
 import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { PendingIngestionsWidget } from '@/components/today/PendingIngestionsWidget';
+import { EmailBindBanner } from '@/components/EmailBindCard';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/lib/api-client';
@@ -22,10 +23,16 @@ export function TodayPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newPatientOpen, setNewPatientOpen] = useState(false);
+  const [profile, setProfile] = useState<{ email?: string } | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   const hour = new Date().getHours();
   const timeGreeting = hour < 12 ? t('today.morning') : hour < 18 ? t('today.afternoon') : t('today.evening');
   const greeting = t('today.greeting', { time: timeGreeting, name: displayName || '' });
+
+  useEffect(() => {
+    api.getUserProfile().then(setProfile).catch(() => {});
+  }, []);
 
   useEffect(() => {
     Promise.all([
@@ -46,6 +53,13 @@ export function TodayPage() {
         </header>
 
         <main className="space-y-6 p-6">
+          {/* #285: non-blocking email binding prompt for users without email */}
+          {!profile?.email && !bannerDismissed && (
+            <EmailBindBanner
+              onDismiss={() => setBannerDismissed(true)}
+              onBound={(email) => setProfile({ email })}
+            />
+          )}
           <div>
             <h2 className="text-2xl font-bold text-text-primary">{greeting}</h2>
             <p className="text-text-secondary">{t('today.subtitle')}</p>

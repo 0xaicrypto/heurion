@@ -234,6 +234,16 @@ class ApiClient {
     return this.fetch<UserProfile>('/api/v1/user/profile');
   }
 
+  /* ────────────────────────── email verification (#285) ────────── */
+
+  async sendVerificationCode(email: string, purpose: 'register' | 'bind' | 'reset'): Promise<{ ok: boolean; expires_in: number }> {
+    return this.fetch('/api/v1/auth/send-code', { method: 'POST', body: JSON.stringify({ email, purpose }) });
+  }
+
+  async bindEmail(email: string, code: string): Promise<{ ok: boolean; email: string; email_verified: boolean }> {
+    return this.fetch('/api/v1/auth/bind-email', { method: 'POST', body: JSON.stringify({ email, code }) });
+  }
+
   async updateUserProfile(data: Partial<Pick<UserProfile, 'display_name' | 'organization' | 'intended_use'>>): Promise<UserProfile> {
     return this.fetch<UserProfile>('/api/v1/user/profile', {
       method: 'PATCH',

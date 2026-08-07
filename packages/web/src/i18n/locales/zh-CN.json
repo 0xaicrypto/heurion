@@ -102,7 +102,18 @@
     "displayNamePlaceholder": "可选",
     "alreadyHaveAccount": "已有账户？",
     "noAccount": "还没有账户？",
-    "unexpectedError": "发生意外错误"
+    "unexpectedError": "发生意外错误",
+    "invalidEmail": "邮箱格式不正确",
+    "emailPlaceholder": "you@example.com",
+    "sendCode": "发送验证码",
+    "codeSent": "验证码已发送（10 分钟内有效）",
+    "codePlaceholder": "6 位验证码",
+    "confirm": "确认绑定",
+    "bindBanner": "绑定邮箱后可以找回密码",
+    "bindBannerHint": "非必填，随时可以在设置中完成",
+    "verified": "已验证",
+    "emailBinding": "绑定邮箱",
+    "emailBindingHint": "绑定后可凭邮箱登录与找回密码（手机为可选字段）"
   },
   "today": {
     "title": "今日概览",

@@ -102,7 +102,18 @@
     "displayNamePlaceholder": "Optional",
     "alreadyHaveAccount": "Already have an account?",
     "noAccount": "Don't have an account?",
-    "unexpectedError": "An unexpected error occurred"
+    "unexpectedError": "An unexpected error occurred",
+    "invalidEmail": "Invalid email format",
+    "emailPlaceholder": "you@example.com",
+    "sendCode": "Send code",
+    "codeSent": "Code sent (valid 10 min)",
+    "codePlaceholder": "6-digit code",
+    "confirm": "Confirm binding",
+    "bindBanner": "Bind an email to recover your password",
+    "bindBannerHint": "Optional — you can do this later in Settings",
+    "verified": "verified",
+    "emailBinding": "Bind email",
+    "emailBindingHint": "Log in and recover your password with this email (phone is optional)"
   },
   "today": {
     "title": "Today",

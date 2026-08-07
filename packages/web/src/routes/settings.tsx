@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, X, Zap, Key, Server, RefreshCw, Activity, BarChart3 } from 'lucide-react';
+import { Check, X, Zap, Key, Server, RefreshCw, Activity, BarChart3, Mail } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api-client';
+import { EmailBindCard } from '@/components/EmailBindCard';
 import type { LlmStatus, LlmTestResult, ProviderKind, UserProfile, LlmUpdateInput, QueueMetrics, LlmCostDashboard } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
 import { Button, Input, Card, Badge, Alert, Skeleton } from '@/components/ui';
@@ -133,19 +134,35 @@ function ProfileSection() {
       <h2 className="text-lg font-semibold text-text-primary">{t('settings.profile')}</h2>
 
       {profile && (
-        <Card className="p-4">
-          <div className="mb-1 text-xs text-text-tertiary">User ID</div>
-          <div className="font-mono text-sm text-text-secondary">{profile.user_id}</div>
-          {profile.status && (
-            <Badge className="mt-2" variant={profile.status === 'active' ? 'success' : 'warning'}>
-              {profile.status}
-            </Badge>
-          )}
-          {profile.tier && (
-            <Badge className="ml-2">{profile.tier}</Badge>
-          )}
-        </Card>
+      <Card className="p-4">
+        <div className="mb-1 text-xs text-text-tertiary">User ID</div>
+        <div className="font-mono text-sm text-text-secondary">{profile.user_id}</div>
+        {profile.status && (
+          <Badge className="mt-2" variant={profile.status === 'active' ? 'success' : 'warning'}>
+            {profile.status}
+          </Badge>
+        )}
+        {profile.tier && (
+          <Badge className="ml-2">{profile.tier}</Badge>
+        )}
+        {profile.email && (
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-text-secondary">
+            <Mail size={12} />
+            {profile.email}
+            {profile.email_verified ? (
+              <span className="text-success">{t('auth.verified', '已验证')}</span>
+            ) : null}
+          </div>
+        )}
+      </Card>
       )}
+
+      {/* #285: persistent email binding entry */}
+      <Card className="space-y-2 p-4">
+        <label className="block text-sm font-medium text-text-secondary">{t('auth.emailBinding', '绑定邮箱')}</label>
+        <p className="text-xs text-text-tertiary">{t('auth.emailBindingHint', '绑定后可凭邮箱登录与找回密码（手机为可选字段）')}</p>
+        <EmailBindCard compact onBound={() => api.getUserProfile().then(setProfile).catch(() => {})} />
+      </Card>
 
       <Card className="space-y-4 p-4">
         <div>

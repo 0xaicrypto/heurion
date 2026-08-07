@@ -78,6 +78,7 @@ export interface UserProfile {
   created_at: string;
   updated_at?: string;
   email?: string;
+  email_verified?: boolean;
   organization?: string;
   intended_use?: string;
   status?: string;
