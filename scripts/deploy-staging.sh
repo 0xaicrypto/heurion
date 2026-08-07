@@ -65,7 +65,12 @@ rm -f staging.db staging.db-journal 2>/dev/null || true
 npx prisma db push --accept-data-loss
 
 pm2 delete heurion-staging 2>/dev/null || true
+pkill -f "tsx src/main.ts" 2>/dev/null || true
 kill $(lsof -ti:8002) 2>/dev/null || fuser -k 8002/tcp 2>/dev/null || true
+for i in $(seq 1 10); do
+  if ! curl -fsS http://localhost:8002/healthz >/dev/null 2>&1; then break; fi
+  sleep 2
+done
 sleep 2
 SERVER_PORT=8002 pm2 start npx --name heurion-staging -- tsx src/main.ts
 pm2 save
