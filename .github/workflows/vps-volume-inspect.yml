@@ -42,6 +42,8 @@ jobs:
             sudo fuser 8002/tcp 2>/dev/null || true;
             echo "=== staging LLM errors ===";
             sudo tail -100 /root/.pm2/logs/heurion-staging-error.log 2>/dev/null | grep -iE "error|401|invalid|fail" | tail -6 || tail -100 ~/.pm2/logs/heurion-staging-error.log 2>/dev/null | grep -iE "error|401|invalid|fail" | tail -6 || true;
+            echo "=== staging out log (chat) ===";
+            sudo tail -200 /root/.pm2/logs/heurion-staging-out.log 2>/dev/null | grep -iE "chat|stream|turn|llm|deepseek|token" | tail -10 || tail -200 ~/.pm2/logs/heurion-staging-out.log 2>/dev/null | grep -iE "chat|stream|turn|llm|deepseek|token" | tail -10 || true;
             echo "=== staging env ===";
             grep -E "DEFAULT_LLM_PROVIDER|DEFAULT_LLM_MODEL|OPENCODE_API_KEY" /root/heurion/packages/server-ts/.env 2>/dev/null || grep -E "DEFAULT_LLM_PROVIDER|DEFAULT_LLM_MODEL|OPENCODE_API_KEY" ~/heurion/packages/server-ts/.env 2>/dev/null | sed 's/OPENCODE_API_KEY=.*/OPENCODE_API_KEY=***/' || true;
             echo "=== df ===";
