@@ -217,7 +217,9 @@ jobs:
           LOG_LEVEL=INFO
           SERVER_SECRET=${SERVER_SECRET}
           CORS_ALLOW_ORIGINS=https://${HOSTNAME}
-          DEFAULT_LLM_PROVIDER=gemini
+          DEFAULT_LLM_PROVIDER=deepseek
+          # #202: runtime model selection — deepseek-v4-flash via DEEPSEEK_CHAT_MODEL.
+          DEEPSEEK_CHAT_MODEL=deepseek-v4-flash
           GEMINI_API_KEY=${GEMINI_API_KEY}
           DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
           OPENAI_API_KEY=${OPENAI_API_KEY}
