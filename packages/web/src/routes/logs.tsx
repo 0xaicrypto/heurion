@@ -46,7 +46,8 @@ function statusVariant(status: string): 'default' | 'success' | 'warning' | 'err
   }
 }
 
-export function LogsPage() {
+/** #341: section body — reused by SettingsPage's logs tab. */
+export function LogsSection() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -113,16 +114,7 @@ export function LogsPage() {
     'h-10 rounded-lg border border-border bg-surface-elevated px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
   return (
-    <AppShell>
-      <div className="flex h-full flex-col overflow-y-auto">
-        <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
-          <h1 className="font-semibold text-text-primary">Execution Logs</h1>
-          <Button size="sm" onClick={loadLogs} disabled={loading}>
-            Refresh
-          </Button>
-        </header>
-
-        <main className="space-y-4 p-6">
+    <main className="space-y-4 p-6">
           {error && <Alert>{error}</Alert>}
 
           <Card className="p-4">
@@ -308,7 +300,19 @@ export function LogsPage() {
               )}
             </Card>
           )}
-        </main>
+    </main>
+  );
+}
+
+/** Standalone page — kept for the legacy /app/logs route (redirects to settings tab). */
+export function LogsPage() {
+  return (
+    <AppShell>
+      <div className="flex h-full flex-col overflow-y-auto">
+        <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
+          <h1 className="font-semibold text-text-primary">Execution Logs</h1>
+        </header>
+        <LogsSection />
       </div>
     </AppShell>
   );
