@@ -1141,3 +1141,187 @@ spawn_subagent: {
 | P0（结构） | #303 chat.router 拆分、#347 api-client 拆分 |
 | P1 | #348 类型共享、#349 zod 校验、#350 多 agent UI、#352 认证 UX、#345 恢复文档 |
 | P2 | #346 备份跳过、#351 双栏、#353 compaction、#354 设置页 |
+
+---
+
+## 十八、medical-research 插件设计（外部医学文献访问）
+
+> 目标：为 agent 提供外部医学文献/期刊访问能力。阶段 1（API 版）：PubMed + Europe PMC + ClinicalTrials.gov + 肿瘤变异注释源（OncoKB/CIViC/ClinVar），零浏览器依赖。阶段 2（Kitesurf 版）：期刊/指南页面访问（Kitesurf 技术验证已通过 2026-08-07）。凭证已配置 GitHub Secrets（CLOUDFLARE_ACCOUNT_ID/API_TOKEN），部署脚本已注入。
+
+### 18.1 设计原则
+
+1. **纯 API 版，零浏览器依赖**（阶段 1 不碰 Kitesurf）
+2. **只读工具**（检索/摘要，无写操作）
+3. **走插件系统**（manifest + 审计 + #105 权限），阶段 1 用核心工具 + 开关，阶段 2 转插件化
+4. **复用现有能力**：web-search.service.ts 已有 PubMed API（#254 修过"无结果不写 fact"）
+5. **全部免费无 key**——PubMed/Europe PMC/ClinicalTrials/OncoKB/CIViC/ClinVar 均免费
+
+### 18.2 工具定义
+
+**工具 1：search_medical_web**
+```
+query: string       // 检索词
+max_results: number // 默认 5，最大 10
+scope?: string      // 'literature' | 'trial' | 'guideline'（guideline 留阶段 2）
+→ { found, articles: [{pmid,title,journal,year,url,source}], total?, truncated? }
+```
+行为：按 scope 路由到源（literature→PubMed+Europe PMC 聚合；trial→ClinicalTrials.gov）；**无结果返回 found:false，绝不写记忆（#254）**
+
+**工具 2：fetch_article_summary**
+```
+id: string       // PMID 或 DOI
+id_type: enum    // 'pmid' | 'doi'，默认 pmid
+→ { found, article?: {pmid,title,abstract,journal,year,doi,url}, error? }
+```
+
+**工具 3：search_variant_annotation（肿瘤差异化）**
+```
+variant: string       // 'EGFR p.L858R' 或 'BRAF V600E'
+gene?: string
+source?: 'oncokb'|'civic'|'clinvar'|'all'（默认 all 聚合）
+→ { found, annotations: [{source, gene, variant, clinical_significance, therapy?, evidence?}] }
+```
+**价值**：医生问"这个突变有没有靶向药" → 聚合查询 → 治疗意义——通用 AI 给不了的差异化护城河。
+
+### 18.3 数据源
+
+| 数据源 | 内容 | API | 阶段 |
+|---|---|---|---|
+| PubMed | 生物医学文献 | esearch/esummary/efetch | 阶段 1 ✅ |
+| Europe PMC | 文献 + 开放获取全文 | REST API | 阶段 1 ✅ |
+| ClinicalTrials.gov | 临床试验 | API v2 | 阶段 1 ✅ |
+| OncoKB | 肿瘤靶向变异注释（FDA 获批） | REST API | 阶段 1 ✅ |
+| CIViC | 临床变异解读 | REST API | 阶段 1 ✅ |
+| ClinVar | 遗传变异临床意义 | REST API | 阶段 1 ✅ |
+| bioRxiv/medRxiv | 预印本 | 可选 | 阶段 1 可选 |
+| OpenFDA | 药品标签/不良事件 | 可选 | 阶段 1 可选 |
+| NCCN/ESMO 指南 | 诊疗金标准 | 无 API | 阶段 2（Kitesurf） |
+| UpToDate/Cochrane | 付费临床决策 | 付费 | 阶段 2（凭据） |
+
+**架构**：medical-sources/ 目录（每源一个 provider 类，复用 WebSearchProvider 模式）+ Composite 聚合 + scope 路由；统一返回 MedicalArticle 结构。
+
+### 18.4 与现有系统衔接
+
+1. **复用 PubMed 代码**：medical-sources/ 抽共享 fetch 逻辑
+2. **接入**：阶段 1 核心工具注册 + MEDICAL_RESEARCH_ENABLED 开关；阶段 2 转运行时插件
+3. **权限**：工具标记 readonly → #105 默认 allow；审计记录检索活动（plugin-audit-log 复用）
+4. **记忆边界**：检索结果默认不写记忆；要写走 propose → 人工审核；无结果绝不写 fact
+
+### 18.5 环境变量
+
+```
+MEDICAL_RESEARCH_ENABLED=true
+MEDICAL_RESEARCH_MAX_RESULTS=5
+```
+
+### 18.6 实施步骤与验收
+
+| 步骤 | 内容 | 工作量 |
+|---|---|---|
+| 1 | medical-sources/（pubmed/europepmc/clinicaltrials/oncokb/civic/clinvar） | 1-2 天 |
+| 2 | search_medical_web（scope 路由 + 聚合） | 1 天 |
+| 3 | fetch_article_summary | 半天 |
+| 4 | search_variant_annotation | 1 天 |
+| 5 | 工具注册 + 开关 + 审计 + #105 权限 | 半天 |
+| 6 | 测试（每源 mock + 命中/无结果/DOI/变异） | 1-2 天 |
+
+**总量级：5-7 天**
+
+验收：结构化结果、无结果不写记忆、开关生效、审计、主 agent 可调用、565+ 测试全绿。
+
+### 18.7 阶段 2（Kitesurf）关系
+
+- 阶段 1 工具接口保持稳定；阶段 2 加 visit_medical_site / extract_fulltext（Kitesurf 渲染）
+- 指南/付费源（NCCN/ESMO/UpToDate/Cochrane）留阶段 2 + 凭据管理（Gatekeeper 思想）
+- **阶段 2 可作为付费功能**（商业模式后续细化）：免费版文献/试验/变异；专业版指南/全文/付费源
+
+**关联 issues**：#356（实现）、#299（MCP）、#105（权限）、#254（无结果不写记忆）
+
+---
+
+## 十九、投稿工作流与统计插件（科研闭环高优先级）
+
+> 目标：把"医生发论文"的完整流程做成 Heurion 的科研闭环（选刊 → 统计 → 写作 → 投稿 → 返修）。**投稿工作流作为高优先级推进**；统计工具（SPSS/R/Python/Prism/AI 统计）作为插件加入系统。
+
+### 19.1 投稿全流程（7 步）
+
+```
+1. 选题/检索   → 确认创新点、避免撞题
+2. 实验/数据   → 临床数据收集、统计分析
+3. 写作        → 论文草稿、图表
+4. 选刊        → 匹配期刊、格式要求
+5. 润色        → 语言润色、格式调整
+6. 投稿        → 提交系统、cover letter
+7. 返修/发表   → 审稿意见、proof
+```
+
+### 19.2 统计工具插件（阶段 1）
+
+**决策：统计能力全部插件化**（复用 §15 插件生态 + #105 权限）：
+
+| 插件 | 能力 | 形态 |
+|---|---|---|
+| **stat-python** | 描述统计、t 检验、卡方、生存分析（Kaplan-Meier）、Cox 回归 | 执行面跑 Python（已有 execution 面） |
+| **stat-r** | R 统计（survival/survminer 等专业包） | 执行面跑 R（需装 R 运行时） |
+| **stat-plot** | GraphPad Prism 风格医学图表（KM 曲线、森林图、箱线图） | 基于 render-chart 增强（#176 已有基础） |
+| **stat-ai** | AI 统计助手（数据 → 推荐检验方法 → 生成结果解读） | LLM + stat-python 组合 |
+
+**关键设计**：
+- 每个统计插件 = 独立工具注册（ToolRegistry）+ scope 权限（#105）
+- 输出统一：`{ method, test_stat, p_value, effect_size, interpretation, plot_url? }`
+- 图表走 render-chart 体系（已有 #176）
+- 结果默认不写记忆（走 propose → 人工审核，符合 #254 精神）
+
+### 19.3 投稿工作流功能（高优先级）
+
+**阶段 1（立即做）**：
+
+| 功能 | 说明 | 形态 |
+|---|---|---|
+| **选刊推荐** | 标题/摘要 → 推荐期刊（IF/接受率/审稿周期） | JANE 类（免费 API）+ 期刊数据库 |
+| **Cover letter 生成** | AI 生成投稿信（期刊/研究亮点/原创声明） | writing-editor 增强 |
+| **论文格式模板** | 期刊模板预填充（标题/作者/摘要/参考文献格式） | documents 模块 |
+
+**阶段 2**：
+
+| 功能 | 说明 | 形态 |
+|---|---|---|
+| **审稿意见回复** | point-by-point 回复生成 + 修订说明 | AI 辅助 |
+| **文献引用管理** | Zotero 集成（插入引用/参考文献格式） | 外部集成 |
+| **投稿合规检查** | 利益冲突/伦理声明/作者贡献检查 | 模板 + 校验 |
+
+**远期**：
+
+| 功能 | 说明 | 形态 |
+|---|---|---|
+| **投稿系统对接** | Editorial Manager/ScholarOne 自动化投稿检查 | Kitesurf（阶段 2 浏览器） |
+| **ORCID 集成** | 作者身份、作品关联 | 外部系统 |
+| **审稿模拟** | AI 模拟审稿人给出预审意见 | LLM 工作流 |
+
+### 19.4 与现有模块衔接
+
+- **writing-editor**（899 行）：Cover letter 生成、格式模板落点
+- **documents 模块**：论文草稿、模板
+- **research 模块**（#8-14）：数据 → 统计 → 论文的闭环
+- **execution 面**：跑 Python/R 统计（已有 sidecar-chat-handler）
+- **render-chart**（#176）：医学图表
+- **medical-research 插件**（#356）：文献/选刊数据源
+
+### 19.5 优先级
+
+**高（阶段 1）**：
+1. 选刊推荐（JANE 免费）
+2. Cover letter 生成
+3. stat-python（生存分析/统计检验）
+
+**中（阶段 2）**：
+4. stat-plot（Prism 风格图表）
+5. 审稿意见回复
+6. 论文格式模板
+
+**后（远期）**：
+7. 投稿系统对接（Kitesurf）
+8. Zotero/ORCID 集成
+9. 审稿模拟
+
+**关联 issues**：#356（medical-research）、#176（render-chart）、#8-14（research 模块）
