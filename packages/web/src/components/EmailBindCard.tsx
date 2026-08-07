@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Mail, X, Check } from 'lucide-react';
 import { api } from '@/lib/api-client';
 import { Button, Input } from '@/components/ui';
+import { ResendControl } from '@/hooks/useCountdown';
 
 /**
  * #285: bind an email address — used both as a non-blocking first-login
@@ -64,11 +65,14 @@ export function EmailBindCard({ compact = false, onBound }: { compact?: boolean;
             {busy ? t('common.loading') : t('auth.sendCode', '发送验证码')}
           </Button>
         ) : (
-          <CodeInput onConfirm={handleConfirm} busy={busy} />
+          <>
+            <CodeInput onConfirm={handleConfirm} busy={busy} />
+            <ResendControl onResend={handleSend} busy={busy} />
+          </>
         )}
       </div>
-      {sent && step === 'input' && (
-        <p className="text-xs text-text-tertiary">{t('auth.codeSent', '验证码已发送（10 分钟内有效）')}</p>
+      {sent && step === 'code' && (
+        <p className="text-xs text-text-tertiary">{t('auth.codeSentTo', '验证码已发送至 {{email}}，10 分钟内有效', { email })}</p>
       )}
       {error && <p className="text-xs text-error">{error}</p>}
     </div>

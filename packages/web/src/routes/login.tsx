@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { api, ApiError } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/auth';
 import { Alert, Button, Input } from '@/components/ui';
+import { ResendControl } from '@/hooks/useCountdown';
 
 export function LoginPage() {
   const { t, i18n } = useTranslation();
@@ -169,6 +170,7 @@ export function LoginPage() {
                   </Button>
                 ) : (
                   <>
+                    <p className="text-xs text-text-tertiary">{t('auth.codeSentTo', '验证码已发送至 {{email}}，10 分钟内有效', { email: resetEmail })}</p>
                     <div>
                       <label className="block text-sm font-medium text-text-secondary">{t('auth.codePlaceholder', '6 位验证码')}</label>
                       <Input
@@ -190,6 +192,9 @@ export function LoginPage() {
                     <Button className="w-full" onClick={handleResetPassword} isLoading={loading}>
                       {t('auth.resetPassword', '重置密码')}
                     </Button>
+                    <div className="text-center">
+                      <ResendControl onResend={handleSendReset} busy={loading} />
+                    </div>
                   </>
                 )}
                 <p className="text-center text-sm">
@@ -240,6 +245,12 @@ export function LoginPage() {
                   placeholder={t('auth.codePlaceholder', '6 位验证码')}
                   className="mt-1"
                 />
+              )}
+              {regCodeSent && (
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-text-tertiary">{t('auth.codeSentTo', '验证码已发送至 {{email}}，10 分钟内有效', { email: regEmail })}</p>
+                  <ResendControl onResend={handleSendRegCode} busy={loading} />
+                </div>
               )}
               {regCodeSent && (
                 <p className="text-xs text-text-tertiary">{t('auth.registerEmailHint', '验证后可用该邮箱登录和找回密码')}</p>

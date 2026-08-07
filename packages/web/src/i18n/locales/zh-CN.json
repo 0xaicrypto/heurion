@@ -123,7 +123,11 @@
     "registerEmailLabel": "邮箱（可选，推荐）",
     "registerEmailHint": "验证后可用该邮箱登录和找回密码",
     "emailBinding": "绑定邮箱",
-    "emailBindingHint": "绑定后可凭邮箱登录与找回密码（手机为可选字段）"
+    "emailBindingHint": "绑定后可凭邮箱登录与找回密码（手机为可选字段）",
+    "codeSentTo": "验证码已发送至 {{email}}，10 分钟内有效",
+    "resendCode": "重新发送验证码",
+    "resendIn": "重新发送（{{s}}s）",
+    "unbound": "未绑定"
   },
   "today": {
     "title": "今日概览",
