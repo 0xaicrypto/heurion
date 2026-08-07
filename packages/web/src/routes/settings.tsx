@@ -180,8 +180,11 @@ function ProfileSection() {
       )}
 
       {/* #285: persistent email binding entry */}
-      <Card className="space-y-2 p-4">
-        <label className="block text-sm font-medium text-text-secondary">{t('auth.emailBinding', '绑定邮箱')}</label>
+      <Card className={cn('space-y-2 p-4', !profile?.email && 'border-accent/40 bg-accent/5')}>
+        <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary">
+          {t('auth.emailBinding', '绑定邮箱')}
+          {!profile?.email && <Badge variant="warning">{t('auth.unbound', '未绑定')}</Badge>}
+        </label>
         <p className="text-xs text-text-tertiary">{t('auth.emailBindingHint', '绑定后可凭邮箱登录与找回密码（手机为可选字段）')}</p>
         {profile?.email ? (
           <div className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm">

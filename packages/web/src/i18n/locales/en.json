@@ -123,7 +123,11 @@
     "registerEmailLabel": "Email (optional, recommended)",
     "registerEmailHint": "Once verified, you can sign in and recover your password with this email",
     "emailBinding": "Bind email",
-    "emailBindingHint": "Log in and recover your password with this email (phone is optional)"
+    "emailBindingHint": "Log in and recover your password with this email (phone is optional)",
+    "codeSentTo": "Code sent to {{email}}, valid 10 min",
+    "resendCode": "Resend code",
+    "resendIn": "Resend ({{s}}s)",
+    "unbound": "Not bound"
   },
   "today": {
     "title": "Today",
