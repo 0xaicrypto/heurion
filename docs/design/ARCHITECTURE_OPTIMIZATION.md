@@ -583,3 +583,561 @@ heurion-core/               ← 通用记忆引擎（零医疗知识）
 | 第六步 | 图谱可视化、可访问性打磨 | 持续 |
 
 **核心原则**：主题颜色已与 logo 同源，重构本质是把 logo 的母题（圆角矩形、克制蓝、状态点、纯平面、字距）贯彻成全站设计语言，并完成从"功能集合"到"临床工作台"的信息架构升级。
+
+
+---
+
+---
+
+## 十二、数据层演进（DB 与应用分离 → 可扩展数据库）
+
+> 目标：当前 SQLite + 文件存储混在同一 `/data` 卷、与应用同机，逐步演进为"应用、数据库、文件存储"三者分离、可独立扩展、可迁移到自托管 Postgres 的架构。
+
+### 12.1 当前数据存储全貌
+
+| 存储 | 内容 | 位置 | 问题 |
+|---|---|---|---|
+| SQLite（Prisma） | 用户、会话、患者、文档、审批、插件等结构化数据 | `nexus-data` 卷（`/data/nexus_server.db`） | 单机、无扩展性 |
+| 文件存储（TWIN_BASE_DIR=/data） | EventLog、Memory Graph（版本化 JSON）、legacy facts、embedding 索引、工具输出、上传文件 | 同一 `/data` 卷 | 与 SQLite 混在同一卷 |
+| S3（worker） | 渲染产物（DOCX/PPTX/PNG）、插件输出 | 外部 S3 | 已是独立存储 ✅ |
+
+**核心问题**：`nexus-data` 卷把 SQLite + 文件存储混在一起、与应用同机——无法独立扩展、无法故障隔离、备份是全卷拷贝。
+
+### 12.2 目标架构（三阶段演进）
+
+**阶段 1：数据库与应用分离（SQLite 独立卷）**：SQLite 移到独立卷 `nexus-db`；纯运维改动（docker-compose + 路径），不动代码。获得：备份粒度分开、故障隔离、为 Postgres 铺路。
+
+**阶段 2：文件存储与 DB 分离**：`/data` 拆分：`/data/db`（SQLite，卷 `nexus-db`）+ `/data/twins`（EventLog/Memory Graph/embedding，卷 `nexus-files`）。备份：DB 每日，文件低频。
+
+**阶段 3：迁移到自托管 PostgreSQL（长期）**：**决策：Postgres 自托管（Docker 独立机器/卷），不用托管服务**——避免与单一云厂商绑定，保持可迁移性。Prisma `provider = "sqlite"` → `"postgresql"`；Memory Graph 从 JSON 文件 → Postgres 表（EventLog 追加型保留文件）。
+
+### 12.3 关键决策
+
+1. **先阶段 1 再阶段 3**：Prisma schema 是 SQLite 写法，直接切 Postgres 需改 schema，风险大
+2. **Postgres 自托管**：Docker Postgres + 独立卷 + 定期备份；不依赖托管服务，厂商中立
+3. **EventLog 保留文件**：追加型 JSONL 天然适合文件；Memory Graph 规模上来后迁 Postgres（全量快照写盘有性能问题，见 #199）
+
+### 12.4 迁移计划
+
+**阶段 1（1-2 天，纯运维）**：停服务 → 建 nexus-db 卷 → 拷贝 DB → 改 docker-compose（DATABASE_URL=file:/data/db/...，TWIN_BASE_DIR=/data/twins）→ 启动验证
+
+**阶段 2（1 天）**：/data/twins 独立卷 + 备份策略分化
+
+**阶段 3（3-5 天，依赖重构完成）**：Prisma schema 改 postgresql → 数据迁移脚本（逐表）→ Memory Graph 迁移评估 → 切 DATABASE_URL → 灰度 → 回滚预案
+
+### 12.5 风险与回滚
+
+| 风险 | 缓解 |
+|---|---|
+| SQLite → Postgres 类型不兼容 | 小表先试迁移，逐表验证 |
+| 迁移中数据丢失 | 迁移前全量备份 + 脚本可重放 |
+| 文件存储路径变化 | 保留旧路径软链，灰度切换 |
+| 双写不一致 | 阶段 1/2 不动 schema 只动路径，风险低 |
+
+### 12.6 建议顺序
+
+阶段 1（当前优先，纯运维 1 天）→ 阶段 2（1 天）→ 阶段 3（重构完成后，不与功能重构并行）
+
+**关联 issues**：#280（阶段 1）、#281（阶段 2）、#282（阶段 3）
+
+### 12.7 数据备份设计（定期备份到对象存储）
+
+> 目标：DB 与文件存储定期备份到对象存储，实现异地冗余、可恢复。
+
+#### 12.7.1 备份对象与频率
+
+| 数据 | 内容 | 频率 | 保留 |
+|---|---|---|---|
+| SQLite DB | nexus_server.db | 每日 | 30 天 |
+| EventLog | event_log.jsonl（追加型，记忆真相源） | 每日 | 30 天 |
+| Memory Graph | 版本化 JSON（v*.json + _current.json） | 每日 | 30 天 |
+| 用户文件 | uploads/（病历/影像/工具输出） | 每周 | 8 周 |
+| embedding 索引 | embedding-index.jsonl | 可跳过（可由 EventLog 重建） | - |
+
+**注意**：SQLite 备份用 `sqlite3 .backup` API（一致性），不用 cp 热拷贝（防 WAL 损坏）。
+
+#### 12.7.2 目标存储（对象存储）
+
+- **选型：DigitalOcean Spaces（当前）**——与 worker 已有 S3 配置一致，零新接入成本；S3 兼容接口，后续可加 MinIO/B2/AWS（换端点即可）
+- **桶结构**：`heurion-backups/` → `db/`（每日）+ `files/`（每周）
+- **生命周期策略**：S3 生命周期规则自动清理过期备份（DB 30 天、文件 8 周）
+
+#### 12.7.3 备份执行（独立容器 + cron）
+
+```
+docker-compose 新增服务：nexus-backup
+  image: 自建备份镜像（sqlite3 + rclone + cron）
+  volumes: 只读挂载 nexus-db + nexus-files
+  env: S3_ENDPOINT（DigitalOcean Spaces）/ S3_BUCKET / S3_ACCESS_KEY / S3_SECRET
+  cron: 每日 02:00 备份 DB+EventLog+Graph；每周日 02:30 备份 files
+```
+
+每日脚本：`sqlite3 .backup` → gzip → rclone 上传 → 清理本地临时
+每周脚本：uploads tar → rclone 上传
+
+#### 12.7.4 恢复流程（RTO/RPO）
+
+| 场景 | RPO | RTO | 恢复动作 |
+|---|---|---|---|
+| DB 损坏/误删 | 当日 | ~30 分钟 | 拉取最新 db 备份 → 解压 → 挂载 → 重启 |
+| 全盘丢失（VPS 重建） | 当日 | ~2 小时 | 重建 VPS → 部署 compose → 拉取 db+files 备份 → 恢复 |
+| 用户文件误删 | 周级 | ~1 小时 | 拉取对应周 files 备份 |
+
+**恢复验证**：每月一次恢复演练（从备份重建临时环境，验证数据可用）
+
+#### 12.7.5 关键决策
+
+1. 备份容器独立于应用（应用故障不影响备份；只读挂载）
+2. **对象存储：DigitalOcean Spaces 起步，S3 兼容接口保持厂商中立**（后续可换 MinIO/B2/AWS）
+3. SQLite 用 `.backup` API 而非 cp
+4. 本地临时备份落盘后上传、随即清理
+
+#### 12.7.6 实施步骤
+
+| 步骤 | 内容 | 工作量 |
+|---|---|---|
+| 1 | 备份镜像（sqlite3 + rclone + cron）+ docker-compose 服务 | 1 天 |
+| 2 | 每日备份脚本（DB + EventLog + Graph） | 半天 |
+| 3 | 每周备份脚本（files） | 半天 |
+| 4 | DO Spaces 桶 + 生命周期策略（30 天/8 周） | 半天 |
+| 5 | 恢复演练（月度）+ 恢复文档 | 半天 |
+
+**总量级：3 天**
+
+**关联 issues**：#290（备份实现，依赖 #280 DB 独立卷）；与 #282（Postgres）配套——迁移后备份改 pg_dump
+
+---
+
+## 十三、用户认证体系升级（邮箱验证 + 手机可选）
+
+> 目标：支持用户用邮箱（验证码验证）或手机（仅存储字段）作为登录标识，支持找回密码；存量用户零破坏、渐进式绑定。**简化决策：手机不做验证码、不接 SMS 服务；只有邮箱发送一个外部依赖（Resend）。**
+
+### 13.1 现状
+
+- 注册：username + password（displayName 即用户名，DB 无 unique 约束）
+- 登录：仅用户名+密码；无邮箱验证、无找回密码
+- email 字段存在但注册时从不填写（存量全为 NULL）
+
+### 13.2 数据模型
+
+```prisma
+model User {
+  id              String    @id
+  displayName     String    @map("display_name")
+  passwordHash    String?   @map("password_hash")
+  email           String?   @unique        // 新增 unique
+  emailVerified   Boolean   @default(false) @map("email_verified")
+  phone           String?   @unique        // 仅存储，无 verified 标记
+}
+
+model VerificationCode {           // 新表（仅邮箱用）
+  id        String   @id
+  userId    String?  @map("user_id")
+  target    String                     // email
+  code      String
+  purpose   String                     // 'register' | 'bind' | 'reset_password'
+  expiresAt String   @map("expires_at")
+  usedAt    String?  @map("used_at")
+  attempts  Int      @default(0)
+  createdAt String   @map("created_at")
+  @@index([target, purpose])
+  @@map("verification_codes")
+}
+```
+
+### 13.3 流程设计
+
+**注册**：填写邮箱+密码（可选手机）→ send-code（邮箱）→ register（邮箱+code+密码，可带 phone）→ 校验 → 创建用户（emailVerified）→ jwt_token
+
+**绑定**：bind-email（send-code → 校验 → verified）；bind-phone（直接保存，无验证）
+
+**登录**：identifier = email OR phone OR displayName
+
+**找回密码**（仅邮箱）：send-code（reset_password）→ reset-password（code + new_password）→ 旧 token 失效
+
+### 13.4 验证码机制（仅邮箱）
+
+6 位数字、10 分钟有效、60s 限流、5 次尝试、一次性、同 IP 注册限流（1 小时 5 次）
+
+### 13.5 发送渠道
+
+- 邮箱：**Resend**（送达率高、免费 3000 封/月、不绑云厂商；验证码邮件最怕进垃圾箱）
+- 手机：无外部依赖（仅存储字段）
+
+### 13.6 存量用户处理（零破坏、渐进式）
+
+1. username 登录完全保留；identifier 查找是兼容扩展
+2. 首次登录非阻塞提示"绑定邮箱？"——可跳过
+3. 设置页常驻绑定入口
+4. username 是邮箱格式（user@gmail.com）——identifier 查找天然覆盖
+5. 迁移：清重复 displayName → 加 unique → email/phone unique（存量 NULL 不冲突）→ 建 verification_codes
+
+### 13.7 API 汇总
+
+| Method | Path | 说明 |
+|---|---|---|
+| POST | /api/v1/auth/send-code | 发送邮箱验证码 |
+| POST | /api/v1/auth/register | 注册（邮箱+code+密码，可带 phone） |
+| POST | /api/v1/auth/bind-email | 绑定邮箱（验证码） |
+| POST | /api/v1/auth/bind-phone | 绑定手机（直接保存） |
+| POST | /api/v1/auth/login | 登录（identifier 多标识） |
+| POST | /api/v1/auth/reset-password | 找回密码（仅邮箱） |
+
+### 13.8 实施顺序与风险
+
+数据模型（半天）→ 验证码服务（半天）→ Resend 接入（半天）→ 注册改造（1 天）→ 绑定+登录兼容（半天）→ 找回密码（半天）。**总量级 3-4 天。建议排在医生试用稳定后**（auth 改造动核心用户表）。
+
+**关联 issues**：#284（数据模型）→ #283（认证功能）→ #285（存量绑定）
+
+---
+
+## 十四、多 Agent 架构设计（参考 Cloudflare OS Spawner 模型）
+
+> 目标：从"单 agent + delegate 工具"演进为"主 agent 按需派生子 agent（spawner 模式）"，子 agent 带受限工具集与独立上下文。参考 Cloudflare OS 的 spawnAgent/AgentSelfLoopback 实现（2026-08 开源）。
+
+### 14.1 现状与差距
+
+**当前 DelegateTool（subagent-tools.ts，46 行）**：本质是"调 LLM 的函数"——子 agent 无工具访问权、无独立上下文、无权限隔离、无状态、技能参数是摆设。
+
+**Cloudflare OS Spawner 模型**：主 agent spawnAgent → 新 chat thread（独立 DO），env bindings = spawner 配置快照（权限隔离）、独立上下文、完整工具能力、callable stub（函数式调用）。
+
+### 14.2 目标架构（适配 Heurion：Node.js + SQLite + 事件溯源）
+
+```
+主 agent（现有 chat 循环，chat.router）
+  工具集：现有工具 + spawn_subagent（新）
+    │ spawn_subagent({ task, context, tools, scope })
+    ▼
+SubAgentSession（新，基于 EventLog + 独立循环）
+  ├─ 独立会话记录（sub_session）
+  ├─ 受限工具集：只注册 spawner 指定的工具
+  ├─ 独立上下文：从 EventLog 投影（可指定 scope）
+  ├─ 运行循环：LLM → 工具 → 观察 → 继续（≤N 轮）
+  └─ 结构化返回（含成本/token/轮数）
+    │ 结果回到主 chat（作为工具输出）
+```
+
+### 14.3 数据模型
+
+```prisma
+model SubAgentSession {
+  id           String   @id
+  userId       String   @map("user_id")
+  parentChatId String   @map("parent_chat_id")
+  task         String
+  context      String?
+  scope        String?                          // 权限范围（如 patientHash）
+  allowedTools String   @map("allowed_tools")   // JSON 数组
+  status       String   @default("running")     // running | done | error | cancelled
+  turns        Int      @default(0)
+  result       String?
+  cost         Float?
+  createdAt    String   @map("created_at")
+  completedAt  String?  @map("completed_at")
+  @@map("sub_agent_sessions")
+}
+```
+
+### 14.4 工具接口
+
+```ts
+spawn_subagent: {
+  task: string,            // 必填
+  context: string,         // 可选
+  tools: string[],         // 可选（默认只读工具集）
+  scope: { patientHash?, studyId? },  // 可选权限范围
+  max_turns: number,       // 可选，默认 5
+}
+```
+
+**默认允许（安全基线）**：search_node、search_past_chats、web_search（全部只读）
+**默认拒绝**：所有写操作（edit/approve/bind）——子 agent 只读，除非显式允许
+
+### 14.5 权限隔离（借鉴 Gatekeeper 思想）
+
+1. scope 过滤：spawner 传 scope → 子 agent memory 工具只返回该范围 facts
+2. 工具白名单：未列出的工具不注册
+3. 禁止嵌套：max_depth=1（子 agent 内不允许再 spawn）
+4. 成本上限：独立 token 预算（如 8000），超限强制结束
+
+### 14.6 运行机制（借鉴 deliverAgentCallback）
+
+- **方案 A（同步，推荐起步）**：spawn_subagent 工具内 await 子 agent 循环，返回结果（受主 tool loop 5 轮限制）
+- **方案 B（异步，后续）**：spawn 后返回 sub_session_id，主 agent 轮询结果（对应 Cloudflare pending callbacks）
+
+### 14.7 实施步骤
+
+| 步骤 | 内容 | 工作量 |
+|---|---|---|
+| 1 | SubAgentSession 表 + CRUD | 半天 |
+| 2 | SubAgentRunner（独立工具注册 + 循环，复用 tool loop 逻辑） | 1-2 天 |
+| 3 | spawn_subagent 工具（同步方案 A） | 半天 |
+| 4 | scope 过滤（memory 工具按 scope 限定） | 半天 |
+| 5 | 成本/轮数上限 + 结构化结果 | 半天 |
+| 6 | 测试：单子 agent、权限隔离、成本上限 | 1 天 |
+
+**总量级：4-5 天**
+
+### 14.8 使用场景（医生视角）
+
+1. 文献综述：spawn 子 agent "搜索 PubMed 关于 X 的最近文献"（只读 web_search）
+2. 患者深度分析：spawn 子 agent "只读患者 A 记忆图谱，总结治疗历程"（scope=patientHash A）
+3. 并行调研（后续方案 B）：同时 spawn 2-3 个子 agent，聚合结果
+
+### 14.9 与现有架构的关系
+
+复用 ToolRegistry、EventLog、LLM 客户端（llm.ts 含超时重试 #184）、telemetry；不改变主 chat 循环和记忆审批流程（子 agent 只读）；与 #219（domain-pack）协同（子 agent 工具集可由 domain pack 定义）。
+
+### 14.10 风险与限制
+
+| 风险 | 缓解 |
+|---|---|
+| 子 agent 递归/失控 | max_depth=1 + token 上限 + 轮数上限 |
+| 越权数据 | scope 过滤 + 工具白名单 + 只读默认 |
+| 成本失控 | 独立 token 预算 + telemetry 归因 |
+| 主 chat 等待阻塞 | 方案 A 受 tool loop 限制；方案 B（异步）后续 |
+
+### 14.11 多 Agent 使用场景（何时用）
+
+**判断标准：单 agent 做不到才用**——多 agent 解决"上下文隔离 + 并行 + 权限"，不是"模型能力"。
+
+| 场景 | 为什么单 agent 不够 | 示例 |
+|---|---|---|
+| 深度任务（>3 步独立探索） | 主 chat 上下文被中间过程污染 | 文献综述（搜→读→总结→整合） |
+| 隔离任务（需权限边界） | 主 agent 不该碰所有数据 | 只读患者 A 记忆做深度分析 |
+| 并行任务（互不依赖） | 串行太慢 | 同时调研 3 个主题 |
+| 专业分工（不同领域知识） | 一个 prompt 装不下所有领域 | 临床 + 统计 + 文献 |
+
+**不该用**：日常问答、简单记忆查询、单步工具调用——单 agent 就够，多 agent 浪费 token 和延迟。
+
+### 14.12 触发决策（谁调用）
+
+**原则：默认主 agent 自动判断，用户不感知"多 agent"概念。**
+
+- **调用方 = 主 agent**（通过 spawn_subagent 工具），用户手动触发是例外
+- 主 agent system prompt 规则："任务满足以下条件时使用 spawn_subagent：>3 步独立探索、需数据隔离、可并行拆解"
+- 用户显式要求（"详细调研，多角度"）→ 主 agent 识别为可并行，主动拆解
+
+**决策矩阵（主 agent 内部）**：
+```
+复杂度低           → 单 agent 直接做
+深度高（>3 步）    → spawn 1 个深度子 agent（scope 隔离）
+可并行             → spawn 2-3 个子 agent（不同 scope/主题）
+混合领域           → spawn 多个专业子 agent
+```
+
+**反滥用**：prompt 明确"如果单线程能做好就不要 spawn"（延迟和成本是代价）。
+
+### 14.13 结果汇总（反馈给用户）
+
+**方案 A（同步聚合，起步）**：spawn 多个子 agent（并行）→ 各自返回结构化结果 {summary, cost, turns} → 主 agent 汇总成综合回答（带引用）→ 用户看到综合回答 + 分项卡片。
+
+**方案 B（流式进度，中期）**：用户看到"正在并行分析 3 个方面…"→ 每完成一个更新进度 → 全部完成汇总。
+
+**汇总呈现（对医生）**：
+```
+综合回答（主 agent 整合，带引用）
+  ├─ [文献] 来自 5 篇 RCT（子 agent 1 检索）
+  ├─ [统计] 生存分析曲线（子 agent 2 分析）
+  └─ [临床] 与 NCCN 指南一致（子 agent 3 对照）
+```
+
+**衔接**：
+- 子 agent 结果**默认不直接写记忆**（只读，§14.5）；要写走 propose → 人工审核
+- 成本按 sub_session 归因（telemetry），用户可见
+- 某子 agent 失败不影响其他，汇总标注"文献部分失败，其余正常"
+
+**关联**：#219（domain-pack）、#105（审批/权限，可借鉴 Gatekeeper 读写分级）、#288（实现）
+
+---
+
+## 十五、插件与 Skills 生态战略
+
+> 目标：Skills 走"内容生态"（医生/研究者产出经验），Plugins 走"集成生态"（开发者连接系统）；两者共享安全/权限底座，不合并。参考 Cloudflare OS 的开源实现（skill 库 + Gatekeeper/MCP）。
+
+### 15.1 现状与区分
+
+| 机制 | 当前实现 | 本质 |
+|---|---|---|
+| Skills | prompt 级能力（注入 system prompt）+ github-skills + ClawHub 集成（#65-70） | "知识/技能"——教 AI 怎么做（轻量） |
+| Plugins | 运行时插件（注册 tools/connectors/UI 扩展）+ 目录/安装/审计/加密 | "能力/扩展"——给 AI 新工具（重量） |
+
+**核心区分（不合并）**：
+- Skills 创作者 = 医生/研究者（非程序员）——内容驱动、网络效应入口
+- Plugins 创作者 = 开发者——工程驱动、集成护城河
+
+### 15.2 Skills 方向：内容生态（近期优先）
+
+**关键产品决策：Skill 捕获（capture）而非编辑器**（见 #68 修正）
+
+- **医生心智**："我平时怎么做这件事" → 做一遍，让 AI 记住
+- **零门槛流程**：正常对话 → AI 完成 → 提示"保存为技能？" → 一键保存 → 自然语言微调 → 预览 → 确认
+- **医生全部操作** = 点保存 + 偶尔一句话
+- **模板作为可选起点**（SOAP/出院小结/文献检索），不是"医生填的表单"
+
+**演进路径**：
+1. 对话中捕获 + 一键保存（近期，灯塔医生验证）
+2. 自然语言微调 + 预览演示（近期）
+3. SkillHub 共享（#67）——医生之间分享经验，网络效应
+4. skill 关联记忆（Memory Graph）——"经验闭环"
+
+### 15.3 Plugins 方向：集成生态（中期）
+
+**关键决策：走 MCP 标准**（参考 Cloudflare OS Gatekeeper/MCP 模型）
+
+- 对接外部系统（EHR/影像/检验）用 MCP 协议，不自研协议
+- 受限连接器模式：插件默认零权限，能力绑定（env.PROJECT 式）
+- 读写分级：只读立即执行、写操作排队审批（Gatekeeper 思想，关联 #105）
+
+**演进路径**：
+1. MCP 适配（插件对接外部系统的标准协议）
+2. 医疗连接器优先：EHR、影像系统、检验系统
+3. 开发者平台完善：manifest + 沙箱 + 审计（已有基础）
+
+### 15.4 共享底座（不合并但同源）
+
+- 同一个目录/市场 UI（一个页面两个 tab：技能/插件）
+- 同一个权限模型（#105 allow/deny/ask——skill 和 plugin 都走）
+- 同一个沙箱（plugin 执行沙箱；skill 的 prompt 注入也可审计）
+
+### 15.5 实施优先级
+
+| 优先级 | 做什么 | 为什么 |
+|---|---|---|
+| P0（近期） | #68 改为 Skill 捕获 + 一键保存 | 医生 5 分钟创建第一个 skill = 粘性验证 |
+| P1（近期） | 自然语言微调 + 预览演示 | 让医生有掌控感 |
+| P1（中期） | Plugins 走 MCP 标准 | 医疗集成生态的标准方向 |
+| P1（中期） | SkillHub 共享（#67） | 网络效应入口 |
+| P2（远期） | 医疗连接器（EHR/影像/检验） | 医疗集成护城河 |
+| P2（远期） | ClawHub 外部生态（#65-70） | 用户量起来后再做 |
+
+### 15.6 风险与提醒
+
+1. **当前不要同时推两条线**（单人资源有限）——近期只推 Skills 捕获
+2. 编辑器形态保留为"高级模式"（懂技术的用户），默认入口是捕获
+3. 权限模型（#105）是两条线的共同底座，尽早做
+
+**关联 issues**：#68（Skill 捕获）、#66/#67（parser/SkillHub）、#105（权限底座）、#106（load_skill）、#65-70（ClawHub 生态）
+
+---
+
+## 十六、设计模式深审（超出前述章节的结构性问题）
+
+> 目标：前述章节解决"数据一致性/可靠性/结构拆分"；本节聚焦**更深层的设计模式问题**——模块级状态管理、上帝路由、错误契约、领域模型贫血等。所有项可渐进修复，不需推翻重来。
+
+### 16.1 模块级可变全局状态
+
+| 位置 | 状态 | 风险 |
+|---|---|---|
+| user-context.ts:25 | `contexts = new Map` | 有 GC，需确认 evict 彻底性 |
+| user-context.ts:109 | `personaCache = new Map` | **无上限、无清理**——长期运行内存增长 |
+| compaction.ts:206 | `inFlight = new Map` | 有 Promise 去重，需确认失败后清理 |
+| memory/registry.ts:20-30 | contextResolver/proposalApplier | 已修（#130），保持 |
+
+**建议**：封装统一 `StateRegistry`（LRU 上限 + 失效策略 + 生命周期钩子），替代散落的 Map；`inFlight` 在 Promise settle 后 `finally` 清理。
+
+### 16.2 chat.router（964 行）仍是上帝路由
+
+**问题**：单 HTTP handler 承担：路由分发、SSE 管理、事件追加、压缩摘要注入、上下文组装、LLM 调用、工具循环、错误处理。
+
+**建议（Handler + 传输分离）**：`ChatSessionHandler`（编排）+ `SSETransport`（SSE 写/abort/heartbeat）+ `chat.router`（只做路由注册）。
+
+### 16.3 memory.service（735 行）门面下仍是实现
+
+**问题**：双存储同步 + 事件追加 + curation 传播全耦合在一个类（原子性已修 #231，结构未拆）。
+
+**建议（Facade + 内部协作者）**：`MemoryService` 保留门面；内部拆 `GraphWriter` / `LegacyProjection` / `EventAppender` / `PropagationCoordinator`（写入顺序原子性由它负责，可独立测试）。
+
+### 16.4 错误处理模式不统一
+
+**问题**：混合三种风格——`{ok:false,error}`（工具层）、`null`（memory.service 部分方法）、抛异常（部分路径）。
+
+**建议**：统一 `Result<T> = { ok: true, value: T } | { ok: false, error: string }` 贯穿服务层；`null` 返回语义不明确，统一为 Result。
+
+### 16.5 依赖注入不彻底
+
+**问题**：chat.router 通过 `getUserContext()` 服务定位器取依赖；部分构造器注入、部分运行时 `await import()`。
+
+**建议**：收敛为"构造器注入 + 顶层组装"（app.ts 组装依赖）；动态 import 只保留给可选能力（LLM provider）。
+
+### 16.6 领域模型贫血（Anemic Domain Model）
+
+**问题**：MemoryNode/FactNode/ArticleNode 是纯数据容器，行为（版本化/supersede/propagation）全在 MemoryService——导致服务类膨胀。
+
+**建议**（不完全 DDD，单人项目适度）：内聚行为上移（`FactNode.isSuperseded()`、`ArticleNode.isStale(depStatus)`），节点演化逻辑放回节点，服务只做编排。
+
+### 16.7 测试缺"行为契约"层
+
+**问题**：测试按模块组织，但缺"记忆写入→审批→检索→上下文→提示词"的跨模块契约测试。
+
+**建议**：补一条"端到端行为契约"测试（不跑真实 LLM，纯模块间契约）。
+
+### 16.8 Web 前端同样的结构问题
+
+**问题**：routes/chat.tsx（560+ 行）+ stores/chat.ts（307 行）——UI 与状态逻辑边界模糊（store 里处理 applyChunk 渲染逻辑）。
+
+**建议**：store 只做状态；`applyChunk` 提取为独立纯函数模块（可单测）——前后端统一"纯逻辑与 IO 分离"。
+
+### 16.9 优先级
+
+| 优先级 | 项 | 理由 |
+|---|---|---|
+| P0 | personaCache/inFlight 泄漏清理 | 长期运行内存问题 |
+| P0 | 错误契约统一（Result 类型） | 影响所有服务层可测性 |
+| P1 | chat.router 拆 Handler + SSE 传输 | 964 行继续膨胀风险 |
+| P1 | 领域行为内聚（节点方法） | 减少服务类膨胀 |
+| P2 | DI 收敛、行为契约测试、前端 store 纯化 | 工程债 |
+
+---
+
+## 十七、代码结构与 UI/UX 审视（2026-08-06 深夜）
+
+> 范围：80 个新提交（#261-#341）后的结构审视 + UI/UX 建议。功能质量已高（565 测试），本节聚焦结构性瓶颈与体验细节。
+
+### 17.1 代码结构
+
+#### 17.1.1 后端
+
+| 项 | 现状 | 建议 | Issue |
+|---|---|---|---|
+| chat.router.ts | 977 行，上帝路由持续膨胀 | 拆 Handler + SSE 传输（#303 待做，优先） | #303 |
+| knowledge/documents 路由 | 400+ 行，路由+业务混合 | #303 模式推广（路由注册 + service） | - |
+| compaction.ts | 469 行，多职责混合 | 拆 budget/state/runner | #353 |
+| memory.service.ts | 735 行门面 | 内部协作者拆分（GraphWriter/LegacyProjection/PropagationCoordinator） | #304 |
+| 请求校验 | chat 等用 `as any` | zod 覆盖核心写路由 | #349 |
+
+#### 17.1.2 前端
+
+| 项 | 现状 | 建议 | Issue |
+|---|---|---|---|
+| api-client.ts | 1272 行上帝客户端 | 按领域拆（auth/chat/patient/memory/plugin） | #347 |
+| 类型共享 | sdk 存在但 web 手写类型 | 共享类型包，防认证字段漂移 | #348 |
+| 大页面 | research-detail 972/writing-editor 899/knowledge 744 | 按组件拆（随功能演进） | - |
+
+#### 17.1.3 安全项（认证新实现）
+
+| 项 | 现状 | 风险 | Issue |
+|---|---|---|---|
+| 验证码 attempts | 用 code 查库，错误码不计数 | 5 次限制失效，可暴力破解 | #343 |
+| send-code IP 限流 | 只有同 target 60s 限流 | 邮件轰炸 | #344 |
+| 备份静默跳过 | 未配置 exit 0 | 误以为有备份 | #346 |
+| 恢复文档 | 不存在 | 出事无法恢复 | #345 |
+
+### 17.2 UI/UX
+
+| 项 | 现状 | 建议 | Issue |
+|---|---|---|---|
+| 多 Agent 活动 | 未实现（#288 后需要） | 子 agent 进度指示器（复用 StatusDot） | #350 |
+| 写作页双栏 | 窄屏可能挤压 | chat 抽屉式滑出 | #351 |
+| 认证 UX | 已实现基础流程 | 邮件反馈 + 重发倒计时 + 入口可见 | #352 |
+| 设置页 | 632 行功能多 | 账号安全/模型/数据/集成分组 | #354 |
+| 知识/记忆 Tab | 统一入口已做（#262） | Tab 状态保持（滚动/筛选） | - |
+
+### 17.3 优先级
+
+| 优先级 | 项 |
+|---|---|
+| P0（安全） | #343 验证码尝试失效、#344 IP 限流 |
+| P0（结构） | #303 chat.router 拆分、#347 api-client 拆分 |
+| P1 | #348 类型共享、#349 zod 校验、#350 多 agent UI、#352 认证 UX、#345 恢复文档 |
+| P2 | #346 备份跳过、#351 双栏、#353 compaction、#354 设置页 |

@@ -82,12 +82,15 @@ export async function sendVerificationCode(email: string, purpose: VerificationP
 
 /**
  * Verify a code — 5 attempts, single-use, expiry. On success marks it used.
+ * #343: the lookup must NOT filter by code — wrong codes would never match
+ * a row, so attempts never counted. Now we resolve the latest unused row
+ * for target+purpose and compare the code against it.
  */
 export async function verifyCode(email: string, code: string, purpose: VerificationPurpose): Promise<boolean> {
   const target = normalizeEmail(email)
   const now = Date.now()
   const row = await (prisma as any).verificationCode.findFirst({
-    where: { target, purpose, usedAt: null, code: String(code).trim() },
+    where: { target, purpose, usedAt: null },
     orderBy: { createdAt: 'desc' },
   })
   if (!row) return false
