@@ -230,7 +230,9 @@
     "deepDone": "Analysis complete",
     "deepTopic_literature": "Literature",
     "deepTopic_stats": "Statistics",
-    "deepTopic_clinical": "Clinical"
+    "deepTopic_clinical": "Clinical",
+    "memoryHits": "Searched patient memory",
+    "memoryHitCount": "hits"
   },
   "patient": {
     "summary": "Summary",

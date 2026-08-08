@@ -421,6 +421,7 @@ export type ChatStreamChunk =
   | { type: 'tool_call'; tool: string; args: Record<string, unknown> }
   | { type: 'subagent_started'; task: string }
   | { type: 'subagent_done'; task: string; success: boolean }
+  | { type: 'memory_hits'; count: number; hits: Array<{ content: string; type: string; id: string }> }
   | { type: 'thought'; text: string }
   | { type: 'search_query'; query: string }
   | { type: 'search_results_summary'; text: string }

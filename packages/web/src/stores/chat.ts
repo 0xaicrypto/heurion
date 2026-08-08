@@ -10,6 +10,8 @@ export interface ChatMessage {
   isStreaming?: boolean;
   tier?: string;
   citations?: Array<{ text: string; source?: string }>;
+  /** #418: memory-search hits backing this answer. */
+  memoryHits?: Array<{ content: string; type: string; id: string }>;
   download?: {
     fileId: string;
     fileName: string;
@@ -48,6 +50,8 @@ interface SessionState {
   skillCapture?: { text: string };
   /** #350: sub-agent activity indicator (delegate/spawn_subagent). */
   subagents?: Array<{ task: string; status: 'running' | 'done' | 'failed' }>;
+  /** #418: memory-search hits attached to the assistant message. */
+  memoryHits?: Array<{ content: string; type: string; id: string }>;
 }
 
 interface ChatStore {
@@ -198,6 +202,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 ...last,
                 toolCalls: [...(last.toolCalls ?? []), { tool: chunk.tool, argsPreview }],
               };
+            }
+            return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
+          });
+          continue;
+        }
+        if (chunk.type === 'memory_hits') {
+          set((state) => {
+            const s = state.sessions[sessionId];
+            if (!s) return state;
+            const msgs = [...s.messages];
+            const last = msgs[msgs.length - 1];
+            if (last?.role === 'assistant') {
+              msgs[msgs.length - 1] = { ...last, memoryHits: chunk.hits };
             }
             return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
           });

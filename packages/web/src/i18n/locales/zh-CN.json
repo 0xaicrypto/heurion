@@ -230,7 +230,9 @@
     "deepDone": "分析完成",
     "deepTopic_literature": "文献",
     "deepTopic_stats": "统计",
-    "deepTopic_clinical": "临床"
+    "deepTopic_clinical": "临床",
+    "memoryHits": "已检索患者记忆",
+    "memoryHitCount": "条命中"
   },
   "patient": {
     "summary": "摘要",

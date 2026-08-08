@@ -715,6 +715,25 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
 
               const result = await toolRegistry.execute(toolName, toolArgs)
 
+              // #418: surface memory-search hits to the doctor (AI 依据可见).
+              if (toolName === 'search_node' && result.success && result.output) {
+                try {
+                  const parsed = JSON.parse(result.output)
+                  const hits = Array.isArray(parsed?.hits) ? parsed.hits : []
+                  if (hits.length > 0) {
+                    send({
+                      type: 'memory_hits',
+                      count: hits.length,
+                      hits: hits.slice(0, 10).map((h: any) => ({
+                        content: String(h.content || '').slice(0, 200),
+                        type: String(h.node_type || 'fact'),
+                        id: String(h.node_id || ''),
+                      })),
+                    })
+                  }
+                } catch { /* non-JSON output */ }
+              }
+
               if (isSubagent) {
                 let cost = 0
                 if (result.success && result.output) {

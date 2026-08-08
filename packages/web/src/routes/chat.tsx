@@ -529,6 +529,21 @@ export function ChatPage() {
                     />
                   )}
                   <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
+                  {m.memoryHits && m.memoryHits.length > 0 && (
+                    <details className="mt-3 rounded-lg border border-border bg-surface px-3 py-2">
+                      <summary className="cursor-pointer text-xs text-text-tertiary hover:text-text-secondary">
+                        🔍 {t('chat.memoryHits', '已检索患者记忆')}（{m.memoryHits.length} {t('chat.memoryHitCount', '条命中')}）
+                      </summary>
+                      <ul className="mt-2 space-y-1.5">
+                        {m.memoryHits.map((hit, i) => (
+                          <li key={i} className="text-xs text-text-secondary">
+                            <span className="mr-1 rounded border border-border px-1 text-[10px] text-text-tertiary">{hit.type}</span>
+                            {hit.content}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                   {m.citations && m.citations.length > 0 && (
                     <div className="mt-3 flex flex-wrap items-center gap-1.5" aria-label={t('chat.citations', '引用')}>
                       {m.citations.map((c, i) => {
