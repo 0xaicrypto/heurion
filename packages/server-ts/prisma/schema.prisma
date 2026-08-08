@@ -103,12 +103,15 @@ model Doc {
   body      String @default("")
   createdAt String @map("created_at")
   updatedAt String @map("updated_at")
+  studyId   String? @map("study_id") // #383: linked research study
 
   user       User            @relation(fields: [userId], references: [id])
+  study      ResearchStudy?  @relation(fields: [studyId], references: [id])
   snapshots  DocSnapshot[]
   references DocReference[]
   chatMsgs   DocChatMessage[]
   @@index([userId, updatedAt(sort: Desc)])
+  @@index([studyId])
   @@map("docs")
 }
 
@@ -191,6 +194,7 @@ model ResearchStudy {
   assessments ResearchAssessment[]
   protocolRules StudyProtocolRule[]
   events      StudyEvent[]
+  papers      Doc[]
   @@index([userId, updatedAt(sort: Desc)])
   @@map("research_studies")
 }

@@ -107,9 +107,13 @@ function WritingList() {
       }
     }).catch(() => {});
     api.listFormatTemplates().then((r) => setTemplates(r.templates)).catch(() => {});
+    api.listStudies().then((r) => setStudies(r)).catch(() => {});
   }, []);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // #383: 新建论文可选关联研究。
+  const [studies, setStudies] = useState<Array<{ study_id: string; display_name: string }>>([]);
+  const [selectedStudy, setSelectedStudy] = useState('');
 
   const handleDelete = async (docId: string) => {
     if (!window.confirm(t('writing.confirmDelete', '确定删除这篇文档？此操作不可撤销。'))) return;
@@ -128,9 +132,10 @@ function WritingList() {
     if (!newTitle.trim()) return;
     setCreating(true);
     try {
-      const doc = await api.createDoc(newTitle.trim());
+      const doc = await api.createDoc(newTitle.trim(), selectedStudy || undefined);
       setNewTitle('');
       setShowForm(false);
+      setSelectedStudy('');
       setPaperLink({ title: doc.title, abstract: '', docId: doc.id, updatedAt: Date.now() });
       navigate(`/app/writing/${doc.id}`);
     } catch (err) {
@@ -163,8 +168,8 @@ function WritingList() {
 
         {showForm && (
           <div className="border-b border-border bg-surface-elevated px-6 py-4">
-            <div className="flex items-end gap-3">
-              <div className="flex-1">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-[200px] flex-1">
                 <Input
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
@@ -172,6 +177,17 @@ function WritingList() {
                   onKeyDown={(e) => { if (e.key === 'Enter') handleCreate(); }}
                 />
               </div>
+              <select
+                value={selectedStudy}
+                onChange={(e) => setSelectedStudy(e.target.value)}
+                className="h-9 rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label={t('writing.studySelect', '关联研究（可选）')}
+              >
+                <option value="">{t('writing.studySelect', '关联研究（可选）')}</option>
+                {studies.map((st) => (
+                  <option key={st.study_id} value={st.study_id}>{st.display_name}</option>
+                ))}
+              </select>
               <Button onClick={handleCreate} disabled={!newTitle.trim() || creating} isLoading={creating}>
                 {t('common.create', 'Create')}
               </Button>

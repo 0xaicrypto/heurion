@@ -10,12 +10,25 @@ export class WritingApi extends SkillsApi {
     return this.fetch('/api/v1/docs');
   }
 
-  async createDoc(title: string): Promise<{id: string; title: string; body: string; created_at: string; updated_at: string}> {
-    return this.fetch('/api/v1/docs', { method: 'POST', body: JSON.stringify({ title }) });
+  async createDoc(title: string, studyId?: string): Promise<{id: string; title: string; body: string; created_at: string; updated_at: string; study_id?: string | null; study_name?: string | null}> {
+    return this.fetch('/api/v1/docs', { method: 'POST', body: JSON.stringify({ title, study_id: studyId }) });
   }
 
-  async getDoc(docId: string): Promise<{id: string; title: string; body: string; created_at: string; updated_at: string}> {
+  async getDoc(docId: string): Promise<{id: string; title: string; body: string; created_at: string; updated_at: string; study_id?: string | null; study_name?: string | null}> {
     return this.fetch(`/api/v1/docs/${docId}`);
+  }
+
+  // #383: research ↔ paper linkage.
+  async createPaperFromStudy(studyId: string): Promise<{ doc_id: string; title: string; body: string }> {
+    return this.fetch(`/api/v1/research/studies/${studyId}/paper`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  async generateMethods(docId: string): Promise<{ methods: string }> {
+    return this.fetch(`/api/v1/docs/${docId}/generate-methods`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  async injectResults(docId: string, label: string, result: string): Promise<{ ok: boolean }> {
+    return this.fetch(`/api/v1/docs/${docId}/inject-results`, { method: 'POST', body: JSON.stringify({ label, result }) });
   }
 
   async deleteDoc(docId: string): Promise<{ deleted: boolean }> {

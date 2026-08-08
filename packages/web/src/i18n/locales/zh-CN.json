@@ -295,7 +295,15 @@
     "title": "论文工作台",
     "comingSoon": "写作工作室功能即将推出。",
     "tabWrite": "写作",
-    "confirmDelete": "确定删除这篇文档？此操作不可撤销。"
+    "confirmDelete": "确定删除这篇文档？此操作不可撤销。",
+    "studySelect": "关联研究（可选）",
+    "studyBadge": "研究",
+    "genMethods": "生成方法",
+    "injectResults": "注入结果",
+    "injectResultsTitle": "注入统计结果",
+    "injectLabel": "小节标题，如 Overall survival",
+    "injectHint": "粘贴 #361 统计输出（JSON）",
+    "injectNow": "注入"
   },
   "skills": {
     "title": "技能",

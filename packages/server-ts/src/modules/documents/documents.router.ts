@@ -22,12 +22,19 @@ export async function documentsRouter(app: FastifyInstance) {
   })
 
   app.post('/api/v1/docs', async (request) => {
-    const { title } = request.body as any
+    const { title, study_id } = request.body as any
     const id = `doc_${uid()}`
     const now = new Date().toISOString()
     const userId = request.user!.userId
+    // #383: creating a paper linked to a study — optionally prefill title
+    // and abstract from the study's name/purpose.
+    let study: any = null
+    if (study_id) {
+      study = await (prisma as any).researchStudy.findFirst({ where: { id: study_id, userId } })
+      if (!study) return { error: 'Study not found' }
+    }
     try {
-      await (prisma as any).doc.create({ data: { id, userId, title: title || 'Untitled', body: '', createdAt: now, updatedAt: now } })
+      await (prisma as any).doc.create({ data: { id, userId, title: title || 'Untitled', body: '', studyId: study_id || null, createdAt: now, updatedAt: now } })
     } catch (err: any) {
       // If FK constraint fails (user not in DB yet — staging/CI), retry without FK
       if (err?.message?.includes('foreign key')) {
@@ -44,7 +51,13 @@ export async function documentsRouter(app: FastifyInstance) {
   app.get('/api/v1/docs/:docId', async (request, reply) => {
     const doc = await (prisma as any).doc.findFirst({ where: { id: (request.params as any).docId, userId: request.user!.userId } })
     if (!doc) return reply.status(404).send({ error: 'Not found' })
-    return { id: doc.id, title: doc.title, body: doc.body, created_at: doc.createdAt, updated_at: doc.updatedAt }
+    // #383: expose the linked study so the editor can show context + methods.
+    let study_name: string | null = null
+    if (doc.studyId) {
+      const st = await (prisma as any).researchStudy.findFirst({ where: { id: doc.studyId } })
+      study_name = st?.name || null
+    }
+    return { id: doc.id, title: doc.title, body: doc.body, created_at: doc.createdAt, updated_at: doc.updatedAt, study_id: doc.studyId || null, study_name }
   })
 
   app.put('/api/v1/docs/:docId', async (request, reply) => {
@@ -387,6 +400,82 @@ function parseInlineMarkdown(text: string): any[] {
       }),
     }
   })
+
+  // ── #383: research ↔ paper linkage ──
+  // Generate a Methods draft from the linked study's protocol rules.
+  app.post('/api/v1/docs/:docId/generate-methods', async (request, reply) => {
+    const doc = await (prisma as any).doc.findFirst({ where: { id: (request.params as any).docId, userId: request.user!.userId } })
+    if (!doc) return reply.status(404).send({ error: 'Document not found' })
+    if (!doc.studyId) return reply.status(400).send({ error: 'This paper is not linked to a study' })
+
+    const rules = await (prisma as any).studyProtocolRule.findMany({
+      where: { studyId: doc.studyId, status: { not: 'superseded' } },
+      orderBy: { category: 'asc' },
+    })
+    const byCategory: Record<string, string[]> = {}
+    for (const r of rules) {
+      (byCategory[r.category] ||= []).push(r.rule)
+    }
+    const study = await (prisma as any).researchStudy.findFirst({ where: { id: doc.studyId } })
+    const prompt = `Write the Methods section of a clinical research paper from this study design.
+
+Study: ${study?.name || ''}
+Inclusion criteria:
+${(byCategory['inclusion'] || []).map((r) => `- ${r}`).join('\n') || 'n/a'}
+Exclusion criteria:
+${(byCategory['exclusion'] || []).map((r) => `- ${r}`).join('\n') || 'n/a'}
+Safety rules:
+${(byCategory['safety'] || []).map((r) => `- ${r}`).join('\n') || 'n/a'}
+Schedule:
+${(byCategory['schedule'] || []).map((r) => `- ${r}`).join('\n') || 'n/a'}
+
+Write 3-6 paragraphs (English): study design, participants, interventions, outcomes, statistical analysis plan. Do not invent numbers. Return only the section text (no preamble, no title).`
+
+    const result = await deepseekChat([{ role: 'user', content: prompt }], getApiKey(), {
+      model: DEEPSEEK_CHAT_MODEL,
+      maxTokens: 2048,
+      telemetryContext: { userId: request.user!.userId, workspaceId: request.user!.userId, action: 'research.generate_methods' },
+    })
+    return { methods: result.trim() }
+  })
+
+  // Inject a statistics output block (from #361 stat tools) into the paper.
+  app.post('/api/v1/docs/:docId/inject-results', async (request, reply) => {
+    const doc = await (prisma as any).doc.findFirst({ where: { id: (request.params as any).docId, userId: request.user!.userId } })
+    if (!doc) return reply.status(404).send({ error: 'Document not found' })
+    const { label, result } = request.body as any
+    if (!label || !result) return reply.status(400).send({ error: 'label and result required' })
+    const block = `\n\n## ${String(label)}\n\n${String(result).slice(0, 8000)}\n`
+    await (prisma as any).doc.update({
+      where: { id: doc.id },
+      data: { body: doc.body + block, updatedAt: new Date().toISOString() },
+    })
+    return { ok: true }
+  })
+
+  // One-shot: create a paper from a study with title/abstract background.
+  app.post('/api/v1/research/studies/:studyId/paper', async (request, reply) => {
+    const { studyId } = request.params as any
+    const study = await (prisma as any).researchStudy.findFirst({ where: { id: studyId, userId: request.user!.userId } })
+    if (!study) return reply.status(404).send({ error: 'Study not found' })
+    const id = `doc_${uid()}`
+    const now = new Date().toISOString()
+    const title = `${study.name} — Clinical Outcomes`
+    const prompt = `Write a one-paragraph Background and Objectives for a paper titled "${title}". Based on the study name only; keep it generic and factual. Return only the paragraph.`
+    let background = ''
+    try {
+      const result = await deepseekChat([{ role: 'user', content: prompt }], getApiKey(), {
+        model: DEEPSEEK_CHAT_MODEL, maxTokens: 500,
+        telemetryContext: { userId: request.user!.userId, workspaceId: request.user!.userId, action: 'research.paper_background' },
+      })
+      background = result.trim()
+    } catch {
+      background = 'Background: 本研究的目的是评估该研究方案下的临床结局。'
+    }
+    await (prisma as any).doc.create({ data: { id, userId: request.user!.userId, title, body: background, studyId, createdAt: now, updatedAt: now } })
+    return { doc_id: id, title, body: background }
+  })
+
 }
 
 function parseDocChatResponse(response: string, currentBody: string): { reply: string; updatedBody: string } {
