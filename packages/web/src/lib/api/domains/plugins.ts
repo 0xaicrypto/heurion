@@ -178,6 +178,48 @@ export class PluginsApi extends CalendarApi {
 
   /* ────────────────────────── chat (SSE) ────────────────────────── */
 
+  // #420: parallel deep analysis — SSE stream of sub-agent activity + final answer.
+  async *deepAnalysis(
+    opts: { question: string; topics: string[]; patientHash?: string | null; context?: string },
+    abortSignal?: AbortSignal,
+  ): AsyncIterable<ChatStreamChunk> {
+    const r = await fetch('/api/v1/agent/deep-analysis', {
+      method: 'POST',
+      headers: this.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        question: opts.question,
+        topics: opts.topics,
+        patient_hash: opts.patientHash ?? null,
+        context: opts.context,
+      }),
+      signal: abortSignal,
+    });
+    if (!r.ok || !r.body) {
+      throw new ApiError(r.status, await r.text().catch(() => r.statusText), '/api/v1/agent/deep-analysis');
+    }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const raw = buffer.slice(0, idx).trim();
+          buffer = buffer.slice(idx + 2);
+          if (!raw.startsWith('data:')) continue;
+          try {
+            yield JSON.parse(raw.slice(5).trim()) as ChatStreamChunk;
+          } catch { /* skip malformed */ }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
   async *sendChatFull(
     opts: SendChatOptions,
     abortSignal?: AbortSignal,

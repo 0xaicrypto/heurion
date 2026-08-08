@@ -61,6 +61,10 @@ interface ChatStore {
   setContextUsage: (sessionId: string, usage: NonNullable<SessionState['contextUsage']>) => void;
   appendMessage: (sessionId: string, msg: ChatMessage) => void;
   setMessages: (sessionId: string, msgs: ChatMessage[]) => void;
+  /** #420: replace the text of one assistant message (deep-analysis stream). */
+  updateMessageText: (sessionId: string, msgId: string, text: string) => void;
+  /** #420: toggle the streaming flag of one message. */
+  setStreaming: (sessionId: string, msgId: string, streaming: boolean) => void;
 }
 
 function applyChunk(msg: ChatMessage, chunk: ChatStreamChunk): ChatMessage {
@@ -355,6 +359,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
   },
 
+  updateMessageText: (sessionId: string, msgId: string, text: string) => {
+    set((state) => {
+      const s = state.sessions[sessionId];
+      if (!s) return state;
+      const msgs = s.messages.map((m) => (m.id === msgId ? { ...m, text } : m));
+      return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
+    });
+  },
+  setStreaming: (sessionId: string, msgId: string, streaming: boolean) => {
+    set((state) => {
+      const s = state.sessions[sessionId];
+      if (!s) return state;
+      const msgs = s.messages.map((m) => (m.id === msgId ? { ...m, isStreaming: streaming } : m));
+      return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
+    });
+  },
   setMessages: (sessionId: string, msgs: ChatMessage[]) => {
     set((state) => {
       const s = state.sessions[sessionId] || { messages: [], abort: null, loading: false };

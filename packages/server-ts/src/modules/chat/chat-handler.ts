@@ -709,13 +709,18 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
               const isSubagent = toolName === 'delegate' || toolName === 'spawn_subagent'
               const subTask = isSubagent ? String((toolArgs as any)?.task || argsPreview) : ''
               if (isSubagent) {
-                send({ type: 'subagent_started', task: subTask.slice(0, 200) })
+                const scope = String((toolArgs as any)?.scope || 'global')
+                send({ type: 'subagent_started', task: subTask.slice(0, 200), scope })
               }
 
               const result = await toolRegistry.execute(toolName, toolArgs)
 
               if (isSubagent) {
-                send({ type: 'subagent_done', task: subTask.slice(0, 200), success: result.success })
+                let cost = 0
+                if (result.success && result.output) {
+                  try { cost = Number(JSON.parse(result.output).cost_tokens) || 0 } catch { /* ignore */ }
+                }
+                send({ type: 'subagent_done', task: subTask.slice(0, 200), success: result.success, cost_tokens: cost })
               }
 
               currentMessages.push({ role: 'assistant', content: callResult })

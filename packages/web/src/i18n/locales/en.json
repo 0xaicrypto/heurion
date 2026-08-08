@@ -221,7 +221,16 @@
     "needSession": "Create a session first",
     "noSessionSelected": "No session selected",
     "compactionDivider": "— Compacted history —",
-    "subagentRunning": "Analyzing"
+    "subagentRunning": "Analyzing",
+    "deepAnalysis": "Deep analysis (parallel)",
+    "deepAnalysisShort": "Deep",
+    "deepQuestion": "Question (defaults to the last one)",
+    "deepNeedQuestion": "Enter a question first",
+    "deepRun": "Run parallel",
+    "deepDone": "Analysis complete",
+    "deepTopic_literature": "Literature",
+    "deepTopic_stats": "Statistics",
+    "deepTopic_clinical": "Clinical"
   },
   "patient": {
     "summary": "Summary",
