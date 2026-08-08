@@ -680,3 +680,19 @@ model SubmissionDraft {
   @@index([userId])
   @@map("submission_drafts")
 }
+
+// #420: sub-agent sessions — parallel deep-analysis task history.
+model SubAgentSession {
+  id         String  @id @default(cuid())
+  userId     String  @map("user_id")
+  task       String  @map("task")
+  scope      String? @map("scope") // 'global' | 'patient:<hash>'
+  topic      String? @map("topic") // literature | stats | clinical | ...
+  summary    String? @map("summary")
+  status     String  @default("done") @map("status") // running | done | failed
+  turns      Int     @default(0) @map("turns")
+  costTokens Int     @default(0) @map("cost_tokens")
+  createdAt  String  @map("created_at")
+  @@index([userId, createdAt])
+  @@map("sub_agent_sessions")
+}

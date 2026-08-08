@@ -10,6 +10,7 @@ import { sessionRouter, agentRouter } from './modules/chat/session-agent.router.
 import { patientsRouter } from './modules/patients/patients.router.js'
 import { researchRouter } from './modules/research/research.router.js'
 import { submissionRouter } from './modules/submission/submission.router.js'
+import { deepAnalysisRouter } from './modules/chat/deep-analysis.router.js'
 import { documentsRouter } from './modules/documents/documents.router.js'
 import { skillsRouter } from './modules/skills/skills.router.js'
 import { settingsRouter } from './modules/settings/settings.router.js'
@@ -82,6 +83,7 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   await app.register(chatRouter, { evolutionQueue })
   await app.register(researchRouter)
   await app.register(submissionRouter)
+  await app.register(deepAnalysisRouter)
   await app.register(documentsRouter)
   await app.register(skillsRouter)
   await app.register(settingsRouter)

@@ -14,6 +14,8 @@ import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import { ToolCalls } from '@/components/ToolCalls';
 import { StatusDot } from '@/components/ui/StatusDot';
+import { cn } from '@/lib/utils';
+import { Radar } from 'lucide-react';
 import { SkillCapturePrompt } from '@/components/SkillCapturePrompt';
 import { Alert, Button, Textarea } from '@/components/ui';
 
@@ -70,6 +72,11 @@ export function ChatPage() {
   const [uploadingFile, setUploadingFile] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
+  // #420: parallel deep analysis entry.
+  const [deepOpen, setDeepOpen] = useState(false);
+  const [deepTopics, setDeepTopics] = useState<string[]>(['literature', 'clinical']);
+  const [deepQuestion, setDeepQuestion] = useState('');
+  const [deepBusy, setDeepBusy] = useState(false);
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -227,6 +234,42 @@ export function ChatPage() {
   };
 
   const handleStop = () => store.stopStream(sessionId);
+
+  /** #420: parallel deep analysis — topics spawn concurrently, results append. */
+  const handleDeepAnalysis = async () => {
+    if (!sessionId || deepBusy || deepTopics.length === 0) return;
+    const question = deepQuestion.trim() || (session?.messages ?? []).slice().reverse().find((m) => m.role === 'user')?.text || '';
+    if (!question) { setError(t('chat.deepNeedQuestion', '请输入分析问题')); return; }
+    setDeepBusy(true);
+    setDeepOpen(false);
+    setError(null);
+    // Mirror the user question into the stream like a normal turn.
+    store.appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `🔬 ${question}` });
+    const assistantId = crypto.randomUUID();
+    store.appendMessage(sessionId, { id: assistantId, role: 'assistant', text: '', isStreaming: true });
+    let acc = '';
+    try {
+      for await (const chunk of api.deepAnalysis({ question, topics: deepTopics })) {
+        if (chunk.type === 'subagent_started') {
+          acc += `[${chunk.task} ⏳] `;
+          store.updateMessageText(sessionId, assistantId, acc.trim());
+        } else if (chunk.type === 'subagent_done') {
+          acc = acc.replace(`[${chunk.task} ⏳] `, `[${chunk.task} ${chunk.success ? '✓' : '✗'}] `);
+          store.updateMessageText(sessionId, assistantId, acc.trim());
+        } else if (chunk.type === 'final_answer_chunk') {
+          acc += chunk.text;
+          store.updateMessageText(sessionId, assistantId, acc);
+        }
+      }
+      store.updateMessageText(sessionId, assistantId, acc || t('chat.deepDone', '分析完成'));
+    } catch (err) {
+      store.updateMessageText(sessionId, assistantId, acc || (err instanceof ApiError ? err.messageText : String(err)));
+    } finally {
+      store.setStreaming(sessionId, assistantId, false);
+      setDeepBusy(false);
+      setDeepQuestion('');
+    }
+  };
 
   /** §10.3 (#220): re-run the last user turn. */
   const handleRegenerate = async () => {
@@ -653,6 +696,41 @@ export function ChatPage() {
                 ))}
               </div>
             )}
+            {deepOpen && (
+              <div className="rounded-xl border border-border bg-surface-elevated p-4 shadow-lg">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-medium text-text-secondary">{t('chat.deepAnalysis', '深度分析')}</span>
+                  <button onClick={() => setDeepOpen(false)} className="text-text-tertiary hover:text-text-primary"><X size={14} /></button>
+                </div>
+                <textarea
+                  value={deepQuestion}
+                  onChange={(e) => setDeepQuestion(e.target.value)}
+                  rows={2}
+                  placeholder={t('chat.deepQuestion', '分析问题（默认用最近一次提问）')}
+                  className="mb-2 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                <div className="mb-3 flex flex-wrap gap-1.5">
+                  {(['literature', 'stats', 'clinical'] as const).map((topic) => (
+                    <button
+                      key={topic}
+                      onClick={() => setDeepTopics((prev) => (prev.includes(topic) ? prev.filter((t2) => t2 !== topic) : [...prev, topic]))}
+                      className={cn(
+                        'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                        deepTopics.includes(topic) ? 'border-accent bg-accent/10 text-accent' : 'border-border bg-surface text-text-secondary',
+                      )}
+                    >
+                      {t(`chat.deepTopic_${topic}`, topic)}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => setDeepOpen(false)}>{t('common.cancel', '取消')}</Button>
+                  <Button size="sm" onClick={handleDeepAnalysis} isLoading={deepBusy} disabled={deepTopics.length === 0}>
+                    {t('chat.deepRun', '并行分析')}
+                  </Button>
+                </div>
+              </div>
+            )}
             <div className="flex gap-2">
               <input
                 ref={fileInputRef}
@@ -661,6 +739,16 @@ export function ChatPage() {
                 className="hidden"
                 disabled={uploadingFile}
               />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setDeepOpen(true); setDeepQuestion(''); }}
+                disabled={session?.loading || uploadingFile || !sessionId}
+                className="shrink-0"
+                title={t('chat.deepAnalysis', '深度分析（并行子任务）')}
+              >
+                <Radar size={14} className="mr-1" /> {t('chat.deepAnalysisShort', '深度分析')}
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"

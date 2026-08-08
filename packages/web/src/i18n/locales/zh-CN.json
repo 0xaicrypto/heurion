@@ -221,7 +221,16 @@
     "needSession": "请先新建一个会话",
     "noSessionSelected": "未选择会话",
     "compactionDivider": "— 压缩历史记录 —",
-    "subagentRunning": "正在分析"
+    "subagentRunning": "正在分析",
+    "deepAnalysis": "深度分析（并行子任务）",
+    "deepAnalysisShort": "深度分析",
+    "deepQuestion": "分析问题（默认用最近一次提问）",
+    "deepNeedQuestion": "请输入分析问题",
+    "deepRun": "并行分析",
+    "deepDone": "分析完成",
+    "deepTopic_literature": "文献",
+    "deepTopic_stats": "统计",
+    "deepTopic_clinical": "临床"
   },
   "patient": {
     "summary": "摘要",
