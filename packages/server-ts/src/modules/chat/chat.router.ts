@@ -704,7 +704,19 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
                 tool: toolName, args: argsPreview, status: 'running', seq,
               })
 
+              // #350: delegate = sub-agent activity — surface started/done
+              // over SSE so the UI can show parallel research progress.
+              const isSubagent = toolName === 'delegate' || toolName === 'spawn_subagent'
+              const subTask = isSubagent ? String((toolArgs as any)?.task || argsPreview) : ''
+              if (isSubagent) {
+                send({ type: 'subagent_started', task: subTask.slice(0, 200) })
+              }
+
               const result = await toolRegistry.execute(toolName, toolArgs)
+
+              if (isSubagent) {
+                send({ type: 'subagent_done', task: subTask.slice(0, 200), success: result.success })
+              }
 
               currentMessages.push({ role: 'assistant', content: callResult })
               currentMessages.push({

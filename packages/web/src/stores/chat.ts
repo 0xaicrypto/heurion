@@ -46,6 +46,8 @@ interface SessionState {
   };
   /** #298: skill-capture suggestion shown after a procedural reply. */
   skillCapture?: { text: string };
+  /** #350: sub-agent activity indicator (delegate/spawn_subagent). */
+  subagents?: Array<{ task: string; status: 'running' | 'done' | 'failed' }>;
 }
 
 interface ChatStore {
@@ -194,6 +196,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               };
             }
             return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
+          });
+          continue;
+        }
+        if (chunk.type === 'subagent_started' || chunk.type === 'subagent_done') {
+          set((state) => {
+            const s = state.sessions[sessionId];
+            if (!s) return state;
+            const entry = { task: chunk.type === 'subagent_started' ? chunk.task : chunk.task, status: chunk.type === 'subagent_started' ? ('running' as const) : (chunk.success ? ('done' as const) : ('failed' as const)) };
+            const existing = s.subagents ?? [];
+            const idx = existing.findIndex((e) => e.task === chunk.task);
+            const next = idx >= 0 ? existing.map((e, i) => (i === idx ? entry : e)) : [...existing, entry];
+            return { sessions: { ...state.sessions, [sessionId]: { ...s, subagents: next } } };
           });
           continue;
         }

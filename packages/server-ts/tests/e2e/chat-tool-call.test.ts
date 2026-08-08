@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import fs from 'node:fs'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getApp, authHeader } from '../setup.js'
 
@@ -124,3 +125,28 @@ describe('chat tool-call parsing (regression: nested arguments JSON)', () => {
     expect(finalText).toContain('unable to complete')
   })
 })
+
+  test('delegate tool emits subagent_started/subagent_done SSE events (#350)', async () => {
+    const app = await getApp()
+    const hash = await createPatient(app)
+
+    vi.mocked(deepseekChat).mockImplementation((messages: any[]) => {
+      const text = messages.map((m: any) => m.content || '').join('\n')
+      if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
+      if (text.includes('Tool "delegate" returned')) return Promise.resolve('汇总：文献与统计子任务完成。')
+      if (text.includes('You are a helpful sub-agent')) return Promise.resolve('子任务结果：检索到 3 篇相关文献')
+      return Promise.resolve(`<tool_call>${JSON.stringify({ name: 'delegate', arguments: { task: '检索 EGFR NSCLC 免疫治疗文献' } })}</tool_call>`)
+    })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/agent/chat',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ text: '帮我检索文献并总结', patient_hash: hash }),
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toContain('subagent_started')
+    expect(res.payload).toContain('subagent_done')
+    expect(res.payload).toContain('检索 EGFR NSCLC 免疫治疗文献')
+    expect(res.payload).toContain('汇总：文献与统计子任务完成')
+  })

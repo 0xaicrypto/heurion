@@ -220,7 +220,8 @@
     "confirmCloseBody": "After closing \"{{title}}\", its chat history is cleared and cannot be recovered. Close it?",
     "needSession": "Create a session first",
     "noSessionSelected": "No session selected",
-    "compactionDivider": "— Compacted history —"
+    "compactionDivider": "— Compacted history —",
+    "subagentRunning": "Analyzing"
   },
   "patient": {
     "summary": "Summary",
