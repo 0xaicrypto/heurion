@@ -57,6 +57,7 @@ export class GenerateImageTool extends BaseTool {
     try {
       // #419: retry once on 429/5xx (transient rate limits).
       let res: Response | null = null
+      let lastStatus = 0
       for (let attempt = 0; attempt < 2 && !res; attempt++) {
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), 60000)
@@ -67,10 +68,11 @@ export class GenerateImageTool extends BaseTool {
           signal: controller.signal,
         })
         clearTimeout(timer)
+        lastStatus = r.status
         if (r.ok || (r.status !== 429 && r.status < 500)) { res = r; break }
         if (attempt === 0) await new Promise((r2) => setTimeout(r2, 1500))
       }
-      if (!res) throw new Error('Image API retries exhausted')
+      if (!res) throw new Error(`Image API retries exhausted (last HTTP ${lastStatus})`)
       if (!res.ok) {
         const text = await res.text().catch(() => '')
         throw new Error(`Image API HTTP ${res.status}: ${text.slice(0, 150)}`)
