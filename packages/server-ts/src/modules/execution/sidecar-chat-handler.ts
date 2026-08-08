@@ -1,4 +1,5 @@
 import { deepseekChat, getApiKey, type LlmTelemetryContext , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { SCHEMA_VERSION, validateRenderContent, type RenderContent } from '@heurion/contracts'
 import { createExecutionPlaneService, type ExecutionJobStatus } from './execution-plane.service.js'
 
 const service = createExecutionPlaneService()
@@ -141,59 +142,109 @@ async function buildPayload(
   const historyBlock = buildHistoryBlock(history)
   const prompt = buildRenderPrompt(type, patientBlock, historyBlock, text)
 
-  let data: Record<string, unknown> = {}
-  try {
-    const apiKey = getApiKey()
-    const raw = await deepseekChat(
-      [{ role: 'user', content: prompt }],
-      apiKey,
-      {
-        model: DEEPSEEK_CHAT_MODEL,
-        maxTokens: 2048,
-        telemetryContext,
-      },
-    )
-    const match = raw.match(/\{[\s\S]*\}/)
-    if (match) {
-      data = JSON.parse(match[0])
-    }
-  } catch {
-    // Fallback to minimal structured data
-  }
-
-  // Ensure minimum required fields exist
-  data.patient_initials = data.patient_initials || patient?.initials || 'PT'
-  data.age = data.age ?? patient?.age ?? 0
-  data.sex = data.sex || patient?.sex || '-'
-  data.diagnosis = data.diagnosis || patient?.diagnosis || '-'
-  data.findings_html = data.findings_html || '-'
-  data.treatment_plan = data.treatment_plan || '-'
-  data.generated_at = data.generated_at || new Date().toISOString().slice(0, 10)
-
-  if (type === 'sidecar.render_plot') {
-    return {
-      plot_type: data.plot_type || 'bar',
-      title: data.title || 'Plot',
-      x_label: data.x_label || 'X',
-      y_label: data.y_label || 'Y',
-      series: data.series || [{ x: [1, 2, 3], y: [1, 2, 1], label: 'Series 1' }],
-      output_name: outputName,
-    }
-  }
-
-  if (type === 'sidecar.render_table') {
-    return {
-      title: data.title || 'Table 1',
-      headers: data.headers || ['Variable', 'Value'],
-      rows: data.rows || [],
-      output_name: outputName,
-    }
-  }
+  // Content guarantee layer: LLM output must pass the shared schema. Invalid
+  // output triggers ONE correction retry; if both fail we fall back to a
+  // minimal-but-complete content model built from the user's request — a
+  // generator must NEVER receive an empty content model.
+  let content = await generateValidatedContent(type, text, prompt, patientBlock, historyBlock, telemetryContext)
 
   return {
-    template_id: templateId,
+    schema_version: SCHEMA_VERSION,
+    content_type: type,
     output_name: outputName,
-    data,
+    data: { ...content, schemaVersion: SCHEMA_VERSION },
+  }
+}
+
+/**
+ * AI → validated content model (with one correction retry), then a fallback
+ * derived from the user's own words. Guarantees non-empty, schema-valid input
+ * for the generator.
+ */
+async function generateValidatedContent(
+  type: string,
+  userText: string,
+  prompt: string,
+  patientBlock: string,
+  historyBlock: string,
+  telemetryContext?: LlmTelemetryContext,
+): Promise<RenderContent> {
+  const apiKey = getApiKey()
+  const call = async (p: string): Promise<unknown> => {
+    const raw = await deepseekChat([{ role: 'user', content: p }], apiKey, {
+      model: DEEPSEEK_CHAT_MODEL,
+      maxTokens: 2048,
+      telemetryContext,
+    })
+    const match = raw.match(/\{[\s\S]*\}/)
+    if (!match) return null
+    try { return JSON.parse(match[0]) } catch { return null }
+  }
+
+  // Attempt 1
+  let parsed = await call(prompt).catch(() => null)
+  let check = parsed === null ? { ok: false as const, errors: ['unparseable LLM output'] } : validateRenderContent(type, parsed)
+  // Attempt 2 — correction retry with the exact schema errors.
+  if (!check.ok) {
+    const retry = `${prompt}\n\n你的上一次输出未通过校验，错误如下：\n${check.errors.join('\n')}\n请只输出符合要求的 JSON。`
+    parsed = await call(retry).catch(() => null)
+    check = parsed === null ? { ok: false as const, errors: ['unparseable retry output'] } : validateRenderContent(type, parsed)
+  }
+  if (check.ok) return check.data
+
+  // Fallback: build a minimal but complete content model from the user text.
+  return fallbackContent(type, userText, patientBlock, historyBlock)
+}
+
+/** Build a non-empty, schema-valid content model from the user's request. */
+function fallbackContent(type: string, userText: string, patientBlock: string, historyBlock: string): RenderContent {
+  const request = userText.trim().slice(0, 3000) || '（未提供具体内容）'
+  const context = `${patientBlock}\n${historyBlock}`.trim().slice(0, 3000)
+  const body = context ? `${request}\n\n${context}` : request
+
+  switch (type) {
+    case 'sidecar.generate_pptx':
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        title: userText.trim().slice(0, 80) || 'Presentation',
+        subtitle: 'Generated from chat',
+        slides: [
+          { title: '概述', content: [{ type: 'paragraph', text: request }] },
+          { title: '详细内容', content: [{ type: 'paragraph', text: body }] },
+        ],
+      }
+    case 'sidecar.generate_docx':
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        title: userText.trim().slice(0, 80) || 'Document',
+        sections: [
+          { heading: '概述', paragraphs: [{ type: 'paragraph', text: request }] },
+          { heading: '详细内容', paragraphs: [{ type: 'paragraph', text: body }] },
+        ],
+      }
+    case 'sidecar.render_table':
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        title: userText.trim().slice(0, 80) || 'Table',
+        headers: ['项目', '内容'],
+        rows: [[request.slice(0, 2000)]],
+      }
+    case 'sidecar.render_plot':
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        type: 'bar',
+        title: userText.trim().slice(0, 80) || 'Plot',
+        x_label: '项目',
+        y_label: '数值',
+        series: [{ label: '数据', x: [1], y: [1] }],
+      }
+    default:
+      // Unreachable (caller only routes known types) — safety net.
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        title: 'Document',
+        sections: [{ heading: '内容', paragraphs: [{ type: 'paragraph', text: body }] }],
+      } as RenderContent
   }
 }
 
