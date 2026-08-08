@@ -101,7 +101,7 @@ jobs:
       - name: Build and push server image
         uses: docker/build-push-action@v6
         with:
-          context: packages/server-ts
+          context: .
           file: packages/server-ts/Dockerfile
           push: true
           tags: |
