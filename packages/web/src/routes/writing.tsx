@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus, FileText, Send } from 'lucide-react';
+import { Plus, FileText, Send, Trash2, Loader2 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { SubmissionWorkbench } from '@/routes/submission';
 import { Alert, Button, Input, Card, Skeleton } from '@/components/ui';
@@ -109,6 +109,21 @@ function WritingList() {
     api.listFormatTemplates().then((r) => setTemplates(r.templates)).catch(() => {});
   }, []);
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleDelete = async (docId: string) => {
+    if (!window.confirm(t('writing.confirmDelete', '确定删除这篇文档？此操作不可撤销。'))) return;
+    setDeletingId(docId);
+    try {
+      await api.deleteDoc(docId);
+      setDocs((prev) => prev.filter((d) => d.id !== docId));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const handleCreate = async () => {
     if (!newTitle.trim()) return;
     setCreating(true);
@@ -186,11 +201,11 @@ function WritingList() {
           ) : (
             <div className="space-y-2">
               {docs.map((d) => (
+                <div key={d.id} className="group relative block rounded-xl transition-colors hover:bg-surface">
                 <Link
-                  key={d.id}
                   to={`/app/writing/${d.id}`}
                   onClick={() => setPaperLink({ title: d.title || '', abstract: '', docId: d.id, updatedAt: Date.now() })}
-                  className="block rounded-xl transition-colors hover:bg-surface"
+                  className="block"
                 >
                   <Card className="p-4">
                     <div className="flex items-center justify-between">
@@ -205,6 +220,15 @@ function WritingList() {
                     </div>
                   </Card>
                 </Link>
+                <button
+                  onClick={() => handleDelete(d.id)}
+                  disabled={deletingId === d.id}
+                  title={t('common.delete', '删除')}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-text-tertiary opacity-0 transition-opacity hover:bg-surface-elevated hover:text-error focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-40"
+                >
+                  {deletingId === d.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                </button>
+                </div>
               ))}
             </div>
           )}

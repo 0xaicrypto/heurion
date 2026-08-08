@@ -294,7 +294,8 @@
   "writing": {
     "title": "论文工作台",
     "comingSoon": "写作工作室功能即将推出。",
-    "tabWrite": "写作"
+    "tabWrite": "写作",
+    "confirmDelete": "确定删除这篇文档？此操作不可撤销。"
   },
   "skills": {
     "title": "技能",
