@@ -1,24 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  LayoutDashboard,
-  Brain,
-  MessageSquare,
-  Users,
-  FlaskConical,
-  FileText,
-  Cpu,
-  Puzzle,
-  Settings,
-  Shield,
-  Menu,
-  Sun,
-  Moon,
-  Monitor,
-  Globe,
-  LogOut,
-  X,
-} from 'lucide-react';
+import { Brain, Cpu, FileText, FlaskConical, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, Monitor, Moon, Puzzle, Send, Settings, Shield, Sun, Users, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
@@ -48,6 +30,7 @@ const navItems: NavItem[] = [
   { to: '/app/chat', labelKey: 'nav.chat', icon: <MessageSquare size={18} />, section: 'conversation' },
   { to: '/app/patients', labelKey: 'nav.patients', icon: <Users size={18} />, section: 'patients' },
   { to: '/app/research', labelKey: 'nav.research', icon: <FlaskConical size={18} />, section: 'patients' },
+  { to: '/app/submission', labelKey: 'nav.submission', icon: <Send size={18} />, section: 'patients' },
   { to: '/app/writing', labelKey: 'nav.writing', icon: <FileText size={18} />, section: 'patients' },
   { to: '/app/memory', labelKey: 'nav.memoryKnowledge', icon: <Brain size={18} />, section: 'memory' },
   { to: '/app/skills', labelKey: 'nav.skills', icon: <Cpu size={18} />, section: 'tools' },
