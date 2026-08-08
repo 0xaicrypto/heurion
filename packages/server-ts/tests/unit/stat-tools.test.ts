@@ -1,5 +1,5 @@
-import { describe, test, expect } from 'vitest'
-import { StatDescribeTool, StatTTestTool, StatChiSqTool, StatKmTool } from '../../src/tools/stat-tools.js'
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import { StatDescribeTool, StatTTestTool, StatChiSqTool, StatKmTool, StatPlotTool, StatAdvisorTool } from '../../src/tools/stat-tools.js'
 import { tTwoTailedP, chiSquaredP } from '../../src/tools/stat-tools.js'
 
 // Expose helpers for direct p-value checks
@@ -101,3 +101,51 @@ describe('stat tools (#361)', () => {
     expect(km.success).toBe(false)
   })
 })
+
+  test('stat_plot converts KM curves and forest rows for render_chart (#361)', async () => {
+    const tool = new StatPlotTool()
+    const km = await tool.execute({
+      plot_type: 'km',
+      group_a: [{ time: 0, survival: 1 }, { time: 5, survival: 0.6 }, { time: 10, survival: 0.3 }],
+      group_b: [{ time: 0, survival: 1 }, { time: 5, survival: 0.9 }],
+      label_a: 'Treated', label_b: 'Control',
+    })
+    expect(km.success).toBe(true)
+    const kmOut = JSON.parse(km.output!)
+    expect(kmOut.charts.length).toBe(2)
+    expect(kmOut.charts[0].type).toBe('line')
+    expect(kmOut.charts[0].data[1]).toEqual({ label: '5', value: 0.6 })
+
+    const forest = await tool.execute({
+      plot_type: 'forest',
+      forest: [{ label: 'PD-L1>=50%', hr: 0.48, lo: 0.29, hi: 0.80 }, { label: 'EGFR 19del', hr: 0.9, lo: 0.6, hi: 1.3 }],
+    })
+    expect(forest.success).toBe(true)
+    const fOut = JSON.parse(forest.output!)
+    expect(fOut.charts[0].type).toBe('bar')
+    expect(fOut.notes[0]).toContain('statistically significant')
+    expect(fOut.notes[1]).toContain('not significant')
+
+    const bad = await tool.execute({ plot_type: 'nope' })
+    expect(bad.success).toBe(false)
+  })
+
+  test('stat_ai advises a method and interprets a result (#361)', async () => {
+    vi.stubEnv('DEEPSEEK_API_KEY', 'test-key')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '{"method":"Log-rank test","rationale":"time-to-event outcome","assumptions":["proportional hazards"],"alternative":"Cox PH","interpretation":"p<0.05 suggests a survival difference"}' } }] }),
+    }) as any)
+    const tool = new StatAdvisorTool()
+    const res = await tool.execute({ question: 'Compare PFS between treated and control arms', outcome_type: 'time_to_event' })
+    expect(res.success).toBe(true)
+    const out = JSON.parse(res.output!)
+    expect(out.method).toBe('stat_advisor')
+    expect(out.recommendation).toBeTruthy()
+    expect(out.interpretation).toBeTruthy()
+
+    const bad = await tool.execute({ question: '', outcome_type: 'continuous' })
+    expect(bad.success).toBe(false)
+    vi.unstubAllEnvs()
+    fetchMock.mockRestore()
+  })
