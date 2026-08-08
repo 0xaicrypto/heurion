@@ -378,3 +378,143 @@ function medianSurvival(points: { time: number; survival: number }[]): number | 
   }
   return null
 }
+
+/**
+ * stat_plot — converts statistics output into render_chart-compatible data
+ * (line/bar). KM curves produce per-group line data; forest plots produce
+ * log-scaled bars. The LLM calls render_chart with the returned data.
+ */
+export class StatPlotTool extends BaseTool {
+  get name(): string { return 'stat_plot' }
+  get description(): string {
+    return 'Prepare statistics output for plotting via render_chart. For kaplan-meier: pass two survival curves and get line data (call render_chart type=line with each). For forest: pass {label,hr,lo,hi} rows and get bar data (log scale). Output: { charts: [{type,data,title,x_label,y_label}], notes }.'
+  }
+  get parameters(): Record<string, unknown> {
+    return {
+      type: 'object',
+      properties: {
+        plot_type: { type: 'string', enum: ['km', 'forest'], description: 'km = Kaplan-Meier survival curves; forest = forest plot (HR with CI)' },
+        group_a: { type: 'array', items: { type: 'object', properties: { time: { type: 'number' }, survival: { type: 'number' } } }, description: 'KM curve A points (from stat_km curve_a)' },
+        group_b: { type: 'array', items: { type: 'object', properties: { time: { type: 'number' }, survival: { type: 'number' } } }, description: 'KM curve B points (from stat_km curve_b)' },
+        label_a: { type: 'string', default: 'Group A' },
+        label_b: { type: 'string', default: 'Group B' },
+        forest: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, hr: { type: 'number' }, lo: { type: 'number' }, hi: { type: 'number' } } }, description: 'Forest plot rows (HR with 95% CI bounds)' },
+        title: { type: 'string', default: 'Survival analysis' },
+      },
+      required: ['plot_type'],
+    }
+  }
+  async execute(args: Record<string, unknown>): Promise<ToolResult> {
+    const plotType = String(args.plot_type)
+    if (plotType === 'km') {
+      const a = (args.group_a as any[]) || []
+      const b = (args.group_b as any[]) || []
+      if (a.length === 0 && b.length === 0) return { success: false, error: 'km needs group_a and/or group_b points' }
+      const toLine = (points: any[]) => points.map((p: any) => ({ label: String(Number(p.time) || 0), value: Number(p.survival) || 0 }))
+      const charts: any[] = []
+      if (a.length > 0) charts.push({ type: 'line', data: toLine(a), title: `${args.title || 'Survival'} — ${args.label_a || 'Group A'}`, x_label: 'Time', y_label: 'Survival probability' })
+      if (b.length > 0) charts.push({ type: 'line', data: toLine(b), title: `${args.title || 'Survival'} — ${args.label_b || 'Group B'}`, x_label: 'Time', y_label: 'Survival probability' })
+      return {
+        success: true,
+        output: JSON.stringify({
+          method: 'stat_plot_km',
+          charts,
+          notes: 'Call render_chart once per chart with its type/data/title/x_label/y_label.',
+        }, null, 2),
+      }
+    }
+    if (plotType === 'forest') {
+      const rows = (args.forest as any[]) || []
+      if (rows.length === 0) return { success: false, error: 'forest needs rows of {label, hr, lo, hi}' }
+      // Log-scale bars centered at 1 (HR=1 → 0 on log axis).
+      const data = rows.map((r) => ({ label: String(r.label), value: Math.log2(Number(r.hr) || 1) }))
+      const notes = rows.map((r) => {
+        const hr = Number(r.hr) || 1
+        const lo = Number(r.lo) || hr
+        const hi = Number(r.hi) || hr
+        const sig = lo > 1 || hi < 1 ? 'statistically significant' : 'not significant'
+        return `${r.label}: HR ${hr.toFixed(2)} (95% CI ${lo.toFixed(2)}–${hi.toFixed(2)}) — ${sig}`
+      })
+      return {
+        success: true,
+        output: JSON.stringify({
+          method: 'stat_plot_forest',
+          charts: [{ type: 'bar', data, title: args.title || 'Forest plot (log2 HR)', x_label: 'Subgroup', y_label: 'log2(HR)' }],
+          notes,
+        }, null, 2),
+      }
+    }
+    return { success: false, error: `Unsupported plot_type: ${plotType}` }
+  }
+}
+
+/**
+ * stat_ai — statistical method advisor. Describes the study question and
+ * gets a recommended test + assumptions + interpretation template.
+ */
+export class StatAdvisorTool extends BaseTool {
+  get name(): string { return 'stat_ai' }
+  get description(): string {
+    return 'Recommend the right statistical test for a study design and interpret the result. Input: research question, outcome type, group structure, sample sizes. Output: { method, rationale, assumptions, alternative, interpretation } — use with stat_ttest/stat_chisq/stat_km to run the analysis.'
+  }
+  get parameters(): Record<string, unknown> {
+    return {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'Research question, e.g. "Compare PFS between treated and control arms"' },
+        outcome_type: { type: 'string', enum: ['continuous', 'binary', 'time_to_event'], description: 'Outcome variable type' },
+        groups: { type: 'integer', default: 2, description: 'Number of groups being compared' },
+        design: { type: 'string', enum: ['independent', 'paired', 'correlation'], default: 'independent' },
+        n: { type: 'integer', description: 'Total sample size (for power/appropriateness notes)' },
+        result: { type: 'string', description: 'Optional observed result (e.g. p=0.012, HR 0.48) to interpret' },
+      },
+      required: ['question', 'outcome_type'],
+    }
+  }
+  async execute(args: Record<string, unknown>): Promise<ToolResult> {
+    const question = String(args.question || '').trim()
+    if (!question) return { success: false, error: 'question required' }
+    try {
+      const { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } = await import('../common/llm.js')
+      const prompt = `You are a clinical biostatistician. For the study below, recommend the statistical test and interpret the result.
+
+Question: ${question}
+Outcome type: ${args.outcome_type}
+Groups: ${args.groups || 2}
+Design: ${args.design || 'independent'}
+Sample size: ${args.n || 'unknown'}
+${args.result ? `Observed result: ${args.result}` : ''}
+
+Return ONLY a JSON object:
+{
+  "method": "recommended test name",
+  "rationale": "1-2 sentences why",
+  "assumptions": ["check 1", "check 2"],
+  "alternative": "backup test if assumptions fail",
+  "interpretation": "how to read the result (template with p/HR placeholders)"
+}`
+
+      const result = await deepseekChat([{ role: 'user', content: prompt }], getApiKey(), {
+        model: DEEPSEEK_CHAT_MODEL,
+        maxTokens: 800,
+        telemetryContext: { userId: 'stat', workspaceId: 'stat', action: 'stat_advisor' },
+      })
+      const match = result.match(/\{[\s\S]*\}/)
+      if (!match) return { success: false, error: 'Unparseable advisor output' }
+      const parsed = JSON.parse(match[0])
+      return {
+        success: true,
+        output: JSON.stringify({
+          method: 'stat_advisor',
+          recommendation: parsed.method || 'n/a',
+          rationale: parsed.rationale || '',
+          assumptions: parsed.assumptions || [],
+          alternative: parsed.alternative || '',
+          interpretation: parsed.interpretation || '',
+        }, null, 2),
+      }
+    } catch (err) {
+      return { success: false, error: `stat_ai failed: ${(err as Error).message.slice(0, 200)}` }
+    }
+  }
+}

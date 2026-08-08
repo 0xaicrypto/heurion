@@ -9,7 +9,7 @@ import { EditDocumentTool } from './edit-document-tool.js'
 import { LoadSkillTool } from './skill-tools.js'
 import { RenderChartTool } from './render-chart-tool.js'
 import { SearchMedicalWebTool, FetchArticleSummaryTool } from './medical-web-tools.js'
-import { StatDescribeTool, StatTTestTool, StatChiSqTool, StatKmTool } from './stat-tools.js'
+import { StatDescribeTool, StatTTestTool, StatChiSqTool, StatKmTool, StatPlotTool, StatAdvisorTool } from './stat-tools.js'
 import type { MemoryService } from '../memory/memory.service.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores.js'
 import type { EventLog } from '../core/event-log.js'
@@ -49,6 +49,8 @@ export class ToolRegistry {
     this.register(new StatTTestTool())
     this.register(new StatChiSqTool())
     this.register(new StatKmTool())
+    this.register(new StatPlotTool())
+    this.register(new StatAdvisorTool())
   }
 
   /**
