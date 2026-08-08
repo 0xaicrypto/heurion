@@ -75,7 +75,7 @@
     "patients": "患者",
     "chat": "对话",
     "research": "科研",
-    "writing": "写作",
+    "writing": "论文工作台",
     "skills": "技能",
     "knowledge": "知识库",
     "plugins": "插件",
@@ -89,8 +89,7 @@
     "sectionConversation": "对话",
     "sectionPatients": "患者工作区",
     "sectionMemory": "记忆与知识",
-    "sectionTools": "工具与设置",
-    "submission": "投稿"
+    "sectionTools": "工具与设置"
   },
   "auth": {
     "welcomeBack": "欢迎回来",
@@ -288,8 +287,9 @@
     "comingSoon": "研究工作台功能即将推出。"
   },
   "writing": {
-    "title": "写作",
-    "comingSoon": "写作工作室功能即将推出。"
+    "title": "论文工作台",
+    "comingSoon": "写作工作室功能即将推出。",
+    "tabWrite": "写作"
   },
   "skills": {
     "title": "技能",

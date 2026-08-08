@@ -9,12 +9,8 @@ import type { JournalRecommendation, FormatTemplate, SubmissionDraft } from '@/l
 
 type Tab = 'journals' | 'cover' | 'template';
 
-/**
- * #362: submission workbench — journal recommendation, cover letter
- * generation, and format templates. Article info flows from the left panel
- * into every tab; drafts persist server-side so a refresh never loses work.
- */
-export function SubmissionPage() {
+/** #362: embedded workbench (no AppShell) — used by the Writing & Submission tab. */
+export function SubmissionWorkbench({ embedded = false }: { embedded?: boolean }) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>('journals');
 
@@ -73,15 +69,15 @@ export function SubmissionPage() {
   }, [title, abstract, keywords, authors, loaded, persist]);
 
   return (
-    <AppShell>
-      <div className="flex h-full flex-col overflow-y-auto">
+    <div className="flex h-full flex-col overflow-y-auto">
+      {!embedded && (
         <header className="flex h-14 items-center gap-2 border-b border-border bg-surface px-6">
           <Send size={18} className="text-text-tertiary" />
           <h1 className="font-semibold text-text-primary">{t('submission.title', '投稿工作台')}</h1>
           {savedFlash && <span className="ml-auto text-xs text-success">✓ {t('submission.saved', '已自动保存')}</span>}
         </header>
-
-        <div className="flex flex-col gap-4 p-6 lg:flex-row">
+      )}
+      <div className="flex flex-col gap-4 p-6 lg:flex-row">
           {/* ① 论文信息面板 */}
           <Card className="h-fit w-full shrink-0 space-y-3 p-4 lg:w-80">
             <div className="flex items-center gap-1.5 text-sm font-medium text-text-secondary">
@@ -123,10 +119,18 @@ export function SubmissionPage() {
 
             {tab === 'journals' && <JournalsTab title={title} abstract={abstract} onPick={(j) => persist({ target_journal: j.name })} />}
             {tab === 'cover' && <CoverTab title={title} abstract={abstract} authors={authors} draft={draft} onSaved={(cl) => persist({ cover_letter: cl })} />}
-             {tab === 'template' && <TemplateTab title={title} abstract={abstract} authors={authors} onSaved={(tid) => persist({ template_id: tid })} />}
+            {tab === 'template' && <TemplateTab title={title} abstract={abstract} authors={authors} onSaved={(tid) => persist({ template_id: tid })} />}
           </div>
         </div>
       </div>
+  );
+}
+
+/** Standalone page — legacy /app/submission route. */
+export function SubmissionPage() {
+  return (
+    <AppShell>
+      <SubmissionWorkbench />
     </AppShell>
   );
 }

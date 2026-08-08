@@ -75,7 +75,7 @@
     "patients": "Patients",
     "chat": "Chat",
     "research": "Research",
-    "writing": "Writing",
+    "writing": "Paper Workbench",
     "skills": "Skills",
     "knowledge": "Knowledge",
     "plugins": "Plugins",
@@ -89,8 +89,7 @@
     "sectionConversation": "Conversation",
     "sectionPatients": "Patient Workspace",
     "sectionMemory": "Memory & Knowledge",
-    "sectionTools": "Tools & Settings",
-    "submission": "Submission"
+    "sectionTools": "Tools & Settings"
   },
   "auth": {
     "welcomeBack": "Welcome back",
@@ -288,8 +287,9 @@
     "comingSoon": "Research workspace coming soon."
   },
   "writing": {
-    "title": "Writing",
-    "comingSoon": "Writing studio coming soon."
+    "title": "Paper Workbench",
+    "comingSoon": "Writing studio coming soon.",
+    "tabWrite": "Write"
   },
   "skills": {
     "title": "Skills",
