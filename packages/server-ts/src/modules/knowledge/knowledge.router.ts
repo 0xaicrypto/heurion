@@ -3,6 +3,7 @@ import { authGuard, adminGuard } from '../../common/auth.guard'
 import { PrismaKnowledgeGapService, type GapSource } from './knowledge-gap.service'
 import { getUserContext } from '../chat/user-context.js'
 import { SidecarFeedbackService, type SidecarOutputType } from './sidecar-feedback.service.js'
+import { isNodeSuperseded } from '../../memory/memory.types.js'
 import { PrismaTelemetryService } from './telemetry.service.js'
 import { deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 
@@ -234,7 +235,7 @@ export async function knowledgeRouter(app: FastifyInstance) {
     const userId = request.user!.userId
     const ctx = getUserContext(userId)
     const articles = ctx.memory.graph.getCurrentNodesByType('article')
-      .filter((n): n is import('../../memory/memory.types').ArticleNode => n.type === 'article')
+      .filter((n): n is import('../../memory/memory.types.js').ArticleNode => n.type === 'article')
       .map(a => serializeArticle(a, ctx.memory))
     return { articles }
   })
@@ -245,10 +246,10 @@ export async function knowledgeRouter(app: FastifyInstance) {
     const { id } = request.params as { id: string }
     const ctx = getUserContext(userId)
     const article = ctx.memory.graph.getLatestByStableId(id)
-    if (!article || article.type !== 'article' || article.status === 'superseded') {
+    if (!article || article.type !== 'article' || isNodeSuperseded(article)) {
       return reply.status(404).send({ error: 'article not found' })
     }
-    return serializeArticle(article as import('../../memory/memory.types').ArticleNode, ctx.memory)
+    return serializeArticle(article as import('../../memory/memory.types.js').ArticleNode, ctx.memory)
   })
 
   // Regenerate a stale article from its current source facts
@@ -256,8 +257,8 @@ export async function knowledgeRouter(app: FastifyInstance) {
     const userId = request.user!.userId
     const { id } = request.params as { id: string }
     const ctx = getUserContext(userId)
-    const article = ctx.memory.graph.getLatestByStableId(id) as import('../../memory/memory.types').ArticleNode | undefined
-    if (!article || article.type !== 'article' || article.status === 'superseded') {
+    const article = ctx.memory.graph.getLatestByStableId(id) as import('../../memory/memory.types.js').ArticleNode | undefined
+    if (!article || article.type !== 'article' || isNodeSuperseded(article)) {
       return reply.status(404).send({ error: 'article not found' })
     }
 
@@ -367,9 +368,9 @@ export async function knowledgeRouter(app: FastifyInstance) {
   })
 }
 
-function serializeArticle(article: import('../../memory/memory.types').ArticleNode, memory: import('../../memory/memory.service').MemoryService) {
+function serializeArticle(article: import('../../memory/memory.types.js').ArticleNode, memory: import('../../memory/memory.service').MemoryService) {
   const impact = (article.staleBecause || []).map(factStableId => {
-    const fact = memory.graph.getLatestByStableId(factStableId) as import('../../memory/memory.types').FactNode | undefined
+    const fact = memory.graph.getLatestByStableId(factStableId) as import('../../memory/memory.types.js').FactNode | undefined
     return {
       factId: factStableId,
       status: fact?.status || 'unknown',
@@ -393,13 +394,13 @@ function serializeArticle(article: import('../../memory/memory.types').ArticleNo
 }
 
 async function regenerateArticleWithLlm(
-  article: import('../../memory/memory.types').ArticleNode,
+  article: import('../../memory/memory.types.js').ArticleNode,
   memory: import('../../memory/memory.service').MemoryService,
   userId: string,
-): Promise<import('../../memory/memory.types').ArticleNode | null> {
+): Promise<import('../../memory/memory.types.js').ArticleNode | null> {
   const sourceFacts = article.sourceFacts
     .map(s => memory.graph.getLatestByStableId(s.stableId))
-    .filter((n): n is import('../../memory/memory.types').FactNode => n?.type === 'fact' && n.status !== 'superseded')
+    .filter((n): n is import('../../memory/memory.types.js').FactNode => n?.type === 'fact' && n.status !== 'superseded')
 
   let title = article.title
   let content = article.content

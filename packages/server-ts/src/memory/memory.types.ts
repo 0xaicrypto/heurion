@@ -230,3 +230,27 @@ export interface AddGapInput {
   sourceId?: string
   provenance?: Partial<Provenance>
 }
+
+/**
+ * #305: cohesive node behavior — evolution predicates live with the node
+ * types so service classes orchestrate instead of re-implementing status
+ * logic (repeated `status === 'superseded'` checks across the codebase).
+ */
+export function isNodeSuperseded(node: MemoryNodeBase | null | undefined): boolean {
+  return !!node && node.status === 'superseded'
+}
+
+export function isNodeStale(node: MemoryNodeBase | null | undefined): boolean {
+  return !!node && node.status === 'stale'
+}
+
+/** A fact supersedes its own prior version when a newer version exists. */
+export function isFactCurrent(fact: FactNode): boolean {
+  return fact.status === 'current' && fact.count > 0
+}
+
+/** An article is stale when any of its source facts were superseded. */
+export function isArticleStale(article: ArticleNode, supersededFactStableIds: string[]): boolean {
+  if (article.status === 'superseded') return true
+  return article.sourceFacts.some((s) => supersededFactStableIds.includes(s.stableId))
+}

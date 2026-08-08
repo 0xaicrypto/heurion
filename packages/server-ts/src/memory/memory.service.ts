@@ -4,6 +4,7 @@ import type { FactsStore, KnowledgeStore } from '../evolution/stores'
 import type { Fact, KnowledgeArticle } from '../evolution/stores'
 import { MemoryGraph } from './memory.graph'
 import { LegacyProjection, type LegacySnapshot } from './legacy-projection.js'
+import { isNodeSuperseded, isNodeStale, isArticleStale, isFactCurrent } from './memory.types.js'
 import { PropagationCoordinator } from './propagation-coordinator.js'
 import { CurationEngine, type PropagationResult } from './curation/curation.engine'
 import type {
@@ -152,7 +153,7 @@ export class MemoryService {
    */
   supersedeFact(stableId: string, reason: string, by: MemoryCreatedBy = 'system'): boolean {
     const current = this.graph.getLatestByStableId(stableId) as FactNode | undefined
-    if (!current || current.status === 'superseded') return false
+    if (!current || isNodeSuperseded(current)) return false
 
     const legacyBefore = this.snapshotLegacy()
 
@@ -173,7 +174,7 @@ export class MemoryService {
 
   editFact(stableId: string, input: EditFactInput, editedBy: MemoryCreatedBy = 'user'): FactNode | null {
     const current = this.graph.getLatestByStableId(stableId) as FactNode | undefined
-    if (!current || current.status === 'superseded') return null
+    if (!current || isNodeSuperseded(current)) return null
 
     const now = Date.now()
     const newVersion = current.version + 1
@@ -244,7 +245,7 @@ export class MemoryService {
 
   deleteFact(stableId: string, deletedBy: MemoryCreatedBy = 'user'): { ok: boolean; propagation?: PropagationResult } {
     const current = this.graph.getLatestByStableId(stableId) as FactNode | undefined
-    if (!current || current.status === 'superseded') return { ok: false }
+    if (!current || isNodeSuperseded(current)) return { ok: false }
 
     // Snapshot legacy before any provisional write (dual-store atomicity, #192).
     const legacyBefore = this.snapshotLegacy()
@@ -292,9 +293,9 @@ export class MemoryService {
       if (propagation) {
         for (const articleId of propagation.staleArticleStableIds) {
           const article = this.graph.getLatestByStableId(articleId) as ArticleNode | undefined
-          if (!article || article.status === 'superseded') {
+          if (!article || isNodeSuperseded(article)) {
             supersededIds.add(articleId)
-          } else if (article.status === 'stale') {
+          } else if (isNodeStale(article)) {
             staleIds.add(articleId)
           }
         }
@@ -395,7 +396,7 @@ export class MemoryService {
 
   editArticle(stableId: string, input: EditArticleInput, editedBy: MemoryCreatedBy = 'user'): ArticleNode | null {
     const current = this.graph.getLatestByStableId(stableId) as ArticleNode | undefined
-    if (!current || current.status === 'superseded') return null
+    if (!current || isNodeSuperseded(current)) return null
 
     const now = Date.now()
     const newVersion = current.version + 1
@@ -458,7 +459,7 @@ export class MemoryService {
 
   deleteArticle(stableId: string, deletedBy: MemoryCreatedBy = 'user'): boolean {
     const current = this.graph.getLatestByStableId(stableId) as ArticleNode | undefined
-    if (!current || current.status === 'superseded') return false
+    if (!current || isNodeSuperseded(current)) return false
 
     const legacyBefore = this.snapshotLegacy()
 
@@ -532,7 +533,7 @@ export class MemoryService {
 
   deleteDocument(stableId: string, deletedBy: MemoryCreatedBy = 'user'): boolean {
     const current = this.graph.getLatestByStableId(stableId) as DocumentNode | undefined
-    if (!current || current.status === 'superseded') return false
+    if (!current || isNodeSuperseded(current)) return false
 
     // Snapshot legacy before any provisional write (dual-store atomicity, #192).
     const legacyBefore = this.snapshotLegacy()
@@ -592,7 +593,7 @@ export class MemoryService {
 
   answerGap(gapStableId: string, answerNode: MemoryNode, answeredBy: MemoryCreatedBy = 'user'): GapNode | null {
     const gap = this.graph.getLatestByStableId(gapStableId) as GapNode | undefined
-    if (!gap || gap.status === 'superseded') return null
+    if (!gap || isNodeSuperseded(gap)) return null
 
     this.graph.updateNode(gap.id, {
       status: 'current',
