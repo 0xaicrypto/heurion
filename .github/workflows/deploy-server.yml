@@ -210,6 +210,8 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           EXECUTION_PLANE_URL: ${{ secrets.EXECUTION_PLANE_URL }}
           WORKER_API_TOKEN: ${{ secrets.WORKER_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           cat > /tmp/heurion-deploy.env <<EOF
           HOSTNAME=${HOSTNAME}
@@ -231,6 +233,8 @@ jobs:
           EMAIL_FROM=Heurion <no-reply@heurion.org>
           EXECUTION_PLANE_URL=${EXECUTION_PLANE_URL}
           WORKER_API_TOKEN=${WORKER_API_TOKEN}
+          CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
+          CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
           EMBEDDING_PROVIDER=local
           EMBEDDING_MODEL=Xenova/bge-small-en-v1.5
           EMBEDDING_BATCH_SIZE=32

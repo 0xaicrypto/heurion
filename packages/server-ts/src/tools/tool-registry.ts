@@ -8,7 +8,7 @@ import { OCRImageTool } from './ocr-tools.js'
 import { EditDocumentTool } from './edit-document-tool.js'
 import { LoadSkillTool } from './skill-tools.js'
 import { RenderChartTool } from './render-chart-tool.js'
-import { SearchMedicalWebTool, FetchArticleSummaryTool } from './medical-web-tools.js'
+import { SearchMedicalWebTool, FetchArticleSummaryTool, VisitMedicalSiteTool, ExtractFulltextTool } from './medical-web-tools.js'
 import { StatDescribeTool, StatTTestTool, StatChiSqTool, StatKmTool, StatPlotTool, StatAdvisorTool } from './stat-tools.js'
 import type { MemoryService } from '../memory/memory.service.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores.js'
@@ -45,6 +45,8 @@ export class ToolRegistry {
     this.register(new LoadSkillTool(ctx))
     this.register(new SearchMedicalWebTool(ctx))
     this.register(new FetchArticleSummaryTool(ctx))
+    this.register(new VisitMedicalSiteTool(ctx))
+    this.register(new ExtractFulltextTool(ctx))
     this.register(new StatDescribeTool())
     this.register(new StatTTestTool())
     this.register(new StatChiSqTool())

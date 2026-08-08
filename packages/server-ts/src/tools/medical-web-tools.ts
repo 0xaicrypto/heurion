@@ -195,3 +195,113 @@ export class FetchArticleSummaryTool extends BaseTool {
     }
   }
 }
+
+/**
+ * #356 stage 2: browser-based medical site access via Cloudflare Browser
+ * Run (Kitesurf). Renders the page and extracts markdown/full text.
+ * Requires CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN; degrades with a
+ * clear error when unconfigured.
+ */
+const CF_BROWSER_RUN = 'https://api.cloudflare.com/client/v4/accounts'
+
+async function browserRunMarkdown(url: string, ctx: ToolContext, auditLabel: string): Promise<{ markdown: string; title: string }> {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID
+  const token = process.env.CLOUDFLARE_API_TOKEN
+  if (!accountId || !token) {
+    throw new Error('CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN not configured — browser access unavailable')
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 30000)
+  try {
+    const res = await fetch(`${CF_BROWSER_RUN}/${accountId}/browser-run/markdown?browser=kitesurf`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ url }),
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`Browser Run HTTP ${res.status}: ${text.slice(0, 150)}`)
+    }
+    const data: any = await res.json()
+    const markdown = String(data?.markdown || data?.result?.markdown || '')
+    if (ctx) {
+      try {
+        ctx.eventLog.append({
+          timestamp: Date.now() / 1000,
+          eventType: 'evolution',
+          content: `🌐 站点访问：${auditLabel}`,
+          metadata: { action: 'medical_web_visit', url, source: 'browser-run' },
+          agentId: ctx.userId,
+          sessionId: ctx.sessionId || '',
+        })
+      } catch { /* best-effort */ }
+    }
+    return { markdown: markdown.slice(0, 20000), title: String(data?.title || '') }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** #356: visit a medical site (journal page, guideline) and read it. */
+export class VisitMedicalSiteTool extends BaseTool {
+  constructor(private ctx: ToolContext) { super() }
+
+  get name(): string { return 'visit_medical_site' }
+  get description(): string {
+    return 'Open a medical website (journal article page, guideline page, PubMed record) in a headless browser and read the rendered content as markdown. Use when PubMed search results are not enough and the full page context matters. Read-only; requires Cloudflare Browser Run configured.'
+  }
+  get parameters(): Record<string, unknown> {
+    return {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Full URL, e.g. https://pubmed.ncbi.nlm.nih.gov/32500001/' },
+      },
+      required: ['url'],
+    }
+  }
+  async execute(args: Record<string, unknown>): Promise<ToolResult> {
+    const url = String(args.url || '').trim()
+    if (!/^https?:\/\//.test(url)) return { success: false, error: 'url must start with http(s)://' }
+    try {
+      const { markdown, title } = await browserRunMarkdown(url, this.ctx, url)
+      if (!markdown) return { success: false, error: 'Browser Run returned no content' }
+      return {
+        success: true,
+        output: `Page: ${title || url}\n\n${markdown.slice(0, 8000)}`,
+      }
+    } catch (err) {
+      return { success: false, error: `visit_medical_site failed: ${(err as Error).message.slice(0, 200)}` }
+    }
+  }
+}
+
+/** #356: full-text extraction from an already-visited medical page. */
+export class ExtractFulltextTool extends BaseTool {
+  constructor(private ctx: ToolContext) { super() }
+
+  get name(): string { return 'extract_fulltext' }
+  get description(): string {
+    return 'Extract the full text of a medical article or guideline page via headless browser rendering. Returns the page as clean markdown. Read-only; requires Cloudflare Browser Run configured.'
+  }
+  get parameters(): Record<string, unknown> {
+    return {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Full URL of the article/guideline page' },
+      },
+      required: ['url'],
+    }
+  }
+  async execute(args: Record<string, unknown>): Promise<ToolResult> {
+    const url = String(args.url || '').trim()
+    if (!/^https?:\/\//.test(url)) return { success: false, error: 'url must start with http(s)://' }
+    try {
+      const { markdown } = await browserRunMarkdown(url, this.ctx, url)
+      if (!markdown) return { success: false, error: 'Browser Run returned no content' }
+      return { success: true, output: markdown.slice(0, 16000) }
+    } catch (err) {
+      return { success: false, error: `extract_fulltext failed: ${(err as Error).message.slice(0, 200)}` }
+    }
+  }
+}
