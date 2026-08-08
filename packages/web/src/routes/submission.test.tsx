@@ -84,3 +84,18 @@ describe('SubmissionWorkbench (#362)', () => {
     });
     expect(screen.getByText(/Doc created/)).toBeTruthy();
   });
+
+  it('only the applied template card shows the applied hint (#382 fix)', async () => {
+    render(<SubmissionWorkbench embedded />);
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'My study' } });
+    fireEvent.click(screen.getByText('Templates'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Journal of Thoracic Oncology')).toBeTruthy();
+    });
+    fireEvent.click(screen.getAllByText('Apply to writing')[0]);
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/Doc created/)).toHaveLength(1);
+    });
+  });
