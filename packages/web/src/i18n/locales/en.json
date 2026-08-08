@@ -294,7 +294,8 @@
   "writing": {
     "title": "Paper Workbench",
     "comingSoon": "Writing studio coming soon.",
-    "tabWrite": "Write"
+    "tabWrite": "Write",
+    "confirmDelete": "Delete this document? This cannot be undone."
   },
   "skills": {
     "title": "Skills",
