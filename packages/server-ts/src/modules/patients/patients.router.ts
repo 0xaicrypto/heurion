@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
+import { registerPatientSchema } from '../chat/chat.dto.js'
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import fs from 'fs'
@@ -46,21 +47,25 @@ export async function patientsRouter(app: FastifyInstance) {
   })
 
   // ── Register manual ──
-  app.post('/api/v1/dicom/patients/register-manual', async (request) => {
-    const body = request.body as any
+  app.post('/api/v1/dicom/patients/register-manual', async (request, reply) => {
+    const parsed = registerPatientSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: `Invalid request: ${parsed.error.issues[0]?.message || 'validation failed'}` })
+    }
+    const body = parsed.data
     const hash = `patient_${uid()}`
     const now = new Date().toISOString()
     await (prisma as any).patientRecord.create({
       data: {
         hash, userId: request.user!.userId,
-        initials: body.initials || body.name || '',
+        initials: body.initials,
         age: body.age || 0,
         sex: body.sex || '',
         chiefComplaint: body.chief_complaint || '',
         source: 'manual', createdAt: now, updatedAt: now,
       },
     })
-    return { patient_hash: hash, name: body.name || '', initials: body.initials || '', created_at: now }
+    return { patient_hash: hash, name: body.initials, initials: body.initials, created_at: now }
   })
 
   // ── Delete ──
