@@ -17,18 +17,27 @@
 
 set -euo pipefail
 
+# #346: a backup-status.json on the VPS reflects the real outcome so the
+# health check can tell "backed up" from "silently skipped".
+STATUS_FILE="${BACKUP_STATUS_FILE:-/opt/heurion/backup-status.json}"
+write_status() {
+  printf '{"last_run":"%s","status":"%s","message":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" > "$STATUS_FILE"
+}
+
 MODE="${1:-daily}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 if [ -z "${S3_ACCESS_KEY:-}" ] || [ -z "${S3_BUCKET:-}" ]; then
-  echo "S3 backup not configured (S3_ACCESS_KEY/S3_BUCKET missing) — skipping" >&2
+  echo "[BACKUP-SKIPPED] S3 not configured (S3_ACCESS_KEY/S3_BUCKET missing)" >&2
+  write_status "skipped" "S3 not configured"
   exit 0
 fi
 
 if ! command -v rclone >/dev/null 2>&1; then
-  echo "rclone not installed — skipping backup" >&2
+  echo "[BACKUP-FAILED] rclone not installed" >&2
+  write_status "failed" "rclone not installed"
   exit 1
 fi
 
@@ -37,7 +46,8 @@ FILES_VOL=$(docker volume ls -q | grep '^heurion_nexus-files-data$' || true)
 DATA_VOL=$(docker volume ls -q | grep '^heurion_nexus-data$' || true)
 
 if [ -z "$DB_VOL" ]; then
-  echo "DB volume not found — skipping backup" >&2
+  echo "[BACKUP-FAILED] DB volume not found" >&2
+  write_status "failed" "DB volume not found"
   exit 1
 fi
 
@@ -60,13 +70,14 @@ if [ "$MODE" = "daily" ]; then
       || docker cp "$(docker create --name tmp-nexus-db -v "$DB_VOL":/db alpine true)":/db/nexus_server.db "$TMP/nexus_server.db" 2>/dev/null || true
   fi
   if [ ! -s "$TMP/nexus_server.db" ]; then
-    echo "Failed to extract DB — skipping daily backup" >&2
+    echo "[BACKUP-FAILED] Failed to extract DB" >&2
+    write_status "failed" "DB extraction failed"
     exit 1
   fi
   # sqlite3 .backup needs a live sqlite3 — use the container's own sqlite if present,
   # otherwise validate via sqlite3 CLI.
   if command -v sqlite3 >/dev/null 2>&1; then
-    sqlite3 "$TMP/nexus_server.db" "PRAGMA integrity_check;" >/dev/null 2>&1 || { echo "DB integrity check failed" >&2; exit 1; }
+    sqlite3 "$TMP/nexus_server.db" "PRAGMA integrity_check;" >/dev/null 2>&1 || { echo "[BACKUP-FAILED] DB integrity check failed" >&2; write_status "failed" "DB integrity check failed"; exit 1; }
   fi
   gzip -9 "$TMP/nexus_server.db"
   rclone copy "$TMP/nexus_server.db.gz" "heurion-s3:${S3_BUCKET}/db/" --s3-no-check-bucket
@@ -109,4 +120,5 @@ else
     | while read -r f; do rclone deletefile "heurion-s3:${S3_BUCKET}/files/$f" 2>/dev/null || true; done || true
 fi
 
-echo "Backup complete ($MODE)"
+echo "[BACKUP-OK] Backup complete ($MODE)"
+write_status "ok" "Backup complete ($MODE)"
