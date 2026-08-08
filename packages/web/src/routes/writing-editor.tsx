@@ -68,6 +68,13 @@ export function WritingEditorPage() {
   const [polishOpen, setPolishOpen] = useState(false);
   // #382: linked submission state (target journal / applied template).
   const [linkedJournal, setLinkedJournal] = useState('');
+  // Desktop chat width — draggable resize, persisted (default 360px).
+  const [chatWidth, setChatWidth] = useState(() => {
+    try { return Number(localStorage.getItem('nexus.docchat.width')) || 360; } catch { return 360; }
+  });
+  const chatWidthRef = useRef(chatWidth);
+  chatWidthRef.current = chatWidth;
+  const resizingRef = useRef(false);
   const [linkedTemplate, setLinkedTemplate] = useState('');
   const [polishInstruction, setPolishInstruction] = useState('');
   const [polishStream, setPolishStream] = useState('');
@@ -106,6 +113,29 @@ export function WritingEditorPage() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatFileRef = useRef<HTMLInputElement>(null);
   const docUploadRef = useRef<HTMLInputElement>(null);
+
+  // #382: drag the chat panel edge to resize (desktop); width persists.
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const width = Math.min(720, Math.max(280, window.innerWidth - e.clientX));
+      setChatWidth(width);
+    };
+    const onUp = () => {
+      if (resizingRef.current) {
+        resizingRef.current = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        try { localStorage.setItem('nexus.docchat.width', String(chatWidthRef.current)); } catch { /* ignore */ }
+      }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
 
   useEffect(() => {
     if (!docId) return;
@@ -738,7 +768,21 @@ export function WritingEditorPage() {
             <>
               {/* #351: tap the scrim to close the mobile chat drawer */}
               <div className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setChatOpen(false)} />
-              <aside className="fixed inset-y-0 right-0 z-40 flex w-[85vw] max-w-sm flex-col border-l border-border bg-surface shadow-xl md:static md:inset-auto md:z-auto md:w-80 md:shrink-0 md:border-l-0 md:shadow-none">
+              <aside
+                style={{ ['--chatw' as string]: `${chatWidth}px` }}
+                className="fixed inset-y-0 right-0 z-40 flex w-[85vw] max-w-sm flex-col border-l border-border bg-surface shadow-xl md:static md:inset-auto md:z-auto md:w-[var(--chatw)] md:max-w-none md:shrink-0 md:border-l-0 md:shadow-none"
+              >
+                {/* #382: desktop resize handle — drag to change chat width */}
+                <div
+                  onMouseDown={(e) => {
+                    resizingRef.current = true;
+                    e.preventDefault();
+                    document.body.style.cursor = 'col-resize';
+                    document.body.style.userSelect = 'none';
+                  }}
+                  className="absolute left-0 top-0 z-10 hidden h-full w-1 cursor-col-resize bg-transparent hover:bg-accent/40 md:block"
+                  style={{ width: 5 }}
+                />
               <div className="flex h-10 items-center justify-between border-b border-border px-3">
                 <span className="text-sm font-medium text-text-secondary">Doc Chat</span>
                 <button onClick={() => setChatOpen(false)} className="text-text-tertiary hover:text-text-primary">
