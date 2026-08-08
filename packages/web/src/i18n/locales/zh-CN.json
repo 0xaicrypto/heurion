@@ -276,7 +276,11 @@
     "embeddingDimensions": "Dimensions",
     "embeddingDevice": "Device",
     "embeddingQuantized": "INT8 quantized",
-    "embeddingHint": "Dimensions appear after the first embed; change model/device in the embedding server env and re-verify dimensions here."
+    "embeddingHint": "Dimensions appear after the first embed; change model/device in the embedding server env and re-verify dimensions here.",
+    "groupAccount": "账号安全",
+    "groupModels": "模型配置",
+    "groupData": "数据管理",
+    "groupOps": "可观测性"
   },
   "admin": {
     "title": "管理",
