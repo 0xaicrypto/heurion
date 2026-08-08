@@ -9,7 +9,7 @@ import { DocEditor } from '@/components/DocEditor';
 import { StreamingLlmContent } from '@/components/LlmContent';
 import { ToolCalls } from '@/components/ToolCalls';
 import { useChatStore } from '@/stores/chat';
-import { Alert, Button, Card, Skeleton, Textarea } from '@/components/ui';
+import { Alert, Button, Card, Skeleton, Textarea, Input } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -76,6 +76,15 @@ export function WritingEditorPage() {
   chatWidthRef.current = chatWidth;
   const resizingRef = useRef(false);
   const [linkedTemplate, setLinkedTemplate] = useState('');
+  // #383: linked study (methods generation) + results injection.
+  const [studyId, setStudyId] = useState('');
+  const [studyName, setStudyName] = useState('');
+  const [methodsLoading, setMethodsLoading] = useState(false);
+  const [methodsError, setMethodsError] = useState<string | null>(null);
+  const [injectOpen, setInjectOpen] = useState(false);
+  const [injectLabel, setInjectLabel] = useState('');
+  const [injectResult, setInjectResult] = useState('');
+  const [injecting, setInjecting] = useState(false);
   const [polishInstruction, setPolishInstruction] = useState('');
   const [polishStream, setPolishStream] = useState('');
   const [polishLoading, setPolishLoading] = useState(false);
@@ -113,6 +122,38 @@ export function WritingEditorPage() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatFileRef = useRef<HTMLInputElement>(null);
   const docUploadRef = useRef<HTMLInputElement>(null);
+
+  // #383: generate the Methods draft from the linked study's protocol.
+  const handleGenerateMethods = async () => {
+    if (!docId) return;
+    setMethodsLoading(true);
+    setMethodsError(null);
+    try {
+      const res = await api.generateMethods(docId);
+      setBody((prev) => `${prev}${prev ? '\n\n' : ''}## Methods\n\n${res.methods}\n`);
+    } catch (err) {
+      setMethodsError(err instanceof ApiError ? err.messageText : String(err));
+    } finally {
+      setMethodsLoading(false);
+    }
+  };
+
+  const handleInjectResults = async () => {
+    if (!docId || !injectLabel.trim() || !injectResult.trim()) return;
+    setInjecting(true);
+    try {
+      await api.injectResults(docId, injectLabel.trim(), injectResult.trim());
+      const d = await api.getDoc(docId);
+      setBody(d.body);
+      setInjectOpen(false);
+      setInjectLabel('');
+      setInjectResult('');
+    } catch (err) {
+      setMethodsError(err instanceof ApiError ? err.messageText : String(err));
+    } finally {
+      setInjecting(false);
+    }
+  };
 
   // #382: drag the chat panel edge to resize (desktop); width persists.
   useEffect(() => {
@@ -154,6 +195,8 @@ export function WritingEditorPage() {
         setDoc(d);
         setTitle(d.title);
         setBody(d.body);
+        setStudyId(d.study_id || '');
+        setStudyName(d.study_name || '');
       })
       .catch((err) => setError(err instanceof ApiError ? err.messageText : String(err)))
       .finally(() => setLoading(false));
@@ -506,6 +549,11 @@ export function WritingEditorPage() {
           </Button>
           <FileText size={18} className="text-text-tertiary" />
           <h1 className="font-semibold text-text-primary">{doc.title || 'Untitled'}</h1>
+          {studyName && (
+            <span className="hidden rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-accent sm:inline">
+              {t('writing.studyBadge', '研究')}: {studyName}
+            </span>
+          )}
           {linkedJournal && (
             <span className="hidden rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-accent sm:inline">
               {t('submission.targetJournalShort', '目标期刊')}: {linkedJournal}
@@ -586,6 +634,46 @@ export function WritingEditorPage() {
           >
             <Download size={14} className="mr-1" /> Export DOCX
           </Button>
+          {studyId && (
+            <>
+              <Button variant="ghost" size="sm" onClick={handleGenerateMethods} isLoading={methodsLoading} disabled={!studyId}>
+                <Sparkles size={14} className="mr-1" /> {t('writing.genMethods', '生成方法')}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setInjectOpen((v) => !v)}>
+                <FileText size={14} className="mr-1" /> {t('writing.injectResults', '注入结果')}
+              </Button>
+            </>
+          )}
+          {methodsError && (
+            <span className="text-xs text-error">{methodsError}</span>
+          )}
+          {injectOpen && (
+            <div className="absolute right-2 top-14 z-30 w-[min(92vw,420px)] rounded-xl border border-border bg-surface-elevated p-4 shadow-lg">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-medium text-text-secondary">{t('writing.injectResultsTitle', '注入统计结果')}</span>
+                <button onClick={() => setInjectOpen(false)} className="text-text-tertiary hover:text-text-primary"><X size={14} /></button>
+              </div>
+              <Input
+                value={injectLabel}
+                onChange={(e) => setInjectLabel(e.target.value)}
+                placeholder={t('writing.injectLabel', '小节标题，如 Overall survival')}
+                className="mb-2"
+              />
+              <textarea
+                value={injectResult}
+                onChange={(e) => setInjectResult(e.target.value)}
+                rows={6}
+                placeholder={t('writing.injectHint', '粘贴 #361 统计输出（JSON），如 {"method":"kaplan_meier_logrank","p_value":0.012}')}
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <div className="mt-2 flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setInjectOpen(false)}>Cancel</Button>
+                <Button size="sm" onClick={handleInjectResults} isLoading={injecting} disabled={!injectLabel.trim() || !injectResult.trim()}>
+                  {t('writing.injectNow', '注入')}
+                </Button>
+              </div>
+            </div>
+          )}
           <div className="relative">
             <Button
               variant="ghost"

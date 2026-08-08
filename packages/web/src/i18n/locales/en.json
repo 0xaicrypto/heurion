@@ -295,7 +295,15 @@
     "title": "Paper Workbench",
     "comingSoon": "Writing studio coming soon.",
     "tabWrite": "Write",
-    "confirmDelete": "Delete this document? This cannot be undone."
+    "confirmDelete": "Delete this document? This cannot be undone.",
+    "studySelect": "Link a study (optional)",
+    "studyBadge": "Study",
+    "genMethods": "Generate Methods",
+    "injectResults": "Inject Results",
+    "injectResultsTitle": "Inject statistics results",
+    "injectLabel": "Section label, e.g. Overall survival",
+    "injectHint": "Paste #361 stat output (JSON)",
+    "injectNow": "Inject"
   },
   "skills": {
     "title": "Skills",
