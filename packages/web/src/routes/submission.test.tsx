@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent } from '@testing-library/react';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { render } from '@/test/render';
 import { SubmissionWorkbench } from './submission';
 
@@ -20,6 +20,8 @@ vi.mock('@/lib/api', () => ({
       ],
     }),
     prefillTemplate: vi.fn().mockResolvedValue({ template_id: 'jto-template', journal_name: 'JTO', content: '# My Study\n\n## Abstract' }),
+    createDoc: vi.fn().mockResolvedValue({ id: 'doc_1', title: 'My Study（JTO 模板）', body: '' }),
+    updateDoc: vi.fn().mockResolvedValue({ id: 'doc_1', title: 'My Study（JTO 模板）', body: '# skeleton' }),
   },
   ApiError: class ApiError extends Error {},
 }));
@@ -63,3 +65,22 @@ describe('SubmissionWorkbench (#362)', () => {
     expect(await screen.findByText(/My Study/)).toBeTruthy();
   });
 });
+
+  it('applies a template to the Write tab (creates a Doc with the skeleton) (#382)', async () => {
+    const { api } = await import('@/lib/api');
+    render(<SubmissionWorkbench embedded />);
+
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'My EGFR study' } });
+    fireEvent.click(screen.getByText('Templates'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Journal of Thoracic Oncology')).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText('Apply to writing'));
+
+    await waitFor(() => {
+      expect(api.createDoc).toHaveBeenCalledWith(expect.stringContaining('Journal of Thoracic Oncology'));
+      expect(api.updateDoc).toHaveBeenCalled();
+    });
+    expect(screen.getByText(/Doc created/)).toBeTruthy();
+  });

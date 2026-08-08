@@ -7,6 +7,7 @@ import { SubmissionWorkbench } from '@/routes/submission';
 import { Alert, Button, Input, Card, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { setPaperLink } from '@/lib/paper-link';
 
 interface Doc {
   id: string;
@@ -76,6 +77,11 @@ function WritingList() {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // #382: the paper's target journal (from the submission draft) — visible
+  // in the Write tab so the workflow feels connected.
+  const [targetJournal, setTargetJournal] = useState('');
+  const [templateName, setTemplateName] = useState('');
+  const [templates, setTemplates] = useState<Array<{ id: string; journal_name: string }>>([]);
   const [showForm, setShowForm] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [creating, setCreating] = useState(false);
@@ -91,6 +97,15 @@ function WritingList() {
 
   useEffect(() => {
     loadDocs();
+    // #382: 联动状态 — submission draft (target journal/template) + template names.
+    api.listSubmissionDrafts().then((r) => {
+      const d = r.drafts[0];
+      if (d) {
+        setTargetJournal(d.target_journal || '');
+        setTemplateName(d.template_id || '');
+      }
+    }).catch(() => {});
+    api.listFormatTemplates().then((r) => setTemplates(r.templates)).catch(() => {});
   }, []);
 
   const handleCreate = async () => {
@@ -100,6 +115,7 @@ function WritingList() {
       const doc = await api.createDoc(newTitle.trim());
       setNewTitle('');
       setShowForm(false);
+      setPaperLink({ title: doc.title, abstract: '', docId: doc.id, updatedAt: Date.now() });
       navigate(`/app/writing/${doc.id}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
@@ -111,7 +127,19 @@ function WritingList() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
-        <h1 className="font-semibold text-text-primary">{t('writing.title', 'Writing Studio')}</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="font-semibold text-text-primary">{t('writing.title', 'Writing Studio')}</h1>
+          {targetJournal && (
+            <span className="rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-accent">
+              {t('submission.targetJournalShort', '目标期刊')}: {targetJournal}
+            </span>
+          )}
+          {templateName && (
+            <span className="rounded-full border border-border bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary">
+              {t('submission.templateAppliedShort', '已应用模板')}: {templates.find((t) => t.id === templateName)?.journal_name || templateName}
+            </span>
+          )}
+        </div>
         <Button size="sm" onClick={() => setShowForm((v) => !v)}>
           <Plus size={16} className="mr-1" /> {t('writing.newDoc', 'New Document')}
         </Button>
@@ -160,6 +188,7 @@ function WritingList() {
                 <Link
                   key={d.id}
                   to={`/app/writing/${d.id}`}
+                  onClick={() => setPaperLink({ title: d.title || '', abstract: '', docId: d.id, updatedAt: Date.now() })}
                   className="block rounded-xl transition-colors hover:bg-surface"
                 >
                   <Card className="p-4">

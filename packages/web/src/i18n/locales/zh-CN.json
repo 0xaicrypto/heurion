@@ -374,6 +374,10 @@
     "targetJournal": "目标期刊（可选）",
     "generateCover": "生成 Cover letter",
     "coverHint": "AI 生成投稿信草稿（含研究亮点/原创声明），可自由编辑",
-    "prefill": "预填充"
+    "prefill": "预填充",
+    "applyToWriting": "应用到写作",
+    "appliedHint": "已创建文档，去「写作」Tab 继续填充",
+    "targetJournalShort": "目标期刊",
+    "templateAppliedShort": "已应用模板"
   }
 }
