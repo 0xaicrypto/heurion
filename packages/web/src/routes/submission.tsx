@@ -6,6 +6,7 @@ import { api, ApiError } from '@/lib/api';
 import { Alert, Button, Card, Input, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import type { JournalRecommendation, FormatTemplate, SubmissionDraft } from '@/lib/types';
+import { getPaperLink, setPaperLink } from '@/lib/paper-link';
 
 type Tab = 'journals' | 'cover' | 'template';
 
@@ -37,6 +38,8 @@ export function SubmissionWorkbench({ embedded = false }: { embedded?: boolean }
       });
       setDraft(res.draft);
       setSavedFlash(true);
+      // #382: the submission inputs ARE the paper — keep the cross-tab link fresh.
+      setPaperLink({ title: title.trim(), abstract: abstract || '', docId: getPaperLink()?.docId, updatedAt: Date.now() });
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => setSavedFlash(false), 1500);
     } catch {
@@ -55,6 +58,13 @@ export function SubmissionWorkbench({ embedded = false }: { embedded?: boolean }
           setKeywords(latest.keywords || '');
           setAuthors((latest.authors || []).join(', '));
           setDraft(latest);
+        }
+        // #382: 选题带入 — the paper selected in the Write tab feeds the
+        // submission inputs when the draft has no title yet (fresh link).
+        const link = getPaperLink();
+        if ((!latest || !latest.article_title) && link) {
+          setTitle(link.title);
+          setAbstract(link.abstract);
         }
       })
       .catch(() => {})
@@ -317,6 +327,8 @@ function TemplateTab({ title, abstract, authors, onSaved }: { title: string; abs
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [appliedDoc, setAppliedDoc] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
 
   useEffect(() => {
     api.listFormatTemplates()
@@ -344,6 +356,31 @@ function TemplateTab({ title, abstract, authors, onSaved }: { title: string; abs
     }
   };
 
+  // #382 联动点 3: 模板应用到写作 — create a Doc with the template skeleton.
+  const applyToWriting = async (template: FormatTemplate) => {
+    if (!title.trim()) {
+      setError(t('submission.needTitle', '请先填写论文标题'));
+      return;
+    }
+    setApplying(true);
+    setError(null);
+    try {
+      const prefilled = content || (await api.prefillTemplate({
+        template_id: template.id, title, abstract,
+        authors: authors.split(',').map((a) => a.trim()).filter(Boolean),
+      })).content;
+      const doc = await api.createDoc(`${title}（${template.journal_name} 模板）`);
+      await api.updateDoc(doc.id, { title: doc.title, body: prefilled });
+      setAppliedDoc(doc.id);
+      setPaperLink({ title: title.trim(), abstract: abstract || '', docId: doc.id, updatedAt: Date.now() });
+      onSaved(template.id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    } finally {
+      setApplying(false);
+    }
+  };
+
   return (
     <div className="space-y-3">
       {error && <Alert variant="error">{error}</Alert>}
@@ -361,9 +398,19 @@ function TemplateTab({ title, abstract, authors, onSaved }: { title: string; abs
                 <BadgePill>{tmpl.word_limit}</BadgePill>
               </div>
               <p className="mt-1 line-clamp-2 text-xs text-text-tertiary">{tmpl.reference_style}</p>
-              <Button size="sm" variant="ghost" className="mt-2" onClick={() => prefill(tmpl)}>
-                {t('submission.prefill', '预填充')}
-              </Button>
+              <div className="mt-2 flex gap-2">
+                <Button size="sm" variant="ghost" onClick={() => prefill(tmpl)}>
+                  {t('submission.prefill', '预填充')}
+                </Button>
+                <Button size="sm" onClick={() => applyToWriting(tmpl)} isLoading={applying}>
+                  {t('submission.applyToWriting', '应用到写作')}
+                </Button>
+              </div>
+              {appliedDoc && (
+                <p className="mt-2 text-xs text-success">
+                  ✓ {t('submission.appliedHint', '已创建文档，去「写作」Tab 继续填充')}
+                </p>
+              )}
             </Card>
           ))}
         </div>

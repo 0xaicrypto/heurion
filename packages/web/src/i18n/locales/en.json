@@ -374,6 +374,10 @@
     "targetJournal": "Target journal (optional)",
     "generateCover": "Generate cover letter",
     "coverHint": "AI drafts the letter (highlights + originality statement); edit freely",
-    "prefill": "Prefill"
+    "prefill": "Prefill",
+    "applyToWriting": "Apply to writing",
+    "appliedHint": "Doc created — continue in the Write tab",
+    "targetJournalShort": "Target journal",
+    "templateAppliedShort": "Template"
   }
 }
