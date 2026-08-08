@@ -43,19 +43,21 @@ export function SettingsPage() {
         </header>
         <div className="flex flex-col lg:flex-row">
           <nav className="border-b border-border bg-surface px-3 py-2 lg:w-48 lg:border-b-0 lg:border-r lg:py-4">
-            <ul className="flex flex-wrap gap-1 lg:flex-col lg:space-y-1">
+            {/* #354: grouped nav — 账号安全 / 模型配置 / 数据管理 / 可观测性 */}
+            <TabGroup label={t('settings.groupAccount', '账号安全')}>
               <TabButton active={tab === 'profile'} onClick={() => selectTab('profile')}>
                 {t('settings.profile')}
               </TabButton>
+            </TabGroup>
+            <TabGroup label={t('settings.groupModels', '模型配置')}>
               <TabButton active={tab === 'llm'} onClick={() => selectTab('llm')}>
                 {t('settings.llm')}
               </TabButton>
               <TabButton active={tab === 'embedding'} onClick={() => selectTab('embedding')}>
                 {t('settings.embedding')}
               </TabButton>
-              <TabButton active={tab === 'observability'} onClick={() => selectTab('observability')}>
-                {t('settings.observability')}
-              </TabButton>
+            </TabGroup>
+            <TabGroup label={t('settings.groupData', '数据管理')}>
               <TabButton active={tab === 'audit'} onClick={() => selectTab('audit')}>
                 <ShieldCheck size={14} className="mr-1 inline" />
                 {t('nav.audit', 'Audit')}
@@ -64,7 +66,12 @@ export function SettingsPage() {
                 <ScrollText size={14} className="mr-1 inline" />
                 {t('nav.logs', 'Logs')}
               </TabButton>
-            </ul>
+            </TabGroup>
+            <TabGroup label={t('settings.groupOps', '可观测性')}>
+              <TabButton active={tab === 'observability'} onClick={() => selectTab('observability')}>
+                {t('settings.observability')}
+              </TabButton>
+            </TabGroup>
           </nav>
           <main className="flex-1 p-4 sm:p-6">
             {tab === 'profile' && <ProfileSection />}
@@ -94,13 +101,25 @@ function TabButton({
       <button
         onClick={onClick}
         className={cn(
-          'w-full rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors',
+          'w-full rounded-lg px-3 py-1.5 text-left text-sm font-medium transition-colors',
           active ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary',
         )}
       >
         {children}
       </button>
     </li>
+  );
+}
+
+/** #354: a labeled group of tabs — hidden group label on mobile, shown on lg. */
+function TabGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <>
+      <li className="px-3 pb-0.5 pt-3 text-[11px] font-semibold uppercase tracking-wide text-text-tertiary max-lg:hidden">
+        {label}
+      </li>
+      {children}
+    </>
   );
 }
 
