@@ -426,6 +426,8 @@ export type ChatStreamChunk =
   | { type: 'context_info'; text: string; kind?: string }
   | { type: 'reasoning_chunk'; text: string }
   | { type: 'tool_call'; tool: string; args: Record<string, unknown> }
+  | { type: 'subagent_started'; task: string }
+  | { type: 'subagent_done'; task: string; success: boolean }
   | { type: 'thought'; text: string }
   | { type: 'search_query'; query: string }
   | { type: 'search_results_summary'; text: string }

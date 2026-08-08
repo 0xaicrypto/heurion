@@ -580,6 +580,22 @@ export function ChatPage() {
                 </div>
               );
             })}
+            {session?.subagents && session.subagents.length > 0 && (
+              <div className="space-y-1.5 px-4 pt-2">
+                {session.subagents.map((sa, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs text-text-secondary">
+                    <StatusDot
+                      tone={sa.status === 'done' ? 'success' : sa.status === 'failed' ? 'error' : 'active'}
+                      pulse={sa.status === 'running'}
+                    />
+                    <span className={sa.status === 'failed' ? 'text-error' : undefined}>
+                      {sa.status === 'running' ? t('chat.subagentRunning', '正在分析') : sa.status === 'done' ? '✓' : '✗'}{' '}
+                      {sa.task}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div ref={bottomRef} />
           </div>
         </main>
