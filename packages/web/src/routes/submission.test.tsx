@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 import { render } from '@/test/render';
-import { SubmissionPage } from './submission';
+import { SubmissionWorkbench } from './submission';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -24,13 +24,13 @@ vi.mock('@/lib/api', () => ({
   ApiError: class ApiError extends Error {},
 }));
 
-describe('SubmissionPage (#362)', () => {
+describe('SubmissionWorkbench (#362)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it('recommends journals after entering a title', async () => {
-    render(<SubmissionPage />);
+    render(<SubmissionWorkbench embedded />);
 
     const titleInput = screen.getByLabelText('Title');
     fireEvent.change(titleInput, { target: { value: 'EGFR-mutant NSCLC immunotherapy survival' } });
@@ -44,7 +44,7 @@ describe('SubmissionPage (#362)', () => {
   });
 
   it('generates a cover letter in the cover tab', async () => {
-    render(<SubmissionPage />);
+    render(<SubmissionWorkbench embedded />);
 
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'My study' } });
     fireEvent.click(screen.getByText('Cover letter'));
@@ -54,7 +54,7 @@ describe('SubmissionPage (#362)', () => {
   });
 
   it('lists and prefills templates', async () => {
-    render(<SubmissionPage />);
+    render(<SubmissionWorkbench embedded />);
 
     fireEvent.click(screen.getByText('Templates'));
 
