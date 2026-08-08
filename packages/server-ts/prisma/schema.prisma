@@ -696,3 +696,18 @@ model SubAgentSession {
   @@index([userId, createdAt])
   @@map("sub_agent_sessions")
 }
+
+// #417: MCP server connectors (frontend-managed, token encrypted).
+model McpServer {
+  id           String  @id @default(cuid())
+  userId       String  @map("user_id")
+  name         String  @map("name")
+  url          String  @map("url")
+  capabilities String  @map("capabilities") // JSON array: ["read","write"]
+  tokenEnc     String? @map("token_enc") // encrypted bearer token
+  enabled      Int     @default(1) @map("enabled")
+  createdAt    String  @map("created_at")
+  updatedAt    String  @map("updated_at")
+  @@index([userId])
+  @@map("mcp_servers")
+}

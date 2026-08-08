@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
-import { Check, X, Zap, Key, Server, RefreshCw, Activity, BarChart3, Mail, ScrollText, ShieldCheck } from 'lucide-react';
+import { Check, X, Zap, Key, Server, RefreshCw, Activity, BarChart3, Mail, ScrollText, ShieldCheck, Plus } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api';
 import { EmailBindCard } from '@/components/EmailBindCard';
@@ -20,7 +20,7 @@ const PROVIDERS: { value: ProviderKind; label: string }[] = [
   { value: 'kimi', label: 'Kimi' },
 ];
 
-type Tab = 'profile' | 'llm' | 'embedding' | 'observability' | 'audit' | 'logs';
+type Tab = 'profile' | 'llm' | 'embedding' | 'observability' | 'audit' | 'logs' | 'integrations';
 
 const TAB_ALIASES: Record<string, Tab> = { audit: 'audit', logs: 'logs' };
 
@@ -72,6 +72,11 @@ export function SettingsPage() {
                 {t('settings.observability')}
               </TabButton>
             </TabGroup>
+            <TabGroup label={t('settings.groupIntegrations', '集成')}>
+              <TabButton active={tab === 'integrations'} onClick={() => selectTab('integrations')}>
+                {t('settings.mcp', 'MCP 连接器')}
+              </TabButton>
+            </TabGroup>
           </nav>
           <main className="flex-1 p-4 sm:p-6">
             {tab === 'profile' && <ProfileSection />}
@@ -80,6 +85,7 @@ export function SettingsPage() {
             {tab === 'observability' && <ObservabilitySection />}
             {tab === 'audit' && <AuditSection />}
             {tab === 'logs' && <LogsSection />}
+            {tab === 'integrations' && <McpSection />}
           </main>
         </div>
       </div>
@@ -649,6 +655,133 @@ function LlmSkeleton() {
       <div className="h-6 w-24 animate-pulse rounded bg-surface" />
       <div className="h-24 animate-pulse rounded-xl bg-surface" />
       <div className="h-48 animate-pulse rounded-xl bg-surface" />
+    </div>
+  );
+}
+
+
+/* ────────────────────────── MCP Integrations (#417) ────────────────────────── */
+interface McpServerRow {
+  id: string; name: string; url: string; capabilities: string[];
+  enabled: boolean; has_token: boolean; created_at: string;
+}
+
+function McpSection() {
+  const { t } = useTranslation();
+  const [servers, setServers] = useState<McpServerRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState('');
+  const [url, setUrl] = useState('');
+  const [token, setToken] = useState('');
+  const [caps, setCaps] = useState<string[]>(['read']);
+  const [saving, setSaving] = useState(false);
+  const [testResult, setTestResult] = useState<{ id: string; ok: boolean; tools: Array<{ name: string; description?: string; is_write?: boolean }> } | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    api.listMcpServers().then((r) => setServers(r.servers)).catch((err) => setError(err instanceof ApiError ? err.messageText : String(err))).finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, []);
+
+  const add = async () => {
+    if (!name.trim() || !url.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await api.addMcpServer({ name: name.trim(), url: url.trim(), capabilities: caps, token: token || undefined });
+      setName(''); setUrl(''); setToken(''); setShowForm(false);
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    } finally { setSaving(false); }
+  };
+
+  const remove = async (id: string) => {
+    try { await api.deleteMcpServer(id); load(); } catch (err) { setError(err instanceof ApiError ? err.messageText : String(err)); }
+  };
+
+  const test = async (id: string) => {
+    setError(null);
+    try {
+      const res = await api.testMcpServer(id);
+      setTestResult({ id, ok: res.ok, tools: res.tools || [] });
+    } catch (err) {
+      setTestResult({ id, ok: false, tools: [] });
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    }
+  };
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-text-secondary">{t('settings.mcpHint', '配置外部系统（EHR/影像/检验）的 MCP 连接。只读工具立即执行；写工具需管理员审批。')}</p>
+        <Button size="sm" onClick={() => setShowForm((v) => !v)}>
+          <Plus size={14} className="mr-1" /> {t('settings.addServer', '添加服务器')}
+        </Button>
+      </div>
+      {error && <Alert variant="error">{error}</Alert>}
+
+      {showForm && (
+        <Card className="space-y-3 p-4">
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('settings.serverName', '名称（如 EHR）')} aria-label="name" />
+          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://ehr.example.com/mcp" aria-label="url" />
+          <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={t('settings.serverToken', 'Bearer token（可选）')} aria-label="token" />
+          <div className="flex gap-1.5">
+            {['read', 'write'].map((c) => (
+              <button
+                key={c}
+                onClick={() => setCaps((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))}
+                className={cn('rounded-full border px-3 py-1 text-xs', caps.includes(c) ? 'border-accent bg-accent/10 text-accent' : 'border-border text-text-secondary')}
+              >
+                {c === 'read' ? '只读' : '写'}
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setShowForm(false)}>{t('common.cancel', '取消')}</Button>
+            <Button size="sm" onClick={add} isLoading={saving} disabled={!name.trim() || !url.trim()}>{t('common.save', '保存')}</Button>
+          </div>
+        </Card>
+      )}
+
+      {loading ? <Skeleton className="h-16 w-full rounded-xl" /> : servers.length === 0 ? (
+        <Card className="p-8 text-center text-sm text-text-tertiary">{t('settings.noServers', '尚未配置 MCP 服务器')}</Card>
+      ) : (
+        <div className="space-y-2">
+          {servers.map((srv) => (
+            <Card key={srv.id} className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-medium text-text-primary">{srv.name}</span>
+                  <span className="ml-2 text-xs text-text-tertiary">{srv.url}</span>
+                  <div className="mt-1 flex gap-1.5">
+                    {srv.capabilities.map((c) => <Badge key={c} variant={c === 'write' ? 'warning' : 'default'}>{c === 'write' ? '写' : '只读'}</Badge>)}
+                    {srv.has_token && <Badge>token ✓</Badge>}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="ghost" onClick={() => test(srv.id)}>{t('settings.testServer', '测试')}</Button>
+                  <Button size="sm" variant="ghost" onClick={() => remove(srv.id)}>{t('common.delete', '删除')}</Button>
+                </div>
+              </div>
+              {testResult?.id === srv.id && (
+                <div className="mt-3 rounded-lg border border-border bg-surface p-3">
+                  <p className="text-xs font-medium text-text-secondary">{testResult.ok ? '✓ 连接成功' : '✗ 连接失败'}</p>
+                  {testResult.tools.length > 0 && (
+                    <ul className="mt-1 space-y-0.5 text-xs text-text-tertiary">
+                      {testResult.tools.map((tool) => (
+                        <li key={tool.name}>- {tool.name}{tool.is_write ? ' [写]' : ''}{tool.description ? `: ${tool.description.slice(0, 60)}` : ''}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
