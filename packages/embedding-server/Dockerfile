@@ -20,7 +20,7 @@ COPY --from=builder /build/dist ./dist
 COPY --from=builder /build/node_modules ./node_modules
 COPY --from=builder /build/package.json ./
 
-RUN node dist/precache.js
+RUN node dist/precache.js || echo 'model precache failed (HF 429/timeout) — will download at runtime'
 
 EXPOSE 8003
 CMD ["node", "dist/index.js"]
