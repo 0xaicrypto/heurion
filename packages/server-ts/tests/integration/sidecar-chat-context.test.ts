@@ -49,9 +49,10 @@ afterEach(() => {
 })
 
 const pptxJson = {
+  schemaVersion: 1,
   title: 'Immunotherapy Update',
   subtitle: 'Conference 2026',
-  slides: [{ title: 'Intro', content: 'Overview of recent trials' }],
+  slides: [{ title: 'Intro', content: [{ type: 'paragraph', text: 'Overview of recent trials' }] }],
 }
 
 describe('sidecar chat handler — conversation context injection', () => {
@@ -98,6 +99,8 @@ describe('sidecar chat handler — conversation context injection', () => {
     const job = mocks.enqueue.mock.calls[0][0] as any
     expect(job.type).toBe('sidecar.generate_pptx')
     expect(job.payload.data.title).toBe('Immunotherapy Update')
-    expect(job.payload.data.slides).toEqual([{ title: 'Intro', content: 'Overview of recent trials' }])
+    expect(job.payload.data.slides[0].title).toBe('Intro')
+    expect(job.payload.data.slides[0].content[0]).toEqual({ type: 'paragraph', text: 'Overview of recent trials' })
+    expect(job.payload.data.schemaVersion).toBe(1)
   })
 })

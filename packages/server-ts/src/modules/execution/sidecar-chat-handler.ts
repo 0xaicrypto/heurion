@@ -173,7 +173,7 @@ async function generateValidatedContent(
   const call = async (p: string): Promise<unknown> => {
     const raw = await deepseekChat([{ role: 'user', content: p }], apiKey, {
       model: DEEPSEEK_CHAT_MODEL,
-      maxTokens: 2048,
+      maxTokens: 4096,
       telemetryContext,
     })
     const match = raw.match(/\{[\s\S]*\}/)
@@ -196,10 +196,12 @@ async function generateValidatedContent(
   return fallbackContent(type, userText, patientBlock, historyBlock)
 }
 
-/** Build a non-empty, schema-valid content model from the user's request. */
+/** Build a non-empty, schema-valid content model from the user's request.
+ *  History is folded in FULL (up to 12k chars) so a deep chat conversation
+ *  survives even when both LLM attempts fail — "聊了什么，deck 至少有什么". */
 function fallbackContent(type: string, userText: string, patientBlock: string, historyBlock: string): RenderContent {
   const request = userText.trim().slice(0, 3000) || '（未提供具体内容）'
-  const context = `${patientBlock}\n${historyBlock}`.trim().slice(0, 3000)
+  const context = `${patientBlock}\n${historyBlock}`.trim().slice(0, 12000)
   const body = context ? `${request}\n\n${context}` : request
 
   switch (type) {
