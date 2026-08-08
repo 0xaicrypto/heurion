@@ -245,7 +245,7 @@ jobs:
 
       - name: Free disk space on VPS (stale images, builder caches, logs)
         run: |
-          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "            docker image prune -f 2>/dev/null || true;             docker builder prune -f 2>/dev/null || true;             journalctl --vacuum-time=3d 2>/dev/null || true;             df -h / | tail -1"
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "            docker system prune -af 2>/dev/null || true;             docker builder prune -af 2>/dev/null || true;             journalctl --vacuum-size=100M 2>/dev/null || true;             find /var/log -name '*.gz' -delete 2>/dev/null || true;             rm -rf /tmp/* /var/tmp/* 2>/dev/null || true;             df -h / | tail -1"
 
       - name: Deploy production via Docker Compose
         env:
