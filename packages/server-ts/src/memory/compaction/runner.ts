@@ -1,5 +1,5 @@
 import { makeLogger } from '../../common/logger.js'
-import { deepseekChat, getApiKey } from '../../common/llm.js'
+import { deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 import prisma from '../../common/prisma.js'
 import { MemoryGraphGateway } from '../memory-gateway.js'
 import {
@@ -52,7 +52,7 @@ ${conversation}
 [JSON array]:`
 
   const chatOpts = {
-    model: 'deepseek-chat',
+    model: DEEPSEEK_CHAT_MODEL,
     maxTokens: 2048,
     telemetryContext: { userId: ctx.userId, workspaceId: ctx.userId, action: 'chat.extract_facts' },
   } as const
@@ -165,7 +165,7 @@ ${conversation}
     [{ role: 'user', content: prompt }],
     apiKey,
     {
-      model: 'deepseek-chat',
+      model: DEEPSEEK_CHAT_MODEL,
       maxTokens: 4000,
       telemetryContext: { userId: ctx.userId, workspaceId: ctx.userId, action: 'chat.compact_segment' },
     },

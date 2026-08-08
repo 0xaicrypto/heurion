@@ -1,5 +1,5 @@
 import type { PractitionerObservation } from './practitioner-extractor.service.js'
-import { getApiKey, deepseekChat } from '../../common/llm.js'
+import { getApiKey, deepseekChat , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 
 export interface DistilledInsight {
   type: 'clinical_impression' | 'key_finding' | 'action_item' | 'uncertainty'
@@ -28,7 +28,7 @@ export async function distillObservations(
     const raw = await deepseekChat(
       [{ role: 'system', content: DISTILL_SYSTEM }, { role: 'user', content: obsText }],
       apiKey,
-      { model: 'deepseek-chat', maxTokens: 1024, temperature: 0.3 },
+      { model: DEEPSEEK_CHAT_MODEL, maxTokens: 1024, temperature: 0.3 },
     )
     const parsed = JSON.parse(raw)
     return (Array.isArray(parsed) ? parsed : []).map((i: any) => ({

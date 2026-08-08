@@ -1,6 +1,7 @@
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import { createAiProvider, type ChatOptions } from '../../common/ai/index.js'
+import { DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 
 const aiProvider = createAiProvider()
 
@@ -77,7 +78,7 @@ ${protocolText.slice(0, 8000)}`
   const chatResult = await aiProvider.chat(
     [{ role: 'user', content: prompt }],
     {
-      model: 'deepseek-chat',
+      model: DEEPSEEK_CHAT_MODEL,
       maxTokens: 2048,
       telemetryContext: options.telemetryContext,
     },

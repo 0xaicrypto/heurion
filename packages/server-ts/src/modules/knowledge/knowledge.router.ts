@@ -4,7 +4,7 @@ import { PrismaKnowledgeGapService, type GapSource } from './knowledge-gap.servi
 import { getUserContext } from '../chat/user-context.js'
 import { SidecarFeedbackService, type SidecarOutputType } from './sidecar-feedback.service.js'
 import { PrismaTelemetryService } from './telemetry.service.js'
-import { deepseekChat, getApiKey } from '../../common/llm.js'
+import { deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 
 const gapService = new PrismaKnowledgeGapService()
 const telemetry = new PrismaTelemetryService()
@@ -421,7 +421,7 @@ Return ONLY JSON: { "title": "...", "content": "..." }`
         [{ role: 'user', content: prompt }],
         getApiKey(),
         {
-          model: 'deepseek-chat',
+          model: DEEPSEEK_CHAT_MODEL,
           maxTokens: 2048,
           telemetryContext: { userId, workspaceId: userId, action: 'article.regenerate' },
         },

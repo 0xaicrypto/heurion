@@ -9,7 +9,7 @@
  * for observability.
  */
 
-import { deepseekChat, getApiKey, type LlmTelemetryContext } from '../common/llm.js'
+import { deepseekChat, getApiKey, type LlmTelemetryContext , DEEPSEEK_CHAT_MODEL } from '../common/llm.js'
 
 export type QueryIntent = 'sql' | 'vector' | 'file' | 'knowledge_command' | 'sidecar' | 'mixed'
 export type RouteKind = 'sql' | 'vector' | 'file' | 'knowledge_command' | 'sidecar'
@@ -197,7 +197,7 @@ export function createDefaultLLMClassifier(context?: LlmTelemetryContext): LLMCl
           [{ role: 'user', content: buildClassifierPrompt(query) }],
           apiKey,
           {
-            model: 'deepseek-chat',
+            model: DEEPSEEK_CHAT_MODEL,
             maxTokens: 50,
             telemetryContext: context,
           },

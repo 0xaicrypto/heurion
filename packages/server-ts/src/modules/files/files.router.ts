@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import { getUserContext } from '../chat/user-context.js'
-import { deepseekChat, getApiKey } from '../../common/llm.js'
+import { deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
@@ -74,7 +74,7 @@ export async function filesRouter(app: FastifyInstance) {
             [{ role: 'user', content: prompt }],
             apiKey,
             {
-              model: 'deepseek-chat',
+              model: DEEPSEEK_CHAT_MODEL,
               maxTokens: 2048,
               telemetryContext: {
                 userId: request.user!.userId,

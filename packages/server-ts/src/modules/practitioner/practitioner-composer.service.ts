@@ -1,6 +1,6 @@
 import type { PractitionerObservation } from './practitioner-extractor.service.js'
 import type { DistilledInsight } from './practitioner-distiller.service.js'
-import { getApiKey, deepseekChat } from '../../common/llm.js'
+import { getApiKey, deepseekChat , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 
 export interface ClinicalNarrative {
   type: 'soap' | 'summary' | 'handoff' | 'progress_note'
@@ -37,7 +37,7 @@ export async function composeNarrative(
         { role: 'user', content: prompt },
       ],
       apiKey,
-      { model: 'deepseek-chat', maxTokens: 2048, temperature: 0.3 },
+      { model: DEEPSEEK_CHAT_MODEL, maxTokens: 2048, temperature: 0.3 },
     )
     const parsed = JSON.parse(raw)
     return {

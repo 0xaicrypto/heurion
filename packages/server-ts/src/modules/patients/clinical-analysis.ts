@@ -1,4 +1,4 @@
-import { deepseekChat, getApiKey, type LlmTelemetryContext } from '../../common/llm.js'
+import { deepseekChat, getApiKey, type LlmTelemetryContext , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 import prisma from '../../common/prisma.js'
 import fs from 'fs'
 import path from 'path'
@@ -33,7 +33,7 @@ ${text}`
       [{ role: 'user', content: prompt }],
       getApiKey(),
       {
-        model: 'deepseek-chat',
+        model: DEEPSEEK_CHAT_MODEL,
         maxTokens: 1024,
         telemetryContext,
       },
@@ -86,7 +86,7 @@ ${messages.slice(0, 3000)}`
       [{ role: 'user', content: prompt }],
       getApiKey(),
       {
-        model: 'deepseek-chat',
+        model: DEEPSEEK_CHAT_MODEL,
         maxTokens: 1024,
         telemetryContext,
       },

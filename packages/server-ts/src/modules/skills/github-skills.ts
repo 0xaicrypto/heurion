@@ -7,7 +7,7 @@
  *   ## Instructions
  *   ...
  */
-import { deepseekChat, getApiKey, type LlmTelemetryContext } from '../../common/llm.js'
+import { deepseekChat, getApiKey, type LlmTelemetryContext , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 
 export interface GitHubSkill {
   identifier: string
@@ -135,7 +135,7 @@ export async function enrichSkillDescription(skill: GitHubSkill, telemetryContex
       [{ role: 'user', content: prompt }],
       apiKey,
       {
-        model: 'deepseek-chat',
+        model: DEEPSEEK_CHAT_MODEL,
         maxTokens: 100,
         telemetryContext,
       },

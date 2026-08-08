@@ -1,6 +1,6 @@
 import prisma from '../../common/prisma.js'
 import type { ProtocolRule } from './protocol-extractor.js'
-import { getApiKey, deepseekChat } from '../../common/llm.js'
+import { getApiKey, deepseekChat , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 
 export interface ScreeningResult {
   patientHash: string
@@ -91,7 +91,7 @@ export async function screenPatient(
     const raw = await deepseekChat(
       [{ role: 'system', content: SCREENING_SYSTEM }, { role: 'user', content: prompt }],
       apiKey,
-      { model: 'deepseek-chat', maxTokens: 2048, temperature: 0.2 },
+      { model: DEEPSEEK_CHAT_MODEL, maxTokens: 2048, temperature: 0.2 },
     )
     const parsed = JSON.parse(raw)
     const ruleResults: ScreeningResult['ruleResults'] = (parsed.ruleResults || rules.map((r: any) => ({
