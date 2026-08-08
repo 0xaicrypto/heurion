@@ -3,6 +3,7 @@ import { makeLogger } from '../../common/logger.js'
 import { EmbeddingIndex, normalizeVector } from '../embedding-index.js'
 import type { MemoryService } from '../../memory/memory.service.js'
 import type { MemoryScope } from '../contracts.js'
+import { isNodeSuperseded } from '../memory.types.js'
 
 /**
  * §5.1 (#189): embedding concerns extracted from the gateway.
@@ -121,7 +122,7 @@ export class EmbeddingService {
       let content = h.record.contentHash
       try {
         const node = this.memory?.graph.getLatestByStableId(h.record.stableId) as any
-        if (node && node.status === 'superseded') continue
+        if (node && isNodeSuperseded(node)) continue
         if (node?.content) content = node.content
       } catch { /* keep hash preview */ }
       results.push({
