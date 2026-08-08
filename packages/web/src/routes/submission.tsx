@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Send, FileText, Mail, BookOpen, Copy, Check } from 'lucide-react';
+import { Send, FileText, Mail, BookOpen, Copy, Check, Download } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api';
 import { Alert, Button, Card, Input, Skeleton } from '@/components/ui';
@@ -278,6 +278,17 @@ function CoverTab({ title, abstract, authors, draft, onSaved }: { title: string;
     }
   };
 
+  const downloadCoverLetter = () => {
+    if (!text) return;
+    const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cover-letter-${(title || 'paper').replace(/[^a-zA-Z0-9]+/g, '-').slice(0, 40)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -299,10 +310,15 @@ function CoverTab({ title, abstract, authors, draft, onSaved }: { title: string;
           {t('submission.generateCover', '生成 Cover letter')}
         </Button>
         {text && (
-          <Button size="sm" variant="ghost" onClick={copy}>
-            {copied ? <Check size={13} className="mr-1" /> : <Copy size={13} className="mr-1" />}
-            {copied ? t('common.copied', '已复制') : t('common.copy', '复制')}
-          </Button>
+          <>
+            <Button size="sm" variant="ghost" onClick={copy}>
+              {copied ? <Check size={13} className="mr-1" /> : <Copy size={13} className="mr-1" />}
+              {copied ? t('common.copied', '已复制') : t('common.copy', '复制')}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={downloadCoverLetter}>
+              <Download size={13} className="mr-1" /> {t('submission.downloadCover', '下载 Markdown')}
+            </Button>
+          </>
         )}
       </div>
       {error && <Alert variant="error">{error}</Alert>}

@@ -289,7 +289,8 @@
   },
   "research": {
     "title": "研究",
-    "comingSoon": "研究工作台功能即将推出。"
+    "comingSoon": "研究工作台功能即将推出。",
+    "writePaper": "写论文"
   },
   "writing": {
     "title": "论文工作台",
@@ -392,6 +393,7 @@
     "checklistTitle": "投稿前检查",
     "statusTitle": "投稿状态",
     "checksDone": "项通过",
-    "readyHint": "检查全部通过，可以投稿了"
+    "readyHint": "检查全部通过，可以投稿了",
+    "downloadCover": "下载 Markdown"
   }
 }

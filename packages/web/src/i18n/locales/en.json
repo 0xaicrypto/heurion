@@ -289,7 +289,8 @@
   },
   "research": {
     "title": "Research",
-    "comingSoon": "Research workspace coming soon."
+    "comingSoon": "Research workspace coming soon.",
+    "writePaper": "Write paper"
   },
   "writing": {
     "title": "Paper Workbench",
@@ -392,6 +393,7 @@
     "checklistTitle": "Pre-submission checklist",
     "statusTitle": "Submission status",
     "checksDone": "passed",
-    "readyHint": "All checks passed — ready to submit"
+    "readyHint": "All checks passed — ready to submit",
+    "downloadCover": "Download Markdown"
   }
 }

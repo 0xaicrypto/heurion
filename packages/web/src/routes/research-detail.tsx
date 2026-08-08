@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, CalendarDays, Check, FlaskConical, Plus, Upload, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { ArrowLeft, CalendarDays, Check, FlaskConical, Plus, Upload, X, FileText } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
@@ -98,6 +99,7 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 export function ResearchDetailPage() {
+  const { t } = useTranslation();
   const { studyId } = useParams<{ studyId: string }>();
   const navigate = useNavigate();
   const [study, setStudy] = useState<StudyDetail | null>(null);
@@ -134,6 +136,7 @@ export function ResearchDetailPage() {
 
   // enroll dialog
   const [showEnroll, setShowEnroll] = useState(false);
+  const [paperCreating, setPaperCreating] = useState(false);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [patientsLoading, setPatientsLoading] = useState(false);
   const [enrollingHash, setEnrollingHash] = useState<string | null>(null);
@@ -211,6 +214,17 @@ export function ResearchDetailPage() {
     else if (tab === 'safety') loadSafety();
     else if (tab === 'schedule') loadSchedule();
   }, [tab, study, loadRoster, loadEligibility, loadSafety, loadSchedule]);
+
+  const createPaper = async () => {
+    if (!studyId) return;
+    setPaperCreating(true);
+    try {
+      const paper = await api.createPaperFromStudy(studyId);
+      navigate(`/app/writing/${paper.doc_id}`);
+    } catch {
+      setPaperCreating(false);
+    }
+  };
 
   const openEnroll = async () => {
     if (!studyId) return;
@@ -384,6 +398,10 @@ export function ResearchDetailPage() {
           </Button>
           <h1 className="font-semibold text-text-primary">{study.display_name}</h1>
           <Badge variant={statusVariant(study.status)}>{study.status}</Badge>
+          {/* #383: 研究 → 论文 */}
+          <Button size="sm" className="ml-auto" onClick={createPaper} isLoading={paperCreating}>
+            <FileText size={14} className="mr-1" /> {t('research.writePaper', '写论文')}
+          </Button>
         </header>
 
         <nav className="flex gap-1 overflow-x-auto border-b border-border px-3 sm:px-6">
