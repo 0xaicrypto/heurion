@@ -58,18 +58,64 @@ export class SearchNodeTool extends BaseTool {
         .map((h) => byStable.get(h.stableId))
         .filter((n): n is any => Boolean(n))
     } else {
-      // Fallback: substring match over graph nodes (patient-scoped)
-      candidates = allNodes.filter(n =>
-        (n as any).patientHash === patientHash &&
-        (entityType ? n.type === entityType : true) &&
-        (JSON.stringify(n).toLowerCase().includes(q))
-      ).slice(0, topK)
+      // #199: fallback uses a per-call keyword inverted index + patientHash
+      // grouping instead of JSON.stringify-scanning every node.
+      // Build once: keyword -> node ids, patientHash -> node ids.
+      const byPatient = new Map<string | undefined, any[]>()
+      const keywordIndex = new Map<string, any[]>()
+      for (const n of allNodes) {
+        const ph = (n as any).patientHash
+        const group = byPatient.get(ph)
+        if (group) group.push(n)
+        else byPatient.set(ph, [n])
+        const text = `${(n as any).content || ''} ${(n as any).title || ''}`.toLowerCase()
+        const tokens = text.split(/[^a-z0-9一-龥]+/).filter((w) => w.length > 1)
+        for (const tok of tokens) {
+          const list = keywordIndex.get(tok)
+          if (list) { if (!list.includes(n)) list.push(n) }
+          else keywordIndex.set(tok, [n])
+        }
+      }
+      const scoped = byPatient.get(patientHash) || []
+      const queryTokens = q.split(/[^a-z0-9一-龥]+/).filter((w) => w.length > 1)
+      let matched: any[] = []
+      if (queryTokens.length > 0) {
+        // Union of nodes that contain any query token, then exact-substring
+        // check on the small candidate set (keeps behavior identical).
+        const seen = new Set<any>()
+        for (const tok of queryTokens) {
+          const kw = q.includes(tok) ? tok : tok
+          for (const n of keywordIndex.get(kw) || []) {
+            if ((n as any).patientHash === patientHash && !seen.has(n)) { seen.add(n); matched.push(n) }
+          }
+        }
+      }
+      candidates = matched
+        .filter((n) => (entityType ? n.type === entityType : true))
+        .filter((n) => JSON.stringify(n).toLowerCase().includes(q))
+        .slice(0, topK)
+      if (candidates.length === 0 && scoped.length > 0) {
+        // Single-token queries without index hits: fall back to scoped scan
+        // only within this patient's group (never the whole graph).
+        candidates = scoped
+          .filter((n) => (entityType ? n.type === entityType : true))
+          .filter((n) => JSON.stringify(n).toLowerCase().includes(q))
+          .slice(0, topK)
+      }
     }
 
+    // #199: neighbor lookup is grouped by patientHash (built once).
+    const byPatientAll = new Map<string | undefined, any[]>()
+    for (const n of allNodes) {
+      const ph = (n as any).patientHash
+      const group = byPatientAll.get(ph)
+      if (group) group.push(n)
+      else byPatientAll.set(ph, [n])
+    }
+    const neighborPool = byPatientAll.get(patientHash) || allNodes
     const hits = candidates.slice(0, topK).map(n => {
-      const connected = allNodes.filter(other =>
+      const connected = neighborPool.filter(other =>
         other.id !== n.id &&
-        (other as any).patientHash === patientHash &&
         ['fact', 'article'].includes(other.type)
       ).slice(0, 5)
 
