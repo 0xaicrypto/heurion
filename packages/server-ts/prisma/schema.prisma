@@ -658,3 +658,21 @@ model VerificationCode {
   @@index([ip, createdAt])
   @@map("verification_codes")
 }
+
+// #362: submission workflow — journal recommendations, cover letter, drafts.
+model SubmissionDraft {
+  id            String  @id @default(cuid())
+  userId        String  @map("user_id")
+  articleTitle  String  @map("article_title")
+  abstract      String? @map("abstract")
+  keywords      String? @map("keywords")
+  authors       String? @map("authors") // JSON string array
+  targetJournal String? @map("target_journal")
+  coverLetter   String? @map("cover_letter")
+  templateId    String? @map("template_id")
+  status        String  @default("draft") @map("status")
+  createdAt     String  @map("created_at")
+  updatedAt     String  @map("updated_at")
+  @@index([userId])
+  @@map("submission_drafts")
+}

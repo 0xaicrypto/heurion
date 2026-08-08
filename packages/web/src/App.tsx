@@ -22,6 +22,7 @@ import { ViewerPage } from '@/routes/viewer';
 import { SettingsPage } from '@/routes/settings';
 import { AdminUsersPage } from '@/routes/admin/users';
 import { ResearchPage } from '@/routes/research';
+import { SubmissionPage } from '@/routes/submission';
 import { ResearchDetailPage } from '@/routes/research-detail';
 import { WritingPage } from '@/routes/writing';
 import { WritingEditorPage } from '@/routes/writing-editor';
@@ -146,6 +147,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <ResearchPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/submission"
+            element={
+              <RequireAuth>
+                <SubmissionPage />
               </RequireAuth>
             }
           />

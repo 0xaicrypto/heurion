@@ -89,7 +89,8 @@
     "sectionConversation": "Conversation",
     "sectionPatients": "Patient Workspace",
     "sectionMemory": "Memory & Knowledge",
-    "sectionTools": "Tools & Settings"
+    "sectionTools": "Tools & Settings",
+    "submission": "Submission"
   },
   "auth": {
     "welcomeBack": "Welcome back",
@@ -343,5 +344,31 @@
     "viewContent": "View content",
     "rawText": "Raw extracted text",
     "confirmDelete": "Delete this entry?"
+  },
+  "submission": {
+    "title": "Submission Workbench",
+    "saved": "Autosaved",
+    "paperInfo": "Paper info",
+    "titleLabel": "Title",
+    "abstractLabel": "Abstract",
+    "keywordsLabel": "Keywords",
+    "authorsLabel": "Authors (comma-separated)",
+    "autosaveHint": "Changes autosave; refresh-safe",
+    "journalsTab": "Journals",
+    "coverTab": "Cover letter",
+    "templateTab": "Templates",
+    "recommend": "Recommend journals",
+    "topJournals": "journals",
+    "needTitle": "Enter the manuscript title first",
+    "journalsHint": "Fill in title/abstract and hit \"Recommend journals\" to get a Top 5 match",
+    "acceptRate": "accept",
+    "reviewWeeks": "review",
+    "weeks": "w",
+    "selected": "Selected",
+    "useTemplate": "Use this journal",
+    "targetJournal": "Target journal (optional)",
+    "generateCover": "Generate cover letter",
+    "coverHint": "AI drafts the letter (highlights + originality statement); edit freely",
+    "prefill": "Prefill"
   }
 }

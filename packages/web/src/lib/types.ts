@@ -436,3 +436,45 @@ export type ChatStreamChunk =
   | { type: 'skill_capture_suggest'; text: string }
   | { type: 'turn_complete'; assistant_event_idx?: number }
   | { type: 'error'; message: string };
+
+/* ────────────────────────── submission workflow (#362) ────────── */
+
+export interface JournalRecommendation {
+  id: string;
+  name: string;
+  impact_factor: number;
+  acceptance_rate: number;
+  review_weeks: number;
+  cas_zone: string;
+  match_score: number;
+  reason: string;
+}
+
+export interface CoverLetterResult {
+  cover_letter: string;
+  highlights: string[];
+}
+
+export interface FormatTemplate {
+  id: string;
+  journal_name: string;
+  journal_id: string;
+  sections: string[];
+  reference_style: string;
+  word_limit: string;
+  notes: string[];
+}
+
+export interface SubmissionDraft {
+  id: string;
+  article_title: string;
+  abstract?: string;
+  keywords?: string;
+  authors: string[];
+  target_journal?: string;
+  cover_letter?: string;
+  template_id?: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}

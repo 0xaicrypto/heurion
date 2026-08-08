@@ -89,7 +89,8 @@
     "sectionConversation": "对话",
     "sectionPatients": "患者工作区",
     "sectionMemory": "记忆与知识",
-    "sectionTools": "工具与设置"
+    "sectionTools": "工具与设置",
+    "submission": "投稿"
   },
   "auth": {
     "welcomeBack": "欢迎回来",
@@ -343,5 +344,31 @@
     "viewContent": "查看内容",
     "rawText": "原始提取文本",
     "confirmDelete": "确定删除该条目？"
+  },
+  "submission": {
+    "title": "投稿工作台",
+    "saved": "已自动保存",
+    "paperInfo": "论文信息",
+    "titleLabel": "标题",
+    "abstractLabel": "摘要",
+    "keywordsLabel": "关键词",
+    "authorsLabel": "作者（逗号分隔）",
+    "autosaveHint": "修改自动保存，刷新不丢失",
+    "journalsTab": "选刊推荐",
+    "coverTab": "Cover letter",
+    "templateTab": "格式模板",
+    "recommend": "推荐期刊",
+    "topJournals": "个推荐期刊",
+    "needTitle": "请先填写论文标题",
+    "journalsHint": "填写标题/摘要后点击「推荐期刊」，获取 Top 5 期刊匹配",
+    "acceptRate": "接受率",
+    "reviewWeeks": "审稿",
+    "weeks": "周",
+    "selected": "已选用",
+    "useTemplate": "使用该刊",
+    "targetJournal": "目标期刊（可选）",
+    "generateCover": "生成 Cover letter",
+    "coverHint": "AI 生成投稿信草稿（含研究亮点/原创声明），可自由编辑",
+    "prefill": "预填充"
   }
 }
