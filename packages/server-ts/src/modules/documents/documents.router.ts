@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
-import { deepseekStream, deepseekChat, getApiKey } from '../../common/llm.js'
+import { deepseekStream, deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 import crypto from 'crypto'
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx'
 
@@ -132,7 +132,7 @@ export async function documentsRouter(app: FastifyInstance) {
     const send = (d: any) => reply.raw.write(`data: ${JSON.stringify(d)}\n\n`)
     try {
       for await (const chunk of deepseekStream([{ role: 'user', content: prompt }], apiKey, {
-        model: 'deepseek-chat',
+        model: DEEPSEEK_CHAT_MODEL,
         maxTokens: 2048,
         telemetryContext: { userId, workspaceId: userId, action: 'document.polish' },
       })) {

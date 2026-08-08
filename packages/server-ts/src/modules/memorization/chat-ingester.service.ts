@@ -34,7 +34,7 @@ export class ChatIngester {
       eventType: 'ingestion_llm_response',
       content: `Extracted ${result.entities.length} entities from chat`,
       metadata: {
-        model: 'deepseek-chat',
+        model: (await import('../../common/llm.js')).DEEPSEEK_CHAT_MODEL,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         latencyMs: result.latencyMs,

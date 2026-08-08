@@ -1,4 +1,5 @@
 import { createAiProvider } from '../../../common/ai/index.js'
+import { DEEPSEEK_CHAT_MODEL } from '../../../common/llm.js'
 import type { IngestionAnalyzer, IngestionJob, IngestionResult } from '../ingestion.service.js'
 
 const aiProvider = createAiProvider()
@@ -41,7 +42,7 @@ JSON:`
     const chatResult = await aiProvider.chat(
       [{ role: 'user', content: prompt }],
       {
-        model: 'deepseek-chat',
+        model: DEEPSEEK_CHAT_MODEL,
         maxTokens: 2048,
         telemetryContext: {
           userId: job.userId,

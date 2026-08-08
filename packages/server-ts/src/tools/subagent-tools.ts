@@ -36,7 +36,7 @@ Provide your response.`
       const result = await deepseekChat(
         [{ role: 'user', content: prompt }],
         getApiKey(),
-        { model: 'deepseek-chat', maxTokens: 2048, telemetryContext: { userId: this.ctx.userId, workspaceId: this.ctx.userId, action: 'tool.delegate' } },
+        { model: (await import('../common/llm.js')).DEEPSEEK_CHAT_MODEL, maxTokens: 2048, telemetryContext: { userId: this.ctx.userId, workspaceId: this.ctx.userId, action: 'tool.delegate' } },
       )
       return { success: true, output: result }
     } catch (err: any) {
