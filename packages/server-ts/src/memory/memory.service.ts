@@ -3,6 +3,8 @@ import type { EventLog } from '../core/event-log'
 import type { FactsStore, KnowledgeStore } from '../evolution/stores'
 import type { Fact, KnowledgeArticle } from '../evolution/stores'
 import { MemoryGraph } from './memory.graph'
+import { LegacyProjection, type LegacySnapshot } from './legacy-projection.js'
+import { PropagationCoordinator } from './propagation-coordinator.js'
 import { CurationEngine, type PropagationResult } from './curation/curation.engine'
 import type {
   AddFactInput,
@@ -51,6 +53,9 @@ export class MemoryService {
   private policy: CurationPolicy
   public graph: MemoryGraph
   public curation: CurationEngine
+  /** #304: internal collaborators — write order is testable in isolation. */
+  public legacyProjection: LegacyProjection
+  public propagation: PropagationCoordinator
 
   constructor(opts: MemoryServiceOptions) {
     this.eventLog = opts.eventLog
@@ -60,6 +65,8 @@ export class MemoryService {
     this.policy = opts.policy || DEFAULT_CURATION_POLICY
     this.graph = new MemoryGraph(opts.baseDir)
     this.curation = new CurationEngine(this.graph, this.policy)
+    this.legacyProjection = new LegacyProjection(this.legacyFacts, this.legacyKnowledge, this.graph)
+    this.propagation = new PropagationCoordinator(this.legacyProjection, this.graph)
   }
 
   // ── Fact API ─────────────────────────────────────────────────
@@ -616,36 +623,14 @@ export class MemoryService {
     this.legacyKnowledge.reload()
   }
 
-  /** Deep-copy of the legacy stores, taken before provisional writes. */
-  private snapshotLegacy() {
-    return {
-      facts: JSON.parse(JSON.stringify(this.legacyFacts.all())) as Fact[],
-      knowledge: JSON.parse(JSON.stringify(this.legacyKnowledge.all())) as KnowledgeArticle[],
-    }
+  /** #304: delegate to LegacyProjection. */
+  private snapshotLegacy(): LegacySnapshot {
+    return this.legacyProjection.snapshot()
   }
 
-  /** Compensating write: restore the pre-mutation legacy state, #192. */
-  private rollbackLegacy(snapshot: ReturnType<MemoryService['snapshotLegacy']>) {
-    this.legacyFacts.replaceAll(snapshot.facts)
-    this.legacyKnowledge.replaceAll(snapshot.knowledge)
-    this.legacyFacts.commit()
-    this.legacyKnowledge.commit()
-    this.graph.reload()
-  }
-
-  /**
-   * Dual-store atomicity (#192): the graph is the last store to commit.
-   * Legacy commits are provisional — on graph-commit failure they are
-   * compensated with a rollback to the snapshot, so the two stores can
-   * never diverge on disk.
-   */
-  private commitGraphLast(legacyBefore: ReturnType<MemoryService['snapshotLegacy']>) {
-    try {
-      this.graph.commit()
-    } catch (e) {
-      this.rollbackLegacy(legacyBefore)
-      throw e
-    }
+  /** #304: delegate to PropagationCoordinator (graph-commit-last atomicity). */
+  private commitGraphLast(legacyBefore: LegacySnapshot) {
+    this.propagation.commit(legacyBefore)
   }
 
   /**
@@ -655,55 +640,7 @@ export class MemoryService {
    * Returns whether a divergence was found and repaired.
    */
   reconcileLegacy(): { repaired: boolean; factDiff: number; articleDiff: number } {
-    const currentFacts = this.graph.getCurrentNodesByType('fact') as FactNode[]
-    const currentArticles = this.graph.getCurrentNodesByType('article') as ArticleNode[]
-
-    const projectedFacts = currentFacts.map(f => ({
-      id: f.stableId,
-      category: f.category,
-      importance: f.importance ?? 3,
-      content: f.content,
-      sourceType: (f.sourceType === 'document' ? 'research' : f.sourceType) as any,
-      patientHash: f.patientHash,
-      studyId: f.studyId,
-      count: f.count ?? 1,
-      createdAt: f.createdAt,
-      updatedAt: f.updatedAt,
-      lastSeenAt: f.updatedAt,
-    }))
-
-    const projectedArticles = currentArticles.map(a => ({
-      id: a.stableId,
-      title: a.title,
-      content: a.content,
-      sources: a.sourceFacts.map(s => s.stableId),
-      version: a.version,
-      status: 'current' as const,
-      createdAt: a.createdAt,
-      updatedAt: a.updatedAt,
-    }))
-
-    const legacyFacts = this.legacyFacts.all()
-    const legacyArticles = this.legacyKnowledge.all()
-
-    const factsEqual = legacyFacts.length === projectedFacts.length &&
-      legacyFacts.every((f, i) => f.id === projectedFacts[i].id && f.content === projectedFacts[i].content && f.category === projectedFacts[i].category)
-    const articlesEqual = legacyArticles.length === projectedArticles.length &&
-      legacyArticles.every((a, i) => a.id === projectedArticles[i].id && a.title === projectedArticles[i].title && a.content === projectedArticles[i].content)
-
-    if (factsEqual && articlesEqual) {
-      return { repaired: false, factDiff: 0, articleDiff: 0 }
-    }
-
-    const factDiff = Math.abs(legacyFacts.length - projectedFacts.length) || legacyFacts.filter((f, i) => f.content !== projectedFacts[i]?.content).length
-    const articleDiff = Math.abs(legacyArticles.length - projectedArticles.length) || legacyArticles.filter((a, i) => a.content !== projectedArticles[i]?.content).length
-
-    this.legacyFacts.replaceAll(projectedFacts)
-    this.legacyKnowledge.replaceAll(projectedArticles)
-    this.legacyFacts.commit()
-    this.legacyKnowledge.commit()
-
-    return { repaired: true, factDiff, articleDiff }
+    return this.legacyProjection.reconcile()
   }
 
   private applyPropagationToLegacy(propagation: {
@@ -711,15 +648,7 @@ export class MemoryService {
     supersededFactStableIds: string[]
     reopenedGapStableIds: string[]
   }) {
-    for (const articleId of propagation.staleArticleStableIds) {
-      this.legacyKnowledge.markStale(articleId, propagation.supersededFactStableIds)
-    }
-    this.legacyKnowledge.commit()
-
-    for (const factId of propagation.supersededFactStableIds) {
-      this.legacyFacts.updateWhere(f => f.id === factId, { content: '[deleted from source document]' })
-    }
-    this.legacyFacts.commit()
+    this.legacyProjection.applyPropagation(propagation)
   }
 
   private appendEvent(eventType: string, content: string, metadata: Record<string, unknown>) {
