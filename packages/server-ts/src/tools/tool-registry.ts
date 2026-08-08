@@ -2,7 +2,7 @@ import { BaseTool, ToolDefinition, ToolResult } from './base-tool.js'
 import { SearchNodeTool, SearchEncounterTool } from './clinical-graph-tools.js'
 import { ReadCalendarTool, ComposeEmailDraftTool, SendEmailNowTool } from './calendar-tools.js'
 import { SearchPastChatsTool } from './memory-tools.js'
-import { DelegateTool } from './subagent-tools.js'
+import { DelegateTool, SpawnSubagentTool } from './subagent-tools.js'
 import { DeferToBackgroundTool } from './async-tools.js'
 import { OCRImageTool } from './ocr-tools.js'
 import { EditDocumentTool } from './edit-document-tool.js'
@@ -38,6 +38,7 @@ export class ToolRegistry {
     this.register(new SearchEncounterTool(ctx))
     this.register(new SearchPastChatsTool(ctx))
     this.register(new DelegateTool(ctx))
+    this.register(new SpawnSubagentTool(ctx))
     this.register(new DeferToBackgroundTool(ctx))
     this.register(new OCRImageTool(ctx))
     this.register(new EditDocumentTool(ctx))
