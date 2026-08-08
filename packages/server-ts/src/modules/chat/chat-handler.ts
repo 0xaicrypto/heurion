@@ -715,6 +715,16 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
 
               const result = await toolRegistry.execute(toolName, toolArgs)
 
+              // #419: generated images render in the chat stream.
+              if (toolName === 'generate_image' && result.success && result.output) {
+                try {
+                  const parsed = JSON.parse(result.output)
+                  if (parsed.url) {
+                    send({ type: 'image_attached', url: parsed.url, caption: parsed.prompt?.slice(0, 120) })
+                  }
+                } catch { /* non-JSON */ }
+              }
+
               // #418: surface memory-search hits to the doctor (AI 依据可见).
               if (toolName === 'search_node' && result.success && result.output) {
                 try {

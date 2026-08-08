@@ -12,6 +12,8 @@ export interface ChatMessage {
   citations?: Array<{ text: string; source?: string }>;
   /** #418: memory-search hits backing this answer. */
   memoryHits?: Array<{ content: string; type: string; id: string }>;
+  /** #419: generated image to render in the stream. */
+  imageUrl?: string;
   download?: {
     fileId: string;
     fileName: string;
@@ -52,6 +54,8 @@ interface SessionState {
   subagents?: Array<{ task: string; status: 'running' | 'done' | 'failed' }>;
   /** #418: memory-search hits attached to the assistant message. */
   memoryHits?: Array<{ content: string; type: string; id: string }>;
+  /** #419: generated image to render in the stream. */
+  imageUrl?: string;
 }
 
 interface ChatStore {
@@ -202,6 +206,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 ...last,
                 toolCalls: [...(last.toolCalls ?? []), { tool: chunk.tool, argsPreview }],
               };
+            }
+            return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
+          });
+          continue;
+        }
+        if (chunk.type === 'image_attached' && chunk.url) {
+          set((state) => {
+            const s = state.sessions[sessionId];
+            if (!s) return state;
+            const msgs = [...s.messages];
+            const last = msgs[msgs.length - 1];
+            if (last?.role === 'assistant') {
+              msgs[msgs.length - 1] = { ...last, imageUrl: chunk.url };
             }
             return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
           });

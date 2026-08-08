@@ -529,6 +529,14 @@ export function ChatPage() {
                     />
                   )}
                   <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
+                  {m.imageUrl && (
+                    <img
+                      src={m.imageUrl}
+                      alt="generated"
+                      className="mt-3 max-h-80 rounded-xl border border-border"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                    />
+                  )}
                   {m.memoryHits && m.memoryHits.length > 0 && (
                     <details className="mt-3 rounded-lg border border-border bg-surface px-3 py-2">
                       <summary className="cursor-pointer text-xs text-text-tertiary hover:text-text-secondary">

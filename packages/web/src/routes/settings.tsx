@@ -435,6 +435,7 @@ function LlmSection() {
               </span>
             )}
           </div>
+          <ImageGenConfig />
           {testResult && (
             <div
               className={cn(
@@ -783,5 +784,58 @@ function McpSection() {
         </div>
       )}
     </div>
+  );
+}
+
+
+/* ────────────────────────── Image generation config (#419) ────────────────────────── */
+function ImageGenConfig() {
+  const { t } = useTranslation();
+  const [cfg, setCfg] = useState<{ base_url: string; model: string; has_key: boolean } | null>(null);
+  const [baseUrl, setBaseUrl] = useState('');
+  const [model, setModel] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getImageSettings().then((r) => {
+      setCfg(r);
+      setBaseUrl(r.base_url);
+      setModel(r.model);
+    }).catch(() => {});
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    setMsg(null);
+    try {
+      await api.updateImageSettings({ base_url: baseUrl.trim() || undefined, model: model.trim() || undefined, api_key: apiKey.trim() || undefined });
+      setApiKey('');
+      setMsg(t('settings.saved', '已保存'));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <Card className="mt-4 space-y-3 p-4">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-text-secondary">{t('settings.imageGen', '图像生成')}</span>
+        {cfg?.has_key && <Badge variant="success">{t('settings.configured', '已配置')}</Badge>}
+      </div>
+      <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" aria-label="base_url" />
+      <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="dall-e-3" aria-label="model" />
+      <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={t('settings.imgKey', 'API Key（可选，留空不改）')} aria-label="api_key" />
+      {error && <Alert variant="error">{error}</Alert>}
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={save} isLoading={saving}>
+          <Server size={14} className="mr-1.5" /> {t('common.save')}
+        </Button>
+        {msg && <span className="flex items-center gap-1 text-sm text-success"><Check size={14} /> {msg}</span>}
+      </div>
+    </Card>
   );
 }

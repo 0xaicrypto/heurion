@@ -11,10 +11,19 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 
-const IMG_BASE = (process.env.IMG_API_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')
-
-function imgApiKey(): string | null {
-  return process.env.IMG_API_KEY || null
+// #419: DB-configured settings win over env.
+async function imgConfig(userId: string): Promise<{ baseUrl: string; key: string | null; model: string }> {
+  let db: { base_url?: string; model?: string; img_api_key?: string } = {}
+  try {
+    const prisma = (await import('../common/prisma.js')).default
+    const rows = await (prisma as any).setting.findMany({ where: { userId } })
+    for (const r of rows) (db as Record<string, string>)[r.key] = r.value
+  } catch { /* no db */ }
+  return {
+    baseUrl: (db.base_url || process.env.IMG_API_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, ''),
+    key: db.img_api_key || process.env.IMG_API_KEY || null,
+    model: db.model || process.env.IMG_MODEL || 'dall-e-3',
+  }
 }
 
 export class GenerateImageTool extends BaseTool {
@@ -39,27 +48,31 @@ export class GenerateImageTool extends BaseTool {
     const prompt = String(args.prompt || '').trim()
     if (!prompt) return { success: false, error: 'prompt required' }
     const size = String(args.size || '1024x1024')
-    const key = imgApiKey()
-    if (!key) {
-      return { success: false, error: 'generate_image is not configured — set IMG_API_KEY (and optionally IMG_API_BASE_URL / IMG_MODEL). Describe the image in text instead.' }
+    const userId = this.ctx?.userId || 'unknown'
+    const cfg = await imgConfig(userId)
+    if (!cfg.key) {
+      return { success: false, error: 'generate_image is not configured — set it in Settings → LLM → 图像生成 (or IMG_API_KEY env). Describe the image in text instead.' }
     }
 
     try {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 60000)
-      const res = await fetch(`${IMG_BASE}/images/generations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-        body: JSON.stringify({
-          model: process.env.IMG_MODEL || 'dall-e-3',
-          prompt,
-          n: 1,
-          size,
-          response_format: 'b64_json',
-        }),
-        signal: controller.signal,
-      })
-      clearTimeout(timer)
+      // #419: retry once on 429/5xx (transient rate limits).
+      let res: Response | null = null
+      let lastStatus = 0
+      for (let attempt = 0; attempt < 2 && !res; attempt++) {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 60000)
+        const r = await fetch(`${cfg.baseUrl}/images/generations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.key}` },
+          body: JSON.stringify({ model: cfg.model, prompt, n: 1, size, response_format: 'b64_json' }),
+          signal: controller.signal,
+        })
+        clearTimeout(timer)
+        lastStatus = r.status
+        if (r.ok || (r.status !== 429 && r.status < 500)) { res = r; break }
+        if (attempt === 0) await new Promise((r2) => setTimeout(r2, 1500))
+      }
+      if (!res) throw new Error(`Image API retries exhausted (last HTTP ${lastStatus})`)
       if (!res.ok) {
         const text = await res.text().catch(() => '')
         throw new Error(`Image API HTTP ${res.status}: ${text.slice(0, 150)}`)
@@ -69,7 +82,6 @@ export class GenerateImageTool extends BaseTool {
       if (!b64) return { success: false, error: 'Image API returned no image data' }
 
       // Save to the user's attachments dir (same layout as render_chart).
-      const userId = this.ctx?.userId || 'unknown'
       const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
       fs.mkdirSync(dir, { recursive: true })
       const fileId = `img_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.png`

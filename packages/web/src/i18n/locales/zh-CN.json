@@ -300,7 +300,11 @@
     "serverName": "名称（如 EHR）",
     "serverToken": "Bearer token（可选）",
     "testServer": "测试",
-    "noServers": "尚未配置 MCP 服务器"
+    "noServers": "尚未配置 MCP 服务器",
+    "imageGen": "图像生成",
+    "configured": "已配置",
+    "imgKey": "API Key（可选，留空不改）",
+    "saved": "已保存"
   },
   "admin": {
     "title": "管理",
