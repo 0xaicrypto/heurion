@@ -11,6 +11,7 @@ import { RenderChartTool } from './render-chart-tool.js'
 import { SearchMedicalWebTool, FetchArticleSummaryTool, VisitMedicalSiteTool, ExtractFulltextTool } from './medical-web-tools.js'
 import { StatDescribeTool, StatTTestTool, StatChiSqTool, StatKmTool, StatPlotTool, StatAdvisorTool } from './stat-tools.js'
 import { McpListToolsTool, McpCallToolTool } from './mcp-tools.js'
+import { GenerateImageTool } from './generate-image-tool.js'
 import type { MemoryService } from '../memory/memory.service.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores.js'
 import type { EventLog } from '../core/event-log.js'
@@ -57,6 +58,7 @@ export class ToolRegistry {
     this.register(new StatAdvisorTool())
     this.register(new McpListToolsTool())
     this.register(new McpCallToolTool())
+    this.register(new GenerateImageTool(ctx))
   }
 
   /**
