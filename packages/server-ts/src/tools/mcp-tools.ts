@@ -11,7 +11,28 @@ export function configuredMcpServers(): string[] {
   return Object.keys(parseMcpServers(process.env.MCP_SERVERS))
 }
 
-function getClient(name: string): McpClient | null {
+// #417: prefer DB-managed servers (frontend-configurable); env stays a fallback.
+async function dbServers(): Promise<Map<string, { url: string; capabilities: Array<'read' | 'write'>; token?: string }>> {
+  try {
+    const prisma = (await import('../common/prisma.js')).default
+    const { decryptSettingValue } = await import('../modules/plugins/plugin-settings-encryption.service.js')
+    const rows = await (prisma as any).mcpServer.findMany({ where: { enabled: 1 } })
+    const map = new Map<string, { url: string; capabilities: Array<'read' | 'write'>; token?: string }>()
+    for (const r of rows) {
+      let caps: Array<'read' | 'write'> = ['read']
+      try { caps = JSON.parse(r.capabilities).filter((c: string) => c === 'read' || c === 'write') } catch { /* default */ }
+      map.set(r.name, { url: r.url, capabilities: caps, token: r.tokenEnc ? decryptSettingValue(r.tokenEnc) : undefined })
+    }
+    return map
+  } catch {
+    return new Map()
+  }
+}
+
+async function getClient(name: string): Promise<McpClient | null> {
+  const db = await dbServers()
+  const dbCfg = db.get(name)
+  if (dbCfg) return new McpClient({ url: dbCfg.url, capabilities: dbCfg.capabilities, token: dbCfg.token })
   const cfg = parseMcpServers(process.env.MCP_SERVERS)[name]
   if (!cfg) return null
   return new McpClient(cfg)
@@ -35,9 +56,9 @@ export class McpListToolsTool extends BaseTool {
   }
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const name = String(args.server || '')
-    const client = getClient(name)
+    const client = await getClient(name)
     if (!client) {
-      return { success: false, error: `MCP server "${name}" is not configured (MCP_SERVERS env)` }
+      return { success: false, error: `MCP server "${name}" is not configured (add it in Settings → Integrations, or set MCP_SERVERS env)` }
     }
     try {
       await client.initialize()
@@ -75,8 +96,8 @@ export class McpCallToolTool extends BaseTool {
     const name = String(args.server || '')
     const tool = String(args.tool || '')
     const toolArgs = (args.arguments as Record<string, unknown>) || {}
-    const client = getClient(name)
-    if (!client) return { success: false, error: `MCP server "${name}" is not configured (MCP_SERVERS env)` }
+    const client = await getClient(name)
+    if (!client) return { success: false, error: `MCP server "${name}" is not configured (add it in Settings → Integrations, or set MCP_SERVERS env)` }
 
     try {
       await client.initialize()

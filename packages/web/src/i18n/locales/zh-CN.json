@@ -290,7 +290,15 @@
     "groupAccount": "账号安全",
     "groupModels": "模型配置",
     "groupData": "数据管理",
-    "groupOps": "可观测性"
+    "groupOps": "可观测性",
+    "groupIntegrations": "集成",
+    "mcp": "MCP 连接器",
+    "mcpHint": "配置外部系统（EHR/影像/检验）的 MCP 连接。只读工具立即执行；写工具需管理员审批。",
+    "addServer": "添加服务器",
+    "serverName": "名称（如 EHR）",
+    "serverToken": "Bearer token（可选）",
+    "testServer": "测试",
+    "noServers": "尚未配置 MCP 服务器"
   },
   "admin": {
     "title": "管理",

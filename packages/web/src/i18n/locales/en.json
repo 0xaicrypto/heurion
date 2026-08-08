@@ -290,7 +290,15 @@
     "groupAccount": "Account & Security",
     "groupModels": "Model configuration",
     "groupData": "Data management",
-    "groupOps": "Observability"
+    "groupOps": "Observability",
+    "groupIntegrations": "Integrations",
+    "mcp": "MCP connectors",
+    "mcpHint": "Connect external systems (EHR/imaging/lab) via MCP. Read tools run immediately; write tools need admin approval.",
+    "addServer": "Add server",
+    "serverName": "Name (e.g. EHR)",
+    "serverToken": "Bearer token (optional)",
+    "testServer": "Test",
+    "noServers": "No MCP servers configured yet"
   },
   "admin": {
     "title": "Admin",
