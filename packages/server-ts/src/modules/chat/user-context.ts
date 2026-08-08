@@ -106,6 +106,9 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
  * is rebuilt only when either store's version changes (any commit bumps the
  * VersionedStore version); identical turns reuse the cached string.
  */
+// #301: bounded LRU persona cache — Map insertion order doubles as recency
+// (every hit re-inserts); eviction drops the least-recently-used entry.
+const PERSONA_CACHE_MAX = 100
 const personaCache = new Map<string, { factsVersion: string | null; knowledgeVersion: string | null; persona: string }>()
 
 export function buildCachedPersona(userId: string, facts: FactsStore, knowledge: KnowledgeStore): string {
@@ -113,11 +116,19 @@ export function buildCachedPersona(userId: string, facts: FactsStore, knowledge:
   const kv = knowledge.currentVersion()
   const cached = personaCache.get(userId)
   if (cached && cached.factsVersion === fv && cached.knowledgeVersion === kv) {
+    // LRU touch: move to the most-recent end.
+    personaCache.delete(userId)
+    personaCache.set(userId, cached)
     return cached.persona
   }
   const persona = buildPersona(facts, knowledge)
+  personaCache.delete(userId)
   personaCache.set(userId, { factsVersion: fv, knowledgeVersion: kv, persona })
-  if (personaCache.size > 200) personaCache.clear()
+  if (personaCache.size > PERSONA_CACHE_MAX) {
+    // Evict the least-recently-used entry (oldest insertion order).
+    const oldest = personaCache.keys().next().value
+    if (oldest !== undefined) personaCache.delete(oldest)
+  }
   return persona
 }
 
