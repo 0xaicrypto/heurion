@@ -17,11 +17,17 @@ export interface UserProfile {
   updated_at?: string
   role?: string
   email?: string
+  /** #348: mirrors GET /user/profile — 1 when the email was verified. */
+  email_verified?: boolean
+  phone?: string
   organization?: string
   intended_use?: string
   status?: string
   tier?: string
 }
+
+/** #348: shared verification-code purpose, kept in sync with the backend. */
+export type VerificationPurpose = 'register' | 'bind' | 'reset'
 
 export type ProviderKind = 'gemini' | 'openai' | 'anthropic' | 'kimi' | 'deepseek'
 

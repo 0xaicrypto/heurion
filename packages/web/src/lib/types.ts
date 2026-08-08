@@ -72,18 +72,11 @@ export interface LlmUpdateResult {
   status: LlmStatus;
 }
 
-export interface UserProfile {
-  user_id: string;
-  display_name: string;
-  created_at: string;
-  updated_at?: string;
-  email?: string;
-  email_verified?: boolean;
-  organization?: string;
-  intended_use?: string;
-  status?: string;
-  tier?: string;
-}
+/**
+ * #348: shared with the backend — single source of truth for auth fields
+ * (email/phone/email_verified), so the frontend can never drift.
+ */
+export type { UserProfile, VerificationPurpose } from '@heurion/sdk';
 
 export interface Patient {
   patient_hash: string;
