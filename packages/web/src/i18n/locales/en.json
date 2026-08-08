@@ -300,7 +300,11 @@
     "serverName": "Name (e.g. EHR)",
     "serverToken": "Bearer token (optional)",
     "testServer": "Test",
-    "noServers": "No MCP servers configured yet"
+    "noServers": "No MCP servers configured yet",
+    "imageGen": "Image generation",
+    "configured": "Configured",
+    "imgKey": "API Key (optional, leave blank to keep)",
+    "saved": "Saved"
   },
   "admin": {
     "title": "Admin",

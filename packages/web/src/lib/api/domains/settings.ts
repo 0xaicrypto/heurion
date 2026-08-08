@@ -41,4 +41,14 @@ export class SettingsApi extends AuthApi {
   async callMcpTool(id: string, tool: string, args: Record<string, unknown>): Promise<{ ok: boolean; result: string }> {
     return this.fetch(`/api/v1/settings/mcp-servers/${id}/call`, { method: 'POST', body: JSON.stringify({ tool, arguments: args }) });
   }
+
+  /* ────────────────────────── image generation (#419) ────────── */
+
+  async getImageSettings(): Promise<{ base_url: string; model: string; has_key: boolean }> {
+    return this.fetch('/api/v1/settings/image');
+  }
+
+  async updateImageSettings(input: { base_url?: string; model?: string; api_key?: string }): Promise<{ ok: boolean }> {
+    return this.fetch('/api/v1/settings/image', { method: 'PUT', body: JSON.stringify(input) });
+  }
 }
