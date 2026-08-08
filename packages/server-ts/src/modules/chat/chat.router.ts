@@ -4,6 +4,7 @@ import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
 import { deepseekStream, deepseekChat, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
+import { chatSendSchema, memoryImportSchema } from './chat.dto.js'
 import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
 import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
 import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
@@ -63,8 +64,12 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
   app.addHook('preHandler', authGuard)
 
   app.post('/api/v1/agent/chat', async (request, reply) => {
-    const body = request.body as any
-    if (!body.text) return reply.status(400).send({ error: 'text required' })
+    // #349: zod-validated body — bad input is rejected at the entry.
+    const parsed = chatSendSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: `Invalid request: ${parsed.error.issues[0]?.message || 'validation failed'}` })
+    }
+    const body = parsed.data
 
     const userId = request.user!.userId
     const ctx = getUserContext(userId)
@@ -871,8 +876,12 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
   // #6: Memory import
   app.post('/api/v1/memory/import', async (request, reply) => {
     const ctx = getUserContext(request.user!.userId)
-    const data = request.body as any
-    if (!data) return reply.status(400).send({ error: 'No data provided' })
+    // #349: zod-validated import payload.
+    const parsed = memoryImportSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: `Invalid import: ${parsed.error.issues[0]?.message || 'validation failed'}` })
+    }
+    const data = parsed.data
     let imported = 0
     if (data.facts && Array.isArray(data.facts)) {
       for (const f of data.facts) {

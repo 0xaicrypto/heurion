@@ -4,6 +4,7 @@ import { getUserContext } from '../chat/user-context.js'
 import { ChatIngester } from './chat-ingester.service.js'
 import { MemoryGraphGateway } from '../../memory/memory-gateway.js'
 import prisma from '../../common/prisma.js'
+import { manualMemorySchema } from '../chat/chat.dto.js'
 
 export async function memorizationRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
@@ -49,10 +50,12 @@ export async function memorizationRouter(app: FastifyInstance) {
    * queue (never a direct graph write).
    */
   app.post('/api/v1/memorization/propose', async (request, reply) => {
-    const { content, category, importance, source_type, patient_hash } = request.body as any
-    if (!content || !String(content).trim()) {
-      return reply.status(400).send({ error: 'content required' })
+    const parsed = manualMemorySchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: `Invalid request: ${parsed.error.issues[0]?.message || 'validation failed'}` })
     }
+    const { content, category, importance, patient_hash } = parsed.data
+    const source_type = undefined
     const userId = request.user!.userId
     const ctx = getUserContext(userId)
     const gateway = new MemoryGraphGateway(
@@ -68,7 +71,7 @@ export async function memorizationRouter(app: FastifyInstance) {
       patientHash: patient_hash || undefined,
       kind: 'fact',
       content: String(content).trim(),
-      importance: Math.min(5, Math.max(1, parseInt(importance, 10) || 3)),
+      importance: Math.min(5, Math.max(1, Number(importance) || 3)),
       confidence: 'medium',
       reason: `手动添加：${String(content).trim().slice(0, 40)}`,
       category: category || 'fact',

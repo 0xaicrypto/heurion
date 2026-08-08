@@ -150,3 +150,33 @@ describe('chat tool-call parsing (regression: nested arguments JSON)', () => {
     expect(res.payload).toContain('检索 EGFR NSCLC 免疫治疗文献')
     expect(res.payload).toContain('汇总：文献与统计子任务完成')
   })
+
+  test('chat rejects invalid bodies with a clear 400 (#349)', async () => {
+    const app = await getApp()
+    const h = { ...await authHeader(), 'content-type': 'application/json' }
+
+    const empty = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', headers: h, payload: JSON.stringify({ text: '' }) })
+    expect(empty.statusCode).toBe(400)
+    expect(JSON.parse(empty.payload).error).toContain('Invalid request')
+
+    const nonString = await app.inject({ method: 'POST', url: '/api/v1/agent/chat', headers: h, payload: JSON.stringify({ text: 123 }) })
+    expect(nonString.statusCode).toBe(400)
+
+    const hugeAttachments = await app.inject({
+      method: 'POST', url: '/api/v1/agent/chat', headers: h,
+      payload: JSON.stringify({ text: 'hi', attachments: Array.from({ length: 30 }, (_, i) => `f_${i}`) }),
+    })
+    expect(hugeAttachments.statusCode).toBe(400)
+  })
+
+  test('memory import rejects empty/structured-invalid payloads (#349)', async () => {
+    const app = await getApp()
+    const h = { ...await authHeader(), 'content-type': 'application/json' }
+
+    // empty import stays 200 (legacy behavior) — structured errors reject.
+    const badCategory = await app.inject({
+      method: 'POST', url: '/api/v1/memory/import', headers: h,
+      payload: JSON.stringify({ facts: [{ content: 'x', category: 'not-a-category' }] }),
+    })
+    expect(badCategory.statusCode).toBe(400)
+  })
