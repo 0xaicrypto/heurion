@@ -387,6 +387,11 @@
     "applyToWriting": "应用到写作",
     "appliedHint": "已创建文档，去「写作」Tab 继续填充",
     "targetJournalShort": "目标期刊",
-    "templateAppliedShort": "已应用模板"
+    "templateAppliedShort": "已应用模板",
+    "checkTab": "投稿前检查",
+    "checklistTitle": "投稿前检查",
+    "statusTitle": "投稿状态",
+    "checksDone": "项通过",
+    "readyHint": "检查全部通过，可以投稿了"
   }
 }

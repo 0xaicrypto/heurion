@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import type { JournalRecommendation, FormatTemplate, SubmissionDraft } from '@/lib/types';
 import { getPaperLink, setPaperLink } from '@/lib/paper-link';
 
-type Tab = 'journals' | 'cover' | 'template';
+type Tab = 'journals' | 'cover' | 'template' | 'check';
 
 /** #362: embedded workbench (no AppShell) — used by the Writing & Submission tab. */
 export function SubmissionWorkbench({ embedded = false }: { embedded?: boolean }) {
@@ -125,11 +125,13 @@ export function SubmissionWorkbench({ embedded = false }: { embedded?: boolean }
               <TabBtn active={tab === 'journals'} onClick={() => setTab('journals')} icon={<BookOpen size={14} />} label={t('submission.journalsTab', '选刊推荐')} />
               <TabBtn active={tab === 'cover'} onClick={() => setTab('cover')} icon={<Mail size={14} />} label={t('submission.coverTab', 'Cover letter')} />
               <TabBtn active={tab === 'template'} onClick={() => setTab('template')} icon={<FileText size={14} />} label={t('submission.templateTab', '格式模板')} />
+              <TabBtn active={tab === 'check'} onClick={() => setTab('check')} icon={<Check size={14} />} label={t('submission.checkTab', '投稿前检查')} />
             </nav>
 
             {tab === 'journals' && <JournalsTab title={title} abstract={abstract} onPick={(j) => persist({ target_journal: j.name })} />}
             {tab === 'cover' && <CoverTab title={title} abstract={abstract} authors={authors} draft={draft} onSaved={(cl) => persist({ cover_letter: cl })} />}
             {tab === 'template' && <TemplateTab title={title} abstract={abstract} authors={authors} onSaved={(tid) => persist({ template_id: tid })} />}
+            {tab === 'check' && <CheckTab draft={draft} />}
           </div>
         </div>
       </div>
@@ -423,6 +425,103 @@ function TemplateTab({ title, abstract, authors, onSaved }: { title: string; abs
           className="w-full rounded-lg border border-border bg-surface-elevated p-3 font-mono text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       )}
+    </div>
+  );
+}
+
+/* ══════════════ Tab 4: 投稿前检查 + 状态追踪 ══════════════ */
+const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'draft', label: '拟投' },
+  { value: 'ready', label: '已就绪' },
+  { value: 'submitted', label: '已投' },
+  { value: 'revision', label: '返修' },
+  { value: 'published', label: '发表' },
+];
+
+function CheckTab({ draft }: { draft: SubmissionDraft | null }) {
+  const { t } = useTranslation();
+  const [checks, setChecks] = useState<Array<{ id: string; label: string; ok: boolean }>>([]);
+  const [passed, setPassed] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState(draft?.status || 'draft');
+  const [statusSaving, setStatusSaving] = useState(false);
+
+  useEffect(() => {
+    api.getSubmissionChecklist()
+      .then((r) => { setChecks(r.checks); setPassed(r.passed); setTotal(r.total); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [draft?.updated_at]);
+
+  const updateStatus = async (next: string) => {
+    setStatusSaving(true);
+    try {
+      const res = await api.updateSubmissionStatus(next as SubmissionDraft['status']);
+      setStatus(res.draft.status);
+    } catch {
+      /* ignore */
+    } finally {
+      setStatusSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* 状态追踪 */}
+      <Card className="p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-sm font-medium text-text-secondary">{t('submission.statusTitle', '投稿状态')}</span>
+          {statusSaving && <span className="text-xs text-text-tertiary">…</span>}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {STATUS_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => updateStatus(opt.value)}
+              className={cn(
+                'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                status === opt.value
+                  ? 'border-accent bg-accent/10 text-accent'
+                  : 'border-border bg-surface-elevated text-text-secondary hover:text-text-primary',
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </Card>
+
+      {/* 检查清单 */}
+      <Card className="p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-sm font-medium text-text-secondary">{t('submission.checklistTitle', '投稿前检查')}</span>
+          <span className={cn('text-xs font-medium', passed === total && total > 0 ? 'text-success' : 'text-warning')}>
+            {passed}/{total} {t('submission.checksDone', '项通过')}
+          </span>
+        </div>
+        {loading ? (
+          <Skeleton className="h-20 w-full rounded-xl" />
+        ) : (
+          <ul className="space-y-1.5">
+            {checks.map((c) => (
+              <li key={c.id} className="flex items-center gap-2 text-sm">
+                {c.ok ? (
+                  <Check size={14} className="shrink-0 text-success" />
+                ) : (
+                  <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-warning text-[10px] text-warning">!</span>
+                )}
+                <span className={c.ok ? 'text-text-primary' : 'text-text-secondary'}>{c.label}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {!loading && passed === total && total > 0 && (
+          <p className="mt-3 rounded-lg border border-success/30 bg-success/5 px-3 py-2 text-xs text-success">
+            ✓ {t('submission.readyHint', '检查全部通过，可以投稿了')}
+          </p>
+        )}
+      </Card>
     </div>
   );
 }

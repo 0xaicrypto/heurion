@@ -38,4 +38,12 @@ export class SubmissionApi extends PluginsApi {
   async saveSubmissionDraft(input: Partial<SubmissionDraft> & { article_title: string }): Promise<{ draft: SubmissionDraft; ok: boolean }> {
     return this.fetch('/api/v1/submission/drafts', { method: 'POST', body: JSON.stringify(input) });
   }
+
+  async getSubmissionChecklist(): Promise<{ checks: Array<{ id: string; label: string; ok: boolean }>; passed: number; total: number; ready: boolean }> {
+    return this.fetch('/api/v1/submission/checklist');
+  }
+
+  async updateSubmissionStatus(status: SubmissionDraft['status']): Promise<{ draft: SubmissionDraft; ok: boolean }> {
+    return this.fetch('/api/v1/submission/status', { method: 'POST', body: JSON.stringify({ status }) });
+  }
 }

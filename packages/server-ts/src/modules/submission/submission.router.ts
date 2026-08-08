@@ -45,14 +45,21 @@ export async function submissionRouter(app: FastifyInstance) {
       journal_name?: string
       highlights?: string[]
       corresponding_author?: string
+      doc_id?: string
     }
     if (!body.title || !String(body.title).trim()) {
       return reply.status(400).send({ error: '标题不能为空' })
     }
     try {
+      // #382 联动点 5: 若论文已写入写作文档，把正文交给 LLM 提取亮点。
+      let docText = ''
+      if (body.doc_id) {
+        const doc = await (prisma as any).doc.findFirst({ where: { id: body.doc_id, userId: request.user!.userId } })
+        if (doc?.body) docText = doc.body.slice(0, 6000)
+      }
       const { coverLetter, highlights } = await generateCoverLetter({
         title: String(body.title),
-        abstract: String(body.abstract || ''),
+        abstract: body.abstract && !docText ? String(body.abstract) : docText ? `FULL DOCUMENT:\n${docText}` : String(body.abstract || ''),
         authors: body.authors,
         journalName: body.journal_name,
         highlights: body.highlights,
@@ -93,6 +100,45 @@ export async function submissionRouter(app: FastifyInstance) {
       journal_name: template.journalName,
       content: buildPrefilledTemplate(template, { title: String(title || '[论文标题]'), abstract: String(abstract || ''), authors }),
     }
+  })
+
+  // ── 投稿前检查清单（#362 阶段2）───────────────────────────────────
+  app.get('/api/v1/submission/checklist', async (request) => {
+    const draft = await (prisma as any).submissionDraft.findFirst({
+      where: { userId: request.user!.userId, status: { not: 'submitted' } },
+      orderBy: { updatedAt: 'desc' },
+    })
+    const checks = [
+      { id: 'title', label: '标题已填写', ok: !!(draft?.articleTitle && String(draft.articleTitle).trim().length >= 5) },
+      { id: 'abstract', label: '摘要已填写', ok: !!(draft?.abstract && String(draft.abstract).trim().length >= 50) },
+      { id: 'authors', label: '作者列表完整', ok: !!(draft?.authors && JSON.parse(draft.authors).length > 0) },
+      { id: 'journal', label: '已选定目标期刊', ok: !!draft?.targetJournal },
+      { id: 'cover', label: 'Cover letter 已生成', ok: !!(draft?.coverLetter && String(draft.coverLetter).length > 100) },
+      { id: 'template', label: '已套用期刊模板', ok: !!draft?.templateId },
+      { id: 'ethics', label: '伦理/IRB 声明（建议包含）', ok: !!(draft?.coverLetter && /IRB|ethical|institutional review|伦理/i.test(draft.coverLetter)) },
+      { id: 'originality', label: '原创性声明（建议包含）', ok: !!(draft?.coverLetter && /not (been )?published|original|原创/i.test(draft.coverLetter)) },
+      { id: 'conflict', label: '利益冲突声明（建议包含）', ok: !!(draft?.coverLetter && /conflict|利益冲突|disclosure/i.test(draft.coverLetter)) },
+    ]
+    const passed = checks.filter((c) => c.ok).length
+    return { checks, passed, total: checks.length, ready: passed === checks.length }
+  })
+
+  // ── 投稿状态追踪（#362 阶段2）─────────────────────────────────────
+  app.post('/api/v1/submission/status', async (request, reply) => {
+    const { status } = request.body as any
+    const allowed = ['draft', 'ready', 'submitted', 'revision', 'published']
+    if (!allowed.includes(status)) return reply.status(400).send({ error: `status must be one of: ${allowed.join(', ')}` })
+    const draft = await (prisma as any).submissionDraft.findFirst({
+      where: { userId: request.user!.userId, status: { not: 'submitted' } },
+      orderBy: { updatedAt: 'desc' },
+    })
+    if (!draft) return reply.status(404).send({ error: 'No draft to update' })
+    const now = new Date().toISOString()
+    const updated = await (prisma as any).submissionDraft.update({
+      where: { id: draft.id },
+      data: { status, updatedAt: now },
+    })
+    return { draft: toDraft(updated), ok: true }
   })
 
   // ── 投稿草稿（刷新不丢失）────────────────────────────────────────
