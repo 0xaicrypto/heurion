@@ -24,14 +24,15 @@ export function WritingPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // #382: 投稿在前、默认投稿 — 线性流程从选刊开始；?tab=write 直达写作。
   const tab: Tab = useMemo(() => {
     const p = new URLSearchParams(location.search).get('tab');
-    return p === 'submission' ? 'submission' : 'write';
+    return p === 'write' ? 'write' : 'submission';
   }, [location.search]);
 
   const switchTab = (next: Tab) => {
     const params = new URLSearchParams();
-    if (next !== 'write') params.set('tab', next);
+    if (next !== 'submission') params.set('tab', next);
     navigate({ pathname: '/app/writing', search: params.toString() });
   };
 
@@ -42,16 +43,6 @@ export function WritingPage() {
           <h1 className="font-semibold text-text-primary">{t('writing.title', '论文工作台')}</h1>
           <div className="flex items-center gap-1 rounded-lg border border-border bg-surface-elevated p-0.5">
             <button
-              onClick={() => switchTab('write')}
-              className={cn(
-                'flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors',
-                tab === 'write' ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary',
-              )}
-            >
-              <FileText size={15} />
-              {t('writing.tabWrite', '写作')}
-            </button>
-            <button
               onClick={() => switchTab('submission')}
               className={cn(
                 'flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors',
@@ -60,6 +51,16 @@ export function WritingPage() {
             >
               <Send size={15} />
               {t('submission.title', '投稿')}
+            </button>
+            <button
+              onClick={() => switchTab('write')}
+              className={cn(
+                'flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors',
+                tab === 'write' ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary',
+              )}
+            >
+              <FileText size={15} />
+              {t('writing.tabWrite', '写作')}
             </button>
           </div>
         </header>
