@@ -387,6 +387,11 @@
     "applyToWriting": "Apply to writing",
     "appliedHint": "Doc created — continue in the Write tab",
     "targetJournalShort": "Target journal",
-    "templateAppliedShort": "Template"
+    "templateAppliedShort": "Template",
+    "checkTab": "Checklist",
+    "checklistTitle": "Pre-submission checklist",
+    "statusTitle": "Submission status",
+    "checksDone": "passed",
+    "readyHint": "All checks passed — ready to submit"
   }
 }

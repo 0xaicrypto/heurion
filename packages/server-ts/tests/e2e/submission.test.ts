@@ -128,3 +128,36 @@ describe('submission workflow (#362)', () => {
     expect(drafts2.length).toBe(1)
   }, 30000)
 })
+
+  test('submission checklist + status tracking (#362 stage 2)', async () => {
+    const app = await getApp()
+    const h = { ...await authHeader(), 'content-type': 'application/json' }
+
+    await app.inject({
+      method: 'POST', url: '/api/v1/submission/drafts',
+      headers: h,
+      payload: JSON.stringify({
+        article_title: 'EGFR-mutant NSCLC immunotherapy outcomes',
+        abstract: 'A retrospective cohort of 87 patients with EGFR-mutant advanced non-small cell lung cancer treated with immune checkpoint inhibitors. Overall survival and progression-free survival were analyzed.',
+        authors: ['Dr A', 'Dr B'],
+        target_journal: 'Lung Cancer',
+        cover_letter: 'Dear Editor, this manuscript has not been published previously. We declare no conflicts of interest. IRB approval was obtained.',
+        template_id: 'lung-cancer-template',
+      }),
+    })
+
+    const cl = await app.inject({ method: 'GET', url: '/api/v1/submission/checklist', headers: await authHeader() })
+    expect(cl.statusCode).toBe(200)
+    const checklist = JSON.parse(cl.payload)
+    expect(checklist.total).toBe(9)
+    expect(checklist.ready).toBe(true)
+    expect(checklist.checks.find((c: any) => c.id === 'title').ok).toBe(true)
+    expect(checklist.checks.find((c: any) => c.id === 'ethics').ok).toBe(true)
+
+    const bad = await app.inject({ method: 'POST', url: '/api/v1/submission/status', headers: h, payload: JSON.stringify({ status: 'nope' }) })
+    expect(bad.statusCode).toBe(400)
+
+    const submitted = await app.inject({ method: 'POST', url: '/api/v1/submission/status', headers: h, payload: JSON.stringify({ status: 'submitted' }) })
+    expect(submitted.statusCode).toBe(200)
+    expect(JSON.parse(submitted.payload).draft.status).toBe('submitted')
+  }, 30000)
