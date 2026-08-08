@@ -714,7 +714,10 @@ export function WritingEditorPage() {
           </main>
 
           {chatOpen && (
-            <aside className="fixed inset-0 z-40 flex w-full flex-col bg-surface md:static md:inset-auto md:z-auto md:w-80 md:shrink-0">
+            <>
+              {/* #351: tap the scrim to close the mobile chat drawer */}
+              <div className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setChatOpen(false)} />
+              <aside className="fixed inset-y-0 right-0 z-40 flex w-[85vw] max-w-sm flex-col border-l border-border bg-surface shadow-xl md:static md:inset-auto md:z-auto md:w-80 md:shrink-0 md:border-l-0 md:shadow-none">
               <div className="flex h-10 items-center justify-between border-b border-border px-3">
                 <span className="text-sm font-medium text-text-secondary">Doc Chat</span>
                 <button onClick={() => setChatOpen(false)} className="text-text-tertiary hover:text-text-primary">
@@ -783,7 +786,8 @@ export function WritingEditorPage() {
                   </Button>
                 </div>
               </div>
-            </aside>
+              </aside>
+            </>
           )}
         </div>
 
