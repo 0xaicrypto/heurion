@@ -327,7 +327,7 @@ function TemplateTab({ title, abstract, authors, onSaved }: { title: string; abs
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [appliedDoc, setAppliedDoc] = useState<string | null>(null);
+  const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
 
   useEffect(() => {
@@ -371,7 +371,7 @@ function TemplateTab({ title, abstract, authors, onSaved }: { title: string; abs
       })).content;
       const doc = await api.createDoc(`${title}（${template.journal_name} 模板）`);
       await api.updateDoc(doc.id, { title: doc.title, body: prefilled });
-      setAppliedDoc(doc.id);
+      setAppliedTemplateId(template.id);
       setPaperLink({ title: title.trim(), abstract: abstract || '', docId: doc.id, updatedAt: Date.now() });
       onSaved(template.id);
     } catch (err) {
@@ -406,7 +406,7 @@ function TemplateTab({ title, abstract, authors, onSaved }: { title: string; abs
                   {t('submission.applyToWriting', '应用到写作')}
                 </Button>
               </div>
-              {appliedDoc && (
+              {appliedTemplateId === tmpl.id && (
                 <p className="mt-2 text-xs text-success">
                   ✓ {t('submission.appliedHint', '已创建文档，去「写作」Tab 继续填充')}
                 </p>

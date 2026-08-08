@@ -66,6 +66,9 @@ export function WritingEditorPage() {
   const [exportResult, setExportResult] = useState<{ docx_path: string; size_bytes: number } | null>(null);
 
   const [polishOpen, setPolishOpen] = useState(false);
+  // #382: linked submission state (target journal / applied template).
+  const [linkedJournal, setLinkedJournal] = useState('');
+  const [linkedTemplate, setLinkedTemplate] = useState('');
   const [polishInstruction, setPolishInstruction] = useState('');
   const [polishStream, setPolishStream] = useState('');
   const [polishLoading, setPolishLoading] = useState(false);
@@ -108,6 +111,14 @@ export function WritingEditorPage() {
     if (!docId) return;
     setLoading(true);
     setError(null);
+    // #382: linked submission state (target journal / applied template).
+    api.listSubmissionDrafts().then((r) => {
+      const d = r.drafts[0];
+      if (d) {
+        setLinkedJournal(d.target_journal || '');
+        setLinkedTemplate(d.template_id || '');
+      }
+    }).catch(() => {});
     api.getDoc(docId)
       .then((d) => {
         setDoc(d);
@@ -465,6 +476,16 @@ export function WritingEditorPage() {
           </Button>
           <FileText size={18} className="text-text-tertiary" />
           <h1 className="font-semibold text-text-primary">{doc.title || 'Untitled'}</h1>
+          {linkedJournal && (
+            <span className="hidden rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-accent sm:inline">
+              {t('submission.targetJournalShort', '目标期刊')}: {linkedJournal}
+            </span>
+          )}
+          {linkedTemplate && (
+            <span className="hidden rounded-full border border-border bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary sm:inline">
+              {t('submission.templateAppliedShort', '已应用模板')}: {linkedTemplate}
+            </span>
+          )}
           <Button
             variant="secondary"
             size="sm"
