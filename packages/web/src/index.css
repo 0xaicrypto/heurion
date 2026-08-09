@@ -28,12 +28,12 @@
   .dark {
     --background: 222 47% 11%;
     --surface: 217 33% 17%;
-    --surface-elevated: 215 25% 27%;
+    --surface-elevated: 215 25% 23%;
     --border: 215 25% 27%;
     --border-strong: 215 16% 34%;
     --text-primary: 210 40% 98%;
-    --text-secondary: 215 20% 85%;
-    --text-tertiary: 215 14% 65%;
+    --text-secondary: 215 20% 88%;
+    --text-tertiary: 215 18% 74%;
     --accent: 199 95% 64%;
     --accent-hover: 199 89% 48%;
     --success: 142 76% 45%;
