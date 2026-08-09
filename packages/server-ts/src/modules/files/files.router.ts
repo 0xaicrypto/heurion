@@ -234,6 +234,32 @@ export async function filesRouter(app: FastifyInstance) {
     })) }
   })
 
+  // #402-followup: generated-chart library (render_chart / render_scene
+  // outputs — Reactome originals + custom bioscene diagrams).
+  app.get('/api/v1/files/generated', async (request) => {
+    const userId = request.user!.userId
+    const { listGeneratedCharts, withChartTokens } = await import('../chat/chart-library.service.js')
+    const entries = listGeneratedCharts(userId)
+    return { charts: withChartTokens(entries, issueChartToken, userId) }
+  })
+
+  // #402-followup: delete a generated chart file.
+  app.delete('/api/v1/files/generated/:fileId', async (request, reply) => {
+    const userId = request.user!.userId
+    const fileId = (request.params as any).fileId
+    if (!fileId.startsWith('scene_') && !fileId.startsWith('chart_')) {
+      return reply.status(400).send({ error: 'not a generated chart' })
+    }
+    const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads', fileId)
+    if (!fs.existsSync(filepath)) return reply.status(404).send({ error: 'File not found' })
+    fs.unlinkSync(filepath)
+    try {
+      const ctx = getUserContext(userId)
+      ctx.memory.deleteDocument(fileId)
+    } catch { /* best-effort */ }
+    return { deleted: true }
+  })
+
   // ── File content preview (Labs page) ──
   app.get('/api/v1/files/:fileId/content', async (request, reply) => {
     const { fileId } = request.params as any

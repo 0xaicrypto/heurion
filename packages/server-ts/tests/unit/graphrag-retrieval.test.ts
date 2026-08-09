@@ -21,6 +21,10 @@ describe('GraphRAG hybrid retrieval (#25)', () => {
     // Per-test base dir — the embedding index file persists on disk and
     // would leak records (and mismatched vector dims) across tests.
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'graphrag-'))
+    // EmbeddingService resolves its index dir from TWIN_BASE_DIR, not from
+    // the constructor arg — point it at the per-test dir or parallel runs
+    // share (and poison) the default .nexus/twins index.
+    process.env.TWIN_BASE_DIR = tmp
     const eventLog = new EventLog(tmp, 'u1')
     const facts = new FactsStore(tmp)
     const episodes = new EpisodesStore(tmp)
