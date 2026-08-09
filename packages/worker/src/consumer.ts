@@ -3,6 +3,7 @@ import { generatePptx } from './handlers/pptx.js'
 import { convertToPdf } from './handlers/pdf.js'
 import { renderPlot } from './handlers/plot.js'
 import { renderTable } from './handlers/table.js'
+import { runStatsAnalysis } from './handlers/stats.js'
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const Redis = require('ioredis') as new (url: string) => any
@@ -20,6 +21,8 @@ const HANDLERS: Record<string, (payload: any, tenant?: any) => Promise<any>> = {
   'sidecar.heurion/table.render_table': (p) => renderTable(p),
   'sidecar.heurion/plot.render_plot': (p) => renderPlot(p),
   'sidecar.heurion/pdf.convert_to_pdf': (p) => convertToPdf(p),
+  'sidecar.heurion/stats.run_analysis': (p) => runStatsAnalysis(p),
+  'sidecar.stats.run_analysis': (p) => runStatsAnalysis(p),
 }
 
 async function main() {
