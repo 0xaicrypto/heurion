@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach } from 'vitest'
-import { renderBioScene, resolveIcon, iconCatalog } from '../../src/tools/bioscene/bioscene.js'
+import { renderBioScene, resolveIcon, iconCatalog, detectLayoutProblems } from '../../src/tools/bioscene/bioscene.js'
 import { RenderSceneTool } from '../../src/tools/bioscene/render-scene-tool.js'
 import fs from 'fs'
 import path from 'path'
@@ -167,4 +167,37 @@ describe('BioScene (#408)', () => {
     const journal = renderBioScene(scene as any, 'journal')
     expect(journal).toContain('stroke="#60a5fa"') // receptor → soft blue
     expect(journal).not.toContain('stroke="#2563eb"')
+  })
+
+  test('#layout-guard: overlapping icons are detected and warned', () => {
+    const bad = detectLayoutProblems({
+      canvas: { width: 800, height: 600 },
+      objects: [
+        { icon: 'egfr', x: 50, y: 50 },
+        { icon: 'kinase', x: 52, y: 52 }, // stacked on EGFR
+        { icon: 'nucleus', x: 80, y: 80 },
+      ],
+    })
+    expect(bad).toContain('overlapping')
+    expect(bad).toContain('egfr+kinase')
+
+    const good = detectLayoutProblems({
+      canvas: { width: 800, height: 600 },
+      objects: [
+        { icon: 'egfr', x: 20, y: 50 },
+        { icon: 'kinase', x: 50, y: 50 },
+        { icon: 'nucleus', x: 80, y: 50 },
+      ],
+    })
+    expect(good).toBeNull()
+
+    // Scale is clamped for the overlap check (4x icon still counts as 3x).
+    const huge = detectLayoutProblems({
+      canvas: { width: 800, height: 600 },
+      objects: [
+        { icon: 'cell', x: 50, y: 50, scale: 4 },
+        { icon: 'egfr', x: 56, y: 50 },
+      ],
+    })
+    expect(huge).toContain('overlapping')
   })

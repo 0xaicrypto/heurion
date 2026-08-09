@@ -6,7 +6,7 @@
  */
 import { BaseTool, ToolResult } from '../base-tool.js'
 import { biosceneContentSchema } from '@heurion/contracts'
-import { iconCatalog, resolveIcon, renderBioScene } from './bioscene.js'
+import { iconCatalog, resolveIcon, renderBioScene, detectLayoutProblems } from './bioscene.js'
 import { resolvePathway, searchPathways, fetchPathwayDiagram, reactomeCatalog } from './reactome-service.js'
 import fs from 'fs'
 import path from 'path'
@@ -18,9 +18,9 @@ export class RenderSceneTool extends BaseTool {
   get name(): string { return 'render_scene' }
   get description(): string {
     return `Render a molecular biology / mechanism schematic.
-MODE 1 — standard pathway (template_source=reactome): authoritative Reactome pathway diagrams (EGFR signaling, PI3K cascade, PD-1 co-inhibition, apoptosis, etc.). Use for STANDARD well-known signaling pathways: pass template_source:"reactome" + pathway (name or ID, e.g. "EGFR signaling"). Returns the official Reactome diagram.
+MODE 1 — standard pathway (template_source=reactome): authoritative Reactome pathway diagrams (EGFR signaling, PI3K cascade, PD-1 co-inhibition, apoptosis, etc.). Use for STANDARD well-known signaling pathways: pass template_source:"reactome" + pathway (name or ID, e.g. "EGFR signaling"). Returns the official Reactome diagram. PREFER THIS MODE whenever the user asks for a standard/well-known pathway.
 MODE 2 — custom schematic (default, bioscene): build a custom mechanism diagram with icons from the restricted catalog (membrane, receptor, EGFR, PD-L1, kinase, ion channels, organelles, cells, antibody, ligand, TKI, drug, apoptosis, proliferation) using {icon, x, y, scale?, rotate?, label?, colorize?}; connections {from, to, kind: arrow|dashed|phosphorylation|inhibition, bend?, label?}; annotations {type: text|bracket, x, y, text}. Use for custom mechanism illustrations, highlighting specific sites, combined therapies. Unknown icons are rejected.
-Returns an SVG file.`
+LAYOUT RULES (bioscene mode, mandatory): coordinates are 0-100 (percent of canvas). Spread objects HORIZONTALLY — never stack everything on one vertical line. Keep adjacent icons at least 15 units apart. Use scale 0.8-1.5 (default 1) for normal icons; large structures like membrane/cell may use up to 3. Every connection must reference two EXISTING object indices via from/to. Returns an SVG file.`
   }
   get parameters(): Record<string, unknown> {
     return {
@@ -95,9 +95,19 @@ Returns an SVG file.`
       }
 
       const title = (args.title as string) || 'scene'
+      const out: Record<string, unknown> = {
+        file_id: fileId,
+        url,
+        markdown: `![${title}](${url})`,
+        objects: (scene.objects as any[]).length,
+      }
+      // #layout-guard: surface overlap problems so the LLM can retry with
+      // a better layout instead of shipping a stacked diagram.
+      const layoutWarning = detectLayoutProblems(check.data as any)
+      if (layoutWarning) out.layout_warning = layoutWarning
       return {
         success: true,
-        output: JSON.stringify({ file_id: fileId, url, markdown: `![${title}](${url})`, objects: (scene.objects as any[]).length }, null, 2),
+        output: JSON.stringify(out, null, 2),
       }
     } catch (err) {
       return { success: false, error: `render_scene failed: ${(err as Error).message.slice(0, 200)}` }
