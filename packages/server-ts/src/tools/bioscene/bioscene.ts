@@ -54,7 +54,9 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-/** Render a validated scene to an SVG string. Deterministic. */
+/** Render a validated scene to an SVG string. Deterministic.
+ *  Coordinates adapt: values ≤ 100 are treated as percentages; larger values
+ *  are treated as pixels (0-1000) and scaled to the canvas. */
 export function renderBioScene(scene: {
   canvas?: { width?: number; height?: number }
   objects: Array<{ icon: string; x: number; y: number; scale?: number; rotate?: number; label?: string; colorize?: string }>
@@ -63,6 +65,9 @@ export function renderBioScene(scene: {
 }): string {
   const w = scene.canvas?.width || 800
   const h = scene.canvas?.height || 600
+  // Coordinate system: percent (≤100) or pixel (0-1000) — auto-detect.
+  const anyPixel = [...scene.objects, ...(scene.annotations || [])].some((o) => o.x > 100 || o.y > 100)
+  const px = (v: number, max: number) => (anyPixel ? (Math.min(v, 1000) / 1000) * max : (Math.min(v, 100) / 100) * max)
   const parts: string[] = []
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`)
   parts.push(`<rect width="${w}" height="${h}" fill="#ffffff"/>`)
@@ -72,10 +77,10 @@ export function renderBioScene(scene: {
     const a = scene.objects[conn.from]
     const b = scene.objects[conn.to]
     if (!a || !b) continue
-    const x1 = (a.x / 100) * w
-    const y1 = (a.y / 100) * h
-    const x2 = (b.x / 100) * w
-    const y2 = (b.y / 100) * h
+    const x1 = px(a.x, w)
+    const y1 = px(a.y, h)
+    const x2 = px(b.x, w)
+    const y2 = px(b.y, h)
     const bend = conn.bend || 0
     const mx = (x1 + x2) / 2 + bend * 8
     const my = (y1 + y2) / 2 + bend * 8
@@ -96,8 +101,8 @@ export function renderBioScene(scene: {
   for (const obj of scene.objects) {
     const icon = resolveIcon(obj.icon)
     if (!icon) continue // validation already rejected unknown ids at the tool layer
-    const cx = (obj.x / 100) * w
-    const cy = (obj.y / 100) * h
+    const cx = px(obj.x, w)
+    const cy = px(obj.y, h)
     const s = obj.scale || 1
     const size = 48 * s
     const rot = obj.rotate ? ` rotate(${obj.rotate} ${cx} ${cy})` : ''
@@ -112,8 +117,8 @@ export function renderBioScene(scene: {
 
   // Annotations.
   for (const ann of scene.annotations || []) {
-    const x = (ann.x / 100) * w
-    const y = (ann.y / 100) * h
+    const x = px(ann.x, w)
+    const y = px(ann.y, h)
     if (ann.type === 'bracket') {
       parts.push(`<path d="M ${x - 20} ${y} L ${x - 20} ${y + 30} L ${x + 20} ${y + 30}" fill="none" stroke="#94a3b8" stroke-width="1.5"/>`)
       parts.push(`<text x="${x}" y="${y + 44}" fill="#475569" font-size="11" text-anchor="middle">${esc(ann.text)}</text>`)

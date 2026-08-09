@@ -85,3 +85,27 @@ describe('BioScene (#408)', () => {
     expect(fs.existsSync(path.join(tmp, 'u1', 'uploads', out.file_id))).toBe(true)
   })
 })
+
+  test('pixel coordinates (0-1000) are accepted and scaled', () => {
+    const svg = renderBioScene({
+      canvas: { width: 800, height: 600 },
+      objects: [
+        { icon: 'cell', x: 200, y: 150 },
+        { icon: 'nucleus', x: 600, y: 450 },
+      ],
+      connections: [{ from: 0, to: 1, kind: 'arrow' }],
+    })
+    // 200/1000*800 = 160 → 160-24=136; 150/1000*600 = 90 → 90-24=66.
+    expect(svg).toContain('translate(136, 66)')
+    // 600/1000*800 = 480 → 480-24=456; 450/1000*600 = 270 → 270-24=246.
+    expect(svg).toContain('translate(456, 246)')
+  })
+
+  test('annotation pixel coordinates render', () => {
+    const svg = renderBioScene({
+      canvas: { width: 800, height: 600 },
+      objects: [{ icon: 'cell', x: 50, y: 50 }],
+      annotations: [{ type: 'text', x: 400, y: 100, text: 'Pixel label' }],
+    })
+    expect(svg).toContain('Pixel label')
+  })
