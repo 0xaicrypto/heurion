@@ -107,3 +107,30 @@ describe('research ↔ paper linkage (#383)', () => {
     expect(bad.statusCode).toBe(400)
   })
 })
+
+  test('study_type defaults to clinical; basic is accepted (#409)', async () => {
+    const app = await getApp()
+    const h = { ...await authHeader(), 'content-type': 'application/json' }
+
+    const clinical = await app.inject({
+      method: 'POST', url: '/api/v1/research/studies',
+      headers: h, payload: JSON.stringify({ display_name: 'Trial X', short_code: 'TRIALX' }),
+    })
+    expect(JSON.parse(clinical.payload).study_type).toBe('clinical')
+
+    const basic = await app.inject({
+      method: 'POST', url: '/api/v1/research/studies',
+      headers: h, payload: JSON.stringify({ display_name: 'Wet Lab Y', short_code: 'WETLAB', study_type: 'basic' }),
+    })
+    expect(JSON.parse(basic.payload).study_type).toBe('basic')
+
+    const list = await app.inject({ method: 'GET', url: '/api/v1/research/studies', headers: await authHeader() })
+    const studies = JSON.parse(list.payload)
+    expect(studies.some((s: any) => s.study_type === 'basic')).toBe(true)
+
+    const bad = await app.inject({
+      method: 'POST', url: '/api/v1/research/studies',
+      headers: h, payload: JSON.stringify({ display_name: 'Bad', short_code: 'BAD', study_type: 'nope' }),
+    })
+    expect(bad.statusCode).toBe(400)
+  }, 30000)

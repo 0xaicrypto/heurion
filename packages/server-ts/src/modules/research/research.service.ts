@@ -8,11 +8,11 @@ export class ResearchService {
     return prisma.researchStudy.findMany({ where: { userId }, orderBy: { updatedAt: 'desc' } })
   }
 
-  async createStudy(userId: string, name: string, shortCode: string) {
+  async createStudy(userId: string, name: string, shortCode: string, studyType: 'clinical' | 'basic' = 'clinical') {
     const id = `study_${uid()}`
     const now = new Date().toISOString()
     return prisma.researchStudy.create({
-      data: { id, userId, name, shortCode, createdAt: now, updatedAt: now },
+      data: { id, userId, name, shortCode, studyType, createdAt: now, updatedAt: now },
     })
   }
 

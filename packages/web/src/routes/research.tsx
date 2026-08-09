@@ -12,6 +12,7 @@ interface Study {
   display_name: string;
   status: string;
   short_code?: string;
+  study_type?: 'clinical' | 'basic';
   created_at: string;
 }
 
@@ -23,6 +24,7 @@ export function ResearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [newName, setNewName] = useState('');
+  const [newType, setNewType] = useState<'clinical' | 'basic'>('clinical');
   const [newCode, setNewCode] = useState('');
   const [creating, setCreating] = useState(false);
 
@@ -43,7 +45,7 @@ export function ResearchPage() {
     if (!newName.trim() || !newCode.trim()) return;
     setCreating(true);
     try {
-      await api.createStudy({ display_name: newName.trim(), short_code: newCode.trim() });
+      await api.createStudy({ display_name: newName.trim(), short_code: newCode.trim(), study_type: newType });
       setNewName('');
       setNewCode('');
       setShowForm(false);
@@ -99,6 +101,18 @@ export function ResearchPage() {
                     placeholder="e.g. CARD"
                   />
                 </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-text-secondary">{t('research.studyType', '研究类型')}</label>
+                  <select
+                    value={newType}
+                    onChange={(e) => setNewType(e.target.value as 'clinical' | 'basic')}
+                    className="h-9 rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label="study_type"
+                  >
+                    <option value="clinical">{t('research.clinical', '临床研究')}</option>
+                    <option value="basic">{t('research.basic', '基础研究')}</option>
+                  </select>
+                </div>
                 <div className="flex items-end">
                   <Button onClick={handleCreate} isLoading={creating} disabled={!newName.trim() || !newCode.trim()} size="sm">
                     Create
@@ -131,6 +145,9 @@ export function ResearchPage() {
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-tertiary">
                         <span className="font-mono">{study.study_id}</span>
                         {study.short_code && <span>· {study.short_code}</span>}
+                        {study.study_type === 'basic' && (
+                          <span className="ml-1 rounded-full border border-accent/30 bg-accent/5 px-1.5 py-0.5 text-[10px] text-accent">基础研究</span>
+                        )}
                       </div>
                     </div>
                     <Badge variant={statusVariant(study.status)}>{study.status}</Badge>
