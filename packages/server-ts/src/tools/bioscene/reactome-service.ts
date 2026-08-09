@@ -1,12 +1,14 @@
 /**
- * #466 — Reactome pathway diagrams: local cache + dynamic load from object
- * storage (S3-compatible, e.g. DigitalOcean Spaces).
+ * #466 — Reactome pathway diagrams. Lookup order:
+ *   1. REACTOME_DIAGRAMS_DIR — pre-provisioned directory on the server
+ *      (deployment job downloads diagrams.svg.tgz and extracts it here;
+ *      recommended — zero runtime network dependency)
+ *   2. local cache under TWIN_BASE_DIR/reactome-diagrams/ (filled by 3)
+ *   3. REACTOME_DIAGRAMS_BASE_URL — object storage (S3-compatible, e.g.
+ *      DigitalOcean Spaces) with on-demand download + cache
  *
  * The catalog (pathway name/alias → R-HSA id) ships in the repo
- * (data/reactome-pathways.json). The SVG bodies live in object storage
- * (REACTOME_DIAGRAMS_BASE_URL, public read) and are cached on disk under
- * TWIN_BASE_DIR/reactome-diagrams/ — first use downloads, later uses are
- * instant. No large files in git.
+ * (data/reactome-pathways.json).
  *
  * Content: Reactome pathway diagrams, CC BY 4.0 (https://reactome.org/license).
  */
@@ -107,15 +109,25 @@ function baseUrl(): string | undefined {
 }
 
 /**
- * Fetch a pathway diagram SVG. Order: local cache → object storage.
- * Returns null when neither the cache nor the base URL is available.
+ * Fetch a pathway diagram SVG. Lookup order:
+ *   REACTOME_DIAGRAMS_DIR (pre-provisioned) → local cache → object storage.
+ * Returns null when none is available.
  */
 export async function fetchPathwayDiagram(stId: string): Promise<string | null> {
+  // 1. Pre-provisioned directory (deployment ships diagrams here).
+  const provisionedDir = process.env.REACTOME_DIAGRAMS_DIR
+  if (provisionedDir) {
+    const p = path.join(provisionedDir, `${stId}.svg`)
+    if (fs.existsSync(p)) return readFileSync(p, 'utf-8')
+  }
+
+  // 2. Local cache (filled by previous downloads).
   const local = cachedPath(stId)
   if (fs.existsSync(local)) {
     return readFileSync(local, 'utf-8')
   }
 
+  // 3. Object storage, on demand.
   const base = baseUrl()
   if (!base) return null
 

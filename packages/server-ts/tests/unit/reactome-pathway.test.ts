@@ -74,6 +74,16 @@ describe('Reactome pathway mode (#466)', () => {
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
   })
 
+  test('fetchPathwayDiagram: pre-provisioned REACTOME_DIAGRAMS_DIR wins', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reactome-dir-'))
+    fs.writeFileSync(path.join(dir, 'R-HSA-194138.svg'), '<svg>provisioned</svg>', 'utf-8')
+    process.env.TWIN_BASE_DIR = tmp
+    process.env.REACTOME_DIAGRAMS_DIR = dir
+    vi.stubGlobal('fetch', vi.fn())
+    expect(await fetchPathwayDiagram('R-HSA-194138')).toContain('provisioned')
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+  })
+
   test('fetchPathwayDiagram: null when storage is not configured', async () => {
     process.env.TWIN_BASE_DIR = tmp
     delete process.env.REACTOME_DIAGRAMS_BASE_URL

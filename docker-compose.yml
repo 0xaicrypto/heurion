@@ -71,11 +71,15 @@ services:
       - WEB_DIST_DIR=/app/web-dist
       # #445: route run_stats_analysis to the authoritative scipy worker.
       - STATS_WORKER_URL=http://nexus-stats-worker:8005
+      # #466: pre-provisioned Reactome pathway diagrams (read-only mount).
+      - REACTOME_DIAGRAMS_DIR=/data/reactome-diagrams
     depends_on:
       - nexus-stats-worker
     volumes:
       # /data persistence — cache, embedding models, misc (#281 remainder).
       - nexus-data:/data
+      # #466: Reactome diagrams shipped by the deploy pipeline (host dir).
+      - /opt/heurion/reactome-diagrams:/data/reactome-diagrams:ro
       # #280: SQLite on its own volume — independent backups + fault isolation.
       - nexus-db-data:/data/db
       # #281: per-user memory files (facts/knowledge/embeddings/events) on
