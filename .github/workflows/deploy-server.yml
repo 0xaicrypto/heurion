@@ -15,6 +15,7 @@ env:
   REGISTRY: ghcr.io
   SERVER_IMAGE_NAME: ghcr.io/0xaicrypto/nexus-server
   EMBEDDING_IMAGE_NAME: ghcr.io/0xaicrypto/nexus-embedding-server
+  STATS_IMAGE_NAME: ghcr.io/0xaicrypto/nexus-stats-worker
 
 jobs:
   typecheck:
@@ -142,6 +143,38 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  build-stats-worker:
+    name: Build Python Stats Worker Image
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract short SHA
+        id: vars
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Build and push stats worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: packages/python-stats-worker
+          file: packages/python-stats-worker/Dockerfile
+          push: true
+          tags: |
+            ${{ env.STATS_IMAGE_NAME }}:${{ steps.vars.outputs.sha }}
+            ${{ env.STATS_IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   staging:
     name: Staging + Regression
     needs: [typecheck, test]
@@ -251,6 +284,7 @@ jobs:
         env:
           NEXUS_IMAGE: ${{ env.SERVER_IMAGE_NAME }}:${{ steps.vars.outputs.sha }}
           EMBEDDING_IMAGE: ${{ env.EMBEDDING_IMAGE_NAME }}:${{ steps.vars.outputs.sha }}
+          STATS_IMAGE: ${{ env.STATS_IMAGE_NAME }}:${{ steps.vars.outputs.sha }}
         run: |
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p /opt/heurion/packages/web/dist /opt/heurion/scripts && rm -rf /opt/heurion/packages/web/dist/assets"
           scp -o StrictHostKeyChecking=no -r packages/web/dist/* ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/packages/web/dist/
@@ -258,7 +292,7 @@ jobs:
           scp -o StrictHostKeyChecking=no docker-compose.yml Caddyfile ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/
           scp -o StrictHostKeyChecking=no scripts/deploy-production-compose.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/scripts/
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "cd /opt/heurion && chmod +x scripts/deploy-production-compose.sh && NEXUS_IMAGE=$NEXUS_IMAGE EMBEDDING_IMAGE=$EMBEDDING_IMAGE bash scripts/deploy-production-compose.sh"
+            "cd /opt/heurion && chmod +x scripts/deploy-production-compose.sh && NEXUS_IMAGE=$NEXUS_IMAGE EMBEDDING_IMAGE=$EMBEDDING_IMAGE STATS_IMAGE=$STATS_IMAGE bash scripts/deploy-production-compose.sh"
 
       - name: Purge Cloudflare cache (stale HTML references removed bundles)
         env:
