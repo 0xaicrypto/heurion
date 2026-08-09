@@ -23,8 +23,9 @@ describe('GraphRAG hybrid retrieval (#25)', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'graphrag-'))
     // EmbeddingService resolves its index dir from TWIN_BASE_DIR, not from
     // the constructor arg — point it at the per-test dir or parallel runs
-    // share (and poison) the default .nexus/twins index.
-    process.env.TWIN_BASE_DIR = tmp
+    // share (and poison) the default .nexus/twins index. Use stubEnv so
+    // the env is restored after each test (no cross-file pollution).
+    vi.stubEnv('TWIN_BASE_DIR', tmp)
     const eventLog = new EventLog(tmp, 'u1')
     const facts = new FactsStore(tmp)
     const episodes = new EpisodesStore(tmp)
@@ -51,6 +52,7 @@ describe('GraphRAG hybrid retrieval (#25)', () => {
 
   afterEach(async () => {
     await memory.eventLog.flush().catch(() => {})
+    vi.unstubAllEnvs()
   })
 
   test('vector recall returns topK with score', async () => {
