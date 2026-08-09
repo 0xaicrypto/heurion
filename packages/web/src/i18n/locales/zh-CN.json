@@ -313,7 +313,10 @@
   "research": {
     "title": "研究",
     "comingSoon": "研究工作台功能即将推出。",
-    "writePaper": "写论文"
+    "writePaper": "写论文",
+    "studyType": "研究类型",
+    "clinical": "临床研究",
+    "basic": "基础研究"
   },
   "writing": {
     "title": "论文工作台",

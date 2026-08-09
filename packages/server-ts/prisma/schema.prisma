@@ -184,6 +184,8 @@ model ResearchStudy {
   name      String
   shortCode String @map("short_code")
   protocol  String @default("{}")
+  // #409: study type — clinical (trials/cohort) vs basic (wet lab).
+  studyType String @default("clinical") @map("study_type")
   createdAt String @map("created_at")
   updatedAt String @map("updated_at")
 

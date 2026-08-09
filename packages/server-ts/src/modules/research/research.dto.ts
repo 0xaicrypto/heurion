@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 export const createStudySchema = z.object({
+  study_type: z.enum(['clinical', 'basic']).optional(),
   display_name: z.string().min(1).max(200),
   short_code: z.string().min(1).max(20).regex(/^[A-Z0-9_-]+$/, 'Short code must be uppercase alphanumeric'),
 })

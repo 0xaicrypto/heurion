@@ -14,6 +14,7 @@ const service = new ResearchService()
 // Transform Prisma camelCase → frontend snake_case
 const toStudy = (s: any) => ({
   study_id: s.id, display_name: s.name, short_code: s.shortCode,
+  study_type: s.studyType || 'clinical',
   status: 'active', created_at: s.createdAt, updated_at: s.updatedAt,
 })
 const toRoster = (e: any, p?: any) => ({
@@ -51,7 +52,7 @@ export async function researchRouter(app: FastifyInstance) {
 
   app.post('/api/v1/research/studies', async (request, reply) => {
     const body = createStudySchema.parse(request.body)
-    const s = await service.createStudy(request.user!.userId, body.display_name, body.short_code)
+    const s = await service.createStudy(request.user!.userId, body.display_name, body.short_code, body.study_type === 'basic' ? 'basic' : 'clinical')
     return toStudy(s)
   })
 

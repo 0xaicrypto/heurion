@@ -6,11 +6,11 @@ import { ApiError } from './core.js';
 export class ResearchApi extends AdminApi {
   /* ────────────────────────── research ────────────────────────── */
 
-  async listStudies(): Promise<Array<{study_id: string; display_name: string; status: string; short_code?: string; created_at: string}>> {
+  async listStudies(): Promise<Array<{study_id: string; display_name: string; status: string; short_code?: string; study_type?: 'clinical' | 'basic'; created_at: string}>> {
     return this.fetch('/api/v1/research/studies');
   }
 
-  async createStudy(data: {display_name: string; short_code: string}): Promise<{study_id: string; display_name: string; status: string}> {
+  async createStudy(data: {display_name: string; short_code: string; study_type?: 'clinical' | 'basic'}): Promise<{study_id: string; display_name: string; status: string}> {
     return this.fetch('/api/v1/research/studies', { method: 'POST', body: JSON.stringify(data) });
   }
 

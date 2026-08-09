@@ -313,7 +313,10 @@
   "research": {
     "title": "Research",
     "comingSoon": "Research workspace coming soon.",
-    "writePaper": "Write paper"
+    "writePaper": "Write paper",
+    "studyType": "Study type",
+    "clinical": "Clinical",
+    "basic": "Basic (wet lab)"
   },
   "writing": {
     "title": "Paper Workbench",
