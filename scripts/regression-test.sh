@@ -537,6 +537,36 @@ check "19.4 chat without text 400" "$([ "$BOUNDARY_CHAT_400" = "400" ] && echo o
 BOUNDARY_SESS=$(curl -sf "$BASE/api/v1/sessions" -H "$H" 2>/dev/null)
 check "19.5 no legacy global-* sessions listed" "$(echo "$BOUNDARY_SESS" | je "j.sessions.every(s=>!s.id.startsWith('global-'))?'ok':'FAIL'" 2>/dev/null)"
 
+# ═══ 20. Plugins (#451/#454) — 渲染能力全部走插件,无内置回退 ═══
+
+# 20.1 官方目录已种子(≥5 个官方插件)
+CATALOG=$(curl -sf "$BASE/api/v1/plugins/catalog" -H "$H" 2>/dev/null)
+check "20.1 Official catalog seeded" "$([ $(echo "$CATALOG" | je '(j.plugins||[]).length' 2>/dev/null) -ge 5 ] && echo ok || echo 'FAIL')"
+
+# 20.2 未安装插件时,渲染请求必须给出安装指引(确定性文本,不依赖 LLM/worker)
+RENDER_HINT=$(curl -sS --max-time 30 -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d '{"text":"帮我生成一个PPT","session_id":"regression-plugin-001"}' 2>/dev/null)
+check "20.2 Render request without plugin → guidance" "$(echo "$RENDER_HINT" | grep -q '插件' && echo ok || echo 'FAIL')"
+
+# 20.3 安装插件(per-user,动态)
+INSTALL=$(curl -sf -X POST "$BASE/api/v1/plugins/install" -H "$H" -H "Content-Type: application/json" -d '{"pluginId":"heurion/pptx"}' 2>/dev/null)
+check "20.3 Install plugin" "$(echo "$INSTALL" | je "j.pluginId==='heurion/pptx'&&j.enabled?'ok':'FAIL'" 2>/dev/null)"
+
+# 20.4 已安装列表
+check "20.4 Installed list" "$(curl -sf "$BASE/api/v1/plugins/installed" -H "$H" | je "j.plugins.some(p=>p.pluginId==='heurion/pptx')?'ok':'FAIL'" 2>/dev/null)"
+
+# 20.5 启用/禁用切换
+check "20.5 Disable plugin" "$(curl -sf -X POST "$BASE/api/v1/plugins/heurion/pptx/disable" -H "$H" | je "j.enabled===false?'ok':'FAIL'" 2>/dev/null)"
+check "20.6 Enable plugin" "$(curl -sf -X POST "$BASE/api/v1/plugins/heurion/pptx/enable" -H "$H" | je "j.enabled===true?'ok':'FAIL'" 2>/dev/null)"
+
+# 20.7 卸载 + 级联清理
+UNINSTALL=$(curl -sf -X DELETE "$BASE/api/v1/plugins/heurion/pptx" -H "$H" 2>/dev/null)
+check "20.7 Uninstall plugin" "$(echo "$UNINSTALL" | je "j.uninstalled?'ok':'FAIL'" 2>/dev/null)"
+check "20.8 Uninstall persists" "$(curl -sf "$BASE/api/v1/plugins/installed" -H "$H" | je "j.plugins.some(p=>p.pluginId==='heurion/pptx')?'FAIL':'ok'" 2>/dev/null)"
+
+# 20.9 卸载后渲染请求再次回到安装指引(无残留状态)
+RENDER_HINT2=$(curl -sS --max-time 30 -X POST "$BASE/api/v1/agent/chat" -H "$H" -H "Content-Type: application/json" -d '{"text":"帮我生成一个PPT","session_id":"regression-plugin-002"}' 2>/dev/null)
+check "20.9 Render request after uninstall → guidance" "$(echo "$RENDER_HINT2" | grep -q '插件' && echo ok || echo 'FAIL')"
+
 echo ""
 echo "════════════════════════════════════════════"
 echo "  $((PASS+FAIL)) tests: $PASS ✓  $FAIL ✗"
