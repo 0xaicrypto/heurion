@@ -134,6 +134,39 @@ export function resolvePalette(name?: string): BioScenePalette {
   return name === 'clinical' || name === 'journal' ? name : 'default'
 }
 
+/**
+ * #layout-guard: detect severely overlapping icons (LLM layout failures —
+ * everything stacked on one line / giant icons covering neighbours).
+ * Returns a short human-readable warning, or null when the layout is OK.
+ * Works in percent space (scene coordinates as given).
+ */
+export function detectLayoutProblems(scene: {
+  canvas?: { width?: number; height?: number }
+  objects: Array<{ icon: string; x: number; y: number; scale?: number; label?: string }>
+}): string | null {
+  const objs = scene.objects || []
+  const icons: Array<{ id: string; x: number; y: number; r: number }> = []
+  for (const o of objs) {
+    const icon = resolveIcon(o.icon)
+    if (!icon) continue
+    const s = Math.min(Math.max(o.scale || 1, 0.2), 3)
+    icons.push({ id: icon.id, x: o.x, y: o.y, r: (48 * s) / 2 })
+  }
+  const overlaps: Array<{ a: string; b: string; d: number }> = []
+  for (let i = 0; i < icons.length; i++) {
+    for (let j = i + 1; j < icons.length; j++) {
+      const a = icons[i]
+      const b = icons[j]
+      const d = Math.hypot(a.x - b.x, a.y - b.y)
+      if (d < (a.r + b.r) * 0.6) {
+        overlaps.push({ a: a.id, b: b.id, d: Math.round(d * 10) / 10 })
+      }
+    }
+  }
+  if (overlaps.length === 0) return null
+  return `layout problem: overlapping icons ${overlaps.slice(0, 3).map((o) => `${o.a}+${o.b}`).join(', ')} — spread the icons apart (keep ≥15 units between centers) and retry`
+}
+
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
@@ -185,14 +218,19 @@ export function renderBioScene(scene: {
   }
 
   // Objects.
+  // #layout-guard: track rendered icon boxes (percent space) so we can
+  // warn when the LLM stacked objects on top of each other.
+  const boxes: Array<{ cx: number; cy: number; r: number; id: string }> = []
   for (const obj of scene.objects) {
     const icon = resolveIcon(obj.icon)
     if (!icon) continue // validation already rejected unknown ids at the tool layer
     const cx = px(obj.x, w)
     const cy = px(obj.y, h)
-    const s = obj.scale || 1
+    // #layout-guard: clamp the scale — a 4x icon can crush the layout.
+    const s = Math.min(Math.max(obj.scale || 1, 0.2), 3)
     const size = 48 * s
     const rot = obj.rotate ? ` rotate(${obj.rotate} ${cx} ${cy})` : ''
+    boxes.push({ cx, cy, r: size / 2, id: icon.id })
 
     // #467: external SVG icons (NIH BioArt, public domain) are embedded
     // as-is, scaled to the object size.
