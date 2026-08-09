@@ -37,6 +37,22 @@ services:
       retries: 5
     # No public ports — only reachable on the internal Docker network.
 
+  nexus-stats-worker:
+    # #404: Python statistics worker (scipy/statsmodels/lifelines).
+    image: ${STATS_IMAGE:-nexus-stats-worker:latest}
+    build:
+      context: packages/python-stats-worker
+      dockerfile: Dockerfile
+    container_name: nexus-stats-worker
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      - STATS_HOST=0.0.0.0
+      - STATS_PORT=8005
+    networks:
+      - nexus-net
+
   nexus-server:
     # TypeScript-based Nexus server. Built from packages/server-ts/Dockerfile.
     image: ${NEXUS_IMAGE:-nexus-server:latest}
