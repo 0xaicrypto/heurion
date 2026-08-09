@@ -130,6 +130,21 @@ export async function skillsRouter(app: FastifyInstance) {
 
 // ── #298: skill capture — draft/refine/confirm from conversation ──────
 
+// #24: experience synthesis — distill candidates from MULTIPLE confirmed
+// cases (facts grouped by category), persisted as pending_review skills.
+app.post('/api/v1/skills/synthesize', async (request) => {
+  const userId = request.user!.userId
+  const { synthesizeExperience } = await import('./experience-synthesis.service.js')
+  const result = await synthesizeExperience(userId, {
+    minFacts: Number((request.query as any).min_facts || 3),
+    maxCandidates: Number((request.query as any).max_candidates || 3),
+  })
+  return {
+    candidates: result.candidates.map((c) => ({ name: c.name, description: c.description, source_count: c.sourceCount })),
+    groups: result.groups,
+  }
+})
+
 app.post('/api/v1/skills/capture', async (request, reply) => {
   const { conversation, session_id } = request.body as any
   if (!conversation || !String(conversation).trim()) {

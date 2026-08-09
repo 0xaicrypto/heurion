@@ -73,6 +73,105 @@ export class MemoryGraphGateway {
     return this.embedOrNull(query).then(vec => vec ? this.embedding.retrieveWithVec(vec, scope, opts) : [])
   }
 
+  /**
+   * #25 — hybrid retrieval: vector recall → graph traversal expansion →
+   * rerank by connectivity → provenance. The returned hits carry a
+   * `score` (vector similarity), `connections` (neighbor node summaries
+   * with edge kinds) and `via` (the neighbor that linked them, when the
+   * hit was discovered by expansion).
+   */
+  async retrieveGraphEnhanced(
+    query: string,
+    scope: MemoryScope,
+    opts: { topK?: number; minScore?: number; expansionDepth?: number; expandLimit?: number } = {},
+  ): Promise<Array<{
+    stableId: string
+    content: string
+    type: string
+    score: number
+    connections: Array<{ stableId: string; type: string; content: string; edge: string }>
+    via?: string
+  }>> {
+    const topK = opts.topK ?? 8
+    const minScore = opts.minScore ?? 0.3
+    const depth = opts.expansionDepth ?? 1
+    const expandLimit = opts.expandLimit ?? 20
+
+    const vectorHits = await this.retrieve(query, scope, { topK, minScore })
+    const byStable = new Map<string, any>()
+    for (const n of this.memory.graph.getAllNodes()) {
+      const cur = byStable.get(n.stableId)
+      if (!cur || n.version > cur.version) byStable.set(n.stableId, n)
+    }
+
+    const results = new Map<string, {
+      stableId: string
+      content: string
+      type: string
+      score: number
+      connections: Array<{ stableId: string; type: string; content: string; edge: string }>
+      via?: string
+    }>()
+
+    // 1. Vector hits with their graph neighbors (provenance).
+    for (const h of vectorHits) {
+      const node = byStable.get(h.stableId)
+      const connections = node
+        ? this.memory.graph.getNeighbors(h.stableId, depth)
+            .slice(0, expandLimit)
+            .map(({ node: nb, edge }) => ({
+              stableId: nb.stableId,
+              type: nb.type,
+              content: String((nb as any).content || (nb as any).title || '').slice(0, 200),
+              edge: edge.relation,
+            }))
+        : []
+      results.set(h.stableId, {
+        stableId: h.stableId,
+        content: h.content,
+        type: h.type,
+        score: h.score,
+        connections,
+      })
+    }
+
+    // 2. Graph expansion: nodes reachable from vector hits also surface
+    // (boosted by connectivity), tagged with `via` for provenance.
+    const viaSeeds = vectorHits.map((h) => h.stableId)
+    const expandBy = new Set<string>(viaSeeds)
+    for (const seed of viaSeeds) {
+      for (const { node: nb } of this.memory.graph.getNeighbors(seed, depth).slice(0, expandLimit)) {
+        if (expandBy.has(nb.stableId)) continue
+        if (nb.type !== 'fact' && nb.type !== 'article' && nb.type !== 'skill' && nb.type !== 'gap') continue
+        expandBy.add(nb.stableId)
+        const content = String((nb as any).content || (nb as any).title || '').slice(0, 300)
+        const conns = this.memory.graph.getNeighbors(nb.stableId, 1)
+          .slice(0, 8)
+          .map(({ node: n2, edge }) => ({
+            stableId: n2.stableId,
+            type: n2.type,
+            content: String((n2 as any).content || (n2 as any).title || '').slice(0, 150),
+            edge: edge.relation,
+          }))
+        results.set(nb.stableId, {
+          stableId: nb.stableId,
+          content,
+          type: nb.type,
+          // Connectivity-weighted: graph-reached facts score between the
+          // vector threshold and the lowest vector hit.
+          score: Math.max(minScore * 0.9, (minScore * 0.9) + Math.min(conns.length, 5) * 0.02),
+          connections: conns,
+          via: seed,
+        })
+      }
+    }
+
+    // 3. Rerank: vector score first, connectivity as tie-break.
+    return Array.from(results.values())
+      .sort((a, b) => (b.score - a.score) || (b.connections.length - a.connections.length))
+      .slice(0, Math.max(topK, topK * 2))
+  }
+
   /** Delegate for tests/tools that inject vectors into the per-user index. */
   embeddingIndex() {
     return this.embedding.embeddingIndex()

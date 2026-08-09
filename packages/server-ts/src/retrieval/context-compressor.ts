@@ -128,8 +128,14 @@ export function buildHistoryMessages(
   const maxTokens = options.maxTokens ?? 8000
   const maxTurns = options.maxTurns ?? 20
 
+  // #compaction-fix: only user/assistant events are turns — tool calls,
+  // tool results and context events are transport noise and must never
+  // count toward the turn window (they inflated the count and triggered
+  // premature/repeated compaction).
+  const messagesOnly = events.filter((e) => e.eventType === 'user_message' || e.eventType === 'assistant_response')
+
   // Newest first, capped at maxTurns (user + assistant = 2 events per turn).
-  const newestFirst = events.slice(-maxTurns * 2).reverse()
+  const newestFirst = messagesOnly.slice(-maxTurns * 2).reverse()
 
   const messages: HistoryMessage[] = []
   let tokens = 0

@@ -148,3 +148,35 @@ describe('buildHistoryMessages — token-budgeted history', () => {
     expect(omittedTurns).toBe(0)
   })
 })
+
+describe('buildHistoryMessages — turn counting (#compaction-fix)', () => {
+  test('tool events do not count as turns', () => {
+    // 6 user turns + heavy tool noise (10 tool_call/tool_result events).
+    const turns = Array.from({ length: 6 }, (_, i) => [
+      { eventType: 'user_message', content: `问题 ${i}` },
+      { eventType: 'tool_call', content: `search_node(${i})` },
+      { eventType: 'tool_result', content: '结果 123' },
+      { eventType: 'assistant_response', content: `回答 ${i}` },
+    ]).flat()
+
+    const { messages } = buildHistoryMessages(turns, { maxTokens: 100_000, maxTurns: 20 })
+    // Only the 12 real messages count — tool events are ignored.
+    expect(messages.length).toBe(12)
+    expect(messages.every((m) => m.role === 'user' || m.role === 'assistant')).toBe(true)
+    expect(messages.filter((m) => m.role === 'user').length).toBe(6)
+  })
+
+  test('tool-heavy chats do not hit the turn cap early', () => {
+    // 8 turns with 3 tool events each = 40 raw events, but only 16 messages.
+    const turns = Array.from({ length: 8 }, (_, i) => [
+      { eventType: 'user_message', content: `问题 ${i}` },
+      { eventType: 'tool_call', content: `t(${i})` },
+      { eventType: 'tool_result', content: 'r' },
+      { eventType: 'assistant_response', content: `回答 ${i}` },
+    ]).flat()
+
+    const { messages, omittedTurns } = buildHistoryMessages(turns, { maxTokens: 100_000, maxTurns: 10 })
+    expect(messages.length).toBe(16) // all 8 turns fit well within maxTurns
+    expect(omittedTurns).toBe(0)
+  })
+})

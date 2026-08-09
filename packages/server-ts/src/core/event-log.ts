@@ -16,12 +16,18 @@ export interface Event {
  * Each line is a JSON object — same format as the Python WriteAheadLog.
  * For production use, the Python SDK's SQLite EventLog is the source of truth;
  * this is a lightweight TS-native equivalent for dev/test/standalone mode.
+ *
+ * #199: writes go through a serialized async queue (fs.promises.appendFile)
+ * so a busy turn (dozens of tool events) never blocks the event loop; the
+ * queue is flushed on close(). Reads stay synchronous over the in-memory
+ * cache.
  */
 export class EventLog {
   private filePath: string
   private agentId: string
   private cache: Event[] = []
   private nextIdx: number = 1
+  private writeQueue: Promise<void> = Promise.resolve()
 
   constructor(baseDir: string, agentId: string) {
     fs.mkdirSync(baseDir, { recursive: true })
@@ -39,10 +45,18 @@ export class EventLog {
       : 1
   }
 
+  /** #199: enqueue a file write; ordering is preserved by the queue. */
+  private enqueueWrite(task: () => Promise<void>) {
+    this.writeQueue = this.writeQueue.then(task).catch(err => {
+      console.error('[event-log] write failed:', (err as Error).message)
+    })
+  }
+
   append(event: Omit<Event, 'idx'>): Event {
     const full: Event = { ...event, idx: this.nextIdx++, agentId: event.agentId || this.agentId }
     this.cache.push(full)
-    fs.appendFileSync(this.filePath, JSON.stringify(full) + '\n')
+    const line = JSON.stringify(full) + '\n'
+    this.enqueueWrite(() => fs.promises.appendFile(this.filePath, line, 'utf-8'))
     return full
   }
 
@@ -70,10 +84,19 @@ export class EventLog {
     this.cache = this.cache.filter(e => e.sessionId !== sessionId)
     const removed = before - this.cache.length
     if (removed > 0) {
-      fs.writeFileSync(this.filePath, this.cache.map(e => JSON.stringify(e)).join('\n') + '\n')
+      // #199: full rewrite is async (rare operation; never blocks a turn).
+      const snapshot = this.cache.map(e => JSON.stringify(e)).join('\n') + '\n'
+      this.enqueueWrite(() => fs.promises.writeFile(this.filePath, snapshot, 'utf-8'))
     }
     return removed
   }
 
-  close() {}
+  /** #199: await pending writes (called on shutdown / tests). */
+  async flush(): Promise<void> {
+    await this.writeQueue
+  }
+
+  close() {
+    void this.flush()
+  }
 }

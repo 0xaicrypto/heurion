@@ -4,11 +4,14 @@ import path from 'path'
 export class VersionedStore {
   private baseDir: string
   private width: number
+  /** #199: cap the number of retained snapshots (unbounded growth before). */
+  private maxVersions: number
 
-  constructor(baseDir: string, width = 4) {
+  constructor(baseDir: string, width = 4, maxVersions = 20) {
     this.baseDir = path.resolve(baseDir)
     fs.mkdirSync(this.baseDir, { recursive: true })
     this.width = width
+    this.maxVersions = maxVersions
   }
 
   current(): unknown | null {
@@ -27,7 +30,20 @@ export class VersionedStore {
     const label = `v${String(highest + 1).padStart(this.width, '0')}`
     this.writeVersion(label, data)
     this.writePointer(label)
+    this.compact()
     return label
+  }
+
+  /** #199: drop the oldest snapshots beyond maxVersions (keeps rollback
+   *  windows sane; dual-store rollback only ever needs the previous one). */
+  private compact() {
+    const versions = this.history().map((h) => h.version)
+    const overflow = versions.length - this.maxVersions
+    if (overflow <= 0) return
+    for (const v of versions.slice(0, overflow)) {
+      const p = path.join(this.baseDir, `${v}.json`)
+      try { fs.unlinkSync(p) } catch { /* best-effort */ }
+    }
   }
 
   rollback(version: string): string {

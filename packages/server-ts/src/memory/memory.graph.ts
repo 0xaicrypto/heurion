@@ -91,6 +91,48 @@ export class MemoryGraph {
     return [...this.relations]
   }
 
+  /** #25: BFS neighbors of a stableId over the relation edges (depth=1 by
+   *  default, deduped, superseded nodes excluded). Relations store node ids
+   *  (versioned) — they are mapped back to stable ids first. Returns the
+   *  connected nodes together with the edge kinds for provenance. */
+  getNeighbors(stableId: string, depth = 1): Array<{ node: MemoryNode; edge: MemoryRelation }> {
+    // Node id (versioned) → latest node by stableId.
+    const latestByStable = new Map<string, MemoryNode>()
+    for (const n of this.getAllNodes()) {
+      const cur = latestByStable.get(n.stableId)
+      if (!cur || n.version > cur.version) latestByStable.set(n.stableId, n)
+    }
+    const stableOfNodeId = (nodeId: string): string | null => {
+      const n = this.getNode(nodeId)
+      return n ? n.stableId : null
+    }
+    const seen = new Set<string>([stableId])
+    const frontier = [stableId]
+    const out: Array<{ node: MemoryNode; edge: MemoryRelation }> = []
+    for (let d = 0; d < depth && frontier.length > 0; d++) {
+      const next: string[] = []
+      for (const sid of frontier) {
+        for (const rel of this.relations) {
+          const srcStable = stableOfNodeId(rel.sourceId)
+          const tgtStable = stableOfNodeId(rel.targetId)
+          if (srcStable === null || tgtStable === null) continue
+          let otherStable: string | null = null
+          if (srcStable === sid) otherStable = tgtStable
+          else if (tgtStable === sid) otherStable = srcStable
+          if (otherStable === null || seen.has(otherStable)) continue
+          const otherNode = latestByStable.get(otherStable)
+          if (!otherNode || otherNode.status === 'superseded') continue
+          seen.add(otherStable)
+          next.push(otherStable)
+          out.push({ node: otherNode, edge: rel })
+        }
+      }
+      frontier.length = 0
+      frontier.push(...next)
+    }
+    return out
+  }
+
   getCurrentNodes(): MemoryNode[] {
     return Array.from(this.nodes.values()).filter(n => n.status !== 'superseded')
   }

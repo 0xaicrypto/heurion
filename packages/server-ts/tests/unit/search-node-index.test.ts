@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, afterEach } from 'vitest'
-import { SearchNodeTool } from '../../src/tools/clinical-graph-tools.js'
+import { SearchNodeTool, clearGraphIndexCache } from '../../src/tools/clinical-graph-tools.js'
 
 /**
  * #199: SearchNodeTool fallback now uses a keyword inverted index +
@@ -26,6 +26,9 @@ function makeCtx(nodes: any[]) {
 describe('SearchNodeTool inverted index (#199)', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    // The index cache is keyed by userId:graphVersion — mock graphs share
+    // the same key, so tests must not leak nodes across cases.
+    clearGraphIndexCache()
   })
 
   test('fallback returns the same results as a plain scan (behavior unchanged)', async () => {

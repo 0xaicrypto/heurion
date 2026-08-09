@@ -5,6 +5,7 @@ import { execSync } from 'child_process'
 import { createDefaultEvolutionQueue, BullMqEvolutionQueue, type EvolutionQueue } from './modules/evolution/evolution.queue.js'
 import { startEvolutionWorker } from './modules/evolution/evolution.worker.js'
 import { createGapResearchScheduler, type GapResearchScheduler } from './modules/knowledge/gap-research.service.js'
+import { createExperienceSynthesisScheduler } from './modules/skills/experience-synthesis.service.js'
 
 async function main() {
   // Run Prisma schema migration at startup
@@ -49,6 +50,19 @@ async function main() {
     console.log(`[GAP-RESEARCH] Scheduler started (interval ${intervalMs}ms)`)
   }
 
+  // #24: periodic experience synthesis (multiple cases → skill candidates).
+  let experienceScheduler: ReturnType<typeof createExperienceSynthesisScheduler> | undefined
+  const experienceSynthesisEnabled = process.env.EXPERIENCE_SYNTHESIS_ENABLED !== 'false'
+  if (experienceSynthesisEnabled) {
+    const intervalMs = parseInt(process.env.EXPERIENCE_SYNTHESIS_INTERVAL_MS || (24 * 3600 * 1000).toString(), 10)
+    experienceScheduler = createExperienceSynthesisScheduler(intervalMs, {
+      minFacts: parseInt(process.env.EXPERIENCE_SYNTHESIS_MIN_FACTS || '3', 10),
+      maxCandidates: parseInt(process.env.EXPERIENCE_SYNTHESIS_MAX_CANDIDATES || '3', 10),
+    })
+    experienceScheduler.start()
+    console.log(`[EXPERIENCE-SYNTHESIS] Scheduler started (interval ${intervalMs}ms)`)
+  }
+
   // Graceful shutdown: stop accepting new jobs, finish in-flight work, then exit.
   let shuttingDown = false
   async function shutdown(signal: string) {
@@ -70,6 +84,13 @@ async function main() {
       console.log('[SHUTDOWN] Gap research scheduler stopped')
     } catch (err) {
       console.error('[SHUTDOWN] Gap research scheduler stop error:', err)
+    }
+
+    try {
+      experienceScheduler?.stop()
+      console.log('[SHUTDOWN] Experience synthesis scheduler stopped')
+    } catch (err) {
+      console.error('[SHUTDOWN] Experience synthesis scheduler stop error:', err)
     }
 
     try {
