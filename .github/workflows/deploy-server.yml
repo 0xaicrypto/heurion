@@ -250,6 +250,7 @@ jobs:
   cloudflare-ssl:
     name: Cloudflare SSL
     needs: [staging]
+    runs-on: ubuntu-latest
     steps:
       - name: Set Cloudflare SSL to Full
         env:
