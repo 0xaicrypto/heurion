@@ -26,6 +26,7 @@ import { handlePluginChatRequest } from '../plugins/plugin-chat-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { ToolRegistry, type ToolContext } from '../../tools/tool-registry.js'
+import type { ToolDefinition } from '../../tools/base-tool.js'
 import {
   formatCommandResult,
   readAttachmentContent,
@@ -136,14 +137,14 @@ async function findPatient(userId: string, patientHash?: string | null): Promise
 async function runToolCallLoop(params: {
   currentMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
   toolRegistry: ToolRegistry
+  tools: ToolDefinition[]
   apiKey: string
   io: TurnIO
   ctx: Awaited<ReturnType<typeof getUserContext>>
   userId: string
   sessionId: string
 }): Promise<{ finalContent: string; messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> }> {
-  const { currentMessages, toolRegistry, io, ctx, userId, sessionId } = params
-  const tools = toolRegistry.definitions
+  const { currentMessages, toolRegistry, tools, io, ctx, userId, sessionId } = params
 
   // R3 — tool-call persistence: per-session sequence numbers continue
   // across turns (and process restarts) by deriving from the log.
@@ -842,11 +843,16 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         sessionId: sid,
       }
       const toolRegistry = new ToolRegistry(toolCtx)
+      // #454-followup: plugin-gated renderers (render_chart / render_scene)
+      // appear in the LLM tool list only while the owning plugin is
+      // installed + enabled.
+      const tools = await toolRegistry.getDefinitionsForUser()
 
       // Tool-calling loop
       const { finalContent, messages: loopMessages } = await runToolCallLoop({
         currentMessages: messages,
         toolRegistry,
+        tools,
         apiKey,
         io,
         ctx,

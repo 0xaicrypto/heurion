@@ -7,19 +7,39 @@
       "version": "1.0.0",
       "description": "Generate Word documents from clinical summaries, case summaries, and discharge notes.",
       "category": "execution",
-      "author": { "name": "Heurion", "email": "plugins@heurion.io" },
+      "author": {
+        "name": "Heurion",
+        "email": "plugins@heurion.io"
+      },
       "license": "MIT",
-      "tags": ["report", "docx", "document"]
+      "tags": [
+        "report",
+        "docx",
+        "document"
+      ]
     },
     "runtime": {
       "type": "container",
       "image": "heurion/plugin-docx:1.0.0",
       "port": 8080,
-      "resources": { "cpu": "1", "memory": "512m", "max_execution_seconds": 60 }
+      "resources": {
+        "cpu": "1",
+        "memory": "512m",
+        "max_execution_seconds": 60
+      }
     },
     "permissions": {
-      "network_egress": { "enabled": false },
-      "file_system": { "read": true, "write": true, "paths": ["/workspace", "/tmp"] },
+      "network_egress": {
+        "enabled": false
+      },
+      "file_system": {
+        "read": true,
+        "write": true,
+        "paths": [
+          "/workspace",
+          "/tmp"
+        ]
+      },
       "phi_access": false,
       "execute_code": false
     },
@@ -30,16 +50,34 @@
         "parameters": {
           "type": "object",
           "properties": {
-            "template_id": { "type": "string" },
-            "data": { "type": "object" },
-            "output_name": { "type": "string" }
+            "template_id": {
+              "type": "string"
+            },
+            "data": {
+              "type": "object"
+            },
+            "output_name": {
+              "type": "string"
+            }
           },
-          "required": ["template_id", "data"]
+          "required": [
+            "template_id",
+            "data"
+          ]
         }
       }
     ],
     "triggers": [
-      { "intent": "docx", "patterns": ["docx", "word", "病例总结", "出院小结", "discharge summary"] }
+      {
+        "intent": "docx",
+        "patterns": [
+          "docx",
+          "word",
+          "病例总结",
+          "出院小结",
+          "discharge summary"
+        ]
+      }
     ]
   },
   {
@@ -50,19 +88,39 @@
       "version": "1.0.0",
       "description": "Generate academic or clinical PowerPoint presentations.",
       "category": "execution",
-      "author": { "name": "Heurion", "email": "plugins@heurion.io" },
+      "author": {
+        "name": "Heurion",
+        "email": "plugins@heurion.io"
+      },
       "license": "MIT",
-      "tags": ["report", "pptx", "presentation"]
+      "tags": [
+        "report",
+        "pptx",
+        "presentation"
+      ]
     },
     "runtime": {
       "type": "container",
       "image": "heurion/plugin-pptx:1.0.0",
       "port": 8080,
-      "resources": { "cpu": "1", "memory": "512m", "max_execution_seconds": 60 }
+      "resources": {
+        "cpu": "1",
+        "memory": "512m",
+        "max_execution_seconds": 60
+      }
     },
     "permissions": {
-      "network_egress": { "enabled": false },
-      "file_system": { "read": true, "write": true, "paths": ["/workspace", "/tmp"] },
+      "network_egress": {
+        "enabled": false
+      },
+      "file_system": {
+        "read": true,
+        "write": true,
+        "paths": [
+          "/workspace",
+          "/tmp"
+        ]
+      },
       "phi_access": false,
       "execute_code": false
     },
@@ -73,16 +131,35 @@
         "parameters": {
           "type": "object",
           "properties": {
-            "template_id": { "type": "string" },
-            "data": { "type": "object" },
-            "output_name": { "type": "string" }
+            "template_id": {
+              "type": "string"
+            },
+            "data": {
+              "type": "object"
+            },
+            "output_name": {
+              "type": "string"
+            }
           },
-          "required": ["template_id", "data"]
+          "required": [
+            "template_id",
+            "data"
+          ]
         }
       }
     ],
     "triggers": [
-      { "intent": "pptx", "patterns": ["pptx", "ppt", "powerpoint", "幻灯片", "汇报", "presentation"] }
+      {
+        "intent": "pptx",
+        "patterns": [
+          "pptx",
+          "ppt",
+          "powerpoint",
+          "幻灯片",
+          "汇报",
+          "presentation"
+        ]
+      }
     ]
   },
   {
@@ -93,19 +170,39 @@
       "version": "1.0.0",
       "description": "Render Table 1, baseline characteristics, and adverse-event summaries.",
       "category": "execution",
-      "author": { "name": "Heurion", "email": "plugins@heurion.io" },
+      "author": {
+        "name": "Heurion",
+        "email": "plugins@heurion.io"
+      },
       "license": "MIT",
-      "tags": ["report", "table", "docx"]
+      "tags": [
+        "report",
+        "table",
+        "docx"
+      ]
     },
     "runtime": {
       "type": "container",
       "image": "heurion/plugin-table:1.0.0",
       "port": 8080,
-      "resources": { "cpu": "1", "memory": "512m", "max_execution_seconds": 60 }
+      "resources": {
+        "cpu": "1",
+        "memory": "512m",
+        "max_execution_seconds": 60
+      }
     },
     "permissions": {
-      "network_egress": { "enabled": false },
-      "file_system": { "read": true, "write": true, "paths": ["/workspace", "/tmp"] },
+      "network_egress": {
+        "enabled": false
+      },
+      "file_system": {
+        "read": true,
+        "write": true,
+        "paths": [
+          "/workspace",
+          "/tmp"
+        ]
+      },
       "phi_access": false,
       "execute_code": false
     },
@@ -116,17 +213,38 @@
         "parameters": {
           "type": "object",
           "properties": {
-            "title": { "type": "string" },
-            "headers": { "type": "array" },
-            "rows": { "type": "array" },
-            "output_name": { "type": "string" }
+            "title": {
+              "type": "string"
+            },
+            "headers": {
+              "type": "array"
+            },
+            "rows": {
+              "type": "array"
+            },
+            "output_name": {
+              "type": "string"
+            }
           },
-          "required": ["title", "headers", "rows"]
+          "required": [
+            "title",
+            "headers",
+            "rows"
+          ]
         }
       }
     ],
     "triggers": [
-      { "intent": "table", "patterns": ["table", "表格", "基线特征", "baseline", "table 1"] }
+      {
+        "intent": "table",
+        "patterns": [
+          "table",
+          "表格",
+          "基线特征",
+          "baseline",
+          "table 1"
+        ]
+      }
     ]
   },
   {
@@ -137,19 +255,39 @@
       "version": "1.0.0",
       "description": "Render KM curves, bar charts, line charts, and forest plots.",
       "category": "execution",
-      "author": { "name": "Heurion", "email": "plugins@heurion.io" },
+      "author": {
+        "name": "Heurion",
+        "email": "plugins@heurion.io"
+      },
       "license": "MIT",
-      "tags": ["report", "plot", "chart"]
+      "tags": [
+        "report",
+        "plot",
+        "chart"
+      ]
     },
     "runtime": {
       "type": "container",
       "image": "heurion/plugin-plot:1.0.0",
       "port": 8080,
-      "resources": { "cpu": "1", "memory": "512m", "max_execution_seconds": 60 }
+      "resources": {
+        "cpu": "1",
+        "memory": "512m",
+        "max_execution_seconds": 60
+      }
     },
     "permissions": {
-      "network_egress": { "enabled": false },
-      "file_system": { "read": true, "write": true, "paths": ["/workspace", "/tmp"] },
+      "network_egress": {
+        "enabled": false
+      },
+      "file_system": {
+        "read": true,
+        "write": true,
+        "paths": [
+          "/workspace",
+          "/tmp"
+        ]
+      },
       "phi_access": false,
       "execute_code": false
     },
@@ -160,19 +298,45 @@
         "parameters": {
           "type": "object",
           "properties": {
-            "plot_type": { "type": "string" },
-            "title": { "type": "string" },
-            "x_label": { "type": "string" },
-            "y_label": { "type": "string" },
-            "series": { "type": "array" },
-            "output_name": { "type": "string" }
+            "plot_type": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "x_label": {
+              "type": "string"
+            },
+            "y_label": {
+              "type": "string"
+            },
+            "series": {
+              "type": "array"
+            },
+            "output_name": {
+              "type": "string"
+            }
           },
-          "required": ["plot_type", "series"]
+          "required": [
+            "plot_type",
+            "series"
+          ]
         }
       }
     ],
     "triggers": [
-      { "intent": "plot", "patterns": ["plot", "chart", "graph", "图表", "曲线", "km curve", "forest plot"] }
+      {
+        "intent": "plot",
+        "patterns": [
+          "plot",
+          "chart",
+          "graph",
+          "图表",
+          "曲线",
+          "km curve",
+          "forest plot"
+        ]
+      }
     ]
   },
   {
@@ -183,19 +347,39 @@
       "version": "1.0.0",
       "description": "Convert DOCX or PPTX files to PDF.",
       "category": "execution",
-      "author": { "name": "Heurion", "email": "plugins@heurion.io" },
+      "author": {
+        "name": "Heurion",
+        "email": "plugins@heurion.io"
+      },
       "license": "MIT",
-      "tags": ["report", "pdf", "convert"]
+      "tags": [
+        "report",
+        "pdf",
+        "convert"
+      ]
     },
     "runtime": {
       "type": "container",
       "image": "heurion/plugin-pdf:1.0.0",
       "port": 8080,
-      "resources": { "cpu": "1", "memory": "512m", "max_execution_seconds": 120 }
+      "resources": {
+        "cpu": "1",
+        "memory": "512m",
+        "max_execution_seconds": 120
+      }
     },
     "permissions": {
-      "network_egress": { "enabled": false },
-      "file_system": { "read": true, "write": true, "paths": ["/workspace", "/tmp"] },
+      "network_egress": {
+        "enabled": false
+      },
+      "file_system": {
+        "read": true,
+        "write": true,
+        "paths": [
+          "/workspace",
+          "/tmp"
+        ]
+      },
       "phi_access": false,
       "execute_code": false
     },
@@ -206,15 +390,292 @@
         "parameters": {
           "type": "object",
           "properties": {
-            "source_file_id": { "type": "string" },
-            "output_name": { "type": "string" }
+            "source_file_id": {
+              "type": "string"
+            },
+            "output_name": {
+              "type": "string"
+            }
           },
-          "required": ["source_file_id"]
+          "required": [
+            "source_file_id"
+          ]
         }
       }
     ],
     "triggers": [
-      { "intent": "pdf", "patterns": ["pdf", "convert to pdf", "导出 pdf"] }
+      {
+        "intent": "pdf",
+        "patterns": [
+          "pdf",
+          "convert to pdf",
+          "导出 pdf"
+        ]
+      }
     ]
+  },
+  {
+    "manifest_version": "1.0.0",
+    "plugin": {
+      "id": "heurion/bioscene",
+      "name": "BioScene Schematic Renderer",
+      "version": "1.0.0",
+      "description": "Deterministic molecular biology / mechanism diagrams (restricted icon catalog) rendered as inline SVG in chat.",
+      "category": "rendering",
+      "author": {
+        "name": "Heurion",
+        "email": "plugins@heurion.io"
+      },
+      "license": "MIT",
+      "tags": [
+        "diagram",
+        "svg",
+        "bioscene",
+        "schematic"
+      ]
+    },
+    "runtime": {
+      "type": "in-process",
+      "resources": {
+        "max_execution_seconds": 30
+      }
+    },
+    "permissions": {
+      "phi_access": false,
+      "network_egress": {
+        "enabled": false
+      },
+      "file_system": {
+        "read": false,
+        "write": true,
+        "paths": [
+          "/tmp"
+        ]
+      }
+    },
+    "tools": [
+      {
+        "name": "render_scene",
+        "description": "Render a molecular biology / mechanism schematic (BioScene). Place only icons from the catalog (membrane, receptor, EGFR, PD-L1, kinase, ion channels, organelles, cells, antibody, ligand, TKI, drug, apoptosis, proliferation) using {icon, x, y, scale?, rotate?, label?, colorize?}; connections {from, to, kind: arrow|dashed|phosphorylation|inhibition, bend?, label?}; annotations {type: text|bracket, x, y, text}. Unknown icons are rejected. Returns an SVG file.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "canvas": {
+              "type": "object",
+              "properties": {
+                "width": {
+                  "type": "number"
+                },
+                "height": {
+                  "type": "number"
+                }
+              }
+            },
+            "objects": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "icon": {
+                    "type": "string"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "scale": {
+                    "type": "number"
+                  },
+                  "rotate": {
+                    "type": "number"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "colorize": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "icon",
+                  "x",
+                  "y"
+                ]
+              }
+            },
+            "connections": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "number"
+                  },
+                  "to": {
+                    "type": "number"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "bend": {
+                    "type": "number"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "required": [
+            "objects"
+          ]
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "file_id": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "markdown": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ],
+    "settings": {
+      "schema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "manifest_version": "1.0.0",
+    "plugin": {
+      "id": "heurion/chart",
+      "name": "Chart Renderer",
+      "version": "1.0.0",
+      "description": "Deterministic statistical / schematic charts rendered as inline SVG in chat.",
+      "category": "rendering",
+      "author": {
+        "name": "Heurion",
+        "email": "plugins@heurion.io"
+      },
+      "license": "MIT",
+      "tags": [
+        "chart",
+        "svg",
+        "plot",
+        "graph"
+      ]
+    },
+    "runtime": {
+      "type": "in-process",
+      "resources": {
+        "max_execution_seconds": 30
+      }
+    },
+    "permissions": {
+      "phi_access": false,
+      "network_egress": {
+        "enabled": false
+      },
+      "file_system": {
+        "read": false,
+        "write": true,
+        "paths": [
+          "/tmp"
+        ]
+      }
+    },
+    "tools": [
+      {
+        "name": "render_chart",
+        "description": "Render a chart as an SVG image embeddable in chat. Types: bar, line, dose_curve, schematic (beam_scan etc).",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "data": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "template": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "elements": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "title"
+          ]
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "file_id": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "markdown": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ],
+    "settings": {
+      "schema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
   }
 ]

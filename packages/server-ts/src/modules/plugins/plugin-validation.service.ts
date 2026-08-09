@@ -56,7 +56,9 @@ export function validateManifest(input: unknown): ValidationResult {
   if (!isPlainObject(runtime)) {
     errors.push('runtime object is required')
   } else {
-    const allowedRuntimes = ['container', 'wasm', 'process']
+    // 'in-process': the tool runs inside the control plane (BioScene/chart
+    // deterministic SVG renderers) — no container/wasm/process required.
+    const allowedRuntimes = ['container', 'wasm', 'process', 'in-process']
     if (!allowedRuntimes.includes(runtime.type as string)) {
       errors.push(`runtime.type must be one of: ${allowedRuntimes.join(', ')}`)
     }

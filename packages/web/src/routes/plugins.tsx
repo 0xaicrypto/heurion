@@ -49,6 +49,7 @@ export function PluginsPage() {
   const [installed, setInstalled] = useState<InstalledPlugin[]>([]);
   const [installedLoading, setInstalledLoading] = useState(true);
   const [installing, setInstalling] = useState<string | null>(null);
+  const [uninstalling, setUninstalling] = useState<string | null>(null);
 
   const [devUrl, setDevUrl] = useState('');
   const [devManifest, setDevManifest] = useState('');
@@ -113,12 +114,15 @@ export function PluginsPage() {
   };
 
   const handleUninstall = async (pluginId: string) => {
+    setUninstalling(pluginId);
     try {
       await api.uninstallPlugin(pluginId);
       loadInstalled();
       doSearch(query, source);
     } catch (err) {
       setMarketError(err instanceof ApiError ? err.messageText : 'Uninstall failed');
+    } finally {
+      setUninstalling(null);
     }
   };
 
@@ -283,15 +287,30 @@ export function PluginsPage() {
                             <span className="text-xs text-text-tertiary/60">v{plugin.version} · {plugin.author.name} · {plugin.runtime}</span>
                           </div>
                         </div>
-                        <Button
-                          size="sm"
-                          className="mt-3 w-full"
-                          variant={isInstalled ? 'secondary' : 'primary'}
-                          onClick={() => handleInstall(plugin.id)}
-                          isLoading={installing === plugin.id}
-                        >
-                          {isInstalled ? 'Installed ✓' : <><Download size={14} className="mr-1.5" /> Install</>}
-                        </Button>
+                        {/* #454: installed plugins get an uninstall action
+                            right on the market card — previously only the
+                            Installed tab had one. */}
+                        {isInstalled ? (
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            className="mt-3 w-full"
+                            onClick={() => handleUninstall(plugin.id)}
+                            isLoading={uninstalling === plugin.id}
+                          >
+                            <Trash2 size={14} className="mr-1.5" /> Uninstall
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            className="mt-3 w-full"
+                            variant="primary"
+                            onClick={() => handleInstall(plugin.id)}
+                            isLoading={installing === plugin.id}
+                          >
+                            <Download size={14} className="mr-1.5" /> Install
+                          </Button>
+                        )}
                       </Card>
                     );
                   })}
