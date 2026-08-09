@@ -1,0 +1,575 @@
+{
+  "welch_normal": {
+    "input": {
+      "test": "t-test",
+      "group_a": [
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17
+      ],
+      "group_b": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    "expected": {
+      "method": "welch_t",
+      "test_stat": 7.348469,
+      "df": 14.0,
+      "p_value": 4e-06,
+      "effect_size": 3.674235,
+      "ci_95": [
+        6.373184,
+        11.626816
+      ],
+      "interpretation": "差异有统计学意义"
+    }
+  },
+  "welch_small_n": {
+    "input": {
+      "test": "t-test",
+      "group_a": [
+        5.1,
+        5.2,
+        5.3
+      ],
+      "group_b": [
+        4.9,
+        4.8,
+        4.7
+      ]
+    },
+    "expected": {
+      "method": "welch_t",
+      "test_stat": 4.898979,
+      "df": 4.0,
+      "p_value": 0.00805,
+      "effect_size": 4.0,
+      "ci_95": [
+        0.173304,
+        0.626696
+      ],
+      "interpretation": "差异有统计学意义"
+    }
+  },
+  "welch_unequal_var": {
+    "input": {
+      "test": "t-test",
+      "group_a": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "group_b": [
+        100,
+        102,
+        98,
+        101,
+        99
+      ]
+    },
+    "expected": {
+      "method": "welch_t",
+      "test_stat": -79.395881,
+      "df": 12.876238,
+      "p_value": 0.0,
+      "effect_size": -35.426857,
+      "ci_95": [
+        -97.073868,
+        -91.926132
+      ],
+      "interpretation": "差异有统计学意义"
+    }
+  },
+  "mann_whitney_degrade": {
+    "input": {
+      "test": "t-test",
+      "group_a": [
+        0.1,
+        0.2,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        0.3,
+        0.4,
+        7.0,
+        8.0
+      ],
+      "group_b": [
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        0.5,
+        0.6,
+        16,
+        17
+      ]
+    },
+    "expected": {
+      "method": "mann_whitney",
+      "test_stat": 12.0,
+      "p_value": 0.004586,
+      "effect_size": 0.76,
+      "interpretation": "差异有统计学意义"
+    },
+    "ts_skip": true
+  },
+  "chisq_2x2_assoc": {
+    "input": {
+      "test": "chi-square",
+      "table": [
+        [
+          90,
+          10
+        ],
+        [
+          20,
+          80
+        ]
+      ]
+    },
+    "expected": {
+      "method": "chisq",
+      "test_stat": 98.989899,
+      "df": 1,
+      "p_value": 0.0,
+      "effect_size": 0.703526,
+      "interpretation": "存在关联"
+    }
+  },
+  "chisq_2x2_indep": {
+    "input": {
+      "test": "chi-square",
+      "table": [
+        [
+          50,
+          50
+        ],
+        [
+          50,
+          50
+        ]
+      ]
+    },
+    "expected": {
+      "method": "chisq",
+      "test_stat": 0.0,
+      "df": 1,
+      "p_value": 1.0,
+      "effect_size": 0.0,
+      "interpretation": "无显著关联"
+    }
+  },
+  "chisq_3x2": {
+    "input": {
+      "test": "chi-square",
+      "table": [
+        [
+          30,
+          20,
+          10
+        ],
+        [
+          10,
+          20,
+          30
+        ]
+      ]
+    },
+    "expected": {
+      "method": "chisq",
+      "test_stat": 20.0,
+      "df": 2,
+      "p_value": 4.5e-05,
+      "effect_size": 0.408248,
+      "interpretation": "存在关联"
+    }
+  },
+  "chisq_small": {
+    "input": {
+      "test": "chi-square",
+      "table": [
+        [
+          5,
+          1
+        ],
+        [
+          1,
+          5
+        ]
+      ]
+    },
+    "expected": {
+      "method": "chisq",
+      "test_stat": 5.333333,
+      "df": 1,
+      "p_value": 0.020921,
+      "effect_size": 0.666667,
+      "interpretation": "存在关联"
+    }
+  },
+  "km_split": {
+    "input": {
+      "test": "kaplan-meier",
+      "survival_a": [
+        {
+          "time": 1,
+          "event": true
+        },
+        {
+          "time": 2,
+          "event": true
+        },
+        {
+          "time": 3,
+          "event": true
+        },
+        {
+          "time": 4,
+          "event": true
+        },
+        {
+          "time": 5,
+          "event": true
+        },
+        {
+          "time": 6,
+          "event": true
+        },
+        {
+          "time": 7,
+          "event": true
+        },
+        {
+          "time": 8,
+          "event": true
+        },
+        {
+          "time": 9,
+          "event": true
+        },
+        {
+          "time": 10,
+          "event": true
+        }
+      ],
+      "survival_b": [
+        {
+          "time": 6,
+          "event": true
+        },
+        {
+          "time": 7,
+          "event": true
+        },
+        {
+          "time": 8,
+          "event": true
+        },
+        {
+          "time": 9,
+          "event": true
+        },
+        {
+          "time": 10,
+          "event": true
+        },
+        {
+          "time": 11,
+          "event": true
+        },
+        {
+          "time": 12,
+          "event": true
+        },
+        {
+          "time": 13,
+          "event": true
+        },
+        {
+          "time": 14,
+          "event": true
+        },
+        {
+          "time": 15,
+          "event": true
+        }
+      ]
+    },
+    "expected": {
+      "method": "kaplan_meier_logrank",
+      "test_stat": 9.492884,
+      "p_value": 0.002063,
+      "effect_size": null,
+      "interpretation": "生存曲线差异有统计学意义",
+      "curve_a": [
+        {
+          "time": 0.0,
+          "survival": 1.0
+        },
+        {
+          "time": 1.0,
+          "survival": 0.9
+        },
+        {
+          "time": 2.0,
+          "survival": 0.8
+        },
+        {
+          "time": 3.0,
+          "survival": 0.7
+        },
+        {
+          "time": 4.0,
+          "survival": 0.6
+        },
+        {
+          "time": 5.0,
+          "survival": 0.5
+        },
+        {
+          "time": 6.0,
+          "survival": 0.4
+        },
+        {
+          "time": 7.0,
+          "survival": 0.3
+        },
+        {
+          "time": 8.0,
+          "survival": 0.2
+        },
+        {
+          "time": 9.0,
+          "survival": 0.1
+        },
+        {
+          "time": 10.0,
+          "survival": 0.0
+        }
+      ],
+      "curve_b": [
+        {
+          "time": 0.0,
+          "survival": 1.0
+        },
+        {
+          "time": 6.0,
+          "survival": 0.9
+        },
+        {
+          "time": 7.0,
+          "survival": 0.8
+        },
+        {
+          "time": 8.0,
+          "survival": 0.7
+        },
+        {
+          "time": 9.0,
+          "survival": 0.6
+        },
+        {
+          "time": 10.0,
+          "survival": 0.5
+        },
+        {
+          "time": 11.0,
+          "survival": 0.4
+        },
+        {
+          "time": 12.0,
+          "survival": 0.3
+        },
+        {
+          "time": 13.0,
+          "survival": 0.2
+        },
+        {
+          "time": 14.0,
+          "survival": 0.1
+        },
+        {
+          "time": 15.0,
+          "survival": 0.0
+        }
+      ]
+    }
+  },
+  "km_censored": {
+    "input": {
+      "test": "kaplan-meier",
+      "survival_a": [
+        {
+          "time": 2,
+          "event": false
+        },
+        {
+          "time": 3,
+          "event": true
+        },
+        {
+          "time": 4,
+          "event": false
+        },
+        {
+          "time": 5,
+          "event": true
+        }
+      ],
+      "survival_b": [
+        {
+          "time": 6,
+          "event": false
+        },
+        {
+          "time": 7,
+          "event": false
+        },
+        {
+          "time": 8,
+          "event": true
+        }
+      ]
+    },
+    "expected": {
+      "method": "kaplan_meier_logrank",
+      "test_stat": 5.628685,
+      "p_value": 0.017669,
+      "effect_size": null,
+      "interpretation": "生存曲线差异有统计学意义",
+      "curve_a": [
+        {
+          "time": 0.0,
+          "survival": 1.0
+        },
+        {
+          "time": 2.0,
+          "survival": 1.0
+        },
+        {
+          "time": 3.0,
+          "survival": 0.666667
+        },
+        {
+          "time": 4.0,
+          "survival": 0.666667
+        },
+        {
+          "time": 5.0,
+          "survival": 0.0
+        }
+      ],
+      "curve_b": [
+        {
+          "time": 0.0,
+          "survival": 1.0
+        },
+        {
+          "time": 6.0,
+          "survival": 1.0
+        },
+        {
+          "time": 7.0,
+          "survival": 1.0
+        },
+        {
+          "time": 8.0,
+          "survival": 0.0
+        }
+      ]
+    },
+    "ts_skip": true
+  },
+  "km_small": {
+    "input": {
+      "test": "kaplan-meier",
+      "survival_a": [
+        {
+          "time": 1,
+          "event": true
+        },
+        {
+          "time": 2,
+          "event": true
+        },
+        {
+          "time": 3,
+          "event": false
+        }
+      ],
+      "survival_b": [
+        {
+          "time": 1,
+          "event": false
+        },
+        {
+          "time": 2,
+          "event": true
+        }
+      ]
+    },
+    "expected": {
+      "method": "kaplan_meier_logrank",
+      "test_stat": 0.48855,
+      "p_value": 0.484575,
+      "effect_size": null,
+      "interpretation": "生存曲线无显著差异",
+      "curve_a": [
+        {
+          "time": 0.0,
+          "survival": 1.0
+        },
+        {
+          "time": 1.0,
+          "survival": 0.666667
+        },
+        {
+          "time": 2.0,
+          "survival": 0.333333
+        },
+        {
+          "time": 3.0,
+          "survival": 0.333333
+        }
+      ],
+      "curve_b": [
+        {
+          "time": 0.0,
+          "survival": 1.0
+        },
+        {
+          "time": 1.0,
+          "survival": 1.0
+        },
+        {
+          "time": 2.0,
+          "survival": 0.0
+        }
+      ]
+    },
+    "ts_skip": true
+  }
+}
