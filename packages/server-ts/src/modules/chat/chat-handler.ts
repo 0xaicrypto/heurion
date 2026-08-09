@@ -99,9 +99,13 @@ async function loadHistoryBudget(
   } catch {
     // kbCompaction may not exist yet
   }
+  // Only user/assistant messages count as turns — tool calls, tool results
+  // and context events are transport noise and must NOT trigger compaction
+  // (#compaction-fix: a 3-turn chat with heavy tool use filled the 40-event
+  // window and compacted repeatedly while the token budget was nearly empty).
   const history = ctx.eventLog
-    .query({ sessionId: sid, limit: historyTurns * 2 })
-    .filter((e: any) => e.idx > compactedUpto)
+    .query({ sessionId: sid, limit: historyTurns * 2 * 8 })
+    .filter((e: any) => e.idx > compactedUpto && (e.eventType === 'user_message' || e.eventType === 'assistant_response'))
     .reverse()
   const { messages: historyMessages, omittedTurns, tokens: historyTokens } = buildHistoryMessages(history, {
     maxTokens: maxHistoryTokens,
@@ -767,8 +771,8 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       // compaction_started/compaction_completed event to the UI.
       const sendCompactionCompleted = async () => {
         const restored = ctx.eventLog
-          .query({ sessionId: sid, limit: historyTurns * 2 })
-          .filter((e: any) => e.idx > compactedUpto)
+          .query({ sessionId: sid, limit: historyTurns * 2 * 8 })
+          .filter((e: any) => e.idx > compactedUpto && (e.eventType === 'user_message' || e.eventType === 'assistant_response'))
           .reverse()
         const { tokens: restoredTokens } = buildHistoryMessages(restored, {
           maxTokens: maxHistoryTokens,
@@ -780,6 +784,8 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       // Writing sessions (doc-*) are workspaces, not clinical dialogues —
       // their content must never leak into memory extraction.
       const isWritingSession = sid.startsWith('doc-')
+      // #compaction-fix: trigger on REAL message turns (history is now
+      // filtered to user/assistant), not raw event count.
       const shouldTrigger = !isWritingSession && (omittedTurns > 0 || history.length >= historyTurns * 2)
       if (shouldTrigger && historyMessages.length > 0) {
         const oldestRetainedIdx = (history[historyMessages.length - 1] as any)?.idx ?? 0

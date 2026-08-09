@@ -1,6 +1,63 @@
 import { BaseTool, ToolResult } from './base-tool.js'
 import type { ToolContext } from './tool-registry.js'
 
+/**
+ * #199: per-user keyword index for the SearchNodeTool fallback. Built once
+ * per graph version and cached — repeated searches in a conversation no
+ * longer re-scan the whole graph (was O(N) build twice per call + O(N²)
+ * candidate/neighbor scans before the index landed).
+ */
+interface GraphIndex {
+  byPatient: Map<string | undefined, any[]>
+  keywordIndex: Map<string, any[]>
+  neighborPool: Map<string | undefined, any[]>
+}
+
+function buildGraphIndex(allNodes: any[]): GraphIndex {
+  const byPatient = new Map<string | undefined, any[]>()
+  const neighborPool = new Map<string | undefined, any[]>()
+  const keywordIndex = new Map<string, any[]>()
+  for (const n of allNodes) {
+    const ph = (n as any).patientHash
+    const group = byPatient.get(ph)
+    if (group) group.push(n)
+    else byPatient.set(ph, [n])
+    const nGroup = neighborPool.get(ph)
+    if (nGroup) nGroup.push(n)
+    else neighborPool.set(ph, [n])
+    const text = `${(n as any).content || ''} ${(n as any).title || ''}`.toLowerCase()
+    const tokens = text.split(/[^a-z0-9一-龥]+/).filter((w) => w.length > 1)
+    for (const tok of tokens) {
+      const list = keywordIndex.get(tok)
+      if (list) { if (!list.includes(n)) list.push(n) }
+      else keywordIndex.set(tok, [n])
+    }
+  }
+  return { byPatient, keywordIndex, neighborPool }
+}
+
+const INDEX_CACHE = new Map<string, GraphIndex>()
+const INDEX_CACHE_MAX = 200
+
+/** Test hook: drop the per-user graph index cache. */
+export function clearGraphIndexCache(): void {
+  INDEX_CACHE.clear()
+}
+
+function getGraphIndex(userId: string, graphVersion: string | null, allNodes: any[]): GraphIndex {
+  const key = `${userId}:${graphVersion ?? 'v0'}`
+  const cached = INDEX_CACHE.get(key)
+  if (cached) return cached
+  const built = buildGraphIndex(allNodes)
+  INDEX_CACHE.set(key, built)
+  if (INDEX_CACHE.size > INDEX_CACHE_MAX) {
+    // Evict oldest (Map insertion order).
+    const oldest = INDEX_CACHE.keys().next().value
+    if (oldest !== undefined) INDEX_CACHE.delete(oldest)
+  }
+  return built
+}
+
 export class SearchNodeTool extends BaseTool {
   constructor(private ctx: ToolContext) { super() }
 
@@ -58,25 +115,11 @@ export class SearchNodeTool extends BaseTool {
         .map((h) => byStable.get(h.stableId))
         .filter((n): n is any => Boolean(n))
     } else {
-      // #199: fallback uses a per-call keyword inverted index + patientHash
-      // grouping instead of JSON.stringify-scanning every node.
-      // Build once: keyword -> node ids, patientHash -> node ids.
-      const byPatient = new Map<string | undefined, any[]>()
-      const keywordIndex = new Map<string, any[]>()
-      for (const n of allNodes) {
-        const ph = (n as any).patientHash
-        const group = byPatient.get(ph)
-        if (group) group.push(n)
-        else byPatient.set(ph, [n])
-        const text = `${(n as any).content || ''} ${(n as any).title || ''}`.toLowerCase()
-        const tokens = text.split(/[^a-z0-9一-龥]+/).filter((w) => w.length > 1)
-        for (const tok of tokens) {
-          const list = keywordIndex.get(tok)
-          if (list) { if (!list.includes(n)) list.push(n) }
-          else keywordIndex.set(tok, [n])
-        }
-      }
-      const scoped = byPatient.get(patientHash) || []
+      // #199: fallback uses a cached per-user keyword inverted index +
+      // patientHash grouping (built once per graph version) instead of
+      // JSON.stringify-scanning every node per call.
+      const idx = getGraphIndex(this.ctx.userId, this.ctx.memory.graph.currentVersion?.() ?? null, allNodes)
+      const scoped = idx.byPatient.get(patientHash) || []
       const queryTokens = q.split(/[^a-z0-9一-龥]+/).filter((w) => w.length > 1)
       let matched: any[] = []
       if (queryTokens.length > 0) {
@@ -84,8 +127,7 @@ export class SearchNodeTool extends BaseTool {
         // check on the small candidate set (keeps behavior identical).
         const seen = new Set<any>()
         for (const tok of queryTokens) {
-          const kw = q.includes(tok) ? tok : tok
-          for (const n of keywordIndex.get(kw) || []) {
+          for (const n of idx.keywordIndex.get(tok) || []) {
             if ((n as any).patientHash === patientHash && !seen.has(n)) { seen.add(n); matched.push(n) }
           }
         }
@@ -104,15 +146,8 @@ export class SearchNodeTool extends BaseTool {
       }
     }
 
-    // #199: neighbor lookup is grouped by patientHash (built once).
-    const byPatientAll = new Map<string | undefined, any[]>()
-    for (const n of allNodes) {
-      const ph = (n as any).patientHash
-      const group = byPatientAll.get(ph)
-      if (group) group.push(n)
-      else byPatientAll.set(ph, [n])
-    }
-    const neighborPool = byPatientAll.get(patientHash) || allNodes
+    // #199: neighbor lookup uses the cached patientHash grouping.
+    const neighborPool = getGraphIndex(this.ctx.userId, this.ctx.memory.graph.currentVersion?.() ?? null, allNodes).neighborPool.get(patientHash) || allNodes
     const hits = candidates.slice(0, topK).map(n => {
       const connected = neighborPool.filter(other =>
         other.id !== n.id &&
