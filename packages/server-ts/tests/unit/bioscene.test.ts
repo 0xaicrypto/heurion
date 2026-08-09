@@ -112,3 +112,30 @@ describe('BioScene (#408)', () => {
     })
     expect(svg).toContain('Pixel label')
   })
+
+  test('#467 external NIH BioArt icons resolve and embed (svgFile)', () => {
+    expect(resolveIcon('t-cell')).toBeTruthy()
+    expect(resolveIcon('巨噬细胞')?.id).toBe('macrophage')
+    expect(resolveIcon('NK细胞')?.id).toBe('nk-cell')
+    expect(resolveIcon('antibody')?.id).toBe('antibody')
+    expect(resolveIcon('HIV')?.id).toBe('hiv')
+    // Catalog includes the external set.
+    const catalog = iconCatalog()
+    expect(catalog.some((i) => i.id === 'macrophage')).toBe(true)
+    expect(catalog.length).toBeGreaterThanOrEqual(21 + 15)
+
+    const svg = renderBioScene({
+      canvas: { width: 800, height: 600 },
+      objects: [
+        { icon: 'macrophage', x: 30, y: 50, label: 'Mφ' },
+        { icon: 'tumor-cell', x: 70, y: 50 },
+      ],
+      connections: [{ from: 0, to: 1, kind: 'arrow' }],
+    })
+    // External SVG content is embedded (metadata + namespaced defs from
+    // NIH BioArt).
+    expect(svg).toContain('metadata')
+    expect(svg).toContain('Macrophage')
+    expect(svg).toContain('Mφ')
+    expect(svg).toContain('translate(216, 276)') // 30% of 800 = 240 - 24
+  })
