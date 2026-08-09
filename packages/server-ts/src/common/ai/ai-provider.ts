@@ -1,12 +1,13 @@
 /**
  * Unified AI Provider abstraction.
  *
- * Business code depends only on `AiProvider`. Switching between DeepSeek,
- * Gemini, local embedding, or OpenAI is done via environment configuration.
+ * Business code depends only on `AiProvider`. Chat goes through the single
+ * LlmGateway (#436); embedding/vision keep their dedicated adapters.
+ * Switching between DeepSeek, Gemini, local embedding, or OpenAI is done
+ * via environment configuration.
  */
 
-import { DeepSeekChatProvider } from './deepseek-chat.provider.js'
-import { resolveChatProvider } from './openai-compatible-chat.provider.js'
+import { getLlmGateway, type LlmChatOptions } from '../llm-gateway.js'
 import { GeminiVisionProvider } from './gemini-vision.provider.js'
 import { LocalEmbeddingProvider, ResilientEmbeddingProvider } from './local-embedding.provider.js'
 import { OpenAIEmbeddingProvider } from './openai-embedding.provider.js'
@@ -273,7 +274,7 @@ export class TelemetryAiProvider implements AiProvider {
 
 /**
  * Create a default AI provider composed of:
- *   - chat: DeepSeek
+ *   - chat: LlmGateway (provider from DEFAULT_LLM_PROVIDER, #436)
  *   - vision: Gemini
  *   - embed: local bge-m3 by default, or OpenAI when EMBEDDING_PROVIDER=openai
  */
@@ -282,9 +283,6 @@ export function createAiProvider(
   recorder?: TelemetryRecorder,
 ): AiProvider {
   const cfg = { ...loadAiConfigFromEnv(), ...config }
-  // #202: runtime provider selection — DEFAULT_LLM_PROVIDER env drives the
-  // chat adapter (deepseek default, backward compatible).
-  const chatProvider = resolveChatProvider(cfg)
   const visionProvider = new GeminiVisionProvider(cfg)
   let embedProvider: Pick<AiProvider, 'embed'>
   if (cfg.embeddingProvider === 'openai') {
@@ -296,6 +294,20 @@ export function createAiProvider(
     } else {
       embedProvider = local
     }
+  }
+
+  const chatProvider: Pick<AiProvider, 'chat'> = {
+    chat: async (messages, options = {}) => {
+      const gwOptions: LlmChatOptions = {
+        model: options.model,
+        maxTokens: options.maxTokens,
+        temperature: options.temperature,
+        telemetryContext: options.telemetryContext as LlmChatOptions['telemetryContext'],
+        signal: options.signal as AbortSignal | undefined,
+      }
+      const content = await getLlmGateway().chat(messages, gwOptions)
+      return { content, model: options.model || gwOptions.model }
+    },
   }
 
   const composite = new CompositeAiProvider({ chat: chatProvider, embed: embedProvider, vision: visionProvider })

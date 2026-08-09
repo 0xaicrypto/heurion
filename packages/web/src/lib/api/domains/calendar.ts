@@ -1,7 +1,7 @@
-import { KnowledgeApi } from './knowledge.js';
+import { ApiCore } from './core.js';
 
 
-export class CalendarApi extends KnowledgeApi {
+export class CalendarApi extends ApiCore {
   /* ────────────────────────── calendar ────────────────────────── */
 
   getCalendarExportUrl(): string {

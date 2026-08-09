@@ -13,6 +13,7 @@
  *   or inline base64 — the generator resolves and embeds.
  */
 import { z } from 'zod';
+export * from './chat.js';
 export declare const SCHEMA_VERSION = 1;
 export declare const imageBlockSchema: z.ZodObject<{
     type: z.ZodLiteral<"image">;

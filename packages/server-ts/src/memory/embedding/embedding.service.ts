@@ -80,7 +80,10 @@ export class EmbeddingService {
         studyId: input.studyId || undefined,
         contentHash: input.content.slice(0, 16),
         vector: vec,
-        model: 'bge-m3',
+        // #442: model label follows the shared EMBEDDING_MODEL default —
+        // previously hard-coded 'bge-m3' while the embedding server could
+        // run a different model (dimension mismatch risk).
+        model: process.env.EMBEDDING_MODEL || 'BAAI/bge-m3',
         norm: normalizeVector(vec),
         updatedAt: Date.now(),
       })

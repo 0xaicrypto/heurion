@@ -48,17 +48,16 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
 function AuthEvents() {
   const navigate = useNavigate();
-  const { clearSession } = useAuthStore();
 
   useEffect(() => {
+    // #460: api.logout() already clears the auth store — no separate clearSession.
     const handler = () => {
       api.logout();
-      clearSession();
       navigate('/login', { replace: true });
     };
     window.addEventListener('nexus:auth-expired', handler);
     return () => window.removeEventListener('nexus:auth-expired', handler);
-  }, [clearSession, navigate]);
+  }, [navigate]);
 
   return null;
 }

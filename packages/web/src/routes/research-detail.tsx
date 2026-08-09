@@ -913,9 +913,8 @@ function ProtocolTab({ studyId }: { studyId: string }) {
   }
   const handleReject = async (ruleId: string) => {
     try {
-      await fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}`, {
-        method: 'DELETE', headers: { Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` }
-      })
+      // #462: auth handled centrally by the api layer (was raw fetch + manual Bearer).
+      await api.deleteProtocolRule(studyId, ruleId);
       loadRules()
     } catch {
       setError('Failed to reject rule')

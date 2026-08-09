@@ -3,13 +3,13 @@ import {
   createAiProvider,
   loadAiConfigFromEnv,
   AiProviderError,
-  DeepSeekChatProvider,
   GeminiVisionProvider,
   LocalEmbeddingProvider,
   OpenAIEmbeddingProvider,
   type TelemetryRecorder,
   type AiTelemetryEvent,
 } from '../../src/common/ai/index.js'
+import { getLlmGateway, setLlmGatewayForTest } from '../../src/common/llm-gateway.js'
 
 function mockJsonResponse(body: any, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -51,16 +51,18 @@ describe('AI Provider configuration', () => {
   })
 })
 
-describe('DeepSeek chat provider', () => {
+describe('LlmGateway chat (unified #436)', () => {
   beforeEach(() => {
     vi.stubEnv('DEEPSEEK_API_KEY', 'sk-test')
+    setLlmGatewayForTest(null)
   })
   afterEach(() => {
     vi.unstubAllEnvs()
     vi.unstubAllGlobals()
+    setLlmGatewayForTest(null)
   })
 
-  test('returns ChatResult with usage', async () => {
+  test('returns ChatResult with content via createAiProvider', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => mockJsonResponse({
@@ -69,26 +71,23 @@ describe('DeepSeek chat provider', () => {
       })),
     )
 
-    const provider = new DeepSeekChatProvider()
+    const provider = createAiProvider()
     const result = await provider.chat([{ role: 'user', content: 'hi' }])
 
     expect(result.content).toBe('hello from deepseek')
-    expect(result.model).toBe('deepseek-chat')
-    expect(result.usage).toEqual({ promptTokens: 10, completionTokens: 3, totalTokens: 13 })
 
     const calls = vi.mocked(fetch).mock.calls
     expect(calls.length).toBe(1)
     const [url, init] = calls[0]
     expect(url).toContain('deepseek.com')
     const body = JSON.parse(init?.body as string)
-    expect(body.model).toBe('deepseek-chat')
+    expect(body.model).toBe('deepseek-v4-flash')
   })
 
   test('throws config error when API key is missing', async () => {
     vi.stubEnv('DEEPSEEK_API_KEY', '')
-    const provider = new DeepSeekChatProvider()
-    await expect(provider.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(AiProviderError)
-    await expect(provider.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow('DEEPSEEK_API_KEY')
+    const gateway = getLlmGateway()
+    await expect(gateway.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow('DEEPSEEK_API_KEY')
   })
 
   test('throws api error on non-2xx response', async () => {
@@ -96,8 +95,8 @@ describe('DeepSeek chat provider', () => {
       'fetch',
       vi.fn(async () => new Response('unauthorized', { status: 401 })),
     )
-    const provider = new DeepSeekChatProvider()
-    await expect(provider.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(AiProviderError)
+    const gateway = getLlmGateway()
+    await expect(gateway.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(/服务暂时不可用/)
   })
 
   test('retries transient 429 then succeeds', async () => {
@@ -107,23 +106,23 @@ describe('DeepSeek chat provider', () => {
         .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
         .mockResolvedValueOnce(mockJsonResponse({ choices: [{ message: { content: 'recovered' } }] })),
     )
-    const provider = new DeepSeekChatProvider()
-    const result = await provider.chat([{ role: 'user', content: 'hi' }])
-    expect(result.content).toBe('recovered')
+    const gateway = getLlmGateway()
+    const result = await gateway.chat([{ role: 'user', content: 'hi' }])
+    expect(result).toBe('recovered')
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2)
   })
 
-  test('retries 500 up to MAX_RETRIES then throws', async () => {
+  test('retries 500 up to max retries then throws', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 500 })))
-    const provider = new DeepSeekChatProvider()
-    await expect(provider.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(AiProviderError)
+    const gateway = getLlmGateway()
+    await expect(gateway.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(/HTTP 500/)
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(3)
   })
 
   test('does not retry non-transient 400', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('bad request', { status: 400 })))
-    const provider = new DeepSeekChatProvider()
-    await expect(provider.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(AiProviderError)
+    const gateway = getLlmGateway()
+    await expect(gateway.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(/服务暂时不可用/)
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
   })
 
@@ -134,10 +133,28 @@ describe('DeepSeek chat provider', () => {
         .mockRejectedValueOnce(new TypeError('fetch failed'))
         .mockResolvedValueOnce(mockJsonResponse({ choices: [{ message: { content: 'ok' } }] })),
     )
-    const provider = new DeepSeekChatProvider()
-    const result = await provider.chat([{ role: 'user', content: 'hi' }])
-    expect(result.content).toBe('ok')
+    const gateway = getLlmGateway()
+    const result = await gateway.chat([{ role: 'user', content: 'hi' }])
+    expect(result).toBe('ok')
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2)
+  })
+
+  test('tool calls are converted to <tool_call> blocks', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => mockJsonResponse({
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: { tool_calls: [{ type: 'function', function: { name: 'search_node', arguments: '{"q":"x"}' } }] },
+        }],
+      })),
+    )
+    const gateway = getLlmGateway()
+    const out = await gateway.chat([{ role: 'user', content: 'do it' }], {}, [
+      { type: 'function', function: { name: 'search_node', description: 'd', parameters: {} } },
+    ])
+    expect(out).toContain('<tool_call>')
+    expect(out).toContain('"name":"search_node"')
   })
 })
 
@@ -288,7 +305,6 @@ describe('Telemetry wrapper', () => {
     expect(events[0].action).toBe('chat')
     expect(events[0].success).toBe(true)
     expect(events[0].model).toBe('deepseek-chat')
-    expect(events[0].usage?.totalTokens).toBe(2)
     expect(events[0].latencyMs).toBeGreaterThanOrEqual(0)
   })
 
@@ -300,11 +316,11 @@ describe('Telemetry wrapper', () => {
     }
 
     const provider = createAiProvider({}, recorder)
-    await expect(provider.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(AiProviderError)
+    await expect(provider.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow('DEEPSEEK_API_KEY')
 
     expect(events.length).toBe(1)
     expect(events[0].action).toBe('chat')
     expect(events[0].success).toBe(false)
-    expect(events[0].errorCode).toBe('config_missing')
+    expect(events[0].errorCode).toBe('api_error')
   })
 })

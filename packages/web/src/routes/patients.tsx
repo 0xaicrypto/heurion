@@ -6,12 +6,12 @@ import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { SkillsBar } from '@/components/SkillsBar';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
-import { ToolCalls } from '@/components/ToolCalls';
-import { StreamingLlmContent } from '@/components/LlmContent';
+import { ChatMessages } from '@/components/chat/ChatMessages';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/api';
+import { mapWireMessages } from '@/lib/message-map';
 import { useChatStore } from '@/stores/chat';
 import type { MemoryFinding, MemoryProjection, Patient, PatientDetail } from '@/lib/types';
 
@@ -437,9 +437,14 @@ function FindingItem({ finding }: { finding: MemoryFinding }) {
 export function PatientChatPage() {
   const { t } = useTranslation();
   const { hash } = useParams<{ hash: string }>();
-  const store = useChatStore();
+  // #462: scoped selectors — a change in any other session no longer
+  // re-renders this page (was a full-store subscription).
   const sessionId = hash ? `patient-${hash}` : '';
-  const session = store.sessions[sessionId];
+  const session = useChatStore((s) => (sessionId ? s.sessions[sessionId] : undefined));
+  const sendMessage = useChatStore((s) => s.sendMessage);
+  const stopStream = useChatStore((s) => s.stopStream);
+  const setMessages = useChatStore((s) => s.setMessages);
+  const setContextUsage = useChatStore((s) => s.setContextUsage);
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
@@ -450,18 +455,16 @@ export function PatientChatPage() {
 
   useEffect(() => {
     if (!sessionId || !hash) return;
-    const existing = store.sessions[sessionId]?.messages?.length;
+    // Non-reactive read: session changes must not re-run this loader.
+    const existing = useChatStore.getState().sessions[sessionId]?.messages?.length;
     if (existing) return;
     api.getMessages(sessionId, 50).then((r) => {
-      const msgs = r.messages.map((m) => ({
-        id: crypto.randomUUID(),
-        role: m.role,
-        text: m.content,
-      }));
-      if (msgs.length > 0) store.setMessages(sessionId, msgs);
+      // #461: single wire→UI mapper.
+      const msgs = mapWireMessages(r.messages);
+      if (msgs.length > 0) setMessages(sessionId, msgs);
     }).catch(() => {});
     api.getContextUsage(sessionId).then((u) => {
-      store.setContextUsage(sessionId, {
+      setContextUsage(sessionId, {
         historyTokens: u.history_tokens,
         historyBudget: u.history_budget,
         historyTurns: u.history_turns,
@@ -469,7 +472,7 @@ export function PatientChatPage() {
         willCompact: u.will_compact,
       });
     }).catch(() => {});
-  }, [sessionId, hash, store]);
+  }, [sessionId, hash, setMessages, setContextUsage]);
 
   useEffect(() => {
     const el = bottomRef.current;
@@ -485,7 +488,7 @@ export function PatientChatPage() {
     const text = input.trim();
     setInput('');
     setError(null);
-    await store.sendMessage(sessionId, {
+    await sendMessage(sessionId, {
       text,
       sessionId,
       patientHash: hash || null,
@@ -494,7 +497,7 @@ export function PatientChatPage() {
     });
   };
 
-  const handleStop = () => store.stopStream(sessionId);
+  const handleStop = () => stopStream(sessionId);
 
   const toggleSkill = (name: string) => {
     setActiveSkills((prev) => prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name]);
@@ -549,58 +552,21 @@ export function PatientChatPage() {
   return (
     <div className="flex h-full flex-col">
       <PatientTabs hash={hash} active="chat" />
-      {messages.length === 0 && (
-        <div className="flex flex-1 items-center justify-center px-6 text-center">
-          <div>
-            <p className="text-lg text-text-tertiary">{t('chat.startConversation')}</p>
-            <p className="text-sm text-text-tertiary">{t('chat.contextHint')}</p>
-          </div>
-        </div>
-      )}
       <main className="flex-1 overflow-y-auto px-4 py-6">
-        <div className="mx-auto max-w-3xl space-y-4">
-          {messages.map((m) => (
-            <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[85%] rounded-md px-4 py-3 text-sm leading-relaxed ${
-                m.role === 'user'
-                  ? 'bg-accent text-white'
-                  : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
-              }`}>
-                {m.tier && <div className="mb-1 text-xs opacity-70">Tier: {m.tier}</div>}
-                {m.reasoning && (
-                  <details className="mb-2" open>
-                    <summary className="cursor-pointer text-xs text-text-tertiary">{t('chat.reasoning')}</summary>
-                    <div className="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-border pl-3 text-xs leading-relaxed text-text-secondary">
-                      {m.reasoning.slice(0, 30000)}
-                      {m.reasoning.length > 30000 ? '…' : ''}
-                    </div>
-                  </details>
-                )}
-                {m.citations && m.citations.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {m.citations.map((c, i) => (
-                      <span key={i} className="inline-flex rounded-full bg-surface px-2 py-0.5 text-xs text-text-tertiary border border-border">
-                        {c.source ? `[${c.source}] ` : ''}{c.text.slice(0, 60)}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {m.toolCalls && m.toolCalls.length > 0 && <ToolCalls calls={m.toolCalls} />}
-                  {m.chart && (
-                    <img
-                      src={m.chart.url}
-                      alt="chart"
-                      className="mt-2 max-h-72 rounded-lg border border-border"
-                    />
-                  )}
-                  <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
-                {m.isStreaming ? (
-                  <span role="status" aria-label={t('chat.streaming')} className="animate-pulse">●</span>
-                ) : null}
+        <div className="mx-auto max-w-3xl">
+          <ChatMessages
+            variant="compact"
+            messages={messages}
+            bottomRef={bottomRef}
+            emptyState={
+              <div className="flex flex-1 items-center justify-center px-6 text-center">
+                <div>
+                  <p className="text-lg text-text-tertiary">{t('chat.startConversation')}</p>
+                  <p className="text-sm text-text-tertiary">{t('chat.contextHint')}</p>
+                </div>
               </div>
-            </div>
-          ))}
-          <div ref={bottomRef} />
+            }
+          />
         </div>
       </main>
       {error && (

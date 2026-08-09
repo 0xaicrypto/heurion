@@ -1,5 +1,4 @@
 import { createExecutionPlaneService, type ExecutionJobStatus } from '../execution/execution-plane.service.js'
-import { handleSidecarRequest, type ChatHistoryMessage } from '../execution/sidecar-chat-handler.js'
 import { buildPayload, matchIntent, type PayloadBuildInput } from './plugin-capability.service.js'
 import { buildInputSummary, recordPluginInvocation } from './plugin-audit-log.service.js'
 
@@ -11,7 +10,7 @@ export interface PluginChatHandlerOptions {
   text: string
   patient?: PayloadBuildInput['patient']
   /** Prior conversation messages in this session, injected as context. */
-  history?: ChatHistoryMessage[]
+  history?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
   telemetryContext?: { userId: string; workspaceId?: string; action: string }
   send: (event: Record<string, unknown>) => void
 }
@@ -56,27 +55,12 @@ export async function handlePluginChatRequest(options: PluginChatHandlerOptions)
 
   const match = await matchIntent(userId, text)
   if (!match) {
-    send({ type: 'thought', text: '没有匹配到已安装的插件，尝试使用内置渲染引擎…' })
-    const sidecarResult = await handleSidecarRequest({
-      userId,
-      workspaceId,
-      text,
-      patient,
-      history,
-      telemetryContext,
-    })
+    // #451: the hard-coded sidecar path is gone — all rendering goes through
+    // installable plugins. Tell the user what to do instead of silently
+    // falling back to an uninstallable built-in.
+    send({ type: 'thought', text: '没有匹配到已安装的插件。请在「插件市场」安装官方渲染插件（PPT / Word / 表格 / 图表）后重试。' })
     return {
-      text: sidecarResult.text,
-      job: sidecarResult.job,
-      file: sidecarResult.file
-        ? {
-            fileId: sidecarResult.file.fileId,
-            fileName: sidecarResult.file.fileName,
-            mimeType: sidecarResult.file.mimeType,
-            downloadUrl: sidecarResult.file.downloadUrl,
-            expiresIn: sidecarResult.file.expiresIn,
-          }
-        : undefined,
+      text: '没有找到可以处理这个请求的插件。你可以到「插件市场」安装官方渲染插件（heurion/pptx、heurion/docx、heurion/table、heurion/plot、heurion/pdf），安装后我会自动识别你的文档生成需求。',
     }
   }
 

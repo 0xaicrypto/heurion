@@ -1,6 +1,9 @@
 /**
  * Execution Plane client — submits async Sidecar / plugin jobs to the
  * sandbox worker and polls for their status.
+ *
+ * #448: no silent stub in production. The stub is a dev/test affordance;
+ * in production a missing worker configuration fails loudly on enqueue.
  */
 
 export interface ExecutionJob {
@@ -32,16 +35,32 @@ export interface ExecutionPlaneService {
   getDownloadUrl(fileId: string): Promise<FileDownloadUrl | null>
 }
 
-const WORKER_URL = process.env.EXECUTION_PLANE_URL?.replace(/\/$/, '')
-const WORKER_TOKEN = process.env.WORKER_API_TOKEN
+function isDev(): boolean {
+  const env = process.env.NODE_ENV || 'development'
+  return env === 'development' || env === 'test'
+}
+
+// #448/#441: env read lazily per call (no import-time snapshot).
+function workerUrl(): string | undefined {
+  return process.env.EXECUTION_PLANE_URL?.replace(/\/$/, '')
+}
+
+function workerToken(): string | undefined {
+  return process.env.WORKER_API_TOKEN
+}
 
 class HttpExecutionPlaneService implements ExecutionPlaneService {
   async enqueue(job: ExecutionJob): Promise<ExecutionJobStatus> {
-    const res = await fetch(`${WORKER_URL}/api/v1/jobs`, {
+    const url = workerUrl()
+    const token = workerToken()
+    if (!url || !token) {
+      throw new Error('Execution Plane is not configured (EXECUTION_PLANE_URL / WORKER_API_TOKEN missing)')
+    }
+    const res = await fetch(`${url}/api/v1/jobs`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-worker-token': WORKER_TOKEN!,
+        'x-worker-token': token,
       },
       body: JSON.stringify({
         type: job.type,
@@ -60,8 +79,13 @@ class HttpExecutionPlaneService implements ExecutionPlaneService {
   }
 
   async getStatus(jobId: string): Promise<ExecutionJobStatus | null> {
-    const res = await fetch(`${WORKER_URL}/api/v1/jobs/${jobId}`, {
-      headers: { 'x-worker-token': WORKER_TOKEN! },
+    const url = workerUrl()
+    const token = workerToken()
+    if (!url || !token) {
+      throw new Error('Execution Plane is not configured (EXECUTION_PLANE_URL / WORKER_API_TOKEN missing)')
+    }
+    const res = await fetch(`${url}/api/v1/jobs/${jobId}`, {
+      headers: { 'x-worker-token': token },
     })
     if (res.status === 404) return null
     if (!res.ok) {
@@ -72,8 +96,13 @@ class HttpExecutionPlaneService implements ExecutionPlaneService {
   }
 
   async getDownloadUrl(fileId: string): Promise<FileDownloadUrl | null> {
-    const res = await fetch(`${WORKER_URL}/api/v1/files/${fileId}/download`, {
-      headers: { 'x-worker-token': WORKER_TOKEN! },
+    const url = workerUrl()
+    const token = workerToken()
+    if (!url || !token) {
+      throw new Error('Execution Plane is not configured (EXECUTION_PLANE_URL / WORKER_API_TOKEN missing)')
+    }
+    const res = await fetch(`${url}/api/v1/files/${fileId}/download`, {
+      headers: { 'x-worker-token': token },
     })
     if (res.status === 404) return null
     if (!res.ok) {
@@ -88,6 +117,8 @@ class StubExecutionPlaneService implements ExecutionPlaneService {
   private jobs: Map<string, ExecutionJobStatus> = new Map()
 
   async enqueue(job: ExecutionJob): Promise<ExecutionJobStatus> {
+    // #448: explicit warning — a stub completion is NOT a real render.
+    console.warn(`[execution-plane] STUB enqueue (${job.type}) — worker not configured; this is NOT a real render.`)
     const id = `job_stub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     const status: ExecutionJobStatus = {
       job_id: id,
@@ -109,7 +140,12 @@ class StubExecutionPlaneService implements ExecutionPlaneService {
 }
 
 export function createExecutionPlaneService(): ExecutionPlaneService {
-  if (WORKER_URL && WORKER_TOKEN) {
+  // #448: the stub is dev/test ONLY — production without a worker must fail
+  // loudly at the first enqueue (HTTP service throws), never fake success.
+  if (!isDev() && !(workerUrl() && workerToken())) {
+    console.warn('[execution-plane] PRODUCTION without EXECUTION_PLANE_URL/WORKER_API_TOKEN — plugin renders will fail loudly.')
+  }
+  if (workerUrl() && workerToken()) {
     return new HttpExecutionPlaneService()
   }
   return new StubExecutionPlaneService()

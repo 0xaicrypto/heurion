@@ -135,3 +135,7 @@ screenshots/
 # ─── Production deploy artifacts (generated at build time) ─────────────
 dist/
 packages/server-ts/.env
+
+# Python bytecode caches
+__pycache__/
+*.pyc

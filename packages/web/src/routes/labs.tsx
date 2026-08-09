@@ -111,11 +111,9 @@ export function LabsPage() {
     setViewingFile(fileId);
     setViewLoading(true);
     try {
-      const res = await fetch(`/api/v1/files/${fileId}/content`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('nexus.auth.token')}` },
-      });
-      const data = await res.json();
-      setFileContent(data.content || data.findings?.map((f: any) => f.content).join('\n') || '');
+      // #462: auth handled centrally by the api layer (was raw fetch + manual Bearer).
+      const data = await api.getFileContent(fileId);
+      setFileContent((data.content as string) || (data.findings as any[])?.map((f: any) => f.content).join('\n') || '');
     } catch {
       setFileContent('Failed to load file content');
     } finally {

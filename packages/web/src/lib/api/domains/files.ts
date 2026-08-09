@@ -1,9 +1,8 @@
-import { MemoryApi } from './memory.js';
+import { ApiCore, ApiError } from './core.js';
 
 
-import { ApiError } from './core.js';
 
-export class FilesApi extends MemoryApi {
+export class FilesApi extends ApiCore {
   /* ────────────────────────── files ────────────────────────── */
 
   async uploadFile(file: File, patientHash?: string): Promise<{ file_id: string; name: string; mime: string; size_bytes: number }> {
@@ -18,6 +17,11 @@ export class FilesApi extends MemoryApi {
       throw new ApiError(r.status, text || r.statusText, '/api/v1/files/upload');
     }
     return r.json();
+  }
+
+  /** #462: extracted from labs.tsx raw fetch — auth header handled centrally. */
+  async getFileContent(fileId: string): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>(`/api/v1/files/${fileId}/content`);
   }
 
 }

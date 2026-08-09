@@ -5,7 +5,7 @@ import { api, ApiError } from '@/lib/api';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 
 interface MemoryNode {
-  node_id: number;
+  node_id: string;
   node_type: string;
   content: unknown;
   weight?: number;
@@ -87,7 +87,7 @@ export function MemoryGraphPage() {
     loadData();
   }, [loadData]);
 
-  const handleCite = (nodeId: number) => {
+  const handleCite = (nodeId: string) => {
     navigator.clipboard.writeText(String(nodeId)).catch(() => {});
   };
 

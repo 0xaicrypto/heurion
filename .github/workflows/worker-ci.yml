@@ -1,0 +1,61 @@
+# Worker CI — execution plane (packages/worker).
+#
+# Runs on PRs and pushes to main that touch packages/worker (or the shared
+# contracts package the worker imports). Verifies:
+#   - TypeScript compiles
+#   - Generator/handler tests pass
+#   - Contracts build (dist is committed, but rebuilds catch drift)
+
+name: Worker CI
+
+on:
+  pull_request:
+    paths:
+      - 'packages/worker/**'
+      - 'packages/contracts/**'
+      - '.github/workflows/worker-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/worker/**'
+      - 'packages/contracts/**'
+      - '.github/workflows/worker-ci.yml'
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '10'
+
+jobs:
+  build-and-test:
+    name: Build + test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: packages/worker/pnpm-lock.yaml
+
+      - name: Build shared contracts (drift guard)
+        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm exec tsc --noEmit
+
+      - name: Test
+        run: pnpm exec vitest run --testTimeout=20000

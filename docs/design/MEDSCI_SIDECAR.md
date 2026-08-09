@@ -323,7 +323,7 @@ DigitalOcean 没有独立的托管 Secrets Manager。推荐按以下优先级：
 
 | 模块 | 集成方式 |
 |---|---|
-| `packages/server/nexus_server/tools_*.py` | 新增 `tools_sidecar.py`，封装对 Sidecar 的调用 |
+| `packages/server-ts/src/tools/`（BaseTool 体系） | 在 `src/tools/` 增加 sidecar 工具（封装对 Execution Plane 的调用） |
 | `packages/server-ts/src/modules/skills/skills.router.ts` | 新增 `official/medsci-sidecar` skill |
 | `packages/server-ts/src/modules/chat/user-context.ts` | system prompt 注入 Sidecar 路由规则 |
 | `packages/server-ts/src/modules/stubs/stubs.router.ts` | `/api/v1/sandbox/execute` 可扩展为通用 plugin 代理 |

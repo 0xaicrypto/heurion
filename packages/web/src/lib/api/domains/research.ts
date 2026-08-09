@@ -1,9 +1,8 @@
-import { AdminApi } from './admin.js';
+import { ApiCore, ApiError } from './core.js';
 
 
-import { ApiError } from './core.js';
 
-export class ResearchApi extends AdminApi {
+export class ResearchApi extends ApiCore {
   /* ────────────────────────── research ────────────────────────── */
 
   async listStudies(): Promise<Array<{study_id: string; display_name: string; status: string; short_code?: string; study_type?: 'clinical' | 'basic'; created_at: string}>> {
@@ -144,6 +143,11 @@ export class ResearchApi extends AdminApi {
 
   async getProtocolRules(studyId: string): Promise<{rules: Array<{id: string; category: string; rule: string; confirmed: boolean}>; status: {total: number; confirmed: number; pending: number; rejected: number}}> {
     return this.fetch(`/api/v1/research/studies/${studyId}/protocol-rules`);
+  }
+
+  /** #462: extracted from research-detail.tsx raw fetch. */
+  async deleteProtocolRule(studyId: string, ruleId: string): Promise<void> {
+    return this.fetch(`/api/v1/research/studies/${studyId}/protocol-rules/${ruleId}`, { method: 'DELETE' });
   }
 
   async importProtocolFile(studyId: string, file: File): Promise<{

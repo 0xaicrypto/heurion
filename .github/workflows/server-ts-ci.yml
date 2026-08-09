@@ -59,6 +59,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build shared contracts (drift guard)
+        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
+
       - name: Generate Prisma client
         run: pnpm exec prisma generate
 
@@ -68,7 +71,7 @@ jobs:
       - name: Run unit tests (tests/unit, no DB/IO)
         # timeout guards against runner-level hangs (observed: job stuck at
         # 15m while the same suite runs in ~10s locally) — fails loudly.
-        run: timeout 240 pnpm exec vitest run tests/unit --testTimeout=20000
+        run: timeout 240 pnpm exec vitest run tests/unit tests/integration --testTimeout=20000
 
   build-and-test:
     name: Build + Phase 0 regression
@@ -95,6 +98,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build shared contracts (drift guard)
+        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
+
       - name: Generate Prisma client
         run: pnpm exec prisma generate
 
@@ -104,7 +110,10 @@ jobs:
       - name: TypeScript build
         run: pnpm run build
 
-      - name: Run Phase 0 regression tests
+      - name: Run regression tests
+        # Phase 0 + architecture-optimization suites (#436-#461): LLM
+        # gateway, stats engine, plugin lifecycle, sidecar content
+        # guarantee, chart tokens, router classification.
         run: |
           pnpm exec vitest run \
             tests/e2e/medical-record-entry.test.ts \
@@ -114,4 +123,17 @@ jobs:
             tests/e2e/imaging-ingestion.test.ts \
             tests/unit/ai-provider.test.ts \
             tests/e2e/protocol-ingestion.test.ts \
-            tests/unit/local-embedding.test.ts
+            tests/unit/local-embedding.test.ts \
+            tests/unit/provider-runtime.test.ts \
+            tests/unit/stats-engine.test.ts \
+            tests/unit/bioscene.test.ts \
+            tests/unit/context-budget.test.ts \
+            tests/unit/episode-isolation.test.ts \
+            tests/unit/llm-telemetry.test.ts \
+            tests/e2e/plugin.test.ts \
+            tests/e2e/sidecar-content.test.ts \
+            tests/e2e/sidecar-metadata.test.ts \
+            tests/e2e/chart-download.test.ts \
+            tests/e2e/render-chart.test.ts \
+            tests/integration/sidecar-chat-context.test.ts \
+            tests/unit/query-router.test.ts

@@ -1,20 +1,20 @@
-import { BrainApi } from './brain.js';
+import { ApiCore } from './core.js';
 import type { MemoryProjection } from '../../types';
 
-export class MemoryApi extends BrainApi {
+export class MemoryApi extends ApiCore {
   /* ────────────────────────── memory ────────────────────────── */
 
   async getMemoryProjection(patientHash: string): Promise<MemoryProjection> {
     return this.fetch<MemoryProjection>(`/api/v1/memory/patient/${patientHash}/projection`);
   }
 
-  async getFindings(patientHash: string): Promise<Array<{node_id: number; node_type: string; content: unknown; weight?: number; encounter_id?: string; updated_at?: number}>> {
-    const r = await this.fetch<{findings: Array<{node_id: number; node_type: string; content: unknown; weight?: number; encounter_id?: string; updated_at?: number}>}>(`/api/v1/memory/patient/${patientHash}/findings`);
+  async getFindings(patientHash: string): Promise<Array<{node_id: string; node_type: string; content: unknown; weight?: number; encounter_id?: string; updated_at?: number}>> {
+    const r = await this.fetch<{findings: Array<{node_id: string; node_type: string; content: unknown; weight?: number; encounter_id?: string; updated_at?: number}>}>(`/api/v1/memory/patient/${patientHash}/findings`);
     return r.findings || [];
   }
 
-  async getMedications(patientHash: string): Promise<Array<{node_id: number; node_type: string; content: unknown; weight?: number; encounter_id?: string; updated_at?: number}>> {
-    const r = await this.fetch<{medications: Array<{node_id: number; node_type: string; content: unknown; weight?: number; encounter_id?: string; updated_at?: number}>}>(`/api/v1/memory/patient/${patientHash}/medications`);
+  async getMedications(patientHash: string): Promise<Array<{node_id: string; node_type: string; content: unknown; weight?: number; encounter_id?: string; updated_at?: number}>> {
+    const r = await this.fetch<{medications: Array<{node_id: string; node_type: string; content: unknown; weight?: number; encounter_id?: string; updated_at?: number}>}>(`/api/v1/memory/patient/${patientHash}/medications`);
     return r.medications || [];
   }
 

@@ -8,7 +8,7 @@ function envBool(value: string | undefined, defaultVal: boolean): boolean {
 
 function loadConfig(): EmbeddingConfig & { host: string; port: number } {
   return {
-    model: process.env.EMBEDDING_MODEL || 'Xenova/bge-small-en-v1.5',
+    model: process.env.EMBEDDING_MODEL || 'BAAI/bge-m3',
     batchSize: parseInt(process.env.EMBEDDING_BATCH_SIZE || '32', 10),
     normalize: envBool(process.env.EMBEDDING_NORMALIZE, true),
     device: resolveDevice(process.env.EMBEDDING_DEVICE),

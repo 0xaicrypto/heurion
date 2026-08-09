@@ -1,12 +1,5 @@
 import { useTranslation } from 'react-i18next';
-
-export interface ContextUsage {
-  historyTokens: number;
-  historyBudget: number;
-  historyTurns: number;
-  omittedTurns: number;
-  willCompact: boolean;
-}
+import type { ChatContextUsage as ContextUsage } from '@/lib/types';
 
 /**
  * U3 — context budget indicator. Shows history-token usage vs the budget so

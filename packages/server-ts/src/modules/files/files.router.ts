@@ -219,6 +219,21 @@ export async function filesRouter(app: FastifyInstance) {
     return { files: result, total: result.length }
   })
 
+  // ── Chat file picker (#440, moved from stubs.router) ──
+  app.get('/api/v1/chat/files', async (request: any) => {
+    const userId = request.user!.userId
+    const files = await (prisma as any).fileIndex.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    }).catch(() => [])
+    return { files: files.map((f: any) => ({
+      file_id: f.fileId, name: f.name, mime_type: f.mimeType,
+      size_bytes: f.sizeBytes, patient_hash: f.patientHash,
+      created_at: f.createdAt,
+    })) }
+  })
+
   // ── File content preview (Labs page) ──
   app.get('/api/v1/files/:fileId/content', async (request, reply) => {
     const { fileId } = request.params as any
@@ -336,21 +351,34 @@ app.get('/api/v1/files/download/:fileId', async (request, reply) => {
 
 }
 
-// Generated-chart download tokens (#176/#213): <img src> cannot send an
-// Authorization header, so render_chart issues a short-lived query token
-// bound to the file AND its owner (no fileIndex dependency — that model
-// does not exist in the schema).
-const chartTokens = new Map<string, { token: string; exp: number; userId: string }>()
+// Generated-chart/scene download tokens (#176/#213/#440): <img src> cannot
+// send an Authorization header, so render tools issue a self-contained,
+// stateless query token bound to the file AND its owner. HMAC-signed (no
+// memory Map): survives server restarts; expiry is embedded in the token.
+const CHART_TOKEN_SECRET = process.env.CHART_TOKEN_SECRET || process.env.SERVER_SECRET || 'dev-secret-key'
+const CHART_TOKEN_TTL_MS = parseInt(process.env.CHART_TOKEN_TTL_MS || (90 * 24 * 3600 * 1000).toString(), 10)
 
-export function issueChartToken(fileId: string, userId: string, ttlMs = 24 * 3600 * 1000): string {
-  const token = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`
-  chartTokens.set(fileId, { token, exp: Date.now() + ttlMs, userId })
-  return token
+function signChartToken(fileId: string, userId: string, exp: number): string {
+  return crypto.createHmac('sha256', CHART_TOKEN_SECRET)
+    .update(`${fileId}\n${exp}\n${userId}`)
+    .digest('base64url')
+}
+
+export function issueChartToken(fileId: string, userId: string, ttlMs = CHART_TOKEN_TTL_MS): string {
+  const exp = Date.now() + ttlMs
+  return `${exp.toString(36)}.${Buffer.from(userId).toString('base64url')}.${signChartToken(fileId, userId, exp)}`
 }
 
 export function verifyChartToken(fileId: string, token: string): string | null {
-  const entry = chartTokens.get(fileId)
-  if (!entry) return null
-  if (Date.now() > entry.exp) { chartTokens.delete(fileId); return null }
-  return entry.token === token ? entry.userId : null
+  const [expB36, userIdB64, sig] = token.split('.')
+  if (!expB36 || !userIdB64 || !sig) return null
+  const exp = parseInt(expB36, 36)
+  if (!Number.isFinite(exp) || Date.now() > exp) return null
+  const userId = Buffer.from(userIdB64, 'base64url').toString()
+  const expected = signChartToken(fileId, userId, exp)
+  const a = Buffer.from(sig)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length) return null
+  if (!crypto.timingSafeEqual(a, b)) return null
+  return userId
 }

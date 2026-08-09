@@ -78,6 +78,24 @@ export interface LlmUpdateResult {
  */
 export type { UserProfile, VerificationPurpose } from '@heurion/sdk';
 
+/**
+ * #438: chat wire contracts (SSE events / wire message / retrieval tool
+ * names) moved to @heurion/contracts — single source of truth shared with
+ * the backend producer.
+ */
+export type {
+  ChatStreamChunk,
+  ChatWireMessage,
+  ContextUsage,
+  MemoryHit,
+  Citation,
+  ToolCallRecord,
+  SidecarFileInfo,
+  ChatEventType,
+  RetrievalTool,
+} from '@heurion/contracts';
+export { RETRIEVAL_TOOLS } from '@heurion/contracts';
+
 export interface Patient {
   patient_hash: string;
   name?: string;
@@ -323,16 +341,6 @@ export interface MemoryProjection {
   medical_record?: MedicalRecordSummary | null;
 }
 
-export interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
-  sync_id?: string;
-  attachments?: unknown[];
-  message_kind?: string;
-  metadata?: Record<string, unknown>;
-}
-
 export interface AdminUser {
   user_id: string;
   username: string;
@@ -407,31 +415,32 @@ export interface SendChatOptions {
   skills?: string[];
 }
 
-export type ChatStreamChunk =
-  | { type: 'turn_started'; event_idx: number; patient_hash: string | null }
-  | { type: 'context_usage'; history_tokens: number; history_budget: number; history_turns: number; omitted_turns: number; will_compact: boolean }
-  | { type: 'compaction_started' }
-  | { type: 'compaction_chunk'; text: string }
-  | { type: 'doc_updated'; body: string; summary?: string }
-  | { type: 'chart_created'; url: string; markdown?: string; chart_type?: string }
-  | { type: 'compaction_completed'; history_tokens?: number; history_budget?: number; history_turns?: number }
-  | { type: 'tier_classified'; tier: 'T1' | 'T2' | 'T3'; view_kind?: string; anchor?: string }
-  | { type: 'context_info'; text: string; kind?: string }
-  | { type: 'reasoning_chunk'; text: string }
-  | { type: 'tool_call'; tool: string; args: Record<string, unknown> }
-  | { type: 'subagent_started'; task: string }
-  | { type: 'subagent_done'; task: string; success: boolean }
-  | { type: 'memory_hits'; count: number; hits: Array<{ content: string; type: string; id: string }> }
-  | { type: 'thought'; text: string }
-  | { type: 'search_query'; query: string }
-  | { type: 'search_results_summary'; text: string }
-  | { type: 'image_attached'; url?: string; study_id?: string; caption?: string }
-  | { type: 'sidecar_file'; file_id: string; file_name: string; mime_type: string; download_url: string; expires_in: number; knowledge_payload?: { title: string; content: string } }
-  | { type: 'final_answer_chunk'; text: string }
-  | { type: 'citations'; items: { text: string; source?: string }[] }
-  | { type: 'skill_capture_suggest'; text: string }
-  | { type: 'turn_complete'; assistant_event_idx?: number }
-  | { type: 'error'; message: string };
+/**
+ * #459: UI-facing context-budget shape (camelCase) — single declaration
+ * shared by stores/chat.ts and ContextUsageIndicator. The wire snake_case
+ * shape lives in @heurion/contracts (ContextUsage).
+ */
+export interface ChatContextUsage {
+  historyTokens: number;
+  historyBudget: number;
+  historyTurns: number;
+  omittedTurns: number;
+  willCompact: boolean;
+}
+
+/** #459: typed /api/v1/memory/health response (was Promise<any>). */
+export interface MemoryHealthResponse {
+  generated_at: string;
+  acceptance: {
+    approved: number;
+    rejected: number;
+    rate: number | null;
+    by_category: Array<{ category: string; accepted: number; rejected: number; rate: number }>;
+  };
+  contradictions_7d: number;
+  stale: { pending_over_7d: number; high_importance_pinned: number; archived: number };
+  scale: { facts: number; articles: number; open_gaps: number; pending: number; episodes: number };
+}
 
 /* ────────────────────────── submission workflow (#362) ────────── */
 

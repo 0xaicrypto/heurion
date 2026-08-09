@@ -83,12 +83,25 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
       return est > 2000 ? { passed: false, violations: [`Too long (${est} tokens)`], score: 0.5 } : { passed: true, violations: [], score: 1 }
     },
   })
+  // #439: sync the embedding index when nodes are deleted/superseded.
+  // EmbeddingService is lazy (embedding-index file per user under baseDir).
   const memory = new MemoryService({
     eventLog,
     baseDir,
     legacyFacts: facts,
     legacyKnowledge: knowledge,
     ownerId: userId,
+    onNodeRemoved: (stableId, type) => {
+      // #439: embedding vectors are removed lazily & best-effort — the
+      // index file may not exist (no approved embeddings yet).
+      void import('../../memory/embedding-index.js').then(({ EmbeddingIndex }) => {
+        try {
+          if (type !== 'fact' && type !== 'article') return
+          const base = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId)
+          new EmbeddingIndex(base).remove(stableId, type)
+        } catch { /* best-effort */ }
+      }).catch(() => {})
+    },
   })
   const orchestrator = new ChatOrchestrator(eventLog, facts, episodes, skills, knowledge, contracts, telemetry, memory)
   const ctx = { eventLog, facts, episodes, skills, knowledge, memory, orchestrator, lastAccess: Date.now() }

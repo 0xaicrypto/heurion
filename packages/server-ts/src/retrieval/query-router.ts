@@ -66,14 +66,6 @@ export function classifyQuery(query: string): QueryIntent {
     return 'file'
   }
 
-  // Sidecar / document rendering — generate DOCX/PPTX/table/plot
-  const sidecarPatterns = [
-    /(病例总结|case summary|出院小结|discharge summary|研究报告|research report)/,
-    /(生成|创建|制作|做|生成一个|给我|导出|export|create|make|generate).*(docx|word|pptx|ppt|powerpoint|幻灯片|表格|table|图表|chart|plot|图)/,
-    /(docx|word|pptx|ppt|powerpoint|幻灯片|表格|table|图表|chart|plot|图).*?(生成|创建|制作|做|给我|导出|create|make|generate)/,
-  ]
-  if (sidecarPatterns.some(p => p.test(q))) return 'sidecar'
-
   // SQL — patient demographic queries
   const hasDemographic = /(年龄|性别|名字|姓名|主诉|多大|叫什么|age|sex|name|gender)/i.test(q)
   const hasPatientRef = /(患者|patient|的年龄|的性别|的名字|的姓名)/i.test(q)
@@ -90,6 +82,23 @@ export function classifyQuery(query: string): QueryIntent {
 
   // Default — mixed: try SQL first, then vector
   return 'mixed'
+}
+
+/**
+ * #452 — render-intent keyword fallback (moved out of classifyQuery).
+ * Only consulted AFTER the plugin trigger matcher: a user with rendering
+ * plugins installed is routed via their plugin triggers; this keyword layer
+ * exists so render requests are still recognized when no renderer plugin is
+ * installed yet (the plugin handler then guides the user to the marketplace).
+ */
+export function classifySidecarIntent(text: string): boolean {
+  const q = text.toLowerCase()
+  const sidecarPatterns = [
+    /(病例总结|case summary|出院小结|discharge summary|研究报告|research report)/,
+    /(生成|创建|制作|做|生成一个|给我|导出|export|create|make|generate).*(docx|word|pptx|ppt|powerpoint|幻灯片|表格|table|图表|chart|plot|图)/,
+    /(docx|word|pptx|ppt|powerpoint|幻灯片|表格|table|图表|chart|plot|图).*?(生成|创建|制作|做|给我|导出|create|make|generate)/,
+  ]
+  return sidecarPatterns.some((p) => p.test(q))
 }
 
 /**

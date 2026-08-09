@@ -1,7 +1,11 @@
 import type { PublicConfig } from '../../types';
+import { useAuthStore } from '@/stores/auth';
 
 export const CLIENT_API_VERSION = 1;
 
+// #460: auth is single-sourced in the zustand persist store (nexus-auth).
+// These keys are kept only for backward-compat reads by legacy call sites
+// (labs.tsx / research-detail.tsx still read them directly).
 const STORAGE_KEY_TOKEN = 'nexus.auth.token';
 const STORAGE_KEY_USER_ID = 'nexus.auth.user_id';
 const STORAGE_KEY_DISPLAY_NAME = 'nexus.auth.display_name';
@@ -48,38 +52,53 @@ export class ApiError extends Error {
 }
 
 export class ApiCore {
-  protected token: string | null = storageGet(STORAGE_KEY_TOKEN);
+  /** #460: token is read from the single auth store (zustand persist). */
+  private getTokenFromStore(): string | null {
+    return useAuthStore.getState().token;
+  }
 
   /** #347: persist a fresh auth session (token + user identity). */
   protected storeSession(data: { jwt_token: string; user_id: string; display_name: string }) {
-    this.token = data.jwt_token;
     storageSet(STORAGE_KEY_TOKEN, data.jwt_token);
     storageSet(STORAGE_KEY_USER_ID, data.user_id);
     storageSet(STORAGE_KEY_DISPLAY_NAME, data.display_name);
+    useAuthStore.getState().setSession({
+      token: data.jwt_token,
+      userId: data.user_id,
+      role: 'user',
+      displayName: data.display_name,
+      expiresInSeconds: 0,
+    });
   }
 
   setToken(t: string | null) {
-    this.token = t;
-    if (t) storageSet(STORAGE_KEY_TOKEN, t);
-    else storageRemove(STORAGE_KEY_TOKEN);
+    if (t) {
+      storageSet(STORAGE_KEY_TOKEN, t);
+      useAuthStore.setState({ token: t, isAuthenticated: true });
+    } else {
+      storageRemove(STORAGE_KEY_TOKEN);
+      useAuthStore.getState().clearSession();
+    }
   }
 
-  hasToken() { return this.token !== null; }
-  getToken() { return this.token; }
+  hasToken() { return this.getTokenFromStore() !== null; }
+  getToken() { return this.getTokenFromStore() || storageGet(STORAGE_KEY_TOKEN); }
   getClientApiVersion() { return CLIENT_API_VERSION; }
 
+  /** #460: clear everything (store + legacy keys) in ONE place. */
   logout() {
-    this.token = null;
     storageRemove(STORAGE_KEY_TOKEN);
     storageRemove(STORAGE_KEY_USER_ID);
     storageRemove(STORAGE_KEY_DISPLAY_NAME);
+    useAuthStore.getState().clearSession();
   }
 
   protected headers(extra?: HeadersInit): Headers {
     const h = new Headers(extra);
     h.set('Accept', 'application/json');
     h.set('X-Nexus-Api-Version', String(CLIENT_API_VERSION));
-    if (this.token) h.set('Authorization', `Bearer ${this.token}`);
+    const token = this.getTokenFromStore() || storageGet(STORAGE_KEY_TOKEN);
+    if (token) h.set('Authorization', `Bearer ${token}`);
     return h;
   }
 

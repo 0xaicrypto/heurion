@@ -1,4 +1,4 @@
-import { PluginsApi } from './plugins.js';
+import { ApiCore } from './core.js';
 import type {
   JournalRecommendation,
   CoverLetterResult,
@@ -7,7 +7,7 @@ import type {
 } from '../../types';
 
 /** #362: submission workflow — journals, cover letter, templates, drafts. */
-export class SubmissionApi extends PluginsApi {
+export class SubmissionApi extends ApiCore {
   async recommendJournals(input: { title: string; abstract?: string; limit?: number }): Promise<{ journals: JournalRecommendation[]; message?: string }> {
     return this.fetch('/api/v1/submission/recommend-journals', { method: 'POST', body: JSON.stringify(input) });
   }

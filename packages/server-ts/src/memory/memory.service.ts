@@ -32,6 +32,9 @@ export interface MemoryServiceOptions {
   legacyKnowledge: KnowledgeStore
   ownerId: string
   policy?: CurationPolicy
+  /** #439: invoked after a node is superseded/deleted so the caller can sync
+   *  derived indexes (e.g. embedding vectors) with the graph commit. */
+  onNodeRemoved?: (stableId: string, type: string) => void
 }
 
 function hashContent(content: string): string {
@@ -68,7 +71,11 @@ export class MemoryService {
     this.curation = new CurationEngine(this.graph, this.policy)
     this.legacyProjection = new LegacyProjection(this.legacyFacts, this.legacyKnowledge, this.graph)
     this.propagation = new PropagationCoordinator(this.legacyProjection, this.graph)
+    this.onNodeRemoved = opts.onNodeRemoved
   }
+
+  /** #439: derived-index sync hook (embedding vectors etc.). */
+  private onNodeRemoved?: (stableId: string, type: string) => void
 
   // ── Fact API ─────────────────────────────────────────────────
 
@@ -261,6 +268,9 @@ export class MemoryService {
     this.legacyFacts.commit()
 
     this.commitGraphLast(legacyBefore)
+
+    // #439: keep derived indexes (embedding vectors) in sync with the graph.
+    this.onNodeRemoved?.(stableId, 'fact')
 
     this.appendEvent('memory_fact_deleted', `Deleted fact ${stableId}`, {
       factId: stableId,
@@ -470,6 +480,9 @@ export class MemoryService {
 
     this.commitGraphLast(legacyBefore)
 
+    // #439: keep derived indexes (embedding vectors) in sync with the graph.
+    this.onNodeRemoved?.(stableId, 'article')
+
     this.appendEvent('memory_article_deleted', `Deleted article ${stableId}`, {
       articleId: stableId,
       deletedBy,
@@ -544,6 +557,9 @@ export class MemoryService {
     this.applyPropagationToLegacy(propagation)
 
     this.commitGraphLast(legacyBefore)
+
+    // #439: keep derived indexes (embedding vectors) in sync with the graph.
+    this.onNodeRemoved?.(stableId, 'document')
 
     this.appendEvent('memory_document_deleted', `Deleted document ${stableId}`, {
       documentId: stableId,

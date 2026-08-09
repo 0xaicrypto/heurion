@@ -1,9 +1,8 @@
-import { SkillsApi } from './skills.js';
+import { ApiCore, ApiError } from './core.js';
+import { parseSseStream } from '../../sse';
 
 
-import { ApiError } from './core.js';
-
-export class WritingApi extends SkillsApi {
+export class WritingApi extends ApiCore {
   /* ────────────────────────── writing ────────────────────────── */
 
   async listDocs(): Promise<{docs: Array<{id: string; title: string; updated_at: string; ref_count: number}>}> {
@@ -76,57 +75,8 @@ export class WritingApi extends SkillsApi {
       body: JSON.stringify({ selection, instruction }),
     });
     if (!r.ok || !r.body) throw new ApiError(r.status, await r.text().catch(() => ''), '/polish');
-    const reader = r.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-          const raw = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          for (const line of raw.split('\n')) {
-            if (line.startsWith('data: ')) {
-              try { yield JSON.parse(line.slice(6)); } catch { /* ignore */ }
-            }
-          }
-        }
-      }
-    } finally { try { reader.releaseLock(); } catch { /* ignore */ } }
-  }
-
-  async *sendDocChat(docId: string, message: string, skills?: string[]): AsyncIterable<{type: string; text?: string; reply?: string; doc_body?: string; message?: string}> {
-    const body: Record<string, unknown> = { message };
-    if (skills?.length) body.skills = skills;
-    const r = await fetch(`/api/v1/docs/${docId}/chat`, {
-      method: 'POST',
-      headers: this.headers({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(body),
-    });
-    if (!r.ok || !r.body) throw new ApiError(r.status, await r.text().catch(() => ''), '/doc/chat');
-    const reader = r.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-          const raw = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          for (const line of raw.split('\n')) {
-            if (line.startsWith('data: ')) {
-              try { yield JSON.parse(line.slice(6)); } catch { /* ignore */ }
-            }
-          }
-        }
-      }
-    } finally { try { reader.releaseLock(); } catch { /* ignore */ } }
+    // #457: single SSE parser.
+    yield* parseSseStream<{text: string; done?: boolean}>(r);
   }
 
 }

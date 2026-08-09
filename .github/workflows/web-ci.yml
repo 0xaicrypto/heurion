@@ -59,6 +59,11 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # #CI-fix: the unit/component suite (SSE parser, chat store, chat
+      # surfaces, api composition) must run on every web change.
+      - name: Test
+        run: pnpm exec vitest run --testTimeout=20000
+
       - name: Build
         run: pnpm build
 

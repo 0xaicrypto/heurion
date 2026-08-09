@@ -64,7 +64,7 @@ This RFC defines how to refactor these capabilities into **installable, containe
 └─────────────────────────────┬───────────────────────────────────────┘
                               │ Redis
 ┌─────────────────────────────▼───────────────────────────────────────┐
-│                    Execution Plane (heurion_worker)                  │
+│                    Execution Plane (packages/worker)                  │
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │ Plugin Runner                                                 │  │
 │  │  - poll job                                                   │  │
@@ -385,7 +385,7 @@ The frontend collapses this trace by default and shows a compact "Thinking..." i
 
 ### 7.1 Worker changes
 
-Refactor `packages/server/heurion_worker/consumer.py`:
+Refactor `packages/worker/src/handlers/`（#443：Python consumer 已随迁移删除）:
 
 - Introduce a `PluginRunner` that resolves a job type to a plugin manifest and image.
 - Job type convention: `sidecar.<plugin_id>.<tool_name>`.
@@ -476,7 +476,7 @@ After invocation, stop and remove the container. For built-in plugins we may lat
 Each built-in plugin is a small Python FastAPI service. Example `heurion/plugin-docx`:
 
 ```
-packages/server/plugins/docx/
+packages/worker/src/handlers/（TS 渲染实现，旧 Python 目录已删除）
 ├── Dockerfile
 ├── pyproject.toml
 ├── plugin.manifest.json
@@ -485,7 +485,7 @@ packages/server/plugins/docx/
     └── case_summary.docx
 ```
 
-`main.py` exposes `/health` and `/v1/tools/invoke`, imports the existing generation logic from `heurion_worker`, and uploads the result to S3.
+`main.py` exposes `/health` and `/v1/tools/invoke`, imports the existing generation logic from `packages/worker/src/handlers`, and uploads the result to S3.
 
 This structure also serves as the reference implementation for third-party developers.
 

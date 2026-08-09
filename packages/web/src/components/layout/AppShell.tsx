@@ -4,6 +4,7 @@ import { Brain, Cpu, FileText, FlaskConical, Globe, LayoutDashboard, LogOut, Men
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
+import { api } from '@/lib/api';
 import { Avatar, IconButton } from '@/components/ui';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
@@ -126,11 +127,12 @@ function LanguageMenu() {
 
 function UserMenu() {
   const { t } = useTranslation();
-  const { displayName, role, clearSession } = useAuthStore();
+  const { displayName, role } = useAuthStore();
   const navigate = useNavigate();
 
+  // #460: api.logout() clears BOTH the zustand store and legacy keys.
   const logout = () => {
-    clearSession();
+    api.logout();
     navigate('/login', { replace: true });
   };
 

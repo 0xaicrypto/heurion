@@ -1,6 +1,6 @@
 import { pipeline } from '@xenova/transformers'
 
-const model = process.env.EMBEDDING_MODEL || 'Xenova/bge-small-en-v1.5'
+const model = process.env.EMBEDDING_MODEL || 'BAAI/bge-m3'
 
 pipeline('feature-extraction', model)
   .then(() => {

@@ -1,7 +1,7 @@
-import { FilesApi } from './files.js';
+import { ApiCore } from './core.js';
 import type { AdminUser } from '../../types';
 
-export class AdminApi extends FilesApi {
+export class AdminApi extends ApiCore {
   /* ────────────────────────── admin ────────────────────────── */
 
   async listUsers(): Promise<{ users: AdminUser[] }> {

@@ -83,6 +83,9 @@ describe('BioScene (#408)', () => {
     const out = JSON.parse(res.output!)
     expect(out.file_id).toMatch(/^scene_/)
     expect(fs.existsSync(path.join(tmp, 'u1', 'uploads', out.file_id))).toBe(true)
+    // #440: <img>-friendly download URL — token-first route + auth query token.
+    expect(out.url).toMatch(/^\/api\/v1\/files\/download\/scene_.*\.svg\?token=/)
+    expect(out.markdown).toBe(`![signaling](${out.url})`)
   })
 })
 
