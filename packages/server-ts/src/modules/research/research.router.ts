@@ -62,6 +62,58 @@ export async function researchRouter(app: FastifyInstance) {
     return { ...toStudy(s), description: '' }
   })
 
+  // #12: AI research-progress summary for citations / internal reporting.
+  // Aggregates protocol, enrollment, rule confirmation, safety and
+  // assessment status into a journal-ready paragraph.
+  app.get('/api/v1/research/studies/:studyId/summary', async (request, reply) => {
+    const userId = request.user!.userId
+    const studyId = (request.params as any).studyId
+    const study = await service.getStudy(userId, studyId)
+    if (!study) return reply.status(404).send({ error: 'Study not found' })
+
+    const [roster, rules, safety, assessments] = await Promise.all([
+      service.getRoster(studyId).catch(() => []),
+      getConfirmationStatus(studyId).catch(() => ({ total: 0, confirmed: 0, by_category: {} })),
+      service.getSafetyStatus(studyId).catch(() => ({ triggered_rules: [], open_issues: 0 })),
+      (prisma as any).researchAssessment.findMany({ where: { studyId }, orderBy: { dueAt: 'asc' } }).catch(() => []),
+    ])
+
+    const enrolled = (roster as any[]).filter((r: any) => r.arm).length
+    const pendingAssessments = (assessments as any[]).filter((a: any) => !a.completedAt).length
+    const safetyHits = (safety as any).triggered_rules?.length ?? 0
+
+    const facts = [
+      `研究：${study.name || studyId}（短码 ${study.shortCode || 'N/A'}）`,
+      `协议要点：${String(study.protocol || '').slice(0, 400)}`,
+      `入组：${enrolled} 例（总数 ${(roster as any[]).length}）`,
+      `规则确认：${rules.confirmed}/${rules.total} 条`,
+      `安全状态：触发停止规则 ${safetyHits} 条，未解决问题 ${(safety as any).open_issues ?? 0} 项`,
+      `随访：待完成评估 ${pendingAssessments} 项，总评估 ${(assessments as any[]).length} 项`,
+    ].filter(Boolean)
+
+    const { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } = await import('../../common/llm.js')
+    let summary = ''
+    try {
+      const raw = await deepseekChat(
+        [{ role: 'system', content: '你是临床研究协调员。基于给定事实生成一段客观、适合写入论文 Methods/Results 或内部汇报的研究进展摘要（150-250字中文，含关键数字）。' },
+         { role: 'user', content: facts.join('\n') }],
+        getApiKey(),
+        { model: DEEPSEEK_CHAT_MODEL, maxTokens: 800, telemetryContext: { userId, workspaceId: userId, action: 'research.summary' } },
+      )
+      summary = raw.trim()
+    } catch {
+      summary = '' // LLM unavailable — structured facts still returned
+    }
+
+    return {
+      study_id: studyId,
+      study_name: study.name,
+      facts,
+      summary: summary || facts.join('；'),
+      generated_at: new Date().toISOString(),
+    }
+  })
+
   app.get('/api/v1/research/studies/:studyId/roster', async (request, reply) => {
     const studyId = (request.params as any).studyId
     const userId = request.user!.userId

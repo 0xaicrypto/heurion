@@ -27,6 +27,7 @@ import { ResearchDetailPage } from '@/routes/research-detail';
 import { WritingPage } from '@/routes/writing';
 import { WritingEditorPage } from '@/routes/writing-editor';
 import { SkillsPage } from '@/routes/skills';
+import { ChartWorkbenchPage } from '@/routes/chart-workbench';
 import { FilesPage } from '@/routes/files';
 import { SchedulePage } from '@/routes/schedule';
 import { ExportPage } from '@/routes/export-data';
@@ -186,6 +187,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <SkillsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/charts"
+            element={
+              <RequireAuth>
+                <ChartWorkbenchPage />
               </RequireAuth>
             }
           />

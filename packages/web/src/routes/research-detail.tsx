@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, CalendarDays, Check, FlaskConical, Plus, Upload, X, FileText } from 'lucide-react';
+import { ArrowLeft, CalendarDays, Check, FlaskConical, Plus, Upload, X, FileText, Sparkles } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
@@ -788,6 +788,8 @@ export function ResearchDetailPage() {
             </div>
           )}
 
+          {tab === 'overview' && studyId && <StudySummaryCard studyId={studyId} />}
+
           {tab === 'protocol' && studyId && (
             <ProtocolTab studyId={studyId} />
           )}
@@ -986,4 +988,50 @@ function ProtocolTab({ studyId }: { studyId: string }) {
       )}
     </div>
   )
+}
+
+/* #12: AI research-progress summary for citations / internal reporting. */
+function StudySummaryCard({ studyId }: { studyId: string }) {
+  const { t } = useTranslation();
+  const [summary, setSummary] = useState<{ facts: string[]; summary: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const generate = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setSummary(await api.getStudySummary(studyId));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card className="max-w-2xl p-6">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-text-secondary">{t('research.summary', 'AI 研究进展摘要')}</h3>
+        <Button size="sm" onClick={generate} isLoading={loading}>
+          <Sparkles size={14} className="mr-1" />
+          {t('research.generateSummary', '生成摘要')}
+        </Button>
+      </div>
+      {error && <p className="mt-3 text-xs text-error">{error}</p>}
+      {summary && (
+        <div className="mt-4 space-y-3">
+          <p className="rounded-lg border border-border bg-surface-elevated p-3 text-sm leading-relaxed text-text-primary">
+            {summary.summary}
+          </p>
+          <details className="rounded-lg border border-border bg-surface p-3">
+            <summary className="cursor-pointer text-xs text-text-tertiary">{t('research.summaryFacts', '依据事实')}</summary>
+            <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-text-secondary">
+              {summary.facts.map((f, i) => <li key={i}>{f}</li>)}
+            </ul>
+          </details>
+        </div>
+      )}
+    </Card>
+  );
 }

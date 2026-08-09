@@ -17,6 +17,11 @@ export class ResearchApi extends ApiCore {
     return this.fetch(`/api/v1/research/studies/${studyId}`);
   }
 
+  /** #12: AI research-progress summary (protocol/enrollment/rules/safety). */
+  async getStudySummary(studyId: string): Promise<{study_id: string; study_name: string; facts: string[]; summary: string; generated_at: string}> {
+    return this.fetch(`/api/v1/research/studies/${studyId}/summary`);
+  }
+
   /* ────────────────────────── research detail ────────────────────────── */
 
   async getStudyRoster(studyId: string): Promise<Array<{

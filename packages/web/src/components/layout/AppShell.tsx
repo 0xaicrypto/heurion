@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Brain, Cpu, FileText, FlaskConical, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, Monitor, Moon, Puzzle, Settings, Shield, Sun, Users, X } from 'lucide-react';
+import { Brain, Cpu, FileText, FlaskConical, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, Monitor, Moon, Puzzle, Settings, Shield, Sun, Users, X, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
@@ -34,6 +34,8 @@ const navItems: NavItem[] = [
   { to: '/app/writing', labelKey: 'nav.writing', icon: <FileText size={18} />, section: 'patients' },
   { to: '/app/memory', labelKey: 'nav.memoryKnowledge', icon: <Brain size={18} />, section: 'memory' },
   { to: '/app/skills', labelKey: 'nav.skills', icon: <Cpu size={18} />, section: 'tools' },
+  // #402: chart workbench — AI chart / pathway / stats generation.
+  { to: '/app/charts', labelKey: 'nav.charts', icon: <BarChart3 size={18} />, section: 'tools' },
   { to: '/app/plugins', labelKey: 'nav.plugins', icon: <Puzzle size={18} />, section: 'tools' },
   { to: '/app/settings', labelKey: 'nav.settings', icon: <Settings size={18} />, section: 'tools' },
   { to: '/app/admin/users', labelKey: 'nav.admin', icon: <Shield size={18} />, admin: true, section: 'tools' },
