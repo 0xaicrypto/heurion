@@ -31,11 +31,25 @@ export interface ToolContext {
   sessionId?: string
 }
 
+/**
+ * #454-followup: tools whose availability is gated by an installable plugin.
+ * The renderer implementation stays in-process (zero latency), but the tool
+ * only appears in the LLM's tool list while the user has the plugin
+ * installed + enabled — everything else (marketplace, uninstall cascade,
+ * audit) is the standard plugin lifecycle.
+ */
+export const PLUGIN_GATED_TOOLS: Record<string, string> = {
+  render_chart: 'heurion/chart',
+  render_scene: 'heurion/bioscene',
+}
+
 export class ToolRegistry {
   private tools: Map<string, BaseTool> = new Map()
   /** #107: tool name → current registration version (bumped on replace). */
   private versions: Map<string, number> = new Map()
   private ctx: ToolContext
+  /** Cached plugin availability per user (per registry instance = per turn). */
+  private gatedAvailability: Record<string, boolean | undefined> = {}
 
   constructor(ctx: ToolContext) {
     this.ctx = ctx
@@ -47,6 +61,8 @@ export class ToolRegistry {
     this.register(new DeferToBackgroundTool(ctx))
     this.register(new OCRImageTool(ctx))
     this.register(new EditDocumentTool(ctx))
+    // #454-followup: plugin-gated renderers — registered so execute() can
+    // give a clear error, but excluded from definitions unless installed.
     this.register(new RenderChartTool(ctx))
     this.register(new LoadSkillTool(ctx))
     this.register(new SearchMedicalWebTool(ctx))
@@ -67,6 +83,37 @@ export class ToolRegistry {
     this.register(new GenerateImageTool(ctx))
   }
 
+  /** Is a plugin-gated tool available to this user right now? */
+  async isToolAvailable(name: string): Promise<boolean> {
+    const pluginId = PLUGIN_GATED_TOOLS[name]
+    if (!pluginId) return true
+    if (this.gatedAvailability[name] !== undefined) return this.gatedAvailability[name]!
+    let available = false
+    try {
+      const { listInstalledPlugins } = await import('../modules/plugins/plugin-installation.service.js')
+      const installed = await listInstalledPlugins(this.ctx.userId)
+      available = installed.some((i) => i.pluginId === pluginId && i.enabled)
+    } catch {
+      available = false
+    }
+    this.gatedAvailability[name] = available
+    return available
+  }
+
+  /**
+   * #454-followup: definitions for THIS user — plugin-gated tools are
+   * omitted while the owning plugin is not installed/enabled. Async because
+   * availability is read from the installation store.
+   */
+  async getDefinitionsForUser(): Promise<ToolDefinition[]> {
+    const out: ToolDefinition[] = []
+    for (const tool of this.tools.values()) {
+      if (PLUGIN_GATED_TOOLS[tool.name] && !(await this.isToolAvailable(tool.name))) continue
+      out.push(tool.definition)
+    }
+    return out
+  }
+
   /**
    * Register a tool. Re-registering the same name bumps its version —
    * callers that captured an old instance get a clear 'stale' error (#107).
@@ -83,8 +130,9 @@ export class ToolRegistry {
     return this.versions.get(name) ?? 0
   }
 
+  /** Legacy synchronous view (all tools, un-gated) — test/internal use. */
   get definitions(): ToolDefinition[] {
-    return Array.from(this.tools.values()).map(t => t.definition)
+    return Array.from(this.tools.values()).map((t) => t.definition)
   }
 
   get(name: string): BaseTool | undefined {
@@ -105,7 +153,15 @@ export class ToolRegistry {
         error: `Stale tool call: ${name} was updated, retry with the current definition`,
       }
     }
-    if (!tool) return { success: false, error: `Unknown tool: ${name}` }
+
+    // #454-followup: plugin-gated renderers must not run without the plugin.
+    const gatePlugin = PLUGIN_GATED_TOOLS[name]
+    if (gatePlugin && !(await this.isToolAvailable(name))) {
+      return {
+        success: false,
+        error: `工具 ${name} 需要安装插件「${gatePlugin}」才能使用。请到「插件市场」安装后重试。`,
+      }
+    }
 
     // §3.3: a throwing tool must never take down the whole chat turn —
     // surface the failure to the LLM so it can switch strategy.

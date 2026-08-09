@@ -103,9 +103,18 @@ describe('#176 render_chart', () => {
       return Promise.resolve('图表已生成。')
     })
 
+    // #454-followup: render_chart is plugin-gated — install heurion/chart
+    // so the tool appears in the LLM tool list.
+    const headers = { ...await authHeader(), 'content-type': 'application/json' }
+    const install = await app.inject({
+      method: 'POST', url: '/api/v1/plugins/install', headers,
+      payload: JSON.stringify({ pluginId: 'heurion/chart' }),
+    })
+    expect(install.statusCode).toBe(200)
+
     const res = await app.inject({
       method: 'POST', url: '/api/v1/agent/chat',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers,
       payload: JSON.stringify({ text: '画个对比图', session_id: sessionId }),
     })
     expect(res.statusCode).toBe(200)
