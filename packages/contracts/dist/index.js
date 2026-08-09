@@ -103,3 +103,33 @@ export function validateRenderContent(type, raw) {
     }
     return { ok: true, data: result.data };
 }
+/* ── BioScene (#408): molecular/schematic scene model ───────────── */
+export const biosceneObjectSchema = z.object({
+    icon: z.string().min(1).max(100), // id from the restricted icon catalog
+    x: z.number().min(0).max(100),
+    y: z.number().min(0).max(100),
+    scale: z.number().min(0.2).max(3).optional(),
+    rotate: z.number().min(-180).max(180).optional(),
+    label: z.string().max(100).optional(),
+    colorize: z.string().max(50).optional(), // css color override
+});
+export const biosceneConnectionSchema = z.object({
+    from: z.number().min(0), // object index
+    to: z.number().min(0),
+    kind: z.enum(['arrow', 'dashed', 'phosphorylation', 'inhibition']).optional(),
+    bend: z.number().min(-50).max(50).optional(),
+    label: z.string().max(80).optional(),
+});
+export const biosceneAnnotationSchema = z.object({
+    type: z.enum(['text', 'bracket']),
+    x: z.number().min(0).max(100),
+    y: z.number().min(0).max(100),
+    text: z.string().max(200),
+});
+export const biosceneContentSchema = z.object({
+    schemaVersion: z.literal(SCHEMA_VERSION),
+    canvas: z.object({ width: z.number().min(100).max(2000).default(800), height: z.number().min(100).max(2000).default(600) }).optional(),
+    objects: z.array(biosceneObjectSchema).min(1).max(30),
+    connections: z.array(biosceneConnectionSchema).max(60).optional(),
+    annotations: z.array(biosceneAnnotationSchema).max(20).optional(),
+});
