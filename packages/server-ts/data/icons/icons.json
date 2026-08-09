@@ -1,0 +1,167 @@
+{
+ "source": "NIH BioArt (U.S. National Institutes of Health)",
+ "license": "Public domain",
+ "source_url": "https://commons.wikimedia.org/wiki/Category:NIH_BioArt",
+ "icons": [
+  {
+   "id": "t-cell",
+   "name": "T cell",
+   "category": "cell",
+   "aliases": [
+    "T细胞",
+    "T 细胞",
+    "cytotoxic t cell"
+   ],
+   "file": "t-cell.svg"
+  },
+  {
+   "id": "bcr",
+   "name": "B cell receptor",
+   "category": "receptor",
+   "aliases": [
+    "B细胞受体",
+    "B cell receptor"
+   ],
+   "file": "bcr.svg"
+  },
+  {
+   "id": "macrophage",
+   "name": "Macrophage",
+   "category": "cell",
+   "aliases": [
+    "巨噬细胞"
+   ],
+   "file": "macrophage.svg"
+  },
+  {
+   "id": "dendritic-cell",
+   "name": "Dendritic cell",
+   "category": "cell",
+   "aliases": [
+    "树突状细胞"
+   ],
+   "file": "dendritic-cell.svg"
+  },
+  {
+   "id": "nk-cell",
+   "name": "Natural killer cell",
+   "category": "cell",
+   "aliases": [
+    "NK细胞",
+    "自然杀伤细胞"
+   ],
+   "file": "nk-cell.svg"
+  },
+  {
+   "id": "neutrophil",
+   "name": "Neutrophil",
+   "category": "cell",
+   "aliases": [
+    "中性粒细胞"
+   ],
+   "file": "neutrophil.svg"
+  },
+  {
+   "id": "red-blood-cell",
+   "name": "Red blood cell",
+   "category": "cell",
+   "aliases": [
+    "红细胞"
+   ],
+   "file": "red-blood-cell.svg"
+  },
+  {
+   "id": "platelet",
+   "name": "Platelet",
+   "category": "cell",
+   "aliases": [
+    "血小板"
+   ],
+   "file": "platelet.svg"
+  },
+  {
+   "id": "neuron",
+   "name": "Neuron",
+   "category": "cell",
+   "aliases": [
+    "神经元"
+   ],
+   "file": "neuron.svg"
+  },
+  {
+   "id": "antibody",
+   "name": "Antibody",
+   "category": "molecule",
+   "aliases": [
+    "抗体"
+   ],
+   "file": "antibody.svg"
+  },
+  {
+   "id": "hiv",
+   "name": "HIV",
+   "category": "virus",
+   "aliases": [
+    "HIV"
+   ],
+   "file": "hiv.svg"
+  },
+  {
+   "id": "adenovirus",
+   "name": "Adenovirus",
+   "category": "virus",
+   "aliases": [
+    "腺病毒"
+   ],
+   "file": "adenovirus.svg"
+  },
+  {
+   "id": "virus",
+   "name": "Virus",
+   "category": "virus",
+   "aliases": [
+    "病毒",
+    "virus particle"
+   ],
+   "file": "virus.svg"
+  },
+  {
+   "id": "dna",
+   "name": "DNA",
+   "category": "molecule",
+   "aliases": [
+    "DNA",
+    "脱氧核糖核酸"
+   ],
+   "file": "dna.svg"
+  },
+  {
+   "id": "mitochondria",
+   "name": "Mitochondrion",
+   "category": "organelle",
+   "aliases": [
+    "线粒体"
+   ],
+   "file": "mitochondria.svg"
+  },
+  {
+   "id": "nucleus",
+   "name": "Nucleus",
+   "category": "organelle",
+   "aliases": [
+    "细胞核"
+   ],
+   "file": "nucleus.svg"
+  },
+  {
+   "id": "pill",
+   "name": "Drug pill",
+   "category": "molecule",
+   "aliases": [
+    "药物",
+    "药丸"
+   ],
+   "file": "pill.svg"
+  }
+ ]
+}

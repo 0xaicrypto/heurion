@@ -1,18 +1,29 @@
 /**
- * #408: BioScene — molecular/schematic scene rendering.
+ * #408/#467: BioScene — molecular/schematic scene rendering.
  * The restricted icon catalog is the quality gate: the LLM can only place
  * icons that exist, never invent shapes. The renderer validates every icon
  * id and draws a deterministic SVG scene.
+ *
+ * #467: icons come in two forms —
+ *   - `path`: a single 24x24 SVG path (drawn with the scene stroke style)
+ *   - `svgFile`: a full NIH BioArt-style SVG (public domain) embedded as-is
+ *     (keeps gradients/defs; scaled to the object size). Loaded lazily from
+ *     data/icons/.
  */
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 
 /** Minimal icon catalog (MVP subset — membrane/receptor/kinase/etc.). */
 export interface BioIcon {
   id: string
   name: string
-  category: 'membrane' | 'receptor' | 'enzyme' | 'ion-channel' | 'organelle' | 'cell' | 'molecule' | 'other'
+  category: 'membrane' | 'receptor' | 'enzyme' | 'ion-channel' | 'organelle' | 'cell' | 'molecule' | 'virus' | 'other'
   aliases: string[]
-  /** Simple SVG path (24x24 viewBox), dark strokes. */
-  path: string
+  /** Simple SVG path (24x24 viewBox), dark strokes — OR */
+  path?: string
+  /** Full external SVG file (public-domain NIH BioArt) embedded as-is. */
+  svgFile?: string
 }
 
 const ICONS: BioIcon[] = [
@@ -41,13 +52,56 @@ const ICONS: BioIcon[] = [
 
 const CATEGORIES = new Set(ICONS.map((i) => i.category))
 
+/* ── #467: external SVG icons (public-domain NIH BioArt) ───────────── */
+
+const ICONS_DIR = fileURLToPath(new URL('../../../data/icons/', import.meta.url))
+
+/** icon id → { file, category, aliases } loaded from data/icons/icons.json. */
+let externalIcons: Array<BioIcon & { file: string }> = []
+
+function loadExternalIcons(): Array<BioIcon & { file: string }> {
+  if (externalIcons.length > 0) return externalIcons
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(ICONS_DIR, 'icons.json'), 'utf-8'))
+    externalIcons = raw.icons.map((i: any) => ({ ...i, category: i.category, svgFile: i.file }))
+  } catch {
+    externalIcons = []
+  }
+  return externalIcons
+}
+
+/** #467: include external icons in the catalog the LLM can pick from. */
+function allIcons(): BioIcon[] {
+  return [...ICONS, ...loadExternalIcons()]
+}
+
+/** Read + normalize an external SVG for embedding (strip outer <svg>). */
+function readExternalSvg(id: string): { inner: string; vbWidth: number } | null {
+  const entry = loadExternalIcons().find((i) => i.id === id)
+  if (!entry) return null
+  try {
+    const raw = fs.readFileSync(path.join(ICONS_DIR, entry.file), 'utf-8')
+    // NIH BioArt SVGs use a namespaced <ns0:svg ...> wrapper — match any
+    // prefix. Keep the inner content (defs + groups), drop the wrapper
+    // (the renderer positions/scales it via a <g transform>).
+    const m = raw.match(/<(?:\w+:)?svg[^>]*>([\s\S]*)<\/(?:\w+:)?svg>/i)
+    if (!m) return null
+    // Parse the viewBox for exact scaling.
+    const vb = raw.match(/viewBox="\s*[\d.]+ [\d.]+ ([\d.]+) ([\d.]+)"/i)
+    const vbWidth = vb ? parseFloat(vb[1]) || 500 : 500
+    return { inner: m[1], vbWidth }
+  } catch {
+    return null
+  }
+}
+
 export function iconCatalog(): Array<{ id: string; name: string; category: string }> {
-  return ICONS.map(({ id, name, category }) => ({ id, name, category }))
+  return allIcons().map(({ id, name, category }) => ({ id, name, category }))
 }
 
 export function resolveIcon(idOrAlias: string): BioIcon | null {
   const q = idOrAlias.trim().toLowerCase()
-  return ICONS.find((i) => i.id.toLowerCase() === q || i.aliases.some((a) => a.toLowerCase() === q)) || null
+  return allIcons().find((i) => i.id.toLowerCase() === q || i.aliases.some((a) => a.toLowerCase() === q)) || null
 }
 
 function esc(s: string): string {
@@ -106,6 +160,22 @@ export function renderBioScene(scene: {
     const s = obj.scale || 1
     const size = 48 * s
     const rot = obj.rotate ? ` rotate(${obj.rotate} ${cx} ${cy})` : ''
+
+    // #467: external SVG icons (NIH BioArt, public domain) are embedded
+    // as-is, scaled to the object size.
+    if (icon.svgFile) {
+      const ext = readExternalSvg(icon.id)
+      if (ext) {
+        parts.push(`<g transform="translate(${cx - size / 2}, ${cy - size / 2}) scale(${size / ext.vbWidth})${rot}">`)
+        parts.push(ext.inner)
+        parts.push(`</g>`)
+        if (obj.label) {
+          parts.push(`<text x="${cx}" y="${cy + size / 2 + 14}" fill="#334155" font-size="12" text-anchor="middle">${esc(obj.label)}</text>`)
+        }
+        continue
+      }
+    }
+
     const stroke = obj.colorize || '#334155'
     parts.push(`<g transform="translate(${cx - size / 2}, ${cy - size / 2})${rot}">`)
     parts.push(`<path d="${icon.path}" transform="scale(${size / 24})" fill="none" stroke="${stroke}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`)

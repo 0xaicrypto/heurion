@@ -1,0 +1,48 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ns0:svg xmlns:ns0="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 500 500">
+  <metadata><title>Red Blood Cell</title><description>Illustration of a red blood cell.</description><license>Public Domain</license><creator>Ryan Kissinger</creator><creationDate>2024-09-03T14:24:19-06:00</creationDate><credit>Courtesy of NIAID</credit><illustrationSoftwares>[{'name': 'Adobe Illustrator', 'version': '28.6'}]</illustrationSoftwares><caption>Red Blood Cell</caption><imageColor>Multicolor</imageColor><isDiscoverThumbnail>True</isDiscoverThumbnail></metadata><ns0:defs>
+    <ns0:style>
+      .cls-1, .cls-2 {
+        fill: #ef4055;
+      }
+
+      .cls-3 {
+        fill: #5c1624;
+      }
+
+      .cls-4 {
+        fill: #b83b4e;
+      }
+
+      .cls-5 {
+        fill: none;
+      }
+
+      .cls-5, .cls-2 {
+        stroke: #5c1723;
+        stroke-miterlimit: 10;
+        stroke-width: 11.81px;
+      }
+
+      .cls-6 {
+        clip-path: url(#clippath);
+      }
+    </ns0:style>
+    <ns0:clipPath id="clippath">
+      <ns0:ellipse class="cls-2" cx="254.14" cy="241.82" rx="157.29" ry="154.08" transform="translate(-64.59 388.37) rotate(-68.27)" />
+    </ns0:clipPath>
+  </ns0:defs>
+  
+  <ns0:g>
+    <ns0:g id="Layer_1">
+      <ns0:g>
+        <ns0:ellipse class="cls-1" cx="254.14" cy="241.82" rx="157.29" ry="154.08" transform="translate(-64.59 388.37) rotate(-68.27)" />
+        <ns0:g class="cls-6">
+          <ns0:circle class="cls-4" cx="258.37" cy="236.98" r="77.04" />
+          <ns0:path class="cls-3" d="M204,295.76c-4.78-4.67-8.19-10.46-11.47-16.22-9.47-17.62-15.29-37.47-13.43-57.81,1.69-20.55,13.73-39.62,30.24-51.78,11.01-8.25,23.29-14.81,36.85-17.92,37.08-8.86,69.59,13.53,85.56,46.17,5.31,11.16,10.85,27.64,6.01,39.65,0,0-1.13-.35-1.13-.35.92-9.5-3.33-18.67-7.59-26.92-13.14-23.87-35.39-45.06-62.87-49.18-24.49-3.3-49.63,9.99-65.96,27.56-25.77,28.24-17.86,72.47,1.62,102.18.92,1.32,1.89,2.63,2.98,3.75l-.8.86h0Z" />
+        </ns0:g>
+        <ns0:ellipse class="cls-5" cx="254.14" cy="241.82" rx="157.29" ry="154.08" transform="translate(-64.59 388.37) rotate(-68.27)" />
+      </ns0:g>
+    </ns0:g>
+  </ns0:g>
+  </ns0:svg>
