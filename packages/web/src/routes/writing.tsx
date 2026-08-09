@@ -232,7 +232,7 @@ function WritingList() {
                           {d.ref_count > 0 ? ` · ${d.ref_count} ${t('writing.refs', 'references')}` : ''}
                         </p>
                       </div>
-                      <FileText size={16} className="text-text-tertiary" />
+                      <FileText size={16} className="text-text-tertiary transition-opacity group-hover:opacity-0" />
                     </div>
                   </Card>
                 </Link>
