@@ -1,9 +1,7 @@
-import { CalendarApi } from './calendar.js';
-import type { ChatStreamChunk, SendChatOptions } from '../../types';
+import { ApiCore, ApiError } from './core.js';
 
-import { ApiError } from './core.js';
 
-export class PluginsApi extends CalendarApi {
+export class PluginsApi extends ApiCore {
   /* ────────────────────────── workflows / plugins ────────────────────────── */
 
   async listWorkflows(): Promise<{workflows: Array<{workflow_id: string; name: string; description?: string; created_at: string; archived?: boolean}>}> {
@@ -120,16 +118,6 @@ export class PluginsApi extends CalendarApi {
     return this.fetch(`/api/v1/execution/jobs/${jobId}`);
   }
 
-  /* ────────────────────────── chat (SSE) ────────────────────────── */
-
-  async *sendChat(
-    text: string,
-    sessionId: string,
-    abortSignal?: AbortSignal,
-  ): AsyncIterable<ChatStreamChunk> {
-    return yield* this.sendChatFull({ text, sessionId }, abortSignal);
-  }
-
   /* ────────────────────────── DICOM render ────────────────────────── */
 
   async renderDicomSlice(studyId: string, seriesIndex: number, sliceIndex: number, preset?: string): Promise<Blob> {
@@ -176,114 +164,6 @@ export class PluginsApi extends CalendarApi {
     return this.fetch('/api/v1/files/bulk', { method: 'DELETE', body: JSON.stringify({ ids }) });
   }
 
-  /* ────────────────────────── chat (SSE) ────────────────────────── */
-
   // #420: parallel deep analysis — SSE stream of sub-agent activity + final answer.
-  async *deepAnalysis(
-    opts: { question: string; topics: string[]; patientHash?: string | null; context?: string },
-    abortSignal?: AbortSignal,
-  ): AsyncIterable<ChatStreamChunk> {
-    const r = await fetch('/api/v1/agent/deep-analysis', {
-      method: 'POST',
-      headers: this.headers({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        question: opts.question,
-        topics: opts.topics,
-        patient_hash: opts.patientHash ?? null,
-        context: opts.context,
-      }),
-      signal: abortSignal,
-    });
-    if (!r.ok || !r.body) {
-      throw new ApiError(r.status, await r.text().catch(() => r.statusText), '/api/v1/agent/deep-analysis');
-    }
-    const reader = r.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          const raw = buffer.slice(0, idx).trim();
-          buffer = buffer.slice(idx + 2);
-          if (!raw.startsWith('data:')) continue;
-          try {
-            yield JSON.parse(raw.slice(5).trim()) as ChatStreamChunk;
-          } catch { /* skip malformed */ }
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
-  }
 
-  async *sendChatFull(
-    opts: SendChatOptions,
-    abortSignal?: AbortSignal,
-  ): AsyncIterable<ChatStreamChunk> {
-    const body: Record<string, unknown> = {
-      text: opts.text,
-      session_id: opts.sessionId || '',
-      patient_hash: opts.patientHash ?? null,
-    };
-    if (opts.attachments) body.attachments = opts.attachments;
-    if (opts.scope) body.scope = opts.scope;
-    if (opts.skills) body.skills = opts.skills;
-    const r = await fetch('/api/v1/agent/chat', {
-      method: 'POST',
-      headers: this.headers({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(body),
-      signal: abortSignal,
-    });
-    if (!r.ok || !r.body) {
-      throw new ApiError(r.status, await r.text().catch(() => r.statusText), '/api/v1/agent/chat');
-    }
-
-    const reader = r.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-
-    abortSignal?.addEventListener(
-      'abort',
-      () => {
-        try {
-          reader.cancel();
-        } catch {
-          /* ignore */
-        }
-      },
-      { once: true },
-    );
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-          const raw = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          for (const line of raw.split('\n')) {
-            if (line.startsWith('data: ')) {
-              try {
-                yield JSON.parse(line.slice(6)) as ChatStreamChunk;
-              } catch {
-                /* malformed payload; skip */
-              }
-            }
-          }
-        }
-      }
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch {
-        /* ignore */
-      }
-    }
-  }
 }

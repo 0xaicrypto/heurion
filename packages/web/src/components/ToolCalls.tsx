@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, Search, Wrench } from 'lucide-react';
+// #462: tool names come from the shared contracts (single source of truth
+// with the backend tool registry) instead of a hard-coded set.
+import { RETRIEVAL_TOOLS } from '@heurion/contracts';
 
 export interface ToolCallEntry {
   tool: string;
@@ -8,7 +11,7 @@ export interface ToolCallEntry {
 }
 
 /** Read-only retrieval tools — consecutive ones merge into one foldable row. */
-const RETRIEVAL_TOOLS = new Set(['search_node', 'search_encounter', 'search_past_chats']);
+const RETRIEVAL_TOOL_SET = new Set<string>(RETRIEVAL_TOOLS);
 
 interface Group {
   kind: 'retrieval' | 'action';
@@ -28,7 +31,7 @@ export function ToolCalls({ calls }: { calls: ToolCallEntry[] }) {
   const groups = useMemo(() => {
     const out: Group[] = [];
     for (const c of calls) {
-      const isRetrieval = RETRIEVAL_TOOLS.has(c.tool);
+      const isRetrieval = RETRIEVAL_TOOL_SET.has(c.tool);
       const last = out[out.length - 1];
       if (isRetrieval && last && last.kind === 'retrieval') {
         // consecutive retrieval calls merge into one foldable row

@@ -1,24 +1,14 @@
 /**
- * #403: run_stats_analysis — the LLM-visible stats tool with a unified
- * output shape { report, chart, methods_text }. Calculation delegates to
- * the existing stat-tools implementations (#366/#394) — W2 swaps the
- * execution backend for the Python worker (#404) with the same shape.
+ * #403/#445: run_stats_analysis — the LLM-visible stats tool with a unified
+ * output shape { report, chart, methods_text }. Calculation delegates to the
+ * configured StatsEngine (#445 Strategy): the Python worker (scipy,
+ * STATS_WORKER_URL) when available, else the deterministic TS fallback.
  *
  * methods_text is journal-pasteable (test name / stat / df / p / effect
  * size / CI / gating declaration), bilingual zh/en.
  */
 import { BaseTool, ToolResult } from './base-tool.js'
-import { StatDescribeTool, StatTTestTool, StatChiSqTool, StatKmTool } from './stat-tools.js'
-
-interface AnalysisInput {
-  test: string
-  group_a?: number[]
-  group_b?: number[]
-  table?: number[][]
-  survival_a?: Array<{ time: number; event: boolean }>
-  survival_b?: Array<{ time: number; event: boolean }>
-  values?: number[]
-}
+import { createStatsEngine, type StatsInput } from './stats-engine.js'
 
 function fmt(n: unknown): string {
   return Number.isFinite(Number(n)) ? String(Math.round(Number(n) * 10000) / 10000) : String(n ?? '—')
@@ -66,13 +56,15 @@ export class RunStatsAnalysisTool extends BaseTool {
   }
 
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
-    const input = args as unknown as AnalysisInput
+    const input = args as unknown as StatsInput
     const test = String(input.test || '')
 
     try {
+      // #445: strategy — Python worker (scipy) when STATS_WORKER_URL is set.
+      const engine = createStatsEngine()
+      const out = await engine.analyze(input)
+
       if (test === 'describe') {
-        const res = await new StatDescribeTool().execute({ values: input.values || [] })
-        const out = res.success ? JSON.parse(res.output!) : { error: res.error }
         const report = { method: 'descriptive', ...out }
         return {
           success: true,
@@ -85,9 +77,6 @@ export class RunStatsAnalysisTool extends BaseTool {
       }
 
       if (test === 't-test') {
-        const res = await new StatTTestTool().execute({ group_a: input.group_a || [], group_b: input.group_b || [] })
-        if (!res.success) return res
-        const out = JSON.parse(res.output!)
         return {
           success: true,
           output: JSON.stringify({
@@ -101,9 +90,6 @@ export class RunStatsAnalysisTool extends BaseTool {
       }
 
       if (test === 'chi-square') {
-        const res = await new StatChiSqTool().execute({ table: input.table || [] })
-        if (!res.success) return res
-        const out = JSON.parse(res.output!)
         return {
           success: true,
           output: JSON.stringify({
@@ -115,16 +101,14 @@ export class RunStatsAnalysisTool extends BaseTool {
       }
 
       if (test === 'kaplan-meier') {
-        const res = await new StatKmTool().execute({ group_a: input.survival_a || [], group_b: input.survival_b || [] })
-        if (!res.success) return res
-        const out = JSON.parse(res.output!)
+        const curveA = ((out as any).curve_a || []) as Array<{ time: number; survival: number }>
         return {
           success: true,
           output: JSON.stringify({
             report: out,
             chart: {
               type: 'line',
-              data: (out.curve_a || []).map((p: any) => ({ label: String(p.time), value: p.survival })),
+              data: curveA.map((p) => ({ label: String(p.time), value: p.survival })),
               title: 'Kaplan-Meier — group A',
               x_label: 'Time', y_label: 'Survival',
             },

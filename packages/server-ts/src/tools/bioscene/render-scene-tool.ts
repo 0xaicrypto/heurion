@@ -68,9 +68,22 @@ export class RenderSceneTool extends BaseTool {
       fs.mkdirSync(dir, { recursive: true })
       const fileId = `scene_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.svg`
       fs.writeFileSync(path.join(dir, fileId), svg, 'utf-8')
+
+      // <img> tags cannot send an Authorization header — issue a short-lived
+      // query token so the scene renders inside chat/documents (same pattern
+      // as render_chart).
+      let url = `/api/v1/files/download/${fileId}`
+      try {
+        const { issueChartToken } = await import('../../modules/files/files.router.js')
+        url = `${url}?token=${issueChartToken(fileId, this.ctx.userId)}`
+      } catch {
+        // token issuance unavailable — URL still works for API consumers
+      }
+
+      const title = (args.title as string) || 'scene'
       return {
         success: true,
-        output: JSON.stringify({ file_id: fileId, url: `/api/v1/files/${fileId}/download`, objects: (scene.objects as any[]).length }, null, 2),
+        output: JSON.stringify({ file_id: fileId, url, markdown: `![${title}](${url})`, objects: (scene.objects as any[]).length }, null, 2),
       }
     } catch (err) {
       return { success: false, error: `render_scene failed: ${(err as Error).message.slice(0, 200)}` }

@@ -1,7 +1,7 @@
-import { AuthApi } from './auth.js';
+import { ApiCore } from './core.js';
 import type { LlmStatus, LlmTestResult, LlmUpdateInput, LlmUpdateResult } from '../../types';
 
-export class SettingsApi extends AuthApi {
+export class SettingsApi extends ApiCore {
   /* ────────────────────────── settings ────────────────────────── */
 
   async getLlmStatus(): Promise<LlmStatus> {

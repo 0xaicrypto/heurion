@@ -55,5 +55,19 @@ describe('#213 chart download endpoint', () => {
     expect(verifyChartToken('other', t)).toBeNull()
   })
 
+  test('#440 stateless HMAC token: expiry embedded, no memory dependency', () => {
+    // Valid for 90 days by default (CHART_TOKEN_TTL_MS), tampering rejected.
+    const t = issueChartToken('file_x', 'user_1')
+    const [expB36, , sig] = t.split('.')
+    expect(parseInt(expB36, 36)).toBeGreaterThan(Date.now())
+    expect(sig.length).toBeGreaterThan(20)
+    // Flip one char in the signature → must fail.
+    const tampered = `${expB36}.${Buffer.from('user_1').toString('base64url')}.${sig.slice(0, -1)}${sig.endsWith('A') ? 'B' : 'A'}`
+    expect(verifyChartToken('file_x', tampered)).toBeNull()
+    // Expired token → rejected.
+    const expired = issueChartToken('file_x', 'user_1', -1000)
+    expect(verifyChartToken('file_x', expired)).toBeNull()
+  })
+
   afterEach(() => { delete process.env.TWIN_BASE_DIR })
 })

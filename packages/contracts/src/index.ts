@@ -14,6 +14,8 @@
  */
 import { z } from 'zod'
 
+export * from './chat.js'
+
 export const SCHEMA_VERSION = 1
 
 /* ── shared blocks ─────────────────────────────────────────────── */

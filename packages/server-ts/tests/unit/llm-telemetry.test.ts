@@ -10,11 +10,14 @@ describe('LLM telemetry integration', () => {
     telemetry = new InMemoryTelemetryService()
     setLlmTelemetryService(telemetry)
     originalFetch = globalThis.fetch
+    // #436: the gateway resolves the API key from the provider env var.
+    process.env.DEEPSEEK_API_KEY = 'sk-telemetry-test'
   })
 
   afterEach(() => {
     setLlmTelemetryService(undefined)
     globalThis.fetch = originalFetch
+    delete process.env.DEEPSEEK_API_KEY
   })
 
   test('records llm_cost telemetry after a non-streaming call', async () => {
@@ -69,11 +72,14 @@ describe('LLM cache usage telemetry (O3 #108)', () => {
     telemetry = new InMemoryTelemetryService()
     setLlmTelemetryService(telemetry)
     originalFetch = globalThis.fetch
+    // #436: the gateway resolves the API key from the provider env var.
+    process.env.DEEPSEEK_API_KEY = 'sk-telemetry-test'
   })
 
   afterEach(() => {
     setLlmTelemetryService(undefined)
     globalThis.fetch = originalFetch
+    delete process.env.DEEPSEEK_API_KEY
   })
 
   test('cache hit/miss tokens are captured into llm_cost metadata', async () => {

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { enforceTotalBudget, selectProjectionInputs } from '../../src/modules/chat/chat.router.js'
+import { enforceTotalBudget, selectProjectionInputs } from '../../src/modules/chat/chat-context.js'
 import { estimateTokens } from '../../src/common/token-estimate.js'
 
 /**

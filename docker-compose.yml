@@ -69,6 +69,10 @@ services:
       # #281: user memory files live under /data/twins on their own volume.
       - TWIN_BASE_DIR=/data/twins
       - WEB_DIST_DIR=/app/web-dist
+      # #445: route run_stats_analysis to the authoritative scipy worker.
+      - STATS_WORKER_URL=http://nexus-stats-worker:8005
+    depends_on:
+      - nexus-stats-worker
     volumes:
       # /data persistence — cache, embedding models, misc (#281 remainder).
       - nexus-data:/data

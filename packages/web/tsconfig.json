@@ -25,6 +25,9 @@
       ],
       "@heurion/sdk": [
         "../sdk-client/src/index.ts"
+      ],
+      "@heurion/contracts": [
+        "../contracts/src/index.ts"
       ]
     },
     "types": [

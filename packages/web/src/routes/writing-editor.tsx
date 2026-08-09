@@ -6,11 +6,11 @@ import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor } from '@/components/DocEditor';
-import { StreamingLlmContent } from '@/components/LlmContent';
-import { ToolCalls } from '@/components/ToolCalls';
+import { ChatMessages } from '@/components/chat/ChatMessages';
 import { useChatStore } from '@/stores/chat';
 import { Alert, Button, Card, Skeleton, Textarea, Input } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
+import { mapWireMessages } from '@/lib/message-map';
 import { cn } from '@/lib/utils';
 
 interface DocDetail {
@@ -210,22 +210,8 @@ export function WritingEditorPage() {
     const existing = store.sessions[chatSessionId]?.messages?.length;
     if (existing) return;
     api.getMessages(chatSessionId, 50).then((r) => {
-      const msgs = r.messages.map((m) => ({
-        id: crypto.randomUUID(),
-        role: m.role,
-        text: m.content,
-        download:
-          (m.metadata?.sidecar || m.metadata?.plugin) && (m.metadata?.file as any)
-            ? {
-                fileId: (m.metadata.file as any).fileId as string,
-                fileName: (m.metadata.file as any).fileName as string,
-                mimeType: (m.metadata.file as any).mimeType as string,
-                url: '',
-                expiresIn: 0,
-              }
-            : undefined,
-        knowledgePayload: (m.metadata?.knowledgePayload as { title: string; content: string }) ?? undefined,
-      }));
+      // #461: single wire→UI mapper (restores download / knowledge payload).
+      const msgs = mapWireMessages(r.messages);
       if (msgs.length > 0) store.setMessages(chatSessionId, msgs);
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps -- store excluded deliberately
@@ -879,37 +865,18 @@ export function WritingEditorPage() {
               </div>
               <SkillsBar active={activeSkills} onToggle={(name) => setActiveSkills((prev) => prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name])} />
               <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                {chatMessages.length === 0 && (
-                  <p className="text-sm text-text-tertiary text-center mt-4 leading-relaxed">
-                    Ask the AI to write or research content.<br />
-                    It will update this document automatically.<br />
-                    <span className="text-xs">e.g. "Write a clinical review on..."</span>
-                  </p>
-                )}
-                {chatMessages.map((m) => (
-                  <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div
-                      className={`max-w-[90%] rounded-md px-3 py-2 text-sm leading-relaxed ${
-                        m.role === 'user'
-                          ? 'bg-accent text-white'
-                          : 'border border-border bg-surface-elevated text-text-primary shadow-sm'
-                      }`}
-                    >
-                      {m.reasoning && (
-                        <details className="mb-2" open>
-                          <summary className="cursor-pointer text-xs text-text-tertiary">{t('chat.reasoning')}</summary>
-                          <div className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-xs leading-relaxed text-text-secondary">
-                            {m.reasoning.slice(0, 20000)}
-                          </div>
-                        </details>
-                      )}
-                      {m.toolCalls && m.toolCalls.length > 0 && <ToolCalls calls={m.toolCalls} />}
-                      <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
-                      {m.isStreaming && !m.text && <span className="animate-pulse">●</span>}
-                    </div>
-                  </div>
-                ))}
-                <div ref={chatEndRef} />
+                <ChatMessages
+                  variant="compact"
+                  messages={chatMessages}
+                  bottomRef={chatEndRef}
+                  emptyState={
+                    <p className="text-sm text-text-tertiary text-center mt-4 leading-relaxed">
+                      Ask the AI to write or research content.<br />
+                      It will update this document automatically.<br />
+                      <span className="text-xs">e.g. "Write a clinical review on..."</span>
+                    </p>
+                  }
+                />
               </div>
               <div className="border-t border-border p-3">
                 {chatAttachedFiles.length > 0 && (

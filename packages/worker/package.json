@@ -7,18 +7,17 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
-    "start:consumer": "node dist/consumer.js"
+    "start": "node dist/server.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.500.0",
     "@aws-sdk/lib-storage": "^3.500.0",
+    "@aws-sdk/s3-request-presigner": "^3.1106.0",
     "@fastify/multipart": "^8.0.0",
     "@heurion/contracts": "file:../contracts",
     "docx": "^9.7.1",
     "dotenv": "^16.0.0",
     "fastify": "^4.0.0",
-    "ioredis": "^5.11.1",
     "pdfkit": "^0.19.1",
     "pptxgenjs": "^3.12.0",
     "uuid": "^9.0.0",

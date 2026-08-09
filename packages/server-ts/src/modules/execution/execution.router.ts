@@ -4,22 +4,6 @@ import { createExecutionPlaneService } from './execution-plane.service.js'
 
 const service = createExecutionPlaneService()
 
-const ALLOWED_SIDEcar_TYPES = [
-  'sidecar.generate_docx',
-  'sidecar.generate_pptx',
-  'sidecar.render_table',
-  'sidecar.render_plot',
-  'sidecar.convert_to_pdf',
-]
-
-const OLD_TYPE_MAP: Record<string, string> = {
-  'sidecar.generate_docx': 'sidecar.heurion/docx.generate_docx',
-  'sidecar.generate_pptx': 'sidecar.heurion/pptx.generate_pptx',
-  'sidecar.render_table': 'sidecar.heurion/table.render_table',
-  'sidecar.render_plot': 'sidecar.heurion/plot.render_plot',
-  'sidecar.convert_to_pdf': 'sidecar.heurion/pdf.convert_to_pdf',
-}
-
 export async function executionRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
@@ -38,26 +22,6 @@ export async function executionRouter(app: FastifyInstance) {
       type: body.type,
       payload: body.payload ?? {},
       tenant: body.tenant ?? { userId: request.user!.userId },
-      callbackUrl: body.callbackUrl,
-    })
-    return job
-  })
-
-  // Convenience endpoint for UI/chat: enqueue a Sidecar render job using
-  // the current authenticated user as the tenant.
-  app.post('/api/v1/execution/render', async (request, reply) => {
-    const body = request.body as {
-      type: string
-      payload?: Record<string, unknown>
-      callbackUrl?: string
-    }
-    if (!body.type || !ALLOWED_SIDEcar_TYPES.includes(body.type)) {
-      return reply.status(400).send({ error: 'invalid or unsupported sidecar render type' })
-    }
-    const job = await service.enqueue({
-      type: OLD_TYPE_MAP[body.type] ?? body.type,
-      payload: body.payload ?? {},
-      tenant: { userId: request.user!.userId },
       callbackUrl: body.callbackUrl,
     })
     return job

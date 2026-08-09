@@ -1,7 +1,7 @@
-import { PatientsApi } from './patients.js';
-import type { AgentState, ApprovalRequest, AuditLogEntry, BrainStats, ChatMessage, ChatSession, IngestionJob, TimelineEvent } from '../../types';
+import { ApiCore } from './core.js';
+import type { AgentState, ApprovalRequest, AuditLogEntry, BrainStats, ChatSession, IngestionJob, MemoryHealthResponse, TimelineEvent } from '../../types';
 
-export class BrainApi extends PatientsApi {
+export class BrainApi extends ApiCore {
   /* ────────────────────────── approvals / audit (Brain 2.0) ────────────────────────── */
 
   async listPendingApprovals(filters?: { targetType?: string }): Promise<{ requests: ApprovalRequest[] }> {
@@ -45,8 +45,8 @@ export class BrainApi extends PatientsApi {
 
   /* ────────────────────────── brain overview (Brain 2.0) ────────────────────────── */
 
-  async getMemoryHealth(): Promise<any> {
-    return this.fetch('/api/v1/memory/health');
+  async getMemoryHealth(): Promise<MemoryHealthResponse> {
+    return this.fetch<MemoryHealthResponse>('/api/v1/memory/health');
   }
 
   async getBrainStats(): Promise<BrainStats> {
@@ -132,10 +132,6 @@ export class BrainApi extends PatientsApi {
     });
   }
 
-  async getContextUsage(sessionId: string): Promise<{ history_tokens: number; history_budget: number; history_turns: number; omitted_turns: number; will_compact: boolean }> {
-    return this.fetch(`/api/v1/agent/context-usage?session_id=${encodeURIComponent(sessionId)}`);
-  }
-
   async closeSession(sessionId: string): Promise<{ id: string; status: string; closed_at?: string }> {
     return this.fetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}/close`, { method: 'POST' });
   }
@@ -157,11 +153,6 @@ export class BrainApi extends PatientsApi {
 
   async getActivity(limit = 20): Promise<{ items: TimelineEvent[] }> {
     return this.fetch<{ items: TimelineEvent[] }>(`/api/v1/agent/activity?limit=${limit}`);
-  }
-
-  async getMessages(sessionId?: string, limit = 50): Promise<{ messages: ChatMessage[]; total: number }> {
-    const q = sessionId ? `?session_id=${sessionId}&limit=${limit}` : `?limit=${limit}`;
-    return this.fetch<{ messages: ChatMessage[]; total: number }>(`/api/v1/agent/messages${q}`);
   }
 
 }

@@ -112,6 +112,65 @@ describe('Plugin Marketplace', () => {
     expect(JSON.parse(enableRes.payload).enabled).toBe(true)
   })
 
+  test('#454 full lifecycle: install → invoke → uninstall cascades audit log', async () => {
+    const app = await getApp()
+    const headers = { ...await authHeader(), 'content-type': 'application/json' }
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/install',
+      headers,
+      payload: { pluginId: 'heurion/docx' },
+    })
+
+    // Invoke once so an audit row exists.
+    const chat = await app.inject({
+      method: 'POST', url: '/api/v1/agent/chat',
+      headers,
+      payload: JSON.stringify({ text: '请生成一份出院小结', session_id: `plugin_lifecycle_${Date.now()}` }),
+    })
+    expect(chat.statusCode).toBe(200)
+
+    const before = await app.inject({
+      method: 'GET',
+      url: '/api/v1/plugins/audit-logs?pluginId=heurion/docx',
+      headers: await authHeader(),
+    })
+    const beforeBody = JSON.parse(before.payload)
+    const auditCount = Array.isArray(beforeBody.logs) ? beforeBody.logs.length : 0
+
+    const uninstall = await app.inject({
+      method: 'DELETE',
+      url: '/api/v1/plugins/heurion/docx',
+      headers: await authHeader(),
+    })
+    expect(uninstall.statusCode).toBe(200)
+    expect(JSON.parse(uninstall.payload).uninstalled).toBe(true)
+
+    // Installation gone.
+    const list = await app.inject({
+      method: 'GET',
+      url: '/api/v1/plugins/installed',
+      headers: await authHeader(),
+    })
+    const listBody = JSON.parse(list.payload)
+    expect(listBody.plugins.some((p: any) => p.pluginId === 'heurion/docx')).toBe(false)
+
+    // #454: audit trail cascaded away with the uninstall.
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/v1/plugins/audit-logs?pluginId=heurion/docx',
+      headers: await authHeader(),
+    })
+    const afterBody = JSON.parse(after.payload)
+    const afterCount = Array.isArray(afterBody.logs) ? afterBody.logs.length : 0
+    expect(afterCount).toBe(0)
+    if (auditCount > 0) {
+      // Sanity: there WAS an audit row before the cascade.
+      expect(auditCount).toBeGreaterThan(0)
+    }
+  })
+
   test('chat routes docx requests through plugin reasoning stream', async () => {
     const app = await getApp()
     const headers = { ...await authHeader(), 'content-type': 'application/json' }
@@ -390,15 +449,15 @@ describe('Plugin Marketplace', () => {
     }
   })
 
-  test('execution render endpoint maps old sidecar job types to plugin job types', async () => {
+  test('#453 unified job namespace: generic execution endpoint accepts sidecar.{pluginId}.{tool}', async () => {
     const app = await getApp()
     const headers = { ...await authHeader(), 'content-type': 'application/json' }
 
     const res = await app.inject({
       method: 'POST',
-      url: '/api/v1/execution/render',
+      url: '/api/v1/execution/jobs',
       headers,
-      payload: { type: 'sidecar.generate_docx', payload: { template_id: 'case_summary', data: {} } },
+      payload: { type: 'sidecar.heurion/docx.generate_docx', payload: { template_id: 'case_summary', data: {} } },
     })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.payload)

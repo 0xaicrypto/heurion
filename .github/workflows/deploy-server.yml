@@ -27,7 +27,7 @@ jobs:
         with: { version: '10' }
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
-      - run: cd packages/server-ts && pnpm install --frozen-lockfile && npx prisma generate && npx tsc --noEmit
+      - run: cd packages/server-ts && pnpm install --frozen-lockfile && cd ../contracts && pnpm install --frozen-lockfile && pnpm build && cd ../server-ts && npx prisma generate && npx tsc --noEmit
 
   test:
     name: Unit Tests
@@ -39,10 +39,11 @@ jobs:
         with: { version: '10' }
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
-      - name: Run Phase 0 regression tests
+      - name: Run regression tests
         run: |
           cd packages/server-ts
           pnpm install --frozen-lockfile
+          cd ../contracts && pnpm install --frozen-lockfile && pnpm build && cd ../server-ts
           npx prisma generate
           pnpm exec vitest run \
             tests/e2e/medical-record-entry.test.ts \
@@ -52,7 +53,13 @@ jobs:
             tests/e2e/imaging-ingestion.test.ts \
             tests/unit/ai-provider.test.ts \
             tests/e2e/protocol-ingestion.test.ts \
-            tests/unit/local-embedding.test.ts
+            tests/unit/local-embedding.test.ts \
+            tests/unit/provider-runtime.test.ts \
+            tests/unit/stats-engine.test.ts \
+            tests/e2e/plugin.test.ts \
+            tests/e2e/sidecar-content.test.ts \
+            tests/e2e/chart-download.test.ts \
+            tests/integration/sidecar-chat-context.test.ts
 
   build-web:
     name: Build Web Dist
@@ -293,7 +300,10 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
           CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
           EMBEDDING_PROVIDER=local
-          EMBEDDING_MODEL=Xenova/bge-small-en-v1.5
+          # #442: model default unified to bge-m3 across embedding-server,
+          # the index label and the deploy env — a mismatch would silently
+          # change vector dimensions (384 vs 1024).
+          EMBEDDING_MODEL=BAAI/bge-m3
           EMBEDDING_BATCH_SIZE=32
           EMBEDDING_FALLBACK_PROVIDER=none
           LOCAL_EMBEDDING_URL=http://nexus-embedding-server:8003/embed

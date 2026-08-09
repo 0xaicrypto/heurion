@@ -5,26 +5,16 @@ import { generatePptx } from './handlers/pptx.js'
 import { convertToPdf } from './handlers/pdf.js'
 import { renderPlot } from './handlers/plot.js'
 import { renderTable } from './handlers/table.js'
-import { getDownloadUrl } from './storage.js'
+import { getDownloadUrl, getLocalFile, localDownloadUrl, downloadUrlTtlSeconds } from './storage.js'
+import { PersistentJobStore, type JobRecord } from './job-store.js'
+import { createReadStream, existsSync } from 'fs'
 
-const JOBS = new Map<string, any>()
+// #446: persistent job store (JSONL) — jobs + fileId index survive restarts.
+const jobStore = new PersistentJobStore()
 
-interface JobRecord {
-  id: string
-  type: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
-  created_at: number
-  completed_at?: number
-  result?: any
-  error?: string
-}
-
+// #453: single job-type namespace — sidecar.{pluginId}.{toolName}.
+// The pre-plugin era names (sidecar.generate_docx, ...) were removed.
 const HANDLERS: Record<string, (payload: any, tenant?: any) => Promise<any>> = {
-  'sidecar.generate_docx': (p) => generateDocx(p, p.tenant),
-  'sidecar.generate_pptx': (p) => generatePptx(p),
-  'sidecar.render_table': (p) => renderTable(p),
-  'sidecar.render_plot': (p) => renderPlot(p),
-  'sidecar.convert_to_pdf': (p) => convertToPdf(p),
   'sidecar.heurion/docx.generate_docx': (p) => generateDocx(p, p.tenant),
   'sidecar.heurion/pptx.generate_pptx': (p) => generatePptx(p),
   'sidecar.heurion/table.render_table': (p) => renderTable(p),
@@ -38,7 +28,9 @@ function isAuthorized(token: string | undefined): boolean {
 }
 
 async function main() {
-  const port = parseInt(process.env.SERVER_PORT || '8001', 10)
+  // #441: default 8002 — the control plane (server-ts) owns 8001. Docker
+  // compose overrides this explicitly (8001:8001 on the host).
+  const port = parseInt(process.env.SERVER_PORT || '8002', 10)
   const host = process.env.SERVER_HOST || '0.0.0.0'
   const app = Fastify({ logger: true })
 
@@ -62,28 +54,46 @@ async function main() {
       }
 
       const id = uuid()
-      const job: JobRecord = { id, type, status: 'pending', created_at: Date.now() / 1000 }
-      JOBS.set(id, job)
+      const job = jobStore.create(id, type)
 
       setImmediate(async () => {
         const handler = HANDLERS[type]
         if (!handler) {
-          job.status = 'failed'
-          job.error = `Unknown job type: ${type}`
-          job.completed_at = Date.now() / 1000
+          jobStore.update(id, { status: 'failed', error: `Unknown job type: ${type}`, completed_at: Date.now() / 1000 })
           return
         }
 
-        job.status = 'running'
+        jobStore.update(id, { status: 'running' })
         try {
           const result = await handler(payload || {}, tenant)
-          job.status = 'completed'
-          job.result = result
+          jobStore.update(id, { status: 'completed', result, completed_at: Date.now() / 1000 })
+          // #446: index the produced file for O(1) download lookups.
+          if (result?.file_id) {
+            jobStore.indexFile({
+              fileId: String(result.file_id),
+              jobId: id,
+              fileName: String(result.file_name || 'output'),
+              mimeType: String(result.mime_type || 'application/octet-stream'),
+            })
+          }
+          // #449: fire-and-forget completion callback.
+          if (callback_url) {
+            fetch(callback_url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ job_id: id, status: 'completed', result, error: undefined }),
+            }).catch(() => {})
+          }
         } catch (err: any) {
-          job.status = 'failed'
-          job.error = err.message || 'Handler failed'
+          jobStore.update(id, { status: 'failed', error: err.message || 'Handler failed', completed_at: Date.now() / 1000 })
+          if (callback_url) {
+            fetch(callback_url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ job_id: id, status: 'failed', error: err.message || 'Handler failed' }),
+            }).catch(() => {})
+          }
         }
-        job.completed_at = Date.now() / 1000
       })
 
       return {
@@ -96,7 +106,7 @@ async function main() {
 
   app.get('/api/v1/jobs/:id', async (request, reply) => {
     const { id } = request.params as { id: string }
-    const job = JOBS.get(id)
+    const job = jobStore.get(id)
     if (!job) return reply.status(404).send({ error: 'job not found' })
     return {
       job_id: job.id,
@@ -108,15 +118,46 @@ async function main() {
     }
   })
 
+  // #447: honest download info — real presigned S3 URL (1h) in S3 mode, or
+  // the local proxy endpoint in local mode. expires_in is the true TTL.
   app.get('/api/v1/files/:fileId/download', async (request, reply) => {
     const { fileId } = request.params as { fileId: string }
-    for (const job of JOBS.values()) {
-      if (job.result?.fileId === fileId || job.result?.s3Key) {
-        const url = getDownloadUrl(job.result.s3Key)
-        return { file_id: fileId, file_name: job.result.fileName, mime_type: job.result.mimeType, download_url: url, expires_in: 3600 }
-      }
+    // #446: O(1) file-index lookup (no job-map scan).
+    const entry = jobStore.getFileEntry(fileId)
+    const job = entry ? jobStore.get(entry.jobId) : null
+    if (!job) return reply.status(404).send({ error: 'file not found' })
+    const result = (job.result || {}) as Record<string, unknown>
+
+    let url: string | null = null
+    if (result.s3Key) {
+      url = await getDownloadUrl(String(result.s3Key))
+      if (!url) return reply.status(500).send({ error: 'download URL generation failed' })
+    } else if (result.fileId) {
+      url = localDownloadUrl(String(result.fileId))
     }
-    return reply.status(404).send({ error: 'file not found' })
+    if (!url) return reply.status(404).send({ error: 'file not found' })
+
+    return {
+      file_id: fileId,
+      file_name: entry?.fileName || String(result.fileName || 'output'),
+      mime_type: entry?.mimeType || String(result.mimeType || 'application/octet-stream'),
+      download_url: url,
+      expires_in: downloadUrlTtlSeconds(),
+    }
+  })
+
+  // Local-mode file content proxy (used by localDownloadUrl). Auth: the
+  // same worker token — the control plane proxies this through its own
+  // authenticated files route.
+  app.get('/api/v1/files/:fileId/content', async (request, reply) => {
+    const { fileId } = request.params as { fileId: string }
+    const file = getLocalFile(fileId)
+    if (!file || !existsSync(file.path)) {
+      return reply.status(404).send({ error: 'file not found' })
+    }
+    reply.header('Content-Type', file.mimeType)
+    reply.header('Cache-Control', 'public, max-age=3600')
+    return reply.send(createReadStream(file.path))
   })
 
   await app.listen({ host, port })

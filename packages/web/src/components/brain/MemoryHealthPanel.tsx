@@ -3,19 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Activity, AlertTriangle, Archive, CheckCircle2, Database } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Card, Skeleton } from '@/components/ui';
-
-interface HealthResponse {
-  generated_at: string;
-  acceptance: {
-    approved: number;
-    rejected: number;
-    rate: number | null;
-    by_category: Array<{ category: string; accepted: number; rejected: number; rate: number }>;
-  };
-  contradictions_7d: number;
-  stale: { pending_over_7d: number; high_importance_pinned: number; archived: number };
-  scale: { facts: number; articles: number; open_gaps: number; pending: number; episodes: number };
-}
+import type { MemoryHealthResponse as HealthResponse } from '@/lib/types';
 
 function StatCard({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: string | number; tone?: 'good' | 'warn' | 'bad' }) {
   const color = tone === 'good' ? 'text-success' : tone === 'warn' ? 'text-warning' : tone === 'bad' ? 'text-error' : 'text-text-primary';

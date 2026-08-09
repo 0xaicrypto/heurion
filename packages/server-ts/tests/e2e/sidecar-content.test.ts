@@ -57,17 +57,25 @@ describe('sidecar content guarantee (AI → validated JSON)', () => {
     const findEnqueue = mockWorker()
 
     const app = await getApp()
+    const headers = { ...await authHeader(), 'content-type': 'application/json' }
+    // #451: rendering goes through installable plugins.
+    const install = await app.inject({
+      method: 'POST', url: '/api/v1/plugins/install', headers,
+      payload: JSON.stringify({ pluginId: 'heurion/pptx' }),
+    })
+    expect(install.statusCode).toBe(200)
+
     const res = await app.inject({
       method: 'POST', url: '/api/v1/agent/chat',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers,
       payload: JSON.stringify({ text: '帮我做一个 PPT' }),
     })
     expect(res.statusCode).toBe(200)
-    // Two LLM calls: original + correction retry.
-    expect(deepseekChat).toHaveBeenCalledTimes(2)
+    // 1× intent classifier + original + correction retry.
+    expect(deepseekChat).toHaveBeenCalledTimes(3)
     // The retry prompt carried the schema errors.
-    const retryPrompt = vi.mocked(deepseekChat).mock.calls[1][0][0].content
-    expect(String(retryPrompt)).toContain('slides')
+    const retryPrompt = vi.mocked(deepseekChat).mock.calls[2][0][0].content
+    expect(String(retryPrompt)).toContain('未通过校验')
     // The worker payload passed validation (schema-valid slides).
     const enqueueCall = findEnqueue()
     const enqueueBody = JSON.parse(String((enqueueCall[1] as any).body))
@@ -79,9 +87,17 @@ describe('sidecar content guarantee (AI → validated JSON)', () => {
     const findEnqueue = mockWorker()
 
     const app = await getApp()
+    const headers = { ...await authHeader(), 'content-type': 'application/json' }
+    // #451: rendering goes through installable plugins.
+    const install = await app.inject({
+      method: 'POST', url: '/api/v1/plugins/install', headers,
+      payload: JSON.stringify({ pluginId: 'heurion/table' }),
+    })
+    expect(install.statusCode).toBe(200)
+
     const res = await app.inject({
       method: 'POST', url: '/api/v1/agent/chat',
-      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      headers,
       payload: JSON.stringify({ text: '帮我生成一个表格' }),
     })
     expect(res.statusCode).toBe(200)

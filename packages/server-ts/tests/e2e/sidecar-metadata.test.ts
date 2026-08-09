@@ -54,6 +54,16 @@ describe('sidecar message metadata persistence (download + knowledge payload aft
     // Intent classifier returns "sidecar" directly so no extra LLM routing call is needed.
     vi.mocked(deepseekChat).mockResolvedValue('sidecar')
 
+    // #451: rendering goes through installable plugins — install the
+    // official PPT plugin so the intent matcher picks it up.
+    const install = await app.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/install',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ pluginId: 'heurion/pptx' }),
+    })
+    expect(install.statusCode).toBe(200)
+
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/agent/chat',

@@ -1,14 +1,9 @@
 """#404: Python stats worker — serves scipy/statsmodels/lifelines results.
 
-Two entry points:
-1. HTTP /analyze (FastAPI) — called by the TS worker/server for stats jobs.
-2. Redis consumer (heurion:jobs, stats.* types) — coexists with the TS
-   consumer on the same queue (Redis brpop is atomic per job).
+Single entry point: HTTP /analyze (FastAPI). #444: the Redis dual-consumer
+was a dead path (no producer ever wrote to heurion:jobs) and is removed.
 """
-import json
 import os
-import threading
-import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -60,41 +55,7 @@ def analyze(req: AnalyzeRequest) -> Dict[str, Any]:
     return run_analysis(req)
 
 
-# ── Redis dual-consumer (stats.* job types) ──────────────────────────
-def redis_consumer() -> None:
-    try:
-        import redis
-
-        r = redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
-        print("Stats worker listening on heurion:jobs (stats.* types)")
-        while True:
-            result = r.brpop("heurion:jobs", 0)
-            if not result:
-                continue
-            _, raw = result
-            try:
-                job = json.loads(raw)
-            except Exception:
-                continue
-            if not str(job.get("type", "")).startswith(("stats.", "sidecar.heurion/stats.")):
-                continue  # other consumers handle non-stats jobs
-            job_id = job.get("id")
-            print(f"Processing stats job {job_id}: {job.get('type')}")
-            try:
-                payload = job.get("payload") or {}
-                data = payload.get("data") or payload
-                req = AnalyzeRequest(**{k: v for k, v in data.items() if k in AnalyzeRequest.model_fields})
-                result_payload = run_analysis(req)
-                status_key = f"heurion:job:{job_id}"
-                r.set(status_key, json.dumps({"status": "completed", "result": result_payload}), ex=3600)
-            except Exception as exc:  # noqa: BLE001
-                r.set(f"heurion:job:{job_id}", json.dumps({"status": "failed", "error": str(exc)}), ex=3600)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Redis consumer unavailable: {exc}")
-
-
 def main() -> None:
-    threading.Thread(target=redis_consumer, daemon=True).start()
     import uvicorn
 
     uvicorn.run(app, host=os.environ.get("STATS_HOST", "0.0.0.0"), port=int(os.environ.get("STATS_PORT", "8005")))

@@ -1,7 +1,7 @@
-import { SettingsApi } from './settings.js';
+import { ApiCore } from './core.js';
 import type { MedicalRecordEntry, MedicalRecordEntryDraft, Patient, PatientDetail } from '../../types';
 
-export class PatientsApi extends SettingsApi {
+export class PatientsApi extends ApiCore {
   /* ────────────────────────── patients ────────────────────────── */
 
   async listPatients(): Promise<Patient[]> {

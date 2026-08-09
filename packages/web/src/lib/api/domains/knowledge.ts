@@ -1,7 +1,7 @@
-import { WritingApi } from './writing.js';
+import { ApiCore } from './core.js';
 import type { Article, LlmCostDashboard, QueueMetrics, TelemetryDashboard } from '../../types';
 
-export class KnowledgeApi extends WritingApi {
+export class KnowledgeApi extends ApiCore {
   /* ────────────────────────── knowledge & facts ────────────────────────── */
 
   async getKnowledgeArticles(): Promise<{articles: Article[]}> {

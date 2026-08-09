@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { api } from '@/lib/api';
-import type { ChatStreamChunk, SendChatOptions } from '@/lib/types';
+import type { ChatStreamChunk, ChatContextUsage, SendChatOptions } from '@/lib/types';
 
 export interface ChatMessage {
   id: string;
@@ -29,6 +29,8 @@ export interface ChatMessage {
   _compactionStream?: boolean;
   toolCalls?: Array<{ tool: string; argsPreview: string }>;
   chart?: { url: string; chartType?: string };
+  /** #455: plugin invocation trail (plugin_selected / payload_building / job_enqueued). */
+  pluginCalls?: Array<{ pluginId: string; tool: string; intent: string; confidence: number }>;
   /** Epoch ms — powers timestamps + grouping (§10.3 #220). */
   createdAt?: number;
   /** Set when the turn failed — renders a retry affordance. */
@@ -41,13 +43,8 @@ interface SessionState {
   loading: boolean;
   compacting: boolean;
   lastDocBody?: string;
-  contextUsage?: {
-    historyTokens: number;
-    historyBudget: number;
-    historyTurns: number;
-    omittedTurns: number;
-    willCompact: boolean;
-  };
+  /** #459: shared UI shape (ChatContextUsage in lib/types). */
+  contextUsage?: ChatContextUsage;
   /** #298: skill-capture suggestion shown after a procedural reply. */
   skillCapture?: { text: string };
   /** #350: sub-agent activity indicator (delegate/spawn_subagent). */
@@ -102,6 +99,15 @@ function applyChunk(msg: ChatMessage, chunk: ChatStreamChunk): ChatMessage {
       return { ...msg, isStreaming: false };
     case 'error':
       return { ...msg, text: msg.text || `Error: ${chunk.message}`, isStreaming: false };
+    // #455: plugin pipeline visibility — collect the trail on the message.
+    case 'plugin_selected':
+      return {
+        ...msg,
+        pluginCalls: [
+          ...(msg.pluginCalls || []),
+          { pluginId: chunk.plugin_id, tool: chunk.tool, intent: chunk.intent, confidence: chunk.confidence },
+        ],
+      };
     default:
       return msg;
   }

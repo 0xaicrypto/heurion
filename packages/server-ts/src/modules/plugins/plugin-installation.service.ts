@@ -51,7 +51,12 @@ export async function installPlugin(userId: string, pluginId: string, requestedV
 }
 
 export async function uninstallPlugin(userId: string, pluginId: string): Promise<void> {
+  // #454: cascade cleanup — installation row + audit trail + any
+  // installation-scoped references.
   await prisma.pluginInstallation.deleteMany({
+    where: { userId, pluginId },
+  })
+  await prisma.pluginAuditLog.deleteMany({
     where: { userId, pluginId },
   })
 }

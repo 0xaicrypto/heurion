@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
-import { selectProjectionInputs } from '../../src/modules/chat/chat.router.js'
+import { selectProjectionInputs } from '../../src/modules/chat/chat-context.js'
 import type { RouterResult } from '../../src/retrieval/query-router.js'
 
 vi.mock('../../src/common/llm.js', () => mockAiProvider())

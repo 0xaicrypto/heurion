@@ -1,13 +1,15 @@
 import { describe, test, expect, vi, afterEach } from 'vitest'
-import { resolveChatProvider } from '../../src/common/ai/openai-compatible-chat.provider.js'
+import { resolveLlmEndpoint, LLM_PROVIDERS, setLlmGatewayForTest } from '../../src/common/llm-gateway.js'
 import { createAiProvider } from '../../src/common/ai/ai-provider.js'
 
 /**
- * #202: runtime LLM provider selection via DEFAULT_LLM_PROVIDER.
+ * #202/#436: runtime LLM provider selection via DEFAULT_LLM_PROVIDER —
+ * chat goes through the single LlmGateway.
  */
-describe('runtime provider selection (#202)', () => {
+describe('runtime provider selection (#202/#436)', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
+    setLlmGatewayForTest(null)
   })
 
   test('DEFAULT_LLM_PROVIDER=gemini routes chat to the Gemini OpenAI-compat endpoint', async () => {
@@ -47,8 +49,12 @@ describe('runtime provider selection (#202)', () => {
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toContain('dkey')
   })
 
-  test('unknown provider throws config_missing', () => {
+  test('unknown provider throws', () => {
     vi.stubEnv('DEFAULT_LLM_PROVIDER', 'watson')
-    expect(() => resolveChatProvider({})).toThrow(/Unknown DEFAULT_LLM_PROVIDER/)
+    expect(() => resolveLlmEndpoint()).toThrow(/Unknown DEFAULT_LLM_PROVIDER/)
+  })
+
+  test('provider registry covers all supported providers', () => {
+    expect(Object.keys(LLM_PROVIDERS).sort()).toEqual(['anthropic', 'deepseek', 'gemini', 'kimi', 'opencode', 'openai'].sort())
   })
 })

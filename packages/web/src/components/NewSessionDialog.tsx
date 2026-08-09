@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import type { ChatSession } from '@/lib/types';
@@ -11,6 +12,7 @@ interface NewSessionDialogProps {
 }
 
 export function NewSessionDialog({ open, onClose, onCreated }: NewSessionDialogProps) {
+  const { t } = useTranslation();
   const [title, setTitle] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +43,7 @@ export function NewSessionDialog({ open, onClose, onCreated }: NewSessionDialogP
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-text-primary">新建会话</h2>
+          <h2 className="text-sm font-semibold text-text-primary">{t('chat.newSession', '新建会话')}</h2>
           <button onClick={onClose} className="text-text-secondary hover:text-text-primary" aria-label="Close">
             <X size={16} />
           </button>
@@ -51,17 +53,17 @@ export function NewSessionDialog({ open, onClose, onCreated }: NewSessionDialogP
             autoFocus
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="会话名称（可选，默认 New Session）"
+            placeholder={t('chat.newSessionPlaceholder', '会话名称（可选，默认 New Session）')}
             maxLength={60}
             className="h-9"
           />
           {error && <div className="text-xs text-error">{error}</div>}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="secondary" onClick={onClose} disabled={loading}>
-              取消
+              {t('common.cancel', '取消')}
             </Button>
             <Button type="submit" disabled={loading}>
-              {loading ? '创建中…' : '创建'}
+              {loading ? t('chat.creating', '创建中…') : t('chat.create', '创建')}
             </Button>
           </div>
         </form>

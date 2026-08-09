@@ -1,7 +1,7 @@
-import { ResearchApi } from './research.js';
+import { ApiCore } from './core.js';
 
 
-export class SkillsApi extends ResearchApi {
+export class SkillsApi extends ApiCore {
   /* ────────────────────────── skills ────────────────────────── */
 
   async listSkills(): Promise<{skills: Array<{name: string; title: string; description: string; version: string; author: string; enabled?: boolean}>}> {
