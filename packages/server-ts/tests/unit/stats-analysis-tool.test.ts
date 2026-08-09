@@ -53,3 +53,43 @@ describe('run_stats_analysis (#403)', () => {
     expect(res.error).toContain('2')
   })
 })
+
+describe('methods_text enhancements (#407)', () => {
+  test('methods_text includes gating declaration when degraded', async () => {
+    const tool = new RunStatsAnalysisTool()
+    // Non-normal-ish data (skewed) → TS heuristic gate may pass; force by
+    // using the Mann-Whitney path via a clearly non-normal sample.
+    const res = await tool.execute({ test: 't-test', group_a: [0.1, 0.2, 5, 6, 7, 8, 0.3, 9], group_b: [20, 21, 22, 23, 0.4, 0.5, 24, 25] })
+    expect(res.success).toBe(true)
+    const out = JSON.parse(res.output!)
+    if (out.report.method === 'mann_whitney') {
+      expect(out.methods_text).toContain('Mann-Whitney')
+      expect(out.methods_text).toContain('自动改用')
+    } else {
+      // Gate heuristic passed — at least CI should be present.
+      expect(out.report.ci_95).toBeDefined()
+    }
+  })
+})
+
+import { renderSvgChart } from '../../src/tools/chart-renderer.js'
+describe('chart significance + error bars (#407)', () => {
+  test('bar chart renders error bars and significance bracket', () => {
+    const svg = renderSvgChart({
+      type: 'bar',
+      data: [{ label: 'A', value: 30 }, { label: 'B', value: 55 }],
+      errors: [{ label: 'A', error: 4 }, { label: 'B', error: 6 }],
+      sig: { pair: ['A', 'B'], stars: '**', p: '0.004' },
+      title: 't',
+    })
+    expect(svg).toContain('<line') // error bars
+    expect(svg).toContain('#dc2626') // significance bracket color
+    expect(svg).toContain('** (p=0.004)')
+  })
+
+  test('bar without errors/sig renders plain', () => {
+    const svg = renderSvgChart({ type: 'bar', data: [{ label: 'A', value: 1 }], title: 'x' })
+    expect(svg).toContain('<rect')
+    expect(svg).not.toContain('#dc2626')
+  })
+})

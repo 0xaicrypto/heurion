@@ -30,13 +30,18 @@ function methodsText(test: string, out: Record<string, unknown>): string {
   const df = fmt(out.df)
   const es = fmt(out.effect_size)
   const sig = Number(out.p_value) < 0.05 ? '差异有统计学意义' : '差异无统计学意义'
+  const ci = Array.isArray(out.ci_95) ? `，95% CI [${fmt(out.ci_95[0])}, ${fmt(out.ci_95[1])}]` : ''
+  const gating = (out.gating as any)?.normality_gate === 'failed'
+    ? `；正态性检验不满足（Shapiro-Wilk p<0.05），已自动改用 Mann-Whitney 检验`
+    : ''
   const name: Record<string, string> = {
     't-test': 'Welch 两样本 t 检验（Welch two-sample t-test）',
     'chi-square': '卡方检验（Chi-squared test）',
     'kaplan-meier': 'Kaplan-Meier 生存分析 + log-rank 检验',
     'describe': '描述统计（Descriptive statistics）',
+    'mann_whitney': 'Mann-Whitney U 检验',
   }
-  return `${name[test] || test}：检验统计量 ${stat}${df ? `（df=${df}）` : ''}，p=${p}，效应量 ${es ?? '—'}，${sig}。`
+  return `${name[test] || name[String(out.method)] || test}：检验统计量 ${stat}${df ? `（df=${df}）` : ''}，p=${p}，效应量 ${es ?? '—'}${ci}，${sig}${gating}。`
 }
 
 export class RunStatsAnalysisTool extends BaseTool {

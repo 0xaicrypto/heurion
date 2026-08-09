@@ -30,6 +30,8 @@ export class RenderChartTool extends BaseTool {
           items: { type: 'object', properties: { label: { type: 'string' }, value: { type: 'number' } }, required: ['label', 'value'] },
           description: 'Data points (omit for dose_curve to use the standard Bragg model).',
         },
+        errors: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, error: { type: 'number' } } }, description: '#407: per-bar error bar half-width (SD/SEM/CI) — bar charts.' },
+        sig: { type: 'object', properties: { pair: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 2 }, stars: { type: 'string' }, p: { type: 'string' } }, description: '#407: significance bracket between two bars (Prism-style).' },
         title: { type: 'string', description: 'Chart title.' },
         x_label: { type: 'string' },
         y_label: { type: 'string' },
@@ -69,6 +71,8 @@ export class RenderChartTool extends BaseTool {
     const input: ChartInput = {
       type,
       data: Array.isArray(args.data) ? (args.data as Array<{ label: string; value: number }>) : undefined,
+      errors: Array.isArray(args.errors) ? (args.errors as Array<{ label: string; error: number }>) : undefined,
+      sig: args.sig as { pair: [string, string]; stars: string; p?: string } | undefined,
       title: args.title ? String(args.title) : undefined,
       x_label: args.x_label ? String(args.x_label) : undefined,
       y_label: args.y_label ? String(args.y_label) : undefined,
