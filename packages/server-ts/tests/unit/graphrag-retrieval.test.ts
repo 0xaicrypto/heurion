@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'vitest'
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { MemoryService } from '../../src/memory/memory.service.js'
 import { MemoryGraphGateway } from '../../src/memory/memory-gateway.js'
 import { VersionedStore } from '../../src/core/versioned-store.js'
