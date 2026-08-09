@@ -25,6 +25,21 @@ export class SkillsApi extends ApiCore {
     return this.fetch(`/api/v1/skills/${name}`, { method: 'DELETE' });
   }
 
+  /* ────────────────────────── #15: captured skills / experience ────────────────────────── */
+
+  async listCapturedSkills(status?: string): Promise<{skills: Array<{id: string; name: string; description: string; steps: string[]; prompt: string; status: string; source_session?: string; created_at: string}>}> {
+    const qs = status ? `?status=${status}` : '';
+    return this.fetch(`/api/v1/skills/captured${qs}`);
+  }
+
+  async confirmCapturedSkill(id: string): Promise<{ok: boolean}> {
+    return this.fetch(`/api/v1/skills/capture/${id}/confirm`, { method: 'POST' });
+  }
+
+  async synthesizeExperience(minFacts = 3): Promise<{candidates: Array<{name: string; description: string; source_count: number}>; groups: number}> {
+    return this.fetch(`/api/v1/skills/synthesize?min_facts=${minFacts}`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
   /* ────────────────────────── skills marketplace ────────────────────────── */
 
   async searchGitHubSkills(query?: string): Promise<{skills: Array<{identifier: string; name: string; description: string; source: string; repo: string; author: string; installed: boolean; version: string}>; total: number}> {

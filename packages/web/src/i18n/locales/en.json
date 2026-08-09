@@ -89,7 +89,8 @@
     "sectionConversation": "Conversation",
     "sectionPatients": "Patient Workspace",
     "sectionMemory": "Memory & Knowledge",
-    "sectionTools": "Tools & Settings"
+    "sectionTools": "Tools & Settings",
+    "charts": "Charts"
   },
   "auth": {
     "welcomeBack": "Welcome back",

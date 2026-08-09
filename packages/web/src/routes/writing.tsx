@@ -240,7 +240,9 @@ function WritingList() {
                   onClick={() => handleDelete(d.id)}
                   disabled={deletingId === d.id}
                   title={t('common.delete', '删除')}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-text-tertiary opacity-0 transition-opacity hover:bg-surface-elevated hover:text-error focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-40"
+                  // #389: corner placement — the old centered-right button
+                  // overlapped the row's FileText icon.
+                  className="absolute right-2 top-2 rounded-lg p-1.5 text-text-tertiary opacity-0 transition-opacity hover:bg-surface-elevated hover:text-error focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-40"
                 >
                   {deletingId === d.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                 </button>

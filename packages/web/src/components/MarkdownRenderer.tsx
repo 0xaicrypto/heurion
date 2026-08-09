@@ -54,6 +54,10 @@ export function MarkdownRenderer({ content, className }: Props) {
     <div
       className={cn(
         'prose prose-sm max-w-none break-words',
+        // #389: dark mode — prose's default colors (lists, hr, blockquote,
+        // leftover elements) are dark; invert them under .dark while the
+        // explicit semantic-color overrides below keep their theme values.
+        'dark:prose-invert',
         // In-chat typography scale: base 14px body, headings kept close to
         // body size (default prose h1/h2 are far too large for a chat bubble).
         'prose-headings:text-text-primary prose-headings:font-semibold',
