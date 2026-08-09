@@ -8,7 +8,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
-      '@heurion/contracts': resolve(__dirname, '../contracts/src/index.ts'),
     },
   },
   server: {
