@@ -1,0 +1,588 @@
+{
+ "source": "Reactome",
+ "license": "CC BY 4.0",
+ "license_url": "https://reactome.org/license",
+ "attribution": "Reactome pathway diagrams, CC BY 4.0",
+ "download": "https://reactome.org/download/current/diagrams.svg.tgz",
+ "downloaded_at": "2026-08-09",
+ "pathways": [
+  {
+   "id": "R-HSA-177929",
+   "name": "Signaling by EGFR",
+   "aliases": [
+    "EGFR 信号通路",
+    "EGFR 信号",
+    "表皮生长因子受体信号",
+    "Signaling by EGFR"
+   ]
+  },
+  {
+   "id": "R-HSA-1227986",
+   "name": "Signaling by ERBB2",
+   "aliases": [
+    "ERBB2 信号通路",
+    "HER2 信号",
+    "HER2 信号通路",
+    "Signaling by ERBB2"
+   ]
+  },
+  {
+   "id": "R-HSA-1236394",
+   "name": "Signaling by ERBB4",
+   "aliases": [
+    "Signaling by ERBB4"
+   ]
+  },
+  {
+   "id": "R-HSA-9634285",
+   "name": "Constitutive Signaling by Overexpressed ERBB2",
+   "aliases": [
+    "Constitutive Signaling by Overexpressed ERBB2"
+   ]
+  },
+  {
+   "id": "R-HSA-5654736",
+   "name": "Signaling by FGFR1",
+   "aliases": [
+    "Signaling by FGFR1"
+   ]
+  },
+  {
+   "id": "R-HSA-5654738",
+   "name": "Signaling by FGFR2",
+   "aliases": [
+    "Signaling by FGFR2"
+   ]
+  },
+  {
+   "id": "R-HSA-5654741",
+   "name": "Signaling by FGFR3",
+   "aliases": [
+    "Signaling by FGFR3"
+   ]
+  },
+  {
+   "id": "R-HSA-74752",
+   "name": "Signaling by Insulin receptor",
+   "aliases": [
+    "胰岛素受体信号",
+    "Signaling by Insulin receptor"
+   ]
+  },
+  {
+   "id": "R-HSA-2586552",
+   "name": "Signaling by Leptin",
+   "aliases": [
+    "瘦素信号",
+    "Signaling by Leptin"
+   ]
+  },
+  {
+   "id": "R-HSA-194138",
+   "name": "Signaling by VEGF",
+   "aliases": [
+    "VEGF 信号通路",
+    "血管内皮生长因子信号",
+    "Signaling by VEGF"
+   ]
+  },
+  {
+   "id": "R-HSA-186797",
+   "name": "Signaling by PDGF",
+   "aliases": [
+    "PDGF 信号",
+    "Signaling by PDGF"
+   ]
+  },
+  {
+   "id": "R-HSA-9680350",
+   "name": "Signaling by CSF1 (M-CSF) in myeloid cells",
+   "aliases": [
+    "Signaling by CSF1 (M-CSF) in myeloid cells"
+   ]
+  },
+  {
+   "id": "R-HSA-9674555",
+   "name": "Signaling by CSF3 (G-CSF)",
+   "aliases": [
+    "Signaling by CSF3 (G-CSF)"
+   ]
+  },
+  {
+   "id": "R-HSA-109704",
+   "name": "PI3K Cascade",
+   "aliases": [
+    "PI3K 级联",
+    "PI3K 信号",
+    "PI3K 通路",
+    "PI3K Cascade"
+   ]
+  },
+  {
+   "id": "R-HSA-2219530",
+   "name": "Constitutive Signaling by Aberrant PI3K in Cancer",
+   "aliases": [
+    "癌症中异常 PI3K 信号",
+    "PI3K 致癌信号",
+    "Constitutive Signaling by Aberrant PI3K in Cancer"
+   ]
+  },
+  {
+   "id": "R-HSA-5674400",
+   "name": "Constitutive Signaling by AKT1 E17K in Cancer",
+   "aliases": [
+    "AKT1 E17K 突变致癌信号",
+    "Constitutive Signaling by AKT1 E17K in Cancer"
+   ]
+  },
+  {
+   "id": "R-HSA-165159",
+   "name": "MTOR signalling",
+   "aliases": [
+    "mTOR 信号通路",
+    "mTOR 通路",
+    "MTOR signalling",
+    "MTOR signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-9639288",
+   "name": "Amino acids regulate mTORC1",
+   "aliases": [
+    "Amino acids regulate mTORC1"
+   ]
+  },
+  {
+   "id": "R-HSA-380972",
+   "name": "Energy dependent regulation of mTOR by LKB1-AMPK",
+   "aliases": [
+    "Energy dependent regulation of mTOR by LKB1-AMPK"
+   ]
+  },
+  {
+   "id": "R-HSA-5687128",
+   "name": "MAPK6/MAPK4 signaling",
+   "aliases": [
+    "MAPK6/MAPK4 signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-5673001",
+   "name": "RAF/MAP kinase cascade",
+   "aliases": [
+    "RAF/MAPK 级联",
+    "RAS-RAF-MEK-ERK 通路",
+    "MAPK 级联",
+    "RAF/MAP kinase cascade"
+   ]
+  },
+  {
+   "id": "R-HSA-450282",
+   "name": "MAPK targets/ Nuclear events mediated by MAP kinases",
+   "aliases": [
+    "MAPK 核内事件",
+    "MAPK targets/ Nuclear events mediated by MAP kinases"
+   ]
+  },
+  {
+   "id": "R-HSA-9648002",
+   "name": "RAS processing",
+   "aliases": [
+    "RAS processing"
+   ]
+  },
+  {
+   "id": "R-HSA-6802953",
+   "name": "RAS signaling downstream of NF1 loss-of-function variants",
+   "aliases": [
+    "RAS signaling downstream of NF1 loss-of-function variants"
+   ]
+  },
+  {
+   "id": "R-HSA-9726842",
+   "name": "Gain-of-function MRAS complexes activate RAF signaling",
+   "aliases": [
+    "Gain-of-function MRAS complexes activate RAF signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-109606",
+   "name": "Intrinsic Pathway for Apoptosis",
+   "aliases": [
+    "内源性凋亡通路",
+    "线粒体凋亡通路",
+    "内在凋亡途径",
+    "Intrinsic Pathway for Apoptosis"
+   ]
+  },
+  {
+   "id": "R-HSA-75157",
+   "name": "FasL/ CD95L signaling",
+   "aliases": [
+    "FasL 信号",
+    "CD95 信号",
+    "FasL/ CD95L signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-69620",
+   "name": "Cell Cycle Checkpoints",
+   "aliases": [
+    "细胞周期检查点",
+    "细胞周期检验点",
+    "Cell Cycle Checkpoints"
+   ]
+  },
+  {
+   "id": "R-HSA-73893",
+   "name": "DNA Damage Bypass",
+   "aliases": [
+    "DNA 损伤绕过",
+    "DNA Damage Bypass"
+   ]
+  },
+  {
+   "id": "R-HSA-2559586",
+   "name": "DNA Damage/Telomere Stress Induced Senescence",
+   "aliases": [
+    "DNA Damage/Telomere Stress Induced Senescence"
+   ]
+  },
+  {
+   "id": "R-HSA-5358508",
+   "name": "Mismatch Repair",
+   "aliases": [
+    "错配修复",
+    "MMR",
+    "Mismatch Repair"
+   ]
+  },
+  {
+   "id": "R-HSA-73929",
+   "name": "Base-Excision Repair, AP Site Formation",
+   "aliases": [
+    "碱基切除修复",
+    "BER",
+    "Base-Excision Repair, AP Site Formation"
+   ]
+  },
+  {
+   "id": "R-HSA-5696398",
+   "name": "Nucleotide Excision Repair",
+   "aliases": [
+    "核苷酸切除修复",
+    "NER",
+    "Nucleotide Excision Repair"
+   ]
+  },
+  {
+   "id": "R-HSA-3858494",
+   "name": "Beta-catenin independent WNT signaling",
+   "aliases": [
+    "Beta-catenin independent WNT signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-5632684",
+   "name": "Hedgehog 'on' state",
+   "aliases": [
+    "Hedgehog 通路激活态",
+    "Hedgehog 信号",
+    "Hedgehog 'on' state"
+   ]
+  },
+  {
+   "id": "R-HSA-2028269",
+   "name": "Signaling by Hippo",
+   "aliases": [
+    "Hippo 信号通路",
+    "Signaling by Hippo"
+   ]
+  },
+  {
+   "id": "R-HSA-170834",
+   "name": "Signaling by TGF-beta Receptor Complex",
+   "aliases": [
+    "TGF-β 受体信号",
+    "TGF-beta 信号通路",
+    "Signaling by TGF-beta Receptor Complex"
+   ]
+  },
+  {
+   "id": "R-HSA-1502540",
+   "name": "Signaling by Activin",
+   "aliases": [
+    "Signaling by Activin"
+   ]
+  },
+  {
+   "id": "R-HSA-201451",
+   "name": "Signaling by BMP",
+   "aliases": [
+    "BMP 信号通路",
+    "骨形态发生蛋白信号",
+    "Signaling by BMP"
+   ]
+  },
+  {
+   "id": "R-HSA-201556",
+   "name": "Signaling by ALK",
+   "aliases": [
+    "Signaling by ALK"
+   ]
+  },
+  {
+   "id": "R-HSA-389948",
+   "name": "Co-inhibition by PD-1",
+   "aliases": [
+    "PD-1 共抑制",
+    "PD-1 通路",
+    "PD-L1 通路",
+    "免疫检查点抑制",
+    "Co-inhibition by PD-1"
+   ]
+  },
+  {
+   "id": "R-HSA-983169",
+   "name": "Class I MHC mediated antigen processing & presentation",
+   "aliases": [
+    "Class I MHC mediated antigen processing & presentation"
+   ]
+  },
+  {
+   "id": "R-HSA-202403",
+   "name": "TCR signaling",
+   "aliases": [
+    "TCR 信号通路",
+    "T 细胞受体信号",
+    "TCR signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-446652",
+   "name": "Interleukin-1 family signaling",
+   "aliases": [
+    "IL-1 家族信号",
+    "白介素-1 信号",
+    "Interleukin-1 family signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-451927",
+   "name": "Interleukin-2 family signaling",
+   "aliases": [
+    "IL-2 家族信号",
+    "白介素-2 信号",
+    "Interleukin-2 family signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-6785807",
+   "name": "Interleukin-4 and Interleukin-13 signaling",
+   "aliases": [
+    "IL-4 和 IL-13 信号",
+    "Interleukin-4 and Interleukin-13 signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-6783589",
+   "name": "Interleukin-6 family signaling",
+   "aliases": [
+    "IL-6 家族信号",
+    "白介素-6 信号",
+    "Interleukin-6 family signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-6783783",
+   "name": "Interleukin-10 signaling",
+   "aliases": [
+    "IL-10 信号",
+    "Interleukin-10 signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-447115",
+   "name": "Interleukin-12 family signaling",
+   "aliases": [
+    "IL-12 家族信号",
+    "Interleukin-12 family signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-448424",
+   "name": "Interleukin-17 signaling",
+   "aliases": [
+    "IL-17 信号",
+    "Interleukin-17 signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-75893",
+   "name": "TNF signaling",
+   "aliases": [
+    "TNF 信号通路",
+    "肿瘤坏死因子信号",
+    "TNF signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-1632852",
+   "name": "Macroautophagy",
+   "aliases": [
+    "巨自噬",
+    "自噬通路",
+    "Macroautophagy"
+   ]
+  },
+  {
+   "id": "R-HSA-9613829",
+   "name": "Chaperone Mediated Autophagy",
+   "aliases": [
+    "Chaperone Mediated Autophagy"
+   ]
+  },
+  {
+   "id": "R-HSA-381119",
+   "name": "Unfolded Protein Response (UPR)",
+   "aliases": [
+    "未折叠蛋白反应",
+    "UPR",
+    "Unfolded Protein Response (UPR)"
+   ]
+  },
+  {
+   "id": "R-HSA-9758919",
+   "name": "Epithelial-Mesenchymal Transition (EMT) during gastrulation",
+   "aliases": [
+    "上皮间质转化",
+    "EMT",
+    "Epithelial-Mesenchymal Transition (EMT) during gastrulation"
+   ]
+  },
+  {
+   "id": "R-HSA-216083",
+   "name": "Integrin cell surface interactions",
+   "aliases": [
+    "整合素信号",
+    "整合素细胞表面相互作用",
+    "Integrin cell surface interactions"
+   ]
+  },
+  {
+   "id": "R-HSA-2682334",
+   "name": "EPH-Ephrin signaling",
+   "aliases": [
+    "EPH-Ephrin signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-9006335",
+   "name": "Signaling by Erythropoietin",
+   "aliases": [
+    "促红细胞生成素信号",
+    "EPO 信号",
+    "Signaling by Erythropoietin"
+   ]
+  },
+  {
+   "id": "R-HSA-982772",
+   "name": "Growth hormone receptor signaling",
+   "aliases": [
+    "Growth hormone receptor signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-418555",
+   "name": "G alpha (s) signalling events",
+   "aliases": [
+    "Gαs 信号",
+    "G alpha (s) signalling events",
+    "G alpha (s) signaling events"
+   ]
+  },
+  {
+   "id": "R-HSA-416476",
+   "name": "G alpha (q) signalling events",
+   "aliases": [
+    "Gαq 信号",
+    "G alpha (q) signalling events",
+    "G alpha (q) signaling events"
+   ]
+  },
+  {
+   "id": "R-HSA-1489509",
+   "name": "DAG and IP3 signaling",
+   "aliases": [
+    "DAG 和 IP3 信号",
+    "DAG and IP3 signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-2454202",
+   "name": "Fc epsilon receptor (FCERI) signaling",
+   "aliases": [
+    "Fc epsilon receptor (FCERI) signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-2404192",
+   "name": "Signaling by Type 1 Insulin-like Growth Factor 1 Receptor (IGF1R)",
+   "aliases": [
+    "IGF1R 信号",
+    "胰岛素样生长因子受体信号",
+    "Signaling by Type 1 Insulin-like Growth Factor 1 Receptor (IGF1R)"
+   ]
+  },
+  {
+   "id": "R-HSA-169911",
+   "name": "Regulation of Apoptosis",
+   "aliases": [
+    "凋亡调控",
+    "Regulation of Apoptosis"
+   ]
+  },
+  {
+   "id": "R-HSA-1980143",
+   "name": "Signaling by NOTCH1",
+   "aliases": [
+    "NOTCH1 信号通路",
+    "Notch 信号",
+    "Signaling by NOTCH1"
+   ]
+  },
+  {
+   "id": "R-HSA-1980145",
+   "name": "Signaling by NOTCH2",
+   "aliases": [
+    "Signaling by NOTCH2"
+   ]
+  },
+  {
+   "id": "R-HSA-877300",
+   "name": "Interferon gamma signaling",
+   "aliases": [
+    "干扰素 γ 信号",
+    "IFN-γ 信号",
+    "Interferon gamma signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-909733",
+   "name": "Interferon alpha/beta signaling",
+   "aliases": [
+    "干扰素 α/β 信号",
+    "Interferon alpha/beta signaling"
+   ]
+  },
+  {
+   "id": "R-HSA-6791312",
+   "name": "TP53 Regulates Transcription of Cell Cycle Genes",
+   "aliases": [
+    "TP53 调控细胞周期基因",
+    "p53 通路",
+    "TP53 Regulates Transcription of Cell Cycle Genes"
+   ]
+  }
+ ]
+}
