@@ -155,8 +155,9 @@ export function validateRenderContent(type: string, raw: unknown): { ok: true; d
 
 export const biosceneObjectSchema = z.object({
   icon: z.string().min(1).max(100), // id from the restricted icon catalog
-  x: z.number().min(0).max(100),
-  y: z.number().min(0).max(100),
+  // Coordinates: 0-100 (percent) OR 0-1000 (pixels) — the renderer adapts.
+  x: z.number().min(0).max(1000),
+  y: z.number().min(0).max(1000),
   scale: z.number().min(0.2).max(3).optional(),
   rotate: z.number().min(-180).max(180).optional(),
   label: z.string().max(100).optional(),
@@ -175,8 +176,8 @@ export type BioSceneConnection = z.infer<typeof biosceneConnectionSchema>
 
 export const biosceneAnnotationSchema = z.object({
   type: z.enum(['text', 'bracket']),
-  x: z.number().min(0).max(100),
-  y: z.number().min(0).max(100),
+  x: z.number().min(0).max(1000),
+  y: z.number().min(0).max(1000),
   text: z.string().max(200),
 })
 export type BioSceneAnnotation = z.infer<typeof biosceneAnnotationSchema>

@@ -30,7 +30,7 @@ export class RenderSceneTool extends BaseTool {
             type: 'object',
             properties: {
               icon: { type: 'string', description: 'Catalog icon id or alias' },
-              x: { type: 'number' }, y: { type: 'number' },
+              x: { type: 'number', description: '0-100 (percent) or 0-1000 (pixels)' }, y: { type: 'number', description: '0-100 (percent) or 0-1000 (pixels)' },
               scale: { type: 'number' }, rotate: { type: 'number' },
               label: { type: 'string' }, colorize: { type: 'string' },
             },
