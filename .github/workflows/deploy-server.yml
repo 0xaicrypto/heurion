@@ -229,6 +229,11 @@ jobs:
     # #466: ship the full Reactome pathway diagram library (CC BY 4.0) to
     # the production server — the server reads them from
     # REACTOME_DIAGRAMS_DIR (no runtime network dependency).
+    #
+    # Non-blocking by design: Reactome is an EXTERNAL resource — its
+    # download failing must never block the core production deploy
+    # (render_scene degrades gracefully with an "unavailable" message).
+    # The deploy job therefore does NOT depend on this job.
     needs: [staging]
     runs-on: ubuntu-latest
     steps:
@@ -236,9 +241,26 @@ jobs:
       - uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+      # Cache the 272MB tgz (Reactome regenerates it per release; refresh
+      # weekly) — also avoids flaky CI downloads.
+      - name: Cache Reactome diagrams tgz
+        uses: actions/cache@v4
+        with:
+          path: /tmp/diagrams.svg.tgz
+          key: reactome-diagrams-tgz-2026-08-09
       - name: Download + extract + ship diagrams
         run: |
-          curl -sL https://reactome.org/download/current/diagrams.svg.tgz -o /tmp/diagrams.svg.tgz
+          if [ ! -s /tmp/diagrams.svg.tgz ]; then
+            # Retry the download; validate the gzip magic bytes — the CI
+            # runner once received a non-gzip payload (19s for 272MB).
+            for i in 1 2 3; do
+              curl -sfL https://reactome.org/download/current/diagrams.svg.tgz -o /tmp/diagrams.svg.tgz && break
+              echo "download attempt $i failed, retrying in 10s"
+              sleep 10
+            done
+          fi
+          # gzip magic check (\x1f\x8b) — fail loudly if not gzip.
+          head -c 2 /tmp/diagrams.svg.tgz | od -An -tx1 | grep -q "1f 8b" || { echo "ERROR: downloaded payload is not gzip"; exit 1; }
           mkdir -p /tmp/diagrams && tar -xzf /tmp/diagrams.svg.tgz -C /tmp/diagrams
           COUNT=$(ls /tmp/diagrams | wc -l)
           echo "extracted $COUNT diagrams"
@@ -265,7 +287,9 @@ jobs:
 
   deploy:
     name: Deploy to Production (Docker Compose)
-    needs: [staging, cloudflare-ssl, provision-reactome-diagrams, build-server-image, build-web, build-embedding-server-image]
+    # #466-fix: provision-reactome-diagrams is intentionally NOT in needs —
+    # external-resource failures must not block the core deploy.
+    needs: [staging, cloudflare-ssl, build-server-image, build-web, build-embedding-server-image]
     runs-on: ubuntu-latest
     environment:
       name: production
