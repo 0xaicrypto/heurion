@@ -143,6 +143,30 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  golden-crosscheck:
+    name: Golden stats cross-check
+    needs: [typecheck]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with: { version: '10' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Python reference values
+        run: |
+          pip install -q scipy lifelines statsmodels numpy
+          cd packages/python-stats-worker
+          python generate_golden.py > golden/stats_golden.json
+          git diff --exit-code golden/stats_golden.json || { echo "golden drift — regenerate and commit"; exit 1; }
+      - name: TS cross-check
+        run: |
+          cd packages/server-ts
+          pnpm install --frozen-lockfile
+          node --import tsx scripts/cross-check-stats.ts ../python-stats-worker/golden/stats_golden.json
+
   build-stats-worker:
     name: Build Python Stats Worker Image
     needs: [test]
