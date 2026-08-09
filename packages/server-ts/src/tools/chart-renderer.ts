@@ -9,6 +9,10 @@
 export interface ChartInput {
   type: 'line' | 'bar' | 'dose_curve' | 'schematic'
   data?: Array<{ label: string; value: number }>
+  /** #407: per-bar error (SD/SEM/CI half-width) for error bars. */
+  errors?: Array<{ label: string; error: number }>
+  /** #407: significance bracket — stars + optional p label. */
+  sig?: { pair: [string, string]; stars: string; p?: string }
   title?: string
   x_label?: string
   y_label?: string
@@ -199,13 +203,42 @@ export function renderSvgChart(input: ChartInput): string {
     })
   } else if (input.type === 'bar') {
     const bw = n > 0 ? 420 / n : 40
+    const errMap = new Map((input.errors || []).map((e) => [e.label, e.error]))
     data.forEach((d, i) => {
       const x = 40 + i * bw
       const h = (d.value / maxV) * 230
       body += `<rect x="${x + bw * 0.15}" y="${260 - h}" width="${bw * 0.7}" height="${h}" fill="#6366f1" rx="2"/>`
       body += `<text x="${x + bw / 2}" y="275" fill="#64748b" font-size="9" text-anchor="middle">${esc(d.label)}</text>`
       body += `<text x="${x + bw / 2}" y="${262 - h}" fill="#334155" font-size="9" text-anchor="middle">${d.value}</text>`
+      // #407: error bars (SD/SEM/CI half-width scaled to the chart).
+      const err = errMap.get(d.label)
+      if (err && err > 0) {
+        const errPx = Math.min(60, (err / maxV) * 230)
+        const cx = x + bw / 2
+        const top = 260 - h
+        body += `<line x1="${cx}" y1="${top - errPx}" x2="${cx}" y2="${Math.max(0, top + errPx)}" stroke="#334155" stroke-width="1.2"/>`
+        body += `<line x1="${cx - 3}" y1="${top - errPx}" x2="${cx + 3}" y2="${top - errPx}" stroke="#334155" stroke-width="1.2"/>`
+        body += `<line x1="${cx - 3}" y1="${Math.max(0, top + errPx)}" x2="${cx + 3}" y2="${Math.max(0, top + errPx)}" stroke="#334155" stroke-width="1.2"/>`
+      }
     })
+    // #407: significance bracket across two bars (Prism-style stars).
+    if (input.sig && input.sig.pair) {
+      const [l1, l2] = input.sig.pair
+      const i1 = data.findIndex((d) => d.label === l1)
+      const i2 = data.findIndex((d) => d.label === l2)
+      if (i1 >= 0 && i2 >= 0) {
+        const x1 = 40 + i1 * bw + bw / 2
+        const x2 = 40 + i2 * bw + bw / 2
+        const maxH = Math.max(data[i1].value, data[i2].value)
+        const topPx = 260 - (maxH / maxV) * 230 - 24
+        body += `<line x1="${x1}" y1="${topPx}" x2="${x2}" y2="${topPx}" stroke="#dc2626" stroke-width="1.2"/>`
+        body += `<line x1="${x1}" y1="${topPx}" x2="${x1}" y2="${topPx + 6}" stroke="#dc2626" stroke-width="1.2"/>`
+        body += `<line x1="${x2}" y1="${topPx}" x2="${x2}" y2="${topPx + 6}" stroke="#dc2626" stroke-width="1.2"/>`
+        const stars = input.sig.stars || '*'
+        const label = input.sig.p ? `${stars} (p=${esc(input.sig.p)})` : stars
+        body += `<text x="${(x1 + x2) / 2}" y="${topPx - 4}" fill="#dc2626" font-size="11" text-anchor="middle">${esc(label)}</text>`
+      }
+    }
   } else if (input.type === 'schematic' && input.template === 'beam_scan') {
     return renderBeamScan(input.title || '', input.description || '')
   } else if (input.type === 'schematic' && input.elements && input.elements.length > 0) {
