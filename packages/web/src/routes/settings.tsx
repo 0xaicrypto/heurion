@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
-import { Check, X, Zap, Key, Server, RefreshCw, Activity, BarChart3, Mail, ScrollText, ShieldCheck, Plus } from 'lucide-react';
+import { Check, X, Zap, Key, Server, RefreshCw, Activity, BarChart3, Mail, ScrollText, ShieldCheck, Plus, FileText } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api';
 import { EmailBindCard } from '@/components/EmailBindCard';
@@ -20,7 +20,7 @@ const PROVIDERS: { value: ProviderKind; label: string }[] = [
   { value: 'kimi', label: 'Kimi' },
 ];
 
-type Tab = 'profile' | 'llm' | 'embedding' | 'observability' | 'audit' | 'logs' | 'integrations';
+type Tab = 'profile' | 'llm' | 'embedding' | 'observability' | 'audit' | 'logs' | 'integrations' | 'credits';
 
 const TAB_ALIASES: Record<string, Tab> = { audit: 'audit', logs: 'logs' };
 
@@ -77,6 +77,12 @@ export function SettingsPage() {
                 {t('settings.mcp', 'MCP 连接器')}
               </TabButton>
             </TabGroup>
+            <TabGroup label={t('settings.groupAbout', '关于')}>
+              <TabButton active={tab === 'credits'} onClick={() => selectTab('credits')}>
+                <FileText size={14} className="mr-1 inline" />
+                {t('settings.credits', '开源致谢')}
+              </TabButton>
+            </TabGroup>
           </nav>
           <main className="flex-1 p-4 sm:p-6">
             {tab === 'profile' && <ProfileSection />}
@@ -86,6 +92,7 @@ export function SettingsPage() {
             {tab === 'audit' && <AuditSection />}
             {tab === 'logs' && <LogsSection />}
             {tab === 'integrations' && <McpSection />}
+            {tab === 'credits' && <CreditsSection />}
           </main>
         </div>
       </div>
@@ -837,5 +844,37 @@ function ImageGenConfig() {
         {msg && <span className="flex items-center gap-1 text-sm text-success"><Check size={14} /> {msg}</span>}
       </div>
     </Card>
+  );
+}
+
+/* ────────────────────────── Credits (#470) ────────────────────────── */
+function CreditsSection() {
+  const { t } = useTranslation();
+  return (
+    <div className="mx-auto max-w-2xl space-y-4">
+      <Card className="p-6">
+        <h2 className="text-base font-semibold text-text-primary">{t('settings.credits', '开源致谢')}</h2>
+        <p className="mt-2 text-sm text-text-secondary leading-relaxed">
+          {t('settings.creditsHint', 'Heurion 内置的科学插图内容来自以下开源项目。CC BY 4.0 要求保留署名。')}
+        </p>
+
+        <div className="mt-5 space-y-4">
+          <div className="rounded-lg border border-border bg-surface-elevated p-4">
+            <h3 className="text-sm font-medium text-text-primary">Reactome Pathway Database</h3>
+            <p className="mt-1 text-xs text-text-tertiary leading-relaxed">
+              {t('settings.creditsReactome', '信号通路图（render_scene 整图模式），CC BY 4.0。')}
+              <a className="text-accent underline hover:opacity-80" href="https://reactome.org/license" target="_blank" rel="noreferrer"> reactome.org/license</a>
+            </p>
+          </div>
+          <div className="rounded-lg border border-border bg-surface-elevated p-4">
+            <h3 className="text-sm font-medium text-text-primary">NIH BioArt (Wikimedia Commons)</h3>
+            <p className="mt-1 text-xs text-text-tertiary leading-relaxed">
+              {t('settings.creditsBioArt', 'BioScene 图标目录（T 细胞、巨噬细胞、抗体等），公共领域（美国 NIH 作品）。')}
+              <a className="text-accent underline hover:opacity-80" href="https://commons.wikimedia.org/wiki/Category:NIH_BioArt" target="_blank" rel="noreferrer"> commons.wikimedia.org/wiki/Category:NIH_BioArt</a>
+            </p>
+          </div>
+        </div>
+      </Card>
+    </div>
   );
 }

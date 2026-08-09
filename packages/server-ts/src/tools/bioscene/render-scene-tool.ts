@@ -29,6 +29,7 @@ Returns an SVG file.`
         template_source: { type: 'string', enum: ['bioscene', 'reactome'], description: 'bioscene = custom schematic (default); reactome = official Reactome pathway diagram' },
         pathway: { type: 'string', description: 'For template_source=reactome: pathway name or R-HSA id, e.g. "EGFR signaling", "PD-1 co-inhibition", "凋亡通路"' },
         title: { type: 'string', description: 'Diagram title (used for the file name)' },
+        palette: { type: 'string', enum: ['default', 'clinical', 'journal'], description: '#468: color scheme — clinical (vivid categorical colors), journal (low-saturation academic), default (legacy gray)' },
         canvas: { type: 'object', properties: { width: { type: 'number' }, height: { type: 'number' } } },
         objects: {
           type: 'array',
@@ -74,7 +75,9 @@ Returns an SVG file.`
     }
 
     try {
-      const svg = renderBioScene(check.data as any)
+      // #468: palette — clinical/journal colored schemes, default = legacy.
+      const palette = args.palette === 'clinical' || args.palette === 'journal' ? args.palette : 'default'
+      const svg = renderBioScene(check.data as any, palette)
       const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', this.ctx.userId, 'uploads')
       fs.mkdirSync(dir, { recursive: true })
       const fileId = `scene_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.svg`

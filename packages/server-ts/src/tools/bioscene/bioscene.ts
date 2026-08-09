@@ -104,21 +104,54 @@ export function resolveIcon(idOrAlias: string): BioIcon | null {
   return allIcons().find((i) => i.id.toLowerCase() === q || i.aliases.some((a) => a.toLowerCase() === q)) || null
 }
 
+/* ── #468: palette system ─────────────────────────────────────────── */
+
+export type BioScenePalette = 'default' | 'clinical' | 'journal'
+
+/** Category → color per palette. Keys: icon categories + connection kinds. */
+const PALETTES: Record<BioScenePalette, Record<string, string>> = {
+  // Legacy look: single gray stroke (backward compatible).
+  default: {
+    stroke: '#334155', text: '#334155', connection: '#475569',
+    membrane: '#334155', receptor: '#334155', enzyme: '#334155', 'ion-channel': '#334155',
+    organelle: '#334155', cell: '#334155', molecule: '#334155', virus: '#334155', other: '#334155',
+  },
+  // High-saturation categorical colors — clinical communication.
+  clinical: {
+    stroke: '#1e293b', text: '#1e293b', connection: '#64748b',
+    membrane: '#475569', receptor: '#2563eb', enzyme: '#16a34a', 'ion-channel': '#7c3aed',
+    organelle: '#b45309', cell: '#0891b2', molecule: '#db2777', virus: '#dc2626', other: '#64748b',
+  },
+  // Low-saturation academic colors — publication-style figures.
+  journal: {
+    stroke: '#334155', text: '#334155', connection: '#94a3b8',
+    membrane: '#64748b', receptor: '#60a5fa', enzyme: '#86efac', 'ion-channel': '#c4b5fd',
+    organelle: '#fcd34d', cell: '#67e8f9', molecule: '#f9a8d4', virus: '#fca5a5', other: '#94a3b8',
+  },
+}
+
+export function resolvePalette(name?: string): BioScenePalette {
+  return name === 'clinical' || name === 'journal' ? name : 'default'
+}
+
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 /** Render a validated scene to an SVG string. Deterministic.
  *  Coordinates adapt: values ≤ 100 are treated as percentages; larger values
- *  are treated as pixels (0-1000) and scaled to the canvas. */
+ *  are treated as pixels (0-1000) and scaled to the canvas.
+ *  #468: `palette` selects the color scheme (default keeps the legacy
+ *  single-gray look). */
 export function renderBioScene(scene: {
   canvas?: { width?: number; height?: number }
   objects: Array<{ icon: string; x: number; y: number; scale?: number; rotate?: number; label?: string; colorize?: string }>
   connections?: Array<{ from: number; to: number; kind?: string; bend?: number; label?: string }>
   annotations?: Array<{ type: string; x: number; y: number; text: string }>
-}): string {
+}, palette: BioScenePalette = 'default'): string {
   const w = scene.canvas?.width || 800
   const h = scene.canvas?.height || 600
+  const colors = PALETTES[palette]
   // Coordinate system: percent (≤100) or pixel (0-1000) — auto-detect.
   const anyPixel = [...scene.objects, ...(scene.annotations || [])].some((o) => o.x > 100 || o.y > 100)
   const px = (v: number, max: number) => (anyPixel ? (Math.min(v, 1000) / 1000) * max : (Math.min(v, 100) / 100) * max)
@@ -139,7 +172,7 @@ export function renderBioScene(scene: {
     const mx = (x1 + x2) / 2 + bend * 8
     const my = (y1 + y2) / 2 + bend * 8
     const dash = conn.kind === 'dashed' ? ' stroke-dasharray="6 4"' : ''
-    const color = conn.kind === 'inhibition' ? '#dc2626' : conn.kind === 'phosphorylation' ? '#16a34a' : '#475569'
+    const color = conn.kind === 'inhibition' ? '#dc2626' : conn.kind === 'phosphorylation' ? '#16a34a' : colors.connection
     parts.push(`<path d="M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}" fill="none" stroke="${color}" stroke-width="2"${dash}/>`)
     // Arrowhead (default arrows).
     if (!conn.kind || conn.kind === 'arrow') {
@@ -147,7 +180,7 @@ export function renderBioScene(scene: {
       parts.push(`<polygon points="${x2},${y2} ${x2 - 8 * Math.cos(angle - 0.4)},${y2 - 8 * Math.sin(angle - 0.4)} ${x2 - 8 * Math.cos(angle + 0.4)},${y2 - 8 * Math.sin(angle + 0.4)}" fill="${color}"/>`)
     }
     if (conn.label) {
-      parts.push(`<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 4}" fill="#334155" font-size="11" text-anchor="middle">${esc(conn.label)}</text>`)
+      parts.push(`<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 4}" fill="${colors.text}" font-size="11" text-anchor="middle">${esc(conn.label)}</text>`)
     }
   }
 
@@ -170,18 +203,20 @@ export function renderBioScene(scene: {
         parts.push(ext.inner)
         parts.push(`</g>`)
         if (obj.label) {
-          parts.push(`<text x="${cx}" y="${cy + size / 2 + 14}" fill="#334155" font-size="12" text-anchor="middle">${esc(obj.label)}</text>`)
+          parts.push(`<text x="${cx}" y="${cy + size / 2 + 14}" fill="${colors.text}" font-size="12" text-anchor="middle">${esc(obj.label)}</text>`)
         }
         continue
       }
     }
 
-    const stroke = obj.colorize || '#334155'
+    // #468: category-colored stroke when a palette is active; explicit
+    // colorize always wins.
+    const stroke = obj.colorize || colors[icon.category] || colors.stroke
     parts.push(`<g transform="translate(${cx - size / 2}, ${cy - size / 2})${rot}">`)
     parts.push(`<path d="${icon.path}" transform="scale(${size / 24})" fill="none" stroke="${stroke}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`)
     parts.push(`</g>`)
     if (obj.label) {
-      parts.push(`<text x="${cx}" y="${cy + size / 2 + 14}" fill="#334155" font-size="12" text-anchor="middle">${esc(obj.label)}</text>`)
+      parts.push(`<text x="${cx}" y="${cy + size / 2 + 14}" fill="${colors.text}" font-size="12" text-anchor="middle">${esc(obj.label)}</text>`)
     }
   }
 
@@ -191,9 +226,9 @@ export function renderBioScene(scene: {
     const y = px(ann.y, h)
     if (ann.type === 'bracket') {
       parts.push(`<path d="M ${x - 20} ${y} L ${x - 20} ${y + 30} L ${x + 20} ${y + 30}" fill="none" stroke="#94a3b8" stroke-width="1.5"/>`)
-      parts.push(`<text x="${x}" y="${y + 44}" fill="#475569" font-size="11" text-anchor="middle">${esc(ann.text)}</text>`)
+      parts.push(`<text x="${x}" y="${y + 44}" fill="${colors.text}" font-size="11" text-anchor="middle">${esc(ann.text)}</text>`)
     } else {
-      parts.push(`<text x="${x}" y="${y}" fill="#475569" font-size="12" text-anchor="middle">${esc(ann.text)}</text>`)
+      parts.push(`<text x="${x}" y="${y}" fill="${colors.text}" font-size="12" text-anchor="middle">${esc(ann.text)}</text>`)
     }
   }
 

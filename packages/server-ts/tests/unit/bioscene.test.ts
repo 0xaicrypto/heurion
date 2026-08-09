@@ -113,8 +113,7 @@ describe('BioScene (#408)', () => {
     expect(svg).toContain('Pixel label')
   })
 
-  test('#467 external NIH BioArt icons resolve and embed (svgFile)', () => {
-    expect(resolveIcon('t-cell')).toBeTruthy()
+  test('#467 external NIH BioArt icons resolve and embed (svgFile)', () => {    expect(resolveIcon('t-cell')).toBeTruthy()
     expect(resolveIcon('巨噬细胞')?.id).toBe('macrophage')
     expect(resolveIcon('NK细胞')?.id).toBe('nk-cell')
     expect(resolveIcon('antibody')?.id).toBe('antibody')
@@ -138,4 +137,34 @@ describe('BioScene (#408)', () => {
     expect(svg).toContain('Macrophage')
     expect(svg).toContain('Mφ')
     expect(svg).toContain('translate(216, 276)') // 30% of 800 = 240 - 24
+  })
+
+  test('#468 palette: default keeps legacy gray, clinical colors by category', () => {
+    const scene = {
+      canvas: { width: 800, height: 600 },
+      objects: [
+        { icon: 'egfr', x: 30, y: 50, label: 'EGFR' },
+        { icon: 'kinase', x: 50, y: 50 },
+      ],
+    }
+    const legacy = renderBioScene(scene as any) // no palette arg
+    expect(legacy).toContain('stroke="#334155"')
+
+    const clinical = renderBioScene(scene as any, 'clinical')
+    // receptor category → blue; enzyme → green
+    expect(clinical).toContain('stroke="#2563eb"')
+    expect(clinical).toContain('stroke="#16a34a"')
+    // Explicit colorize always wins.
+    const explicit = renderBioScene({ ...scene, objects: [{ icon: 'egfr', x: 30, y: 50, colorize: '#f00' }] } as any, 'clinical')
+    expect(explicit).toContain('stroke="#f00"')
+
+    // Deterministic: same input + palette → identical output.
+    expect(renderBioScene(scene as any, 'clinical')).toBe(clinical)
+  })
+
+  test('#468 journal palette renders distinct low-saturation colors', () => {
+    const scene = { canvas: { width: 800, height: 600 }, objects: [{ icon: 'pd-l1', x: 50, y: 50 }] }
+    const journal = renderBioScene(scene as any, 'journal')
+    expect(journal).toContain('stroke="#60a5fa"') // receptor → soft blue
+    expect(journal).not.toContain('stroke="#2563eb"')
   })
