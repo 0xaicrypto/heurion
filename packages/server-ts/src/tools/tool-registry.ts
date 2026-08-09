@@ -12,6 +12,7 @@ import { SearchMedicalWebTool, FetchArticleSummaryTool, VisitMedicalSiteTool, Ex
 import { StatDescribeTool, StatTTestTool, StatChiSqTool, StatKmTool, StatPlotTool, StatAdvisorTool } from './stat-tools.js'
 import { RunStatsAnalysisTool } from './stats-analysis-tool.js'
 import { LoadDataTableTool } from './data-table-tool.js'
+import { RenderSceneTool } from './bioscene/render-scene-tool.js'
 import { McpListToolsTool, McpCallToolTool } from './mcp-tools.js'
 import { GenerateImageTool } from './generate-image-tool.js'
 import type { MemoryService } from '../memory/memory.service.js'
@@ -60,6 +61,7 @@ export class ToolRegistry {
     this.register(new StatAdvisorTool())
     this.register(new RunStatsAnalysisTool())
     this.register(new LoadDataTableTool(ctx))
+    this.register(new RenderSceneTool(ctx))
     this.register(new McpListToolsTool())
     this.register(new McpCallToolTool())
     this.register(new GenerateImageTool(ctx))

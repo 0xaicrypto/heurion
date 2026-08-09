@@ -466,3 +466,196 @@ export declare function validateRenderContent(type: string, raw: unknown): {
     ok: false;
     errors: string[];
 };
+export declare const biosceneObjectSchema: z.ZodObject<{
+    icon: z.ZodString;
+    x: z.ZodNumber;
+    y: z.ZodNumber;
+    scale: z.ZodOptional<z.ZodNumber>;
+    rotate: z.ZodOptional<z.ZodNumber>;
+    label: z.ZodOptional<z.ZodString>;
+    colorize: z.ZodOptional<z.ZodString>;
+}, "strip", z.ZodTypeAny, {
+    icon: string;
+    x: number;
+    y: number;
+    scale?: number | undefined;
+    rotate?: number | undefined;
+    label?: string | undefined;
+    colorize?: string | undefined;
+}, {
+    icon: string;
+    x: number;
+    y: number;
+    scale?: number | undefined;
+    rotate?: number | undefined;
+    label?: string | undefined;
+    colorize?: string | undefined;
+}>;
+export type BioSceneObject = z.infer<typeof biosceneObjectSchema>;
+export declare const biosceneConnectionSchema: z.ZodObject<{
+    from: z.ZodNumber;
+    to: z.ZodNumber;
+    kind: z.ZodOptional<z.ZodEnum<["arrow", "dashed", "phosphorylation", "inhibition"]>>;
+    bend: z.ZodOptional<z.ZodNumber>;
+    label: z.ZodOptional<z.ZodString>;
+}, "strip", z.ZodTypeAny, {
+    from: number;
+    to: number;
+    kind?: "arrow" | "dashed" | "inhibition" | "phosphorylation" | undefined;
+    bend?: number | undefined;
+    label?: string | undefined;
+}, {
+    from: number;
+    to: number;
+    kind?: "arrow" | "dashed" | "inhibition" | "phosphorylation" | undefined;
+    bend?: number | undefined;
+    label?: string | undefined;
+}>;
+export type BioSceneConnection = z.infer<typeof biosceneConnectionSchema>;
+export declare const biosceneAnnotationSchema: z.ZodObject<{
+    type: z.ZodEnum<["text", "bracket"]>;
+    x: z.ZodNumber;
+    y: z.ZodNumber;
+    text: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    type: "bracket" | "text";
+    x: number;
+    y: number;
+    text: string;
+}, {
+    type: "bracket" | "text";
+    x: number;
+    y: number;
+    text: string;
+}>;
+export type BioSceneAnnotation = z.infer<typeof biosceneAnnotationSchema>;
+export declare const biosceneContentSchema: z.ZodObject<{
+    schemaVersion: z.ZodLiteral<1>;
+    canvas: z.ZodOptional<z.ZodObject<{
+        width: z.ZodDefault<z.ZodNumber>;
+        height: z.ZodDefault<z.ZodNumber>;
+    }, "strip", z.ZodTypeAny, {
+        width: number;
+        height: number;
+    }, {
+        width?: number | undefined;
+        height?: number | undefined;
+    }>>;
+    objects: z.ZodArray<z.ZodObject<{
+        icon: z.ZodString;
+        x: z.ZodNumber;
+        y: z.ZodNumber;
+        scale: z.ZodOptional<z.ZodNumber>;
+        rotate: z.ZodOptional<z.ZodNumber>;
+        label: z.ZodOptional<z.ZodString>;
+        colorize: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        icon: string;
+        x: number;
+        y: number;
+        scale?: number | undefined;
+        rotate?: number | undefined;
+        label?: string | undefined;
+        colorize?: string | undefined;
+    }, {
+        icon: string;
+        x: number;
+        y: number;
+        scale?: number | undefined;
+        rotate?: number | undefined;
+        label?: string | undefined;
+        colorize?: string | undefined;
+    }>, "many">;
+    connections: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        from: z.ZodNumber;
+        to: z.ZodNumber;
+        kind: z.ZodOptional<z.ZodEnum<["arrow", "dashed", "phosphorylation", "inhibition"]>>;
+        bend: z.ZodOptional<z.ZodNumber>;
+        label: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        from: number;
+        to: number;
+        kind?: "arrow" | "dashed" | "inhibition" | "phosphorylation" | undefined;
+        bend?: number | undefined;
+        label?: string | undefined;
+    }, {
+        from: number;
+        to: number;
+        kind?: "arrow" | "dashed" | "inhibition" | "phosphorylation" | undefined;
+        bend?: number | undefined;
+        label?: string | undefined;
+    }>, "many">>;
+    annotations: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        type: z.ZodEnum<["text", "bracket"]>;
+        x: z.ZodNumber;
+        y: z.ZodNumber;
+        text: z.ZodString;
+    }, "strip", z.ZodTypeAny, {
+        type: "bracket" | "text";
+        x: number;
+        y: number;
+        text: string;
+    }, {
+        type: "bracket" | "text";
+        x: number;
+        y: number;
+        text: string;
+    }>, "many">>;
+}, "strip", z.ZodTypeAny, {
+    schemaVersion: 1;
+    canvas?: {
+        width: number;
+        height: number;
+    } | undefined;
+    objects: {
+        icon: string;
+        x: number;
+        y: number;
+        scale?: number | undefined;
+        rotate?: number | undefined;
+        label?: string | undefined;
+        colorize?: string | undefined;
+    }[];
+    connections?: {
+        from: number;
+        to: number;
+        kind?: "arrow" | "dashed" | "inhibition" | "phosphorylation" | undefined;
+        bend?: number | undefined;
+        label?: string | undefined;
+    }[] | undefined;
+    annotations?: {
+        type: "bracket" | "text";
+        x: number;
+        y: number;
+        text: string;
+    }[] | undefined;
+}, {
+    schemaVersion: 1;
+    canvas?: {
+        width?: number | undefined;
+        height?: number | undefined;
+    } | undefined;
+    objects: {
+        icon: string;
+        x: number;
+        y: number;
+        scale?: number | undefined;
+        rotate?: number | undefined;
+        label?: string | undefined;
+        colorize?: string | undefined;
+    }[];
+    connections?: {
+        from: number;
+        to: number;
+        kind?: "arrow" | "dashed" | "inhibition" | "phosphorylation" | undefined;
+        bend?: number | undefined;
+        label?: string | undefined;
+    }[] | undefined;
+    annotations?: {
+        type: "bracket" | "text";
+        x: number;
+        y: number;
+        text: string;
+    }[] | undefined;
+}>;
+export type BioSceneContent = z.infer<typeof biosceneContentSchema>;
