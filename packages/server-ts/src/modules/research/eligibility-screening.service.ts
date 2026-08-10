@@ -117,6 +117,8 @@ export async function screenPatient(
         patientHash,
         verdict: result.verdict,
         reason: result.reason?.slice(0, 500),
+        // #10: persist the per-rule breakdown for the progress view.
+        criteriaResults: JSON.stringify(result.ruleResults || []),
         scannedAt: new Date().toISOString(),
       },
     })

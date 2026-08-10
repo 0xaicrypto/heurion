@@ -68,6 +68,8 @@ interface Assessment {
   scheduled_at: string;
   status: string;
   completed_at?: string;
+  // #11: recent check data (labs/imaging/notes) at the visit point.
+  recent_entries?: Array<{type: string; title: string; date: string; content: string; status?: string}>;
 }
 
 interface SafetyStatus {
@@ -655,6 +657,25 @@ export function ResearchDetailPage() {
                             </Badge>
                           </td>
                           <td className="px-4 py-2">
+                            {a.recent_entries && a.recent_entries.length > 0 ? (
+                              <details className="max-w-[260px]">
+                                <summary className="cursor-pointer text-xs text-accent">{t('research.visitEntries', '检查数据')} ({a.recent_entries.length})</summary>
+                                <ul className="mt-1 space-y-1">
+                                  {a.recent_entries.map((e, i) => (
+                                    <li key={i} className="text-[11px] text-text-secondary">
+                                      <span className="rounded border border-border px-1 text-[9px] text-text-tertiary">{e.type}</span>{' '}
+                                      <span className="font-medium">{e.title}</span>
+                                      <span className="text-text-tertiary"> · {e.date ? new Date(e.date).toLocaleDateString() : ''}</span>
+                                      <div className="line-clamp-2 text-text-tertiary">{e.content}</div>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </details>
+                            ) : (
+                              <span className="text-xs text-text-tertiary">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2">
                             {a.status !== 'completed' && (
                               <Button
                                 size="sm"
@@ -788,7 +809,12 @@ export function ResearchDetailPage() {
             </div>
           )}
 
-          {tab === 'overview' && studyId && <StudySummaryCard studyId={studyId} />}
+          {tab === 'overview' && studyId && (
+            <div className="max-w-2xl space-y-4">
+              <StudyProgressCard studyId={studyId} />
+              <StudySummaryCard studyId={studyId} />
+            </div>
+          )}
 
           {tab === 'protocol' && studyId && (
             <ProtocolTab studyId={studyId} />
@@ -1032,6 +1058,66 @@ function StudySummaryCard({ studyId }: { studyId: string }) {
           </details>
         </div>
       )}
+    </Card>
+  );
+}
+
+/* #10: structured study-progress overview (enrollment/rules/visits/safety). */
+function StudyProgressCard({ studyId }: { studyId: string }) {
+  const { t } = useTranslation();
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getStudyProgress(studyId)
+      .then(setData)
+      .catch(err => setError(err instanceof ApiError ? err.messageText : String(err)));
+  }, [studyId]);
+
+  if (error) return <Card className="p-6"><p className="text-xs text-error">{error}</p></Card>;
+  if (!data) return <Card className="p-6"><Skeleton className="h-24 w-full rounded-lg" /></Card>;
+
+  const arms = Object.entries(data.enrollment.by_arm);
+  const visits = Object.entries(data.visits.by_visit);
+
+  return (
+    <Card className="p-6">
+      <h3 className="mb-3 text-sm font-semibold text-text-secondary">{t('research.progress', '研究进展')}</h3>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border border-border bg-surface-elevated p-3">
+          <div className="text-2xl font-semibold text-text-primary">{data.enrollment.total}</div>
+          <div className="text-xs text-text-tertiary">{t('research.enrolled', '入组患者')}</div>
+          {arms.length > 0 && (
+            <div className="mt-1 space-y-0.5 text-[10px] text-text-tertiary">
+              {arms.map(([arm, n]) => <div key={String(arm)}>{String(arm)}: {String(n)}</div>)}
+            </div>
+          )}
+        </div>
+        <div className="rounded-lg border border-border bg-surface-elevated p-3">
+          <div className="text-2xl font-semibold text-text-primary">{data.rules.confirmed}/{data.rules.total}</div>
+          <div className="text-xs text-text-tertiary">{t('research.rulesConfirmed', '规则已确认')}</div>
+          {data.rules.pending > 0 && <div className="mt-1 text-[10px] text-warning">{data.rules.pending} pending</div>}
+        </div>
+        <div className="rounded-lg border border-border bg-surface-elevated p-3">
+          <div className="text-2xl font-semibold text-text-primary">{data.visits.completed}/{data.visits.total}</div>
+          <div className="text-xs text-text-tertiary">{t('research.visits', '随访完成')}</div>
+          {visits.length > 0 && (
+            <div className="mt-1 space-y-0.5 text-[10px] text-text-tertiary">
+              {visits.slice(0, 4).map(([v, s]) => { const st = s as {completed: number; total: number}; return <div key={String(v)}>{String(v)}: {st.completed}/{st.total}</div>; })}
+            </div>
+          )}
+        </div>
+        <div className="rounded-lg border border-border bg-surface-elevated p-3">
+          <div className="text-2xl font-semibold text-text-primary">{data.screenings.eligible}</div>
+          <div className="text-xs text-text-tertiary">{t('research.eligible', '符合入组')}</div>
+          {data.screenings.pending > 0 && <div className="mt-1 text-[10px] text-warning">{data.screenings.pending} pending</div>}
+        </div>
+        <div className="rounded-lg border border-border bg-surface-elevated p-3">
+          <div className="text-2xl font-semibold text-text-primary">{data.safety.dlt_count}</div>
+          <div className="text-xs text-text-tertiary">{t('research.dlt', '确认 DLT')}</div>
+          {data.safety.unconfirmed > 0 && <div className="mt-1 text-[10px] text-warning">{data.safety.unconfirmed} unconfirmed</div>}
+        </div>
+      </div>
     </Card>
   );
 }

@@ -29,7 +29,16 @@ const toRoster = (e: any, p?: any) => ({
   arm: e.arm,
   enrolled_at: e.enrolledAt,
 })
-const toScreening = (s: any, p?: any) => ({ patient_hash: s.patientHash, patient_id: s.patientHash, name: p?.name || '', initials: p?.initials || '', age_value: p?.age || undefined, sex: p?.sex || '', status: s.verdict, scanned_at: s.scannedAt, criteria_results: [] })
+const toScreening = (s: any, p?: any) => {
+  // #10: criteria_results persisted as JSON in the screening row.
+  let criteria: any[] = []
+  try { criteria = JSON.parse(s.criteriaResults || '[]') } catch { /* legacy rows */ }
+  return {
+    patient_hash: s.patientHash, patient_id: s.patientHash, name: p?.name || '',
+    initials: p?.initials || '', age_value: p?.age || undefined, sex: p?.sex || '',
+    status: s.verdict, scanned_at: s.scannedAt, reason: s.reason || '', criteria_results: criteria,
+  }
+}
 const toObservation = (o: any, p?: any) => ({ observation_id: o.id, patient_hash: o.patientHash, patient_id: o.patientHash, name: p?.name || '', initials: p?.initials || '', age_value: p?.age || undefined, sex: p?.sex || '', category: o.kind, ae_grade: o.grade, is_dlt: o.dlt === 1, confirmed: o.confirmed === 1, created_at: o.createdAt })
 const toAssessment = (a: any, p?: any) => ({ visit_id: a.visit, patient_hash: a.patientHash, patient_id: a.patientHash, name: p?.name || '', initials: p?.initials || '', age_value: p?.age || undefined, sex: p?.sex || '', scheduled_at: a.dueAt, status: a.completedAt ? 'completed' : 'pending', completed_at: a.completedAt })
 
@@ -159,6 +168,67 @@ export async function researchRouter(app: FastifyInstance) {
     return { screenings: screenings.map((s: any) => toScreening(s, patientMap.get(s.patientHash))) }
   })
 
+  // #10: study progress overview — enrollment, rule confirmation, visits,
+  // safety and screening stats in one payload.
+  app.get('/api/v1/research/studies/:studyId/progress', async (request, reply) => {
+    const userId = request.user!.userId
+    const studyId = (request.params as any).studyId
+    const study = await service.getStudy(userId, studyId)
+    if (!study) return reply.status(404).send({ error: 'Study not found' })
+
+    const [roster, rules, assessments, observations, screenings] = await Promise.all([
+      service.getRoster(studyId).catch(() => []),
+      getConfirmationStatus(studyId).catch(() => ({ total: 0, confirmed: 0, pending: 0, rejected: 0 })),
+      (prisma as any).researchAssessment.findMany({ where: { studyId }, orderBy: { dueAt: 'asc' } }).catch(() => []),
+      (prisma as any).researchObservation.findMany({ where: { studyId } }).catch(() => []),
+      (prisma as any).researchScreening.findMany({ where: { studyId } }).catch(() => []),
+    ])
+
+    const arms = new Map<string, number>()
+    for (const e of roster as any[]) {
+      const arm = e.arm || 'default'
+      arms.set(arm, (arms.get(arm) || 0) + 1)
+    }
+    const visits = new Map<string, { total: number; completed: number }>()
+    for (const a of assessments as any[]) {
+      const key = a.visit || 'visit'
+      const cur = visits.get(key) || { total: 0, completed: 0 }
+      cur.total++
+      if (a.completedAt) cur.completed++
+      visits.set(key, cur)
+    }
+
+    return {
+      study_id: studyId,
+      study_name: study.name,
+      enrollment: {
+        total: (roster as any[]).length,
+        by_arm: Object.fromEntries(arms),
+      },
+      rules: {
+        total: rules.total,
+        confirmed: rules.confirmed,
+        pending: rules.pending,
+        rejected: rules.rejected,
+      },
+      visits: {
+        total: (assessments as any[]).length,
+        completed: (assessments as any[]).filter((a: any) => a.completedAt).length,
+        by_visit: Object.fromEntries(visits),
+      },
+      safety: {
+        dlt_count: (observations as any[]).filter((o: any) => o.dlt === 1 && o.confirmed === 1).length,
+        unconfirmed: (observations as any[]).filter((o: any) => o.confirmed !== 1).length,
+      },
+      screenings: {
+        eligible: (screenings as any[]).filter((s: any) => s.verdict === 'eligible').length,
+        ineligible: (screenings as any[]).filter((s: any) => s.verdict === 'ineligible').length,
+        pending: (screenings as any[]).filter((s: any) => s.verdict !== 'eligible' && s.verdict !== 'ineligible').length,
+      },
+      generated_at: new Date().toISOString(),
+    }
+  })
+
   app.post('/api/v1/research/studies/:studyId/eligibility/rescan', async (request) =>
     service.rescanEligibility((request.params as any).studyId))
 
@@ -199,7 +269,35 @@ export async function researchRouter(app: FastifyInstance) {
     const userId = request.user!.userId
     const assessments = await service.getAssessments(studyId)
     const patientMap = await getPatientMap(assessments.map((a: any) => a.patientHash), userId)
-    return assessments.map((a: any) => toAssessment(a, patientMap.get(a.patientHash)))
+
+    // #11: attach each patient's recent check data (labs/imaging/notes) to
+    // their assessments so the schedule view shows what was measured at
+    // the visit point.
+    const hashes = Array.from(new Set(assessments.map((a: any) => a.patientHash)))
+    const entries = hashes.length > 0
+      ? await (prisma as any).medicalRecordEntry.findMany({
+          where: { userId, patientHash: { in: hashes } },
+          orderBy: { date: 'desc' },
+          take: 200,
+        }).catch(() => [])
+      : []
+    const byPatient = new Map<string, any[]>()
+    for (const e of entries) {
+      const list = byPatient.get(e.patientHash)
+      if (list) { if (list.length < 5) list.push(e) }
+      else byPatient.set(e.patientHash, [e])
+    }
+
+    return assessments.map((a: any) => ({
+      ...toAssessment(a, patientMap.get(a.patientHash)),
+      recent_entries: (byPatient.get(a.patientHash) || []).map((e: any) => ({
+        type: e.type,
+        title: e.title,
+        date: e.date,
+        content: String(e.content || '').slice(0, 200),
+        status: e.status,
+      })),
+    }))
   })
 
   app.post('/api/v1/research/studies/:studyId/assessments/:visitName/complete', async (request) => {
