@@ -53,7 +53,6 @@ with tool calls and base your summary on real results. Keep the conclusion conci
     tools,
     system,
     prompt,
-    toolChoice: 'required',
   })
 
   return {
