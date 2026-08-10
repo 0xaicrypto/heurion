@@ -13,7 +13,7 @@ vi.mock('@/components/plugins/PluginExtensionPoint', () => ({
 }));
 /** vi.hoisted: mock 工厂引用必须在此处声明(vitest hoisting 限制)。 */
 const { sendChatFull } = vi.hoisted(() => ({
-  sendChatFull: vi.fn(async function* () {
+  sendChatFull: vi.fn(async function* (_opts: Record<string, unknown>) {
     yield { type: 'final_answer_chunk', text: '回复' };
     yield { type: 'citations', items: [] };
     yield { type: 'turn_complete', assistant_event_idx: 3 };
@@ -86,7 +86,7 @@ describe('#516 chat scene selector', () => {
     fireEvent.change(input, { target: { value: '画一张 KM 曲线' } });
     fireEvent.click(screen.getByRole('button', { name: /发送|send/i }));
     await waitFor(() => {
-      const call = sendChatFull.mock.calls[0]?.[0] as { scene?: string };
+      const call = sendChatFull.mock.calls[0]?.[0] as { scene?: string } | undefined;
       expect(call?.scene).toBe('chart');
     });
   });
@@ -102,7 +102,7 @@ describe('#516 chat scene selector', () => {
     fireEvent.change(input, { target: { value: '问题二' } });
     fireEvent.click(screen.getByRole('button', { name: /发送|send/i }));
     await waitFor(() => expect(sendChatFull.mock.calls.length).toBe(2));
-    const second = sendChatFull.mock.calls[1]?.[0] as { scene?: string };
+    const second = sendChatFull.mock.calls[1]?.[0] as { scene?: string } | undefined;
     expect(second?.scene).toBe('chart');
   });
 });

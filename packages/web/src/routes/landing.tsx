@@ -14,6 +14,8 @@ import {
   Users,
   Lock,
   Terminal,
+  ShieldCheck,
+  FileKey,
 } from 'lucide-react';
 import { Button, Card } from '@/components/ui';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
@@ -90,8 +92,8 @@ export function LandingPage() {
         icon: <Users size={24} />,
         role: isZh ? '临床医生 / MDT 负责人' : 'Clinicians / MDT leads',
         quote: isZh
-          ? '“您下次复诊这位患者时，只需一句话唤醒，系统会自动构建他这三年的患者专属图谱。任何结论都能一键查看依据哪一天的哪份化验单，100% 防幻觉。”'
-          : '"Next time you see the patient, one sentence brings up their multi-year patient graph. Every recommendation is sourced to a specific lab record."',
+          ? '“复诊前一句话唤起患者三年的完整随访轨迹：化验趋势、基因变异、影像结论全部按时间轴排列，每一条都能点击回原始报告。写病程或 MDT 汇报时，引用内容全部带可核对的出处。”'
+          : '"One sentence recalls a patient\u2019s full multi-year trajectory: lab trends, mutations, and imaging conclusions on a single timeline, each traceable to its original report. Every citation in my MDT summaries is verifiable."',
       },
       {
         icon: <FlaskConical size={24} />,
@@ -137,6 +139,38 @@ export function LandingPage() {
     ctaSubtitle: isZh
       ? '免费开始，或在您的服务器上自托管完整平台。'
       : 'Start free or self-host the full platform on your own servers.',
+
+    // #514: 医疗定位与合规澄清 — 面向潜在客户的第一句专业声明。
+    complianceTitle: isZh ? '医疗定位与合规' : 'Medical positioning & compliance',
+    complianceIntro: isZh
+      ? 'Heurion 是面向临床科研的辅助工具，不提供诊断或治疗决策建议。所有 AI 输出必须由执业医师审阅确认。'
+      : 'Heurion is a clinical research assistance tool. It does not provide diagnoses or treatment decisions — every AI output must be reviewed and confirmed by a licensed physician.',
+    compliancePoints: [
+      {
+        icon: <ShieldCheck size={20} />,
+        title: isZh ? '科研辅助定位' : 'Research-assistance positioning',
+        desc: isZh
+          ? '用于病历摘要、随访管理、数据清洗与科研报告；AI 生成内容仅供参考，不作为临床决策依据。'
+          : 'For charting, follow-up management, data cleaning, and research reporting. AI-generated content is reference-only, never a basis for clinical decisions.',
+      },
+      {
+        icon: <Lock size={20} />,
+        title: isZh ? '数据不出院' : 'Data stays inside',
+        desc: isZh
+          ? '支持纯本地化部署（Docker Compose），敏感数据不离开院区；隔离沙箱与核心病历库物理分离。'
+          : 'On-premise deployment (Docker Compose) keeps sensitive data inside the hospital; the sandbox is isolated from core records.',
+      },
+      {
+        icon: <FileKey size={20} />,
+        title: isZh ? '可审计溯源' : 'Auditable provenance',
+        desc: isZh
+          ? '不可变 EventLog 记录每一次访问与生成；每个结论可点击追溯至具体日期的病历原文。'
+          : 'An immutable EventLog records every access and generation; every conclusion traces back to its source record.',
+      },
+    ],
+    complianceFootnote: isZh
+      ? '* Heurion 不构成医疗器械，不用于诊断、治疗或预后判断；部署前请按机构法规完成评估。'
+      : '* Heurion is not a medical device and is not intended for diagnosis, treatment, or prognosis. Evaluate against your institution\u2019s regulations before deployment.',
   };
 
   return (
@@ -318,6 +352,30 @@ export function LandingPage() {
               </div>
             </Card>
           ))}
+        </div>
+      </section>
+
+      {/* #514: Medical positioning & compliance — the first professional
+          statement prospective customers (physicians / hospital IT /
+          compliance) should see. */}
+      <section className="border-t border-border bg-surface">
+        <div className="mx-auto max-w-7xl px-4 py-24">
+          <div className="mb-12 text-center">
+            <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.complianceTitle}</h2>
+            <p className="mx-auto mt-4 max-w-3xl text-lg leading-relaxed text-text-secondary">{T.complianceIntro}</p>
+          </div>
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {T.compliancePoints.map((p, idx) => (
+              <Card key={idx} className="h-full p-8">
+                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-accent/10 text-accent">
+                  {p.icon}
+                </div>
+                <h3 className="text-lg font-bold text-text-primary">{p.title}</h3>
+                <p className="mt-3 leading-relaxed text-text-secondary">{p.desc}</p>
+              </Card>
+            ))}
+          </div>
+          <p className="mt-8 text-center text-xs leading-relaxed text-text-tertiary">{T.complianceFootnote}</p>
         </div>
       </section>
 
