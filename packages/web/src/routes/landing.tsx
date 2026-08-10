@@ -16,6 +16,10 @@ import {
   Terminal,
   ShieldCheck,
   FileKey,
+  Globe,
+  Image as ImageIcon,
+  BarChart3,
+  Puzzle,
 } from 'lucide-react';
 import { Button, Card } from '@/components/ui';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
@@ -86,6 +90,35 @@ export function LandingPage() {
       ],
     },
 
+    // #515: 独特能力露出 — 已上线且可演示的差异化能力。
+    uniqueTitle: isZh ? '从对话到行动：三大独特能力' : 'From conversation to action: three distinctive capabilities',
+    uniqueSubtitle: isZh
+      ? '不只是问答：AI 能替你操作真实网页、直接解读上传的图片，并在数据缺失时诚实说明。'
+      : 'More than Q&A: the AI operates real web pages for you, reads uploaded images, and is honest when data is missing.',
+    uniqueCards: [
+      {
+        icon: <Globe size={24} />,
+        title: isZh ? '浏览器自动化' : 'Browser automation',
+        desc: isZh
+          ? '用自然语言指令让 AI 登录系统、查询与采集网页信息（Agent Browser）。也可用于回归测试：模拟真实用户旅程验证平台功能。'
+          : 'Tell the AI to log in, query, and collect web information (Agent Browser). Also powers regression testing that simulates real user journeys.',
+      },
+      {
+        icon: <ImageIcon size={24} />,
+        title: isZh ? '上传即解读' : 'Upload & interpret',
+        desc: isZh
+          ? '上传化验单、影像截图或手写记录，AI 直接解读并结构化（视觉模型支持，非视觉模型走 OCR 并明确标注来源）。'
+          : 'Upload lab reports, imaging snapshots, or notes and the AI interprets them directly (vision models; OCR fallback with explicit sourcing).',
+      },
+      {
+        icon: <Puzzle size={24} />,
+        title: isZh ? '可扩展的插件生态' : 'Extensible plugin ecosystem',
+        desc: isZh
+          ? '统计图表（chart）、3D 生物场景（bioscene）、网页操作（browser-agent）等能力按需安装启用，核心平台保持轻量。'
+          : 'Statistical charts (chart), 3D bioscience scenes (bioscene), and web operations (browser-agent) install on demand — the core stays lean.',
+      },
+    ],
+
     personasTitle: isZh ? '面向三种关键角色' : 'Built for three critical roles',
     personas: [
       {
@@ -132,6 +165,16 @@ export function LandingPage() {
         pro: isZh
           ? 'Heurion 的记忆是“活的生命体”：底层 Facts 修改后，所有依赖它的 Articles 自动标红失效，保证全院一致。'
           : 'Heurion memory is a living system: when a fact changes, every article that depends on it is auto-marked stale.',
+      },
+      {
+        icon: <BarChart3 size={24} />,
+        title: isZh ? '通用 AI 图表生成' : 'Generic AI chart generation',
+        cons: isZh
+          ? '数据缺失时编造示例数值并呈现为“结果”；统计口径与样本量无法核对。'
+          : 'Fabricates placeholder values and presents them as results; methodology and sample sizes cannot be verified.',
+        pro: isZh
+          ? 'Heurion 在数据缺失时明确说明并索要真实数据，绝不编造；统计图表标注方法学（检验类型、P 值、样本量）。'
+          : 'Heurion states explicitly when data is missing and asks for the real numbers — no fabrication; charts carry methodology (test, p-value, N).',
       },
     ],
 
@@ -302,6 +345,28 @@ export function LandingPage() {
               <Activity size={16} className="text-accent" />
               <span>{isZh ? '统计图表' : 'Statistical plots'}</span>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* #515: Distinctive capabilities — already shipped, demonstrable
+          differentiators (Agent Browser / multimodal / plugin ecosystem). */}
+      <section className="border-y border-border bg-surface">
+        <div className="mx-auto max-w-7xl px-4 py-24">
+          <div className="mb-12 text-center">
+            <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.uniqueTitle}</h2>
+            <p className="mx-auto mt-4 max-w-2xl text-lg text-text-secondary">{T.uniqueSubtitle}</p>
+          </div>
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {T.uniqueCards.map((p, idx) => (
+              <Card key={idx} className="h-full p-8">
+                <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-accent/10 text-accent">
+                  {p.icon}
+                </div>
+                <h3 className="text-lg font-bold text-text-primary">{p.title}</h3>
+                <p className="mt-3 leading-relaxed text-text-secondary">{p.desc}</p>
+              </Card>
+            ))}
           </div>
         </div>
       </section>
