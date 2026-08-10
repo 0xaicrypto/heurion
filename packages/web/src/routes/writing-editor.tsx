@@ -7,6 +7,7 @@ import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor } from '@/components/DocEditor';
 import { ChatMessages } from '@/components/chat/ChatMessages';
+import { ChartLibrary } from '@/components/chat/ChartLibrary';
 import { useChatStore } from '@/stores/chat';
 import { Alert, Button, Card, Skeleton, Textarea, Input } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
@@ -90,6 +91,14 @@ export function WritingEditorPage() {
   const [polishLoading, setPolishLoading] = useState(false);
 
   const [chatOpen, setChatOpen] = useState(false);
+  // #402-merge: the right panel hosts Doc Chat and the chart library.
+  const [sidePanelTab, setSidePanelTab] = useState<'chat' | 'charts'>('chat');
+
+  // #402-merge: append a library figure to the document body.
+  const handleInsertChart = (markdown: string) => {
+    setBody((prev) => `${prev || ''}\n\n${markdown}`);
+    setDoc((prev) => (prev ? { ...prev, body: `${prev.body || ''}\n\n${markdown}`, updated_at: new Date().toISOString() } : prev));
+  };
   const [chatInput, setChatInput] = useState('');
   const store = useChatStore();
   const chatSessionId = docId ? `doc-${docId}` : '';
@@ -858,11 +867,22 @@ export function WritingEditorPage() {
                   style={{ width: 5 }}
                 />
               <div className="flex h-10 items-center justify-between border-b border-border px-3">
-                <span className="text-sm font-medium text-text-secondary">Doc Chat</span>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setSidePanelTab('chat')}
+                    className={cn('rounded-lg px-2.5 py-1 text-xs font-medium transition-colors', sidePanelTab === 'chat' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:text-text-primary')}
+                  >Chat</button>
+                  <button
+                    onClick={() => setSidePanelTab('charts')}
+                    className={cn('rounded-lg px-2.5 py-1 text-xs font-medium transition-colors', sidePanelTab === 'charts' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:text-text-primary')}
+                  >Charts</button>
+                </div>
                 <button onClick={() => setChatOpen(false)} className="text-text-tertiary hover:text-text-primary">
                   <X size={14} />
                 </button>
               </div>
+              {sidePanelTab === 'chat' && (
+                <>
               <SkillsBar active={activeSkills} onToggle={(name) => setActiveSkills((prev) => prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name])} />
               <div className="flex-1 overflow-y-auto p-3 space-y-3">
                 <ChatMessages
@@ -906,6 +926,11 @@ export function WritingEditorPage() {
                   </Button>
                 </div>
               </div>
+                </>
+              )}
+              {sidePanelTab === 'charts' && (
+                <ChartLibrary onInsert={handleInsertChart} />
+              )}
               </aside>
             </>
           )}
