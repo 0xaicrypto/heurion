@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, NavLink } from 'react-router-dom';
 import { Brain, FileText, BookOpen, Shield, Globe } from 'lucide-react';
 import { Button } from '@/components/ui';
+import { ThemeMenu } from '@/components/ThemeMenu';
 
 const subpages = [
   { to: '/memory', labelKey: 'marketing.navMemory', icon: Brain },
@@ -43,6 +44,8 @@ export function MarketingShell({ children }: { children: React.ReactNode }) {
             ))}
           </div>
           <div className="flex items-center gap-2">
+            {/* #517-followup: 营销页与应用内一致的主题切换。 */}
+            <ThemeMenu placement="top-full" />
             <button
               onClick={switchLang}
               className="inline-flex items-center gap-1 rounded-lg p-2 text-sm text-text-secondary hover:bg-surface hover:text-text-primary transition-colors"

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Brain, Cpu, FileText, FlaskConical, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, Monitor, Moon, Puzzle, Settings, Shield, Sun, Users, X, BarChart3 } from 'lucide-react';
+import { Brain, Cpu, FileText, FlaskConical, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, Puzzle, Settings, Shield, Users, X, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
-import { useThemeStore } from '@/stores/theme';
 import { api } from '@/lib/api';
 import { Avatar, IconButton } from '@/components/ui';
+import { ThemeMenu } from '@/components/ThemeMenu';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 
@@ -40,49 +40,6 @@ const navItems: NavItem[] = [
   { to: '/app/settings', labelKey: 'nav.settings', icon: <Settings size={18} />, section: 'tools' },
   { to: '/app/admin/users', labelKey: 'nav.admin', icon: <Shield size={18} />, admin: true, section: 'tools' },
 ];
-
-function ThemeMenu() {
-  const { t } = useTranslation();
-  const { mode, setMode } = useThemeStore();
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="relative">
-      <IconButton
-        aria-label={t('common.theme')}
-        title={t('common.theme')}
-        onClick={() => setOpen((v) => !v)}
-      >
-        {mode === 'dark' ? <Moon size={18} /> : mode === 'light' ? <Sun size={18} /> : <Monitor size={18} />}
-      </IconButton>
-      {open && (
-        <div
-          className="absolute bottom-full left-0 mb-2 w-32 rounded-lg border border-border bg-surface-elevated p-1 shadow-lg"
-          onMouseLeave={() => setOpen(false)}
-        >
-          {(['light', 'dark', 'system'] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => {
-                setMode(m);
-                setOpen(false);
-              }}
-              className={cn(
-                'flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-text-primary hover:bg-surface',
-                mode === m && 'bg-surface',
-              )}
-            >
-              {m === 'light' && <Sun size={14} />}
-              {m === 'dark' && <Moon size={14} />}
-              {m === 'system' && <Monitor size={14} />}
-              {m}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function LanguageMenu() {
   const { t, i18n } = useTranslation();
