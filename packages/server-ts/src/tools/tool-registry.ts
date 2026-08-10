@@ -45,6 +45,19 @@ export const PLUGIN_GATED_TOOLS: Record<string, string> = {
   browser_task: 'heurion/browser-agent',
 }
 
+/**
+ * #510: per-scene tool surface. Patient-retrieval tools are omitted from
+ * non-patient scenes so the model does not search patient records for
+ * general/chart/document requests. 'patient' keeps the full surface
+ * (backwards compatible with the pre-#510 behavior).
+ */
+const PATIENT_RETRIEVAL_TOOLS = new Set(['search_node', 'search_encounter', 'search_past_chats'])
+export const SCENE_OMIT_TOOLS: Record<string, Set<string>> = {
+  general: PATIENT_RETRIEVAL_TOOLS,
+  document: PATIENT_RETRIEVAL_TOOLS,
+  chart: PATIENT_RETRIEVAL_TOOLS,
+}
+
 export class ToolRegistry {
   private tools: Map<string, BaseTool> = new Map()
   /** #107: tool name → current registration version (bumped on replace). */
@@ -107,11 +120,14 @@ export class ToolRegistry {
    * #454-followup: definitions for THIS user — plugin-gated tools are
    * omitted while the owning plugin is not installed/enabled. Async because
    * availability is read from the installation store.
+   * #510: scene-scoped omissions (patient retrieval in non-patient scenes).
    */
-  async getDefinitionsForUser(): Promise<ToolDefinition[]> {
+  async getDefinitionsForUser(scene: string = 'patient'): Promise<ToolDefinition[]> {
+    const omit = SCENE_OMIT_TOOLS[scene]
     const out: ToolDefinition[] = []
     for (const tool of this.tools.values()) {
       if (PLUGIN_GATED_TOOLS[tool.name] && !(await this.isToolAvailable(tool.name))) continue
+      if (omit?.has(tool.name)) continue
       out.push(tool.definition)
     }
     return out

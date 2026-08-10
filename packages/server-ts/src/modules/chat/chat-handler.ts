@@ -13,6 +13,7 @@ import { createSseSender } from './chat-sse.js'
 import { makeLogger } from '../../common/logger.js'
 import prisma from '../../common/prisma'
 import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
+import type { ChatScene } from '../../common/persona.js'
 import { deepseekStream, deepseekChat, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { chatSendSchema } from './chat.dto.js'
 import { analyzeChatForPatient, updatePatientFromFindings, analyzeChatForMedicalRecord, updateMedicalRecordFromChat } from '../patients/clinical-analysis.js'
@@ -374,6 +375,10 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
     const ctx = getUserContext(userId)
     const sid = body.session_id || `session_${Math.random().toString(36).slice(2, 10)}`
     const patientHash = body.patient_hash || null
+    // #510: entry scene — explicit field wins, else inferred from the
+    // patient scope / doc- session id, else general.
+    const scene: ChatScene = body.scene
+      ?? (patientHash ? 'patient' : (sid.startsWith('doc-') ? 'document' : 'general'))
     const apiKey = getApiKey()
 
     // #303: SSE transport extracted — owns headers, disconnect abort, close.
@@ -667,8 +672,10 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       }
 
       // Build dynamic persona from user's accumulated knowledge (K5: cached
-      // until facts/knowledge versions change).
-      const persona = buildCachedPersona(userId, ctx.facts, ctx.knowledge)
+      // until facts/knowledge versions change). #510: persona variant follows
+      // the entry scene so non-patient scenes stop inheriting the
+      // patient-centric guidance.
+      const persona = buildCachedPersona(userId, ctx.facts, ctx.knowledge, scene)
 
       // #2: Weighted attention context projection (filtered by router intent)
       const projectionInputs = selectProjectionInputs(routeResult, ctx, patientHash, sid)
@@ -853,8 +860,8 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       const toolRegistry = new ToolRegistry(toolCtx)
       // #454-followup: plugin-gated renderers (render_chart / render_scene)
       // appear in the LLM tool list only while the owning plugin is
-      // installed + enabled.
-      const tools = await toolRegistry.getDefinitionsForUser()
+      // installed + enabled. #510: scene-scoped tool surface.
+      const tools = await toolRegistry.getDefinitionsForUser(scene)
 
       // Tool-calling loop
       const { finalContent, messages: loopMessages } = await runToolCallLoop({
