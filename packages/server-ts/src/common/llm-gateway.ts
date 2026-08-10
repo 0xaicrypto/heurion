@@ -11,9 +11,40 @@
  */
 export const FRIENDLY_LLM_ERROR = '服务暂时不可用，请稍后重试'
 
+/**
+ * #511 — multimodal chat content. A message content may be a plain string
+ * (legacy) or an array of content parts (text + image). Images are passed
+ * as data URLs to OpenAI-compatible /chat/completions; providers without
+ * vision support must not receive image parts (the caller falls back to
+ * OCR or a textual note instead).
+ */
+export type ChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; mime: string; dataBase64: string }
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
-  content: string
+  content: string | ChatContentPart[]
+}
+
+/** #511: providers that accept image_url parts over the OpenAI-compatible
+ *  endpoint. deepseek/opencode/kimi are text-only → image parts must be
+ *  downgraded before sending. */
+export const VISION_PROVIDERS: ReadonlySet<string> = new Set(['gemini', 'openai', 'anthropic'])
+
+export function providerSupportsVision(provider?: string): boolean {
+  return VISION_PROVIDERS.has((provider || process.env.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase())
+}
+
+/** Serialize a message content into OpenAI /chat/completions parts. */
+export function serializeContent(content: string | ChatContentPart[]): unknown {
+  if (typeof content === 'string') return content
+  return content.map((part) => {
+    if (part.type === 'image') {
+      return { type: 'image_url', image_url: { url: `data:${part.mime};base64,${part.dataBase64}` } }
+    }
+    return { type: 'text', text: part.text }
+  })
 }
 
 export interface LlmTelemetryContext {
@@ -174,7 +205,15 @@ function approximateTokensFromChars(chars: number): number {
 }
 
 function promptChars(messages: ChatMessage[]): number {
-  return messages.reduce((acc, m) => acc + (m.content?.length || 0), 0)
+  return messages.reduce((acc, m) => {
+    if (typeof m.content === 'string') return acc + m.content.length
+    return acc + m.content.reduce((a, p) => a + (p.type === 'text' ? p.text.length : p.dataBase64.length / 2), 0)
+  }, 0)
+}
+
+/** #511: map message contents to OpenAI parts before sending. */
+function serializeMessages(messages: ChatMessage[]): unknown[] {
+  return messages.map((m) => ({ role: m.role, content: serializeContent(m.content) }))
 }
 
 async function recordUsage(
@@ -254,7 +293,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
     const model = this.resolveModel(options, DEEPSEEK_CHAT_MODEL)
     const body: any = {
       model,
-      messages,
+      messages: serializeMessages(messages),
       max_tokens: options.maxTokens ?? 4096,
       temperature: options.temperature ?? 0.7,
     }
@@ -315,7 +354,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
       body: JSON.stringify({
         model,
-        messages,
+        messages: serializeMessages(messages),
         max_tokens: options.maxTokens ?? 4096,
         temperature: options.temperature ?? 0.7,
         stream: true,

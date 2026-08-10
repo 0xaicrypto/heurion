@@ -16,6 +16,18 @@ const DEFAULT_OCR_SCALE = 2
 
 const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
+/**
+ * #511: image attachment detection — bitmap images (png/jpg/jpeg/gif/webp)
+ * travel as multimodal image parts; SVG is text-readable XML so it stays on
+ * the text path.
+ */
+export function isImageFile(filename: string, mimeType?: string): boolean {
+  const lower = filename.toLowerCase()
+  if (/\.(png|jpe?g|gif|webp|avif)$/i.test(lower)) return true
+  if (mimeType && (mimeType.startsWith('image/')) && !mimeType.includes('svg')) return true
+  return false
+}
+
 function isDocx(filename: string, mimeType?: string): boolean {
   const lower = filename.toLowerCase()
   return lower.endsWith('.docx') || mimeType === DOCX_MIME_TYPE
@@ -184,4 +196,29 @@ export async function extractTextFromUpload(
   // fileId format from upload endpoint is usually `<uuid>_<originalName>`
   const originalName = fileId.split('_').slice(1).join('_') || fileId
   return extractDocumentText(buffer, originalName, undefined, options)
+}
+
+/**
+ * #511: read an uploaded image as a base64 data payload for multimodal
+ * parts. Returns null when the file is missing or not a bitmap image.
+ */
+export async function extractImageUpload(
+  userId: string,
+  fileId: string,
+): Promise<{ mime: string; dataBase64: string } | null> {
+  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+  const filepath = path.join(dir, fileId)
+  if (!fs.existsSync(filepath)) return null
+
+  const originalName = fileId.split('_').slice(1).join('_') || fileId
+  if (!isImageFile(originalName)) return null
+
+  const mimeByExt: Record<string, string> = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', webp: 'image/webp', avif: 'image/avif',
+  }
+  const ext = originalName.split('.').pop()?.toLowerCase() || ''
+  const mime = mimeByExt[ext] || 'image/png'
+  const buffer = fs.readFileSync(filepath)
+  return { mime, dataBase64: buffer.toString('base64') }
 }

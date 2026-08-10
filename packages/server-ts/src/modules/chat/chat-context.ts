@@ -7,6 +7,7 @@
 import { estimateTokens } from '../../common/token-estimate.js'
 import { router } from '../../retrieval/query-router.js'
 import { getUserContext } from './user-context.js'
+import type { ChatContentPart } from '../../common/llm-gateway.js'
 import type { CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { extractTextFromUpload } from '../../lib/document-extractor.js'
 
@@ -46,7 +47,7 @@ export async function readAttachmentContent(userId: string, fileId: string): Pro
  * prompt. Returns the number of trimmed messages.
  */
 export function enforceTotalBudget(
-  msgs: Array<{ role: string; content: string }>,
+  msgs: Array<{ role: string; content: string | ChatContentPart[] }>,
   maxTokens: number,
 ): number {
   if (maxTokens <= 0) return 0

@@ -34,6 +34,8 @@ import {
   enforceTotalBudget,
   selectProjectionInputs,
 } from './chat-context.js'
+import { providerSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
+import { extractImageUpload } from '../../lib/document-extractor.js'
 
 const gapService = new PrismaKnowledgeGapService()
 /** #6: per-patient LLM analysis throttle (ms) — avoid an extra call per message. */
@@ -142,7 +144,7 @@ async function findPatient(userId: string, patientHash?: string | null): Promise
  * detection, sub-agent SSE surfacing and per-tool media events.
  */
 async function runToolCallLoop(params: {
-  currentMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  currentMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }>
   toolRegistry: ToolRegistry
   tools: ToolDefinition[]
   apiKey: string
@@ -150,7 +152,7 @@ async function runToolCallLoop(params: {
   ctx: Awaited<ReturnType<typeof getUserContext>>
   userId: string
   sessionId: string
-}): Promise<{ finalContent: string; messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> }> {
+}): Promise<{ finalContent: string; messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }> }> {
   const { currentMessages, toolRegistry, tools, io, ctx, userId, sessionId } = params
 
   // R3 — tool-call persistence: per-session sequence numbers continue
@@ -553,19 +555,34 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         return
       }
 
-      // #2: Read attachment content
+      // #2: Read attachment content. #511: bitmap images become multimodal
+      // image parts when the active provider supports vision; otherwise a
+      // textual note (model can still use ocr_image / ask for a vision
+      // model). Text-like attachments keep the legacy text injection.
+      const vision = providerSupportsVision()
+      const userParts: ChatContentPart[] = []
       let attachmentText = ''
       const rawAttachments = body.attachments || []
       for (const att of rawAttachments) {
         // Accept both string (file_id) and object ({ file_id, fileId, name })
         const fid = typeof att === 'string' ? att : (att.file_id || att.fileId || '')
         const name = typeof att === 'string' ? fid.split('_').slice(1).join('_') : (att.name || '')
-        if (fid) {
-          const content = await readAttachmentContent(userId, fid)
-          if (content) {
-            attachmentText += content
-            send({ type: 'context_info', text: `Attachment: ${name.slice(0, 30)}`, kind: 'attachment' })
-          }
+        if (!fid) continue
+        const image = await extractImageUpload(userId, fid)
+        if (image && vision) {
+          userParts.push({ type: 'image', mime: image.mime, dataBase64: image.dataBase64 })
+          send({ type: 'context_info', text: `Attachment: ${name.slice(0, 30)} (image → multimodal)`, kind: 'attachment' })
+          continue
+        }
+        if (image && !vision) {
+          attachmentText += `\n[ATTACHMENT: ${name}] (image attachment — 当前模型不支持图片输入;如需要分析图中内容,请使用 ocr_image 工具,或切换到支持视觉的模型)\n`
+          send({ type: 'context_info', text: `Attachment: ${name.slice(0, 30)} (image, no vision provider)`, kind: 'attachment' })
+          continue
+        }
+        const content = await readAttachmentContent(userId, fid)
+        if (content) {
+          attachmentText += content
+          send({ type: 'context_info', text: `Attachment: ${name.slice(0, 30)}`, kind: 'attachment' })
         }
       }
 
@@ -769,7 +786,8 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       } catch {
         // snapshot/diff pipeline is best-effort — fall back to direct join
       }
-      const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      // #511: content may carry multimodal parts (images) on the user turn.
+      const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }> = [
         { role: 'system', content: systemPrompt },
       ]
 
@@ -830,7 +848,12 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         })
       }
       messages.push(...historyMessages)
-      messages.push({ role: 'user' as const, content: fullMessage })
+      // #511: multimodal user message — image parts first, then the full
+      // text (demographics/roster/file context stays inside the text part).
+      messages.push({
+        role: 'user' as const,
+        content: userParts.length > 0 ? [...userParts, { type: 'text', text: fullMessage }] : fullMessage,
+      })
 
       // §3.4 (#194): enforce a TOTAL token budget across all assembled
       // messages. History is trimmed oldest-first; the system prompt is
