@@ -20,6 +20,8 @@ import {
   Image as ImageIcon,
   BarChart3,
   Puzzle,
+  Stethoscope,
+  Presentation,
 } from 'lucide-react';
 import { Button, Card } from '@/components/ui';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
@@ -214,6 +216,57 @@ export function LandingPage() {
     complianceFootnote: isZh
       ? '* Heurion 不构成医疗器械，不用于诊断、治疗或预后判断；部署前请按机构法规完成评估。'
       : '* Heurion is not a medical device and is not intended for diagnosis, treatment, or prognosis. Evaluate against your institution\u2019s regulations before deployment.',
+
+    // #519: 真实临床工作流演示 — 统计方法学严谨性露出。
+    workflowTitle: isZh ? '一次真实的临床科研工作流' : 'A real clinical research workflow',
+    workflowSubtitle: isZh
+      ? '从随访问答到学术成果交付，全程可溯源、可复现。'
+      : 'From follow-up Q&A to a publishable deliverable — fully traceable and reproducible.',
+    workflowSteps: [
+      {
+        icon: <Stethoscope size={18} />,
+        title: isZh ? '随访问答' : 'Follow-up Q&A',
+        desc: isZh ? '一句话唤起患者多年随访轨迹：化验趋势、基因变异、影像结论按时间轴排列。' : 'One sentence recalls the patient trajectory: labs, mutations, imaging on one timeline.',
+      },
+      {
+        icon: <FileText size={18} />,
+        title: isZh ? '溯源总结' : 'Traceable summaries',
+        desc: isZh ? '生成病程与 MDT 汇报，每条引用可点击回原始报告。' : 'Progress notes and MDT reports, every citation traceable to the source record.',
+      },
+      {
+        icon: <Terminal size={18} />,
+        title: isZh ? '数据清洗' : 'Data cleaning',
+        desc: isZh ? '自然语言触发隔离沙箱运行 Python 清洗随访数据。' : 'Natural language triggers an isolated sandbox to clean follow-up data.',
+      },
+      {
+        icon: <BarChart3 size={18} />,
+        title: isZh ? '统计图表' : 'Statistical figures',
+        desc: isZh ? 'Table 1、KM 曲线、卡方检验，标注方法学与样本量。' : 'Table 1, KM curves, chi-square — methodology and sample size annotated.',
+      },
+      {
+        icon: <Presentation size={18} />,
+        title: isZh ? '成果交付' : 'Deliverables',
+        desc: isZh ? '一键导出学术 PPT / DOCX，并反哺知识库。' : 'One-click export of academic PPT/DOCX, feeding the knowledge base.',
+      },
+    ],
+    workflowSampleLabel: isZh
+      ? '样例：带误差棒与显著性标注的正式统计图表（占位）'
+      : 'Sample: formal statistical figure with error bars and significance (placeholder)',
+
+    // #518: 合作伙伴与致谢。
+    partnersTitle: isZh ? '合作伙伴与致谢' : 'Partners & acknowledgements',
+    partnersIntro: isZh
+      ? 'Heurion 构建于开放的技术生态之上，感谢以下平台与项目的支撑。'
+      : 'Heurion is built on an open technical ecosystem. Thanks to the platforms and projects below.',
+    partners: [
+      { name: 'Cloudflare', desc: isZh ? 'Workers 平台与 Browser Run 浏览器执行服务' : 'Workers platform & Browser Run browser execution' },
+      { name: 'opencode.ai', desc: isZh ? 'zen 网关：多模型统一访问' : 'zen gateway: unified model access' },
+      { name: 'Vercel AI SDK', desc: isZh ? 'ai / @ai-sdk：工具调用与多模态消息' : 'ai / @ai-sdk: tool calls & multimodal messages' },
+      { name: 'Cloudflare agents', desc: isZh ? 'Agent Browser 浏览器自动化工具集' : 'Agent Browser automation toolkit' },
+    ],
+    partnersFootnote: isZh
+      ? '以及所有为开源与医疗信息化做出贡献的开发者。'
+      : 'And every developer contributing to open source and health informatics.',
   };
 
   return (
@@ -229,7 +282,7 @@ export function LandingPage() {
               <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
               {T.tagline}
             </div>
-            <h1 className="text-4xl font-extrabold tracking-tight text-text-primary sm:text-6xl lg:text-7xl">
+            <h1 className="text-4xl font-extrabold tracking-tight text-text-primary sm:text-5xl lg:text-6xl">
               {T.title}
             </h1>
             <p className="mx-auto mt-8 max-w-3xl text-lg leading-relaxed text-text-secondary sm:text-xl">
@@ -298,16 +351,16 @@ export function LandingPage() {
           </Card>
 
           {/* Execution Plane */}
-          <Card className="relative overflow-hidden border-l-4 border-l-nexus-600 p-8">
-            <div className="absolute -right-6 -top-6 h-32 w-32 rounded-full bg-nexus-500/5" />
-            <span className="text-sm font-semibold uppercase tracking-wider text-nexus-600">
+          <Card className="relative overflow-hidden border-l-4 border-l-accent p-8">
+            <div className="absolute -right-6 -top-6 h-32 w-32 rounded-full bg-accent/5" />
+            <span className="text-sm font-semibold uppercase tracking-wider text-accent">
               {T.executionPlane.label}
             </span>
             <h3 className="mt-2 text-2xl font-bold text-text-primary">{T.executionPlane.title}</h3>
             <ul className="mt-6 space-y-4">
               {T.executionPlane.points.map((pt, idx) => (
                 <li key={idx} className="flex items-start gap-3 text-text-secondary">
-                  <Terminal size={18} className="mt-0.5 shrink-0 text-nexus-600" />
+                  <Terminal size={18} className="mt-0.5 shrink-0 text-accent" />
                   <span>{pt}</span>
                 </li>
               ))}
@@ -329,8 +382,8 @@ export function LandingPage() {
             <div className="h-px w-24 bg-border" />
             <span className="text-xs uppercase tracking-wider">{isZh ? '执行结果' : 'Results'}</span>
           </div>
-          <div className="flex w-56 flex-col items-center rounded-xl border border-nexus-600/30 bg-nexus-500/5 p-5 text-center">
-            <Cpu size={32} className="text-nexus-600" />
+          <div className="flex w-56 flex-col items-center rounded-xl border border-accent/30 bg-accent/5 p-5 text-center">
+            <Cpu size={32} className="text-accent" />
             <span className="mt-2 font-semibold text-text-primary">
               {isZh ? 'Execution Plane' : 'Execution Plane'}
             </span>
@@ -441,6 +494,51 @@ export function LandingPage() {
             ))}
           </div>
           <p className="mt-8 text-center text-xs leading-relaxed text-text-tertiary">{T.complianceFootnote}</p>
+        </div>
+      </section>
+
+      {/* #519: 真实临床工作流 — 统计方法学严谨性露出。 */}
+      <section className="mx-auto max-w-7xl px-4 py-24">
+        <div className="mb-12 text-center">
+          <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.workflowTitle}</h2>
+          <p className="mx-auto mt-4 max-w-2xl text-lg text-text-secondary">{T.workflowSubtitle}</p>
+        </div>
+        <div className="grid gap-6 lg:grid-cols-5">
+          {T.workflowSteps.map((s, idx) => (
+            <Card key={idx} className="relative h-full p-6">
+              <span className="absolute right-4 top-4 text-3xl font-bold text-accent/10">{idx + 1}</span>
+              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                {s.icon}
+              </div>
+              <h3 className="text-sm font-bold text-text-primary">{s.title}</h3>
+              <p className="mt-2 text-xs leading-relaxed text-text-secondary">{s.desc}</p>
+            </Card>
+          ))}
+        </div>
+        <div className="mt-8 flex min-h-[160px] items-center justify-center rounded-xl border border-dashed border-border bg-surface p-8">
+          <div className="text-center">
+            <BarChart3 size={28} className="mx-auto text-text-tertiary" />
+            <p className="mt-3 text-sm text-text-tertiary">{T.workflowSampleLabel}</p>
+          </div>
+        </div>
+      </section>
+
+      {/* #518: 合作伙伴与致谢。 */}
+      <section className="border-t border-border bg-surface">
+        <div className="mx-auto max-w-7xl px-4 py-24">
+          <div className="mb-12 text-center">
+            <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.partnersTitle}</h2>
+            <p className="mx-auto mt-4 max-w-2xl text-lg text-text-secondary">{T.partnersIntro}</p>
+          </div>
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {T.partners.map((p, idx) => (
+              <Card key={idx} className="p-6 text-center">
+                <h3 className="font-semibold text-text-primary">{p.name}</h3>
+                <p className="mt-2 text-xs leading-relaxed text-text-secondary">{p.desc}</p>
+              </Card>
+            ))}
+          </div>
+          <p className="mt-8 text-center text-xs text-text-tertiary">{T.partnersFootnote}</p>
         </div>
       </section>
 
