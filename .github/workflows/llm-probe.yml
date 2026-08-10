@@ -1,0 +1,16 @@
+name: LLM probe (temp)
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Model tool-call sweep
+        env:
+          KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          mkdir -p /tmp/probe && cd /tmp/probe && npm init -y >/dev/null 2>&1 && npm i ai@6.0.246 @ai-sdk/openai@3.0.91 zod >/dev/null 2>&1
+          cp /home/runner/work/heurion/heurion/scripts/probe-llm.mjs ./probe-llm.mjs
+          KEY=$KEY node ./probe-llm.mjs 2>&1 | head -20
