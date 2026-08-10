@@ -317,7 +317,7 @@ export function LandingPage() {
     // opencode 官方 logo 本身即单色(mono=true),dark 主题下反白适配。
     partners: [
       { name: 'Cloudflare', logo: '/partners/cloudflare.png', mono: false, url: 'https://cloudflare.com', desc: isZh ? 'Workers · Browser Run · Agents' : 'Workers · Browser Run · Agents' },
-      { name: 'opencode.ai', logo: '/partners/opencodeai.png', mono: true, url: 'https://opencode.ai', desc: isZh ? 'zen 网关 · 多模型访问' : 'zen gateway · model access' },
+      { name: 'Reactome', logo: '/partners/reactome.png', mono: false, url: 'https://reactome.org', desc: isZh ? '通路图数据（CC BY 4.0）' : 'Pathway data (CC BY 4.0)' },
       { name: 'Vercel', logo: '/partners/vercel.png', mono: true, url: 'https://vercel.com', desc: isZh ? 'AI SDK · 工具调用与多模态' : 'AI SDK · tools & multimodal' },
       { name: 'GitHub', logo: '/partners/github.png', mono: true, url: 'https://github.com', desc: isZh ? '开源托管 · 自动化交付' : 'Hosting · automation' },
     ],

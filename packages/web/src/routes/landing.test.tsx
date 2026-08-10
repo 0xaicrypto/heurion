@@ -20,7 +20,7 @@ describe('LandingPage', () => {
     expect(screen.getByRole('heading', { name: /a real clinical research workflow/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /partners & acknowledgements/i })).toBeInTheDocument();
     expect(screen.getAllByText(/cloudflare/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/opencode\.ai/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/reactome/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/built on cloudflare workers/i)).toBeInTheDocument();
 
     const nav = screen.getByTestId('marketing-nav');
