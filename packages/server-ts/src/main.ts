@@ -2,6 +2,7 @@ import { Worker } from 'bullmq'
 import { createApp } from './app'
 import { config } from './config'
 import { execSync } from 'child_process'
+import { enableSqliteWal } from './common/prisma.js'
 import { createDefaultEvolutionQueue, BullMqEvolutionQueue, type EvolutionQueue } from './modules/evolution/evolution.queue.js'
 import { startEvolutionWorker } from './modules/evolution/evolution.worker.js'
 import { createGapResearchScheduler, type GapResearchScheduler } from './modules/knowledge/gap-research.service.js'
@@ -25,6 +26,8 @@ async function main() {
   }
 
   const evolutionQueue = await createDefaultEvolutionQueue()
+  // SQLite WAL (idempotent) — concurrent reads never block writes.
+  await enableSqliteWal().catch(() => {})
   const app = await createApp({ evolutionQueue })
   await app.listen({ port: config.port, host: config.host })
   console.log(`Heurion TS backend listening on ${config.host}:${config.port}`)
