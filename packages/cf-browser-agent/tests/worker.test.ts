@@ -64,7 +64,7 @@ describe('browser-task endpoint (#485)', () => {
       body: JSON.stringify({ instruction: '登录 heurion.org 并生成 EGFR 通路图', url: 'https://heurion.org' }),
     }), env)
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = (await res.json()) as Record<string, unknown>
     expect(body.success).toBe(true)
     expect(body.conclusion).toContain('图表已生成')
     expect(Array.isArray(body.steps)).toBe(true)
@@ -94,8 +94,8 @@ describe('browser-task endpoint (#485)', () => {
       body: JSON.stringify({ instruction: 'x' }),
     }), env)
     expect(res.status).toBe(502)
-    const body = await res.json()
-    expect(body.error).toContain('browser crashed')
+    const body = (await res.json()) as Record<string, unknown>
+    expect(String(body.error)).toContain('browser crashed')
   })
 
   test('5. GET /healthz → ok (no auth required)', async () => {

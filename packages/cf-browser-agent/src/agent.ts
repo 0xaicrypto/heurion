@@ -7,7 +7,7 @@
  * so no separate Workers AI binding is required to run the POC.
  */
 import { createBrowserTools } from 'agents/browser/ai'
-import { runAgent } from 'agents'
+import { generateText } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 
 export interface BrowserTaskInput {
@@ -45,7 +45,7 @@ and include a screenshot of the final state. Keep the conclusion concise and fac
     ? `Start at ${input.url}.\n\nTask: ${input.instruction}`
     : `Task: ${input.instruction}`
 
-  const result = await runAgent({
+  const result = await generateText({
     model: deps.llm as any,
     tools,
     system,
