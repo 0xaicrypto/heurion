@@ -372,6 +372,23 @@ app.get('/api/v1/files/download/:fileId', async (request, reply) => {
   const mime = fileId.endsWith('.svg') ? 'image/svg+xml' : 'application/octet-stream'
   reply.header('Content-Type', mime)
   reply.header('Cache-Control', 'public, max-age=3600')
+
+  // #opt: large generated SVGs (Reactome diagrams ~1.3MB) are served gzipped
+  // — browsers decompress transparently for <img>, cutting transfer ~4x.
+  const stat = fs.statSync(filepath)
+  if (mime === 'image/svg+xml' && stat.size > 100 * 1024) {
+    const accept = String(request.headers['accept-encoding'] || '')
+    if (accept.includes('gzip')) {
+      const body = fs.readFileSync(filepath)
+      const zlib = await import('zlib')
+      const gz = zlib.gzipSync(body, { level: 9 })
+      if (gz.length < body.length) {
+        reply.header('Content-Encoding', 'gzip')
+        reply.header('Content-Length', String(gz.length))
+        return reply.send(gz)
+      }
+    }
+  }
   return reply.send(fs.createReadStream(filepath))
 })
 

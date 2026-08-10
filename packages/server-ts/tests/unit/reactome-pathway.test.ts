@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, afterEach } from 'vitest'
 import { RenderSceneTool } from '../../src/tools/bioscene/render-scene-tool.js'
-import { resolvePathway, searchPathways, fetchPathwayDiagram } from '../../src/tools/bioscene/reactome-service.js'
+import { resolvePathway, searchPathways, fetchPathwayDiagram, lightweightSvg } from '../../src/tools/bioscene/reactome-service.js'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
@@ -103,5 +103,19 @@ describe('Reactome pathway mode (#466)', () => {
     expect(out.markdown).toContain('![EGFR 信号]')
     expect(out.markdown).toContain('CC BY 4.0')
     expect(fs.existsSync(path.join(tmp, 'u1', 'uploads', out.file_id))).toBe(true)
+  })
+})
+
+describe('#opt Reactome SVG lightweighting', () => {
+  test('lightweightSvg strips indent + blank lines deterministically', () => {
+    // Build a >50KB diagram (the lightweighting threshold).
+    const big = '<svg>\n' + '  <g>\n    <path d="M0 0 L1 1"/>\n  </g>\n\n'.repeat(4000) + '</svg>'
+    const out = lightweightSvg(big)
+    expect(out).not.toContain('  <g>')
+    expect(out).not.toContain('\n\n')
+    expect(out).toContain('<g>')
+    expect(lightweightSvg(big)).toBe(out) // deterministic
+    // Small SVGs skip (no churn).
+    expect(lightweightSvg('<svg/>')).toBe('<svg/>')
   })
 })

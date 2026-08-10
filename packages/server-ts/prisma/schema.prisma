@@ -214,13 +214,16 @@ model ResearchEnrollment {
 }
 
 model ResearchScreening {
-  id          String @id
-  studyId     String @map("study_id")
-  patientHash String @map("patient_hash")
-  initials    String @default("")
-  verdict     String @default("pending")
-  reason      String @default("")
-  scannedAt   String @map("scanned_at")
+  id               String @id
+  studyId          String @map("study_id")
+  patientHash      String @map("patient_hash")
+  initials         String @default("")
+  verdict          String @default("pending")
+  reason           String @default("")
+  // #10: per-rule screening results as JSON array
+  // [{"ruleId","rule","category","passed","detail"}]
+  criteriaResults  String @default("[]") @map("criteria_results")
+  scannedAt        String @map("scanned_at")
 
   study ResearchStudy @relation(fields: [studyId], references: [id])
   @@index([studyId, patientHash])

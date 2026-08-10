@@ -15,7 +15,7 @@ import prisma from '../../common/prisma'
 import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
 import { deepseekStream, deepseekChat, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { chatSendSchema } from './chat.dto.js'
-import { analyzeChatForPatient, updatePatientFromFindings } from '../patients/clinical-analysis.js'
+import { analyzeChatForPatient, updatePatientFromFindings, analyzeChatForMedicalRecord, updateMedicalRecordFromChat } from '../patients/clinical-analysis.js'
 import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
 import { resolveSidecarIntent } from '../../retrieval/intent-router.js'
 import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
@@ -35,6 +35,8 @@ import {
 } from './chat-context.js'
 
 const gapService = new PrismaKnowledgeGapService()
+/** #6: per-patient LLM analysis throttle (ms) — avoid an extra call per message. */
+const chatAnalysisThrottle = new Map<string, number>()
 const telemetry = new PrismaTelemetryService()
 const log = makeLogger('chat.router')
 
@@ -900,17 +902,34 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         opts.evolutionQueue.add({ userId, sessionId: sid, userMessage: body.text, patientHash: patientHash || undefined }).catch(() => {})
       }
 
-      // Step 2: Analyze attached files for clinical findings only.
-      // Chat-only turns skip this to avoid an extra LLM call on every message.
-      if (patientHash && attachmentText) {
-        const analysisText = `[FILE CONTENT]\n${attachmentText}\n[CHAT]\nUser: ${body.text}\nAI: ${fullResponse}`
-        analyzeChatForPatient(userId, patientHash, analysisText, {
-          userId,
-          workspaceId: userId,
-          action: 'clinical.analysis',
-        })
-          .then(findings => updatePatientFromFindings(userId, patientHash, findings))
-          .catch(() => {})
+      // #6: analyze patient turns (attachments AND plain text) into both
+      // free findings (patient profile) and structured record sections.
+      // Fire-and-forget; rate-limited to avoid an extra LLM call per
+      // message (every ~15s max per patient, or when new files arrived).
+      if (patientHash && (attachmentText || body.text.length >= 6)) {
+        const analysisText = attachmentText
+          ? `[FILE CONTENT]\n${attachmentText}\n[CHAT]\nUser: ${body.text}\nAI: ${fullResponse}`
+          : `[CHAT]\nUser: ${body.text}\nAI: ${fullResponse}`
+        const lastRun = chatAnalysisThrottle.get(`${userId}:${patientHash}`) ?? 0
+        const now = Date.now()
+        if (now - lastRun >= 15000) {
+          chatAnalysisThrottle.set(`${userId}:${patientHash}`, now)
+          if (chatAnalysisThrottle.size > 5000) chatAnalysisThrottle.clear()
+          analyzeChatForMedicalRecord(userId, patientHash, analysisText, {
+            userId,
+            workspaceId: userId,
+            action: 'clinical.analysis',
+          })
+            .then(async ({ findings, sections }) => {
+              if (findings.length > 0) {
+                await updatePatientFromFindings(userId, patientHash, findings)
+              }
+              if (Object.keys(sections).length > 0) {
+                await updateMedicalRecordFromChat(userId, patientHash, sections)
+              }
+            })
+            .catch(() => {})
+        }
       }
 
       // Update session (writing doc-* sessions never get a Session row;

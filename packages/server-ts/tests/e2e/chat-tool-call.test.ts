@@ -53,8 +53,10 @@ describe('chat tool-call parsing (regression: nested arguments JSON)', () => {
       return JSON.stringify(users[users.length - 1]?.content ?? '(none)')
     }).join('\n---\n') + '\n=======\n')
 
-    // Tool loop executed: classifier + round1(tool) + round2(final) = 3 calls.
-    expect(deepseekChat).toHaveBeenCalledTimes(3)
+    // Tool loop executed: classifier + round1(tool) + round2(final) = 3
+    // calls (excludes the #6 async medical-record analysis pass).
+    const toolCalls = vi.mocked(deepseekChat).mock.calls.filter((c) => !JSON.stringify(c[0]).includes('clinical information from this doctor-patient'))
+    expect(toolCalls.length).toBe(3)
 
     // Final answer streamed; no raw tool_call markup in the SSE payload.
     expect(res.payload).toContain('初步诊断')
@@ -86,7 +88,8 @@ describe('chat tool-call parsing (regression: nested arguments JSON)', () => {
       payload: JSON.stringify({ text: '汇总该患者情况', patient_hash: hash }),
     })
     expect(res.statusCode).toBe(200)
-    expect(deepseekChat).toHaveBeenCalledTimes(3)
+    const toolCalls2 = vi.mocked(deepseekChat).mock.calls.filter((c) => !JSON.stringify(c[0]).includes('clinical information from this doctor-patient'))
+    expect(toolCalls2.length).toBe(3)
     expect(res.payload).toContain('综合两次查询结果给出建议')
     expect(res.payload).not.toContain('<tool_call>')
 

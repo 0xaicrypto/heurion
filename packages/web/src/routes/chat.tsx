@@ -421,6 +421,18 @@ export function ChatPage() {
                     <>
                       <p className="text-lg">{t('chat.startConversation')}</p>
                       <p className="text-sm">{t('chat.contextHint')}</p>
+                      <div className="mt-5 flex flex-wrap justify-center gap-2 text-xs">
+                        {['📊 画一张对比柱状图', '🧬 画一下 EGFR 信号通路图', '💊 示意 TKI 耐药机制', '📈 对这两组数据做 t 检验'].map((ex) => (
+                          <button
+                            key={ex}
+                            onClick={() => setInput(ex.replace(/^[^\s]+\s/, ''))}
+                            className="rounded-full border border-border bg-surface-elevated px-3 py-1.5 text-text-secondary transition-colors hover:border-accent/50 hover:text-accent"
+                          >
+                            {ex}
+                          </button>
+                        ))}
+                        <span className="py-1.5 text-text-tertiary">{t('chat.chartHint', '· 安装 heurion/chart 与 heurion/bioscene 插件后可用')}</span>
+                      </div>
                     </>
                   ) : (
                     <>

@@ -22,6 +22,18 @@ export class ResearchApi extends ApiCore {
     return this.fetch(`/api/v1/research/studies/${studyId}/summary`);
   }
 
+  /** #10: structured progress overview (enrollment/rules/visits/safety/screening). */
+  async getStudyProgress(studyId: string): Promise<{
+    study_id: string; study_name: string;
+    enrollment: {total: number; by_arm: Record<string, number>};
+    rules: {total: number; confirmed: number; pending: number; rejected: number};
+    visits: {total: number; completed: number; by_visit: Record<string, {total: number; completed: number}>};
+    safety: {dlt_count: number; unconfirmed: number};
+    screenings: {eligible: number; ineligible: number; pending: number};
+  }> {
+    return this.fetch(`/api/v1/research/studies/${studyId}/progress`);
+  }
+
   /* ────────────────────────── research detail ────────────────────────── */
 
   async getStudyRoster(studyId: string): Promise<Array<{
