@@ -133,6 +133,10 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
           res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
         } else if (path.includes('/assets/')) {
           res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+        } else if (path.includes('/partners/')) {
+          // #534-followup: 品牌 logo 会随合作伙伴调整而增删 — 短缓存,
+          // 避免 CDN/浏览器缓存已删除的旧文件(broken link)。
+          res.setHeader('Cache-Control', 'public, max-age=600')
         }
       },
     })
