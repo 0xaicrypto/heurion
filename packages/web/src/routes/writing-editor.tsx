@@ -388,6 +388,9 @@ export function WritingEditorPage() {
       sessionId: `doc-${docId}`,
       patientHash: null,
       skills: activeSkills,
+      // #516: writing chat is always the document scene (server also infers
+      // from the doc- session id).
+      scene: 'document',
     });
   };
 

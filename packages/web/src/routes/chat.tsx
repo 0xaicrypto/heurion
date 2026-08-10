@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Paperclip, FileText, Plus, X } from 'lucide-react';
+import { MessageSquare, Stethoscope, FileEdit, BarChart3 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { mapWireMessages } from '@/lib/message-map';
-import type { LlmStatus } from '@/lib/types';
+import type { LlmStatus, ChatScene } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore, type ChatMessage } from '@/stores/chat';
 import { AppShell } from '@/components/layout/AppShell';
@@ -58,6 +59,12 @@ export function ChatPage() {
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // #516: per-session entry scene — switching sessions must not leak the
+  // previous mode into a different conversation.
+  const [scenes, setScenes] = useState<Record<string, ChatScene>>({});
+  const currentScene = (scenes[sessionId] ?? 'general') as ChatScene;
+  const setScene = (scene: ChatScene) =>
+    setScenes((prev) => (sessionId ? { ...prev, [sessionId]: scene } : prev));
   const [kbChecked, setKbChecked] = useState<Record<string, boolean>>({});
   const [kbAdded, setKbAdded] = useState<Record<string, boolean>>({});
   const [downloadUrls, setDownloadUrls] = useState<Record<string, string>>({});
@@ -194,6 +201,7 @@ export function ChatPage() {
       sessionId,
       attachments: attachedFiles.map((a) => a.fileId),
       skills: activeSkills,
+      scene: currentScene,
     });
   };
 
@@ -244,6 +252,7 @@ export function ChatPage() {
       text: '',
       attachments: [],
       skills: activeSkills,
+      scene: currentScene,
     });
   };
 
@@ -258,6 +267,7 @@ export function ChatPage() {
       text: lastUser.text,
       attachments: [],
       skills: activeSkills,
+      scene: currentScene,
     });
   };
 
@@ -485,6 +495,33 @@ export function ChatPage() {
                 </div>
               </div>
             )}
+            {/* #516: entry scene selector — the same AI, four explicit modes.
+                patient/document scenes are auto-selected on their pages and
+                force the matching scene; here the user picks explicitly. */}
+            <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-surface-elevated p-1">
+              {([
+                { key: 'general', icon: <MessageSquare size={14} />, label: t('chat.sceneGeneral', '通用对话') },
+                { key: 'patient', icon: <Stethoscope size={14} />, label: t('chat.scenePatient', '患者问诊') },
+                { key: 'document', icon: <FileEdit size={14} />, label: t('chat.sceneDocument', '文档写作') },
+                { key: 'chart', icon: <BarChart3 size={14} />, label: t('chat.sceneChart', '图表分析') },
+              ] as Array<{ key: ChatScene; icon: React.ReactNode; label: string }>).map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => setScene(s.key)}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                    currentScene === s.key
+                      ? 'bg-accent/10 text-accent'
+                      : 'text-text-secondary hover:bg-surface hover:text-text-primary',
+                  )}
+                  aria-pressed={currentScene === s.key}
+                  title={s.label}
+                >
+                  {s.icon}
+                  <span className="hidden sm:inline">{s.label}</span>
+                </button>
+              ))}
+            </div>
             <SkillsBar active={activeSkills} onToggle={toggleSkill} />
             {attachedFiles.length > 0 && (
               <div className="flex gap-2 flex-wrap">
