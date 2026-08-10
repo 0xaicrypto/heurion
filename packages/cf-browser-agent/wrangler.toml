@@ -12,5 +12,5 @@ enabled = true
 [browser]
 binding = "BROWSER"
 
-[worker_loaders]
+[[worker_loaders]]
 binding = "LOADER"
