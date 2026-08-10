@@ -13,6 +13,7 @@ import { StatDescribeTool, StatTTestTool, StatChiSqTool, StatKmTool, StatPlotToo
 import { RunStatsAnalysisTool } from './stats-analysis-tool.js'
 import { LoadDataTableTool } from './data-table-tool.js'
 import { RenderSceneTool } from './bioscene/render-scene-tool.js'
+import { BrowserTaskTool } from './browser-agent-tool.js'
 import { McpListToolsTool, McpCallToolTool } from './mcp-tools.js'
 import { GenerateImageTool } from './generate-image-tool.js'
 import type { MemoryService } from '../memory/memory.service.js'
@@ -41,6 +42,7 @@ export interface ToolContext {
 export const PLUGIN_GATED_TOOLS: Record<string, string> = {
   render_chart: 'heurion/chart',
   render_scene: 'heurion/bioscene',
+  browser_task: 'heurion/browser-agent',
 }
 
 export class ToolRegistry {
@@ -78,6 +80,7 @@ export class ToolRegistry {
     this.register(new RunStatsAnalysisTool())
     this.register(new LoadDataTableTool(ctx))
     this.register(new RenderSceneTool(ctx))
+    this.register(new BrowserTaskTool(ctx))
     this.register(new McpListToolsTool())
     this.register(new McpCallToolTool())
     this.register(new GenerateImageTool(ctx))
