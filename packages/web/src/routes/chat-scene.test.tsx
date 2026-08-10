@@ -13,7 +13,8 @@ vi.mock('@/components/plugins/PluginExtensionPoint', () => ({
 }));
 /** vi.hoisted: mock 工厂引用必须在此处声明(vitest hoisting 限制)。 */
 const { sendChatFull } = vi.hoisted(() => ({
-  sendChatFull: vi.fn(async function* (_opts: Record<string, unknown>) {
+  sendChatFull: vi.fn(async function* (opts: Record<string, unknown>) {
+    void opts;
     yield { type: 'final_answer_chunk', text: '回复' };
     yield { type: 'citations', items: [] };
     yield { type: 'turn_complete', assistant_event_idx: 3 };
