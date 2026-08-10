@@ -4,25 +4,16 @@ import { cn } from '@/lib/utils';
 import {
   ArrowRight,
   Brain,
-  Cpu,
-  FlaskConical,
   AlertTriangle,
-  Search,
   Activity,
-  CheckCircle,
-  XCircle,
-  FileText,
-  Users,
   Lock,
   Terminal,
   ShieldCheck,
   FileKey,
   Globe,
   Image as ImageIcon,
-  BarChart3,
   Puzzle,
-  Stethoscope,
-  Presentation,
+  BookOpen,
 } from 'lucide-react';
 import { Button, Card } from '@/components/ui';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
@@ -175,69 +166,11 @@ export function LandingPage() {
       },
     ],
 
-    personasTitle: isZh ? '面向三种关键角色' : 'Built for three critical roles',
-    personas: [
-      {
-        icon: <Users size={24} />,
-        role: isZh ? '临床医生 / MDT 负责人' : 'Clinicians / MDT leads',
-        quote: isZh
-          ? '“复诊前一句话唤起患者三年的完整随访轨迹：化验趋势、基因变异、影像结论全部按时间轴排列，每一条都能点击回原始报告。写病程或 MDT 汇报时，引用内容全部带可核对的出处。”'
-          : '"One sentence recalls a patient\u2019s full multi-year trajectory: lab trends, mutations, and imaging conclusions on a single timeline, each traceable to its original report. Every citation in my MDT summaries is verifiable."',
-      },
-      {
-        icon: <FlaskConical size={24} />,
-        role: isZh ? '医学研究员 / PI / 科研助理' : 'Researchers / PIs / assistants',
-        quote: isZh
-          ? '“Heurion 是带了‘手’的 AI。一句指令就能完成数据清洗、生成 Table 1、渲染带 KM 生存曲线的学术 PPT，并且反哺到知识库。”'
-          : '"Heurion has hands. One command cleans data, generates Table 1, renders a PPT with KM curves, and feeds the results back into the knowledge base."',
-      },
-      {
-        icon: <Lock size={24} />,
-        role: isZh ? '医院信息科 / 药企合规' : 'Hospital IT / pharma compliance',
-        quote: isZh
-          ? '“纯本地化部署，敏感数据不出院；不可变 EventLog 让每一次增删改查都有迹可循；双平面隔离让科研计算崩溃也不会触碰核心病历库。”'
-          : '"On-premise deployment keeps sensitive data inside. Every access and change is auditable. Isolation protects core records even if research compute fails."',
-      },
-    ],
-
-    battleTitle: isZh ? '竞品攻防：为什么不是 ChatGPT / RAG？' : 'Why not ChatGPT / RAG?',
-    battleCards: [
-      {
-        icon: <XCircle size={24} />,
-        title: isZh ? '通用大模型' : 'General-purpose LLMs',
-        cons: isZh
-          ? '无状态，每次对话都在遗忘；会编造数据；无法执行代码、生成文件。'
-          : 'Stateless; forgets every turn; hallucinates data; cannot execute code or generate files.',
-        pro: isZh
-          ? 'Heurion 通过 DAG 图谱 + Gaps 机制主动发问，每个事实都有版本号可追溯，且能直接交付科研成果。'
-          : 'Heurion uses a DAG graph + gaps mechanism, traces every fact, and delivers research outputs directly.',
-      },
-      {
-        icon: <Search size={24} />,
-        title: isZh ? '传统 RAG 知识库' : 'Traditional RAG knowledge bases',
-        cons: isZh
-          ? '静态切片搜索，文档更新后前后矛盾；没有 Stale 失效传播，全院数据一致性差。'
-          : 'Static chunk search; documents contradict after updates; no stale propagation; poor consistency.',
-        pro: isZh
-          ? 'Heurion 的记忆是“活的生命体”：底层 Facts 修改后，所有依赖它的 Articles 自动标红失效，保证全院一致。'
-          : 'Heurion memory is a living system: when a fact changes, every article that depends on it is auto-marked stale.',
-      },
-      {
-        icon: <BarChart3 size={24} />,
-        title: isZh ? '通用 AI 图表生成' : 'Generic AI chart generation',
-        cons: isZh
-          ? '数据缺失时编造示例数值并呈现为“结果”；统计口径与样本量无法核对。'
-          : 'Fabricates placeholder values and presents them as results; methodology and sample sizes cannot be verified.',
-        pro: isZh
-          ? 'Heurion 在数据缺失时明确说明并索要真实数据，绝不编造；统计图表标注方法学（检验类型、P 值、样本量）。'
-          : 'Heurion states explicitly when data is missing and asks for the real numbers — no fabrication; charts carry methodology (test, p-value, N).',
-      },
-    ],
-
     ctaTitle: isZh ? '把科室的隐性经验，沉淀为可继承的数据资产' : 'Turn tacit expertise into inheritable data assets',
     ctaSubtitle: isZh
       ? '免费开始，或在您的服务器上自托管完整平台。'
       : 'Start free or self-host the full platform on your own servers.',
+    docsCta: isZh ? '查看用户指南' : 'User Guide',
 
     // #514: 医疗定位与合规澄清 — 面向潜在客户的第一句专业声明。
     complianceTitle: isZh ? '医疗定位与合规' : 'Medical positioning & compliance',
@@ -272,37 +205,10 @@ export function LandingPage() {
       : '* Heurion is not a medical device and is not intended for diagnosis, treatment, or prognosis. Evaluate against your institution\u2019s regulations before deployment.',
 
     // #519: 真实临床工作流演示 — 统计方法学严谨性露出。
-    workflowTitle: isZh ? '一次真实的临床科研工作流' : 'A real clinical research workflow',
+    workflowTitle: isZh ? '正式统计图表,方法学完整标注' : 'Formal statistical figures, methodology annotated',
     workflowSubtitle: isZh
-      ? '从随访问答到学术成果交付，全程可溯源、可复现。'
-      : 'From follow-up Q&A to a publishable deliverable — fully traceable and reproducible.',
-    workflowSteps: [
-      {
-        icon: <Stethoscope size={18} />,
-        title: isZh ? '随访问答' : 'Follow-up Q&A',
-        desc: isZh ? '一句话唤起患者多年随访轨迹：化验趋势、基因变异、影像结论按时间轴排列。' : 'One sentence recalls the patient trajectory: labs, mutations, imaging on one timeline.',
-      },
-      {
-        icon: <FileText size={18} />,
-        title: isZh ? '溯源总结' : 'Traceable summaries',
-        desc: isZh ? '生成病程与 MDT 汇报，每条引用可点击回原始报告。' : 'Progress notes and MDT reports, every citation traceable to the source record.',
-      },
-      {
-        icon: <Terminal size={18} />,
-        title: isZh ? '数据清洗' : 'Data cleaning',
-        desc: isZh ? '自然语言触发隔离沙箱完成随访数据清洗。' : 'Natural language triggers an isolated sandbox to clean follow-up data.',
-      },
-      {
-        icon: <BarChart3 size={18} />,
-        title: isZh ? '统计图表' : 'Statistical figures',
-        desc: isZh ? 'Table 1、KM 曲线、卡方检验，标注方法学与样本量。' : 'Table 1, KM curves, chi-square — methodology and sample size annotated.',
-      },
-      {
-        icon: <Presentation size={18} />,
-        title: isZh ? '成果交付' : 'Deliverables',
-        desc: isZh ? '一键导出学术 PPT / DOCX，并反哺知识库。' : 'One-click export of academic PPT/DOCX, feeding the knowledge base.',
-      },
-    ],
+      ? '两组比较示例:误差棒(95% CI)、P 值与样本量——科研级图表可直接交付。'
+      : 'Two-group example: error bars (95% CI), p-values and sample size — publication-grade figures.',
     workflowSampleLabel: isZh
       ? '示例数据：仅用于演示图表样式，不代表任何真实研究结果'
       : 'Sample data: for style demonstration only, not real study results',
@@ -425,186 +331,74 @@ export function LandingPage() {
           </Card>
         </div>
 
-        {/* Simple architecture diagram */}
-        <div className="mt-12 hidden items-center justify-center gap-4 rounded-lg border border-border bg-surface p-8 lg:flex">
-          <div className="flex w-56 flex-col items-center rounded-xl border border-accent/30 bg-accent/5 p-5 text-center">
-            <Brain size={32} className="text-accent" />
-            <span className="mt-2 font-semibold text-text-primary">
-              {isZh ? 'Control Plane' : 'Control Plane'}
-            </span>
-            <span className="text-xs text-text-secondary">{isZh ? '记忆 · 溯源 · 合规' : 'Memory · Provenance · Compliance'}</span>
-          </div>
-          <div className="flex flex-col items-center gap-1 text-text-tertiary">
-            <span className="text-xs uppercase tracking-wider">{isZh ? '可信数据' : 'Trusted data'}</span>
-            <div className="h-px w-24 bg-border" />
-            <span className="text-xs uppercase tracking-wider">{isZh ? '执行结果' : 'Results'}</span>
-          </div>
-          <div className="flex w-56 flex-col items-center rounded-xl border border-accent/30 bg-accent/5 p-5 text-center">
-            <Cpu size={32} className="text-accent" />
-            <span className="mt-2 font-semibold text-text-primary">
-              {isZh ? 'Execution Plane' : 'Execution Plane'}
-            </span>
-            <span className="text-xs text-text-secondary">{isZh ? '数据 · DOCX · PPTX · 图表' : 'Data · DOCX · PPTX · Plots'}</span>
-          </div>
-          <div className="ml-4 flex flex-col gap-2">
-            <div className="flex items-center gap-2 text-sm text-text-secondary">
-              <FileText size={16} className="text-accent" />
-              <span>DOCX / PPTX</span>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-text-secondary">
-              <Activity size={16} className="text-accent" />
-              <span>{isZh ? '统计图表' : 'Statistical plots'}</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* #515: Distinctive capabilities — already shipped, demonstrable
-          differentiators (Agent Browser / multimodal / plugin ecosystem). */}
-      <section className="border-y border-border bg-surface">
-        <div className="mx-auto max-w-7xl px-4 py-24">
-          <div className="mb-12 text-center">
-            <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.uniqueTitle}</h2>
-            <p className="mx-auto mt-4 max-w-2xl text-lg text-text-secondary">{T.uniqueSubtitle}</p>
-          </div>
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {T.uniqueCards.map((p, idx) => (
-              <Card key={idx} className="h-full p-8">
-                <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-accent/10 text-accent">
-                  {p.icon}
-                </div>
-                <h3 className="text-lg font-bold text-text-primary">{p.title}</h3>
-                <p className="mt-3 leading-relaxed text-text-secondary">{p.desc}</p>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Personas */}
-      <section className="bg-surface">
-        <div className="mx-auto max-w-7xl px-4 py-24">
-          <div className="mb-12 text-center">
-            <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.personasTitle}</h2>
-          </div>
-          <div className="grid gap-6 lg:grid-cols-3">
-            {T.personas.map((p, idx) => (
-              <Card key={idx} className="h-full p-8">
-                <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-accent/10 text-accent">
-                  {p.icon}
-                </div>
-                <h3 className="text-lg font-bold text-text-primary">{p.role}</h3>
-                <p className="mt-4 italic leading-relaxed text-text-secondary">{p.quote}</p>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Battlecards */}
-      <section className="mx-auto max-w-7xl px-4 py-24">
-        <div className="mb-12 text-center">
-          <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.battleTitle}</h2>
-        </div>
-        <div className="grid gap-6 lg:grid-cols-2">
-          {T.battleCards.map((b, idx) => (
-            <Card key={idx} className="p-8">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-error/10 text-error">
-                  {b.icon}
-                </div>
-                <h3 className="text-xl font-bold text-text-primary">{b.title}</h3>
+        {/* 独特能力徽章:已上线的差异化能力(原独立区块并入)。 */}
+        <div className="mt-10 grid gap-4 sm:grid-cols-3">
+          {T.uniqueCards.map((p, idx) => (
+            <div key={idx} className="flex items-start gap-3 rounded-lg border border-border bg-surface p-4">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                {p.icon}
+              </span>
+              <div>
+                <h4 className="text-sm font-bold text-text-primary">{p.title}</h4>
+                <p className="mt-1 text-xs leading-relaxed text-text-secondary">{p.desc}</p>
               </div>
-              <div className="space-y-4">
-                <div className="flex items-start gap-3 rounded-lg bg-error/5 p-4 text-text-secondary">
-                  <XCircle size={18} className="mt-0.5 shrink-0 text-error" />
-                  <span>{b.cons}</span>
-                </div>
-                <div className="flex items-start gap-3 rounded-lg bg-success/5 p-4 text-text-secondary">
-                  <CheckCircle size={18} className="mt-0.5 shrink-0 text-success" />
-                  <span>{b.pro}</span>
-                </div>
-              </div>
-            </Card>
+            </div>
           ))}
         </div>
       </section>
 
-      {/* #514: Medical positioning & compliance — the first professional
-          statement prospective customers (physicians / hospital IT /
-          compliance) should see. */}
-      <section className="border-t border-border bg-surface">
-        <div className="mx-auto max-w-7xl px-4 py-24">
-          <div className="mb-12 text-center">
-            <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.complianceTitle}</h2>
-            <p className="mx-auto mt-4 max-w-3xl text-lg leading-relaxed text-text-secondary">{T.complianceIntro}</p>
-          </div>
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      {/* #514: 医疗定位与合规 — 紧凑底部条(专业澄清,不占篇幅)。 */}
+      <section className="border-t border-border bg-surface py-10">
+        <div className="mx-auto max-w-5xl px-4 text-center">
+          <p className="text-sm font-semibold text-text-primary">{T.complianceIntro}</p>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 text-sm text-text-secondary">
             {T.compliancePoints.map((p, idx) => (
-              <Card key={idx} className="h-full p-8">
-                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-accent/10 text-accent">
-                  {p.icon}
-                </div>
-                <h3 className="text-lg font-bold text-text-primary">{p.title}</h3>
-                <p className="mt-3 leading-relaxed text-text-secondary">{p.desc}</p>
-              </Card>
+              <span key={idx} className="inline-flex items-center gap-1.5">
+                <span className="text-accent">{p.icon}</span>
+                {p.title}: {p.desc}
+              </span>
             ))}
           </div>
-          <p className="mt-8 text-center text-xs leading-relaxed text-text-tertiary">{T.complianceFootnote}</p>
+          <p className="mt-3 text-xs text-text-tertiary">{T.complianceFootnote}</p>
         </div>
       </section>
 
-      {/* #519: 真实临床工作流 — 统计方法学严谨性露出。 */}
-      <section className="mx-auto max-w-7xl px-4 py-24">
-        <div className="mb-12 text-center">
+      {/* #519: 统计图表成果样例 — 方法学严谨性露出(流程细节见 /docs 指南)。 */}
+      <section className="mx-auto max-w-7xl px-4 py-20">
+        <div className="mb-10 text-center">
           <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.workflowTitle}</h2>
           <p className="mx-auto mt-4 max-w-2xl text-lg text-text-secondary">{T.workflowSubtitle}</p>
         </div>
-        <div className="grid gap-6 lg:grid-cols-5">
-          {T.workflowSteps.map((s, idx) => (
-            <Card key={idx} className="relative h-full p-6">
-              <span className="absolute right-4 top-4 text-3xl font-bold text-accent/10">{idx + 1}</span>
-              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                {s.icon}
-              </div>
-              <h3 className="text-sm font-bold text-text-primary">{s.title}</h3>
-              <p className="mt-2 text-xs leading-relaxed text-text-secondary">{s.desc}</p>
-            </Card>
-          ))}
-        </div>
-        <div className="mt-8 rounded-xl border border-border bg-surface p-6">
+        <div className="mx-auto max-w-xl rounded-xl border border-border bg-surface p-6">
           <EfficacyBarChartSample />
           <p className="mt-3 text-center text-xs text-text-tertiary">{T.workflowSampleLabel}</p>
         </div>
       </section>
 
       {/* #518: 合作伙伴与致谢。 */}
-      <section className="border-t border-border bg-surface">
-        <div className="mx-auto max-w-7xl px-4 py-24">
-          <div className="mb-12 text-center">
-            <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.partnersTitle}</h2>
-            <p className="mx-auto mt-4 max-w-2xl text-lg text-text-secondary">{T.partnersIntro}</p>
-          </div>
-          <div className="flex flex-wrap items-stretch justify-center gap-8">
+      <section className="border-t border-border bg-surface py-16">
+        <div className="mx-auto max-w-7xl px-4 text-center">
+          <h2 className="text-2xl font-bold text-text-primary">{T.partnersTitle}</h2>
+          <p className="mx-auto mt-3 max-w-2xl text-sm text-text-secondary">{T.partnersIntro}</p>
+          <div className="mt-8 flex flex-wrap items-stretch justify-center gap-6">
             {T.partners.map((p, idx) => (
               <a
                 key={idx}
                 href={p.url}
                 target="_blank"
                 rel="noreferrer"
-                className="group flex w-44 flex-col items-center gap-2 rounded-xl border border-border bg-surface-elevated p-6 transition-colors hover:border-accent/30"
+                className="group flex w-40 flex-col items-center gap-2 rounded-xl border border-border bg-surface-elevated p-5 transition-colors hover:border-accent/30"
               >
                 <img
                   src={p.logo}
                   alt={p.name}
-                  className={cn('h-10 w-auto transition-colors group-hover:opacity-80', p.mono && 'dark:invert')}
+                  className={cn('h-9 w-auto transition-colors group-hover:opacity-80', p.mono && 'dark:invert')}
                 />
                 <span className="text-sm font-semibold text-text-primary">{p.name}</span>
-                <span className="text-center text-xs leading-relaxed text-text-secondary">{p.desc}</span>
               </a>
             ))}
           </div>
-          <p className="mt-8 text-center text-xs text-text-tertiary">{T.partnersFootnote}</p>
+          <p className="mt-6 text-xs text-text-tertiary">{T.partnersFootnote}</p>
         </div>
       </section>
 
@@ -624,6 +418,12 @@ export function LandingPage() {
             <a href="https://github.com/0xaicrypto/heurion" target="_blank" rel="noreferrer">
               <Button variant="secondary" size="lg" className="px-8">
                 {T.github}
+              </Button>
+            </a>
+            <a href="/docs/">
+              <Button variant="ghost" size="lg" className="px-8">
+                <BookOpen size={18} className="mr-2" />
+                {T.docsCta}
               </Button>
             </a>
           </div>
