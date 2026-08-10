@@ -82,6 +82,10 @@ export function MarketingShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <p className="mt-6 text-center text-xs text-text-tertiary">{t('landing.footer', { year: new Date().getFullYear() })}</p>
+          {/* #518: 技术生态致谢。 */}
+          <p className="mt-2 text-center text-xs text-text-tertiary">
+            {t('landing.footerBuiltOn', 'Built on Cloudflare Workers · Vercel AI SDK · opencode.ai — thank you to our partners.')}
+          </p>
         </div>
       </footer>
     </div>

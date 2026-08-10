@@ -14,9 +14,14 @@ describe('LandingPage', () => {
     expect(screen.getByRole('heading', { name: /medical positioning & compliance/i })).toBeInTheDocument();
     expect(screen.getByText(/not a medical device/i)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /from conversation to action: three distinctive capabilities/i })).toBeInTheDocument();
-    expect(screen.getByText(/browser automation/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/browser automation/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/upload & interpret/i)).toBeInTheDocument();
     expect(screen.getByText(/generic ai chart generation/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /a real clinical research workflow/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /partners & acknowledgements/i })).toBeInTheDocument();
+    expect(screen.getAllByText(/cloudflare/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/opencode\.ai/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/built on cloudflare workers/i)).toBeInTheDocument();
 
     const nav = screen.getByTestId('marketing-nav');
     expect(within(nav).getByRole('link', { name: /memory/i })).toHaveAttribute('href', '/memory');
