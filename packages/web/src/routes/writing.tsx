@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus, FileText, Send, Trash2, Loader2 } from 'lucide-react';
+import { Plus, FileText, Send, Trash2, Loader2 , BarChart3 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
+import { ChartLibrary } from '@/components/chat/ChartLibrary';
 import { SubmissionWorkbench } from '@/routes/submission';
 import { Alert, Button, Input, Card, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
@@ -16,7 +17,7 @@ interface Doc {
   ref_count: number;
 }
 
-type Tab = 'write' | 'submission';
+type Tab = 'submission' | 'write' | 'library';
 
 /** #362 合并决策: 论文工作台 — 写作 + 投稿一个入口两个 Tab。 */
 export function WritingPage() {
@@ -27,7 +28,7 @@ export function WritingPage() {
   // #382: 投稿在前、默认投稿 — 线性流程从选刊开始；?tab=write 直达写作。
   const tab: Tab = useMemo(() => {
     const p = new URLSearchParams(location.search).get('tab');
-    return p === 'write' ? 'write' : 'submission';
+    return p === 'write' ? 'write' : p === 'library' ? 'library' : 'submission';
   }, [location.search]);
 
   const switchTab = (next: Tab) => {
@@ -62,10 +63,22 @@ export function WritingPage() {
               <FileText size={15} />
               {t('writing.tabWrite', '写作')}
             </button>
+            <button
+              onClick={() => switchTab('library')}
+              className={cn(
+                'flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors',
+                tab === 'library' ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary',
+              )}
+            >
+              <BarChart3 size={15} />
+              {t('charts.library', '图表图库')}
+            </button>
           </div>
         </header>
         <div className="min-h-0 flex-1">
-          {tab === 'submission' ? <SubmissionWorkbench embedded /> : <WritingList />}
+          {tab === 'submission' && <SubmissionWorkbench embedded />}
+          {tab === 'write' && <WritingList />}
+          {tab === 'library' && <LibraryView />}
         </div>
       </div>
     </AppShell>
@@ -252,5 +265,24 @@ function WritingList() {
           )}
         </main>
       </div>
+  );
+}
+
+
+/* #481-followup: chart library entry point on the writing workbench.
+ * Read-only management here (view/copy/delete) — inserting into a
+ * document happens inside a specific document's right panel. */
+function LibraryView() {
+  const { t } = useTranslation();
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="border-b border-border px-6 py-3">
+        <h2 className="text-sm font-semibold text-text-primary">{t('charts.library', '图表图库')}</h2>
+        <p className="text-xs text-text-tertiary">{t('charts.libraryHint', 'AI 生成过的全部图表（Reactome 官方通路图 + 自定义示意图 + 统计图）。打开文档后可在右侧面板直接插入。')}</p>
+      </div>
+      <div className="min-h-0 flex-1">
+        <ChartLibrary />
+      </div>
+    </div>
   );
 }
