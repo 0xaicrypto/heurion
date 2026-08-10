@@ -12,7 +12,7 @@
     "@ai-sdk/openai": "^4.0.36",
     "@cloudflare/codemode": "^0.3.8",
     "agents": "^0.13.0",
-    "ai": "^4.0.0",
+    "ai": "^6.0.246",
     "zod": "^3.22.0"
   },
   "devDependencies": {
