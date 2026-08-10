@@ -63,6 +63,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
           npx wrangler secret put WRB_TASK_TOKEN --name heurion-browser-agent <<< "${{ secrets.WRB_TASK_TOKEN }}" 2>&1 | tail -1 || true
+          npx wrangler secret put LLM_API_KEY --name heurion-browser-agent <<< "${{ secrets.OPENCODE_API_KEY }}" 2>&1 | tail -1 || true
           npx wrangler deploy --name heurion-browser-agent 2>&1 | tee /tmp/wr.log
           grep -oE 'https://[a-z0-9-]+\.workers\.dev[^ ]*' /tmp/wr.log | head -1
       - name: Smoke check
