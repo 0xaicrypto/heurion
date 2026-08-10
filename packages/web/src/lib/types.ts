@@ -406,6 +406,9 @@ export interface QueueMetrics {
   paused: number;
 }
 
+/** #516: chat entry scenes — mirrors server-side ChatScene (#510). */
+export type ChatScene = 'general' | 'patient' | 'document' | 'chart';
+
 export interface SendChatOptions {
   text: string;
   sessionId?: string;
@@ -413,6 +416,8 @@ export interface SendChatOptions {
   attachments?: unknown[];
   scope?: { kind: string; ref: string };
   skills?: string[];
+  /** #516: entry scene for the turn; server infers when absent. */
+  scene?: ChatScene;
 }
 
 /**

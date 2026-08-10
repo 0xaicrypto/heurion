@@ -42,6 +42,7 @@ export class ChatApi extends ApiCore {
     if (opts.attachments) body.attachments = opts.attachments;
     if (opts.scope) body.scope = opts.scope;
     if (opts.skills) body.skills = opts.skills;
+    if (opts.scene) body.scene = opts.scene;
     const r = await fetch('/api/v1/agent/chat', {
       method: 'POST',
       headers: this.headers({ 'Content-Type': 'application/json' }),

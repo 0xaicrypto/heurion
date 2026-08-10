@@ -494,6 +494,8 @@ export function PatientChatPage() {
       patientHash: hash || null,
       attachments: attachedFiles.map((a) => a.fileId),
       skills: activeSkills,
+      // #516: patient chat is always the patient scene.
+      scene: 'patient',
     });
   };
 
