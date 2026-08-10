@@ -6,7 +6,7 @@ const openai = createOpenAI({
   apiKey: process.env.KEY,
   baseURL: 'https://opencode.ai/zen/go/v1',
 })
-const model = openai('deepseek-v4-flash')
+const model = openai.chat('deepseek-v4-flash')
 
 const result = await generateText({
   model,
