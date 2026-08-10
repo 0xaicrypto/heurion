@@ -24,6 +24,7 @@ describe('LandingPage', () => {
     expect(screen.getByText(/built on cloudflare workers/i)).toBeInTheDocument();
 
     const nav = screen.getByTestId('marketing-nav');
+    expect(within(nav).getByRole('link', { name: /docs/i })).toHaveAttribute('href', '/docs/');
     expect(within(nav).getByRole('link', { name: /memory/i })).toHaveAttribute('href', '/memory');
     expect(within(nav).getByRole('link', { name: /reports/i })).toHaveAttribute('href', '/sidecar');
     expect(within(nav).getByRole('link', { name: /knowledge/i })).toHaveAttribute('href', '/knowledge');
