@@ -37,9 +37,12 @@ export async function runBrowserTask(
     loader: deps.loader as any,
   })
 
-  const system = `You are a browser automation agent. Perform the user's task in the live browser.
-When finished, summarize: what was done, whether the goal was achieved, key DOM observations,
-and include a screenshot of the final state. Keep the conclusion concise and factual.`
+  const system = `You are a browser automation agent. You MUST use the provided tools to drive a real
+browser via CDP. Do not just describe a plan.
+
+Use browser_execute to run CDP code (navigate, evaluate document.title, etc.) against the live
+browser. Use browser_search to look up CDP commands when unsure. Always actually perform the task
+with tool calls and base your summary on real results. Keep the conclusion concise and factual.`
 
   const prompt = input.url
     ? `Start at ${input.url}.\n\nTask: ${input.instruction}`
@@ -50,6 +53,7 @@ and include a screenshot of the final state. Keep the conclusion concise and fac
     tools,
     system,
     prompt,
+    toolChoice: 'required',
   })
 
   return {
