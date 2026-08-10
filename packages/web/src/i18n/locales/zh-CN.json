@@ -89,8 +89,7 @@
     "sectionConversation": "对话",
     "sectionPatients": "患者工作区",
     "sectionMemory": "记忆与知识",
-    "sectionTools": "工具与设置",
-    "charts": "图表工作台"
+    "sectionTools": "工具与设置"
   },
   "auth": {
     "welcomeBack": "欢迎回来",
