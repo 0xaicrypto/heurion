@@ -25,7 +25,7 @@ export function LandingPage() {
   const isZh = i18n.language.startsWith('zh');
 
   const T = {
-    tagline: isZh ? '不卖聊天机器人，卖数字化医学科研合伙人' : 'Not a chatbot. A digital medical research partner.',
+    tagline: isZh ? '面向临床科研的数字化医疗助手' : 'A digital medical research assistant',
     title: isZh ? '让 AI 拥有临床记忆与执行能力' : 'Give AI clinical memory and execution',
     subtitle: isZh
       ? 'Heurion 用“双平面架构”重建医疗 AI 的大脑与双手：Control Plane 沉淀可溯源、可失效传播的 DAG 记忆；Execution Plane 在隔离沙箱中直接生成 DOCX、PPTX、统计图表。'
@@ -33,25 +33,25 @@ export function LandingPage() {
     startFree: isZh ? '免费开始使用' : 'Start Free',
     github: 'GitHub',
 
-    painsTitle: isZh ? '医疗大模型的三大“绝望时刻”' : 'Three failure modes of medical LLMs',
+    painsTitle: isZh ? '临床场景中医疗大模型的三大失效模式' : 'Three failure modes of medical LLMs in clinical practice',
     pains: [
       {
         icon: <Brain size={28} />,
-        title: isZh ? '金鱼记忆' : 'Goldfish memory',
+        title: isZh ? '会话级记忆缺失' : 'No persistent memory',
         desc: isZh
           ? '每次打开对话框，AI 都不认识患者。复诊、写总结前，医生得把过去 3 年的化验单、基因突变、影像记录重新粘贴一遍。'
           : 'Every session starts from scratch. Before a follow-up or summary, doctors must re-paste years of labs, mutations, and imaging.',
       },
       {
         icon: <AlertTriangle size={28} />,
-        title: isZh ? '致命幻觉与黑盒' : 'Hallucination & black box',
+        title: isZh ? '幻觉与黑盒' : 'Hallucination & black box',
         desc: isZh
           ? 'AI 生成的病例总结很漂亮，但医生不敢用：指标可能是编造的，且无法点击追溯到具体日期的病历。'
           : 'Generated summaries look polished, but doctors cannot trust them: metrics may be invented, and sources cannot be traced.',
       },
       {
         icon: <Activity size={28} />,
-        title: isZh ? '高位截瘫：只能聊天' : 'No execution: chat only',
+        title: isZh ? '缺乏执行能力：仅限对话' : 'No execution: chat only',
         desc: isZh
           ? '“帮我把随访数据清洗一下，画一张 KM 曲线。”通用 AI 只能回答：“抱歉，我是一个语言模型，无法作图。”'
           : '"Clean this follow-up data and plot a KM curve." Generic AI replies: "Sorry, I am a language model and cannot generate charts."',
@@ -60,12 +60,12 @@ export function LandingPage() {
 
     dualPlaneTitle: isZh ? '双平面架构：大脑 + 双手' : 'Dual-Plane Architecture: brain + hands',
     dualPlaneSubtitle: isZh
-      ? '不要给客户讲枯燥的代码。Heurion 是“会记忆的医学大脑” + “能干脏活累活的隔离双手”。'
-      : 'No code jargon. Heurion is a medical brain that remembers, plus isolated hands that do the dirty work.',
+      ? '无需理解底层实现：Heurion 由具备持久临床记忆的智能大脑与在隔离沙箱中完成执行与交付的执行引擎构成。'
+      : 'No implementation details required: Heurion pairs a brain with persistent clinical memory and an execution engine that delivers results inside an isolated sandbox.',
 
     controlPlane: {
       label: isZh ? '🧠 Control Plane · 记忆引擎' : '🧠 Control Plane · Memory Engine',
-      title: isZh ? '绝对理性的医学大脑' : 'A rational medical brain',
+      title: isZh ? '持久记忆与完整溯源' : 'Persistent memory & full provenance',
       points: [
         isZh ? '临床原始输入写入不可变 EventLog' : 'Raw clinical inputs are written to an immutable EventLog',
         isZh ? '原子 Facts 组合成 Articles，构成 DAG 记忆图谱' : 'Atomic facts compose articles, forming a DAG memory graph',
@@ -76,7 +76,7 @@ export function LandingPage() {
     },
     executionPlane: {
       label: isZh ? '⚙️ Execution Plane · 执行沙箱' : '⚙️ Execution Plane · Sandbox',
-      title: isZh ? '干脏活累活的双手' : 'Hands that do the work',
+      title: isZh ? '执行与交付引擎' : 'Execution & delivery engine',
       points: [
         isZh ? '自然语言指令触发隔离沙箱' : 'Natural-language commands trigger an isolated sandbox',
         isZh ? '自动运行 Python / 渲染引擎清洗数据' : 'Python and rendering engines clean data automatically',
@@ -86,7 +86,7 @@ export function LandingPage() {
       ],
     },
 
-    personasTitle: isZh ? '打动三种关键角色' : 'Built for three critical roles',
+    personasTitle: isZh ? '面向三种关键角色' : 'Built for three critical roles',
     personas: [
       {
         icon: <Users size={24} />,
