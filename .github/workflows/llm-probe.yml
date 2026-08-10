@@ -20,4 +20,5 @@ jobs:
           KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           mkdir -p /tmp/probe && cd /tmp/probe && npm init -y >/dev/null 2>&1 && npm i ai@6.0.246 @ai-sdk/openai@3.0.91 zod >/dev/null 2>&1
-          node /home/runner/work/heurion/heurion/scripts/probe-llm.mjs 2>&1 | head -12
+          cp /home/runner/work/heurion/heurion/scripts/probe-llm.mjs ./probe-llm.mjs
+          KEY=$KEY node ./probe-llm.mjs 2>&1 | head -12
