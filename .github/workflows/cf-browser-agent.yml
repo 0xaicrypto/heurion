@@ -47,6 +47,12 @@ jobs:
       # #485: the browser binding is only validated at deploy time — if the
       # account hasn't enabled Browser Run, this step fails with the binding
       # error and we know the account needs the service enabled.
+      - name: Register workers.dev subdomain (idempotent)
+        working-directory: packages/cf-browser-agent
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: npx wrangler subdomain heurion-browser-agent || true
       - name: Deploy worker
         working-directory: packages/cf-browser-agent
         env:
@@ -54,12 +60,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
           npx wrangler secret put WRB_TASK_TOKEN --name heurion-browser-agent <<< "${{ secrets.WRB_TASK_TOKEN }}" 2>&1 | tail -1 || true
-          npx wrangler deploy --name heurion-browser-agent
+          npx wrangler deploy --name heurion-browser-agent 2>&1 | tee /tmp/wr.log
+          grep -oE 'https://[a-z0-9-]+\.workers\.dev[^ ]*' /tmp/wr.log | head -1
       - name: Smoke check
         env:
           WRB_TOKEN: ${{ secrets.WRB_TASK_TOKEN }}
         run: |
-          URL="https://heurion-browser-agent.${{ secrets.CF_ACCOUNT_ID }}.workers.dev"
+          URL="$(grep -oE 'https://heurion-browser-agent\.[a-z0-9-]+\.workers\.dev' /tmp/wr.log | head -1)"
+          echo "smoke URL: $URL"
           curl -s "$URL/healthz"
           echo
           curl -s -X POST "$URL/browser-task" -H "content-type: application/json" -d '{"instruction":"x"}' | head -c 120
