@@ -11,6 +11,10 @@ const subpages = [
   { to: '/security', labelKey: 'marketing.navSecurity', icon: Shield },
 ];
 
+/** #530-followup: /docs 是独立 VitePress 站点(server 静态服务),
+ *  必须用整页跳转 <a>,React Router Link 会走 SPA 兜底。 */
+const docLinks = [{ to: '/docs/', labelKey: 'marketing.navDocs', icon: BookOpen }];
+
 export function MarketingShell({ children }: { children: React.ReactNode }) {
   const { t, i18n } = useTranslation();
   const isZh = i18n.language.startsWith('zh');
@@ -41,6 +45,16 @@ export function MarketingShell({ children }: { children: React.ReactNode }) {
                 <item.icon size={16} />
                 {t(item.labelKey)}
               </NavLink>
+            ))}
+            {docLinks.map((item) => (
+              <a
+                key={item.to}
+                href={item.to}
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-text-secondary transition-colors hover:text-text-primary"
+              >
+                <item.icon size={16} />
+                {t(item.labelKey)}
+              </a>
             ))}
           </div>
           <div className="flex items-center gap-2">
