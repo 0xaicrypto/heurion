@@ -50,7 +50,6 @@ and include a screenshot of the final state. Keep the conclusion concise and fac
     tools,
     system,
     prompt,
-    maxSteps: 25,
   })
 
   return {
