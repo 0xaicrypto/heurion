@@ -11,6 +11,8 @@ describe('LandingPage', () => {
     expect(screen.getByRole('heading', { name: /dual-plane architecture: brain \+ hands/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /built for three critical roles/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /why not chatgpt \/ rag\?/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /medical positioning & compliance/i })).toBeInTheDocument();
+    expect(screen.getByText(/not a medical device/i)).toBeInTheDocument();
 
     const nav = screen.getByTestId('marketing-nav');
     expect(within(nav).getByRole('link', { name: /memory/i })).toHaveAttribute('href', '/memory');

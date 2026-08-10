@@ -60,6 +60,35 @@ export function SecurityPage() {
       ? '当对话关联到具体患者时，系统会把年龄、性别、主诉、最近文件等上下文强制拼接到 Prompt 中。这降低了模型“遗忘”患者信息而给出通用建议的风险。'
       : 'When a conversation is linked to a specific patient, the system forcibly appends age, sex, chief complaint, recent files, and other context to the prompt. This reduces the risk of the model "forgetting" the patient and giving generic advice.',
 
+    // #514: 法规映射 — 面向医院信息科/合规角色的具体承诺。
+    regulationsTitle: isZh ? '法规与合规映射' : 'Regulatory & compliance mapping',
+    regulations: [
+      {
+        framework: isZh ? '个人信息保护法（PIPL）' : 'PIPL (China)',
+        mechanisms: isZh
+          ? '最小必要收集（仅存储任务所需字段）；数据本地化部署；用户数据导出与删除能力'
+          : 'Minimal-collection (only task-required fields); on-premise data residency; user export & deletion',
+      },
+      {
+        framework: 'HIPAA（美国）',
+        mechanisms: isZh
+          ? '租户级数据隔离；不可变审计日志（EventLog）记录访问与生成；角色访问控制；传输加密（TLS）'
+          : 'Tenant-level data isolation; immutable audit log (EventLog) of access & generation; RBAC; TLS in transit',
+      },
+      {
+        framework: 'GDPR（欧盟）',
+        mechanisms: isZh
+          ? '数据主体导出/删除（隐私权）；事件日志保留策略可配置；最小化处理原则'
+          : 'Data-subject export/erasure; configurable log retention; minimization principle',
+      },
+      {
+        framework: isZh ? '医疗数据分级分类' : 'Medical data classification',
+        mechanisms: isZh
+          ? '敏感字段（诊断、基因、影像）按用途分级；科研计算沙箱与核心病历库物理隔离'
+          : 'Sensitive fields (diagnosis, genetics, imaging) classified by use; research sandbox physically isolated from core records',
+      },
+    ],
+
     selfHostTitle: isZh ? '自托管友好' : 'Self-host friendly',
     selfHostBody: isZh
       ? '所有服务都可通过 Docker Compose 在本地或私有云运行。API 密钥、对象存储与数据库连接均可通过环境变量配置，数据不出境。'
@@ -138,6 +167,31 @@ export function SecurityPage() {
               </div>
             </div>
           </Card>
+        </div>
+      </section>
+
+      {/* #514: 法规映射表 — 面向医院信息科/合规角色的具体承诺。 */}
+      <section className="bg-surface">
+        <div className="mx-auto max-w-5xl px-4 py-24">
+          <h2 className="mb-10 text-center text-2xl font-bold text-text-primary">{T.regulationsTitle}</h2>
+          <div className="overflow-hidden rounded-xl border border-border">
+            <table className="w-full border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-border bg-surface-elevated">
+                  <th className="px-4 py-3 font-semibold text-text-primary">{isZh ? '法规 / 框架' : 'Framework'}</th>
+                  <th className="px-4 py-3 font-semibold text-text-primary">{isZh ? 'Heurion 对应机制' : 'Heurion mechanisms'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {T.regulations.map((r, idx) => (
+                  <tr key={idx} className="border-b border-border last:border-b-0">
+                    <td className="whitespace-nowrap px-4 py-3 align-top font-medium text-text-primary">{r.framework}</td>
+                    <td className="px-4 py-3 leading-relaxed text-text-secondary">{r.mechanisms}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
