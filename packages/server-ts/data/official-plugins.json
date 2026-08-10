@@ -677,5 +677,114 @@
         "properties": {}
       }
     }
+  },
+  {
+    "manifest_version": "1.0.0",
+    "plugin": {
+      "id": "heurion/browser-agent",
+      "name": "Cloudflare Agent Browser",
+      "version": "1.0.0",
+      "description": "Simulate real user browser operations (login, click, form fill) via Cloudflare Agent Browser — useful for web research and automated regression journeys.",
+      "category": "automation",
+      "author": {
+        "name": "Heurion",
+        "email": "plugins@heurion.io"
+      },
+      "license": "MIT",
+      "tags": [
+        "browser",
+        "automation",
+        "agent",
+        "regression"
+      ]
+    },
+    "runtime": {
+      "type": "in-process",
+      "resources": {
+        "max_execution_seconds": 120
+      }
+    },
+    "permissions": {
+      "phi_access": false,
+      "network_egress": {
+        "enabled": true,
+        "description": "calls the configured Cloudflare Agent Browser Worker endpoint"
+      },
+      "file_system": {
+        "read": false,
+        "write": false
+      }
+    },
+    "tools": [
+      {
+        "name": "browser_task",
+        "description": "Simulate a real user performing a task in a browser (login, navigate, click, type, verify) via Cloudflare Agent Browser. Pass a clear natural-language instruction, e.g. \"log in to https://heurion.org, open the patient chat and ask for an EGFR pathway diagram, then confirm an image appears\". Returns the conclusion, a DOM summary, steps performed and a screenshot.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "instruction": {
+              "type": "string",
+              "description": "What the browser agent should do, in natural language"
+            },
+            "url": {
+              "type": "string",
+              "description": "Optional starting URL"
+            }
+          },
+          "required": [
+            "instruction"
+          ]
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "success": {
+              "type": "boolean"
+            },
+            "conclusion": {
+              "type": "string"
+            },
+            "dom_summary": {
+              "type": "string"
+            },
+            "screenshot_url": {
+              "type": "string"
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "settings": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "worker_url": {
+            "type": "string",
+            "description": "Cloudflare Worker endpoint (browser binding), e.g. https://browser-agent.<acct>.workers.dev"
+          },
+          "worker_token": {
+            "type": "string",
+            "format": "password",
+            "description": "x-worker-token secret for the Worker endpoint"
+          },
+          "approval_mode": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "ask",
+              "deny"
+            ],
+            "default": "allow",
+            "description": "allow: AI may start browser sessions freely; ask: AI asks the user first (cost/privacy guard); deny: disabled"
+          }
+        }
+      }
+    }
   }
 ]
