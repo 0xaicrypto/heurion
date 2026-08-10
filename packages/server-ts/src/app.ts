@@ -116,6 +116,11 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   const webDistDir = process.env.WEB_DIST_DIR || './web-dist'
   const resolvedDistDir = webDistDir.startsWith('/') ? webDistDir : require('path').resolve(webDistDir)
   if (existsSync(resolvedDistDir)) {
+    // #530: VitePress 用户指南目录(/docs) — 无尾斜杠直接 302,避免
+    // SPA fallback 把 /docs 渲染成 web 首页。
+    await app.get('/docs', async (_req: any, reply: any) => {
+      reply.redirect('/docs/')
+    })
     await app.register(fastifyStatic, {
       root: resolvedDistDir,
       prefix: '/',
