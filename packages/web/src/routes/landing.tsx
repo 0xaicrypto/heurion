@@ -73,11 +73,11 @@ export function LandingPage() {
       label: isZh ? '🧠 Control Plane · 记忆引擎' : '🧠 Control Plane · Memory Engine',
       title: isZh ? '持久记忆与完整溯源' : 'Persistent memory & full provenance',
       points: [
-        isZh ? '临床原始输入写入不可变 EventLog' : 'Raw clinical inputs are written to an immutable EventLog',
-        isZh ? '原子 Facts 组合成 Articles，构成 DAG 记忆图谱' : 'Atomic facts compose articles, forming a DAG memory graph',
-        isZh ? '底层数据一改，上层报告自动标红 Stale' : 'When underlying data changes, downstream reports auto-mark stale',
-        isZh ? '发现数据缺失，AI 主动提出 Gaps 而非瞎编' : 'When data is missing, the AI raises gaps instead of hallucinating',
-        isZh ? '每一个结论都能点击追溯到具体日期的病历' : 'Every conclusion is one click away from its source record',
+        isZh ? '临床原始输入被不可变记录' : 'Raw clinical inputs are recorded immutably',
+        isZh ? '记忆以可组合的知识单元组织成 DAG 图谱' : 'Memory is organized as a DAG graph of composable knowledge units',
+        isZh ? '底层数据一旦变更，上层报告自动标记失效' : 'When underlying data changes, downstream reports auto-mark stale',
+        isZh ? '发现数据缺失时主动提问，而非编造' : 'When data is missing, the AI asks instead of hallucinating',
+        isZh ? '每个结论都可点击追溯到具体日期的病历' : 'Every conclusion is one click away from its source record',
       ],
     },
     executionPlane: {
@@ -85,7 +85,7 @@ export function LandingPage() {
       title: isZh ? '执行与交付引擎' : 'Execution & delivery engine',
       points: [
         isZh ? '自然语言指令触发隔离沙箱' : 'Natural-language commands trigger an isolated sandbox',
-        isZh ? '自动运行 Python / 渲染引擎清洗数据' : 'Python and rendering engines clean data automatically',
+        isZh ? '自动执行数据分析、清洗与图表渲染' : 'Automated data analysis, cleaning, and figure rendering',
         isZh ? '直接交付 DOCX、PPTX、Table 1、KM 曲线' : 'Directly deliver DOCX, PPTX, Table 1, KM curves',
         isZh ? '沙箱崩溃不影响核心患者数据库' : 'Sandbox crashes never touch core patient data',
         isZh ? '数据不出院，算力可本地化部署' : 'Data never leaves the hospital; compute can be on-premise',
@@ -134,15 +134,15 @@ export function LandingPage() {
         icon: <FlaskConical size={24} />,
         role: isZh ? '医学研究员 / PI / 科研助理' : 'Researchers / PIs / assistants',
         quote: isZh
-          ? '“Heurion 是带了‘手’的 AI。一句指令就能跑 Python 清洗数据、生成 Table 1、渲染带 KM 生存曲线的学术 PPT，并且反哺到知识库。”'
-          : '"Heurion has hands. One command runs Python, generates Table 1, renders a PPT with KM curves, and feeds the results back into the knowledge base."',
+          ? '“Heurion 是带了‘手’的 AI。一句指令就能完成数据清洗、生成 Table 1、渲染带 KM 生存曲线的学术 PPT，并且反哺到知识库。”'
+          : '"Heurion has hands. One command cleans data, generates Table 1, renders a PPT with KM curves, and feeds the results back into the knowledge base."',
       },
       {
         icon: <Lock size={24} />,
         role: isZh ? '医院信息科 / 药企合规' : 'Hospital IT / pharma compliance',
         quote: isZh
-          ? '“Docker Compose 纯本地化部署，敏感数据不出院；不可变 EventLog 让每一次增删改查都有迹可循；双平面隔离让科研计算崩溃也不会触碰核心病历库。”'
-          : '"Docker Compose on-premise keeps sensitive data inside. Immutable EventLog supports audits. Dual-plane isolation protects core records even if research code crashes."',
+          ? '“纯本地化部署，敏感数据不出院；不可变 EventLog 让每一次增删改查都有迹可循；双平面隔离让科研计算崩溃也不会触碰核心病历库。”'
+          : '"On-premise deployment keeps sensitive data inside. Every access and change is auditable. Isolation protects core records even if research compute fails."',
       },
     ],
 
@@ -202,8 +202,8 @@ export function LandingPage() {
         icon: <Lock size={20} />,
         title: isZh ? '数据不出院' : 'Data stays inside',
         desc: isZh
-          ? '支持纯本地化部署（Docker Compose），敏感数据不离开院区；隔离沙箱与核心病历库物理分离。'
-          : 'On-premise deployment (Docker Compose) keeps sensitive data inside the hospital; the sandbox is isolated from core records.',
+          ? '支持纯本地化部署，敏感数据不离开院区；隔离沙箱与核心病历库物理分离。'
+          : 'On-premise deployment keeps sensitive data inside the hospital; the sandbox is isolated from core records.',
       },
       {
         icon: <FileKey size={20} />,
@@ -236,7 +236,7 @@ export function LandingPage() {
       {
         icon: <Terminal size={18} />,
         title: isZh ? '数据清洗' : 'Data cleaning',
-        desc: isZh ? '自然语言触发隔离沙箱运行 Python 清洗随访数据。' : 'Natural language triggers an isolated sandbox to clean follow-up data.',
+        desc: isZh ? '自然语言触发隔离沙箱完成随访数据清洗。' : 'Natural language triggers an isolated sandbox to clean follow-up data.',
       },
       {
         icon: <BarChart3 size={18} />,
@@ -258,11 +258,12 @@ export function LandingPage() {
     partnersIntro: isZh
       ? 'Heurion 构建于开放的技术生态之上，感谢以下平台与项目的支撑。'
       : 'Heurion is built on an open technical ecosystem. Thanks to the platforms and projects below.',
+    // #518-followup: 合并去重(Cloudflare agents 并入 Cloudflare),以 logo 墙为主。
     partners: [
-      { name: 'Cloudflare', desc: isZh ? 'Workers 平台与 Browser Run 浏览器执行服务' : 'Workers platform & Browser Run browser execution' },
-      { name: 'opencode.ai', desc: isZh ? 'zen 网关：多模型统一访问' : 'zen gateway: unified model access' },
-      { name: 'Vercel AI SDK', desc: isZh ? 'ai / @ai-sdk：工具调用与多模态消息' : 'ai / @ai-sdk: tool calls & multimodal messages' },
-      { name: 'Cloudflare agents', desc: isZh ? 'Agent Browser 浏览器自动化工具集' : 'Agent Browser automation toolkit' },
+      { name: 'Cloudflare', logo: '/partners/cloudflare.svg', url: 'https://cloudflare.com', desc: isZh ? 'Workers · Browser Run · Agents' : 'Workers · Browser Run · Agents' },
+      { name: 'opencode.ai', logo: '/partners/opencodeai.svg', url: 'https://opencode.ai', desc: isZh ? 'zen 网关 · 多模型访问' : 'zen gateway · model access' },
+      { name: 'Vercel', logo: '/partners/vercel.svg', url: 'https://vercel.com', desc: isZh ? 'AI SDK · 工具调用与多模态' : 'AI SDK · tools & multimodal' },
+      { name: 'GitHub', logo: '/partners/github.svg', url: 'https://github.com', desc: isZh ? '开源托管 · 自动化交付' : 'Hosting · automation' },
     ],
     partnersFootnote: isZh
       ? '以及所有为开源与医疗信息化做出贡献的开发者。'
@@ -387,7 +388,7 @@ export function LandingPage() {
             <span className="mt-2 font-semibold text-text-primary">
               {isZh ? 'Execution Plane' : 'Execution Plane'}
             </span>
-            <span className="text-xs text-text-secondary">{isZh ? 'Python · DOCX · PPTX · 图表' : 'Python · DOCX · PPTX · Plots'}</span>
+            <span className="text-xs text-text-secondary">{isZh ? '数据 · DOCX · PPTX · 图表' : 'Data · DOCX · PPTX · Plots'}</span>
           </div>
           <div className="ml-4 flex flex-col gap-2">
             <div className="flex items-center gap-2 text-sm text-text-secondary">
@@ -530,12 +531,24 @@ export function LandingPage() {
             <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">{T.partnersTitle}</h2>
             <p className="mx-auto mt-4 max-w-2xl text-lg text-text-secondary">{T.partnersIntro}</p>
           </div>
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="flex flex-wrap items-stretch justify-center gap-8">
             {T.partners.map((p, idx) => (
-              <Card key={idx} className="p-6 text-center">
-                <h3 className="font-semibold text-text-primary">{p.name}</h3>
-                <p className="mt-2 text-xs leading-relaxed text-text-secondary">{p.desc}</p>
-              </Card>
+              <a
+                key={idx}
+                href={p.url}
+                target="_blank"
+                rel="noreferrer"
+                className="group flex w-44 flex-col items-center gap-2 rounded-xl border border-border bg-surface-elevated p-6 transition-colors hover:border-accent/30"
+              >
+                <img
+                  src={p.logo}
+                  alt={p.name}
+                  className="h-10 w-auto text-text-tertiary transition-colors group-hover:text-accent"
+                  style={{ color: 'var(--text-tertiary)' }}
+                />
+                <span className="text-sm font-semibold text-text-primary">{p.name}</span>
+                <span className="text-center text-xs leading-relaxed text-text-secondary">{p.desc}</span>
+              </a>
             ))}
           </div>
           <p className="mt-8 text-center text-xs text-text-tertiary">{T.partnersFootnote}</p>
