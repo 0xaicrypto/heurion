@@ -51,7 +51,7 @@ function EfficacyBarChartSample() {
   const ticks = [0, 25, 50, 75, 100]
 
   return (
-    <svg viewBox={`0 0 ${chartW} ${chartH}`} role="img" aria-label="两组治疗有效率对比示例图" className="w-full max-w-[560px]">
+    <svg viewBox={`0 0 ${chartW} ${chartH}`} role="img" aria-label="两组治疗有效率对比示例图" className="mx-auto block max-w-[420px]">
       <title>两组治疗有效率对比(示例数据)</title>
       {/* axes */}
       <line x1={padL} y1={padT} x2={padL} y2={padT + plotH} stroke="var(--border-strong)" strokeWidth={1} />
