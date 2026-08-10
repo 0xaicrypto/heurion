@@ -19,15 +19,15 @@ export function SecurityPage() {
         icon: <Server size={24} />,
         title: isZh ? '控制面 Control Plane' : 'Control Plane',
         desc: isZh
-          ? '运行 Fastify + Prisma + SQLite：认证、授权、患者、研究、知识库、插件管理。插件无法直接访问。'
-          : 'Runs Fastify + Prisma + SQLite: authentication, authorization, patients, research, knowledge base, and plugin management. Plugins cannot reach it directly.',
+          ? '承载认证、授权、患者、研究、知识库与插件管理；插件无法直接访问核心数据。'
+          : 'Hosts authentication, patients, research, the knowledge base, and plugin management; plugins cannot reach core data directly.',
       },
       {
         icon: <Cpu size={24} />,
         title: isZh ? '执行面 Execution Plane' : 'Execution Plane',
         desc: isZh
-          ? '运行 FastAPI + Redis + heurion_worker：报告渲染、插件沙箱、对象存储上传。与主数据库隔离。'
-          : 'Runs FastAPI + Redis + heurion_worker: report rendering, plugin sandbox, and object-storage upload. Isolated from the main database.',
+          ? '承载报告渲染、插件沙箱与文件交付；与核心数据隔离。'
+          : 'Hosts report rendering, the plugin sandbox, and file delivery; isolated from core data.',
       },
     ],
 
@@ -51,7 +51,7 @@ export function SecurityPage() {
       {
         icon: <FileKey size={22} />,
         title: isZh ? '最小权限' : 'Least privilege',
-        desc: isZh ? '插件与报告助手只拥有完成任务所需的最小访问范围。' : 'Plugins and report-assistant workers have only the minimum access needed to complete their tasks.',
+        desc: isZh ? '插件与自动化任务只拥有完成任务所需的最小访问范围。' : 'Plugins and automated tasks have only the minimum access needed to complete their work.',
       },
     ],
 
@@ -91,8 +91,8 @@ export function SecurityPage() {
 
     selfHostTitle: isZh ? '自托管友好' : 'Self-host friendly',
     selfHostBody: isZh
-      ? '所有服务都可通过 Docker Compose 在本地或私有云运行。API 密钥、对象存储与数据库连接均可通过环境变量配置，数据不出境。'
-      : 'All services can run locally or in a private cloud via Docker Compose. API keys, object storage, and database connections are configurable via environment variables, keeping data on premises.',
+      ? '支持在本地或私有云中完整部署，敏感数据不出境；无需依赖外部服务即可运行全部功能。'
+      : 'Deploy fully in a private cloud or on-premises so sensitive data never leaves your environment; all features run without external dependencies.',
 
     ctaTitle: isZh ? '查看开源代码与安全说明' : 'Review the open-source code and security notes',
   };

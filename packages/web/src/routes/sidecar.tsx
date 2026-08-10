@@ -46,7 +46,7 @@ export function SidecarPage() {
       },
       {
         title: isZh ? '2. 执行面渲染' : '2. Execution-plane rendering',
-        desc: isZh ? '任务进入 Redis 队列，heurion_worker 在隔离环境中生成文件并上传对象存储。' : 'Jobs enter a Redis queue; heurion_worker generates files in an isolated environment and uploads them to object storage.',
+        desc: isZh ? '任务在隔离环境中异步完成文件生成与交付。' : 'Jobs complete file generation and delivery asynchronously in an isolated environment.',
       },
       {
         title: isZh ? '3. 刷新不丢的下载' : '3. Refresh-safe download',
