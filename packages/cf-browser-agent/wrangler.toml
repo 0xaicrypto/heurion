@@ -1,0 +1,16 @@
+name = "heurion-browser-agent"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[vars]
+# x-worker-token the control plane sends (set via wrangler secret in prod)
+
+[[browser]]
+binding = "BROWSER"
+
+[[worker_loaders]]
+binding = "LOADER"
