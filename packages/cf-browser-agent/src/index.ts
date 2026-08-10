@@ -21,6 +21,17 @@ export default {
       return new Response('ok', { status: 200 })
     }
 
+    if (url.pathname === '/debug-binding') {
+      try {
+        const r = await (env.BROWSER as any).fetch('https://localhost/v1/devtools/browser', { headers: { Upgrade: 'websocket' } })
+        const h: Record<string, string> = {}
+        r.headers.forEach((v: string, k: string) => { h[k] = v })
+        return new Response(JSON.stringify({ status: r.status, statusText: r.statusText, headers: h, hasWs: !!r.webSocket }), { headers: { 'content-type': 'application/json' } })
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: { 'content-type': 'application/json' } })
+      }
+    }
+
     if (url.pathname !== '/browser-task' || request.method !== 'POST') {
       return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } })
     }
