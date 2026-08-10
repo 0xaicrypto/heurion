@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { cn } from '@/lib/utils';
 import {
   ArrowRight,
   Brain,
@@ -25,6 +26,59 @@ import {
 } from 'lucide-react';
 import { Button, Card } from '@/components/ui';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
+
+
+/**
+ * #519-followup: 正式统计图表样例 — 带误差棒(95% CI)与显著性标注。
+ * 数据为演示示例,仅用于展示图表样式(诚实原则:不冒充真实结果)。
+ */
+function EfficacyBarChartSample() {
+  const bars = [
+    { label: 'A 组', value: 75, ciLow: 65, ciHigh: 85 },
+    { label: 'B 组', value: 82, ciLow: 73, ciHigh: 91 },
+  ]
+  const chartW = 480
+  const chartH = 300
+  const padL = 48
+  const padB = 36
+  const padT = 44
+  const plotW = chartW - padL - 20
+  const plotH = chartH - padT - padB
+  const yMax = 100
+  const y = (v: number) => padT + plotH * (1 - v / yMax)
+  const x = (i: number) => padL + plotW * (0.25 + i * 0.5)
+  const barW = 72
+  const ticks = [0, 25, 50, 75, 100]
+
+  return (
+    <svg viewBox={`0 0 ${chartW} ${chartH}`} role="img" aria-label="两组治疗有效率对比示例图" className="w-full max-w-[560px]">
+      <title>两组治疗有效率对比(示例数据)</title>
+      {/* axes */}
+      <line x1={padL} y1={padT} x2={padL} y2={padT + plotH} stroke="var(--border-strong)" strokeWidth={1} />
+      <line x1={padL} y1={padT + plotH} x2={chartW - 20} y2={padT + plotH} stroke="var(--border-strong)" strokeWidth={1} />
+      {ticks.map((t) => (
+        <g key={t}>
+          <line x1={padL} y1={y(t)} x2={chartW - 20} y2={y(t)} stroke="var(--border)" strokeWidth={0.5} strokeDasharray="3 3" />
+          <text x={padL - 8} y={y(t) + 4} textAnchor="end" fontSize={11} fill="var(--text-tertiary)">{t}%</text>
+        </g>
+      ))}
+      {/* bars + error bars */}
+      {bars.map((b, i) => (
+        <g key={b.label}>
+          <rect x={x(i) - barW / 2} y={y(b.value)} width={barW} height={y(0) - y(b.value)} rx={4} fill={i === 0 ? 'var(--accent)' : 'hsl(var(--accent) / 0.55)'} />
+          <line x1={x(i)} y1={y(b.ciHigh)} x2={x(i)} y2={y(b.ciLow)} stroke="var(--text-primary)" strokeWidth={1.5} />
+          <line x1={x(i) - 10} y1={y(b.ciHigh)} x2={x(i) + 10} y2={y(b.ciHigh)} stroke="var(--text-primary)" strokeWidth={1.5} />
+          <line x1={x(i) - 10} y1={y(b.ciLow)} x2={x(i) + 10} y2={y(b.ciLow)} stroke="var(--text-primary)" strokeWidth={1.5} />
+          <text x={x(i)} y={y(0) + 22} textAnchor="middle" fontSize={13} fontWeight={600} fill="var(--text-primary)">{b.label}</text>
+          <text x={x(i)} y={y(0) + 40} textAnchor="middle" fontSize={11} fill="var(--text-tertiary)">{b.value}%</text>
+        </g>
+      ))}
+      {/* significance annotation */}
+      <text x={(x(0) + x(1)) / 2} y={padT - 10} textAnchor="middle" fontSize={13} fontWeight={600} fill="var(--text-secondary)">P = 0.56 (ns)</text>
+      <line x1={(x(0) + x(1)) / 2 - 40} y1={padT - 4} x2={(x(0) + x(1)) / 2 + 40} y2={padT - 4} stroke="var(--text-secondary)" strokeWidth={1} />
+    </svg>
+  )
+}
 
 export function LandingPage() {
   const { i18n } = useTranslation();
@@ -250,8 +304,8 @@ export function LandingPage() {
       },
     ],
     workflowSampleLabel: isZh
-      ? '样例：带误差棒与显著性标注的正式统计图表（占位）'
-      : 'Sample: formal statistical figure with error bars and significance (placeholder)',
+      ? '示例数据：仅用于演示图表样式，不代表任何真实研究结果'
+      : 'Sample data: for style demonstration only, not real study results',
 
     // #518: 合作伙伴与致谢。
     partnersTitle: isZh ? '合作伙伴与致谢' : 'Partners & acknowledgements',
@@ -259,11 +313,13 @@ export function LandingPage() {
       ? 'Heurion 构建于开放的技术生态之上，感谢以下平台与项目的支撑。'
       : 'Heurion is built on an open technical ecosystem. Thanks to the platforms and projects below.',
     // #518-followup: 合并去重(Cloudflare agents 并入 Cloudflare),以 logo 墙为主。
+    // #518-followup: 官方彩色 logo。Cloudflare 为品牌彩色;Vercel/GitHub/
+    // opencode 官方 logo 本身即单色(mono=true),dark 主题下反白适配。
     partners: [
-      { name: 'Cloudflare', logo: '/partners/cloudflare.svg', url: 'https://cloudflare.com', desc: isZh ? 'Workers · Browser Run · Agents' : 'Workers · Browser Run · Agents' },
-      { name: 'opencode.ai', logo: '/partners/opencodeai.svg', url: 'https://opencode.ai', desc: isZh ? 'zen 网关 · 多模型访问' : 'zen gateway · model access' },
-      { name: 'Vercel', logo: '/partners/vercel.svg', url: 'https://vercel.com', desc: isZh ? 'AI SDK · 工具调用与多模态' : 'AI SDK · tools & multimodal' },
-      { name: 'GitHub', logo: '/partners/github.svg', url: 'https://github.com', desc: isZh ? '开源托管 · 自动化交付' : 'Hosting · automation' },
+      { name: 'Cloudflare', logo: '/partners/cloudflare.png', mono: false, url: 'https://cloudflare.com', desc: isZh ? 'Workers · Browser Run · Agents' : 'Workers · Browser Run · Agents' },
+      { name: 'opencode.ai', logo: '/partners/opencodeai.png', mono: true, url: 'https://opencode.ai', desc: isZh ? 'zen 网关 · 多模型访问' : 'zen gateway · model access' },
+      { name: 'Vercel', logo: '/partners/vercel.png', mono: true, url: 'https://vercel.com', desc: isZh ? 'AI SDK · 工具调用与多模态' : 'AI SDK · tools & multimodal' },
+      { name: 'GitHub', logo: '/partners/github.png', mono: true, url: 'https://github.com', desc: isZh ? '开源托管 · 自动化交付' : 'Hosting · automation' },
     ],
     partnersFootnote: isZh
       ? '以及所有为开源与医疗信息化做出贡献的开发者。'
@@ -516,11 +572,9 @@ export function LandingPage() {
             </Card>
           ))}
         </div>
-        <div className="mt-8 flex min-h-[160px] items-center justify-center rounded-xl border border-dashed border-border bg-surface p-8">
-          <div className="text-center">
-            <BarChart3 size={28} className="mx-auto text-text-tertiary" />
-            <p className="mt-3 text-sm text-text-tertiary">{T.workflowSampleLabel}</p>
-          </div>
+        <div className="mt-8 rounded-xl border border-border bg-surface p-6">
+          <EfficacyBarChartSample />
+          <p className="mt-3 text-center text-xs text-text-tertiary">{T.workflowSampleLabel}</p>
         </div>
       </section>
 
@@ -543,8 +597,7 @@ export function LandingPage() {
                 <img
                   src={p.logo}
                   alt={p.name}
-                  className="h-10 w-auto text-text-tertiary transition-colors group-hover:text-accent"
-                  style={{ color: 'var(--text-tertiary)' }}
+                  className={cn('h-10 w-auto transition-colors group-hover:opacity-80', p.mono && 'dark:invert')}
                 />
                 <span className="text-sm font-semibold text-text-primary">{p.name}</span>
                 <span className="text-center text-xs leading-relaxed text-text-secondary">{p.desc}</span>
