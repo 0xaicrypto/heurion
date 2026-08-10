@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "test": "vitest run"
+    "test": "vitest run",
+    "docs:sync": "node scripts/gen-feature-inventory.mjs"
   },
   "dependencies": {
     "@tiptap/extension-image": "^3.29.2",

@@ -1,0 +1,34 @@
+{
+  "generatedAt": "2026-08-10T14:51:54.842Z",
+  "source": "src/App.tsx (scripts/gen-feature-inventory.mjs)",
+  "routes": [
+    {
+      "path": "/app/app/today/app/memory/app/chat/app/patients/:hash",
+      "component": "PatientSummaryPage"
+    },
+    {
+      "path": "/app/app/today/app/memory/app/chat/app/patients/:hash/chat",
+      "component": "PatientChatPage"
+    },
+    {
+      "path": "/app/app/today/app/memory/app/chat/app/patients/:hash/imaging",
+      "component": "ImagingPage"
+    },
+    {
+      "path": "/app/app/today/app/memory/app/chat/app/patients/:hash/labs",
+      "component": "LabsPage"
+    },
+    {
+      "path": "/app/app/today/app/memory/app/chat/app/patients/:hash/memory",
+      "component": "MemoryGraphPage"
+    },
+    {
+      "path": "/app/app/today/app/memory/app/chat/app/patients/:hash/records",
+      "component": "MedicalRecordsPage"
+    },
+    {
+      "path": "/app/app/today/app/memory/app/chat/app/patients/:hash/report",
+      "component": "ReportPage"
+    }
+  ]
+}
