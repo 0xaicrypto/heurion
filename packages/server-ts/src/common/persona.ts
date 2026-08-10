@@ -11,6 +11,28 @@ export function personaFactScore(f: { importance?: number; lastSeenAt?: number; 
   return (f.importance ?? 3) * recencyWeight(daysAgo(ts), 0.3)
 }
 
+/**
+ * #510: chat entry scenes. The scene selects the persona variant and the
+ * tool surface — a general/chart/document request must not inherit the
+ * patient-centric persona that made the model keep searching patient
+ * records even for "explain this image" requests.
+ */
+export type ChatScene = 'general' | 'patient' | 'document' | 'chart'
+
+/** Scene-specific guidance prepended to the shared base persona. */
+const SCENE_GUIDANCE: Record<ChatScene, string> = {
+  patient: '',
+  general: `Handle the user's request as a standalone task. Do NOT search patient records and do NOT assume the request involves a patient, a study, or the knowledge base unless the user explicitly mentions one.`,
+  document: `You are helping the user edit a document. Focus on the content in ## Current Document. Do NOT search patient records unless the user explicitly asks.`,
+  chart: `You are generating charts, figures, and statistical analyses. When the real data is missing, say so explicitly and ask for it — never fabricate data or present placeholder values as results. Do NOT search patient records unless the user explicitly asks.`,
+}
+
+export function buildScenePersona(scene: ChatScene, facts: FactsStore, knowledge: KnowledgeStore): string {
+  const base = buildPersona(facts, knowledge)
+  const guidance = SCENE_GUIDANCE[scene]
+  return guidance ? `${guidance}\n\n${base}` : base
+}
+
 export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): string {
   const allFacts = facts.all().filter(f => !f.patientHash && !f.studyId)
   const prefs = allFacts.filter(f => f.category === 'preference').sort((a, b) => b.importance - a.importance)

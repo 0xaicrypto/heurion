@@ -8,8 +8,8 @@ import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { MemoryService } from '../../memory/memory.service.js'
 import { defaultProposalApplier, registerContextResolver, registerProposalApplier } from '../../memory/memory-gateway.js'
 // §5.4 (#197): persona lives in common/persona.ts (shared with memory gateway).
-import { buildPersona, personaFactScore } from '../../common/persona.js'
-export { buildPersona, personaFactScore }
+import { buildScenePersona, type ChatScene } from '../../common/persona.js'
+export { buildPersona, personaFactScore } from '../../common/persona.js'
 
 const TTL_MS = 30 * 60 * 1000 // 30 minutes idle → evict
 const telemetry = new PrismaTelemetryService()
@@ -124,19 +124,22 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
 const PERSONA_CACHE_MAX = 100
 const personaCache = new Map<string, { factsVersion: string | null; knowledgeVersion: string | null; persona: string }>()
 
-export function buildCachedPersona(userId: string, facts: FactsStore, knowledge: KnowledgeStore): string {
+export function buildCachedPersona(userId: string, facts: FactsStore, knowledge: KnowledgeStore, scene: ChatScene = 'patient'): string {
   const fv = facts.currentVersion()
   const kv = knowledge.currentVersion()
-  const cached = personaCache.get(userId)
+  // #510: cache key includes the scene — each entry scene gets its own
+  // persona variant (general/chart must not reuse the patient persona).
+  const cacheKey = `${userId}:${scene}`
+  const cached = personaCache.get(cacheKey)
   if (cached && cached.factsVersion === fv && cached.knowledgeVersion === kv) {
     // LRU touch: move to the most-recent end.
-    personaCache.delete(userId)
-    personaCache.set(userId, cached)
+    personaCache.delete(cacheKey)
+    personaCache.set(cacheKey, cached)
     return cached.persona
   }
-  const persona = buildPersona(facts, knowledge)
-  personaCache.delete(userId)
-  personaCache.set(userId, { factsVersion: fv, knowledgeVersion: kv, persona })
+  const persona = buildScenePersona(scene, facts, knowledge)
+  personaCache.delete(cacheKey)
+  personaCache.set(cacheKey, { factsVersion: fv, knowledgeVersion: kv, persona })
   if (personaCache.size > PERSONA_CACHE_MAX) {
     // Evict the least-recently-used entry (oldest insertion order).
     const oldest = personaCache.keys().next().value
