@@ -1,0 +1,41 @@
+name: CF Agent Browser Probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    name: Probe CF token + Agent Browser availability
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Probe CF API token
+        env:
+          CF_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          echo "== accounts =="
+          ACCOUNTS=$(curl -s "https://api.cloudflare.com/client/v4/accounts" -H "Authorization: Bearer $CF_TOKEN")
+          echo "$ACCOUNTS" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("success:", d.get("success")); [print("account:", a.get("id"), a.get("name")) for a in (d.get("result") or [])]'
+          ACCOUNT_ID=$(echo "$ACCOUNTS" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["result"][0]["id"] if d.get("result") else "")')
+          if [ -z "$ACCOUNT_ID" ]; then echo "no account access"; exit 0; fi
+          echo "ACCOUNT_ID=$ACCOUNT_ID"
+
+          echo "== memberships =="
+          curl -s "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/memberships" -H "Authorization: Bearer $CF_TOKEN" | head -c 300
+          echo
+
+          echo "== Browser Rendering subscription =="
+          curl -s "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/browser-rendering/subscriptions" -H "Authorization: Bearer $CF_TOKEN" | head -c 500
+          echo
+
+          echo "== zones =="
+          curl -s "https://api.cloudflare.com/client/v4/zones" -H "Authorization: Bearer $CF_TOKEN" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("zones:", [z["name"] for z in d.get("result") or []] if d.get("result") is not None else d.get("errors"))' 
+
+      - name: Wrangler whoami (Workers permission check)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          npm install -g wrangler 2>&1 | tail -1
+          wrangler whoami 2>&1 | head -12 || echo "wrangler auth failed (token lacks Workers perms?)"
