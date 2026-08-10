@@ -8,7 +8,6 @@ const subpages = [
   { to: '/sidecar', labelKey: 'marketing.navSidecar', icon: FileText },
   { to: '/knowledge', labelKey: 'marketing.navKnowledge', icon: BookOpen },
   { to: '/security', labelKey: 'marketing.navSecurity', icon: Shield },
-  { to: '/docs', labelKey: 'marketing.navDocs', icon: BookOpen },
 ];
 
 export function MarketingShell({ children }: { children: React.ReactNode }) {

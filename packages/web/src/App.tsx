@@ -16,7 +16,6 @@ import { MemoryPage } from '@/routes/memory';
 import { SidecarPage } from '@/routes/sidecar';
 import { KnowledgeLandingPage } from '@/routes/knowledge-landing';
 import { SecurityPage } from '@/routes/security';
-import { DocsPage } from '@/routes/docs';
 
 import { ReportPage } from '@/routes/report-page';
 import { MedicalRecordsPage } from '@/routes/medical-records';
@@ -77,7 +76,6 @@ export default function App() {
           <Route path="/sidecar" element={<SidecarPage />} />
           <Route path="/knowledge" element={<KnowledgeLandingPage />} />
           <Route path="/security" element={<SecurityPage />} />
-          <Route path="/docs" element={<DocsPage />} />
           <Route
             path="/app"
             element={
