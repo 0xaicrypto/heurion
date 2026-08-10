@@ -5,8 +5,7 @@
     "navMemory": "记忆",
     "navSidecar": "报告助手",
     "navKnowledge": "知识库",
-    "navSecurity": "安全",
-    "navDocs": "指南"
+    "navSecurity": "安全"
   },
   "landing": {
     "navLogin": "登录",

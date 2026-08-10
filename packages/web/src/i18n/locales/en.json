@@ -5,8 +5,7 @@
     "navMemory": "Memory",
     "navSidecar": "Reports",
     "navKnowledge": "Knowledge",
-    "navSecurity": "Security",
-    "navDocs": "Docs"
+    "navSecurity": "Security"
   },
   "landing": {
     "navLogin": "Log in",
