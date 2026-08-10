@@ -20,6 +20,7 @@ export interface BrowserTaskResult {
   dom_summary: string
   steps: string[]
   screenshot_url: string
+  debug?: { steps: unknown[] }
 }
 
 export interface BrowserTaskDeps {
@@ -55,11 +56,23 @@ with tool calls and base your summary on real results. Keep the conclusion conci
     prompt,
   })
 
+  const steps = (result.steps ?? []).map((s) => {
+    const content = Array.isArray(s.content)
+      ? s.content.map((c: any) => ({
+          type: c.type,
+          toolName: c.toolName,
+          text: typeof c.text === 'string' ? c.text.slice(0, 120) : undefined,
+          error: c.error ? String(c.error).slice(0, 200) : undefined,
+        }))
+      : undefined
+    return { stepNumber: s.stepNumber, content }
+  })
   return {
     conclusion: result.text || '任务完成',
     dom_summary: '',
-    steps: [],
+    steps: steps as unknown as string[],
     screenshot_url: '',
+    debug: { steps },
   }
 }
 
