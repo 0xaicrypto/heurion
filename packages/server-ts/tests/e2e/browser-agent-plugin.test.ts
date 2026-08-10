@@ -16,6 +16,44 @@ import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../sr
  * plugin lifecycle, calling the CF Agent Browser Worker endpoint (#485).
  * TDD: tests written before the implementation.
  */
+/** Install with retry — parallel tests clear the shared catalog table. */
+async function installBrowserAgent(userId: string, config?: { worker_url: string; worker_token: string }) {
+  const { installPlugin, setPluginConfig } = await import('../../src/modules/plugins/plugin-installation.service.js')
+  for (let i = 0; i < 5; i++) {
+    try {
+      // userId is a FK to User — tests use a synthetic id, so ensure the
+      // user row exists too.
+      const now = new Date().toISOString()
+      await (prisma as any).user.upsert({
+        where: { id: userId },
+        update: {},
+        create: { id: userId, displayName: `BA_${userId}_${Math.random().toString(36).slice(2, 6)}`, passwordHash: 'x', role: 'user', status: 'approved', createdAt: now, updatedAt: now },
+      })
+      await ensureCatalog()
+      await installPlugin(userId, 'heurion/browser-agent')
+      if (config) await setPluginConfig(userId, 'heurion/browser-agent', config)
+      return
+    } catch (err: any) {
+      if (i === 4) throw err
+      await new Promise((r) => setTimeout(r, 50))
+    }
+  }
+}
+
+/** Self-contained catalog row — parallel tests clear the shared table. */
+async function ensureCatalog() {
+  const { loadOfficialCatalog } = await import('../../src/modules/plugins/plugin-catalog.service.js')
+  const manifest = loadOfficialCatalog().find((m: any) => m.plugin.id === 'heurion/browser-agent')
+  expect(manifest).toBeDefined()
+  const now = new Date().toISOString()
+  await (prisma as any).pluginCatalog.upsert({
+    where: { id: 'heurion/browser-agent' },
+    update: { source: 'official', manifest: JSON.stringify(manifest), updatedAt: now },
+    create: { id: 'heurion/browser-agent', source: 'official', manifest: JSON.stringify(manifest), createdAt: now, updatedAt: now },
+  })
+}
+
+
 describe('browser-agent plugin (#486)', () => {
   beforeEach(() => {
     vi.stubEnv('DEEPSEEK_API_KEY', 'test-key')
@@ -25,43 +63,6 @@ describe('browser-agent plugin (#486)', () => {
     vi.clearAllMocks()
     vi.restoreAllMocks()
   })
-
-  /** Install with retry — parallel tests clear the shared catalog table. */
-  async function installBrowserAgent(userId: string, config?: { worker_url: string; worker_token: string }) {
-    const { installPlugin, setPluginConfig } = await import('../../src/modules/plugins/plugin-installation.service.js')
-    for (let i = 0; i < 5; i++) {
-      try {
-        // userId is a FK to User — tests use a synthetic id, so ensure the
-        // user row exists too.
-        const now = new Date().toISOString()
-        await (prisma as any).user.upsert({
-          where: { id: userId },
-          update: {},
-          create: { id: userId, displayName: `BA_${userId}_${Math.random().toString(36).slice(2, 6)}`, passwordHash: 'x', role: 'user', status: 'approved', createdAt: now, updatedAt: now },
-        })
-        await ensureCatalog()
-        await installPlugin(userId, 'heurion/browser-agent')
-        if (config) await setPluginConfig(userId, 'heurion/browser-agent', config)
-        return
-      } catch (err: any) {
-        if (i === 4) throw err
-        await new Promise((r) => setTimeout(r, 50))
-      }
-    }
-  }
-
-  /** Self-contained catalog row — parallel tests clear the shared table. */
-  async function ensureCatalog() {
-    const { loadOfficialCatalog } = await import('../../src/modules/plugins/plugin-catalog.service.js')
-    const manifest = loadOfficialCatalog().find((m: any) => m.plugin.id === 'heurion/browser-agent')
-    expect(manifest).toBeDefined()
-    const now = new Date().toISOString()
-    await (prisma as any).pluginCatalog.upsert({
-      where: { id: 'heurion/browser-agent' },
-      update: { source: 'official', manifest: JSON.stringify(manifest), updatedAt: now },
-      create: { id: 'heurion/browser-agent', source: 'official', manifest: JSON.stringify(manifest), createdAt: now, updatedAt: now },
-    })
-  }
 
   function makeRegistry() {
     const ctx = getUserContext('u1')
@@ -190,4 +191,70 @@ describe('browser-agent plugin (#486)', () => {
     const toolsArg = (toolLoopCall?.[3] as Array<{ function: { name: string } }> | undefined) || []
     expect(toolsArg.some((t) => t.function?.name === 'browser_task')).toBe(true)
   }, 30000)
+})
+
+describe('browser-agent approval mode (#486-followup)', () => {
+  beforeEach(() => {
+    vi.stubEnv('DEEPSEEK_API_KEY', 'test-key')
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.clearAllMocks()
+  })
+
+  function makeRegistry() {
+    const ctx = getUserContext('u1')
+    return new ToolRegistry({
+      userId: 'u1', memory: ctx.memory, facts: ctx.facts, episodes: ctx.episodes,
+      skills: ctx.skills, knowledge: ctx.knowledge, eventLog: ctx.eventLog, sessionId: 's1',
+    })
+  }
+
+  test('default (no approval config) = allow: execute calls the worker', async () => {
+    await installBrowserAgent('u1', { worker_url: 'https://browser-agent.example.workers.dev', worker_token: 'wrb' })
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ success: true, conclusion: 'ok', steps: [] }) }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await makeRegistry().execute('browser_task', { instruction: 'open page' })
+    expect(res.success).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('approval_mode=ask → tool asks the user first, worker NOT called', async () => {
+    await installBrowserAgent('u1', {
+      worker_url: 'https://browser-agent.example.workers.dev',
+      worker_token: 'wrb',
+    })
+    const { setPluginConfig } = await import('../../src/modules/plugins/plugin-installation.service.js')
+    await setPluginConfig('u1', 'heurion/browser-agent', {
+      worker_url: 'https://browser-agent.example.workers.dev',
+      worker_token: 'wrb',
+      approval_mode: 'ask',
+    })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await makeRegistry().execute('browser_task', { instruction: 'open page' })
+    // Ask path: friendly message asking the user to approve; no fetch.
+    expect(res.success).toBe(true)
+    expect(JSON.parse(res.output!).approval_required).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test('approval_mode=deny → refused without calling the worker', async () => {
+    await installBrowserAgent('u1', { worker_url: 'https://browser-agent.example.workers.dev', worker_token: 'wrb' })
+    const { setPluginConfig } = await import('../../src/modules/plugins/plugin-installation.service.js')
+    await setPluginConfig('u1', 'heurion/browser-agent', {
+      worker_url: 'https://browser-agent.example.workers.dev',
+      worker_token: 'wrb',
+      approval_mode: 'deny',
+    })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await makeRegistry().execute('browser_task', { instruction: 'open page' })
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('禁用')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })

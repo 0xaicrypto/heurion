@@ -44,18 +44,38 @@ export class BrowserTaskTool extends BaseTool {
       return { success: false, error: 'instruction is required' }
     }
 
-    // #486: worker endpoint + token come from the plugin's settings (the
-    // token is stored encrypted by the plugin settings service).
+    // #486-followup: worker endpoint + token + approval mode come from the
+    // plugin's settings (token stored encrypted). Default approval = allow.
     let workerUrl = ''
     let workerToken = ''
+    let approvalMode = 'allow'
     try {
       const { getPluginConfig } = await import('../modules/plugins/plugin-installation.service.js')
       const config = await getPluginConfig(this.ctx.userId, 'heurion/browser-agent')
       workerUrl = String(config.worker_url || '').replace(/\/$/, '')
       workerToken = String(config.worker_token || '')
+      if (config.approval_mode === 'ask' || config.approval_mode === 'deny') {
+        approvalMode = config.approval_mode
+      }
     } catch {
       // config read failure — report below
     }
+
+    // #486-followup: ask mode — surface the request for user approval
+    // (cost + privacy guard); deny mode — disabled.
+    if (approvalMode === 'deny') {
+      return { success: false, error: 'browser-agent 已被禁用（approval_mode=deny）。请到插件设置中修改。' }
+    }
+    if (approvalMode === 'ask') {
+      return {
+        success: true,
+        output: JSON.stringify({
+          approval_required: true,
+          message: `需要打开浏览器执行：${input.instruction.slice(0, 200)}。请询问用户是否同意（浏览器会话按用量计费）。同意后重试本任务。`,
+        }, null, 2),
+      }
+    }
+
     if (!workerUrl) {
       return { success: false, error: 'browser-agent 未配置：请在插件设置中填写 Worker 地址（worker_url）。' }
     }

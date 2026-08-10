@@ -772,6 +772,16 @@
             "type": "string",
             "format": "password",
             "description": "x-worker-token secret for the Worker endpoint"
+          },
+          "approval_mode": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "ask",
+              "deny"
+            ],
+            "default": "allow",
+            "description": "allow: AI may start browser sessions freely; ask: AI asks the user first (cost/privacy guard); deny: disabled"
           }
         }
       }
