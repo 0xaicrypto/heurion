@@ -9,8 +9,8 @@ enabled = true
 [vars]
 # x-worker-token the control plane sends (set via wrangler secret in prod)
 
-[[browser]]
+[browser]
 binding = "BROWSER"
 
-[[worker_loaders]]
+[worker_loaders]
 binding = "LOADER"
