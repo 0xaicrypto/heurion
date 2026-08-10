@@ -66,5 +66,5 @@ export function buildLlm(env: Record<string, unknown>): unknown {
   const baseUrl = String(env.LLM_BASE_URL || 'https://api.openai.com/v1')
   const model = String(env.LLM_MODEL || 'gpt-4o-mini')
   const provider = createOpenAI({ apiKey, baseURL: baseUrl })
-  return provider(model)
+  return provider.chat(model)
 }
