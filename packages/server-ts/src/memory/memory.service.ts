@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'crypto'
+import { ok, err, type Result } from '../common/result'
 import type { EventLog } from '../core/event-log'
 import type { FactsStore, KnowledgeStore } from '../evolution/stores'
 import type { Fact, KnowledgeArticle } from '../evolution/stores'
@@ -179,9 +180,9 @@ export class MemoryService {
     return true
   }
 
-  editFact(stableId: string, input: EditFactInput, editedBy: MemoryCreatedBy = 'user'): FactNode | null {
+  editFact(stableId: string, input: EditFactInput, editedBy: MemoryCreatedBy = 'user'): Result<FactNode> {
     const current = this.graph.getLatestByStableId(stableId) as FactNode | undefined
-    if (!current || isNodeSuperseded(current)) return null
+    if (!current || isNodeSuperseded(current)) return err('fact not found or superseded')
 
     const now = Date.now()
     const newVersion = current.version + 1
@@ -247,12 +248,12 @@ export class MemoryService {
       propagation,
     })
 
-    return edited
+    return ok(edited)
   }
 
-  deleteFact(stableId: string, deletedBy: MemoryCreatedBy = 'user'): { ok: boolean; propagation?: PropagationResult } {
+  deleteFact(stableId: string, deletedBy: MemoryCreatedBy = 'user'): Result<{ propagation?: PropagationResult }> {
     const current = this.graph.getLatestByStableId(stableId) as FactNode | undefined
-    if (!current || isNodeSuperseded(current)) return { ok: false }
+    if (!current || isNodeSuperseded(current)) return err('fact not found or superseded')
 
     // Snapshot legacy before any provisional write (dual-store atomicity, #192).
     const legacyBefore = this.snapshotLegacy()
@@ -277,7 +278,7 @@ export class MemoryService {
       deletedBy,
       propagation,
     })
-    return { ok: true, propagation }
+    return ok({ propagation })
   }
 
   /**
@@ -298,8 +299,9 @@ export class MemoryService {
     const supersededIds = new Set<string>()
 
     for (const fact of affected) {
-      const { ok, propagation } = this.deleteFact(fact.stableId, 'system')
-      if (!ok) continue
+      const result = this.deleteFact(fact.stableId, 'system')
+      if (!result.ok) continue
+      const { propagation } = result.value
       if (propagation) {
         for (const articleId of propagation.staleArticleStableIds) {
           const article = this.graph.getLatestByStableId(articleId) as ArticleNode | undefined
@@ -404,9 +406,9 @@ export class MemoryService {
     return article
   }
 
-  editArticle(stableId: string, input: EditArticleInput, editedBy: MemoryCreatedBy = 'user'): ArticleNode | null {
+  editArticle(stableId: string, input: EditArticleInput, editedBy: MemoryCreatedBy = 'user'): Result<ArticleNode> {
     const current = this.graph.getLatestByStableId(stableId) as ArticleNode | undefined
-    if (!current || isNodeSuperseded(current)) return null
+    if (!current || isNodeSuperseded(current)) return err('article not found or superseded')
 
     const now = Date.now()
     const newVersion = current.version + 1
@@ -464,12 +466,12 @@ export class MemoryService {
       newVersionId: newNodeId,
     })
 
-    return edited
+    return ok(edited)
   }
 
-  deleteArticle(stableId: string, deletedBy: MemoryCreatedBy = 'user'): boolean {
+  deleteArticle(stableId: string, deletedBy: MemoryCreatedBy = 'user'): Result<void> {
     const current = this.graph.getLatestByStableId(stableId) as ArticleNode | undefined
-    if (!current || isNodeSuperseded(current)) return false
+    if (!current || isNodeSuperseded(current)) return err('article not found or superseded')
 
     const legacyBefore = this.snapshotLegacy()
 
@@ -487,12 +489,12 @@ export class MemoryService {
       articleId: stableId,
       deletedBy,
     })
-    return true
+    return ok(undefined)
   }
 
-  regenerateArticle(stableId: string): ArticleNode | null {
+  regenerateArticle(stableId: string): Result<ArticleNode> {
     const current = this.graph.getLatestByStableId(stableId) as ArticleNode | undefined
-    if (!current) return null
+    if (!current) return err('article not found')
     const sourceFactNodeIds = current.sourceFacts.map(s => s.nodeId)
     const input: AddArticleInput = {
       title: current.title,
@@ -502,7 +504,7 @@ export class MemoryService {
     }
     // Mark old version superseded and create fresh version
     this.graph.markStatus(current.id, 'superseded')
-    return this.addArticle(input, current.createdBy)
+    return ok(this.addArticle(input, current.createdBy))
   }
 
   // ── Document API ─────────────────────────────────────────────
@@ -544,9 +546,9 @@ export class MemoryService {
     return doc
   }
 
-  deleteDocument(stableId: string, deletedBy: MemoryCreatedBy = 'user'): boolean {
+  deleteDocument(stableId: string, deletedBy: MemoryCreatedBy = 'user'): Result<void> {
     const current = this.graph.getLatestByStableId(stableId) as DocumentNode | undefined
-    if (!current || isNodeSuperseded(current)) return false
+    if (!current || isNodeSuperseded(current)) return err('document not found or superseded')
 
     // Snapshot legacy before any provisional write (dual-store atomicity, #192).
     const legacyBefore = this.snapshotLegacy()
@@ -566,7 +568,7 @@ export class MemoryService {
       deletedBy,
       propagation,
     })
-    return true
+    return ok(undefined)
   }
 
   // ── Gap API ──────────────────────────────────────────────────
@@ -607,9 +609,9 @@ export class MemoryService {
     return gap
   }
 
-  answerGap(gapStableId: string, answerNode: MemoryNode, answeredBy: MemoryCreatedBy = 'user'): GapNode | null {
+  answerGap(gapStableId: string, answerNode: MemoryNode, answeredBy: MemoryCreatedBy = 'user'): Result<GapNode> {
     const gap = this.graph.getLatestByStableId(gapStableId) as GapNode | undefined
-    if (!gap || isNodeSuperseded(gap)) return null
+    if (!gap || isNodeSuperseded(gap)) return err('gap not found or superseded')
 
     this.graph.updateNode(gap.id, {
       status: 'current',
@@ -628,7 +630,7 @@ export class MemoryService {
       gapId: gapStableId,
       answerNodeId: answerNode.stableId,
     })
-    return this.graph.getNode(gap.id) as GapNode
+    return ok(this.graph.getNode(gap.id) as GapNode)
   }
 
   // ── Helpers ──────────────────────────────────────────────────
