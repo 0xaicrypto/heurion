@@ -44,7 +44,7 @@ describe('browser-task endpoint (#485)', () => {
     LLM_BASE_URL: 'https://api.example.com/v1',
     LLM_MODEL: 'test-model',
     BROWSER: { kind: 'browser-binding' },
-    LOADER: { kind: 'loader-binding' },
+
   }
 
   test('1. no token → 401', async () => {
@@ -72,7 +72,7 @@ describe('browser-task endpoint (#485)', () => {
     // Delegation shape.
     expect(mocks.runBrowserMock).toHaveBeenCalledWith(
       expect.objectContaining({ instruction: '登录 heurion.org 并生成 EGFR 通路图', url: 'https://heurion.org' }),
-      expect.objectContaining({ browser: expect.anything(), loader: expect.anything(), llm: expect.anything() }),
+      expect.objectContaining({ browser: expect.anything(), llm: expect.anything() }),
     )
   })
 
