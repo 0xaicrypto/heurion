@@ -608,6 +608,7 @@ export function ChatPage() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
+                maxLength={32000}
                 placeholder={!sessionId
                   ? t('chat.needSession', '请先新建一个会话')
                   : (currentSessionTitle ? `${t('chat.placeholder')} — ${currentSessionTitle}` : t('chat.placeholder'))}

@@ -7,7 +7,7 @@
  * depend on `getLlmGateway()` (or these helpers) only.
  */
 import { getLlmGateway } from './llm-gateway.js'
-import type { ChatMessage, LlmChatOptions, LlmToolDefinition } from './llm-gateway.js'
+import type { ChatMessage, LlmChatOptions, LlmChatResult, LlmToolDefinition } from './llm-gateway.js'
 
 export type DeepSeekCallOptions = LlmChatOptions
 export {
@@ -20,6 +20,8 @@ export {
   LLM_PROVIDERS,
   resolveLlmEndpoint,
   LlmGateway,
+  LlmChatResult,
+  LlmTruncatedError,
   fetchWithRetry,
   DEEPSEEK_CHAT_MODEL,
   DEEPSEEK_PREMIUM_MODEL,
@@ -42,6 +44,17 @@ export async function deepseekChat(
   onReasoning?: (text: string) => void,
 ): Promise<string> {
   return getLlmGateway().chat(messages, options, tools, onReasoning)
+}
+
+/** #548 — non-streaming call that also reports truncation (finish_reason='length'). */
+export async function deepseekChatWithMeta(
+  messages: ChatMessage[],
+  _apiKey: string,
+  options: DeepSeekCallOptions = {},
+  tools?: LlmToolDefinition[],
+  onReasoning?: (text: string) => void,
+): Promise<LlmChatResult> {
+  return getLlmGateway().chatWithMeta(messages, options, tools, onReasoning)
 }
 
 /**

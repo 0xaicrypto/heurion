@@ -35,6 +35,8 @@ export interface ChatMessage {
   createdAt?: number;
   /** Set when the turn failed — renders a retry affordance. */
   failed?: boolean;
+  /** #548: answer was cut off by the output token budget. */
+  truncated?: boolean;
 }
 
 interface SessionState {
@@ -97,6 +99,8 @@ function applyChunk(msg: ChatMessage, chunk: ChatStreamChunk): ChatMessage {
       };
     case 'turn_complete':
       return { ...msg, isStreaming: false };
+    case 'truncated':
+      return { ...msg, truncated: true, isStreaming: false };
     case 'error':
       return { ...msg, text: msg.text || `Error: ${chunk.message}`, isStreaming: false };
     // #455: plugin pipeline visibility — collect the trail on the message.

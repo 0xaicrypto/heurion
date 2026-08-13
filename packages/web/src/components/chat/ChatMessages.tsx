@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, Download, FileText, Puzzle, Quote, RefreshCw, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Check, Copy, Download, FileText, Puzzle, Quote, RefreshCw, RotateCcw } from 'lucide-react';
 import type { ChatMessage } from '@/stores/chat';
 import { StreamingLlmContent } from '@/components/LlmContent';
 import { ToolCalls } from '@/components/ToolCalls';
@@ -162,6 +162,15 @@ export function ChatMessages({
                   <img src={m.chart.url} alt="chart" className="mt-2 max-h-72 rounded-lg border border-border" />
                 )}
                 <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
+                {m.reasoning && !m.text && m.isStreaming && (
+                  <div className="mt-1 text-xs text-text-tertiary">{t('chat.thinking', '思考中…')}</div>
+                )}
+                {m.truncated && (
+                  <div className="mt-2 flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/5 px-2.5 py-1.5 text-xs text-warning">
+                    <AlertTriangle size={12} className="shrink-0" />
+                    <span>{t('chat.truncated', '回答因输出长度限制被截断，请重试或简化问题')}</span>
+                  </div>
+                )}
                 {m.imageUrl && (
                   <img
                     src={m.imageUrl}

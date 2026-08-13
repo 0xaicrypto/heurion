@@ -4,6 +4,7 @@ import { deepseekChat } from '../../src/common/llm.js'
 import {
   classifyQuery,
   classifyQueryLLM,
+  classifySidecarIntent,
   clearRouteCache,
   defaultLLMClassifier,
   parseKnowledgeCommand,
@@ -59,6 +60,32 @@ describe('P3 — Query Router', () => {
   describe('classifyQuery — fallback', () => {
     test('empty string → mixed', () => {
       expect(classifyQuery('')).toBe('mixed')
+    })
+  })
+
+  describe('classifySidecarIntent — #549 候选召回(strong/weak/null)', () => {
+    test('强生成信号:动词+格式词 → strong(直接放行,不花 LLM)', () => {
+      expect(classifySidecarIntent('帮我生成一份出院小结 docx')).toBe('strong')
+      expect(classifySidecarIntent('把表格导出为 PDF')).toBe('strong')
+      expect(classifySidecarIntent('生成一份病例总结')).toBe('strong')
+    })
+
+    test('弱信号:仅长短语 → weak(交给 LLM 精裁)', () => {
+      expect(classifySidecarIntent('帮我看看病例总结')).toBe('weak')
+      expect(classifySidecarIntent('上次说的 km curve')).toBe('weak')
+    })
+
+    test('讨论句 → null:不再把"做/图/表格"当生成请求', () => {
+      expect(classifySidecarIntent('帮我做一下脑电图的分析')).toBe(null)
+      expect(classifySidecarIntent('这个表格的数字怎么来的')).toBe(null)
+      expect(classifySidecarIntent('上次那个 PPT 讲了什么')).toBe(null)
+      expect(classifySidecarIntent('这个图怎么解读')).toBe(null)
+      expect(classifySidecarIntent('分析一下 KM 曲线')).toBe(null)
+    })
+
+    test('非生成请求 → null', () => {
+      expect(classifySidecarIntent('这个病人最近怎么样')).toBe(null)
+      expect(classifySidecarIntent('')).toBe(null)
     })
   })
 

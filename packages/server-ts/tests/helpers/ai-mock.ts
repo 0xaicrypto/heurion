@@ -13,8 +13,16 @@ import { vi } from 'vitest'
  * gets a fresh mock instance when the factory runs.
  */
 export function mockAiProvider() {
+  const chat = vi.fn()
   return {
-    deepseekChat: vi.fn(),
+    deepseekChat: chat,
+    // #548: truncation-aware variant delegates to deepseekChat so existing
+    // tests keep working, but returns the { text, truncated } envelope that
+    // runToolCallLoop now consumes.
+    deepseekChatWithMeta: vi.fn(async (messages: any[], key: string, options: any, tools?: any, onReasoning?: any) => ({
+      text: await chat(messages, key, options, tools, onReasoning),
+      truncated: false,
+    })),
     deepseekStream: vi.fn(),
     getApiKey: () => 'test-key',
     setLlmTelemetryService: vi.fn(),

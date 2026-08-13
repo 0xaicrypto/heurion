@@ -14,7 +14,7 @@ import { makeLogger } from '../../common/logger.js'
 import prisma from '../../common/prisma'
 import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
 import type { ChatScene } from '../../common/persona.js'
-import { deepseekStream, deepseekChat, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
+import { deepseekStream, deepseekChat, deepseekChatWithMeta, LlmTruncatedError, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { chatSendSchema } from './chat.dto.js'
 import { analyzeChatForPatient, updatePatientFromFindings, analyzeChatForMedicalRecord, updateMedicalRecordFromChat } from '../patients/clinical-analysis.js'
 import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
@@ -179,18 +179,20 @@ async function runToolCallLoop(params: {
 
   while (toolRound < MAX_TOOL_ROUNDS) {
     toolRound++
-    const callResult = await deepseekChat(
+    // #548: use chatWithMeta (truncation-aware) and the gateway default token
+    // budget (MAX_OUTPUT_TOKENS, 8192) instead of a hardcoded 4096.
+    const call = await deepseekChatWithMeta(
       messages,
       params.apiKey,
       {
         model: DEEPSEEK_PREMIUM_MODEL,
-        maxTokens: 4096,
         telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
         signal: io.signal,
       },
       tools,
       (reasoning) => io.send({ type: 'reasoning_chunk', text: reasoning }),
     )
+    const callResult = call.text
 
     if (!callResult) {
       finalContent = ''
@@ -200,11 +202,26 @@ async function runToolCallLoop(params: {
     // Parse JSON response — DeepSeek returns plain text; check for function calls in the text.
     // Match all <tool_call> blocks (each may contain nested JSON in `arguments`).
     const toolCallBlocks = callResult.match(/<tool_call>([\s\S]*?)<\/tool_call>/g)
+    // #548: the final answer hit the output token budget — tell the user the
+    // reply was cut off instead of silently presenting a half answer. An
+    // empty callResult means the reasoning burned the budget (the gateway
+    // auto-retried already) — explain, don't leave a blank turn.
+    if (call.truncated && (!toolCallBlocks || toolCallBlocks.length === 0)) {
+      io.send({
+        type: 'truncated',
+        message: callResult.trim()
+          ? '回答因输出长度限制被截断，请重试或简化问题'
+          : '回答在思考阶段被输出限制中断，未能生成内容，请重试或简化问题',
+      })
+    }
     if (toolCallBlocks && toolCallBlocks.length > 0) {
       let executedAny = false
       let toolError: string | null = null
+      // The assistant message must appear ONCE regardless of how many
+      // tool calls it contains — re-pushing it per block would duplicate
+      // the whole payload N times and corrupt the turn history.
+      messages.push({ role: 'assistant', content: callResult })
       for (const block of toolCallBlocks) {
-        toolSeq++
         let toolCall: any = null
         try {
           toolCall = JSON.parse(block.replace(/<\/?tool_call>/g, '').trim())
@@ -212,7 +229,7 @@ async function runToolCallLoop(params: {
           // §3.3: malformed JSON must not crash the turn — tell the model
           // to re-emit a valid call instead of dying silently.
           appendToolEvent('tool_call', 'malformed_arguments', {
-            tool: '?', args: 'parse-failed', status: 'error', seq: toolSeq,
+            tool: '?', args: 'parse-failed', status: 'error', seq: ++toolSeq,
           })
           messages.push({ role: 'assistant', content: block })
           messages.push({
@@ -296,7 +313,6 @@ async function runToolCallLoop(params: {
           io.send({ type: 'subagent_done', task: subTask.slice(0, 200), success: result.success, cost_tokens: cost })
         }
 
-        messages.push({ role: 'assistant', content: callResult })
         messages.push({
           role: 'user',
           content: `Tool "${toolName}" returned: ${result.success ? (result.output || 'Success') : `Error: ${result.error}`}`,
@@ -464,7 +480,17 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       // Plugin-based document rendering — handled directly without streaming
       // LLM output. #452: sidecar intent comes from the IntentRouter chain
       // (plugin triggers → keyword fallback), not from query-router regex.
-      const isSidecarRequest = await resolveSidecarIntent(userId, body.text)
+      // #549: recent turns are passed so the LLM adjudicator can understand
+      // reference ("做好了发我") instead of misreading the bare message.
+      const recentTurns = ctx.eventLog.query({ sessionId: sid, limit: 40 })
+        .reverse()
+        .filter((evt: any) => evt.eventType === 'user_message' || evt.eventType === 'assistant_response')
+        .slice(0, 6)
+        .map((evt: any) => ({
+          role: evt.eventType === 'user_message' ? ('user' as const) : ('assistant' as const),
+          content: evt.content,
+        }))
+      const isSidecarRequest = await resolveSidecarIntent(userId, body.text, { history: recentTurns })
       if (routeResult.intent === 'sidecar' || isSidecarRequest) {
         const patient = await findPatient(userId, patientHash)
 
@@ -890,14 +916,31 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         }
       } else {
         // Fallback: use streaming for the response
-        for await (const chunk of deepseekStream(loopMessages, apiKey, {
-          model: DEEPSEEK_PREMIUM_MODEL,
-          maxTokens: 4096,
-          telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
-          signal: chatAbort.signal,
-        }, (reasoning) => send({ type: 'reasoning_chunk', text: reasoning }))) {
-          fullResponse += chunk
-          send({ type: 'final_answer_chunk', text: chunk })
+        try {
+          for await (const chunk of deepseekStream(loopMessages, apiKey, {
+            model: DEEPSEEK_PREMIUM_MODEL,
+            telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
+            signal: chatAbort.signal,
+          }, (reasoning) => send({ type: 'reasoning_chunk', text: reasoning }))) {
+            fullResponse += chunk
+            send({ type: 'final_answer_chunk', text: chunk })
+          }
+        } catch (err) {
+          // #548: finish_reason='length' — keep the partial answer, but
+          // surface a truncation notice instead of a hard error. A
+          // zero-content truncation means the reasoning consumed the whole
+          // budget (auto-retry already happened inside the gateway; if it
+          // still failed the user must see the cause, not a silent blank).
+          if (err instanceof LlmTruncatedError) {
+            send({
+              type: 'truncated',
+              message: err.hadContent
+                ? '回答因输出长度限制被截断，请重试或简化问题'
+                : '回答在思考阶段被输出限制中断，未能生成内容，请重试或简化问题',
+            })
+          } else {
+            throw err
+          }
         }
       }
 
