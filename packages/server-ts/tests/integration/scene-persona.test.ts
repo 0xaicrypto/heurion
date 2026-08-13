@@ -6,6 +6,7 @@ import { FactsStore, KnowledgeStore } from '../../src/evolution/stores'
 import { buildScenePersona, buildPersona, type ChatScene } from '../../src/common/persona.js'
 import { buildCachedPersona } from '../../src/modules/chat/user-context.js'
 import { ToolRegistry, SCENE_OMIT_TOOLS, PLUGIN_GATED_TOOLS } from '../../src/tools/tool-registry.js'
+import { resolveScene } from '../../src/modules/chat/chat-context.js'
 import { classifyQuery } from '../../src/retrieval/query-router.js'
 
 /**
@@ -119,6 +120,32 @@ describe('#510 scene tool surface', () => {
     expect(names).toContain('search_node')
     expect(names).toContain('search_encounter')
     expect(names).toContain('search_past_chats')
+  })
+})
+
+describe('#546 resolveScene consistency', () => {
+  test('显式优先: 显式 scene 覆盖推断', () => {
+    expect(resolveScene({ explicit: 'chart', patientHash: 'h', sessionId: 'doc-x' })).toBe('chart')
+  })
+
+  test('推断: patient_hash→patient、doc- 会话→document、否则 general', () => {
+    expect(resolveScene({ patientHash: 'h', sessionId: 's' })).toBe('patient')
+    expect(resolveScene({ sessionId: 'doc-1' })).toBe('document')
+    expect(resolveScene({ sessionId: 's' })).toBe('general')
+  })
+
+  test('错配修正: patient 场景无 patient_hash → general', () => {
+    expect(resolveScene({ explicit: 'patient', patientHash: null, sessionId: 's' })).toBe('general')
+    expect(resolveScene({ explicit: 'patient', patientHash: '', sessionId: 's' })).toBe('general')
+  })
+
+  test('错配修正: document 场景非 doc- 会话 → general', () => {
+    expect(resolveScene({ explicit: 'document', sessionId: 's' })).toBe('general')
+  })
+
+  test('合法组合保持不变', () => {
+    expect(resolveScene({ explicit: 'patient', patientHash: 'h', sessionId: 's' })).toBe('patient')
+    expect(resolveScene({ explicit: 'document', sessionId: 'doc-7' })).toBe('document')
   })
 })
 

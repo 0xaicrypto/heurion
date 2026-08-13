@@ -75,10 +75,19 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: packages/web/pnpm-lock.yaml
       - run: cd packages/web && pnpm install --frozen-lockfile && pnpm build
-      # #530: VitePress 用户指南并入 web dist(server 以 /docs 静态提供)。
+      # #545: docs 构建与部署解耦 — 文档站故障只产生告警,不阻塞主应用
+      # 发布(web-dist 照常产出,仅不含 /docs)。
       - name: Build docs site
         run: |
-          cd packages/docs-site && pnpm install --frozen-lockfile && pnpm build
+          cd packages/docs-site
+          if ! pnpm install --frozen-lockfile; then
+            echo "::error::docs-site install failed — shipping without /docs"
+            exit 0
+          fi
+          if ! pnpm build; then
+            echo "::error::docs-site build failed — shipping without /docs"
+            exit 0
+          fi
           mkdir -p ../web/dist/docs
           cp -r docs/.vitepress/dist/* ../web/dist/docs/
       - uses: actions/upload-artifact@v4

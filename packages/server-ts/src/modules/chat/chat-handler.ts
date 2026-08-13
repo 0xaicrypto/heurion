@@ -30,12 +30,12 @@ import { ToolRegistry, type ToolContext } from '../../tools/tool-registry.js'
 import type { ToolDefinition } from '../../tools/base-tool.js'
 import {
   formatCommandResult,
-  readAttachmentContent,
   enforceTotalBudget,
   selectProjectionInputs,
+  resolveScene,
+  buildAttachmentParts,
 } from './chat-context.js'
 import { providerSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
-import { extractImageUpload, isImageFile } from '../../lib/document-extractor.js'
 
 const gapService = new PrismaKnowledgeGapService()
 /** #6: per-patient LLM analysis throttle (ms) — avoid an extra call per message. */
@@ -377,10 +377,13 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
     const ctx = getUserContext(userId)
     const sid = body.session_id || `session_${Math.random().toString(36).slice(2, 10)}`
     const patientHash = body.patient_hash || null
-    // #510: entry scene — explicit field wins, else inferred from the
-    // patient scope / doc- session id, else general.
-    const scene: ChatScene = body.scene
-      ?? (patientHash ? 'patient' : (sid.startsWith('doc-') ? 'document' : 'general'))
+    // #510/#546: scene 解析与一致性修正(显式 patient 无 patient_hash 等
+    // 错配会降级 general) — 单点实现 resolveScene(chat-context.ts)。
+    const scene: ChatScene = resolveScene({
+      explicit: body.scene,
+      patientHash,
+      sessionId: sid,
+    })
     const apiKey = getApiKey()
 
     // #303: SSE transport extracted — owns headers, disconnect abort, close.
@@ -555,43 +558,14 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         return
       }
 
-      // #2: Read attachment content. #511: bitmap images become multimodal
-      // image parts when the active provider supports vision; otherwise a
-      // textual note (model can still use ocr_image / ask for a vision
-      // model). Text-like attachments keep the legacy text injection.
-      const vision = providerSupportsVision()
-      const userParts: ChatContentPart[] = []
-      let attachmentText = ''
-      const rawAttachments = body.attachments || []
-      for (const att of rawAttachments) {
-        // Accept both string (file_id) and object ({ file_id, fileId, name })
-        const fid = typeof att === 'string' ? att : (att.file_id || att.fileId || '')
-        const name = typeof att === 'string' ? fid.split('_').slice(1).join('_') : (att.name || '')
-        if (!fid) continue
-        // #511-followup: 非视觉 provider 不读文件(仅按文件名判定),
-        // 避免为判断类型而全量读取大图。
-        const probe: { mime?: string; dataBase64?: string; oversized?: boolean; noVision?: boolean } | null =
-          vision
-            ? await extractImageUpload(userId, fid)
-            : (isImageFile(name) ? { noVision: true } : null)
-        if (probe?.mime && probe.dataBase64) {
-          userParts.push({ type: 'image', mime: probe.mime, dataBase64: probe.dataBase64 })
-          send({ type: 'context_info', text: `Attachment: ${name.slice(0, 30)} (image → multimodal)`, kind: 'attachment' })
-          continue
-        }
-        if (probe) {
-          const reason = probe.oversized
-            ? '图片超过 4MB 上限,请压缩后上传,或使用 ocr_image 工具提取文字'
-            : '当前模型不支持图片输入;如需要分析图中内容,请使用 ocr_image 工具,或切换到支持视觉的模型'
-          attachmentText += `\n[ATTACHMENT: ${name}] (image attachment — ${reason})\n`
-          send({ type: 'context_info', text: `Attachment: ${name.slice(0, 30)} (image ${probe.oversized ? 'oversized' : 'no vision'})`, kind: 'attachment' })
-          continue
-        }
-        const content = await readAttachmentContent(userId, fid)
-        if (content) {
-          attachmentText += content
-          send({ type: 'context_info', text: `Attachment: ${name.slice(0, 30)}`, kind: 'attachment' })
-        }
+      // #2/#544: 附件 → 对话内容(图片多模态/超限降级/文本注入)由
+      // buildAttachmentParts 纯函数处理;事件说明在此发送。
+      const { parts: userParts, attachmentText, notes: attachmentNotes } = await buildAttachmentParts(body.attachments, {
+        userId,
+        vision: providerSupportsVision(),
+      })
+      for (const note of attachmentNotes) {
+        send({ type: 'context_info', text: note, kind: 'attachment' })
       }
 
       let fullMessage = attachmentText ? `${attachmentText}\n\nUser query: ${body.text}` : body.text

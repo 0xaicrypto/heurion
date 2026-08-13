@@ -9,7 +9,27 @@ import { router } from '../../retrieval/query-router.js'
 import { getUserContext } from './user-context.js'
 import type { ChatContentPart } from '../../common/llm-gateway.js'
 import type { CommandResult } from '../knowledge/knowledge-command-handler.js'
-import { extractTextFromUpload } from '../../lib/document-extractor.js'
+import { extractTextFromUpload, extractImageUpload, isImageFile } from '../../lib/document-extractor.js'
+import type { ChatScene } from '../../common/persona.js'
+
+/**
+ * #510/#546: chat 入口场景解析 — 显式字段优先,否则按患者范围 /
+ * doc- 会话推断。再做一致性修正:
+ * - scene=patient 但无 patient_hash → 降级 general(工具面全量却无患者
+ *   上下文,行为错配)
+ * - scene=document 但会话非 doc- 前缀 → 降级 general
+ */
+export function resolveScene(opts: {
+  explicit?: string | null
+  patientHash?: string | null
+  sessionId: string
+}): ChatScene {
+  let scene: ChatScene = (opts.explicit as ChatScene)
+    ?? (opts.patientHash ? 'patient' : (opts.sessionId.startsWith('doc-') ? 'document' : 'general'))
+  if (scene === 'patient' && !opts.patientHash) scene = 'general'
+  if (scene === 'document' && !opts.sessionId.startsWith('doc-')) scene = 'general'
+  return scene
+}
 
 /** Render a knowledge-command result into a chat-facing string. */
 export function formatCommandResult(result: CommandResult): string {
@@ -119,4 +139,51 @@ export function selectProjectionInputs(
         skills: ctx.skills.all(),
       }
   }
+}
+
+/**
+ * #544: 附件 → 对话内容(纯函数)。图片按视觉能力/大小分流:
+ * - 视觉 provider + 位图 ≤4MB → image part
+ * - 超限 / 无视觉 provider → 文本说明(提示压缩或 ocr_image)
+ * - 文本类 → extractTextFromUpload 注入
+ * 返回 parts + 拼接文本 + 每个附件的事件说明(供 handler 发 context_info)。
+ */
+export type AttachmentWire = string | { file_id?: string; fileId?: string; name?: string }
+
+export async function buildAttachmentParts(
+  rawAttachments: AttachmentWire[] | undefined,
+  opts: { userId: string; vision: boolean },
+): Promise<{ parts: ChatContentPart[]; attachmentText: string; notes: string[] }> {
+  const parts: ChatContentPart[] = []
+  let attachmentText = ''
+  const notes: string[] = []
+  for (const att of rawAttachments || []) {
+    const fid = typeof att === 'string' ? att : (att.file_id || att.fileId || '')
+    const name = typeof att === 'string' ? fid.split('_').slice(1).join('_') : (att.name || '')
+    if (!fid) continue
+    // #511-followup: 非视觉 provider 不读文件(仅按文件名判定)。
+    const probe: { mime?: string; dataBase64?: string; oversized?: boolean; noVision?: boolean } | null =
+      opts.vision
+        ? await extractImageUpload(opts.userId, fid)
+        : (isImageFile(name) ? { noVision: true } : null)
+    if (probe?.mime && probe.dataBase64) {
+      parts.push({ type: 'image', mime: probe.mime, dataBase64: probe.dataBase64 })
+      notes.push(`Attachment: ${name.slice(0, 30)} (image → multimodal)`)
+      continue
+    }
+    if (probe) {
+      const reason = probe.oversized
+        ? '图片超过 4MB 上限,请压缩后上传,或使用 ocr_image 工具提取文字'
+        : '当前模型不支持图片输入;如需要分析图中内容,请使用 ocr_image 工具,或切换到支持视觉的模型'
+      attachmentText += `\n[ATTACHMENT: ${name}] (image attachment — ${reason})\n`
+      notes.push(`Attachment: ${name.slice(0, 30)} (image ${probe.oversized ? 'oversized' : 'no vision'})`)
+      continue
+    }
+    const content = await extractTextFromUpload(opts.userId, fid, { maxChars: 15000 })
+    if (content) {
+      attachmentText += `\n[ATTACHMENT: ${name}]\n${content}\n[/ATTACHMENT]\n`
+      notes.push(`Attachment: ${name.slice(0, 30)}`)
+    }
+  }
+  return { parts, attachmentText, notes }
 }
