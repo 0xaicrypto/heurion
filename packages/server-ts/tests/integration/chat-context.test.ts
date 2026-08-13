@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from 'vitest'
+import { describe, test, expect, beforeEach, afterEach } from 'vitest'
 import { buildPersona, buildFileContext } from '../../src/modules/chat/user-context'
 import { FactsStore, KnowledgeStore } from '../../src/evolution/stores'
 import os from 'os'
@@ -59,5 +59,65 @@ describe('P2 — Chat Context Enhancement', () => {
 
   test('buildFileContext returns empty for no files', () => {
     expect(buildFileContext([])).toBe('')
+  })
+})
+
+import { buildAttachmentParts } from '../../src/modules/chat/chat-context.js'
+import { resolveScene } from '../../src/modules/chat/chat-context.js'
+
+describe('#544 buildAttachmentParts', () => {
+  let baseDir: string
+  beforeEach(() => {
+    baseDir = path.join(os.tmpdir(), `nexus-att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`)
+    process.env.TWIN_BASE_DIR = baseDir
+  })
+  afterEach(() => {
+    fs.rmSync(baseDir, { recursive: true, force: true })
+    delete process.env.TWIN_BASE_DIR
+  })
+
+  function putUpload(userId: string, fileId: string, content: Buffer) {
+    const dir = path.join(baseDir, userId, 'uploads')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, fileId), content)
+  }
+
+  test('视觉 provider: 位图 → image part', async () => {
+    putUpload('u1', 'abc_pic.png', Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    const { parts, attachmentText, notes } = await buildAttachmentParts(['abc_pic.png'], { userId: 'u1', vision: true })
+    expect(parts).toHaveLength(1)
+    expect(parts[0].type).toBe('image')
+    expect(notes[0]).toContain('image → multimodal')
+    expect(attachmentText).toBe('')
+  })
+
+  test('视觉 provider: 超限图片 → 文本说明', async () => {
+    putUpload('u1', 'big_x.png', Buffer.alloc(4 * 1024 * 1024 + 1))
+    const { parts, attachmentText } = await buildAttachmentParts(['big_x.png'], { userId: 'u1', vision: true })
+    expect(parts).toHaveLength(0)
+    expect(attachmentText).toContain('4MB')
+  })
+
+  test('非视觉 provider: 不读文件,仅按文件名降级', async () => {
+    const { parts, attachmentText, notes } = await buildAttachmentParts(['abc_pic.png'], { userId: 'u1', vision: false })
+    expect(parts).toHaveLength(0)
+    expect(attachmentText).toContain('不支持图片输入')
+    expect(notes[0]).toContain('no vision')
+  })
+
+  test('文本附件注入内容', async () => {
+    putUpload('u1', 'abc_note.txt', Buffer.from('血红蛋白 120 g/L'))
+    const { parts, attachmentText } = await buildAttachmentParts(['abc_note.txt'], { userId: 'u1', vision: true })
+    expect(parts).toHaveLength(0)
+    expect(attachmentText).toContain('血红蛋白 120 g/L')
+  })
+
+  test('空附件/缺失文件不产生内容', async () => {
+    const r = await buildAttachmentParts([], { userId: 'u1', vision: true })
+    expect(r.parts).toHaveLength(0)
+    expect(r.attachmentText).toBe('')
+    const r2 = await buildAttachmentParts(['missing_x.txt'], { userId: 'u1', vision: true })
+    expect(r2.parts).toHaveLength(0)
+    expect(r2.attachmentText).toBe('')
   })
 })
