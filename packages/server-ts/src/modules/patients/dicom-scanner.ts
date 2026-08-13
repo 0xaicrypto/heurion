@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { safeUploadPath } from '../../lib/upload-path.js'
 import zlib from 'zlib'
 
 let dicomParser: any = null
@@ -14,7 +15,7 @@ export interface DicomFinding {
 
 export function quickScanDicom(userId: string, fileId: string): DicomFinding[] {
   const filepath = getDicomPath(userId, fileId)
-  if (!fs.existsSync(filepath)) return [{ type: 'error', content: 'File not found' }]
+  if (!filepath || !fs.existsSync(filepath)) return [{ type: 'error', content: 'File not found' }]
 
   if (dicomParser) {
     try {
@@ -59,7 +60,7 @@ export function quickScanDicom(userId: string, fileId: string): DicomFinding[] {
  */
 export function renderDicomSlice(userId: string, fileId: string): Buffer | null {
   const filepath = getDicomPath(userId, fileId)
-  if (!fs.existsSync(filepath) || !dicomParser) return null
+  if (!filepath || !fs.existsSync(filepath) || !dicomParser) return null
 
   try {
     const buffer = fs.readFileSync(filepath)
@@ -140,7 +141,7 @@ export function renderDicomSlice(userId: string, fileId: string): Buffer | null 
  */
 export async function analyzeWithGeminiVision(userId: string, fileId: string): Promise<string> {
   const filepath = getDicomPath(userId, fileId)
-  if (!fs.existsSync(filepath) || !dicomParser) return ''
+  if (!filepath || !fs.existsSync(filepath) || !dicomParser) return ''
 
   try {
     const buffer = fs.readFileSync(filepath)
@@ -223,13 +224,14 @@ export async function analyzeWithGeminiVision(userId: string, fileId: string): P
     return ''
   }
 }
-function getDicomPath(userId: string, fileId: string): string {
-  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
-  let p = path.join(dir, fileId)
-  if (fs.existsSync(p)) return p
-  p = path.join(dir, fileId + '.dcm')
-  if (fs.existsSync(p)) return p
-  return p
+function getDicomPath(userId: string, fileId: string): string | null {
+  // #553: fileId 可能来自客户端 — 安全拼接,拒绝路径穿越。
+  const base = safeUploadPath(userId, fileId)
+  if (!base) return null
+  if (fs.existsSync(base)) return base
+  const withExt = safeUploadPath(userId, fileId + '.dcm')
+  if (withExt && fs.existsSync(withExt)) return withExt
+  return null
 }
 
 function crc32(buf: Buffer): number {
