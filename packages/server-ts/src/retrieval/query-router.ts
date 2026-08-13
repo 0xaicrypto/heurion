@@ -110,6 +110,12 @@ export const WEAK_SIDECAR_PHRASES = /(病例总结|case summary|出院小结|dis
  *  sidecar pipeline on its own (the LLM adjudicator may still decide). */
 export const DISCUSSION_MARKERS = /(怎么|为什么|如何|解释|解读|什么意思|是什么|对不对|是不是|讲讲|说说|介绍一下|分析一下|讲解|how|why|what|explain|interpret|discuss|mean)/i
 
+/** #551-followup — edit/refine markers: "帮我润色这篇论文" operates on an
+ *  EXISTING document. File generation requires the source material, which the
+ *  chat usually does not carry — never route these to a generator plugin, or
+ *  the AI invents clinical content instead of polishing the user's paper. */
+export const EDIT_MARKERS = /(润色|修改|改一下|完善|续写|改写|修正|polish|edit|revise|rewrite|improve)/i
+
 /**
  * #549 — rule layer is now a CANDIDATE RECALL, not a decision. Strong
  * generation signals (verb + format word, no discussion markers) return
@@ -121,6 +127,8 @@ export function classifySidecarIntent(text: string): SidecarCandidate {
   const q = text.toLowerCase()
   if (!q) return null
   if (DISCUSSION_MARKERS.test(q)) return null
+  // Editing/polishing an existing document is not a generate request.
+  if (EDIT_MARKERS.test(q)) return null
   if (STRONG_GENERATE_VERBS.test(q) && FILE_FORMAT_WORDS.test(q)) return 'strong'
   if (WEAK_SIDECAR_PHRASES.test(q)) return 'weak'
   return null
