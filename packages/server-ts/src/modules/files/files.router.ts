@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import { getUserContext } from '../chat/user-context.js'
+import { sanitizeFilename, safeUploadPath, uploadsBaseDir } from '../../lib/upload-path.js'
 import { deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 import fs from 'fs'
 import path from 'path'
@@ -47,7 +48,8 @@ export async function filesRouter(app: FastifyInstance) {
       // FileIndex table not available — fall through to normal upload
     }
 
-    const fileId = `${Date.now()}_${data.filename}`
+    // #553: multipart filename 可能含路径分隔 — 净化后再入库。
+    const fileId = `${Date.now()}_${sanitizeFilename(data.filename)}`
     const filepath = path.join(dir, fileId)
     fs.writeFileSync(filepath, buffer)
 
@@ -250,8 +252,8 @@ export async function filesRouter(app: FastifyInstance) {
     if (!fileId.startsWith('scene_') && !fileId.startsWith('chart_')) {
       return reply.status(400).send({ error: 'not a generated chart' })
     }
-    const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads', fileId)
-    if (!fs.existsSync(filepath)) return reply.status(404).send({ error: 'File not found' })
+    const filepath = safeUploadPath(userId, fileId)
+    if (!filepath || !fs.existsSync(filepath)) return reply.status(404).send({ error: 'File not found' })
     fs.unlinkSync(filepath)
     try {
       const ctx = getUserContext(userId)
@@ -264,9 +266,9 @@ export async function filesRouter(app: FastifyInstance) {
   app.get('/api/v1/files/:fileId/content', async (request, reply) => {
     const { fileId } = request.params as any
     const userId = request.user!.userId
-    const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads', fileId)
+    const filepath = safeUploadPath(userId, fileId)
 
-    if (!fs.existsSync(filepath)) {
+    if (!filepath || !fs.existsSync(filepath)) {
       return reply.status(404).send({ error: 'File not found' })
     }
 
@@ -315,7 +317,8 @@ export async function filesRouter(app: FastifyInstance) {
     let deleted = 0
     for (const rawId of ids) {
       const fileId = String(rawId)
-      const filepath = path.join(baseDir, fileId)
+      const filepath = safeUploadPath(userId, fileId)
+      if (!filepath) continue
       try {
         await (prisma as any).fileIndex.updateMany({
           where: { id: fileId, userId },
@@ -335,7 +338,8 @@ export async function filesRouter(app: FastifyInstance) {
     const { fileId } = request.params as any
     const userId = request.user!.userId
     const ctx = getUserContext(userId)
-    const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads', fileId)
+    const filepath = safeUploadPath(userId, fileId)
+    if (!filepath) return reply.status(404).send({ error: 'File not found' })
     // Soft-delete in FileIndex
     try {
       await (prisma as any).fileIndex.updateMany({
@@ -366,8 +370,8 @@ app.get('/api/v1/files/download/:fileId', async (request, reply) => {
     ownerUserId = fromToken
   }
 
-  const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', ownerUserId, 'uploads', fileId)
-  if (!fs.existsSync(filepath)) return reply.status(404).send({ error: 'File not found' })
+  const filepath = safeUploadPath(ownerUserId, fileId)
+  if (!filepath || !fs.existsSync(filepath)) return reply.status(404).send({ error: 'File not found' })
 
   const mime = fileId.endsWith('.svg') ? 'image/svg+xml' : 'application/octet-stream'
   reply.header('Content-Type', mime)

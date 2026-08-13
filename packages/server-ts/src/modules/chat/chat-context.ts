@@ -66,22 +66,37 @@ export async function readAttachmentContent(userId: string, fileId: string): Pro
  * oldest-first until the estimate fits; falls back to truncating the system
  * prompt. Returns the number of trimmed messages.
  */
+/** #553: 消息 token 估算 — image part 按固定配额计(base64 全量计入会
+ *  系统性清空上下文);文本按字符。 */
+function estimateMessageTokens(m: { role: string; content: string | ChatContentPart[] }): number {
+  if (typeof m.content === 'string') return estimateTokens(m.content)
+  return m.content.reduce((acc, part) => {
+    if (part.type === 'image') return acc + 1024
+    return acc + estimateTokens(part.text)
+  }, 0)
+}
+
 export function enforceTotalBudget(
   msgs: Array<{ role: string; content: string | ChatContentPart[] }>,
   maxTokens: number,
 ): number {
   if (maxTokens <= 0) return 0
-  let tokens = estimateTokens(JSON.stringify(msgs))
+  let tokens = msgs.reduce((acc, m) => acc + estimateMessageTokens(m), 0)
   let trimmed = 0
-  for (let i = 1; i < msgs.length && tokens > maxTokens; ) {
+  // 从最旧消息开始裁剪,但永不删除最后一条 user 消息(否则模型收不到
+  // 当前提问);图片 part 保留(配额已计),优先裁文本。
+  for (let i = 1; i < msgs.length - 1 && tokens > maxTokens; ) {
     msgs.splice(i, 1)
     trimmed++
-    tokens = estimateTokens(JSON.stringify(msgs))
+    tokens = msgs.reduce((acc, m) => acc + estimateMessageTokens(m), 0)
   }
   if (tokens > maxTokens && msgs.length > 0) {
     // Last resort: truncate the system prompt (keeps the newest user turn).
-    const keepChars = Math.max(500, Math.floor((maxTokens / Math.max(tokens, 1)) * (msgs[0].content.length || 0)))
-    msgs[0].content = msgs[0].content.slice(0, keepChars)
+    const sysLen = typeof msgs[0].content === 'string' ? msgs[0].content.length : 0
+    const keepChars = Math.max(500, Math.floor((maxTokens / Math.max(tokens, 1)) * sysLen))
+    if (typeof msgs[0].content === 'string') {
+      msgs[0].content = msgs[0].content.slice(0, keepChars)
+    }
   }
   return trimmed
 }
