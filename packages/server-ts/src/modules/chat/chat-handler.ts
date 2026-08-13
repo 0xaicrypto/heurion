@@ -35,7 +35,7 @@ import {
   selectProjectionInputs,
 } from './chat-context.js'
 import { providerSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
-import { extractImageUpload } from '../../lib/document-extractor.js'
+import { extractImageUpload, isImageFile } from '../../lib/document-extractor.js'
 
 const gapService = new PrismaKnowledgeGapService()
 /** #6: per-patient LLM analysis throttle (ms) — avoid an extra call per message. */
@@ -568,15 +568,23 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         const fid = typeof att === 'string' ? att : (att.file_id || att.fileId || '')
         const name = typeof att === 'string' ? fid.split('_').slice(1).join('_') : (att.name || '')
         if (!fid) continue
-        const image = await extractImageUpload(userId, fid)
-        if (image && vision) {
-          userParts.push({ type: 'image', mime: image.mime, dataBase64: image.dataBase64 })
+        // #511-followup: 非视觉 provider 不读文件(仅按文件名判定),
+        // 避免为判断类型而全量读取大图。
+        const probe: { mime?: string; dataBase64?: string; oversized?: boolean; noVision?: boolean } | null =
+          vision
+            ? await extractImageUpload(userId, fid)
+            : (isImageFile(name) ? { noVision: true } : null)
+        if (probe?.mime && probe.dataBase64) {
+          userParts.push({ type: 'image', mime: probe.mime, dataBase64: probe.dataBase64 })
           send({ type: 'context_info', text: `Attachment: ${name.slice(0, 30)} (image → multimodal)`, kind: 'attachment' })
           continue
         }
-        if (image && !vision) {
-          attachmentText += `\n[ATTACHMENT: ${name}] (image attachment — 当前模型不支持图片输入;如需要分析图中内容,请使用 ocr_image 工具,或切换到支持视觉的模型)\n`
-          send({ type: 'context_info', text: `Attachment: ${name.slice(0, 30)} (image, no vision provider)`, kind: 'attachment' })
+        if (probe) {
+          const reason = probe.oversized
+            ? '图片超过 4MB 上限,请压缩后上传,或使用 ocr_image 工具提取文字'
+            : '当前模型不支持图片输入;如需要分析图中内容,请使用 ocr_image 工具,或切换到支持视觉的模型'
+          attachmentText += `\n[ATTACHMENT: ${name}] (image attachment — ${reason})\n`
+          send({ type: 'context_info', text: `Attachment: ${name.slice(0, 30)} (image ${probe.oversized ? 'oversized' : 'no vision'})`, kind: 'attachment' })
           continue
         }
         const content = await readAttachmentContent(userId, fid)

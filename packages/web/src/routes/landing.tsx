@@ -138,10 +138,6 @@ export function LandingPage() {
     },
 
     // #515: 独特能力露出 — 已上线且可演示的差异化能力。
-    uniqueTitle: isZh ? '从对话到行动：三大独特能力' : 'From conversation to action: three distinctive capabilities',
-    uniqueSubtitle: isZh
-      ? '不只是问答：AI 能替你操作真实网页、直接解读上传的图片，并在数据缺失时诚实说明。'
-      : 'More than Q&A: the AI operates real web pages for you, reads uploaded images, and is honest when data is missing.',
     uniqueCards: [
       {
         icon: <Globe size={24} />,
