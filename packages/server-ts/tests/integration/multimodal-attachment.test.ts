@@ -112,4 +112,12 @@ describe('#511 image upload detection', () => {
     fs.writeFileSync(path.join(dir, 'abc_note.txt'), 'hello')
     expect(await extractImageUpload('u1', 'abc_note.txt')).toBeNull()
   })
+
+  test('超过 4MB 上限的图片返回 oversized(不读内容)', async () => {
+    const dir = path.join(baseDir, 'u1', 'uploads')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'big_x.png'), Buffer.alloc(4 * 1024 * 1024 + 1))
+    const out = await extractImageUpload('u1', 'big_x.png')
+    expect(out).toEqual({ oversized: true })
+  })
 })

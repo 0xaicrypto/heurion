@@ -30,16 +30,22 @@ const DEFAULT_TOOLS = [
   'stat_describe', 'stat_ttest', 'stat_chisq', 'stat_km', 'load_skill',
 ]
 
+/** #510-followup: 患者检索工具仅在患者场景可用 — 通用场景(global)的
+ *  深度分析子代理不得检索患者数据(与主 chat 的场景化工具裁剪一致)。 */
+const PATIENT_SCOPED_TOOLS = new Set(['search_node', 'search_encounter', 'search_past_chats'])
+
 export async function runSubAgent(input: SubAgentInput, ctx: ToolContext): Promise<SubAgentResult> {
   const maxTurns = Math.min(8, Math.max(1, input.maxTurns || 4))
-  const toolNames = input.tools && input.tools.length > 0 ? input.tools : DEFAULT_TOOLS
+  const scope = input.scope || 'global'
+  const isPatientScope = scope.startsWith('patient:')
+  const requested = input.tools && input.tools.length > 0 ? input.tools : DEFAULT_TOOLS
+  const toolNames = isPatientScope ? requested : requested.filter((t) => !PATIENT_SCOPED_TOOLS.has(t))
 
   // Read-only by default: every allowed tool must pass the white-list.
   const registry = new ToolRegistry(ctx)
   const allowed = toolNames.filter((n) => registry.get(n))
 
-  const scope = input.scope || 'global'
-  const scopeNote = scope.startsWith('patient:')
+  const scopeNote = isPatientScope
     ? `You are LIMITED to the patient ${scope.slice('patient:'.length)} — never mention or use data from other patients.`
     : 'You may use global (user-level) knowledge only.'
 

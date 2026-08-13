@@ -202,16 +202,29 @@ export async function extractTextFromUpload(
  * #511: read an uploaded image as a base64 data payload for multimodal
  * parts. Returns null when the file is missing or not a bitmap image.
  */
+/** #511-followup: 多模态图片大小上限 — 超出降级为 OCR/文本说明,
+ *  避免超大 base64 撑爆 LLM 请求体与上下文预算。 */
+export const MAX_IMAGE_UPLOAD_BYTES = 4 * 1024 * 1024
+
+/**
+ * #511: 读取上传图片为 base64 多模态数据。
+ * - 非图片/文件缺失 → null(调用方走文本路径)
+ * - 图片但超过 MAX_IMAGE_UPLOAD_BYTES → { oversized: true }(调用方降级)
+ * - 正常 → { mime, dataBase64 }
+ */
 export async function extractImageUpload(
   userId: string,
   fileId: string,
-): Promise<{ mime: string; dataBase64: string } | null> {
+): Promise<{ mime: string; dataBase64: string } | { oversized: true } | null> {
   const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
   const filepath = path.join(dir, fileId)
   if (!fs.existsSync(filepath)) return null
 
   const originalName = fileId.split('_').slice(1).join('_') || fileId
   if (!isImageFile(originalName)) return null
+
+  const stat = fs.statSync(filepath)
+  if (stat.size > MAX_IMAGE_UPLOAD_BYTES) return { oversized: true }
 
   const mimeByExt: Record<string, string> = {
     png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
