@@ -72,8 +72,10 @@ jobs:
         run: |
           URL="$(grep -oE 'https://heurion-browser-agent\.[a-z0-9-]+\.workers\.dev' /tmp/wr.log | head -1)"
           echo "smoke URL: $URL"
-          curl -s "$URL/healthz"
+          # #553: --fail + 状态断言 — 坏部署必须让 job 失败。
+          curl -sf "$URL/healthz" || { echo "healthz failed"; exit 1; }
           echo
-          curl -s -X POST "$URL/browser-task" -H "content-type: application/json" -d '{"instruction":"x"}' | head -c 120
-          echo
-          curl -s -X POST "$URL/browser-task" -H "content-type: application/json" -H "x-worker-token: $WRB_TOKEN" -d '{"instruction":"访问 heurion.org 首页并描述内容"}' --max-time 120 | head -c 400
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/browser-task" -H "content-type: application/json" -d '{"instruction":"x"}')
+          echo "no-token status: $STATUS"
+          [ "$STATUS" = "401" ] || { echo "expected 401, got $STATUS"; exit 1; }
+          curl -sf --max-time 120 -X POST "$URL/browser-task" -H "content-type: application/json" -H "x-worker-token: $WRB_TOKEN" -d '{"instruction":"访问 heurion.org 首页并描述内容"}' | head -c 400 || { echo "auth task failed"; exit 1; }

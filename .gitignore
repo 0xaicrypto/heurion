@@ -125,6 +125,9 @@ screenshots/
 # Brand assets in the web public folder must be tracked.
 !packages/web/public/*.png
 !packages/web/public/*.ico
+# #553: partner logos under public/partners/ — *.png 通配符不跨目录,
+# 必须显式放行,否则新增 logo 会被静默忽略(曾致生产 404)。
+!packages/web/public/partners/*.png
 
 # ─── Large generated / intermediate files ──────────────────────────────
 *.map

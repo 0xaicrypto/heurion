@@ -49,7 +49,9 @@ export function ChatPage() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
-  const [attachedFiles, setAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
+  // #553: 附件按会话隔离(仿 drafts)— 切换会话不得把 A 会话附件带到 B。
+  const [attachedFiles, setAttachedFiles] = useState<Record<string, Array<{name: string; fileId: string}>>>({});
+  const currentAttachedFiles = attachedFiles[sessionId] ?? [];
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   // #420: parallel deep analysis entry.
   const [deepOpen, setDeepOpen] = useState(false);
@@ -199,7 +201,7 @@ export function ChatPage() {
     await store.sendMessage(sessionId, {
       text,
       sessionId,
-      attachments: attachedFiles.map((a) => a.fileId),
+      attachments: currentAttachedFiles.map((a) => a.fileId),
       skills: activeSkills,
       scene: currentScene,
     });
@@ -317,7 +319,7 @@ export function ChatPage() {
     setUploadingFile(true);
     try {
       const result = await api.uploadFile(f);
-      setAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+      setAttachedFiles((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), { name: result.name, fileId: result.file_id }] }));
     } catch (err) {
       // silently fail
     } finally {
@@ -346,7 +348,7 @@ export function ChatPage() {
       setUploadingFile(true);
       try {
         const result = await api.uploadFile(file);
-        setAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+        setAttachedFiles((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), { name: result.name, fileId: result.file_id }] }));
       } catch { /* ignore */ }
       finally { setUploadingFile(false); }
     }
@@ -523,14 +525,14 @@ export function ChatPage() {
               ))}
             </div>
             <SkillsBar active={activeSkills} onToggle={toggleSkill} />
-            {attachedFiles.length > 0 && (
+            {currentAttachedFiles.length > 0 && (
               <div className="flex gap-2 flex-wrap">
-                {attachedFiles.map((f) => (
+                {currentAttachedFiles.map((f) => (
                   <span key={f.fileId} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-elevated px-2 py-1 text-xs text-text-secondary">
                     <FileText size={12} className="shrink-0" />
                     <span className="max-w-[180px] truncate">{f.name}</span>
                     <button
-                      onClick={() => setAttachedFiles((prev) => prev.filter((a) => a.fileId !== f.fileId))}
+                      onClick={() => setAttachedFiles((prev) => ({ ...prev, [sessionId]: (prev[sessionId] ?? []).filter((a) => a.fileId !== f.fileId) }))}
                       className="rounded p-0.5 text-text-tertiary transition-colors hover:bg-surface hover:text-error"
                       aria-label={t('chat.removeAttachment', 'Remove attachment')}
                     >

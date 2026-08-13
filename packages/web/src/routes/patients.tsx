@@ -453,6 +453,19 @@ export function PatientChatPage() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // #553: 切换患者(hash 变化)时重置本地状态,避免遗留输入/附件
+  // 串入下一位患者。
+  const prevHash = useRef(hash);
+  useEffect(() => {
+    if (prevHash.current !== hash) {
+      prevHash.current = hash;
+      setInput('');
+      setAttachedFiles([]);
+      setActiveSkills([]);
+      setError(null);
+    }
+  }, [hash]);
+
   useEffect(() => {
     if (!sessionId || !hash) return;
     // Non-reactive read: session changes must not re-run this loader.

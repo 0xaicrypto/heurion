@@ -28,7 +28,8 @@ cd packages/server-ts
 DATABASE_URL="file:./nexus_server.db"
 SERVER_PORT=8001
 SERVER_SECRET=$(openssl rand -hex 32)
-DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-sk-edc3839a3dd44babaf33dc16d0761dc3}
+# #553: 密钥必须由环境注入 — 仓库内禁止硬编码(曾泄露真实 key,已吊销)。
+DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:?DEEPSEEK_API_KEY env required}
 CORS_ALLOW_ORIGINS=*
 TWIN_BASE_DIR=.nexus/twins
 ENDENV

@@ -45,28 +45,28 @@ function EfficacyBarChartSample() {
     <svg viewBox={`0 0 ${chartW} ${chartH}`} role="img" aria-label="两组治疗有效率对比示例图" className="mx-auto block max-w-[420px]">
       <title>两组治疗有效率对比(示例数据)</title>
       {/* axes */}
-      <line x1={padL} y1={padT} x2={padL} y2={padT + plotH} stroke="var(--border-strong)" strokeWidth={1} />
-      <line x1={padL} y1={padT + plotH} x2={chartW - 20} y2={padT + plotH} stroke="var(--border-strong)" strokeWidth={1} />
+      <line x1={padL} y1={padT} x2={padL} y2={padT + plotH} stroke="hsl(var(--border-strong))" strokeWidth={1} />
+      <line x1={padL} y1={padT + plotH} x2={chartW - 20} y2={padT + plotH} stroke="hsl(var(--border-strong))" strokeWidth={1} />
       {ticks.map((t) => (
         <g key={t}>
-          <line x1={padL} y1={y(t)} x2={chartW - 20} y2={y(t)} stroke="var(--border)" strokeWidth={0.5} strokeDasharray="3 3" />
-          <text x={padL - 8} y={y(t) + 4} textAnchor="end" fontSize={11} fill="var(--text-tertiary)">{t}%</text>
+          <line x1={padL} y1={y(t)} x2={chartW - 20} y2={y(t)} stroke="hsl(var(--border))" strokeWidth={0.5} strokeDasharray="3 3" />
+          <text x={padL - 8} y={y(t) + 4} textAnchor="end" fontSize={11} fill="hsl(var(--text-tertiary))">{t}%</text>
         </g>
       ))}
       {/* bars + error bars */}
       {bars.map((b, i) => (
         <g key={b.label}>
-          <rect x={x(i) - barW / 2} y={y(b.value)} width={barW} height={y(0) - y(b.value)} rx={4} fill={i === 0 ? 'var(--accent)' : 'hsl(var(--accent) / 0.55)'} />
-          <line x1={x(i)} y1={y(b.ciHigh)} x2={x(i)} y2={y(b.ciLow)} stroke="var(--text-primary)" strokeWidth={1.5} />
-          <line x1={x(i) - 10} y1={y(b.ciHigh)} x2={x(i) + 10} y2={y(b.ciHigh)} stroke="var(--text-primary)" strokeWidth={1.5} />
-          <line x1={x(i) - 10} y1={y(b.ciLow)} x2={x(i) + 10} y2={y(b.ciLow)} stroke="var(--text-primary)" strokeWidth={1.5} />
-          <text x={x(i)} y={y(0) + 22} textAnchor="middle" fontSize={13} fontWeight={600} fill="var(--text-primary)">{b.label}</text>
-          <text x={x(i)} y={y(0) + 40} textAnchor="middle" fontSize={11} fill="var(--text-tertiary)">{b.value}%</text>
+          <rect x={x(i) - barW / 2} y={y(b.value)} width={barW} height={y(0) - y(b.value)} rx={4} fill={i === 0 ? 'hsl(var(--accent))' : 'hsl(var(--accent) / 0.55)'} />
+          <line x1={x(i)} y1={y(b.ciHigh)} x2={x(i)} y2={y(b.ciLow)} stroke="hsl(var(--text-primary))" strokeWidth={1.5} />
+          <line x1={x(i) - 10} y1={y(b.ciHigh)} x2={x(i) + 10} y2={y(b.ciHigh)} stroke="hsl(var(--text-primary))" strokeWidth={1.5} />
+          <line x1={x(i) - 10} y1={y(b.ciLow)} x2={x(i) + 10} y2={y(b.ciLow)} stroke="hsl(var(--text-primary))" strokeWidth={1.5} />
+          <text x={x(i)} y={y(0) + 22} textAnchor="middle" fontSize={13} fontWeight={600} fill="hsl(var(--text-primary))">{b.label}</text>
+          <text x={x(i)} y={y(0) + 40} textAnchor="middle" fontSize={11} fill="hsl(var(--text-tertiary))">{b.value}%</text>
         </g>
       ))}
       {/* significance annotation */}
-      <text x={(x(0) + x(1)) / 2} y={padT - 10} textAnchor="middle" fontSize={13} fontWeight={600} fill="var(--text-secondary)">P = 0.56 (ns)</text>
-      <line x1={(x(0) + x(1)) / 2 - 40} y1={padT - 4} x2={(x(0) + x(1)) / 2 + 40} y2={padT - 4} stroke="var(--text-secondary)" strokeWidth={1} />
+      <text x={(x(0) + x(1)) / 2} y={padT - 10} textAnchor="middle" fontSize={13} fontWeight={600} fill="hsl(var(--text-secondary))">P = 0.56 (ns)</text>
+      <line x1={(x(0) + x(1)) / 2 - 40} y1={padT - 4} x2={(x(0) + x(1)) / 2 + 40} y2={padT - 4} stroke="hsl(var(--text-secondary))" strokeWidth={1} />
     </svg>
   )
 }
