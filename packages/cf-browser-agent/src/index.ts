@@ -10,7 +10,6 @@ export interface Env {
   LLM_BASE_URL?: string
   LLM_MODEL?: string
   BROWSER: unknown
-  LOADER: unknown
 }
 
 export default {
@@ -20,19 +19,6 @@ export default {
     if (url.pathname === '/healthz') {
       return new Response('ok', { status: 200 })
     }
-
-    if (url.pathname === '/debug-binding') {
-      try {
-        const r = await (env.BROWSER as any).fetch('https://localhost/v1/devtools/browser', { headers: { Upgrade: 'websocket' } })
-        const h: Record<string, string> = {}
-        r.headers.forEach((v: string, k: string) => { h[k] = v })
-        const body = await r.text().catch(() => '')
-        return new Response(JSON.stringify({ status: r.status, statusText: r.statusText, headers: h, hasWs: !!r.webSocket, body: body.slice(0, 300) }), { headers: { 'content-type': 'application/json' } })
-      } catch (e) {
-        return new Response(JSON.stringify({ error: String(e).slice(0, 300) }), { status: 500, headers: { 'content-type': 'application/json' } })
-      }
-    }
-
 
     if (url.pathname !== '/browser-task' || request.method !== 'POST') {
       return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } })
@@ -58,7 +44,7 @@ export default {
       const llm = buildLlm({ ...env })
       const result = await runBrowserTask(
         { instruction: body.instruction.trim(), url: body.url },
-        { browser: env.BROWSER, loader: env.LOADER, llm },
+        { browser: env.BROWSER, llm },
       )
       return new Response(JSON.stringify({ success: true, ...result }), {
         status: 200,

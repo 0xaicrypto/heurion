@@ -20,12 +20,10 @@ export interface BrowserTaskResult {
   dom_summary: string
   steps: string[]
   screenshot_url: string
-  debug?: { steps: unknown[] }
 }
 
 export interface BrowserTaskDeps {
   browser: unknown
-  loader: unknown
   llm: unknown
 }
 
@@ -35,7 +33,9 @@ export async function runBrowserTask(
 ): Promise<BrowserTaskResult> {
   const tools = createBrowserTools({
     browser: deps.browser as any,
-    loader: deps.loader as any,
+    // #485-followup: Worker Loaders(Dynamic Workers)需付费计划,loader 暂
+    // 不可用 — CDP 会话可建立,但 agents 的代码执行层受限(已知限制)。
+    loader: undefined as any,
   })
 
   const system = `You are a browser automation agent. You MUST use the provided tools to drive a real
@@ -56,23 +56,11 @@ with tool calls and base your summary on real results. Keep the conclusion conci
     prompt,
   })
 
-  const steps = (result.steps ?? []).map((s) => {
-    const content = Array.isArray(s.content)
-      ? s.content.map((c: any) => ({
-          type: c.type,
-          toolName: c.toolName,
-          text: typeof c.text === 'string' ? c.text.slice(0, 120) : undefined,
-          error: c.error ? String(c.error).slice(0, 200) : undefined,
-        }))
-      : undefined
-    return { stepNumber: s.stepNumber, content }
-  })
   return {
     conclusion: result.text || '任务完成',
     dom_summary: '',
-    steps: steps as unknown as string[],
+    steps: [],
     screenshot_url: '',
-    debug: { steps },
   }
 }
 
