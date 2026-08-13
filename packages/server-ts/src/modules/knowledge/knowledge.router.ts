@@ -263,8 +263,8 @@ export async function knowledgeRouter(app: FastifyInstance) {
     }
 
     const regenerated = await regenerateArticleWithLlm(article, ctx.memory, userId)
-    if (!regenerated) {
-      return reply.status(500).send({ error: 'failed to regenerate article' })
+    if (!regenerated.ok) {
+      return reply.status(500).send({ error: regenerated.error })
     }
 
     await telemetry.record({
@@ -272,10 +272,10 @@ export async function knowledgeRouter(app: FastifyInstance) {
       workspaceId: userId,
       category: 'kb_command',
       action: 'article_regenerated',
-      metadata: { articleId: regenerated.stableId, previousVersion: article.id },
+      metadata: { articleId: regenerated.value.stableId, previousVersion: article.id },
     }).catch(() => {})
 
-    return serializeArticle(regenerated, ctx.memory)
+    return serializeArticle(regenerated.value, ctx.memory)
   })
 
   // Manually edit an article
@@ -288,8 +288,8 @@ export async function knowledgeRouter(app: FastifyInstance) {
       title: body?.title,
       content: body?.content,
     }, 'user')
-    if (!edited) {
-      return reply.status(404).send({ error: 'article not found' })
+    if (!edited.ok) {
+      return reply.status(404).send({ error: edited.error })
     }
 
     await telemetry.record({
@@ -297,10 +297,10 @@ export async function knowledgeRouter(app: FastifyInstance) {
       workspaceId: userId,
       category: 'kb_command',
       action: 'article_edited',
-      metadata: { articleId: edited.stableId },
+      metadata: { articleId: edited.value.stableId },
     }).catch(() => {})
 
-    return serializeArticle(edited, ctx.memory)
+    return serializeArticle(edited.value, ctx.memory)
   })
 
   // Sidecar output feedback: extract candidates and optionally save facts
@@ -397,7 +397,7 @@ async function regenerateArticleWithLlm(
   article: import('../../memory/memory.types.js').ArticleNode,
   memory: import('../../memory/memory.service').MemoryService,
   userId: string,
-): Promise<import('../../memory/memory.types.js').ArticleNode | null> {
+): Promise<import('../../common/result').Result<import('../../memory/memory.types.js').ArticleNode>> {
   const sourceFacts = article.sourceFacts
     .map(s => memory.graph.getLatestByStableId(s.stableId))
     .filter((n): n is import('../../memory/memory.types.js').FactNode => n?.type === 'fact' && n.status !== 'superseded')
