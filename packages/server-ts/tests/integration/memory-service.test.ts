@@ -46,9 +46,10 @@ describe('MemoryService', () => {
     const fact = memory.addFact({ content: 'ZL has EGFR exon19del', importance: 5 })
     const edited = memory.editFact(fact.stableId, { content: 'ZL has EGFR exon19del (confirmed)' })
 
-    expect(edited).not.toBeNull()
-    expect(edited!.version).toBe(2)
-    expect(edited!.content).toBe('ZL has EGFR exon19del (confirmed)')
+    expect(edited.ok).toBe(true)
+    if (!edited.ok) return
+    expect(edited.value.version).toBe(2)
+    expect(edited.value.content).toBe('ZL has EGFR exon19del (confirmed)')
 
     const versions = memory.graph.getVersions(fact.stableId)
     expect(versions).toHaveLength(2)

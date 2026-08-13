@@ -95,7 +95,7 @@ export async function knowledgeStoresRouter(app: FastifyInstance) {
     if (!Array.isArray(ids)) return { deleted: 0 }
     let deleted = 0
     for (const id of ids) {
-      if (ctx.memory.deleteArticle(String(id))) deleted++
+      if (ctx.memory.deleteArticle(String(id)).ok) deleted++
     }
     return { deleted }
   })
@@ -166,7 +166,7 @@ export async function knowledgeStoresRouter(app: FastifyInstance) {
       importance: patch.importance,
       sourceType: patch.sourceType,
     })
-    if (!fact && !id.startsWith('fact_')) {
+    if (!fact.ok && !id.startsWith('fact_')) {
       const changed = ctx.facts.updateWhere(f => f.id === id, {
         content: patch.content,
         category: patch.category,
@@ -174,11 +174,11 @@ export async function knowledgeStoresRouter(app: FastifyInstance) {
         sourceType: patch.sourceType,
       })
       if (changed > 0) {
-        fact = ctx.facts.all().find(f => f.id === id) as any
+        fact = { ok: true, value: ctx.facts.all().find(f => f.id === id) as any }
       }
     }
-    if (!fact) return { error: 'Not found' }
-    return { fact }
+    if (!fact.ok) return { error: fact.error }
+    return { fact: fact.value }
   })
   app.delete('/api/v1/facts/:id', async (request: any) => {
     const ctx = getUserContext(request.user!.userId)
