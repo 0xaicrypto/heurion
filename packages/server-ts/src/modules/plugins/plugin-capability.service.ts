@@ -2,7 +2,7 @@ import { deepseekChat, getApiKey as getLlmApiKey, type LlmTelemetryContext , DEE
 import { listInstalledPlugins } from './plugin-installation.service.js'
 import { getCatalogById, type PluginManifest, type PluginTool } from './plugin-catalog.service.js'
 import { SCHEMA_VERSION, validateRenderContent, type RenderContent } from '@heurion/contracts'
-import { DISCUSSION_MARKERS, STRONG_GENERATE_VERBS } from '../../retrieval/query-router.js'
+import { DISCUSSION_MARKERS, EDIT_MARKERS, STRONG_GENERATE_VERBS } from '../../retrieval/query-router.js'
 
 export interface PluginMatch {
   pluginId: string
@@ -51,6 +51,9 @@ export async function matchIntent(userId: string, text: string): Promise<PluginM
   const q = text.toLowerCase()
   // #549: discussion/question sentences are NEVER file-generation requests.
   if (DISCUSSION_MARKERS.test(q)) return null
+  // #551-followup: polishing/editing an existing document must not hit a
+  // generator plugin ("帮我润色修改这篇论文" → general conversation, not docx).
+  if (EDIT_MARKERS.test(q)) return null
   const hasStrongVerb = STRONG_GENERATE_VERBS.test(q)
 
   for (const manifest of plugins) {

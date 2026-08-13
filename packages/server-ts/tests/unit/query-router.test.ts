@@ -83,6 +83,13 @@ describe('P3 — Query Router', () => {
       expect(classifySidecarIntent('分析一下 KM 曲线')).toBe(null)
     })
 
+    test('编辑/润色语 → null:对已有文档操作不是生成请求', () => {
+      expect(classifySidecarIntent('帮我润色修改一下这篇论文')).toBe(null)
+      expect(classifySidecarIntent('改一下这份病例总结')).toBe(null)
+      expect(classifySidecarIntent('polish this manuscript')).toBe(null)
+      expect(classifySidecarIntent('帮我完善那份出院小结')).toBe(null)
+    })
+
     test('非生成请求 → null', () => {
       expect(classifySidecarIntent('这个病人最近怎么样')).toBe(null)
       expect(classifySidecarIntent('')).toBe(null)

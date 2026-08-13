@@ -65,7 +65,7 @@ function buildSidecarClassifierPrompt(text: string, history?: SidecarHistoryEntr
   return `You are a strict intent classifier for a clinical assistant. Decide whether the user is asking to GENERATE/CREATE/EXPORT a NEW file (document, presentation, table, plot, PDF) — not merely mentioning one.
 - generate: the user explicitly asks to create/produce/export a file. Examples: "帮我生成一份出院小结 docx", "把这个表格导出为 PDF", "make me a PPT about the case".
 - discuss: the user is discussing, asking about, or interpreting EXISTING content. Examples: "这个表格的数字怎么来的", "上次那个 PPT 讲了什么", "这个图怎么解读", "help me understand this chart".
-- uncertain: anything else or ambiguous.
+- uncertain: anything else or ambiguous. IMPORTANT: EDITING/POLISHING an existing document is NOT generate — "帮我润色修改这篇论文", "改一下这份病例", "polish this manuscript" mean working on content that already exists; return uncertain unless the user explicitly asks to produce a NEW file.
 ${historyBlock}User: "${safeQuery}"
 Return ONLY one word: generate|discuss|uncertain`
 }
