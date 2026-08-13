@@ -14,7 +14,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
             echo '=== before ==='; df -h /;
-            sudo docker system prune -a -f --volumes 2>/dev/null || true;
+            sudo docker system prune -a -f 2>/dev/null || true;
             sudo ctr -n moby content prune -f 2>/dev/null || true;
             sudo docker builder prune -a -f 2>/dev/null || true;
             sudo journalctl --vacuum-time=2d 2>/dev/null || true;

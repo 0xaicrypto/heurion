@@ -107,19 +107,34 @@ export function WritingEditorPage() {
   const chatLoading = chatSession?.loading ?? false;
   const [aiEditNotice, setAiEditNotice] = useState('');
 
-  // §15.4: apply AI document write-backs to the canvas.
+  // §15.4 / #553: apply AI write-backs — only when lastDocBody actually
+  // changes. `body` must NOT be a dependency: it would re-apply the AI
+  // version over the user's manual edits on every keystroke.
+  const appliedDocBody = useRef<string | null>(null);
   useEffect(() => {
     if (!docId || !chatSession?.lastDocBody) return;
-    if (chatSession.lastDocBody === body) return;
+    if (appliedDocBody.current === chatSession.lastDocBody) return;
+    appliedDocBody.current = chatSession.lastDocBody;
     setBody(chatSession.lastDocBody);
     setDoc((prev) => (prev ? { ...prev, body: chatSession.lastDocBody as string, updated_at: new Date().toISOString() } : prev));
     setAiEditNotice('文档已更新（AI 编辑）');
     const timer = setTimeout(() => setAiEditNotice(''), 4000);
     return () => clearTimeout(timer);
-  }, [chatSession?.lastDocBody, docId, body]);
+  }, [chatSession?.lastDocBody, docId]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [chatUploadingFile, setChatUploadingFile] = useState(false);
   const [chatAttachedFiles, setChatAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
+
+  // #553: 切换文档时重置聊天本地状态。
+  const prevDocId = useRef(docId);
+  useEffect(() => {
+    if (prevDocId.current !== docId) {
+      prevDocId.current = docId;
+      setChatInput('');
+      setChatAttachedFiles([]);
+      setActiveSkills([]);
+    }
+  }, [docId]);
 
   const [refDialogOpen, setRefDialogOpen] = useState(false);
   const [refForm, setRefForm] = useState({ kind: 'guideline', content: '', label: '', source_patient_hash: '' });

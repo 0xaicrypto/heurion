@@ -347,16 +347,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   stopStream: (sessionId: string) => {
     const s = get().sessions[sessionId];
     s?.abort?.abort();
-    set((state) => ({
-      sessions: {
-        ...state.sessions,
-        [sessionId]: {
-          ...(state.sessions[sessionId]),
-          abort: null,
-          loading: false,
+    set((state) => {
+      const cur = state.sessions[sessionId];
+      if (!cur) return state;
+      // #553: 停止后清理最后一条 assistant 消息的 isStreaming 标志,
+      // 否则脉冲指示永久显示。
+      const msgs = cur.messages.map((m) =>
+        m.isStreaming ? { ...m, isStreaming: false } : m,
+      );
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: { ...cur, messages: msgs, abort: null, loading: false },
         },
-      },
-    }));
+      };
+    });
   },
 
   regenerate: async (sessionId: string, opts: SendChatOptions) => {
