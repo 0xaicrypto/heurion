@@ -2,6 +2,7 @@ import { deepseekChat, getApiKey as getLlmApiKey, type LlmTelemetryContext , DEE
 import { listInstalledPlugins } from './plugin-installation.service.js'
 import { getCatalogById, type PluginManifest, type PluginTool } from './plugin-catalog.service.js'
 import { SCHEMA_VERSION, validateRenderContent, type RenderContent } from '@heurion/contracts'
+import { DISCUSSION_MARKERS, STRONG_GENERATE_VERBS } from '../../retrieval/query-router.js'
 
 export interface PluginMatch {
   pluginId: string
@@ -35,26 +36,41 @@ export async function getActivePlugins(userId: string): Promise<PluginManifest[]
   return manifests
 }
 
+/**
+ * #549 — short, noisy trigger words ("ppt", "表格", "chart"…) fire only when
+ * a strong generate verb is present; discussion sentences never match.
+ */
+const NOISY_SHORT_PATTERNS = new Set([
+  'ppt', 'pptx', 'pdf', 'word', 'docx', '表格', '图表', '曲线', '汇报', '图',
+  'table', 'plot', 'chart', 'graph', 'presentation',
+])
+
 export async function matchIntent(userId: string, text: string): Promise<PluginMatch | null> {
   const plugins = await getActivePlugins(userId)
   let best: PluginMatch | null = null
   const q = text.toLowerCase()
+  // #549: discussion/question sentences are NEVER file-generation requests.
+  if (DISCUSSION_MARKERS.test(q)) return null
+  const hasStrongVerb = STRONG_GENERATE_VERBS.test(q)
 
   for (const manifest of plugins) {
     const triggers = manifest.triggers || []
     for (const trigger of triggers) {
       for (const pattern of trigger.patterns) {
-        if (q.includes(pattern.toLowerCase())) {
-          const score = pattern.length / Math.max(q.length, 1)
-          if (!best || score > best.confidence) {
-            const tool = manifest.tools[0]
-            if (!tool) continue
-            best = {
-              pluginId: manifest.plugin.id,
-              toolName: tool.name,
-              intent: trigger.intent,
-              confidence: score,
-            }
+        const p = pattern.toLowerCase()
+        if (!q.includes(p)) continue
+        // Short noisy word without an explicit generate verb → almost always
+        // talk about existing content ("这个表格的数字怎么来的"). Skip.
+        if (NOISY_SHORT_PATTERNS.has(p) && !hasStrongVerb) continue
+        const score = pattern.length / Math.max(q.length, 1)
+        if (!best || score > best.confidence) {
+          const tool = manifest.tools[0]
+          if (!tool) continue
+          best = {
+            pluginId: manifest.plugin.id,
+            toolName: tool.name,
+            intent: trigger.intent,
+            confidence: score,
           }
         }
       }
@@ -127,7 +143,6 @@ async function buildRenderPayload(
   const call = async (p: string): Promise<unknown> => {
     const raw = await deepseekChat([{ role: 'user', content: p }], apiKey, {
       model: DEEPSEEK_CHAT_MODEL,
-      maxTokens: 4096,
       telemetryContext: input.telemetryContext,
     })
     const match = raw.match(/\{[\s\S]*\}/)

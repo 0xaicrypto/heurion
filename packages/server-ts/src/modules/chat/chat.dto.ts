@@ -6,7 +6,7 @@
 import { z } from 'zod'
 
 export const chatSendSchema = z.object({
-  text: z.string().min(1).max(8000),
+  text: z.string().min(1).max(32000),
   session_id: z.string().min(1).max(128).optional(),
   patient_hash: z.string().min(1).max(128).nullable().optional(),
   /** #510: entry scene — overrides server-side inference (patient_hash / doc- session). */

@@ -85,20 +85,45 @@ export function classifyQuery(query: string): QueryIntent {
 }
 
 /**
- * #452 — render-intent keyword fallback (moved out of classifyQuery).
- * Only consulted AFTER the plugin trigger matcher: a user with rendering
- * plugins installed is routed via their plugin triggers; this keyword layer
- * exists so render requests are still recognized when no renderer plugin is
- * installed yet (the plugin handler then guides the user to the marketplace).
+ * #549 — sidecar candidate kinds. 'strong' = clear generate signal (verb +
+ * format word) → skip the LLM adjudicator; 'weak' = mention of an intent
+ * phrase → let the LLM adjudicator decide; null = no candidate at all.
  */
-export function classifySidecarIntent(text: string): boolean {
+export type SidecarCandidate = 'strong' | 'weak' | null
+
+/** Explicit generation verbs — a request must contain one of these (plus a
+ *  format word) to be treated as a strong generate signal. Single-character
+ *  verbs like "做" alone are noisy ("帮我做一下脑电图的分析" must stay a
+ *  discussion), but paired with a format word and no discussion marker
+ *  ("帮我做一个 PPT") they are unambiguous. */
+export const STRONG_GENERATE_VERBS = /(生成|创建|制作|做|给我|导出|create|make|generate|export|render)/i
+
+/** File/document format words that pair with a generate verb. Deliberately
+ *  excludes bare "图" — 医学词如 "脑电图"/"通路图" 不是文件格式。 */
+export const FILE_FORMAT_WORDS = /(docx|word|pptx|ppt|powerpoint|幻灯片|表格|table|图表|chart|plot|pdf|图片|绘图|figure|曲线|报告|总结|病例总结|出院小结)/i
+
+/** Phrases that are themselves a generate-intent signal (weak candidate). */
+export const WEAK_SIDECAR_PHRASES = /(病例总结|case summary|出院小结|discharge summary|研究报告|research report|基线特征|baseline|km curve|forest plot|convert to pdf|导出 pdf)/i
+
+/** #549 — discussion/question markers: "这个表格怎么来的" is NOT a file
+ *  generation request. A query containing one of these never triggers the
+ *  sidecar pipeline on its own (the LLM adjudicator may still decide). */
+export const DISCUSSION_MARKERS = /(怎么|为什么|如何|解释|解读|什么意思|是什么|对不对|是不是|讲讲|说说|介绍一下|分析一下|讲解|how|why|what|explain|interpret|discuss|mean)/i
+
+/**
+ * #549 — rule layer is now a CANDIDATE RECALL, not a decision. Strong
+ * generation signals (verb + format word, no discussion markers) return
+ * 'strong'; unambiguous intent phrases return 'weak'; everything else —
+ * including discussion sentences like "帮我做一下脑电图的分析" — returns null
+ * and never triggers sidecar generation on its own.
+ */
+export function classifySidecarIntent(text: string): SidecarCandidate {
   const q = text.toLowerCase()
-  const sidecarPatterns = [
-    /(病例总结|case summary|出院小结|discharge summary|研究报告|research report)/,
-    /(生成|创建|制作|做|生成一个|给我|导出|export|create|make|generate).*(docx|word|pptx|ppt|powerpoint|幻灯片|表格|table|图表|chart|plot|图)/,
-    /(docx|word|pptx|ppt|powerpoint|幻灯片|表格|table|图表|chart|plot|图).*?(生成|创建|制作|做|给我|导出|create|make|generate)/,
-  ]
-  return sidecarPatterns.some((p) => p.test(q))
+  if (!q) return null
+  if (DISCUSSION_MARKERS.test(q)) return null
+  if (STRONG_GENERATE_VERBS.test(q) && FILE_FORMAT_WORDS.test(q)) return 'strong'
+  if (WEAK_SIDECAR_PHRASES.test(q)) return 'weak'
+  return null
 }
 
 /**

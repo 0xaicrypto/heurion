@@ -35,6 +35,7 @@ export const CHAT_EVENT_TYPES = [
     'final_answer_chunk',
     'citations',
     'skill_capture_suggest',
+    'truncated',
     'turn_complete',
     'error',
     'plugin_selected',

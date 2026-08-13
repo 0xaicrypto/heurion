@@ -41,7 +41,7 @@ export class DeferToBackgroundTool extends BaseTool {
         const result = await deepseekChat(
           [{ role: 'user', content: prompt }],
           getApiKey(),
-          { model: (await import('../common/llm.js')).DEEPSEEK_CHAT_MODEL, maxTokens: 4096, telemetryContext: { userId: this.ctx.userId, workspaceId: this.ctx.userId, action: 'tool.background' } },
+          { model: (await import('../common/llm.js')).DEEPSEEK_CHAT_MODEL, telemetryContext: { userId: this.ctx.userId, workspaceId: this.ctx.userId, action: 'tool.background' } },
         )
         this.ctx.eventLog.append({
           timestamp: Date.now() / 1000,

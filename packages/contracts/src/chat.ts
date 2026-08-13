@@ -69,6 +69,7 @@ export type ChatStreamChunk =
   | { type: 'final_answer_chunk'; text: string }
   | { type: 'citations'; items: Citation[] }
   | { type: 'skill_capture_suggest'; text: string }
+  | { type: 'truncated'; message: string }
   | { type: 'turn_complete'; assistant_event_idx?: number }
   | { type: 'error'; message: string }
   // ── plugin pipeline events (plugin-chat-handler.ts) ──
@@ -118,6 +119,7 @@ export const CHAT_EVENT_TYPES = [
   'final_answer_chunk',
   'citations',
   'skill_capture_suggest',
+  'truncated',
   'turn_complete',
   'error',
   'plugin_selected',

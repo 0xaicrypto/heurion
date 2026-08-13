@@ -11,6 +11,100 @@
  */
 export const FRIENDLY_LLM_ERROR = '服务暂时不可用，请稍后重试'
 
+/** #548 — raised when the provider stopped generation because the output
+ *  token budget was exhausted (finish_reason='length'). Stream consumers
+ *  can surface a "回答被截断" notice instead of marking the reply complete. */
+export class LlmTruncatedError extends Error {
+  /** True when some final content was produced before the truncation. */
+  readonly hadContent: boolean
+  /** True when reasoning/thinking chunks were produced. */
+  readonly hadReasoning: boolean
+  constructor(meta: { hadContent: boolean; hadReasoning: boolean }) {
+    super('LLM response was truncated because the output token limit was reached')
+    this.name = 'LlmTruncatedError'
+    this.hadContent = meta.hadContent
+    this.hadReasoning = meta.hadReasoning
+  }
+}
+
+/** #548 — non-streaming result with truncation metadata. */
+export interface LlmChatResult {
+  text: string
+  /** True when the provider stopped at finish_reason='length'. */
+  truncated: boolean
+}
+
+/**
+ * #548 — per-model max output token budgets (native provider limits).
+ * Resolution order: option > MAX_OUTPUT_TOKENS env override > model
+ * capability > 4096 safe default. An explicit env var is the admin's
+ * global override; without it the chosen model's own limit is used.
+ * DeepSeek-style reasoners share this budget between reasoning and the
+ * visible answer, which is why the numbers are generous.
+ */
+export const MODEL_MAX_OUTPUT_TOKENS: Readonly<Record<string, number>> = {
+  // Gemini (OpenAI-compatible endpoint)
+  'gemini-2.5-flash': 8192,
+  'gemini-2.5-pro': 65536,
+  'gemini-2.0-flash': 8192,
+  // DeepSeek V4 (1M context, 384K max output — official docs; no published
+  // default, so the native ceiling is used as the generous default).
+  'deepseek-v4-flash': 384000,
+  'deepseek-v4-pro': 384000,
+  // DeepSeek V3-era IDs (max output 8K nominal)
+  'deepseek-chat': 8192,
+  'deepseek-reasoner': 8192,
+  // OpenAI
+  'gpt-4o-mini': 16384,
+  'gpt-4o': 16384,
+  'gpt-4.1-mini': 32768,
+  // Anthropic
+  'claude-3-5-sonnet-latest': 8192,
+  'claude-3-5-haiku-latest': 8192,
+  // Moonshot
+  'moonshot-v1-8k': 4096,
+  'moonshot-v1-32k': 4096,
+  'moonshot-v1-128k': 4096,
+}
+
+/** Family fallbacks for unlisted model names (e.g. gemini-2.5-flash-latest). */
+const MODEL_FAMILY_DEFAULTS: ReadonlyArray<readonly [string, number]> = [
+  ['gemini-', 8192],
+  ['gpt-', 16384],
+  ['claude-', 8192],
+  ['deepseek-', 8192],
+  ['moonshot-', 4096],
+  ['kimi-', 4096],
+]
+
+export function resolveDefaultMaxTokens(model?: string): number {
+  // Env override first — the admin's explicit global budget wins.
+  const fromEnv = parseInt(process.env.MAX_OUTPUT_TOKENS || '', 10)
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv
+  // Otherwise match the chosen model's native output capability.
+  if (model) {
+    const known = MODEL_MAX_OUTPUT_TOKENS[model]
+    if (known) return known
+    for (const [prefix, budget] of MODEL_FAMILY_DEFAULTS) {
+      if (model.startsWith(prefix)) return budget
+    }
+  }
+  return 4096
+}
+
+// #548: doubling the budget for a thinking-only truncation retry must never
+// exceed the model's native output ceiling (e.g. deepseek-v4-* caps at 384K
+// by default — doubling that would produce an invalid request).
+export function truncationRetryBudget(model: string, maxTokens: number | undefined): number {
+  const doubled = (maxTokens ?? resolveDefaultMaxTokens(model)) * 2
+  const ceiling = MODEL_MAX_OUTPUT_TOKENS[model]
+  return ceiling !== undefined && doubled > ceiling ? ceiling : doubled
+}
+
+/** #548 — a pure-reasoning truncation retries once with a doubled budget so
+ *  the user always gets a visible answer (never a silent zero-output stop). */
+const MAX_TRUNCATION_RETRY_DEPTH = 1
+
 /**
  * #511 — multimodal chat content. A message content may be a plain string
  * (legacy) or an array of content parts (text + image). Images are passed
@@ -71,6 +165,8 @@ export interface LlmChatOptions {
   /** External abort signal (client disconnect) — combined with the
    *  internal timeout via AbortSignal.any. */
   signal?: AbortSignal
+  /** @internal — pure-reasoning truncation retry guard (never set by callers). */
+  retryDepth?: number
 }
 
 /** Historical alias kept for compatibility with pre-#436 call sites. */
@@ -250,6 +346,13 @@ export interface LlmGateway {
     tools?: LlmToolDefinition[],
     onReasoning?: (text: string) => void,
   ): Promise<string>
+  /** #548 — non-streaming call with truncation metadata. */
+  chatWithMeta(
+    messages: ChatMessage[],
+    options?: LlmChatOptions,
+    tools?: LlmToolDefinition[],
+    onReasoning?: (text: string) => void,
+  ): Promise<LlmChatResult>
   /** Streaming call — yields content deltas via AsyncGenerator. */
   stream(messages: ChatMessage[], options?: LlmChatOptions, onReasoning?: (text: string) => void): AsyncGenerator<string>
   /** API key for the active provider (from the provider's env var). */
@@ -290,11 +393,20 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
     tools?: LlmToolDefinition[],
     onReasoning?: (text: string) => void,
   ): Promise<string> {
+    return (await this.chatWithMeta(messages, options, tools, onReasoning)).text
+  }
+
+  async chatWithMeta(
+    messages: ChatMessage[],
+    options: LlmChatOptions = {},
+    tools?: LlmToolDefinition[],
+    onReasoning?: (text: string) => void,
+  ): Promise<LlmChatResult> {
     const model = this.resolveModel(options, DEEPSEEK_CHAT_MODEL)
     const body: any = {
       model,
       messages: serializeMessages(messages),
-      max_tokens: options.maxTokens ?? 4096,
+      max_tokens: options.maxTokens ?? resolveDefaultMaxTokens(model),
       temperature: options.temperature ?? 0.7,
     }
     if (tools && tools.length > 0) {
@@ -327,9 +439,12 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
           blocks.push(`<tool_call>${JSON.stringify({ name: tc.function.name, arguments: JSON.parse(tc.function.arguments) })}</tool_call>`)
         }
       }
-      if (blocks.length > 0) return blocks.join('\n')
+      if (blocks.length > 0) return { text: blocks.join('\n'), truncated: false }
     }
 
+    // #548: surface finish_reason='length' so callers can tell the user the
+    // answer was cut off instead of silently presenting a half reply.
+    const truncated = choice?.finish_reason === 'length'
     const content = choice?.message?.content || ''
 
     const usage = json?.usage
@@ -340,7 +455,26 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       const cTokens = approximateTokensFromChars(content.length)
       await recordUsage(model, options, pTokens, cTokens)
     }
-    return content
+
+    // #548: truncated with ZERO visible content = the reasoner burned the
+    // whole budget thinking. Retry ONCE with a doubled budget so the user
+    // always receives an actual answer. Partial-content truncations and
+    // failed retries are returned as-is (caller surfaces the notice).
+    const retryDepth = options.retryDepth ?? 0
+    if (truncated && !content.trim() && retryDepth < MAX_TRUNCATION_RETRY_DEPTH) {
+      return await this.chatWithMeta(
+        messages,
+        {
+          ...options,
+          maxTokens: truncationRetryBudget(model, options.maxTokens),
+          retryDepth: retryDepth + 1,
+        },
+        tools,
+        onReasoning,
+      )
+    }
+
+    return { text: content, truncated }
   }
 
   async *stream(
@@ -355,7 +489,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       body: JSON.stringify({
         model,
         messages: serializeMessages(messages),
-        max_tokens: options.maxTokens ?? 4096,
+        max_tokens: options.maxTokens ?? resolveDefaultMaxTokens(model),
         temperature: options.temperature ?? 0.7,
         stream: true,
         stream_options: { include_usage: true },
@@ -370,6 +504,12 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
     let buffer = ''
     let completionChars = 0
     let finalUsage: LlmChunk['usage'] | undefined
+    let truncated = false
+    // #548: reasoning vs content tracking — a truncation BEFORE any visible
+    // content means the reasoner burned the budget thinking; the stream must
+    // not end silently with zero output.
+    let sawContent = false
+    let sawReasoning = false
 
     try {
       while (true) {
@@ -383,25 +523,41 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
           const data = line.slice(6).trim()
-          if (data === '[DONE]') return
+          // #548: the provider signals the end of the stream right after a
+          // finish_reason='length' chunk — throw before completing so the
+          // caller can surface the truncation notice.
+          if (data === '[DONE]') {
+            if (truncated) break
+            return
+          }
           try {
             const chunk: LlmChunk = JSON.parse(data)
             if (chunk.usage) {
               finalUsage = chunk.usage
               continue
             }
-            const delta = chunk.choices?.[0]?.delta
+            const choice = chunk.choices?.[0]
+            const delta = choice?.delta
             const reasoningContent = delta?.reasoning_content
-            if (reasoningContent && onReasoning) {
-              onReasoning(reasoningContent)
+            if (reasoningContent) {
+              sawReasoning = true
+              if (onReasoning) onReasoning(reasoningContent)
             }
             const content = delta?.content
             if (content) {
+              sawContent = true
               completionChars += content.length
               yield content
             }
+            // #548: detect finish_reason='length' so the caller can surface
+            // a truncation notice instead of marking a half reply complete.
+            if (choice?.finish_reason === 'length') {
+              truncated = true
+              break
+            }
           } catch { /* skip parse errors */ }
         }
+        if (truncated) break
       }
     } finally {
       reader.releaseLock()
@@ -413,6 +569,33 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       const pTokens = approximateTokensFromChars(promptChars(messages))
       const cTokens = approximateTokensFromChars(completionChars)
       await recordUsage(model, options, pTokens, cTokens)
+    }
+
+    if (truncated) {
+      // #548: nothing visible was produced — the whole budget went to
+      // thinking. Retry ONCE with a doubled budget; only give up (with the
+      // trimming metadata) when the retry also fails.
+      const retryDepth = options.retryDepth ?? 0
+      if (!sawContent && retryDepth < MAX_TRUNCATION_RETRY_DEPTH) {
+        try {
+          yield* this.stream(
+            messages,
+            {
+              ...options,
+              maxTokens: truncationRetryBudget(model, options.maxTokens),
+              retryDepth: retryDepth + 1,
+            },
+            onReasoning,
+          )
+          return
+        } catch (err) {
+          if (err instanceof LlmTruncatedError) {
+            throw new LlmTruncatedError({ hadContent: false, hadReasoning: sawReasoning || err.hadReasoning })
+          }
+          throw err
+        }
+      }
+      throw new LlmTruncatedError({ hadContent: sawContent, hadReasoning: sawReasoning })
     }
   }
 }

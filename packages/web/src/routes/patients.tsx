@@ -618,6 +618,7 @@ export function PatientChatPage() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
+              maxLength={32000}
               placeholder={t('chat.placeholder')}
               disabled={session?.loading}
               rows={1}
