@@ -124,6 +124,15 @@ const RENDER_TOOL_TYPES: Record<string, string> = {
   'heurion/pdf.convert_to_pdf': 'sidecar.convert_to_pdf',
 }
 
+/**
+ * #451-fix: worker-side template IDs. The docx plugin only ships
+ * case_summary / discharge_summary templates — 'default' is rejected with
+ * "Template 'default' not found". The other renderers accept 'default'.
+ */
+const RENDER_TEMPLATE_IDS: Record<string, string> = {
+  'sidecar.generate_docx': 'case_summary',
+}
+
 async function buildRenderPayload(
   renderType: string,
   tool: PluginTool,
@@ -165,7 +174,7 @@ async function buildRenderPayload(
     : fallbackRenderContent(renderType, input.text, patientBlock, historyBlock)
 
   return {
-    template_id: 'default',
+    template_id: RENDER_TEMPLATE_IDS[renderType] || 'default',
     output_name: (input.text.trim().slice(0, 40) || 'Output').replace(/\s+/g, '_'),
     schema_version: SCHEMA_VERSION,
     content_type: renderType,
