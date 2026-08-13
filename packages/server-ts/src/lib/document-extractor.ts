@@ -3,6 +3,7 @@ import path from 'path'
 import mammoth from 'mammoth'
 import { PDFParse } from 'pdf-parse'
 import { createWorker, type Worker } from 'tesseract.js'
+import { safeUploadPath } from './upload-path.js'
 
 export interface ExtractOptions {
   maxChars?: number
@@ -188,9 +189,8 @@ export async function extractTextFromUpload(
   fileId: string,
   options?: ExtractOptions,
 ): Promise<string> {
-  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
-  const filepath = path.join(dir, fileId)
-  if (!fs.existsSync(filepath)) return ''
+  const filepath = safeUploadPath(userId, fileId)
+  if (!filepath || !fs.existsSync(filepath)) return ''
 
   const buffer = fs.readFileSync(filepath)
   // fileId format from upload endpoint is usually `<uuid>_<originalName>`
@@ -216,9 +216,8 @@ export async function extractImageUpload(
   userId: string,
   fileId: string,
 ): Promise<{ mime: string; dataBase64: string } | { oversized: true } | null> {
-  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
-  const filepath = path.join(dir, fileId)
-  if (!fs.existsSync(filepath)) return null
+  const filepath = safeUploadPath(userId, fileId)
+  if (!filepath || !fs.existsSync(filepath)) return null
 
   const originalName = fileId.split('_').slice(1).join('_') || fileId
   if (!isImageFile(originalName)) return null

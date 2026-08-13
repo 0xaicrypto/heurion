@@ -27,9 +27,9 @@ export class OCRImageTool extends BaseTool {
     if (!fileId) return { success: false, error: 'file_id required' }
 
     const fs = await import('fs')
-    const path = await import('path')
-    const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', this.ctx.userId, 'uploads', fileId)
-    if (!fs.existsSync(filepath)) return { success: false, error: `File ${fileId} not found` }
+    const { safeUploadPath } = await import('../lib/upload-path.js')
+    const filepath = safeUploadPath(this.ctx.userId, fileId)
+    if (!filepath || !fs.existsSync(filepath)) return { success: false, error: `File ${fileId} not found` }
 
     try {
       const { extractDocumentText } = await import('../lib/document-extractor.js')

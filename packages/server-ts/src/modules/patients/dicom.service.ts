@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { safeUploadPath } from '../../lib/upload-path.js'
 import zlib from 'zlib'
 import crypto from 'crypto'
 
@@ -51,13 +52,14 @@ const WINDOW_PRESETS: Record<string, { center: number; width: number }> = {
 
 function uid(): string { return crypto.randomBytes(8).toString('hex') }
 
-function getDicomPath(userId: string, fileId: string): string {
-  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
-  let p = path.join(dir, fileId)
-  if (fs.existsSync(p)) return p
-  p = path.join(dir, fileId + '.dcm')
-  if (fs.existsSync(p)) return p
-  return p
+function getDicomPath(userId: string, fileId: string): string | null {
+  // #553: fileId 可能来自客户端 — 安全拼接,拒绝路径穿越。
+  const base = safeUploadPath(userId, fileId)
+  if (!base) return null
+  if (fs.existsSync(base)) return base
+  const withExt = safeUploadPath(userId, fileId + '.dcm')
+  if (withExt && fs.existsSync(withExt)) return withExt
+  return null
 }
 
 function parseInstance(filepath: string): DicomInstance | null {
@@ -146,7 +148,7 @@ function renderGrayscalePng(
 
 function parseStudy(userId: string, studyId: string): DicomStudy | null {
   const filepath = getDicomPath(userId, studyId)
-  if (!fs.existsSync(filepath) || !dicomParser) return null
+  if (!filepath || !fs.existsSync(filepath) || !dicomParser) return null
   try {
     const buffer = fs.readFileSync(filepath)
     const arr = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
@@ -318,7 +320,7 @@ export function renderGridPng(
 
 export function getMetadata(userId: string, studyId: string): Record<string, any> | null {
   const filepath = getDicomPath(userId, studyId)
-  if (!dicomParser || !fs.existsSync(filepath)) return null
+  if (!filepath || !dicomParser || !fs.existsSync(filepath)) return null
   try {
     const buffer = fs.readFileSync(filepath)
     const arr = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)

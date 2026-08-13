@@ -2,6 +2,7 @@ import { deepseekChat, getApiKey, type LlmTelemetryContext , DEEPSEEK_CHAT_MODEL
 import prisma from '../../common/prisma.js'
 import fs from 'fs'
 import path from 'path'
+import { safeUploadPath } from '../../lib/upload-path.js'
 
 /**
  * Clinical Analysis Service — extracted from uploads and chats
@@ -138,9 +139,8 @@ export async function updateMedicalRecordFromChat(
 export async function analyzeUploadForPatient(
   userId: string, fileId: string, telemetryContext?: LlmTelemetryContext
 ): Promise<ClinicalFinding[]> {
-  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
-  const filepath = path.join(dir, fileId)
-  if (!fs.existsSync(filepath)) return []
+  const filepath = safeUploadPath(userId, fileId)
+  if (!filepath || !fs.existsSync(filepath)) return []
 
   const text = fs.readFileSync(filepath, 'utf-8').slice(0, 3000)
   const prompt = `Extract clinical findings from this medical document. Return ONLY a JSON array:
