@@ -35,14 +35,26 @@ ENVEOF
 cd ~/heurion/packages/embedding-server
 EMBEDDING_SERVER_PORT=8004 npm install 2>/dev/null || npm install
 EMBEDDING_SERVER_PORT=8004 npm run build 2>/dev/null || true
+# #553: 预下载模型(fail fast)— 运行时 60 次健康重试掩盖了模型加载失败,
+# 且 pm2 重启循环会让 /health 假阳性(进程在监听但模型不可用)。
+if ! EMBEDDING_SERVER_PORT=8004 npm run precache; then
+  echo "⚠ embedding model precache failed — clearing HF cache and retrying once"
+  rm -rf ~/.cache/huggingface ~/.cache/@xenova 2>/dev/null || true
+  EMBEDDING_SERVER_PORT=8004 npm run precache || {
+    echo "❌ embedding model unavailable (bge-m3 download/load failed)"
+    exit 1
+  }
+fi
 pm2 delete heurion-embedding-staging 2>/dev/null || true
 EMBEDDING_SERVER_PORT=8004 pm2 start node --name heurion-embedding-staging -- dist/index.js
 
+# 健康检查:先 /health,再真实 embed 探针(验证模型真正就绪)。
 EMBEDDING_HEALTH_URL="http://localhost:8004/health"
 EMBEDDING_MAX_RETRIES=60
 for i in $(seq 1 $EMBEDDING_MAX_RETRIES); do
-  if curl -fsS "$EMBEDDING_HEALTH_URL" >/dev/null 2>&1; then
-    echo "✓ Staging embedding service healthy"
+  if curl -fsS "$EMBEDDING_HEALTH_URL" >/dev/null 2>&1 && \
+     curl -fsS -X POST "http://localhost:8004/embed" -H 'content-type: application/json' -d '{"texts":["health"]}' >/dev/null 2>&1; then
+    echo "✓ Staging embedding service healthy (model ready)"
     break
   fi
   echo "  staging embedding health check attempt $i/$EMBEDDING_MAX_RETRIES failed, retrying in 5s..."
