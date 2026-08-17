@@ -85,53 +85,34 @@ export function classifyQuery(query: string): QueryIntent {
 }
 
 /**
- * #549 — sidecar candidate kinds. 'strong' = clear generate signal (verb +
- * format word) → skip the LLM adjudicator; 'weak' = mention of an intent
- * phrase → let the LLM adjudicator decide; null = no candidate at all.
+ * #557 — sidecar 意图判定已收敛为"强否决规则 + 一次 LLM 裁决"（见
+ * intent-router.ts）。候选召回（strong/weak 正则组合）整体移除：
+ * - STRONG_GENERATE_VERBS / FILE_FORMAT_WORDS / WEAK_SIDECAR_PHRASES /
+ *   STRONG_DIRECT_MAX_CHARS 不再使用（#558-issue 兼类词误触整类从此消失）
+ * - 保留的只有确定性否决锚点：编辑语与讨论语
  */
-export type SidecarCandidate = 'strong' | 'weak' | null
-
-/** Explicit generation verbs — a request must contain one of these (plus a
- *  format word) to be treated as a strong generate signal. Single-character
- *  verbs like "做" alone are noisy ("帮我做一下脑电图的分析" must stay a
- *  discussion), but paired with a format word and no discussion marker
- *  ("帮我做一个 PPT") they are unambiguous. */
-export const STRONG_GENERATE_VERBS = /(生成|创建|制作|做|给我|导出|create|make|generate|export|render)/i
-
-/** File/document format words that pair with a generate verb. Deliberately
- *  excludes bare "图" — 医学词如 "脑电图"/"通路图" 不是文件格式。 */
-export const FILE_FORMAT_WORDS = /(docx|word|pptx|ppt|powerpoint|幻灯片|表格|table|图表|chart|plot|pdf|图片|绘图|figure|曲线|报告|总结|病例总结|出院小结)/i
-
-/** Phrases that are themselves a generate-intent signal (weak candidate). */
-export const WEAK_SIDECAR_PHRASES = /(病例总结|case summary|出院小结|discharge summary|研究报告|research report|基线特征|baseline|km curve|forest plot|convert to pdf|导出 pdf)/i
 
 /** #549 — discussion/question markers: "这个表格怎么来的" is NOT a file
- *  generation request. A query containing one of these never triggers the
- *  sidecar pipeline on its own (the LLM adjudicator may still decide). */
-export const DISCUSSION_MARKERS = /(怎么|为什么|如何|解释|解读|什么意思|是什么|对不对|是不是|讲讲|说说|介绍一下|分析一下|讲解|how|why|what|explain|interpret|discuss|mean)/i
+ *  generation request. A query containing one of these is vetoed for
+ *  generation (deterministic anchor, zero LLM cost). */
+export const DISCUSSION_MARKERS = /(怎么|为什么|如何|解释|解读|什么|对不对|是不是|讲讲|说说|介绍一下|分析|讲解|how|why|what|explain|interpret|discuss|mean)/i
 
 /** #551-followup — edit/refine markers: "帮我润色这篇论文" operates on an
  *  EXISTING document. File generation requires the source material, which the
  *  chat usually does not carry — never route these to a generator plugin, or
  *  the AI invents clinical content instead of polishing the user's paper. */
-export const EDIT_MARKERS = /(润色|修改|改一下|完善|续写|改写|修正|polish|edit|revise|rewrite|improve)/i
+export const EDIT_MARKERS = /(润色|修改|改一下|完善|续写|改写|重写|修正|排版|polish|edit|revise|rewrite|improve)/i
 
 /**
- * #549 — rule layer is now a CANDIDATE RECALL, not a decision. Strong
- * generation signals (verb + format word, no discussion markers) return
- * 'strong'; unambiguous intent phrases return 'weak'; everything else —
- * including discussion sentences like "帮我做一下脑电图的分析" — returns null
- * and never triggers sidecar generation on its own.
+ * #557 — deterministic veto: when one of these markers is present the message
+ * is by definition NOT a file-generation request. No LLM needed, no ambiguity.
  */
-export function classifySidecarIntent(text: string): SidecarCandidate {
+export function isSidecarVetoed(text: string): boolean {
   const q = text.toLowerCase()
-  if (!q) return null
-  if (DISCUSSION_MARKERS.test(q)) return null
-  // Editing/polishing an existing document is not a generate request.
-  if (EDIT_MARKERS.test(q)) return null
-  if (STRONG_GENERATE_VERBS.test(q) && FILE_FORMAT_WORDS.test(q)) return 'strong'
-  if (WEAK_SIDECAR_PHRASES.test(q)) return 'weak'
-  return null
+  if (!q) return false
+  if (DISCUSSION_MARKERS.test(q)) return true
+  if (EDIT_MARKERS.test(q)) return true
+  return false
 }
 
 /**
@@ -214,8 +195,7 @@ Available intents:
 - vector: clinical/guideline/literature questions
 - file: file or attachment references
 - knowledge_command: ONLY explicit COMMAND-LIKE instructions that START with an action verb (记住, 保存, 搜索知识库, 总结知识库, 查看我的未解问题, 回答gap; english: remember, save, search my knowledge base, summarize, list gaps). Questions and soft requests are NEVER knowledge_command: "我想了解你学到了什么", "你能告诉我记忆里有什么", "what did you learn", "你掌握了哪些信息" → use mixed.
-- sidecar: requests to generate documents, presentations, tables, or plots
-- mixed: anything else or ambiguous
+- mixed: anything else or ambiguous. Document/report requests (生成文档/PPT/表格, or editing/polishing existing documents 润色/修改) belong here — a dedicated sidecar intent router decides those separately.
 
 Return ONLY the intent label, nothing else.
 
@@ -245,7 +225,7 @@ export function createDefaultLLMClassifier(context?: LlmTelemetryContext): LLMCl
           },
         )
         const intent = raw.trim().toLowerCase().split(/\s+/)[0]
-        if (['sql', 'vector', 'file', 'knowledge_command', 'sidecar', 'mixed'].includes(intent)) {
+        if (['sql', 'vector', 'file', 'knowledge_command', 'mixed'].includes(intent)) {
           return intent as QueryIntent
         }
         return 'mixed'
@@ -273,7 +253,7 @@ export async function classifyQueryLLM(
 
   try {
     const intent = await classifier.classify(query)
-    if (['sql', 'vector', 'file', 'knowledge_command', 'sidecar', 'mixed'].includes(intent)) {
+    if (['sql', 'vector', 'file', 'knowledge_command', 'mixed'].includes(intent)) {
       return intent
     }
     return 'mixed'

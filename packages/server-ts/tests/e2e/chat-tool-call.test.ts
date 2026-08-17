@@ -1,5 +1,4 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
-import fs from 'node:fs'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getApp, authHeader } from '../setup.js'
 
@@ -48,10 +47,6 @@ describe('chat tool-call parsing (regression: nested arguments JSON)', () => {
       payload: JSON.stringify({ text: '患者发热持续3周，胸痛伴随咳嗽。先做一个初步诊断', patient_hash: hash }),
     })
     expect(res.statusCode).toBe(200)
-    require('fs').appendFileSync('/tmp/opencode/calls.txt', vi.mocked(deepseekChat).mock.calls.map((c: any) => {
-      const users = (c[0] as any[]).filter((m: any) => m.role === 'user')
-      return JSON.stringify(users[users.length - 1]?.content ?? '(none)')
-    }).join('\n---\n') + '\n=======\n')
 
     // Tool loop executed: classifier + round1(tool) + round2(final) = 3
     // calls (excludes the #6 async medical-record analysis pass).

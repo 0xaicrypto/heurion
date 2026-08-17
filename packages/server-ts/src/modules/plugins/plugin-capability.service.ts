@@ -2,7 +2,7 @@ import { deepseekChat, getApiKey as getLlmApiKey, type LlmTelemetryContext , DEE
 import { listInstalledPlugins } from './plugin-installation.service.js'
 import { getCatalogById, type PluginManifest, type PluginTool } from './plugin-catalog.service.js'
 import { SCHEMA_VERSION, validateRenderContent, type RenderContent } from '@heurion/contracts'
-import { DISCUSSION_MARKERS, EDIT_MARKERS, STRONG_GENERATE_VERBS } from '../../retrieval/query-router.js'
+import { DISCUSSION_MARKERS, EDIT_MARKERS } from '../../retrieval/query-router.js'
 
 export interface PluginMatch {
   pluginId: string
@@ -10,6 +10,16 @@ export interface PluginMatch {
   intent: string
   confidence: number
 }
+
+/**
+ * #558 — three-way result so callers can distinguish WHY no plugin matched:
+ * - a PluginMatch: a generation plugin trigger fired
+ * - 'edit-or-discuss': the text is editing/polishing/discussing EXISTING
+ *   content — a generation plugin is wrong BY DESIGN, not missing. Callers
+ *   must fall back to normal conversation, never show "install a plugin".
+ * - null: no plugin trigger matched at all (plugins may not be installed).
+ */
+export type IntentMatch = PluginMatch | 'edit-or-discuss' | null
 
 export interface PayloadBuildInput {
   text: string
@@ -37,34 +47,27 @@ export async function getActivePlugins(userId: string): Promise<PluginManifest[]
 }
 
 /**
- * #549 — short, noisy trigger words ("ppt", "表格", "chart"…) fire only when
- * a strong generate verb is present; discussion sentences never match.
+ * #557 — intent adjudication happens in the LLM layer (intent-router). This
+ * function's ONLY job is plugin availability: does an installed tool trigger
+ * on this text, and is it NOT vetoed as edit/discussion? Used as the
+ * confirmation step AFTER the LLM says generate (plugin-chat-handler) and as
+ * the second line of defense ('edit-or-discuss' → fall back to conversation).
  */
-const NOISY_SHORT_PATTERNS = new Set([
-  'ppt', 'pptx', 'pdf', 'word', 'docx', '表格', '图表', '曲线', '汇报', '图',
-  'table', 'plot', 'chart', 'graph', 'presentation',
-])
-
-export async function matchIntent(userId: string, text: string): Promise<PluginMatch | null> {
+export async function matchIntent(userId: string, text: string): Promise<IntentMatch> {
   const plugins = await getActivePlugins(userId)
   let best: PluginMatch | null = null
   const q = text.toLowerCase()
-  // #549: discussion/question sentences are NEVER file-generation requests.
-  if (DISCUSSION_MARKERS.test(q)) return null
-  // #551-followup: polishing/editing an existing document must not hit a
-  // generator plugin ("帮我润色修改这篇论文" → general conversation, not docx).
-  if (EDIT_MARKERS.test(q)) return null
-  const hasStrongVerb = STRONG_GENERATE_VERBS.test(q)
+  // #549/#557: editing/polishing or discussing existing content is NEVER a
+  // generator-plugin request — vetoed by deterministic markers, no plugin
+  // lookup needed for them.
+  if (DISCUSSION_MARKERS.test(q)) return 'edit-or-discuss'
+  if (EDIT_MARKERS.test(q)) return 'edit-or-discuss'
 
   for (const manifest of plugins) {
     const triggers = manifest.triggers || []
     for (const trigger of triggers) {
       for (const pattern of trigger.patterns) {
-        const p = pattern.toLowerCase()
-        if (!q.includes(p)) continue
-        // Short noisy word without an explicit generate verb → almost always
-        // talk about existing content ("这个表格的数字怎么来的"). Skip.
-        if (NOISY_SHORT_PATTERNS.has(p) && !hasStrongVerb) continue
+        if (!q.includes(pattern.toLowerCase())) continue
         const score = pattern.length / Math.max(q.length, 1)
         if (!best || score > best.confidence) {
           const tool = manifest.tools[0]

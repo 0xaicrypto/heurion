@@ -17,8 +17,8 @@ import type { ChatScene } from '../../common/persona.js'
 import { deepseekStream, deepseekChat, deepseekChatWithMeta, LlmTruncatedError, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { chatSendSchema } from './chat.dto.js'
 import { analyzeChatForPatient, updatePatientFromFindings, analyzeChatForMedicalRecord, updateMedicalRecordFromChat } from '../patients/clinical-analysis.js'
-import { router, createDefaultLLMClassifier } from '../../retrieval/query-router.js'
-import { resolveSidecarIntent } from '../../retrieval/intent-router.js'
+import { router } from '../../retrieval/query-router.js'
+import { resolveSidecarIntent, type SidecarDecisionDetail } from '../../retrieval/intent-router.js'
 import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
 import { detectDoomLoop } from '../../tools/doom-loop.js'
 import { ensureSessionCompaction, getInFlightCompaction } from '../../memory/compaction/index.js'
@@ -418,13 +418,11 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       send({ type: 'turn_started', event_idx: ctx.eventLog.count() + 1, patient_hash: patientHash })
 
       // ── P3: Route the query before building expensive context ──
-      const routeResult = await router(body.text, {
-        llmClassifier: createDefaultLLMClassifier({
-          userId,
-          workspaceId: userId,
-          action: 'router.classify',
-        }),
-      })
+      // #557: rule layer only — the LLM fallback classifier was retired here.
+      // sidecar generation is adjudicated once by resolveSidecarIntent below
+      // (its SINGLE authority); rule-missed queries flow into the normal
+      // conversation pipeline instead of paying a second LLM call.
+      const routeResult = await router(body.text, {})
       await telemetry.record({
         userId,
         workspaceId: userId,
@@ -478,10 +476,11 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       }
 
       // Plugin-based document rendering — handled directly without streaming
-      // LLM output. #452: sidecar intent comes from the IntentRouter chain
-      // (plugin triggers → keyword fallback), not from query-router regex.
-      // #549: recent turns are passed so the LLM adjudicator can understand
-      // reference ("做好了发我") instead of misreading the bare message.
+      // LLM output. #452/#549: the main router no longer classifies sidecar
+      // (its LLM fallback lacked the edit/polish exclusion and caused
+      // #552-class misroutes); resolveSidecarIntent is the SINGLE authority
+      // for "is this a file-generation request" — rule candidate recall →
+      // LLM adjudicator → conservative fallback, all with history context.
       const recentTurns = ctx.eventLog.query({ sessionId: sid, limit: 40 })
         .reverse()
         .filter((evt: any) => evt.eventType === 'user_message' || evt.eventType === 'assistant_response')
@@ -490,8 +489,37 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
           role: evt.eventType === 'user_message' ? ('user' as const) : ('assistant' as const),
           content: evt.content,
         }))
-      const isSidecarRequest = await resolveSidecarIntent(userId, body.text, { history: recentTurns })
-      if (routeResult.intent === 'sidecar' || isSidecarRequest) {
+      // #560/#561: capture the adjudication detail — telemetry-worthy verdict
+      // distribution and, on 'uncertain', an intent_clarify hint for the UI
+      // (the request could be a generation request, but the LLM was unsure).
+      let sidecarDetail: SidecarDecisionDetail | undefined
+      const isSidecarRequest = await resolveSidecarIntent(userId, body.text, {
+        history: recentTurns,
+        onDecision: (detail) => { sidecarDetail = detail },
+      })
+      await telemetry.record({
+        userId,
+        workspaceId: userId,
+        category: 'sidecar',
+        action: 'intent',
+        metadata: {
+          verdict: sidecarDetail?.verdict ?? 'uncertain',
+          vetoed: sidecarDetail?.vetoed ?? false,
+          llmCalls: sidecarDetail?.llmCalls ?? 0,
+          cacheHit: sidecarDetail?.cacheHit ?? false,
+          textLength: sidecarDetail?.textLength ?? body.text.length,
+          historyTurns: sidecarDetail?.historyTurns ?? 0,
+        },
+      }).catch(() => {})
+      if (!isSidecarRequest && sidecarDetail?.verdict === 'uncertain') {
+        // #561: conservative by design — never generate on doubt, but tell
+        // the user we can generate if they confirm.
+        send({
+          type: 'intent_clarify',
+          text: '如果你是想让我生成一份文档/PPT/表格，请明确说"生成/导出"；否则我会按普通对话回复。',
+        })
+      }
+      if (isSidecarRequest) {
         const patient = await findPatient(userId, patientHash)
 
         // Conversation history from event log (same source as the normal
@@ -523,65 +551,72 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
           send,
         })
 
-        await telemetry.record({
-          userId,
-          workspaceId: userId,
-          category: 'plugin',
-          action: 'render',
-          metadata: {
-            jobId: pluginResult.job?.job_id,
-            status: pluginResult.job?.status,
-            hadError: pluginResult.job?.status === 'failed',
-          },
-        }).catch(() => {})
+        // #558: the request was editing/polishing existing content that only
+        // looked like a generation request — fall back to the normal
+        // conversation pipeline (no plugin telemetry/events, no early return).
+        if (pluginResult.fallback) {
+          send({ type: 'context_info', text: '未匹配到生成意图，转入常规对话。', kind: 'plugin' })
+        } else {
+          await telemetry.record({
+            userId,
+            workspaceId: userId,
+            category: 'plugin',
+            action: 'render',
+            metadata: {
+              jobId: pluginResult.job?.job_id,
+              status: pluginResult.job?.status,
+              hadError: pluginResult.job?.status === 'failed',
+            },
+          }).catch(() => {})
 
-        ctx.eventLog.append({
-          timestamp: Date.now() / 1000,
-          eventType: 'user_message',
-          content: body.text,
-          metadata: { patientHash, plugin: true },
-          agentId: userId,
-          sessionId: sid,
-        })
-        const pluginMeta: Record<string, unknown> = { plugin: true, sidecar: true, jobId: pluginResult.job?.job_id }
-        if (pluginResult.file) {
-          pluginMeta.file = {
-            fileId: pluginResult.file.fileId,
-            fileName: pluginResult.file.fileName,
-            mimeType: pluginResult.file.mimeType,
-          }
-          pluginMeta.knowledgePayload = {
-            title: pluginResult.file.fileName,
-            content: pluginResult.text || `Generated document: ${pluginResult.file.fileName}`,
-          }
-        }
-        ctx.eventLog.append({
-          timestamp: Date.now() / 1000,
-          eventType: 'assistant_response',
-          content: pluginResult.text,
-          metadata: pluginMeta,
-          agentId: userId,
-          sessionId: sid,
-        })
-
-        send({ type: 'final_answer_chunk', text: pluginResult.text })
-        if (pluginResult.file) {
-          send({
-            type: 'sidecar_file',
-            file_id: pluginResult.file.fileId,
-            file_name: pluginResult.file.fileName,
-            mime_type: pluginResult.file.mimeType,
-            download_url: pluginResult.file.downloadUrl,
-            expires_in: pluginResult.file.expiresIn,
-            knowledge_payload: {
+          ctx.eventLog.append({
+            timestamp: Date.now() / 1000,
+            eventType: 'user_message',
+            content: body.text,
+            metadata: { patientHash, plugin: true },
+            agentId: userId,
+            sessionId: sid,
+          })
+          const pluginMeta: Record<string, unknown> = { plugin: true, sidecar: true, jobId: pluginResult.job?.job_id }
+          if (pluginResult.file) {
+            pluginMeta.file = {
+              fileId: pluginResult.file.fileId,
+              fileName: pluginResult.file.fileName,
+              mimeType: pluginResult.file.mimeType,
+            }
+            pluginMeta.knowledgePayload = {
               title: pluginResult.file.fileName,
               content: pluginResult.text || `Generated document: ${pluginResult.file.fileName}`,
-            },
+            }
+          }
+          ctx.eventLog.append({
+            timestamp: Date.now() / 1000,
+            eventType: 'assistant_response',
+            content: pluginResult.text,
+            metadata: pluginMeta,
+            agentId: userId,
+            sessionId: sid,
           })
+
+          send({ type: 'final_answer_chunk', text: pluginResult.text })
+          if (pluginResult.file) {
+            send({
+              type: 'sidecar_file',
+              file_id: pluginResult.file.fileId,
+              file_name: pluginResult.file.fileName,
+              mime_type: pluginResult.file.mimeType,
+              download_url: pluginResult.file.downloadUrl,
+              expires_in: pluginResult.file.expiresIn,
+              knowledge_payload: {
+                title: pluginResult.file.fileName,
+                content: pluginResult.text || `Generated document: ${pluginResult.file.fileName}`,
+              },
+            })
+          }
+          send({ type: 'citations', items: [] })
+          send({ type: 'turn_complete', assistant_event_idx: ctx.eventLog.count() })
+          return
         }
-        send({ type: 'citations', items: [] })
-        send({ type: 'turn_complete', assistant_event_idx: ctx.eventLog.count() })
-        return
       }
 
       // #2/#544: 附件 → 对话内容(图片多模态/超限降级/文本注入)由
