@@ -237,9 +237,9 @@ jobs:
           OPENCODE_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           scp -o StrictHostKeyChecking=no scripts/deploy-staging.sh scripts/regression-test.sh scripts/probe-staging.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:~/heurion/scripts/
-          # #553: 去掉 || true — staging 部署或回归失败必须失败本 job,
-          # 否则生产门禁形同虚设(probe 仅诊断,单独以 ; 分隔)。
-          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd ~/heurion && DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY OPENCODE_KEY=$OPENCODE_KEY bash scripts/deploy-staging.sh && bash scripts/regression-test.sh http://localhost:8002; bash scripts/probe-staging.sh"
+          # #553/#565: 部署或回归失败必须失败本 job。probe 仅诊断,用 rc 捕获,
+          # 不能让 `; bash probe ... || true` 吞掉前面的失败退出码。
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd ~/heurion && DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY OPENCODE_KEY=$OPENCODE_KEY bash scripts/deploy-staging.sh && bash scripts/regression-test.sh http://localhost:8002; rc=\$?; bash scripts/probe-staging.sh || true; exit \$rc"
 
 
   provision-reactome-diagrams:
