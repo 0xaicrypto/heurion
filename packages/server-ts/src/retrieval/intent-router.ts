@@ -21,6 +21,8 @@
  */
 import { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL, type LlmTelemetryContext } from '../common/llm.js'
 import { isSidecarVetoed } from './query-router.js'
+import { SemanticIntentRouter, type SemanticVerdict } from './semantic-intent-router.js'
+import { SEMANTIC_GENERATE_SEEDS, SEMANTIC_VETO_SEEDS } from './semantic-seeds.js'
 
 export type SidecarDecision = 'generate' | 'discuss' | 'uncertain'
 
@@ -110,6 +112,11 @@ export function clearSidecarCache(): void {
   sidecarCache.clear()
 }
 
+/** #562 — reset the lazily-built semantic router (tests switch env modes). */
+export function resetSemanticRouterForTests(): void {
+  semanticRouter = undefined
+}
+
 export interface ResolveSidecarOptions {
   /** Recent conversation turns — helps the adjudicator understand reference. */
   history?: SidecarHistoryEntry[]
@@ -132,6 +139,8 @@ export interface SidecarDecisionDetail {
   cacheHit: boolean
   textLength: number
   historyTurns: number
+  /** #562 — semantic router verdict when enabled (shadow/on); undefined otherwise. */
+  semantic?: SemanticVerdict
 }
 
 /**
@@ -168,6 +177,30 @@ export async function resolveSidecarIntent(
   return result.decision
 }
 
+// #562 — semantic router instance (lazy; embedding service may be absent).
+let semanticRouter: SemanticIntentRouter | null | undefined
+
+async function getSemanticRouter(): Promise<SemanticIntentRouter | null> {
+  if (semanticRouter !== undefined) return semanticRouter
+  const mode = process.env.INTENT_SEMANTIC_ROUTER || 'off'
+  if (mode !== 'on' && mode !== 'shadow') {
+    semanticRouter = null
+    return null
+  }
+  try {
+    const { createAiProvider } = await import('../common/ai/ai-provider.js')
+    const provider = createAiProvider()
+    semanticRouter = new SemanticIntentRouter({
+      embed: (texts) => provider.embed(texts),
+      generateSeeds: SEMANTIC_GENERATE_SEEDS,
+      vetoSeeds: SEMANTIC_VETO_SEEDS,
+    })
+  } catch {
+    semanticRouter = null
+  }
+  return semanticRouter
+}
+
 async function adjudicate(opts: ResolveSidecarOptions, text: string): Promise<{ decision: boolean; detail: SidecarDecisionDetail }> {
   // #557: deterministic veto first — zero LLM cost, and the veto is final:
   // editing/discussion sentences must never pay for adjudication either.
@@ -178,6 +211,29 @@ async function adjudicate(opts: ResolveSidecarOptions, text: string): Promise<{ 
     }
     opts.onDecision?.(detail)
     return { decision: false, detail }
+  }
+  // #562: semantic router (opt-in, shadow/on) — high-confidence answers skip
+  // the LLM entirely; 'uncertain' falls through to the adjudicator below.
+  try {
+    const semantic = await getSemanticRouter()
+    if (semantic) {
+      const semanticVerdict = await semantic.classify(text)
+      if (semanticVerdict === 'generate' || semanticVerdict === 'veto') {
+        const detail: SidecarDecisionDetail = {
+          verdict: semanticVerdict === 'generate' ? 'generate' : 'discuss',
+          vetoed: semanticVerdict === 'veto',
+          llmCalls: 0,
+          cacheHit: false,
+          textLength: text.length,
+          historyTurns: opts.history?.length ?? 0,
+          semantic: semanticVerdict,
+        }
+        opts.onDecision?.(detail)
+        return { decision: semanticVerdict === 'generate', detail }
+      }
+    }
+  } catch {
+    // semantic layer outage → fall through to LLM (never block on doubt).
   }
   // #549: any adjudicator failure degrades to 'discuss' — never generate on doubt.
   try {
