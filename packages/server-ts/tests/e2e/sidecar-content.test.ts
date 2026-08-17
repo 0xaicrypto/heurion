@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockAiProvider } from '../helpers/ai-mock.js'
+import { mockAiProvider, intentAware } from '../helpers/ai-mock.js'
 import { getApp, authHeader } from '../setup.js'
 
 // Execution-plane env must exist BEFORE the module under test loads (it
@@ -83,7 +83,8 @@ describe('sidecar content guarantee (AI → validated JSON)', () => {
   }, 30000)
 
   test('both LLM attempts failing falls back to user-request content (never empty)', async () => {
-    vi.mocked(deepseekChat).mockResolvedValue('not json at all') // both attempts unparseable
+    // #557: adjudicator answered first; both content attempts unparseable.
+    vi.mocked(deepseekChat).mockImplementation(intentAware(() => 'not json at all'))
     const findEnqueue = mockWorker()
 
     const app = await getApp()

@@ -4,7 +4,7 @@ import { deepseekChat } from '../../src/common/llm.js'
 import {
   classifyQuery,
   classifyQueryLLM,
-  classifySidecarIntent,
+  isSidecarVetoed,
   clearRouteCache,
   defaultLLMClassifier,
   parseKnowledgeCommand,
@@ -63,36 +63,47 @@ describe('P3 — Query Router', () => {
     })
   })
 
-  describe('classifySidecarIntent — #549 候选召回(strong/weak/null)', () => {
-    test('强生成信号:动词+格式词 → strong(直接放行,不花 LLM)', () => {
-      expect(classifySidecarIntent('帮我生成一份出院小结 docx')).toBe('strong')
-      expect(classifySidecarIntent('把表格导出为 PDF')).toBe('strong')
-      expect(classifySidecarIntent('生成一份病例总结')).toBe('strong')
+  describe('isSidecarVetoed — #557 确定性否决（只说不，永不说是）', () => {
+    test('讨论句 → 否决（不生成，零 LLM）', () => {
+      expect(isSidecarVetoed('这个表格的数字怎么来的')).toBe(true)
+      expect(isSidecarVetoed('帮我做一下脑电图的分析')).toBe(true)
+      expect(isSidecarVetoed('上次那个 PPT 讲了什么')).toBe(true)
+      expect(isSidecarVetoed('这个图怎么解读')).toBe(true)
+      expect(isSidecarVetoed('分析一下 KM 曲线')).toBe(true)
+      expect(isSidecarVetoed('这个病人最近怎么样')).toBe(true)
     })
 
-    test('弱信号:仅长短语 → weak(交给 LLM 精裁)', () => {
-      expect(classifySidecarIntent('帮我看看病例总结')).toBe('weak')
-      expect(classifySidecarIntent('上次说的 km curve')).toBe('weak')
+    test('编辑/润色句 → 否决', () => {
+      expect(isSidecarVetoed('帮我润色修改一下这篇论文')).toBe(true)
+      expect(isSidecarVetoed('改一下这份病例总结')).toBe(true)
+      expect(isSidecarVetoed('polish this manuscript')).toBe(true)
+      expect(isSidecarVetoed('帮我完善那份出院小结')).toBe(true)
+      expect(isSidecarVetoed('把这篇论文排版成 Word 发我')).toBe(true)
+      expect(isSidecarVetoed('把论文的结论部分重写一遍')).toBe(true)
     })
 
-    test('讨论句 → null:不再把"做/图/表格"当生成请求', () => {
-      expect(classifySidecarIntent('帮我做一下脑电图的分析')).toBe(null)
-      expect(classifySidecarIntent('这个表格的数字怎么来的')).toBe(null)
-      expect(classifySidecarIntent('上次那个 PPT 讲了什么')).toBe(null)
-      expect(classifySidecarIntent('这个图怎么解读')).toBe(null)
-      expect(classifySidecarIntent('分析一下 KM 曲线')).toBe(null)
+    test('明确的生成请求 → 不否决（交由 LLM 裁决）', () => {
+      expect(isSidecarVetoed('帮我生成一份出院小结 docx')).toBe(false)
+      expect(isSidecarVetoed('把表格导出为 PDF')).toBe(false)
+      expect(isSidecarVetoed('生成一份病例总结')).toBe(false)
     })
 
-    test('编辑/润色语 → null:对已有文档操作不是生成请求', () => {
-      expect(classifySidecarIntent('帮我润色修改一下这篇论文')).toBe(null)
-      expect(classifySidecarIntent('改一下这份病例总结')).toBe(null)
-      expect(classifySidecarIntent('polish this manuscript')).toBe(null)
-      expect(classifySidecarIntent('帮我完善那份出院小结')).toBe(null)
+    test('#558-issue 兼类词口头请求 → 不否决（交由 LLM 裁决，不再 strong 直通）', () => {
+      expect(isSidecarVetoed('给我总结一下这个病人的治疗经过')).toBe(false)
+      expect(isSidecarVetoed('帮我补一份近期随访报告')).toBe(false)
+      expect(isSidecarVetoed('给我整理一个月度总结')).toBe(false)
     })
 
-    test('非生成请求 → null', () => {
-      expect(classifySidecarIntent('这个病人最近怎么样')).toBe(null)
-      expect(classifySidecarIntent('')).toBe(null)
+    test('普通问题 / 空串 → 不否决', () => {
+      expect(isSidecarVetoed('这个治疗方案有没有文献支持')).toBe(false)
+      expect(isSidecarVetoed('')).toBe(false)
+    })
+
+    test('#557 粘贴的长文本：正文含讨论/编辑词时被否决，否则交 LLM', () => {
+      const longPaper = `${'这是一篇关于免疫治疗的论文正文，综述了多项临床研究的结果。'.repeat(30)}我们生成了一份图表来展示主要数据。`
+      expect(longPaper.length).toBeGreaterThan(200)
+      expect(isSidecarVetoed(longPaper)).toBe(false)
+      expect(isSidecarVetoed(`${longPaper}\n请帮我润色这篇论文。`)).toBe(true)
     })
   })
 

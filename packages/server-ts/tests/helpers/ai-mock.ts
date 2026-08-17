@@ -30,3 +30,28 @@ export function mockAiProvider() {
     DEEPSEEK_PREMIUM_MODEL: 'deepseek-v4-pro',
   }
 }
+
+/** Prompt marker of the #557 intent adjudicator (see intent-router.ts). */
+export const INTENT_PROMPT_MARKER = 'intent classifier'
+
+/**
+ * #557 — e2e LLM mocks must answer the sidecar intent adjudication before
+ * producing their usual content: resolveSidecarIntent is the first LLM call in
+ * the chat pipeline, so a single mockResolvedValue/mockImplementation would be
+ * consumed by the adjudicator and the content generation would never run.
+ * Wrap the content mock so the adjudicator call gets a fixed answer instead.
+ *
+ * Example: intentAware(() => JSON_CONTENT, 'generate')
+ *   → adjudicator receives 'generate' (or your value in the 2nd arg),
+ *     content-generation calls receive JSON_CONTENT.
+ */
+export function intentAware(
+  contentImpl: (messages: any[], ...rest: any[]) => any,
+  adjudicatorAnswer: string = 'generate',
+) {
+  return (messages: any[], ...rest: any[]) => {
+    const last = messages.at(-1)?.content
+    if (typeof last === 'string' && last.includes(INTENT_PROMPT_MARKER)) return adjudicatorAnswer
+    return contentImpl(messages, ...rest)
+  }
+}

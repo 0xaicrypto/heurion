@@ -25,6 +25,12 @@ export interface PluginChatResult {
     downloadUrl: string
     expiresIn: number
   }
+  /**
+   * #558 — the request turned out to be editing/polishing/discussing EXISTING
+   * content (not a generation request). Callers must fall back to the normal
+   * conversation pipeline instead of treating this as a plugin turn.
+   */
+  fallback?: boolean
 }
 
 async function pollJob(jobId: string, send: (event: Record<string, unknown>) => void, maxWaitMs = 30000, intervalMs = 1000): Promise<ExecutionJobStatus | null> {
@@ -54,6 +60,14 @@ export async function handlePluginChatRequest(options: PluginChatHandlerOptions)
   send({ type: 'thought', text: '检测到可能的报告生成请求…' })
 
   const match = await matchIntent(userId, text)
+  if (match === 'edit-or-discuss') {
+    // #558: the request is editing/polishing/discussing existing content —
+    // matched a plugin trigger upstream but the rule layer proves generation
+    // is wrong. Do NOT tell the user to install renderer plugins; hand the
+    // turn back to the normal conversation pipeline.
+    send({ type: 'thought', text: '这是对已有内容的编辑/润色请求，已转交常规对话处理。' })
+    return { text: '', fallback: true }
+  }
   if (!match) {
     // #451: the hard-coded sidecar path is gone — all rendering goes through
     // installable plugins. Tell the user what to do instead of silently
