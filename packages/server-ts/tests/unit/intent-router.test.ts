@@ -1,13 +1,25 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest'
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
-import { resolveSidecarIntent, clearSidecarCache, type SidecarClassifier } from '../../src/retrieval/intent-router.js'
+import { fakeEmbed } from '../helpers/fake-embed.js'
+import { resolveSidecarIntent, clearSidecarCache, resetSemanticRouterForTests, type SidecarClassifier } from '../../src/retrieval/intent-router.js'
 
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
+// #562: intent-router lazy-loads the embedding provider for the semantic
+// layer; stub it with the deterministic fake embedder.
+vi.mock('../../src/common/ai/ai-provider.js', () => ({
+  createAiProvider: () => ({ embed: fakeEmbed }),
+}))
 
 describe('#557 — sidecar 意图判定（强否决 + 一次 LLM 裁决）', () => {
   beforeEach(() => {
     clearSidecarCache()
+    resetSemanticRouterForTests()
     vi.clearAllMocks()
+    delete process.env.INTENT_SEMANTIC_ROUTER
+  })
+
+  afterEach(() => {
+    delete process.env.INTENT_SEMANTIC_ROUTER
   })
 
   const classifier = (decision: string): SidecarClassifier => ({
@@ -125,5 +137,34 @@ test('普通问题：无否决词健康，LLM 裁决 discuss → 不生成', asy
     expect(decisions).toHaveLength(2)
     expect(decisions[1].cacheHit).toBe(true)
     expect(decisions[1].verdict).toBe('discuss')
+  })
+
+  // ── #562: 语义路由层（env 开关，默认 off） ──
+
+  test('#562 默认 off：语义路由不生效，LLM 裁决路径不变', async () => {
+    const cl = classifier('generate')
+    const r = await resolveSidecarIntent('u1', '帮我生成一份出院小结 docx', { classifier: cl })
+    expect(r).toBe(true)
+    expect(cl.classify).toHaveBeenCalled()
+    expect(cl.classify).toHaveBeenCalledTimes(1)
+  })
+
+  test('#562 on：语义路由高置信 generate → 零 LLM 直通', async () => {
+    process.env.INTENT_SEMANTIC_ROUTER = 'on'
+    const cl = classifier('generate')
+    const decisions: any[] = []
+    const r = await resolveSidecarIntent('u1', '帮我生成一份出院小结 docx', { classifier: cl, onDecision: (d) => decisions.push(d) })
+    expect(r).toBe(true)
+    expect(cl.classify).not.toHaveBeenCalled()
+    expect(decisions[0].llmCalls).toBe(0)
+    expect(decisions[0].semantic).toBe('generate')
+  })
+
+  test('#562 on：语义路由 uncertain → 回落 LLM 裁决（保守兜底）', async () => {
+    process.env.INTENT_SEMANTIC_ROUTER = 'on'
+    const cl = classifier('discuss')
+    const r = await resolveSidecarIntent('u1', '今天下午的会议取消了吗', { classifier: cl })
+    expect(r).toBe(false)
+    expect(cl.classify).toHaveBeenCalledTimes(1)
   })
 })
