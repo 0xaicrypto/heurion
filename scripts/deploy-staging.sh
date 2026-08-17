@@ -46,6 +46,13 @@ if ! EMBEDDING_SERVER_PORT=8004 npm run precache; then
   }
 fi
 pm2 delete heurion-embedding-staging 2>/dev/null || true
+# #565: 与 8002 同理 — 孤儿进程占 8004 会让 embedding 新实例 EADDRINUSE。
+pkill -f "dist/index.js" 2>/dev/null || true
+kill $(lsof -ti:8004) 2>/dev/null || fuser -k 8004/tcp 2>/dev/null || true
+for pid in $(ss -ltnp 2>/dev/null | grep ':8004' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u); do
+  kill -9 "$pid" 2>/dev/null || true
+done
+sleep 1
 EMBEDDING_SERVER_PORT=8004 pm2 start node --name heurion-embedding-staging -- dist/index.js
 
 # 健康检查:先 /health,再真实 embed 探针(验证模型真正就绪)。
@@ -77,7 +84,12 @@ rm -f staging.db staging.db-journal 2>/dev/null || true
 npx prisma db push --accept-data-loss
 
 pm2 delete heurion-staging 2>/dev/null || true
-pkill -f "tsx src/main.ts" 2>/dev/null || true
+# #565: pm2 delete 只杀 pm2 直接 spawn 的 shim,`npx tsx src/main.ts` 拉起的
+# 真实 node 进程会成孤儿继续占 8002 → 新实例 EADDRINUSE 重启循环。必须
+# 按端口+进程名双重清场。注意 cmdline 是 `.../tsx/dist/cli.mjs src/main.ts`,
+# `pkill -f "tsx src/main.ts"` 匹配不到,要用 src/main.ts。
+pkill -f "src/main.ts" 2>/dev/null || true
+pkill -f "tsx" 2>/dev/null || true
 kill $(lsof -ti:8002) 2>/dev/null || fuser -k 8002/tcp 2>/dev/null || true
 # Orphaned node processes survive pm2 delete — kill whoever holds :8002 by PID.
 for pid in $(ss -ltnp 2>/dev/null | grep ':8002' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u); do
@@ -87,8 +99,13 @@ for i in $(seq 1 15); do
   if ! ss -ltn 2>/dev/null | grep -q ':8002'; then break; fi
   sleep 2
 done
+if ss -ltn 2>/dev/null | grep -q ':8002'; then
+  echo "❌ port 8002 still held after cleanup:"
+  lsof -i:8002 2>/dev/null || ss -ltnp 2>/dev/null | grep ':8002' || true
+  exit 1
+fi
 sleep 2
-SERVER_PORT=8002 pm2 start npx --name heurion-staging -- tsx src/main.ts
+SERVER_PORT=8002 pm2 start node --name heurion-staging -- $(pwd)/node_modules/.bin/tsx src/main.ts
 pm2 save
 
 sleep 3
