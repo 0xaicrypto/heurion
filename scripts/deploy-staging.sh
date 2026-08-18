@@ -2,7 +2,12 @@
 # Deploy to staging (port 8002)
 set -e
 cd ~/heurion
-git fetch origin main 2>/dev/null || { sleep 3; git fetch origin main; }
+# #569: GitHub 故障期服务器 git fetch 会瞬断(DNS/429),给 3 次重试(10s 间隔)。
+for i in 1 2 3; do
+  if git fetch origin main 2>/dev/null; then break; fi
+  echo "git fetch failed (attempt $i/3), retrying in 10s..."
+  sleep 10
+done
 git reset --hard origin/main
 echo "Deploying: $(git log -1 --oneline)"
 cd packages/server-ts
