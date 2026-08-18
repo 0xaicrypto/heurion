@@ -105,7 +105,10 @@ if ss -ltn 2>/dev/null | grep -q ':8002'; then
   exit 1
 fi
 sleep 2
-SERVER_PORT=8002 pm2 start node --name heurion-staging -- $(pwd)/node_modules/.bin/tsx src/main.ts
+# #565: 直指 tsx 真实 JS 入口。不能走 node_modules/.bin/tsx —— npm 安装下
+# 它是 shell shim(node 会 SyntaxError),pnpm 下是 symlink(能跑)。包内
+# dist/cli.mjs 两种安装方式都存在。也不要经 npx(孤儿进程问题见 #565)。
+SERVER_PORT=8002 pm2 start node --name heurion-staging -- $(pwd)/node_modules/tsx/dist/cli.mjs src/main.ts
 pm2 save
 
 sleep 3
