@@ -140,7 +140,18 @@ export EMBEDDING_IMAGE="${EMBEDDING_IMAGE:-ghcr.io/0xaicrypto/nexus-embedding-se
 docker image prune -f 2>/dev/null || true
 docker builder prune -f 2>/dev/null || true
 
-docker compose --env-file .env.production pull
+# #575: GHCR/网络瞬断会导致 pull 中途失败(connection reset) — 重试
+# 3 次,成功一次即继续;全部失败则退出(不吞错)。
+PULLED=0
+for i in 1 2 3; do
+  if docker compose --env-file .env.production pull; then
+    PULLED=1
+    break
+  fi
+  echo "⚠️  docker compose pull attempt $i/3 failed, retrying in 10s..."
+  sleep 10
+done
+[ "$PULLED" -eq 1 ] || { echo "❌ docker compose pull failed after 3 attempts"; exit 1; }
 docker compose --env-file .env.production up -d --remove-orphans
 
 # Remove unused images (old versions) to keep disk from filling up.
