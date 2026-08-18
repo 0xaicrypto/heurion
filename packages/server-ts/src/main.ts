@@ -2,7 +2,7 @@ import { Worker } from 'bullmq'
 import { createApp } from './app'
 import { config } from './config'
 import { execSync } from 'child_process'
-import { enableSqliteWal } from './common/prisma.js'
+import { enableSqliteWal, resolveDatabaseUrl } from './common/prisma.js'
 import { createDefaultEvolutionQueue, BullMqEvolutionQueue, type EvolutionQueue } from './modules/evolution/evolution.queue.js'
 import { startEvolutionWorker } from './modules/evolution/evolution.worker.js'
 import { createGapResearchScheduler, type GapResearchScheduler } from './modules/knowledge/gap-research.service.js'
@@ -10,15 +10,17 @@ import { createExperienceSynthesisScheduler } from './modules/skills/experience-
 
 async function main() {
   // Run Prisma schema migration at startup
+  // #569-fix: db push 是独立引擎进程,若用原始 URL 会开默认多连接池写 SQLite —
+  // 与主连接池并发写立即 SQLITE_BUSY。传 resolveDatabaseUrl(单连接)。
   try {
     execSync('npx prisma db push --accept-data-loss --skip-generate', {
       stdio: 'inherit',
-      env: { ...process.env, DATABASE_URL: config.databaseUrl },
+      env: { ...process.env, DATABASE_URL: resolveDatabaseUrl(config.databaseUrl) },
     })
     // Generate Prisma client (needed after push)
     execSync('npx prisma generate', {
       stdio: 'inherit',
-      env: { ...process.env, DATABASE_URL: config.databaseUrl },
+      env: { ...process.env, DATABASE_URL: resolveDatabaseUrl(config.databaseUrl) },
     })
     console.log('[DB] Schema synced')
   } catch (err) {

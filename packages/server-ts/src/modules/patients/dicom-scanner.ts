@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { safeUploadPath } from '../../lib/upload-path.js'
+import { resolveDatabaseUrl } from '../../common/prisma.js'
 import zlib from 'zlib'
 
 let dicomParser: any = null
@@ -191,8 +192,14 @@ export async function analyzeWithGeminiVision(userId: string, fileId: string): P
     const base64 = png.toString('base64')
 
     // Get Gemini API key from DB
+    // #569-fix: 裸 PrismaClient 用默认连接池(无 busy_timeout)并发写 → SQLITE_BUSY,
+    // 生产反复报 "Error: SQLite database error"。走 resolveDatabaseUrl(单连接) +
+    // busy_timeout,与主连接池同策略。
     const { PrismaClient } = require('@prisma/client')
-    const prisma = new PrismaClient()
+    const prisma = new PrismaClient({
+      datasources: { db: { url: resolveDatabaseUrl(process.env.DATABASE_URL || 'file:./nexus_server.db') } },
+    })
+    await prisma.$queryRawUnsafe('PRAGMA busy_timeout=10000').catch(() => {})
     const setting = await (prisma as any).userSetting.findUnique({
       where: { userId_key: { userId, key: 'gemini_api_key' } },
     })
