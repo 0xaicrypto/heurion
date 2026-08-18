@@ -110,9 +110,10 @@ if ss -ltn 2>/dev/null | grep -q ':8002'; then
   exit 1
 fi
 sleep 2
-# #565: 直指 tsx 真实 JS 入口。不能走 node_modules/.bin/tsx —— npm 安装下
-# 它是 shell shim(node 会 SyntaxError),pnpm 下是 symlink(能跑)。包内
-# dist/cli.mjs 两种安装方式都存在。也不要经 npx(孤儿进程问题见 #565)。
+# #565/#569: 直指 tsx 真实 JS 入口(cli.mjs 在 npm/pnpm 布局下都是真实
+# ESM 文件,本地已验证可启动 server-ts)。不能走 .bin/tsx(npm 下是 shell
+# shim → node SyntaxError),也不要经 npx(孤儿进程见 #565)。dist 产物是
+# ESNext 无扩展名 import,node 无法直启,故不用编译产物。
 SERVER_PORT=8002 pm2 start node --name heurion-staging -- $(pwd)/node_modules/tsx/dist/cli.mjs src/main.ts
 pm2 save
 
@@ -121,7 +122,7 @@ npx tsx scripts/set-admin.ts 2>/dev/null || true
 
 # Health check
 HEALTH_URL="http://localhost:8002/healthz"
-MAX_RETRIES=15
+MAX_RETRIES=30
 RETRY_DELAY=2
 for i in $(seq 1 $MAX_RETRIES); do
   if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
@@ -133,6 +134,6 @@ for i in $(seq 1 $MAX_RETRIES); do
 done
 
 echo "❌ STAGING health check failed after ${MAX_RETRIES} attempts."
-pm2 logs heurion-staging --lines 100 --nostream || true
+pm2 logs heurion-staging --lines 200 --nostream || true
 pm2 describe heurion-staging || true
 exit 1
