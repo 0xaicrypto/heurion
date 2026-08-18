@@ -1,4 +1,4 @@
-import { pipeline, type FeatureExtractionPipeline } from '@xenova/transformers'
+import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers'
 
 export interface EmbeddingConfig {
   model: string
@@ -44,10 +44,13 @@ export class EmbeddingService {
   async load(): Promise<void> {
     const options: Record<string, unknown> = {
       device: this.device === 'wasm' ? 'cpu' : this.device,
-      quantized: this.quantized,
-    }
-    if (this.dtype && this.dtype !== 'int8') {
-      options.dtype = this.dtype
+      // v4: quantized flag removed → dtype. fp32 (BAAI/bge-m3 has no
+      // q8 artifact) unless explicitly overridden.
+      dtype: this.dtype || (this.quantized ? 'q8' : 'fp32'),
+      // BAAI/bge-m3 ships weights as external data (model.onnx_data,
+      // 2.1GB) but its config.json does not declare the format — without
+      // this flag v4 silently skips onnx_data and session creation fails.
+      use_external_data_format: true,
     }
     this.extractor = (await pipeline(
       'feature-extraction',
