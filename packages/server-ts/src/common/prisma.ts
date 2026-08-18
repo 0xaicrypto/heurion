@@ -29,15 +29,24 @@ const prisma = new PrismaClient(
  */
 export async function enableSqliteWal(): Promise<void> {
   if (!databaseUrl.startsWith('file:')) return // only SQLite
-  try {
-    await prisma.$queryRawUnsafe('PRAGMA journal_mode=WAL')
-    await prisma.$queryRawUnsafe('PRAGMA synchronous=NORMAL').catch(() => {})
-    // #553/#569: 写锁竞争(SQLITE_BUSY)是生产 "database error" 根因 —
-    // WAL 下读写不互斥,但多写者仍冲突;busy_timeout 让短锁等待而非报错。
-    // 配合 connection_limit=1(唯一连接),该 PRAGMA 覆盖所有后续查询。
-    await prisma.$queryRawUnsafe('PRAGMA busy_timeout=10000').catch(() => {})
-  } catch (err) {
-    console.warn('[sqlite] WAL enable skipped:', (err as Error).message.slice(0, 120))
+  // #569: 启动早期 db push 引擎进程可能尚持锁,PRAGMA 瞬态 SQLITE_BUSY
+  // (引擎打 error 日志,应用 catch 吞掉)。重试 3 次等待锁释放,让日志干净。
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await prisma.$queryRawUnsafe('PRAGMA journal_mode=WAL')
+      await prisma.$queryRawUnsafe('PRAGMA synchronous=NORMAL').catch(() => {})
+      // #553/#569: 写锁竞争(SQLITE_BUSY)是生产 "database error" 根因 —
+      // WAL 下读写不互斥,但多写者仍冲突;busy_timeout 让短锁等待而非报错。
+      // 配合 connection_limit=1(唯一连接),该 PRAGMA 覆盖所有后续查询。
+      await prisma.$queryRawUnsafe('PRAGMA busy_timeout=10000').catch(() => {})
+      return
+    } catch (err) {
+      if (attempt === 3) {
+        console.warn('[sqlite] WAL enable failed after 3 attempts:', (err as Error).message.slice(0, 120))
+      } else {
+        await new Promise((r) => setTimeout(r, 2000 * attempt))
+      }
+    }
   }
 }
 
