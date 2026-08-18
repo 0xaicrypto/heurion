@@ -126,10 +126,11 @@ else
   echo "S3 backup not configured — skipping backup setup"
 fi
 
-# #284: clear duplicate display_names before the unique constraint applies
-# (idempotent; no-op when there is nothing to dedupe).
-cd "$DEPLOY_DIR/packages/server-ts" 2>/dev/null && npx tsx scripts/dedupe-display-names.ts 2>/dev/null || true
-cd "$DEPLOY_DIR"
+# #284: display_name dedupe now runs INSIDE the server container at startup
+# (main.ts → dedupeDisplayNames, before prisma db push). The old host-side
+# call here connected to a stale DB path (no DATABASE_URL → default file)
+# and silently no-op'd via `|| true` — removed to avoid the illusion of
+# coverage.
 
 # Pull the images tagged by CI and recreate containers.
 export NEXUS_IMAGE="${NEXUS_IMAGE:-ghcr.io/0xaicrypto/nexus-server:latest}"

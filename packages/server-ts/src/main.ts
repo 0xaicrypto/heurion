@@ -2,13 +2,42 @@ import { Worker } from 'bullmq'
 import { createApp } from './app'
 import { config } from './config'
 import { execSync } from 'child_process'
-import { enableSqliteWal, resolveDatabaseUrl } from './common/prisma.js'
+import prisma, { enableSqliteWal, resolveDatabaseUrl } from './common/prisma.js'
 import { createDefaultEvolutionQueue, BullMqEvolutionQueue, type EvolutionQueue } from './modules/evolution/evolution.queue.js'
 import { startEvolutionWorker } from './modules/evolution/evolution.worker.js'
 import { createGapResearchScheduler, type GapResearchScheduler } from './modules/knowledge/gap-research.service.js'
 import { createExperienceSynthesisScheduler } from './modules/skills/experience-synthesis.service.js'
 
+// #284/#569: users.display_name 有唯一约束,生产库曾存在重复名 → db push
+// 每次启动都报 UNIQUE constraint failed(即日志里的 "Error: SQLite database
+// error")。db push 前先去重(保留最早注册者,其余改名),幂等。
+async function dedupeDisplayNames(): Promise<void> {
+  try {
+    const users = await prisma.user.findMany({ orderBy: { createdAt: 'asc' } })
+    const seen = new Map<string, string>()
+    let renamed = 0
+    for (const u of users) {
+      const existing = seen.get(u.displayName)
+      if (!existing) {
+        seen.set(u.displayName, u.id)
+        continue
+      }
+      if (existing === u.id) continue
+      await prisma.user.update({
+        where: { id: u.id },
+        data: { displayName: `${u.displayName}_dup_${u.id.slice(-6)}` },
+      })
+      renamed++
+    }
+    if (renamed > 0) console.log(`[DB] dedupe: ${renamed} display_name(s) renamed`)
+  } catch (err) {
+    console.warn('[DB] display_name dedupe failed (non-fatal):', (err as Error)?.message.slice(0, 120))
+  }
+}
+
 async function main() {
+  // #284: 先清理重复 display_name,否则 db push 建唯一索引失败(每次启动报错)。
+  await dedupeDisplayNames()
   // Run Prisma schema migration at startup
   // #569-fix: db push 是独立引擎进程,若用原始 URL 会开默认多连接池写 SQLite —
   // 与主连接池并发写立即 SQLITE_BUSY。传 resolveDatabaseUrl(单连接)。
