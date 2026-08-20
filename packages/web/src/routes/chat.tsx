@@ -309,22 +309,6 @@ export function ChatPage() {
     if (url) window.open(url, '_blank');
   };
 
-  /** #561/#581: 意图澄清选择 — 「生成文档」改为带 "生成：" 前缀重发；其余按原文重跑（编辑器目标由 scene/会话决定）。 */
-  const handleClarifyChoice = async (_m: ChatMessage, option: string) => {
-    const msgs = session?.messages ?? [];
-    const lastUser = [...msgs].reverse().find((x) => x.role === 'user');
-    if (!lastUser || session?.loading || session?.compacting) return;
-    const text = option === '生成文档' ? `生成：${lastUser.text}` : lastUser.text;
-    setError(null);
-    await store.regenerate(sessionId, {
-      sessionId,
-      text,
-      attachments: [],
-      skills: activeSkills,
-      scene: currentScene,
-    });
-  };
-
   /** #582: 附件编辑结果落地 — 保存为文档 / 导出 PDF / 继续讨论。 */
   const handleExportChoice = async (
     m: ChatMessage,
@@ -470,7 +454,6 @@ export function ChatPage() {
               kbAdded={kbAdded}
               onRegenerate={handleRegenerate}
               onRetry={handleRetry}
-              onClarifyChoice={handleClarifyChoice}
               onExportChoice={handleExportChoice}
               subagents={session?.subagents}
               emptyState={
