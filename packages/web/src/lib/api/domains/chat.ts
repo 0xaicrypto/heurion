@@ -78,4 +78,15 @@ export class ChatApi extends ApiCore {
     // #457: single SSE parser.
     yield* parseSseStream<ChatStreamChunk>(r, abortSignal);
   }
+
+  /** #598: 上传附件写入会话历史(user_message),刷新后聊天记录可见。 */
+  async logAttachments(sessionId: string, files: Array<{ name: string; file_id: string }>): Promise<{ logged: boolean }> {
+    const r = await fetch('/api/v1/agent/attachments/log', {
+      method: 'POST',
+      headers: this.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ session_id: sessionId, files }),
+    });
+    if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => r.statusText), '/attachments/log');
+    return r.json();
+  }
 }

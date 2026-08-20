@@ -264,6 +264,26 @@ export async function agentRouter(app: FastifyInstance) {
     return { items: items.slice(0, limit) }
   })
 
+  // #598: 上传附件即写入会话历史(作为 user_message)— 刷新后聊天记录
+  // 可见"已上传文件",附件信息随消息恢复。
+  app.post('/api/v1/agent/attachments/log', async (request) => {
+    const ctx = getUserContext(request.user!.userId)
+    const { session_id, files } = request.body as any
+    if (!session_id || !Array.isArray(files) || files.length === 0) {
+      return { logged: false }
+    }
+    const names = files.map((f: any) => String(f.name || f.file_id || 'file')).filter(Boolean)
+    ctx.eventLog.append({
+      timestamp: Date.now() / 1000,
+      eventType: 'user_message',
+      content: `[📎 已上传] ${names.join(', ')}`,
+      metadata: { attachment: true, fileIds: files.map((f: any) => String(f.file_id || '')) },
+      agentId: request.user!.userId,
+      sessionId: session_id,
+    })
+    return { logged: true, names }
+  })
+
   app.get('/api/v1/agent/messages', async (request) => {
     const ctx = getUserContext(request.user!.userId)
     const sessionId = (request.query as any).session_id

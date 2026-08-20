@@ -2,10 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Paperclip, FileText, Plus, X } from 'lucide-react';
-import { MessageSquare, Stethoscope, FileEdit, BarChart3 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { mapWireMessages } from '@/lib/message-map';
-import type { LlmStatus, ChatScene } from '@/lib/types';
+import type { LlmStatus } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore, type ChatMessage } from '@/stores/chat';
 import { AppShell } from '@/components/layout/AppShell';
@@ -50,7 +49,18 @@ export function ChatPage() {
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
   // #553: 附件按会话隔离(仿 drafts)— 切换会话不得把 A 会话附件带到 B。
-  const [attachedFiles, setAttachedFiles] = useState<Record<string, Array<{name: string; fileId: string}>>>({});
+  // #598: 附件持久化到 localStorage,刷新页面后按会话恢复(否则已上传
+  // 附件刷新即消失)。
+  const ATTACH_KEY = 'nexus-chat-attached-files';
+  const [attachedFiles, setAttachedFiles] = useState<Record<string, Array<{name: string; fileId: string}>>>(() => {
+    try {
+      const raw = localStorage.getItem(ATTACH_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(ATTACH_KEY, JSON.stringify(attachedFiles)); } catch { /* ignore */ }
+  }, [attachedFiles]);
   const currentAttachedFiles = attachedFiles[sessionId] ?? [];
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   // #420: parallel deep analysis entry.
@@ -63,10 +73,6 @@ export function ChatPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   // #516: per-session entry scene — switching sessions must not leak the
   // previous mode into a different conversation.
-  const [scenes, setScenes] = useState<Record<string, ChatScene>>({});
-  const currentScene = (scenes[sessionId] ?? 'general') as ChatScene;
-  const setScene = (scene: ChatScene) =>
-    setScenes((prev) => (sessionId ? { ...prev, [sessionId]: scene } : prev));
   const [kbChecked, setKbChecked] = useState<Record<string, boolean>>({});
   const [kbAdded, setKbAdded] = useState<Record<string, boolean>>({});
   const [downloadUrls, setDownloadUrls] = useState<Record<string, string>>({});
@@ -128,6 +134,12 @@ export function ChatPage() {
       setGlobalSessions((prev) => prev.filter((s) => s.id !== closingId));
       store.clearSession(closingId);
       setDrafts((prev) => { const next = { ...prev }; delete next[closingId]; return next; });
+      setAttachedFiles((prev) => {
+        if (!(closingId in prev)) return prev;
+        const next = { ...prev };
+        delete next[closingId];
+        return next;
+      });
       // Pick the next open session; if none remains, show the empty state
       // (no implicit default session).
       const next = globalSessions.find((s) => s.id !== closingId && s.status === 'open');
@@ -203,7 +215,6 @@ export function ChatPage() {
       sessionId,
       attachments: currentAttachedFiles.map((a) => a.fileId),
       skills: activeSkills,
-      scene: currentScene,
     });
   };
 
@@ -254,7 +265,6 @@ export function ChatPage() {
       text: '',
       attachments: [],
       skills: activeSkills,
-      scene: currentScene,
     });
   };
 
@@ -269,7 +279,6 @@ export function ChatPage() {
       text: lastUser.text,
       attachments: [],
       skills: activeSkills,
-      scene: currentScene,
     });
   };
 
@@ -348,6 +357,11 @@ export function ChatPage() {
     try {
       const result = await api.uploadFile(f);
       setAttachedFiles((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), { name: result.name, fileId: result.file_id }] }));
+      // #598: 上传即入聊天历史(服务端 user_message),刷新后仍可见.
+      if (sessionId) {
+        store.appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
+        api.logAttachments(sessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
+      }
     } catch (err) {
       // silently fail
     } finally {
@@ -377,6 +391,11 @@ export function ChatPage() {
       try {
         const result = await api.uploadFile(file);
         setAttachedFiles((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), { name: result.name, fileId: result.file_id }] }));
+        // #598: 上传即入聊天历史.
+        if (sessionId) {
+          store.appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
+          api.logAttachments(sessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
+        }
       } catch { /* ignore */ }
       finally { setUploadingFile(false); }
     }
@@ -526,33 +545,6 @@ export function ChatPage() {
                 </div>
               </div>
             )}
-            {/* #516: entry scene selector — the same AI, four explicit modes.
-                patient/document scenes are auto-selected on their pages and
-                force the matching scene; here the user picks explicitly. */}
-            <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-surface-elevated p-1">
-              {([
-                { key: 'general', icon: <MessageSquare size={14} />, label: t('chat.sceneGeneral', '通用对话') },
-                { key: 'patient', icon: <Stethoscope size={14} />, label: t('chat.scenePatient', '患者问诊') },
-                { key: 'document', icon: <FileEdit size={14} />, label: t('chat.sceneDocument', '文档写作') },
-                { key: 'chart', icon: <BarChart3 size={14} />, label: t('chat.sceneChart', '图表分析') },
-              ] as Array<{ key: ChatScene; icon: React.ReactNode; label: string }>).map((s) => (
-                <button
-                  key={s.key}
-                  onClick={() => setScene(s.key)}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
-                    currentScene === s.key
-                      ? 'bg-accent/10 text-accent'
-                      : 'text-text-secondary hover:bg-surface hover:text-text-primary',
-                  )}
-                  aria-pressed={currentScene === s.key}
-                  title={s.label}
-                >
-                  {s.icon}
-                  <span className="hidden sm:inline">{s.label}</span>
-                </button>
-              ))}
-            </div>
             <SkillsBar active={activeSkills} onToggle={toggleSkill} />
             {currentAttachedFiles.length > 0 && (
               <div className="flex gap-2 flex-wrap">

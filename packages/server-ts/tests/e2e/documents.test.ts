@@ -128,7 +128,9 @@ describe('Documents', () => {
     expect(res.statusCode).toBe(200)
     const snapshots = JSON.parse(res.payload).snapshots
     expect(snapshots.length).toBeGreaterThanOrEqual(1)
-    expect(snapshots[0].body).toBe('')
+    // #598: 返回结构为 snapshot_id/body_preview(原 body 已调整)
+    expect(snapshots[0].snapshot_id).toBeTruthy()
+    expect(snapshots[0].body_preview).toBe('')
   })
 
   test('non-existent document returns 404', async () => {
