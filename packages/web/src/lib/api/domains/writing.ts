@@ -34,7 +34,7 @@ export class WritingApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}`, { method: 'DELETE' });
   }
 
-  async updateDoc(docId: string, data: {title: string; body: string}): Promise<{id: string; title: string; body: string; updated_at: string}> {
+  async updateDoc(docId: string, data: {title: string; body: string}): Promise<{id: string; title: string; body: string; updated_at: string; unchanged?: boolean}> {
     return this.fetch(`/api/v1/docs/${docId}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 

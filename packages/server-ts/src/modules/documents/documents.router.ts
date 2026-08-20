@@ -70,23 +70,32 @@ export async function documentsRouter(app: FastifyInstance) {
     const data: any = { updatedAt: now }
     if (title !== undefined) data.title = title
 
-    // Snapshot before body changes so users can restore previous versions.
-    if (body !== undefined && body !== existing.body) {
+    // 查重 + 版本:body 未变化时不创建快照、不刷新 updatedAt(避免
+    // 重复保存产生空版本/列表跳动);变化时快照旧 body 作为版本。
+    const bodyChanged = body !== undefined && body !== existing.body
+    if (bodyChanged) {
       await (prisma as any).docSnapshot.create({
         data: {
           docId,
           userId: request.user!.userId,
           body: existing.body,
-          label: 'Manual save',
+          label: '保存版本',
           createdAt: now,
         },
       })
       data.body = body
+    } else {
+      delete data.updatedAt
     }
 
     await (prisma as any).doc.update({ where: { id: docId }, data })
     const doc = await (prisma as any).doc.findFirst({ where: { id: docId } })
-    return { id: doc!.id, title: doc!.title, body: doc!.body, created_at: doc!.createdAt, updated_at: doc!.updatedAt }
+    return {
+      id: doc!.id, title: doc!.title, body: doc!.body,
+      created_at: doc!.createdAt, updated_at: doc!.updatedAt,
+      // #598: 前端保存按钮据此提示'内容未变化'.
+      unchanged: !bodyChanged,
+    }
   })
 
   app.delete('/api/v1/docs/:docId', async (request, reply) => {
