@@ -119,7 +119,7 @@ export function WritingEditorPage() {
     // #598: AI 写回自动保存到服务端 — 生成版本快照,用户可随时回退。
     api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: chatSession.lastDocBody }).catch(() => {});
     return () => clearTimeout(timer);
-  }, [chatSession?.lastDocBody, docId]);
+  }, [chatSession?.lastDocBody, docId, doc?.title]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [chatUploadingFile, setChatUploadingFile] = useState(false);
   const [chatAttachedFiles, setChatAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
