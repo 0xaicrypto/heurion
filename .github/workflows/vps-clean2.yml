@@ -1,0 +1,35 @@
+name: VPS cleanup2 (temp)
+on: workflow_dispatch
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+      - name: Cleanup host node + logs
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '
+            echo "===== BEFORE ====="
+            free -m | head -2
+            pm2 list 2>/dev/null | head -8
+            ps -eo pid,rss,pcpu,args --sort=-rss | grep -E "node|python" | grep -v grep | head -10
+            echo "===== KILL HOST NODE (non-docker) ====="
+            for pid in $(ps -eo pid,args | grep -E "node.*(dist/index.js|src/main.ts|precache|tsx)" | grep -v grep | awk "{print \$1}"); do
+              if ! grep -q docker /proc/$pid/cgroup 2>/dev/null; then
+                echo "kill host pid=$pid $(tr "\0" " " < /proc/$pid/cmdline 2>/dev/null | head -c 70)"
+                kill -9 "$pid" 2>/dev/null || true
+              fi
+            done
+            pkill -9 -f "dist/index.js" 2>/dev/null || true
+            pkill -9 -f "precache" 2>/dev/null || true
+            pm2 kill 2>/dev/null || true
+            sleep 2
+            echo "===== AFTER ====="
+            free -m | head -2
+            ps -eo pid,rss,pcpu,args --sort=-rss | grep -E "node|python" | grep -v grep | head -8
+            echo "===== PROD HEALTH via caddy ====="
+            curl -s -o /dev/null -w "https: %{http_code} %{time_total}s\n" --max-time 30 https://heurion.org/healthz
+            sudo docker ps --format "{{.Names}} {{.Status}}" | head -6
+          ' 2>&1 | tail -60
