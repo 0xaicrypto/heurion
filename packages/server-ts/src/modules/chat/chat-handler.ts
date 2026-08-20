@@ -838,10 +838,19 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
           // doc context is best-effort
         }
       }
+      // #598: 全局输出格式规范 — 模型常用非标准 Markdown(不标准表格
+      // 分隔行、用代码围栏包裹标点),导致前端渲染成乱码/代码块。
+      const OUTPUT_FORMAT_RULES = `
+## 输出格式规范
+- 使用标准 Markdown 语法。表格的分隔行必须是 | --- | --- | 形式;不要写成 |--、---| 等不标准形式。
+- 展示单个标点或字符修改(如 .. → .)时,用普通文本或引号说明即可,禁止用代码围栏(\`\`\`)或反引号包裹标点、符号或单个字符。
+- 代码围栏(\`\`\`)仅用于真实代码、命令、JSON 等;不要把普通文字、术语或符号放进去。
+- 行内反引号仅用于真正的行内代码。
+`
       // R1 (#98): assemble the system prompt from typed context segments —
       // hash-snapshot per user so stable segments stay byte-identical
       // (provider prompt-cache friendly) and changes are diffable.
-      let systemPrompt = projected.systemPrompt + studyContext + docContext
+      let systemPrompt = projected.systemPrompt + OUTPUT_FORMAT_RULES + studyContext + docContext
       try {
         const { computeSegments, saveSnapshot, loadSnapshot, renderSystemPrompt } = await import('../../memory/context-sources.js')
         const prev = loadSnapshot(userId)

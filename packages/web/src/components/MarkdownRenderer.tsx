@@ -93,6 +93,13 @@ export function MarkdownRenderer({ content, className }: Props) {
               );
             }
 
+            // #598: 模型常把单个标点/短符号用 ``` 围栏包裹(如 `..`、`.`),
+            // 若围栏无语言标注且内容极短(≤4 字符、无换行),按普通文本
+            // 渲染而非代码块,避免"明明不是代码却显示成 code"。
+            if (!lang && text.trim().length <= 4 && !text.includes('\n')) {
+              return <span className="text-text-primary">{children}</span>;
+            }
+
             return <CodeBlock lang={lang} text={text} />;
           },
           a({ children, href }) {
