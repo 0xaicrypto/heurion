@@ -344,6 +344,7 @@ export interface MemoryProjection {
 export interface AdminUser {
   user_id: string;
   username: string;
+  email?: string;
   role: string;
   created_at: string;
   disabled_at?: string | null;
