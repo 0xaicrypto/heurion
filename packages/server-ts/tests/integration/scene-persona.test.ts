@@ -95,13 +95,32 @@ describe('#510 scene tool surface', () => {
     }
     const registry = new ToolRegistry(ctx as any)
     // 插件门控工具默认不可用，不影响本断言（它们不在 PATIENT_RETRIEVAL_TOOLS 中）
-    const defs = await registry.getDefinitionsForUser('general')
+    const defs = await registry.getDefinitionsForUser('general', 'doc-9')
     const names = defs.map((d) => d.function.name)
     expect(names).not.toContain('search_node')
     expect(names).not.toContain('search_encounter')
     expect(names).not.toContain('search_past_chats')
     expect(names).toContain('edit_document')
     expect(names).toContain('load_data_table')
+  })
+
+  test('#580 非 doc- 会话不暴露 edit_document（即使 scene=document 降级为 general 也一致）', async () => {
+    const ctx = {
+      userId: 'u',
+      memory: {} as any,
+      facts: {} as any,
+      episodes: {} as any,
+      skills: {} as any,
+      knowledge: {} as any,
+      eventLog: {} as any,
+    }
+    const registry = new ToolRegistry(ctx as any)
+    const generalDefs = await registry.getDefinitionsForUser('general', 'session_abc')
+    const names = generalDefs.map((d) => d.function.name)
+    expect(names).not.toContain('edit_document')
+
+    const docDefs = await registry.getDefinitionsForUser('document', 'doc-7')
+    expect(docDefs.map((d) => d.function.name)).toContain('edit_document')
   })
 
   test('getDefinitionsForUser() 默认 patient 全量(兼容旧调用)', async () => {

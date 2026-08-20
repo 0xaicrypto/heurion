@@ -17,7 +17,7 @@ import type { ChatScene } from '../../common/persona.js'
 import { deepseekStream, deepseekChat, deepseekChatWithMeta, LlmTruncatedError, getApiKey, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { chatSendSchema } from './chat.dto.js'
 import { analyzeChatForPatient, updatePatientFromFindings, analyzeChatForMedicalRecord, updateMedicalRecordFromChat } from '../patients/clinical-analysis.js'
-import { router } from '../../retrieval/query-router.js'
+import { router, EDIT_MARKERS } from '../../retrieval/query-router.js'
 import { resolveSidecarIntent, type SidecarDecisionDetail } from '../../retrieval/intent-router.js'
 import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
 import { detectDoomLoop } from '../../tools/doom-loop.js'
@@ -36,6 +36,12 @@ import {
   buildAttachmentParts,
 } from './chat-context.js'
 import { providerSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
+import { resolveTargetCandidates, pickTarget, isGenerateRequest, recordTurnIntent, type TurnAction, type TurnIntent, type TurnSource, type TurnTarget } from './turn-intent.js'
+
+/** 仅编辑语义判断（供决策表消歧——判定为编辑但存在多目标时需要澄清）。 */
+function turnAction2edit(detail: SidecarDecisionDetail | undefined, text: string): boolean {
+  return Boolean(detail?.vetoed) && EDIT_MARKERS.test(text)
+}
 
 const gapService = new PrismaKnowledgeGapService()
 /** #6: per-patient LLM analysis throttle (ms) — avoid an extra call per message. */
@@ -493,7 +499,7 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       // distribution and, on 'uncertain', an intent_clarify hint for the UI
       // (the request could be a generation request, but the LLM was unsure).
       let sidecarDetail: SidecarDecisionDetail | undefined
-      const isSidecarRequest = await resolveSidecarIntent(userId, body.text, {
+      await resolveSidecarIntent(userId, body.text, {
         history: recentTurns,
         onDecision: (detail) => { sidecarDetail = detail },
       })
@@ -511,15 +517,45 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
           historyTurns: sidecarDetail?.historyTurns ?? 0,
         },
       }).catch(() => {})
-      if (!isSidecarRequest && sidecarDetail?.verdict === 'uncertain') {
-        // #561: conservative by design — never generate on doubt, but tell
-        // the user we can generate if they confirm.
+      // #583 — 判定全量入事件日志（脱敏指纹），供审计重建与 #560 语料。
+      // #578 — 用 TurnIntent（scene×action×target）驱动决策路由：generate 走插件，
+      // edit/answer 回落常规对话；编辑目标冲突（附件 vs 当前草稿，例 C）要澄清。
+      const candidates = resolveTargetCandidates(
+        { scene, sessionId: sid, hasAttachment: Boolean(body.attachments?.length), patientHash },
+      )
+      const picked = pickTarget({ text: body.text, hasAttachment: Boolean(body.attachments?.length) }, candidates)
+      const turnIntent: TurnIntent = {
+        action: (sidecarDetail?.verdict === 'generate' ? 'generate'
+          : (sidecarDetail?.vetoed ? (EDIT_MARKERS.test(body.text) ? 'edit' : 'answer') : 'answer')) as TurnAction,
+        target: (sidecarDetail?.verdict === 'generate' ? 'none' : picked.target) as TurnTarget,
+        source: (sidecarDetail?.semantic ? 'semantic' : 'llm') as TurnSource,
+        confidence: sidecarDetail?.verdict === 'generate' ? 0.8 : 0.6,
+        needsClarify: sidecarDetail?.verdict === 'uncertain' || (turnAction2edit(sidecarDetail, body.text) && picked.needsClarify),
+        clarifyOptions: (sidecarDetail?.verdict === 'uncertain' || (turnAction2edit(sidecarDetail, body.text) && picked.needsClarify)
+          ? picked.options
+          : []),
+        payload: {
+          rawText: body.text,
+          patientHash: patientHash ?? undefined,
+          historyTurns: sidecarDetail?.historyTurns,
+          editDocumentId: picked.target === 'current_doc' && sid.startsWith('doc-') ? sid.slice(4) : undefined,
+        },
+      }
+      recordTurnIntent(ctx.eventLog, {
+        userId, sessionId: sid, text: body.text, intent: turnIntent,
+        llmCalls: sidecarDetail?.llmCalls ?? 0, vetoed: sidecarDetail?.vetoed ?? false, cacheHit: sidecarDetail?.cacheHit,
+        semantic: sidecarDetail?.semantic,
+      })
+      if (!isGenerateRequest(turnIntent) && turnIntent.needsClarify) {
+        // #561: conservative by design — never generate on doubt，但把选择权交给用户。
         send({
           type: 'intent_clarify',
-          text: '如果你是想让我生成一份文档/PPT/表格，请明确说"生成/导出"；否则我会按普通对话回复。',
+          text: turnIntent.action === 'edit'
+            ? '你要编辑的是当前草稿还是上传的文件？请选择：' + (turnIntent.clarifyOptions.map(o => ({ current_doc: '当前草稿', attachment: '上传的文件', patient: '当前患者' })[o] ?? o).join(' / '))
+            : '如果你是想让我生成一份文档/PPT/表格，请明确说"生成/导出"；否则我会按普通对话回复。',
         })
       }
-      if (isSidecarRequest) {
+      if (isGenerateRequest(turnIntent)) {
         const patient = await findPatient(userId, patientHash)
 
         // Conversation history from event log (same source as the normal
@@ -927,7 +963,8 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       // #454-followup: plugin-gated renderers (render_chart / render_scene)
       // appear in the LLM tool list only while the owning plugin is
       // installed + enabled. #510: scene-scoped tool surface.
-      const tools = await toolRegistry.getDefinitionsForUser(scene)
+      // #580 (TURN_INTENT_DESIGN §8-4): edit_document exposed only in doc- sessions.
+      const tools = await toolRegistry.getDefinitionsForUser(scene, sid)
 
       // Tool-calling loop
       const { finalContent, messages: loopMessages } = await runToolCallLoop({
@@ -984,6 +1021,15 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         timestamp: Date.now() / 1000, eventType: 'assistant_response', content: fullResponse,
         metadata: {}, agentId: userId, sessionId: sid,
       })
+
+      // #582 — 例 A：通用会话编辑附件（action=edit, target=attachment）时，给
+      // 一条可落地出口（保存为文档 / 导出），避免"结果只留在对话里"的死路。
+      if (turnIntent.action === 'edit' && turnIntent.target === 'attachment') {
+        send({
+          type: 'attachment_export_option',
+          options: ['save_as_document', 'export_pdf', 'continue_discussion'],
+        })
+      }
 
       // #2: Extract takeaway + evolve facts + analyze patient chat (async evolution worker)
       // Writing sessions (doc-*) are excluded — their content must not

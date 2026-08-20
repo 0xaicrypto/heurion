@@ -121,11 +121,16 @@ export class ToolRegistry {
    * omitted while the owning plugin is not installed/enabled. Async because
    * availability is read from the installation store.
    * #510: scene-scoped omissions (patient retrieval in non-patient scenes).
+   * #580 (TURN_INTENT_DESIGN §8-4): edit_document is exposed ONLY inside a
+   * document-writing session (sessionId prefix "doc-"); a non-doc / unknown
+   * session must not present a write-back tool the runtime would refuse.
    */
-  async getDefinitionsForUser(scene: string = 'patient'): Promise<ToolDefinition[]> {
+  async getDefinitionsForUser(scene: string = 'patient', sessionId?: string): Promise<ToolDefinition[]> {
     const omit = SCENE_OMIT_TOOLS[scene]
+    const isDocSession = Boolean(sessionId?.startsWith('doc-'))
     const out: ToolDefinition[] = []
     for (const tool of this.tools.values()) {
+      if (tool.name === 'edit_document' && !isDocSession) continue
       if (PLUGIN_GATED_TOOLS[tool.name] && !(await this.isToolAvailable(tool.name))) continue
       if (omit?.has(tool.name)) continue
       out.push(tool.definition)

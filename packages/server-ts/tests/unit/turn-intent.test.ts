@@ -17,7 +17,10 @@ import {
   pickTarget,
   isGenerateRequest,
   buildTurnIntentPrompt,
+  queryFingerprint,
+  recordTurnIntent,
   type TurnContext,
+  type TurnIntent,
   type TurnLlms,
 } from '../../src/modules/chat/turn-intent.js'
 
@@ -288,6 +291,40 @@ describe('isGenerateRequest — 生成判定布尔化（向后兼容映射）', 
       action: 'answer', target: 'none', source: 'veto', confidence: 1,
       needsClarify: false, clarifyOptions: [], payload: {},
     })).toBe(false)
+  })
+})
+
+describe('recordTurnIntent — turn/intent-decode 事件入会话日志（#583/#560）', () => {
+  test('判定结果写入事件：action/target/source/llmCalls + 脱敏指纹', () => {
+    const events: any[] = []
+    const log = { append: (e: any) => { events.push(e); return events.length } }
+    const intent: TurnIntent = {
+      action: 'edit', target: 'attachment', source: 'veto', confidence: 1,
+      needsClarify: true, clarifyOptions: ['attachment', 'current_doc'],
+      payload: { rawText: '润色这个文件', patientHash: undefined },
+    }
+    recordTurnIntent(log, {
+      userId: 'u1', sessionId: 'doc-9', text: '润色这个文件',
+      intent, llmCalls: 0, vetoed: true,
+    })
+    expect(events).toHaveLength(1)
+    const e = events[0]
+    expect(e.eventType).toBe('turn/intent-decode')
+    expect(e.agentId).toBe('u1')
+    expect(e.sessionId).toBe('doc-9')
+    expect(e.metadata.action).toBe('edit')
+    expect(e.metadata.target).toBe('attachment')
+    expect(e.metadata.source).toBe('veto')
+    expect(e.metadata.llmCalls).toBe(0)
+    expect(e.metadata.vetoed).toBe(true)
+    expect(e.metadata.queryHash).toBe(queryFingerprint('润色这个文件'))
+    // 不落明文原文/患者ID（脱敏: 原文仅截断300字，patient 用 hash 化前先不入库 PII）
+    expect(e.metadata).not.toHaveProperty('patientId')
+  })
+
+  test('同句指纹稳定：同一文本(仅空白差异)指纹一致，不同文本不同', () => {
+    expect(queryFingerprint(' 帮我生成  PPT ')).toBe(queryFingerprint('帮我生成 PPT'))
+    expect(queryFingerprint('生成一份病例总结')).not.toBe(queryFingerprint('帮我总结治疗经过'))
   })
 })
 

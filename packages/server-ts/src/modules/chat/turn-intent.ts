@@ -45,6 +45,11 @@ export interface TurnIntent {
     editDocumentId?: string
     attachmentRef?: boolean
     patientHash?: string
+    /** 用户提交时的历史轮数（#558 指代承接计数）。 */
+    historyTurns?: number
+    /** 用户原始文本（供插件可用性确认做第二道防线，脱敏前的原文由事件层负责）。 */
+    rawText?: string
+    summary?: string
   }
 }
 
@@ -52,6 +57,54 @@ export interface DecodeResult {
   intent: TurnIntent
   llmCalls: number
   vetoed: boolean
+}
+
+/** 事件日志的写入面（由 memory/event-log 实现注入），供 §7 事件落库。 */
+export interface TurnEventLog {
+  append(e: { timestamp: number; eventType: string; content: string; metadata: Record<string, unknown>; agentId: string; sessionId: string }): unknown
+}
+
+/** #560 — 文本规范化指纹（非加密，仅用于同句聚合/脱敏；不存原文）。 */
+export function queryFingerprint(text: string): string {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ')
+  let h = 5381
+  for (let i = 0; i < normalized.length; i++) {
+    h = ((h << 5) + h + normalized.charCodeAt(i)) >>> 0
+  }
+  return h.toString(16)
+}
+
+/**
+ * #583 (#560) — 每次意图判定落定后写一条 turn/intent-decode 事件。
+ * 字段按 TURN_INTENT_DESIGN.md §7：action/target/source/confidence/llmCalls/
+ * needsClarify + 脱敏指纹，供审计重建与语料导出（可回放判定路径）。
+ */
+export function recordTurnIntent(
+  eventLog: TurnEventLog,
+  opts: { userId: string; sessionId: string; text: string; intent: TurnIntent; llmCalls: number; vetoed: boolean; cacheHit?: boolean; semantic?: string },
+): void {
+  eventLog.append({
+    timestamp: Date.now() / 1000,
+    eventType: 'turn/intent-decode',
+    content: opts.text.slice(0, 300),
+    metadata: {
+      action: opts.intent.action,
+      target: opts.intent.target,
+      source: opts.intent.source,
+      confidence: opts.intent.confidence,
+      needsClarify: opts.intent.needsClarify,
+      clarifyOptions: opts.intent.clarifyOptions,
+      llmCalls: opts.llmCalls,
+      cacheHit: opts.cacheHit ?? false,
+      vetoed: opts.vetoed,
+      queryHash: queryFingerprint(opts.text),
+      historyTurns: (opts.intent.payload.historyTurns ?? 0),
+      // #585 — shadow 模式下记录语义层探测值，供离线分歧率统计。
+      semantic: opts.semantic,
+    },
+    agentId: opts.userId,
+    sessionId: opts.sessionId,
+  })
 }
 
 /** 生成信号：仅用于区分“总结/报告”兼类词（#558），不单独构成生成判定。 */
@@ -184,7 +237,7 @@ function fallbackAnswer(ctx: TurnContext): TurnIntent {
  */
 export async function decodeTurnIntent(ctx: TurnContext, llms: TurnLlms): Promise<DecodeResult> {
   const text = ctx.text
-  const basePayload = (patientHash?: string): TurnIntent['payload'] => ({ patientHash })
+  const basePayload = (patientHash?: string): TurnIntent['payload'] => ({ patientHash, rawText: text })
 
   // ── L0a：显式知识库命令 ──
   const cmd = parseKnowledgeCommand(text)
