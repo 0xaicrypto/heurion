@@ -212,13 +212,17 @@ async function adjudicate(opts: ResolveSidecarOptions, text: string): Promise<{ 
     opts.onDecision?.(detail)
     return { decision: false, detail }
   }
-  // #562: semantic router (opt-in, shadow/on) — high-confidence answers skip
-  // the LLM entirely; 'uncertain' falls through to the adjudicator below.
+  // #562/#585: semantic router (opt-in, shadow/on).
+  //  - 'on' (灰度): 高置信 generate/veto 直接落定（0 LLM）；uncertain 回落 LLM。
+  //  - 'shadow' (影子): 只探测语义判定并随 detail.semantic 上报，不参与决定——
+  //    供离线评估"语义 vs LLM 分歧率"（门槛 <5% 才切换 on），绝不误放行。
+  const semanticMode = process.env.INTENT_SEMANTIC_ROUTER || 'off'
+  let semanticProbe: SemanticVerdict | undefined
   try {
     const semantic = await getSemanticRouter()
-    if (semantic) {
+    if (semantic && semanticMode !== 'off') {
       const semanticVerdict = await semantic.classify(text)
-      if (semanticVerdict === 'generate' || semanticVerdict === 'veto') {
+      if (semanticMode === 'on' && (semanticVerdict === 'generate' || semanticVerdict === 'veto')) {
         const detail: SidecarDecisionDetail = {
           verdict: semanticVerdict === 'generate' ? 'generate' : 'discuss',
           vetoed: semanticVerdict === 'veto',
@@ -231,6 +235,8 @@ async function adjudicate(opts: ResolveSidecarOptions, text: string): Promise<{ 
         opts.onDecision?.(detail)
         return { decision: semanticVerdict === 'generate', detail }
       }
+      // shadow 与 uncertain → 记录探测，继续走 LLM 兜底。
+      semanticProbe = semanticVerdict
     }
   } catch {
     // semantic layer outage → fall through to LLM (never block on doubt).
@@ -242,6 +248,7 @@ async function adjudicate(opts: ResolveSidecarOptions, text: string): Promise<{ 
     const detail: SidecarDecisionDetail = {
       verdict, vetoed: false, llmCalls: 1, cacheHit: false,
       textLength: text.length, historyTurns: opts.history?.length ?? 0,
+      semantic: semanticProbe,
     }
     opts.onDecision?.(detail)
     return { decision: verdict === 'generate', detail }
@@ -249,6 +256,7 @@ async function adjudicate(opts: ResolveSidecarOptions, text: string): Promise<{ 
     const detail: SidecarDecisionDetail = {
       verdict: 'uncertain', vetoed: false, llmCalls: 1, cacheHit: false,
       textLength: text.length, historyTurns: opts.history?.length ?? 0,
+      semantic: semanticProbe,
     }
     opts.onDecision?.(detail)
     return { decision: false, detail }

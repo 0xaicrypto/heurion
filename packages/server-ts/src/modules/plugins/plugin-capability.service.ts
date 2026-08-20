@@ -3,6 +3,7 @@ import { listInstalledPlugins } from './plugin-installation.service.js'
 import { getCatalogById, type PluginManifest, type PluginTool } from './plugin-catalog.service.js'
 import { SCHEMA_VERSION, validateRenderContent, type RenderContent } from '@heurion/contracts'
 import { DISCUSSION_MARKERS, EDIT_MARKERS } from '../../retrieval/query-router.js'
+import type { TurnIntent } from '../chat/turn-intent.js'
 
 export interface PluginMatch {
   pluginId: string
@@ -47,19 +48,28 @@ export async function getActivePlugins(userId: string): Promise<PluginManifest[]
 }
 
 /**
- * #557 — intent adjudication happens in the LLM layer (intent-router). This
- * function's ONLY job is plugin availability: does an installed tool trigger
- * on this text, and is it NOT vetoed as edit/discussion? Used as the
- * confirmation step AFTER the LLM says generate (plugin-chat-handler) and as
- * the second line of defense ('edit-or-discuss' → fall back to conversation).
+ * #557/#579 — intent adjudication happens upstream in decodeTurnIntent
+ * (turn-intent.ts). This function's ONLY job is plugin availability: when the
+ * turn ACTION is generate, confirm whether an installed tool trigger fires on
+ * this text — and keep the deterministic markers as the second line of defense
+ * (edit/discussion semantics must never fall through to a generator plugin).
+ *
+ * Three-way result (callers distinguish WHY no plugin matched):
+ * - PluginMatch: a generation plugin trigger fired → render via plugin
+ * - 'edit-or-discuss': editing/discussing EXISTING content — a generator
+ *   plugin is wrong BY DESIGN; callers fall back to normal conversation
+ * - null: no plugin trigger matched at all (nothing installed / not generate)
  */
-export async function matchIntent(userId: string, text: string): Promise<IntentMatch> {
+export async function matchIntent(userId: string, turn: TurnIntent): Promise<IntentMatch> {
+  if (turn.action !== 'generate') {
+    // 非生成动作绝不咨询渲染插件；编辑/讨论语义由上层路由回普通对话。
+    return turn.action === 'edit' ? 'edit-or-discuss' : null
+  }
+  const text = turn.payload.rawText ?? turn.payload.summary ?? ''
   const plugins = await getActivePlugins(userId)
   let best: PluginMatch | null = null
   const q = text.toLowerCase()
-  // #549/#557: editing/polishing or discussing existing content is NEVER a
-  // generator-plugin request — vetoed by deterministic markers, no plugin
-  // lookup needed for them.
+  // 第二道防线：LLM 说生成，但规则锚点证明是编辑/讨论 → 交给普通对话（#557）。
   if (DISCUSSION_MARKERS.test(q)) return 'edit-or-discuss'
   if (EDIT_MARKERS.test(q)) return 'edit-or-discuss'
 

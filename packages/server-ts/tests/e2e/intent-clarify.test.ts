@@ -55,7 +55,10 @@ describe('#561 intent_clarify 三态上报', () => {
     const events = parseEvents(res.payload)
     const clarify = events.find((e: any) => e.type === 'intent_clarify')
     expect(clarify).toBeDefined()
-    expect(String(clarify.text)).toContain('生成/导出')
+    // #561/#581: 结构化 options（前端渲染选择气泡），text 为提示文案。
+    expect(Array.isArray(clarify.options)).toBe(true)
+    expect(clarify.options).toContain('生成文档')
+    expect(clarify.options).toContain('先讨论')
   })
 
   test('明确的生成请求 → 不发送 intent_clarify', async () => {

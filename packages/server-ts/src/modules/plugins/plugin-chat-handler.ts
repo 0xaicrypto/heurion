@@ -1,6 +1,7 @@
 import { createExecutionPlaneService, type ExecutionJobStatus } from '../execution/execution-plane.service.js'
 import { buildPayload, matchIntent, type PayloadBuildInput } from './plugin-capability.service.js'
 import { buildInputSummary, recordPluginInvocation } from './plugin-audit-log.service.js'
+import type { TurnIntent } from '../chat/turn-intent.js'
 
 const executionService = createExecutionPlaneService()
 
@@ -9,6 +10,8 @@ export interface PluginChatHandlerOptions {
   workspaceId?: string
   text: string
   patient?: PayloadBuildInput['patient']
+  /** #579 — upstream decodeTurnIntent 的裁定。缺省按 generate 处理（仅生成路径会走到本 handler）。 */
+  turnIntent?: TurnIntent
   /** Prior conversation messages in this session, injected as context. */
   history?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
   telemetryContext?: { userId: string; workspaceId?: string; action: string }
@@ -59,7 +62,12 @@ export async function handlePluginChatRequest(options: PluginChatHandlerOptions)
 
   send({ type: 'thought', text: '检测到可能的报告生成请求…' })
 
-  const match = await matchIntent(userId, text)
+  const turn = options.turnIntent ?? {
+    action: 'generate' as const, target: 'none' as const, source: 'llm' as const,
+    confidence: 0.8, needsClarify: false, clarifyOptions: [] as string[],
+    payload: { rawText: text },
+  }
+  const match = await matchIntent(userId, turn)
   if (match === 'edit-or-discuss') {
     // #558: the request is editing/polishing/discussing existing content —
     // matched a plugin trigger upstream but the rule layer proves generation

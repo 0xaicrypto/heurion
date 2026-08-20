@@ -274,9 +274,10 @@ export async function agentRouter(app: FastifyInstance) {
     }
     // R3: tool_call/tool_result events stay OUT of the chat message stream
     // so the reconstructed conversation remains structurally compatible.
+    // #583: turn/intent-decode is a log-only audit event, never a chat message.
     const events = ctx.eventLog
       .query({ sessionId, limit: parseInt((request.query as any).limit || '100', 10) })
-      .filter((e: any) => e.eventType !== 'tool_call' && e.eventType !== 'tool_result')
+      .filter((e: any) => e.eventType !== 'tool_call' && e.eventType !== 'tool_result' && e.eventType !== 'turn/intent-decode')
       .reverse()
     return {
       messages: events.map(e => ({

@@ -167,4 +167,28 @@ test('普通问题：无否决词健康，LLM 裁决 discuss → 不生成', asy
     expect(r).toBe(false)
     expect(cl.classify).toHaveBeenCalledTimes(1)
   })
+
+  // ── #585: 语义路由 shadow（只探测、不决定；分歧随 detail.semantic 上报） ──
+
+  test('#585 shadow：语义判 generate 也不直通，仍走 LLM 兜底（绝不误放行）', async () => {
+    process.env.INTENT_SEMANTIC_ROUTER = 'shadow'
+    const cl = classifier('discuss')
+    const decisions: any[] = []
+    const r = await resolveSidecarIntent('u1', '把这份数据做成 PPT 汇报', { classifier: cl, onDecision: (d) => decisions.push(d) })
+    expect(r).toBe(false)                     // shadow 不做决定
+    expect(cl.classify).toHaveBeenCalledTimes(1) // 仍走 LLM 兜底
+    expect(decisions[0].llmCalls).toBe(1)
+    expect(decisions[0].semantic).toBeDefined() // 探测值随 detail 上报（供分歧率统计）
+  })
+
+  test('#585 shadow：规则锚点 veto 时绝不直通，LLM 裁决为准，探测值上报', async () => {
+    process.env.INTENT_SEMANTIC_ROUTER = 'shadow'
+    const cl = classifier('uncertain')
+    const decisions: any[] = []
+    const r = await resolveSidecarIntent('u1', '帮我润色修改一下这篇论文', { classifier: cl, onDecision: (d) => decisions.push(d) })
+    expect(r).toBe(false)                        // 否决（编辑）永远不生成
+    expect(cl.classify).not.toHaveBeenCalled()   // 规则否决零 LLM（优于 shadow 探测）
+    expect(decisions[0].verdict).toBe('vetoed')
+    expect(decisions[0].llmCalls).toBe(0)
+  })
 })
