@@ -120,9 +120,6 @@ function applyChunk(msg: ChatMessage, chunk: ChatStreamChunk): ChatMessage {
           { pluginId: chunk.plugin_id, tool: chunk.tool, intent: chunk.intent, confidence: chunk.confidence },
         ],
       };
-    // #561/#581: 反问确认气泡（不确定时不静默，交给用户选）。
-    case 'intent_clarify':
-      return { ...msg, clarify: { text: chunk.text, options: chunk.options ?? [] } };
     // #582: 附件编辑结果落地出口。
     case 'attachment_export_option':
       return { ...msg, exportOptions: chunk.options };

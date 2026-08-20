@@ -62,21 +62,9 @@ describe('chat store — regenerate (§10.3 #220)', () => {
   });
 });
 
-describe('chat store — 意图澄清与附件导出（#561/#581/#582）', () => {
+describe('chat store — 附件导出与消息更新（#582）', () => {
   beforeEach(() => {
     useChatStore.setState({ sessions: {} });
-  });
-
-  test('intent_clarify chunk 附着到 assistant 消息（选项气泡）', async () => {
-    const { api } = await import('@/lib/api');
-    (api.sendChatFull as any).mockImplementationOnce(async function* () {
-      yield { type: 'intent_clarify', text: '你要编辑的是当前草稿还是上传的文件？', options: ['当前草稿', '上传的文件'] };
-      yield { type: 'turn_complete' };
-    });
-    const store = useChatStore.getState();
-    await store.sendMessage('s1', { sessionId: 's1', text: '润色这个文件', attachments: [], skills: [] });
-    const asst = useChatStore.getState().sessions.s1.messages[1];
-    expect(asst.clarify).toEqual({ text: '你要编辑的是当前草稿还是上传的文件？', options: ['当前草稿', '上传的文件'] });
   });
 
   test('attachment_export_option chunk 附着 exportOptions', async () => {

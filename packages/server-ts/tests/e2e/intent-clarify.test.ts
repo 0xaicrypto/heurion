@@ -6,10 +6,9 @@ import { deepseekChat } from '../../src/common/llm.js'
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
 
 /**
- * #561 — intent_clarify SSE event:
- * - LLM verdict 'uncertain' (mixed/ambiguous request) → not generated, but a
- *   clarification hint is streamed so the UI can offer an explicit generate.
- * - 'generate' → plugin flow, no clarification.
+ * #561/#598 — intent 判定与自动决策:
+ * - 'generate' → 直接走插件生成,无澄清。
+ * - 'uncertain' → #598 起不再反问,按普通对话处理。
  * - vetoed (edit/discuss) → normal conversation, no clarification.
  */
 function parseEvents(payload: string): any[] {
@@ -30,7 +29,7 @@ function parseEvents(payload: string): any[] {
     )
 }
 
-describe('#561 intent_clarify 三态上报', () => {
+describe('#561/#598 intent 判定与自动决策', () => {
   beforeAll(async () => {
     vi.stubEnv('DEEPSEEK_API_KEY', 'test-key')
   })
@@ -40,7 +39,7 @@ describe('#561 intent_clarify 三态上报', () => {
     vi.clearAllMocks()
   })
 
-  test('uncertain → 不生成但发送 intent_clarify 事件', async () => {
+  test('uncertain → 不发送澄清事件,按普通对话回复(#598)', async () => {
     vi.mocked(deepseekChat).mockImplementation(intentAware(() => 'uncertain', 'uncertain'))
     const app = await getApp()
     const headers = { ...await authHeader(), 'content-type': 'application/json' }
@@ -54,11 +53,10 @@ describe('#561 intent_clarify 三态上报', () => {
     expect(res.statusCode).toBe(200)
     const events = parseEvents(res.payload)
     const clarify = events.find((e: any) => e.type === 'intent_clarify')
-    expect(clarify).toBeDefined()
-    // #561/#581: 结构化 options（前端渲染选择气泡），text 为提示文案。
-    expect(Array.isArray(clarify.options)).toBe(true)
-    expect(clarify.options).toContain('生成文档')
-    expect(clarify.options).toContain('先讨论')
+    expect(clarify).toBeUndefined()
+    // 普通对话路径:应有最终回答。
+    const final = events.find((e: any) => e.type === 'final_answer_chunk')
+    expect(final).toBeDefined()
   })
 
   test('明确的生成请求 → 不发送 intent_clarify', async () => {

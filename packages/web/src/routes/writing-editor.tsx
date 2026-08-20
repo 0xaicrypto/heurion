@@ -8,7 +8,7 @@ import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor } from '@/components/DocEditor';
 import { ChatMessages } from '@/components/chat/ChatMessages';
 import { ChartLibrary } from '@/components/chat/ChartLibrary';
-import { useChatStore, type ChatMessage } from '@/stores/chat';
+import { useChatStore } from '@/stores/chat';
 import { Alert, Button, Card, Skeleton, Textarea, Input } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { mapWireMessages } from '@/lib/message-map';
@@ -405,22 +405,6 @@ export function WritingEditorPage() {
       skills: activeSkills,
       // #516: writing chat is always the document scene (server also infers
       // from the doc- session id).
-      scene: 'document',
-    });
-  };
-
-  /** #581: doc-chat 的意图澄清（例 C：当前草稿 vs 上传文件）。*/
-  const handleDocClarifyChoice = async (_m: ChatMessage, option: string) => {
-    if (!docId) return;
-    const msgs = chatMessages ?? [];
-    const lastUser = [...msgs].reverse().find((x) => x.role === 'user');
-    if (!lastUser) return;
-    const text = option === '生成文档' ? `生成：${lastUser.text}` : lastUser.text;
-    store.regenerate(`doc-${docId}`, {
-      sessionId: `doc-${docId}`,
-      text,
-      patientHash: null,
-      skills: activeSkills,
       scene: 'document',
     });
   };
@@ -923,7 +907,6 @@ export function WritingEditorPage() {
                   variant="compact"
                   messages={chatMessages}
                   bottomRef={chatEndRef}
-                  onClarifyChoice={handleDocClarifyChoice}
                   emptyState={
                     <p className="text-sm text-text-tertiary text-center mt-4 leading-relaxed">
                       Ask the AI to write or research content.<br />
