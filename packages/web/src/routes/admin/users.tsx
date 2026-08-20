@@ -78,6 +78,7 @@ export function AdminUsersPage() {
                 <thead>
                   <tr className="border-b border-border text-left text-text-secondary">
                     <th className="px-4 py-3 font-medium">Username</th>
+                    <th className="px-4 py-3 font-medium">Email</th>
                     <th className="px-4 py-3 font-medium">User ID</th>
                     <th className="px-4 py-3 font-medium">Role</th>
                     <th className="px-4 py-3 font-medium">Status</th>
@@ -90,6 +91,9 @@ export function AdminUsersPage() {
                     <tr key={u.user_id} className={cn('border-b border-border', u.disabled_at && 'opacity-60')}>
                       <td className="px-4 py-3">
                         <span className="font-medium text-text-primary">{u.username}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-text-secondary">{u.email || <span className="text-text-tertiary">—</span>}</span>
                       </td>
                       <td className="px-4 py-3">
                         <span className="font-mono text-xs text-text-tertiary">{u.user_id.slice(0, 12)}…</span>

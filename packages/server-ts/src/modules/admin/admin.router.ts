@@ -10,12 +10,13 @@ export async function adminRouter(app: FastifyInstance) {
   app.get('/api/v1/admin/users', async () => {
     const users = await (prisma as any).user.findMany({
       orderBy: { createdAt: 'desc' },
-      select: { id: true, displayName: true, role: true, createdAt: true, disabledAt: true, lastLoginAt: true },
+      select: { id: true, displayName: true, email: true, role: true, createdAt: true, disabledAt: true, lastLoginAt: true },
     })
     return {
       users: users.map((u: any) => ({
         user_id: u.id,
         username: u.displayName,
+        email: u.email || '',
         role: u.role,
         created_at: u.createdAt,
         disabled_at: u.disabledAt,
