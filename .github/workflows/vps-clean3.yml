@@ -1,0 +1,32 @@
+name: VPS cleanup3 (temp)
+on: workflow_dispatch
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+      - name: Cleanup
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '
+            echo "===== BEFORE ====="
+            free -m | head -2
+            echo "===== KILL ALL NON-DOCKER NODE ====="
+            for pid in $(ps -eo pid,args | grep -E "node|precache" | grep -v grep | awk "{print \$1}"); do
+              cg=$(cat /proc/$pid/cgroup 2>/dev/null | grep -c docker)
+              if [ "$cg" = "0" ]; then
+                echo "kill host pid=$pid"
+                kill -9 "$pid" 2>/dev/null || true
+              fi
+            done
+            pm2 kill 2>/dev/null || true
+            sleep 2
+            echo "===== AFTER ====="
+            free -m | head -2
+            ps -eo pid,rss,pcpu,args --sort=-rss | grep -E "node|python" | grep -v grep | head -6
+            echo "===== PROD HEALTH ====="
+            curl -s -o /dev/null -w "https: %{http_code} %{time_total}s\n" --max-time 30 https://heurion.org/healthz
+            sudo docker ps --format "{{.Names}} {{.Status}}" | head -6
+          ' 2>&1 | tail -50
