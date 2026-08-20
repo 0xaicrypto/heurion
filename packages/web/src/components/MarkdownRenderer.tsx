@@ -54,7 +54,7 @@ export function CodeBlock({ lang, text }: { lang: string; text: string }) {
  */
 function fixTableSyntax(md: string): string {
   const lines = md.split('\n')
-  const isSeparator = (l: string) => /^\s*\|?[\-:]+\|?[\-: |]*$/.test(l) && l.includes('-')
+  const isSeparator = (l: string) => /^\s*\|?[-:]+\|?[-: |]*$/.test(l) && l.includes('-')
   const isHr = (l: string) => /^\s*-{3,}\s*$/.test(l)
   const isStandardSep = (l: string) => /^\s*\|(\s*:?-+:?\s*\|){2,}\s*$/.test(l)
   const colCount = (l: string) => Math.max(0, (l.match(/\|/g) || []).length - 1)
