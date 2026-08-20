@@ -548,11 +548,14 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       })
       if (!isGenerateRequest(turnIntent) && turnIntent.needsClarify) {
         // #561: conservative by design — never generate on doubt，但把选择权交给用户。
+        const targetLabels: Record<string, string> = { current_doc: '当前草稿', attachment: '上传的文件', patient: '当前患者' }
+        const editOptions = turnIntent.clarifyOptions.map((o) => targetLabels[o] ?? o)
         send({
           type: 'intent_clarify',
           text: turnIntent.action === 'edit'
-            ? '你要编辑的是当前草稿还是上传的文件？请选择：' + (turnIntent.clarifyOptions.map(o => ({ current_doc: '当前草稿', attachment: '上传的文件', patient: '当前患者' })[o] ?? o).join(' / '))
-            : '如果你是想让我生成一份文档/PPT/表格，请明确说"生成/导出"；否则我会按普通对话回复。',
+            ? '你要编辑的是当前草稿还是上传的文件？'
+            : '如果你是想让我生成一份文档/PPT/表格，我会为你生成；否则按普通对话回复。',
+          options: turnIntent.action === 'edit' ? editOptions : ['生成文档', '先讨论'],
         })
       }
       if (isGenerateRequest(turnIntent)) {

@@ -41,6 +41,10 @@ export interface ChatMessagesProps {
   onRegenerate?: () => void;
   onRetry?: () => void;
   onKbCheckedChange?: (id: string, checked: boolean) => void;
+  /** #561/#581: 意图澄清选择（生成 / 讨论 / 编辑目标）。 */
+  onClarifyChoice?: (m: ChatMessage, option: string) => void;
+  /** #582: 附件编辑结果落地出口（保存为文档 / 导出 / 继续讨论）。 */
+  onExportChoice?: (m: ChatMessage, option: 'save_as_document' | 'export_pdf' | 'continue_discussion') => void;
   copiedId?: string | null;
   downloadLoading?: Record<string, boolean>;
   kbChecked?: Record<string, boolean>;
@@ -64,6 +68,8 @@ export function ChatMessages({
   onRegenerate,
   onRetry,
   onKbCheckedChange,
+  onClarifyChoice,
+  onExportChoice,
   copiedId,
   downloadLoading,
   kbChecked,
@@ -258,6 +264,50 @@ export function ChatMessages({
                         </span>
                       )}
                     </div>
+                  </div>
+                )}
+                {/* #561/#581: 意图澄清选择气泡 */}
+                {m.clarify && (
+                  <div className="mt-3 rounded-lg border border-accent/30 bg-accent/5 p-3">
+                    <p className="mb-2 text-xs text-text-secondary">{m.clarify.text}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {m.clarify.options.map((opt) => (
+                        <Button
+                          key={opt}
+                          size="sm"
+                          variant={opt.includes('生成') || opt.includes('草稿') ? 'primary' : 'secondary'}
+                          onClick={() => onClarifyChoice?.(m, opt)}
+                        >
+                          {opt}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* #582: 附件编辑结果落地出口 */}
+                {m.exportOptions && onExportChoice && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-text-tertiary">{t('chat.exportOptionsLabel', '保存结果：')}</span>
+                    {m.exportOptions.map((opt) => (
+                      <Button
+                        key={opt}
+                        size="sm"
+                        variant="secondary"
+                        isLoading={m.exportState === 'saving'}
+                        onClick={() => onExportChoice(m, opt)}
+                      >
+                        {opt === 'save_as_document'
+                          ? t('chat.saveAsDocument', '保存为文档')
+                          : opt === 'export_pdf'
+                            ? t('chat.exportPdf', '导出 PDF')
+                            : t('chat.continueDiscussion', '继续讨论')}
+                      </Button>
+                    ))}
+                    {m.exportState === 'saved' && (
+                      <span className="flex items-center gap-1 text-xs text-success">
+                        <Check size={12} /> {t('chat.exportSaved', '已保存')}
+                      </span>
+                    )}
                   </div>
                 )}
                 {m.isStreaming ? <StatusDot tone="active" pulse title={t('chat.streaming')} className="ml-1" /> : null}

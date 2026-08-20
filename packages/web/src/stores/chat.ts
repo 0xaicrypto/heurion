@@ -37,6 +37,12 @@ export interface ChatMessage {
   failed?: boolean;
   /** #548: answer was cut off by the output token budget. */
   truncated?: boolean;
+  /** #561/#581: intent clarification — uncertain 时向用户反问（选择气泡）。 */
+  clarify?: { text: string; options: string[] };
+  /** #582: 通用会话编辑附件的结果落地出口（保存为文档/导出PDF/继续讨论）。 */
+  exportOptions?: Array<'save_as_document' | 'export_pdf' | 'continue_discussion'>;
+  /** #582: 导出动作的进行/完成状态。 */
+  exportState?: 'saving' | 'saved';
 }
 
 interface SessionState {
@@ -70,6 +76,8 @@ interface ChatStore {
   setMessages: (sessionId: string, msgs: ChatMessage[]) => void;
   /** #420: replace the text of one assistant message (deep-analysis stream). */
   updateMessageText: (sessionId: string, msgId: string, text: string) => void;
+  /** #581/#582: 就地更新一条消息的任意字段（clarify 选择后清除 / 导出状态）。 */
+  patchMessage: (sessionId: string, msgId: string, patch: Partial<ChatMessage>) => void;
   /** #420: toggle the streaming flag of one message. */
   setStreaming: (sessionId: string, msgId: string, streaming: boolean) => void;
 }
@@ -112,6 +120,12 @@ function applyChunk(msg: ChatMessage, chunk: ChatStreamChunk): ChatMessage {
           { pluginId: chunk.plugin_id, tool: chunk.tool, intent: chunk.intent, confidence: chunk.confidence },
         ],
       };
+    // #561/#581: 反问确认气泡（不确定时不静默，交给用户选）。
+    case 'intent_clarify':
+      return { ...msg, clarify: { text: chunk.text, options: chunk.options ?? [] } };
+    // #582: 附件编辑结果落地出口。
+    case 'attachment_export_option':
+      return { ...msg, exportOptions: chunk.options };
     default:
       return msg;
   }
@@ -413,6 +427,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const s = state.sessions[sessionId];
       if (!s) return state;
       const msgs = s.messages.map((m) => (m.id === msgId ? { ...m, text } : m));
+      return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
+    });
+  },
+  patchMessage: (sessionId: string, msgId: string, patch: Partial<ChatMessage>) => {
+    set((state) => {
+      const s = state.sessions[sessionId];
+      if (!s) return state;
+      const msgs = s.messages.map((m) => (m.id === msgId ? { ...m, ...patch } : m));
       return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
     });
   },

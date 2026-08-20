@@ -61,3 +61,40 @@ describe('chat store — regenerate (§10.3 #220)', () => {
     expect(last.text).toContain('Error');
   });
 });
+
+describe('chat store — 意图澄清与附件导出（#561/#581/#582）', () => {
+  beforeEach(() => {
+    useChatStore.setState({ sessions: {} });
+  });
+
+  test('intent_clarify chunk 附着到 assistant 消息（选项气泡）', async () => {
+    const { api } = await import('@/lib/api');
+    (api.sendChatFull as any).mockImplementationOnce(async function* () {
+      yield { type: 'intent_clarify', text: '你要编辑的是当前草稿还是上传的文件？', options: ['当前草稿', '上传的文件'] };
+      yield { type: 'turn_complete' };
+    });
+    const store = useChatStore.getState();
+    await store.sendMessage('s1', { sessionId: 's1', text: '润色这个文件', attachments: [], skills: [] });
+    const asst = useChatStore.getState().sessions.s1.messages[1];
+    expect(asst.clarify).toEqual({ text: '你要编辑的是当前草稿还是上传的文件？', options: ['当前草稿', '上传的文件'] });
+  });
+
+  test('attachment_export_option chunk 附着 exportOptions', async () => {
+    const { api } = await import('@/lib/api');
+    (api.sendChatFull as any).mockImplementationOnce(async function* () {
+      yield { type: 'attachment_export_option', options: ['save_as_document', 'export_pdf', 'continue_discussion'] };
+      yield { type: 'turn_complete' };
+    });
+    const store = useChatStore.getState();
+    await store.sendMessage('s1', { sessionId: 's1', text: '帮我润色一下', attachments: ['f1'], skills: [] });
+    const asst = useChatStore.getState().sessions.s1.messages[1];
+    expect(asst.exportOptions).toEqual(['save_as_document', 'export_pdf', 'continue_discussion']);
+  });
+
+  test('patchMessage 就地更新单条消息字段（导出状态）', () => {
+    const store = useChatStore.getState();
+    store.setMessages('s1', [{ id: 'a1', role: 'assistant', text: '润色结果' }]);
+    store.patchMessage('s1', 'a1', { exportState: 'saving' });
+    expect(useChatStore.getState().sessions.s1.messages[0].exportState).toBe('saving');
+  });
+});

@@ -70,6 +70,10 @@ export type ChatStreamChunk =
   | { type: 'citations'; items: Citation[] }
   | { type: 'skill_capture_suggest'; text: string }
   | { type: 'truncated'; message: string }
+  // #561/#581 — 意图不确定时反问确认：text 为提示文案，options 为可选项（前端渲染选择气泡）。
+  | { type: 'intent_clarify'; text: string; options?: string[] }
+  // #582 — 通用会话编辑附件（action=edit, target=attachment）的落地出口。
+  | { type: 'attachment_export_option'; options: Array<'save_as_document' | 'export_pdf' | 'continue_discussion'> }
   | { type: 'turn_complete'; assistant_event_idx?: number }
   | { type: 'error'; message: string }
   // ── plugin pipeline events (plugin-chat-handler.ts) ──
@@ -120,6 +124,8 @@ export const CHAT_EVENT_TYPES = [
   'citations',
   'skill_capture_suggest',
   'truncated',
+  'intent_clarify',
+  'attachment_export_option',
   'turn_complete',
   'error',
   'plugin_selected',

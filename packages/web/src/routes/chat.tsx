@@ -309,6 +309,50 @@ export function ChatPage() {
     if (url) window.open(url, '_blank');
   };
 
+  /** #561/#581: 意图澄清选择 — 「生成文档」改为带 "生成：" 前缀重发；其余按原文重跑（编辑器目标由 scene/会话决定）。 */
+  const handleClarifyChoice = async (_m: ChatMessage, option: string) => {
+    const msgs = session?.messages ?? [];
+    const lastUser = [...msgs].reverse().find((x) => x.role === 'user');
+    if (!lastUser || session?.loading || session?.compacting) return;
+    const text = option === '生成文档' ? `生成：${lastUser.text}` : lastUser.text;
+    setError(null);
+    await store.regenerate(sessionId, {
+      sessionId,
+      text,
+      attachments: [],
+      skills: activeSkills,
+      scene: currentScene,
+    });
+  };
+
+  /** #582: 附件编辑结果落地 — 保存为文档 / 导出 PDF / 继续讨论。 */
+  const handleExportChoice = async (
+    m: ChatMessage,
+    option: 'save_as_document' | 'export_pdf' | 'continue_discussion',
+  ) => {
+    if (option === 'continue_discussion') {
+      store.patchMessage(sessionId, m.id, { exportOptions: undefined });
+      return;
+    }
+    if (m.exportState === 'saving' || !m.text) return;
+    const title = 'AI 润色结果';
+    store.patchMessage(sessionId, m.id, { exportState: 'saving' });
+    try {
+      const doc = await api.createDoc(title);
+      await api.updateDoc(doc.id, { title: doc.title || title, body: m.text });
+      if (option === 'export_pdf') {
+        try {
+          const { exportDocx } = api as any;
+          if (typeof exportDocx === 'function') await exportDocx(doc.id, title);
+        } catch { /* PDF 导出为可选，失败不阻塞保存 */ }
+      }
+      store.patchMessage(sessionId, m.id, { exportState: 'saved' });
+    } catch (err) {
+      store.patchMessage(sessionId, m.id, { exportState: undefined });
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    }
+  };
+
   const toggleSkill = (name: string) => {
     setActiveSkills((prev) => prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name]);
   };
@@ -426,6 +470,8 @@ export function ChatPage() {
               kbAdded={kbAdded}
               onRegenerate={handleRegenerate}
               onRetry={handleRetry}
+              onClarifyChoice={handleClarifyChoice}
+              onExportChoice={handleExportChoice}
               subagents={session?.subagents}
               emptyState={
                 <div className="py-20 text-center text-text-tertiary">
