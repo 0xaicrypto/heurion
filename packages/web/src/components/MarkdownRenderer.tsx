@@ -52,15 +52,46 @@ export function CodeBlock({ lang, text }: { lang: string; text: string }) {
  *  不一致(5 列表头 + 4 列分隔) ③ 分隔行写成 |--、---| 等。
  *  GFM 严格解析失败会退回 raw text。仅修复表格上下文,纯 ---(hr)不受影响。
  */
+/**
+ * #598: 单行表格展开 — 模型常把整个表格挤成一行
+ * (On-Chain Reality| Asset |...| |---|---| | WETH |...|| WMNT |...)。
+ * 检测"管道密集 + 分隔段"的行,按表头列数拆分为标准多行表格。
+ */
+function expandSingleLineTable(line: string): string | null {
+  if ((line.match(/\|/g) || []).length < 4) return null
+  const sepIdx = line.search(/\|[-:]{1,}\|/)
+  if (sepIdx < 0) return null
+  const headerRaw = line.slice(0, sepIdx)
+  const sepMatch = line.slice(sepIdx).match(/^\|?[-:]{1,}(\|[-:]{1,})+\|?/)
+  if (!sepMatch) return null
+  const dataRaw = line.slice(sepIdx + sepMatch[0].length)
+  if (!dataRaw.includes('|')) return null
+
+  const headerCells = headerRaw.split('|').map((s) => s.trim()).filter((s) => s !== '')
+  if (headerCells.length === 0) return null
+  const cols = headerCells.length
+  const hdr = headerRaw.trim().startsWith('|') ? headerRaw.trim() : `| ${headerRaw.trim()}`
+  const sepLine = `| ${Array(cols).fill('---').join(' | ')} |`
+  const cells = dataRaw.split('|').map((s) => s.trim()).filter((s) => s !== '')
+  const rows: string[] = []
+  for (let i = 0; i < cells.length; i += cols) {
+    rows.push(`| ${cells.slice(i, i + cols).join(' | ')} |`)
+  }
+  return [hdr, sepLine, ...rows].join('\n')
+}
+
 function fixTableSyntax(md: string): string {
   const lines = md.split('\n')
+  // 先尝试展开单行表格(命中则替换该行)。
+  const expanded = lines.map((l) => expandSingleLineTable(l) ?? l)
+
   const isSeparator = (l: string) => /^\s*\|?[-:]+\|?[-: |]*$/.test(l) && l.includes('-')
   const isHr = (l: string) => /^\s*-{3,}\s*$/.test(l)
   const isStandardSep = (l: string) => /^\s*\|(\s*:?-+:?\s*\|){2,}\s*$/.test(l)
   const colCount = (l: string) => Math.max(0, (l.match(/\|/g) || []).length - 1)
 
   let forceCols: number | null = null
-  return lines.map((line, i) => {
+  return expanded.map((line, i) => {
     const next = i + 1 < lines.length ? lines[i + 1] : ''
     const prev = i > 0 ? lines[i - 1] : ''
 

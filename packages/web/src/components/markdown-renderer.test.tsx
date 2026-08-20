@@ -152,4 +152,13 @@ describe('MarkdownRenderer — 标点围栏/表格容错(#598)', () => {
     const { container } = render(<MarkdownRenderer content={md} />);
     expect(container.querySelector('table')).toBeTruthy();
   });
+
+  it('单行表格(无换行)被展开为表格(#598)', () => {
+    const md = "On-Chain Reality| Asset | Gross | Debt | Net ||---|---|---|---|| WETH | $3.93M | $3.80M | $0.13M || Total | $321.6M | $141.2M | $180.4M |## Root Cause";
+    const { container } = render(<MarkdownRenderer content={md} />);
+    const table = container.querySelector('table');
+    expect(table).toBeTruthy();
+    expect(table!.querySelectorAll('th').length).toBe(5);
+    expect(table!.querySelectorAll('tr').length).toBeGreaterThanOrEqual(3);
+  });
 });
