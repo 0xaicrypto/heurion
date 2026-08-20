@@ -156,7 +156,8 @@ describe('MarkdownRenderer — 标点围栏/表格容错(#598)', () => {
     const { container } = render(<MarkdownRenderer content={md} />);
     const table = container.querySelector('table');
     expect(table).toBeTruthy();
-    expect(table!.querySelectorAll('th').length).toBe(5);
+    // #598-followup: 列数以分隔行(数据实际列数)为准,表头 5 列截取为 4.
+    expect(table!.querySelectorAll('th').length).toBe(4);
     expect(table!.querySelectorAll('tr').length).toBeGreaterThanOrEqual(3);
   });
 });
