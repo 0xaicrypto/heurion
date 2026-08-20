@@ -47,8 +47,39 @@ export function CodeBlock({ lang, text }: { lang: string; text: string }) {
   );
 }
 
+/** #598: 表格语法容错 — 模型常输出非标准表格(表头缺前导 |、
+ *  分隔行写成 |--、---| 等),GFM 严格解析失败会退回 raw text。
+ *  仅在"表格上下文"(相邻行含 |)内修复;纯 ---(hr)不受影响。
+ */
+function fixTableSyntax(md: string): string {
+  const lines = md.split('\n')
+  const isSeparator = (l: string) => /^\s*\|?[\-:]+\|?[\-: |]*$/.test(l) && l.includes('-')
+  const isHr = (l: string) => /^\s*-{3,}\s*$/.test(l)
+  // 标准分隔行: | --- | --- |(每列 :?-+:?)→ 保留原样,避免列数被改写。
+  const isStandardSep = (l: string) => /^\s*\|(\s*:?-+:?\s*\|){2,}\s*$/.test(l)
+  const colCount = (l: string) => Math.max(0, (l.match(/\|/g) || []).length - 1)
+
+  return lines.map((line, i) => {
+    const next = i + 1 < lines.length ? lines[i + 1] : ''
+    const prev = i > 0 ? lines[i - 1] : ''
+
+    // 1) 表头行缺前导 | 且下一行是分隔行 → 补前导 |
+    if (line.includes('|') && !line.trim().startsWith('|') && isSeparator(next) && !isHr(next)) {
+      return '| ' + line.trim()
+    }
+    // 2) 非标准分隔行(非 hr,处于表格上下文)→ 规范为 | --- | ... |
+    //    标准分隔行原样保留(列数与表头一致,避免被改写破坏表格)。
+    if (isSeparator(line) && !isHr(line) && !isStandardSep(line) && (prev.includes('|') || next.includes('|'))) {
+      const n = Math.max(1, colCount(prev.includes('|') ? prev : next))
+      return `| ${Array(n).fill('---').join(' | ')} |`
+    }
+    return line
+  }).join('\n')
+}
+
 export function MarkdownRenderer({ content, className }: Props) {
   if (!content) return null;
+  content = fixTableSyntax(content);
 
   return (
     <div
