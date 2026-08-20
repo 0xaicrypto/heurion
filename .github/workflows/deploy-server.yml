@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      # #596: staging 默认跳过(资源占用大:embedding 模型 3.4GB + pm2),
+      # 仅在需要回归验证时手动触发。
+      run_staging:
+        description: 'Run staging deploy + regression'
+        type: boolean
+        default: false
 
 # Only one deploy+regression at a time: staging is a single shared VPS, and
 # concurrent deploys reset the DB while the other run is mid-regression.
@@ -223,6 +230,8 @@ jobs:
 
   staging:
     name: Staging + Regression
+    # #596: 默认跳过 — 资源占用大,仅在 workflow_dispatch 手动开启时运行.
+    if: inputs.run_staging == true
     needs: [typecheck, test]
     runs-on: ubuntu-latest
     steps:
@@ -252,7 +261,6 @@ jobs:
     # download failing must never block the core production deploy
     # (render_scene degrades gracefully with an "unavailable" message).
     # The deploy job therefore does NOT depend on this job.
-    needs: [staging]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -289,7 +297,6 @@ jobs:
 
   cloudflare-ssl:
     name: Cloudflare SSL
-    needs: [staging]
     runs-on: ubuntu-latest
     steps:
       - name: Set Cloudflare SSL to Full
@@ -307,7 +314,7 @@ jobs:
     name: Deploy to Production (Docker Compose)
     # #466-fix: provision-reactome-diagrams is intentionally NOT in needs —
     # external-resource failures must not block the core deploy.
-    needs: [staging, cloudflare-ssl, build-server-image, build-web, build-embedding-server-image, build-stats-worker]
+    needs: [cloudflare-ssl, build-server-image, build-web, build-embedding-server-image, build-stats-worker]
     runs-on: ubuntu-latest
     environment:
       name: production
