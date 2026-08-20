@@ -879,9 +879,12 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       // the anchored summary is always injectable. Both cases surface a
       // compaction_started/compaction_completed event to the UI.
       const sendCompactionCompleted = async () => {
+        // #598: 压缩已写入新 compactedUpto — 必须重新读取,否则用本轮
+        // 压缩前的旧 cursor 计算,预算仍显示压缩前的高水位(如 70%)。
+        const latest = await loadCompactedUpto(userId, sid)
         const restored = ctx.eventLog
           .query({ sessionId: sid, limit: historyTurns * 2 * 8 })
-          .filter((e: any) => e.idx > compactedUpto && (e.eventType === 'user_message' || e.eventType === 'assistant_response'))
+          .filter((e: any) => e.idx > latest && (e.eventType === 'user_message' || e.eventType === 'assistant_response'))
           .reverse()
         const { tokens: restoredTokens } = buildHistoryMessages(restored, {
           maxTokens: maxHistoryTokens,
