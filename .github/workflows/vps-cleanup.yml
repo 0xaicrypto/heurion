@@ -1,0 +1,40 @@
+name: VPS cleanup (temp)
+on: workflow_dispatch
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+      - name: Cleanup
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '
+            echo "===== BEFORE ====="
+            pm2 list 2>/dev/null | head -10
+            du -sh ~/.pm2/logs 2>/dev/null
+            free -m | head -2
+            echo "===== STOP PM2 STAGING (log storm source) ====="
+            pm2 delete heurion-embedding-staging 2>/dev/null || true
+            pm2 delete heurion-staging 2>/dev/null || true
+            pm2 kill 2>/dev/null || true
+            echo "===== TRUNCATE PM2 LOGS ====="
+            find ~/.pm2/logs -name "*.log" -exec truncate -s 0 {} \; 2>/dev/null || true
+            du -sh ~/.pm2/logs 2>/dev/null
+            echo "===== KILL LEFTOVER HOST NODE (non-docker) ====="
+            for pid in $(ps -eo pid,args | grep -E "node.*(dist/index.js|src/main.ts|precache)" | grep -v grep | awk "{print \$1}"); do
+              cg=$(cat /proc/$pid/cgroup 2>/dev/null | grep -o docker || true)
+              if [ -z "$cg" ]; then
+                echo "killing host node pid=$pid $(tr "\0" " " < /proc/$pid/cmdline 2>/dev/null | head -c 80)"
+                kill -9 "$pid" 2>/dev/null || true
+              fi
+            done
+            sleep 3
+            echo "===== AFTER ====="
+            pm2 list 2>/dev/null | head -5 || echo "pm2 dead"
+            free -m | head -2
+            echo "===== DOCKER OK? ====="
+            sudo docker ps --format "{{.Names}} {{.Status}}" 2>/dev/null
+            curl -s -o /dev/null -w "prod health: %{http_code}\n" http://localhost:8001/healthz
+          ' 2>&1 | tail -60
