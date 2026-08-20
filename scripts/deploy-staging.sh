@@ -51,6 +51,8 @@ if ! EMBEDDING_SERVER_PORT=8004 npm run precache; then
   }
 fi
 pm2 delete heurion-embedding-staging 2>/dev/null || true
+# #591: 部署前截断旧日志(曾因模型加载失败循环涨至 742MB,写爆磁盘).
+truncate -s 0 ~/.pm2/logs/heurion-embedding-staging-*.log 2>/dev/null || true
 # #565: 与 8002 同理 — 孤儿进程占 8004 会让 embedding 新实例 EADDRINUSE。
 pkill -f "dist/index.js" 2>/dev/null || true
 kill $(lsof -ti:8004) 2>/dev/null || fuser -k 8004/tcp 2>/dev/null || true
@@ -58,7 +60,8 @@ for pid in $(ss -ltnp 2>/dev/null | grep ':8004' | grep -oE 'pid=[0-9]+' | cut -
   kill -9 "$pid" 2>/dev/null || true
 done
 sleep 1
-EMBEDDING_SERVER_PORT=8004 pm2 start node --name heurion-embedding-staging -- dist/index.js
+# #591: 限制重启次数与启动超时 — 模型加载失败不再无限重启刷日志.
+EMBEDDING_SERVER_PORT=8004 pm2 start node --name heurion-embedding-staging --max-restarts 2 --time -- dist/index.js
 
 # 健康检查:先 /health,再真实 embed 探针(验证模型真正就绪)。
 EMBEDDING_HEALTH_URL="http://localhost:8004/health"
@@ -114,7 +117,9 @@ sleep 2
 # ESM 文件,本地已验证可启动 server-ts)。不能走 .bin/tsx(npm 下是 shell
 # shim → node SyntaxError),也不要经 npx(孤儿进程见 #565)。dist 产物是
 # ESNext 无扩展名 import,node 无法直启,故不用编译产物。
-SERVER_PORT=8002 pm2 start node --name heurion-staging -- $(pwd)/node_modules/tsx/dist/cli.mjs src/main.ts
+# #591: staging server 同样限制重启次数 + 截断旧日志.
+truncate -s 0 ~/.pm2/logs/heurion-staging-*.log 2>/dev/null || true
+SERVER_PORT=8002 pm2 start node --name heurion-staging --max-restarts 3 --time -- $(pwd)/node_modules/tsx/dist/cli.mjs src/main.ts
 pm2 save
 
 sleep 3
