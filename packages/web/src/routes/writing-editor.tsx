@@ -119,6 +119,8 @@ export function WritingEditorPage() {
     setDoc((prev) => (prev ? { ...prev, body: chatSession.lastDocBody as string, updated_at: new Date().toISOString() } : prev));
     setAiEditNotice('文档已更新（AI 编辑）');
     const timer = setTimeout(() => setAiEditNotice(''), 4000);
+    // #598: AI 写回自动保存到服务端 — 生成版本快照,用户可随时回退。
+    api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: chatSession.lastDocBody }).catch(() => {});
     return () => clearTimeout(timer);
   }, [chatSession?.lastDocBody, docId]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
@@ -300,9 +302,18 @@ export function WritingEditorPage() {
     setError(null);
     try {
       const updated = await api.updateDoc(docId, { title, body });
-      setDoc((prev) => prev ? { ...prev, title: updated.title, body: updated.body, updated_at: updated.updated_at } : prev);
-      setTitle(updated.title);
-      setBody(updated.body);
+      if (updated.unchanged) {
+        // #598: 内容未变化 — 提示且不刷新时间戳.
+        setAiEditNotice('内容未变化，未创建新版本');
+        setDoc((prev) => prev ? { ...prev, title: updated.title, body: updated.body } : prev);
+        setTimeout(() => setAiEditNotice(''), 3000);
+      } else {
+        setDoc((prev) => prev ? { ...prev, title: updated.title, body: updated.body, updated_at: updated.updated_at } : prev);
+        setTitle(updated.title);
+        setBody(updated.body);
+        setAiEditNotice('已保存并创建版本');
+        setTimeout(() => setAiEditNotice(''), 3000);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
