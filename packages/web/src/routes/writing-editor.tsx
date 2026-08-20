@@ -9,7 +9,7 @@ import { DocEditor } from '@/components/DocEditor';
 import { ChatMessages } from '@/components/chat/ChatMessages';
 import { ChartLibrary } from '@/components/chat/ChartLibrary';
 import { useChatStore } from '@/stores/chat';
-import { Alert, Button, Card, Skeleton, Textarea, Input } from '@/components/ui';
+import { Alert, Button, Skeleton, Textarea, Input } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { mapWireMessages } from '@/lib/message-map';
 import { cn } from '@/lib/utils';
@@ -773,47 +773,6 @@ export function WritingEditorPage() {
                 </p>
               )}
 
-              {showHistory && (
-                <Card className="p-4">
-                  <h3 className="mb-3 text-sm font-semibold text-text-secondary">Snapshots</h3>
-                  {snapshotsLoading ? (
-                    <div className="space-y-2">
-                      <Skeleton className="h-12 w-full rounded-lg" />
-                      <Skeleton className="h-12 w-full rounded-lg" />
-                    </div>
-                  ) : snapshots.length === 0 ? (
-                    <p className="text-sm text-text-tertiary">No snapshots available</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {snapshots.map((s) => (
-                        <div
-                          key={s.snapshot_id}
-                          className="flex items-start justify-between rounded-lg border border-border p-3"
-                        >
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs text-text-tertiary">
-                              {new Date(s.created_at).toLocaleString()}
-                            </p>
-                            <p className="mt-1 text-sm text-text-secondary truncate">
-                              {s.body_preview || '(empty)'}
-                            </p>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleRestore(s.snapshot_id)}
-                            disabled={restoring === s.snapshot_id}
-                            isLoading={restoring === s.snapshot_id}
-                          >
-                            <RotateCcw size={14} className="mr-1" /> Restore
-            </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </Card>
-              )}
-
             </div>
           </main>
 
@@ -905,6 +864,42 @@ export function WritingEditorPage() {
             </>
           )}
         </div>
+
+        {/* #598: History 版本列表 — 悬浮窗选择 snapshot(无需滚动到底部) */}
+        {showHistory && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowHistory(false)}>
+            <div className="flex max-h-[70vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface-elevated p-6 shadow-xl m-4" onClick={(e) => e.stopPropagation()}>
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-text-primary">历史版本 (Snapshots)</h2>
+                <button onClick={() => setShowHistory(false)} className="text-text-tertiary hover:text-text-primary">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="flex-1 space-y-2 overflow-y-auto">
+                {snapshotsLoading ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-12 w-full rounded-lg" />
+                    <Skeleton className="h-12 w-full rounded-lg" />
+                  </div>
+                ) : snapshots.length === 0 ? (
+                  <p className="text-sm text-text-tertiary">No snapshots available</p>
+                ) : (
+                  snapshots.map((s) => (
+                    <div key={s.snapshot_id} className="flex items-start justify-between rounded-lg border border-border p-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs text-text-tertiary">{new Date(s.created_at).toLocaleString()}</p>
+                        <p className="mt-1 truncate text-sm text-text-secondary">{s.body_preview || '(empty)'}</p>
+                      </div>
+                      <Button size="sm" variant="ghost" onClick={() => handleRestore(s.snapshot_id)} disabled={restoring === s.snapshot_id} isLoading={restoring === s.snapshot_id}>
+                        <RotateCcw size={14} className="mr-1" /> Restore
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* PHI Findings Dialog */}
         {showPhiDialog && phiFindings && (
