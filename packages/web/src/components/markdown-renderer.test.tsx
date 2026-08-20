@@ -127,4 +127,29 @@ describe('MarkdownRenderer — 标点围栏/表格容错(#598)', () => {
     expect(container.querySelector('button')).toBeTruthy();
   });
 
+  it('表头缺前导 | 的表格被修复渲染为表格(#598)', () => {
+    const md = "On-Chain Reality| Asset | Debt |\n|---|---|---|\n| WETH | $3.93M | $3.80M |";
+    const { container, getByText } = render(<MarkdownRenderer content={md} />);
+    expect(container.querySelector('table')).toBeTruthy();
+    expect(getByText('Asset')).toBeTruthy();
+    expect(getByText('WETH')).toBeTruthy();
+  });
+
+  it('表头5列 + 分隔4列被强制修复为表格(#598)', () => {
+    const md = "On-Chain Reality| Asset | Gross | Debt | Net |\n|---|---|---|---|\n| WETH | $3.93M | $3.80M | $0.13M |";
+    const { container } = render(<MarkdownRenderer content={md} />);
+    expect(container.querySelector('table')).toBeTruthy();
+  });
+
+  it('hr(---) 不被误判为表格(#598)', () => {
+    const { container } = render(<MarkdownRenderer content={"## h2\n\n---\n\nbody"} />);
+    expect(container.querySelector('table')).toBeNull();
+    expect(container.querySelector('hr')).toBeTruthy();
+  });
+
+  it('非标准分隔行 |--| 被规范化为表格(#598)', () => {
+    const md = "| A | B |\n|--|\n| 1 | 2 |";
+    const { container } = render(<MarkdownRenderer content={md} />);
+    expect(container.querySelector('table')).toBeTruthy();
+  });
 });

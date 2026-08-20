@@ -47,8 +47,50 @@ export function CodeBlock({ lang, text }: { lang: string; text: string }) {
   );
 }
 
+/** #598: 表格语法容错 — 模型常输出非标准表格:
+ *  ① 表头缺前导 |(如 'On-Chain Reality| Asset |') ② 表头列数与分隔行
+ *  不一致(5 列表头 + 4 列分隔) ③ 分隔行写成 |--、---| 等。
+ *  GFM 严格解析失败会退回 raw text。仅修复表格上下文,纯 ---(hr)不受影响。
+ */
+function fixTableSyntax(md: string): string {
+  const lines = md.split('\n')
+  const isSeparator = (l: string) => /^\s*\|?[\-:]+\|?[\-: |]*$/.test(l) && l.includes('-')
+  const isHr = (l: string) => /^\s*-{3,}\s*$/.test(l)
+  const isStandardSep = (l: string) => /^\s*\|(\s*:?-+:?\s*\|){2,}\s*$/.test(l)
+  const colCount = (l: string) => Math.max(0, (l.match(/\|/g) || []).length - 1)
+
+  let forceCols: number | null = null
+  return lines.map((line, i) => {
+    const next = i + 1 < lines.length ? lines[i + 1] : ''
+    const prev = i > 0 ? lines[i - 1] : ''
+
+    // 1) 表头行缺前导 | 且下一行是分隔行 → 补前导 |,并强制分隔行列数
+    //    与表头一致(模型可能少写一列分隔)。
+    if (line.includes('|') && !line.trim().startsWith('|') && isSeparator(next) && !isHr(next)) {
+      const header = '| ' + line.trim()
+      forceCols = Math.max(1, colCount(header))
+      return header
+    }
+    // 2) 分隔行(非 hr,处于表格上下文)→ 规范为 | --- | ... |。
+    if (isSeparator(line) && !isHr(line) && (forceCols != null || prev.includes('|') || next.includes('|'))) {
+      if (forceCols != null) {
+        const n = forceCols
+        forceCols = null
+        return `| ${Array(n).fill('---').join(' | ')} |`
+      }
+      if (!isStandardSep(line)) {
+        const n = Math.max(1, colCount(prev.includes('|') ? prev : next))
+        return `| ${Array(n).fill('---').join(' | ')} |`
+      }
+    }
+    forceCols = null
+    return line
+  }).join('\n')
+}
+
 export function MarkdownRenderer({ content, className }: Props) {
   if (!content) return null;
+  content = fixTableSyntax(content);
 
   return (
     <div
