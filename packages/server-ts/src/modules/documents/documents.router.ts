@@ -112,7 +112,14 @@ export async function documentsRouter(app: FastifyInstance) {
     const snaps = await (prisma as any).docSnapshot.findMany({
       where: { docId: (request.params as any).docId }, orderBy: { id: 'desc' },
     })
-    return { snapshots: snaps.map((s: any) => ({ id: s.id, body: s.body, label: s.label, created_at: s.createdAt })) }
+    // #598: 返回字段与前端约定一致(snapshot_id / body_preview),此前
+    // id/body 不匹配导致 History 面板渲染 undefined、点击无反应。
+    return { snapshots: snaps.map((s: any) => ({
+      snapshot_id: String(s.id),
+      created_at: s.createdAt,
+      body_preview: (s.body || '').slice(0, 80),
+      label: s.label || '保存版本',
+    })) }
   })
 
   app.post('/api/v1/docs/:docId/snapshots/:snapId/restore', async (request, reply) => {

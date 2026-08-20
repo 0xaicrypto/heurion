@@ -6,7 +6,8 @@ import { useChatStore } from '@/stores/chat';
 import { useAuthStore } from '@/stores/auth';
 
 /**
- * #516 — chat 场景入口:四场景切换 UI,发送消息时 scene 随请求传递。
+ * #598 — 主 chat 场景切换 UI 已移除:场景由后端按上下文自动推断
+ * + 意图判定;患者页/写作页仍显式传 patient/document。
  */
 vi.mock('@/components/plugins/PluginExtensionPoint', () => ({
   PluginExtensionPoint: () => null,
@@ -56,18 +57,17 @@ beforeEach(() => {
   useAuthStore.setState({ isAuthenticated: true, token: 't', userId: 'u1', displayName: 'Doc' } as any);
 });
 
-describe('#516 chat scene selector', () => {
-  test('渲染四个场景入口', async () => {
+describe('#598 chat scene auto (selector removed)', () => {
+  test('主 chat 不显示场景切换按钮(由意图自动判定)', async () => {
     render(<ChatPage />);
-    await screen.findByText('通用对话');
-    expect(screen.getByText('通用对话')).toBeTruthy();
-    expect(screen.getByText('患者问诊')).toBeTruthy();
-    expect(screen.getByText('文档写作')).toBeTruthy();
-    expect(screen.getByText('图表分析')).toBeTruthy();
+    expect(screen.queryByText('通用对话')).toBeNull();
+    expect(screen.queryByText('图表分析')).toBeNull();
+    expect(screen.queryByText('患者问诊')).toBeNull();
+    expect(screen.queryByText('文档写作')).toBeNull();
   });
 
-  /** 建立会话:空状态 → 新建会话对话框 → 确认。 */
-  async function createSession() {
+  test('发送时未显式携带 scene(后端自动推断 general)', async () => {
+    render(<ChatPage />);
     const newButtons = screen.getAllByRole('button', { name: /新建会话|New Session/i });
     fireEvent.click(newButtons[newButtons.length - 1]);
     const titleInput = await screen.findByPlaceholderText(/会话名称|session name/i);
@@ -77,33 +77,12 @@ describe('#516 chat scene selector', () => {
     await waitFor(() => {
       expect(screen.queryByPlaceholderText(/请先新建一个会话|Create a session first/)).not.toBeInTheDocument();
     });
-  }
-
-  test('默认 general;切换到 chart 后发送携带 scene', async () => {
-    render(<ChatPage />);
-    await createSession();
-    fireEvent.click(screen.getByText('图表分析'));
     const input = screen.getByPlaceholderText(/输入|message|聊天/i) as HTMLTextAreaElement;
-    fireEvent.change(input, { target: { value: '画一张 KM 曲线' } });
+    fireEvent.change(input, { target: { value: '你好' } });
     fireEvent.click(screen.getByRole('button', { name: /发送|send/i }));
     await waitFor(() => {
       const call = sendChatFull.mock.calls[0]?.[0] as { scene?: string } | undefined;
-      expect(call?.scene).toBe('chart');
+      expect(call?.scene).toBeUndefined();
     });
-  });
-
-  test('发送后场景在当前会话保持(再次发送仍是 chart)', async () => {
-    render(<ChatPage />);
-    await createSession();
-    fireEvent.click(screen.getByText('图表分析'));
-    const input = screen.getByPlaceholderText(/输入|message|聊天/i) as HTMLTextAreaElement;
-    fireEvent.change(input, { target: { value: '问题一' } });
-    fireEvent.click(screen.getByRole('button', { name: /发送|send/i }));
-    await waitFor(() => expect(sendChatFull.mock.calls.length).toBeGreaterThan(0));
-    fireEvent.change(input, { target: { value: '问题二' } });
-    fireEvent.click(screen.getByRole('button', { name: /发送|send/i }));
-    await waitFor(() => expect(sendChatFull.mock.calls.length).toBe(2));
-    const second = sendChatFull.mock.calls[1]?.[0] as { scene?: string } | undefined;
-    expect(second?.scene).toBe('chart');
   });
 });
