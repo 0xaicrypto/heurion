@@ -345,19 +345,6 @@ export function WritingEditorPage() {
     }
   };
 
-  const handlePolish = async () => {
-    if (!docId || !bodyRef.current) return;
-    const ta = bodyRef.current;
-    const selection = body.substring(ta.selectionStart, ta.selectionEnd);
-    if (!selection) {
-      setError('Select text in the editor first, then click Polish.');
-      return;
-    }
-    setPolishOpen(true);
-    setPolishStream('');
-    setPolishInstruction('');
-  };
-
   const handlePolishSubmit = async () => {
     if (!docId || !bodyRef.current) return;
     const ta = bodyRef.current;
@@ -671,15 +658,7 @@ export function WritingEditorPage() {
               </div>
             </div>
           )}
-          <div className="relative">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handlePolish}
-            >
-              <Sparkles size={14} className="mr-1" /> AI Polish
-            </Button>
-            {polishOpen && (
+          {polishOpen && (
               <div
                 ref={polishRef}
                 className="absolute left-0 right-0 top-full z-30 mt-1 w-auto max-w-full rounded-xl border border-border bg-surface-elevated p-4 shadow-lg sm:left-auto sm:right-auto sm:w-80"
@@ -703,7 +682,6 @@ export function WritingEditorPage() {
                 </div>
               </div>
             )}
-          </div>
           <Button
             variant="ghost"
             size="sm"
