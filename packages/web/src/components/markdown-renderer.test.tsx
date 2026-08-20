@@ -48,17 +48,14 @@ describe('MarkdownRenderer', () => {
     expect(screen.getByText('条目二')).toBeInTheDocument();
   });
 
-  it('renders a fenced code block with a copy button', () => {
-    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
+  it('renders fenced code as plain text (no code box / copy button)', () => {
     render(
       <MarkdownRenderer
         content={'```python\ndef f():\n    return 1\n```'}
       />,
     );
-    expect(screen.getByText('python')).toBeInTheDocument();
     expect(screen.getByText(/def f\(\):/)).toBeInTheDocument();
-    const copyBtn = screen.getByRole('button', { name: /copy python/i });
-    expect(copyBtn).toBeInTheDocument();
+    expect(screen.queryByRole('button')).toBeNull();
   });
 
   it('renders GFM tables', () => {
@@ -122,9 +119,10 @@ describe('MarkdownRenderer — 标点围栏/表格容错(#598)', () => {
     expect(getByText('..')).toBeTruthy();
   });
 
-  it('有语言标注的真实代码块仍渲染为 CodeBlock', () => {
+  it('有语言标注的真实代码块按普通文本渲染(无复制按钮)', () => {
     const { container } = render(<MarkdownRenderer content={"```python\nprint(1)\n```"} />);
-    expect(container.querySelector('button')).toBeTruthy();
+    expect(container.querySelector('button')).toBeNull();
+    expect(container.querySelector('pre')).toBeTruthy();
   });
 
   it('表头缺前导 | 的表格被修复渲染为表格(#598)', () => {

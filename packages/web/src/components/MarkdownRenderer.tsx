@@ -153,9 +153,7 @@ export function MarkdownRenderer({ content, className }: Props) {
             // CodeBlock renders its own container; unwrap the default <pre>.
             return <>{children}</>;
           },
-          code({ inline, className, children, ...props }: any) {
-            const match = /language-(\w+)/.exec(className || '');
-            const lang = match ? match[1] : '';
+          code({ inline, children, ...props }: any) {
             const text = String(children).replace(/\n$/, '');
 
             if (inline) {
@@ -166,14 +164,12 @@ export function MarkdownRenderer({ content, className }: Props) {
               );
             }
 
-            // #598: 模型常把单个标点/短符号用 ``` 围栏包裹(如 `..`、`.`),
-            // 若围栏无语言标注且内容极短(≤4 字符、无换行),按普通文本
-            // 渲染而非代码块,避免"明明不是代码却显示成 code"。
-            if (!lang && text.trim().length <= 4 && !text.includes('\n')) {
-              return <span className="text-text-primary">{children}</span>;
-            }
-
-            return <CodeBlock lang={lang} text={text} />;
+            // #598: 围栏代码块不再单独渲染为带框/复制按钮的代码块 —
+            // 按普通文本(等宽、保留换行)展示,避免"非代码被 code 化"的
+            // 视觉突兀与误判。
+            return (
+              <pre className="my-1 whitespace-pre-wrap font-mono text-[13px] leading-relaxed text-text-primary">{text}</pre>
+            );
           },
           a({ children, href }) {
             return (
