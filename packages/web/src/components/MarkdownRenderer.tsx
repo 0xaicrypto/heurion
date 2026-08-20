@@ -69,8 +69,13 @@ function expandSingleLineTable(line: string): string | null {
 
   const headerCells = headerRaw.split('|').map((s) => s.trim()).filter((s) => s !== '')
   if (headerCells.length === 0) return null
-  const cols = headerCells.length
-  const hdr = headerRaw.trim().startsWith('|') ? headerRaw.trim() : `| ${headerRaw.trim()}`
+  // #598: 列数以"分隔行列数"为准(数据行往往比表头少一列 — 模型输出
+  // 不一致)。按分隔列数分组数据,表头截取前 cols 个单元格,避免错位。
+  const sepCells = sepMatch[0].split('|').map((s) => s.trim()).filter((s) => s !== '')
+  const cols = Math.max(1, sepCells.length)
+  const hdrCells = headerCells.slice(0, cols)
+  while (hdrCells.length < cols) hdrCells.push('')
+  const hdr = `| ${hdrCells.join(' | ')} |`
   const sepLine = `| ${Array(cols).fill('---').join(' | ')} |`
   const cells = dataRaw.split('|').map((s) => s.trim()).filter((s) => s !== '')
   const rows: string[] = []
@@ -157,8 +162,10 @@ export function MarkdownRenderer({ content, className }: Props) {
             const text = String(children).replace(/\n$/, '');
 
             if (inline) {
+              // #598: 行内代码(反引号)去背景、去内边距 — 代码标识符/
+              // 变量名/地址以纯等宽文本展示,避免视觉杂乱。
               return (
-                <code className="rounded bg-surface px-1 py-0.5 text-[13px] font-mono text-text-primary" {...props}>
+                <code className="font-mono text-[13px] text-text-primary" {...props}>
                   {children}
                 </code>
               );
