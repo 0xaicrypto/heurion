@@ -114,3 +114,17 @@ describe('normalizeLlmText — single-line block recovery', () => {
     expect(out).toBe('每次照射仅 1-5 分钟，剂量 1.8-2 Gy 常规分割。');
   });
 });
+
+describe('MarkdownRenderer — 标点围栏/表格容错(#598)', () => {
+  it('围栏包裹单个标点 → 按普通文本(无 CodeBlock 复制按钮)', () => {
+    const { container, getByText } = render(<MarkdownRenderer content={"```\n..\n```"} />);
+    expect(container.querySelector('button')).toBeNull();
+    expect(getByText('..')).toBeTruthy();
+  });
+
+  it('有语言标注的真实代码块仍渲染为 CodeBlock', () => {
+    const { container } = render(<MarkdownRenderer content={"```python\nprint(1)\n```"} />);
+    expect(container.querySelector('button')).toBeTruthy();
+  });
+
+});
