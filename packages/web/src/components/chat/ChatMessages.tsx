@@ -1,11 +1,12 @@
-import type { RefObject } from 'react';
+import { useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Check, Copy, Download, FileText, Puzzle, Quote, RefreshCw, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Copy, Download, FileText, Puzzle, Quote, RefreshCw, RotateCcw } from 'lucide-react';
 import type { ChatMessage } from '@/stores/chat';
 import { StreamingLlmContent } from '@/components/LlmContent';
 import { ToolCalls } from '@/components/ToolCalls';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { Alert, Button } from '@/components/ui';
+import { cn } from '@/lib/utils';
 
 /** §10.3 (#220): group separator when a gap exceeds this many minutes. */
 const TIME_GROUP_GAP_MS = 5 * 60 * 1000;
@@ -58,6 +59,29 @@ export interface ChatMessagesProps {
  * writing-editor doc-chat all render through this component; the per-page
  * differences are reduced to props (full vs compact variant).
  */
+/** #612: 上下文压缩摘要 — 可折叠卡片展示。 */
+function CompactionSummaryCard({ text }: { text: string }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="my-1 overflow-hidden rounded-lg border border-border bg-surface/60">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-text-secondary transition-colors hover:bg-surface"
+        aria-expanded={open}
+      >
+        <span>📋 {t('chat.compactionSummary', '上下文压缩摘要')}</span>
+        <ChevronDown size={14} className={cn('shrink-0 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div className="border-t border-border px-3 py-2 text-sm text-text-secondary">
+          <StreamingLlmContent content={text} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ChatMessages({
   messages,
   variant = 'full',
@@ -165,7 +189,11 @@ export function ChatMessages({
                 {m.chart && (
                   <img src={m.chart.url} alt="chart" className="mt-2 max-h-72 rounded-lg border border-border" />
                 )}
-                <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
+                {m.compactionSummary ? (
+                  <CompactionSummaryCard text={m.text || ''} />
+                ) : (
+                  <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
+                )}
                 {m.reasoning && !m.text && m.isStreaming && (
                   <div className="mt-1 text-xs text-text-tertiary">{t('chat.thinking', '思考中…')}</div>
                 )}

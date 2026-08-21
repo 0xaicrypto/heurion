@@ -27,6 +27,8 @@ export interface ChatMessage {
   };
   addedToKnowledge?: boolean;
   _compactionStream?: boolean;
+  /** #612: 上下文压缩摘要消息(可折叠展示)。 */
+  compactionSummary?: boolean;
   toolCalls?: Array<{ tool: string; argsPreview: string }>;
   chart?: { url: string; chartType?: string };
   /** #455: plugin invocation trail (plugin_selected / payload_building / job_enqueued). */
@@ -288,6 +290,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               });
             }
             return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
+          });
+          continue;
+        }
+        if (chunk.type === 'compaction_summary') {
+          // #612: 压缩摘要作为独立 assistant 消息(可折叠),append 到历史.
+          set((state) => {
+            const s = state.sessions[sessionId];
+            if (!s) return state;
+            const summaryMsg: ChatMessage = {
+              id: crypto.randomUUID(), role: 'assistant', text: chunk.text,
+              createdAt: Date.now(), compactionSummary: true,
+            };
+            return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: [...s.messages, summaryMsg] } } };
           });
           continue;
         }
