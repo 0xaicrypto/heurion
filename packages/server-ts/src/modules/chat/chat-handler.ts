@@ -36,6 +36,7 @@ import {
   buildAttachmentParts,
 } from './chat-context.js'
 import { providerSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
+import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
 import { resolveTargetCandidates, pickTarget, isGenerateRequest, recordTurnIntent, type TurnAction, type TurnIntent, type TurnSource, type TurnTarget } from './turn-intent.js'
 
 /** 仅编辑语义判断（供决策表消歧——判定为编辑但存在多目标时需要澄清）。 */
@@ -847,10 +848,17 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
 - 代码围栏(\`\`\`)仅用于真实代码、命令、JSON 等;不要把普通文字、术语或符号放进去。
 - 行内反引号仅用于真正的行内代码。
 `
+      // #621: 知识库语义自动注入 — 用户消息后自动检索 Top-K 知识作为
+      // system 片段(带来源)。患者场景已有患者知识自动带,不重复注入;
+      // 文档场景也注入(参考资料)。
+      const kbInjection = scene === 'patient'
+        ? ''
+        : buildKnowledgeInjection(body.text, ctx.facts, ctx.knowledge)
       // R1 (#98): assemble the system prompt from typed context segments —
       // hash-snapshot per user so stable segments stay byte-identical
       // (provider prompt-cache friendly) and changes are diffable.
       let systemPrompt = projected.systemPrompt + OUTPUT_FORMAT_RULES + studyContext + docContext
+      if (kbInjection) systemPrompt += '\n\n' + kbInjection
       try {
         const { computeSegments, saveSnapshot, loadSnapshot, renderSystemPrompt } = await import('../../memory/context-sources.js')
         const prev = loadSnapshot(userId)
@@ -970,6 +978,31 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
           text: `Context trimmed: ${trimmedTurns} earlier turns dropped to fit the total token budget.`,
           kind: 'projection',
         })
+      }
+
+      // #621: 知识库注入后超预算 — 历史被裁剪时同步触发压缩(async),
+      // 压缩后历史从新 cursor 开始,后续轮次预算回落到低位。
+      if (trimmedTurns > 0 && kbInjection && !isWritingSession && sid !== '') {
+        try {
+          send({ type: 'compaction_started' })
+          const oldestRetainedIdx = (history[historyMessages.length - 1] as any)?.idx ?? 0
+          ensureSessionCompaction(
+            {
+              userId,
+              eventLog: ctx.eventLog,
+              facts: ctx.facts,
+              episodes: ctx.episodes,
+              skills: ctx.skills,
+              knowledge: ctx.knowledge,
+              memory: ctx.memory,
+            },
+            sid,
+            oldestRetainedIdx,
+            patientHash || undefined,
+          )
+            .then(() => send({ type: 'compaction_completed' }))
+            .catch(() => {})
+        } catch { /* best-effort */ }
       }
 
       // Create tool registry for function calling
