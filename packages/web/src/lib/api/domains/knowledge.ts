@@ -4,6 +4,11 @@ import type { Article, LlmCostDashboard, QueueMetrics, TelemetryDashboard } from
 export class KnowledgeApi extends ApiCore {
   /* ────────────────────────── knowledge & facts ────────────────────────── */
 
+  /** #620: 知识库选择器搜索(标题/内容关键词)。 */
+  async getKnowledgePicker(q: string): Promise<{ articles: Array<{ id: string; title: string; summary: string; updated_at: string }> }> {
+    return this.fetch(`/api/v1/knowledge/picker?q=${encodeURIComponent(q)}`);
+  }
+
   async getKnowledgeArticles(): Promise<{articles: Article[]}> {
     return this.fetch('/api/v1/knowledge/articles');
   }

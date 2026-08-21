@@ -854,11 +854,27 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       const kbInjection = scene === 'patient'
         ? ''
         : buildKnowledgeInjection(body.text, ctx.facts, ctx.knowledge)
+      // #620: 用户显式选定的知识库文章(知识库选择器)→ 注入为 system 片段.
+      const pickedIds: string[] = Array.isArray((body as any).picked_kb_ids) ? (body as any).picked_kb_ids.map(String) : []
+      let pickedInjection = ''
+      if (pickedIds.length > 0 && !scene.startsWith('patient')) {
+        try {
+          const articles = (ctx.memory.graph.getCurrentNodesByType('article') as any[])
+            .filter((n: any) => n.type === 'article' && pickedIds.includes(n.stableId))
+            .slice(0, 3)
+          if (articles.length > 0) {
+            pickedInjection = '\n## 用户选定知识库参考\n' + articles
+              .map((a) => `- [${a.title}] ${String(a.content || '').slice(0, 4000)}`)
+              .join('\n')
+          }
+        } catch { /* best-effort */ }
+      }
       // R1 (#98): assemble the system prompt from typed context segments —
       // hash-snapshot per user so stable segments stay byte-identical
       // (provider prompt-cache friendly) and changes are diffable.
       let systemPrompt = projected.systemPrompt + OUTPUT_FORMAT_RULES + studyContext + docContext
       if (kbInjection) systemPrompt += '\n\n' + kbInjection
+      if (pickedInjection) systemPrompt += pickedInjection
       try {
         const { computeSegments, saveSnapshot, loadSnapshot, renderSystemPrompt } = await import('../../memory/context-sources.js')
         const prev = loadSnapshot(userId)

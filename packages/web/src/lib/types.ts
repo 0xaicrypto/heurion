@@ -419,6 +419,8 @@ export interface SendChatOptions {
   skills?: string[];
   /** #516: entry scene for the turn; server infers when absent. */
   scene?: ChatScene;
+  /** #620: 显式选定的知识库文章(选择器)。 */
+  pickedKbIds?: string[];
 }
 
 /**
