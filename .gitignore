@@ -113,6 +113,8 @@ _attic/
 scratch/
 TODO.local.md
 packages/server-ts/web-dist/
+!packages/llm-markdown-fix/dist/
+!packages/llm-markdown-fix/dist/rules/
 packages/server-ts/test-results/
 packages/server-ts/playwright-report/
 
