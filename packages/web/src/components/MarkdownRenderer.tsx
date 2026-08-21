@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
+import { fixMarkdown } from 'llm-markdown-fix';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -47,86 +48,9 @@ export function CodeBlock({ lang, text }: { lang: string; text: string }) {
   );
 }
 
-/** #598: 表格语法容错 — 模型常输出非标准表格:
- *  ① 表头缺前导 |(如 'On-Chain Reality| Asset |') ② 表头列数与分隔行
- *  不一致(5 列表头 + 4 列分隔) ③ 分隔行写成 |--、---| 等。
- *  GFM 严格解析失败会退回 raw text。仅修复表格上下文,纯 ---(hr)不受影响。
- */
-/**
- * #598: 单行表格展开 — 模型常把整个表格挤成一行
- * (On-Chain Reality| Asset |...| |---|---| | WETH |...|| WMNT |...)。
- * 检测"管道密集 + 分隔段"的行,按表头列数拆分为标准多行表格。
- */
-function expandSingleLineTable(line: string): string | null {
-  if ((line.match(/\|/g) || []).length < 4) return null
-  const sepIdx = line.search(/\|[-:]{1,}\|/)
-  if (sepIdx < 0) return null
-  const headerRaw = line.slice(0, sepIdx)
-  const sepMatch = line.slice(sepIdx).match(/^\|?[-:]{1,}(\|[-:]{1,})+\|?/)
-  if (!sepMatch) return null
-  const dataRaw = line.slice(sepIdx + sepMatch[0].length)
-  if (!dataRaw.includes('|')) return null
-
-  const headerCells = headerRaw.split('|').map((s) => s.trim()).filter((s) => s !== '')
-  if (headerCells.length === 0) return null
-  // #598: 列数以"分隔行列数"为准(数据行往往比表头少一列 — 模型输出
-  // 不一致)。按分隔列数分组数据,表头截取前 cols 个单元格,避免错位。
-  const sepCells = sepMatch[0].split('|').map((s) => s.trim()).filter((s) => s !== '')
-  const cols = Math.max(1, sepCells.length)
-  const hdrCells = headerCells.slice(0, cols)
-  while (hdrCells.length < cols) hdrCells.push('')
-  const hdr = `| ${hdrCells.join(' | ')} |`
-  const sepLine = `| ${Array(cols).fill('---').join(' | ')} |`
-  const cells = dataRaw.split('|').map((s) => s.trim()).filter((s) => s !== '')
-  const rows: string[] = []
-  for (let i = 0; i < cells.length; i += cols) {
-    rows.push(`| ${cells.slice(i, i + cols).join(' | ')} |`)
-  }
-  return [hdr, sepLine, ...rows].join('\n')
-}
-
-function fixTableSyntax(md: string): string {
-  const lines = md.split('\n')
-  // 先尝试展开单行表格(命中则替换该行)。
-  const expanded = lines.map((l) => expandSingleLineTable(l) ?? l)
-
-  const isSeparator = (l: string) => /^\s*\|?[-:]+\|?[-: |]*$/.test(l) && l.includes('-')
-  const isHr = (l: string) => /^\s*-{3,}\s*$/.test(l)
-  const isStandardSep = (l: string) => /^\s*\|(\s*:?-+:?\s*\|){2,}\s*$/.test(l)
-  const colCount = (l: string) => Math.max(0, (l.match(/\|/g) || []).length - 1)
-
-  let forceCols: number | null = null
-  return expanded.map((line, i) => {
-    const next = i + 1 < lines.length ? lines[i + 1] : ''
-    const prev = i > 0 ? lines[i - 1] : ''
-
-    // 1) 表头行缺前导 | 且下一行是分隔行 → 补前导 |,并强制分隔行列数
-    //    与表头一致(模型可能少写一列分隔)。
-    if (line.includes('|') && !line.trim().startsWith('|') && isSeparator(next) && !isHr(next)) {
-      const header = '| ' + line.trim()
-      forceCols = Math.max(1, colCount(header))
-      return header
-    }
-    // 2) 分隔行(非 hr,处于表格上下文)→ 规范为 | --- | ... |。
-    if (isSeparator(line) && !isHr(line) && (forceCols != null || prev.includes('|') || next.includes('|'))) {
-      if (forceCols != null) {
-        const n = forceCols
-        forceCols = null
-        return `| ${Array(n).fill('---').join(' | ')} |`
-      }
-      if (!isStandardSep(line)) {
-        const n = Math.max(1, colCount(prev.includes('|') ? prev : next))
-        return `| ${Array(n).fill('---').join(' | ')} |`
-      }
-    }
-    forceCols = null
-    return line
-  }).join('\n')
-}
-
 export function MarkdownRenderer({ content, className }: Props) {
   if (!content) return null;
-  content = fixTableSyntax(content);
+  content = fixMarkdown(content);
 
   return (
     <div
