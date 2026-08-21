@@ -15,6 +15,7 @@ export function mapWireMessage(m: ChatWireMessage): ChatMessage {
         plugin?: boolean;
         file?: { fileId: string; fileName: string; mimeType: string };
         knowledgePayload?: { title: string; content: string };
+        compactionSummary?: boolean;
       }
     | undefined;
 
@@ -36,6 +37,7 @@ export function mapWireMessage(m: ChatWireMessage): ChatMessage {
     createdAt: m.timestamp ? new Date(m.timestamp).getTime() : undefined,
     download,
     knowledgePayload: meta?.knowledgePayload,
+    compactionSummary: meta?.compactionSummary === true,
   };
 }
 
