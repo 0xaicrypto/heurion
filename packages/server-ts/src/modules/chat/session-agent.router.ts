@@ -345,13 +345,13 @@ export async function agentRouter(app: FastifyInstance) {
     if (!sessionId) {
       return {
         history_tokens: 0,
-        history_budget: parseInt(process.env.MAX_HISTORY_TOKENS || '8000', 10),
+        history_budget: parseInt(process.env.MAX_HISTORY_TOKENS || '32000', 10),
         history_turns: parseInt(process.env.HISTORY_TURNS || '20', 10),
         omitted_turns: 0,
         will_compact: false,
       }
     }
-    const maxHistoryTokens = parseInt(process.env.MAX_HISTORY_TOKENS || '8000', 10)
+    const maxHistoryTokens = parseInt(process.env.MAX_HISTORY_TOKENS || '32000', 10)
     const historyTurns = parseInt(process.env.HISTORY_TURNS || '20', 10)
     const history = ctx.eventLog.query({ sessionId, limit: historyTurns * 2 }).reverse()
     const { buildHistoryMessages } = await import('../../retrieval/context-compressor.js')

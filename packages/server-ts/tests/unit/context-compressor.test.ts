@@ -147,6 +147,30 @@ describe('buildHistoryMessages — token-budgeted history', () => {
     expect(messages).toEqual([])
     expect(omittedTurns).toBe(0)
   })
+
+  test('#611 压缩后(仅剩新增轮次)预算显著回落 — 不再显示压缩前高水位', () => {
+    const long = events(40).map((e) => ({ ...e, content: e.content + '（这是一段很长的临床讨论内容，用于撑大 token 预算，模拟压缩前的高水位）' }))
+    // 压缩前: 满预算 → 裁剪, tokens 接近上限(高水位)
+    const before = buildHistoryMessages(long, { maxTokens: 300, maxTurns: 20 })
+    expect(before.omittedTurns).toBeGreaterThan(0)
+    expect(before.tokens).toBeGreaterThan(200)
+
+    // 压缩后: 历史只剩压缩边界之后的新增轮次(短内容) → tokens 显著低
+    const after = buildHistoryMessages(events(4), { maxTokens: 300, maxTurns: 20 })
+    expect(after.tokens).toBeLessThan(before.tokens / 2)
+    // 且不再触发裁剪(新增轮次都在预算内)
+    expect(after.omittedTurns).toBe(0)
+  })
+
+  test('#611 超大单条消息在压缩后仍完整保留(不截断)', () => {
+    const big = '长'.repeat(8_000)
+    const after = buildHistoryMessages(
+      [{ eventType: 'user_message', content: big }],
+      { maxTokens: 2000, maxTurns: 20 },
+    )
+    expect(after.messages.length).toBe(1)
+    expect(after.messages[0].content).toBe(big)
+  })
 })
 
 describe('buildHistoryMessages — turn counting (#compaction-fix)', () => {
