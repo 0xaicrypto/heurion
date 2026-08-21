@@ -449,6 +449,7 @@ export function PatientChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
+  const [kbDedupNotice, setKbDedupNotice] = useState<string | null>(null);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -525,6 +526,10 @@ export function PatientChatPage() {
     try {
       const result = await api.uploadFile(f, hash || undefined);
       setAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+      if (result.dedup) {
+        setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
+        setTimeout(() => setKbDedupNotice(null), 4000);
+      }
     } catch (err) {
       // silently fail
     } finally {
@@ -544,6 +549,10 @@ export function PatientChatPage() {
         try {
           const result = await api.uploadFile(file, hash || undefined);
           setAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+      if (result.dedup) {
+        setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
+        setTimeout(() => setKbDedupNotice(null), 4000);
+      }
         } catch { /* ignore */ }
         finally { setUploadingFile(false); }
       }
@@ -601,6 +610,9 @@ export function PatientChatPage() {
             <SkillsBar active={activeSkills} onToggle={toggleSkill} />
             <ContextUsageIndicator usage={session?.contextUsage} />
           </div>
+          {kbDedupNotice && (
+            <div className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-text-secondary">{kbDedupNotice}</div>
+          )}
           {attachedFiles.length > 0 && (
             <div className="flex gap-2 flex-wrap">
               {attachedFiles.map((f) => (

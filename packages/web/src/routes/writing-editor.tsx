@@ -122,6 +122,7 @@ export function WritingEditorPage() {
   }, [chatSession?.lastDocBody, docId, doc?.title]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [chatUploadingFile, setChatUploadingFile] = useState(false);
+  const [kbDedupNotice, setKbDedupNotice] = useState<string | null>(null);
   const [chatAttachedFiles, setChatAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
 
   // #553: 切换文档时重置聊天本地状态。
@@ -400,6 +401,10 @@ export function WritingEditorPage() {
         try {
           const result = await api.uploadFile(file);
           setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+        if (result.dedup) {
+          setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
+          setTimeout(() => setKbDedupNotice(null), 4000);
+        }
           if (docId) api.addDocReference(docId, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
         } catch { /* ignore */ }
         finally { setChatUploadingFile(false); }
@@ -806,7 +811,10 @@ export function WritingEditorPage() {
                 />
               </div>
               <div className="border-t border-border p-3">
-                {chatAttachedFiles.length > 0 && (
+                {kbDedupNotice && (
+              <div className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-text-secondary">{kbDedupNotice}</div>
+            )}
+            {chatAttachedFiles.length > 0 && (
                   <div className="mb-2 flex gap-1 flex-wrap">
                     {chatAttachedFiles.map((f) => (
                       <span key={f.fileId} className="inline-flex items-center rounded-full bg-surface-elevated border border-border px-2 py-0.5 text-xs text-text-secondary">{f.name}</span>

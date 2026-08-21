@@ -71,6 +71,8 @@ export function ChatPage() {
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // #619: 上传命中知识库(sha256 dedup)提示。
+  const [kbDedupNotice, setKbDedupNotice] = useState<string | null>(null);
   // #516: per-session entry scene — switching sessions must not leak the
   // previous mode into a different conversation.
   const [kbChecked, setKbChecked] = useState<Record<string, boolean>>({});
@@ -357,6 +359,11 @@ export function ChatPage() {
     try {
       const result = await api.uploadFile(f);
       setAttachedFiles((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), { name: result.name, fileId: result.file_id }] }));
+      // #619: 上传命中知识库(sha256 dedup)→ 提示,不重复存储.
+      if (result.dedup) {
+        setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
+        setTimeout(() => setKbDedupNotice(null), 4000);
+      }
       // #598: 上传即入聊天历史(服务端 user_message),刷新后仍可见.
       if (sessionId) {
         store.appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
@@ -391,6 +398,11 @@ export function ChatPage() {
       try {
         const result = await api.uploadFile(file);
         setAttachedFiles((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), { name: result.name, fileId: result.file_id }] }));
+        // #619: 上传命中知识库(sha256 dedup)→ 提示.
+        if (result.dedup) {
+          setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
+          setTimeout(() => setKbDedupNotice(null), 4000);
+        }
         // #598: 上传即入聊天历史.
         if (sessionId) {
           store.appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
@@ -546,6 +558,9 @@ export function ChatPage() {
               </div>
             )}
             <SkillsBar active={activeSkills} onToggle={toggleSkill} />
+            {kbDedupNotice && (
+              <div className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-text-secondary">{kbDedupNotice}</div>
+            )}
             {currentAttachedFiles.length > 0 && (
               <div className="flex gap-2 flex-wrap">
                 {currentAttachedFiles.map((f) => (

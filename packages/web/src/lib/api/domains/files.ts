@@ -5,7 +5,7 @@ import { ApiCore, ApiError } from './core.js';
 export class FilesApi extends ApiCore {
   /* ────────────────────────── files ────────────────────────── */
 
-  async uploadFile(file: File, patientHash?: string): Promise<{ file_id: string; name: string; mime: string; size_bytes: number }> {
+  async uploadFile(file: File, patientHash?: string): Promise<{ file_id: string; name: string; mime: string; size_bytes: number; dedup?: boolean }> {
     const form = new FormData();
     form.append('file', file);
     if (patientHash) form.append('patient_hash', patientHash);
