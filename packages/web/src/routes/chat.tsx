@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Paperclip, FileText, Plus, X } from 'lucide-react';
+import { Paperclip, FileText, Plus, X, BookOpen } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { mapWireMessages } from '@/lib/message-map';
 import type { LlmStatus } from '@/lib/types';
@@ -73,6 +73,12 @@ export function ChatPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   // #619: 上传命中知识库(sha256 dedup)提示。
   const [kbDedupNotice, setKbDedupNotice] = useState<string | null>(null);
+  // #620: 知识库选择器 — 显式选定文章加入上下文.
+  const [kbPickerOpen, setKbPickerOpen] = useState(false);
+  const [kbQuery, setKbQuery] = useState('');
+  const [kbResults, setKbResults] = useState<Array<{ id: string; title: string; summary: string }>>([]);
+  const [kbPicked, setKbPicked] = useState<Array<{ id: string; title: string }>>([]);
+  const [kbSearching, setKbSearching] = useState(false);
   // #516: per-session entry scene — switching sessions must not leak the
   // previous mode into a different conversation.
   const [kbChecked, setKbChecked] = useState<Record<string, boolean>>({});
@@ -217,6 +223,7 @@ export function ChatPage() {
       sessionId,
       attachments: currentAttachedFiles.map((a) => a.fileId),
       skills: activeSkills,
+      pickedKbIds: kbPicked.map((k) => k.id),
     });
   };
 
@@ -318,6 +325,25 @@ export function ChatPage() {
     if (!msg.download) return;
     const url = msg.download.url || await resolveDownloadUrl(msg.download.fileId);
     if (url) window.open(url, '_blank');
+  };
+
+  /** #620: 搜索知识库文章(选择器). */
+  const handleKbSearch = async (q: string) => {
+    setKbSearching(true);
+    try {
+      const r = await api.getKnowledgePicker(q);
+      setKbResults(r.articles);
+    } catch { setKbResults([]); }
+    finally { setKbSearching(false); }
+  };
+  useEffect(() => {
+    if (kbPickerOpen) handleKbSearch(kbQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 打开时按当前查询搜索
+  }, [kbPickerOpen]);
+  const toggleKbPick = (a: { id: string; title: string }) => {
+    setKbPicked((prev) =>
+      prev.some((p) => p.id === a.id) ? prev.filter((p) => p.id !== a.id) : (prev.length >= 3 ? prev : [...prev, a]),
+    );
   };
 
   /** #582: 附件编辑结果落地 — 保存为文档 / 导出 PDF / 继续讨论。 */
@@ -641,6 +667,16 @@ export function ChatPage() {
               >
                 <Paperclip size={16} />
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setKbPickerOpen(true)}
+                disabled={session?.loading || !sessionId}
+                className="shrink-0"
+                title={t('chat.kbPicker', '从知识库添加')}
+              >
+                <BookOpen size={16} />
+              </Button>
               <Textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -700,6 +736,50 @@ export function ChatPage() {
               <Button variant="danger" onClick={confirmCloseSession}>
                 {t('chat.closeSession', 'Close')}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* #620: 知识库选择器弹窗 */}
+      {kbPickerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setKbPickerOpen(false)}>
+          <div className="flex max-h-[70vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface-elevated p-6 shadow-xl m-4" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-text-primary">📚 {t('chat.kbPicker', '从知识库添加')}</h2>
+              <button onClick={() => setKbPickerOpen(false)} className="text-text-tertiary hover:text-text-primary"><X size={18} /></button>
+            </div>
+            <input
+              value={kbQuery}
+              onChange={(e) => { setKbQuery(e.target.value); handleKbSearch(e.target.value); }}
+              placeholder={t('chat.kbSearch', '搜索知识库…')}
+              className="mb-3 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <div className="flex-1 space-y-2 overflow-y-auto">
+              {kbSearching ? (
+                <p className="text-sm text-text-tertiary">…</p>
+              ) : kbResults.length === 0 ? (
+                <p className="text-sm text-text-tertiary">{t('chat.kbEmpty', '暂无知识库文章')}</p>
+              ) : (
+                kbResults.map((a) => (
+                  <label key={a.id} className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 hover:bg-surface">
+                    <input
+                      type="checkbox"
+                      checked={kbPicked.some((p) => p.id === a.id)}
+                      disabled={!kbPicked.some((p) => p.id === a.id) && kbPicked.length >= 3}
+                      onChange={() => toggleKbPick(a)}
+                      className="mt-1"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-text-primary">{a.title}</p>
+                      <p className="mt-0.5 truncate text-xs text-text-tertiary">{a.summary}</p>
+                    </div>
+                  </label>
+                ))
+              )}
+            </div>
+            <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
+              <span className="text-xs text-text-tertiary">{t('chat.kbPicked', '已选 {{n}}/3', { n: kbPicked.length })}</span>
+              <Button size="sm" onClick={() => setKbPickerOpen(false)}>{t('chat.kbDone', '完成')}</Button>
             </div>
           </div>
         </div>
