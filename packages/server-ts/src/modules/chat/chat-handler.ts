@@ -98,7 +98,7 @@ async function loadHistoryBudget(
   historyTurns: number
   compactedUpto: number
 }> {
-  const maxHistoryTokens = parseInt(process.env.MAX_HISTORY_TOKENS || '8000', 10)
+  const maxHistoryTokens = parseInt(process.env.MAX_HISTORY_TOKENS || '32000', 10)
   const historyTurns = parseInt(process.env.HISTORY_TURNS || '20', 10)
   let compactedUpto = 0
   try {
@@ -891,6 +891,24 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
           maxTurns: historyTurns,
         })
         send({ type: 'compaction_completed', history_tokens: restoredTokens, history_budget: maxHistoryTokens, history_turns: historyTurns })
+
+        // #612: 压缩结果作为聊天记录展示 — 读取会话最新摘要(episode),
+        // 写入 event log(刷新后历史可见)+ 发 SSE 给当前窗口。
+        try {
+          const summary = ctx.episodes.all().find((e) => e.sessionId === sid)?.summary
+          if (summary && summary.trim()) {
+            const content = `📋 已压缩前序对话,要点:\n${summary}`
+            ctx.eventLog.append({
+              timestamp: Date.now() / 1000,
+              eventType: 'assistant_response',
+              content,
+              metadata: { compactionSummary: true },
+              agentId: userId,
+              sessionId: sid,
+            })
+            send({ type: 'compaction_summary', text: content })
+          }
+        } catch { /* best-effort: 摘要展示失败不影响对话 */ }
       }
       const inFlightCompaction = getInFlightCompaction(userId, sid)
       // Writing sessions (doc-*) are workspaces, not clinical dialogues —
@@ -944,7 +962,7 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       // messages. History is trimmed oldest-first; the system prompt is
       // truncated as a last resort so a pathological projection can never
       // blow the context window.
-      const maxTotalTokens = parseInt(process.env.MAX_TOTAL_TOKENS || '16000', 10)
+      const maxTotalTokens = parseInt(process.env.MAX_TOTAL_TOKENS || '64000', 10)
       const trimmedTurns = enforceTotalBudget(messages, maxTotalTokens)
       if (trimmedTurns > 0) {
         send({

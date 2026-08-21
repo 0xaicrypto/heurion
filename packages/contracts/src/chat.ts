@@ -54,6 +54,7 @@ export type ChatStreamChunk =
   | { type: 'compaction_started' }
   | { type: 'compaction_chunk'; text: string }
   | { type: 'compaction_completed'; history_tokens?: number; history_budget?: number; history_turns?: number }
+  | { type: 'compaction_summary'; text: string }
   | { type: 'doc_updated'; body: string; summary?: string }
   | { type: 'chart_created'; url: string; markdown?: string; chart_type?: string }
   | { type: 'tier_classified'; tier: 'T1' | 'T2' | 'T3'; view_kind?: string; anchor?: string }
@@ -108,6 +109,7 @@ export const CHAT_EVENT_TYPES = [
   'compaction_started',
   'compaction_chunk',
   'compaction_completed',
+  'compaction_summary',
   'doc_updated',
   'chart_created',
   'tier_classified',
