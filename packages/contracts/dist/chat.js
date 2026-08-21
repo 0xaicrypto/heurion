@@ -20,6 +20,7 @@ export const CHAT_EVENT_TYPES = [
     'compaction_started',
     'compaction_chunk',
     'compaction_completed',
+    'compaction_summary',
     'doc_updated',
     'chart_created',
     'tier_classified',
