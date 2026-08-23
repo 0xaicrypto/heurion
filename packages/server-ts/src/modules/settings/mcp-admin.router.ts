@@ -1,6 +1,6 @@
 /**
  * #417: MCP server management — frontend-configurable connectors stored in
- * the DB (token encrypted via plugin-settings-encryption), replacing the
+ * the DB (token encrypted via common/settings-encryption), replacing the
  * env-only MCP_SERVERS. Write-calls flow through the approval queue (#105):
  * WRITE-GATED requests create an ApprovalRequest; an admin confirmation
  * executes the call.
@@ -8,7 +8,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
-import { encryptSettingValue, decryptSettingValue } from '../plugins/plugin-settings-encryption.service.js'
+import { encryptSettingValue, decryptSettingValue } from '../../common/settings-encryption.js'
 import { McpClient } from '../../tools/mcp-client.js'
 
 function parseCaps(raw: string): Array<'read' | 'write'> {

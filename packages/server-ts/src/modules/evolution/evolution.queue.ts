@@ -24,6 +24,9 @@ export interface EvolutionQueue {
   add(job: EvolutionJob): Promise<void>
   close(): Promise<void>
   getMetrics(): Promise<QueueMetrics>
+  /** #670: optional processor registration — in-memory queues process
+   *  inline; BullMQ runs its own worker (main.ts). */
+  setProcessor?(processor: EvolutionJobProcessor): void
 }
 
 /**

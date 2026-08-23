@@ -137,3 +137,20 @@ export const CHAT_EVENT_TYPES = [
   'file_ready',
 ] as const
 export type ChatEventType = (typeof CHAT_EVENT_TYPES)[number]
+
+// ── Auth (migrated from @heurion/sdk — #668: sdk-client removed) ──
+export interface UserProfile {
+  user_id: string
+  display_name: string
+  created_at: string
+  updated_at?: string
+  role?: string
+  email?: string
+  /** #348: mirrors GET /user/profile — 1 when the email was verified. */
+  email_verified?: boolean
+  phone?: string
+  organization?: string
+  intended_use?: string
+  status?: string
+  tier?: string
+}

@@ -1,5 +1,11 @@
 import crypto from 'node:crypto'
 
+/**
+ * Plugin/secret setting encryption (#666): pure crypto helpers formerly
+ * living in modules/plugins — moved to `common/` so the tools layer
+ * (mcp-tools) can decrypt DB-stored credentials without importing from
+ * `modules/*`.
+ */
 const ENCRYPTION_PREFIX = 'enc:'
 
 function getKey(): Buffer {

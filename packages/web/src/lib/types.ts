@@ -71,7 +71,7 @@ export interface LlmUpdateResult {
  * #348: shared with the backend — single source of truth for auth fields
  * (email/phone/email_verified), so the frontend can never drift.
  */
-export type { UserProfile } from '@heurion/sdk';
+export type { UserProfile } from '@heurion/contracts';
 
 /**
  * #438: chat wire contracts (SSE events / wire message / retrieval tool
@@ -130,17 +130,9 @@ export interface ChatSession {
 
 export interface AgentState {
   user_id: string;
-  chain_agent_id?: string;
-  chain_register_tx?: string;
-  network?: string;
-  on_chain: boolean;
   memory_count: number;
-  anchored_count: number;
-  pending_anchor_count: number;
-  failed_anchor_count: number;
-  total_anchor_count: number;
-  last_anchor?: string;
-  last_chain_event?: string;
+  episode_count: number;
+  skill_count: number;
   server_time: string;
 }
 

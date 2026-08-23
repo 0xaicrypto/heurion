@@ -22,9 +22,6 @@
     "paths": {
       "@/*": [
         "./src/*"
-      ],
-      "@heurion/sdk": [
-        "../sdk-client/src/index.ts"
       ]
     },
     "types": [
