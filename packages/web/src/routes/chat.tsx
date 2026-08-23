@@ -371,11 +371,9 @@ export function ChatPage() {
     try {
       const doc = await api.createDoc(title);
       await api.updateDoc(doc.id, { title: doc.title || title, body: m.text });
+      // #fix: 导出 PDF 走真实 PDF 渲染(?format=pdf),不再误下载 docx。
       if (option === 'export_pdf') {
-        try {
-          const { exportDocx } = api as any;
-          if (typeof exportDocx === 'function') await exportDocx(doc.id, title);
-        } catch { /* PDF 导出为可选，失败不阻塞保存 */ }
+        await api.exportDoc(doc.id, 'pdf', title);
       }
       patchMessage(sessionId, m.id, { exportState: 'saved' });
     } catch (err) {

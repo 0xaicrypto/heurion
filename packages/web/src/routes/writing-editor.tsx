@@ -345,6 +345,19 @@ export function WritingEditorPage() {
     }
   };
 
+  const handleExportPdf = async () => {
+    if (!docId) return;
+    setExporting(true);
+    setError(null);
+    try {
+      await api.exportDoc(docId, 'pdf', doc?.title);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handlePolishSubmit = async () => {
     const editor = polishEditorRef.current;
     if (!docId || !editor) return;
@@ -622,6 +635,14 @@ export function WritingEditorPage() {
             isLoading={exporting}
           >
             <Download size={14} className="mr-1" /> Export DOCX
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => handleExportPdf()}
+            disabled={exporting}
+          >
+            <FileText size={14} className="mr-1" /> Export PDF
           </Button>
           {studyId && (
             <>

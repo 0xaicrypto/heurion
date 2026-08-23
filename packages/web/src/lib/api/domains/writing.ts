@@ -50,8 +50,12 @@ export class WritingApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}/phi-scan`, { method: 'POST' });
   }
 
-  async exportDocx(docId: string, title?: string): Promise<{docx_path: string; size_bytes: number}> {
-    const r = await fetch(`/api/v1/docs/${docId}/export`, {
+  /**
+   * 导出文档为 docx/pdf（#fix: 原仅 docx,且 chat 的"导出 PDF"按钮误调本
+   * 方法 — 现按 format 走真实格式）。
+   */
+  async exportDoc(docId: string, format: 'docx' | 'pdf', title?: string): Promise<{path: string; size_bytes: number}> {
+    const r = await fetch(`/api/v1/docs/${docId}/export?format=${format}`, {
       method: 'POST',
       headers: this.headers(),
     });
@@ -60,12 +64,17 @@ export class WritingApi extends ApiCore {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${(title || 'document').replace(/[^a-z0-9\u4e00-\u9fa5_-]/gi, '_')}.docx`;
+    a.download = `${(title || 'document').replace(/[^a-z0-9\u4e00-\u9fa5_-]/gi, '_')}.${format}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     window.URL.revokeObjectURL(url);
-    return { docx_path: a.download, size_bytes: blob.size };
+    return { path: a.download, size_bytes: blob.size };
+  }
+
+  async exportDocx(docId: string, title?: string): Promise<{docx_path: string; size_bytes: number}> {
+    const res = await this.exportDoc(docId, 'docx', title);
+    return { docx_path: res.path, size_bytes: res.size_bytes };
   }
 
   async *polishDoc(docId: string, selection: string, instruction?: string): AsyncIterable<{text: string; done?: boolean}> {

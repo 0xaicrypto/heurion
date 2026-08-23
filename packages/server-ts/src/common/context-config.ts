@@ -61,7 +61,10 @@ export const CONTEXT_CONFIG = {
     docRefChars: 4000,
     recentFilesMax: 5,
     fileContextChars: 120,
-    attachmentTextChars: 15_000,
+    /** 附件文本注入上限(字符)。#fix: 15K 会把长文件(如整篇待润色文档)
+     *  截断 — 默认放宽到 50K,由组装器 segmentFallback + enforceTotalBudget
+     *  (64K token)兜底。 */
+    attachmentTextChars: parseInt(process.env.ATTACHMENT_TEXT_MAX_CHARS || '50000', 10),
   },
 
   // ── 检索（chat-context.ts / picker）──
