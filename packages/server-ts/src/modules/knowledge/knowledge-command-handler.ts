@@ -6,8 +6,8 @@
  */
 
 import { parseKnowledgeCommand, type KnowledgeCommandType } from '../../retrieval/query-router'
-import { FactsStore, KnowledgeStore, type Fact, type KnowledgeArticle } from '../../evolution/stores'
-import { type KnowledgeGap, type KnowledgeGapService, type GapFilter } from './knowledge-gap.service'
+import { FactsStore, KnowledgeStore } from '../../evolution/stores'
+import { type KnowledgeGap, type KnowledgeGapService } from './knowledge-gap.service'
 import type { MemoryService } from '../../memory/memory.service.js'
 import { LegacyFactProvider, type FactProvider } from '../../memory/fact-provider.js' // #637 双 store 收敛
 

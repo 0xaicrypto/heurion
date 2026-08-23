@@ -2,7 +2,6 @@ import path from 'path'
 import fs from 'fs'
 import { EventLog } from '../../core/event-log'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../evolution/stores'
-import { ContractEngine } from '../../core/contracts'
 import { ChatOrchestrator } from './chat.orchestrator.js'
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { MemoryService } from '../../memory/memory.service.js'
@@ -74,15 +73,6 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
   const episodes = new EpisodesStore(baseDir)
   const skills = new SkillsStore(baseDir)
   const knowledge = new KnowledgeStore(baseDir)
-  const contracts = new ContractEngine()
-  contracts.addRule({
-    name: 'max_response_length',
-    description: 'Response should not exceed 2000 tokens',
-    check: (ctx) => {
-      const est = Math.ceil(ctx.length / 4)
-      return est > 2000 ? { passed: false, violations: [`Too long (${est} tokens)`], score: 0.5 } : { passed: true, violations: [], score: 1 }
-    },
-  })
   // #439: sync the embedding index when nodes are deleted/superseded.
   // EmbeddingService is lazy (embedding-index file per user under baseDir).
   const memory = new MemoryService({
@@ -103,7 +93,7 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
       }).catch(() => {})
     },
   })
-  const orchestrator = new ChatOrchestrator(eventLog, facts, episodes, skills, knowledge, contracts, telemetry, memory)
+  const orchestrator = new ChatOrchestrator(eventLog, facts, episodes, skills, knowledge, telemetry, memory)
   const ctx = { eventLog, facts, episodes, skills, knowledge, memory, orchestrator, lastAccess: Date.now() }
   contexts.set(userId, ctx)
 

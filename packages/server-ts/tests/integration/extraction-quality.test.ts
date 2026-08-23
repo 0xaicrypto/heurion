@@ -15,7 +15,7 @@ describe('13.4F extraction quality feedback', () => {
   test('propose persists the category', async () => {
     const userId = await getAuthUserId()
     const ctx = getUserContext(userId)
-    const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.facts, ctx.episodes, ctx.skills, ctx.knowledge)
+    const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.episodes)
     await gateway.propose({
       scopeType: 'global', kind: 'fact', content: '患者血压偏高', importance: 3,
       confidence: 'medium', reason: 'test', category: 'symptom',

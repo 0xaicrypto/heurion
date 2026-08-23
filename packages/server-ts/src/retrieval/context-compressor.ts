@@ -9,7 +9,7 @@
  * Target: 53% token reduction while maintaining semantics.
  */
 import type { Fact } from '../evolution/stores'
-import { attentionScore, rankByAttention } from '../common/attention.js' // §5.4 (#197)
+import { rankByAttention } from '../common/attention.js' // §5.4 (#197)
 import { estimateTokens } from '../common/token-estimate.js' // §5.4 (#197)
 // §5.4 (#197): re-export for existing callers.
 export { rankByAttention }

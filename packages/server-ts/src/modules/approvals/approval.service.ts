@@ -204,14 +204,7 @@ async function applyProposalViaGateway(userId: string, row: any): Promise<any> {
   const { getUserContext } = await import('../chat/user-context.js')
   const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
   const ctx = getUserContext(userId)
-  const gateway = new MemoryGraphGateway(
-    userId,
-    ctx.memory,
-    ctx.facts,
-    ctx.episodes,
-    ctx.skills,
-    ctx.knowledge,
-  )
+  const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.episodes)
   const proposal = {
     id: row.id,
     userId: row.userId,

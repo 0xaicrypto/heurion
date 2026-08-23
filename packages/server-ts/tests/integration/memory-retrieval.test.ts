@@ -15,7 +15,7 @@ function fakeEmbed(texts: string[]): number[][] {
 }
 
 function makeGateway(userId: string) {
-  return new MemoryGraphGateway(userId, null as any, null as any, null as any, null as any, null as any, fakeEmbed)
+  return new MemoryGraphGateway(userId, null as any, null as any, fakeEmbed)
 }
 
 describe('gateway semantic retrieval + dedup', () => {

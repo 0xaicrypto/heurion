@@ -15,7 +15,7 @@ function buildGateway(userId: string, patientHash?: string) {
   const ctx = getUserContext(userId)
   return {
     ctx,
-    gateway: new MemoryGraphGateway(userId, ctx.memory, ctx.facts, ctx.episodes, ctx.skills, ctx.knowledge),
+    gateway: new MemoryGraphGateway(userId, ctx.memory, ctx.episodes),
   }
 }
 

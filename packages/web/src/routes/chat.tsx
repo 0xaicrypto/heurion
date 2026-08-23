@@ -33,11 +33,21 @@ export function ChatPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { isAuthenticated, clearSession } = useAuthStore();
-  const store = useChatStore();
-  // No implicit default session — the user creates one explicitly.
+  // #653/#462: scoped selectors — a chunk arriving for another session no
+  // longer re-renders this page (was a full-store subscription).
   const [sessionId, setSessionId] = useState<string>('');
   const [newSessionOpen, setNewSessionOpen] = useState(false);
-  const session = store.sessions[sessionId];
+  const session = useChatStore((s) => (sessionId ? s.sessions[sessionId] : undefined));
+  const sendMessage = useChatStore((s) => s.sendMessage);
+  const stopStream = useChatStore((s) => s.stopStream);
+  const clearChatSession = useChatStore((s) => s.clearSession);
+  const setMessages = useChatStore((s) => s.setMessages);
+  const setContextUsage = useChatStore((s) => s.setContextUsage);
+  const appendMessage = useChatStore((s) => s.appendMessage);
+  const updateMessageText = useChatStore((s) => s.updateMessageText);
+  const setStreaming = useChatStore((s) => s.setStreaming);
+  const regenerate = useChatStore((s) => s.regenerate);
+  const patchMessage = useChatStore((s) => s.patchMessage);
   const [globalSessions, setGlobalSessions] = useState<ChatSessionItem[]>([]);
   const currentSessionTitle =
     globalSessions.find((s) => s.id === sessionId)?.title ?? '';
@@ -122,7 +132,7 @@ export function ChatPage() {
       ...prev,
     ]);
     setSessionId(res.id);
-    store.clearSession(res.id);
+    clearChatSession(res.id);
   };
 
   const handleSessionCreated = (session: { id: string; title: string; created_at: string }) => {
@@ -140,7 +150,7 @@ export function ChatPage() {
       await api.closeSession(closingId);
       // Remove the closed session from the selector and clean up local state.
       setGlobalSessions((prev) => prev.filter((s) => s.id !== closingId));
-      store.clearSession(closingId);
+      clearChatSession(closingId);
       setDrafts((prev) => { const next = { ...prev }; delete next[closingId]; return next; });
       setAttachedFiles((prev) => {
         if (!(closingId in prev)) return prev;
@@ -177,16 +187,16 @@ export function ChatPage() {
   // (observed: first message in a brand-new session never got a reply).
   useEffect(() => {
     if (!sessionId) return; // no session selected — nothing to load
-    const existing = store.sessions[sessionId]?.messages?.length;
+    const existing = useChatStore.getState().sessions[sessionId]?.messages?.length;
     if (existing) return;
     api.getMessages(sessionId, 50).then((r) => {
       // #461: single wire→UI mapper (restores download / knowledge payload).
       const msgs = mapWireMessages(r.messages);
-      if (msgs.length > 0) store.setMessages(sessionId, msgs);
+      if (msgs.length > 0) setMessages(sessionId, msgs);
     }).catch(() => {});
     // U3: show the context budget immediately for sessions with history.
     api.getContextUsage(sessionId).then((u) => {
-      store.setContextUsage(sessionId, {
+      setContextUsage(sessionId, {
         historyTokens: u.history_tokens,
         historyBudget: u.history_budget,
         historyTurns: u.history_turns,
@@ -218,7 +228,7 @@ export function ChatPage() {
     setInput('');
     setDrafts((prev) => { const next = { ...prev }; delete next[sessionId]; return next; });
     setError(null);
-    await store.sendMessage(sessionId, {
+    await sendMessage(sessionId, {
       text,
       sessionId,
       attachments: currentAttachedFiles.map((a) => a.fileId),
@@ -227,7 +237,7 @@ export function ChatPage() {
     });
   };
 
-  const handleStop = () => store.stopStream(sessionId);
+  const handleStop = () => stopStream(sessionId);
 
   /** #420: parallel deep analysis — topics spawn concurrently, results append. */
   const handleDeepAnalysis = async () => {
@@ -238,28 +248,28 @@ export function ChatPage() {
     setDeepOpen(false);
     setError(null);
     // Mirror the user question into the stream like a normal turn.
-    store.appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `🔬 ${question}` });
+    appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `🔬 ${question}` });
     const assistantId = crypto.randomUUID();
-    store.appendMessage(sessionId, { id: assistantId, role: 'assistant', text: '', isStreaming: true });
+    appendMessage(sessionId, { id: assistantId, role: 'assistant', text: '', isStreaming: true });
     let acc = '';
     try {
       for await (const chunk of api.deepAnalysis({ question, topics: deepTopics })) {
         if (chunk.type === 'subagent_started') {
           acc += `[${chunk.task} ⏳] `;
-          store.updateMessageText(sessionId, assistantId, acc.trim());
+          updateMessageText(sessionId, assistantId, acc.trim());
         } else if (chunk.type === 'subagent_done') {
           acc = acc.replace(`[${chunk.task} ⏳] `, `[${chunk.task} ${chunk.success ? '✓' : '✗'}] `);
-          store.updateMessageText(sessionId, assistantId, acc.trim());
+          updateMessageText(sessionId, assistantId, acc.trim());
         } else if (chunk.type === 'final_answer_chunk') {
           acc += chunk.text;
-          store.updateMessageText(sessionId, assistantId, acc);
+          updateMessageText(sessionId, assistantId, acc);
         }
       }
-      store.updateMessageText(sessionId, assistantId, acc || t('chat.deepDone', '分析完成'));
+      updateMessageText(sessionId, assistantId, acc || t('chat.deepDone', '分析完成'));
     } catch (err) {
-      store.updateMessageText(sessionId, assistantId, acc || (err instanceof ApiError ? err.messageText : String(err)));
+      updateMessageText(sessionId, assistantId, acc || (err instanceof ApiError ? err.messageText : String(err)));
     } finally {
-      store.setStreaming(sessionId, assistantId, false);
+      setStreaming(sessionId, assistantId, false);
       setDeepBusy(false);
       setDeepQuestion('');
     }
@@ -269,7 +279,7 @@ export function ChatPage() {
   const handleRegenerate = async () => {
     if (session?.loading || session?.compacting) return;
     setError(null);
-    await store.regenerate(sessionId, {
+    await regenerate(sessionId, {
       sessionId,
       text: '',
       attachments: [],
@@ -283,7 +293,7 @@ export function ChatPage() {
     const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
     if (!lastUser || session?.loading || session?.compacting) return;
     setError(null);
-    await store.regenerate(sessionId, {
+    await regenerate(sessionId, {
       sessionId,
       text: lastUser.text,
       attachments: [],
@@ -352,12 +362,12 @@ export function ChatPage() {
     option: 'save_as_document' | 'export_pdf' | 'continue_discussion',
   ) => {
     if (option === 'continue_discussion') {
-      store.patchMessage(sessionId, m.id, { exportOptions: undefined });
+      patchMessage(sessionId, m.id, { exportOptions: undefined });
       return;
     }
     if (m.exportState === 'saving' || !m.text) return;
     const title = 'AI 润色结果';
-    store.patchMessage(sessionId, m.id, { exportState: 'saving' });
+    patchMessage(sessionId, m.id, { exportState: 'saving' });
     try {
       const doc = await api.createDoc(title);
       await api.updateDoc(doc.id, { title: doc.title || title, body: m.text });
@@ -367,9 +377,9 @@ export function ChatPage() {
           if (typeof exportDocx === 'function') await exportDocx(doc.id, title);
         } catch { /* PDF 导出为可选，失败不阻塞保存 */ }
       }
-      store.patchMessage(sessionId, m.id, { exportState: 'saved' });
+      patchMessage(sessionId, m.id, { exportState: 'saved' });
     } catch (err) {
-      store.patchMessage(sessionId, m.id, { exportState: undefined });
+      patchMessage(sessionId, m.id, { exportState: undefined });
       setError(err instanceof ApiError ? err.messageText : String(err));
     }
   };
@@ -392,7 +402,7 @@ export function ChatPage() {
       }
       // #598: 上传即入聊天历史(服务端 user_message),刷新后仍可见.
       if (sessionId) {
-        store.appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
+        appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
         api.logAttachments(sessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
       }
     } catch (err) {
@@ -431,7 +441,7 @@ export function ChatPage() {
         }
         // #598: 上传即入聊天历史.
         if (sessionId) {
-          store.appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
+          appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
           api.logAttachments(sessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
         }
       } catch { /* ignore */ }

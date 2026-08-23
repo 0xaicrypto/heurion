@@ -1,20 +1,15 @@
 import { FastifyInstance } from 'fastify'
-import { makeLogger } from '../../common/logger.js'
 import { authGuard } from '../../common/auth.guard'
-import prisma from '../../common/prisma'
 import { getUserContext } from './user-context.js'
 import { chatSendSchema, memoryImportSchema } from './chat.dto.js'
 import { handleAgentChat } from './chat-handler.js'
-import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { type EvolutionQueue } from '../evolution/evolution.queue.js'
 
-const telemetry = new PrismaTelemetryService()
 
 export interface ChatRouterOptions {
   evolutionQueue?: EvolutionQueue
 }
 
-const log = makeLogger('chat.router')
 
 export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions = {}) {
   app.addHook('preHandler', authGuard)
@@ -74,15 +69,6 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
     ctx.facts.commit()
     ctx.episodes.commit()
     return { imported, facts_count: ctx.facts.all().length, episodes_count: ctx.episodes.all().length }
-  })
-
-  app.get('/api/v1/chat/projection', async (request) => {
-    const ctx = getUserContext(request.user!.userId)
-    const result = await ctx.orchestrator['projection'].project({
-      userId: request.user!.userId, patientHash: null,
-      persona: 'debug', facts: ctx.facts.all(), episodes: ctx.episodes.all(), skills: ctx.skills.all(),
-    })
-    return result
   })
 }
 

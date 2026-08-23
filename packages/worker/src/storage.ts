@@ -1,6 +1,5 @@
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
-import { createWriteStream } from 'fs'
 import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -94,5 +93,3 @@ export function downloadUrlTtlSeconds(): number {
   return DOWNLOAD_URL_TTL_SECONDS
 }
 
-// keep createWriteStream import (used by callers via storage module)
-export { createWriteStream }

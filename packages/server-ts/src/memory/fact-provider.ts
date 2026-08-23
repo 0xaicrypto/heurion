@@ -6,8 +6,6 @@
  * #627 的跨 store 去重(factContentHash)也统一从这里产出。
  */
 import type { FactsStore } from '../evolution/stores.js'
-import type { MemoryGraph } from './memory.graph.js'
-import type { FactNode } from './memory.types.js'
 import { factContentHash } from '../common/fact-render.js'
 
 export interface ScoredFact {
@@ -46,27 +44,6 @@ export class LegacyFactProvider implements FactProvider {
       factHash: factContentHash(f),
       createdAt: f.createdAt,
       source: `fact:${f.id}`,
-    }))
-  }
-}
-
-/** memory graph FactNode 适配器(稳定 ID + contentHash 全生命周期)。 */
-export class GraphFactProvider implements FactProvider {
-  constructor(private graph: MemoryGraph) {}
-
-  listCurrent(opts?: { patientHash?: string | null }): ScoredFact[] {
-    const nodes = this.graph.getCurrentNodesByType('fact') as FactNode[]
-    const filtered = opts?.patientHash ? nodes.filter((n) => n.patientHash === opts.patientHash) : nodes
-    return filtered.map((n) => ({
-      content: n.content,
-      category: n.category,
-      importance: n.importance ?? 3,
-      confidence: n.provenance.confidence,
-      provenance: { sourceKind: n.provenance.sourceKind },
-      patientHash: n.patientHash,
-      factHash: factContentHash(n),
-      createdAt: n.createdAt,
-      source: `fact:${n.stableId}`,
     }))
   }
 }

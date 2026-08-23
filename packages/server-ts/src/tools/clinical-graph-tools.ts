@@ -94,14 +94,7 @@ export class SearchNodeTool extends BaseTool {
     let semanticHits: Array<{ stableId: string; content: string; type: string; score: number }> = []
     try {
       const { MemoryGraphGateway } = await import('../memory/memory-gateway.js')
-      const gateway = new MemoryGraphGateway(
-        this.ctx.userId,
-        this.ctx.memory,
-        this.ctx.facts,
-        this.ctx.episodes,
-        this.ctx.skills,
-        this.ctx.knowledge,
-      )
+      const gateway = new MemoryGraphGateway(this.ctx.userId, this.ctx.memory, this.ctx.episodes)
       semanticHits = await gateway.retrieve(query, { patientHash }, { topK, minScore: 0.35 })
     } catch {
       semanticHits = []

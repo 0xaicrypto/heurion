@@ -36,7 +36,7 @@ export interface PayloadBuildInput {
   telemetryContext?: LlmTelemetryContext
 }
 
-export async function getActivePlugins(userId: string): Promise<PluginManifest[]> {
+async function getActivePlugins(userId: string): Promise<PluginManifest[]> {
   const installed = await listInstalledPlugins(userId)
   const activeIds = installed.filter((i) => i.enabled).map((i) => i.pluginId)
   const manifests: PluginManifest[] = []

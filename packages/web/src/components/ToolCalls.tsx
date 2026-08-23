@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronRight, Search, Wrench } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, Loader2, Search, Wrench, XCircle } from 'lucide-react';
 // #462: tool names come from the shared contracts (single source of truth
 // with the backend tool registry) instead of a hard-coded set.
 import { RETRIEVAL_TOOLS } from '@heurion/contracts';
@@ -8,6 +8,8 @@ import { RETRIEVAL_TOOLS } from '@heurion/contracts';
 export interface ToolCallEntry {
   tool: string;
   argsPreview: string;
+  /** #662: 4-state — running spinner / done check / error red. */
+  status?: 'running' | 'done' | 'error';
 }
 
 /** Read-only retrieval tools — consecutive ones merge into one foldable row. */
@@ -17,6 +19,13 @@ interface Group {
   kind: 'retrieval' | 'action';
   tools: string[];
   args: string[];
+  statuses: ToolCallEntry['status'][];
+}
+
+function StatusIcon({ status }: { status: ToolCallEntry['status'] }) {
+  if (status === 'running') return <Loader2 size={11} className="animate-spin text-accent" />;
+  if (status === 'error') return <XCircle size={11} className="text-error" />;
+  return <CheckCircle2 size={11} className="text-text-tertiary" />;
 }
 
 /**
@@ -37,9 +46,10 @@ export function ToolCalls({ calls }: { calls: ToolCallEntry[] }) {
         // consecutive retrieval calls merge into one foldable row
         last.tools.push(c.tool);
         last.args.push(c.argsPreview);
+        last.statuses.push(c.status ?? 'done');
       } else {
         // action tools (writes, ocr, defer…) stay on their own row
-        out.push({ kind: isRetrieval ? 'retrieval' : 'action', tools: [c.tool], args: [c.argsPreview] });
+        out.push({ kind: isRetrieval ? 'retrieval' : 'action', tools: [c.tool], args: [c.argsPreview], statuses: [c.status ?? 'done'] });
       }
     }
     return out;
@@ -60,11 +70,13 @@ export function ToolCalls({ calls }: { calls: ToolCallEntry[] }) {
             {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
             <Search size={11} className="text-text-tertiary" />
             {t('chat.toolRetrieval', '检索患者记忆')} · {g.tools.length}
+            <StatusIcon status={g.statuses.some((st) => st === 'running') ? 'running' : g.statuses.some((st) => st === 'error') ? 'error' : 'done'} />
           </button>
         ) : (
           <span key={i} className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-xs text-text-tertiary">
             <Wrench size={11} />
             {g.tools[g.tools.length - 1]}
+            <StatusIcon status={g.statuses[g.statuses.length - 1] ?? 'done'} />
           </span>
         ),
       )}

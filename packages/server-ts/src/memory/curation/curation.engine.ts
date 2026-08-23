@@ -1,6 +1,5 @@
 import type { MemoryGraph } from '../memory.graph'
-import type { CurationPolicy, FactNode, ArticleNode, DocumentNode } from '../memory.types'
-import { DEFAULT_CURATION_POLICY } from '../memory.types'
+import type { FactNode, ArticleNode, DocumentNode } from '../memory.types'
 
 export interface PropagationResult {
   staleArticleStableIds: string[]
@@ -9,10 +8,7 @@ export interface PropagationResult {
 }
 
 export class CurationEngine {
-  constructor(
-    private graph: MemoryGraph,
-    private policy: CurationPolicy = DEFAULT_CURATION_POLICY,
-  ) {}
+  constructor(private graph: MemoryGraph) {}
 
   /** Called after a fact is edited or soft-deleted. */
   propagateFactChange(factStableId: string): PropagationResult {

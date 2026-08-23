@@ -4,21 +4,6 @@ import { useAuthStore } from '@/stores/auth';
 export const CLIENT_API_VERSION = 1;
 
 // #460: auth is single-sourced in the zustand persist store (nexus-auth).
-// These keys are kept only for backward-compat reads by legacy call sites
-// (labs.tsx / research-detail.tsx still read them directly).
-const STORAGE_KEY_TOKEN = 'nexus.auth.token';
-const STORAGE_KEY_USER_ID = 'nexus.auth.user_id';
-const STORAGE_KEY_DISPLAY_NAME = 'nexus.auth.display_name';
-
-function storageGet(key: string): string | null {
-  try { return localStorage.getItem(key); } catch { return null; }
-}
-function storageSet(key: string, value: string): void {
-  try { localStorage.setItem(key, value); } catch { /* ignore */ }
-}
-function storageRemove(key: string): void {
-  try { localStorage.removeItem(key); } catch { /* ignore */ }
-}
 
 export class ApiError extends Error {
   constructor(
@@ -59,9 +44,6 @@ export class ApiCore {
 
   /** #347: persist a fresh auth session (token + user identity). */
   protected storeSession(data: { jwt_token: string; user_id: string; display_name: string }) {
-    storageSet(STORAGE_KEY_TOKEN, data.jwt_token);
-    storageSet(STORAGE_KEY_USER_ID, data.user_id);
-    storageSet(STORAGE_KEY_DISPLAY_NAME, data.display_name);
     useAuthStore.getState().setSession({
       token: data.jwt_token,
       userId: data.user_id,
@@ -73,23 +55,18 @@ export class ApiCore {
 
   setToken(t: string | null) {
     if (t) {
-      storageSet(STORAGE_KEY_TOKEN, t);
       useAuthStore.setState({ token: t, isAuthenticated: true });
     } else {
-      storageRemove(STORAGE_KEY_TOKEN);
       useAuthStore.getState().clearSession();
     }
   }
 
   hasToken() { return this.getTokenFromStore() !== null; }
-  getToken() { return this.getTokenFromStore() || storageGet(STORAGE_KEY_TOKEN); }
+  getToken() { return this.getTokenFromStore(); }
   getClientApiVersion() { return CLIENT_API_VERSION; }
 
-  /** #460: clear everything (store + legacy keys) in ONE place. */
+  /** #460: clear everything (store) in ONE place. */
   logout() {
-    storageRemove(STORAGE_KEY_TOKEN);
-    storageRemove(STORAGE_KEY_USER_ID);
-    storageRemove(STORAGE_KEY_DISPLAY_NAME);
     useAuthStore.getState().clearSession();
   }
 
@@ -97,7 +74,7 @@ export class ApiCore {
     const h = new Headers(extra);
     h.set('Accept', 'application/json');
     h.set('X-Nexus-Api-Version', String(CLIENT_API_VERSION));
-    const token = this.getTokenFromStore() || storageGet(STORAGE_KEY_TOKEN);
+    const token = this.getTokenFromStore();
     if (token) h.set('Authorization', `Bearer ${token}`);
     return h;
   }

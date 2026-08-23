@@ -4,7 +4,6 @@ import { InMemoryTelemetryService, PrismaTelemetryService } from '../../src/modu
 import { ChatOrchestrator } from '../../src/modules/chat/chat.orchestrator'
 import { EventLog } from '../../src/core/event-log'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../src/evolution/stores'
-import { ContractEngine } from '../../src/core/contracts'
 import { getApp, authHeader } from '../setup.js'
 import prisma from '../../src/common/prisma'
 import fs from 'fs'
@@ -22,10 +21,9 @@ function createTestOrchestrator(telemetry: InMemoryTelemetryService) {
   const episodesStore = new EpisodesStore(baseDir)
   const skillsStore = new SkillsStore(baseDir)
   const knowledgeStore = new KnowledgeStore(baseDir)
-  const contracts = new ContractEngine([])
 
   return {
-    orchestrator: new ChatOrchestrator(eventLog, factsStore, episodesStore, skillsStore, knowledgeStore, contracts, telemetry),
+    orchestrator: new ChatOrchestrator(eventLog, factsStore, episodesStore, skillsStore, knowledgeStore, telemetry),
     factsStore,
   }
 }

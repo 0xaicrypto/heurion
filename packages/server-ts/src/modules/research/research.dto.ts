@@ -18,11 +18,6 @@ export const confirmObservationSchema = z.object({
   note: z.string().optional(),
 })
 
-export const completeAssessmentSchema = z.object({
-  completedAt: z.string().optional(),
-  note: z.string().optional(),
-})
-
 export type CreateStudyInput = z.infer<typeof createStudySchema>
 export type EnrollPatientInput = z.infer<typeof enrollPatientSchema>
 export type ConfirmObservationInput = z.infer<typeof confirmObservationSchema>

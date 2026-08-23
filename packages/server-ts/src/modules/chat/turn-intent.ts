@@ -160,13 +160,6 @@ export function isGenerateRequest(intent: TurnIntent): boolean {
   return intent.action === 'generate' && !intent.needsClarify
 }
 
-const ACTION_LABEL: Record<TurnAction, string> = {
-  answer: 'answer（对话/解释/口头总结）',
-  edit: 'edit（编辑既有对象）',
-  generate: 'generate（生成新文件）',
-  retrieve: 'retrieve（检索）',
-  command: 'command（显式命令）',
-}
 
 /**
  * 分类 prompt（供单测注入断言；生产路径由 decoder 内部调用）。

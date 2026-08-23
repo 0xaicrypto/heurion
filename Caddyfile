@@ -22,7 +22,7 @@
 	}
 
 	# Pass everything to the TypeScript server. proxy headers + the
-	# Dockerfile's --proxy-headers flag let uvicorn see the actual
+	# Dockerfile's --proxy-headers flag let the server see the actual
 	# client IP and HTTPS scheme through the reverse proxy.
 	reverse_proxy nexus-server:8001 {
 		header_up X-Real-IP {remote_host}

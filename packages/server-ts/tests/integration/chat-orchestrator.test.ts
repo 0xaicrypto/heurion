@@ -3,7 +3,6 @@ import { mockAiProvider } from '../helpers/ai-mock.js'
 import { ChatOrchestrator } from '../../src/modules/chat/chat.orchestrator'
 import { EventLog } from '../../src/core/event-log'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../src/evolution/stores'
-import { ContractEngine } from '../../src/core/contracts'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
@@ -30,10 +29,9 @@ function createTestOrchestrator() {
   const episodesStore = new EpisodesStore(baseDir)
   const skillsStore = new SkillsStore(baseDir)
   const knowledgeStore = new KnowledgeStore(baseDir)
-  const contracts = new ContractEngine([])
 
   return {
-    orchestrator: new ChatOrchestrator(eventLog, factsStore, episodesStore, skillsStore, knowledgeStore, contracts),
+    orchestrator: new ChatOrchestrator(eventLog, factsStore, episodesStore, skillsStore, knowledgeStore),
     eventLog,
     factsStore,
     episodesStore,

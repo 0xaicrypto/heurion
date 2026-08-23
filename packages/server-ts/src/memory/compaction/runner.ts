@@ -4,9 +4,6 @@ import prisma from '../../common/prisma.js'
 import { MemoryGraphGateway } from '../memory-gateway.js'
 import {
   EXTRACTION_RULES,
-  MIN_COMPACT_EVENTS,
-  MIN_EXTRACT_EVENTS,
-  MAX_EVENT_CHARS,
   buildContextBlock,
   parseExtractionResult,
   type CompactionCtx,
@@ -74,7 +71,7 @@ ${conversation}
   }
   const extracted: ExtractedFact[] = []
   const gateway = ctx.memory
-    ? new MemoryGraphGateway(ctx.userId, ctx.memory, ctx.facts, ctx.episodes, ctx.skills, ctx.knowledge)
+    ? new MemoryGraphGateway(ctx.userId, ctx.memory, ctx.episodes)
     : null
   for (const f of parsed) {
     if (!f.category || !f.content) continue
@@ -185,7 +182,7 @@ ${conversation}
   let proposed = 0
   if (Array.isArray(parsed.facts)) {
     const gateway = ctx.memory
-      ? new MemoryGraphGateway(ctx.userId, ctx.memory, ctx.facts, ctx.episodes, ctx.skills, ctx.knowledge)
+      ? new MemoryGraphGateway(ctx.userId, ctx.memory, ctx.episodes)
       : null
     for (const f of parsed.facts) {
       if (!f.category || !f.content) continue

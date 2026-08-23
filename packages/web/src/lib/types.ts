@@ -15,11 +15,6 @@ export interface AuthSession {
   expiresInSeconds: number;
 }
 
-export interface AuthError {
-  code: string;
-  message: string;
-}
-
 export type ProviderKind = 'gemini' | 'openai' | 'anthropic' | 'kimi' | 'deepseek';
 
 export interface LlmStatus {
@@ -76,7 +71,7 @@ export interface LlmUpdateResult {
  * #348: shared with the backend — single source of truth for auth fields
  * (email/phone/email_verified), so the frontend can never drift.
  */
-export type { UserProfile, VerificationPurpose } from '@heurion/sdk';
+export type { UserProfile } from '@heurion/sdk';
 
 /**
  * #438: chat wire contracts (SSE events / wire message / retrieval tool

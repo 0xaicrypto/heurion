@@ -4,7 +4,6 @@
  * creating circular dependencies.
  */
 import type { FactNode, ArticleNode } from './memory.types'
-import type { Fact } from '../evolution/stores'
 
 export type MemoryScope = { patientHash?: string; studyId?: string; global?: boolean }
 
@@ -90,6 +89,3 @@ export function serializeProposal(r: any): MemoryProposalRow {
   }
 }
 
-export function isLegacyFact(f: any): f is Fact {
-  return typeof f?.content === 'string' && typeof f?.id === 'string'
-}

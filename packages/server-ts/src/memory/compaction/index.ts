@@ -4,7 +4,6 @@ export {
   EXTRACTION_RULES,
   MIN_COMPACT_EVENTS,
   MIN_EXTRACT_EVENTS,
-  MAX_RELATED_FACTS,
   MAX_EVENT_CHARS,
   buildContextBlock,
   parseExtractionResult,

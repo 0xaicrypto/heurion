@@ -178,7 +178,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
 
   // #2: Weighted attention context projection (filtered by router intent)
   const projectionInputs = selectProjectionInputs(routeResult, ctx, patientHash, sid)
-  const projected = await ctx.orchestrator['projection'].project({
+  const projected = await ctx.orchestrator.projection.project({
     userId, patientHash,
     persona,
     facts: projectionInputs.facts,
@@ -341,13 +341,6 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   )
   // #637: 回退后刷新预算视图 — 观测与事件输出用同一对象。
   budget.allocateSystem(estimateTokens(systemPrompt))
-  if (droppedSegments.length > 0) {
-    send({
-      type: 'context_info',
-      text: `Context segments dropped to fit the total token budget: ${droppedSegments.join(', ')}.`,
-      kind: 'projection',
-    })
-  }
   if (droppedSegments.length > 0) {
     send({
       type: 'context_info',

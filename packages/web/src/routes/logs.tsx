@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 
@@ -304,16 +303,3 @@ export function LogsSection() {
   );
 }
 
-/** Standalone page — kept for the legacy /app/logs route (redirects to settings tab). */
-export function LogsPage() {
-  return (
-    <AppShell>
-      <div className="flex h-full flex-col overflow-y-auto">
-        <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-6">
-          <h1 className="font-semibold text-text-primary">Execution Logs</h1>
-        </header>
-        <LogsSection />
-      </div>
-    </AppShell>
-  );
-}

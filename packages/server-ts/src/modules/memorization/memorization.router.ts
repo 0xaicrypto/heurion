@@ -17,15 +17,8 @@ export async function memorizationRouter(app: FastifyInstance) {
       const ctx = getUserContext(userId)
       // §4.5 (#186): the ingester routes through the gateway so every write
       // lands in the review queue (semantic dedup + human approval).
-      const gateway = new MemoryGraphGateway(
-        userId,
-        ctx.memory,
-        ctx.facts,
-        ctx.episodes,
-        ctx.skills,
-        ctx.knowledge,
-      )
-      ingester = new ChatIngester(ctx.memory, ctx.eventLog, gateway)
+      const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.episodes)
+      ingester = new ChatIngester(ctx.eventLog, gateway)
       ingesterByUser.set(userId, ingester)
     }
     return ingester
@@ -55,17 +48,9 @@ export async function memorizationRouter(app: FastifyInstance) {
       return reply.status(400).send({ error: `Invalid request: ${parsed.error.issues[0]?.message || 'validation failed'}` })
     }
     const { content, category, importance, patient_hash } = parsed.data
-    const source_type = undefined
     const userId = request.user!.userId
     const ctx = getUserContext(userId)
-    const gateway = new MemoryGraphGateway(
-      userId,
-      ctx.memory,
-      ctx.facts,
-      ctx.episodes,
-      ctx.skills,
-      ctx.knowledge,
-    )
+    const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.episodes)
     const proposal = await gateway.propose({
       scopeType: patient_hash ? 'patient' : 'global',
       patientHash: patient_hash || undefined,
@@ -117,14 +102,7 @@ export async function memorizationRouter(app: FastifyInstance) {
     }
 
     const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
-    const gateway = new MemoryGraphGateway(
-      userId,
-      ctx.memory,
-      ctx.facts,
-      ctx.episodes,
-      ctx.skills,
-      ctx.knowledge,
-    )
+    const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.episodes)
     const result = await gateway.summarize({
       conversation,
       sessionId,

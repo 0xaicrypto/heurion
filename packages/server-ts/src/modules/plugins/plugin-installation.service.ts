@@ -25,9 +25,6 @@ export async function installPlugin(userId: string, pluginId: string, requestedV
   }
 
   const version = requestedVersion || manifest.plugin.version
-  const existing = await prisma.pluginInstallation.findUnique({
-    where: { userId_pluginId: { userId, pluginId } },
-  })
 
   const row = await prisma.pluginInstallation.upsert({
     where: { userId_pluginId: { userId, pluginId } },

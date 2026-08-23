@@ -130,10 +130,6 @@ const PALETTES: Record<BioScenePalette, Record<string, string>> = {
   },
 }
 
-export function resolvePalette(name?: string): BioScenePalette {
-  return name === 'clinical' || name === 'journal' ? name : 'default'
-}
-
 /**
  * #layout-guard: detect severely overlapping icons (LLM layout failures —
  * everything stacked on one line / giant icons covering neighbours).

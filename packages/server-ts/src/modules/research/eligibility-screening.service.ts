@@ -1,5 +1,4 @@
 import prisma from '../../common/prisma.js'
-import type { ProtocolRule } from './protocol-extractor.js'
 import { getApiKey, deepseekChat , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 
 export interface ScreeningResult {

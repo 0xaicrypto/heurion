@@ -54,3 +54,60 @@ export async function* parseSseStream<T = unknown>(
     }
   }
 }
+
+/**
+ * #660 — coalesce a chunk stream into windows. LLM token events arrive far
+ * faster than the UI can re-render; consumers apply one batch per window
+ * (default 16ms ≈ one render frame) instead of one setState per chunk.
+ * Done is flushed immediately even if the window has not elapsed.
+ */
+export async function* batchChunks<T>(
+  source: AsyncIterable<T>,
+  windowMs = 16,
+): AsyncGenerator<T[]> {
+  const iter = source[Symbol.asyncIterator]();
+  let pending: Promise<IteratorResult<T>> | null = null;
+  while (true) {
+    const batch: T[] = [];
+    // Await the chunk that was in flight when the previous window closed —
+    // never abandon an in-flight next(), or a chunk is silently lost.
+    if (pending) {
+      const r = await pending;
+      pending = null;
+      if (r.done) {
+        if (batch.length) yield batch;
+        break;
+      }
+      batch.push(r.value);
+    } else {
+      const r = await iter.next();
+      if (r.done) {
+        if (batch.length) yield batch;
+        break;
+      }
+      batch.push(r.value);
+    }
+    // Gather every chunk that arrives inside the window; cap at 128 to
+    // bound memory when the source floods faster than the timer.
+    while (batch.length < 128) {
+      const nextP = iter.next();
+      const timeoutP = new Promise<{ kind: 'timeout' }>((resolve) => {
+        setTimeout(() => resolve({ kind: 'timeout' }), windowMs);
+      });
+      const res = await Promise.race([
+        nextP.then((r) => ({ kind: 'value' as const, r })),
+        timeoutP,
+      ]);
+      if (res.kind === 'timeout') {
+        pending = nextP;
+        break;
+      }
+      if (res.r.done) {
+        pending = Promise.resolve(res.r);
+        break;
+      }
+      batch.push(res.r.value);
+    }
+    yield batch;
+  }
+}

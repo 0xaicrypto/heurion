@@ -18,7 +18,7 @@ describe('MemoryGraphGateway — propose/listPending', () => {
     const app = await getApp()
     const userId = await getAuthUserId()
 
-    const gw = new MemoryGraphGateway(userId, null as any, null as any, null as any, null as any, null as any)
+    const gw = new MemoryGraphGateway(userId, null as any)
     const proposal = await gw.propose({
       scopeType: 'patient',
       patientHash: 'patient_test1',
@@ -45,7 +45,7 @@ describe('MemoryGraphGateway — propose/listPending', () => {
 
   test('listPending scopes by patient/global', async () => {
     const userId = await getAuthUserId()
-    const gw = new MemoryGraphGateway(userId, null as any, null as any, null as any, null as any, null as any)
+    const gw = new MemoryGraphGateway(userId, null as any)
     await gw.propose({ scopeType: 'patient', patientHash: 'patient_A', kind: 'fact', content: 'A fact' })
     await gw.propose({ scopeType: 'global', kind: 'fact', content: 'Global fact' })
 
@@ -63,7 +63,7 @@ describe('MemoryProposal approval flow', () => {
     const userId = await getAuthUserId()
     const baseDir = makeBaseDir()
 
-    const gw = new MemoryGraphGateway(userId, null as any, null as any, null as any, null as any, null as any)
+    const gw = new MemoryGraphGateway(userId, null as any)
     const proposal = await gw.propose({
       scopeType: 'patient',
       patientHash: 'patient_test2',
@@ -103,7 +103,7 @@ describe('MemoryProposal approval flow', () => {
       return { id: 'x' } as any
     })
 
-    const gw = new MemoryGraphGateway(userId, null as any, null as any, null as any, null as any, null as any)
+    const gw = new MemoryGraphGateway(userId, null as any)
     const proposal = await gw.propose({ scopeType: 'global', kind: 'fact', content: '待拒绝事实' })
 
     const req = await createApprovalRequest(userId, {

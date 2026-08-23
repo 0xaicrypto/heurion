@@ -43,7 +43,7 @@ function makeGateway() {
   const facts = new FactsStore(baseDir)
   const knowledge = new KnowledgeStore(baseDir)
   const memory = new MemoryService({ eventLog, baseDir, legacyFacts: facts, legacyKnowledge: knowledge, ownerId: userId })
-  const gateway = new MemoryGraphGateway(userId, memory, facts, new EpisodesStore(baseDir), new SkillsStore(baseDir), knowledge)
+  const gateway = new MemoryGraphGateway(userId, memory, new EpisodesStore(baseDir))
   return { memory, gateway, facts }
 }
 

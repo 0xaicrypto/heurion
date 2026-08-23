@@ -1,6 +1,5 @@
 import { BaseTool, ToolDefinition, ToolResult } from './base-tool.js'
 import { SearchNodeTool, SearchEncounterTool } from './clinical-graph-tools.js'
-import { ReadCalendarTool, ComposeEmailDraftTool, SendEmailNowTool } from './calendar-tools.js'
 import { SearchPastChatsTool } from './memory-tools.js'
 import { DelegateTool, SpawnSubagentTool } from './subagent-tools.js'
 import { DeferToBackgroundTool } from './async-tools.js'

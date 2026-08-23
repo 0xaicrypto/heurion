@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
+import type { Editor } from '@tiptap/react';
 import { ArrowLeft, Download, Eye, FilePlus, FileText, History, MessageSquare, Paperclip, RotateCcw, ShieldAlert, Sparkles, X } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor } from '@/components/DocEditor';
 import { ChatMessages } from '@/components/chat/ChatMessages';
+import { StreamingLlmContent } from '@/components/LlmContent';
 import { ChartLibrary } from '@/components/chat/ChartLibrary';
 import { useChatStore } from '@/stores/chat';
 import { Alert, Button, Skeleton, Textarea, Input } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { mapWireMessages } from '@/lib/message-map';
 import { cn } from '@/lib/utils';
+import { markdownToHtml } from '@/lib/doc-convert';
 
 interface DocDetail {
   id: string;
@@ -48,7 +51,6 @@ export function WritingEditorPage() {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [saving, setSaving] = useState(false);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   const [showHistory, setShowHistory] = useState(false);
   const [snapshots, setSnapshots] = useState<SnapshotEntry[]>([]);
@@ -97,9 +99,12 @@ export function WritingEditorPage() {
     setDoc((prev) => (prev ? { ...prev, body: `${prev.body || ''}\n\n${markdown}`, updated_at: new Date().toISOString() } : prev));
   };
   const [chatInput, setChatInput] = useState('');
-  const store = useChatStore();
   const chatSessionId = docId ? `doc-${docId}` : '';
-  const chatSession = store.sessions[chatSessionId];
+  // #653/#462: scoped selectors — doc-chat chunks no longer re-render the
+  // whole editor (was a full-store subscription).
+  const chatSession = useChatStore((s) => (chatSessionId ? s.sessions[chatSessionId] : undefined));
+  const sendMessage = useChatStore((s) => s.sendMessage);
+  const setMessages = useChatStore((s) => s.setMessages);
   const chatMessages = chatSession?.messages ?? [];
   const chatLoading = chatSession?.loading ?? false;
   const [aiEditNotice, setAiEditNotice] = useState('');
@@ -143,6 +148,7 @@ export function WritingEditorPage() {
   const [preview, setPreview] = useState(false);
 
   const polishRef = useRef<HTMLDivElement>(null);
+  const polishEditorRef = useRef<Editor | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatFileRef = useRef<HTMLInputElement>(null);
   const docUploadRef = useRef<HTMLInputElement>(null);
@@ -231,22 +237,15 @@ export function WritingEditorPage() {
   // store must NOT be a dependency (same infinite-loop trap as #272).
   useEffect(() => {
     if (!chatSessionId) return;
-    const existing = store.sessions[chatSessionId]?.messages?.length;
+    const existing = useChatStore.getState().sessions[chatSessionId]?.messages?.length;
     if (existing) return;
     api.getMessages(chatSessionId, 50).then((r) => {
       // #461: single wire→UI mapper (restores download / knowledge payload).
       const msgs = mapWireMessages(r.messages);
-      if (msgs.length > 0) store.setMessages(chatSessionId, msgs);
+      if (msgs.length > 0) setMessages(chatSessionId, msgs);
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps -- store excluded deliberately
   }, [chatSessionId]);
-
-  useEffect(() => {
-    if (bodyRef.current) {
-      bodyRef.current.style.height = 'auto';
-      bodyRef.current.style.height = `${bodyRef.current.scrollHeight}px`;
-    }
-  }, [body]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -347,9 +346,10 @@ export function WritingEditorPage() {
   };
 
   const handlePolishSubmit = async () => {
-    if (!docId || !bodyRef.current) return;
-    const ta = bodyRef.current;
-    const selection = body.substring(ta.selectionStart, ta.selectionEnd);
+    const editor = polishEditorRef.current;
+    if (!docId || !editor) return;
+    const { from, to } = editor.state.selection;
+    const selection = editor.state.doc.textBetween(from, to, '\n').trim();
     if (!selection) return;
     setPolishLoading(true);
     setPolishStream('');
@@ -360,10 +360,10 @@ export function WritingEditorPage() {
         setPolishStream(result);
         if (chunk.done) break;
       }
-      const start = ta.selectionStart;
-      const end = ta.selectionEnd;
-      const newBody = body.substring(0, start) + result + body.substring(end);
-      setBody(newBody);
+      if (!result) return;
+      // #642: replace the polished range through TipTap — onUpdate round-trips
+      // markdown → body state, so the doc and its versions stay in sync.
+      editor.chain().focus().insertContentAt({ from, to }, markdownToHtml(result)).run();
       setPolishOpen(false);
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
@@ -378,7 +378,7 @@ export function WritingEditorPage() {
     setChatInput('');
     // §15.4: the writing chat runs through the unified pipeline (session
     // doc-{docId}); the doc context is injected via the docs/current source.
-    store.sendMessage(`doc-${docId}`, {
+    sendMessage(`doc-${docId}`, {
       text,
       sessionId: `doc-${docId}`,
       patientHash: null,
@@ -675,8 +675,9 @@ export function WritingEditorPage() {
                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none h-16"
                 />
                 {polishStream && (
-                  <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-border bg-surface p-2 text-sm text-text-secondary whitespace-pre-wrap">
-                    {polishStream}
+                  // #660/#661: streaming tail renders throttled + block-projected.
+                  <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-border bg-surface p-2">
+                    <StreamingLlmContent content={polishStream} isStreaming={polishLoading} />
                   </div>
                 )}
                 <div className="mt-2 flex justify-end gap-2">
@@ -745,7 +746,7 @@ export function WritingEditorPage() {
                   </div>
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
-                    <DocEditor value={body} onChange={setBody} />
+                    <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} />
                   </div>
                 )}
               </div>

@@ -1,7 +1,7 @@
 # CI/CD runbook
 
-How push-to-main deploys Heurion to the VPS via PM2 + Nginx, and how to
-recover when it doesn't.
+How push-to-main deploys Heurion to the VPS (Docker Compose + Caddy), and
+how to recover when it doesn't.
 
 ## TL;DR
 
@@ -9,60 +9,53 @@ recover when it doesn't.
 git push origin main
 ```
 
-`.github/workflows/deploy-server.yml` runs:
+`.github/workflows/deploy-server.yml` runs (concurrency-grouped — one
+deploy at a time):
 
 1. **typecheck** — `tsc --noEmit` on `packages/server-ts`
-2. **test** — `vitest run` (245+ unit tests)
-3. **build-worker-image** — builds the Execution Plane worker image
-   (`Dockerfile.worker`) and pushes it to GHCR.
-4. **staging** — deploys the Control Plane to staging on VPS via
-   `scripts/deploy-staging.sh`, then runs `scripts/regression-test.sh`
-   against `http://localhost:8002`. **Deploy to production is blocked on failure.**
-5. **cloudflare-ssl** — ensures Cloudflare SSL mode is "Full"
-6. **deploy** — runs `scripts/deploy.sh` on the Control Plane VPS, which
-   `git pull`s, installs deps, runs Prisma generate, restarts PM2, and
-   health-checks.
-7. **deploy-execution-plane** — runs `scripts/deploy-worker.sh` on the
-   sandbox worker VPS to pull the new worker image and restart
-   `docker-compose.worker.yml`.
+2. **test** — selected `vitest` suites (ingestion, auth, stats, plugins, chat)
+3. **build-web** — web dist + docs site (docs failures are non-blocking)
+4. **build-server-image / build-embedding-server-image / build-stats-worker**
+   — push `ghcr.io/0xaicrypto/nexus-*` images tagged `sha-<short>` + `latest`
+5. **golden-crosscheck** — TS statistics cross-checked against a golden
+   file generated from Python scipy/lifelines/statsmodels
+6. **cloudflare-ssl** — ensures Cloudflare SSL mode is "Full"
+7. **deploy** — uploads web dist + `.env.production` + compose/Caddy files
+   to the VPS, then runs `scripts/deploy-production-compose.sh`
+   (health-gated, non-idempotent-safe). `provision-reactome-diagrams` is
+   intentionally NOT a dependency (external resource).
 
-Total: ~5 minutes.
+`staging` runs only on manual `workflow_dispatch` (`run_staging: true`):
+deploys to `~/heurion` on port 8002 via `scripts/deploy-staging.sh`, runs
+`scripts/regression-test.sh http://localhost:8002`, then cleans up PM2.
 
 ## VPS layout
 
-### Control Plane
+### Control Plane (`/opt/heurion`)
 
 ```
-~/heurion/
-├── packages/server-ts/   # TypeScript backend (PM2)
-│   ├── prisma/           # SQLite DB + schema
-│   └── data/             # uploads, twins, cache
-├── packages/web/dist     # Web UI static build
-├── scripts/
-│   ├── deploy.sh         # Production deploy
-│   ├── deploy-staging.sh # Staging deploy (port 8002)
-│   └── regression-test.sh
-└── .env.production
+/opt/heurion/
+├── docker-compose.yml        # nexus-server + nexus-embedding-server + nexus-stats-worker
+├── Caddyfile                 # HTTPS termination (Let's Encrypt) + reverse proxy
+├── packages/web/dist         # Web UI static build (mounted into the server container)
+├── scripts/deploy-production-compose.sh
+├── .env.production           # secrets + config (written by the deploy job)
+└── .deploy.lock              # compose deploy lockfile
 ```
 
-- **Nginx** proxies `https://heurion.org` → `localhost:8001` (production)
-  and `https://staging.heurion.org:443` → `localhost:8002` (staging)
-- **PM2** manages server processes: `heurion` (prod) and `heurion-staging`
-- **Cloudflare** handles SSL termination + CDN
+- **Caddy** terminates TLS (Let's Encrypt) and proxies to `nexus-server:8001`.
+- **Cloudflare** sits in front (DNS + SSL "Full" mode).
+- SQLite data lives on the `nexus-server` volume.
 
 ### Execution Plane (separate sandbox VPS)
 
 ```
-~/heurion/
-├── docker-compose.worker.yml   # MedSci-Sidecar / plugin worker
-├── scripts/deploy-worker.sh    # Worker deploy script
-└── secrets/                    # Docker Secrets (not committed)
+/opt/heurion-worker/
+└── docker-compose.worker.yml   # heurion-worker (document rendering / plugins)
 ```
 
-- **Docker Compose** runs the worker container + Redis job queue.
-- **Docker Secrets** mount LLM keys and `SERVER_SECRET` under `/run/secrets/`.
-- The worker is **not** exposed to the public internet; only the Control Plane
-  can reach it (restrict via worker host firewall / VPC).
+- Worker is reached over HTTP with `WORKER_API_TOKEN` (no Redis — #444).
+- Uploads render output to an S3-compatible bucket (`S3_*` env).
 
 ## Deploying
 
@@ -72,98 +65,78 @@ Total: ~5 minutes.
 git push origin main
 ```
 
-### Manual deploy
+### Manual production deploy
 
 ```bash
-ssh root@174.138.31.245
-cd ~/heurion
-bash scripts/deploy.sh
+# run locally (requires GHCR access + VPS SSH key)
+NEXUS_IMAGE=ghcr.io/0xaicrypto/nexus-server:sha-<short> \
+EMBEDDING_IMAGE=ghcr.io/0xaicrypto/nexus-embedding-server:sha-<short> \
+STATS_IMAGE=ghcr.io/0xaicrypto/nexus-stats-worker:sha-<short> \
+  bash scripts/deploy-production-compose.sh
 ```
 
-### Staging deploy
+### Staging deploy (manual)
 
 ```bash
-ssh root@174.138.31.245
+ssh <user>@<vps>
 cd ~/heurion
 DEEPSEEK_KEY=sk-... GEMINI_KEY=sk-... bash scripts/deploy-staging.sh
 bash scripts/regression-test.sh http://localhost:8002
 ```
 
-### Execution Plane deploy
-
-```bash
-ssh root@<worker-vps-ip>
-cd ~/heurion
-WORKER_IMAGE_TAG=<sha> SERVER_SECRET=... DEEPSEEK_KEY=sk-... GEMINI_KEY=sk-... bash scripts/deploy-worker.sh
-```
-
 ### Object Storage (DigitalOcean Spaces)
 
 The Execution Plane uploads generated files (DOCX, PPTX, PDFs, plots) to an
-S3-compatible bucket. DigitalOcean Spaces is the recommended backend.
-
-1. In the DigitalOcean Control Panel, go to **Spaces Object Storage** →
-   **Access Keys** and create a key with **Read/Write/Delete (Objects)**
-   permission on the bucket `heurion-execution-output` in `sgp1`.
-2. Store the credentials in GitHub Secrets for the `0xaicrypto/heurion` repo:
-   - `S3_ENDPOINT` — e.g. `https://sgp1.digitaloceanspaces.com`
-   - `S3_BUCKET` — e.g. `heurion-execution-output`
-   - `S3_REGION` — e.g. `sgp1`
-   - `S3_ACCESS_KEY_ID`
-   - `S3_SECRET_ACCESS_KEY`
-3. Re-run the `deploy-execution-plane` job or push a new commit.
+S3-compatible bucket. Store credentials in GitHub Secrets for the
+`0xaicrypto/heurion` repo: `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`,
+`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`.
 
 > Spaces access keys cannot be created through the DigitalOcean API or CLI,
 > so this step must be done in the control panel.
 
 ## Rollback
 
-```bash
-ssh root@174.138.31.245
-cd ~/heurion
-git log --oneline -5    # find last good commit sha
-git checkout <sha>
-bash scripts/deploy.sh
-```
+Deploys are pinned to immutable `sha-<short>` image tags. `vps_deploy.sh`
+keeps the last good image tag in `.last-good-image` — a failed deploy can
+flip back by re-running it with the previous tag. There is no push-based
+rollback: you cannot "un-push" main, so roll forward with a fix instead.
 
 ## Failure modes
 
 ### Regression tests fail
 
-61 API tests run against staging. If any fail, production deploy is
-blocked. Fix the failure, push a new commit. Check the GitHub Actions
-log for the specific failing test.
+The deploy pipeline aborts before image builds. Fix the failure, push a new
+commit. Check the GitHub Actions log for the specific failing suite.
 
 ### Deploy timeout at SSH stage
 
-- VPS unreachable (firewall, host down) — check `ssh root@174.138.31.245`
-- VPS_SSH_KEY secret doesn't match `authorized_keys`
+- VPS unreachable (firewall, host down) — check `ssh <user>@<vps>`
+- `VPS_SSH_KEY` secret doesn't match `authorized_keys`
 
-### PM2 won't start
+### Compose deploy fails / health check never passes
 
 ```bash
-ssh root@174.138.31.245
-pm2 logs heurion --lines 50
+ssh <user>@<vps>
+cd /opt/heurion
+docker compose logs --tail=100 nexus-server
+docker compose ps
 ```
 
-Common: missing env var, Prisma migration needed, port conflict.
+Common causes:
+- Missing env var in `.env.production` (rewritten on every deploy).
+- Schema drift: production uses a non-destructive `prisma db push` — a
+  data-loss-y drift fails startup loudly by design (#641).
+- Port 8001 conflict inside the container network.
 
 ### Execution Plane worker won't start
 
 ```bash
-ssh root@<worker-vps-ip>
-cd ~/heurion
+ssh <user>@<worker-vps>
+cd /opt/heurion-worker
 docker compose -f docker-compose.worker.yml logs --tail=50 heurion-worker
 ```
 
 Common causes:
 - Missing `S3_*` credentials when the worker tries to upload a file.
-- `SERVER_SECRET` mismatch between Control Plane and worker (JWT validation fails).
-- Worker firewall blocks the Control Plane's private IP on port 8001.
-
-### Health check fails
-
-`scripts/deploy.sh` polls `/healthz` for up to 30s. If it never responds:
-- Check Nginx config: `nginx -t && systemctl restart nginx`
-- Check PM2 status: `pm2 status`
-- Check env vars: `pm2 env 0 | grep -i key
+- `WORKER_API_TOKEN` mismatch between Control Plane and worker.
+- Worker firewall blocks the Control Plane's IP on the worker port.

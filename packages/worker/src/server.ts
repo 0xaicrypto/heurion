@@ -8,18 +8,46 @@ import { renderTable } from './handlers/table.js'
 import { getDownloadUrl, getLocalFile, localDownloadUrl, downloadUrlTtlSeconds } from './storage.js'
 import { PersistentJobStore, type JobRecord } from './job-store.js'
 import { createReadStream, existsSync } from 'fs'
+import { renderJobType, type RenderJobType } from '@heurion/contracts'
 
 // #446: persistent job store (JSONL) — jobs + fileId index survive restarts.
 const jobStore = new PersistentJobStore()
 
-// #453: single job-type namespace — sidecar.{pluginId}.{toolName}.
-// The pre-plugin era names (sidecar.generate_docx, ...) were removed.
-const HANDLERS: Record<string, (payload: any, tenant?: any) => Promise<any>> = {
-  'sidecar.heurion/docx.generate_docx': (p) => generateDocx(p, p.tenant),
-  'sidecar.heurion/pptx.generate_pptx': (p) => generatePptx(p),
-  'sidecar.heurion/table.render_table': (p) => renderTable(p),
-  'sidecar.heurion/plot.render_plot': (p) => renderPlot(p),
-  'sidecar.heurion/pdf.convert_to_pdf': (p) => convertToPdf(p),
+// #656: bounded concurrency — jobs execute with at most MAX_CONCURRENT_JOBS
+// in flight; the rest wait in the queue (was: setImmediate parallel with no
+// cap, so a burst of renders could exhaust memory/CPU).
+const MAX_CONCURRENT_JOBS = parseInt(process.env.WORKER_MAX_CONCURRENT || '4', 10)
+let activeJobs = 0
+const jobQueue: Array<() => void> = []
+function whenSlotFree(): Promise<void> {
+  if (activeJobs < MAX_CONCURRENT_JOBS) {
+    activeJobs++
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => jobQueue.push(() => {
+    activeJobs++
+    resolve()
+  }))
+}
+function releaseSlot(): void {
+  activeJobs--
+  const next = jobQueue.shift()
+  if (next) next()
+}
+
+// #656: jobs left `running` by a crashed process can never complete.
+const recovered = jobStore.recoverInterrupted()
+if (recovered > 0) console.log(`[JOB-STORE] recovered ${recovered} interrupted job(s)`)
+
+// #652: single job-type namespace. Keys are the renderJobType enum from
+// @heurion/contracts — the same values the control plane submits
+// (sidecar.*). Keep in sync with contracts/src/index.ts.
+const HANDLERS: Record<RenderJobType, (payload: any) => Promise<any>> = {
+  'sidecar.generate_docx': (p) => generateDocx(p),
+  'sidecar.generate_pptx': (p) => generatePptx(p),
+  'sidecar.render_table': (p) => renderTable(p),
+  'sidecar.render_plot': (p) => renderPlot(p),
+  'sidecar.convert_to_pdf': (p) => convertToPdf(p),
 }
 
 function isAuthorized(token: string | undefined): boolean {
@@ -48,7 +76,7 @@ async function main() {
   app.post<{ Body: { type: string; payload?: any; tenant?: any; callback_url?: string } }>(
     '/api/v1/jobs',
     async (request, reply) => {
-      const { type, payload, tenant, callback_url } = request.body
+      const { type, payload, callback_url } = request.body
       if (!type) {
         return reply.status(400).send({ error: 'type is required' })
       }
@@ -56,16 +84,18 @@ async function main() {
       const id = uuid()
       const job = jobStore.create(id, type)
 
-      setImmediate(async () => {
-        const handler = HANDLERS[type]
+      ;(async () => {
+        await whenSlotFree()
+        const handler = HANDLERS[type as RenderJobType]
         if (!handler) {
           jobStore.update(id, { status: 'failed', error: `Unknown job type: ${type}`, completed_at: Date.now() / 1000 })
+          releaseSlot()
           return
         }
 
         jobStore.update(id, { status: 'running' })
         try {
-          const result = await handler(payload || {}, tenant)
+          const result = await handler(payload || {})
           jobStore.update(id, { status: 'completed', result, completed_at: Date.now() / 1000 })
           // #446: index the produced file for O(1) download lookups.
           if (result?.file_id) {
@@ -93,8 +123,10 @@ async function main() {
               body: JSON.stringify({ job_id: id, status: 'failed', error: err.message || 'Handler failed' }),
             }).catch(() => {})
           }
+        } finally {
+          releaseSlot()
         }
-      })
+      })()
 
       return {
         job_id: id,

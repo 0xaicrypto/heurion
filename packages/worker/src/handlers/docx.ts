@@ -15,16 +15,8 @@ export interface DocxInput {
 
 /**
  * Sidecar/plugin jobs arrive as { template_id, data: {...}, output_name }.
- * The actual content lives under `data`, so unwrap it before rendering
- * (also tolerates a flat payload for direct callers).
+ * The actual content lives under `data` (see generateDocx).
  */
-function unwrapPayload(payload: any): Record<string, unknown> {
-  if (payload && typeof payload === 'object' && payload.data && typeof payload.data === 'object') {
-    return payload.data
-  }
-  return payload || {}
-}
-
 function str(v: unknown): string {
   return v == null ? '' : String(v)
 }
@@ -49,7 +41,7 @@ function sectionsFromTemplateData(data: Record<string, unknown>): DocxSection[] 
   return sections
 }
 
-export async function generateDocx(payload: any, tenant?: { userId?: string; workspaceId?: string }) {
+export async function generateDocx(payload: any) {
   // New validated contract: { schema_version, content_type, data: {schemaVersion, title, sections} }.
   // Legacy tolerance: { template_id, data: {...legacy fields} } → sectionsFromTemplateData.
   let raw = payload?.data ?? payload

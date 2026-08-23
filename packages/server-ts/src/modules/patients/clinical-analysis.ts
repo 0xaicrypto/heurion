@@ -1,8 +1,5 @@
 import { deepseekChat, getApiKey, type LlmTelemetryContext , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 import prisma from '../../common/prisma.js'
-import fs from 'fs'
-import path from 'path'
-import { safeUploadPath } from '../../lib/upload-path.js'
 
 /**
  * Clinical Analysis Service — extracted from uploads and chats
@@ -136,36 +133,6 @@ export async function updateMedicalRecordFromChat(
   return true
 }
 
-export async function analyzeUploadForPatient(
-  userId: string, fileId: string, telemetryContext?: LlmTelemetryContext
-): Promise<ClinicalFinding[]> {
-  const filepath = safeUploadPath(userId, fileId)
-  if (!filepath || !fs.existsSync(filepath)) return []
-
-  const text = fs.readFileSync(filepath, 'utf-8').slice(0, 3000)
-  const prompt = `Extract clinical findings from this medical document. Return ONLY a JSON array:
-[{"finding_type": "diagnosis|lab_result|imaging|medication|symptom", "content": "short finding", "confidence": 0.0-1.0}]
-
-Document:
-${text}`
-
-  try {
-    const result = await deepseekChat(
-      [{ role: 'user', content: prompt }],
-      getApiKey(),
-      {
-        model: DEEPSEEK_CHAT_MODEL,
-        maxTokens: 1024,
-        telemetryContext,
-      },
-    )
-    const match = result.match(/\[[\s\S]*\]/)
-    return match ? JSON.parse(match[0]) : []
-  } catch {
-    return []
-  }
-}
-
 export async function updatePatientFromFindings(
   userId: string, patientHash: string, findings: ClinicalFinding[]
 ): Promise<void> {
@@ -191,30 +158,4 @@ export async function updatePatientFromFindings(
       updatedAt: new Date().toISOString(),
     },
   })
-}
-
-export async function analyzeChatForPatient(
-  userId: string, patientHash: string, messages: string, telemetryContext?: LlmTelemetryContext
-): Promise<ClinicalFinding[]> {
-  const prompt = `Extract clinical findings from this doctor-patient conversation. Return ONLY a JSON array:
-[{"finding_type": "diagnosis|lab_result|imaging|medication|symptom", "content": "short finding", "confidence": 0.0-1.0}]
-
-Conversation:
-${messages.slice(0, 3000)}`
-
-  try {
-    const result = await deepseekChat(
-      [{ role: 'user', content: prompt }],
-      getApiKey(),
-      {
-        model: DEEPSEEK_CHAT_MODEL,
-        maxTokens: 1024,
-        telemetryContext,
-      },
-    )
-    const match = result.match(/\[[\s\S]*\]/)
-    return match ? JSON.parse(match[0]) : []
-  } catch {
-    return []
-  }
 }

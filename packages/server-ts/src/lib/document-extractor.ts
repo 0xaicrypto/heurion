@@ -1,5 +1,4 @@
 import fs from 'fs'
-import path from 'path'
 import mammoth from 'mammoth'
 import { PDFParse } from 'pdf-parse'
 import { createWorker, type Worker } from 'tesseract.js'
@@ -204,7 +203,7 @@ export async function extractTextFromUpload(
  */
 /** #511-followup: 多模态图片大小上限 — 超出降级为 OCR/文本说明,
  *  避免超大 base64 撑爆 LLM 请求体与上下文预算。 */
-export const MAX_IMAGE_UPLOAD_BYTES = 4 * 1024 * 1024
+const MAX_IMAGE_UPLOAD_BYTES = 4 * 1024 * 1024
 
 /**
  * #511: 读取上传图片为 base64 多模态数据。

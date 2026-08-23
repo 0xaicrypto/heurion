@@ -1,3 +1,6 @@
+<!-- ARCHIVED (2026-08): 本文档引用 2026-07 已删除的 Python 时代结构
+     (packages/server / desktop / main.py)。设计理念仍可参考，具体路径均已过时。 -->
+
 # Stripe billing — operator checklist
 
 How to turn on subscriptions for a Nexus deployment. The server code

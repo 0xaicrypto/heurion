@@ -1,4 +1,3 @@
-import prisma from '../common/prisma.js'
 import type { MemoryService } from './memory.service.js'
 import type { EpisodesStore } from '../evolution/stores'
 
@@ -123,7 +122,7 @@ export async function maybeSynthesizeArticle(
     if (!article.title || !article.content) return
 
     const { MemoryGraphGateway } = await import('./memory-gateway.js')
-    const gateway = new MemoryGraphGateway(userId, memory, null as any, null as any, null as any, null as any)
+    const gateway = new MemoryGraphGateway(userId, memory)
     await gateway.propose({
       scopeType: scope.patientHash ? 'patient' : scope.studyId ? 'study' : 'global',
       patientHash: scope.patientHash,

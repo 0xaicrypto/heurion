@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import { getUserContext } from '../chat/user-context.js'
-import { sanitizeFilename, safeUploadPath, uploadsBaseDir } from '../../lib/upload-path.js'
+import { sanitizeFilename, safeUploadPath } from '../../lib/upload-path.js'
 import { deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 import fs from 'fs'
 import path from 'path'
@@ -333,7 +333,6 @@ export async function filesRouter(app: FastifyInstance) {
     const ids = (request.body as any)?.ids
     if (!Array.isArray(ids)) return { deleted: 0 }
     const ctx = getUserContext(userId)
-    const baseDir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
     let deleted = 0
     for (const rawId of ids) {
       const fileId = String(rawId)

@@ -115,11 +115,17 @@ export type PlotContent = z.infer<typeof plotContentSchema>
 
 /* ── dispatch ──────────────────────────────────────────────────── */
 
+/**
+ * #652: single job-type namespace. Values are what the control plane sends
+ * (plugin-capability.service maps heurion/* tool names onto these) and what
+ * the worker registers. Keep in sync with worker/src/server.ts HANDLERS.
+ */
 export const renderJobType = z.enum([
   'sidecar.generate_pptx',
   'sidecar.generate_docx',
   'sidecar.render_table',
   'sidecar.render_plot',
+  'sidecar.convert_to_pdf',
 ])
 
 export type RenderJobType = z.infer<typeof renderJobType>
@@ -129,6 +135,8 @@ const CONTENT_SCHEMAS: Record<RenderJobType, z.ZodType> = {
   'sidecar.generate_docx': documentContentSchema,
   'sidecar.render_table': tableContentSchema,
   'sidecar.render_plot': plotContentSchema,
+  // PDF converter consumes the same sections model as DOCX.
+  'sidecar.convert_to_pdf': documentContentSchema,
 }
 
 export type RenderContent =

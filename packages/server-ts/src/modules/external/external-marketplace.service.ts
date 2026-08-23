@@ -47,7 +47,7 @@ export async function getExternalCatalogPlugin(id: string) {
   }
 }
 
-export async function ensureHeurionUser(externalAppId: string, externalUserId: string): Promise<string> {
+async function ensureHeurionUser(externalAppId: string, externalUserId: string): Promise<string> {
   const existing = await prisma.externalUserMapping.findUnique({
     where: { externalAppId_externalUserId: { externalAppId, externalUserId } },
   })
@@ -186,7 +186,7 @@ export async function listExternalPluginInstallations(externalAppId: string, ext
   )
 }
 
-export async function checkInvocationQuota(externalAppId: string): Promise<void> {
+async function checkInvocationQuota(externalAppId: string): Promise<void> {
   const app = await prisma.externalApplication.findUnique({ where: { id: externalAppId } })
   if (!app) return
   let quotas: Record<string, number> = {}

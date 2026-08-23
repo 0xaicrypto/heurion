@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
-import { fetchGitHubSkills, type GitHubSkill } from './github-skills.js'
+import { fetchGitHubSkills } from './github-skills.js'
 
 // #3: Expanded skill catalog (30+ skills)
 const CATALOG = [

@@ -92,13 +92,6 @@ function mapPrismaToGap(row: any): KnowledgeGap {
   }
 }
 
-function matchesFilter(gap: KnowledgeGap, options: GapListOptions): boolean {
-  if (options.status && options.status !== 'all' && gap.status !== options.status) return false
-  if (options.source && options.source !== 'all' && gap.source !== options.source) return false
-  if (options.q && !gap.content.toLowerCase().includes(options.q.toLowerCase())) return false
-  return true
-}
-
 function sortGaps(gaps: KnowledgeGap[], sortBy: 'createdAt' | 'updatedAt', sortOrder: 'asc' | 'desc'): KnowledgeGap[] {
   const dir = sortOrder === 'asc' ? 1 : -1
   return gaps.slice().sort((a, b) => {

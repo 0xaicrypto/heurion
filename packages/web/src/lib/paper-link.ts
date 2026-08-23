@@ -32,11 +32,3 @@ export function setPaperLink(link: PaperLink): void {
     /* storage unavailable */
   }
 }
-
-export function clearPaperLink(): void {
-  try {
-    localStorage.removeItem(KEY);
-  } catch {
-    /* ignore */
-  }
-}

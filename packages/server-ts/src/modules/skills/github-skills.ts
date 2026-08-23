@@ -7,8 +7,6 @@
  *   ## Instructions
  *   ...
  */
-import { deepseekChat, getApiKey, type LlmTelemetryContext , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
-
 export interface GitHubSkill {
   identifier: string
   name: string
@@ -121,27 +119,5 @@ function parseSkillMd(md: string, repo: string, path: string): GitHubSkill | nul
     author,
     repo,
     path,
-  }
-}
-
-/**
- * Auto-enrich skill descriptions using LLM (cache-bust).
- */
-export async function enrichSkillDescription(skill: GitHubSkill, telemetryContext?: LlmTelemetryContext): Promise<string> {
-  try {
-    const apiKey = getApiKey()
-    const prompt = `You are a clinical skill classifier. Given a Claude Skill named "${skill.name}" from repo ${skill.repo}, write a 1-sentence description of what this skill does for a clinical researcher. If the skill name doesn't suggest clinical utility, say "General AI agent skill."`
-    const result = await deepseekChat(
-      [{ role: 'user', content: prompt }],
-      apiKey,
-      {
-        model: DEEPSEEK_CHAT_MODEL,
-        maxTokens: 100,
-        telemetryContext,
-      },
-    )
-    return result.slice(0, 200)
-  } catch {
-    return skill.description
   }
 }

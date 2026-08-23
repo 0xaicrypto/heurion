@@ -60,7 +60,7 @@ function isNumber(v: string): boolean {
 }
 
 /** Infer the analysis shape from headers + rows. */
-export function inferShape(headers: string[], rows: string[][]): DataShape {
+function inferShape(headers: string[], rows: string[][]): DataShape {
   const lower = headers.map((h) => h.toLowerCase().trim())
   const has = (...names: string[]) => lower.some((h) => names.some((n) => h.includes(n)))
   const cols = headers.length
@@ -95,14 +95,14 @@ export function inferShape(headers: string[], rows: string[][]): DataShape {
   return 'grouped_table'
 }
 
-export function columnKinds(headers: string[], rows: string[][]): Array<{ name: string; kind: 'number' | 'text' }> {
+function columnKinds(headers: string[], rows: string[][]): Array<{ name: string; kind: 'number' | 'text' }> {
   return headers.map((h, i) => ({
     name: h,
     kind: rows.every((r) => isNumber(r[i])) ? 'number' as const : 'text' as const,
   }))
 }
 
-export function summarize(shape: DataShape, headers: string[], rows: string[][]): string {
+function summarize(shape: DataShape, headers: string[], rows: string[][]): string {
   const cols = columnKinds(headers, rows)
   const numeric = cols.filter((c) => c.kind === 'number')
   const summary: string[] = [

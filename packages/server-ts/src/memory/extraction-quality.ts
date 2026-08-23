@@ -18,7 +18,6 @@ export interface CategoryQuality {
 }
 
 export async function getCategoryQuality(userId: string, days = 7): Promise<CategoryQuality[]> {
-  const since = new Date(Date.now() - days * 86400_000).toISOString()
   const rows = await (prisma as any).memoryProposal.findMany({
     where: {
       userId,

@@ -40,7 +40,7 @@ export interface SidecarClassifier {
  * distinguishes "generate a NEW file" from "discussing/editing existing
  * content". Any failure/unknown answer degrades to 'uncertain' (safe).
  */
-export function createDefaultSidecarClassifier(context?: LlmTelemetryContext): SidecarClassifier {
+function createDefaultSidecarClassifier(context?: LlmTelemetryContext): SidecarClassifier {
   return {
     async classify(text: string, history?: SidecarHistoryEntry[]): Promise<SidecarDecision> {
       const apiKey = getApiKey()

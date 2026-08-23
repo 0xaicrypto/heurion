@@ -341,7 +341,7 @@ Marketplace UI 分为两个 Tab：
 ```
 Plugin: heurion/medsci-sidecar
 ├── runtime/
-│   └── main.py
+│   └── main.ts
 ├── tools/
 │   ├── generate_docx
 │   └── generate_pptx

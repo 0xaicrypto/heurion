@@ -132,18 +132,6 @@ export function formatCommandResult(result: CommandResult): string {
 }
 
 /** Read uploaded file content for chat context (#2). */
-export async function readAttachmentContent(userId: string, fileId: string): Promise<string> {
-  const name = fileId.split('_').slice(1).join('_') || fileId
-  const text = await extractTextFromUpload(userId, fileId, { maxChars: ATTACHMENT_TEXT_MAX_CHARS })
-  if (!text) return ''
-  return `\n[ATTACHMENT: ${name}]\n${text}\n[/ATTACHMENT]\n`
-}
-
-/**
- * §3.4 (#194): total context budget enforcement. Trims non-system messages
- * oldest-first until the estimate fits; falls back to truncating the system
- * prompt. Returns the number of trimmed messages.
- */
 /** #553: 消息 token 估算 — image part 按固定配额计(base64 全量计入会
  *  系统性清空上下文);文本按字符。 */
 export function estimateMessageTokens(m: { role: string; content: string | ChatContentPart[] }): number {
@@ -289,7 +277,10 @@ export async function buildAttachmentParts(
     if (content) {
       const remaining = ATTACHMENT_TEXT_MAX_CHARS - consumedChars
       const slice = content.length > remaining ? content.slice(0, remaining) : content
-      attachmentText += `\n[ATTACHMENT: ${name}]\n${slice}\n[/ATTACHMENT]\n`
+      // #659: 读取痕迹化 — 模型可见"文件从哪来、读了多大范围"
+      // (opencode 的 "Called the Read tool..." 模式)。
+      const truncated = content.length > slice.length
+      attachmentText += `\n[read file: ${name}${truncated ? ` (${slice.length}/${content.length} chars, truncated)` : ''}]\n${slice}\n[/read]\n`
       consumedChars += slice.length
       notes.push(`Attachment: ${name.slice(0, 30)}`)
     }

@@ -9,7 +9,7 @@ export interface EvolutionWorkerOptions {
   lockDuration: number
 }
 
-export function loadWorkerOptions(): EvolutionWorkerOptions {
+function loadWorkerOptions(): EvolutionWorkerOptions {
   return {
     concurrency: parseInt(process.env.EVOLUTION_WORKER_CONCURRENCY || '3', 10),
     lockDuration: parseInt(process.env.EVOLUTION_WORKER_LOCK_DURATION || '30000', 10),

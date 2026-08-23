@@ -57,7 +57,6 @@
     "register": "注册",
     "theme": "主题",
     "language": "语言",
-    "comingSoon": "即将推出",
     "optional": "可选",
     "error": "加载失败",
     "errorBoundary": "出现错误",
@@ -309,12 +308,10 @@
     "saved": "已保存"
   },
   "admin": {
-    "title": "管理",
-    "comingSoon": "用户管理功能即将推出。"
+    "title": "管理"
   },
   "research": {
     "title": "研究",
-    "comingSoon": "研究工作台功能即将推出。",
     "writePaper": "写论文",
     "studyType": "研究类型",
     "clinical": "临床研究",
@@ -322,7 +319,6 @@
   },
   "writing": {
     "title": "论文工作台",
-    "comingSoon": "写作工作室功能即将推出。",
     "tabWrite": "写作",
     "confirmDelete": "确定删除这篇文档？此操作不可撤销。",
     "studySelect": "关联研究（可选）",
@@ -336,16 +332,12 @@
   },
   "skills": {
     "title": "技能",
-    "comingSoon": "技能管理功能即将推出。",
     "captureHint": "这个流程可以保存为技能，要保存吗？",
     "captureTitle": "保存为技能",
     "captureSubtitle": "AI 已把你的操作整理成可复用流程，下次可直接调用。",
     "refineHint": "用一句话修改，如\"下次别忘了加上复发风险\"",
     "refine": "调整",
     "captureSaved": "技能已保存，下次对话可直接调用"
-  },
-  "placeholder": {
-    "comingSoon": "即将推出"
   },
   "labs": {
     "ingestionStatus": "AI 分析状态",
