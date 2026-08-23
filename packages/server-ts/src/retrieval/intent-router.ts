@@ -141,6 +141,8 @@ export interface SidecarDecisionDetail {
   historyTurns: number
   /** #562 — semantic router verdict when enabled (shadow/on); undefined otherwise. */
   semantic?: SemanticVerdict
+  /** #585 — semantic layer classify latency (ms); gate: 判定 p50 < 50ms. */
+  semanticMs?: number
 }
 
 /**
@@ -218,10 +220,13 @@ async function adjudicate(opts: ResolveSidecarOptions, text: string): Promise<{ 
   //    供离线评估"语义 vs LLM 分歧率"（门槛 <5% 才切换 on），绝不误放行。
   const semanticMode = process.env.INTENT_SEMANTIC_ROUTER || 'off'
   let semanticProbe: SemanticVerdict | undefined
+  let semanticMs: number | undefined
   try {
     const semantic = await getSemanticRouter()
     if (semantic && semanticMode !== 'off') {
+      const t0 = Date.now()
       const semanticVerdict = await semantic.classify(text)
+      semanticMs = Date.now() - t0
       if (semanticMode === 'on' && (semanticVerdict === 'generate' || semanticVerdict === 'veto')) {
         const detail: SidecarDecisionDetail = {
           verdict: semanticVerdict === 'generate' ? 'generate' : 'discuss',
@@ -231,6 +236,7 @@ async function adjudicate(opts: ResolveSidecarOptions, text: string): Promise<{ 
           textLength: text.length,
           historyTurns: opts.history?.length ?? 0,
           semantic: semanticVerdict,
+          semanticMs,
         }
         opts.onDecision?.(detail)
         return { decision: semanticVerdict === 'generate', detail }
@@ -249,6 +255,7 @@ async function adjudicate(opts: ResolveSidecarOptions, text: string): Promise<{ 
       verdict, vetoed: false, llmCalls: 1, cacheHit: false,
       textLength: text.length, historyTurns: opts.history?.length ?? 0,
       semantic: semanticProbe,
+      semanticMs,
     }
     opts.onDecision?.(detail)
     return { decision: verdict === 'generate', detail }
@@ -257,6 +264,7 @@ async function adjudicate(opts: ResolveSidecarOptions, text: string): Promise<{ 
       verdict: 'uncertain', vetoed: false, llmCalls: 1, cacheHit: false,
       textLength: text.length, historyTurns: opts.history?.length ?? 0,
       semantic: semanticProbe,
+      semanticMs,
     }
     opts.onDecision?.(detail)
     return { decision: false, detail }
