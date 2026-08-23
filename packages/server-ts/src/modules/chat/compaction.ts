@@ -11,6 +11,7 @@
  */
 import prisma from '../../common/prisma'
 import { getUserContext } from './user-context.js'
+import { MAX_HISTORY_TOKENS } from './chat-context.js'
 import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
 import { ensureSessionCompaction, getInFlightCompaction } from '../../memory/compaction/index.js'
 
@@ -145,7 +146,7 @@ export async function loadHistoryBudget(
   historyTurns: number
   compactedUpto: number
 }> {
-  const maxHistoryTokens = parseInt(process.env.MAX_HISTORY_TOKENS || '32000', 10)
+  const maxHistoryTokens = MAX_HISTORY_TOKENS
   const historyTurns = parseInt(process.env.HISTORY_TURNS || '20', 10)
   let compactedUpto = 0
   try {

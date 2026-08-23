@@ -2,9 +2,8 @@ import { describe, test, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { EventLog } from '../../src/core/event-log.js'
 import { MemoryProjection } from '../../src/retrieval/memory-projection.js'
-import { computeSegments, loadSnapshot, saveSnapshot, hashText } from '../../src/memory/context-sources.js'
+import { computeSegments, loadSnapshot, saveSnapshot, hashText, renderSystemPromptFiltered } from '../../src/memory/context-sources.js'
 
 /**
  * R1 (#98): typed context sources — stable segments keep byte-identical
@@ -54,16 +53,42 @@ describe('R1 context sources (#98)', () => {
   })
 
   test('projection emits per-layer segments', async () => {
-    const projection = new MemoryProjection(new EventLog(baseDir, 'u1'))
+    const projection = new MemoryProjection()
     const res = await projection.project({
-      userId: 'u1', patientHash: null, sessionId: 's1',
+      userId: 'u1', patientHash: null,
       persona: 'persona',
       facts: [], episodes: [], skills: [],
     })
     const keys = res.segments.map((s) => s.key)
     expect(keys).toContain('persona')
-    // Empty session → no conversation segment, but the key space is typed.
+    // #634: layer1 removed — recent conversation never appears in segments.
     expect(keys).not.toContain('recent_conversation')
     expect(res.systemPrompt).toContain('persona')
+  })
+
+  test('#634: projection no longer injects recent conversation (layer1 removed)', async () => {
+    const projection = new MemoryProjection()
+    const res = await projection.project({
+      userId: 'u1', patientHash: null,
+      persona: 'persona',
+      facts: [], episodes: [], skills: [],
+    })
+    expect(res.systemPrompt).not.toContain('Recent Conversation')
+    expect(res.budget.map((b) => b.layer)).not.toContain('layer1_recent')
+  })
+
+  test('#635: filtered render drops whole segments, keeps base', () => {
+    const state = computeSegments('u1', [
+      { key: 'persona', text: 'P' },
+      { key: 'study_context', text: 'S' },
+      { key: 'knowledge_inject', text: 'K' },
+      { key: 'picked_kb', text: 'X' },
+    ], null).state
+    const rendered = renderSystemPromptFiltered('base', state, ['knowledge_inject'])
+    expect(rendered).toContain('base')
+    expect(rendered).toContain('P')
+    expect(rendered).toContain('S')
+    expect(rendered).not.toContain('K')
+    expect(rendered).toContain('X')
   })
 })

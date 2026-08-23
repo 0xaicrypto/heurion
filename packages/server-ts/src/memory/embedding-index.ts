@@ -10,7 +10,7 @@ import path from 'path'
 export interface EmbeddingRecord {
   nodeId: string
   stableId: string
-  type: 'fact' | 'article'
+  type: 'fact' | 'article' | 'document'
   patientHash?: string
   studyId?: string
   contentHash: string
@@ -77,7 +77,7 @@ export class EmbeddingIndex {
     this.persist()
   }
 
-  remove(stableId: string, type: 'fact' | 'article'): void {
+  remove(stableId: string, type: 'fact' | 'article' | 'document'): void {
     this.records = this.records.filter((r) => !(r.stableId === stableId && r.type === type))
     this.persist()
   }

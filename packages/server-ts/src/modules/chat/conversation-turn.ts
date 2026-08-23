@@ -17,8 +17,10 @@ import { deepseekStream, LlmTruncatedError, DEEPSEEK_PREMIUM_MODEL } from '../..
 import { providerSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
-import { buildAttachmentParts, enforceTotalBudget, selectProjectionInputs } from './chat-context.js'
+import { buildAttachmentParts, enforceTotalBudget, selectProjectionInputs, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from './chat-context.js'
+import { estimateTokens } from '../../common/token-estimate.js'
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
+import { ContextAssembler } from './context-assembler.js'
 import { ToolRegistry, type ToolContext } from '../../tools/tool-registry.js'
 import { runToolCallLoop, type TurnIO } from './tool-loop.js'
 import {
@@ -29,6 +31,9 @@ import {
 } from './compaction.js'
 import { analyzeChatForMedicalRecord, updatePatientFromFindings, updateMedicalRecordFromChat } from '../patients/clinical-analysis.js'
 import type { TurnIntent } from './turn-intent.js'
+import { factContentHash } from '../../common/fact-render.js'
+import { CONTEXT_CONFIG } from '../../common/context-config.js'
+import type { SendEvent } from './chat-events.js'
 
 const log = makeLogger('chat.conversation')
 
@@ -49,7 +54,7 @@ export interface ConversationTurnParams {
   scene: ChatScene
   body: { text: string; attachments?: any[]; picked_kb_ids?: string[] }
   apiKey: string
-  send: (chunk: any) => void
+  send: SendEvent
   signal: AbortSignal
   chatAbort: AbortController
   io: TurnIO
@@ -65,7 +70,7 @@ export interface ConversationTurnParams {
  * persistence. All SSE events for the turn are sent through `send`.
  */
 export async function runConversationTurn(p: ConversationTurnParams): Promise<void> {
-  const { userId, ctx, sid, patientHash, scene, body, apiKey, send, signal, chatAbort, io, routeResult, turnIntent } = p
+  const { userId, ctx, sid, patientHash, scene, body, apiKey, send, chatAbort, io, routeResult, turnIntent } = p
 
   // #2/#544: 附件 → 对话内容(图片多模态/超限降级/文本注入)由
   // buildAttachmentParts 纯函数处理;事件说明在此发送。
@@ -79,7 +84,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
 
   let fullMessage = attachmentText ? `${attachmentText}\n\nUser query: ${body.text}` : body.text
 
-  // Inject patient demographics + memory findings into chat context
+  // #627: patient user-message 块只保留 demographics 级信息 — 临床发现
+  // 由 projection layer3(患者 facts 隔离)承担,避免同一患者事实在
+  // user message + patient_context 段 + layer3 三处各出现一次。
   if (patientHash) {
     const patient = await findPatient(userId, patientHash)
     const parts: string[] = ['## Current Patient Context']
@@ -89,39 +96,32 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       if (patient.sex) parts.push(`- Sex: ${patient.sex}`)
       if (patient.chiefComplaint) parts.push(`- Chief Complaint: ${patient.chiefComplaint}`)
     }
-    // Inject memory facts for this patient as structured findings
-    const patientFacts = ctx.memory.graph.getCurrentNodesByType('fact')
-      .filter((n: any) => (n as any).patientHash === patientHash)
-      .slice(0, 20)
-    if (patientFacts.length > 0) {
-      parts.push('- Clinical Findings:')
-      for (const f of patientFacts) {
-        const cat = (f as any).category || 'fact'
-        const content = (f as any).content || ''
-        const imp = (f as any).importance || 3
-        if (content) parts.push(`  * [${cat}] ${content} (importance: ${imp}/5)`)
-      }
-    }
     if (parts.length > 1) {
       send({ type: 'context_info', text: parts.join('\n'), kind: 'patient_context' })
       fullMessage = parts.join('\n') + '\n\n' + fullMessage
     }
   }
 
-  // Always include patient roster so AI knows the user's patient list
+  // #636: roster 按场景裁剪 — patient scene(或患者相关意图)全量注入
+  // (含 age/sex/CC);general/chart/document 场景简化(仅姓名缩写),
+  // token 显著下降;'list my patients' 类确定性查询走下方独立路径。
   const allPatients = await (prisma as any).patientRecord.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
-    take: 50,
+    take: CONTEXT_CONFIG.scene.rosterMax,
   })
+  const isPatientIntent = patientHash !== null || /患者|病人|patient|roster/i.test(body.text)
+  const fullRoster = isPatientIntent
   if (allPatients.length > 0) {
-    const roster = allPatients.map((p: any) => {
-      const parts = [`- ${p.initials || 'Unknown'}`]
-      if (p.age) parts.push(`${p.age}y/o`)
-      if (p.sex) parts.push(p.sex)
-      if (p.chiefComplaint) parts.push(`CC: ${p.chiefComplaint}`)
-      return parts.join(', ')
-    }).join('\n')
+    const roster = fullRoster
+      ? allPatients.map((p: any) => {
+          const parts = [`- ${p.initials || 'Unknown'}`]
+          if (p.age) parts.push(`${p.age}y/o`)
+          if (p.sex) parts.push(p.sex)
+          if (p.chiefComplaint) parts.push(`CC: ${p.chiefComplaint}`)
+          return parts.join(', ')
+        }).join('\n')
+      : allPatients.map((p: any) => `- ${p.initials || 'Unknown'}`).join('\n')
     send({ type: 'context_info', text: `## Patient Roster (${allPatients.length} patients)\n${roster}`, kind: 'patient_roster' })
     fullMessage = `## Patient Roster (${allPatients.length} patients)\n${roster}\n\n` + fullMessage
   } else {
@@ -158,7 +158,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       const recentFiles = await (prisma as any).fileIndex.findMany({
         where: { userId, patientHash, deletedAt: null },
         orderBy: { createdAt: 'desc' },
-        take: 5,
+        take: CONTEXT_CONFIG.scene.recentFilesMax,
       })
       if (recentFiles.length > 0) {
         const fileCtx = buildFileContext(recentFiles)
@@ -179,31 +179,13 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // #2: Weighted attention context projection (filtered by router intent)
   const projectionInputs = selectProjectionInputs(routeResult, ctx, patientHash, sid)
   const projected = await ctx.orchestrator['projection'].project({
-    userId, patientHash, sessionId: sid,
+    userId, patientHash,
     persona,
     facts: projectionInputs.facts,
     episodes: projectionInputs.episodes,
     skills: projectionInputs.skills,
   })
   send({ type: 'context_info', text: projected.budget.map((b: any) => `${b.layer}: ${b.tokens}t/${b.items}i`).join(' | '), kind: 'projection' })
-
-  // #5: Include research study context
-  const studies = await (prisma as any).researchStudy.findMany({
-    where: { userId },
-    orderBy: { updatedAt: 'desc' },
-    take: 10,
-  })
-  let studyContext = ''
-  if (studies.length > 0) {
-    studyContext = '\n## Active Research Studies (ALWAYS use the short_code below to refer to a study when the user mentions it)\n'
-    for (const s of studies) {
-      studyContext += `- **${s.shortCode}**: ${s.name}\n`
-      if (s.protocol) {
-        studyContext += `  Protocol: ${s.protocol.slice(0, 700).replace(/\n/g, ' ')}\n`
-      }
-    }
-    studyContext += '\nIMPORTANT: When the user asks about a specific study (e.g. "NSCLC001" or any short_code), you MUST reference that short_code in your reply. When asked about details not in the protocol snippet above, suggest importing the full protocol.\n'
-  }
 
   // #5: Conversation history under a token budget; compaction replaces
   // the covered segment with the Session Memory summary.
@@ -214,7 +196,6 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     historyTokens,
     maxHistoryTokens,
     historyTurns,
-    compactedUpto,
   } = await loadHistoryBudget(ctx, sid, userId)
   // U3: surface the context budget usage so the user can anticipate the
   // next compaction (100% of the history budget or the turn window cap).
@@ -226,95 +207,101 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     omitted_turns: omittedTurns,
     will_compact: omittedTurns > 0 || history.length >= historyTurns * 2,
   })
-  // Writing sessions (doc-{docId}) inject the current document + its
-  // references as the docs/current context source (§15.4).
-  let docContext = ''
-  if (sid.startsWith('doc-')) {
-    try {
-      const docId = sid.slice(4)
-      const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
-      if (doc) {
+
+  // #637 阶段2: system 侧装配走 ContextAssembler — 各注入源注册为独立
+  // builder(不再往 runConversationTurn 中间插代码),装配器负责排段
+  // (稳定段前置/动态段尾部 #631)、预算刷新(#630)、快照渲染(#98)、
+  // 出口断言与段级回退(#635)。
+  const budget = new ContextBudget()
+  const layer3FactHashes = new Set((projectionInputs.facts as any[]).map((f) => factContentHash(f)))
+  const assembler = new ContextAssembler([
+    {
+      // #5/#631: 研究上下文 — shortCode 排序保证不更新时字节稳定。
+      key: 'study_context',
+      fallbackOrder: 3,
+      build: async () => {
+        const studies = await (prisma as any).researchStudy.findMany({
+          where: { userId },
+          take: CONTEXT_CONFIG.scene.studiesMax,
+        })
+        studies.sort((a: any, b: any) => String(a.shortCode || '').localeCompare(String(b.shortCode || '')))
+        if (studies.length === 0) return ''
+        let text = '\n## Active Research Studies (ALWAYS use the short_code below to refer to a study when the user mentions it)\n'
+        for (const s of studies) {
+          text += `- **${s.shortCode}**: ${s.name}\n`
+          if (s.protocol) {
+            text += `  Protocol: ${s.protocol.slice(0, CONTEXT_CONFIG.scene.protocolChars).replace(/\n/g, ' ')}\n`
+          }
+        }
+        text += '\nIMPORTANT: When the user asks about a specific study (e.g. "NSCLC001" or any short_code), you MUST reference that short_code in your reply. When asked about details not in the protocol snippet above, suggest importing the full protocol.\n'
+        return text
+      },
+    },
+    {
+      // §15.4: 写作会话注入当前文档 + 引用。
+      key: 'document_context',
+      fallbackOrder: 2,
+      build: async () => {
+        if (!sid.startsWith('doc-')) return ''
+        const docId = sid.slice(4)
+        const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+        if (!doc) return ''
         const refs = await (prisma as any).docReference.findMany({
           where: { userId, docId },
           orderBy: { createdAt: 'asc' },
         })
         const refBlock = (refs || [])
-          .map((r: any) => `### ${r.label || r.id}\n${String(r.snapshot || r.body || '').slice(0, 4000)}`)
+          .map((r: any) => `### ${r.label || r.id}\n${String(r.snapshot || r.body || '').slice(0, CONTEXT_CONFIG.scene.docRefChars)}`)
           .join('\n\n')
-        docContext = `\n\n## Current Document\n标题：${doc.title}\n\n${String(doc.body || '').slice(0, 12000)}\n\n## Reference Materials\n${refBlock || '(none)'}\n\n规则：用户在编辑这份文档。回答用中文；当用户要求修改文档时，调用 edit_document 工具写回完整的新文档内容（markdown）。`
-      }
-    } catch {
-      // doc context is best-effort
-    }
+        return `\n\n## Current Document\n标题：${doc.title}\n\n${String(doc.body || '').slice(0, CONTEXT_CONFIG.scene.docBodyChars)}\n\n## Reference Materials\n${refBlock || '(none)'}\n\n规则：用户在编辑这份文档。回答用中文；当用户要求修改文档时，调用 edit_document 工具写回完整的新文档内容（markdown）。`
+      },
+    },
+    {
+      // #621/#629/#630/#627: 知识库语义自动注入 — 患者过滤 + 预算自适应 + 跨层去重。
+      key: 'knowledge_inject',
+      fallbackOrder: 1,
+      build: (input) => buildKnowledgeInjection(input.body.text, ctx.facts, ctx.knowledge, {
+        remainingBudget: input.budget.remaining(),
+        excludeFactHashes: input.layer3FactHashes,
+        patientHash: input.patientHash ?? undefined,
+      }),
+    },
+    {
+      // #620/#633: 用户显式选定的文章/文档(用户强制保留,不入稳定段)。
+      key: 'picked_kb',
+      fallbackOrder: 0,
+      build: async (input) => {
+        const pickedIds: string[] = Array.isArray(input.body.picked_kb_ids) ? input.body.picked_kb_ids.map(String) : []
+        if (pickedIds.length === 0 || input.scene.startsWith('patient')) return ''
+        // #628: 选择器同时返回合成文章(article)与上传文件(document)。
+        const articles = (ctx.memory.graph.getCurrentNodesByType('article') as any[])
+          .filter((n: any) => n.type === 'article' && pickedIds.includes(n.stableId))
+          .slice(0, CONTEXT_CONFIG.injection.pickedMax)
+        const docs = (ctx.memory.graph.getCurrentNodesByType('document') as any[])
+          .filter((n: any) => n.type === 'document' && pickedIds.includes(n.stableId))
+          .slice(0, CONTEXT_CONFIG.injection.pickedMax)
+        const { extractTextFromUpload } = await import('../../lib/document-extractor.js')
+        const docBlocks: string[] = []
+        for (const d of docs) {
+          const text = await extractTextFromUpload(userId, d.stableId, { maxChars: CONTEXT_CONFIG.injection.pickedCharsPerItem })
+          docBlocks.push(`- [document] (${d.stableId}) ${d.name}: ${(text || d.name).slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`)
+        }
+        const articleBlocks = articles.map((a) => `- [article] (${a.stableId}) ${a.title}: ${String(a.content || '').slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`)
+        if (docBlocks.length === 0 && articleBlocks.length === 0) return ''
+        return '\n## 用户选定知识库参考\n' + [...articleBlocks, ...docBlocks].join('\n')
+      },
+    },
+  ])
+  const assembled = await assembler.assemble({
+    userId, sid, patientHash, scene, body, ctx,
+    projected, budget, layer3FactHashes, historyTokens,
+  })
+  if (assembled.telemetry.length > 0) {
+    log.warn('context assembly telemetry (required segments degraded)', { issues: assembled.telemetry })
   }
-  // #598: 全局输出格式规范 — 模型常用非标准 Markdown(不标准表格
-  // 分隔行、用代码围栏包裹标点),导致前端渲染成乱码/代码块。
-  const OUTPUT_FORMAT_RULES = `
-## 输出格式规范
-- 使用标准 Markdown 语法。表格的分隔行必须是 | --- | --- | 形式;不要写成 |--、---| 等不标准形式。
-- 展示单个标点或字符修改(如 .. → .)时,用普通文本或引号说明即可,禁止用代码围栏(\`\`\`)或反引号包裹标点、符号或单个字符。
-- 代码围栏(\`\`\`)仅用于真实代码、命令、JSON 等;不要把普通文字、术语或符号放进去。
-- 行内反引号仅用于真正的行内代码。
-`
-  // #621: 知识库语义自动注入 — 用户消息后自动检索 Top-K 知识作为
-  // system 片段(带来源)。患者场景已有患者知识自动带,不重复注入;
-  // 文档场景也注入(参考资料)。
-  const kbInjection = scene === 'patient'
-    ? ''
-    : buildKnowledgeInjection(body.text, ctx.facts, ctx.knowledge)
-  // #620: 用户显式选定的知识库文章(知识库选择器)→ 注入为 system 片段.
-  const pickedIds: string[] = Array.isArray(body.picked_kb_ids) ? body.picked_kb_ids.map(String) : []
-  let pickedInjection = ''
-  if (pickedIds.length > 0 && !scene.startsWith('patient')) {
-    try {
-      // #628: 选择器现在同时返回合成文章(article)与上传文件(document)。
-      // article 注入内容;document 读磁盘原文(docx/pdf/文本,失败降级为文件名)。
-      const articles = (ctx.memory.graph.getCurrentNodesByType('article') as any[])
-        .filter((n: any) => n.type === 'article' && pickedIds.includes(n.stableId))
-        .slice(0, 3)
-      const docs = (ctx.memory.graph.getCurrentNodesByType('document') as any[])
-        .filter((n: any) => n.type === 'document' && pickedIds.includes(n.stableId))
-        .slice(0, 3)
-      const { extractTextFromUpload } = await import('../../lib/document-extractor.js')
-      const docBlocks: string[] = []
-      for (const d of docs) {
-        const text = await extractTextFromUpload(userId, d.stableId, { maxChars: 4000 })
-        docBlocks.push(`- [${d.name}] ${(text || d.name).slice(0, 4000)}`)
-      }
-      const articleBlocks = articles.map((a) => `- [${a.title}] ${String(a.content || '').slice(0, 4000)}`)
-      if (docBlocks.length > 0 || articleBlocks.length > 0) {
-        pickedInjection = '\n## 用户选定知识库参考\n' + [...articleBlocks, ...docBlocks].join('\n')
-      }
-    } catch { /* best-effort */ }
-  }
-  // R1 (#98): assemble the system prompt from typed context segments —
-  // hash-snapshot per user so stable segments stay byte-identical
-  // (provider prompt-cache friendly) and changes are diffable.
-  let systemPrompt = projected.systemPrompt + OUTPUT_FORMAT_RULES + studyContext + docContext
-  if (kbInjection) systemPrompt += '\n\n' + kbInjection
-  if (pickedInjection) systemPrompt += pickedInjection
-  try {
-    const { computeSegments, saveSnapshot, loadSnapshot, renderSystemPrompt } = await import('../../memory/context-sources.js')
-    const prev = loadSnapshot(userId)
-    const segments: Array<{ key: string; text: string }> = [
-      ...(projected.segments || []),
-      ...(studyContext ? [{ key: 'study_context', text: studyContext }] : []),
-      ...(docContext ? [{ key: 'document_context', text: docContext }] : []),
-      // #628-fix: 知识库注入必须作为 segment 进入渲染管线 — 此前仅追加到
-      // 局部 systemPrompt,renderSystemPrompt 按 segments 重建后注入被静默丢弃
-      // (#620 选择器/#621 语义注入实际从未到达 LLM)。
-      ...(kbInjection ? [{ key: 'knowledge_inject', text: kbInjection }] : []),
-      ...(pickedInjection ? [{ key: 'picked_kb', text: pickedInjection }] : []),
-    ]
-    const { state, diff } = computeSegments(userId, segments, prev)
-    saveSnapshot(userId, state)
-    if (diff.changed.length > 0 || diff.removed.length > 0) {
-      log.info('context segments diffed', { changed: diff.changed, removed: diff.removed })
-    }
-    systemPrompt = renderSystemPrompt('', state)
-  } catch {
-    // snapshot/diff pipeline is best-effort — fall back to direct join
-  }
+  let systemPrompt = assembled.systemPrompt
+  let segmentState = assembled.segmentState
+  let segmentRenderFiltered = assembled.renderFiltered
   // #511: content may carry multimodal parts (images) on the user turn.
   const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }> = [
     { role: 'system', content: systemPrompt },
@@ -341,11 +328,33 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     content: userParts.length > 0 ? [...userParts, { type: 'text', text: fullMessage }] : fullMessage,
   })
 
-  // §3.4 (#194): enforce a TOTAL token budget across all assembled
-  // messages. History is trimmed oldest-first; the system prompt is
-  // truncated as a last resort so a pathological projection can never
-  // blow the context window.
-  const maxTotalTokens = parseInt(process.env.MAX_TOTAL_TOKENS || '64000', 10)
+  // §3.4 (#194) + #635: enforce a TOTAL token budget across all assembled
+  // messages. 先段级回退 — 按 builder fallbackOrder 逆序整段移除尾部
+  // 动态段(picked_kb → knowledge_inject → document_context → study_context),
+  // 避免字符切片截断半句话/半截 markdown 结构;全部移除仍超预算才落到
+  // enforceTotalBudget 的字符级兜底(保留 persona)。与 #630 组装时预算
+  // 控制形成双层保障。
+  const maxTotalTokens = MAX_TOTAL_TOKENS
+  const { droppedSegments } = assembler.segmentFallback(
+    messages, maxTotalTokens, segmentState, segmentRenderFiltered,
+    estimateMessagesTokens as any,
+  )
+  // #637: 回退后刷新预算视图 — 观测与事件输出用同一对象。
+  budget.allocateSystem(estimateTokens(systemPrompt))
+  if (droppedSegments.length > 0) {
+    send({
+      type: 'context_info',
+      text: `Context segments dropped to fit the total token budget: ${droppedSegments.join(', ')}.`,
+      kind: 'projection',
+    })
+  }
+  if (droppedSegments.length > 0) {
+    send({
+      type: 'context_info',
+      text: `Context segments dropped to fit the total token budget: ${droppedSegments.join(', ')}.`,
+      kind: 'projection',
+    })
+  }
   const trimmedTurns = enforceTotalBudget(messages, maxTotalTokens)
   if (trimmedTurns > 0) {
     send({
@@ -354,9 +363,23 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       kind: 'projection',
     })
   }
+  // #630: system 侧预算统计 — 与 history 口径统一(maxTotal 为唯一上限),
+  // 让 context_usage 可观测 system 实际消耗与回退情况。
+  send({
+    type: 'context_usage',
+    history_tokens: historyTokens,
+    history_budget: maxHistoryTokens,
+    history_turns: historyTurns,
+    omitted_turns: omittedTurns,
+    will_compact: omittedTurns > 0 || history.length >= historyTurns * 2,
+    system_tokens: budget.usage().system_tokens,
+    system_budget: budget.usage().system_budget,
+    dropped_segments: droppedSegments,
+  })
 
   // #621: 知识库注入后超预算 — 历史被裁剪时同步触发压缩(async),
   // 压缩后历史从新 cursor 开始,后续轮次预算回落到低位。
+  const kbInjection = segmentState?.['knowledge_inject']?.text ?? ''
   if (trimmedTurns > 0 && kbInjection && !sid.startsWith('doc-') && sid !== '') {
     try {
       triggerCompactionAfterTrim({

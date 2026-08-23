@@ -5,12 +5,90 @@
  * honest: one implementation, one test surface.
  */
 import { estimateTokens } from '../../common/token-estimate.js'
+import { CONTEXT_CONFIG } from '../../common/context-config.js' // #637 集中配置
 import { router } from '../../retrieval/query-router.js'
 import { getUserContext } from './user-context.js'
 import type { ChatContentPart } from '../../common/llm-gateway.js'
 import type { CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { extractTextFromUpload, extractImageUpload, isImageFile } from '../../lib/document-extractor.js'
 import type { ChatScene } from '../../common/persona.js'
+
+// #630: 统一预算口径 — 剩余预算 = maxTotalTokens − system − history。
+// #637: 常量集中自 CONTEXT_CONFIG,此处仅 re-export 保持既有引用面。
+export const MAX_TOTAL_TOKENS = CONTEXT_CONFIG.maxTotalTokens
+export const MAX_HISTORY_TOKENS = CONTEXT_CONFIG.maxHistoryTokens
+
+/** #630: 本轮剩余预算（token）— system 与 history 都按实际估算值占位。 */
+export function remainingContextTokens(systemTokens: number, historyTokens: number, maxTotal = MAX_TOTAL_TOKENS): number {
+  return Math.max(0, maxTotal - systemTokens - historyTokens)
+}
+
+/** #636: 附件文本注入上限(字符)— 统一预算常量,超限附件降级为文件名列表。 */
+export const ATTACHMENT_TEXT_MAX_CHARS = CONTEXT_CONFIG.scene.attachmentTextChars
+
+/** #636: 附件文本超限时的降级提示行。 */
+export const ATTACHMENT_DEGRADED_MARK = '(text truncated — filename only)'
+
+/**
+ * #637 阶段 4 — ContextBudget 抽象:三层预算(projection 虚构 8000 /
+ * MAX_HISTORY / MAX_TOTAL)收敛为同一对象的三个视图。组装管线
+ * allocate/consume,各段声明可裁剪性;#630 三档策略作为分档视图;
+ * #635 段级回退作为兜底入口。后续 builder 管线以本对象为唯一预算源。
+ */
+export class ContextBudget {
+  readonly maxTotal: number
+  readonly maxHistory: number
+  private systemTokens = 0
+  private historyTokens = 0
+
+  constructor(maxTotal = MAX_TOTAL_TOKENS, maxHistory = MAX_HISTORY_TOKENS) {
+    this.maxTotal = maxTotal
+    this.maxHistory = maxHistory
+  }
+
+  /** 记录已组装 system 的占用。 */
+  allocateSystem(tokens: number): void {
+    this.systemTokens = tokens
+  }
+
+  /** 记录历史占用。 */
+  allocateHistory(tokens: number): void {
+    this.historyTokens = tokens
+  }
+
+  /** 剩余预算 = maxTotal − system − history(#630 口径)。 */
+  remaining(): number {
+    return remainingContextTokens(this.systemTokens, this.historyTokens, this.maxTotal)
+  }
+
+  /** 剩余预算占总窗口比例 — #630 三档分档依据。 */
+  remainingRatio(): number {
+    return this.remaining() / Math.max(1, this.maxTotal)
+  }
+
+  /** 剩余预算分档:rich(>30%) / mid(>10%) / tight。 */
+  tier(): 'rich' | 'mid' | 'tight' {
+    const ratio = this.remainingRatio()
+    if (ratio > 0.3) return 'rich'
+    if (ratio > 0.1) return 'mid'
+    return 'tight'
+  }
+
+  /** 留给 system 的额度(maxTotal − history) — 观测与兜底用。 */
+  systemCap(): number {
+    return Math.max(0, this.maxTotal - this.historyTokens)
+  }
+
+  /** 已占用视图 — context_usage 事件输出。 */
+  usage(): { system_tokens: number; history_tokens: number; system_budget: number; remaining: number } {
+    return {
+      system_tokens: this.systemTokens,
+      history_tokens: this.historyTokens,
+      system_budget: this.systemCap(),
+      remaining: this.remaining(),
+    }
+  }
+}
 
 /**
  * #510/#546: chat 入口场景解析 — 显式字段优先,否则按患者范围 /
@@ -56,7 +134,7 @@ export function formatCommandResult(result: CommandResult): string {
 /** Read uploaded file content for chat context (#2). */
 export async function readAttachmentContent(userId: string, fileId: string): Promise<string> {
   const name = fileId.split('_').slice(1).join('_') || fileId
-  const text = await extractTextFromUpload(userId, fileId, { maxChars: 15000 })
+  const text = await extractTextFromUpload(userId, fileId, { maxChars: ATTACHMENT_TEXT_MAX_CHARS })
   if (!text) return ''
   return `\n[ATTACHMENT: ${name}]\n${text}\n[/ATTACHMENT]\n`
 }
@@ -68,12 +146,17 @@ export async function readAttachmentContent(userId: string, fileId: string): Pro
  */
 /** #553: 消息 token 估算 — image part 按固定配额计(base64 全量计入会
  *  系统性清空上下文);文本按字符。 */
-function estimateMessageTokens(m: { role: string; content: string | ChatContentPart[] }): number {
+export function estimateMessageTokens(m: { role: string; content: string | ChatContentPart[] }): number {
   if (typeof m.content === 'string') return estimateTokens(m.content)
   return m.content.reduce((acc, part) => {
     if (part.type === 'image') return acc + 1024
     return acc + estimateTokens(part.text)
   }, 0)
+}
+
+/** 整组消息的 token 估算（#630 段级回退重算用）。 */
+export function estimateMessagesTokens(msgs: Array<{ role: string; content: string | ChatContentPart[] }>): number {
+  return msgs.reduce((acc, m) => acc + estimateMessageTokens(m), 0)
 }
 
 export function enforceTotalBudget(
@@ -111,7 +194,7 @@ export function isolateFactsByScope(allFacts: any[], patientHash?: string | null
   const own = allFacts.filter((f) => f.patientHash === patientHash)
   const cross = allFacts
     .filter((f) => f.patientHash && f.patientHash !== patientHash && (f.importance ?? 3) >= 4)
-    .slice(0, 5)
+    .slice(0, CONTEXT_CONFIG.retrieval.crossPatientMax)
     .map((f) => ({
       ...f,
       content: `[patient: ${f.patientHash}] ${f.content}`,
@@ -140,7 +223,7 @@ export function selectProjectionInputs(
       return { facts: [], episodes: [], skills: [] }
     case 'vector':
       // Knowledge questions: keep facts/knowledge, skip episodic chat history
-      return { facts: isolateFactsByScope(ctx.facts.all(), patientHash).slice(0, 50), episodes: [], skills: [] }
+      return { facts: isolateFactsByScope(ctx.facts.all(), patientHash).slice(0, CONTEXT_CONFIG.retrieval.factsCap), episodes: [], skills: [] }
     case 'file':
       // File queries: context comes from attachments; skip accumulated memory
       return { facts: [], episodes: [], skills: [] }
@@ -149,7 +232,7 @@ export function selectProjectionInputs(
       // Ambiguous or summary questions: keep full context (patient-isolated);
       // episodes are limited to the current session's un-reviewed summary.
       return {
-        facts: isolateFactsByScope(ctx.facts.all(), patientHash).slice(0, 50),
+        facts: isolateFactsByScope(ctx.facts.all(), patientHash).slice(0, CONTEXT_CONFIG.retrieval.factsCap),
         episodes: sessionId ? ctx.episodes.all().filter((e) => e.sessionId === sessionId) : [],
         skills: ctx.skills.all(),
       }
@@ -172,6 +255,7 @@ export async function buildAttachmentParts(
   const parts: ChatContentPart[] = []
   let attachmentText = ''
   const notes: string[] = []
+  let consumedChars = 0
   for (const att of rawAttachments || []) {
     const fid = typeof att === 'string' ? att : (att.file_id || att.fileId || '')
     const name = typeof att === 'string' ? fid.split('_').slice(1).join('_') : (att.name || '')
@@ -194,9 +278,19 @@ export async function buildAttachmentParts(
       notes.push(`Attachment: ${name.slice(0, 30)} (image ${probe.oversized ? 'oversized' : 'no vision'})`)
       continue
     }
-    const content = await extractTextFromUpload(opts.userId, fid, { maxChars: 15000 })
+    // #636: 附件文本纳入统一预算 — 累计超限后后续附件降级为文件名列表,
+    // 避免多个大附件把 user message 撑爆。
+    if (consumedChars >= ATTACHMENT_TEXT_MAX_CHARS) {
+      attachmentText += `\n[ATTACHMENT: ${name}] ${ATTACHMENT_DEGRADED_MARK}\n`
+      notes.push(`Attachment: ${name.slice(0, 30)} (degraded — text budget exceeded)`)
+      continue
+    }
+    const content = await extractTextFromUpload(opts.userId, fid, { maxChars: ATTACHMENT_TEXT_MAX_CHARS })
     if (content) {
-      attachmentText += `\n[ATTACHMENT: ${name}]\n${content}\n[/ATTACHMENT]\n`
+      const remaining = ATTACHMENT_TEXT_MAX_CHARS - consumedChars
+      const slice = content.length > remaining ? content.slice(0, remaining) : content
+      attachmentText += `\n[ATTACHMENT: ${name}]\n${slice}\n[/ATTACHMENT]\n`
+      consumedChars += slice.length
       notes.push(`Attachment: ${name.slice(0, 30)}`)
     }
   }

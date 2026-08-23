@@ -1,6 +1,5 @@
 import { describe, test, expect } from 'vitest'
 import { MemoryProjection } from '../../src/retrieval/memory-projection.js'
-import { EventLog } from '../../src/core/event-log.js'
 import type { Fact } from '../../src/evolution/stores'
 
 /**
@@ -16,11 +15,10 @@ function makeFact(overrides: Partial<Fact>): Fact {
 }
 
 function project(facts: Fact[]) {
-  const projection = new MemoryProjection(new EventLog('/tmp/nonexistent-proj', 'u1'))
+  const projection = new MemoryProjection()
   return projection.project({
     userId: 'u1',
     patientHash: null,
-    sessionId: 's1',
     persona: 'persona',
     facts,
     episodes: [],
