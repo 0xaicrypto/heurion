@@ -57,14 +57,18 @@ export const CONTEXT_CONFIG = {
     rosterMax: 50,
     studiesMax: 10,
     protocolChars: 700,
-    docBodyChars: 12_000,
+    /** #fix: 写作会话注入的当前文档 token 预算(脚本感知裁剪,见
+     *  token-estimate.fitTextToTokens)。 */
+    docBodyTokens: parseInt(process.env.DOC_BODY_TOKENS || '20000', 10),
     docRefChars: 4000,
     recentFilesMax: 5,
     fileContextChars: 120,
-    /** 附件文本注入上限(字符)。#fix: 15K 会把长文件(如整篇待润色文档)
-     *  截断 — 默认放宽到 50K,由组装器 segmentFallback + enforceTotalBudget
-     *  (64K token)兜底。 */
-    attachmentTextChars: parseInt(process.env.ATTACHMENT_TEXT_MAX_CHARS || '50000', 10),
+    /** #fix: 附件文本提取字符上限(每文件,提取阶段;token 层面由
+     *  attachmentTokenBudget 裁剪)。默认 300K — 长文档(整篇稿件)不在此截断。 */
+    attachmentExtractChars: parseInt(process.env.ATTACHMENT_TEXT_MAX_CHARS || '300000', 10),
+    /** #fix: 附件文本 token 预算(脚本感知) — 总预算减 system(6K)+最小
+     *  历史(4K)+输出预留(2K),剩余全给附件。 */
+    attachmentTokenBudget: parseInt(process.env.ATTACHMENT_TOKEN_BUDGET || '52000', 10),
   },
 
   // ── 检索（chat-context.ts / picker）──

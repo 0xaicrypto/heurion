@@ -122,8 +122,9 @@ describe('#544 buildAttachmentParts', () => {
   })
 
   test('#636 附件文本超限 → 后续附件降级为文件名列表', async () => {
-    // 预算由 env 控制(默认 50K);测试用 15K 复现降级行为。
+    // 预算由 env 控制;提取字符上限 15K + token 预算 3000 复现降级行为。
     vi.stubEnv('ATTACHMENT_TEXT_MAX_CHARS', '15000')
+    vi.stubEnv('ATTACHMENT_TOKEN_BUDGET', '3000')
     // 第一个附件占满预算,第二个附件应降级为文件名
     putUpload('u1', '111_big1.txt', Buffer.from('A'.repeat(15_000)))
     putUpload('u1', '222_big2.txt', Buffer.from('B'.repeat(10_000)))
@@ -135,11 +136,23 @@ describe('#544 buildAttachmentParts', () => {
     vi.unstubAllEnvs()
   })
 
-  test('#fix 长文件读取:默认预算(50K)下单个大附件全文注入', async () => {
-    // 30K 字符的文件应完整读取,不再被 15K 硬截断。
+  test('#fix 长文件读取:默认预算下 30K 字符附件全文注入(不被字符层截断)', async () => {
+    // 30K 字符的文件应完整读取 — 提取上限 300K,token 预算 52K(30K latin ≈ 7.5K token)。
     putUpload('u1', '111_long.txt', Buffer.from('C'.repeat(30_000)))
     const { attachmentText } = await buildAttachmentParts(['111_long.txt'], { userId: 'u1', vision: true })
     expect(attachmentText).toContain('C'.repeat(30_000))
     expect(attachmentText).not.toContain('truncated')
+  })
+
+  test('#fix token 预算脚本感知:中文文档按 1.5 字符/token 裁剪而非固定字符数', async () => {
+    // 英文 200K 字符 ≈ 50K token,在 52K 预算内 → 全文注入
+    putUpload('u1', '111_en.txt', Buffer.from('e'.repeat(200_000)))
+    const en = await buildAttachmentParts(['111_en.txt'], { userId: 'u1', vision: true })
+    expect(en.attachmentText).not.toContain('truncated')
+    // 中文 100K 字符 ≈ 66K token,超出预算 → 在 token 层裁剪(仍远大于旧 15K)
+    putUpload('u1', '222_cn.txt', Buffer.from('中'.repeat(100_000)))
+    const cn = await buildAttachmentParts(['222_cn.txt'], { userId: 'u1', vision: true })
+    expect(cn.attachmentText).toContain('truncated')
+    expect(cn.attachmentText.length).toBeGreaterThan(30_000)
   })
 })
