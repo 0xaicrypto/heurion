@@ -68,6 +68,7 @@ describe('chat store — regenerate (§10.3 #220)', () => {
     });
     const { api } = await import('@/lib/api');
     (api.sendChatFull as any).mockImplementationOnce(async function* () {
+      yield 'x';
       throw new TypeError('network error');
     });
     await useChatStore.getState().sendMessage('s1', { sessionId: 's1', text: '润色一下', attachments: [], skills: [] });
