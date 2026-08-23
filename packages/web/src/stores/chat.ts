@@ -82,6 +82,20 @@ interface ChatStore {
   setStreaming: (sessionId: string, msgId: string, streaming: boolean) => void;
 }
 
+/**
+ * #fix: fetch 级失败(连接被重置/服务器崩溃/重启)没有任何可用的服务端
+ * 错误内容 — 渲染"网络连接中断"而不是裸的 "TypeError: network error"。
+ * 服务端能捕获的错误(LLM 超时/上下文溢出/附件解析失败)会以 SSE error
+ * 事件送达,走 `Error: ${msg}` 分支。
+ */
+function chatFailureText(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (/network error|failed to fetch|fetch failed|load failed|net::/i.test(msg)) {
+    return '网络连接中断（服务器可能已重启或网络不稳定），请重试。'
+  }
+  return `Error: ${msg}`
+}
+
 function applyChunk(msg: ChatMessage, chunk: ChatStreamChunk): ChatMessage {
   switch (chunk.type) {
     case 'tier_classified':
@@ -327,7 +341,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             ...last,
             isStreaming: false,
             failed: true,
-            text: last.text || `Error: ${String(err)}`,
+            text: last.text || chatFailureText(err),
           };
         }
         return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };

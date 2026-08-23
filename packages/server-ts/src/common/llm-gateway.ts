@@ -50,6 +50,7 @@ const MODEL_MAX_OUTPUT_TOKENS: Readonly<Record<string, number>> = {
   // DeepSeek V4 (1M context, 384K max output — official docs; no published
   // default, so the native ceiling is used as the generous default).
   'deepseek-v4-flash': 384000,
+  'deepseek-v4-flash-vision-exp': 384000,
   'deepseek-v4-pro': 384000,
   // DeepSeek V3-era IDs (max output 8K nominal)
   'deepseek-chat': 8192,
@@ -72,6 +73,9 @@ const MODEL_FAMILY_DEFAULTS: ReadonlyArray<readonly [string, number]> = [
   ['gemini-', 8192],
   ['gpt-', 16384],
   ['claude-', 8192],
+  // #fix: v4 家族整体(含 deepseek-v4-flash-vision-exp 及未来变体)都吃原生
+  // 384K 上限;顺序必须在 ['deepseek-', 8192] 之前,前缀越长越先匹配。
+  ['deepseek-v4-', 384000],
   ['deepseek-', 8192],
   ['moonshot-', 4096],
   ['kimi-', 4096],
@@ -122,17 +126,58 @@ export interface ChatMessage {
 }
 
 /** #511: providers that accept image_url parts over the OpenAI-compatible
- *  endpoint. deepseek/opencode/kimi are text-only → image parts must be
- *  downgraded before sending. */
+ *  endpoint. deepseek/opencode 默认走 deepseek-v4-flash(支持多模态),
+ *  kimi 纯文本 → 由 modelSupportsVision 精确兜底。 */
 const VISION_PROVIDERS: ReadonlySet<string> = new Set(['gemini', 'openai', 'anthropic'])
 
-export function providerSupportsVision(provider?: string): boolean {
-  return VISION_PROVIDERS.has((provider || process.env.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase())
+/** #fix: 明确不支持视觉的模型。v3 时代 DeepSeek(deepseek-chat /
+ *  deepseek-reasoner)是纯文本;v4+(deepseek-v4-flash/pro)支持
+ *  OpenAI-compatible image_url 多模态输入。 */
+const TEXT_ONLY_MODELS: ReadonlySet<string> = new Set(['deepseek-chat', 'deepseek-reasoner'])
+
+/** 按模型名判定视觉能力:已知视觉模型(v4+ 家族,含
+ *  deepseek-v4-flash-vision-exp)→ true;已知纯文本模型 → false;
+ *  未知模型名保守 false(由调用方用 provider 维度兜底)。 */
+export function modelSupportsVision(model: string): boolean {
+  const m = model.toLowerCase()
+  if (TEXT_ONLY_MODELS.has(m)) return false
+  // deepseek-v4 前缀覆盖 flash/pro/vision-exp 等全部 v4 变体;
+  // 名称含 vision 的模型也按支持视觉处理。
+  if (/^deepseek-v4/.test(m) || /vision/.test(m)) return true
+  return false
+}
+
+/**
+ * 视觉能力判定(provider + model 双维度)。
+ * - 显式传 model:模型明确支持视觉 → true;否则看 provider。
+ * - 不传 model(老调用方):deepseek/opencode 默认模型是 deepseek-v4-flash,
+ *   按视觉处理;gemini/openai/anthropic 恒支持;kimi 恒不支持。
+ */
+export function providerSupportsVision(provider?: string, model?: string): boolean {
+  const prov = (provider || process.env.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase()
+  if (model) return modelSupportsVision(model) || VISION_PROVIDERS.has(prov)
+  return VISION_PROVIDERS.has(prov) || prov === 'deepseek' || prov === 'opencode'
+}
+
+/** 当前生效的主对话模型(与 gateway resolveModel 同一口径:显式 model →
+ *  provider modelEnv → 默认 deepseek-v4-flash)。 */
+export function resolveActiveModel(): string {
+  const ep = resolveLlmEndpoint()
+  return process.env[ep.modelEnv] || DEEPSEEK_PREMIUM_MODEL
 }
 
 /** Serialize a message content into OpenAI /chat/completions parts. */
-export function serializeContent(content: string | ChatContentPart[]): unknown {
+export function serializeContent(content: string | ChatContentPart[], model?: string): unknown {
   if (typeof content === 'string') return content
+  // #fix: 双保险 — 即使上下文装配阶段已注入图片 part,发往纯文本模型
+  // (deepseek-chat/reasoner)前必须降级,否则 provider 直接 400。
+  if (model && !modelSupportsVision(model)) {
+    return content.map((part) =>
+      part.type === 'image'
+        ? { type: 'text', text: `[图片附件已省略:当前模型 ${model} 不支持图片输入]` }
+        : { type: 'text', text: part.text },
+    )
+  }
   return content.map((part) => {
     if (part.type === 'image') {
       return { type: 'image_url', image_url: { url: `data:${part.mime};base64,${part.dataBase64}` } }
@@ -291,6 +336,7 @@ function getPricing(model: string): { input: number; output: number } {
     'deepseek-chat': { input: 0.27, output: 1.10 },
     'deepseek-reasoner': { input: 0.55, output: 2.19 },
     'deepseek-v4-flash': { input: 0.27, output: 1.10 },
+    'deepseek-v4-flash-vision-exp': { input: 0.27, output: 1.10 },
     'deepseek-v4-pro': { input: 0.55, output: 2.19 },
   }
   const envPricing = process.env.LLM_PRICING ? JSON.parse(process.env.LLM_PRICING) : {}
@@ -320,8 +366,8 @@ function promptChars(messages: ChatMessage[]): number {
 }
 
 /** #511: map message contents to OpenAI parts before sending. */
-function serializeMessages(messages: ChatMessage[]): unknown[] {
-  return messages.map((m) => ({ role: m.role, content: serializeContent(m.content) }))
+function serializeMessages(messages: ChatMessage[], model: string): unknown[] {
+  return messages.map((m) => ({ role: m.role, content: serializeContent(m.content, model) }))
 }
 
 async function recordUsage(
@@ -417,7 +463,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
     const model = this.resolveModel(options, DEEPSEEK_CHAT_MODEL)
     const body: any = {
       model,
-      messages: serializeMessages(messages),
+      messages: serializeMessages(messages, model),
       max_tokens: options.maxTokens ?? resolveDefaultMaxTokens(model),
       temperature: options.temperature ?? 0.7,
     }
@@ -500,7 +546,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
       body: JSON.stringify({
         model,
-        messages: serializeMessages(messages),
+        messages: serializeMessages(messages, model),
         max_tokens: options.maxTokens ?? resolveDefaultMaxTokens(model),
         temperature: options.temperature ?? 0.7,
         stream: true,

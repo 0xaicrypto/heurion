@@ -61,6 +61,21 @@ describe('chat store — regenerate (§10.3 #220)', () => {
     expect(last.failed).toBe(true);
     expect(last.text).toContain('Error');
   });
+
+  test('network-level failures render a friendly retry message instead of raw TypeError', async () => {
+    useChatStore.setState({
+      sessions: { s1: { messages: [], abort: null, loading: false, compacting: false } },
+    });
+    const { api } = await import('@/lib/api');
+    (api.sendChatFull as any).mockImplementationOnce(async function* () {
+      throw new TypeError('network error');
+    });
+    await useChatStore.getState().sendMessage('s1', { sessionId: 's1', text: '润色一下', attachments: [], skills: [] });
+    const last = useChatStore.getState().sessions.s1.messages[1];
+    expect(last.failed).toBe(true);
+    expect(last.text).toBe('网络连接中断（服务器可能已重启或网络不稳定），请重试。');
+    expect(last.text).not.toContain('TypeError');
+  });
 });
 
 describe('chat store — 附件导出与消息更新（#582）', () => {

@@ -14,7 +14,7 @@ import prisma from '../../common/prisma'
 import { makeLogger } from '../../common/logger.js'
 import type { ChatScene } from '../../common/persona.js'
 import { deepseekStream, LlmTruncatedError, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
-import { providerSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
+import { providerSupportsVision, resolveActiveModel, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
 import { buildAttachmentParts, enforceTotalBudget, selectProjectionInputs, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from './chat-context.js'
@@ -75,9 +75,12 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
 
   // #2/#544: 附件 → 对话内容(图片多模态/超限降级/文本注入)由
   // buildAttachmentParts 纯函数处理;事件说明在此发送。
+  // #fix: 视觉能力按当前生效模型判定(deepseek-v4-flash 支持多模态;
+  // deepseek-chat/reasoner 纯文本)。buildAttachmentParts 据此决定
+  // 图片 part / PDF 内嵌图片是否注入。
   const { parts: userParts, attachmentText, notes: attachmentNotes } = await buildAttachmentParts(body.attachments, {
     userId,
-    vision: providerSupportsVision(),
+    vision: providerSupportsVision(undefined, resolveActiveModel()),
   })
   for (const note of attachmentNotes) {
     send({ type: 'context_info', text: note, kind: 'attachment' })

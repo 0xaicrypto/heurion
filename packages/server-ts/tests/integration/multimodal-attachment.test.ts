@@ -5,6 +5,7 @@ import os from 'os'
 import {
   serializeContent,
   providerSupportsVision,
+  modelSupportsVision,
   type ChatContentPart,
 } from '../../src/common/llm-gateway.js'
 import { isImageFile, extractImageUpload } from '../../src/lib/document-extractor.js'
@@ -39,6 +40,18 @@ describe('#511 content part serialization', () => {
     expect(out[0].type).toBe('image_url')
     expect(out[1].type).toBe('text')
   })
+
+  // #fix: deepseek-v4-flash 支持多模态 — 纯文本模型(deepseek-chat/reasoner)
+  // 序列化时必须把图片 part 降级为文本说明,否则 provider 直接 400。
+  test('图片 part 发给纯文本模型时降级为文本说明', () => {
+    const parts: ChatContentPart[] = [
+      { type: 'image', mime: 'image/png', dataBase64: 'aGVsbG8=' },
+      { type: 'text', text: '看图' },
+    ]
+    const out = serializeContent(parts, 'deepseek-chat') as Array<{ type: string; text?: string }>
+    expect(out.every((p) => p.type === 'text')).toBe(true)
+    expect(out[0].text).toContain('图片附件已省略')
+  })
 })
 
 describe('#511 vision provider detection', () => {
@@ -54,16 +67,31 @@ describe('#511 vision provider detection', () => {
     expect(providerSupportsVision('anthropic')).toBe(true)
   })
 
-  test('deepseek/opencode/kimi 不支持视觉', () => {
-    expect(providerSupportsVision('deepseek')).toBe(false)
-    expect(providerSupportsVision('opencode')).toBe(false)
+  // #fix: deepseek/opencode 默认模型是 deepseek-v4-flash — 支持多模态。
+  test('deepseek/opencode 默认(v4-flash)支持视觉,kimi 纯文本', () => {
+    expect(providerSupportsVision('deepseek')).toBe(true)
+    expect(providerSupportsVision('opencode')).toBe(true)
     expect(providerSupportsVision('kimi')).toBe(false)
+  })
+
+  test('按模型精确判定:v4 支持(含 vision-exp),v3 时代纯文本', () => {
+    expect(modelSupportsVision('deepseek-v4-flash')).toBe(true)
+    expect(modelSupportsVision('deepseek-v4-flash-vision-exp')).toBe(true)
+    expect(modelSupportsVision('deepseek-v4-pro')).toBe(true)
+    expect(modelSupportsVision('deepseek-chat')).toBe(false)
+    expect(modelSupportsVision('deepseek-reasoner')).toBe(false)
+    // model 维度优先于 provider 默认。
+    expect(providerSupportsVision('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(true)
+    expect(providerSupportsVision('deepseek', 'deepseek-chat')).toBe(false)
+    expect(providerSupportsVision('kimi', 'deepseek-v4-flash')).toBe(true)
   })
 
   test('未指定时按环境变量默认值', () => {
     process.env.DEFAULT_LLM_PROVIDER = 'gemini'
     expect(providerSupportsVision()).toBe(true)
     process.env.DEFAULT_LLM_PROVIDER = 'opencode'
+    expect(providerSupportsVision()).toBe(true)
+    process.env.DEFAULT_LLM_PROVIDER = 'kimi'
     expect(providerSupportsVision()).toBe(false)
   })
 })
