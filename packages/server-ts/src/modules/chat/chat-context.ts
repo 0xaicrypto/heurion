@@ -4,7 +4,7 @@
  * router copies were dead code). Keeps the turn pipeline and the router
  * honest: one implementation, one test surface.
  */
-import { estimateTokens } from '../../common/token-estimate.js'
+import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js' // #637 集中配置
 import { router } from '../../retrieval/query-router.js'
 import { getUserContext } from './user-context.js'
@@ -24,12 +24,17 @@ export function remainingContextTokens(systemTokens: number, historyTokens: numb
 }
 
 /**
- * #636/#fix: 附件文本注入上限(字符)— 惰性读取(#441 env-lazy 原则,
- * CONTEXT_CONFIG 在 import 时冻结)。默认 50K:长文件(整篇待润色文档)
- * 不再被 15K 硬截断;超限附件仍降级为文件名列表。
+ * #636/#fix: 附件文本提取字符上限(每文件)— 惰性读取(#441 env-lazy)。
+ * 提取阶段读足,真正的预算裁剪在 token 层面(attachmentTokenBudget),
+ * 中文(1.5 字符/token)与英文(4 字符/token)各自获得合理容量。
  */
-export function attachmentTextMaxChars(): number {
-  return parseInt(process.env.ATTACHMENT_TEXT_MAX_CHARS || String(CONTEXT_CONFIG.scene.attachmentTextChars), 10)
+export function attachmentExtractChars(): number {
+  return parseInt(process.env.ATTACHMENT_TEXT_MAX_CHARS || String(CONTEXT_CONFIG.scene.attachmentExtractChars), 10)
+}
+
+/** #fix: 附件文本 token 预算(脚本感知裁剪的上限)。 */
+export function attachmentTokenBudget(): number {
+  return parseInt(process.env.ATTACHMENT_TOKEN_BUDGET || String(CONTEXT_CONFIG.scene.attachmentTokenBudget), 10)
 }
 
 /** #636: 附件文本超限时的降级提示行。 */
@@ -249,7 +254,12 @@ export async function buildAttachmentParts(
   const parts: ChatContentPart[] = []
   let attachmentText = ''
   const notes: string[] = []
-  let consumedChars = 0
+  // #fix: 附件按 token 预算裁剪(脚本感知 — 中文 1.5 字符/token、英文 4
+  // 字符/token),而非固定字符数:长文档(整篇稿件)不再在字符层被硬截断,
+  // 多个附件也不会撑爆总预算。
+  const extractCap = attachmentExtractChars()
+  const tokenBudget = attachmentTokenBudget()
+  let consumedTokens = 0
   for (const att of rawAttachments || []) {
     const fid = typeof att === 'string' ? att : (att.file_id || att.fileId || '')
     const name = typeof att === 'string' ? fid.split('_').slice(1).join('_') : (att.name || '')
@@ -274,20 +284,19 @@ export async function buildAttachmentParts(
     }
     // #636: 附件文本纳入统一预算 — 累计超限后后续附件降级为文件名列表,
     // 避免多个大附件把 user message 撑爆。
-    if (consumedChars >= attachmentTextMaxChars()) {
+    if (consumedTokens >= tokenBudget) {
       attachmentText += `\n[ATTACHMENT: ${name}] ${ATTACHMENT_DEGRADED_MARK}\n`
       notes.push(`Attachment: ${name.slice(0, 30)} (degraded — text budget exceeded)`)
       continue
     }
-    const content = await extractTextFromUpload(opts.userId, fid, { maxChars: attachmentTextMaxChars() })
+    const content = await extractTextFromUpload(opts.userId, fid, { maxChars: extractCap })
     if (content) {
-      const remaining = attachmentTextMaxChars() - consumedChars
-      const slice = content.length > remaining ? content.slice(0, remaining) : content
-      // #659: 读取痕迹化 — 模型可见"文件从哪来、读了多大范围"
-      // (opencode 的 "Called the Read tool..." 模式)。
-      const truncated = content.length > slice.length
+      // token 预算内裁剪(脚本感知),保留读取痕迹(原文总长)。
+      const remainingTokens = tokenBudget - consumedTokens
+      const slice = fitTextToTokens(content, remainingTokens)
+      const truncated = slice.length < content.length
       attachmentText += `\n[read file: ${name}${truncated ? ` (${slice.length}/${content.length} chars, truncated)` : ''}]\n${slice}\n[/read]\n`
-      consumedChars += slice.length
+      consumedTokens += estimateTokens(slice)
       notes.push(`Attachment: ${name.slice(0, 30)}`)
     }
   }

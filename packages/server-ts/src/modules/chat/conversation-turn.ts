@@ -18,7 +18,7 @@ import { providerSupportsVision, type ChatContentPart } from '../../common/llm-g
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
 import { buildAttachmentParts, enforceTotalBudget, selectProjectionInputs, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from './chat-context.js'
-import { estimateTokens } from '../../common/token-estimate.js'
+import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
 import { ContextAssembler } from './context-assembler.js'
 import { ToolRegistry, type ToolContext } from '../../tools/tool-registry.js'
@@ -254,7 +254,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         const refBlock = (refs || [])
           .map((r: any) => `### ${r.label || r.id}\n${String(r.snapshot || r.body || '').slice(0, CONTEXT_CONFIG.scene.docRefChars)}`)
           .join('\n\n')
-        return `\n\n## Current Document\n标题：${doc.title}\n\n${String(doc.body || '').slice(0, CONTEXT_CONFIG.scene.docBodyChars)}\n\n## Reference Materials\n${refBlock || '(none)'}\n\n规则：用户在编辑这份文档。回答用中文；当用户要求修改文档时，调用 edit_document 工具写回完整的新文档内容（markdown）。`
+        return `\n\n## Current Document\n标题：${doc.title}\n\n${fitTextToTokens(String(doc.body || ''), CONTEXT_CONFIG.scene.docBodyTokens)}\n\n## Reference Materials\n${refBlock || '(none)'}\n\n规则：用户在编辑这份文档。回答用中文；当用户要求修改文档时，调用 edit_document 工具写回完整的新文档内容（markdown）。`
       },
     },
     {
