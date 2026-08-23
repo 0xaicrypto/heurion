@@ -11,6 +11,9 @@ export const chatSendSchema = z.object({
   patient_hash: z.string().min(1).max(128).nullable().optional(),
   /** #510: entry scene — overrides server-side inference (patient_hash / doc- session). */
   scene: z.enum(['general', 'patient', 'document', 'chart']).optional(),
+  /** #620/#628: 知识库选择器选定的文章/文件 stableId — zod 默认剥离未知字段,
+   *  不加 schema 会在入口被静默丢弃(前端发了但后端永远收不到)。 */
+  picked_kb_ids: z.array(z.string().min(1).max(512)).max(3).optional(),
   attachments: z
     .array(
       z.union([
