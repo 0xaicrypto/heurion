@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeAll } from 'vitest'
+import mammoth from 'mammoth'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
 import { deepseekStream } from '../../src/common/llm.js'
@@ -194,6 +195,66 @@ describe('Documents', () => {
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('application/vnd.openxmlformats-officedocument.wordprocessingml.document')
     expect(Buffer.from(res.payload).length).toBeGreaterThan(0)
+  })
+
+  test('export pdf returns a real PDF (magic header)', async () => {
+    const app = await getApp()
+    const create = await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'PDF Test' },
+    })
+    const docId = JSON.parse(create.payload).id
+    // body 经 update 写入(create 只建标题)。
+    await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ title: 'PDF Test', body: '# 标题\n\n| 列1 | 列2 |\n| --- | --- |\n| a | b |\n\n**bold** text' }),
+    })
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/export?format=pdf`,
+      headers: await authHeader(),
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toContain('application/pdf')
+    const buf = res.rawPayload as Buffer
+    // PDF magic: %PDF-1.x
+    expect(buf.subarray(0, 5).toString()).toBe('%PDF-')
+    expect(buf.length).toBeGreaterThan(100)
+  })
+
+  test('export docx renders markdown table as a real table, not raw pipes', async () => {
+    const app = await getApp()
+    const create = await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Table Test' },
+    })
+    const docId = JSON.parse(create.payload).id
+    await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({
+        title: 'Table Test',
+        body: '| 药物 | 剂量 |\n| --- | --- |\n| 阿昔替尼 | 5mg |',
+      }),
+    })
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/export?format=docx`,
+      headers: await authHeader(),
+    })
+    expect(res.statusCode).toBe(200)
+    const buf = res.rawPayload as Buffer
+    // docx zip magic: PK
+    expect(buf.subarray(0, 2).toString()).toBe('PK')
+    // unzip via mammoth — table cells must be real table text, raw markdown
+    // pipes must NOT leak into the document body (#fix: 之前原样导出)。
+    const { value } = await mammoth.extractRawText({ buffer: buf })
+    expect(value).toContain('阿昔替尼')
+    expect(value).not.toContain('| --- |')
+    expect(value).not.toContain('药物 | 剂量')
   })
 
   test('add and list references', async () => {

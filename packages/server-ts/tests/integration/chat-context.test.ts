@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'vitest'
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { buildPersona, buildFileContext } from '../../src/modules/chat/user-context'
 import { FactsStore, KnowledgeStore } from '../../src/evolution/stores'
 import os from 'os'
@@ -122,6 +122,8 @@ describe('#544 buildAttachmentParts', () => {
   })
 
   test('#636 附件文本超限 → 后续附件降级为文件名列表', async () => {
+    // 预算由 env 控制(默认 50K);测试用 15K 复现降级行为。
+    vi.stubEnv('ATTACHMENT_TEXT_MAX_CHARS', '15000')
     // 第一个附件占满预算,第二个附件应降级为文件名
     putUpload('u1', '111_big1.txt', Buffer.from('A'.repeat(15_000)))
     putUpload('u1', '222_big2.txt', Buffer.from('B'.repeat(10_000)))
@@ -130,5 +132,14 @@ describe('#544 buildAttachmentParts', () => {
     expect(attachmentText).not.toContain('BBBBBB')
     expect(attachmentText).toContain('filename only')
     expect(notes.some((n) => n.includes('degraded'))).toBe(true)
+    vi.unstubAllEnvs()
+  })
+
+  test('#fix 长文件读取:默认预算(50K)下单个大附件全文注入', async () => {
+    // 30K 字符的文件应完整读取,不再被 15K 硬截断。
+    putUpload('u1', '111_long.txt', Buffer.from('C'.repeat(30_000)))
+    const { attachmentText } = await buildAttachmentParts(['111_long.txt'], { userId: 'u1', vision: true })
+    expect(attachmentText).toContain('C'.repeat(30_000))
+    expect(attachmentText).not.toContain('truncated')
   })
 })

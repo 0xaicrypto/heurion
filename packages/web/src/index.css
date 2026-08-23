@@ -65,3 +65,30 @@
     }
   }
 }
+
+/* ── #diff-review: AI 编辑审阅的 track-changes 标记 ── */
+.ProseMirror ins[data-change-id] {
+  background: rgba(34, 197, 94, 0.18);
+  text-decoration: none;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.ProseMirror ins[data-change-id]:hover {
+  background: rgba(34, 197, 94, 0.3);
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.4);
+}
+.ProseMirror del[data-change-id] {
+  background: rgba(239, 68, 68, 0.15);
+  color: rgba(185, 28, 28, 0.85);
+  text-decoration: line-through;
+  text-decoration-color: rgba(220, 38, 38, 0.7);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.ProseMirror del[data-change-id]:hover {
+  background: rgba(239, 68, 68, 0.28);
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.4);
+}
+.ProseMirror [data-tracked] {
+  opacity: 0.7;
+}

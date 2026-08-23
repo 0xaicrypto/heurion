@@ -23,8 +23,14 @@ export function remainingContextTokens(systemTokens: number, historyTokens: numb
   return Math.max(0, maxTotal - systemTokens - historyTokens)
 }
 
-/** #636: 附件文本注入上限(字符)— 统一预算常量,超限附件降级为文件名列表。 */
-export const ATTACHMENT_TEXT_MAX_CHARS = CONTEXT_CONFIG.scene.attachmentTextChars
+/**
+ * #636/#fix: 附件文本注入上限(字符)— 惰性读取(#441 env-lazy 原则,
+ * CONTEXT_CONFIG 在 import 时冻结)。默认 50K:长文件(整篇待润色文档)
+ * 不再被 15K 硬截断;超限附件仍降级为文件名列表。
+ */
+export function attachmentTextMaxChars(): number {
+  return parseInt(process.env.ATTACHMENT_TEXT_MAX_CHARS || String(CONTEXT_CONFIG.scene.attachmentTextChars), 10)
+}
 
 /** #636: 附件文本超限时的降级提示行。 */
 export const ATTACHMENT_DEGRADED_MARK = '(text truncated — filename only)'
@@ -268,14 +274,14 @@ export async function buildAttachmentParts(
     }
     // #636: 附件文本纳入统一预算 — 累计超限后后续附件降级为文件名列表,
     // 避免多个大附件把 user message 撑爆。
-    if (consumedChars >= ATTACHMENT_TEXT_MAX_CHARS) {
+    if (consumedChars >= attachmentTextMaxChars()) {
       attachmentText += `\n[ATTACHMENT: ${name}] ${ATTACHMENT_DEGRADED_MARK}\n`
       notes.push(`Attachment: ${name.slice(0, 30)} (degraded — text budget exceeded)`)
       continue
     }
-    const content = await extractTextFromUpload(opts.userId, fid, { maxChars: ATTACHMENT_TEXT_MAX_CHARS })
+    const content = await extractTextFromUpload(opts.userId, fid, { maxChars: attachmentTextMaxChars() })
     if (content) {
-      const remaining = ATTACHMENT_TEXT_MAX_CHARS - consumedChars
+      const remaining = attachmentTextMaxChars() - consumedChars
       const slice = content.length > remaining ? content.slice(0, remaining) : content
       // #659: 读取痕迹化 — 模型可见"文件从哪来、读了多大范围"
       // (opencode 的 "Called the Read tool..." 模式)。

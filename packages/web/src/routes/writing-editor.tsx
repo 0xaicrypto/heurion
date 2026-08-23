@@ -6,7 +6,7 @@ import { ArrowLeft, Download, Eye, FilePlus, FileText, History, MessageSquare, P
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
-import { DocEditor } from '@/components/DocEditor';
+import { DocEditor, type DiffReviewState } from '@/components/DocEditor';
 import { ChatMessages } from '@/components/chat/ChatMessages';
 import { StreamingLlmContent } from '@/components/LlmContent';
 import { ChartLibrary } from '@/components/chat/ChartLibrary';
@@ -108,23 +108,37 @@ export function WritingEditorPage() {
   const chatMessages = chatSession?.messages ?? [];
   const chatLoading = chatSession?.loading ?? false;
   const [aiEditNotice, setAiEditNotice] = useState('');
+  /** #diff-review: 待审阅的 AI 编辑(旧→新);null=无审阅。 */
+  const [diffReview, setDiffReview] = useState<DiffReviewState | null>(null);
+  const bodyRef = useRef(body);
+  bodyRef.current = body;
 
-  // §15.4 / #553: apply AI write-backs — only when lastDocBody actually
-  // changes. `body` must NOT be a dependency: it would re-apply the AI
-  // version over the user's manual edits on every keystroke.
+  // §15.4 / #553: AI write-back 不再静默替换正文 — 进入审阅模式,用户
+  // 逐条/全部接受或拒绝后由 onDiffResolve 落地。
   const appliedDocBody = useRef<string | null>(null);
   useEffect(() => {
     if (!docId || !chatSession?.lastDocBody) return;
     if (appliedDocBody.current === chatSession.lastDocBody) return;
+    if (chatSession.lastDocBody === bodyRef.current) return;
     appliedDocBody.current = chatSession.lastDocBody;
-    setBody(chatSession.lastDocBody);
-    setDoc((prev) => (prev ? { ...prev, body: chatSession.lastDocBody as string, updated_at: new Date().toISOString() } : prev));
-    setAiEditNotice('文档已更新（AI 编辑）');
-    const timer = setTimeout(() => setAiEditNotice(''), 4000);
-    // #598: AI 写回自动保存到服务端 — 生成版本快照,用户可随时回退。
-    api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: chatSession.lastDocBody }).catch(() => {});
-    return () => clearTimeout(timer);
-  }, [chatSession?.lastDocBody, docId, doc?.title]);
+    setDiffReview({ key: `rev_${Date.now()}`, old: bodyRef.current, next: chatSession.lastDocBody });
+  }, [chatSession?.lastDocBody, docId]);
+
+  /** 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。 */
+  const handleDiffResolve = useCallback((result: { md: string; accepted: number; rejected: number; cancelled: boolean }) => {
+    setDiffReview(null);
+    if (result.cancelled || result.md === '') {
+      setAiEditNotice('已放弃本次 AI 修改');
+      setTimeout(() => setAiEditNotice(''), 3000);
+      return;
+    }
+    setBody(result.md);
+    setDoc((prev) => (prev ? { ...prev, body: result.md, updated_at: new Date().toISOString() } : prev));
+    setAiEditNotice(`已采纳 AI 修改：接受 ${result.accepted} / 拒绝 ${result.rejected}`);
+    setTimeout(() => setAiEditNotice(''), 4000);
+    // #598: 落地后自动保存到服务端 — 生成版本快照,用户可随时回退。
+    if (docId) api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: result.md }).catch(() => {});
+  }, [docId, doc?.title]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [chatUploadingFile, setChatUploadingFile] = useState(false);
   const [kbDedupNotice, setKbDedupNotice] = useState<string | null>(null);
@@ -345,6 +359,19 @@ export function WritingEditorPage() {
     }
   };
 
+  const handleExportPdf = async () => {
+    if (!docId) return;
+    setExporting(true);
+    setError(null);
+    try {
+      await api.exportDoc(docId, 'pdf', doc?.title);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handlePolishSubmit = async () => {
     const editor = polishEditorRef.current;
     if (!docId || !editor) return;
@@ -378,11 +405,16 @@ export function WritingEditorPage() {
     setChatInput('');
     // §15.4: the writing chat runs through the unified pipeline (session
     // doc-{docId}); the doc context is injected via the docs/current source.
+    // #fix: 上传的 doc/pdf 必须随消息传给服务端 — 此前只传 text,附件
+    // 从未到达 buildAttachmentParts,AI 读不到文件内容。
+    const attachments = chatAttachedFiles.map((a) => a.fileId);
+    if (attachments.length > 0) setChatAttachedFiles([]);
     sendMessage(`doc-${docId}`, {
       text,
       sessionId: `doc-${docId}`,
       patientHash: null,
       skills: activeSkills,
+      attachments,
       // #516: writing chat is always the document scene (server also infers
       // from the doc- session id).
       scene: 'document',
@@ -623,6 +655,14 @@ export function WritingEditorPage() {
           >
             <Download size={14} className="mr-1" /> Export DOCX
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => handleExportPdf()}
+            disabled={exporting}
+          >
+            <FileText size={14} className="mr-1" /> Export PDF
+          </Button>
           {studyId && (
             <>
               <Button variant="ghost" size="sm" onClick={handleGenerateMethods} isLoading={methodsLoading} disabled={!studyId}>
@@ -746,7 +786,7 @@ export function WritingEditorPage() {
                   </div>
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
-                    <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} />
+                    <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} diffReview={diffReview} onDiffResolve={handleDiffResolve} />
                   </div>
                 )}
               </div>
