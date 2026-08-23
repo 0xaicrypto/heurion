@@ -10,7 +10,7 @@ import { router } from '../../retrieval/query-router.js'
 import { getUserContext } from './user-context.js'
 import type { ChatContentPart } from '../../common/llm-gateway.js'
 import type { CommandResult } from '../knowledge/knowledge-command-handler.js'
-import { extractTextFromUpload, extractImageUpload, isImageFile } from '../../lib/document-extractor.js'
+import { extractTextFromUpload, extractImageUpload, isImageFile, isPdf, extractPdfImagesFromUpload } from '../../lib/document-extractor.js'
 import type { ChatScene } from '../../common/persona.js'
 
 // #630: 统一预算口径 — 剩余预算 = maxTotalTokens − system − history。
@@ -298,6 +298,17 @@ export async function buildAttachmentParts(
       attachmentText += `\n[read file: ${name}${truncated ? ` (${slice.length}/${content.length} chars, truncated)` : ''}]\n${slice}\n[/read]\n`
       consumedTokens += estimateTokens(slice)
       notes.push(`Attachment: ${name.slice(0, 30)}`)
+    }
+    // #fix: PDF 内嵌图片 → 多模态 part(仅视觉模型)。文本照常注入,
+    // 图片让模型看到真实图表/照片,而不是 "图 3 显示…" 占位文字。
+    if (opts.vision && isPdf(name)) {
+      const pdfImages = await extractPdfImagesFromUpload(opts.userId, fid)
+      if (pdfImages && pdfImages.length > 0) {
+        for (const im of pdfImages) {
+          parts.push({ type: 'image', mime: im.mime, dataBase64: im.dataBase64 })
+        }
+        notes.push(`Attachment: ${name.slice(0, 30)} (PDF 内嵌图片 ×${pdfImages.length})`)
+      }
     }
   }
   return { parts, attachmentText, notes }

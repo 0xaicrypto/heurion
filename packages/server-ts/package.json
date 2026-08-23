@@ -18,6 +18,7 @@
     "@fastify/cors": "^9.0.0",
     "@fastify/multipart": "^8.0.0",
     "@fastify/static": "^7.0.0",
+    "@heurion/contracts": "file:../contracts",
     "@prisma/client": "^5.0.0",
     "@types/pdfkit": "^0.17.6",
     "bcryptjs": "^2.4.3",
@@ -33,14 +34,15 @@
     "pdfkit": "^0.19.1",
     "sharp": "^0.35.3",
     "tesseract.js": "^7.0.0",
-    "zod": "^3.22.0",
-    "@heurion/contracts": "file:../contracts"
+    "turndown": "^7.2.4",
+    "zod": "^3.22.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.40.0",
     "@types/bcryptjs": "^2.4.0",
     "@types/jsonwebtoken": "^9.0.0",
     "@types/node": "^20.0.0",
+    "@types/turndown": "^5.0.6",
     "playwright": "^1.40.0",
     "prisma": "^5.0.0",
     "tsx": "^4.0.0",
