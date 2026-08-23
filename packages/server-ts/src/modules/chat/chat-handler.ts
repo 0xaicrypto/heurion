@@ -14,8 +14,6 @@ import type { FastifyRequest, FastifyReply } from 'fastify'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { createSseSender } from './chat-sse.js'
 import type { ChatEvent } from './chat-events.js'
-import { makeLogger } from '../../common/logger.js'
-import prisma from '../../common/prisma'
 import { getUserContext } from './user-context.js'
 import type { ChatScene } from '../../common/persona.js'
 import { getApiKey } from '../../common/llm.js'
@@ -29,6 +27,7 @@ import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { formatCommandResult, resolveScene } from './chat-context.js'
 import { resolveTargetCandidates, pickTarget, isGenerateRequest, recordTurnIntent, type TurnAction, type TurnIntent, type TurnSource, type TurnTarget } from './turn-intent.js'
 import { runConversationTurn, findPatient } from './conversation-turn.js'
+import { ensureSessionCompaction } from '../../memory/compaction/index.js'
 import { streamUnshownCompaction, loadCompactedUpto } from './compaction.js'
 import type { TurnIO } from './tool-loop.js'
 
@@ -39,10 +38,28 @@ function turnAction2edit(detail: SidecarDecisionDetail | undefined, text: string
 
 const gapService = new PrismaKnowledgeGapService()
 const telemetry = new PrismaTelemetryService()
-const log = makeLogger('chat.router')
 
 export interface ChatRouterOptions {
   evolutionQueue?: EvolutionQueue
+}
+
+
+// #657: provider context-overflow fallback — when the model rejects the
+// request as exceeding its context window, force a compaction of the session
+// segment and retry the turn ONCE (the anchored summary + fresh budget make
+// the retry fit). Never loops: the retry is a single extra attempt.
+const OVERFLOW_HINTS = [
+  'context_length_exceeded',
+  'maximum context length',
+  'context window',
+  'too many tokens',
+  'request too large',
+  'invalid_request_error',
+]
+
+export function isContextOverflowError(err: unknown): boolean {
+  const msg = String((err as Error)?.message || err || '').toLowerCase()
+  return OVERFLOW_HINTS.some((h) => msg.includes(h))
 }
 
 export async function handleAgentChat(request: FastifyRequest, reply: FastifyReply, opts: { evolutionQueue?: EvolutionQueue } = {}): Promise<void> {
@@ -313,7 +330,7 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
 
       // #544: 正常对话路径(上下文组装/工具循环/流式/持久化)已抽到
       // conversation-turn.ts — 本文件只保留调度。
-      await runConversationTurn({
+      const turnParams = {
         userId,
         ctx,
         sid,
@@ -328,7 +345,30 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         routeResult,
         evolutionQueue: opts.evolutionQueue,
         turnIntent,
-      })
+      }
+      try {
+        await runConversationTurn(turnParams)
+      } catch (err) {
+        // #657: context overflow → compact the segment, then retry once.
+        if (!isContextOverflowError(err)) throw err
+        send({ type: 'compaction_started' })
+        await ensureSessionCompaction(
+          {
+            userId,
+            eventLog: ctx.eventLog,
+            facts: ctx.facts,
+            episodes: ctx.episodes,
+            skills: ctx.skills,
+            knowledge: ctx.knowledge,
+            memory: ctx.memory,
+          },
+          sid,
+          ctx.eventLog.count(),
+          patientHash || undefined,
+        )
+        send({ type: 'compaction_completed' })
+        await runConversationTurn(turnParams)
+      }
     } catch (err: any) {
       send({ type: 'error', message: err.message || 'Chat failed' })
     } finally {

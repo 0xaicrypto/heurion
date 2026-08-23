@@ -127,7 +127,6 @@ export async function medicalRecordEntriesRouter(app: FastifyInstance) {
 
     const updates = parsed.data
     const now = new Date().toISOString()
-    const isStatusChange = updates.status && updates.status !== existing.status
 
     let confirmedAt = existing.confirmedAt
     let confirmedBy = existing.confirmedBy

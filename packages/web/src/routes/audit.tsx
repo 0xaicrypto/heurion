@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ScrollText } from 'lucide-react';
-import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Badge, Card, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/utils';
@@ -115,18 +114,3 @@ export function AuditSection() {
   );
 }
 
-/** Standalone page — kept for the legacy /app/audit route (redirects to settings tab). */
-export function AuditPage() {
-  const { t } = useTranslation();
-  return (
-    <AppShell>
-      <div className="flex h-full flex-col overflow-y-auto">
-        <header className="flex h-14 items-center gap-2 border-b border-border bg-surface px-6">
-          <ScrollText size={18} className="text-text-tertiary" />
-          <h1 className="font-semibold text-text-primary">{t('audit.title', 'Audit Log')}</h1>
-        </header>
-        <AuditSection />
-      </div>
-    </AppShell>
-  );
-}

@@ -2,10 +2,9 @@ import { createHash, randomUUID } from 'crypto'
 import { ok, err, type Result } from '../common/result'
 import type { EventLog } from '../core/event-log'
 import type { FactsStore, KnowledgeStore } from '../evolution/stores'
-import type { Fact, KnowledgeArticle } from '../evolution/stores'
 import { MemoryGraph } from './memory.graph'
 import { LegacyProjection, type LegacySnapshot } from './legacy-projection.js'
-import { isNodeSuperseded, isNodeStale, isArticleStale, isFactCurrent } from './memory.types.js'
+import { isNodeSuperseded, isNodeStale } from './memory.types.js'
 import { PropagationCoordinator } from './propagation-coordinator.js'
 import { CurationEngine, type PropagationResult } from './curation/curation.engine'
 import type {
@@ -20,11 +19,9 @@ import type {
   DocumentNode,
   GapNode,
   MemoryNode,
-  MemoryRelation,
   MemoryCreatedBy,
-  CurationPolicy,
 } from './memory.types'
-import { DEFAULT_CURATION_POLICY, sanitizeFactFields } from './memory.types'
+import { sanitizeFactFields } from './memory.types'
 
 export interface MemoryServiceOptions {
   eventLog: EventLog
@@ -32,7 +29,6 @@ export interface MemoryServiceOptions {
   legacyFacts: FactsStore
   legacyKnowledge: KnowledgeStore
   ownerId: string
-  policy?: CurationPolicy
   /** #439: invoked after a node is superseded/deleted so the caller can sync
    *  derived indexes (e.g. embedding vectors) with the graph commit. */
   onNodeRemoved?: (stableId: string, type: string) => void
@@ -55,7 +51,6 @@ export class MemoryService {
   private legacyFacts: FactsStore
   private legacyKnowledge: KnowledgeStore
   private ownerId: string
-  private policy: CurationPolicy
   public graph: MemoryGraph
   public curation: CurationEngine
   /** #304: internal collaborators — write order is testable in isolation. */
@@ -67,9 +62,8 @@ export class MemoryService {
     this.legacyFacts = opts.legacyFacts
     this.legacyKnowledge = opts.legacyKnowledge
     this.ownerId = opts.ownerId
-    this.policy = opts.policy || DEFAULT_CURATION_POLICY
     this.graph = new MemoryGraph(opts.baseDir)
-    this.curation = new CurationEngine(this.graph, this.policy)
+    this.curation = new CurationEngine(this.graph)
     this.legacyProjection = new LegacyProjection(this.legacyFacts, this.legacyKnowledge, this.graph)
     this.propagation = new PropagationCoordinator(this.legacyProjection, this.graph)
     this.onNodeRemoved = opts.onNodeRemoved
@@ -634,13 +628,6 @@ export class MemoryService {
   }
 
   // ── Helpers ──────────────────────────────────────────────────
-
-  /** Roll back all stores to their last committed disk state (#192). */
-  private reloadAll() {
-    this.graph.reload()
-    this.legacyFacts.reload()
-    this.legacyKnowledge.reload()
-  }
 
   /** #304: delegate to LegacyProjection. */
   private snapshotLegacy(): LegacySnapshot {

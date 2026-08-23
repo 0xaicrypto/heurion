@@ -72,6 +72,59 @@ export function LlmContent({ content, className }: { content: string; className?
  * U1 — block-projection alternative: full parse happens exactly once, at the
  * end; during streaming the text is lightly formatted (bold/inline-code).
  */
+/**
+ * #661 — block projection during streaming (opencode markdown-stream
+ * pattern): split the partial text at block boundaries (blank lines, with
+ * code fences respected). Blocks that have CLOSED are frozen — rendered once
+ * through MarkdownRenderer and cached, never reparsed. Only the trailing
+ * incomplete block renders live (light formatting).
+ */
+const CLOSED_BLOCK_CACHE = new Map<string, React.ReactNode>();
+
+function splitBlocks(text: string): { blocks: string[]; liveTail: string } {
+  const blocks: string[] = [];
+  let current = '';
+  let inFence = false;
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^```/.test(line.trim())) inFence = !inFence;
+    current += (current ? '\n' : '') + line;
+    // A block closes at a blank line — unless we're inside a code fence.
+    if (!inFence && line.trim() === '') {
+      blocks.push(current);
+      current = '';
+    }
+  }
+  return { blocks, liveTail: current };
+}
+
+function BlockRenderer({ block, className }: { block: string; className?: string }) {
+  const cached = CLOSED_BLOCK_CACHE.get(block);
+  if (cached) return <>{cached}</>;
+  const node = (
+    <div className={className}>
+      <MarkdownRenderer content={block} />
+    </div>
+  );
+  // Cache per exact block content — completed blocks never reparse.
+  if (CLOSED_BLOCK_CACHE.size > 200) CLOSED_BLOCK_CACHE.clear();
+  CLOSED_BLOCK_CACHE.set(block, node);
+  return node;
+}
+
+/** Streaming partial text — inline formatting only (bold + inline code). */
+function LiveTail({ text }: { text: string }) {
+  const boldParts = text.split(/\*\*([^*]+)\*\*/g);
+  return (
+    <>
+      {boldParts.map((part, i) =>
+        i % 2 === 1 ? <strong key={i} className="font-semibold text-text-primary">{part}</strong> : <span key={i}>{part}</span>,
+      )}
+    </>
+  );
+}
+
 export function StreamingLlmContent({ content, isStreaming, className }: { content: string; isStreaming?: boolean; className?: string }) {
   const [display, setDisplay] = useState(content);
   const rafRef = useRef<number | null>(null);
@@ -102,15 +155,19 @@ export function StreamingLlmContent({ content, isStreaming, className }: { conte
   const text = normalizeLlmText(display || '');
   if (!text) return <span className="animate-pulse text-text-tertiary">●</span>;
 
-  // Light inline formatting only (bold + inline code) for the streaming phase.
-  const boldParts = text.split(/\*\*([^*]+)\*\*/g);
-  const html = boldParts.map((part, i) =>
-    i % 2 === 1 ? <strong key={i} className="font-semibold text-text-primary">{part}</strong> : <span key={i}>{part}</span>,
-  );
+  // #661: closed blocks render once (cached), only the tail is live.
+  const { blocks, liveTail } = splitBlocks(text);
 
   return (
-    <div className={cn('whitespace-pre-wrap break-words text-sm leading-relaxed text-text-secondary', className)}>
-      {html}
+    <div className={cn('break-words text-sm leading-relaxed text-text-secondary', className)}>
+      {blocks.map((block, i) => (
+        <BlockRenderer key={i} block={block} className={i === 0 ? '' : 'mt-2'} />
+      ))}
+      {liveTail && (
+        <div className="whitespace-pre-wrap">
+          <LiveTail text={liveTail} />
+        </div>
+      )}
     </div>
   );
 }

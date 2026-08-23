@@ -1,4 +1,3 @@
-import type { PluginManifest } from './plugin-catalog.service.js'
 
 export interface ValidationResult {
   valid: boolean

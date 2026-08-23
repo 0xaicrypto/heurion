@@ -73,33 +73,6 @@ describe('GraphRAG hybrid retrieval (#25)', () => {
     expect(nb2[0].node.stableId).toBe(f2.stableId)
     expect(nb2[0].edge.relation).toBe('related_to')
   })
-
-  test('retrieveGraphEnhanced returns vector hits with connections + provenance', async () => {
-    const f1 = memory.addFact({ content: '左肺上叶结节 8mm', category: 'fact', importance: 4, sourceType: 'patient', patientHash: 'p1' }, 'test')
-    const f2 = memory.addFact({ content: 'CEA 升高至 12', category: 'fact', importance: 4, sourceType: 'patient', patientHash: 'p1' }, 'test')
-    memory.graph.addRelation({ id: 'rel1', sourceId: f1.id, targetId: f2.id, relation: 'related_to', createdAt: Date.now() })
-    memory.graph.commit()
-
-    // Seed the embedding index (the gateway's retrieve reads it).
-    const norm = 1
-    gateway.embeddingIndex().upsert({
-      nodeId: f1.id, stableId: f1.stableId, type: 'fact', patientHash: 'p1',
-      contentHash: f1.content.slice(0, 16), vector: [1, 0, 0, 0, 0.1, 0, 0, 0], model: 'test', norm, updatedAt: Date.now(),
-    })
-    gateway.embeddingIndex().upsert({
-      nodeId: f2.id, stableId: f2.stableId, type: 'fact', patientHash: 'p1',
-      contentHash: f2.content.slice(0, 16), vector: [0, 1, 0, 0, 0.1, 0, 0, 0], model: 'test', norm, updatedAt: Date.now(),
-    })
-
-    const hits = await gateway.retrieveGraphEnhanced('结节', { patientHash: 'p1' }, { topK: 5, minScore: 0.1 })
-    const f1Hit = hits.find((h) => h.stableId === f1.stableId)
-    expect(f1Hit).toBeDefined()
-    expect(f1Hit!.score).toBeGreaterThan(0)
-    expect(Array.isArray(f1Hit!.connections)).toBe(true)
-    // The connected fact appears either as connection or as an expanded hit.
-    const sawF2 = f1Hit!.connections.some((c) => c.stableId === f2.stableId) || hits.some((h) => h.stableId === f2.stableId)
-    expect(sawF2).toBe(true)
-  })
 })
 
 describe('VersionedStore compaction (#199)', () => {

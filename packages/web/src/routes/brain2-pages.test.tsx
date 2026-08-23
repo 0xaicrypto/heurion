@@ -4,7 +4,7 @@ import { Route, Routes } from 'react-router-dom';
 import { render } from '@/test/render';
 import { MedicalRecordsPage } from '@/routes/medical-records';
 import { LabsPage } from '@/routes/labs';
-import { AuditPage } from '@/routes/audit';
+import { AuditSection } from '@/routes/audit';
 import { api } from '@/lib/api';
 import i18n from '@/i18n';
 
@@ -169,16 +169,16 @@ describe('LabsPage (ingestion status)', () => {
   });
 });
 
-describe('AuditPage', () => {
+describe('AuditSection', () => {
   it('lists audit records with filters', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ logs: [
       { id: 'log_1', actor: 'user_a', action: 'approval.confirmed', targetType: 'MedicalRecordEntry', targetId: 'mre_1', createdAt: '2026-07-30T00:00:00.000Z', entry: { id: 'mre_1', patientHash: 'p1', title: '血常规', type: 'lab' } },
       { id: 'log_2', actor: 'user_b', action: 'approval.rejected', targetType: 'MedicalRecordEntry', targetId: 'mre_2', reason: '重复报告', createdAt: '2026-07-30T01:00:00.000Z' },
     ] }));
 
-    render(<AuditPage />);
+    render(<AuditSection />);
 
-    await waitFor(() => expect(screen.getByText('审计日志')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('approval.confirmed')).toBeInTheDocument());
     const auditList = within(screen.getByTestId('audit-list'));
     expect(auditList.getByText('approval.confirmed')).toBeInTheDocument();
     expect(auditList.getByText('approval.rejected')).toBeInTheDocument();
@@ -192,7 +192,7 @@ describe('AuditPage', () => {
   it('shows empty state', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ logs: [] }));
 
-    render(<AuditPage />);
+    render(<AuditSection />);
 
     await waitFor(() => expect(screen.getByText('暂无审计记录')).toBeInTheDocument());
   });

@@ -1,6 +1,5 @@
 import { BaseTool, ToolResult } from './base-tool.js'
 import type { ToolContext } from './tool-registry.js'
-import { execSync } from 'child_process'
 import { platform } from 'os'
 
 export class OCRImageTool extends BaseTool {
@@ -23,7 +22,6 @@ export class OCRImageTool extends BaseTool {
 
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const fileId = String(args.file_id || '')
-    const language = args.language ? String(args.language) : ''
     if (!fileId) return { success: false, error: 'file_id required' }
 
     const fs = await import('fs')
@@ -42,7 +40,6 @@ export class OCRImageTool extends BaseTool {
 
     if (platform() === 'darwin') {
       try {
-        const text = execSync(`osascript -e 'tell application "System Events" to display dialog "OCR not available"' 2>/dev/null`, { timeout: 5000 }).toString()
       } catch { }
     }
 

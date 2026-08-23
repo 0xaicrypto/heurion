@@ -96,8 +96,7 @@ export class EmbeddingIndex {
   ): SearchHit[] {
     const topK = opts.topK ?? 5
     const minScore = opts.minScore ?? 0.35
-    const queryNorm = normalizeVector(queryVec)
-
+    
     const hits: SearchHit[] = []
     for (const r of this.records) {
       if (opts.patientHash && r.patientHash && r.patientHash !== opts.patientHash && !opts.includeCrossPatient) continue

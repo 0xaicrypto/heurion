@@ -4,7 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import prisma from '../../common/prisma'
 import { signToken } from '../../common/jwt'
-import { authGuard, adminGuard } from '../../common/auth.guard'
+import { authGuard } from '../../common/auth.guard'
 import { loginSchema, registerSchema } from './auth.dto'
 import { evictUserContext } from '../chat/user-context.js'
 

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Send, FileText, Mail, BookOpen, Copy, Check, Download } from 'lucide-react';
-import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api';
 import { Alert, Button, Card, Input, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
@@ -138,14 +137,6 @@ export function SubmissionWorkbench({ embedded = false }: { embedded?: boolean }
   );
 }
 
-/** Standalone page — legacy /app/submission route. */
-export function SubmissionPage() {
-  return (
-    <AppShell>
-      <SubmissionWorkbench />
-    </AppShell>
-  );
-}
 
 function TabBtn({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
   return (

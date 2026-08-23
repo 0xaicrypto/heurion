@@ -30,7 +30,7 @@ async function registerUser(app: any, prefix: string): Promise<{ token: string; 
 
 function gwFor(userId: string): MemoryGraphGateway {
   const ctx = getUserContext(userId)
-  return new MemoryGraphGateway(userId, ctx.memory, ctx.facts, ctx.episodes, ctx.skills, ctx.knowledge)
+  return new MemoryGraphGateway(userId, ctx.memory, ctx.episodes)
 }
 
 describe('memory per-user isolation', () => {

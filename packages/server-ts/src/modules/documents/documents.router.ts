@@ -493,21 +493,3 @@ Write 3-6 paragraphs (English): study design, participants, interventions, outco
   })
 
 }
-
-function parseDocChatResponse(response: string, currentBody: string): { reply: string; updatedBody: string } {
-  const replyMatch = response.match(/REPLY:\s*([\s\S]*?)(?=UPDATED_DOCUMENT:|$)/)
-  const docMatch = response.match(/UPDATED_DOCUMENT:\s*([\s\S]*?)$/)
-
-  const reply = replyMatch ? replyMatch[1].trim() : response.trim()
-  const updatedBody = docMatch ? docMatch[1].trim() : currentBody
-
-  return { reply, updatedBody }
-}
-
-function chunkText(text: string, size: number): string[] {
-  const chunks: string[] = []
-  for (let i = 0; i < text.length; i += size) {
-    chunks.push(text.slice(i, i + size))
-  }
-  return chunks
-}

@@ -57,7 +57,6 @@
     "register": "Sign up",
     "theme": "Theme",
     "language": "Language",
-    "comingSoon": "Coming soon",
     "optional": "Optional",
     "error": "Failed to load",
     "errorBoundary": "Something went wrong",
@@ -309,12 +308,10 @@
     "saved": "Saved"
   },
   "admin": {
-    "title": "Admin",
-    "comingSoon": "User management coming soon."
+    "title": "Admin"
   },
   "research": {
     "title": "Research",
-    "comingSoon": "Research workspace coming soon.",
     "writePaper": "Write paper",
     "studyType": "Study type",
     "clinical": "Clinical",
@@ -322,7 +319,6 @@
   },
   "writing": {
     "title": "Paper Workbench",
-    "comingSoon": "Writing studio coming soon.",
     "tabWrite": "Write",
     "confirmDelete": "Delete this document? This cannot be undone.",
     "studySelect": "Link a study (optional)",
@@ -336,16 +332,12 @@
   },
   "skills": {
     "title": "Skills",
-    "comingSoon": "Skills manager coming soon.",
     "captureHint": "Save this workflow as a skill?",
     "captureTitle": "Save as skill",
     "captureSubtitle": "AI turned your workflow into a reusable procedure.",
     "refineHint": "Adjust in one sentence, e.g. \"don't forget the recurrence risk\"",
     "refine": "Adjust",
     "captureSaved": "Skill saved — reusable in future conversations"
-  },
-  "placeholder": {
-    "comingSoon": "Coming Soon"
   },
   "labs": {
     "ingestionStatus": "AI Analysis Status",

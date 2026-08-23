@@ -1,5 +1,4 @@
 import fs from 'fs'
-import path from 'path'
 import { safeUploadPath } from '../../lib/upload-path.js'
 import { resolveDatabaseUrl } from '../../common/prisma.js'
 import zlib from 'zlib'

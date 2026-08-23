@@ -67,9 +67,6 @@ const DEFAULT_CONFIG: ProjectionConfig = {
 
 // ── 注意力评分 ──────────────────────────────────────────
 
-interface ScoredFact { fact: Fact; score: number }
-interface ScoredEpisode { episode: Episode; score: number }
-
 import { daysAgo, recencyWeight, importanceMultiplier } from '../common/attention.js' // §5.4 (#197)
 import { estimateTokens } from '../common/token-estimate.js' // §5.4 (#197)
 import { formatFactLine } from '../common/fact-render.js' // #627 统一渲染
@@ -100,8 +97,7 @@ export class MemoryProjection {
     segments: Array<{ key: string; text: string }>
     budget: { layer: string; tokens: number; items: number }[]
   }> {
-    const budget: { layer: string; tokens: number; items: number }[] = []
-    const { maxTokens, layer2EpisodeDays, patientContextTokens, reserveTokens } = this.config
+    const { maxTokens, patientContextTokens, reserveTokens } = this.config
 
     // ── Layer 0: System Persona (固定) ──
     const personaTokens = estimateTokens(params.persona)

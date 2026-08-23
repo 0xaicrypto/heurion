@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { EditorContent, useEditor } from '@tiptap/react';
+import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Table } from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
@@ -17,13 +17,15 @@ interface DocEditorProps {
   value: string;        // markdown body
   onChange: (md: string) => void;
   className?: string;
+  /** Receives the TipTap editor instance once created (selection access etc.). */
+  editorRef?: { current: Editor | null };
 }
 
 /**
  * Lark-style WYSIWYG canvas (TipTap). The document body stays markdown —
  * the editor converts on load (md → HTML) and on save (HTML → md).
  */
-export function DocEditor({ value, onChange, className }: DocEditorProps) {
+export function DocEditor({ value, onChange, className, editorRef }: DocEditorProps) {
   const applyMdRef = useRef<string | null>(null);
 
   const editor = useEditor({
@@ -42,6 +44,13 @@ export function DocEditor({ value, onChange, className }: DocEditorProps) {
       onChange(htmlToMarkdown(editor.getHTML()));
     },
   });
+
+  useEffect(() => {
+    if (editorRef && editor) editorRef.current = editor;
+    return () => {
+      if (editorRef) editorRef.current = null;
+    };
+  }, [editor, editorRef]);
 
   // External markdown update (AI edit / doc load) → convert and apply.
   useEffect(() => {

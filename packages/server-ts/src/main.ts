@@ -2,8 +2,10 @@ import { Worker } from 'bullmq'
 import { createApp } from './app'
 import { config } from './config'
 import { execSync } from 'child_process'
+import { existsSync } from 'fs'
+import { fileURLToPath } from 'url'
 import prisma, { enableSqliteWal, resolveDatabaseUrl } from './common/prisma.js'
-import { createDefaultEvolutionQueue, BullMqEvolutionQueue, type EvolutionQueue } from './modules/evolution/evolution.queue.js'
+import { createDefaultEvolutionQueue, BullMqEvolutionQueue } from './modules/evolution/evolution.queue.js'
 import { startEvolutionWorker } from './modules/evolution/evolution.worker.js'
 import { createGapResearchScheduler, type GapResearchScheduler } from './modules/knowledge/gap-research.service.js'
 import { createExperienceSynthesisScheduler } from './modules/skills/experience-synthesis.service.js'
@@ -35,26 +37,45 @@ async function dedupeDisplayNames(): Promise<void> {
   }
 }
 
+// #641: production must never run `db push --accept-data-loss` — a schema
+// drift would silently drop data. Dev keeps the destructive flag for fast
+// iteration; production uses committed migrations when present, otherwise a
+// non-destructive push that fails loudly instead of deleting columns.
+function syncSchema(): void {
+  if (process.env.NODE_ENV === 'test') return
+  const dbUrl = resolveDatabaseUrl(config.databaseUrl)
+  const baseEnv = { ...process.env, DATABASE_URL: dbUrl }
+  const isProd = process.env.NODE_ENV === 'production'
+  const migrationsDir = new URL('../prisma/migrations/', import.meta.url)
+  const hasMigrations = existsSync(fileURLToPath(migrationsDir))
+  const allowDataLoss = !isProd && process.env.ALLOW_DB_PUSH_ACCEPT_DATA_LOSS !== 'false'
+
+  try {
+    if (hasMigrations) {
+      // Committed migrations only — non-destructive, replayable.
+      execSync('npx prisma migrate deploy', { stdio: 'inherit', env: baseEnv })
+    } else {
+      const flag = allowDataLoss ? '--accept-data-loss' : ''
+      execSync(`npx prisma db push --skip-generate ${flag}`.trim(), { stdio: 'inherit', env: baseEnv })
+    }
+    // Generate Prisma client (needed after push)
+    execSync('npx prisma generate', { stdio: 'inherit', env: baseEnv })
+    console.log('[DB] Schema synced')
+  } catch (err) {
+    const msg = (err as Error)?.message || err
+    // In production a non-destructive push that fails (schema drift would
+    // lose data) must abort startup — never start on a stale schema.
+    if (isProd && !hasMigrations) throw new Error(`[DB] Schema sync failed: ${msg}`)
+    console.warn('[DB] Schema sync failed (non-fatal):', msg)
+  }
+}
+
 async function main() {
   // #284: 先清理重复 display_name,否则 db push 建唯一索引失败(每次启动报错)。
   await dedupeDisplayNames()
-  // Run Prisma schema migration at startup
-  // #569-fix: db push 是独立引擎进程,若用原始 URL 会开默认多连接池写 SQLite —
-  // 与主连接池并发写立即 SQLITE_BUSY。传 resolveDatabaseUrl(单连接)。
-  try {
-    execSync('npx prisma db push --accept-data-loss --skip-generate', {
-      stdio: 'inherit',
-      env: { ...process.env, DATABASE_URL: resolveDatabaseUrl(config.databaseUrl) },
-    })
-    // Generate Prisma client (needed after push)
-    execSync('npx prisma generate', {
-      stdio: 'inherit',
-      env: { ...process.env, DATABASE_URL: resolveDatabaseUrl(config.databaseUrl) },
-    })
-    console.log('[DB] Schema synced')
-  } catch (err) {
-    console.warn('[DB] Schema sync failed (non-fatal):', (err as Error)?.message || err)
-  }
+  // Run Prisma schema migration at startup (see syncSchema — production is
+  // non-destructive; #569-fix: single-connection URL avoids SQLITE_BUSY).
+  syncSchema()
 
   const evolutionQueue = await createDefaultEvolutionQueue()
   // SQLite WAL (idempotent) — concurrent reads never block writes.

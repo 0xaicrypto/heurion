@@ -42,7 +42,7 @@ export interface LlmChatResult {
  * DeepSeek-style reasoners share this budget between reasoning and the
  * visible answer, which is why the numbers are generous.
  */
-export const MODEL_MAX_OUTPUT_TOKENS: Readonly<Record<string, number>> = {
+const MODEL_MAX_OUTPUT_TOKENS: Readonly<Record<string, number>> = {
   // Gemini (OpenAI-compatible endpoint)
   'gemini-2.5-flash': 8192,
   'gemini-2.5-pro': 65536,
@@ -95,7 +95,7 @@ export function resolveDefaultMaxTokens(model?: string): number {
 // #548: doubling the budget for a thinking-only truncation retry must never
 // exceed the model's native output ceiling (e.g. deepseek-v4-* caps at 384K
 // by default — doubling that would produce an invalid request).
-export function truncationRetryBudget(model: string, maxTokens: number | undefined): number {
+function truncationRetryBudget(model: string, maxTokens: number | undefined): number {
   const doubled = (maxTokens ?? resolveDefaultMaxTokens(model)) * 2
   const ceiling = MODEL_MAX_OUTPUT_TOKENS[model]
   return ceiling !== undefined && doubled > ceiling ? ceiling : doubled
@@ -124,7 +124,7 @@ export interface ChatMessage {
 /** #511: providers that accept image_url parts over the OpenAI-compatible
  *  endpoint. deepseek/opencode/kimi are text-only → image parts must be
  *  downgraded before sending. */
-export const VISION_PROVIDERS: ReadonlySet<string> = new Set(['gemini', 'openai', 'anthropic'])
+const VISION_PROVIDERS: ReadonlySet<string> = new Set(['gemini', 'openai', 'anthropic'])
 
 export function providerSupportsVision(provider?: string): boolean {
   return VISION_PROVIDERS.has((provider || process.env.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase())

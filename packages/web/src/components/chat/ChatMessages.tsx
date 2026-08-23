@@ -5,7 +5,7 @@ import type { ChatMessage } from '@/stores/chat';
 import { StreamingLlmContent } from '@/components/LlmContent';
 import { ToolCalls } from '@/components/ToolCalls';
 import { StatusDot } from '@/components/ui/StatusDot';
-import { Alert, Button } from '@/components/ui';
+import { Button } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
 /** §10.3 (#220): group separator when a gap exceeds this many minutes. */
@@ -367,11 +367,3 @@ export function ChatMessages({
   );
 }
 
-export function ChatErrorBanner({ error }: { error: string | null }) {
-  if (!error) return null;
-  return (
-    <div className="mx-auto w-full max-w-3xl px-4 pb-2">
-      <Alert variant="error">{error}</Alert>
-    </div>
-  );
-}

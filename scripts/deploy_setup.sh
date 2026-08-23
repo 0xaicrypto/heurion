@@ -154,7 +154,7 @@ echo "════════════════════════�
 echo "  Deploy complete"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
-echo "Server URL (use this in the desktop's settings.json):"
+echo "Server URL:"
 echo ""
 echo "    https://$NIP_HOSTNAME"
 echo ""

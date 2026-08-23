@@ -22,7 +22,6 @@ export class SearchPastChatsTool extends BaseTool {
 
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const query = String(args.query || '')
-    const patientHash = args.patient_hash ? String(args.patient_hash) : undefined
     const topK = Number(args.top_k || 5)
     if (!query) return { success: false, error: 'query required' }
 

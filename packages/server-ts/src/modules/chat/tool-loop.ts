@@ -43,11 +43,33 @@ export async function runToolCallLoop(params: {
   let toolSeq = existingToolEvents.length
   const doomHistory: Array<{ tool: string; argsKey: string }> = []
 
-  const appendToolEvent = (eventType: string, content: string, metadata: Record<string, unknown>) => {
+  // #658: write-time truncation — tool outputs are capped on write so the
+  // event log (and every LLM context that reads it: history / extraction /
+  // compaction) stays bounded without a separate prune pass. Oversized
+  // outputs spill to the per-user truncation dir; the event keeps a preview
+  // plus the disk path so a future "view full output" flow can recover it.
+  const TRUNCATE_CHARS = 500
+  const appendToolEvent = async (eventType: string, content: string, metadata: Record<string, unknown>) => {
+    let body = content
+    if (eventType === 'tool_result' && body.length > TRUNCATE_CHARS) {
+      try {
+        const { mkdir, writeFile } = await import('fs/promises')
+        const { join } = await import('path')
+        const baseDir = process.env.TWIN_BASE_DIR || '.nexus/twins'
+        const dir = join(baseDir, userId, 'truncation')
+        await mkdir(dir, { recursive: true })
+        const name = `tool_${sessionId.replace(/[^\w-]/g, '_')}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.txt`
+        await writeFile(join(dir, name), content, 'utf-8')
+        body = `[Tool output truncated to ${TRUNCATE_CHARS} chars — full output spilled to ${name}]\n${content.slice(0, TRUNCATE_CHARS)}`
+        metadata = { ...metadata, truncatedTo: TRUNCATE_CHARS, spillFile: name }
+      } catch {
+        body = content.slice(0, TRUNCATE_CHARS)
+      }
+    }
     ctx.eventLog.append({
       timestamp: Date.now() / 1000,
       eventType,
-      content,
+      content: body,
       metadata,
       agentId: userId,
       sessionId,
@@ -110,7 +132,7 @@ export async function runToolCallLoop(params: {
         } catch (err) {
           // §3.3: malformed JSON must not crash the turn — tell the model
           // to re-emit a valid call instead of dying silently.
-          appendToolEvent('tool_call', 'malformed_arguments', {
+          await appendToolEvent('tool_call', 'malformed_arguments', {
             tool: '?', args: 'parse-failed', status: 'error', seq: ++toolSeq,
           })
           messages.push({ role: 'assistant', content: block })
@@ -129,21 +151,21 @@ export async function runToolCallLoop(params: {
         const argsPreview = String(JSON.stringify(toolArgs) || '').slice(0, 300)
 
         // R3: persist the state machine — pending → running → completed/error.
-        appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+        await appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
           tool: toolName, args: argsPreview, status: 'pending', seq,
         })
 
         // Doom-loop guard: same tool + identical args 3x consecutively.
         if (detectDoomLoop(doomHistory, toolName, toolArgs)) {
           log.warn('doom-loop detected', { tool: toolName, seq })
-          appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+          await appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
             tool: toolName, args: argsPreview, status: 'warning', seq,
           })
         }
 
         io.send({ type: 'tool_call', tool: toolName, args: toolArgs })
 
-        appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+        await appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
           tool: toolName, args: argsPreview, status: 'running', seq,
         })
 
@@ -202,10 +224,10 @@ export async function runToolCallLoop(params: {
 
         if (result.success) {
           const output = result.output || ''
-          appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+          await appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
             tool: toolName, args: argsPreview, status: 'completed', seq,
           })
-          appendToolEvent('tool_result', output.slice(0, 500), {
+          await appendToolEvent('tool_result', output, {
             toolCallId: seq, success: true, outputTruncated: output.length > 500,
           })
           // §15.4: surface document write-backs to the writing canvas.
@@ -231,10 +253,10 @@ export async function runToolCallLoop(params: {
             }
           }
         } else {
-          appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+          await appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
             tool: toolName, args: argsPreview, status: 'error', seq,
           })
-          appendToolEvent('tool_result', (result.error || '').slice(0, 500), {
+          await appendToolEvent('tool_result', result.error || '', {
             toolCallId: seq, success: false, error: (result.error || '').slice(0, 200),
           })
           toolError = result.error ?? 'Unknown tool error'

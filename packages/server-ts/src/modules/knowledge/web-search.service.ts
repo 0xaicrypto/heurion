@@ -20,7 +20,7 @@ export interface WebSearchProvider {
   search(query: string): Promise<WebSearchResult>
 }
 
-export class PlaceholderSearchProvider implements WebSearchProvider {
+class PlaceholderSearchProvider implements WebSearchProvider {
   readonly name = 'placeholder'
 
   async search(query: string): Promise<WebSearchResult> {
@@ -48,7 +48,7 @@ interface PubMedSummaryResult {
   }>
 }
 
-export class PubMedSearchProvider implements WebSearchProvider {
+class PubMedSearchProvider implements WebSearchProvider {
   readonly name = 'pubmed'
   private baseUrl = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils'
 
@@ -92,7 +92,7 @@ export class PubMedSearchProvider implements WebSearchProvider {
   }
 }
 
-export class CompositeWebSearchProvider implements WebSearchProvider {
+class CompositeWebSearchProvider implements WebSearchProvider {
   readonly name = 'composite'
 
   constructor(private providers: WebSearchProvider[]) {}

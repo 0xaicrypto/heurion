@@ -4,14 +4,14 @@
  * stat-tools and compares against the Python-generated golden values.
  * Statistical quantities must agree within 1e-8.
  *
- * Run: node scripts/cross-check-stats.mjs <golden.json>
+ * Run: node --import tsx scripts/cross-check-stats.ts <golden.json>
  */
 import { readFileSync } from 'node:fs'
 import { StatTTestTool, StatChiSqTool, StatKmTool } from '../src/tools/stat-tools.js'
 
 const goldenPath = process.argv[2]
 if (!goldenPath) {
-  console.error('Usage: node scripts/cross-check-stats.mjs <golden.json>')
+  console.error('Usage: node --import tsx scripts/cross-check-stats.ts <golden.json>')
   process.exit(2)
 }
 const golden = JSON.parse(readFileSync(goldenPath, 'utf8'))

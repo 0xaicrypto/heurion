@@ -1,7 +1,6 @@
-import type { MemoryService } from '../../memory/memory.service.js'
 import type { EventLog } from '../../core/event-log.js'
 import type { MemoryGraphGateway } from '../../memory/memory-gateway.js'
-import { extractClinicalEntities, type ClinicalEntity, type ExtractionResult } from './clinical-extractor.service.js'
+import { extractClinicalEntities, type ClinicalEntity } from './clinical-extractor.service.js'
 
 export interface IngestOptions {
   userId: string
@@ -13,7 +12,6 @@ export interface IngestOptions {
 
 export class ChatIngester {
   constructor(
-    private memory: MemoryService,
     private eventLog: EventLog,
     private gateway: MemoryGraphGateway,
   ) {}
@@ -24,7 +22,7 @@ export class ChatIngester {
     drops: Record<string, number>
     entities: ClinicalEntity[]
   }> {
-    const { userId, patientHash, encounterId, sourceText, sourceEventIdx } = opts
+    const { userId, patientHash, encounterId, sourceText } = opts
     if (!sourceText) return { emitted: 0, rawCount: 0, drops: {}, entities: [] }
 
     const result = await extractClinicalEntities(sourceText)
@@ -53,11 +51,6 @@ export class ChatIngester {
         : entity.node_type === 'measurement' ? 'fact'
         : entity.node_type === 'finding' ? 'context'
         : 'fact'
-      const sourceType = entity.node_type === 'finding' ? 'patient'
-        : entity.node_type === 'med' ? 'research'
-        : entity.node_type === 'ddx' ? 'doctor'
-        : 'general'
-
       // §4.5 (#186): every write goes through the review queue — no direct
       // addFact path. The gateway also semantically dedups (0.95, same scope).
       const proposal = await this.gateway.propose({

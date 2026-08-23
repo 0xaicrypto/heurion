@@ -1,6 +1,6 @@
 # ADR-003: Web UI SaaS pivot — replacing the Tauri desktop client with a browser-first UI
 
-**Status:** Proposed  
+**Status: **Superseded** — 已由 web-first 架构落地（2026-07 移除 desktop-v2）。
 **Date:** 2026-07-15  
 **Deciders:** JZ (architect), product owner  
 

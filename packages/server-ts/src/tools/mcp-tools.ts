@@ -7,7 +7,7 @@
 import { BaseTool, ToolResult } from './base-tool.js'
 import { McpClient, parseMcpServers } from './mcp-client.js'
 
-export function configuredMcpServers(): string[] {
+function configuredMcpServers(): string[] {
   return Object.keys(parseMcpServers(process.env.MCP_SERVERS))
 }
 

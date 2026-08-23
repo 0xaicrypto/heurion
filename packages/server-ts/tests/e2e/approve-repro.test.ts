@@ -19,7 +19,7 @@ describe('approve pending fact via API', () => {
     // S1: no real-time extraction — create the pending proposal directly
     // through the gateway (the approval flow itself is what's under test).
     const ctx = getUserContext(userId)
-    const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.facts, ctx.episodes, ctx.skills, ctx.knowledge)
+    const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.episodes)
     await gateway.propose({
       scopeType: 'global',
       kind: 'fact',

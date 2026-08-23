@@ -5,7 +5,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify'
 import prisma from '../../common/prisma'
 import { config } from '../../config'
 
-export const EXTERNAL_TOKEN_AUDIENCE = 'heurion-external'
+const EXTERNAL_TOKEN_AUDIENCE = 'heurion-external'
 
 export interface ExternalAccessTokenPayload {
   appId: string
@@ -103,7 +103,7 @@ export function issueAccessToken(appId: string, clientId: string, scopes: string
   })
 }
 
-export function verifyAccessToken(token: string): ExternalAccessTokenPayload {
+function verifyAccessToken(token: string): ExternalAccessTokenPayload {
   return jwt.verify(token, config.secret, {
     algorithms: [config.jwtAlgorithm],
     audience: EXTERNAL_TOKEN_AUDIENCE,

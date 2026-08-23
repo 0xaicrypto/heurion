@@ -47,15 +47,16 @@ describe('chat store — regenerate (§10.3 #220)', () => {
   });
 
   test('failed messages are flagged for retry', async () => {
-    const store = useChatStore.getState();
-    store.getOrCreate('s1');
+    useChatStore.setState({
+      sessions: { s1: { messages: [], abort: null, loading: false, compacting: false } },
+    });
     // Force an error path: make the stream throw.
     const { api } = await import('@/lib/api');
     (api.sendChatFull as any).mockImplementationOnce(async function* () {
       yield 'boom';
       throw new Error('llm down');
     });
-    await store.sendMessage('s1', { sessionId: 's1', text: 'hi', attachments: [], skills: [] });
+    await useChatStore.getState().sendMessage('s1', { sessionId: 's1', text: 'hi', attachments: [], skills: [] });
     const last = useChatStore.getState().sessions.s1.messages[1];
     expect(last.failed).toBe(true);
     expect(last.text).toContain('Error');

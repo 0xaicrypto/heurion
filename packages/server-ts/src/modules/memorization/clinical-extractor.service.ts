@@ -17,19 +17,6 @@ export interface ExtractionResult {
   rawCount: number
 }
 
-const SYSTEM_PROMPT = `You extract structured clinical entities from a chat encounter between a physician and a clinical assistant.
-
-OUTPUT FORMAT — STRICT JSON ONLY. Your entire response is a single JSON object: {"entities": [ ... ]}. Never add prose before/after. Never use markdown fences.
-
-Each entity:
-  node_type: "finding" | "med" | "ddx" | "measurement" | "semantic_fact"
-  content: { label: "<short canonical name>", canonical_en: "<optional English form>" }
-  evidence_quote: VERBATIM substring of the source text
-  confidence: 0.0-1.0
-
-Language: match source text language for labels. Acronyms/units/scales keep canonical form.
-Quality: Only extract what the chat clearly establishes. Skip speculative mentions. Prefer one canonical label per concept.`
-
 function parseJsonSafe(raw: string): any {
   let s = (raw || '').trim()
   if (!s) return {}

@@ -1,69 +1,6 @@
 /**
- * P8 — Knowledge Cascade & P9 — Knowledge Gap Queue
- *
- * P8: When Facts change, mark dependent Knowledge articles as stale.
- * P9: Knowledge Gap detection — when query finds nothing, track gap.
- */
-
-export interface KnowledgeGap {
-  id: string
-  userId: string
-  query: string
-  context: string
-  detectedAt: string
-  status: 'pending' | 'resolved' | 'dismissed'
-}
-
-/** In-memory gap store (replace with Prisma/DB in production) */
-const gapStore = new Map<string, KnowledgeGap[]>()
-
-export function detectGap(query: string, userId: string, resultsFound: number, context = ''): KnowledgeGap | null {
-  if (resultsFound > 0) return null
-  const gap: KnowledgeGap = {
-    id: `gap_${Date.now()}`,
-    userId,
-    query: query.slice(0, 200),
-    context: context.slice(0, 200),
-    detectedAt: new Date().toISOString(),
-    status: 'pending',
-  }
-  const existing = gapStore.get(userId) || []
-  existing.push(gap)
-  gapStore.set(userId, existing)
-  return gap
-}
-
-export function getPendingGaps(userId: string): KnowledgeGap[] {
-  return (gapStore.get(userId) || []).filter(g => g.status === 'pending')
-}
-
-export function resolveGap(userId: string, gapId: string): boolean {
-  const gaps = gapStore.get(userId) || []
-  const gap = gaps.find(g => g.id === gapId)
-  if (gap) { gap.status = 'resolved'; return true }
-  return false
-}
-
-/**
- * When new facts arrive, auto-resolve any pending gaps that match by keyword.
- */
-export function autoResolveGaps(userId: string, newFacts: Array<{ content: string }>): string[] {
-  const gaps = gapStore.get(userId) || []
-  const resolved: string[] = []
-  for (const gap of gaps) {
-    if (gap.status !== 'pending') continue
-    const words = gap.query.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3)
-    const matched = newFacts.some(f => words.some(w => f.content.toLowerCase().includes(w)))
-    if (matched) {
-      gap.status = 'resolved'
-      resolved.push(gap.id)
-    }
-  }
-  return resolved
-}
-
-/**
- * P10 — Tool Store (for auto-created tools)
+ * P10 — Tool Store (for auto-created tools). P8/P9 (knowledge cascade /
+ * gap queue) moved to the Prisma-backed knowledge-gap.service.
  */
 
 export interface ToolRecord {
@@ -81,28 +18,8 @@ export interface ToolRecord {
 
 const toolStore = new Map<string, ToolRecord[]>()
 
-export function registerTool(tool: Omit<ToolRecord, 'id' | 'createdAt' | 'enabled'>): ToolRecord {
-  const record: ToolRecord = {
-    ...tool,
-    id: `tool_${Date.now()}`,
-    enabled: false,
-    createdAt: new Date().toISOString(),
-  }
-  const existing = toolStore.get(tool.userId) || []
-  existing.push(record)
-  toolStore.set(tool.userId, existing)
-  return record
-}
-
 export function getUserTools(userId: string): ToolRecord[] {
   return toolStore.get(userId) || []
-}
-
-export function enableTool(userId: string, toolId: string): boolean {
-  const tools = toolStore.get(userId) || []
-  const tool = tools.find(t => t.id === toolId)
-  if (tool) { tool.enabled = true; return true }
-  return false
 }
 
 export function deleteUserTool(userId: string, toolId: string): boolean {

@@ -123,7 +123,6 @@ export function parseKnowledgeCommand(query: string): { command: KnowledgeComman
   const q = query.trim()
   if (!q) return { command: 'unknown', payload: '' }
 
-  const lower = q.toLowerCase()
 
   // kb_search patterns
   const searchPatterns = [

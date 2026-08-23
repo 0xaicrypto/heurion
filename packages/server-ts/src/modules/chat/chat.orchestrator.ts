@@ -1,7 +1,6 @@
-import { EventLog, Event } from '../../core/event-log'
+import { EventLog } from '../../core/event-log'
 import { makeLogger } from '../../common/logger.js'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../evolution/stores'
-import { ContractEngine } from '../../core/contracts'
 import { MemoryProjection } from '../../retrieval/memory-projection'
 
 /** CJK-aware keyword extraction: latin tokens as-is, Chinese via 2-grams
@@ -24,7 +23,6 @@ function extractCjkKeywords(text: string): string[] {
   }
   return [...words]
 }
-import { handleKnowledgeCommand, CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
 import { type TelemetryService, NoopTelemetryService } from '../knowledge/telemetry.service.js'
 import type { MemoryService } from '../../memory/memory.service.js'
@@ -33,41 +31,9 @@ import type { MemoryService } from '../../memory/memory.service.js'
 const log = makeLogger('chat.orchestrator')
 
 export class ChatOrchestrator {
-  private projection: MemoryProjection
+  /** #646: read by conversation-turn / chat.router — no private-access hack. */
+  readonly projection = new MemoryProjection()
   private gapService = new PrismaKnowledgeGapService()
-
-  /**
-   * Route an AI-extracted fact into the pending review queue instead of
-   * writing the memory graph directly (BRAIN2_MEMORY_LIFECYCLE §5.2).
-   */
-  async proposeFact(
-    userId: string,
-    patientHash: string | undefined,
-    input: { category: string; importance: number; content: string; sourceType: string; patientHash?: string },
-  ): Promise<void> {
-    try {
-      const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
-      const gateway = new MemoryGraphGateway(
-        userId,
-        this.memory!,
-        this.factsStore,
-        this.episodesStore,
-        this.skillsStore,
-        this.knowledgeStore,
-      )
-      await gateway.propose({
-        scopeType: patientHash ? 'patient' : 'global',
-        patientHash: input.patientHash || patientHash,
-        kind: 'fact',
-        content: input.content,
-        importance: input.importance,
-        confidence: 'medium',
-        reason: `AI extraction (${input.category}, source: ${input.sourceType})`,
-      })
-    } catch (err) {
-      console.log('[EVOLVE] Proposal write skipped:', (err as Error).message.slice(0, 120))
-    }
-  }
 
   constructor(
     private eventLog: EventLog,
@@ -75,12 +41,10 @@ export class ChatOrchestrator {
     private episodesStore: EpisodesStore,
     private skillsStore: SkillsStore,
     private knowledgeStore: KnowledgeStore,
-    private contracts: ContractEngine,
     private telemetry: TelemetryService = new NoopTelemetryService(),
     /** §5.2 (#190): constructor-injected — no more (this as any).memory. */
     private memory?: MemoryService,
   ) {
-    this.projection = new MemoryProjection()
   }
 
   // #2: Extract facts automatically using DeepSeek (K1/K2: incremental

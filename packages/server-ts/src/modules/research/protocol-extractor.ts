@@ -257,7 +257,7 @@ export async function getConfirmationStatus(studyId: string): Promise<{ total: n
   }
 }
 
-export function parseTimingForRule(timing: string, studyStart: Date): number | null {
+function parseTimingForRule(timing: string, studyStart: Date): number | null {
   const dayMatch = timing.match(/Day\s+(-?\d+)/)
   if (dayMatch) return parseInt(dayMatch[1])
   const weekMatch = timing.match(/every\s+(\d+)\s*week/i)

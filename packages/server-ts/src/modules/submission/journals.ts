@@ -15,7 +15,7 @@ export interface JournalInfo {
   description: string
 }
 
-export const JOURNAL_DATABASE: JournalInfo[] = [
+const JOURNAL_DATABASE: JournalInfo[] = [
   { id: 'lancet-oncol', name: 'Lancet Oncology', impactFactor: 51.1, acceptanceRate: 8, reviewWeeks: 6, casZone: '1区', keywords: ['lung', 'cancer', 'oncology', 'trial', 'immunotherapy'], description: '顶级肿瘤学期刊，适合重大临床突破' },
   { id: 'jco', name: 'Journal of Clinical Oncology', impactFactor: 45.3, acceptanceRate: 12, reviewWeeks: 8, casZone: '1区', keywords: ['cancer', 'clinical', 'trial', 'chemotherapy', 'survival'], description: '临床肿瘤学旗舰刊' },
   { id: 'jama-oncol', name: 'JAMA Oncology', impactFactor: 28.4, acceptanceRate: 15, reviewWeeks: 7, casZone: '1区', keywords: ['cancer', 'clinical', 'oncology', 'trial'], description: 'JAMA 子刊，临床研究影响力高' },

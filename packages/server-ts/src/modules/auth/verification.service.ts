@@ -49,8 +49,13 @@ async function deliverEmail(email: string, code: string, purpose: string): Promi
       throw new Error(`Resend failed: ${res.status} ${text.slice(0, 120)}`)
     }
   } else {
-    // Dev mode: no provider configured — log the code instead of failing.
-    console.log(`[AUTH] verification code for ${email} (${purpose}): ${code}`)
+    // Dev mode only: no provider configured — surface the code for local
+    // testing. Never log it in production (credential leak surface).
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[AUTH] verification code for ${email} (${purpose}): ${code}`)
+    } else {
+      throw new Error('EMAIL_PROVIDER_NOT_CONFIGURED')
+    }
   }
 }
 
