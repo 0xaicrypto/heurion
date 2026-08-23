@@ -104,6 +104,7 @@ export function WritingEditorPage() {
   // whole editor (was a full-store subscription).
   const chatSession = useChatStore((s) => (chatSessionId ? s.sessions[chatSessionId] : undefined));
   const sendMessage = useChatStore((s) => s.sendMessage);
+  const appendMessage = useChatStore((s) => s.appendMessage);
   const setMessages = useChatStore((s) => s.setMessages);
   const chatMessages = chatSession?.messages ?? [];
   const chatLoading = chatSession?.loading ?? false;
@@ -437,6 +438,11 @@ export function WritingEditorPage() {
           setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
           setTimeout(() => setKbDedupNotice(null), 4000);
         }
+          // #fix: 粘贴上传同样写入聊天记录。
+          if (chatSessionId) {
+            appendMessage(chatSessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
+            api.logAttachments(chatSessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
+          }
           if (docId) api.addDocReference(docId, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
         } catch { /* ignore */ }
         finally { setChatUploadingFile(false); }
@@ -451,6 +457,11 @@ export function WritingEditorPage() {
     try {
       const result = await api.uploadFile(f);
       setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
+      // #fix: 上传即入聊天记录(与服务端 user_message 事件一致),刷新后仍可见。
+      if (chatSessionId) {
+        appendMessage(chatSessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
+        api.logAttachments(chatSessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
+      }
       if (docId) api.addDocReference(docId, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
     } catch { /* ignore */ }
     finally { setChatUploadingFile(false); }
