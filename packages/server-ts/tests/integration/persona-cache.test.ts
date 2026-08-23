@@ -110,26 +110,22 @@ describe('§13.3 persona scope isolation + ranking', () => {
     expect(persona).not.toContain('青霉素过敏')
   })
 
-  test('#4 排序：高重要性新近 fact 优先于陈旧低价值', () => {
+  test('#4 #627 persona 不再包含 fact 条目(事实由 projection layer3 承担)', () => {
     const facts = new FactsStore(baseDir)
     const knowledge = new KnowledgeStore(baseDir)
-    // 陈旧高价值（10 天前）
-    const oldHigh = facts.add({ content: '旧的但重要的事实', category: 'fact', importance: 5, sourceType: 'doctor' })
-    // 新近中价值（1 小时前）
-    const freshMid = facts.add({ content: '新近中等重要的事实', category: 'fact', importance: 3, sourceType: 'doctor' })
+    const now = Date.now()
+    facts.add({ content: '旧的但重要的事实', category: 'fact', importance: 5, sourceType: 'doctor' })
+    facts.add({ content: '新近中等重要的事实', category: 'fact', importance: 3, sourceType: 'doctor' })
     facts.commit()
     // 调整时间戳
-    const now = Date.now()
     const rows = facts.all()
-    const oldRow = rows.find(f => f.id === oldHigh.id)
-    const freshRow = rows.find(f => f.id === freshMid.id)
-    if (oldRow) oldRow.lastSeenAt = now - 10 * 86400_000
-    if (freshRow) freshRow.lastSeenAt = now - 3600_000
+    rows.forEach(f => { f.lastSeenAt = now })
     facts.commit()
 
     const persona = buildPersona(facts, knowledge)
-    const topFactsSection = persona.slice(persona.indexOf('Key clinical facts'))
-    // 排序后新近中价值应排在陈旧高价值之前（recency 主导 3 天后的衰减）
-    expect(topFactsSection.indexOf('新近中等重要的事实')).toBeLessThan(topFactsSection.indexOf('旧的但重要的事实'))
+    // 事实条目从 persona 移除 — 身份级信息(preference/goal)与知识库标题保留
+    expect(persona).not.toContain('Key clinical facts')
+    expect(persona).not.toContain('旧的但重要的事实')
+    expect(persona).not.toContain('新近中等重要的事实')
   })
 })

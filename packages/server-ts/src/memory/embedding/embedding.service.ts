@@ -64,7 +64,7 @@ export class EmbeddingService {
   async indexApproved(input: {
     nodeId: string
     stableId: string
-    type: 'fact' | 'article'
+    type: 'fact' | 'article' | 'document'
     content: string
     patientHash?: string | null
     studyId?: string | null

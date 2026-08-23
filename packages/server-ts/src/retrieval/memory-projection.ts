@@ -6,9 +6,10 @@
  *
  * 策略: 三层衰减 + 重要性加权
  *
- * Layer 1 — 完整保留 (高注意力)
- *   最近 N 轮对话全文，不压缩
- *   N = 3 (可配置)
+ * (#634) Layer 1 — 最近 N 轮对话全文 已删除:
+ *   与 conversation-turn 的 historyMessages 完全重复（同一批事件以
+ *   两种形式各出现一次）。最近对话由 historyMessages 承担
+ *   (compaction.ts buildHistoryMessages, 20 轮 / MAX_HISTORY_TOKENS=32K)。
  *
  * Layer 2 — 摘要压缩 (中注意力)
  *   最近 7 天的会话摘要（Episode），每个 ~100 tokens
@@ -23,12 +24,12 @@
  *   recency_weight = e^(-λ × days_ago)
  *      λ = 0.3 → 7天前约 12%, 30天前约 0.01%
  *
- *   importance_multiplier (仅 Facts):
- *      5 → 2.0x    (极高, 总是保留)
- *      4 → 1.5x
- *      3 → 1.0x    (基准)
- *      2 → 0.5x
- *      1 → 0.25x   (低重要性快速衰减)
+ *   importance_multiplier (仅 Facts, #627 收敛自 attention.ts):
+ *      5 → 2.2x    (极高, 总是保留)
+ *      4 → 1.9x
+ *      3 → 1.6x    (基准)
+ *      2 → 1.3x
+ *      1 → 1.0x    (低重要性快速衰减)
  *
  * 预算分配 (假设 8000 token 上下文窗口):
  *   ┌────────────┬──────────┬─────────────────────┐
@@ -36,7 +37,6 @@
  *   ├────────────┼──────────┼─────────────────────┤
  *   │ System     │ 500   6% │ 人格 + 指令           │
  *   │ Patient    │ 1000  12% │ 当前患者临床图谱       │
- *   │ Layer 1    │ 2500  31% │ 最近 3 轮完整对话      │
  *   │ Layer 2    │ 1500  19% │ 最近 7 天 Episodes    │
  *   │ Layer 3    │ 1500  19% │ 高权重 Facts          │
  *   │ Skills     │ 500    6% │ 活跃技能列表           │
@@ -45,14 +45,12 @@
  */
 
 import { Fact, Episode, LearnedSkill } from '../evolution/stores'
-import { EventLog, Event } from '../core/event-log'
 import prisma from '../common/prisma'
 
 // ── 配置 ────────────────────────────────────────────────
 
 export interface ProjectionConfig {
   maxTokens: number           // 上下文窗口大小 (token 估计)
-  layer1Turns: number         // 完整保留的最近轮次
   layer2EpisodeDays: number   // Episode 保留天数
   recencyLambda: number       // 衰减系数
   patientContextTokens: number
@@ -60,12 +58,11 @@ export interface ProjectionConfig {
 }
 
 const DEFAULT_CONFIG: ProjectionConfig = {
-  maxTokens: 8000,
-  layer1Turns: 3,
-  layer2EpisodeDays: 7,
-  recencyLambda: 0.3,
-  patientContextTokens: 1000,
-  reserveTokens: 500,
+  maxTokens: CONTEXT_CONFIG.projection.maxTokens,
+  layer2EpisodeDays: CONTEXT_CONFIG.projection.episodeDays,
+  recencyLambda: CONTEXT_CONFIG.projection.recencyLambda,
+  patientContextTokens: CONTEXT_CONFIG.projection.patientContextTokens,
+  reserveTokens: CONTEXT_CONFIG.projection.reserveTokens,
 }
 
 // ── 注意力评分 ──────────────────────────────────────────
@@ -73,14 +70,15 @@ const DEFAULT_CONFIG: ProjectionConfig = {
 interface ScoredFact { fact: Fact; score: number }
 interface ScoredEpisode { episode: Episode; score: number }
 
-import { daysAgo, recencyWeight } from '../common/attention.js' // §5.4 (#197)
+import { daysAgo, recencyWeight, importanceMultiplier } from '../common/attention.js' // §5.4 (#197)
 import { estimateTokens } from '../common/token-estimate.js' // §5.4 (#197)
+import { formatFactLine } from '../common/fact-render.js' // #627 统一渲染
+import { CONTEXT_CONFIG } from '../common/context-config.js' // #637 集中配置
 
 // ── 上下文投影器 ───────────────────────────────────────
 
 export class MemoryProjection {
   constructor(
-    private eventLog: EventLog,
     private config: ProjectionConfig = DEFAULT_CONFIG,
   ) {}
 
@@ -92,7 +90,6 @@ export class MemoryProjection {
   async project(params: {
     userId: string
     patientHash: string | null
-    sessionId: string
     persona: string
     facts: Fact[]
     episodes: Episode[]
@@ -104,7 +101,7 @@ export class MemoryProjection {
     budget: { layer: string; tokens: number; items: number }[]
   }> {
     const budget: { layer: string; tokens: number; items: number }[] = []
-    const { maxTokens, layer1Turns, layer2EpisodeDays, patientContextTokens, reserveTokens } = this.config
+    const { maxTokens, layer2EpisodeDays, patientContextTokens, reserveTokens } = this.config
 
     // ── Layer 0: System Persona (固定) ──
     const personaTokens = estimateTokens(params.persona)
@@ -118,20 +115,7 @@ export class MemoryProjection {
     const patientTokens = Math.min(estimateTokens(patientContext), patientContextTokens)
     remaining -= patientTokens
 
-    // ── Layer 1: 最近 N 轮完整对话 (最高注意力) ──
-    const recentEvents = this.eventLog.query({
-      sessionId: params.sessionId,
-      limit: layer1Turns * 2, // user + assistant = 2 events per turn
-    }).reverse()
-    let layer1Text = ''
-    for (const evt of recentEvents) {
-      const line = evt.eventType === 'user_message'
-        ? `User: ${evt.content}`
-        : `Assistant: ${evt.content}`
-      layer1Text += line + '\n'
-    }
-    const layer1Tokens = estimateTokens(layer1Text)
-    remaining -= layer1Tokens
+    // (#634) Layer 1 已删除 — 最近对话由 historyMessages 承担，此处不再注入。
 
     // ── Layer 2: 最近 N 天 Episodes (中注意力) ──
     const scoredEpisodes = params.episodes
@@ -141,7 +125,7 @@ export class MemoryProjection {
 
     let layer2Text = ''
     let layer2Count = 0
-    const episodeBudget = Math.min(remaining * 0.4, 1500)
+    const episodeBudget = Math.min(remaining * 0.4, CONTEXT_CONFIG.projection.episodesBudget)
     for (const se of scoredEpisodes) {
       const line = `[Day ${Math.round(daysAgo(se.episode.createdAt))}d ago] ${se.episode.summary}`
       const t = estimateTokens(line)
@@ -152,10 +136,11 @@ export class MemoryProjection {
     remaining -= estimateTokens(layer2Text)
 
     // ── Layer 3: 加权 Facts (importance × recency) ──
+    // #627: 评分收敛 — 统一走 attention.ts 的 importanceMultiplier,
+    // 不再手写 [0.25,0.5,1.0,1.5,2.0](5→2.0x vs attention 5→2.2x 曾矛盾)。
     const scoredFacts = params.facts
       .map(f => {
-        const impMultiplier = [0.25, 0.5, 1.0, 1.5, 2.0][f.importance - 1] || 1.0
-        const score = recencyWeight(daysAgo(f.createdAt), this.config.recencyLambda) * impMultiplier
+        const score = recencyWeight(daysAgo(f.createdAt), this.config.recencyLambda) * importanceMultiplier(f.importance)
         return { fact: f, score }
       })
       .filter(s => s.score > 0.02)
@@ -163,7 +148,7 @@ export class MemoryProjection {
 
     let layer3Text = ''
     let layer3Count = 0
-    const factsBudget = Math.min(remaining, 1500)
+    const factsBudget = Math.min(remaining, CONTEXT_CONFIG.projection.factsBudget)
     for (const sf of scoredFacts) {
       const line = this.formatFact(sf.fact, sf.score)
       const t = estimateTokens(line)
@@ -178,7 +163,7 @@ export class MemoryProjection {
     if (params.skills.length > 0) {
       skillsText = params.skills
         .filter(s => s.successCount > 0)
-        .slice(0, 5) // 最多 5 个技能
+        .slice(0, CONTEXT_CONFIG.projection.skillsMax) // 最多 N 个技能
         .map(s => `- ${s.name}: ${s.bestStrategy} (${s.successCount}/${s.taskCount})`)
         .join('\n')
     }
@@ -192,7 +177,6 @@ export class MemoryProjection {
     const sections = [
       params.persona,
       patientContext ? `\n## Patient Context\n${patientContext}` : '',
-      layer1Text ? `\n## Recent Conversation\n${layer1Text}` : '',
       layer2Text ? `\n## Recent Sessions\n${layer2Text}` : '',
       layer3Text ? `\n## Accumulated Knowledge\n${layer3Text}${citationRule}` : '',
       skillsText ? `\n## Active Skills\n${skillsText}` : '',
@@ -206,7 +190,6 @@ export class MemoryProjection {
       segments: [
         { key: 'persona', text: params.persona },
         ...(patientContext ? [{ key: 'patient_context', text: patientContext }] : []),
-        ...(layer1Text ? [{ key: 'recent_conversation', text: layer1Text }] : []),
         ...(layer2Text ? [{ key: 'recent_sessions', text: layer2Text }] : []),
         ...(layer3Text ? [{ key: 'accumulated_knowledge', text: layer3Text }] : []),
         ...(skillsText ? [{ key: 'active_skills', text: skillsText }] : []),
@@ -214,7 +197,6 @@ export class MemoryProjection {
       budget: [
         { layer: 'persona', tokens: personaTokens, items: 1 },
         { layer: 'patient', tokens: patientTokens, items: params.patientHash ? 1 : 0 },
-        { layer: 'layer1_recent', tokens: layer1Tokens, items: recentEvents.length },
         { layer: 'layer2_episodes', tokens: estimateTokens(layer2Text), items: layer2Count },
         { layer: 'layer3_facts', tokens: estimateTokens(layer3Text), items: layer3Count },
         { layer: 'layer4_skills', tokens: estimateTokens(skillsText), items: params.skills.length },
@@ -301,16 +283,11 @@ export class MemoryProjection {
 
   // ── 事实格式化 (注意力越高 → 越详细) ──
 
+  // #627: 统一渲染 — 与自动注入/patient block 共用 formatFactLine,
+  // 去重后同一事实只以一种说法出现。截断仍是 layer3 特有行为(低注意力
+  // → 缩短),由调用方先处理 content。
   private formatFact(fact: Fact, score: number): string {
-    const stars = '★'.repeat(fact.importance)
-    const days = Math.round(daysAgo(fact.createdAt))
-    // 高注意力 → 完整内容, 低注意力 → 截断
     const content = score > 0.5 ? fact.content : fact.content.slice(0, 80) + '...'
-    // §4.3 (#188): clinical evidence stays visible — the LLM is asked to
-    // cite memory with [confidence, source] so answers are traceable.
-    const confidence = typeof fact.confidence === 'number' ? `conf ${fact.confidence}` : null
-    const source = fact.provenance?.sourceKind ? `source: ${fact.provenance.sourceKind}` : null
-    const evidence = [confidence, source].filter(Boolean).join(', ')
-    return `[${fact.category} ${stars}] ${content} (${days}d ago${evidence ? ` [${evidence}]` : ''})`
+    return formatFactLine({ ...fact, content })
   }
 }

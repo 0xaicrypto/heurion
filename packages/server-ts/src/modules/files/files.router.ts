@@ -56,8 +56,12 @@ export async function filesRouter(app: FastifyInstance) {
     // Read patient_hash from form data
     const patientHash = (data.fields?.patient_hash as any)?.value || ''
 
-    // Extract facts from text files (fire-and-forget)
-    const isText = data.mimetype?.startsWith('text/') || data.filename?.endsWith('.txt') || data.filename?.endsWith('.md')
+    // #628: 提取事实从 txt/md 放开到 docx/pdf/csv — 统一走
+    // extractDocumentText(文本直接读、docx 经 mammoth、pdf 经 pdf-parse)。
+    // 大小上限放宽至 500KB;超大文件降级跳过(不阻塞上传流程)。
+    const isExtractable = data.mimetype?.startsWith('text/')
+      || /\.(txt|md|csv|docx|pdf)$/i.test(data.filename || '')
+    const MAX_FACT_EXTRACT_BYTES = 500 * 1024
     const ctx = getUserContext(request.user!.userId)
     const docNode = ctx.memory.addDocument({
       fileId,
@@ -66,10 +70,24 @@ export async function filesRouter(app: FastifyInstance) {
       mimeType: data.mimetype || 'application/octet-stream',
       patientHash: patientHash || undefined,
     })
-    if (isText && buffer.length < 50000) {
-      const text = buffer.toString('utf-8')
+    if (isExtractable && buffer.length <= MAX_FACT_EXTRACT_BYTES) {
       ;(async () => {
         try {
+          // #632: 一次提取全文 — fact 提取 prompt 用前 4K,embedding 用全文。
+          const text = await extractDocumentText(buffer, data.filename, data.mimetype, { maxChars: 30000 })
+          if (!text.trim() || text.startsWith('[PDF') || text.startsWith('[DOCX')) {
+            console.log(`[FILE] ${data.filename} returned no extractable text — fact extraction skipped`)
+            return
+          }
+          // #632: document 正文入向量索引(embedding 故障自动跳过,不阻塞上传)。
+          const { EmbeddingService } = await import('../../memory/embedding/embedding.service.js')
+          await new EmbeddingService(request.user!.userId).indexApproved({
+            nodeId: docNode.id,
+            stableId: docNode.stableId,
+            type: 'document',
+            content: text.slice(0, 6000),
+            patientHash: patientHash || undefined,
+          })
           const apiKey = getApiKey()
           const prompt = `Extract key facts from this clinical document. Return ONLY a JSON array of objects with: category (fact/preference/constraint/goal/context), importance (1-5), content (short sentence), sourceType (patient/doctor/research/general).\n\n${text.slice(0, 4000)}\n\n[JSON array]:`
           const result = await deepseekChat(
@@ -114,6 +132,8 @@ export async function filesRouter(app: FastifyInstance) {
           }
         } catch (err) { console.log('[FILE] Fact extraction skipped:', (err as Error).message.slice(0, 80)) }
       })()
+    } else if (isExtractable && buffer.length > MAX_FACT_EXTRACT_BYTES) {
+      console.log(`[FILE] ${data.filename} (${buffer.length} bytes) exceeds fact-extract size cap — skipped, upload unaffected`)
     }
 
     // Persist file index for dedup + listing
@@ -277,7 +297,7 @@ export async function filesRouter(app: FastifyInstance) {
     const lowerName = name.toLowerCase()
     const isDicom = lowerName.endsWith('.dcm')
     const isPdf = lowerName.endsWith('.pdf')
-    const isText = lowerName.endsWith('.txt') || lowerName.endsWith('.md') || lowerName.endsWith('.csv') || fileId.includes('report') || fileId.includes('lab')
+    const isText = lowerName.endsWith('.txt') || lowerName.endsWith('.md') || lowerName.endsWith('.csv') || lowerName.endsWith('.docx') || fileId.includes('report') || fileId.includes('lab')
 
     if (isDicom) {
       const { quickScanDicom } = await import('../patients/dicom-scanner.js')

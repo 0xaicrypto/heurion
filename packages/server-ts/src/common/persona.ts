@@ -1,15 +1,14 @@
 import type { FactsStore, KnowledgeStore } from '../evolution/stores'
-import { recencyWeight, daysAgo } from './attention.js'
+import { CONTEXT_CONFIG } from './context-config.js' // #637 集中配置
 
 /**
  * §5.4 (#197): single persona builder shared by user-context and the
  * memory gateway. §13.3A: the global persona must never contain
- * patient-scoped facts; §13.3B: top facts rank by importance × recency.
+ * patient-scoped facts.
+ * #627: persona 不再包含 top-facts — 事实由 projection layer3 承担
+ * (importance×recency 排序),身份级信息(preference/goal)与知识库标题
+ * 保留,避免同一事实在 persona 与 layer3 重复注入。
  */
-export function personaFactScore(f: { importance?: number; lastSeenAt?: number; createdAt?: number }): number {
-  const ts = (f.lastSeenAt || f.createdAt || Date.now())
-  return (f.importance ?? 3) * recencyWeight(daysAgo(ts), 0.3)
-}
 
 /**
  * #510: chat entry scenes. The scene selects the persona variant and the
@@ -36,12 +35,8 @@ export function buildScenePersona(scene: ChatScene, facts: FactsStore, knowledge
 export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): string {
   const allFacts = facts.all().filter(f => !f.patientHash && !f.studyId)
   const prefs = allFacts.filter(f => f.category === 'preference').sort((a, b) => b.importance - a.importance)
-  const goals = allFacts.filter(f => f.category === 'goal').slice(0, 3)
-  const topFacts = allFacts
-    .filter(f => f.category === 'fact')
-    .sort((a, b) => personaFactScore(b) - personaFactScore(a))
-    .slice(0, 5)
-  const knowledgeArticles = knowledge.all().filter(k => k.status === 'current').slice(0, 5)
+  const goals = allFacts.filter(f => f.category === 'goal').slice(0, CONTEXT_CONFIG.persona.goalsMax)
+  const knowledgeArticles = knowledge.all().filter(k => k.status === 'current').slice(0, CONTEXT_CONFIG.persona.knowledgeTitlesMax)
 
   const parts: string[] = [
     'You are Heurion, a clinical AI assistant for oncology research.',
@@ -53,7 +48,7 @@ export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): stri
 
   if (prefs.length > 0) {
     parts.push('\nYour accumulated preferences:')
-    for (const p of prefs.slice(0, 5)) {
+    for (const p of prefs.slice(0, CONTEXT_CONFIG.persona.prefsMax)) {
       parts.push(`- ${p.content} (importance: ${p.importance}/5)`)
     }
   }
@@ -66,11 +61,6 @@ export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): stri
   if (knowledgeArticles.length > 0) {
     parts.push('\nYour knowledge base includes:')
     for (const k of knowledgeArticles) parts.push(`- ${k.title}`)
-  }
-
-  if (topFacts.length > 0) {
-    parts.push('\nKey clinical facts you track:')
-    for (const f of topFacts.slice(0, 3)) parts.push(`- ${f.content}`)
   }
 
   return parts.join('\n')

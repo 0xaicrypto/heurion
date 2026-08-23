@@ -79,7 +79,7 @@ export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions =
   app.get('/api/v1/chat/projection', async (request) => {
     const ctx = getUserContext(request.user!.userId)
     const result = await ctx.orchestrator['projection'].project({
-      userId: request.user!.userId, patientHash: null, sessionId: 'debug',
+      userId: request.user!.userId, patientHash: null,
       persona: 'debug', facts: ctx.facts.all(), episodes: ctx.episodes.all(), skills: ctx.skills.all(),
     })
     return result

@@ -120,4 +120,15 @@ describe('#544 buildAttachmentParts', () => {
     expect(r2.parts).toHaveLength(0)
     expect(r2.attachmentText).toBe('')
   })
+
+  test('#636 附件文本超限 → 后续附件降级为文件名列表', async () => {
+    // 第一个附件占满预算,第二个附件应降级为文件名
+    putUpload('u1', '111_big1.txt', Buffer.from('A'.repeat(15_000)))
+    putUpload('u1', '222_big2.txt', Buffer.from('B'.repeat(10_000)))
+    const { attachmentText, notes } = await buildAttachmentParts(['111_big1.txt', '222_big2.txt'], { userId: 'u1', vision: true })
+    expect(attachmentText).toContain('big1.txt')
+    expect(attachmentText).not.toContain('BBBBBB')
+    expect(attachmentText).toContain('filename only')
+    expect(notes.some((n) => n.includes('degraded'))).toBe(true)
+  })
 })

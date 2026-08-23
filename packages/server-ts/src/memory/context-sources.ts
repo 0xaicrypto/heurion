@@ -93,8 +93,23 @@ export function computeSegments(
 
 /** Render segments into the system prompt (base + stable segments). */
 export function renderSystemPrompt(base: string, state: Record<string, SegmentState>): string {
+  return renderSystemPromptFiltered(base, state)
+}
+
+/**
+ * #635: 段级回退渲染 — 排除指定 segment key 后重新拼接。
+ * 超预算时整段移除（picked_kb → knowledge_inject → document_context →
+ * study_context），避免字符切片截断半句话/半截 markdown 结构。
+ */
+export function renderSystemPromptFiltered(
+  base: string,
+  state: Record<string, SegmentState>,
+  excluded: Iterable<string> = [],
+): string {
   const parts = [base]
+  const skip = new Set(excluded)
   for (const seg of Object.values(state)) {
+    if (skip.has(seg.key)) continue
     if (seg.text.trim()) parts.push(seg.text.trim())
   }
   return parts.join('\n\n')

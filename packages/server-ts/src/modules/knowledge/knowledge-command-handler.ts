@@ -9,6 +9,7 @@ import { parseKnowledgeCommand, type KnowledgeCommandType } from '../../retrieva
 import { FactsStore, KnowledgeStore, type Fact, type KnowledgeArticle } from '../../evolution/stores'
 import { type KnowledgeGap, type KnowledgeGapService, type GapFilter } from './knowledge-gap.service'
 import type { MemoryService } from '../../memory/memory.service.js'
+import { LegacyFactProvider, type FactProvider } from '../../memory/fact-provider.js' // #637 双 store 收敛
 
 export interface LLMSummarizer {
   summarize(text: string): Promise<string>
@@ -31,6 +32,12 @@ export interface SearchResult {
   source: string
   content: string
   score: number
+  /** #627: 跨 store 去重 key — fact 条目携带,注入层按它与已注入事实对比。 */
+  factHash?: string
+  /** #627: fact 条目的分类 — 统一渲染用(layer3 同源)。 */
+  category?: string
+  /** #627: fact 条目的重要性 — 统一渲染用(★ 数量)。 */
+  importance?: number
 }
 
 export type CommandResult =
@@ -192,20 +199,29 @@ export function keywordSearch(
   query: string,
   factsStore: FactsStore,
   knowledgeStore: KnowledgeStore,
+  factProvider?: FactProvider,
+  patientHash?: string | null,
 ): SearchResult[] {
   const queryTerms = tokenize(query)
   if (queryTerms.length === 0) return []
 
   const results: SearchResult[] = []
 
-  for (const fact of factsStore.all()) {
+  // #637: 注入/检索层默认走 legacy 适配器;传 provider 时(如 graph 双轨
+  // 收敛)按同一接口访问 — 双 store 去重不再依赖具体存储。
+  // #629: patientHash 过滤 — 患者场景只检索该患者的 facts,跨患者泄漏防护。
+  const facts = (factProvider ?? new LegacyFactProvider(factsStore)).listCurrent({ patientHash: patientHash ?? undefined })
+  for (const fact of facts) {
     const score = scoreText(`${fact.content} ${fact.category}`, queryTerms)
     if (score > 0) {
       results.push({
         kind: 'fact',
-        source: `fact:${fact.id}`,
+        source: fact.source || fact.factHash,
         content: fact.content,
         score,
+        factHash: fact.factHash,
+        category: fact.category,
+        importance: fact.importance,
       })
     }
   }

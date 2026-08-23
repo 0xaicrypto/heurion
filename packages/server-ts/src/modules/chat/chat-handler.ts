@@ -13,6 +13,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { createSseSender } from './chat-sse.js'
+import type { ChatEvent } from './chat-events.js'
 import { makeLogger } from '../../common/logger.js'
 import prisma from '../../common/prisma'
 import { getUserContext } from './user-context.js'
@@ -238,7 +239,8 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
             : null,
           history,
           telemetryContext: { userId, workspaceId: userId, action: 'plugin.build_payload' },
-          send,
+          // #637: 插件事件流独立于 ChatEvent(自有载荷),透传未知载荷。
+          send: (d: unknown) => send(d as ChatEvent),
         })
 
         // #558: the request was editing/polishing existing content that only

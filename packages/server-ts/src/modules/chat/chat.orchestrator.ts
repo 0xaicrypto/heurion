@@ -80,7 +80,7 @@ export class ChatOrchestrator {
     /** §5.2 (#190): constructor-injected — no more (this as any).memory. */
     private memory?: MemoryService,
   ) {
-    this.projection = new MemoryProjection(eventLog)
+    this.projection = new MemoryProjection()
   }
 
   // #2: Extract facts automatically using DeepSeek (K1/K2: incremental

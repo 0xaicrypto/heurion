@@ -6,7 +6,7 @@ function mockStore(version: string) {
   return {
     currentVersion: () => version,
     all: () => entries,
-    _push: (c: string) => entries.push({ content: c, category: 'fact', importance: 3, patientHash: null, studyId: null }),
+    _push: (c: string) => entries.push({ content: c, category: 'preference', importance: 3, patientHash: null, studyId: null }),
   }
 }
 

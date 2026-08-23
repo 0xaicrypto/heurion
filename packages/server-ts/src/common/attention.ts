@@ -18,12 +18,17 @@ export interface AttentionItem {
   count?: number
 }
 
+/** #627: 单一 importance 倍率实现 — 1→1.0, 5→2.2。所有调用方
+ *  (attentionScore / projection layer3)统一从这里取,不再各自手写。 */
+export function importanceMultiplier(importance = 3): number {
+  return 1 + (importance - 1) * 0.3
+}
+
 /** Attention score: importance × recency × observation count. */
 export function attentionScore(item: AttentionItem, now = Date.now()): number {
   const days = Math.max(0, (now - (item.lastSeenAt || now)) / 86400_000)
   const recency = recencyWeight(days, 0.3) // ~74% at 1 day, ~12% at 7 days
-  const importanceMultiplier = 1 + (item.importance - 1) * 0.3 // 1→1.0, 5→2.2
-  return recency * importanceMultiplier * (item.count || 1)
+  return recency * importanceMultiplier(item.importance) * (item.count || 1)
 }
 
 /** Rank items by attention score, return top N. */

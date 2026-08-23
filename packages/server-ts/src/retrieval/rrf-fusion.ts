@@ -7,7 +7,7 @@
 
 export interface RrfCandidate {
   content: string
-  source: 'sql' | 'vector' | 'graph'
+  source: 'sql' | 'vector' | 'graph' | 'keyword'
   sourceId: string
   rank: number
 }

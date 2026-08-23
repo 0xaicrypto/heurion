@@ -9,7 +9,7 @@ import { MemoryService } from '../../memory/memory.service.js'
 import { defaultProposalApplier, registerContextResolver, registerProposalApplier } from '../../memory/memory-gateway.js'
 // §5.4 (#197): persona lives in common/persona.ts (shared with memory gateway).
 import { buildScenePersona, type ChatScene } from '../../common/persona.js'
-export { buildPersona, personaFactScore } from '../../common/persona.js'
+export { buildPersona } from '../../common/persona.js'
 
 const TTL_MS = 30 * 60 * 1000 // 30 minutes idle → evict
 const telemetry = new PrismaTelemetryService()
@@ -96,7 +96,7 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
       // index file may not exist (no approved embeddings yet).
       void import('../../memory/embedding-index.js').then(({ EmbeddingIndex }) => {
         try {
-          if (type !== 'fact' && type !== 'article') return
+          if (type !== 'fact' && type !== 'article' && type !== 'document') return
           const base = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId)
           new EmbeddingIndex(base).remove(stableId, type)
         } catch { /* best-effort */ }

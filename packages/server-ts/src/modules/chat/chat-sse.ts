@@ -4,9 +4,10 @@
  * abort signal and the final close.
  */
 import type { FastifyReply } from 'fastify'
+import type { ChatEvent } from './chat-events.js'
 
 export interface SseSender {
-  send(d: unknown): void
+  send(d: ChatEvent): void
   /** Abort signal fired when the client disconnects. */
   signal: AbortSignal
   end(): void

@@ -6,6 +6,7 @@ import { SidecarFeedbackService, type SidecarOutputType } from './sidecar-feedba
 import { isNodeSuperseded } from '../../memory/memory.types.js'
 import { PrismaTelemetryService } from './telemetry.service.js'
 import { deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import type { PickerNode } from './knowledge-picker.service.js'
 
 const gapService = new PrismaKnowledgeGapService()
 const telemetry = new PrismaTelemetryService()
@@ -236,33 +237,48 @@ export async function knowledgeRouter(app: FastifyInstance) {
   app.get('/api/v1/knowledge/picker', async (request) => {
     const userId = request.user!.userId
     const ctx = getUserContext(userId)
-    const q = String((request.query as any)?.q || '').trim().toLowerCase()
+    const q = String((request.query as any)?.q || '').trim()
+    // #633: 选择器改用统一检索(keyword + vector RRF) — 语义相近词可命中
+    // (如搜"放疗抵抗"命中 ATR 论文);embedding 故障自动回落词法。
     const nodes = ctx.memory.graph
       .getCurrentNodesByType('article')
       .concat(ctx.memory.graph.getCurrentNodesByType('document'))
-    const items = nodes
-      .map((n): any => {
-        if (n.type === 'article') {
-          return {
-            id: n.stableId,
-            kind: 'article',
-            title: n.title,
-            summary: String(n.content || '').slice(0, 120),
+    const { EmbeddingService } = await import('../../memory/embedding/embedding.service.js')
+    const embedding = new EmbeddingService(userId)
+    const { searchPickerItems } = await import('./knowledge-picker.service.js')
+    const hits = await searchPickerItems(
+      nodes.map((n): PickerNode => n.type === 'article'
+        ? {
+            stableId: n.stableId, type: 'article', title: n.title,
+            content: String((n as import('../../memory/memory.types.js').ArticleNode).content || '').slice(0, 2000),
             updatedAt: n.updatedAt,
           }
-        }
-        const d = n as import('../../memory/memory.types.js').DocumentNode
+        : {
+            stableId: n.stableId, type: 'document',
+            title: (n as import('../../memory/memory.types.js').DocumentNode).name,
+            updatedAt: n.updatedAt,
+          }),
+      q,
+      embedding,
+    )
+    const items = hits.map(({ node }): any => {
+      if (node.type === 'article') {
         return {
-          id: d.stableId,
-          kind: 'document',
-          title: d.name,
-          summary: `📎 ${d.mimeType || '文件'}${d.patientHash ? ' · 患者' : ''}`,
-          updatedAt: d.updatedAt,
+          id: node.stableId,
+          kind: 'article',
+          title: node.title,
+          summary: String(node.content || '').slice(0, 120),
+          updatedAt: node.updatedAt,
         }
-      })
-      .filter((a) => !q || a.title.toLowerCase().includes(q) || a.summary.toLowerCase().includes(q))
-      .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
-      .slice(0, 50)
+      }
+      return {
+        id: node.stableId,
+        kind: 'document',
+        title: node.title,
+        summary: '📎 文件',
+        updatedAt: node.updatedAt,
+      }
+    })
     return { articles: items.map((a) => ({ id: a.id, title: a.title, summary: a.summary, kind: a.kind, updated_at: a.updatedAt })) }
   })
 
