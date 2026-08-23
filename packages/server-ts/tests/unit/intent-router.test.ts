@@ -179,6 +179,7 @@ test('普通问题：无否决词健康，LLM 裁决 discuss → 不生成', asy
     expect(cl.classify).toHaveBeenCalledTimes(1) // 仍走 LLM 兜底
     expect(decisions[0].llmCalls).toBe(1)
     expect(decisions[0].semantic).toBeDefined() // 探测值随 detail 上报（供分歧率统计）
+    expect(typeof decisions[0].semanticMs).toBe('number') // #585 延迟指标入库
   })
 
   test('#585 shadow：规则锚点 veto 时绝不直通，LLM 裁决为准，探测值上报', async () => {

@@ -76,7 +76,7 @@ export function ChatPage() {
   // #620: 知识库选择器 — 显式选定文章加入上下文.
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const [kbQuery, setKbQuery] = useState('');
-  const [kbResults, setKbResults] = useState<Array<{ id: string; title: string; summary: string }>>([]);
+  const [kbResults, setKbResults] = useState<Array<{ id: string; title: string; summary: string; kind: 'article' | 'document' }>>([]);
   const [kbPicked, setKbPicked] = useState<Array<{ id: string; title: string }>>([]);
   const [kbSearching, setKbSearching] = useState(false);
   // #516: per-session entry scene — switching sessions must not leak the
@@ -770,7 +770,10 @@ export function ChatPage() {
                       className="mt-1"
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-text-primary">{a.title}</p>
+                      <p className="text-sm font-medium text-text-primary">
+                        {a.kind === 'document' && <span className="mr-1 rounded bg-surface-muted px-1 py-0.5 text-[10px] text-text-secondary">文件</span>}
+                        {a.title}
+                      </p>
                       <p className="mt-0.5 truncate text-xs text-text-tertiary">{a.summary}</p>
                     </div>
                   </label>

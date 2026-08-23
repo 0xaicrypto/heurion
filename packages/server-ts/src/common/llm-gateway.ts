@@ -157,10 +157,22 @@ export interface LlmTelemetryRecorder {
   }): Promise<void>
 }
 
+/** #627 — LLM request timeout (TTFB) with env override LLM_TIMEOUT_MS.
+ *  Default 180s: reasoning models on long documents (editing/polishing)
+ *  regularly think >60s before the first token, and the previous hardcoded
+ *  60s aborted those requests with "LLM request timed out after 60000ms". */
+function resolveLlmTimeoutMs(): number {
+  const fromEnv = parseInt(process.env.LLM_TIMEOUT_MS || '', 10)
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv
+  return 180000
+}
+
 export interface LlmChatOptions {
   model?: string
   maxTokens?: number
   temperature?: number
+  /** Override the request timeout (TTFB). Default: LLM_TIMEOUT_MS env or 180s. */
+  timeoutMs?: number
   telemetryContext?: LlmTelemetryContext
   /** External abort signal (client disconnect) — combined with the
    *  internal timeout via AbortSignal.any. */
@@ -219,7 +231,7 @@ export async function fetchWithRetry(
   opts: { maxRetries?: number; timeoutMs?: number; delayMs?: number; signal?: AbortSignal } = {},
 ): Promise<Response> {
   const maxRetries = opts.maxRetries ?? 2
-  const timeoutMs = opts.timeoutMs ?? 60000
+  const timeoutMs = opts.timeoutMs ?? resolveLlmTimeoutMs()
   let lastErr: Error | null = null
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     let controller: AbortController | null = null
@@ -417,7 +429,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
       body: JSON.stringify(body),
-    }, { signal: options.signal })
+    }, { signal: options.signal, timeoutMs: options.timeoutMs })
     if (!res.ok) {
       throw new Error(FRIENDLY_LLM_ERROR)
     }
@@ -494,7 +506,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
         stream: true,
         stream_options: { include_usage: true },
       }),
-    }, { signal: options.signal })
+    }, { signal: options.signal, timeoutMs: options.timeoutMs })
     if (!res.ok) {
       throw new Error(FRIENDLY_LLM_ERROR)
     }

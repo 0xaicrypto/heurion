@@ -231,22 +231,39 @@ export async function knowledgeRouter(app: FastifyInstance) {
   })
 
   // #620: 知识库选择器 — chat 从知识库显式添加文章到上下文.
+  // #628: 除合成文章(article)外,同时列出用户上传过的文件(document),
+  // 否则上传的文件永远不会出现在选择器里(文章需 ≥3 条 7 天内确认事实才合成)。
   app.get('/api/v1/knowledge/picker', async (request) => {
     const userId = request.user!.userId
     const ctx = getUserContext(userId)
     const q = String((request.query as any)?.q || '').trim().toLowerCase()
-    const articles = ctx.memory.graph.getCurrentNodesByType('article')
-      .filter((n): n is import('../../memory/memory.types.js').ArticleNode => n.type === 'article')
-      .map((a) => ({
-        id: a.stableId,
-        title: a.title,
-        content: a.content || '',
-        updatedAt: a.updatedAt,
-      }))
-      .filter((a) => !q || a.title.toLowerCase().includes(q) || a.content.toLowerCase().includes(q))
+    const nodes = ctx.memory.graph
+      .getCurrentNodesByType('article')
+      .concat(ctx.memory.graph.getCurrentNodesByType('document'))
+    const items = nodes
+      .map((n): any => {
+        if (n.type === 'article') {
+          return {
+            id: n.stableId,
+            kind: 'article',
+            title: n.title,
+            summary: String(n.content || '').slice(0, 120),
+            updatedAt: n.updatedAt,
+          }
+        }
+        const d = n as import('../../memory/memory.types.js').DocumentNode
+        return {
+          id: d.stableId,
+          kind: 'document',
+          title: d.name,
+          summary: `📎 ${d.mimeType || '文件'}${d.patientHash ? ' · 患者' : ''}`,
+          updatedAt: d.updatedAt,
+        }
+      })
+      .filter((a) => !q || a.title.toLowerCase().includes(q) || a.summary.toLowerCase().includes(q))
       .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
       .slice(0, 50)
-    return { articles: articles.map((a) => ({ id: a.id, title: a.title, summary: a.content.slice(0, 120), updated_at: a.updatedAt })) }
+    return { articles: items.map((a) => ({ id: a.id, title: a.title, summary: a.summary, kind: a.kind, updated_at: a.updatedAt })) }
   })
 
   // List knowledge articles with stale/impact metadata

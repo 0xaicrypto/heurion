@@ -1,0 +1,261 @@
+/**
+ * #544 — tool-calling loop, extracted from chat-handler.ts.
+ *
+ * Owns the tool state machine (pending→running→completed/error), doom-loop
+ * detection, sub-agent SSE surfacing and per-tool media events. The caller
+ * (chat-handler) supplies the message list, the registry and the SSE sink.
+ */
+import type { ToolRegistry } from '../../tools/tool-registry.js'
+import type { ToolDefinition } from '../../tools/base-tool.js'
+import type { ChatContentPart } from '../../common/llm-gateway.js'
+import { deepseekChatWithMeta, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
+import { detectDoomLoop } from '../../tools/doom-loop.js'
+import { makeLogger } from '../../common/logger.js'
+import type { getUserContext } from './user-context.js'
+
+const log = makeLogger('chat.tool-loop')
+
+export interface TurnIO {
+  send: (chunk: any) => void
+  signal: AbortSignal
+}
+
+/**
+ * Tool-calling loop: up to MAX_TOOL_ROUNDS rounds of <tool_call> execution.
+ * Owns the tool state machine (pending→running→completed/error), doom-loop
+ * detection, sub-agent SSE surfacing and per-tool media events.
+ */
+export async function runToolCallLoop(params: {
+  currentMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }>
+  toolRegistry: ToolRegistry
+  tools: ToolDefinition[]
+  apiKey: string
+  io: TurnIO
+  ctx: Awaited<ReturnType<typeof getUserContext>>
+  userId: string
+  sessionId: string
+}): Promise<{ finalContent: string; messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }> }> {
+  const { currentMessages, toolRegistry, tools, io, ctx, userId, sessionId } = params
+
+  // R3 — tool-call persistence: per-session sequence numbers continue
+  // across turns (and process restarts) by deriving from the log.
+  const existingToolEvents = ctx.eventLog.query({ sessionId }).filter((e: any) => e.eventType === 'tool_call')
+  let toolSeq = existingToolEvents.length
+  const doomHistory: Array<{ tool: string; argsKey: string }> = []
+
+  const appendToolEvent = (eventType: string, content: string, metadata: Record<string, unknown>) => {
+    ctx.eventLog.append({
+      timestamp: Date.now() / 1000,
+      eventType,
+      content,
+      metadata,
+      agentId: userId,
+      sessionId,
+    })
+  }
+
+  let messages = [...currentMessages]
+  const MAX_TOOL_ROUNDS = 5
+  let toolRound = 0
+  let finalContent = ''
+
+  while (toolRound < MAX_TOOL_ROUNDS) {
+    toolRound++
+    // #548: use chatWithMeta (truncation-aware) and the gateway default token
+    // budget (MAX_OUTPUT_TOKENS, 8192) instead of a hardcoded 4096.
+    const call = await deepseekChatWithMeta(
+      messages,
+      params.apiKey,
+      {
+        model: DEEPSEEK_PREMIUM_MODEL,
+        telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
+        signal: io.signal,
+      },
+      tools,
+      (reasoning) => io.send({ type: 'reasoning_chunk', text: reasoning }),
+    )
+    const callResult = call.text
+
+    if (!callResult) {
+      finalContent = ''
+      break
+    }
+
+    // Parse JSON response — DeepSeek returns plain text; check for function calls in the text.
+    // Match all <tool_call> blocks (each may contain nested JSON in `arguments`).
+    const toolCallBlocks = callResult.match(/<tool_call>([\s\S]*?)<\/tool_call>/g)
+    // #548: the final answer hit the output token budget — tell the user the
+    // reply was cut off instead of silently presenting a half answer. An
+    // empty callResult means the reasoning burned the budget (the gateway
+    // auto-retried already) — explain, don't leave a blank turn.
+    if (call.truncated && (!toolCallBlocks || toolCallBlocks.length === 0)) {
+      io.send({
+        type: 'truncated',
+        message: callResult.trim()
+          ? '回答因输出长度限制被截断，请重试或简化问题'
+          : '回答在思考阶段被输出限制中断，未能生成内容，请重试或简化问题',
+      })
+    }
+    if (toolCallBlocks && toolCallBlocks.length > 0) {
+      let executedAny = false
+      let toolError: string | null = null
+      // The assistant message must appear ONCE regardless of how many
+      // tool calls it contains — re-pushing it per block would duplicate
+      // the whole payload N times and corrupt the turn history.
+      messages.push({ role: 'assistant', content: callResult })
+      for (const block of toolCallBlocks) {
+        let toolCall: any = null
+        try {
+          toolCall = JSON.parse(block.replace(/<\/?tool_call>/g, '').trim())
+        } catch (err) {
+          // §3.3: malformed JSON must not crash the turn — tell the model
+          // to re-emit a valid call instead of dying silently.
+          appendToolEvent('tool_call', 'malformed_arguments', {
+            tool: '?', args: 'parse-failed', status: 'error', seq: ++toolSeq,
+          })
+          messages.push({ role: 'assistant', content: block })
+          messages.push({
+            role: 'user',
+            content: 'The previous tool call had malformed JSON arguments. Please re-emit the tool call with valid JSON only.',
+          })
+          continue
+        }
+        const toolName = toolCall.name || toolCall.tool
+        const toolArgs = toolCall.arguments || toolCall.args || {}
+        executedAny = true
+
+        toolSeq++
+        const seq = toolSeq
+        const argsPreview = String(JSON.stringify(toolArgs) || '').slice(0, 300)
+
+        // R3: persist the state machine — pending → running → completed/error.
+        appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+          tool: toolName, args: argsPreview, status: 'pending', seq,
+        })
+
+        // Doom-loop guard: same tool + identical args 3x consecutively.
+        if (detectDoomLoop(doomHistory, toolName, toolArgs)) {
+          log.warn('doom-loop detected', { tool: toolName, seq })
+          appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+            tool: toolName, args: argsPreview, status: 'warning', seq,
+          })
+        }
+
+        io.send({ type: 'tool_call', tool: toolName, args: toolArgs })
+
+        appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+          tool: toolName, args: argsPreview, status: 'running', seq,
+        })
+
+        // #350: delegate = sub-agent activity — surface started/done
+        // over SSE so the UI can show parallel research progress.
+        const isSubagent = toolName === 'delegate' || toolName === 'spawn_subagent'
+        const subTask = isSubagent ? String((toolArgs as any)?.task || argsPreview) : ''
+        if (isSubagent) {
+          const scope = String((toolArgs as any)?.scope || 'global')
+          io.send({ type: 'subagent_started', task: subTask.slice(0, 200), scope })
+        }
+
+        const result = await toolRegistry.execute(toolName, toolArgs)
+
+        // #419: generated images render in the chat stream.
+        if (toolName === 'generate_image' && result.success && result.output) {
+          try {
+            const parsed = JSON.parse(result.output)
+            if (parsed.url) {
+              io.send({ type: 'image_attached', url: parsed.url, caption: parsed.prompt?.slice(0, 120) })
+            }
+          } catch { /* non-JSON */ }
+        }
+
+        // #418: surface memory-search hits to the doctor (AI 依据可见).
+        if (toolName === 'search_node' && result.success && result.output) {
+          try {
+            const parsed = JSON.parse(result.output)
+            const hits = Array.isArray(parsed?.hits) ? parsed.hits : []
+            if (hits.length > 0) {
+              io.send({
+                type: 'memory_hits',
+                count: hits.length,
+                hits: hits.slice(0, 10).map((h: any) => ({
+                  content: String(h.content || '').slice(0, 200),
+                  type: String(h.node_type || 'fact'),
+                  id: String(h.node_id || ''),
+                })),
+              })
+            }
+          } catch { /* non-JSON output */ }
+        }
+
+        if (isSubagent) {
+          let cost = 0
+          if (result.success && result.output) {
+            try { cost = Number(JSON.parse(result.output).cost_tokens) || 0 } catch { /* ignore */ }
+          }
+          io.send({ type: 'subagent_done', task: subTask.slice(0, 200), success: result.success, cost_tokens: cost })
+        }
+
+        messages.push({
+          role: 'user',
+          content: `Tool "${toolName}" returned: ${result.success ? (result.output || 'Success') : `Error: ${result.error}`}`,
+        })
+
+        if (result.success) {
+          const output = result.output || ''
+          appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+            tool: toolName, args: argsPreview, status: 'completed', seq,
+          })
+          appendToolEvent('tool_result', output.slice(0, 500), {
+            toolCallId: seq, success: true, outputTruncated: output.length > 500,
+          })
+          // §15.4: surface document write-backs to the writing canvas.
+          if (toolName === 'edit_document') {
+            try {
+              const parsed = JSON.parse(output) as { body?: string; summary?: string }
+              if (typeof parsed.body === 'string') {
+                io.send({ type: 'doc_updated', body: parsed.body, summary: parsed.summary || '' })
+              }
+            } catch {
+              // non-JSON output — nothing to surface
+            }
+          }
+          // #176: surface generated charts as images in the message.
+          if (toolName === 'render_chart') {
+            try {
+              const parsed = JSON.parse(output) as { url?: string; markdown?: string; type?: string }
+              if (parsed.url) {
+                io.send({ type: 'chart_created', url: parsed.url, markdown: parsed.markdown || '', chart_type: parsed.type || '' })
+              }
+            } catch {
+              // non-JSON output — nothing to surface
+            }
+          }
+        } else {
+          appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
+            tool: toolName, args: argsPreview, status: 'error', seq,
+          })
+          appendToolEvent('tool_result', (result.error || '').slice(0, 500), {
+            toolCallId: seq, success: false, error: (result.error || '').slice(0, 200),
+          })
+          toolError = result.error ?? 'Unknown tool error'
+          break
+        }
+      }
+      if (executedAny) {
+        if (toolError) {
+          finalContent = `I tried to use a tool but encountered an error: ${toolError}`
+          break
+        }
+        continue
+      }
+    }
+
+    // §3.3: never surface raw <tool_call> markers to the user — strip
+    // any unparsed blocks before sending the final answer.
+    const cleaned = (callResult || '').replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim()
+    finalContent = cleaned || 'I was unable to complete that request. Please try again.'
+    break
+  }
+
+  return { finalContent, messages }
+}
