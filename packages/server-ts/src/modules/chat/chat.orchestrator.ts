@@ -2,27 +2,6 @@ import { EventLog } from '../../core/event-log'
 import { makeLogger } from '../../common/logger.js'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../evolution/stores'
 import { MemoryProjection } from '../../retrieval/memory-projection'
-
-/** CJK-aware keyword extraction: latin tokens as-is, Chinese via 2-grams
- *  (split(/\s+/) does not segment Chinese — a whole sentence becomes one
- *  token and keyword overlap never matches). Stopwords are dropped. */
-function extractCjkKeywords(text: string): string[] {
-  const clean = text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ')
-  const STOP = /^(患者|病人|医生|这个|那个|我们|你们|他们|请问|没有|一下|的话)$/
-  const words = new Set<string>()
-  for (const token of clean.split(/\s+/)) {
-    if (!token) continue
-    if (/[\p{Script=Han}]/u.test(token)) {
-      for (let i = 0; i < token.length - 1; i++) {
-        const bigram = token.slice(i, i + 2)
-        if (!STOP.test(bigram) && /[\p{Script=Han}]/u.test(bigram)) words.add(bigram)
-      }
-    } else if (token.length >= 2 && token.length <= 6) {
-      words.add(token)
-    }
-  }
-  return [...words]
-}
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
 import { type TelemetryService, NoopTelemetryService } from '../knowledge/telemetry.service.js'
 import type { MemoryService } from '../../memory/memory.service.js'
@@ -56,25 +35,19 @@ export class ChatOrchestrator {
     const turnCount = sessionEvents.filter((e) => e.eventType === 'user_message').length
     this.episodesStore.upsert(sessionId, userMessage.slice(0, 150), turnCount)
 
-    // K6: Detect knowledge gaps on every turn — question-shaped messages
-    // (containing ?/？/如何/是否/为什么…) not covered by any fact.
+    // K6 (#645): gap detection lives in knowledge-gap.service (single
+    // source); postTurn just reports the outcome for telemetry/logging.
     try {
-      const QUESTION_RE = /[?？]|如何|怎样|怎么|为什么|为何|是否|是不是|有没有|是什么|哪些|哪个/
       const factList = this.memory
         ? this.memory.graph.getCurrentNodesByType('fact').filter((n): n is import('../../memory/memory.types').FactNode => n.type === 'fact')
         : this.factsStore.all()
-      const gapKeywords = extractCjkKeywords(userMessage)
-      const relatedFacts = factList.filter(f =>
-        gapKeywords.some(w => f.content.toLowerCase().includes(w))
-      )
-      if (relatedFacts.length === 0 && QUESTION_RE.test(userMessage) && userMessage.length > 5) {
-        await this.gapService.create({
-          userId,
-          workspaceId: userId,
-          content: userMessage.slice(0, 200),
-          source: 'chat',
-          sourceId: sessionId,
-        })
+      const created = await this.gapService.detectFromChat({
+        userId,
+        sessionId,
+        message: userMessage,
+        facts: factList,
+      })
+      if (created) {
         await this.telemetry.record({
           userId,
           workspaceId: userId,
@@ -82,7 +55,7 @@ export class ChatOrchestrator {
           action: 'created',
           metadata: { source: 'chat', sourceId: sessionId },
         }).catch(() => {})
-        console.log(`[GAP] Detected: "${userMessage.slice(0, 80)}"`)
+        log.info(`gap detected: "${userMessage.slice(0, 80)}"`)
       }
     } catch (err) {
       log.warn('gap detection skipped', { reason: (err as Error).message.slice(0, 100) })

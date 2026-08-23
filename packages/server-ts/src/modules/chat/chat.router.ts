@@ -1,27 +1,11 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import { getUserContext } from './user-context.js'
-import { chatSendSchema, memoryImportSchema } from './chat.dto.js'
-import { handleAgentChat } from './chat-handler.js'
-import { type EvolutionQueue } from '../evolution/evolution.queue.js'
+import { memoryImportSchema } from './chat.dto.js'
 
 
-export interface ChatRouterOptions {
-  evolutionQueue?: EvolutionQueue
-}
-
-
-export async function chatRouter(app: FastifyInstance, opts: ChatRouterOptions = {}) {
+export async function chatRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
-
-  app.post('/api/v1/agent/chat', async (request, reply) => {
-    // #349: zod-validated body — bad input is rejected at the entry.
-    const parsed = chatSendSchema.safeParse(request.body)
-    if (!parsed.success) {
-      return reply.status(400).send({ error: `Invalid request: ${parsed.error.issues[0]?.message || 'validation failed'}` })
-    }
-    await handleAgentChat(request, reply, { evolutionQueue: opts.evolutionQueue })
-  })
 
   // #6: Memory export
   app.get('/api/v1/memory/export', async (request, reply) => {

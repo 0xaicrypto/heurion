@@ -29,6 +29,17 @@ export interface ToolContext {
   eventLog: EventLog
   /** Current session id — write tools (edit_document) derive doc-{docId}. */
   sessionId?: string
+  /**
+   * #666: plugin availability port — provided by the modules layer
+   * (conversation-turn), keeps `tools/` free of `modules/*` imports.
+   * Absent port ⇒ gated tools are treated as unavailable.
+   */
+  isPluginInstalled?: (pluginId: string) => Promise<boolean>
+  /**
+   * #666: plugin config port (browser-agent worker url/token/approval) —
+   * same layering rationale; absent port ⇒ defaults are used.
+   */
+  getPluginConfig?: (pluginId: string) => Promise<Record<string, unknown>>
 }
 
 /**
@@ -103,13 +114,14 @@ export class ToolRegistry {
     const pluginId = PLUGIN_GATED_TOOLS[name]
     if (!pluginId) return true
     if (this.gatedAvailability[name] !== undefined) return this.gatedAvailability[name]!
+    const port = this.ctx.isPluginInstalled
     let available = false
-    try {
-      const { listInstalledPlugins } = await import('../modules/plugins/plugin-installation.service.js')
-      const installed = await listInstalledPlugins(this.ctx.userId)
-      available = installed.some((i) => i.pluginId === pluginId && i.enabled)
-    } catch {
-      available = false
+    if (port) {
+      try {
+        available = await port(pluginId)
+      } catch {
+        available = false
+      }
     }
     this.gatedAvailability[name] = available
     return available

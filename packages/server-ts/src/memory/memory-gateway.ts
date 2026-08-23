@@ -98,7 +98,10 @@ export {
   registerContextResolver,
   registerProposalApplier,
   getProposalApplier,
+  registerProposalCreatedHandler,
+  getProposalCreatedHandler,
   defaultProposalApplier,
   type ContextResolver,
   type ProposalApplier,
+  type ProposalCreatedHandler,
 } from './registry.js'

@@ -21,7 +21,7 @@ interface WorkerResponse {
 }
 
 export class BrowserTaskTool extends BaseTool {
-  constructor(private ctx: { userId: string }) { super() }
+  constructor(private ctx: { userId: string; getPluginConfig?: (pluginId: string) => Promise<Record<string, unknown>> }) { super() }
 
   get name(): string { return 'browser_task' }
   get description(): string {
@@ -50,8 +50,9 @@ export class BrowserTaskTool extends BaseTool {
     let workerToken = ''
     let approvalMode = 'allow'
     try {
-      const { getPluginConfig } = await import('../modules/plugins/plugin-installation.service.js')
-      const config = await getPluginConfig(this.ctx.userId, 'heurion/browser-agent')
+      const config = this.ctx.getPluginConfig
+        ? await this.ctx.getPluginConfig('heurion/browser-agent')
+        : {}
       workerUrl = String(config.worker_url || '').replace(/\/$/, '')
       workerToken = String(config.worker_token || '')
       if (config.approval_mode === 'ask' || config.approval_mode === 'deny') {

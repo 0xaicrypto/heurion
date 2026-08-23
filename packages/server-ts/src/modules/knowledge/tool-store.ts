@@ -1,6 +1,8 @@
 /**
- * P10 — Tool Store (for auto-created tools). P8/P9 (knowledge cascade /
- * gap queue) moved to the Prisma-backed knowledge-gap.service.
+ * #645: auto-created tool store (formerly evolution/cascade-gaps.ts — the
+ * file name described the removed P8/P9 knowledge-cascade, not its actual
+ * content). Moved under modules/knowledge where its only consumer
+ * (knowledge-stores.router) lives. Note: in-memory Map — not persisted.
  */
 
 export interface ToolRecord {

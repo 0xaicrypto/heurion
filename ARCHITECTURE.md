@@ -20,13 +20,52 @@ worker ──S3/MinIO──▶ rendered files                        presigned U
 
 | Package | Role |
 |---|---|
-| `contracts` | **Single source of truth**: render-content schemas (zod), SSE chat event union, wire message shapes, retrieval tool names (#438) |
+| `contracts` | **Single source of truth**: render-content schemas (zod), SSE chat event union, wire message shapes (incl. `UserProfile`, #668), retrieval tool names (#438) |
 | `server-ts` | Control plane: chat pipeline, tools (BaseTool + registry), plugins (catalog/install/capability/audit), memory (graph/facts/proposals), files, execution-plane client |
 | `worker` | Execution plane: document/office rendering (docx/pptx/pdf/table/plot), job store (persistent JSONL, #446), honest download URLs (#447), completion webhook (#449) |
 | `python-stats-worker` | Authoritative statistics (scipy/statsmodels/lifelines) behind the `StatsEngine` strategy (#445) |
 | `embedding-server` | Local ONNX embeddings (bge-m3 default, #442) |
-| `web` | React frontend: zustand stores, SSE via shared parser (#457), ChatMessages component shared by all chat surfaces (#456), composed ApiClient (#458) |
-| `sdk-client` | Typed client surface shared with the web app |
+| `web` | React frontend: zustand stores, SSE via shared parser (#457), ChatMessages component shared by all chat surfaces (#456), composed ApiClient (#458). Shared wire types come from `contracts` (#668) |
+
+## server-ts 分层与依赖规则 (#672)
+
+```
+common/  core/          leaf — zero imports from modules/tools/memory/retrieval
+   │
+memory/  retrieval/    cross-cutting domains — may import common/core, never modules/*
+   │
+tools/                 may import common/core/memory/retrieval, never modules/*
+   │                     (plugin ports injected via ToolContext — #666)
+   ▼
+modules/*              may import common/core/memory/retrieval/tools;
+                       peers may cross-import ONLY in one direction where the
+                       orchestrator needs it (chat → knowledge, #666) — keep the
+                       cross-module edge list to a minimum and documented
+```
+
+Enforcement so far (manual greps, #666/#672):
+- `common/` → zero imports from `modules/`, `tools/`, `memory/`, `retrieval/`
+- `tools/` → zero imports from `modules/` (port injection: `isPluginInstalled` /
+  `getPluginConfig` in `ToolContext`; pure crypto in `common/chart-token.ts` +
+  `common/settings-encryption.ts`)
+- `modules/*` → peer cross-imports: only `chat → knowledge` (knowledge-inject,
+  gap detection)
+- Pure crypto/util helpers used by both tools and modules live in `common/`
+  (never import a `.router.ts` for non-HTTP functions — #666)
+
+## 会话后提取器与触发时机 (#645)
+
+| 提取器 | 触发 | 产物 |
+|---|---|---|
+| `memory/compaction/runner.ts` | 会话预算超限压缩、会话关闭 Tier-3 flush | facts 入库 |
+| `modules/memorization/chat-ingester.service.ts` | 聊天回合后异步 | 记忆提案 |
+| `modules/memorization/clinical-extractor.service.ts` | evolution worker 回合后 | 临床实体 |
+| `modules/patients/clinical-analysis.ts` | 聊天回合内 | 病历更新 |
+| `modules/practitioner/session-takeaway.service.ts` | 会话关闭 | 要点摘要 |
+| `modules/knowledge/sidecar-feedback.service.ts` | sidecar 反馈 | 知识库文章 |
+
+gap 检测仅存一处：`knowledge-gap.service.ts`（含 `detectFromChat`，纯逻辑在
+`modules/knowledge/gap-detect.ts`）— 由 chat.orchestrator.postTurn 调用。
 
 ## Key designs
 

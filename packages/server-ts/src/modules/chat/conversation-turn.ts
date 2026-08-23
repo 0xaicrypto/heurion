@@ -22,6 +22,7 @@ import { estimateTokens } from '../../common/token-estimate.js'
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
 import { ContextAssembler } from './context-assembler.js'
 import { ToolRegistry, type ToolContext } from '../../tools/tool-registry.js'
+import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
 import { runToolCallLoop, type TurnIO } from './tool-loop.js'
 import {
   loadHistoryBudget,
@@ -392,6 +393,13 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     knowledge: ctx.knowledge,
     eventLog: ctx.eventLog,
     sessionId: sid,
+    // #666: plugin-gated tool availability (render_chart / render_scene /
+    // browser_task) — modules layer provides the port, tools stay decoupled.
+    isPluginInstalled: async (pluginId) => {
+      const installed = await listInstalledPlugins(userId)
+      return installed.some((i) => i.pluginId === pluginId && i.enabled)
+    },
+    getPluginConfig: (pluginId) => getPluginConfig(userId, pluginId),
   }
   const toolRegistry = new ToolRegistry(toolCtx)
   // #454-followup: plugin-gated renderers (render_chart / render_scene)

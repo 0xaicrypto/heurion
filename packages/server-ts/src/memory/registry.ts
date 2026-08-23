@@ -37,6 +37,24 @@ export function getProposalApplier(): ProposalApplier | null {
   return proposalApplier
 }
 
+/**
+ * #666: approval-request side effect (approvals module) — inverted via a
+ * module-level hook so `memory/` never imports `modules/*`. Registered once
+ * by user-context.ts; ProposalService invokes it after persisting a
+ * proposal.
+ */
+export type ProposalCreatedHandler = (userId: string, proposal: MemoryProposalRow) => void | Promise<void>
+
+let proposalCreatedHandler: ProposalCreatedHandler | null = null
+
+export function registerProposalCreatedHandler(fn: ProposalCreatedHandler): void {
+  proposalCreatedHandler = fn
+}
+
+export function getProposalCreatedHandler(): ProposalCreatedHandler | null {
+  return proposalCreatedHandler
+}
+
 // Default applier: fact/article → memory service write via the resolver.
 export function defaultProposalApplier(userId: string, proposal: MemoryProposalRow): MemoryNode | null {
   const ctx = contextResolver?.(userId)

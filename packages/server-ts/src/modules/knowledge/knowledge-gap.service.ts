@@ -163,6 +163,32 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
     return mapPrismaToGap(row)
   }
 
+  /**
+   * #645: chat post-turn detection (K6) — consolidated from the old inline
+   * logic in chat.orchestrator.postTurn. Creates a gap when the message is
+   * question-shaped and no existing fact's content overlaps its keywords.
+   * Returns true when a gap was created.
+   */
+  async detectFromChat(input: {
+    userId: string
+    sessionId: string
+    message: string
+    facts: Array<{ content: string }>
+  }): Promise<boolean> {
+    const { extractCjkKeywords, detectQuestionShaped } = await import('./gap-detect.js')
+    const keywords = extractCjkKeywords(input.message)
+    const covered = input.facts.some((f) => keywords.some((w) => f.content.toLowerCase().includes(w)))
+    if (covered || !detectQuestionShaped(input.message) || input.message.length <= 5) return false
+    await this.create({
+      userId: input.userId,
+      workspaceId: input.userId,
+      content: input.message.slice(0, 200),
+      source: 'chat',
+      sourceId: input.sessionId,
+    })
+    return true
+  }
+
   async list(options: GapListOptions): Promise<PaginatedGaps> {
     const where: any = { workspaceId: options.workspaceId }
     if (options.status && options.status !== 'all') {

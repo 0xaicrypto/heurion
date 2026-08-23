@@ -1,5 +1,11 @@
 # Heurion SDK — 设计文档
 
+> **ARCHIVED (#668, 2026-08-23)**: the `@heurion/sdk` runtime was removed in
+> #654 and the packages/sdk-client package itself was deleted in #668 — the
+> web app owns its ApiClient (`web/src/lib/api/domains/*`) and SSE parser
+> (`web/src/lib/sse.ts`); shared wire types live in `@heurion/contracts`.
+> This document is kept as historical record only.
+
 ## 目标
 
 前后端解耦，支持多种消费端:

@@ -91,12 +91,13 @@ export class ProposalService {
       },
     })
     try {
-      const { createApprovalRequest } = await import('../../modules/approvals/approval.service.js')
-      await createApprovalRequest(this.userId, {
-        targetType: 'MemoryProposal',
-        targetId: row.id,
-        payload: serializeProposal(row),
-      })
+      // #666: approval request enqueued via the module-level hook (wired by
+      // user-context) — memory layer never imports modules/*.
+      const { getProposalCreatedHandler } = await import('../registry.js')
+      const handler = getProposalCreatedHandler()
+      if (handler) {
+        await handler(this.userId, serializeProposal(row))
+      }
     } catch (err) {
       log.warn('approval request enqueue skipped', { reason: (err as Error).message.slice(0, 120) })
     }

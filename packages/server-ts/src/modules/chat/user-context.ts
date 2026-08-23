@@ -5,7 +5,8 @@ import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../ev
 import { ChatOrchestrator } from './chat.orchestrator.js'
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { MemoryService } from '../../memory/memory.service.js'
-import { defaultProposalApplier, registerContextResolver, registerProposalApplier } from '../../memory/memory-gateway.js'
+import { defaultProposalApplier, registerContextResolver, registerProposalApplier, registerProposalCreatedHandler } from '../../memory/memory-gateway.js'
+import { createApprovalRequest } from '../approvals/approval.service.js'
 // §5.4 (#197): persona lives in common/persona.ts (shared with memory gateway).
 import { buildScenePersona, type ChatScene } from '../../common/persona.js'
 export { buildPersona } from '../../common/persona.js'
@@ -40,6 +41,15 @@ registerContextResolver((applierUserId) => {
   }
 })
 registerProposalApplier(defaultProposalApplier)
+// #666: proposal→approval-request side effect wired from the modules layer
+// (memory/ never imports modules/*).
+registerProposalCreatedHandler(async (userId, proposal) => {
+  await createApprovalRequest(userId, {
+    targetType: 'MemoryProposal',
+    targetId: proposal.id,
+    payload: proposal,
+  })
+})
 
 export function evictUserContext(userId: string): void {
   const ctx = contexts.get(userId)

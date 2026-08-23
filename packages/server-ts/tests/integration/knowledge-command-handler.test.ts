@@ -2,11 +2,12 @@ import { describe, test, expect, beforeEach } from 'vitest'
 import {
   handleKnowledgeCommand,
   executeCommand,
-  keywordSearch,
   extractFactFromPayload,
   type CommandContext,
   type LLMSummarizer,
 } from '../../src/modules/knowledge/knowledge-command-handler'
+// #666: keywordSearch moved to the retrieval layer.
+import { keywordSearch } from '../../src/retrieval/keyword-search'
 import { FactsStore, KnowledgeStore } from '../../src/evolution/stores'
 import { InMemoryKnowledgeGapService } from '../../src/modules/knowledge/knowledge-gap.service'
 import fs from 'fs'

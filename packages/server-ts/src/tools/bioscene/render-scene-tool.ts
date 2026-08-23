@@ -88,7 +88,7 @@ LAYOUT RULES (bioscene mode, mandatory): coordinates are 0-100 (percent of canva
       // as render_chart).
       let url = `/api/v1/files/download/${fileId}`
       try {
-        const { issueChartToken } = await import('../../modules/files/files.router.js')
+        const { issueChartToken } = await import('../../common/chart-token.js')
         url = `${url}?token=${issueChartToken(fileId, this.ctx.userId)}`
       } catch {
         // token issuance unavailable — URL still works for API consumers
@@ -141,7 +141,7 @@ LAYOUT RULES (bioscene mode, mandatory): coordinates are 0-100 (percent of canva
 
       let url = `/api/v1/files/download/${fileId}`
       try {
-        const { issueChartToken } = await import('../../modules/files/files.router.js')
+        const { issueChartToken } = await import('../../common/chart-token.js')
         url = `${url}?token=${issueChartToken(fileId, this.ctx.userId)}`
       } catch {
         // token issuance unavailable — URL still works for API consumers

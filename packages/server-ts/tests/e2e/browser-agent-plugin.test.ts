@@ -8,6 +8,7 @@ import { deepseekChat } from '../../src/common/llm.js'
 import { ToolRegistry, PLUGIN_GATED_TOOLS } from '../../src/tools/tool-registry.js'
 import prisma from '../../src/common/prisma'
 import { getUserContext } from '../../src/modules/chat/user-context.js'
+import { listInstalledPlugins, getPluginConfig } from '../../src/modules/plugins/plugin-installation.service.js'
 import { EventLog } from '../../src/core/event-log.js'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../src/evolution/stores.js'
 
@@ -66,6 +67,7 @@ describe('browser-agent plugin (#486)', () => {
 
   function makeRegistry() {
     const ctx = getUserContext('u1')
+    // #666: plugin ports injected here exactly as conversation-turn wires them.
     return new ToolRegistry({
       userId: 'u1',
       memory: ctx.memory,
@@ -75,6 +77,11 @@ describe('browser-agent plugin (#486)', () => {
       knowledge: ctx.knowledge,
       eventLog: ctx.eventLog,
       sessionId: 's1',
+      isPluginInstalled: async (pluginId) => {
+        const installed = await listInstalledPlugins('u1')
+        return installed.some((i) => i.pluginId === pluginId && i.enabled)
+      },
+      getPluginConfig: (pluginId) => getPluginConfig('u1', pluginId),
     })
   }
 
@@ -204,9 +211,15 @@ describe('browser-agent approval mode (#486-followup)', () => {
 
   function makeRegistry() {
     const ctx = getUserContext('u1')
+    // #666: same port wiring as conversation-turn.
     return new ToolRegistry({
       userId: 'u1', memory: ctx.memory, facts: ctx.facts, episodes: ctx.episodes,
       skills: ctx.skills, knowledge: ctx.knowledge, eventLog: ctx.eventLog, sessionId: 's1',
+      isPluginInstalled: async (pluginId) => {
+        const installed = await listInstalledPlugins('u1')
+        return installed.some((i) => i.pluginId === pluginId && i.enabled)
+      },
+      getPluginConfig: (pluginId) => getPluginConfig('u1', pluginId),
     })
   }
 

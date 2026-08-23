@@ -5,7 +5,7 @@
  * 相关命中走 embedding 余弦。embedding 服务故障时自动回落纯词法。
  * 双 store(facts/knowledge 词法 vs graph/document 向量)在此收敛。
  */
-import { keywordSearch } from '../modules/knowledge/knowledge-command-handler.js'
+import { keywordSearch } from './keyword-search.js'
 import type { FactsStore, KnowledgeStore } from '../evolution/stores.js'
 import { rrfFusion, type RrfCandidate } from './rrf-fusion.js'
 import type { EmbeddingService } from '../memory/embedding/embedding.service.js'

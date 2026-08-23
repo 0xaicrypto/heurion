@@ -108,7 +108,7 @@ export class RenderChartTool extends BaseTool {
       // query token so the chart renders inside documents and chat.
       let url = `/api/v1/files/download/${fileId}`
       try {
-        const { issueChartToken } = await import('../modules/files/files.router.js')
+        const { issueChartToken } = await import('../common/chart-token.js')
         url = `${url}?token=${issueChartToken(fileId, userId)}`
       } catch {
         // token issuance unavailable — URL still works for API consumers

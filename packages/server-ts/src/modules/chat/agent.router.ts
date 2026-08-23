@@ -1,144 +1,52 @@
-import { FastifyInstance } from 'fastify'
+/**
+ * #667: single router for the whole `/api/v1/agent/*` surface.
+ * Previously fragmented across chat.router.ts (agent/chat),
+ * session-agent.router.ts (state/timeline/activity/messages/…) and
+ * deep-analysis.router.ts (agent/deep-analysis) — one prefix, one file.
+ */
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import { MAX_HISTORY_TOKENS } from './chat-context.js'
 import { getUserContext } from './user-context.js'
+import { chatSendSchema } from './chat.dto.js'
+import { handleAgentChat } from './chat-handler.js'
+import { type EvolutionQueue } from '../evolution/evolution.queue.js'
+import { createSseSender } from './chat-sse.js'
+import { runSubAgent } from '../../tools/subagent-runner.js'
+import { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 
-export async function sessionRouter(app: FastifyInstance) {
-  app.addHook('preHandler', authGuard)
-
-  app.get('/api/v1/sessions', async (request) => {
-    const includeArchived = (request.query as any).include_archived === '1'
-    const scope = (request.query as any).scope
-    // Writing sessions (doc-*) are internal namespaces — never list them;
-    // legacy global-* default sessions were removed as a concept.
-    const where: any = {
-      userId: request.user!.userId,
-      archived: includeArchived ? undefined : 0,
-      NOT: { id: { startsWith: 'doc-' } },
-    }
-    if (scope) where.scope = scope
-    const allRows = await prisma.session.findMany({
-      where,
-      orderBy: { lastMessageAt: 'desc' },
-    })
-    const rows = allRows.filter((s: any) => !String(s.id).startsWith('global-'))
-    return {
-      sessions: rows.map(s => ({
-        id: s.id, title: s.title,
-        scope: s.scope, patient_hash: s.patientHash,
-        status: s.status,
-        created_at: s.createdAt, updated_at: s.lastMessageAt,
-        closed_at: s.closedAt,
-        archived: s.archived === 1, message_count: s.messageCount,
-      })),
-    }
-  })
-
-  app.post('/api/v1/sessions', async (request) => {
-    const { title, scope, patient_hash } = request.body as any
-    const id = `session_${Math.random().toString(36).slice(2, 10)}`
-    const now = new Date().toISOString()
-    await prisma.session.create({
-      data: {
-        id, userId: request.user!.userId,
-        title: title || 'New Session',
-        scope: scope === 'patient' ? 'patient' : 'global',
-        patientHash: patient_hash || null,
-        status: 'open',
-        createdAt: now,
-      },
-    })
-    return {
-      id, title: title || 'New Session',
-      scope: scope === 'patient' ? 'patient' : 'global',
-      patient_hash: patient_hash || null,
-      status: 'open',
-      created_at: now, message_count: 0, archived: false,
-    }
-  })
-
-  /**
-   * Close a session: summarize the conversation into the pending queue
-   * (sync, so the summary is durable before cleanup), then remove the
-   * session's event-log data. status → closed, no more writes.
-   */
-  app.post('/api/v1/sessions/:sessionId/close', async (request, reply) => {
-    const { sessionId } = request.params as any
-    const userId = request.user!.userId
-    const now = new Date().toISOString()
-
-    const updated = await prisma.session.updateMany({
-      where: { id: sessionId, userId, status: 'open' },
-      data: { status: 'closed', closedAt: now },
-    })
-    let patientHash: string | undefined
-    if (updated.count === 0) {
-      const existing = await prisma.session.findFirst({ where: { id: sessionId, userId } })
-      if (!existing) {
-        // Legacy global-* default-session namespaces: the concept was
-        // removed — closing one deletes its row outright so it can never
-        // reappear in the session list.
-        if (sessionId.startsWith('global-')) {
-          await prisma.session.deleteMany({ where: { id: sessionId, userId } })
-        } else {
-          return reply.status(404).send({ error: 'Session not found' })
-        }
-      } else {
-        return { id: sessionId, status: existing.status, already: true }
-      }
-    } else {
-      const row = await prisma.session.findFirst({ where: { id: sessionId, userId } })
-      patientHash = row?.patientHash ?? undefined
-    }
-
-    // 1) Tier-3 flush: extract any segment not yet covered by the
-    //     incremental cursor or a compaction, before the event log is wiped
-    //     (short sessions must not lose memory).
-    let flushed = 0
-    try {
-      const ctx = getUserContext(userId)
-      flushed = await ctx.orchestrator.extractUnextractedSegment(userId, sessionId, patientHash)
-      if (flushed > 0) console.log(`[SESSION] ${flushed} facts flushed on close`)
-    } catch (err) {
-      console.log('[SESSION] close flush failed:', (err as Error).message.slice(0, 120))
-    }
-
-    // 2) Clean up the session's event-log data.
-    let cleaned = 0
-    try {
-      const { getUserContext } = await import('./user-context.js')
-      const ctx = getUserContext(userId)
-      cleaned = ctx.eventLog.deleteSession(sessionId)
-    } catch (err) {
-      console.log('[SESSION] event cleanup failed:', (err as Error).message.slice(0, 120))
-    }
-
-    return { id: sessionId, status: 'closed', closed_at: now, flushed_facts: flushed, cleaned_events: cleaned }
-  })
-
-  app.delete('/api/v1/sessions/:sessionId', async (request, reply) => {
-    // 边界审计（#253）: userId-scoped; a miss must 404, never a silent 200.
-    const deleted = await prisma.session.deleteMany({ where: { id: (request.params as any).sessionId, userId: request.user!.userId } })
-    if (deleted.count === 0) {
-      return reply.status(404).send({ error: 'Session not found' })
-    }
-    return {}
-  })
+export interface AgentRouterOptions {
+  evolutionQueue?: EvolutionQueue
 }
 
-export async function agentRouter(app: FastifyInstance) {
+const TOPIC_TASKS: Record<string, string> = {
+  literature: 'Review the medical literature for this question and summarize the best available evidence (studies, guidelines, citations with PMIDs).',
+  stats: 'Analyze the available data statistically: recommend a test, run it on any retrieved data, and report the result with p-values and effect sizes.',
+  clinical: 'Analyze the patient context clinically: findings, medications, contradictions, and next-step recommendations consistent with guidelines.',
+}
+
+export async function agentRouter(app: FastifyInstance, opts: AgentRouterOptions = {}) {
   app.addHook('preHandler', authGuard)
 
+  // ── Chat ────────────────────────────────────────────────────────────
+  app.post('/api/v1/agent/chat', async (request, reply) => {
+    // #349: zod-validated body — bad input is rejected at the entry.
+    const parsed = chatSendSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: `Invalid request: ${parsed.error.issues[0]?.message || 'validation failed'}` })
+    }
+    await handleAgentChat(request, reply, { evolutionQueue: opts.evolutionQueue })
+  })
+
+  // ── State / timeline / activity ─────────────────────────────────────
   app.get('/api/v1/agent/state', async (request) => {
     const ctx = getUserContext(request.user!.userId)
     return {
       user_id: request.user!.userId,
-      on_chain: false,
       memory_count: ctx.facts.all().length,
       episode_count: ctx.episodes.all().length,
       skill_count: ctx.skills.all().filter((s: any) => s.successCount > 0).length,
-      anchored_count: 0, pending_anchor_count: 0, failed_anchor_count: 0, total_anchor_count: 0,
       server_time: new Date().toISOString(),
     }
   })
@@ -285,6 +193,7 @@ export async function agentRouter(app: FastifyInstance) {
     return { logged: true, names }
   })
 
+  // ── Message / tool replay ───────────────────────────────────────────
   app.get('/api/v1/agent/messages', async (request) => {
     const ctx = getUserContext(request.user!.userId)
     const sessionId = (request.query as any).session_id
@@ -366,6 +275,103 @@ export async function agentRouter(app: FastifyInstance) {
       history_turns: historyTurns,
       omitted_turns: omittedTurns,
       will_compact: omittedTurns > 0 || history.length >= historyTurns * 2,
+    }
+  })
+
+  // ── Parallel deep analysis (#420) ───────────────────────────────────
+  app.post('/api/v1/agent/deep-analysis', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { patient_hash, topics, context, question } = request.body as {
+      patient_hash?: string
+      topics?: string[]
+      context?: string
+      question?: string
+    }
+    const selected = (topics || ['literature', 'clinical']).filter((t) => TOPIC_TASKS[t])
+    if (selected.length === 0) return reply.status(400).send({ error: 'no valid topics (literature|stats|clinical)' })
+    const questionText = question || String((request.body as any)?.text || '')
+    if (!questionText.trim()) return reply.status(400).send({ error: 'question required' })
+
+    const userId = request.user!.userId
+    const ctx = { ...getUserContext(userId), userId }
+    const scope = patient_hash ? `patient:${patient_hash}` : 'global'
+
+    const sender = createSseSender(reply)
+    const send = sender.send
+
+    // Kick off all sub-agents in parallel; each failure is isolated.
+    const results = await Promise.all(
+      selected.map(async (topic) => {
+        const task = `${TOPIC_TASKS[topic]}\n\nQuestion: ${questionText}${context ? `\nContext: ${context.slice(0, 2000)}` : ''}`
+        send({ type: 'subagent_started', task: topic, scope })
+        const sessionId = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        try {
+          const res = await runSubAgent({ task, scope, context }, ctx)
+          await (prisma as any).subAgentSession.create({
+            data: {
+              id: sessionId, userId, task, scope, topic,
+              summary: res.summary, status: 'done',
+              turns: res.turns, costTokens: res.costTokens, createdAt: new Date().toISOString(),
+            },
+          })
+          send({ type: 'subagent_done', task: topic, success: true, cost_tokens: res.costTokens })
+          return { topic, summary: res.summary, turns: res.turns, costTokens: res.costTokens, failed: false }
+        } catch (err) {
+          const msg = (err as Error).message.slice(0, 200)
+          await (prisma as any).subAgentSession.create({
+            data: {
+              id: sessionId, userId, task, scope, topic,
+              summary: `FAILED: ${msg}`, status: 'failed', turns: 0, costTokens: 0, createdAt: new Date().toISOString(),
+            },
+          })
+          send({ type: 'subagent_done', task: topic, success: false })
+          return { topic, summary: `FAILED: ${msg}`, turns: 0, costTokens: 0, failed: true }
+        }
+      }),
+    )
+
+    // Synthesize one combined answer (主 agent 聚合).
+    send({ type: 'context_info', text: '所有子任务完成，正在汇总…', kind: 'router' })
+    const ok = results.filter((r) => !r.failed)
+    const failed = results.filter((r) => r.failed)
+    const totalCost = results.reduce((a, r) => a + r.costTokens, 0)
+
+    let summary = ''
+    if (ok.length > 0) {
+      try {
+        const parts = ok.map((r) => `## ${r.topic}\n${r.summary}`).join('\n\n')
+        const synth = await deepseekChat(
+          [{ role: 'user', content: `Combine the following sub-agent findings into one comprehensive answer for the doctor, with clear per-topic sections and clinical implications. Question: ${questionText}\n\n${parts}` }],
+          getApiKey(),
+          { model: DEEPSEEK_CHAT_MODEL, maxTokens: 2000, telemetryContext: { userId, workspaceId: userId, action: 'deep_analysis.synthesize' } },
+        )
+        summary = synth.trim()
+      } catch {
+        summary = ok.map((r) => `**[${r.topic}]** ${r.summary}`).join('\n\n')
+      }
+    }
+    if (failed.length > 0) {
+      summary += `\n\n⚠️ 以下子任务失败（不影响其他）：${failed.map((f) => f.topic).join(', ')}`
+    }
+
+    send({ type: 'final_answer_chunk', text: summary })
+    send({ type: 'subagent_done', task: 'synthesis', success: true, cost_tokens: totalCost })
+    send({ type: 'turn_complete' })
+    sender.end()
+  })
+
+  // ── Sub-agent session history ──────────────────────────────────────
+  app.get('/api/v1/agent/subagent-sessions', async (request: FastifyRequest) => {
+    const rows = await (prisma as any).subAgentSession.findMany({
+      where: { userId: request.user!.userId },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+    })
+    return {
+      sessions: rows.map((r: any) => ({
+        id: r.id, task: r.task, topic: r.topic, scope: r.scope,
+        summary: r.summary, status: r.status, turns: r.turns,
+        cost_tokens: r.costTokens, created_at: r.createdAt,
+      })),
     }
   })
 }

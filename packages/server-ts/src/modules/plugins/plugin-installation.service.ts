@@ -4,7 +4,7 @@ import {
   decryptSettingValue,
   encryptSettingValue,
   transformSecretValues,
-} from './plugin-settings-encryption.service.js'
+} from '../../common/settings-encryption.js'
 
 export interface InstalledPluginView {
   pluginId: string

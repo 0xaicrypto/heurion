@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Activity, AlertCircle, FilePlus, FileText, UserPlus } from 'lucide-react';
+import { Activity, FilePlus, FileText, Sparkles, UserPlus } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { PendingIngestionsWidget } from '@/components/today/PendingIngestionsWidget';
@@ -105,12 +105,12 @@ export function TodayPage() {
               </Card>
               <Card className="p-4">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-error/10 text-error">
-                    <AlertCircle size={20} />
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                    <Sparkles size={20} />
                   </div>
                   <div>
-                    <p className="text-2xl font-bold text-text-primary">{state?.failed_anchor_count ?? 0}</p>
-                    <p className="text-sm text-text-secondary">{t('today.unresolvedConflicts')}</p>
+                    <p className="text-2xl font-bold text-text-primary">{state?.skill_count ?? 0}</p>
+                    <p className="text-sm text-text-secondary">{t('today.skills')}</p>
                   </div>
                 </div>
               </Card>

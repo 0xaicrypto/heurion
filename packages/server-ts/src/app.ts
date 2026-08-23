@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import Fastify from 'fastify'
 import fastifyCors from '@fastify/cors'
 import fastifyMultipart from '@fastify/multipart'
 import fastifyStatic from '@fastify/static'
@@ -6,11 +7,11 @@ import { existsSync, readFileSync } from 'fs'
 import { config } from './config.js'
 import { authRouter } from './modules/auth/auth.router.js'
 import { chatRouter } from './modules/chat/chat.router.js'
-import { sessionRouter, agentRouter } from './modules/chat/session-agent.router.js'
+import { agentRouter } from './modules/chat/agent.router.js'
+import { sessionRouter } from './modules/chat/session.router.js'
 import { patientsRouter } from './modules/patients/patients.router.js'
 import { researchRouter } from './modules/research/research.router.js'
 import { submissionRouter } from './modules/submission/submission.router.js'
-import { deepAnalysisRouter } from './modules/chat/deep-analysis.router.js'
 import { mcpAdminRouter } from './modules/settings/mcp-admin.router.js'
 import { documentsRouter } from './modules/documents/documents.router.js'
 import { skillsRouter } from './modules/skills/skills.router.js'
@@ -49,17 +50,14 @@ export interface AppOptions {
 }
 
 export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance> {
-  const app = require('fastify')({ logger: true })
+  const app = Fastify({ logger: true })
 
   // ── Wire up LLM cost telemetry once per process ──
   setLlmTelemetryService(new PrismaTelemetryService())
 
   // ── Evolution queue (BullMQ/Redis in prod, in-memory in tests/offline) ──
   const evolutionQueue = opts.evolutionQueue ?? (await createDefaultEvolutionQueue())
-  if ('setProcessor' in evolutionQueue) {
-    ;(evolutionQueue as any).setProcessor(processEvolutionTurn)
-  }
-  ;(app as any).evolutionQueue = evolutionQueue
+  evolutionQueue.setProcessor?.(processEvolutionTurn)
 
   // ── Global error handler ──
   app.setErrorHandler((err: Error, _req: FastifyRequest, reply: FastifyReply) => {
@@ -82,11 +80,10 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   // ── Routes ──
   await app.register(authRouter)
   await app.register(sessionRouter)
-  await app.register(agentRouter)
-  await app.register(chatRouter, { evolutionQueue })
+  await app.register(agentRouter, { evolutionQueue })
+  await app.register(chatRouter)
   await app.register(researchRouter)
   await app.register(submissionRouter)
-  await app.register(deepAnalysisRouter)
   await app.register(mcpAdminRouter)
   await app.register(documentsRouter)
   await app.register(skillsRouter)

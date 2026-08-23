@@ -4,7 +4,7 @@ import {
   decryptSettingValue,
   encryptSettingValue,
   transformSecretValues,
-} from '../plugins/plugin-settings-encryption.service'
+} from '../../common/settings-encryption'
 import { createExecutionPlaneService } from '../execution/execution-plane.service'
 import { buildInputSummary, recordPluginInvocation } from '../plugins/plugin-audit-log.service'
 
