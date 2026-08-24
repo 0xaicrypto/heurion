@@ -199,9 +199,11 @@ export async function documentsRouter(app: FastifyInstance) {
     const title = doc.title || 'Untitled'
     const body = doc.body || ''
 
+    // #fix: 双格式导出共享块解析器;传 userId 以便内嵌图从本用户
+    // uploads 目录读取并嵌入导出文件。
     const buffer = format === 'pdf'
-      ? await renderPdfBuffer(title, body)
-      : await renderDocxBuffer(title, body)
+      ? await renderPdfBuffer(title, body, userId)
+      : await renderDocxBuffer(title, body, userId)
 
     const safeName = (doc.title || 'document').replace(/[^a-z0-9\u4e00-\u9fa5 _-]/gi, '_').trim() || 'document'
     const asciiName = safeName.replace(/[^\x20-\x7E]/g, '_')

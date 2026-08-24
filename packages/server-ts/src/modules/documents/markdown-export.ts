@@ -1,14 +1,18 @@
 /**
  * Markdown → docx/pdf export for documents (#fix: export 曾只支持 docx、
- * 表格/图片以原始 markdown 文本导出 — 现支持 docx+pdf 双格式,表格结构化)。
+ * 表格/图片以原始 markdown 文本导出 — 现支持 docx+pdf 双格式,表格结构化,
+ * 内嵌图(document 托管的 /api/v1/files/download 图片)嵌入导出文件)。
  *
  * Shared block parser feeds two renderers: docx (via `docx` lib) and pdf
  * (via pdfkit). Inline markdown (bold/italic/code) is handled by both;
- * images degrade to a placeholder line (no binary embedding).
+ * images are read from the uploads dir and embedded (webp/gif/bmp 经 sharp
+ * 转 png 后嵌入 — docx/pdfkit 不支持 webp)。
  */
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table as DocxTable, TableRow as DocxTableRow, TableCell as DocxTableCell, WidthType } from 'docx'
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table as DocxTable, TableRow as DocxTableRow, TableCell as DocxTableCell, WidthType, ImageRun } from 'docx'
 import PDFDocument from 'pdfkit'
 import fs from 'fs'
+import path from 'path'
+import sharp from 'sharp'
 
 export type ExportBlock =
   | { kind: 'heading'; level: number; text: string }
@@ -18,6 +22,7 @@ export type ExportBlock =
   | { kind: 'code'; lines: string[] }
   | { kind: 'hr' }
   | { kind: 'blank' }
+  | { kind: 'image'; url: string; alt: string }
   | { kind: 'table'; headers: string[]; rows: string[][] }
 
 export type ExportFormat = 'docx' | 'pdf'
@@ -101,6 +106,14 @@ export function parseMarkdownBlocks(body: string): ExportBlock[] {
       continue
     }
 
+    // Image: ![alt](/api/v1/files/download/<fileId>?token=…)
+    const imageMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/)
+    if (imageMatch) {
+      blocks.push({ kind: 'image', url: imageMatch[2], alt: imageMatch[1] })
+      i++
+      continue
+    }
+
     if (!line.trim()) {
       blocks.push({ kind: 'blank' })
       i++
@@ -172,7 +185,53 @@ export function parseInlineMarkdown(text: string): any[] {
 
 // ── docx renderer ────────────────────────────────────────────────────────
 
-export async function renderDocxBuffer(title: string, body: string): Promise<Buffer> {
+interface ExportImage {
+  buffer: Buffer
+  type: 'png' | 'jpg' | 'gif' | 'bmp'
+  width: number
+  height: number
+}
+
+/**
+ * #fix: 把文档内的托管图片 URL(/api/v1/files/download/<fileId>)解析为
+ * 嵌入导出的位图。只接受本用户 uploads 目录内的文件(safeUploadPath
+ * 防穿越);webp/未知格式经 sharp 转 png(docx/pdfkit 不支持 webp);
+ * 尺寸读 metadata,长边限 1600px(docx 96dpi 下约 16.7 英寸)。
+ */
+export async function loadExportImage(userId: string, url: string): Promise<ExportImage | null> {
+  try {
+    const parsed = new URL(url, 'http://local')
+    const m = parsed.pathname.match(/^\/api\/v1\/files\/download\/([^/]+)$/)
+    if (!m) return null
+    const fileId = decodeURIComponent(m[1])
+    if (fileId.includes('..') || fileId.includes('/') || fileId.includes('\\')) return null
+
+    const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads', fileId)
+    if (!fs.existsSync(filepath)) return null
+
+    let buffer = fs.readFileSync(filepath)
+    const ext = fileId.split('.').pop()?.toLowerCase() || ''
+    let type: ExportImage['type']
+    if (ext === 'png') type = 'png'
+    else if (ext === 'jpg' || ext === 'jpeg') type = 'jpg'
+    else if (ext === 'gif') type = 'gif'
+    else if (ext === 'bmp') type = 'bmp'
+    else {
+      buffer = await sharp(buffer).png().toBuffer()
+      type = 'png'
+    }
+
+    const meta = await sharp(buffer).metadata()
+    const srcW = meta.width || 300
+    const srcH = meta.height || 300
+    const scale = Math.min(1, 1600 / Math.max(srcW, srcH))
+    return { buffer, type, width: Math.round(srcW * scale), height: Math.round(srcH * scale) }
+  } catch {
+    return null
+  }
+}
+
+export async function renderDocxBuffer(title: string, body: string, userId?: string): Promise<Buffer> {
   const blocks = parseMarkdownBlocks(body)
   const children: any[] = []
 
@@ -235,6 +294,23 @@ export async function renderDocxBuffer(title: string, body: string): Promise<Buf
       case 'blank':
         children.push(new Paragraph({ spacing: { before: 60 }, children: [] }))
         break
+      case 'image': {
+        const img = userId ? await loadExportImage(userId, block.url) : null
+        if (img) {
+          children.push(new Paragraph({
+            alignment: 'center',
+            spacing: { before: 120, after: 120 },
+            children: [new ImageRun({ type: img.type, data: img.buffer, transformation: { width: img.width, height: img.height } })],
+          }))
+        } else {
+          children.push(new Paragraph({
+            alignment: 'center',
+            spacing: { before: 120, after: 120 },
+            children: [new TextRun({ text: block.alt || '[图片]', italics: true, color: '888888' })],
+          }))
+        }
+        break
+      }
       case 'table': {
         const row = (cells: string[], isHeader: boolean) => new DocxTableRow({
           tableHeader: isHeader,
@@ -315,7 +391,7 @@ function stripLinks(text: string): string {
   return text.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
 }
 
-export async function renderPdfBuffer(title: string, body: string): Promise<Buffer> {
+export async function renderPdfBuffer(title: string, body: string, userId?: string): Promise<Buffer> {
   const blocks = parseMarkdownBlocks(body)
   const buffers: Buffer[] = []
   const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true })
@@ -404,6 +480,25 @@ export async function renderPdfBuffer(title: string, body: string): Promise<Buff
       case 'blank':
         doc.moveDown(0.4)
         break
+      case 'image': {
+        const img = userId ? await loadExportImage(userId, block.url) : null
+        if (img) {
+          try {
+            doc.image(img.buffer, {
+              fit: [doc.page.width - 100, doc.page.height - 160],
+              align: 'center',
+            })
+            doc.moveDown(0.3)
+          } catch {
+            writeInline(block.alt || '[图片]')
+            doc.moveDown(0.3)
+          }
+        } else {
+          writeInline(block.alt || '[图片]')
+          doc.moveDown(0.3)
+        }
+        break
+      }
       case 'table': {
         renderPdfTable(doc, baseFont, block.headers, block.rows)
         break
