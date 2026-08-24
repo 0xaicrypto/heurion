@@ -504,6 +504,53 @@ export async function extractDocumentMarkdownFromUpload(
   return buffer.toString('utf-8').slice(0, maxChars).trim()
 }
 
+export interface ExtractedMarkdownContent {
+  text: string
+  images: ExtractedPdfImage[]
+}
+
+/**
+ * #fix: 导入文档专用提取(markdown + 内嵌图片)— PDF/DOCX 的图片同时抽出,
+ * 供导入时落盘为可托管文件并在文档里渲染(取代 [图] 占位符)。
+ * - PDF → pdfTextToMarkdown 结构恢复 + extractPdfContentFromUpload 内嵌图
+ * - DOCX → mammoth markdown(含 [图] 占位)+ data URI 图
+ * - txt/md → 原样,无图
+ */
+export async function extractDocumentMarkdownWithImagesFromUpload(
+  userId: string,
+  fileId: string,
+  options: { maxChars?: number } = {},
+): Promise<ExtractedMarkdownContent> {
+  const filepath = safeUploadPath(userId, fileId)
+  if (!filepath || !fs.existsSync(filepath)) return { text: '', images: [] }
+  const maxChars = options.maxChars ?? 300000
+
+  const stat = fs.statSync(filepath)
+  if (stat.size > MAX_EXTRACT_FILE_BYTES) {
+    const name = fileId.split('_').slice(1).join('_') || fileId
+    return {
+      text: `[附件 ${name} 超过 ${Math.round(MAX_EXTRACT_FILE_BYTES / 1024 / 1024)}MB，已跳过文本提取以避免服务崩溃；请压缩后重新上传]`,
+      images: [],
+    }
+  }
+
+  const buffer = fs.readFileSync(filepath)
+  const originalName = fileId.split('_').slice(1).join('_') || fileId
+  const sniffed = sniffDocumentMime(buffer)
+
+  if (sniffed === 'application/pdf' || isPdf(originalName)) {
+    const pdf = await extractPdfContentFromUpload(userId, fileId, { maxChars, vision: true })
+    return { text: pdfTextToMarkdown(pdf?.text || ''), images: pdf?.images || [] }
+  }
+
+  if (sniffed === 'application/zip' || isDocx(originalName)) {
+    const docx = await extractDocxContentFromUpload(userId, fileId, { maxChars, vision: true })
+    return { text: docx?.text || '', images: docx?.images || [] }
+  }
+
+  return { text: buffer.toString('utf-8').slice(0, maxChars).trim(), images: [] }
+}
+
 // #fix: PDF 内嵌图片提取 — getImage 抽出原始位图(图表/照片/示意图),
 // 视觉模型下作为多模态 part 随文本一起注入,AI 看到的不再是
 // "图 3 显示…" 这类占位文字,而是图本身。上限为常量防止 token 超支:

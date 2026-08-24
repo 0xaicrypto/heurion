@@ -6,7 +6,7 @@ import zlib from 'zlib'
 import crypto from 'crypto'
 import PDFDocument from 'pdfkit'
 import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun, ImageRun } from 'docx'
-import { extractTextFromUpload, extractPdfImagesFromUpload, extractDocxContentFromUpload, extractImageUpload, sniffDocumentMime, pdfTextToMarkdown, extractDocumentMarkdownFromUpload } from '../../src/lib/document-extractor.js'
+import { extractTextFromUpload, extractPdfImagesFromUpload, extractDocxContentFromUpload, extractImageUpload, sniffDocumentMime, pdfTextToMarkdown, extractDocumentMarkdownFromUpload, extractDocumentMarkdownWithImagesFromUpload } from '../../src/lib/document-extractor.js'
 import { buildAttachmentParts, MAX_ATTACHMENT_IMAGES } from '../../src/modules/chat/chat-context.js'
 
 /** 生成一张合法 PNG(RGB,无压缩选项) — 测试用最小实现。 */
@@ -329,6 +329,54 @@ describe('#fix 导入格式保留 pdfTextToMarkdown 结构恢复', () => {
       const md = await extractDocumentMarkdownFromUpload('u1', fileId)
       expect(md).toContain('## 研究背景')
       expect(md).toContain('| 指标 | 数值 |')
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+      delete process.env.TWIN_BASE_DIR
+    }
+  })
+
+  test('#fix 导入图片托管:PDF 内嵌图随 markdown 一起抽出(供落盘渲染)', async () => {
+    const tmpDir = path.join(os.tmpdir(), `heurion-pdfimgmd-${Date.now()}`)
+    const uploadsDir = path.join(tmpDir, 'u1', 'uploads')
+    process.env.TWIN_BASE_DIR = tmpDir
+    fs.mkdirSync(uploadsDir, { recursive: true })
+    try {
+      const fileId = '1750000000302_fig.pdf'
+      fs.writeFileSync(path.join(uploadsDir, fileId), await makePdfWithImage())
+      const { text, images } = await extractDocumentMarkdownWithImagesFromUpload('u1', fileId)
+      expect(text.length).toBeGreaterThan(0)
+      expect(images.length).toBeGreaterThanOrEqual(1)
+      expect(images[0].dataBase64.length).toBeGreaterThan(100)
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+      delete process.env.TWIN_BASE_DIR
+    }
+  })
+
+  test('#fix 导入图片托管:DOCX 内嵌图抽出且文本保留 [图] 占位(供替换)', async () => {
+    const tmpDir = path.join(os.tmpdir(), `heurion-docximgmd-${Date.now()}`)
+    const uploadsDir = path.join(tmpDir, 'u1', 'uploads')
+    process.env.TWIN_BASE_DIR = tmpDir
+    fs.mkdirSync(uploadsDir, { recursive: true })
+    try {
+      const doc = new Document({
+        sections: [{
+          children: [
+            new Paragraph({ text: 'results section' }),
+            new Paragraph({ children: [new ImageRun({ type: 'png', data: makePng(50, 50), transformation: { width: 50, height: 50 } })] }),
+            new Paragraph({ text: 'text after image' }),
+          ],
+        }],
+      })
+      const fileId = '1750000000303_fig.docx'
+      fs.writeFileSync(path.join(uploadsDir, fileId), await Packer.toBuffer(doc))
+      const { text, images } = await extractDocumentMarkdownWithImagesFromUpload('u1', fileId)
+      expect(text).toContain('results section')
+      expect(text).toContain('text after image')
+      expect(text).not.toContain('data:image')
+      expect(text).toContain('图')
+      expect(images.length).toBe(1)
+      expect(images[0].mime).toBe('image/png')
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true })
       delete process.env.TWIN_BASE_DIR

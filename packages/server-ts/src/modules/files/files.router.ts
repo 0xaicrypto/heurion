@@ -561,7 +561,15 @@ app.get('/api/v1/files/download/:fileId', async (request, reply) => {
   const filepath = safeUploadPath(ownerUserId, fileId)
   if (!filepath || !fs.existsSync(filepath)) return reply.status(404).send({ error: 'File not found' })
 
-  const mime = fileId.endsWith('.svg') ? 'image/svg+xml' : 'application/octet-stream'
+  // #fix: 文档内嵌图(img_* 落盘文件)按扩展名给 MIME — 之前只有 svg,
+  // 其余全当 octet-stream,<img> 在部分浏览器拒绝渲染。
+  const ext = fileId.split('.').pop()?.toLowerCase() || ''
+  const mimeByExt: Record<string, string> = {
+    svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', pdf: 'application/pdf',
+    txt: 'text/plain', md: 'text/markdown', csv: 'text/csv',
+  }
+  const mime = mimeByExt[ext] || 'application/octet-stream'
   reply.header('Content-Type', mime)
   reply.header('Cache-Control', 'public, max-age=3600')
 

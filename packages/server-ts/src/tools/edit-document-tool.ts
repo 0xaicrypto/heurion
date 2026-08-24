@@ -1,6 +1,7 @@
 import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
-import { extractDocumentMarkdownFromUpload } from '../lib/document-extractor.js'
+import { extractDocumentMarkdownWithImagesFromUpload, type ExtractedPdfImage } from '../lib/document-extractor.js'
+import { issueChartToken } from '../common/chart-token.js'
 import fs from 'fs'
 import path from 'path'
 
@@ -103,9 +104,12 @@ export class EditDocumentTool extends BaseTool {
             }).catch(() => null)
           : null
         const fileId = byIndex?.id || this.findUploadByFileName(this.ctx.userId, String(hit.r.snapshot || ''))
-        // #fix: 导入走 markdown 提取 — PDF 恢复标题/段落结构,DOCX 保留
-        // mammoth 结构,文档画布(TipTap)才能正确渲染而不是一坨平铺文本。
-        if (fileId) text = await extractDocumentMarkdownFromUpload(this.ctx.userId, fileId)
+        // #fix: 导入走 markdown+图片提取 — PDF 恢复标题/段落结构,DOCX 保留
+        // mammoth 结构;内嵌图落盘为托管文件并在文档里渲染(取代 [图])。
+        const extracted = fileId
+          ? await extractDocumentMarkdownWithImagesFromUpload(this.ctx.userId, fileId)
+          : { text: '', images: [] }
+        text = this.embedDocumentImages(docId, extracted.text, extracted.images)
         if (!text) text = `[无法从参考材料 ${hit.label} 提取正文]`
       } else {
         text = String(hit.r.snapshot || '')
@@ -219,5 +223,66 @@ export class EditDocumentTool extends BaseTool {
       if (derived === name) return f
     }
     return null
+  }
+
+  /**
+   * #fix: 内嵌图 → 文档托管图片。图片落盘为 uploads/img_<docId>_<n>.<ext>,
+   * 签发 chart token(绑定文件+所有者,<img> 无鉴权头也能加载),生成
+   * ![图 N](/api/v1/files/download/...?token=...) markdown。
+   * 替换顺序:
+   *   1) DOCX 的 [图]/\[图\] 占位符按序替换;
+   *   2) 剩余图片按 "Figure N / 图 N" 标题行就近插入(PDF 常见);
+   *   3) 仍未插入的追加到文末 "## 图" 段。
+   */
+  private embedDocumentImages(docId: string, text: string, images: ExtractedPdfImage[]): string {
+    if (!images.length) return text
+
+    const extByMime: Record<string, string> = {
+      'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp',
+      'image/gif': 'gif', 'image/bmp': 'bmp',
+    }
+    const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', this.ctx.userId, 'uploads')
+    fs.mkdirSync(dir, { recursive: true })
+
+    const urls = images.map((img, i) => {
+      const ext = extByMime[img.mime] || 'png'
+      const fileId = `img_${docId}_${i + 1}.${ext}`
+      fs.writeFileSync(path.join(dir, fileId), Buffer.from(img.dataBase64, 'base64'))
+      const token = issueChartToken(fileId, this.ctx.userId)
+      return `/api/v1/files/download/${fileId}?token=${token}`
+    })
+
+    let body = text
+    let used = 0
+    // 1) DOCX 占位符 [图] / \[图\](turndown 转义方括号)按序替换。
+    body = body.replace(/\\?\[图\\?\]/g, () => {
+      if (used < urls.length) {
+        const n = used + 1
+        used++
+        return `![图 ${n}](${urls[n - 1]})`
+      }
+      return '[图]'
+    })
+
+    // 2) 剩余图片按 Figure/图 标题行就近插入(PDF 文本没有占位符)。
+    if (used < urls.length) {
+      const lines = body.split('\n')
+      const outLines: string[] = []
+      for (const line of lines) {
+        outLines.push(line)
+        if (used < urls.length && /^\s*(?:Figure|Fig\.?|图)\s*\d+/i.test(line)) {
+          used++
+          outLines.push(`![图 ${used}](${urls[used - 1]})`)
+        }
+      }
+      body = outLines.join('\n')
+    }
+
+    // 3) 仍未插入的追加到文末。
+    if (used < urls.length) {
+      const leftover = urls.slice(used).map((u, i) => `![图 ${used + 1 + i}](${u})`).join('\n\n')
+      body = `${body}\n\n## 图\n${leftover}`
+    }
+    return body
   }
 }

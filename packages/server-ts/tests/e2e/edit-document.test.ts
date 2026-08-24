@@ -3,6 +3,8 @@ import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getApp, authHeader, getAuthUserId } from '../setup.js'
 import prisma from '../../src/common/prisma.js'
 import { EditDocumentTool } from '../../src/tools/edit-document-tool.js'
+import fs from 'fs'
+import path from 'path'
 
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
 
@@ -218,4 +220,91 @@ describe('#171 edit_document tool', () => {
     expect(result.error).toContain('未找到参考材料')
     expect(result.error).toContain('ESMO 指南')
   }, 30000)
+
+  test('#fix 导入图片托管:带内嵌图的 DOCX 导入后,图片落盘并在正文渲染为 markdown 图片', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '')
+
+    // 生成带内嵌 PNG 的 DOCX 并上传。
+    const { Document, Packer, Paragraph, ImageRun } = await import('docx')
+    const zlib = await import('zlib')
+    const makePng = (w: number, h: number): Buffer => {
+      const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      const chunk = (type: string, data: Buffer): Buffer => {
+        const t = Buffer.from(type, 'ascii')
+        const len = Buffer.alloc(4)
+        len.writeUInt32BE(data.length)
+        const crc = Buffer.alloc(4)
+        crc.writeUInt32BE(zlib.crc32(Buffer.concat([t, data])) >>> 0)
+        return Buffer.concat([len, t, data, crc])
+      }
+      const ihdr = Buffer.alloc(13)
+      ihdr.writeUInt32BE(w, 0)
+      ihdr.writeUInt32BE(h, 4)
+      ihdr[8] = 8
+      ihdr[9] = 2
+      const scanlines = Buffer.alloc((w * 3 + 1) * h)
+      for (let y = 0; y < h; y++) {
+        scanlines[y * (w * 3 + 1)] = 0
+        for (let x = 0; x < w; x++) {
+          const off = y * (w * 3 + 1) + 1 + x * 3
+          scanlines[off] = 200
+          scanlines[off + 1] = 30
+          scanlines[off + 2] = 60
+        }
+      }
+      return Buffer.concat([signature, chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(scanlines)), chunk('IEND', Buffer.alloc(0))])
+    }
+    const doc = new Document({
+      sections: [{
+        children: [
+          new Paragraph({ text: 'results section' }),
+          new Paragraph({ children: [new ImageRun({ type: 'png', data: makePng(50, 50), transformation: { width: 50, height: 50 } })] }),
+          new Paragraph({ text: 'text after image' }),
+        ],
+      }],
+    })
+    const docxBuf = await Packer.toBuffer(doc)
+
+    const boundary = `----imgimport${Date.now()}`
+    const uploadForm = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="fig.docx"\r\nContent-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document\r\n\r\n`),
+      docxBuf,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    const upload = await app.inject({
+      method: 'POST',
+      url: '/api/v1/files/upload',
+      headers: { ...await authHeader(), 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: uploadForm,
+    })
+    expect(upload.statusCode).toBe(200)
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/references`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ kind: 'file', content: 'fig.docx', label: 'fig.docx' }),
+    })
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ import_reference: 'fig.docx' })
+    expect(result.success).toBe(true)
+    const parsed = JSON.parse(result.output as string)
+    // 正文保留文本 + 图片渲染为托管 markdown。
+    expect(parsed.body).toContain('results section')
+    expect(parsed.body).toContain('text after image')
+    expect(parsed.body).not.toContain('data:image')
+    const imgMatch = parsed.body.match(/!\[图 1\]\(\/api\/v1\/files\/download\/(img_[^?]+\.png)\?token=([^)]+)\)/)
+    expect(imgMatch).toBeTruthy()
+    // 图片文件已落盘,且带 token 的下载接口可渲染(无鉴权头)。
+    const imgFileId = imgMatch![1]
+    expect(fs.existsSync(path.join(process.env.TWIN_BASE_DIR!, userId, 'uploads', imgFileId))).toBe(true)
+    const imgRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/files/download/${imgFileId}?token=${imgMatch![2]}`,
+    })
+    expect(imgRes.statusCode).toBe(200)
+    expect(imgRes.headers['content-type']).toBe('image/png')
+  }, 60000)
 })
