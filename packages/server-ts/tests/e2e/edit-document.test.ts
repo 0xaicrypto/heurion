@@ -85,4 +85,65 @@ describe('#171 edit_document tool', () => {
     expect(res.payload).toContain('"type":"doc_updated"')
     expect(res.payload).toContain('新文档内容')
   }, 30000)
+
+  test('#fix 分步润色:range 模式 old_text/new_text 局部替换,其余内容不动', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const body = '摘要部分。\n\n研究方法部分内容。\n\n结论部分。'
+    const docId = await createDoc(app, body)
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({
+      old_text: '研究方法部分内容。',
+      new_text: '改进后的研究方法部分内容。',
+      summary: '润色方法部分',
+    })
+    expect(result.success).toBe(true)
+    const parsed = JSON.parse(result.output as string)
+    expect(parsed.body).toBe('摘要部分。\n\n改进后的研究方法部分内容。\n\n结论部分。')
+    expect(parsed.summary).toBe('润色方法部分')
+
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.body).toBe('摘要部分。\n\n改进后的研究方法部分内容。\n\n结论部分。')
+    const snap = await (prisma as any).docSnapshot.findFirst({ where: { docId }, orderBy: { createdAt: 'desc' } })
+    expect(snap.body).toBe(body)
+  }, 30000)
+
+  test('#fix range 模式:old_text 未找到 → 报错并给文档开头片段帮助修正锚点', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '摘要部分。\n\n正文部分。')
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ old_text: '不存在的句子', new_text: 'x' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('未找到')
+    expect(result.error).toContain('摘要部分')
+
+    // 文档未被改动
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.body).toBe('摘要部分。\n\n正文部分。')
+  }, 30000)
+
+  test('#fix range 模式:old_text 多处匹配 → 报错要求唯一锚点', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '重复句。\n\n重复句。')
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ old_text: '重复句。', new_text: '改后句。' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('多次')
+  }, 30000)
+
+  test('#fix range 模式:old_text 与 new_text 相同 → 报错不产生空快照', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '内容。')
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ old_text: '内容。', new_text: '内容。' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('没有任何变化')
+  }, 30000)
 })

@@ -273,7 +273,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           }),
         })
         const refBlock = refBlocks.join('\n\n')
-        return `\n\n## Current Document\n标题：${doc.title}\n\n${fitTextToTokens(String(doc.body || ''), CONTEXT_CONFIG.scene.docBodyTokens)}\n\n## Reference Materials\n${refBlock || '(none)'}\n\n规则：用户在编辑这份文档。回答用中文；当用户要求修改文档时，调用 edit_document 工具写回完整的新文档内容（markdown）。`
+        // #fix: 长文档分步润色工作流 — 引导模型局部编辑 + 逐步推进,
+        // 而不是对超出输出上限的整篇文档做全量重写。
+        return `\n\n## Current Document\n标题：${doc.title}\n\n${fitTextToTokens(String(doc.body || ''), CONTEXT_CONFIG.scene.docBodyTokens)}\n\n## Reference Materials\n${refBlock || '(none)'}\n\n规则：用户在编辑这份文档。回答用中文。修改文档时优先用 edit_document 的 old_text/new_text 做局部编辑（old_text 必须从上方 Current Document 中逐字复制，改完立刻请用户确认）。\n\n长文档润色流程：用户要求润色/修改长文档时，不要一次性全量重写。步骤：1) 先精确定位第一部分要改的原文（old_text）；2) 用局部编辑替换，并在回复里说明改了什么；3) 询问用户“继续修改下一部分吗？”；4) 用户确认后继续下一部分，直到全部完成。\n\n只有文档很短（整体在当前上下文内）且用户明确要求全文重写时，才用 full_text 全量替换。如果文档超过上下文预算看不到后续内容，明确告知用户当前可见范围，并请用户提供下一段原文或分段处理。`
       },
     },
     {
