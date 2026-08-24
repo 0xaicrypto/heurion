@@ -34,8 +34,11 @@ export async function runToolCallLoop(params: {
   ctx: Awaited<ReturnType<typeof getUserContext>>
   userId: string
   sessionId: string
+  /** #fix: 本回合模型覆盖(视觉模型自适应) — 缺省用 DEEPSEEK_PREMIUM_MODEL。 */
+  model?: string
 }): Promise<{ finalContent: string; messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }> }> {
   const { currentMessages, toolRegistry, tools, io, ctx, userId, sessionId } = params
+  const turnModel = params.model || DEEPSEEK_PREMIUM_MODEL
 
   // R3 — tool-call persistence: per-session sequence numbers continue
   // across turns (and process restarts) by deriving from the log.
@@ -89,7 +92,7 @@ export async function runToolCallLoop(params: {
       messages,
       params.apiKey,
       {
-        model: DEEPSEEK_PREMIUM_MODEL,
+        model: turnModel,
         telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
         signal: io.signal,
       },

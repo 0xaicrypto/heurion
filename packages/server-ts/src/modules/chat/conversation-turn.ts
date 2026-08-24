@@ -14,10 +14,10 @@ import prisma from '../../common/prisma'
 import { makeLogger } from '../../common/logger.js'
 import type { ChatScene } from '../../common/persona.js'
 import { deepseekStream, LlmTruncatedError, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
-import { providerSupportsVision, resolveActiveModel, type ChatContentPart } from '../../common/llm-gateway.js'
+import type { ChatContentPart } from '../../common/llm-gateway.js'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
-import { buildAttachmentParts, buildDocReferenceBlocks, enforceTotalBudget, selectProjectionInputs, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from './chat-context.js'
+import { buildAttachmentParts, buildDocReferenceBlocks, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from './chat-context.js'
 import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
 import { ContextAssembler } from './context-assembler.js'
@@ -75,12 +75,22 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
 
   // #2/#544: 附件 → 对话内容(图片多模态/超限降级/文本注入)由
   // buildAttachmentParts 纯函数处理;事件说明在此发送。
-  // #fix: 视觉能力按当前生效模型判定(deepseek-v4-flash 支持多模态;
-  // deepseek-chat/reasoner 纯文本)。buildAttachmentParts 据此决定
-  // 图片 part / PDF 内嵌图片是否注入。
+  // #fix: 视觉能力按本回合实际调用模型判定,并做模型自适应 — 图片附件
+  // + 当前模型纯文本时自动切换到视觉模型(deepseek/opencode 同源端点),
+  // 否则按文本降级提示。
+  const turnModel = DEEPSEEK_PREMIUM_MODEL
+  const hasImageAttachments = await detectImageAttachments(userId, body.attachments)
+  const { model: visionModel, vision, switched } = pickVisionTurnModel({ turnModel, hasImages: hasImageAttachments })
+  if (switched) {
+    send({
+      type: 'context_info',
+      text: `当前模型 ${turnModel} 不支持图片输入,已自动切换到视觉模型 ${visionModel} 处理本回合`,
+      kind: 'attachment',
+    })
+  }
   const { parts: userParts, attachmentText, notes: attachmentNotes } = await buildAttachmentParts(body.attachments, {
     userId,
-    vision: providerSupportsVision(undefined, resolveActiveModel()),
+    vision,
   })
   for (const note of attachmentNotes) {
     send({ type: 'context_info', text: note, kind: 'attachment' })
@@ -427,6 +437,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     ctx,
     userId,
     sessionId: sid,
+    model: visionModel,
   })
 
   // Stream the final response
@@ -441,7 +452,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     // Fallback: use streaming for the response
     try {
       for await (const chunk of deepseekStream(loopMessages, apiKey, {
-        model: DEEPSEEK_PREMIUM_MODEL,
+        model: visionModel,
         telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
         signal: chatAbort.signal,
       }, (reasoning) => send({ type: 'reasoning_chunk', text: reasoning }))) {

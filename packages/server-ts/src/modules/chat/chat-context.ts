@@ -8,7 +8,7 @@ import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js' // #637 集中配置
 import { router } from '../../retrieval/query-router.js'
 import { getUserContext } from './user-context.js'
-import type { ChatContentPart } from '../../common/llm-gateway.js'
+import { providerSupportsVision, modelSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { extractTextFromUpload, extractImageUpload, isImageFile, isPdf, extractPdfContentFromUpload, type ExtractedPdfImage } from '../../lib/document-extractor.js'
 import type { ChatScene } from '../../common/persona.js'
@@ -270,13 +270,16 @@ export async function buildAttachmentParts(
   let imageBytes = 0
   for (const att of rawAttachments || []) {
     const fid = typeof att === 'string' ? att : (att.file_id || att.fileId || '')
-    const name = typeof att === 'string' ? fid.split('_').slice(1).join('_') : (att.name || '')
+    // #fix: 对象形式缺 name 时按 fileId 还原原始文件名。
+    const name = typeof att === 'string'
+      ? fid.split('_').slice(1).join('_')
+      : (att.name || fid.split('_').slice(1).join('_') || '')
     if (!fid) continue
     // #511-followup: 非视觉 provider 不读文件(仅按文件名判定)。
-    const probe: { mime?: string; dataBase64?: string; oversized?: boolean; noVision?: boolean } | null =
-      opts.vision
-        ? await extractImageUpload(opts.userId, fid)
-        : (isImageFile(name) ? { noVision: true } : null)
+  const probe: { mime?: string; dataBase64?: string; oversized?: boolean; noVision?: boolean } | null =
+    opts.vision
+      ? await extractImageUpload(opts.userId, fid)
+      : (isImageFile(name) ? { noVision: true } : null)
     if (probe?.mime && probe.dataBase64) {
       if (imageCount >= MAX_ATTACHMENT_IMAGES || imageBytes + probe.dataBase64.length > MAX_ATTACHMENT_IMAGE_BYTES) {
         attachmentText += `\n[ATTACHMENT: ${name}] (image — 超出单条消息图片上限 ${MAX_ATTACHMENT_IMAGES} 张 / ${Math.round(MAX_ATTACHMENT_IMAGE_BYTES / 1024 / 1024)}MB,已降级为文件名)\n`
@@ -390,4 +393,53 @@ export async function buildDocReferenceBlocks(
     blocks.push(`${header}\n${snapshot.slice(0, CONTEXT_CONFIG.scene.docRefChars)}`)
   }
   return { blocks, resolved }
+}
+
+/**
+ * #fix: 附件中是否含位图图片 — 视觉模型切换的依据。PDF 走文本路径即可
+ * (文本层解析不依赖视觉),仅位图(png/jpg/gif/webp/avif)需要视觉模型。
+ * 名称判定不读文件,与 buildAttachmentParts 的探针逻辑一致。
+ */
+export async function detectImageAttachments(
+  userId: string,
+  rawAttachments: AttachmentWire[] | undefined,
+): Promise<boolean> {
+  for (const att of rawAttachments || []) {
+    const fid = typeof att === 'string' ? att : (att.file_id || att.fileId || '')
+    // #fix: 对象形式缺 name 时按 fileId 还原原始文件名(与字符串形式同口径)。
+    const name = typeof att === 'string'
+      ? fid.split('_').slice(1).join('_')
+      : (att.name || fid.split('_').slice(1).join('_') || '')
+    if (!fid) continue
+    if (isImageFile(name)) return true
+  }
+  return false
+}
+
+function envModel(envKey: string, fallback: string): string {
+  return process.env[envKey] || fallback
+}
+
+/**
+ * #fix: 视觉模型自适应 — 图片附件 + 当前回合模型纯文本时,自动切换到
+ * 视觉模型。仅在 deepseek/opencode(同源 OpenAI 兼容端点)内切换;
+ * 跨 provider 换模型会请求错端点,宁可按文本降级提示。无图或当前
+ * 模型本就支持视觉 → 原样返回。
+ */
+export function pickVisionTurnModel(opts: { turnModel: string; hasImages: boolean }): { model: string; vision: boolean; switched: boolean } {
+  const vision = providerSupportsVision(undefined, opts.turnModel)
+  if (!opts.hasImages || vision) return { model: opts.turnModel, vision, switched: false }
+  const prov = (process.env.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase()
+  if (prov === 'deepseek' || prov === 'opencode') {
+    const candidates = [
+      envModel('DEEPSEEK_PREMIUM_MODEL', 'deepseek-v4-flash'),
+      envModel('DEEPSEEK_CHAT_MODEL', 'deepseek-v4-flash'),
+    ]
+    for (const candidate of candidates) {
+      if (candidate !== opts.turnModel && modelSupportsVision(candidate)) {
+        return { model: candidate, vision: true, switched: true }
+      }
+    }
+  }
+  return { model: opts.turnModel, vision, switched: false }
 }
