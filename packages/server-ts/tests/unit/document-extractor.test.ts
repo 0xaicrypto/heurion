@@ -6,7 +6,7 @@ import zlib from 'zlib'
 import crypto from 'crypto'
 import PDFDocument from 'pdfkit'
 import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun, ImageRun } from 'docx'
-import { extractTextFromUpload, extractPdfImagesFromUpload, extractDocxContentFromUpload, extractImageUpload, sniffDocumentMime } from '../../src/lib/document-extractor.js'
+import { extractTextFromUpload, extractPdfImagesFromUpload, extractDocxContentFromUpload, extractImageUpload, sniffDocumentMime, pdfTextToMarkdown, extractDocumentMarkdownFromUpload } from '../../src/lib/document-extractor.js'
 import { buildAttachmentParts, MAX_ATTACHMENT_IMAGES } from '../../src/modules/chat/chat-context.js'
 
 /** 生成一张合法 PNG(RGB,无压缩选项) — 测试用最小实现。 */
@@ -245,6 +245,94 @@ describe('#fix(参考 opencode) magic bytes 嗅探 + sharp 图片归一化', () 
     expect((probe as any).mime).toBe('image/webp')
     // 压缩后 base64 显著小于原图(远低于 4MB 上限)。
     expect((probe as any).dataBase64.length).toBeLessThan(bigPng.length)
+  })
+})
+
+describe('#fix 导入格式保留 pdfTextToMarkdown 结构恢复', () => {
+  test('英文标题 → ##,跨行段落按行尾标点合并(补空格)', () => {
+    const pdf = [
+      'Abstract',
+      'Background: some first line of the abstract',
+      'that continues here without a period at the end',
+      'and finishes here.',
+      '',
+      'Methods',
+      'We enrolled patients from 2020 to 2024.',
+    ].join('\n')
+    const md = pdfTextToMarkdown(pdf)
+    expect(md).toContain('## Abstract')
+    expect(md).toContain('## Methods')
+    expect(md).toContain('Background: some first line of the abstract that continues here without a period at the end and finishes here.')
+  })
+
+  test('中文标题与中文段落拼接(不加空格)', () => {
+    const md = pdfTextToMarkdown('摘要\n这是摘要的第一行\n继续的第二行。\n\n方法\n这是方法。')
+    expect(md).toContain('## 摘要')
+    expect(md).toContain('## 方法')
+    expect(md).toContain('这是摘要的第一行继续的第二行。')
+  })
+
+  test('编号标题识别,普通数字行不被误判', () => {
+    const md = pdfTextToMarkdown('1. Introduction\nText.\n\n1.1 Background\nMore text.\n\n10 patients were enrolled.')
+    expect(md).toContain('## 1. Introduction')
+    expect(md).toContain('## 1.1 Background')
+    expect(md).not.toContain('## 10 patients')
+    expect(md).toContain('10 patients were enrolled.')
+  })
+
+  test('重复标题(页眉/页脚)只保留第一次', () => {
+    const md = pdfTextToMarkdown('Methods\ncontent one.\n\nMethods\ncontent two.\n\nDiscussion\nfinal.')
+    expect(md).toContain('## Methods')
+    expect(md).toContain('content two.')
+    expect(md.match(/## Methods/g)!.length).toBe(1)
+  })
+
+  test('extractDocumentMarkdownFromUpload:PDF 导入走结构恢复(段落合并)', async () => {
+    const tmpDir = path.join(os.tmpdir(), `heurion-mdimport-${Date.now()}`)
+    const uploadsDir = path.join(tmpDir, 'u1', 'uploads')
+    process.env.TWIN_BASE_DIR = tmpDir
+    fs.mkdirSync(uploadsDir, { recursive: true })
+    try {
+      const fileId = '1750000000300_paper.pdf'
+      fs.writeFileSync(path.join(uploadsDir, fileId), await makePdfWithImage())
+      const md = await extractDocumentMarkdownFromUpload('u1', fileId)
+      expect(md.length).toBeGreaterThan(0)
+      // pdfkit 无 ToUnicode 会出乱码,标题检测不可靠 — 验证段落合并生效:
+      // 原文多行(标题/表格文本)被合并为单个段落(无空行分隔)。
+      expect(md.split('\n\n').length).toBe(1)
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+      delete process.env.TWIN_BASE_DIR
+    }
+  })
+
+  test('extractDocumentMarkdownFromUpload:DOCX 保留标题/表格(markdown 结构)', async () => {
+    const tmpDir = path.join(os.tmpdir(), `heurion-docximport-${Date.now()}`)
+    const uploadsDir = path.join(tmpDir, 'u1', 'uploads')
+    process.env.TWIN_BASE_DIR = tmpDir
+    fs.mkdirSync(uploadsDir, { recursive: true })
+    try {
+      const doc = new Document({
+        sections: [{
+          children: [
+            new Paragraph({ text: '研究背景', heading: HeadingLevel.HEADING_2 }),
+            new Table({
+              rows: [
+                new TableRow({ children: [new TableCell({ children: [new Paragraph('指标')] }), new TableCell({ children: [new Paragraph('数值')] })] }),
+              ],
+            }),
+          ],
+        }],
+      })
+      const fileId = '1750000000301_report.docx'
+      fs.writeFileSync(path.join(uploadsDir, fileId), await Packer.toBuffer(doc))
+      const md = await extractDocumentMarkdownFromUpload('u1', fileId)
+      expect(md).toContain('## 研究背景')
+      expect(md).toContain('| 指标 | 数值 |')
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+      delete process.env.TWIN_BASE_DIR
+    }
   })
 })
 

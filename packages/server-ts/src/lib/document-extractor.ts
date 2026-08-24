@@ -381,6 +381,129 @@ export async function extractTextFromUpload(
   return extractDocumentText(buffer, originalName, undefined, options)
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// #fix: PDF 纯文本 → markdown 结构恢复(导入文档用)。
+// pdf-parse 的 getText 只给平铺文本行,标题/段落边界全部丢失。恢复层:
+//   1. 章节标题(中英常见标题 + 编号标题)→ `## `(同一标题重复出现视为
+//      页眉/页脚,跳过);
+//   2. 按行尾标点重建段落 — 行尾无句子标点则与下一行合并(英文补空格,
+//      中文直接拼接),OCR 文本同样适用。
+// 表格无法从平铺文本可靠还原(单元格对齐信息已丢失),保持现状。
+// ────────────────────────────────────────────────────────────────────────────
+
+const PDF_SECTION_HEADINGS = new Set([
+  // 英文期刊常见章节
+  'abstract', 'introduction', 'background', 'materials and methods', 'methods', 'method',
+  'results', 'discussion', 'conclusions', 'conclusion', 'references', 'bibliography',
+  'acknowledgements', 'acknowledgments', 'limitations', 'keywords', 'key words',
+  'summary', 'appendix', 'funding', 'conflicts of interest', 'supplementary materials',
+  // 中文期刊常见章节
+  '摘要', '引言', '前言', '背景', '材料与方法', '方法', '研究对象', '结果', '讨论',
+  '结论', '参考文献', '致谢', '关键词', '局限性', '附录', '利益冲突', '统计学分析',
+])
+
+/** 常见章节标题(整行独立、长度 ≤40 才命中)。 */
+function isPdfHeadingLine(line: string): boolean {
+  const t = line.trim()
+  if (!t || t.length > 40) return false
+  if (PDF_SECTION_HEADINGS.has(t.toLowerCase())) return true
+  // 编号标题 — 两种形态:
+  //  a) "1. Introduction" / "1. 引言":数字 + 分隔符(点/顿号);
+  //  b) "1.1 Background" / "3.2.1 分析":点分组数字(含点),分隔符可省。
+  //  "10 patients were enrolled" 两种都不命中(无点分组、无分隔符)。
+  if (/^\d+[.．、]\s*[A-Za-z\u4e00-\u9fa5]/.test(t)) return true
+  if (/^\d+(\.\d+)+[.．、]?\s+[A-Za-z\u4e00-\u9fa5]/.test(t)) return true
+  // 中文编号标题:一、引言 / 1) 方法
+  if (/^[一二三四五六七八九十]+[、.．]\s*\S/.test(t)) return true
+  return false
+}
+
+function endsSentence(s: string): boolean {
+  return /[。！？；!?;…]$/.test(s.trim())
+}
+
+export function pdfTextToMarkdown(text: string): string {
+  const lines = (text || '').split('\n')
+  const out: string[] = []
+  let para: string[] = []
+  let lastHeading = ''
+
+  const flushPara = () => {
+    if (para.length > 0) {
+      out.push(para.join(''))
+      para = []
+    }
+  }
+
+  for (const raw of lines) {
+    const line = raw.trimEnd()
+    const trimmed = line.trim()
+    if (!trimmed) {
+      flushPara()
+      continue
+    }
+    if (isPdfHeadingLine(trimmed)) {
+      flushPara()
+      // 同一标题重复(页眉/页脚)只保留第一次。
+      if (lastHeading === trimmed) continue
+      lastHeading = trimmed
+      out.push(`## ${trimmed}`)
+      continue
+    }
+    if (para.length > 0 && !endsSentence(para[para.length - 1])) {
+      // 段落续行:英文单词间补空格,中文直接拼接。
+      const prev = para[para.length - 1]
+      const needsSpace = /[A-Za-z0-9]$/.test(prev) && /^[A-Za-z0-9]/.test(trimmed)
+      para[para.length - 1] = prev + (needsSpace ? ' ' : '') + trimmed
+    } else {
+      para.push(trimmed)
+    }
+  }
+  flushPara()
+  return out.join('\n\n')
+}
+
+/**
+ * #fix: 导入文档专用提取 — 输出保留结构的 markdown:
+ * - PDF/OCR 文本 → pdfTextToMarkdown(标题/段落恢复)
+ * - DOCX → mammoth 结构化 markdown(标题/加粗/GFM 表格)
+ * - txt/md → 原样
+ */
+export async function extractDocumentMarkdownFromUpload(
+  userId: string,
+  fileId: string,
+  options: { maxChars?: number } = {},
+): Promise<string> {
+  const filepath = safeUploadPath(userId, fileId)
+  if (!filepath || !fs.existsSync(filepath)) return ''
+  const maxChars = options.maxChars ?? 300000
+
+  const stat = fs.statSync(filepath)
+  if (stat.size > MAX_EXTRACT_FILE_BYTES) {
+    const name = fileId.split('_').slice(1).join('_') || fileId
+    return `[附件 ${name} 超过 ${Math.round(MAX_EXTRACT_FILE_BYTES / 1024 / 1024)}MB，已跳过文本提取以避免服务崩溃；请压缩后重新上传]`
+  }
+
+  const buffer = fs.readFileSync(filepath)
+  const originalName = fileId.split('_').slice(1).join('_') || fileId
+  const sniffed = sniffDocumentMime(buffer)
+
+  if (sniffed === 'application/pdf' || isPdf(originalName)) {
+    const text = await extractPdfText(buffer, {
+      maxChars,
+      ocrPageLimit: DEFAULT_OCR_PAGE_LIMIT,
+      ocrScale: DEFAULT_OCR_SCALE,
+    })
+    return pdfTextToMarkdown(text)
+  }
+
+  if (sniffed === 'application/zip' || isDocx(originalName)) {
+    return extractDocxText(buffer, maxChars)
+  }
+
+  return buffer.toString('utf-8').slice(0, maxChars).trim()
+}
+
 // #fix: PDF 内嵌图片提取 — getImage 抽出原始位图(图表/照片/示意图),
 // 视觉模型下作为多模态 part 随文本一起注入,AI 看到的不再是
 // "图 3 显示…" 这类占位文字,而是图本身。上限为常量防止 token 超支:

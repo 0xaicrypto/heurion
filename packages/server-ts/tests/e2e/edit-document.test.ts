@@ -156,6 +156,66 @@ describe('#171 edit_document tool', () => {
     const result = await tool.execute({ old_text: '论文摘要内容', new_text: '润色后的摘要' })
     expect(result.success).toBe(false)
     expect(result.error).toContain('文档正文为空')
-    expect(result.error).toContain('full_text')
+    expect(result.error).toContain('import_reference')
+  }, 30000)
+
+  test('#fix import 模式:把上传的参考材料正文导入空文档(分步润色前置步骤)', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '')
+
+    // 上传一个 txt 文件 + 挂为文档参考材料(模拟用户上传论文后"帮我润色")。
+    const boundary = `----imptest${Date.now()}`
+    const uploadForm = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="paper.txt"\r\nContent-Type: text/plain\r\n\r\n`),
+      Buffer.from('# 论文标题\n\n## 摘要\n\n这是摘要内容。\n\n## 方法\n\n这是方法内容。', 'utf-8'),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    const upload = await app.inject({
+      method: 'POST',
+      url: '/api/v1/files/upload',
+      headers: { ...await authHeader(), 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: uploadForm,
+    })
+    expect(upload.statusCode).toBe(200)
+    const fileId = JSON.parse(upload.payload).file_id
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/references`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ kind: 'file', content: 'paper.txt', label: 'paper.txt' }),
+    })
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ import_reference: 'paper.txt', summary: '导入论文' })
+    expect(result.success).toBe(true)
+    const parsed = JSON.parse(result.output as string)
+    expect(parsed.body).toContain('# 论文标题')
+    expect(parsed.body).toContain('## 摘要')
+    expect(parsed.body).toContain('这是方法内容。')
+    expect(parsed.summary).toContain('paper.txt')
+
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.body).toContain('## 方法')
+  }, 30000)
+
+  test('#fix import 模式:label 不存在时列出可用参考材料', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '')
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/references`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ kind: 'note', content: '指南摘要文本', label: 'ESMO 指南' }),
+    })
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ import_reference: '不存在的材料' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('未找到参考材料')
+    expect(result.error).toContain('ESMO 指南')
   }, 30000)
 })
