@@ -34,7 +34,7 @@ jobs:
         with: { version: '10' }
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
-      - run: cd packages/server-ts && pnpm install --frozen-lockfile && cd ../contracts && pnpm install --frozen-lockfile && pnpm build && cd ../server-ts && npx prisma generate && npx tsc --noEmit
+      - run: cd packages/contracts && pnpm install --frozen-lockfile && pnpm build && cd ../server-ts && pnpm install --frozen-lockfile && npx prisma generate && npx tsc --noEmit
 
   test:
     name: Unit Tests
@@ -48,9 +48,11 @@ jobs:
         with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
       - name: Run regression tests
         run: |
-          cd packages/server-ts
+          cd packages/contracts
           pnpm install --frozen-lockfile
-          cd ../contracts && pnpm install --frozen-lockfile && pnpm build && cd ../server-ts
+          pnpm build
+          cd ../server-ts
+          pnpm install --frozen-lockfile
           npx prisma generate
           pnpm exec vitest run \
             tests/e2e/medical-record-entry.test.ts \
@@ -81,7 +83,7 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
           cache-dependency-path: packages/web/pnpm-lock.yaml
-      - run: cd packages/web && pnpm install --frozen-lockfile && pnpm build
+      - run: cd packages/contracts && pnpm install --frozen-lockfile && pnpm build && cd ../web && pnpm install --frozen-lockfile && pnpm build
       # #545: docs 构建与部署解耦 — 文档站故障只产生告警,不阻塞主应用
       # 发布(web-dist 照常产出,仅不含 /docs)。
       - name: Build docs site

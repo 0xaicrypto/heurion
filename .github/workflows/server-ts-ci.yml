@@ -56,11 +56,13 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: packages/server-ts/pnpm-lock.yaml
 
+      - name: Build shared contracts (drift guard)
+        # #fix: contracts must be built BEFORE consumers install — pnpm
+        # snapshots the file: dependency at install time (worker-ci.yml order).
+        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Build shared contracts (drift guard)
-        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
 
       - name: Generate Prisma client
         run: pnpm exec prisma generate
@@ -95,11 +97,13 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: packages/server-ts/pnpm-lock.yaml
 
+      - name: Build shared contracts (drift guard)
+        # #fix: contracts must be built BEFORE consumers install — pnpm
+        # snapshots the file: dependency at install time (worker-ci.yml order).
+        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Build shared contracts (drift guard)
-        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
 
       - name: Generate Prisma client
         run: pnpm exec prisma generate

@@ -50,6 +50,11 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: packages/web/pnpm-lock.yaml
 
+      - name: Build shared contracts (drift guard)
+        # #fix: contracts built BEFORE consumers install — pnpm snapshots the
+        # file: dependency at install time (see worker-ci.yml).
+        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
