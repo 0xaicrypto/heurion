@@ -10,7 +10,7 @@ import { router } from '../../retrieval/query-router.js'
 import { getUserContext } from './user-context.js'
 import { providerSupportsVision, modelSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { CommandResult } from '../knowledge/knowledge-command-handler.js'
-import { extractTextFromUpload, extractImageUpload, isImageFile, isPdf, isDocx, extractPdfContentFromUpload, extractDocxContentFromUpload, type ExtractedPdfImage } from '../../lib/document-extractor.js'
+import { extractTextFromUpload, extractImageUpload, isImageFile, isPdf, isDocx, extractPdfContentFromUpload, extractDocxContentFromUpload, extractDocumentMarkdownFromUpload, type ExtractedPdfImage } from '../../lib/document-extractor.js'
 import type { ChatScene } from '../../common/persona.js'
 
 // #630: 统一预算口径 — 剩余预算 = maxTotalTokens − system − history。
@@ -390,7 +390,11 @@ export async function buildDocReferenceBlocks(
     }
     try {
       const found = await opts.findFileByName(snapshot)
-      const text = found ? await extractTextFromUpload(userId, found.id, { maxChars: attachmentExtractChars() }) : ''
+      // #fix: 文件类引用用与"导入文档"同一提取器(markdown 结构恢复) —
+      // 此前用 raw 文本提取(保留 PDF 原始换行),而 import_reference 写入
+      // 文档的是 pdfTextToMarkdown 合并段落,两处文本换行不一致,LLM 从
+      // 参考材料块复制的 old_text 在文档里匹配不上 → 润色反复报错。
+      const text = found ? await extractDocumentMarkdownFromUpload(userId, found.id, { maxChars: attachmentExtractChars() }) : ''
       const usable = Boolean(text) && !text.startsWith('[PDF') && !text.startsWith('[DOCX')
       if (found && usable) {
         resolved++

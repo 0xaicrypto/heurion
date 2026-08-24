@@ -298,15 +298,16 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           ? fitTextToTokens(docText, CONTEXT_CONFIG.scene.docBodyTokens)
           : fitTextToTokens(sections.sections[focus - 1]?.content || docText, CONTEXT_CONFIG.scene.docBodyTokens)
 
-        // #fix: 文档为空 + 参考材料有内容 — 分步润色的前置步骤:先导入
-        // 参考材料(import_reference 不消耗输出),导入后分段/焦点/锚点
-        // 自动生效,再按"改一段→确认→继续"分步润色。
+        // #fix: 文档为空 + 参考材料有内容 — 分步润色:直接开始第一步,
+        // 调用 edit_document 的 old_text/new_text 把参考资料第一部分的
+        // 润色结果写回草稿(正文为空时工具会自动先导入唯一的参考材料),
+        // 然后询问用户是否继续下一部分。禁止停在"要不要先导入"。
         const emptyDocRule = docText.trim()
           ? ''
-          : '注意:当前文档正文为空。Reference Materials 中的内容只是参考资料,不可直接编辑。若用户要求润色/整理参考材料中的内容,第一步先调用 edit_document 的 import_reference 参数(值为参考材料的名称)把原文导入文档;导入后文档有了正文,再按长文档分步流程逐段润色(改一段→请用户确认→继续下一段)。除非参考材料很短,否则不要用 full_text 一次性输出全部内容(超出输出上限)。禁止用 old_text 局部编辑空正文。\n\n'
+          : '注意:当前文档正文为空。Reference Materials 中的内容只是参考资料,尚未写入文档。若用户要求润色/整理参考材料中的内容:直接开始第一步润色 — 调用 edit_document 的 old_text/new_text 把参考资料第一部分的润色结果写回草稿(正文为空时工具会自动先导入唯一的参考材料;old_text 从上方 Reference Materials 部分复制,空格/换行差异会被忽略)。写回后告知用户「已完成第 1/N 段」,并询问是否继续处理下一部分;用户确认后逐段继续。除非参考材料很短,否则不要用 full_text 一次性输出全部内容(超出输出上限)。\n\n'
         const rules = docFits
-          ? `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}文档较短已完整展示，可直接修改任意部分；优先用 edit_document 的 old_text/new_text 做局部编辑（old_text 必须从上方文档中逐字复制）。`
-          : `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。除非用户明确要求全文重写（此时请告知全文超出上下文预算不可行），否则不要用 full_text 全量替换。`
+          ? `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}文档较短已完整展示，可直接修改任意部分；优先用 edit_document 的 old_text/new_text 做局部编辑（old_text 必须从上方 ## Current Document 部分逐字复制，空格/换行差异会被自动忽略，不要从 Reference Materials 复制）。`
+          : `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。old_text 必须从上方 ## Current Document 部分逐字复制（空格/换行差异会被自动忽略，不要从 Reference Materials 复制）。除非用户明确要求全文重写（此时请告知全文超出上下文预算不可行），否则不要用 full_text 全量替换。`
 
         return `\n\n## Current Document\n标题：${doc.title}\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n## Reference Materials\n${refBlock || '(none)'}\n\n${rules}`
       },

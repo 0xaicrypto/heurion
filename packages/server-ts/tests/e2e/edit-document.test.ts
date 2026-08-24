@@ -149,7 +149,66 @@ describe('#171 edit_document tool', () => {
     expect(result.error).toContain('没有任何变化')
   }, 30000)
 
-  test('#fix 正文为空时 range 编辑报错并指引改用 full_text(上传 PDF 后文档空白的场景)', async () => {
+  test('#fix range 模式:old_text 换行/空格与正文不同(LLM 从参考材料复制)→ 归一化匹配成功且不留残留', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    // 模拟 PDF 导入后的正文:标题被 PDF 文本层拆成多行。
+    const body = 'Impact of two years of treatment\nwith Elexacaftor/Tezacaftor/\nIvacaftor on longitudinal changes.\n\n## Abstract\nThis is the abstract.'
+    const docId = await createDoc(app, body)
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    // LLM 的 old_text 把换行折叠成空格(或从参考材料块复制)。
+    const result = await tool.execute({
+      old_text: 'Impact of two years of treatment with Elexacaftor/Tezacaftor/Ivacaftor on longitudinal changes.',
+      new_text: 'Impact of two years of triple-combination therapy on structural lung disease.',
+      summary: '润色标题',
+    })
+    expect(result.success).toBe(true)
+    const parsed = JSON.parse(result.output as string)
+    expect(parsed.body).toBe('Impact of two years of triple-combination therapy on structural lung disease.\n\n## Abstract\nThis is the abstract.')
+  }, 30000)
+
+  test('#fix range 模式:old_text 含软连字符/连续空格 → 归一化匹配成功', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const body = '## Results\nstructural lung diseas\u00ade was  reduced  by  40%.'
+    const docId = await createDoc(app, body)
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({
+      old_text: 'structural lung disease was reduced by 40%.',
+      new_text: 'structural lung disease fell by 40%.',
+      summary: '润色结果句',
+    })
+    expect(result.success).toBe(true)
+    const parsed = JSON.parse(result.output as string)
+    expect(parsed.body).toBe('## Results\nstructural lung disease fell by 40%.')
+  }, 30000)
+
+  test('#fix range 模式:归一化后多处匹配 → 报错要求唯一锚点', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const body = '第一句重复。\n\n第二行 重复。'
+    const docId = await createDoc(app, body)
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ old_text: '重复。', new_text: '改后。' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('多次')
+  }, 30000)
+
+  test('#fix range 模式:字符不一致(非空白差异)仍报"未找到"', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '正确原文。')
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ old_text: '错误原文。', new_text: 'x' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('未找到')
+  }, 30000)
+
+  test('#fix 正文为空且无参考材料时 range 编辑报错并指引先上传/full_text', async () => {
     const app = await getApp()
     const userId = await getAuthUserId()
     const docId = await createDoc(app, '')
@@ -158,6 +217,69 @@ describe('#171 edit_document tool', () => {
     const result = await tool.execute({ old_text: '论文摘要内容', new_text: '润色后的摘要' })
     expect(result.success).toBe(false)
     expect(result.error).toContain('文档正文为空')
+    expect(result.error).toContain('full_text')
+  }, 30000)
+
+  test('#fix 正文为空 + 唯一参考材料:range 编辑自动导入后再局部替换(用户上传 PDF 后直接说"润色"的场景)', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '')
+
+    const boundary = `----autoiptest${Date.now()}`
+    const uploadForm = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="paper.txt"\r\nContent-Type: text/plain\r\n\r\n`),
+      Buffer.from('# 论文标题\n\n## 摘要\n\n这是摘要内容。\n\n## 方法\n\n这是方法内容。', 'utf-8'),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    const upload = await app.inject({
+      method: 'POST',
+      url: '/api/v1/files/upload',
+      headers: { ...await authHeader(), 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: uploadForm,
+    })
+    expect(upload.statusCode).toBe(200)
+    const fileId = JSON.parse(upload.payload).file_id
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/references`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ kind: 'file', content: 'paper.txt', label: 'paper.txt' }),
+    })
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ old_text: '这是摘要内容。', new_text: '这是润色后的摘要。', summary: '润色摘要' })
+    expect(result.success).toBe(true)
+    const parsed = JSON.parse(result.output as string)
+    expect(parsed.body).toContain('# 论文标题')
+    expect(parsed.body).toContain('这是润色后的摘要。')
+    expect(parsed.body).toContain('这是方法内容。')
+
+    // 导入快照 + 编辑快照各一个。
+    const snaps = await (prisma as any).docSnapshot.findMany({ where: { docId }, orderBy: { id: 'asc' } })
+    expect(snaps.length).toBe(2)
+    expect(snaps[0].label).toBe('AI import')
+    expect(snaps[1].label).toBe('AI edit')
+  }, 30000)
+
+  test('#fix 正文为空 + 多个参考材料:range 编辑报错要求先 import_reference 明确导入', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '')
+
+    for (const [name, content] of [['a.txt', '材料 A 内容。'], ['b.txt', '材料 B 内容。']] as const) {
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/docs/${docId}/references`,
+        headers: { ...await authHeader(), 'content-type': 'application/json' },
+        payload: JSON.stringify({ kind: 'note', content, label: name }),
+      })
+    }
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ old_text: '材料 A 内容。', new_text: 'x' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('多个参考材料')
     expect(result.error).toContain('import_reference')
   }, 30000)
 
