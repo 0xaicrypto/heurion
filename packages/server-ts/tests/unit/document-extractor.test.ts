@@ -3,9 +3,10 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import zlib from 'zlib'
+import crypto from 'crypto'
 import PDFDocument from 'pdfkit'
-import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun } from 'docx'
-import { extractTextFromUpload, extractPdfImagesFromUpload } from '../../src/lib/document-extractor.js'
+import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun, ImageRun } from 'docx'
+import { extractTextFromUpload, extractPdfImagesFromUpload, extractDocxContentFromUpload, extractImageUpload, sniffDocumentMime } from '../../src/lib/document-extractor.js'
 import { buildAttachmentParts, MAX_ATTACHMENT_IMAGES } from '../../src/modules/chat/chat-context.js'
 
 /** 生成一张合法 PNG(RGB,无压缩选项) — 测试用最小实现。 */
@@ -135,6 +136,116 @@ describe('document-extractor DOCX 结构化提取', () => {
     const text = await extractTextFromUpload('u1', fileId)
     expect(text).toMatch(/^\[(DOCX extraction failed|DOCX returned empty text)/)
   })
+
+  test('#fix DOCX 内嵌图片抽为多模态 part,正文不含 base64 垃圾', async () => {
+    const doc = new Document({
+      sections: [{
+        children: [
+          new Paragraph({ text: 'Figure 1 caption' }),
+          new Paragraph({ children: [new ImageRun({ type: 'png', data: makePng(50, 50), transformation: { width: 50, height: 50 } })] }),
+          new Paragraph({ text: 'text after image' }),
+        ],
+      }],
+    })
+    const fileId = '1750000000202_with_img.docx'
+    fs.writeFileSync(path.join(uploadsDir, fileId), await Packer.toBuffer(doc))
+
+    // 提取路径:正文干净(无 base64),图片单独抽出。
+    const text = await extractTextFromUpload('u1', fileId)
+    expect(text).toContain('Figure 1 caption')
+    expect(text).toContain('text after image')
+    expect(text).not.toContain('data:image')
+    expect(text).toContain('图') // 内嵌图替换为 [图] 占位(turndown 转义方括号)
+
+    const content = await extractDocxContentFromUpload('u1', fileId, { maxChars: 30000, vision: true })
+    expect(content).not.toBeNull()
+    expect(content!.images.length).toBe(1)
+    expect(content!.images[0].mime).toBe('image/png')
+    expect(content!.images[0].dataBase64.length).toBeGreaterThan(50)
+  })
+
+  test('#fix buildAttachmentParts: DOCX 内嵌图片注入为图片 part(视觉模型)', async () => {
+    const doc = new Document({
+      sections: [{
+        children: [
+          new Paragraph({ text: 'results section' }),
+          new Paragraph({ children: [new ImageRun({ type: 'png', data: makePng(50, 50), transformation: { width: 50, height: 50 } })] }),
+        ],
+      }],
+    })
+    const fileId = '1750000000203_with_img2.docx'
+    fs.writeFileSync(path.join(uploadsDir, fileId), await Packer.toBuffer(doc))
+
+    const vision = await buildAttachmentParts([fileId], { userId: 'u1', vision: true })
+    expect(vision.parts.some((p) => p.type === 'image')).toBe(true)
+    expect(vision.attachmentText).toContain('results section')
+    expect(vision.attachmentText).not.toContain('data:image')
+    expect(vision.notes.some((n) => n.includes('内嵌图片 ×1/1'))).toBe(true)
+
+    const textOnly = await buildAttachmentParts([fileId], { userId: 'u1', vision: false })
+    expect(textOnly.parts.some((p) => p.type === 'image')).toBe(false)
+    expect(textOnly.attachmentText).toContain('results section')
+    expect(textOnly.attachmentText).not.toContain('data:image')
+  })
+})
+
+describe('#fix(参考 opencode) magic bytes 嗅探 + sharp 图片归一化', () => {
+  const tmpDir = path.join(os.tmpdir(), `heurion-sniff-test-${Date.now()}`)
+  const uploadsDir = path.join(tmpDir, 'u1', 'uploads')
+
+  beforeEach(() => {
+    process.env.TWIN_BASE_DIR = tmpDir
+    fs.mkdirSync(uploadsDir, { recursive: true })
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    delete process.env.TWIN_BASE_DIR
+  })
+
+  test('sniffDocumentMime 识别 PNG/PDF/zip(docx) 魔数', () => {
+    expect(sniffDocumentMime(makePng(10, 10))).toBe('image/png')
+    expect(sniffDocumentMime(Buffer.from('%PDF-1.7 ...'))).toBe('application/pdf')
+    expect(sniffDocumentMime(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]))).toBe('application/zip')
+    expect(sniffDocumentMime(Buffer.from('plain text'))).toBeNull()
+  })
+
+  test('伪装扩展名:PDF 改名 .txt 仍按 PDF 解析(不再解码成乱码)', async () => {
+    const fileId = '1750000000204_disguised.txt'
+    fs.writeFileSync(path.join(uploadsDir, fileId), await makePdfWithImage())
+    const text = await extractTextFromUpload('u1', fileId)
+    expect(text).toContain('Section Heading')
+  })
+
+  test('无扩展名 PNG 附件被嗅探为图片并注入多模态 part', async () => {
+    const fileId = '1750000000205_img.bin'
+    fs.writeFileSync(path.join(uploadsDir, fileId), makePng(200, 150))
+    const probe = await extractImageUpload('u1', fileId)
+    expect(probe).not.toBeNull()
+    expect((probe as any).mime).toBe('image/png')
+
+    const res = await buildAttachmentParts([fileId], { userId: 'u1', vision: true })
+    expect(res.parts.some((p) => p.type === 'image')).toBe(true)
+  })
+
+  test('超过 4MB 的图片自动归一化压缩,不再直接降级', async () => {
+    // 高熵 PNG(≈18MB)模拟论文高清图/病理截图。
+    const wide = 2600, tall = 2600
+    const raw = crypto.randomBytes(wide * tall * 3)
+    const bigPng = await (await import('sharp')).default(raw, { raw: { width: wide, height: tall, channels: 3 } })
+      .png({ compressionLevel: 6 }).toBuffer()
+    expect(bigPng.length).toBeGreaterThan(4 * 1024 * 1024)
+
+    const fileId = '1750000000206_scan.png'
+    fs.writeFileSync(path.join(uploadsDir, fileId), bigPng)
+    const probe = await extractImageUpload('u1', fileId)
+    expect(probe).not.toBeNull()
+    expect((probe as any).oversized).toBeUndefined()
+    expect((probe as any).normalized).toBe(true)
+    expect((probe as any).mime).toBe('image/webp')
+    // 压缩后 base64 显著小于原图(远低于 4MB 上限)。
+    expect((probe as any).dataBase64.length).toBeLessThan(bigPng.length)
+  })
 })
 
 describe('document-extractor PDF 内嵌图片提取', () => {
@@ -182,7 +293,7 @@ describe('document-extractor PDF 内嵌图片提取', () => {
     // 会被 pdf.js 解码成乱码 — 断言稳定的 ASCII 片段即可(真实 Word/LaTeX
     // PDF 带完整 ToUnicode,不受此影响)。
     expect(vision.attachmentText).toContain('Section Heading')
-    expect(vision.notes.some((n) => n.includes('PDF 内嵌图片'))).toBe(true)
+    expect(vision.notes.some((n) => n.includes('内嵌图片'))).toBe(true)
 
     const textOnly = await buildAttachmentParts([fileId], { userId: 'u1', vision: false })
     expect(textOnly.parts.some((p) => p.type === 'image')).toBe(false)

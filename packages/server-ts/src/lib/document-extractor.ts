@@ -3,6 +3,7 @@ import mammoth from 'mammoth'
 import TurndownService from 'turndown'
 import { PDFParse } from 'pdf-parse'
 import { createWorker, type Worker } from 'tesseract.js'
+import sharp from 'sharp'
 import { safeUploadPath } from './upload-path.js'
 
 export interface ExtractOptions {
@@ -29,6 +30,29 @@ const MAX_TEXT_PAGES = 30
 const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
 /**
+ * #fix(参考 opencode util/media.ts):magic bytes 嗅探真实文件类型 —
+ * 扩展名可伪造/缺失(如把 PDF 改名 .txt 或去掉扩展名),按扩展名判定会
+ * 走错解析路径(文本解码出乱码)。读文件头前几个字节判定,扩展名兜底。
+ */
+export function sniffDocumentMime(buffer: Uint8Array): string | null {
+  const startsWith = (prefix: number[]) => prefix.every((v, i) => buffer[i] === v)
+  if (startsWith([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png'
+  if (startsWith([0xff, 0xd8, 0xff])) return 'image/jpeg'
+  if (startsWith([0x47, 0x49, 0x46, 0x38])) return 'image/gif'
+  if (startsWith([0x42, 0x4d])) return 'image/bmp'
+  // RIFF....WEBP — webp 是 RIFF 容器,"WEBP" 写在偏移 8 处。
+  if (startsWith([0x52, 0x49, 0x46, 0x46]) && buffer.length >= 12) {
+    const webp = [0x57, 0x45, 0x42, 0x50]
+    if (webp.every((v, i) => buffer[8 + i] === v)) return 'image/webp'
+  }
+  // PK\x03\x04 / PK\x05\x06 / PK\x07\x08 — zip 容器(docx/xlsx/pptx 共用,
+  // 具体格式仍需扩展名或内容判定,mammoth 解析失败会回退)。
+  if (startsWith([0x50, 0x4b, 0x03, 0x04]) || startsWith([0x50, 0x4b, 0x05, 0x06]) || startsWith([0x50, 0x4b, 0x07, 0x08])) return 'application/zip'
+  if (startsWith([0x25, 0x50, 0x44, 0x46, 0x2d])) return 'application/pdf'
+  return null
+}
+
+/**
  * #511: image attachment detection — bitmap images (png/jpg/jpeg/gif/webp)
  * travel as multimodal image parts; SVG is text-readable XML so it stays on
  * the text path.
@@ -39,6 +63,8 @@ export function isImageFile(filename: string, mimeType?: string): boolean {
   if (mimeType && (mimeType.startsWith('image/')) && !mimeType.includes('svg')) return true
   return false
 }
+
+export { isDocx }
 
 function isDocx(filename: string, mimeType?: string): boolean {
   const lower = filename.toLowerCase()
@@ -185,6 +211,27 @@ const docxTurndown = new TurndownService({
   strongDelimiter: '**',
 })
 
+// #fix: mammoth 默认把 docx 内嵌图片转成 <img src="data:...;base64,...">
+// data URI。若不处理,经 turndown 变成 markdown 里一坨 base64 字符串 —
+// 模型既看不懂、又吃满提取字符预算,真图还没到模型。这里:
+//   1. 从 HTML 抽出 data URI 图片(供多模态 part 注入);
+//   2. 转 markdown 前把 <img> 换成 [图] 占位符,文本保持干净。
+const DOCX_IMG_RE = /<img[^>]*>/gi
+const DOCX_DATA_URI_RE = /<img[^>]*src="data:([^;,]+);base64,([^"]+)"[^>]*>/gi
+
+function extractDocxDataUris(html: string): { mime: string; dataBase64: string }[] {
+  const images: { mime: string; dataBase64: string }[] = []
+  let m: RegExpExecArray | null
+  while ((m = DOCX_DATA_URI_RE.exec(html)) !== null) {
+    images.push({ mime: m[1], dataBase64: m[2] })
+  }
+  return images
+}
+
+function docxHtmlWithoutImages(html: string): string {
+  return html.replace(DOCX_IMG_RE, '[图]')
+}
+
 // turndown 无内置表格支持 — 把 <table> 渲染成 GFM 表格。
 // 注意:Node 环境下 turndown 用 domino 解析,其 NodeList 不可迭代,
 // 必须用下标访问(for...of 会抛 "is not iterable")。
@@ -218,8 +265,9 @@ docxTurndown.addRule('table', {
 async function extractDocxText(buffer: Buffer, maxChars: number): Promise<string> {
   try {
     // #fix: 结构化优先 — 失败或空内容才回退 extractRawText(原行为)。
+    // <img> 先替换为 [图] 占位,避免 base64 data URI 混进文本。
     const html = await mammoth.convertToHtml({ buffer })
-    const md = docxTurndown.turndown(html.value).trim()
+    const md = docxTurndown.turndown(docxHtmlWithoutImages(html.value)).trim()
     if (md) return md.slice(0, maxChars)
     const fallback = await mammoth.extractRawText({ buffer })
     return fallback.value.trim().slice(0, maxChars) || '[DOCX returned empty text]'
@@ -227,6 +275,50 @@ async function extractDocxText(buffer: Buffer, maxChars: number): Promise<string
     const message = err instanceof Error ? err.message : String(err)
     return `[DOCX extraction failed: ${message}]`
   }
+}
+
+/**
+ * #fix: 一次解析同时产出 DOCX 文本 + 内嵌图片(与 PDF 路径对齐)。
+ * 图片从 mammoth 的 data URI 抽出,直接转多模态 part;文本侧由
+ * extractDocxText 保证干净。非 DOCX/文件缺失 → null;超大文件跳过。
+ */
+export async function extractDocxContentFromUpload(
+  userId: string,
+  fileId: string,
+  options: { maxChars: number; vision: boolean } = { maxChars: 30000, vision: false },
+): Promise<{ text: string; images: ExtractedPdfImage[] } | null> {
+  const filepath = safeUploadPath(userId, fileId)
+  if (!filepath || !fs.existsSync(filepath)) return null
+  const originalName = fileId.split('_').slice(1).join('_') || fileId
+
+  const stat = fs.statSync(filepath)
+  if (stat.size > MAX_EXTRACT_FILE_BYTES) {
+    return {
+      text: `[附件 ${originalName} 超过 ${Math.round(MAX_EXTRACT_FILE_BYTES / 1024 / 1024)}MB，已跳过文本提取以避免服务崩溃；请压缩后重新上传]`,
+      images: [],
+    }
+  }
+
+  const buffer = fs.readFileSync(filepath)
+  // #fix: 嗅探优先 — 文件头是 zip(docx 容器)即按 docx 处理,扩展名只兜底。
+  const sniffed = sniffDocumentMime(buffer)
+  if (!isDocx(originalName) && sniffed !== 'application/zip') return null
+
+  const text = await extractDocxText(buffer, options.maxChars)
+  const images: ExtractedPdfImage[] = []
+  if (options.vision && stat.size <= MAX_PDF_IMAGE_FILE_BYTES) {
+    try {
+      const html = await mammoth.convertToHtml({ buffer })
+      for (const img of extractDocxDataUris(html.value)) {
+        if (img.dataBase64.length > MAX_PDF_IMAGE_BYTES) continue
+        images.push({ mime: img.mime || 'image/png', dataBase64: img.dataBase64, page: 1 })
+        if (images.length >= MAX_PDF_IMAGES) break
+      }
+    } catch {
+      // 图片提取失败不影响文本
+    }
+  }
+  return { text, images }
 }
 
 export async function extractDocumentText(
@@ -239,12 +331,21 @@ export async function extractDocumentText(
   const ocrPageLimit = options.ocrPageLimit ?? DEFAULT_OCR_PAGE_LIMIT
   const ocrScale = options.ocrScale ?? DEFAULT_OCR_SCALE
 
-  if (isPdf(filename, mimeType)) {
+  // #fix(参考 opencode):magic bytes 嗅探优先于扩展名 — 把 PDF 改名 .txt
+  // 或去掉扩展名后仍走正确的解析路径,而不是按文本解码出乱码。
+  const sniffed = sniffDocumentMime(buffer)
+
+  if (sniffed === 'application/pdf' || isPdf(filename, mimeType)) {
     return extractPdfText(buffer, { maxChars, ocrPageLimit, ocrScale })
   }
 
-  if (isDocx(filename, mimeType)) {
+  // zip 容器可能是 docx/xlsx/pptx — 统一按 docx 尝试(mammoth 失败回退文本)。
+  if (sniffed === 'application/zip' || isDocx(filename, mimeType)) {
     return extractDocxText(buffer, maxChars)
+  }
+
+  if (sniffed && sniffed.startsWith('image/')) {
+    return `[附件 ${filename} 是图片(${sniffed}),不提取文本;如需分析图片内容请使用支持视觉的模型或 ocr_image 工具]`
   }
 
   if (isText(filename, mimeType)) {
@@ -329,7 +430,6 @@ export async function extractPdfContentFromUpload(
   const filepath = safeUploadPath(userId, fileId)
   if (!filepath || !fs.existsSync(filepath)) return null
   const originalName = fileId.split('_').slice(1).join('_') || fileId
-  if (!isPdf(originalName)) return null
 
   const stat = fs.statSync(filepath)
   if (stat.size > MAX_EXTRACT_FILE_BYTES) {
@@ -340,6 +440,10 @@ export async function extractPdfContentFromUpload(
   }
 
   const buffer = fs.readFileSync(filepath)
+  // #fix: 嗅探优先 — 文件头 %PDF 即按 PDF 处理,扩展名只兜底。
+  const sniffed = sniffDocumentMime(buffer)
+  if (!isPdf(originalName) && sniffed !== 'application/pdf') return null
+
   const fileBytes = buffer.byteLength
   let parser: PDFParse | undefined
   try {
@@ -419,31 +523,68 @@ export async function extractPdfImagesFromUpload(
  *  避免超大 base64 撑爆 LLM 请求体与上下文预算。 */
 const MAX_IMAGE_UPLOAD_BYTES = 4 * 1024 * 1024
 
+// #fix(参考 opencode image.normalize):大图用 sharp 归一化 — 论文里的
+// 高清图/病理截图常超 4MB,此前直接降级成"请压缩后上传",模型看不到。
+// 现在缩放长边 ≤2048 + webp q80,压缩到预算内再注入(质量对图表足够)。
+const NORMALIZE_LONG_EDGE = 2048
+const NORMALIZE_QUALITY = 80
+const MAX_NORMALIZE_FILE_BYTES = 32 * 1024 * 1024
+
+const mimeByExt: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  gif: 'image/gif', webp: 'image/webp', avif: 'image/avif',
+}
+
+/** sharp 归一化:长边缩到 NORMALIZE_LONG_EDGE(不放大)、webp 输出。
+ *  成功返回压缩后的数据;失败返回 null(调用方走 oversized 降级)。 */
+async function normalizeImageBuffer(buffer: Buffer): Promise<{ mime: string; dataBase64: string } | null> {
+  try {
+    const out = await sharp(buffer)
+      .resize({ width: NORMALIZE_LONG_EDGE, height: NORMALIZE_LONG_EDGE, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: NORMALIZE_QUALITY })
+      .toBuffer()
+    return { mime: 'image/webp', dataBase64: out.toString('base64') }
+  } catch (err) {
+    console.warn('[document-extractor] Image normalization failed:', (err as Error).message.slice(0, 80))
+    return null
+  }
+}
+
 /**
  * #511: 读取上传图片为 base64 多模态数据。
  * - 非图片/文件缺失 → null(调用方走文本路径)
- * - 图片但超过 MAX_IMAGE_UPLOAD_BYTES → { oversized: true }(调用方降级)
+ * - 图片但超过 MAX_IMAGE_UPLOAD_BYTES → 尝试 sharp 归一化压缩后返回
+ *   ({ normalized: true });压缩失败 → { oversized: true }(调用方降级)
  * - 正常 → { mime, dataBase64 }
+ * #fix: 类型判定用 magic bytes 嗅探优先(无扩展名/伪装扩展名的图片也能识别)。
  */
 export async function extractImageUpload(
   userId: string,
   fileId: string,
-): Promise<{ mime: string; dataBase64: string } | { oversized: true } | null> {
+): Promise<{ mime: string; dataBase64: string; normalized?: boolean } | { oversized: true } | null> {
   const filepath = safeUploadPath(userId, fileId)
   if (!filepath || !fs.existsSync(filepath)) return null
 
   const originalName = fileId.split('_').slice(1).join('_') || fileId
-  if (!isImageFile(originalName)) return null
-
   const stat = fs.statSync(filepath)
-  if (stat.size > MAX_IMAGE_UPLOAD_BYTES) return { oversized: true }
-
-  const mimeByExt: Record<string, string> = {
-    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
-    gif: 'image/gif', webp: 'image/webp', avif: 'image/avif',
+  if (stat.size > MAX_NORMALIZE_FILE_BYTES) {
+    // 超大到连归一化都不做(读进内存不划算)—— 按扩展名兜底判定。
+    return isImageFile(originalName) ? { oversized: true } : null
   }
-  const ext = originalName.split('.').pop()?.toLowerCase() || ''
-  const mime = mimeByExt[ext] || 'image/png'
+
   const buffer = fs.readFileSync(filepath)
-  return { mime, dataBase64: buffer.toString('base64') }
+  const sniffed = sniffDocumentMime(buffer)
+  if (!sniffed || !sniffed.startsWith('image/')) {
+    if (!isImageFile(originalName)) return null
+  }
+
+  const mime = sniffed && sniffed.startsWith('image/') ? sniffed : (mimeByExt[originalName.split('.').pop()?.toLowerCase() || ''] || 'image/png')
+  if (buffer.length <= MAX_IMAGE_UPLOAD_BYTES) {
+    return { mime, dataBase64: buffer.toString('base64') }
+  }
+
+  // 超过 4MB — 先尝试归一化,再考虑降级。
+  const normalized = await normalizeImageBuffer(buffer)
+  if (normalized) return { ...normalized, normalized: true }
+  return { oversized: true }
 }

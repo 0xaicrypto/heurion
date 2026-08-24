@@ -10,7 +10,7 @@ import { router } from '../../retrieval/query-router.js'
 import { getUserContext } from './user-context.js'
 import { providerSupportsVision, modelSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { CommandResult } from '../knowledge/knowledge-command-handler.js'
-import { extractTextFromUpload, extractImageUpload, isImageFile, isPdf, extractPdfContentFromUpload, type ExtractedPdfImage } from '../../lib/document-extractor.js'
+import { extractTextFromUpload, extractImageUpload, isImageFile, isPdf, isDocx, extractPdfContentFromUpload, extractDocxContentFromUpload, type ExtractedPdfImage } from '../../lib/document-extractor.js'
 import type { ChatScene } from '../../common/persona.js'
 
 // #630: 统一预算口径 — 剩余预算 = maxTotalTokens − system − history。
@@ -276,10 +276,10 @@ export async function buildAttachmentParts(
       : (att.name || fid.split('_').slice(1).join('_') || '')
     if (!fid) continue
     // #511-followup: 非视觉 provider 不读文件(仅按文件名判定)。
-  const probe: { mime?: string; dataBase64?: string; oversized?: boolean; noVision?: boolean } | null =
-    opts.vision
-      ? await extractImageUpload(opts.userId, fid)
-      : (isImageFile(name) ? { noVision: true } : null)
+    const probe: { mime?: string; dataBase64?: string; oversized?: boolean; noVision?: boolean; normalized?: boolean } | null =
+      opts.vision
+        ? await extractImageUpload(opts.userId, fid)
+        : (isImageFile(name) ? { noVision: true } : null)
     if (probe?.mime && probe.dataBase64) {
       if (imageCount >= MAX_ATTACHMENT_IMAGES || imageBytes + probe.dataBase64.length > MAX_ATTACHMENT_IMAGE_BYTES) {
         attachmentText += `\n[ATTACHMENT: ${name}] (image — 超出单条消息图片上限 ${MAX_ATTACHMENT_IMAGES} 张 / ${Math.round(MAX_ATTACHMENT_IMAGE_BYTES / 1024 / 1024)}MB,已降级为文件名)\n`
@@ -289,7 +289,7 @@ export async function buildAttachmentParts(
       imageCount++
       imageBytes += probe.dataBase64.length
       parts.push({ type: 'image', mime: probe.mime, dataBase64: probe.dataBase64 })
-      notes.push(`Attachment: ${name.slice(0, 30)} (image → multimodal)`)
+      notes.push(`Attachment: ${name.slice(0, 30)} (image → multimodal${probe.normalized ? ', 已自动压缩归一化' : ''})`)
       continue
     }
     if (probe) {
@@ -307,10 +307,10 @@ export async function buildAttachmentParts(
       notes.push(`Attachment: ${name.slice(0, 30)} (degraded — text budget exceeded)`)
       continue
     }
-    // #fix: PDF 单次解析同时拿文本 + 内嵌图片(共用同一个 PDFParse 实例,
-    // 避免大 PDF 被解析两遍导致 OOM → 连接重置 → 前端 "network error")。
+    // #fix: PDF/DOCX 单次解析同时拿文本 + 内嵌图片(共用同一份已读 buffer,
+    // 避免大文件被解析两遍导致 OOM → 连接重置 → 前端 "network error")。
     let content: string | null = null
-    let pdfImages: ExtractedPdfImage[] = []
+    let embeddedImages: ExtractedPdfImage[] = []
     if (isPdf(name)) {
       const pdf = await extractPdfContentFromUpload(opts.userId, fid, {
         maxChars: extractCap,
@@ -318,7 +318,18 @@ export async function buildAttachmentParts(
       })
       if (pdf) {
         content = pdf.text
-        pdfImages = pdf.images
+        embeddedImages = pdf.images
+      }
+    } else if (isDocx(name)) {
+      // #fix: DOCX 内嵌图片同样抽为多模态 part(此前只有文本,
+      // 内嵌图变 base64 字符串混进正文)。
+      const docx = await extractDocxContentFromUpload(opts.userId, fid, {
+        maxChars: extractCap,
+        vision: opts.vision,
+      })
+      if (docx) {
+        content = docx.text
+        embeddedImages = docx.images
       }
     } else {
       content = await extractTextFromUpload(opts.userId, fid, { maxChars: extractCap })
@@ -332,14 +343,14 @@ export async function buildAttachmentParts(
       consumedTokens += estimateTokens(slice)
       notes.push(`Attachment: ${name.slice(0, 30)}`)
     }
-    // #fix: PDF 内嵌图片 → 多模态 part(仅视觉模型)。文本照常注入,
+    // #fix: PDF/DOCX 内嵌图片 → 多模态 part(仅视觉模型)。文本照常注入,
     // 图片让模型看到真实图表/照片,而不是 "图 3 显示…" 占位文字。
     // 与直接上传图片共用计数/字节上限,超出部分丢弃(文本仍完整)。
-    if (pdfImages.length > 0) {
+    if (embeddedImages.length > 0) {
       const room = Math.max(0, MAX_ATTACHMENT_IMAGES - imageCount)
       let pushed = 0
       let usedBytes = 0
-      for (const im of pdfImages) {
+      for (const im of embeddedImages) {
         if (pushed >= room || imageBytes + usedBytes + im.dataBase64.length > MAX_ATTACHMENT_IMAGE_BYTES) break
         parts.push({ type: 'image', mime: im.mime, dataBase64: im.dataBase64 })
         pushed++
@@ -347,7 +358,7 @@ export async function buildAttachmentParts(
       }
       imageCount += pushed
       imageBytes += usedBytes
-      notes.push(`Attachment: ${name.slice(0, 30)} (PDF 内嵌图片 ×${pushed}/${pdfImages.length})`)
+      notes.push(`Attachment: ${name.slice(0, 30)} (内嵌图片 ×${pushed}/${embeddedImages.length})`)
     }
   }
   return { parts, attachmentText, notes }
