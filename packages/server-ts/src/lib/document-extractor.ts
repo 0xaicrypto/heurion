@@ -289,11 +289,21 @@ const MAX_PDF_IMAGE_PAGES = 6
 const MAX_PDF_IMAGES = 8
 const MIN_PDF_IMAGE_PIXELS = 100 * 100
 const MAX_PDF_IMAGE_BYTES = 1.5 * 1024 * 1024
+// #fix: 超过此体积的 PDF 跳过内嵌图片提取 — getImage 会把整页图片同时
+// 物化成 RGBA,大 PDF(几十 MB)在解析文本之外再来一遍会撑爆进程内存
+// (OOM kill → SSE 连接重置 → 前端 "network error")。大文件通常是文字
+// 为主的稿件,图对 LLM 的意义有限,直接省掉。
+const MAX_PDF_IMAGE_FILE_BYTES = 25 * 1024 * 1024
 
 export interface ExtractedPdfImage {
   mime: string
   dataBase64: string
   page: number
+}
+
+export interface ExtractedPdfContent {
+  text: string
+  images: ExtractedPdfImage[]
 }
 
 function mimeFromImageName(name: string): string {
@@ -305,44 +315,100 @@ function mimeFromImageName(name: string): string {
   return map[ext] || 'image/png'
 }
 
+/**
+ * #fix: 单次解析同时产出 PDF 文本 + 内嵌图片 — 共享一个 PDFParse 实例,
+ * 不再先 parse 一次文本、再 parse 一次 getImage(每遍都会 readFileSync +
+ * pdf.js 全量载入,大 PDF 内存峰值翻倍,直接触发 OOM)。
+ * 非 PDF/文件缺失 → null;超大文件 → 文本跳过 + 无图。
+ */
+export async function extractPdfContentFromUpload(
+  userId: string,
+  fileId: string,
+  options: { maxChars: number; vision: boolean } = { maxChars: 30000, vision: false },
+): Promise<ExtractedPdfContent | null> {
+  const filepath = safeUploadPath(userId, fileId)
+  if (!filepath || !fs.existsSync(filepath)) return null
+  const originalName = fileId.split('_').slice(1).join('_') || fileId
+  if (!isPdf(originalName)) return null
+
+  const stat = fs.statSync(filepath)
+  if (stat.size > MAX_EXTRACT_FILE_BYTES) {
+    return {
+      text: `[附件 ${originalName} 超过 ${Math.round(MAX_EXTRACT_FILE_BYTES / 1024 / 1024)}MB，已跳过文本提取以避免服务崩溃；请压缩后重新上传]`,
+      images: [],
+    }
+  }
+
+  const buffer = fs.readFileSync(filepath)
+  const fileBytes = buffer.byteLength
+  let parser: PDFParse | undefined
+  try {
+    parser = new PDFParse({ data: new Uint8Array(buffer) })
+
+    // ── 文本层(大文件分档:超过 PAGE_LIMITED_PARSE_BYTES 只解析前 N 页)──
+    let limitedPages: number[] | undefined
+    if (fileBytes > PAGE_LIMITED_PARSE_BYTES) {
+      const info = await parser.getInfo({ parsePageInfo: true })
+      const totalPages = info.pages?.length || 1
+      limitedPages = Array.from({ length: Math.min(totalPages, MAX_TEXT_PAGES) }, (_, i) => i + 1)
+    }
+    const textResult = limitedPages
+      ? await parser.getText({ partial: limitedPages, parseHyperlinks: true })
+      : await parser.getText({ parseHyperlinks: true })
+    let text = textResult.text.trim()
+    if (text.length >= OCR_TEXT_THRESHOLD) {
+      if (limitedPages) {
+        text = `[注: 文件超过 ${Math.round(PAGE_LIMITED_PARSE_BYTES / 1024 / 1024)}MB，仅解析前 ${limitedPages.length} 页]\n${text}`
+      }
+    } else {
+      // 扫描版 PDF — OCR 兜底(已按页限量)。
+      text = await ocrPdfPages(parser, {
+        maxChars: options.maxChars,
+        ocrPageLimit: DEFAULT_OCR_PAGE_LIMIT,
+        ocrScale: DEFAULT_OCR_SCALE,
+      })
+    }
+    text = text.slice(0, options.maxChars)
+
+    // ── 内嵌图片(复用同一 parser;仅视觉模型 + 体积上限内才提取)──
+    const images: ExtractedPdfImage[] = []
+    if (options.vision && fileBytes <= MAX_PDF_IMAGE_FILE_BYTES) {
+      const result = await parser.getImage({
+        first: MAX_PDF_IMAGE_PAGES,
+        imageThreshold: 100,
+        imageBuffer: true,
+        imageDataUrl: false,
+      })
+      for (const page of result.pages) {
+        for (const img of page.images) {
+          if (img.width * img.height < MIN_PDF_IMAGE_PIXELS) continue
+          const base64 = Buffer.from(img.data).toString('base64')
+          if (base64.length > MAX_PDF_IMAGE_BYTES) continue
+          images.push({ mime: mimeFromImageName(img.name), dataBase64: base64, page: page.pageNumber })
+          if (images.length >= MAX_PDF_IMAGES) break
+        }
+        // 逐页释放 RGBA 缓冲 — 避免所有页的图片同时驻留内存。
+        page.images.length = 0
+        if (images.length >= MAX_PDF_IMAGES) break
+      }
+    }
+
+    return { text, images }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { text: `[PDF extraction failed: ${message}]`, images: [] }
+  } finally {
+    await parser?.destroy().catch(() => {})
+  }
+}
+
 /** 提取上传 PDF 内嵌图片。非 PDF/文件缺失/超大 → null;无可用图片 → []。 */
 export async function extractPdfImagesFromUpload(
   userId: string,
   fileId: string,
 ): Promise<ExtractedPdfImage[] | null> {
-  const filepath = safeUploadPath(userId, fileId)
-  if (!filepath || !fs.existsSync(filepath)) return null
-  const originalName = fileId.split('_').slice(1).join('_') || fileId
-  if (!isPdf(originalName)) return null
-  const stat = fs.statSync(filepath)
-  if (stat.size > MAX_EXTRACT_FILE_BYTES) return null
-
-  const buffer = fs.readFileSync(filepath)
-  let parser: PDFParse | undefined
-  try {
-    parser = new PDFParse({ data: new Uint8Array(buffer) })
-    const result = await parser.getImage({
-      first: MAX_PDF_IMAGE_PAGES,
-      imageThreshold: 100,
-      imageBuffer: true,
-      imageDataUrl: false,
-    })
-    const out: ExtractedPdfImage[] = []
-    for (const page of result.pages) {
-      for (const img of page.images) {
-        if (img.width * img.height < MIN_PDF_IMAGE_PIXELS) continue
-        const base64 = Buffer.from(img.data).toString('base64')
-        if (base64.length > MAX_PDF_IMAGE_BYTES) continue
-        out.push({ mime: mimeFromImageName(img.name), dataBase64: base64, page: page.pageNumber })
-        if (out.length >= MAX_PDF_IMAGES) return out
-      }
-    }
-    return out
-  } catch {
-    return null
-  } finally {
-    await parser?.destroy().catch(() => {})
-  }
+  const content = await extractPdfContentFromUpload(userId, fileId, { maxChars: 30000, vision: true })
+  return content ? content.images : null
 }
 
 /**

@@ -88,7 +88,7 @@ interface ChatStore {
  * 服务端能捕获的错误(LLM 超时/上下文溢出/附件解析失败)会以 SSE error
  * 事件送达,走 `Error: ${msg}` 分支。
  */
-function chatFailureText(err: unknown): string {
+export function chatFailureText(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
   if (/network error|failed to fetch|fetch failed|load failed|net::/i.test(msg)) {
     return '网络连接中断（服务器可能已重启或网络不稳定），请重试。'

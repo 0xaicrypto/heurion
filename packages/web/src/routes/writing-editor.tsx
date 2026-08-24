@@ -10,7 +10,7 @@ import { DocEditor, type DiffReviewState } from '@/components/DocEditor';
 import { ChatMessages } from '@/components/chat/ChatMessages';
 import { StreamingLlmContent } from '@/components/LlmContent';
 import { ChartLibrary } from '@/components/chat/ChartLibrary';
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, chatFailureText } from '@/stores/chat';
 import { Alert, Button, Skeleton, Textarea, Input } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { mapWireMessages } from '@/lib/message-map';
@@ -367,7 +367,7 @@ export function WritingEditorPage() {
     try {
       await api.exportDoc(docId, 'pdf', doc?.title);
     } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err));
+      setError(err instanceof ApiError ? err.messageText : chatFailureText(err));
     } finally {
       setExporting(false);
     }
@@ -394,7 +394,7 @@ export function WritingEditorPage() {
       editor.chain().focus().insertContentAt({ from, to }, markdownToHtml(result)).run();
       setPolishOpen(false);
     } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err));
+      setError(err instanceof ApiError ? err.messageText : chatFailureText(err));
     } finally {
       setPolishLoading(false);
     }
