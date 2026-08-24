@@ -298,9 +298,14 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           ? fitTextToTokens(docText, CONTEXT_CONFIG.scene.docBodyTokens)
           : fitTextToTokens(sections.sections[focus - 1]?.content || docText, CONTEXT_CONFIG.scene.docBodyTokens)
 
+        // #fix: 文档为空 + 参考材料有内容 — 模型应把润色结果用 full_text
+        // 写入文档(参考材料只是资料来源,不是可编辑对象)。
+        const emptyDocRule = docText.trim()
+          ? ''
+          : '注意:当前文档正文为空。Reference Materials 中的内容只是参考资料,不可编辑。若用户要求润色/整理参考材料中的内容,请直接调用 edit_document 的 full_text 参数,把润色后的完整内容写入文档。禁止使用 old_text 局部编辑(正文为空无法匹配)。\n\n'
         const rules = docFits
-          ? '规则：用户在编辑这份文档。回答用中文。文档较短已完整展示，可直接修改任意部分；优先用 edit_document 的 old_text/new_text 做局部编辑（old_text 必须从上方文档中逐字复制）。'
-          : '规则：用户在编辑这份文档。回答用中文。本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。除非用户明确要求全文重写（此时请告知全文超出上下文预算不可行），否则不要用 full_text 全量替换。'
+          ? `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}文档较短已完整展示，可直接修改任意部分；优先用 edit_document 的 old_text/new_text 做局部编辑（old_text 必须从上方文档中逐字复制）。`
+          : `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。除非用户明确要求全文重写（此时请告知全文超出上下文预算不可行），否则不要用 full_text 全量替换。`
 
         return `\n\n## Current Document\n标题：${doc.title}\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n## Reference Materials\n${refBlock || '(none)'}\n\n${rules}`
       },

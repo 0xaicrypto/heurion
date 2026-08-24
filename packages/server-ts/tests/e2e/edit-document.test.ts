@@ -146,4 +146,16 @@ describe('#171 edit_document tool', () => {
     expect(result.success).toBe(false)
     expect(result.error).toContain('没有任何变化')
   }, 30000)
+
+  test('#fix 正文为空时 range 编辑报错并指引改用 full_text(上传 PDF 后文档空白的场景)', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '')
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ old_text: '论文摘要内容', new_text: '润色后的摘要' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('文档正文为空')
+    expect(result.error).toContain('full_text')
+  }, 30000)
 })

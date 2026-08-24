@@ -71,6 +71,14 @@ export class EditDocumentTool extends BaseTool {
       if (!existing) return { success: false, error: `Document not found: ${docId}` }
 
       const body = String(existing.body || '')
+      // #fix: 正文为空时局部编辑必然失败 — 明确指引模型改用 full_text
+      // 把完整内容写入文档(常见场景:用户上传 PDF 到参考材料,文档本身空白)。
+      if (!body.trim()) {
+        return {
+          success: false,
+          error: '文档正文为空,无法做局部编辑。请改用 full_text 参数把润色后的完整内容写入文档(可参考 Reference Materials 中的原文)。',
+        }
+      }
       const first = body.indexOf(oldText)
       if (first === -1) {
         // 帮助模型修正锚点:给出文档开头附近的可匹配片段。
