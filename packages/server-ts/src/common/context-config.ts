@@ -64,6 +64,9 @@ export const CONTEXT_CONFIG = {
     /** #fix: 参考材料里上传文件(PDF/DOCX/txt)提取正文的 token 预算 —
      *  正文注入取代"只有文件名",LLM 才能真正读到稿件内容。 */
     docRefFileTokens: parseInt(process.env.DOC_REF_FILE_TOKENS || '8000', 10),
+    /** #fix: 长文档分步润色 — 无标题文档按段落合并的目标块大小(token)。
+     *  有标题时按章节切分,不受此值影响。 */
+    docSectionTokens: parseInt(process.env.DOC_SECTION_TOKENS || '1500', 10),
     recentFilesMax: 5,
     fileContextChars: 120,
     /** #fix: 附件文本提取字符上限(每文件,提取阶段;token 层面由
