@@ -471,7 +471,10 @@ export function WritingEditorPage() {
     const f = e.target.files?.[0];
     if (!f || !docId) return;
     try {
-      await api.uploadFile(f);
+      // #fix: 上传按钮的附件必须同时挂到聊天消息(attachments),否则首条
+      // 消息只带"参考材料里的文件名",LLM 读不到正文。
+      const result = await api.uploadFile(f);
+      setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
       await api.addDocReference(docId, {
         kind: f.name.endsWith('.pdf') ? 'pdf' : f.name.endsWith('.docx') || f.name.endsWith('.doc') ? 'docx' : 'file',
         content: f.name,

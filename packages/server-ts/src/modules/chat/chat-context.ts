@@ -325,3 +325,45 @@ export async function buildAttachmentParts(
   }
   return { parts, attachmentText, notes }
 }
+
+/**
+ * #fix: 写作会话参考材料中的上传文件(PDF/DOCX/txt)此前只注入文件名,
+ * LLM 读不到正文,误报"无法解析该文件/没有解析 docx 的能力"。这里识别
+ * refType ∈ {file, pdf, docx} 的文件类引用:按文件名定位上传记录
+ * (findFileByName),提取正文注入;解析失败或非文件引用回退原行为
+ * (标题 + 原 snapshot 截断)。
+ */
+export const DOC_FILE_REF_KINDS = new Set(['file', 'pdf', 'docx'])
+
+export async function buildDocReferenceBlocks(
+  userId: string,
+  refs: Array<{ id?: string; refType?: string | null; snapshot?: string | null; label?: string | null }>,
+  opts: { findFileByName: (name: string) => Promise<{ id: string } | null> },
+): Promise<{ blocks: string[]; resolved: number }> {
+  const blocks: string[] = []
+  let resolved = 0
+  for (const r of refs) {
+    const header = `### ${r.label || r.id || ''}`
+    const kind = String(r.refType || '')
+    const snapshot = String(r.snapshot || '')
+    if (!DOC_FILE_REF_KINDS.has(kind) || !snapshot) {
+      blocks.push(`${header}\n${snapshot.slice(0, CONTEXT_CONFIG.scene.docRefChars)}`)
+      continue
+    }
+    try {
+      const found = await opts.findFileByName(snapshot)
+      const text = found ? await extractTextFromUpload(userId, found.id, { maxChars: attachmentExtractChars() }) : ''
+      const usable = Boolean(text) && !text.startsWith('[PDF') && !text.startsWith('[DOCX')
+      if (found && usable) {
+        resolved++
+        const body = fitTextToTokens(text, CONTEXT_CONFIG.scene.docRefFileTokens)
+        blocks.push(`${header}\n[已解析上传文件正文]\n${body}`)
+        continue
+      }
+    } catch {
+      // fall through to name-only
+    }
+    blocks.push(`${header}\n${snapshot.slice(0, CONTEXT_CONFIG.scene.docRefChars)}`)
+  }
+  return { blocks, resolved }
+}

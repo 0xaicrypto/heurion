@@ -17,7 +17,7 @@ import { deepseekStream, LlmTruncatedError, DEEPSEEK_PREMIUM_MODEL } from '../..
 import { providerSupportsVision, resolveActiveModel, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
-import { buildAttachmentParts, enforceTotalBudget, selectProjectionInputs, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from './chat-context.js'
+import { buildAttachmentParts, buildDocReferenceBlocks, enforceTotalBudget, selectProjectionInputs, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from './chat-context.js'
 import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
 import { ContextAssembler } from './context-assembler.js'
@@ -254,9 +254,15 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           where: { userId, docId },
           orderBy: { createdAt: 'asc' },
         })
-        const refBlock = (refs || [])
-          .map((r: any) => `### ${r.label || r.id}\n${String(r.snapshot || r.body || '').slice(0, CONTEXT_CONFIG.scene.docRefChars)}`)
-          .join('\n\n')
+        // #fix: 上传文件引用(PDF/DOCX/txt)按文件名定位上传并注入提取的
+        // 正文,LLM 才能真正读到稿件内容(此前只有文件名)。
+        const { blocks: refBlocks } = await buildDocReferenceBlocks(userId, refs || [], {
+          findFileByName: async (name) => (prisma as any).fileIndex.findFirst({
+            where: { userId, name, deletedAt: null },
+            orderBy: { createdAt: 'desc' },
+          }),
+        })
+        const refBlock = refBlocks.join('\n\n')
         return `\n\n## Current Document\n标题：${doc.title}\n\n${fitTextToTokens(String(doc.body || ''), CONTEXT_CONFIG.scene.docBodyTokens)}\n\n## Reference Materials\n${refBlock || '(none)'}\n\n规则：用户在编辑这份文档。回答用中文；当用户要求修改文档时，调用 edit_document 工具写回完整的新文档内容（markdown）。`
       },
     },

@@ -61,6 +61,9 @@ export const CONTEXT_CONFIG = {
      *  token-estimate.fitTextToTokens)。 */
     docBodyTokens: parseInt(process.env.DOC_BODY_TOKENS || '20000', 10),
     docRefChars: 4000,
+    /** #fix: 参考材料里上传文件(PDF/DOCX/txt)提取正文的 token 预算 —
+     *  正文注入取代"只有文件名",LLM 才能真正读到稿件内容。 */
+    docRefFileTokens: parseInt(process.env.DOC_REF_FILE_TOKENS || '8000', 10),
     recentFilesMax: 5,
     fileContextChars: 120,
     /** #fix: 附件文本提取字符上限(每文件,提取阶段;token 层面由
