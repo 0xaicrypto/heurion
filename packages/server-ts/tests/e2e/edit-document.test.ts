@@ -208,6 +208,55 @@ describe('#171 edit_document tool', () => {
     expect(result.error).toContain('未找到')
   }, 30000)
 
+  test('#fix range 模式:old_text 省略 ## 标题标记(LLM 从参考材料复制时去掉标记)仍能匹配', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const body = '## Abstract\n\n## Rationale\n\nProgressive structural lung disease is a key hallmark.\n\n## Objectives\n\nWe sought to establish improvements.'
+    const docId = await createDoc(app, body)
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({
+      old_text: 'Abstract Rationale Progressive structural lung disease is a key hallmark. Objectives We sought to establish improvements.',
+      new_text: '**Abstract**\n\n**Rationale** Progressive structural lung disease is a key hallmark. **Objectives** We sought to establish improvements.',
+      summary: '润色摘要',
+    })
+    expect(result.success).toBe(true)
+    const parsed = JSON.parse(result.output as string)
+    expect(parsed.body).toContain('**Abstract**')
+    expect(parsed.body).toContain('**Objectives**')
+  }, 30000)
+
+  test('#fix range 模式:old_text 含少量字符差异(模型脑补修正拼写)→ 模糊匹配成功', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    // 模拟 PDF 提取出的 "BwtAand"(应为 "Bwt/A and"),模型复制时脑补修正。
+    const body = 'Automated analysis showed a significant reduction in BwtAand Bwa/Boa at 12 months which were sustained to 24 months.'
+    const docId = await createDoc(app, body)
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({
+      old_text: 'Automated analysis showed a significant reduction in Bwt/A and Bwa/Boa at 12 months which were sustained to 24 months.',
+      new_text: 'Automated analysis showed a significant reduction in Bwt/A and Bwa/Boa at 12 months, sustained to 24 months.',
+      summary: '润色结果句',
+    })
+    expect(result.success).toBe(true)
+    const parsed = JSON.parse(result.output as string)
+    expect(parsed.body).toContain('sustained to 24 months.')
+    expect(parsed.body).not.toContain('BwtAand')
+  }, 30000)
+
+  test('#fix range 模式:old_text 忽略大小写差异', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, 'Elexacaftor/Tezacaftor/Ivacaftor')
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ old_text: 'elexacaftor/tezacaftor/ivacaftor', new_text: 'ETI', summary: '缩写' })
+    expect(result.success).toBe(true)
+    const parsed = JSON.parse(result.output as string)
+    expect(parsed.body).toBe('ETI')
+  }, 30000)
+
   test('#fix 正文为空且无参考材料时 range 编辑报错并指引先上传/full_text', async () => {
     const app = await getApp()
     const userId = await getAuthUserId()

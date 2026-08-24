@@ -5,34 +5,100 @@ import { issueChartToken } from '../common/chart-token.js'
 import fs from 'fs'
 import path from 'path'
 
+/** 匹配时忽略的 markdown 语法字符 — 模型复制 old_text 时常省略/重排这些
+ *  标记(`## ` 标题、`**` 强调、`` ` `` 行内代码、`>` 引用、`•` 列表圆点),
+ *  而导入后的文档正文里它们真实存在,字符级差异会让两级空白匹配失效。 */
+function isMatchSyntaxChar(c: string): boolean {
+  return c === '#' || c === '*' || c === '`' || c === '>' || c === '•' || c === '\u00ad'
+}
+
+/** 剥离开匹配的 markdown 语法(含软连字符与整段图片 token)。 */
+function stripMatchSyntax(s: string): string {
+  return s
+    .replace(/\u00ad/g, '')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/[#`>*•]/g, '')
+    .replace(/\*/g, '')
+}
+
 /**
- * #fix: 空白归一化 — 任意空白序列塌缩为单个空格,去除软连字符(U+00AD)。
- * PDF 提取正文里满是换行/空格伪影,LLM 的 old_text 在空白上常有细微
- * 差异(换行位置、连续空格、连字断开),逐字节 indexOf 必然失败。
+ * #fix: 匹配归一化 — 空白塌缩 + 剥离 markdown 语法 + 忽略大小写。
+ * PDF 提取正文里满是换行/空格伪影,LLM 的 old_text 在空白/标记/大小写
+ * 上常有细微差异(换行位置、连续空格、连字断开、## 标题前缀),逐字节
+ * indexOf 必然失败。
  */
 export function normalizeForMatch(s: string): string {
-  return s.replace(/\u00ad/g, '').replace(/\s+/g, ' ').trim()
+  return stripMatchSyntax(s).replace(/\s+/g, ' ').trim().toLowerCase()
 }
 
 /** 完全忽略空白/软连字符(兜底匹配用 — PDF 断行把词拆开时插入的空格)。 */
 function normalizeWsFree(s: string): string {
-  return s.replace(/[\u00ad\s]/g, '')
+  return stripMatchSyntax(s).replace(/\s/g, '').toLowerCase()
 }
 
-/** 归一化索引 → 原始下标:空白序列按一个空格计(塌缩口径)。 */
+/** 跳过 markdown 图片 token(![...](...)),命中返回跳过后的下标,否则原样。 */
+function skipImageToken(body: string, raw: number): number {
+  if (body[raw] !== '!' || body[raw + 1] !== '[') return raw
+  const close = body.indexOf('](', raw + 2)
+  if (close === -1) return raw
+  const paren = body.indexOf(')', close + 2)
+  if (paren === -1) return raw
+  return paren + 1
+}
+
+/** 归一化索引 → 原始下标:空白序列按一个空格计(塌缩口径)。
+ *  注意:归一化先剥离语法标记再塌缩空白,所以空白段要连同交错其中的
+ *  语法字符/图片 token 一起合并为 1 个归一化位置('\\n\\n## ' 这类
+ *  标记两侧空白在剥离后是同一段 \s+,不能拆成两个位置)。 */
 function walkCollapsed(body: string, target: number): number {
   let raw = 0
   let norm = 0
-  while (norm < target && raw < body.length) {
+  // 归一化做了 trim:正文开头的空白/语法/图片不占归一化位置。
+  while (raw < body.length) {
+    const img = skipImageToken(body, raw)
+    if (img !== raw) {
+      raw = img
+      continue
+    }
     const c = body[raw]
-    if (c === '\u00ad') {
+    if (isMatchSyntaxChar(c) || /\s/.test(c)) {
       raw++
       continue
     }
+    break
+  }
+  while (norm < target && raw < body.length) {
+    const c = body[raw]
     if (/\s/.test(c)) {
-      while (raw < body.length && /\s/.test(body[raw])) raw++
+      raw++
+      while (raw < body.length) {
+        const d = body[raw]
+        if (/\s/.test(d)) {
+          raw++
+          continue
+        }
+        const img = skipImageToken(body, raw)
+        if (img !== raw) {
+          raw = img
+          continue
+        }
+        if (isMatchSyntaxChar(d)) {
+          raw++
+          continue
+        }
+        break
+      }
       norm++
     } else {
+      const img = skipImageToken(body, raw)
+      if (img !== raw) {
+        raw = img
+        continue
+      }
+      if (isMatchSyntaxChar(c)) {
+        raw++
+        continue
+      }
       raw++
       norm++
     }
@@ -40,13 +106,18 @@ function walkCollapsed(body: string, target: number): number {
   return raw
 }
 
-/** 归一化索引 → 原始下标:空白/软连字符不占位(完全忽略口径)。 */
+/** 归一化索引 → 原始下标:空白/软连字符/语法标记不占位(完全忽略口径)。 */
 function walkWsFree(body: string, target: number): number {
   let raw = 0
   let norm = 0
   while (norm < target && raw < body.length) {
+    const img = skipImageToken(body, raw)
+    if (img !== raw) {
+      raw = img
+      continue
+    }
     const c = body[raw]
-    if (c === '\u00ad' || /\s/.test(c)) {
+    if (isMatchSyntaxChar(c) || /\s/.test(c)) {
       raw++
       continue
     }
@@ -62,6 +133,7 @@ export interface NormalizedSpan {
   k: number
   normBody: string
   normNeedle: string
+  fuzzy?: boolean
 }
 
 /**
@@ -85,6 +157,115 @@ export function findNormalizedSpan(body: string, needle: string): NormalizedSpan
   const k2 = fb.indexOf(fn)
   if (k2 === -1) return null
   return { start: walkWsFree(body, k2), end: walkWsFree(body, k2 + fn.length), k: k2, normBody: fb, normNeedle: fn }
+}
+
+/** 锚点片段长度与模糊匹配的编辑预算上限(needle 长度的比例)。 */
+const FUZZY_EDIT_RATIO = 0.02
+const FUZZY_MIN_EDITS = 10
+const FUZZY_SLACK_RATIO = 0.05
+const FUZZY_SLACK_MIN = 20
+const FUZZY_SLACK_MAX = 120
+
+/**
+ * #fix: 模糊匹配兜底 — 两级精确归一化失败后,允许少量字符差异
+ * (模型复制 old_text 时的拼写/词形微差,如把 "BwtAand" 脑补成
+ * "Bwt/A and")。锚点策略:取 needle 前/后 FUZZY_ANCHOR_LEN 个字符在
+ * body 中定位,再在锚点附近窗口内做半全局编辑距离(窗口侧允许自由
+ * 前后缀删除),编辑数 ≤ maxEdits 才接受。命中级别 fuzzy=true。
+ */
+export function findFuzzySpan(body: string, needle: string): NormalizedSpan | null {
+  const nb = normalizeWsFree(body)
+  const nn = normalizeWsFree(needle)
+  if (!nn) return null
+
+  // 锚点:按长度递减尝试 needle 前缀/后缀片段(差异可能落在中间,过长的
+  // 锚片段会把差异包含进去,退化为找不到)。
+  let bp = -1
+  let np = 0
+  for (const len of [80, 60, 40, 24]) {
+    const prefix = nn.slice(0, len)
+    const p = nb.indexOf(prefix)
+    if (p !== -1) {
+      bp = p
+      np = 0
+      break
+    }
+    const suffix = nn.slice(-len)
+    const s = nb.indexOf(suffix)
+    if (s !== -1) {
+      bp = s
+      np = nn.length - len
+      break
+    }
+  }
+  if (bp === -1) return null
+
+  const slack = Math.min(FUZZY_SLACK_MAX, Math.max(FUZZY_SLACK_MIN, Math.round(nn.length * FUZZY_SLACK_RATIO)))
+  const winStart = Math.max(0, bp - np - slack)
+  const winEnd = Math.min(nb.length, bp - np + nn.length + slack)
+  const window = nb.slice(winStart, winEnd)
+  const M = nn.length
+  const N = window.length
+  const maxEdits = Math.max(FUZZY_MIN_EDITS, Math.ceil(nn.length * FUZZY_EDIT_RATIO))
+
+  // 半全局 DP:第 0 行自由跳过窗口前缀(代价 0,起点随 j);滚动行,
+  // 同步记录每个 cell 的对齐起点;最后一行取最小代价(自由后缀删除)。
+  let prev = new Float64Array(N + 1)
+  let prevStart = new Int32Array(N + 1)
+  for (let j = 0; j <= N; j++) {
+    prev[j] = 0
+    prevStart[j] = j
+  }
+  let best = Infinity
+  let bestJ = -1
+  let bestStart = 0
+  for (let i = 1; i <= M; i++) {
+    const curr = new Float64Array(N + 1)
+    const currStart = new Int32Array(N + 1)
+    curr[0] = i
+    currStart[0] = 0
+    const ni = nn.charCodeAt(i - 1)
+    for (let j = 1; j <= N; j++) {
+      const cost = ni === window.charCodeAt(j - 1) ? 0 : 1
+      const del = curr[j - 1] + 1
+      const ins = prev[j] + 1
+      const sub = prev[j - 1] + cost
+      if (del <= ins && del <= sub) {
+        curr[j] = del
+        currStart[j] = currStart[j - 1]
+      } else if (ins <= sub) {
+        curr[j] = ins
+        currStart[j] = prevStart[j]
+      } else {
+        curr[j] = sub
+        currStart[j] = prevStart[j - 1]
+      }
+    }
+    if (i === M) {
+      for (let j = 1; j <= N; j++) {
+        if (curr[j] < best) {
+          best = curr[j]
+          bestJ = j
+          bestStart = currStart[j]
+        }
+      }
+    }
+    prev = curr
+    prevStart = currStart
+  }
+  if (best > maxEdits || bestJ === -1) return null
+
+  const startNorm = winStart + bestStart
+  const endNorm = winStart + bestJ
+  if (startNorm >= endNorm) return null
+  return {
+    start: walkWsFree(body, startNorm),
+    end: walkWsFree(body, endNorm),
+    k: startNorm,
+    normBody: nb,
+    normNeedle: nn,
+    fuzzy: true,
+  }
 }
 
 /**
@@ -261,20 +442,22 @@ export class EditDocumentTool extends BaseTool {
           }
         }
       }
-      // #fix: 空白归一化匹配 — PDF 提取的换行/空格伪影与 LLM 复制的
-      // old_text 之间允许空白差异(换行位置、连续空格、软连字符),其余
-      // 字符必须逐字一致。命中后替换原始 span,新正文不留空白残留。
-      const span = findNormalizedSpan(body, oldText)
+      // #fix: 三级匹配 — 空白归一化(换行/连续空格/软连字符/markdown
+      // 标题标记/大小写)→ 完全忽略空白 → 模糊匹配(少量字符差异)。
+      // 命中后替换原始 span,新正文不留空白残留。
+      const span = findNormalizedSpan(body, oldText) ?? findFuzzySpan(body, oldText)
       if (!span) {
-        // 帮助模型修正锚点:给出文档开头附近的可匹配片段。
-        const probe = normalizeForMatch(body).slice(0, 120)
+        // 帮助模型修正锚点:给出文档开头附近的可匹配片段(保留大小写与
+        // 标题标记,便于逐字复制)。
+        const probe = body.slice(0, 400).replace(/\s+/g, ' ').slice(0, 120)
         return {
           success: false,
-          error: `old_text 在文档中未找到(已忽略空格/换行差异后仍不匹配),请从上方 Current Document 部分逐字复制待修改的原文。文档开头附近是: "${probe}"`,
+          error: `old_text 在文档中未找到(已忽略空格/换行/标题标记差异后仍不匹配),请从上方 Current Document 部分逐字复制待修改的原文。文档开头附近是: "${probe}"`,
         }
       }
-      // 归一化匹配同样参与多次命中判定 — 两个片段仅空白不同也视为重复。
-      if (span.normBody.indexOf(span.normNeedle, span.k + span.normNeedle.length) !== -1) {
+      // 归一化匹配同样参与多次命中判定 — 两个片段仅空白不同也视为重复;
+      // 模糊匹配跳过(锚点窗口内已约束唯一性)。
+      if (!span.fuzzy && span.normBody.indexOf(span.normNeedle, span.k + span.normNeedle.length) !== -1) {
         return {
           success: false,
           error: 'old_text 在文档中出现多次,请包含更多上下文让锚点唯一(比如加上前后句)',
