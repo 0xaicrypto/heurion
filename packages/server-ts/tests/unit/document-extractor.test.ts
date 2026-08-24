@@ -6,7 +6,7 @@ import zlib from 'zlib'
 import PDFDocument from 'pdfkit'
 import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun } from 'docx'
 import { extractTextFromUpload, extractPdfImagesFromUpload } from '../../src/lib/document-extractor.js'
-import { buildAttachmentParts } from '../../src/modules/chat/chat-context.js'
+import { buildAttachmentParts, MAX_ATTACHMENT_IMAGES } from '../../src/modules/chat/chat-context.js'
 
 /** 生成一张合法 PNG(RGB,无压缩选项) — 测试用最小实现。 */
 function makePng(width: number, height: number): Buffer {
@@ -187,5 +187,36 @@ describe('document-extractor PDF 内嵌图片提取', () => {
     const textOnly = await buildAttachmentParts([fileId], { userId: 'u1', vision: false })
     expect(textOnly.parts.some((p) => p.type === 'image')).toBe(false)
     expect(textOnly.attachmentText).toContain('Section Heading')
+  })
+
+  test('多张直接上传图片共用数量上限 — 超出降级为文件名说明,不撑爆请求体', async () => {
+    const png = makePng(200, 150)
+    const ids: string[] = []
+    for (let i = 0; i < MAX_ATTACHMENT_IMAGES + 3; i++) {
+      const fid = `175000000011${i}_img${i}.png`
+      fs.writeFileSync(path.join(uploadsDir, fid), png)
+      ids.push(fid)
+    }
+    const res = await buildAttachmentParts(ids, { userId: 'u1', vision: true })
+    const imageParts = res.parts.filter((p) => p.type === 'image')
+    expect(imageParts.length).toBe(MAX_ATTACHMENT_IMAGES)
+    expect(res.notes.some((n) => n.includes('image skipped — part cap reached'))).toBe(true)
+    expect(res.attachmentText).toContain('超出单条消息图片上限')
+  })
+
+  test('PDF 内嵌图片与直接上传图片共用配额', async () => {
+    const pdfId = '1750000000120_paper.pdf'
+    fs.writeFileSync(path.join(uploadsDir, pdfId), await makePdfWithImage())
+    const pngId = '1750000000121_extra.png'
+    fs.writeFileSync(path.join(uploadsDir, pngId), makePng(200, 150))
+    // PDF(1 张内嵌图)+ 8 张直接图 — 超过 8 张上限,整体被裁剪。
+    const ids = [pdfId, ...Array.from({ length: MAX_ATTACHMENT_IMAGES }, (_, i) => `175000000012${i + 2}_e${i}.png`).map((f) => {
+      fs.writeFileSync(path.join(uploadsDir, f), makePng(200, 150))
+      return f
+    })]
+    const res = await buildAttachmentParts(ids, { userId: 'u1', vision: true })
+    const imageParts = res.parts.filter((p) => p.type === 'image')
+    expect(imageParts.length).toBeLessThanOrEqual(MAX_ATTACHMENT_IMAGES)
+    expect(imageParts.length).toBeGreaterThanOrEqual(1)
   })
 })

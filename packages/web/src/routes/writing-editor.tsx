@@ -444,7 +444,10 @@ export function WritingEditorPage() {
             api.logAttachments(chatSessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
           }
           if (docId) api.addDocReference(docId, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
-        } catch { /* ignore */ }
+        } catch (err) {
+          // #fix: 大文件/上传失败此前静默吞掉,用户以为传上了 — 现在明示。
+          setError(err instanceof ApiError ? err.messageText : String(err));
+        }
         finally { setChatUploadingFile(false); }
       }
     }
@@ -463,7 +466,10 @@ export function WritingEditorPage() {
         api.logAttachments(chatSessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
       }
       if (docId) api.addDocReference(docId, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
-    } catch { /* ignore */ }
+    } catch (err) {
+      // #fix: 大文件/上传失败此前静默吞掉 — 现在明示。
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    }
     finally { setChatUploadingFile(false); }
   };
 

@@ -531,7 +531,8 @@ export function PatientChatPage() {
         setTimeout(() => setKbDedupNotice(null), 4000);
       }
     } catch (err) {
-      // silently fail
+      // #fix: 大文件/上传失败此前静默吞掉 — 现在明示。
+      setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
       setUploadingFile(false);
     }
@@ -553,7 +554,10 @@ export function PatientChatPage() {
         setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
         setTimeout(() => setKbDedupNotice(null), 4000);
       }
-        } catch { /* ignore */ }
+        } catch (err) {
+          // #fix: 大文件/上传失败此前静默吞掉 — 现在明示。
+          setError(err instanceof ApiError ? err.messageText : String(err));
+        }
         finally { setUploadingFile(false); }
       }
     }

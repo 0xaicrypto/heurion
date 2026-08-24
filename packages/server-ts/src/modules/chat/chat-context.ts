@@ -247,6 +247,12 @@ export function selectProjectionInputs(
  */
 export type AttachmentWire = string | { file_id?: string; fileId?: string; name?: string }
 
+// #fix: 单条消息的图片 part 总量上限 — 直接上传图片(≤4MB/张)与 PDF 内嵌
+// 图片共用配额。token 预算只覆盖文本,图片 base64(膨胀 ~1.33×)不在此
+// 预算内,不设上限会把 LLM 请求体撑爆(多张 4MB 图 → 数十 MB body)。
+export const MAX_ATTACHMENT_IMAGES = 8
+export const MAX_ATTACHMENT_IMAGE_BYTES = 20 * 1024 * 1024
+
 export async function buildAttachmentParts(
   rawAttachments: AttachmentWire[] | undefined,
   opts: { userId: string; vision: boolean },
@@ -260,6 +266,8 @@ export async function buildAttachmentParts(
   const extractCap = attachmentExtractChars()
   const tokenBudget = attachmentTokenBudget()
   let consumedTokens = 0
+  let imageCount = 0
+  let imageBytes = 0
   for (const att of rawAttachments || []) {
     const fid = typeof att === 'string' ? att : (att.file_id || att.fileId || '')
     const name = typeof att === 'string' ? fid.split('_').slice(1).join('_') : (att.name || '')
@@ -270,6 +278,13 @@ export async function buildAttachmentParts(
         ? await extractImageUpload(opts.userId, fid)
         : (isImageFile(name) ? { noVision: true } : null)
     if (probe?.mime && probe.dataBase64) {
+      if (imageCount >= MAX_ATTACHMENT_IMAGES || imageBytes + probe.dataBase64.length > MAX_ATTACHMENT_IMAGE_BYTES) {
+        attachmentText += `\n[ATTACHMENT: ${name}] (image — 超出单条消息图片上限 ${MAX_ATTACHMENT_IMAGES} 张 / ${Math.round(MAX_ATTACHMENT_IMAGE_BYTES / 1024 / 1024)}MB,已降级为文件名)\n`
+        notes.push(`Attachment: ${name.slice(0, 30)} (image skipped — part cap reached)`)
+        continue
+      }
+      imageCount++
+      imageBytes += probe.dataBase64.length
       parts.push({ type: 'image', mime: probe.mime, dataBase64: probe.dataBase64 })
       notes.push(`Attachment: ${name.slice(0, 30)} (image → multimodal)`)
       continue
@@ -316,11 +331,20 @@ export async function buildAttachmentParts(
     }
     // #fix: PDF 内嵌图片 → 多模态 part(仅视觉模型)。文本照常注入,
     // 图片让模型看到真实图表/照片,而不是 "图 3 显示…" 占位文字。
+    // 与直接上传图片共用计数/字节上限,超出部分丢弃(文本仍完整)。
     if (pdfImages.length > 0) {
+      const room = Math.max(0, MAX_ATTACHMENT_IMAGES - imageCount)
+      let pushed = 0
+      let usedBytes = 0
       for (const im of pdfImages) {
+        if (pushed >= room || imageBytes + usedBytes + im.dataBase64.length > MAX_ATTACHMENT_IMAGE_BYTES) break
         parts.push({ type: 'image', mime: im.mime, dataBase64: im.dataBase64 })
+        pushed++
+        usedBytes += im.dataBase64.length
       }
-      notes.push(`Attachment: ${name.slice(0, 30)} (PDF 内嵌图片 ×${pdfImages.length})`)
+      imageCount += pushed
+      imageBytes += usedBytes
+      notes.push(`Attachment: ${name.slice(0, 30)} (PDF 内嵌图片 ×${pushed}/${pdfImages.length})`)
     }
   }
   return { parts, attachmentText, notes }

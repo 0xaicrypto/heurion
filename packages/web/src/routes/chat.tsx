@@ -404,7 +404,8 @@ export function ChatPage() {
         api.logAttachments(sessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
       }
     } catch (err) {
-      // silently fail
+      // #fix: 大文件/上传失败此前静默吞掉,用户以为传上了 — 现在明示。
+      setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
       setUploadingFile(false);
     }
@@ -442,7 +443,10 @@ export function ChatPage() {
           appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
           api.logAttachments(sessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        // #fix: 大文件/上传失败此前静默吞掉 — 现在明示。
+        setError(err instanceof ApiError ? err.messageText : String(err));
+      }
       finally { setUploadingFile(false); }
     }
   };

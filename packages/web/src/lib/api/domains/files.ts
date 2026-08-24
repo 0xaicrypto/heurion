@@ -5,7 +5,13 @@ import { ApiCore, ApiError } from './core.js';
 export class FilesApi extends ApiCore {
   /* ────────────────────────── files ────────────────────────── */
 
+  /** #fix: 与服务端 multipart 上限保持一致(server app.ts fileSize=100MB)。 */
+  static readonly MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
   async uploadFile(file: File, patientHash?: string): Promise<{ file_id: string; name: string; mime: string; size_bytes: number; dedup?: boolean }> {
+    if (file.size > FilesApi.MAX_UPLOAD_BYTES) {
+      throw new ApiError(413, JSON.stringify({ error: `上传文件超过 100MB 上限,请压缩后再试 (file exceeds the 100MB upload limit)` }), '/api/v1/files/upload');
+    }
     const form = new FormData();
     form.append('file', file);
     if (patientHash) form.append('patient_hash', patientHash);

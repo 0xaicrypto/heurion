@@ -64,6 +64,12 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
     if (err instanceof ZodError) {
       return reply.status(400).send({ error: 'Validation failed', details: err.errors })
     }
+    // #fix: 超限上传(multipart fileSize=100MB)此前落成裸 500,前端又静默
+    // 吞错,用户完全不知道文件没传上去。改成 413 + 可读提示。
+    const code = (err as any)?.code
+    if (code === 'FST_REQ_FILE_TOO_LARGE' || (err as any)?.statusCode === 413) {
+      return reply.status(413).send({ error: '上传文件超过 100MB 上限,请压缩后再试 (file exceeds the 100MB upload limit)' })
+    }
     reply.status(500).send({ error: err.message || 'Internal error' })
   })
 
