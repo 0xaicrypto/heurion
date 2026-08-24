@@ -64,19 +64,15 @@ export function isImageFile(filename: string, mimeType?: string): boolean {
   return false
 }
 
-export { isDocx }
-
-function isDocx(filename: string, mimeType?: string): boolean {
+export function isDocx(filename: string, mimeType?: string): boolean {
   const lower = filename.toLowerCase()
   return lower.endsWith('.docx') || mimeType === DOCX_MIME_TYPE
 }
 
-function isPdf(filename: string, mimeType?: string): boolean {
+export function isPdf(filename: string, mimeType?: string): boolean {
   const lower = filename.toLowerCase()
   return lower.endsWith('.pdf') || mimeType === 'application/pdf'
 }
-
-export { isPdf }
 
 function isText(filename: string, mimeType?: string): boolean {
   const lower = filename.toLowerCase()

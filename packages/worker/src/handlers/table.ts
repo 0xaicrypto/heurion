@@ -1,5 +1,4 @@
-import PDFDocument from 'pdfkit'
-import { saveFile } from '../storage.js'
+import { renderPdf } from './common.js'
 
 export interface TableInput {
   title?: string
@@ -8,22 +7,7 @@ export interface TableInput {
 }
 
 export async function renderTable(input: TableInput) {
-  const doc = new PDFDocument({ margin: 50, size: 'A4' })
-  const buffers: Buffer[] = []
-  doc.on('data', (chunk: Buffer) => buffers.push(chunk))
-
-  return new Promise<any>((resolve, reject) => {
-    doc.on('end', async () => {
-      try {
-        const buffer = Buffer.concat(buffers)
-        const result = await saveFile(buffer, 'table.pdf', 'application/pdf')
-        resolve(result)
-      } catch (err) {
-        reject(err)
-      }
-    })
-    doc.on('error', reject)
-
+  return renderPdf((doc) => {
     if (input.title) {
       doc.fontSize(20).text(input.title, { align: 'center' })
       doc.moveDown(1)
@@ -39,17 +23,10 @@ export async function renderTable(input: TableInput) {
       const cellHeight = isHeader ? rowHeight + 5 : rowHeight
       cells.forEach((cell, i) => {
         doc.rect(x, y, colWidth, cellHeight).stroke()
-        if (isHeader) {
-          doc.font('Helvetica-Bold').fontSize(fontSize).text(cell, x + 2, y + 3, {
-            width: colWidth - 4,
-            align: 'left',
-          })
-        } else {
-          doc.font('Helvetica').fontSize(fontSize).text(cell, x + 2, y + 3, {
-            width: colWidth - 4,
-            align: 'left',
-          })
-        }
+        doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica').fontSize(fontSize).text(cell, x + 2, y + 3, {
+          width: colWidth - 4,
+          align: 'left',
+        })
         x += colWidth
       })
       y += cellHeight
@@ -63,7 +40,5 @@ export async function renderTable(input: TableInput) {
       }
       drawRow(row, false)
     }
-
-    doc.end()
-  })
+  }, 'table.pdf')
 }

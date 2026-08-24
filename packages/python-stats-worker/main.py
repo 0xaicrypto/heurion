@@ -2,6 +2,9 @@
 
 Single entry point: HTTP /analyze (FastAPI). #444: the Redis dual-consumer
 was a dead path (no producer ever wrote to heurion:jobs) and is removed.
+
+Wire contract (#689): AnalyzeRequest mirrors
+packages/contracts/src/stats.ts (statsRequestSchema) — keep both in sync.
 """
 import os
 from typing import Any, Dict, List, Optional
@@ -15,6 +18,7 @@ app = FastAPI(title="Heurion Python Stats Worker")
 
 
 class AnalyzeRequest(BaseModel):
+    """Mirror of contracts/src/stats.ts statsRequestSchema (#689)."""
     test: str
     group_a: Optional[List[float]] = None
     group_b: Optional[List[float]] = None
@@ -27,22 +31,22 @@ class AnalyzeRequest(BaseModel):
 
 
 def run_analysis(req: AnalyzeRequest) -> Dict[str, Any]:
-    test = req.test
-    if test == "describe":
-        return {"report": stats_core.describe(req.values or [])}
-    if test == "t-test":
-        return {"report": stats_core.welch_t(req.group_a or [], req.group_b or [])}
-    if test == "chi-square":
-        return {"report": stats_core.chi_square(req.table or [])}
-    if test == "kaplan-meier":
-        ta = [r.get("time", 0) for r in (req.survival_a or [])]
-        ea = [bool(r.get("event")) for r in (req.survival_a or [])]
-        tb = [r.get("time", 0) for r in (req.survival_b or [])]
-        eb = [bool(r.get("event")) for r in (req.survival_b or [])]
-        return {"report": stats_core.kaplan_meier(ta, ea, tb, eb)}
-    if test == "two-way-anova":
-        return {"report": stats_core.two_way_anova(req.group or [], req.factor_a or [], req.values or [])}
-    raise HTTPException(status_code=400, detail=f"unknown test: {test}")
+    handlers: Dict[str, Any] = {
+        "describe": lambda: stats_core.describe(req.values or []),
+        "t-test": lambda: stats_core.welch_t(req.group_a or [], req.group_b or []),
+        "chi-square": lambda: stats_core.chi_square(req.table or []),
+        "kaplan-meier": lambda: stats_core.kaplan_meier(
+            [r.get("time", 0) for r in (req.survival_a or [])],
+            [bool(r.get("event")) for r in (req.survival_a or [])],
+            [r.get("time", 0) for r in (req.survival_b or [])],
+            [bool(r.get("event")) for r in (req.survival_b or [])],
+        ),
+        "two-way-anova": lambda: stats_core.two_way_anova(req.group or [], req.factor_a or [], req.values or []),
+    }
+    handler = handlers.get(req.test)
+    if handler is None:
+        raise HTTPException(status_code=400, detail=f"unknown test: {req.test}")
+    return {"report": handler()}
 
 
 @app.get("/healthz")

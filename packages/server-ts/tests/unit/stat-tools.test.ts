@@ -1,6 +1,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
-import { StatDescribeTool, StatTTestTool, StatChiSqTool, StatKmTool, StatPlotTool, StatAdvisorTool } from '../../src/tools/stat-tools.js'
-import { tTwoTailedP, chiSquaredP } from '../../src/tools/stat-tools.js'
+import { StatDescribeTool, StatTTestTool, StatChiSqTool, StatKmTool, StatPlotTool } from '../../src/tools/stat-tools.js'
+import { StatAdvisorTool } from '../../src/tools/stat-advisor-tool.js'
+import { tTwoTailedP, chiSquaredP } from '../../src/lib/stats-math.js'
 
 // Expose helpers for direct p-value checks
 const helpers = { tTwoTailedP, chiSquaredP } as any

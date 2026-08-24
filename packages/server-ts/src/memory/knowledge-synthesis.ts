@@ -100,12 +100,13 @@ export async function maybeSynthesizeArticle(
       .slice(0, 10)
 
     const { deepseekChat, getApiKey } = await import('../common/llm.js')
+    const { parseLlmJson } = await import('../common/llm-json.js')
+    const { articleSynthesisPrompt } = await import('./prompts.js')
     const apiKey = getApiKey()
     const factList = articleFacts
       .map((f) => `[importance=${f.importance ?? 3}] [${f.sourceType || 'general'}] ${f.content}`)
       .join('\n')
-    const prompt = `你是临床知识合成器。基于以下已确认的事实合成一篇简短知识文章（1-2 段，临床可执行）：
-\n${factList}\n\n返回 ONLY JSON: {"title": "...", "content": "..."}`
+    const prompt = articleSynthesisPrompt(factList)
 
     const result = await deepseekChat(
       [{ role: 'user', content: prompt }],
@@ -116,10 +117,8 @@ export async function maybeSynthesizeArticle(
         telemetryContext: { userId, workspaceId: userId, action: 'memory.article_synthesis' },
       },
     )
-    const jsonMatch = result.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) return
-    const article = JSON.parse(jsonMatch[0])
-    if (!article.title || !article.content) return
+    const article = parseLlmJson<{ title?: string; content?: string }>(result)
+    if (!article?.title || !article.content) return
 
     const { MemoryGraphGateway } = await import('./memory-gateway.js')
     const gateway = new MemoryGraphGateway(userId, memory)

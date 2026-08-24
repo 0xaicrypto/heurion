@@ -1,4 +1,5 @@
 import fs from 'fs'
+import { esc } from '../lib/xml-escape.js'
 import path from 'path'
 import { BaseTool, ToolResult } from './base-tool.js'
 import { renderSvgChart, type ChartInput } from './chart-renderer.js'
@@ -129,6 +130,4 @@ export class RenderChartTool extends BaseTool {
   }
 }
 
-function esc(s: string): string {
-  return String(s).replace(/"/g, '&quot;')
-}
+

@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
+import { generateResearchSummary } from './research-summary.service.js'
 import { ResearchService } from './research.service'
 import { createStudySchema, enrollPatientSchema } from './research.dto'
 import { extractRulesFromProtocol, getPendingRules, confirmRule, rejectRule, getConfirmationStatus } from './protocol-extractor.js'
@@ -100,25 +101,13 @@ export async function researchRouter(app: FastifyInstance) {
       `随访：待完成评估 ${pendingAssessments} 项，总评估 ${(assessments as any[]).length} 项`,
     ].filter(Boolean)
 
-    const { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } = await import('../../common/llm.js')
-    let summary = ''
-    try {
-      const raw = await deepseekChat(
-        [{ role: 'system', content: '你是临床研究协调员。基于给定事实生成一段客观、适合写入论文 Methods/Results 或内部汇报的研究进展摘要（150-250字中文，含关键数字）。' },
-         { role: 'user', content: facts.join('\n') }],
-        getApiKey(),
-        { model: DEEPSEEK_CHAT_MODEL, maxTokens: 800, telemetryContext: { userId, workspaceId: userId, action: 'research.summary' } },
-      )
-      summary = raw.trim()
-    } catch {
-      summary = '' // LLM unavailable — structured facts still returned
-    }
+    const summary = await generateResearchSummary(userId, facts)
 
     return {
       study_id: studyId,
       study_name: study.name,
       facts,
-      summary: summary || facts.join('；'),
+      summary,
       generated_at: new Date().toISOString(),
     }
   })

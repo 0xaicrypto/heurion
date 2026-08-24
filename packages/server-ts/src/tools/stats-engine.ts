@@ -15,16 +15,13 @@
  *                     interpretation }
  *   kaplan-meier  → { method:'kaplan_meier_logrank', test_stat, p_value,
  *                     interpretation, curve_a, curve_b, ... }
+ *
+ * Wire contract lives in @heurion/contracts (stats.ts, #689) and is
+ * mirrored by python-stats-worker/main.py (pydantic).
  */
-export interface StatsInput {
-  test: string
-  group_a?: number[]
-  group_b?: number[]
-  table?: number[][]
-  survival_a?: Array<{ time: number; event: boolean }>
-  survival_b?: Array<{ time: number; event: boolean }>
-  values?: number[]
-}
+import type { StatsRequest } from '@heurion/contracts'
+
+export type StatsInput = StatsRequest
 
 export interface StatsEngine {
   analyze(input: StatsInput): Promise<Record<string, unknown>>
@@ -70,6 +67,11 @@ class TypeScriptStatsEngine implements StatsEngine {
       case 'kaplan-meier':
         res = await new StatKmTool().execute({ group_a: input.survival_a || [], group_b: input.survival_b || [] })
         break
+      case 'two-way-anova':
+        // #689: only the Python engine implements it (statsmodels). Fail
+        // loudly here so the operator configures STATS_WORKER_URL instead
+        // of silently getting an "unknown test".
+        throw new Error('two-way-anova requires the Python stats worker (STATS_WORKER_URL)')
       default:
         throw new Error(`Unsupported test: ${input.test}`)
     }

@@ -12,11 +12,12 @@
  */
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
+import type { JobStatus } from '@heurion/contracts'
 
 export interface JobRecord {
   id: string
   type: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: JobStatus
   created_at: number
   completed_at?: number
   result?: Record<string, unknown>

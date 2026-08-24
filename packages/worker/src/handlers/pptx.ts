@@ -1,31 +1,9 @@
 import { saveFile } from '../storage.js'
 import PptxGenJS from 'pptxgenjs'
 import { SCHEMA_VERSION, validateRenderContent, type ContentBlock, type PresentationContent } from '@heurion/contracts'
+import { resolveImage } from './common.js'
 
 const PptxGenJSCtor = PptxGenJS as unknown as new () => any
-
-/**
- * Resolve an image block: inline base64 data, or a file on the worker's
- * asset dir (asset://name). Returns a buffer or null.
- */
-async function resolveImage(block: ContentBlock & { type: 'image' }): Promise<{ data: Buffer; caption?: string } | null> {
-  if (block.data) {
-    const base64 = block.data.startsWith('data:') ? block.data.split(',')[1] || '' : block.data
-    return { data: Buffer.from(base64, 'base64'), caption: block.caption }
-  }
-  if (block.ref.startsWith('asset://')) {
-    const name = block.ref.slice('asset://'.length)
-    try {
-      const { readFile } = await import('node:fs/promises')
-      const dir = process.env.ASSET_DIR || '/opt/heurion/assets'
-      const buf = await readFile(`${dir}/${name}`)
-      return { data: buf, caption: block.caption }
-    } catch {
-      return null
-    }
-  }
-  return null
-}
 
 /**
  * Generator: validated PresentationContent → .pptx. Pure — the same input

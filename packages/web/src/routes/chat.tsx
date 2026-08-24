@@ -44,8 +44,7 @@ export function ChatPage() {
   const setMessages = useChatStore((s) => s.setMessages);
   const setContextUsage = useChatStore((s) => s.setContextUsage);
   const appendMessage = useChatStore((s) => s.appendMessage);
-  const updateMessageText = useChatStore((s) => s.updateMessageText);
-  const setStreaming = useChatStore((s) => s.setStreaming);
+  const runDeepAnalysis = useChatStore((s) => s.runDeepAnalysis);
   const regenerate = useChatStore((s) => s.regenerate);
   const patchMessage = useChatStore((s) => s.patchMessage);
   const [globalSessions, setGlobalSessions] = useState<ChatSessionItem[]>([]);
@@ -239,7 +238,9 @@ export function ChatPage() {
 
   const handleStop = () => stopStream(sessionId);
 
-  /** #420: parallel deep analysis — topics spawn concurrently, results append. */
+  /** #420: parallel deep analysis — topics spawn concurrently, results append.
+   *  #685: the whole SSE consumption lives in the store (runDeepAnalysis) —
+   *  same reducer + batching as a normal turn. */
   const handleDeepAnalysis = async () => {
     if (!sessionId || deepBusy || deepTopics.length === 0) return;
     const question = deepQuestion.trim() || (session?.messages ?? []).slice().reverse().find((m) => m.role === 'user')?.text || '';
@@ -247,29 +248,11 @@ export function ChatPage() {
     setDeepBusy(true);
     setDeepOpen(false);
     setError(null);
-    // Mirror the user question into the stream like a normal turn.
-    appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `🔬 ${question}` });
-    const assistantId = crypto.randomUUID();
-    appendMessage(sessionId, { id: assistantId, role: 'assistant', text: '', isStreaming: true });
-    let acc = '';
     try {
-      for await (const chunk of api.deepAnalysis({ question, topics: deepTopics })) {
-        if (chunk.type === 'subagent_started') {
-          acc += `[${chunk.task} ⏳] `;
-          updateMessageText(sessionId, assistantId, acc.trim());
-        } else if (chunk.type === 'subagent_done') {
-          acc = acc.replace(`[${chunk.task} ⏳] `, `[${chunk.task} ${chunk.success ? '✓' : '✗'}] `);
-          updateMessageText(sessionId, assistantId, acc.trim());
-        } else if (chunk.type === 'final_answer_chunk') {
-          acc += chunk.text;
-          updateMessageText(sessionId, assistantId, acc);
-        }
-      }
-      updateMessageText(sessionId, assistantId, acc || t('chat.deepDone', '分析完成'));
+      await runDeepAnalysis(sessionId, { question, topics: deepTopics, patientHash: undefined });
     } catch (err) {
-      updateMessageText(sessionId, assistantId, acc || (err instanceof ApiError ? err.messageText : String(err)));
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setStreaming(sessionId, assistantId, false);
       setDeepBusy(false);
       setDeepQuestion('');
     }

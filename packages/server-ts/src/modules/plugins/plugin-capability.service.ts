@@ -1,4 +1,5 @@
 import { deepseekChat, getApiKey as getLlmApiKey, type LlmTelemetryContext , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 import { listInstalledPlugins } from './plugin-installation.service.js'
 import { getCatalogById, type PluginManifest, type PluginTool } from './plugin-catalog.service.js'
 import { SCHEMA_VERSION, validateRenderContent, type RenderContent } from '@heurion/contracts'
@@ -170,9 +171,7 @@ async function buildRenderPayload(
       model: DEEPSEEK_CHAT_MODEL,
       telemetryContext: input.telemetryContext,
     })
-    const match = raw.match(/\{[\s\S]*\}/)
-    if (!match) return null
-    try { return JSON.parse(match[0]) } catch { return null }
+    return parseLlmJson(raw)
   }
 
   // Attempt 1
@@ -334,9 +333,9 @@ async function buildPayloadWithLlm(
     telemetryContext: input.telemetryContext,
   })
 
-  const match = raw.match(/\{[\s\S]*\}/)
-  if (!match) throw new Error('no JSON object in LLM response')
-  return JSON.parse(match[0]) as Record<string, unknown>
+  const parsed = parseLlmJson<Record<string, unknown>>(raw)
+  if (!parsed) throw new Error('no JSON object in LLM response')
+  return parsed
 }
 
 function fallbackPayload(tool: PluginTool, input: PayloadBuildInput): Record<string, unknown> {

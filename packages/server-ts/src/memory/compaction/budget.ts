@@ -1,6 +1,7 @@
 import type { EventLog } from '../../core/event-log'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../evolution/stores'
 import type { MemoryService } from '../memory.service.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 
 /**
  * #353: input budget & context shaping for compaction/extraction.
@@ -86,12 +87,6 @@ export function buildContextBlock(ctx: CompactionCtx, patientHash: string | unde
 
 /** Parse the extraction LLM output as a JSON array; null when unparseable. */
 export function parseExtractionResult(result: string): Array<Record<string, any>> | null {
-  const jsonMatch = result.match(/\[[\s\S]*\]/)
-  if (!jsonMatch) return null
-  try {
-    const parsed = JSON.parse(jsonMatch[0])
-    return Array.isArray(parsed) ? (parsed as Array<Record<string, any>>) : null
-  } catch {
-    return null
-  }
+  const parsed = parseLlmJson<unknown>(result)
+  return Array.isArray(parsed) ? (parsed as Array<Record<string, any>>) : null
 }

@@ -2,6 +2,8 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { useLocation } from 'react-router-dom';
 import { api } from '@/lib/api';
 
+import { showToast, showModal, navigate } from '@/lib/plugin-dom-ui';
+import { useAuthStore } from '@/stores/auth';
 export interface PluginUIRegistration {
   pluginId: string;
   pluginName: string;
@@ -76,116 +78,8 @@ export interface PluginUIRegistryState {
 
 const PluginUIContext = createContext<PluginUIRegistryState | null>(null);
 
-function decodeUserIdFromToken(token: string | null): string | undefined {
-  if (!token) return undefined;
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    return payload.userId || payload.sub;
-  } catch {
-    return undefined;
-  }
-}
-
 function getStorageKey(pluginId: string, key: string): string {
   return `heurion-plugin:${pluginId}:${key}`;
-}
-
-function createToastContainer(): HTMLDivElement {
-  const existing = document.getElementById('heurion-plugin-toasts');
-  if (existing) return existing as HTMLDivElement;
-  const container = document.createElement('div');
-  container.id = 'heurion-plugin-toasts';
-  container.style.cssText =
-    'position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none;';
-  document.body.appendChild(container);
-  return container;
-}
-
-function showToast(message: string, type: 'info' | 'success' | 'error' = 'info') {
-  const container = createToastContainer();
-  const el = document.createElement('div');
-  const colors = {
-    info: 'bg-surface-elevated text-text-primary border-border',
-    success: 'bg-success/10 text-success border-success/20',
-    error: 'bg-error/10 text-error border-error/20',
-  };
-  el.className = `rounded-lg border px-4 py-2 text-sm shadow-lg pointer-events-auto ${colors[type]}`;
-  el.textContent = message;
-  container.appendChild(el);
-  setTimeout(() => {
-    el.style.opacity = '0';
-    el.style.transition = 'opacity 300ms';
-    setTimeout(() => el.remove(), 300);
-  }, 3000);
-}
-
-function showModal(config: {
-  title?: string;
-  message: string;
-  confirm?: string;
-  cancel?: string;
-}): Promise<boolean> {
-  return new Promise((resolve) => {
-    const overlay = document.createElement('div');
-    overlay.style.cssText =
-      'position:fixed;inset:0;z-[9998];display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);';
-
-    const box = document.createElement('div');
-    box.className = 'rounded-xl border border-border bg-surface-elevated p-6 shadow-xl max-w-sm w-full mx-4';
-
-    if (config.title) {
-      const title = document.createElement('h3');
-      title.className = 'mb-2 text-lg font-semibold text-text-primary';
-      title.textContent = config.title;
-      box.appendChild(title);
-    }
-
-    const msg = document.createElement('p');
-    msg.className = 'mb-6 text-sm text-text-secondary';
-    msg.textContent = config.message;
-    box.appendChild(msg);
-
-    const actions = document.createElement('div');
-    actions.className = 'flex justify-end gap-2';
-
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className =
-      'rounded-lg px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface';
-    cancelBtn.textContent = config.cancel || 'Cancel';
-    cancelBtn.onclick = () => {
-      cleanup();
-      resolve(false);
-    };
-
-    const confirmBtn = document.createElement('button');
-    confirmBtn.className =
-      'rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover';
-    confirmBtn.textContent = config.confirm || 'OK';
-    confirmBtn.onclick = () => {
-      cleanup();
-      resolve(true);
-    };
-
-    actions.appendChild(cancelBtn);
-    actions.appendChild(confirmBtn);
-    box.appendChild(actions);
-    overlay.appendChild(box);
-
-    const cleanup = () => overlay.remove();
-    overlay.onclick = (e) => {
-      if (e.target === overlay) {
-        cleanup();
-        resolve(false);
-      }
-    };
-
-    document.body.appendChild(overlay);
-  });
-}
-
-function navigate(path: string) {
-  window.history.pushState({}, '', path);
-  window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
 async function verifyIntegrity(text: string, integrity: string): Promise<boolean> {
@@ -243,9 +137,9 @@ export function PluginUIProvider({ children }: { children: React.ReactNode }) {
   const eventListeners = useRef(new Map<string, Set<(payload: unknown) => void>>());
 
   const context = useMemo<PluginRuntimeContext>(() => {
-    const token = api.getToken();
     return {
-      userId: decodeUserIdFromToken(token),
+      // #688: userId comes from the auth store — no hand-rolled JWT decode.
+      userId: useAuthStore.getState().userId ?? undefined,
       route: location.pathname,
     };
   }, [location.pathname]);

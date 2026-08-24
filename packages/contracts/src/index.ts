@@ -15,6 +15,8 @@
 import { z } from 'zod'
 
 export * from './chat.js'
+export * from './jobs.js'
+export * from './stats.js'
 
 export const SCHEMA_VERSION = 1
 

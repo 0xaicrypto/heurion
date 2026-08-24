@@ -8,6 +8,7 @@
  */
 
 import prisma from '../../common/prisma'
+import { parseDbJson } from '../../common/llm-json.js'
 
 export type TelemetryCategory = 'router' | 'kb_command' | 'gap' | 'sidecar' | 'plugin' | 'llm_cost'
 
@@ -79,13 +80,9 @@ function safeJsonStringify(value: unknown): string | undefined {
   }
 }
 
+/** DB-stored JSON string parse — telemetry metadata has no model chatter. */
 function safeJsonParse(text: string | undefined | null): Record<string, unknown> | undefined {
-  if (!text) return undefined
-  try {
-    return JSON.parse(text) as Record<string, unknown>
-  } catch {
-    return undefined
-  }
+  return parseDbJson(text)
 }
 
 /**

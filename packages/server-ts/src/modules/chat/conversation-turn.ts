@@ -30,12 +30,12 @@ import {
   maybeTriggerCompaction,
   triggerCompactionAfterTrim,
   upsertSessionRow,
-} from './compaction.js'
+} from './history-budget.js'
 import { analyzeChatForMedicalRecord, updatePatientFromFindings, updateMedicalRecordFromChat } from '../patients/clinical-analysis.js'
 import type { TurnIntent } from './turn-intent.js'
 import { factContentHash } from '../../common/fact-render.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
-import type { SendEvent } from './chat-events.js'
+import type { SendEvent } from './chat-sse.js'
 
 const log = makeLogger('chat.conversation')
 

@@ -14,6 +14,8 @@
  */
 import { z } from 'zod';
 export * from './chat.js';
+export * from './jobs.js';
+export * from './stats.js';
 export declare const SCHEMA_VERSION = 1;
 export declare const imageBlockSchema: z.ZodObject<{
     type: z.ZodLiteral<"image">;

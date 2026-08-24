@@ -15,6 +15,11 @@ export interface ContextUsage {
     history_turns: number;
     omitted_turns: number;
     will_compact: boolean;
+    /** #630: system 侧统计（组装完成后补充发送，仅 producer 侧）。 */
+    system_tokens?: number;
+    system_budget?: number;
+    /** #635: 段级回退事件。 */
+    dropped_segments?: string[];
 }
 /** A memory-search hit attached to an answer (#418). */
 export interface MemoryHit {

@@ -13,6 +13,7 @@ import type { ChatScene } from '../../common/persona.js'
 import type { SidecarClassifier, SidecarHistoryEntry } from '../../retrieval/intent-router.js'
 import type { SemanticIntentRouter, SemanticVerdict } from '../../retrieval/semantic-intent-router.js'
 import { DISCUSSION_MARKERS, EDIT_MARKERS, parseKnowledgeCommand, classifyQuery } from '../../retrieval/query-router.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 
 export type TurnAction = 'answer' | 'edit' | 'generate' | 'retrieve' | 'command'
 export type TurnTarget = 'current_doc' | 'attachment' | 'patient' | 'none' | 'external'
@@ -200,19 +201,14 @@ function parseTurnAdjudication(raw: string): { action: TurnAction; conf: number;
   if (first === 'generate') return { action: 'generate', conf: 0.8, needsClarify: false }
   if (first === 'discuss' || first === 'normal') return { action: 'answer', conf: 0.7, needsClarify: false }
   if (first === 'uncertain') return { action: 'answer', conf: 0.5, needsClarify: true }
-  const m = trimmed.match(/\{[\s\S]*\}/)
-  if (!m) return null
-  try {
-    const parsed = JSON.parse(m[0])
-    const action = parsed.action as TurnAction
-    if (!['answer', 'edit', 'generate', 'retrieve', 'command'].includes(action)) return null
-    return {
-      action,
-      conf: typeof parsed.confidence === 'number' ? parsed.confidence : 0.6,
-      needsClarify: parsed.needsClarify === true,
-    }
-  } catch {
-    return null
+  const parsed = parseLlmJson<{ action?: string; confidence?: number; needsClarify?: boolean }>(trimmed)
+  if (!parsed) return null
+  const action = parsed.action as TurnAction
+  if (!['answer', 'edit', 'generate', 'retrieve', 'command'].includes(action)) return null
+  return {
+    action,
+    conf: typeof parsed.confidence === 'number' ? parsed.confidence : 0.6,
+    needsClarify: parsed.needsClarify === true,
   }
 }
 

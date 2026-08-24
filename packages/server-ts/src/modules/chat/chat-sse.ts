@@ -4,10 +4,12 @@
  * abort signal and the final close.
  */
 import type { FastifyReply } from 'fastify'
-import type { ChatEvent } from './chat-events.js'
+import type { ChatStreamChunk } from '@heurion/contracts'
+
+export type SendEvent = (event: ChatStreamChunk) => void
 
 export interface SseSender {
-  send(d: ChatEvent): void
+  send(d: ChatStreamChunk): void
   /** Abort signal fired when the client disconnects. */
   signal: AbortSignal
   end(): void

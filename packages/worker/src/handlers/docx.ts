@@ -1,6 +1,7 @@
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, AlignmentType, WidthType, ImageRun, convertMillimetersToTwip } from 'docx'
 import { saveFile } from '../storage.js'
 import { SCHEMA_VERSION, validateRenderContent, type ContentBlock, type DocumentContent } from '@heurion/contracts'
+import { resolveImage } from './common.js'
 
 export interface DocxSection {
   heading?: string
@@ -76,30 +77,16 @@ export async function generateDocx(payload: any) {
     new Paragraph({ spacing: { after: 200 }, children: [] }),
   )
 
-  const resolveImage = async (block: ContentBlock & { type: 'image' }) => {
-    if (block.data) {
-      const base64 = block.data.startsWith('data:') ? block.data.split(',')[1] || '' : block.data
-      return Buffer.from(base64, 'base64')
-    }
-    if (block.ref.startsWith('asset://')) {
-      try {
-        const { readFile } = await import('node:fs/promises')
-        return await readFile(`${process.env.ASSET_DIR || '/opt/heurion/assets'}/${block.ref.slice('asset://'.length)}`)
-      } catch { return null }
-    }
-    return null
-  }
-
   for (const section of input.sections || []) {
     if (section.heading) {
       children.push(new Paragraph({ text: section.heading, heading: 'Heading1', spacing: { before: 400, after: 200 } }))
     }
     for (const block of section.paragraphs || []) {
       if (block.type === 'image') {
-        const buf = await resolveImage(block)
-        if (buf) {
+        const img = await resolveImage(block)
+        if (img) {
           try {
-            children.push(new Paragraph({ children: [new ImageRun({ type: 'png', data: buf as any, transformation: { width: 240, height: 120 } })] }))
+            children.push(new Paragraph({ children: [new ImageRun({ type: 'png', data: img.data as any, transformation: { width: 240, height: 120 } })] }))
           } catch { /* skip broken image */ }
         }
         continue

@@ -9,6 +9,7 @@ import { getDownloadUrl, getLocalFile, localDownloadUrl, downloadUrlTtlSeconds }
 import { PersistentJobStore, type JobRecord } from './job-store.js'
 import { createReadStream, existsSync } from 'fs'
 import { renderJobType, type RenderJobType } from '@heurion/contracts'
+import { enqueueJobRequestSchema } from '@heurion/contracts'
 
 // #446: persistent job store (JSONL) — jobs + fileId index survive restarts.
 const jobStore = new PersistentJobStore()
@@ -73,13 +74,15 @@ async function main() {
 
   app.get('/healthz', async () => 'ok')
 
-  app.post<{ Body: { type: string; payload?: any; tenant?: any; callback_url?: string } }>(
-    '/api/v1/jobs',
-    async (request, reply) => {
-      const { type, payload, callback_url } = request.body
-      if (!type) {
-        return reply.status(400).send({ error: 'type is required' })
-      }
+  app.post('/api/v1/jobs', async (request, reply) => {
+    // #678: entry validation — reject malformed envelopes before they reach
+    // the handlers (was: untyped body, illegal payloads surfaced as
+    // pdfkit/other internal errors).
+    const parsed = enqueueJobRequestSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join('; ') || 'invalid job request' })
+    }
+    const { type, payload, callback_url } = parsed.data
 
       const id = uuid()
       const job = jobStore.create(id, type)

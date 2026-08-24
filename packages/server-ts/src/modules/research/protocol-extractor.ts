@@ -2,6 +2,7 @@ import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import { createAiProvider, type ChatOptions } from '../../common/ai/index.js'
 import { DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 
 const aiProvider = createAiProvider()
 
@@ -38,12 +39,7 @@ interface ExtractedProtocol {
 }
 
 function parseJsonFromText(text: string): ExtractedProtocol | null {
-  try {
-    const match = text.match(/\{[\s\S]*\}/)
-    return JSON.parse(match ? match[0] : text)
-  } catch {
-    return null
-  }
+  return parseLlmJson<ExtractedProtocol>(text)
 }
 
 /**

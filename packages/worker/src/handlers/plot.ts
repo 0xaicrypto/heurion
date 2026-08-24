@@ -1,4 +1,5 @@
 import { saveFile } from '../storage.js'
+import { PLOT_COLORS } from './common.js'
 
 export interface PlotInput {
   type: 'bar' | 'line' | 'pie'
@@ -55,7 +56,7 @@ function generateBarSvg(input: PlotInput, w: number, h: number): string {
   const groupWidth = chartW / input.labels.length
 
   let bars = ''
-  const colors = ['#4dc9f6', '#f67019', '#537bc4', '#acc236', '#166a8f', '#00a950', '#58595b', '#8549ba']
+  const colors = PLOT_COLORS
 
   input.labels.forEach((label, li) => {
     input.datasets.forEach((ds, di) => {
@@ -110,7 +111,7 @@ function generateLineSvg(input: PlotInput, w: number, h: number): string {
 
   const allValues = input.datasets.flatMap((d) => d.data)
   const maxVal = Math.max(...allValues, 1)
-  const colors = ['#4dc9f6', '#f67019', '#537bc4', '#acc236', '#166a8f', '#00a950', '#58595b', '#8549ba']
+  const colors = PLOT_COLORS
 
   let paths = ''
   let dots = ''
@@ -170,7 +171,7 @@ function generatePieSvg(input: PlotInput, w: number, h: number): string {
   const cy = h / 2
   const r = Math.min(cx - 20, cy - 40, 100)
   const total = input.datasets[0]?.data.reduce((a, b) => a + b, 0) || 1
-  const colors = ['#4dc9f6', '#f67019', '#537bc4', '#acc236', '#166a8f', '#00a950', '#58595b', '#8549ba']
+  const colors = PLOT_COLORS
 
   let slices = ''
   let startAngle = -Math.PI / 2

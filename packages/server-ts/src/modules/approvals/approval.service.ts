@@ -201,9 +201,13 @@ export async function rejectApproval(userId: string, id: string, reason: string 
 }
 
 async function applyProposalViaGateway(userId: string, row: any): Promise<any> {
-  const { getUserContext } = await import('../chat/user-context.js')
+  // #679: resolve the per-user memory via the registry hook (registered by
+  // user-context.ts) instead of importing the chat module — removes the
+  // approvals ↔ user-context import cycle.
+  const { getContextResolver } = await import('../../memory/registry.js')
   const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
-  const ctx = getUserContext(userId)
+  const ctx = getContextResolver()?.(userId)
+  if (!ctx) return null
   const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.episodes)
   const proposal = {
     id: row.id,

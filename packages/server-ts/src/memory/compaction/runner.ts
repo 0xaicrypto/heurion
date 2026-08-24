@@ -3,12 +3,12 @@ import { deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.
 import prisma from '../../common/prisma.js'
 import { MemoryGraphGateway } from '../memory-gateway.js'
 import {
-  EXTRACTION_RULES,
   buildContextBlock,
   parseExtractionResult,
   type CompactionCtx,
   type ExtractedFact,
 } from './budget.js'
+import { factExtractionPrompt, EXTRACTION_RULES } from '../prompts.js'
 
 /**
  * #353: compaction/extraction runner — Tier 2 (compaction-time batch) and
@@ -33,20 +33,7 @@ export async function extractAndProposeFacts(
   } catch {
     // quality stats are best-effort
   }
-  const prompt = `You are a clinical memory extractor. From the conversation below, extract ONLY facts worth persisting for future reference.
-
-${EXTRACTION_RULES}
-
-Return ONLY a JSON array:
-[{"content": "consolidated fact", "category": "diagnosis|symptom|exam|medication|allergy|constraint|preference|plan", "importance": 1-5, "sourceType": "patient|doctor|research", "conflictsWith": ["stableId of a same-scope confirmed fact, only when contradicting"]}]
-
-Importance: 5 = changes treatment/diagnosis; 4 = important clinical fact; 3 = general; 1-2 = marginal (omit).
-${qualityGuidance}
-${contextBlock}
-Conversation:
-${conversation}
-
-[JSON array]:`
+  const prompt = factExtractionPrompt({ text: conversation, contextBlock, qualityGuidance })
 
   const chatOpts = {
     model: DEEPSEEK_CHAT_MODEL,

@@ -1,9 +1,9 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
-import { deepseekStream, deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 import crypto from 'crypto'
 import { renderDocxBuffer, renderPdfBuffer, isExportFormat } from './markdown-export.js'
+import { polishSelection, writeMethodsSection, writePaperBackground } from './document-writing.service.js'
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
 
@@ -155,16 +155,10 @@ export async function documentsRouter(app: FastifyInstance) {
   app.post('/api/v1/docs/:docId/polish', async (request, reply) => {
     const { selection, instruction } = request.body as any
     const userId = request.user!.userId
-    const apiKey = getApiKey()
-    const prompt = `Polish the following clinical text${instruction ? ` with instruction: "${instruction}"` : ''}. Keep the meaning but improve clarity and professionalism:\n\n${selection || ''}`
     reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
     const send = (d: any) => reply.raw.write(`data: ${JSON.stringify(d)}\n\n`)
     try {
-      for await (const chunk of deepseekStream([{ role: 'user', content: prompt }], apiKey, {
-        model: DEEPSEEK_CHAT_MODEL,
-        maxTokens: 2048,
-        telemetryContext: { userId, workspaceId: userId, action: 'document.polish' },
-      })) {
+      for await (const chunk of polishSelection(selection, instruction, userId)) {
         send({ text: chunk })
       }
       send({ done: true })
@@ -282,26 +276,8 @@ export async function documentsRouter(app: FastifyInstance) {
       (byCategory[r.category] ||= []).push(r.rule)
     }
     const study = await (prisma as any).researchStudy.findFirst({ where: { id: doc.studyId } })
-    const prompt = `Write the Methods section of a clinical research paper from this study design.
-
-Study: ${study?.name || ''}
-Inclusion criteria:
-${(byCategory['inclusion'] || []).map((r) => `- ${r}`).join('\n') || 'n/a'}
-Exclusion criteria:
-${(byCategory['exclusion'] || []).map((r) => `- ${r}`).join('\n') || 'n/a'}
-Safety rules:
-${(byCategory['safety'] || []).map((r) => `- ${r}`).join('\n') || 'n/a'}
-Schedule:
-${(byCategory['schedule'] || []).map((r) => `- ${r}`).join('\n') || 'n/a'}
-
-Write 3-6 paragraphs (English): study design, participants, interventions, outcomes, statistical analysis plan. Do not invent numbers. Return only the section text (no preamble, no title).`
-
-    const result = await deepseekChat([{ role: 'user', content: prompt }], getApiKey(), {
-      model: DEEPSEEK_CHAT_MODEL,
-      maxTokens: 2048,
-      telemetryContext: { userId: request.user!.userId, workspaceId: request.user!.userId, action: 'research.generate_methods' },
-    })
-    return { methods: result.trim() }
+    const methods = await writeMethodsSection({ study, byCategory, userId: request.user!.userId })
+    return { methods }
   })
 
   // Inject a statistics output block (from #361 stat tools) into the paper.
@@ -326,17 +302,7 @@ Write 3-6 paragraphs (English): study design, participants, interventions, outco
     const id = `doc_${uid()}`
     const now = new Date().toISOString()
     const title = `${study.name} — Clinical Outcomes`
-    const prompt = `Write a one-paragraph Background and Objectives for a paper titled "${title}". Based on the study name only; keep it generic and factual. Return only the paragraph.`
-    let background = ''
-    try {
-      const result = await deepseekChat([{ role: 'user', content: prompt }], getApiKey(), {
-        model: DEEPSEEK_CHAT_MODEL, maxTokens: 500,
-        telemetryContext: { userId: request.user!.userId, workspaceId: request.user!.userId, action: 'research.paper_background' },
-      })
-      background = result.trim()
-    } catch {
-      background = 'Background: 本研究的目的是评估该研究方案下的临床结局。'
-    }
+    const background = await writePaperBackground(title, request.user!.userId)
     await (prisma as any).doc.create({ data: { id, userId: request.user!.userId, title, body: background, studyId, createdAt: now, updatedAt: now } })
     return { doc_id: id, title, body: background }
   })

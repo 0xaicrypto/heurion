@@ -13,7 +13,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { createSseSender } from './chat-sse.js'
-import type { ChatEvent } from './chat-events.js'
+import type { ChatStreamChunk } from '@heurion/contracts'
 import { getUserContext } from './user-context.js'
 import type { ChatScene } from '../../common/persona.js'
 import { getApiKey } from '../../common/llm.js'
@@ -28,7 +28,7 @@ import { formatCommandResult, resolveScene } from './chat-context.js'
 import { resolveTargetCandidates, pickTarget, isGenerateRequest, recordTurnIntent, type TurnAction, type TurnIntent, type TurnSource, type TurnTarget } from './turn-intent.js'
 import { runConversationTurn, findPatient } from './conversation-turn.js'
 import { ensureSessionCompaction } from '../../memory/compaction/index.js'
-import { streamUnshownCompaction, loadCompactedUpto } from './compaction.js'
+import { streamUnshownCompaction, loadCompactedUpto } from './history-budget.js'
 import type { TurnIO } from './tool-loop.js'
 
 /** 仅编辑语义判断（供决策表消歧——判定为编辑但存在多目标时需要澄清）。 */
@@ -257,7 +257,7 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
           history,
           telemetryContext: { userId, workspaceId: userId, action: 'plugin.build_payload' },
           // #637: 插件事件流独立于 ChatEvent(自有载荷),透传未知载荷。
-          send: (d: unknown) => send(d as ChatEvent),
+          send: (d: unknown) => send(d as ChatStreamChunk),
         })
 
         // #558: the request was editing/polishing existing content that only

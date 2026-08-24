@@ -3,7 +3,7 @@ import { getApp, authHeader, getAuthUserId } from '../setup.js'
 import fs from 'fs'
 import path from 'path'
 import { RenderChartTool } from '../../src/tools/render-chart-tool.js'
-import { issueChartToken, verifyChartToken } from '../../src/modules/files/files.router.js'
+import { issueChartToken, verifyChartToken } from '../../src/common/chart-token.js'
 
 vi.mock('../../src/common/llm.js', () => ({
   deepseekChat: vi.fn(),

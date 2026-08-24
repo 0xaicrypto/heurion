@@ -1,5 +1,4 @@
-import PDFDocument from 'pdfkit'
-import { saveFile } from '../storage.js'
+import { renderPdf } from './common.js'
 
 export interface PdfInput {
   title?: string
@@ -8,23 +7,7 @@ export interface PdfInput {
 }
 
 export async function convertToPdf(input: PdfInput) {
-  const doc = new PDFDocument({ margin: 50, size: 'A4' })
-  const buffers: Buffer[] = []
-
-  doc.on('data', (chunk: Buffer) => buffers.push(chunk))
-
-  return new Promise<any>((resolve, reject) => {
-    doc.on('end', async () => {
-      try {
-        const buffer = Buffer.concat(buffers)
-        const result = await saveFile(buffer, 'document.pdf', 'application/pdf')
-        resolve(result)
-      } catch (err) {
-        reject(err)
-      }
-    })
-    doc.on('error', reject)
-
+  return renderPdf((doc) => {
     if (input.title) {
       doc.fontSize(24).text(input.title, { align: 'center' })
       doc.moveDown(2)
@@ -41,7 +24,5 @@ export async function convertToPdf(input: PdfInput) {
       doc.fontSize(12).text(section.body)
       doc.moveDown(1)
     }
-
-    doc.end()
-  })
+  }, 'document.pdf')
 }

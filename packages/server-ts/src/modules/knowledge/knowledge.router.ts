@@ -5,8 +5,8 @@ import { getUserContext } from '../chat/user-context.js'
 import { SidecarFeedbackService, type SidecarOutputType } from './sidecar-feedback.service.js'
 import { isNodeSuperseded } from '../../memory/memory.types.js'
 import { PrismaTelemetryService } from './telemetry.service.js'
-import { deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
 import type { PickerNode } from './knowledge-picker.service.js'
+import { regenerateArticleWithLlm } from './article-synthesis.service.js'
 
 const gapService = new PrismaKnowledgeGapService()
 const telemetry = new PrismaTelemetryService()
@@ -443,53 +443,4 @@ function serializeArticle(article: import('../../memory/memory.types.js').Articl
     createdAt: article.createdAt,
     updatedAt: article.updatedAt,
   }
-}
-
-async function regenerateArticleWithLlm(
-  article: import('../../memory/memory.types.js').ArticleNode,
-  memory: import('../../memory/memory.service').MemoryService,
-  userId: string,
-): Promise<import('../../common/result').Result<import('../../memory/memory.types.js').ArticleNode>> {
-  const sourceFacts = article.sourceFacts
-    .map(s => memory.graph.getLatestByStableId(s.stableId))
-    .filter((n): n is import('../../memory/memory.types.js').FactNode => n?.type === 'fact' && n.status !== 'superseded')
-
-  let title = article.title
-  let content = article.content
-
-  if (sourceFacts.length > 0) {
-    const factList = sourceFacts
-      .map(f => `[importance=${f.importance ?? 3}] [${f.category}] ${f.content}`)
-      .join('\n')
-    const prompt = `You are synthesizing clinical findings for an oncology researcher.
-Synthesize the following facts into a concise, clinically actionable knowledge article.
-Keep it to 1-2 paragraphs and a short title.
-
-Facts:
-${factList}
-
-Return ONLY JSON: { "title": "...", "content": "..." }`
-    try {
-      const raw = await deepseekChat(
-        [{ role: 'user', content: prompt }],
-        getApiKey(),
-        {
-          model: DEEPSEEK_CHAT_MODEL,
-          maxTokens: 2048,
-          telemetryContext: { userId, workspaceId: userId, action: 'article.regenerate' },
-        },
-      )
-      const jsonMatch = raw.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0])
-        if (parsed.title) title = String(parsed.title)
-        if (parsed.content) content = String(parsed.content)
-      }
-    } catch {
-      // Fall back to keeping existing title/content but still bumping the version.
-    }
-  }
-
-  const edited = memory.editArticle(article.stableId, { title, content }, 'system')
-  return edited
 }

@@ -25,6 +25,10 @@ export function registerContextResolver(fn: ContextResolver): void {
   contextResolver = fn
 }
 
+export function getContextResolver(): ContextResolver | null {
+  return contextResolver
+}
+
 export type ProposalApplier = (userId: string, proposal: MemoryProposalRow) => MemoryNode | null
 
 let proposalApplier: ProposalApplier | null = null

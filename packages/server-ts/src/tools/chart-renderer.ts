@@ -5,6 +5,7 @@
  * #228: schematic now draws real programmatic diagrams (element primitives
  * + the beam_scan template) instead of an empty placeholder box.
  */
+import { esc } from '../lib/xml-escape.js'
 
 export interface ChartInput {
   type: 'line' | 'bar' | 'dose_curve' | 'schematic'
@@ -44,13 +45,7 @@ export interface SchematicElement {
   exitWidth?: number
 }
 
-function esc(s: string): string {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
+
 
 function hexToRgba(hex: string, alpha: number): string {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || '')

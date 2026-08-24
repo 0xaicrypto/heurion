@@ -48,8 +48,20 @@ Enforcement so far (manual greps, #666/#672):
 - `tools/` → zero imports from `modules/` (port injection: `isPluginInstalled` /
   `getPluginConfig` in `ToolContext`; pure crypto in `common/chart-token.ts` +
   `common/settings-encryption.ts`)
-- `modules/*` → peer cross-imports: only `chat → knowledge` (knowledge-inject,
-  gap detection)
+- `memory/` → zero imports from `modules/*` (side effects inverted via the
+  registry hooks in `memory/registry.ts`: context resolver, proposal applier,
+  proposal-created handler)
+- `modules/*` → peer cross-imports are orchestration-heavy today (#679): the
+  chat module is the hub (`user-context` / `chat-context` / `chat.dto` are
+  consumed by auth/approvals/knowledge/memorization/patients/skills/files).
+  The only known import *cycle* (user-context ↔ approvals) was broken in
+  #679 — approvals now resolves memory via `getContextResolver()` (registry)
+  instead of importing the chat module. Remaining documented edges:
+  auth→chat, calendar→research, chat→knowledge/plugins/patients, evolution→
+  chat/memorization/practitioner, files→chat/ingestion, ingestion→
+  medical-records/research, knowledge→chat, memorization→chat, patients→chat,
+  plugins→execution/chat, skills→chat, external→plugins/execution,
+  medical-records→approvals
 - Pure crypto/util helpers used by both tools and modules live in `common/`
   (never import a `.router.ts` for non-HTTP functions — #666)
 

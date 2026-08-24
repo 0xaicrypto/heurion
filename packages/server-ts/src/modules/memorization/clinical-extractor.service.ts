@@ -1,4 +1,6 @@
 import { getApiKey, deepseekChat } from '../../common/llm.js'
+import { parseLlmJson } from '../../common/llm-json.js'
+import { clinicalEntityExtractionPrompt } from '../../memory/prompts.js'
 
 export interface ClinicalEntity {
   node_type: 'finding' | 'med' | 'ddx' | 'measurement' | 'semantic_fact'
@@ -18,17 +20,7 @@ export interface ExtractionResult {
 }
 
 function parseJsonSafe(raw: string): any {
-  let s = (raw || '').trim()
-  if (!s) return {}
-  try { return JSON.parse(s) } catch {}
-  const fenced = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
-  try { return JSON.parse(fenced) } catch {}
-  const first = s.indexOf('{')
-  const last = s.lastIndexOf('}')
-  if (first >= 0 && last > first) {
-    try { return JSON.parse(s.slice(first, last + 1)) } catch {}
-  }
-  return {}
+  return parseLlmJson(raw) ?? {}
 }
 
 export async function extractClinicalEntities(
@@ -43,7 +35,7 @@ export async function extractClinicalEntities(
   let raw = ''
   try {
     raw = await deepseekChat(
-      [{ role: 'user', content: sourceText }],
+      [{ role: 'user', content: clinicalEntityExtractionPrompt(sourceText) }],
       apiKey,
       { model, maxTokens, temperature: 0.2 },
     )

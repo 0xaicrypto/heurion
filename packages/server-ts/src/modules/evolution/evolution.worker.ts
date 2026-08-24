@@ -1,7 +1,8 @@
 import { Worker, type ConnectionOptions } from 'bullmq'
 import { getUserContext } from '../chat/user-context.js'
-import { extractClinicalEntities } from '../memorization/clinical-extractor.service.js'
+import { ChatIngester } from '../memorization/chat-ingester.service.js'
 import { extractTakeaways } from '../practitioner/session-takeaway.service.js'
+import { MemoryGraphGateway } from '../../memory/memory-gateway.js'
 import type { EvolutionJob, EvolutionJobProcessor } from './evolution.queue.js'
 
 export interface EvolutionWorkerOptions {
@@ -30,7 +31,17 @@ export const processEvolutionTurn: EvolutionJobProcessor = async (job) => {
         .join('\n')
 
       if (conversation.length > 100) {
-        extractClinicalEntities(conversation, { maxTokens: 3000 }).catch(() => {})
+        // #680: the extracted entities previously went nowhere — route them
+        // through the same propose → review-queue pipeline as chat-ingester
+        // (dedup + approval side effect), instead of burning the LLM call.
+        const gateway = new MemoryGraphGateway(userId, ctx.memory)
+        const ingester = new ChatIngester(ctx.memory.eventLog, gateway)
+        await ingester.ingestEncounter({
+          userId,
+          patientHash,
+          encounterId: sessionId,
+          sourceText: conversation,
+        }).catch(() => {})
       }
     } catch {}
   }

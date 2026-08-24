@@ -1,4 +1,5 @@
 import { deepseekChat, getApiKey, type LlmTelemetryContext , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 import prisma from '../../common/prisma.js'
 
 /**
@@ -72,9 +73,8 @@ ${messages.slice(0, 4000)}`
         telemetryContext,
       },
     )
-    const match = result.match(/\{[\s\S]*\}/)
-    if (!match) return empty
-    const parsed = JSON.parse(match[0])
+    const parsed = parseLlmJson<{ sections?: Record<string, string>; findings?: ClinicalFinding[] }>(result)
+    if (!parsed) return empty
     const sections: MedicalRecordSectionsUpdate = {}
     for (const key of SECTIONS_KEYS) {
       const v = parsed.sections?.[key]

@@ -29,9 +29,18 @@ let gcTimer: ReturnType<typeof setInterval> | null = null
 // load with a closure over the contexts map — resolving by the requested
 // userId at call time keeps every user's memory strictly isolated (a naive
 // per-getUserContext registration would overwrite the previous user's).
+// #679: the resolver lazily creates the context so callers without a live
+// chat session (e.g. approving a proposal for an expired context) still get
+// a writable memory — no behavioral regression vs. calling getUserContext.
 registerContextResolver((applierUserId) => {
   const current = contexts.get(applierUserId)
-  if (!current) return null
+  if (!current) {
+    try {
+      return getUserContext(applierUserId)
+    } catch {
+      return null
+    }
+  }
   return {
     memory: current.memory,
     facts: current.facts,

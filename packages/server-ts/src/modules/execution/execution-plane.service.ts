@@ -5,7 +5,10 @@
  * #448: no silent stub in production. The stub is a dev/test affordance;
  * in production a missing worker configuration fails loudly on enqueue.
  */
+import type { JobStatusResponse, SidecarFileInfo } from '@heurion/contracts'
 
+/** Enqueue payload — `callbackUrl` (camelCase, client-side) maps to the
+ * wire field `callback_url` at send time. */
 export interface ExecutionJob {
   type: string
   payload: Record<string, unknown>
@@ -13,21 +16,9 @@ export interface ExecutionJob {
   callbackUrl?: string
 }
 
-export interface ExecutionJobStatus {
-  job_id: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'unknown'
-  created_at: number
-  result?: Record<string, unknown>
-  error?: string
-}
+export type ExecutionJobStatus = JobStatusResponse
 
-export interface FileDownloadUrl {
-  file_id: string
-  file_name: string
-  mime_type: string
-  download_url: string
-  expires_in: number
-}
+export type FileDownloadUrl = SidecarFileInfo
 
 export interface ExecutionPlaneService {
   enqueue(job: ExecutionJob): Promise<ExecutionJobStatus>
