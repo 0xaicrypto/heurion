@@ -18,9 +18,9 @@ describe('extractFormulasFromPdf(方案 A 公式 OCR)', () => {
 
   beforeEach(() => {
     process.env.TWIN_BASE_DIR = tmpDir
+    process.env.PDF_FORMULA_OCR = '1'
     fs.mkdirSync(uploadsDir, { recursive: true })
   })
-
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true })
     delete process.env.TWIN_BASE_DIR
@@ -69,11 +69,21 @@ describe('extractFormulasFromPdf(方案 A 公式 OCR)', () => {
     expect(out).toBe('')
   })
 
-  test('PDF_FORMULA_OCR=0 关闭;文件不存在返回空', async () => {
-    process.env.PDF_FORMULA_OCR = '0'
+  test('默认开(可 PDF_FORMULA_OCR=0 关闭);文件不存在返回空', async () => {
+    // 重置上一个测试的 mockResolvedValue 残留。
+    fakeVision.mockImplementation(async () => ({ content: '$$E = mc^2$$' }))
     const fileId = '1750000000302_off.pdf'
     fs.writeFileSync(path.join(uploadsDir, fileId), await makePdf(1))
+    // 默认(未设置 env)= 开。
+    const on = await extractFormulasFromPdf('u1', fileId)
+    expect(on).toContain('## 公式')
+    expect(fakeVision).toHaveBeenCalledTimes(1)
+    // PDF_FORMULA_OCR=0 显式关闭 → 不做视觉调用。
+    process.env.PDF_FORMULA_OCR = '0'
+    fakeVision.mockClear()
     expect(await extractFormulasFromPdf('u1', fileId)).toBe('')
+    expect(fakeVision).not.toHaveBeenCalled()
+    // 不存在的文件返回空。
     expect(await extractFormulasFromPdf('u1', 'missing.pdf')).toBe('')
   })
 })

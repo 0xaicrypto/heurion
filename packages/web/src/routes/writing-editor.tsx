@@ -536,6 +536,9 @@ export function WritingEditorPage() {
           setBody(importedBody);
           setDoc((prev) => (prev ? { ...prev, body: importedBody, updated_at: new Date().toISOString() } : prev));
           lastSavedBody.current = importedBody;
+          // #fix: 引导 — 已导入原文,可直接编辑草稿或与 AI 对话调整。
+          setAiEditNotice('已导入原文，可直接编辑草稿，或在右侧与 AI 对话调整内容');
+          setTimeout(() => setAiEditNotice(''), 6000);
         }
       }
       setError(null);

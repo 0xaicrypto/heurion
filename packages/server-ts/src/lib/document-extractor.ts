@@ -665,7 +665,18 @@ export async function extractPdfContentFromUpload(
     const textResult = limitedPages
       ? await parser.getText({ partial: limitedPages, parseHyperlinks: true })
       : await parser.getText({ parseHyperlinks: true })
-    let text = textResult.text.trim()
+    // #fix: 按页组织文本,页间插入分页标记 — 图片提取带页码,导入时按
+    // 标记把图插到对应页(否则全插到 Figure 标题行,正文引用 "Figure 1)"
+    // 会抢走图 1 的位置)。逐页做 markdown 结构恢复。
+    let text: string
+    if (textResult.pages && textResult.pages.length > 0) {
+      text = textResult.pages
+        .map((p: any, i: number) => `${pdfTextToMarkdown(p.text || '')}\n\n<!-- page:${i + 1} -->`)
+        .join('\n\n')
+        .trim()
+    } else {
+      text = pdfTextToMarkdown(textResult.text || '')
+    }
     if (text.length >= OCR_TEXT_THRESHOLD) {
       if (limitedPages) {
         text = `[注: 文件超过 ${Math.round(PAGE_LIMITED_PARSE_BYTES / 1024 / 1024)}MB，仅解析前 ${limitedPages.length} 页]\n${text}`

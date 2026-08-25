@@ -579,11 +579,17 @@ export class EditDocumentTool extends BaseTool {
    * ![图 N](/api/v1/files/download/...?token=...) markdown。
    * 替换顺序:
    *   1) DOCX 的 [图]/\[图\] 占位符按序替换;
-   *   2) 剩余图片按 "Figure N / 图 N" 标题行就近插入(PDF 常见);
-   *   3) 仍未插入的追加到文末 "## 图" 段。
+   *   2) PDF 按分页标记 <!-- page:N --> 插入该页的图(提取带页码,
+   *      位置准确 — 此前全按 Figure 标题行,正文引用 "Figure 1)" 会
+   *      抢走图 1 的位置);
+   *   3) 剩余图片按严格 "Figure N:" / "图 N:" 标题行就近插入;
+   *   4) 仍未插入的追加到文末 "## 图" 段;清理未消费的分页标记。
    */
   private embedDocumentImages(docId: string, text: string, images: ExtractedPdfImage[]): string {
-    if (!images.length) return text
+    if (!images.length) {
+      // 无图也要清理分页标记(它们只服务于图片定位)。
+      return text.replace(/<!-- page:\d+ -->/g, '')
+    }
 
     const extByMime: Record<string, string> = {
       'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp',
@@ -612,13 +618,30 @@ export class EditDocumentTool extends BaseTool {
       return '[图]'
     })
 
-    // 2) 剩余图片按 Figure/图 标题行就近插入(PDF 文本没有占位符)。
+    // 2) PDF 分页标记:该页的图插入到 <!-- page:N --> 之后。
+    if (used < urls.length) {
+      const byPage = new Map<number, string[]>()
+      for (let i = used; i < images.length; i++) {
+        const p = images[i].page || 1
+        const list = byPage.get(p) || []
+        list.push(`![图 ${i + 1}](${urls[i]})`)
+        byPage.set(p, list)
+      }
+      body = body.replace(/<!-- page:(\d+) -->/g, (marker, p: string) => {
+        const imgs = byPage.get(parseInt(p, 10)) || []
+        if (imgs.length === 0) return ''
+        used += imgs.length
+        return `${imgs.join('\n\n')}`
+      })
+    }
+
+    // 3) 剩余图片按严格 "Figure N:" / "图 N:" 标题行就近插入。
     if (used < urls.length) {
       const lines = body.split('\n')
       const outLines: string[] = []
       for (const line of lines) {
         outLines.push(line)
-        if (used < urls.length && /^\s*(?:Figure|Fig\.?|图)\s*\d+/i.test(line)) {
+        if (used < urls.length && /^\s*(?:Figure|Fig\.?|图)\s*\d+\s*[:.．]/i.test(line)) {
           used++
           outLines.push(`![图 ${used}](${urls[used - 1]})`)
         }
@@ -626,7 +649,7 @@ export class EditDocumentTool extends BaseTool {
       body = outLines.join('\n')
     }
 
-    // 3) 仍未插入的追加到文末。
+    // 4) 仍未插入的追加到文末。
     if (used < urls.length) {
       const leftover = urls.slice(used).map((u, i) => `![图 ${used + 1 + i}](${u})`).join('\n\n')
       body = `${body}\n\n## 图\n${leftover}`

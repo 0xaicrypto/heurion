@@ -5,9 +5,9 @@
  * 理解文章中的数学内容。
  *
  * 成本控制:
- * - PDF_FORMULA_OCR='0' 可关闭(默认开)
- * - PDF_FORMULA_OCR_MAX_PAGES 默认 10(只处理前 N 页,长论文覆盖正文
- *   开头公式密集区)
+ * - PDF_FORMULA_OCR='0' 可关闭(默认开 — 用户实测确认需要公式;
+ *   仅在需要时用 '0' 关掉以省视觉调用成本)
+ * - PDF_FORMULA_OCR_MAX_PAGES 默认 10(只处理前 N 页)
  * - PDF_FORMULA_OCR_CONCURRENCY 默认 3(并行视觉调用)
  * - 失败静默降级(返回空串,不阻断导入)
  */
