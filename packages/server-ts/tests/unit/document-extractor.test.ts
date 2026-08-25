@@ -6,7 +6,7 @@ import zlib from 'zlib'
 import crypto from 'crypto'
 import PDFDocument from 'pdfkit'
 import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun, ImageRun } from 'docx'
-import { extractTextFromUpload, extractPdfImagesFromUpload, extractDocxContentFromUpload, extractImageUpload, sniffDocumentMime, pdfTextToMarkdown, extractDocumentMarkdownFromUpload, extractDocumentMarkdownWithImagesFromUpload } from '../../src/lib/document-extractor.js'
+import { extractTextFromUpload, extractPdfImagesFromUpload, extractDocxContentFromUpload, extractImageUpload, sniffDocumentMime, pdfTextToMarkdown, extractDocumentMarkdownFromUpload, extractDocumentMarkdownWithImagesFromUpload, cachedExtractDocumentMarkdownFromUpload } from '../../src/lib/document-extractor.js'
 import { buildAttachmentParts, MAX_ATTACHMENT_IMAGES } from '../../src/modules/chat/chat-context.js'
 
 /** 生成一张合法 PNG(RGB,无压缩选项) — 测试用最小实现。 */
@@ -465,5 +465,41 @@ describe('document-extractor PDF 内嵌图片提取', () => {
     const imageParts = res.parts.filter((p) => p.type === 'image')
     expect(imageParts.length).toBeLessThanOrEqual(MAX_ATTACHMENT_IMAGES)
     expect(imageParts.length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('cachedExtractDocumentMarkdownFromUpload 缓存', () => {
+  const tmpDir = path.join(os.tmpdir(), `heurion-extract-cache-${Date.now()}`)
+  const uploadsDir = path.join(tmpDir, 'u1', 'uploads')
+
+  beforeEach(() => {
+    process.env.TWIN_BASE_DIR = tmpDir
+    fs.mkdirSync(uploadsDir, { recursive: true })
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    delete process.env.TWIN_BASE_DIR
+  })
+
+  test('同参数第二次命中缓存,不重新提取;失败结果不缓存', async () => {
+    const fileId = '1750000000200_cached.txt'
+    fs.writeFileSync(path.join(uploadsDir, fileId), 'Hello cached extraction.', 'utf-8')
+
+    const a = await cachedExtractDocumentMarkdownFromUpload('u1', fileId)
+    const b = await cachedExtractDocumentMarkdownFromUpload('u1', fileId)
+    expect(a).toBe('Hello cached extraction.')
+    expect(b).toBe(a)
+
+    // 直接删除文件后再取 — 命中缓存仍返回(证明没重新读盘)。
+    fs.rmSync(path.join(uploadsDir, fileId))
+    const c = await cachedExtractDocumentMarkdownFromUpload('u1', fileId)
+    expect(c).toBe('Hello cached extraction.')
+
+    // 不存在的文件(提取失败)不缓存 — 每次都会重新尝试(返回空)。
+    const d1 = await cachedExtractDocumentMarkdownFromUpload('u1', 'nope.txt')
+    const d2 = await cachedExtractDocumentMarkdownFromUpload('u1', 'nope.txt')
+    expect(d1).toBe('')
+    expect(d2).toBe('')
   })
 })

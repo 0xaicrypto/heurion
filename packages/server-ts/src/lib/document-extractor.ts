@@ -500,6 +500,44 @@ export async function extractDocumentMarkdownFromUpload(
   return buffer.toString('utf-8').slice(0, maxChars).trim()
 }
 
+/**
+ * #fix: 提取结果缓存(进程内 LRU) — buildDocReferenceBlocks 每轮对话都
+ * 重新提取 PDF/DOCX(读文件+pdf.js 解析,34 页 PDF 1-5 秒),而提取是
+ * 纯函数且 uploads 文件不可变(新上传 = 新 fileId),缓存完全安全。
+ * TTL 30 分钟、上限 50 条(单条约 100-300KB,峰值 ~15MB,可接受)。
+ * 失败结果(空/跳过提示)不缓存,下次可重试。
+ */
+const EXTRACT_CACHE_MAX = 50
+const EXTRACT_CACHE_TTL_MS = 30 * 60 * 1000
+const extractCache = new Map<string, { text: string; at: number }>()
+
+export function cachedExtractDocumentMarkdownFromUpload(
+  userId: string,
+  fileId: string,
+  options: { maxChars?: number } = {},
+): Promise<string> {
+  const key = `${userId}:${fileId}:${options.maxChars ?? 300000}`
+  const hit = extractCache.get(key)
+  if (hit && Date.now() - hit.at < EXTRACT_CACHE_TTL_MS) return Promise.resolve(hit.text)
+
+  return extractDocumentMarkdownFromUpload(userId, fileId, options).then((text) => {
+    // 提取失败/跳过标记([PDF xxx failed] / [附件 超过 xxMB])不缓存,
+    // 下次可重试;正常 markdown 文本(可能以 # 标题开头)照常缓存。
+    if (text && !/^\[(PDF|DOCX|附件)/.test(text)) {
+      if (extractCache.size >= EXTRACT_CACHE_MAX) {
+        let oldest: string | null = null
+        let oldestAt = Infinity
+        for (const [k, v] of extractCache) {
+          if (v.at < oldestAt) { oldestAt = v.at; oldest = k }
+        }
+        if (oldest) extractCache.delete(oldest)
+      }
+      extractCache.set(key, { text, at: Date.now() })
+    }
+    return text
+  })
+}
+
 export interface ExtractedMarkdownContent {
   text: string
   images: ExtractedPdfImage[]
