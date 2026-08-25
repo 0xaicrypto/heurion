@@ -55,8 +55,8 @@ function escapeHtmlAttr(s: string): string {
 function mathToHtml(md: string): string {
   if (!md || !md.includes('$')) return md;
   let out = md;
-  // 保护转义 \$ (字面美元符)。
-  out = out.replace(/\\\$/g, '\u0000');
+  // 保护转义 \$ (字面美元符) — 文本占位符避免控制字符。
+  out = out.replace(/\\\$/g, '@@LITERAL_DOLLAR@@');
   // 块公式 $$...$$(跨行,非贪婪)。节点内带 LaTeX 文本子内容 —
   // turndown 会把空 div 判定为 blank 而跳过规则,必须有内容才能回写。
   out = out.replace(/\$\$([\s\S]*?)\$\$/g, (_m, latex: string) => {
@@ -70,7 +70,7 @@ function mathToHtml(md: string): string {
     return `${pre}<span data-type="inline-math" data-latex="${safe}">${safe}</span>`;
   });
   // 恢复转义美元符。
-  return out.replace(/\u0000/g, '$');
+  return out.replace(/@@LITERAL_DOLLAR@@/g, '$');
 }
 
 /** 数学节点 → markdown(保存回写)。 */
