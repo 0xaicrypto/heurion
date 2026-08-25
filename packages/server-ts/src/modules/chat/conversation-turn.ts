@@ -331,8 +331,8 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           ? '若用户选中的文本(见上方「用户选中文本」)需要修改,old_text 必须从该选中文本逐字复制(空格/换行差异会被自动忽略),不要自行改写措辞或从其他位置复制;选中文本仅供你优先处理,用户未明确要求时不要改动选中范围外的内容。'
           : ''
         const rules = docFits
-          ? `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}文档较短已完整展示，可直接修改任意部分；优先用 edit_document 的 old_text/new_text 做局部编辑（old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制，空格/换行差异会被自动忽略，不要从 Reference Materials 复制）。${selectionRule}`
-          : `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制（空格/换行差异会被自动忽略，不要从 Reference Materials 复制）。不要用 full_text 全量替换：即使内容很短，full_text 也只适用于全文不足约 2000 token 的短文档；当用户要求「整理/润色/格式化全文」时，逐段用 old_text/new_text 依次处理（每次调用整理一段），并报告进度。${selectionRule}`
+          ? `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}文档较短已完整展示，可直接修改任意部分；优先用 edit_document 的 old_text/new_text 做局部编辑（old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制，空格/换行差异会被自动忽略，不要从 Reference Materials 复制；「文档结构」清单里的序号不是正文内容，复制时不要带序号，也不要从工具报错信息里复制片段）。${selectionRule}`
+          : `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制（空格/换行差异会被自动忽略，不要从 Reference Materials 复制；「文档结构」清单里的序号不是正文内容，复制时不要带序号，也不要从工具报错信息里复制片段）。不要用 full_text 全量替换：即使内容很短，full_text 也只适用于全文不足约 2000 token 的短文档；当用户要求「整理/润色/格式化全文」时，逐段用 old_text/new_text 依次处理（每次调用整理一段），并报告进度。${selectionRule}`
 
         return `\n\n## Current Document\n标题：${doc.title}\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n${selection ? `## 用户选中文本\n[用户选中的文本 — 如需修改请从此处逐字复制 old_text(空格/换行差异会被自动忽略)。]\n${selection}\n\n` : ''}## Reference Materials\n${refBlock || '(none)'}${refHint}\n\n${rules}`
       },

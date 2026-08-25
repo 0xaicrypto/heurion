@@ -128,7 +128,7 @@ describe('#171 edit_document tool', () => {
     expect(snap.body).toBe(body)
   }, 30000)
 
-  test('#fix range 模式:old_text 未找到 → 报错并给文档开头片段帮助修正锚点', async () => {
+  test('#fix range 模式:old_text 未找到 → 报错并给文档开头完整句片段帮助修正锚点', async () => {
     const app = await getApp()
     const userId = await getAuthUserId()
     const docId = await createDoc(app, '摘要部分。\n\n正文部分。')
@@ -137,11 +137,37 @@ describe('#171 edit_document tool', () => {
     const result = await tool.execute({ old_text: '不存在的句子', new_text: 'x' })
     expect(result.success).toBe(false)
     expect(result.error).toContain('未找到')
-    expect(result.error).toContain('摘要部分')
+    expect(result.error).toContain('摘要部分。')
 
     // 文档未被改动
     const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
     expect(doc.body).toBe('摘要部分。\n\n正文部分。')
+  }, 30000)
+
+  test('#fix probe 取完整标题行:复制报错里的片段重试必然命中', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    // 150+ 字符的长标题(超过旧 probe 的 120 字符窗口,硬切会断在单词中间)。
+    const title = 'Impact of two years of treatment with Elexacaftor/Tezacaftor/Ivacaftor on longitudinal changes in structural lung disease in people with Cystic Fibrosis. 这是第二句。'
+    const docId = await createDoc(app, `${title}\n\n## Abstract\n\n正文。`)
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ old_text: '不存在的句子', new_text: 'x' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('未找到')
+    // probe = 第一个非空行完整内容(标题整行),不截在单词中间。
+    expect(result.error).toContain('structural lung disease in people with Cystic Fibrosis. 这是第二句。')
+    // 文案引导:不从「文档结构」清单复制(带序号)。
+    expect(result.error).toContain('不要从「文档结构」清单复制')
+
+    // 模拟模型按报错提示复制 probe 重试 → 必然命中。
+    const probe = (result.error.match(/"(.*)"$/) || [])[1] || ''
+    expect(probe.length).toBeGreaterThan(50)
+    const retry = await tool.execute({ old_text: probe, new_text: '新标题。' })
+    expect(retry.success).toBe(true)
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.body).toContain('新标题。')
+    expect(doc.body).not.toContain(title)
   }, 30000)
 
   test('#fix range 模式:old_text 多处匹配 → 报错要求唯一锚点', async () => {

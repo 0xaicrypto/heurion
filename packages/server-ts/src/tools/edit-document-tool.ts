@@ -450,10 +450,21 @@ export class EditDocumentTool extends BaseTool {
       if (!span) {
         // 帮助模型修正锚点:给出文档开头附近的可匹配片段(保留大小写与
         // 标题标记,便于逐字复制)。
-        const probe = body.slice(0, 400).replace(/\s+/g, ' ').slice(0, 120)
+        // #fix: probe 取文档第一个非空行(通常是标题行)的完整内容 —
+        // 模型会把 probe 直接复制成 old_text,按字符硬切在句子中间
+        // (长标题 150+ 字符)必然失配;整行天然完整,复制即可命中。
+        const probeLine = body.split('\n').map((l) => l.trim()).filter(Boolean)[0] || ''
+        let probe = probeLine.slice(0, 300)
+        if (probe.length > 120) {
+          const cut = Math.max(
+            probe.lastIndexOf('。'), probe.lastIndexOf('. '), probe.lastIndexOf('；'),
+            probe.lastIndexOf('; '), probe.lastIndexOf('，'), probe.lastIndexOf(', '),
+          )
+          if (cut > 40) probe = probe.slice(0, cut + 1)
+        }
         return {
           success: false,
-          error: `old_text 在文档中未找到(已忽略空格/换行/标题标记差异后仍不匹配),请从上方 Current Document 部分逐字复制待修改的原文。文档开头附近是: "${probe}"`,
+          error: `old_text 在文档中未找到(已忽略空格/换行/标题标记差异后仍不匹配)。请从上方 ## Current Document 部分逐字复制待修改的原文,不要从「文档结构」清单复制(带序号)。文档开头附近完整片段(可直接复制): "${probe}"`,
         }
       }
       // 归一化匹配同样参与多次命中判定 — 两个片段仅空白不同也视为重复;
