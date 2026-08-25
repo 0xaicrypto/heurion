@@ -1,5 +1,32 @@
 import { ApiCore, ApiError } from './core.js';
 
+/** #fix: XHR 上传 — fetch 不支持上传进度,用 XHR 的 upload.onprogress
+ *  获得真实进度百分比(Modal 进度条)。返回 { status, body }。 */
+function xhrUpload(
+  path: string,
+  form: FormData,
+  headers: Headers,
+  onProgress?: (percent: number) => void,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', path);
+    headers.forEach((v, k) => {
+      if (k.toLowerCase() !== 'content-type') xhr.setRequestHeader(k, v);
+    });
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && e.total > 0) {
+          onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)));
+        }
+      };
+    }
+    xhr.onload = () => resolve({ status: xhr.status, body: xhr.responseText });
+    xhr.onerror = () => reject(new Error('network error'));
+    xhr.send(form);
+  });
+}
+
 
 
 export class FilesApi extends ApiCore {
@@ -13,29 +40,37 @@ export class FilesApi extends ApiCore {
   /** #fix: 分片总文件体积上限(与服务端 MAX_CHUNKED_UPLOAD_BYTES 对齐)。 */
   static readonly MAX_CHUNKED_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 
-  async uploadFile(file: File, patientHash?: string): Promise<{ file_id: string; name: string; mime: string; size_bytes: number; dedup?: boolean }> {
+  async uploadFile(
+    file: File,
+    patientHash?: string,
+    onProgress?: (percent: number) => void,
+  ): Promise<{ file_id: string; name: string; mime: string; size_bytes: number; dedup?: boolean }> {
     if (file.size > FilesApi.MAX_CHUNKED_UPLOAD_BYTES) {
       throw new ApiError(413, JSON.stringify({ error: `上传文件超过 ${FilesApi.MAX_CHUNKED_UPLOAD_BYTES / 1024 / 1024 / 1024}GB 上限,请压缩后再试 (file exceeds the upload limit)` }), '/api/v1/files/upload');
     }
     if (file.size > FilesApi.MAX_SINGLE_UPLOAD_BYTES) {
-      return this.uploadChunked(file, patientHash);
+      return this.uploadChunked(file, patientHash, onProgress);
     }
     const form = new FormData();
     form.append('file', file);
     if (patientHash) form.append('patient_hash', patientHash);
     const h = this.headers();
     h.delete('Content-Type');
-    const r = await fetch('/api/v1/files/upload', { method: 'POST', headers: h, body: form });
-    if (!r.ok) {
-      const text = await r.text().catch(() => '');
-      throw new ApiError(r.status, text || r.statusText, '/api/v1/files/upload');
+    // #fix: XHR 上传以获得真实进度(此前 fetch 无进度,大文件只有 spinner)。
+    const { status, body } = await xhrUpload('/api/v1/files/upload', form, h, onProgress);
+    if (status >= 400) {
+      throw new ApiError(status, body || `HTTP ${status}`, '/api/v1/files/upload');
     }
-    return r.json();
+    return JSON.parse(body);
   }
 
   /** #fix: 大文件分片上传 — 逐段 POST upload-chunk,完成后 upload-complete
    *  由服务端合并 + 去重;失败时尽力 upload-abort 清理残留分片。 */
-  private async uploadChunked(file: File, patientHash?: string): Promise<{ file_id: string; name: string; mime: string; size_bytes: number; dedup?: boolean }> {
+  private async uploadChunked(
+    file: File,
+    patientHash?: string,
+    onProgress?: (percent: number) => void,
+  ): Promise<{ file_id: string; name: string; mime: string; size_bytes: number; dedup?: boolean }> {
     const uploadId = `up_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     const total = Math.ceil(file.size / FilesApi.CHUNK_SIZE);
     try {
@@ -54,11 +89,15 @@ export class FilesApi extends ApiCore {
           const text = await r.text().catch(() => '');
           throw new ApiError(r.status, text || r.statusText, '/api/v1/files/upload-chunk');
         }
+        // #fix: 分片进度 = 已传片数/总片数。
+        onProgress?.(Math.min(99, Math.round(((i + 1) / total) * 100)));
       }
+      onProgress?.(99);
       const done = await this.fetch('/api/v1/files/upload-complete', {
         method: 'POST',
         body: JSON.stringify({ upload_id: uploadId, filename: file.name, total, patient_hash: patientHash ?? null, mime: file.type || 'application/octet-stream' }),
       });
+      onProgress?.(100);
       return done as { file_id: string; name: string; mime: string; size_bytes: number; dedup?: boolean };
     } catch (err) {
       try {

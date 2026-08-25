@@ -7,6 +7,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor, type DiffReviewState } from '@/components/DocEditor';
+import { UploadProgressModal, type UploadProgressState } from '@/components/UploadProgressModal';
 import { ChatMessages } from '@/components/chat/ChatMessages';
 import { StreamingLlmContent } from '@/components/LlmContent';
 import { ChartLibrary } from '@/components/chat/ChartLibrary';
@@ -156,6 +157,8 @@ export function WritingEditorPage() {
     if (docId) api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: result.md }).catch(() => {});  }, [docId, doc?.title]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [chatUploadingFile, setChatUploadingFile] = useState(false);
+  // #fix: 上传进度 Modal — 上传中显示进度条,服务端导入阶段为不确定进度。
+  const [uploadState, setUploadState] = useState<UploadProgressState | null>(null);
   const [kbDedupNotice, setKbDedupNotice] = useState<string | null>(null);
   const [chatAttachedFiles, setChatAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
 
@@ -474,7 +477,7 @@ export function WritingEditorPage() {
         if (!file) continue;
         setChatUploadingFile(true);
         try {
-          const result = await api.uploadFile(file);
+          const result = await uploadWithProgress(file);
           setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
         if (result.dedup) {
           setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
@@ -490,7 +493,10 @@ export function WritingEditorPage() {
           // #fix: 大文件/上传失败此前静默吞掉,用户以为传上了 — 现在明示。
           setError(err instanceof ApiError ? err.messageText : String(err));
         }
-        finally { setChatUploadingFile(false); }
+        finally {
+          setChatUploadingFile(false);
+          setUploadState(null);
+        }
       }
     }
   };
@@ -500,7 +506,7 @@ export function WritingEditorPage() {
     if (!f) return;
     setChatUploadingFile(true);
     try {
-      const result = await api.uploadFile(f);
+      const result = await uploadWithProgress(f);
       setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
       // #fix: 上传即入聊天记录(与服务端 user_message 事件一致),刷新后仍可见。
       if (chatSessionId) {
@@ -512,7 +518,26 @@ export function WritingEditorPage() {
       // #fix: 大文件/上传失败此前静默吞掉 — 现在明示。
       setError(err instanceof ApiError ? err.messageText : String(err));
     }
-    finally { setChatUploadingFile(false); }
+    finally {
+      setChatUploadingFile(false);
+      setUploadState(null);
+    }
+  };
+
+  // #fix: 统一上传入口 — 驱动进度 Modal(uploading → importing)。
+  const uploadWithProgress = async (f: File) => {
+    setUploadState({ fileName: f.name, percent: 0, stage: 'uploading' });
+    try {
+      const result = await api.uploadFile(f, undefined, (p) => {
+        setUploadState((prev) => (prev ? { ...prev, percent: p } : prev));
+      });
+      // 上传完成 → 服务端导入阶段(提取文字/图片/公式)。
+      setUploadState((prev) => (prev ? { ...prev, percent: 100, stage: 'importing' } : prev));
+      return result;
+    } catch (err) {
+      setUploadState(null);
+      throw err;
+    }
   };
 
   const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -521,7 +546,7 @@ export function WritingEditorPage() {
     try {
       // #fix: 上传按钮的附件必须同时挂到聊天消息(attachments),否则首条
       // 消息只带"参考材料里的文件名",LLM 读不到正文。
-      const result = await api.uploadFile(f);
+      const result = await uploadWithProgress(f);
       setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
       // #fix: 上传即草稿 — 空文档 + 文件类参考时服务端自动导入正文,
       // 响应携带 imported_body,前端立即刷新编辑框(用户马上看到原文)。
@@ -547,6 +572,9 @@ export function WritingEditorPage() {
       setChatInput(`I uploaded "${f.name}". Please analyze it and draft content.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : 'Upload failed');
+    } finally {
+      // #fix: 导入完成(或失败)关闭进度 Modal。
+      setUploadState(null);
     }
     if (e.target) e.target.value = '';
   };
@@ -995,6 +1023,9 @@ export function WritingEditorPage() {
             </>
           )}
         </div>
+
+        {/* #fix: 上传进度 Modal — 上传中显示进度条,导入阶段不确定进度。 */}
+        <UploadProgressModal state={uploadState} />
 
         {/* #598: History 版本列表 — 悬浮窗选择 snapshot(无需滚动到底部) */}
         {showHistory && (
