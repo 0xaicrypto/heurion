@@ -120,7 +120,8 @@ describe('chat tool-call parsing (regression: nested arguments JSON)', () => {
     }).filter(Boolean)
     expect(events.some((e: any) => e.type === 'error')).toBe(false)
     const finalText = events.filter((e: any) => e.type === 'final_answer_chunk').map((e: any) => e.text).join('')
-    expect(finalText).toContain('unable to complete')
+    // #fix: 兜底文案改中文(此前硬编码英文 'I was unable to complete...')。
+    expect(finalText).toContain('未能完成这个操作')
   })
 })
 

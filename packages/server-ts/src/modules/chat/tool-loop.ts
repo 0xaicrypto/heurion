@@ -123,7 +123,6 @@ export async function runToolCallLoop(params: {
     }
     if (toolCallBlocks && toolCallBlocks.length > 0) {
       let executedAny = false
-      let toolError: string | null = null
       // The assistant message must appear ONCE regardless of how many
       // tool calls it contains — re-pushing it per block would duplicate
       // the whole payload N times and corrupt the turn history.
@@ -274,15 +273,14 @@ export async function runToolCallLoop(params: {
           await appendToolEvent('tool_result', result.error || '', {
             toolCallId: seq, success: false, error: (result.error || '').slice(0, 200),
           })
-          toolError = result.error ?? 'Unknown tool error'
-          break
+          // #fix: 工具失败不 break — 错误已作为 tool_result 注入消息,
+          // 让模型下一轮看到错误后自行修正锚点重试或正常回答用户。
+          // 此前直接返回硬编码的 'I tried to use a tool but...'(英文,
+          // 与对话上下文无关),生产反馈"前言不搭后语"。doom-loop 已有
+          // 3 次同类告警,MAX_TOOL_ROUNDS=5 兜底总轮数。
         }
       }
       if (executedAny) {
-        if (toolError) {
-          finalContent = `I tried to use a tool but encountered an error: ${toolError}`
-          break
-        }
         continue
       }
     }
@@ -290,9 +288,12 @@ export async function runToolCallLoop(params: {
     // §3.3: never surface raw <tool_call> markers to the user — strip
     // any unparsed blocks before sending the final answer.
     const cleaned = (callResult || '').replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim()
-    finalContent = cleaned || 'I was unable to complete that request. Please try again.'
+    finalContent = cleaned || '抱歉，我未能完成这个操作，请再试一次或换一种说法描述需求。'
     break
   }
 
+  // 注意:finalContent 为空时不能在这里兜底 — conversation-turn 会走
+  // deepseekStream 流式 fallback(511-517 行的 if(finalContent) 分支)。
+  // 硬编码兜底文案会截胡流式路径。
   return { finalContent, messages }
 }

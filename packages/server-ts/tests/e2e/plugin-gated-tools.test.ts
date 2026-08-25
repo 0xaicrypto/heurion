@@ -38,8 +38,11 @@ describe('plugin-gated render tools (#454-followup)', () => {
     expect(res.statusCode).toBe(200)
     // No chart_created — the gated tool must not run.
     expect(res.payload).not.toContain('"type":"chart_created"')
-    // The refusal is surfaced to the LLM as a tool error.
-    expect(res.payload).toContain('插件')
+    // #fix: 拒绝原因作为 tool_result 喂回模型(第二轮消息),不再是硬编码
+    // 的英文最终回复('I tried to use a tool...' — 生产反馈前言不搭后语)。
+    const round2 = vi.mocked(deepseekChat).mock.calls[1]?.[0] ?? []
+    expect(JSON.stringify(round2)).toContain('插件')
+    expect(res.payload).not.toContain('I tried to use a tool')
   }, 30000)
 
   test('installing heurion/chart exposes render_chart to the LLM', async () => {

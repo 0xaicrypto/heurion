@@ -639,4 +639,40 @@ describe('#171 edit_document tool', () => {
     const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
     expect(doc.body).toContain('润色后的摘要。')
   }, 30000)
+
+  test('#fix 工具失败不返回硬编码错误:模型看到错误后修正锚点重试,正常回答', async () => {
+    const app = await getApp()
+    const docId = await createDoc(app, '# 摘要\n\n原始摘要内容。\n\n# 方法\n\n研究方法内容。')
+    const sessionId = `doc-${docId}`
+
+    let round = 0
+    vi.mocked(deepseekChat).mockImplementation((messages: any) => {
+      const text = JSON.stringify(messages)
+      if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
+      round++
+      if (round === 1) {
+        // 第一轮:锚点错误(不在文档中)→ 工具失败。
+        return Promise.resolve(`<tool_call>${JSON.stringify({ name: 'edit_document', arguments: { old_text: '不存在的句子', new_text: 'x' } })}</tool_call>`)
+      }
+      if (round === 2) {
+        // 第二轮:模型看到 tool_result 的错误后修正锚点重试 → 成功。
+        return Promise.resolve(`<tool_call>${JSON.stringify({ name: 'edit_document', arguments: { old_text: '原始摘要内容。', new_text: '润色后的摘要内容。', summary: '润色' } })}</tool_call>`)
+      }
+      return Promise.resolve('已完成摘要段润色。')
+    })
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/agent/chat',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ text: '润色一下', session_id: sessionId }),
+    })
+    expect(res.statusCode).toBe(200)
+    // 最终回复是模型的正常回答,不再是硬编码英文错误(前言不搭后语)。
+    expect(res.payload).toContain('已完成摘要段润色。')
+    expect(res.payload).not.toContain('I tried to use a tool')
+    // 修正后的编辑成功写回。
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId } })
+    expect(doc.body).toContain('润色后的摘要内容。')
+    expect(doc.body).not.toContain('原始摘要内容。')
+  }, 30000)
 })
