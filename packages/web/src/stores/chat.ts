@@ -9,6 +9,9 @@ export type { ChatMessage, SessionState };
 interface ChatStore {
   sessions: Record<string, SessionState>;
   sendMessage: (sessionId: string, opts: SendChatOptions) => Promise<void>;
+  /** #fix: 回复进行中追加消息 → 排队,当前 turn 完成后自动发送(不打断
+   *  正在执行的工具/写回,文档状态始终一致)。 */
+  sendMessageQueued: (sessionId: string, opts: SendChatOptions) => Promise<void>;
   /** §10.3 (#220): re-run the last user turn — drops its stale reply first. */
   regenerate: (sessionId: string, opts: SendChatOptions) => Promise<void>;
   /** #420: 并行深度分析 — 与 sendMessage 共用同一个 SSE reducer + 批处理。 */
@@ -77,11 +80,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       sessions: {
         ...state.sessions,
         [sessionId]: {
+          // #fix: 必须 spread prev — 丢失 pending/lastDocBody/contextUsage
+          // 等字段(排队消息会在 turn 完成后丢失)。
+          ...prev,
           messages: [...prev.messages, userMsg, asstMsg],
           abort,
           loading: true,
           compacting: false,
-        },      },
+        },
+      },
     }));
 
     try {
@@ -110,7 +117,37 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (!s || s.abort !== abort) return state;
         return { sessions: { ...state.sessions, [sessionId]: { ...s, loading: false, compacting: false } } };
       });
+      // #fix: 排队消息在 turn 完成后自动发出(不 await — 避免嵌套状态
+      // 竞争;新的 turn 会设置自己的 loading/abort)。
+      const s2 = get().sessions[sessionId];
+      if (s2?.pending && s2.abort === abort) {
+        const queued = s2.pending;
+        set((state) => {
+          const cur = state.sessions[sessionId];
+          if (!cur) return state;
+          return { sessions: { ...state.sessions, [sessionId]: { ...cur, pending: null } } };
+        });
+        void get().sendMessage(sessionId, queued.opts);
+      }
     }
+  },
+
+  sendMessageQueued: async (sessionId: string, opts: SendChatOptions) => {
+    const s = get().sessions[sessionId];
+    if (s?.loading || s?.compacting) {
+      // 回复进行中 → 排队;同一时刻只保留最后一条(用户可连续输入覆盖)。
+      set((state) => {
+        const cur = state.sessions[sessionId] ?? emptySession();
+        return {
+          sessions: {
+            ...state.sessions,
+            [sessionId]: { ...cur, pending: { text: opts.text, opts } },
+          },
+        };
+      });
+      return;
+    }
+    return get().sendMessage(sessionId, opts);
   },
 
   runDeepAnalysis: async (sessionId: string, opts) => {
@@ -215,6 +252,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const prev: SessionState = {
       ...s,
       messages: s.messages.slice(0, lastUserIdx),
+      // #fix: 丢弃排队中的追加消息 — regenerate 语义是重跑上一条用户消息。
+      pending: null,
     };
     set((state) => ({
       sessions: { ...state.sessions, [sessionId]: prev },

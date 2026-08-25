@@ -61,4 +61,31 @@ describe('DocEditor behaviors', () => {
     expect(text).toContain('1');
     expect(text).not.toContain('旧标题');
   });
+
+  test('#5 审阅模式:多修改逐条导航(第 N/M 处)渲染', async () => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    // 两处独立修改(中间隔未改段落,不会被 diff 合并成一组)。
+    const md = '第一段原文。\n\n## 未改章节\n\n保持不变的段落。\n\n第二段原文。';
+    const next = '第一段已润色。\n\n## 未改章节\n\n保持不变的段落。\n\n第二段已润色。';
+    render(
+      <DocEditor
+        value={md}
+        onChange={() => {}}
+        diffReview={{ key: 'rev_1', old: md, next }}
+        onDiffResolve={() => {}}
+      />,
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    // 两处修改:进入审阅自动聚焦第 1 处。
+    expect(screen.getByText('第 1/2 处')).toBeInTheDocument();
+    expect(screen.getByText(/2 处待处理/)).toBeInTheDocument();
+    // 下一处可点。
+    screen.getByTitle('下一处修改').click();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(screen.getByText('第 2/2 处')).toBeInTheDocument();
+    // 上一处回退。
+    screen.getByTitle('上一处修改').click();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(screen.getByText('第 1/2 处')).toBeInTheDocument();
+  });
 });

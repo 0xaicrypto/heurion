@@ -146,3 +146,57 @@ describe('chat store — 选中即引用 selection 透传（#693）', () => {
     expect(captured?.selection).toBeUndefined();
   });
 });
+
+describe('chat store — 追加问题排队(#fix)', () => {
+  beforeEach(() => {
+    useChatStore.setState({ sessions: {} });
+  });
+
+  test('回复进行中 sendMessageQueued → 排队不发送,回复完成后自动发出', async () => {
+    const { api } = await import('@/lib/api');
+    const sendChatFull = api.sendChatFull as any;
+    const sent: string[] = [];
+    sendChatFull.mockImplementationOnce(async function* (opts: any) {
+      sent.push(opts.text);
+      yield { type: 'final_answer_chunk', text: '第一轮回复' };
+      yield { type: 'turn_complete' };
+    });
+    // 第二轮(排队消息自动发出)。
+    sendChatFull.mockImplementationOnce(async function* (opts: any) {
+      sent.push(opts.text);
+      yield { type: 'final_answer_chunk', text: '第二轮回复' };
+      yield { type: 'turn_complete' };
+    });
+
+    const store = useChatStore.getState();
+    // 第一轮:直接发送。
+    const p1 = store.sendMessage('s1', { sessionId: 's1', text: '润色摘要', attachments: [], skills: [] });
+    // 回复进行中:追加消息 → 排队,不触发新一轮 fetch。
+    const queued = store.sendMessageQueued('s1', { sessionId: 's1', text: '顺便把标题也改一下', attachments: [], skills: [] });
+    expect(queued).toBeInstanceOf(Promise);
+    expect(sent).toEqual(['润色摘要']);
+    expect(useChatStore.getState().sessions.s1.pending?.text).toBe('顺便把标题也改一下');
+
+    await p1;
+    // 第一轮完成后,排队消息自动发出。
+    await vi.waitFor(() => expect(sent).toEqual(['润色摘要', '顺便把标题也改一下']));
+    await vi.waitFor(() => expect(useChatStore.getState().sessions.s1.pending).toBeNull());
+    const msgs = useChatStore.getState().sessions.s1.messages;
+    expect(msgs.filter((m) => m.role === 'user').map((m) => m.text)).toEqual(['润色摘要', '顺便把标题也改一下']);
+  });
+
+  test('回复中连续追加只保留最后一条', async () => {
+    const { api } = await import('@/lib/api');
+    const sendChatFull = api.sendChatFull as any;
+    sendChatFull.mockImplementationOnce(async function* () {
+      yield { type: 'final_answer_chunk', text: '回复中' };
+      yield { type: 'turn_complete' };
+    });
+    const store = useChatStore.getState();
+    const p1 = store.sendMessage('s1', { sessionId: 's1', text: '第一轮', attachments: [], skills: [] });
+    await store.sendMessageQueued('s1', { sessionId: 's1', text: '追加 A', attachments: [], skills: [] });
+    await store.sendMessageQueued('s1', { sessionId: 's1', text: '追加 B', attachments: [], skills: [] });
+    expect(useChatStore.getState().sessions.s1.pending?.text).toBe('追加 B');
+    await p1;
+  });
+});

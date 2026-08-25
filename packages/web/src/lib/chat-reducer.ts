@@ -6,7 +6,7 @@
  * function: one chunk (or a batch reduced left-to-right) in, one new
  * SessionState out.
  */
-import type { ChatStreamChunk, ChatContextUsage } from './types';
+import type { ChatStreamChunk, ChatContextUsage, SendChatOptions } from './types';
 
 export interface ChatMessage {
   id: string;
@@ -58,6 +58,9 @@ export interface SessionState {
   abort: AbortController | null;
   loading: boolean;
   compacting: boolean;
+  /** #fix: 回复进行中用户追加的消息 — 当前 turn 完成后自动发送(排队,
+   *  不打断正在执行的工具/写回,避免文档状态不一致)。 */
+  pending?: { text: string; opts: SendChatOptions } | null;
   lastDocBody?: string;
   /** #459: shared UI shape (ChatContextUsage in lib/types). */
   contextUsage?: ChatContextUsage;

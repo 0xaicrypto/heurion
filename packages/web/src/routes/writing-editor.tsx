@@ -105,11 +105,14 @@ export function WritingEditorPage() {
   // #653/#462: scoped selectors — doc-chat chunks no longer re-render the
   // whole editor (was a full-store subscription).
   const chatSession = useChatStore((s) => (chatSessionId ? s.sessions[chatSessionId] : undefined));
-  const sendMessage = useChatStore((s) => s.sendMessage);
+  // #fix: 追加问题排队发送(回复进行中不打断,当前 turn 完成后自动执行)。
+  const sendMessageQueued = useChatStore((s) => s.sendMessageQueued);
   const appendMessage = useChatStore((s) => s.appendMessage);
   const setMessages = useChatStore((s) => s.setMessages);
   const chatMessages = chatSession?.messages ?? [];
   const chatLoading = chatSession?.loading ?? false;
+  // #fix: 排队中的追加消息(回复完成后自动发送)。
+  const chatPending = useChatStore((s) => (chatSessionId ? !!s.sessions[chatSessionId]?.pending : false));
   const [aiEditNotice, setAiEditNotice] = useState('');
   /** #diff-review: 待审阅的 AI 编辑(旧→新);null=无审阅。 */
   const [diffReview, setDiffReview] = useState<DiffReviewState | null>(null);
@@ -444,7 +447,10 @@ export function WritingEditorPage() {
         // 保存失败仍继续发送 — 锚点不匹配时由服务端归一化兜底/报错引导。
       }
     }
-    sendMessage(`doc-${docId}`, {
+    // #fix: 追加问题排队发送 — 回复进行中调用时不打断(工具写回中的
+    // doc_updated 若被中断,前端与文档状态会不一致),由 store 在当前
+    // turn 完成后自动发出;排队状态经 session.pending 在输入框上方提示。
+    await sendMessageQueued(`doc-${docId}`, {
       text,
       sessionId: `doc-${docId}`,
       patientHash: null,
@@ -917,6 +923,12 @@ export function WritingEditorPage() {
                     ))}
                   </div>
                 )}
+                {/* #fix: 追加问题排队提示 — 回复完成后自动发送,不打断。 */}
+                {chatPending && (
+                  <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-2 py-1">
+                    <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">已排队 — 当前回复完成后自动发送</span>
+                  </div>
+                )}
                 {/* #693: 选中即引用 — 当前编辑器选中文本将随下一条消息发送。 */}
                 {chatSelection && (
                   <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-2 py-1">
@@ -947,8 +959,9 @@ export function WritingEditorPage() {
                     className="min-h-0 flex-1 resize-none py-1.5"
                     style={{ maxHeight: '120px' }}
                   />
-                  <Button size="sm" onClick={handleSendChat} disabled={chatLoading || !chatInput.trim()} className="shrink-0">
-                    Send
+                  {/* #fix: 回复进行中不禁用 — 发送=排队,当前 turn 完成后自动执行。 */}
+                  <Button size="sm" onClick={handleSendChat} isLoading={chatLoading} disabled={!chatInput.trim()} className="shrink-0">
+                    {chatLoading ? '排队发送' : 'Send'}
                   </Button>
                 </div>
               </div>

@@ -12,7 +12,7 @@ import { applyTrackedDiff, cleanupEmptyBlocks } from '@/lib/doc-diff';
 import { Button } from '@/components/ui';
 import {
   Bold, Italic, Heading2, List, ListOrdered, Table as TableIcon,
-  Plus, Trash2, Undo2, Redo2, Check, X, Eye, RotateCcw,
+  Plus, Trash2, Undo2, Redo2, Check, X, Eye, RotateCcw, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 
 /** AI 作者身份 — 审阅模式下的变更标记作者色。 */
@@ -54,6 +54,9 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   const reviewKeyRef = useRef<string | null>(null);
   const [reviewStats, setReviewStats] = useState<{ pending: number; accepted: number; rejected: number }>({ pending: 0, accepted: 0, rejected: 0 });
   const [selectedChange, setSelectedChange] = useState<{ id: string; text: string } | null>(null);
+  // #fix: 逐条确认导航 — 修改处列表中的当前位置(第 N/M 处),进入审阅
+  // 自动聚焦第一处,接受/拒绝后自动跳下一处。
+  const [changeNav, setChangeNav] = useState<{ idx: number; total: number }>({ idx: -1, total: 0 });
   const statsRef = useRef({ accepted: 0, rejected: 0 });
   // #693: useEditor 选项只在创建时生效 — 经 ref 取最新回调。
   const onSelRef = useRef(onSelectionChange);
@@ -118,6 +121,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       setReviewStats({ pending: 0, accepted: 0, rejected: 0 });
       statsRef.current = { accepted: 0, rejected: 0 };
       setSelectedChange(null);
+      setChangeNav({ idx: -1, total: 0 });
       (editor.commands as any).setTrackChangesMode('edit');
       // 退出审阅(含"放弃修改")→ 还原为当前正文
       applyMdRef.current = value;
@@ -134,6 +138,13 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     (editor.commands as any).setTrackChangesMode('view');
     setReviewStats({ pending: getPendingChangeCount(editor), accepted: 0, rejected: 0 });
     setSelectedChange(null);
+    // #fix: 进入审阅自动聚焦第一处修改(用户可逐条遍历确认/拒绝)。
+    const changes = groupedChanges(editor);
+    setChangeNav({ idx: changes.length > 0 ? 0 : -1, total: changes.length });
+    if (changes.length > 0) {
+      editor.commands.setTextSelection({ from: changes[0].from, to: changes[0].to });
+      editor.commands.scrollIntoView();
+    }
   }, [diffReview, editor, value]);
 
   const finishReview = (cancelled: boolean) => {
@@ -173,6 +184,20 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     finishReview(false);
   };
 
+  // #fix: 修改处按 changeId 分组 — 一次替换可能拆成多个 change
+  // (delete+insert),但接受/拒绝按 changeId 整组生效;导航粒度与
+  // "N 处待处理"保持一致。
+  const groupedChanges = (ed: Editor) => {
+    const byId = new Map<string, { from: number; to: number }>();
+    for (const c of getTrackedChanges(ed).sort((a, b) => a.from - b.from)) {
+      const prev = byId.get(c.changeId);
+      byId.set(c.changeId, prev
+        ? { from: Math.min(prev.from, c.from), to: Math.max(prev.to, c.to) }
+        : { from: c.from, to: c.to });
+    }
+    return Array.from(byId.entries()).map(([changeId, range]) => ({ changeId, ...range }));
+  };
+
   const resolveOne = (changeId: string, accept: boolean) => {
     if (!editor) return;
     const stats = statsRef.current;
@@ -183,7 +208,31 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     applyMdRef.current = null;
     setSelectedChange(null);
     setReviewStats({ pending: getPendingChangeCount(editor), accepted: stats.accepted, rejected: stats.rejected });
-    if (getPendingChangeCount(editor) === 0) finishReview(false);
+    if (getPendingChangeCount(editor) === 0) {
+      setChangeNav({ idx: -1, total: 0 });
+      finishReview(false);
+      return;
+    }
+    // #fix: 处理完当前处自动跳到下一处 — 逐条确认流程不断档。
+    const changes = groupedChanges(editor);
+    const nextIdx = Math.min(changeNav.idx, changes.length - 1);
+    setChangeNav({ idx: nextIdx, total: changes.length });
+    if (nextIdx >= 0) {
+      editor.commands.setTextSelection({ from: changes[nextIdx].from, to: changes[nextIdx].to });
+      editor.commands.scrollIntoView();
+    }
+  };
+
+  // #fix: 逐条导航 — 上一处/下一处(移动选区到对应修改)。
+  const jumpTo = (idx: number) => {
+    if (!editor) return;
+    const changes = groupedChanges(editor);
+    if (changes.length === 0) return;
+    const clamped = Math.max(0, Math.min(changes.length - 1, idx));
+    const c = changes[clamped];
+    setChangeNav({ idx: clamped, total: changes.length });
+    editor.commands.setTextSelection({ from: c.from, to: c.to });
+    editor.commands.scrollIntoView();
   };
 
   if (!editor) return null;
@@ -214,6 +263,18 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
               </Button>
             </span>
           )}
+          {/* #fix: 逐条确认导航 — 上一处/下一处,接受/拒绝当前处后自动跳转。 */}
+          <span className="flex items-center gap-1">
+            <Button size="sm" variant="ghost" disabled={changeNav.total === 0 || changeNav.idx <= 0} onClick={() => jumpTo(changeNav.idx - 1)} title="上一处修改">
+              <ChevronLeft size={13} />
+            </Button>
+            <span className="text-xs tabular-nums text-amber-700 dark:text-amber-300">
+              {changeNav.total > 0 ? `第 ${changeNav.idx + 1}/${changeNav.total} 处` : '无修改'}
+            </span>
+            <Button size="sm" variant="ghost" disabled={changeNav.total === 0 || changeNav.idx >= changeNav.total - 1} onClick={() => jumpTo(changeNav.idx + 1)} title="下一处修改">
+              <ChevronRight size={13} />
+            </Button>
+          </span>
           <span className="ml-auto flex items-center gap-1">
             <Button size="sm" variant="primary" disabled={reviewStats.pending === 0} onClick={() => resolveAll(true)}>
               <Check size={13} /> 全部接受
