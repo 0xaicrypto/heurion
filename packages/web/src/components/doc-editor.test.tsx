@@ -79,13 +79,24 @@ describe('DocEditor behaviors', () => {
     // 两处修改:进入审阅自动聚焦第 1 处。
     expect(screen.getByText('第 1/2 处')).toBeInTheDocument();
     expect(screen.getByText(/2 处待处理/)).toBeInTheDocument();
-    // 下一处可点。
+    // #fix: 逐条确认 — 导航即选中,显示「选中修改」+ 接受/拒绝按钮
+    // (此前覆盖判定对导航选区不成立,只能全部接受/全部拒绝)。
+    expect(screen.getByText(/选中修改/)).toBeInTheDocument();
+    const acceptOne = screen.getByRole('button', { name: /^接受$/ });
+    expect(acceptOne).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^拒绝$/ })).toBeInTheDocument();
+    // 下一处可点,选中同步。
     screen.getByTitle('下一处修改').click();
     await new Promise((r) => setTimeout(r, 100));
     expect(screen.getByText('第 2/2 处')).toBeInTheDocument();
+    expect(screen.getByText(/选中修改/)).toBeInTheDocument();
     // 上一处回退。
     screen.getByTitle('上一处修改').click();
     await new Promise((r) => setTimeout(r, 100));
     expect(screen.getByText('第 1/2 处')).toBeInTheDocument();
+    // 逐条接受后 pending 减少,自动跳到下一处。
+    acceptOne.click();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(screen.getByText(/1 处待处理/)).toBeInTheDocument();
   });
 });

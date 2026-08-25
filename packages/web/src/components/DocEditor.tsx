@@ -148,6 +148,9 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     if (changes.length > 0) {
       editor.commands.setTextSelection({ from: changes[0].from, to: changes[0].to });
       editor.commands.scrollIntoView();
+      // #fix: 同步选中第一处(见 jumpTo)。
+      const first = getTrackedChanges(editor).find((x) => x.changeId === changes[0].changeId);
+      setSelectedChange(first ? { id: first.changeId, text: first.text.slice(0, 40) } : null);
     }
   }, [diffReview, editor, value]);
 
@@ -222,8 +225,12 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     const nextIdx = Math.min(changeNav.idx, changes.length - 1);
     setChangeNav({ idx: nextIdx, total: changes.length });
     if (nextIdx >= 0) {
-      editor.commands.setTextSelection({ from: changes[nextIdx].from, to: changes[nextIdx].to });
+      const c = changes[nextIdx];
+      editor.commands.setTextSelection({ from: c.from, to: c.to });
       editor.commands.scrollIntoView();
+      // #fix: 同步选中(见 jumpTo — 覆盖判定对导航选区不成立)。
+      const first = getTrackedChanges(editor).find((x) => x.changeId === c.changeId);
+      setSelectedChange(first ? { id: first.changeId, text: first.text.slice(0, 40) } : null);
     }
   };
 
@@ -237,6 +244,11 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     setChangeNav({ idx: clamped, total: changes.length });
     editor.commands.setTextSelection({ from: c.from, to: c.to });
     editor.commands.scrollIntoView();
+    // #fix: 导航即选中 — onSelectionUpdate 的覆盖判定要求单个 change
+    // 完全覆盖选区,而导航选区是整组范围(超集)永远不匹配,按钮不出现。
+    // 这里直接用该组的第一个 change 设置 selectedChange。
+    const first = getTrackedChanges(editor).find((x) => x.changeId === c.changeId);
+    setSelectedChange(first ? { id: first.changeId, text: first.text.slice(0, 40) } : null);
   };
 
   if (!editor) return null;
