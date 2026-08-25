@@ -115,6 +115,13 @@ export function WritingEditorPage() {
   const [diffReview, setDiffReview] = useState<DiffReviewState | null>(null);
   const bodyRef = useRef(body);
   bodyRef.current = body;
+  // #fix: 最近一次已保存的正文 — 发送 chat 前对比,内容有变化才先保存,
+  // 保证服务端注入的上下文与用户编辑框看到的内容一致(否则模型基于旧
+  // 内容编辑会覆盖用户的本地修改)。
+  const lastSavedBody = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastSavedBody.current === null && doc) lastSavedBody.current = doc.body;
+  }, [doc]);
 
   // §15.4 / #553: AI write-back 不再静默替换正文 — 进入审阅模式,用户
   // 逐条/全部接受或拒绝后由 onDiffResolve 落地。
@@ -142,8 +149,7 @@ export function WritingEditorPage() {
     setAiEditNotice(`已采纳 AI 修改：接受 ${result.accepted} / 拒绝 ${result.rejected}`);
     setTimeout(() => setAiEditNotice(''), 4000);
     // #598: 落地后自动保存到服务端 — 生成版本快照,用户可随时回退。
-    if (docId) api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: result.md }).catch(() => {});
-  }, [docId, doc?.title]);
+    if (docId) api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: result.md }).catch(() => {});  }, [docId, doc?.title]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [chatUploadingFile, setChatUploadingFile] = useState(false);
   const [kbDedupNotice, setKbDedupNotice] = useState<string | null>(null);
@@ -302,6 +308,7 @@ export function WritingEditorPage() {
     setError(null);
     try {
       const updated = await api.updateDoc(docId, { title, body });
+      lastSavedBody.current = updated.body ?? body;
       if (updated.unchanged) {
         // #598: 内容未变化 — 提示且不刷新时间戳.
         setAiEditNotice('内容未变化，未创建新版本');
@@ -426,11 +433,13 @@ export function WritingEditorPage() {
     if (selection.length > 20000) selection = selection.slice(0, 20000);
     const attachments = chatAttachedFiles.map((a) => a.fileId);
     if (attachments.length > 0) setChatAttachedFiles([]);
-    // #693: 同源保证 — 有选中文本时先保存当前正文,确保服务端 body 与
-    // 选中文本一致(编辑器内容可能尚未保存)。
-    if (selection) {
+    // #fix: 发送前总是把编辑框当前内容保存到服务端(内容有变化才 PUT) —
+    // 上下文注入的是数据库 body,必须与用户看到的编辑框一致;否则模型
+    // 基于旧内容编辑写回,会覆盖/丢失用户未保存的本地修改。
+    if (lastSavedBody.current !== bodyRef.current) {
       try {
-        await api.updateDoc(docId, { title, body: bodyRef.current });
+        const saved = await api.updateDoc(docId, { title, body: bodyRef.current });
+        lastSavedBody.current = saved.body ?? bodyRef.current;
       } catch {
         // 保存失败仍继续发送 — 锚点不匹配时由服务端归一化兜底/报错引导。
       }
