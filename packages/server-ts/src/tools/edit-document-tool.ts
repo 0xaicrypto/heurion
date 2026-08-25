@@ -2,6 +2,7 @@ import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { extractDocumentMarkdownWithImagesFromUpload, type ExtractedPdfImage } from '../lib/document-extractor.js'
 import { issueChartToken } from '../common/chart-token.js'
+import { estimateTokens } from '../common/token-estimate.js'
 import fs from 'fs'
 import path from 'path'
 
@@ -490,6 +491,19 @@ export class EditDocumentTool extends BaseTool {
     try {
       const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
       if (!existing) return { success: false, error: `Document not found: ${docId}` }
+
+      // #fix: 长文档全量重写会超 LLM 输出预算(8192 token)→ 截断成半篇、
+      // 长时间生成触发网关/Cloudflare 超时重置 SSE("网络连接中断")。
+      // 硬约束不依赖模型自觉:现有文档超限即拒绝,引导逐段 range 编辑。
+      const docTokens = estimateTokens(String(existing.body || ''))
+      const fullTextTokens = estimateTokens(fullText)
+      const FULL_REPLACE_MAX_TOKENS = 2000
+      if (docTokens > FULL_REPLACE_MAX_TOKENS || fullTextTokens > FULL_REPLACE_MAX_TOKENS) {
+        return {
+          success: false,
+          error: `full_text 全量重写仅适用于短文档（约 ${FULL_REPLACE_MAX_TOKENS} token 以内）；当前文档约 ${docTokens} token，重写输出会被截断并导致连接超时。请改用 old_text/new_text 逐段编辑（每段一次调用），或提示用户先选中要修改的文本再操作。`,
+        }
+      }
 
       const now = new Date().toISOString()
       if (existing.body !== fullText) {

@@ -56,6 +56,23 @@ describe('#171 edit_document tool', () => {
     expect(result.success).toBe(false)
   }, 30000)
 
+  test('#fix 长文档 full_text 全量重写被拒绝(防输出截断/连接超时)', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const longBody = ('这是一段很长的文档内容，用来撑大 token 数量，确保超过全量重写的保护阈值。'.repeat(100))
+    const docId = await createDoc(app, longBody)
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ full_text: '重写后的内容', summary: '重写' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('full_text')
+    expect(result.error).toContain('old_text/new_text')
+
+    // 文档未被破坏。
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.body).toBe(longBody)
+  }, 30000)
+
   test('#2 LLM tool loop: chat call edit_document → doc updated + doc_updated SSE', async () => {
     const app = await getApp()
     const docId = await createDoc(app, '原文')
