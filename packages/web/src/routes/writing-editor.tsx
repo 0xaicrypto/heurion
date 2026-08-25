@@ -523,11 +523,21 @@ export function WritingEditorPage() {
       // 消息只带"参考材料里的文件名",LLM 读不到正文。
       const result = await api.uploadFile(f);
       setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
-      await api.addDocReference(docId, {
+      // #fix: 上传即草稿 — 空文档 + 文件类参考时服务端自动导入正文,
+      // 响应携带 imported_body,前端立即刷新编辑框(用户马上看到原文)。
+      const refResult = await api.addDocReference(docId, {
         kind: f.name.endsWith('.pdf') ? 'pdf' : f.name.endsWith('.docx') || f.name.endsWith('.doc') ? 'docx' : 'file',
         content: f.name,
         label: f.name,
       });
+      if ((refResult as any)?.imported && !bodyRef.current.trim()) {
+        const importedBody = (refResult as any)?.imported_body as string | undefined;
+        if (importedBody) {
+          setBody(importedBody);
+          setDoc((prev) => (prev ? { ...prev, body: importedBody, updated_at: new Date().toISOString() } : prev));
+          lastSavedBody.current = importedBody;
+        }
+      }
       setError(null);
       // Open chat panel with suggested prompt
       setChatOpen(true);
@@ -903,6 +913,7 @@ export function WritingEditorPage() {
                 <ChatMessages
                   variant="compact"
                   messages={chatMessages}
+                  streamNote={chatSession?.streamNote}
                   bottomRef={chatEndRef}
                   emptyState={
                     <p className="text-sm text-text-tertiary text-center mt-4 leading-relaxed">

@@ -643,6 +643,70 @@ describe('#171 edit_document tool', () => {
     expect(doc.body).toContain('润色后的摘要。')
   }, 30000)
 
+  test('#fix 上传即草稿:文件类参考挂到空文档 → 自动导入正文,响应带 imported_body', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '')
+
+    const boundary = `----autodraft${Date.now()}`
+    const uploadForm = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="paper.txt"\r\nContent-Type: text/plain\r\n\r\n`),
+      Buffer.from('# 论文标题\n\n## 摘要\n\n这是摘要内容。\n\n## 方法\n\n这是方法内容。', 'utf-8'),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    const upload = await app.inject({
+      method: 'POST',
+      url: '/api/v1/files/upload',
+      headers: { ...await authHeader(), 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: uploadForm,
+    })
+    expect(upload.statusCode).toBe(200)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/references`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ kind: 'file', content: 'paper.txt', label: 'paper.txt' }),
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    // 上传即草稿:响应携带导入的正文。
+    expect(body.imported).toBe(true)
+    expect(body.imported_body).toContain('# 论文标题')
+    expect(body.imported_body).toContain('这是摘要内容。')
+
+    // 正文已写入文档(用户立即能在编辑框看到原文)。
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.body).toContain('这是方法内容。')
+    const snap = await (prisma as any).docSnapshot.findFirst({ where: { docId }, orderBy: { createdAt: 'desc' } })
+    expect(snap.label).toBe('AI import')
+  }, 30000)
+
+  test('#fix 上传即草稿:文档已有正文时不覆盖', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '已有正文。')
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/references`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ kind: 'note', content: '参考文本', label: 'note-ref' }),
+    })
+    // 非文件类(纯文本参考)不触发导入。
+    const res2 = await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/references`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ kind: 'file', content: 'missing-file.txt', label: 'missing-file.txt' }),
+    })
+    const body2 = JSON.parse(res2.payload)
+    // 文件不存在 → 导入失败,但不阻塞(imported=false)。
+    expect(body2.imported).toBe(false)
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.body).toBe('已有正文。')
+  }, 30000)
+
   test('#fix 工具失败不返回硬编码错误:模型看到错误后修正锚点重试,正常回答', async () => {
     const app = await getApp()
     const docId = await createDoc(app, '# 摘要\n\n原始摘要内容。\n\n# 方法\n\n研究方法内容。')

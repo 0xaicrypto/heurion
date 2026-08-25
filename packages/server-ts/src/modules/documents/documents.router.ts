@@ -234,7 +234,29 @@ export async function documentsRouter(app: FastifyInstance) {
         createdAt: now,
       },
     })
-    return { reference_id: id, kind: kind || 'note', content: content || '', label: label || '', source_patient_hash: source_patient_hash || '', created_at: now }
+    // #fix: 上传即草稿 — 文件类参考(pdf/docx/file)挂到空文档时自动导入
+    // 为正文(含图片托管 + 快照),用户上传后立即能在编辑框看到原文,
+    // 模型上下文也直接有 Current Document,不再"解读+计划+确认"循环。
+    const autoImport = (async () => {
+      try {
+        if (kind !== 'file' && kind !== 'pdf' && kind !== 'docx') return null
+        if (String(doc.body || '').trim()) return null
+        const { EditDocumentTool } = await import('../../tools/edit-document-tool.js')
+        const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+        const result = await tool.execute({ import_reference: label || content })
+        return result.success ? (JSON.parse(result.output as string) as { body: string }).body : null
+      } catch {
+        return null
+      }
+    })()
+    const importedBody = await autoImport
+    return {
+      reference_id: id, kind: kind || 'note', content: content || '', label: label || '',
+      source_patient_hash: source_patient_hash || '', created_at: now,
+      // #fix: 上传即草稿 — 自动导入后的正文(空文档 + 文件类参考时)。
+      imported_body: importedBody,
+      imported: importedBody !== null,
+    }
   })
 
   app.get('/api/v1/docs/:docId/references', async (request, reply) => {

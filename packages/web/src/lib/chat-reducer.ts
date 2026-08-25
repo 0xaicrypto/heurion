@@ -71,6 +71,8 @@ export interface SessionState {
   /** #663: message ids touched by live SSE chunks — history snapshots must
    *  never clobber the in-flight versions (touch-tracker merge). */
   msgTouched?: Record<string, number>;
+  /** #fix: 前置阶段进度提示(context_info) — 等待期实时反馈。 */
+  streamNote?: string;
 }
 
 export function emptySession(): SessionState {
@@ -156,6 +158,23 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
           willCompact: chunk.will_compact,
         },
       };
+    case 'context_info': {
+      // #fix: 前置阶段进度提示(路由/上下文组装) — 等待期实时反馈。
+      // 只透传用户可读的 kind(projection/patient_roster 等内部日志忽略)。
+      const kind = (chunk as { kind?: string }).kind;
+      if (kind !== 'router' && kind !== 'attachment' && kind !== 'file_context' && kind !== 'plugin') return s;
+      return { ...s, streamNote: chunk.text };
+    }
+    case 'turn_complete': {
+      // #fix: 清 streamNote 的同时必须保留消息级 isStreaming 清理
+      // (applyChunk 的 turn_complete 分支被本 case 截获,不会执行)。
+      const msgs = [...s.messages];
+      const last = msgs[msgs.length - 1];
+      if (last?.role === 'assistant') {
+        msgs[msgs.length - 1] = { ...last, isStreaming: false };
+      }
+      return { ...s, messages: msgs, streamNote: undefined };
+    }
     case 'chart_created': {
       const msgs = [...s.messages];
       const last = msgs[msgs.length - 1];

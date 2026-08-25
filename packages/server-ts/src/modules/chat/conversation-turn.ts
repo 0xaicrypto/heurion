@@ -341,8 +341,11 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         // #fix: 格式规范 — 编辑/整理格式时必须使用正确的 markdown 结构,
         // 草稿是人类阅读的,heading 层级要语义正确。
         const formatRule = '格式规范:正文使用正确的 markdown 结构 — 文档主标题用 #(H1),一级章节用 ##(H2),子节用 ###(H3);段落用空行分隔;列表用 - 或 1.;表格用 GFM 管道表(| 分隔)。用户要求「整理格式/修正标题/规范标题」时,按内容语义设置 heading 层级(不要全部用 #,不要用全角空格/加粗/下划线模拟标题,不要给普通段落加标题标记),并保留文档原有的合理结构。'
+        // #fix: 确认循环 — 用户已同意计划后模型仍反复询问"是否开始",
+        // 导致对话卡死(生产反馈:同意两次仍在循环)。确认后必须立即执行。
+        const confirmRule = '行动纪律:用户回复「同意」「可以」「开始」「继续」「好的」「按此计划」等确认信号后,不要再重复询问确认,立即执行计划的第一步:若文档正文为空,先调用 edit_document 的 import_reference 导入参考材料(或直接用 old_text/new_text 润色),然后逐段处理并写回草稿。不要只给计划不执行,不要在每步后重复询问同一问题。'
 
-        return `\n\n## Current Document\n标题：${doc.title}\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n${selection ? `## 用户选中文本\n[用户选中的文本 — 如需修改请从此处逐字复制 old_text(空格/换行差异会被自动忽略)。]\n${selection}\n\n` : ''}## Reference Materials\n${refBlock || '(none)'}${refHint}\n\n${refSourceRule}\n\n${rules}\n\n${formatRule}`
+        return `\n\n## Current Document\n标题：${doc.title}\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n${selection ? `## 用户选中文本\n[用户选中的文本 — 如需修改请从此处逐字复制 old_text(空格/换行差异会被自动忽略)。]\n${selection}\n\n` : ''}## Reference Materials\n${refBlock || '(none)'}${refHint}\n\n${refSourceRule}\n\n${rules}\n\n${formatRule}\n\n${confirmRule}`
       },
     },
     {
@@ -381,6 +384,13 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       },
     },
   ])
+  // #fix: 上下文组装(文档分段/参考材料提取)可能耗时数秒 — 等待期给
+  // 用户可见的进度提示(前端 context_info 过滤后展示)。
+  if (sid.startsWith('doc-')) {
+    send({ type: 'context_info', text: '正在读取文档与参考资料…', kind: 'file_context' })
+  } else {
+    send({ type: 'context_info', text: '正在整理上下文…', kind: 'file_context' })
+  }
   const assembled = await assembler.assemble({
     userId, sid, patientHash, scene, body, ctx,
     projected, budget, layer3FactHashes, historyTokens,

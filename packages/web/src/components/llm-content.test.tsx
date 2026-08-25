@@ -80,6 +80,7 @@ describe('StreamingLlmContent (U1)', () => {
 
   it('shows a pulsing placeholder while streaming empty text', () => {
     const { container } = render(<StreamingLlmContent content="" isStreaming />);
-    expect(container.textContent).toContain('●');
+    // #fix: 等待期醒目标识(此前只有一个 ●,用户以为没有响应)。
+    expect(container.textContent).toContain('正在分析');
   });
 });

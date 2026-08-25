@@ -153,7 +153,20 @@ export function StreamingLlmContent({ content, isStreaming, className }: { conte
 
   // Lightweight partial rendering: no per-chunk markdown re-parse.
   const text = normalizeLlmText(display || '');
-  if (!text) return <span className="animate-pulse text-text-tertiary">●</span>;
+  if (!text) {
+    // #fix: 流式等待期(LLM 首 token 前可能 10-30s)必须醒目 — 此前只有
+    // 一个 14px 的 ●,用户以为没有响应。
+    return (
+      <span className="flex items-center gap-2 py-1 text-xs text-text-secondary">
+        <span className="flex gap-1">
+          {[0, 1, 2].map((i) => (
+            <span key={i} className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent" style={{ animationDelay: `${i * 150}ms` }} />
+          ))}
+        </span>
+        <span className="animate-pulse">正在分析…</span>
+      </span>
+    );
+  }
 
   // #661: closed blocks render once (cached), only the tail is live.
   const { blocks, liveTail } = splitBlocks(text);

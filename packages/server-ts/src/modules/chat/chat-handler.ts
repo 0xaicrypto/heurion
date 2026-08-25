@@ -115,7 +115,9 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
           llmCalls: routeResult.cost.llmCalls,
         },
       }).catch(() => {})
-      send({ type: 'context_info', text: `Router: ${routeResult.intent} (ruleHit=${routeResult.ruleHit}, llmFallback=${routeResult.llmFallback})`, kind: 'router' })
+      // #fix: 用户可读的等待期进度提示(此前是 'Router: mixed (ruleHit=..)'
+      // 技术文本;前端 context_info 按 kind 过滤展示)。
+      send({ type: 'context_info', text: '正在分析你的请求…', kind: 'router' })
 
       await streamUnshownCompaction(ctx, sid, io)
 

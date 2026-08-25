@@ -585,6 +585,7 @@ export function PatientChatPage() {
           <ChatMessages
             variant="compact"
             messages={messages}
+            streamNote={session?.streamNote}
             bottomRef={bottomRef}
             emptyState={
               <div className="flex flex-1 items-center justify-center px-6 text-center">

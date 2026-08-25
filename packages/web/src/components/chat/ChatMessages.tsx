@@ -52,6 +52,8 @@ export interface ChatMessagesProps {
   emptyState?: React.ReactNode;
   subagents?: Array<{ task: string; status: 'running' | 'done' | 'failed' }>;
   bottomRef?: RefObject<HTMLDivElement>;
+  /** #fix: 前置阶段进度提示(context_info) — 等待期实时反馈(路由/上下文组装)。 */
+  streamNote?: string;
 }
 
 /**
@@ -99,6 +101,7 @@ export function ChatMessages({
   emptyState,
   subagents,
   bottomRef,
+  streamNote,
 }: ChatMessagesProps) {
   const { t } = useTranslation();
   const compact = variant === 'compact';
@@ -107,6 +110,13 @@ export function ChatMessages({
 
   return (
     <div className="space-y-4">
+      {/* #fix: 前置阶段进度提示 — 等待期(路由/上下文组装,可能 10-30s)实时反馈。 */}
+      {streamNote && (
+        <div className="flex items-center gap-2 px-1 text-[11px] text-text-tertiary">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+          <span className="truncate">{streamNote}</span>
+        </div>
+      )}
       {messages.map((m, idx) => {
         const prevMsg = idx > 0 ? messages[idx - 1] : undefined;
         const isLastAssistant = m.role === 'assistant' && idx === messages.length - 1 && !m.isStreaming;
@@ -194,8 +204,12 @@ export function ChatMessages({
                 ) : (
                   <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
                 )}
-                {m.reasoning && !m.text && m.isStreaming && (
-                  <div className="mt-1 text-xs text-text-tertiary">{t('chat.thinking', '思考中…')}</div>
+                {/* #fix: 流式等待提示 — 无论是否有推理内容,都明确告知
+                    正在处理(此前只有 reasoning 存在时才显示'思考中')。 */}
+                {m.isStreaming && !m.text && (
+                  <div className="mt-1 text-xs text-text-tertiary">
+                    {m.reasoning ? t('chat.thinking', '思考中…') : '正在处理中…'}
+                  </div>
                 )}
                 {m.truncated && (
                   <div className="mt-2 flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/5 px-2.5 py-1.5 text-xs text-warning">
