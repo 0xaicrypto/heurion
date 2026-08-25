@@ -369,7 +369,15 @@ export class EditDocumentTool extends BaseTool {
     // #fix: 导入走 markdown+图片提取 — PDF 恢复标题/段落结构,DOCX 保留
     // mammoth 结构;内嵌图落盘为托管文件并在文档里渲染(取代 [图])。
     const extracted = await extractDocumentMarkdownWithImagesFromUpload(this.ctx.userId, fileId)
-    const text = this.embedDocumentImages(docId, extracted.text, extracted.images)
+    let text = this.embedDocumentImages(docId, extracted.text, extracted.images)
+    // #fix(方案 A):PDF 公式视觉 OCR → LaTeX 追加文末 — PDF 文本层没有
+    // 公式语义,视觉模型把公式转 $$...$$,AI 才能理解数学内容。仅导入时
+    // 一次(非每轮),失败静默降级。
+    if (kind === 'pdf' && text) {
+      const { extractFormulasFromPdf } = await import('../lib/pdf-formula.js')
+      const formulas = await extractFormulasFromPdf(this.ctx.userId, fileId)
+      if (formulas) text += formulas
+    }
     if (!text) return { text: '', error: `无法从参考材料「${label}」提取正文` }
     return { text }
   }

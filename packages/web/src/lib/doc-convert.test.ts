@@ -32,4 +32,27 @@ describe('doc conversion layer (md ⇄ HTML)', () => {
     expect(markdownToHtml('纯文本')).toContain('纯文本');
     expect(htmlToMarkdown('<p>纯文本</p>').trim()).toBe('纯文本');
   });
+
+  test('#4 块公式 $$...$$ → block-math 节点(KaTeX 渲染),回写还原', () => {
+    const md = '# 标题\n\n公式如下：\n\n$$E = mc^2$$\n\n正文。';
+    const html = markdownToHtml(md);
+    expect(html).toContain('data-type="block-math"');
+    expect(html).toContain('data-latex="E = mc^2"');
+    // 特殊字符(& <)被转义,marked 不会破坏节点。
+    const html2 = markdownToHtml('$$a & b < c$$');
+    expect(html2).toContain('data-latex="a &amp; b &lt; c"');
+    // 回写还原。
+    expect(htmlToMarkdown(html)).toContain('$$E = mc^2$$');
+  });
+
+  test('#5 行内公式 $...$ → inline-math 节点;转义 \\$ 不受影响', () => {
+    const html = markdownToHtml('成本 $5 且 $x^2$ 是公式');
+    expect(html).toContain('data-type="inline-math"');
+    expect(html).toContain('data-latex="x^2"');
+    expect(html).not.toContain('data-latex="5');
+    // 转义美元符保持字面。
+    const html2 = markdownToHtml('价格 \\$100 美元');
+    expect(html2).not.toContain('data-type="inline-math"');
+    expect(html2).toContain('$100');
+  });
 });

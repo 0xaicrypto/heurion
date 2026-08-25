@@ -6,6 +6,8 @@ import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
 import Image from '@tiptap/extension-image';
+import Mathematics from '@tiptap/extension-mathematics';
+import 'katex/dist/katex.min.css';
 import { TrackChangesExtension, getTrackedChanges, getPendingChangeCount, type ChangeAuthor } from 'tiptap-track-changes';
 import { markdownToHtml, htmlToMarkdown } from '@/lib/doc-convert';
 import { applyTrackedDiff, cleanupEmptyBlocks } from '@/lib/doc-diff';
@@ -72,6 +74,8 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       TableCell,
       TableHeader,
       Image.configure({ allowBase64: false, inline: false }),
+      // #fix: 学术论文渲染 — $...$ / $$...$$ LaTeX 以 KaTeX 渲染成数学符号。
+      Mathematics.configure({ katexOptions: { throwOnError: false } }),
       TrackChangesExtension.configure({ author: AI_AUTHOR, mode: 'edit' }),
     ],
     content: markdownToHtml(value),
@@ -324,8 +328,9 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       </div>
       {/* #517-followup: prose defaults are light-theme colors — without
           dark:prose-invert the editor body is unreadable on dark surface.
-          Semantic overrides keep headings/links/code on theme tokens. */}
-      <div className="prose prose-sm max-w-none p-4 dark:prose-invert [&_.ProseMirror]:min-h-[300px] [&_.ProseMirror]:outline-none prose-headings:text-text-primary prose-headings:font-semibold prose-p:text-text-secondary prose-p:leading-relaxed prose-a:text-accent hover:prose-a:underline prose-strong:text-text-primary prose-code:text-text-primary prose-code:bg-surface prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:font-mono prose-ol:text-text-secondary prose-ul:text-text-secondary prose-li:my-0.5 prose-blockquote:border-l-4 prose-blockquote:border-accent prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-text-secondary prose-hr:border-border [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-1.5 [&_th]:border [&_th]:border-border [&_th]:bg-surface-elevated [&_th]:p-1.5 [&_th]:text-left [&_img]:my-2 [&_img]:max-h-72 [&_img]:rounded-lg [&_img]:border [&_img]:border-border">
+          Semantic overrides keep headings/links/code on theme tokens.
+          #fix: 学术论文排版 — 衬线字体、宽松行距、标题层级、公式/图片居中。 */}
+      <div className="prose prose-sm max-w-none p-4 dark:prose-invert [&_.ProseMirror]:min-h-[300px] [&_.ProseMirror]:outline-none [&_.ProseMirror]:font-serif [&_.ProseMirror]:text-[15px] [&_.ProseMirror]:leading-loose prose-headings:text-text-primary prose-headings:font-semibold prose-p:text-text-secondary prose-p:leading-relaxed prose-a:text-accent hover:prose-a:underline prose-strong:text-text-primary prose-code:text-text-primary prose-code:bg-surface prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:font-mono prose-ol:text-text-secondary prose-ul:text-text-secondary prose-li:my-0.5 prose-blockquote:border-l-4 prose-blockquote:border-accent prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-text-secondary prose-hr:border-border [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-1.5 [&_th]:border [&_th]:border-border [&_th]:bg-surface-elevated [&_th]:p-1.5 [&_th]:text-left [&_img]:my-2 [&_img]:max-h-72 [&_img]:rounded-lg [&_img]:border [&_img]:border-border [&_.ProseMirror_img]:mx-auto [&_[data-type='block-math']]:my-4 [&_[data-type='block-math']]:overflow-x-auto [&_[data-type='inline-math']]:px-0.5">
         <EditorContent editor={editor} />
       </div>
     </div>

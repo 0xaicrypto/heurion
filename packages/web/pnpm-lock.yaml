@@ -14,6 +14,9 @@ importers:
       '@tiptap/extension-image':
         specifier: ^3.29.2
         version: 3.29.2(@tiptap/core@3.30.2(@tiptap/pm@3.29.2))
+      '@tiptap/extension-mathematics':
+        specifier: ^3.30.3
+        version: 3.30.3(@tiptap/core@3.30.2(@tiptap/pm@3.29.2))(@tiptap/pm@3.29.2)(katex@0.18.4)
       '@tiptap/extension-table':
         specifier: ^3.29.2
         version: 3.29.2(@tiptap/core@3.30.2(@tiptap/pm@3.29.2))(@tiptap/pm@3.29.2)
@@ -47,6 +50,9 @@ importers:
       i18next-browser-languagedetector:
         specifier: ^8.2.1
         version: 8.2.1
+      katex:
+        specifier: ^0.18.4
+        version: 0.18.4
       llm-markdown-fix:
         specifier: file:../llm-markdown-fix
         version: file:../llm-markdown-fix
@@ -836,6 +842,13 @@ packages:
       '@tiptap/core': 3.29.2
       '@tiptap/pm': 3.29.2
 
+  '@tiptap/extension-mathematics@3.30.3':
+    resolution: {integrity: sha512-hd4QLK8L+ELnYbaP9NPzoToaXozIqJ13xCZ85HkRhDzrGguvmduHeDfuxyZIG4GXiXqxydamWIWn2ZHv0hCsXA==}
+    peerDependencies:
+      '@tiptap/core': 3.30.3
+      '@tiptap/pm': 3.30.3
+      katex: ^0.16.4 || ^0.17.0 || ^0.18.0
+
   '@tiptap/extension-ordered-list@3.29.2':
     resolution: {integrity: sha512-ndCunC+UsYOpkOtL7vGnDz21UNa45WUlcO9wMT1fbuYow2QnRhsuMlCWENXI52YPPARWuQ0RDgN7q6TaxPERBg==}
     peerDependencies:
@@ -1210,6 +1223,10 @@ packages:
   commander@4.1.1:
     resolution: {integrity: sha512-NOKm8xhkzAjzFx8B2v5OAHT+u5pRQc2UCa2Vq9jYL/31o2wi9mxBA7LIFs3sV5VSC49z6pEhfbMULvShKj26WA==}
     engines: {node: '>= 6'}
+
+  commander@8.3.0:
+    resolution: {integrity: sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==}
+    engines: {node: '>= 12'}
 
   concat-map@0.0.1:
     resolution: {integrity: sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==}
@@ -1615,6 +1632,10 @@ packages:
   json5@2.2.3:
     resolution: {integrity: sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==}
     engines: {node: '>=6'}
+    hasBin: true
+
+  katex@0.18.4:
+    resolution: {integrity: sha512-IMPntbRLOU+eu88XDiFKqQ8Akhr9Tv7jDMXqPhjG9SI1JMA4DIgXk4x9k4skJz2NZJXBRbC+2pYBLj9olqcZow==}
     hasBin: true
 
   keyv@4.5.4:
@@ -3068,6 +3089,12 @@ snapshots:
       '@tiptap/core': 3.30.2(@tiptap/pm@3.29.2)
       '@tiptap/pm': 3.29.2
 
+  '@tiptap/extension-mathematics@3.30.3(@tiptap/core@3.30.2(@tiptap/pm@3.29.2))(@tiptap/pm@3.29.2)(katex@0.18.4)':
+    dependencies:
+      '@tiptap/core': 3.30.2(@tiptap/pm@3.29.2)
+      '@tiptap/pm': 3.29.2
+      katex: 0.18.4
+
   '@tiptap/extension-ordered-list@3.29.2(@tiptap/extension-list@3.29.2(@tiptap/core@3.30.2(@tiptap/pm@3.29.2))(@tiptap/pm@3.29.2))':
     dependencies:
       '@tiptap/extension-list': 3.29.2(@tiptap/core@3.30.2(@tiptap/pm@3.29.2))(@tiptap/pm@3.29.2)
@@ -3506,6 +3533,8 @@ snapshots:
 
   commander@4.1.1: {}
 
+  commander@8.3.0: {}
+
   concat-map@0.0.1: {}
 
   convert-source-map@2.0.0: {}
@@ -3937,6 +3966,10 @@ snapshots:
   json-stable-stringify-without-jsonify@1.0.1: {}
 
   json5@2.2.3: {}
+
+  katex@0.18.4:
+    dependencies:
+      commander: 8.3.0
 
   keyv@4.5.4:
     dependencies:
