@@ -144,8 +144,7 @@ describe('#171 edit_document tool', () => {
     expect(doc.body).toBe('摘要部分。\n\n正文部分。')
   }, 30000)
 
-  test('#fix probe 取完整标题行:复制报错里的片段重试必然命中', async () => {
-    const app = await getApp()
+  test('#fix probe 取完整标题行:复制报错里的片段重试必然命中', async () => {    const app = await getApp()
     const userId = await getAuthUserId()
     // 150+ 字符的长标题(超过旧 probe 的 120 字符窗口,硬切会断在单词中间)。
     const title = 'Impact of two years of treatment with Elexacaftor/Tezacaftor/Ivacaftor on longitudinal changes in structural lung disease in people with Cystic Fibrosis. 这是第二句。'
@@ -607,5 +606,37 @@ describe('#171 edit_document tool', () => {
     const doc = await (prisma as any).doc.findFirst({ where: { id: docId } })
     expect(doc.body).toContain('第二段第100句：这是润色后的独特内容')
     expect(res.payload).toContain('"type":"doc_updated"')
+  }, 30000)
+
+  test('#fix old_text 来自参考材料(正文与参考不同格式) → 报错指引 import_reference', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    // 正文是"PDF 版",参考材料是"DOCX 版" — 同一稿件不同格式,文本有差异。
+    const docId = await createDoc(app, 'PDF 版标题:Impact of two years of treatment.\n\n## Abstract\n\nPDF 版摘要内容。')
+
+    // 参考材料是"DOCX 版"文本(纯文本引用,模拟不同格式提取结果)。
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/references`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ kind: 'note', content: 'DOCX 版标题:Impact of two years of treatment.\n\n## Abstract\n\nDOCX 版摘要内容。', label: 'McNally_Recover_Annals ATS_2026.docx' }),
+    })
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    // 模型从参考材料复制的 old_text(DOCX 版文本)→ 与正文(PDF 版)不匹配。
+    const result = await tool.execute({ old_text: 'DOCX 版摘要内容。', new_text: '润色后的摘要。' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('未找到')
+    // 命中参考材料检测 → 报错指引导入该参考材料。
+    expect(result.error).toContain('与参考材料「McNally_Recover_Annals ATS_2026.docx」一致')
+    expect(result.error).toContain('import_reference')
+
+    // 模型按指引导入 DOCX 覆盖正文 → 再次编辑命中。
+    const imported = await tool.execute({ import_reference: 'McNally_Recover_Annals ATS_2026.docx' })
+    expect(imported.success).toBe(true)
+    const retry = await tool.execute({ old_text: 'DOCX 版摘要内容。', new_text: '润色后的摘要。' })
+    expect(retry.success).toBe(true)
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.body).toContain('润色后的摘要。')
   }, 30000)
 })

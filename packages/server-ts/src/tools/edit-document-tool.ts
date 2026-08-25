@@ -448,6 +448,20 @@ export class EditDocumentTool extends BaseTool {
       // 命中后替换原始 span,新正文不留空白残留。
       const span = findNormalizedSpan(body, oldText) ?? findFuzzySpan(body, oldText)
       if (!span) {
+        // #fix: 检测 old_text 是否来自参考材料而非正文 — 同一篇稿件不同
+        // 格式(PDF vs DOCX)提取的文本有差异,模型从参考材料复制必然失配
+        // (生产事故:正文是 PDF 版,参考是 DOCX 版)。命中的话报错去向明确:
+        // 先 import_reference 导入该参考材料覆盖正文,再编辑。
+        let refMatchLabel = ''
+        try {
+          const targets = await this.resolveImportTargets(docId)
+          for (const { r, label } of targets.slice(0, 3)) {
+            const { text } = await this.extractRefText(docId, r, label)
+            if (text && findNormalizedSpan(text, oldText)) { refMatchLabel = label; break }
+          }
+        } catch {
+          // 检测失败不阻断 — 走普通提示
+        }
         // 帮助模型修正锚点:给出文档开头附近的可匹配片段(保留大小写与
         // 标题标记,便于逐字复制)。
         // #fix: probe 取文档第一个非空行(通常是标题行)的完整内容 —
@@ -462,9 +476,12 @@ export class EditDocumentTool extends BaseTool {
           )
           if (cut > 40) probe = probe.slice(0, cut + 1)
         }
+        const guide = refMatchLabel
+          ? `你复制的 old_text 与参考材料「${refMatchLabel}」一致,但与正文(## Current Document)不符 — 正文与参考材料来自不同文件格式/版本,提取的文本有差异。请先调用 edit_document 的 import_reference 导入「${refMatchLabel}」把该参考材料设为正文(覆盖后 old_text 即可匹配),或从 ## Current Document 逐字复制待修改的原文。`
+          : '请从上方 ## Current Document 部分逐字复制待修改的原文,不要从「文档结构」清单复制(带序号),不要从 Reference Materials 复制。'
         return {
           success: false,
-          error: `old_text 在文档中未找到(已忽略空格/换行/标题标记差异后仍不匹配)。请从上方 ## Current Document 部分逐字复制待修改的原文,不要从「文档结构」清单复制(带序号)。文档开头附近完整片段(可直接复制): "${probe}"`,
+          error: `old_text 在文档中未找到(已忽略空格/换行/标题标记差异后仍不匹配)。${guide} 文档开头附近完整片段(可直接复制): "${probe}"`,
         }
       }
       // 归一化匹配同样参与多次命中判定 — 两个片段仅空白不同也视为重复;
