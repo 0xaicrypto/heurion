@@ -100,6 +100,8 @@ export function WritingEditorPage() {
   };
   const [chatInput, setChatInput] = useState('');
   const chatSessionId = docId ? `doc-${docId}` : '';
+  // #693: 选中即引用 — 编辑器当前选中文本,发送消息时随消息携带。
+  const [chatSelection, setChatSelection] = useState('');
   // #653/#462: scoped selectors — doc-chat chunks no longer re-render the
   // whole editor (was a full-store subscription).
   const chatSession = useChatStore((s) => (chatSessionId ? s.sessions[chatSessionId] : undefined));
@@ -123,6 +125,8 @@ export function WritingEditorPage() {
     if (chatSession.lastDocBody === bodyRef.current) return;
     appliedDocBody.current = chatSession.lastDocBody;
     setDiffReview({ key: `rev_${Date.now()}`, old: bodyRef.current, next: chatSession.lastDocBody });
+    // #693: 审阅模式下编辑器选中的是 diff 内容,不再构成引用。
+    setChatSelection('');
   }, [chatSession?.lastDocBody, docId]);
 
   /** 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。 */
@@ -400,7 +404,7 @@ export function WritingEditorPage() {
     }
   };
 
-  const handleSendChat = () => {
+  const handleSendChat = async () => {
     if (!docId || !chatInput.trim()) return;
     const text = chatInput.trim();
     setChatInput('');
@@ -408,8 +412,29 @@ export function WritingEditorPage() {
     // doc-{docId}); the doc context is injected via the docs/current source.
     // #fix: 上传的 doc/pdf 必须随消息传给服务端 — 此前只传 text,附件
     // 从未到达 buildAttachmentParts,AI 读不到文件内容。
+    // #693: 选中即引用 — 编辑器选中文本随消息携带,服务端注入上下文,
+    // 模型 old_text 从选中逐字复制,同源保证锚点必然命中。
+    let selection = '';
+    if (!diffReview) {
+      const editor = polishEditorRef.current;
+      if (editor) {
+        const { from, to } = editor.state.selection;
+        selection = editor.state.doc.textBetween(from, to, '\n').trim();
+      }
+    }
+    if (!selection) selection = chatSelection.trim();
+    if (selection.length > 20000) selection = selection.slice(0, 20000);
     const attachments = chatAttachedFiles.map((a) => a.fileId);
     if (attachments.length > 0) setChatAttachedFiles([]);
+    // #693: 同源保证 — 有选中文本时先保存当前正文,确保服务端 body 与
+    // 选中文本一致(编辑器内容可能尚未保存)。
+    if (selection) {
+      try {
+        await api.updateDoc(docId, { title, body: bodyRef.current });
+      } catch {
+        // 保存失败仍继续发送 — 锚点不匹配时由服务端归一化兜底/报错引导。
+      }
+    }
     sendMessage(`doc-${docId}`, {
       text,
       sessionId: `doc-${docId}`,
@@ -419,6 +444,7 @@ export function WritingEditorPage() {
       // #516: writing chat is always the document scene (server also infers
       // from the doc- session id).
       scene: 'document',
+      selection: selection || undefined,
     });
   };
 
@@ -806,7 +832,7 @@ export function WritingEditorPage() {
                   </div>
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
-                    <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} diffReview={diffReview} onDiffResolve={handleDiffResolve} />
+                    <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} diffReview={diffReview} onDiffResolve={handleDiffResolve} onSelectionChange={setChatSelection} />
                   </div>
                 )}
               </div>
@@ -880,6 +906,21 @@ export function WritingEditorPage() {
                     {chatAttachedFiles.map((f) => (
                       <span key={f.fileId} className="inline-flex items-center rounded-full bg-surface-elevated border border-border px-2 py-0.5 text-xs text-text-secondary">{f.name}</span>
                     ))}
+                  </div>
+                )}
+                {/* #693: 选中即引用 — 当前编辑器选中文本将随下一条消息发送。 */}
+                {chatSelection && (
+                  <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-2 py-1">
+                    <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+                      {chatSelection.length > 48 ? `${chatSelection.slice(0, 48)}…` : chatSelection}
+                    </span>
+                    <button
+                      onClick={() => setChatSelection('')}
+                      className="shrink-0 text-text-tertiary hover:text-text-primary"
+                      title="Clear selection reference"
+                    >
+                      <X size={14} />
+                    </button>
                   </div>
                 )}
                 <div className="flex gap-2">

@@ -478,4 +478,91 @@ describe('#171 edit_document tool', () => {
     expect(imgRes.statusCode).toBe(200)
     expect(imgRes.headers['content-type']).toBe('image/png')
   }, 60000)
+
+  test('#693 选中即引用:selection 注入上下文,模型 old_text 逐字命中 → doc_updated 闭环', async () => {
+    const app = await getApp()
+    const body = '# 摘要\n\n原始摘要内容一句话。\n\n# 方法\n\n研究方法内容。'
+    const docId = await createDoc(app, body)
+    const sessionId = `doc-${docId}`
+
+    let contextSeen = ''
+    let toolCallDone = false
+    vi.mocked(deepseekChat).mockImplementation((messages: any) => {
+      const text = JSON.stringify(messages)
+      if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
+      if (!toolCallDone) {
+        contextSeen = text
+        toolCallDone = true
+        return Promise.resolve(`<tool_call>${JSON.stringify({ name: 'edit_document', arguments: { old_text: '原始摘要内容一句话。', new_text: '改进后的摘要内容一句话。', summary: '润色摘要' } })}</tool_call>`)
+      }
+      return Promise.resolve('已完成摘要段润色。')
+    })
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/agent/chat',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ text: '润色这段', session_id: sessionId, selection: '原始摘要内容一句话。' }),
+    })
+    expect(res.statusCode).toBe(200)
+
+    // 选中文本注入为独立上下文块(模型据此逐字复制 old_text)。
+    expect(contextSeen).toContain('## 用户选中文本')
+    expect(contextSeen).toContain('原始摘要内容一句话。')
+    // 规则提示从选中文本复制。
+    expect(contextSeen).toContain('必须从该选中文本逐字复制')
+
+    // old_text 逐字命中 → body 更新 + doc_updated SSE 推送。
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId } })
+    expect(doc.body).toContain('改进后的摘要内容一句话。')
+    expect(doc.body).toContain('研究方法内容。')
+    expect(res.payload).toContain('"type":"doc_updated"')
+  }, 30000)
+
+  test('#693 长文档:selection 优先定位焦点段,注入包含选中文本的完整段', async () => {
+    const app = await getApp()
+    // 默认 DOC_BODY_TOKENS=20000(约 30000 中文字符),构造超预算文档触发分段注入。
+    // 每句带序号保证全文唯一(重复句会触发 edit_document 的"出现多次"检查)。
+    const makeSection = (prefix: string) =>
+      Array.from({ length: 200 }, (_, i) => `${prefix}第${i + 1}句：这是详细内容，用于撑大 token 数量，确保文档超出上下文预算而走分段注入路径。该句包含足够的文字使得段落总长超过两万 token 的阈值，从而触发长文档的分段注入与焦点定位逻辑。`).join('\n')
+    const longA = makeSection('第一段')
+    const longB = makeSection('第二段')
+    const body = `# 第一段\n\n${longA}\n\n# 第二段\n\n${longB}`
+    const docId = await createDoc(app, body)
+    const sessionId = `doc-${docId}`
+
+    let contextSeen = ''
+    let toolCallDone = false
+    vi.mocked(deepseekChat).mockImplementation((messages: any) => {
+      const text = JSON.stringify(messages)
+      if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
+      if (!toolCallDone) {
+        contextSeen = text
+        toolCallDone = true
+        return Promise.resolve(`<tool_call>${JSON.stringify({ name: 'edit_document', arguments: { old_text: '第二段第100句：这是详细内容，用于撑大 token 数量', new_text: '第二段第100句：这是润色后的独特内容', summary: '润色第二段' } })}</tool_call>`)
+      }
+      return Promise.resolve('已完成第二段润色。')
+    })
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/agent/chat',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ text: '润色这段', session_id: sessionId, selection: '第二段第100句：这是详细内容，用于撑大 token 数量' }),
+    })
+    expect(res.statusCode).toBe(200)
+
+    // 走长文档分段注入路径,焦点段定位到包含选中文本的段(第 2 段)。
+    expect(contextSeen).toContain('## 文档结构（共 2 段')
+    expect(contextSeen).toContain('## 当前编辑段落（第 2/2 段')
+    expect(contextSeen).toContain('## 用户选中文本')
+    // JSON 序列化会转义换行 — 用无换行的单句断言。
+    expect(contextSeen).toContain(longB.split('\n')[0])
+    expect(contextSeen).toContain(longB.split('\n')[1])
+    // 未选中部分(第一段)不注入。
+    expect(contextSeen).not.toContain(longA.slice(0, 50))
+
+    // 编辑命中并写回。
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId } })
+    expect(doc.body).toContain('第二段第100句：这是润色后的独特内容')
+    expect(res.payload).toContain('"type":"doc_updated"')
+  }, 30000)
 })

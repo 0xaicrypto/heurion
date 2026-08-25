@@ -408,6 +408,8 @@ export interface SendChatOptions {
   scene?: ChatScene;
   /** #620: 显式选定的知识库文章(选择器)。 */
   pickedKbIds?: string[];
+  /** #693: 编辑器选中的文本(选中即引用) — 随消息传给服务端注入上下文。 */
+  selection?: string;
 }
 
 /**

@@ -220,9 +220,21 @@ export async function runToolCallLoop(params: {
           io.send({ type: 'subagent_done', task: subTask.slice(0, 200), success: result.success, cost_tokens: cost })
         }
 
+        // #693: edit_document 输出含完整 body(豁免了 bound) — 注入给模型
+        // 的内容只保留摘要,避免正文全文每轮循环膨胀上下文;doc_updated
+        // 推送在下方用原始 output 完整解析。
+        let toolResultText = result.output || 'Success'
+        if (toolName === 'edit_document' && result.success) {
+          try {
+            const parsed = JSON.parse(toolResultText) as { summary?: string }
+            toolResultText = `{ body: <updated>, summary: ${JSON.stringify(parsed.summary || '')} }`
+          } catch {
+            toolResultText = toolResultText.slice(0, 500)
+          }
+        }
         messages.push({
           role: 'user',
-          content: `Tool "${toolName}" returned: ${result.success ? (result.output || 'Success') : `Error: ${result.error}`}`,
+          content: `Tool "${toolName}" returned: ${result.success ? toolResultText : `Error: ${result.error}`}`,
         })
 
         if (result.success) {

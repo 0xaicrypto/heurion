@@ -552,15 +552,17 @@ export async function extractDocumentMarkdownWithImagesFromUpload(
 // "图 3 显示…" 这类占位文字,而是图本身。上限为常量防止 token 超支:
 // 只看前 MAX_PDF_IMAGE_PAGES 页、最多 MAX_PDF_IMAGES 张、过滤小图标、
 // 单张 base64 不超过 MAX_PDF_IMAGE_BYTES。
-const MAX_PDF_IMAGE_PAGES = 6
-const MAX_PDF_IMAGES = 8
+// #relax: 2026-08 导入即草稿后,图主要供文档渲染而非每轮注入模型,
+// 限额放宽(6→20 页、8→24 张、1.5MB→4MB、25MB→50MB)以提升草稿保真度。
+const MAX_PDF_IMAGE_PAGES = 20
+const MAX_PDF_IMAGES = 24
 const MIN_PDF_IMAGE_PIXELS = 100 * 100
-const MAX_PDF_IMAGE_BYTES = 1.5 * 1024 * 1024
+const MAX_PDF_IMAGE_BYTES = 4 * 1024 * 1024
 // #fix: 超过此体积的 PDF 跳过内嵌图片提取 — getImage 会把整页图片同时
 // 物化成 RGBA,大 PDF(几十 MB)在解析文本之外再来一遍会撑爆进程内存
 // (OOM kill → SSE 连接重置 → 前端 "network error")。大文件通常是文字
 // 为主的稿件,图对 LLM 的意义有限,直接省掉。
-const MAX_PDF_IMAGE_FILE_BYTES = 25 * 1024 * 1024
+const MAX_PDF_IMAGE_FILE_BYTES = 50 * 1024 * 1024
 
 export interface ExtractedPdfImage {
   mime: string

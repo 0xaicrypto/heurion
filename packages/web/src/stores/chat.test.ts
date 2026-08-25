@@ -103,3 +103,46 @@ describe('chat store — 附件导出与消息更新（#582）', () => {
     expect(useChatStore.getState().sessions.s1.messages[0].exportState).toBe('saving');
   });
 });
+
+describe('chat store — 选中即引用 selection 透传（#693）', () => {
+  beforeEach(() => {
+    useChatStore.setState({ sessions: {} });
+  });
+
+  test('sendMessage 将编辑器选中文本透传给 sendChatFull', async () => {
+    const { api } = await import('@/lib/api');
+    const sendChatFull = api.sendChatFull as any;
+    let captured: any = null;
+    sendChatFull.mockImplementationOnce(async function* (opts: any) {
+      captured = opts;
+      yield { type: 'final_answer_chunk', text: 'done' };
+      yield { type: 'turn_complete' };
+    });
+    await useChatStore.getState().sendMessage('s1', {
+      sessionId: 's1',
+      text: '润色这段',
+      attachments: [],
+      skills: [],
+      selection: '原始摘要内容一句话。',
+    });
+    expect(captured?.selection).toBe('原始摘要内容一句话。');
+  });
+
+  test('无选中时不携带 selection', async () => {
+    const { api } = await import('@/lib/api');
+    const sendChatFull = api.sendChatFull as any;
+    let captured: any = null;
+    sendChatFull.mockImplementationOnce(async function* (opts: any) {
+      captured = opts;
+      yield { type: 'final_answer_chunk', text: 'done' };
+      yield { type: 'turn_complete' };
+    });
+    await useChatStore.getState().sendMessage('s1', {
+      sessionId: 's1',
+      text: '随便聊聊',
+      attachments: [],
+      skills: [],
+    });
+    expect(captured?.selection).toBeUndefined();
+  });
+});

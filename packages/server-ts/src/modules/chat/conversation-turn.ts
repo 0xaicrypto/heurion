@@ -54,7 +54,7 @@ export interface ConversationTurnParams {
   sid: string
   patientHash: string | null
   scene: ChatScene
-  body: { text: string; attachments?: any[]; picked_kb_ids?: string[] }
+  body: { text: string; attachments?: any[]; picked_kb_ids?: string[]; selection?: string }
   apiKey: string
   send: SendEvent
   signal: AbortSignal
@@ -283,16 +283,31 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         const docFits = estimateTokens(docText) <= CONTEXT_CONFIG.scene.docBodyTokens
         const inventory = sections.sections.map((s) => `${s.index}. ${s.title || `第 ${s.index} 段`}`).join('\n')
 
+        // #693: 选中即引用 — 用户选中的文本(来自编辑器选区,与 body 同源)
+        // 优先成为编辑目标:注入独立上下文块,焦点段定位到包含它的段。
+        const selection = typeof body.selection === 'string' && body.selection.trim() ? body.selection.trim() : null
+
         let focus = 1
         let focusTitle = ''
         if (!docFits && sections.sections.length > 0) {
-          const lastAssistant = ctx.eventLog
-            .query({ sessionId: sid })
-            .reverse()
-            .find((e: any) => e.eventType === 'assistant_response')
-          focus = resolveDocumentFocus(body.text, sections.sections, lastAssistant?.content)
-          const focused = sections.sections[focus - 1]
-          if (focused) focusTitle = focused.title
+          if (selection) {
+            const norm = (s: string) => s.replace(/\s+/g, ' ').trim()
+            const needle = norm(selection.slice(0, 200))
+            const idx = sections.sections.findIndex((s) => norm(s.content).includes(needle))
+            if (idx >= 0) {
+              focus = idx + 1
+              focusTitle = sections.sections[idx].title
+            }
+          }
+          if (focusTitle === '') {
+            const lastAssistant = ctx.eventLog
+              .query({ sessionId: sid })
+              .reverse()
+              .find((e: any) => e.eventType === 'assistant_response')
+            focus = resolveDocumentFocus(body.text, sections.sections, lastAssistant?.content)
+            const focused = sections.sections[focus - 1]
+            if (focused) focusTitle = focused.title
+          }
         }
         const bodyInjection = docFits
           ? fitTextToTokens(docText, CONTEXT_CONFIG.scene.docBodyTokens)
@@ -305,11 +320,15 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         const emptyDocRule = docText.trim()
           ? ''
           : '注意:当前文档正文为空。Reference Materials 中的内容只是参考资料,尚未写入文档。若用户要求润色/整理参考材料中的内容:直接开始第一步润色 — 调用 edit_document 的 old_text/new_text 把参考资料第一部分的润色结果写回草稿(正文为空时工具会自动先导入唯一的参考材料;old_text 从上方 Reference Materials 部分复制,空格/换行差异会被忽略)。写回后告知用户「已完成第 1/N 段」,并询问是否继续处理下一部分;用户确认后逐段继续。除非参考材料很短,否则不要用 full_text 一次性输出全部内容(超出输出上限)。\n\n'
+        // #693: 选中即引用 — 选中文本的编辑规则(与参考材料规则互斥)。
+        const selectionRule = selection
+          ? '若用户选中的文本(见上方「用户选中文本」)需要修改,old_text 必须从该选中文本逐字复制(空格/换行差异会被自动忽略),不要自行改写措辞或从其他位置复制;选中文本仅供你优先处理,用户未明确要求时不要改动选中范围外的内容。'
+          : ''
         const rules = docFits
-          ? `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}文档较短已完整展示，可直接修改任意部分；优先用 edit_document 的 old_text/new_text 做局部编辑（old_text 必须从上方 ## Current Document 部分逐字复制，空格/换行差异会被自动忽略，不要从 Reference Materials 复制）。`
-          : `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。old_text 必须从上方 ## Current Document 部分逐字复制（空格/换行差异会被自动忽略，不要从 Reference Materials 复制）。除非用户明确要求全文重写（此时请告知全文超出上下文预算不可行），否则不要用 full_text 全量替换。`
+          ? `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}文档较短已完整展示，可直接修改任意部分；优先用 edit_document 的 old_text/new_text 做局部编辑（old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制，空格/换行差异会被自动忽略，不要从 Reference Materials 复制）。${selectionRule}`
+          : `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制（空格/换行差异会被自动忽略，不要从 Reference Materials 复制）。除非用户明确要求全文重写（此时请告知全文超出上下文预算不可行），否则不要用 full_text 全量替换。${selectionRule}`
 
-        return `\n\n## Current Document\n标题：${doc.title}\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n## Reference Materials\n${refBlock || '(none)'}\n\n${rules}`
+        return `\n\n## Current Document\n标题：${doc.title}\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n${selection ? `## 用户选中文本\n[用户选中的文本 — 如需修改请从此处逐字复制 old_text(空格/换行差异会被自动忽略)。]\n${selection}\n\n` : ''}## Reference Materials\n${refBlock || '(none)'}\n\n${rules}`
       },
     },
     {

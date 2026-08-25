@@ -40,6 +40,8 @@ interface DocEditorProps {
   diffReview?: DiffReviewState | null;
   /** 审阅结束回调。cancelled=true 表示用户放弃本次 AI 修改。 */
   onDiffResolve?: (result: { md: string; accepted: number; rejected: number; cancelled: boolean }) => void;
+  /** #693: 编辑器选中文本变化回调(空字符串=无选中;审阅模式下不触发)。 */
+  onSelectionChange?: (text: string) => void;
 }
 
 /**
@@ -47,12 +49,15 @@ interface DocEditorProps {
  * the editor converts on load (md → HTML) and on save (HTML → md).
  * 审阅模式下:AI 编辑以绿(插入)/红(删除)标记呈现,逐条或全部接受/拒绝。
  */
-export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve }: DocEditorProps) {
+export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange }: DocEditorProps) {
   const applyMdRef = useRef<string | null>(null);
   const reviewKeyRef = useRef<string | null>(null);
   const [reviewStats, setReviewStats] = useState<{ pending: number; accepted: number; rejected: number }>({ pending: 0, accepted: 0, rejected: 0 });
   const [selectedChange, setSelectedChange] = useState<{ id: string; text: string } | null>(null);
   const statsRef = useRef({ accepted: 0, rejected: 0 });
+  // #693: useEditor 选项只在创建时生效 — 经 ref 取最新回调。
+  const onSelRef = useRef(onSelectionChange);
+  onSelRef.current = onSelectionChange;
   const onResolveRef = useRef(onDiffResolve);
   onResolveRef.current = onDiffResolve;
 
@@ -73,8 +78,13 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       onChange(htmlToMarkdown(editor.getHTML()));
     },
     onSelectionUpdate: ({ editor }) => {
-      if (reviewKeyRef.current === null) return;
       const sel = editor.state.selection;
+      // #693: 非审阅模式下把选中文本上报给外部(选中即引用);审阅模式下
+      // 选中的是 diff 内容,不构成引用。
+      if (reviewKeyRef.current === null) {
+        onSelRef.current?.(editor.state.doc.textBetween(sel.from, sel.to, '\n').trim());
+        return;
+      }
       if (sel.empty) { setSelectedChange(null); return; }
       const covering = getTrackedChanges(editor)
         .filter((c) => c.from <= sel.from && c.to >= sel.to)

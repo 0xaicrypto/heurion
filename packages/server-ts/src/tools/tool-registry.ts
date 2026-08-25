@@ -210,7 +210,10 @@ export class ToolRegistry {
 
     // T1: bound large outputs uniformly — every tool result that goes back
     // into the LLM round passes through the limiter.
-    if (result.success && result.output) {
+    // #693: edit_document 豁免 — 其 output 是承载完整 body 的结构化 JSON,
+    // 截断会破坏 doc_updated SSE 的 JSON 解析(大文档写回后画布不更新)。
+    // 防上下文膨胀改由 tool-loop 注入时截断(tool-loop.ts 的 messages push)。
+    if (result.success && result.output && name !== 'edit_document') {
       try {
         const { boundToolOutput } = await import('./tool-output-store.js')
         const { bounded, truncated, filePath } = boundToolOutput(result.output, { userId: this.ctx.userId })
