@@ -107,6 +107,7 @@ export function WritingEditorPage() {
   const chatSession = useChatStore((s) => (chatSessionId ? s.sessions[chatSessionId] : undefined));
   // #fix: 追加问题排队发送(回复进行中不打断,当前 turn 完成后自动执行)。
   const sendMessageQueued = useChatStore((s) => s.sendMessageQueued);
+  const stopStream = useChatStore((s) => s.stopStream);
   const appendMessage = useChatStore((s) => s.appendMessage);
   const setMessages = useChatStore((s) => s.setMessages);
   const chatMessages = chatSession?.messages ?? [];
@@ -959,10 +960,16 @@ export function WritingEditorPage() {
                     className="min-h-0 flex-1 resize-none py-1.5"
                     style={{ maxHeight: '120px' }}
                   />
-                  {/* #fix: 回复进行中不禁用 — 发送=排队,当前 turn 完成后自动执行。 */}
-                  <Button size="sm" onClick={handleSendChat} isLoading={chatLoading} disabled={!chatInput.trim()} className="shrink-0">
-                    {chatLoading ? '排队发送' : 'Send'}
-                  </Button>
+                  {/* #fix: 回复进行中显示 Stop(停止分析,含排队消息);平时发送=排队。 */}
+                  {chatLoading ? (
+                    <Button size="sm" variant="secondary" onClick={() => stopStream(chatSessionId)} className="shrink-0">
+                      Stop
+                    </Button>
+                  ) : (
+                    <Button size="sm" onClick={handleSendChat} disabled={!chatInput.trim()} className="shrink-0">
+                      Send
+                    </Button>
+                  )}
                 </div>
               </div>
                 </>

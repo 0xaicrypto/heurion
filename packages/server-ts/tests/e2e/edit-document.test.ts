@@ -552,6 +552,9 @@ describe('#171 edit_document tool', () => {
     expect(contextSeen).toContain('原始摘要内容一句话。')
     // 规则提示从选中文本复制。
     expect(contextSeen).toContain('必须从该选中文本逐字复制')
+    // 格式规范注入(markdown heading 层级)。
+    expect(contextSeen).toContain('格式规范')
+    expect(contextSeen).toContain('##(H2)')
 
     // old_text 逐字命中 → body 更新 + doc_updated SSE 推送。
     const doc = await (prisma as any).doc.findFirst({ where: { id: docId } })

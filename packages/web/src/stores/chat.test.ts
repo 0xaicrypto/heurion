@@ -199,4 +199,32 @@ describe('chat store — 追加问题排队(#fix)', () => {
     expect(useChatStore.getState().sessions.s1.pending?.text).toBe('追加 B');
     await p1;
   });
+
+  test('stopStream 停止分析并清空排队消息(不自动发出)', async () => {
+    const { api } = await import('@/lib/api');
+    const sendChatFull = api.sendChatFull as any;
+    const sent: string[] = [];
+    sendChatFull.mockImplementationOnce(async function* (opts: any, signal?: AbortSignal) {
+      sent.push(opts.text);
+      // 模拟长流:abort 信号到达才结束。
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener('abort', () => resolve());
+        setTimeout(resolve, 8000);
+      });
+      yield { type: 'final_answer_chunk', text: 'x' };
+    });
+    const store = useChatStore.getState();
+    const p1 = store.sendMessage('s1', { sessionId: 's1', text: '第一轮', attachments: [], skills: [] });
+    // 排队一条。
+    await store.sendMessageQueued('s1', { sessionId: 's1', text: '追加消息', attachments: [], skills: [] });
+    expect(useChatStore.getState().sessions.s1.pending?.text).toBe('追加消息');
+
+    // 停止:loading 结束、pending 清空、排队消息不被发出。
+    store.stopStream('s1');
+    await p1;
+    const s = useChatStore.getState().sessions.s1;
+    expect(s.loading).toBe(false);
+    expect(s.pending).toBeNull();
+    expect(sent).toEqual(['第一轮']);
+  });
 });

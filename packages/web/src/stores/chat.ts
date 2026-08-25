@@ -235,7 +235,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return {
         sessions: {
           ...state.sessions,
-          [sessionId]: { ...cur, messages: msgs, abort: null, loading: false },
+          [sessionId]: {
+            ...cur,
+            messages: msgs,
+            abort: null,
+            loading: false,
+            // #fix: Stop = 停止一切(含排队中的追加消息) — 用户点停止
+            // 就是不想继续了,排队消息不应在 turn 结束后自动发出。
+            pending: null,
+          },
         },
       };
     });
