@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { buildDocReferenceBlocks } from '../../src/modules/chat/chat-context.js'
+import { buildDocReferenceBlocks, findUploadFileByName } from '../../src/modules/chat/chat-context.js'
 
 /**
  * #fix: 写作会话参考材料里的上传文件此前只注入文件名,LLM 读不到正文。
@@ -81,5 +81,26 @@ describe('buildDocReferenceBlocks 文件引用正文注入', () => {
     ], { findFileByName })
     expect(resolved).toBe(0)
     expect(blocks[0]).not.toContain('[已解析上传文件正文]')
+  })
+
+  test('findUploadFileByName: fileIndex 不可用时按上传目录文件名兜底', async () => {
+    // 目录里有真实文件,fileIndex 查询失败 → 兜底命中。
+    const found = await findUploadFileByName('u1', 'paper.txt')
+    expect(found).not.toBeNull()
+    expect(found!.id).toBe(fileId)
+  })
+
+  test('findUploadFileByName: 文件名不匹配 → null', async () => {
+    const found = await findUploadFileByName('u1', 'not-uploaded.pdf')
+    expect(found).toBeNull()
+  })
+
+  test('findUploadFileByName + buildDocReferenceBlocks: fileIndex 查不到也能注入正文', async () => {
+    const { blocks, resolved } = await buildDocReferenceBlocks('u1', [
+      { id: 'ref_6', refType: 'pdf', snapshot: 'paper.txt', label: 'paper.txt' },
+    ], { findFileByName: async (name) => findUploadFileByName('u1', name) })
+    expect(resolved).toBe(1)
+    expect(blocks[0]).toContain('[已解析上传文件正文]')
+    expect(blocks[0]).toContain('ATR confers radioresistance')
   })
 })

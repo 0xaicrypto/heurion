@@ -373,6 +373,46 @@ export async function buildAttachmentParts(
  */
 export const DOC_FILE_REF_KINDS = new Set(['file', 'pdf', 'docx'])
 
+/**
+ * #fix: 定位上传文件 — fileIndex 优先,未命中时按上传目录文件名兜底。
+ * 用户上传的文件一定已落盘(uploads/<userId>/),参考材料与 import_reference
+ * 同源;只查 fileIndex 会在表缺失/记录丢失时把正文注入降级成"只有文件名",
+ * 模型拿不到内容就去调 ocr_image 之类读文件工具而报错。
+ */
+export async function findUploadFileByName(
+  userId: string,
+  name: string,
+): Promise<{ id: string } | null> {
+  try {
+    const { default: prisma } = await import('../../common/prisma.js')
+    const byIndex = await (prisma as any).fileIndex.findFirst({
+      where: { userId, name, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    }).catch(() => null)
+    if (byIndex) return { id: byIndex.id }
+  } catch {
+    // fileIndex 不可用 → 目录兜底
+  }
+  try {
+    const fs = await import('fs')
+    const { uploadsBaseDir } = await import('../../lib/upload-path.js')
+    const dir = uploadsBaseDir(userId)
+    if (!fs.existsSync(dir)) return null
+    for (const f of fs.readdirSync(dir)) {
+      const derived = f.split('_').slice(1).join('_') || f
+      if (derived === name) return { id: f }
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+/**
+ * #fix: 参考材料 → 上传文件正文注入。返回注入了多少个文件类引用
+ * (resolved)与渲染块;解析失败/无上传时回退为纯文件名(不中断整块)。
+ */
+
 export async function buildDocReferenceBlocks(
   userId: string,
   refs: Array<{ id?: string; refType?: string | null; snapshot?: string | null; label?: string | null }>,
@@ -402,7 +442,10 @@ export async function buildDocReferenceBlocks(
         blocks.push(`${header}\n[已解析上传文件正文]\n${body}`)
         continue
       }
-    } catch {
+    } catch (err) {
+      // #fix: 记录注入失败原因 — 生产上"模型拿文件名去读文件"的根因
+      // 都是这里静默降级,必须留痕便于诊断。
+      console.warn(`[doc-ref] body injection failed for ref ${r.id || ''} (kind=${kind}, snapshot=${snapshot}):`, (err as Error).message.slice(0, 160))
       // fall through to name-only
     }
     blocks.push(`${header}\n${snapshot.slice(0, CONTEXT_CONFIG.scene.docRefChars)}`)

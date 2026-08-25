@@ -17,7 +17,7 @@ import { deepseekStream, LlmTruncatedError, DEEPSEEK_PREMIUM_MODEL } from '../..
 import type { ChatContentPart } from '../../common/llm-gateway.js'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
-import { buildAttachmentParts, buildDocReferenceBlocks, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from './chat-context.js'
+import { buildAttachmentParts, buildDocReferenceBlocks, findUploadFileByName, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from './chat-context.js'
 import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
 import { splitDocumentSections, resolveDocumentFocus } from '../../lib/doc-sections.js'
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
@@ -268,10 +268,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         // #fix: 上传文件引用(PDF/DOCX/txt)按文件名定位上传并注入提取的
         // 正文,LLM 才能真正读到稿件内容(此前只有文件名)。
         const { blocks: refBlocks } = await buildDocReferenceBlocks(userId, refs || [], {
-          findFileByName: async (name) => (prisma as any).fileIndex.findFirst({
-            where: { userId, name, deletedAt: null },
-            orderBy: { createdAt: 'desc' },
-          }),
+          // #fix: fileIndex 优先 + 上传目录文件名兜底 — 用户上传的文件
+          // 一定在磁盘上,正文注入不依赖 fileIndex 表是否有记录。
+          findFileByName: async (name) => findUploadFileByName(userId, name),
         })
         const refBlock = refBlocks.join('\n\n')
 
