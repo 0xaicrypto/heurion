@@ -66,7 +66,7 @@ export function ManualMemoryAdd({ onAdded }: { onAdded?: () => void }) {
         <Input
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
+          onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter') handleSubmit(); }}
           placeholder={t('brain.manualAddHint', '如：患者对阿司匹林不耐受…')}
           className="min-w-[240px] flex-1"
           aria-label={t('brain.manualAddHint', '如：患者对阿司匹林不耐受…')}

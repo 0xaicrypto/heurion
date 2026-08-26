@@ -167,7 +167,7 @@ export function SkillsPage() {
               <Input
                 value={ghQuery}
                 onChange={e => setGhQuery(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') loadGitHub(); }}
+                onKeyDown={e => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter') loadGitHub(); }}
                 placeholder="Search community skills..."
                 className="flex-1"
               />

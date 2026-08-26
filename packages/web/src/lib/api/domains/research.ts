@@ -123,6 +123,11 @@ export class ResearchApi extends ApiCore {
     return this.fetch(`/api/v1/research/studies/${studyId}/enrollments/${patientHash}`, { method: 'DELETE' });
   }
 
+  /** #724: 患者已入组的研究(患者摘要页展示)。 */
+  async getPatientEnrollments(patientHash: string): Promise<{enrollments: Array<{study_id: string; study_name: string; status: string; arm: string | null; enrolled_at: string}>}> {
+    return this.fetch(`/api/v1/research/patients/${patientHash}/enrollments`);
+  }
+
   async confirmObservation(studyId: string, obsId: string, aeGrade?: number, isDlt?: boolean): Promise<{ok: boolean}> {
     return this.fetch(`/api/v1/research/studies/${studyId}/observations/${obsId}/confirm`, { method: 'POST', body: JSON.stringify({ ae_grade: aeGrade, is_dlt: isDlt }) });
   }

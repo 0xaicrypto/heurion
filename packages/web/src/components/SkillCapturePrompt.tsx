@@ -65,6 +65,8 @@ export function SkillCapturePrompt({ conversation, sessionId, onDone }: {
       await api.confirmSkill(draftId);
       setSaved(true);
       onDone?.();
+      // #727: 保存成功后通知 SkillsBar 刷新 — "下次对话可直接调用"立即成立。
+      window.dispatchEvent(new Event('skills:refresh'));
     } catch (err) {
       setError(String(err));
     } finally {
@@ -80,6 +82,17 @@ export function SkillCapturePrompt({ conversation, sessionId, onDone }: {
       </div>
     );
   }
+
+  const handleCancel = async () => {
+    // #727: 取消即删除服务端草稿 — 不残留 Captured tab 的"幽灵技能"。
+    if (draftId) {
+      try { await api.deleteSkillDraft(draftId); } catch { /* 删除失败不阻塞关闭 */ }
+    }
+    setOpen(false);
+    setDraft(null);
+    setDraftId('');
+    setError(null);
+  };
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -98,7 +111,7 @@ export function SkillCapturePrompt({ conversation, sessionId, onDone }: {
           <div className="w-full max-w-lg rounded-lg border border-border bg-surface p-5 shadow-lg">
             <div className="mb-1 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-text-primary">{t('skills.captureTitle', '保存为技能')}</h2>
-              <button onClick={() => setOpen(false)} aria-label="Close" className="text-text-tertiary hover:text-text-primary">
+              <button onClick={handleCancel} aria-label="Close" className="text-text-tertiary hover:text-text-primary">
                 <X size={16} />
               </button>
             </div>
@@ -119,7 +132,7 @@ export function SkillCapturePrompt({ conversation, sessionId, onDone }: {
               <Input
                 value={refineInput}
                 onChange={(e) => setRefineInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleRefine(); }}
+                onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter') handleRefine(); }}
                 placeholder={t('skills.refineHint', '用一句话修改，如"下次别忘了加上复发风险"')}
                 className="flex-1"
               />
@@ -130,7 +143,10 @@ export function SkillCapturePrompt({ conversation, sessionId, onDone }: {
             </div>
 
             <div className="flex justify-end gap-2">
-              <Button size="sm" variant="secondary" onClick={() => setOpen(false)}>
+              <Button size="sm" variant="ghost" onClick={handleCancel}>
+                {t('skills.later', '稍后')}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={handleCancel}>
                 {t('common.cancel', '取消')}
               </Button>
               <Button size="sm" onClick={handleConfirm} disabled={busy}>

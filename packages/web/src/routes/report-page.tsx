@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { FileDown, FileText } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
+import { PatientBackButton } from '@/components/PatientBackButton';
 import { Alert, Button, Card, Skeleton, Textarea } from '@/components/ui';
 import type { PatientDetail } from '@/lib/types';
 
@@ -59,9 +60,13 @@ export function ReportPage() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto p-6">
-      <div className="mb-6">
-        <h2 className="text-lg font-semibold text-text-primary">Generate Clinical Report</h2>
-        <p className="text-sm text-text-secondary">Create a structured PDF report for this patient</p>
+      <div className="mb-6 flex items-center gap-3">
+        {/* #709: 移动端返回患者 — 此前无任何返回入口 */}
+        <PatientBackButton hash={hash} />
+        <div>
+          <h2 className="text-lg font-semibold text-text-primary">Generate Clinical Report</h2>
+          <p className="text-sm text-text-secondary">Create a structured PDF report for this patient</p>
+        </div>
       </div>
 
       {patientLoading ? (

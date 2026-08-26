@@ -36,10 +36,10 @@ export declare const statsRequestSchema: z.ZodObject<{
     factor_a: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
 }, "strip", z.ZodTypeAny, {
     test: string;
-    values?: number[] | undefined;
     group_a?: number[] | undefined;
     group_b?: number[] | undefined;
     table?: number[][] | undefined;
+    values?: number[] | undefined;
     survival_a?: {
         time: number;
         event: boolean;
@@ -52,10 +52,10 @@ export declare const statsRequestSchema: z.ZodObject<{
     factor_a?: string[] | undefined;
 }, {
     test: string;
-    values?: number[] | undefined;
     group_a?: number[] | undefined;
     group_b?: number[] | undefined;
     table?: number[][] | undefined;
+    values?: number[] | undefined;
     survival_a?: {
         time: number;
         event: boolean;

@@ -187,7 +187,7 @@ function WritingList() {
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   placeholder={t('writing.docTitle', 'Document title')}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleCreate(); }}
+                  onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter') handleCreate(); }}
                 />
               </div>
               <select

@@ -10,6 +10,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
+import { PatientBackButton } from '@/components/PatientBackButton';
 import { Alert, Button, Card, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
@@ -123,6 +124,10 @@ export function ImagingPage() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto p-6">
+      <div className="mb-4 flex items-center gap-3">
+        {/* #709: 移动端返回患者 — 此前无任何返回入口 */}
+        <PatientBackButton hash={hash} />
+      </div>
       {scanError && (
         <div className="mb-4">
           <Alert variant="error">{scanError}</Alert>

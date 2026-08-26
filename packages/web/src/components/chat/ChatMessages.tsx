@@ -1,4 +1,5 @@
 import { useState, type RefObject } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Check, ChevronDown, Copy, Download, FileText, Puzzle, Quote, RefreshCw, RotateCcw } from 'lucide-react';
 import type { ChatMessage } from '@/stores/chat';
@@ -162,7 +163,7 @@ export function ChatMessages({
                 {!compact && !m.isStreaming && onCopy && (
                   <button
                     onClick={() => onCopy(m.id, m.text || '')}
-                    className={`absolute -top-2 -right-2 rounded-full border border-border p-1 shadow-sm opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 ${
+                    className={`absolute -top-2 -right-2 rounded-full border border-border p-1 shadow-sm opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 max-lg:opacity-100 ${
                       m.role === 'user' ? 'bg-accent text-white' : 'bg-surface text-text-secondary hover:text-text-primary'
                     }`}
                     title={t('common.copy', 'Copy')}
@@ -260,7 +261,9 @@ export function ChatMessages({
                     })}
                   </div>
                 )}
-                {!compact && m.download && onDownloadClick && (
+                {/* #722: 下载/入库出口由 handler 存在与否控制,不再被 compact
+                 门控 — 患者对话(compact)生成的文件必须可取回。 */}
+                {m.download && onDownloadClick && (
                   <div className="mt-3 rounded-lg border border-border bg-surface p-3">
                     <div className="flex items-center gap-2 text-sm text-text-primary">
                       <FileText size={16} className="text-text-tertiary shrink-0" />
@@ -326,8 +329,16 @@ export function ChatMessages({
                       </Button>
                     ))}
                     {m.exportState === 'saved' && (
-                      <span className="flex items-center gap-1 text-xs text-success">
+                      <span className="flex items-center gap-2 text-xs text-success">
                         <Check size={12} /> {t('chat.exportSaved', '已保存')}
+                        {m.savedDocId && (
+                          <Link
+                            to={`/app/writing/${m.savedDocId}`}
+                            className="rounded border border-border bg-surface px-2 py-0.5 text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary"
+                          >
+                            {t('chat.openDocument', '打开文档 →')}
+                          </Link>
+                        )}
                       </span>
                     )}
                   </div>
@@ -336,7 +347,7 @@ export function ChatMessages({
                 {!compact && isLastAssistant && !isFailed && onRegenerate && (
                   <button
                     onClick={onRegenerate}
-                    className="absolute -bottom-2.5 left-2 flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-tertiary opacity-0 shadow-sm transition-opacity hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
+                    className="absolute -bottom-2.5 left-2 flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-tertiary opacity-0 shadow-sm transition-opacity hover:text-text-primary focus:opacity-100 group-hover:opacity-100 max-lg:opacity-100"
                     title={t('chat.regenerate', '重新生成')}
                     aria-label={t('chat.regenerate', '重新生成')}
                   >
@@ -347,7 +358,7 @@ export function ChatMessages({
                 {!compact && isLastAssistant && isFailed && onRetry && (
                   <button
                     onClick={onRetry}
-                    className="absolute -bottom-2.5 left-2 flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-tertiary opacity-0 shadow-sm transition-opacity hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
+                    className="absolute -bottom-2.5 left-2 flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-tertiary opacity-0 shadow-sm transition-opacity hover:text-text-primary focus:opacity-100 group-hover:opacity-100 max-lg:opacity-100"
                     title={t('chat.retry', '重试')}
                     aria-label={t('chat.retry', '重试')}
                   >

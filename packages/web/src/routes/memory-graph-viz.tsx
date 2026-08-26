@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import cytoscape from 'cytoscape';
 import {
-  Brain, BookOpen, Lightbulb, FileText, Wrench, Hexagon, AlertTriangle,
+  ArrowLeft, Brain, BookOpen, Lightbulb, FileText, Wrench, Hexagon, AlertTriangle,
   RotateCcw, X, Filter, Eye, EyeOff, Maximize2,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
@@ -70,6 +70,7 @@ function formatDate(ts?: number) {
 
 export function MemoryGraphVizPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const patientHash = searchParams.get('patient') || undefined;
 
@@ -375,6 +376,16 @@ export function MemoryGraphVizPage() {
         {/* Toolbar */}
         <header className="flex flex-wrap items-center gap-3 border-b border-border bg-surface px-4 py-2">
           <div className="flex items-center gap-2">
+            {/* #709: 带 patient 参数时返回患者记忆页;否则回知识页 */}
+            {patientHash ? (
+              <Button size="sm" variant="ghost" onClick={() => navigate(`/app/patients/${encodeURIComponent(patientHash)}/memory`)}>
+                <ArrowLeft size={16} />
+              </Button>
+            ) : (
+              <Button size="sm" variant="ghost" onClick={() => navigate('/app/knowledge')}>
+                <ArrowLeft size={16} />
+              </Button>
+            )}
             <Brain size={18} className="text-accent" />
             <h1 className="font-semibold text-text-primary">Memory Graph</h1>
             <Badge variant="default">{filteredNodes.length}</Badge>

@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { FileText, Upload, ClipboardList, X, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
+import { PatientBackButton } from '@/components/PatientBackButton';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 import type { IngestionJob, IngestionJobStatus } from '@/lib/types';
 
@@ -90,19 +91,23 @@ export function LabsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash, loadJobs]);
 
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
+    setUploadProgress(0);
     setError(null);
     try {
-      await api.uploadFile(file, hash);
+      await api.uploadFile(file, hash, (p) => setUploadProgress(p));
       loadFiles();
       loadJobs();
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
       setUploading(false);
+      setUploadProgress(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
@@ -133,6 +138,10 @@ export function LabsPage() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto p-6">
+      <div className="mb-4 flex items-center gap-3">
+        {/* #709: 移动端返回患者 — 此前无任何返回入口 */}
+        <PatientBackButton hash={hash} />
+      </div>
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-text-primary">Lab Results & Documents</h2>
@@ -148,6 +157,14 @@ export function LabsPage() {
           className="hidden"
           disabled={uploading}
         />
+        {uploadProgress !== null && (
+          <div className="flex items-center gap-2 text-xs text-text-secondary">
+            <div className="h-1.5 w-24 overflow-hidden rounded-full bg-surface">
+              <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${uploadProgress}%` }} />
+            </div>
+            <span>{uploadProgress}%</span>
+          </div>
+        )}
       </div>
 
       {viewingFile && (

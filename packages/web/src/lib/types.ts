@@ -469,6 +469,8 @@ export interface FormatTemplate {
 
 export interface SubmissionDraft {
   id: string;
+  /** #726: 关联文档 id — 每个文档独立的投稿草稿。 */
+  doc_id?: string | null;
   article_title: string;
   abstract?: string;
   keywords?: string;

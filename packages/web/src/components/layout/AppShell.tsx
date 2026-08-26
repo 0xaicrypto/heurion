@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Brain, Cpu, FileText, FlaskConical, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, Puzzle, Settings, Shield, Users, X, BarChart3 } from 'lucide-react';
+import { Brain, CalendarClock, Cpu, Download, FileText, FlaskConical, FolderOpen, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, Puzzle, Settings, Shield, Users, X, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/lib/api';
@@ -14,6 +14,10 @@ interface NavItem {
   labelKey: string;
   icon: React.ReactNode;
   admin?: boolean;
+  /** #713: 激活态需额外匹配的 query 参数（同 pathname 的项互斥，如 /app/writing vs ?tab=library）. */
+  activeQuery?: string;
+  /** #713: 命中该 query 时不高亮（与 activeQuery 互斥语义）. */
+  inactiveQuery?: string;
   /** §11.5 (#221): workflow grouping — 概览/对话/患者工作区/记忆与知识/工具与设置. */
   section?: 'overview' | 'conversation' | 'patients' | 'memory' | 'tools';
 }
@@ -31,12 +35,15 @@ const navItems: NavItem[] = [
   { to: '/app/chat', labelKey: 'nav.chat', icon: <MessageSquare size={18} />, section: 'conversation' },
   { to: '/app/patients', labelKey: 'nav.patients', icon: <Users size={18} />, section: 'patients' },
   { to: '/app/research', labelKey: 'nav.research', icon: <FlaskConical size={18} />, section: 'patients' },
-  { to: '/app/writing', labelKey: 'nav.writing', icon: <FileText size={18} />, section: 'patients' },
+  { to: '/app/writing', labelKey: 'nav.writing', icon: <FileText size={18} />, section: 'patients', inactiveQuery: '?tab=library' },
   { to: '/app/memory', labelKey: 'nav.memoryKnowledge', icon: <Brain size={18} />, section: 'memory' },
   { to: '/app/skills', labelKey: 'nav.skills', icon: <Cpu size={18} />, section: 'tools' },
   // #481-followup: chart library entry — writing workbench library tab.
-  { to: '/app/writing?tab=library', labelKey: 'nav.chartLibrary', icon: <BarChart3 size={18} />, section: 'tools' },
+  { to: '/app/writing?tab=library', labelKey: 'nav.chartLibrary', icon: <BarChart3 size={18} />, section: 'tools', activeQuery: '?tab=library' },
   { to: '/app/plugins', labelKey: 'nav.plugins', icon: <Puzzle size={18} />, section: 'tools' },
+  { to: '/app/files', labelKey: 'nav.files', icon: <FolderOpen size={18} />, section: 'tools' },
+  { to: '/app/schedule', labelKey: 'nav.schedule', icon: <CalendarClock size={18} />, section: 'tools' },
+  { to: '/app/export', labelKey: 'nav.export', icon: <Download size={18} />, section: 'tools' },
   { to: '/app/settings', labelKey: 'nav.settings', icon: <Settings size={18} />, section: 'tools' },
   { to: '/app/admin/users', labelKey: 'nav.admin', icon: <Shield size={18} />, admin: true, section: 'tools' },
 ];
@@ -133,6 +140,7 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
   }, [isResizing]);
 
   const visibleItems = navItems.filter((item) => !item.admin || role === 'admin');
+  const search = location.search;
 
   return (
     <>
@@ -187,7 +195,8 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
                         className={({ isActive }) =>
                           cn(
                             'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                            isActive
+                            // #713: 同 pathname 的导航项按 query 互斥高亮
+                            isActive && !item.inactiveQuery && (!item.activeQuery || search.includes(item.activeQuery))
                               ? 'bg-accent/10 text-accent'
                               : 'text-text-secondary hover:bg-surface hover:text-text-primary',
                           )
@@ -198,7 +207,7 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
                             {item.icon}
                             {t(item.labelKey)}
                             {/* §11.4 (#221): the logo's lit dot marks the current page */}
-                            {isActive && <StatusDot tone="active" className="ml-auto" />}
+                            {isActive && !item.inactiveQuery && (!item.activeQuery || search.includes(item.activeQuery)) && <StatusDot tone="active" className="ml-auto" />}
                           </>
                         )}
                       </NavLink>

@@ -22,4 +22,9 @@ export class CalendarApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}/references`, { method: 'POST', body: JSON.stringify(data) });
   }
 
+  /** #711: 删除文档参考材料(移除 AI 上下文输入)。 */
+  async deleteDocReference(docId: string, referenceId: string): Promise<{ ok: boolean }> {
+    return this.fetch(`/api/v1/docs/${docId}/references/${referenceId}`, { method: 'DELETE' });
+  }
+
 }

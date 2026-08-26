@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, CalendarDays, Check, FlaskConical, Plus, Upload, X, FileText, Sparkles } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
+import { Alert, Badge, Button, Card, Input, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { Patient } from '@/lib/types';
@@ -107,7 +107,19 @@ export function ResearchDetailPage() {
   const [study, setStudy] = useState<StudyDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>(() => {
+    // #719: tab 状态用 URL query 持久化 — 刷新/深链不丢当前 tab。
+    const p = new URLSearchParams(window.location.search).get('tab');
+    return (p === 'roster' || p === 'eligibility' || p === 'schedule' || p === 'safety' || p === 'protocol') ? p as Tab : 'overview';
+  });
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (tab === 'overview') params.delete('tab');
+    else params.set('tab', tab);
+    const qs = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+  }, [tab]);
 
   // overview
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
@@ -136,8 +148,12 @@ export function ResearchDetailPage() {
   // unenroll
   const [unenrollingHash, setUnenrollingHash] = useState<string | null>(null);
 
+  // #710: 各 tab 数据加载失败 — 区分"没有数据"与"加载失败"。
+  const [tabError, setTabError] = useState<string | null>(null);
+
   // enroll dialog
   const [showEnroll, setShowEnroll] = useState(false);
+  const [enrollQuery, setEnrollQuery] = useState('');
   const [paperCreating, setPaperCreating] = useState(false);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [patientsLoading, setPatientsLoading] = useState(false);
@@ -163,24 +179,27 @@ export function ResearchDetailPage() {
   const loadRoster = useCallback(() => {
     if (!studyId) return;
     setRosterLoading(true);
+    setTabError(null);
     api.getStudyRoster(studyId)
       .then(setRoster)
-      .catch(() => {})
+      .catch((err) => setTabError(err instanceof ApiError ? err.messageText : String(err)))
       .finally(() => setRosterLoading(false));
   }, [studyId]);
 
   const loadEligibility = useCallback(() => {
     if (!studyId) return;
     setEligLoading(true);
+    setTabError(null);
     api.getStudyEligibility(studyId)
       .then(setEligibility)
-      .catch(() => {})
+      .catch((err) => setTabError(err instanceof ApiError ? err.messageText : String(err)))
       .finally(() => setEligLoading(false));
   }, [studyId]);
 
   const loadSafety = useCallback(() => {
     if (!studyId) return;
     setSafetyLoading(true);
+    setTabError(null);
     Promise.all([
       api.getStudyObservations(studyId),
       api.getSafetyStatus(studyId),
@@ -196,16 +215,17 @@ export function ResearchDetailPage() {
         });
         setConfirmingObs(init);
       })
-      .catch(() => {})
+      .catch((err) => setTabError(err instanceof ApiError ? err.messageText : String(err)))
       .finally(() => setSafetyLoading(false));
   }, [studyId]);
 
   const loadSchedule = useCallback(() => {
     if (!studyId) return;
     setScheduleLoading(true);
+    setTabError(null);
     api.getStudyAssessments(studyId)
       .then(setAssessments)
-      .catch(() => {})
+      .catch((err) => setTabError(err instanceof ApiError ? err.messageText : String(err)))
       .finally(() => setScheduleLoading(false));
   }, [studyId]);
 
@@ -220,11 +240,14 @@ export function ResearchDetailPage() {
   const createPaper = async () => {
     if (!studyId) return;
     setPaperCreating(true);
+    setError(null);
     try {
       const paper = await api.createPaperFromStudy(studyId);
       navigate(`/app/writing/${paper.doc_id}`);
-    } catch {
+    } catch (err) {
+      // #710: 写论文失败此前静默吞掉 — 主流程最后一环失败必须可见。
       setPaperCreating(false);
+      setError(err instanceof ApiError ? `写论文失败：${err.messageText}` : '写论文失败，请稍后重试');
     }
   };
 
@@ -259,7 +282,9 @@ export function ResearchDetailPage() {
   const handleRescan = async () => {
     if (!studyId) return;
     setRescanning(true);
+    setError(null);
     try {
+      // 服务端 rescan 为同步执行(创建 pending screenings),完成后直接刷新。
       await api.rescanEligibility(studyId);
       loadEligibility();
     } catch (err) {
@@ -271,6 +296,8 @@ export function ResearchDetailPage() {
 
   const handleUnenroll = async (patientHash: string) => {
     if (!studyId) return;
+    // #710: 破坏性操作 — 科研入组记录删除需二次确认。
+    if (!window.confirm('确定将该患者移出本研究的入组名单吗？此操作不可撤销。')) return;
     setUnenrollingHash(patientHash);
     try {
       await api.unenrollPatient(studyId, patientHash);
@@ -489,6 +516,22 @@ export function ResearchDetailPage() {
             </div>
           )}
 
+          {tabError && (
+            <div className="max-w-3xl">
+              <Alert variant="error">
+                <div className="flex items-center justify-between gap-2">
+                  <span>{tabError}</span>
+                  <Button size="sm" variant="ghost" onClick={() => {
+                    if (tab === 'roster') loadRoster();
+                    else if (tab === 'eligibility') loadEligibility();
+                    else if (tab === 'safety') loadSafety();
+                    else if (tab === 'schedule') loadSchedule();
+                  }}>重试</Button>
+                </div>
+              </Alert>
+            </div>
+          )}
+
           {tab === 'roster' && (
             <div className="max-w-3xl space-y-4">
               <div className="flex items-center justify-between">
@@ -591,9 +634,17 @@ export function ResearchDetailPage() {
                               {s.sex || ''}
                             </p>
                           </div>
-                          <Badge variant={s.status === 'eligible' ? 'success' : s.status === 'ineligible' ? 'error' : 'default'}>
-                            {s.status}
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={s.status === 'eligible' ? 'success' : s.status === 'ineligible' ? 'error' : 'default'}>
+                              {s.status}
+                            </Badge>
+                            {/* #719: eligible 患者直达入组(预选),不必回 Roster 滚动找人。 */}
+                            {s.status === 'eligible' && (
+                              <Button size="sm" variant="secondary" onClick={() => handleEnroll(s.patient_hash)}>
+                                Enroll
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       {s.criteria_results && s.criteria_results.length > 0 && (
                         <div className="space-y-1 mt-2">
@@ -835,8 +886,22 @@ export function ResearchDetailPage() {
                   <p className="text-text-tertiary">No patients available</p>
                 </div>
               ) : (
-                <div className="max-h-80 space-y-2 overflow-y-auto">
-                  {patients.map((p) => (
+                <>
+                  {/* #719: 患者多时入组弹窗需可搜索。 */}
+                  <Input
+                    value={enrollQuery}
+                    onChange={(e) => setEnrollQuery(e.target.value)}
+                    placeholder="搜索患者（姓名/缩写/ID）…"
+                    className="mb-2"
+                  />
+                  <div className="max-h-80 space-y-2 overflow-y-auto">
+                    {patients.filter((p) => {
+                      const q = enrollQuery.trim().toLowerCase();
+                      if (!q) return true;
+                      return (p.name || '').toLowerCase().includes(q)
+                        || (p.initials || '').toLowerCase().includes(q)
+                        || p.patient_hash.toLowerCase().includes(q);
+                    }).map((p) => (
                     <div
                       key={p.patient_hash}
                       className="flex items-center justify-between rounded-lg border border-border p-3"
@@ -863,7 +928,16 @@ export function ResearchDetailPage() {
                       </Button>
                     </div>
                   ))}
-                </div>
+                  </div>
+                  {enrollQuery.trim() && patients.filter((p) => {
+                    const q = enrollQuery.trim().toLowerCase();
+                    return (p.name || '').toLowerCase().includes(q)
+                      || (p.initials || '').toLowerCase().includes(q)
+                      || p.patient_hash.toLowerCase().includes(q);
+                  }).length === 0 && (
+                    <p className="py-4 text-center text-xs text-text-tertiary">没有匹配的患者</p>
+                  )}
+                </>
               )}
               <div className="mt-4 flex justify-end">
                 <Button variant="ghost" onClick={() => setShowEnroll(false)}>Cancel</Button>

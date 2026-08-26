@@ -7,6 +7,7 @@ import { mapWireMessages } from '@/lib/message-map';
 import type { LlmStatus } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore, type ChatMessage } from '@/stores/chat';
+import { useAutoScrollOnStream } from '@/lib/use-auto-scroll';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { ChatMessages } from '@/components/chat/ChatMessages';
@@ -16,7 +17,7 @@ import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import { cn } from '@/lib/utils';
 import { Radar } from 'lucide-react';
 import { SkillCapturePrompt } from '@/components/SkillCapturePrompt';
-import { Alert, Button, Textarea } from '@/components/ui';
+import { Button, Textarea } from '@/components/ui';
 
 /** §10.3 (#220): group separator when a gap exceeds this many minutes. — moved to ChatMessages (#456) */
 
@@ -37,6 +38,9 @@ export function ChatPage() {
   // longer re-renders this page (was a full-store subscription).
   const [sessionId, setSessionId] = useState<string>('');
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  // #712: 历史加载骨架 + 失败重试。
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const session = useChatStore((s) => (sessionId ? s.sessions[sessionId] : undefined));
   const sendMessage = useChatStore((s) => s.sendMessage);
   const stopStream = useChatStore((s) => s.stopStream);
@@ -57,6 +61,7 @@ export function ChatPage() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   // #553: 附件按会话隔离(仿 drafts)— 切换会话不得把 A 会话附件带到 B。
   // #598: 附件持久化到 localStorage,刷新页面后按会话恢复(否则已上传
   // 附件刷新即消失)。
@@ -85,8 +90,13 @@ export function ChatPage() {
   // #620: 知识库选择器 — 显式选定文章加入上下文.
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const [kbQuery, setKbQuery] = useState('');
+  // #721: kbPicker 搜索 debounce。
+  const kbSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [kbResults, setKbResults] = useState<Array<{ id: string; title: string; summary: string; kind: 'article' | 'document' }>>([]);
-  const [kbPicked, setKbPicked] = useState<Array<{ id: string; title: string }>>([]);
+  // #712: kbPicked 按会话隔离(同 attachedFiles 模式) — A 会话选的文章
+  // 不得静默带入 B 会话。
+  const [kbPickedBySession, setKbPickedBySession] = useState<Record<string, Array<{ id: string; title: string }>>>({});
+  const kbPicked = kbPickedBySession[sessionId] ?? [];
   const [kbSearching, setKbSearching] = useState(false);
   // #516: per-session entry scene — switching sessions must not leak the
   // previous mode into a different conversation.
@@ -94,7 +104,7 @@ export function ChatPage() {
   const [kbAdded, setKbAdded] = useState<Record<string, boolean>>({});
   const [downloadUrls, setDownloadUrls] = useState<Record<string, string>>({});
   const [downloadLoading, setDownloadLoading] = useState<Record<string, boolean>>({});
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const { bottomRef, containerRef, isAtBottom, scrollToBottom } = useAutoScrollOnStream(session?.messages);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadGlobalSessions = useCallback(() => {
@@ -188,11 +198,15 @@ export function ChatPage() {
     if (!sessionId) return; // no session selected — nothing to load
     const existing = useChatStore.getState().sessions[sessionId]?.messages?.length;
     if (existing) return;
+    // #712: 历史加载中显示骨架,避免"空会话闪现 → 历史突然出现"。
+    setHistoryLoading(true);
+    setHistoryError(null);
     api.getMessages(sessionId, 50).then((r) => {
       // #461: single wire→UI mapper (restores download / knowledge payload).
       const msgs = mapWireMessages(r.messages);
       if (msgs.length > 0) setMessages(sessionId, msgs);
-    }).catch(() => {});
+    }).catch(() => setHistoryError('历史加载失败，点击重试'))
+      .finally(() => setHistoryLoading(false));
     // U3: show the context budget immediately for sessions with history.
     api.getContextUsage(sessionId).then((u) => {
       setContextUsage(sessionId, {
@@ -205,15 +219,6 @@ export function ChatPage() {
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps -- store must not be a dependency (setContextUsage would re-trigger this effect forever).
   }, [sessionId]);
-
-  useEffect(() => {
-    const el = bottomRef.current;
-    if (!el) return;
-    const parent = el.parentElement;
-    if (!parent) return;
-    const isNearBottom = parent.scrollHeight - parent.scrollTop - parent.clientHeight < 150;
-    if (isNearBottom) el.scrollIntoView({ behavior: 'smooth' });
-  }, [session?.messages]);
 
   const handleSend = async () => {
     if (!input.trim() || session?.loading || session?.compacting) return;
@@ -234,6 +239,8 @@ export function ChatPage() {
       skills: activeSkills,
       pickedKbIds: kbPicked.map((k) => k.id),
     });
+    // #707: 附件随本条消息消费后清空 — 避免连续消息重复附带同一文件。
+    setAttachedFiles((prev) => ({ ...prev, [sessionId]: [] }));
   };
 
   const handleStop = () => stopStream(sessionId);
@@ -265,7 +272,7 @@ export function ChatPage() {
     await regenerate(sessionId, {
       sessionId,
       text: '',
-      attachments: [],
+      // #708: 附件由 store 从原 user 消息恢复 — 不传空数组。
       skills: activeSkills,
     });
   };
@@ -279,7 +286,7 @@ export function ChatPage() {
     await regenerate(sessionId, {
       sessionId,
       text: lastUser.text,
-      attachments: [],
+      // #708: 附件由 store 从原 user 消息恢复 — 不传空数组。
       skills: activeSkills,
     });
   };
@@ -334,9 +341,14 @@ export function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 打开时按当前查询搜索
   }, [kbPickerOpen]);
   const toggleKbPick = (a: { id: string; title: string }) => {
-    setKbPicked((prev) =>
-      prev.some((p) => p.id === a.id) ? prev.filter((p) => p.id !== a.id) : (prev.length >= 3 ? prev : [...prev, a]),
-    );
+    // #712: 按会话隔离存储。
+    setKbPickedBySession((prevBySession) => {
+      const cur = prevBySession[sessionId] ?? [];
+      const next = cur.some((p) => p.id === a.id)
+        ? cur.filter((p) => p.id !== a.id)
+        : (cur.length >= 3 ? cur : [...cur, a]);
+      return { ...prevBySession, [sessionId]: next };
+    });
   };
 
   /** #582: 附件编辑结果落地 — 保存为文档 / 导出 PDF / 继续讨论。 */
@@ -349,7 +361,9 @@ export function ChatPage() {
       return;
     }
     if (m.exportState === 'saving' || !m.text) return;
-    const title = 'AI 润色结果';
+    // #725: 标题取消息首句(可读、可区分),不再固定 "AI 润色结果"。
+    const firstLine = m.text.split('\n').map((s) => s.trim()).find(Boolean) || 'AI 润色结果';
+    const title = firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine;
     patchMessage(sessionId, m.id, { exportState: 'saving' });
     try {
       const doc = await api.createDoc(title);
@@ -358,7 +372,8 @@ export function ChatPage() {
       if (option === 'export_pdf') {
         await api.exportDoc(doc.id, 'pdf', title);
       }
-      patchMessage(sessionId, m.id, { exportState: 'saved' });
+      // #725: 记录 docId — 消息内显示"打开文档"跳转链接。
+      patchMessage(sessionId, m.id, { exportState: 'saved', savedDocId: doc.id });
     } catch (err) {
       patchMessage(sessionId, m.id, { exportState: undefined });
       setError(err instanceof ApiError ? err.messageText : String(err));
@@ -372,9 +387,11 @@ export function ChatPage() {
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    e.target.value = ''; // #707: 同一文件可重复选择。
     setUploadingFile(true);
+    setUploadProgress(0);
     try {
-      const result = await api.uploadFile(f);
+      const result = await api.uploadFile(f, undefined, (p) => setUploadProgress(p));
       setAttachedFiles((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), { name: result.name, fileId: result.file_id }] }));
       // #619: 上传命中知识库(sha256 dedup)→ 提示,不重复存储.
       if (result.dedup) {
@@ -391,6 +408,7 @@ export function ChatPage() {
       setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
       setUploadingFile(false);
+      setUploadProgress(null);
     }
   };
 
@@ -413,8 +431,9 @@ export function ChatPage() {
       const file = item.getAsFile();
       if (!file) continue;
       setUploadingFile(true);
+      setUploadProgress(0);
       try {
-        const result = await api.uploadFile(file);
+        const result = await api.uploadFile(file, undefined, (p) => setUploadProgress(p));
         setAttachedFiles((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), { name: result.name, fileId: result.file_id }] }));
         // #619: 上传命中知识库(sha256 dedup)→ 提示.
         if (result.dedup) {
@@ -430,11 +449,13 @@ export function ChatPage() {
         // #fix: 大文件/上传失败此前静默吞掉 — 现在明示。
         setError(err instanceof ApiError ? err.messageText : String(err));
       }
-      finally { setUploadingFile(false); }
+      finally { setUploadingFile(false); setUploadProgress(null); }
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // #704: IME 组词阶段按 Enter 确认候选词 — 不能触发发送。
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -490,7 +511,7 @@ export function ChatPage() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto px-4 py-6">
+        <main ref={containerRef} className="flex-1 overflow-y-auto px-4 py-6">
           <div className="mx-auto max-w-3xl space-y-6">
             <ChatMessages
               variant="full"
@@ -511,15 +532,48 @@ export function ChatPage() {
               subagents={session?.subagents}
               emptyState={
                 <div className="py-20 text-center text-text-tertiary">
-                  {sessionId ? (
+                  {historyLoading ? (
+                    <>
+                      <div className="mx-auto mb-4 h-3 w-40 animate-pulse rounded bg-surface-elevated" />
+                      <div className="mx-auto mb-3 h-3 w-64 animate-pulse rounded bg-surface-elevated" />
+                      <div className="mx-auto mb-3 h-3 w-56 animate-pulse rounded bg-surface-elevated" />
+                      <div className="mx-auto mb-3 h-3 w-72 animate-pulse rounded bg-surface-elevated" />
+                      <p className="text-sm">{t('chat.loadingHistory', '正在加载历史记录…')}</p>
+                    </>
+                  ) : historyError ? (
+                    <>
+                      <p className="text-lg text-error">{historyError}</p>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="mt-4"
+                        onClick={() => {
+                          setHistoryLoading(true);
+                          setHistoryError(null);
+                          api.getMessages(sessionId, 50).then((r) => {
+                            const msgs = mapWireMessages(r.messages);
+                            if (msgs.length > 0) setMessages(sessionId, msgs);
+                          }).catch(() => setHistoryError('历史加载失败，点击重试'))
+                            .finally(() => setHistoryLoading(false));
+                        }}
+                      >
+                        {t('common.retry', '重试')}
+                      </Button>
+                    </>
+                  ) : sessionId ? (
                     <>
                       <p className="text-lg">{t('chat.startConversation')}</p>
                       <p className="text-sm">{t('chat.contextHint')}</p>
                       <div className="mt-5 flex flex-wrap justify-center gap-2 text-xs">
-                        {['📊 画一张对比柱状图', '🧬 画一下 EGFR 信号通路图', '💊 示意 TKI 耐药机制', '📈 对这两组数据做 t 检验'].map((ex) => (
+                        {[
+                          t('chat.exampleChart', '画一张对比柱状图'),
+                          t('chat.examplePathway', '画一下 EGFR 信号通路图'),
+                          t('chat.exampleMechanism', '示意 TKI 耐药机制'),
+                          t('chat.exampleStats', '对这两组数据做 t 检验'),
+                        ].map((ex) => (
                           <button
                             key={ex}
-                            onClick={() => setInput(ex.replace(/^[^\s]+\s/, ''))}
+                            onClick={() => setInput(ex)}
                             className="rounded-full border border-border bg-surface-elevated px-3 py-1.5 text-text-secondary transition-colors hover:border-accent/50 hover:text-accent"
                           >
                             {ex}
@@ -531,7 +585,7 @@ export function ChatPage() {
                   ) : (
                     <>
                       <p className="text-lg">{t('chat.noSession', '还没有会话')}</p>
-                      <p className="text-sm mb-5">{t('chat.noSessionHint', '创建一个新会话开始对话，或直接在下方输入第一条消息。')}</p>
+                      <p className="text-sm mb-5">{t('chat.noSessionHint', '创建一个新会话开始对话。')}</p>
                       <Button onClick={handleNewSession} variant="secondary">
                         <Plus size={14} className="mr-1.5" />
                         {t('chat.newSession', 'New Session')}
@@ -542,11 +596,28 @@ export function ChatPage() {
               }
             />
           </div>
+          {!isAtBottom && (
+            <button
+              onClick={scrollToBottom}
+              className="fixed bottom-24 left-1/2 z-30 -translate-x-1/2 rounded-full border border-border bg-surface-elevated px-3 py-1.5 text-xs text-text-secondary shadow-lg transition-colors hover:bg-surface hover:text-text-primary"
+            >
+              {t('chat.scrollToBottom', '回到底部')}
+            </button>
+          )}
         </main>
 
         {error && (
           <div className="mx-auto w-full max-w-3xl px-4 pb-2">
-            <Alert variant="error">{error}</Alert>
+            <div className="flex items-start justify-between gap-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-sm text-error">
+              <span>{error}</span>
+              <button
+                onClick={() => setError(null)}
+                className="rounded p-0.5 text-error/70 transition-colors hover:bg-error/10 hover:text-error"
+                aria-label={t('common.dismiss', '关闭')}
+              >
+                <X size={14} />
+              </button>
+            </div>
           </div>
         )}
 
@@ -598,6 +669,15 @@ export function ChatPage() {
                     </button>
                   </span>
                 ))}
+              </div>
+            )}
+            {uploadingFile && uploadProgress !== null && (
+              <div className="flex items-center gap-2 text-xs text-text-secondary">
+                <span className="shrink-0">{t('chat.uploading', '上传中…')}</span>
+                <div className="h-1.5 w-32 overflow-hidden rounded-full bg-surface">
+                  <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${uploadProgress}%` }} />
+                </div>
+                <span className="shrink-0">{uploadProgress}%</span>
               </div>
             )}
             {deepOpen && (
@@ -657,7 +737,8 @@ export function ChatPage() {
                 variant="ghost"
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={session?.loading || uploadingFile}
+                // #707: 无会话上传会静默丢失(附件按 sessionId 存空键) — 禁用。
+                disabled={session?.loading || uploadingFile || !sessionId}
                 isLoading={uploadingFile}
                 className="shrink-0"
               >
@@ -673,20 +754,25 @@ export function ChatPage() {
               >
                 <BookOpen size={16} />
               </Button>
-              <Textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                maxLength={32000}
-                placeholder={!sessionId
-                  ? t('chat.needSession', '请先新建一个会话')
-                  : (currentSessionTitle ? `${t('chat.placeholder')} — ${currentSessionTitle}` : t('chat.placeholder'))}
-                disabled={session?.loading || !sessionId || false}
-                rows={1}
-                className="min-h-0 flex-1 resize-none py-3"
-                style={{ maxHeight: '160px' }}
-              />
+               <Textarea
+                 value={input}
+                 onChange={(e) => {
+                   setInput(e.target.value);
+                   // #721: 输入框随内容自动增高(最多 160px 后内部滚动)。
+                   e.target.style.height = 'auto';
+                   e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+                 }}
+                 onKeyDown={handleKeyDown}
+                 onPaste={handlePaste}
+                 maxLength={32000}
+                 placeholder={!sessionId
+                   ? t('chat.needSession', '请先新建一个会话')
+                   : (currentSessionTitle ? `${t('chat.placeholder')} — ${currentSessionTitle}` : t('chat.placeholder'))}
+                 disabled={session?.loading || !sessionId || false}
+                 rows={1}
+                 className="min-h-0 flex-1 resize-none overflow-y-auto py-3"
+                 style={{ maxHeight: '160px' }}
+               />
               <PluginExtensionPoint
                 point="chat_toolbar"
                 context={{ sessionId }}
@@ -703,7 +789,7 @@ export function ChatPage() {
                   {t('chat.newSession', 'New Session')}
                 </Button>
               ) : (
-                <Button onClick={handleSend} disabled={!input.trim() || !!session?.compacting}>
+                <Button onClick={handleSend} disabled={!input.trim() || !!session?.compacting || uploadingFile}>
                   {session?.compacting ? t('chat.compactingShort', '压缩中…') : t('common.send')}
                 </Button>
               )}
@@ -746,7 +832,12 @@ export function ChatPage() {
             </div>
             <input
               value={kbQuery}
-              onChange={(e) => { setKbQuery(e.target.value); handleKbSearch(e.target.value); }}
+              onChange={(e) => {
+                setKbQuery(e.target.value);
+                // #721: 300ms debounce,避免每次击键都发请求。
+                if (kbSearchTimer.current) clearTimeout(kbSearchTimer.current);
+                kbSearchTimer.current = setTimeout(() => handleKbSearch(e.target.value), 300);
+              }}
               placeholder={t('chat.kbSearch', '搜索知识库…')}
               className="mb-3 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />

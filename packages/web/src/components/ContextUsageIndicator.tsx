@@ -28,8 +28,15 @@ export function ContextUsageIndicator({ usage }: { usage?: ContextUsage }) {
       <span className={pct >= 100 ? 'text-error' : pct >= 80 ? 'text-warning' : undefined}>
         {Math.round(pct)}%
       </span>
+      {/* #721: 百分比含义从 tooltip 提到可见文字 — 用户要知道何时压缩/丢什么。 */}
+      <span className="hidden text-text-tertiary sm:inline">
+        {t('chat.contextUsageText', '历史上下文（达 100% 自动压缩）')}
+      </span>
       {usage.willCompact && (
         <span className="text-error">{t('chat.compactingSoon', '即将压缩')}</span>
+      )}
+      {usage.omittedTurns > 0 && (
+        <span className="text-text-tertiary">{t('chat.omittedTurns', '已省略 {{n}} 轮', { n: usage.omittedTurns })}</span>
       )}
     </div>
   );

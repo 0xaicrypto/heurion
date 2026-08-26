@@ -111,6 +111,14 @@ export async function confirmSkillDraft(userId: string, draftId: string): Promis
   return updated.count > 0
 }
 
+/** #727: 对话内取消捕捉 — 删除尚未确认的草稿。 */
+export async function deleteSkillDraft(userId: string, draftId: string): Promise<boolean> {
+  const deleted = await (prisma as any).capturedSkill.deleteMany({
+    where: { id: draftId, userId, status: 'draft' },
+  })
+  return deleted.count > 0
+}
+
 export async function listCapturedSkills(userId: string, status?: string): Promise<any[]> {
   const where: any = { userId }
   if (status) where.status = status

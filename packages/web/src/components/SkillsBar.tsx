@@ -23,15 +23,21 @@ export function SkillsBar({ active, onToggle }: SkillsBarProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.listSkills()
-      .then((r) => setSkills(r.skills.map((s) => ({
-        name: s.name,
-        title: s.title || s.name,
-        enabled: s.enabled ?? false,
-        auto_apply: (s as unknown as { auto_apply?: boolean }).auto_apply,
-      }))))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    const load = () => {
+      api.listSkills()
+        .then((r) => setSkills(r.skills.map((s) => ({
+          name: s.name,
+          title: s.title || s.name,
+          enabled: s.enabled ?? false,
+          auto_apply: (s as unknown as { auto_apply?: boolean }).auto_apply,
+        }))))
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    };
+    load();
+    // #727: 技能捕捉保存成功后刷新 — "下次可直接调用"在当前会话立即成立。
+    window.addEventListener('skills:refresh', load);
+    return () => window.removeEventListener('skills:refresh', load);
   }, []);
 
   const enabledSkilss = skills.filter((s) => s.enabled);

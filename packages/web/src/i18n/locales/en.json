@@ -90,7 +90,10 @@
     "sectionPatients": "Patient Workspace",
     "sectionMemory": "Memory & Knowledge",
     "sectionTools": "Tools & Settings",
-    "chartLibrary": "Chart Library"
+    "chartLibrary": "Chart Library",
+    "files": "Files",
+    "schedule": "Schedule",
+    "export": "Export"
   },
   "auth": {
     "welcomeBack": "Welcome back",
@@ -216,7 +219,7 @@
     "closed": "closed",
     "cannotCloseDefault": "The default session cannot be closed",
     "noSession": "No session yet",
-    "noSessionHint": "Create a new session to start, or just type your first message below.",
+    "noSessionHint": "Create a new session to start a conversation.",
     "confirmCloseBody": "After closing \"{{title}}\", its chat history is cleared and cannot be recovered. Close it?",
     "needSession": "Create a session first",
     "noSessionSelected": "No session selected",

@@ -43,11 +43,11 @@ export declare const paragraphBlockSchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     type: "paragraph";
     text: string;
-    style?: "normal" | "bullet" | "heading" | undefined;
+    style?: "bullet" | "heading" | "normal" | undefined;
 }, {
     type: "paragraph";
     text: string;
-    style?: "normal" | "bullet" | "heading" | undefined;
+    style?: "bullet" | "heading" | "normal" | undefined;
 }>;
 export type ParagraphBlock = z.infer<typeof paragraphBlockSchema>;
 export declare const contentBlockSchema: z.ZodUnion<[z.ZodObject<{
@@ -57,11 +57,11 @@ export declare const contentBlockSchema: z.ZodUnion<[z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     type: "paragraph";
     text: string;
-    style?: "normal" | "bullet" | "heading" | undefined;
+    style?: "bullet" | "heading" | "normal" | undefined;
 }, {
     type: "paragraph";
     text: string;
-    style?: "normal" | "bullet" | "heading" | undefined;
+    style?: "bullet" | "heading" | "normal" | undefined;
 }>, z.ZodObject<{
     type: z.ZodLiteral<"image">;
     /** "asset://name" (resolved from a configured asset dir) or an inline data/base64 string. */
@@ -90,11 +90,11 @@ export declare const presentationSlideSchema: z.ZodObject<{
     }, "strip", z.ZodTypeAny, {
         type: "paragraph";
         text: string;
-        style?: "normal" | "bullet" | "heading" | undefined;
+        style?: "bullet" | "heading" | "normal" | undefined;
     }, {
         type: "paragraph";
         text: string;
-        style?: "normal" | "bullet" | "heading" | undefined;
+        style?: "bullet" | "heading" | "normal" | undefined;
     }>, z.ZodObject<{
         type: z.ZodLiteral<"image">;
         /** "asset://name" (resolved from a configured asset dir) or an inline data/base64 string. */
@@ -123,7 +123,7 @@ export declare const presentationSlideSchema: z.ZodObject<{
     } | {
         type: "paragraph";
         text: string;
-        style?: "normal" | "bullet" | "heading" | undefined;
+        style?: "bullet" | "heading" | "normal" | undefined;
     })[];
 }, {
     title: string;
@@ -135,7 +135,7 @@ export declare const presentationSlideSchema: z.ZodObject<{
     } | {
         type: "paragraph";
         text: string;
-        style?: "normal" | "bullet" | "heading" | undefined;
+        style?: "bullet" | "heading" | "normal" | undefined;
     })[];
 }>;
 export type PresentationSlide = z.infer<typeof presentationSlideSchema>;
@@ -154,11 +154,11 @@ export declare const presentationContentSchema: z.ZodObject<{
         }, "strip", z.ZodTypeAny, {
             type: "paragraph";
             text: string;
-            style?: "normal" | "bullet" | "heading" | undefined;
+            style?: "bullet" | "heading" | "normal" | undefined;
         }, {
             type: "paragraph";
             text: string;
-            style?: "normal" | "bullet" | "heading" | undefined;
+            style?: "bullet" | "heading" | "normal" | undefined;
         }>, z.ZodObject<{
             type: z.ZodLiteral<"image">;
             /** "asset://name" (resolved from a configured asset dir) or an inline data/base64 string. */
@@ -187,7 +187,7 @@ export declare const presentationContentSchema: z.ZodObject<{
         } | {
             type: "paragraph";
             text: string;
-            style?: "normal" | "bullet" | "heading" | undefined;
+            style?: "bullet" | "heading" | "normal" | undefined;
         })[];
     }, {
         title: string;
@@ -199,12 +199,15 @@ export declare const presentationContentSchema: z.ZodObject<{
         } | {
             type: "paragraph";
             text: string;
-            style?: "normal" | "bullet" | "heading" | undefined;
+            style?: "bullet" | "heading" | "normal" | undefined;
         })[];
     }>, "many">;
 }, "strip", z.ZodTypeAny, {
-    title: string;
     schemaVersion: 1;
+    title: string;
+    subtitle?: string | undefined;
+    presenter?: string | undefined;
+    date?: string | undefined;
     slides: {
         title: string;
         content: ({
@@ -215,15 +218,15 @@ export declare const presentationContentSchema: z.ZodObject<{
         } | {
             type: "paragraph";
             text: string;
-            style?: "normal" | "bullet" | "heading" | undefined;
+            style?: "bullet" | "heading" | "normal" | undefined;
         })[];
     }[];
-    date?: string | undefined;
-    subtitle?: string | undefined;
-    presenter?: string | undefined;
 }, {
-    title: string;
     schemaVersion: 1;
+    title: string;
+    subtitle?: string | undefined;
+    presenter?: string | undefined;
+    date?: string | undefined;
     slides: {
         title: string;
         content: ({
@@ -234,12 +237,9 @@ export declare const presentationContentSchema: z.ZodObject<{
         } | {
             type: "paragraph";
             text: string;
-            style?: "normal" | "bullet" | "heading" | undefined;
+            style?: "bullet" | "heading" | "normal" | undefined;
         })[];
     }[];
-    date?: string | undefined;
-    subtitle?: string | undefined;
-    presenter?: string | undefined;
 }>;
 export type PresentationContent = z.infer<typeof presentationContentSchema>;
 export declare const documentSectionSchema: z.ZodObject<{
@@ -251,11 +251,11 @@ export declare const documentSectionSchema: z.ZodObject<{
     }, "strip", z.ZodTypeAny, {
         type: "paragraph";
         text: string;
-        style?: "normal" | "bullet" | "heading" | undefined;
+        style?: "bullet" | "heading" | "normal" | undefined;
     }, {
         type: "paragraph";
         text: string;
-        style?: "normal" | "bullet" | "heading" | undefined;
+        style?: "bullet" | "heading" | "normal" | undefined;
     }>, z.ZodObject<{
         type: z.ZodLiteral<"image">;
         /** "asset://name" (resolved from a configured asset dir) or an inline data/base64 string. */
@@ -284,7 +284,7 @@ export declare const documentSectionSchema: z.ZodObject<{
     } | {
         type: "paragraph";
         text: string;
-        style?: "normal" | "bullet" | "heading" | undefined;
+        style?: "bullet" | "heading" | "normal" | undefined;
     })[];
 }, {
     heading: string;
@@ -296,7 +296,7 @@ export declare const documentSectionSchema: z.ZodObject<{
     } | {
         type: "paragraph";
         text: string;
-        style?: "normal" | "bullet" | "heading" | undefined;
+        style?: "bullet" | "heading" | "normal" | undefined;
     })[];
 }>;
 export type DocumentSection = z.infer<typeof documentSectionSchema>;
@@ -312,11 +312,11 @@ export declare const documentContentSchema: z.ZodObject<{
         }, "strip", z.ZodTypeAny, {
             type: "paragraph";
             text: string;
-            style?: "normal" | "bullet" | "heading" | undefined;
+            style?: "bullet" | "heading" | "normal" | undefined;
         }, {
             type: "paragraph";
             text: string;
-            style?: "normal" | "bullet" | "heading" | undefined;
+            style?: "bullet" | "heading" | "normal" | undefined;
         }>, z.ZodObject<{
             type: z.ZodLiteral<"image">;
             /** "asset://name" (resolved from a configured asset dir) or an inline data/base64 string. */
@@ -345,7 +345,7 @@ export declare const documentContentSchema: z.ZodObject<{
         } | {
             type: "paragraph";
             text: string;
-            style?: "normal" | "bullet" | "heading" | undefined;
+            style?: "bullet" | "heading" | "normal" | undefined;
         })[];
     }, {
         heading: string;
@@ -357,12 +357,12 @@ export declare const documentContentSchema: z.ZodObject<{
         } | {
             type: "paragraph";
             text: string;
-            style?: "normal" | "bullet" | "heading" | undefined;
+            style?: "bullet" | "heading" | "normal" | undefined;
         })[];
     }>, "many">;
 }, "strip", z.ZodTypeAny, {
-    title: string;
     schemaVersion: 1;
+    title: string;
     sections: {
         heading: string;
         paragraphs: ({
@@ -373,12 +373,12 @@ export declare const documentContentSchema: z.ZodObject<{
         } | {
             type: "paragraph";
             text: string;
-            style?: "normal" | "bullet" | "heading" | undefined;
+            style?: "bullet" | "heading" | "normal" | undefined;
         })[];
     }[];
 }, {
-    title: string;
     schemaVersion: 1;
+    title: string;
     sections: {
         heading: string;
         paragraphs: ({
@@ -389,7 +389,7 @@ export declare const documentContentSchema: z.ZodObject<{
         } | {
             type: "paragraph";
             text: string;
-            style?: "normal" | "bullet" | "heading" | undefined;
+            style?: "bullet" | "heading" | "normal" | undefined;
         })[];
     }[];
 }>;
@@ -400,13 +400,13 @@ export declare const tableContentSchema: z.ZodObject<{
     headers: z.ZodArray<z.ZodString, "many">;
     rows: z.ZodArray<z.ZodArray<z.ZodString, "many">, "many">;
 }, "strip", z.ZodTypeAny, {
-    title: string;
     schemaVersion: 1;
+    title: string;
     headers: string[];
     rows: string[][];
 }, {
-    title: string;
     schemaVersion: 1;
+    title: string;
     headers: string[];
     rows: string[][];
 }>;
@@ -431,27 +431,27 @@ export declare const plotContentSchema: z.ZodObject<{
         y: number[];
     }>, "many">;
 }, "strip", z.ZodTypeAny, {
+    schemaVersion: 1;
     type: "bar" | "line" | "pie";
     title: string;
-    schemaVersion: 1;
+    x_label?: string | undefined;
+    y_label?: string | undefined;
     series: {
         label: string;
         x: number[];
         y: number[];
     }[];
-    x_label?: string | undefined;
-    y_label?: string | undefined;
 }, {
+    schemaVersion: 1;
     type: "bar" | "line" | "pie";
     title: string;
-    schemaVersion: 1;
+    x_label?: string | undefined;
+    y_label?: string | undefined;
     series: {
         label: string;
         x: number[];
         y: number[];
     }[];
-    x_label?: string | undefined;
-    y_label?: string | undefined;
 }>;
 export type PlotContent = z.infer<typeof plotContentSchema>;
 /**
@@ -483,20 +483,20 @@ export declare const biosceneObjectSchema: z.ZodObject<{
     label: z.ZodOptional<z.ZodString>;
     colorize: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
+    icon: string;
     x: number;
     y: number;
-    icon: string;
-    label?: string | undefined;
     scale?: number | undefined;
     rotate?: number | undefined;
+    label?: string | undefined;
     colorize?: string | undefined;
 }, {
+    icon: string;
     x: number;
     y: number;
-    icon: string;
-    label?: string | undefined;
     scale?: number | undefined;
     rotate?: number | undefined;
+    label?: string | undefined;
     colorize?: string | undefined;
 }>;
 export type BioSceneObject = z.infer<typeof biosceneObjectSchema>;
@@ -509,15 +509,15 @@ export declare const biosceneConnectionSchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     from: number;
     to: number;
-    label?: string | undefined;
-    kind?: "arrow" | "dashed" | "phosphorylation" | "inhibition" | undefined;
+    kind?: "arrow" | "dashed" | "inhibition" | "phosphorylation" | undefined;
     bend?: number | undefined;
+    label?: string | undefined;
 }, {
     from: number;
     to: number;
-    label?: string | undefined;
-    kind?: "arrow" | "dashed" | "phosphorylation" | "inhibition" | undefined;
+    kind?: "arrow" | "dashed" | "inhibition" | "phosphorylation" | undefined;
     bend?: number | undefined;
+    label?: string | undefined;
 }>;
 export type BioSceneConnection = z.infer<typeof biosceneConnectionSchema>;
 export declare const biosceneAnnotationSchema: z.ZodObject<{
@@ -526,15 +526,15 @@ export declare const biosceneAnnotationSchema: z.ZodObject<{
     y: z.ZodNumber;
     text: z.ZodString;
 }, "strip", z.ZodTypeAny, {
-    type: "text" | "bracket";
-    text: string;
+    type: "bracket" | "text";
     x: number;
     y: number;
+    text: string;
 }, {
-    type: "text" | "bracket";
-    text: string;
+    type: "bracket" | "text";
     x: number;
     y: number;
+    text: string;
 }>;
 export type BioSceneAnnotation = z.infer<typeof biosceneAnnotationSchema>;
 export declare const biosceneContentSchema: z.ZodObject<{
@@ -558,20 +558,20 @@ export declare const biosceneContentSchema: z.ZodObject<{
         label: z.ZodOptional<z.ZodString>;
         colorize: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
+        icon: string;
         x: number;
         y: number;
-        icon: string;
-        label?: string | undefined;
         scale?: number | undefined;
         rotate?: number | undefined;
+        label?: string | undefined;
         colorize?: string | undefined;
     }, {
+        icon: string;
         x: number;
         y: number;
-        icon: string;
-        label?: string | undefined;
         scale?: number | undefined;
         rotate?: number | undefined;
+        label?: string | undefined;
         colorize?: string | undefined;
     }>, "many">;
     connections: z.ZodOptional<z.ZodArray<z.ZodObject<{
@@ -583,15 +583,15 @@ export declare const biosceneContentSchema: z.ZodObject<{
     }, "strip", z.ZodTypeAny, {
         from: number;
         to: number;
-        label?: string | undefined;
-        kind?: "arrow" | "dashed" | "phosphorylation" | "inhibition" | undefined;
+        kind?: "arrow" | "dashed" | "inhibition" | "phosphorylation" | undefined;
         bend?: number | undefined;
+        label?: string | undefined;
     }, {
         from: number;
         to: number;
-        label?: string | undefined;
-        kind?: "arrow" | "dashed" | "phosphorylation" | "inhibition" | undefined;
+        kind?: "arrow" | "dashed" | "inhibition" | "phosphorylation" | undefined;
         bend?: number | undefined;
+        label?: string | undefined;
     }>, "many">>;
     annotations: z.ZodOptional<z.ZodArray<z.ZodObject<{
         type: z.ZodEnum<["text", "bracket"]>;
@@ -599,71 +599,71 @@ export declare const biosceneContentSchema: z.ZodObject<{
         y: z.ZodNumber;
         text: z.ZodString;
     }, "strip", z.ZodTypeAny, {
-        type: "text" | "bracket";
-        text: string;
+        type: "bracket" | "text";
         x: number;
         y: number;
+        text: string;
     }, {
-        type: "text" | "bracket";
-        text: string;
+        type: "bracket" | "text";
         x: number;
         y: number;
+        text: string;
     }>, "many">>;
 }, "strip", z.ZodTypeAny, {
     schemaVersion: 1;
-    objects: {
-        x: number;
-        y: number;
-        icon: string;
-        label?: string | undefined;
-        scale?: number | undefined;
-        rotate?: number | undefined;
-        colorize?: string | undefined;
-    }[];
     canvas?: {
         width: number;
         height: number;
     } | undefined;
+    objects: {
+        icon: string;
+        x: number;
+        y: number;
+        scale?: number | undefined;
+        rotate?: number | undefined;
+        label?: string | undefined;
+        colorize?: string | undefined;
+    }[];
     connections?: {
         from: number;
         to: number;
-        label?: string | undefined;
-        kind?: "arrow" | "dashed" | "phosphorylation" | "inhibition" | undefined;
+        kind?: "arrow" | "dashed" | "inhibition" | "phosphorylation" | undefined;
         bend?: number | undefined;
+        label?: string | undefined;
     }[] | undefined;
     annotations?: {
-        type: "text" | "bracket";
-        text: string;
+        type: "bracket" | "text";
         x: number;
         y: number;
+        text: string;
     }[] | undefined;
 }, {
     schemaVersion: 1;
-    objects: {
-        x: number;
-        y: number;
-        icon: string;
-        label?: string | undefined;
-        scale?: number | undefined;
-        rotate?: number | undefined;
-        colorize?: string | undefined;
-    }[];
     canvas?: {
         width?: number | undefined;
         height?: number | undefined;
     } | undefined;
+    objects: {
+        icon: string;
+        x: number;
+        y: number;
+        scale?: number | undefined;
+        rotate?: number | undefined;
+        label?: string | undefined;
+        colorize?: string | undefined;
+    }[];
     connections?: {
         from: number;
         to: number;
-        label?: string | undefined;
-        kind?: "arrow" | "dashed" | "phosphorylation" | "inhibition" | undefined;
+        kind?: "arrow" | "dashed" | "inhibition" | "phosphorylation" | undefined;
         bend?: number | undefined;
+        label?: string | undefined;
     }[] | undefined;
     annotations?: {
-        type: "text" | "bracket";
-        text: string;
+        type: "bracket" | "text";
         x: number;
         y: number;
+        text: string;
     }[] | undefined;
 }>;
 export type BioSceneContent = z.infer<typeof biosceneContentSchema>;

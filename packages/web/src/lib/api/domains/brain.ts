@@ -67,6 +67,11 @@ export class BrainApi extends ApiCore {
     return this.fetch(`/api/v1/skills/capture/${draftId}/confirm`, { method: 'POST', body: JSON.stringify({}) });
   }
 
+  /** #727: 取消捕捉 — 删除未确认草稿,不残留 Captured tab。 */
+  async deleteSkillDraft(draftId: string): Promise<{ ok: boolean }> {
+    return this.fetch(`/api/v1/skills/capture/${draftId}`, { method: 'DELETE' });
+  }
+
   async proposeMemory(data: { content: string; category?: string; importance?: number; patientHash?: string }): Promise<{ status: 'pending' | 'rejected'; id: string; reason?: string }> {
     return this.fetch('/api/v1/memorization/propose', {
       method: 'POST',

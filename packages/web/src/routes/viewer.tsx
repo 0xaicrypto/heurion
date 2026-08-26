@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ChevronLeft, ChevronRight, Image as ImageIcon, Layers } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
@@ -46,6 +46,7 @@ const modalityColors: Record<string, string> = {
 
 export function ViewerPage() {
   const { studyId } = useParams<{ studyId: string }>();
+  const navigate = useNavigate();
   const [study, setStudy] = useState<StudyDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -157,7 +158,7 @@ export function ViewerPage() {
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       <div className="flex items-center gap-4 border-b border-border bg-surface px-6 py-3">
-        <Button size="sm" variant="ghost" onClick={() => window.history.back()}>
+        <Button size="sm" variant="ghost" onClick={() => (window.history.length > 1 ? window.history.back() : navigate('/app/patients'))}>
           <ArrowLeft size={16} />
         </Button>
         {loading ? (

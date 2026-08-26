@@ -282,6 +282,16 @@ export async function documentsRouter(app: FastifyInstance) {
     }
   })
 
+  // #711: 参考材料可删除 — 传错文件/不再需要的材料要从 AI 上下文中移除。
+  app.delete('/api/v1/docs/:docId/references/:referenceId', async (request, reply) => {
+    const { docId, referenceId } = request.params as any
+    const userId = request.user!.userId
+    const ref = await (prisma as any).docReference.findFirst({ where: { id: referenceId, docId, userId } })
+    if (!ref) return reply.status(404).send({ error: 'Reference not found' })
+    await (prisma as any).docReference.delete({ where: { id: referenceId } })
+    return { ok: true }
+  })
+
   // ── #383: research ↔ paper linkage ──
   // Generate a Methods draft from the linked study's protocol rules.
   app.post('/api/v1/docs/:docId/generate-methods', async (request, reply) => {

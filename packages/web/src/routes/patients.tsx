@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ChevronRight, FileText, Paperclip, Plus, Search, Trash2, User } from 'lucide-react';
+import { ArrowLeft, ChevronRight, FileText, FlaskConical, Paperclip, Plus, Search, Trash2, User } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { SkillsBar } from '@/components/SkillsBar';
@@ -12,7 +12,8 @@ import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/compone
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/api';
 import { mapWireMessages } from '@/lib/message-map';
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, type ChatMessage } from '@/stores/chat';
+import { useAutoScrollOnStream } from '@/lib/use-auto-scroll';
 import type { MemoryFinding, MemoryProjection, Patient, PatientDetail } from '@/lib/types';
 
 function PatientList({
@@ -53,6 +54,23 @@ function PatientList({
         </div>
       </div>
       <ul className="flex-1 overflow-y-auto px-3">
+        {filtered.length === 0 && (
+          <li className="px-3 py-8 text-center">
+            <p className="text-sm text-text-tertiary">
+              {patients.length === 0
+                ? t('patient.empty', '还没有患者 — 点击 + 创建')
+                : t('patient.noMatch', '没有匹配的患者，试试其他关键词')}
+            </p>
+            {patients.length > 0 && (
+              <button
+                onClick={() => setQuery('')}
+                className="mt-2 text-xs text-accent underline underline-offset-2 hover:opacity-80"
+              >
+                {t('common.clearSearch', '清除搜索')}
+              </button>
+            )}
+          </li>
+        )}
         {filtered.map((p) => (
           <li key={p.patient_hash} className="flex items-center group">
             <NavLink
@@ -212,6 +230,8 @@ export function PatientSummaryPage() {
   const navigate = useNavigate();
   const [detail, setDetail] = useState<PatientDetail | null>(null);
   const [projection, setProjection] = useState<MemoryProjection | null>(null);
+  // #724: 患者已入组的研究(科研双向桥 — 患者侧可见入组状态)。
+  const [patientEnrollments, setPatientEnrollments] = useState<Array<{ study_id: string; study_name: string; status: string; arm: string | null }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -222,10 +242,12 @@ export function PatientSummaryPage() {
     Promise.all([
       api.getPatientDetail(hash).catch(() => null),
       api.getMemoryProjection(hash).catch(() => null),
+      api.getPatientEnrollments(hash).catch(() => ({ enrollments: [] })),
     ])
-      .then(([d, p]) => {
+      .then(([d, p, e]) => {
         setDetail(d);
         setProjection(p);
+        setPatientEnrollments(e.enrollments);
         if (!d && !p) setError('Patient not found');
       })
       .catch((err) => setError(err instanceof ApiError ? err.messageText : String(err)))
@@ -305,7 +327,10 @@ export function PatientSummaryPage() {
         </div>
         <Button size="sm" onClick={() => navigate(`/app/patients/${hash}/chat`)}>{t('patient.chat')}</Button>
         <button
-          onClick={() => { if (confirm('Delete this patient?')) { api.deletePatient(hash).then(() => navigate('/app/patients')).catch(() => {}); } }}
+          onClick={async () => { if (confirm('Delete this patient?')) {
+            try { await api.deletePatient(hash); navigate('/app/patients'); }
+            catch (err) { setError(err instanceof ApiError ? err.messageText : 'Delete failed'); }
+          } }}
           className="ml-2 rounded p-1.5 text-text-tertiary hover:text-error hover:bg-error/10 transition-colors"
           title="Delete patient"
         >
@@ -314,6 +339,30 @@ export function PatientSummaryPage() {
       </div>
       <PatientTabs hash={hash} active="summary" />
       <main className="space-y-6 p-6">
+        {/* #724: 已入组研究 — 患者侧可见科研关联,点击直达研究详情。 */}
+        {patientEnrollments.length > 0 && (
+          <Card className="p-4">
+            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text-primary">
+              <FlaskConical size={14} className="text-accent" />
+              {t('patient.enrolledStudies', '已入组研究')}
+            </h3>
+            <ul className="space-y-1.5">
+              {patientEnrollments.map((en) => (
+                <li key={en.study_id}>
+                  <button
+                    onClick={() => navigate(`/app/research/${en.study_id}`)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-accent/50 hover:bg-surface-elevated"
+                  >
+                    <span className="truncate text-sm text-text-primary">{en.study_name}</span>
+                    <span className="shrink-0 text-xs text-text-tertiary">
+                      {en.arm || '—'} · {en.status}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
         {/* ── Medical Record Summary (primary source) ── */}
         {hasMr ? (
           <Card className="p-6 border-l-4 border-l-accent">
@@ -445,13 +494,18 @@ export function PatientChatPage() {
   const stopStream = useChatStore((s) => s.stopStream);
   const setMessages = useChatStore((s) => s.setMessages);
   const setContextUsage = useChatStore((s) => s.setContextUsage);
+  // #722: 患者对话产出可达 — 下载 AI 生成文件 / 加入知识库。
+  const [downloadUrls, setDownloadUrls] = useState<Record<string, string>>({});
+  const [downloadLoading, setDownloadLoading] = useState<Record<string, boolean>>({});
+  const [kbChecked, setKbChecked] = useState<Record<string, boolean>>({});
+  const [kbAdded, setKbAdded] = useState<Record<string, boolean>>({});
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<Array<{name: string; fileId: string}>>([]);
   const [kbDedupNotice, setKbDedupNotice] = useState<string | null>(null);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const { bottomRef, containerRef } = useAutoScrollOnStream(session?.messages);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // #553: 切换患者(hash 变化)时重置本地状态,避免遗留输入/附件
@@ -488,15 +542,6 @@ export function PatientChatPage() {
     }).catch(() => {});
   }, [sessionId, hash, setMessages, setContextUsage]);
 
-  useEffect(() => {
-    const el = bottomRef.current;
-    if (!el) return;
-    const parent = el.parentElement;
-    if (!parent) return;
-    const nearBottom = parent.scrollHeight - parent.scrollTop - parent.clientHeight < 150;
-    if (nearBottom) el.scrollIntoView({ behavior: 'smooth' });
-  }, [session?.messages]);
-
   const handleSend = async () => {
     if (!input.trim() || !sessionId || session?.loading || session?.compacting) return;
     const text = input.trim();
@@ -514,6 +559,37 @@ export function PatientChatPage() {
   };
 
   const handleStop = () => stopStream(sessionId);
+
+  // #722: 下载 AI 生成文件(患者场景此前 compact 隐藏了下载出口)。
+  const resolveDownloadUrl = async (fileId: string) => {
+    if (downloadUrls[fileId]) return downloadUrls[fileId];
+    setDownloadLoading(prev => ({ ...prev, [fileId]: true }));
+    try {
+      const info = await api.getExecutionFileDownload(fileId);
+      setDownloadUrls(prev => ({ ...prev, [fileId]: info.download_url }));
+      return info.download_url;
+    } catch {
+      setError('下载链接获取失败');
+      return '';
+    } finally {
+      setDownloadLoading(prev => ({ ...prev, [fileId]: false }));
+    }
+  };
+
+  const handleDownloadClick = async (msg: ChatMessage) => {
+    if (!msg.download) return;
+    const url = msg.download.url || await resolveDownloadUrl(msg.download.fileId);
+    if (url) window.open(url, '_blank');
+    else setError('文件下载不可用');
+  };
+
+  const handleAddToKnowledge = async (msg: ChatMessage) => {
+    if (!msg.knowledgePayload) return;
+    await api.createKnowledgeArticle(msg.knowledgePayload).catch((err) => {
+      setError(err instanceof ApiError ? err.messageText : '加入知识库失败');
+    });
+    setKbAdded(prev => ({ ...prev, [msg.id]: true }));
+  };
 
   const toggleSkill = (name: string) => {
     setActiveSkills((prev) => prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name]);
@@ -580,14 +656,20 @@ export function PatientChatPage() {
   return (
     <div className="flex h-full flex-col">
       <PatientTabs hash={hash} active="chat" />
-      <main className="flex-1 overflow-y-auto px-4 py-6">
+      <main ref={containerRef} className="flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto max-w-3xl">
-          <ChatMessages
-            variant="compact"
-            messages={messages}
-            streamNote={session?.streamNote}
-            bottomRef={bottomRef}
-            emptyState={
+           <ChatMessages
+             variant="compact"
+             messages={messages}
+             streamNote={session?.streamNote}
+             bottomRef={bottomRef}
+             onDownloadClick={handleDownloadClick}
+             downloadLoading={downloadLoading}
+             onAddToKnowledge={handleAddToKnowledge}
+             onKbCheckedChange={(id, checked) => setKbChecked(prev => ({ ...prev, [id]: checked }))}
+             kbChecked={kbChecked}
+             kbAdded={kbAdded}
+             emptyState={
               <div className="flex flex-1 items-center justify-center px-6 text-center">
                 <div>
                   <p className="text-lg text-text-tertiary">{t('chat.startConversation')}</p>

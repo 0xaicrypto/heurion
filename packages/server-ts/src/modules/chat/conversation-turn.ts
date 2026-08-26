@@ -507,12 +507,25 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   const tools = await toolRegistry.getDefinitionsForUser(scene, sid)
 
   // Tool-calling loop
+  // #723: 拦截 chart_created — 图表 URL 随 assistant_response 的 metadata
+  // 持久化,历史重载时前端才能恢复聊天里的图表(否则刷新后图"消失")。
+  const chartMeta: Array<{ url: string; chartType?: string }> = []
+  const ioWithChart: TurnIO = {
+    ...io,
+    send: (chunk) => {
+      if (chunk && typeof chunk === 'object' && (chunk as { type?: string }).type === 'chart_created') {
+        const c = chunk as { type: 'chart_created'; url: string; chart_type?: string }
+        chartMeta.push({ url: c.url, chartType: c.chart_type })
+      }
+      io.send(chunk)
+    },
+  }
   const { finalContent, messages: loopMessages } = await runToolCallLoop({
     currentMessages: messages,
     toolRegistry,
     tools,
     apiKey,
-    io,
+    io: ioWithChart,
     ctx,
     userId,
     sessionId: sid,
@@ -560,7 +573,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // Log the assistant response (user_message was persisted upfront)
   ctx.eventLog.append({
     timestamp: Date.now() / 1000, eventType: 'assistant_response', content: fullResponse,
-    metadata: {}, agentId: userId, sessionId: sid,
+    metadata: chartMeta.length > 0 ? { chart: chartMeta } : {}, agentId: userId, sessionId: sid,
   })
 
   // #582 — 例 A：通用会话编辑附件（action=edit, target=attachment）时，给

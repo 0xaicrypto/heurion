@@ -12,6 +12,8 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  /** #708: user 消息携带的附件 fileId — 重试/重新生成时恢复附件上下文。 */
+  attachments?: string[];
   reasoning?: string;
   isStreaming?: boolean;
   tier?: string;
@@ -51,6 +53,8 @@ export interface ChatMessage {
   exportOptions?: Array<'save_as_document' | 'export_pdf' | 'continue_discussion'>;
   /** #582: 导出动作的进行/完成状态。 */
   exportState?: 'saving' | 'saved';
+  /** #725: 保存为文档后的 docId — 消息内提供跳转链接。 */
+  savedDocId?: string;
 }
 
 export interface SessionState {

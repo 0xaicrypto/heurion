@@ -672,6 +672,9 @@ model VerificationCode {
 model SubmissionDraft {
   id            String  @id @default(cuid())
   userId        String  @map("user_id")
+  // #726: 投稿草稿关联文档 — 每个文档独立的目标期刊/模板/状态,
+  // 不再所有文档共享全局单例(drafts[0])互相污染。
+  docId         String? @map("doc_id")
   articleTitle  String  @map("article_title")
   abstract      String? @map("abstract")
   keywords      String? @map("keywords")
@@ -682,7 +685,7 @@ model SubmissionDraft {
   status        String  @default("draft") @map("status")
   createdAt     String  @map("created_at")
   updatedAt     String  @map("updated_at")
-  @@index([userId])
+  @@index([userId, docId])
   @@map("submission_drafts")
 }
 

@@ -183,6 +183,16 @@ app.post('/api/v1/skills/capture/:id/confirm', async (request, reply) => {
   return { status: 'confirmed' }
 })
 
+// #727: 对话内取消捕捉 — 删除服务端草稿,避免 Captured tab 残留
+// "我没保存过的技能"。
+app.delete('/api/v1/skills/capture/:id', async (request, reply) => {
+  const userId = request.user!.userId
+  const { deleteSkillDraft } = await import('./skill-capture.service.js')
+  const ok = await deleteSkillDraft(userId, (request.params as any).id)
+  if (!ok) return reply.status(404).send({ error: 'Draft not found' })
+  return { ok: true }
+})
+
 app.get('/api/v1/skills/captured', async (request) => {
   const userId = request.user!.userId
   const { listCapturedSkills } = await import('./skill-capture.service.js')

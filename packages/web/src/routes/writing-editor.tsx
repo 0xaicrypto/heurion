@@ -96,6 +96,12 @@ export function WritingEditorPage() {
 
   // #402-merge: append a library figure to the document body.
   const handleInsertChart = (markdown: string) => {
+    // #720: 审阅未决时插入图表会被编辑器吞掉(审阅内容由 diffReview 驱动) — 明示。
+    if (diffReview) {
+      setAiEditNotice('请先完成当前 AI 修改的审阅，再插入图表');
+      setTimeout(() => setAiEditNotice(''), 4000);
+      return;
+    }
     setBody((prev) => `${prev || ''}\n\n${markdown}`);
     setDoc((prev) => (prev ? { ...prev, body: `${prev.body || ''}\n\n${markdown}`, updated_at: new Date().toISOString() } : prev));
   };
@@ -128,23 +134,97 @@ export function WritingEditorPage() {
     if (lastSavedBody.current === null && doc) lastSavedBody.current = doc.body;
   }, [doc]);
 
+  // #705: 自动保存（debounce）+ 未保存离开保护 + Cmd/Ctrl+S。
+  const dirtyRef = useRef(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const leaveConfirmed = useRef(false);
+  const [dirty, setDirty] = useState(false);
+
+  const markDirty = useCallback((nextBody: string, nextTitle: string) => {
+    if (!docId) return;
+    const nextDirty = nextBody !== (lastSavedBody.current ?? '') || nextTitle !== (doc?.title ?? '');
+    dirtyRef.current = nextDirty;
+    setDirty(nextDirty);
+  }, [docId, doc?.title]);
+
+  useEffect(() => {
+    if (!docId || doc === null) return;
+    markDirty(bodyRef.current, title);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [body, title, docId]);
+
+  useEffect(() => {
+    if (!docId || doc === null || !dirty) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      void handleSave();
+    }, 2500);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [body, title, docId, dirty]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!dirtyRef.current || leaveConfirmed.current) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void handleSave();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.removeEventListener('keydown', onKeyDown);
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId]);
+
+  /** #705: 有未保存修改时拦截返回，确认后再离开。 */
+  const leaveEditor = () => {
+    if (!dirtyRef.current) { navigate('/app/writing'); return; }
+    const ok = window.confirm('文档有未保存的修改，确定离开吗？');
+    if (ok) {
+      leaveConfirmed.current = true;
+      dirtyRef.current = false;
+      navigate('/app/writing');
+    }
+  };
+
   // §15.4 / #553: AI write-back 不再静默替换正文 — 进入审阅模式,用户
   // 逐条/全部接受或拒绝后由 onDiffResolve 落地。
   const appliedDocBody = useRef<string | null>(null);
+  const diffPendingRef = useRef(false);
+  useEffect(() => {
+    diffPendingRef.current = diffReview !== null;
+  }, [diffReview]);
   useEffect(() => {
     if (!docId || !chatSession?.lastDocBody) return;
     if (appliedDocBody.current === chatSession.lastDocBody) return;
     if (chatSession.lastDocBody === bodyRef.current) return;
+    // #720: 上一版审阅未决时拒绝新写回 — 提示先完成当前审阅,避免静默覆盖。
+    if (diffPendingRef.current) {
+      setAiEditNotice('有未完成的 AI 修改审阅 — 请先接受/拒绝后再继续');
+      setTimeout(() => setAiEditNotice(''), 5000);
+      return;
+    }
     appliedDocBody.current = chatSession.lastDocBody;
     setDiffReview({ key: `rev_${Date.now()}`, old: bodyRef.current, next: chatSession.lastDocBody });
     // #693: 审阅模式下编辑器选中的是 diff 内容,不再构成引用。
     setChatSelection('');
-  }, [chatSession?.lastDocBody, docId]);
+  }, [chatSession?.lastDocBody, docId, diffReview]);
 
   /** 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。 */
   const handleDiffResolve = useCallback((result: { md: string; accepted: number; rejected: number; cancelled: boolean }) => {
     setDiffReview(null);
-    if (result.cancelled || result.md === '') {
+    // #720: 用显式 cancelled 字段区分"放弃"，不再用空串推断 — 全文删空的
+    // 接受结果(空 md)应落地为空正文,而不是被当成放弃。
+    if (result.cancelled) {
       setAiEditNotice('已放弃本次 AI 修改');
       setTimeout(() => setAiEditNotice(''), 3000);
       return;
@@ -153,8 +233,21 @@ export function WritingEditorPage() {
     setDoc((prev) => (prev ? { ...prev, body: result.md, updated_at: new Date().toISOString() } : prev));
     setAiEditNotice(`已采纳 AI 修改：接受 ${result.accepted} / 拒绝 ${result.rejected}`);
     setTimeout(() => setAiEditNotice(''), 4000);
-    // #598: 落地后自动保存到服务端 — 生成版本快照,用户可随时回退。
-    if (docId) api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: result.md }).catch(() => {});  }, [docId, doc?.title]);
+    // #598/#711: 落地后自动保存到服务端 — 失败必须可见,不能静默吞掉。
+    if (docId) {
+      api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: result.md })
+        .then((updated) => {
+          lastSavedBody.current = updated.body ?? result.md;
+          dirtyRef.current = false;
+          setDirty(false);
+        })
+        .catch((err) => {
+          setError(err instanceof ApiError ? err.messageText : String(err));
+          setAiEditNotice('AI 修改已应用，但保存失败 — 请点击 Save 重试');
+          setTimeout(() => setAiEditNotice(''), 6000);
+        });
+    }
+  }, [docId, doc?.title]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [chatUploadingFile, setChatUploadingFile] = useState(false);
   // #fix: 上传进度 Modal — 上传中显示进度条,服务端导入阶段为不确定进度。
@@ -176,6 +269,18 @@ export function WritingEditorPage() {
   const [refDialogOpen, setRefDialogOpen] = useState(false);
   const [refForm, setRefForm] = useState({ kind: 'guideline', content: '', label: '', source_patient_hash: '' });
   const [refSubmitting, setRefSubmitting] = useState(false);
+  // #711: 参考材料列表(可查看/删除) — 此前只能添加,AI 上下文对用户不可见。
+  const [refList, setRefList] = useState<Array<{ reference_id: string; kind: string; label: string; content: string; created_at: string }>>([]);
+  const [refListOpen, setRefListOpen] = useState(false);
+  const [refDeleting, setRefDeleting] = useState<string | null>(null);
+
+  const loadReferences = useCallback(async () => {
+    if (!docId) return;
+    try {
+      const r = await api.getDocReferences(docId);
+      setRefList(r.references);
+    } catch { /* 列表加载失败不阻断编辑 */ }
+  }, [docId]);
 
   const [preview, setPreview] = useState(false);
 
@@ -244,9 +349,12 @@ export function WritingEditorPage() {
     if (!docId) return;
     setLoading(true);
     setError(null);
-    // #382: linked submission state (target journal / applied template).
+    // #382/#726: linked submission state (target journal / applied template).
+    // #726: 按 docId 取对应投稿草稿,不再所有文档共享 drafts[0]。
     api.listSubmissionDrafts().then((r) => {
-      const d = r.drafts[0];
+      // #726: 按 docId 取对应投稿草稿,不再所有文档共享 drafts[0]。
+      const mine = docId ? r.drafts.find((d) => d.doc_id === docId) : undefined;
+      const d = mine ?? r.drafts[0];
       if (d) {
         setLinkedJournal(d.target_journal || '');
         setLinkedTemplate(d.template_id || '');
@@ -267,6 +375,11 @@ export function WritingEditorPage() {
   // #297: doc chat history lives on the server (event log under doc-<id>);
   // reload it on mount so a refresh doesn't lose the conversation. The
   // store must NOT be a dependency (same infinite-loop trap as #272).
+  useEffect(() => {
+    void loadReferences();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId]);
+
   useEffect(() => {
     if (!chatSessionId) return;
     const existing = useChatStore.getState().sessions[chatSessionId]?.messages?.length;
@@ -316,6 +429,8 @@ export function WritingEditorPage() {
     try {
       const updated = await api.updateDoc(docId, { title, body });
       lastSavedBody.current = updated.body ?? body;
+      dirtyRef.current = false;
+      setDirty(false);
       if (updated.unchanged) {
         // #598: 内容未变化 — 提示且不刷新时间戳.
         setAiEditNotice('内容未变化，未创建新版本');
@@ -525,8 +640,11 @@ export function WritingEditorPage() {
   };
 
   // #fix: 统一上传入口 — 驱动进度 Modal(uploading → importing)。
+  const uploadAbortRef = useRef<AbortController | null>(null);
   const uploadWithProgress = async (f: File) => {
     setUploadState({ fileName: f.name, percent: 0, stage: 'uploading' });
+    const abort = new AbortController();
+    uploadAbortRef.current = abort;
     try {
       const result = await api.uploadFile(f, undefined, (p) => {
         setUploadState((prev) => (prev ? { ...prev, percent: p } : prev));
@@ -535,9 +653,17 @@ export function WritingEditorPage() {
       setUploadState((prev) => (prev ? { ...prev, percent: 100, stage: 'importing' } : prev));
       return result;
     } catch (err) {
-      setUploadState(null);
+      // #714: 主动取消不视为错误。
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      setUploadState((prev) => (prev ? { ...prev, error: err instanceof ApiError ? err.messageText : '上传失败' } : prev));
       throw err;
     }
+  };
+
+  /** #714: 取消上传(分片场景服务端清理 upload-abort,单次场景中止 XHR)。 */
+  const cancelUpload = () => {
+    uploadAbortRef.current?.abort();
+    setUploadState(null);
   };
 
   const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -550,11 +676,16 @@ export function WritingEditorPage() {
       setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
       // #fix: 上传即草稿 — 空文档 + 文件类参考时服务端自动导入正文,
       // 响应携带 imported_body,前端立即刷新编辑框(用户马上看到原文)。
-      const refResult = await api.addDocReference(docId, {
-        kind: f.name.endsWith('.pdf') ? 'pdf' : f.name.endsWith('.docx') || f.name.endsWith('.doc') ? 'docx' : 'file',
-        content: f.name,
-        label: f.name,
-      });
+      // #714: 已存在的同名参考不重复写入(服务端 dedup 命中时 result.dedup)。
+      let refResult: unknown = null;
+      if (!result.dedup) {
+        refResult = await api.addDocReference(docId, {
+          kind: f.name.endsWith('.pdf') ? 'pdf' : f.name.endsWith('.docx') || f.name.endsWith('.doc') ? 'docx' : 'file',
+          content: f.name,
+          label: f.name,
+        });
+      }
+      void loadReferences();
       if ((refResult as any)?.imported && !bodyRef.current.trim()) {
         const importedBody = (refResult as any)?.imported_body as string | undefined;
         if (importedBody) {
@@ -567,10 +698,12 @@ export function WritingEditorPage() {
         }
       }
       setError(null);
-      // Open chat panel with suggested prompt
-      setChatOpen(true);
-      setChatInput(`I uploaded "${f.name}". Please analyze it and draft content.`);
+      // #714: 不再强制打开 chat 面板 + 预填英文 prompt — 导入是独立动作,
+      // 用 toast 引导即可;用户想对话时自己点开。
+      setAiEditNotice(`已上传 ${f.name} 并挂为参考材料`);
+      setTimeout(() => setAiEditNotice(''), 4000);
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setError(err instanceof ApiError ? err.messageText : 'Upload failed');
     } finally {
       // #fix: 导入完成(或失败)关闭进度 Modal。
@@ -642,7 +775,7 @@ export function WritingEditorPage() {
       <AppShell>
         <div className="flex h-full flex-col">
           <div className="flex h-14 items-center border-b border-border bg-surface px-6">
-            <Button variant="ghost" size="sm" onClick={() => navigate('/app/writing')}>
+            <Button variant="ghost" size="sm" onClick={leaveEditor}>
               <ArrowLeft size={16} className="mr-1" /> Back
             </Button>
           </div>
@@ -659,7 +792,7 @@ export function WritingEditorPage() {
       <AppShell>
         <div className="flex h-full flex-col">
           <div className="flex h-14 items-center border-b border-border bg-surface px-6">
-            <Button variant="ghost" size="sm" onClick={() => navigate('/app/writing')}>
+            <Button variant="ghost" size="sm" onClick={leaveEditor}>
               <ArrowLeft size={16} className="mr-1" /> Back
             </Button>
           </div>
@@ -675,15 +808,19 @@ export function WritingEditorPage() {
     <AppShell>
       <div className="flex h-full flex-col overflow-hidden">
         <header className="flex h-14 items-center gap-3 border-b border-border bg-surface px-6 shrink-0">
-          <Button variant="ghost" size="sm" onClick={() => navigate('/app/writing')}>
+          <Button variant="ghost" size="sm" onClick={leaveEditor}>
             <ArrowLeft size={16} />
           </Button>
           <FileText size={18} className="text-text-tertiary" />
           <h1 className="font-semibold text-text-primary">{doc.title || 'Untitled'}</h1>
           {studyName && (
-            <span className="hidden rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-accent sm:inline">
-              {t('writing.studyBadge', '研究')}: {studyName}
-            </span>
+            <button
+              onClick={() => studyId && navigate(`/app/research/${studyId}`)}
+              className="hidden rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-accent transition-colors hover:bg-accent/10 sm:inline"
+              title={t('writing.openStudy', '打开研究详情')}
+            >
+              {t('writing.studyBadge', '研究')}: {studyName} ↗
+            </button>
           )}
           {linkedJournal && (
             <span className="hidden rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-accent sm:inline">
@@ -717,7 +854,7 @@ export function WritingEditorPage() {
               <History size={14} className="mr-1" /> History
             </Button>
             <Button size="sm" onClick={handleSave} isLoading={saving} disabled={saving}>
-              Save
+              {dirty ? '● 未保存' : 'Save'}
             </Button>
             <Button size="sm" variant="secondary" onClick={handleExportDocx}>
               <Download size={14} className="mr-1" /> DOCX
@@ -776,6 +913,16 @@ export function WritingEditorPage() {
               </Button>
             </>
           )}
+          {/* #711: Polish 入口此前缺失(UI 死代码) — 选中文本后点击可润色选区。 */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setPolishOpen((v) => !v)}
+            disabled={polishLoading}
+            title={t('writing.polishHint', '选中文本后润色')}
+          >
+            <Sparkles size={14} className="mr-1" /> {t('writing.polish', 'Polish')}
+          </Button>
           {methodsError && (
             <span className="text-xs text-error">{methodsError}</span>
           )}
@@ -831,13 +978,60 @@ export function WritingEditorPage() {
                 </div>
               </div>
             )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setRefDialogOpen(true)}
-          >
-            <FilePlus size={14} className="mr-1" /> Reference
-          </Button>
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setRefListOpen((v) => !v); if (!refListOpen) void loadReferences(); }}
+            >
+              <FilePlus size={14} className="mr-1" /> Reference
+              {refList.length > 0 && (
+                <span className="ml-1 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">{refList.length}</span>
+              )}
+            </Button>
+            {refListOpen && (
+              <div className="absolute left-0 top-full z-30 mt-1 w-[min(92vw,420px)] rounded-xl border border-border bg-surface-elevated p-3 shadow-lg">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-medium text-text-secondary">参考材料 ({refList.length})</span>
+                  <button onClick={() => setRefListOpen(false)} className="text-text-tertiary hover:text-text-primary"><X size={14} /></button>
+                </div>
+                {refList.length === 0 ? (
+                  <p className="py-3 text-center text-xs text-text-tertiary">暂无参考材料 — 点击 Reference 添加，AI 将基于这些材料写作</p>
+                ) : (
+                  <ul className="max-h-72 space-y-1.5 overflow-y-auto">
+                    {refList.map((r) => (
+                      <li key={r.reference_id} className="flex items-start gap-2 rounded-lg border border-border bg-surface px-2 py-1.5 text-xs">
+                        <span className="shrink-0 rounded bg-accent/10 px-1 py-0.5 text-[10px] text-accent">{r.kind}</span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium text-text-primary">{r.label || r.content.slice(0, 40)}</p>
+                          <p className="truncate text-text-tertiary">{r.content.slice(0, 80)}</p>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            if (!docId) return;
+                            setRefDeleting(r.reference_id);
+                            try {
+                              await api.deleteDocReference(docId, r.reference_id);
+                              setRefList((prev) => prev.filter((x) => x.reference_id !== r.reference_id));
+                            } catch (err) {
+                              setError(err instanceof ApiError ? err.messageText : String(err));
+                            } finally {
+                              setRefDeleting(null);
+                            }
+                          }}
+                          disabled={refDeleting !== null}
+                          className="rounded p-1 text-text-tertiary transition-colors hover:bg-surface hover:text-error"
+                          aria-label="删除参考材料"
+                        >
+                          <X size={12} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
           <Button
             variant="ghost"
             size="sm"
@@ -995,7 +1189,7 @@ export function WritingEditorPage() {
                   <Textarea
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendChat(); } }}
+                    onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendChat(); } }}
                     onPaste={handleChatPaste}
                     placeholder="Ask a question..."
                     rows={1}
@@ -1025,7 +1219,7 @@ export function WritingEditorPage() {
         </div>
 
         {/* #fix: 上传进度 Modal — 上传中显示进度条,导入阶段不确定进度。 */}
-        <UploadProgressModal state={uploadState} />
+        <UploadProgressModal state={uploadState} onCancel={cancelUpload} />
 
         {/* #598: History 版本列表 — 悬浮窗选择 snapshot(无需滚动到底部) */}
         {showHistory && (

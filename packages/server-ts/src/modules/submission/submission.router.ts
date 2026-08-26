@@ -104,10 +104,18 @@ export async function submissionRouter(app: FastifyInstance) {
 
   // ── 投稿前检查清单（#362 阶段2）───────────────────────────────────
   app.get('/api/v1/submission/checklist', async (request) => {
-    const draft = await (prisma as any).submissionDraft.findFirst({
-      where: { userId: request.user!.userId, status: { not: 'submitted' } },
-      orderBy: { updatedAt: 'desc' },
-    })
+    const userId = request.user!.userId
+    const docId = (request.query as any).doc_id as string | undefined
+    // #726: 按文档隔离 — 无 doc_id 时回退旧行为(最新一条)。
+    const draft = docId
+      ? await (prisma as any).submissionDraft.findFirst({
+          where: { userId, docId },
+          orderBy: { updatedAt: 'desc' },
+        })
+      : await (prisma as any).submissionDraft.findFirst({
+          where: { userId, status: { not: 'submitted' } },
+          orderBy: { updatedAt: 'desc' },
+        })
     const checks = [
       { id: 'title', label: '标题已填写', ok: !!(draft?.articleTitle && String(draft.articleTitle).trim().length >= 5) },
       { id: 'abstract', label: '摘要已填写', ok: !!(draft?.abstract && String(draft.abstract).trim().length >= 50) },
@@ -125,13 +133,19 @@ export async function submissionRouter(app: FastifyInstance) {
 
   // ── 投稿状态追踪（#362 阶段2）─────────────────────────────────────
   app.post('/api/v1/submission/status', async (request, reply) => {
-    const { status } = request.body as any
+    const { status, doc_id } = request.body as any
     const allowed = ['draft', 'ready', 'submitted', 'revision', 'published']
     if (!allowed.includes(status)) return reply.status(400).send({ error: `status must be one of: ${allowed.join(', ')}` })
-    const draft = await (prisma as any).submissionDraft.findFirst({
-      where: { userId: request.user!.userId, status: { not: 'submitted' } },
-      orderBy: { updatedAt: 'desc' },
-    })
+    // #726: 按文档隔离状态追踪。
+    const draft = doc_id
+      ? await (prisma as any).submissionDraft.findFirst({
+          where: { userId: request.user!.userId, docId: doc_id },
+          orderBy: { updatedAt: 'desc' },
+        })
+      : await (prisma as any).submissionDraft.findFirst({
+          where: { userId: request.user!.userId, status: { not: 'submitted' } },
+          orderBy: { updatedAt: 'desc' },
+        })
     if (!draft) return reply.status(404).send({ error: 'No draft to update' })
     const now = new Date().toISOString()
     const updated = await (prisma as any).submissionDraft.update({
@@ -152,6 +166,7 @@ export async function submissionRouter(app: FastifyInstance) {
 
   app.post('/api/v1/submission/drafts', async (request, reply) => {
     const body = request.body as {
+      doc_id?: string
       article_title?: string
       abstract?: string
       keywords?: string
@@ -166,13 +181,20 @@ export async function submissionRouter(app: FastifyInstance) {
     }
     const now = new Date().toISOString()
 
-    // Single active draft per user for phase 1: upsert on the latest row.
-    const existing = await (prisma as any).submissionDraft.findFirst({
-      where: { userId: request.user!.userId, status: body.status || 'draft' },
-      orderBy: { updatedAt: 'desc' },
-    })
+    // #726: 按 docId 隔离投稿草稿 — 无 docId 时回退到"该状态最新一条"
+    // (兼容旧前端/未关联文档的投稿面板)。
+    const existing = body.doc_id
+      ? await (prisma as any).submissionDraft.findFirst({
+          where: { userId: request.user!.userId, docId: body.doc_id },
+          orderBy: { updatedAt: 'desc' },
+        })
+      : await (prisma as any).submissionDraft.findFirst({
+          where: { userId: request.user!.userId, status: body.status || 'draft' },
+          orderBy: { updatedAt: 'desc' },
+        })
     const data = {
       userId: request.user!.userId,
+      docId: body.doc_id ?? null,
       articleTitle: String(body.article_title).trim(),
       abstract: body.abstract ?? null,
       keywords: body.keywords ?? null,
@@ -196,6 +218,7 @@ export async function submissionRouter(app: FastifyInstance) {
 function toDraft(d: any) {
   return {
     id: d.id,
+    doc_id: d.docId ?? null,
     article_title: d.articleTitle,
     abstract: d.abstract,
     keywords: d.keywords,

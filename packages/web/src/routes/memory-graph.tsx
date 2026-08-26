@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Brain, ClipboardCopy, Clock, GitGraph, Pill } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
+import { PatientBackButton } from '@/components/PatientBackButton';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 
 interface MemoryNode {
@@ -112,7 +113,12 @@ export function MemoryGraphPage() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto p-6">
-      <div className="mb-4 flex items-center justify-end">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        {/* #709: 移动端返回患者 */}
+        <div className="flex items-center gap-2">
+          <PatientBackButton hash={hash} />
+          <h2 className="text-lg font-semibold text-text-primary">Memory</h2>
+        </div>
         <Button size="sm" variant="secondary" onClick={() => navigate(`/app/memory-graph?patient=${encodeURIComponent(hash)}`)}>
           <GitGraph size={14} className="mr-1" /> Visual graph
         </Button>

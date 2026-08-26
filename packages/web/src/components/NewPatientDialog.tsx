@@ -24,7 +24,15 @@ export function NewPatientDialog({ open, onClose, onCreated }: NewPatientDialogP
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() && !initials.trim()) return;
+    // #715: 校验带明确解释 — 姓名/缩写二选一,年龄 0-120。
+    if (!name.trim() && !initials.trim()) {
+      setError('姓名与缩写至少填一项');
+      return;
+    }
+    if (age && (parseInt(age, 10) < 0 || parseInt(age, 10) > 120 || !/^\d+$/.test(age.trim()))) {
+      setError('年龄须为 0–120 之间的整数');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {

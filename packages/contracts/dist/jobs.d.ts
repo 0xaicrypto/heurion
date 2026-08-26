@@ -62,19 +62,19 @@ export declare const jobStatusResponseSchema: z.ZodObject<{
     result: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     error: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
-    status: "pending" | "running" | "completed" | "failed";
     job_id: string;
+    status: "completed" | "failed" | "pending" | "running";
     created_at: number;
-    error?: string | undefined;
     completed_at?: number | undefined;
     result?: Record<string, unknown> | undefined;
+    error?: string | undefined;
 }, {
-    status: "pending" | "running" | "completed" | "failed";
     job_id: string;
+    status: "completed" | "failed" | "pending" | "running";
     created_at: number;
-    error?: string | undefined;
     completed_at?: number | undefined;
     result?: Record<string, unknown> | undefined;
+    error?: string | undefined;
 }>;
 export type JobStatusResponse = z.infer<typeof jobStatusResponseSchema>;
 /** POST /api/v1/jobs response body (enqueue acknowledgment). */
@@ -85,13 +85,13 @@ export declare const jobEnqueuedResponseSchema: z.ZodObject<Pick<{
     completed_at: z.ZodOptional<z.ZodNumber>;
     result: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     error: z.ZodOptional<z.ZodString>;
-}, "status" | "job_id" | "created_at">, "strip", z.ZodTypeAny, {
-    status: "pending" | "running" | "completed" | "failed";
+}, "created_at" | "job_id" | "status">, "strip", z.ZodTypeAny, {
     job_id: string;
+    status: "completed" | "failed" | "pending" | "running";
     created_at: number;
 }, {
-    status: "pending" | "running" | "completed" | "failed";
     job_id: string;
+    status: "completed" | "failed" | "pending" | "running";
     created_at: number;
 }>;
 export type JobEnqueuedResponse = z.infer<typeof jobEnqueuedResponseSchema>;

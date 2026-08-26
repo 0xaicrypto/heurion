@@ -73,7 +73,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     const abort = new AbortController();
     const now = Date.now();
-    const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: opts.text, createdAt: now };
+    const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: opts.text, createdAt: now, attachments: opts.attachments as string[] | undefined };
     const asstMsg: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', isStreaming: true, createdAt: now };
 
     set((state) => ({
@@ -106,7 +106,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             ...last,
             isStreaming: false,
             failed: true,
-            text: last.text || chatFailureText(err),
+            // #708: 已有部分输出时也追加错误文案 — 用户看到"说到一半停了"要能知道是失败。
+            text: last.text ? `${last.text}\n\n> ⚠️ ${chatFailureText(err)}` : chatFailureText(err),
+            // #708: 网络失败把卡在 running 的工具徽章统一置 error。
+            toolCalls: (last.toolCalls ?? []).map((tc) => (tc.status === 'running' ? { ...tc, status: 'error' as const } : tc)),
           };
         }
         return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: msgs } } };
@@ -269,6 +272,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     await get().sendMessage(sessionId, {
       ...opts,
       text: userMsg.text,
+      // #708: 恢复原消息附件与知识库引用 — 重试不应基于完全不同的输入。
+      attachments: userMsg.attachments ?? [],
     });
   },
 

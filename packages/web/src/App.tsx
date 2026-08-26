@@ -47,6 +47,16 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** #716 — 仅管理员可访问（侧边栏隐藏只是视觉层，路由必须有真实守卫）。 */
+function RequireRole({ role, children }: { role: 'admin'; children: React.ReactNode }) {
+  const { role: userRole } = useAuthStore();
+  const location = useLocation();
+  if (userRole !== role) {
+    return <Navigate to="/app/today" state={{ from: location }} replace />;
+  }
+  return <>{children}</>;
+}
+
 function AuthEvents() {
   const navigate = useNavigate();
 
@@ -267,7 +277,9 @@ export default function App() {
             path="/app/admin/users"
             element={
               <RequireAuth>
-                <AdminUsersPage />
+                <RequireRole role="admin">
+                  <AdminUsersPage />
+                </RequireRole>
               </RequireAuth>
             }
           />

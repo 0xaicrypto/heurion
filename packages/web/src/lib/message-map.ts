@@ -16,6 +16,8 @@ export function mapWireMessage(m: ChatWireMessage): ChatMessage {
         file?: { fileId: string; fileName: string; mimeType: string };
         knowledgePayload?: { title: string; content: string };
         compactionSummary?: boolean;
+        /** #723: 该轮生成的图表(render_chart) — 刷新后恢复聊天里的图。 */
+        chart?: Array<{ url: string; chartType?: string }>;
       }
     | undefined;
 
@@ -38,6 +40,8 @@ export function mapWireMessage(m: ChatWireMessage): ChatMessage {
     download,
     knowledgePayload: meta?.knowledgePayload,
     compactionSummary: meta?.compactionSummary === true,
+    // #723: 恢复该轮生成的图表(取最后一张)。
+    chart: meta?.chart?.length ? meta.chart[meta.chart.length - 1] : undefined,
   };
 }
 

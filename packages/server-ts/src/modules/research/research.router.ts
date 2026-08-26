@@ -149,6 +149,29 @@ export async function researchRouter(app: FastifyInstance) {
     return { ok: await service.unenroll(studyId, patientHash) }
   })
 
+  // #724: 患者侧查看其已入组的研究 — 患者页显示入组状态与直达链接。
+  app.get('/api/v1/research/patients/:patientHash/enrollments', async (request) => {
+    const { patientHash } = request.params as any
+    const userId = request.user!.userId
+    const studies = await prisma.researchStudy.findMany({ where: { userId } })
+    const out: Array<{ study_id: string; study_name: string; status: string; arm: string | null; enrolled_at: string }> = []
+    for (const s of studies) {
+      const roster = await service.getRoster(s.id)
+      const row = roster.find((r: any) => r.patientHash === patientHash)
+      if (row) {
+        out.push({
+          study_id: s.id,
+          study_name: s.name,
+          // #724: roster 行恒为 active(已过滤 unenrolledAt),arm 来自入组行。
+          status: 'active',
+          arm: row.arm ?? null,
+          enrolled_at: row.enrolledAt,
+        })
+      }
+    }
+    return { enrollments: out }
+  })
+
   app.get('/api/v1/research/studies/:studyId/eligibility', async (request) => {
     const studyId = (request.params as any).studyId
     const userId = request.user!.userId

@@ -181,10 +181,10 @@ export interface ChatWireMessage {
  * Tool names that are pure retrieval (no side effects) — the UI collapses
  * consecutive retrieval calls into a single expandable row.
  */
-export declare const RETRIEVAL_TOOLS: readonly ["search_node", "search_encounter", "search_past_chats"];
+export declare const RETRIEVAL_TOOLS: readonly ['search_node', 'search_encounter', 'search_past_chats'];
 export type RetrievalTool = (typeof RETRIEVAL_TOOLS)[number];
 /** Every SSE event type the backend can emit. */
-export declare const CHAT_EVENT_TYPES: readonly ["turn_started", "context_usage", "compaction_started", "compaction_chunk", "compaction_completed", "compaction_summary", "doc_updated", "chart_created", "tier_classified", "context_info", "reasoning_chunk", "thought", "tool_call", "subagent_started", "subagent_done", "memory_hits", "image_attached", "sidecar_file", "final_answer_chunk", "citations", "skill_capture_suggest", "truncated", "intent_clarify", "attachment_export_option", "turn_complete", "error", "plugin_selected", "payload_building", "job_enqueued", "job_status", "file_ready"];
+export declare const CHAT_EVENT_TYPES: readonly ['turn_started', 'context_usage', 'compaction_started', 'compaction_chunk', 'compaction_completed', 'compaction_summary', 'doc_updated', 'chart_created', 'tier_classified', 'context_info', 'reasoning_chunk', 'thought', 'tool_call', 'subagent_started', 'subagent_done', 'memory_hits', 'image_attached', 'sidecar_file', 'final_answer_chunk', 'citations', 'skill_capture_suggest', 'truncated', 'intent_clarify', 'attachment_export_option', 'turn_complete', 'error', 'plugin_selected', 'payload_building', 'job_enqueued', 'job_status', 'file_ready'];
 export type ChatEventType = (typeof CHAT_EVENT_TYPES)[number];
 export interface UserProfile {
     user_id: string;

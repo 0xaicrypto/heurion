@@ -81,39 +81,49 @@ export function TodayPage() {
             </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <Card className="p-4">
+              {/* #728: 统计卡可点击 — 数字引导到对应模块。 */}
+              <button
+                onClick={() => navigate('/app/patients')}
+                className="rounded-xl border border-border bg-surface p-4 text-left transition-colors hover:border-accent/50 hover:bg-surface-elevated"
+              >
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent">
                     <Activity size={20} />
                   </div>
                   <div>
                     <p className="text-2xl font-bold text-text-primary">{patients.length}</p>
-                    <p className="text-sm text-text-secondary">{t('today.activePatients')}</p>
+                    <p className="text-sm text-text-secondary">{t('today.activePatients')} →</p>
                   </div>
                 </div>
-              </Card>
-              <Card className="p-4">
+              </button>
+              <button
+                onClick={() => navigate('/app/memory')}
+                className="rounded-xl border border-border bg-surface p-4 text-left transition-colors hover:border-accent/50 hover:bg-surface-elevated"
+              >
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10 text-warning">
                     <FileText size={20} />
                   </div>
                   <div>
                     <p className="text-2xl font-bold text-text-primary">{pendingCount}</p>
-                    <p className="text-sm text-text-secondary">{t('today.pendingReports')}</p>
+                    <p className="text-sm text-text-secondary">{t('today.pendingReports')} →</p>
                   </div>
                 </div>
-              </Card>
-              <Card className="p-4">
+              </button>
+              <button
+                onClick={() => navigate('/app/skills')}
+                className="rounded-xl border border-border bg-surface p-4 text-left transition-colors hover:border-accent/50 hover:bg-surface-elevated"
+              >
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent">
                     <Sparkles size={20} />
                   </div>
                   <div>
                     <p className="text-2xl font-bold text-text-primary">{state?.skill_count ?? 0}</p>
-                    <p className="text-sm text-text-secondary">{t('today.skills')}</p>
+                    <p className="text-sm text-text-secondary">{t('today.skills')} →</p>
                   </div>
                 </div>
-              </Card>
+              </button>
             </div>
           )}
 
@@ -140,7 +150,7 @@ export function TodayPage() {
               <UserPlus size={16} className="mr-2" />
               {t('today.newPatient')}
             </Button>
-            <Button variant="secondary" onClick={() => navigate('/app/writing')}>
+            <Button variant="secondary" onClick={() => navigate('/app/writing?tab=write')}>
               <FilePlus size={16} className="mr-2" />
               {t('today.newDocument')}
             </Button>
