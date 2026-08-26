@@ -356,14 +356,11 @@ export class EditDocumentTool extends BaseTool {
     if (kind !== 'file' && kind !== 'pdf' && kind !== 'docx') {
       return { text: String(ref.snapshot || '') }
     }
-    // 先查 FileIndex(生产库),不可用则扫描上传目录按文件名兜底。
-    const fileIndex = (prisma as any).fileIndex
-    const byIndex = fileIndex
-      ? await fileIndex.findFirst({
-          where: { userId: this.ctx.userId, name: String(ref.snapshot || ''), deletedAt: null },
-          orderBy: { createdAt: 'desc' },
-        }).catch(() => null)
-      : null
+    // #730: FileIndex 是真实表 — typed 访问,查不到按文件名扫描磁盘兜底。
+    const byIndex = await prisma.fileIndex.findFirst({
+      where: { userId: this.ctx.userId, name: String(ref.snapshot || ''), deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    }).catch(() => null)
     const fileId = byIndex?.id || this.findUploadByFileName(this.ctx.userId, String(ref.snapshot || ''))
     if (!fileId) return { text: '', error: `参考材料「${label}」对应的上传文件不存在` }
     // #fix: 导入走 markdown+图片提取 — PDF 恢复标题/段落结构,DOCX 保留

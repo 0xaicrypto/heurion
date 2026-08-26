@@ -1,4 +1,5 @@
 import fs from 'fs'
+import crypto from 'crypto'
 import { esc } from '../lib/xml-escape.js'
 import path from 'path'
 import { BaseTool, ToolResult } from './base-tool.js'
@@ -91,19 +92,20 @@ export class RenderChartTool extends BaseTool {
       const filepath = path.join(dir, fileId)
       fs.writeFileSync(filepath, svg, 'utf-8')
 
+      // #730/#746: FileIndex is typed and real; generated charts get their
+      // own index row so the chat picker can list them. Content hash keeps
+      // the (sha256,userId) unique constraint satisfied per chart.
       const now = new Date().toISOString()
-      try {
-        await (prisma as any).fileIndex.upsert({
-          where: { id: fileId },
-          create: {
-            id: fileId, userId, fileName: `${input.title || 'chart'}.svg`, mimeType: 'image/svg+xml',
-            sizeBytes: Buffer.byteLength(svg), sha256: '', createdAt: now, updatedAt: now,
-          },
-          update: {},
-        })
-      } catch {
-        // fileIndex may not exist — the file is still saved
-      }
+      await prisma.fileIndex.upsert({
+        where: { id: fileId },
+        create: {
+          id: fileId, userId, name: `${input.title || 'chart'}.svg`, mime: 'image/svg+xml',
+          sizeBytes: Buffer.byteLength(svg),
+          sha256: crypto.createHash('sha256').update(svg).digest('hex'),
+          createdAt: now, updatedAt: now,
+        },
+        update: {},
+      }).catch((err: Error) => console.warn(`[CHART] fileIndex persist skipped: ${err.message.slice(0, 100)}`))
 
       // <img> tags cannot send an Authorization header — issue a short-lived
       // query token so the chart renders inside documents and chat.

@@ -84,11 +84,8 @@ export async function patientsRouter(app: FastifyInstance) {
     // Remove related structured records first
     await (prisma as any).medicalRecord.deleteMany({ where: { patientHash: hash, userId } })
     await (prisma as any).researchAssessment.deleteMany({ where: { patientHash: hash } })
-    try {
-      await (prisma as any).fileIndex.deleteMany({ where: { patientHash: hash, userId } })
-    } catch {
-      // FileIndex table may not exist in older databases
-    }
+    // #730: FileIndex 是真实表 — typed 访问。
+    await prisma.fileIndex.deleteMany({ where: { patientHash: hash, userId } })
 
     // Delete the patient row
     await (prisma as any).patientRecord.deleteMany({ where: { hash, userId } })

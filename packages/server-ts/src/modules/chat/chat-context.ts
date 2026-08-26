@@ -383,16 +383,13 @@ export async function findUploadFileByName(
   userId: string,
   name: string,
 ): Promise<{ id: string } | null> {
-  try {
-    const { default: prisma } = await import('../../common/prisma.js')
-    const byIndex = await (prisma as any).fileIndex.findFirst({
-      where: { userId, name, deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-    }).catch(() => null)
-    if (byIndex) return { id: byIndex.id }
-  } catch {
-    // fileIndex 不可用 → 目录兜底
-  }
+  // #730: FileIndex 是真实表 — typed 访问;查不到仍按文件名扫目录兜底。
+  const { default: prisma } = await import('../../common/prisma.js')
+  const byIndex = await prisma.fileIndex.findFirst({
+    where: { userId, name, deletedAt: null },
+    orderBy: { createdAt: 'desc' },
+  }).catch(() => null)
+  if (byIndex) return { id: byIndex.id }
   try {
     const fs = await import('fs')
     const { uploadsBaseDir } = await import('../../lib/upload-path.js')
