@@ -35,7 +35,15 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs()
   vi.clearAllMocks()
-  fs.rmSync(baseDir, { recursive: true, force: true })
+  // #CI: 目录清理偶发 ENOTEMPTY(异步句柄未释放) — 重试几次,避免 flaky 拦部署。
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      fs.rmSync(baseDir, { recursive: true, force: true })
+      break
+    } catch {
+      if (attempt === 4) throw new Error(`embedding-sync: failed to clean ${baseDir} after 5 attempts`)
+    }
+  }
 })
 
 function makeGateway() {
