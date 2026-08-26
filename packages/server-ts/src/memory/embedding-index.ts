@@ -83,7 +83,11 @@ export class EmbeddingIndex {
   }
 
   remove(stableId: string, type: 'fact' | 'article' | 'document'): void {
-    this.records = this.records.filter((r) => !(r.stableId === stableId && r.type === type))
+    // #749-fix: document chunks live under `<stableId>::cN` — removing the
+    // parent must sweep its chunk namespace too, otherwise deleted files
+    // stay retrievable (orphaned vectors injected into chat).
+    const chunkPrefix = `${stableId}::`
+    this.records = this.records.filter((r) => !(r.type === type && (r.stableId === stableId || r.stableId.startsWith(chunkPrefix))))
     this.persist()
   }
 

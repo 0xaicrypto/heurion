@@ -67,6 +67,23 @@ describe('EmbeddingIndex', () => {
     idx.remove('a', 'fact')
     expect(idx.count()).toBe(0)
   })
+
+  test('#749-fix remove 父文档时连带清除 ::cN 分块向量', () => {
+    const base = makeBaseDir()
+    const idx = new EmbeddingIndex(base)
+    // 文档 chunk 命名空间:<fileId>::cN
+    idx.upsert({ nodeId: 'doc123::c0', stableId: 'doc123::c0', type: 'document', contentHash: 'x', vector: vec(1), model: 'm', norm: 1, updatedAt: 0 })
+    idx.upsert({ nodeId: 'doc123::c1', stableId: 'doc123::c1', type: 'document', contentHash: 'x', vector: vec(1), model: 'm', norm: 1, updatedAt: 0 })
+    // 其他文档的 chunk 不受影响
+    idx.upsert({ nodeId: 'other::c0', stableId: 'other::c0', type: 'document', contentHash: 'x', vector: vec(1), model: 'm', norm: 1, updatedAt: 0 })
+    // 同名前缀但不同命名空间的 fact 不受影响
+    idx.upsert({ nodeId: 'a@v1', stableId: 'a', type: 'fact', contentHash: 'x', vector: vec(1), model: 'm', norm: 1, updatedAt: 0 })
+
+    idx.remove('doc123', 'document')
+
+    const remaining = idx.all().map((r) => r.stableId)
+    expect(remaining).toEqual(['other::c0', 'a'])
+  })
 })
 
 describe('cosineSimilarity', () => {
