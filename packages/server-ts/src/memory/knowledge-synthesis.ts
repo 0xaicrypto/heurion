@@ -131,6 +131,9 @@ export async function maybeSynthesizeArticle(
       importance: 3,
       confidence: 'medium',
       reason: `AI synthesis from ${articleFacts.length} confirmed ${best[0]} facts`,
+      // #736/#748: provenance — on approval the article binds these so the
+      // "used" set excludes them from future synthesis rounds.
+      relatedFacts: articleFacts.map(f => f.stableId),
     })
     console.log(`[KNOWLEDGE] Article proposed: ${article.title}`)
   } catch (err) {

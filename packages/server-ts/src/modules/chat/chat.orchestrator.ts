@@ -33,7 +33,12 @@ export class ChatOrchestrator {
     // Turns = user messages only; tool_call/tool_result events (R3) must
     // not inflate the count.
     const turnCount = sessionEvents.filter((e) => e.eventType === 'user_message').length
-    this.episodesStore.upsert(sessionId, userMessage.slice(0, 150), turnCount)
+    // #737: the raw message goes into its own lastMessage slot — never into
+    // `summary`, which compaction/summarizer own. Explicit commit keeps
+    // in-memory and on-disk stores consistent.
+    this.episodesStore.upsert(sessionId, '', turnCount)
+    this.episodesStore.recordRecentMessage(sessionId, userMessage)
+    this.episodesStore.commit()
 
     // K6 (#645): gap detection lives in knowledge-gap.service (single
     // source); postTurn just reports the outcome for telemetry/logging.

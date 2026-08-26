@@ -176,11 +176,14 @@ export class ArticleService extends MemoryNodeService {
   regenerateArticle(stableId: string): Result<ArticleNode> {
     const current = this.c.graph.getLatestByStableId(stableId) as ArticleNode | undefined
     if (!current) return err('article not found')
-    const sourceFactNodeIds = current.sourceFacts.map(s => s.nodeId)
+    // #741: reference facts by stableId — addArticle resolves the LATEST
+    // version, so curation edits between generations no longer leave the new
+    // article citing superseded node versions (or dropping them silently).
+    const sourceFactStableIds = current.sourceFacts.map(s => s.stableId)
     const input: AddArticleInput = {
       title: current.title,
       content: current.content,
-      sourceFactNodeIds,
+      sourceFactStableIds,
       sourceDocuments: current.sourceDocuments,
     }
     // Mark old version superseded and create fresh version

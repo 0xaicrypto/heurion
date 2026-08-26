@@ -23,6 +23,12 @@ export interface ProposalInput {
   category?: string
   /** Same-scope confirmed facts this proposal contradicts (§5.7) */
   conflictsWith?: Array<{ stableId: string; content: string }>
+  /**
+   * #736/#748: source fact stableIds this proposal was synthesized from —
+   * article applier passes them to addArticle so `maybeSynthesizeArticle`'s
+   * used-set can exclude already-covered facts (stops repeat synthesis).
+   */
+  relatedFacts?: string[]
 }
 
 export interface MemoryProposalRow {
@@ -45,6 +51,8 @@ export interface MemoryProposalRow {
   createdAt: string
   resolvedAt: string | null
   resolvedBy: string | null
+  /** #736/#748: JSON-encoded string[] of source fact stableIds (article synthesis provenance). */
+  relatedFacts?: string | null
 }
 
 export interface ContextBundle {
@@ -86,6 +94,7 @@ export function serializeProposal(r: any): MemoryProposalRow {
     createdAt: r.createdAt,
     resolvedAt: r.resolvedAt,
     resolvedBy: r.resolvedBy,
+    relatedFacts: r.relatedFacts ?? null,
   }
 }
 

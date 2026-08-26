@@ -115,12 +115,18 @@ export class FactService extends MemoryNodeService {
     this.c.legacyFacts.remove(stableId)
     this.c.legacyFacts.commit()
 
+    // #738: propagate curation on supersede too — dependent articles must not
+    // keep citing a dead fact (editFact/deleteFact already did this).
+    const propagation = this.c.curation.propagateFactChange(stableId)
+    this.applyPropagationToLegacy(propagation)
+
     this.commitGraphLast(legacyBefore)
 
     this.appendEvent('memory_fact_superseded', `Superseded fact ${stableId} (${reason})`, {
       factId: stableId,
       supersededBy: by,
       reason,
+      propagation,
     })
     return true
   }

@@ -30,6 +30,12 @@ export interface Episode {
   summary: string
   turnCount: number
   createdAt: number
+  /**
+   * #737: separate slot for the most recent user message — postTurn must not
+   * write into `summary` anymore (it used to stomp LLM-merged summaries from
+   * compaction with a 150-char snippet).
+   */
+  lastMessage?: string
 }
 
 export interface LearnedSkill {
@@ -173,11 +179,35 @@ export class EpisodesStore {
     if (current && Array.isArray(current)) this.working = current
   }
 
-  upsert(sessionId: string, summary: string, turnCount: number) {
+  upsert(sessionId: string, summary: string, turnCount: number, lastMessage?: string) {
     const existing = this.working.findIndex(e => e.sessionId === sessionId)
-    const ep: Episode = { sessionId, summary, turnCount, createdAt: Date.now() }
+    const prev = existing >= 0 ? this.working[existing] : undefined
+    const ep: Episode = {
+      sessionId,
+      summary,
+      turnCount,
+      createdAt: prev?.createdAt ?? Date.now(),
+    }
+    // #737: preserve prior lastMessage unless the caller supplies a new one —
+    // summarizer/compaction upserts must not wipe it.
+    if (lastMessage !== undefined) ep.lastMessage = lastMessage
+    else if (prev?.lastMessage !== undefined) ep.lastMessage = prev.lastMessage
     if (existing >= 0) this.working[existing] = ep
     else this.working.push(ep)
+  }
+
+  /**
+   * #737: record the latest user message in its own slot without touching
+   * `summary` (which compaction/summarizer own). Caller commits explicitly.
+   */
+  recordRecentMessage(sessionId: string, message: string) {
+    const snippet = message.slice(0, 150)
+    const ep = this.working.find(e => e.sessionId === sessionId)
+    if (ep) {
+      ep.lastMessage = snippet
+      return
+    }
+    this.working.push({ sessionId, summary: '', turnCount: 0, createdAt: Date.now(), lastMessage: snippet })
   }
 
   all(): Episode[] { return [...this.working] }

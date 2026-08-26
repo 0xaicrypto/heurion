@@ -86,6 +86,7 @@ export class ProposalService {
         sourceRange: input.sourceRange || null,
         category,
         conflictsWith: conflictsWith ? JSON.stringify(conflictsWith) : null,
+        relatedFacts: input.relatedFacts && input.relatedFacts.length > 0 ? JSON.stringify(input.relatedFacts) : null,
         status: 'pending',
         createdAt: now,
       },

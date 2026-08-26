@@ -92,10 +92,23 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
     )
   }
   if (proposal.kind === 'article') {
+    // #736/#748: carry the synthesized-from fact stableIds into the article —
+    // without them, maybeSynthesizeArticle's used-set stays empty and the
+    // same batch of facts re-triggers synthesis forever.
+    let sourceFactStableIds: string[] = []
+    if (proposal.relatedFacts) {
+      try {
+        const parsed = JSON.parse(proposal.relatedFacts)
+        if (Array.isArray(parsed)) sourceFactStableIds = parsed.map(String)
+      } catch (err) {
+        log.warn('relatedFacts parse skipped', { reason: (err as Error).message.slice(0, 120) })
+      }
+    }
     return ctx.memory.addArticle(
       {
         title: proposal.content.split('\n')[0].slice(0, 120) || '知识文章',
         content: proposal.content,
+        sourceFactStableIds,
         provenance: { sourceKind: 'proposal', sourceRef: proposal.id },
       },
       'system',
