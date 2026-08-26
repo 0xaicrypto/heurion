@@ -569,7 +569,7 @@ export function PatientChatPage() {
       setDownloadUrls(prev => ({ ...prev, [fileId]: info.download_url }));
       return info.download_url;
     } catch {
-      setError('下载链接获取失败');
+      setError(t('chat.downloadUrlFailed', '下载链接获取失败'));
       return '';
     } finally {
       setDownloadLoading(prev => ({ ...prev, [fileId]: false }));
@@ -580,13 +580,13 @@ export function PatientChatPage() {
     if (!msg.download) return;
     const url = msg.download.url || await resolveDownloadUrl(msg.download.fileId);
     if (url) window.open(url, '_blank');
-    else setError('文件下载不可用');
+    else setError(t('chat.downloadUnavailable', '文件下载不可用'));
   };
 
   const handleAddToKnowledge = async (msg: ChatMessage) => {
     if (!msg.knowledgePayload) return;
     await api.createKnowledgeArticle(msg.knowledgePayload).catch((err) => {
-      setError(err instanceof ApiError ? err.messageText : '加入知识库失败');
+      setError(err instanceof ApiError ? err.messageText : t('chat.addToKbFailed', '加入知识库失败'));
     });
     setKbAdded(prev => ({ ...prev, [msg.id]: true }));
   };

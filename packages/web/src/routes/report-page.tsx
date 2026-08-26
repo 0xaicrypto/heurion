@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { FileDown, FileText } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { FileDown, FileText, Sparkles } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { PatientBackButton } from '@/components/PatientBackButton';
 import { Alert, Button, Card, Skeleton, Textarea } from '@/components/ui';
 import type { PatientDetail } from '@/lib/types';
 
 export function ReportPage() {
+  const { t } = useTranslation();
   const { hash } = useParams<{ hash: string }>();
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [patientLoading, setPatientLoading] = useState(true);
@@ -16,6 +18,8 @@ export function ReportPage() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ path: string; bytes: number; created_at: number; patient_hash: string } | null>(null);
+  // #724: AI 记忆投影 — 一键预填,避免用户在对话里整理好的病史手抄一遍。
+  const [projectionLoading, setProjectionLoading] = useState(false);
 
   useEffect(() => {
     if (!hash) return;
@@ -26,6 +30,30 @@ export function ReportPage() {
       .catch(() => {})
       .finally(() => setPatientLoading(false));
   }, [hash]);
+
+  /** #724: 拉取记忆投影并预填三个文本域。 */
+  const handlePrefillFromMemory = async () => {
+    if (!hash) return;
+    setProjectionLoading(true);
+    setError(null);
+    try {
+      const p = await api.getMemoryProjection(hash);
+      const findings = (p.findings ?? []).map((f) => f.content).filter(Boolean).join('\n');
+      const mr = p.medical_record?.sections;
+      const infoParts = [
+        mr?.chief_complaint,
+        mr?.diagnosis,
+        ...(findings ? [findings] : []),
+      ].filter(Boolean) as string[];
+      setClinicalInfo((prev) => prev || infoParts.join('\n'));
+      setImpression((prev) => prev || (mr?.progress_notes ?? ''));
+      setRecommendation((prev) => prev || (mr?.treatment_plan ?? ''));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : t('report.prefillFailed', '记忆投影加载失败'));
+    } finally {
+      setProjectionLoading(false);
+    }
+  };
 
   const handleGenerate = async () => {
     if (!hash) return;
@@ -77,6 +105,13 @@ export function ReportPage() {
         </div>
       ) : (
         <Card className="mb-6 p-6">
+          <div className="mb-4 flex items-center justify-between">
+            <p className="text-sm text-text-secondary">{t('report.prefillHint', '基于 AI 记忆自动预填，或手动填写')}</p>
+            {/* #724: 从对话整理好的记忆投影一键预填,免手抄。 */}
+            <Button size="sm" variant="secondary" onClick={handlePrefillFromMemory} isLoading={projectionLoading}>
+              <Sparkles size={14} className="mr-1" /> {t('report.prefillFromMemory', '从 AI 记忆预填')}
+            </Button>
+          </div>
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
               <div>

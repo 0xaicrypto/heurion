@@ -743,7 +743,7 @@ function McpSection() {
                 onClick={() => setCaps((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))}
                 className={cn('rounded-full border px-3 py-1 text-xs', caps.includes(c) ? 'border-accent bg-accent/10 text-accent' : 'border-border text-text-secondary')}
               >
-                {c === 'read' ? '只读' : '写'}
+                {c === 'read' ? t('settings.readOnly', '只读') : t('settings.write', '写')}
               </button>
             ))}
           </div>
@@ -765,7 +765,7 @@ function McpSection() {
                   <span className="font-medium text-text-primary">{srv.name}</span>
                   <span className="ml-2 text-xs text-text-tertiary">{srv.url}</span>
                   <div className="mt-1 flex gap-1.5">
-                    {srv.capabilities.map((c) => <Badge key={c} variant={c === 'write' ? 'warning' : 'default'}>{c === 'write' ? '写' : '只读'}</Badge>)}
+                    {srv.capabilities.map((c) => <Badge key={c} variant={c === 'write' ? 'warning' : 'default'}>{c === 'write' ? t('settings.write', '写') : t('settings.readOnly', '只读')}</Badge>)}
                     {srv.has_token && <Badge>token ✓</Badge>}
                   </div>
                 </div>
@@ -776,11 +776,11 @@ function McpSection() {
               </div>
               {testResult?.id === srv.id && (
                 <div className="mt-3 rounded-lg border border-border bg-surface p-3">
-                  <p className="text-xs font-medium text-text-secondary">{testResult.ok ? '✓ 连接成功' : '✗ 连接失败'}</p>
+                  <p className="text-xs font-medium text-text-secondary">{testResult.ok ? t('settings.connOk', '✓ 连接成功') : t('settings.connFail', '✗ 连接失败')}</p>
                   {testResult.tools.length > 0 && (
                     <ul className="mt-1 space-y-0.5 text-xs text-text-tertiary">
                       {testResult.tools.map((tool) => (
-                        <li key={tool.name}>- {tool.name}{tool.is_write ? ' [写]' : ''}{tool.description ? `: ${tool.description.slice(0, 60)}` : ''}</li>
+                        <li key={tool.name}>- {tool.name}{tool.is_write ? t('settings.writeMark', ' [写]') : ''}{tool.description ? `: ${tool.description.slice(0, 60)}` : ''}</li>
                       ))}
                     </ul>
                   )}

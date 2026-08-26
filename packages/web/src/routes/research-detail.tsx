@@ -247,7 +247,7 @@ export function ResearchDetailPage() {
     } catch (err) {
       // #710: 写论文失败此前静默吞掉 — 主流程最后一环失败必须可见。
       setPaperCreating(false);
-      setError(err instanceof ApiError ? `写论文失败：${err.messageText}` : '写论文失败，请稍后重试');
+      setError(err instanceof ApiError ? t('research.paperFailedDetail', '写论文失败：{{msg}}', { msg: err.messageText }) : t('research.paperFailed', '写论文失败，请稍后重试'));
     }
   };
 
@@ -297,7 +297,7 @@ export function ResearchDetailPage() {
   const handleUnenroll = async (patientHash: string) => {
     if (!studyId) return;
     // #710: 破坏性操作 — 科研入组记录删除需二次确认。
-    if (!window.confirm('确定将该患者移出本研究的入组名单吗？此操作不可撤销。')) return;
+    if (!window.confirm(t('research.unenrollConfirm', '确定将该患者移出本研究的入组名单吗？此操作不可撤销。'))) return;
     setUnenrollingHash(patientHash);
     try {
       await api.unenrollPatient(studyId, patientHash);
@@ -566,9 +566,14 @@ export function ResearchDetailPage() {
                     </thead>
                     <tbody>
                       {roster.map((r) => (
-                        <tr key={r.patient_hash} className="border-b border-border last:border-0">
+                        // #724: 行点击跳回患者详情(科研↔患者双向桥)。
+                        <tr
+                          key={r.patient_hash}
+                          onClick={() => navigate(`/app/patients/${r.patient_hash}`)}
+                          className="cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-surface-elevated"
+                        >
                           <td className="px-4 py-2 text-text-primary">
-                            {r.name || r.initials || '—'}
+                            <span className="underline decoration-dotted underline-offset-2">{r.name || r.initials || '—'}</span>
                           </td>
                           <td className="px-4 py-2 font-mono text-text-secondary">
                             {r.patient_hash.slice(0, 16)}...
@@ -586,7 +591,7 @@ export function ResearchDetailPage() {
                           <td className="px-4 py-2">
                             <button
                               className="rounded p-1 text-text-tertiary hover:bg-error/10 hover:text-error transition-colors"
-                              onClick={() => handleUnenroll(r.patient_hash)}
+                              onClick={(e) => { e.stopPropagation(); handleUnenroll(r.patient_hash); }}
                               disabled={unenrollingHash === r.patient_hash}
                               title="Unenroll patient"
                             >
@@ -624,8 +629,9 @@ export function ResearchDetailPage() {
                     {eligibility.screenings.map((s, i) => (
                       <Card key={`${s.patient_hash}-${i}`} className="p-4">
                         <div className="flex items-center justify-between mb-2">
-                          <div>
-                            <p className="text-sm font-medium text-text-primary">{s.name || s.initials || s.patient_hash.slice(0, 12)}</p>
+                          {/* #724: 点击跳回患者详情。 */}
+                          <button onClick={() => navigate(`/app/patients/${s.patient_hash}`)} className="text-left">
+                            <p className="text-sm font-medium text-text-primary hover:underline">{s.name || s.initials || s.patient_hash.slice(0, 12)}</p>
                             <p className="text-xs text-text-tertiary">
                               ID: {s.patient_hash.slice(0, 16)}...
                               {s.age_value != null || s.sex ? ' · ' : ''}
@@ -633,7 +639,7 @@ export function ResearchDetailPage() {
                               {s.age_value != null && s.sex ? ' / ' : ''}
                               {s.sex || ''}
                             </p>
-                          </div>
+                          </button>
                           <div className="flex items-center gap-2">
                             <Badge variant={s.status === 'eligible' ? 'success' : s.status === 'ineligible' ? 'error' : 'default'}>
                               {s.status}

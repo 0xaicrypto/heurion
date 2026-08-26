@@ -98,7 +98,7 @@ export function WritingEditorPage() {
   const handleInsertChart = (markdown: string) => {
     // #720: 审阅未决时插入图表会被编辑器吞掉(审阅内容由 diffReview 驱动) — 明示。
     if (diffReview) {
-      setAiEditNotice('请先完成当前 AI 修改的审阅，再插入图表');
+      setAiEditNotice(t('writing.reviewFirstForChart', '请先完成当前 AI 修改的审阅，再插入图表'));
       setTimeout(() => setAiEditNotice(''), 4000);
       return;
     }
@@ -188,7 +188,7 @@ export function WritingEditorPage() {
   /** #705: 有未保存修改时拦截返回，确认后再离开。 */
   const leaveEditor = () => {
     if (!dirtyRef.current) { navigate('/app/writing'); return; }
-    const ok = window.confirm('文档有未保存的修改，确定离开吗？');
+    const ok = window.confirm(t('writing.unsavedLeave', '文档有未保存的修改，确定离开吗？'));
     if (ok) {
       leaveConfirmed.current = true;
       dirtyRef.current = false;
@@ -209,7 +209,7 @@ export function WritingEditorPage() {
     if (chatSession.lastDocBody === bodyRef.current) return;
     // #720: 上一版审阅未决时拒绝新写回 — 提示先完成当前审阅,避免静默覆盖。
     if (diffPendingRef.current) {
-      setAiEditNotice('有未完成的 AI 修改审阅 — 请先接受/拒绝后再继续');
+      setAiEditNotice(t('writing.reviewPending', '有未完成的 AI 修改审阅 — 请先接受/拒绝后再继续'));
       setTimeout(() => setAiEditNotice(''), 5000);
       return;
     }
@@ -225,7 +225,7 @@ export function WritingEditorPage() {
     // #720: 用显式 cancelled 字段区分"放弃"，不再用空串推断 — 全文删空的
     // 接受结果(空 md)应落地为空正文,而不是被当成放弃。
     if (result.cancelled) {
-      setAiEditNotice('已放弃本次 AI 修改');
+      setAiEditNotice(t('writing.reviewCancelled', '已放弃本次 AI 修改'));
       setTimeout(() => setAiEditNotice(''), 3000);
       return;
     }
@@ -243,7 +243,7 @@ export function WritingEditorPage() {
         })
         .catch((err) => {
           setError(err instanceof ApiError ? err.messageText : String(err));
-          setAiEditNotice('AI 修改已应用，但保存失败 — 请点击 Save 重试');
+          setAiEditNotice(t('writing.reviewSaveFailed', 'AI 修改已应用，但保存失败 — 请点击 Save 重试'));
           setTimeout(() => setAiEditNotice(''), 6000);
         });
     }
@@ -433,14 +433,14 @@ export function WritingEditorPage() {
       setDirty(false);
       if (updated.unchanged) {
         // #598: 内容未变化 — 提示且不刷新时间戳.
-        setAiEditNotice('内容未变化，未创建新版本');
+        setAiEditNotice(t('writing.unchanged', '内容未变化，未创建新版本'));
         setDoc((prev) => prev ? { ...prev, title: updated.title, body: updated.body } : prev);
         setTimeout(() => setAiEditNotice(''), 3000);
       } else {
         setDoc((prev) => prev ? { ...prev, title: updated.title, body: updated.body, updated_at: updated.updated_at } : prev);
         setTitle(updated.title);
         setBody(updated.body);
-        setAiEditNotice('已保存并创建版本');
+        setAiEditNotice(t('writing.savedVersion', '已保存并创建版本'));
         setTimeout(() => setAiEditNotice(''), 3000);
       }
     } catch (err) {
@@ -655,7 +655,7 @@ export function WritingEditorPage() {
     } catch (err) {
       // #714: 主动取消不视为错误。
       if (err instanceof DOMException && err.name === 'AbortError') throw err;
-      setUploadState((prev) => (prev ? { ...prev, error: err instanceof ApiError ? err.messageText : '上传失败' } : prev));
+      setUploadState((prev) => (prev ? { ...prev, error: err instanceof ApiError ? err.messageText : t('common.uploadFailed', '上传失败') } : prev));
       throw err;
     }
   };
@@ -693,7 +693,7 @@ export function WritingEditorPage() {
           setDoc((prev) => (prev ? { ...prev, body: importedBody, updated_at: new Date().toISOString() } : prev));
           lastSavedBody.current = importedBody;
           // #fix: 引导 — 已导入原文,可直接编辑草稿或与 AI 对话调整。
-          setAiEditNotice('已导入原文，可直接编辑草稿，或在右侧与 AI 对话调整内容');
+          setAiEditNotice(t('writing.importedBody', '已导入原文，可直接编辑草稿，或在右侧与 AI 对话调整内容'));
           setTimeout(() => setAiEditNotice(''), 6000);
         }
       }
@@ -854,7 +854,7 @@ export function WritingEditorPage() {
               <History size={14} className="mr-1" /> History
             </Button>
             <Button size="sm" onClick={handleSave} isLoading={saving} disabled={saving}>
-              {dirty ? '● 未保存' : 'Save'}
+              {dirty ? t('writing.unsaved', '● 未保存') : 'Save'}
             </Button>
             <Button size="sm" variant="secondary" onClick={handleExportDocx}>
               <Download size={14} className="mr-1" /> DOCX

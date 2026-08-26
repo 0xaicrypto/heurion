@@ -437,12 +437,23 @@ function TemplateTab({ title, abstract, authors, onSaved }: { title: string; abs
 }
 
 /* ══════════════ Tab 4: 投稿前检查 + 状态追踪 ══════════════ */
+// #718: 状态标签走 t() — 语言切换后跟随。
+function statusLabel(v: string, t: (k: string, def: string) => string): string {
+  switch (v) {
+    case 'draft': return t('submission.statusDraft', '拟投');
+    case 'ready': return t('submission.statusReady', '已就绪');
+    case 'submitted': return t('submission.statusSubmitted', '已投');
+    case 'revision': return t('submission.statusRevision', '返修');
+    case 'published': return t('submission.statusPublished', '发表');
+    default: return v;
+  }
+}
 const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: 'draft', label: '拟投' },
-  { value: 'ready', label: '已就绪' },
-  { value: 'submitted', label: '已投' },
-  { value: 'revision', label: '返修' },
-  { value: 'published', label: '发表' },
+  { value: 'draft', label: 'draft' },
+  { value: 'ready', label: 'ready' },
+  { value: 'submitted', label: 'submitted' },
+  { value: 'revision', label: 'revision' },
+  { value: 'published', label: 'published' },
 ];
 
 function CheckTab({ draft }: { draft: SubmissionDraft | null }) {
@@ -493,7 +504,7 @@ function CheckTab({ draft }: { draft: SubmissionDraft | null }) {
                   : 'border-border bg-surface-elevated text-text-secondary hover:text-text-primary',
               )}
             >
-              {opt.label}
+              {statusLabel(opt.value, t)}
             </button>
           ))}
         </div>

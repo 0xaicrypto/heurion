@@ -205,7 +205,7 @@ export function ChatPage() {
       // #461: single wire→UI mapper (restores download / knowledge payload).
       const msgs = mapWireMessages(r.messages);
       if (msgs.length > 0) setMessages(sessionId, msgs);
-    }).catch(() => setHistoryError('历史加载失败，点击重试'))
+    }).catch(() => setHistoryError(t('chat.historyLoadFailed', '历史加载失败，点击重试')))
       .finally(() => setHistoryLoading(false));
     // U3: show the context budget immediately for sessions with history.
     api.getContextUsage(sessionId).then((u) => {
@@ -362,7 +362,7 @@ export function ChatPage() {
     }
     if (m.exportState === 'saving' || !m.text) return;
     // #725: 标题取消息首句(可读、可区分),不再固定 "AI 润色结果"。
-    const firstLine = m.text.split('\n').map((s) => s.trim()).find(Boolean) || 'AI 润色结果';
+    const firstLine = m.text.split('\n').map((s) => s.trim()).find(Boolean) || t('chat.defaultDocTitle', 'AI 润色结果');
     const title = firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine;
     patchMessage(sessionId, m.id, { exportState: 'saving' });
     try {
@@ -553,7 +553,7 @@ export function ChatPage() {
                           api.getMessages(sessionId, 50).then((r) => {
                             const msgs = mapWireMessages(r.messages);
                             if (msgs.length > 0) setMessages(sessionId, msgs);
-                          }).catch(() => setHistoryError('历史加载失败，点击重试'))
+                          }).catch(() => setHistoryError(t('chat.historyLoadFailed', '历史加载失败，点击重试')))
                             .finally(() => setHistoryLoading(false));
                         }}
                       >
@@ -626,7 +626,7 @@ export function ChatPage() {
             {/* #298: offer to capture a reusable procedure as a skill */}
             {session?.skillCapture && messages.length > 1 && (
               <SkillCapturePrompt
-                conversation={messages.slice(-4).map((m) => `${m.role === 'user' ? '医生' : 'AI'}: ${m.text}`).join('\n')}
+                conversation={messages.slice(-4).map((m) => `${m.role === 'user' ? t('chat.doctor', '医生') : 'AI'}: ${m.text}`).join('\n')}
                 sessionId={sessionId}
                 onDone={() => {
                   useChatStore.setState((st) => {
