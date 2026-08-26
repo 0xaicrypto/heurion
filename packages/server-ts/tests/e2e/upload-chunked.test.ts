@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'vitest'
 import { getApp, authHeader, getAuthUserId } from '../setup.js'
+import { pipelineSettled } from '../../src/modules/files/file-pipeline.service.js'
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
@@ -52,8 +53,11 @@ beforeEach(async () => {
   userId = await getAuthUserId()
 })
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.TWIN_BASE_DIR
+  // 上传触发的后台管线可能仍在写库 — 必须排空后再进入下一文件/断开引擎,
+  // 否则与 Prisma query-engine 卸载竞态导致 napi abort(vitest exit 134)。
+  await pipelineSettled()
 })
 
 describe('#fix 分片上传 upload-chunk / upload-complete / upload-abort', () => {
