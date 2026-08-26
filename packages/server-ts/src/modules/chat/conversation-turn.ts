@@ -265,9 +265,43 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           where: { userId, docId },
           orderBy: { createdAt: 'asc' },
         })
+        // #writing-cost: 参考材料按用户消息相关性裁剪 — 只注入命中的
+        // 文件(label/文件名关键词匹配),其余降级为"仅文件名"占位;避免
+        // 每次轮询都全量提取所有参考正文(多文件时成本与 TTFB 飙升)。
+        // 匹配失败时保留前 N 个(有正文优先),保证模型始终有上下文可用。
+        const allRefs: Array<{ id?: string; label?: string | null; snapshot?: string | null; refType?: string | null }> = refs || []
+        const msgText = String(body.text || '')
+        const maxFiles = CONTEXT_CONFIG.scene.docRefFilesMax
+        let refsToInject = allRefs
+        if (allRefs.length > maxFiles) {
+          const scored = allRefs.map((r) => {
+            const label = String(r.label || r.snapshot || '')
+            let score = 0
+            if (msgText && label && msgText.toLowerCase().includes(label.toLowerCase())) score = 10
+            else if (msgText && label) {
+              // 部分词命中(label 的子串出现在消息中)
+              const words = label.toLowerCase().split(/[\s._-]+/).filter((w) => w.length > 2)
+              if (words.some((w) => msgText.toLowerCase().includes(w))) score = 5
+            }
+            return { r, score }
+          })
+          scored.sort((a, b) => b.score - a.score)
+          const top = scored.slice(0, maxFiles)
+          const withBody = top.some((x) => x.score > 0)
+          if (withBody) {
+            // 命中时:命中文件全量 + 其余降级为文件名占位(列表可见,不注入正文)。
+            refsToInject = top.map((x) => x.r)
+            const placeholder = allRefs
+              .filter((r) => !top.some((t) => t.r.id === r.id))
+              .map((r) => ({ ...r, snapshot: `[未注入正文 — 参考文件 ${r.label || r.snapshot || r.id} 未命中当前问题]` }))
+            refsToInject = [...refsToInject, ...placeholder]
+          } else {
+            refsToInject = top.map((x) => x.r)
+          }
+        }
         // #fix: 上传文件引用(PDF/DOCX/txt)按文件名定位上传并注入提取的
         // 正文,LLM 才能真正读到稿件内容(此前只有文件名)。
-        const { blocks: refBlocks } = await buildDocReferenceBlocks(userId, refs || [], {
+        const { blocks: refBlocks } = await buildDocReferenceBlocks(userId, refsToInject || [], {
           // #fix: fileIndex 优先 + 上传目录文件名兜底 — 用户上传的文件
           // 一定在磁盘上,正文注入不依赖 fileIndex 表是否有记录。
           findFileByName: async (name) => findUploadFileByName(userId, name),
@@ -277,12 +311,12 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         // #fix: 文件类参考材料未解析出正文时(如上传未入库),模型手里只有
         // 文件名,会误拿文件名调 ocr_image(只接受图片 file_id)而报错。
         // 明确引导:读 PDF/DOCX 正文用 import_reference,不用 ocr_image。
-        const refHint = (refs || []).length > 0 && !refBlock.includes('[已解析上传文件正文]')
+        const refHint = allRefs.length > 0 && !refBlock.includes('[已解析上传文件正文]')
           ? '\n[提示] 以上文件类参考材料未解析出正文。要读取 PDF/DOCX 内容,请调用 edit_document 的 import_reference 导入(正文为空时工具会自动导入唯一参考);不要用 ocr_image — 它只接受上传的图片文件(file_id)。'
           : ''
         // #fix: 正文与参考材料可能来自不同格式(如正文是 PDF 版、参考是
         // DOCX 版),提取的文本有差异 — 明确禁止从参考材料复制 old_text。
-        const refSourceRule = (refs || []).length > 0
+        const refSourceRule = allRefs.length > 0
           ? '注意:Reference Materials 与当前正文可能来自不同文件格式/版本,文本有差异,old_text 禁止从 Reference Materials 复制(从那里复制的文本在正文中找不到)。若用户新上传了附件并要求润色/重写,优先调用 edit_document 的 import_reference 导入该附件作为正文(覆盖),再逐段编辑。'
           : ''
 

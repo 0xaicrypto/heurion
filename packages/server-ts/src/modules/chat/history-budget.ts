@@ -12,6 +12,7 @@
 import prisma from '../../common/prisma'
 import { getUserContext } from './user-context.js'
 import { MAX_HISTORY_TOKENS } from './chat-context.js'
+import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
 import { ensureSessionCompaction, getInFlightCompaction } from '../../memory/compaction/index.js'
 
@@ -146,7 +147,10 @@ export async function loadHistoryBudget(
   historyTurns: number
   compactedUpto: number
 }> {
-  const maxHistoryTokens = MAX_HISTORY_TOKENS
+  // #writing-cost: 写作(doc-*)会话历史预算降额 — 润色聚焦当前文档,
+  // 老对话价值低;防"文档+参考+历史"冲顶总预算导致 TTFB 长/成本高。
+  const isDocSession = sid.startsWith('doc-')
+  const maxHistoryTokens = isDocSession ? CONTEXT_CONFIG.docHistoryTokens : MAX_HISTORY_TOKENS
   const historyTurns = parseInt(process.env.HISTORY_TURNS || '20', 10)
   let compactedUpto = 0
   try {

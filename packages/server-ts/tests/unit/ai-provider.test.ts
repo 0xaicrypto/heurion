@@ -96,7 +96,7 @@ describe('LlmGateway chat (unified #436)', () => {
       vi.fn(async () => new Response('unauthorized', { status: 401 })),
     )
     const gateway = getLlmGateway()
-    await expect(gateway.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(/服务暂时不可用/)
+    await expect(gateway.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(/HTTP 401/)
   })
 
   test('retries transient 429 then succeeds', async () => {
@@ -122,7 +122,7 @@ describe('LlmGateway chat (unified #436)', () => {
   test('does not retry non-transient 400', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('bad request', { status: 400 })))
     const gateway = getLlmGateway()
-    await expect(gateway.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(/服务暂时不可用/)
+    await expect(gateway.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(/HTTP 400/)
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
   })
 

@@ -237,15 +237,16 @@ function WritingList() {
                   className="block"
                 >
                   <Card className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="font-medium text-text-primary">{d.title || t('writing.untitled', 'Untitled')}</h3>
+                    <div className="flex items-center justify-between gap-3">
+                      {/* 文档标识图标移左侧 — 与删除按钮分开,不再重叠 */}
+                      <FileText size={18} className="shrink-0 text-accent/70" />
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate font-medium text-text-primary">{d.title || t('writing.untitled', 'Untitled')}</h3>
                         <p className="text-xs text-text-tertiary">
                           {new Date(d.updated_at).toLocaleDateString()}
                           {d.ref_count > 0 ? ` · ${d.ref_count} ${t('writing.refs', 'references')}` : ''}
                         </p>
                       </div>
-                      <FileText size={16} className="text-text-tertiary transition-opacity group-hover:opacity-0" />
                     </div>
                   </Card>
                 </Link>
@@ -253,9 +254,9 @@ function WritingList() {
                   onClick={() => handleDelete(d.id)}
                   disabled={deletingId === d.id}
                   title={t('common.delete', '删除')}
-                  // #389: corner placement — the old centered-right button
-                  // overlapped the row's FileText icon.
-                  className="absolute right-2 top-2 rounded-lg p-1.5 text-text-tertiary opacity-0 transition-opacity hover:bg-surface-elevated hover:text-error focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-40"
+                  aria-label={t('common.delete', '删除')}
+                  // 右端常显,不再覆盖左侧文档图标;触屏也可达。
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-text-tertiary transition-colors hover:bg-surface-elevated hover:text-error disabled:opacity-40"
                 >
                   {deletingId === d.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                 </button>

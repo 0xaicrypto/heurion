@@ -14,6 +14,10 @@ export const CONTEXT_CONFIG = {
   maxHistoryTokens: parseInt(process.env.MAX_HISTORY_TOKENS || '32000', 10),
   /** 历史轮数窗口。 */
   historyTurns: parseInt(process.env.HISTORY_TURNS || '20', 10),
+  /** #writing-cost: 写作(doc-*)会话的历史预算 — 润色任务的历史价值低
+   *  (每轮聚焦当前文档),降到 12k 防止“文档 20k + 参考 + 历史 32k”冲顶
+   *  64k 总预算 → TTFB 长/成本高/易触发上游限流。 */
+  docHistoryTokens: parseInt(process.env.DOC_HISTORY_TOKENS || '12000', 10),
 
   // ── projection 内部配额（memory-projection.ts）──
   projection: {
@@ -60,6 +64,9 @@ export const CONTEXT_CONFIG = {
     /** #fix: 写作会话注入的当前文档 token 预算(脚本感知裁剪,见
      *  token-estimate.fitTextToTokens)。 */
     docBodyTokens: parseInt(process.env.DOC_BODY_TOKENS || '20000', 10),
+    /** #writing-cost: 单轮注入参考材料的文件数上限(按 label 与用户消息
+     *  相关性优先) — 不相关参考不每轮全量注入。 */
+    docRefFilesMax: parseInt(process.env.DOC_REF_FILES_MAX || '3', 10),
     docRefChars: 4000,
     /** #fix: 参考材料里上传文件(PDF/DOCX/txt)提取正文的 token 预算 —
      *  正文注入取代"只有文件名",LLM 才能真正读到稿件内容。 */

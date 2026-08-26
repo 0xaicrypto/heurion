@@ -312,7 +312,10 @@ export async function fetchWithRetry(
       }
     }
   }
-  throw lastErr ?? new Error(FRIENDLY_LLM_ERROR)
+  // 重试耗尽 — 保留具体失败原因(HTTP 状态/超时),前端才能给出可行动的
+  // 提示,而不是一律吞成"服务暂时不可用"(用户无法区分 key 失效/限流/网络)。
+  if (lastErr) throw lastErr
+  throw new Error(FRIENDLY_LLM_ERROR)
 }
 
 /** Default cheap model for classifiers, extractors, and background tasks. */
@@ -477,7 +480,9 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       body: JSON.stringify(body),
     }, { signal: options.signal, timeoutMs: options.timeoutMs })
     if (!res.ok) {
-      throw new Error(FRIENDLY_LLM_ERROR)
+      // 上游明确拒绝(401 key 失效 / 402 余额 / 429 限流 / 413 超长) —
+      // 带状态码,前端可据此提示用户而非笼统"服务不可用"。
+      throw new Error(`LLM 请求失败 (HTTP ${res.status})`)
     }
     const json: { choices?: LlmChunk['choices']; usage?: LlmChunk['usage'] } = await res.json()
     const choice = json.choices?.[0]
@@ -554,7 +559,8 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       }),
     }, { signal: options.signal, timeoutMs: options.timeoutMs })
     if (!res.ok) {
-      throw new Error(FRIENDLY_LLM_ERROR)
+      // 同上 — 流式路径也带上状态码。
+      throw new Error(`LLM 请求失败 (HTTP ${res.status})`)
     }
 
     const reader = res.body!.getReader()
