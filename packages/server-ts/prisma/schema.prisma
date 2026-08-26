@@ -48,8 +48,10 @@ model User {
    pluginInstallations PluginInstallation[]
    externalUserMappings ExternalUserMapping[]
    medicalRecordEntries MedicalRecordEntry[]
-   approvalRequests ApprovalRequest[]
-   @@map("users")
+  approvalRequests ApprovalRequest[]
+  fileIndexes      FileIndex[]
+  pipelineJobs     FilePipelineJob[]
+  @@map("users")
 }
 
 model Session {
@@ -430,6 +432,7 @@ model MemoryProposal {
   resolvedBy     String? @map("resolved_by")
   archivedAt     String? @map("archived_at") // 13.4D: auto-archived after 7 days (low importance / summaries)
   category       String? // 13.4F: extraction category for quality feedback stats
+  relatedFacts   String? @map("related_facts") // #736/#748: JSON string[] of source fact stableIds — carried to addArticle so synthesis dedup can work
 
   @@index([userId, status, createdAt(sort: Desc)])
   @@index([scopeType, patientHash, status])
@@ -448,6 +451,60 @@ model KbCompaction {
   @@unique([sessionId, coveredUptoIdx])
   @@index([userId, sessionId, coveredUptoIdx(sort: Desc)])
   @@map("kb_compactions")
+}
+
+// #730/#619: 文件索引 — SHA-256 查重与文件列表的唯一持久层。
+// 复合唯一 (userId+sha256) 支撑 dedup upsert;deletedAt 软删后查重放行。
+model FileIndex {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  sha256      String
+  name        String
+  mime        String    @default("application/octet-stream")
+  sizeBytes   Int       @map("size_bytes")
+  patientHash String?   @map("patient_hash")
+  deletedAt   String?   @map("deleted_at")
+  createdAt   String    @map("created_at")
+  updatedAt   String    @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+  @@unique([sha256, userId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, patientHash])
+  @@index([patientHash, deletedAt])
+  @@map("file_index")
+}
+
+// #747: 上传后处理管线 — extract→embed→index→facts→ingest 单一状态机。
+// 每 stage 独立状态/重试,替代 finalizeUpload 内三条互不知情的 fire-and-forget
+// 异步路(#732/#733/#734 的结构根因)。
+model FilePipelineJob {
+  id             String   @id @default(cuid())
+  userId         String   @map("user_id")
+  fileId         String   @map("file_id")
+  fileName       String   @map("file_name")
+  mimeType       String   @map("mime_type")
+  sha256         String
+  sizeBytes      Int      @map("size_bytes")
+  patientHash    String?  @map("patient_hash")
+  stage          String   @default("queued") // queued|extracted|embedded|proposed|ingested|failed|skipped
+  extractedChars Int      @default(0) @map("extracted_chars")
+  chunkCount     Int      @default(0) @map("chunk_count")
+  factCount      Int      @default(0) @map("fact_count")
+  proposalIds    String?  @map("proposal_ids") // JSON array
+  ingestionJobId String?  @map("ingestion_job_id")
+  errorStage     String?  @map("error_stage")
+  errorMessage   String?  @map("error_message")
+  retryCount     Int      @default(0) @map("retry_count")
+  createdAt      String   @map("created_at")
+  updatedAt      String   @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+  @@unique([userId, fileId])
+  @@index([userId, stage])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([patientHash, stage])
+  @@map("file_pipeline_jobs")
 }
 
 model IngestionJob {

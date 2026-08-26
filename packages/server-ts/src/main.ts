@@ -70,12 +70,39 @@ function syncSchema(): void {
   }
 }
 
+// #746: startup schema assertion — every prisma model the hot paths rely on
+// must exist at boot. Missing table = actionable fatal error, never a runtime
+// silent-degradation (`(prisma as any).x` TypeError swallowed by a bare catch).
+async function assertSchema(): Promise<void> {
+  const required: Array<[string, () => Promise<unknown>]> = [
+    ['FileIndex', async () => prisma.fileIndex.count()],
+    ['FilePipelineJob', async () => prisma.filePipelineJob.count()],
+    ['MemoryProposal', async () => prisma.memoryProposal.count()],
+    ['IngestionJob', async () => prisma.ingestionJob.count()],
+    ['KnowledgeGap', async () => prisma.knowledgeGap.count()],
+  ]
+  for (const [model, probe] of required) {
+    try {
+      await probe()
+    } catch (err) {
+      const msg = (err as Error)?.message?.slice(0, 200)
+      throw new Error(
+        `[DB] Required model "${model}" is missing or unreadable — run \`npx prisma db push\` in packages/server-ts, then restart. (${msg})`,
+      )
+    }
+  }
+  console.log('[DB] Schema assertion passed (kb hot-path models present)')
+}
+
 async function main() {
   // #284: 先清理重复 display_name,否则 db push 建唯一索引失败(每次启动报错)。
   await dedupeDisplayNames()
   // Run Prisma schema migration at startup (see syncSchema — production is
   // non-destructive; #569-fix: single-connection URL avoids SQLITE_BUSY).
   syncSchema()
+
+  // #746: fail fast on missing tables instead of degrading silently later.
+  if (process.env.NODE_ENV !== 'test') await assertSchema()
 
   const evolutionQueue = await createDefaultEvolutionQueue()
   // SQLite WAL (idempotent) — concurrent reads never block writes.
