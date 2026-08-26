@@ -217,6 +217,7 @@ export function WritingEditorPage() {
     setDiffReview({ key: `rev_${Date.now()}`, old: bodyRef.current, next: chatSession.lastDocBody });
     // #693: 审阅模式下编辑器选中的是 diff 内容,不再构成引用。
     setChatSelection('');
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定,避免抖动
   }, [chatSession?.lastDocBody, docId, diffReview]);
 
   /** 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。 */
@@ -247,6 +248,7 @@ export function WritingEditorPage() {
           setTimeout(() => setAiEditNotice(''), 6000);
         });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定,避免抖动
   }, [docId, doc?.title]);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [chatUploadingFile, setChatUploadingFile] = useState(false);
