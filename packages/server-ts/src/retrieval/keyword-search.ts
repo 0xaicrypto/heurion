@@ -17,6 +17,8 @@ export interface SearchResult {
   category?: string
   /** #627: fact 条目的重要性 — 统一渲染用(★ 数量)。 */
   importance?: number
+  /** #748: stableId 主键 — RRF 融合键与向量路对齐,同一事实不再双份注入。 */
+  stableId?: string
 }
 
 function tokenize(text: string): string[] {
@@ -75,6 +77,7 @@ export function keywordSearch(
         factHash: fact.factHash,
         category: fact.category,
         importance: fact.importance,
+        stableId: fact.stableId,
       })
     }
   }
@@ -87,6 +90,8 @@ export function keywordSearch(
         source: `knowledge:${article.id}`,
         content: `${article.title}: ${article.content.slice(0, 200)}`,
         score,
+        // #748: article legacy id === graph stableId — same fusion key rule.
+        stableId: article.id,
       })
     }
   }

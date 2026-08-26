@@ -20,6 +20,10 @@ export interface ScoredFact {
   createdAt?: number
   /** 来源标识(如 fact:abc) — 检索结果追踪用。 */
   source?: string
+  /**
+   * #748: 图谱稳定ID — 词法/向量两路检索的统一主键,RRF 以此合并同一事实。
+   */
+  stableId?: string
 }
 
 export interface FactProvider {
@@ -44,6 +48,8 @@ export class LegacyFactProvider implements FactProvider {
       factHash: factContentHash(f),
       createdAt: f.createdAt,
       source: `fact:${f.id}`,
+      // #748: legacy id === graph stableId (legacy-projection maps 1:1).
+      stableId: f.id,
     }))
   }
 }

@@ -10,7 +10,7 @@
 import prisma from '../../common/prisma'
 import { parseDbJson } from '../../common/llm-json.js'
 
-export type TelemetryCategory = 'router' | 'kb_command' | 'gap' | 'sidecar' | 'plugin' | 'llm_cost'
+export type TelemetryCategory = 'router' | 'kb_command' | 'gap' | 'sidecar' | 'plugin' | 'llm_cost' | 'kb_pipeline'
 
 export interface TelemetryInput {
   userId: string

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
 import { api } from '@/lib/api';
@@ -6,6 +6,7 @@ import { Button, Card, Skeleton, Badge, Input, Textarea } from '@/components/ui'
 import { cn } from '@/lib/utils';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { Article } from '@/lib/types';
+import { KB_SOURCE_TYPES, type KbSourceType } from '@heurion/contracts'; // #744/#750 single source of truth
 import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X, ChevronLeft, ChevronRight, GitGraph } from 'lucide-react';
 
 interface Fact {
@@ -35,8 +36,11 @@ const TABS: { key: Tab; label: string; icon: typeof BookOpen }[] = [
   { key: 'files', label: 'Files', icon: FileText },
 ];
 
-const SOURCE_TYPES = ['patient', 'doctor', 'research', 'general'] as const;
-type SourceType = typeof SOURCE_TYPES[number];
+// #744/#750: enum imported from @heurion/contracts — server and client share
+// one definition; local copies drifted before (sidecar missing → invisible
+// facts + silent rewrite on edit).
+const SOURCE_TYPES = KB_SOURCE_TYPES;
+type SourceType = KbSourceType;
 
 const PAGE_SIZE = 10;
 
@@ -95,18 +99,27 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
-  const loadAll = () => {
-    setLoading(true);
-    Promise.all([
-      api.getKnowledgeArticles().then(r => setArticles(r.articles)).catch(() => {}),
-      api.getFacts().then(r => setFacts(r.facts)).catch(() => {}),
-      api.getKnowledgeGaps().then(r => setGaps(r.gaps)).catch(() => {}),
-      api.getKnowledgeTools().then(r => setTools(r.tools)).catch(() => {}),
-      api.listFiles().then(r => setFiles(r.files)).catch(() => {}),
-    ]).finally(() => setLoading(false));
+  // #743: observable failures — silent `.catch(() => {})` left users with
+  // empty lists and no hint why. Errors surface in a dismissible banner.
+  const [loadErrors, setLoadErrors] = useState<string[]>([]);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const recordLoadError = (what: string) => (err: unknown) => {
+    setLoadErrors(prev => [...new Set([...prev, `${what}: ${(err as Error)?.message || '请求失败'}`])].slice(-3));
   };
 
-  useEffect(() => { loadAll(); }, []);
+  const loadAll = useCallback(() => {
+    setLoading(true);
+    setLoadErrors([]);
+    Promise.all([
+      api.getKnowledgeArticles().then(r => setArticles(r.articles)).catch(recordLoadError('文章加载失败')),
+      api.getFacts().then(r => setFacts(r.facts)).catch(recordLoadError('事实加载失败')),
+      api.getKnowledgeGaps().then(r => setGaps(r.gaps)).catch(recordLoadError('Gaps 加载失败')),
+      api.getKnowledgeTools().then(r => setTools(r.tools)).catch(recordLoadError('工具加载失败')),
+      api.listFiles().then(r => setFiles(r.files)).catch(recordLoadError('文件列表加载失败')),
+    ]).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
 
   const staleCount = articles.filter(a => a.status === 'stale').length;
   const pendingCount = gaps.filter(g => g.status === 'open').length;
@@ -148,39 +161,39 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
   const filePagination = usePagination(filteredFiles, filePage);
 
   const resolveGap = async (gapId: string) => {
-    await api.resolveKnowledgeGap(gapId).catch(() => {});
+    try { await api.resolveKnowledgeGap(gapId); } catch (err) { setActionError(`标记失败:${(err as Error)?.message || '请重试'}`); return; }
     loadAll();
   };
 
   const answerGap = async (gapId: string) => {
     const text = gapAnswer.trim();
     if (!text) return;
-    await api.answerKnowledgeGap(gapId, text).catch(() => {});
+    try { await api.answerKnowledgeGap(gapId, text); } catch (err) { setActionError(`提交回答失败:${(err as Error)?.message || '请重试'}`); return; }
     setAnsweringGapId(null);
     setGapAnswer('');
     loadAll();
   };
 
   const ignoreGap = async (gapId: string) => {
-    await api.ignoreKnowledgeGap(gapId).catch(() => {});
+    try { await api.ignoreKnowledgeGap(gapId); } catch (err) { setActionError(`忽略失败:${(err as Error)?.message || '请重试'}`); return; }
     loadAll();
   };
 
   const deleteFact = async (id: string) => {
-    await api.deleteFact(id).catch(() => {});
+    try { await api.deleteFact(id); } catch (err) { setActionError(`删除失败:${(err as Error)?.message || '请重试'}`); return; }
     loadAll();
   };
 
   const saveFact = async () => {
     if (!editingFact) return;
-    await api.updateFact(editingFact.id, { content: editContent, sourceType: editSource }).catch(() => {});
+    try { await api.updateFact(editingFact.id, { content: editContent, sourceType: editSource }); } catch (err) { setActionError(`保存失败:${(err as Error)?.message || '请重试'}`); return; }
     setEditingFact(null);
     loadAll();
   };
 
   const regenerateArticle = async (id: string) => {
     setArticleBusy(prev => new Set(prev).add(id));
-    await api.regenerateKnowledgeArticle(id).catch(() => {});
+    try { await api.regenerateKnowledgeArticle(id); } catch (err) { setArticleBusy(prev => { const next = new Set(prev); next.delete(id); return next; }); setActionError(`重新生成失败:${(err as Error)?.message || '请稍后再试'}`); return; }
     setArticleBusy(prev => { const next = new Set(prev); next.delete(id); return next; });
     loadAll();
   };
@@ -323,6 +336,19 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
           </div>
         </header>
 
+        {/* #743: surfaced load/action failures — no more silent empty lists. */}
+        {(loadErrors.length > 0 || actionError) && (
+          <div className="mx-3 mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200" role="alert">
+            {loadErrors.map((e, i) => (<div key={i}>⚠ {e}</div>))}
+            {actionError && (
+              <div className="flex items-center justify-between gap-2">
+                <span>⚠ {actionError}</span>
+                <button onClick={() => setActionError(null)} aria-label="dismiss"><X size={14} /></button>
+              </div>
+            )}
+          </div>
+        )}
+
         <nav className="flex border-b border-border bg-surface px-6">
           {TABS.map(({ key, label, icon: Icon }) => (
             <button
@@ -464,8 +490,9 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                   {SOURCE_TYPES.map(sourceType => {
                     const groupFacts = factPagination.pageItems.filter(f => f.sourceType === sourceType || (!f.sourceType && sourceType === 'general'));
                     if (groupFacts.length === 0) return null;
-                    const Icon = sourceType === 'patient' ? User : sourceType === 'doctor' ? Stethoscope : sourceType === 'research' ? FlaskConical : Globe;
-                    const label = sourceType === 'patient' ? 'Patient Facts' : sourceType === 'doctor' ? 'Doctor & Preferences' : sourceType === 'research' ? 'Research & Studies' : 'General';
+                    // #744: sidecar now has its own group (was invisible/absorbed into general).
+                    const Icon = sourceType === 'patient' ? User : sourceType === 'doctor' ? Stethoscope : sourceType === 'research' ? FlaskConical : sourceType === 'sidecar' ? GitGraph : Globe;
+                    const label = sourceType === 'patient' ? 'Patient Facts' : sourceType === 'doctor' ? 'Doctor & Preferences' : sourceType === 'research' ? 'Research & Studies' : sourceType === 'sidecar' ? 'Tool & Sidecar Facts' : 'General';
                     return (
                       <div key={sourceType}>
                         <h3 className="flex items-center gap-2 mb-3 text-sm font-semibold text-text-secondary">

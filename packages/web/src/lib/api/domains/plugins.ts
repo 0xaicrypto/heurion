@@ -152,8 +152,9 @@ export class PluginsApi extends ApiCore {
 
   /* ────────────────────────── file manager ────────────────────────── */
 
-  async listFiles(limit = 200): Promise<{files: Array<{file_id: string; name: string; mime: string; size_bytes: number; created_at: string}>}> {
-    return this.fetch(`/api/v1/files?limit=${limit}`);
+  async listFiles(limit = 200, offset = 0): Promise<{files: Array<{file_id: string; name: string; mime: string; size_bytes: number; created_at: string}>, total: number}> {
+    // #745: real pagination — total reflects ALL files, not the truncated page.
+    return this.fetch(`/api/v1/files?limit=${limit}&offset=${offset}`);
   }
 
   async deleteFile(fileId: string): Promise<void> {

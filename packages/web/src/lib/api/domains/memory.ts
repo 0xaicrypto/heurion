@@ -44,8 +44,14 @@ export class MemoryApi extends ApiCore {
 
   /* ────────────────────────── knowledge gaps + tools ────────────────────────── */
 
-  async getKnowledgeGaps(): Promise<{gaps: Array<{id: string; content: string; status: 'open' | 'answered' | 'ignored'; source: string; createdAt: string; updatedAt: string}>}> {
-    return this.fetch('/api/v1/knowledge/gaps');
+  async getKnowledgeGaps(opts?: { page?: number; pageSize?: number; status?: string }): Promise<{gaps: Array<{id: string; content: string; status: 'open' | 'answered' | 'ignored'; source: string; createdAt: string; updatedAt: string}>, pagination: {page: number; pageSize: number; total: number; totalPages: number}}> {
+    // #742: pass page/pageSize through so server-side pagination actually works.
+    const params = new URLSearchParams();
+    if (opts?.page) params.set('page', String(opts.page));
+    if (opts?.pageSize) params.set('pageSize', String(opts.pageSize));
+    if (opts?.status) params.set('status', opts.status);
+    const qs = params.toString();
+    return this.fetch(`/api/v1/knowledge/gaps${qs ? `?${qs}` : ''}`);
   }
 
   async deleteKnowledgeGaps(ids: string[]): Promise<{deleted: number}> {

@@ -10,6 +10,10 @@ import type { FactsStore, KnowledgeStore } from '../evolution/stores.js'
 import { rrfFusion, type RrfCandidate } from './rrf-fusion.js'
 import type { EmbeddingService } from '../memory/embedding/embedding.service.js'
 import type { MemoryScope } from '../memory/contracts.js'
+import { factContentHash } from '../common/fact-render.js' // #748 hash parity
+import { makeLogger } from '../common/logger.js' // #746: no bare catches
+
+const log = makeLogger('retrieval.unified-search')
 
 export interface UnifiedHit {
   content: string
@@ -19,6 +23,11 @@ export interface UnifiedHit {
   factHash?: string
   category?: string
   importance?: number
+  /**
+   * #748/#749: unified identity — fact/article stableId, or for document
+   * chunks the `fileId::cN` chunk key (strip the ::cN suffix to get the doc).
+   */
+  stableId?: string
 }
 
 export interface UnifiedSearchOptions {
@@ -54,12 +63,15 @@ export async function unifiedSearch(
   const keywordCandidates: RrfCandidate[] = keywordHits.map((r, i) => ({
     content: r.content,
     source: 'keyword',
-    sourceId: r.source,
+    // #748: keyword path keys candidates by stableId (raw), matching the
+    // vector path — previously `fact:xxx` vs `xxx` never merged in RRF.
+    sourceId: r.stableId ?? r.source,
     rank: i + 1,
   }))
 
   let vectorCandidates: RrfCandidate[] = []
   const vecTypeById = new Map<string, string>()
+  const vecMetaById = new Map<string, { patientHash?: string | null; category?: string | null; importance?: number | null }>()
   if (opts.embedding) {
     try {
       const vecHits = await opts.embedding.retrieve(query, scope, {
@@ -67,20 +79,27 @@ export async function unifiedSearch(
         minScore: 0.25,
         includeCrossPatient: opts.includeCrossPatient,
       })
-      for (const h of vecHits) vecTypeById.set(h.stableId, h.type)
+      for (const h of vecHits) {
+        vecTypeById.set(h.stableId, h.type)
+        vecMetaById.set(h.stableId, { patientHash: h.patientHash, category: h.category, importance: h.importance })
+      }
       vectorCandidates = vecHits.map((h, i) => ({
         content: h.content,
         source: 'vector',
         sourceId: h.stableId,
         rank: i + 1,
       }))
-    } catch {
-      // embedding 服务故障 → 词法路兜底
+    } catch (err) {
+      // #734/#746: embedding 服务故障 → 词法路兜底,但必须留痕(可观测),
+      // 不再静默空 catch。
+      log.warn('vector path degraded — falling back to keyword-only', {
+        reason: (err as Error)?.message?.slice(0, 120),
+      })
     }
   }
 
   const merged = rrfFusion([keywordCandidates, vectorCandidates], topK)
-  const keywordById = new Map(keywordHits.map((r) => [r.source, r]))
+  const keywordById = new Map(keywordHits.map((r) => [r.stableId ?? r.source, r]))
 
   const hits: UnifiedHit[] = []
   for (const m of merged) {
@@ -94,15 +113,31 @@ export async function unifiedSearch(
         factHash: kw.factHash,
         category: kw.category,
         importance: kw.importance,
+        stableId: kw.stableId ?? m.sourceIds[0],
       })
     } else {
       // 向量独有命中 — 按 embedding 记录的 type 标注(graph fact/article/document)
       const vtype = vecTypeById.get(m.sourceIds[0])
+      const meta = vecMetaById.get(m.sourceIds[0]) ?? {}
       hits.push({
         content: m.content,
         kind: vtype === 'fact' ? 'fact' : vtype === 'article' ? 'knowledge' : 'document',
         source: m.sourceIds[0],
         score: m.score,
+        // #748: real factContentHash parity — keyword/vector dedup keys now
+        // match when the same fact is hit from both stores.
+        ...(vtype === 'fact'
+          ? {
+              factHash: factContentHash({
+                content: m.content,
+                category: (meta.category as any) || undefined,
+                patientHash: meta.patientHash || undefined,
+              }),
+              category: meta.category || undefined,
+              importance: meta.importance ?? undefined,
+            }
+          : {}),
+        stableId: m.sourceIds[0],
       })
     }
   }

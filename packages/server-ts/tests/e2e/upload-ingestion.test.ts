@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'vitest'
 import { getApp, authHeader } from '../setup.js'
+import { pipelineSettled } from '../../src/modules/files/file-pipeline.service.js'
 
 function buildMultipart(fields: Record<string, string>, file?: { name: string; mime: string; content: Buffer }): { body: Buffer; contentType: string } {
   const boundary = `----testboundary${Date.now()}`
@@ -29,8 +30,11 @@ beforeEach(() => {
   process.env.TWIN_BASE_DIR = '.nexus/test-upload-ingestion'
 })
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.TWIN_BASE_DIR
+  // 上传触发的后台管线可能仍在写库 — 必须排空后再进入下一文件/断开引擎,
+  // 否则与 Prisma query-engine 卸载竞态导致 napi abort(vitest exit 134)。
+  await pipelineSettled()
 })
 
 async function createPatient(app: any) {

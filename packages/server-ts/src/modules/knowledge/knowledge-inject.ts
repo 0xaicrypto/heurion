@@ -98,8 +98,38 @@ export async function buildKnowledgeInjection(
   const items = results.filter((r) => !(r.kind === 'fact' && r.factHash && excludeFactHashes?.has(r.factHash)))
   if (items.length === 0) return ''
 
-  const lines: string[] = [KB_INJECT_HEADER]
+  // #749: aggregate same-document chunk hits (stableId `docId::cN`) into one
+  // entry so a single big file cannot crowd out other sources; extra budget
+  // flows to the merged item's combined text.
+  const docParts = new Map<string, { hit: typeof items[number]; parts: string[] }>()
+  const finalItems: typeof items = []
   for (const item of items) {
+    if (item.kind === 'document' && item.stableId?.includes('::')) {
+      const docKey = item.stableId.split('::')[0]
+      const existing = docParts.get(docKey)
+      if (existing) {
+        existing.parts.push(item.content)
+      } else {
+        const entry = { hit: item, parts: [item.content] }
+        docParts.set(docKey, entry)
+        finalItems.push(entry.hit)
+      }
+    } else {
+      finalItems.push(item)
+    }
+  }
+
+  const lines: string[] = [KB_INJECT_HEADER]
+  for (const item of finalItems) {
+    // #749: merged document rendering — chunks joined with an ellipsis marker.
+    if (item.kind === 'document') {
+      const docKey = item.stableId?.split('::')[0]
+      const entry = docKey ? docParts.get(docKey) : undefined
+      if (entry && entry.parts.length > 1) {
+        lines.push(`- [${item.kind}] (${item.source},共${entry.parts.length}个相关片段) ${entry.parts.join('\n…\n').slice(0, maxCharsPerItem * 2)}`)
+        continue
+      }
+    }
     // #627: fact 条目与 layer3 共用统一渲染(formatFactLine),去重后
     // 同一事实表述单一;来源标注保留(id 可追踪)。
     const content = item.kind === 'fact'

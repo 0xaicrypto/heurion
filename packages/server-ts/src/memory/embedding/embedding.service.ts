@@ -60,6 +60,19 @@ export class EmbeddingService {
     }
   }
 
+  /** #747: batch embed for the file pipeline. Null when the provider is down. */
+  async embedBatchOrNull(texts: string[]): Promise<(number[] | null)[] | null> {
+    try {
+      const embed = await this.embedder()
+      if (!embed) return null
+      const vecs = await embed(texts)
+      return texts.map((_, i) => vecs[i] ?? null)
+    } catch (err) {
+      log.warn('embedding batch unavailable', { reason: (err as Error).message.slice(0, 120) })
+      return null
+    }
+  }
+
   /** §5.1 (#189): index an approved memory (reviewed memories only enter RAG). */
   async indexApproved(input: {
     nodeId: string
@@ -68,6 +81,8 @@ export class EmbeddingService {
     content: string
     patientHash?: string | null
     studyId?: string | null
+    /** #749: document chunk 原文 — 缺省按 graph 回读,有值直接存 record。 */
+    storeContent?: boolean
   }): Promise<void> {
     try {
       const vec = await this.embedOrNull(input.content)
@@ -86,6 +101,7 @@ export class EmbeddingService {
         model: process.env.EMBEDDING_MODEL || 'BAAI/bge-m3',
         norm: normalizeVector(vec),
         updatedAt: Date.now(),
+        ...(input.storeContent ? { content: input.content } : {}),
       })
     } catch (err) {
       log.warn('embedding index write skipped', { reason: (err as Error).message.slice(0, 120) })
@@ -101,7 +117,7 @@ export class EmbeddingService {
     query: string,
     scope: MemoryScope,
     opts: { topK?: number; minScore?: number; includeCrossPatient?: boolean } = {},
-  ): Promise<Array<{ stableId: string; content: string; type: string; score: number }>> {
+  ): Promise<Array<{ stableId: string; content: string; type: string; score: number; patientHash?: string | null; category?: string | null; importance?: number | null }>> {
     const vec = await this.embedOrNull(query)
     if (!vec) return []
     return this.retrieveWithVec(vec, scope, opts)
@@ -112,7 +128,7 @@ export class EmbeddingService {
     vec: number[],
     scope: MemoryScope,
     opts: { topK?: number; minScore?: number; includeCrossPatient?: boolean } = {},
-  ): Promise<Array<{ stableId: string; content: string; type: string; score: number }>> {
+  ): Promise<Array<{ stableId: string; content: string; type: string; score: number; patientHash?: string | null; category?: string | null; importance?: number | null }>> {
     const hits = this.embeddingIndex().search(vec, {
       patientHash: scope.patientHash,
       studyId: scope.studyId,
@@ -120,19 +136,29 @@ export class EmbeddingService {
       topK: opts.topK ?? 5,
       minScore: opts.minScore ?? 0.35,
     })
-    const results: Array<{ stableId: string; content: string; type: string; score: number }> = []
+    const results: Array<{ stableId: string; content: string; type: string; score: number; patientHash?: string | null; category?: string | null; importance?: number | null }> = []
     for (const h of hits) {
-      let content = h.record.contentHash
+      // #749: chunk 记录自带正文 — 分块稳定ID(document::cN)不在图谱上。
+      let content = h.record.content ?? h.record.contentHash
+      let category: string | null = null
+      let importance: number | null = null
       try {
         const node = this.memory?.graph.getLatestByStableId(h.record.stableId) as any
         if (node && isNodeSuperseded(node)) continue
         if (node?.content) content = node.content
-      } catch { /* keep hash preview */ }
+        // #748: carry graph metadata so callers can compute real fact hashes
+        // (keyword/vector parity for injection-layer dedup).
+        if (node?.category) category = node.category
+        if (typeof node?.importance === 'number') importance = node.importance
+      } catch { /* keep record content */ }
       results.push({
         stableId: h.record.stableId,
         content,
         type: h.record.type,
         score: h.score,
+        patientHash: h.record.patientHash ?? null,
+        category,
+        importance,
       })
     }
     return results

@@ -18,6 +18,11 @@ export interface EmbeddingRecord {
   model: string
   norm: number
   updatedAt: number
+  /**
+   * #749: 大段文本(document chunk)直接存正文 — 分块稳定ID不在图谱上,
+   * retrieveWithVec 无法经 graph 回读内容;有此字段优先使用。
+   */
+  content?: string
 }
 
 export interface SearchHit {

@@ -18,6 +18,7 @@ import {
   newFileId,
   sha256Hex,
 } from './files.service.js'
+import { retryPipelineJob } from './file-pipeline.service.js'
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
@@ -217,12 +218,15 @@ export async function filesRouter(app: FastifyInstance) {
   })
 
   // ── List all files ──
+  // #745: unified pagination contract — offset/limit + independent total.
   app.get('/api/v1/files', async (request) => {
     const userId = request.user!.userId
     const dir = uploadsDir(userId)
-    if (!fs.existsSync(dir)) return { files: [], total: 0 }
+    if (!fs.existsSync(dir)) return { files: [], total: 0, limit: 0, offset: 0 }
 
-    const { patientHash, limit } = request.query as any
+    const { patientHash, limit: limitRaw, offset: offsetRaw } = request.query as any
+    const limit = limitRaw ? Math.max(1, parseInt(limitRaw as string, 10)) : 0
+    const offset = offsetRaw ? Math.max(0, parseInt(offsetRaw as string, 10)) : 0
     const files = fs.readdirSync(dir)
       .map(f => {
         const stat = fs.statSync(path.join(dir, f))
@@ -241,23 +245,52 @@ export async function filesRouter(app: FastifyInstance) {
       .filter((x): x is { file_id: string; name: string; mime: string; size_bytes: number; patient_hash: string | null; created_at: string } => x !== null)
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
-    const result = limit ? files.slice(0, parseInt(limit as string)) : files
-    return { files: result, total: result.length }
+    const total = files.length
+    const result = limit > 0 ? files.slice(offset, offset + limit) : files.slice(offset)
+    return { files: result, total, limit, offset }
   })
 
-  // ── Chat file picker (#440, moved from stubs.router) ──
+  // ── Post-upload pipeline visibility (#733/#747) ──
+  app.get('/api/v1/files/pipeline/jobs', async (request) => {
+    const userId = request.user!.userId
+    const q = request.query as any
+    const limit = Math.min(200, Math.max(1, parseInt(q?.limit || '50', 10)))
+    const offset = Math.max(0, parseInt(q?.offset || '0', 10))
+    const where: any = { userId }
+    if (q?.stage && q.stage !== 'all') where.stage = q.stage
+    const [rows, total] = await Promise.all([
+      prisma.filePipelineJob.findMany({ where, orderBy: { updatedAt: 'desc' }, take: limit, skip: offset }),
+      prisma.filePipelineJob.count({ where }),
+    ])
+    return { jobs: rows, total, limit, offset }
+  })
+
+  app.post('/api/v1/files/pipeline/jobs/:jobId/retry', async (request, reply) => {
+    const userId = request.user!.userId
+    const { jobId } = request.params as any
+    const result = await retryPipelineJob(userId, String(jobId))
+    if (!result.ok) return reply.status(400).send({ error: result.error })
+    return { retried: true }
+  })
+
+  // ── Chat file picker (#440; #740/#745 fixed — typed read of id, real
+  //    pagination via offset/limit + total count) ──
   app.get('/api/v1/chat/files', async (request: any) => {
     const userId = request.user!.userId
-    const files = await (prisma as any).fileIndex.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    }).catch(() => [])
-    return { files: files.map((f: any) => ({
-      file_id: f.fileId, name: f.name, mime_type: f.mimeType,
+    const q = request.query as any
+    const limit = Math.min(500, Math.max(1, parseInt(q?.limit || '50', 10)))
+    const offset = Math.max(0, parseInt(q?.offset || '0', 10))
+    const patientHash = q?.patient_hash ? String(q.patient_hash) : undefined
+    const where = { userId, deletedAt: null, ...(patientHash ? { patientHash } : {}) }
+    const [rows, total] = await Promise.all([
+      prisma.fileIndex.findMany({ where, orderBy: { createdAt: 'desc' }, take: limit, skip: offset }),
+      prisma.fileIndex.count({ where }),
+    ])
+    return { files: rows.map((f) => ({
+      file_id: f.id, name: f.name, mime_type: f.mime,
       size_bytes: f.sizeBytes, patient_hash: f.patientHash,
       created_at: f.createdAt,
-    })) }
+    })), total, limit, offset }
   })
 
   // #402-followup: generated-chart library (render_chart / render_scene
@@ -343,12 +376,10 @@ export async function filesRouter(app: FastifyInstance) {
       const fileId = String(rawId)
       const filepath = safeUploadPath(userId, fileId)
       if (!filepath) continue
-      try {
-        await (prisma as any).fileIndex.updateMany({
-          where: { id: fileId, userId },
-          data: { deletedAt: new Date().toISOString() },
-        })
-      } catch { /* FileIndex may not exist */ }
+      await prisma.fileIndex.updateMany({
+        where: { id: fileId, userId },
+        data: { deletedAt: new Date().toISOString() },
+      })
       if (fs.existsSync(filepath)) {
         fs.unlinkSync(filepath)
         ctx.memory.deleteDocument(fileId)
@@ -365,12 +396,10 @@ export async function filesRouter(app: FastifyInstance) {
     const filepath = safeUploadPath(userId, fileId)
     if (!filepath) return reply.status(404).send({ error: 'File not found' })
     // Soft-delete in FileIndex
-    try {
-      await (prisma as any).fileIndex.updateMany({
-        where: { id: fileId, userId },
-        data: { deletedAt: new Date().toISOString() },
-      })
-    } catch { /* FileIndex may not exist */ }
+    await prisma.fileIndex.updateMany({
+      where: { id: fileId, userId },
+      data: { deletedAt: new Date().toISOString() },
+    })
     if (fs.existsSync(filepath)) {
       fs.unlinkSync(filepath)
       ctx.memory.deleteDocument(fileId)

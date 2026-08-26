@@ -25,7 +25,9 @@ export async function knowledgeRouter(app: FastifyInstance) {
     const q = request.query as any
     const result = await gapService.list({
       workspaceId: userId,
-      status: q.status || 'open',
+      // #742: default 'all' — previously defaulted to 'open', so answered/
+      // ignored gaps were unreachable from the UI even though they render.
+      status: q.status || 'all',
       source: q.source || 'all',
       q: q.q,
       page: parseQueryInt(q.page, 1),

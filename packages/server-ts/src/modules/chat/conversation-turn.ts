@@ -21,6 +21,7 @@ import { buildAttachmentParts, buildDocReferenceBlocks, findUploadFileByName, de
 import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
 import { splitDocumentSections, resolveDocumentFocus } from '../../lib/doc-sections.js'
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
+import { EmbeddingService } from '../../memory/embedding/embedding.service.js' // #731 向量路接线
 import { ContextAssembler } from './context-assembler.js'
 import { ToolRegistry, type ToolContext } from '../../tools/tool-registry.js'
 import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
@@ -169,19 +170,21 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
 
   // Inject recent file context for the patient
   if (patientHash) {
-    try {
-      const recentFiles = await (prisma as any).fileIndex.findMany({
-        where: { userId, patientHash, deletedAt: null },
-        orderBy: { createdAt: 'desc' },
-        take: CONTEXT_CONFIG.scene.recentFilesMax,
-      })
-      if (recentFiles.length > 0) {
-        const fileCtx = buildFileContext(recentFiles)
-        send({ type: 'context_info', text: fileCtx, kind: 'file_context' })
-        fullMessage = fileCtx + '\n\n' + fullMessage
-      }
-    } catch {
-      // FileIndex table may not exist yet
+    // #730: FileIndex is a real table now — no silent degradation.
+    const recentFiles = await prisma.fileIndex.findMany({
+      where: { userId, patientHash, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: CONTEXT_CONFIG.scene.recentFilesMax,
+    })
+    if (recentFiles.length > 0) {
+      const fileCtx = buildFileContext(recentFiles.map((f) => ({
+        file_id: f.id,
+        name: f.name,
+        size_bytes: f.sizeBytes,
+        createdAt: f.createdAt,
+      })))
+      send({ type: 'context_info', text: fileCtx, kind: 'file_context' })
+      fullMessage = fileCtx + '\n\n' + fullMessage
     }
   }
 
@@ -383,13 +386,15 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       },
     },
     {
-      // #621/#629/#630/#627: 知识库语义自动注入 — 患者过滤 + 预算自适应 + 跨层去重。
+      // #621/#629/#630/#627/#731: 知识库语义自动注入 — 患者过滤 + 预算自适应
+      // + 跨层去重 + 向量路接线(embedding 缺省时 unified-search 自动回落词法)。
       key: 'knowledge_inject',
       fallbackOrder: 1,
       build: (input) => buildKnowledgeInjection(input.body.text, ctx.facts, ctx.knowledge, {
         remainingBudget: input.budget.remaining(),
         excludeFactHashes: input.layer3FactHashes,
         patientHash: input.patientHash ?? undefined,
+        embedding: new EmbeddingService(userId, ctx.memory),
       }),
     },
     {
