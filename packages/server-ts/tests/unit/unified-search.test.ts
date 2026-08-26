@@ -4,6 +4,7 @@ import path from 'path'
 import os from 'os'
 import { FactsStore, KnowledgeStore } from '../../src/evolution/stores.js'
 import { unifiedSearch } from '../../src/retrieval/unified-search.js'
+import { factContentHash } from '../../src/common/fact-render.js'
 
 function makeStores(baseDir: string) {
   const facts = new FactsStore(baseDir)
@@ -85,6 +86,46 @@ describe('#632 unified search (keyword + vector RRF)', () => {
       } as any
       await unifiedSearch('EGFR', facts, knowledge, { embedding, patientHash: 'p1' })
       expect(seen[0].patientHash).toBe('p1')
+    } finally {
+      fs.rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  test('#739/#748 同一 fact 词法+向量双命中 → RRF 按 stableId 合并为一条', async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'us-merge-'))
+    try {
+      const { facts, knowledge } = makeStores(baseDir)
+      // 取真实 fact stableId(legacy id === graph stableId)
+      const factId = facts.all()[0].id
+      const embedding = stubEmbedding([
+        { stableId: factId, content: facts.all()[0].content, type: 'fact', score: 0.9 },
+      ])
+      const hits = await unifiedSearch('EGFR 突变', facts, knowledge, { embedding, topK: 5 })
+      const merged = hits.filter((h) => h.stableId === factId)
+      // 修复前:词法 sourceId=fact:<id> vs 向量=<id> → 双份注入
+      expect(merged.length).toBe(1)
+      // 合并条目保留词法元数据 + 与向量路一致的 hash(注入层跨 store 去重可用)
+      expect(merged[0].factHash).toBeTruthy()
+      expect(merged[0].category).toBe('fact')
+    } finally {
+      fs.rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  test('#748 向量独有 fact 命中携带与词法路同公式的 factHash', async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'us-vec-hash-'))
+    try {
+      const { facts, knowledge } = makeStores(baseDir)
+      const fact = facts.all()[0]
+      const embedding = stubEmbedding([
+        { stableId: 'fact_other_9', content: fact.content, type: 'fact', score: 0.88, category: 'fact' },
+      ])
+      const hits = await unifiedSearch('放疗抵抗 ATR', facts, knowledge, { embedding, topK: 5 })
+      const h = hits.find((x) => x.stableId === 'fact_other_9')
+      expect(h?.kind).toBe('fact')
+      // hash 公式与 keyword 路一致(factContentHash) — 注入层 excludeFactHashes
+      // 对纯向量命中同样生效(#627 完整闭环)
+      expect(h?.factHash).toBe(factContentHash({ content: fact.content, category: 'fact', patientHash: undefined }))
     } finally {
       fs.rmSync(baseDir, { recursive: true, force: true })
     }
