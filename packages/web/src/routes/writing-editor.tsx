@@ -88,6 +88,8 @@ export function WritingEditorPage() {
   const [bubbleRun, setBubbleRun] = useState<BubbleRunState | null>(null);
   const bubbleRunRef = useRef<BubbleRunState | null>(null);
   bubbleRunRef.current = bubbleRun;
+  // #752-ux-cancel: 运行中的 AbortController — 取消即断流。
+  const polishAbortRef = useRef<AbortController | null>(null);
   // #382: linked submission state (target journal / applied template).
   const [linkedJournal, setLinkedJournal] = useState('');
   // Desktop chat width — draggable resize, persisted (default 360px).
@@ -595,14 +597,15 @@ export function WritingEditorPage() {
 
     // #752-ux: 气泡内联运行 — 思考过程/流式正文全程展示在选区上方气泡里。
     if (inBubble) {
+      const controller = new AbortController();
+      polishAbortRef.current = controller;
       setBubbleRun({ action, status: 'running', stream: '', reasoning: '', error: null, startedAt: Date.now() });
-      // 运行期间不再需要工具条选区态
       setPolishLoading(true);
       setPolishStream('');
       try {
         let result = '';
         let reasoning = '';
-        for await (const chunk of api.polishDoc(docId, selection.slice(0, 20000), instruction || undefined)) {
+        for await (const chunk of api.polishDoc(docId, selection.slice(0, 20000), instruction || undefined, controller.signal)) {
           if ((chunk as any).type === 'error') throw new Error(String((chunk as any).message || 'AI 服务返回错误'));
           if ((chunk as any).type === 'reasoning') {
             reasoning += String((chunk as any).text ?? '');
@@ -615,16 +618,25 @@ export function WritingEditorPage() {
           if (chunk.done) break;
         }
         if (!result.trim()) {
-          setBubbleRun((prev) => (prev ? { ...prev, status: 'error', error: 'AI 未返回内容,请重试或检查模型配置' } : prev));
-          setPolishError('AI 未返回内容,请重试或检查模型配置');
+          const msg = reasoning
+            ? `模型思考了 ${reasoning.length} 字但未产出正文 — 请点「重试」,通常第二次会正常输出`
+            : 'AI 未返回内容,请重试或检查模型配置';
+          setBubbleRun((prev) => (prev ? { ...prev, status: 'error', error: msg } : prev));
+          setPolishError(msg);
           return;
         }
         setBubbleRun((prev) => (prev ? { ...prev, status: 'done' } : prev));
       } catch (err) {
+        // 用户主动取消 → 静默收起,不算错误
+        if ((err as Error)?.name === 'AbortError') {
+          setBubbleRun(null);
+          return;
+        }
         const msg = err instanceof ApiError ? err.messageText : String((err as Error)?.message || err);
         setBubbleRun((prev) => (prev ? { ...prev, status: 'error', error: msg } : prev));
         setPolishError(msg);
       } finally {
+        polishAbortRef.current = null;
         setPolishLoading(false);
       }
       return;
@@ -682,6 +694,15 @@ export function WritingEditorPage() {
   };
 
   const handleBubbleDiscard = () => {
+    // #752-ux-cancel: running 态 = 取消(abort 断流);done 态 = 丢弃结果。
+    if (bubbleRunRef.current?.status === 'running') {
+      polishAbortRef.current?.abort();
+      polishAbortRef.current = null;
+      setBubbleRun(null);
+      setPolishLoading(false);
+      setPolishStream('');
+      return;
+    }
     setBubbleRun(null);
     setPolishStream('');
   };

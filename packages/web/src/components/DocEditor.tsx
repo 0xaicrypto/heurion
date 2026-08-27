@@ -443,6 +443,12 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
                   </div>
                 )}
                 <div className="mt-2 flex items-center justify-end gap-1">
+                  {bubbleRun.status === 'running' && onBubbleDiscard && (
+                    /* #752-ux-cancel: 运行中可随时取消 — abort 断流,静默收起 */
+                    <Button size="sm" variant="ghost" onClick={(e) => { e.preventDefault(); onBubbleDiscard(); }}>
+                      <X size={12} className="mr-1" /> 取消
+                    </Button>
+                  )}
                   {bubbleRun.status === 'error' && onBubbleRetry && (
                     <Button size="sm" variant="secondary" onClick={(e) => { e.preventDefault(); onBubbleRetry(); }}>重试</Button>
                   )}

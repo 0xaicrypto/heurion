@@ -25,12 +25,26 @@ export async function* polishSelection(
 ): AsyncGenerator<string> {
   const apiKey = getApiKey()
   const prompt = `Polish the following clinical text${instruction ? ` with instruction: "${instruction}"` : ''}. Keep the meaning but improve clarity and professionalism:\n\n${selection || ''}`
+  // #752-fix: 4096 — reasoner 模型思维链计入输出额度,2048 会被长思考
+  // 耗尽后以空正文"正常"结束(finish_reason=stop,不触发截断重试路径)。
+  let sawContent = false
+  let reasoningChars = 0
+  const trackReasoning = (t: string) => { reasoningChars += t.length; onReasoning?.(t) }
   for await (const chunk of deepseekStream([{ role: 'user', content: prompt }], apiKey, {
     model: DEEPSEEK_CHAT_MODEL,
-    maxTokens: 2048,
+    maxTokens: 4096,
     telemetryContext: { userId, workspaceId: userId, action: 'document.polish' },
-  }, onReasoning)) {
+  }, trackReasoning)) {
+    if (chunk) sawContent = true
     yield chunk
+  }
+  if (!sawContent) {
+    // 空正文结束:给出可操作的错误而非让前端显示笼统"未返回内容"。
+    throw new Error(
+      reasoningChars > 0
+        ? `模型思考了约 ${reasoningChars} 字但未产出正文(输出额度被思考耗尽),请重试或缩小选中范围`
+        : '模型未返回任何内容,请稍后重试',
+    )
   }
 }
 

@@ -83,15 +83,17 @@ export class WritingApi extends ApiCore {
     return { docx_path: res.path, size_bytes: res.size_bytes };
   }
 
-  async *polishDoc(docId: string, selection: string, instruction?: string): AsyncIterable<{text: string; done?: boolean}> {
+  async *polishDoc(docId: string, selection: string, instruction?: string, signal?: AbortSignal): AsyncIterable<{text?: string; reasoning?: string; done?: boolean; type?: string; message?: string}> {
     const r = await fetch(`/api/v1/docs/${docId}/polish`, {
       method: 'POST',
       headers: this.headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ selection, instruction }),
+      // #752-ux: 气泡「取消」按钮 — 中断即断流,不再干等模型跑完。
+      signal,
     });
     if (!r.ok || !r.body) throw new ApiError(r.status, await r.text().catch(() => ''), '/polish');
     // #457: single SSE parser.
-    yield* parseSseStream<{text: string; done?: boolean}>(r);
+    yield* parseSseStream<{text?: string; reasoning?: string; done?: boolean; type?: string; message?: string}>(r);
   }
 
 }
