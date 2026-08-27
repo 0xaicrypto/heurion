@@ -106,6 +106,8 @@ export function WritingEditorPage() {
   const [polishInstruction, setPolishInstruction] = useState('');
   const [polishStream, setPolishStream] = useState('');
   const [polishLoading, setPolishLoading] = useState(false);
+  // #752-feedback: polish 执行错误 — 面板内可见(顶部 banner 在气泡场景不可达)。
+  const [polishError, setPolishError] = useState<string | null>(null);
 
   const [chatOpen, setChatOpen] = useState(false);
   // #402-merge: the right panel hosts Doc Chat and the chart library.
@@ -570,50 +572,66 @@ export function WritingEditorPage() {
 
   // #753: Polish 提交 — 双模式。selection 模式需要真实选区;full 模式对
   // 全文执行(服务端 polish 接口接受任意文本,全文=正文整体传入)。
+  // #752-feedback: 本函数是气泡/面板共用的执行体 — 任何失败都必须落进
+  // polishError 并渲染在面板内(此前只写顶部 banner,气泡场景用户根本看不到)。
   const runPolish = async (mode: 'selection' | 'full', instruction: string) => {
     const editor = polishEditorRef.current;
     if (!docId || !editor) return;
+    setPolishError(null);
     let from = 0; let to = 0; let selection = '';
     if (mode === 'selection') {
       const sel = editor.state.selection;
       from = sel.from; to = sel.to;
       selection = editor.state.doc.textBetween(from, to, '\n').trim();
-      if (!selection) { setPolishScope('full'); setError('没有选中文本 — 已切换到全文润色'); return; }
+      if (!selection) { setPolishScope('full'); setPolishError('没有选中文本 — 已切换到全文润色'); return; }
     } else {
       selection = editor.state.doc.textBetween(0, editor.state.doc.content.size, '\n').trim();
-      if (!selection) return;
+      if (!selection) { setPolishError('正文为空,无可润色内容'); return; }
     }
     setPolishLoading(true);
     setPolishStream('');
     try {
       let result = '';
       for await (const chunk of api.polishDoc(docId, selection.slice(0, 20000), instruction || undefined)) {
-        result += chunk.text;
+        // #752-feedback: 服务端错误事件(此前被静默拼进正文/丢弃)
+        if ((chunk as any).type === 'error') {
+          throw new Error(String((chunk as any).message || 'AI 服务返回错误'));
+        }
+        if (typeof chunk.text === 'string') result += chunk.text;
         setPolishStream(result);
         if (chunk.done) break;
       }
-      if (!result) return;
+      if (!result.trim()) {
+        setPolishError('AI 未返回内容,请重试或检查模型配置');
+        return;
+      }
       // #642: replace the polished range through TipTap — onUpdate round-trips
       // markdown → body state, so the doc and its versions stay in sync.
-      // full 模式整篇替换(走 setBody 状态,onUpdate round-trip 保持版本同步)。
       if (mode === 'selection') {
         editor.chain().focus().insertContentAt({ from, to }, markdownToHtml(result)).run();
       } else {
         setBody(result);
       }
       setPolishOpen(false);
+      setAiEditNotice(mode === 'selection' ? '✨ 已按 AI 结果替换选中文本' : '✨ 已按 AI 结果更新全文');
+      setTimeout(() => setAiEditNotice(''), 3000);
     } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : chatFailureText(err));
+      // 面板内可见错误 — 不再依赖页面顶部 banner
+      setPolishError(err instanceof ApiError ? err.messageText : String((err as Error)?.message || err));
     } finally {
       setPolishLoading(false);
     }
   };
 
   /** #752: Selection Bubble 动作分发 — 所有动作都打开面板跑流式,用户始终
-   *  看得到生成过程与取消入口(此前一键预设后台静默执行,零反馈)。 */
+   *  看得到生成过程与取消入口(此前一键预设后台静默执行,零反馈)。
+   *  #752-feedback: 到达性 console 标记 — 若用户端仍"无响应",console 有
+   *  [bubble] 日志即可区分「handler 未触发」与「下游失败」。 */
   const handleBubbleAction = (action: string, sel: { text: string; from: number; to: number }) => {
+    console.info('[bubble] action=', action, 'selLen=', sel.text.length, 'from=', sel.from, 'to=', sel.to);
     setBubbleSel(sel);
     setPolishScope('selection');
+    setPolishError(null);
     if (action === 'polish') {
       setPolishInstruction('');
       setPolishOpen(true);
@@ -1095,6 +1113,12 @@ export function WritingEditorPage() {
                   /* #752 反馈:LLM 首包前的等待期也必须有可见状态 */
                   <div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-surface p-2 text-xs text-text-secondary">
                     <Loader2 size={12} className="animate-spin" /> {t('writing.generating', 'AI 生成中,通常需要几秒…')}
+                  </div>
+                )}
+                {polishError && (
+                  /* #752-feedback: 执行失败必须在面板内立即可见 */
+                  <div className="mt-2 rounded-lg border border-error/40 bg-error/5 p-2 text-xs text-error" role="alert">
+                    ✗ {polishError}
                   </div>
                 )}
                 {polishStream && (
