@@ -67,6 +67,23 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   /** #752: bubble 动作点击时读取当前选区后分发给父组件。 */
   const onActionRef = useRef(onBubbleAction);
   onActionRef.current = onBubbleAction;
+  const bubbleBusyRef = useRef<string | null>(null);
+  const [bubbleBusy, setBubbleBusy] = useState<string | null>(null);
+  /** pointerdown/click 双通道去重:同一次按下只分发一次。 */
+  const fireBubbleAction = (id: string) => {
+    if (!onActionRef.current || !editor) return;
+    if (bubbleBusyRef.current === id) return;
+    bubbleBusyRef.current = id;
+    setBubbleBusy(id);
+    const sel = editor.state.selection;
+    const text = editor.state.doc.textBetween(sel.from, sel.to, '\n').trim();
+    try {
+      onActionRef.current(id, { text, from: sel.from, to: sel.to });
+    } finally {
+      // 菜单即将随选区消费而隐藏;下一轮选中重置 busy。
+      window.setTimeout(() => { bubbleBusyRef.current = null; setBubbleBusy(null); }, 300);
+    }
+  };
   // #fix: 逐条确认导航 — 修改处列表中的当前位置(第 N/M 处),进入审阅
   // 自动聚焦第一处,接受/拒绝后自动跳下一处。
   const [changeNav, setChangeNav] = useState<{ idx: number; total: number }>({ idx: -1, total: 0 });
@@ -378,23 +395,25 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
               ] as const).map(([id, icon, label]) => (
                 <button
                   key={id}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    if (!onActionRef.current) return;
-                    const sel = editor.state.selection;
-                    const text = editor.state.doc.textBetween(sel.from, sel.to, '\n').trim();
-                    onActionRef.current(id, { text, from: sel.from, to: sel.to });
+                  // #752-feedback: pointerdown 主通道 — 在任何 focus/可见性
+                  // 逻辑之前触发;click 兜底并按 action 去重防止双发。
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    fireBubbleAction(id);
                   }}
-                  className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-text-secondary hover:bg-surface hover:text-text-primary"
+                  onClick={(e) => e.stopPropagation()}
+                  disabled={bubbleBusy === id}
+                  className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-text-secondary hover:bg-surface hover:text-text-primary disabled:opacity-60"
                   title={label}
                 >
-                  <span aria-hidden>{icon}</span>{label}
+                  <span aria-hidden>{bubbleBusy === id ? '⏳' : icon}</span>{label}
                 </button>
               ))}
             </div>
           </TiptapBubbleMenu>
         )}
-</div>
+      </div>
     </div>
   );
 }
