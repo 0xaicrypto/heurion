@@ -31,6 +31,8 @@ export interface MemoryHit {
 export interface Citation {
     text: string;
     source?: string;
+    /** #756: provenance flavor — 📄 文件 / 🧠 事实 / 📖 文章 / 📌 钉选。 */
+    kind?: 'fact' | 'knowledge' | 'document' | 'pinned';
 }
 /** Tool invocation record surfaced to the UI (badge/折叠展示). */
 export interface ToolCallRecord {

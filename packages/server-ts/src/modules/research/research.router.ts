@@ -427,4 +427,71 @@ export async function researchRouter(app: FastifyInstance) {
     const results = await screenAllEnrolled(studyId, userId)
     return { screenings: results }
   })
+
+  // #759: research suggestion touchpoints — recent auto/manual screenings
+  // (eligible or pending_review) for patients NOT yet enrolled. Powers the
+  // patient-page "候选研究" card and the dashboard aggregation.
+  app.get('/api/v1/patients/:patientHash/research-suggestions', async (request) => {
+    const { patientHash } = request.params as any
+    const rows = await (prisma as any).researchScreening.findMany({
+      where: { patientHash, verdict: { in: ['eligible', 'pending_review'] } },
+      orderBy: { scannedAt: 'desc' },
+      take: 20,
+    })
+    const out: Array<{ studyId: string; title: string; matchRatio: string; verdict: string; reason: string; screenedAt: string }> = []
+    for (const row of rows) {
+      // Skip studies the patient already joined.
+      const enrolled = await (prisma as any).researchEnrollment.findFirst({
+        where: { studyId: row.studyId, patientHash, unenrolledAt: null },
+      })
+      if (enrolled) continue
+      const rules = JSON.parse(row.criteriaResults || '[]') as Array<{ passed?: boolean }>
+      const total = rules.length
+      const passed = rules.filter((r) => r.passed).length
+      const study = await (prisma as any).researchStudy.findUnique({ where: { id: row.studyId }, select: { title: true } })
+      out.push({
+        studyId: row.studyId,
+        title: study?.title || '未命名研究',
+        matchRatio: total > 0 ? `${passed}/${total}` : '—',
+        verdict: row.verdict,
+        reason: String(row.reason || '').replace(/\s*rev:\d+\s*$/, ''),
+        screenedAt: row.scannedAt,
+      })
+    }
+    // Dedupe by study (keep latest).
+    const seen = new Set<string>()
+    return { suggestions: out.filter((s) => !seen.has(s.studyId) && seen.add(s.studyId)) }
+  })
+
+  app.get('/api/v1/research/suggestions/recent', async () => {
+    // Dashboard aggregate: most recent screening per (study,patient), not yet
+    // enrolled, positive-leaning verdicts only.
+    const rows = await (prisma as any).researchScreening.findMany({
+      where: { verdict: { in: ['eligible', 'pending_review'] } },
+      orderBy: { scannedAt: 'desc' },
+      take: 60,
+    })
+    const seen = new Set<string>()
+    const out: Array<Record<string, string>> = []
+    for (const row of rows) {
+      const key = `${row.studyId}:${row.patientHash}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const enrolled = await (prisma as any).researchEnrollment.findFirst({
+        where: { studyId: row.studyId, patientHash: row.patientHash, unenrolledAt: null },
+      })
+      if (enrolled) continue
+      const patient = await (prisma as any).patientRecord.findUnique({ where: { hash: row.patientHash }, select: { initials: true } })
+      out.push({
+        studyId: row.studyId,
+        patientHash: row.patientHash,
+        patientInitials: patient?.initials || '',
+        verdict: row.verdict,
+        reason: String(row.reason || '').replace(/\s*rev:\d+\s*$/, ''),
+        screenedAt: row.scannedAt,
+      })
+      if (out.length >= 5) break
+    }
+    return { suggestions: out }
+  })
 }

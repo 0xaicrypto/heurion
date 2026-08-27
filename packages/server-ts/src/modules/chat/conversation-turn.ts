@@ -232,6 +232,28 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // 出口断言与段级回退(#635)。
   const budget = new ContextBudget()
   const layer3FactHashes = new Set((projectionInputs.facts as any[]).map((f) => factContentHash(f)))
+  // #756: 注入透明化 — 本轮实际进入 system 的 kb 条目(自动注入 + 用户钉选),
+  // 装配完成后作为 citations 事件发给前端(去重)。
+  type KbCitation = { kind: 'fact' | 'knowledge' | 'document'; label: string; sourceId: string }
+  const kbCitations: KbCitation[] = []
+  /** 由图谱解析用户可读标签;失败时回退原始 id。 */
+  const resolveKbLabel = (c: ReturnType<typeof getUserContext> extends never ? never : any, it: { kind: string; label: string; stableId?: string }): string => {
+    try {
+      if (it.kind === 'document' && it.stableId) {
+        const docId = it.stableId.split('::')[0]
+        const node = c.memory.graph.getLatestByStableId(docId) as { name?: string } | undefined
+        return `📄 ${node?.name || docId}`
+      }
+      if (it.kind === 'knowledge' && it.stableId) {
+        const articleId = it.label.replace(/^knowledge:/, '')
+        const node = c.memory.graph.getLatestByStableId(articleId) as { title?: string } | undefined
+        return `📖 ${node?.title || articleId}`
+      }
+      return `🧠 相关事实`
+    } catch {
+      return it.label || it.kind
+    }
+  }
   const assembler = new ContextAssembler([
     {
       // #5/#631: 研究上下文 — shortCode 排序保证不更新时字节稳定。
@@ -395,6 +417,12 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         excludeFactHashes: input.layer3FactHashes,
         patientHash: input.patientHash ?? undefined,
         embedding: new EmbeddingService(userId, ctx.memory),
+        // #756: 自动注入条目进入 citations 上报清单。
+        onItems: (items) => items.forEach((it) => kbCitations.push({
+          kind: it.kind,
+          label: resolveKbLabel(ctx, it),
+          sourceId: it.stableId ?? it.label,
+        })),
       }),
     },
     {
@@ -419,6 +447,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         }
         const articleBlocks = articles.map((a) => `- [article] (${a.stableId}) ${a.title}: ${String(a.content || '').slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`)
         if (docBlocks.length === 0 && articleBlocks.length === 0) return ''
+        // #756: 钉选条目进入 citations — 📌 前缀与自动注入区分。
+        articles.forEach((a: any) => kbCitations.push({ kind: 'knowledge', label: `📌 ${a.title}`, sourceId: a.stableId }))
+        docs.forEach((d: any) => kbCitations.push({ kind: 'document', label: `📌 ${d.name}`, sourceId: d.stableId }))
         return '\n## 用户选定知识库参考\n' + [...articleBlocks, ...docBlocks].join('\n')
       },
     },
@@ -665,7 +696,15 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // legacy global-* default sessions must never be recreated).
   await upsertSessionRow(userId, sid, body.text.slice(0, 50))
 
-  send({ type: 'citations', items: [] })
+  // #756: 注入透明化 — 本轮实际进入 system 的 kb 条目作为引用 chips。
+  const seenCitation = new Set<string>()
+  send({
+    type: 'citations',
+    items: kbCitations
+      .filter((c) => !seenCitation.has(c.sourceId) && seenCitation.add(c.sourceId))
+      .slice(0, 8)
+      .map((c) => ({ text: c.label, source: `/app/knowledge?q=${encodeURIComponent(c.sourceId)}`, kind: c.kind })),
+  })
   // #298: suggest saving a reusable procedure as a skill.
   try {
     const { looksLikeProcedure } = await import('../skills/skill-capture.service.js')

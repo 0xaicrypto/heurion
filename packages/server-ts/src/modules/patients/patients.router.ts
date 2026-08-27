@@ -65,6 +65,13 @@ export async function patientsRouter(app: FastifyInstance) {
         source: 'manual', createdAt: now, updatedAt: now,
       },
     })
+    // #755: fire-and-forget auto eligibility screening — never blocks or
+    // fails registration; results land in ResearchScreening for the
+    // suggestion touchpoints (#759).
+    try {
+      const { enqueueAutoScreen } = await import('../research/auto-screen.service.js')
+      enqueueAutoScreen(request.user!.userId, hash)
+    } catch { /* non-fatal */ }
     return { patient_hash: hash, name: body.initials, initials: body.initials, created_at: now }
   })
 

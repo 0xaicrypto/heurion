@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { Editor } from '@tiptap/react';
-import { ArrowLeft, Download, Eye, FilePlus, FileText, History, MessageSquare, Paperclip, RotateCcw, ShieldAlert, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, Check, Download, Eye, FilePlus, FileText, History, MessageSquare, Paperclip, RotateCcw, ShieldAlert, Sparkles, X } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor, type DiffReviewState } from '@/components/DocEditor';
+import { KbPicker } from '@/components/KbPicker';
 import { UploadProgressModal, type UploadProgressState } from '@/components/UploadProgressModal';
 import { ChatMessages } from '@/components/chat/ChatMessages';
 import { StreamingLlmContent } from '@/components/LlmContent';
@@ -65,8 +66,23 @@ export function WritingEditorPage() {
 
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<{ docx_path: string; size_bytes: number } | null>(null);
+  // #754: 导出完成态面板 — 下载反馈取代服务器路径字符串;记录本会话导出历史。
+  const [exportPanelOpen, setExportPanelOpen] = useState(false);
+  const [exportHistory, setExportHistory] = useState<Array<{ format: 'docx' | 'pdf'; filename: string; size: number; at: number }>>([]);
 
   const [polishOpen, setPolishOpen] = useState(false);
+  // #752/#753: Polish 双模式 — bubble 按钮或工具栏触发的动作。
+  // scope=selection(有选区)| full(全文);presets 一键直达,#753 定义。
+  const [polishScope, setPolishScope] = useState<'selection' | 'full'>('selection');
+  const POLISH_PRESETS: Array<{ id: string; icon: string; label: string; instruction: string }> = [
+    { id: 'academic', icon: '🔬', label: '学术语气强化', instruction: '强化学术语气:使用正式、客观、精确的学术表达,避免口语化措辞。' },
+    { id: 'concise', icon: '📐', label: '压缩至字数限制', instruction: '在保留全部关键信息的前提下压缩篇幅,删除冗余表述与重复论证。' },
+    { id: 'terminology', icon: '🧪', label: '方法学术语统一', instruction: '统一方法学部分的术语与单位表达,确保同一概念前后用词一致。' },
+    { id: 'hedging', icon: '⚖️', label: '结论弱化限定', instruction: '为结论添加适当的学术限定语(hedging),避免超出证据强度的断言。' },
+    { id: 'proofread', icon: '✅', label: '语法标点检查', instruction: '只修正语法错误、标点与格式问题,不改写句子结构。' },
+  ];
+  // #752: Selection Bubble 待处理选区(bubble 点击时记录)。
+  const [bubbleSel, setBubbleSel] = useState<{ text: string; from: number; to: number } | null>(null);
   // #382: linked submission state (target journal / applied template).
   const [linkedJournal, setLinkedJournal] = useState('');
   // Desktop chat width — draggable resize, persisted (default 360px).
@@ -269,6 +285,23 @@ export function WritingEditorPage() {
   }, [docId]);
 
   const [refDialogOpen, setRefDialogOpen] = useState(false);
+  // #757: 共享 KbPicker — 从知识库选文章/文件直接登记为参考(kind=article/file)。
+  const [kbPickerOpen, setKbPickerOpen] = useState(false);
+  const handleKbPickConfirm = async (items: Array<{ id: string; title: string; kind: 'article' | 'document' }>) => {
+    if (!docId || items.length === 0) return;
+    for (const it of items) {
+      try {
+        await api.addDocReference(docId, {
+          kind: it.kind === 'document' ? 'file' : 'guideline',
+          content: it.title,
+          label: it.title,
+        });
+      } catch (err) {
+        setError(err instanceof ApiError ? err.messageText : String(err));
+      }
+    }
+    void loadReferences();
+  };
   const [refForm, setRefForm] = useState({ kind: 'guideline', content: '', label: '', source_patient_hash: '' });
   const [refSubmitting, setRefSubmitting] = useState(false);
   // #711: 参考材料列表(可查看/删除) — 此前只能添加,AI 上下文对用户不可见。
@@ -488,6 +521,12 @@ export function WritingEditorPage() {
     try {
       const result = await api.exportDocx(docId, doc?.title);
       setExportResult(result);
+      // #754: 完成态面板 + 历史(blob 已在 api 层触发下载,这里补记录)。
+      setExportHistory((prev) => [
+        { format: 'docx' as const, filename: `${(doc?.title || 'document').replace(/[^a-z0-9\u4e00-\u9fa5_-]/gi, '_')}.docx`, size: result.size_bytes, at: Date.now() },
+        ...prev.slice(0, 9),
+      ]);
+      setExportPanelOpen(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
@@ -500,7 +539,12 @@ export function WritingEditorPage() {
     setExporting(true);
     setError(null);
     try {
-      await api.exportDoc(docId, 'pdf', doc?.title);
+      const res = await api.exportDoc(docId, 'pdf', doc?.title);
+      setExportHistory((prev) => [
+        { format: 'pdf' as const, filename: res.path, size: res.size_bytes, at: Date.now() },
+        ...prev.slice(0, 9),
+      ]);
+      setExportPanelOpen(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : chatFailureText(err));
     } finally {
@@ -508,17 +552,26 @@ export function WritingEditorPage() {
     }
   };
 
-  const handlePolishSubmit = async () => {
+  // #753: Polish 提交 — 双模式。selection 模式需要真实选区;full 模式对
+  // 全文执行(服务端 polish 接口接受任意文本,全文=正文整体传入)。
+  const runPolish = async (mode: 'selection' | 'full', instruction: string) => {
     const editor = polishEditorRef.current;
     if (!docId || !editor) return;
-    const { from, to } = editor.state.selection;
-    const selection = editor.state.doc.textBetween(from, to, '\n').trim();
-    if (!selection) return;
+    let from = 0; let to = 0; let selection = '';
+    if (mode === 'selection') {
+      const sel = editor.state.selection;
+      from = sel.from; to = sel.to;
+      selection = editor.state.doc.textBetween(from, to, '\n').trim();
+      if (!selection) { setPolishScope('full'); setError('没有选中文本 — 已切换到全文润色'); return; }
+    } else {
+      selection = editor.state.doc.textBetween(0, editor.state.doc.content.size, '\n').trim();
+      if (!selection) return;
+    }
     setPolishLoading(true);
     setPolishStream('');
     try {
       let result = '';
-      for await (const chunk of api.polishDoc(docId, selection, polishInstruction || undefined)) {
+      for await (const chunk of api.polishDoc(docId, selection.slice(0, 20000), instruction || undefined)) {
         result += chunk.text;
         setPolishStream(result);
         if (chunk.done) break;
@@ -526,13 +579,38 @@ export function WritingEditorPage() {
       if (!result) return;
       // #642: replace the polished range through TipTap — onUpdate round-trips
       // markdown → body state, so the doc and its versions stay in sync.
-      editor.chain().focus().insertContentAt({ from, to }, markdownToHtml(result)).run();
+      // full 模式整篇替换(走 setBody 状态,onUpdate round-trip 保持版本同步)。
+      if (mode === 'selection') {
+        editor.chain().focus().insertContentAt({ from, to }, markdownToHtml(result)).run();
+      } else {
+        setBody(result);
+      }
       setPolishOpen(false);
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : chatFailureText(err));
     } finally {
       setPolishLoading(false);
     }
+  };
+
+  /** #752: Selection Bubble 动作分发 — polish 打开弹层,其余预设一键直达。 */
+  const handleBubbleAction = (action: string, sel: { text: string; from: number; to: number }) => {
+    void action;
+    setBubbleSel(sel);
+    setPolishScope('selection');
+    if (action === 'polish') {
+      setPolishInstruction('');
+      setPolishOpen(true);
+      return;
+    }
+    const preset = POLISH_PRESETS.find((p) => p.id === action);
+    // bubble 上的一键预设直接执行(rewrite/academic/summarize 映射到最近语义)
+    void runPolish('selection', preset?.instruction ?? '');
+  };
+
+  // #753 兼容旧入口(工具栏 Polish 按钮):读当前 scope。
+  const handlePolishSubmit = async () => {
+    await runPolish(polishScope, polishInstruction);
   };
 
   const handleSendChat = async () => {
@@ -915,15 +993,25 @@ export function WritingEditorPage() {
               </Button>
             </>
           )}
-          {/* #711: Polish 入口此前缺失(UI 死代码) — 选中文本后点击可润色选区。 */}
+          {/* #752/#753: Polish 双模式 — 按钮文案随选区状态切换;无选区=
+              全文润色,有选区=局部润色。永远不静默失败。 */}
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setPolishOpen((v) => !v)}
+            onClick={() => {
+              const editor = polishEditorRef.current;
+              const sel = editor?.state.selection;
+              const hasSel = !!sel && !sel.empty
+                && editor.state.doc.textBetween(sel.from, sel.to, '\n').trim().length > 10;
+              setPolishScope(hasSel ? 'selection' : 'full');
+              setPolishInstruction('');
+              setPolishOpen((v) => !v);
+            }}
             disabled={polishLoading}
-            title={t('writing.polishHint', '选中文本后润色')}
+            title={t('writing.polishHint', '选中文字可局部润色;未选中则润色全文')}
           >
-            <Sparkles size={14} className="mr-1" /> {t('writing.polish', 'Polish')}
+            <Sparkles size={14} className="mr-1" />
+            {polishOpen ? t('writing.polish', '润色') : (t('writing.polishFull', '润色全文'))}
           </Button>
           {methodsError && (
             <span className="text-xs text-error">{methodsError}</span>
@@ -960,6 +1048,25 @@ export function WritingEditorPage() {
                 ref={polishRef}
                 className="absolute left-0 right-0 top-full z-30 mt-1 w-auto max-w-full rounded-xl border border-border bg-surface-elevated p-4 shadow-lg sm:left-auto sm:right-auto sm:w-80"
               >
+                {/* #753: 作用范围自述 — 消除"作用于哪里"的歧义。 */}
+                <div className="mb-2 rounded-lg bg-surface px-2 py-1.5 text-xs text-text-secondary">
+                  {polishScope === 'full'
+                    ? t('writing.polishScopeFull', '📄 将对全文进行润色 · 或先选中一段文字做局部调整')
+                    : t('writing.polishScopeSel', `✨ 将润色选中的文字(${bubbleSel?.text.length ?? '选中部分'})`)}
+                </div>
+                {/* #753: 预设意图卡 — 点卡片即发,免学习成本。 */}
+                <div className="mb-2 flex flex-wrap gap-1">
+                  {POLISH_PRESETS.map((p) => (
+                    <button
+                      key={p.id}
+                      disabled={polishLoading}
+                      onClick={() => { setPolishInstruction(p.instruction); void runPolish(polishScope, p.instruction); }}
+                      className="flex items-center gap-1 rounded-full border border-border px-2 py-1 text-xs text-text-secondary hover:border-accent hover:text-accent disabled:opacity-50"
+                    >
+                      <span aria-hidden>{p.icon}</span>{p.label}
+                    </button>
+                  ))}
+                </div>
                 <textarea
                   value={polishInstruction}
                   onChange={(e) => setPolishInstruction(e.target.value)}
@@ -990,6 +1097,15 @@ export function WritingEditorPage() {
               {refList.length > 0 && (
                 <span className="ml-1 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">{refList.length}</span>
               )}
+            </Button>
+            {/* #757: 从知识库选择 — 同一文件不再重传,一次上传处处引用。 */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setKbPickerOpen(true)}
+              title={t('writing.pickFromKb', '从知识库选择文章/文件作为参考')}
+            >
+              📚 {t('writing.fromKb', '知识库')}
             </Button>
             {refListOpen && (
               <div className="absolute left-0 top-full z-30 mt-1 w-[min(92vw,420px)] rounded-xl border border-border bg-surface-elevated p-3 shadow-lg">
@@ -1042,10 +1158,37 @@ export function WritingEditorPage() {
             <MessageSquare size={14} className="mr-1" /> Chat
           </Button>
 
-          {exportResult && (
-            <div className="ml-3 flex items-center gap-2 text-xs text-success">
-              <span>Exported: {exportResult.docx_path} ({(exportResult.size_bytes / 1024).toFixed(1)} KB)</span>
-              <button onClick={() => setExportResult(null)} className="text-text-tertiary hover:text-text-primary"><X size={12} /></button>
+          {/* #754: 导出完成态面板 — 取代路径字符串;api 层已触发下载,
+              面板补齐确认感 + 历史入口。 */}
+          {(exportResult || exportHistory.length > 0) && exportPanelOpen && (
+            <div className="relative ml-3">
+              <div className="w-72 rounded-xl border border-border bg-surface-elevated p-3 shadow-lg">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-1 text-sm font-medium text-text-primary">
+                    <Check size={14} className="text-success" /> {t('writing.exportDone', '导出完成')}
+                  </span>
+                  <button onClick={() => setExportPanelOpen(false)} className="text-text-tertiary hover:text-text-primary"><X size={14} /></button>
+                </div>
+                {exportResult && (
+                  <div className="mb-1 rounded-lg bg-surface px-2 py-1.5 text-xs text-text-secondary">
+                    📄 DOCX · {(exportResult.size_bytes / 1024).toFixed(1)} KB · 已开始下载
+                    <div className="mt-0.5 text-[11px] text-text-tertiary">✓ {t('writing.exportKbSync', '已同步知识库,可在聊天中引用')}</div>
+                  </div>
+                )}
+                {exportHistory.length > 0 && (
+                  <div className="mt-2 border-t border-border pt-2">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-text-tertiary">{t('writing.exportHistory', '本次导出历史')}</span>
+                    <ul className="mt-1 space-y-0.5">
+                      {exportHistory.map((h) => (
+                        <li key={h.at} className="flex items-center justify-between text-xs text-text-secondary">
+                          <span className="truncate">{h.format === 'docx' ? '📄' : '📕'} {h.filename}</span>
+                          <span className="text-text-tertiary">{(h.size / 1024).toFixed(0)}KB</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -1085,7 +1228,9 @@ export function WritingEditorPage() {
                   </div>
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
-                    <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} diffReview={diffReview} onDiffResolve={handleDiffResolve} onSelectionChange={setChatSelection} />
+                    <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} diffReview={diffReview} onDiffResolve={handleDiffResolve} onSelectionChange={setChatSelection}
+                      onBubbleAction={handleBubbleAction}
+                    />
                   </div>
                 )}
               </div>
@@ -1366,6 +1511,8 @@ export function WritingEditorPage() {
           </div>
         )}
       </div>
+      {/* #757: 共享知识库选择器 */}
+      <KbPicker open={kbPickerOpen} onClose={() => setKbPickerOpen(false)} onConfirm={handleKbPickConfirm} max={5} />
     </AppShell>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+import BubbleMenu from '@tiptap/extension-bubble-menu';
 import { Table } from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
@@ -44,6 +45,11 @@ interface DocEditorProps {
   onDiffResolve?: (result: { md: string; accepted: number; rejected: number; cancelled: boolean }) => void;
   /** #693: 编辑器选中文本变化回调(空字符串=无选中;审阅模式下不触发)。 */
   onSelectionChange?: (text: string) => void;
+  /**
+   * #752: Selection Bubble 按钮动作回调(action: polish|rewrite|academic|summarize)。
+   * 提供 after DocEditor 即渲染浮出工具条;审阅模式下自动隐藏。
+   */
+  onBubbleAction?: (action: string, sel: { text: string; from: number; to: number }) => void;
 }
 
 /**
@@ -51,11 +57,18 @@ interface DocEditorProps {
  * the editor converts on load (md → HTML) and on save (HTML → md).
  * 审阅模式下:AI 编辑以绿(插入)/红(删除)标记呈现,逐条或全部接受/拒绝。
  */
-export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange }: DocEditorProps) {
+export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction }: DocEditorProps) {
   const applyMdRef = useRef<string | null>(null);
   const reviewKeyRef = useRef<string | null>(null);
   const [reviewStats, setReviewStats] = useState<{ pending: number; accepted: number; rejected: number }>({ pending: 0, accepted: 0, rejected: 0 });
   const [selectedChange, setSelectedChange] = useState<{ id: string; text: string } | null>(null);
+  // #752: bubble 菜单挂载点 — extension 需要真实 DOM element;动作按钮由
+  // BubbleActions 内部渲染,点击回调 ref 透传父组件(onBubbleAction)。
+  const bubbleRef = useRef<HTMLDivElement | null>(null);
+  const onActionRef = useRef(onBubbleAction);
+  onActionRef.current = onBubbleAction;
+  /** 当前非空选区(>10 字符),供动作点击时读取。 */
+  const selRef = useRef<{ text: string; from: number; to: number } | null>(null);
   // #fix: 逐条确认导航 — 修改处列表中的当前位置(第 N/M 处),进入审阅
   // 自动聚焦第一处,接受/拒绝后自动跳下一处。
   const [changeNav, setChangeNav] = useState<{ idx: number; total: number }>({ idx: -1, total: 0 });
@@ -99,6 +112,38 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       setSelectedChange(covering ? { id: covering.changeId, text: covering.text.slice(0, 40) } : null);
     },
   });
+
+  // #752: BubbleMenu extension 在 editor 创建后动态注册(useEditor 的
+  // extensions 数组只在创建时生效);审阅模式通过 shouldShow 拦截(此时
+  // 选区是 diff 导航语义)。150ms updateDelay 避免拖动选择闪烁。
+  useEffect(() => {
+    if (!editor || !bubbleRef.current || !onActionRef.current) return;
+    const ext = BubbleMenu.configure({
+      element: bubbleRef.current,
+      updateDelay: 150,
+      shouldShow: ({ state, from, to }) => {
+        if (reviewKeyRef.current !== null) return false;
+        const text = state.doc.textBetween(from, to, '\n').trim();
+        return text.length > 10;
+      },
+    });
+    const pluginKey = (ext as any).config?.name ?? 'bubbleMenu';
+    editor.registerPlugin(ext as unknown as Parameters<typeof editor.registerPlugin>[0]);
+    // 选区变化时记录范围(bubble 按钮动作需要 from/to + 文本)。
+    const report = () => {
+      if (reviewKeyRef.current !== null) { selRef.current = null; return; }
+      const { from, to } = editor.state.selection;
+      const text = editor.state.doc.textBetween(from, to, '\n').trim();
+      selRef.current = text.length > 10 ? { text, from, to } : null;
+    };
+    editor.on('selectionUpdate', report);
+    editor.on('transaction', report);
+    return () => {
+      editor.off('selectionUpdate', report);
+      editor.off('transaction', report);
+      try { editor.unregisterPlugin(pluginKey); } catch { /* plugin already gone */ }
+    };
+  }, [editor]);
 
   useEffect(() => {
     if (editorRef && editor) editorRef.current = editor;
@@ -344,6 +389,36 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
           #fix: 学术论文排版 — 衬线字体、宽松行距、标题层级、公式/图片居中。 */}
       <div className="prose prose-sm max-w-none p-4 dark:prose-invert [&_.ProseMirror]:min-h-[300px] [&_.ProseMirror]:outline-none [&_.ProseMirror]:font-serif [&_.ProseMirror]:text-[15px] [&_.ProseMirror]:leading-loose prose-headings:text-text-primary prose-headings:font-semibold prose-p:text-text-secondary prose-p:leading-relaxed prose-a:text-accent hover:prose-a:underline prose-strong:text-text-primary prose-code:text-text-primary prose-code:bg-surface prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:font-mono prose-ol:text-text-secondary prose-ul:text-text-secondary prose-li:my-0.5 prose-blockquote:border-l-4 prose-blockquote:border-accent prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-text-secondary prose-hr:border-border [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-1.5 [&_th]:border [&_th]:border-border [&_th]:bg-surface-elevated [&_th]:p-1.5 [&_th]:text-left [&_img]:my-2 [&_img]:max-h-72 [&_img]:rounded-lg [&_img]:border [&_img]:border-border [&_.ProseMirror_img]:mx-auto [&_[data-type='block-math']]:my-4 [&_[data-type='block-math']]:overflow-x-auto [&_[data-type='inline-math']]:px-0.5">
         <EditorContent editor={editor} />
+        {/* #752: Selection Bubble 挂载点 — extension 控制 visibility 并把该
+            元素 appendChild 到编辑器视图定位到选区上方;内容常驻渲染。
+            点按动作读 selRef 当前选区后交回父组件。 */}
+        {onBubbleAction && (
+          <div
+            ref={bubbleRef}
+            style={{ visibility: 'hidden', opacity: 0 }}
+            className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-elevated px-1 py-0.5 shadow-lg"
+          >
+            {([
+              ['polish', '✨', '润色'],
+              ['rewrite', '📝', '改写'],
+              ['academic', '🔬', '更学术'],
+              ['summarize', '📄', '总结'],
+            ] as const).map(([id, icon, label]) => (
+              <button
+                key={id}
+                onMouseDown={(e) => {
+                  // 防止 mousedown 抢焦点清空 selection(TipTap 文档建议)
+                  e.preventDefault();
+                  if (selRef.current && onActionRef.current) onActionRef.current(id, selRef.current);
+                }}
+                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-text-secondary hover:bg-surface hover:text-text-primary"
+                title={label}
+              >
+                <span aria-hidden>{icon}</span>{label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

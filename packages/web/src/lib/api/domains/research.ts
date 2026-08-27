@@ -128,6 +128,16 @@ export class ResearchApi extends ApiCore {
     return this.fetch(`/api/v1/research/patients/${patientHash}/enrollments`);
   }
 
+  /** #759: 患者研究建议 — 自动/手动筛查的 eligible/pending_review 且未入组。 */
+  async getResearchSuggestions(patientHash: string): Promise<{suggestions: Array<{studyId: string; title: string; matchRatio: string; verdict: string; reason: string; screenedAt: string}>}> {
+    return this.fetch(`/api/v1/patients/${patientHash}/research-suggestions`);
+  }
+
+  /** #759: dashboard 聚合建议(top N 最近未处理筛查命中)。 */
+  async getRecentResearchSuggestions(): Promise<{suggestions: Array<{studyId: string; patientHash: string; patientInitials: string; verdict: string; reason: string; screenedAt: string}>}> {
+    return this.fetch('/api/v1/research/suggestions/recent');
+  }
+
   async confirmObservation(studyId: string, obsId: string, aeGrade?: number, isDlt?: boolean): Promise<{ok: boolean}> {
     return this.fetch(`/api/v1/research/studies/${studyId}/observations/${obsId}/confirm`, { method: 'POST', body: JSON.stringify({ ae_grade: aeGrade, is_dlt: isDlt }) });
   }

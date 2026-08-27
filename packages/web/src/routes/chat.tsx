@@ -10,6 +10,7 @@ import { useChatStore, type ChatMessage } from '@/stores/chat';
 import { useAutoScrollOnStream } from '@/lib/use-auto-scroll';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
+import { KbPicker } from '@/components/KbPicker';
 import { ChatMessages } from '@/components/chat/ChatMessages';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
@@ -89,15 +90,11 @@ export function ChatPage() {
   const [kbDedupNotice, setKbDedupNotice] = useState<string | null>(null);
   // #620: 知识库选择器 — 显式选定文章加入上下文.
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
-  const [kbQuery, setKbQuery] = useState('');
   // #721: kbPicker 搜索 debounce。
-  const kbSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [kbResults, setKbResults] = useState<Array<{ id: string; title: string; summary: string; kind: 'article' | 'document' }>>([]);
   // #712: kbPicked 按会话隔离(同 attachedFiles 模式) — A 会话选的文章
   // 不得静默带入 B 会话。
   const [kbPickedBySession, setKbPickedBySession] = useState<Record<string, Array<{ id: string; title: string }>>>({});
   const kbPicked = kbPickedBySession[sessionId] ?? [];
-  const [kbSearching, setKbSearching] = useState(false);
   // #516: per-session entry scene — switching sessions must not leak the
   // previous mode into a different conversation.
   const [kbChecked, setKbChecked] = useState<Record<string, boolean>>({});
@@ -327,29 +324,6 @@ export function ChatPage() {
     if (url) window.open(url, '_blank');
   };
 
-  /** #620: 搜索知识库文章(选择器). */
-  const handleKbSearch = async (q: string) => {
-    setKbSearching(true);
-    try {
-      const r = await api.getKnowledgePicker(q);
-      setKbResults(r.articles);
-    } catch { setKbResults([]); }
-    finally { setKbSearching(false); }
-  };
-  useEffect(() => {
-    if (kbPickerOpen) handleKbSearch(kbQuery);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 打开时按当前查询搜索
-  }, [kbPickerOpen]);
-  const toggleKbPick = (a: { id: string; title: string }) => {
-    // #712: 按会话隔离存储。
-    setKbPickedBySession((prevBySession) => {
-      const cur = prevBySession[sessionId] ?? [];
-      const next = cur.some((p) => p.id === a.id)
-        ? cur.filter((p) => p.id !== a.id)
-        : (cur.length >= 3 ? cur : [...cur, a]);
-      return { ...prevBySession, [sessionId]: next };
-    });
-  };
 
   /** #582: 附件编辑结果落地 — 保存为文档 / 导出 PDF / 继续讨论。 */
   const handleExportChoice = async (
@@ -823,57 +797,17 @@ export function ChatPage() {
         </div>
       )}
       {/* #620: 知识库选择器弹窗 */}
-      {kbPickerOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setKbPickerOpen(false)}>
-          <div className="flex max-h-[70vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface-elevated p-6 shadow-xl m-4" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-text-primary">📚 {t('chat.kbPicker', '从知识库添加')}</h2>
-              <button onClick={() => setKbPickerOpen(false)} className="text-text-tertiary hover:text-text-primary"><X size={18} /></button>
-            </div>
-            <input
-              value={kbQuery}
-              onChange={(e) => {
-                setKbQuery(e.target.value);
-                // #721: 300ms debounce,避免每次击键都发请求。
-                if (kbSearchTimer.current) clearTimeout(kbSearchTimer.current);
-                kbSearchTimer.current = setTimeout(() => handleKbSearch(e.target.value), 300);
-              }}
-              placeholder={t('chat.kbSearch', '搜索知识库…')}
-              className="mb-3 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <div className="flex-1 space-y-2 overflow-y-auto">
-              {kbSearching ? (
-                <p className="text-sm text-text-tertiary">…</p>
-              ) : kbResults.length === 0 ? (
-                <p className="text-sm text-text-tertiary">{t('chat.kbEmpty', '暂无知识库文章')}</p>
-              ) : (
-                kbResults.map((a) => (
-                  <label key={a.id} className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 hover:bg-surface">
-                    <input
-                      type="checkbox"
-                      checked={kbPicked.some((p) => p.id === a.id)}
-                      disabled={!kbPicked.some((p) => p.id === a.id) && kbPicked.length >= 3}
-                      onChange={() => toggleKbPick(a)}
-                      className="mt-1"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-text-primary">
-                        {a.kind === 'document' && <span className="mr-1 rounded bg-surface-muted px-1 py-0.5 text-[10px] text-text-secondary">文件</span>}
-                        {a.title}
-                      </p>
-                      <p className="mt-0.5 truncate text-xs text-text-tertiary">{a.summary}</p>
-                    </div>
-                  </label>
-                ))
-              )}
-            </div>
-            <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
-              <span className="text-xs text-text-tertiary">{t('chat.kbPicked', '已选 {{n}}/3', { n: kbPicked.length })}</span>
-              <Button size="sm" onClick={() => setKbPickerOpen(false)}>{t('chat.kbDone', '完成')}</Button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* #757: 共享 KbPicker — 搜索/防抖/上限统一维护 */}
+      <KbPicker
+        open={kbPickerOpen}
+        onClose={() => setKbPickerOpen(false)}
+        onConfirm={(items) => {
+          // #712: 按会话隔离存储。
+          setKbPickedBySession((prevBySession) => ({ ...prevBySession, [sessionId]: items.map((it) => ({ id: it.id, title: it.title })) }));
+        }}
+        initialIds={kbPicked.map((k) => k.id)}
+        max={3}
+      />
     </AppShell>
   );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Activity, FilePlus, FileText, Sparkles, UserPlus } from 'lucide-react';
+import { Activity, FilePlus, FileText, GitGraph, Sparkles, UserPlus } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { PendingIngestionsWidget } from '@/components/today/PendingIngestionsWidget';
@@ -25,6 +25,8 @@ export function TodayPage() {
   const [newPatientOpen, setNewPatientOpen] = useState(false);
   const [profile, setProfile] = useState<{ email?: string } | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  // #759: 入组建议聚合卡 — 自动筛查命中且未入组(top N)。
+  const [researchSuggestions, setResearchSuggestions] = useState<Array<{ studyId: string; patientHash: string; patientInitials: string; verdict: string; reason: string; screenedAt: string }>>([]);
 
   const hour = new Date().getHours();
   const timeGreeting = hour < 12 ? t('today.morning') : hour < 18 ? t('today.afternoon') : t('today.evening');
@@ -39,8 +41,9 @@ export function TodayPage() {
       api.getAgentState().catch(() => null),
       api.getActivity(15).then((r) => r.items).catch(() => []),
       api.listPatients().catch(() => [] as Patient[]),
+      api.getRecentResearchSuggestions().catch(() => ({ suggestions: [] })),
     ])
-      .then(([s, t, p]) => { setState(s); setTimeline(t); setPatients(p); })
+      .then(([s, t, p, sg]) => { setState(s); setTimeline(t); setPatients(p); setResearchSuggestions(sg.suggestions || []); })
       .catch(() => setError('Failed to load dashboard'))
       .finally(() => setLoading(false));
   }, []);
@@ -144,6 +147,33 @@ export function TodayPage() {
           )}
 
           <PendingIngestionsWidget onCountChange={setPendingCount} />
+
+          {/* #759: 入组建议 — 自动筛查命中且未入组的患者,主动举牌而非等医生查 */}
+          {researchSuggestions.length > 0 && (
+            <Card className="border-accent/30 p-4">
+              <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text-primary">
+                <GitGraph size={14} className="text-accent" />
+                {t('today.enrollSuggestions', '入组建议')}
+              </h3>
+              <ul className="space-y-1.5">
+                {researchSuggestions.map((sg) => (
+                  <li key={`${sg.studyId}:${sg.patientHash}`}>
+                    <button
+                      onClick={() => navigate(`/app/patients/${sg.patientHash}`)}
+                      className="flex w-full items-center justify-between gap-2 rounded-lg border border-accent/25 bg-accent/5 px-3 py-2 text-left transition-colors hover:border-accent/60"
+                    >
+                      <span className="truncate text-sm text-text-primary">
+                        {t('today.suggestionRow', '{{initials}} 可能符合一项研究', { initials: sg.patientInitials || sg.patientHash.slice(0, 8) })}
+                      </span>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${sg.verdict === 'eligible' ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
+                        {sg.verdict === 'eligible' ? t('research.eligible', '符合') : t('research.pendingReview', '待复核')}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
 
           <div className="flex flex-wrap gap-3">
             <Button onClick={() => setNewPatientOpen(true)}>

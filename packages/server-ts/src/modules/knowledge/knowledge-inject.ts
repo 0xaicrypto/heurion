@@ -31,6 +31,11 @@ export interface KnowledgeInjectOptions {
   patientHash?: string | null
   /** #632: 向量路来源(embedding);缺省或故障时回落纯词法。 */
   embedding?: EmbeddingService
+  /**
+   * #756: 注入透明化 — 收集本轮实际注入条目(去重后),由调用方转为
+   * citations SSE 事件;回调在过滤/截断后、渲染前触发。
+   */
+  onItems?: (items: Array<{ kind: 'fact' | 'knowledge' | 'document'; label: string; stableId?: string }>) => void
 }
 
 export const KB_INJECT_HEADER = '## 知识库参考(自动注入)'
@@ -119,6 +124,14 @@ export async function buildKnowledgeInjection(
     }
   }
 
+  // #756: 注入透明化 — 原始条目交给调用方修饰(稳定ID 可由图谱解析标题)。
+  if (options.onItems) {
+    options.onItems(finalItems.map((item) => ({
+      kind: item.kind,
+      label: item.source,
+      stableId: item.stableId,
+    })))
+  }
   const lines: string[] = [KB_INJECT_HEADER]
   for (const item of finalItems) {
     // #749: merged document rendering — chunks joined with an ellipsis marker.

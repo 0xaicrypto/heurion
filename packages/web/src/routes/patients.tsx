@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ChevronRight, FileText, FlaskConical, Paperclip, Plus, Search, Trash2, User } from 'lucide-react';
+import { ArrowLeft, ChevronRight, FileText, FlaskConical, GitGraph, Paperclip, Plus, Search, Trash2, User } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { SkillsBar } from '@/components/SkillsBar';
@@ -232,6 +232,8 @@ export function PatientSummaryPage() {
   const [projection, setProjection] = useState<MemoryProjection | null>(null);
   // #724: 患者已入组的研究(科研双向桥 — 患者侧可见入组状态)。
   const [patientEnrollments, setPatientEnrollments] = useState<Array<{ study_id: string; study_name: string; status: string; arm: string | null }>>([]);
+  // #759: 研究匹配建议(自动筛查命中且未入组)。
+  const [researchSuggestions, setResearchSuggestions] = useState<Array<{studyId: string; title: string; matchRatio: string; verdict: string; reason: string}>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -243,11 +245,13 @@ export function PatientSummaryPage() {
       api.getPatientDetail(hash).catch(() => null),
       api.getMemoryProjection(hash).catch(() => null),
       api.getPatientEnrollments(hash).catch(() => ({ enrollments: [] })),
+      api.getResearchSuggestions(hash).catch(() => ({ suggestions: [] })),
     ])
-      .then(([d, p, e]) => {
+      .then(([d, p, e, sg]) => {
         setDetail(d);
         setProjection(p);
         setPatientEnrollments(e.enrollments);
+        setResearchSuggestions(sg.suggestions || []);
         if (!d && !p) setError('Patient not found');
       })
       .catch((err) => setError(err instanceof ApiError ? err.messageText : String(err)))
@@ -361,6 +365,31 @@ export function PatientSummaryPage() {
                 </li>
               ))}
             </ul>
+          </Card>
+        )}
+        {/* #759: 候选研究 — 自动筛查命中且未入组,一键到筛查明细。 */}
+        {researchSuggestions.length > 0 && (
+          <Card className="border-accent/30 p-4">
+            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text-primary">
+              <GitGraph size={14} className="text-accent" />
+              {t('patient.researchSuggestions', '可能适合的研究')}
+            </h3>
+            <ul className="space-y-1.5">
+              {researchSuggestions.map((sg) => (
+                <li key={sg.studyId}>
+                  <button
+                    onClick={() => navigate(`/app/research/${sg.studyId}?tab=eligibility&patient=${encodeURIComponent(sg.studyId ? hash || '' : '')}`)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg border border-accent/25 bg-accent/5 px-3 py-2 text-left transition-colors hover:border-accent/60"
+                  >
+                    <span className="truncate text-sm text-text-primary">{sg.title}</span>
+                    <span className="shrink-0 text-xs font-medium text-accent">
+                      {t('patient.matchRatio', '匹配 {{ratio}}', { ratio: sg.matchRatio })}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-[11px] text-text-tertiary">{t('patient.matchHint', 'AI 根据基本信息与病历自动筛查,点击查看逐条匹配明细')}</p>
           </Card>
         )}
         {/* ── Medical Record Summary (primary source) ── */}

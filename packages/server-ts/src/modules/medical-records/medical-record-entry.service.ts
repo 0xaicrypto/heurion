@@ -79,6 +79,13 @@ export async function createMedicalRecordEntry(
     },
   })
 
+  // #755: new clinical evidence → re-screen research eligibility (async;
+  // evidence revision counter permits one re-screen per record count bump).
+  try {
+    const { enqueueAutoScreen } = await import('../research/auto-screen.service.js')
+    enqueueAutoScreen(userId, patientHash)
+  } catch { /* non-fatal */ }
+
   if (status === 'pending_review') {
     await createApprovalRequest(userId, {
       targetType: 'MedicalRecordEntry',

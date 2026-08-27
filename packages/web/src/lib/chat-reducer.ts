@@ -17,7 +17,7 @@ export interface ChatMessage {
   reasoning?: string;
   isStreaming?: boolean;
   tier?: string;
-  citations?: Array<{ text: string; source?: string }>;
+  citations?: Array<{ text: string; source?: string; kind?: 'fact' | 'knowledge' | 'document' | 'pinned' }>;
   /** #418: memory-search hits backing this answer. */
   memoryHits?: Array<{ content: string; type: string; id: string }>;
   /** #419: generated image to render in the stream. */

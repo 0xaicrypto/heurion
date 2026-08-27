@@ -259,6 +259,8 @@ export function ChatMessages({
                         </a>
                       );
                     })}
+                    {/* #756: 标注出处行 — 医生可见 AI 引用了什么,信任由此而来。 */}
+                    <span className="text-[10px] text-text-tertiary">{t('chat.kbCited', '知识库引用')}</span>
                   </div>
                 )}
                 {/* #722: 下载/入库出口由 handler 存在与否控制,不再被 compact
