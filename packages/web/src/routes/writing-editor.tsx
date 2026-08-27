@@ -6,7 +6,7 @@ import { ArrowLeft, Check, Download, Eye, FilePlus, FileText, History, Loader2, 
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
-import { DocEditor, type DiffReviewState } from '@/components/DocEditor';
+import { DocEditor, type BubbleRunState, type DiffReviewState } from '@/components/DocEditor';
 import { KbPicker } from '@/components/KbPicker';
 import { SpotHint } from '@/components/SpotHint';
 import { UploadProgressModal, type UploadProgressState } from '@/components/UploadProgressModal';
@@ -84,6 +84,10 @@ export function WritingEditorPage() {
   ];
   // #752: Selection Bubble 待处理选区(bubble 点击时记录)。
   const [bubbleSel, setBubbleSel] = useState<{ text: string; from: number; to: number } | null>(null);
+  // #752-ux: 气泡内联运行态 — 思考过程/流式/错误全程在选区上方的气泡里。
+  const [bubbleRun, setBubbleRun] = useState<BubbleRunState | null>(null);
+  const bubbleRunRef = useRef<BubbleRunState | null>(null);
+  bubbleRunRef.current = bubbleRun;
   // #382: linked submission state (target journal / applied template).
   const [linkedJournal, setLinkedJournal] = useState('');
   // Desktop chat width — draggable resize, persisted (default 360px).
@@ -574,7 +578,7 @@ export function WritingEditorPage() {
   // 全文执行(服务端 polish 接口接受任意文本,全文=正文整体传入)。
   // #752-feedback: 本函数是气泡/面板共用的执行体 — 任何失败都必须落进
   // polishError 并渲染在面板内(此前只写顶部 banner,气泡场景用户根本看不到)。
-  const runPolish = async (mode: 'selection' | 'full', instruction: string) => {
+  const runPolish = async (mode: 'selection' | 'full', instruction: string, inBubble = false, action = 'rewrite') => {
     const editor = polishEditorRef.current;
     if (!docId || !editor) return;
     setPolishError(null);
@@ -588,12 +592,50 @@ export function WritingEditorPage() {
       selection = editor.state.doc.textBetween(0, editor.state.doc.content.size, '\n').trim();
       if (!selection) { setPolishError('正文为空,无可润色内容'); return; }
     }
+
+    // #752-ux: 气泡内联运行 — 思考过程/流式正文全程展示在选区上方气泡里。
+    if (inBubble) {
+      setBubbleRun({ action, status: 'running', stream: '', reasoning: '', error: null, startedAt: Date.now() });
+      // 运行期间不再需要工具条选区态
+      setPolishLoading(true);
+      setPolishStream('');
+      try {
+        let result = '';
+        let reasoning = '';
+        for await (const chunk of api.polishDoc(docId, selection.slice(0, 20000), instruction || undefined)) {
+          if ((chunk as any).type === 'error') throw new Error(String((chunk as any).message || 'AI 服务返回错误'));
+          if ((chunk as any).type === 'reasoning') {
+            reasoning += String((chunk as any).text ?? '');
+            setBubbleRun((prev) => (prev ? { ...prev, reasoning } : prev));
+            continue;
+          }
+          if (typeof chunk.text === 'string' && chunk.text) result += chunk.text;
+          setPolishStream(result);
+          setBubbleRun((prev) => (prev ? { ...prev, stream: result } : prev));
+          if (chunk.done) break;
+        }
+        if (!result.trim()) {
+          setBubbleRun((prev) => (prev ? { ...prev, status: 'error', error: 'AI 未返回内容,请重试或检查模型配置' } : prev));
+          setPolishError('AI 未返回内容,请重试或检查模型配置');
+          return;
+        }
+        setBubbleRun((prev) => (prev ? { ...prev, status: 'done' } : prev));
+      } catch (err) {
+        const msg = err instanceof ApiError ? err.messageText : String((err as Error)?.message || err);
+        setBubbleRun((prev) => (prev ? { ...prev, status: 'error', error: msg } : prev));
+        setPolishError(msg);
+      } finally {
+        setPolishLoading(false);
+      }
+      return;
+    }
+
+    // ── 工具栏面板路径(润色全文/自定义指令) — 原有行为 ──
     setPolishLoading(true);
     setPolishStream('');
     try {
       let result = '';
       for await (const chunk of api.polishDoc(docId, selection.slice(0, 20000), instruction || undefined)) {
-        // #752-feedback: 服务端错误事件(此前被静默拼进正文/丢弃)
         if ((chunk as any).type === 'error') {
           throw new Error(String((chunk as any).message || 'AI 服务返回错误'));
         }
@@ -616,11 +658,39 @@ export function WritingEditorPage() {
       setAiEditNotice(mode === 'selection' ? '✨ 已按 AI 结果替换选中文本' : '✨ 已按 AI 结果更新全文');
       setTimeout(() => setAiEditNotice(''), 3000);
     } catch (err) {
-      // 面板内可见错误 — 不再依赖页面顶部 banner
       setPolishError(err instanceof ApiError ? err.messageText : String((err as Error)?.message || err));
     } finally {
       setPolishLoading(false);
     }
+  };
+
+  /** #752-ux: 气泡内「替换选中」 — 用运行开始时记录的 from/to 应用结果,
+      不重读选区(点击应用按钮时选区可能已变化)。 */
+  const handleBubbleApply = () => {
+    const editor = polishEditorRef.current;
+    const run = bubbleRunRef.current;
+    if (!editor || !run || run.status !== 'done' || !run.stream.trim()) return;
+    const range = bubbleSel;
+    if (!range || range.to <= range.from) {
+      setPolishError('选区已失效,请重新选择后再试');
+      return;
+    }
+    editor.chain().focus().insertContentAt({ from: range.from, to: range.to }, markdownToHtml(run.stream)).run();
+    setBubbleRun(null);
+    setAiEditNotice('✨ 已按 AI 结果替换选中文本');
+    setTimeout(() => setAiEditNotice(''), 3000);
+  };
+
+  const handleBubbleDiscard = () => {
+    setBubbleRun(null);
+    setPolishStream('');
+  };
+
+  const handleBubbleRetry = () => {
+    const run = bubbleRunRef.current;
+    const sel = bubbleSel;
+    setBubbleRun(null);
+    if (sel) handleBubbleAction(run?.action ?? 'rewrite', sel);
   };
 
   /** #752: Selection Bubble 动作分发 — 所有动作都打开面板跑流式,用户始终
@@ -633,15 +703,14 @@ export function WritingEditorPage() {
     setPolishScope('selection');
     setPolishError(null);
     if (action === 'polish') {
+      // ✨润色 = 无预设指令的通用润色,直接在气泡里跑
       setPolishInstruction('');
-      setPolishOpen(true);
+      void runPolish('selection', '', true, action);
       return;
     }
     const preset = POLISH_PRESETS.find((p) => p.id === action);
-    const instruction = preset?.instruction ?? '';
-    setPolishInstruction(instruction);
-    setPolishOpen(true);
-    void runPolish('selection', instruction);
+    // #752-ux: 全程气泡内联 — 不再弹顶部面板
+    void runPolish('selection', preset?.instruction ?? '', true, action);
   };
 
   // #753 兼容旧入口(工具栏 Polish 按钮):读当前 scope。
@@ -1285,6 +1354,10 @@ export function WritingEditorPage() {
                     <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} diffReview={diffReview} onDiffResolve={handleDiffResolve} onSelectionChange={setChatSelection}
                       reviewTitle={restoreReview ? '审阅版本恢复' : undefined}
                       onBubbleAction={handleBubbleAction}
+                      bubbleRun={bubbleRun}
+                      onBubbleApply={handleBubbleApply}
+                      onBubbleDiscard={handleBubbleDiscard}
+                      onBubbleRetry={handleBubbleRetry}
                     />
                   </div>
                 )}

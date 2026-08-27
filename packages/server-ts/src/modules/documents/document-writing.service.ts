@@ -19,6 +19,9 @@ export async function* polishSelection(
   selection: string,
   instruction: string | undefined,
   userId: string,
+  /** #752-ux: 思维链回调(deepseek-reasoner/v4-pro 的 reasoning_content)—
+   *  前端气泡内展示"思考过程",与正文流分离。 */
+  onReasoning?: (text: string) => void,
 ): AsyncGenerator<string> {
   const apiKey = getApiKey()
   const prompt = `Polish the following clinical text${instruction ? ` with instruction: "${instruction}"` : ''}. Keep the meaning but improve clarity and professionalism:\n\n${selection || ''}`
@@ -26,7 +29,7 @@ export async function* polishSelection(
     model: DEEPSEEK_CHAT_MODEL,
     maxTokens: 2048,
     telemetryContext: { userId, workspaceId: userId, action: 'document.polish' },
-  })) {
+  }, onReasoning)) {
     yield chunk
   }
 }

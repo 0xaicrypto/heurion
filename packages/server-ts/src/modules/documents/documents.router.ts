@@ -166,7 +166,10 @@ export async function documentsRouter(app: FastifyInstance) {
     reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
     const send = (d: any) => reply.raw.write(`data: ${JSON.stringify(d)}\n\n`)
     try {
-      for await (const chunk of polishSelection(selection, instruction, userId)) {
+      for await (const chunk of polishSelection(selection, instruction, userId, (reasoning) => {
+        // #752-ux: 思维链独立事件 — 气泡内"思考过程"折叠区消费。
+        send({ type: 'reasoning', text: reasoning })
+      })) {
         send({ text: chunk })
       }
       send({ done: true })

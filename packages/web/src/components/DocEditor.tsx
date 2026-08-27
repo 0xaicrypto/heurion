@@ -15,7 +15,7 @@ import { applyTrackedDiff, cleanupEmptyBlocks } from '@/lib/doc-diff';
 import { Button } from '@/components/ui';
 import {
   Bold, Italic, Heading2, List, ListOrdered, Table as TableIcon,
-  Plus, Trash2, Undo2, Redo2, Check, X, Eye, RotateCcw, ChevronLeft, ChevronRight,
+  Plus, Trash2, Undo2, Redo2, Check, X, Eye, RotateCcw, ChevronLeft, ChevronRight, Loader2,
 } from 'lucide-react';
 
 /** AI 作者身份 — 审阅模式下的变更标记作者色。 */
@@ -50,8 +50,31 @@ interface DocEditorProps {
    * 提供 after DocEditor 即渲染浮出工具条;审阅模式下自动隐藏。
    */
   onBubbleAction?: (action: string, sel: { text: string; from: number; to: number }) => void;
+  /**
+   * #752-ux: 气泡内联运行态 — 整个润色过程(思考过程/流式正文/错误)展示
+   * 在气泡里,不弹顶部面板。status 迁移 running→done|error。
+   */
+  bubbleRun?: BubbleRunState | null;
+  /** 应用 AI 结果到选区(使用运行开始时记录的 from/to)。 */
+  onBubbleApply?: () => void;
+  /** 丢弃本次结果,回到四个动作按钮。 */
+  onBubbleDiscard?: () => void;
+  /** 出错后原地重试同一动作。 */
+  onBubbleRetry?: () => void;
   /** #764: 审阅模式标题(restore 场景显示「审阅版本恢复」)。 */
   reviewTitle?: string;
+}
+
+/** #752-ux: 气泡内联运行状态(由父组件持有,气泡只渲染)。 */
+export interface BubbleRunState {
+  action: string;
+  status: 'running' | 'done' | 'error';
+  /** 正文流(应用时替换选区的内容)。 */
+  stream: string;
+  /** 模型思维链(折叠展示,部分模型不返回)。 */
+  reasoning: string;
+  error: string | null;
+  startedAt: number;
 }
 
 /**
@@ -59,7 +82,7 @@ interface DocEditorProps {
  * the editor converts on load (md → HTML) and on save (HTML → md).
  * 审阅模式下:AI 编辑以绿(插入)/红(删除)标记呈现,逐条或全部接受/拒绝。
  */
-export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, reviewTitle }: DocEditorProps) {
+export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubbleRun, onBubbleApply, onBubbleDiscard, onBubbleRetry, reviewTitle }: DocEditorProps) {
   const applyMdRef = useRef<string | null>(null);
   const reviewKeyRef = useRef<string | null>(null);
   const [reviewStats, setReviewStats] = useState<{ pending: number; accepted: number; rejected: number }>({ pending: 0, accepted: 0, rejected: 0 });
@@ -67,6 +90,9 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   /** #752: bubble 动作点击时读取当前选区后分发给父组件。 */
   const onActionRef = useRef(onBubbleAction);
   onActionRef.current = onBubbleAction;
+  /** #752-ux: 最新运行态 — shouldShow 闭包经 updateOptions 每轮刷新可读。 */
+  const bubbleRunRef = useRef(bubbleRun);
+  bubbleRunRef.current = bubbleRun;
   const bubbleBusyRef = useRef<string | null>(null);
   const [bubbleBusy, setBubbleBusy] = useState<string | null>(null);
   /** pointerdown/click 双通道去重:同一次按下只分发一次。 */
@@ -382,10 +408,55 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
             options={{ placement: 'top', offset: 8 }}
             shouldShow={({ state, from, to }) => {
               if (reviewKeyRef.current !== null) return false;
+              // #752-ux: 运行/完成卡片不被选区塌陷或点击空白打断
+              if (bubbleRunRef.current && bubbleRunRef.current.status !== 'error') return true;
+              if (bubbleRunRef.current?.status === 'error') return true;
               const selText = state.doc.textBetween(from, to, '\n').trim();
               return selText.length > 10;
             }}
           >
+            {bubbleRun ? (
+              /* #752-ux: 全过程内联气泡 — 思考过程(折叠)/流式正文/结果操作,
+                  不再弹出顶部面板。Apply 用运行开始时的 from/to。 */
+              <div className="w-[min(420px,88vw)] rounded-lg border border-border bg-surface-elevated p-2.5 shadow-lg">
+                <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-text-tertiary">
+                  <span className="flex items-center gap-1">
+                    {bubbleRun.status === 'running'
+                      ? <><Loader2 size={11} className="animate-spin" /> AI 生成中…</>
+                      : bubbleRun.status === 'error'
+                        ? <span className="text-error">✗ 出错了</span>
+                        : <><Check size={11} className="text-success" /> 已完成 {bubbleRun.stream.length} 字</>}
+                  </span>
+                  <span className="tabular-nums">{Math.round((Date.now() - bubbleRun.startedAt) / 100) / 10}s</span>
+                </div>
+                {bubbleRun.reasoning && (
+                  <details className="mb-1.5 rounded-md bg-surface px-2 py-1">
+                    <summary className="cursor-pointer select-none text-[11px] text-text-tertiary">💭 思考过程</summary>
+                    <div className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-text-secondary">{bubbleRun.reasoning}</div>
+                  </details>
+                )}
+                {bubbleRun.error ? (
+                  <div className="rounded-md border border-error/40 bg-error/5 px-2 py-1.5 text-[11px] text-error" role="alert">{bubbleRun.error}</div>
+                ) : (
+                  <div className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-surface px-2 py-1.5 text-[12px] leading-relaxed text-text-primary">
+                    {bubbleRun.stream || '…'}
+                  </div>
+                )}
+                <div className="mt-2 flex items-center justify-end gap-1">
+                  {bubbleRun.status === 'error' && onBubbleRetry && (
+                    <Button size="sm" variant="secondary" onClick={(e) => { e.preventDefault(); onBubbleRetry(); }}>重试</Button>
+                  )}
+                  {bubbleRun.status === 'done' && (
+                    <>
+                      <Button size="sm" variant="ghost" onClick={(e) => { e.preventDefault(); onBubbleDiscard?.(); }}>丢弃</Button>
+                      <Button size="sm" onClick={(e) => { e.preventDefault(); onBubbleApply?.(); }}>
+                        <Check size={12} className="mr-1" /> 替换选中
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ) : (
             <div className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-elevated px-1 py-0.5 shadow-lg">
               {([
                 ['polish', '✨', '润色'],
@@ -411,6 +482,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
                 </button>
               ))}
             </div>
+            )}
           </TiptapBubbleMenu>
         )}
       </div>
