@@ -42,8 +42,14 @@ export class WritingApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}/snapshots`);
   }
 
+  /** #764: deprecated — restore 改走 getSnapshotBody + diff 审阅 + updateDoc。 */
   async restoreSnapshot(docId: string, snapshotId: string): Promise<{id: string; body: string}> {
     return this.fetch(`/api/v1/docs/${docId}/snapshots/${snapshotId}/restore`, { method: 'POST' });
+  }
+
+  /** #764: 快照全文 — Restore 流程先取全文与当前版本 diff 审阅。 */
+  async getSnapshotBody(docId: string, snapshotId: string): Promise<{id: string; created_at: string; label: string; body: string}> {
+    return this.fetch(`/api/v1/docs/${docId}/snapshots/${snapshotId}`);
   }
 
   async runPhiScan(docId: string): Promise<{findings: Array<{start: number; end: number; text: string; suggestion: string}>}> {

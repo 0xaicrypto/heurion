@@ -50,6 +50,8 @@ interface DocEditorProps {
    * 提供 after DocEditor 即渲染浮出工具条;审阅模式下自动隐藏。
    */
   onBubbleAction?: (action: string, sel: { text: string; from: number; to: number }) => void;
+  /** #764: 审阅模式标题(restore 场景显示「审阅版本恢复」)。 */
+  reviewTitle?: string;
 }
 
 /**
@@ -57,7 +59,7 @@ interface DocEditorProps {
  * the editor converts on load (md → HTML) and on save (HTML → md).
  * 审阅模式下:AI 编辑以绿(插入)/红(删除)标记呈现,逐条或全部接受/拒绝。
  */
-export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction }: DocEditorProps) {
+export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, reviewTitle }: DocEditorProps) {
   const applyMdRef = useRef<string | null>(null);
   const reviewKeyRef = useRef<string | null>(null);
   const [reviewStats, setReviewStats] = useState<{ pending: number; accepted: number; rejected: number }>({ pending: 0, accepted: 0, rejected: 0 });
@@ -272,7 +274,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       {reviewing && (
         <div className="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/40">
           <span className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
-            <Eye size={13} /> 审阅 AI 修改
+            <Eye size={13} /> {reviewTitle ?? '审阅 AI 修改'}
             <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[11px] dark:bg-amber-900">
               {reviewStats.pending} 处待处理 · 已接受 {reviewStats.accepted} · 已拒绝 {reviewStats.rejected}
             </span>

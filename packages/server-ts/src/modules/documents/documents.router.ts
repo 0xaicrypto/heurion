@@ -122,6 +122,14 @@ export async function documentsRouter(app: FastifyInstance) {
     })) }
   })
 
+  // #764: 快照全文 — Restore 前先与当前版本做 diff 审阅,确认后才 apply。
+  app.get('/api/v1/docs/:docId/snapshots/:snapId', async (request, reply) => {
+    const { docId, snapId } = request.params as any
+    const snap = await (prisma as any).docSnapshot.findFirst({ where: { id: Number(snapId), docId } })
+    if (!snap) return reply.status(404).send({ error: 'Not found' })
+    return { id: String(snap.id), created_at: snap.createdAt, label: snap.label || '保存版本', body: snap.body || '' }
+  })
+
   app.post('/api/v1/docs/:docId/snapshots/:snapId/restore', async (request, reply) => {
     const { docId, snapId } = request.params as any
     const snap = await (prisma as any).docSnapshot.findFirst({ where: { id: Number(snapId), docId } })

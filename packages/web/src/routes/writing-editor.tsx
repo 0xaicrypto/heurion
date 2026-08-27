@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { Editor } from '@tiptap/react';
-import { ArrowLeft, Check, Download, Eye, FilePlus, FileText, History, MessageSquare, Paperclip, RotateCcw, ShieldAlert, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, Check, Download, Eye, FilePlus, FileText, History, Loader2, MessageSquare, Paperclip, RotateCcw, ShieldAlert, Sparkles, X } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
@@ -141,6 +141,8 @@ export function WritingEditorPage() {
   const [aiEditNotice, setAiEditNotice] = useState('');
   /** #diff-review: 待审阅的 AI 编辑(旧→新);null=无审阅。 */
   const [diffReview, setDiffReview] = useState<DiffReviewState | null>(null);
+  // #764: 标记当前审阅是「恢复历史版本」——通知文案与 AI 润色区分。
+  const [restoreReview, setRestoreReview] = useState<{ snapshotId: string; label: string } | null>(null);
   const bodyRef = useRef(body);
   bodyRef.current = body;
   // #fix: 最近一次已保存的正文 — 发送 chat 前对比,内容有变化才先保存,
@@ -243,13 +245,19 @@ export function WritingEditorPage() {
     // #720: 用显式 cancelled 字段区分"放弃"，不再用空串推断 — 全文删空的
     // 接受结果(空 md)应落地为空正文,而不是被当成放弃。
     if (result.cancelled) {
+      if (restoreReview) { setRestoreReview(null); }
       setAiEditNotice(t('writing.reviewCancelled', '已放弃本次 AI 修改'));
       setTimeout(() => setAiEditNotice(''), 3000);
       return;
     }
     setBody(result.md);
     setDoc((prev) => (prev ? { ...prev, body: result.md, updated_at: new Date().toISOString() } : prev));
-    setAiEditNotice(`已采纳 AI 修改：接受 ${result.accepted} / 拒绝 ${result.rejected}`);
+    if (restoreReview) {
+      setAiEditNotice(`已恢复到「${restoreReview.label}」：接受 ${result.accepted} / 拒绝 ${result.rejected} 处差异`);
+      setRestoreReview(null);
+    } else {
+      setAiEditNotice(`已采纳 AI 修改：接受 ${result.accepted} / 拒绝 ${result.rejected}`);
+    }
     setTimeout(() => setAiEditNotice(''), 4000);
     // #598/#711: 落地后自动保存到服务端 — 失败必须可见,不能静默吞掉。
     if (docId) {
@@ -486,13 +494,20 @@ export function WritingEditorPage() {
     }
   };
 
-  const handleRestore = async (snapshotId: string) => {
-    if (!docId) return;
+  /**
+   * #764: Restore 先审阅 — 拉快照全文与当前正文进 diff 审阅模式(绿=恢复
+   * 内容/红=当前内容),用户逐条确认后经 handleDiffResolve 落地并自动保存。
+   * 不再直接调用 restore(旧契约前端按 {body} 解析、服务端却只回 restored,
+   * 存在把正文刷成 undefined 的隐患)。
+   */
+  const handleRestoreRequest = async (snapshotId: string) => {
+    if (!docId || !body) return;
     setRestoring(snapshotId);
     try {
-      const restored = await api.restoreSnapshot(docId, snapshotId);
-      setBody(restored.body);
-      setDoc((prev) => prev ? { ...prev, body: restored.body, updated_at: new Date().toISOString() } : prev);
+      const snap = await api.getSnapshotBody(docId, snapshotId);
+      setShowHistory(false);
+      setRestoreReview({ snapshotId, label: snap.label });
+      setDiffReview({ key: `restore-${snapshotId}`, old: body, next: snap.body });
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
@@ -594,9 +609,9 @@ export function WritingEditorPage() {
     }
   };
 
-  /** #752: Selection Bubble 动作分发 — polish 打开弹层,其余预设一键直达。 */
+  /** #752: Selection Bubble 动作分发 — 所有动作都打开面板跑流式,用户始终
+   *  看得到生成过程与取消入口(此前一键预设后台静默执行,零反馈)。 */
   const handleBubbleAction = (action: string, sel: { text: string; from: number; to: number }) => {
-    void action;
     setBubbleSel(sel);
     setPolishScope('selection');
     if (action === 'polish') {
@@ -605,8 +620,10 @@ export function WritingEditorPage() {
       return;
     }
     const preset = POLISH_PRESETS.find((p) => p.id === action);
-    // bubble 上的一键预设直接执行(rewrite/academic/summarize 映射到最近语义)
-    void runPolish('selection', preset?.instruction ?? '');
+    const instruction = preset?.instruction ?? '';
+    setPolishInstruction(instruction);
+    setPolishOpen(true);
+    void runPolish('selection', instruction);
   };
 
   // #753 兼容旧入口(工具栏 Polish 按钮):读当前 scope。
@@ -1074,6 +1091,12 @@ export function WritingEditorPage() {
                   placeholder="Optional instruction (e.g. make it more concise)"
                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none h-16"
                 />
+                {polishLoading && !polishStream && (
+                  /* #752 反馈:LLM 首包前的等待期也必须有可见状态 */
+                  <div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-surface p-2 text-xs text-text-secondary">
+                    <Loader2 size={12} className="animate-spin" /> {t('writing.generating', 'AI 生成中,通常需要几秒…')}
+                  </div>
+                )}
                 {polishStream && (
                   // #660/#661: streaming tail renders throttled + block-projected.
                   <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-border bg-surface p-2">
@@ -1236,6 +1259,7 @@ export function WritingEditorPage() {
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
                     <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} diffReview={diffReview} onDiffResolve={handleDiffResolve} onSelectionChange={setChatSelection}
+                      reviewTitle={restoreReview ? '审阅版本恢复' : undefined}
                       onBubbleAction={handleBubbleAction}
                     />
                   </div>
@@ -1400,7 +1424,7 @@ export function WritingEditorPage() {
                         <p className="text-xs text-text-tertiary">{new Date(s.created_at).toLocaleString()}</p>
                         <p className="mt-1 truncate text-sm text-text-secondary">{s.body_preview || '(empty)'}</p>
                       </div>
-                      <Button size="sm" variant="ghost" onClick={() => handleRestore(s.snapshot_id)} disabled={restoring === s.snapshot_id} isLoading={restoring === s.snapshot_id}>
+                      <Button size="sm" variant="ghost" onClick={() => void handleRestoreRequest(s.snapshot_id)} disabled={restoring === s.snapshot_id} isLoading={restoring === s.snapshot_id}>
                         <RotateCcw size={14} className="mr-1" /> Restore
                       </Button>
                     </div>
