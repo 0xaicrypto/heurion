@@ -6,6 +6,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { NewPatientDialog } from '@/components/NewPatientDialog';
 import { PendingIngestionsWidget } from '@/components/today/PendingIngestionsWidget';
 import { EmailBindBanner } from '@/components/EmailBindCard';
+import { NextBestActions } from '@/components/NextBestActions';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/lib/api';
@@ -56,6 +57,8 @@ export function TodayPage() {
         </header>
 
         <main className="space-y-6 p-6">
+          {/* #761: 基于状态的下一步建议 — 系统主动引导而非信息墙 */}
+          <NextBestActions />
           {/* #285: non-blocking email binding prompt for users without email */}
           {!profile?.email && !bannerDismissed && (
             <EmailBindBanner

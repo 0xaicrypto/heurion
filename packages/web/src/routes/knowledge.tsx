@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { Button, Card, Skeleton, Badge, Input, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { NextBestActions } from '@/components/NextBestActions';
 import type { Article } from '@/lib/types';
 import { KB_SOURCE_TYPES, type KbSourceType } from '@heurion/contracts'; // #744/#750 single source of truth
 import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X, ChevronLeft, ChevronRight, GitGraph } from 'lucide-react';
@@ -25,6 +26,18 @@ interface Tool {
 interface UploadedFile {
   file_id: string; name: string; mime: string; size_bytes: number; created_at: string;
 }
+
+// #762: 文件管线状态(#747 FilePipelineJob)— Files 卡可见"为什么搜不到"。
+type PipelineStage = 'queued' | 'extracted' | 'embedded' | 'proposed' | 'ingested' | 'failed' | 'skipped';
+const PIPELINE_BADGE: Record<PipelineStage, { label: string; cls: string }> = {
+  queued: { label: '排队中', cls: 'bg-surface-muted text-text-secondary' },
+  extracted: { label: '已提取', cls: 'bg-surface-muted text-text-secondary' },
+  embedded: { label: '已入索引', cls: 'bg-success/10 text-success' },
+  proposed: { label: '事实待审', cls: 'bg-success/10 text-success' },
+  ingested: { label: '就绪', cls: 'bg-success/10 text-success' },
+  failed: { label: '失败', cls: 'bg-error/10 text-error' },
+  skipped: { label: '跳过', cls: 'bg-warning/10 text-warning' },
+};
 
 type Tab = 'articles' | 'facts' | 'gaps' | 'tools' | 'files';
 
@@ -58,12 +71,19 @@ function usePagination<T>(items: T[], page: number, pageSize = PAGE_SIZE) {
 
 export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<Tab>('articles');
+  // #761/#762: 支持 ?view=gaps|articles 深链(NBA 卡跳转定位)。
+  const [tab, setTabState] = useState<Tab>(() => {
+    const v = new URLSearchParams(window.location.search).get('view');
+    return (['articles', 'facts', 'gaps', 'tools', 'files'] as const).includes(v as Tab) ? (v as Tab) : 'articles';
+  });
+  const setTab = setTabState;
   const [articles, setArticles] = useState<Article[]>([]);
   const [facts, setFacts] = useState<Fact[]>([]);
   const [gaps, setGaps] = useState<Gap[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
   const [files, setFiles] = useState<UploadedFile[]>([]);
+  // #762: fileId → pipeline stage,Files 卡渲染状态徽章。
+  const [pipelineStages, setPipelineStages] = useState<Record<string, PipelineStage>>({});
   const [loading, setLoading] = useState(true);
   const [editingFact, setEditingFact] = useState<Fact | null>(null);
   const [editContent, setEditContent] = useState('');
@@ -116,6 +136,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
       api.getKnowledgeGaps().then(r => setGaps(r.gaps)).catch(recordLoadError('Gaps 加载失败')),
       api.getKnowledgeTools().then(r => setTools(r.tools)).catch(recordLoadError('工具加载失败')),
       api.listFiles().then(r => setFiles(r.files)).catch(recordLoadError('文件列表加载失败')),
+      api.getPipelineJobs().then(r => setPipelineStages(Object.fromEntries(r.jobs.map(j => [j.fileId, j.stage as PipelineStage])))).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, []);
 
@@ -353,7 +374,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
           {TABS.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
-              onClick={() => setTab(key)}
+              onClick={() => { setTab(key); }}
               className={cn(
                 'flex items-center gap-1.5 px-4 py-2.5 text-sm border-b-2 -mb-px transition-colors',
                 tab === key
@@ -368,6 +389,8 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
         </nav>
 
         <main className="p-6 space-y-4">
+          {/* #761: 知识库视角的下一步建议(gaps/stale/新文件) */}
+          <NextBestActions />
           {loading ? (
             <div className="space-y-4">
               <Skeleton className="h-20 w-full rounded-xl" />
@@ -744,6 +767,17 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                             {f.mime} · {(f.size_bytes / 1024).toFixed(1)} KB · {new Date(f.created_at).toLocaleDateString()}
                           </p>
                         </div>
+                        {/* #762: 管线状态徽章 — 让"为什么搜不到"可见可诊断。 */}
+                        {(() => {
+                          const stage = pipelineStages[f.file_id];
+                          if (!stage) return null;
+                          const badge = PIPELINE_BADGE[stage];
+                          return (
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${badge.cls}`} title={stage}>
+                              {badge.label}
+                            </span>
+                          );
+                        })()}
                         <button
                           className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-error"
                           onClick={async () => {

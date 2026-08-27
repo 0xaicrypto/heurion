@@ -157,6 +157,11 @@ export class PluginsApi extends ApiCore {
     return this.fetch(`/api/v1/files?limit=${limit}&offset=${offset}`);
   }
 
+  /** #762: 文件管线状态 — Files 卡显示"已索引/处理中/失败"徽章。 */
+  async getPipelineJobs(limit = 100): Promise<{jobs: Array<{id: string; fileId: string; stage: string; errorMessage: string | null}>}> {
+    return this.fetch(`/api/v1/files/pipeline/jobs?limit=${limit}`);
+  }
+
   async deleteFile(fileId: string): Promise<void> {
     return this.fetch(`/api/v1/files/${fileId}`, { method: 'DELETE' });
   }

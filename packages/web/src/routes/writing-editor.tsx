@@ -8,6 +8,7 @@ import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor, type DiffReviewState } from '@/components/DocEditor';
 import { KbPicker } from '@/components/KbPicker';
+import { SpotHint } from '@/components/SpotHint';
 import { UploadProgressModal, type UploadProgressState } from '@/components/UploadProgressModal';
 import { ChatMessages } from '@/components/chat/ChatMessages';
 import { StreamingLlmContent } from '@/components/LlmContent';
@@ -1195,7 +1196,13 @@ export function WritingEditorPage() {
 
         <div className="flex flex-1 overflow-hidden">
           <main className={cn('flex-1 overflow-y-auto p-6', chatOpen ? 'border-r border-border' : '')}>
-            {error && (
+          {/* #763: Selection Bubble 首次引导 — 一次性,dismiss 永久记住。 */}
+          <div className="mx-auto mb-3 max-w-3xl">
+            <SpotHint id="writing-selection-bubble" icon="✨">
+              试试:<b>选中任意一段文字</b>,会出现润色菜单;不选中则润色全文。
+            </SpotHint>
+          </div>
+          {error && (
               <div className="mb-4 max-w-3xl mx-auto">
                 <Alert variant="error">{error}</Alert>
               </div>
