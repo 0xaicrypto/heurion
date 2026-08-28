@@ -724,9 +724,9 @@ export function WritingEditorPage() {
     setPolishScope('selection');
     setPolishError(null);
     if (action === 'polish') {
-      // ✨润色 = 无预设指令的通用润色,直接在气泡里跑
+      // ✨润色 = 气泡内输入自定义指令(可留空),⌘+Enter 或「开始」执行
       setPolishInstruction('');
-      void runPolish('selection', '', true, action);
+      setBubbleRun({ action, status: 'input', stream: '', reasoning: '', error: null, startedAt: Date.now() });
       return;
     }
     const preset = POLISH_PRESETS.find((p) => p.id === action);
@@ -1376,6 +1376,7 @@ export function WritingEditorPage() {
                       reviewTitle={restoreReview ? '审阅版本恢复' : undefined}
                       onBubbleAction={handleBubbleAction}
                       bubbleRun={bubbleRun}
+                      onBubbleStart={(instruction) => void runPolish('selection', instruction, true, 'polish')}
                       onBubbleApply={handleBubbleApply}
                       onBubbleDiscard={handleBubbleDiscard}
                       onBubbleRetry={handleBubbleRetry}

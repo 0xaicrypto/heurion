@@ -55,6 +55,8 @@ interface DocEditorProps {
    * 在气泡里,不弹顶部面板。status 迁移 running→done|error。
    */
   bubbleRun?: BubbleRunState | null;
+  /** input 态:用户提交自定义指令 → 开始运行。 */
+  onBubbleStart?: (instruction: string) => void;
   /** 应用 AI 结果到选区(使用运行开始时记录的 from/to)。 */
   onBubbleApply?: () => void;
   /** 丢弃本次结果,回到四个动作按钮。 */
@@ -68,7 +70,7 @@ interface DocEditorProps {
 /** #752-ux: 气泡内联运行状态(由父组件持有,气泡只渲染)。 */
 export interface BubbleRunState {
   action: string;
-  status: 'running' | 'done' | 'error';
+  status: 'input' | 'running' | 'done' | 'error';
   /** 正文流(应用时替换选区的内容)。 */
   stream: string;
   /** 模型思维链(折叠展示,部分模型不返回)。 */
@@ -82,7 +84,7 @@ export interface BubbleRunState {
  * the editor converts on load (md → HTML) and on save (HTML → md).
  * 审阅模式下:AI 编辑以绿(插入)/红(删除)标记呈现,逐条或全部接受/拒绝。
  */
-export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubbleRun, onBubbleApply, onBubbleDiscard, onBubbleRetry, reviewTitle }: DocEditorProps) {
+export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubbleRun, onBubbleStart, onBubbleApply, onBubbleDiscard, onBubbleRetry, reviewTitle }: DocEditorProps) {
   const applyMdRef = useRef<string | null>(null);
   const reviewKeyRef = useRef<string | null>(null);
   const [reviewStats, setReviewStats] = useState<{ pending: number; accepted: number; rejected: number }>({ pending: 0, accepted: 0, rejected: 0 });
@@ -93,6 +95,9 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   /** #752-ux: 最新运行态 — shouldShow 闭包经 updateOptions 每轮刷新可读。 */
   const bubbleRunRef = useRef(bubbleRun);
   bubbleRunRef.current = bubbleRun;
+  /** input 态的自定义指令(uncontrolled-ish:ref 存值 + force 触发渲染)。 */
+  const bubbleInputRef = useRef('');
+  const [, forceBubbleInput] = useState(0);
   const bubbleBusyRef = useRef<string | null>(null);
   const [bubbleBusy, setBubbleBusy] = useState<string | null>(null);
   /** pointerdown/click 双通道去重:同一次按下只分发一次。 */
@@ -419,6 +424,33 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
               /* #752-ux: 全过程内联气泡 — 思考过程(折叠)/流式正文/结果操作,
                   不再弹出顶部面板。Apply 用运行开始时的 from/to。 */
               <div className="w-[min(420px,88vw)] rounded-lg border border-border bg-surface-elevated p-2.5 shadow-lg">
+              {bubbleRun.status === 'input' ? (
+                /* #752-ux: ✨润色 = 气泡内自定义指令输入,支持任意 prompt */
+                <div>
+                  <textarea
+                    autoFocus
+                    value={bubbleInputRef.current}
+                    onChange={(e) => { bubbleInputRef.current = e.target.value; forceBubbleInput((n) => n + 1); }}
+                    placeholder="告诉 AI 怎么改(可留空直接润色),如:压缩到 200 字 / 强调安全性信号 / 改写成投稿信语气"
+                    rows={3}
+                    className="w-full resize-none rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] text-text-primary placeholder:text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                        e.preventDefault();
+                        onBubbleStart?.(bubbleInputRef.current.trim());
+                      }
+                    }}
+                  />
+                  <div className="mt-1.5 flex items-center justify-between">
+                    <span className="text-[10px] text-text-tertiary">⌘/Ctrl + Enter 开始</span>
+                    <div className="flex gap-1">
+                      <Button size="sm" variant="ghost" onClick={(e) => { e.preventDefault(); onBubbleDiscard?.(); }}>取消</Button>
+                      <Button size="sm" onClick={(e) => { e.preventDefault(); onBubbleStart?.(bubbleInputRef.current.trim()); }}>开始</Button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
                 <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-text-tertiary">
                   <span className="flex items-center gap-1">
                     {bubbleRun.status === 'running'
@@ -461,6 +493,8 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
                     </>
                   )}
                 </div>
+                </>
+                )}
               </div>
             ) : (
             <div className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-elevated px-1 py-0.5 shadow-lg">

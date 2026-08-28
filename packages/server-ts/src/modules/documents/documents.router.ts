@@ -166,11 +166,33 @@ export async function documentsRouter(app: FastifyInstance) {
     reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
     const send = (d: any) => reply.raw.write(`data: ${JSON.stringify(d)}\n\n`)
     try {
+      let textChunks = 0
       for await (const chunk of polishSelection(selection, instruction, userId, (reasoning) => {
         // #752-ux: 思维链独立事件 — 气泡内"思考过程"折叠区消费。
         send({ type: 'reasoning', text: reasoning })
       })) {
+        textChunks++
         send({ text: chunk })
+      }
+      if (textChunks === 0) {
+        // #752-fix: 流式路径空结束(上游偶发只回思维链/空流)——自动降级到
+        // 非流式 chatWithMeta(带 #548 双倍额度重试),保证用户拿到结果。
+        const { buildPolishPrompt } = await import('./document-writing.service.js')
+        const { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } = await import('../../common/llm.js')
+        console.warn(`[polish] empty stream, falling back to non-streaming (selection=${selection.length}c)`)
+        const text = await deepseekChat(
+          [{ role: 'user', content: buildPolishPrompt(selection, instruction) }],
+          getApiKey(),
+          {
+            model: DEEPSEEK_CHAT_MODEL,
+            maxTokens: 4096,
+            telemetryContext: { userId, workspaceId: userId, action: 'document.polish_fallback' },
+          },
+          undefined,
+          (reasoning) => send({ type: 'reasoning', text: reasoning }),
+        )
+        if (!text.trim()) throw new Error('模型连续两次未返回内容,请稍后重试')
+        send({ text })
       }
       send({ done: true })
     } catch (err: any) {

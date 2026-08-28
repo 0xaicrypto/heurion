@@ -15,6 +15,11 @@ export interface MethodsSectionInput {
  * #3: AI Polish SSE — streaming rewrite of a selection. Yields text
  * chunks; the caller wraps them in the SSE envelope.
  */
+/** Polish 提示词 — 流式与 fallback 共用。 */
+export function buildPolishPrompt(selection: string, instruction?: string): string {
+  return `Polish the following clinical text${instruction ? ` with instruction: "${instruction}"` : ''}. Keep the meaning but improve clarity and professionalism:\n\n${selection || ''}`
+}
+
 export async function* polishSelection(
   selection: string,
   instruction: string | undefined,
@@ -24,7 +29,7 @@ export async function* polishSelection(
   onReasoning?: (text: string) => void,
 ): AsyncGenerator<string> {
   const apiKey = getApiKey()
-  const prompt = `Polish the following clinical text${instruction ? ` with instruction: "${instruction}"` : ''}. Keep the meaning but improve clarity and professionalism:\n\n${selection || ''}`
+  const prompt = buildPolishPrompt(selection, instruction)
   // #752-fix: 4096 — reasoner 模型思维链计入输出额度,2048 会被长思考
   // 耗尽后以空正文"正常"结束(finish_reason=stop,不触发截断重试路径)。
   let sawContent = false
