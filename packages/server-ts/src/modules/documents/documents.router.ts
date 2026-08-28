@@ -179,12 +179,16 @@ export async function documentsRouter(app: FastifyInstance) {
         // 非流式 chatWithMeta(带 #548 双倍额度重试),保证用户拿到结果。
         const { buildPolishPrompt } = await import('./document-writing.service.js')
         const { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } = await import('../../common/llm.js')
-        console.warn(`[polish] empty stream, falling back to non-streaming (selection=${selection.length}c)`)
+        // 与流式路径同模型链(reasoner 优先),否则 fallback 行为不一致。
+        const model = process.env.DEEPSEEK_REASONER_MODEL
+          || process.env.DEEPSEEK_PREMIUM_MODEL
+          || DEEPSEEK_CHAT_MODEL
+        console.warn(`[polish] empty stream, falling back to non-streaming (model=${model}, selection=${selection.length}c)`)
         const text = await deepseekChat(
           [{ role: 'user', content: buildPolishPrompt(selection, instruction) }],
           getApiKey(),
           {
-            model: DEEPSEEK_CHAT_MODEL,
+            model,
             maxTokens: 4096,
             telemetryContext: { userId, workspaceId: userId, action: 'document.polish_fallback' },
           },
