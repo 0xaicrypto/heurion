@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { Editor } from '@tiptap/react';
-import { ArrowLeft, Check, Download, Eye, FilePlus, FileText, History, Loader2, MessageSquare, Paperclip, RotateCcw, ShieldAlert, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, Check, Download, Eye, FilePlus, FileText, History, MessageSquare, Paperclip, RotateCcw, ShieldAlert, Sparkles, X } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
@@ -12,7 +12,6 @@ import { sanitizePolishOutput } from '@/lib/polish-sanitize';
 import { SpotHint } from '@/components/SpotHint';
 import { UploadProgressModal, type UploadProgressState } from '@/components/UploadProgressModal';
 import { ChatMessages } from '@/components/chat/ChatMessages';
-import { StreamingLlmContent } from '@/components/LlmContent';
 import { ChartLibrary } from '@/components/chat/ChartLibrary';
 import { useChatStore, chatFailureText } from '@/stores/chat';
 import { Alert, Button, Skeleton, Textarea, Input } from '@/components/ui';
@@ -72,10 +71,6 @@ export function WritingEditorPage() {
   const [exportPanelOpen, setExportPanelOpen] = useState(false);
   const [exportHistory, setExportHistory] = useState<Array<{ format: 'docx' | 'pdf'; filename: string; size: number; at: number }>>([]);
 
-  const [polishOpen, setPolishOpen] = useState(false);
-  // #752/#753: Polish 双模式 — bubble 按钮或工具栏触发的动作。
-  // scope=selection(有选区)| full(全文);presets 一键直达,#753 定义。
-  const [polishScope, setPolishScope] = useState<'selection' | 'full'>('selection');
   const POLISH_PRESETS: Array<{ id: string; icon: string; label: string; instruction: string }> = [
     { id: 'academic', icon: '🔬', label: '学术语气强化', instruction: '强化学术语气:使用正式、客观、精确的学术表达,避免口语化措辞。' },
     { id: 'concise', icon: '📐', label: '压缩至字数限制', instruction: '在保留全部关键信息的前提下压缩篇幅,删除冗余表述与重复论证。' },
@@ -112,11 +107,7 @@ export function WritingEditorPage() {
   const [injectLabel, setInjectLabel] = useState('');
   const [injectResult, setInjectResult] = useState('');
   const [injecting, setInjecting] = useState(false);
-  const [polishInstruction, setPolishInstruction] = useState('');
-  const [polishStream, setPolishStream] = useState('');
-  const [polishLoading, setPolishLoading] = useState(false);
   // #752-feedback: polish 执行错误 — 面板内可见(顶部 banner 在气泡场景不可达)。
-  const [polishError, setPolishError] = useState<string | null>(null);
 
   const [chatOpen, setChatOpen] = useState(false);
   // #402-merge: the right panel hosts Doc Chat and the chart library.
@@ -339,7 +330,6 @@ export function WritingEditorPage() {
 
   const [preview, setPreview] = useState(false);
 
-  const polishRef = useRef<HTMLDivElement>(null);
   const polishEditorRef = useRef<Editor | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatFileRef = useRef<HTMLInputElement>(null);
@@ -451,15 +441,6 @@ export function WritingEditorPage() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatSession?.messages]);
 
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (polishRef.current && !polishRef.current.contains(e.target as Node)) {
-        setPolishOpen(false);
-      }
-    }
-    if (polishOpen) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [polishOpen]);
 
   const loadSnapshots = useCallback(() => {
     if (!docId) return;
@@ -581,119 +562,60 @@ export function WritingEditorPage() {
 
   // #753: Polish 提交 — 双模式。selection 模式需要真实选区;full 模式对
   // 全文执行(服务端 polish 接口接受任意文本,全文=正文整体传入)。
-  // #752-feedback: 本函数是气泡/面板共用的执行体 — 任何失败都必须落进
-  // polishError 并渲染在面板内(此前只写顶部 banner,气泡场景用户根本看不到)。
-  const runPolish = async (mode: 'selection' | 'full', instruction: string, inBubble = false, action = 'rewrite') => {
+  // #753: Polish 执行体 — 气泡内联(润色全文按钮已移除;全文场景可全选
+  // 后走气泡,或用 doc-chat)。错误写入 bubbleRun.error 展示。
+  const runPolish = async (instruction: string, action = 'rewrite') => {
     const editor = polishEditorRef.current;
     if (!docId || !editor) return;
-    setPolishError(null);
-    let from = 0; let to = 0; let selection = '';
-    if (mode === 'selection') {
-      const sel = editor.state.selection;
-      from = sel.from; to = sel.to;
-      selection = editor.state.doc.textBetween(from, to, '\n').trim();
-      if (!selection) { setPolishScope('full'); setPolishError('没有选中文本 — 已切换到全文润色'); return; }
-    } else {
-      selection = editor.state.doc.textBetween(0, editor.state.doc.content.size, '\n').trim();
-      if (!selection) { setPolishError('正文为空,无可润色内容'); return; }
-    }
-
-    // #752-ux: 气泡内联运行 — 思考过程/流式正文全程展示在选区上方气泡里。
-    if (inBubble) {
-      // C2 并发守卫:上一轮仍在跑 → 先 abort,状态归零再开新流
-      if (polishAbortRef.current) {
-        polishAbortRef.current.abort();
-        polishAbortRef.current = null;
-      }
-      const controller = new AbortController();
-      polishAbortRef.current = controller;
-      setBubbleRun({ action, status: 'running', stream: '', reasoning: '', error: null, startedAt: Date.now() });
-      polishRangeRef.current = { from, to, original: selection };
-      setPolishLoading(true);
-      setPolishStream('');
-      try {
-        let result = '';
-        let reasoning = '';
-        for await (const chunk of api.polishDoc(docId, selection.slice(0, 20000), instruction || undefined, controller.signal)) {
-          if ((chunk as any).type === 'error') throw new Error(String((chunk as any).message || 'AI 服务返回错误'));
-          if ((chunk as any).type === 'reasoning') {
-            reasoning += String((chunk as any).text ?? '');
-            setBubbleRun((prev) => (prev ? { ...prev, reasoning } : prev));
-            continue;
-          }
-          if (typeof chunk.text === 'string' && chunk.text) result += chunk.text;
-          setPolishStream(result);
-          setBubbleRun((prev) => (prev ? { ...prev, stream: result } : prev));
-          if (chunk.done) break;
-        }
-        if (!result.trim()) {
-          const msg = reasoning
-            ? `模型思考了 ${reasoning.length} 字但未产出正文 — 请点「重试」,通常第二次会正常输出`
-            : 'AI 未返回内容,请重试或检查模型配置';
-          setBubbleRun((prev) => (prev ? { ...prev, status: 'error', error: msg } : prev));
-          setPolishError(msg);
-          return;
-        }
-        setBubbleRun((prev) => (prev ? { ...prev, status: 'done' } : prev));
-      } catch (err) {
-        // 用户主动取消 → 静默收起,不算错误
-        if ((err as Error)?.name === 'AbortError') {
-          setBubbleRun(null);
-          return;
-        }
-        const msg = err instanceof ApiError ? err.messageText : String((err as Error)?.message || err);
-        setBubbleRun((prev) => (prev ? { ...prev, status: 'error', error: msg } : prev));
-        setPolishError(msg);
-      } finally {
-        polishAbortRef.current = null;
-        setPolishLoading(false);
-      }
+    const sel = editor.state.selection;
+    const from = sel.from; const to = sel.to;
+    const selection = editor.state.doc.textBetween(from, to, '\n').trim();
+    if (!selection) {
+      setBubbleRun({ action, status: 'error', stream: '', reasoning: '', error: '请先选中一段文字', startedAt: Date.now() });
       return;
     }
 
-    // ── 工具栏面板路径(润色全文/自定义指令) — 原有行为 ──
-    setPolishLoading(true);
-    setPolishStream('');
+    // C2 并发守卫:上一轮仍在跑 → 先 abort,状态归零再开新流
+    if (polishAbortRef.current) {
+      polishAbortRef.current.abort();
+      polishAbortRef.current = null;
+    }
+    const controller = new AbortController();
+    polishAbortRef.current = controller;
+    setBubbleRun({ action, status: 'running', stream: '', reasoning: '', error: null, startedAt: Date.now() });
+    polishRangeRef.current = { from, to, original: selection };
     try {
       let result = '';
-      for await (const chunk of api.polishDoc(docId, selection.slice(0, 20000), instruction || undefined)) {
-        if ((chunk as any).type === 'error') {
-          throw new Error(String((chunk as any).message || 'AI 服务返回错误'));
+      let reasoning = '';
+      for await (const chunk of api.polishDoc(docId, selection.slice(0, 20000), instruction || undefined, controller.signal)) {
+        if ((chunk as any).type === 'error') throw new Error(String((chunk as any).message || 'AI 服务返回错误'));
+        if ((chunk as any).type === 'reasoning') {
+          reasoning += String((chunk as any).text ?? '');
+          setBubbleRun((prev) => (prev ? { ...prev, reasoning } : prev));
+          continue;
         }
-        if (typeof chunk.text === 'string') result += chunk.text;
-        setPolishStream(result);
+        if (typeof chunk.text === 'string' && chunk.text) result += chunk.text;
+        setBubbleRun((prev) => (prev ? { ...prev, stream: result } : prev));
         if (chunk.done) break;
       }
       if (!result.trim()) {
-        setPolishError('AI 未返回内容,请重试或检查模型配置');
+        const msg = reasoning
+          ? `模型思考了 ${reasoning.length} 字但未产出正文 — 请点「重试」,通常第二次会正常输出`
+          : 'AI 未返回内容,请重试或检查模型配置';
+        setBubbleRun((prev) => (prev ? { ...prev, status: 'error', error: msg } : prev));
         return;
       }
-      // #642: replace the polished range through TipTap — onUpdate round-trips
-      // markdown → body state, so the doc and its versions stay in sync.
-      // C1: 面板路径同样净化(全文模式净化后整篇替换)
-      const clean = sanitizePolishOutput(result);
-      const scrollEl = (() => {
-        let el: HTMLElement | null = editor.view.dom as HTMLElement;
-        while (el && el !== document.body) {
-          if (el.scrollHeight > el.clientHeight + 1 && /(auto|scroll|overlay)/.test(getComputedStyle(el).overflowY)) return el;
-          el = el.parentElement;
-        }
-        return null;
-      })();
-      const savedTop = scrollEl?.scrollTop ?? 0;
-      if (mode === 'selection') {
-        editor.chain().focus().insertContentAt({ from, to }, markdownToHtml(clean)).run();
-        if (scrollEl) scrollEl.scrollTop = savedTop;
-      } else {
-        setBody(clean);
-      }
-      setPolishOpen(false);
-      setAiEditNotice(mode === 'selection' ? '✨ 已按 AI 结果替换选中文本' : '✨ 已按 AI 结果更新全文');
-      setTimeout(() => setAiEditNotice(''), 3000);
+      setBubbleRun((prev) => (prev ? { ...prev, status: 'done' } : prev));
     } catch (err) {
-      setPolishError(err instanceof ApiError ? err.messageText : String((err as Error)?.message || err));
+      // 用户主动取消 → 静默收起,不算错误
+      if ((err as Error)?.name === 'AbortError') {
+        setBubbleRun(null);
+        return;
+      }
+      const msg = err instanceof ApiError ? err.messageText : String((err as Error)?.message || err);
+      setBubbleRun((prev) => (prev ? { ...prev, status: 'error', error: msg } : prev));
     } finally {
-      setPolishLoading(false);
+      polishAbortRef.current = null;
     }
   };
 
@@ -706,18 +628,20 @@ export function WritingEditorPage() {
     const range = bubbleSel;
     const snap = polishRangeRef.current;
     if (!range || !snap || range.to <= range.from) {
-      setPolishError('选区已失效,请重新选择后再试');
+      setAiEditNotice('选区已失效,请重新选择后再试');
+      setTimeout(() => setAiEditNotice(''), 3000);
       return;
     }
     // C3 漂移校验:流式期间用户编辑过该区域 → 拒绝盲替换,防错位
     const current = editor.state.doc.textBetween(snap.from, snap.to, '\n').trim();
     if (current !== snap.original) {
-      setPolishError('选区内容已变化,为避免错位替换未应用 — 请重新选中后重试');
+      setAiEditNotice('选区内容已变化,为避免错位替换未应用 — 请重新选中后重试');
+      setTimeout(() => setAiEditNotice(''), 4000);
       return;
     }
     // C1 净化:元评论/javascript: 链接不得进入文档
     const clean = sanitizePolishOutput(run.stream);
-    if (!clean) { setPolishError('AI 结果为空,已丢弃'); return; }
+    if (!clean) { setAiEditNotice('AI 结果为空,已丢弃'); return; }
     // #752-cursor: focus()+插入会触发浏览器 scrollIntoView — 快照/恢复
     // 滚动位置,把用户留在当前修改处
     const scrollEl = (() => {
@@ -741,13 +665,8 @@ export function WritingEditorPage() {
     if (bubbleRunRef.current?.status === 'running') {
       polishAbortRef.current?.abort();
       polishAbortRef.current = null;
-      setBubbleRun(null);
-      setPolishLoading(false);
-      setPolishStream('');
-      return;
     }
     setBubbleRun(null);
-    setPolishStream('');
   };
 
   const handleBubbleRetry = () => {
@@ -764,22 +683,14 @@ export function WritingEditorPage() {
   const handleBubbleAction = (action: string, sel: { text: string; from: number; to: number }) => {
     console.info('[bubble] action=', action, 'selLen=', sel.text.length, 'from=', sel.from, 'to=', sel.to);
     setBubbleSel(sel);
-    setPolishScope('selection');
-    setPolishError(null);
     if (action === 'polish') {
       // ✨润色 = 气泡内输入自定义指令(可留空),⌘+Enter 或「开始」执行
-      setPolishInstruction('');
       setBubbleRun({ action, status: 'input', stream: '', reasoning: '', error: null, startedAt: Date.now() });
       return;
     }
     const preset = POLISH_PRESETS.find((p) => p.id === action);
     // #752-ux: 全程气泡内联 — 不再弹顶部面板
-    void runPolish('selection', preset?.instruction ?? '', true, action);
-  };
-
-  // #753 兼容旧入口(工具栏 Polish 按钮):读当前 scope。
-  const handlePolishSubmit = async () => {
-    await runPolish(polishScope, polishInstruction);
+    void runPolish(preset?.instruction ?? '', action);
   };
 
   const handleSendChat = async () => {
@@ -1162,26 +1073,6 @@ export function WritingEditorPage() {
               </Button>
             </>
           )}
-          {/* #752/#753: Polish 双模式 — 按钮文案随选区状态切换;无选区=
-              全文润色,有选区=局部润色。永远不静默失败。 */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              const editor = polishEditorRef.current;
-              const sel = editor?.state.selection;
-              const hasSel = !!sel && !sel.empty
-                && editor.state.doc.textBetween(sel.from, sel.to, '\n').trim().length > 10;
-              setPolishScope(hasSel ? 'selection' : 'full');
-              setPolishInstruction('');
-              setPolishOpen((v) => !v);
-            }}
-            disabled={polishLoading}
-            title={t('writing.polishHint', '选中文字可局部润色;未选中则润色全文')}
-          >
-            <Sparkles size={14} className="mr-1" />
-            {polishOpen ? t('writing.polish', '润色') : (t('writing.polishFull', '润色全文'))}
-          </Button>
           {methodsError && (
             <span className="text-xs text-error">{methodsError}</span>
           )}
@@ -1212,62 +1103,6 @@ export function WritingEditorPage() {
               </div>
             </div>
           )}
-          {polishOpen && (
-              <div
-                ref={polishRef}
-                className="absolute left-0 right-0 top-full z-30 mt-1 w-auto max-w-full rounded-xl border border-border bg-surface-elevated p-4 shadow-lg sm:left-auto sm:right-auto sm:w-80"
-              >
-                {/* #753: 作用范围自述 — 消除"作用于哪里"的歧义。 */}
-                <div className="mb-2 rounded-lg bg-surface px-2 py-1.5 text-xs text-text-secondary">
-                  {polishScope === 'full'
-                    ? t('writing.polishScopeFull', '📄 将对全文进行润色 · 或先选中一段文字做局部调整')
-                    : t('writing.polishScopeSel', `✨ 将润色选中的文字(${bubbleSel?.text.length ?? '选中部分'})`)}
-                </div>
-                {/* #753: 预设意图卡 — 点卡片即发,免学习成本。 */}
-                <div className="mb-2 flex flex-wrap gap-1">
-                  {POLISH_PRESETS.map((p) => (
-                    <button
-                      key={p.id}
-                      disabled={polishLoading}
-                      onClick={() => { setPolishInstruction(p.instruction); void runPolish(polishScope, p.instruction); }}
-                      className="flex items-center gap-1 rounded-full border border-border px-2 py-1 text-xs text-text-secondary hover:border-accent hover:text-accent disabled:opacity-50"
-                    >
-                      <span aria-hidden>{p.icon}</span>{p.label}
-                    </button>
-                  ))}
-                </div>
-                <textarea
-                  value={polishInstruction}
-                  onChange={(e) => setPolishInstruction(e.target.value)}
-                  placeholder="Optional instruction (e.g. make it more concise)"
-                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none h-16"
-                />
-                {polishLoading && !polishStream && (
-                  /* #752 反馈:LLM 首包前的等待期也必须有可见状态 */
-                  <div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-surface p-2 text-xs text-text-secondary">
-                    <Loader2 size={12} className="animate-spin" /> {t('writing.generating', 'AI 生成中,通常需要几秒…')}
-                  </div>
-                )}
-                {polishError && (
-                  /* #752-feedback: 执行失败必须在面板内立即可见 */
-                  <div className="mt-2 rounded-lg border border-error/40 bg-error/5 p-2 text-xs text-error" role="alert">
-                    ✗ {polishError}
-                  </div>
-                )}
-                {polishStream && (
-                  // #660/#661: streaming tail renders throttled + block-projected.
-                  <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-border bg-surface p-2">
-                    <StreamingLlmContent content={polishStream} isStreaming={polishLoading} />
-                  </div>
-                )}
-                <div className="mt-2 flex justify-end gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => setPolishOpen(false)}>Cancel</Button>
-                  <Button size="sm" onClick={handlePolishSubmit} isLoading={polishLoading} disabled={polishLoading}>
-                    Polish
-                  </Button>
-                </div>
-              </div>
-            )}
           <div className="relative">
             <Button
               variant="ghost"
@@ -1419,7 +1254,7 @@ export function WritingEditorPage() {
                       reviewTitle={restoreReview ? '审阅版本恢复' : undefined}
                       onBubbleAction={handleBubbleAction}
                       bubbleRun={bubbleRun}
-                      onBubbleStart={(instruction) => void runPolish('selection', instruction, true, 'polish')}
+                      onBubbleStart={(instruction) => void runPolish(instruction, 'polish')}
                       onBubbleApply={handleBubbleApply}
                       onBubbleDiscard={handleBubbleDiscard}
                       onBubbleRetry={handleBubbleRetry}

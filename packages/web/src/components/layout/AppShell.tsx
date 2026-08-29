@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Brain, CalendarClock, Cpu, Download, FileText, FlaskConical, FolderOpen, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, Puzzle, Settings, Shield, Users, X, BarChart3 } from 'lucide-react';
+import { ChevronDown, Brain, CalendarClock, Cpu, Download, FileText, FlaskConical, FolderOpen, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, Puzzle, Settings, Shield, Users, X, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/lib/api';
@@ -140,6 +140,9 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
   }, [isResizing]);
 
   const visibleItems = navItems.filter((item) => !item.admin || role === 'admin');
+
+  // #764-nav: 「工具与设置」组默认折叠 — 低频管理页不再占据侧栏视觉
+  const [toolsOpen, setToolsOpen] = useState(false);
   const search = location.search;
 
   return (
@@ -181,11 +184,27 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
           {NAV_SECTIONS.map((section) => {
             const items = visibleItems.filter((i) => i.section === section.key);
             if (items.length === 0) return null;
+            // #764-nav: 工具与设置组可折叠(当前路由在该组内时自动展开)
+            const isTools = section.key === 'tools';
+            const toolsActive = items.some((i) => search.includes(new URL(i.to, 'http://x').search));
+            const collapsed = isTools && !toolsOpen && !toolsActive;
             return (
               <div key={section.key} className="mb-3">
-                <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
-                  {t(section.labelKey)}
-                </p>
+                {isTools ? (
+                  <button
+                    onClick={() => setToolsOpen((v) => !v)}
+                    aria-expanded={toolsOpen || toolsActive}
+                    className="flex w-full items-center justify-between px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary hover:text-text-primary"
+                  >
+                    {t(section.labelKey)}
+                    <ChevronDown size={12} className={cn('transition-transform', (toolsOpen || toolsActive) && 'rotate-180')} />
+                  </button>
+                ) : (
+                  <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
+                    {t(section.labelKey)}
+                  </p>
+                )}
+                {!collapsed && (
                 <ul className="space-y-0.5">
                   {items.map((item) => (
                     <li key={item.to}>
@@ -214,6 +233,7 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
                     </li>
                   ))}
                 </ul>
+                )}
               </div>
             );
           })}
