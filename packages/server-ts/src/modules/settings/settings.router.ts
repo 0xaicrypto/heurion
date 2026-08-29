@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
-import { authGuard } from '../../common/auth.guard'
+import { authGuard, adminGuard } from '../../common/auth.guard'
+import { resolveActiveModel, getGlobalModelOverride, setGlobalModelOverride } from '../../common/llm-gateway.js'
 import prisma from '../../common/prisma'
 
 export async function settingsRouter(app: FastifyInstance) {
@@ -17,6 +18,23 @@ export async function settingsRouter(app: FastifyInstance) {
     })
   }
 
+  // #764-admin: 全局模型选择 — 运行时覆盖 + 持久化('__global__' 设置行,
+  // 启动时由 main.ts 回灌)。优先级:explicit tier model > 此覆盖 > env。
+  app.post('/api/v1/settings/llm/global-model', { preHandler: adminGuard }, async (request) => {
+    const body = request.body as any
+    const model = typeof body?.model === 'string' ? body.model.trim() : ''
+    if (!model) return { ok: false, error: 'model required' }
+    setGlobalModelOverride(model)
+    await setSetting('__global__', 'global_llm_model', model)
+    return { ok: true, activeModel: resolveActiveModel() }
+  })
+
+  app.delete('/api/v1/settings/llm/global-model', { preHandler: adminGuard }, async () => {
+    setGlobalModelOverride(null)
+    await setSetting('__global__', 'global_llm_model', '')
+    return { ok: true, activeModel: resolveActiveModel() }
+  })
+
   app.get('/api/v1/settings/llm', async (request) => {
     const userId = request.user!.userId
     const [gemini, openai, anthropic, kimi, deepseek] = await Promise.all([
@@ -25,8 +43,11 @@ export async function settingsRouter(app: FastifyInstance) {
       getSetting(userId, 'deepseek_api_key'),
     ])
     return {
-      provider: (await getSetting(userId, 'llm_provider')) || 'deepseek',
-      model: (await getSetting(userId, 'llm_model')) || 'deepseek-v4-flash',
+      // #764-admin: 显示网关真实生效的 provider/模型(此前显示未使用的
+      // per-user 设置默认值,与实际脱节)
+      provider: process.env.DEFAULT_LLM_PROVIDER || 'deepseek',
+      model: resolveActiveModel(),
+      globalModelOverride: getGlobalModelOverride(),
       hasGeminiKey: !!gemini, hasOpenaiKey: !!openai, hasAnthropicKey: !!anthropic,
       hasKimiKey: !!kimi, hasDeepseekKey: !!deepseek || !!process.env.DEEPSEEK_API_KEY,
       activeKeySource: deepseek ? 'db' : (process.env.DEEPSEEK_API_KEY ? 'env' : 'none'),

@@ -104,6 +104,18 @@ async function main() {
   // #746: fail fast on missing tables instead of degrading silently later.
   if (process.env.NODE_ENV !== 'test') await assertSchema()
 
+  // #764-admin: 回灌 admin 全局模型覆盖(持久化于 userSetting)
+  try {
+    const row = await (prisma as any).userSetting.findUnique({
+      where: { userId_key: { userId: '__global__', key: 'global_llm_model' } },
+    })
+    if (row?.value?.trim()) {
+      const { setGlobalModelOverride } = await import('./common/llm-gateway.js')
+      setGlobalModelOverride(row.value.trim())
+      console.log(`[LLM] global model override from settings: ${row.value.trim()}`)
+    }
+  } catch { /* fresh DB / table missing — ignore */ }
+
   const evolutionQueue = await createDefaultEvolutionQueue()
   // SQLite WAL (idempotent) — concurrent reads never block writes.
   await enableSqliteWal().catch(() => {})

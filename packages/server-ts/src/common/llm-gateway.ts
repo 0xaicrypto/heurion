@@ -186,9 +186,20 @@ export function resolveTierModel(tier: LlmTier): string {
   return resolveActiveModel()
 }
 
-/** 当前生效的主对话模型(与 gateway resolveModel 同一口径:显式 model →
- *  provider modelEnv → 默认 deepseek-v4-flash)。 */
+// #752-admin: 运行时全局模型覆盖 — admin 在配置页选择后立即生效,
+// 持久化在 userSetting('__global__','global_llm_model'),启动时回灌。
+let globalModelOverride: string | null = null
+export function setGlobalModelOverride(m: string | null): void {
+  globalModelOverride = m?.trim() || null
+}
+export function getGlobalModelOverride(): string | null {
+  return globalModelOverride
+}
+
+/** 当前生效的主对话模型 — 优先级:admin 运行时覆盖 → provider modelEnv →
+ *  默认 deepseek-v4-flash。(显式传 model 的调用点走 tier,不受此影响。) */
 export function resolveActiveModel(): string {
+  if (globalModelOverride) return globalModelOverride
   const ep = resolveLlmEndpoint()
   return process.env[ep.modelEnv] || DEEPSEEK_PREMIUM_MODEL
 }
@@ -473,9 +484,11 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
     return key
   }
 
-  /** Model resolution: explicit option > provider modelEnv > legacy default. */
+  /** Model resolution: explicit option > admin override > provider modelEnv
+   *  > legacy default. */
   private resolveModel(options: LlmChatOptions, legacyDefault: string): string {
     if (options.model) return options.model
+    if (globalModelOverride) return globalModelOverride
     const fromEnv = process.env[this.endpoint().modelEnv]
     if (fromEnv) return fromEnv
     return legacyDefault

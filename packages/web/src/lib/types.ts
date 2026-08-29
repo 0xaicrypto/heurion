@@ -31,6 +31,8 @@ export interface LlmStatus {
   activeKeySource?: 'db' | 'env' | 'none' | null;
   activeKeyPreview?: string;
   activeKeyLength?: number;
+  /** #764-admin: 真实生效模型 = admin 覆盖 > env(DEFAULT_LLM_MODEL) > 默认 */
+  globalModelOverride?: string | null;
 }
 
 export interface LlmTestResult {

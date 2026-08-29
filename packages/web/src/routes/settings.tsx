@@ -284,6 +284,25 @@ function LlmSection() {
   const [error, setError] = useState<string | null>(null);
 
   const [provider, setProvider] = useState<ProviderKind>('deepseek');
+
+  // #764-admin: 全局模型选择(仅 admin 可见可改,运行时覆盖 + 持久化)
+  const GLOBAL_MODEL_PRESETS = [
+    'glm-5.3-flash', 'glm-5.3', 'glm-5.2', 'glm-5.1',
+    'deepseek-v4-flash', 'deepseek-v4-pro',
+    'kimi-k3', 'qwen3.8-flash', 'minimax-m3', 'longcat-2.0',
+  ];
+  const [globalModel, setGlobalModel] = useState('');
+  const [savingGlobal, setSavingGlobal] = useState(false);
+  const [globalSaved, setGlobalSaved] = useState(false);
+  const saveGlobalModel = async () => {
+    if (!globalModel.trim()) return;
+    setSavingGlobal(true);
+    try {
+      const res = await api.saveGlobalLlmModel(globalModel.trim());
+      if (res.ok) { setGlobalSaved(true); setTimeout(() => setGlobalSaved(false), 2500); if (status) setStatus({ ...status, model: res.activeModel, globalModelOverride: globalModel.trim() }); }
+    } catch { /* error 由既有 error 态展示 */ }
+    finally { setSavingGlobal(false); }
+  };
   const [keyInput, setKeyInput] = useState('');
   const [savingLlm, setSavingLlm] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -361,6 +380,43 @@ function LlmSection() {
 
       {error && (
         <Alert variant="error">{error}</Alert>
+      )}
+
+      {/* #764-admin: 全局模型选择 — 网关真实生效模型,运行时覆盖 */}
+      {isAdmin && status && (
+        <Card className="space-y-2 border-accent/30 p-4">
+          <div className="text-sm font-medium text-text-primary">{t('settings.globalModel', '全局模型(admin)')}</div>
+          <p className="text-xs text-text-tertiary">{t('settings.globalModelHint', '覆盖 env 配置,立即对全站 LLM 调用生效;清空并保存可恢复 env 值')}</p>
+          <div className="flex flex-wrap gap-1">
+            {GLOBAL_MODEL_PRESETS.map((m) => (
+              <button
+                key={m}
+                onClick={() => setGlobalModel(m)}
+                className={cn('rounded-full border px-2.5 py-1 text-xs transition-colors',
+                  globalModel === m ? 'border-accent bg-accent/10 text-accent' : 'border-border text-text-secondary hover:border-accent/50')}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              value={globalModel}
+              onChange={(e) => setGlobalModel(e.target.value)}
+              placeholder={t('settings.customModel', '自定义模型 ID')}
+              className="max-w-xs font-mono text-xs"
+            />
+            <Button size="sm" onClick={saveGlobalModel} isLoading={savingGlobal} disabled={!globalModel.trim() || savingGlobal}>
+              {globalSaved ? <><Check size={13} className="mr-1" />已生效</> : t('settings.apply', '应用')}
+            </Button>
+            {status.globalModelOverride && (
+              <Button size="sm" variant="ghost" onClick={async () => { try { const r = await api.clearGlobalLlmModel(); if (r.ok && status) setStatus({ ...status, model: r.activeModel, globalModelOverride: null }); setGlobalModel(r.activeModel); } catch { /* ignore */ } }}>
+                {t('settings.revertEnv', '恢复 env 值')}
+              </Button>
+            )}
+          </div>
+          <div className="font-mono text-[11px] text-text-tertiary">当前生效: {status.provider}/{status.model}</div>
+        </Card>
       )}
 
       {status && (

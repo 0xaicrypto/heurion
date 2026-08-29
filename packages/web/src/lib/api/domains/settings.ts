@@ -8,6 +8,14 @@ export class SettingsApi extends ApiCore {
     return this.fetch<LlmStatus>('/api/v1/settings/llm');
   }
 
+  /** #764-admin: 全局模型选择 — 运行时覆盖 + 持久化(重启后自动回灌)。 */
+  async saveGlobalLlmModel(model: string): Promise<{ok: boolean; activeModel: string}> {
+    return this.fetch('/api/v1/settings/llm/global-model', { method: 'POST', body: JSON.stringify({ model }) });
+  }
+
+  async clearGlobalLlmModel(): Promise<{ok: boolean; activeModel: string}> {
+    return this.fetch('/api/v1/settings/llm/global-model', { method: 'DELETE' });
+  }
   async testLlm(): Promise<LlmTestResult> {
     return this.fetch<LlmTestResult>('/api/v1/settings/llm/test', { method: 'POST' });
   }
