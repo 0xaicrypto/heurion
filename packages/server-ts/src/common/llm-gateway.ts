@@ -144,6 +144,8 @@ export function modelSupportsVision(model: string): boolean {
   // deepseek-v4 前缀覆盖 flash/pro/vision-exp 等全部 v4 变体;
   // 名称含 vision 的模型也按支持视觉处理。
   if (/^deepseek-v4/.test(m) || /vision/.test(m)) return true
+  // #752: GLM-5.x 全系多模态(用户确认 glm-5.3-flash 支持图片输入)。
+  if (/^glm-/.test(m)) return true
   return false
 }
 
