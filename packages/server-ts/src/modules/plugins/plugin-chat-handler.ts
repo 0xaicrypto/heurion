@@ -1,5 +1,5 @@
 import { createExecutionPlaneService, type ExecutionJobStatus } from '../execution/execution-plane.service.js'
-import { buildPayload, hasActivePlugins, matchIntent, type PayloadBuildInput } from './plugin-capability.service.js'
+import { buildPayload, hasActivePlugins, matchIntent, resolveRenderJobType, type PayloadBuildInput } from './plugin-capability.service.js'
 import { buildInputSummary, recordPluginInvocation } from './plugin-audit-log.service.js'
 import type { TurnIntent } from '../chat/turn-intent.js'
 
@@ -106,7 +106,9 @@ export async function handlePluginChatRequest(options: PluginChatHandlerOptions)
     telemetryContext,
   })
 
-  const jobType = `sidecar.${match.pluginId}.${match.toolName}`
+  // #766: worker 只注册契约 render job type（sidecar.render_plot…）—
+  // 此前的 `sidecar.<pluginId>.<toolName>` 命名会命中 Unknown job type。
+  const jobType = resolveRenderJobType(match.pluginId, match.toolName)
   send({ type: 'job_enqueued', plugin_id: match.pluginId, tool: match.toolName, job_type: jobType })
 
   const job = await executionService.enqueue({

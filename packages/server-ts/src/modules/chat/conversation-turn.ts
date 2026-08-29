@@ -25,6 +25,7 @@ import { EmbeddingService } from '../../memory/embedding/embedding.service.js' /
 import { ContextAssembler } from './context-assembler.js'
 import { ToolRegistry, type ToolContext } from '../../tools/tool-registry.js'
 import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
+import { createExecutionPlaneService } from '../execution/execution-plane.service.js'
 import { runToolCallLoop, type TurnIO } from './tool-loop.js'
 import {
   loadHistoryBudget,
@@ -568,6 +569,8 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       return installed.some((i) => i.pluginId === pluginId && i.enabled)
     },
     getPluginConfig: (pluginId) => getPluginConfig(userId, pluginId),
+    // #766: insert_asset plot 渲染 — execution plane 端口（modules 层提供）。
+    executionPlane: createExecutionPlaneService(),
   }
   const toolRegistry = new ToolRegistry(toolCtx)
   // #454-followup: plugin-gated renderers (render_chart / render_scene)

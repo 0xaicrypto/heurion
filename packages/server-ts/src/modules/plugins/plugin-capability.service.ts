@@ -154,6 +154,17 @@ const RENDER_TOOL_TYPES: Record<string, string> = {
 }
 
 /**
+ * #766: job type for the execution plane. The worker registers the contract
+ * render job types (sidecar.render_plot …) — the namespaced
+ * `sidecar.<pluginId>.<toolName>` form hits "Unknown job type". Official
+ * renderers map via RENDER_TOOL_TYPES; third-party plugins keep the legacy
+ * namespaced form (unknown to the worker either way).
+ */
+export function resolveRenderJobType(pluginId: string, toolName: string): string {
+  return RENDER_TOOL_TYPES[`${pluginId}.${toolName}`] || `sidecar.${pluginId}.${toolName}`
+}
+
+/**
  * #451-fix: worker-side template IDs. The docx plugin only ships
  * case_summary / discharge_summary templates — 'default' is rejected with
  * "Template 'default' not found". The other renderers accept 'default'.

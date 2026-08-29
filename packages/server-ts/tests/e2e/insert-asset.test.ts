@@ -9,6 +9,8 @@ import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getApp, authHeader, getAuthUserId } from '../setup.js'
 import prisma from '../../src/common/prisma.js'
 import { InsertAssetTool, buildMarkdownTable } from '../../src/tools/insert-asset-tool.js'
+import fs from 'fs'
+import path from 'path'
 
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
 
@@ -136,5 +138,116 @@ describe('#765 insert_asset 工具', () => {
     expect((await tool.execute({ asset_type: 'table', headers: [], rows: [['a']] })).success).toBe(false)
     expect((await tool.execute({ asset_type: 'table', headers: ['a'], rows: [] })).success).toBe(false)
     expect((await tool.execute({ asset_type: 'plot' })).success).toBe(false)
+  }, 30000)
+})
+
+describe('#766 insert_asset plot 分支（fake execution plane）', () => {
+  const PLOT_ARGS = {
+    asset_type: 'plot',
+    plot_type: 'line',
+    title: 'PFS by PD-L1',
+    x_label: 'Months',
+    y_label: 'PFS rate',
+    series: [{ label: 'PD-L1 ≥50%', y: [1, 0.8, 0.6, 0.5] }],
+    caption: 'Figure 1. PFS by PD-L1 expression',
+    anchor: '主要终点 PFS 见下文。',
+  }
+
+  function fakePlane(over: Record<string, any> = {}) {
+    return {
+      enqueue: vi.fn(async () => ({ job_id: 'j1', status: 'pending' })),
+      getStatus: vi.fn(async () => ({ job_id: 'j1', status: 'completed', result: { file_id: 'f1', file_name: 'plot.png' } })),
+      fetchFile: vi.fn(async () => Buffer.from([0x89, 0x50, 0x4e, 0x47])),
+      ...over,
+    }
+  }
+
+  test('happy path：渲 PNG 落盘 + chart-token URL 插入锚点后', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const body = '## 结果\n\n主要终点 PFS 见下文。'
+    const docId = await createDoc(app, body)
+    const plane = fakePlane()
+
+    const tool = new InsertAssetTool({ userId, sessionId: `doc-${docId}`, executionPlane: plane, isPluginInstalled: async () => true })
+    const result = await tool.execute(PLOT_ARGS)
+
+    expect(result.success).toBe(true)
+    expect(plane.enqueue).toHaveBeenCalledWith(expect.objectContaining({ type: 'sidecar.render_plot' }))
+    const payload = (plane.enqueue as any).mock.calls[0][0].payload
+    expect(payload.content_type).toBe('sidecar.render_plot')
+    // x 缺省合成 1..n
+    expect(payload.data.series[0].x).toEqual([1, 2, 3, 4])
+    expect(plane.fetchFile).toHaveBeenCalledWith('f1')
+
+    const { body: newBody, file } = JSON.parse(result.output as string)
+    expect(file.url).toMatch(/^\/api\/v1\/files\/download\/plot_[\w-]+_\d+\.png\?token=/)
+    const anchorIdx = newBody.indexOf('主要终点 PFS 见下文。')
+    const imgIdx = newBody.indexOf(`![Figure 1. PFS by PD-L1 expression](${file.url})`)
+    expect(anchorIdx).toBeGreaterThan(-1)
+    expect(imgIdx).toBeGreaterThan(anchorIdx)
+
+    // 落盘文件真实存在
+    const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+    expect(fs.existsSync(path.join(dir, file.fileId))).toBe(true)
+  }, 30000)
+
+  test('plot 插件未安装 → 可读报错，不 enqueue', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '正文')
+    const plane = fakePlane()
+    const tool = new InsertAssetTool({ userId, sessionId: `doc-${docId}`, executionPlane: plane, isPluginInstalled: async () => false })
+    const result = await tool.execute(PLOT_ARGS)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('heurion/plot')
+    expect(plane.enqueue).not.toHaveBeenCalled()
+  }, 30000)
+
+  test('execution plane 缺失 → 可读报错', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '正文')
+    const tool = new InsertAssetTool({ userId, sessionId: `doc-${docId}`, isPluginInstalled: async () => true })
+    const result = await tool.execute(PLOT_ARGS)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('执行平面')
+  }, 30000)
+
+  test('job 失败 → 报错含原因', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '正文')
+    const plane = fakePlane({ getStatus: async () => ({ job_id: 'j1', status: 'failed', error: 'Unknown job type' }) })
+    const tool = new InsertAssetTool({ userId, sessionId: `doc-${docId}`, executionPlane: plane, isPluginInstalled: async () => true })
+    const result = await tool.execute(PLOT_ARGS)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('渲染失败')
+    expect(result.error).toContain('Unknown job type')
+  }, 30000)
+
+  test('fetchFile 为空 → 可读报错', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '正文')
+    const plane = fakePlane({ fetchFile: async () => null })
+    const tool = new InsertAssetTool({ userId, sessionId: `doc-${docId}`, executionPlane: plane, isPluginInstalled: async () => true })
+    const result = await tool.execute(PLOT_ARGS)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('fetchFile')
+  }, 30000)
+
+  test('x/y 长度不一致 / 缺 title / 空 series → 报错', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '正文')
+    const tool = new InsertAssetTool({ userId, sessionId: `doc-${docId}`, executionPlane: fakePlane(), isPluginInstalled: async () => true })
+    const bad1 = await tool.execute({ ...PLOT_ARGS, series: [{ label: 'a', x: [1, 2], y: [1, 2, 3] }] })
+    expect(bad1.success).toBe(false)
+    expect(bad1.error).toContain('长度不一致')
+    const bad2 = await tool.execute({ ...PLOT_ARGS, title: '' })
+    expect(bad2.success).toBe(false)
+    const bad3 = await tool.execute({ ...PLOT_ARGS, series: [] })
+    expect(bad3.success).toBe(false)
   }, 30000)
 })

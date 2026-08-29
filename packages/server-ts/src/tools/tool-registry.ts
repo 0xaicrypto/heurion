@@ -21,6 +21,16 @@ import type { MemoryService } from '../memory/memory.service.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores.js'
 import type { EventLog } from '../core/event-log.js'
 
+/**
+ * #766: execution-plane port (structural — tools stay decoupled from
+ * modules/). conversation-turn provides createExecutionPlaneService().
+ */
+export interface ToolExecutionPlane {
+  enqueue(job: { type: string; payload: Record<string, unknown>; tenant?: { userId?: string; workspaceId?: string } }): Promise<{ job_id: string; status: string }>
+  getStatus(jobId: string): Promise<{ job_id: string; status: string; error?: unknown; result?: Record<string, unknown> } | null>
+  fetchFile?(fileId: string): Promise<Buffer | null>
+}
+
 export interface ToolContext {
   userId: string
   memory: MemoryService
@@ -37,6 +47,12 @@ export interface ToolContext {
    * Absent port ⇒ gated tools are treated as unavailable.
    */
   isPluginInstalled?: (pluginId: string) => Promise<boolean>
+  /**
+   * #766: execution-plane port for insert_asset plot rendering
+   * (enqueue → poll → fetchFile → chart-token 落盘). Absent ⇒ plot branch
+   * degrades to a readable error.
+   */
+  executionPlane?: ToolExecutionPlane
   /**
    * #666: plugin config port (browser-agent worker url/token/approval) —
    * same layering rationale; absent port ⇒ defaults are used.
@@ -90,8 +106,7 @@ export class ToolRegistry {
     this.register(new EditDocumentTool(ctx))
     // #765: 写作画布结构化资产工具（表格）— 与 edit_document 同管道
     // （快照 + doc_updated），仅 doc- 会话暴露。
-    this.register(new InsertAssetTool(ctx))
-    // #454-followup: plugin-gated renderers — registered so execute() can
+    this.register(new InsertAssetTool(ctx))    // #454-followup: plugin-gated renderers — registered so execute() can
     // give a clear error, but excluded from definitions unless installed.
     this.register(new RenderChartTool(ctx))
     this.register(new LoadSkillTool(ctx))

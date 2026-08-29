@@ -24,6 +24,12 @@ export interface ExecutionPlaneService {
   enqueue(job: ExecutionJob): Promise<ExecutionJobStatus>
   getStatus(jobId: string): Promise<ExecutionJobStatus | null>
   getDownloadUrl(fileId: string): Promise<FileDownloadUrl | null>
+  /**
+   * #766: raw file bytes — server-side 落盘 for draft embedding (chart-token
+   * URLs need a stable local file; the worker download URL itself is
+   * token-gated and expiring, unusable inside a document).
+   */
+  fetchFile(fileId: string): Promise<Buffer | null>
 }
 
 function isDev(): boolean {
@@ -102,6 +108,20 @@ class HttpExecutionPlaneService implements ExecutionPlaneService {
     }
     return res.json() as Promise<FileDownloadUrl>
   }
+
+  async fetchFile(fileId: string): Promise<Buffer | null> {
+    const download = await this.getDownloadUrl(fileId)
+    if (!download?.download_url) return null
+    const token = workerToken()
+    const res = await fetch(download.download_url, {
+      headers: token ? { 'x-worker-token': token } : {},
+    })
+    if (res.status === 404) return null
+    if (!res.ok) {
+      throw new Error(`Execution Plane file fetch failed: ${res.status}`)
+    }
+    return Buffer.from(await res.arrayBuffer())
+  }
 }
 
 class StubExecutionPlaneService implements ExecutionPlaneService {
@@ -126,6 +146,10 @@ class StubExecutionPlaneService implements ExecutionPlaneService {
   }
 
   async getDownloadUrl(_fileId: string): Promise<FileDownloadUrl | null> {
+    return null
+  }
+
+  async fetchFile(_fileId: string): Promise<Buffer | null> {
     return null
   }
 }
