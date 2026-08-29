@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard, adminGuard } from '../../common/auth.guard'
-import { resolveActiveModel, getGlobalModelOverride, setGlobalModelOverride } from '../../common/llm-gateway.js'
+import { resolveActiveModel, resolveLlmEndpoint, getGlobalModelOverride, setGlobalModelOverride } from '../../common/llm-gateway.js'
 import prisma from '../../common/prisma'
 
 export async function settingsRouter(app: FastifyInstance) {
@@ -47,6 +47,7 @@ export async function settingsRouter(app: FastifyInstance) {
       // per-user 设置默认值,与实际脱节)
       provider: process.env.DEFAULT_LLM_PROVIDER || 'deepseek',
       model: resolveActiveModel(),
+      baseUrl: resolveLlmEndpoint().baseUrl,
       globalModelOverride: getGlobalModelOverride(),
       hasGeminiKey: !!gemini, hasOpenaiKey: !!openai, hasAnthropicKey: !!anthropic,
       hasKimiKey: !!kimi, hasDeepseekKey: !!deepseek || !!process.env.DEEPSEEK_API_KEY,

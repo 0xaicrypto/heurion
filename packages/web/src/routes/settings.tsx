@@ -1,24 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
-import { Check, X, Zap, Key, Server, RefreshCw, Activity, BarChart3, Mail, ScrollText, ShieldCheck, Plus, FileText } from 'lucide-react';
+import { Check, X, Key, Server, RefreshCw, Activity, BarChart3, Mail, ScrollText, ShieldCheck, Plus, FileText } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api';
 import { EmailBindCard } from '@/components/EmailBindCard';
 import { AuditSection } from '@/routes/audit';
 import { LogsSection } from '@/routes/logs';
-import type { LlmStatus, LlmTestResult, ProviderKind, UserProfile, LlmUpdateInput, QueueMetrics, LlmCostDashboard } from '@/lib/types';
+import type { LlmStatus, UserProfile, QueueMetrics, LlmCostDashboard } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth';
 import { Button, Input, Card, Badge, Alert, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
-
-const PROVIDERS: { value: ProviderKind; label: string }[] = [
-  { value: 'deepseek', label: 'DeepSeek' },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'gemini', label: 'Gemini' },
-  { value: 'anthropic', label: 'Anthropic' },
-  { value: 'kimi', label: 'Kimi' },
-];
 
 type Tab = 'profile' | 'llm' | 'embedding' | 'observability' | 'audit' | 'logs' | 'integrations' | 'credits';
 
@@ -283,7 +275,6 @@ function LlmSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [provider, setProvider] = useState<ProviderKind>('deepseek');
 
   // #764-admin: 全局模型选择(仅 admin 可见可改,运行时覆盖 + 持久化)
   const GLOBAL_MODEL_PRESETS = [
@@ -303,19 +294,12 @@ function LlmSection() {
     } catch { /* error 由既有 error 态展示 */ }
     finally { setSavingGlobal(false); }
   };
-  const [keyInput, setKeyInput] = useState('');
-  const [savingLlm, setSavingLlm] = useState(false);
-  const [savedMsg, setSavedMsg] = useState<string | null>(null);
-
-  const [testResult, setTestResult] = useState<LlmTestResult | null>(null);
-  const [testing, setTesting] = useState(false);
 
   const loadStatus = useCallback(() => {
     api
       .getLlmStatus()
       .then((s) => {
         setStatus(s);
-        setProvider(s.provider);
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.messageText : t('settings.loadFailed')))
@@ -326,51 +310,6 @@ function LlmSection() {
     loadStatus();
   }, [loadStatus]);
 
-  const providerKey = (): keyof LlmUpdateInput => {
-    const map: Record<string, keyof LlmUpdateInput> = {
-      gemini: 'gemini_api_key',
-      openai: 'openai_api_key',
-      anthropic: 'anthropic_api_key',
-      kimi: 'kimi_api_key',
-      deepseek: 'deepseek_api_key',
-    };
-    return map[provider];
-  };
-
-  const handleSaveLlm = async () => {
-    setSavingLlm(true);
-    setSavedMsg(null);
-    setError(null);
-    try {
-      const input: LlmUpdateInput = { provider };
-      if (keyInput.trim()) {
-        (input as Record<string, string>)[providerKey()] = keyInput.trim();
-      }
-      const result = await api.updateLlmSettings(input);
-      setStatus(result.status);
-      setKeyInput('');
-      setSavedMsg(t('settings.settingsSaved'));
-      setTestResult(null);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : t('settings.saveFailed'));
-    } finally {
-      setSavingLlm(false);
-    }
-  };
-
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    setError(null);
-    try {
-      const r = await api.testLlm();
-      setTestResult(r);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : t('settings.testFailed'));
-    } finally {
-      setTesting(false);
-    }
-  };
 
   if (loading) return <LlmSkeleton />;
 
@@ -447,76 +386,27 @@ function LlmSection() {
         </Card>
       )}
 
-      {isAdmin ? (
-        <Card className="space-y-4 p-4">
-          <h3 className="font-medium text-text-primary">{t('settings.changeProvider')}</h3>
-          <div>
-            <label className="block text-sm font-medium text-text-secondary mb-1">{t('settings.provider')}</label>
-            <div className="flex flex-wrap gap-2">
-              {PROVIDERS.map((p) => (
-                <button
-                  key={p.value}
-                  onClick={() => setProvider(p.value)}
-                  className={cn(
-                    'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
-                    provider === p.value
-                      ? 'border-accent bg-accent/10 text-accent'
-                      : 'border-border text-text-secondary hover:border-border-strong',
-                  )}
-                >
-                  {p.label}
-                  {status && hasKey(status, p.value) && (
-                    <Key size={12} className="ml-1 inline text-success" />
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-text-secondary mb-1">
-              {t('settings.apiKeyLabel')}
-            </label>
-            <Input
-              type="password"
-              value={keyInput}
-              onChange={(e) => setKeyInput(e.target.value)}
-              placeholder="sk-..."
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={handleSaveLlm} isLoading={savingLlm} size="sm">
-              <Server size={14} className="mr-1.5" />
-              {t('common.save')}
-            </Button>
-            <Button variant="secondary" onClick={handleTest} isLoading={testing} size="sm">
-              <Zap size={14} className="mr-1.5" />
-              {t('settings.test')}
-            </Button>
-            {savedMsg && (
-              <span className="flex items-center gap-1 text-sm text-success">
-                <Check size={14} /> {savedMsg}
-              </span>
+      {isAdmin && status ? (
+        <Card className="space-y-3 p-4">
+          <h3 className="font-medium text-text-primary">{t('settings.llmRelay', 'LLM 接入(中转站)')}</h3>
+          <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+            <span className="text-text-tertiary">{t('settings.provider')}</span>
+            <span className="font-mono text-text-primary">{status.provider}</span>
+            {status.baseUrl && (
+              <>
+                <span className="text-text-tertiary">{t('settings.endpoint', '端点')}</span>
+                <span className="truncate font-mono text-xs text-text-secondary">{status.baseUrl}</span>
+              </>
             )}
+            <span className="text-text-tertiary">{t('settings.activeModel', '生效模型')}</span>
+            <span className="font-mono text-text-primary">{status.model}</span>
           </div>
+          <p className="text-xs text-text-tertiary">
+            {status.globalModelOverride
+              ? t('settings.overrideActive', '当前为 admin 运行时覆盖(见上方全局模型卡);清空该卡可恢复 env 值')
+              : t('settings.relayHint', '由服务端 env(DEFAULT_LLM_PROVIDER / DEFAULT_LLM_MODEL / API Key)配置;admin 可在上方全局模型卡运行时切换模型')}
+          </p>
           <ImageGenConfig />
-          {testResult && (
-            <div
-              className={cn(
-                'rounded-lg px-4 py-3 text-sm',
-                testResult.ok ? 'bg-success/10 text-success' : 'bg-error/10 text-error',
-              )}
-            >
-              <div className="font-medium">
-                {testResult.ok ? t('common.connectionOk') : t('common.connectionFailed')}
-                {testResult.latencyMs ? ` (${testResult.latencyMs}ms)` : ''}
-              </div>
-              <div className="text-xs opacity-80">
-                {testResult.provider}/{testResult.model}
-                {testResult.error ? ` — ${testResult.error}` : ''}
-                {testResult.diagnosis ? ` [${testResult.diagnosis}]` : ''}
-              </div>
-            </div>
-          )}
         </Card>
       ) : (
         <Card className="p-4">
@@ -702,16 +592,6 @@ function ObservabilitySkeleton() {
   );
 }
 
-function hasKey(status: LlmStatus, provider: ProviderKind): boolean {
-  const map: Record<ProviderKind, boolean> = {
-    gemini: status.hasGeminiKey,
-    openai: status.hasOpenaiKey,
-    anthropic: status.hasAnthropicKey,
-    kimi: status.hasKimiKey,
-    deepseek: status.hasDeepseekKey,
-  };
-  return map[provider] ?? false;
-}
 
 function LlmSkeleton() {
   return (

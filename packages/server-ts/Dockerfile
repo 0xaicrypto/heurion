@@ -25,8 +25,11 @@ RUN npx prisma generate
 FROM node:22-bookworm-slim
 WORKDIR /app
 
+# fonts-droid-fallback: 单面 .ttf 中文字体(DroidSansFallbackFull.ttf) —
+# pdfkit/fontkit 不支持 .ttc 集合,noto-cjk 包不可用;无字体时 PDF 中文
+# 全部渲染为空白方块(生产乱码根因)。
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates \
+    curl ca-certificates fonts-droid-fallback \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/packages/server-ts/dist ./dist

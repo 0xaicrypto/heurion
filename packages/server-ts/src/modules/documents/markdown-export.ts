@@ -352,6 +352,7 @@ export async function renderDocxBuffer(title: string, body: string, userId?: str
 // Helvetica fallback renders latin fine but CJK as blank boxes.
 const CJK_FONT_CANDIDATES = [
   '/System/Library/Fonts/Supplemental/Arial Unicode.ttf',
+  '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf', // Docker 运行时(fonts-droid-fallback,单面 ttf)
   '/System/Library/Fonts/STHeiti Light.ttc',
   '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttf',
   '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttf',
@@ -410,7 +411,9 @@ export async function renderPdfBuffer(title: string, body: string, userId?: stri
 
   const baseFont = cjkFont ? 'cjk' : 'Helvetica'
   const fontFor = (seg: InlineSegment) => {
-    if (seg.code) return 'Courier'
+    // #752-qa: 有 CJK 字体时代码段也走 CJK 字体 — Courier 仅拉丁,内联
+    // 代码里的中文会变空白方块;无 CJK 字体时保持原行为。
+    if (seg.code) return cjkFont ? baseFont : 'Courier'
     if (cjkFont) return baseFont // custom CJK font has no bold/oblique variants
     if (seg.bold && seg.italics) return 'Helvetica-BoldOblique'
     if (seg.bold) return 'Helvetica-Bold'
@@ -463,7 +466,8 @@ export async function renderPdfBuffer(title: string, body: string, userId?: stri
         break
       }
       case 'code': {
-        doc.font(baseFont).fontSize(10)
+        // #752-qa: 同上 — 代码块含中文时避免空白方块
+        doc.font(cjkFont ? baseFont : 'Courier').fontSize(10)
         doc.rect(50, doc.y, doc.page.width - 100, 0.01).fillOpacity(0).stroke()
         for (const line of block.lines) {
           doc.text(line, 56, undefined, { width: doc.page.width - 112 })

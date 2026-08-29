@@ -28,6 +28,7 @@ export interface LlmStatus {
   hasKimiKey: boolean;
   hasDeepseekKey: boolean;
   advisory: string | null;
+  baseUrl?: string;
   activeKeySource?: 'db' | 'env' | 'none' | null;
   activeKeyPreview?: string;
   activeKeyLength?: number;
