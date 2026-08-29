@@ -218,6 +218,8 @@ export interface LlmChatOptions {
   temperature?: number
   /** Override the request timeout (TTFB). Default: LLM_TIMEOUT_MS env or 180s. */
   timeoutMs?: number
+  /** #752: GLM 混合思考开关 — 仅 glm-* 模型生效,body.thinking 透传。 */
+  thinking?: 'enabled' | 'disabled'
   telemetryContext?: LlmTelemetryContext
   /** External abort signal (client disconnect) — combined with the
    *  internal timeout via AbortSignal.any. */
@@ -247,10 +249,14 @@ export const LLM_PROVIDERS: Record<string, LlmEndpoint> = {
   // OpenCode Go gateway — deepseek-v4-flash / deepseek-v4-pro via the
   // OpenAI-compatible endpoint (key from opencode.ai/auth).
   opencode: { baseUrl: 'https://opencode.ai/zen/go/v1', apiKeyEnv: 'OPENCODE_API_KEY', modelEnv: 'DEFAULT_LLM_MODEL', defaultModel: 'deepseek-v4-flash' },
+  // #752: Zhipu GLM — OpenAI-compatible; GLM-5.x 为混合思考模型,流式
+  // delta 带 reasoning_content(需 body.thinking={type:'enabled'},见
+  // chatWithMeta/stream 的 glm 分支)。
+  zhipu: { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiKeyEnv: 'ZHIPU_API_KEY', modelEnv: 'DEFAULT_LLM_MODEL', defaultModel: 'glm-5.3-flash' },
   gemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKeyEnv: 'GEMINI_API_KEY', modelEnv: 'DEFAULT_LLM_MODEL', defaultModel: 'gemini-2.5-flash' },
   openai: { baseUrl: 'https://api.openai.com/v1', apiKeyEnv: 'OPENAI_API_KEY', modelEnv: 'DEFAULT_LLM_MODEL', defaultModel: 'gpt-4o-mini' },
   kimi: { baseUrl: 'https://api.moonshot.cn/v1', apiKeyEnv: 'KIMI_API_KEY', modelEnv: 'DEFAULT_LLM_MODEL', defaultModel: 'moonshot-v1-8k' },
-  anthropic: { baseUrl: 'https://api.anthropic.com/v1', apiKeyEnv: 'ANTHROPIC_API_KEY', modelEnv: 'DEFAULT_LLM_MODEL', defaultModel: 'claude-3-5-sonnet-latest' },
+  anthropic: { baseUrl: 'https://api.anthropic.com/v1', apiKeyEnv: 'OPENAI_API_KEY', modelEnv: 'DEFAULT_LLM_MODEL', defaultModel: 'claude-3-5-sonnet-latest' },
 }
 
 function currentLlmProvider(): string {
@@ -470,6 +476,11 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       max_tokens: options.maxTokens ?? resolveDefaultMaxTokens(model),
       temperature: options.temperature ?? 0.7,
     }
+    // #752: GLM 混合思考 — thinking 参数仅 glm-* 模型接受,其他 provider
+    // 不传该字段避免 400。
+    if (options.thinking && model.toLowerCase().startsWith('glm')) {
+      body.thinking = { type: options.thinking }
+    }
     if (tools && tools.length > 0) {
       body.tools = tools
       body.tool_choice = 'auto'
@@ -556,6 +567,10 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
         temperature: options.temperature ?? 0.7,
         stream: true,
         stream_options: { include_usage: true },
+        // #752: GLM 混合思考开关(同 chatWithMeta — 仅 glm-* 生效)
+        ...(options.thinking && model.toLowerCase().startsWith('glm')
+          ? { thinking: { type: options.thinking } }
+          : {}),
       }),
     }, { signal: options.signal, timeoutMs: options.timeoutMs })
     if (!res.ok) {
