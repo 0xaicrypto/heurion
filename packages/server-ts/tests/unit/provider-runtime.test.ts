@@ -55,6 +55,6 @@ describe('runtime provider selection (#202/#436)', () => {
   })
 
   test('provider registry covers all supported providers', () => {
-    expect(Object.keys(LLM_PROVIDERS).sort()).toEqual(['anthropic', 'deepseek', 'gemini', 'kimi', 'opencode', 'openai'].sort())
+    expect(Object.keys(LLM_PROVIDERS).sort()).toEqual(['anthropic', 'deepseek', 'gemini', 'kimi', 'opencode', 'openai', 'zhipu'].sort())
   })
 })
