@@ -174,6 +174,7 @@ export async function documentsRouter(app: FastifyInstance) {
         textChunks++
         send({ text: chunk })
       }
+      if (textChunks > 0) console.info(`[polish] streamed ${textChunks} chunks`)
       if (textChunks === 0) {
         // #752-fix: 流式路径空结束(上游偶发只回思维链/空流)——自动降级到
         // 非流式 chatWithMeta(带 #548 双倍额度重试),保证用户拿到结果。
@@ -200,7 +201,14 @@ export async function documentsRouter(app: FastifyInstance) {
       }
       send({ done: true })
     } catch (err: any) {
-      send({ type: 'error', message: err.message })
+      // #752-fix: 截断错误映射为可操作提示(gateway 已自动双倍额度重试过)
+      let message = err?.message || 'AI 服务错误'
+      if (err?.name === 'LlmTruncatedError') {
+        message = err.hadReasoning && !err.hadContent
+          ? '模型思考超出输出额度且未产出正文,请缩小选中范围后重试'
+          : '回答因输出额度被截断,请缩小选中范围后重试'
+      }
+      send({ type: 'error', message })
     } finally {
       reply.raw.end()
     }

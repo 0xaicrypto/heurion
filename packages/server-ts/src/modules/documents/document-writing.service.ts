@@ -34,16 +34,19 @@ export async function* polishSelection(
   const apiKey = getApiKey()
   const prompt = buildPolishPrompt(selection, instruction)
   // #752-fix: 润色走 reasoner 类模型 — v4-flash 非推理模型没有
-  // reasoning_content,前端"思考过程"区永远为空,首 token 前只能干等;
-  // reasoner 的思维链实时流式返回,气泡从第一秒起就有可见进展。
-  // 优先级:显式 REASONER env > PREMIUM env > 主对话模型。
-  // 链尾用 provider 感知的主模型 — 切 GLM 等 provider 时润色自动跟随。
+  // reasoning_content,前端"思考过程"区永远为空,首 token 前只能干等。
+  // 优先级:显式 REASONER env > PREMIUM env > provider 感知默认。
+  // opencode provider 的 Go 订阅含 glm-5.3-flash(混合思考,$0.15/$0.50,
+  // 0 天数据保留)— 润色默认用它,不依赖 DEFAULT_LLM_MODEL 是否更新。
+  const provider = (process.env.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase()
   const model = process.env.DEEPSEEK_REASONER_MODEL
     || process.env.DEEPSEEK_PREMIUM_MODEL
-    || resolveActiveModel()
+    || (provider === 'opencode' ? 'glm-5.3-flash' : resolveActiveModel())
   // #752-fix: 4096 — reasoner 模型思维链计入输出额度,2048 会被长思考
   // 耗尽后以空正文"正常"结束(finish_reason=stop,不触发截断重试路径)。
-  let sawContent = false
+  // 注意:空正文不再在此抛错 — 由 router 的 textChunks===0 fallback
+  // (非流式 chatWithMeta,#548 双倍额度重试)接管,此前 throw 恰好绕过
+  // 了该兜底,导致用户看到空结果错误。
   let reasoningChars = 0
   const trackReasoning = (t: string) => { reasoningChars += t.length; onReasoning?.(t) }
   for await (const chunk of deepseekStream([{ role: 'user', content: prompt }], apiKey, {
@@ -52,16 +55,7 @@ export async function* polishSelection(
     thinking: POLISH_THINKING, // 仅 glm-* 模型生效,gateway 内部守卫
     telemetryContext: { userId, workspaceId: userId, action: 'document.polish' },
   }, trackReasoning)) {
-    if (chunk) sawContent = true
     yield chunk
-  }
-  if (!sawContent) {
-    // 空正文结束:给出可操作的错误而非让前端显示笼统"未返回内容"。
-    throw new Error(
-      reasoningChars > 0
-        ? `模型思考了约 ${reasoningChars} 字但未产出正文(输出额度被思考耗尽),请重试或缩小选中范围`
-        : `模型 ${model} 未返回任何内容,请稍后重试`,
-    )
   }
 }
 
