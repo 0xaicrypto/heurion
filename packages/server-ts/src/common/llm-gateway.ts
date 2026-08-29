@@ -494,8 +494,10 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
     }, { signal: options.signal, timeoutMs: options.timeoutMs })
     if (!res.ok) {
       // 上游明确拒绝(401 key 失效 / 402 余额 / 429 限流 / 413 超长) —
-      // 带状态码,前端可据此提示用户而非笼统"服务不可用"。
-      throw new Error(`LLM 请求失败 (HTTP ${res.status})`)
+      // 带状态码 + 上游响应体片段,前端/日志可定位真实原因(如某模型
+      // 不支持 tools/image 参数时上游会写明)。
+      const body = await res.text().catch(() => '')
+      throw new Error(`LLM 请求失败 (HTTP ${res.status}): ${body.slice(0, 300)}`)
     }
     const json: { choices?: LlmChunk['choices']; usage?: LlmChunk['usage'] } = await res.json()
     const choice = json.choices?.[0]
@@ -576,8 +578,9 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       }),
     }, { signal: options.signal, timeoutMs: options.timeoutMs })
     if (!res.ok) {
-      // 同上 — 流式路径也带上状态码。
-      throw new Error(`LLM 请求失败 (HTTP ${res.status})`)
+      // 同上 — 流式路径也带状态码 + 上游响应体片段。
+      const body = await res.text().catch(() => '')
+      throw new Error(`LLM 请求失败 (HTTP ${res.status}): ${body.slice(0, 300)}`)
     }
 
     const reader = res.body!.getReader()

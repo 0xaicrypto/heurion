@@ -3,7 +3,7 @@ import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import { renderDocxBuffer, renderPdfBuffer, isExportFormat } from './markdown-export.js'
-import { polishSelection, writeMethodsSection, writePaperBackground } from './document-writing.service.js'
+import { polishSelection, writeMethodsSection, writePaperBackground, MAX_POLISH_CHARS } from './document-writing.service.js'
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
 
@@ -159,28 +159,51 @@ export async function documentsRouter(app: FastifyInstance) {
     return { findings }
   })
 
-  // #3: AI Polish SSE — uses DeepSeek
+  // #3: AI Polish SSE — uses DeepSeek/GLM
+  // #752-qa 全面加固:归属校验(S1)/长度上限(S2)/客户端断开→abort 上游(S3)/
+  // 15s 心跳(S4)/150s 总超时(S5)/fallback 全文净化(S7)。
   app.post('/api/v1/docs/:docId/polish', async (request, reply) => {
+    const { docId } = request.params as any
     const { selection, instruction } = request.body as any
     const userId = request.user!.userId
+
+    // S1: 文档归属校验 — 此前 docId 完全未使用,任意登录用户可调用
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    if (!doc) return reply.status(404).send({ error: 'Doc not found' })
+    // S2: 选区长度上限
+    if (typeof selection !== 'string' || !selection.trim()) {
+      return reply.status(400).send({ error: 'selection required' })
+    }
+    if (selection.length > MAX_POLISH_CHARS) {
+      return reply.status(413).send({ error: `选区过长(${selection.length} 字符),上限 ${MAX_POLISH_CHARS}` })
+    }
+
     reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
     const send = (d: any) => reply.raw.write(`data: ${JSON.stringify(d)}\n\n`)
+
+    // S3+S5: 取消传导 — 客户端断开或 150s 总超时都 abort 上游生成
+    const controller = new AbortController()
+    let finished = false
+    const finish = () => { if (!finished) { finished = true; try { reply.raw.end() } catch { /* already closed */ } } }
+    reply.raw.on('close', () => controller.abort())
+    const deadline = setTimeout(() => controller.abort(), 150_000)
+    // S4: 心跳 — 长思考静默期防代理空闲掐断(SSE 注释行,客户端解析器自动忽略)
+    const heartbeat = setInterval(() => {
+      try { reply.raw.write(': ping\n\n') } catch { /* closed */ }
+    }, 15_000)
+
     try {
       let textChunks = 0
       for await (const chunk of polishSelection(selection, instruction, userId, (reasoning) => {
-        // #752-ux: 思维链独立事件 — 气泡内"思考过程"折叠区消费。
         send({ type: 'reasoning', text: reasoning })
-      })) {
+      }, controller.signal)) {
         textChunks++
         send({ text: chunk })
       }
-      if (textChunks > 0) console.info(`[polish] streamed ${textChunks} chunks`)
       if (textChunks === 0) {
-        // #752-fix: 流式路径空结束(上游偶发只回思维链/空流)——自动降级到
-        // 非流式 chatWithMeta(带 #548 双倍额度重试),保证用户拿到结果。
+        // 空流自动降级:非流式 chatWithMeta(#548 双倍额度重试)
         const { buildPolishPrompt } = await import('./document-writing.service.js')
         const { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } = await import('../../common/llm.js')
-        // 与流式路径同模型链(reasoner 优先),否则 fallback 行为不一致。
         const model = process.env.DEEPSEEK_REASONER_MODEL
           || process.env.DEEPSEEK_PREMIUM_MODEL
           || DEEPSEEK_CHAT_MODEL
@@ -191,26 +214,35 @@ export async function documentsRouter(app: FastifyInstance) {
           {
             model,
             maxTokens: 4096,
+            signal: controller.signal,
             telemetryContext: { userId, workspaceId: userId, action: 'document.polish_fallback' },
           },
           undefined,
           (reasoning) => send({ type: 'reasoning', text: reasoning }),
         )
         if (!text.trim()) throw new Error('模型连续两次未返回内容,请稍后重试')
-        send({ text })
+        // S7: fallback 拿到全文 — 服务端先净化再下发
+        const { sanitizePolishOutput } = await import('../../lib/polish-sanitize.js')
+        send({ text: sanitizePolishOutput(text) })
       }
       send({ done: true })
     } catch (err: any) {
-      // #752-fix: 截断错误映射为可操作提示(gateway 已自动双倍额度重试过)
-      let message = err?.message || 'AI 服务错误'
-      if (err?.name === 'LlmTruncatedError') {
-        message = err.hadReasoning && !err.hadContent
-          ? '模型思考超出输出额度且未产出正文,请缩小选中范围后重试'
-          : '回答因输出额度被截断,请缩小选中范围后重试'
+      if (controller.signal.aborted) {
+        // 客户端取消/总超时 — 连接已死,仅记日志
+        console.info(`[polish] aborted (${err?.name === 'AbortError' ? 'client/timeout' : err?.message?.slice(0, 80)})`)
+      } else {
+        let message = err?.message || 'AI 服务错误'
+        if (err?.name === 'LlmTruncatedError') {
+          message = err.hadReasoning && !err.hadContent
+            ? '模型思考超出输出额度且未产出正文,请缩小选中范围后重试'
+            : '回答因输出额度被截断,请缩小选中范围后重试'
+        }
+        send({ type: 'error', message })
       }
-      send({ type: 'error', message })
     } finally {
-      reply.raw.end()
+      clearTimeout(deadline)
+      clearInterval(heartbeat)
+      finish()
     }
   })
 

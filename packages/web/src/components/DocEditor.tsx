@@ -468,7 +468,17 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
                   </details>
                 )}
                 {bubbleRun.error ? (
-                  <div className="rounded-md border border-error/40 bg-error/5 px-2 py-1.5 text-[11px] text-error" role="alert">{bubbleRun.error}</div>
+                  /* #752-qa C4: 截断等错误时保留已生成的部分内容 — 用户可
+                      手动复制,不再整体丢弃 */
+                  <div>
+                    <div className="rounded-md border border-error/40 bg-error/5 px-2 py-1.5 text-[11px] text-error" role="alert">{bubbleRun.error}</div>
+                    {bubbleRun.stream.trim() && (
+                      <div className="mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-md bg-surface px-2 py-1.5 text-[12px] leading-relaxed text-text-secondary">
+                        {bubbleRun.stream}
+                        <div className="mt-1 text-[10px] text-text-tertiary">↑ 已生成的部分内容,可手动复制</div>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <div className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-surface px-2 py-1.5 text-[12px] leading-relaxed text-text-primary">
                     {bubbleRun.stream || '…'}

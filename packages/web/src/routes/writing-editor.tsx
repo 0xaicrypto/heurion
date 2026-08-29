@@ -8,6 +8,7 @@ import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor, type BubbleRunState, type DiffReviewState } from '@/components/DocEditor';
 import { KbPicker } from '@/components/KbPicker';
+import { sanitizePolishOutput } from '@/lib/polish-sanitize';
 import { SpotHint } from '@/components/SpotHint';
 import { UploadProgressModal, type UploadProgressState } from '@/components/UploadProgressModal';
 import { ChatMessages } from '@/components/chat/ChatMessages';
@@ -90,6 +91,8 @@ export function WritingEditorPage() {
   bubbleRunRef.current = bubbleRun;
   // #752-ux-cancel: 运行中的 AbortController — 取消即断流。
   const polishAbortRef = useRef<AbortController | null>(null);
+  // C3: 运行开始时的选区快照 — apply 前校验漂移。
+  const polishRangeRef = useRef<{ from: number; to: number; original: string } | null>(null);
   // #382: linked submission state (target journal / applied template).
   const [linkedJournal, setLinkedJournal] = useState('');
   // Desktop chat width — draggable resize, persisted (default 360px).
@@ -597,9 +600,15 @@ export function WritingEditorPage() {
 
     // #752-ux: 气泡内联运行 — 思考过程/流式正文全程展示在选区上方气泡里。
     if (inBubble) {
+      // C2 并发守卫:上一轮仍在跑 → 先 abort,状态归零再开新流
+      if (polishAbortRef.current) {
+        polishAbortRef.current.abort();
+        polishAbortRef.current = null;
+      }
       const controller = new AbortController();
       polishAbortRef.current = controller;
       setBubbleRun({ action, status: 'running', stream: '', reasoning: '', error: null, startedAt: Date.now() });
+      polishRangeRef.current = { from, to, original: selection };
       setPolishLoading(true);
       setPolishStream('');
       try {
@@ -661,10 +670,12 @@ export function WritingEditorPage() {
       }
       // #642: replace the polished range through TipTap — onUpdate round-trips
       // markdown → body state, so the doc and its versions stay in sync.
+      // C1: 面板路径同样净化(全文模式净化后整篇替换)
+      const clean = sanitizePolishOutput(result);
       if (mode === 'selection') {
-        editor.chain().focus().insertContentAt({ from, to }, markdownToHtml(result)).run();
+        editor.chain().focus().insertContentAt({ from, to }, markdownToHtml(clean)).run();
       } else {
-        setBody(result);
+        setBody(clean);
       }
       setPolishOpen(false);
       setAiEditNotice(mode === 'selection' ? '✨ 已按 AI 结果替换选中文本' : '✨ 已按 AI 结果更新全文');
@@ -683,11 +694,21 @@ export function WritingEditorPage() {
     const run = bubbleRunRef.current;
     if (!editor || !run || run.status !== 'done' || !run.stream.trim()) return;
     const range = bubbleSel;
-    if (!range || range.to <= range.from) {
+    const snap = polishRangeRef.current;
+    if (!range || !snap || range.to <= range.from) {
       setPolishError('选区已失效,请重新选择后再试');
       return;
     }
-    editor.chain().focus().insertContentAt({ from: range.from, to: range.to }, markdownToHtml(run.stream)).run();
+    // C3 漂移校验:流式期间用户编辑过该区域 → 拒绝盲替换,防错位
+    const current = editor.state.doc.textBetween(snap.from, snap.to, '\n').trim();
+    if (current !== snap.original) {
+      setPolishError('选区内容已变化,为避免错位替换未应用 — 请重新选中后重试');
+      return;
+    }
+    // C1 净化:元评论/javascript: 链接不得进入文档
+    const clean = sanitizePolishOutput(run.stream);
+    if (!clean) { setPolishError('AI 结果为空,已丢弃'); return; }
+    editor.chain().focus().insertContentAt({ from: snap.from, to: snap.to }, markdownToHtml(clean)).run();
     setBubbleRun(null);
     setAiEditNotice('✨ 已按 AI 结果替换选中文本');
     setTimeout(() => setAiEditNotice(''), 3000);

@@ -18,9 +18,24 @@ export interface MethodsSectionInput {
  * #3: AI Polish SSE — streaming rewrite of a selection. Yields text
  * chunks; the caller wraps them in the SSE envelope.
  */
-/** Polish 提示词 — 流式与 fallback 共用。 */
+/** 润色选区上限 — 超限请求直接 413(防御:成本/超时)。 */
+export const MAX_POLISH_CHARS = 50000
+
+/** Polish 提示词 — 流式与 fallback 共用。
+ *  #752-qa: 显式禁止元评论(Polished Text 标题/Key Changes/Let me know
+ *  收尾语)——此前模型把修改说明混进正文,靠客户端 sanitize 兜底只是
+ *  创可贴,源头约束才是正解;两条都保留。 */
 export function buildPolishPrompt(selection: string, instruction?: string): string {
-  return `Polish the following clinical text${instruction ? ` with instruction: "${instruction}"` : ''}. Keep the meaning but improve clarity and professionalism:\n\n${selection || ''}`
+  const extra = instruction ? `\nUser instruction: ${instruction}` : ''
+  return `Polish the following text. Keep the original language, meaning, markdown structure, citation markers like [9], numbers, and proper nouns.
+
+STRICT OUTPUT RULES:
+- Return ONLY the polished text — no preamble, no headings of your own, no "Polished Text" title, no "Key Changes" list, no explanations of what you changed, no closing offers like "Let me know if...".
+- Match the input's length approximately unless asked otherwise.
+${extra}
+
+Text:
+${selection || ''}`
 }
 
 export async function* polishSelection(
@@ -30,6 +45,8 @@ export async function* polishSelection(
   /** #752-ux: 思维链回调(deepseek-reasoner/v4-pro 的 reasoning_content)—
    *  前端气泡内展示"思考过程",与正文流分离。 */
   onReasoning?: (text: string) => void,
+  /** #752-qa: 取消信号 — 客户端断开/超时/取消时中断上游,token 不白烧。 */
+  signal?: AbortSignal,
 ): AsyncGenerator<string> {
   const apiKey = getApiKey()
   const prompt = buildPolishPrompt(selection, instruction)
@@ -53,6 +70,7 @@ export async function* polishSelection(
     model,
     maxTokens: 4096,
     thinking: POLISH_THINKING, // 仅 glm-* 模型生效,gateway 内部守卫
+    signal,
     telemetryContext: { userId, workspaceId: userId, action: 'document.polish' },
   }, trackReasoning)) {
     yield chunk
