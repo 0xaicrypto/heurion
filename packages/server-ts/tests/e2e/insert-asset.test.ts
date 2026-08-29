@@ -8,7 +8,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getApp, authHeader, getAuthUserId } from '../setup.js'
 import prisma from '../../src/common/prisma.js'
-import { InsertAssetTool, buildMarkdownTable } from '../../src/tools/insert-asset-tool.js'
+import { InsertAssetTool, buildMarkdownTable, buildDocumentContent, buildPresentationContent } from '../../src/tools/insert-asset-tool.js'
 import fs from 'fs'
 import path from 'path'
 
@@ -249,5 +249,102 @@ describe('#766 insert_asset plot 分支（fake execution plane）', () => {
     expect(bad2.success).toBe(false)
     const bad3 = await tool.execute({ ...PLOT_ARGS, series: [] })
     expect(bad3.success).toBe(false)
+  }, 30000)
+})
+
+describe('#767 buildDocumentContent / buildPresentationContent', () => {
+  const md = '# EGFR 研究\n\n引言正文。\n\n## 结果\n\nPFS 5.2 个月。\n\n- 要点一\n- 要点二\n\n## 讨论\n\n略。'
+
+  test('docx：`#` → title，`##` → section，`-` → bullet，首个正文行归「概述」', () => {
+    const doc = buildDocumentContent(md, 'fallback')
+    expect(doc.title).toBe('EGFR 研究')
+    expect(doc.sections[0]).toMatchObject({ heading: '概述', paragraphs: [{ type: 'paragraph', text: '引言正文。' }] })
+    expect(doc.sections[1].heading).toBe('结果')
+    expect(doc.sections[1].paragraphs).toContainEqual({ type: 'paragraph', text: '要点一', style: 'bullet' })
+    expect(doc.sections[2].heading).toBe('讨论')
+  })
+
+  test('pptx：sections → slides', () => {
+    const ppt = buildPresentationContent(md, 'fallback')
+    expect(ppt.title).toBe('EGFR 研究')
+    expect(ppt.slides.map((s) => s.title)).toEqual(['概述', '结果', '讨论'])
+    expect(ppt.slides[1].content[0].text).toBe('PFS 5.2 个月。')
+  })
+})
+
+describe('#767 insert_asset export 分支（fake execution plane）', () => {
+  const BODY = '# EGFR 研究\n\n## 结果\n\n中位 PFS 5.2 个月。\n\n- PD-L1 ≥50% 获益\n- HR 0.48'
+
+  function fakePlane(over: Record<string, any> = {}) {
+    return {
+      enqueue: vi.fn(async () => ({ job_id: 'j1', status: 'pending' })),
+      getStatus: vi.fn(async () => ({ job_id: 'j1', status: 'completed', result: { file_id: 'f1', file_name: 'out.docx' } })),
+      fetchFile: vi.fn(async () => Buffer.from('PK\x03\x04fake')),
+      ...over,
+    }
+  }
+
+  test('docx happy path：草稿→sections、渲染、落盘、卡片写回 + file 元数据', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, BODY)
+    const plane = fakePlane()
+
+    const tool = new InsertAssetTool({ userId, sessionId: `doc-${docId}`, executionPlane: plane, isPluginInstalled: async () => true })
+    const result = await tool.execute({ asset_type: 'export', format: 'docx' })
+
+    expect(result.success).toBe(true)
+    expect(plane.enqueue).toHaveBeenCalledWith(expect.objectContaining({ type: 'sidecar.generate_docx' }))
+    const payload = (plane.enqueue as any).mock.calls[0][0].payload
+    expect(payload.template_id).toBe('case_summary')
+    expect(payload.data.title).toBe('EGFR 研究')
+    expect(payload.data.sections.map((s: any) => s.heading)).toContain('结果')
+
+    const { body: newBody, summary, file } = JSON.parse(result.output as string)
+    expect(summary).toContain('已导出 Word')
+    expect(file.fileName).toMatch(/^EGFR_研究\.docx$/)
+    expect(file.url).toMatch(/^\/api\/v1\/files\/download\/export_[\w-]+_\d+\.docx\?token=/)
+    expect(newBody.trimEnd().endsWith(`[下载 Word 版（${file.fileName}）](${file.url})`)).toBe(true)
+
+    const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+    expect(fs.existsSync(path.join(dir, file.fileId))).toBe(true)
+  }, 30000)
+
+  test('pptx / pdf 使用对应契约 job type', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, BODY)
+    const pptPlane = fakePlane()
+    await new InsertAssetTool({ userId, sessionId: `doc-${docId}`, executionPlane: pptPlane, isPluginInstalled: async () => true })
+      .execute({ asset_type: 'export', format: 'pptx' })
+    expect(pptPlane.enqueue).toHaveBeenCalledWith(expect.objectContaining({ type: 'sidecar.generate_pptx' }))
+    const pdfPlane = fakePlane()
+    await new InsertAssetTool({ userId, sessionId: `doc-${docId}`, executionPlane: pdfPlane, isPluginInstalled: async () => true })
+      .execute({ asset_type: 'export', format: 'pdf' })
+    expect(pdfPlane.enqueue).toHaveBeenCalledWith(expect.objectContaining({ type: 'sidecar.convert_to_pdf' }))
+  }, 30000)
+
+  test('插件未安装 / 正文为空 / format 缺失 → 可读报错，不写卡片', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, BODY)
+    const plane = fakePlane()
+
+    const noPlugin = await new InsertAssetTool({ userId, sessionId: `doc-${docId}`, executionPlane: plane, isPluginInstalled: async () => false })
+      .execute({ asset_type: 'export', format: 'docx' })
+    expect(noPlugin.success).toBe(false)
+    expect(noPlugin.error).toContain('heurion/docx')
+
+    const emptyDoc = await createDoc(app, '')
+    const empty = await new InsertAssetTool({ userId, sessionId: `doc-${emptyDoc}`, executionPlane: plane, isPluginInstalled: async () => true })
+      .execute({ asset_type: 'export', format: 'docx' })
+    expect(empty.success).toBe(false)
+    expect(empty.error).toContain('正文为空')
+
+    const badFormat = await new InsertAssetTool({ userId, sessionId: `doc-${docId}`, executionPlane: plane, isPluginInstalled: async () => true })
+      .execute({ asset_type: 'export' })
+    expect(badFormat.success).toBe(false)
+    expect(badFormat.error).toContain('format')
+    expect(plane.enqueue).not.toHaveBeenCalled()
   }, 30000)
 })

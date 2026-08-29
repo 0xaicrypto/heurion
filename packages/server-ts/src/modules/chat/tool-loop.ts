@@ -256,6 +256,24 @@ export async function runToolCallLoop(params: {
             } catch {
               // non-JSON output — nothing to surface
             }
+            // #767: export 产物 — 聊天内下载卡片（chart-token 长期有效）。
+            if (toolName === 'insert_asset') {
+              try {
+                const parsed = JSON.parse(output) as { file?: { fileId?: string; fileName?: string; mimeType?: string; url?: string } }
+                if (parsed.file?.fileId && parsed.file.url) {
+                  io.send({
+                    type: 'sidecar_file',
+                    file_id: parsed.file.fileId,
+                    file_name: parsed.file.fileName || parsed.file.fileId,
+                    mime_type: parsed.file.mimeType || 'application/octet-stream',
+                    download_url: parsed.file.url,
+                    expires_in: 90 * 24 * 3600,
+                  })
+                }
+              } catch {
+                // non-JSON output — nothing to surface
+              }
+            }
           }
           // #176: surface generated charts as images in the message.
           if (toolName === 'render_chart') {
