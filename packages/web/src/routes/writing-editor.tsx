@@ -672,8 +672,18 @@ export function WritingEditorPage() {
       // markdown → body state, so the doc and its versions stay in sync.
       // C1: 面板路径同样净化(全文模式净化后整篇替换)
       const clean = sanitizePolishOutput(result);
+      const scrollEl = (() => {
+        let el: HTMLElement | null = editor.view.dom as HTMLElement;
+        while (el && el !== document.body) {
+          if (el.scrollHeight > el.clientHeight + 1 && /(auto|scroll|overlay)/.test(getComputedStyle(el).overflowY)) return el;
+          el = el.parentElement;
+        }
+        return null;
+      })();
+      const savedTop = scrollEl?.scrollTop ?? 0;
       if (mode === 'selection') {
         editor.chain().focus().insertContentAt({ from, to }, markdownToHtml(clean)).run();
+        if (scrollEl) scrollEl.scrollTop = savedTop;
       } else {
         setBody(clean);
       }
@@ -708,7 +718,19 @@ export function WritingEditorPage() {
     // C1 净化:元评论/javascript: 链接不得进入文档
     const clean = sanitizePolishOutput(run.stream);
     if (!clean) { setPolishError('AI 结果为空,已丢弃'); return; }
+    // #752-cursor: focus()+插入会触发浏览器 scrollIntoView — 快照/恢复
+    // 滚动位置,把用户留在当前修改处
+    const scrollEl = (() => {
+      let el: HTMLElement | null = editor.view.dom as HTMLElement;
+      while (el && el !== document.body) {
+        if (el.scrollHeight > el.clientHeight + 1 && /(auto|scroll|overlay)/.test(getComputedStyle(el).overflowY)) return el;
+        el = el.parentElement;
+      }
+      return null;
+    })();
+    const savedTop = scrollEl?.scrollTop ?? 0;
     editor.chain().focus().insertContentAt({ from: snap.from, to: snap.to }, markdownToHtml(clean)).run();
+    if (scrollEl) scrollEl.scrollTop = savedTop;
     setBubbleRun(null);
     setAiEditNotice('✨ 已按 AI 结果替换选中文本');
     setTimeout(() => setAiEditNotice(''), 3000);

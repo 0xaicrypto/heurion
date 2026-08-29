@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import { BubbleMenu as TiptapBubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
@@ -166,6 +166,22 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     };
   }, [editor, editorRef]);
 
+
+  /** #752-cursor: 编辑器最近的滚动容器(main.overflow-y-auto 等)。
+   *  外部更新重建文档/插入内容都会引发浏览器滚动,这里统一快照恢复。 */
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅依赖 editor 实例
+  const captureScroll = useCallback((): { el: HTMLElement; top: number } | null => {
+    if (!editor) return null
+    let el: HTMLElement | null = editor.view.dom as HTMLElement
+    while (el && el !== document.body) {
+      if (el.scrollHeight > el.clientHeight + 1 && /(auto|scroll|overlay)/.test(getComputedStyle(el).overflowY)) {
+        return { el, top: el.scrollTop }
+      }
+      el = el.parentElement
+    }
+    return null
+  }, [editor])
+
   // External markdown update (AI edit / doc load) → convert and apply.
   useEffect(() => {
     if (!editor) return;
@@ -179,6 +195,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     if (currentMd === value) return;
     // 真正的外部更新(打开文档/restore/他人编辑):保留当前选区位置
     const { from, to } = editor.state.selection;
+    const sc = captureScroll();
     applyMdRef.current = value;
     editor.commands.setContent(markdownToHtml(value), { emitUpdate: false });
     applyMdRef.current = null;
@@ -187,7 +204,8 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       from: Math.min(from, size),
       to: Math.min(to, size),
     });
-  }, [value, editor]);
+    if (sc) sc.el.scrollTop = sc.top;
+  }, [value, editor, captureScroll]);
 
   // 审阅模式:应用 AI diff 并进入只读审阅
   useEffect(() => {
