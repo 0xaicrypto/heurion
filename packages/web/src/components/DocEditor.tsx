@@ -169,7 +169,6 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
 
   /** #752-cursor: 编辑器最近的滚动容器(main.overflow-y-auto 等)。
    *  外部更新重建文档/插入内容都会引发浏览器滚动,这里统一快照恢复。 */
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅依赖 editor 实例
   const captureScroll = useCallback((): { el: HTMLElement; top: number } | null => {
     if (!editor) return null
     let el: HTMLElement | null = editor.view.dom as HTMLElement
