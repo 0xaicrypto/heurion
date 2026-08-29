@@ -221,9 +221,10 @@ export async function runToolCallLoop(params: {
 
         // #693: edit_document 输出含完整 body(豁免了 bound) — 注入给模型
         // 的内容只保留摘要,避免正文全文每轮循环膨胀上下文;doc_updated
-        // 推送在下方用原始 output 完整解析。
+        // 推送在下方用原始 output 完整解析。#765: insert_asset 同管道。
+        const DOC_WRITE_TOOLS = new Set(['edit_document', 'insert_asset'])
         let toolResultText = result.output || 'Success'
-        if (toolName === 'edit_document' && result.success) {
+        if (DOC_WRITE_TOOLS.has(toolName) && result.success) {
           try {
             const parsed = JSON.parse(toolResultText) as { summary?: string }
             toolResultText = `{ body: <updated>, summary: ${JSON.stringify(parsed.summary || '')} }`
@@ -245,7 +246,8 @@ export async function runToolCallLoop(params: {
             toolCallId: seq, success: true, outputTruncated: output.length > 500,
           })
           // §15.4: surface document write-backs to the writing canvas.
-          if (toolName === 'edit_document') {
+          // #765: insert_asset (表格) 写回与 edit_document 同管道。
+          if (DOC_WRITE_TOOLS.has(toolName)) {
             try {
               const parsed = JSON.parse(output) as { body?: string; summary?: string }
               if (typeof parsed.body === 'string') {

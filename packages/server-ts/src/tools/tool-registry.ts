@@ -5,6 +5,7 @@ import { DelegateTool, SpawnSubagentTool } from './subagent-tools.js'
 import { DeferToBackgroundTool } from './async-tools.js'
 import { OCRImageTool } from './ocr-tools.js'
 import { EditDocumentTool } from './edit-document-tool.js'
+import { InsertAssetTool } from './insert-asset-tool.js'
 import { LoadSkillTool } from './skill-tools.js'
 import { RenderChartTool } from './render-chart-tool.js'
 import { SearchMedicalWebTool, FetchArticleSummaryTool, VisitMedicalSiteTool, ExtractFulltextTool } from './medical-web-tools.js'
@@ -87,6 +88,9 @@ export class ToolRegistry {
     this.register(new DeferToBackgroundTool(ctx))
     this.register(new OCRImageTool(ctx))
     this.register(new EditDocumentTool(ctx))
+    // #765: 写作画布结构化资产工具（表格）— 与 edit_document 同管道
+    // （快照 + doc_updated），仅 doc- 会话暴露。
+    this.register(new InsertAssetTool(ctx))
     // #454-followup: plugin-gated renderers — registered so execute() can
     // give a clear error, but excluded from definitions unless installed.
     this.register(new RenderChartTool(ctx))
@@ -143,6 +147,7 @@ export class ToolRegistry {
     const out: ToolDefinition[] = []
     for (const tool of this.tools.values()) {
       if (tool.name === 'edit_document' && !isDocSession) continue
+      if (tool.name === 'insert_asset' && !isDocSession) continue
       if (PLUGIN_GATED_TOOLS[tool.name] && !(await this.isToolAvailable(tool.name))) continue
       if (omit?.has(tool.name)) continue
       out.push(tool.definition)
@@ -213,7 +218,8 @@ export class ToolRegistry {
     // #693: edit_document 豁免 — 其 output 是承载完整 body 的结构化 JSON,
     // 截断会破坏 doc_updated SSE 的 JSON 解析(大文档写回后画布不更新)。
     // 防上下文膨胀改由 tool-loop 注入时截断(tool-loop.ts 的 messages push)。
-    if (result.success && result.output && name !== 'edit_document') {
+    // #765: insert_asset 同理 — 表格写回同样携带完整 body。
+    if (result.success && result.output && name !== 'edit_document' && name !== 'insert_asset') {
       try {
         const { boundToolOutput } = await import('./tool-output-store.js')
         const { bounded, truncated, filePath } = boundToolOutput(result.output, { userId: this.ctx.userId })
