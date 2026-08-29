@@ -50,6 +50,17 @@ async function getActivePlugins(userId: string): Promise<PluginManifest[]> {
 }
 
 /**
+ * True when the user has at least one enabled installed plugin. Lets callers
+ * distinguish "nothing installed → install hint is the honest answer" from
+ * "installed but no trigger matched the bare text → fall back to conversation"
+ * (a bare confirmation like 是的/开始 carries no format keyword; telling the
+ * user to install plugins there loops forever — the plugins ARE installed).
+ */
+export async function hasActivePlugins(userId: string): Promise<boolean> {
+  return (await getActivePlugins(userId)).length > 0
+}
+
+/**
  * #557/#579 — intent adjudication happens upstream in decodeTurnIntent
  * (turn-intent.ts). This function's ONLY job is plugin availability: when the
  * turn ACTION is generate, confirm whether an installed tool trigger fires on

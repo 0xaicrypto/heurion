@@ -82,6 +82,7 @@ Hard rules:
 - EDITING/POLISHING/REVISING an existing document is NEVER generate: 润色/修改/改写/重写/完善/排版/polish/edit/revise/rewrite → uncertain or discuss.
 - Pasting a long document body (paper/manuscript) with a short request is never a generate signal on its own — the file to generate does not exist yet.
 - "总结/概括/归纳" without an explicit document-context word is discuss (verbal summary), NOT generate.
+- A bare confirmation/acknowledgement ("是的", "好", "可以", "开始吧", "继续", "yes", "ok") is generate ONLY when the latest assistant offer in the history names a concrete file format (docx/word/ppt/pdf/表格/图表). If the offer has no format word (e.g. "开始撰写正文"), the confirmation cannot identify WHICH file to render — return uncertain (the assistant should answer in conversation instead of rendering an unidentified file).
 - When unsure between generate and anything else, return uncertain.
 ${historyBlock}User: "${safeQuery}"
 Return ONLY one word: generate|discuss|uncertain`
