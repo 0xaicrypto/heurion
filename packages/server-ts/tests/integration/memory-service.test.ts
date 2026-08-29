@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import fs from 'fs'
+import path from 'path'
+import os from 'os'
 import { EventLog } from '../../src/core/event-log.js'
 import { FactsStore, KnowledgeStore } from '../../src/evolution/stores.js'
 import { MemoryService } from '../../src/memory/memory.service.js'
 
 describe('MemoryService', () => {
-  const baseDir = '/tmp/test-memory-service'
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-memory-service-'))
 
   function setup(userId = 'user_1') {
     fs.rmSync(baseDir, { recursive: true, force: true })

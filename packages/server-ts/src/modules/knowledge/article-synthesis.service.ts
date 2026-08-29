@@ -1,9 +1,10 @@
+import { resolveTierModel } from '../../common/llm-gateway.js'
 /**
  * Article synthesis service (#687) — the LLM-driven regenerate path that
  * used to live in knowledge.router.ts. Router stays request/response-only;
  * prompts are the shared templates from memory/prompts.ts.
  */
-import { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { deepseekChat, getApiKey} from '../../common/llm.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 import { articleSynthesisPrompt, ARTICLE_SYNTHESIS_PERSONA } from '../../memory/prompts.js'
 import type { MemoryService } from '../../memory/memory.service.js'
@@ -36,7 +37,7 @@ export async function regenerateArticleWithLlm(
         [{ role: 'user', content: prompt }],
         getApiKey(),
         {
-          model: DEEPSEEK_CHAT_MODEL,
+          model: resolveTierModel('fast'),
           maxTokens: 2048,
           telemetryContext: { userId, workspaceId: userId, action: 'article.regenerate' },
         },

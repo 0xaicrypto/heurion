@@ -1,3 +1,4 @@
+import { resolveTierModel } from '../common/llm-gateway.js'
 import type { MemoryService } from './memory.service.js'
 import type { EpisodesStore } from '../evolution/stores'
 
@@ -36,7 +37,7 @@ export async function updateEpisodeSummary(input: EpisodeSummaryInput): Promise<
       [{ role: 'user', content: prompt }],
       apiKey,
       {
-        model: process.env.DEEPSEEK_CHAT_MODEL || 'deepseek-v4-flash',
+        model: resolveTierModel('fast'),
         maxTokens: 400,
         telemetryContext: { userId: input.userId, workspaceId: input.userId, action: 'memory.episode_summary' },
       },
@@ -112,7 +113,7 @@ export async function maybeSynthesizeArticle(
       [{ role: 'user', content: prompt }],
       apiKey,
       {
-        model: process.env.DEEPSEEK_CHAT_MODEL || 'deepseek-v4-flash',
+        model: resolveTierModel('fast'),
         maxTokens: 512,
         telemetryContext: { userId, workspaceId: userId, action: 'memory.article_synthesis' },
       },

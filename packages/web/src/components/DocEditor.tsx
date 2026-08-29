@@ -171,9 +171,22 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     if (!editor) return;
     // 审阅中不响应外部 value 更新(审阅内容由 diffReview 驱动)
     if (reviewKeyRef.current !== null) return;
+    // #752-cursor: round-trip no-op guard — 自己的 insertContentAt 已更新
+    // 文档,onChange → 父组件 setBody → value 回流;若此处再 setContent 会
+    // 重建文档并把光标冲到文末(AI apply 后跳到文章末尾的根因)。
+    // incoming 与当前编辑器内容等价时直接跳过。
+    const currentMd = htmlToMarkdown(editor.getHTML());
+    if (currentMd === value) return;
+    // 真正的外部更新(打开文档/restore/他人编辑):保留当前选区位置
+    const { from, to } = editor.state.selection;
     applyMdRef.current = value;
     editor.commands.setContent(markdownToHtml(value), { emitUpdate: false });
     applyMdRef.current = null;
+    const size = editor.state.doc.content.size;
+    editor.commands.setTextSelection({
+      from: Math.min(from, size),
+      to: Math.min(to, size),
+    });
   }, [value, editor]);
 
   // 审阅模式:应用 AI diff 并进入只读审阅

@@ -1,3 +1,4 @@
+import { resolveTierModel } from '../common/llm-gateway.js'
 import { BaseTool, ToolResult } from './base-tool.js'
 import type { ToolContext } from './tool-registry.js'
 
@@ -41,7 +42,7 @@ export class DeferToBackgroundTool extends BaseTool {
         const result = await deepseekChat(
           [{ role: 'user', content: prompt }],
           getApiKey(),
-          { model: (await import('../common/llm.js')).DEEPSEEK_CHAT_MODEL, telemetryContext: { userId: this.ctx.userId, workspaceId: this.ctx.userId, action: 'tool.background' } },
+          { model: resolveTierModel('fast'), telemetryContext: { userId: this.ctx.userId, workspaceId: this.ctx.userId, action: 'tool.background' } },
         )
         this.ctx.eventLog.append({
           timestamp: Date.now() / 1000,

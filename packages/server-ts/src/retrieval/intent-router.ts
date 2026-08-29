@@ -19,7 +19,8 @@
  * layer confirms which plugin exists AFTER the LLM says generate (see
  * plugin-chat-handler.ts).
  */
-import { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL, type LlmTelemetryContext } from '../common/llm.js'
+import { deepseekChat, getApiKey, type LlmTelemetryContext } from '../common/llm.js'
+import { resolveTierModel } from '../common/llm-gateway.js'
 import { isSidecarVetoed } from './query-router.js'
 import { SemanticIntentRouter, type SemanticVerdict } from './semantic-intent-router.js'
 import { SEMANTIC_GENERATE_SEEDS, SEMANTIC_VETO_SEEDS } from './semantic-seeds.js'
@@ -47,7 +48,7 @@ function createDefaultSidecarClassifier(context?: LlmTelemetryContext): SidecarC
       if (!apiKey) return 'uncertain'
       try {
         const raw = await deepseekChat([{ role: 'user', content: buildSidecarClassifierPrompt(text, history) }], apiKey, {
-          model: DEEPSEEK_CHAT_MODEL,
+          model: resolveTierModel('fast'),
           maxTokens: 50,
           telemetryContext: context,
         })

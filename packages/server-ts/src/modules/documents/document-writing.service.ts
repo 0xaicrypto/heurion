@@ -1,10 +1,10 @@
+import { resolveTierModel } from '../../common/llm-gateway.js'
 /**
  * Document writing service (#687) — the three inline LLM prompts that used
  * to live in documents.router.ts (polish / methods / background). The
  * router now only maps HTTP + SSE transport to these functions.
  */
-import { deepseekStream, deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
-import { resolveActiveModel } from '../../common/llm-gateway.js'
+import { deepseekStream, deepseekChat, getApiKey} from '../../common/llm.js'
 // #752: GLM 混合思考开关 — 润色固定开启,reasoning_content 才会流式返回。
 const POLISH_THINKING = 'enabled' as const
 
@@ -38,6 +38,11 @@ Text:
 ${selection || ''}`
 }
 
+/** #752-mid: 润色模型解析(reasoner tier 链)— 流式与 fallback 共用。 */
+export function resolvePolishModel(): string {
+  return resolveTierModel('reasoner')
+}
+
 export async function* polishSelection(
   selection: string,
   instruction: string | undefined,
@@ -55,10 +60,7 @@ export async function* polishSelection(
   // 优先级:显式 REASONER env > PREMIUM env > provider 感知默认。
   // opencode provider 的 Go 订阅含 glm-5.3-flash(混合思考,$0.15/$0.50,
   // 0 天数据保留)— 润色默认用它,不依赖 DEFAULT_LLM_MODEL 是否更新。
-  const provider = (process.env.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase()
-  const model = process.env.DEEPSEEK_REASONER_MODEL
-    || process.env.DEEPSEEK_PREMIUM_MODEL
-    || (provider === 'opencode' ? 'glm-5.3-flash' : resolveActiveModel())
+  const model = resolvePolishModel()
   // #752-fix: 4096 — reasoner 模型思维链计入输出额度,2048 会被长思考
   // 耗尽后以空正文"正常"结束(finish_reason=stop,不触发截断重试路径)。
   // 注意:空正文不再在此抛错 — 由 router 的 textChunks===0 fallback
@@ -94,7 +96,7 @@ ${(byCategory['schedule'] || []).map((r) => `- ${r}`).join('\n') || 'n/a'}
 
 Write 3-6 paragraphs (English): study design, participants, interventions, outcomes, statistical analysis plan. Do not invent numbers. Return only the section text (no preamble, no title).`
   const result = await deepseekChat([{ role: 'user', content: prompt }], getApiKey(), {
-    model: DEEPSEEK_CHAT_MODEL,
+    model: resolveTierModel('fast'),
     maxTokens: 2048,
     telemetryContext: { userId, workspaceId: userId, action: 'research.generate_methods' },
   })
@@ -107,7 +109,7 @@ export async function writePaperBackground(title: string, userId: string): Promi
   const prompt = `Write a one-paragraph Background and Objectives for a paper titled "${title}". Based on the study name only; keep it generic and factual. Return only the paragraph.`
   try {
     const result = await deepseekChat([{ role: 'user', content: prompt }], getApiKey(), {
-      model: DEEPSEEK_CHAT_MODEL, maxTokens: 500,
+      model: resolveTierModel('fast'), maxTokens: 500,
       telemetryContext: { userId, workspaceId: userId, action: 'research.paper_background' },
     })
     return result.trim()

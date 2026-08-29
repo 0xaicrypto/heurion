@@ -1,5 +1,6 @@
+import { resolveTierModel } from '../../common/llm-gateway.js'
 import { makeLogger } from '../../common/logger.js'
-import { deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { deepseekChat, getApiKey} from '../../common/llm.js'
 import prisma from '../../common/prisma.js'
 import { MemoryGraphGateway } from '../memory-gateway.js'
 import {
@@ -36,7 +37,7 @@ export async function extractAndProposeFacts(
   const prompt = factExtractionPrompt({ text: conversation, contextBlock, qualityGuidance })
 
   const chatOpts = {
-    model: DEEPSEEK_CHAT_MODEL,
+    model: resolveTierModel('fast'),
     maxTokens: 2048,
     telemetryContext: { userId: ctx.userId, workspaceId: ctx.userId, action: 'chat.extract_facts' },
   } as const
@@ -149,7 +150,7 @@ ${conversation}
     [{ role: 'user', content: prompt }],
     apiKey,
     {
-      model: DEEPSEEK_CHAT_MODEL,
+      model: resolveTierModel('fast'),
       maxTokens: 4000,
       telemetryContext: { userId: ctx.userId, workspaceId: ctx.userId, action: 'chat.compact_segment' },
     },

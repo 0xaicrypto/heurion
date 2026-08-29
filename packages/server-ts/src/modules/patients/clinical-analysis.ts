@@ -1,4 +1,5 @@
-import { deepseekChat, getApiKey, type LlmTelemetryContext , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { resolveTierModel } from '../../common/llm-gateway.js'
+import { deepseekChat, getApiKey, type LlmTelemetryContext} from '../../common/llm.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 import prisma from '../../common/prisma.js'
 
@@ -68,7 +69,7 @@ ${messages.slice(0, 4000)}`
       [{ role: 'user', content: prompt }],
       getApiKey(),
       {
-        model: DEEPSEEK_CHAT_MODEL,
+        model: resolveTierModel('fast'),
         maxTokens: 1200,
         telemetryContext,
       },

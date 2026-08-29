@@ -1,3 +1,4 @@
+import { resolveTierModel } from '../../common/llm-gateway.js'
 /**
  * #667: single router for the whole `/api/v1/agent/*` surface.
  * Previously fragmented across chat.router.ts (agent/chat),
@@ -14,7 +15,7 @@ import { handleAgentChat } from './chat-handler.js'
 import { type EvolutionQueue } from '../evolution/evolution.queue.js'
 import { createSseSender } from './chat-sse.js'
 import { runSubAgent } from '../../tools/subagent-runner.js'
-import { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { deepseekChat, getApiKey} from '../../common/llm.js'
 
 export interface AgentRouterOptions {
   evolutionQueue?: EvolutionQueue
@@ -342,7 +343,7 @@ export async function agentRouter(app: FastifyInstance, opts: AgentRouterOptions
         const synth = await deepseekChat(
           [{ role: 'user', content: `Combine the following sub-agent findings into one comprehensive answer for the doctor, with clear per-topic sections and clinical implications. Question: ${questionText}\n\n${parts}` }],
           getApiKey(),
-          { model: DEEPSEEK_CHAT_MODEL, maxTokens: 2000, telemetryContext: { userId, workspaceId: userId, action: 'deep_analysis.synthesize' } },
+          { model: resolveTierModel('fast'), maxTokens: 2000, telemetryContext: { userId, workspaceId: userId, action: 'deep_analysis.synthesize' } },
         )
         summary = synth.trim()
       } catch {

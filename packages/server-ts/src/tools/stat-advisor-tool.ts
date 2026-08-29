@@ -1,3 +1,4 @@
+import { resolveTierModel } from '../common/llm-gateway.js'
 /**
  * stat_ai — statistical method advisor (#684). LLM-backed tool, isolated
  * from the deterministic stat-tools so the stats-engine "pure-TS fallback"
@@ -30,7 +31,7 @@ export class StatAdvisorTool extends BaseTool {
     const question = String(args.question || '').trim()
     if (!question) return { success: false, error: 'question required' }
     try {
-      const { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } = await import('../common/llm.js')
+      const { deepseekChat, getApiKey } = await import('../common/llm.js')
       const prompt = `You are a clinical biostatistician. For the study below, recommend the statistical test and interpret the result.
 
 Question: ${question}
@@ -50,7 +51,7 @@ Return ONLY a JSON object:
 }`
 
       const result = await deepseekChat([{ role: 'user', content: prompt }], getApiKey(), {
-        model: DEEPSEEK_CHAT_MODEL,
+        model: resolveTierModel('fast'),
         maxTokens: 800,
         telemetryContext: { userId: 'stat', workspaceId: 'stat', action: 'stat_advisor' },
       })

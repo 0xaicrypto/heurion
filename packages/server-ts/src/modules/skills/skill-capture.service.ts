@@ -1,5 +1,6 @@
+import { resolveTierModel } from '../../common/llm-gateway.js'
 import prisma from '../../common/prisma.js'
-import { getApiKey, deepseekChat , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { getApiKey, deepseekChat} from '../../common/llm.js'
 
 /**
  * #298: skill capture — turn a finished conversation into a reusable skill
@@ -39,7 +40,7 @@ async function draftFromConversation(userId: string, conversation: string, extra
   const raw = await deepseekChat(
     [{ role: 'system', content: CAPTURE_SYSTEM }, { role: 'user', content: conversation.slice(0, 8000) + instruction }],
     getApiKey(),
-    { model: DEEPSEEK_CHAT_MODEL, maxTokens: 1500 },
+    { model: resolveTierModel('fast'), maxTokens: 1500 },
   )
   return parseDraft(raw)
 }

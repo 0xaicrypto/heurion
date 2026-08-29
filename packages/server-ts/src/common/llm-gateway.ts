@@ -161,6 +161,31 @@ export function providerSupportsVision(provider?: string, model?: string): boole
   return VISION_PROVIDERS.has(prov) || prov === 'deepseek' || prov === 'opencode'
 }
 
+export type LlmTier = 'fast' | 'premium' | 'reasoner'
+
+/**
+ * #752-mid: 模型分层解析 — 调用点只声明档位,不硬编码具体模型名。
+ * 中转站/聚合网关模式下,换模型只改 env,调用点零改动。
+ * 优先级:按层 env(LLM_MODEL_*) → legacy deepseek env → provider 主模型。
+ */
+export function resolveTierModel(tier: LlmTier): string {
+  const byTier = tier === 'fast'
+    ? process.env.LLM_MODEL_FAST
+    : tier === 'premium'
+      ? process.env.LLM_MODEL_PREMIUM
+      : process.env.LLM_MODEL_REASONER
+  if (byTier) return byTier
+  // legacy deepseek-named envs(向后兼容既有部署)
+  if (tier === 'reasoner' && process.env.DEEPSEEK_REASONER_MODEL) return process.env.DEEPSEEK_REASONER_MODEL
+  if (tier !== 'fast' && process.env.DEEPSEEK_PREMIUM_MODEL) return process.env.DEEPSEEK_PREMIUM_MODEL
+  // reasoner 档在 opencode(Go 订阅)下默认 glm-5.3-flash:混合思考,
+  // 思维链可流式,润色/分析场景的用户体感从"干等"变为"看思考"。
+  if (tier === 'reasoner' && (process.env.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase() === 'opencode') {
+    return 'glm-5.3-flash'
+  }
+  return resolveActiveModel()
+}
+
 /** 当前生效的主对话模型(与 gateway resolveModel 同一口径:显式 model →
  *  provider modelEnv → 默认 deepseek-v4-flash)。 */
 export function resolveActiveModel(): string {

@@ -4,6 +4,7 @@ import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import { renderDocxBuffer, renderPdfBuffer, isExportFormat } from './markdown-export.js'
 import { polishSelection, writeMethodsSection, writePaperBackground, MAX_POLISH_CHARS } from './document-writing.service.js'
+// resolvePolishModel 由 service 导出(fallback 时动态 import)
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
 
@@ -202,11 +203,9 @@ export async function documentsRouter(app: FastifyInstance) {
       }
       if (textChunks === 0) {
         // 空流自动降级:非流式 chatWithMeta(#548 双倍额度重试)
-        const { buildPolishPrompt } = await import('./document-writing.service.js')
-        const { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } = await import('../../common/llm.js')
-        const model = process.env.DEEPSEEK_REASONER_MODEL
-          || process.env.DEEPSEEK_PREMIUM_MODEL
-          || DEEPSEEK_CHAT_MODEL
+        const { buildPolishPrompt, resolvePolishModel } = await import('./document-writing.service.js')
+        const { deepseekChat, getApiKey } = await import('../../common/llm.js')
+        const model = resolvePolishModel()
         console.warn(`[polish] empty stream, falling back to non-streaming (model=${model}, selection=${selection.length}c)`)
         const text = await deepseekChat(
           [{ role: 'user', content: buildPolishPrompt(selection, instruction) }],

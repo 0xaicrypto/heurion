@@ -119,7 +119,7 @@ export function loadAiConfigFromEnv(): AiProviderConfig {
   return {
     llmProvider: process.env.DEFAULT_LLM_PROVIDER || 'deepseek',
     deepseekApiKey: process.env.DEEPSEEK_API_KEY,
-    deepseekChatModel: process.env.DEEPSEEK_CHAT_MODEL || 'deepseek-chat',
+    deepseekChatModel: process.env.DEEPSEEK_CHAT_MODEL || 'deepseek-chat', // 保留:provider 元数据展示
     geminiApiKey: process.env.GEMINI_API_KEY,
     geminiVisionModel: process.env.GEMINI_VISION_MODEL || 'gemini-2.0-flash',
     embeddingProvider: (process.env.EMBEDDING_PROVIDER as any) || 'local',

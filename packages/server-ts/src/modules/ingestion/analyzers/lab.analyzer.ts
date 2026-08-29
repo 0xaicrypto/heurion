@@ -1,5 +1,6 @@
+import { resolveTierModel } from '../../../common/llm-gateway.js'
 import { createAiProvider } from '../../../common/ai/index.js'
-import { DEEPSEEK_CHAT_MODEL } from '../../../common/llm.js'
+import {} from '../../../common/llm.js'
 import type { IngestionAnalyzer, IngestionJob, IngestionResult } from '../ingestion.service.js'
 
 const aiProvider = createAiProvider()
@@ -42,7 +43,7 @@ JSON:`
     const chatResult = await aiProvider.chat(
       [{ role: 'user', content: prompt }],
       {
-        model: DEEPSEEK_CHAT_MODEL,
+        model: resolveTierModel('fast'),
         maxTokens: 2048,
         telemetryContext: {
           userId: job.userId,

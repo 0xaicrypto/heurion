@@ -1,9 +1,10 @@
+import { resolveTierModel } from '../../common/llm-gateway.js'
 /**
  * #362: cover letter generation + journal format templates.
  * LLM draft is always a starting point — the doctor edits and owns the
  * final version (issue requirement).
  */
-import { deepseekChat, getApiKey , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { deepseekChat, getApiKey} from '../../common/llm.js'
 
 export async function generateCoverLetter(input: {
   title: string
@@ -38,7 +39,7 @@ Return ONLY the letter text (no preamble).`
 
   const apiKey = getApiKey()
   const result = await deepseekChat([{ role: 'user', content: prompt }], apiKey, {
-    model: DEEPSEEK_CHAT_MODEL,
+    model: resolveTierModel('fast'),
     maxTokens: 1200,
     telemetryContext: { userId: 'submission', workspaceId: 'submission', action: 'submission.cover_letter' },
   })

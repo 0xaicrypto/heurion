@@ -1,3 +1,4 @@
+import { resolveTierModel } from '../../common/llm-gateway.js'
 /**
  * #747 — File post-upload pipeline: a single job state machine replacing the
  * three fire-and-forget async paths that previously lived in finalizeUpload
@@ -21,7 +22,7 @@ import prisma from '../../common/prisma.js'
 import { makeLogger } from '../../common/logger.js'
 import { getUserContext } from '../chat/user-context.js'
 import { extractDocumentText } from '../../lib/document-extractor.js'
-import { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { deepseekChat, getApiKey} from '../../common/llm.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 import { factExtractionPrompt } from '../../memory/prompts.js'
 import { EmbeddingService } from '../../memory/embedding/embedding.service.js'
@@ -226,7 +227,7 @@ async function runPropose(job: PipelineRow, ctx: ReturnType<typeof getUserContex
         [{ role: 'user', content: prompt }],
         apiKey,
         {
-          model: DEEPSEEK_CHAT_MODEL,
+          model: resolveTierModel('fast'),
           maxTokens: 2048,
           telemetryContext: { userId: job.userId, workspaceId: job.userId, action: 'file.extract_facts' },
         },

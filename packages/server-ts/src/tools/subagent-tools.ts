@@ -1,3 +1,4 @@
+import { resolveTierModel } from '../common/llm-gateway.js'
 import { BaseTool, ToolResult } from './base-tool.js'
 import type { ToolContext } from './tool-registry.js'
 
@@ -36,7 +37,7 @@ Provide your response.`
       const result = await deepseekChat(
         [{ role: 'user', content: prompt }],
         getApiKey(),
-        { model: (await import('../common/llm.js')).DEEPSEEK_CHAT_MODEL, maxTokens: 2048, telemetryContext: { userId: this.ctx.userId, workspaceId: this.ctx.userId, action: 'tool.delegate' } },
+        { model: resolveTierModel('fast'), maxTokens: 2048, telemetryContext: { userId: this.ctx.userId, workspaceId: this.ctx.userId, action: 'tool.delegate' } },
       )
       return { success: true, output: result }
     } catch (err: any) {

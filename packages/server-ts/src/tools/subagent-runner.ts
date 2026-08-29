@@ -1,3 +1,4 @@
+import { resolveTierModel } from '../common/llm-gateway.js'
 /**
  * #288: SubAgentRunner — a constrained, read-only sub-agent loop.
  * Synchronous strategy A: run(task) → { summary, cost, turns }. The sub
@@ -5,7 +6,7 @@
  * that is forced onto patient-scoped tools, a turn cap and an output cap.
  * The result is a structured summary the main agent folds into its answer.
  */
-import { deepseekChat, getApiKey, DEEPSEEK_CHAT_MODEL } from '../common/llm.js'
+import { deepseekChat, getApiKey} from '../common/llm.js'
 import { ToolRegistry, type ToolContext } from './tool-registry.js'
 
 export interface SubAgentInput {
@@ -67,7 +68,7 @@ Rules:
 
   for (let turn = 0; turn < maxTurns; turn++) {
     const result = await deepseekChat(messages, getApiKey(), {
-      model: DEEPSEEK_CHAT_MODEL,
+      model: resolveTierModel('fast'),
       maxTokens: 1200,
       telemetryContext: { userId: ctx.userId, workspaceId: ctx.userId, action: 'subagent.turn' },
     })

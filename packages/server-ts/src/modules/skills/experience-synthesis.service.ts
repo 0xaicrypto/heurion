@@ -1,3 +1,4 @@
+import { resolveTierModel } from '../../common/llm-gateway.js'
 /**
  * #24 — Experience Synthesis Worker: distill reusable clinical experience
  * candidates from MULTIPLE confirmed cases (memory-graph facts), in
@@ -12,7 +13,7 @@
  */
 import prisma from '../../common/prisma.js'
 import { getUserContext } from '../chat/user-context.js'
-import { getApiKey, deepseekChat, DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { getApiKey, deepseekChat} from '../../common/llm.js'
 import type { LlmTelemetryContext } from '../../common/llm.js'
 
 export interface ExperienceCandidate {
@@ -62,7 +63,7 @@ async function synthesizeGroup(
       { role: 'user', content: `主题分类：${category}\n已确认事实（${facts.length} 条）：\n${factBlock.slice(0, 6000)}` },
     ],
     getApiKey(),
-    { model: DEEPSEEK_CHAT_MODEL, maxTokens: 1200, telemetryContext },
+    { model: resolveTierModel('fast'), maxTokens: 1200, telemetryContext },
   )
   const candidate = parseCandidate(raw)
   if (!candidate) return null

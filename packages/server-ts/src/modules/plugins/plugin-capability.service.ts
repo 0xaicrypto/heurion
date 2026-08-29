@@ -1,4 +1,5 @@
-import { deepseekChat, getApiKey as getLlmApiKey, type LlmTelemetryContext , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { resolveTierModel } from '../../common/llm-gateway.js'
+import { deepseekChat, getApiKey as getLlmApiKey, type LlmTelemetryContext} from '../../common/llm.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 import { listInstalledPlugins } from './plugin-installation.service.js'
 import { getCatalogById, type PluginManifest, type PluginTool } from './plugin-catalog.service.js'
@@ -168,7 +169,7 @@ async function buildRenderPayload(
 
   const call = async (p: string): Promise<unknown> => {
     const raw = await deepseekChat([{ role: 'user', content: p }], apiKey, {
-      model: DEEPSEEK_CHAT_MODEL,
+      model: resolveTierModel('fast'),
       telemetryContext: input.telemetryContext,
     })
     return parseLlmJson(raw)
@@ -328,7 +329,7 @@ async function buildPayloadWithLlm(
   const prompt = `${patientBlock}${historyBlock}\n\nUser request: "${input.text}"\n\nYou are preparing arguments for the "${manifest.plugin.name}" plugin tool "${tool.name}".\nReturn ONLY a JSON object that conforms to this schema:\n${schemaJson}${shapeHint ? `\n\n${shapeHint}` : ''}\n\nBase the arguments on the conversation history and patient context above when available; if the request does not provide enough detail, use clinically plausible placeholders. Do not include markdown or explanation.\n\nJSON object:`
 
   const raw = await deepseekChat([{ role: 'user', content: prompt }], apiKey, {
-    model: DEEPSEEK_CHAT_MODEL,
+    model: resolveTierModel('fast'),
     maxTokens: 2048,
     telemetryContext: input.telemetryContext,
   })

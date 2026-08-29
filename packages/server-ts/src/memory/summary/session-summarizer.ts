@@ -1,3 +1,4 @@
+import { resolveTierModel } from '../../common/llm-gateway.js'
 import type { EpisodesStore } from '../../evolution/stores'
 import { makeLogger } from '../../common/logger.js'
 
@@ -59,7 +60,7 @@ ${input.conversation.slice(0, 12000)}`
         [{ role: 'user', content: prompt }],
         apiKey,
         {
-          model: process.env.DEEPSEEK_CHAT_MODEL || 'deepseek-v4-flash',
+          model: resolveTierModel('fast'),
           maxTokens: 400,
           telemetryContext: { userId: this.userId, workspaceId: this.userId, action: 'memory.summarize' },
         },

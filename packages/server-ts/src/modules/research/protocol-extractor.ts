@@ -1,7 +1,8 @@
+import { resolveTierModel } from '../../common/llm-gateway.js'
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import { createAiProvider, type ChatOptions } from '../../common/ai/index.js'
-import { DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import {} from '../../common/llm.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 
 const aiProvider = createAiProvider()
@@ -74,7 +75,7 @@ ${protocolText.slice(0, 8000)}`
   const chatResult = await aiProvider.chat(
     [{ role: 'user', content: prompt }],
     {
-      model: DEEPSEEK_CHAT_MODEL,
+      model: resolveTierModel('fast'),
       maxTokens: 2048,
       telemetryContext: options.telemetryContext,
     },

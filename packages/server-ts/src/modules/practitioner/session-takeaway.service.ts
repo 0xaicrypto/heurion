@@ -1,5 +1,6 @@
+import { resolveTierModel } from '../../common/llm-gateway.js'
 import prisma from '../../common/prisma.js'
-import { getApiKey, deepseekChat , DEEPSEEK_CHAT_MODEL } from '../../common/llm.js'
+import { getApiKey, deepseekChat} from '../../common/llm.js'
 
 export interface TakeawayInput {
   userId: string
@@ -34,7 +35,7 @@ export async function extractTakeaways(input: TakeawayInput): Promise<Takeaway[]
     const raw = await deepseekChat(
       [{ role: 'system', content: TAKEAWAY_SYSTEM }, { role: 'user', content: conversationText }],
       apiKey,
-      { model: DEEPSEEK_CHAT_MODEL, maxTokens: 1024, temperature: 0.3 },
+      { model: resolveTierModel('fast'), maxTokens: 1024, temperature: 0.3 },
     )
     // 边界审计（#253）: a non-JSON LLM reply must degrade to no takeaways,
     // never a 500.

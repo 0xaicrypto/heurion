@@ -1,3 +1,4 @@
+import { resolveTierModel } from '../../common/llm-gateway.js'
 import type { EventLog } from '../../core/event-log.js'
 import type { MemoryGraphGateway } from '../../memory/memory-gateway.js'
 import { extractClinicalEntities, type ClinicalEntity } from './clinical-extractor.service.js'
@@ -32,7 +33,7 @@ export class ChatIngester {
       eventType: 'ingestion_llm_response',
       content: `Extracted ${result.entities.length} entities from chat`,
       metadata: {
-        model: (await import('../../common/llm.js')).DEEPSEEK_CHAT_MODEL,
+        model: resolveTierModel('fast'),
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         latencyMs: result.latencyMs,
