@@ -1,5 +1,5 @@
 import { createExecutionPlaneService, type ExecutionJobStatus } from '../execution/execution-plane.service.js'
-import { buildPayload, matchIntent, type PayloadBuildInput } from './plugin-capability.service.js'
+import { buildPayload, hasActivePlugins, matchIntent, resolveRenderJobType, type PayloadBuildInput } from './plugin-capability.service.js'
 import { buildInputSummary, recordPluginInvocation } from './plugin-audit-log.service.js'
 import type { TurnIntent } from '../chat/turn-intent.js'
 
@@ -77,6 +77,16 @@ export async function handlePluginChatRequest(options: PluginChatHandlerOptions)
     return { text: '', fallback: true }
   }
   if (!match) {
+    if (await hasActivePlugins(userId)) {
+      // Generate was adjudicated upstream (with history context) but no
+      // trigger pattern hits THIS turn's text — the classic case is a bare
+      // confirmation (是的/开始) of a conversational offer. The plugins are
+      // installed; an install hint here loops forever. Fall back to the
+      // normal conversation pipeline (same path as 'edit-or-discuss'), where
+      // the model can answer in chat or ask which format to render.
+      send({ type: 'thought', text: '已安装的插件没有匹配到本次请求的触发词，转入常规对话处理。' })
+      return { text: '', fallback: true }
+    }
     // #451: the hard-coded sidecar path is gone — all rendering goes through
     // installable plugins. Tell the user what to do instead of silently
     // falling back to an uninstallable built-in.
@@ -96,7 +106,9 @@ export async function handlePluginChatRequest(options: PluginChatHandlerOptions)
     telemetryContext,
   })
 
-  const jobType = `sidecar.${match.pluginId}.${match.toolName}`
+  // #766: worker 只注册契约 render job type（sidecar.render_plot…）—
+  // 此前的 `sidecar.<pluginId>.<toolName>` 命名会命中 Unknown job type。
+  const jobType = resolveRenderJobType(match.pluginId, match.toolName)
   send({ type: 'job_enqueued', plugin_id: match.pluginId, tool: match.toolName, job_type: jobType })
 
   const job = await executionService.enqueue({

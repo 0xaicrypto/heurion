@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { Editor } from '@tiptap/react';
-import { ArrowLeft, Check, Download, Eye, FilePlus, FileText, History, MessageSquare, Paperclip, RotateCcw, ShieldAlert, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, Check, Download, Eye, FilePlus, FileText, History, MessageSquare, Paperclip, Pencil, Presentation, RotateCcw, ShieldAlert, Sparkles, X } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
@@ -19,11 +19,15 @@ import { api, ApiError } from '@/lib/api';
 import { mapWireMessages } from '@/lib/message-map';
 import { cn } from '@/lib/utils';
 import { markdownToHtml } from '@/lib/doc-convert';
+import { toSlides, type Slide } from '@/lib/deck';
+import type { DeckWire } from '@/lib/types';
 
 interface DocDetail {
   id: string;
   title: string;
   body: string;
+  /** #773: deck 资产（presentationContent JSON，可空）。 */
+  deck?: unknown;
   created_at: string;
   updated_at: string;
 }
@@ -150,6 +154,13 @@ export function WritingEditorPage() {
   // #fix: 最近一次已保存的正文 — 发送 chat 前对比,内容有变化才先保存,
   // 保证服务端注入的上下文与用户编辑框看到的内容一致(否则模型基于旧
   // 内容编辑会覆盖用户的本地修改)。
+  // #773: deck 资产状态 — lastSavedDeck 跟踪服务端已保存版本（dirty 判定），
+  // appliedDocDeck 跟踪 AI 写回已应用版本（doc_updated.deck 幂等）。
+  const [deckAsset, setDeckAsset] = useState<DeckWire | null>(null);
+  const lastSavedDeck = useRef<string>('');
+  const appliedDocDeck = useRef<string>('');
+  const deckJson = useMemo(() => (deckAsset ? JSON.stringify(deckAsset) : ''), [deckAsset]);
+
   const lastSavedBody = useRef<string | null>(null);
   useEffect(() => {
     if (lastSavedBody.current === null && doc) lastSavedBody.current = doc.body;
@@ -163,16 +174,19 @@ export function WritingEditorPage() {
 
   const markDirty = useCallback((nextBody: string, nextTitle: string) => {
     if (!docId) return;
-    const nextDirty = nextBody !== (lastSavedBody.current ?? '') || nextTitle !== (doc?.title ?? '');
+    // #773: deck 变更同样计入 dirty（deckJson 由 useMemo 派生，与 lastSavedDeck 比较）。
+    const nextDirty = nextBody !== (lastSavedBody.current ?? '')
+      || nextTitle !== (doc?.title ?? '')
+      || deckJson !== lastSavedDeck.current;
     dirtyRef.current = nextDirty;
     setDirty(nextDirty);
-  }, [docId, doc?.title]);
+  }, [docId, doc?.title, deckJson]);
 
   useEffect(() => {
     if (!docId || doc === null) return;
     markDirty(bodyRef.current, title);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [body, title, docId]);
+  }, [body, title, deckJson, docId]);
 
   useEffect(() => {
     if (!docId || doc === null || !dirty) return;
@@ -240,6 +254,25 @@ export function WritingEditorPage() {
     setChatSelection('');
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定,避免抖动
   }, [chatSession?.lastDocBody, docId, diffReview]);
+
+  // #773: AI deck 写回（edit_deck / organize 落 deck）— 页级小改直接应用
+  // + 服务端快照回滚（deck 页是天然结构化单元，整篇 markdown diff 反而难读）。
+  // 并发守卫：本地有未保存 deck 编辑时提示刷新，不直接覆盖。
+  useEffect(() => {
+    if (!docId || !chatSession?.lastDocDeck) return;
+    const deckKey = JSON.stringify(chatSession.lastDocDeck);
+    if (appliedDocDeck.current === deckKey) return;
+    appliedDocDeck.current = deckKey;
+    // 服务端已持久化该 deck — 同步"已保存"基线，本地无未保存编辑时直接换源。
+    if (deckJson && deckJson !== lastSavedDeck.current && deckJson !== deckKey) {
+      setAiEditNotice(t('writing.deckConflict', 'AI 已更新 deck，但你有未保存的 deck 编辑 — 请先 Save，再刷新页面获取 AI 版本'));
+      setTimeout(() => setAiEditNotice(''), 6000);
+      return;
+    }
+    lastSavedDeck.current = deckKey;
+    setDeckAsset(chatSession.lastDocDeck);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定
+  }, [chatSession?.lastDocDeck, docId, deckJson]);
 
   /** 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。 */
   const handleDiffResolve = useCallback((result: { md: string; accepted: number; rejected: number; cancelled: boolean }) => {
@@ -330,6 +363,81 @@ export function WritingEditorPage() {
 
   const [preview, setPreview] = useState(false);
 
+  // #770: 画布视图模式 — body 仍是唯一数据源，幻灯片视图 = toSlides(body) 投影；
+  // AI 写回（doc_updated → setBody）与文档视图编辑自动同步到卡片，零额外状态。
+  // #773: Doc.deck 存在时 deck 视图切换为 deck 资产来源（可编辑，独立于 body）。
+  const [viewMode, setViewMode] = useState<'document' | 'deck'>('document');
+  const pendingDeckAnchorRef = useRef<string | null>(null);
+
+  // #770: 幻灯片卡片 = body 派生（useMemo），doc_updated / 手动编辑即时反映。
+  const deck = useMemo(() => toSlides(body), [body]);
+
+  // #770: 卡片「编辑」→ 切回文档视图并锚定对应 ## 段（复用编辑器实例定位）。
+  // DocEditor 重新挂载后编辑器实例才可用 — 短暂重试等挂载完成。
+  useEffect(() => {
+    if (viewMode !== 'document') return;
+    const anchor = pendingDeckAnchorRef.current;
+    if (!anchor) return;
+    const timer = setTimeout(() => {
+      const editor = polishEditorRef.current;
+      if (!editor) return;
+      pendingDeckAnchorRef.current = null;
+      let target: number | null = null;
+      editor.state.doc.descendants((node, pos) => {
+        if (target !== null) return false;
+        if (node.type.name === 'heading' && node.textContent.trim() === anchor.trim()) {
+          target = pos;
+          return false;
+        }
+        return true;
+      });
+      if (target !== null) {
+        editor.commands.setTextSelection((target as number) + 1);
+        editor.commands.scrollIntoView();
+        editor.commands.focus();
+      }
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [viewMode]);
+
+  const handleDeckCardEdit = (slide: Slide) => {
+    pendingDeckAnchorRef.current = slide.headingRaw ? slide.title : '';
+    setPreview(false);
+    setViewMode('document');
+  };
+
+  // ── #773: deck 资产卡片编辑（写 Doc.deck，独立于 body）──────────
+  const updateDeckSlide = (index: number, next: { title?: string; bullets?: string[] }) => {
+    setDeckAsset((prev) => {
+      if (!prev) return prev;
+      const slides = prev.slides.map((s, i) => {
+        if (i !== index) return s;
+        const content = next.bullets !== undefined
+          ? next.bullets.map((b) => ({ type: 'paragraph', text: b, style: 'bullet' })).filter((b) => b.text.trim())
+          : s.content;
+        return { ...s, title: next.title !== undefined ? next.title : s.title, content };
+      });
+      return { ...prev, slides };
+    });
+  };
+  const deleteDeckSlide = (index: number) => {
+    setDeckAsset((prev) => {
+      if (!prev || prev.slides.length <= 1) return prev;
+      return { ...prev, slides: prev.slides.filter((_, i) => i !== index) };
+    });
+  };
+  const addDeckSlide = () => {
+    setDeckAsset((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        slides: [...prev.slides, { title: t('writing.deckNewSlide', '新页'), content: [{ type: 'paragraph', text: t('writing.deckNewBullet', '要点'), style: 'bullet' }] }],
+      };
+    });
+  };
+  const slideBullets = (slide: DeckWire['slides'][number]): string[] =>
+    slide.content.filter((c) => typeof c.text === 'string').map((c) => c.text as string);
+
   const polishEditorRef = useRef<Editor | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatFileRef = useRef<HTMLInputElement>(null);
@@ -410,6 +518,11 @@ export function WritingEditorPage() {
         setDoc(d);
         setTitle(d.title);
         setBody(d.body);
+        // #773: deck 资产装载（服务端返回已解析对象）。
+        const deck = (d.deck && typeof d.deck === 'object' ? d.deck : null) as DeckWire | null;
+        setDeckAsset(deck);
+        lastSavedDeck.current = deck ? JSON.stringify(deck) : '';
+        appliedDocDeck.current = lastSavedDeck.current;
         setStudyId(d.study_id || '');
         setStudyName(d.study_name || '');
       })
@@ -463,8 +576,10 @@ export function WritingEditorPage() {
     setSaving(true);
     setError(null);
     try {
-      const updated = await api.updateDoc(docId, { title, body });
+      // #773: deck 一并保存（deckAsset 为 null 时不触碰服务端 deck）。
+      const updated = await api.updateDoc(docId, { title, body, ...(deckAsset ? { deck: deckAsset } : {}) });
       lastSavedBody.current = updated.body ?? body;
+      lastSavedDeck.current = deckAsset ? JSON.stringify(deckAsset) : lastSavedDeck.current;
       dirtyRef.current = false;
       setDirty(false);
       if (updated.unchanged) {
@@ -693,10 +808,11 @@ export function WritingEditorPage() {
     void runPolish(preset?.instruction ?? '', action);
   };
 
-  const handleSendChat = async () => {
-    if (!docId || !chatInput.trim()) return;
-    const text = chatInput.trim();
-    setChatInput('');
+  // #770: 统一发送管道（先保存编辑框内容再走 doc- 工具循环）—
+  // 幻灯片视图的一键指令（AI 拆页 / AI 导出 PPT）与 chat 输入框共用；
+  // 不新建旁路 API，保持"AI 在工具循环里决策"单管道。
+  const sendChatText = async (text: string) => {
+    if (!docId || !text.trim()) return;
     // §15.4: the writing chat runs through the unified pipeline (session
     // doc-{docId}); the doc context is injected via the docs/current source.
     // #fix: 上传的 doc/pdf 必须随消息传给服务端 — 此前只传 text,附件
@@ -742,6 +858,13 @@ export function WritingEditorPage() {
     });
   };
 
+  const handleSendChat = async () => {
+    if (!docId || !chatInput.trim()) return;
+    const text = chatInput.trim();
+    setChatInput('');
+    await sendChatText(text);
+  };
+
   const handleChatPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -764,6 +887,8 @@ export function WritingEditorPage() {
             api.logAttachments(chatSessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
           }
           if (docId) api.addDocReference(docId, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
+          // #777: pptx 上传即后台解析 — 轮询刷新 deck。
+          if (/\.pptx$/i.test(result.name)) schedulePptxReload();
         } catch (err) {
           // #fix: 大文件/上传失败此前静默吞掉,用户以为传上了 — 现在明示。
           setError(err instanceof ApiError ? err.messageText : String(err));
@@ -789,6 +914,8 @@ export function WritingEditorPage() {
         api.logAttachments(chatSessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
       }
       if (docId) api.addDocReference(docId, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
+      // #777: pptx 上传即后台解析 — 轮询刷新 deck。
+      if (/\.pptx$/i.test(result.name)) schedulePptxReload();
     } catch (err) {
       // #fix: 大文件/上传失败此前静默吞掉 — 现在明示。
       setError(err instanceof ApiError ? err.messageText : String(err));
@@ -826,10 +953,36 @@ export function WritingEditorPage() {
     setUploadState(null);
   };
 
+  /** #777: pptx 上传后后台解析（deck 落点）— 轮询刷新；dirty 时不覆盖本地编辑。 */
+  const schedulePptxReload = () => {
+    if (!docId) return;
+    for (const delay of [3000, 7000, 13000]) {
+      setTimeout(() => {
+        api.getDoc(docId).then((d) => {
+          if (dirtyRef.current) return;
+          if (d.body && !bodyRef.current.trim()) {
+            setBody(d.body);
+            lastSavedBody.current = d.body;
+            setDoc((prev) => (prev ? { ...prev, body: d.body, updated_at: d.updated_at } : prev));
+          }
+          const deck = (d.deck && typeof d.deck === 'object' ? d.deck : null) as DeckWire | null;
+          if (deck) {
+            const key = JSON.stringify(deck);
+            if (key !== lastSavedDeck.current) {
+              lastSavedDeck.current = key;
+              appliedDocDeck.current = key;
+              setDeckAsset(deck);
+              setViewMode('deck');
+            }
+          }
+        }).catch(() => {});
+      }, delay);
+    }
+  };
+
   const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
-    if (!f || !docId) return;
-    try {
+    if (!f || !docId) return;    try {
       // #fix: 上传按钮的附件必须同时挂到聊天消息(attachments),否则首条
       // 消息只带"参考材料里的文件名",LLM 读不到正文。
       const result = await uploadWithProgress(f);
@@ -844,6 +997,12 @@ export function WritingEditorPage() {
           content: f.name,
           label: f.name,
         });
+      }
+      // #777: pptx 上传即后台解析（deck/正文双落点）— 轮询刷新。
+      if (/\.pptx$/i.test(f.name)) {
+        schedulePptxReload();
+        setAiEditNotice(t('writing.pptxParsing', 'PPT 后台解析中 — 稍后 deck 视图将呈现每一页'));
+        setTimeout(() => setAiEditNotice(''), 6000);
       }
       void loadReferences();
       if ((refResult as any)?.imported && !bodyRef.current.trim()) {
@@ -1000,6 +1159,25 @@ export function WritingEditorPage() {
           >
             <Eye size={14} className="mr-1" /> {preview ? 'Edit' : 'Preview'}
           </Button>
+          {/* #770: 文档 | 幻灯片视图切换 — deck 视图是 body 的只读投影。 */}
+          <div className="ml-2 flex items-center overflow-hidden rounded-md border border-border" role="tablist" aria-label={t('writing.viewMode', '视图模式')}>
+            <button
+              role="tab"
+              aria-selected={viewMode === 'document'}
+              onClick={() => { setPreview(false); setViewMode('document'); }}
+              className={cn('flex items-center gap-1 px-2.5 py-1.5 text-xs transition-colors', viewMode === 'document' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-surface-elevated')}
+            >
+              <FileText size={13} className="mr-0.5" /> {t('writing.docView', '文档')}
+            </button>
+            <button
+              role="tab"
+              aria-selected={viewMode === 'deck'}
+              onClick={() => setViewMode('deck')}
+              className={cn('flex items-center gap-1 px-2.5 py-1.5 text-xs transition-colors', viewMode === 'deck' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-surface-elevated')}
+            >
+              <Presentation size={13} className="mr-0.5" /> {t('writing.deckView', '幻灯片')} · {deck.slides.length}
+            </button>
+          </div>
           {aiEditNotice && (
             <span className="ml-3 rounded-full border border-success/30 bg-success/5 px-2 py-0.5 text-xs text-success">
               {aiEditNotice}
@@ -1247,6 +1425,128 @@ export function WritingEditorPage() {
                 {preview ? (
                   <div className="min-h-[300px] rounded-lg border border-border bg-surface-elevated p-4">
                     <MarkdownRenderer content={body} />
+                  </div>
+                ) : viewMode === 'deck' ? (
+                  /* #770: 幻灯片视图 — 16:9 卡片流。
+                     #773: 双来源 — Doc.deck 存在时为可编辑 deck 卡片（写
+                     Doc.deck，不动正文）；否则回落 body 的 markdown 投影
+                     （只读 + 锚点跳回文档编辑）。 */
+                  <div className="space-y-3">
+                    {deckAsset ? (
+                      <div className="flex items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent/5 px-4 py-2">
+                        <span className="text-xs text-accent">
+                          {t('writing.deckAssetBadge', 'AI 编排 deck 资产 — 卡片内可直接编辑（改标题/调要点/删页），保存不会改动文章原文。')}
+                        </span>
+                        <Button size="sm" variant="secondary" onClick={addDeckSlide}>
+                          <FilePlus size={13} className="mr-1" /> {t('writing.deckAddSlide', '添加一页')}
+                        </Button>
+                      </div>
+                    ) : deck.slides.length <= 1 && body.trim() && (
+                      <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-surface-elevated px-4 py-2.5">
+                        <span className="text-xs text-text-secondary">
+                          {t('writing.deckSinglePageHint', '文档还没有 ## 分页结构，导出 PPT 只会有一页。可让 AI 按内容语义拆页。')}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => void sendChatText(t('writing.aiSplitPrompt', '请把当前稿件按内容语义拆成多页（每页一个 ## 二级标题），为生成 PPT 做准备。'))}
+                        >
+                          <Sparkles size={13} className="mr-1" /> {t('writing.aiSplitPages', 'AI 帮我拆页')}
+                        </Button>
+                      </div>
+                    )}
+                    {deckAsset ? (
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        {deckAsset.slides.map((slide, i) => (
+                          <div key={i} className="flex aspect-video flex-col overflow-hidden rounded-lg border border-border bg-surface-elevated shadow-sm transition-shadow hover:shadow-md">
+                            <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
+                              <span className="shrink-0 text-[11px] font-semibold text-text-tertiary">{i + 1}.</span>
+                              <input
+                                value={slide.title}
+                                onChange={(e) => updateDeckSlide(i, { title: e.target.value })}
+                                className="min-w-0 flex-1 rounded bg-transparent px-1 py-0.5 text-xs font-semibold text-text-primary outline-none focus:bg-surface focus:ring-1 focus:ring-ring"
+                              />
+                              <button
+                                onClick={() => deleteDeckSlide(i)}
+                                title={t('writing.deckDeleteSlide', '删除此页')}
+                                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface hover:text-error"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                            <div className="flex flex-1 flex-col gap-1 overflow-hidden px-3 py-2 text-xs leading-relaxed text-text-secondary">
+                              {slideBullets(slide).map((b, j) => (
+                                <div key={j} className="flex min-w-0 items-start gap-1.5">
+                                  <span className="mt-[6px] h-1 w-1 shrink-0 rounded-full bg-text-tertiary" />
+                                  <input
+                                    value={b}
+                                    onChange={(e) => {
+                                      const bullets = slideBullets(slide).map((x, k) => (k === j ? e.target.value : x));
+                                      updateDeckSlide(i, { bullets });
+                                    }}
+                                    className="min-w-0 flex-1 rounded bg-transparent px-1 py-0.5 outline-none focus:bg-surface focus:ring-1 focus:ring-ring"
+                                  />
+                                </div>
+                              ))}
+                              <button
+                                onClick={() => updateDeckSlide(i, { bullets: [...slideBullets(slide), ''] })}
+                                className="self-start rounded px-1.5 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface hover:text-accent"
+                              >
+                                + {t('writing.deckAddBullet', '要点')}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      {deck.slides.map((slide, i) => (
+                        <div
+                          key={i}
+                          className="group relative flex aspect-video flex-col overflow-hidden rounded-lg border border-border bg-surface-elevated shadow-sm transition-shadow hover:shadow-md"
+                        >
+                          <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+                            <span className="truncate text-xs font-semibold text-text-primary">
+                              {i + 1}. {slide.title}
+                            </span>
+                            <button
+                              onClick={() => handleDeckCardEdit(slide)}
+                              title={t('writing.deckCardEdit', '跳回文档编辑此页')}
+                              className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-text-tertiary transition-opacity hover:bg-surface hover:text-accent group-hover:opacity-100 md:opacity-0"
+                            >
+                              <Pencil size={11} /> {t('writing.deckCardEdit', '编辑')}
+                            </button>
+                          </div>
+                          <div className="flex flex-1 flex-col gap-1.5 overflow-hidden px-3 py-2 text-xs leading-relaxed text-text-secondary">
+                            {slide.blocks.slice(0, 8).map((b, j) =>
+                              b.type === 'image' ? (
+                                <img key={j} src={b.url} alt={b.caption || ''} className="max-h-[55%] w-auto self-start rounded border border-border object-contain" />
+                              ) : b.type === 'bullet' ? (
+                                <div key={j} className="flex min-w-0 items-start gap-1.5">
+                                  <span className="mt-[6px] h-1 w-1 shrink-0 rounded-full bg-text-tertiary" />
+                                  <span className="line-clamp-2">{b.text}</span>
+                                </div>
+                              ) : (
+                                <p key={j} className="line-clamp-2">{b.text}</p>
+                              ),
+                            )}
+                            {slide.blocks.length > 8 && (
+                              <span className="text-[11px] text-text-tertiary">…{t('writing.deckMoreBlocks', '还有 {{n}} 段', { n: slide.blocks.length - 8 })}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      </div>
+                    )}
+                    {/* #770 设计更新 2：导出交互 = 预填 chat 消息发送，不新建旁路 API。
+                        #773: deck 资产存在时导出内容源 = Doc.deck（所见即所导）。 */}
+                    <div className="flex justify-end">
+                      <Button size="sm" onClick={() => void sendChatText(deckAsset
+                        ? t('writing.aiExportDeckPrompt', '请把当前 deck 导出为 PPT（使用现有 deck 内容，不要重新编排）。')
+                        : t('writing.aiExportPptPrompt', '请把当前稿件导出为 PPT。'))}>
+                        <Presentation size={13} className="mr-1" /> {t('writing.aiExportPpt', 'AI 导出 PPT')}
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">

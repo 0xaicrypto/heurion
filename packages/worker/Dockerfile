@@ -14,6 +14,11 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates \
+    # #771: 翻页预览 — LibreOffice（pptx/docx→PDF）+ poppler（PDF→PNG）。
+    # 缺失时 preview_file job 返回 PREVIEW_UNAVAILABLE，控制面优雅降级为仅下载。
+    libreoffice-impress libreoffice-writer poppler-utils \
+    # 中文幻灯片渲染字体（CJK 缺字会变成方块）。
+    fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/dist ./dist

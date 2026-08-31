@@ -6,7 +6,7 @@
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
-import { matchIntent, type IntentMatch } from '../../src/modules/plugins/plugin-capability.service.js'
+import { matchIntent, resolveRenderJobType, type IntentMatch } from '../../src/modules/plugins/plugin-capability.service.js'
 import type { TurnIntent } from '../../src/modules/chat/turn-intent.js'
 
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
@@ -85,5 +85,17 @@ describe('#579 matchIntent — generate 时确认插件可用性', () => {
     mockCatalog.mockResolvedValue(docxManifest)
     const r = await matchIntent('u1', intent({ payload: { rawText: '上次那份出院小结讲了什么' } }))
     expect(r).toBe('edit-or-discuss')
+  })
+})
+
+describe('#766 resolveRenderJobType', () => {
+  test('官方 renderer 映射为契约 job type（worker HANDLERS 键）', () => {
+    expect(resolveRenderJobType('heurion/plot', 'render_plot')).toBe('sidecar.render_plot')
+    expect(resolveRenderJobType('heurion/docx', 'generate_docx')).toBe('sidecar.generate_docx')
+    expect(resolveRenderJobType('heurion/pdf', 'convert_to_pdf')).toBe('sidecar.convert_to_pdf')
+  })
+
+  test('三方插件回退 namespaced 形式', () => {
+    expect(resolveRenderJobType('acme/custom', 'make')).toBe('sidecar.acme/custom.make')
   })
 })

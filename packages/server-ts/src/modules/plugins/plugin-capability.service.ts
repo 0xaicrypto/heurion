@@ -50,6 +50,17 @@ async function getActivePlugins(userId: string): Promise<PluginManifest[]> {
 }
 
 /**
+ * True when the user has at least one enabled installed plugin. Lets callers
+ * distinguish "nothing installed → install hint is the honest answer" from
+ * "installed but no trigger matched the bare text → fall back to conversation"
+ * (a bare confirmation like 是的/开始 carries no format keyword; telling the
+ * user to install plugins there loops forever — the plugins ARE installed).
+ */
+export async function hasActivePlugins(userId: string): Promise<boolean> {
+  return (await getActivePlugins(userId)).length > 0
+}
+
+/**
  * #557/#579 — intent adjudication happens upstream in decodeTurnIntent
  * (turn-intent.ts). This function's ONLY job is plugin availability: when the
  * turn ACTION is generate, confirm whether an installed tool trigger fires on
@@ -140,6 +151,17 @@ const RENDER_TOOL_TYPES: Record<string, string> = {
   'heurion/table.render_table': 'sidecar.render_table',
   'heurion/plot.render_plot': 'sidecar.render_plot',
   'heurion/pdf.convert_to_pdf': 'sidecar.convert_to_pdf',
+}
+
+/**
+ * #766: job type for the execution plane. The worker registers the contract
+ * render job types (sidecar.render_plot …) — the namespaced
+ * `sidecar.<pluginId>.<toolName>` form hits "Unknown job type". Official
+ * renderers map via RENDER_TOOL_TYPES; third-party plugins keep the legacy
+ * namespaced form (unknown to the worker either way).
+ */
+export function resolveRenderJobType(pluginId: string, toolName: string): string {
+  return RENDER_TOOL_TYPES[`${pluginId}.${toolName}`] || `sidecar.${pluginId}.${toolName}`
 }
 
 /**

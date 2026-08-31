@@ -6,6 +6,7 @@ import type { ChatMessage } from '@/stores/chat';
 import { StreamingLlmContent } from '@/components/LlmContent';
 import { ToolCalls } from '@/components/ToolCalls';
 import { StatusDot } from '@/components/ui/StatusDot';
+import { FilePreviewButton } from '@/components/chat/FilePreview';
 import { Button } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
@@ -30,6 +31,14 @@ function needsDaySeparator(prev?: ChatMessage, cur?: ChatMessage): boolean {
 function needsTimeGroupSeparator(prev?: ChatMessage, cur?: ChatMessage): boolean {
   if (!cur?.createdAt || !prev?.createdAt) return false;
   return cur.createdAt - prev.createdAt > TIME_GROUP_GAP_MS;
+}
+
+/** #771: pptx/docx 产物可预览（worker LibreOffice 转图）；其它类型仅下载。 */
+function isPreviewable(mimeType?: string, fileName?: string): boolean {
+  const PREVIEWABLE_MIME = ['presentationml.presentation', 'wordprocessingml.document'];
+  if (mimeType && PREVIEWABLE_MIME.some((m) => mimeType.includes(m))) return true;
+  if (fileName && /\.(pptx|docx)$/i.test(fileName)) return true;
+  return false;
 }
 
 export interface ChatMessagesProps {
@@ -281,6 +290,11 @@ export function ChatMessages({
                         <Download size={14} className="mr-1" />
                         {t('common.download', 'Download')}
                       </Button>
+                      {/* #771: 真实版式翻页预览（worker 转图）— pptx/docx 可用，
+                          未配置预览能力时点击提示降级。 */}
+                      {isPreviewable(m.download.mimeType, m.download.fileName) && (
+                        <FilePreviewButton fileId={m.download.fileId} fileName={m.download.fileName} />
+                      )}
                       {m.knowledgePayload && !kbAdded?.[m.id] && onKbCheckedChange && onAddToKnowledge && (
                         <>
                           <label className="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer select-none">

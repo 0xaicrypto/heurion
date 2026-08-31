@@ -221,9 +221,11 @@ export async function runToolCallLoop(params: {
 
         // #693: edit_document 输出含完整 body(豁免了 bound) — 注入给模型
         // 的内容只保留摘要,避免正文全文每轮循环膨胀上下文;doc_updated
-        // 推送在下方用原始 output 完整解析。
+        // 推送在下方用原始 output 完整解析。#765: insert_asset 同管道。
+        // #773: edit_deck 同管道(deck JSON 注入模型时只保留摘要)。
+        const DOC_WRITE_TOOLS = new Set(['edit_document', 'insert_asset', 'edit_deck'])
         let toolResultText = result.output || 'Success'
-        if (toolName === 'edit_document' && result.success) {
+        if (DOC_WRITE_TOOLS.has(toolName) && result.success) {
           try {
             const parsed = JSON.parse(toolResultText) as { summary?: string }
             toolResultText = `{ body: <updated>, summary: ${JSON.stringify(parsed.summary || '')} }`
@@ -245,14 +247,60 @@ export async function runToolCallLoop(params: {
             toolCallId: seq, success: true, outputTruncated: output.length > 500,
           })
           // §15.4: surface document write-backs to the writing canvas.
-          if (toolName === 'edit_document') {
+          // #765: insert_asset (表格) 写回与 edit_document 同管道。
+          if (DOC_WRITE_TOOLS.has(toolName)) {
             try {
-              const parsed = JSON.parse(output) as { body?: string; summary?: string }
+              // #773: deck 同帧到达(doc_updated.deck) — 前端一次刷新,
+              // 避免双事件乱序。SSE push 不截 deck 大小(#693 豁免同理)。
+              const parsed = JSON.parse(output) as { body?: string; summary?: string; deck?: unknown }
               if (typeof parsed.body === 'string') {
-                io.send({ type: 'doc_updated', body: parsed.body, summary: parsed.summary || '' })
+                io.send({
+                  type: 'doc_updated',
+                  body: parsed.body,
+                  summary: parsed.summary || '',
+                  ...(parsed.deck !== undefined ? { deck: parsed.deck } : {}),
+                })
               }
             } catch {
               // non-JSON output — nothing to surface
+            }
+            // #767: export 产物 — 聊天内下载卡片（chart-token 长期有效）。
+            // #776: knowledge_payload 平价迁移 — 旁路收编前插件管线在
+            // sidecar_file 里携带 knowledgePayload（产物进知识索引），
+            // 收编后 tool-loop 必须补齐同等形状，否则导出产物从知识库消失。
+            // 内容源 = 导出时的草稿正文（writeBlock 前的 body + 卡片行），
+            // 与"导出内容=草稿"语义一致；plot 产物是图片，不进知识索引。
+            if (toolName === 'insert_asset') {
+              try {
+                const parsed = JSON.parse(output) as {
+                  body?: string
+                  knowledge?: { title: string; content: string }
+                  file?: { fileId?: string; fileName?: string; mimeType?: string; url?: string }
+                }
+                if (parsed.file?.fileId && parsed.file.url) {
+                  const fileName = parsed.file.fileName || parsed.file.fileId
+                  io.send({
+                    type: 'sidecar_file',
+                    file_id: parsed.file.fileId,
+                    file_name: fileName,
+                    mime_type: parsed.file.mimeType || 'application/octet-stream',
+                    download_url: parsed.file.url,
+                    expires_in: 90 * 24 * 3600,
+                    ...(parsed.file.mimeType
+                      ? {
+                          knowledge_payload: parsed.knowledge
+                            ? { title: parsed.knowledge.title, content: parsed.knowledge.content }
+                            : {
+                                title: fileName,
+                                content: parsed.body?.trim() || `Generated document: ${fileName}`,
+                              },
+                        }
+                      : {}),
+                  })
+                }
+              } catch {
+                // non-JSON output — nothing to surface
+              }
             }
           }
           // #176: surface generated charts as images in the message.

@@ -121,4 +121,8 @@ export class FilesApi extends ApiCore {
     return this.fetch(`/api/v1/files/generated/${fileId}`, { method: 'DELETE' });
   }
 
+  /** #771: worker 端 LibreOffice 翻页预览 — 返回带 token 的逐页 PNG URL。 */
+  async previewFile(fileId: string): Promise<{ page_count: number; pages: Array<{ index: number; url: string }> }> {
+    return this.fetch('/api/v1/files/preview', { method: 'POST', body: JSON.stringify({ file_id: fileId }) });
+  }
 }

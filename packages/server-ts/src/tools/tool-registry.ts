@@ -5,6 +5,8 @@ import { DelegateTool, SpawnSubagentTool } from './subagent-tools.js'
 import { DeferToBackgroundTool } from './async-tools.js'
 import { OCRImageTool } from './ocr-tools.js'
 import { EditDocumentTool } from './edit-document-tool.js'
+import { InsertAssetTool } from './insert-asset-tool.js'
+import { EditDeckTool } from './edit-deck-tool.js'
 import { LoadSkillTool } from './skill-tools.js'
 import { RenderChartTool } from './render-chart-tool.js'
 import { SearchMedicalWebTool, FetchArticleSummaryTool, VisitMedicalSiteTool, ExtractFulltextTool } from './medical-web-tools.js'
@@ -19,6 +21,16 @@ import { GenerateImageTool } from './generate-image-tool.js'
 import type { MemoryService } from '../memory/memory.service.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores.js'
 import type { EventLog } from '../core/event-log.js'
+
+/**
+ * #766: execution-plane port (structural — tools stay decoupled from
+ * modules/). conversation-turn provides createExecutionPlaneService().
+ */
+export interface ToolExecutionPlane {
+  enqueue(job: { type: string; payload: Record<string, unknown>; tenant?: { userId?: string; workspaceId?: string } }): Promise<{ job_id: string; status: string }>
+  getStatus(jobId: string): Promise<{ job_id: string; status: string; error?: unknown; result?: Record<string, unknown> } | null>
+  fetchFile?(fileId: string): Promise<Buffer | null>
+}
 
 export interface ToolContext {
   userId: string
@@ -36,6 +48,12 @@ export interface ToolContext {
    * Absent port ⇒ gated tools are treated as unavailable.
    */
   isPluginInstalled?: (pluginId: string) => Promise<boolean>
+  /**
+   * #766: execution-plane port for insert_asset plot rendering
+   * (enqueue → poll → fetchFile → chart-token 落盘). Absent ⇒ plot branch
+   * degrades to a readable error.
+   */
+  executionPlane?: ToolExecutionPlane
   /**
    * #666: plugin config port (browser-agent worker url/token/approval) —
    * same layering rationale; absent port ⇒ defaults are used.
@@ -87,7 +105,11 @@ export class ToolRegistry {
     this.register(new DeferToBackgroundTool(ctx))
     this.register(new OCRImageTool(ctx))
     this.register(new EditDocumentTool(ctx))
-    // #454-followup: plugin-gated renderers — registered so execute() can
+    // #765: 写作画布结构化资产工具（表格）— 与 edit_document 同管道
+    // （快照 + doc_updated），仅 doc- 会话暴露。
+    this.register(new InsertAssetTool(ctx))
+    // #773: deck 资产 AI 编辑工具 — 仅 doc- 会话暴露（与 edit_document 同门控）。
+    this.register(new EditDeckTool(ctx))    // #454-followup: plugin-gated renderers — registered so execute() can
     // give a clear error, but excluded from definitions unless installed.
     this.register(new RenderChartTool(ctx))
     this.register(new LoadSkillTool(ctx))
@@ -143,6 +165,8 @@ export class ToolRegistry {
     const out: ToolDefinition[] = []
     for (const tool of this.tools.values()) {
       if (tool.name === 'edit_document' && !isDocSession) continue
+      if (tool.name === 'insert_asset' && !isDocSession) continue
+      if (tool.name === 'edit_deck' && !isDocSession) continue
       if (PLUGIN_GATED_TOOLS[tool.name] && !(await this.isToolAvailable(tool.name))) continue
       if (omit?.has(tool.name)) continue
       out.push(tool.definition)
@@ -213,7 +237,9 @@ export class ToolRegistry {
     // #693: edit_document 豁免 — 其 output 是承载完整 body 的结构化 JSON,
     // 截断会破坏 doc_updated SSE 的 JSON 解析(大文档写回后画布不更新)。
     // 防上下文膨胀改由 tool-loop 注入时截断(tool-loop.ts 的 messages push)。
-    if (result.success && result.output && name !== 'edit_document') {
+    // #765: insert_asset 同理 — 表格写回同样携带完整 body。
+    // #773: edit_deck 同理 — deck JSON 随输出返回（doc_updated SSE 需要）。
+    if (result.success && result.output && name !== 'edit_document' && name !== 'insert_asset' && name !== 'edit_deck') {
       try {
         const { boundToolOutput } = await import('./tool-output-store.js')
         const { bounded, truncated, filePath } = boundToolOutput(result.output, { userId: this.ctx.userId })

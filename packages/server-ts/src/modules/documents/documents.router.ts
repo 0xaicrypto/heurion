@@ -2,11 +2,20 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
+import { SCHEMA_VERSION } from '@heurion/contracts'
 import { renderDocxBuffer, renderPdfBuffer, isExportFormat } from './markdown-export.js'
 import { polishSelection, writeMethodsSection, writePaperBackground, MAX_POLISH_CHARS } from './document-writing.service.js'
 // resolvePolishModel 由 service 导出(fallback 时动态 import)
+// #777: pptx 解析导入 — deck/文章双落点（后台执行）。
+import { extractPptxContentFromUpload, pptxSlidesToDeck } from '../../lib/pptx-extractor.js'
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
+
+/** #773: Doc.deck 存 JSON 字符串 — 线上返回解析后的对象（损坏容错为 null）。 */
+function parseDeck(deck: unknown): unknown {
+  if (typeof deck !== 'string' || !deck) return null
+  try { return JSON.parse(deck) } catch { return null }
+}
 
 export async function documentsRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
@@ -58,12 +67,12 @@ export async function documentsRouter(app: FastifyInstance) {
       const st = await (prisma as any).researchStudy.findFirst({ where: { id: doc.studyId } })
       study_name = st?.name || null
     }
-    return { id: doc.id, title: doc.title, body: doc.body, created_at: doc.createdAt, updated_at: doc.updatedAt, study_id: doc.studyId || null, study_name }
+    return { id: doc.id, title: doc.title, body: doc.body, deck: parseDeck(doc.deck), created_at: doc.createdAt, updated_at: doc.updatedAt, study_id: doc.studyId || null, study_name }
   })
 
   app.put('/api/v1/docs/:docId', async (request, reply) => {
     const { docId } = request.params as any
-    const { title, body } = request.body as any
+    const { title, body, deck } = request.body as any
     const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId: request.user!.userId } })
     if (!existing) return reply.status(404).send({ error: 'Document not found' })
 
@@ -71,31 +80,45 @@ export async function documentsRouter(app: FastifyInstance) {
     const data: any = { updatedAt: now }
     if (title !== undefined) data.title = title
 
-    // 查重 + 版本:body 未变化时不创建快照、不刷新 updatedAt(避免
-    // 重复保存产生空版本/列表跳动);变化时快照旧 body 作为版本。
+    // #773: deck 视图手动编辑的保存路径 — deck 以对象传入，序列化落库；
+    // undefined = 不触碰 deck。
+    let deckChanged = false
+    if (deck !== undefined) {
+      const deckJson = deck === null ? null : JSON.stringify(deck)
+      deckChanged = deckJson !== (existing.deck ?? null)
+      if (deckChanged) data.deck = deckJson
+    }
+
+    // 查重 + 版本:body/deck 未变化时不创建快照、不刷新 updatedAt(避免
+    // 重复保存产生空版本/列表跳动);变化时快照旧 body+deck 同帧作为版本
+    // (#773 方案 A — 恢复时一致回滚)。
     const bodyChanged = body !== undefined && body !== existing.body
     if (bodyChanged) {
+      data.body = body
+    }
+    if (bodyChanged || deckChanged) {
       await (prisma as any).docSnapshot.create({
         data: {
           docId,
           userId: request.user!.userId,
           body: existing.body,
+          deck: existing.deck ?? null,
           label: '保存版本',
           createdAt: now,
         },
       })
-      data.body = body
-    } else {
+    }
+    if (!bodyChanged && !deckChanged) {
       delete data.updatedAt
     }
 
     await (prisma as any).doc.update({ where: { id: docId }, data })
     const doc = await (prisma as any).doc.findFirst({ where: { id: docId } })
     return {
-      id: doc!.id, title: doc!.title, body: doc!.body,
+      id: doc!.id, title: doc!.title, body: doc!.body, deck: parseDeck(doc!.deck),
       created_at: doc!.createdAt, updated_at: doc!.updatedAt,
       // #598: 前端保存按钮据此提示'内容未变化'.
-      unchanged: !bodyChanged,
+      unchanged: !bodyChanged && !deckChanged,
     }
   })
 
@@ -128,14 +151,16 @@ export async function documentsRouter(app: FastifyInstance) {
     const { docId, snapId } = request.params as any
     const snap = await (prisma as any).docSnapshot.findFirst({ where: { id: Number(snapId), docId } })
     if (!snap) return reply.status(404).send({ error: 'Not found' })
-    return { id: String(snap.id), created_at: snap.createdAt, label: snap.label || '保存版本', body: snap.body || '' }
+    // #773: 同帧返回 deck — 恢复审阅可见,恢复时 body+deck 一致回滚。
+    return { id: String(snap.id), created_at: snap.createdAt, label: snap.label || '保存版本', body: snap.body || '', deck: parseDeck(snap.deck) }
   })
 
   app.post('/api/v1/docs/:docId/snapshots/:snapId/restore', async (request, reply) => {
     const { docId, snapId } = request.params as any
     const snap = await (prisma as any).docSnapshot.findFirst({ where: { id: Number(snapId), docId } })
     if (!snap) return reply.status(404).send({ error: 'Not found' })
-    await (prisma as any).doc.update({ where: { id: docId }, data: { body: snap.body, updatedAt: new Date().toISOString() } })
+    // #773: body+deck 一致回滚（deck 未快照的历史行恢复为 null = 无 deck）。
+    await (prisma as any).doc.update({ where: { id: docId }, data: { body: snap.body, deck: snap.deck ?? null, updatedAt: new Date().toISOString() } })
     return { restored: true }
   })
 
@@ -313,8 +338,52 @@ export async function documentsRouter(app: FastifyInstance) {
     // #fix: 上传即草稿 — 文件类参考(pdf/docx/file)挂到空文档时自动导入
     // 为正文(含图片托管 + 快照),用户上传后立即能在编辑框看到原文,
     // 模型上下文也直接有 Current Document,不再"解读+计划+确认"循环。
+    // #777: pptx 走后台异步解析（上传响应不等待 — 50MB pptx 解包秒级）：
+    // deck 落点（Doc.deck，deck 视图可编辑）+ 空 doc 正文导入 markdown。
+    const refFileName = String(label || content || '')
+    const isPptxRef = (kind || 'note') === 'file' && /\.pptx$/i.test(refFileName)
+    let pptxParse: { started: boolean; reason?: string } | null = null
+    if (isPptxRef) {
+      const fileIndex = await (prisma as any).fileIndex.findFirst({ where: { userId, name: refFileName, deletedAt: null } }).catch(() => null)
+      if (!fileIndex) {
+        pptxParse = { started: false, reason: '上传记录缺失，无法解析 PPT' }
+      } else if (Number(fileIndex.sizeBytes || 0) > 50 * 1024 * 1024) {
+        pptxParse = { started: false, reason: '文件超过 50MB，已跳过 PPT 解析' }
+      } else {
+        pptxParse = { started: true }
+        void (async () => {
+          try {
+            const parsed = extractPptxContentFromUpload(userId, fileIndex.id)
+            if (parsed.error) return
+            // deck 落点：覆盖写入（同帧快照旧 deck，label 'AI deck'，与
+            // organize 重生成一致）；文章正文不受影响。
+            const deck = pptxSlidesToDeck(parsed.slides, parsed.images, doc.title || refFileName, SCHEMA_VERSION)
+            if (deck) {
+              const now = new Date().toISOString()
+              await (prisma as any).docSnapshot.create({
+                data: { docId, userId, body: doc.body, deck: doc.deck ?? null, label: 'AI deck', createdAt: now },
+              })
+              await (prisma as any).doc.update({ where: { id: docId }, data: { deck: JSON.stringify(deck), updatedAt: now } })
+            }
+            // 文章落点：正文为空时导入 markdown（## 分节 + 图片托管）。
+            if (!String(doc.body || '').trim()) {
+              const { resolveImportTargets, extractRefText, writeDocBody } = await import('../../tools/doc-import.js')
+              const targets = await resolveImportTargets(userId, docId)
+              const hit = targets.find(({ label: l }) => l === refFileName) || targets[0]
+              if (hit) {
+                const { text, error } = await extractRefText(userId, docId, hit.r, hit.label)
+                if (!error && text) await writeDocBody(userId, docId, text, 'AI import')
+              }
+            }
+          } catch {
+            // 后台解析失败不阻断上传 — 失败哨兵文本不缓存，重传可重试。
+          }
+        })()
+      }
+    }
     const autoImport = (async () => {
       try {
+        if (isPptxRef) return null // #777: pptx 走后台，不阻塞上传响应
         if (kind !== 'file' && kind !== 'pdf' && kind !== 'docx') return null
         if (String(doc.body || '').trim()) return null
         const { EditDocumentTool } = await import('../../tools/edit-document-tool.js')
@@ -332,6 +401,8 @@ export async function documentsRouter(app: FastifyInstance) {
       // #fix: 上传即草稿 — 自动导入后的正文(空文档 + 文件类参考时)。
       imported_body: importedBody,
       imported: importedBody !== null,
+      // #777: pptx 上传即后台解析（deck 落点）— 前端据 started 轮询刷新。
+      pptx_parse: pptxParse,
     }
   })
 

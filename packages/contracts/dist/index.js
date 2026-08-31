@@ -84,6 +84,9 @@ export const plotContentSchema = z.object({
  * #652: single job-type namespace. Values are what the control plane sends
  * (plugin-capability.service maps heurion/* tool names onto these) and what
  * the worker registers. Keep in sync with worker/src/server.ts HANDLERS.
+ * #771: `sidecar.preview_file` — LibreOffice 渲染产物/上传 pptx 的翻页预览
+ * 图（worker 端 soffice → pdf → pdftoppm PNG）；payload 不走 render-content
+ * 校验（data_base64 直传文件字节）。
  */
 export const renderJobType = z.enum([
     'sidecar.generate_pptx',
@@ -91,14 +94,17 @@ export const renderJobType = z.enum([
     'sidecar.render_table',
     'sidecar.render_plot',
     'sidecar.convert_to_pdf',
+    'sidecar.preview_file',
 ]);
 const CONTENT_SCHEMAS = {
     'sidecar.generate_pptx': presentationContentSchema,
     'sidecar.generate_docx': documentContentSchema,
     'sidecar.render_table': tableContentSchema,
     'sidecar.render_plot': plotContentSchema,
-    // PDF converter consumes the same sections model as DOCX.
     'sidecar.convert_to_pdf': documentContentSchema,
+    // #771: preview payload = { data_base64, file_name?, max_pages? } —
+    // 字节直传，不经 render-content 契约校验。
+    'sidecar.preview_file': z.any(),
 };
 /**
  * Validate an AI-produced content payload for a job type. Returns

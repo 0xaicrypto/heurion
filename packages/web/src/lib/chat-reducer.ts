@@ -6,7 +6,7 @@
  * function: one chunk (or a batch reduced left-to-right) in, one new
  * SessionState out.
  */
-import type { ChatStreamChunk, ChatContextUsage, SendChatOptions } from './types';
+import type { ChatStreamChunk, ChatContextUsage, DeckWire, SendChatOptions } from './types';
 
 export interface ChatMessage {
   id: string;
@@ -66,6 +66,8 @@ export interface SessionState {
    *  不打断正在执行的工具/写回,避免文档状态不一致)。 */
   pending?: { text: string; opts: SendChatOptions } | null;
   lastDocBody?: string;
+  /** #773: AI 写回同帧携带的 deck 资产（null = 无 deck 变更）。 */
+  lastDocDeck?: DeckWire | null;
   /** #459: shared UI shape (ChatContextUsage in lib/types). */
   contextUsage?: ChatContextUsage;
   /** #298: skill-capture suggestion shown after a procedural reply. */
@@ -188,7 +190,9 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
       return { ...s, messages: msgs };
     }
     case 'doc_updated':
-      return { ...s, lastDocBody: chunk.body };
+      // #773: deck 与 body 同帧到达 — lastDocDeck 供 deck 视图直apply
+      // (AI 改页不走 markdown diffReview，页级小改直接应用 + 快照回滚)。
+      return { ...s, lastDocBody: chunk.body, lastDocDeck: chunk.deck ?? null };
     case 'skill_capture_suggest':
       return { ...s, skillCapture: { text: chunk.text } };
     case 'tool_call': {

@@ -4,7 +4,8 @@ import prisma from '../../common/prisma'
 import { getUserContext } from '../chat/user-context.js'
 import { safeUploadPath } from '../../lib/upload-path.js'
 import { extractDocumentText } from '../../lib/document-extractor.js'
-import { verifyChartToken } from '../../common/chart-token.js'
+import { verifyChartToken, issueChartToken } from '../../common/chart-token.js'
+import { createExecutionPlaneService } from '../execution/execution-plane.service.js'
 import {
   uploadsDir,
   chunkDir,
@@ -456,4 +457,78 @@ app.get('/api/v1/files/download/:fileId', async (request, reply) => {
   }
   return reply.send(fs.createReadStream(filepath))
 })
+
+  // ── #771: 渲染产物 / 上传 pptx 的翻页预览（worker 端 LibreOffice 转图）──
+
+  const PREVIEW_MAX_BYTES = 50 * 1024 * 1024
+  const PREVIEW_POLL_TIMEOUT_MS = 90_000
+  const PREVIEW_SUPPORTED = /\.(pptx|docx)$/i
+
+  app.post('/api/v1/files/preview', async (request, reply) => {
+    const { file_id: rawFileId } = (request.body || {}) as { file_id?: string }
+    const fileId = String(rawFileId || '').trim()
+    if (!fileId) return reply.status(400).send({ error: 'file_id required' })
+    const userId = request.user!.userId
+
+    const filepath = safeUploadPath(userId, fileId)
+    if (!filepath || !fs.existsSync(filepath)) return reply.status(404).send({ error: 'File not found' })
+    const fileName = fileId.split('_').slice(1).join('_') || fileId
+    if (!PREVIEW_SUPPORTED.test(fileName)) {
+      return reply.status(400).send({ error: '预览仅支持 pptx / docx 文件' })
+    }
+    const stat = fs.statSync(filepath)
+    if (stat.size > PREVIEW_MAX_BYTES) {
+      return reply.status(413).send({ error: `文件超过 ${Math.round(PREVIEW_MAX_BYTES / 1024 / 1024)}MB，无法预览` })
+    }
+
+    const plane = createExecutionPlaneService()
+    const job = await plane.enqueue({
+      type: 'sidecar.preview_file',
+      payload: {
+        data_base64: fs.readFileSync(filepath).toString('base64'),
+        file_name: fileName,
+        max_pages: 30,
+      },
+      tenant: { userId },
+    })
+    const deadline = Date.now() + PREVIEW_POLL_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      const status = await plane.getStatus(job.job_id)
+      if (status && status.status !== 'pending' && status.status !== 'running') {
+        if (status.status !== 'completed') {
+          const reason = String(status.error || (status.result as any)?.error || status.status)
+          // 优雅降级：worker 未配置 LibreOffice → 明确的降级信号（前端回落仅下载）。
+          if (reason.includes('PREVIEW_UNAVAILABLE')) {
+            return reply.status(501).send({ error: '预览能力未配置（worker 缺少 LibreOffice），请下载后查看', degraded: true })
+          }
+          return reply.status(502).send({ error: `预览失败：${reason.slice(0, 200)}` })
+        }
+        const pages = (status.result as any)?.pages as Array<{ fileId?: string; fileName?: string; mimeType?: string }> | undefined
+        if (!pages || pages.length === 0) return reply.status(502).send({ error: '预览失败：未生成任何页面' })
+        return reply.send({
+          page_count: pages.length,
+          pages: pages.map((p, i) => ({
+            index: i + 1,
+            // chart token — <img> 无鉴权头也能加载（与文档内嵌图同机制）。
+            url: `/api/v1/files/preview-page/${p.fileId}?token=${issueChartToken(p.fileId!, userId)}`,
+          })),
+        })
+      }
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+    return reply.status(504).send({ error: '预览超时，请稍后重试或下载查看' })
+  })
+
+  app.get('/api/v1/files/preview-page/:fileId', async (request, reply) => {
+    const fileId = (request.params as any).fileId
+    const token = (request.query as any).token
+    const userId = request.user?.userId || (token ? verifyChartToken(fileId, token) : null)
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized' })
+    const plane = createExecutionPlaneService()
+    const bytes = await plane.fetchFile(fileId)
+    if (!bytes || bytes.length === 0) return reply.status(404).send({ error: 'Page not found' })
+    reply.header('Content-Type', 'image/png')
+    reply.header('Cache-Control', 'private, max-age=3600')
+    return reply.send(bytes)
+  })
 }

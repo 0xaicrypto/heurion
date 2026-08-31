@@ -103,6 +103,10 @@ model Doc {
   userId    String @map("user_id")
   title     String @default("")
   body      String @default("")
+  // #773: deck 资产 — AI 编排产物（organize 导出）与 deck 视图编辑的
+  // 独立数据源（presentationContentSchema JSON 字符串，可空）。
+  // 与 body 分治：文档视图编辑 body，deck 视图编辑 deck，互不污染。
+  deck      String? @map("deck")
   createdAt String @map("created_at")
   updatedAt String @map("updated_at")
   studyId   String? @map("study_id") // #383: linked research study
@@ -122,6 +126,8 @@ model DocSnapshot {
   docId     String @map("doc_id")
   userId    String @map("user_id")
   body      String
+  // #773: 同帧快照 deck（方案 A）— 恢复历史版本时 body+deck 一致回滚。
+  deck      String? @map("deck")
   label     String @default("")
   createdAt String @map("created_at")
 

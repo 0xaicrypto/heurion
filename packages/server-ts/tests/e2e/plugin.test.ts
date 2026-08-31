@@ -216,7 +216,9 @@ describe('Plugin Marketplace', () => {
 
     const jobEnqueued = events.find((e: any) => e.type === 'job_enqueued')
     expect(jobEnqueued).toBeDefined()
-    expect(jobEnqueued.job_type).toBe('sidecar.heurion/docx.generate_docx')
+    // #766: job type 是 worker HANDLERS 注册的契约名（旧 namespaced 命名会
+    // 命中 Unknown job type）。
+    expect(jobEnqueued.job_type).toBe('sidecar.generate_docx')
   })
 
   test('validate manifest rejects invalid plugin', async () => {
