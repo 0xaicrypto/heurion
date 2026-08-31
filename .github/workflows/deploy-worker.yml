@@ -1,0 +1,176 @@
+name: Deploy Worker
+
+# #775-followup: heurion-worker (execution plane) 的镜像构建 + VPS 部署。
+# 此前 worker-ci 只有测试 — 镜像从未进 GHCR，worker VPS 需手动 build。
+#
+# 触发：push main（worker / contracts / 本文件变更）或手动 workflow_dispatch。
+#
+# 部署目标（docs/CICD.md "Execution Plane (separate sandbox VPS)"）：
+#   /opt/heurion-worker/docker-compose.worker.yml
+#   镜像：ghcr.io/0xaicrypto/heurion-worker:<sha>（compose 里 image: 引用，
+#   WORKER_IMAGE_TAG 控制具体 tag）。
+#
+# 必需 secrets（deploy 步骤缺任一即跳过部署，镜像照常构建推送）：
+#   WORKER_VPS_HOST      worker VPS 地址（如 worker.heurion.org 或 IP）
+#   WORKER_VPS_USER      SSH 用户（缺省回落 VPS_USER）
+#   WORKER_VPS_SSH_KEY   SSH 私钥（缺省回落 VPS_SSH_KEY）
+#   WORKER_API_TOKEN     控制面/worker 共享 token（已存在）
+#   S3_ENDPOINT / S3_BUCKET / S3_REGION / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY
+#                        worker 渲染产物 S3 上传（已存在，可留空 = 本地存储）
+#
+# 首次部署前置（worker VPS 上一次性）：
+#   mkdir -p /opt/heurion-worker && 用户可写
+#   echo "$GHCR_PAT" | docker login ghcr.io -u <user> --password-stdin
+#   （GHCR 私有镜像需要 read:packages 的 PAT；或把 heurion-worker 包设为 public）
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/worker/**'
+      - 'packages/contracts/**'
+      - 'docker-compose.worker.yml'
+      - '.github/workflows/deploy-worker.yml'
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  WORKER_IMAGE_NAME: ghcr.io/0xaicrypto/heurion-worker
+
+jobs:
+  build-and-push:
+    name: Build & push worker image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract short SHA
+        id: vars
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: packages/worker
+          file: packages/worker/Dockerfile
+          push: true
+          tags: |
+            ${{ env.WORKER_IMAGE_NAME }}:${{ steps.vars.outputs.sha }}
+            ${{ env.WORKER_IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Worker VPS
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    env:
+      # SSH 凭据：worker 专用 secrets 优先，回落主 VPS 的 key/user（同一密钥
+      # 授权到 worker VPS 的场景）。host 不做回落 — 主/worker 是两台机器。
+      WORKER_VPS_HOST: ${{ secrets.WORKER_VPS_HOST }}
+      WORKER_VPS_USER: ${{ secrets.WORKER_VPS_USER || secrets.VPS_USER }}
+      WORKER_VPS_SSH_KEY: ${{ secrets.WORKER_VPS_SSH_KEY || secrets.VPS_SSH_KEY }}
+      WORKER_API_TOKEN: ${{ secrets.WORKER_API_TOKEN }}
+      S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_REGION: ${{ secrets.S3_REGION }}
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract short SHA
+        id: vars
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Check worker VPS secrets
+        id: check
+        run: |
+          if [ -n "$WORKER_VPS_HOST" ] && [ -n "$WORKER_VPS_USER" ] && [ -n "$WORKER_VPS_SSH_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️ WORKER_VPS_HOST 未配置（WORKER_VPS_USER/WORKER_VPS_SSH_KEY 可回落 VPS_USER/VPS_SSH_KEY）— 镜像已构建推送，跳过 SSH 部署"
+          fi
+
+      - name: Check out deploy target dir via SSH (pre-flight)
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          mkdir -p ~/.ssh
+          echo "$WORKER_VPS_SSH_KEY" > ~/.ssh/worker_key
+          chmod 600 ~/.ssh/worker_key
+          ssh -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 \
+            "$WORKER_VPS_USER@$WORKER_VPS_HOST" "mkdir -p /opt/heurion-worker"
+
+      - name: Ship compose file + env
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          cat > /tmp/heurion-worker.env <<EOF
+          WORKER_API_TOKEN=${WORKER_API_TOKEN}
+          S3_ENDPOINT=${S3_ENDPOINT}
+          S3_BUCKET=${S3_BUCKET}
+          S3_REGION=${S3_REGION}
+          S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+          S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+          EOF
+          scp -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new \
+            docker-compose.worker.yml "$WORKER_VPS_USER@$WORKER_VPS_HOST":/opt/heurion-worker/
+          scp -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new \
+            /tmp/heurion-worker.env "$WORKER_VPS_USER@$WORKER_VPS_HOST":/opt/heurion-worker/.env.worker
+
+      - name: Pull new image (fail fast before touching the running container)
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          ssh -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 \
+            "$WORKER_VPS_USER@$WORKER_VPS_HOST" \
+            "cd /opt/heurion-worker && WORKER_IMAGE_TAG=${{ steps.vars.outputs.sha }} \
+             docker compose --env-file .env.worker -f docker-compose.worker.yml pull"
+
+      - name: Roll out new image
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          ssh -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 \
+            "$WORKER_VPS_USER@$WORKER_VPS_HOST" \
+            "cd /opt/heurion-worker && WORKER_IMAGE_TAG=${{ steps.vars.outputs.sha }} \
+             docker compose --env-file .env.worker -f docker-compose.worker.yml up -d --remove-orphans && \
+             docker image prune -f >/dev/null 2>&1 || true"
+
+      - name: Health check
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          ok=0
+          for i in $(seq 1 24); do
+            if ssh -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 \
+              "$WORKER_VPS_USER@$WORKER_VPS_HOST" \
+              "curl -fsS http://localhost:8001/healthz >/dev/null 2>&1"; then
+              ok=1
+              echo "✓ Worker healthy (image ${{ steps.vars.outputs.sha }})"
+              break
+            fi
+            echo "  attempt $i/24 failed, retrying in 5s..."
+            sleep 5
+          done
+          if [ "$ok" != "1" ]; then
+            ssh -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new \
+              "$WORKER_VPS_USER@$WORKER_VPS_HOST" \
+              "cd /opt/heurion-worker && docker compose --env-file .env.worker -f docker-compose.worker.yml logs --tail=50 heurion-worker || true"
+            echo "❌ Worker health check failed. 手动回滚：WORKER_IMAGE_TAG=<上一个 sha> docker compose --env-file .env.worker -f docker-compose.worker.yml up -d"
+            exit 1
+          fi
