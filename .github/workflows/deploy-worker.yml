@@ -68,7 +68,8 @@ jobs:
       - name: Build and push worker image
         uses: docker/build-push-action@v6
         with:
-          context: packages/worker
+          # repo 根 context — Dockerfile 的 contracts file: 依赖需要整仓可见
+          context: .
           file: packages/worker/Dockerfile
           push: true
           tags: |
