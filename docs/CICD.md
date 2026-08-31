@@ -65,6 +65,15 @@ deploys to `~/heurion` on port 8002 via `scripts/deploy-staging.sh`, runs
 git push origin main
 ```
 
+- **Control plane**（/opt/heurion）由 `deploy-server.yml` 自动部署。
+- **Execution Plane worker**（/opt/heurion-worker）由 `deploy-worker.yml`
+  自动部署：worker/contracts 变更 push main 或手动触发 → 构建
+  `ghcr.io/0xaicrypto/heurion-worker:<sha>` 推 GHCR → SSH 到 worker VPS
+  `docker compose pull && up -d` → localhost:8001/healthz 健康检查。
+  需要的 secrets：`WORKER_VPS_HOST`（必填）+ `WORKER_VPS_USER` /
+  `WORKER_VPS_SSH_KEY`（缺省回落 `VPS_USER` / `VPS_SSH_KEY`）；
+  secrets 未配置时只构建镜像、跳过 SSH 部署（run 日志有明确提示）。
+
 ### Manual production deploy
 
 ```bash
