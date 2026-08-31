@@ -8,8 +8,11 @@ services:
   heurion-worker:
     image: ghcr.io/0xaicrypto/heurion-worker:${WORKER_IMAGE_TAG:-latest}
     build:
-      context: packages/worker
-      dockerfile: Dockerfile
+      # Dockerfile 以 repo 根为 context（contracts file: 依赖需要整仓可见），
+      # 见 packages/worker/Dockerfile 头注释。worker VPS 走 image pull，
+      # 此 build 段仅在 repo checkout 内手动 --build 时生效。
+      context: .
+      dockerfile: packages/worker/Dockerfile
     container_name: heurion-worker
     restart: unless-stopped
     ports:
