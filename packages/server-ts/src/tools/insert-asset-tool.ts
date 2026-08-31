@@ -3,6 +3,7 @@ import path from 'path'
 import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { findNormalizedSpan, findFuzzySpan } from './edit-document-tool.js'
+import { resolveImportTargets, extractRefText, writeDocBody } from './doc-import.js'
 import { issueChartToken } from '../common/chart-token.js'
 import { validateRenderContent, SCHEMA_VERSION } from '@heurion/contracts'
 import type { ToolExecutionPlane } from './tool-registry.js'
@@ -105,6 +106,65 @@ export function buildPresentationContent(body: string, title: string): { schemaV
   return { schemaVersion: SCHEMA_VERSION, title: doc.title, slides }
 }
 
+/**
+ * #772 — 正文摘要（标题层级 + 每段首句，有界 ~1200 字）。
+ * organize 两段协议第一段用：模型未见正文时第一次调用 organize=true
+ * 不带 slides，工具返回摘要引导第二次调用直供 slides。
+ */
+export function digestBody(body: string): string {
+  const out: string[] = []
+  let total = 0
+  for (const rawLine of body.split('\n')) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const isHeading = /^#{1,6}\s/.test(line)
+    let piece: string
+    if (isHeading) {
+      piece = line
+    } else {
+      const m = /^(.*?[。！？.!?]|.{1,60})/s.exec(line)
+      piece = `- ${m ? m[1].trim() : line.slice(0, 60)}`
+    }
+    if (total + piece.length > 1200) {
+      out.push('…（正文过长，摘要已截断）')
+      break
+    }
+    out.push(piece)
+    total += piece.length
+  }
+  return out.join('\n')
+}
+
+/**
+ * #769 — 契约内容模型里的图片 markdown 段落 → 内嵌 base64 image block
+ * （worker pptx/docx 渲染器均已消费 image block，零 worker 改动）。
+ * URL 只在本用户 uploads 目录内解析（取 path basename，防目录穿越）；
+ * 文件缺失/不可读时保留原段落（worker 渲染文本，不产生半截文件）。
+ */
+export function embedContentImages(userId: string, blocks: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return blocks.map((b) => {
+    if (b.type !== 'paragraph') return b
+    const img = /^!\[([^\]]*)\]\(([^)\s]+)\)$/.exec(String(b.text || ''))
+    if (!img) return b
+    return resolveLocalImageBlock(userId, img[2], img[1]) || b
+  })
+}
+
+/** #772 — 把 bullets 里的 ![caption](托管URL) 解析为内嵌 base64 图片块。
+ *  URL 只在本用户 uploads 目录内解析（取 path basename，防目录穿越）；
+ *  文件不存在返回 null（跳过该块，由调用方计数注记）。 */
+export function resolveLocalImageBlock(userId: string, url: string, caption: string): { type: 'image'; ref: string; caption?: string; data: string } | null {
+  const name = path.basename(url.split('?')[0] || '')
+  const p = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads', name)
+  try {
+    if (!name || !fs.existsSync(p)) return null
+    const data = fs.readFileSync(p).toString('base64')
+    return { type: 'image', ref: url.slice(0, 500), caption: caption ? caption.slice(0, 500) : undefined, data }
+  } catch {
+    return null
+  }
+}
+
 export class InsertAssetTool extends BaseTool {
   constructor(private ctx: InsertAssetContext) {
     super()
@@ -117,7 +177,7 @@ export class InsertAssetTool extends BaseTool {
       'Insert a structured asset into the current writing-session document.',
       "asset_type='table': pass headers + rows — a markdown table is generated and written into the document.",
       "asset_type='plot': pass plot_type (bar/line/pie), title and series [{label, x, y}] — the chart is rendered to PNG (requires the heurion/plot plugin) and embedded as an image.",
-      "asset_type='export': pass format (docx/pptx/pdf) — the CURRENT DRAFT is converted and rendered as a downloadable file (requires the matching plugin); a download link card is appended to the document.",
+      "asset_type='export': pass format (docx/pptx/pdf). TWO export semantics: (a) organize=false (default) = FAITHFUL export — the CURRENT DRAFT is converted as-is (mechanical '##' → slide/section mapping); requires a non-empty draft, but when the draft is empty and exactly one reference material exists it is auto-imported first. Use when the user says 导出/转 Word/保真导出. (b) organize=true (pptx only) = AI-ORGANIZED deck — the draft is just SOURCE MATERIAL, not the target structure: you read the draft (## Current Document) or the conversation context and PROVIDE the deck content directly in the `slides` argument (aim for 8–15 content slides, max 30; each slide {title, bullets[]}; cover is generated from `title`/`subtitle`). A deck does not require a non-empty draft (素材=对话上下文). If you call organize=true WITHOUT slides, the tool replies with an auto-imported body digest — call it again with slides. Use when the user says 把这篇文章做成 PPT/做个演示.",
       'Optionally pass anchor (a text fragment copied VERBATIM from the current document; whitespace/line-break differences are tolerated) to place the asset right AFTER that fragment. Without a match (or without anchor) it is appended at the end.',
       "Use this when the user asks for a table or chart IN the draft (Table 1, 基线特征表, 画图, 曲线, 图表…), or asks to export the draft (导出 Word, 生成 PPT, 转 PDF…) — do NOT paste raw markdown tables/image links yourself and do NOT use edit_document for this.",
     ].join(' ')
@@ -151,6 +211,20 @@ export class InsertAssetTool extends BaseTool {
         },
         // shared
         format: { type: 'string', enum: ['docx', 'pptx', 'pdf'], description: 'export: output format.' },
+        organize: { type: 'boolean', description: 'export+pptx only: true = AI 编排做 PPT（你在 slides 参数里直供 deck 内容，文章只是素材）；false/缺省 = 保真导出（草稿机械转换）。' },
+        slides: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: 'slide title (自拟提炼，每页一个主题).' },
+              bullets: { type: 'array', items: { type: 'string' }, description: 'bullet 要点；可嵌图片 ![caption](托管URL)（来自正文中的托管图，工具会转内嵌图片块）。' },
+            },
+            required: ['title'],
+          },
+          description: 'organize=true: deck 内容直供（建议 8–15 页，契约上限 30）。封面由 title/subtitle 自动生成，不要自己加封面页。',
+        },
+        subtitle: { type: 'string', description: 'export+organize=true: 封面副标题（可选）。' },
         caption: { type: 'string', description: 'table: bold caption line above; plot: image alt text (e.g. "Figure 1. PFS by PD-L1").' },
         anchor: { type: 'string', description: 'Optional: verbatim fragment from the current document; the asset is inserted right after it. Omit to append at the end.' },
         summary: { type: 'string', description: 'A one-line summary of what was inserted.' },
@@ -280,12 +354,16 @@ export class InsertAssetTool extends BaseTool {
     return result
   }
 
-  // ── export（#767）────────────────────────────────────────────────
+  // ── export（#767 保真 / #772 编排）──────────────────────────────
 
   private async insertExport(docId: string, args: Record<string, unknown>): Promise<ToolResult> {
     const format = String(args.format || '')
     const spec = EXPORT_FORMATS[format]
     if (!spec) return { success: false, error: 'export 需要 format: docx | pptx | pdf' }
+    const organize = args.organize === true
+    if (organize && spec.contentType !== 'sidecar.generate_pptx') {
+      return { success: false, error: 'organize 仅支持 format=pptx（AI 编排做演示）；docx/pdf 请用 organize=false 保真导出。' }
+    }
     if (this.ctx.isPluginInstalled && !(await this.ctx.isPluginInstalled(spec.pluginId))) {
       return { success: false, error: `导出 ${spec.label} 需要先在「插件市场」安装 ${spec.pluginId} 插件。` }
     }
@@ -296,17 +374,164 @@ export class InsertAssetTool extends BaseTool {
 
     const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
     if (!existing) return { success: false, error: `Document not found: ${docId}` }
-    const body = String(existing.body || '')
-    if (!body.trim()) return { success: false, error: '文档正文为空，无法导出。请先撰写内容。' }
+    let body = String(existing.body || '')
+
+    // #772: organize=true — AI 编排做 PPT（主场景"把这篇文章做成 PPT"）。
+    if (organize) return this.organizedExport(docId, existing, body, args)
+
+    // organize=false — 保真导出。#774: 草稿正文为空时不再直接拒绝:
+    // 存在唯一参考材料则自动导入(与 edit_document range edit 的
+    // auto-import 行为对齐)后继续本次导出;多参考/无参考报错引导。
+    let autoImportNote = ''
+    if (!body.trim()) {
+      const labels = await resolveImportTargets(this.ctx.userId, docId)
+      if (labels.length === 1) {
+        const { text, error } = await extractRefText(this.ctx.userId, docId, labels[0].r, labels[0].label)
+        if (error) return { success: false, error }
+        const { body: imported, error: writeError } = await writeDocBody(this.ctx.userId, docId, text, 'AI import')
+        if (writeError) return { success: false, error: writeError }
+        body = imported
+        autoImportNote = `已自动导入参考材料「${labels[0].label}」，`
+      } else if (labels.length === 0) {
+        return { success: false, error: '文档正文为空，无法导出。请先撰写内容。' }
+      } else {
+        const available = labels.map((l) => l.label).slice(0, 5).join('、')
+        return {
+          success: false,
+          error: `文档正文为空,且有多个参考材料(${available})。请先用 edit_document 的 import_reference 明确导入其中之一,再导出。`,
+        }
+      }
+    }
 
     // 内容源 = 草稿正文本身（markdown → 契约模型），不重付 LLM 重编 —
     // 导出内容与草稿天然一致（epic #764 的"内容正确"目标）。
-    const content = spec.contentType === 'sidecar.generate_pptx'
+    // #769: 草稿内嵌图片行（plot/导入托管图）→ image block 随导出携带。
+    let content = spec.contentType === 'sidecar.generate_pptx'
       ? buildPresentationContent(body, String(existing.title || 'Presentation'))
       : buildDocumentContent(body, String(existing.title || 'Document'))
+    content = ('slides' in content
+      ? { ...content, slides: content.slides.map((s) => ({ ...s, content: embedContentImages(this.ctx.userId, s.content) })) }
+      : { ...content, sections: content.sections.map((sec) => ({ ...sec, paragraphs: embedContentImages(this.ctx.userId, sec.paragraphs) })) }) as typeof content
     const check = validateRenderContent(spec.contentType, content)
     if (!check.ok) return { success: false, error: `导出内容未通过契约校验：${check.errors.join('；')}` }
 
+    return this.renderExportFile(docId, spec, content, args, `${autoImportNote}已导出 ${spec.label}`)
+  }
+
+  /**
+   * #772 — organize 分支：模型直供 slides 生成 PPT。
+   * 两段协议：草稿不在模型上下文（空正文 + 有参考）时第一次调用不带
+   * slides → 自动导入并返回正文摘要（digestBody），报错文案引导第二次
+   * 调用直供 slides。直供 slides 不强依赖正文（凭空做 PPT，素材=对话
+   * 上下文）。bullets 里的 ![caption](托管URL) 解析回 uploads 文件转
+   * 内嵌 base64 图片块（worker 零改动）。
+   */
+  private async organizedExport(docId: string, existing: any, body: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const rawSlides = Array.isArray(args.slides) ? args.slides : []
+
+    // 两段协议第一段。success:false → 工具循环把完整文本按 Error 注入
+    // （不会被 DOC_WRITE_TOOLS 的摘要替换截断），模型可见完整摘要。
+    if (rawSlides.length === 0) {
+      // #773: deck 已存在 → 直接以 Doc.deck 为内容源导出（所见即所导，
+      // 不再重新编排 — deck 视图手动编辑后的再导出路径）。
+      if (existing.deck) {
+        try {
+          const deckContent = JSON.parse(String(existing.deck))
+          const deckCheck = validateRenderContent('sidecar.generate_pptx', deckContent)
+          if (deckCheck.ok) {
+            const deckSlides = (deckContent as { slides: Array<{ title: string; content: Array<{ type: string; text?: string }> }> }).slides || []
+            const deckKnowledge = {
+              title: String((deckContent as { title?: string }).title || 'Presentation'),
+              content: deckSlides.map((s) => `## ${s.title}\n${(s.content || []).filter((c) => c.type === 'paragraph').map((c) => `- ${c.text || ''}`).join('\n')}`).join('\n\n'),
+            }
+            return this.renderExportFile(docId, EXPORT_FORMATS.pptx, deckContent as { title: string }, args, `已从 deck 导出 PPT（${deckSlides.length} 页）`, deckKnowledge)
+          }
+        } catch {
+          // deck 损坏 → 落回 digest 流程重新编排。
+        }
+      }
+      let workingBody = body
+      let importedNote = ''
+      if (!workingBody.trim()) {
+        const labels = await resolveImportTargets(this.ctx.userId, docId)
+        if (labels.length === 1) {
+          const { text, error } = await extractRefText(this.ctx.userId, docId, labels[0].r, labels[0].label)
+          if (error) return { success: false, error }
+          const { body: imported, error: writeError } = await writeDocBody(this.ctx.userId, docId, text, 'AI import')
+          if (writeError) return { success: false, error: writeError }
+          workingBody = imported
+          importedNote = `已自动导入参考材料「${labels[0].label}」。`
+        } else if (labels.length === 0) {
+          return {
+            success: false,
+            error: 'organize=true 需要你在 tool call 参数里直接提供 slides（deck 内容）。当前草稿为空且无参考材料 — 若对话上下文素材足够（如用户要求"凭空做个 PPT"），请把内容整理成 slides 再次调用；否则请让用户上传参考材料或先撰写正文。',
+          }
+        } else {
+          const available = labels.map((l) => l.label).slice(0, 5).join('、')
+          return {
+            success: false,
+            error: `文档正文为空,且有多个参考材料(${available})。请先用 edit_document 的 import_reference 明确导入其中之一,再走编排导出。`,
+          }
+        }
+      }
+      return {
+        success: false,
+        error: `${importedNote}organize=true 需要提供 slides 参数：[{title, bullets[]}]（建议 8–15 页，契约上限 30；封面由 title/subtitle 自动生成，不要自加封面页）。请基于以下正文摘要提炼编排后再次调用：\n${digestBody(workingBody)}`,
+      }
+    }
+
+    // 直供 slides → 契约内容。bullets 转 bullet 段；图片 markdown 转
+    // 内嵌 base64 图片块（草稿已有的托管图不丢失）。
+    let skippedImages = 0
+    const slides = rawSlides.slice(0, 30).map((s: any) => {
+      const title = String(s?.title || '').trim().slice(0, 500) || '未命名页'
+      const bullets = Array.isArray(s?.bullets) ? s.bullets : []
+      const content: Array<Record<string, unknown>> = []
+      for (const b of bullets.slice(0, 50)) {
+        const text = String(b ?? '').trim()
+        if (!text) continue
+        const img = /^!\[([^\]]*)\]\(([^)\s]+)\)$/.exec(text)
+        if (img) {
+          const block = resolveLocalImageBlock(this.ctx.userId, img[2], img[1])
+          if (block) {
+            content.push(block)
+          } else {
+            skippedImages++
+          }
+          continue
+        }
+        content.push({ type: 'paragraph', text: text.slice(0, 2000), style: 'bullet' })
+      }
+      if (content.length === 0) content.push({ type: 'paragraph', text: '（本页待补充）', style: 'normal' })
+      return { title, content }
+    })
+    if (slides.length === 0) return { success: false, error: 'slides 解析后为空 — organize=true 需要至少 1 页 [{title, bullets[]}]。' }
+
+    const deckTitle = (String(args.title || '').trim() || String(existing.title || '').trim() || 'Presentation').slice(0, 500)
+    const subtitle = String(args.subtitle || '').trim().slice(0, 500)
+    const content = {
+      schemaVersion: SCHEMA_VERSION,
+      title: deckTitle,
+      ...(subtitle ? { subtitle } : {}),
+      slides,
+    }
+    const check = validateRenderContent('sidecar.generate_pptx', content)
+    if (!check.ok) {
+      return { success: false, error: `slides 未通过契约校验：${check.errors.join('；')} — 请修正参数后重新调用（不会产生半截文件）。` }
+    }
+
+    const summaryBase = `已编排生成 PPT（${slides.length} 页${skippedImages > 0 ? `，${skippedImages} 张图片未能嵌入` : ''}）`
+    const knowledge = {
+      title: deckTitle,
+      content: slides.map((s: any) => `## ${s.title}\n${(s.content as any[]).filter((c) => c.type === 'paragraph').map((c) => `- ${(c as any).text}`).join('\n')}`).join('\n\n'),
+    }
+    // #773: 编排产物落 Doc.deck（画布 deck 视图可编辑、再导出所见即所导）。
+    return this.renderExportFile(docId, EXPORT_FORMATS.pptx, content, args, summaryBase, knowledge, JSON.stringify(content))
+  }
+
+  /** 渲染 → 落盘 → 下载卡片写回（#767/#772 共用管道）。#773: deckJson 传入时同帧落 Doc.deck。 */
+  private async renderExportFile(docId: string, spec: typeof EXPORT_FORMATS[string], content: { title: string }, args: Record<string, unknown>, summaryBase: string, knowledge?: { title: string; content: string }, deckJson?: string): Promise<ToolResult> {
+    const plane = this.ctx.executionPlane!
     const payload = {
       template_id: spec.templateId,
       output_name: content.title.slice(0, 40).replace(/\s+/g, '_'),
@@ -337,11 +562,18 @@ export class InsertAssetTool extends BaseTool {
     const url = `/api/v1/files/download/${localFileId}?token=${token}`
 
     // 下载卡片行写回草稿（快照 + doc_updated）— 渲染失败不会产生半截卡片。
+    // #773: organize 时同帧写 deck，快照 label 'AI deck'（可追溯）。
     const card = `[下载 ${spec.label} 版（${fileName}）](${url})`
-    const result = await this.writeBlock(docId, card, args, `已导出 ${spec.label}（${fileName}）`)
+    const result = await this.writeBlock(
+      docId, card, args, `${summaryBase}（${fileName}）`,
+      deckJson !== undefined ? { deckJson, snapshotLabel: 'AI deck' } : {},
+    )
     if (result.success && result.output) {
       const parsed = JSON.parse(result.output)
       parsed.file = { fileId: localFileId, fileName, mimeType: spec.mime, url }
+      // #776: knowledge 平价迁移 — organize 产物正文可能为空，
+      // 用 deck 大纲作为知识索引内容。
+      if (knowledge) parsed.knowledge = knowledge
       result.output = JSON.stringify(parsed)
     }
     return result
@@ -357,12 +589,15 @@ export class InsertAssetTool extends BaseTool {
   }
 
   // ── 共用写回（#765 管道：快照 + doc_updated）──────────────────
-
-  private async writeBlock(docId: string, block: string, args: Record<string, unknown>, summaryBase: string): Promise<ToolResult> {
+  // #773: opts.deckJson 传入时同帧写入 Doc.deck（快照旧行同帧带旧 deck，
+  // body+deck 一致回滚）；opts.snapshotLabel 覆盖快照 label（organize 落
+  // deck 用 'AI deck'）。
+  private async writeBlock(docId: string, block: string, args: Record<string, unknown>, summaryBase: string, opts: { deckJson?: string | null; snapshotLabel?: string } = {}): Promise<ToolResult> {
     const anchor = typeof args.anchor === 'string' ? args.anchor.trim() : ''
     const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
     if (!existing) return { success: false, error: `Document not found: ${docId}` }
     const body = String(existing.body || '')
+    const deckChanged = opts.deckJson !== undefined && opts.deckJson !== (existing.deck ?? null)
 
     let newBody: string
     let placement: string
@@ -388,17 +623,30 @@ export class InsertAssetTool extends BaseTool {
     }
 
     const now = new Date().toISOString()
-    if (newBody !== body) {
+    if (newBody !== body || deckChanged) {
       await (prisma as any).docSnapshot.create({
-        data: { docId, userId: this.ctx.userId, body, label: 'AI insert', createdAt: now },
+        data: {
+          docId, userId: this.ctx.userId, body,
+          // 同帧快照旧 deck（可能为 null）— 恢复时 body+deck 一致回滚。
+          ...(deckChanged ? { deck: existing.deck ?? null } : {}),
+          label: opts.snapshotLabel || 'AI insert', createdAt: now,
+        },
       })
       await (prisma as any).doc.update({
         where: { id: docId },
-        data: { body: newBody, updatedAt: now },
+        data: {
+          body: newBody, updatedAt: now,
+          ...(deckChanged ? { deck: opts.deckJson } : {}),
+        },
       })
     }
 
     const summary = String(args.summary || `${summaryBase}，${placement}`)
-    return { success: true, output: JSON.stringify({ body: newBody, summary }) }
+    const output: Record<string, unknown> = { body: newBody, summary }
+    // #773: deck JSON 随工具输出返回 — tool-loop 转成 doc_updated.deck 推画布。
+    if (opts.deckJson) {
+      try { output.deck = JSON.parse(opts.deckJson) } catch { /* ignore */ }
+    }
+    return { success: true, output: JSON.stringify(output) }
   }
 }

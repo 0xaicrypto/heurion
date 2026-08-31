@@ -38,6 +38,20 @@ export interface Citation {
   kind?: 'fact' | 'knowledge' | 'document' | 'pinned'
 }
 
+/**
+ * #773: deck 资产的线上形状（presentationContentSchema 的结构化子集 —
+ * 与 Doc.deck 存储同构）。deck 与 body 同源同帧（doc_updated 一次到达），
+ * 避免双事件乱序。
+ */
+export interface DeckWire {
+  title: string
+  subtitle?: string
+  slides: Array<{
+    title: string
+    content: Array<{ type: string; text?: string; style?: string; url?: string; caption?: string; data?: string; ref?: string }>
+  }>
+}
+
 /** Tool invocation record surfaced to the UI (badge/折叠展示). */
 export interface ToolCallRecord {
   tool: string
@@ -62,7 +76,7 @@ export type ChatStreamChunk =
   | { type: 'compaction_chunk'; text: string }
   | { type: 'compaction_completed'; history_tokens?: number; history_budget?: number; history_turns?: number }
   | { type: 'compaction_summary'; text: string }
-  | { type: 'doc_updated'; body: string; summary?: string }
+  | { type: 'doc_updated'; body: string; summary?: string; deck?: DeckWire | null }
   | { type: 'chart_created'; url: string; markdown?: string; chart_type?: string }
   | { type: 'tier_classified'; tier: 'T1' | 'T2' | 'T3'; view_kind?: string; anchor?: string }
   | { type: 'context_info'; text: string; kind?: string }

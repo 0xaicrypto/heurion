@@ -57,6 +57,14 @@ describe('#510 scene personas', () => {
     expect(p).toContain('Do NOT search patient records')
   })
 
+  test('#776 document 场景指引:生成请求走 insert_asset 工具,正文空先 import', () => {
+    const { facts, knowledge } = makeStores()
+    const p = buildScenePersona('document', facts, knowledge)
+    expect(p).toContain('insert_asset')
+    expect(p).toContain('import_reference')
+    expect(p).toContain('no other file pipeline exists in this session')
+  })
+
   test('persona 缓存按场景隔离', () => {
     const { facts, knowledge } = makeStores()
     const general = buildCachedPersona('u', facts, knowledge, 'general')

@@ -5,6 +5,9 @@ import { PDFParse } from 'pdf-parse'
 import { createWorker, type Worker } from 'tesseract.js'
 import sharp from 'sharp'
 import { safeUploadPath } from './upload-path.js'
+// #777: pptx 解析导入 — zip-reader + OOXML 文本提取（零 XML 解析器依赖）。
+// pptx-extractor 仅以 type 引用本文件类型（无运行时环）。
+import { parsePptx, pptxSlidesToMarkdown, isPptx } from './pptx-extractor.js'
 
 export interface ExtractOptions {
   maxChars?: number
@@ -335,8 +338,14 @@ export async function extractDocumentText(
     return extractPdfText(buffer, { maxChars, ocrPageLimit, ocrScale })
   }
 
-  // zip 容器可能是 docx/xlsx/pptx — 统一按 docx 尝试(mammoth 失败回退文本)。
+  // zip 容器可能是 docx/xlsx/pptx — #777: pptx 走专用解析；其余按 docx
+  // 尝试(mammoth 失败回退文本)。
   if (sniffed === 'application/zip' || isDocx(filename, mimeType)) {
+    if (isPptx(filename, mimeType)) {
+      const parsed = parsePptx(buffer)
+      if (!parsed.ok) return `[PPTX extraction failed: ${parsed.error}]`
+      return pptxSlidesToMarkdown(parsed).slice(0, maxChars)
+    }
     return extractDocxText(buffer, maxChars)
   }
 
@@ -521,9 +530,9 @@ export function cachedExtractDocumentMarkdownFromUpload(
   if (hit && Date.now() - hit.at < EXTRACT_CACHE_TTL_MS) return Promise.resolve(hit.text)
 
   return extractDocumentMarkdownFromUpload(userId, fileId, options).then((text) => {
-    // 提取失败/跳过标记([PDF xxx failed] / [附件 超过 xxMB])不缓存,
+    // 提取失败/跳过标记([PDF xxx failed] / [PPTX xxx failed] / [附件 超过 xxMB])不缓存,
     // 下次可重试;正常 markdown 文本(可能以 # 标题开头)照常缓存。
-    if (text && !/^\[(PDF|DOCX|附件)/.test(text)) {
+    if (text && !/^\[(PDF|DOCX|PPTX|附件)/.test(text)) {
       if (extractCache.size >= EXTRACT_CACHE_MAX) {
         let oldest: string | null = null
         let oldestAt = Infinity
@@ -578,6 +587,13 @@ export async function extractDocumentMarkdownWithImagesFromUpload(
   }
 
   if (sniffed === 'application/zip' || isDocx(originalName)) {
+    // #777: pptx（上传的 PPT）→ slides markdown（## 分节 + 页标记嵌图），
+    // 此前 zip 容器全交给 mammoth，pptx 导入空/乱码。
+    if (isPptx(originalName)) {
+      const parsed = parsePptx(buffer)
+      if (!parsed.ok) return { text: `[PPTX extraction failed: ${parsed.error}]`, images: [] }
+      return { text: pptxSlidesToMarkdown(parsed).slice(0, maxChars), images: parsed.images }
+    }
     const docx = await extractDocxContentFromUpload(userId, fileId, { maxChars, vision: true })
     return { text: docx?.text || '', images: docx?.images || [] }
   }

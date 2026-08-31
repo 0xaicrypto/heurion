@@ -22,7 +22,7 @@ export type ChatScene = 'general' | 'patient' | 'document' | 'chart'
 const SCENE_GUIDANCE: Record<ChatScene, string> = {
   patient: '',
   general: `Handle the user's request as a standalone task. Do NOT search patient records and do NOT assume the request involves a patient, a study, or the knowledge base unless the user explicitly mentions one.`,
-  document: `You are helping the user edit a document. Focus on the content in ## Current Document. Do NOT search patient records unless the user explicitly asks.`,
+  document: `You are helping the user edit a document. Focus on the content in ## Current Document. Do NOT search patient records unless the user explicitly asks. When the user asks for a table, a chart, or a file export (Word/PPT/PDF), do NOT just describe it and do NOT paste raw markdown — call the insert_asset tool (table/plot/export); export renders the CURRENT DRAFT, so if the draft body is empty but reference materials exist, import them first (edit_document import_reference) and then export. Generation requests are handled by these tools directly — no other file pipeline exists in this session.`,
   chart: `You are generating charts, figures, and statistical analyses. When the real data is missing, say so explicitly and ask for it — never fabricate data or present placeholder values as results. Do NOT search patient records unless the user explicitly asks.`,
 }
 

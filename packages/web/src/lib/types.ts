@@ -89,6 +89,7 @@ export type {
   Citation,
   ToolCallRecord,
   SidecarFileInfo,
+  DeckWire,
   ChatEventType,
   RetrievalTool,
 } from '@heurion/contracts';

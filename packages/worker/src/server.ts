@@ -5,6 +5,7 @@ import { generatePptx } from './handlers/pptx.js'
 import { convertToPdf } from './handlers/pdf.js'
 import { renderPlot } from './handlers/plot.js'
 import { renderTable } from './handlers/table.js'
+import { previewFile } from './handlers/preview.js'
 import { getDownloadUrl, getLocalFile, localDownloadUrl, downloadUrlTtlSeconds } from './storage.js'
 import { PersistentJobStore, type JobRecord } from './job-store.js'
 import { createReadStream, existsSync } from 'fs'
@@ -49,6 +50,7 @@ const HANDLERS: Record<RenderJobType, (payload: any) => Promise<any>> = {
   'sidecar.render_table': (p) => renderTable(p),
   'sidecar.render_plot': (p) => renderPlot(p),
   'sidecar.convert_to_pdf': (p) => convertToPdf(p),
+  'sidecar.preview_file': (p) => previewFile(p),
 }
 
 function isAuthorized(token: string | undefined): boolean {
@@ -61,7 +63,12 @@ async function main() {
   // compose overrides this explicitly (8001:8001 on the host).
   const port = parseInt(process.env.SERVER_PORT || '8002', 10)
   const host = process.env.SERVER_HOST || '0.0.0.0'
-  const app = Fastify({ logger: true })
+  const app = Fastify({
+    logger: true,
+    // #771: preview_file 以 base64 直传文件字节（50MB 文件 ≈ 67MB JSON），
+    // 默认 1MB bodyLimit 无法承载。
+    bodyLimit: parseInt(process.env.WORKER_BODY_LIMIT || String(96 * 1024 * 1024), 10),
+  })
 
   app.addHook('preHandler', (request, reply, done) => {
     if (request.url === '/healthz') return done()

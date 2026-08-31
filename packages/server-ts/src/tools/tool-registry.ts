@@ -6,6 +6,7 @@ import { DeferToBackgroundTool } from './async-tools.js'
 import { OCRImageTool } from './ocr-tools.js'
 import { EditDocumentTool } from './edit-document-tool.js'
 import { InsertAssetTool } from './insert-asset-tool.js'
+import { EditDeckTool } from './edit-deck-tool.js'
 import { LoadSkillTool } from './skill-tools.js'
 import { RenderChartTool } from './render-chart-tool.js'
 import { SearchMedicalWebTool, FetchArticleSummaryTool, VisitMedicalSiteTool, ExtractFulltextTool } from './medical-web-tools.js'
@@ -106,7 +107,9 @@ export class ToolRegistry {
     this.register(new EditDocumentTool(ctx))
     // #765: 写作画布结构化资产工具（表格）— 与 edit_document 同管道
     // （快照 + doc_updated），仅 doc- 会话暴露。
-    this.register(new InsertAssetTool(ctx))    // #454-followup: plugin-gated renderers — registered so execute() can
+    this.register(new InsertAssetTool(ctx))
+    // #773: deck 资产 AI 编辑工具 — 仅 doc- 会话暴露（与 edit_document 同门控）。
+    this.register(new EditDeckTool(ctx))    // #454-followup: plugin-gated renderers — registered so execute() can
     // give a clear error, but excluded from definitions unless installed.
     this.register(new RenderChartTool(ctx))
     this.register(new LoadSkillTool(ctx))
@@ -163,6 +166,7 @@ export class ToolRegistry {
     for (const tool of this.tools.values()) {
       if (tool.name === 'edit_document' && !isDocSession) continue
       if (tool.name === 'insert_asset' && !isDocSession) continue
+      if (tool.name === 'edit_deck' && !isDocSession) continue
       if (PLUGIN_GATED_TOOLS[tool.name] && !(await this.isToolAvailable(tool.name))) continue
       if (omit?.has(tool.name)) continue
       out.push(tool.definition)
@@ -234,7 +238,8 @@ export class ToolRegistry {
     // 截断会破坏 doc_updated SSE 的 JSON 解析(大文档写回后画布不更新)。
     // 防上下文膨胀改由 tool-loop 注入时截断(tool-loop.ts 的 messages push)。
     // #765: insert_asset 同理 — 表格写回同样携带完整 body。
-    if (result.success && result.output && name !== 'edit_document' && name !== 'insert_asset') {
+    // #773: edit_deck 同理 — deck JSON 随输出返回（doc_updated SSE 需要）。
+    if (result.success && result.output && name !== 'edit_document' && name !== 'insert_asset' && name !== 'edit_deck') {
       try {
         const { boundToolOutput } = await import('./tool-output-store.js')
         const { bounded, truncated, filePath } = boundToolOutput(result.output, { userId: this.ctx.userId })

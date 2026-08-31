@@ -459,8 +459,11 @@ export type PlotContent = z.infer<typeof plotContentSchema>;
  * #652: single job-type namespace. Values are what the control plane sends
  * (plugin-capability.service maps heurion/* tool names onto these) and what
  * the worker registers. Keep in sync with worker/src/server.ts HANDLERS.
+ * #771: `sidecar.preview_file` — LibreOffice 渲染产物/上传 pptx 的翻页预览
+ * 图（worker 端 soffice → pdf → pdftoppm PNG）；payload 不走 render-content
+ * 校验（data_base64 直传文件字节）。
  */
-export declare const renderJobType: z.ZodEnum<["sidecar.generate_pptx", "sidecar.generate_docx", "sidecar.render_table", "sidecar.render_plot", "sidecar.convert_to_pdf"]>;
+export declare const renderJobType: z.ZodEnum<["sidecar.generate_pptx", "sidecar.generate_docx", "sidecar.render_table", "sidecar.render_plot", "sidecar.convert_to_pdf", "sidecar.preview_file"]>;
 export type RenderJobType = z.infer<typeof renderJobType>;
 export type RenderContent = PresentationContent | DocumentContent | TableContent | PlotContent;
 /**

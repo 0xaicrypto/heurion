@@ -13,7 +13,7 @@ export class WritingApi extends ApiCore {
     return this.fetch('/api/v1/docs', { method: 'POST', body: JSON.stringify({ title, study_id: studyId }) });
   }
 
-  async getDoc(docId: string): Promise<{id: string; title: string; body: string; created_at: string; updated_at: string; study_id?: string | null; study_name?: string | null}> {
+  async getDoc(docId: string): Promise<{id: string; title: string; body: string; deck?: unknown; created_at: string; updated_at: string; study_id?: string | null; study_name?: string | null}> {
     return this.fetch(`/api/v1/docs/${docId}`);
   }
 
@@ -34,7 +34,8 @@ export class WritingApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}`, { method: 'DELETE' });
   }
 
-  async updateDoc(docId: string, data: {title: string; body: string}): Promise<{id: string; title: string; body: string; updated_at: string; unchanged?: boolean}> {
+  // #773: deck 为可编辑资产（deck 视图编辑保存路径）；undefined = 不触碰。
+  async updateDoc(docId: string, data: {title: string; body: string; deck?: unknown}): Promise<{id: string; title: string; body: string; deck?: unknown; updated_at: string; unchanged?: boolean}> {
     return this.fetch(`/api/v1/docs/${docId}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 

@@ -11,6 +11,8 @@ import { getUserContext } from './user-context.js'
 import { providerSupportsVision, modelSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { extractTextFromUpload, extractImageUpload, isImageFile, isPdf, isDocx, extractPdfContentFromUpload, extractDocxContentFromUpload, cachedExtractDocumentMarkdownFromUpload, type ExtractedPdfImage } from '../../lib/document-extractor.js'
+// #777: pptx 解析导入 — 主 chat 附件管道共用 extractor 层解析。
+import { isPptx, extractPptxContentFromUpload } from '../../lib/pptx-extractor.js'
 import type { ChatScene } from '../../common/persona.js'
 
 // #630: 统一预算口径 — 剩余预算 = maxTotalTokens − system − history。
@@ -330,6 +332,16 @@ export async function buildAttachmentParts(
       if (docx) {
         content = docx.text
         embeddedImages = docx.images
+      }
+    } else if (isPptx(name)) {
+      // #777: 主 chat 上传 pptx 的问答/摘要 — 解析做在 extractor 层,
+      // doc 场景与主 chat 共用（副产物：主 chat 自动获得 pptx 支持）。
+      const parsed = extractPptxContentFromUpload(opts.userId, fid)
+      if (parsed.error) {
+        content = `[PPTX extraction failed: ${parsed.error}]`
+      } else {
+        content = parsed.text
+        embeddedImages = parsed.images
       }
     } else {
       content = await extractTextFromUpload(opts.userId, fid, { maxChars: extractCap })

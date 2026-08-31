@@ -158,45 +158,62 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         return
       }
 
+      // #776: doc- 会话路由收编 — 写作会话内一切生成请求（表格/图/导出/编排）
+      // 统一交给工具循环（模型视上下文自主调 insert_asset / edit_document），
+      // 旁路（触发词匹配 + 旁路裁决 + handlePluginChatRequest）只保留给主
+      // chat。否则"把这篇文章做成 PPT"会被 ppt 触发词截胡进历史编内容渲染，
+      // #767/#772 的导出/编排管线对最典型话术是死代码；收编后 doc 会话每回
+      // 合还省一次裁决 LLM 调用。verdict 记 taken_over_by_tool_loop 供回归对比。
+      const isDocSession = sid.startsWith('doc-')
       // Plugin-based document rendering — handled directly without streaming
       // LLM output. #452/#549: the main router no longer classifies sidecar
       // (its LLM fallback lacked the edit/polish exclusion and caused
       // #552-class misroutes); resolveSidecarIntent is the SINGLE authority
       // for "is this a file-generation request" — rule candidate recall →
       // LLM adjudicator → conservative fallback, all with history context.
-      const recentTurns = ctx.eventLog.query({ sessionId: sid, limit: 40 })
-        .reverse()
-        .filter((evt: any) => evt.eventType === 'user_message' || evt.eventType === 'assistant_response')
-        .slice(0, 6)
-        .map((evt: any) => ({
-          role: evt.eventType === 'user_message' ? ('user' as const) : ('assistant' as const),
-          content: evt.content,
-        }))
       // #560/#561: capture the adjudication detail — telemetry-worthy verdict
       // distribution and, on 'uncertain', an intent_clarify hint for the UI
       // (the request could be a generation request, but the LLM was unsure).
       let sidecarDetail: SidecarDecisionDetail | undefined
-      await resolveSidecarIntent(userId, body.text, {
-        history: recentTurns,
-        onDecision: (detail) => { sidecarDetail = detail },
-      })
-      await telemetry.record({
-        userId,
-        workspaceId: userId,
-        category: 'sidecar',
-        action: 'intent',
-        metadata: {
-          verdict: sidecarDetail?.verdict ?? 'uncertain',
-          vetoed: sidecarDetail?.vetoed ?? false,
-          llmCalls: sidecarDetail?.llmCalls ?? 0,
-          cacheHit: sidecarDetail?.cacheHit ?? false,
-          textLength: sidecarDetail?.textLength ?? body.text.length,
-          historyTurns: sidecarDetail?.historyTurns ?? 0,
-          // #585 — 语义层探测值 + 耗时入库,供分歧率/延迟月报 (shadow→on 门槛)。
-          semantic: sidecarDetail?.semantic,
-          semanticMs: sidecarDetail?.semanticMs,
-        },
-      }).catch(() => {})
+      if (isDocSession) {
+        await telemetry.record({
+          userId,
+          workspaceId: userId,
+          category: 'sidecar',
+          action: 'intent',
+          metadata: { verdict: 'taken_over_by_tool_loop', llmCalls: 0, docSession: true },
+        }).catch(() => {})
+      } else {
+        const recentTurns = ctx.eventLog.query({ sessionId: sid, limit: 40 })
+          .reverse()
+          .filter((evt: any) => evt.eventType === 'user_message' || evt.eventType === 'assistant_response')
+          .slice(0, 6)
+          .map((evt: any) => ({
+            role: evt.eventType === 'user_message' ? ('user' as const) : ('assistant' as const),
+            content: evt.content,
+          }))
+        await resolveSidecarIntent(userId, body.text, {
+          history: recentTurns,
+          onDecision: (detail) => { sidecarDetail = detail },
+        })
+        await telemetry.record({
+          userId,
+          workspaceId: userId,
+          category: 'sidecar',
+          action: 'intent',
+          metadata: {
+            verdict: sidecarDetail?.verdict ?? 'uncertain',
+            vetoed: sidecarDetail?.vetoed ?? false,
+            llmCalls: sidecarDetail?.llmCalls ?? 0,
+            cacheHit: sidecarDetail?.cacheHit ?? false,
+            textLength: sidecarDetail?.textLength ?? body.text.length,
+            historyTurns: sidecarDetail?.historyTurns ?? 0,
+            // #585 — 语义层探测值 + 耗时入库,供分歧率/延迟月报 (shadow→on 门槛)。
+            semantic: sidecarDetail?.semantic,
+            semanticMs: sidecarDetail?.semanticMs,
+          },
+        }).catch(() => {})
+      }
       // #583 — 判定全量入事件日志（脱敏指纹），供审计重建与 #560 语料。
       // #578 — 用 TurnIntent（scene×action×target）驱动决策路由：generate 走插件，
       // edit/answer 回落常规对话；编辑目标冲突（附件 vs 当前草稿，例 C）要澄清。
@@ -204,7 +221,21 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         { scene, sessionId: sid, hasAttachment: Boolean(body.attachments?.length), patientHash },
       )
       const picked = pickTarget({ text: body.text, hasAttachment: Boolean(body.attachments?.length) }, candidates)
-      const turnIntent: TurnIntent = {
+      // #776: doc 会话的 action 只按确定性编辑标记照记（遥测回归对比用），
+      // 真正的生成/编排决策在工具循环内由模型做出 — 旁路不参与。
+      const turnIntent: TurnIntent = isDocSession ? {
+        action: (EDIT_MARKERS.test(body.text) ? 'edit' : 'answer') as TurnAction,
+        target: picked.target as TurnTarget,
+        source: 'rule' as TurnSource,
+        confidence: 0.6,
+        needsClarify: false,
+        clarifyOptions: [],
+        payload: {
+          rawText: body.text,
+          patientHash: patientHash ?? undefined,
+          editDocumentId: picked.target === 'current_doc' ? sid.slice(4) : undefined,
+        },
+      } : {
         action: (sidecarDetail?.verdict === 'generate' ? 'generate'
           : (sidecarDetail?.vetoed ? (EDIT_MARKERS.test(body.text) ? 'edit' : 'answer') : 'answer')) as TurnAction,
         target: (sidecarDetail?.verdict === 'generate' ? 'none' : picked.target) as TurnTarget,
@@ -229,7 +260,8 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       // #598: 移除人工澄清 — 意图不确定(uncertain)时按普通对话处理,
       // 不再弹出'生成文档'反问;确定的生成请求由 isGenerateRequest 直接
       // 走插件管线,文档生成可逆,用户可用'生成一份…'随时触发。
-      if (isGenerateRequest(turnIntent)) {
+      // #776: doc 会话不走插件旁路 — 生成请求由工具循环承接。
+      if (!isDocSession && isGenerateRequest(turnIntent)) {
         const patient = await findPatient(userId, patientHash)
 
         // Conversation history from event log (same source as the normal

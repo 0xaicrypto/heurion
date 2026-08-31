@@ -13,6 +13,10 @@ export async function authGuard(request: FastifyRequest, reply: FastifyReply) {
   if (request.url.startsWith('/api/v1/files/download/') && (request.query as any)?.token) {
     return
   }
+  // #771: preview-page PNG 同为 <img src> 加载（无鉴权头）— chart token 校验。
+  if (request.url.startsWith('/api/v1/files/preview-page/') && (request.query as any)?.token) {
+    return
+  }
 
   const header = request.headers.authorization
   if (!header || !header.startsWith('Bearer ')) {
