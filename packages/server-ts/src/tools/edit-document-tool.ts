@@ -1,7 +1,7 @@
 import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { estimateTokens } from '../common/token-estimate.js'
-import { resolveImportTargets, extractRefText, writeDocBody } from './doc-import.js'
+import { resolveImportTargets, extractRefText, writeDocBody, ensureDraftBody } from './doc-import.js'
 
 /** 匹配时忽略的 markdown 语法字符 — 模型复制 old_text 时常省略/重排这些
  *  标记(`## ` 标题、`**` 强调、`` ` `` 行内代码、`>` 引用、`•` 列表圆点),
@@ -372,26 +372,11 @@ export class EditDocumentTool extends BaseTool {
       // #fix: 正文为空时局部编辑必然失败 — 若存在唯一参考材料(用户上传
       // PDF/DOCX 后直接说"润色"的典型场景),自动导入后再执行本编辑,
       // 不依赖模型先单独调一次 import_reference;多参考/无参考才报错引导。
+      // #787: 编排收敛到 doc-import.ensureDraftBody(文案单点维护)。
       if (!body.trim()) {
-        const labels = await this.resolveDocImportTargets(docId)
-        if (labels.length === 1) {
-          const { text, error } = await extractRefText(this.ctx.userId, docId, labels[0].r, labels[0].label)
-          if (error) return { success: false, error: error }
-          const { body: importedBody, error: writeError } = await writeDocBody(this.ctx.userId, docId, text, 'AI import')
-          if (writeError) return { success: false, error: writeError }
-          body = importedBody
-        } else if (labels.length === 0) {
-          return {
-            success: false,
-            error: '文档正文为空,且没有可导入的参考材料。请先上传参考资料,或内容很短时用 full_text 直接写入。',
-          }
-        } else {
-          const available = labels.map((l) => l.label).slice(0, 5).join('、')
-          return {
-            success: false,
-            error: `文档正文为空,且有多个参考材料(${available})。请先用 import_reference 明确导入其中之一(分步润色的前置步骤),或内容很短时用 full_text 直接写入。`,
-          }
-        }
+        const ensured = await ensureDraftBody(this.ctx.userId, docId, { scenario: 'import_reference' })
+        if (ensured.error) return { success: false, error: ensured.error }
+        body = ensured.body
       }
       // #fix: 三级匹配 — 空白归一化(换行/连续空格/软连字符/markdown
       // 标题标记/大小写)→ 完全忽略空白 → 模糊匹配(少量字符差异)。

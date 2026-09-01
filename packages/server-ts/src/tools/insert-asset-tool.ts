@@ -3,7 +3,7 @@ import path from 'path'
 import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { findNormalizedSpan, findFuzzySpan } from './edit-document-tool.js'
-import { resolveImportTargets, extractRefText, writeDocBody } from './doc-import.js'
+import { ensureDraftBody } from './doc-import.js'
 import { issueChartToken } from '../common/chart-token.js'
 import { validateRenderContent, SCHEMA_VERSION } from '@heurion/contracts'
 import type { ToolExecutionPlane } from './tool-registry.js'
@@ -382,25 +382,13 @@ export class InsertAssetTool extends BaseTool {
     // organize=false — 保真导出。#774: 草稿正文为空时不再直接拒绝:
     // 存在唯一参考材料则自动导入(与 edit_document range edit 的
     // auto-import 行为对齐)后继续本次导出;多参考/无参考报错引导。
+    // #787: 编排收敛到 doc-import.ensureDraftBody(文案单点维护)。
     let autoImportNote = ''
     if (!body.trim()) {
-      const labels = await resolveImportTargets(this.ctx.userId, docId)
-      if (labels.length === 1) {
-        const { text, error } = await extractRefText(this.ctx.userId, docId, labels[0].r, labels[0].label)
-        if (error) return { success: false, error }
-        const { body: imported, error: writeError } = await writeDocBody(this.ctx.userId, docId, text, 'AI import')
-        if (writeError) return { success: false, error: writeError }
-        body = imported
-        autoImportNote = `已自动导入参考材料「${labels[0].label}」，`
-      } else if (labels.length === 0) {
-        return { success: false, error: '文档正文为空，无法导出。请先撰写内容。' }
-      } else {
-        const available = labels.map((l) => l.label).slice(0, 5).join('、')
-        return {
-          success: false,
-          error: `文档正文为空,且有多个参考材料(${available})。请先用 edit_document 的 import_reference 明确导入其中之一,再导出。`,
-        }
-      }
+      const ensured = await ensureDraftBody(this.ctx.userId, docId, { scenario: 'export' })
+      if (ensured.error) return { success: false, error: ensured.error }
+      body = ensured.body
+      if (ensured.note) autoImportNote = `${ensured.note}，`
     }
 
     // 内容源 = 草稿正文本身（markdown → 契约模型），不重付 LLM 重编 —
@@ -452,27 +440,12 @@ export class InsertAssetTool extends BaseTool {
       }
       let workingBody = body
       let importedNote = ''
+      // #787: 编排收敛到 doc-import.ensureDraftBody(文案单点维护)。
       if (!workingBody.trim()) {
-        const labels = await resolveImportTargets(this.ctx.userId, docId)
-        if (labels.length === 1) {
-          const { text, error } = await extractRefText(this.ctx.userId, docId, labels[0].r, labels[0].label)
-          if (error) return { success: false, error }
-          const { body: imported, error: writeError } = await writeDocBody(this.ctx.userId, docId, text, 'AI import')
-          if (writeError) return { success: false, error: writeError }
-          workingBody = imported
-          importedNote = `已自动导入参考材料「${labels[0].label}」。`
-        } else if (labels.length === 0) {
-          return {
-            success: false,
-            error: 'organize=true 需要你在 tool call 参数里直接提供 slides（deck 内容）。当前草稿为空且无参考材料 — 若对话上下文素材足够（如用户要求"凭空做个 PPT"），请把内容整理成 slides 再次调用；否则请让用户上传参考材料或先撰写正文。',
-          }
-        } else {
-          const available = labels.map((l) => l.label).slice(0, 5).join('、')
-          return {
-            success: false,
-            error: `文档正文为空,且有多个参考材料(${available})。请先用 edit_document 的 import_reference 明确导入其中之一,再走编排导出。`,
-          }
-        }
+        const ensured = await ensureDraftBody(this.ctx.userId, docId, { scenario: 'organize' })
+        if (ensured.error) return { success: false, error: ensured.error }
+        workingBody = ensured.body
+        if (ensured.note) importedNote = `${ensured.note}。`
       }
       return {
         success: false,
