@@ -307,7 +307,8 @@
     "imageGen": "图像生成",
     "configured": "已配置",
     "imgKey": "API Key（可选，留空不改）",
-    "saved": "已保存"
+    "saved": "已保存",
+    "currentActive": "当前生效: "
   },
   "admin": {
     "title": "管理"
@@ -349,7 +350,38 @@
     "deckNewBullet": "要点",
     "deckConflict": "AI 已更新 deck，但你有未保存的 deck 编辑 — 请先 Save，再刷新页面获取 AI 版本",
     "aiExportDeckPrompt": "请把当前 deck 导出为 PPT（使用现有 deck 内容，不要重新编排）。",
-    "pptxParsing": "PPT 后台解析中 — 稍后 deck 视图将呈现每一页"
+    "pptxParsing": "PPT 后台解析中 — 稍后 deck 视图将呈现每一页",
+    "bubblePolish": "润色",
+    "bubbleRewrite": "改写",
+    "bubbleAcademic": "更学术",
+    "bubbleSummarize": "总结",
+    "bubblePlaceholder": "告诉 AI 怎么改(可留空直接润色),如:压缩到 200 字 / 强调安全性信号 / 改写成投稿信语气",
+    "bubbleKeyHint": "⌘/Ctrl + Enter 开始",
+    "bubbleCancel": "取消",
+    "bubbleStart": "开始",
+    "bubbleRunning": "AI 生成中…",
+    "bubbleFailed": "出错了",
+    "bubbleDone": "已完成 {{n}} 字",
+    "bubbleReasoning": "💭 思考过程",
+    "bubblePartialHint": "↑ 已生成的部分内容,可手动复制",
+    "bubbleRetry": "重试",
+    "bubbleDiscard": "丢弃",
+    "bubbleReplace": "替换选中",
+    "selectFirst": "请先选中一段文字",
+    "polishReasoningNoOutput": "模型思考了 {{n}} 字但未产出正文 — 请点「重试」,通常第二次会正常输出",
+    "polishNoContent": "AI 未返回内容,请重试或检查模型配置",
+    "selectionStale": "选区已失效,请重新选择后再试",
+    "selectionChanged": "选区内容已变化,为避免错位替换未应用 — 请重新选中后重试",
+    "polishEmpty": "AI 结果为空,已丢弃",
+    "polishApplied": "✨ 已按 AI 结果替换选中文本",
+    "kbDedup": "📚 已在知识库,已加入上下文: {{name}}",
+    "restoreApplied": "已恢复到「{{label}}」：接受 {{a}} / 拒绝 {{r}} 处差异",
+    "restoreReviewTitle": "审阅版本恢复",
+    "exportDownloadStarted": "已开始下载",
+    "exportKbSync": "已同步知识库,可在聊天中引用",
+    "exportDone": "导出完成",
+    "exportHistory": "本次导出历史",
+    "pptxReloadFailed": "解析结果刷新失败,可稍后手动刷新页面"
   },
   "preview": {
     "open": "预览",
@@ -445,5 +477,31 @@
     "checksDone": "项通过",
     "readyHint": "检查全部通过，可以投稿了",
     "downloadCover": "下载 Markdown"
+  },
+  "nba": {
+    "title": "建议下一步",
+    "fileOne": "《{{name}}》已入库,要不要问问它的核心结论?",
+    "filesMany": "{{n}} 个新文件已入库,试试用它们提问",
+    "askAction": "去问问",
+    "gapOne": "AI 发现了 1 个知识缺口",
+    "gapMany": "AI 发现了 {{n}} 个知识缺口",
+    "gapAction": "处理",
+    "stale": "{{n}} 篇文章因新事实过期",
+    "viewAction": "查看"
+  },
+  "kb": {
+    "pipelineQueued": "排队中",
+    "pipelineExtracted": "已提取",
+    "pipelineEmbedded": "已入索引",
+    "pipelineProposed": "事实待审",
+    "pipelineIngested": "就绪",
+    "pipelineFailed": "失败",
+    "pipelineSkipped": "跳过",
+    "loadArticles": "文章加载失败",
+    "loadFacts": "事实加载失败",
+    "loadGaps": "Gaps 加载失败",
+    "loadTools": "工具加载失败",
+    "loadFiles": "文件列表加载失败",
+    "requestFailed": "请求失败"
   }
 }

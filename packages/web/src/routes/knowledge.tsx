@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { AppShell } from '@/components/layout/AppShell';
 import { api } from '@/lib/api';
 import { Button, Card, Skeleton, Badge, Input, Textarea } from '@/components/ui';
@@ -29,14 +30,15 @@ interface UploadedFile {
 
 // #762: 文件管线状态(#747 FilePipelineJob)— Files 卡可见"为什么搜不到"。
 type PipelineStage = 'queued' | 'extracted' | 'embedded' | 'proposed' | 'ingested' | 'failed' | 'skipped';
-const PIPELINE_BADGE: Record<PipelineStage, { label: string; cls: string }> = {
-  queued: { label: '排队中', cls: 'bg-surface-muted text-text-secondary' },
-  extracted: { label: '已提取', cls: 'bg-surface-muted text-text-secondary' },
-  embedded: { label: '已入索引', cls: 'bg-success/10 text-success' },
-  proposed: { label: '事实待审', cls: 'bg-success/10 text-success' },
-  ingested: { label: '就绪', cls: 'bg-success/10 text-success' },
-  failed: { label: '失败', cls: 'bg-error/10 text-error' },
-  skipped: { label: '跳过', cls: 'bg-warning/10 text-warning' },
+// #792: badge 文案走 i18n(key),cls 保留模块级。
+const PIPELINE_BADGE: Record<PipelineStage, { key: string; cls: string }> = {
+  queued: { key: 'kb.pipelineQueued', cls: 'bg-surface-muted text-text-secondary' },
+  extracted: { key: 'kb.pipelineExtracted', cls: 'bg-surface-muted text-text-secondary' },
+  embedded: { key: 'kb.pipelineEmbedded', cls: 'bg-success/10 text-success' },
+  proposed: { key: 'kb.pipelineProposed', cls: 'bg-success/10 text-success' },
+  ingested: { key: 'kb.pipelineIngested', cls: 'bg-success/10 text-success' },
+  failed: { key: 'kb.pipelineFailed', cls: 'bg-error/10 text-error' },
+  skipped: { key: 'kb.pipelineSkipped', cls: 'bg-warning/10 text-warning' },
 };
 
 type Tab = 'articles' | 'facts' | 'gaps' | 'tools' | 'files';
@@ -70,6 +72,7 @@ function usePagination<T>(items: T[], page: number, pageSize = PAGE_SIZE) {
 }
 
 export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   // #761/#762: 支持 ?view=gaps|articles 深链(NBA 卡跳转定位)。
   const [tab, setTabState] = useState<Tab>(() => {
@@ -123,22 +126,24 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
   // empty lists and no hint why. Errors surface in a dismissible banner.
   const [loadErrors, setLoadErrors] = useState<string[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
-  const recordLoadError = (what: string) => (err: unknown) => {
-    setLoadErrors(prev => [...new Set([...prev, `${what}: ${(err as Error)?.message || '请求失败'}`])].slice(-3));
-  };
+  // #792: useCallback 固定引用 — loadAll 的依赖数组需要稳定值,
+  // 否则每渲染新建回调会让 useEffect 无限重跑。
+  const recordLoadError = useCallback((what: string) => (err: unknown) => {
+    setLoadErrors(prev => [...new Set([...prev, `${what}: ${(err as Error)?.message || t('kb.requestFailed', '请求失败')}`])].slice(-3));
+  }, [t]);
 
   const loadAll = useCallback(() => {
     setLoading(true);
     setLoadErrors([]);
     Promise.all([
-      api.getKnowledgeArticles().then(r => setArticles(r.articles)).catch(recordLoadError('文章加载失败')),
-      api.getFacts().then(r => setFacts(r.facts)).catch(recordLoadError('事实加载失败')),
-      api.getKnowledgeGaps().then(r => setGaps(r.gaps)).catch(recordLoadError('Gaps 加载失败')),
-      api.getKnowledgeTools().then(r => setTools(r.tools)).catch(recordLoadError('工具加载失败')),
-      api.listFiles().then(r => setFiles(r.files)).catch(recordLoadError('文件列表加载失败')),
+      api.getKnowledgeArticles().then(r => setArticles(r.articles)).catch(recordLoadError(t('kb.loadArticles', '文章加载失败'))),
+      api.getFacts().then(r => setFacts(r.facts)).catch(recordLoadError(t('kb.loadFacts', '事实加载失败'))),
+      api.getKnowledgeGaps().then(r => setGaps(r.gaps)).catch(recordLoadError(t('kb.loadGaps', 'Gaps 加载失败'))),
+      api.getKnowledgeTools().then(r => setTools(r.tools)).catch(recordLoadError(t('kb.loadTools', '工具加载失败'))),
+      api.listFiles().then(r => setFiles(r.files)).catch(recordLoadError(t('kb.loadFiles', '文件列表加载失败'))),
       api.getPipelineJobs().then(r => setPipelineStages(Object.fromEntries(r.jobs.map(j => [j.fileId, j.stage as PipelineStage])))).catch(() => {}),
     ]).finally(() => setLoading(false));
-  }, []);
+  }, [t, recordLoadError]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -774,7 +779,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                           const badge = PIPELINE_BADGE[stage];
                           return (
                             <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${badge.cls}`} title={stage}>
-                              {badge.label}
+                              {t(badge.key)}
                             </span>
                           );
                         })()}

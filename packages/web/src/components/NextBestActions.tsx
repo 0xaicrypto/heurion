@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Sparkles, X, FileText, GitGraph, BookOpen } from 'lucide-react';
 import { Card, Button } from '@/components/ui';
 import { dismissNba, useNextBestActionSignals } from '@/lib/nba';
@@ -11,6 +12,7 @@ import { dismissNba, useNextBestActionSignals } from '@/lib/nba';
  */
 export function NextBestActions() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const signals = useNextBestActionSignals();
   const [, force] = useState(0);
   if (signals.length === 0) return null;
@@ -19,7 +21,7 @@ export function NextBestActions() {
     <Card className="border-dashed border-accent/40 p-4">
       <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-text-primary">
         <Sparkles size={14} className="text-accent" />
-        建议下一步
+        {t('nba.title', '建议下一步')}
       </h3>
       <div className="space-y-1.5">
         {signals.map((a) => (

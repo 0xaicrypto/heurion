@@ -29,6 +29,7 @@ export function isDismissedRecently(id: string): boolean {
 
 // ── signal → action mapping (needs router + api) ──
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { api } from '@/lib/api';
 
 export interface NbaAction {
@@ -44,6 +45,7 @@ export interface NbaAction {
  * 组件层负责把 targetPath 渲染为跳转按钮与图标。
  */
 export function useNextBestActionSignals(): Array<{ id: string; text: string; actionLabel: string; targetPath: string; tone: 'accent' | 'warning' }> {
+  const { t } = useTranslation();
   const [actions, setActions] = useState<Array<{ id: string; text: string; actionLabel: string; targetPath: string; tone: 'accent' | 'warning' }>>([]);
 
   useEffect(() => {
@@ -56,14 +58,15 @@ export function useNextBestActionSignals(): Array<{ id: string; text: string; ac
       ]);
       const found: Array<{ id: string; text: string; actionLabel: string; targetPath: string; tone: 'accent' | 'warning' }> = [];
 
+      // #792: NBA 文案走 i18n(此前 8 条硬编码)。
       const files = signals[0].status === 'fulfilled' ? signals[0].value : [];
       if (files.length > 0) {
         found.push({
           id: `nba-file-${files[0].file_id}`,
           text: files.length === 1
-            ? `《${files[0].name}》已入库,要不要问问它的核心结论?`
-            : `${files.length} 个新文件已入库,试试用它们提问`,
-          actionLabel: '去问问',
+            ? t('nba.fileOne', '《{{name}}》已入库,要不要问问它的核心结论?', { name: files[0].name })
+            : t('nba.filesMany', '{{n}} 个新文件已入库,试试用它们提问', { n: files.length }),
+          actionLabel: t('nba.askAction', '去问问'),
           targetPath: '/app/chat',
           tone: 'accent',
         });
@@ -73,8 +76,8 @@ export function useNextBestActionSignals(): Array<{ id: string; text: string; ac
       if (gaps.length > 0) {
         found.push({
           id: 'nba-gaps-open',
-          text: gaps.length === 1 ? 'AI 发现了 1 个知识缺口' : `AI 发现了 ${gaps.length} 个知识缺口`,
-          actionLabel: '处理',
+          text: gaps.length === 1 ? t('nba.gapOne', 'AI 发现了 1 个知识缺口') : t('nba.gapMany', 'AI 发现了 {{n}} 个知识缺口', { n: gaps.length }),
+          actionLabel: t('nba.gapAction', '处理'),
           targetPath: '/app/knowledge?view=gaps',
           tone: 'accent',
         });
@@ -84,8 +87,8 @@ export function useNextBestActionSignals(): Array<{ id: string; text: string; ac
       if (stale.length >= 2) {
         found.push({
           id: 'nba-articles-stale',
-          text: `${stale.length} 篇文章因新事实过期`,
-          actionLabel: '查看',
+          text: t('nba.stale', '{{n}} 篇文章因新事实过期', { n: stale.length }),
+          actionLabel: t('nba.viewAction', '查看'),
           targetPath: '/app/knowledge?view=articles',
           tone: 'warning',
         });
@@ -96,7 +99,7 @@ export function useNextBestActionSignals(): Array<{ id: string; text: string; ac
         : []);
     })();
     return () => { alive = false; };
-  }, []);
+  }, [t]);
 
   return actions;
 }

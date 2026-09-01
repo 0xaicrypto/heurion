@@ -9,6 +9,7 @@ import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor, type BubbleRunState, type DiffReviewState } from '@/components/DocEditor';
 import { KbPicker } from '@/components/KbPicker';
 import { sanitizePolishOutput } from '@/lib/polish-sanitize';
+import { captureScrollContainer } from '@/lib/scroll-utils';
 import { SpotHint } from '@/components/SpotHint';
 import { UploadProgressModal, type UploadProgressState } from '@/components/UploadProgressModal';
 import { ChatMessages } from '@/components/chat/ChatMessages';
@@ -290,7 +291,7 @@ export function WritingEditorPage() {
     setBody(result.md);
     setDoc((prev) => (prev ? { ...prev, body: result.md, updated_at: new Date().toISOString() } : prev));
     if (restoreReview) {
-      setAiEditNotice(`已恢复到「${restoreReview.label}」：接受 ${result.accepted} / 拒绝 ${result.rejected} 处差异`);
+      setAiEditNotice(t('writing.restoreApplied', '已恢复到「{{label}}」：接受 {{a}} / 拒绝 {{r}} 处差异', { label: restoreReview.label, a: result.accepted, r: result.rejected }));
       setRestoreReview(null);
     } else {
       setAiEditNotice(`已采纳 AI 修改：接受 ${result.accepted} / 拒绝 ${result.rejected}`);
@@ -688,7 +689,7 @@ export function WritingEditorPage() {
     const from = sel.from; const to = sel.to;
     const selection = editor.state.doc.textBetween(from, to, '\n').trim();
     if (!selection) {
-      setBubbleRun({ action, status: 'error', stream: '', reasoning: '', error: '请先选中一段文字', startedAt: Date.now() });
+      setBubbleRun({ action, status: 'error', stream: '', reasoning: '', error: t('writing.selectFirst', '请先选中一段文字'), startedAt: Date.now() });
       return;
     }
 
@@ -717,8 +718,8 @@ export function WritingEditorPage() {
       }
       if (!result.trim()) {
         const msg = reasoning
-          ? `模型思考了 ${reasoning.length} 字但未产出正文 — 请点「重试」,通常第二次会正常输出`
-          : 'AI 未返回内容,请重试或检查模型配置';
+          ? t('writing.polishReasoningNoOutput', '模型思考了 {{n}} 字但未产出正文 — 请点「重试」,通常第二次会正常输出', { n: reasoning.length })
+          : t('writing.polishNoContent', 'AI 未返回内容,请重试或检查模型配置');
         setBubbleRun((prev) => (prev ? { ...prev, status: 'error', error: msg } : prev));
         return;
       }
@@ -745,35 +746,28 @@ export function WritingEditorPage() {
     const range = bubbleSel;
     const snap = polishRangeRef.current;
     if (!range || !snap || range.to <= range.from) {
-      setAiEditNotice('选区已失效,请重新选择后再试');
+      setAiEditNotice(t('writing.selectionStale', '选区已失效,请重新选择后再试'));
       setTimeout(() => setAiEditNotice(''), 3000);
       return;
     }
     // C3 漂移校验:流式期间用户编辑过该区域 → 拒绝盲替换,防错位
     const current = editor.state.doc.textBetween(snap.from, snap.to, '\n').trim();
     if (current !== snap.original) {
-      setAiEditNotice('选区内容已变化,为避免错位替换未应用 — 请重新选中后重试');
+      setAiEditNotice(t('writing.selectionChanged', '选区内容已变化,为避免错位替换未应用 — 请重新选中后重试'));
       setTimeout(() => setAiEditNotice(''), 4000);
       return;
     }
     // C1 净化:元评论/javascript: 链接不得进入文档
     const clean = sanitizePolishOutput(run.stream);
-    if (!clean) { setAiEditNotice('AI 结果为空,已丢弃'); return; }
+    if (!clean) { setAiEditNotice(t('writing.polishEmpty', 'AI 结果为空,已丢弃')); return; }
     // #752-cursor: focus()+插入会触发浏览器 scrollIntoView — 快照/恢复
-    // 滚动位置,把用户留在当前修改处
-    const scrollEl = (() => {
-      let el: HTMLElement | null = editor.view.dom as HTMLElement;
-      while (el && el !== document.body) {
-        if (el.scrollHeight > el.clientHeight + 1 && /(auto|scroll|overlay)/.test(getComputedStyle(el).overflowY)) return el;
-        el = el.parentElement;
-      }
-      return null;
-    })();
-    const savedTop = scrollEl?.scrollTop ?? 0;
+    // 滚动位置,把用户留在当前修改处。#792: 复用 lib/scroll-utils。
+    const scrollEl = captureScrollContainer(editor.view.dom as HTMLElement);
+    const savedTop = scrollEl?.top ?? 0;
     editor.chain().focus().insertContentAt({ from: snap.from, to: snap.to }, markdownToHtml(clean)).run();
-    if (scrollEl) scrollEl.scrollTop = savedTop;
+    if (scrollEl) scrollEl.el.scrollTop = savedTop;
     setBubbleRun(null);
-    setAiEditNotice('✨ 已按 AI 结果替换选中文本');
+    setAiEditNotice(t('writing.polishApplied', '✨ 已按 AI 结果替换选中文本'));
     setTimeout(() => setAiEditNotice(''), 3000);
   };
 
@@ -880,7 +874,7 @@ export function WritingEditorPage() {
           const result = await uploadWithProgress(file);
           setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
         if (result.dedup) {
-          setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
+          setKbDedupNotice(t('writing.kbDedup', '📚 已在知识库,已加入上下文: {{name}}', { name: result.name }));
           setTimeout(() => setKbDedupNotice(null), 4000);
         }
           // #fix: 粘贴上传同样写入聊天记录。
@@ -1381,7 +1375,7 @@ export function WritingEditorPage() {
                 </div>
                 {exportResult && (
                   <div className="mb-1 rounded-lg bg-surface px-2 py-1.5 text-xs text-text-secondary">
-                    📄 DOCX · {(exportResult.size_bytes / 1024).toFixed(1)} KB · 已开始下载
+                    📄 DOCX · {(exportResult.size_bytes / 1024).toFixed(1)} KB · {t('writing.exportDownloadStarted', '已开始下载')}
                     <div className="mt-0.5 text-[11px] text-text-tertiary">✓ {t('writing.exportKbSync', '已同步知识库,可在聊天中引用')}</div>
                   </div>
                 )}
@@ -1567,13 +1561,15 @@ export function WritingEditorPage() {
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
                     <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} diffReview={diffReview} onDiffResolve={handleDiffResolve} onSelectionChange={setChatSelection}
-                      reviewTitle={restoreReview ? '审阅版本恢复' : undefined}
+                      reviewTitle={restoreReview ? t('writing.restoreReviewTitle', '审阅版本恢复') : undefined}
                       onBubbleAction={handleBubbleAction}
-                      bubbleRun={bubbleRun}
-                      onBubbleStart={(instruction) => void runPolish(instruction, 'polish')}
-                      onBubbleApply={handleBubbleApply}
-                      onBubbleDiscard={handleBubbleDiscard}
-                      onBubbleRetry={handleBubbleRetry}
+                      bubble={{
+                        run: bubbleRun,
+                        onStart: (instruction) => void runPolish(instruction, 'polish'),
+                        onApply: handleBubbleApply,
+                        onDiscard: handleBubbleDiscard,
+                        onRetry: handleBubbleRetry,
+                      }}
                     />
                   </div>
                 )}

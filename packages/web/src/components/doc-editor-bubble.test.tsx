@@ -27,10 +27,19 @@ class FakeRange {
  * 浮层,jsdom 不附加到 document,点击分发逻辑由线上 bundle 验证。
  */
 describe('DocEditor Selection Bubble (#752)', () => {
-  test('onBubbleAction 提供时 bubbleMenu 插件已注册', async () => {
+  // #792: 气泡运行态回调收敛为单个 bubble 对象 — 提供时注册插件。
+  const bubbleProp = {
+    run: null,
+    onStart: () => {},
+    onApply: () => {},
+    onDiscard: () => {},
+    onRetry: () => {},
+  };
+
+  test('onBubbleAction + bubble 提供时 bubbleMenu 插件已注册', async () => {
     vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
     const editorRef = { current: null };
-    render(<DocEditor value="# 标题" onChange={() => {}} onBubbleAction={() => {}} editorRef={editorRef} />);
+    render(<DocEditor value="# 标题" onChange={() => {}} onBubbleAction={() => {}} bubble={bubbleProp} editorRef={editorRef} />);
     await new Promise((r) => setTimeout(r, 200));
     const editor = editorRef.current as any;
     expect(editor).toBeTruthy();
