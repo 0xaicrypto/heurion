@@ -35,13 +35,25 @@ export function createSseSender(reply: FastifyReply): SseSender {
 export function createRawSseSender(reply: FastifyReply): { send: (d: unknown) => void; signal: AbortSignal; end(): void } {
   const controller = new AbortController()
   reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
-  reply.raw.on('close', () => { try { controller.abort() } catch { /* ignore */ } })
+  // #fix: SSE 心跳 — 网关/Cloudflare 会掐断约 100s 无字节的连接。工具执行
+  // 期间（render_scene / generate_image / edit_document / delegate）没有任何
+  // 事件下发，浏览器端表现为 "网络连接中断（服务器可能已重启或网络不稳定）"。
+  // 每 15s 写一行 SSE 注释（`: ping`）保活；前端 parseSseStream 只消费
+  // `data: ` 行，注释被透明忽略。
+  const heartbeat = setInterval(() => {
+    if (reply.raw.destroyed || reply.raw.writableEnded) return
+    try { reply.raw.write(': ping\n\n') } catch { /* socket gone */ }
+  }, 15_000)
+  // unref: 心跳绝不阻止进程退出（测试/优雅停机）。
+  heartbeat.unref?.()
+  const stopHeartbeat = () => clearInterval(heartbeat)
+  reply.raw.on('close', () => { stopHeartbeat(); try { controller.abort() } catch { /* ignore */ } })
   return {
     send: (d) => {
       if (reply.raw.destroyed || reply.raw.writableEnded) return
       try { reply.raw.write(`data: ${JSON.stringify(d)}\n\n`) } catch { /* socket gone */ }
     },
     signal: controller.signal,
-    end: () => { try { reply.raw.end() } catch { /* already closed */ } },
+    end: () => { stopHeartbeat(); try { reply.raw.end() } catch { /* already closed */ } },
   }
 }
