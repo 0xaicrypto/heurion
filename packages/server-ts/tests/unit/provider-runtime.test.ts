@@ -55,6 +55,18 @@ describe('runtime provider selection (#202/#436)', () => {
   })
 
   test('provider registry covers all supported providers', () => {
-    expect(Object.keys(LLM_PROVIDERS).sort()).toEqual(['anthropic', 'deepseek', 'gemini', 'kimi', 'opencode', 'openai', 'zhipu'].sort())
+    // #784: direct-anthropic entry removed — claude goes through the
+    // OpenAI-compatible relay (opencode), not api.anthropic.com.
+    expect(Object.keys(LLM_PROVIDERS).sort()).toEqual(['deepseek', 'gemini', 'kimi', 'opencode', 'openai', 'zhipu'].sort())
+  })
+
+  test('provider registry apiKeyEnv convention holds (#784 lock)', () => {
+    // Every provider reads its own env var — guards against the ade826c-style
+    // smuggled apiKeyEnv drift (anthropic once pointed at OPENAI_API_KEY).
+    for (const [name, entry] of Object.entries(LLM_PROVIDERS)) {
+      expect(entry.apiKeyEnv).toBe(`${name.toUpperCase()}_API_KEY`)
+    }
+    const envs = Object.values(LLM_PROVIDERS).map((e) => e.apiKeyEnv)
+    expect(new Set(envs).size).toBe(envs.length)
   })
 })
