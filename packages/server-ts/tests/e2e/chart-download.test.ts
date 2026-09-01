@@ -69,5 +69,36 @@ describe('#213 chart download endpoint', () => {
     expect(verifyChartToken('file_x', expired)).toBeNull()
   })
 
+  test('#fix: download-url mints a tokenized URL for an owned file (legacy repair)', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const tmp = fs.mkdtempSync(path.join('/tmp', 'chart-dl-'))
+    process.env.TWIN_BASE_DIR = tmp
+    const dir = path.join(tmp, userId, 'uploads')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'img_legacy_1.png'), 'png-bytes')
+
+    // Bearer-authenticated mint.
+    const mint = await app.inject({ method: 'GET', url: '/api/v1/files/img_legacy_1.png/download-url', headers: await authHeader() })
+    expect(mint.statusCode).toBe(200)
+    const { url } = mint.json()
+    expect(url).toMatch(/^\/api\/v1\/files\/download\/img_legacy_1\.png\?token=/)
+
+    // The minted URL works with NO auth header (the <img> path).
+    const res = await app.inject({ method: 'GET', url })
+    expect(res.statusCode).toBe(200)
+
+    // Another user's file is not reachable.
+    const otherDir = path.join(tmp, 'someone-else', 'uploads')
+    fs.mkdirSync(otherDir, { recursive: true })
+    fs.writeFileSync(path.join(otherDir, 'img_other_1.png'), 'x')
+    const foreign = await app.inject({ method: 'GET', url: '/api/v1/files/img_other_1.png/download-url', headers: await authHeader() })
+    expect(foreign.statusCode).toBe(404)
+
+    // No Bearer → auth guard rejects before minting.
+    const anon = await app.inject({ method: 'GET', url: '/api/v1/files/img_legacy_1.png/download-url' })
+    expect(anon.statusCode).toBe(401)
+  }, 30000)
+
   afterEach(() => { delete process.env.TWIN_BASE_DIR })
 })

@@ -95,9 +95,21 @@ export class GenerateImageTool extends BaseTool {
         fs.writeFileSync(filepath, Buffer.from(b64, 'base64'))
       }
 
+      // #fix: canonical tokenized URL — same shape as render_chart (#213).
+      // The old `/api/v1/files/<id>/download` matched no route on the main
+      // server (404) and carried no chart token (<img> sends no Bearer →
+      // 401), so every generated diagram failed to display in chat.
+      let url = `/api/v1/files/download/${fileId}`
+      try {
+        const { issueChartToken } = await import('../common/chart-token.js')
+        url = `${url}?token=${issueChartToken(fileId, userId)}`
+      } catch {
+        // token issuance unavailable — URL still works for Bearer consumers
+      }
+
       return {
         success: true,
-        output: JSON.stringify({ file_id: fileId, url: `/api/v1/files/${fileId}/download`, prompt }, null, 2),
+        output: JSON.stringify({ file_id: fileId, url, prompt }, null, 2),
       }
     } catch (err) {
       return { success: false, error: `generate_image failed: ${(err as Error).message.slice(0, 200)}` }

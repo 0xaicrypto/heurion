@@ -458,6 +458,19 @@ app.get('/api/v1/files/download/:fileId', async (request, reply) => {
   return reply.send(fs.createReadStream(filepath))
 })
 
+  // #fix: Bearer-authenticated mint of a tokenized download URL — lets the
+  // frontend repair legacy generate_image URLs (`/api/v1/files/<id>/download`,
+  // a shape that matched no route and carried no chart token) and refresh
+  // expired chart tokens for <img> without a page reload.
+  app.get('/api/v1/files/:fileId/download-url', async (request, reply) => {
+    const { fileId } = request.params as any
+    const userId = request.user!.userId
+    const filepath = safeUploadPath(userId, fileId)
+    if (!filepath || !fs.existsSync(filepath)) return reply.status(404).send({ error: 'File not found' })
+    const { issueChartToken } = await import('../../common/chart-token.js')
+    return { file_id: fileId, url: `/api/v1/files/download/${fileId}?token=${issueChartToken(fileId, userId)}` }
+  })
+
   // ── #771: 渲染产物 / 上传 pptx 的翻页预览（worker 端 LibreOffice 转图）──
 
   const PREVIEW_MAX_BYTES = 50 * 1024 * 1024

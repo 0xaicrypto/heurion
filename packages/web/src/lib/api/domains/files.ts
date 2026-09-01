@@ -117,6 +117,13 @@ export class FilesApi extends ApiCore {
     return this.fetch('/api/v1/files/generated');
   }
 
+  /** #fix: Bearer 换取带 chart token 的下载 URL — 渲染层用于修复历史消息
+   *  里旧版 generate_image 坏链（路由不存在且无 token），并在 token 过期
+   *  时重新签发（<img> 无法携带 Authorization 头）。 */
+  async getDownloadUrl(fileId: string): Promise<{ file_id: string; url: string }> {
+    return this.fetch(`/api/v1/files/${encodeURIComponent(fileId)}/download-url`);
+  }
+
   async deleteGeneratedChart(fileId: string): Promise<{deleted: boolean}> {
     return this.fetch(`/api/v1/files/generated/${fileId}`, { method: 'DELETE' });
   }

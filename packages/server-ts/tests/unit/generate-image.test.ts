@@ -40,7 +40,9 @@ describe('generate_image (#177)', () => {
     expect(res.success).toBe(true)
     const out = JSON.parse(res.output!)
     expect(out.file_id).toMatch(/^img_/)
-    expect(out.url).toContain('/download')
+    // #fix: canonical tokenized shape — the legacy `/api/v1/files/<id>/download`
+    // matched no route (404) and had no chart token (<img> → 401).
+    expect(out.url).toMatch(/^\/api\/v1\/files\/download\/img_[\w-]+\.png\?token=/)
     // File actually written.
     const saved = path.join(tmp, 'u_img', 'uploads', out.file_id)
     expect(fs.existsSync(saved)).toBe(true)

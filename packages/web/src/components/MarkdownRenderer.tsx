@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { Check, Copy } from 'lucide-react';
+import { SmartImg } from './SmartImg';
 
 interface Props {
   content: string;
@@ -108,6 +109,13 @@ export function MarkdownRenderer({ content, className }: Props) {
                 {children}
               </a>
             );
+          },
+          // #fix: markdown 内嵌图统一走 SmartImg — 修复历史消息里旧版
+          // generate_image 坏链（无路由无 token）并自愈过期 chart token。
+          img({ src, alt }: any) {
+            const s = typeof src === 'string' ? src : '';
+            if (!s) return null;
+            return <SmartImg src={s} alt={alt} className="my-2 max-h-80 max-w-full rounded-lg border border-border" />;
           },
           // Tables: the wrapper scrolls horizontally; the <table> itself must
           // keep `display: table` (a block table breaks row/column layout).

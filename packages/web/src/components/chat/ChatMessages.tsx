@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Check, ChevronDown, Copy, Download, FileText, Puzzle, Quote, RefreshCw, RotateCcw } from 'lucide-react';
 import type { ChatMessage } from '@/stores/chat';
 import { StreamingLlmContent } from '@/components/LlmContent';
+import { SmartImg } from '@/components/SmartImg';
 import { ToolCalls } from '@/components/ToolCalls';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { FilePreviewButton } from '@/components/chat/FilePreview';
@@ -207,7 +208,7 @@ export function ChatMessages({
                   </div>
                 )}
                 {m.chart && (
-                  <img src={m.chart.url} alt="chart" className="mt-2 max-h-72 rounded-lg border border-border" />
+                  <SmartImg src={m.chart.url} alt="chart" className="mt-2 max-h-72 rounded-lg border border-border" />
                 )}
                 {m.compactionSummary ? (
                   <CompactionSummaryCard text={m.text || ''} />
@@ -228,11 +229,10 @@ export function ChatMessages({
                   </div>
                 )}
                 {m.imageUrl && (
-                  <img
+                  <SmartImg
                     src={m.imageUrl}
                     alt="generated"
                     className="mt-3 max-h-80 rounded-xl border border-border"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                   />
                 )}
                 {m.memoryHits && m.memoryHits.length > 0 && (
