@@ -109,4 +109,46 @@ describe('#771 preview_file', () => {
     await expect(previewFile({ data_base64: Buffer.from('x').toString('base64') }))
       .rejects.toThrow(/PREVIEW_FAILED/)
   })
+
+  // #785: docx 必须保留原始扩展名 — soffice 按扩展名选导入滤镜,
+  // 强制 input.pptx 会让 docx 预览 100% 失败（控制面已放行 docx）。
+  test('docx 输入保留扩展名落盘', async () => {
+    mocks.execFileAsync.mockImplementation(async (cmd: string, args: string[]) => {
+      if (cmd === 'which') return { stdout: '/usr/bin/x', stderr: '' }
+      if (cmd === 'soffice') mocks.pdfProduced = true
+      if (cmd === 'pdftoppm') {
+        mocks.existingFiles.add('page-1.png')
+      }
+      return { stdout: '', stderr: '' }
+    })
+    await previewFile({
+      data_base64: Buffer.from('fake docx bytes').toString('base64'),
+      file_name: 'report.docx',
+    })
+    expect(mocks.writtenInputPath).toContain('report.docx')
+    expect(mocks.writtenInputPath).not.toContain('input.pptx')
+  })
+
+  test('#785/#793: 未知扩展名回退 input.bin + 路径片段被 basename 剥离', async () => {
+    mocks.execFileAsync.mockImplementation(async (cmd: string, args: string[]) => {
+      if (cmd === 'which') return { stdout: '/usr/bin/x', stderr: '' }
+      if (cmd === 'soffice') mocks.pdfProduced = true
+      if (cmd === 'pdftoppm') mocks.existingFiles.add('page-1.png')
+      return { stdout: '', stderr: '' }
+    })
+    await previewFile({
+      data_base64: Buffer.from('x').toString('base64'),
+      file_name: '../../evil.pptx',
+    })
+    // basename 剥离目录穿越,保留合法扩展名
+    expect(mocks.writtenInputPath!.endsWith('evil.pptx')).toBe(true)
+    expect(mocks.writtenInputPath).not.toContain('..')
+
+    mocks.writtenInputPath = null
+    await previewFile({
+      data_base64: Buffer.from('x').toString('base64'),
+      file_name: 'archive.zip',
+    })
+    expect(mocks.writtenInputPath!.endsWith('input.bin')).toBe(true)
+  })
 })

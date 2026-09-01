@@ -5,6 +5,8 @@ import path from 'path'
 import { randomUUID } from 'crypto'
 import { promisify } from 'util'
 import { saveFile } from '../storage.js'
+// #790: payload 形状来自 contracts 单一来源（此前本文件手写 interface）。
+import type { PreviewPayload } from '@heurion/contracts'
 
 const execFileAsync = promisify(execFile)
 
@@ -23,14 +25,7 @@ const execFileAsync = promisify(execFile)
  * 无网络依赖、超时 120s + 临时目录即用即删。
  */
 
-export interface PreviewInput {
-  /** 文件字节（base64）— 上传文件或渲染产物由控制面读取后直传。 */
-  data_base64?: string
-  /** 原始文件名（决定 soffice 的导入滤镜，扩展名必须保留）。 */
-  file_name?: string
-  /** 最多预览页数（默认 30）。 */
-  max_pages?: number
-}
+export type PreviewInput = PreviewPayload
 
 const PREVIEW_MAX_INPUT_BYTES = 60 * 1024 * 1024
 const PREVIEW_DEFAULT_PAGES = 30
@@ -62,7 +57,12 @@ export async function previewFile(input: PreviewInput) {
   const dir = path.join(os.tmpdir(), `heurion-preview-${randomUUID()}`)
   fs.mkdirSync(dir, { recursive: true })
   try {
-    const fileName = input.file_name && /\.pptx$/i.test(input.file_name) ? input.file_name : 'input.pptx'
+    // #785: 保留原始扩展名（pptx/docx）— soffice 按扩展名选导入滤镜，
+    // docx 被强制落成 input.pptx 必然 PREVIEW_FAILED。未知/缺扩展名回退
+    // input.bin；basename 防御 payload 携带路径片段（#793 纵深）。
+    const rawName = input.file_name ? path.basename(input.file_name) : ''
+    const ext = path.extname(rawName).toLowerCase()
+    const fileName = ext === '.pptx' || ext === '.docx' ? rawName : 'input.bin'
     const inputPath = path.join(dir, fileName)
     fs.writeFileSync(inputPath, binary)
 
