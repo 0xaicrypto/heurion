@@ -62,20 +62,22 @@ export async function approvalsRouter(app: FastifyInstance) {
     return {}
   })
 
+  // #794: default user-scoped for everyone. Cross-user visibility only when
+  // an admin explicitly passes ?scope=all — regular users passing it get
+  // their own feed regardless.
   app.get('/api/v1/approvals/pending', async (request) => {
     const userId = request.user!.userId
     const isAdmin = request.user!.role === 'admin'
-    const { targetType } = request.query as any
-    const requests = await listPendingApprovals(userId, targetType, isAdmin)
+    const { targetType, scope } = request.query as any
+    const requests = await listPendingApprovals(userId, targetType, isAdmin && scope === 'all')
     return { requests }
   })
 
   app.post('/api/v1/approvals/:id/confirm', async (request, reply) => {
     const userId = request.user!.userId
-    const isAdmin = request.user!.role === 'admin'
     const { id } = request.params as any
     try {
-      const result = await confirmApproval(userId, id, isAdmin)
+      const result = await confirmApproval(userId, id)
       return result
     } catch (err: any) {
       return reply.status(404).send({ error: err.message })
@@ -84,14 +86,13 @@ export async function approvalsRouter(app: FastifyInstance) {
 
   app.post('/api/v1/approvals/:id/reject', async (request, reply) => {
     const userId = request.user!.userId
-    const isAdmin = request.user!.role === 'admin'
     const { id } = request.params as any
     const parsed = rejectSchema.safeParse(request.body)
     if (!parsed.success) {
       return reply.status(400).send({ error: parsed.error.format() })
     }
     try {
-      const result = await rejectApproval(userId, id, parsed.data.reason ?? null, isAdmin)
+      const result = await rejectApproval(userId, id, parsed.data.reason ?? null)
       return result
     } catch (err: any) {
       if (err.message === 'rejectedReason required') {
@@ -102,10 +103,10 @@ export async function approvalsRouter(app: FastifyInstance) {
   })
 
   app.get('/api/v1/audit', async (request) => {
-    const { targetType, targetId, actor } = request.query as any
+    const { targetType, targetId, actor, scope } = request.query as any
     const userId = request.user!.userId
     const isAdmin = request.user!.role === 'admin'
-    const logs = await listAuditLogs({ targetType, targetId, actor }, userId, isAdmin)
+    const logs = await listAuditLogs({ targetType, targetId, actor, scope }, userId, isAdmin)
     return { logs }
   })
 }
