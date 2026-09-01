@@ -47,6 +47,15 @@ interface PhiFinding {
 
 
 
+// #792: 润色预设提为模块级常量 — 此前定义在组件体内,每次渲染重建数组。
+const POLISH_PRESETS: Array<{ id: string; icon: string; label: string; instruction: string }> = [
+  { id: 'academic', icon: '🔬', label: '学术语气强化', instruction: '强化学术语气:使用正式、客观、精确的学术表达,避免口语化措辞。' },
+  { id: 'concise', icon: '📐', label: '压缩至字数限制', instruction: '在保留全部关键信息的前提下压缩篇幅,删除冗余表述与重复论证。' },
+  { id: 'terminology', icon: '🧪', label: '方法学术语统一', instruction: '统一方法学部分的术语与单位表达,确保同一概念前后用词一致。' },
+  { id: 'hedging', icon: '⚖️', label: '结论弱化限定', instruction: '为结论添加适当的学术限定语(hedging),避免超出证据强度的断言。' },
+  { id: 'proofread', icon: '✅', label: '语法标点检查', instruction: '只修正语法错误、标点与格式问题,不改写句子结构。' },
+];
+
 export function WritingEditorPage() {
   const { t } = useTranslation();
   const { docId } = useParams<{ docId: string }>();
@@ -75,13 +84,6 @@ export function WritingEditorPage() {
   const [exportPanelOpen, setExportPanelOpen] = useState(false);
   const [exportHistory, setExportHistory] = useState<Array<{ format: 'docx' | 'pdf'; filename: string; size: number; at: number }>>([]);
 
-  const POLISH_PRESETS: Array<{ id: string; icon: string; label: string; instruction: string }> = [
-    { id: 'academic', icon: '🔬', label: '学术语气强化', instruction: '强化学术语气:使用正式、客观、精确的学术表达,避免口语化措辞。' },
-    { id: 'concise', icon: '📐', label: '压缩至字数限制', instruction: '在保留全部关键信息的前提下压缩篇幅,删除冗余表述与重复论证。' },
-    { id: 'terminology', icon: '🧪', label: '方法学术语统一', instruction: '统一方法学部分的术语与单位表达,确保同一概念前后用词一致。' },
-    { id: 'hedging', icon: '⚖️', label: '结论弱化限定', instruction: '为结论添加适当的学术限定语(hedging),避免超出证据强度的断言。' },
-    { id: 'proofread', icon: '✅', label: '语法标点检查', instruction: '只修正语法错误、标点与格式问题,不改写句子结构。' },
-  ];
   // #752: Selection Bubble 待处理选区(bubble 点击时记录)。
   const [bubbleSel, setBubbleSel] = useState<{ text: string; from: number; to: number } | null>(null);
   // #752-ux: 气泡内联运行态 — 思考过程/流式/错误全程在选区上方的气泡里。
@@ -953,11 +955,14 @@ export function WritingEditorPage() {
     setUploadState(null);
   };
 
-  /** #777: pptx 上传后后台解析（deck 落点）— 轮询刷新；dirty 时不覆盖本地编辑。 */
+  /** #777: pptx 上传后后台解析（deck 落点）— 轮询刷新；dirty 时不覆盖本地编辑。
+   * #792: timer 全部登记,卸载/切文档时清理 — 旧实现卸载后仍 setState 且
+   * .catch(()=>{}) 静默吞错(#743 反模式)。 */
+  const pptxReloadTimers = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const schedulePptxReload = () => {
     if (!docId) return;
     for (const delay of [3000, 7000, 13000]) {
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         api.getDoc(docId).then((d) => {
           if (dirtyRef.current) return;
           if (d.body && !bodyRef.current.trim()) {
@@ -975,10 +980,21 @@ export function WritingEditorPage() {
               setViewMode('deck');
             }
           }
-        }).catch(() => {});
+        }).catch(() => {
+          setAiEditNotice(t('writing.pptxReloadFailed', '解析结果刷新失败,可稍后手动刷新页面'));
+        });
       }, delay);
+      pptxReloadTimers.current.push(timer);
     }
   };
+
+  // #792: 卸载/切换文档时清理未触发的轮询 timer(旧实现泄漏)。
+  useEffect(() => {
+    return () => {
+      for (const timer of pptxReloadTimers.current) clearTimeout(timer);
+      pptxReloadTimers.current = [];
+    };
+  }, [docId]);
 
   const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
