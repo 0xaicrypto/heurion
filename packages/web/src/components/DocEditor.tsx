@@ -58,9 +58,10 @@ interface DocEditorProps {
   bubble?: {
     run: BubbleRunState | null;
     onStart: (instruction: string) => void;
-    onApply: () => void;
+    onApply: (finalText: string) => void;
     onDiscard: () => void;
     onRetry: () => void;
+    onRefine: (instruction: string, currentText: string) => void;
   };
   /** #764: 审阅模式标题(restore 场景显示「审阅版本恢复」)。 */
   reviewTitle?: string;
@@ -409,6 +410,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
             onApply={bubble.onApply}
             onDiscard={bubble.onDiscard}
             onRetry={bubble.onRetry}
+            onRefine={bubble.onRefine}
           />
         )}
       </div>

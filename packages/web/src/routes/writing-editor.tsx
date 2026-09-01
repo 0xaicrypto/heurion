@@ -682,12 +682,14 @@ export function WritingEditorPage() {
   // 全文执行(服务端 polish 接口接受任意文本,全文=正文整体传入)。
   // #753: Polish 执行体 — 气泡内联(润色全文按钮已移除;全文场景可全选
   // 后走气泡,或用 doc-chat)。错误写入 bubbleRun.error 展示。
-  const runPolish = async (instruction: string, action = 'rewrite') => {
+  // #778: opts.selection — 多轮 refine 时发用户手上的当前版本(不再重读
+  // 编辑器选区文本);opts.round — 轮次透传给结果面板展示。
+  const runPolish = async (instruction: string, action = 'rewrite', opts: { selection?: string; round?: number } = {}) => {
     const editor = polishEditorRef.current;
     if (!docId || !editor) return;
     const sel = editor.state.selection;
     const from = sel.from; const to = sel.to;
-    const selection = editor.state.doc.textBetween(from, to, '\n').trim();
+    const selection = opts.selection ?? editor.state.doc.textBetween(from, to, '\n').trim();
     if (!selection) {
       setBubbleRun({ action, status: 'error', stream: '', reasoning: '', error: t('writing.selectFirst', '请先选中一段文字'), startedAt: Date.now() });
       return;
@@ -700,7 +702,7 @@ export function WritingEditorPage() {
     }
     const controller = new AbortController();
     polishAbortRef.current = controller;
-    setBubbleRun({ action, status: 'running', stream: '', reasoning: '', error: null, startedAt: Date.now() });
+    setBubbleRun({ action, status: 'running', stream: '', reasoning: '', error: null, startedAt: Date.now(), round: opts.round ?? 1 });
     polishRangeRef.current = { from, to, original: selection };
     try {
       let result = '';
@@ -739,7 +741,7 @@ export function WritingEditorPage() {
 
   /** #752-ux: 气泡内「替换选中」 — 用运行开始时记录的 from/to 应用结果,
       不重读选区(点击应用按钮时选区可能已变化)。 */
-  const handleBubbleApply = () => {
+  const handleBubbleApply = (finalText?: string) => {
     const editor = polishEditorRef.current;
     const run = bubbleRunRef.current;
     if (!editor || !run || run.status !== 'done' || !run.stream.trim()) return;
@@ -758,7 +760,8 @@ export function WritingEditorPage() {
       return;
     }
     // C1 净化:元评论/javascript: 链接不得进入文档
-    const clean = sanitizePolishOutput(run.stream);
+    // #778: 应用的是面板内用户编辑后的最终版(未改即 AI 原文)
+    const clean = sanitizePolishOutput(finalText ?? run.stream);
     if (!clean) { setAiEditNotice(t('writing.polishEmpty', 'AI 结果为空,已丢弃')); return; }
     // #752-cursor: focus()+插入会触发浏览器 scrollIntoView — 快照/恢复
     // 滚动位置,把用户留在当前修改处。#792: 复用 lib/scroll-utils。
@@ -785,6 +788,13 @@ export function WritingEditorPage() {
     const sel = bubbleSel;
     setBubbleRun(null);
     if (sel) handleBubbleAction(run?.action ?? 'rewrite', sel);
+  };
+
+  /** #778: 多轮继续修改 — selection=用户改过的当前版本,服务端零改动
+   *  (polish(selection, instruction) 天然支持);轮次 +1。 */
+  const handleBubbleRefine = (instruction: string, currentText: string) => {
+    const round = (bubbleRunRef.current?.round ?? 1) + 1;
+    void runPolish(instruction, bubbleRunRef.current?.action ?? 'polish', { selection: currentText, round });
   };
 
   /** #752: Selection Bubble 动作分发 — 所有动作都打开面板跑流式,用户始终
@@ -1569,6 +1579,7 @@ export function WritingEditorPage() {
                         onApply: handleBubbleApply,
                         onDiscard: handleBubbleDiscard,
                         onRetry: handleBubbleRetry,
+                        onRefine: handleBubbleRefine,
                       }}
                     />
                   </div>

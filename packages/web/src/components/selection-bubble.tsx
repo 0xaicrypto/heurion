@@ -2,8 +2,8 @@ import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BubbleMenu as TiptapBubbleMenu } from '@tiptap/react/menus';
 import type { Editor } from '@tiptap/react';
-import { Check, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui';
+import { BubbleResultPanel } from './BubbleResultPanel';
 
 /**
  * #792 — Selection Bubble 抽取:气泡工具条 + 全程内联运行态卡片此前
@@ -24,6 +24,8 @@ export interface BubbleRunState {
   reasoning: string;
   error: string | null;
   startedAt: number;
+  /** #778: 多轮 refine 轮次（≥2 显示「第 N 轮」）。 */
+  round?: number;
 }
 
 export interface SelectionBubbleProps {
@@ -36,12 +38,14 @@ export interface SelectionBubbleProps {
   onAction: (action: string, sel: { text: string; from: number; to: number }) => void;
   /** input 态:用户提交自定义指令 → 开始运行。 */
   onStart: (instruction: string) => void;
-  /** 应用 AI 结果到选区(使用运行开始时记录的 from/to)。 */
-  onApply: () => void;
+  /** 应用 AI 结果到选区(finalText=面板内用户编辑后的最终版,#778)。 */
+  onApply: (finalText: string) => void;
   /** 运行中=取消(abort);完成态=丢弃结果。 */
   onDiscard: () => void;
   /** 出错后原地重试同一动作。 */
   onRetry: () => void;
+  /** #778: 多轮 — instruction=新要求,currentText=用户可能已改的当前版本。 */
+  onRefine: (instruction: string, currentText: string) => void;
 }
 
 const ACTIONS: ReadonlyArray<readonly [string, string, string]> = [
@@ -51,7 +55,7 @@ const ACTIONS: ReadonlyArray<readonly [string, string, string]> = [
   ['summarize', '📄', 'bubbleSummarize'],
 ];
 
-export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, onApply, onDiscard, onRetry }: SelectionBubbleProps) {
+export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, onApply, onDiscard, onRetry, onRefine }: SelectionBubbleProps) {
   const { t } = useTranslation();
   const [instruction, setInstruction] = useState('');
   /** pointerdown/click 双通道去重:同一次按下只分发一次。 */
@@ -121,60 +125,15 @@ export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, o
             </div>
           </div>
         ) : (
-          <>
-          <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-text-tertiary">
-            <span className="flex items-center gap-1">
-              {run.status === 'running'
-                ? <><Loader2 size={11} className="animate-spin" /> {t('writing.bubbleRunning', 'AI 生成中…')}</>
-                : run.status === 'error'
-                  ? <span className="text-error">✗ {t('writing.bubbleFailed', '出错了')}</span>
-                  : <><Check size={11} className="text-success" /> {t('writing.bubbleDone', '已完成 {{n}} 字', { n: run.stream.length })}</>}
-            </span>
-            <span className="tabular-nums">{Math.round((Date.now() - run.startedAt) / 100) / 10}s</span>
-          </div>
-          {run.reasoning && (
-            <details className="mb-1.5 rounded-md bg-surface px-2 py-1">
-              <summary className="cursor-pointer select-none text-[11px] text-text-tertiary">{t('writing.bubbleReasoning', '💭 思考过程')}</summary>
-              <div className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-text-secondary">{run.reasoning}</div>
-            </details>
-          )}
-          {run.error ? (
-            /* #752-qa C4: 截断等错误时保留已生成的部分内容 — 用户可
-                手动复制,不再整体丢弃 */
-            <div>
-              <div className="rounded-md border border-error/40 bg-error/5 px-2 py-1.5 text-[11px] text-error" role="alert">{run.error}</div>
-              {run.stream.trim() && (
-                <div className="mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-md bg-surface px-2 py-1.5 text-[12px] leading-relaxed text-text-secondary">
-                  {run.stream}
-                  <div className="mt-1 text-[10px] text-text-tertiary">{t('writing.bubblePartialHint', '↑ 已生成的部分内容,可手动复制')}</div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-surface px-2 py-1.5 text-[12px] leading-relaxed text-text-primary">
-              {run.stream || '…'}
-            </div>
-          )}
-          <div className="mt-2 flex items-center justify-end gap-1">
-            {run.status === 'running' && (
-              /* #752-ux-cancel: 运行中可随时取消 — abort 断流,静默收起 */
-              <Button size="sm" variant="ghost" onClick={(e) => { e.preventDefault(); onDiscard(); }}>
-                <X size={12} className="mr-1" /> {t('writing.bubbleCancel', '取消')}
-              </Button>
-            )}
-            {run.status === 'error' && (
-              <Button size="sm" variant="secondary" onClick={(e) => { e.preventDefault(); onRetry(); }}>{t('writing.bubbleRetry', '重试')}</Button>
-            )}
-            {run.status === 'done' && (
-              <>
-                <Button size="sm" variant="ghost" onClick={(e) => { e.preventDefault(); onDiscard(); }}>{t('writing.bubbleDiscard', '丢弃')}</Button>
-                <Button size="sm" onClick={(e) => { e.preventDefault(); onApply(); }}>
-                  <Check size={12} className="mr-1" /> {t('writing.bubbleReplace', '替换选中')}
-                </Button>
-              </>
-            )}
-          </div>
-          </>
+          /* #778: 运行/结果卡片渲染收敛到 BubbleResultPanel — done 态
+             可直接编辑结果,refine 输入框发起新一轮。 */
+          <BubbleResultPanel
+            run={run}
+            onApply={onApply}
+            onDiscard={onDiscard}
+            onRetry={onRetry}
+            onRefine={onRefine}
+          />
           )}
         </div>
       ) : (

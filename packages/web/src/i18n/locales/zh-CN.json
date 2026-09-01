@@ -381,7 +381,10 @@
     "exportKbSync": "已同步知识库,可在聊天中引用",
     "exportDone": "导出完成",
     "exportHistory": "本次导出历史",
-    "pptxReloadFailed": "解析结果刷新失败,可稍后手动刷新页面"
+    "pptxReloadFailed": "解析结果刷新失败,可稍后手动刷新页面",
+    "bubbleContinue": "继续",
+    "bubbleRefinePlaceholder": "继续修改：告诉 AI 还要怎么改（基于当前版本）",
+    "bubbleRound": "第 {{n}} 轮"
   },
   "preview": {
     "open": "预览",

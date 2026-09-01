@@ -381,7 +381,10 @@
     "exportKbSync": "Synced to the knowledge base — reference it in chat",
     "exportDone": "Export complete",
     "exportHistory": "This session",
-    "pptxReloadFailed": "Failed to refresh parsed content — reload the page later"
+    "pptxReloadFailed": "Failed to refresh parsed content — reload the page later",
+    "bubbleContinue": "Continue",
+    "bubbleRefinePlaceholder": "Keep refining: tell the AI what to change next (based on the current version)",
+    "bubbleRound": "Round {{n}}"
   },
   "preview": {
     "open": "Preview",

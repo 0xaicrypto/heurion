@@ -34,6 +34,7 @@ describe('DocEditor Selection Bubble (#752)', () => {
     onApply: () => {},
     onDiscard: () => {},
     onRetry: () => {},
+    onRefine: () => {},
   };
 
   test('onBubbleAction + bubble 提供时 bubbleMenu 插件已注册', async () => {
