@@ -1,11 +1,14 @@
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { mkdir, writeFile } from 'fs/promises'
+import { existsSync } from 'fs'
 import { join } from 'path'
-import { tmpdir } from 'os'
 import { v4 as uuid } from 'uuid'
+import { workerDataDir, loadJsonl, appendJsonl } from './data-dir.js'
 
-const outputDir = join(tmpdir(), 'heurion-worker')
+// #795: renders used to land in os.tmpdir() (OS-cleanable, not volume-
+// mounted). They now live under the persistent worker data dir.
+const outputDir = join(workerDataDir(), 'output')
 const DOWNLOAD_URL_TTL_SECONDS = 3600
 
 const s3 = process.env.S3_ENDPOINT
@@ -30,8 +33,26 @@ export interface StorageResult {
   downloadUrl?: string
 }
 
-/** Local files stay on disk; fileId → local path (in-memory; #446 persists). */
+/**
+ * #795: fileId → local path is durable, not a plain Map. Every save appends
+ * to local-files.jsonl in the worker data dir; on boot the manifest is
+ * replayed (last record per fileId wins) and entries whose backing file
+ * vanished (manual cleanup) are dropped.
+ */
+interface LocalFileManifestEntry {
+  fileId: string
+  path: string
+  fileName: string
+  mimeType: string
+}
+
+const localFilesPath = join(workerDataDir(), 'local-files.jsonl')
 const localFiles = new Map<string, { path: string; fileName: string; mimeType: string }>()
+for (const entry of loadJsonl<LocalFileManifestEntry>(localFilesPath)) {
+  if (entry.fileId && entry.path && existsSync(entry.path)) {
+    localFiles.set(entry.fileId, { path: entry.path, fileName: entry.fileName, mimeType: entry.mimeType })
+  }
+}
 
 export async function saveFile(
   content: Buffer,
@@ -46,6 +67,7 @@ export async function saveFile(
   const s3Key = `${prefix}/${fileId}/${fileName}`
   await writeFile(localPath, content)
   localFiles.set(fileId, { path: localPath, fileName, mimeType })
+  appendJsonl(localFilesPath, { fileId, path: localPath, fileName, mimeType } satisfies LocalFileManifestEntry)
 
   if (s3) {
     await s3.send(
