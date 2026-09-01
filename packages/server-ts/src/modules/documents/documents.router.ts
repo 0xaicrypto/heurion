@@ -10,6 +10,8 @@ import { polishSelection, writeMethodsSection, writePaperBackground, MAX_POLISH_
 import { extractPptxContentFromUpload, pptxSlidesToDeck } from '../../lib/pptx-extractor.js'
 // #787: 上传即草稿的导入编排收敛到 doc-import 单点。
 import { ensureDraftBody } from '../../tools/doc-import.js'
+// #789: doc 写回单点 owner。
+import { writeDocVersion } from '../../tools/doc-version-writer.js'
 import { makeLogger } from '../../common/logger.js'
 // #790: polish 流复用共享 SSE 传输。
 import { createRawSseSender } from '../chat/chat-sse.js'
@@ -368,14 +370,15 @@ export async function documentsRouter(app: FastifyInstance) {
             // organize 重生成一致）；文章正文不受影响。
             const deck = pptxSlidesToDeck(parsed.slides, parsed.images, doc.title || refFileName, SCHEMA_VERSION)
             if (deck) {
-              const now = new Date().toISOString()
-              // #787: 快照+更新包同事务 — 中断会留下"有快照无 deck"的错位。
-              await (prisma as any).$transaction([
-                (prisma as any).docSnapshot.create({
-                  data: { docId, userId, body: doc.body, deck: doc.deck ?? null, label: 'AI deck', createdAt: now },
-                }),
-                (prisma as any).doc.update({ where: { id: docId }, data: { deck: JSON.stringify(deck), updatedAt: now } }),
-              ])
+              // #789: 写回走 DocVersionWriter 单点 — 事务 + 同帧快照旧
+              // body+deck；writer 内部重读新行,不再用 handler 早前捕获的
+              // doc（后台执行时可能已过期）。
+              const written = await writeDocVersion({
+                userId, docId, deck, snapshotLabel: 'AI deck',
+              })
+              if (written.error) {
+                log.warn('pptx deck write-back failed', { docId, reason: written.error.slice(0, 200) })
+              }
             }
             // 文章落点：正文为空时导入 markdown（## 分节 + 图片托管）。
             // #787: 编排走 ensureDraftBody（此前此处内联了第三份导入决策）。

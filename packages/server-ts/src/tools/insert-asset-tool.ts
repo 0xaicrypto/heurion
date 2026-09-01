@@ -4,6 +4,7 @@ import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { findNormalizedSpan, findFuzzySpan } from './edit-document-tool.js'
 import { ensureDraftBody } from './doc-import.js'
+import { writeDocVersion } from './doc-version-writer.js'
 import { issueChartToken } from '../common/chart-token.js'
 import { validateRenderContent, SCHEMA_VERSION } from '@heurion/contracts'
 import type { ToolExecutionPlane } from './tool-registry.js'
@@ -570,7 +571,10 @@ export class InsertAssetTool extends BaseTool {
     const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
     if (!existing) return { success: false, error: `Document not found: ${docId}` }
     const body = String(existing.body || '')
+    // #789: deck 变更判定保持字符串比较(避免 parse→stringify 键序漂移
+    // 造成假阳性快照),变更时才把 deck 交给 DocVersionWriter。
     const deckChanged = opts.deckJson !== undefined && opts.deckJson !== (existing.deck ?? null)
+    const nextDeck = deckChanged ? safeParseDeckJson(opts.deckJson) : undefined
 
     let newBody: string
     let placement: string
@@ -595,23 +599,17 @@ export class InsertAssetTool extends BaseTool {
       placement = '追加文末'
     }
 
-    const now = new Date().toISOString()
+    // #789: 写回走 DocVersionWriter 单点 — 快照同帧带旧 body+deck 且包
+    // 事务(旧代码两段写,快照仅在 deckChanged 时才带旧 deck)。
     if (newBody !== body || deckChanged) {
-      await (prisma as any).docSnapshot.create({
-        data: {
-          docId, userId: this.ctx.userId, body,
-          // 同帧快照旧 deck（可能为 null）— 恢复时 body+deck 一致回滚。
-          ...(deckChanged ? { deck: existing.deck ?? null } : {}),
-          label: opts.snapshotLabel || 'AI insert', createdAt: now,
-        },
+      const written = await writeDocVersion({
+        userId: this.ctx.userId,
+        docId,
+        body: newBody,
+        deck: nextDeck,
+        snapshotLabel: opts.snapshotLabel || 'AI insert',
       })
-      await (prisma as any).doc.update({
-        where: { id: docId },
-        data: {
-          body: newBody, updatedAt: now,
-          ...(deckChanged ? { deck: opts.deckJson } : {}),
-        },
-      })
+      if (written.error) return { success: false, error: written.error }
     }
 
     const summary = String(args.summary || `${summaryBase}，${placement}`)
@@ -621,5 +619,17 @@ export class InsertAssetTool extends BaseTool {
       try { output.deck = JSON.parse(opts.deckJson) } catch { /* ignore */ }
     }
     return { success: true, output: JSON.stringify(output) }
+  }
+}
+
+/** #789: deck JSON 容错解析 — 损坏时交 null(清空),由调用方判定语义。 */
+function safeParseDeckJson(raw: string | null | undefined): Record<string, unknown> | null {
+  if (raw === undefined) return undefined as unknown as Record<string, unknown>
+  if (raw === null) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
   }
 }

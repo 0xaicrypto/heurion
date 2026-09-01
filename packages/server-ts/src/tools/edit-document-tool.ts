@@ -2,6 +2,7 @@ import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { estimateTokens } from '../common/token-estimate.js'
 import { resolveImportTargets, extractRefText, writeDocBody, ensureDraftBody } from './doc-import.js'
+import { writeDocVersion } from './doc-version-writer.js'
 
 /** 匹配时忽略的 markdown 语法字符 — 模型复制 old_text 时常省略/重排这些
  *  标记(`## ` 标题、`**` 强调、`` ` `` 行内代码、`>` 引用、`•` 列表圆点),
@@ -431,18 +432,13 @@ export class EditDocumentTool extends BaseTool {
       const newBody = body.slice(0, span.start) + newText + body.slice(span.end)
       if (newBody === body) return { success: false, error: 'old_text 与 new_text 相同,没有任何变化' }
 
-      const now = new Date().toISOString()
-      await (prisma as any).docSnapshot.create({
-        data: { docId, userId: this.ctx.userId, body, label: 'AI edit', createdAt: now },
-      })
-      await (prisma as any).doc.update({
-        where: { id: docId },
-        data: { body: newBody, updatedAt: now },
-      })
+      // #789: 写回走 DocVersionWriter 单点(快照同帧带旧 deck + 事务)。
+      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: newBody, snapshotLabel: 'AI edit' })
+      if (written.error) return { success: false, error: written.error }
 
       return {
         success: true,
-        output: JSON.stringify({ body: newBody, summary }),
+        output: JSON.stringify({ body: written.body, summary }),
       }
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }
@@ -468,20 +464,13 @@ export class EditDocumentTool extends BaseTool {
         }
       }
 
-      const now = new Date().toISOString()
-      if (existing.body !== fullText) {
-        await (prisma as any).docSnapshot.create({
-          data: { docId, userId: this.ctx.userId, body: existing.body, label: 'AI edit', createdAt: now },
-        })
-      }
-      await (prisma as any).doc.update({
-        where: { id: docId },
-        data: { body: fullText, updatedAt: now },
-      })
+      // #789: 写回走 DocVersionWriter 单点(无变化不产生空版本)。
+      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: fullText, snapshotLabel: 'AI edit' })
+      if (written.error) return { success: false, error: written.error }
 
       return {
         success: true,
-        output: JSON.stringify({ body: fullText, summary }),
+        output: JSON.stringify({ body: written.body, summary }),
       }
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }

@@ -3,6 +3,7 @@ import path from 'path'
 import prisma from '../common/prisma.js'
 import { extractDocumentMarkdownWithImagesFromUpload, type ExtractedPdfImage } from '../lib/document-extractor.js'
 import { issueChartToken } from '../common/chart-token.js'
+import { writeDocVersion } from './doc-version-writer.js'
 
 /**
  * #774 — doc 工具共享导入面。
@@ -52,22 +53,11 @@ export async function extractRefText(userId: string, docId: string, ref: any, la
   return { text }
 }
 
-/** 把正文写入文档(差异时快照旧版),返回新正文。 */
+/** 把正文写入文档(#789: 经 DocVersionWriter — 差异时同帧快照旧 body+deck),返回新正文。 */
 export async function writeDocBody(userId: string, docId: string, text: string, snapshotLabel: string): Promise<{ body: string; error?: string }> {
-  const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
-  if (!existing) return { body: '', error: `Document not found: ${docId}` }
-
-  const now = new Date().toISOString()
-  if (existing.body !== text) {
-    await (prisma as any).docSnapshot.create({
-      data: { docId, userId, body: existing.body, label: snapshotLabel, createdAt: now },
-    })
-  }
-  await (prisma as any).doc.update({
-    where: { id: docId },
-    data: { body: text, updatedAt: now },
-  })
-  return { body: text }
+  const result = await writeDocVersion({ userId, docId, body: text, snapshotLabel })
+  if (result.error) return { body: '', error: result.error }
+  return { body: result.body }
 }
 
 // ── #787: 「空正文自动导入唯一参考材料」单点编排 ──────────────────────

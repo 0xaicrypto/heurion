@@ -2,6 +2,7 @@ import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { validateRenderContent } from '@heurion/contracts'
 import { SCHEMA_VERSION } from '@heurion/contracts'
+import { writeDocVersion } from './doc-version-writer.js'
 
 /**
  * #773 — edit_deck: deck 资产（Doc.deck）的 AI 编辑工具。
@@ -99,15 +100,15 @@ export class EditDeckTool extends BaseTool {
       const check = validateRenderContent('sidecar.generate_pptx', nextDeck)
       if (!check.ok) return { success: false, error: `编辑后的 deck 未通过契约校验：${check.errors.join('；')}` }
 
-      const deckJson = JSON.stringify(nextDeck)
-      const now = new Date().toISOString()
-      await (prisma as any).docSnapshot.create({
-        data: { docId, userId: this.ctx.userId, body: existing.body, deck: existing.deck ?? null, label: 'AI deck edit', createdAt: now },
+      // #789: 写回走 DocVersionWriter 单点(快照同帧带旧 body+deck + 事务;
+      // deck 无实际变化时不再产生空快照 — 旧代码无条件写版本)。
+      const written = await writeDocVersion({
+        userId: this.ctx.userId, docId, deck: nextDeck, snapshotLabel: 'AI deck edit',
       })
-      await (prisma as any).doc.update({ where: { id: docId }, data: { deck: deckJson, updatedAt: now } })
+      if (written.error) return { success: false, error: written.error }
 
       const summary = String(args.summary || `已${action === 'update' ? '更新' : action === 'delete' ? '删除' : '插入'}第 ${slideIndex} 页（现共 ${slides.length} 页）；文章正文未改动`)
-      return { success: true, output: JSON.stringify({ body: existing.body, deck: nextDeck, summary }) }
+      return { success: true, output: JSON.stringify({ body: written.body, deck: nextDeck, summary }) }
     } catch (err) {
       return { success: false, error: `edit_deck failed: ${(err as Error).message.slice(0, 200)}` }
     }
