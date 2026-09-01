@@ -10,9 +10,12 @@
  * #656: the append-only log is periodically compacted (latest record per
  * job id) so long-running workers do not grow jobs.jsonl unboundedly.
  */
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
+import { mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { JobStatus } from '@heurion/contracts'
+// #795: path + JSONL helpers moved to the shared data-dir module so the
+// storage manifest and the job log share one location and one loader.
+import { workerDataDir, loadJsonl, appendJsonl } from './data-dir.js'
 
 export interface JobRecord {
   id: string
@@ -31,35 +34,15 @@ interface FileIndexEntry {
   mimeType: string
 }
 
-const dataDir = process.env.WORKER_DATA_DIR || join(process.cwd(), '.worker-data')
-const jobsPath = join(dataDir, 'jobs.jsonl')
-const filesPath = join(dataDir, 'files.jsonl')
+const jobsPath = join(workerDataDir(), 'jobs.jsonl')
+const filesPath = join(workerDataDir(), 'files.jsonl')
 /** #656: rewrite the append-only log every N updates, keeping only the
  *  latest record per key — the map is authoritative, the file is a replay
  *  log, so dropping superseded lines loses nothing. */
 const COMPACTION_EVERY = 200
 
 function ensureDir(): void {
-  mkdirSync(dataDir, { recursive: true })
-}
-
-function loadJsonl<T>(path: string): T[] {
-  if (!existsSync(path)) return []
-  const out: T[] = []
-  try {
-    for (const line of readFileSync(path, 'utf-8').split('\n')) {
-      if (!line.trim()) continue
-      try {
-        out.push(JSON.parse(line) as T)
-      } catch { /* skip corrupted line */ }
-    }
-  } catch { /* unreadable — start fresh */ }
-  return out
-}
-
-function appendJsonl<T>(path: string, record: T): void {
-  ensureDir()
-  writeFileSync(path, JSON.stringify(record) + '\n', { flag: 'a' })
+  mkdirSync(workerDataDir(), { recursive: true })
 }
 
 export class PersistentJobStore {

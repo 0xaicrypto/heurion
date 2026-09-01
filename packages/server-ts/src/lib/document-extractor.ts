@@ -518,6 +518,17 @@ export async function extractDocumentMarkdownFromUpload(
  */
 const EXTRACT_CACHE_MAX = 50
 const EXTRACT_CACHE_TTL_MS = 30 * 60 * 1000
+
+/**
+ * #788: 提取失败/跳过哨兵的单一谓词 — extractor 会以 `[PDF …]` /
+ * `[DOCX …]` / `[PPTX …]` / `[附件 …]` 哨兵文本代替抛错。此前管线只认
+ * 前两个前缀,PPTX 失败与超限附件文本被当正文建索引/喂 LLM;缓存失效
+ * 判定则维护着第二份口径。所有调用方统一走本谓词。
+ */
+const SENTINEL_PREFIX_RE = /^\[(PDF|DOCX|PPTX|附件)/
+export function isExtractionSentinel(text: string): boolean {
+  return SENTINEL_PREFIX_RE.test(text)
+}
 const extractCache = new Map<string, { text: string; at: number }>()
 
 export function cachedExtractDocumentMarkdownFromUpload(
@@ -530,9 +541,9 @@ export function cachedExtractDocumentMarkdownFromUpload(
   if (hit && Date.now() - hit.at < EXTRACT_CACHE_TTL_MS) return Promise.resolve(hit.text)
 
   return extractDocumentMarkdownFromUpload(userId, fileId, options).then((text) => {
-    // 提取失败/跳过标记([PDF xxx failed] / [PPTX xxx failed] / [附件 超过 xxMB])不缓存,
-    // 下次可重试;正常 markdown 文本(可能以 # 标题开头)照常缓存。
-    if (text && !/^\[(PDF|DOCX|PPTX|附件)/.test(text)) {
+    // 提取失败/跳过标记不缓存(#788 isExtractionSentinel 单一口径),下次可重试;
+    // 正常 markdown 文本(可能以 # 标题开头)照常缓存。
+    if (text && !isExtractionSentinel(text)) {
       if (extractCache.size >= EXTRACT_CACHE_MAX) {
         let oldest: string | null = null
         let oldestAt = Infinity

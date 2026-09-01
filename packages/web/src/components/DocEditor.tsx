@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
-import { BubbleMenu as TiptapBubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
 import { Table } from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
@@ -12,10 +11,12 @@ import 'katex/dist/katex.min.css';
 import { TrackChangesExtension, getTrackedChanges, getPendingChangeCount, type ChangeAuthor } from 'tiptap-track-changes';
 import { markdownToHtml, htmlToMarkdown } from '@/lib/doc-convert';
 import { applyTrackedDiff, cleanupEmptyBlocks } from '@/lib/doc-diff';
+import { captureScrollContainer } from '@/lib/scroll-utils';
+import { SelectionBubble } from './selection-bubble';
 import { Button } from '@/components/ui';
 import {
   Bold, Italic, Heading2, List, ListOrdered, Table as TableIcon,
-  Plus, Trash2, Undo2, Redo2, Check, X, Eye, RotateCcw, ChevronLeft, ChevronRight, Loader2,
+  Plus, Trash2, Undo2, Redo2, Check, X, Eye, RotateCcw, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 
 /** AI 作者身份 — 审阅模式下的变更标记作者色。 */
@@ -51,40 +52,30 @@ interface DocEditorProps {
    */
   onBubbleAction?: (action: string, sel: { text: string; from: number; to: number }) => void;
   /**
-   * #752-ux: 气泡内联运行态 — 整个润色过程(思考过程/流式正文/错误)展示
-   * 在气泡里,不弹顶部面板。status 迁移 running→done|error。
+   * #752-ux/#792: 气泡运行态与回调单对象 — 此前 5 个散装 props
+   * (bubbleRun/onBubbleStart/onBubbleApply/onBubbleDiscard/onBubbleRetry)。
    */
-  bubbleRun?: BubbleRunState | null;
-  /** input 态:用户提交自定义指令 → 开始运行。 */
-  onBubbleStart?: (instruction: string) => void;
-  /** 应用 AI 结果到选区(使用运行开始时记录的 from/to)。 */
-  onBubbleApply?: () => void;
-  /** 丢弃本次结果,回到四个动作按钮。 */
-  onBubbleDiscard?: () => void;
-  /** 出错后原地重试同一动作。 */
-  onBubbleRetry?: () => void;
+  bubble?: {
+    run: BubbleRunState | null;
+    onStart: (instruction: string) => void;
+    onApply: () => void;
+    onDiscard: () => void;
+    onRetry: () => void;
+  };
   /** #764: 审阅模式标题(restore 场景显示「审阅版本恢复」)。 */
   reviewTitle?: string;
 }
 
-/** #752-ux: 气泡内联运行状态(由父组件持有,气泡只渲染)。 */
-export interface BubbleRunState {
-  action: string;
-  status: 'input' | 'running' | 'done' | 'error';
-  /** 正文流(应用时替换选区的内容)。 */
-  stream: string;
-  /** 模型思维链(折叠展示,部分模型不返回)。 */
-  reasoning: string;
-  error: string | null;
-  startedAt: number;
-}
+/** #792: BubbleRunState 移至 selection-bubble.tsx,这里 re-export 兼容旧 import。 */
+import type { BubbleRunState } from './selection-bubble';
+export type { BubbleRunState } from './selection-bubble';
 
 /**
  * Lark-style WYSIWYG canvas (TipTap). The document body stays markdown —
  * the editor converts on load (md → HTML) and on save (HTML → md).
  * 审阅模式下:AI 编辑以绿(插入)/红(删除)标记呈现,逐条或全部接受/拒绝。
  */
-export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubbleRun, onBubbleStart, onBubbleApply, onBubbleDiscard, onBubbleRetry, reviewTitle }: DocEditorProps) {
+export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubble, reviewTitle }: DocEditorProps) {
   const applyMdRef = useRef<string | null>(null);
   const reviewKeyRef = useRef<string | null>(null);
   const [reviewStats, setReviewStats] = useState<{ pending: number; accepted: number; rejected: number }>({ pending: 0, accepted: 0, rejected: 0 });
@@ -92,29 +83,6 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   /** #752: bubble 动作点击时读取当前选区后分发给父组件。 */
   const onActionRef = useRef(onBubbleAction);
   onActionRef.current = onBubbleAction;
-  /** #752-ux: 最新运行态 — shouldShow 闭包经 updateOptions 每轮刷新可读。 */
-  const bubbleRunRef = useRef(bubbleRun);
-  bubbleRunRef.current = bubbleRun;
-  /** input 态的自定义指令(uncontrolled-ish:ref 存值 + force 触发渲染)。 */
-  const bubbleInputRef = useRef('');
-  const [, forceBubbleInput] = useState(0);
-  const bubbleBusyRef = useRef<string | null>(null);
-  const [bubbleBusy, setBubbleBusy] = useState<string | null>(null);
-  /** pointerdown/click 双通道去重:同一次按下只分发一次。 */
-  const fireBubbleAction = (id: string) => {
-    if (!onActionRef.current || !editor) return;
-    if (bubbleBusyRef.current === id) return;
-    bubbleBusyRef.current = id;
-    setBubbleBusy(id);
-    const sel = editor.state.selection;
-    const text = editor.state.doc.textBetween(sel.from, sel.to, '\n').trim();
-    try {
-      onActionRef.current(id, { text, from: sel.from, to: sel.to });
-    } finally {
-      // 菜单即将随选区消费而隐藏;下一轮选中重置 busy。
-      window.setTimeout(() => { bubbleBusyRef.current = null; setBubbleBusy(null); }, 300);
-    }
-  };
   // #fix: 逐条确认导航 — 修改处列表中的当前位置(第 N/M 处),进入审阅
   // 自动聚焦第一处,接受/拒绝后自动跳下一处。
   const [changeNav, setChangeNav] = useState<{ idx: number; total: number }>({ idx: -1, total: 0 });
@@ -168,17 +136,12 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
 
 
   /** #752-cursor: 编辑器最近的滚动容器(main.overflow-y-auto 等)。
-   *  外部更新重建文档/插入内容都会引发浏览器滚动,这里统一快照恢复。 */
+   *  外部更新重建文档/插入内容都会引发浏览器滚动,这里统一快照恢复。
+   *  #792: DOM 上溯逻辑抽至 lib/scroll-utils(writing-editor 气泡 Apply
+   *  共用同一实现)。 */
   const captureScroll = useCallback((): { el: HTMLElement; top: number } | null => {
     if (!editor) return null
-    let el: HTMLElement | null = editor.view.dom as HTMLElement
-    while (el && el !== document.body) {
-      if (el.scrollHeight > el.clientHeight + 1 && /(auto|scroll|overlay)/.test(getComputedStyle(el).overflowY)) {
-        return { el, top: el.scrollTop }
-      }
-      el = el.parentElement
-    }
-    return null
+    return captureScrollContainer(editor.view.dom as HTMLElement)
   }, [editor])
 
   // External markdown update (AI edit / doc load) → convert and apply.
@@ -433,137 +396,20 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
           #fix: 学术论文排版 — 衬线字体、宽松行距、标题层级、公式/图片居中。 */}
       <div className="prose prose-sm max-w-none p-4 dark:prose-invert [&_.ProseMirror]:min-h-[300px] [&_.ProseMirror]:outline-none [&_.ProseMirror]:font-serif [&_.ProseMirror]:text-[15px] [&_.ProseMirror]:leading-loose prose-headings:text-text-primary prose-headings:font-semibold prose-p:text-text-secondary prose-p:leading-relaxed prose-a:text-accent hover:prose-a:underline prose-strong:text-text-primary prose-code:text-text-primary prose-code:bg-surface prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:font-mono prose-ol:text-text-secondary prose-ul:text-text-secondary prose-li:my-0.5 prose-blockquote:border-l-4 prose-blockquote:border-accent prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-text-secondary prose-hr:border-border [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-1.5 [&_th]:border [&_th]:border-border [&_th]:bg-surface-elevated [&_th]:p-1.5 [&_th]:text-left [&_img]:my-2 [&_img]:max-h-72 [&_img]:rounded-lg [&_img]:border [&_img]:border-border [&_.ProseMirror_img]:mx-auto [&_[data-type='block-math']]:my-4 [&_[data-type='block-math']]:overflow-x-auto [&_[data-type='inline-math']]:px-0.5">
         <EditorContent editor={editor} />
-        {onBubbleAction && editor && (
-          /* #752: Selection Bubble — 官方 React 组件管理插件生命周期
-             (此前手写 registerPlugin(extension) 传错对象导致编辑器崩溃白屏)。
+        {onBubbleAction && editor && bubble && (
+          /* #752/#792: Selection Bubble — 组件与运行态卡片已抽至
+             selection-bubble.tsx(官方 React 组件管理插件生命周期);
              审阅模式由 shouldShow 拦截;150ms 延迟防拖动闪烁。 */
-          <TiptapBubbleMenu
+          <SelectionBubble
             editor={editor}
-            updateDelay={150}
-            options={{ placement: 'top', offset: 8 }}
-            shouldShow={({ state, from, to }) => {
-              if (reviewKeyRef.current !== null) return false;
-              // #752-ux: 运行/完成卡片不被选区塌陷或点击空白打断
-              if (bubbleRunRef.current && bubbleRunRef.current.status !== 'error') return true;
-              if (bubbleRunRef.current?.status === 'error') return true;
-              const selText = state.doc.textBetween(from, to, '\n').trim();
-              return selText.length > 10;
-            }}
-          >
-            {bubbleRun ? (
-              /* #752-ux: 全过程内联气泡 — 思考过程(折叠)/流式正文/结果操作,
-                  不再弹出顶部面板。Apply 用运行开始时的 from/to。 */
-              <div className="w-[min(420px,88vw)] rounded-lg border border-border bg-surface-elevated p-2.5 shadow-lg">
-              {bubbleRun.status === 'input' ? (
-                /* #752-ux: ✨润色 = 气泡内自定义指令输入,支持任意 prompt */
-                <div>
-                  <textarea
-                    autoFocus
-                    value={bubbleInputRef.current}
-                    onChange={(e) => { bubbleInputRef.current = e.target.value; forceBubbleInput((n) => n + 1); }}
-                    placeholder="告诉 AI 怎么改(可留空直接润色),如:压缩到 200 字 / 强调安全性信号 / 改写成投稿信语气"
-                    rows={3}
-                    className="w-full resize-none rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] text-text-primary placeholder:text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                        e.preventDefault();
-                        onBubbleStart?.(bubbleInputRef.current.trim());
-                      }
-                    }}
-                  />
-                  <div className="mt-1.5 flex items-center justify-between">
-                    <span className="text-[10px] text-text-tertiary">⌘/Ctrl + Enter 开始</span>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="ghost" onClick={(e) => { e.preventDefault(); onBubbleDiscard?.(); }}>取消</Button>
-                      <Button size="sm" onClick={(e) => { e.preventDefault(); onBubbleStart?.(bubbleInputRef.current.trim()); }}>开始</Button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <>
-                <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-text-tertiary">
-                  <span className="flex items-center gap-1">
-                    {bubbleRun.status === 'running'
-                      ? <><Loader2 size={11} className="animate-spin" /> AI 生成中…</>
-                      : bubbleRun.status === 'error'
-                        ? <span className="text-error">✗ 出错了</span>
-                        : <><Check size={11} className="text-success" /> 已完成 {bubbleRun.stream.length} 字</>}
-                  </span>
-                  <span className="tabular-nums">{Math.round((Date.now() - bubbleRun.startedAt) / 100) / 10}s</span>
-                </div>
-                {bubbleRun.reasoning && (
-                  <details className="mb-1.5 rounded-md bg-surface px-2 py-1">
-                    <summary className="cursor-pointer select-none text-[11px] text-text-tertiary">💭 思考过程</summary>
-                    <div className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-text-secondary">{bubbleRun.reasoning}</div>
-                  </details>
-                )}
-                {bubbleRun.error ? (
-                  /* #752-qa C4: 截断等错误时保留已生成的部分内容 — 用户可
-                      手动复制,不再整体丢弃 */
-                  <div>
-                    <div className="rounded-md border border-error/40 bg-error/5 px-2 py-1.5 text-[11px] text-error" role="alert">{bubbleRun.error}</div>
-                    {bubbleRun.stream.trim() && (
-                      <div className="mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-md bg-surface px-2 py-1.5 text-[12px] leading-relaxed text-text-secondary">
-                        {bubbleRun.stream}
-                        <div className="mt-1 text-[10px] text-text-tertiary">↑ 已生成的部分内容,可手动复制</div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-surface px-2 py-1.5 text-[12px] leading-relaxed text-text-primary">
-                    {bubbleRun.stream || '…'}
-                  </div>
-                )}
-                <div className="mt-2 flex items-center justify-end gap-1">
-                  {bubbleRun.status === 'running' && onBubbleDiscard && (
-                    /* #752-ux-cancel: 运行中可随时取消 — abort 断流,静默收起 */
-                    <Button size="sm" variant="ghost" onClick={(e) => { e.preventDefault(); onBubbleDiscard(); }}>
-                      <X size={12} className="mr-1" /> 取消
-                    </Button>
-                  )}
-                  {bubbleRun.status === 'error' && onBubbleRetry && (
-                    <Button size="sm" variant="secondary" onClick={(e) => { e.preventDefault(); onBubbleRetry(); }}>重试</Button>
-                  )}
-                  {bubbleRun.status === 'done' && (
-                    <>
-                      <Button size="sm" variant="ghost" onClick={(e) => { e.preventDefault(); onBubbleDiscard?.(); }}>丢弃</Button>
-                      <Button size="sm" onClick={(e) => { e.preventDefault(); onBubbleApply?.(); }}>
-                        <Check size={12} className="mr-1" /> 替换选中
-                      </Button>
-                    </>
-                  )}
-                </div>
-                </>
-                )}
-              </div>
-            ) : (
-            <div className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-elevated px-1 py-0.5 shadow-lg">
-              {([
-                ['polish', '✨', '润色'],
-                ['rewrite', '📝', '改写'],
-                ['academic', '🔬', '更学术'],
-                ['summarize', '📄', '总结'],
-              ] as const).map(([id, icon, label]) => (
-                <button
-                  key={id}
-                  // #752-feedback: pointerdown 主通道 — 在任何 focus/可见性
-                  // 逻辑之前触发;click 兜底并按 action 去重防止双发。
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    fireBubbleAction(id);
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  disabled={bubbleBusy === id}
-                  className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-text-secondary hover:bg-surface hover:text-text-primary disabled:opacity-60"
-                  title={label}
-                >
-                  <span aria-hidden>{bubbleBusy === id ? '⏳' : icon}</span>{label}
-                </button>
-              ))}
-            </div>
-            )}
-          </TiptapBubbleMenu>
+            isReviewing={() => reviewKeyRef.current !== null}
+            run={bubble.run}
+            onAction={(action, sel) => onActionRef.current?.(action, sel)}
+            onStart={bubble.onStart}
+            onApply={bubble.onApply}
+            onDiscard={bubble.onDiscard}
+            onRetry={bubble.onRetry}
+          />
         )}
       </div>
     </div>

@@ -10,7 +10,7 @@ import { useChatStore, type ChatMessage } from '@/stores/chat';
 import { useAutoScrollOnStream } from '@/lib/use-auto-scroll';
 import { AppShell } from '@/components/layout/AppShell';
 import { SkillsBar } from '@/components/SkillsBar';
-import { KbPicker } from '@/components/KbPicker';
+import { KbPicker, type KbPickerItem } from '@/components/KbPicker';
 import { ChatMessages } from '@/components/chat/ChatMessages';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
@@ -92,8 +92,9 @@ export function ChatPage() {
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   // #721: kbPicker 搜索 debounce。
   // #712: kbPicked 按会话隔离(同 attachedFiles 模式) — A 会话选的文章
-  // 不得静默带入 B 会话。
-  const [kbPickedBySession, setKbPickedBySession] = useState<Record<string, Array<{ id: string; title: string }>>>({});
+  // 不得静默带入 B 会话。#786: 保留完整 item(id+title+kind+summary),
+  // KbPicker 打开时按 item 回显勾选。
+  const [kbPickedBySession, setKbPickedBySession] = useState<Record<string, KbPickerItem[]>>({});
   const kbPicked = kbPickedBySession[sessionId] ?? [];
   // #516: per-session entry scene — switching sessions must not leak the
   // previous mode into a different conversation.
@@ -803,9 +804,9 @@ export function ChatPage() {
         onClose={() => setKbPickerOpen(false)}
         onConfirm={(items) => {
           // #712: 按会话隔离存储。
-          setKbPickedBySession((prevBySession) => ({ ...prevBySession, [sessionId]: items.map((it) => ({ id: it.id, title: it.title })) }));
+          setKbPickedBySession((prevBySession) => ({ ...prevBySession, [sessionId]: items }));
         }}
-        initialIds={kbPicked.map((k) => k.id)}
+        initialItems={kbPicked}
         max={3}
       />
     </AppShell>

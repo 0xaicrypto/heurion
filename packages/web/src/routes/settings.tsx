@@ -354,7 +354,7 @@ function LlmSection() {
               </Button>
             )}
           </div>
-          <div className="font-mono text-[11px] text-text-tertiary">当前生效: {status.provider}/{status.model}</div>
+          <div className="font-mono text-[11px] text-text-tertiary">{t('settings.currentActive', '当前生效: ')}{status.provider}/{status.model}</div>
         </Card>
       )}
 

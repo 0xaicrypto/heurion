@@ -3,7 +3,8 @@ import path from 'path'
 import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { findNormalizedSpan, findFuzzySpan } from './edit-document-tool.js'
-import { resolveImportTargets, extractRefText, writeDocBody } from './doc-import.js'
+import { ensureDraftBody } from './doc-import.js'
+import { writeDocVersion } from './doc-version-writer.js'
 import { issueChartToken } from '../common/chart-token.js'
 import { validateRenderContent, SCHEMA_VERSION } from '@heurion/contracts'
 import type { ToolExecutionPlane } from './tool-registry.js'
@@ -382,25 +383,13 @@ export class InsertAssetTool extends BaseTool {
     // organize=false — 保真导出。#774: 草稿正文为空时不再直接拒绝:
     // 存在唯一参考材料则自动导入(与 edit_document range edit 的
     // auto-import 行为对齐)后继续本次导出;多参考/无参考报错引导。
+    // #787: 编排收敛到 doc-import.ensureDraftBody(文案单点维护)。
     let autoImportNote = ''
     if (!body.trim()) {
-      const labels = await resolveImportTargets(this.ctx.userId, docId)
-      if (labels.length === 1) {
-        const { text, error } = await extractRefText(this.ctx.userId, docId, labels[0].r, labels[0].label)
-        if (error) return { success: false, error }
-        const { body: imported, error: writeError } = await writeDocBody(this.ctx.userId, docId, text, 'AI import')
-        if (writeError) return { success: false, error: writeError }
-        body = imported
-        autoImportNote = `已自动导入参考材料「${labels[0].label}」，`
-      } else if (labels.length === 0) {
-        return { success: false, error: '文档正文为空，无法导出。请先撰写内容。' }
-      } else {
-        const available = labels.map((l) => l.label).slice(0, 5).join('、')
-        return {
-          success: false,
-          error: `文档正文为空,且有多个参考材料(${available})。请先用 edit_document 的 import_reference 明确导入其中之一,再导出。`,
-        }
-      }
+      const ensured = await ensureDraftBody(this.ctx.userId, docId, { scenario: 'export' })
+      if (ensured.error) return { success: false, error: ensured.error }
+      body = ensured.body
+      if (ensured.note) autoImportNote = `${ensured.note}，`
     }
 
     // 内容源 = 草稿正文本身（markdown → 契约模型），不重付 LLM 重编 —
@@ -452,27 +441,12 @@ export class InsertAssetTool extends BaseTool {
       }
       let workingBody = body
       let importedNote = ''
+      // #787: 编排收敛到 doc-import.ensureDraftBody(文案单点维护)。
       if (!workingBody.trim()) {
-        const labels = await resolveImportTargets(this.ctx.userId, docId)
-        if (labels.length === 1) {
-          const { text, error } = await extractRefText(this.ctx.userId, docId, labels[0].r, labels[0].label)
-          if (error) return { success: false, error }
-          const { body: imported, error: writeError } = await writeDocBody(this.ctx.userId, docId, text, 'AI import')
-          if (writeError) return { success: false, error: writeError }
-          workingBody = imported
-          importedNote = `已自动导入参考材料「${labels[0].label}」。`
-        } else if (labels.length === 0) {
-          return {
-            success: false,
-            error: 'organize=true 需要你在 tool call 参数里直接提供 slides（deck 内容）。当前草稿为空且无参考材料 — 若对话上下文素材足够（如用户要求"凭空做个 PPT"），请把内容整理成 slides 再次调用；否则请让用户上传参考材料或先撰写正文。',
-          }
-        } else {
-          const available = labels.map((l) => l.label).slice(0, 5).join('、')
-          return {
-            success: false,
-            error: `文档正文为空,且有多个参考材料(${available})。请先用 edit_document 的 import_reference 明确导入其中之一,再走编排导出。`,
-          }
-        }
+        const ensured = await ensureDraftBody(this.ctx.userId, docId, { scenario: 'organize' })
+        if (ensured.error) return { success: false, error: ensured.error }
+        workingBody = ensured.body
+        if (ensured.note) importedNote = `${ensured.note}。`
       }
       return {
         success: false,
@@ -597,7 +571,10 @@ export class InsertAssetTool extends BaseTool {
     const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
     if (!existing) return { success: false, error: `Document not found: ${docId}` }
     const body = String(existing.body || '')
+    // #789: deck 变更判定保持字符串比较(避免 parse→stringify 键序漂移
+    // 造成假阳性快照),变更时才把 deck 交给 DocVersionWriter。
     const deckChanged = opts.deckJson !== undefined && opts.deckJson !== (existing.deck ?? null)
+    const nextDeck = deckChanged ? safeParseDeckJson(opts.deckJson) : undefined
 
     let newBody: string
     let placement: string
@@ -622,23 +599,17 @@ export class InsertAssetTool extends BaseTool {
       placement = '追加文末'
     }
 
-    const now = new Date().toISOString()
+    // #789: 写回走 DocVersionWriter 单点 — 快照同帧带旧 body+deck 且包
+    // 事务(旧代码两段写,快照仅在 deckChanged 时才带旧 deck)。
     if (newBody !== body || deckChanged) {
-      await (prisma as any).docSnapshot.create({
-        data: {
-          docId, userId: this.ctx.userId, body,
-          // 同帧快照旧 deck（可能为 null）— 恢复时 body+deck 一致回滚。
-          ...(deckChanged ? { deck: existing.deck ?? null } : {}),
-          label: opts.snapshotLabel || 'AI insert', createdAt: now,
-        },
+      const written = await writeDocVersion({
+        userId: this.ctx.userId,
+        docId,
+        body: newBody,
+        deck: nextDeck,
+        snapshotLabel: opts.snapshotLabel || 'AI insert',
       })
-      await (prisma as any).doc.update({
-        where: { id: docId },
-        data: {
-          body: newBody, updatedAt: now,
-          ...(deckChanged ? { deck: opts.deckJson } : {}),
-        },
-      })
+      if (written.error) return { success: false, error: written.error }
     }
 
     const summary = String(args.summary || `${summaryBase}，${placement}`)
@@ -648,5 +619,17 @@ export class InsertAssetTool extends BaseTool {
       try { output.deck = JSON.parse(opts.deckJson) } catch { /* ignore */ }
     }
     return { success: true, output: JSON.stringify(output) }
+  }
+}
+
+/** #789: deck JSON 容错解析 — 损坏时交 null(清空),由调用方判定语义。 */
+function safeParseDeckJson(raw: string | null | undefined): Record<string, unknown> | null {
+  if (raw === undefined) return undefined as unknown as Record<string, unknown>
+  if (raw === null) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
   }
 }

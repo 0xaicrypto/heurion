@@ -112,8 +112,14 @@ class HttpExecutionPlaneService implements ExecutionPlaneService {
   async fetchFile(fileId: string): Promise<Buffer | null> {
     const download = await this.getDownloadUrl(fileId)
     if (!download?.download_url) return null
+    // #785: local-mode workers return a RELATIVE proxy path
+    // (/api/v1/files/:id/content) — undici's fetch cannot parse relative
+    // URLs, so anchor it on the configured worker base URL.
+    const target = /^https?:\/\//i.test(download.download_url)
+      ? download.download_url
+      : `${workerUrl() ?? ''}${download.download_url}`
     const token = workerToken()
-    const res = await fetch(download.download_url, {
+    const res = await fetch(target, {
       headers: token ? { 'x-worker-token': token } : {},
     })
     if (res.status === 404) return null

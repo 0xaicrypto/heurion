@@ -613,9 +613,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   const ioWithChart: TurnIO = {
     ...io,
     send: (chunk) => {
-      if (chunk && typeof chunk === 'object' && (chunk as { type?: string }).type === 'chart_created') {
-        const c = chunk as { type: 'chart_created'; url: string; chart_type?: string }
-        chartMeta.push({ url: c.url, chartType: c.chart_type })
+      // #790: TurnIO 已类型化 — 直接窄化,不再手工嗅探。
+      if (chunk.type === 'chart_created') {
+        chartMeta.push({ url: chunk.url, chartType: chunk.chart_type })
       }
       io.send(chunk)
     },

@@ -61,10 +61,12 @@ describe('#511 vision provider detection', () => {
     else process.env.DEFAULT_LLM_PROVIDER = old
   })
 
-  test('gemini/openai/anthropic 支持视觉', () => {
+  test('gemini/openai 支持视觉;anthropic 直连已删除(#784)', () => {
     expect(providerSupportsVision('gemini')).toBe(true)
     expect(providerSupportsVision('openai')).toBe(true)
-    expect(providerSupportsVision('anthropic')).toBe(true)
+    // #784: 直连 anthropic 条目已删除(协议不匹配),claude 经中转站走
+    // OpenAI 兼容端点 — provider 维度不再把 anthropic 当视觉可用。
+    expect(providerSupportsVision('anthropic')).toBe(false)
   })
 
   // #fix: deepseek/opencode 默认模型是 deepseek-v4-flash — 支持多模态。

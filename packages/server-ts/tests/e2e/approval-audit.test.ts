@@ -287,7 +287,7 @@ describe('Approval permission isolation', () => {
     expect(JSON.parse(stillPending.payload).requests.some((r: any) => r.id === ownerReq.id)).toBe(true)
   })
 
-  test('admin can see and confirm any user\'s pending approval', async () => {
+  test('admin inbox is self-scoped by default; cross-user read needs ?scope=all; writes stay owner-only (#794)', async () => {
     const app = await getApp()
 
     const owner = await registerUser(app, 'owner2')
@@ -313,26 +313,65 @@ describe('Approval permission isolation', () => {
     })
     const entryId = JSON.parse(entry.payload).id
 
-    // Admin sees the pending request created by another user
     const adminToken = await createAdminToken()
     const adminHeaders = { authorization: `Bearer ${adminToken}` }
+
+    // #794: admin default inbox does NOT contain other users' requests
     const list = await app.inject({
       method: 'GET',
       url: '/api/v1/approvals/pending',
       headers: adminHeaders,
     })
+    expect(JSON.parse(list.payload).requests.some((r: any) => r.targetId === entryId)).toBe(false)
 
-    const req = JSON.parse(list.payload).requests.find((r: any) => r.targetId === entryId)
+    // Explicit opt-in reveals it for supervision…
+    const listAll = await app.inject({
+      method: 'GET',
+      url: '/api/v1/approvals/pending?scope=all',
+      headers: adminHeaders,
+    })
+    const req = JSON.parse(listAll.payload).requests.find((r: any) => r.targetId === entryId)
     expect(req).toBeDefined()
 
-    // Admin confirms it → entry becomes confirmed
-    const confirmed = await app.inject({
+    // …but writes remain owner-only: admin cannot confirm/reject it
+    const deniedConfirm = await app.inject({
       method: 'POST',
       url: `/api/v1/approvals/${req.id}/confirm`,
       headers: adminHeaders,
     })
+    expect(deniedConfirm.statusCode).toBe(404)
+
+    const deniedReject = await app.inject({
+      method: 'POST',
+      url: `/api/v1/approvals/${req.id}/reject`,
+      headers: { ...adminHeaders, 'content-type': 'application/json' },
+      payload: { reason: 'supervision' },
+    })
+    expect(deniedReject.statusCode).toBe(404)
+
+    // Non-admin passing ?scope=all gets nothing cross-user either
+    const stranger = await registerUser(app, 'stranger2')
+    const strangerAll = await app.inject({
+      method: 'GET',
+      url: '/api/v1/approvals/pending?scope=all',
+      headers: { authorization: `Bearer ${stranger.token}` },
+    })
+    expect(JSON.parse(strangerAll.payload).requests.some((r: any) => r.targetId === entryId)).toBe(false)
+
+    // Owner still sees and can resolve their own request
+    const ownerPending = await app.inject({
+      method: 'GET',
+      url: '/api/v1/approvals/pending',
+      headers: ownerHeaders,
+    })
+    const ownerReq = JSON.parse(ownerPending.payload).requests.find((r: any) => r.targetId === entryId)
+    expect(ownerReq).toBeDefined()
+    const confirmed = await app.inject({
+      method: 'POST',
+      url: `/api/v1/approvals/${ownerReq.id}/confirm`,
+      headers: ownerHeaders,
+    })
     expect(confirmed.statusCode).toBe(200)
-    expect(JSON.parse(confirmed.payload).status).toBe('approved')
 
     const entryAfter = await app.inject({
       method: 'GET',
@@ -340,21 +379,52 @@ describe('Approval permission isolation', () => {
       headers: ownerHeaders,
     })
     expect(JSON.parse(entryAfter.payload).status).toBe('confirmed')
+  })
 
-    // Admin audit feed contains the cross-user action; owner audit still scoped
-    const adminAudit = await app.inject({
-      method: 'GET',
-      url: '/api/v1/audit',
-      headers: adminHeaders,
+  test('audit feed: actor filter cannot override self-scope; admin cross-user needs scope=all (#794)', async () => {
+    const app = await getApp()
+    const owner = await registerUser(app, 'auditowner')
+    const ownerHeaders = { authorization: `Bearer ${owner.token}` }
+    const patient = await app.inject({
+      method: 'POST',
+      url: '/api/v1/dicom/patients/register-manual',
+      headers: { ...ownerHeaders, 'content-type': 'application/json' },
+      payload: { initials: 'OA2' },
     })
-    expect(JSON.parse(adminAudit.payload).logs.some((l: any) => l.targetId === entryId)).toBe(true)
+    const hash = JSON.parse(patient.payload).patient_hash
+    const entry = await app.inject({
+      method: 'POST',
+      url: `/api/v1/patients/${hash}/medical-records`,
+      headers: { ...ownerHeaders, 'content-type': 'application/json' },
+      payload: { type: 'lab', title: 'Audit CBC', content: 'WBC 9.9', status: 'pending_review', createdBy: 'system' },
+    })
+    const entryId = JSON.parse(entry.payload).id
+    // Owner resolves their own request → audit row exists for owner
+    const pending = await app.inject({ method: 'GET', url: '/api/v1/approvals/pending', headers: ownerHeaders })
+    const req = JSON.parse(pending.payload).requests.find((r: any) => r.targetId === entryId)
+    await app.inject({ method: 'POST', url: `/api/v1/approvals/${req.id}/confirm`, headers: ownerHeaders })
 
-    const ownerAudit = await app.inject({
+    // Stranger tried the old ?actor= override hole → must stay empty
+    const stranger = await registerUser(app, 'auditpeek')
+    const peek = await app.inject({
       method: 'GET',
-      url: '/api/v1/audit',
-      headers: ownerHeaders,
+      url: `/api/v1/audit?actor=${owner.userId}`,
+      headers: { authorization: `Bearer ${stranger.token}` },
     })
-    expect(JSON.parse(ownerAudit.payload).logs.some((l: any) => l.targetId === entryId)).toBe(false)
+    expect(peek.statusCode).toBe(200)
+    expect(JSON.parse(peek.payload).logs.some((l: any) => l.targetId === entryId)).toBe(false)
+
+    // Owner sees their own row
+    const own = await app.inject({ method: 'GET', url: '/api/v1/audit', headers: ownerHeaders })
+    expect(JSON.parse(own.payload).logs.some((l: any) => l.targetId === entryId)).toBe(true)
+
+    // Admin default = own feed (nothing here); scope=all reveals it
+    const adminToken = await createAdminToken()
+    const adminDefault = await app.inject({ method: 'GET', url: '/api/v1/audit', headers: { authorization: `Bearer ${adminToken}` } })
+    expect(JSON.parse(adminDefault.payload).logs.some((l: any) => l.targetId === entryId)).toBe(false)
+
+    const adminAll = await app.inject({ method: 'GET', url: '/api/v1/audit?scope=all', headers: { authorization: `Bearer ${adminToken}` } })
+    expect(JSON.parse(adminAll.payload).logs.some((l: any) => l.targetId === entryId)).toBe(true)
   })
 })
 

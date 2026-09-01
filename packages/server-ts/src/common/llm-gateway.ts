@@ -127,8 +127,9 @@ export interface ChatMessage {
 
 /** #511: providers that accept image_url parts over the OpenAI-compatible
  *  endpoint. deepseek/opencode 默认走 deepseek-v4-flash(支持多模态),
- *  kimi 纯文本 → 由 modelSupportsVision 精确兜底。 */
-const VISION_PROVIDERS: ReadonlySet<string> = new Set(['gemini', 'openai', 'anthropic'])
+ *  kimi 纯文本 → 由 modelSupportsVision 精确兜底。#784: anthropic 移除
+ *  (直连条目已删,claude 经中转站走 OpenAI 兼容端点)。 */
+const VISION_PROVIDERS: ReadonlySet<string> = new Set(['gemini', 'openai'])
 
 /** #fix: 明确不支持视觉的模型。v3 时代 DeepSeek(deepseek-chat /
  *  deepseek-reasoner)是纯文本;v4+(deepseek-v4-flash/pro)支持
@@ -153,7 +154,7 @@ export function modelSupportsVision(model: string): boolean {
  * 视觉能力判定(provider + model 双维度)。
  * - 显式传 model:模型明确支持视觉 → true;否则看 provider。
  * - 不传 model(老调用方):deepseek/opencode 默认模型是 deepseek-v4-flash,
- *   按视觉处理;gemini/openai/anthropic 恒支持;kimi 恒不支持。
+ *   按视觉处理;gemini/openai 恒支持;kimi 恒不支持。
  */
 export function providerSupportsVision(provider?: string, model?: string): boolean {
   const prov = (provider || process.env.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase()
@@ -294,7 +295,12 @@ export const LLM_PROVIDERS: Record<string, LlmEndpoint> = {
   gemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKeyEnv: 'GEMINI_API_KEY', modelEnv: 'DEFAULT_LLM_MODEL', defaultModel: 'gemini-2.5-flash' },
   openai: { baseUrl: 'https://api.openai.com/v1', apiKeyEnv: 'OPENAI_API_KEY', modelEnv: 'DEFAULT_LLM_MODEL', defaultModel: 'gpt-4o-mini' },
   kimi: { baseUrl: 'https://api.moonshot.cn/v1', apiKeyEnv: 'KIMI_API_KEY', modelEnv: 'DEFAULT_LLM_MODEL', defaultModel: 'moonshot-v1-8k' },
-  anthropic: { baseUrl: 'https://api.anthropic.com/v1', apiKeyEnv: 'OPENAI_API_KEY', modelEnv: 'DEFAULT_LLM_MODEL', defaultModel: 'claude-3-5-sonnet-latest' },
+  // #784: direct-anthropic entry removed. This gateway is an OpenAI-compatible
+  // client (/chat/completions + Bearer), while Anthropic's native API is
+  // /v1/messages + x-api-key — the entry could never work (ade826c also
+  // smuggled its apiKeyEnv to OPENAI_API_KEY). Claude goes through the
+  // OpenAI-compatible relay (opencode) instead. claude-* token budgets above
+  // stay, keyed by model name for relay-routed models.
 }
 
 function currentLlmProvider(): string {

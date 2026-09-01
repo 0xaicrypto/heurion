@@ -12,11 +12,15 @@ import { deepseekChatWithMeta, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.j
 import { detectDoomLoop } from '../../tools/doom-loop.js'
 import { makeLogger } from '../../common/logger.js'
 import type { getUserContext } from './user-context.js'
+// #790: SSE 出口类型化 — 此前 (chunk: any) 使 loop 内新事件绕过编译期
+// 检查，契约类型化停在传输层（chat-sse）。
+import type { ChatStreamChunk, DeckWire } from '@heurion/contracts'
+import { deckWireSchema } from '@heurion/contracts'
 
 const log = makeLogger('chat.tool-loop')
 
 export interface TurnIO {
-  send: (chunk: any) => void
+  send: (chunk: ChatStreamChunk) => void
   signal: AbortSignal
 }
 
@@ -254,11 +258,19 @@ export async function runToolCallLoop(params: {
               // 避免双事件乱序。SSE push 不截 deck 大小(#693 豁免同理)。
               const parsed = JSON.parse(output) as { body?: string; summary?: string; deck?: unknown }
               if (typeof parsed.body === 'string') {
+                // #790: deck 产出端过 deckWireSchema — 形状损坏降级 null
+                // (前端 as DeckWire 强转兜不住坏数据)。
+                let deck: DeckWire | null = null
+                if (parsed.deck !== undefined && parsed.deck !== null) {
+                  const check = deckWireSchema.safeParse(parsed.deck)
+                  deck = check.success ? check.data : null
+                  if (!check.success) log.warn('doc_updated.deck failed schema check — degraded to null')
+                }
                 io.send({
                   type: 'doc_updated',
                   body: parsed.body,
                   summary: parsed.summary || '',
-                  ...(parsed.deck !== undefined ? { deck: parsed.deck } : {}),
+                  ...(parsed.deck !== undefined ? { deck } : {}),
                 })
               }
             } catch {

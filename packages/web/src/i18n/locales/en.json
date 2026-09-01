@@ -307,7 +307,8 @@
     "imageGen": "Image generation",
     "configured": "Configured",
     "imgKey": "API Key (optional, leave blank to keep)",
-    "saved": "Saved"
+    "saved": "Saved",
+    "currentActive": "Active: "
   },
   "admin": {
     "title": "Admin"
@@ -349,7 +350,38 @@
     "deckNewBullet": "Bullet",
     "deckConflict": "The AI has updated the deck, but you have unsaved deck edits — save first, then reload to get the AI version",
     "aiExportDeckPrompt": "Please export the current deck as a PPT (use the existing deck content, do not re-organize).",
-    "pptxParsing": "PPT is being parsed in the background — the deck view will show every slide shortly"
+    "pptxParsing": "PPT is being parsed in the background — the deck view will show every slide shortly",
+    "bubblePolish": "Polish",
+    "bubbleRewrite": "Rewrite",
+    "bubbleAcademic": "More academic",
+    "bubbleSummarize": "Summarize",
+    "bubblePlaceholder": "Tell the AI how to change it (leave empty to polish directly), e.g. compress to 200 words / emphasize safety signals / rewrite as a cover letter",
+    "bubbleKeyHint": "⌘/Ctrl + Enter to start",
+    "bubbleCancel": "Cancel",
+    "bubbleStart": "Start",
+    "bubbleRunning": "AI generating…",
+    "bubbleFailed": "Failed",
+    "bubbleDone": "Done · {{n}} chars",
+    "bubbleReasoning": "💭 Reasoning",
+    "bubblePartialHint": "↑ Partial output generated — copy manually",
+    "bubbleRetry": "Retry",
+    "bubbleDiscard": "Discard",
+    "bubbleReplace": "Replace selection",
+    "selectFirst": "Please select some text first",
+    "polishReasoningNoOutput": "Model produced {{n}} chars of reasoning but no text — hit Retry, the second attempt usually works",
+    "polishNoContent": "AI returned no content — retry or check the model configuration",
+    "selectionStale": "Selection is no longer valid — select again",
+    "selectionChanged": "Selection content changed — replace skipped to avoid misplacement. Select again and retry",
+    "polishEmpty": "AI result was empty and discarded",
+    "polishApplied": "✨ Selection replaced with the AI result",
+    "kbDedup": "📚 Already in the knowledge base, added to context: {{name}}",
+    "restoreApplied": "Restored \"{{label}}\": {{a}} accepted / {{r}} rejected",
+    "restoreReviewTitle": "Review version restore",
+    "exportDownloadStarted": "download started",
+    "exportKbSync": "Synced to the knowledge base — reference it in chat",
+    "exportDone": "Export complete",
+    "exportHistory": "This session",
+    "pptxReloadFailed": "Failed to refresh parsed content — reload the page later"
   },
   "preview": {
     "open": "Preview",
@@ -445,5 +477,31 @@
     "checksDone": "passed",
     "readyHint": "All checks passed — ready to submit",
     "downloadCover": "Download Markdown"
+  },
+  "nba": {
+    "title": "Next best actions",
+    "fileOne": "\"{{name}}\" is indexed — ask about its key findings?",
+    "filesMany": "{{n}} new files indexed — try asking with them",
+    "askAction": "Ask",
+    "gapOne": "AI found 1 knowledge gap",
+    "gapMany": "AI found {{n}} knowledge gaps",
+    "gapAction": "Handle",
+    "stale": "{{n}} articles outdated by new facts",
+    "viewAction": "View"
+  },
+  "kb": {
+    "pipelineQueued": "Queued",
+    "pipelineExtracted": "Extracted",
+    "pipelineEmbedded": "Indexed",
+    "pipelineProposed": "Facts pending",
+    "pipelineIngested": "Ready",
+    "pipelineFailed": "Failed",
+    "pipelineSkipped": "Skipped",
+    "loadArticles": "Failed to load articles",
+    "loadFacts": "Failed to load facts",
+    "loadGaps": "Failed to load gaps",
+    "loadTools": "Failed to load tools",
+    "loadFiles": "Failed to load file list",
+    "requestFailed": "request failed"
   }
 }

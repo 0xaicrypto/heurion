@@ -8,6 +8,15 @@ import { polishSelection, writeMethodsSection, writePaperBackground, MAX_POLISH_
 // resolvePolishModel 由 service 导出(fallback 时动态 import)
 // #777: pptx 解析导入 — deck/文章双落点（后台执行）。
 import { extractPptxContentFromUpload, pptxSlidesToDeck } from '../../lib/pptx-extractor.js'
+// #787: 上传即草稿的导入编排收敛到 doc-import 单点。
+import { ensureDraftBody } from '../../tools/doc-import.js'
+// #789: doc 写回单点 owner。
+import { writeDocVersion } from '../../tools/doc-version-writer.js'
+import { makeLogger } from '../../common/logger.js'
+// #790: polish 流复用共享 SSE 传输。
+import { createRawSseSender } from '../chat/chat-sse.js'
+
+const log = makeLogger('documents')
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
 
@@ -204,13 +213,15 @@ export async function documentsRouter(app: FastifyInstance) {
       return reply.status(413).send({ error: `选区过长(${selection.length} 字符),上限 ${MAX_POLISH_CHARS}` })
     }
 
-    reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
-    const send = (d: any) => reply.raw.write(`data: ${JSON.stringify(d)}\n\n`)
+    // #790: SSE 传输复用 createRawSseSender（断连 abort 信号 + 防写死
+    // socket），不再手写 writeHead / (d:any) => raw.write。
+    const sse = createRawSseSender(reply)
+    const send = sse.send
 
     // S3+S5: 取消传导 — 客户端断开或 150s 总超时都 abort 上游生成
     const controller = new AbortController()
     let finished = false
-    const finish = () => { if (!finished) { finished = true; try { reply.raw.end() } catch { /* already closed */ } } }
+    const finish = () => { if (!finished) { finished = true; sse.end() } }
     reply.raw.on('close', () => controller.abort())
     const deadline = setTimeout(() => controller.abort(), 150_000)
     // S4: 心跳 — 长思考静默期防代理空闲掐断(SSE 注释行,客户端解析器自动忽略)
@@ -359,24 +370,24 @@ export async function documentsRouter(app: FastifyInstance) {
             // organize 重生成一致）；文章正文不受影响。
             const deck = pptxSlidesToDeck(parsed.slides, parsed.images, doc.title || refFileName, SCHEMA_VERSION)
             if (deck) {
-              const now = new Date().toISOString()
-              await (prisma as any).docSnapshot.create({
-                data: { docId, userId, body: doc.body, deck: doc.deck ?? null, label: 'AI deck', createdAt: now },
+              // #789: 写回走 DocVersionWriter 单点 — 事务 + 同帧快照旧
+              // body+deck；writer 内部重读新行,不再用 handler 早前捕获的
+              // doc（后台执行时可能已过期）。
+              const written = await writeDocVersion({
+                userId, docId, deck, snapshotLabel: 'AI deck',
               })
-              await (prisma as any).doc.update({ where: { id: docId }, data: { deck: JSON.stringify(deck), updatedAt: now } })
-            }
-            // 文章落点：正文为空时导入 markdown（## 分节 + 图片托管）。
-            if (!String(doc.body || '').trim()) {
-              const { resolveImportTargets, extractRefText, writeDocBody } = await import('../../tools/doc-import.js')
-              const targets = await resolveImportTargets(userId, docId)
-              const hit = targets.find(({ label: l }) => l === refFileName) || targets[0]
-              if (hit) {
-                const { text, error } = await extractRefText(userId, docId, hit.r, hit.label)
-                if (!error && text) await writeDocBody(userId, docId, text, 'AI import')
+              if (written.error) {
+                log.warn('pptx deck write-back failed', { docId, reason: written.error.slice(0, 200) })
               }
             }
-          } catch {
-            // 后台解析失败不阻断上传 — 失败哨兵文本不缓存，重传可重试。
+            // 文章落点：正文为空时导入 markdown（## 分节 + 图片托管）。
+            // #787: 编排走 ensureDraftBody（此前此处内联了第三份导入决策）。
+            if (!String(doc.body || '').trim()) {
+              await ensureDraftBody(userId, docId, { scenario: 'upload', preferLabel: refFileName })
+            }
+          } catch (err) {
+            // #787: 后台解析失败不阻断上传 — 但必须留痕(此前空 catch)。
+            log.warn('pptx background parse failed', { docId, reason: (err as Error)?.message?.slice(0, 200) })
           }
         })()
       }
@@ -385,12 +396,14 @@ export async function documentsRouter(app: FastifyInstance) {
       try {
         if (isPptxRef) return null // #777: pptx 走后台，不阻塞上传响应
         if (kind !== 'file' && kind !== 'pdf' && kind !== 'docx') return null
+        // 契约:ensureDraftBody 只在空正文时调用 — 已有正文不导入不覆盖。
         if (String(doc.body || '').trim()) return null
-        const { EditDocumentTool } = await import('../../tools/edit-document-tool.js')
-        const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
-        const result = await tool.execute({ import_reference: label || content })
-        return result.success ? (JSON.parse(result.output as string) as { body: string }).body : null
-      } catch {
+        const ensured = await ensureDraftBody(userId, docId, { scenario: 'upload', preferLabel: label || content || '' })
+        // #787: 不再实例化 EditDocumentTool(Tool 是模型入口,不是 service);
+        // 空/多参考的引导文案对上传路径无意义,失败静默但保留日志。
+        return ensured.error ? null : ensured.body
+      } catch (err) {
+        log.warn('reference auto-import failed', { docId, reason: (err as Error)?.message?.slice(0, 200) })
         return null
       }
     })()

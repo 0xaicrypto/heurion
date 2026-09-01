@@ -21,6 +21,13 @@ services:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8001
       - WORKER_API_TOKEN=${WORKER_API_TOKEN:-}
+      # #795: job store + rendered files must live on the mounted volume,
+      # not the container layer (a rebuild would otherwise lose everything).
+      - WORKER_DATA_DIR=/data
+      # #793: expose the server.ts tunables instead of baking them into the
+      # (CI-overwritten) compose file.
+      - WORKER_MAX_CONCURRENT=${WORKER_MAX_CONCURRENT:-}
+      - WORKER_BODY_LIMIT=${WORKER_BODY_LIMIT:-}
       - S3_ENDPOINT=${S3_ENDPOINT:-}
       - S3_BUCKET=${S3_BUCKET:-}
       - S3_REGION=${S3_REGION:-}

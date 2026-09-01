@@ -102,7 +102,13 @@ export async function archiveStaleProposals(): Promise<number> {
   return archived
 }
 
-export async function listPendingApprovals(userId: string, targetType?: string, isAdmin = false) {
+/**
+ * #794: pending approvals are user-scoped by default for everyone (admin
+ * included — the inbox must never mix tenants). Cross-user visibility is an
+ * explicit API opt-in: `scopeAll=true`, which the router only sets for admin
+ * callers passing ?scope=all.
+ */
+export async function listPendingApprovals(userId: string, targetType?: string, scopeAll = false) {
   // Lazy archival keeps the queue current without a background job —
   // awaited so the returned list is always post-archival.
   try {
@@ -111,8 +117,8 @@ export async function listPendingApprovals(userId: string, targetType?: string, 
     // archival is best-effort; listing must not fail
   }
 
-  const where: any = { status: 'pending' }
-  if (!isAdmin) where.userId = userId
+  const where: any = { status: 'pending', userId }
+  if (scopeAll) delete where.userId
   if (targetType) where.targetType = targetType
   const rows = await (prisma as any).approvalRequest.findMany({
     where,
@@ -134,16 +140,10 @@ export async function listPendingApprovals(userId: string, targetType?: string, 
     .map(serializeApproval)
 }
 
-export async function getApprovalRequest(userId: string, id: string, isAdmin = false) {
-  const where: any = { id }
-  if (!isAdmin) where.userId = userId
-  const row = await (prisma as any).approvalRequest.findFirst({ where })
-  return row ? serializeApproval(row) : null
-}
-
-export async function confirmApproval(userId: string, id: string, isAdmin = false) {
-  const where: any = { id, status: 'pending' }
-  if (!isAdmin) where.userId = userId
+export async function confirmApproval(userId: string, id: string) {
+  // #794: writes are always owner-scoped — no admin bypass. An approval may
+  // only be resolved by the user whose context produced it.
+  const where: any = { id, status: 'pending', userId }
   const req = await (prisma as any).approvalRequest.findFirst({ where })
   if (!req) throw new Error('Approval request not found')
 
@@ -170,10 +170,10 @@ export async function confirmApproval(userId: string, id: string, isAdmin = fals
   return serializeApproval(updated)
 }
 
-export async function rejectApproval(userId: string, id: string, reason: string | null, isAdmin = false) {
+export async function rejectApproval(userId: string, id: string, reason: string | null) {
   // Reason is OPTIONAL — rejecting without a note is allowed.
-  const where: any = { id, status: 'pending' }
-  if (!isAdmin) where.userId = userId
+  // #794: owner-scoped like confirmApproval.
+  const where: any = { id, status: 'pending', userId }
   const req = await (prisma as any).approvalRequest.findFirst({ where })
   if (!req) throw new Error('Approval request not found')
 
@@ -296,12 +296,23 @@ async function applyTargetUpdate(
   throw new Error(`Unsupported approval target type: ${targetType}`)
 }
 
-export async function listAuditLogs(filters: { targetType?: string; targetId?: string; actor?: string }, viewerUserId?: string, isAdmin = false) {
+/**
+ * #794: audit reads are actor-scoped by default for everyone. Two fixes:
+ *  - the old `if (filters.actor)` OVERWROTE the forced self-scope, so any
+ *    user could read another user's audit log via ?actor=<victim>;
+ *  - admins now also default to their own feed, with cross-user visibility
+ *    only behind the explicit `?scope=all` opt-in (router gates on role).
+ */
+export async function listAuditLogs(filters: { targetType?: string; targetId?: string; actor?: string; scope?: string }, viewerUserId?: string, isAdmin = false) {
+  const seeAll = isAdmin && filters.scope === 'all'
   const where: any = {}
-  if (!isAdmin && viewerUserId) where.actor = viewerUserId
+  if (!seeAll) {
+    if (viewerUserId) where.actor = viewerUserId
+  } else if (filters.actor) {
+    where.actor = filters.actor
+  }
   if (filters.targetType) where.targetType = filters.targetType
   if (filters.targetId) where.targetId = filters.targetId
-  if (filters.actor) where.actor = filters.actor
   const rows = await (prisma as any).auditLog.findMany({
     where,
     orderBy: { createdAt: 'desc' },

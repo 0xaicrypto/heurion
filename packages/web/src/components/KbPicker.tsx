@@ -23,13 +23,15 @@ interface KbPickerProps {
   onClose: () => void;
   /** Confirm current selection (id-kind pairs). */
   onConfirm: (items: KbPickerItem[]) => void;
-  /** Pre-selected ids (shown checked on open). */
-  initialIds?: string[];
+  /** Pre-selected items (shown checked on open). #786: ids alone could not
+   * work — checkboxes match on full items, so callers pass back what a
+   * previous onConfirm gave them. */
+  initialItems?: KbPickerItem[];
   /** Max items selectable for this context (chat=3). */
   max?: number;
 }
 
-export function KbPicker({ open, onClose, onConfirm, initialIds = [], max = 3 }: KbPickerProps) {
+export function KbPicker({ open, onClose, onConfirm, initialItems = [], max = 3 }: KbPickerProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<KbPickerItem[]>([]);
@@ -39,9 +41,10 @@ export function KbPicker({ open, onClose, onConfirm, initialIds = [], max = 3 }:
 
   useEffect(() => {
     if (!open) return;
-    setPicked((prev) => prev.filter((p) => initialIds.includes(p.id)).length === initialIds.length
-      ? picked
-      : []);
+    // #786: seed pre-selections on open — the old effect compared but never
+    // seeded, so re-opening always showed an empty selection.
+    setPicked(initialItems);
+    setQuery('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
