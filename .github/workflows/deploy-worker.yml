@@ -110,6 +110,12 @@ jobs:
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "⚠️ WORKER_VPS_HOST 未配置（WORKER_VPS_USER/WORKER_VPS_SSH_KEY 可回落 VPS_USER/VPS_SSH_KEY）— 镜像已构建推送，跳过 SSH 部署"
           fi
+          # #791: worker 端鉴权 fail-closed 后,空 token = 全部请求 401。
+          # 部署前硬断言,把配置错误挡在 CI 而不是上线后的排障。
+          if [ -z "$WORKER_API_TOKEN" ]; then
+            echo "❌ WORKER_API_TOKEN secret 未设置 — worker 鉴权 fail-closed(#791),空 token 将拒绝一切请求,中止部署"
+            exit 1
+          fi
 
       - name: Check out deploy target dir via SSH (pre-flight)
         if: steps.check.outputs.configured == 'true'
@@ -123,18 +129,25 @@ jobs:
       - name: Ship compose file + env
         if: steps.check.outputs.configured == 'true'
         run: |
+          # #791: 单引号包裹值 — secret 含空格/换行/特殊字符时 heredoc 错行
+          # 会导致 compose 解析错乱或静默错值。
           cat > /tmp/heurion-worker.env <<EOF
-          WORKER_API_TOKEN=${WORKER_API_TOKEN}
-          S3_ENDPOINT=${S3_ENDPOINT}
-          S3_BUCKET=${S3_BUCKET}
-          S3_REGION=${S3_REGION}
-          S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
-          S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+          WORKER_API_TOKEN='${WORKER_API_TOKEN}'
+          S3_ENDPOINT='${S3_ENDPOINT}'
+          S3_BUCKET='${S3_BUCKET}'
+          S3_REGION='${S3_REGION}'
+          S3_ACCESS_KEY_ID='${S3_ACCESS_KEY_ID}'
+          S3_SECRET_ACCESS_KEY='${S3_SECRET_ACCESS_KEY}'
           EOF
           scp -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new \
             docker-compose.worker.yml "$WORKER_VPS_USER@$WORKER_VPS_HOST":/opt/heurion-worker/
           scp -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new \
             /tmp/heurion-worker.env "$WORKER_VPS_USER@$WORKER_VPS_HOST":/opt/heurion-worker/.env.worker
+          # #791: 明文凭据落盘必须收紧为 owner-only(umask 022 默认 0644,
+          # 同机所有用户可读)。
+          ssh -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new \
+            "$WORKER_VPS_USER@$WORKER_VPS_HOST" "chmod 600 /opt/heurion-worker/.env.worker"
+          rm -f /tmp/heurion-worker.env
 
       - name: Pull new image (fail fast before touching the running container)
         if: steps.check.outputs.configured == 'true'

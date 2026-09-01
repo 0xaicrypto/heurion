@@ -10,7 +10,7 @@ import { getDownloadUrl, getLocalFile, localDownloadUrl, downloadUrlTtlSeconds }
 import { PersistentJobStore, type JobRecord } from './job-store.js'
 import { createReadStream, existsSync } from 'fs'
 import { renderJobType, type RenderJobType } from '@heurion/contracts'
-import { enqueueJobRequestSchema } from '@heurion/contracts'
+import { enqueueJobRequestSchema, previewPayloadSchema } from '@heurion/contracts'
 
 // #446: persistent job store (JSONL) — jobs + fileId index survive restarts.
 const jobStore = new PersistentJobStore()
@@ -55,10 +55,19 @@ const HANDLERS: Record<RenderJobType, (payload: any) => Promise<any>> = {
 
 function isAuthorized(token: string | undefined): boolean {
   const expected = process.env.WORKER_API_TOKEN
-  return !expected || token === expected
+  // #791: fail-closed — an unset/empty token must never open the API (the
+  // old `!expected ||` made "misconfigured" equivalent to "unprotected",
+  // and the compose file's empty default made that the reachable state).
+  if (!expected) return false
+  return token === expected
 }
 
 async function main() {
+  // #791: fail-closed auth means an unset token bricks the API — warn loudly
+  // at boot so the operator knows it is a configuration problem, not a bug.
+  if (!process.env.WORKER_API_TOKEN) {
+    console.warn('[AUTH] WORKER_API_TOKEN is not set — ALL requests will be rejected (fail-closed, #791). Set it in the worker env/compose.')
+  }
   // #441: default 8002 — the control plane (server-ts) owns 8001. Docker
   // compose overrides this explicitly (8001:8001 on the host).
   const port = parseInt(process.env.SERVER_PORT || '8002', 10)
@@ -70,8 +79,12 @@ async function main() {
     bodyLimit: parseInt(process.env.WORKER_BODY_LIMIT || String(96 * 1024 * 1024), 10),
   })
 
-  app.addHook('preHandler', (request, reply, done) => {
-    if (request.url === '/healthz') return done()
+  // #791: auth runs in onRequest — BEFORE body parsing. preHandler fires
+  // after the (96MB) body has been received and buffered, so an unauthenticated
+  // caller could force the worker to buffer + JSON.parse huge payloads and
+  // only then get a 401. healthz stays public (compose healthcheck).
+  app.addHook('onRequest', (request, reply, done) => {
+    if (request.url === '/healthz' || request.method === 'OPTIONS') return done()
     const token = (request.headers['x-worker-token'] || request.headers['authorization']) as string | undefined
     if (!isAuthorized(token)) {
       return reply.status(401).send({ error: 'Unauthorized' })
@@ -90,6 +103,16 @@ async function main() {
       return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join('; ') || 'invalid job request' })
     }
     const { type, payload, callback_url } = parsed.data
+
+    // #790: preview payload 此前零校验（CONTENT_SCHEMAS 里是 z.any()）—
+    // 形状错错到 soffice 才炸。入口 zod 一刀（其余 jobType 的内容在
+    // 控制面 LLM 出口已过 validateRenderContent，不重复）。
+    if (type === 'sidecar.preview_file') {
+      const check = previewPayloadSchema.safeParse(payload || {})
+      if (!check.success) {
+        return reply.status(400).send({ error: check.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') || 'invalid preview payload' })
+      }
+    }
 
       const id = uuid()
       const job = jobStore.create(id, type)
