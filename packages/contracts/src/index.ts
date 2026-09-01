@@ -137,15 +137,28 @@ export const renderJobType = z.enum([
 
 export type RenderJobType = z.infer<typeof renderJobType>
 
+/**
+ * #790: preview payload 单一形状来源 — 此前四份定义（contracts 注释 /
+ * worker PreviewInput 手写接口 / server-ts 产出端内联字面量 / web 消费端
+ * 手写类型），worker 端运行时靠 ad-hoc if 校验。data_base64 为文件字节
+ * 直传，不经 render-content 契约（其余 jobType 的内容 schema 走
+ * presentationContentSchema 等）。
+ */
+export const previewPayloadSchema = z.object({
+  data_base64: z.string().min(1),
+  file_name: z.string().optional(),
+  max_pages: z.number().int().positive().max(60).optional(),
+})
+export type PreviewPayload = z.infer<typeof previewPayloadSchema>
+
 const CONTENT_SCHEMAS: Record<RenderJobType, z.ZodType> = {
   'sidecar.generate_pptx': presentationContentSchema,
   'sidecar.generate_docx': documentContentSchema,
   'sidecar.render_table': tableContentSchema,
   'sidecar.render_plot': plotContentSchema,
   'sidecar.convert_to_pdf': documentContentSchema,
-  // #771: preview payload = { data_base64, file_name?, max_pages? } —
-  // 字节直传，不经 render-content 契约校验。
-  'sidecar.preview_file': z.any(),
+  // #790: preview payload 也收进 schema 表（此前 z.any() 恒真 no-op）。
+  'sidecar.preview_file': previewPayloadSchema,
 }
 
 export type RenderContent =

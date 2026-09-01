@@ -8,6 +8,7 @@
  * Events listed here are the ones the backend actually emits
  * (chat-handler.ts / deep-analysis.router.ts / plugin-chat-handler.ts).
  */
+import { z } from 'zod'
 
 /** Context-budget snapshot sent at the start of a turn (U3). */
 export interface ContextUsage {
@@ -41,7 +42,9 @@ export interface Citation {
 /**
  * #773: deck 资产的线上形状（presentationContentSchema 的结构化子集 —
  * 与 Doc.deck 存储同构）。deck 与 body 同源同帧（doc_updated 一次到达），
- * 避免双事件乱序。
+ * 避免双事件乱序。#790: zod schema 同步落地 — 此前只写 interface，产出端
+ * JSON.parse 后原样塞进 doc_updated.deck 无任何形状检查，pptx-extractor
+ * 已实际漂移过一次（schemaVersion）。
  */
 export interface DeckWire {
   title: string
@@ -51,6 +54,25 @@ export interface DeckWire {
     content: Array<{ type: string; text?: string; style?: string; url?: string; caption?: string; data?: string; ref?: string }>
   }>
 }
+
+const deckSlideContentSchema = z.object({
+  type: z.string(),
+  text: z.string().optional(),
+  style: z.string().optional(),
+  url: z.string().optional(),
+  caption: z.string().optional(),
+  data: z.string().optional(),
+  ref: z.string().optional(),
+})
+
+export const deckWireSchema = z.object({
+  title: z.string(),
+  subtitle: z.string().optional(),
+  slides: z.array(z.object({
+    title: z.string(),
+    content: z.array(deckSlideContentSchema),
+  })),
+})
 
 /** Tool invocation record surfaced to the UI (badge/折叠展示). */
 export interface ToolCallRecord {

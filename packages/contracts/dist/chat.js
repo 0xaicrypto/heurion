@@ -8,6 +8,24 @@
  * Events listed here are the ones the backend actually emits
  * (chat-handler.ts / deep-analysis.router.ts / plugin-chat-handler.ts).
  */
+import { z } from 'zod';
+const deckSlideContentSchema = z.object({
+    type: z.string(),
+    text: z.string().optional(),
+    style: z.string().optional(),
+    url: z.string().optional(),
+    caption: z.string().optional(),
+    data: z.string().optional(),
+    ref: z.string().optional(),
+});
+export const deckWireSchema = z.object({
+    title: z.string(),
+    subtitle: z.string().optional(),
+    slides: z.array(z.object({
+        title: z.string(),
+        content: z.array(deckSlideContentSchema),
+    })),
+});
 /**
  * Tool names that are pure retrieval (no side effects) — the UI collapses
  * consecutive retrieval calls into a single expandable row.

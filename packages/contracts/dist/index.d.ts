@@ -465,6 +465,27 @@ export type PlotContent = z.infer<typeof plotContentSchema>;
  */
 export declare const renderJobType: z.ZodEnum<["sidecar.generate_pptx", "sidecar.generate_docx", "sidecar.render_table", "sidecar.render_plot", "sidecar.convert_to_pdf", "sidecar.preview_file"]>;
 export type RenderJobType = z.infer<typeof renderJobType>;
+/**
+ * #790: preview payload 单一形状来源 — 此前四份定义（contracts 注释 /
+ * worker PreviewInput 手写接口 / server-ts 产出端内联字面量 / web 消费端
+ * 手写类型），worker 端运行时靠 ad-hoc if 校验。data_base64 为文件字节
+ * 直传，不经 render-content 契约（其余 jobType 的内容 schema 走
+ * presentationContentSchema 等）。
+ */
+export declare const previewPayloadSchema: z.ZodObject<{
+    data_base64: z.ZodString;
+    file_name: z.ZodOptional<z.ZodString>;
+    max_pages: z.ZodOptional<z.ZodNumber>;
+}, "strip", z.ZodTypeAny, {
+    data_base64: string;
+    file_name?: string | undefined;
+    max_pages?: number | undefined;
+}, {
+    data_base64: string;
+    file_name?: string | undefined;
+    max_pages?: number | undefined;
+}>;
+export type PreviewPayload = z.infer<typeof previewPayloadSchema>;
 export type RenderContent = PresentationContent | DocumentContent | TableContent | PlotContent;
 /**
  * Validate an AI-produced content payload for a job type. Returns

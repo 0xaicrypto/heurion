@@ -8,6 +8,7 @@
  * Events listed here are the ones the backend actually emits
  * (chat-handler.ts / deep-analysis.router.ts / plugin-chat-handler.ts).
  */
+import { z } from 'zod';
 /** Context-budget snapshot sent at the start of a turn (U3). */
 export interface ContextUsage {
     history_tokens: number;
@@ -37,7 +38,9 @@ export interface Citation {
 /**
  * #773: deck 资产的线上形状（presentationContentSchema 的结构化子集 —
  * 与 Doc.deck 存储同构）。deck 与 body 同源同帧（doc_updated 一次到达），
- * 避免双事件乱序。
+ * 避免双事件乱序。#790: zod schema 同步落地 — 此前只写 interface，产出端
+ * JSON.parse 后原样塞进 doc_updated.deck 无任何形状检查，pptx-extractor
+ * 已实际漂移过一次（schemaVersion）。
  */
 export interface DeckWire {
     title: string;
@@ -55,6 +58,90 @@ export interface DeckWire {
         }>;
     }>;
 }
+export declare const deckWireSchema: z.ZodObject<{
+    title: z.ZodString;
+    subtitle: z.ZodOptional<z.ZodString>;
+    slides: z.ZodArray<z.ZodObject<{
+        title: z.ZodString;
+        content: z.ZodArray<z.ZodObject<{
+            type: z.ZodString;
+            text: z.ZodOptional<z.ZodString>;
+            style: z.ZodOptional<z.ZodString>;
+            url: z.ZodOptional<z.ZodString>;
+            caption: z.ZodOptional<z.ZodString>;
+            data: z.ZodOptional<z.ZodString>;
+            ref: z.ZodOptional<z.ZodString>;
+        }, "strip", z.ZodTypeAny, {
+            type: string;
+            text?: string | undefined;
+            style?: string | undefined;
+            url?: string | undefined;
+            caption?: string | undefined;
+            data?: string | undefined;
+            ref?: string | undefined;
+        }, {
+            type: string;
+            text?: string | undefined;
+            style?: string | undefined;
+            url?: string | undefined;
+            caption?: string | undefined;
+            data?: string | undefined;
+            ref?: string | undefined;
+        }>, "many">;
+    }, "strip", z.ZodTypeAny, {
+        title: string;
+        content: {
+            type: string;
+            text?: string | undefined;
+            style?: string | undefined;
+            url?: string | undefined;
+            caption?: string | undefined;
+            data?: string | undefined;
+            ref?: string | undefined;
+        }[];
+    }, {
+        title: string;
+        content: {
+            type: string;
+            text?: string | undefined;
+            style?: string | undefined;
+            url?: string | undefined;
+            caption?: string | undefined;
+            data?: string | undefined;
+            ref?: string | undefined;
+        }[];
+    }>, "many">;
+}, "strip", z.ZodTypeAny, {
+    title: string;
+    subtitle?: string | undefined;
+    slides: {
+        title: string;
+        content: {
+            type: string;
+            text?: string | undefined;
+            style?: string | undefined;
+            url?: string | undefined;
+            caption?: string | undefined;
+            data?: string | undefined;
+            ref?: string | undefined;
+        }[];
+    }[];
+}, {
+    title: string;
+    subtitle?: string | undefined;
+    slides: {
+        title: string;
+        content: {
+            type: string;
+            text?: string | undefined;
+            style?: string | undefined;
+            url?: string | undefined;
+            caption?: string | undefined;
+            data?: string | undefined;
+            ref?: string | undefined;
+        }[];
+    }[];
+}>;
 /** Tool invocation record surfaced to the UI (badge/折叠展示). */
 export interface ToolCallRecord {
     tool: string;
