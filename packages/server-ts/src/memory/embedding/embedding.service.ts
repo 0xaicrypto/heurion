@@ -15,6 +15,8 @@ const log = makeLogger('memory.embedding.service')
 export class EmbeddingService {
   private _embeddingIndex: EmbeddingIndex | null = null
   private _embed: Promise<((texts: string[]) => Promise<number[][]>) | null> | null = null
+  /** #796: dim pinned by the first successful embed; later mismatches drop. */
+  private expectedDim: number | null = null
 
   constructor(
     private userId: string,
@@ -47,13 +49,33 @@ export class EmbeddingService {
     return this._embed
   }
 
+  /**
+   * #796: mixing vector dimensions in one index silently destroys cosine
+   * retrieval (e.g. EMBEDDING_MODEL drift 384-dim bge-small vs 1024-dim
+   * bge-m3). The first successful embed pins the expected dim; later
+   * mismatched vectors are dropped with a loud error instead of indexed.
+   */
+  private dimGuard(vec: number[] | null): number[] | null {
+    if (!vec) return null
+    if (this.expectedDim === null) {
+      this.expectedDim = vec.length
+    } else if (vec.length !== this.expectedDim) {
+      log.error('embedding dimension mismatch — vector dropped (EMBEDDING_MODEL changed? re-index required)', {
+        expected: this.expectedDim,
+        got: vec.length,
+      })
+      return null
+    }
+    return vec
+  }
+
   /** Embed text; returns null when the embedding service is unavailable. */
   async embedOrNull(text: string): Promise<number[] | null> {
     try {
       const embed = await this.embedder()
       if (!embed) return null
       const vecs = await embed([text])
-      return vecs[0] ?? null
+      return this.dimGuard(vecs[0] ?? null)
     } catch (err) {
       log.warn('embedding unavailable', { reason: (err as Error).message.slice(0, 120) })
       return null
@@ -66,7 +88,7 @@ export class EmbeddingService {
       const embed = await this.embedder()
       if (!embed) return null
       const vecs = await embed(texts)
-      return texts.map((_, i) => vecs[i] ?? null)
+      return texts.map((_, i) => this.dimGuard(vecs[i] ?? null))
     } catch (err) {
       log.warn('embedding batch unavailable', { reason: (err as Error).message.slice(0, 120) })
       return null
