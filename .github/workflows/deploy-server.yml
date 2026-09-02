@@ -361,6 +361,9 @@ jobs:
           CORS_ALLOW_ORIGINS=https://${HOSTNAME}
           DEFAULT_LLM_PROVIDER=opencode
           DEFAULT_LLM_MODEL=deepseek-v4-flash
+          # #fix 2026-09: Console Go 中转的 deepseek-v4-flash 实测纯文本
+          # (生产 400 拒收 image_url) — 注册表覆盖,附件图片注入侧即降级。
+          LLM_TEXT_ONLY_MODELS=deepseek-v4-flash
           OPENCODE_API_KEY=${OPENCODE_API_KEY}
           GEMINI_API_KEY=${GEMINI_API_KEY}
           DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}

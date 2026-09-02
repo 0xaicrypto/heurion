@@ -136,8 +136,35 @@ const VISION_PROVIDERS: ReadonlySet<string> = new Set(['gemini', 'openai'])
 
 /** #fix: 明确不支持视觉的模型。v3 时代 DeepSeek(deepseek-chat /
  *  deepseek-reasoner)是纯文本;v4+(deepseek-v4-flash/pro)支持
- *  OpenAI-compatible image_url 多模态输入。 */
-const TEXT_ONLY_MODELS: ReadonlySet<string> = new Set(['deepseek-chat', 'deepseek-reasoner'])
+ *  OpenAI-compatible image_url 多模态输入。
+ *  #fix 2026-09: 注册表假设可能落后于中转站实际路由 — Console Go 的
+ *  deepseek-v4-flash 实测纯文本(生产 400: "Model only supports text
+ *  input; received unsupported content type 'image_url'")。部署可用
+ *  LLM_TEXT_ONLY_MODELS=deepseek-v4-flash(逗号分隔)覆盖注册表,注入侧
+ *  即降级为文字占位;网关侧另有 400 自愈重试兜底(stripImageParts)。 */
+const TEXT_ONLY_MODELS: ReadonlySet<string> = new Set([
+  'deepseek-chat', 'deepseek-reasoner',
+  ...(process.env.LLM_TEXT_ONLY_MODELS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+])
+
+/** #fix 2026-09: 上游 400 拒收图片错误的识别 — 命中即剥离图片重试一次。 */
+export function isImageUnsupportedError(status: number, body: string): boolean {
+  if (status !== 400) return false
+  return /image_url|image url|content\s*type|multimodal|only supports text/i.test(body)
+}
+
+/** 剥离消息中的图片 part → 文字占位(模型纯文本时的降级路径)。 */
+export function stripImageParts(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((m) => {
+    if (!Array.isArray(m.content) || !m.content.some((p) => p.type === 'image')) return m
+    return {
+      ...m,
+      content: m.content.map((p) =>
+        p.type === 'image' ? ({ type: 'text', text: `[image omitted: ${p.mime} — 当前模型仅支持文本输入]` } as ChatContentPart) : p,
+      ),
+    }
+  })
+}
 
 /** 按模型名判定视觉能力:已知视觉模型(v4+ 家族,含
  *  deepseek-v4-flash-vision-exp)→ true;已知纯文本模型 → false;
@@ -589,11 +616,40 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       // 上游明确拒绝(401 key 失效 / 402 余额 / 429 限流 / 413 超长) —
       // 带状态码 + 上游响应体片段,前端/日志可定位真实原因(如某模型
       // 不支持 tools/image 参数时上游会写明)。
-      const body = await res.text().catch(() => '')
-      await recordFailure(model, options, new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`), promptChars(messages), Date.now() - startedAt)
-      throw new Error(`LLM 请求失败 (HTTP ${res.status}): ${body.slice(0, 300)}`)
+      const errBody = await res.text().catch(() => '')
+      // #fix 2026-09: 中转站/上游纯文本模型拒收 image_url(生产 400:
+      // "Model only supports text input") — 注册表可能落后于中转实际路由。
+      // 剥离图片为文字占位重试一次,回合不再因这类错误整轮报废。
+      if (isImageUnsupportedError(res.status, errBody)) {
+        log.warn('image parts rejected — retrying with images stripped', { model })
+        const res2 = await fetchWithRetry(`${this.endpoint().baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
+          body: JSON.stringify({ ...body, messages: serializeMessages(stripImageParts(messages), model) }),
+        }, { signal: options.signal, timeoutMs: options.timeoutMs })
+        if (res2.ok) {
+          return this.parseChatResponse(await res2.json(), model, options, messages, tools, onReasoning)
+        }
+        const body2 = await res2.text().catch(() => '')
+        await recordFailure(model, options, new Error(`HTTP ${res2.status} after image-strip retry: ${body2.slice(0, 200)}`), promptChars(messages), Date.now() - startedAt)
+        throw new Error(`LLM 请求失败 (HTTP ${res2.status}): ${body2.slice(0, 300)}`)
+      }
+      await recordFailure(model, options, new Error(`HTTP ${res.status}: ${errBody.slice(0, 200)}`), promptChars(messages), Date.now() - startedAt)
+      throw new Error(`LLM 请求失败 (HTTP ${res.status}): ${errBody.slice(0, 300)}`)
     }
     const json: { choices?: LlmChunk['choices']; usage?: LlmChunk['usage'] } = await res.json()
+    return await this.parseChatResponse(json, model, options, messages, tools, onReasoning)
+  }
+
+  /** #fix 2026-09: 响应解析单点 — 供正常路径与图片剥离重试路径共用。 */
+  private async parseChatResponse(
+    json: { choices?: LlmChunk['choices']; usage?: LlmChunk['usage'] },
+    model: string,
+    options: LlmChatOptions,
+    messages: ChatMessage[],
+    tools?: LlmToolDefinition[],
+    onReasoning?: (text: string) => void,
+  ): Promise<LlmChatResult> {
     const choice = json.choices?.[0]
 
     // Surface the model's reasoning_content (deepseek-reasoner / v4-pro)
@@ -682,8 +738,35 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
     if (!res.ok) {
       // 同上 — 流式路径也带状态码 + 上游响应体片段。
       const body = await res.text().catch(() => '')
-      await recordFailure(model, options, new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`), promptChars(messages), Date.now() - startedAt)
-      throw new Error(`LLM 请求失败 (HTTP ${res.status}): ${body.slice(0, 300)}`)
+      // #fix 2026-09: 图片被纯文本上游拒收 → 剥离重试一次(同 chatWithMeta)。
+      // 流式尚未产出任何字节,重试对调用方透明。
+      if (isImageUnsupportedError(res.status, body)) {
+        log.warn('image parts rejected (stream) — retrying with images stripped', { model })
+        const bodyJson: any = {
+          model,
+          messages: serializeMessages(stripImageParts(messages), model),
+          max_tokens: options.maxTokens ?? resolveDefaultMaxTokens(model),
+          temperature: options.temperature ?? 0.7,
+          stream: true,
+          stream_options: { include_usage: true },
+          ...(options.thinking && model.toLowerCase().startsWith('glm') ? { thinking: { type: options.thinking } } : {}),
+        }
+        const res2 = await fetchWithRetry(`${this.endpoint().baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
+          body: JSON.stringify(bodyJson),
+        }, { signal: options.signal, timeoutMs: options.timeoutMs })
+        if (res2.ok) {
+          res = res2
+        } else {
+          const body2 = await res2.text().catch(() => '')
+          await recordFailure(model, options, new Error(`HTTP ${res2.status} after image-strip retry: ${body2.slice(0, 200)}`), promptChars(messages), Date.now() - startedAt)
+          throw new Error(`LLM 请求失败 (HTTP ${res2.status}): ${body2.slice(0, 300)}`)
+        }
+      } else {
+        await recordFailure(model, options, new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`), promptChars(messages), Date.now() - startedAt)
+        throw new Error(`LLM 请求失败 (HTTP ${res.status}): ${body.slice(0, 300)}`)
+      }
     }
 
     const reader = res.body!.getReader()
