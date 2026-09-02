@@ -242,13 +242,15 @@ export interface LlmTelemetryRecorder {
 }
 
 /** #627 — LLM request timeout (TTFB) with env override LLM_TIMEOUT_MS.
- *  Default 180s: reasoning models on long documents (editing/polishing)
- *  regularly think >60s before the first token, and the previous hardcoded
- *  60s aborted those requests with "LLM request timed out after 60000ms". */
+ *  Default 300s: reasoning models on long documents (editing/polishing,
+ *  chart generation with full doc context) can think >180s before the
+ *  first token — the previous 180s aborted those with "LLM request timed
+ *  out after 180000ms". The SSE heartbeat keeps the client connection
+ *  alive while the origin waits. */
 function resolveLlmTimeoutMs(): number {
   const fromEnv = parseInt(process.env.LLM_TIMEOUT_MS || '', 10)
   if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv
-  return 180000
+  return 300000
 }
 
 export interface LlmChatOptions {

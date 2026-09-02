@@ -13,6 +13,7 @@ import { ensureDraftBody } from '../../tools/doc-import.js'
 // #789: doc 写回单点 owner。
 import { writeDocVersion } from '../../tools/doc-version-writer.js'
 import { makeLogger } from '../../common/logger.js'
+import { refreshFileUrls } from '../../common/chart-token.js'
 // #790: polish 流复用共享 SSE 传输。
 import { createRawSseSender } from '../chat/chat-sse.js'
 
@@ -26,6 +27,12 @@ function parseDeck(deck: unknown): unknown {
   try { return JSON.parse(deck) } catch { return null }
 }
 
+/** #fix: deck 内嵌图片 URL 自愈（refreshFileUrls 的 JSON 结构包装）。 */
+function refreshDeckUrls(deck: unknown, userId: string): unknown {
+  if (!deck) return deck
+  try { return JSON.parse(refreshFileUrls(JSON.stringify(deck), userId)) } catch { return deck }
+}
+
 export async function documentsRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
@@ -35,7 +42,9 @@ export async function documentsRouter(app: FastifyInstance) {
       where: { userId: request.user!.userId }, orderBy: { updatedAt: 'desc' },
     })
     return { docs: docs.map((d: any) => ({
-      id: d.id, title: d.title, body: d.body,
+      id: d.id, title: d.title,
+      // #fix: 图片 URL 自愈 — 旧版坏链/过期 token 在读取时统一重签。
+      body: refreshFileUrls(d.body, request.user!.userId),
       updated_at: d.updatedAt, created_at: d.createdAt, ref_count: 0,
     }))}
   })
@@ -76,7 +85,7 @@ export async function documentsRouter(app: FastifyInstance) {
       const st = await (prisma as any).researchStudy.findFirst({ where: { id: doc.studyId } })
       study_name = st?.name || null
     }
-    return { id: doc.id, title: doc.title, body: doc.body, deck: parseDeck(doc.deck), created_at: doc.createdAt, updated_at: doc.updatedAt, study_id: doc.studyId || null, study_name }
+    return { id: doc.id, title: doc.title, body: refreshFileUrls(doc.body, request.user!.userId), deck: refreshDeckUrls(parseDeck(doc.deck), request.user!.userId), created_at: doc.createdAt, updated_at: doc.updatedAt, study_id: doc.studyId || null, study_name }
   })
 
   app.put('/api/v1/docs/:docId', async (request, reply) => {
@@ -161,7 +170,7 @@ export async function documentsRouter(app: FastifyInstance) {
     const snap = await (prisma as any).docSnapshot.findFirst({ where: { id: Number(snapId), docId } })
     if (!snap) return reply.status(404).send({ error: 'Not found' })
     // #773: 同帧返回 deck — 恢复审阅可见,恢复时 body+deck 一致回滚。
-    return { id: String(snap.id), created_at: snap.createdAt, label: snap.label || '保存版本', body: snap.body || '', deck: parseDeck(snap.deck) }
+    return { id: String(snap.id), created_at: snap.createdAt, label: snap.label || '保存版本', body: refreshFileUrls(snap.body || '', request.user!.userId), deck: refreshDeckUrls(parseDeck(snap.deck), request.user!.userId) }
   })
 
   app.post('/api/v1/docs/:docId/snapshots/:snapId/restore', async (request, reply) => {
