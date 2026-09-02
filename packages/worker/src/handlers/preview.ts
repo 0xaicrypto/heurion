@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto'
 import { promisify } from 'util'
 import { saveFile } from '../storage.js'
 // #790: payload 形状来自 contracts 单一来源（此前本文件手写 interface）。
-import type { PreviewPayload } from '@heurion/contracts'
+import { previewPayloadSchema, type PreviewPayload } from '@heurion/contracts'
 
 const execFileAsync = promisify(execFile)
 
@@ -40,7 +40,13 @@ async function whichAvailable(bin: string): Promise<boolean> {
   }
 }
 
-export async function previewFile(input: PreviewInput) {
+export async function previewFile(payload: unknown) {
+  // #686: 入口收 unknown — zod 校验在内部（server.ts 的入口校验保留为快速失败）。
+  const parsed = previewPayloadSchema.safeParse(payload ?? {})
+  if (!parsed.success) {
+    throw new Error(`preview_file payload failed validation: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`)
+  }
+  const input: PreviewInput = parsed.data
   if (!input.data_base64) throw new Error('preview_file requires data_base64')
   const binary = Buffer.from(input.data_base64, 'base64')
   if (binary.length === 0) throw new Error('preview_file got empty data')

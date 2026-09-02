@@ -8,34 +8,13 @@ import { renderTable } from './handlers/table.js'
 import { previewFile } from './handlers/preview.js'
 import { getDownloadUrl, getLocalFile, localDownloadUrl, downloadUrlTtlSeconds } from './storage.js'
 import { PersistentJobStore, type JobRecord } from './job-store.js'
+import { runJob } from './job-runner.js'
 import { createReadStream, existsSync } from 'fs'
 import { renderJobType, type RenderJobType } from '@heurion/contracts'
 import { enqueueJobRequestSchema, previewPayloadSchema } from '@heurion/contracts'
 
 // #446: persistent job store (JSONL) — jobs + fileId index survive restarts.
 const jobStore = new PersistentJobStore()
-
-// #656: bounded concurrency — jobs execute with at most MAX_CONCURRENT_JOBS
-// in flight; the rest wait in the queue (was: setImmediate parallel with no
-// cap, so a burst of renders could exhaust memory/CPU).
-const MAX_CONCURRENT_JOBS = parseInt(process.env.WORKER_MAX_CONCURRENT || '4', 10)
-let activeJobs = 0
-const jobQueue: Array<() => void> = []
-function whenSlotFree(): Promise<void> {
-  if (activeJobs < MAX_CONCURRENT_JOBS) {
-    activeJobs++
-    return Promise.resolve()
-  }
-  return new Promise((resolve) => jobQueue.push(() => {
-    activeJobs++
-    resolve()
-  }))
-}
-function releaseSlot(): void {
-  activeJobs--
-  const next = jobQueue.shift()
-  if (next) next()
-}
 
 // #656: jobs left `running` by a crashed process can never complete.
 const recovered = jobStore.recoverInterrupted()
@@ -44,7 +23,9 @@ if (recovered > 0) console.log(`[JOB-STORE] recovered ${recovered} interrupted j
 // #652: single job-type namespace. Keys are the renderJobType enum from
 // @heurion/contracts — the same values the control plane submits
 // (sidecar.*). Keep in sync with contracts/src/index.ts.
-const HANDLERS: Record<RenderJobType, (payload: any) => Promise<any>> = {
+// #686: handler signature typed unknown→unknown — payload validation lives
+// in each handler (contracts schemas), not as an untyped passthrough.
+const HANDLERS: Record<RenderJobType, (payload: unknown) => Promise<unknown>> = {
   'sidecar.generate_docx': (p) => generateDocx(p),
   'sidecar.generate_pptx': (p) => generatePptx(p),
   'sidecar.render_table': (p) => renderTable(p),
@@ -117,49 +98,17 @@ async function main() {
       const id = uuid()
       const job = jobStore.create(id, type)
 
-      ;(async () => {
-        await whenSlotFree()
-        const handler = HANDLERS[type as RenderJobType]
-        if (!handler) {
-          jobStore.update(id, { status: 'failed', error: `Unknown job type: ${type}`, completed_at: Date.now() / 1000 })
-          releaseSlot()
-          return
-        }
-
-        jobStore.update(id, { status: 'running' })
-        try {
-          const result = await handler(payload || {})
-          jobStore.update(id, { status: 'completed', result, completed_at: Date.now() / 1000 })
-          // #446: index the produced file for O(1) download lookups.
-          if (result?.file_id) {
-            jobStore.indexFile({
-              fileId: String(result.file_id),
-              jobId: id,
-              fileName: String(result.file_name || 'output'),
-              mimeType: String(result.mime_type || 'application/octet-stream'),
-            })
-          }
-          // #449: fire-and-forget completion callback.
-          if (callback_url) {
-            fetch(callback_url, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ job_id: id, status: 'completed', result, error: undefined }),
-            }).catch(() => {})
-          }
-        } catch (err: any) {
-          jobStore.update(id, { status: 'failed', error: err.message || 'Handler failed', completed_at: Date.now() / 1000 })
-          if (callback_url) {
-            fetch(callback_url, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ job_id: id, status: 'failed', error: err.message || 'Handler failed' }),
-            }).catch(() => {})
-          }
-        } finally {
-          releaseSlot()
-        }
-      })()
+      // #686: 执行状态机收敛到 job-runner.runJob（并发上限/文件索引/
+      // callback 通知在单点维护）— HANDLERS 已是穷举 Record,此处不再有
+      // Unknown job type 分支。
+      void runJob({
+        jobStore,
+        id,
+        type: type as RenderJobType,
+        payload: payload || {},
+        handler: HANDLERS[type as RenderJobType],
+        callbackUrl: callback_url,
+      })
 
       return {
         job_id: id,

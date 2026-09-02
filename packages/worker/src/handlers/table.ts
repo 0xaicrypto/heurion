@@ -1,17 +1,29 @@
+import { validateRenderContent, SCHEMA_VERSION, type TableContent } from '@heurion/contracts'
 import { renderPdf } from './common.js'
 
-export interface TableInput {
-  title?: string
-  headers: string[]
-  rows: string[][]
-}
+/**
+ * #686: render_table 入口契约化 — 契约 TableContent（schemaVersion/title/
+ * headers/rows）必检;legacy 直调（无 schemaVersion、title 可空）走归一化
+ * 兜底,非法输入给出明确错误而不是 pdfkit 内部异常。
+ */
+export async function renderTable(payload: unknown) {
+  const p = (payload || {}) as Record<string, unknown>
 
-export async function renderTable(input: TableInput) {
+  // Legacy 容错:无 schemaVersion 的旧形状(title 缺省/headers 单列)。
+  if (!p.schemaVersion) {
+    p.schemaVersion = SCHEMA_VERSION
+    if (typeof p.title !== 'string' || !p.title.trim()) p.title = 'Table'
+  }
+
+  const check = validateRenderContent('sidecar.render_table', p)
+  if (!check.ok) {
+    throw new Error(`render_table payload failed contract validation: ${check.errors.join('; ')}`)
+  }
+  const input = p as unknown as TableContent
+
   return renderPdf((doc) => {
-    if (input.title) {
-      doc.fontSize(20).text(input.title, { align: 'center' })
-      doc.moveDown(1)
-    }
+    doc.fontSize(20).text(input.title, { align: 'center' })
+    doc.moveDown(1)
 
     const colWidth = (doc.page.width - 100) / input.headers.length
     const fontSize = 10
