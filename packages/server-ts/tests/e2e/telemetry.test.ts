@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { InMemoryTelemetryService, PrismaTelemetryService } from '../../src/modules/knowledge/telemetry.service'
-import { ChatOrchestrator } from '../../src/modules/chat/chat.orchestrator'
+import { ChatOrchestrator } from '../../src/modules/shared/chat-orchestrator'
 import { EventLog } from '../../src/core/event-log'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../src/evolution/stores'
 import { getApp, authHeader } from '../setup.js'

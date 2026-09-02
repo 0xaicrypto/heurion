@@ -4,9 +4,9 @@ import path from 'path'
 import os from 'os'
 import { FactsStore, KnowledgeStore } from '../../src/evolution/stores'
 import { buildScenePersona, buildPersona, type ChatScene } from '../../src/common/persona.js'
-import { buildCachedPersona } from '../../src/modules/chat/user-context.js'
+import { buildCachedPersona } from '../../src/modules/shared/user-context.js'
 import { ToolRegistry, SCENE_OMIT_TOOLS, PLUGIN_GATED_TOOLS } from '../../src/tools/tool-registry.js'
-import { resolveScene } from '../../src/modules/chat/chat-context.js'
+import { resolveScene } from '../../src/modules/shared/chat-context.js'
 import { classifyQuery } from '../../src/retrieval/query-router.js'
 
 /**

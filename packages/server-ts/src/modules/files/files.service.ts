@@ -147,7 +147,7 @@ export async function finalizeUpload(input: FinalizeUploadInput): Promise<Finali
   // Graph DocumentNode must exist immediately (picker / picked_kb list
   // documents from the in-memory graph); original text stays on disk and is
   // extracted on demand (#628 contract).
-  const { getUserContext } = await import('../chat/user-context.js')
+  const { getUserContext } = await import('../shared/user-context.js')
   getUserContext(userId).memory.addDocument({
     fileId: input.fileId,
     sha256,

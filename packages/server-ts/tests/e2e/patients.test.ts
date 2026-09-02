@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest'
 import { getApp, authHeader, getAuthUserId } from '../setup.js'
-import { getUserContext } from '../../src/modules/chat/user-context.js'
+import { getUserContext } from '../../src/modules/shared/user-context.js'
 
 describe('Patients', () => {
   test('create patient returns hash and persists', async () => {

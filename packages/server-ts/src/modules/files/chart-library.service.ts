@@ -6,7 +6,7 @@
  */
 import fs from 'fs'
 import path from 'path'
-import { getUserContext } from '../chat/user-context.js'
+import { getUserContext } from '../shared/user-context.js'
 
 export interface GeneratedChartEntry {
   file_id: string

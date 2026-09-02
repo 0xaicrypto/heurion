@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
-import { getUserContext } from '../chat/user-context.js'
+import { getUserContext } from '../shared/user-context.js'
 import { safeUploadPath } from '../../lib/upload-path.js'
 import { extractDocumentText } from '../../lib/document-extractor.js'
 import { verifyChartToken, issueChartToken } from '../../common/chart-token.js'

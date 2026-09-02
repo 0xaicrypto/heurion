@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { ContextBudget } from '../../src/modules/chat/chat-context.js'
+import { ContextBudget } from '../../src/modules/shared/chat-context.js'
 import { LegacyFactProvider } from '../../src/memory/fact-provider.js'
 import { FactsStore } from '../../src/evolution/stores.js'
 import { factContentHash } from '../../src/common/fact-render.js'

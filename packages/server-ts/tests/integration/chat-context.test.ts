@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
-import { buildPersona, buildFileContext } from '../../src/modules/chat/user-context'
+import { buildPersona, buildFileContext } from '../../src/modules/shared/user-context'
 import { FactsStore, KnowledgeStore } from '../../src/evolution/stores'
 import os from 'os'
 import path from 'path'
@@ -62,8 +62,8 @@ describe('P2 — Chat Context Enhancement', () => {
   })
 })
 
-import { buildAttachmentParts } from '../../src/modules/chat/chat-context.js'
-import { resolveScene } from '../../src/modules/chat/chat-context.js'
+import { buildAttachmentParts } from '../../src/modules/shared/chat-context.js'
+import { resolveScene } from '../../src/modules/shared/chat-context.js'
 
 describe('#544 buildAttachmentParts', () => {
   let baseDir: string

@@ -148,7 +148,7 @@ describe('Sidecar feedback — API', () => {
     expect(body.saved.length).toBeGreaterThan(0)
 
     // Verify user context has new facts
-    const ctxModule = await import('../../src/modules/chat/user-context.js')
+    const ctxModule = await import('../../src/modules/shared/user-context.js')
     const userId = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString()).userId
     const ctx = ctxModule.getUserContext(userId)
     expect(ctx.facts.all().some((f: any) => f.sourceType === 'sidecar')).toBe(true)

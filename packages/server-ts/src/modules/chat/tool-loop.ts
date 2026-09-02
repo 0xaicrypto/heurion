@@ -13,7 +13,7 @@ import { deepseekChatWithMeta, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.j
 import { detectDoomLoop } from '../../tools/doom-loop.js'
 import { makeLogger } from '../../common/logger.js'
 import { parseLlmJson } from '../../common/llm-json.js'
-import type { getUserContext } from './user-context.js'
+import type { getUserContext } from '../shared/user-context.js'
 // #790: SSE 出口类型化 — 此前 (chunk: any) 使 loop 内新事件绕过编译期
 // 检查，契约类型化停在传输层（chat-sse）。
 import type { ChatStreamChunk, DeckWire } from '@heurion/contracts'

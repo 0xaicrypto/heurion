@@ -137,7 +137,7 @@ describe('writing sessions never leak into memory extraction (bug repro)', () =>
     // Core leak guard: the doc session must have no evolution/compaction
     // events, and no memory proposals may have been created from it.
     const userId = await (await import('../setup.js')).getAuthUserId()
-    const events = (await import('../../src/modules/chat/user-context.js')).getUserContext(userId)
+    const events = (await import('../../src/modules/shared/user-context.js')).getUserContext(userId)
       .eventLog.query({ sessionId: docId })
     expect(events.filter((e: any) => e.eventType === 'evolution')).toHaveLength(0)
     const proposals = await (prisma as any).memoryProposal.findMany({})

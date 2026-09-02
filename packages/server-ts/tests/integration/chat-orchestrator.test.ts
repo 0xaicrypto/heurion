@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
-import { ChatOrchestrator } from '../../src/modules/chat/chat.orchestrator'
+import { ChatOrchestrator } from '../../src/modules/shared/chat-orchestrator'
 import { EventLog } from '../../src/core/event-log'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../src/evolution/stores'
 import fs from 'fs'

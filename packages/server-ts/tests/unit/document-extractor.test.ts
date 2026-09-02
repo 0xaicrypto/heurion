@@ -7,7 +7,7 @@ import crypto from 'crypto'
 import PDFDocument from 'pdfkit'
 import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun, ImageRun } from 'docx'
 import { extractTextFromUpload, extractPdfImagesFromUpload, extractDocxContentFromUpload, extractImageUpload, sniffDocumentMime, pdfTextToMarkdown, extractDocumentMarkdownFromUpload, extractDocumentMarkdownWithImagesFromUpload, cachedExtractDocumentMarkdownFromUpload } from '../../src/lib/document-extractor.js'
-import { buildAttachmentParts, MAX_ATTACHMENT_IMAGES } from '../../src/modules/chat/chat-context.js'
+import { buildAttachmentParts, MAX_ATTACHMENT_IMAGES } from '../../src/modules/shared/chat-context.js'
 
 /** 生成一张合法 PNG(RGB,无压缩选项) — 测试用最小实现。 */
 function makePng(width: number, height: number): Buffer {

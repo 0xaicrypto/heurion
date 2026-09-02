@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { buildDocReferenceBlocks, findUploadFileByName } from '../../src/modules/chat/chat-context.js'
+import { buildDocReferenceBlocks, findUploadFileByName } from '../../src/modules/shared/chat-context.js'
 
 /**
  * #fix: 写作会话参考材料里的上传文件此前只注入文件名,LLM 读不到正文。

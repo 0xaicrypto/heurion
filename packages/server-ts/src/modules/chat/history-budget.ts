@@ -10,8 +10,8 @@
  * Also: session-memory summary surfacing (compaction_summary event + log).
  */
 import prisma from '../../common/prisma'
-import { getUserContext } from './user-context.js'
-import { MAX_HISTORY_TOKENS } from './chat-context.js'
+import { getUserContext } from '../shared/user-context.js'
+import { MAX_HISTORY_TOKENS } from '../shared/chat-context.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
 import { ensureSessionCompaction, getInFlightCompaction } from '../../memory/compaction/index.js'

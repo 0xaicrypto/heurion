@@ -12,7 +12,7 @@ import { resolveTierModel } from '../../common/llm-gateway.js'
  * Triggers: manual (POST /api/v1/skills/synthesize) + periodic scheduler.
  */
 import prisma from '../../common/prisma.js'
-import { getUserContext } from '../chat/user-context.js'
+import { getUserContext } from '../shared/user-context.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 import type { LlmTelemetryContext } from '../../common/llm.js'

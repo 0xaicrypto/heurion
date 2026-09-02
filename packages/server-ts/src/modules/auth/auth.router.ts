@@ -6,7 +6,7 @@ import prisma from '../../common/prisma'
 import { signToken } from '../../common/jwt'
 import { authGuard } from '../../common/auth.guard'
 import { loginSchema, registerSchema } from './auth.dto'
-import { evictUserContext } from '../chat/user-context.js'
+import { evictUserContext } from '../shared/user-context.js'
 
 export async function authRouter(app: FastifyInstance) {
   app.post('/api/v1/auth/register', async (request, reply) => {

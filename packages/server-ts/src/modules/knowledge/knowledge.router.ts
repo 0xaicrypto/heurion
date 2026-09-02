@@ -10,7 +10,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard, adminGuard } from '../../common/auth.guard'
 import { PrismaKnowledgeGapService, type GapSource } from './knowledge-gap.service'
-import { getUserContext } from '../chat/user-context.js'
+import { getUserContext } from '../shared/user-context.js'
 import { SidecarFeedbackService, type SidecarOutputType } from './sidecar-feedback.service.js'
 import { isNodeSuperseded } from '../../memory/memory.types.js'
 import { PrismaTelemetryService } from './telemetry.service.js'

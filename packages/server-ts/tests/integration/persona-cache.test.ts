@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { FactsStore, KnowledgeStore } from '../../src/evolution/stores'
-import * as userContext from '../../src/modules/chat/user-context.js'
+import * as userContext from '../../src/modules/shared/user-context.js'
 const { buildCachedPersona, buildPersona } = userContext
 
 /**

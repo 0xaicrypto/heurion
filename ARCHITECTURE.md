@@ -51,17 +51,23 @@ Enforcement so far (manual greps, #666/#672):
 - `memory/` → zero imports from `modules/*` (side effects inverted via the
   registry hooks in `memory/registry.ts`: context resolver, proposal applier,
   proposal-created handler)
+- **`modules/shared/`（#679 上提的事实共享层）**: `user-context.ts` /
+  `chat-context.ts` / `chat.dto.ts` / `chat-orchestrator.ts` — 被
+  auth/approvals/knowledge/memorization/patients/skills/files/documents 等
+  8+ 模块消费,任何模块可直接 import shared;shared 自身仅依赖
+  core/common/memory 与 knowledge/approvals 的 service 接口。
 - `modules/*` → peer cross-imports are orchestration-heavy today (#679): the
-  chat module is the hub (`user-context` / `chat-context` / `chat.dto` are
-  consumed by auth/approvals/knowledge/memorization/patients/skills/files).
-  The only known import *cycle* (user-context ↔ approvals) was broken in
-  #679 — approvals now resolves memory via `getContextResolver()` (registry)
-  instead of importing the chat module. Remaining documented edges:
-  auth→chat, calendar→research, chat→knowledge/plugins/patients, evolution→
-  chat/memorization/practitioner, files→chat/ingestion, ingestion→
-  medical-records/research, knowledge→chat, memorization→chat, patients→chat,
-  plugins→execution/chat, skills→chat, external→plugins/execution,
-  medical-records→approvals
+  chat module is the hub. The only known import *cycle*
+  (user-context ↔ approvals) was broken in #679 — approvals now resolves
+  memory via `getContextResolver()` (registry) instead of importing the chat
+  module. 剩余已声明边（机器可执行版 =
+  `tests/unit/arch-layers.test.ts` 的 peerEdges,新增边必须先改表再改代码）:
+  auth→chat, calendar→research, chat→knowledge/plugins/evolution/patients/
+  execution, documents→chat, evolution→chat/memorization/practitioner,
+  files→ingestion/knowledge/execution, ingestion→medical-records,
+  medical-records→approvals, memorization→chat, patients→chat,
+  plugins→chat/execution, research→knowledge, skills→chat,
+  external→plugins/execution
 - Pure crypto/util helpers used by both tools and modules live in `common/`
   (never import a `.router.ts` for non-HTTP functions — #666)
 

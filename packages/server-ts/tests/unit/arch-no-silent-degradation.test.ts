@@ -14,7 +14,7 @@ function read(p: string): string {
 describe('#746 文件链路禁用静默降级模式', () => {
   const filesDir = path.resolve(__dirname, '../../src/modules/files')
   const chatCtxFiles = [
-    '../../src/modules/chat/chat-context.ts',
+    '../../src/modules/shared/chat-context.ts',
     '../../src/modules/chat/conversation-turn.ts',
     '../../src/tools/render-chart-tool.ts',
     '../../src/tools/edit-document-tool.ts',

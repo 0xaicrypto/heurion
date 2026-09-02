@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest'
 import { ContextAssembler, OUTPUT_FORMAT_RULES } from '../../src/modules/chat/context-assembler.js'
-import { ContextBudget } from '../../src/modules/chat/chat-context.js'
+import { ContextBudget } from '../../src/modules/shared/chat-context.js'
 import type { SegmentBuildInput } from '../../src/modules/chat/context-assembler.js'
 
 function input(overrides: Partial<SegmentBuildInput> = {}): SegmentBuildInput {

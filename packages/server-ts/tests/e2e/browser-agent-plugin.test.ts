@@ -7,7 +7,7 @@ vi.mock('../../src/common/llm.js', () => mockAiProvider())
 import { deepseekChat } from '../../src/common/llm.js'
 import { ToolRegistry, PLUGIN_GATED_TOOLS } from '../../src/tools/tool-registry.js'
 import prisma from '../../src/common/prisma'
-import { getUserContext } from '../../src/modules/chat/user-context.js'
+import { getUserContext } from '../../src/modules/shared/user-context.js'
 import { listInstalledPlugins, getPluginConfig } from '../../src/modules/plugins/plugin-installation.service.js'
 import { EventLog } from '../../src/core/event-log.js'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../src/evolution/stores.js'

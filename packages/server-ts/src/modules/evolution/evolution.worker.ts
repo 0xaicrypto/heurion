@@ -1,5 +1,5 @@
 import { Worker, type ConnectionOptions } from 'bullmq'
-import { getUserContext } from '../chat/user-context.js'
+import { getUserContext } from '../shared/user-context.js'
 import { ChatIngester } from '../memorization/chat-ingester.service.js'
 import { extractTakeaways } from '../practitioner/session-takeaway.service.js'
 import { MemoryGraphGateway } from '../../memory/memory-gateway.js'

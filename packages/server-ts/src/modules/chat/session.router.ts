@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
-import { getUserContext } from './user-context.js'
+import { getUserContext } from '../shared/user-context.js'
 import { makeLogger } from '../../common/logger.js'
 
 const log = makeLogger('chat.session')
@@ -109,7 +109,7 @@ export async function sessionRouter(app: FastifyInstance) {
     // 2) Clean up the session's event-log data.
     let cleaned = 0
     try {
-      const { getUserContext } = await import('./user-context.js')
+      const { getUserContext } = await import('../shared/user-context.js')
       const ctx = getUserContext(userId)
       cleaned = ctx.eventLog.deleteSession(sessionId)
     } catch (err) {

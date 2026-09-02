@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { detectImageAttachments, pickVisionTurnModel } from '../../src/modules/chat/chat-context.js'
+import { detectImageAttachments, pickVisionTurnModel } from '../../src/modules/shared/chat-context.js'
 
 /**
  * #fix 视觉模型自适应 — 图片附件 + 纯文本模型时自动切换视觉模型;

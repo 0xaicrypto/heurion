@@ -136,7 +136,7 @@ describe('closing the default global session', () => {
     expect(body.status).toBe('closed')
 
     // Events wiped
-    const ctx = (await import('../../src/modules/chat/user-context.js')).getUserContext(uid)
+    const ctx = (await import('../../src/modules/shared/user-context.js')).getUserContext(uid)
     const remaining = ctx.eventLog.query({ sessionId })
     expect(remaining.length).toBe(0)
 

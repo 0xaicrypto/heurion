@@ -4,7 +4,7 @@
  * patients.router.ts. The router only maps HTTP to these operations.
  */
 import prisma from '../../common/prisma.js'
-import { getUserContext } from '../chat/user-context.js'
+import { getUserContext } from '../shared/user-context.js'
 
 /**
  * Append a labelled snippet to the patient's chiefComplaint. The target

@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getAuthUserId } from '../setup.js'
-import { getUserContext } from '../../src/modules/chat/user-context.js'
+import { getUserContext } from '../../src/modules/shared/user-context.js'
 import { getExtractedUptoIdx } from '../../src/memory/extraction-cursor.js'
 import { extractSegment } from '../../src/memory/compaction/index.js'
 

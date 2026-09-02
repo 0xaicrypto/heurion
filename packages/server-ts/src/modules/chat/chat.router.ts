@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
-import { getUserContext } from './user-context.js'
-import { memoryImportSchema } from './chat.dto.js'
+import { getUserContext } from '../shared/user-context.js'
+import { memoryImportSchema } from '../shared/chat.dto.js'
 
 
 export async function chatRouter(app: FastifyInstance) {

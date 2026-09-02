@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { getAuthUserId } from '../setup.js'
-import { getUserContext } from '../../src/modules/chat/user-context.js'
+import { getUserContext } from '../../src/modules/shared/user-context.js'
 import { GapResearchService } from '../../src/modules/knowledge/gap-research.service.js'
 import type { WebSearchProvider, WebSearchResult } from '../../src/modules/knowledge/web-search.service.js'
 import prisma from '../../src/common/prisma.js'

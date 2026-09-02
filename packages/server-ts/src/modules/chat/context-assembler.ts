@@ -12,7 +12,7 @@
 import { makeLogger } from '../../common/logger.js'
 import { estimateTokens } from '../../common/token-estimate.js'
 import type { SegmentState } from '../../memory/context-sources.js'
-import type { ContextBudget } from './chat-context.js'
+import type { ContextBudget } from '../shared/chat-context.js'
 
 export interface SegmentBuildInput {
   userId: string

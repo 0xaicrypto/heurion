@@ -2,7 +2,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getApp, authHeader, getAuthUserId } from '../setup.js'
 import prisma from '../../src/common/prisma.js'
-import { getUserContext } from '../../src/modules/chat/user-context.js'
+import { getUserContext } from '../../src/modules/shared/user-context.js'
 import { PrismaKnowledgeGapService } from '../../src/modules/knowledge/knowledge-gap.service.js'
 
 vi.mock('../../src/common/llm.js', () => mockAiProvider())

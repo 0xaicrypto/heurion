@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getApp, authHeader, getAuthUserId } from '../setup.js'
-import { getUserContext } from '../../src/modules/chat/user-context.js'
+import { getUserContext } from '../../src/modules/shared/user-context.js'
 import { MemoryGraphGateway } from '../../src/memory/memory-gateway.js'
 
 vi.mock('../../src/common/llm.js', () => mockAiProvider())

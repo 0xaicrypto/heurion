@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach } from 'vitest'
-import { buildCachedPersona } from '../../src/modules/chat/user-context.js'
+import { buildCachedPersona } from '../../src/modules/shared/user-context.js'
 
 function mockStore(version: string) {
   const entries: Array<{ content: string; category?: string; importance?: number; patientHash?: string | null; studyId?: string | null }> = []

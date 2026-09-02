@@ -1,10 +1,10 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
-import { getUserContext } from '../chat/user-context.js'
+import { getUserContext } from '../shared/user-context.js'
 import { ChatIngester } from './chat-ingester.service.js'
 import { MemoryGraphGateway } from '../../memory/memory-gateway.js'
 import prisma from '../../common/prisma.js'
-import { manualMemorySchema } from '../chat/chat.dto.js'
+import { manualMemorySchema } from '../shared/chat.dto.js'
 
 export async function memorizationRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)

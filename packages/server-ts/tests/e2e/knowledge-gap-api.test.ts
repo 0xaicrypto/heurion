@@ -84,7 +84,7 @@ describe('Knowledge Gap API', () => {
     expect(body.answerId).toBeDefined()
 
     // Verify fact was saved
-    const ctxModule = await import('../../src/modules/chat/user-context.js')
+    const ctxModule = await import('../../src/modules/shared/user-context.js')
     const ctx = ctxModule.getUserContext(userId)
     const fact = ctx.facts.all().find((f: any) => f.id === body.answerId)
     expect(fact).toBeTruthy()

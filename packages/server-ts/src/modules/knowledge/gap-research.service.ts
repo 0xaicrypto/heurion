@@ -9,7 +9,7 @@
 
 import type { KnowledgeGap } from './knowledge-gap.service'
 import { PrismaKnowledgeGapService } from './knowledge-gap.service'
-import { getUserContext } from '../chat/user-context'
+import { getUserContext } from '../shared/user-context'
 import prisma from '../../common/prisma'
 import { createDefaultWebSearchProvider, type WebSearchProvider } from './web-search.service'
 import { PrismaTelemetryService } from './telemetry.service'

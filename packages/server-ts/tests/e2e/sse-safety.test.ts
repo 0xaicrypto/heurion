@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { getApp, authHeader, getAuthUserId } from '../setup.js'
-import { getUserContext } from '../../src/modules/chat/user-context.js'
+import { getUserContext } from '../../src/modules/shared/user-context.js'
 
 vi.mock('../../src/common/llm.js', () => ({
   deepseekChat: vi.fn(),

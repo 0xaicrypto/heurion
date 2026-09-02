@@ -1,13 +1,13 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
-import { registerPatientSchema } from '../chat/chat.dto.js'
+import { registerPatientSchema } from '../shared/chat.dto.js'
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { quickScanDicom, renderDicomSlice, analyzeWithGeminiVision } from './dicom-scanner.js'
 import { appendChiefComplaint, recordScanFindingsAsFacts } from './patient-record.service.js'
-import { getUserContext } from '../chat/user-context.js'
+import { getUserContext } from '../shared/user-context.js'
 import { makeLogger } from '../../common/logger.js'
 
 const log = makeLogger('knowledge.quick-scan')

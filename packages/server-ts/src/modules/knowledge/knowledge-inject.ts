@@ -10,7 +10,7 @@ import { estimateTokens } from '../../common/token-estimate.js'
 import { formatFactLine } from '../../common/fact-render.js' // #627 统一渲染
 import { unifiedSearch } from '../../retrieval/unified-search.js' // #632 统一检索层
 import type { EmbeddingService } from '../../memory/embedding/embedding.service.js' // #632 向量路
-import { MAX_TOTAL_TOKENS } from '../chat/chat-context.js'
+import { MAX_TOTAL_TOKENS } from '../shared/chat-context.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js' // #637 集中配置
 
 export interface KnowledgeInjectOptions {

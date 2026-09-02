@@ -4,7 +4,7 @@
  * SSE transport: it passes an `emit` sink and receives the final summary.
  */
 import prisma from '../../common/prisma.js'
-import { getUserContext } from './user-context.js'
+import { getUserContext } from '../shared/user-context.js'
 import { runSubAgent } from '../../tools/subagent-runner.js'
 import { deepseekChat, getApiKey } from '../../common/llm.js'
 import { resolveTierModel } from '../../common/llm-gateway.js'

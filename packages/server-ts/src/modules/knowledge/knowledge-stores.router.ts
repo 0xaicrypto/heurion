@@ -6,7 +6,7 @@
  */
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
-import { getUserContext } from '../chat/user-context.js'
+import { getUserContext } from '../shared/user-context.js'
 import { getUserTools, getEnabledTools, deleteUserTool } from './tool-store.js'
 import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js'
 import type { MemoryNode } from '../../memory/memory.types.js'
