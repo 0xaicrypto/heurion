@@ -404,6 +404,18 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         await runConversationTurn(turnParams)
       }
     } catch (err: any) {
+      // #802: turn 失败落事件日志 — 与 assistant_response 对称可查,
+      // 失败轮次(如 LLM TTFB 超时)不再无声消失。
+      try {
+        ctx.eventLog.append({
+          timestamp: Date.now() / 1000,
+          eventType: 'llm_error',
+          content: String(err?.message || err || 'Chat failed').slice(0, 500),
+          metadata: {},
+          agentId: userId,
+          sessionId: sid,
+        })
+      } catch { /* 记录失败不阻断错误路径 */ }
       send({ type: 'error', message: err.message || 'Chat failed' })
     } finally {
       sseEnd()

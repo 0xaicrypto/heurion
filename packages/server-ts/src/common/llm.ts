@@ -25,6 +25,7 @@ export {
   fetchWithRetry,
   DEEPSEEK_CHAT_MODEL,
   DEEPSEEK_PREMIUM_MODEL,
+  resolveTurnTimeoutMs,
   setLlmTelemetryService,
   getLlmGateway,
   setLlmGatewayForTest,

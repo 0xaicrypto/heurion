@@ -8,6 +8,7 @@
 import type { ToolRegistry } from '../../tools/tool-registry.js'
 import type { ToolDefinition } from '../../tools/base-tool.js'
 import type { ChatContentPart } from '../../common/llm-gateway.js'
+import { resolveTurnTimeoutMs } from '../../common/llm-gateway.js'
 import { deepseekChatWithMeta, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { detectDoomLoop } from '../../tools/doom-loop.js'
 import { makeLogger } from '../../common/logger.js'
@@ -99,6 +100,9 @@ export async function runToolCallLoop(params: {
         model: turnModel,
         telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
         signal: io.signal,
+        // #802: doc 会话长生成任务 TTFB 预算放宽到 600s(默认 300s 掐死
+        // 整篇扩写类首调用,现场 9/2「扩充完整正文」309s 静默死亡)。
+        timeoutMs: resolveTurnTimeoutMs(sessionId),
       },
       tools,
       (reasoning) => io.send({ type: 'reasoning_chunk', text: reasoning }),

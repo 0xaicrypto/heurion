@@ -13,7 +13,7 @@
 import prisma from '../../common/prisma'
 import { makeLogger } from '../../common/logger.js'
 import type { ChatScene } from '../../common/persona.js'
-import { deepseekStream, LlmTruncatedError, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
+import { deepseekStream, LlmTruncatedError, DEEPSEEK_PREMIUM_MODEL, resolveTurnTimeoutMs } from '../../common/llm.js'
 import type { ChatContentPart } from '../../common/llm-gateway.js'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from './user-context.js'
@@ -395,9 +395,14 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         const selectionRule = selection
           ? '若用户选中的文本(见上方「用户选中文本」)需要修改,old_text 必须从该选中文本逐字复制(空格/换行差异会被自动忽略),不要自行改写措辞或从其他位置复制;选中文本仅供你优先处理,用户未明确要求时不要改动选中范围外的内容。'
           : ''
+        // #803: 扩写纪律 — 「扩充/撰写完整正文」类任务禁止单轮生成整篇:
+        // LLM 无字节时间超过 TTFB 预算即被掐死(现场 9/2「扩充完整正文」
+        // 309s 静默死亡);先大纲后逐节是唯一稳定路径(用户改口"先完成
+        // introduction"后 33.9s 成功)。规则单点在此,勿散点内联(#699)。
+        const expansionRule = '扩写纪律:当用户要求扩充/撰写/续写完整正文或一次新增多个章节时,先在回复中输出章节大纲(不调用工具),然后逐节写入 — 每轮只调用一次 edit_document 写一个章节(old_text 锚定该章节标题行或相邻既有文字,new_text 为该节完整内容),写完注明进度(如「已完成 1/5:Introduction」),下一轮继续下一节;禁止单轮生成整篇文档,禁止用 full_text 做整篇扩写。'
         const rules = docFits
-          ? `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}文档较短已完整展示，可直接修改任意部分；优先用 edit_document 的 old_text/new_text 做局部编辑（old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制，空格/换行差异会被自动忽略，不要从 Reference Materials 复制；「文档结构」清单里的序号不是正文内容，复制时不要带序号，也不要从工具报错信息里复制片段）。${selectionRule}`
-          : `规则：用户在编辑这份文档。回答用中文。${emptyDocRule}本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制（空格/换行差异会被自动忽略，不要从 Reference Materials 复制；「文档结构」清单里的序号不是正文内容，复制时不要带序号，也不要从工具报错信息里复制片段）。不要用 full_text 全量替换：即使内容很短，full_text 也只适用于全文不足约 2000 token 的短文档；当用户要求「整理/润色/格式化全文」时，逐段用 old_text/new_text 依次处理（每次调用整理一段），并报告进度。${selectionRule}`
+          ? `规则：用户在编辑这份文档。回答用中文。${expansionRule}${emptyDocRule}文档较短已完整展示，可直接修改任意部分；优先用 edit_document 的 old_text/new_text 做局部编辑（old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制，空格/换行差异会被自动忽略，不要从 Reference Materials 复制；「文档结构」清单里的序号不是正文内容，复制时不要带序号，也不要从工具报错信息里复制片段）。${selectionRule}`
+          : `规则：用户在编辑这份文档。回答用中文。${expansionRule}${emptyDocRule}本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制（空格/换行差异会被自动忽略，不要从 Reference Materials 复制；「文档结构」清单里的序号不是正文内容，复制时不要带序号，也不要从工具报错信息里复制片段）。不要用 full_text 全量替换：即使内容很短，full_text 也只适用于全文不足约 2000 token 的短文档；当用户要求「整理/润色/格式化全文」时，逐段用 old_text/new_text 依次处理（每次调用整理一段），并报告进度。${selectionRule}`
         // #fix: 格式规范 — 编辑/整理格式时必须使用正确的 markdown 结构,
         // 草稿是人类阅读的,heading 层级要语义正确。
         const formatRule = '格式规范:正文使用正确的 markdown 结构 — 文档主标题用 #(H1),一级章节用 ##(H2),子节用 ###(H3);段落用空行分隔;列表用 - 或 1.;表格用 GFM 管道表(| 分隔)。用户要求「整理格式/修正标题/规范标题」时,按内容语义设置 heading 层级(不要全部用 #,不要用全角空格/加粗/下划线模拟标题,不要给普通段落加标题标记),并保留文档原有的合理结构。'
@@ -647,6 +652,8 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         model: visionModel,
         telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
         signal: chatAbort.signal,
+        // #802: doc 会话长生成 TTFB 放宽(同 tool-loop — 见 resolveTurnTimeoutMs)。
+        timeoutMs: resolveTurnTimeoutMs(sid),
       }, (reasoning) => send({ type: 'reasoning_chunk', text: reasoning }))) {
         fullResponse += chunk
         send({ type: 'final_answer_chunk', text: chunk })

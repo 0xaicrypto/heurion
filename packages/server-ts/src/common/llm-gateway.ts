@@ -235,7 +235,8 @@ export interface LlmTelemetryRecorder {
   record(input: {
     userId: string
     workspaceId: string
-    category: 'llm_cost'
+    /** #802: 'llm_error' — 失败/超时调用与 'llm_cost' 成功对称落库。 */
+    category: 'llm_cost' | 'llm_error'
     action: string
     metadata: Record<string, unknown>
   }): Promise<void>
@@ -370,8 +371,43 @@ export async function fetchWithRetry(
   throw new Error(FRIENDLY_LLM_ERROR)
 }
 
+/** #802: 失败/超时调用与成功对称可观测 — 此前只有成功才打 [LLM] 行，
+ *  超时轮次在日志与 telemetry 里完全无痕（现场：309s 静默死亡无任何记录）。
+ *  console 一行 + telemetry_events 表 llm_error 类目（DB 持久化,重启不丢）。 */
+async function recordFailure(
+  model: string,
+  options: LlmChatOptions,
+  err: unknown,
+  chars: number,
+  elapsedMs: number,
+): Promise<void> {
+  const msg = err instanceof Error ? err.message : String(err)
+  const promptTokens = approximateTokensFromChars(chars)
+  console.log(`[LLM] failed model=${model} elapsedMs=${elapsedMs} prompt≈${promptTokens} error=${msg.slice(0, 300)}`)
+  if (options.telemetryContext && telemetryRecorder) {
+    await telemetryRecorder
+      .record({
+        userId: options.telemetryContext.userId,
+        workspaceId: options.telemetryContext.workspaceId,
+        category: 'llm_error',
+        action: options.telemetryContext.action,
+        metadata: { model, elapsedMs, promptTokens, error: msg.slice(0, 500) },
+      })
+      .catch(() => {})
+  }
+}
+
 /** Default cheap model for classifiers, extractors, and background tasks. */
 export const DEEPSEEK_CHAT_MODEL = process.env.DEEPSEEK_CHAT_MODEL || 'deepseek-v4-flash'
+
+/** #802 — TTFB 预算按会话自适应：doc 写作会话的长生成任务（整篇正文
+ *  扩写等）首字节/响应头常超默认 300s（现场 9/2：首个工具调用 309s 静默
+ *  死亡），放宽到 600s；env LLM_DOC_TIMEOUT_MS 可覆盖。非 doc 会话返回
+ *  undefined 走默认。 */
+export function resolveTurnTimeoutMs(sessionId?: string): number | undefined {
+  if (!sessionId?.startsWith('doc-')) return undefined
+  return Number(process.env.LLM_DOC_TIMEOUT_MS) || 600000
+}
 /** Optional premium model for high-stakes chat / document editing. */
 export const DEEPSEEK_PREMIUM_MODEL = process.env.DEEPSEEK_PREMIUM_MODEL || 'deepseek-v4-flash'
 
@@ -533,16 +569,25 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       body.tools = tools
       body.tool_choice = 'auto'
     }
-    const res = await fetchWithRetry(`${this.endpoint().baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
-      body: JSON.stringify(body),
-    }, { signal: options.signal, timeoutMs: options.timeoutMs })
+    const startedAt = Date.now()
+    let res: Awaited<ReturnType<typeof fetch>>
+    try {
+      res = await fetchWithRetry(`${this.endpoint().baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
+        body: JSON.stringify(body),
+      }, { signal: options.signal, timeoutMs: options.timeoutMs })
+    } catch (err) {
+      // #802: 超时/网络失败 — 与成功对称落 [LLM] failed + telemetry llm_error。
+      await recordFailure(model, options, err, promptChars(messages), Date.now() - startedAt)
+      throw err
+    }
     if (!res.ok) {
       // 上游明确拒绝(401 key 失效 / 402 余额 / 429 限流 / 413 超长) —
       // 带状态码 + 上游响应体片段,前端/日志可定位真实原因(如某模型
       // 不支持 tools/image 参数时上游会写明)。
       const body = await res.text().catch(() => '')
+      await recordFailure(model, options, new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`), promptChars(messages), Date.now() - startedAt)
       throw new Error(`LLM 请求失败 (HTTP ${res.status}): ${body.slice(0, 300)}`)
     }
     const json: { choices?: LlmChunk['choices']; usage?: LlmChunk['usage'] } = await res.json()
@@ -607,25 +652,34 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
     onReasoning?: (text: string) => void,
   ): AsyncGenerator<string> {
     const model = this.resolveModel(options, DEEPSEEK_PREMIUM_MODEL)
-    const res = await fetchWithRetry(`${this.endpoint().baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
-      body: JSON.stringify({
-        model,
-        messages: serializeMessages(messages, model),
-        max_tokens: options.maxTokens ?? resolveDefaultMaxTokens(model),
-        temperature: options.temperature ?? 0.7,
-        stream: true,
-        stream_options: { include_usage: true },
-        // #752: GLM 混合思考开关(同 chatWithMeta — 仅 glm-* 生效)
-        ...(options.thinking && model.toLowerCase().startsWith('glm')
-          ? { thinking: { type: options.thinking } }
-          : {}),
-      }),
-    }, { signal: options.signal, timeoutMs: options.timeoutMs })
+    const startedAt = Date.now()
+    let res: Awaited<ReturnType<typeof fetch>>
+    try {
+      res = await fetchWithRetry(`${this.endpoint().baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
+        body: JSON.stringify({
+          model,
+          messages: serializeMessages(messages, model),
+          max_tokens: options.maxTokens ?? resolveDefaultMaxTokens(model),
+          temperature: options.temperature ?? 0.7,
+          stream: true,
+          stream_options: { include_usage: true },
+          // #752: GLM 混合思考开关(同 chatWithMeta — 仅 glm-* 生效)
+          ...(options.thinking && model.toLowerCase().startsWith('glm')
+            ? { thinking: { type: options.thinking } }
+            : {}),
+        }),
+      }, { signal: options.signal, timeoutMs: options.timeoutMs })
+    } catch (err) {
+      // #802: 流式路径同样对称记录失败(超时=上游连响应头都没给)。
+      await recordFailure(model, options, err, promptChars(messages), Date.now() - startedAt)
+      throw err
+    }
     if (!res.ok) {
       // 同上 — 流式路径也带状态码 + 上游响应体片段。
       const body = await res.text().catch(() => '')
+      await recordFailure(model, options, new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`), promptChars(messages), Date.now() - startedAt)
       throw new Error(`LLM 请求失败 (HTTP ${res.status}): ${body.slice(0, 300)}`)
     }
 
