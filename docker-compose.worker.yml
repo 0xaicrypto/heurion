@@ -6,6 +6,14 @@
 
 services:
   heurion-worker:
+    # #801 P0: 日志轮转(同 docker-compose.yml — json-file 无上限打爆磁盘)。
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        compress: "true"
+        tag: "{{.Name}}"
     image: ghcr.io/0xaicrypto/heurion-worker:${WORKER_IMAGE_TAG:-latest}
     build:
       # Dockerfile 以 repo 根为 context（contracts file: 依赖需要整仓可见），

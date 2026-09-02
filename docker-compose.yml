@@ -12,6 +12,17 @@
 # sslip.io / xip.io). $PUBLIC_IP=1.2.3.4 → https://1-2-3-4.nip.io
 # routes to your VPS and gets a real Let's Encrypt cert.
 
+# #801 P0: 日志轮转 — json-file 无上限曾把磁盘打爆(靠 vps-disk-clean.yml
+# prune 保命),且容器重建后日志全丢(9/2 排障现场:只剩重启后 152 行)。
+# 50m x 5 = 单容器最多 ~250MB,重启丢日志问题由 #801 P1 Loki 管道根治。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+    compress: "true"
+    tag: "{{.Name}}"
+
 services:
   nexus-embedding-server:
     # Node.js embedding server using Transformers.js (ONNX).
@@ -20,6 +31,7 @@ services:
     build:
       context: packages/embedding-server
       dockerfile: Dockerfile
+    logging: *default-logging
     container_name: nexus-embedding-server
     restart: unless-stopped
     env_file:
@@ -43,6 +55,7 @@ services:
     build:
       context: packages/python-stats-worker
       dockerfile: Dockerfile
+    logging: *default-logging
     container_name: nexus-stats-worker
     restart: unless-stopped
     env_file:
@@ -59,6 +72,7 @@ services:
     build:
       context: packages/server-ts
       dockerfile: Dockerfile
+    logging: *default-logging
     container_name: nexus-server
     restart: unless-stopped
     env_file:
@@ -93,6 +107,7 @@ services:
 
   caddy:
     image: caddy:2-alpine
+    logging: *default-logging
     container_name: nexus-caddy
     restart: unless-stopped
     ports:
