@@ -215,6 +215,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       const first = getTrackedChanges(editor).find((x) => x.changeId === changes[0].changeId);
       setSelectedChange(first ? { id: first.changeId, text: first.text.slice(0, 40) } : null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- #812: applyExternalContent/captureScroll 闭包读最新 value/编辑器实例,故意不进 deps
   }, [diffReview, editor, value]);
 
   const finishReview = (cancelled: boolean) => {
