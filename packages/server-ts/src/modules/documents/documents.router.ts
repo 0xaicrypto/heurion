@@ -17,6 +17,8 @@ import { refreshFileUrls } from '../../common/chart-token.js'
 // #790: polish 流复用共享 SSE 传输。
 import { createRawSseSender } from '../chat/chat-sse.js'
 
+const slog = makeLogger('documents.polish')
+
 const log = makeLogger('documents')
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
@@ -251,7 +253,7 @@ export async function documentsRouter(app: FastifyInstance) {
         const { buildPolishPrompt, resolvePolishModel } = await import('./document-writing.service.js')
         const { deepseekChat, getApiKey } = await import('../../common/llm.js')
         const model = resolvePolishModel()
-        console.warn(`[polish] empty stream, falling back to non-streaming (model=${model}, selection=${selection.length}c)`)
+        slog.warn(`[polish] empty stream, falling back to non-streaming (model=${model}, selection=${selection.length}c)`)
         const text = await deepseekChat(
           [{ role: 'user', content: buildPolishPrompt(selection, instruction) }],
           getApiKey(),
@@ -273,7 +275,7 @@ export async function documentsRouter(app: FastifyInstance) {
     } catch (err: any) {
       if (controller.signal.aborted) {
         // 客户端取消/总超时 — 连接已死,仅记日志
-        console.info(`[polish] aborted (${err?.name === 'AbortError' ? 'client/timeout' : err?.message?.slice(0, 80)})`)
+        slog.info(`[polish] aborted (${err?.name === 'AbortError' ? 'client/timeout' : err?.message?.slice(0, 80)})`)
       } else {
         let message = err?.message || 'AI 服务错误'
         if (err?.name === 'LlmTruncatedError') {

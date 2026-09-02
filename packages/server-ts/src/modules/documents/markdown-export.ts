@@ -13,6 +13,9 @@ import PDFDocument from 'pdfkit'
 import fs from 'fs'
 import path from 'path'
 import sharp from 'sharp'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('documents.export')
 
 export type ExportBlock =
   | { kind: 'heading'; level: number; text: string }
@@ -400,7 +403,7 @@ export async function renderPdfBuffer(title: string, body: string, userId?: stri
   if (cjkFont) {
     doc.registerFont('cjk', cjkFont)
   } else {
-    console.warn('[doc-export] no CJK font found on host — PDF CJK text will render as blank boxes')
+    log.warn('[doc-export] no CJK font found on host — PDF CJK text will render as blank boxes')
   }
 
   doc.on('data', (chunk: Buffer) => buffers.push(chunk))

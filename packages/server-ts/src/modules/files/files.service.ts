@@ -16,6 +16,9 @@ import crypto from 'crypto'
 import prisma from '../../common/prisma.js'
 import { sanitizeFilename } from '../../lib/upload-path.js'
 import { createAndRunPipeline } from './file-pipeline.service.js'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('files')
 
 // ── Upload limits & paths ─────────────────────────────────────
 
@@ -184,7 +187,7 @@ export async function finalizeUpload(input: FinalizeUploadInput): Promise<Finali
       ingestionJobId,
     })
   } catch (err) {
-    console.log('[FILE] Pipeline kickoff failed:', (err as Error).message.slice(0, 120))
+    log.info('[FILE] Pipeline kickoff failed:', (err as Error).message.slice(0, 120))
   }
 
   return {

@@ -4,6 +4,9 @@ import { ChatIngester } from '../memorization/chat-ingester.service.js'
 import { extractTakeaways } from '../practitioner/session-takeaway.service.js'
 import { MemoryGraphGateway } from '../../memory/memory-gateway.js'
 import type { EvolutionJob, EvolutionJobProcessor } from './evolution.queue.js'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('evolution')
 
 export interface EvolutionWorkerOptions {
   concurrency: number
@@ -83,10 +86,10 @@ export function startEvolutionWorker(
   )
 
   worker.on('completed', (job) => {
-    console.log(`[EVOLUTION] Completed job ${job.id} for user ${(job.data as EvolutionJob).userId}`)
+    log.info(`[EVOLUTION] Completed job ${job.id} for user ${(job.data as EvolutionJob).userId}`)
   })
   worker.on('failed', (job, err) => {
-    console.error(`[EVOLUTION] Failed job ${job?.id} (attempt ${job?.attemptsMade ?? 0}):`, err.message)
+    log.error(`[EVOLUTION] Failed job ${job?.id} (attempt ${job?.attemptsMade ?? 0}):`, err.message)
   })
 
   return worker

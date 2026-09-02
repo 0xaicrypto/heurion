@@ -19,6 +19,9 @@ import {
   listInstalledUIPlugins,
 } from './plugin-installation.service.js'
 import { listPluginAuditLogs } from './plugin-audit-log.service.js'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('plugins')
 
 export async function pluginsRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
@@ -26,7 +29,7 @@ export async function pluginsRouter(app: FastifyInstance) {
   // Seed official catalog on first request (or move to app startup)
   app.addHook('onReady', async () => {
     await seedOfficialCatalog().catch((e) => {
-      console.warn('[plugins] seed official catalog failed (non-fatal):', (e as Error)?.message || e)
+      log.warn('[plugins] seed official catalog failed (non-fatal):', (e as Error)?.message || e)
     })
   })
 

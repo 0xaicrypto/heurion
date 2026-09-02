@@ -1,5 +1,8 @@
 import fs from 'fs'
 import path from 'path'
+import { makeLogger } from '../common/logger.js'
+
+const log = makeLogger('event-log')
 
 export interface Event {
   idx: number
@@ -48,7 +51,7 @@ export class EventLog {
   /** #199: enqueue a file write; ordering is preserved by the queue. */
   private enqueueWrite(task: () => Promise<void>) {
     this.writeQueue = this.writeQueue.then(task).catch(err => {
-      console.error('[event-log] write failed:', (err as Error).message)
+      log.error('[event-log] write failed:', (err as Error).message)
     })
   }
 

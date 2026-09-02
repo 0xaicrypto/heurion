@@ -1,5 +1,8 @@
 import { Queue, type ConnectionOptions, type JobsOptions } from 'bullmq'
 import Redis, { type RedisOptions } from 'ioredis'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('evolution')
 
 export interface EvolutionJob {
   userId: string
@@ -45,7 +48,7 @@ export class InMemoryEvolutionQueue implements EvolutionQueue {
   async add(job: EvolutionJob): Promise<void> {
     this.jobs.push(job)
     if (this.processor) {
-      this.processor(job).catch(err => console.error('[EVOLUTION] In-memory processor failed:', err))
+      this.processor(job).catch(err => log.error('[EVOLUTION] In-memory processor failed:', err))
     }
   }
 
@@ -154,10 +157,10 @@ export async function createDefaultEvolutionQueue(): Promise<EvolutionQueue> {
     })
     await probe.connect()
     await probe.ping()
-    console.log('[EVOLUTION] Redis is reachable, using BullMQ queue')
+    log.info('[EVOLUTION] Redis is reachable, using BullMQ queue')
     return new BullMqEvolutionQueue('evolution', redis)
   } catch (err) {
-    console.warn('[EVOLUTION] Redis unavailable, falling back to in-memory queue:', (err as Error).message)
+    log.warn('[EVOLUTION] Redis unavailable, falling back to in-memory queue:', (err as Error).message)
     return new InMemoryEvolutionQueue()
   } finally {
     if (probe) {

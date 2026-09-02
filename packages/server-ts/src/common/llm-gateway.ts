@@ -1,3 +1,6 @@
+import { makeLogger } from './logger.js'
+
+const log = makeLogger('llm-gateway')
 /**
  * #436 — LlmGateway: the SINGLE entry point for LLM calls (Strategy + DIP).
  *
@@ -383,7 +386,7 @@ async function recordFailure(
 ): Promise<void> {
   const msg = err instanceof Error ? err.message : String(err)
   const promptTokens = approximateTokensFromChars(chars)
-  console.log(`[LLM] failed model=${model} elapsedMs=${elapsedMs} prompt≈${promptTokens} error=${msg.slice(0, 300)}`)
+  log.info(`[LLM] failed model=${model} elapsedMs=${elapsedMs} prompt≈${promptTokens} error=${msg.slice(0, 300)}`)
   if (options.telemetryContext && telemetryRecorder) {
     await telemetryRecorder
       .record({
@@ -473,7 +476,7 @@ async function recordUsage(
   const costUsd = estimateCost(model, promptTokens, completionTokens)
   // O3 (#108): surface DeepSeek cache usage so cache effectiveness is visible.
   const cachePct = promptTokens > 0 ? Math.round((cacheHitTokens / promptTokens) * 100) : 0
-  console.log(`[LLM] model=${model} prompt=${promptTokens} (cache hit ${cacheHitTokens}/${cachePct}%) completion=${completionTokens} total=${totalTokens} costUsd≈${costUsd.toFixed(6)}`)
+  log.info(`[LLM] model=${model} prompt=${promptTokens} (cache hit ${cacheHitTokens}/${cachePct}%) completion=${completionTokens} total=${totalTokens} costUsd≈${costUsd.toFixed(6)}`)
   if (options.telemetryContext && telemetryRecorder) {
     await telemetryRecorder
       .record({

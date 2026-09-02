@@ -7,6 +7,9 @@ import fs from 'fs'
 import path from 'path'
 import { quickScanDicom, renderDicomSlice, analyzeWithGeminiVision } from './dicom-scanner.js'
 import { getUserContext } from '../chat/user-context.js'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('knowledge.quick-scan')
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
 
@@ -206,7 +209,7 @@ export async function patientsRouter(app: FastifyInstance) {
     } catch (err) {
       aiFailed = true
       const message = err instanceof Error ? err.message : String(err)
-      console.log(`[QUICK-SCAN] Vision analysis failed: ${message}`)
+      log.info(`[QUICK-SCAN] Vision analysis failed: ${message}`)
     }
 
     if (aiFindings && !aiFailed) {

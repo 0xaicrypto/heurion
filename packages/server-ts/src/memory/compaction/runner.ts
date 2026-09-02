@@ -11,6 +11,8 @@ import {
 } from './budget.js'
 import { factExtractionPrompt, EXTRACTION_RULES } from '../prompts.js'
 
+const slog = makeLogger('documents.extract')
+
 /**
  * #353: compaction/extraction runner — Tier 2 (compaction-time batch) and
  * Tier 3 (session-close flush) both funnel through here. In-flight state
@@ -278,7 +280,7 @@ export async function extractSegment(
       turnCount: toIdx,
     })
   } catch (err) {
-    console.log('[EXTRACT] Session Memory update skipped:', (err as Error).message.slice(0, 120))
+    slog.info('[EXTRACT] Session Memory update skipped:', (err as Error).message.slice(0, 120))
   }
 
   // 3) Advance the cursor to the LAST EVENT THIS SEGMENT actually covered —
@@ -295,7 +297,7 @@ export async function extractSegment(
     const coveredMax = events.length > 0 ? Math.max(...events.map((e: any) => e.idx)) : fromIdx
     await advanceExtractedUptoIdx(scopeKey, coveredMax)
   } catch (err) {
-    console.log('[EXTRACT] Cursor advance skipped:', (err as Error).message)
+    slog.info('[EXTRACT] Cursor advance skipped:', (err as Error).message)
   }
 
   return extracted.length
@@ -327,7 +329,7 @@ export async function flushUnextracted(
   try {
     return await extractSegment(ctx, sessionId, patientHash, fromIdx, ctx.eventLog.count())
   } catch (err) {
-    console.log('[FLUSH] Extraction skipped:', (err as Error).message.slice(0, 120))
+    slog.info('[FLUSH] Extraction skipped:', (err as Error).message.slice(0, 120))
     return 0
   }
 }

@@ -1,4 +1,7 @@
 import prisma from '../../common/prisma.js'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('auth')
 
 /**
  * #283/#284: email verification codes — 6 digits, 10 min expiry, 60s
@@ -52,7 +55,7 @@ async function deliverEmail(email: string, code: string, purpose: string): Promi
     // Dev mode only: no provider configured — surface the code for local
     // testing. Never log it in production (credential leak surface).
     if (process.env.NODE_ENV !== 'production') {
-      console.log(`[AUTH] verification code for ${email} (${purpose}): ${code}`)
+      log.info(`[AUTH] verification code for ${email} (${purpose}): ${code}`)
     } else {
       throw new Error('EMAIL_PROVIDER_NOT_CONFIGURED')
     }

@@ -11,7 +11,7 @@ import { rrfFusion, type RrfCandidate } from './rrf-fusion.js'
 import type { EmbeddingService } from '../memory/embedding/embedding.service.js'
 import type { MemoryScope } from '../memory/contracts.js'
 import { factContentHash } from '../common/fact-render.js' // #748 hash parity
-import { makeLogger } from '../common/logger.js' // #746: no bare catches
+import { makeLogger } from '../common/logger.js'
 
 const log = makeLogger('retrieval.unified-search')
 

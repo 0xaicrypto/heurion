@@ -13,6 +13,9 @@ import { getUserContext } from '../chat/user-context'
 import prisma from '../../common/prisma'
 import { createDefaultWebSearchProvider, type WebSearchProvider } from './web-search.service'
 import { PrismaTelemetryService } from './telemetry.service'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('knowledge.gap-research')
 
 const telemetry = new PrismaTelemetryService()
 
@@ -145,10 +148,10 @@ export function createGapResearchScheduler(
         try {
           const result = await service.researchOpenGaps(options)
           if (result.processed > 0 || result.errors.length > 0) {
-            console.log('[GAP-RESEARCH] processed', result.processed, 'errors', result.errors.length)
+            log.info('[GAP-RESEARCH] processed', result.processed, 'errors', result.errors.length)
           }
         } catch (err) {
-          console.error('[GAP-RESEARCH] scheduler tick failed:', err)
+          log.error('[GAP-RESEARCH] scheduler tick failed:', err)
         }
       }, intervalMs)
     },

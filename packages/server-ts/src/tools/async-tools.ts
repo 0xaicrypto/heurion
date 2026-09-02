@@ -1,6 +1,9 @@
 import { resolveTierModel } from '../common/llm-gateway.js'
 import { BaseTool, ToolResult } from './base-tool.js'
 import type { ToolContext } from './tool-registry.js'
+import { makeLogger } from '../common/logger.js'
+
+const log = makeLogger('background')
 
 export class DeferToBackgroundTool extends BaseTool {
   constructor(private ctx: ToolContext) { super() }
@@ -53,7 +56,7 @@ export class DeferToBackgroundTool extends BaseTool {
           sessionId: 'background',
         })
       } catch (err: any) {
-        console.log('[BACKGROUND] Task failed:', err.message)
+        log.info('[BACKGROUND] Task failed:', err.message)
       }
     })()
 

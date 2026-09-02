@@ -7,6 +7,7 @@ import { OCRImageTool } from './ocr-tools.js'
 import { EditDocumentTool } from './edit-document-tool.js'
 import { InsertAssetTool } from './insert-asset-tool.js'
 import { FixDocumentImagesTool } from './fix-document-images-tool.js'
+import { QueryLogsTool, isUserAdmin } from './query-logs-tool.js'
 import { EditDeckTool } from './edit-deck-tool.js'
 import { LoadSkillTool } from './skill-tools.js'
 import { RenderChartTool } from './render-chart-tool.js'
@@ -22,6 +23,9 @@ import { GenerateImageTool } from './generate-image-tool.js'
 import type { MemoryService } from '../memory/memory.service.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores.js'
 import type { EventLog } from '../core/event-log.js'
+import { makeLogger } from '../common/logger.js'
+
+const log = makeLogger('tools')
 
 /**
  * #766: execution-plane port (structural — tools stay decoupled from
@@ -112,7 +116,9 @@ export class ToolRegistry {
     // #773: deck 资产 AI 编辑工具 — 仅 doc- 会话暴露（与 edit_document 同门控）。
     this.register(new EditDeckTool(ctx))
     // #fix 2026-09: 图片链接先审计后修复 — 仅 doc- 会话暴露（与 edit_document 同门控）。
-    this.register(new FixDocumentImagesTool(ctx))    // #454-followup: plugin-gated renderers — registered so execute() can
+    this.register(new FixDocumentImagesTool(ctx))
+    // #801: AI 日志检索 — 排障一等能力,仅 admin 用户暴露。
+    this.register(new QueryLogsTool(ctx))    // #454-followup: plugin-gated renderers — registered so execute() can
     // give a clear error, but excluded from definitions unless installed.
     this.register(new RenderChartTool(ctx))
     this.register(new LoadSkillTool(ctx))
@@ -171,6 +177,7 @@ export class ToolRegistry {
       if (tool.name === 'insert_asset' && !isDocSession) continue
       if (tool.name === 'edit_deck' && !isDocSession) continue
       if (tool.name === 'fix_document_images' && !isDocSession) continue
+      if (tool.name === 'query_logs' && !(await isUserAdmin(this.ctx.userId))) continue
       if (PLUGIN_GATED_TOOLS[tool.name] && !(await this.isToolAvailable(tool.name))) continue
       if (omit?.has(tool.name)) continue
       out.push(tool.definition)
@@ -256,7 +263,7 @@ export class ToolRegistry {
           cleanupToolOutputs()
         }
       } catch (err) {
-        console.log('[TOOLS] Output bounding skipped:', (err as Error).message.slice(0, 100))
+        log.info('[TOOLS] Output bounding skipped:', (err as Error).message.slice(0, 100))
       }
     }
     return result

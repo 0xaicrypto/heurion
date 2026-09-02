@@ -14,6 +14,9 @@
 import { PDFParse } from 'pdf-parse'
 import fs from 'fs'
 import { safeUploadPath } from './upload-path.js'
+import { makeLogger } from '../common/logger.js'
+
+const log = makeLogger('documents.formula')
 
 function formulaOcrEnabled(): boolean {
   return process.env.PDF_FORMULA_OCR !== '0'
@@ -85,7 +88,7 @@ export async function extractFormulasFromPdf(userId: string, fileId: string): Pr
         return { page: i + 1, latex }
       } catch (err) {
         // 单页失败(渲染/视觉调用/无 key)不阻断整篇导入。
-        console.error('[formula] page', i, 'failed:', String((err as Error)?.message || err).slice(0, 150))
+        log.error('[formula] page', i, 'failed:', String((err as Error)?.message || err).slice(0, 150))
         return null
       }
     })

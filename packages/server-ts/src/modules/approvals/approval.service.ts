@@ -1,5 +1,8 @@
 import prisma from '../../common/prisma.js'
 import { resolvePermission, type PermissionRule } from '../../common/permission.js'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('knowledge')
 
 export type ApprovalTargetType = 'MedicalRecordEntry' | 'MemoryProposal' | 'Skill' | 'Persona' | 'Fact' | 'ResearchRule'
 
@@ -235,7 +238,7 @@ async function applyProposalViaGateway(userId: string, row: any): Promise<any> {
   if (node && row.kind === 'fact') {
     const { maybeSynthesizeArticle } = await import('../../memory/knowledge-synthesis.js')
     maybeSynthesizeArticle(userId, { patientHash: row.patientHash || undefined, studyId: row.studyId || undefined }, ctx.memory)
-      .catch((err: Error) => console.log('[KNOWLEDGE] Article check skipped:', err.message.slice(0, 120)))
+      .catch((err: Error) => log.info('[KNOWLEDGE] Article check skipped:', err.message.slice(0, 120)))
   }
   return node
 }

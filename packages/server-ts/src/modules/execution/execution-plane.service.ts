@@ -6,6 +6,9 @@
  * in production a missing worker configuration fails loudly on enqueue.
  */
 import type { JobStatusResponse, SidecarFileInfo } from '@heurion/contracts'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('execution-plane')
 
 /** Enqueue payload — `callbackUrl` (camelCase, client-side) maps to the
  * wire field `callback_url` at send time. */
@@ -135,7 +138,7 @@ class StubExecutionPlaneService implements ExecutionPlaneService {
 
   async enqueue(job: ExecutionJob): Promise<ExecutionJobStatus> {
     // #448: explicit warning — a stub completion is NOT a real render.
-    console.warn(`[execution-plane] STUB enqueue (${job.type}) — worker not configured; this is NOT a real render.`)
+    log.warn(`[execution-plane] STUB enqueue (${job.type}) — worker not configured; this is NOT a real render.`)
     const id = `job_stub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     const status: ExecutionJobStatus = {
       job_id: id,
@@ -164,7 +167,7 @@ export function createExecutionPlaneService(): ExecutionPlaneService {
   // #448: the stub is dev/test ONLY — production without a worker must fail
   // loudly at the first enqueue (HTTP service throws), never fake success.
   if (!isDev() && !(workerUrl() && workerToken())) {
-    console.warn('[execution-plane] PRODUCTION without EXECUTION_PLANE_URL/WORKER_API_TOKEN — plugin renders will fail loudly.')
+    log.warn('[execution-plane] PRODUCTION without EXECUTION_PLANE_URL/WORKER_API_TOKEN — plugin renders will fail loudly.')
   }
   if (workerUrl() && workerToken()) {
     return new HttpExecutionPlaneService()

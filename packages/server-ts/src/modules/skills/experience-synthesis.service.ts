@@ -15,6 +15,9 @@ import prisma from '../../common/prisma.js'
 import { getUserContext } from '../chat/user-context.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
 import type { LlmTelemetryContext } from '../../common/llm.js'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('skills.experience-synthesis')
 
 export interface ExperienceCandidate {
   name: string
@@ -130,7 +133,7 @@ export async function synthesizeExperience(
       })
       candidates.push(candidate)
     } catch (err) {
-      console.warn('[experience-synthesis] group failed:', (err as Error).message.slice(0, 150))
+      log.warn('[experience-synthesis] group failed:', (err as Error).message.slice(0, 150))
     }
   }
   return { candidates, groups: groups.length }
@@ -165,9 +168,9 @@ export function createExperienceSynthesisScheduler(
             const r = await synthesizeExperience(userId, opts)
             created += r.candidates.length
           }
-          console.log(`[EXPERIENCE-SYNTHESIS] tick: ${userIds.length} users, ${created} candidates`)
+          log.info(`[EXPERIENCE-SYNTHESIS] tick: ${userIds.length} users, ${created} candidates`)
         } catch (err) {
-          console.error('[EXPERIENCE-SYNTHESIS] tick failed:', (err as Error).message.slice(0, 200))
+          log.error('[EXPERIENCE-SYNTHESIS] tick failed:', (err as Error).message.slice(0, 200))
         }
       }, intervalMs)
     },

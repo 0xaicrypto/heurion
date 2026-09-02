@@ -14,6 +14,9 @@ import { extractTextFromUpload, extractImageUpload, isImageFile, isPdf, isDocx, 
 // #777: pptx 解析导入 — 主 chat 附件管道共用 extractor 层解析。
 import { isPptx, extractPptxContentFromUpload } from '../../lib/pptx-extractor.js'
 import type { ChatScene } from '../../common/persona.js'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('chat.doc-ref')
 
 // #630: 统一预算口径 — 剩余预算 = maxTotalTokens − system − history。
 // #637: 常量集中自 CONTEXT_CONFIG,此处仅 re-export 保持既有引用面。
@@ -455,7 +458,7 @@ export async function buildDocReferenceBlocks(
     } catch (err) {
       // #fix: 记录注入失败原因 — 生产上"模型拿文件名去读文件"的根因
       // 都是这里静默降级,必须留痕便于诊断。
-      console.warn(`[doc-ref] body injection failed for ref ${r.id || ''} (kind=${kind}, snapshot=${snapshot}):`, (err as Error).message.slice(0, 160))
+      log.warn(`[doc-ref] body injection failed for ref ${r.id || ''} (kind=${kind}, snapshot=${snapshot}):`, (err as Error).message.slice(0, 160))
       // fall through to name-only
     }
     blocks.push(`${header}\n${snapshot.slice(0, CONTEXT_CONFIG.scene.docRefChars)}`)

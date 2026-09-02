@@ -1,0 +1,159 @@
+{
+ "title": "Heurion 日志总览 (#801)",
+ "uid": "heurion-logs",
+ "tags": [
+  "heurion",
+  "logs"
+ ],
+ "timezone": "utc",
+ "schemaVersion": 39,
+ "refresh": "30s",
+ "time": {
+  "from": "now-3h",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "title": "日志量按容器",
+   "type": "timeseries",
+   "datasource": {
+    "type": "loki",
+    "uid": "loki"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (container) (count_over_time({job=\"docker\"}[5m]))",
+     "queryType": "range",
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     }
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 2,
+   "title": "LLM 调用 成功(llm_cost) vs 失败(llm_error)",
+   "type": "timeseries",
+   "datasource": {
+    "type": "loki",
+    "uid": "loki"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum(count_over_time({container=\"nexus-server\"} | json | category=\"llm_cost\" [5m]))",
+     "queryType": "range",
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     }
+    },
+    {
+     "refId": "B",
+     "expr": "sum(count_over_time({container=\"nexus-server\"} | json | category=\"llm_error\" [5m]))",
+     "queryType": "range",
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     }
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "description": "#802: 失败与成功对称落库 — 失败 spikes 对应卡死/超时轮次"
+  },
+  {
+   "id": 3,
+   "title": "warn/error 实时流",
+   "type": "logs",
+   "datasource": {
+    "type": "loki",
+    "uid": "loki"
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "{job=\"docker\"} | json | level=~\"warn|error|40|50\"",
+     "queryType": "range",
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     }
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "description": "makeLogger 字符串 level + pino 数字 level 双口径"
+  },
+  {
+   "id": 4,
+   "title": "files.download 图片下载结果(ok/401/404 诊断)",
+   "type": "logs",
+   "datasource": {
+    "type": "loki",
+    "uid": "loki"
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 17
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "{container=\"nexus-server\"} | json | module=\"files.download\"",
+     "queryType": "range",
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     }
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "description": "#801 诊断链:token_missing/expired/invalid_signature/not_on_disk/ok"
+  }
+ ],
+ "annotations": {
+  "list": []
+ },
+ "templating": {
+  "list": []
+ }
+}

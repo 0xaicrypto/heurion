@@ -2,6 +2,9 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import { getUserContext } from './user-context.js'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('chat.session')
 
 export async function sessionRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
@@ -98,9 +101,9 @@ export async function sessionRouter(app: FastifyInstance) {
     try {
       const ctx = getUserContext(userId)
       flushed = await ctx.orchestrator.extractUnextractedSegment(userId, sessionId, patientHash)
-      if (flushed > 0) console.log(`[SESSION] ${flushed} facts flushed on close`)
+      if (flushed > 0) log.info(`[SESSION] ${flushed} facts flushed on close`)
     } catch (err) {
-      console.log('[SESSION] close flush failed:', (err as Error).message.slice(0, 120))
+      log.info('[SESSION] close flush failed:', (err as Error).message.slice(0, 120))
     }
 
     // 2) Clean up the session's event-log data.
@@ -110,7 +113,7 @@ export async function sessionRouter(app: FastifyInstance) {
       const ctx = getUserContext(userId)
       cleaned = ctx.eventLog.deleteSession(sessionId)
     } catch (err) {
-      console.log('[SESSION] event cleanup failed:', (err as Error).message.slice(0, 120))
+      log.info('[SESSION] event cleanup failed:', (err as Error).message.slice(0, 120))
     }
 
     return { id: sessionId, status: 'closed', closed_at: now, flushed_facts: flushed, cleaned_events: cleaned }

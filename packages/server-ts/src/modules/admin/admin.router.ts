@@ -2,9 +2,31 @@ import { FastifyInstance } from 'fastify'
 import bcrypt from 'bcryptjs'
 import prisma from '../../common/prisma'
 import { adminGuard } from '../../common/auth.guard'
+import { queryLoki, type LogQueryFilters } from '../../common/log-query'
 
 export async function adminRouter(app: FastifyInstance) {
   app.addHook('preHandler', adminGuard)
+
+  // ── #801: AI 日志检索 — 语义过滤键代理 Loki,紧凑 JSON 输出 ──
+  // query_logs agent 工具与外部 AI 共用此出口;adminGuard 挡非管理员。
+  app.get('/api/v1/admin/logs', async (request, reply) => {
+    const q = request.query as any
+    const filters: LogQueryFilters = {
+      container: q.container,
+      module: q.module,
+      level: q.level,
+      sessionId: q.session_id || q.sessionId,
+      docId: q.docId,
+      fileId: q.fileId,
+      tool: q.tool,
+      q: q.q,
+      since: q.since,
+      limit: Math.min(Number(q.limit) || 200, 500),
+    }
+    const result = await queryLoki(filters)
+    if (result.error) return reply.status(502).send({ error: result.error })
+    return { lines: result.lines, total: result.total }
+  })
 
   // ── List users (frontend expects { users: [...] }) ──
   app.get('/api/v1/admin/users', async () => {

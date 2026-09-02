@@ -8,6 +8,9 @@ import { safeUploadPath } from './upload-path.js'
 // #777: pptx 解析导入 — zip-reader + OOXML 文本提取（零 XML 解析器依赖）。
 // pptx-extractor 仅以 type 引用本文件类型（无运行时环）。
 import { parsePptx, pptxSlidesToMarkdown, isPptx } from './pptx-extractor.js'
+import { makeLogger } from '../common/logger.js'
+
+const log = makeLogger('documents.extract')
 
 export interface ExtractOptions {
   maxChars?: number
@@ -107,7 +110,7 @@ async function getTesseractWorker(): Promise<Worker | null> {
       return tesseractWorker
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      console.warn('[document-extractor] Failed to create tesseract worker:', message)
+      log.warn('[document-extractor] Failed to create tesseract worker:', message)
       return null
     }
   })()
@@ -789,7 +792,7 @@ async function normalizeImageBuffer(buffer: Buffer): Promise<{ mime: string; dat
       .toBuffer()
     return { mime: 'image/webp', dataBase64: out.toString('base64') }
   } catch (err) {
-    console.warn('[document-extractor] Image normalization failed:', (err as Error).message.slice(0, 80))
+    log.warn('[document-extractor] Image normalization failed:', (err as Error).message.slice(0, 80))
     return null
   }
 }

@@ -1,4 +1,7 @@
 import { PrismaClient, Prisma } from '@prisma/client'
+import { makeLogger } from './logger.js'
+
+const log = makeLogger('db')
 
 /**
  * #569: SQLite busy_timeout 是 per-connection 的,但 Prisma 默认按
@@ -42,7 +45,7 @@ export async function enableSqliteWal(): Promise<void> {
       return
     } catch (err) {
       if (attempt === 3) {
-        console.warn('[sqlite] WAL enable failed after 3 attempts:', (err as Error).message.slice(0, 120))
+        log.warn('[sqlite] WAL enable failed after 3 attempts:', (err as Error).message.slice(0, 120))
       } else {
         await new Promise((r) => setTimeout(r, 2000 * attempt))
       }

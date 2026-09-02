@@ -5,6 +5,9 @@ import path from 'path'
 import { BaseTool, ToolResult } from './base-tool.js'
 import { renderSvgChart, type ChartInput } from './chart-renderer.js'
 import prisma from '../common/prisma.js'
+import { makeLogger } from '../common/logger.js'
+
+const log = makeLogger('tools.chart')
 
 /**
  * #176 — render_chart: the AI generates deterministic SVG charts (Bragg
@@ -105,7 +108,7 @@ export class RenderChartTool extends BaseTool {
           createdAt: now, updatedAt: now,
         },
         update: {},
-      }).catch((err: Error) => console.warn(`[CHART] fileIndex persist skipped: ${err.message.slice(0, 100)}`))
+      }).catch((err: Error) => log.warn(`[CHART] fileIndex persist skipped: ${err.message.slice(0, 100)}`))
 
       // <img> tags cannot send an Authorization header — issue a short-lived
       // query token so the chart renders inside documents and chat.

@@ -1,6 +1,9 @@
 import { resolveTierModel } from '../common/llm-gateway.js'
 import type { MemoryService } from './memory.service.js'
 import type { EpisodesStore } from '../evolution/stores'
+import { makeLogger } from '../common/logger.js'
+
+const log = makeLogger('documents.summary')
 
 /**
  * K3/K4 — session summaries and knowledge-article synthesis driven by NEW
@@ -47,7 +50,7 @@ export async function updateEpisodeSummary(input: EpisodeSummaryInput): Promise<
     input.episodes.commit()
     return summary
   } catch (err) {
-    console.log('[SUMMARY] Episode update skipped:', (err as Error).message.slice(0, 120))
+    log.info('[SUMMARY] Episode update skipped:', (err as Error).message.slice(0, 120))
     return previous || ''
   }
 }
@@ -136,8 +139,8 @@ export async function maybeSynthesizeArticle(
       // "used" set excludes them from future synthesis rounds.
       relatedFacts: articleFacts.map(f => f.stableId),
     })
-    console.log(`[KNOWLEDGE] Article proposed: ${article.title}`)
+    log.info(`[KNOWLEDGE] Article proposed: ${article.title}`)
   } catch (err) {
-    console.log('[KNOWLEDGE] Article synthesis skipped:', (err as Error).message.slice(0, 120))
+    log.info('[KNOWLEDGE] Article synthesis skipped:', (err as Error).message.slice(0, 120))
   }
 }

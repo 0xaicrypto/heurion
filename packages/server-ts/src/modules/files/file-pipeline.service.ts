@@ -36,6 +36,8 @@ import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { FILE_PIPELINE_STAGES, KB_EXTRACTABLE_EXTENSIONS, type FilePipelineStage } from '@heurion/contracts'
 import { isExtractionSentinel } from '../../lib/document-extractor.js'
 
+const slog = makeLogger('files.pipeline')
+
 const log = makeLogger('files.pipeline')
 const telemetry = new PrismaTelemetryService()
 
@@ -288,7 +290,7 @@ async function runPropose(job: PipelineRow, ctx: ReturnType<typeof getUserContex
     factCount: totalFacts,
     proposalIds: JSON.stringify(proposalIds),
   })
-  if (totalFacts > 0) console.log(`[PIPELINE] ${job.fileName}: ${proposalIds.length}/${totalFacts} facts passed semantic dedup`)
+  if (totalFacts > 0) slog.info(`[PIPELINE] ${job.fileName}: ${proposalIds.length}/${totalFacts} facts passed semantic dedup`)
   return { totalFacts, proposalCount: proposalIds.length }
 }
 
@@ -298,7 +300,7 @@ async function runIngest(job: PipelineRow): Promise<string | null> {
   // ingestion_job_id) — here we only kick async processing.
   if (job.ingestionJobId) {
     processIngestionJob(job.ingestionJobId)
-      .then((processed) => console.log(`[PIPELINE] Ingestion job ${job.ingestionJobId} → ${processed.status}`))
+      .then((processed) => slog.info(`[PIPELINE] Ingestion job ${job.ingestionJobId} → ${processed.status}`))
       .catch((err: Error) => log.warn('ingestion processing failed (retryable via /api/v1/ingestion/jobs)', { jobId: job.ingestionJobId, reason: err.message.slice(0, 120) }))
     return job.ingestionJobId
   }
@@ -312,7 +314,7 @@ async function runIngest(job: PipelineRow): Promise<string | null> {
       uploadedBy: job.userId,
     })
     processIngestionJob(ingestionJob.id)
-      .then((processed) => console.log(`[PIPELINE] Ingestion job ${ingestionJob.id} → ${processed.status}`))
+      .then((processed) => slog.info(`[PIPELINE] Ingestion job ${ingestionJob.id} → ${processed.status}`))
       .catch((err: Error) => log.warn('ingestion processing failed (retryable via /api/v1/ingestion/jobs)', { jobId: ingestionJob.id, reason: err.message.slice(0, 120) }))
     return ingestionJob.id
   } catch (err) {
