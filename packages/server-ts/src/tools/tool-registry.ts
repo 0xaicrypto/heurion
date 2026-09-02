@@ -6,6 +6,7 @@ import { DeferToBackgroundTool } from './async-tools.js'
 import { OCRImageTool } from './ocr-tools.js'
 import { EditDocumentTool } from './edit-document-tool.js'
 import { InsertAssetTool } from './insert-asset-tool.js'
+import { FixDocumentImagesTool } from './fix-document-images-tool.js'
 import { EditDeckTool } from './edit-deck-tool.js'
 import { LoadSkillTool } from './skill-tools.js'
 import { RenderChartTool } from './render-chart-tool.js'
@@ -109,7 +110,9 @@ export class ToolRegistry {
     // （快照 + doc_updated），仅 doc- 会话暴露。
     this.register(new InsertAssetTool(ctx))
     // #773: deck 资产 AI 编辑工具 — 仅 doc- 会话暴露（与 edit_document 同门控）。
-    this.register(new EditDeckTool(ctx))    // #454-followup: plugin-gated renderers — registered so execute() can
+    this.register(new EditDeckTool(ctx))
+    // #fix 2026-09: 图片链接先审计后修复 — 仅 doc- 会话暴露（与 edit_document 同门控）。
+    this.register(new FixDocumentImagesTool(ctx))    // #454-followup: plugin-gated renderers — registered so execute() can
     // give a clear error, but excluded from definitions unless installed.
     this.register(new RenderChartTool(ctx))
     this.register(new LoadSkillTool(ctx))
@@ -167,6 +170,7 @@ export class ToolRegistry {
       if (tool.name === 'edit_document' && !isDocSession) continue
       if (tool.name === 'insert_asset' && !isDocSession) continue
       if (tool.name === 'edit_deck' && !isDocSession) continue
+      if (tool.name === 'fix_document_images' && !isDocSession) continue
       if (PLUGIN_GATED_TOOLS[tool.name] && !(await this.isToolAvailable(tool.name))) continue
       if (omit?.has(tool.name)) continue
       out.push(tool.definition)

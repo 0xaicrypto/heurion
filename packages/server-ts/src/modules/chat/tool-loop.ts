@@ -227,7 +227,9 @@ export async function runToolCallLoop(params: {
         // 的内容只保留摘要,避免正文全文每轮循环膨胀上下文;doc_updated
         // 推送在下方用原始 output 完整解析。#765: insert_asset 同管道。
         // #773: edit_deck 同管道(deck JSON 注入模型时只保留摘要)。
-        const DOC_WRITE_TOOLS = new Set(['edit_document', 'insert_asset', 'edit_deck'])
+        // #fix 2026-09: fix_document_images 同管道(审计摘要进模型,body
+        // 只推前端实时渲染)。
+        const DOC_WRITE_TOOLS = new Set(['edit_document', 'insert_asset', 'edit_deck', 'fix_document_images'])
         let toolResultText = result.output || 'Success'
         if (DOC_WRITE_TOOLS.has(toolName) && result.success) {
           try {

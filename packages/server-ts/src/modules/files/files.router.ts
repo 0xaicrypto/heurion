@@ -5,6 +5,7 @@ import { getUserContext } from '../chat/user-context.js'
 import { safeUploadPath } from '../../lib/upload-path.js'
 import { extractDocumentText } from '../../lib/document-extractor.js'
 import { verifyChartToken, issueChartToken } from '../../common/chart-token.js'
+import { makeLogger } from '../../common/logger.js'
 import { createExecutionPlaneService } from '../execution/execution-plane.service.js'
 import {
   uploadsDir,
@@ -412,20 +413,43 @@ app.get('/api/v1/files/download/:fileId', async (request, reply) => {
   const fileId = (request.params as any).fileId
   const userId = request.user?.userId
   const queryToken = (request.query as any).token
+  // #fix 2026-09: 图片不显示的诊断日志 — 每个请求一条结论,定位失败环节:
+  // token_missing/invalid_signature/expired(401) vs path_rejected/not_on_disk(404) vs ok。
+  const dlog = makeLogger('files.download')
+  const audit = (outcome: string, reason?: string) =>
+    dlog.info(outcome === 'ok' ? 'download ok' : 'download failed', { fileId, outcome, ...(reason ? { reason } : {}) })
 
   // <img> render path: no Authorization header — validate the short-lived
   // chart token which also carries the file owner.
   let ownerUserId = userId ?? ''
   if (!userId) {
-    const fromToken = queryToken ? verifyChartToken(fileId, queryToken) : null
+    if (!queryToken) {
+      audit('unauthorized', 'token_missing')
+      return reply.status(401).send({ error: 'Unauthorized' })
+    }
+    const fromToken = verifyChartToken(fileId, queryToken)
     if (!fromToken) {
+      // 失效细分:过期 vs 签名不符 vs 畸形 — 重签自愈只救前两类之外的
+      // 环节,签名不符通常是 CHART_TOKEN_SECRET 漂移(日志可直接定位)。
+      const parts = String(queryToken).split('.')
+      const exp = parts.length === 3 ? parseInt(parts[0], 36) : NaN
+      const reason = parts.length !== 3 ? 'malformed' : Number.isFinite(exp) && Date.now() > exp ? 'expired' : 'invalid_signature'
+      audit('unauthorized', reason)
       return reply.status(401).send({ error: 'Unauthorized' })
     }
     ownerUserId = fromToken
   }
 
   const filepath = safeUploadPath(ownerUserId, fileId)
-  if (!filepath || !fs.existsSync(filepath)) return reply.status(404).send({ error: 'File not found' })
+  if (!filepath) {
+    audit('not_found', 'path_rejected')
+    return reply.status(404).send({ error: 'File not found' })
+  }
+  if (!fs.existsSync(filepath)) {
+    audit('not_found', 'not_on_disk')
+    return reply.status(404).send({ error: 'File not found' })
+  }
+  audit('ok', userId ? 'bearer' : 'chart_token')
 
   // #fix: 文档内嵌图(img_* 落盘文件)按扩展名给 MIME — 之前只有 svg,
   // 其余全当 octet-stream,<img> 在部分浏览器拒绝渲染。

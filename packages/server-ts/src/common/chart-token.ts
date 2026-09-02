@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { makeLogger } from './logger.js'
 
 /**
  * Generated-chart/scene download tokens (#176/#213/#440): <img src> cannot
@@ -49,11 +50,20 @@ export function verifyChartToken(fileId: string, token: string): string | null {
 export function refreshFileUrls(text: string, userId: string): string {
   if (!text || !text.includes('/api/v1/files/')) return text
   const mint = (_m: string, id: string) => `/api/v1/files/download/${id}?token=${issueChartToken(id, userId)}`
-  return (
+  // #fix 2026-09: 自愈观测 — 每次读取改写了多少链接、其中多少是旧版坏链
+  // 形状(说明 DB 正文仍存坏链,需要 fix_document_images 落库修复)。
+  const log = makeLogger('chart-token')
+  const canonicalCount = (text.match(/\/api\/v1\/files\/download\//g) || []).length
+  const legacyCount = (text.match(/\/api\/v1\/files\/(?!download\/|preview-page\/)([\w.\-]+)\/download/g) || []).length
+  const result = (
     text
       // canonical 形状 — 重签 token（过期/陈旧签名/缺失均覆盖）。
       .replace(/\/api\/v1\/files\/download\/([\w.\-]+)(?:\?token=[^\s)"'\\]*)?/g, mint)
       // 旧版坏链形状 — 负向排除 canonical 与 preview-page 前缀。
       .replace(/\/api\/v1\/files\/(?!download\/|preview-page\/)([\w.\-]+)\/download(?:\?token=[^\s)"'\\]*)?/g, mint)
   )
+  if (canonicalCount + legacyCount > 0) {
+    log.info('file urls refreshed', { canonical: canonicalCount, legacy: legacyCount })
+  }
+  return result
 }
