@@ -10,7 +10,7 @@ describe('MemoryService', () => {
   const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-memory-service-'))
 
   function setup(userId = 'user_1') {
-    fs.rmSync(baseDir, { recursive: true, force: true })
+    fs.rmSync(baseDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
     fs.mkdirSync(baseDir, { recursive: true })
     const eventLog = new EventLog(baseDir, userId)
     const facts = new FactsStore(baseDir)
@@ -26,7 +26,9 @@ describe('MemoryService', () => {
   }
 
   beforeEach(() => {
-    fs.rmSync(baseDir, { recursive: true, force: true })
+    // EventLog 的异步 flush 可能恰好在清理窗口内补写文件 → 裸 rmdir 偶发
+    // ENOTEMPTY（CI flake）。maxRetries 让 rmSync 自旋等写入收尾。
+    fs.rmSync(baseDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   })
 
   it('adds a fact and writes to legacy store', () => {
