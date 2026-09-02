@@ -79,8 +79,37 @@ export async function* polishSelection(
   }
 }
 
-/** Write the Methods section of a clinical research paper from study rules. */
-export async function writeMethodsSection(input: MethodsSectionInput): Promise<string> {
+/**
+ * #687: 空流自动降级 — 非流式一次重试(chatWithMeta,#548 双倍额度),
+ * 服务端先净化再返回。router 不再直接 import llm。
+ */
+export async function polishSelectionFallback(
+  selection: string,
+  instruction: string | undefined,
+  userId: string,
+  signal?: AbortSignal,
+  onReasoning?: (text: string) => void,
+): Promise<string> {
+  const model = resolvePolishModel()
+  const text = await deepseekChat(
+    [{ role: 'user', content: buildPolishPrompt(selection, instruction) }],
+    getApiKey(),
+    {
+      model,
+      maxTokens: 4096,
+      signal,
+      telemetryContext: { userId, workspaceId: userId, action: 'document.polish_fallback' },
+    },
+    undefined,
+    onReasoning,
+  )
+  if (!text.trim()) throw new Error('模型连续两次未返回内容,请稍后重试')
+  // S7: fallback 拿到全文 — 服务端先净化再下发
+  const { sanitizePolishOutput } = await import('../../lib/polish-sanitize.js')
+  return sanitizePolishOutput(text)
+}
+
+/** Write the Methods section of a clinical research paper from study rules. */export async function writeMethodsSection(input: MethodsSectionInput): Promise<string> {
   const { study, byCategory, userId } = input
   const prompt = `Write the Methods section of a clinical research paper from this study design.
 

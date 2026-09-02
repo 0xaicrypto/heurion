@@ -1,3 +1,12 @@
+/**
+ * Knowledge articles / gaps / telemetry HTTP surface.
+ *
+ * #687 双 router 边界:本文件 = 文章(生成/重生成/编辑)/gap 检测/遥测的
+ * HTTP 面;knowledge-stores.router.ts = 记忆图谱(facts/nodes/versions)与
+ * 工具商店的存储面。两者共享 authGuard 与 gapService,但端点前缀不同
+ * (/api/v1/knowledge/* vs /api/v1/memory/* + tool-store),不构成重复路由。
+ * LLM 生成在 article-synthesis.service,展示序列化在 article-view.service。
+ */
 import { FastifyInstance } from 'fastify'
 import { authGuard, adminGuard } from '../../common/auth.guard'
 import { PrismaKnowledgeGapService, type GapSource } from './knowledge-gap.service'
@@ -7,6 +16,7 @@ import { isNodeSuperseded } from '../../memory/memory.types.js'
 import { PrismaTelemetryService } from './telemetry.service.js'
 import type { PickerNode } from './knowledge-picker.service.js'
 import { regenerateArticleWithLlm } from './article-synthesis.service.js'
+import { serializeArticle } from './article-view.service.js'
 
 const gapService = new PrismaKnowledgeGapService()
 const telemetry = new PrismaTelemetryService()
@@ -420,29 +430,4 @@ export async function knowledgeRouter(app: FastifyInstance) {
     const q = request.query as any
     return telemetry.llmCostDashboard(q.from, q.to)
   })
-}
-
-function serializeArticle(article: import('../../memory/memory.types.js').ArticleNode, memory: import('../../memory/memory.service').MemoryService) {
-  const impact = (article.staleBecause || []).map(factStableId => {
-    const fact = memory.graph.getLatestByStableId(factStableId) as import('../../memory/memory.types.js').FactNode | undefined
-    return {
-      factId: factStableId,
-      status: fact?.status || 'unknown',
-      content: fact?.content || '',
-      message: `依赖的 Fact ${factStableId} 已更新`,
-    }
-  })
-
-  return {
-    id: article.stableId,
-    title: article.title,
-    content: article.content,
-    status: article.status,
-    version: article.version,
-    sources: article.sourceFacts.map(s => s.stableId),
-    staleBecause: article.staleBecause || [],
-    impact,
-    createdAt: article.createdAt,
-    updatedAt: article.updatedAt,
-  }
 }

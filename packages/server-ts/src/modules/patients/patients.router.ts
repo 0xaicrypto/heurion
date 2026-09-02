@@ -6,6 +6,7 @@ import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { quickScanDicom, renderDicomSlice, analyzeWithGeminiVision } from './dicom-scanner.js'
+import { appendChiefComplaint, recordScanFindingsAsFacts } from './patient-record.service.js'
 import { getUserContext } from '../chat/user-context.js'
 import { makeLogger } from '../../common/logger.js'
 
@@ -170,23 +171,8 @@ export async function patientsRouter(app: FastifyInstance) {
     return Buffer.alloc(1)
   })
 
-  // The target patient must be EXPLICIT and owned by the user — a scan
-  // result must never land in the 'latest patient' profile (multi-patient
-  // data integrity, clinical safety).
-  async function appendChiefComplaint(userId: string, patientHash: string | undefined | null, prefix: string, text: string) {
-    if (!patientHash || !text || text.length <= 5) return
-    const patient = await (prisma as any).patientRecord.findFirst({ where: { hash: patientHash, userId } })
-    if (!patient) return
-    const existing = patient.chiefComplaint || ''
-    const snippet = text.slice(0, 50)
-    if (existing.includes(snippet)) return
-    await (prisma as any).patientRecord.update({
-      where: { hash: patientHash },
-      data: { chiefComplaint: (existing + `\n[${prefix}] ` + text.slice(0, 300)).trim(), updatedAt: new Date().toISOString() },
-    })
-  }
-
-  // #2: Quick Scan + update patient profile
+  // #2: Quick Scan + update patient profile (memory/record writes in
+  // patient-record.service — #687)
   app.post('/api/v1/dicom/studies/:studyId/quick-scan', async (request) => {
     const studyId = (request.params as any).studyId
     const userId = request.user!.userId
@@ -225,25 +211,7 @@ export async function patientsRouter(app: FastifyInstance) {
     }
 
     // Store findings as MemoryGraph facts so the LLM can reference them in chat
-    try {
-      const ctx = getUserContext(userId)
-      const docNode = ctx.memory.graph.getLatestByStableId(studyId)
-      const patientHash = (docNode as any)?.patientHash
-      for (const f of findings) {
-        if (f.type === 'meta' || f.type === 'error') continue
-        const content = f.content.slice(0, 200)
-        if (content.length > 5) {
-          ctx.memory.addFact({
-            category: 'fact',
-            importance: 4,
-            content,
-            sourceType: 'patient',
-            patientHash: patientHash || undefined,
-            provenance: { sourceKind: 'document', sourceRef: studyId },
-          }, 'system')
-        }
-      }
-    } catch {}
+    recordScanFindingsAsFacts(userId, studyId, findings)
 
     return { ok: true, findings, study_id: studyId }
   })

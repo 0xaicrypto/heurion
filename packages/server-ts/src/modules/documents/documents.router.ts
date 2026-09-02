@@ -4,8 +4,7 @@ import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import { SCHEMA_VERSION } from '@heurion/contracts'
 import { renderDocxBuffer, renderPdfBuffer, isExportFormat } from './markdown-export.js'
-import { polishSelection, writeMethodsSection, writePaperBackground, MAX_POLISH_CHARS } from './document-writing.service.js'
-// resolvePolishModel 由 service 导出(fallback 时动态 import)
+import { polishSelection, polishSelectionFallback, writeMethodsSection, writePaperBackground, MAX_POLISH_CHARS, resolvePolishModel } from './document-writing.service.js'
 // #777: pptx 解析导入 — deck/文章双落点（后台执行）。
 import { extractPptxContentFromUpload, pptxSlidesToDeck } from '../../lib/pptx-extractor.js'
 // #787: 上传即草稿的导入编排收敛到 doc-import 单点。
@@ -261,27 +260,11 @@ export async function documentsRouter(app: FastifyInstance) {
         send({ text: chunk })
       }
       if (textChunks === 0) {
-        // 空流自动降级:非流式 chatWithMeta(#548 双倍额度重试)
-        const { buildPolishPrompt, resolvePolishModel } = await import('./document-writing.service.js')
-        const { deepseekChat, getApiKey } = await import('../../common/llm.js')
-        const model = resolvePolishModel()
-        slog.warn(`[polish] empty stream, falling back to non-streaming (model=${model}, selection=${selection.length}c)`)
-        const text = await deepseekChat(
-          [{ role: 'user', content: buildPolishPrompt(selection, instruction) }],
-          getApiKey(),
-          {
-            model,
-            maxTokens: 4096,
-            signal: controller.signal,
-            telemetryContext: { userId, workspaceId: userId, action: 'document.polish_fallback' },
-          },
-          undefined,
-          (reasoning) => send({ type: 'reasoning', text: reasoning }),
-        )
-        if (!text.trim()) throw new Error('模型连续两次未返回内容,请稍后重试')
-        // S7: fallback 拿到全文 — 服务端先净化再下发
-        const { sanitizePolishOutput } = await import('../../lib/polish-sanitize.js')
-        send({ text: sanitizePolishOutput(text) })
+        // 空流自动降级:非流式 chatWithMeta(#548 双倍额度重试)—
+        // #687: LLM 调用与净化都在 writing service,router 只做 SSE 映射。
+        slog.warn(`[polish] empty stream, falling back to non-streaming (model=${resolvePolishModel()}, selection=${selection.length}c)`)
+        const text = await polishSelectionFallback(selection, instruction, userId, controller.signal, (reasoning) => send({ type: 'reasoning', text: reasoning }))
+        send({ text })
       }
       send({ done: true })
     } catch (err: any) {
