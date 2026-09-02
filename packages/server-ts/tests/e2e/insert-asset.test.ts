@@ -8,7 +8,9 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getApp, authHeader, getAuthUserId } from '../setup.js'
 import prisma from '../../src/common/prisma.js'
-import { InsertAssetTool, buildMarkdownTable, buildDocumentContent, buildPresentationContent } from '../../src/tools/insert-asset-tool.js'
+// #789②: 纯构建器下沉 lib/asset-content。
+import { InsertAssetTool } from '../../src/tools/insert-asset-tool.js'
+import { buildMarkdownTable, buildDocumentContent, buildPresentationContent } from '../../src/lib/asset-content.js'
 import fs from 'fs'
 import path from 'path'
 
