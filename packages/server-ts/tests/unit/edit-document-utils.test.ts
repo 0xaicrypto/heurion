@@ -18,8 +18,10 @@ describe('normalizeForMatch', () => {
     expect(normalizeForMatch('## Abstract\n\n**Rationale**\n\n`code` and Elexacaftor')).toBe('abstract rationale code and elexacaftor')
   })
 
-  test('strip image markdown tokens', () => {
-    expect(normalizeForMatch('a ![图 1](/api/v1/files/download/img_x.png?token=t) b')).toBe('a b')
+  test('image markdown token → 占位符+URL(参与匹配,不再整段删除)', () => {
+    expect(normalizeForMatch('a ![图 1](/api/v1/files/download/img_x.png?token=t) b')).toBe(
+      'a \uFFFC/api/v1/files/download/img_x.png?token=t b',
+    )
   })
 })
 
@@ -64,11 +66,16 @@ describe('findNormalizedSpan', () => {
     expect(span).not.toBeNull()
   })
 
-  test('#fix: span can cross an embedded image markdown token', () => {
+  test('#fix: needle 含图片 token 时 span 覆盖图片本体', () => {
     const b = 'before ![图 1](/api/v1/files/download/img_doc_x_1.png?token=t) after'
-    const span = findNormalizedSpan(b, 'before after')
+    const span = findNormalizedSpan(b, 'before ![图 1](/api/v1/files/download/img_doc_x_1.png?token=t) after')
     expect(span).not.toBeNull()
     expect(b.slice(span!.start, span!.end)).toBe(b)
+  })
+
+  test('#fix: 跨图片但不含图片的 needle 不再命中(防静默删图)', () => {
+    const b = 'before ![图 1](/api/v1/files/download/img_doc_x_1.png?token=t) after'
+    expect(findNormalizedSpan(b, 'before after')).toBeNull()
   })
 
   test('no match returns null', () => {
@@ -77,11 +84,65 @@ describe('findNormalizedSpan', () => {
     expect(findNormalizedSpan(body, 'Impct of two years')).toBeNull()
   })
 
-  test('empty needle matches at position 0', () => {
-    const span = findNormalizedSpan('abc', '   ')
+  test('#fix: 纯空白/纯标记 old_text 归一化后为空 → null(空锚点守卫)', () => {
+    expect(findNormalizedSpan('abc', '   ')).toBeNull()
+    expect(findNormalizedSpan('abc', '***')).toBeNull()
+  })
+})
+
+describe('findNormalizedSpan: 图片锚点(#fix 换图工作流 — 假「出现多次」死循环根治)', () => {
+  const doc = [
+    '## 一、背景',
+    '',
+    '**图1：剂量对比**',
+    '',
+    '![图1：剂量对比](/api/v1/files/download/chart_111.svg?token=a1)',
+    '',
+    '**图2：布拉格峰**',
+    '',
+    '![图2：布拉格峰](/api/v1/files/download/chart_222.svg?token=a2)',
+    '',
+    '正文结尾。',
+  ].join('\n')
+
+  const fig1 = '![图1：剂量对比](/api/v1/files/download/chart_111.svg?token=a1)'
+
+  test('整行图片做 old_text — 按 URL 精确命中,span 覆盖图片本体', () => {
+    const span = findNormalizedSpan(doc, fig1)
     expect(span).not.toBeNull()
-    expect(span!.start).toBe(0)
-    expect(span!.end).toBe(0)
+    expect(doc.slice(span!.start, span!.end)).toBe(fig1)
+  })
+
+  test('URL 不同的图片不会互相误配', () => {
+    expect(findNormalizedSpan(doc, '![x](/api/v1/files/download/chart_999.svg?token=zz)')).toBeNull()
+  })
+
+  test('图题+图片 old_text — 替换 span 覆盖到图片本体(旧图不再残留)', () => {
+    const needle = '**图1：剂量对比**\n\n' + fig1
+    const span = findNormalizedSpan(doc, needle)
+    expect(span).not.toBeNull()
+    expect(doc.slice(span!.start, span!.end)).toBe(needle)
+  })
+
+  test('仅图题 old_text — span 停在图题末尾,不吞图片', () => {
+    const span = findNormalizedSpan(doc, '**图1：剂量对比**')
+    expect(span).not.toBeNull()
+    expect(doc.slice(span!.start, span!.end)).toBe('**图1：剂量对比**')
+  })
+
+  test('同 URL 多张图 — 第一处命中且 span 对准第一个 token', () => {
+    const dup = '![a](/u.svg) 中间 ![b](/u.svg)'
+    const span = findNormalizedSpan(dup, '![a](/u.svg)')
+    expect(span).not.toBeNull()
+    expect(dup.slice(span!.start, span!.end)).toBe('![a](/u.svg)')
+  })
+
+  test('模糊匹配兜底对含图片锚点同样覆盖图片本体', () => {
+    const b = '图题一 **图1：剂量对比**\n\n![图1：剂量对比](/api/v1/files/download/chart_111.svg?token=a1) 结尾'
+    const span = findFuzzySpan(b, '图题一 **图1：剂量对比**\n\n![图1：剂量对比](/api/v1/files/download/chart_111.svg?token=a!) 结尾')
+    expect(span).not.toBeNull()
+    expect(span!.fuzzy).toBe(true)
+    expect(b.slice(span!.start, span!.end)).toBe('图题一 **图1：剂量对比**\n\n![图1：剂量对比](/api/v1/files/download/chart_111.svg?token=a1) 结尾')
   })
 })
 

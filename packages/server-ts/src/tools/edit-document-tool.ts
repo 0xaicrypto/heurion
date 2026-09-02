@@ -11,11 +11,36 @@ function isMatchSyntaxChar(c: string): boolean {
   return c === '#' || c === '*' || c === '`' || c === '>' || c === '•' || c === '\u00ad'
 }
 
-/** 剥离开匹配的 markdown 语法(含软连字符与整段图片 token)。 */
+/** 图片 token 在归一化串里的占位符。图片不再整段删除,而是收敛为
+ *  「占位符+URL」原子块(#fix 2026-09):
+ *  · URL 保留参与匹配 — 换图工作流里模型常用整行图片做 old_text,
+ *    无 URL 的占位会让多张图互不可分,恒误判「出现多次」死循环;
+ *  · 占位符占 1 个归一化位置 — 含图片的 old_text 的替换 span 才能
+ *    覆盖图片本体(此前 span 停在图题末尾,旧图片行残留成重复块)。 */
+const IMAGE_PLACEHOLDER = '\uFFFC'
+
+/** 识别 raw 处的图片 token(![alt](url)),返回 token 长度与 URL;非图片返回 null。 */
+const IMAGE_TOKEN_RE = /!\[[^\]]*\]\(([^)]*)\)/y
+function matchImageToken(body: string, raw: number): { length: number; url: string } | null {
+  if (body[raw] !== '!' || body[raw + 1] !== '[') return null
+  IMAGE_TOKEN_RE.lastIndex = raw
+  const m = IMAGE_TOKEN_RE.exec(body)
+  if (!m) return null
+  return { length: m[0].length, url: m[1] }
+}
+
+/** URL 在归一化串里的长度 — 剔除语法字符;空白按模式折叠/删除。
+ *  必须与 stripMatchSyntax 的字符串管线逐字符一致,否则索引漂移。 */
+function imageUrlNormLen(url: string, wsFree: boolean): number {
+  const cleaned = url.replace(/[\u00ad#`>*•]/g, '')
+  return (wsFree ? cleaned.replace(/\s/g, '') : cleaned.replace(/\s+/g, ' ')).length
+}
+
+/** 剥离匹配忽略的 markdown 语法;图片 token 收敛为「占位符+URL」。 */
 function stripMatchSyntax(s: string): string {
   return s
     .replace(/\u00ad/g, '')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/!\[[^\]]*\]\(([^)]*)\)/g, (_m, url: string) => IMAGE_PLACEHOLDER + url.replace(/[\u00ad#`>*•]/g, ''))
     .replace(/[#`>*•]/g, '')
     .replace(/\*/g, '')
 }
@@ -35,30 +60,17 @@ function normalizeWsFree(s: string): string {
   return stripMatchSyntax(s).replace(/\s/g, '').toLowerCase()
 }
 
-/** 跳过 markdown 图片 token(![...](...)),命中返回跳过后的下标,否则原样。 */
-function skipImageToken(body: string, raw: number): number {
-  if (body[raw] !== '!' || body[raw + 1] !== '[') return raw
-  const close = body.indexOf('](', raw + 2)
-  if (close === -1) return raw
-  const paren = body.indexOf(')', close + 2)
-  if (paren === -1) return raw
-  return paren + 1
-}
-
-/** 归一化索引 → 原始下标:空白序列按一个空格计(塌缩口径)。
- *  注意:归一化先剥离语法标记再塌缩空白,所以空白段要连同交错其中的
- *  语法字符/图片 token 一起合并为 1 个归一化位置('\\n\\n## ' 这类
- *  标记两侧空白在剥离后是同一段 \s+,不能拆成两个位置)。 */
-function walkCollapsed(body: string, target: number): number {
+/** 归一化索引 → 原始下标,镜像字符串归一化口径(wsFree=false:
+ *  normalizeForMatch 空白塌缩;wsFree=true: normalizeWsFree 空白全删):
+ *  语法字符 0 位;空白 — 塌缩模式一个 run(可交错语法字符)记 1 位 /
+ *  wsFree 模式 0 位;图片 token 是原子块,占 1+URL 归一化长度 位;
+ *  归一化串做了首尾 trim,故前导空白/语法不占位(前导图片占位)。
+ *  target 落在图片块中间时整块消费(URL 不会成为锚点切点)。 */
+function walkNorm(body: string, target: number, wsFree: boolean): number {
   let raw = 0
   let norm = 0
-  // 归一化做了 trim:正文开头的空白/语法/图片不占归一化位置。
   while (raw < body.length) {
-    const img = skipImageToken(body, raw)
-    if (img !== raw) {
-      raw = img
-      continue
-    }
+    if (matchImageToken(body, raw)) break
     const c = body[raw]
     if (isMatchSyntaxChar(c) || /\s/.test(c)) {
       raw++
@@ -67,57 +79,27 @@ function walkCollapsed(body: string, target: number): number {
     break
   }
   while (norm < target && raw < body.length) {
+    const img = matchImageToken(body, raw)
+    if (img) {
+      raw += img.length
+      norm += 1 + imageUrlNormLen(img.url, wsFree)
+      continue
+    }
     const c = body[raw]
-    if (/\s/.test(c)) {
+    if (isMatchSyntaxChar(c)) {
       raw++
+      continue
+    }
+    if (/\s/.test(c)) {
       while (raw < body.length) {
         const d = body[raw]
-        if (/\s/.test(d)) {
-          raw++
-          continue
-        }
-        const img = skipImageToken(body, raw)
-        if (img !== raw) {
-          raw = img
-          continue
-        }
-        if (isMatchSyntaxChar(d)) {
+        if (/\s/.test(d) || isMatchSyntaxChar(d)) {
           raw++
           continue
         }
         break
       }
-      norm++
-    } else {
-      const img = skipImageToken(body, raw)
-      if (img !== raw) {
-        raw = img
-        continue
-      }
-      if (isMatchSyntaxChar(c)) {
-        raw++
-        continue
-      }
-      raw++
-      norm++
-    }
-  }
-  return raw
-}
-
-/** 归一化索引 → 原始下标:空白/软连字符/语法标记不占位(完全忽略口径)。 */
-function walkWsFree(body: string, target: number): number {
-  let raw = 0
-  let norm = 0
-  while (norm < target && raw < body.length) {
-    const img = skipImageToken(body, raw)
-    if (img !== raw) {
-      raw = img
-      continue
-    }
-    const c = body[raw]
-    if (isMatchSyntaxChar(c) || /\s/.test(c)) {
-      raw++
+      if (!wsFree) norm++
       continue
     }
     raw++
@@ -141,21 +123,30 @@ export interface NormalizedSpan {
  * 两级匹配:
  *   1) 空白塌缩(换行位置/连续空格差异);
  *   2) 完全忽略空白(兜底 — PDF 断行把长词拆开插入空格,如药物名跨行)。
+ * 图片 token 以「占位符+URL」参与匹配 — 含图片的锚点其替换 span 覆盖
+ * 图片本体;跨图片但不含图片的 needle 不再命中(防静默删图)。
  * 命中级别连同归一化串返回,调用方可复用做多次命中判定。
  */
 export function findNormalizedSpan(body: string, needle: string): NormalizedSpan | null {
   const nb = normalizeForMatch(body)
   const nn = normalizeForMatch(needle)
+  // #fix: 空锚点守卫 — 纯空白/纯标记归一化后为空,indexOf('') 恒命中
+  // 且重复判定恒报「出现多次」,必须在此拦下(调用方给出修正指引)。
+  if (!nn) return null
   const k = nb.indexOf(nn)
   if (k !== -1) {
-    return { start: walkCollapsed(body, k), end: walkCollapsed(body, k + nn.length), k, normBody: nb, normNeedle: nn }
+    const start = walkNorm(body, k, false)
+    const end = walkNorm(body, k + nn.length, false)
+    return { ...expandSpanOverMarkers(body, start, end, needle), k, normBody: nb, normNeedle: nn }
   }
 
   const fb = normalizeWsFree(body)
   const fn = normalizeWsFree(needle)
   const k2 = fb.indexOf(fn)
   if (k2 === -1) return null
-  return { start: walkWsFree(body, k2), end: walkWsFree(body, k2 + fn.length), k: k2, normBody: fb, normNeedle: fn }
+  const start2 = walkNorm(body, k2, true)
+  const end2 = walkNorm(body, k2 + fn.length, true)
+  return { ...expandSpanOverMarkers(body, start2, end2, needle), k: k2, normBody: fb, normNeedle: fn }
 }
 
 /** 锚点片段长度与模糊匹配的编辑预算上限(needle 长度的比例)。 */
@@ -258,13 +249,30 @@ export function findFuzzySpan(body: string, needle: string): NormalizedSpan | nu
   const endNorm = winStart + bestJ
   if (startNorm >= endNorm) return null
   return {
-    start: walkWsFree(body, startNorm),
-    end: walkWsFree(body, endNorm),
+    ...expandSpanOverMarkers(body, walkNorm(body, startNorm, true), walkNorm(body, endNorm, true), needle),
     k: startNorm,
     normBody: nb,
     normNeedle: nn,
     fuzzy: true,
   }
+}
+
+/** 锚点标记回扩 — 归一化剥离了 `**`/`##` 等标记,span 因此停在文字
+ *  本体(如「**图1…**」的 span 不含加号标记)。若 needle 原文首/尾字符
+ *  本身是语法标记,把 span 首/尾回扩到紧贴的标记(不跨空白),使含标记
+ *  锚点的替换覆盖完整 token(否则换图后残留 `****` 断裂标记)。 */
+function expandSpanOverMarkers(body: string, start: number, end: number, needle: string): { start: number; end: number } {
+  let s = start
+  let e = end
+  const firstNonWs = needle.trimStart()[0]
+  if (firstNonWs && isMatchSyntaxChar(firstNonWs)) {
+    while (s > 0 && isMatchSyntaxChar(body[s - 1])) s--
+  }
+  const lastNonWs = needle.trimEnd().slice(-1)
+  if (lastNonWs && isMatchSyntaxChar(lastNonWs)) {
+    while (e < body.length && isMatchSyntaxChar(body[e])) e++
+  }
+  return { start: s, end: e }
 }
 
 /**
@@ -292,7 +300,7 @@ export class EditDocumentTool extends BaseTool {
     return [
       'Edit the current writing-session document. Three modes:',
       '- Import: pass `import_reference` (the reference-material name to import) when the document body is EMPTY and the user wants to work on an uploaded reference (PDF/DOCX/txt). This copies the reference text into the document.',
-      '- Range edit (preferred for polishing long documents): pass `old_text` (the original text to replace, copied from the current document — line breaks/whitespace differences are tolerated) and `new_text` (the replacement). One edit per call; make multiple calls to edit multiple parts. When the document body is EMPTY and exactly one reference exists, the tool auto-imports it before applying the edit (so you can polish an uploaded reference without a separate import call).',
+      '- Range edit (preferred for polishing long documents): pass `old_text` (the original text to replace, copied from the current document — line breaks/whitespace differences are tolerated) and `new_text` (the replacement). One edit per call; make multiple calls to edit multiple parts. When the document body is EMPTY and exactly one reference exists, the tool auto-imports it before applying the edit (so you can polish an uploaded reference without a separate import call). To replace a figure/link, include its image markdown together with surrounding caption text — image URLs must match exactly, and an old_text that spans an image must include the image.',
       '- Full rewrite: pass `full_text` (complete new document in markdown). Only for short documents or when the user explicitly asks to rewrite the whole document.',
       'Use this instead of explaining changes.',
     ].join(' ')
@@ -329,6 +337,15 @@ export class EditDocumentTool extends BaseTool {
     // #fix: 分步编辑 — 提供了 old_text 就走局部替换,不要求完整文档。
     if (oldText) {
       if (!oldText.trim()) return { success: false, error: 'old_text is empty' }
+      // #fix: 空锚点守卫 — 纯空白/markdown 标记归一化后为空,此前会退化
+      // 为 indexOf('') 恒命中并假报「出现多次」,模型反复补上下文重试
+      // 进入死循环。此处直接给出可执行的修正方向。
+      if (!normalizeForMatch(oldText)) {
+        return {
+          success: false,
+          error: 'old_text 归一化后为空(仅含空白或 markdown 标记,没有可定位的文字或图片 URL)。请从 ## Current Document 复制包含实际文字的片段作为 old_text(替换图片时连同图题文字一起复制)。',
+        }
+      }
       return this.rangeEdit(docId, oldText, newText, String(args.summary || 'range edit'))
     }
 
