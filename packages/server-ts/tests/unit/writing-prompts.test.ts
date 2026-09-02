@@ -1,0 +1,63 @@
+import { describe, it, expect } from 'vitest'
+import {
+  refUnresolvedHint,
+  refSourceRule,
+  emptyDocRule,
+  selectionRule,
+  documentRules,
+  EXPANSION_RULE,
+  CITATION_RULE,
+} from '../../src/modules/chat/writing-prompts.js'
+
+describe('writing-prompts (#699 — 文档场景规则可单测)', () => {
+  it('refUnresolvedHint 仅在无正文时给出 import_reference 引导', () => {
+    const hint = refUnresolvedHint(true, '## Reference Materials\n(no body)')
+    expect(hint).toContain('import_reference')
+    expect(hint).toContain('不要用 ocr_image')
+    expect(refUnresolvedHint(false, '')).toBe('')
+    expect(refUnresolvedHint(true, '[已解析上传文件正文] body')).toBe('')
+  })
+
+  it('refSourceRule 仅在有参考材料时禁止复制 old_text', () => {
+    expect(refSourceRule(true)).toContain('old_text 禁止从 Reference Materials 复制')
+    expect(refSourceRule(false)).toBe('')
+  })
+
+  it('emptyDocRule 空文档时分步润色指令', () => {
+    expect(emptyDocRule(true)).toContain('当前文档正文为空')
+    expect(emptyDocRule(true)).toContain('已完成第 1/N 段')
+    expect(emptyDocRule(false)).toBe('')
+  })
+
+  it('selectionRule 选中即引用 — 逐字复制', () => {
+    expect(selectionRule('some text')).toContain('逐字复制')
+    expect(selectionRule(null)).toBe('')
+  })
+
+  it('documentRules 短文档档:允许整篇可见 + 禁带序号', () => {
+    const r = documentRules({ docFits: true, selection: 'sel', docBodyEmpty: false })
+    expect(r).toContain('文档较短已完整展示')
+    expect(r).toContain('逐字复制')
+    expect(r).not.toContain('一次只处理一个段落')
+    expect(r).toContain('逐字复制')
+  })
+
+  it('documentRules 长文档档:逐段纪律 + full_text 限制 + 进度播报', () => {
+    const r = documentRules({ docFits: false, selection: null, docBodyEmpty: false })
+    expect(r).toContain('一次只处理一个段落')
+    expect(r).toContain('full_text')
+    expect(r).toContain('已完成 第 i/N 段')
+  })
+
+  it('documentRules 空文档档包含 emptyDocRule + 扩写纪律', () => {
+    const r = documentRules({ docFits: true, selection: null, docBodyEmpty: true })
+    expect(r).toContain('当前文档正文为空')
+    expect(r).toContain(EXPANSION_RULE.slice(0, 20))
+  })
+
+  it('常量规则锚点 — 扩写纪律/引用纪律不被回归删除', () => {
+    expect(EXPANSION_RULE).toContain('禁止单轮生成整篇文档')
+    expect(CITATION_RULE).toContain('search_citation')
+    expect(CITATION_RULE).toContain('严禁编造')
+  })
+})
