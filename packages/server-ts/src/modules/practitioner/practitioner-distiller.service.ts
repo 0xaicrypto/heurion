@@ -1,6 +1,7 @@
 import { resolveTierModel } from '../../common/llm-gateway.js'
 import type { PractitionerObservation } from './practitioner-extractor.service.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
+import { parseLlmJsonArray } from '../../common/llm-json.js'
 
 export interface DistilledInsight {
   type: 'clinical_impression' | 'key_finding' | 'action_item' | 'uncertainty'
@@ -31,8 +32,9 @@ export async function distillObservations(
       apiKey,
       { model: resolveTierModel('fast'), maxTokens: 1024, temperature: 0.3 },
     )
-    const parsed = JSON.parse(raw)
-    return (Array.isArray(parsed) ? parsed : []).map((i: any) => ({
+    // #694: fence 容错数组解析。
+    const parsed = parseLlmJsonArray<Record<string, unknown>>(raw) || []
+    return parsed.map((i: any) => ({
       type: i.type,
       content: i.content,
       supportingObservations: i.supportingObservations || [],

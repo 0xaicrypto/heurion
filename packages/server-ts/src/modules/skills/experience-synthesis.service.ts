@@ -14,6 +14,7 @@ import { resolveTierModel } from '../../common/llm-gateway.js'
 import prisma from '../../common/prisma.js'
 import { getUserContext } from '../chat/user-context.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 import type { LlmTelemetryContext } from '../../common/llm.js'
 import { makeLogger } from '../../common/logger.js'
 
@@ -35,20 +36,16 @@ const SYNTHESIS_SYSTEM = `你是临床经验沉淀助手。根据多条已确认
 - 事实不足（<3条）或主题分散时，输出 {"name":"","description":"","steps":[],"prompt":""}`
 
 function parseCandidate(raw: string | null | undefined): ExperienceCandidate | null {
-  if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw)
-    if (!parsed.name) return null
-    return {
-      name: String(parsed.name).slice(0, 120),
-      description: String(parsed.description || '').slice(0, 300),
-      steps: Array.isArray(parsed.steps) ? parsed.steps.map((s: unknown) => String(s).slice(0, 500)) : [],
-      prompt: String(parsed.prompt || '').slice(0, 4000),
-      sources: [],
-      sourceCount: 0,
-    }
-  } catch {
-    return null
+  // #694: parseLlmJson — fence 剥离 + 容错，解析失败/无名时回 null。
+  const parsed = parseLlmJson<Record<string, unknown>>(raw)
+  if (!parsed || !parsed.name) return null
+  return {
+    name: String(parsed.name).slice(0, 120),
+    description: String(parsed.description || '').slice(0, 300),
+    steps: Array.isArray(parsed.steps) ? parsed.steps.map((s: unknown) => String(s).slice(0, 500)) : [],
+    prompt: String(parsed.prompt || '').slice(0, 4000),
+    sources: [],
+    sourceCount: 0,
   }
 }
 

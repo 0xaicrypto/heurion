@@ -2,6 +2,7 @@ import { resolveTierModel } from '../../common/llm-gateway.js'
 import type { PractitionerObservation } from './practitioner-extractor.service.js'
 import type { DistilledInsight } from './practitioner-distiller.service.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 
 export interface ClinicalNarrative {
   type: 'soap' | 'summary' | 'handoff' | 'progress_note'
@@ -40,11 +41,13 @@ export async function composeNarrative(
       apiKey,
       { model: resolveTierModel('fast'), maxTokens: 2048, temperature: 0.3 },
     )
-    const parsed = JSON.parse(raw)
+    // #694: fence 容错 — 非 JSON 回复降级空叙述，不抛错。
+    const parsed = parseLlmJson<{ content?: string; sections?: Record<string, unknown> }>(raw)
+    if (!parsed) return { type: narrativeType, content: '', sections: {} }
     return {
       type: narrativeType,
       content: parsed.content || '',
-      sections: parsed.sections || {},
+      sections: (parsed.sections || {}) as Record<string, string>,
     }
   } catch {
     return { type: narrativeType, content: '', sections: {} }

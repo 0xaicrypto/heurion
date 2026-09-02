@@ -12,6 +12,7 @@ import { resolveTurnTimeoutMs } from '../../common/llm-gateway.js'
 import { deepseekChatWithMeta, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { detectDoomLoop } from '../../tools/doom-loop.js'
 import { makeLogger } from '../../common/logger.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 import type { getUserContext } from './user-context.js'
 // #790: SSE 出口类型化 — 此前 (chunk: any) 使 loop 内新事件绕过编译期
 // 检查，契约类型化停在传输层（chat-sse）。
@@ -24,6 +25,118 @@ export interface TurnIO {
   send: (chunk: ChatStreamChunk) => void
   signal: AbortSignal
 }
+
+/**
+ * #789③ — per-tool result presenters, replacing the if-chain that grew a
+ * new branch per media tool (open/closed violation) and re-`JSON.parse`d the
+ * same output up to 3×/round with independent silent catches. The loop now
+ * parses the tool output ONCE and hands the object to every matching
+ * presenter; presenters are pure SSE-projection (no registry/prisma access).
+ */
+interface PresentEnv {
+  io: TurnIO
+  toolName: string
+}
+
+interface ToolResultPresenter {
+  matches: (toolName: string) => boolean
+  present: (parsed: Record<string, unknown>, env: PresentEnv) => void
+}
+
+/** Tools whose output carries a full document body for the writing canvas. */
+const DOC_WRITE_TOOLS = new Set(['edit_document', 'insert_asset', 'edit_deck', 'fix_document_images'])
+
+const PRESENTERS: ToolResultPresenter[] = [
+  {
+    // #419: generated images render in the chat stream.
+    matches: (t) => t === 'generate_image',
+    present: (parsed, { io }) => {
+      if (typeof parsed.url === 'string' && parsed.url) {
+        const prompt = typeof parsed.prompt === 'string' ? parsed.prompt : ''
+        io.send({ type: 'image_attached', url: parsed.url, caption: prompt.slice(0, 120) })
+      }
+    },
+  },
+  {
+    // #418: surface memory-search hits to the doctor (AI 依据可见).
+    matches: (t) => t === 'search_node',
+    present: (parsed, { io }) => {
+      const hits = Array.isArray(parsed.hits) ? parsed.hits : []
+      if (hits.length > 0) {
+        io.send({
+          type: 'memory_hits',
+          count: hits.length,
+          hits: hits.slice(0, 10).map((h: any) => ({
+            content: String(h.content || '').slice(0, 200),
+            type: String(h.node_type || 'fact'),
+            id: String(h.node_id || ''),
+          })),
+        })
+      }
+    },
+  },
+  {
+    // §15.4/#765/#773: document write-backs to the writing canvas —
+    // doc_updated (body+deck 同帧) plus insert_asset's sidecar_file
+    // (export 产物下载卡片 + knowledge_payload 进知识索引).
+    matches: (t) => DOC_WRITE_TOOLS.has(t),
+    present: (parsed, { io, toolName }) => {
+      if (typeof parsed.body === 'string') {
+        // #790: deck 产出端过 deckWireSchema — 形状损坏降级 null
+        // (前端 as DeckWire 强转兜不住坏数据)。
+        let deck: DeckWire | null = null
+        if (parsed.deck !== undefined && parsed.deck !== null) {
+          const check = deckWireSchema.safeParse(parsed.deck)
+          deck = check.success ? check.data : null
+          if (!check.success) log.warn('doc_updated.deck failed schema check — degraded to null')
+        }
+        io.send({
+          type: 'doc_updated',
+          body: parsed.body,
+          summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+          ...(parsed.deck !== undefined ? { deck } : {}),
+        })
+      }
+      if (toolName === 'insert_asset') {
+        const file = parsed.file as Record<string, unknown> | undefined
+        const knowledge = parsed.knowledge as { title?: string; content?: string } | undefined
+        if (file && typeof file.fileId === 'string' && typeof file.url === 'string' && file.fileId && file.url) {
+          const fileName = (typeof file.fileName === 'string' && file.fileName) || file.fileId
+          const body = typeof parsed.body === 'string' ? parsed.body : ''
+          io.send({
+            type: 'sidecar_file',
+            file_id: file.fileId,
+            file_name: fileName,
+            mime_type: (typeof file.mimeType === 'string' && file.mimeType) || 'application/octet-stream',
+            download_url: file.url,
+            expires_in: 90 * 24 * 3600,
+            ...(file.mimeType
+              ? {
+                  knowledge_payload: knowledge?.title && knowledge?.content
+                    ? { title: knowledge.title, content: knowledge.content }
+                    : { title: fileName, content: body.trim() || `Generated document: ${fileName}` },
+                }
+              : {}),
+          })
+        }
+      }
+    },
+  },
+  {
+    // #176: surface generated charts as images in the message.
+    matches: (t) => t === 'render_chart',
+    present: (parsed, { io }) => {
+      if (typeof parsed.url === 'string' && parsed.url) {
+        io.send({
+          type: 'chart_created',
+          url: parsed.url,
+          markdown: typeof parsed.markdown === 'string' ? parsed.markdown : '',
+          chart_type: typeof parsed.type === 'string' ? parsed.type : '',
+        })
+      }
+    },
+  },
+]
 
 /**
  * Tool-calling loop: up to MAX_TOOL_ROUNDS rounds of <tool_call> execution.
@@ -136,10 +249,9 @@ export async function runToolCallLoop(params: {
       // the whole payload N times and corrupt the turn history.
       messages.push({ role: 'assistant', content: callResult })
       for (const block of toolCallBlocks) {
-        let toolCall: any = null
-        try {
-          toolCall = JSON.parse(block.replace(/<\/?tool_call>/g, '').trim())
-        } catch (err) {
+        // #694: parseLlmJson — 模型在 <tool_call> 内夹围栏/闲话时同样容错。
+        const toolCall = parseLlmJson<Record<string, unknown>>(block.replace(/<\/?tool_call>/g, '').trim())
+        if (!toolCall) {
           // §3.3: malformed JSON must not crash the turn — tell the model
           // to re-emit a valid call instead of dying silently.
           await appendToolEvent('tool_call', 'malformed_arguments', {
@@ -152,8 +264,8 @@ export async function runToolCallLoop(params: {
           })
           continue
         }
-        const toolName = toolCall.name || toolCall.tool
-        const toolArgs = toolCall.arguments || toolCall.args || {}
+        const toolName = String(toolCall.name || toolCall.tool || '')
+        const toolArgs = (toolCall.arguments || toolCall.args || {}) as Record<string, unknown>
         executedAny = true
 
         toolSeq++
@@ -190,58 +302,31 @@ export async function runToolCallLoop(params: {
 
         const result = await toolRegistry.execute(toolName, toolArgs)
 
-        // #419: generated images render in the chat stream.
-        if (toolName === 'generate_image' && result.success && result.output) {
-          try {
-            const parsed = JSON.parse(result.output)
-            if (parsed.url) {
-              io.send({ type: 'image_attached', url: parsed.url, caption: parsed.prompt?.slice(0, 120) })
-            }
-          } catch { /* non-JSON */ }
-        }
+        // #789③/#694: parse the tool output ONCE per result —此前
+        // generate_image/search_node/insert_asset/render_chart 各自
+        // JSON.parse 同一份 output(insert_asset 单轮 3 次),逐处静默
+        // catch。parseLlmJson 带 fence 容错;非 JSON 输出为 null,
+        // presenter 自然跳过。
+        const parsedOutput = (result.success && result.output)
+          ? parseLlmJson<Record<string, unknown>>(result.output)
+          : null
 
-        // #418: surface memory-search hits to the doctor (AI 依据可见).
-        if (toolName === 'search_node' && result.success && result.output) {
-          try {
-            const parsed = JSON.parse(result.output)
-            const hits = Array.isArray(parsed?.hits) ? parsed.hits : []
-            if (hits.length > 0) {
-              io.send({
-                type: 'memory_hits',
-                count: hits.length,
-                hits: hits.slice(0, 10).map((h: any) => ({
-                  content: String(h.content || '').slice(0, 200),
-                  type: String(h.node_type || 'fact'),
-                  id: String(h.node_id || ''),
-                })),
-              })
-            }
-          } catch { /* non-JSON output */ }
-        }
-
+        // #350: sub-agent done — 成败都要发(cost 仅成功时有值)。
         if (isSubagent) {
-          let cost = 0
-          if (result.success && result.output) {
-            try { cost = Number(JSON.parse(result.output).cost_tokens) || 0 } catch { /* ignore */ }
-          }
+          const cost = parsedOutput ? Number(parsedOutput.cost_tokens) || 0 : 0
           io.send({ type: 'subagent_done', task: subTask.slice(0, 200), success: result.success, cost_tokens: cost })
         }
 
         // #693: edit_document 输出含完整 body(豁免了 bound) — 注入给模型
-        // 的内容只保留摘要,避免正文全文每轮循环膨胀上下文;doc_updated
-        // 推送在下方用原始 output 完整解析。#765: insert_asset 同管道。
-        // #773: edit_deck 同管道(deck JSON 注入模型时只保留摘要)。
-        // #fix 2026-09: fix_document_images 同管道(审计摘要进模型,body
-        // 只推前端实时渲染)。
-        const DOC_WRITE_TOOLS = new Set(['edit_document', 'insert_asset', 'edit_deck', 'fix_document_images'])
+        // 的内容只保留摘要,避免正文全文每轮循环膨胀上下文。#765:
+        // insert_asset 同管道。#773: edit_deck 同管道。#fix 2026-09:
+        // fix_document_images 同管道。摘要取自共享 parsedOutput,不再重解析。
         let toolResultText = result.output || 'Success'
         if (DOC_WRITE_TOOLS.has(toolName) && result.success) {
-          try {
-            const parsed = JSON.parse(toolResultText) as { summary?: string }
-            toolResultText = `{ body: <updated>, summary: ${JSON.stringify(parsed.summary || '')} }`
-          } catch {
-            toolResultText = toolResultText.slice(0, 500)
-          }
+          const summary = typeof parsedOutput?.summary === 'string' ? parsedOutput.summary : ''
+          toolResultText = summary
+            ? `{ body: <updated>, summary: ${JSON.stringify(summary)} }`
+            : toolResultText.slice(0, 500)
         }
         messages.push({
           role: 'user',
@@ -256,80 +341,12 @@ export async function runToolCallLoop(params: {
           await appendToolEvent('tool_result', output, {
             toolCallId: seq, success: true, outputTruncated: output.length > 500,
           })
-          // §15.4: surface document write-backs to the writing canvas.
-          // #765: insert_asset (表格) 写回与 edit_document 同管道。
-          if (DOC_WRITE_TOOLS.has(toolName)) {
-            try {
-              // #773: deck 同帧到达(doc_updated.deck) — 前端一次刷新,
-              // 避免双事件乱序。SSE push 不截 deck 大小(#693 豁免同理)。
-              const parsed = JSON.parse(output) as { body?: string; summary?: string; deck?: unknown }
-              if (typeof parsed.body === 'string') {
-                // #790: deck 产出端过 deckWireSchema — 形状损坏降级 null
-                // (前端 as DeckWire 强转兜不住坏数据)。
-                let deck: DeckWire | null = null
-                if (parsed.deck !== undefined && parsed.deck !== null) {
-                  const check = deckWireSchema.safeParse(parsed.deck)
-                  deck = check.success ? check.data : null
-                  if (!check.success) log.warn('doc_updated.deck failed schema check — degraded to null')
-                }
-                io.send({
-                  type: 'doc_updated',
-                  body: parsed.body,
-                  summary: parsed.summary || '',
-                  ...(parsed.deck !== undefined ? { deck } : {}),
-                })
-              }
-            } catch {
-              // non-JSON output — nothing to surface
-            }
-            // #767: export 产物 — 聊天内下载卡片（chart-token 长期有效）。
-            // #776: knowledge_payload 平价迁移 — 旁路收编前插件管线在
-            // sidecar_file 里携带 knowledgePayload（产物进知识索引），
-            // 收编后 tool-loop 必须补齐同等形状，否则导出产物从知识库消失。
-            // 内容源 = 导出时的草稿正文（writeBlock 前的 body + 卡片行），
-            // 与"导出内容=草稿"语义一致；plot 产物是图片，不进知识索引。
-            if (toolName === 'insert_asset') {
-              try {
-                const parsed = JSON.parse(output) as {
-                  body?: string
-                  knowledge?: { title: string; content: string }
-                  file?: { fileId?: string; fileName?: string; mimeType?: string; url?: string }
-                }
-                if (parsed.file?.fileId && parsed.file.url) {
-                  const fileName = parsed.file.fileName || parsed.file.fileId
-                  io.send({
-                    type: 'sidecar_file',
-                    file_id: parsed.file.fileId,
-                    file_name: fileName,
-                    mime_type: parsed.file.mimeType || 'application/octet-stream',
-                    download_url: parsed.file.url,
-                    expires_in: 90 * 24 * 3600,
-                    ...(parsed.file.mimeType
-                      ? {
-                          knowledge_payload: parsed.knowledge
-                            ? { title: parsed.knowledge.title, content: parsed.knowledge.content }
-                            : {
-                                title: fileName,
-                                content: parsed.body?.trim() || `Generated document: ${fileName}`,
-                              },
-                        }
-                      : {}),
-                  })
-                }
-              } catch {
-                // non-JSON output — nothing to surface
-              }
-            }
-          }
-          // #176: surface generated charts as images in the message.
-          if (toolName === 'render_chart') {
-            try {
-              const parsed = JSON.parse(output) as { url?: string; markdown?: string; type?: string }
-              if (parsed.url) {
-                io.send({ type: 'chart_created', url: parsed.url, markdown: parsed.markdown || '', chart_type: parsed.type || '' })
-              }
-            } catch {
-              // non-JSON output — nothing to surface
+          // #789③: per-tool SSE 投影走 presenter 注册表 — 新媒体工具只需
+          // 注册一个 presenter,不再往 loop 里加 if 分支。
+          if (parsedOutput) {
+            const env: PresentEnv = { io, toolName }
+            for (const presenter of PRESENTERS) {
+              if (presenter.matches(toolName)) presenter.present(parsedOutput, env)
             }
           }
         } else {

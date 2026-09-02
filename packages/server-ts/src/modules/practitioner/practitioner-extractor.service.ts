@@ -1,4 +1,5 @@
 import { getApiKey, deepseekChat } from '../../common/llm.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 
 export interface PractitionerObservation {
   category: string
@@ -26,8 +27,10 @@ export async function extractPractitionerObservations(
       apiKey,
       { model, maxTokens: 2048, temperature: 0.2 },
     )
-    const parsed = JSON.parse(raw)
-    const items = Array.isArray(parsed) ? parsed : parsed.observations || []
+    // #694: fence 容错解析 — 模型带 ```json 围栏或前后闲话时不再整体失败。
+    const parsed = parseLlmJson<Record<string, unknown>>(raw)
+    if (!parsed) return []
+    const items = Array.isArray(parsed) ? parsed : (parsed.observations as unknown[]) || []
     return items
       .filter((i: any) => i.category && i.content && conversationText.includes(i.evidence || ''))
       .map((i: any) => ({

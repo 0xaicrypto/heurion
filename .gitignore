@@ -144,3 +144,4 @@ packages/server-ts/.env
 # Python bytecode caches
 __pycache__/
 *.pyc
+.env.test-bak

@@ -1,6 +1,7 @@
 import { resolveTierModel } from '../../common/llm-gateway.js'
 import prisma from '../../common/prisma.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 
 export interface ScreeningResult {
   patientHash: string
@@ -93,20 +94,26 @@ export async function screenPatient(
       apiKey,
       { model: resolveTierModel('fast'), maxTokens: 2048, temperature: 0.2 },
     )
-    const parsed = JSON.parse(raw)
-    const ruleResults: ScreeningResult['ruleResults'] = (parsed.ruleResults || rules.map((r: any) => ({
+    // #694: fence 容错 — 模型带围栏/闲话时 screening 不再整体炸掉，
+    // 解析失败按「全部规则未评估」降级，与外层 catch 语义一致。
+    const parsed = parseLlmJson<{
+      verdict?: ScreeningResult['verdict']
+      reason?: string
+      ruleResults?: ScreeningResult['ruleResults']
+    }>(raw)
+    const ruleResults: ScreeningResult['ruleResults'] = parsed?.ruleResults || rules.map((r: any) => ({
       ruleId: r.id,
       rule: r.rule,
       category: r.category,
       passed: false,
       detail: 'Not evaluated',
-    })))
+    }))
 
     const result: ScreeningResult = {
       patientHash,
       studyId,
-      verdict: parsed.verdict || 'pending_review',
-      reason: parsed.reason,
+      verdict: parsed?.verdict || 'pending_review',
+      reason: parsed?.reason,
       ruleResults,
     }
 

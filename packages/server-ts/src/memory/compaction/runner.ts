@@ -10,6 +10,7 @@ import {
   type ExtractedFact,
 } from './budget.js'
 import { factExtractionPrompt, EXTRACTION_RULES } from '../prompts.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 
 const slog = makeLogger('documents.extract')
 
@@ -157,14 +158,14 @@ ${conversation}
       telemetryContext: { userId: ctx.userId, workspaceId: ctx.userId, action: 'chat.compact_segment' },
     },
   )
-  const jsonMatch = result.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) return
-
-  const parsed = JSON.parse(jsonMatch[0]) as {
+  // #694: parseLlmJson 收编 — 此前正则截 {...} 再裸 JSON.parse，围栏/
+  // 闲话变体直接丢失整段压缩结果。
+  const parsed = parseLlmJson<{
     anchoredSummary?: Record<string, any>
     facts?: Array<Record<string, any>>
     episodeUpdate?: string
-  }
+  }>(result)
+  if (!parsed) return
 
   const now = new Date().toISOString()
 

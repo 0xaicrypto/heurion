@@ -1,6 +1,7 @@
 import { resolveTierModel } from '../../common/llm-gateway.js'
 import prisma from '../../common/prisma.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 
 export interface TakeawayInput {
   userId: string
@@ -38,14 +39,10 @@ export async function extractTakeaways(input: TakeawayInput): Promise<Takeaway[]
       { model: resolveTierModel('fast'), maxTokens: 1024, temperature: 0.3 },
     )
     // 边界审计（#253）: a non-JSON LLM reply must degrade to no takeaways,
-    // never a 500.
-    let parsed: any = null
-    try {
-      parsed = JSON.parse(raw || '')
-    } catch {
-      return []
-    }
-    const items = Array.isArray(parsed) ? parsed : parsed.takeaways || []
+    // never a 500. #694: parseLlmJson 带 fence/闲话剥离，围栏回复不再丢。
+    const parsed = parseLlmJson<unknown>(raw || '')
+    if (!parsed) return []
+    const items = Array.isArray(parsed) ? parsed : ((parsed as any).takeaways || [])
 
     const created: Takeaway[] = []
     for (const item of items) {

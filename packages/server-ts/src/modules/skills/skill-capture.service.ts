@@ -1,6 +1,7 @@
 import { resolveTierModel } from '../../common/llm-gateway.js'
 import prisma from '../../common/prisma.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
+import { parseLlmJson } from '../../common/llm-json.js'
 
 /**
  * #298: skill capture — turn a finished conversation into a reusable skill
@@ -21,17 +22,14 @@ const CAPTURE_SYSTEM = `你是临床工作流技能整理器。把用户的对�
 
 function parseDraft(raw: string | null | undefined): SkillDraft {
   const fallback: SkillDraft = { name: '', description: '', steps: [], prompt: '' }
-  if (!raw) return fallback
-  try {
-    const parsed = JSON.parse(raw)
-    return {
-      name: String(parsed.name || '').slice(0, 120),
-      description: String(parsed.description || '').slice(0, 300),
-      steps: Array.isArray(parsed.steps) ? parsed.steps.map((s: unknown) => String(s).slice(0, 500)) : [],
-      prompt: String(parsed.prompt || '').slice(0, 4000),
-    }
-  } catch {
-    return fallback
+  // #694: parseLlmJson — fence 剥离 + 容错，null 时回退空草稿。
+  const parsed = parseLlmJson<Record<string, unknown>>(raw)
+  if (!parsed) return fallback
+  return {
+    name: String(parsed.name || '').slice(0, 120),
+    description: String(parsed.description || '').slice(0, 300),
+    steps: Array.isArray(parsed.steps) ? parsed.steps.map((s: unknown) => String(s).slice(0, 500)) : [],
+    prompt: String(parsed.prompt || '').slice(0, 4000),
   }
 }
 

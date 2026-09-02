@@ -76,3 +76,15 @@ export function parseDbJson<T = Record<string, unknown>>(text: string | null | u
   if (!text) return undefined
   try { return JSON.parse(text) as T } catch { return undefined }
 }
+
+/**
+ * #694 — array-shaped LLM output. Several extractors ask the model for a
+ * bare JSON array; models still fence them or wrap in prose. Returns the
+ * array when the output parses to one, an object's `items`-style array
+ * field is NOT auto-unwrapped here (callers decide — practitioner uses
+ * `{observations}` while distiller expects a bare array), null otherwise.
+ */
+export function parseLlmJsonArray<T = unknown>(raw: string | null | undefined): T[] | null {
+  const parsed = parseLlmJson<unknown>(raw)
+  return Array.isArray(parsed) ? (parsed as T[]) : null
+}
