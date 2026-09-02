@@ -26,7 +26,7 @@ export function ChartLibrary({ onInsert }: { onInsert?: (markdown: string, title
   const load = () => {
     setLoading(true);
     api.listGeneratedCharts()
-      .then(r => setEntries(r.charts as unknown as LibraryEntry[]))
+      .then(r => setEntries(r.charts))
       .catch(err => setError(err instanceof ApiError ? err.messageText : String(err)))
       .finally(() => setLoading(false));
   };

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Send, FileText, Mail, BookOpen, Copy, Check, Download } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
+import { downloadBlob } from '@/lib/download';
 import { Alert, Button, Card, Input, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import type { JournalRecommendation, FormatTemplate, SubmissionDraft } from '@/lib/types';
@@ -271,13 +272,9 @@ function CoverTab({ title, abstract, authors, draft, onSaved }: { title: string;
 
   const downloadCoverLetter = () => {
     if (!text) return;
+    // #653: 下载触发收敛 lib/download.downloadBlob。
     const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `cover-letter-${(title || 'paper').replace(/[^a-zA-Z0-9]+/g, '-').slice(0, 40)}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `cover-letter-${(title || 'paper').replace(/[^a-zA-Z0-9]+/g, '-').slice(0, 40)}.md`);
   };
 
   const copy = async () => {

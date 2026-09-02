@@ -3,27 +3,15 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Brain, Check, ExternalLink, Inbox, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
+// #653: 待审批行投影/加载与 today widget 收敛到共享 lib。
+import { fetchIngestionRows, kindVariant, type IngestionRow as InboxRow } from '@/lib/ingestion-rows';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 import { RejectReasonDialog } from './RejectReasonDialog';
-import type { ApprovalRequest, MedicalRecordEntry, MemoryProposal } from '@/lib/types';
-
-interface InboxRow {
-  approval: ApprovalRequest;
-  entry: MedicalRecordEntry | null;
-  proposal: MemoryProposal | null;
-  patientName?: string;
-}
+import type { MedicalRecordEntry, MemoryProposal } from '@/lib/types';
 
 interface IngestionInboxProps {
   onChanged?: () => void;
 }
-
-const kindVariant: Record<string, 'default' | 'success' | 'warning' | 'error'> = {
-  fact: 'success',
-  article: 'warning',
-  episode_summary: 'default',
-  compaction_summary: 'default',
-};
 
 export function IngestionInbox({ onChanged }: IngestionInboxProps) {
   const { t } = useTranslation();
@@ -41,33 +29,8 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [entriesRes, memoriesRes, patientsRes] = await Promise.all([
-        api.listPendingApprovals({ targetType: 'MedicalRecordEntry' }),
-        api.listPendingApprovals({ targetType: 'MemoryProposal' }),
-        api.listPatients().catch(() => []),
-      ]);
-      const patientNames = new Map(patientsRes.map((p) => [p.patient_hash, p.name]));
-      const entryRows: InboxRow[] = entriesRes.requests.map((approval) => {
-        const payload = approval.payload as Record<string, unknown> | null;
-        const entry = payload && typeof payload.id === 'string' ? (payload as unknown as MedicalRecordEntry) : null;
-        return {
-          approval,
-          entry,
-          proposal: null,
-          patientName: entry?.patientHash ? patientNames.get(entry.patientHash) : undefined,
-        };
-      });
-      const proposalRows: InboxRow[] = memoriesRes.requests.map((approval) => {
-        const payload = approval.payload as Record<string, unknown> | null;
-        const proposal = payload && typeof payload.kind === 'string' ? (payload as unknown as MemoryProposal) : null;
-        return {
-          approval,
-          entry: null,
-          proposal,
-          patientName: proposal?.patientHash ? patientNames.get(proposal.patientHash) : undefined,
-        };
-      });
-      setRows([...entryRows, ...proposalRows]);
+      const rows = await fetchIngestionRows();
+      setRows(rows);
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {

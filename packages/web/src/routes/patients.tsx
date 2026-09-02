@@ -8,6 +8,7 @@ import { SkillsBar } from '@/components/SkillsBar';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import { ChatMessages } from '@/components/chat/ChatMessages';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
+import { isEnterSendKey } from '@/lib/chat-composer';
 import { Alert, Button, Input, Card, Badge, Skeleton, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/api';
@@ -669,7 +670,7 @@ export function PatientChatPage() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    if (isEnterSendKey(e)) { e.preventDefault(); handleSend(); } // #704 IME 守卫统一(#653)
   };
 
   if (!hash) {

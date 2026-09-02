@@ -113,7 +113,8 @@ export class FilesApi extends ApiCore {
   }
 
   /** #402-followup: generated-chart library (Reactome + bioscene + charts). */
-  async listGeneratedCharts(): Promise<{charts: Array<{file_id: string; url: string; title: string; tool: string; mode: string; size_bytes: number; created_at: string; pathway_id?: string}>}> {
+  // #653: 返回类型引用 ChartLibrary.LibraryEntry(单一来源,不再同构重定义)。
+  async listGeneratedCharts(): Promise<{ charts: import('@/components/chat/ChartLibrary').LibraryEntry[] }> {
     return this.fetch('/api/v1/files/generated');
   }
 

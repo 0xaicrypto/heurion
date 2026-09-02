@@ -15,6 +15,7 @@ import { ChatMessages } from '@/components/chat/ChatMessages';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
+import { isEnterSendKey } from '@/lib/chat-composer';
 import { cn } from '@/lib/utils';
 import { Radar } from 'lucide-react';
 import { SkillCapturePrompt } from '@/components/SkillCapturePrompt';
@@ -430,11 +431,9 @@ export function ChatPage() {
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // #704: IME 组词阶段按 Enter 确认候选词 — 不能触发发送。
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+    if (!isEnterSendKey(e)) return;
+    e.preventDefault();
+    handleSend();
   };
 
   const messages = sessionId ? (session?.messages || []) : [];

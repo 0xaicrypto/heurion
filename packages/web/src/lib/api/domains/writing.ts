@@ -1,5 +1,6 @@
 import { ApiCore, ApiError } from './core.js';
 import { parseSseStream } from '../../sse';
+import { downloadBlob } from '../../download';
 import type { PolishStreamChunk } from '@heurion/contracts';
 
 
@@ -69,15 +70,10 @@ export class WritingApi extends ApiCore {
     });
     if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''), '/export');
     const blob = await r.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${(title || 'document').replace(/[^a-z0-9\u4e00-\u9fa5_-]/gi, '_')}.${format}`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
-    return { path: a.download, size_bytes: blob.size };
+    // #653: 下载触发收敛 lib/download.downloadBlob。
+    const filename = `${(title || 'document').replace(/[^a-z0-9\u4e00-\u9fa5_-]/gi, '_')}.${format}`;
+    downloadBlob(blob, filename);
+    return { path: filename, size_bytes: blob.size };
   }
 
   async exportDocx(docId: string, title?: string): Promise<{docx_path: string; size_bytes: number}> {

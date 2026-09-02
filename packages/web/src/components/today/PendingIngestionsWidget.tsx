@@ -5,26 +5,13 @@ import { Check, FileText, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/utils';
 import { Alert, Badge, Button, Card, Input, Skeleton } from '@/components/ui';
-import type { ApprovalRequest, MedicalRecordEntry, MemoryProposal } from '@/lib/types';
+// #653: 待审批行投影/加载与 brain IngestionInbox 收敛到共享 lib。
+import { fetchIngestionRows, kindVariant, type IngestionRow as PendingRow } from '@/lib/ingestion-rows';
 
 interface PendingIngestionsWidgetProps {
   limit?: number;
   onCountChange?: (count: number) => void;
 }
-
-interface PendingRow {
-  approval: ApprovalRequest;
-  entry: MedicalRecordEntry | null;
-  proposal: MemoryProposal | null;
-  patientName?: string;
-}
-
-const kindVariant: Record<string, 'default' | 'success' | 'warning' | 'error'> = {
-  fact: 'success',
-  article: 'warning',
-  episode_summary: 'default',
-  compaction_summary: 'default',
-};
 
 export function PendingIngestionsWidget({ limit = 5, onCountChange }: PendingIngestionsWidgetProps) {
   const { t, i18n } = useTranslation();
@@ -39,27 +26,7 @@ export function PendingIngestionsWidget({ limit = 5, onCountChange }: PendingIng
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [entriesRes, memoriesRes, patientsRes] = await Promise.all([
-        api.listPendingApprovals({ targetType: 'MedicalRecordEntry' }),
-        api.listPendingApprovals({ targetType: 'MemoryProposal' }),
-        api.listPatients().catch(() => []),
-      ]);
-      const approvalsRes = { requests: [...entriesRes.requests, ...memoriesRes.requests] };
-      const patientNames = new Map(patientsRes.map((p) => [p.patient_hash, p.name]));
-      const nextRows: PendingRow[] = approvalsRes.requests.map((approval) => {
-        const payload = approval.payload as Record<string, unknown> | null;
-        const proposal = payload && typeof payload.kind === 'string' ? (payload as unknown as MemoryProposal) : null;
-        // MemoryProposal payloads also carry an `id` — only treat a payload
-        // as a MedicalRecordEntry when it is NOT a proposal.
-        const entry = !proposal && payload && typeof payload.id === 'string' ? (payload as unknown as MedicalRecordEntry) : null;
-        const patientHash = proposal?.patientHash ?? entry?.patientHash;
-        return {
-          approval,
-          entry,
-          proposal,
-          patientName: patientHash ? patientNames.get(patientHash) : undefined,
-        };
-      });
+      const nextRows = await fetchIngestionRows();
       setRows(nextRows);
       setTotal(nextRows.length);
       onCountChange?.(nextRows.length);

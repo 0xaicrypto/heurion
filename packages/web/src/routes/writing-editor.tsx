@@ -17,6 +17,7 @@ import { Alert, Button, Skeleton, Textarea, Input } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { toSlides, type Slide } from '@/lib/deck';
+import { isEnterSendKey } from '@/lib/chat-composer';
 import type { DeckWire } from '@/lib/types';
 // #696: 状态机全部下沉 hooks — 路由只保留编排与布局。
 import { usePolishBubble } from './writing-editor/bubble';
@@ -1075,7 +1076,7 @@ export function WritingEditorPage() {
                   <Textarea
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void chat.handleSendChat(); } }}
+                    onKeyDown={(e) => { if (!isEnterSendKey(e)) return; e.preventDefault(); void chat.handleSendChat(); }}
                     onPaste={chat.handleChatPaste}
                     placeholder="Ask a question..."
                     rows={1}
