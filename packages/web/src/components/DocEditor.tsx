@@ -145,6 +145,23 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     return captureScrollContainer(editor.view.dom as HTMLElement)
   }, [editor])
 
+  /** #752-cursor/#812: 外部内容替换的统一入口 — 快照当前选区+滚动位置,
+   *  setContent 后原位恢复。所有 AI apply / restore / doc load 的内容替换
+   *  都走这里,用户不再被甩到文章末尾。 */
+  const applyExternalContent = useCallback((md: string) => {
+    const { from, to } = editor.state.selection;
+    const sc = captureScroll();
+    applyMdRef.current = md;
+    editor.commands.setContent(markdownToHtml(md), { emitUpdate: false });
+    applyMdRef.current = null;
+    const size = editor.state.doc.content.size;
+    editor.commands.setTextSelection({
+      from: Math.min(from, size),
+      to: Math.min(to, size),
+    });
+    if (sc) sc.el.scrollTop = sc.top;
+  }, [editor, captureScroll]);
+
   // External markdown update (AI edit / doc load) → convert and apply.
   useEffect(() => {
     if (!editor) return;
@@ -156,19 +173,8 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     // incoming 与当前编辑器内容等价时直接跳过。
     const currentMd = htmlToMarkdown(editor.getHTML());
     if (currentMd === value) return;
-    // 真正的外部更新(打开文档/restore/他人编辑):保留当前选区位置
-    const { from, to } = editor.state.selection;
-    const sc = captureScroll();
-    applyMdRef.current = value;
-    editor.commands.setContent(markdownToHtml(value), { emitUpdate: false });
-    applyMdRef.current = null;
-    const size = editor.state.doc.content.size;
-    editor.commands.setTextSelection({
-      from: Math.min(from, size),
-      to: Math.min(to, size),
-    });
-    if (sc) sc.el.scrollTop = sc.top;
-  }, [value, editor, captureScroll]);
+    applyExternalContent(value);
+  }, [value, editor, captureScroll, applyExternalContent]);
 
   // 审阅模式:应用 AI diff 并进入只读审阅
   useEffect(() => {
@@ -180,18 +186,22 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       setSelectedChange(null);
       setChangeNav({ idx: -1, total: 0 });
       (editor.commands as any).setTrackChangesMode('edit');
-      // 退出审阅(含"放弃修改")→ 还原为当前正文
-      applyMdRef.current = value;
-      editor.commands.setContent(markdownToHtml(value), { emitUpdate: false });
-      applyMdRef.current = null;
+      // 退出审阅(含"放弃修改")→ 还原为当前正文。
+      // #812: accept 后的落地也走位置保持 — 用户停在原选区/滚动处,
+      // 不再被 setContent 甩到文档末尾。
+      applyExternalContent(value);
       return;
     }
     if (reviewKeyRef.current === diffReview.key) return;
     reviewKeyRef.current = diffReview.key;
     statsRef.current = { accepted: 0, rejected: 0 };
     applyMdRef.current = value;
+    // #812: 进入审阅同样保持滚动位置 — 用户视线不被拽走。
+    const sc = captureScroll();
+    const savedTop = sc?.top ?? null;
     applyTrackedDiff(editor, markdownToHtml(diffReview.old), markdownToHtml(diffReview.next), AI_AUTHOR);
     applyMdRef.current = null;
+    if (sc && savedTop !== null) sc.el.scrollTop = savedTop;
     (editor.commands as any).setTrackChangesMode('view');
     setReviewStats({ pending: getPendingChangeCount(editor), accepted: 0, rejected: 0 });
     setSelectedChange(null);
