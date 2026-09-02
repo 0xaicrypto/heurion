@@ -234,6 +234,8 @@ export async function filesRouter(app: FastifyInstance) {
         const stat = fs.statSync(path.join(dir, f))
         // #fix: .tmp 分片临时目录不进入文件列表。
         if (stat.isDirectory()) return null
+        // #811: 图库域分离 — AI 生成产物(chart/scene/img)不进知识库文件列表。
+        if (isGeneratedFileId(f)) return null
         const parts = f.split('_')
         return {
           file_id: f,
@@ -283,7 +285,10 @@ export async function filesRouter(app: FastifyInstance) {
     const limit = Math.min(500, Math.max(1, parseInt(q?.limit || '50', 10)))
     const offset = Math.max(0, parseInt(q?.offset || '0', 10))
     const patientHash = q?.patient_hash ? String(q.patient_hash) : undefined
-    const where = { userId, deletedAt: null, ...(patientHash ? { patientHash } : {}) }
+    // #811: 域分离 — chat picker 只列用户上传,排除 AI 生成产物(chart/scene/img)。
+    const where = { userId, deletedAt: null,
+      NOT: [{ id: { startsWith: 'chart_' } }, { id: { startsWith: 'scene_' } }, { id: { startsWith: 'img_' } }],
+      ...(patientHash ? { patientHash } : {}) }
     const [rows, total] = await Promise.all([
       prisma.fileIndex.findMany({ where, orderBy: { createdAt: 'desc' }, take: limit, skip: offset }),
       prisma.fileIndex.count({ where }),

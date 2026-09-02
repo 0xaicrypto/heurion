@@ -12,7 +12,7 @@ export interface GeneratedChartEntry {
   file_id: string
   url: string
   title: string
-  tool: 'render_scene' | 'render_chart' | 'unknown'
+  tool: 'render_scene' | 'render_chart' | 'generate_image' | 'unknown'
   mode: 'reactome' | 'bioscene' | 'chart' | 'unknown'
   size_bytes: number
   created_at: string
@@ -21,6 +21,8 @@ export interface GeneratedChartEntry {
 
 const SCENE_PREFIX = 'scene_'
 const CHART_PREFIX = 'chart_'
+// #811: generate_image 产物(img_*)也归图库域。
+const IMAGE_PREFIX = 'img_'
 
 /** Heuristic: Reactome SVGs are large-viewBox official diagrams. */
 function detectMode(fileId: string, svgHead: string): 'reactome' | 'bioscene' | 'chart' | 'unknown' {
@@ -63,7 +65,8 @@ export function listGeneratedCharts(userId: string): GeneratedChartEntry[] {
   if (!fs.existsSync(dir)) return []
 
   const files = fs.readdirSync(dir)
-    .filter((f) => (f.startsWith(SCENE_PREFIX) || f.startsWith(CHART_PREFIX)) && f.endsWith('.svg'))
+    .filter((f) => f.startsWith(SCENE_PREFIX) || f.startsWith(CHART_PREFIX)
+      || (f.startsWith(IMAGE_PREFIX) && (f.endsWith('.png') || f.endsWith('.jpg') || f.endsWith('.jpeg') || f.endsWith('.webp'))))
     .map((f) => {
       const stat = fs.statSync(path.join(dir, f))
       const head = fs.readFileSync(path.join(dir, f), 'utf-8').slice(0, 600)
@@ -86,7 +89,9 @@ export function listGeneratedCharts(userId: string): GeneratedChartEntry[] {
       file_id,
       url: '',
       title: meta.title || (mode === 'reactome' ? 'Reactome pathway diagram' : mode === 'chart' ? 'Chart' : 'Custom schematic'),
-      tool: (meta.tool as GeneratedChartEntry['tool']) || (file_id.startsWith(CHART_PREFIX) ? 'render_chart' : 'render_scene'),
+      tool: (meta.tool as GeneratedChartEntry['tool'])
+        || (file_id.startsWith(CHART_PREFIX) ? 'render_chart'
+          : file_id.startsWith(IMAGE_PREFIX) ? 'generate_image' : 'render_scene'),
       mode,
       size_bytes: stat.size,
       created_at: new Date(stat.mtimeMs).toISOString(),

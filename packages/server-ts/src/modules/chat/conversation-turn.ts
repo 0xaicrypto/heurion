@@ -411,6 +411,10 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         // #801-review: 图表/示意图请求的降级路径 — render_chart 受 heurion/chart 插件门控,
         // generate_image 需图像 API 配置。工具不可用时明确告知用户,不静默退化成纯文字。
         const chartRule = '图表/示意图规范:用户要求图表、曲线、示意图时,优先调用 render_chart(图表/曲线/示意图);需要照片级插图时用 generate_image。若这两个工具不可用(未安装 heurion/chart 插件或未配置图像 API),明确告诉用户原因和开启路径(插件市场安装 heurion/chart / 设置页配置图像生成),不要假装已生成,也不要输出 ASCII 假图。'
+        // #806: 修订意见批处理 — 单锚点原语之上的批量旅程（计划→确认→逐条→对照表）。
+        const revisionRule = '修订意见批处理:当用户一次给出多条修改意见/审稿意见(编号列表或多段)时,先在回复中输出「意见→修改点」计划表(每条:意见摘要/目标章节/改动方案,不调用工具),经用户确认后逐条执行 — 每轮一次 edit_document,回复注明「意见 N/共 M 已落实」;全部完成后输出修订对照表(原意见×实际改动×所在章节)。修回(response letter)场景:对照表后追加给审稿人的正式回复信草稿(意见→回复→改动位置)。'
+        // #807: 引用纪律 — References 零编造。
+        const citationRule = '引用纪律:新增/修改 References 或正文内引用时,必须先用 search_citation 检索 PubMed 获取真实 PMID/作者/年份,只允许引用检索命中的文献(保留 PMID 便于核对);检索无命中或工具失败时如实告知用户,严禁编造任何 PMID/DOI/作者/年份。'
         // #fix: 确认循环 — 用户已同意计划后模型仍反复询问"是否开始",
         // 导致对话卡死(生产反馈:同意两次仍在循环)。确认后必须立即执行。
         const confirmRule = '行动纪律:用户回复「同意」「可以」「开始」「继续」「好的」「按此计划」等确认信号后,不要再重复询问确认,立即执行计划的第一步:若文档正文为空,先调用 edit_document 的 import_reference 导入参考材料(或直接用 old_text/new_text 润色),然后逐段处理并写回草稿。不要只给计划不执行,不要在每步后重复询问同一问题。'
@@ -442,7 +446,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           }
         }
 
-        return `\n\n## Current Document\n标题：${doc.title}\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n${selection ? `## 用户选中文本\n[用户选中的文本 — 如需修改请从此处逐字复制 old_text(空格/换行差异会被自动忽略)。]\n${selection}\n\n` : ''}## Reference Materials\n${refBlock || '(none)'}${refHint}\n\n${refSourceRule}\n\n${rules}\n\n${formatRule}\n\n${chartRule}\n\n${confirmRule}${deckBlock}`
+        return `\n\n## Current Document\n标题：${doc.title}（正文约 ${Math.round(docText.replace(/\s+/g, ' ').length / 2)} 字）\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n${selection ? `## 用户选中文本\n[用户选中的文本 — 如需修改请从此处逐字复制 old_text(空格/换行差异会被自动忽略)。]\n${selection}\n\n` : ''}## Reference Materials\n${refBlock || '(none)'}${refHint}\n\n${refSourceRule}\n\n${rules}\n\n${formatRule}\n\n${chartRule}\n\n${revisionRule}\n\n${citationRule}\n\n${confirmRule}${deckBlock}`
       },
     },
     {

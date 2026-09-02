@@ -202,9 +202,10 @@ export async function finalizeUpload(input: FinalizeUploadInput): Promise<Finali
   }
 }
 
-/** Generated file ids look like `scene_*` / `chart_*` (render output). */
+/** Generated file ids look like `scene_*` / `chart_*` / `img_*` (AI render
+ *  output — #811 图库与知识库域分离的判别键)。 */
 export function isGeneratedFileId(fileId: string): boolean {
-  return fileId.startsWith('scene_') || fileId.startsWith('chart_')
+  return fileId.startsWith('scene_') || fileId.startsWith('chart_') || fileId.startsWith('img_')
 }
 
 export function newFileId(filename: string): string {

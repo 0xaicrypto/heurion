@@ -14,6 +14,7 @@ import { ensureDraftBody } from '../../tools/doc-import.js'
 import { writeDocVersion } from '../../tools/doc-version-writer.js'
 import { makeLogger } from '../../common/logger.js'
 import { refreshFileUrls } from '../../common/chart-token.js'
+import { lintDocument } from '../../common/doc-lint.js'
 // #790: polish 流复用共享 SSE 传输。
 import { createRawSseSender } from '../chat/chat-sse.js'
 
@@ -152,6 +153,17 @@ export async function documentsRouter(app: FastifyInstance) {
   })
 
   // ── Snapshots ──
+  // #809: 一致性 lint（纯规则）— 缩写纪律/图表编号/heading 跳级。
+  app.get('/api/v1/docs/:docId/lint', async (request) => {
+    const docId = (request.params as any).docId
+    const doc = await (prisma as any).doc.findFirst({
+      where: { id: docId, userId: request.user!.userId },
+      select: { body: true },
+    })
+    if (!doc) return { issues: [], error: 'not found' }
+    return { issues: lintDocument(String(doc.body || '')) }
+  })
+
   app.get('/api/v1/docs/:docId/snapshots', async (request) => {
     const snaps = await (prisma as any).docSnapshot.findMany({
       where: { docId: (request.params as any).docId }, orderBy: { id: 'desc' },

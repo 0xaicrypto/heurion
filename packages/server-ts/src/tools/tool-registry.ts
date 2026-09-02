@@ -8,6 +8,7 @@ import { EditDocumentTool } from './edit-document-tool.js'
 import { InsertAssetTool } from './insert-asset-tool.js'
 import { FixDocumentImagesTool } from './fix-document-images-tool.js'
 import { QueryLogsTool, isUserAdmin } from './query-logs-tool.js'
+import { SearchCitationTool } from './search-citation-tool.js'
 import { EditDeckTool } from './edit-deck-tool.js'
 import { LoadSkillTool } from './skill-tools.js'
 import { RenderChartTool } from './render-chart-tool.js'
@@ -118,7 +119,9 @@ export class ToolRegistry {
     // #fix 2026-09: 图片链接先审计后修复 — 仅 doc- 会话暴露（与 edit_document 同门控）。
     this.register(new FixDocumentImagesTool(ctx))
     // #801: AI 日志检索 — 排障一等能力,仅 admin 用户暴露。
-    this.register(new QueryLogsTool(ctx))    // #454-followup: plugin-gated renderers — registered so execute() can
+    this.register(new QueryLogsTool(ctx))
+    // #807: 引用实体化 — PubMed 真实检索,治 References 编造。
+    this.register(new SearchCitationTool(ctx))    // #454-followup: plugin-gated renderers — registered so execute() can
     // give a clear error, but excluded from definitions unless installed.
     this.register(new RenderChartTool(ctx))
     this.register(new LoadSkillTool(ctx))
