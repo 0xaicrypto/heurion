@@ -399,8 +399,14 @@ jobs:
           scp -o StrictHostKeyChecking=no /tmp/heurion-deploy.env ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/.env.production
           scp -o StrictHostKeyChecking=no docker-compose.yml Caddyfile ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/
           scp -o StrictHostKeyChecking=no scripts/deploy-production-compose.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/scripts/
+          # #801 P1: 日志栈(Loki/Alloy/Grafana)随部署同步配置并确保在跑 —
+          # 配置更新(dashboard/采集规则/Loki 保留)每次 deploy 自动生效。
+          scp -o StrictHostKeyChecking=no -r monitoring docker-compose.monitoring.yml ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             "cd /opt/heurion && chmod +x scripts/deploy-production-compose.sh && NEXUS_IMAGE=$NEXUS_IMAGE EMBEDDING_IMAGE=$EMBEDDING_IMAGE STATS_IMAGE=$STATS_IMAGE bash scripts/deploy-production-compose.sh"
+          # #801 P1: 监控栈与主应用独立 compose — up -d 幂等,配置变更才重建。
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "cd /opt/heurion && docker compose -f docker-compose.monitoring.yml --env-file .env.production up -d"
 
       - name: Purge Cloudflare cache (stale HTML references removed bundles)
         env:
