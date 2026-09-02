@@ -3,6 +3,7 @@ import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import { SCHEMA_VERSION } from '@heurion/contracts'
+import type { PolishStreamChunk } from '@heurion/contracts'
 import { renderDocxBuffer, renderPdfBuffer, isExportFormat } from './markdown-export.js'
 import { polishSelection, polishSelectionFallback, writeMethodsSection, writePaperBackground, MAX_POLISH_CHARS, resolvePolishModel } from './document-writing.service.js'
 // #777: pptx 解析导入 — deck/文章双落点（后台执行）。
@@ -238,7 +239,8 @@ export async function documentsRouter(app: FastifyInstance) {
     // #790: SSE 传输复用 createRawSseSender（断连 abort 信号 + 防写死
     // socket），不再手写 writeHead / (d:any) => raw.write。
     const sse = createRawSseSender(reply)
-    const send = sse.send
+    // #797: 产出端过契约 — 发送形状由 PolishStreamChunk 编译期锁定。
+    const send = (d: PolishStreamChunk) => sse.send(d)
 
     // S3+S5: 取消传导 — 客户端断开或 150s 总超时都 abort 上游生成
     const controller = new AbortController()

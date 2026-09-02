@@ -159,6 +159,34 @@ export interface SidecarFileInfo {
         content: string;
     };
 }
+/**
+ * #797 — One chunk of the polish SSE stream (POST /api/v1/docs/:docId/polish).
+ * Server emission shapes (documents.router + document-writing.service):
+ * `{text}`, `{type:'reasoning',text}`, `{done:true}`, `{type:'error',message}`.
+ * The wire union below mirrors those exactly so web consumption can narrow
+ * instead of casting `as any`.
+ */
+export type PolishStreamChunk = {
+    text: string;
+    type?: undefined;
+    done?: undefined;
+    message?: undefined;
+} | {
+    type: 'reasoning';
+    text?: string;
+    done?: undefined;
+    message?: undefined;
+} | {
+    done: true;
+    type?: undefined;
+    text?: undefined;
+    message?: undefined;
+} | {
+    type: 'error';
+    message?: string;
+    text?: undefined;
+    done?: undefined;
+};
 /** One chunk of the chat SSE stream. */
 export type ChatStreamChunk = {
     type: 'turn_started';

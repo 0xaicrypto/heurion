@@ -88,23 +88,20 @@ export function usePolishBubble(input: {
       if (rafId === null) rafId = requestAnimationFrame(flush);
     };
     try {
-      let done = false;
       for await (const chunk of api.polishDoc(docId, selection.slice(0, 20000), instruction || undefined, controller.signal)) {
-        if ((chunk as any).type === 'error') throw new Error(String((chunk as any).message || 'AI 服务返回错误'));
-        if ((chunk as any).type === 'reasoning') {
-          reasoningText += String((chunk as any).text ?? '');
+        // #797: PolishStreamChunk 契约收窄 — 不再 as any。
+        if (chunk.type === 'error') throw new Error(String(chunk.message || 'AI 服务返回错误'));
+        if (chunk.type === 'reasoning') {
+          reasoningText += String(chunk.text ?? '');
           schedule();
           continue;
         }
         if (typeof chunk.text === 'string' && chunk.text) streamText += chunk.text;
         schedule();
-        if (chunk.done) { done = true; break; }
+        if (chunk.done) break;
       }
       if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
       setBubbleRun((prev) => (prev ? { ...prev, stream: streamText, reasoning: reasoningText } : prev));
-      if (!done && !streamText.trim()) {
-        // 流被服务端 done 前收口但零正文 — 与空结果同一提示路径。
-      }
       if (!streamText.trim()) {
         const msg = reasoningText
           ? t('writing.polishReasoningNoOutput', '模型思考了 {{n}} 字但未产出正文 — 请点「重试」,通常第二次会正常输出', { n: reasoningText.length })

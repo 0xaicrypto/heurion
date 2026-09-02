@@ -1,5 +1,6 @@
 import { ApiCore, ApiError } from './core.js';
 import { parseSseStream } from '../../sse';
+import type { PolishStreamChunk } from '@heurion/contracts';
 
 
 export class WritingApi extends ApiCore {
@@ -84,7 +85,9 @@ export class WritingApi extends ApiCore {
     return { docx_path: res.path, size_bytes: res.size_bytes };
   }
 
-  async *polishDoc(docId: string, selection: string, instruction?: string, signal?: AbortSignal): AsyncIterable<{text?: string; reasoning?: string; done?: boolean; type?: string; message?: string}> {
+  // #797: 契约类型化 — PolishStreamChunk 来自 @heurion/contracts(此前
+  // wire 形状手写在本文件,与服务端人肉对齐)。
+  async *polishDoc(docId: string, selection: string, instruction?: string, signal?: AbortSignal): AsyncIterable<PolishStreamChunk> {
     const r = await fetch(`/api/v1/docs/${docId}/polish`, {
       method: 'POST',
       headers: this.headers({ 'Content-Type': 'application/json' }),
@@ -94,7 +97,7 @@ export class WritingApi extends ApiCore {
     });
     if (!r.ok || !r.body) throw new ApiError(r.status, await r.text().catch(() => ''), '/polish');
     // #457: single SSE parser.
-    yield* parseSseStream<{text?: string; reasoning?: string; done?: boolean; type?: string; message?: string}>(r);
+    yield* parseSseStream<PolishStreamChunk>(r);
   }
 
 }
