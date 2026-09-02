@@ -1,0 +1,41 @@
+# #801 P1 — Loki 单机二进制模式(local filesystem + TSDB)。
+# 第一消费者是 AI:结构化 JSON 行按 label(container/job/stream)+JSON 字段
+# (module/level/fileId/docId/sessionId)可经 LogQL /loki/api/v1/query_range 检索。
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2026-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# 保留 30d(info 级)——issue #801:warn/error 90d 属 P2 分桶,当前统一 30d。
+limits_config:
+  retention_period: 720h
+  reject_old_samples: true
+  reject_old_samples_max_age: 24h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem

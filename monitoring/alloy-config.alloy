@@ -1,0 +1,36 @@
+// #801 P1 — Grafana Alloy:从 docker socket 采集全部容器 stdout/stderr → Loki。
+// label 设计(检索主键,见 issue #801「模块日志分离与检索设计」):
+//   container = 容器名(nexus-server/nexus-loki/...)
+//   stream    = stdout|stderr
+//   job       = "docker"
+// 应用内 makeLogger 的 JSON 行(module/level/fileId/...)在查询侧用
+// LogQL | json 解析,不在采集侧展开(保持采集层零解析、全量转发)。
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.relabel.containers.output
+  forward_to    = [loki.write.default.receiver]
+  relabel_rules = discovery.relabel.containers.rules
+  labels        = { job = "docker" }
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

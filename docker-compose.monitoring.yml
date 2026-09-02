@@ -1,0 +1,65 @@
+# #801 P1 — 日志栈：Loki（存储/检索）+ Grafana Alloy（采集）+ Grafana（人工 UI）。
+#
+# 设计要点（issue #801「模块日志分离与检索设计」+ AI 消费补充）：
+# - 全部端口**不对外发布**（AI/排障经 docker 网络 http://loki:3100 访问；
+#   人工看板经 SSH 隧道访问 127.0.0.1:3000）——日志面不暴露公网。
+# - 网络：加入主 compose 的 heurion_nexus-net（external），nexus-server
+#   后续的 admin 日志查询端点(#801 AI 消费)可直接连 loki:3100。
+# - 采集层零解析：Alloy 只打 container/stream 标签全量转发，应用 JSON 行
+#   的 module/level/fileId 等 key 在查询侧 LogQL | json 展开。
+#
+# 部署：docker compose -f docker-compose.monitoring.yml --env-file .env.production up -d
+
+services:
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: nexus-loki
+    command: -config.file=/etc/loki/config.yaml
+    volumes:
+      - ./monitoring/loki-config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    networks: [heurion_nexus-net]
+    restart: unless-stopped
+    logging: &monitoring-logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  alloy:
+    image: grafana/alloy:v1.5.1
+    container_name: nexus-alloy
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./monitoring/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [loki]
+    networks: [heurion_nexus-net]
+    restart: unless-stopped
+    logging: *monitoring-logging
+
+  grafana:
+    image: grafana/grafana:11.5.0
+    container_name: nexus-grafana
+    # 仅绑回环 — 人工 UI 走 SSH 隧道,不暴露公网。
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-changeme-on-first-login}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [loki]
+    networks: [heurion_nexus-net]
+    restart: unless-stopped
+    logging: *monitoring-logging
+
+volumes:
+  loki-data:
+  grafana-data:
+
+networks:
+  heurion_nexus-net:
+    external: true
