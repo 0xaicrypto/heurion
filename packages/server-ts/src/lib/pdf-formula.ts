@@ -10,6 +10,10 @@
  * - PDF_FORMULA_OCR_MAX_PAGES 默认 10(只处理前 N 页)
  * - PDF_FORMULA_OCR_CONCURRENCY 默认 3(并行视觉调用)
  * - 失败静默降级(返回空串,不阻断导入)
+ * - #698: 结果进程内 LRU 缓存(key=userId:fileId,TTL 30min) — 同一文件
+ *   第二次 import_reference/重新润色不再重烧视觉调用(uploads 文件不可变,
+ *   新上传=新 fileId,缓存安全;与 document-extractor 的提取缓存同款)。
+ *   失败/空结果不缓存,下次可重试。
  */
 import { PDFParse } from 'pdf-parse'
 import fs from 'fs'
@@ -48,11 +52,41 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return results
 }
 
+// #698: 公式 OCR 结果 LRU — key=userId:fileId, TTL 30min, 上限 50 条。
+const FORMULA_CACHE_MAX = 50
+const FORMULA_CACHE_TTL_MS = 30 * 60 * 1000
+const formulaCache = new Map<string, { text: string; at: number }>()
+
 /**
  * 对 PDF 逐页截图 → 视觉模型提取公式转 LaTeX。返回 markdown 公式段
  * (以 '## 公式' 开头,按页分组),失败/无公式返回 ''。
+ * #698: 命中缓存直接返回 — 同一文件重复导入零视觉调用。
  */
 export async function extractFormulasFromPdf(userId: string, fileId: string): Promise<string> {
+  if (!formulaOcrEnabled()) return ''
+  const cacheKey = `${userId}:${fileId}`
+  const hit = formulaCache.get(cacheKey)
+  if (hit && Date.now() - hit.at < FORMULA_CACHE_TTL_MS) {
+    log.info('[formula] cache hit', { fileId })
+    return hit.text
+  }
+  const text = await extractFormulasFromPdfUncached(userId, fileId)
+  // 空结果可能是「无公式」也可能是失败 — 都不缓存,下次重试无副作用。
+  if (text) {
+    if (formulaCache.size >= FORMULA_CACHE_MAX) {
+      let oldest: string | null = null
+      let oldestAt = Infinity
+      for (const [k, v] of formulaCache) {
+        if (v.at < oldestAt) { oldestAt = v.at; oldest = k }
+      }
+      if (oldest) formulaCache.delete(oldest)
+    }
+    formulaCache.set(cacheKey, { text, at: Date.now() })
+  }
+  return text
+}
+
+async function extractFormulasFromPdfUncached(userId: string, fileId: string): Promise<string> {
   if (!formulaOcrEnabled()) return ''
   const filepath = safeUploadPath(userId, fileId)
   if (!filepath || !fs.existsSync(filepath)) return ''
@@ -94,6 +128,8 @@ export async function extractFormulasFromPdf(userId: string, fileId: string): Pr
     })
 
     const found = results.filter((r): r is { page: number; latex: string } => r !== null)
+    // #698: 页级可观测 — 成功/总数一眼可查(llm_cost 侧已有 action=pdf.formula_ocr)。
+    log.info(`[formula] ocr done file=${fileId} pages=${pages} hit=${found.length}`)
     if (found.length === 0) return ''
     return (
       '\n\n## 公式\n\n' +

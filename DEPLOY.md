@@ -175,6 +175,18 @@ docker compose exec nexus-server bash
 
 ---
 
+## Optional: PDF formula OCR
+
+PDF 导入时会把前 N 页渲染成图并调用视觉模型提取公式转 LaTeX（每页一次视觉调用，有成本）。结果按文件缓存（进程内 LRU，TTL 30 分钟，#698）——同一文件重复导入不重烧调用。
+
+```bash
+PDF_FORMULA_OCR=1                 # '0' 关闭（默认开）
+PDF_FORMULA_OCR_MAX_PAGES=10      # 只处理前 N 页
+PDF_FORMULA_OCR_CONCURRENCY=3     # 并行视觉调用数
+```
+
+---
+
 ## Security notes
 
 - The container runs as a **non-root user** (`nexus`, UID 1000). Nothing in the image needs root post-build.
