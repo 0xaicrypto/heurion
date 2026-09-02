@@ -13,17 +13,13 @@ import {
   UPLOAD_ID_RE,
   MAX_CHUNKS,
   CHUNK_MAX_BYTES,
-  MAX_CHUNKED_TOTAL_BYTES,
-  findDedup,
-  finalizeUpload,
+  completeSimpleUpload,
+  completeChunkedUpload,
   isGeneratedFileId,
-  newFileId,
-  sha256Hex,
 } from './files.service.js'
 import { retryPipelineJob } from './file-pipeline.service.js'
 import fs from 'fs'
 import path from 'path'
-import crypto from 'crypto'
 
 export async function filesRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
@@ -41,38 +37,13 @@ export async function filesRouter(app: FastifyInstance) {
     if (!data) return reply.status(400).send({ error: 'No file uploaded' })
 
     const buffer = await data.toBuffer()
-    const sha256 = sha256Hex(buffer)
-    const dir = uploadsDir(request.user!.userId)
-    fs.mkdirSync(dir, { recursive: true })
-
-    // Try dedup via FileIndex (may not exist in older DBs)
-    const existing = await findDedup(request.user!.userId, sha256)
-    if (existing && !existing.deletedAt) {
-      return {
-        file_id: existing.id,
-        name: data.filename,
-        mime: data.mimetype,
-        size_bytes: existing.sizeBytes,
-        patient_hash: (data.fields as any)?.patient_hash?.value || existing.patientHash || null,
-        dedup: true,
-      }
-    }
-
-    // #553: multipart filename 可能含路径分隔 — 净化后再入库。
-    const fileId = newFileId(data.filename)
-    const filepath = path.join(dir, fileId)
-    fs.writeFileSync(filepath, buffer)
-
-    // Read patient_hash from form data
+    // #681/#700: 去重/落盘/收尾在 service — router 只解析 multipart。
     const patientHash = (data.fields?.patient_hash as any)?.value || ''
-
-    return finalizeUpload({
+    return completeSimpleUpload({
       userId: request.user!.userId,
-      fileId,
       filename: data.filename,
       mimeType: data.mimetype || 'application/octet-stream',
-      sha256,
-      sizeBytes: buffer.length,
+      buffer,
       patientHash: patientHash || null,
     })
   })
@@ -111,76 +82,28 @@ export async function filesRouter(app: FastifyInstance) {
   })
 
   app.post('/api/v1/files/upload-complete', async (request, reply) => {
+    // #700: 合并/去重/收尾全部下沉 files.service — router 只做参数校验
+    // 与 HTTP 状态映射。
     const body = (request.body || {}) as any
     const uploadId = String(body.upload_id || '')
     const filename = String(body.filename || '')
     const total = parseInt(String(body.total || ''), 10)
-    const patientHash = String(body.patient_hash || '') || null
-    const mimeType = String(body.mime || '') || 'application/octet-stream'
     if (!UPLOAD_ID_RE.test(uploadId)) return reply.status(400).send({ error: 'Invalid upload_id' })
     if (!Number.isInteger(total) || total < 1 || total > MAX_CHUNKS) {
       return reply.status(400).send({ error: `total must be an integer in [1, ${MAX_CHUNKS}]` })
     }
     if (!filename.trim()) return reply.status(400).send({ error: 'filename is required' })
 
-    const dir = chunkDir(request.user!.userId, uploadId)
-    if (!fs.existsSync(dir)) return reply.status(400).send({ error: 'Upload session not found — upload chunks first' })
-    for (let i = 1; i <= total; i++) {
-      const chunkPath = path.join(dir, `chunk_${String(i).padStart(6, '0')}`)
-      if (!fs.existsSync(chunkPath)) {
-        return reply.status(400).send({ error: `Missing chunk ${i}/${total}` })
-      }
-    }
-
-    // 顺序合并 + 流式 sha256(分片单独落盘,不整读进内存)。
-    const tmpMerged = path.join(dir, 'merged')
-    const hash = crypto.createHash('sha256')
-    let sizeBytes = 0
-    const out = fs.createWriteStream(tmpMerged)
-    await new Promise<void>((resolve, reject) => {
-      out.on('error', reject)
-      for (let i = 1; i <= total; i++) {
-        const buf = fs.readFileSync(path.join(dir, `chunk_${String(i).padStart(6, '0')}`))
-        hash.update(buf)
-        sizeBytes += buf.length
-        out.write(buf)
-      }
-      out.end(() => resolve())
-    })
-    const sha256 = hash.digest('hex')
-
-    if (sizeBytes > MAX_CHUNKED_TOTAL_BYTES) {
-      fs.rmSync(dir, { recursive: true, force: true })
-      return reply.status(413).send({ error: `分片总大小超过 ${Math.round(MAX_CHUNKED_TOTAL_BYTES / 1024 / 1024)}MB 上限` })
-    }
-
-    // 合并后去重(与单次上传同口径)。
-    const existing = await findDedup(request.user!.userId, sha256)
-    if (existing && !existing.deletedAt) {
-      fs.rmSync(dir, { recursive: true, force: true })
-      return {
-        file_id: existing.id,
-        name: filename,
-        mime: mimeType,
-        size_bytes: existing.sizeBytes,
-        patient_hash: patientHash || existing.patientHash || null,
-        dedup: true,
-      }
-    }
-
-    const fileId = newFileId(filename)
-    fs.renameSync(tmpMerged, path.join(uploadsDir(request.user!.userId), fileId))
-    fs.rmSync(dir, { recursive: true, force: true })
-
-    return finalizeUpload({
+    const result = await completeChunkedUpload({
       userId: request.user!.userId,
-      fileId,
+      uploadId,
       filename,
-      mimeType,
-      sha256,
-      sizeBytes,
-      patientHash,
+      mimeType: String(body.mime || '') || 'application/octet-stream',
+      total,
+      patientHash: String(body.patient_hash || '') || null,
     })
+    if (result.status !== 200) return reply.status(result.status).send({ error: result.error })
+    return result.payload
   })
 
   app.post('/api/v1/files/upload-abort', async (request, reply) => {

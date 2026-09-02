@@ -215,3 +215,145 @@ export function newFileId(filename: string): string {
 export function sha256Hex(buffer: Buffer): string {
   return crypto.createHash('sha256').update(buffer).digest('hex')
 }
+
+// ── #700: chunked-upload merge — 上传收尾逻辑单点化 ─────────────────
+// 此前「校验分片齐全 → 顺序合并+流式 sha256 → 体积上限 → 去重 → 搬运 →
+// 清理 → finalize」70 行内联在 router,与单次上传的两套口径并存。现在
+// service 提供唯一入口,router 只剩参数校验与 HTTP 映射。
+
+export type CompleteChunkedResult =
+  | { status: 400; error: string }
+  | { status: 413; error: string }
+  | { status: 200; payload: FinalizedUpload | DedupUploadPayload }
+
+/** 去重命中的响应形状(不含 ingestion 字段 — 与既有 API 契约一致)。 */
+export interface DedupUploadPayload {
+  file_id: string
+  name: string
+  mime: string
+  size_bytes: number
+  patient_hash: string | null
+  dedup: true
+}
+
+/**
+ * 单次上传收尾(去重 → 落盘 → finalize)— router 只留 multipart 解析。
+ */
+export async function completeSimpleUpload(input: {
+  userId: string
+  filename: string
+  mimeType: string
+  buffer: Buffer
+  patientHash: string | null
+}): Promise<FinalizedUpload | DedupUploadPayload> {
+  const { userId, filename, mimeType, buffer, patientHash } = input
+  const sha256 = sha256Hex(buffer)
+  const dir = uploadsDir(userId)
+  fs.mkdirSync(dir, { recursive: true })
+
+  const existing = await findDedup(userId, sha256)
+  if (existing) {
+    return {
+      file_id: existing.id,
+      name: filename,
+      mime: mimeType,
+      size_bytes: existing.sizeBytes,
+      patient_hash: patientHash || existing.patientHash || null,
+      dedup: true,
+    }
+  }
+
+  const fileId = newFileId(filename)
+  fs.writeFileSync(path.join(dir, fileId), buffer)
+  return finalizeUpload({
+    userId,
+    fileId,
+    filename,
+    mimeType,
+    sha256,
+    sizeBytes: buffer.length,
+    patientHash,
+  })
+}
+
+/**
+ * 分片上传收尾(与单次上传同口径):
+ *   1. 会话与分片齐全性校验(缺失 → 400)
+ *   2. 顺序合并 + 流式 sha256(分片单独落盘,不整读进内存)
+ *   3. 总体积上限(超限 → 413,清理临时目录)
+ *   4. 合并后去重(命中 → 清理临时目录,返回 dedup 形状)
+ *   5. 搬入 uploads 目录 + 清理 .tmp 会话 → finalizeUpload(去重认领 +
+ *      图谱 DocumentNode + 管线启动)
+ */
+export async function completeChunkedUpload(input: {
+  userId: string
+  uploadId: string
+  filename: string
+  mimeType: string
+  total: number
+  patientHash: string | null
+}): Promise<CompleteChunkedResult> {
+  const { userId, uploadId, filename, mimeType, total, patientHash } = input
+  const dir = chunkDir(userId, uploadId)
+  if (!fs.existsSync(dir)) {
+    return { status: 400, error: 'Upload session not found — upload chunks first' }
+  }
+  for (let i = 1; i <= total; i++) {
+    const chunkPath = path.join(dir, `chunk_${String(i).padStart(6, '0')}`)
+    if (!fs.existsSync(chunkPath)) {
+      return { status: 400, error: `Missing chunk ${i}/${total}` }
+    }
+  }
+
+  const tmpMerged = path.join(dir, 'merged')
+  const hash = crypto.createHash('sha256')
+  let sizeBytes = 0
+  const out = fs.createWriteStream(tmpMerged)
+  await new Promise<void>((resolve, reject) => {
+    out.on('error', reject)
+    for (let i = 1; i <= total; i++) {
+      const buf = fs.readFileSync(path.join(dir, `chunk_${String(i).padStart(6, '0')}`))
+      hash.update(buf)
+      sizeBytes += buf.length
+      out.write(buf)
+    }
+    out.end(() => resolve())
+  })
+  const sha256 = hash.digest('hex')
+
+  if (sizeBytes > MAX_CHUNKED_TOTAL_BYTES) {
+    fs.rmSync(dir, { recursive: true, force: true })
+    return { status: 413, error: `分片总大小超过 ${Math.round(MAX_CHUNKED_TOTAL_BYTES / 1024 / 1024)}MB 上限` }
+  }
+
+  const existing = await findDedup(userId, sha256)
+  if (existing && !existing.deletedAt) {
+    fs.rmSync(dir, { recursive: true, force: true })
+    return {
+      status: 200,
+      payload: {
+        file_id: existing.id,
+        name: filename,
+        mime: mimeType,
+        size_bytes: existing.sizeBytes,
+        patient_hash: patientHash || existing.patientHash || null,
+        dedup: true,
+      } satisfies DedupUploadPayload,
+    }
+  }
+
+  const fileId = newFileId(filename)
+  fs.renameSync(tmpMerged, path.join(uploadsDir(userId), fileId))
+  fs.rmSync(dir, { recursive: true, force: true })
+
+  const finalized = await finalizeUpload({
+    userId,
+    fileId,
+    filename,
+    mimeType,
+    sha256,
+    sizeBytes,
+    patientHash,
+  })
+  return { status: 200, payload: finalized }
+}
