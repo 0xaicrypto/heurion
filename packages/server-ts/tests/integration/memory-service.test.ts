@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
@@ -7,11 +7,13 @@ import { FactsStore, KnowledgeStore } from '../../src/evolution/stores.js'
 import { MemoryService } from '../../src/memory/memory.service.js'
 
 describe('MemoryService', () => {
-  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-memory-service-'))
+  // 每个测试独立临时目录 — 共享目录时,上一个测试的 EventLog 异步 flush
+  // 定时器可能在任意时刻重建文件,使下一个测试的清理 rmdir 偶发
+  // ENOTEMPTY(CI flake 根因,共享目录 + 跨实例写入竞争)。
+  let baseDir = ''
 
   function setup(userId = 'user_1') {
-    fs.rmSync(baseDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
-    fs.mkdirSync(baseDir, { recursive: true })
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-memory-service-'))
     const eventLog = new EventLog(baseDir, userId)
     const facts = new FactsStore(baseDir)
     const knowledge = new KnowledgeStore(baseDir)
@@ -25,10 +27,8 @@ describe('MemoryService', () => {
     return { eventLog, facts, knowledge, memory }
   }
 
-  beforeEach(() => {
-    // EventLog 的异步 flush 可能恰好在清理窗口内补写文件 → 裸 rmdir 偶发
-    // ENOTEMPTY（CI flake）。maxRetries 让 rmSync 自旋等写入收尾。
-    fs.rmSync(baseDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
+  afterEach(() => {
+    if (baseDir) fs.rmSync(baseDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   })
 
   it('adds a fact and writes to legacy store', () => {
