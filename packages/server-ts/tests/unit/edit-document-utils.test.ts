@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { normalizeForMatch, findNormalizedSpan, findFuzzySpan } from '../../src/tools/edit-document-tool.js'
+import { normalizeForMatch, findNormalizedSpan, findFuzzySpan } from '../../src/lib/document-span-match.js'
 
 describe('normalizeForMatch', () => {
   test('collapse any whitespace runs to a single space and trim', () => {
