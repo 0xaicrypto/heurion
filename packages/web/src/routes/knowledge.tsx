@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { NextBestActions } from '@/components/NextBestActions';
 import type { Article } from '@/lib/types';
 import { KB_SOURCE_TYPES, type KbSourceType } from '@heurion/contracts'; // #744/#750 single source of truth
-import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X, ChevronLeft, ChevronRight, GitGraph } from 'lucide-react';
+import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X, ChevronLeft, ChevronRight, GitGraph, Download, Image as ImageIcon } from 'lucide-react';
 
 interface Fact {
   id: string; category: string; importance: number; content: string;
@@ -87,6 +87,8 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   // #762: fileId → pipeline stage,Files 卡渲染状态徽章。
   const [pipelineStages, setPipelineStages] = useState<Record<string, PipelineStage>>({});
+  // #811: 图库 — AI 生成产物(chart/scene/img)集中管理,支持预览/重下载/删除。
+  const [charts, setCharts] = useState<Array<{ file_id: string; url: string; title: string; tool: string; size_bytes: number; created_at: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [editingFact, setEditingFact] = useState<Fact | null>(null);
   const [editContent, setEditContent] = useState('');
@@ -141,9 +143,18 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
       api.getKnowledgeGaps().then(r => setGaps(r.gaps)).catch(recordLoadError(t('kb.loadGaps', 'Gaps 加载失败'))),
       api.getKnowledgeTools().then(r => setTools(r.tools)).catch(recordLoadError(t('kb.loadTools', '工具加载失败'))),
       api.listFiles().then(r => setFiles(r.files)).catch(recordLoadError(t('kb.loadFiles', '文件列表加载失败'))),
+      api.listGeneratedCharts().then(r => setCharts(r.charts)).catch(() => {}),
       api.getPipelineJobs().then(r => setPipelineStages(Object.fromEntries(r.jobs.map(j => [j.fileId, j.stage as PipelineStage])))).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, [t, recordLoadError]);
+
+  // #811: 重新下载 — Bearer mint 一次性带 token 的下载 URL。
+  const downloadFile = useCallback(async (fileId: string) => {
+    try {
+      const r = await api.getDownloadUrl(fileId);
+      window.open(r.url, '_blank');
+    } catch { recordLoadError('下载失败'); }
+  }, [recordLoadError]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -783,6 +794,12 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                             </span>
                           );
                         })()}
+                        {/* #811: 知识库文件重新下载入口。 */}
+                        <button
+                          className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-text-primary"
+                          title="Download"
+                          onClick={() => downloadFile(f.file_id)}
+                        ><Download size={14} /></button>
                         <button
                           className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-error"
                           onClick={async () => {
@@ -795,12 +812,61 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                       </div>
                     </Card>
                   ))}
-                  {renderPagination(filePagination.page, filePagination.totalPages, setFilePage, filePagination.start, filteredFiles.length)}
-                </div>
-              )}
-            </>
-          )}
-        </main>
+                   {renderPagination(filePagination.page, filePagination.totalPages, setFilePage, filePagination.start, filteredFiles.length)}
+                 </div>
+               )}
+
+               {/* #811: 图库 — AI 生成产物（图表/示意图/插图）集中管理，与知识库文件分离。
+                   支持：预览（带 token 的签名 URL）/ 重新下载 / 删除。 */}
+               {charts.length > 0 && (
+                 <div className="mt-8">
+                   <div className="flex items-center gap-2 mb-3">
+                     <ImageIcon size={16} className="text-text-tertiary" />
+                     <h2 className="text-sm font-medium text-text-secondary">
+                       {t('kb.gallery', '图库')} · {charts.length}
+                     </h2>
+                   </div>
+                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                     {charts.map(c => (
+                       <Card key={c.file_id} className="p-3">
+                         <div className="flex items-center gap-2 mb-2">
+                           <div className="flex-1 min-w-0">
+                             <p className="text-sm text-text-primary truncate" title={c.title}>{c.title}</p>
+                             <p className="text-xs text-text-tertiary">
+                               {c.tool} · {(c.size_bytes / 1024).toFixed(1)} KB · {new Date(c.created_at).toLocaleDateString()}
+                             </p>
+                           </div>
+                         </div>
+                         {c.url && (
+                           <div className="rounded bg-surface-elevated p-2 mb-2 flex items-center justify-center h-36 overflow-hidden">
+                             <img src={c.url} alt={c.title} className="max-h-full max-w-full object-contain" loading="lazy" />
+                           </div>
+                         )}
+                         <div className="flex items-center gap-1">
+                           <button
+                             className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-text-primary"
+                             title="Download"
+                             onClick={() => downloadFile(c.file_id)}
+                           ><Download size={14} /></button>
+                           <button
+                             className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-error"
+                             title="Delete"
+                             onClick={async () => {
+                               if (confirm(`Delete ${c.title}?`)) {
+                                 await api.deleteGeneratedChart(c.file_id).catch(() => {});
+                                 setCharts(prev => prev.filter(x => x.file_id !== c.file_id));
+                               }
+                             }}
+                           ><Trash2 size={14} /></button>
+                         </div>
+                       </Card>
+                     ))}
+                   </div>
+                 </div>
+               )}
+             </>
+           )}
+         </main>
       </div>
   );
 
