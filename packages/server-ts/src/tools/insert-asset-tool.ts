@@ -6,6 +6,7 @@ import { findNormalizedSpan, findFuzzySpan } from './edit-document-tool.js'
 import { ensureDraftBody } from './doc-import.js'
 import { writeDocVersion } from './doc-version-writer.js'
 import { issueChartToken } from '../common/chart-token.js'
+import sharp from 'sharp'
 import { validateRenderContent, SCHEMA_VERSION } from '@heurion/contracts'
 import type { ToolExecutionPlane } from './tool-registry.js'
 
@@ -142,25 +143,34 @@ export function digestBody(body: string): string {
  * URL 只在本用户 uploads 目录内解析（取 path basename，防目录穿越）；
  * 文件缺失/不可读时保留原段落（worker 渲染文本，不产生半截文件）。
  */
-export function embedContentImages(userId: string, blocks: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-  return blocks.map((b) => {
-    if (b.type !== 'paragraph') return b
+export async function embedContentImages(userId: string, blocks: Array<Record<string, unknown>>): Promise<Array<Record<string, unknown>>> {
+  const out: Array<Record<string, unknown>> = []
+  for (const b of blocks) {
+    if (b.type !== 'paragraph') { out.push(b); continue }
     const img = /^!\[([^\]]*)\]\(([^)\s]+)\)$/.exec(String(b.text || ''))
-    if (!img) return b
-    return resolveLocalImageBlock(userId, img[2], img[1]) || b
-  })
+    if (!img) { out.push(b); continue }
+    out.push((await resolveLocalImageBlock(userId, img[2], img[1])) || b)
+  }
+  return out
 }
 
 /** #772 — 把 bullets 里的 ![caption](托管URL) 解析为内嵌 base64 图片块。
  *  URL 只在本用户 uploads 目录内解析（取 path basename，防目录穿越）；
- *  文件不存在返回 null（跳过该块，由调用方计数注记）。 */
-export function resolveLocalImageBlock(userId: string, url: string, caption: string): { type: 'image'; ref: string; caption?: string; data: string } | null {
+ *  文件不存在返回 null（跳过该块，由调用方计数注记）。
+ *  #fix 2026-09: SVG 图表不能按原字节嵌入 — worker docx/pptx 把图片统一
+ *  声明为 PNG，SVG 字节被 Word/PowerPoint 按位图解析 → diagram 内中文
+ *  成方块。服务端 sharp 栅格化为 PNG（本容器有 Droid CJK 字体，中文
+ *  正确渲染；density 150 保证清晰度）。 */
+export async function resolveLocalImageBlock(userId: string, url: string, caption: string): Promise<{ type: 'image'; ref: string; caption?: string; data: string } | null> {
   const name = path.basename(url.split('?')[0] || '')
   const p = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads', name)
   try {
     if (!name || !fs.existsSync(p)) return null
-    const data = fs.readFileSync(p).toString('base64')
-    return { type: 'image', ref: url.slice(0, 500), caption: caption ? caption.slice(0, 500) : undefined, data }
+    let buf = fs.readFileSync(p)
+    if (name.toLowerCase().endsWith('.svg')) {
+      buf = await sharp(buf, { density: 150 }).png().toBuffer()
+    }
+    return { type: 'image', ref: url.slice(0, 500), caption: caption ? caption.slice(0, 500) : undefined, data: buf.toString('base64') }
   } catch {
     return null
   }
@@ -398,9 +408,9 @@ export class InsertAssetTool extends BaseTool {
     let content = spec.contentType === 'sidecar.generate_pptx'
       ? buildPresentationContent(body, String(existing.title || 'Presentation'))
       : buildDocumentContent(body, String(existing.title || 'Document'))
-    content = ('slides' in content
-      ? { ...content, slides: content.slides.map((s) => ({ ...s, content: embedContentImages(this.ctx.userId, s.content) })) }
-      : { ...content, sections: content.sections.map((sec) => ({ ...sec, paragraphs: embedContentImages(this.ctx.userId, sec.paragraphs) })) }) as typeof content
+    content = await ('slides' in content
+      ? Promise.all(content.slides.map(async (s) => ({ ...s, content: await embedContentImages(this.ctx.userId, s.content) }))).then((slides) => ({ ...content, slides }))
+      : Promise.all(content.sections.map(async (sec) => ({ ...sec, paragraphs: await embedContentImages(this.ctx.userId, sec.paragraphs) }))).then((sections) => ({ ...content, sections }))) as typeof content
     const check = validateRenderContent(spec.contentType, content)
     if (!check.ok) return { success: false, error: `导出内容未通过契约校验：${check.errors.join('；')}` }
 
@@ -457,7 +467,7 @@ export class InsertAssetTool extends BaseTool {
     // 直供 slides → 契约内容。bullets 转 bullet 段；图片 markdown 转
     // 内嵌 base64 图片块（草稿已有的托管图不丢失）。
     let skippedImages = 0
-    const slides = rawSlides.slice(0, 30).map((s: any) => {
+    const slides = await Promise.all(rawSlides.slice(0, 30).map(async (s: any) => {
       const title = String(s?.title || '').trim().slice(0, 500) || '未命名页'
       const bullets = Array.isArray(s?.bullets) ? s.bullets : []
       const content: Array<Record<string, unknown>> = []
@@ -466,7 +476,7 @@ export class InsertAssetTool extends BaseTool {
         if (!text) continue
         const img = /^!\[([^\]]*)\]\(([^)\s]+)\)$/.exec(text)
         if (img) {
-          const block = resolveLocalImageBlock(this.ctx.userId, img[2], img[1])
+          const block = await resolveLocalImageBlock(this.ctx.userId, img[2], img[1])
           if (block) {
             content.push(block)
           } else {
@@ -478,7 +488,7 @@ export class InsertAssetTool extends BaseTool {
       }
       if (content.length === 0) content.push({ type: 'paragraph', text: '（本页待补充）', style: 'normal' })
       return { title, content }
-    })
+    }))
     if (slides.length === 0) return { success: false, error: 'slides 解析后为空 — organize=true 需要至少 1 页 [{title, bullets[]}]。' }
 
     const deckTitle = (String(args.title || '').trim() || String(existing.title || '').trim() || 'Presentation').slice(0, 500)

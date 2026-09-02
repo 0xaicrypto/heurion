@@ -23,7 +23,9 @@ export async function renderTable(input: TableInput) {
       const cellHeight = isHeader ? rowHeight + 5 : rowHeight
       cells.forEach((cell, i) => {
         doc.rect(x, y, colWidth, cellHeight).stroke()
-        doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica').fontSize(fontSize).text(cell, x + 2, y + 3, {
+        // #fix 2026-09: 'cjk' 单字体统一（applyCjkFont 已注册）——表头中文
+        // 不能用 Helvetica（CJK 全方块）。粗体视觉由字号/底纹弥补。
+        doc.font('cjk').fontSize(fontSize).text(cell, x + 2, y + 3, {
           width: colWidth - 4,
           align: 'left',
         })

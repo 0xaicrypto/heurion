@@ -29,6 +29,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-impress libreoffice-writer poppler-utils \
     # 中文幻灯片渲染字体（CJK 缺字会变成方块）。
     fonts-noto-cjk \
+    # #fix 2026-09: pdfkit 无法嵌入 .ttc 集合（noto-cjk 全是 .ttc）—
+    # PDF 导出中文全是方块。fonts-droid-fallback 提供单面 .ttf
+    # （DroidSansFallbackFull.ttf）供 pdfkit registerFont 嵌入。
+    fonts-droid-fallback \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/packages/worker/dist ./dist
