@@ -10,10 +10,14 @@ import { cn } from '@/lib/utils';
  * 从"碎片"收敛成一条分层的活动流。
  *
  * 三层信息架构（沿用 #662 摘要/详情两层模式，外加常驻状态行）：
- *  - 一眼层：常驻状态行 — 当前活动 + 已耗时 + 停滞提示(#828)
- *  - 扫一眼层：折叠行 — 推理(完成/生成中)、连续检索 ×N(含失败数)、
+ *  - 一眼层：常驻状态行 — 当前活动 + 已耗时 + 停滞提示(#828) + 轮次
+ *  - 扫一眼层：折叠行 — 推理(完成/生成中)、连续只读工具 ×N(含失败数)、
  *    子代理进度(阶段/轮次/耗时)，完成后变结果卡预览(#831)
  *  - 深究层：展开 — reasoning 全文(30K 上限)、工具入参+结果摘要
+ *
+ * #832-缺2: 服务端 tool_call/tool_result 携带 round（模型轮次）— 换轮时
+ * 渲染轮次分隔行，与后端 MAX_TOOL_ROUNDS 状态机同源。
+ * 文案全部走 i18n（#798 裸键治理）。
  */
 
 export interface ActivityTimelineProps {
@@ -26,6 +30,8 @@ export interface ActivityTimelineProps {
   isStreaming?: boolean;
 }
 
+type ToolEntry = NonNullable<ChatMessage['toolCalls']>[number];
+
 /** 与服务端 READ_ONLY_TOOLS 同口径的 UI 折叠集 — 连续只读工具并成一行。 */
 const FOLD_TOOLS = new Set<string>([
   ...RETRIEVAL_TOOLS,
@@ -36,35 +42,6 @@ const FOLD_TOOLS = new Set<string>([
   'search_citation',
   'load_data_table',
 ]);
-
-/** 常用工具的可读标签 — 未命中的回退原始名。 */
-const TOOL_LABELS: Record<string, string> = {
-  search_node: '检索患者记忆',
-  search_encounter: '检索就诊记录',
-  search_past_chats: '检索历史对话',
-  search_medical_web: '检索 PubMed',
-  fetch_article_summary: '读取文献摘要',
-  visit_medical_site: '读取网页',
-  extract_fulltext: '提取全文',
-  search_citation: '核验引用',
-  load_data_table: '载入数据表',
-  load_skill: '加载技能',
-  query_logs: '查询日志',
-  edit_document: '写回文档',
-  insert_asset: '插入资产',
-  edit_deck: '编辑幻灯片',
-  fix_document_images: '修复图片链接',
-  generate_image: '生成图片',
-  render_chart: '渲染图表',
-  render_scene: '渲染生物场景',
-  delegate: '委派子任务',
-  spawn_subagent: '子代理研究',
-  ocr_image: '识别图片',
-};
-
-function toolLabel(tool: string): string {
-  return TOOL_LABELS[tool] || tool;
-}
 
 function fmtDuration(ms: number): string {
   if (ms < 1000) return '<1s';
@@ -83,17 +60,19 @@ function useTick(active: boolean): void {
   }, [active]);
 }
 
-interface FoldGroup {
-  kind: 'retrieval';
-  items: NonNullable<ChatMessage['toolCalls']>;
-  index: number;
-}
-interface SoloTool {
+interface ToolRowData {
   kind: 'tool';
-  item: NonNullable<ChatMessage['toolCalls']>[number];
-  index: number;
+  item: ToolEntry;
 }
-type Row = FoldGroup | SoloTool;
+interface FoldGroupData {
+  kind: 'fold';
+  items: ToolEntry[];
+}
+interface RoundDividerData {
+  kind: 'round';
+  round: number;
+}
+type Row = ToolRowData | FoldGroupData | RoundDividerData;
 
 function StatusIcon({ status }: { status: 'running' | 'done' | 'error' }) {
   if (status === 'running') return <Loader2 size={11} className="animate-spin text-accent" />;
@@ -116,8 +95,8 @@ function ReasoningBlock({ text, streaming }: { text: string; streaming: boolean 
         aria-expanded={open}
       >
         {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-        {streaming ? t('chat.reasoningStreaming', '推理中') : t('chat.reasoningDone', '推理完成')}
-        <span className="text-text-tertiary">· {text.length > 1000 ? `${Math.round(text.length / 1000)}k 字` : `${text.length} 字`}</span>
+        {streaming ? t('chat.activityReasoningStreaming') : t('chat.activityReasoningDone')}
+        <span className="text-text-tertiary">· {text.length} {t('chat.activityChars')}</span>
       </button>
       {!open && streaming && tail && (
         <div className="mt-1 truncate border-l-2 border-border pl-2 text-[11px] text-text-tertiary">{tail}</div>
@@ -132,8 +111,9 @@ function ReasoningBlock({ text, streaming }: { text: string; streaming: boolean 
   );
 }
 
-function ToolRow({ item }: { item: NonNullable<ChatMessage['toolCalls']>[number] }) {
+function ToolRow({ item }: { item: ToolEntry }) {
   const [open, setOpen] = useState(false);
+  const { t } = useTranslation();
   const running = item.status === 'running';
   return (
     <div className="text-xs">
@@ -147,7 +127,9 @@ function ToolRow({ item }: { item: NonNullable<ChatMessage['toolCalls']>[number]
         aria-expanded={open}
       >
         <Wrench size={11} className="shrink-0 text-text-tertiary" />
-        <span className="truncate">{toolLabel(item.tool)}</span>
+        <span className="truncate">
+          {t(`chat.tool.${item.tool}`, { defaultValue: item.tool })}
+        </span>
         {running ? (
           <>
             <span className="text-text-tertiary">{item.startedAt ? fmtDuration(Date.now() - item.startedAt) : ''}</span>
@@ -170,7 +152,7 @@ function ToolRow({ item }: { item: NonNullable<ChatMessage['toolCalls']>[number]
   );
 }
 
-function FoldedRetrievalRow({ group }: { group: FoldGroup }) {
+function FoldedRow({ group }: { group: FoldGroupData }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const failed = group.items.filter((i) => i.status === 'error').length;
@@ -187,8 +169,12 @@ function FoldedRetrievalRow({ group }: { group: FoldGroup }) {
         {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
         <Search size={11} className="text-text-tertiary" />
         <span>
-          {t('chat.retrievalFold', '检索/读取')} · {group.items.length}
-          {failed > 0 ? ` · ${failed} 失败` : doneCount > 0 ? ` · ${doneCount} 完成` : ''}
+          {t('chat.activityRetrievalFold')} · {group.items.length}
+          {failed > 0
+            ? ` · ${failed} ${t('chat.activityFailed')}`
+            : doneCount > 0
+              ? ` · ${doneCount} ${t('chat.activityDone')}`
+              : ''}
         </span>
         {elapsed > 0 && <span className="text-text-tertiary">{fmtDuration(elapsed)}</span>}
         <StatusIcon status={running ? 'running' : failed > 0 ? 'error' : 'done'} />
@@ -216,13 +202,14 @@ function FoldedRetrievalRow({ group }: { group: FoldGroup }) {
   );
 }
 
-const PHASE_LABEL: Record<'thinking' | 'tool' | 'summarizing', string> = {
-  thinking: '思考中',
-  tool: '调用工具',
-  summarizing: '汇总结果',
+const PHASE_KEY: Record<'thinking' | 'tool' | 'summarizing', string> = {
+  thinking: 'chat.subagentPhaseThinking',
+  tool: 'chat.subagentPhaseTool',
+  summarizing: 'chat.subagentPhaseSummarizing',
 };
 
 function SubagentRow({ sa }: { sa: NonNullable<ChatMessage['subagents']>[number] }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const running = sa.status === 'running';
   return (
@@ -237,16 +224,20 @@ function SubagentRow({ sa }: { sa: NonNullable<ChatMessage['subagents']>[number]
         {running ? (
           <>
             <span className="text-text-tertiary">
-              {sa.phase ? PHASE_LABEL[sa.phase] : ''}
-              {sa.phase === 'tool' && sa.currentTool ? ` · ${toolLabel(sa.currentTool)}` : ''}
+              {sa.phase ? t(PHASE_KEY[sa.phase]) : ''}
+              {sa.phase === 'tool' && sa.currentTool
+                ? ` · ${t(`chat.tool.${sa.currentTool}`, { defaultValue: sa.currentTool })}`
+                : ''}
               {sa.turn !== undefined ? ` · ${sa.turn}/${sa.maxTurns ?? '?'}` : ''}
             </span>
-            <span className="text-text-tertiary">{(sa.startedAt || sa.elapsedMs !== undefined) ? fmtDuration(sa.elapsedMs ?? (sa.startedAt ? Date.now() - sa.startedAt : 0)) : ''}</span>
+            <span className="text-text-tertiary">
+              {(sa.startedAt || sa.elapsedMs !== undefined) ? fmtDuration(sa.elapsedMs ?? (sa.startedAt ? Date.now() - sa.startedAt : 0)) : ''}
+            </span>
             <Loader2 size={11} className="animate-spin text-accent" />
           </>
         ) : (
           <>
-            {sa.turns !== undefined && <span className="text-text-tertiary">{sa.turns} 轮</span>}
+            {sa.turns !== undefined && <span className="text-text-tertiary">{t('chat.subagentTurns', { turns: sa.turns })}</span>}
             <StatusIcon status={sa.status === 'failed' ? 'error' : 'done'} />
           </>
         )}
@@ -256,7 +247,7 @@ function SubagentRow({ sa }: { sa: NonNullable<ChatMessage['subagents']>[number]
           {sa.currentTool && <div className="font-mono">{sa.currentTool}{sa.toolArgsPreview ? `(${sa.toolArgsPreview})` : ''}</div>}
           {(sa.summaryPreview || sa.status === 'done') && (
             <div className={cn('break-words', sa.status === 'failed' && 'text-error')}>
-              {sa.status === 'done' ? (sa.summaryPreview || '完成') : '子任务失败（不影响其他子任务）'}
+              {sa.status === 'done' ? (sa.summaryPreview || t('chat.activityDone')) : t('chat.subagentFailed')}
             </div>
           )}
           {sa.costTokens !== undefined && sa.costTokens > 0 && <div>≈{sa.costTokens} tokens</div>}
@@ -266,68 +257,91 @@ function SubagentRow({ sa }: { sa: NonNullable<ChatMessage['subagents']>[number]
   );
 }
 
-/** #832: 常驻状态行 — 当前活动 + 已耗时 + 停滞提示。 */
+/** #832: 常驻状态行 — 当前活动 + 轮次 + 已耗时 + 停滞提示。 */
 function StatusLine({ message, stallSince, streamNote }: Pick<ActivityTimelineProps, 'message' | 'stallSince' | 'streamNote'>) {
+  const { t } = useTranslation();
   const streaming = Boolean(message.isStreaming);
   useTick(streaming || Boolean(stallSince));
   const runningTool = (message.toolCalls ?? []).find((tc) => tc.status === 'running');
   const runningSub = (message.subagents ?? []).find((sa) => sa.status === 'running');
   const stalledMs = stallSince ? Date.now() - stallSince : 0;
-  let activity = streamNote || '正在处理';
+  let activity = streamNote || t('chat.activityWorking');
   if (runningTool) {
-    activity = `执行 ${toolLabel(runningTool.tool)}`;
+    activity = t('chat.activityRunningTool', { tool: t(`chat.tool.${runningTool.tool}`, { defaultValue: runningTool.tool }) });
   } else if (runningSub) {
-    activity = `子代理 ${runningSub.task}`;
+    activity = t('chat.activitySubagent', { task: runningSub.task });
   } else if (message.reasoning && !message.text) {
-    activity = streamNote || '思考中';
+    activity = streamNote || t('chat.thinking', '思考中…');
   }
   const startedAt = message.createdAt ?? Date.now();
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-1 text-[11px] text-text-tertiary">
       <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
       <span className="truncate">{activity}</span>
+      {streaming && runningTool?.round !== undefined && (
+        <span>· {t('chat.activityRound', { round: runningTool.round })}</span>
+      )}
       {streaming && <span>· ⏱ {fmtDuration(Date.now() - startedAt)}</span>}
       {stallSince && (
         <span className="rounded border border-warning/30 bg-warning/5 px-1.5 py-0.5 text-warning">
-          已 {fmtDuration(stalledMs)} 无新进展 — 仍在执行，复杂任务可能较慢
+          {t('chat.activityStalled', { duration: fmtDuration(stalledMs) })}
         </span>
       )}
     </div>
   );
 }
 
+/** #832: 行构造 — 连续只读工具折叠 + 换轮分隔行（缺2）。 */
+function buildRows(tools: ToolEntry[]): Row[] {
+  const rows: Row[] = [];
+  let lastRound: number | undefined;
+  for (const item of tools) {
+    if (item.round !== undefined && item.round !== lastRound) {
+      if (rows.length > 0) rows.push({ kind: 'round', round: item.round });
+      lastRound = item.round;
+    }
+    const foldable = FOLD_TOOLS.has(item.tool) && item.status !== 'running';
+    const prev = rows[rows.length - 1];
+    if (foldable && prev && prev.kind === 'fold') {
+      prev.items.push(item);
+    } else if (foldable) {
+      rows.push({ kind: 'fold', items: [item] });
+    } else {
+      rows.push({ kind: 'tool', item });
+    }
+  }
+  return rows;
+}
+
 /**
  * #832 — 时间线主体。无内容（纯文本回答）时渲染 null，行为与旧芯片一致。
  */
 export function ActivityTimeline({ message, stallSince, streamNote, isStreaming }: ActivityTimelineProps) {
+  const { t } = useTranslation();
   const streaming = isStreaming ?? Boolean(message.isStreaming);
   const hasContent = Boolean(
     message.reasoning || (message.toolCalls && message.toolCalls.length > 0) || (message.subagents && message.subagents.length > 0),
   );
   if (!hasContent && !streamNote) return null;
 
-  // 连续只读（检索/读取）工具折叠成一行；running 的逐个展示；其余独立成行。
-  const rows: Row[] = [];
-  const tools = message.toolCalls ?? [];
-  tools.forEach((item, index) => {
-    const foldable = FOLD_TOOLS.has(item.tool) && item.status !== 'running';
-    const prev = rows[rows.length - 1];
-    if (foldable && prev && prev.kind === 'retrieval') {
-      prev.items.push(item);
-    } else if (foldable) {
-      rows.push({ kind: 'retrieval', items: [item], index });
-    } else {
-      rows.push({ kind: 'tool', item, index });
-    }
-  });
+  const rows = buildRows(message.toolCalls ?? []);
 
   return (
     <div className="mb-2 space-y-1.5" data-testid="activity-timeline">
       {(streaming || stallSince) && <StatusLine message={message} stallSince={stallSince} streamNote={streamNote} />}
       {message.reasoning && <ReasoningBlock text={message.reasoning} streaming={streaming && !message.text} />}
-      {rows.map((row, i) =>
-        row.kind === 'retrieval' ? <FoldedRetrievalRow key={`g${i}`} group={row} /> : <ToolRow key={`t${i}`} item={row.item} />,
-      )}
+      {rows.map((row, i) => {
+        if (row.kind === 'fold') return <FoldedRow key={`g${i}`} group={row} />;
+        if (row.kind === 'round') {
+          return (
+            <div key={`r${i}`} className="flex items-center gap-2 pt-0.5 text-[10px] text-text-tertiary/80">
+              <span className="h-px w-4 bg-border" />
+              {t('chat.activityRound', { round: row.round })}
+            </div>
+          );
+        }
+        return <ToolRow key={`t${i}`} item={row.item} />;
+      })}
       {(message.subagents ?? []).map((sa) => <SubagentRow key={sa.id} sa={sa} />)}
     </div>
   );

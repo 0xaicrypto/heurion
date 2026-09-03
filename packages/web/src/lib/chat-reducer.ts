@@ -38,12 +38,14 @@ export interface ChatMessage {
   /** #612: 上下文压缩摘要消息(可折叠展示)。 */
   compactionSummary?: boolean;
   /** #662: 4-state tool entries — #829: seq 精确闭合（并行执行时多个
-   *  芯片同时 running），resultPreview/elapsedMs 支撑折叠行结果摘要。 */
+   *  芯片同时 running），resultPreview/elapsedMs 支撑折叠行结果摘要；
+   *  #832: round 支撑时间线轮次分组。 */
   toolCalls?: Array<{
     tool: string;
     argsPreview: string;
     status: 'running' | 'done' | 'error';
     seq?: number;
+    round?: number;
     resultPreview?: string;
     elapsedMs?: number;
     startedAt?: number;
@@ -241,7 +243,7 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
         );
         msgs[msgs.length - 1] = {
           ...last,
-          toolCalls: [...prev, { tool: chunk.tool, argsPreview, status: 'running' as const, seq, startedAt: Date.now() }],
+          toolCalls: [...prev, { tool: chunk.tool, argsPreview, status: 'running' as const, seq, round: chunk.round, startedAt: Date.now() }],
         };
       }
       return { ...s, messages: msgs };

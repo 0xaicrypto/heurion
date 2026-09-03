@@ -12,7 +12,7 @@ import { resolveTierModel } from '../common/llm-gateway.js'
  * single-task (one id per run).
  */
 import { deepseekChat, getApiKey} from '../common/llm.js'
-import { ToolRegistry, type ToolContext } from './tool-registry.js'
+import { ToolRegistry, READ_ONLY_TOOLS, type ToolContext } from './tool-registry.js'
 
 export interface SubAgentInput {
   task: string
@@ -119,15 +119,19 @@ Rules:
       }
     }
 
-    // Execute tool calls in order; failures are recorded, not fatal.
-    // #828: registry now owns the per-tool timeout/abort guard.
-    const toolResults: string[] = []
+    // Execute tool calls; failures are recorded, not fatal.
+    // #828: registry owns the per-tool timeout/abort guard.
+    // #830: consecutive READ-ONLY calls run in parallel (same policy as the
+    // main tool-loop, #829) — toolResults stay in original call order so
+    // the transcript the model sees is deterministic.
+    type ParsedCall = { name: string; args: Record<string, unknown> }
+    const parsed: Array<{ kind: 'call'; call: ParsedCall } | { kind: 'skipped'; line: string }> = []
     for (const m of calls) {
       if (ctx.signal?.aborted) throw new Error('Sub-agent aborted: client disconnected')
       try {
         const call = JSON.parse(m[1].trim()) as { name: string; arguments: Record<string, unknown> }
         if (!allowed.includes(call.name)) {
-          toolResults.push(`Tool ${call.name} is not allowed for this sub-agent`)
+          parsed.push({ kind: 'skipped', line: `Tool ${call.name} is not allowed for this sub-agent` })
           continue
         }
         toolCalls++
@@ -136,15 +140,47 @@ Rules:
         if (scope.startsWith('patient:') && call.name !== 'search_medical_web') {
           args.patient_hash = scope.slice('patient:'.length)
         }
-        report('tool', {
-          current_tool: call.name,
-          tool_args_preview: String(JSON.stringify(args) || '').slice(0, 120),
-        })
-        const out = await registry.execute(call.name, args)
-        toolResults.push(`[${call.name}] ${out.success ? (out.output || 'ok').slice(0, 1500) : `ERROR: ${out.error}`}`)
+        parsed.push({ kind: 'call', call: { name: call.name, args } })
       } catch (err) {
-        toolResults.push(`[tool] ${(err as Error).message.slice(0, 200)}`)
+        parsed.push({ kind: 'skipped', line: `[tool] ${(err as Error).message.slice(0, 200)}` })
       }
+    }
+
+    const execOne = async (call: ParsedCall): Promise<string> => {
+      report('tool', {
+        current_tool: call.name,
+        tool_args_preview: String(JSON.stringify(call.args) || '').slice(0, 120),
+      })
+      const out = await registry.execute(call.name, call.args)
+      return `[${call.name}] ${out.success ? (out.output || 'ok').slice(0, 1500) : `ERROR: ${out.error}`}`
+    }
+
+    const toolResults: string[] = []
+    let i = 0
+    while (i < parsed.length) {
+      const item = parsed[i]
+      if (item.kind === 'skipped') {
+        toolResults.push(item.line)
+        i++
+        continue
+      }
+      if (!READ_ONLY_TOOLS.has(item.call.name)) {
+        toolResults.push(await execOne(item.call))
+        i++
+        continue
+      }
+      const group: ParsedCall[] = [item.call]
+      let j = i + 1
+      while (j < parsed.length) {
+        const nxt = parsed[j]
+        if (nxt.kind === 'call' && READ_ONLY_TOOLS.has(nxt.call.name)) {
+          group.push(nxt.call)
+          j++
+        } else break
+      }
+      const results = await Promise.all(group.map(execOne))
+      toolResults.push(...results)
+      i = j
     }
     messages.push({ role: 'assistant', content: result })
     messages.push({ role: 'user', content: `Tool results:\n${toolResults.join('\n')}` })

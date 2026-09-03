@@ -286,7 +286,7 @@ export async function runToolCallLoop(params: {
             tool: c.toolName, args: c.argsPreview, status: 'warning', seq: c.seq,
           })
         }
-        io.send({ type: 'tool_call', tool: c.toolName, args: c.toolArgs, seq: c.seq })
+        io.send({ type: 'tool_call', tool: c.toolName, args: c.toolArgs, seq: c.seq, round: toolRound })
         await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
           tool: c.toolName, args: c.argsPreview, status: 'running', seq: c.seq,
         })
@@ -366,6 +366,7 @@ export async function runToolCallLoop(params: {
           success: result.success,
           elapsed_ms: Date.now() - c.startedAt,
           preview: preview || undefined,
+          round: toolRound,
         })
 
         // #789③: per-tool SSE 投影走 presenter 注册表 — 新媒体工具只需

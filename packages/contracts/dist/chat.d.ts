@@ -270,12 +270,15 @@ export type ChatStreamChunk = {
 /**
  * #829: seq = per-session tool 序号 — 前端按 seq 精确闭合芯片（并行执行
  * 时多个工具同时 running，"下一个调用关闭上一个"不再成立）。
+ * #832: round = 模型工具循环轮次（1-based，MAX_TOOL_ROUNDS 状态机同源）
+ * — 前端时间线按轮分组。
  */
  | {
     type: 'tool_call';
     tool: string;
     args: Record<string, unknown>;
     seq?: number;
+    round?: number;
 }
 /**
  * #829: 工具结果事件 — 每个工具执行完成（成功/失败）即发，前端据此
@@ -288,6 +291,7 @@ export type ChatStreamChunk = {
     success: boolean;
     elapsed_ms?: number;
     preview?: string;
+    round?: number;
 } | SubagentStartedEvent | SubagentProgressEvent | SubagentDoneEvent | {
     type: 'memory_hits';
     count: number;

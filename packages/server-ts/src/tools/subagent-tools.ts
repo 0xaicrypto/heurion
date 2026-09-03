@@ -123,6 +123,20 @@ export class SpawnSubagentTool extends BaseTool {
         cost_tokens: result.costTokens, turns: result.turns, tool_calls: result.toolCalls,
         summary_preview: result.summary.slice(0, 200),
       })
+      // #831-持久化: 摘要落事件日志 — 刷新后可从 history 重建，不再黑盒蒸发。
+      try {
+        this.ctx.eventLog.append({
+          timestamp: Date.now() / 1000,
+          eventType: 'subagent_result',
+          content: result.summary.slice(0, 3000),
+          metadata: {
+            id, task: task.slice(0, 200), scope: item.scope || 'global', success: true,
+            turns: result.turns, costTokens: result.costTokens, toolCalls: result.toolCalls,
+          },
+          agentId: this.ctx.userId,
+          sessionId: this.ctx.sessionId || '',
+        })
+      } catch { /* persistence is best-effort */ }
       return { success: true, summary: result.summary, turns: result.turns, cost_tokens: result.costTokens, tool_calls: result.toolCalls }
     } catch (err) {
       const msg = (err as Error).message.slice(0, 200)

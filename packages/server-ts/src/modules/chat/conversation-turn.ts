@@ -614,13 +614,63 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // Tool-calling loop
   // #723: 拦截 chart_created — 图表 URL 随 assistant_response 的 metadata
   // 持久化,历史重载时前端才能恢复聊天里的图表(否则刷新后图"消失")。
+  // #832-缺3: 同管道收集 tool_call/tool_result/subagent_* 事件 — 折叠成
+  // 有界 timeline 快照随 assistant_response 落库,前端刷新后重建时间线
+  // (工具芯片/子代理结果卡不再蒸发)。
   const chartMeta: Array<{ url: string; chartType?: string }> = []
+  const timelineTools: Array<{
+    tool: string; seq: number; round?: number; argsPreview: string
+    status: 'running' | 'completed' | 'error'
+    resultPreview?: string; elapsedMs?: number
+  }> = []
+  const timelineSubs: Array<{
+    id: string; task: string; status: 'running' | 'done' | 'failed'
+    summaryPreview?: string; turns?: number; costTokens?: number
+  }> = []
   const ioWithChart: TurnIO = {
     ...io,
     send: (chunk) => {
       // #790: TurnIO 已类型化 — 直接窄化,不再手工嗅探。
       if (chunk.type === 'chart_created') {
         chartMeta.push({ url: chunk.url, chartType: chunk.chart_type })
+      } else if (chunk.type === 'tool_call' && chunk.seq !== undefined) {
+        if (timelineTools.length < 40) {
+          timelineTools.push({
+            tool: chunk.tool,
+            seq: chunk.seq,
+            ...(chunk.round !== undefined ? { round: chunk.round } : {}),
+            argsPreview: String(JSON.stringify(chunk.args) || '').slice(0, 120),
+            status: 'running',
+          })
+        }
+      } else if (chunk.type === 'tool_result' && chunk.seq !== undefined) {
+        const entry = timelineTools.find((t) => t.seq === chunk.seq)
+        if (entry) {
+          entry.status = chunk.success ? 'completed' : 'error'
+          if (chunk.preview) entry.resultPreview = chunk.preview.slice(0, 80)
+          if (chunk.elapsed_ms !== undefined) entry.elapsedMs = chunk.elapsed_ms
+        }
+      } else if (chunk.type === 'subagent_started') {
+        if (timelineSubs.length < 12) {
+          timelineSubs.push({ id: chunk.id, task: chunk.task.slice(0, 200), status: 'running' })
+        }
+      } else if (chunk.type === 'subagent_done') {
+        const entry = timelineSubs.find((s) => s.id === chunk.id)
+        if (entry) {
+          entry.status = chunk.success ? 'done' : 'failed'
+          if (chunk.summary_preview) entry.summaryPreview = chunk.summary_preview.slice(0, 200)
+          if (chunk.turns !== undefined) entry.turns = chunk.turns
+          if (chunk.cost_tokens !== undefined) entry.costTokens = chunk.cost_tokens
+        } else if (timelineSubs.length < 12) {
+          timelineSubs.push({
+            id: chunk.id,
+            task: chunk.task.slice(0, 200),
+            status: chunk.success ? 'done' : 'failed',
+            ...(chunk.summary_preview ? { summaryPreview: chunk.summary_preview.slice(0, 200) } : {}),
+            ...(chunk.turns !== undefined ? { turns: chunk.turns } : {}),
+            ...(chunk.cost_tokens !== undefined ? { costTokens: chunk.cost_tokens } : {}),
+          })
+        }
       }
       io.send(chunk)
     },
@@ -678,9 +728,18 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   }
 
   // Log the assistant response (user_message was persisted upfront)
+  // #832-缺3: timeline 快照(有界)随 metadata 落库 — 刷新后前端重建时间线。
+  const timelineMeta: Record<string, unknown> = {}
+  if (chartMeta.length > 0) timelineMeta.chart = chartMeta
+  if (timelineTools.length > 0 || timelineSubs.length > 0) {
+    timelineMeta.timeline = {
+      ...(timelineTools.length > 0 ? { tools: timelineTools } : {}),
+      ...(timelineSubs.length > 0 ? { subagents: timelineSubs } : {}),
+    }
+  }
   ctx.eventLog.append({
     timestamp: Date.now() / 1000, eventType: 'assistant_response', content: fullResponse,
-    metadata: chartMeta.length > 0 ? { chart: chartMeta } : {}, agentId: userId, sessionId: sid,
+    metadata: timelineMeta, agentId: userId, sessionId: sid,
   })
 
   // #582 — 例 A：通用会话编辑附件（action=edit, target=attachment）时，给

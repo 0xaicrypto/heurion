@@ -1,7 +1,14 @@
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, beforeAll } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import i18n from '@/i18n';
 import { ActivityTimeline } from './ActivityTimeline';
 import type { ChatMessage } from '@/lib/chat-reducer';
+
+// i18n 异步 init 且 jsdom 探测为 en — 测试固定 zh-CN，断言与 zh 文案同源
+// （#798: 组件文案必须走 i18n，不硬编码）。
+beforeAll(async () => {
+  await i18n.changeLanguage('zh-CN');
+});
 
 function baseMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return { id: 'm1', role: 'assistant', text: '', isStreaming: true, ...overrides };
@@ -75,6 +82,23 @@ describe('ActivityTimeline (#832)', () => {
     fireEvent.click(buttons.find((b) => b.textContent?.includes('stats check'))!);
     expect(line.textContent).toContain('p<0.05 significant');
     expect(line.textContent).toContain('800 tokens');
+  });
+
+  test('round changes render a divider row (#832 round grouping)', () => {
+    render(
+      <ActivityTimeline
+        message={baseMessage({
+          isStreaming: false,
+          toolCalls: [
+            { tool: 'search_medical_web', argsPreview: 'q1', status: 'done', seq: 1, round: 1, elapsedMs: 100 },
+            { tool: 'search_medical_web', argsPreview: 'q2', status: 'done', seq: 2, round: 2, elapsedMs: 100 },
+          ],
+        })}
+      />,
+    );
+    const line = screen.getByTestId('activity-timeline');
+    expect(line.textContent).toContain('第 2 轮'); // divider between round 1 → 2
+    expect(line.textContent).toContain('检索/读取'); // both folded
   });
 
   test('reasoning is collapsed by default with a tail preview while streaming', () => {
