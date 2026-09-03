@@ -1,25 +1,21 @@
-import { describe, test, expect, afterAll } from 'vitest'
-import fs from 'fs'
-import os from 'os'
-import path from 'path'
-import { renderFigure, extractSvgSize, applySvgScale, figureUnavailableReason } from '../src/handlers/figure.js'
+import { describe, test, expect } from 'vitest'
+import { renderFigure, extractSvgSize, applySvgScale, figureUnavailableReason, resetFigureBrowserForTest } from '../src/handlers/figure.js'
 
 /**
  * #819 — render_figure 渲染器。
  *
- * 本机有 Chrome 时(开发/CI macOS runner)跑真实渲染:mermaid 中文图 +
- * LaTeX 公式 + 零外呼断言(request interception 只放行 file:/data:)。
- * 无 Chrome/资产时仅验证优雅降级路径(FIGURE_UNAVAILABLE)。
+ * 有可用 chromium + 本地资产时(macOS 开发机/自带 Chrome 的 CI runner)
+ * 跑真实渲染:mermaid 中文图 + LaTeX 公式 + 零外呼断言(request
+ * interception 只放行 file:/data:)。缺失时仅验证优雅降级路径
+ * (FIGURE_UNAVAILABLE)。
  */
+import { afterAll } from 'vitest'
 
-const hasLocalSetup =
-  fs.existsSync('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
-  && fs.existsSync(path.join(process.cwd(), 'assets', 'figure', 'shell.html'))
+const hasLocalSetup = figureUnavailableReason() === null
 
 afterAll(() => {
   // 浏览器单例清理(避免 vitest 进程挂住)。
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  import('../src/handlers/figure.js').then((m) => m.resetFigureBrowserForTest())
+  resetFigureBrowserForTest()
 })
 
 describe.skipIf(!hasLocalSetup)('#819 real headless rendering', () => {
@@ -53,7 +49,9 @@ describe.skipIf(!hasLocalSetup)('#819 real headless rendering', () => {
 
 describe.skipIf(hasLocalSetup)('#819 graceful degradation', () => {
   test('no chromium/assets → FIGURE_UNAVAILABLE', async () => {
-    expect(figureUnavailableReason()).toMatch(/FIGURE_UNAVAILABLE/)
+    const reason = figureUnavailableReason()
+    expect(reason).toBeTruthy()
+    expect(String(reason)).toMatch(/FIGURE_UNAVAILABLE/)
     await expect(renderFigure({ kind: 'mermaid', source: 'graph TD; A-->B;' })).rejects.toThrow(/FIGURE_UNAVAILABLE/)
   })
 })
