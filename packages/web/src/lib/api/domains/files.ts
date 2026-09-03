@@ -129,6 +129,15 @@ export class FilesApi extends ApiCore {
     return this.fetch(`/api/v1/files/generated/${fileId}`, { method: 'DELETE' });
   }
 
+  /* #822: 学术渲染产物溯源 — 查看渲染源码/参数 + 强制重渲染(旧产物保留)。 */
+  async getFigureSource(fileId: string): Promise<{ kind: 'mermaid' | 'latex_math'; source: string; options: Record<string, unknown>; rendered_ms?: number | null }> {
+    return this.fetch(`/api/v1/figures/${encodeURIComponent(fileId)}/source`);
+  }
+
+  async rerenderFigure(fileId: string): Promise<{ file_id: string; url: string }> {
+    return this.fetch(`/api/v1/figures/${encodeURIComponent(fileId)}/rerender`, { method: 'POST' });
+  }
+
   /** #771: worker 端 LibreOffice 翻页预览 — 返回带 token 的逐页 PNG URL。 */
   async previewFile(fileId: string): Promise<{ page_count: number; pages: Array<{ index: number; url: string }> }> {
     return this.fetch('/api/v1/files/preview', { method: 'POST', body: JSON.stringify({ file_id: fileId }) });

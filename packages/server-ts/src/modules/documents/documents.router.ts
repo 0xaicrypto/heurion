@@ -135,6 +135,21 @@ export async function documentsRouter(app: FastifyInstance) {
 
     await (prisma as any).doc.update({ where: { id: docId }, data })
     const doc = await (prisma as any).doc.findFirst({ where: { id: docId } })
+
+    // #821: 保存时预渲染预热 — 扫描学术图 fire-and-forget ensureFigures,
+    // 导出时基本全命中 FigureRender 缓存(冷导出 15s/图预算只是兜底)。
+    if (bodyChanged && body) {
+      try {
+        const ownerId = request.user!.userId
+        const { scanFigures } = await import('../figures/figure-markdown.js')
+        const { ensureFigures } = await import('../figures/figure.service.js')
+        const { figures } = scanFigures(String(body))
+        if (figures.length > 0) {
+          void ensureFigures(ownerId, figures).catch(() => {})
+        }
+      } catch { /* 预热是纯优化 — 任何失败不影响保存 */ }
+    }
+
     return {
       id: doc!.id, title: doc!.title, body: doc!.body, deck: parseDeck(doc!.deck),
       created_at: doc!.createdAt, updated_at: doc!.updatedAt,
@@ -315,9 +330,14 @@ export async function documentsRouter(app: FastifyInstance) {
 
     // #fix: 双格式导出共享块解析器;传 userId 以便内嵌图从本用户
     // uploads 目录读取并嵌入导出文件。
+    // #821 管线 A: mermaid 围栏/公式行先 ensureFigure → 托管图片行
+    // (失败降级原文本,15s/图预算,缓存命中不等待)。
+    const { resolveFiguresToImageLines } = await import('../figures/figure-markdown.js')
+    const { ensureFigure } = await import('../figures/figure.service.js')
+    const exportBody = await resolveFiguresToImageLines(userId, body, ensureFigure)
     const buffer = format === 'pdf'
-      ? await renderPdfBuffer(title, body, userId)
-      : await renderDocxBuffer(title, body, userId)
+      ? await renderPdfBuffer(title, exportBody, userId)
+      : await renderDocxBuffer(title, exportBody, userId)
 
     const safeName = (doc.title || 'document').replace(/[^a-z0-9\u4e00-\u9fa5 _-]/gi, '_').trim() || 'document'
     const asciiName = safeName.replace(/[^\x20-\x7E]/g, '_')

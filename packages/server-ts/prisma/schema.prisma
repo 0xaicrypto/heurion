@@ -41,6 +41,7 @@ model User {
   skillPrefs    UserSkillPref[]
   settings      UserSetting[]
   chatTakeaways ChatTakeaway[]
+  figureRenders FigureRender[]
   studies       ResearchStudy[]
   patients      PatientRecord[]
    knowledgeGaps KnowledgeGap[]
@@ -781,4 +782,26 @@ model McpServer {
   updatedAt    String  @map("updated_at")
   @@index([userId])
   @@map("mcp_servers")
+}
+
+// #825: 学术渲染产物溯源 — 渲染源码留存在库,支撑图库"查看源码/重渲染"
+// 与 sha256 渲染缓存(同源码二次请求不重复 enqueue)。缓存三级:
+// FigureRender 表(DB) → FileIndex(盘) → 前端客户端渲染。
+model FigureRender {
+  id         String  @id @default(cuid())
+  userId     String  @map("user_id")
+  kind       String // 'mermaid' | 'latex_math'
+  source     String // 渲染源码(≤32KB, contracts figurePayloadSchema)
+  optionsJson String @map("options_json") // {display?, theme?, scale?} — 影响 sha256
+  sha256     String
+  svgFileId  String  @map("svg_file_id")
+  width      Int?
+  height     Int?
+  renderedMs Int?    @map("rendered_ms")
+  createdAt  String  @map("created_at")
+  updatedAt  String  @map("updated_at")
+  user       User    @relation(fields: [userId], references: [id])
+  @@unique([userId, sha256])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("figure_renders")
 }

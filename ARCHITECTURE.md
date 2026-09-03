@@ -64,10 +64,10 @@ Enforcement so far (manual greps, #666/#672):
   `tests/unit/arch-layers.test.ts` 的 peerEdges,新增边必须先改表再改代码）:
   auth→chat, calendar→research, chat→knowledge/plugins/evolution/patients/
   execution, documents→chat, evolution→chat/memorization/practitioner,
+  external→plugins/execution, figures→execution (#820 学术渲染编排),
   files→ingestion/knowledge/execution, ingestion→medical-records,
   medical-records→approvals, memorization→chat, patients→chat,
-  plugins→chat/execution, research→knowledge, skills→chat,
-  external→plugins/execution
+  plugins→chat/execution, research→knowledge, skills→chat
 - Pure crypto/util helpers used by both tools and modules live in `common/`
   (never import a `.router.ts` for non-HTTP functions — #666)
 

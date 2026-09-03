@@ -6,12 +6,13 @@ import { convertToPdf } from './handlers/pdf.js'
 import { renderPlot } from './handlers/plot.js'
 import { renderTable } from './handlers/table.js'
 import { previewFile } from './handlers/preview.js'
+import { renderFigure } from './handlers/figure.js'
 import { getDownloadUrl, getLocalFile, localDownloadUrl, downloadUrlTtlSeconds } from './storage.js'
 import { PersistentJobStore, type JobRecord } from './job-store.js'
 import { runJob } from './job-runner.js'
 import { createReadStream, existsSync } from 'fs'
 import { renderJobType, type RenderJobType } from '@heurion/contracts'
-import { enqueueJobRequestSchema, previewPayloadSchema } from '@heurion/contracts'
+import { enqueueJobRequestSchema, previewPayloadSchema, figurePayloadSchema } from '@heurion/contracts'
 
 // #446: persistent job store (JSONL) — jobs + fileId index survive restarts.
 const jobStore = new PersistentJobStore()
@@ -32,6 +33,7 @@ const HANDLERS: Record<RenderJobType, (payload: unknown) => Promise<unknown>> = 
   'sidecar.render_plot': (p) => renderPlot(p),
   'sidecar.convert_to_pdf': (p) => convertToPdf(p),
   'sidecar.preview_file': (p) => previewFile(p),
+  'sidecar.render_figure': (p) => renderFigure(p),
 }
 
 function isAuthorized(token: string | undefined): boolean {
@@ -92,6 +94,13 @@ async function main() {
       const check = previewPayloadSchema.safeParse(payload || {})
       if (!check.success) {
         return reply.status(400).send({ error: check.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') || 'invalid preview payload' })
+      }
+    }
+    // #825: figure payload 同 preview 模式 — 入口 zod 快速失败(源码≤32KB 等)。
+    if (type === 'sidecar.render_figure') {
+      const check = figurePayloadSchema.safeParse(payload || {})
+      if (!check.success) {
+        return reply.status(400).send({ error: check.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') || 'invalid figure payload' })
       }
     }
 

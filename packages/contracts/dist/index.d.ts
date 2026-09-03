@@ -463,7 +463,7 @@ export type PlotContent = z.infer<typeof plotContentSchema>;
  * 图（worker 端 soffice → pdf → pdftoppm PNG）；payload 不走 render-content
  * 校验（data_base64 直传文件字节）。
  */
-export declare const renderJobType: z.ZodEnum<["sidecar.generate_pptx", "sidecar.generate_docx", "sidecar.render_table", "sidecar.render_plot", "sidecar.convert_to_pdf", "sidecar.preview_file"]>;
+export declare const renderJobType: z.ZodEnum<["sidecar.generate_pptx", "sidecar.generate_docx", "sidecar.render_table", "sidecar.render_plot", "sidecar.convert_to_pdf", "sidecar.preview_file", "sidecar.render_figure"]>;
 export type RenderJobType = z.infer<typeof renderJobType>;
 /**
  * #790: preview payload 单一形状来源 — 此前四份定义（contracts 注释 /
@@ -486,6 +486,58 @@ export declare const previewPayloadSchema: z.ZodObject<{
     max_pages?: number | undefined;
 }>;
 export type PreviewPayload = z.infer<typeof previewPayloadSchema>;
+/**
+ * #825: render_figure payload 单一形状来源(与 preview 同构 — 输入是
+ * 用户/文档源码而非 LLM 产物,不走 render-content 契约)。
+ * source ≤ 32KB(设计 §5 安全约束);产物 SVG 为准,导出侧按需光栅化。
+ */
+export declare const figurePayloadSchema: z.ZodObject<{
+    kind: z.ZodEnum<["mermaid", "latex_math"]>;
+    source: z.ZodString;
+    display: z.ZodOptional<z.ZodBoolean>;
+    theme: z.ZodOptional<z.ZodString>;
+    scale: z.ZodOptional<z.ZodNumber>;
+}, "strip", z.ZodTypeAny, {
+    kind: "latex_math" | "mermaid";
+    source: string;
+    display?: boolean | undefined;
+    theme?: string | undefined;
+    scale?: number | undefined;
+}, {
+    kind: "latex_math" | "mermaid";
+    source: string;
+    display?: boolean | undefined;
+    theme?: string | undefined;
+    scale?: number | undefined;
+}>;
+export type FigurePayload = z.infer<typeof figurePayloadSchema>;
+/**
+ * #825: render_figure 结果形状 — 对齐 worker saveFile 产物(job-runner
+ * 按 file_id 索引,控制面 fetchFile 取字节后自行落盘 fig_*.svg)。
+ */
+export declare const figureResultSchema: z.ZodObject<{
+    file_id: z.ZodString;
+    file_name: z.ZodString;
+    mime_type: z.ZodString;
+    width: z.ZodOptional<z.ZodNumber>;
+    height: z.ZodOptional<z.ZodNumber>;
+    warnings: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+}, "strip", z.ZodTypeAny, {
+    file_id: string;
+    file_name: string;
+    mime_type: string;
+    width?: number | undefined;
+    height?: number | undefined;
+    warnings?: string[] | undefined;
+}, {
+    file_id: string;
+    file_name: string;
+    mime_type: string;
+    width?: number | undefined;
+    height?: number | undefined;
+    warnings?: string[] | undefined;
+}>;
+export type FigureResult = z.infer<typeof figureResultSchema>;
 export type RenderContent = PresentationContent | DocumentContent | TableContent | PlotContent;
 /**
  * Validate an AI-produced content payload for a job type. Returns

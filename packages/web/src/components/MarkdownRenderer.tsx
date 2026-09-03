@@ -4,8 +4,11 @@ import { fixMarkdown } from 'llm-markdown-fix';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import { Check, Copy } from 'lucide-react';
 import { SmartImg } from './SmartImg';
+import { MermaidBlock } from './MermaidBlock';
 
 interface Props {
   content: string;
@@ -77,14 +80,16 @@ export function MarkdownRenderer({ content, className }: Props) {
       )}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm as any, remarkBreaks as any]}
+        remarkPlugins={[remarkGfm as any, remarkBreaks as any, remarkMath as any]}
+        rehypePlugins={[[rehypeKatex as any, { throwOnError: false }]]}
         components={{
           pre({ children }: any) {
             // CodeBlock renders its own container; unwrap the default <pre>.
             return <>{children}</>;
           },
-          code({ inline, children, ...props }: any) {
+          code({ inline, children, className, ...props }: any) {
             const text = String(children).replace(/\n$/, '');
+            const lang = /language-([\w-]+)/.exec(String(className || ''))?.[1] || '';
 
             if (inline) {
               // #598: 行内代码(反引号)去背景、去内边距 — 代码标识符/
@@ -94,6 +99,11 @@ export function MarkdownRenderer({ content, className }: Props) {
                   {children}
                 </code>
               );
+            }
+
+            // #822: mermaid 围栏 → 客户端渲染(失败回退代码块)。
+            if (lang === 'mermaid') {
+              return <MermaidBlock code={text} />;
             }
 
             // #598: 围栏代码块不再单独渲染为带框/复制按钮的代码块 —

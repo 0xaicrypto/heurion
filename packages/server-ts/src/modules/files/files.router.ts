@@ -210,7 +210,7 @@ export async function filesRouter(app: FastifyInstance) {
     const patientHash = q?.patient_hash ? String(q.patient_hash) : undefined
     // #811: 域分离 — chat picker 只列用户上传,排除 AI 生成产物(chart/scene/img)。
     const where = { userId, deletedAt: null,
-      NOT: [{ id: { startsWith: 'chart_' } }, { id: { startsWith: 'scene_' } }, { id: { startsWith: 'img_' } }],
+      NOT: [{ id: { startsWith: 'chart_' } }, { id: { startsWith: 'scene_' } }, { id: { startsWith: 'img_' } }, { id: { startsWith: 'fig_' } }],
       ...(patientHash ? { patientHash } : {}) }
     const [rows, total] = await Promise.all([
       prisma.fileIndex.findMany({ where, orderBy: { createdAt: 'desc' }, take: limit, skip: offset }),
@@ -229,7 +229,7 @@ export async function filesRouter(app: FastifyInstance) {
     const userId = request.user!.userId
     const { listGeneratedCharts, withChartTokens } = await import('./chart-library.service.js')
     const { issueChartToken } = await import('../../common/chart-token.js')
-    const entries = listGeneratedCharts(userId)
+    const entries = await listGeneratedCharts(userId)
     return { charts: withChartTokens(entries, issueChartToken, userId) }
   })
 

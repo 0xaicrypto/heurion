@@ -12,8 +12,8 @@ export interface GeneratedChartEntry {
   file_id: string
   url: string
   title: string
-  tool: 'render_scene' | 'render_chart' | 'generate_image' | 'unknown'
-  mode: 'reactome' | 'bioscene' | 'chart' | 'unknown'
+  tool: 'render_scene' | 'render_chart' | 'generate_image' | 'render_figure' | 'unknown'
+  mode: 'reactome' | 'bioscene' | 'chart' | 'figure' | 'unknown'
   size_bytes: number
   created_at: string
   pathway_id?: string
@@ -23,10 +23,14 @@ const SCENE_PREFIX = 'scene_'
 const CHART_PREFIX = 'chart_'
 // #811: generate_image 产物(img_*)也归图库域。
 const IMAGE_PREFIX = 'img_'
+// #825: 学术渲染产物(fig_*)— mermaid/LaTeX SVG,元数据来自 FigureRender。
+const FIGURE_PREFIX = 'fig_'
 
 /** Heuristic: Reactome SVGs are large-viewBox official diagrams. */
-function detectMode(fileId: string, svgHead: string): 'reactome' | 'bioscene' | 'chart' | 'unknown' {
+function detectMode(fileId: string, svgHead: string): 'reactome' | 'bioscene' | 'chart' | 'figure' | 'unknown' {
   if (fileId.startsWith(CHART_PREFIX)) return 'chart'
+  // #825: fig_ 域 — kind 由 FigureRender 元数据给出,调用方覆盖。
+  if (fileId.startsWith(FIGURE_PREFIX)) return 'figure'
   // Reactome diagrams have huge viewBoxes and use stroke-dasharray="none".
   if (svgHead.includes('stroke-dasharray="none"') || /viewBox="[-\d. ]+ \d{4,}/.test(svgHead)) return 'reactome'
   return 'bioscene'
@@ -60,12 +64,12 @@ function findEventMeta(
 }
 
 /** List every generated chart SVG for a user, newest first. */
-export function listGeneratedCharts(userId: string): GeneratedChartEntry[] {
+export async function listGeneratedCharts(userId: string): Promise<GeneratedChartEntry[]> {
   const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
   if (!fs.existsSync(dir)) return []
 
   const files = fs.readdirSync(dir)
-    .filter((f) => f.startsWith(SCENE_PREFIX) || f.startsWith(CHART_PREFIX)
+    .filter((f) => f.startsWith(SCENE_PREFIX) || f.startsWith(CHART_PREFIX) || f.startsWith(FIGURE_PREFIX)
       || (f.startsWith(IMAGE_PREFIX) && (f.endsWith('.png') || f.endsWith('.jpg') || f.endsWith('.jpeg') || f.endsWith('.webp'))))
     .map((f) => {
       const stat = fs.statSync(path.join(dir, f))
@@ -73,6 +77,22 @@ export function listGeneratedCharts(userId: string): GeneratedChartEntry[] {
       return { file_id: f, stat, head }
     })
     .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)
+
+  // #825: fig_ 产物元数据来自 FigureRender 表(源码/kind 留存),不走事件日志。
+  const figureFileIds = files.filter((f) => f.file_id.startsWith(FIGURE_PREFIX)).map((f) => f.file_id)
+  const figureMeta = new Map<string, { kind: string; source: string }>()
+  if (figureFileIds.length > 0) {
+    try {
+      const prisma = (await import('../../common/prisma.js')).default
+      const rows = await prisma.figureRender.findMany({
+        where: { userId, svgFileId: { in: figureFileIds } },
+        orderBy: { createdAt: 'desc' },
+      })
+      for (const row of rows) {
+        if (!figureMeta.has(row.svgFileId)) figureMeta.set(row.svgFileId, { kind: row.kind, source: row.source })
+      }
+    } catch { /* table missing — fall back to filename defaults */ }
+  }
 
   // Event log lookup for titles/tools (best-effort).
   let events: Array<{ eventType: string; content: string; metadata: any }> = []
@@ -83,6 +103,18 @@ export function listGeneratedCharts(userId: string): GeneratedChartEntry[] {
 
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   return files.map(({ file_id, stat, head }) => {
+    const figure = figureMeta.get(file_id)
+    if (figure) {
+      return {
+        file_id,
+        url: '',
+        title: figure.kind === 'latex_math' ? '公式渲染' : 'Mermaid 图',
+        tool: 'render_figure' as const,
+        mode: 'figure' as const,
+        size_bytes: stat.size,
+        created_at: new Date(stat.mtimeMs).toISOString(),
+      }
+    }
     const meta = findEventMeta(events, file_id)
     const mode = detectMode(file_id, head)
     return {
