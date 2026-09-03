@@ -58,24 +58,8 @@ export async function settingsRouter(app: FastifyInstance) {
     }
   })
 
-  // ── #419: image generation config ──────────────────────────────
-  app.get('/api/v1/settings/image', async (request) => {
-    const userId = request.user!.userId
-    return {
-      base_url: (await getSetting(userId, 'img_base_url')) || process.env.IMG_API_BASE_URL || 'https://api.openai.com/v1',
-      model: (await getSetting(userId, 'img_model')) || process.env.IMG_MODEL || 'dall-e-3',
-      has_key: !!(await getSetting(userId, 'img_api_key')) || !!process.env.IMG_API_KEY,
-    }
-  })
-
-  app.put('/api/v1/settings/image', async (request) => {
-    const body = request.body as any
-    const userId = request.user!.userId
-    if (body.base_url) await setSetting(userId, 'img_base_url', body.base_url)
-    if (body.model) await setSetting(userId, 'img_model', body.model)
-    if (body.api_key) await setSetting(userId, 'img_api_key', body.api_key)
-    return { ok: true }
-  })
+  // #827: 图像生成独立配置(/settings/image GET/PUT)已移除 —
+  // generate_image 改用当前多模态主模型,非多模态时明确报错。
 
   app.post('/api/v1/settings/llm/test', async () => {
     return { ok: true, provider: 'deepseek', model: 'deepseek-v4-flash', latencyMs: 500 }

@@ -35,6 +35,12 @@ export interface LlmChatResult {
   text: string
   /** True when the provider stopped at finish_reason='length'. */
   truncated: boolean
+  /**
+   * #827: 多模态输出 — provider 在 message.images(OpenAI-compat 约定)或
+   * content 内联 data-URI/https 图片时填充(data: 或 https:// URL)。
+   * 普通文本响应恒为 undefined,既有消费方零影响。
+   */
+  images?: string[]
 }
 
 /**
@@ -192,6 +198,34 @@ export function providerSupportsVision(provider?: string, model?: string): boole
   return VISION_PROVIDERS.has(prov) || prov === 'deepseek' || prov === 'opencode'
 }
 
+/** #827: 当前生效的主模型是否多模态(provider + resolveActiveModel 双维度)。 */
+export function isMainModelMultimodal(): boolean {
+  return providerSupportsVision(currentLlmProvider(), resolveActiveModel())
+}
+
+/**
+ * #827: 多模态输出提取(纯函数) — OpenAI-compat 约定的
+ * `message.images[]`(image_url.url 或 url,常见于 gemini/中转站)+
+ * content 内联 data-URI/https 图片兜底。返回 data:/https:// URL 列表。
+ */
+export function extractImagesFromChatResponse(message: any): string[] | undefined {
+  if (!message) return undefined
+  const urls: string[] = []
+  if (Array.isArray(message.images)) {
+    for (const img of message.images) {
+      const u = typeof img === 'string' ? img : img?.image_url?.url || img?.url
+      if (typeof u === 'string' && (u.startsWith('data:image/') || /^https?:\/\//.test(u))) urls.push(u)
+    }
+  }
+  const content = typeof message.content === 'string' ? message.content : ''
+  if (content) {
+    for (const m of content.matchAll(/data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]+|https?:\/\/\S+\.(?:png|jpe?g|webp|gif)(?:\?\S*)?/gi)) {
+      urls.push(m[0])
+    }
+  }
+  return urls.length > 0 ? urls : undefined
+}
+
 export type LlmTier = 'fast' | 'premium' | 'reasoner'
 
 /**
@@ -336,7 +370,7 @@ export const LLM_PROVIDERS: Record<string, LlmEndpoint> = {
   // stay, keyed by model name for relay-routed models.
 }
 
-function currentLlmProvider(): string {
+export function currentLlmProvider(): string {
   return (process.env.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase()
 }
 
@@ -536,6 +570,11 @@ export interface LlmGateway {
   stream(messages: ChatMessage[], options?: LlmChatOptions, onReasoning?: (text: string) => void): AsyncGenerator<string>
   /** API key for the active provider (from the provider's env var). */
   getApiKey(): string
+  /**
+   * #827 — 用当前主模型直接生成图像(取代独立图像 API 配置)。
+   * 主模型非多模态或上游未返回图片 → IMAGE_UNSUPPORTED 明确报错。
+   */
+  generateImage(prompt: string, options?: LlmChatOptions): Promise<{ dataBase64: string; mime: string }>
 }
 
 /**
@@ -702,7 +741,38 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       )
     }
 
-    return { text: content, truncated }
+    return { text: content, truncated, images: extractImagesFromChatResponse(choice?.message) }
+  }
+
+  /**
+   * #827 — 用当前主模型直接生成图像(取代独立图像 API 配置)。
+   * 主模型非多模态 → IMAGE_UNSUPPORTED 明确报错;多模态但上游未返回
+   * 图片(该模型不支持图像输出)→ 同样明确报错,绝不静默降级。
+   */
+  async generateImage(prompt: string, options: LlmChatOptions = {}): Promise<{ dataBase64: string; mime: string }> {
+    const model = this.resolveModel(options, resolveActiveModel())
+    if (!providerSupportsVision(currentLlmProvider(), model)) {
+      throw new Error(`IMAGE_UNSUPPORTED: 主模型 ${model} 非多模态,无法生成图片 — 请在设置页切换到多模态模型`)
+    }
+    const result = await this.chatWithMeta(
+      [{ role: 'user', content: `请直接生成一张图片并输出图片本身(不要只输出文字描述):${prompt}` }],
+      { ...options, maxTokens: options.maxTokens ?? 4096 },
+    )
+    const urls = result.images || []
+    const pick = urls.find((u) => u.startsWith('data:')) || urls[0]
+    if (!pick) {
+      throw new Error(`IMAGE_UNSUPPORTED: 模型 ${model} 未返回图片数据(该模型不支持图像生成)`)
+    }
+    if (pick.startsWith('data:')) {
+      const m = /^data:(image\/[\w.+-]+);base64,(.+)$/s.exec(pick)
+      if (!m) throw new Error('IMAGE_UNSUPPORTED: 模型返回的图片数据无法解析')
+      return { mime: m[1], dataBase64: m[2] }
+    }
+    // provider 返回的 https 图片 URL — 拉回转 base64(下游统一按字节落盘)
+    const r = await fetch(pick, { signal: options.signal ?? AbortSignal.timeout(30_000) })
+    if (!r.ok) throw new Error(`IMAGE_FAILED: 图片下载失败 HTTP ${r.status}`)
+    const buf = Buffer.from(await r.arrayBuffer())
+    return { mime: r.headers.get('content-type') || 'image/png', dataBase64: buf.toString('base64') }
   }
 
   async *stream(

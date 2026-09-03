@@ -1,44 +1,28 @@
 /**
- * #177: generate_image — external text-to-image (OpenAI-compatible
- * images/generations endpoint). The generated image is saved to the user's
- * attachments and returned as a file_id + URL. Missing config and API
- * failures degrade to tool errors (the agent can fall back to a placeholder
- * description) — never crash the tool loop.
+ * #827: generate_image — 通过当前主模型直接生成图像(取代 #177 的独立
+ * OpenAI images/generations 配置)。主模型多模态 → 直接用;非多模态或
+ * 上游未返回图片 → 明确报错(工具层把 IMAGE_UNSUPPORTED 映射为用户可读
+ * 的降级提示,agent 会转述并以文字描述代替)— 绝不静默失败。
  */
 import { BaseTool, ToolResult } from './base-tool.js'
 import type { ToolContext } from './tool-registry.js'
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
-
-// #419: DB-configured settings win over env.
-async function imgConfig(userId: string): Promise<{ baseUrl: string; key: string | null; model: string }> {
-  let db: { base_url?: string; model?: string; img_api_key?: string } = {}
-  try {
-    const prisma = (await import('../common/prisma.js')).default
-    const rows = await (prisma as any).setting.findMany({ where: { userId } })
-    for (const r of rows) (db as Record<string, string>)[r.key] = r.value
-  } catch { /* no db */ }
-  return {
-    baseUrl: (db.base_url || process.env.IMG_API_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, ''),
-    key: db.img_api_key || process.env.IMG_API_KEY || null,
-    model: db.model || process.env.IMG_MODEL || 'dall-e-3',
-  }
-}
+import { getLlmGateway } from '../common/llm-gateway.js'
 
 export class GenerateImageTool extends BaseTool {
   constructor(private ctx?: ToolContext) { super() }
 
   get name(): string { return 'generate_image' }
   get description(): string {
-    return 'Generate an illustration / schematic image (e.g. study design diagram, beam-scan sketch) via the configured image API. Returns a file_id + URL you can reference or embed. If the API is unconfigured or fails, say so and describe the image in text instead.'
+    return 'Generate an illustration / schematic image (e.g. study design diagram, beam-scan sketch) using the current multimodal main model. Returns a file_id + URL you can reference or embed. If the main model is not multimodal (image generation unsupported), the call fails with an explicit error — tell the user and describe the image in text instead.'
   }
   get parameters(): Record<string, unknown> {
     return {
       type: 'object',
       properties: {
         prompt: { type: 'string', description: 'Detailed image prompt (style, content, layout)' },
-        size: { type: 'string', enum: ['1024x1024', '1024x1792', '1792x1024'], default: '1024x1024' },
       },
       required: ['prompt'],
     }
@@ -47,58 +31,22 @@ export class GenerateImageTool extends BaseTool {
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const prompt = String(args.prompt || '').trim()
     if (!prompt) return { success: false, error: 'prompt required' }
-    const size = String(args.size || '1024x1024')
     const userId = this.ctx?.userId || 'unknown'
-    const cfg = await imgConfig(userId)
-    if (!cfg.key) {
-      return { success: false, error: 'generate_image is not configured — set it in Settings → LLM → 图像生成 (or IMG_API_KEY env). Describe the image in text instead.' }
-    }
 
     try {
-      // #419: retry once on 429/5xx (transient rate limits).
-      let res: Response | null = null
-      let lastStatus = 0
-      for (let attempt = 0; attempt < 2 && !res; attempt++) {
-        const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), 60000)
-        const r = await fetch(`${cfg.baseUrl}/images/generations`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.key}` },
-          body: JSON.stringify({ model: cfg.model, prompt, n: 1, size, response_format: 'b64_json' }),
-          signal: controller.signal,
-        })
-        clearTimeout(timer)
-        lastStatus = r.status
-        if (r.ok || (r.status !== 429 && r.status < 500)) { res = r; break }
-        if (attempt === 0) await new Promise((r2) => setTimeout(r2, 1500))
-      }
-      if (!res) throw new Error(`Image API retries exhausted (last HTTP ${lastStatus})`)
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        throw new Error(`Image API HTTP ${res.status}: ${text.slice(0, 150)}`)
-      }
-      const data: any = await res.json()
-      const b64 = data?.data?.[0]?.b64_json || data?.data?.[0]?.url
-      if (!b64) return { success: false, error: 'Image API returned no image data' }
+      const { mime, dataBase64 } = await getLlmGateway().generateImage(prompt, {
+        telemetryContext: { userId, workspaceId: userId, action: 'tool.generate_image' },
+      })
 
       // Save to the user's attachments dir (same layout as render_chart).
       const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
       fs.mkdirSync(dir, { recursive: true })
-      const fileId = `img_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.png`
-      const filepath = path.join(dir, fileId)
-      if (b64.startsWith('data:')) {
-        fs.writeFileSync(filepath, Buffer.from(b64.split(',')[1] || '', 'base64'))
-      } else if (b64.startsWith('http')) {
-        const img = await fetch(b64, { signal: AbortSignal.timeout(30000) })
-        fs.writeFileSync(filepath, Buffer.from(await img.arrayBuffer()))
-      } else {
-        fs.writeFileSync(filepath, Buffer.from(b64, 'base64'))
-      }
+      const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png'
+      const fileId = `img_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`
+      fs.writeFileSync(path.join(dir, fileId), Buffer.from(dataBase64, 'base64'))
 
-      // #fix: canonical tokenized URL — same shape as render_chart (#213).
-      // The old `/api/v1/files/<id>/download` matched no route on the main
-      // server (404) and carried no chart token (<img> sends no Bearer →
-      // 401), so every generated diagram failed to display in chat.
+      // Canonical tokenized URL — same shape as render_chart (#213): <img>
+      // cannot send Bearer headers, so a short-lived chart token is required.
       let url = `/api/v1/files/download/${fileId}`
       try {
         const { issueChartToken } = await import('../common/chart-token.js')
@@ -112,7 +60,12 @@ export class GenerateImageTool extends BaseTool {
         output: JSON.stringify({ file_id: fileId, url, prompt }, null, 2),
       }
     } catch (err) {
-      return { success: false, error: `generate_image failed: ${(err as Error).message.slice(0, 200)}` }
+      const msg = (err as Error).message || 'generate_image failed'
+      // IMAGE_UNSUPPORTED → 面向用户的明确降级提示(agent 转述 + 文字描述代替)
+      if (msg.includes('IMAGE_UNSUPPORTED')) {
+        return { success: false, error: msg.replace(/^IMAGE_UNSUPPORTED:\s*/, '无法生成图片 — ') }
+      }
+      return { success: false, error: `generate_image failed: ${msg.slice(0, 200)}` }
     }
   }
 }

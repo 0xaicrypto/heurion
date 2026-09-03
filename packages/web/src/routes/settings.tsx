@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
-import { Check, X, Key, Server, RefreshCw, Activity, BarChart3, Mail, ScrollText, ShieldCheck, Plus, FileText } from 'lucide-react';
+import { Check, X, Key, RefreshCw, Activity, BarChart3, Mail, ScrollText, ShieldCheck, Plus, FileText } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api';
 import { EmailBindCard } from '@/components/EmailBindCard';
@@ -406,7 +406,6 @@ function LlmSection() {
               ? t('settings.overrideActive', '当前为 admin 运行时覆盖(见上方全局模型卡);清空该卡可恢复 env 值')
               : t('settings.relayHint', '由服务端 env(DEFAULT_LLM_PROVIDER / DEFAULT_LLM_MODEL / API Key)配置;admin 可在上方全局模型卡运行时切换模型')}
           </p>
-          <ImageGenConfig />
         </Card>
       ) : (
         <Card className="p-4">
@@ -730,58 +729,6 @@ function McpSection() {
   );
 }
 
-
-/* ────────────────────────── Image generation config (#419) ────────────────────────── */
-function ImageGenConfig() {
-  const { t } = useTranslation();
-  const [cfg, setCfg] = useState<{ base_url: string; model: string; has_key: boolean } | null>(null);
-  const [baseUrl, setBaseUrl] = useState('');
-  const [model, setModel] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.getImageSettings().then((r) => {
-      setCfg(r);
-      setBaseUrl(r.base_url);
-      setModel(r.model);
-    }).catch(() => {});
-  }, []);
-
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    setMsg(null);
-    try {
-      await api.updateImageSettings({ base_url: baseUrl.trim() || undefined, model: model.trim() || undefined, api_key: apiKey.trim() || undefined });
-      setApiKey('');
-      setMsg(t('settings.saved', '已保存'));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err));
-    } finally { setSaving(false); }
-  };
-
-  return (
-    <Card className="mt-4 space-y-3 p-4">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-text-secondary">{t('settings.imageGen', '图像生成')}</span>
-        {cfg?.has_key && <Badge variant="success">{t('settings.configured', '已配置')}</Badge>}
-      </div>
-      <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" aria-label="base_url" />
-      <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="dall-e-3" aria-label="model" />
-      <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={t('settings.imgKey', 'API Key（可选，留空不改）')} aria-label="api_key" />
-      {error && <Alert variant="error">{error}</Alert>}
-      <div className="flex items-center gap-2">
-        <Button size="sm" onClick={save} isLoading={saving}>
-          <Server size={14} className="mr-1.5" /> {t('common.save')}
-        </Button>
-        {msg && <span className="flex items-center gap-1 text-sm text-success"><Check size={14} /> {msg}</span>}
-      </div>
-    </Card>
-  );
-}
 
 /* ────────────────────────── Credits (#470) ────────────────────────── */
 function CreditsSection() {
