@@ -690,7 +690,10 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // Stream the final response
   let fullResponse = ''
   if (finalContent) {
-    const chunks = finalContent.match(/.{1,80}/g) || [finalContent]
+    // #fix: 分块必须带 /s 标志 — `.` 默认不匹配 \n,丢掉换行后前端拼回的
+    // 回答整段粘连(markdown 表格行尾 | 与下行行首 | 相接成 ||、接 ## 成
+    // |##),表格/标题/列表全部渲染崩坏。/s 让 . 匹配任意字符,分块无损。
+    const chunks = finalContent.match(/[\s\S]{1,80}/gs) || [finalContent]
     for (const chunk of chunks) {
       fullResponse += chunk
       send({ type: 'final_answer_chunk', text: chunk })
