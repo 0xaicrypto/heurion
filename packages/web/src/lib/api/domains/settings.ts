@@ -52,11 +52,4 @@ export class SettingsApi extends ApiCore {
 
   /* ────────────────────────── image generation (#419) ────────── */
 
-  async getImageSettings(): Promise<{ base_url: string; model: string; has_key: boolean }> {
-    return this.fetch('/api/v1/settings/image');
-  }
-
-  async updateImageSettings(input: { base_url?: string; model?: string; api_key?: string }): Promise<{ ok: boolean }> {
-    return this.fetch('/api/v1/settings/image', { method: 'PUT', body: JSON.stringify(input) });
-  }
 }
