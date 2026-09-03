@@ -294,6 +294,14 @@ export async function knowledgeRouter(app: FastifyInstance) {
     return { articles: items.map((a) => ({ id: a.id, title: a.title, summary: a.summary, kind: a.kind, updated_at: a.updatedAt })) }
   })
 
+  // #816: facts→article 覆盖率仪表盘(global + 患者 scope)
+  app.get('/api/v1/knowledge/coverage', async (request) => {
+    const userId = request.user!.userId
+    const ctx = getUserContext(userId)
+    const { buildCoverageDashboard } = await import('../../memory/coverage.js')
+    return buildCoverageDashboard(userId, ctx.memory)
+  })
+
   // List knowledge articles with stale/impact metadata
   app.get('/api/v1/knowledge/articles', async (request) => {
     const userId = request.user!.userId

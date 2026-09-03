@@ -28,6 +28,7 @@ import './modules/ingestion/analyzers/index.js'
 import { stubRouter } from './modules/stubs/stubs.router.js'
 import { knowledgeRouter } from './modules/knowledge/knowledge.router.js'
 import { knowledgeStoresRouter } from './modules/knowledge/knowledge-stores.router.js'
+import { figuresRouter } from './modules/figures/figures.router.js'
 import { reportRouter } from './modules/report/report.router.js'
 import { executionRouter } from './modules/execution/execution.router.js'
 import { pluginsRouter } from './modules/plugins/plugins.router.js'
@@ -105,6 +106,7 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   await app.register(medicalRecordsRouter)
   await app.register(knowledgeRouter)
   await app.register(knowledgeStoresRouter)
+  await app.register(figuresRouter)
   await app.register(evolutionRouter, { evolutionQueue })
   await app.register(stubRouter)
   await app.register(reportRouter)

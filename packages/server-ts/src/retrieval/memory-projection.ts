@@ -55,6 +55,9 @@ export interface ProjectionConfig {
   recencyLambda: number       // 衰减系数
   patientContextTokens: number
   reserveTokens: number
+  /** #814: layer3 降级 — importance ≥ 此值或近 N 天才进入碎片投影。 */
+  layer3ImportanceMin: number
+  layer3RecentDays: number
 }
 
 const DEFAULT_CONFIG: ProjectionConfig = {
@@ -63,6 +66,8 @@ const DEFAULT_CONFIG: ProjectionConfig = {
   recencyLambda: CONTEXT_CONFIG.projection.recencyLambda,
   patientContextTokens: CONTEXT_CONFIG.projection.patientContextTokens,
   reserveTokens: CONTEXT_CONFIG.projection.reserveTokens,
+  layer3ImportanceMin: CONTEXT_CONFIG.projection.layer3ImportanceMin,
+  layer3RecentDays: CONTEXT_CONFIG.projection.layer3RecentDays,
 }
 
 // ── 注意力评分 ──────────────────────────────────────────
@@ -71,6 +76,17 @@ import { daysAgo, recencyWeight, importanceMultiplier } from '../common/attentio
 import { estimateTokens } from '../common/token-estimate.js' // §5.4 (#197)
 import { formatFactLine } from '../common/fact-render.js' // #627 统一渲染
 import { CONTEXT_CONFIG } from '../common/context-config.js' // #637 集中配置
+import { makeLogger } from '../common/logger.js'
+
+const log = makeLogger('retrieval.memory-projection')
+
+/**
+ * #814: 身份级类目 — 与 persona 同源。全局范围的
+ * preference/constraint/goal 已进 persona,layer3 不再重复注入
+ * (persona.ts 注释声称的去重自此真实成立);患者范围的同类 facts
+ * 不受影响(persona 按 §13.3A 只收全局,不会重复)。
+ */
+const PERSONA_IDENTITY_CATEGORIES = new Set(['preference', 'constraint', 'goal'])
 
 // ── 上下文投影器 ───────────────────────────────────────
 
@@ -134,7 +150,25 @@ export class MemoryProjection {
     // ── Layer 3: 加权 Facts (importance × recency) ──
     // #627: 评分收敛 — 统一走 attention.ts 的 importanceMultiplier,
     // 不再手写 [0.25,0.5,1.0,1.5,2.0](5→2.0x vs attention 5→2.2x 曾矛盾)。
+    // #814: layer3 降级为"未成文记忆" —
+    //   ① 全局 preference/constraint/goal 已进 persona,此处排除(去重);
+    //   ② 仅 importance ≥ 阈值或近 N 天的 facts 进入投影(长尾交给
+    //      article 覆盖 — 覆盖率调度见 #816,JIT 兜底见 #815)。
+    let personaIdentityExcluded = 0
+    let downgradedOut = 0
     const scoredFacts = params.facts
+      .filter(f => {
+        if (PERSONA_IDENTITY_CATEGORIES.has(f.category) && !f.patientHash && !f.studyId) {
+          personaIdentityExcluded += 1
+          return false
+        }
+        const recent = daysAgo(f.createdAt) <= this.config.layer3RecentDays
+        if ((f.importance ?? 3) < this.config.layer3ImportanceMin && !recent) {
+          downgradedOut += 1
+          return false
+        }
+        return true
+      })
       .map(f => {
         const score = recencyWeight(daysAgo(f.createdAt), this.config.recencyLambda) * importanceMultiplier(f.importance)
         return { fact: f, score }
@@ -154,6 +188,18 @@ export class MemoryProjection {
     }
     remaining -= estimateTokens(layer3Text)
 
+    // #814: 注入条数/字符占比 telemetry — 供 article-first 前后对比
+    // (facts 裸注入占比是本 epic 的核心验收指标)。
+    log.info('layer3 projection telemetry', {
+      userId: params.userId,
+      inputFacts: params.facts.length,
+      injected: layer3Count,
+      tokens: estimateTokens(layer3Text),
+      chars: layer3Text.length,
+      excludedPersonaIdentity: personaIdentityExcluded,
+      downgradedOut,
+    })
+
     // ── Layer 4: Skills (固定, 低开销) ──
     let skillsText = ''
     if (params.skills.length > 0) {
@@ -165,16 +211,14 @@ export class MemoryProjection {
     }
 
     // ── 组装 ──
-    // §4.3 (#188): when citing accumulated knowledge, annotate the source
-    // and confidence so every clinical statement stays traceable.
-    const citationRule = layer3Text
-      ? '\n引用记忆中的事实时，请附带 [置信度, 来源]，例如 [0.9, chat]；不确定的记忆请标注 "不确定"。'
-      : ''
+    // §4.3 (#188): 引用标注规则已并入 layer3 段头(#814 文案收敛)。
     const sections = [
       params.persona,
       patientContext ? `\n## Patient Context\n${patientContext}` : '',
       layer2Text ? `\n## Recent Sessions\n${layer2Text}` : '',
-      layer3Text ? `\n## Accumulated Knowledge\n${layer3Text}${citationRule}` : '',
+      // #814: 段文案明示碎片属性 — 模型优先参考知识库注入的文章,
+      // 碎片仅作未成文记忆补充。§4.3 (#188) 引用标注规则保留(含示例)。
+      layer3Text ? `\n## 未成文记忆(碎片)\n以下为尚未合成知识文章的记忆碎片,可能已有文章覆盖(以知识库注入为准)。引用记忆中的事实时请附带 [置信度, 来源],例如 [0.9, chat];不确定的记忆请标注 "不确定"。\n${layer3Text}` : '',
       skillsText ? `\n## Active Skills\n${skillsText}` : '',
     ].filter(Boolean)
 

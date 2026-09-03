@@ -1,5 +1,6 @@
 import type { MemoryGraph } from '../memory.graph'
 import type { FactNode, ArticleNode, DocumentNode } from '../memory.types'
+import { resolveArticleStaleness } from '../staleness.js'
 
 export interface PropagationResult {
   staleArticleStableIds: string[]
@@ -29,9 +30,15 @@ export class CurationEngine {
       if (!article) continue
       if (article.status === 'superseded') continue
 
+      // #813: 判定统一走 resolveArticleStaleness(与注入侧同源)。
+      // 事件路径只提供触发时机;引用了编辑后新版本的 article 不再被误标。
+      const staleness = resolveArticleStaleness(this.graph, article)
+      if (!staleness.stale) continue
+
       this.graph.markStatus(articleNodeId, 'stale')
+      // staleBecause 保持裸 fact stableId(article-view/legacy 按裸 id 反查)。
       const staleBecause = new Set(article.staleBecause || [])
-      staleBecause.add(factStableId)
+      for (const r of staleness.reasons) staleBecause.add(r.includes(':') ? r.slice(r.indexOf(':') + 1) : r)
       this.graph.updateNode(articleNodeId, {
         staleBecause: Array.from(staleBecause),
       } as Partial<ArticleNode>)

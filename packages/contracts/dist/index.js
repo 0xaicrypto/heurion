@@ -95,6 +95,9 @@ export const renderJobType = z.enum([
     'sidecar.render_plot',
     'sidecar.convert_to_pdf',
     'sidecar.preview_file',
+    // #825: 学术内容本地渲染 — mermaid 围栏/LaTeX 公式 → SVG(headless
+    // Chromium + 本地 mermaid ESM/MathJax bundle,零外呼)。
+    'sidecar.render_figure',
 ]);
 /**
  * #790: preview payload 单一形状来源 — 此前四份定义（contracts 注释 /
@@ -108,6 +111,30 @@ export const previewPayloadSchema = z.object({
     file_name: z.string().optional(),
     max_pages: z.number().int().positive().max(60).optional(),
 });
+/**
+ * #825: render_figure payload 单一形状来源(与 preview 同构 — 输入是
+ * 用户/文档源码而非 LLM 产物,不走 render-content 契约)。
+ * source ≤ 32KB(设计 §5 安全约束);产物 SVG 为准,导出侧按需光栅化。
+ */
+export const figurePayloadSchema = z.object({
+    kind: z.enum(['mermaid', 'latex_math']),
+    source: z.string().min(1).max(32 * 1024),
+    display: z.boolean().optional(),
+    theme: z.string().max(50).optional(),
+    scale: z.number().min(0.5).max(4).optional(),
+});
+/**
+ * #825: render_figure 结果形状 — 对齐 worker saveFile 产物(job-runner
+ * 按 file_id 索引,控制面 fetchFile 取字节后自行落盘 fig_*.svg)。
+ */
+export const figureResultSchema = z.object({
+    file_id: z.string().min(1),
+    file_name: z.string().min(1),
+    mime_type: z.string().min(1),
+    width: z.number().int().positive().max(10000).optional(),
+    height: z.number().int().positive().max(10000).optional(),
+    warnings: z.array(z.string().max(500)).max(10).optional(),
+});
 const CONTENT_SCHEMAS = {
     'sidecar.generate_pptx': presentationContentSchema,
     'sidecar.generate_docx': documentContentSchema,
@@ -116,6 +143,8 @@ const CONTENT_SCHEMAS = {
     'sidecar.convert_to_pdf': documentContentSchema,
     // #790: preview payload 也收进 schema 表（此前 z.any() 恒真 no-op）。
     'sidecar.preview_file': previewPayloadSchema,
+    // #825: figure payload 收进同一穷举表(编译期防漏)。
+    'sidecar.render_figure': figurePayloadSchema,
 };
 /**
  * Validate an AI-produced content payload for a job type. Returns

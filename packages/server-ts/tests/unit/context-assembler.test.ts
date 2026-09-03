@@ -84,4 +84,31 @@ describe('#637 阶段2 ContextAssembler', () => {
     expect(messages[0].content).not.toContain('K')
     expect(messages[0].content).toContain('persona')
   })
+
+  test('#814 让位顺序: layer3 碎片最先让位,随后自动注入,用户钉选最后', async () => {
+    const a = new ContextAssembler([
+      { key: 'knowledge_inject', fallbackOrder: 0, build: async () => 'K' },
+      { key: 'picked_kb', fallbackOrder: 1, build: async () => 'P' },
+    ])
+    const res = await a.assemble(input({
+      projected: {
+        systemPrompt: 'persona',
+        segments: [
+          { key: 'persona', text: 'persona' },
+          { key: 'accumulated_knowledge', text: 'FRAGMENTS' },
+        ],
+      },
+    }))
+    const messages = [
+      { role: 'system', content: res.systemPrompt },
+      { role: 'user', content: 'q'.repeat(100000) },
+    ] as any
+    const { droppedSegments } = a.segmentFallback(
+      messages, 5000, res.segmentState, res.renderFiltered,
+      (msgs) => msgs.reduce((acc: number, m: any) => acc + String(m.content).length / 4, 0),
+    )
+    expect(droppedSegments).toEqual(['accumulated_knowledge', 'knowledge_inject', 'picked_kb'])
+    expect(messages[0].content).not.toContain('FRAGMENTS')
+    expect(messages[0].content).toContain('persona')
+  })
 })

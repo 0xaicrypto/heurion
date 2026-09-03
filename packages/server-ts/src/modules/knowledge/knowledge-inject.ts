@@ -36,9 +36,35 @@ export interface KnowledgeInjectOptions {
    * citations SSE 事件;回调在过滤/截断后、渲染前触发。
    */
   onItems?: (items: Array<{ kind: 'fact' | 'knowledge' | 'document'; label: string; stableId?: string }>) => void
+  /**
+   * #813: 知识文章溯源增强 — 解析 article 图谱元数据(标题/源 facts
+   * 置信度/来源/stale),由调用方接线(memory/staleness.ts 的
+   * describeArticleForInjection);缺省时保持原始渲染。
+   */
+  resolveArticle?: (articleStableId: string) => {
+    title: string
+    stale: boolean
+    staleSummary?: string
+    sourceSummary: string
+  } | undefined
+  /**
+   * #815: JIT 惰性合成 hook — facts 命中且无文章覆盖时读时综合。
+   * 由调用方接线(jit-synthesis.service.maybeJitSynthesize);缺省不触发。
+   */
+  jitSynthesize?: (query: string, factHits: Array<{ stableId: string; content: string; importance?: number; sourceType?: string }>) => Promise<string | null>
 }
 
 export const KB_INJECT_HEADER = '## 知识库参考(自动注入)'
+
+/** #815: JIT 综合块头 — 明示未审核,与正式文章区分。 */
+export const JIT_INJECT_HEADER = '## 即时综合(JIT — 尚未经人工审核,仅供参考)'
+
+/**
+ * #813: 文章层引用指令 — 与 layer3 的 `[置信度, 来源]` 规则对齐。
+ * 合成文章自带结论/依据/caveat 结构,注入时要求模型引用结论标注来源,
+ * 不确定处以 caveat 为准(合成期幻觉已被 factId 白名单过滤)。
+ */
+export const KB_CITATION_RULE = '引用上方知识库文章的结论时，请标注来源与置信度，例如（来源：《文章标题》，置信度: 高）；标注"注意事项/caveats"的内容按不确定性对待，不要作为确定结论复述。'
 
 /** 剩余预算占总窗口的比例分档(>30% 充足 / >10% 中等 / 其余紧张)。 */
 const BUDGET_TIER_RICH = 0.3
@@ -91,10 +117,12 @@ export async function buildKnowledgeInjection(
   const excludeFactHashes = options.excludeFactHashes
 
   if (!query || !query.trim()) return ''
+  // #814: 取 3× 候选再分区截取 — 否则 RRF 排名靠后的 article 会在
+  // 排序前就被 topK 砍掉,article 优先成为空话。
   const results = await unifiedSearch(query, facts, knowledge, {
     embedding: options.embedding,
     patientHash: options.patientHash,
-    topK: maxItems,
+    topK: maxItems * 3,
     minScore,
   })
   if (results.length === 0) return ''
@@ -103,12 +131,18 @@ export async function buildKnowledgeInjection(
   const items = results.filter((r) => !(r.kind === 'fact' && r.factHash && excludeFactHashes?.has(r.factHash)))
   if (items.length === 0) return ''
 
+  // #814: article 命中优先于裸 facts — knowledge 排最前,document 次之,
+  // facts 仅作兜底填充剩余槽位(组内保持 RRF 原序,同序稳定)。
+  const kindPriority: Record<string, number> = { knowledge: 0, document: 1, fact: 2 }
+  items.sort((a, b) => (kindPriority[a.kind] ?? 9) - (kindPriority[b.kind] ?? 9))
+  const selected = items.slice(0, maxItems)
+
   // #749: aggregate same-document chunk hits (stableId `docId::cN`) into one
   // entry so a single big file cannot crowd out other sources; extra budget
   // flows to the merged item's combined text.
-  const docParts = new Map<string, { hit: typeof items[number]; parts: string[] }>()
-  const finalItems: typeof items = []
-  for (const item of items) {
+  const docParts = new Map<string, { hit: typeof selected[number]; parts: string[] }>()
+  const finalItems: typeof selected = []
+  for (const item of selected) {
     if (item.kind === 'document' && item.stableId?.includes('::')) {
       const docKey = item.stableId.split('::')[0]
       const existing = docParts.get(docKey)
@@ -133,6 +167,7 @@ export async function buildKnowledgeInjection(
     })))
   }
   const lines: string[] = [KB_INJECT_HEADER]
+  let hasKnowledgeItem = false
   for (const item of finalItems) {
     // #749: merged document rendering — chunks joined with an ellipsis marker.
     if (item.kind === 'document') {
@@ -153,7 +188,40 @@ export async function buildKnowledgeInjection(
           createdAt: Date.now(),
         })
       : item.content.slice(0, maxCharsPerItem)
+    if (item.kind === 'knowledge') {
+      // #813: 文章条目附溯源增强(标题/源 facts 置信度摘要/stale 失效标注),
+      // 解析失败或调用方未接线时回退原始渲染。
+      const articleId = item.stableId ?? item.source.replace(/^knowledge:/, '')
+      const meta = articleId ? opts.resolveArticle?.(articleId) : undefined
+      if (meta) {
+        hasKnowledgeItem = true
+        const staleTag = meta.stale ? ` ⚠️已过时(${meta.staleSummary || '依据已失效'}) — 引用前注意时效` : ''
+        const sourceTag = meta.sourceSummary ? `来源: ${meta.sourceSummary}` : '来源: 合成文章'
+        lines.push(`- [knowledge] 《${meta.title}》${staleTag}(${sourceTag}) ${content}`)
+        continue
+      }
+    }
     lines.push(`- [${item.kind}] (${item.source}) ${content}`)
+  }
+  if (hasKnowledgeItem) {
+    lines.push('', KB_CITATION_RULE)
+  } else if (options.jitSynthesize) {
+    // #815: 无文章覆盖 → JIT 读时综合兜底。仅在预算充足档触发
+    // (合成是追加 LLM 调用;紧张/中等档不做)。
+    const rich = opts.maxItems === CONTEXT_CONFIG.injection.kbItemsRich
+      && (opts.remainingBudget === undefined
+        || opts.remainingBudget / MAX_TOTAL_TOKENS > BUDGET_TIER_RICH)
+    const factHits = finalItems
+      .filter((i) => i.kind === 'fact' && i.stableId)
+      .map((i) => ({ stableId: i.stableId!, content: i.content, importance: i.importance, sourceType: i.category }))
+    if (rich && factHits.length >= CONTEXT_CONFIG.injection.jitMinFacts) {
+      try {
+        const jit = await options.jitSynthesize(query, factHits)
+        if (jit) lines.push('', JIT_INJECT_HEADER, jit)
+      } catch {
+        // JIT 是 best-effort 兜底 — 失败静默跳过(注入主体已可用)
+      }
+    }
   }
 
   let text = lines.join('\n')

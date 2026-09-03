@@ -28,6 +28,7 @@ const peerEdges: Record<string, string[]> = {
   calendar: ['research'],
   external: ['plugins', 'execution'],
   plugins: ['chat', 'execution'],
+  figures: ['execution'], // #820: figure.service 编排执行面 render_figure
   memorization: ['chat'],
   patients: ['chat'],
   documents: ['chat'],

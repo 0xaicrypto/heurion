@@ -205,7 +205,8 @@ export async function finalizeUpload(input: FinalizeUploadInput): Promise<Finali
 /** Generated file ids look like `scene_*` / `chart_*` / `img_*` (AI render
  *  output — #811 图库与知识库域分离的判别键)。 */
 export function isGeneratedFileId(fileId: string): boolean {
-  return fileId.startsWith('scene_') || fileId.startsWith('chart_') || fileId.startsWith('img_')
+  // #825: fig_ — 学术渲染产物(mermaid/LaTeX SVG)纳入图库域。
+  return fileId.startsWith('scene_') || fileId.startsWith('chart_') || fileId.startsWith('img_') || fileId.startsWith('fig_')
 }
 
 export function newFileId(filename: string): string {

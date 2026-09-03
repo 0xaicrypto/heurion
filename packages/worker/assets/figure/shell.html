@@ -1,0 +1,65 @@
+<!doctype html>
+<!--
+  #825 — 学术内容本地渲染壳(file:// 加载,零外呼)。
+  worker handlers/figure.ts 通过 page.evaluate 调用 window.__renderMermaid /
+  window.__renderLatex;所有资源均为同目录本地 bundle,页面无任何网络请求
+  (运行期另有 request interception 兜底:仅放行 file:/data:)。
+  注意:file:// 页面禁止 ES module(file:// 模块加载被 CORS 拦截),
+  因此 bundle 一律用经典 <script src>(mermaid UMD / MathJax es5)。
+-->
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    /* 透明背景 — 导出侧控制底色;字体交容器 fonts-noto-cjk。 */
+    html, body { margin: 0; padding: 0; background: transparent; }
+    #out svg { display: block; }
+    #err { color: #b00; font: 12px monospace; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div id="out"></div>
+  <div id="err"></div>
+  <!-- mermaid UMD 本地 bundle → window.mermaid -->
+  <script src="./mermaid.min.js"></script>
+  <script>
+    // securityLevel=strict + 禁 htmlLabels(设计 §5 安全约束:序列化输出,
+    // 拒绝脚本注入/外链图片)。startOnLoad 关闭 — 渲染由 evaluate 显式触发。
+    const BASE_INIT = {
+      startOnLoad: false,
+      securityLevel: 'strict',
+      htmlLabels: false,
+      theme: 'default',
+      fontFamily: 'Noto Sans CJK SC, Droid Sans Fallback, sans-serif',
+    };
+    window.mermaid.initialize(BASE_INIT);
+    window.__renderMermaid = async (source, theme) => {
+      if (theme && theme !== 'default') {
+        window.mermaid.initialize({ ...BASE_INIT, theme });
+      }
+      const { svg } = await window.mermaid.render('fig' + Date.now() + Math.floor(Math.random() * 1e6), source);
+      return svg;
+    };
+  </script>
+  <!-- MathJax v3 tex-svg 本地 bundle(SVG 输出) -->
+  <script>
+    window.MathJax = {
+      loader: { load: ['input/tex', 'output/svg'] },
+      tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] },
+      svg: { fontCache: 'none', exFactor: 0.02 },
+      startup: { typeset: false },
+    };
+  </script>
+  <script src="./tex-svg.js"></script>
+  <script>
+    window.__renderLatex = async (source, display) => {
+      // safe:仅 tex 输入 + svg 输出,无 HTML 注入面。
+      const node = await window.MathJax.tex2svgPromise(source, { display: !!display });
+      const svg = node.querySelector('svg');
+      if (!svg) throw new Error('MathJax produced no SVG');
+      return svg.outerHTML;
+    };
+    window.__ready = !!(window.mermaid && window.__renderMermaid && window.__renderLatex);
+  </script>
+</body>
+</html>

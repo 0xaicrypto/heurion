@@ -145,3 +145,6 @@ packages/server-ts/.env
 __pycache__/
 *.pyc
 .env.test-bak
+
+# worker 测试运行时数据(job store/renders)
+packages/worker/.worker-data/

@@ -123,7 +123,10 @@ export class ContextAssembler {
 
   /**
    * #635: 段级回退 — 按 fallbackOrder 逆序整段移除(0 最先)。
-   * 全部移除仍超预算返回 false,由调用方落字符级兜底。
+   * #814: 让位关系复核 — layer3 碎片(未成文记忆,projected 稳定段)价值
+   * 最低,先于所有 builder 段让位;随后 knowledge_inject(自动注入,0)
+   * 先于 picked_kb(用户钉选,1) — 顺序 picked_kb > knowledge_inject >
+   * layer3。全部移除仍超预算返回 false,由调用方落字符级兜底。
    */
   segmentFallback(
     messages: Array<{ role: string; content: unknown }>,
@@ -134,10 +137,13 @@ export class ContextAssembler {
   ): { droppedSegments: string[] } {
     const droppedSegments: string[] = []
     if (!segmentState || !renderFiltered) return { droppedSegments }
-    const droppable = this.builders
-      .filter((b) => b.fallbackOrder >= 0)
-      .sort((a, b) => a.fallbackOrder - b.fallbackOrder)
-      .map((b) => b.key)
+    const droppable = [
+      'accumulated_knowledge', // #814: layer3 碎片最先让位(未成文记忆)
+      ...this.builders
+        .filter((b) => b.fallbackOrder >= 0)
+        .sort((a, b) => a.fallbackOrder - b.fallbackOrder)
+        .map((b) => b.key),
+    ]
     for (const key of droppable) {
       if (estimateMessagesTokens(messages as any) <= maxTotalTokens) break
       if (!segmentState[key]) continue

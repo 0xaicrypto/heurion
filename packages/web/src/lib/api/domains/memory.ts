@@ -54,6 +54,15 @@ export class MemoryApi extends ApiCore {
     return this.fetch(`/api/v1/knowledge/gaps${qs ? `?${qs}` : ''}`);
   }
 
+  /* #816: facts→article 覆盖率仪表盘(global + 患者 scope)。 */
+  async getKnowledgeCoverage(): Promise<{
+    global: { scope: string; confirmedFacts: number; coveredFacts: number; ratio: number; uncoveredSample: string[] };
+    patients: Array<{ scope: string; patientHash?: string; confirmedFacts: number; coveredFacts: number; ratio: number; uncoveredSample: string[] }>;
+    hintThreshold: number;
+  }> {
+    return this.fetch('/api/v1/knowledge/coverage');
+  }
+
   async deleteKnowledgeGaps(ids: string[]): Promise<{deleted: number}> {
     return this.fetch('/api/v1/knowledge/gaps', { method: 'DELETE', body: JSON.stringify({ ids }) });
   }

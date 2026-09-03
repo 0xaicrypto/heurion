@@ -63,6 +63,14 @@ export async function executeInsertExport(deps: ExportExecutorDeps, docId: strin
   // 内容源 = 草稿正文本身（markdown → 契约模型），不重付 LLM 重编 —
   // 导出内容与草稿天然一致（epic #764 的"内容正确"目标）。
   // #769: 草稿内嵌图片行（plot/导入托管图）→ image block 随导出携带。
+  // #821 管线 B: mermaid 围栏/公式行先 ensureFigure → 托管图片行
+  // (embedContentImages 统一 base64,经 image block 通道绕开 paragraph
+  // 20000 字符截断;失败降级原文本,不阻塞导出)。
+  {
+    const { resolveFiguresToImageLines } = await import('../modules/figures/figure-markdown.js')
+    const { ensureFigure } = await import('../modules/figures/figure.service.js')
+    body = await resolveFiguresToImageLines(userId, body, ensureFigure)
+  }
   let content = spec.contentType === 'sidecar.generate_pptx'
     ? buildPresentationContent(body, String(existing.title || 'Presentation'))
     : buildDocumentContent(body, String(existing.title || 'Document'))
