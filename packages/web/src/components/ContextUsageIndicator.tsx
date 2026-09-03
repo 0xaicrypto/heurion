@@ -11,6 +11,9 @@ export function ContextUsageIndicator({ usage }: { usage?: ContextUsage }) {
   if (!usage) return null;
 
   const pct = usage.historyBudget > 0 ? (usage.historyTokens / usage.historyBudget) * 100 : 0;
+  // #fix: will_compact 有两个触发源（token 预算 / 轮次窗口上限）— 低百分比
+  // 时的"即将压缩"来自轮次窗口,必须说明原因,否则"5% 即将压缩"自相矛盾。
+  const tokenDriven = pct >= 80 || usage.omittedTurns > 0;
 
   return (
     <div
@@ -33,7 +36,11 @@ export function ContextUsageIndicator({ usage }: { usage?: ContextUsage }) {
         {t('chat.contextUsageText', '历史上下文（达 100% 自动压缩）')}
       </span>
       {usage.willCompact && (
-        <span className="text-error">{t('chat.compactingSoon', '即将压缩')}</span>
+        <span className="text-error">
+          {tokenDriven
+            ? t('chat.compactingSoon', '即将压缩')
+            : t('chat.compactingSoonTurns', '对话已达 {{turns}} 轮窗口，下一句自动压缩', { turns: usage.historyTurns })}
+        </span>
       )}
       {usage.omittedTurns > 0 && (
         <span className="text-text-tertiary">{t('chat.omittedTurns', '已省略 {{n}} 轮', { n: usage.omittedTurns })}</span>

@@ -274,7 +274,8 @@
     "subagentPhaseTool": "Running tool",
     "subagentPhaseSummarizing": "Summarizing",
     "subagentTurns": "{{turns}} turns",
-    "subagentFailed": "Sub-task failed (other sub-tasks unaffected)"
+    "subagentFailed": "Sub-task failed (other sub-tasks unaffected)",
+    "compactingSoonTurns": "Turn window ({{turns}}) full — compacting next turn"
   },
   "patient": {
     "summary": "Summary",

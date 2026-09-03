@@ -274,7 +274,8 @@
     "subagentPhaseTool": "调用工具",
     "subagentPhaseSummarizing": "汇总结果",
     "subagentTurns": "{{turns}} 轮",
-    "subagentFailed": "子任务失败（不影响其他子任务）"
+    "subagentFailed": "子任务失败（不影响其他子任务）",
+    "compactingSoonTurns": "对话已达 {{turns}} 轮窗口，下一句自动压缩"
   },
   "patient": {
     "summary": "摘要",
