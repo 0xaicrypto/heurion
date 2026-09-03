@@ -103,6 +103,41 @@ export type PolishStreamChunk =
   | { done: true; type?: undefined; text?: undefined; message?: undefined }
   | { type: 'error'; message?: string; text?: undefined; done?: undefined }
 
+/**
+ * #831: 子代理可见性事件流。id 由发起方生成（uuid）— 批量扇出时同 id
+ * 聚合、跨子代理不串组。progress 在 thinking/tool/summarizing 阶段各发。
+ */
+export interface SubagentStartedEvent {
+  type: 'subagent_started'
+  id: string
+  task: string
+  scope?: string
+}
+export interface SubagentProgressEvent {
+  type: 'subagent_progress'
+  id: string
+  task: string
+  phase: 'thinking' | 'tool' | 'summarizing'
+  current_tool?: string
+  tool_args_preview?: string
+  turn?: number
+  max_turns?: number
+  elapsed_ms?: number
+}
+export interface SubagentDoneEvent {
+  type: 'subagent_done'
+  id: string
+  task: string
+  success: boolean
+  scope?: string
+  cost_tokens?: number
+  turns?: number
+  tool_calls?: number
+  /** ≤200 字摘要预览 — 完成即可读，无需等待主回答。 */
+  summary_preview?: string
+}
+export type SubagentEvent = SubagentStartedEvent | SubagentProgressEvent | SubagentDoneEvent
+
 /** One chunk of the chat SSE stream. */
 export type ChatStreamChunk =
   | { type: 'turn_started'; event_idx: number; patient_hash: string | null }
@@ -117,9 +152,19 @@ export type ChatStreamChunk =
   | { type: 'context_info'; text: string; kind?: string }
   | { type: 'reasoning_chunk'; text: string }
   | { type: 'thought'; text: string }
-  | { type: 'tool_call'; tool: string; args: Record<string, unknown> }
-  | { type: 'subagent_started'; task: string; scope?: string }
-  | { type: 'subagent_done'; task: string; success: boolean; cost_tokens?: number }
+  /**
+   * #829: seq = per-session tool 序号 — 前端按 seq 精确闭合芯片（并行执行
+   * 时多个工具同时 running，"下一个调用关闭上一个"不再成立）。
+   */
+  | { type: 'tool_call'; tool: string; args: Record<string, unknown>; seq?: number }
+  /**
+   * #829: 工具结果事件 — 每个工具执行完成（成功/失败）即发，前端据此
+   * 关闭对应芯片并展示结果摘要。preview ≤80 字（命中数/页面标题/错误首行）。
+   */
+  | { type: 'tool_result'; seq?: number; tool?: string; success: boolean; elapsed_ms?: number; preview?: string }
+  | SubagentStartedEvent
+  | SubagentProgressEvent
+  | SubagentDoneEvent
   | { type: 'memory_hits'; count: number; hits: MemoryHit[] }
   | { type: 'image_attached'; url?: string; study_id?: string; caption?: string }
   | ({ type: 'sidecar_file' } & SidecarFileInfo)
@@ -173,7 +218,9 @@ export const CHAT_EVENT_TYPES = [
   'reasoning_chunk',
   'thought',
   'tool_call',
+  'tool_result',
   'subagent_started',
+  'subagent_progress',
   'subagent_done',
   'memory_hits',
   'image_attached',

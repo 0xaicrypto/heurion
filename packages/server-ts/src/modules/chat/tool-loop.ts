@@ -11,6 +11,7 @@ import type { ChatContentPart } from '../../common/llm-gateway.js'
 import { resolveTurnTimeoutMs } from '../../common/llm-gateway.js'
 import { deepseekChatWithMeta, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { detectDoomLoop } from '../../tools/doom-loop.js'
+import { READ_ONLY_TOOLS } from '../../tools/tool-registry.js'
 import { makeLogger } from '../../common/logger.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 import type { getUserContext } from '../shared/user-context.js'
@@ -248,60 +249,59 @@ export async function runToolCallLoop(params: {
       // tool calls it contains — re-pushing it per block would duplicate
       // the whole payload N times and corrupt the turn history.
       messages.push({ role: 'assistant', content: callResult })
+
+      // #829: parse every block up front. Malformed JSON gets its
+      // correction injected in block order; executable calls get a
+      // per-session seq (SSE chip identity) at plan time.
+      type ExecutableCall = { toolName: string; toolArgs: Record<string, unknown>; seq: number; argsPreview: string; startedAt: number }
+      const plan: Array<{ kind: 'malformed'; block: string } | { kind: 'call'; call: ExecutableCall }> = []
       for (const block of toolCallBlocks) {
         // #694: parseLlmJson — 模型在 <tool_call> 内夹围栏/闲话时同样容错。
         const toolCall = parseLlmJson<Record<string, unknown>>(block.replace(/<\/?tool_call>/g, '').trim())
         if (!toolCall) {
-          // §3.3: malformed JSON must not crash the turn — tell the model
-          // to re-emit a valid call instead of dying silently.
-          await appendToolEvent('tool_call', 'malformed_arguments', {
-            tool: '?', args: 'parse-failed', status: 'error', seq: ++toolSeq,
-          })
-          messages.push({ role: 'assistant', content: block })
-          messages.push({
-            role: 'user',
-            content: 'The previous tool call had malformed JSON arguments. Please re-emit the tool call with valid JSON only.',
-          })
+          plan.push({ kind: 'malformed', block })
           continue
         }
         const toolName = String(toolCall.name || toolCall.tool || '')
         const toolArgs = (toolCall.arguments || toolCall.args || {}) as Record<string, unknown>
-        executedAny = true
-
-        toolSeq++
-        const seq = toolSeq
-        const argsPreview = String(JSON.stringify(toolArgs) || '').slice(0, 300)
-
-        // R3: persist the state machine — pending → running → completed/error.
-        await appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
-          tool: toolName, args: argsPreview, status: 'pending', seq,
+        plan.push({
+          kind: 'call',
+          call: { toolName, toolArgs, seq: ++toolSeq, argsPreview: String(JSON.stringify(toolArgs) || '').slice(0, 300), startedAt: Date.now() },
         })
+      }
 
+      const isSubagent = (t: string) => t === 'delegate'
+      const subTaskOf = (c: ExecutableCall) => String((c.toolArgs as any)?.task || c.argsPreview)
+
+      /** #829: pre-execution lifecycle — pending/running 事件 + SSE 芯片 +
+       *  doom-loop 检查 + delegate 的 subagent_started。 */
+      const startCall = async (c: ExecutableCall) => {
+        await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
+          tool: c.toolName, args: c.argsPreview, status: 'pending', seq: c.seq,
+        })
         // Doom-loop guard: same tool + identical args 3x consecutively.
-        if (detectDoomLoop(doomHistory, toolName, toolArgs)) {
-          log.warn('doom-loop detected', { tool: toolName, seq })
-          await appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
-            tool: toolName, args: argsPreview, status: 'warning', seq,
+        if (detectDoomLoop(doomHistory, c.toolName, c.toolArgs)) {
+          log.warn('doom-loop detected', { tool: c.toolName, seq: c.seq })
+          await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
+            tool: c.toolName, args: c.argsPreview, status: 'warning', seq: c.seq,
           })
         }
-
-        io.send({ type: 'tool_call', tool: toolName, args: toolArgs })
-
-        await appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
-          tool: toolName, args: argsPreview, status: 'running', seq,
+        io.send({ type: 'tool_call', tool: c.toolName, args: c.toolArgs, seq: c.seq })
+        await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
+          tool: c.toolName, args: c.argsPreview, status: 'running', seq: c.seq,
         })
-
-        // #350: delegate = sub-agent activity — surface started/done
-        // over SSE so the UI can show parallel research progress.
-        const isSubagent = toolName === 'delegate' || toolName === 'spawn_subagent'
-        const subTask = isSubagent ? String((toolArgs as any)?.task || argsPreview) : ''
-        if (isSubagent) {
-          const scope = String((toolArgs as any)?.scope || 'global')
-          io.send({ type: 'subagent_started', task: subTask.slice(0, 200), scope })
+        // #350/#831: delegate = sub-agent activity — id 由 loop 生成，
+        // spawn_subagent 的 started/progress/done 改由工具内部按子任务
+        // 各自上报（批量扇出时一 call 多 id）。
+        if (isSubagent(c.toolName)) {
+          const scope = String((c.toolArgs as any)?.scope || 'global')
+          io.send({ type: 'subagent_started', id: `sub_${c.seq}`, task: subTaskOf(c).slice(0, 200), scope })
         }
+      }
 
-        const result = await toolRegistry.execute(toolName, toolArgs)
-
+      /** #829: post-execution lifecycle — 状态机落盘 + tool_result 事件
+       *  (seq/elapsed/preview) + 结果注入消息 + presenter 投影。 */
+      const finishCall = async (c: ExecutableCall, result: Awaited<ReturnType<typeof toolRegistry.execute>>) => {
         // #789③/#694: parse the tool output ONCE per result —此前
         // generate_image/search_node/insert_asset/render_chart 各自
         // JSON.parse 同一份 output(insert_asset 单轮 3 次),逐处静默
@@ -312,9 +312,9 @@ export async function runToolCallLoop(params: {
           : null
 
         // #350: sub-agent done — 成败都要发(cost 仅成功时有值)。
-        if (isSubagent) {
+        if (isSubagent(c.toolName)) {
           const cost = parsedOutput ? Number(parsedOutput.cost_tokens) || 0 : 0
-          io.send({ type: 'subagent_done', task: subTask.slice(0, 200), success: result.success, cost_tokens: cost })
+          io.send({ type: 'subagent_done', id: `sub_${c.seq}`, task: subTaskOf(c).slice(0, 200), success: result.success, cost_tokens: cost })
         }
 
         // #693: edit_document 输出含完整 body(豁免了 bound) — 注入给模型
@@ -322,7 +322,7 @@ export async function runToolCallLoop(params: {
         // insert_asset 同管道。#773: edit_deck 同管道。#fix 2026-09:
         // fix_document_images 同管道。摘要取自共享 parsedOutput,不再重解析。
         let toolResultText = result.output || 'Success'
-        if (DOC_WRITE_TOOLS.has(toolName) && result.success) {
+        if (DOC_WRITE_TOOLS.has(c.toolName) && result.success) {
           const summary = typeof parsedOutput?.summary === 'string' ? parsedOutput.summary : ''
           toolResultText = summary
             ? `{ body: <updated>, summary: ${JSON.stringify(summary)} }`
@@ -330,38 +330,98 @@ export async function runToolCallLoop(params: {
         }
         messages.push({
           role: 'user',
-          content: `Tool "${toolName}" returned: ${result.success ? toolResultText : `Error: ${result.error}`}`,
+          content: `Tool "${c.toolName}" returned: ${result.success ? toolResultText : `Error: ${result.error}`}`,
         })
 
         if (result.success) {
           const output = result.output || ''
-          await appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
-            tool: toolName, args: argsPreview, status: 'completed', seq,
+          await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
+            tool: c.toolName, args: c.argsPreview, status: 'completed', seq: c.seq,
           })
           await appendToolEvent('tool_result', output, {
-            toolCallId: seq, success: true, outputTruncated: output.length > 500,
+            toolCallId: c.seq, success: true, outputTruncated: output.length > 500,
           })
-          // #789③: per-tool SSE 投影走 presenter 注册表 — 新媒体工具只需
-          // 注册一个 presenter,不再往 loop 里加 if 分支。
-          if (parsedOutput) {
-            const env: PresentEnv = { io, toolName }
-            for (const presenter of PRESENTERS) {
-              if (presenter.matches(toolName)) presenter.present(parsedOutput, env)
-            }
-          }
         } else {
-          await appendToolEvent('tool_call', `${toolName}(${argsPreview})`, {
-            tool: toolName, args: argsPreview, status: 'error', seq,
+          await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
+            tool: c.toolName, args: c.argsPreview, status: 'error', seq: c.seq,
           })
           await appendToolEvent('tool_result', result.error || '', {
-            toolCallId: seq, success: false, error: (result.error || '').slice(0, 200),
+            toolCallId: c.seq, success: false, error: (result.error || '').slice(0, 200),
           })
           // #fix: 工具失败不 break — 错误已作为 tool_result 注入消息,
           // 让模型下一轮看到错误后自行修正锚点重试或正常回答用户。
-          // 此前直接返回硬编码的 'I tried to use a tool but...'(英文,
-          // 与对话上下文无关),生产反馈"前言不搭后语"。doom-loop 已有
-          // 3 次同类告警,MAX_TOOL_ROUNDS=5 兜底总轮数。
+          // doom-loop 已有 3 次同类告警,MAX_TOOL_ROUNDS=5 兜底总轮数。
         }
+
+        // #829: tool_result SSE — 前端按 seq 闭合芯片并展示结果摘要。
+        const preview = !result.success
+          ? (result.error || '').split('\n')[0].slice(0, 80)
+          : DOC_WRITE_TOOLS.has(c.toolName)
+            ? (typeof parsedOutput?.summary === 'string' && parsedOutput.summary ? parsedOutput.summary.slice(0, 80) : '文档已写回')
+            : (result.output || '').split('\n')[0].slice(0, 80)
+        io.send({
+          type: 'tool_result',
+          seq: c.seq,
+          tool: c.toolName,
+          success: result.success,
+          elapsed_ms: Date.now() - c.startedAt,
+          preview: preview || undefined,
+        })
+
+        // #789③: per-tool SSE 投影走 presenter 注册表 — 新媒体工具只需
+        // 注册一个 presenter,不再往 loop 里加 if 分支。
+        if (result.success && parsedOutput) {
+          const env: PresentEnv = { io, toolName: c.toolName }
+          for (const presenter of PRESENTERS) {
+            if (presenter.matches(c.toolName)) presenter.present(parsedOutput, env)
+          }
+        }
+      }
+
+      // #829: walk the plan — consecutive READ-ONLY calls run in parallel
+      // (Promise.all), everything else stays serial in block order. Results
+      // (messages/events/SSE) are applied in original order, so the model
+      // sees a deterministic transcript.
+      let i = 0
+      while (i < plan.length) {
+        const item = plan[i]
+        if (item.kind === 'malformed') {
+          // §3.3: malformed JSON must not crash the turn — tell the model
+          // to re-emit a valid call instead of dying silently.
+          await appendToolEvent('tool_call', 'malformed_arguments', {
+            tool: '?', args: 'parse-failed', status: 'error', seq: ++toolSeq,
+          })
+          messages.push({ role: 'assistant', content: item.block })
+          messages.push({
+            role: 'user',
+            content: 'The previous tool call had malformed JSON arguments. Please re-emit the tool call with valid JSON only.',
+          })
+          i++
+          continue
+        }
+        const call = item.call
+        if (!READ_ONLY_TOOLS.has(call.toolName)) {
+          await startCall(call)
+          const result = await toolRegistry.execute(call.toolName, call.toolArgs)
+          await finishCall(call, result)
+          executedAny = true
+          i++
+          continue
+        }
+        const group: ExecutableCall[] = [call]
+        let j = i + 1
+        while (j < plan.length) {
+          const nxt = plan[j]
+          if (nxt.kind === 'call' && READ_ONLY_TOOLS.has(nxt.call.toolName)) {
+            group.push(nxt.call)
+            j++
+          } else break
+        }
+        for (const c of group) await startCall(c)
+        const results = await Promise.all(group.map((c) => toolRegistry.execute(c.toolName, c.toolArgs)))
+        for (let k = 0; k < group.length; k++) await finishCall(group[k], results[k])
+        executedAny = true
+        i = j
       }
       if (executedAny) {
         continue

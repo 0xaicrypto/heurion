@@ -1,4 +1,5 @@
 import { BaseTool, ToolDefinition, ToolResult } from './base-tool.js'
+import type { SubagentEvent } from '@heurion/contracts'
 import { SearchNodeTool, SearchEncounterTool } from './clinical-graph-tools.js'
 import { SearchPastChatsTool } from './memory-tools.js'
 import { DelegateTool, SpawnSubagentTool } from './subagent-tools.js'
@@ -27,6 +28,67 @@ import type { EventLog } from '../core/event-log.js'
 import { makeLogger } from '../common/logger.js'
 
 const log = makeLogger('tools')
+
+/**
+ * #828: registry-level hang backstop — any tool that exceeds its timeout
+ * returns a structured error instead of stalling the whole turn. Defaults
+ * to 120s (TOOL_TIMEOUT_MS env); long-running tools override either via
+ * BaseTool.timeoutMs or the map below (delegate/spawn_subagent make
+ * multiple LLM calls; execution-plane renders and doc write-backs involve
+ * the worker pipeline).
+ */
+const DEFAULT_TOOL_TIMEOUT_MS = Number(process.env.TOOL_TIMEOUT_MS) || 120_000
+const TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
+  delegate: 360_000,
+  spawn_subagent: 600_000,
+  browser_task: 300_000,
+  render_scene: 300_000,
+  render_chart: 300_000,
+  generate_image: 300_000,
+  edit_document: 300_000,
+  insert_asset: 300_000,
+  edit_deck: 300_000,
+  fix_document_images: 300_000,
+  run_stats_analysis: 300_000,
+  ocr_image: 300_000,
+}
+
+/** #828: race a tool execution against its timeout / abort signal. */
+async function executeWithGuard(
+  name: string,
+  run: () => Promise<ToolResult>,
+  opts: { timeoutMs: number; signal?: AbortSignal },
+): Promise<ToolResult> {
+  const signal = opts.signal
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onAbort: (() => void) | undefined
+  const timeoutP = new Promise<ToolResult>((resolve) => {
+    timer = setTimeout(() => resolve({
+      success: false,
+      error: `工具 ${name} 执行超过 ${Math.round(opts.timeoutMs / 1000)}s 被中止（可在重试中让模型换一种做法）`,
+    }), opts.timeoutMs)
+    timer.unref?.()
+  })
+  const abortP = signal
+    ? new Promise<ToolResult>((resolve) => {
+        if (signal.aborted) return resolve({ success: false, error: `Tool ${name} aborted: client disconnected` })
+        onAbort = () => resolve({ success: false, error: `Tool ${name} aborted: client disconnected` })
+        signal.addEventListener('abort', onAbort, { once: true })
+      })
+    : null
+  try {
+    // Promise.race attaches handlers to every participant up front, so a
+    // late rejection after the timeout resolved is safely dropped.
+    return await Promise.race([run(), ...(abortP ? [abortP] : []), timeoutP])
+  } finally {
+    cleanup()
+  }
+
+  function cleanup() {
+    if (timer) clearTimeout(timer)
+    if (signal && onAbort) signal.removeEventListener('abort', onAbort)
+  }
+}
 
 /**
  * #766: execution-plane port (structural — tools stay decoupled from
@@ -65,6 +127,18 @@ export interface ToolContext {
    * same layering rationale; absent port ⇒ defaults are used.
    */
   getPluginConfig?: (pluginId: string) => Promise<Record<string, unknown>>
+  /**
+   * #828: turn abort signal (client disconnect / stop / watchdog) — tools
+   * and sub-agents observe it so a dead client stops burning tokens.
+   * Absent ⇒ tools run to completion as before.
+   */
+  signal?: AbortSignal
+  /**
+   * #831: sub-agent visibility port — spawn_subagent/deep-analysis report
+   * started/progress/done through it (typed SubagentEvent from contracts).
+   * Absent ⇒ sub-agents run silently (old behavior).
+   */
+  emitSubagentEvent?: (ev: SubagentEvent) => void
 }
 
 /**
@@ -92,6 +166,33 @@ export const SCENE_OMIT_TOOLS: Record<string, Set<string>> = {
   document: PATIENT_RETRIEVAL_TOOLS,
   chart: PATIENT_RETRIEVAL_TOOLS,
 }
+
+/**
+ * #829: side-effect-free tools — the tool loop may run these in parallel
+ * within one model round (they only read external state). Everything else
+ * (write-backs, sends, renders that enqueue jobs, sub-agents, background
+ * deferrals) stays serial to preserve ordering-sensitive flows.
+ */
+export const READ_ONLY_TOOLS = new Set([
+  'search_node',
+  'search_encounter',
+  'search_past_chats',
+  'search_medical_web',
+  'fetch_article_summary',
+  'visit_medical_site',
+  'extract_fulltext',
+  'search_citation',
+  'load_data_table',
+  'load_skill',
+  'query_logs',
+  'mcp_list_tools',
+  'stat_describe',
+  'stat_ttest',
+  'stat_chisq',
+  'stat_km',
+  'stat_plot',
+  'stat_ai',
+])
 
 export class ToolRegistry {
   private tools: Map<string, BaseTool> = new Map()
@@ -239,9 +340,15 @@ export class ToolRegistry {
 
     // §3.3: a throwing tool must never take down the whole chat turn —
     // surface the failure to the LLM so it can switch strategy.
+    // #828: hang backstop — per-tool timeout (BaseTool.timeoutMs → override
+    // map → TOOL_TIMEOUT_MS env → 120s) + turn abort awareness.
     let result: ToolResult
     try {
-      result = await tool.execute(this.sanitizeArgs(tool, args))
+      const timeoutMs = tool.timeoutMs ?? TOOL_TIMEOUT_OVERRIDES[name] ?? DEFAULT_TOOL_TIMEOUT_MS
+      result = await executeWithGuard(name, () => tool.execute(this.sanitizeArgs(tool, args)), {
+        timeoutMs,
+        signal: this.ctx.signal,
+      })
     } catch (err) {
       return { success: false, error: `Tool ${name} failed: ${(err as Error).message.slice(0, 300)}` }
     }

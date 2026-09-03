@@ -1026,6 +1026,7 @@ export function WritingEditorPage() {
                   variant="compact"
                   messages={chatMessages}
                   streamNote={chatSession?.streamNote}
+                  stallSince={chatSession?.stallSince}
                   bottomRef={chatEndRef}
                   emptyState={
                     <p className="text-sm text-text-tertiary text-center mt-4 leading-relaxed">

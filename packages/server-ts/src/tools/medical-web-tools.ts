@@ -27,8 +27,13 @@ async function eutilsFetch(path: string, params: Record<string, string>, ctx?: T
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  // #828: combine the internal timeout with the turn abort signal — a
+  // disconnected client stops the fetch immediately.
+  const signal = ctx?.signal && typeof AbortSignal.any === 'function'
+    ? AbortSignal.any([controller.signal, ctx.signal])
+    : controller.signal
   try {
-    const res = await fetch(url.toString(), { signal: controller.signal, headers: { 'User-Agent': 'Heurion/1.0 (medical research agent)' } })
+    const res = await fetch(url.toString(), { signal, headers: { 'User-Agent': 'Heurion/1.0 (medical research agent)' } })
     if (!res.ok) {
       throw new Error(`PubMed HTTP ${res.status}`)
     }
@@ -212,12 +217,16 @@ async function browserRunMarkdown(url: string, ctx: ToolContext, auditLabel: str
   }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 30000)
+  // #828: turn abort awareness (same combination as eutilsFetch).
+  const signal = ctx.signal && typeof AbortSignal.any === 'function'
+    ? AbortSignal.any([controller.signal, ctx.signal])
+    : controller.signal
   try {
     const res = await fetch(`${CF_BROWSER_RUN}/${accountId}/browser-run/markdown?browser=kitesurf`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ url }),
-      signal: controller.signal,
+      signal,
     })
     if (!res.ok) {
       const text = await res.text().catch(() => '')

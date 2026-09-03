@@ -187,6 +187,40 @@ export type PolishStreamChunk = {
     text?: undefined;
     done?: undefined;
 };
+/**
+ * #831: 子代理可见性事件流。id 由发起方生成（uuid）— 批量扇出时同 id
+ * 聚合、跨子代理不串组。progress 在 thinking/tool/summarizing 阶段各发。
+ */
+export interface SubagentStartedEvent {
+    type: 'subagent_started';
+    id: string;
+    task: string;
+    scope?: string;
+}
+export interface SubagentProgressEvent {
+    type: 'subagent_progress';
+    id: string;
+    task: string;
+    phase: 'thinking' | 'tool' | 'summarizing';
+    current_tool?: string;
+    tool_args_preview?: string;
+    turn?: number;
+    max_turns?: number;
+    elapsed_ms?: number;
+}
+export interface SubagentDoneEvent {
+    type: 'subagent_done';
+    id: string;
+    task: string;
+    success: boolean;
+    scope?: string;
+    cost_tokens?: number;
+    turns?: number;
+    tool_calls?: number;
+    /** ≤200 字摘要预览 — 完成即可读，无需等待主回答。 */
+    summary_preview?: string;
+}
+export type SubagentEvent = SubagentStartedEvent | SubagentProgressEvent | SubagentDoneEvent;
 /** One chunk of the chat SSE stream. */
 export type ChatStreamChunk = {
     type: 'turn_started';
@@ -232,20 +266,29 @@ export type ChatStreamChunk = {
 } | {
     type: 'thought';
     text: string;
-} | {
+}
+/**
+ * #829: seq = per-session tool 序号 — 前端按 seq 精确闭合芯片（并行执行
+ * 时多个工具同时 running，"下一个调用关闭上一个"不再成立）。
+ */
+ | {
     type: 'tool_call';
     tool: string;
     args: Record<string, unknown>;
-} | {
-    type: 'subagent_started';
-    task: string;
-    scope?: string;
-} | {
-    type: 'subagent_done';
-    task: string;
+    seq?: number;
+}
+/**
+ * #829: 工具结果事件 — 每个工具执行完成（成功/失败）即发，前端据此
+ * 关闭对应芯片并展示结果摘要。preview ≤80 字（命中数/页面标题/错误首行）。
+ */
+ | {
+    type: 'tool_result';
+    seq?: number;
+    tool?: string;
     success: boolean;
-    cost_tokens?: number;
-} | {
+    elapsed_ms?: number;
+    preview?: string;
+} | SubagentStartedEvent | SubagentProgressEvent | SubagentDoneEvent | {
     type: 'memory_hits';
     count: number;
     hits: MemoryHit[];
@@ -323,7 +366,7 @@ export interface ChatWireMessage {
 export declare const RETRIEVAL_TOOLS: readonly ['search_node', 'search_encounter', 'search_past_chats'];
 export type RetrievalTool = (typeof RETRIEVAL_TOOLS)[number];
 /** Every SSE event type the backend can emit. */
-export declare const CHAT_EVENT_TYPES: readonly ['turn_started', 'context_usage', 'compaction_started', 'compaction_chunk', 'compaction_completed', 'compaction_summary', 'doc_updated', 'chart_created', 'tier_classified', 'context_info', 'reasoning_chunk', 'thought', 'tool_call', 'subagent_started', 'subagent_done', 'memory_hits', 'image_attached', 'sidecar_file', 'final_answer_chunk', 'citations', 'skill_capture_suggest', 'truncated', 'intent_clarify', 'attachment_export_option', 'turn_complete', 'error', 'plugin_selected', 'payload_building', 'job_enqueued', 'job_status', 'file_ready'];
+export declare const CHAT_EVENT_TYPES: readonly ['turn_started', 'context_usage', 'compaction_started', 'compaction_chunk', 'compaction_completed', 'compaction_summary', 'doc_updated', 'chart_created', 'tier_classified', 'context_info', 'reasoning_chunk', 'thought', 'tool_call', 'tool_result', 'subagent_started', 'subagent_progress', 'subagent_done', 'memory_hits', 'image_attached', 'sidecar_file', 'final_answer_chunk', 'citations', 'skill_capture_suggest', 'truncated', 'intent_clarify', 'attachment_export_option', 'turn_complete', 'error', 'plugin_selected', 'payload_building', 'job_enqueued', 'job_status', 'file_ready'];
 export type ChatEventType = (typeof CHAT_EVENT_TYPES)[number];
 export interface UserProfile {
     user_id: string;

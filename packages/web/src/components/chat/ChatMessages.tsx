@@ -5,7 +5,7 @@ import { AlertTriangle, Check, ChevronDown, Copy, Download, FileText, Puzzle, Qu
 import type { ChatMessage } from '@/stores/chat';
 import { StreamingLlmContent } from '@/components/LlmContent';
 import { SmartImg } from '@/components/SmartImg';
-import { ToolCalls } from '@/components/ToolCalls';
+import { ActivityTimeline } from '@/components/chat/ActivityTimeline';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { FilePreviewButton } from '@/components/chat/FilePreview';
 import { Button } from '@/components/ui';
@@ -61,10 +61,12 @@ export interface ChatMessagesProps {
   kbChecked?: Record<string, boolean>;
   kbAdded?: Record<string, boolean>;
   emptyState?: React.ReactNode;
-  subagents?: Array<{ task: string; status: 'running' | 'done' | 'failed' }>;
   bottomRef?: RefObject<HTMLDivElement>;
-  /** #fix: 前置阶段进度提示(context_info) — 等待期实时反馈(路由/上下文组装)。 */
+  /** #fix: 前置阶段进度提示(context_info) — 等待期实时反馈。
+   *  #832: 由列表顶部移入流式气泡内的状态行。 */
   streamNote?: string;
+  /** #828: 会话停滞起点 — 透传给时间线状态行。 */
+  stallSince?: number | null;
 }
 
 /**
@@ -110,9 +112,9 @@ export function ChatMessages({
   kbChecked,
   kbAdded,
   emptyState,
-  subagents,
   bottomRef,
   streamNote,
+  stallSince,
 }: ChatMessagesProps) {
   const { t } = useTranslation();
   const compact = variant === 'compact';
@@ -121,13 +123,6 @@ export function ChatMessages({
 
   return (
     <div className="space-y-4">
-      {/* #fix: 前置阶段进度提示 — 等待期(路由/上下文组装,可能 10-30s)实时反馈。 */}
-      {streamNote && (
-        <div className="flex items-center gap-2 px-1 text-[11px] text-text-tertiary">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-          <span className="truncate">{streamNote}</span>
-        </div>
-      )}
       {messages.map((m, idx) => {
         const prevMsg = idx > 0 ? messages[idx - 1] : undefined;
         const isLastAssistant = m.role === 'assistant' && idx === messages.length - 1 && !m.isStreaming;
@@ -183,16 +178,9 @@ export function ChatMessages({
                   </button>
                 )}
                 {m.tier && <div className="mb-1 text-xs opacity-70">Tier: {m.tier}</div>}
-                {m.reasoning && (
-                  <details className="mb-2" open>
-                    <summary className="cursor-pointer text-xs text-text-tertiary">{t('chat.reasoning')}</summary>
-                    <div className="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-border pl-3 text-xs leading-relaxed text-text-secondary">
-                      {m.reasoning.slice(0, 30000)}
-                      {m.reasoning.length > 30000 ? '…' : ''}
-                    </div>
-                  </details>
-                )}
-                {m.toolCalls && m.toolCalls.length > 0 && <ToolCalls calls={m.toolCalls} />}
+                {/* #832: 任务活动时间线 — 推理/工具/子代理/前置阶段提示
+                    收敛为分层活动流（状态行/折叠行/展开三层）。 */}
+                <ActivityTimeline message={m} stallSince={stallSince} streamNote={streamNote} />
                 {m.pluginCalls && m.pluginCalls.length > 0 && (
                   <div className="mb-2 flex flex-wrap items-center gap-1.5" aria-label={t('chat.pluginCalls', '插件调用')}>
                     {m.pluginCalls.map((pc, i) => (
@@ -215,11 +203,11 @@ export function ChatMessages({
                 ) : (
                   <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
                 )}
-                {/* #fix: 流式等待提示 — 无论是否有推理内容,都明确告知
-                    正在处理(此前只有 reasoning 存在时才显示'思考中')。 */}
-                {m.isStreaming && !m.text && (
+                {/* #fix: 流式等待提示 — 时间线(StatusLine)未渲染时的兜底
+                    (无推理/工具/子代理/前置提示的纯流式回合)。 */}
+                {m.isStreaming && !m.text && !m.reasoning && !(m.toolCalls?.length) && !(m.subagents?.length) && !streamNote && (
                   <div className="mt-1 text-xs text-text-tertiary">
-                    {m.reasoning ? t('chat.thinking', '思考中…') : '正在处理中…'}
+                    {t('chat.thinking', '思考中…')}
                   </div>
                 )}
                 {m.truncated && (
@@ -387,22 +375,6 @@ export function ChatMessages({
           </div>
         );
       })}
-      {subagents && subagents.length > 0 && (
-        <div className="space-y-1.5 px-4 pt-2">
-          {subagents.map((sa, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs text-text-secondary">
-              <StatusDot
-                tone={sa.status === 'done' ? 'success' : sa.status === 'failed' ? 'error' : 'active'}
-                pulse={sa.status === 'running'}
-              />
-              <span className={sa.status === 'failed' ? 'text-error' : undefined}>
-                {sa.status === 'running' ? t('chat.subagentRunning', '正在分析') : sa.status === 'done' ? '✓' : '✗'}{' '}
-                {sa.task}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
       {messages.length > 0 && bottomRef && <div ref={bottomRef} />}
     </div>
   );

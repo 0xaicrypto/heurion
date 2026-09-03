@@ -37,9 +37,36 @@ export interface ChatMessage {
   _compactionStream?: boolean;
   /** #612: 上下文压缩摘要消息(可折叠展示)。 */
   compactionSummary?: boolean;
-  /** #662: 4-state tool entries — running until a newer call / the answer
-   *  or an error supersedes it (the wire has no tool.done event). */
-  toolCalls?: Array<{ tool: string; argsPreview: string; status: 'running' | 'done' | 'error' }>;
+  /** #662: 4-state tool entries — #829: seq 精确闭合（并行执行时多个
+   *  芯片同时 running），resultPreview/elapsedMs 支撑折叠行结果摘要。 */
+  toolCalls?: Array<{
+    tool: string;
+    argsPreview: string;
+    status: 'running' | 'done' | 'error';
+    seq?: number;
+    resultPreview?: string;
+    elapsedMs?: number;
+    startedAt?: number;
+  }>;
+  /**
+   * #831: 子代理可见性 — 消息级（时间线渲染），按 id 聚合批量扇出；
+   * 旧后端事件无 id 时以 task 兜底为 id。
+   */
+  subagents?: Array<{
+    id: string;
+    task: string;
+    status: 'running' | 'done' | 'failed';
+    phase?: 'thinking' | 'tool' | 'summarizing';
+    currentTool?: string;
+    toolArgsPreview?: string;
+    turn?: number;
+    maxTurns?: number;
+    startedAt?: number;
+    elapsedMs?: number;
+    summaryPreview?: string;
+    turns?: number;
+    costTokens?: number;
+  }>;
   chart?: { url: string; chartType?: string };
   /** #455: plugin invocation trail (plugin_selected / payload_building / job_enqueued). */
   pluginCalls?: Array<{ pluginId: string; tool: string; intent: string; confidence: number }>;
@@ -72,13 +99,17 @@ export interface SessionState {
   contextUsage?: ChatContextUsage;
   /** #298: skill-capture suggestion shown after a procedural reply. */
   skillCapture?: { text: string };
-  /** #350: sub-agent activity indicator (delegate/spawn_subagent). */
-  subagents?: Array<{ task: string; status: 'running' | 'done' | 'failed' }>;
   /** #663: message ids touched by live SSE chunks — history snapshots must
    *  never clobber the in-flight versions (touch-tracker merge). */
   msgTouched?: Record<string, number>;
   /** #fix: 前置阶段进度提示(context_info) — 等待期实时反馈。 */
   streamNote?: string;
+  /**
+   * #828: 停滞检测 — 距最近一条 SSE data 事件超过阈值(90s)时记录起点。
+   * 心跳保活让连接永不断开，前端必须区分"活着"与"有进展"。null/undefined
+   * = 无停滞。UI 据此显示"仍在执行(已 Xs 无新进展)"而非无解释转圈。
+   */
+  stallSince?: number | null;
 }
 
 export function emptySession(): SessionState {
@@ -201,11 +232,39 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
       if (last?.role === 'assistant') {
         let argsPreview = '';
         try { argsPreview = JSON.stringify(chunk.args ?? {}).slice(0, 120); } catch { /* ignore */ }
-        const prev = (last.toolCalls ?? []).map((tc) => (tc.status === 'running' ? { ...tc, status: 'done' as const } : tc));
+        const seq = chunk.seq;
+        // #829: 携带 seq 的新协议下不再"下一个调用关闭上一个" — 并行执行
+        // 时多个芯片同时 running，由 tool_result 按 seq 各自闭合。
+        // 无 seq 的旧事件流保持原行为兜底。
+        const prev = (last.toolCalls ?? []).map((tc) =>
+          seq === undefined && tc.status === 'running' ? { ...tc, status: 'done' as const } : tc,
+        );
         msgs[msgs.length - 1] = {
           ...last,
-          toolCalls: [...prev, { tool: chunk.tool, argsPreview, status: 'running' as const }],
+          toolCalls: [...prev, { tool: chunk.tool, argsPreview, status: 'running' as const, seq, startedAt: Date.now() }],
         };
+      }
+      return { ...s, messages: msgs };
+    }
+    // #829: 工具结果事件 — 按 seq 精确闭合芯片 + 结果摘要/耗时进折叠行。
+    case 'tool_result': {
+      const msgs = [...s.messages];
+      const last = msgs[msgs.length - 1];
+      if (last?.role === 'assistant' && (last.toolCalls ?? []).length > 0) {
+        const status = chunk.success ? ('done' as const) : ('error' as const);
+        const seq = chunk.seq;
+        const toolCalls = (last.toolCalls ?? []).map((tc) => {
+          if (seq !== undefined) {
+            return tc.seq === seq
+              ? { ...tc, status, resultPreview: chunk.preview, elapsedMs: chunk.elapsed_ms }
+              : tc;
+          }
+          // legacy：无 seq 时关闭所有 running（旧行为等价）。
+          return tc.status === 'running'
+            ? { ...tc, status, resultPreview: chunk.preview, elapsedMs: chunk.elapsed_ms }
+            : tc;
+        });
+        msgs[msgs.length - 1] = { ...last, toolCalls };
       }
       return { ...s, messages: msgs };
     }
@@ -226,16 +285,47 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
       }
       return { ...s, messages: msgs };
     }
+    // #831: 子代理可见性 — 事件附加到最后一条 assistant 消息（时间线渲染），
+    // 按 id 聚合（批量扇出互不串组）；旧后端无 id 时以 task 兜底。
     case 'subagent_started':
+    case 'subagent_progress':
     case 'subagent_done': {
-      const entry = {
-        task: chunk.task,
-        status: chunk.type === 'subagent_started' ? 'running' as const : (chunk.success ? 'done' as const : 'failed' as const),
-      };
-      const existing = s.subagents ?? [];
-      const idx = existing.findIndex((e) => e.task === chunk.task);
-      const next = idx >= 0 ? existing.map((e, i) => (i === idx ? entry : e)) : [...existing, entry];
-      return { ...s, subagents: next };
+      const msgs = [...s.messages];
+      const last = msgs[msgs.length - 1];
+      if (last?.role !== 'assistant') return s;
+      const id = chunk.id || chunk.task;
+      const list = last.subagents ?? [];
+      const idx = list.findIndex((e) => e.id === id);
+      if (chunk.type === 'subagent_started') {
+        const entry = {
+          id, task: chunk.task, status: 'running' as const,
+          phase: undefined, startedAt: Date.now(),
+        };
+        const next = idx >= 0 ? list.map((e, i) => (i === idx ? { ...e, ...entry } : e)) : [...list, entry];
+        msgs[msgs.length - 1] = { ...last, subagents: next };
+      } else if (chunk.type === 'subagent_progress') {
+        if (idx < 0) return s; // progress 只更新已 started 的条目
+        const next = list.map((e, i) => (i === idx ? {
+          ...e,
+          phase: chunk.phase,
+          currentTool: chunk.current_tool,
+          toolArgsPreview: chunk.tool_args_preview,
+          turn: chunk.turn,
+          maxTurns: chunk.max_turns,
+          elapsedMs: chunk.elapsed_ms,
+        } : e));
+        msgs[msgs.length - 1] = { ...last, subagents: next };
+      } else {
+        const entry = {
+          status: (chunk.success ? 'done' : 'failed') as 'done' | 'failed',
+          summaryPreview: chunk.summary_preview,
+          turns: chunk.turns,
+          costTokens: chunk.cost_tokens,
+        };
+        const next = idx >= 0 ? list.map((e, i) => (i === idx ? { ...e, ...entry } : e)) : [...list, { id, task: chunk.task, ...entry }];
+        msgs[msgs.length - 1] = { ...last, subagents: next };
+      }
+      return { ...s, messages: msgs };
     }
     case 'compaction_chunk': {
       const msgs = [...s.messages];

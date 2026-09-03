@@ -25,7 +25,8 @@ export interface DeepAnalysisResult {
 /**
  * Run each selected topic as a parallel sub-agent (failures isolated),
  * persist one SubAgentSession row per topic, then synthesize one combined
- * answer. `emit` receives subagent_started/subagent_done per topic.
+ * answer. `emit` receives subagent_started/subagent_done per topic (#831:
+ * each with a unique id so the UI can group parallel runs).
  */
 export async function runDeepAnalysis(input: {
   userId: string
@@ -33,19 +34,22 @@ export async function runDeepAnalysis(input: {
   question: string
   context?: string
   patientHash?: string
-  emit?: (event: { type: 'subagent_started' | 'subagent_done'; task: string; scope: string; success?: boolean; cost_tokens?: number }) => void
+  emit?: (event: import('@heurion/contracts').SubagentEvent) => void
 }): Promise<DeepAnalysisResult> {
   const { userId, question, context, patientHash } = input
-  const ctx = { ...getUserContext(userId), userId }
+  // #831: forward the visibility port into the tool context so sub-agent
+  // progress (thinking/tool/summarizing) reaches the SSE stream too.
+  const ctx = { ...getUserContext(userId), userId, emitSubagentEvent: input.emit ? (ev: import('@heurion/contracts').SubagentEvent) => input.emit!(ev) : undefined } as ReturnType<typeof getUserContext> & { userId: string; emitSubagentEvent?: (ev: import('@heurion/contracts').SubagentEvent) => void }
   const scope = patientHash ? `patient:${patientHash}` : 'global'
 
   const results = await Promise.all(
     input.topics.map(async (topic) => {
       const task = `${TOPIC_TASKS[topic]}\n\nQuestion: ${question}${context ? `\nContext: ${context.slice(0, 2000)}` : ''}`
-      input.emit?.({ type: 'subagent_started', task: topic, scope })
+      const id = `deep_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      input.emit?.({ type: 'subagent_started', id, task: topic, scope })
       const sessionId = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
       try {
-        const res = await runSubAgent({ task, scope, context }, ctx)
+        const res = await runSubAgent({ task, scope, context, id }, ctx)
         await (prisma as any).subAgentSession.create({
           data: {
             id: sessionId, userId, task, scope, topic,
@@ -53,7 +57,11 @@ export async function runDeepAnalysis(input: {
             turns: res.turns, costTokens: res.costTokens, createdAt: new Date().toISOString(),
           },
         })
-        input.emit?.({ type: 'subagent_done', task: topic, scope, success: true, cost_tokens: res.costTokens })
+        input.emit?.({
+          type: 'subagent_done', id, task: topic, scope, success: true,
+          cost_tokens: res.costTokens, turns: res.turns, tool_calls: res.toolCalls,
+          summary_preview: res.summary.slice(0, 200),
+        })
         return { topic, summary: res.summary, turns: res.turns, costTokens: res.costTokens, failed: false }
       } catch (err) {
         const msg = (err as Error).message.slice(0, 200)
@@ -63,7 +71,7 @@ export async function runDeepAnalysis(input: {
             summary: `FAILED: ${msg}`, status: 'failed', turns: 0, costTokens: 0, createdAt: new Date().toISOString(),
           },
         })
-        input.emit?.({ type: 'subagent_done', task: topic, scope, success: false })
+        input.emit?.({ type: 'subagent_done', id, task: topic, scope, success: false })
         return { topic, summary: `FAILED: ${msg}`, turns: 0, costTokens: 0, failed: true }
       }
     }),

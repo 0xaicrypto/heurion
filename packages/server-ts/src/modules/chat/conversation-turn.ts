@@ -595,6 +595,12 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       return installed.some((i) => i.pluginId === pluginId && i.enabled)
     },
     getPluginConfig: (pluginId) => getPluginConfig(userId, pluginId),
+    // #828: turn abort — 客户端断开/停止/watchdog 时工具与子代理可感知，
+    // 不再空跑烧 token。
+    signal: chatAbort.signal,
+    // #831: 子代理可见性端口 — spawn_subagent 批量扇出的
+    // started/progress/done 直接进本回合 SSE 流。
+    emitSubagentEvent: (ev) => send(ev),
     // #766: insert_asset plot 渲染 — execution plane 端口（modules 层提供）。
     executionPlane: createExecutionPlaneService(),
   }

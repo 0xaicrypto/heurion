@@ -5,6 +5,11 @@ import { resolveTierModel } from '../common/llm-gateway.js'
  * agent gets a white-listed tool set, an optional scope (patient/global)
  * that is forced onto patient-scoped tools, a turn cap and an output cap.
  * The result is a structured summary the main agent folds into its answer.
+ *
+ * #831: progress hooks — every turn/tool step is reported through the
+ * ctx.emitSubagentEvent port so the UI can show live sub-agent activity.
+ * #830: batch fan-out lives in SpawnSubagentTool; this runner stays
+ * single-task (one id per run).
  */
 import { deepseekChat, getApiKey} from '../common/llm.js'
 import { ToolRegistry, type ToolContext } from './tool-registry.js'
@@ -17,6 +22,11 @@ export interface SubAgentInput {
   /** Scope: 'global' or 'patient:<hash>' — forced onto patient tools. */
   scope?: string
   maxTurns?: number
+  /**
+   * #831: visibility id for the ctx.emitSubagentEvent port. Absent ⇒
+   * no progress events.
+   */
+  id?: string
 }
 
 export interface SubAgentResult {
@@ -42,6 +52,24 @@ export async function runSubAgent(input: SubAgentInput, ctx: ToolContext): Promi
   const requested = input.tools && input.tools.length > 0 ? input.tools : DEFAULT_TOOLS
   const toolNames = isPatientScope ? requested : requested.filter((t) => !PATIENT_SCOPED_TOOLS.has(t))
 
+  // #831: progress emitter — silent when no id/port (tests, background runs).
+  const startedAt = Date.now()
+  const emit = ctx.emitSubagentEvent
+  const report = (phase: 'thinking' | 'tool' | 'summarizing', extra: { current_tool?: string; tool_args_preview?: string } = {}) => {
+    if (!input.id || !emit) return
+    emit({
+      type: 'subagent_progress',
+      id: input.id,
+      task: input.task.slice(0, 200),
+      phase,
+      turn: Math.min(turns + 1, maxTurns),
+      max_turns: maxTurns,
+      elapsed_ms: Date.now() - startedAt,
+      ...extra,
+    })
+  }
+  let turns = 0
+
   // Read-only by default: every allowed tool must pass the white-list.
   const registry = new ToolRegistry(ctx)
   const allowed = toolNames.filter((n) => registry.get(n))
@@ -62,14 +90,17 @@ Rules:
   let messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
     { role: 'user', content: `${system}\n\nTask: ${input.task}${input.context ? `\n\nContext:\n${input.context.slice(0, 3000)}` : ''}` },
   ]
-  let turns = 0
   let toolCalls = 0
   let costTokens = 0
 
   for (let turn = 0; turn < maxTurns; turn++) {
+    // #828: stop burning tokens when the client is gone.
+    if (ctx.signal?.aborted) throw new Error('Sub-agent aborted: client disconnected')
+    report('thinking')
     const result = await deepseekChat(messages, getApiKey(), {
       model: resolveTierModel('fast'),
       maxTokens: 1200,
+      signal: ctx.signal,
       telemetryContext: { userId: ctx.userId, workspaceId: ctx.userId, action: 'subagent.turn' },
     })
     costTokens += estimate(result)
@@ -77,6 +108,7 @@ Rules:
 
     const calls = Array.from(result.matchAll(/<tool_call>([\s\S]*?)<\/tool_call>/g))
     if (calls.length === 0) {
+      report('summarizing')
       const summary = result.trim()
       const marker = summary.match(/SUBAGENT_SUMMARY:\s*([\s\S]*)$/i)
       return {
@@ -88,8 +120,10 @@ Rules:
     }
 
     // Execute tool calls in order; failures are recorded, not fatal.
+    // #828: registry now owns the per-tool timeout/abort guard.
     const toolResults: string[] = []
     for (const m of calls) {
+      if (ctx.signal?.aborted) throw new Error('Sub-agent aborted: client disconnected')
       try {
         const call = JSON.parse(m[1].trim()) as { name: string; arguments: Record<string, unknown> }
         if (!allowed.includes(call.name)) {
@@ -102,6 +136,10 @@ Rules:
         if (scope.startsWith('patient:') && call.name !== 'search_medical_web') {
           args.patient_hash = scope.slice('patient:'.length)
         }
+        report('tool', {
+          current_tool: call.name,
+          tool_args_preview: String(JSON.stringify(args) || '').slice(0, 120),
+        })
         const out = await registry.execute(call.name, args)
         toolResults.push(`[${call.name}] ${out.success ? (out.output || 'ok').slice(0, 1500) : `ERROR: ${out.error}`}`)
       } catch (err) {

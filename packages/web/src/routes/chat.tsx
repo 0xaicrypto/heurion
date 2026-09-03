@@ -503,7 +503,7 @@ export function ChatPage() {
               onRegenerate={handleRegenerate}
               onRetry={handleRetry}
               onExportChoice={handleExportChoice}
-              subagents={session?.subagents}
+              stallSince={session?.stallSince}
               emptyState={
                 <div className="py-20 text-center text-text-tertiary">
                   {historyLoading ? (

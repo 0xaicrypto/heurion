@@ -291,24 +291,19 @@ export async function agentRouter(app: FastifyInstance, opts: AgentRouterOptions
     const send = sender.send
 
     // #687: 编排/持久化/汇总 LLM 在 service — router 只做 SSE 投影。
+    // #831: 三类子代理事件（started/progress/done）带 id 原样透传。
     const { summary, totalCost } = await runDeepAnalysis({
       userId,
       topics: selected,
       question: questionText,
       context,
       patientHash: patient_hash,
-      emit: (event) => {
-        if (event.type === 'subagent_started') {
-          send({ type: 'subagent_started', task: event.task, scope: event.scope })
-        } else {
-          send({ type: 'subagent_done', task: event.task, success: event.success ?? false, cost_tokens: event.cost_tokens ?? 0 })
-        }
-      },
+      emit: (event) => send(event),
     })
 
     send({ type: 'context_info', text: '所有子任务完成，正在汇总…', kind: 'router' })
     send({ type: 'final_answer_chunk', text: summary })
-    send({ type: 'subagent_done', task: 'synthesis', success: true, cost_tokens: totalCost })
+    send({ type: 'subagent_done', id: 'deep_synthesis', task: 'synthesis', success: true, cost_tokens: totalCost })
     send({ type: 'turn_complete' })
     sender.end()
   })

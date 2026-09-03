@@ -13,6 +13,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { createSseSender } from './chat-sse.js'
+import { makeLogger } from '../../common/logger.js'
 import type { ChatStreamChunk } from '@heurion/contracts'
 import { getUserContext } from '../shared/user-context.js'
 import type { ChatScene } from '../../common/persona.js'
@@ -35,6 +36,8 @@ import type { TurnIO } from './tool-loop.js'
 function turnAction2edit(detail: SidecarDecisionDetail | undefined, text: string): boolean {
   return Boolean(detail?.vetoed) && EDIT_MARKERS.test(text)
 }
+
+const log = makeLogger('chat.handler')
 
 const gapService = new PrismaKnowledgeGapService()
 const telemetry = new PrismaTelemetryService()
@@ -88,6 +91,21 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
     const chatAbort = new AbortController()
     chatAbortSignal.addEventListener('abort', () => { try { chatAbort.abort() } catch { /* ignore */ } })
     const io: TurnIO = { send, signal: chatAbort.signal }
+
+    // #828: 回合级 watchdog — 最后防线，任何下游（LLM/工具/子代理）的挂死
+    // 都不再表现为"永久转圈"。超时发可解释错误 + turn_complete，并 abort
+    // 整条工具链路（ToolContext.signal 已在 conversation-turn 装配）。
+    const TURN_MAX_MS = Number(process.env.TURN_MAX_MS) || 15 * 60_000
+    let turnSettled = false
+    const watchdog = setTimeout(() => {
+      if (turnSettled) return
+      log.warn('[chat] turn watchdog fired', { userId, sessionId: sid, elapsedMs: TURN_MAX_MS })
+      send({ type: 'error', message: `本回合执行超过 ${Math.round(TURN_MAX_MS / 60_000)} 分钟仍未完成，已中止。可将任务拆分为多步后重试。` })
+      send({ type: 'turn_complete' })
+      try { chatAbort.abort() } catch { /* ignore */ }
+      sseEnd()
+    }, TURN_MAX_MS)
+    watchdog.unref?.()
 
     try {
       // #185: persist the user message BEFORE any LLM work — a mid-stream
@@ -418,6 +436,10 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       } catch { /* 记录失败不阻断错误路径 */ }
       send({ type: 'error', message: err.message || 'Chat failed' })
     } finally {
+      // #828: settle the turn watchdog — normal completion/error paths must
+      // never fire it.
+      turnSettled = true
+      clearTimeout(watchdog)
       sseEnd()
     }
 }

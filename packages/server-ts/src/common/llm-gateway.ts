@@ -318,6 +318,35 @@ function resolveLlmTimeoutMs(): number {
   return 300000
 }
 
+/**
+ * #828 — post-header stall protection. fetchWithRetry's timer covers TTFB
+ * (response headers) only; after that, a non-streaming `res.json()` or a
+ * streaming `reader.read()` could previously wait FOREVER when the
+ * provider/relay sent headers early then stalled — and the SSE heartbeat
+ * kept the client connection alive, so the turn looked "stuck" with no
+ * error. Every body-read now races an idle timeout (LLM_BODY_IDLE_TIMEOUT_MS
+ * env, default 120s) that raises an actionable error instead.
+ */
+function resolveBodyIdleTimeoutMs(): number {
+  const fromEnv = parseInt(process.env.LLM_BODY_IDLE_TIMEOUT_MS || '', 10)
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv
+  return 120_000
+}
+
+async function withBodyIdleTimeout<T>(p: Promise<T>, label: string): Promise<T> {
+  const idleMs = resolveBodyIdleTimeoutMs()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeoutP = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}: no data for ${idleMs}ms (post-header stall)`)), idleMs)
+    timer.unref?.()
+  })
+  try {
+    return await Promise.race([p, timeoutP])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 export interface LlmChatOptions {
   model?: string
   maxTokens?: number
@@ -667,7 +696,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
           body: JSON.stringify({ ...body, messages: serializeMessages(stripImageParts(messages), model) }),
         }, { signal: options.signal, timeoutMs: options.timeoutMs })
         if (res2.ok) {
-          return this.parseChatResponse(await res2.json(), model, options, messages, tools, onReasoning)
+          return this.parseChatResponse(await withBodyIdleTimeout(res2.json(), 'LLM response body stalled'), model, options, messages, tools, onReasoning)
         }
         const body2 = await res2.text().catch(() => '')
         await recordFailure(model, options, new Error(`HTTP ${res2.status} after image-strip retry: ${body2.slice(0, 200)}`), promptChars(messages), Date.now() - startedAt)
@@ -676,7 +705,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       await recordFailure(model, options, new Error(`HTTP ${res.status}: ${errBody.slice(0, 200)}`), promptChars(messages), Date.now() - startedAt)
       throw new Error(`LLM 请求失败 (HTTP ${res.status}): ${errBody.slice(0, 300)}`)
     }
-    const json: { choices?: LlmChunk['choices']; usage?: LlmChunk['usage'] } = await res.json()
+    const json: { choices?: LlmChunk['choices']; usage?: LlmChunk['usage'] } = await withBodyIdleTimeout(res.json(), 'LLM response body stalled')
     return await this.parseChatResponse(json, model, options, messages, tools, onReasoning)
   }
 
@@ -853,7 +882,17 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
 
     try {
       while (true) {
-        const { done, value } = await reader.read()
+        // #828: per-read idle timeout — a stalled provider after headers
+        // must surface as an error, not an eternal await. The timer resets
+        // on every chunk because each read gets its own race.
+        let readResult: Awaited<ReturnType<typeof reader.read>>
+        try {
+          readResult = await withBodyIdleTimeout(reader.read(), 'LLM stream stalled')
+        } catch (err) {
+          try { await reader.cancel() } catch { /* already broken */ }
+          throw err
+        }
+        const { done, value } = readResult
         if (done) break
         buffer += decoder.decode(value, { stream: true })
 

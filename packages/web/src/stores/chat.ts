@@ -43,20 +43,61 @@ export function chatFailureText(err: unknown): string {
   return `Error: ${msg}`
 }
 
-/** 与 sendMessage 相同的批处理循环 — 一个 set() 消费一批 chunk。 */
+/** #828: 距最近一条 SSE data 事件超过该阈值即标记会话停滞（心跳注释行
+ *  让字节永远在流，必须基于 data 事件而非字节判断）。 */
+const STALL_DETECT_MS = 90_000;
+
+/** 与 sendMessage 相同的批处理循环 — 一个 set() 消费一批 chunk。
+ *  #828: 手写消费循环以叠加停滞检测 — race 每个 next() 与剩余停滞窗口，
+ *  停滞时记录 stallSince（供 UI 显示"已 Xs 无新进展"），流继续等待，
+ *  下一事件到达即清除。pending 保存未完成的 next()，与 batchChunks 同
+ *  约定：绝不丢弃 in-flight 的 chunk。 */
 async function consumeStream(
   set: (fn: (state: { sessions: Record<string, SessionState> }) => { sessions: Record<string, SessionState> }) => void,
   sessionId: string,
   stream: AsyncIterable<ChatStreamChunk>,
 ): Promise<boolean> {
   let gotChunks = false;
-  for await (const batch of batchChunks(stream)) {
-    if (batch.length === 0) continue;
+  let lastEventAt = Date.now();
+  let pending: Promise<IteratorResult<ChatStreamChunk[]>> | null = null;
+  const iter = batchChunks(stream)[Symbol.asyncIterator]();
+  const setStall = (since: number | null) => {
+    set((state) => {
+      const s = state.sessions[sessionId];
+      if (!s) return state;
+      if ((s.stallSince ?? null) === since) return state;
+      return { sessions: { ...state.sessions, [sessionId]: { ...s, stallSince: since } } };
+    });
+  };
+  // for(;;) — web eslint (v8) flags while(true) as constant condition.
+  for (;;) {
+    const nextP: Promise<IteratorResult<ChatStreamChunk[]>> = pending ?? iter.next();
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    const stallP = new Promise<'stall'>((resolve) => {
+      const remain = STALL_DETECT_MS - (Date.now() - lastEventAt);
+      stallTimer = setTimeout(() => resolve('stall'), Math.max(100, remain));
+    });
+    let r: IteratorResult<ChatStreamChunk[]> | 'stall';
+    try {
+      r = await Promise.race([nextP, stallP]);
+    } finally {
+      if (stallTimer) clearTimeout(stallTimer);
+    }
+    if (r === 'stall') {
+      pending = nextP;
+      setStall(Date.now());
+      continue;
+    }
+    pending = null;
+    lastEventAt = Date.now();
+    setStall(null);
+    if (r.done) break;
+    if (r.value.length === 0) continue;
     gotChunks = true;
     set((state) => {
       const s = state.sessions[sessionId];
       if (!s) return state;
-      const next = batch.reduce(applyChunkToSession, s);
+      const next = r.value.reduce(applyChunkToSession, s);
       return { sessions: { ...state.sessions, [sessionId]: next } };
     });
   }
@@ -87,6 +128,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           abort,
           loading: true,
           compacting: false,
+          stallSince: null,
         },
       },
     }));
@@ -118,7 +160,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set((state) => {
         const s = state.sessions[sessionId];
         if (!s || s.abort !== abort) return state;
-        return { sessions: { ...state.sessions, [sessionId]: { ...s, loading: false, compacting: false } } };
+        return { sessions: { ...state.sessions, [sessionId]: { ...s, loading: false, compacting: false, stallSince: null } } };
       });
       // #fix: 排队消息在 turn 完成后自动发出(不 await — 避免嵌套状态
       // 竞争;新的 turn 会设置自己的 loading/abort)。
@@ -170,6 +212,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               { id: crypto.randomUUID(), role: 'assistant', text: '', isStreaming: true, createdAt: now },
             ],
             loading: true,
+            stallSince: null,
           },
         },
       };
@@ -219,7 +262,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set((state) => {
         const cur = state.sessions[sessionId];
         if (!cur) return state;
-        return { sessions: { ...state.sessions, [sessionId]: { ...cur, loading: false } } };
+        return { sessions: { ...state.sessions, [sessionId]: { ...cur, loading: false, stallSince: null } } };
       });
     }
   },
@@ -243,6 +286,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             messages: msgs,
             abort: null,
             loading: false,
+            stallSince: null,
             // #fix: Stop = 停止一切(含排队中的追加消息) — 用户点停止
             // 就是不想继续了,排队消息不应在 turn 结束后自动发出。
             pending: null,
