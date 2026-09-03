@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
-import { MessageSquare, Activity, BookOpen, Brain, ArrowRight, Layers, Clock, Zap } from 'lucide-react';
+import { MessageSquare, Activity, BookOpen, Brain, ArrowRight, Layers, Clock, Zap, Gauge } from 'lucide-react';
 import { Card, Skeleton } from '@/components/ui';
 import { api } from '@/lib/api';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
@@ -11,6 +11,21 @@ interface MemoryStats {
   episodes: number;
   knowledge: number;
   events: number;
+}
+
+interface ScopeCoverageView {
+  scope: string;
+  patientHash?: string;
+  confirmedFacts: number;
+  coveredFacts: number;
+  ratio: number;
+  uncoveredSample: string[];
+}
+
+interface CoverageView {
+  global: ScopeCoverageView;
+  patients: ScopeCoverageView[];
+  hintThreshold: number;
 }
 
 function countField(value: unknown): number {
@@ -23,21 +38,26 @@ export function MemoryPage() {
   const { i18n } = useTranslation();
   const isZh = i18n.language.startsWith('zh');
   const [stats, setStats] = useState<MemoryStats | null>(null);
+  const [coverage, setCoverage] = useState<CoverageView | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!api.hasToken()) return;
     setLoading(true);
-    api
-      .exportMemory()
-      .then((data: any) => {
+    Promise.all([
+      api.exportMemory(),
+      api.getKnowledgeCoverage().catch(() => null),
+    ])
+      .then(([rawStats, cov]) => {
+        const data = rawStats as typeof rawStats & { event_log_count?: number };
         setStats({
           facts: countField(data.facts),
           episodes: countField(data.episodes),
           knowledge: countField(data.knowledge),
           events: countField(data.event_log_count),
         });
+        if (cov) setCoverage(cov);
       })
       .catch((err) => setError(err.messageText || String(err)))
       .finally(() => setLoading(false));
@@ -127,6 +147,12 @@ export function MemoryPage() {
                 <StatCard value={stats.episodes} label={isZh ? 'Episodes' : 'Episodes'} />
                 <StatCard value={stats.knowledge} label={isZh ? 'Articles' : 'Articles'} />
                 <StatCard value={stats.events} label={isZh ? '事件' : 'Events'} />
+              </div>
+            )}
+            {/* #816: facts→article 覆盖率 — 记忆沉淀健康度 */}
+            {coverage && !loading && (
+              <div className="mx-auto mt-8 max-w-3xl">
+                <CoveragePanel coverage={coverage} isZh={isZh} />
               </div>
             )}
           </div>
@@ -220,5 +246,47 @@ function StatCard({ value, label }: { value: number; label: string }) {
       <p className="text-3xl font-bold text-accent">{value}</p>
       <p className="mt-1 text-sm text-text-tertiary">{label}</p>
     </div>
+  );
+}
+
+/** #816: 覆盖率面板 — ratio 条 + 低覆盖提示(沉淀/手动合成)。 */
+function CoveragePanel({ coverage, isZh }: { coverage: CoverageView; isZh: boolean }) {
+  const pct = (r: number) => `${Math.round(r * 100)}%`;
+  const rows = [coverage.global, ...coverage.patients].filter((r) => r.confirmedFacts > 0);
+  if (rows.length === 0) return null;
+  return (
+    <Card className="p-6 text-left">
+      <div className="mb-4 flex items-center gap-2 text-accent">
+        <Gauge size={18} />
+        <span className="font-semibold">{isZh ? '知识覆盖率（facts → article）' : 'Knowledge coverage (facts → articles)'}</span>
+      </div>
+      <div className="space-y-3">
+        {rows.map((r) => (
+          <div key={`${r.scope}-${r.patientHash || 'global'}`}>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-text-secondary">
+                {r.scope === 'global' ? (isZh ? '全局知识库' : 'Global') : `${isZh ? '患者' : 'Patient'} ${r.patientHash?.slice(0, 12)}`}
+              </span>
+              <span className="font-mono text-text-primary">
+                {r.coveredFacts}/{r.confirmedFacts} · {pct(r.ratio)}
+              </span>
+            </div>
+            <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-border">
+              <div
+                className={`h-full rounded-full ${r.ratio < coverage.hintThreshold ? 'bg-error' : 'bg-accent'}`}
+                style={{ width: pct(r.ratio) }}
+              />
+            </div>
+            {r.ratio < coverage.hintThreshold && (
+              <p className="mt-1 text-xs text-text-tertiary">
+                {isZh
+                  ? `覆盖率偏低 — 可在对话中说"总结知识库"或对相关事实手动合成文章（如：${r.uncoveredSample[0]?.slice(0, 40) || '…'}）`
+                  : `Coverage below threshold — ask the assistant to summarize the knowledge base or synthesize an article from uncovered facts (e.g. "${r.uncoveredSample[0]?.slice(0, 40) || '…'}")`}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }

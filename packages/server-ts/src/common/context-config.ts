@@ -30,11 +30,16 @@ export const CONTEXT_CONFIG = {
     episodesBudget: 1500,
     factsBudget: 1500,
     skillsMax: 5,
+    /** #814: layer3 降级为"未成文记忆" — 仅 importance ≥ 此值或近 N 天的
+     *  facts 进入碎片投影(其余交给 article/JIT 合成覆盖,#815)。 */
+    layer3ImportanceMin: parseInt(process.env.LAYER3_IMPORTANCE_MIN || '4', 10),
+    layer3RecentDays: parseInt(process.env.LAYER3_RECENT_DAYS || '14', 10),
   },
 
   // ── persona 身份级信息配额（persona.ts）──
   persona: {
     prefsMax: 5,
+    constraintsMax: 5,
     goalsMax: 3,
     knowledgeTitlesMax: 5,
   },
@@ -54,6 +59,10 @@ export const CONTEXT_CONFIG = {
     /** 显式选择(#620/#633)。 */
     pickedMax: 3,
     pickedCharsPerItem: 4000,
+    /** #815: JIT 惰性合成 — 无文章覆盖时的读时综合兜底(env 可关)。 */
+    jitEnabled: process.env.JIT_SYNTHESIS_ENABLED !== 'false',
+    jitMinFacts: 3,
+    jitFactsMax: 10,
   },
 
   // ── 场景上下文配额（conversation-turn.ts）──

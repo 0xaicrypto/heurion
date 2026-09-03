@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { FactsStore, KnowledgeStore } from '../../src/evolution/stores.js'
-import { buildKnowledgeInjection, applyBudgetTiers, KB_INJECT_HEADER } from '../../src/modules/knowledge/knowledge-inject.js'
+import { buildKnowledgeInjection, applyBudgetTiers, KB_INJECT_HEADER, KB_CITATION_RULE } from '../../src/modules/knowledge/knowledge-inject.js'
 import { factContentHash } from '../../src/common/fact-render.js'
 
 describe('#621 knowledge injection', () => {
@@ -52,6 +52,63 @@ describe('#621 knowledge injection', () => {
     const knowledge = new KnowledgeStore(baseDir)
     expect(await buildKnowledgeInjection('', facts, knowledge)).toBe('')
     expect(await buildKnowledgeInjection('x', facts, knowledge)).toBe('')
+  })
+})
+
+describe('#813 article citation enrichment', () => {
+  let baseDir: string
+  beforeEach(() => { baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-cite-meta-')) })
+  afterEach(() => fs.rmSync(baseDir, { recursive: true, force: true }))
+
+  function makeKnowledgeStores() {
+    const facts = new FactsStore(baseDir)
+    const knowledge = new KnowledgeStore(baseDir)
+    knowledge.add({ title: 'NSCLC 靶向治疗进展', content: '三代 EGFR-TKI 一线治疗显著延长 PFS。', status: 'current', sourceType: 'research' })
+    facts.commit(); knowledge.commit()
+    return { facts, knowledge }
+  }
+
+  test('resolveArticle 接线 → 文章条目带标题/来源摘要,并附引用指令', async () => {
+    const { facts, knowledge } = makeKnowledgeStores()
+    const inj = await buildKnowledgeInjection('NSCLC 靶向治疗', facts, knowledge, {
+      resolveArticle: () => ({ title: 'NSCLC 靶向治疗进展', stale: false, sourceSummary: 'fact_x[0.9,patient] fact_y[0.8,chat]' }),
+    })
+    expect(inj).toContain('《NSCLC 靶向治疗进展》')
+    expect(inj).toContain('来源: fact_x[0.9,patient] fact_y[0.8,chat]')
+    expect(inj).toContain(KB_CITATION_RULE)
+  })
+
+  test('stale 文章 → 注入带失效标注', async () => {
+    const { facts, knowledge } = makeKnowledgeStores()
+    const inj = await buildKnowledgeInjection('NSCLC 靶向治疗', facts, knowledge, {
+      resolveArticle: () => ({ title: 'NSCLC 靶向治疗进展', stale: true, staleSummary: 'fact_x 已修订', sourceSummary: 'fact_x[0.9,patient]' }),
+    })
+    expect(inj).toContain('⚠️已过时(fact_x 已修订)')
+    expect(inj).toContain('引用前注意时效')
+  })
+
+  test('未接线 resolveArticle → 保持原始渲染,无引用指令', async () => {
+    const { facts, knowledge } = makeKnowledgeStores()
+    const inj = await buildKnowledgeInjection('NSCLC 靶向治疗', facts, knowledge)
+    expect(inj).not.toContain('《')
+    expect(inj).not.toContain(KB_CITATION_RULE)
+    expect(inj).toContain('[knowledge]')
+  })
+
+  test('只有 fact 命中 → 不附引用指令', async () => {
+    const baseDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-cite-'))
+    try {
+      const facts = new FactsStore(baseDir2)
+      const knowledge = new KnowledgeStore(baseDir2)
+      facts.add({ content: '患者 EGFR 突变阳性特殊标记词', category: 'fact', importance: 4, sourceType: 'patient' })
+      facts.commit(); knowledge.commit()
+      const inj = await buildKnowledgeInjection('EGFR 突变阳性特殊标记词', facts, knowledge, {
+        resolveArticle: () => ({ title: 'T', stale: false, sourceSummary: '' }),
+      })
+      expect(inj).not.toContain(KB_CITATION_RULE)
+    } finally {
+      fs.rmSync(baseDir2, { recursive: true, force: true })
+    }
   })
 })
 

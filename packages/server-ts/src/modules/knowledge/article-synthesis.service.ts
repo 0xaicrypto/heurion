@@ -7,6 +7,7 @@ import { resolveTierModel } from '../../common/llm-gateway.js'
 import { deepseekChat, getApiKey} from '../../common/llm.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 import { articleSynthesisPrompt, ARTICLE_SYNTHESIS_PERSONA } from '../../memory/prompts.js'
+import { normalizeSynthesizedArticle } from '../../memory/article-contract.js'
 import type { MemoryService } from '../../memory/memory.service.js'
 import type { ArticleNode, FactNode } from '../../memory/memory.types.js'
 import type { Result } from '../../common/result.js'
@@ -14,6 +15,9 @@ import type { Result } from '../../common/result.js'
 /**
  * Re-write an article from its current source facts. LLM failure falls back
  * to the existing title/content — the version bump still happens.
+ * #813: same answer-ready contract as the K4 path — every claim cites the
+ * fact stableIds it was synthesized from (normalized through the shared
+ * contract layer).
  */
 export async function regenerateArticleWithLlm(
   article: ArticleNode,
@@ -29,7 +33,7 @@ export async function regenerateArticleWithLlm(
 
   if (sourceFacts.length > 0) {
     const factList = sourceFacts
-      .map(f => `[importance=${f.importance ?? 3}] [${f.category}] ${f.content}`)
+      .map(f => `[${f.stableId}] importance=${f.importance ?? 3} source=${f.sourceType || 'general'}: ${f.content}`)
       .join('\n')
     const prompt = articleSynthesisPrompt(factList, ARTICLE_SYNTHESIS_PERSONA.researcherEn)
     try {
@@ -42,10 +46,12 @@ export async function regenerateArticleWithLlm(
           telemetryContext: { userId, workspaceId: userId, action: 'article.regenerate' },
         },
       )
-      const parsed = parseLlmJson<{ title?: string; content?: string }>(raw)
-      if (parsed) {
-        if (parsed.title) title = String(parsed.title)
-        if (parsed.content) content = String(parsed.content)
+      const parsed = parseLlmJson<unknown>(raw)
+      // #813: 契约归一化失败时保留旧 title/content(版本照常递增)。
+      const normalized = normalizeSynthesizedArticle(parsed, sourceFacts.map(f => f.stableId), { lang: 'en' })
+      if (normalized) {
+        title = normalized.title
+        content = normalized.content
       }
     } catch {
       // Fall back to keeping existing title/content but still bumping the version.

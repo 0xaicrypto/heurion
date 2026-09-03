@@ -21,7 +21,9 @@ import { buildAttachmentParts, buildDocReferenceBlocks, findUploadFileByName, de
 import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
 import { splitDocumentSections, resolveDocumentFocus } from '../../lib/doc-sections.js'
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
+import { maybeJitSynthesize } from '../../modules/knowledge/jit-synthesis.service.js' // #815 JIT 兜底
 import { EmbeddingService } from '../../memory/embedding/embedding.service.js' // #731 向量路接线
+import { describeArticleForInjection } from '../../memory/staleness.js' // #813 文章溯源/stale 单一判定入口
 import { ContextAssembler } from './context-assembler.js'
 import { ToolRegistry, type ToolContext } from '../../tools/tool-registry.js'
 import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
@@ -421,7 +423,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       // #621/#629/#630/#627/#731: 知识库语义自动注入 — 患者过滤 + 预算自适应
       // + 跨层去重 + 向量路接线(embedding 缺省时 unified-search 自动回落词法)。
       key: 'knowledge_inject',
-      fallbackOrder: 1,
+      // #814: 让位顺序 layer3 > knowledge_inject > picked_kb — 自动注入
+      // 先于用户钉选让位(见 context-assembler.segmentFallback)。
+      fallbackOrder: 0,
       build: (input) => buildKnowledgeInjection(input.body.text, ctx.facts, ctx.knowledge, {
         remainingBudget: input.budget.remaining(),
         excludeFactHashes: input.layer3FactHashes,
@@ -433,12 +437,20 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           label: resolveKbLabel(ctx, it),
           sourceId: it.stableId ?? it.label,
         })),
+        // #813: 文章条目附溯源增强 — 标题/源 facts 置信度摘要/stale 失效标注
+        // (判定走 memory/staleness.ts 单一入口,与 curation 传播同源)。
+        resolveArticle: (articleStableId) => describeArticleForInjection(ctx.memory.graph, articleStableId),
+        // #815: JIT 惰性合成 — 无文章覆盖的 facts 簇读时综合,异步沉淀待审。
+        jitSynthesize: (q, factHits) => maybeJitSynthesize({
+          userId, query: q, patientHash: input.patientHash, memory: ctx.memory, facts: factHits,
+        }),
       }),
     },
     {
       // #620/#633: 用户显式选定的文章/文档(用户强制保留,不入稳定段)。
       key: 'picked_kb',
-      fallbackOrder: 0,
+      // #814: 用户钉选最后让位。
+      fallbackOrder: 1,
       build: async (input) => {
         const pickedIds: string[] = Array.isArray(input.body.picked_kb_ids) ? input.body.picked_kb_ids.map(String) : []
         if (pickedIds.length === 0 || input.scene.startsWith('patient')) return ''
@@ -455,7 +467,12 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           const text = await extractTextFromUpload(userId, d.stableId, { maxChars: CONTEXT_CONFIG.injection.pickedCharsPerItem })
           docBlocks.push(`- [document] (${d.stableId}) ${d.name}: ${(text || d.name).slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`)
         }
-        const articleBlocks = articles.map((a) => `- [article] (${a.stableId}) ${a.title}: ${String(a.content || '').slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`)
+        const articleBlocks = articles.map((a) => {
+          // #813: 钉选文章同样带 stale 失效标注(判定单一入口)。
+          const meta = describeArticleForInjection(ctx.memory.graph, a.stableId)
+          const staleTag = meta?.stale ? ` ⚠️已过时(${meta.staleSummary || '依据已失效'}) — 引用前注意时效` : ''
+          return `- [article] (${a.stableId}) ${a.title}:${staleTag} ${String(a.content || '').slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`
+        })
         if (docBlocks.length === 0 && articleBlocks.length === 0) return ''
         // #756: 钉选条目进入 citations — 📌 前缀与自动注入区分。
         articles.forEach((a: any) => kbCitations.push({ kind: 'knowledge', label: `📌 ${a.title}`, sourceId: a.stableId }))

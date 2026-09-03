@@ -45,15 +45,64 @@ ${text}
 // ── Knowledge-article synthesis ───────────────────────────────
 
 export const ARTICLE_SYNTHESIS_PERSONA = {
-  zh: '你是临床知识合成器。基于以下已确认的事实合成一篇简短知识文章（1-2 段，临床可执行）：',
+  zh: '你是临床知识合成器。把以下已确认事实合成为一篇 answer-ready 的知识单元——面向问题自包含、每条依据可溯源到事实 ID、不确定性显式暴露。',
   researcherEn: `You are synthesizing clinical findings for an oncology researcher.
-Synthesize the following facts into a concise, clinically actionable knowledge article.
-Keep it to 1-2 paragraphs and a short title.`,
+Synthesize the following facts into an answer-ready knowledge unit: self-contained for the question it answers, every claim traceable to fact IDs, uncertainty explicit.`,
 } as const
 
+/**
+ * #813: answer-ready 合成契约 — 结论/依据/caveat 结构化,每个论断回指
+ * 源 fact stableId(注入层据此渲染溯源标记;合成期幻觉经 factId 过滤
+ * 后不会静默进入文章)。factList 每行格式:`[<stableId>] ...<content>`。
+ */
 export function articleSynthesisPrompt(factList: string, persona: string = ARTICLE_SYNTHESIS_PERSONA.zh): string {
   const isEn = persona.includes('You are')
-  return `${persona}\n\nFacts:\n${factList}\n\n${isEn ? 'Return ONLY JSON' : '返回 ONLY JSON'}: { "title": "...", "content": "..." }`
+  if (isEn) {
+    return `${persona}
+
+Facts (each line starts with its stable ID in brackets):
+${factList}
+
+Return ONLY JSON:
+{
+  "title": "short title",
+  "question": "the self-contained question this knowledge answers (include subject context)",
+  "conclusion": "the actionable conclusion, 1-3 sentences",
+  "evidence": [
+    { "claim": "one supporting point", "factIds": ["fact_xxx"], "confidence": "high|medium|low" }
+  ],
+  "caveats": ["uncertainty / applicability boundary / conflicting evidence"]
+}
+
+Rules:
+- Every claim in "evidence" MUST cite factIds copied from the bracketed IDs above — never invent IDs.
+- Anything you cannot trace to a provided fact goes into "caveats", not "evidence" or "conclusion".
+- If facts conflict, state the conflict in "caveats" instead of silently picking one.
+
+[JSON]:`
+  }
+  return `${persona}
+
+Facts（每行以方括号内的稳定 ID 开头）:
+${factList}
+
+返回 ONLY JSON:
+{
+  "title": "简短标题",
+  "question": "这段知识回答的问题（自包含,含对象语境）",
+  "conclusion": "核心结论,1-3 句,临床可执行",
+  "evidence": [
+    { "claim": "一条依据要点", "factIds": ["fact_xxx"], "confidence": "high|medium|low" }
+  ],
+  "caveats": ["不确定性/适用边界/证据冲突"]
+}
+
+规则:
+- evidence 中每条论断必须引用上方方括号内的 factId — 禁止编造 ID。
+- 无法追溯到给定 fact 的内容一律放 caveats,不得进入 conclusion/evidence。
+- 事实之间存在冲突时,在 caveats 中写明冲突,不要静默择一。
+
+[JSON]:`
 }
 
 // ── Clinical entity extraction (chat-ingester / evolution worker) ──

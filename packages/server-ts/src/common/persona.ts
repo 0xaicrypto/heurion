@@ -35,6 +35,9 @@ export function buildScenePersona(scene: ChatScene, facts: FactsStore, knowledge
 export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): string {
   const allFacts = facts.all().filter(f => !f.patientHash && !f.studyId)
   const prefs = allFacts.filter(f => f.category === 'preference').sort((a, b) => b.importance - a.importance)
+  // #814: constraint 与 preference/goal 同属身份级信息(天生无上下文),
+  // 直接进 persona — 此前漏网落入 layer3 碎片。
+  const constraints = allFacts.filter(f => f.category === 'constraint').sort((a, b) => b.importance - a.importance)
   const goals = allFacts.filter(f => f.category === 'goal').slice(0, CONTEXT_CONFIG.persona.goalsMax)
   const knowledgeArticles = knowledge.all().filter(k => k.status === 'current').slice(0, CONTEXT_CONFIG.persona.knowledgeTitlesMax)
 
@@ -50,6 +53,13 @@ export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): stri
     parts.push('\nYour accumulated preferences:')
     for (const p of prefs.slice(0, CONTEXT_CONFIG.persona.prefsMax)) {
       parts.push(`- ${p.content} (importance: ${p.importance}/5)`)
+    }
+  }
+
+  if (constraints.length > 0) {
+    parts.push('\nActive constraints (must respect):')
+    for (const c of constraints.slice(0, CONTEXT_CONFIG.persona.constraintsMax)) {
+      parts.push(`- ${c.content}`)
     }
   }
 
