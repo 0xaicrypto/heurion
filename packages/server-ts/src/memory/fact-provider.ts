@@ -16,6 +16,8 @@ export interface ScoredFact {
   confidence?: number
   provenance?: { sourceKind?: string }
   patientHash?: string
+  /** #840-r5: study 域事实的隔离口径(persona 过滤 !studyId) — graph 路此前丢失该字段。 */
+  studyId?: string
   /** 跨 store 去重 key — content+category+patientHash(#627)。 */
   factHash: string
   createdAt?: number
@@ -74,6 +76,7 @@ export class GraphFactProvider implements FactProvider {
         confidence: n.confidence,
         provenance: n.provenance,
         patientHash: n.patientHash,
+        studyId: n.studyId,
         factHash: factContentHash({ content: String(n.content || ''), category: n.category, patientHash: n.patientHash }),
         createdAt: typeof n.createdAt === 'string' ? Date.parse(n.createdAt) : n.createdAt,
         source: `fact:${n.stableId}`,

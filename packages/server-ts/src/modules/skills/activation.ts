@@ -15,6 +15,8 @@ import { tokenize } from '../../retrieval/keyword-search.js'
 /** 剧本卡摘要 — Layer 4 注入形状(设计 §3.4)。 */
 export interface SkillCardSummary {
   name: string
+  /** #840-r5: 稳定 ID — 遵循度度量按此精确关联(重名技能不再有歧义)。 */
+  stableId?: string
   taskKind: string
   description: string
   followRate: number
@@ -68,6 +70,7 @@ export function matchSkillsForTurn(input: MatchSkillsInput): SkillCardSummary[] 
       : (s.taskCount ?? 0) > 0 ? (s.successCount ?? 0) / (s.taskCount ?? 1) : 0
     matched.push({
       name: s.name,
+      stableId: (s as any).stableId,
       taskKind: s.taskKind,
       description: s.description || s.bestStrategy || '',
       followRate,

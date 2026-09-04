@@ -3,6 +3,7 @@ import prisma from '../../common/prisma.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 import { getUserContext } from '../shared/user-context.js'
+import { buildSkillProposalPayload } from '../../memory/skill-node-factory.js'
 
 /**
  * #298: skill capture — turn a finished conversation into a reusable skill
@@ -133,21 +134,18 @@ export async function confirmSkillDraft(
     importance: 3,
     confidence: 'medium',
     reason: `医生确认捕捉技能(${draftId})`,
-    payload: JSON.stringify({
-      skill: {
-        stableId: `skill_cap_${draftId}`,
-        name,
-        description,
-        steps,
-        promptTemplate,
-        taskKind: 'edit',
-        triggers: [name].filter(Boolean),
-        scope: 'personal',
-        source: 'capture',
-        evidence: { trajectoryIds: [], sessionIds: row.sourceSession ? [String(row.sourceSession)] : [], observationCount: 0, correctionRate: 0 },
-      },
-      fingerprint: `capture:${draftId}`,
-    }),
+    payload: buildSkillProposalPayload({
+      stableId: `skill_cap_${draftId}`,
+      name,
+      description,
+      steps,
+      promptTemplate,
+      taskKind: 'edit',
+      triggers: [name].filter(Boolean),
+      scope: 'personal',
+      source: 'capture',
+      evidence: { trajectoryIds: [], sessionIds: row.sourceSession ? [String(row.sourceSession)] : [], observationCount: 0, correctionRate: 0 },
+    }, `capture:${draftId}`),
   })
   return { ok: proposal.status !== 'rejected', proposalId: proposal.id }
 }

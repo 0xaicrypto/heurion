@@ -7,7 +7,7 @@
  * 的 Crossref fallback,补 preprint / 非 MEDLINE 期刊盲区)、
  * fetch_article_summary 的 DOI 直解、#382 选刊元数据。
  */
-import { externalRequest } from './external-fetch.js'
+import { externalRequest, ExternalHttpError } from './external-fetch.js'
 import { formatAma, type CitationRecord } from './search-citation-tool.js'
 
 /** DOI 归一化:剥 URL/`doi:` 前缀与空白 — 模型常把 DOI 带着前缀复制进来。 */
@@ -70,7 +70,7 @@ export async function crossrefResolveDoi(doi: string): Promise<CitationRecord | 
     text = await externalRequest('crossref', `/works/${encodeURIComponent(norm)}`)
   } catch (err) {
     // 404 → DOI 不存在(正常业务分支);其余错误上抛由调用方降级。
-    if (/HTTP 404/.test((err as Error).message)) return null
+    if (err instanceof ExternalHttpError && err.status === 404) return null
     throw err
   }
   const msg = JSON.parse(text)?.message

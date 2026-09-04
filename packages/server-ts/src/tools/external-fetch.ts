@@ -91,6 +91,17 @@ export const EXTERNAL_HOSTS: Record<string, ExternalHostConfig> = {
 
 export interface ExternalRequestOptions { signal?: AbortSignal }
 
+/**
+ * #840-r5: 类型化 HTTP 错误(#683 错误通道治理)— 调用方按 status 分支
+ * (如 Crossref 404 = DOI 不存在的业务分支),不再解析错误文案。
+ */
+export class ExternalHttpError extends Error {
+  constructor(readonly label: string, readonly status: number, message?: string) {
+    super(message ?? `${label} HTTP ${status}`)
+    this.name = 'ExternalHttpError'
+  }
+}
+
 interface HostState {
   chain: Promise<void>
   lastAt: number
@@ -186,9 +197,9 @@ export async function externalRequest(
           await new Promise((r) => setTimeout(r, retryAfterMs))
           continue
         }
-        throw new Error(`${cfg.label} HTTP ${res.status}（已退避重试仍限流）`)
+        throw new ExternalHttpError(cfg.label, res.status, `${cfg.label} HTTP ${res.status}（已退避重试仍限流）`)
       }
-      if (!res.ok) throw new Error(`${cfg.label} HTTP ${res.status}`)
+      if (!res.ok) throw new ExternalHttpError(cfg.label, res.status)
       const text = await res.text()
       cacheSet(state, cfg.cacheMax, cacheKey, text)
       return text

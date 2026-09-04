@@ -134,7 +134,7 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
       const parsed = parseSkillPayload(proposal.payload || '')
       const node = buildSkillNode(userId, parsed.skill)
       ctx.memory.graph.addNode(node)
-      return node as unknown as MemoryNode
+      return node // SkillNode 本就是 MemoryNode 联合成员 — 无需强转(#840-r5)
     } catch (err) {
       log.warn('skill proposal applier failed', { reason: (err as Error).message.slice(0, 160) })
       return null

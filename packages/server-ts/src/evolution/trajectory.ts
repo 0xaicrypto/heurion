@@ -101,6 +101,15 @@ export class TaskTrajectoryProjection {
     return this.query()
   }
 
+  /**
+   * #840-r5: 缓存失效钩子 — eventLog 追加新轨迹后,持有实例的调用方必须
+   * 先 invalidate() 再 query,否则读到 stale(当前所有调用方均为一次性
+   * new 实例,隐式安全;此方法固化该契约,防未来复用踩坑)。
+   */
+  invalidate(): void {
+    this.cache = null
+  }
+
   /** 采集量/任务型占比基线(taskKind 过滤后 / 全量)。 */
   stats(): { total: number; byTaskKind: Record<string, number> } {
     const all = this.query()

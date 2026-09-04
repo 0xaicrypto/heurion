@@ -20,7 +20,7 @@ interface GraphLike {
 export function graphPersonaSource(memory: { graph: GraphLike }): PersonaSource {
   const facts = new GraphFactProvider(memory.graph as any).listCurrent().map((f) => ({
     content: f.content, category: f.category, importance: f.importance,
-    patientHash: f.patientHash, studyId: undefined as string | undefined,
+    patientHash: f.patientHash, studyId: f.studyId,
   }))
   const summaries = (memory.graph.getCurrentNodesByType('summary') as Array<Record<string, any>>)
     .filter((n) => n.status === 'current')

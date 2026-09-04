@@ -72,8 +72,52 @@ export function buildSkillNode(ownerId: string, input: SkillNodeInput): SkillNod
   }
 }
 
-/** 提案 payload → 构建入参(解析失败抛错,调用方决定降级)。 */
-export function parseSkillPayload(payload: string): { skill: SkillNodeInput; fingerprint?: string } {
+/**
+ * #840-r5: skill 提案 payload 的唯一组装点(此前归纳/经验/捕捉三处内联
+ * JSON.stringify,字段已现漂移:toolsSequence 仅归纳有)。与 parseSkillPayload
+ * 构成对称往返:serialize 白名单 = parse 白名单。
+ */
+export interface SkillProposalCandidate {
+  stableId?: string
+  name: string
+  description: string
+  steps: string[]
+  promptTemplate: string
+  taskKind: string
+  triggers: string[]
+  scope: SkillScope
+  source: SkillSource
+  evidence: SkillEvidence
+  /** #841 环⑤: 剧本声明的工具序列(归纳聚类)。 */
+  toolsSequence?: string[]
+  taskCount?: number
+  successCount?: number
+  failureCount?: number
+  followRate?: number
+}
+
+export function buildSkillProposalPayload(candidate: SkillProposalCandidate, fingerprint: string): string {
+  const skill: Record<string, unknown> = {
+    name: candidate.name,
+    description: candidate.description,
+    steps: candidate.steps,
+    promptTemplate: candidate.promptTemplate,
+    taskKind: candidate.taskKind,
+    triggers: candidate.triggers,
+    scope: candidate.scope,
+    source: candidate.source,
+    evidence: candidate.evidence,
+  }
+  if (candidate.stableId) skill.stableId = candidate.stableId
+  if (candidate.toolsSequence) skill.toolsSequence = candidate.toolsSequence
+  if (candidate.taskCount !== undefined) skill.taskCount = candidate.taskCount
+  if (candidate.successCount !== undefined) skill.successCount = candidate.successCount
+  if (candidate.failureCount !== undefined) skill.failureCount = candidate.failureCount
+  if (candidate.followRate !== undefined) skill.followRate = candidate.followRate
+  return JSON.stringify({ skill, fingerprint })
+}
+
+/** 提案 payload → 构建入参(解析失败抛错,调用方决定降级)。 */export function parseSkillPayload(payload: string): { skill: SkillNodeInput; fingerprint?: string } {
   const parsed = JSON.parse(payload)
   const s = parsed?.skill || parsed
   if (!s?.name) throw new Error('skill payload missing name')

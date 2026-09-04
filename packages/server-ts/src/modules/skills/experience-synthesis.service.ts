@@ -119,6 +119,7 @@ export async function synthesizeExperience(
       // #844 收编:产物不再落 CapturedSkill pending_review(绕过写入闸门),
       // 改走提案闸门(kind='skill' — PII 扫描 + 审批后经 applier 落图)。
       const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
+      const { buildSkillProposalPayload } = await import('../../memory/skill-node-factory.js')
       const gateway = new MemoryGraphGateway(userId, ctx.memory)
       const proposal = await gateway.propose({
         scopeType: 'global',
@@ -127,20 +128,17 @@ export async function synthesizeExperience(
         importance: 3,
         confidence: 'medium',
         reason: `经验归纳(${candidate.sourceCount} 条已确认事实,主题 ${category})`,
-        payload: JSON.stringify({
-          skill: {
-            name: candidate.name,
-            description: candidate.description,
-            steps: candidate.steps,
-            promptTemplate: candidate.prompt,
-            taskKind: 'edit',
-            triggers: [candidate.name].filter(Boolean),
-            scope: 'personal',
-            source: 'synthesis',
-            evidence: { trajectoryIds: [], sessionIds: [], observationCount: candidate.sourceCount, correctionRate: 0 },
-          },
-          fingerprint: `experience:${category}`,
-        }),
+        payload: buildSkillProposalPayload({
+          name: candidate.name,
+          description: candidate.description,
+          steps: candidate.steps,
+          promptTemplate: candidate.prompt,
+          taskKind: 'edit',
+          triggers: [candidate.name].filter(Boolean),
+          scope: 'personal',
+          source: 'synthesis',
+          evidence: { trajectoryIds: [], sessionIds: [], observationCount: candidate.sourceCount, correctionRate: 0 },
+        }, `experience:${category}`),
       })
       candidates.push({ ...candidate, proposalId: proposal.id, proposalStatus: proposal.status })
     } catch (err) {

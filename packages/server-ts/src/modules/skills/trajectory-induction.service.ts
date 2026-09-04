@@ -14,6 +14,7 @@
  */
 import { getUserContext } from '../shared/user-context.js'
 import { MemoryGraphGateway } from '../../memory/memory-gateway.js'
+import { buildSkillProposalPayload } from '../../memory/skill-node-factory.js'
 import { TaskTrajectoryProjection, type TaskTrajectory } from '../../evolution/trajectory.js'
 import { hashContent } from '../../memory/node-base.js'
 import { resolveTierModel } from '../../common/llm-gateway.js'
@@ -144,6 +145,18 @@ export async function induceSkillsFromTrajectories(
   const trajectories = projection.query().filter(inFirstWaveScope)
   if (trajectories.length === 0) return result
 
+  // #840-r5: pending 去重闸 — 闸门语义去重索引只含已审批内容,pending 提案
+  // 不在其中;不做本闸,同一聚类会随每次 tick 重复提案直到审批完成。
+  const pendingSkillRows = await (prisma as any).memoryProposal.findMany({
+    where: { userId, kind: 'skill', status: 'pending' },
+    select: { payload: true },
+  }).catch(() => [] as Array<{ payload: string | null }>)
+  const pendingFingerprints = new Set<string>(
+    pendingSkillRows
+      .map((r: any) => { try { return JSON.parse(r.payload || '{}')?.fingerprint } catch { return undefined } })
+      .filter((f: unknown): f is string => typeof f === 'string'),
+  )
+
   // 聚类
   const clusters = new Map<string, TaskTrajectory[]>()
   for (const t of trajectories) {
@@ -159,6 +172,10 @@ export async function induceSkillsFromTrajectories(
     result.evaluated++
     if (!evaluation.eligible) {
       result.details.push({ fingerprint, eligible: false, reasons: evaluation.reasons })
+      continue
+    }
+    if (pendingFingerprints.has(fingerprint)) {
+      result.details.push({ fingerprint, eligible: true, reasons: ['pending_duplicate_skipped'] })
       continue
     }
 
@@ -209,8 +226,24 @@ export async function induceSkillsFromTrajectories(
       importance: 3,
       confidence: 'medium',
       reason: `轨迹归纳(${evidence.observationCount} 条观察,修正率 ${(evidence.correctionRate * 100).toFixed(0)}%)`,
-      payload: JSON.stringify({ skill: { ...candidate, taskKind: 'generate', scope: 'personal', source: 'synthesis', evidence, toolsSequence: cluster[0]?.toolsUsed ?? [] }, fingerprint }),
+      payload: buildSkillProposalPayload({
+        name: candidate.name,
+        description: candidate.description,
+        steps: candidate.steps,
+        promptTemplate: candidate.promptTemplate,
+        taskKind: 'generate',
+        triggers: candidate.triggers,
+        scope: 'personal',
+        source: 'synthesis',
+        evidence,
+        toolsSequence: cluster[0]?.toolsUsed ?? [],
+      }, fingerprint),
     })
+    if (proposal.status === 'rejected') {
+      // 闸门拒单(语义重复/工具通知过滤)— 不计 proposed,原因留痕
+      result.details.push({ fingerprint, eligible: true, reasons: [`gate_rejected:${(proposal.rejectedReason ?? '').slice(0, 60)}`] })
+      continue
+    }
     result.proposed++
     result.details.push({ fingerprint, eligible: true, proposalId: proposal.id })
   }

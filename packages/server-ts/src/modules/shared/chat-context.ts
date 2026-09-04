@@ -250,7 +250,8 @@ export function selectProjectionInputs(
       return {
         facts: projectionFacts(ctx, patientHash),
         episodes: sessionId ? ctx.episodes.all().filter((e) => e.sessionId === sessionId) : [],
-        skills: ctx.skills.all(),
+        // #841 环④: skills 注入源已改 conversation-turn 的激活匹配 — 此处死值置空
+        skills: [],
       }
   }
 }

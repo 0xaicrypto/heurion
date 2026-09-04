@@ -48,8 +48,8 @@ export function judgeFollowed(
 export interface FollowThroughInput {
   memory: MemoryService
   userId: string
-  /** 本轮激活的剧本卡(matchSkillsForTurn 输出,按 name 关联回 graph 节点)。 */
-  activated: Array<{ name: string }>
+  /** 本轮激活的剧本卡(matchSkillsForTurn 输出)— stableId 精确关联,缺省回落 name。 */
+  activated: Array<{ name: string; stableId?: string }>
   toolsUsed: string[]
   docEdits: number
   outcome: 'completed' | 'abandoned'
@@ -60,12 +60,16 @@ export interface FollowThroughInput {
  * 达降级线自动 suspended(不删除)。
  */
 export async function recordFollowThrough(input: FollowThroughInput): Promise<void> {
-  const activatedNames = new Set(input.activated.map((s) => s.name))
-  if (activatedNames.size === 0) return
+  const activatedIds = new Set(input.activated.map((s) => s.stableId).filter(Boolean) as string[])
+  const activatedNames = new Set(
+    input.activated.filter((s) => !s.stableId || !activatedIds.has(s.stableId)).map((s) => s.name),
+  )
+  if (activatedIds.size === 0 && activatedNames.size === 0) return
   const nodes = (input.memory.graph.getCurrentNodesByType('skill') ?? []) as any[]
 
   for (const node of nodes) {
-    if (!activatedNames.has(node.name)) continue
+    // 优先 stableId 精确匹配;卡片缺 stableId(legacy)回落 name
+    if (!(activatedIds.has(node.stableId) || (activatedNames.has(node.name) && !activatedIds.has(node.stableId)))) continue
 
     // skill_activated(每次激活可回放,审计要求 §5)
     await telemetry.record({
