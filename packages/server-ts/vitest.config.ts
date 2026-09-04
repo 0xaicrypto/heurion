@@ -8,6 +8,12 @@ export default defineConfig({
     globalSetup: ['tests/globalSetup.ts'],
     setupFiles: ['tests/setup-cleanup.ts'],
     testTimeout: 10000,
+    // #835: Prisma query-engine(原生模块)在 threads 池下的卸载竞态会
+    // 随机 abort 整个 vitest 进程("failed to delete napi ref"/SIGABRT,
+    // CI 偶发 exit 1) — Vitest 官方文档记载的已知问题,官方解法是 forks
+    // 池(进程隔离,一个 fork 的 panic 不再炸掉全部文件)。fileParallelism
+    // 已经是 false,串行下 forks 几乎无性能损失。
+    pool: 'forks',
     // Tests share one SQLite file (file:./test.db). Run files sequentially so
     // globalSetup's DB reset and the "first registered user is admin" invariant
     // stay deterministic.
