@@ -7,8 +7,6 @@
 import { BaseTool, ToolResult } from './base-tool.js'
 import type { ToolContext } from './tool-registry.js'
 
-const EUTILS = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils'
-const FETCH_TIMEOUT_MS = 15000
 const MAX_RESULTS = 10
 
 interface PubmedArticle {
@@ -21,41 +19,30 @@ interface PubmedArticle {
   doi?: string
 }
 
-async function eutilsFetch(path: string, params: Record<string, string>, ctx?: ToolContext, queryForAudit?: string): Promise<string> {
-  const url = new URL(`${EUTILS}/${path}`)
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
+/**
+ * #837: eutils 调用统一走 search-citation 的共享管道(api_key + 进程级
+ * 节流阀 + 缓存 + 429 退避) — 此前本模块直连 NCBI,绕过全部限速治理,
+ * 主 chat 的 PubMed 流量实际不受控。
+ */
+import { eutilsRequest } from './search-citation-tool.js'
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-  // #828: combine the internal timeout with the turn abort signal — a
-  // disconnected client stops the fetch immediately.
-  const signal = ctx?.signal && typeof AbortSignal.any === 'function'
-    ? AbortSignal.any([controller.signal, ctx.signal])
-    : controller.signal
-  try {
-    const res = await fetch(url.toString(), { signal, headers: { 'User-Agent': 'Heurion/1.0 (medical research agent)' } })
-    if (!res.ok) {
-      throw new Error(`PubMed HTTP ${res.status}`)
+async function eutilsFetch(path: string, params: Record<string, string>, ctx?: ToolContext, queryForAudit?: string): Promise<string> {
+  const text = await eutilsRequest(path, params, { signal: ctx?.signal })
+  if (ctx && queryForAudit) {
+    try {
+      ctx.eventLog.append({
+        timestamp: Date.now() / 1000,
+        eventType: 'evolution',
+        content: `🔎 医学文献检索：${queryForAudit}`,
+        metadata: { action: 'medical_web_search', query: queryForAudit, source: 'pubmed' },
+        agentId: ctx.userId,
+        sessionId: ctx.sessionId || '',
+      })
+    } catch {
+      /* audit is best-effort */
     }
-    const text = await res.text()
-    if (ctx && queryForAudit) {
-      try {
-        ctx.eventLog.append({
-          timestamp: Date.now() / 1000,
-          eventType: 'evolution',
-          content: `🔎 医学文献检索：${queryForAudit}`,
-          metadata: { action: 'medical_web_search', query: queryForAudit, source: 'pubmed' },
-          agentId: ctx.userId,
-          sessionId: ctx.sessionId || '',
-        })
-      } catch {
-        /* audit is best-effort */
-      }
-    }
-    return text
-  } finally {
-    clearTimeout(timer)
   }
+  return text
 }
 
 function xmlUnescape(s: string): string {
@@ -295,6 +282,26 @@ function hostOf(url: string): string {
 }
 
 /**
+ * #837: NCBI E-utilities API 端点守卫。
+ * 生产实例:模型把 PubMed 检索式拼成 esearch.fcgi URL 用 visit_medical_site
+ * 抓取 → 被反爬拦截判「PubMed 被封」→ 触发降级把全部检索工具停用。
+ * API 端点不是网页,永远不该走网页抓取 — 命中即返回成功+改道指引
+ * (不标黑名单、不进检索失败计数)。
+ */
+export function isStructuredApiEndpoint(url: string): boolean {
+  try {
+    const u = new URL(url)
+    if (u.hostname === 'eutils.ncbi.nlm.nih.gov' || u.hostname === 'api.ncbi.nlm.nih.gov') return true
+    if (u.hostname.endsWith('.ncbi.nlm.nih.gov') && u.pathname.includes('entrez/eutils')) return true
+    return false
+  } catch {
+    return false
+  }
+}
+
+const EUTILS_MISUSE_GUIDANCE = 'eutils.ncbi.nlm.nih.gov 是 NCBI E-utilities 结构化 API 端点，不是网页 — 本工具不抓取 API。检索 PubMed 请改用 search_citation 工具（内置限速/缓存/API key，传入检索式而非拼好的 URL）。'
+
+/**
  * 医学页面统一抓取入口:直连 → Browser Run → 诚实失败(带停止重试指引)。
  * 同会话重复抓取已确认拦截的 host 会立即秒拒,不再消耗工具轮次。
  */
@@ -378,7 +385,7 @@ export class VisitMedicalSiteTool extends BaseTool {
 
   get name(): string { return 'visit_medical_site' }
   get description(): string {
-    return 'Open a medical website (journal article page, guideline page, PubMed record) and read the rendered content as markdown. Tries a direct fetch first, then headless browser rendering. Read-only. If a site blocks automated access, do NOT retry it — continue with available material.'
+    return 'Open a medical website (journal article page, guideline page) and read the rendered content as markdown. Tries a direct fetch first, then headless browser rendering. Read-only. If a site blocks automated access, do NOT retry it — continue with available material. NEVER use this tool for NCBI E-utilities API endpoints (eutils.ncbi.nlm.nih.gov, entrez/eutils URLs) — use the search_citation tool for PubMed queries instead.'
   }
   get parameters(): Record<string, unknown> {
     return {
@@ -392,6 +399,8 @@ export class VisitMedicalSiteTool extends BaseTool {
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const url = String(args.url || '').trim()
     if (!/^https?:\/\//.test(url)) return { success: false, error: 'url must start with http(s)://' }
+    // #837: NCBI API 端点误用 — 成功返回改道指引(不计失败、不标黑名单)。
+    if (isStructuredApiEndpoint(url)) return { success: true, output: EUTILS_MISUSE_GUIDANCE }
     try {
       const { markdown, title } = await fetchMedicalPageMarkdown(url, this.ctx, url)
       return {
@@ -424,6 +433,8 @@ export class ExtractFulltextTool extends BaseTool {
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const url = String(args.url || '').trim()
     if (!/^https?:\/\//.test(url)) return { success: false, error: 'url must start with http(s)://' }
+    // #837: NCBI API 端点误用 — 成功返回改道指引(不计失败、不标黑名单)。
+    if (isStructuredApiEndpoint(url)) return { success: true, output: EUTILS_MISUSE_GUIDANCE }
     try {
       const { markdown } = await fetchMedicalPageMarkdown(url, this.ctx, url)
       return { success: true, output: markdown.slice(0, 16000) }

@@ -2,6 +2,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { runToolCallLoop, type TurnIO } from '../../src/modules/chat/tool-loop.js'
 import { ToolRegistry } from '../../src/tools/tool-registry.js'
+import { VisitMedicalSiteTool } from '../../src/tools/medical-web-tools.js'
 import { BaseTool, type ToolResult } from '../../src/tools/base-tool.js'
 import type { ChatStreamChunk } from '@heurion/contracts'
 
@@ -131,5 +132,73 @@ describe('#835 tool-call loop — best-effort retrieval', () => {
     // 只失败 1 次 → 不停用,第二轮 tools 仍含该工具
     const secondCallTools = (vi.mocked(deepseekChat).mock.calls[1]?.[3] ?? []) as any[]
     expect(secondCallTools.some((t) => t.function.name === 'search_medical_web')).toBe(true)
+  })
+
+  // #837: 降级按工具粒度 — visit_medical_site 连败只停它自己,
+  // 不再连坐 search_citation(生产实例:visit 抓 NCBI API 两次 →
+  // PubMed 明明可用却被判"已停用")。
+  test('visit_medical_site 连续失败只停用自身,search_citation 保持可用', async () => {
+    const registry = new ToolRegistry(testCtx)
+    const failTool = new ProbeTool(() =>
+      Promise.resolve({ success: false, error: '站点禁止自动化访问（反爬拦截）' }))
+    Object.defineProperty(failTool, 'name', { value: 'visit_medical_site' })
+    registry.register(failTool)
+    const defs = [
+      { type: 'function' as const, function: { name: 'visit_medical_site', description: '', parameters: { type: 'object', properties: {} } } },
+      { type: 'function' as const, function: { name: 'search_citation', description: '', parameters: { type: 'object', properties: {} } } },
+    ]
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(
+        callBlock('{"name":"visit_medical_site","arguments":{"url":"https://a.example.org"}}') +
+        callBlock('{"name":"visit_medical_site","arguments":{"url":"https://b.example.org"}}'),
+      )
+      .mockResolvedValueOnce('done')
+
+    const { io } = makeIO()
+    await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: 'x' }],
+      toolRegistry: registry,
+      tools: defs,
+      apiKey: 'k',
+      io,
+      ctx: testCtx,
+      userId: 'user_1',
+      sessionId: 'sess_1',
+    })
+
+    const secondCallTools = (vi.mocked(deepseekChat).mock.calls[1]?.[3] ?? []) as any[]
+    expect(secondCallTools.some((t) => t.function.name === 'visit_medical_site')).toBe(false)
+    // 连坐修复的关键断言:search_citation 不被 visit 的失败牵连
+    expect(secondCallTools.some((t) => t.function.name === 'search_citation')).toBe(true)
+  })
+
+  // #837: NCBI API 端点误用守卫 — visit_medical_site 抓 eutils URL 时
+  // 成功返回改道指引(不计检索失败、不标黑名单)。
+  test('visit_medical_site 访问 eutils API → 成功返回指引,不进失败计数', async () => {
+    const registry = new ToolRegistry(testCtx)
+    registry.register(new VisitMedicalSiteTool(testCtx))
+    const defs = [{ type: 'function' as const, function: { name: 'visit_medical_site', description: '', parameters: { type: 'object', properties: {} } } }]
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"visit_medical_site","arguments":{"url":"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=x"}}'))
+      .mockResolvedValueOnce('done')
+
+    const { io } = makeIO()
+    await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: 'x' }],
+      toolRegistry: registry,
+      tools: defs,
+      apiKey: 'k',
+      io,
+      ctx: testCtx,
+      userId: 'user_1',
+      sessionId: 'sess_1',
+    })
+
+    // 首轮消息不含兜底指引/停用通知(工具成功返回 → 未进失败计数)
+    const secondCallMessages = (vi.mocked(deepseekChat).mock.calls[1]?.[0] ?? []) as any[]
+    expect(secondCallMessages.some((m) => String(m.content).includes('检索兜底策略'))).toBe(false)
+    expect(secondCallMessages.some((m) => String(m.content).includes('已因连续失败被停用'))).toBe(false)
   })
 })

@@ -208,8 +208,11 @@ export async function runToolCallLoop(params: {
   // 基于已有上下文继续完成任务。finalContent 为空时 conversation-turn 的
   // 无工具流式兜底会读到这些指引,产出"最佳努力"回答而非空转。
   let activeTools = [...params.tools]
-  let retrievalFailures = 0
-  let degradationNoted = false
+  // #837: 降级按工具粒度计数 — visit_medical_site 连续失败只停它自己,
+  // 不再连坐 search_citation(生产实例:模型误用 visit 抓 NCBI API 两次 →
+  // 全部检索工具被停用 → PubMed 明明可用却被判"已停用")。
+  const retrievalFailuresByTool = new Map<string, number>()
+  const degradedTools = new Set<string>()
 
   while (toolRound < MAX_TOOL_ROUNDS) {
     toolRound++
@@ -338,12 +341,13 @@ export async function runToolCallLoop(params: {
         }
         // #835: 检索类失败注入"尽最大努力"指引 — 失败不阻塞任务,禁止
         // 换参反复重试,基于已有上下文继续并如实标注未核实来源。
+        // #837: 按工具计数(降级只停连败的工具本身)。
         const isRetrievalFailure = !result.success && BEST_EFFORT_RETRIEVAL_TOOLS.has(c.toolName)
         if (isRetrievalFailure) {
-          retrievalFailures++
+          retrievalFailuresByTool.set(c.toolName, (retrievalFailuresByTool.get(c.toolName) || 0) + 1)
         }
         const retrievalGuidance = isRetrievalFailure
-          ? '\n【检索兜底策略】检索失败不阻塞任务：请勿再用不同参数重试同一工具（连续失败会被系统停用该类工具）；请基于已有上下文与自身知识继续完成用户请求；如需引用，请在文中如实标注"来源未能核实"。'
+          ? '\n【检索兜底策略】检索失败不阻塞任务：请勿再用不同参数重试同一工具（连续失败会被系统停用该工具）；请基于已有上下文与自身知识继续完成用户请求；如需引用，请在文中如实标注"来源未能核实"。'
           : ''
         messages.push({
           role: 'user',
@@ -370,26 +374,26 @@ export async function runToolCallLoop(params: {
           // doom-loop 已有 3 次同类告警,MAX_TOOL_ROUNDS=5 兜底总轮数。
         }
 
-        // #835: 连续 ≥2 次检索失败 — 从后续轮次移除检索工具,强制进入
-        // "基于已有资料继续"的最佳努力模式(事件留痕,便于排障)。
-        if (retrievalFailures >= 2 && !degradationNoted) {
-          degradationNoted = true
-          const blocked = activeTools.filter((t) => BEST_EFFORT_RETRIEVAL_TOOLS.has(t.function.name)).map((t) => t.function.name)
-          if (blocked.length > 0) {
-            activeTools = activeTools.filter((t) => !BEST_EFFORT_RETRIEVAL_TOOLS.has(t.function.name))
-            log.warn('best-effort retrieval: disabling retrieval tools for remaining rounds', {
-              sessionId, failedTools: blocked, retrievalFailures,
+        // #835: 连续 ≥2 次检索失败 — 从后续轮次移除"该工具"(模型物理上
+        // 无法再重试),配合注入指引让模型基于已有资料继续(事件留痕)。
+        // #837: 只停连败的工具本身 — 其他检索工具(PubMed/知识库等)保持可用。
+        for (const [toolName, failures] of retrievalFailuresByTool) {
+          if (failures < 2 || degradedTools.has(toolName)) continue
+          if (!BEST_EFFORT_RETRIEVAL_TOOLS.has(toolName)) continue
+          degradedTools.add(toolName)
+          activeTools = activeTools.filter((t) => t.function.name !== toolName)
+          log.warn('best-effort retrieval: disabling repeatedly failing tool', {
+            sessionId, failedTool: toolName, failures,
+          })
+          try {
+            await appendToolEvent('tool_call', `retrieval_degraded:${toolName}`, {
+              tool: 'system', args: toolName, status: 'warning', seq: ++toolSeq,
             })
-            try {
-              await appendToolEvent('tool_call', 'retrieval_degraded', {
-                tool: 'system', args: blocked.join(','), status: 'warning', seq: ++toolSeq,
-              })
-            } catch { /* best-effort */ }
-            messages.push({
-              role: 'user',
-              content: `【系统】检索工具（${blocked.join('、')}）已因连续失败被停用。请直接基于已有上下文、已注入的知识片段与你的专业知识继续完成用户请求；涉及外部资料的部分请如实标注"来源未能核实"。`,
-            })
-          }
+          } catch { /* best-effort */ }
+          messages.push({
+            role: 'user',
+            content: `【系统】检索工具 ${toolName} 已因连续失败被停用。其他检索工具仍可用（如适用请改用它们）；请直接基于已有上下文、已注入的知识片段与你的专业知识继续完成用户请求；涉及外部资料的部分请如实标注"来源未能核实"。`,
+          })
         }
 
         // #829: tool_result SSE — 前端按 seq 闭合芯片并展示结果摘要。

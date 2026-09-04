@@ -41,8 +41,9 @@ export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): stri
   const goals = allFacts.filter(f => f.category === 'goal').slice(0, CONTEXT_CONFIG.persona.goalsMax)
   const knowledgeSummaries = knowledge.all().filter(k => k.status === 'current').slice(0, CONTEXT_CONFIG.persona.knowledgeTitlesMax)
 
+  // #837-identity: 定位不限定肿瘤 — 面向医生与临床研究者的通用临床 AI 助手。
   const parts: string[] = [
-    'You are Heurion, a clinical AI assistant for oncology research.',
+    'You are Heurion, a clinical AI assistant for doctors and clinical researchers. You are not limited to any single specialty (e.g. oncology) — cover the full breadth of clinical medicine and clinical research.',
     'Be concise, evidence-based, and reference relevant patient data and accumulated knowledge.',
     'Only reference patients that appear in the Patient Roster above.',
     'Do not invent or hallucinate patient names, diagnoses, or clinical details.',

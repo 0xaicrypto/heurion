@@ -63,45 +63,57 @@ function cacheSet(key: string, body: unknown): void {
   }
 }
 
-interface EutilsResult { body: unknown; retryAfterMs?: number }
-
-async function eutilsFetchOnce(path: string, url: string): Promise<EutilsResult> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-  try {
-    const res = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': 'Heurion/1.0 (medical research agent)' } })
-    if (res.status === 429 || res.status >= 500) {
-      const ra = Number(res.headers.get('retry-after')) || 0
-      return { body: null, retryAfterMs: Math.max(ra * 1000, 1200) }
-    }
-    if (!res.ok) throw new Error(`PubMed HTTP ${res.status}`)
-    return { body: await res.json() }
-  } finally {
-    clearTimeout(timer)
-  }
+/** #837: 统一 eutils 出口 — 主/写作 chat 的所有 PubMed 检索都过同一节流阀。 */
+async function eutilsJson(path: string, params: Record<string, string>): Promise<any> {
+  return JSON.parse(await eutilsRequest(path, params))
 }
 
-async function eutilsJson(path: string, params: Record<string, string>): Promise<any> {
+export interface EutilsRequestOptions { signal?: AbortSignal }
+
+/**
+ * #837: E-utilities 统一请求管道(api_key + 进程级节流阀 + 5min 缓存 +
+ * 429/5xx 退避重试一次)。medical-web-tools(search_medical_web /
+ * fetch_article_summary)此前绕过全部治理直连 NCBI — 主 chat 的限速
+ * 形同虚设,现统一走本管道。返回原始响应文本(JSON 或 XML 由调用方解析)。
+ */
+export async function eutilsRequest(
+  path: string,
+  params: Record<string, string>,
+  opts: EutilsRequestOptions = {},
+): Promise<string> {
   const url = new URL(`${EUTILS}/${path}`)
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
   const apiKey = process.env.NCBI_API_KEY
   if (apiKey) url.searchParams.set('api_key', apiKey)
   const cacheKey = url.toString()
   const cached = cacheGet(cacheKey)
-  if (cached !== undefined) return cached
+  if (cached !== undefined) return String(cached)
 
   for (let attempt = 0; attempt < 2; attempt++) {
     await eutilsGate()
-    const { body, retryAfterMs } = await eutilsFetchOnce(path, url.toString())
-    if (retryAfterMs !== undefined) {
-      if (attempt === 0) {
-        await new Promise((r) => setTimeout(r, retryAfterMs))
-        continue
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+    const signal = opts.signal && typeof AbortSignal.any === 'function'
+      ? AbortSignal.any([controller.signal, opts.signal])
+      : controller.signal
+    try {
+      const res = await fetch(url.toString(), { signal, headers: { 'User-Agent': 'Heurion/1.0 (medical research agent)' } })
+      if (res.status === 429 || res.status >= 500) {
+        const ra = Number(res.headers.get('retry-after')) || 0
+        const retryAfterMs = Math.max(ra * 1000, 1200)
+        if (attempt === 0) {
+          await new Promise((r) => setTimeout(r, retryAfterMs))
+          continue
+        }
+        throw new Error('PubMed HTTP 429（已退避重试仍限流）')
       }
-      throw new Error(`PubMed HTTP 429（已退避重试仍限流）`)
+      if (!res.ok) throw new Error(`PubMed HTTP ${res.status}`)
+      const text = await res.text()
+      cacheSet(cacheKey, text)
+      return text
+    } finally {
+      clearTimeout(timer)
     }
-    cacheSet(cacheKey, body)
-    return body
   }
   throw new Error('PubMed request failed')
 }
