@@ -363,7 +363,9 @@ jobs:
           SERVER_SECRET=${SERVER_SECRET}
           CORS_ALLOW_ORIGINS=https://${HOSTNAME}
           DEFAULT_LLM_PROVIDER=opencode
-          DEFAULT_LLM_MODEL=deepseek-v4-flash
+          # #837: 默认主对话模型 glm-5.3-flash(opencode Go 网关,混合思考
+          # 可流式) — 此前默认 deepseek-v4-flash。
+          DEFAULT_LLM_MODEL=glm-5.3-flash
           # #fix 2026-09: Console Go 中转的 deepseek-v4-flash 实测纯文本
           # (生产 400 拒收 image_url) — 注册表覆盖,附件图片注入侧即降级。
           LLM_TEXT_ONLY_MODELS=deepseek-v4-flash

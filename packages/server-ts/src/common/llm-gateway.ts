@@ -75,6 +75,10 @@ const MODEL_MAX_OUTPUT_TOKENS: Readonly<Record<string, number>> = {
   'moonshot-v1-8k': 4096,
   'moonshot-v1-32k': 4096,
   'moonshot-v1-128k': 4096,
+  // Zhipu GLM-5.x — 混合思考(思维链与可见答案共享预算,预算从宽,同
+  // DeepSeek reasoner 口径);glm-5.3-flash 为 #837 起的默认主对话模型。
+  'glm-5.3-flash': 96000,
+  'glm-5.3': 96000,
 }
 
 /** Family fallbacks for unlisted model names (e.g. gemini-2.5-flash-latest). */
@@ -88,6 +92,8 @@ const MODEL_FAMILY_DEFAULTS: ReadonlyArray<readonly [string, number]> = [
   ['deepseek-', 8192],
   ['moonshot-', 4096],
   ['kimi-', 4096],
+  // #837: GLM 家族兜底(混合思考预算从宽,同 DeepSeek reasoner 口径)。
+  ['glm-', 96000],
 ]
 
 export function resolveDefaultMaxTokens(model?: string): number {
