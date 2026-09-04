@@ -323,6 +323,14 @@ export interface MemoryProposal {
   createdAt: string;
   resolvedAt?: string | null;
   resolvedBy?: string | null;
+  /** JSON string[] of source fact stableIds (summary synthesis provenance). */
+  relatedFacts?: string | null;
+  /** 服务端解析后的溯源(#836-followup):summary 由哪些文档/会话、哪些事实合成。 */
+  sourceFacts?: Array<{ stableId: string; content: string; sourceDocument?: string; sourceSession?: string }>;
+  sourceDocuments?: string[];
+  sourceSessions?: string[];
+  /** fact 提案来源会话标题(压缩/会话提取,sourceRange session:<id> 解析)。 */
+  sourceSession?: string;
 }
 
 export interface MemoryProjection {
@@ -410,7 +418,7 @@ export interface SendChatOptions {
   skills?: string[];
   /** #516: entry scene for the turn; server infers when absent. */
   scene?: ChatScene;
-  /** #620: 显式选定的知识库文章(选择器)。 */
+  /** #620: 显式选定的知识库总结(选择器)。 */
   pickedKbIds?: string[];
   /** #693: 编辑器选中的文本(选中即引用) — 随消息传给服务端注入上下文。 */
   selection?: string;

@@ -189,8 +189,7 @@ describe('IngestionInbox', () => {
     createdAt: '2026-07-30T00:00:00.000Z',
   });
 
-  it('groups file-derived facts into one document card with batch actions', async () => {
-    fetchMock
+  it('groups file-derived facts into one document card with batch actions', async () => {    fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [] }))
       .mockResolvedValueOnce(jsonResponse({ requests: [
         factProposalRequest('apr_f1', 'mp_1', 0, 'EGFR T790M 突变常见于非小细胞肺癌'),
@@ -215,6 +214,131 @@ describe('IngestionInbox', () => {
     await waitFor(() => expect(confirmSpy).toHaveBeenCalledWith('apr_f1'));
     await waitFor(() => expect(confirmSpy).toHaveBeenCalledWith('apr_f2'));
     await waitFor(() => expect(screen.getByText('所有分析结果已处理')).toBeInTheDocument());
+  });
+
+  it('shows summary provenance: source documents + expandable source facts', async () => {    const summaryRequest = {
+      id: 'apr_s1',
+      userId: 'u1',
+      targetType: 'MemoryProposal',
+      targetId: 'mp_s1',
+      status: 'pending',
+      payload: {
+        id: 'mp_s1',
+        kind: 'summary',
+        content: 'EGFR 突变 NSCLC 中 ICIs 的临床获益与 PD-L1 分层 > ### 结论 ICIs 可带来适度但临床意义的获益',
+        confidence: 'medium',
+        importance: 3,
+        patientHash: null,
+        reason: 'AI synthesis from 10 confirmed fact facts',
+        sourceRange: null,
+        conflictsWith: null,
+        relatedFacts: '["fact_a1","fact_a2"]',
+        sourceFacts: [
+          { stableId: 'fact_a1', content: 'EGFR T790M 突变常见于非小细胞肺癌', sourceDocument: 'EGFR_综述.pdf' },
+          { stableId: 'fact_a2', content: '奥希替尼针对 T790M 耐药突变有效', sourceDocument: 'EGFR_综述.pdf' },
+        ],
+        sourceDocuments: ['EGFR_综述.pdf'],
+        createdAt: '2026-07-30T00:00:00.000Z',
+      },
+      createdAt: '2026-07-30T00:00:00.000Z',
+    };
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [summaryRequest] }))
+      .mockResolvedValueOnce(jsonResponse(mockPatients()));
+
+    render(<IngestionInbox />);
+    await waitFor(() => expect(screen.getByText(/EGFR 突变 NSCLC/)).toBeInTheDocument());
+
+    // 来源文档 chip 直接可见
+    expect(screen.getByText('EGFR_综述.pdf')).toBeInTheDocument();
+
+    // 依据事实默认收起,点击展开后逐条可见
+    expect(screen.queryByText(/EGFR T790M 突变常见于非小细胞肺癌/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /查看依据/ }));
+    expect(screen.getByText(/fact_a1/)).toBeInTheDocument();
+    expect(screen.getByText(/奥希替尼针对 T790M 耐药突变有效/)).toBeInTheDocument();
+  });
+
+  it('groups session-derived (compaction) facts under one session card', async () => {
+    const sessionFact = (approvalId: string, proposalId: string, content: string) => ({
+      id: approvalId,
+      userId: 'u1',
+      targetType: 'MemoryProposal',
+      targetId: proposalId,
+      status: 'pending',
+      payload: {
+        id: proposalId,
+        kind: 'fact',
+        content,
+        confidence: 'medium',
+        importance: 3,
+        patientHash: null,
+        reason: `Compaction extraction (fact, source: patient)`,
+        sourceRange: 'session:sess_abc123',
+        sourceSession: '肺癌随访讨论',
+        conflictsWith: null,
+        createdAt: '2026-07-30T00:00:00.000Z',
+      },
+      createdAt: '2026-07-30T00:00:00.000Z',
+    });
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [
+        sessionFact('apr_cs1', 'mp_c1', '患者对铂类化疗既往不耐受'),
+        sessionFact('apr_cs2', 'mp_c2', '随访计划调整为每 6 周一次'),
+      ] }))
+      .mockResolvedValueOnce(jsonResponse(mockPatients()));
+
+    render(<IngestionInbox />);
+    await waitFor(() => expect(screen.getByText('肺癌随访讨论')).toBeInTheDocument());
+
+    // 折叠态:fact 内容不直接展示
+    expect(screen.queryByText('患者对铂类化疗既往不耐受')).not.toBeInTheDocument();
+
+    // 展开后逐条可见,一键全收
+    fireEvent.click(screen.getByText('肺癌随访讨论'));
+    expect(screen.getByText('患者对铂类化疗既往不耐受')).toBeInTheDocument();
+    const confirmSpy = vi.spyOn(api, 'confirmApproval').mockResolvedValue({ ...pendingRequest, status: 'approved' });
+    fireEvent.click(screen.getByRole('button', { name: /全部接受/ }));
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledWith('apr_cs1'));
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledWith('apr_cs2'));
+  });
+
+  it('shows summary provenance chips for session-sourced facts', async () => {
+    const summaryRequest = {
+      id: 'apr_s2',
+      userId: 'u1',
+      targetType: 'MemoryProposal',
+      targetId: 'mp_s2',
+      status: 'pending',
+      payload: {
+        id: 'mp_s2',
+        kind: 'summary',
+        content: '随访与耐受性综合结论 > ### 结论 患者铂类不耐受,随访间隔调整为 6 周',
+        confidence: 'medium',
+        importance: 3,
+        patientHash: null,
+        reason: 'AI synthesis from 2 confirmed fact facts',
+        sourceRange: null,
+        conflictsWith: null,
+        relatedFacts: '["fact_b1"]',
+        sourceFacts: [
+          { stableId: 'fact_b1', content: '患者对铂类化疗既往不耐受', sourceSession: '肺癌随访讨论' },
+        ],
+        sourceSessions: ['肺癌随访讨论'],
+        createdAt: '2026-07-30T00:00:00.000Z',
+      },
+      createdAt: '2026-07-30T00:00:00.000Z',
+    };
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [summaryRequest] }))
+      .mockResolvedValueOnce(jsonResponse(mockPatients()));
+
+    render(<IngestionInbox />);
+    await waitFor(() => expect(screen.getByText(/随访与耐受性综合结论/)).toBeInTheDocument());
+    expect(screen.getByText('肺癌随访讨论')).toBeInTheDocument();
   });
 
   it('shows empty state when nothing pending', async () => {

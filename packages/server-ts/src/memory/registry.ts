@@ -79,14 +79,18 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
     }
   }
   if (proposal.kind === 'fact') {
+    // 溯源保留(#836-followup):文件管道的 fact 提案带 sourceRange `file:<fileId>#w`,
+    // 审批通过写入图谱时必须保留 — 否则 summary 合成与审批列表无法回溯来源文档。
+    // 历史事实的 sourceRef 仍是 proposal id,由审批列表侧回查 memoryProposal 行兜底。
+    const fileRange = proposal.sourceRange?.startsWith('file:') ? proposal.sourceRange : null
     return ctx.memory.addFact(
       {
         content: proposal.content,
         category: 'fact',
         importance: proposal.importance,
         patientHash: proposal.patientHash || undefined,
-        sourceType: proposal.scopeType === 'patient' ? 'patient' : 'general',
-        provenance: { sourceKind: 'proposal', sourceRef: proposal.id },
+        sourceType: fileRange ? 'document' : proposal.scopeType === 'patient' ? 'patient' : 'general',
+        provenance: { sourceKind: fileRange ? 'document' : 'proposal', sourceRef: fileRange ?? proposal.id },
       },
       'system',
     )
@@ -106,7 +110,7 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
     }
     return ctx.memory.addSummary(
       {
-        title: proposal.content.split('\n')[0].slice(0, 120) || '知识文章',
+        title: proposal.content.split('\n')[0].slice(0, 120) || '知识总结',
         content: proposal.content,
         sourceFactStableIds,
         provenance: { sourceKind: 'proposal', sourceRef: proposal.id },

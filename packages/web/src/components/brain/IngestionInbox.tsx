@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Brain, Check, ChevronDown, ExternalLink, FileText, Inbox, X } from 'lucide-react';
+import { Brain, Check, ChevronDown, ExternalLink, FileText, Inbox, MessageSquare, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 // #653: 待审批行投影/加载与 today widget 收敛到共享 lib。
 import { fetchIngestionRows, kindVariant, type IngestionRow as InboxRow } from '@/lib/ingestion-rows';
@@ -13,45 +13,143 @@ interface IngestionInboxProps {
   onChanged?: () => void;
 }
 
-/** file-pipeline 的 fact 提案 sourceRange 形如 `file:<fileId>#<window>`。 */
+/** file-pipeline 的 fact 提案 sourceRange 形如 `file:<fileId>#<window>`;压缩/会话提取形如 `session:<sessionId>`(#836-followup)。 */
 const FILE_SOURCE_PREFIX = 'file:'
+const SESSION_SOURCE_PREFIX = 'session:'
+
+/** KB 重命名(facts→article→summary)后的本地化徽章文案 — 徽章不再裸显英文 kind。 */
+const KIND_LABEL_KEYS: Record<string, string> = {
+  fact: 'brain.kindFact',
+  summary: 'brain.kindSummary',
+  article: 'brain.kindSummary',
+  episode_summary: 'brain.kindEpisode',
+  compaction_summary: 'brain.kindCompaction',
+}
 
 interface FactFileGroup {
   key: string
   label: string
+  icon: 'file' | 'session'
   rows: InboxRow[]
 }
 
 /**
- * 按来源文件聚合 fact 提案 — 一个文档一张审批卡,一键全收/全拒,
- * 展开可逐条复核。非文件来源的提案/病历条目原样进 rest。
+ * 按来源聚合 fact 提案 — 一个文档(或一次会话)一张审批卡,一键全收/全拒,
+ * 展开可逐条复核。非文件/会话来源的提案/病历条目原样进 rest。
  * 文件名取自提案 reason(pipeline 固定写 "extracted from file <name>"),
- * 解析失败回退裸 fileId。
+ * 会话名取自服务端 enrichment 的 sourceSession;解析失败回退裸 ID。
  */
 function partitionFactGroups(rows: InboxRow[]): { groups: FactFileGroup[]; rest: InboxRow[] } {
   const groups = new Map<string, FactFileGroup>()
   const rest: InboxRow[] = []
   for (const r of rows) {
     const sr = r.proposal?.sourceRange
-    if (r.proposal?.kind === 'fact' && sr?.startsWith(FILE_SOURCE_PREFIX)) {
-      const key = sr.split('#')[0]
-      const existing = groups.get(key)
-      if (existing) {
-        existing.rows.push(r)
-      } else {
-        const m = r.proposal.reason?.match(/^extracted from file (.+)$/)
-        groups.set(key, { key, label: m?.[1] || key.slice(FILE_SOURCE_PREFIX.length), rows: [r] })
-      }
-    } else {
+    if (r.proposal?.kind !== 'fact' || !sr) {
       rest.push(r)
+      continue
+    }
+    let key: string | null = null
+    let label: string | null = null
+    let icon: 'file' | 'session' = 'file'
+    if (sr.startsWith(FILE_SOURCE_PREFIX)) {
+      key = sr.split('#')[0]
+      const m = r.proposal.reason?.match(/^extracted from file (.+)$/)
+      label = m?.[1] || key.slice(FILE_SOURCE_PREFIX.length)
+      icon = 'file'
+    } else if (sr.startsWith(SESSION_SOURCE_PREFIX)) {
+      key = sr
+      label = r.proposal.sourceSession || `会话 ${sr.slice(SESSION_SOURCE_PREFIX.length).slice(-8)}`
+      icon = 'session'
+    }
+    if (!key || !label) {
+      rest.push(r)
+      continue
+    }
+    const existing = groups.get(key)
+    if (existing) {
+      existing.rows.push(r)
+    } else {
+      groups.set(key, { key, label, icon, rows: [r] })
     }
   }
   return { groups: Array.from(groups.values()), rest }
 }
 
+/**
+ * 提案溯源(#836-followup)— 服务端把 relatedFacts/sourceRange 解析为来源
+ * 文档、会话与依据事实;此处展示 chips + 可展开的逐条依据(默认收起)。
+ */
+function SummaryProvenance({ proposal }: { proposal: MemoryProposal }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const docs = proposal.sourceDocuments ?? [];
+  const sessions = proposal.sourceSessions ?? [];
+  const facts = proposal.sourceFacts ?? [];
+  if (docs.length === 0 && sessions.length === 0 && facts.length === 0) return null;
+  return (
+    <div className="mt-2">
+      {(docs.length > 0 || sessions.length > 0) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {docs.map((d) => (
+            <span
+              key={d}
+              title={d}
+              className="inline-flex max-w-[260px] items-center gap-1 rounded border border-border bg-surface-elevated px-1.5 py-0.5 text-[11px] text-text-secondary"
+            >
+              <FileText size={10} className="shrink-0 text-text-tertiary" />
+              <span className="truncate">{d}</span>
+            </span>
+          ))}
+          {sessions.map((s) => (
+            <span
+              key={s}
+              title={s}
+              className="inline-flex max-w-[260px] items-center gap-1 rounded border border-border bg-surface-elevated px-1.5 py-0.5 text-[11px] text-text-secondary"
+            >
+              <MessageSquare size={10} className="shrink-0 text-text-tertiary" />
+              <span className="truncate">{s}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {facts.length > 0 && (
+        <>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="mt-1.5 text-[11px] font-medium text-accent hover:underline"
+          >
+            {open ? t('brain.hideSources', '收起依据') : t('brain.viewSources', '查看依据')} ({facts.length})
+          </button>
+          {open && (
+            <ul className="mt-1.5 space-y-1.5 rounded-lg border border-border bg-surface-elevated p-2">
+              {facts.map((f) => (
+                <li key={f.stableId} className="text-[11px] leading-relaxed text-text-secondary">
+                  <span className="mr-1.5 font-mono text-[10px] text-text-tertiary">{f.stableId}</span>
+                  {f.content}
+                  {f.sourceDocument && <span className="ml-1.5 text-text-tertiary">— {f.sourceDocument}</span>}
+                  {f.sourceSession && <span className="ml-1.5 text-text-tertiary">— {f.sourceSession}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export function IngestionInbox({ onChanged }: IngestionInboxProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const kindLabel = useCallback(
+    (kind: string) => {
+      const key = KIND_LABEL_KEYS[kind];
+      return key ? t(key, kind) : kind;
+    },
+    [t],
+  );
   const [rows, setRows] = useState<InboxRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -218,7 +316,7 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <Brain size={14} className="shrink-0 text-text-tertiary" />
-                  <Badge variant={kindVariant[proposal.kind] ?? 'default'}>{proposal.kind}</Badge>
+                  <Badge variant={kindVariant[proposal.kind] ?? 'default'}>{kindLabel(proposal.kind)}</Badge>
                   {proposal.patientHash && <span className="truncate text-sm font-medium text-text-primary">{patientLabel}</span>}
                   <Badge variant="default">{proposal.confidence}</Badge>
                   <span className="text-xs text-text-tertiary">★ {proposal.importance}</span>
@@ -229,6 +327,9 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
                 )}
                 {proposal.reason && (
                   <p className="mt-0.5 text-[11px] text-text-tertiary">{proposal.reason}</p>
+                )}
+                {proposal.kind === 'summary' && (
+                  <SummaryProvenance proposal={proposal} />
                 )}
               </div>
             </div>
@@ -351,7 +452,7 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
           >
             <option value="all">{t('brain.allTypes')}</option>
             {typeOptions.map((type) => (
-              <option key={type} value={type}>{type}</option>
+              <option key={type} value={type}>{KIND_LABEL_KEYS[type] ? t(KIND_LABEL_KEYS[type], type) : type}</option>
             ))}
           </select>
           <Button
@@ -422,9 +523,15 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
                             onClick={() => toggleGroup(g.key)}
                             aria-expanded={isOpen}
                           >
-                            <FileText size={14} className="shrink-0 text-text-tertiary" />
+                            <span className="shrink-0 text-text-tertiary">
+                              {g.icon === 'session' ? <MessageSquare size={14} /> : <FileText size={14} />}
+                            </span>
                             <span className="truncate text-sm font-medium text-text-primary">{g.label}</span>
-                            <Badge variant="default">{t('brain.docGroupFacts', '文档提取的记忆')} · {g.rows.length}</Badge>
+                            <Badge variant="default">
+                              {g.icon === 'session'
+                                ? `${t('brain.sessionGroupFacts', '会话提取的记忆')} · ${g.rows.length}`
+                                : `${t('brain.docGroupFacts', '文档提取的记忆')} · ${g.rows.length}`}
+                            </Badge>
                             <ChevronDown size={14} className={`shrink-0 text-text-tertiary transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                           </button>
                           <div className="flex shrink-0 items-center gap-2">

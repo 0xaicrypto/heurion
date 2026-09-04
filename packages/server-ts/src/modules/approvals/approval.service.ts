@@ -138,9 +138,170 @@ export async function listPendingApprovals(userId: string, targetType?: string, 
     })
     for (const a of archived) archivedIds.add(a.id)
   }
-  return rows
+
+  const serialized = rows
     .filter((r: any) => !(r.targetType === 'MemoryProposal' && archivedIds.has(r.targetId)))
     .map(serializeApproval)
+  await enrichProposalProvenance(serialized)
+  return serialized
+}
+
+/**
+ * #836-followup: 提案溯源 — 收件箱此前只有 raw reason 文本,用户无法看出
+ * 内容由哪些文档/会话而来。分两类:
+ *  - summary 提案:relatedFacts(stableId)→ fact 节点 → provenance.sourceRef
+ *    (file: → DocumentNode.name;session: → Session.title;历史事实的
+ *    sourceRef 是创建它的 proposal id,回查 memoryProposal 行兜底)。
+ *  - fact 提案:sourceRange `session:<id>`(压缩/会话提取)→ Session.title,
+ *    供前端按会话聚合;`file:` 前端已有分组逻辑,不在此处理。
+ * 全程 best-effort:任何解析失败都只让字段缺失,绝不阻塞审批列表。
+ */
+async function enrichProposalProvenance(serialized: Array<Record<string, any>>): Promise<void> {
+  const summaryRows = serialized.filter(
+    (r) => r.targetType === 'MemoryProposal' && r.payload && (r.payload.kind === 'summary' || r.payload.kind === 'article'),
+  )
+  const sessionFactRows = serialized.filter(
+    (r) => r.targetType === 'MemoryProposal' && r.payload?.kind === 'fact' && typeof r.payload.sourceRange === 'string' && r.payload.sourceRange.startsWith('session:'),
+  )
+  if (summaryRows.length === 0 && sessionFactRows.length === 0) return
+
+  const byUser = new Map<string, Array<Record<string, any>>>()
+  const bucket = (userId: string, row: Record<string, any>) => {
+    const list = byUser.get(userId)
+    if (list) list.push(row)
+    else byUser.set(userId, [row])
+  }
+  for (const r of summaryRows) {
+    const ids = parseRelatedFactIds(r.payload.relatedFacts)
+    if (ids.length > 0) bucket(r.userId, r)
+  }
+  for (const r of sessionFactRows) bucket(r.userId, r)
+  if (byUser.size === 0) return
+
+  const { getContextResolver } = await import('../../memory/registry.js')
+  for (const [ownerId, rows] of byUser) {
+    try {
+      const ctx = getContextResolver()?.(ownerId)
+      if (!ctx?.memory) continue
+      const documents = (ctx.memory.graph.getCurrentNodesByType('document') as any[]) ?? []
+      const docNameByFileId = new Map<string, string>()
+      for (const d of documents) {
+        if (d?.fileId && d?.name) docNameByFileId.set(d.fileId, d.name)
+      }
+      const sessionTitle = await makeSessionTitleResolver()
+      // 历史事实:sourceRef = 创建它的 memoryProposal id → 查原始行拿文件信息。
+      const originCache = new Map<string, { fileId: string | null; fileName: string | null; sessionId: string | null }>()
+      const resolveOrigin = async (ref: string) => {
+        const cached = originCache.get(ref)
+        if (cached) return cached
+        const out = { fileId: null as string | null, fileName: null as string | null, sessionId: null as string | null }
+        try {
+          const mp = await (prisma as any).memoryProposal.findFirst({
+            where: { id: ref },
+            select: { sourceRange: true, reason: true },
+          })
+          if (mp?.sourceRange?.startsWith('file:')) {
+            out.fileId = mp.sourceRange.slice('file:'.length).split('#')[0]
+          }
+          if (mp?.sourceRange?.startsWith('session:')) {
+            out.sessionId = mp.sourceRange.slice('session:'.length)
+          }
+          const m = mp?.reason?.match(/^extracted from file (.+)$/)
+          if (m) out.fileName = m[1]
+        } catch {
+          // lookup failure → origin stays unknown
+        }
+        originCache.set(ref, out)
+        return out
+      }
+      const sessionRefLabel = async (sessionId: string): Promise<string> => {
+        const title = await sessionTitle(sessionId)
+        return title || `会话 ${sessionId.slice(-8)}`
+      }
+
+      for (const row of rows) {
+        const payload = row.payload
+        if (payload.kind === 'fact') {
+          const sessionId = String(payload.sourceRange).slice('session:'.length)
+          payload.sourceSession = await sessionRefLabel(sessionId)
+          continue
+        }
+        // summary 提案溯源
+        const factIds = parseRelatedFactIds(payload.relatedFacts)
+        if (factIds.length === 0) continue
+        const sourceFacts: Array<{ stableId: string; content: string; sourceDocument?: string; sourceSession?: string }> = []
+        const docNames = new Set<string>()
+        const sessionTitles = new Set<string>()
+        for (const stableId of factIds.slice(0, 10)) {
+          const node = ctx.memory.graph.getLatestByStableId(stableId) as any
+          if (!node || node.type !== 'fact') continue
+          const ref: string | undefined = node.provenance?.sourceRef
+          let fileId: string | null = null
+          let fileName: string | null = null
+          let refSessionId: string | null = null
+          if (ref?.startsWith('file:')) {
+            fileId = ref.slice('file:'.length).split('#')[0]
+          } else if (ref?.startsWith('session:')) {
+            refSessionId = ref.slice('session:'.length)
+          } else if (ref && !ref.startsWith('doc_')) {
+            const origin = await resolveOrigin(ref)
+            fileId = origin.fileId
+            fileName = origin.fileName
+            refSessionId = origin.sessionId
+          }
+          const docName = (fileId && (docNameByFileId.get(fileId) ?? null)) || fileName || null
+          const sessionLabel = refSessionId ? await sessionRefLabel(refSessionId) : null
+          if (docName) docNames.add(docName)
+          if (sessionLabel) sessionTitles.add(sessionLabel)
+          sourceFacts.push({
+            stableId,
+            content: String(node.content || '').slice(0, 120),
+            ...(docName ? { sourceDocument: docName } : {}),
+            ...(sessionLabel ? { sourceSession: sessionLabel } : {}),
+          })
+        }
+        if (sourceFacts.length > 0) {
+          row.payload = {
+            ...payload,
+            sourceFacts,
+            ...(docNames.size > 0 ? { sourceDocuments: Array.from(docNames) } : {}),
+            ...(sessionTitles.size > 0 ? { sourceSessions: Array.from(sessionTitles) } : {}),
+          }
+        }
+      }
+    } catch (err) {
+      log.info('proposal provenance enrichment skipped', { reason: (err as Error).message.slice(0, 120) })
+    }
+  }
+}
+
+function parseRelatedFactIds(raw: unknown): string[] {
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch {
+    return []
+  }
+}
+
+/** sessionId → 会话标题(带缓存;查不到回退 null,由调用方拼兜底标签)。 */
+async function makeSessionTitleResolver(): Promise<(sessionId: string) => Promise<string | null>> {
+  const cache = new Map<string, string | null>()
+  return async (sessionId: string) => {
+    if (cache.has(sessionId)) return cache.get(sessionId)!
+    let title: string | null = null
+    try {
+      const s = await (prisma as any).session.findFirst({
+        where: { id: sessionId },
+        select: { title: true },
+      })
+      title = typeof s?.title === 'string' && s.title.trim() ? s.title.trim().slice(0, 60) : null
+    } catch {
+      // lookup failure → fallback label
+    }
+    cache.set(sessionId, title)
+    return title
+  }
 }
 
 export async function confirmApproval(userId: string, id: string) {

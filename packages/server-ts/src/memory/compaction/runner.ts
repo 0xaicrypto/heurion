@@ -86,6 +86,8 @@ export async function extractAndProposeFacts(
           confidence: 'medium',
           reason: `${opts.reason} (${fact.category}, source: ${fact.sourceType})`,
           category: fact.category,
+          // #836-followup: 会话溯源 — 审批列表与 summary 合成需回溯来源会话。
+          sourceRange: `session:${opts.sessionId}`,
           conflictsWith: fact.conflictsWith?.map(stableId => ({ stableId, content: '' })),
         })
       } catch (err) {
@@ -213,6 +215,8 @@ ${conversation}
             confidence: 'medium',
             reason: `Compaction extraction (${f.category}, source: ${f.sourceType || 'general'})`,
             category: f.category,
+            // #836-followup: 会话溯源 — 同上,审批收件箱按会话聚合展示。
+            sourceRange: `session:${sessionId}`,
             conflictsWith: Array.isArray(f.conflictsWith) ? f.conflictsWith.map((sid: any) => ({ stableId: String(sid), content: '' })) : undefined,
           })
           proposed++
