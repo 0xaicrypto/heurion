@@ -28,6 +28,7 @@ import { factExtractionPrompt } from '../../memory/prompts.js'
 import { EmbeddingService } from '../../memory/embedding/embedding.service.js'
 import { normalizeVector } from '../../memory/embedding-index.js'
 import { chunkText } from '../../lib/text-chunker.js' // #749 pure chunker
+import { buildSectionWindows } from '../../lib/section-windows.js' // 章节感知 fact 窗口
 import { ProposalService } from '../../memory/proposal/proposal.service.js'
 import { createIngestionJob, processIngestionJob } from '../ingestion/ingestion.service.js'
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
@@ -88,8 +89,15 @@ export const PIPELINE_MAX_BYTES = parseInt(process.env.FILE_PIPELINE_MAX_BYTES |
 /** #749 chunk sizing. */
 export const CHUNK_CHARS = parseInt(process.env.FILE_CHUNK_CHARS || '1200', 10)
 export const CHUNK_OVERLAP_CHARS = parseInt(process.env.FILE_CHUNK_OVERLAP_CHARS || '150', 10)
-/** Fact extraction window budget: N × ~4K chars from the head of the doc. */
-export const FACT_WINDOWS = parseInt(process.env.FILE_FACT_WINDOWS || '4', 10)
+/**
+ * Fact-extraction windows — 章节感知:markdown 标题优先断开(结构来自
+ * document-extractor 的结构恢复,非启发式猜测),超长章节内部段落感知
+ * 滑窗;跨章节 round-robin 轮转取窗,预算摊平到全文,长文档尾部
+ * (Results/Discussion 等 fact 密度最高处)不再被 head-only 截断丢弃。
+ * 每窗口 = 1 次 fast 模型调用。
+ */
+export const FACT_WINDOW_CHARS = parseInt(process.env.FILE_FACT_WINDOW_CHARS || '6000', 10)
+export const FACT_MAX_WINDOWS = parseInt(process.env.FILE_FACT_WINDOWS || '12', 10)
 
 type PipelineRow = Awaited<ReturnType<typeof prisma.filePipelineJob.findUniqueOrThrow>>
 
@@ -241,14 +249,13 @@ async function runPropose(job: PipelineRow, ctx: ReturnType<typeof getUserContex
   const scopeType = job.patientHash ? ('patient' as const) : ('global' as const)
   const proposal = new ProposalService(job.userId, ctx.memory, new EmbeddingService(job.userId, ctx.memory))
 
-  const windows = Math.max(1, FACT_WINDOWS)
-  const windowChars = 4000
+  const windows = buildSectionWindows(text, FACT_WINDOW_CHARS, FACT_MAX_WINDOWS)
   const proposalIds: string[] = []
   let totalFacts = 0
 
-  for (let w = 0; w < windows; w++) {
-    const slice = text.slice(w * windowChars, (w + 1) * windowChars)
-    if (!slice.trim()) break
+  for (let w = 0; w < windows.length; w++) {
+    const slice = windows[w]
+    if (!slice.trim()) continue
     try {
       const prompt = factExtractionPrompt({ text: slice, mode: 'document' })
       const result = await deepseekChat(
@@ -285,12 +292,12 @@ async function runPropose(job: PipelineRow, ctx: ReturnType<typeof getUserContex
     }
   }
 
-  await recordStage(job.userId, job.id, job.fileId, 'stage_proposed', { totalFacts, proposals: proposalIds.length })
+  await recordStage(job.userId, job.id, job.fileId, 'stage_proposed', { totalFacts, proposals: proposalIds.length, windows: windows.length })
   await transitionStage(job, 'proposed', {
     factCount: totalFacts,
     proposalIds: JSON.stringify(proposalIds),
   })
-  if (totalFacts > 0) slog.info(`[PIPELINE] ${job.fileName}: ${proposalIds.length}/${totalFacts} facts passed semantic dedup`)
+  if (totalFacts > 0) slog.info(`[PIPELINE] ${job.fileName}: ${proposalIds.length}/${totalFacts} facts passed semantic dedup (${windows.length} section windows)`)
   return { totalFacts, proposalCount: proposalIds.length }
 }
 
