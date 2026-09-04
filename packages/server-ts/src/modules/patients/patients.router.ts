@@ -101,7 +101,7 @@ export async function patientsRouter(app: FastifyInstance) {
     // Delete the patient row
     await (prisma as any).patientRecord.deleteMany({ where: { hash, userId } })
 
-    // Cascade-delete memory facts tied to this patient so dependent articles become stale/superseded
+    // Cascade-delete memory facts tied to this patient so dependent summaries become stale/superseded
     const ctx = getUserContext(userId)
     const cascade = ctx.memory.deletePatientReferences(hash)
 

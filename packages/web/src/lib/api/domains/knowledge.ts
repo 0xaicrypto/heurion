@@ -1,33 +1,33 @@
 import { ApiCore } from './core.js';
-import type { Article, LlmCostDashboard, QueueMetrics, TelemetryDashboard } from '../../types';
+import type { Summary, LlmCostDashboard, QueueMetrics, TelemetryDashboard } from '../../types';
 
 export class KnowledgeApi extends ApiCore {
   /* ────────────────────────── knowledge & facts ────────────────────────── */
 
   /** #620: 知识库选择器搜索(标题/内容关键词)。 */
-  // #620/#628: 选择器返回合成文章(article)与上传文件(document)
-  async getKnowledgePicker(q: string): Promise<{ articles: Array<{ id: string; title: string; summary: string; updated_at: string; kind: 'article' | 'document' }> }> {
+  // #620/#628: 选择器返回合成文章(summary)与上传文件(document)
+  async getKnowledgePicker(q: string): Promise<{ summaries: Array<{ id: string; title: string; summary: string; updated_at: string; kind: 'summary' | 'document' }> }> {
     return this.fetch(`/api/v1/knowledge/picker?q=${encodeURIComponent(q)}`);
   }
 
-  async getKnowledgeArticles(): Promise<{articles: Article[]}> {
-    return this.fetch('/api/v1/knowledge/articles');
+  async getKnowledgeSummaries(): Promise<{summaries: Summary[]}> {
+    return this.fetch('/api/v1/knowledge/summaries');
   }
 
-  async getKnowledgeArticle(id: string): Promise<Article> {
-    return this.fetch(`/api/v1/knowledge/articles/${id}`);
+  async getKnowledgeSummary(id: string): Promise<Summary> {
+    return this.fetch(`/api/v1/knowledge/summaries/${id}`);
   }
 
-  async createKnowledgeArticle(data: {title: string; content: string; sources?: string[]}): Promise<{id: string}> {
-    return this.fetch('/api/v1/knowledge/articles', { method: 'POST', body: JSON.stringify(data) });
+  async createKnowledgeSummary(data: {title: string; content: string; sources?: string[]}): Promise<{id: string}> {
+    return this.fetch('/api/v1/knowledge/summaries', { method: 'POST', body: JSON.stringify(data) });
   }
 
-  async regenerateKnowledgeArticle(id: string): Promise<Article> {
-    return this.fetch(`/api/v1/knowledge/articles/${id}/regenerate`, { method: 'POST' });
+  async regenerateKnowledgeSummary(id: string): Promise<Summary> {
+    return this.fetch(`/api/v1/knowledge/summaries/${id}/regenerate`, { method: 'POST' });
   }
 
-  async updateKnowledgeArticle(id: string, data: {title?: string; content?: string}): Promise<Article> {
-    return this.fetch(`/api/v1/knowledge/articles/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  async updateKnowledgeSummary(id: string, data: {title?: string; content?: string}): Promise<Summary> {
+    return this.fetch(`/api/v1/knowledge/summaries/${id}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
   async getKnowledgeTelemetryDashboard(from?: string, to?: string): Promise<TelemetryDashboard> {
@@ -50,8 +50,8 @@ export class KnowledgeApi extends ApiCore {
     return this.fetch('/api/v1/evolution/queue');
   }
 
-  async deleteKnowledgeArticles(ids: string[]): Promise<{deleted: number}> {
-    return this.fetch('/api/v1/knowledge/articles', { method: 'DELETE', body: JSON.stringify({ ids }) });
+  async deleteKnowledgeSummaries(ids: string[]): Promise<{deleted: number}> {
+    return this.fetch('/api/v1/knowledge/summaries', { method: 'DELETE', body: JSON.stringify({ ids }) });
   }
 
   async getFacts(): Promise<{facts: Array<{id: string; category: string; importance: number; content: string; count: number; sourceType: string; patientHash?: string; studyId?: string; createdAt: number; updatedAt: number; lastSeenAt: number}>}> {
@@ -74,8 +74,8 @@ export class KnowledgeApi extends ApiCore {
     return this.fetch(`/api/v1/memory/nodes/${id}/versions`);
   }
 
-  async getArticleImpact(id: string): Promise<{impact: any[]}> {
-    return this.fetch(`/api/v1/memory/articles/${id}/impact`);
+  async getSummaryImpact(id: string): Promise<{impact: any[]}> {
+    return this.fetch(`/api/v1/memory/summaries/${id}/impact`);
   }
 
   async getMemoryGraph(patientHash?: string, includeSuperseded?: boolean): Promise<{nodes: any[]; relations: any[]}> {

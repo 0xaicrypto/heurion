@@ -31,7 +31,7 @@ export const CONTEXT_CONFIG = {
     factsBudget: 1500,
     skillsMax: 5,
     /** #814: layer3 降级为"未成文记忆" — 仅 importance ≥ 此值或近 N 天的
-     *  facts 进入碎片投影(其余交给 article/JIT 合成覆盖,#815)。 */
+     *  facts 进入碎片投影(其余交给 summary/JIT 合成覆盖,#815)。 */
     layer3ImportanceMin: parseInt(process.env.LAYER3_IMPORTANCE_MIN || '4', 10),
     layer3RecentDays: parseInt(process.env.LAYER3_RECENT_DAYS || '14', 10),
   },

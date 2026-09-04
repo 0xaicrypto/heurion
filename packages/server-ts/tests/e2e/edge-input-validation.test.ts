@@ -37,10 +37,10 @@ describe('required params 400 (边界 #253)', () => {
     expect(res.statusCode).toBe(400)
   })
 
-  test('knowledge articles create without title/content → 400', async () => {
+  test('knowledge summaries create without title/content → 400', async () => {
     const app = await getApp()
     const res = await app.inject({
-      method: 'POST', url: '/api/v1/knowledge/articles',
+      method: 'POST', url: '/api/v1/knowledge/summaries',
       headers: { ...await authHeader(), 'content-type': 'application/json' },
       payload: JSON.stringify({}),
     })

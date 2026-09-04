@@ -28,7 +28,7 @@ describe('K5 persona cache', () => {
     return { facts, knowledge }
   }
 
-  test('#1 facts/articles 无变化 → persona 复用缓存，不重建', () => {
+  test('#1 facts/summaries 无变化 → persona 复用缓存，不重建', () => {
     const { facts, knowledge } = makeStores()
 
     const first = buildCachedPersona('user_a', facts, knowledge)

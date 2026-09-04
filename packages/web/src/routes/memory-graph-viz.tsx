@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
 interface MemoryNode {
   id: string;
   stableId: string;
-  type: 'fact' | 'article' | 'gap' | 'document' | 'entity' | 'skill';
+  type: 'fact' | 'summary' | 'gap' | 'document' | 'entity' | 'skill';
   status: 'current' | 'stale' | 'superseded' | 'pending_review';
   content: string;
   title?: string;
@@ -36,12 +36,12 @@ interface MemoryRelation {
   relation: string;
 }
 
-const NODE_TYPES: MemoryNode['type'][] = ['fact', 'article', 'gap', 'document', 'entity', 'skill'];
+const NODE_TYPES: MemoryNode['type'][] = ['fact', 'summary', 'gap', 'document', 'entity', 'skill'];
 const NODE_STATUS: MemoryNode['status'][] = ['current', 'stale', 'superseded', 'pending_review'];
 
 const TYPE_LABELS: Record<MemoryNode['type'], string> = {
   fact: 'Fact',
-  article: 'Article',
+  summary: 'Summary',
   gap: 'Gap',
   document: 'Document',
   entity: 'Entity',
@@ -50,7 +50,7 @@ const TYPE_LABELS: Record<MemoryNode['type'], string> = {
 
 const TYPE_ICONS: Record<MemoryNode['type'], React.ElementType> = {
   fact: Brain,
-  article: BookOpen,
+  summary: BookOpen,
   gap: Lightbulb,
   document: FileText,
   entity: Hexagon,
@@ -169,7 +169,7 @@ export function MemoryGraphVizPage() {
           },
         },
         { selector: '.type-fact', style: { 'background-color': '#3b82f6' } },
-        { selector: '.type-article', style: { 'background-color': '#8b5cf6', width: 36, height: 36 } },
+        { selector: '.type-summary', style: { 'background-color': '#8b5cf6', width: 36, height: 36 } },
         { selector: '.type-gap', style: { 'background-color': '#f59e0b', shape: 'diamond' } },
         { selector: '.type-document', style: { 'background-color': '#64748b' } },
         { selector: '.type-entity', style: { 'background-color': '#f97316', shape: 'hexagon' } },
@@ -286,8 +286,8 @@ export function MemoryGraphVizPage() {
     cyRef.current?.fit(undefined, 24);
   };
 
-  const regenerateArticle = async (id: string) => {
-    await api.regenerateKnowledgeArticle(id);
+  const regenerateSummary = async (id: string) => {
+    await api.regenerateKnowledgeSummary(id);
     load();
   };
 
@@ -361,8 +361,8 @@ export function MemoryGraphVizPage() {
           </div>
         )}
 
-        {selectedNode.type === 'article' && selectedNode.status === 'stale' && (
-          <Button size="sm" variant="secondary" onClick={() => regenerateArticle(selectedNode.stableId)}>
+        {selectedNode.type === 'summary' && selectedNode.status === 'stale' && (
+          <Button size="sm" variant="secondary" onClick={() => regenerateSummary(selectedNode.stableId)}>
             <RotateCcw size={14} className="mr-1" /> Regenerate
           </Button>
         )}

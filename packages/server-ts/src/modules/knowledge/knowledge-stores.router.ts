@@ -22,11 +22,11 @@ export async function knowledgeStoresRouter(app: FastifyInstance) {
     const versions = ctx.memory.graph.getVersions(request.params.id as string)
     return { versions }
   })
-  app.get('/api/v1/memory/articles/:id/impact', async (request: any) => {
+  app.get('/api/v1/memory/summaries/:id/impact', async (request: any) => {
     const ctx = getUserContext(request.user!.userId)
-    const article = ctx.memory.graph.getLatestByStableId(request.params.id as string) as any
-    if (!article || article.type !== 'article') return { error: 'Not found' }
-    return { impact: article.impact || [] }
+    const summary = ctx.memory.graph.getLatestByStableId(request.params.id as string) as any
+    if (!summary || summary.type !== 'summary') return { error: 'Not found' }
+    return { impact: summary.impact || [] }
   })
 
   // ── Memory graph (Cytoscape) ──
@@ -38,7 +38,7 @@ export async function knowledgeStoresRouter(app: FastifyInstance) {
 
     let nodes = includeSuperseded
       ? Array.from(ctx.memory.graph.getNodesByType('fact'))
-          .concat(Array.from(ctx.memory.graph.getNodesByType('article')))
+          .concat(Array.from(ctx.memory.graph.getNodesByType('summary')))
           .concat(Array.from(ctx.memory.graph.getNodesByType('gap')))
           .concat(Array.from(ctx.memory.graph.getNodesByType('document')))
           .concat(Array.from(ctx.memory.graph.getNodesByType('entity')))
@@ -89,13 +89,13 @@ export async function knowledgeStoresRouter(app: FastifyInstance) {
   })
 
   // ── Bulk deletes ──
-  app.delete('/api/v1/knowledge/articles', async (request: any) => {
+  app.delete('/api/v1/knowledge/summaries', async (request: any) => {
     const ctx = getUserContext(request.user!.userId)
     const ids = (request.body as any)?.ids
     if (!Array.isArray(ids)) return { deleted: 0 }
     let deleted = 0
     for (const id of ids) {
-      if (ctx.memory.deleteArticle(String(id)).ok) deleted++
+      if (ctx.memory.deleteSummary(String(id)).ok) deleted++
     }
     return { deleted }
   })
@@ -150,7 +150,7 @@ export async function knowledgeStoresRouter(app: FastifyInstance) {
   // ── Knowledge & Facts API (legacy file-backed stores) ──
   app.get('/api/v1/knowledge', async (request: any) => {
     const ctx = getUserContext(request.user!.userId)
-    return { articles: ctx.knowledge.all() }
+    return { summaries: ctx.knowledge.all() }
   })
   app.get('/api/v1/facts', async (request: any) => {
     const ctx = getUserContext(request.user!.userId)

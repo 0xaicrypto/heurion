@@ -164,7 +164,7 @@ export class ProposalService {
       await this.embedding.indexApproved({
         nodeId: node.id,
         stableId: node.stableId,
-        type: proposal.kind === 'article' ? 'article' : 'fact',
+        type: proposal.kind === 'summary' ? 'summary' : 'fact',
         content: proposal.content,
         patientHash: proposal.patientHash || (node as any).patientHash,
         studyId: proposal.studyId || (node as any).studyId,

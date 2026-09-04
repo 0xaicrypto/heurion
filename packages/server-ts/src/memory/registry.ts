@@ -59,7 +59,7 @@ export function getProposalCreatedHandler(): ProposalCreatedHandler | null {
   return proposalCreatedHandler
 }
 
-// Default applier: fact/article → memory service write via the resolver.
+// Default applier: fact/summary → memory service write via the resolver.
 export function defaultProposalApplier(userId: string, proposal: MemoryProposalRow): MemoryNode | null {
   const ctx = contextResolver?.(userId)
   if (!ctx) return null
@@ -91,9 +91,9 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
       'system',
     )
   }
-  if (proposal.kind === 'article') {
-    // #736/#748: carry the synthesized-from fact stableIds into the article —
-    // without them, maybeSynthesizeArticle's used-set stays empty and the
+  if (proposal.kind === 'summary') {
+    // #736/#748: carry the synthesized-from fact stableIds into the summary —
+    // without them, maybeSynthesizeSummary's used-set stays empty and the
     // same batch of facts re-triggers synthesis forever.
     let sourceFactStableIds: string[] = []
     if (proposal.relatedFacts) {
@@ -104,7 +104,7 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
         log.warn('relatedFacts parse skipped', { reason: (err as Error).message.slice(0, 120) })
       }
     }
-    return ctx.memory.addArticle(
+    return ctx.memory.addSummary(
       {
         title: proposal.content.split('\n')[0].slice(0, 120) || '知识文章',
         content: proposal.content,

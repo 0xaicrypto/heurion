@@ -15,7 +15,7 @@ import type {
   AddFactInput,
   EditFactInput,
   FactNode,
-  ArticleNode,
+  SummaryNode,
   MemoryCreatedBy,
 } from './memory.types'
 
@@ -115,7 +115,7 @@ export class FactService extends MemoryNodeService {
     this.c.legacyFacts.remove(stableId)
     this.c.legacyFacts.commit()
 
-    // #738: propagate curation on supersede too — dependent articles must not
+    // #738: propagate curation on supersede too — dependent summaries must not
     // keep citing a dead fact (editFact/deleteFact already did this).
     const propagation = this.c.curation.propagateFactChange(stableId)
     this.applyPropagationToLegacy(propagation)
@@ -234,13 +234,13 @@ export class FactService extends MemoryNodeService {
 
   /**
    * Delete all facts tied to a patient when the patient is deleted.
-   * Dependent knowledge articles are marked stale (or superseded if they
+   * Dependent knowledge summaries are marked stale (or superseded if they
    * no longer have any current source facts).
    */
   deletePatientReferences(patientHash: string): {
     deletedFacts: number
-    staleArticles: number
-    supersededArticles: number
+    staleSummaries: number
+    supersededSummaries: number
   } {
     const affected = this.c.graph.getCurrentNodesByType('fact').filter(
       (n): n is FactNode => n.type === 'fact' && n.patientHash === patientHash,
@@ -254,12 +254,12 @@ export class FactService extends MemoryNodeService {
       if (!result.ok) continue
       const { propagation } = result.value
       if (propagation) {
-        for (const articleId of propagation.staleArticleStableIds) {
-          const article = this.c.graph.getLatestByStableId(articleId) as ArticleNode | undefined
-          if (!article || isNodeSuperseded(article)) {
-            supersededIds.add(articleId)
-          } else if (isNodeStale(article)) {
-            staleIds.add(articleId)
+        for (const summaryId of propagation.staleSummaryStableIds) {
+          const summary = this.c.graph.getLatestByStableId(summaryId) as SummaryNode | undefined
+          if (!summary || isNodeSuperseded(summary)) {
+            supersededIds.add(summaryId)
+          } else if (isNodeStale(summary)) {
+            staleIds.add(summaryId)
           }
         }
       }
@@ -268,14 +268,14 @@ export class FactService extends MemoryNodeService {
     this.appendEvent('memory_patient_deleted', `Deleted patient references for ${patientHash}`, {
       patientHash,
       deletedFacts: affected.length,
-      staleArticles: Array.from(staleIds),
-      supersededArticles: Array.from(supersededIds),
+      staleSummaries: Array.from(staleIds),
+      supersededSummaries: Array.from(supersededIds),
     })
 
     return {
       deletedFacts: affected.length,
-      staleArticles: staleIds.size,
-      supersededArticles: supersededIds.size,
+      staleSummaries: staleIds.size,
+      supersededSummaries: supersededIds.size,
     }
   }
 

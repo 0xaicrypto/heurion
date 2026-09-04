@@ -40,9 +40,9 @@ export class LegacyProjection {
    * truth and rebuild the legacy projection from it. Idempotent — no-ops
    * when the stores already agree. Safe to call at startup or on demand.
    */
-  reconcile(): { repaired: boolean; factDiff: number; articleDiff: number } {
+  reconcile(): { repaired: boolean; factDiff: number; summaryDiff: number } {
     const currentFacts = this.graph.getCurrentNodesByType('fact') as any[]
-    const currentArticles = this.graph.getCurrentNodesByType('article') as any[]
+    const currentSummaries = this.graph.getCurrentNodesByType('summary') as any[]
 
     const projectedFacts = currentFacts.map((f) => ({
       id: f.stableId,
@@ -58,7 +58,7 @@ export class LegacyProjection {
       lastSeenAt: f.updatedAt,
     }))
 
-    const projectedArticles = currentArticles.map((a) => ({
+    const projectedSummaries = currentSummaries.map((a) => ({
       id: a.stableId,
       title: a.title,
       content: a.content,
@@ -70,35 +70,35 @@ export class LegacyProjection {
     }))
 
     const legacyFacts = this.legacyFacts.all()
-    const legacyArticles = this.legacyKnowledge.all()
+    const legacySummaries = this.legacyKnowledge.all()
 
     const factsEqual = legacyFacts.length === projectedFacts.length &&
       legacyFacts.every((f, i) => f.id === projectedFacts[i].id && f.content === projectedFacts[i].content && f.category === projectedFacts[i].category)
-    const articlesEqual = legacyArticles.length === projectedArticles.length &&
-      legacyArticles.every((a, i) => a.id === projectedArticles[i].id && a.title === projectedArticles[i].title && a.content === projectedArticles[i].content)
+    const summariesEqual = legacySummaries.length === projectedSummaries.length &&
+      legacySummaries.every((a, i) => a.id === projectedSummaries[i].id && a.title === projectedSummaries[i].title && a.content === projectedSummaries[i].content)
 
-    if (factsEqual && articlesEqual) {
-      return { repaired: false, factDiff: 0, articleDiff: 0 }
+    if (factsEqual && summariesEqual) {
+      return { repaired: false, factDiff: 0, summaryDiff: 0 }
     }
 
     const factDiff = Math.abs(legacyFacts.length - projectedFacts.length) || legacyFacts.filter((f, i) => f.content !== projectedFacts[i]?.content).length
-    const articleDiff = Math.abs(legacyArticles.length - projectedArticles.length) || legacyArticles.filter((a, i) => a.content !== projectedArticles[i]?.content).length
+    const summaryDiff = Math.abs(legacySummaries.length - projectedSummaries.length) || legacySummaries.filter((a, i) => a.content !== projectedSummaries[i]?.content).length
 
     this.legacyFacts.replaceAll(projectedFacts)
-    this.legacyKnowledge.replaceAll(projectedArticles)
+    this.legacyKnowledge.replaceAll(projectedSummaries)
     this.legacyFacts.commit()
     this.legacyKnowledge.commit()
 
-    return { repaired: true, factDiff, articleDiff }
+    return { repaired: true, factDiff, summaryDiff }
   }
 
   applyPropagation(propagation: {
-    staleArticleStableIds: string[]
+    staleSummaryStableIds: string[]
     supersededFactStableIds: string[]
     reopenedGapStableIds: string[]
   }): void {
-    for (const articleId of propagation.staleArticleStableIds) {
-      this.legacyKnowledge.markStale(articleId, propagation.supersededFactStableIds)
+    for (const summaryId of propagation.staleSummaryStableIds) {
+      this.legacyKnowledge.markStale(summaryId, propagation.supersededFactStableIds)
     }
     this.legacyKnowledge.commit()
 

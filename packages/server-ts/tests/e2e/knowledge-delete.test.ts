@@ -13,11 +13,11 @@ async function createGap(app: any, content: string) {
 }
 
 describe('Knowledge base bulk deletes', () => {
-  async function createArticle(title: string) {
+  async function createSummary(title: string) {
     const app = await getApp()
     const res = await app.inject({
       method: 'POST',
-      url: '/api/v1/knowledge/articles',
+      url: '/api/v1/knowledge/summaries',
       headers: { ...(await authHeader()), 'content-type': 'application/json' },
       payload: { title, content: 'test content', sources: [] },
     })
@@ -29,21 +29,21 @@ describe('Knowledge base bulk deletes', () => {
     const app = await getApp()
     const res = await app.inject({
       method: 'POST',
-      url: '/api/v1/knowledge/articles',
+      url: '/api/v1/knowledge/summaries',
       headers: { ...(await authHeader()), 'content-type': 'application/json' },
       payload: { title: content, content, sources: [] },
     })
-    // Fallback: facts may not have a direct create endpoint; use article as placeholder
+    // Fallback: facts may not have a direct create endpoint; use summary as placeholder
     return JSON.parse(res.payload).id
   }
 
-  test('DELETE /api/v1/knowledge/articles removes selected articles', async () => {
+  test('DELETE /api/v1/knowledge/summaries removes selected summaries', async () => {
     const app = await getApp()
-    const id = await createArticle('To be deleted')
+    const id = await createSummary('To be deleted')
 
     const delRes = await app.inject({
       method: 'DELETE',
-      url: '/api/v1/knowledge/articles',
+      url: '/api/v1/knowledge/summaries',
       headers: { ...(await authHeader()), 'content-type': 'application/json' },
       payload: { ids: [id] },
     })
@@ -55,21 +55,21 @@ describe('Knowledge base bulk deletes', () => {
       url: '/api/v1/knowledge',
       headers: await authHeader(),
     })
-    const articles = JSON.parse(listRes.payload).articles as Array<{ id: string }>
-    expect(articles.find(a => a.id === id)).toBeUndefined()
+    const summaries = JSON.parse(listRes.payload).summaries as Array<{ id: string }>
+    expect(summaries.find(a => a.id === id)).toBeUndefined()
   })
 
-  test('DELETE /api/v1/knowledge/articles removes multiple selected articles', async () => {
+  test('DELETE /api/v1/knowledge/summaries removes multiple selected summaries', async () => {
     const app = await getApp()
     const ids = await Promise.all([
-      createArticle('Batch 1'),
-      createArticle('Batch 2'),
-      createArticle('Batch 3'),
+      createSummary('Batch 1'),
+      createSummary('Batch 2'),
+      createSummary('Batch 3'),
     ])
 
     const delRes = await app.inject({
       method: 'DELETE',
-      url: '/api/v1/knowledge/articles',
+      url: '/api/v1/knowledge/summaries',
       headers: { ...(await authHeader()), 'content-type': 'application/json' },
       payload: { ids },
     })
@@ -81,9 +81,9 @@ describe('Knowledge base bulk deletes', () => {
       url: '/api/v1/knowledge',
       headers: await authHeader(),
     })
-    const articles = JSON.parse(listRes.payload).articles as Array<{ id: string }>
+    const summaries = JSON.parse(listRes.payload).summaries as Array<{ id: string }>
     for (const id of ids) {
-      expect(articles.find(a => a.id === id)).toBeUndefined()
+      expect(summaries.find(a => a.id === id)).toBeUndefined()
     }
   })
 

@@ -1,21 +1,21 @@
 /**
- * #813 — article 失效判定的单一入口。
+ * #813 — summary 失效判定的单一入口。
  *
- * `isArticleStale`(纯谓词)此前生产零调用:curation.engine 用自己的
+ * `isSummaryStale`(纯谓词)此前生产零调用:curation.engine 用自己的
  * markStatus+getDependents 逻辑实现了等价判定,两套实现存在漂移风险 —
- * 事件路径会把"引用了编辑后新版本"的 article 也误标 stale(它只是
+ * 事件路径会把"引用了编辑后新版本"的 summary 也误标 stale(它只是
  * 恰好挂在同一 stableId 的某个版本边上)。现在 curation 传播与注入侧
- * 标注统一收敛到 resolveArticleStaleness,curation 事件路径只负责
+ * 标注统一收敛到 resolveSummaryStaleness,curation 事件路径只负责
  * 触发时机,判定本身以本模块为准。
  *
  * 兼容性:节点上的 `staleBecause` 保持裸 fact stableId 格式
- * (article-view.service / legacy stores / web 按裸 id 反查图谱),
+ * (summary-view.service / legacy stores / web 按裸 id 反查图谱),
  * 机器可读的 `edited:/deleted:` 原因仅在查询时派生,不落盘。
  */
 import type { MemoryGraph } from './memory.graph'
-import { isArticleStale, type ArticleNode } from './memory.types'
+import { isSummaryStale, type SummaryNode } from './memory.types'
 
-export interface ArticleStaleness {
+export interface SummaryStaleness {
   stale: boolean
   /**
    * 机器可读原因(查询时派生,非持久化):
@@ -29,23 +29,23 @@ export interface ArticleStaleness {
 }
 
 /**
- * 从图谱状态推导 article 是否过时 — 所有 stale 判定的唯一入口。
+ * 从图谱状态推导 summary 是否过时 — 所有 stale 判定的唯一入口。
  * - status superseded → 过时(被新版本取代);
  * - 引用的 fact 版本已 superseded 且该 stableId 已无存活版本 → 过时(已删除);
  * - 引用的 fact 版本已 superseded 但存在更新版本 → 过时(依据已修订);
  * - status stale(历史事件路径已标记)→ 保持过时(不静默"复活")。
- * 判定核心委托给 isArticleStale 纯谓词(生产接线)。
+ * 判定核心委托给 isSummaryStale 纯谓词(生产接线)。
  */
-export function resolveArticleStaleness(
+export function resolveSummaryStaleness(
   graph: Pick<MemoryGraph, 'getNode' | 'getLatestByStableId'>,
-  article: ArticleNode,
-): ArticleStaleness {
-  if (article.status === 'superseded') {
+  summary: SummaryNode,
+): SummaryStaleness {
+  if (summary.status === 'superseded') {
     return { stale: true, reasons: ['article_superseded'], summary: '文章已被新版本取代' }
   }
   const derived: string[] = []
   const supersededStableIds: string[] = []
-  for (const sf of article.sourceFacts || []) {
+  for (const sf of summary.sourceFacts || []) {
     const cited = graph.getNode(sf.nodeId)
     const latest = graph.getLatestByStableId(sf.stableId)
     const latestGone = !latest || latest.status === 'superseded'
@@ -55,9 +55,9 @@ export function resolveArticleStaleness(
       derived.push(latestGone ? `deleted:${sf.stableId}` : `edited:${sf.stableId}`)
     }
   }
-  const stale = article.status === 'stale' || isArticleStale(article, supersededStableIds)
+  const stale = summary.status === 'stale' || isSummaryStale(summary, supersededStableIds)
   if (!stale) return { stale: false, reasons: [], summary: '' }
-  const reasons = Array.from(new Set([...derived, ...(article.staleBecause || [])]))
+  const reasons = Array.from(new Set([...derived, ...(summary.staleBecause || [])]))
   return { stale: true, reasons, summary: buildSummary(reasons) }
 }
 
@@ -73,7 +73,7 @@ function buildSummary(reasons: string[]): string {
   return parts.length > 0 ? parts.join('；') : '文章已被新版本取代'
 }
 
-export interface ArticleInjectMeta {
+export interface SummaryInjectMeta {
   title: string
   stale: boolean
   staleSummary?: string
@@ -85,17 +85,17 @@ export interface ArticleInjectMeta {
 const SOURCE_SUMMARY_MAX = 5
 
 /**
- * 注入侧的 article 元数据描述(标题 + 源 facts 置信度/来源 + stale 标注)。
- * stableId 解析不到 article 时返回 undefined,调用方回退原始渲染。
+ * 注入侧的 summary 元数据描述(标题 + 源 facts 置信度/来源 + stale 标注)。
+ * stableId 解析不到 summary 时返回 undefined,调用方回退原始渲染。
  */
-export function describeArticleForInjection(
+export function describeSummaryForInjection(
   graph: Pick<MemoryGraph, 'getNode' | 'getLatestByStableId'>,
-  articleStableId: string,
-): ArticleInjectMeta | undefined {
-  const article = graph.getLatestByStableId(articleStableId)
-  if (!article || article.type !== 'article') return undefined
-  const node = article as ArticleNode
-  const staleness = resolveArticleStaleness(graph, node)
+  summaryStableId: string,
+): SummaryInjectMeta | undefined {
+  const summary = graph.getLatestByStableId(summaryStableId)
+  if (!summary || summary.type !== 'summary') return undefined
+  const node = summary as SummaryNode
+  const staleness = resolveSummaryStaleness(graph, node)
   const parts: string[] = []
   for (const sf of (node.sourceFacts || []).slice(0, SOURCE_SUMMARY_MAX)) {
     const fact = graph.getLatestByStableId(sf.stableId)

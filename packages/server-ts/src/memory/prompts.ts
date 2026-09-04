@@ -42,9 +42,9 @@ ${text}
 [JSON array]:`
 }
 
-// ── Knowledge-article synthesis ───────────────────────────────
+// ── Knowledge-summary synthesis ───────────────────────────────
 
-export const ARTICLE_SYNTHESIS_PERSONA = {
+export const SUMMARY_SYNTHESIS_PERSONA = {
   zh: '你是临床知识合成器。把以下已确认事实合成为一篇 answer-ready 的知识单元——面向问题自包含、每条依据可溯源到事实 ID、不确定性显式暴露。',
   researcherEn: `You are synthesizing clinical findings for an oncology researcher.
 Synthesize the following facts into an answer-ready knowledge unit: self-contained for the question it answers, every claim traceable to fact IDs, uncertainty explicit.`,
@@ -55,7 +55,7 @@ Synthesize the following facts into an answer-ready knowledge unit: self-contain
  * 源 fact stableId(注入层据此渲染溯源标记;合成期幻觉经 factId 过滤
  * 后不会静默进入文章)。factList 每行格式:`[<stableId>] ...<content>`。
  */
-export function articleSynthesisPrompt(factList: string, persona: string = ARTICLE_SYNTHESIS_PERSONA.zh): string {
+export function summarySynthesisPrompt(factList: string, persona: string = SUMMARY_SYNTHESIS_PERSONA.zh): string {
   const isEn = persona.includes('You are')
   if (isEn) {
     return `${persona}

@@ -47,7 +47,7 @@ function scoreText(text: string, queryTerms: string[]): number {
 }
 
 /**
- * Simple keyword search over Facts and Knowledge articles.
+ * Simple keyword search over Facts and Knowledge summaries.
  * Scores by normalized keyword overlap.
  */
 export function keywordSearch(
@@ -82,16 +82,16 @@ export function keywordSearch(
     }
   }
 
-  for (const article of knowledgeStore.all()) {
-    const score = scoreText(`${article.title} ${article.content}`, queryTerms)
+  for (const summary of knowledgeStore.all()) {
+    const score = scoreText(`${summary.title} ${summary.content}`, queryTerms)
     if (score > 0) {
       results.push({
         kind: 'knowledge',
-        source: `knowledge:${article.id}`,
-        content: `${article.title}: ${article.content.slice(0, 200)}`,
+        source: `knowledge:${summary.id}`,
+        content: `${summary.title}: ${summary.content.slice(0, 200)}`,
         score,
-        // #748: article legacy id === graph stableId — same fusion key rule.
-        stableId: article.id,
+        // #748: summary legacy id === graph stableId — same fusion key rule.
+        stableId: summary.id,
       })
     }
   }

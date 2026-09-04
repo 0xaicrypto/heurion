@@ -39,7 +39,7 @@ export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): stri
   // 直接进 persona — 此前漏网落入 layer3 碎片。
   const constraints = allFacts.filter(f => f.category === 'constraint').sort((a, b) => b.importance - a.importance)
   const goals = allFacts.filter(f => f.category === 'goal').slice(0, CONTEXT_CONFIG.persona.goalsMax)
-  const knowledgeArticles = knowledge.all().filter(k => k.status === 'current').slice(0, CONTEXT_CONFIG.persona.knowledgeTitlesMax)
+  const knowledgeSummaries = knowledge.all().filter(k => k.status === 'current').slice(0, CONTEXT_CONFIG.persona.knowledgeTitlesMax)
 
   const parts: string[] = [
     'You are Heurion, a clinical AI assistant for oncology research.',
@@ -68,9 +68,9 @@ export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): stri
     for (const g of goals) parts.push(`- ${g.content}`)
   }
 
-  if (knowledgeArticles.length > 0) {
+  if (knowledgeSummaries.length > 0) {
     parts.push('\nYour knowledge base includes:')
-    for (const k of knowledgeArticles) parts.push(`- ${k.title}`)
+    for (const k of knowledgeSummaries) parts.push(`- ${k.title}`)
   }
 
   return parts.join('\n')

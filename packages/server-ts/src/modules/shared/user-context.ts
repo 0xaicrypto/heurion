@@ -105,7 +105,7 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
       // index file may not exist (no approved embeddings yet).
       void import('../../memory/embedding-index.js').then(({ EmbeddingIndex }) => {
         try {
-          if (type !== 'fact' && type !== 'article' && type !== 'document') return
+          if (type !== 'fact' && type !== 'summary' && type !== 'document') return
           const base = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId)
           new EmbeddingIndex(base).remove(stableId, type)
         } catch { /* best-effort */ }

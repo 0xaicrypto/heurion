@@ -183,7 +183,7 @@ src/
 │   ├── compaction.ts         R2 anchored compaction (extractSegment) + delayed-sync
 │   ├── extraction-cursor.ts  per-session incremental cursor (K1/K2)
 │   ├── extraction-quality.ts category quality feedback + prompt guidance
-│   ├── knowledge-synthesis.ts K3/K4 episode summaries + article synthesis
+│   ├── knowledge-synthesis.ts K3/K4 episode summaries + summary synthesis
 │   ├── context-sources.ts    typed context sources (R1, docs/current)
 │   ├── curation/             propagation engine (stale/supersede cascade)
 │   └── embedding-index.ts    per-user semantic index (reviewed memories only)

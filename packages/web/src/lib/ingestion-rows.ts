@@ -13,7 +13,7 @@ export type KindVariant = 'default' | 'success' | 'warning' | 'error'
 
 export const kindVariant: Record<string, KindVariant> = {
   fact: 'success',
-  article: 'warning',
+  summary: 'warning',
   episode_summary: 'default',
   compaction_summary: 'default',
 };
@@ -27,7 +27,11 @@ export interface IngestionRow {
 
 function toRow(approval: ApprovalRequest, patientNames: Map<string, string>): IngestionRow {
   const payload = approval.payload as Record<string, unknown> | null;
-  const proposal = payload && typeof payload.kind === 'string' ? (payload as unknown as MemoryProposal) : null;
+  // KB 重命名兼容:服务端启动迁移前的存量 payload 可能仍是 kind:'article'。
+  let proposal = payload && typeof payload.kind === 'string' ? (payload as unknown as MemoryProposal) : null;
+  if (proposal && (proposal as unknown as { kind: string }).kind === 'article') {
+    proposal = { ...proposal, kind: 'summary' };
+  }
   const entry = !proposal && payload && typeof payload.id === 'string' ? (payload as unknown as MedicalRecordEntry) : null;
   const patientHash = proposal?.patientHash ?? entry?.patientHash;
   return { approval, entry, proposal, patientName: patientHash ? patientNames.get(patientHash) : undefined };

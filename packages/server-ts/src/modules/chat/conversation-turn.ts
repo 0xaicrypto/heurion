@@ -23,7 +23,7 @@ import { splitDocumentSections, resolveDocumentFocus } from '../../lib/doc-secti
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
 import { maybeJitSynthesize } from '../../modules/knowledge/jit-synthesis.service.js' // #815 JIT 兜底
 import { EmbeddingService } from '../../memory/embedding/embedding.service.js' // #731 向量路接线
-import { describeArticleForInjection } from '../../memory/staleness.js' // #813 文章溯源/stale 单一判定入口
+import { describeSummaryForInjection } from '../../memory/staleness.js' // #813 文章溯源/stale 单一判定入口
 import { ContextAssembler } from './context-assembler.js'
 import { ToolRegistry, type ToolContext } from '../../tools/tool-registry.js'
 import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
@@ -250,9 +250,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         return `📄 ${node?.name || docId}`
       }
       if (it.kind === 'knowledge' && it.stableId) {
-        const articleId = it.label.replace(/^knowledge:/, '')
-        const node = c.memory.graph.getLatestByStableId(articleId) as { title?: string } | undefined
-        return `📖 ${node?.title || articleId}`
+        const summaryId = it.label.replace(/^knowledge:/, '')
+        const node = c.memory.graph.getLatestByStableId(summaryId) as { title?: string } | undefined
+        return `📖 ${node?.title || summaryId}`
       }
       return `🧠 相关事实`
     } catch {
@@ -439,7 +439,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         })),
         // #813: 文章条目附溯源增强 — 标题/源 facts 置信度摘要/stale 失效标注
         // (判定走 memory/staleness.ts 单一入口,与 curation 传播同源)。
-        resolveArticle: (articleStableId) => describeArticleForInjection(ctx.memory.graph, articleStableId),
+        resolveSummary: (summaryStableId) => describeSummaryForInjection(ctx.memory.graph, summaryStableId),
         // #815: JIT 惰性合成 — 无文章覆盖的 facts 簇读时综合,异步沉淀待审。
         jitSynthesize: (q, factHits) => maybeJitSynthesize({
           userId, query: q, patientHash: input.patientHash, memory: ctx.memory, facts: factHits,
@@ -454,9 +454,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       build: async (input) => {
         const pickedIds: string[] = Array.isArray(input.body.picked_kb_ids) ? input.body.picked_kb_ids.map(String) : []
         if (pickedIds.length === 0 || input.scene.startsWith('patient')) return ''
-        // #628: 选择器同时返回合成文章(article)与上传文件(document)。
-        const articles = (ctx.memory.graph.getCurrentNodesByType('article') as any[])
-          .filter((n: any) => n.type === 'article' && pickedIds.includes(n.stableId))
+        // #628: 选择器同时返回合成文章(summary)与上传文件(document)。
+        const summaries = (ctx.memory.graph.getCurrentNodesByType('summary') as any[])
+          .filter((n: any) => n.type === 'summary' && pickedIds.includes(n.stableId))
           .slice(0, CONTEXT_CONFIG.injection.pickedMax)
         const docs = (ctx.memory.graph.getCurrentNodesByType('document') as any[])
           .filter((n: any) => n.type === 'document' && pickedIds.includes(n.stableId))
@@ -467,17 +467,17 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           const text = await extractTextFromUpload(userId, d.stableId, { maxChars: CONTEXT_CONFIG.injection.pickedCharsPerItem })
           docBlocks.push(`- [document] (${d.stableId}) ${d.name}: ${(text || d.name).slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`)
         }
-        const articleBlocks = articles.map((a) => {
+        const summaryBlocks = summaries.map((a) => {
           // #813: 钉选文章同样带 stale 失效标注(判定单一入口)。
-          const meta = describeArticleForInjection(ctx.memory.graph, a.stableId)
+          const meta = describeSummaryForInjection(ctx.memory.graph, a.stableId)
           const staleTag = meta?.stale ? ` ⚠️已过时(${meta.staleSummary || '依据已失效'}) — 引用前注意时效` : ''
-          return `- [article] (${a.stableId}) ${a.title}:${staleTag} ${String(a.content || '').slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`
+          return `- [summary] (${a.stableId}) ${a.title}:${staleTag} ${String(a.content || '').slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`
         })
-        if (docBlocks.length === 0 && articleBlocks.length === 0) return ''
+        if (docBlocks.length === 0 && summaryBlocks.length === 0) return ''
         // #756: 钉选条目进入 citations — 📌 前缀与自动注入区分。
-        articles.forEach((a: any) => kbCitations.push({ kind: 'knowledge', label: `📌 ${a.title}`, sourceId: a.stableId }))
+        summaries.forEach((a: any) => kbCitations.push({ kind: 'knowledge', label: `📌 ${a.title}`, sourceId: a.stableId }))
         docs.forEach((d: any) => kbCitations.push({ kind: 'document', label: `📌 ${d.name}`, sourceId: d.stableId }))
-        return '\n## 用户选定知识库参考\n' + [...articleBlocks, ...docBlocks].join('\n')
+        return '\n## 用户选定知识库参考\n' + [...summaryBlocks, ...docBlocks].join('\n')
       },
     },
   ])

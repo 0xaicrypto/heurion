@@ -24,7 +24,7 @@ describe('P2 — Chat Context Enhancement', () => {
     expect(persona).toContain('NSCLC')
   })
 
-  test('buildPersona includes knowledge article titles', () => {
+  test('buildPersona includes knowledge summary titles', () => {
     const facts = new FactsStore(path.join(baseDir, 'pf2'))
     const knowledge = new KnowledgeStore(path.join(baseDir, 'pk2'))
     knowledge.add({ title: 'EGFR mutation management', content: 'Guidelines...', sources: [] })

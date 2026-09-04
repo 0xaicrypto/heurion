@@ -615,7 +615,7 @@ export function PatientChatPage() {
 
   const handleAddToKnowledge = async (msg: ChatMessage) => {
     if (!msg.knowledgePayload) return;
-    await api.createKnowledgeArticle(msg.knowledgePayload).catch((err) => {
+    await api.createKnowledgeSummary(msg.knowledgePayload).catch((err) => {
       setError(err instanceof ApiError ? err.messageText : t('chat.addToKbFailed', '加入知识库失败'));
     });
     setKbAdded(prev => ({ ...prev, [msg.id]: true }));

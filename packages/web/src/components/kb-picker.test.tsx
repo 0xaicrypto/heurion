@@ -5,8 +5,8 @@ import { KbPicker, type KbPickerItem } from './KbPicker';
 vi.mock('@/lib/api', () => ({
   api: {
     getKnowledgePicker: vi.fn(async () => ({
-      articles: [
-        { id: 'a1', title: '_km 文章', summary: 's', kind: 'article' },
+      summaries: [
+        { id: 'a1', title: '_km 文章', summary: 's', kind: 'summary' },
         { id: 'd1', title: 'km 文件', summary: 's', kind: 'document' },
       ] satisfies KbPickerItem[],
     })),
@@ -24,7 +24,7 @@ describe('KbPicker pre-selection (#786)', () => {
         open
         onClose={() => {}}
         onConfirm={() => {}}
-        initialItems={[{ id: 'a1', title: '_km 文章', summary: 's', kind: 'article' }]}
+        initialItems={[{ id: 'a1', title: '_km 文章', summary: 's', kind: 'summary' }]}
       />,
     );
     // 等搜索结果渲染出 checkbox 行
@@ -49,7 +49,7 @@ describe('KbPicker pre-selection (#786)', () => {
         onClose={() => {}}
         onConfirm={onConfirm}
         initialItems={[
-          { id: 'a1', title: '_km 文章', summary: 's', kind: 'article' },
+          { id: 'a1', title: '_km 文章', summary: 's', kind: 'summary' },
           { id: 'd1', title: 'km 文件', summary: 's', kind: 'document' },
         ]}
       />,

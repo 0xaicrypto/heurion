@@ -24,7 +24,7 @@ describe('Marketing subpages', () => {
     render(<KnowledgeLandingPage />);
     expect(screen.getByRole('heading', { name: /evolving knowledge base/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /five tabs/i })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /evolution from facts to articles/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /evolution from facts to summaries/i })).toBeInTheDocument();
   });
 
   it('SecurityPage highlights two-plane isolation', () => {

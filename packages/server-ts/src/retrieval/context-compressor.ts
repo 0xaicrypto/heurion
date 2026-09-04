@@ -79,7 +79,7 @@ export function compactContext(
     parts.push('Key findings: ' + deduped.join(' | '))
   }
 
-  // Knowledge articles (titles only for compactness)
+  // Knowledge summaries (titles only for compactness)
   if (knowledgeTitles.length > 0) {
     parts.push('Knowledge: ' + knowledgeTitles.slice(0, 5).join(', '))
   }

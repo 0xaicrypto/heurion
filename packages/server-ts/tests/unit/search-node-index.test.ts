@@ -36,7 +36,7 @@ describe('SearchNodeTool inverted index (#199)', () => {
       makeNode('f1', 'p1', 'EGFR mutation detected in exon 19'),
       makeNode('f2', 'p1', 'PD-L1 expression 60%'),
       makeNode('f3', 'p2', 'EGFR wild-type'), // other patient — must be excluded
-      makeNode('a1', 'p1', 'Article about immune checkpoint inhibitors'),
+      makeNode('a1', 'p1', 'Summary about immune checkpoint inhibitors'),
     ]
     // Force the embedding path to fail so the fallback runs.
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('embedding down'))

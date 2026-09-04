@@ -17,17 +17,17 @@ describe('P1 — KnowledgeStore', () => {
     baseDir = path.join(os.tmpdir(), `nexus-test-p1-${Date.now()}-${Math.random().toString(36).slice(2,6)}`)
   })
 
-  test('add creates a knowledge article', () => {
+  test('add creates a knowledge summary', () => {
     const store = getStore()
-    const article = store.add({
+    const summary = store.add({
       title: 'NSCLC immunotherapy review',
       content: 'Immunotherapy has shown significant benefit in NSCLC patients with PD-L1 > 50%.',
       sources: ['fact:001', 'file:ct001'],
     })
-    expect(article).toBeTruthy()
-    expect(article.title).toBe('NSCLC immunotherapy review')
-    expect(article.sources).toContain('fact:001')
-    expect(article.version).toBe(1)
+    expect(summary).toBeTruthy()
+    expect(summary.title).toBe('NSCLC immunotherapy review')
+    expect(summary.sources).toContain('fact:001')
+    expect(summary.version).toBe(1)
   })
 
   test('update increments version', () => {
@@ -41,7 +41,7 @@ describe('P1 — KnowledgeStore', () => {
     expect(updated!.content).toBe('v2 content updated')
   })
 
-  test('all returns articles sorted by updatedAt desc', () => {
+  test('all returns summaries sorted by updatedAt desc', () => {
     const store = getStore()
     store.add({ title: 'First', content: 'a', sources: [] })
     store.add({ title: 'Second', content: 'b', sources: [] })
@@ -51,7 +51,7 @@ describe('P1 — KnowledgeStore', () => {
     expect(all[1].title).toBe('First')
   })
 
-  test('commit + reload preserves articles with versions', () => {
+  test('commit + reload preserves summaries with versions', () => {
     const dir = path.join(baseDir, 'persist')
     fs.mkdirSync(dir, { recursive: true })
 
@@ -79,7 +79,7 @@ describe('P1 — KnowledgeStore', () => {
     expect(store.isStale(a.id)).toBe(false)
   })
 
-  test('getStale returns all stale articles', () => {
+  test('getStale returns all stale summaries', () => {
     const store = getStore()
     const a1 = store.add({ title: 'Fresh', content: 'f', sources: [] })
     const a2 = store.add({ title: 'Stale', content: 's', sources: ['fact:old'] })

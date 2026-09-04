@@ -1,7 +1,7 @@
 import type { EventLog } from '../core/event-log'
 import type { FactsStore, KnowledgeStore } from '../evolution/stores'
 
-export type MemoryNodeType = 'fact' | 'article' | 'gap' | 'skill' | 'entity' | 'document'
+export type MemoryNodeType = 'fact' | 'summary' | 'gap' | 'skill' | 'entity' | 'document'
 
 export type MemoryNodeStatus = 'current' | 'stale' | 'superseded' | 'pending_review'
 
@@ -53,8 +53,8 @@ export interface FactNode extends MemoryNodeBase {
   uncertain?: boolean
 }
 
-export interface ArticleNode extends MemoryNodeBase {
-  type: 'article'
+export interface SummaryNode extends MemoryNodeBase {
+  type: 'summary'
   title: string
   sourceFacts: Array<{ nodeId: string; stableId: string; version: number; snapshot: string }>
   sourceDocuments?: string[]
@@ -98,7 +98,7 @@ export interface DocumentNode extends MemoryNodeBase {
 
 export type MemoryNode =
   | FactNode
-  | ArticleNode
+  | SummaryNode
   | GapNode
   | SkillNode
   | EntityNode
@@ -126,17 +126,17 @@ export interface MemoryGraphState {
 
 export interface CurationPolicy {
   factDelete: 'soft' | 'hard'
-  articleOnFactDelete: 'stale' | 'supersede'
+  summaryOnFactDelete: 'stale' | 'supersede'
   staleGracePeriodMs: number
-  minFactsForArticle: number
+  minFactsForSummary: number
   documentDeleteAutoCleanup: boolean
 }
 
 export const DEFAULT_CURATION_POLICY: CurationPolicy = {
   factDelete: 'soft',
-  articleOnFactDelete: 'stale',
+  summaryOnFactDelete: 'stale',
   staleGracePeriodMs: 7 * 24 * 60 * 60 * 1000,
-  minFactsForArticle: 2,
+  minFactsForSummary: 2,
   documentDeleteAutoCleanup: true,
 }
 
@@ -199,7 +199,7 @@ export interface EditFactInput {
   studyId?: string
 }
 
-export interface AddArticleInput {
+export interface AddSummaryInput {
   title: string
   content: string
   sourceFactNodeIds?: string[]
@@ -209,7 +209,7 @@ export interface AddArticleInput {
   createdBy?: MemoryCreatedBy
 }
 
-export interface EditArticleInput {
+export interface EditSummaryInput {
   title?: string
   content?: string
 }
@@ -249,8 +249,8 @@ export function isFactCurrent(fact: FactNode): boolean {
   return fact.status === 'current' && fact.count > 0
 }
 
-/** An article is stale when any of its source facts were superseded. */
-export function isArticleStale(article: ArticleNode, supersededFactStableIds: string[]): boolean {
-  if (article.status === 'superseded') return true
-  return article.sourceFacts.some((s) => supersededFactStableIds.includes(s.stableId))
+/** An summary is stale when any of its source facts were superseded. */
+export function isSummaryStale(summary: SummaryNode, supersededFactStableIds: string[]): boolean {
+  if (summary.status === 'superseded') return true
+  return summary.sourceFacts.some((s) => supersededFactStableIds.includes(s.stableId))
 }

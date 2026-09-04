@@ -15,7 +15,7 @@ export interface KbPickerItem {
   id: string;
   title: string;
   summary: string;
-  kind: 'article' | 'document';
+  kind: 'summary' | 'document';
 }
 
 interface KbPickerProps {
@@ -58,7 +58,7 @@ export function KbPicker({ open, onClose, onConfirm, initialItems = [], max = 3 
     setSearching(true);
     try {
       const r = await api.getKnowledgePicker(q);
-      setResults(r.articles || []);
+      setResults(r.summaries || []);
     } catch {
       setResults([]);
     } finally {

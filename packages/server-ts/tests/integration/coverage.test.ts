@@ -5,10 +5,10 @@ import os from 'os'
 import { computeScopeCoverage, buildCoverageDashboard, getPendingOccupiedFactIds } from '../../src/memory/coverage.js'
 
 /**
- * #816 — facts→article 覆盖率:
+ * #816 — facts→summary 覆盖率:
  * - 患者隔离口径(global 只统计无 scope facts);
- * - pending article 提案占用即"覆盖在路上";
- * - 失效传播(supersede article)后覆盖率实时下降。
+ * - pending summary 提案占用即"覆盖在路上";
+ * - 失效传播(supersede summary)后覆盖率实时下降。
  */
 
 let baseDir: string
@@ -47,27 +47,27 @@ describe('#816 computeScopeCoverage — scope isolation', () => {
     expect(p.uncoveredSample).toContain('患者事实 A1')
   })
 
-  test('article 覆盖后 ratio 上升;article supersede(失效传播)后实时回落', async () => {
+  test('summary 覆盖后 ratio 上升;summary supersede(失效传播)后实时回落', async () => {
     const f1 = memory.addFact({ content: '事实一', category: 'exam', importance: 4, sourceType: 'general' }, 'system')
     memory.addFact({ content: '事实二', category: 'exam', importance: 4, sourceType: 'general' }, 'system')
-    const article = memory.addArticle({ title: 'T', content: 'C', sourceFactStableIds: [f1.stableId] }, 'system')
+    const summary = memory.addSummary({ title: 'T', content: 'C', sourceFactStableIds: [f1.stableId] }, 'system')
 
     const covered = await computeScopeCoverage('user_cov', memory, {})
     expect(covered.coveredFacts).toBe(1)
     expect(covered.ratio).toBe(0.5)
 
-    // 失效传播路径:删除源 fact → article stale → 覆盖率回落
+    // 失效传播路径:删除源 fact → summary stale → 覆盖率回落
     memory.deleteFact(f1.staleId || f1.stableId, 'system')
     const after = await computeScopeCoverage('user_cov', memory, {})
     expect(after.ratio).toBeLessThan(covered.ratio)
-    void article
+    void summary
   })
 
-  test('pending article 提案占用 → 视为已覆盖(getPendingOccupiedFactIds)', async () => {
+  test('pending summary 提案占用 → 视为已覆盖(getPendingOccupiedFactIds)', async () => {
     const f = memory.addFact({ content: '待审占用事实', category: 'exam', importance: 4, sourceType: 'general' }, 'system')
     await prisma.memoryProposal.create({
       data: {
-        userId: 'user_cov', scopeType: 'global', kind: 'article',
+        userId: 'user_cov', scopeType: 'global', kind: 'summary',
         content: '待审文章', importance: 3, confidence: 'medium',
         relatedFacts: JSON.stringify([f.stableId]),
         status: 'pending', createdAt: new Date().toISOString(),
@@ -96,7 +96,7 @@ describe('#816 buildCoverageDashboard', () => {
     }
     // pa 覆盖 3/4,pb 覆盖 0/4
     const paFacts = (memory.graph.getCurrentNodesByType('fact') as any[]).filter((f) => f.patientHash === 'pa')
-    memory.addArticle({ title: 'T', content: 'C', sourceFactStableIds: paFacts.slice(0, 3).map((f) => f.stableId) }, 'system')
+    memory.addSummary({ title: 'T', content: 'C', sourceFactStableIds: paFacts.slice(0, 3).map((f) => f.stableId) }, 'system')
 
     const dash = await buildCoverageDashboard('user_cov', memory)
     expect(dash.hintThreshold).toBe(0.6)

@@ -98,7 +98,7 @@ describe('Patients', () => {
     expect(res.statusCode).toBe(404)
   })
 
-  test('delete patient cascades to memory facts and marks dependent articles stale', async () => {
+  test('delete patient cascades to memory facts and marks dependent summaries stale', async () => {
     const app = await getApp()
     const userId = await getAuthUserId()
     const ctx = getUserContext(userId)
@@ -114,13 +114,13 @@ describe('Patients', () => {
       { content: 'Patient-specific fact', category: 'fact', importance: 4, sourceType: 'patient', patientHash: hash },
       'test',
     )
-    const article = ctx.memory.addArticle(
-      { title: 'Derived article', content: 'Article body', sourceFactStableIds: [fact.stableId] },
+    const summary = ctx.memory.addSummary(
+      { title: 'Derived summary', content: 'Summary body', sourceFactStableIds: [fact.stableId] },
       'test',
     )
 
     expect(ctx.facts.all().some((f: any) => f.id === fact.stableId)).toBe(true)
-    expect(ctx.memory.graph.getLatestByStableId(article.stableId)?.status).toBe('current')
+    expect(ctx.memory.graph.getLatestByStableId(summary.stableId)?.status).toBe('current')
 
     const del = await app.inject({
       method: 'DELETE', url: `/api/v1/dicom/patients/${hash}`,
@@ -132,9 +132,9 @@ describe('Patients', () => {
 
     expect(ctx.facts.all().some((f: any) => f.id === fact.stableId)).toBe(false)
 
-    const articleNode = ctx.memory.graph.getLatestByStableId(article.stableId)
-    expect(articleNode).toBeDefined()
-    expect(['stale', 'superseded']).toContain(articleNode!.status)
+    const summaryNode = ctx.memory.graph.getLatestByStableId(summary.stableId)
+    expect(summaryNode).toBeDefined()
+    expect(['stale', 'superseded']).toContain(summaryNode!.status)
   })
 
   test('memory graph returns edges mapped to stable ids', async () => {
@@ -146,8 +146,8 @@ describe('Patients', () => {
       { content: 'Graph fact', category: 'fact', importance: 3, sourceType: 'general' },
       'test',
     )
-    const article = ctx.memory.addArticle(
-      { title: 'Graph article', content: 'Graph body', sourceFactStableIds: [fact.stableId] },
+    const summary = ctx.memory.addSummary(
+      { title: 'Graph summary', content: 'Graph body', sourceFactStableIds: [fact.stableId] },
       'test',
     )
 
@@ -158,7 +158,7 @@ describe('Patients', () => {
     expect(res.statusCode).toBe(200)
     const data = JSON.parse(res.payload)
 
-    const edge = data.relations.find((r: any) => r.sourceId === article.stableId && r.targetId === fact.stableId)
+    const edge = data.relations.find((r: any) => r.sourceId === summary.stableId && r.targetId === fact.stableId)
     expect(edge).toBeDefined()
     expect(edge.relation).toBe('depends_on')
   })

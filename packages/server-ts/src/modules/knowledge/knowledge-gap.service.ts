@@ -5,7 +5,7 @@
  */
 
 import prisma from '../../common/prisma'
-import type { Fact, KnowledgeArticle } from '../../evolution/stores'
+import type { Fact, KnowledgeSummary } from '../../evolution/stores'
 
 export type GapStatus = 'open' | 'answered' | 'ignored'
 export type GapSource = 'chat' | 'user' | 'sidecar'
@@ -73,7 +73,7 @@ export interface KnowledgeGapService {
   resolve(id: string, answer: string): Promise<KnowledgeGap | null>
   ignore(id: string): Promise<KnowledgeGap | null>
   getStats(workspaceId: string): Promise<GapStats>
-  suggestAnswer(id: string, facts: Fact[], knowledge: KnowledgeArticle[]): Promise<string[]>
+  suggestAnswer(id: string, facts: Fact[], knowledge: KnowledgeSummary[]): Promise<string[]>
 }
 
 function mapPrismaToGap(row: any): KnowledgeGap {
@@ -284,7 +284,7 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
     }
   }
 
-  async suggestAnswer(id: string, facts: Fact[], knowledge: KnowledgeArticle[]): Promise<string[]> {
+  async suggestAnswer(id: string, facts: Fact[], knowledge: KnowledgeSummary[]): Promise<string[]> {
     const gap = await this.getById(id)
     if (!gap) return []
 
@@ -409,7 +409,7 @@ export class InMemoryKnowledgeGapService implements KnowledgeGapService {
     }
   }
 
-  async suggestAnswer(id: string, facts: Fact[], knowledge: KnowledgeArticle[]): Promise<string[]> {
+  async suggestAnswer(id: string, facts: Fact[], knowledge: KnowledgeSummary[]): Promise<string[]> {
     const gap = await this.getById(id)
     if (!gap) return []
 

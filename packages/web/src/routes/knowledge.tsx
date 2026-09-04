@@ -7,7 +7,7 @@ import { Button, Card, Skeleton, Badge, Input, Textarea } from '@/components/ui'
 import { cn } from '@/lib/utils';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { NextBestActions } from '@/components/NextBestActions';
-import type { Article } from '@/lib/types';
+import type { Summary } from '@/lib/types';
 import { KB_SOURCE_TYPES, type KbSourceType } from '@heurion/contracts'; // #744/#750 single source of truth
 import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X, ChevronLeft, ChevronRight, GitGraph, Download, Image as ImageIcon } from 'lucide-react';
 
@@ -41,10 +41,10 @@ const PIPELINE_BADGE: Record<PipelineStage, { key: string; cls: string }> = {
   skipped: { key: 'kb.pipelineSkipped', cls: 'bg-warning/10 text-warning' },
 };
 
-type Tab = 'articles' | 'facts' | 'gaps' | 'tools' | 'files';
+type Tab = 'summaries' | 'facts' | 'gaps' | 'tools' | 'files';
 
 const TABS: { key: Tab; label: string; icon: typeof BookOpen }[] = [
-  { key: 'articles', label: 'Articles', icon: BookOpen },
+  { key: 'summaries', label: 'Summaries', icon: BookOpen },
   { key: 'facts', label: 'Facts', icon: Brain },
   { key: 'gaps', label: 'Pending', icon: Clock },
   { key: 'tools', label: 'Tools', icon: Wrench },
@@ -74,13 +74,13 @@ function usePagination<T>(items: T[], page: number, pageSize = PAGE_SIZE) {
 export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  // #761/#762: 支持 ?view=gaps|articles 深链(NBA 卡跳转定位)。
+  // #761/#762: 支持 ?view=gaps|summaries 深链(NBA 卡跳转定位)。
   const [tab, setTabState] = useState<Tab>(() => {
     const v = new URLSearchParams(window.location.search).get('view');
-    return (['articles', 'facts', 'gaps', 'tools', 'files'] as const).includes(v as Tab) ? (v as Tab) : 'articles';
+    return (['summaries', 'facts', 'gaps', 'tools', 'files'] as const).includes(v as Tab) ? (v as Tab) : 'summaries';
   });
   const setTab = setTabState;
-  const [articles, setArticles] = useState<Article[]>([]);
+  const [summaries, setSummaries] = useState<Summary[]>([]);
   const [facts, setFacts] = useState<Fact[]>([]);
   const [gaps, setGaps] = useState<Gap[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
@@ -94,31 +94,31 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
   const [editContent, setEditContent] = useState('');
   const [editSource, setEditSource] = useState<SourceType>('general');
 
-  const [editingArticle, setEditingArticle] = useState<Article | null>(null);
-  const [editArticleTitle, setEditArticleTitle] = useState('');
-  const [editArticleContent, setEditArticleContent] = useState('');
-  const [articleBusy, setArticleBusy] = useState<Set<string>>(new Set());
+  const [editingSummary, setEditingSummary] = useState<Summary | null>(null);
+  const [editSummaryTitle, setEditSummaryTitle] = useState('');
+  const [editSummaryContent, setEditSummaryContent] = useState('');
+  const [summaryBusy, setSummaryBusy] = useState<Set<string>>(new Set());
 
   // Gap answering
   const [answeringGapId, setAnsweringGapId] = useState<string | null>(null);
   const [gapAnswer, setGapAnswer] = useState('');
 
   // Filters
-  const [articleFilter, setArticleFilter] = useState('');
+  const [summaryFilter, setSummaryFilter] = useState('');
   const [factFilter, setFactFilter] = useState('');
   const [gapFilter, setGapFilter] = useState('');
   const [toolFilter, setToolFilter] = useState('');
   const [fileFilter, setFileFilter] = useState('');
 
   // Pagination
-  const [articlePage, setArticlePage] = useState(1);
+  const [summaryPage, setSummaryPage] = useState(1);
   const [factPage, setFactPage] = useState(1);
   const [gapPage, setGapPage] = useState(1);
   const [toolPage, setToolPage] = useState(1);
   const [filePage, setFilePage] = useState(1);
 
   // Selections
-  const [selectedArticles, setSelectedArticles] = useState<Set<string>>(new Set());
+  const [selectedSummaries, setSelectedSummaries] = useState<Set<string>>(new Set());
   const [selectedFacts, setSelectedFacts] = useState<Set<string>>(new Set());
   const [selectedGaps, setSelectedGaps] = useState<Set<string>>(new Set());
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
@@ -138,7 +138,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
     setLoading(true);
     setLoadErrors([]);
     Promise.all([
-      api.getKnowledgeArticles().then(r => setArticles(r.articles)).catch(recordLoadError(t('kb.loadArticles', '文章加载失败'))),
+      api.getKnowledgeSummaries().then(r => setSummaries(r.summaries)).catch(recordLoadError(t('kb.loadSummaries', '文章加载失败'))),
       api.getFacts().then(r => setFacts(r.facts)).catch(recordLoadError(t('kb.loadFacts', '事实加载失败'))),
       api.getKnowledgeGaps().then(r => setGaps(r.gaps)).catch(recordLoadError(t('kb.loadGaps', 'Gaps 加载失败'))),
       api.getKnowledgeTools().then(r => setTools(r.tools)).catch(recordLoadError(t('kb.loadTools', '工具加载失败'))),
@@ -158,14 +158,14 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  const staleCount = articles.filter(a => a.status === 'stale').length;
+  const staleCount = summaries.filter(a => a.status === 'stale').length;
   const pendingCount = gaps.filter(g => g.status === 'open').length;
 
-  const filteredArticles = useMemo(() => {
-    const q = normalizeSearch(articleFilter);
-    if (!q) return articles;
-    return articles.filter(a => normalizeSearch(a.title).includes(q) || normalizeSearch(a.content).includes(q));
-  }, [articles, articleFilter]);
+  const filteredSummaries = useMemo(() => {
+    const q = normalizeSearch(summaryFilter);
+    if (!q) return summaries;
+    return summaries.filter(a => normalizeSearch(a.title).includes(q) || normalizeSearch(a.content).includes(q));
+  }, [summaries, summaryFilter]);
 
   const filteredFacts = useMemo(() => {
     const q = normalizeSearch(factFilter);
@@ -191,7 +191,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
     return files.filter(f => normalizeSearch(f.name).includes(q));
   }, [files, fileFilter]);
 
-  const articlePagination = usePagination(filteredArticles, articlePage);
+  const summaryPagination = usePagination(filteredSummaries, summaryPage);
   const factPagination = usePagination(filteredFacts, factPage);
   const gapPagination = usePagination(filteredGaps, gapPage);
   const toolPagination = usePagination(filteredTools, toolPage);
@@ -228,20 +228,20 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
     loadAll();
   };
 
-  const regenerateArticle = async (id: string) => {
-    setArticleBusy(prev => new Set(prev).add(id));
-    try { await api.regenerateKnowledgeArticle(id); } catch (err) { setArticleBusy(prev => { const next = new Set(prev); next.delete(id); return next; }); setActionError(`重新生成失败:${(err as Error)?.message || '请稍后再试'}`); return; }
-    setArticleBusy(prev => { const next = new Set(prev); next.delete(id); return next; });
+  const regenerateSummary = async (id: string) => {
+    setSummaryBusy(prev => new Set(prev).add(id));
+    try { await api.regenerateKnowledgeSummary(id); } catch (err) { setSummaryBusy(prev => { const next = new Set(prev); next.delete(id); return next; }); setActionError(`重新生成失败:${(err as Error)?.message || '请稍后再试'}`); return; }
+    setSummaryBusy(prev => { const next = new Set(prev); next.delete(id); return next; });
     loadAll();
   };
 
-  const saveArticle = async () => {
-    if (!editingArticle) return;
+  const saveSummary = async () => {
+    if (!editingSummary) return;
     const patch: {title?: string; content?: string} = {};
-    if (editArticleTitle.trim()) patch.title = editArticleTitle.trim();
-    if (editArticleContent.trim()) patch.content = editArticleContent.trim();
-    await api.updateKnowledgeArticle(editingArticle.id, patch).catch(() => {});
-    setEditingArticle(null);
+    if (editSummaryTitle.trim()) patch.title = editSummaryTitle.trim();
+    if (editSummaryContent.trim()) patch.content = editSummaryContent.trim();
+    await api.updateKnowledgeSummary(editingSummary.id, patch).catch(() => {});
+    setEditingSummary(null);
     loadAll();
   };
 
@@ -415,28 +415,28 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
             </div>
           ) : (
             <>
-              {/* ── Articles ── */}
-              {tab === 'articles' && (
+              {/* ── Summaries ── */}
+              {tab === 'summaries' && (
                 <div className="space-y-4">
                   {renderToolbar(
-                    articleFilter,
-                    setArticleFilter,
-                    setArticlePage,
-                    selectedArticles,
-                    setSelectedArticles,
-                    articlePagination.pageItems.map(a => a.id),
-                    'articles',
-                    (ids: string[]) => api.deleteKnowledgeArticles(ids),
-                    'Filter articles by title or content...',
+                    summaryFilter,
+                    setSummaryFilter,
+                    setSummaryPage,
+                    selectedSummaries,
+                    setSelectedSummaries,
+                    summaryPagination.pageItems.map(a => a.id),
+                    'summaries',
+                    (ids: string[]) => api.deleteKnowledgeSummaries(ids),
+                    'Filter summaries by title or content...',
                   )}
-                  {articlePagination.pageItems.length === 0 && (
+                  {summaryPagination.pageItems.length === 0 && (
                     <EmptyState
                       icon={<BookOpen size={24} />}
-                      title="No knowledge articles yet"
-                      hint="Articles are auto-generated when 3+ related facts accumulate."
+                      title="No knowledge summaries yet"
+                      hint="Summaries are auto-generated when 3+ related facts accumulate."
                     />
                   )}
-                  {articlePagination.pageItems.map(a => (
+                  {summaryPagination.pageItems.map(a => (
                     <Card key={a.id} className={cn('p-4', a.status === 'stale' && 'border-warning/50')}>
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
@@ -444,8 +444,8 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                             <input
                               type="checkbox"
                               className="rounded border-border mr-2"
-                              checked={selectedArticles.has(a.id)}
-                              onChange={() => toggleSelection(setSelectedArticles, a.id)}
+                              checked={selectedSummaries.has(a.id)}
+                              onChange={() => toggleSelection(setSelectedSummaries, a.id)}
                             />
                             <h3 className="font-medium text-text-primary truncate">{a.title || 'Untitled'}</h3>
                             <Badge variant="default">v{a.version || 1}</Badge>
@@ -467,15 +467,15 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                         <div className="flex items-center gap-1 ml-3 shrink-0">
                           <button
                             className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-text-primary"
-                            onClick={() => { setEditingArticle(a); setEditArticleTitle(a.title || ''); setEditArticleContent(a.content || ''); }}
-                            title="Edit article"
+                            onClick={() => { setEditingSummary(a); setEditSummaryTitle(a.title || ''); setEditSummaryContent(a.content || ''); }}
+                            title="Edit summary"
                           ><Edit3 size={14} /></button>
                           {a.status === 'stale' && (
                             <Button
                               size="sm"
                               variant="secondary"
-                              isLoading={articleBusy.has(a.id)}
-                              onClick={() => regenerateArticle(a.id)}
+                              isLoading={summaryBusy.has(a.id)}
+                              onClick={() => regenerateSummary(a.id)}
                             ><RotateCcw size={14} className="mr-1" /> Regenerate</Button>
                           )}
                         </div>
@@ -483,32 +483,32 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                     </Card>
                   ))}
 
-                  {/* Article edit modal */}
-                  {editingArticle && (
+                  {/* Summary edit modal */}
+                  {editingSummary && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
                       <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto p-5">
                         <div className="flex items-center justify-between mb-4">
-                          <h3 className="text-lg font-semibold text-text-primary">Edit Article</h3>
-                          <button onClick={() => setEditingArticle(null)}><X size={18} className="text-text-tertiary" /></button>
+                          <h3 className="text-lg font-semibold text-text-primary">Edit Summary</h3>
+                          <button onClick={() => setEditingSummary(null)}><X size={18} className="text-text-tertiary" /></button>
                         </div>
                         <div className="space-y-3">
                           <div>
                             <label className="block text-sm font-medium text-text-secondary mb-1">Title</label>
-                            <Input value={editArticleTitle} onChange={e => setEditArticleTitle(e.target.value)} />
+                            <Input value={editSummaryTitle} onChange={e => setEditSummaryTitle(e.target.value)} />
                           </div>
                           <div>
                             <label className="block text-sm font-medium text-text-secondary mb-1">Content</label>
-                            <Textarea value={editArticleContent} onChange={e => setEditArticleContent(e.target.value)} rows={12} />
+                            <Textarea value={editSummaryContent} onChange={e => setEditSummaryContent(e.target.value)} rows={12} />
                           </div>
                           <div className="flex gap-2 pt-2">
-                            <Button size="sm" onClick={saveArticle}><Check size={14} className="mr-1" /> Save</Button>
-                            <Button size="sm" variant="secondary" onClick={() => setEditingArticle(null)}>Cancel</Button>
+                            <Button size="sm" onClick={saveSummary}><Check size={14} className="mr-1" /> Save</Button>
+                            <Button size="sm" variant="secondary" onClick={() => setEditingSummary(null)}>Cancel</Button>
                           </div>
                         </div>
                       </Card>
                     </div>
                   )}
-                  {renderPagination(articlePagination.page, articlePagination.totalPages, setArticlePage, articlePagination.start, filteredArticles.length)}
+                  {renderPagination(summaryPagination.page, summaryPagination.totalPages, setSummaryPage, summaryPagination.start, filteredSummaries.length)}
                 </div>
               )}
 

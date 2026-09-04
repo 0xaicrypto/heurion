@@ -1,9 +1,9 @@
 import type { MemoryGraph } from '../memory.graph'
-import type { FactNode, ArticleNode, DocumentNode } from '../memory.types'
-import { resolveArticleStaleness } from '../staleness.js'
+import type { FactNode, SummaryNode, DocumentNode } from '../memory.types'
+import { resolveSummaryStaleness } from '../staleness.js'
 
 export interface PropagationResult {
-  staleArticleStableIds: string[]
+  staleSummaryStableIds: string[]
   supersededFactStableIds: string[]
   reopenedGapStableIds: string[]
 }
@@ -14,7 +14,7 @@ export class CurationEngine {
   /** Called after a fact is edited or soft-deleted. */
   propagateFactChange(factStableId: string): PropagationResult {
     const result: PropagationResult = {
-      staleArticleStableIds: [],
+      staleSummaryStableIds: [],
       supersededFactStableIds: [],
       reopenedGapStableIds: [],
     }
@@ -25,30 +25,30 @@ export class CurationEngine {
     // Collect dependents across all versions of this fact
     const versionIds = this.graph.getVersions(factStableId).map(v => v.id)
     const dependentNodeIds = Array.from(new Set(versionIds.flatMap(id => this.graph.getDependents(id))))
-    for (const articleNodeId of dependentNodeIds) {
-      const article = this.graph.getNode(articleNodeId) as ArticleNode | undefined
-      if (!article) continue
-      if (article.status === 'superseded') continue
+    for (const summaryNodeId of dependentNodeIds) {
+      const summary = this.graph.getNode(summaryNodeId) as SummaryNode | undefined
+      if (!summary) continue
+      if (summary.status === 'superseded') continue
 
-      // #813: 判定统一走 resolveArticleStaleness(与注入侧同源)。
-      // 事件路径只提供触发时机;引用了编辑后新版本的 article 不再被误标。
-      const staleness = resolveArticleStaleness(this.graph, article)
+      // #813: 判定统一走 resolveSummaryStaleness(与注入侧同源)。
+      // 事件路径只提供触发时机;引用了编辑后新版本的 summary 不再被误标。
+      const staleness = resolveSummaryStaleness(this.graph, summary)
       if (!staleness.stale) continue
 
-      this.graph.markStatus(articleNodeId, 'stale')
-      // staleBecause 保持裸 fact stableId(article-view/legacy 按裸 id 反查)。
-      const staleBecause = new Set(article.staleBecause || [])
+      this.graph.markStatus(summaryNodeId, 'stale')
+      // staleBecause 保持裸 fact stableId(summary-view/legacy 按裸 id 反查)。
+      const staleBecause = new Set(summary.staleBecause || [])
       for (const r of staleness.reasons) staleBecause.add(r.includes(':') ? r.slice(r.indexOf(':') + 1) : r)
-      this.graph.updateNode(articleNodeId, {
+      this.graph.updateNode(summaryNodeId, {
         staleBecause: Array.from(staleBecause),
-      } as Partial<ArticleNode>)
-      result.staleArticleStableIds.push(article.stableId)
+      } as Partial<SummaryNode>)
+      result.staleSummaryStableIds.push(summary.stableId)
 
-      // If the article now has zero current/replaced sources, supersede it.
+      // If the summary now has zero current/replaced sources, supersede it.
       // A source that was edited still counts because a newer version exists.
-      const currentDeps = this.countCurrentDependencies(articleNodeId)
+      const currentDeps = this.countCurrentDependencies(summaryNodeId)
       if (currentDeps === 0) {
-        this.graph.markStatus(articleNodeId, 'superseded')
+        this.graph.markStatus(summaryNodeId, 'superseded')
       }
     }
 
@@ -71,7 +71,7 @@ export class CurationEngine {
   /** Called after a document is soft-deleted. */
   propagateDocumentDelete(documentStableId: string): PropagationResult {
     const result: PropagationResult = {
-      staleArticleStableIds: [],
+      staleSummaryStableIds: [],
       supersededFactStableIds: [],
       reopenedGapStableIds: [],
     }
@@ -90,7 +90,7 @@ export class CurationEngine {
       result.supersededFactStableIds.push(fact.stableId)
 
       const sub = this.propagateFactChange(fact.stableId)
-      result.staleArticleStableIds.push(...sub.staleArticleStableIds)
+      result.staleSummaryStableIds.push(...sub.staleSummaryStableIds)
       result.reopenedGapStableIds.push(...sub.reopenedGapStableIds)
     }
 
@@ -98,9 +98,9 @@ export class CurationEngine {
     return result
   }
 
-  private countCurrentDependencies(articleNodeId: string): number {
+  private countCurrentDependencies(summaryNodeId: string): number {
     return this.graph
-      .getRelationsFrom(articleNodeId)
+      .getRelationsFrom(summaryNodeId)
       .filter(r => r.relation === 'depends_on')
       .map(r => this.graph.getNode(r.targetId))
       .filter(n => {

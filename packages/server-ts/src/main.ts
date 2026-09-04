@@ -10,6 +10,7 @@ import { startEvolutionWorker } from './modules/evolution/evolution.worker.js'
 import { createGapResearchScheduler, type GapResearchScheduler } from './modules/knowledge/gap-research.service.js'
 import { createExperienceSynthesisScheduler } from './modules/skills/experience-synthesis.service.js'
 import { makeLogger } from './common/logger.js'
+import { ensureArticleSummaryRenameMigration } from './common/kb-rename-migration.js'
 
 const log = makeLogger('db')
 
@@ -106,6 +107,9 @@ async function main() {
 
   // #746: fail fast on missing tables instead of degrading silently later.
   if (process.env.NODE_ENV !== 'test') await assertSchema()
+
+  // KB 重命名(article→summary)数据迁移 — 幂等,详情见 kb-rename-migration.ts。
+  await ensureArticleSummaryRenameMigration()
 
   // #764-admin: 回灌 admin 全局模型覆盖(持久化于 userSetting)
   try {

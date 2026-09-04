@@ -13,7 +13,7 @@ export interface DocReferences {
   refDeleting: string | null;
   loadReferences: () => Promise<void>;
   handleAddReference: () => Promise<void>;
-  handleKbPickConfirm: (items: Array<{ id: string; title: string; kind: 'article' | 'document' }>) => Promise<void>;
+  handleKbPickConfirm: (items: Array<{ id: string; title: string; kind: 'summary' | 'document' }>) => Promise<void>;
   deleteReference: (referenceId: string) => Promise<void>;
 }
 
@@ -59,8 +59,8 @@ export function useDocReferences(input: {
     }
   };
 
-  // #757: 共享 KbPicker — 从知识库选文章/文件直接登记为参考(kind=article/file)。
-  const handleKbPickConfirm = async (items: Array<{ id: string; title: string; kind: 'article' | 'document' }>) => {
+  // #757: 共享 KbPicker — 从知识库选文章/文件直接登记为参考(kind=summary/file)。
+  const handleKbPickConfirm = async (items: Array<{ id: string; title: string; kind: 'summary' | 'document' }>) => {
     if (!docId || items.length === 0) return;
     for (const it of items) {
       try {

@@ -24,7 +24,7 @@ export interface UnifiedHit {
   category?: string
   importance?: number
   /**
-   * #748/#749: unified identity — fact/article stableId, or for document
+   * #748/#749: unified identity — fact/summary stableId, or for document
    * chunks the `fileId::cN` chunk key (strip the ::cN suffix to get the doc).
    */
   stableId?: string
@@ -116,12 +116,12 @@ export async function unifiedSearch(
         stableId: kw.stableId ?? m.sourceIds[0],
       })
     } else {
-      // 向量独有命中 — 按 embedding 记录的 type 标注(graph fact/article/document)
+      // 向量独有命中 — 按 embedding 记录的 type 标注(graph fact/summary/document)
       const vtype = vecTypeById.get(m.sourceIds[0])
       const meta = vecMetaById.get(m.sourceIds[0]) ?? {}
       hits.push({
         content: m.content,
-        kind: vtype === 'fact' ? 'fact' : vtype === 'article' ? 'knowledge' : 'document',
+        kind: vtype === 'fact' ? 'fact' : vtype === 'summary' ? 'knowledge' : 'document',
         source: m.sourceIds[0],
         score: m.score,
         // #748: real factContentHash parity — keyword/vector dedup keys now

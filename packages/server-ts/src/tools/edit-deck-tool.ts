@@ -27,7 +27,7 @@ export class EditDeckTool extends BaseTool {
 
   get description(): string {
     return [
-      'Edit the AI-organized deck (PPT asset) of the current writing session — the deck is separate from the document body (editing it never touches the article text).',
+      'Edit the AI-organized deck (PPT asset) of the current writing session — the deck is separate from the document body (editing it never touches the summary text).',
       'Requires an existing deck (generated via insert_asset export organize=true, or uploaded PPT).',
       "Actions: 'update' = replace slide N's title/bullets; 'delete' = remove slide N; 'insert_after' = insert a new slide after slide N.",
       'slide_index is 1-based. See ## Current Deck in the context for the current deck content.',

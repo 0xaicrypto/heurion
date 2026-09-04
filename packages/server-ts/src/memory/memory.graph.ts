@@ -22,6 +22,10 @@ export class MemoryGraph {
     if (!current) return
     if (Array.isArray(current.nodes)) {
       for (const node of current.nodes) {
+        // KB 重命名(article→summary)兼容:旧持久化状态的节点类型归一化。
+        // 仅内存态 — 下一次 commit() 落盘即为新形态;reload()(含回滚路径)
+        // 也会重新经过这里,幂等。
+        if ((node as any).type === 'article') (node as any).type = 'summary'
         this.nodes.set(node.id, node)
         this.indexNode(node)
       }

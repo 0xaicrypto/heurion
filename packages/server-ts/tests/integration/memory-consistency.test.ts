@@ -68,13 +68,13 @@ describe('memory consistency', () => {
     expect(legacyFacts.some((f: any) => f.content.includes('血压 140/90'))).toBe(false)
   }, 30000)
 
-  test('scenario 3c: addArticle graph failure rolls back the provisional legacy write (#192)', () => {
+  test('scenario 3c: addSummary graph failure rolls back the provisional legacy write (#192)', () => {
     const m1 = makeMemory()
     const fact = m1.addFact({ content: '患者白细胞升高', category: 'exam', importance: 4, sourceType: 'doctor' }, 'system') as any
     const graphCommitSpy = vi.spyOn(m1['graph'], 'commit')
     graphCommitSpy.mockImplementationOnce(() => { throw new Error('graph disk full') })
 
-    expect(() => m1.addArticle({
+    expect(() => m1.addSummary({
       title: '感染指标文章',
       content: '基于白细胞数据的文章',
       provenance: { sourceKind: 'proposal', sourceRef: 'p1' },
@@ -82,10 +82,10 @@ describe('memory consistency', () => {
     }, 'system')).toThrow('graph disk full')
 
     const m2 = makeMemory()
-    const graphArticles = m2.graph.getCurrentNodesByType('article') as any[]
-    const legacyArticles = m2['legacyKnowledge'].all()
-    expect(graphArticles.some((a: any) => a.title === '感染指标文章')).toBe(false)
-    expect(legacyArticles.some((a: any) => a.title === '感染指标文章')).toBe(false)
+    const graphSummaries = m2.graph.getCurrentNodesByType('summary') as any[]
+    const legacySummaries = m2['legacyKnowledge'].all()
+    expect(graphSummaries.some((a: any) => a.title === '感染指标文章')).toBe(false)
+    expect(legacySummaries.some((a: any) => a.title === '感染指标文章')).toBe(false)
   }, 30000)
 
   test('scenario 3d: supersedeFact graph failure keeps the fact current in both views (#192)', () => {

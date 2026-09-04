@@ -125,9 +125,9 @@ export async function agentRouter(app: FastifyInstance, opts: AgentRouterOptions
       memory_fact_added: 'Added fact',
       memory_fact_edited: 'Edited fact',
       memory_fact_deleted: 'Deleted fact',
-      memory_article_added: 'Added article',
-      memory_article_edited: 'Edited article',
-      memory_article_deleted: 'Deleted article',
+      memory_summary_added: 'Added summary',
+      memory_article_edited: 'Edited summary',
+      memory_article_deleted: 'Deleted summary',
       memory_document_uploaded: 'Uploaded document',
       memory_document_deleted: 'Deleted document',
       memory_gap_detected: 'Detected gap',
@@ -142,7 +142,7 @@ export async function agentRouter(app: FastifyInstance, opts: AgentRouterOptions
       const label = labelMap[evt.eventType] || evt.eventType
       let summary = evt.content
 
-      const nodeId = (meta.factId || meta.articleId || meta.documentId || meta.gapId) as string | undefined
+      const nodeId = (meta.factId || meta.summaryId || meta.documentId || meta.gapId) as string | undefined
       if (nodeId) {
         const node = ctx.memory.graph.getLatestByStableId(nodeId)
         if (node) {

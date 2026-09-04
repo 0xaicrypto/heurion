@@ -119,7 +119,7 @@ app.get('/api/v1/memory/health', async (request) => {
   const nowIso = new Date().toISOString()
 
   const { getCategoryQuality } = await import('../../memory/extraction-quality.js')
-  const [quality, byCategory, contradictions, staleRows, archivedRows, graphFacts, graphArticles, gaps] = await Promise.all([
+  const [quality, byCategory, contradictions, staleRows, archivedRows, graphFacts, graphSummaries, gaps] = await Promise.all([
     getCategoryQuality(userId),
     (prisma as any).memoryProposal.findMany({
       where: { userId, status: { in: ['approved', 'rejected'] }, resolvedAt: { not: null } },
@@ -134,7 +134,7 @@ app.get('/api/v1/memory/health', async (request) => {
     }),
     (prisma as any).memoryProposal.count({ where: { userId, archivedAt: { not: null } } }),
     ctx.memory.graph.getCurrentNodesByType('fact'),
-    ctx.memory.graph.getCurrentNodesByType('article'),
+    ctx.memory.graph.getCurrentNodesByType('summary'),
     (prisma as any).knowledgeGap.count({ where: { userId, status: 'open' } }),
   ])
 
@@ -158,7 +158,7 @@ app.get('/api/v1/memory/health', async (request) => {
     },
     scale: {
       facts: graphFacts.length,
-      articles: graphArticles.length,
+      summaries: graphSummaries.length,
       open_gaps: gaps,
       pending: staleRows.length + archivedRows,
       episodes: ctx.episodes.all().length,

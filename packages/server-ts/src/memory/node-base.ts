@@ -1,6 +1,6 @@
 /**
  * Shared collaborator plumbing for the per-node-type memory services
- * (#682). Fact/Article/Document/Gap services each handle their own node
+ * (#682). Fact/Summary/Document/Gap services each handle their own node
  * type but share: graph + legacy projection + propagation + curation +
  * event log, and the dual-store atomicity helpers.
  */
@@ -51,7 +51,7 @@ export abstract class MemoryNodeService {
   }
 
   protected applyPropagationToLegacy(propagation: {
-    staleArticleStableIds: string[]
+    staleSummaryStableIds: string[]
     supersededFactStableIds: string[]
     reopenedGapStableIds: string[]
   }) {

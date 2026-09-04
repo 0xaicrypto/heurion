@@ -71,7 +71,7 @@ export class SearchNodeTool extends BaseTool {
       properties: {
         patient_hash: { type: 'string', description: 'PHI-safe patient hash to search within.' },
         query: { type: 'string', description: 'Free-text query matched against node content.' },
-        entity_type: { type: 'string', description: 'Optional filter: fact, article, document, gap, entity', enum: ['fact', 'article', 'document', 'gap', 'entity'] },
+        entity_type: { type: 'string', description: 'Optional filter: fact, summary, document, gap, entity', enum: ['fact', 'summary', 'document', 'gap', 'entity'] },
         top_k: { type: 'integer', description: 'Max results (default 8).', default: 8 },
       },
       required: ['patient_hash', 'query'],
@@ -144,7 +144,7 @@ export class SearchNodeTool extends BaseTool {
     const hits = candidates.slice(0, topK).map(n => {
       const connected = neighborPool.filter(other =>
         other.id !== n.id &&
-        ['fact', 'article'].includes(other.type)
+        ['fact', 'summary'].includes(other.type)
       ).slice(0, 5)
 
       return {

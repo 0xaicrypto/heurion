@@ -3,14 +3,14 @@ import path from 'path'
 
 /**
  * Per-user embedding index (JSONL). Keeps a normalized vector per memory node
- * (fact/article) so semantic retrieval is a plain cosine scan — brute-force is
+ * (fact/summary) so semantic retrieval is a plain cosine scan — brute-force is
  * fine at per-user scale (#23). Only reviewed memories (applyApproved) enter
  * this index (BRAIN2_MEMORY_LIFECYCLE §4.5).
  */
 export interface EmbeddingRecord {
   nodeId: string
   stableId: string
-  type: 'fact' | 'article' | 'document'
+  type: 'fact' | 'summary' | 'document'
   patientHash?: string
   studyId?: string
   contentHash: string
@@ -66,6 +66,11 @@ export class EmbeddingIndex {
     try {
       const lines = fs.readFileSync(this.filePath, 'utf-8').split('\n').filter(Boolean)
       this.records = lines.map((l) => JSON.parse(l))
+      // KB 重命名(article→summary)兼容:旧 index.jsonl 里的 type 归一化,
+      // 下一次 persist() 落盘即为新形态(幂等)。
+      for (const r of this.records) {
+        if ((r as any).type === 'article') (r as any).type = 'summary'
+      }
     } catch {
       this.records = []
     }
@@ -82,7 +87,7 @@ export class EmbeddingIndex {
     this.persist()
   }
 
-  remove(stableId: string, type: 'fact' | 'article' | 'document'): void {
+  remove(stableId: string, type: 'fact' | 'summary' | 'document'): void {
     // #749-fix: document chunks live under `<stableId>::cN` — removing the
     // parent must sweep its chunk namespace too, otherwise deleted files
     // stay retrievable (orphaned vectors injected into chat).

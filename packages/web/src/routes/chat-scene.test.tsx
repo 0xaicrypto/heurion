@@ -31,7 +31,7 @@ vi.mock('@/lib/api', () => ({
     getExecutionFileDownload: vi.fn().mockResolvedValue({ download_url: '' }),
     listSkills: vi.fn().mockResolvedValue({ skills: [] }),
     getLlmStatus: vi.fn().mockResolvedValue({ provider: 'deepseek', model: 'deepseek-chat', ok: true }),
-    createKnowledgeArticle: vi.fn().mockResolvedValue({}),
+    createKnowledgeSummary: vi.fn().mockResolvedValue({}),
     uploadFile: vi.fn(),
     sendChatFull,
   },

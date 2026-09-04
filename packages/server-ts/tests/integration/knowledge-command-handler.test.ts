@@ -56,7 +56,7 @@ describe('knowledge-command-handler', () => {
       ctx.knowledgeStore.add({ title: 'EGFR Management', content: 'First-line osimertinib for EGFR mutated NSCLC', sources: [] })
     })
 
-    test('finds facts and knowledge articles', async () => {
+    test('finds facts and knowledge summaries', async () => {
       const result = await executeCommand(ctx, 'kb_search', 'EGFR osimertinib')
       expect(result.type).toBe('kb_search_result')
       const items = (result as any).items as any[]

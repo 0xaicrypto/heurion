@@ -61,8 +61,8 @@ export function SidecarPage() {
 
     kbTitle: isZh ? '一键加入知识库' : 'One-click knowledge ingestion',
     kbBody: isZh
-      ? '生成文件时，报告助手同时输出 knowledgePayload。聊天界面的下载卡片提供“加入知识库”选项，把文档结构化为 Facts 或 Articles。'
-      : 'When generating a file, the report assistant also emits a knowledgePayload. The chat download card offers an "Add to knowledge base" option to turn the document into Facts or Articles.',
+      ? '生成文件时，报告助手同时输出 knowledgePayload。聊天界面的下载卡片提供“加入知识库”选项，把文档结构化为 Facts 或 Summaries。'
+      : 'When generating a file, the report assistant also emits a knowledgePayload. The chat download card offers an "Add to knowledge base" option to turn the document into Facts or Summaries.',
 
     ctaTitle: isZh ? '在聊天里试试' : 'Try it in chat',
     ctaBody: isZh ? '登录后打开 Chat，输入“生成一份 NSCLC 免疫治疗进展的 PPTX”。' : 'Log in, open Chat, and type "Generate a PPTX on NSCLC immunotherapy advances".',

@@ -4,7 +4,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { EpisodesStore } from '../../src/evolution/stores.js'
-import { updateEpisodeSummary, maybeSynthesizeArticle } from '../../src/memory/knowledge-synthesis.js'
+import { updateEpisodeSummary, maybeSynthesizeSummary } from '../../src/memory/knowledge-synthesis.js'
 import { MemoryGraphGateway, registerProposalApplier } from '../../src/memory/memory-gateway.js'
 
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
@@ -76,7 +76,7 @@ describe('K3 — incremental episode summary', () => {
   })
 })
 
-describe('K4 — article synthesis from new confirmed facts', () => {
+describe('K4 — summary synthesis from new confirmed facts', () => {
   test('synthesizes when >= 3 unused confirmed facts of a category exist', async () => {
     const base = makeBaseDir()
     const { MemoryService } = await import('../../src/memory/memory.service.js')
@@ -98,16 +98,16 @@ describe('K4 — article synthesis from new confirmed facts', () => {
     vi.mocked(deepseekChat).mockResolvedValue(JSON.stringify({ title: '感染指标汇总', content: '三项感染指标均升高，提示细菌感染可能。' }))
     registerProposalApplier(() => null)
 
-    await maybeSynthesizeArticle('user_1', { patientHash: 'patient_p1' }, memory)
+    await maybeSynthesizeSummary('user_1', { patientHash: 'patient_p1' }, memory)
 
     expect(deepseekChat).toHaveBeenCalled()
-    const articlePrompt = vi.mocked(deepseekChat).mock.calls[0][0][0].content as string
-    expect(articlePrompt).toContain('WBC 11.2 偏高')
+    const summaryPrompt = vi.mocked(deepseekChat).mock.calls[0][0][0].content as string
+    expect(summaryPrompt).toContain('WBC 11.2 偏高')
 
-    // Article proposal reaches the pending review queue (real prisma write)
+    // Summary proposal reaches the pending review queue (real prisma write)
     const prisma = (await import('../../src/common/prisma.js')).default
     const proposal = await (prisma as any).memoryProposal.findFirst({
-      where: { userId: 'user_1', kind: 'article', status: 'pending' },
+      where: { userId: 'user_1', kind: 'summary', status: 'pending' },
       orderBy: { createdAt: 'desc' },
     })
     expect(proposal).toBeTruthy()
@@ -137,11 +137,11 @@ describe('K4 — article synthesis from new confirmed facts', () => {
     registerProposalApplier(() => null)
 
     // 旧 K4(13.3C)会跳过 — #816 覆盖率驱动后,长尾未覆盖簇照常合成
-    await maybeSynthesizeArticle('user_1b', { patientHash: 'patient_p1' }, memory)
+    await maybeSynthesizeSummary('user_1b', { patientHash: 'patient_p1' }, memory)
     expect(deepseekChat).toHaveBeenCalled()
     const prisma = (await import('../../src/common/prisma.js')).default
     const proposal = await (prisma as any).memoryProposal.findFirst({
-      where: { userId: 'user_1b', kind: 'article', status: 'pending' },
+      where: { userId: 'user_1b', kind: 'summary', status: 'pending' },
     })
     expect(proposal).toBeTruthy()
   }, 30000)
@@ -173,7 +173,7 @@ describe('K4 — article synthesis from new confirmed facts', () => {
     registerProposalApplier(() => null)
 
     // 全局触发(空 scope — approval 全局提案路径)
-    await maybeSynthesizeArticle('user_iso', {}, memory)
+    await maybeSynthesizeSummary('user_iso', {}, memory)
     expect(deepseekChat).not.toHaveBeenCalled()
   }, 30000)
 
@@ -194,11 +194,11 @@ describe('K4 — article synthesis from new confirmed facts', () => {
     for (const c of ['指标一', '指标二', '指标三']) {
       factNodes.push(memory.addFact({ content: c, category: 'exam', importance: 4, patientHash: 'p1', sourceType: 'patient' }, 'system'))
     }
-    // 模拟:该批 facts 已被一条 pending article 提案占用(审批中)
+    // 模拟:该批 facts 已被一条 pending summary 提案占用(审批中)
     const prisma = (await import('../../src/common/prisma.js')).default
     await (prisma as any).memoryProposal.create({
       data: {
-        userId: 'user_pend', scopeType: 'patient', patientHash: 'p1', kind: 'article',
+        userId: 'user_pend', scopeType: 'patient', patientHash: 'p1', kind: 'summary',
         content: '审批中的文章', importance: 3, confidence: 'medium',
         relatedFacts: JSON.stringify(factNodes.map((f) => f.stableId)),
         status: 'pending', createdAt: new Date().toISOString(),
@@ -208,11 +208,11 @@ describe('K4 — article synthesis from new confirmed facts', () => {
     vi.mocked(deepseekChat).mockResolvedValue(JSON.stringify({ title: 'x', content: 'y' }))
     registerProposalApplier(() => null)
 
-    await maybeSynthesizeArticle('user_pend', { patientHash: 'p1' }, memory)
+    await maybeSynthesizeSummary('user_pend', { patientHash: 'p1' }, memory)
     expect(deepseekChat).not.toHaveBeenCalled()
   }, 30000)
 
-  test('does not synthesize when facts are already used by an article', async () => {
+  test('does not synthesize when facts are already used by an summary', async () => {
     const base = makeBaseDir()
     const { MemoryService } = await import('../../src/memory/memory.service.js')
     const { EventLog } = await import('../../src/core/event-log.js')
@@ -229,15 +229,15 @@ describe('K4 — article synthesis from new confirmed facts', () => {
     for (const c of ['WBC 11.2 偏高', 'CRP 68 mg/L 升高', '中性粒细胞比例 85%']) {
       factNodes.push(memory.addFact({ content: c, category: 'exam', importance: 4, patientHash: 'p1', sourceType: 'patient' }, 'system'))
     }
-    // Mark all as used by an existing article
-    memory.addArticle({
+    // Mark all as used by an existing summary
+    memory.addSummary({
       title: '已有文章',
       content: '旧文章',
       sourceFactStableIds: factNodes.map((f) => f.stableId),
     }, 'system')
 
     vi.mocked(deepseekChat).mockResolvedValue(JSON.stringify({ title: 'x', content: 'y' }))
-    await maybeSynthesizeArticle('user_2', { patientHash: 'p1' }, memory)
+    await maybeSynthesizeSummary('user_2', { patientHash: 'p1' }, memory)
     expect(deepseekChat).not.toHaveBeenCalled()
   }, 30000)
 })

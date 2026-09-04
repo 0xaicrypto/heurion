@@ -11,7 +11,7 @@ import type { EmbeddingService } from '../../memory/embedding/embedding.service.
 
 export interface PickerNode {
   stableId: string
-  type: 'article' | 'document'
+  type: 'summary' | 'document'
   title: string
   content?: string
   updatedAt: number
@@ -48,7 +48,7 @@ export async function searchPickerItems(
     }
   }
 
-  // 向量路: embedding 余弦(仅 article/document 记录,且须在节点池内)
+  // 向量路: embedding 余弦(仅 summary/document 记录,且须在节点池内)
   const vector: RrfCandidate[] = []
   if (qTrim && embedding) {
     try {
@@ -59,7 +59,7 @@ export async function searchPickerItems(
       })
       let vrank = 0
       for (const h of vecHits) {
-        if (h.type !== 'article' && h.type !== 'document') continue
+        if (h.type !== 'summary' && h.type !== 'document') continue
         if (!byStableId.has(h.stableId)) continue
         vector.push({ content: h.content, source: 'vector', sourceId: h.stableId, rank: ++vrank })
       }

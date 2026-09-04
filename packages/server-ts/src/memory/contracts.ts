@@ -3,11 +3,11 @@
  * Kept separate from the gateway so services can import types without
  * creating circular dependencies.
  */
-import type { FactNode, ArticleNode } from './memory.types'
+import type { FactNode, SummaryNode } from './memory.types'
 
 export type MemoryScope = { patientHash?: string; studyId?: string; global?: boolean }
 
-export type ProposalKind = 'fact' | 'article' | 'episode_summary' | 'compaction_summary'
+export type ProposalKind = 'fact' | 'summary' | 'episode_summary' | 'compaction_summary'
 
 export interface ProposalInput {
   scopeType: 'patient' | 'global' | 'study'
@@ -25,7 +25,7 @@ export interface ProposalInput {
   conflictsWith?: Array<{ stableId: string; content: string }>
   /**
    * #736/#748: source fact stableIds this proposal was synthesized from —
-   * article applier passes them to addArticle so `maybeSynthesizeArticle`'s
+   * summary applier passes them to addSummary so `maybeSynthesizeSummary`'s
    * used-set can exclude already-covered facts (stops repeat synthesis).
    */
   relatedFacts?: string[]
@@ -51,7 +51,7 @@ export interface MemoryProposalRow {
   createdAt: string
   resolvedAt: string | null
   resolvedBy: string | null
-  /** #736/#748: JSON-encoded string[] of source fact stableIds (article synthesis provenance). */
+  /** #736/#748: JSON-encoded string[] of source fact stableIds (summary synthesis provenance). */
   relatedFacts?: string | null
 }
 
@@ -72,7 +72,7 @@ export interface ContextBundle {
   skills: Array<{ name: string; strategy: string; successCount: number; taskCount: number }>
 }
 
-export type MemoryNodeLike = FactNode | ArticleNode
+export type MemoryNodeLike = FactNode | SummaryNode
 
 export function serializeProposal(r: any): MemoryProposalRow {
   return {

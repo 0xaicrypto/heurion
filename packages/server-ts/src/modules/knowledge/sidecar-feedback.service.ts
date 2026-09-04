@@ -124,7 +124,7 @@ export const ruleBasedSidecarExtractor: SidecarFactExtractor = {
  * Service that processes Sidecar outputs and optionally writes facts.
  *
  * Writes through the unified MemoryService so facts are versioned and
- * downstream articles are marked stale when sources change.
+ * downstream summaries are marked stale when sources change.
  */
 export class SidecarFeedbackService {
   constructor(

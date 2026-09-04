@@ -233,12 +233,12 @@ async function applyProposalViaGateway(userId: string, row: any): Promise<any> {
     resolvedBy: row.resolvedBy,
   }
   const node = await gateway.applyApproved(proposal)
-  // K4: once a fact is confirmed, check whether a new knowledge article can
+  // K4: once a fact is confirmed, check whether a new knowledge summary can
   // be synthesized from >= 3 unused confirmed facts of the same category.
   if (node && row.kind === 'fact') {
-    const { maybeSynthesizeArticle } = await import('../../memory/knowledge-synthesis.js')
-    maybeSynthesizeArticle(userId, { patientHash: row.patientHash || undefined, studyId: row.studyId || undefined }, ctx.memory)
-      .catch((err: Error) => log.info('[KNOWLEDGE] Article check skipped:', err.message.slice(0, 120)))
+    const { maybeSynthesizeSummary } = await import('../../memory/knowledge-synthesis.js')
+    maybeSynthesizeSummary(userId, { patientHash: row.patientHash || undefined, studyId: row.studyId || undefined }, ctx.memory)
+      .catch((err: Error) => log.info('[KNOWLEDGE] Summary check skipped:', err.message.slice(0, 120)))
   }
   return node
 }
@@ -279,7 +279,7 @@ async function applyTargetUpdate(
 
     // Summaries are context memory, not graph nodes: approving records the
     // human verdict on the content without a graph write (the applier only
-    // supports fact/article).
+    // supports fact/summary).
     if (row.kind === 'episode_summary' || row.kind === 'compaction_summary') {
       await (prisma as any).memoryProposal.update({
         where: { id: targetId },

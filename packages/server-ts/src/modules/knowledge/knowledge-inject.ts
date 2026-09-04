@@ -37,11 +37,11 @@ export interface KnowledgeInjectOptions {
    */
   onItems?: (items: Array<{ kind: 'fact' | 'knowledge' | 'document'; label: string; stableId?: string }>) => void
   /**
-   * #813: 知识文章溯源增强 — 解析 article 图谱元数据(标题/源 facts
+   * #813: 知识文章溯源增强 — 解析 summary 图谱元数据(标题/源 facts
    * 置信度/来源/stale),由调用方接线(memory/staleness.ts 的
-   * describeArticleForInjection);缺省时保持原始渲染。
+   * describeSummaryForInjection);缺省时保持原始渲染。
    */
-  resolveArticle?: (articleStableId: string) => {
+  resolveSummary?: (summaryStableId: string) => {
     title: string
     stale: boolean
     staleSummary?: string
@@ -64,7 +64,7 @@ export const JIT_INJECT_HEADER = '## 即时综合(JIT — 尚未经人工审核,
  * 合成文章自带结论/依据/caveat 结构,注入时要求模型引用结论标注来源,
  * 不确定处以 caveat 为准(合成期幻觉已被 factId 白名单过滤)。
  */
-export const KB_CITATION_RULE = '引用上方知识库文章的结论时，请标注来源与置信度，例如（来源：《文章标题》，置信度: 高）；标注"注意事项/caveats"的内容按不确定性对待，不要作为确定结论复述。'
+export const KB_CITATION_RULE = '引用上方知识库摘要的结论时，请标注来源与置信度，例如（来源：《摘要标题》，置信度: 高）；标注"注意事项/caveats"的内容按不确定性对待，不要作为确定结论复述。'
 
 /** 剩余预算占总窗口的比例分档(>30% 充足 / >10% 中等 / 其余紧张)。 */
 const BUDGET_TIER_RICH = 0.3
@@ -117,8 +117,8 @@ export async function buildKnowledgeInjection(
   const excludeFactHashes = options.excludeFactHashes
 
   if (!query || !query.trim()) return ''
-  // #814: 取 3× 候选再分区截取 — 否则 RRF 排名靠后的 article 会在
-  // 排序前就被 topK 砍掉,article 优先成为空话。
+  // #814: 取 3× 候选再分区截取 — 否则 RRF 排名靠后的 summary 会在
+  // 排序前就被 topK 砍掉,summary 优先成为空话。
   const results = await unifiedSearch(query, facts, knowledge, {
     embedding: options.embedding,
     patientHash: options.patientHash,
@@ -131,7 +131,7 @@ export async function buildKnowledgeInjection(
   const items = results.filter((r) => !(r.kind === 'fact' && r.factHash && excludeFactHashes?.has(r.factHash)))
   if (items.length === 0) return ''
 
-  // #814: article 命中优先于裸 facts — knowledge 排最前,document 次之,
+  // #814: summary 命中优先于裸 facts — knowledge 排最前,document 次之,
   // facts 仅作兜底填充剩余槽位(组内保持 RRF 原序,同序稳定)。
   const kindPriority: Record<string, number> = { knowledge: 0, document: 1, fact: 2 }
   items.sort((a, b) => (kindPriority[a.kind] ?? 9) - (kindPriority[b.kind] ?? 9))
@@ -191,8 +191,8 @@ export async function buildKnowledgeInjection(
     if (item.kind === 'knowledge') {
       // #813: 文章条目附溯源增强(标题/源 facts 置信度摘要/stale 失效标注),
       // 解析失败或调用方未接线时回退原始渲染。
-      const articleId = item.stableId ?? item.source.replace(/^knowledge:/, '')
-      const meta = articleId ? opts.resolveArticle?.(articleId) : undefined
+      const summaryId = item.stableId ?? item.source.replace(/^knowledge:/, '')
+      const meta = summaryId ? opts.resolveSummary?.(summaryId) : undefined
       if (meta) {
         hasKnowledgeItem = true
         const staleTag = meta.stale ? ` ⚠️已过时(${meta.staleSummary || '依据已失效'}) — 引用前注意时效` : ''

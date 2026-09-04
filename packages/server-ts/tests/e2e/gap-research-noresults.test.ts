@@ -45,7 +45,7 @@ describe('gap research no-result handling (#254)', () => {
     const ctx = getUserContext(userId)
     const factsBefore = ctx.memory.graph.getCurrentNodesByType('fact').length
 
-    const service = new GapResearchService(makeProvider({ found: false, text: 'No PubMed articles found for "x".' }))
+    const service = new GapResearchService(makeProvider({ found: false, text: 'No PubMed summaries found for "x".' }))
     await service.researchOpenGaps({ maxPerRun: 5, minAgeMs: 0 })
 
     const factsAfter = ctx.memory.graph.getCurrentNodesByType('fact').length
@@ -61,7 +61,7 @@ describe('gap research no-result handling (#254)', () => {
     const ctx = getUserContext(userId)
     const factsBefore = ctx.memory.graph.getCurrentNodesByType('fact').length
 
-    const service = new GapResearchService(makeProvider({ found: true, text: 'PubMed search results for "EGFR":\n\n- Article title (Journal)' }))
+    const service = new GapResearchService(makeProvider({ found: true, text: 'PubMed search results for "EGFR":\n\n- Summary title (Journal)' }))
     await service.researchOpenGaps({ maxPerRun: 5, minAgeMs: 0 })
 
     const factsAfter = ctx.memory.graph.getCurrentNodesByType('fact').length

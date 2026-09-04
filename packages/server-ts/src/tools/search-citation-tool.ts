@@ -95,7 +95,7 @@ export class SearchCitationTool extends BaseTool {
             year: String(d.pubdate || '').slice(0, 4) || '',
             volume: String(d.volume || ''),
             pages: String(d.pages || ''),
-            doi: (Array.isArray(d.articleids) ? d.articleids.find((x: any) => x.idtype === 'doi')?.value : '') || undefined,
+            doi: (Array.isArray(d.summaryids) ? d.summaryids.find((x: any) => x.idtype === 'doi')?.value : '') || undefined,
           }
           return { ...record, ama: formatAma(record) }
         })

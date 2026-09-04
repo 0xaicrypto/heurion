@@ -2,8 +2,8 @@
  * MemoryService — composition root over the per-node-type services (#682).
  *
  * The former god class (4 node-type CRUD groups + legacy dual-write) is
- * split into FactService / ArticleService / DocumentService / GapService;
- * this facade keeps the historical public API (addFact, addArticle, …,
+ * split into FactService / SummaryService / DocumentService / GapService;
+ * this facade keeps the historical public API (addFact, addSummary, …,
  * graph, eventLog, curation) so callers are unaffected.
  */
 import type { EventLog } from '../core/event-log'
@@ -11,13 +11,13 @@ import type { FactsStore, KnowledgeStore } from '../evolution/stores'
 import type { Result } from '../common/result'
 import type {
   AddFactInput,
-  AddArticleInput,
+  AddSummaryInput,
   AddDocumentInput,
   AddGapInput,
   EditFactInput,
-  EditArticleInput,
+  EditSummaryInput,
   FactNode,
-  ArticleNode,
+  SummaryNode,
   DocumentNode,
   GapNode,
   MemoryNode,
@@ -29,7 +29,7 @@ import { LegacyProjection } from './legacy-projection.js'
 import { PropagationCoordinator } from './propagation-coordinator.js'
 import { buildMemoryCollaborators, type MemoryCollaborators } from './node-base.js'
 import { FactService } from './fact-service.js'
-import { ArticleService } from './article-service.js'
+import { SummaryService } from './summary-service.js'
 import { DocumentService } from './document-service.js'
 import { GapService } from './gap-service.js'
 
@@ -57,7 +57,7 @@ export class MemoryService {
 
   private readonly collaborators: MemoryCollaborators
   private readonly facts: FactService
-  private readonly articles: ArticleService
+  private readonly summaries: SummaryService
   private readonly documents: DocumentService
   private readonly gaps: GapService
 
@@ -71,7 +71,7 @@ export class MemoryService {
     this.legacyFacts = this.collaborators.legacyFacts
     this.legacyKnowledge = this.collaborators.legacyKnowledge
     this.facts = new FactService(this.collaborators)
-    this.articles = new ArticleService(this.collaborators)
+    this.summaries = new SummaryService(this.collaborators)
     this.documents = new DocumentService(this.collaborators)
     this.gaps = new GapService(this.collaborators)
   }
@@ -96,28 +96,28 @@ export class MemoryService {
 
   deletePatientReferences(patientHash: string): {
     deletedFacts: number
-    staleArticles: number
-    supersededArticles: number
+    staleSummaries: number
+    supersededSummaries: number
   } {
     return this.facts.deletePatientReferences(patientHash)
   }
 
-  // ── Article API ──────────────────────────────────────────────
+  // ── Summary API ──────────────────────────────────────────────
 
-  addArticle(input: AddArticleInput, createdBy: MemoryCreatedBy = 'system'): ArticleNode {
-    return this.articles.addArticle(input, createdBy)
+  addSummary(input: AddSummaryInput, createdBy: MemoryCreatedBy = 'system'): SummaryNode {
+    return this.summaries.addSummary(input, createdBy)
   }
 
-  editArticle(stableId: string, input: EditArticleInput, editedBy: MemoryCreatedBy = 'user'): Result<ArticleNode> {
-    return this.articles.editArticle(stableId, input, editedBy)
+  editSummary(stableId: string, input: EditSummaryInput, editedBy: MemoryCreatedBy = 'user'): Result<SummaryNode> {
+    return this.summaries.editSummary(stableId, input, editedBy)
   }
 
-  deleteArticle(stableId: string, deletedBy: MemoryCreatedBy = 'user'): Result<void> {
-    return this.articles.deleteArticle(stableId, deletedBy)
+  deleteSummary(stableId: string, deletedBy: MemoryCreatedBy = 'user'): Result<void> {
+    return this.summaries.deleteSummary(stableId, deletedBy)
   }
 
-  regenerateArticle(stableId: string): Result<ArticleNode> {
-    return this.articles.regenerateArticle(stableId)
+  regenerateSummary(stableId: string): Result<SummaryNode> {
+    return this.summaries.regenerateSummary(stableId)
   }
 
   // ── Document API ─────────────────────────────────────────────
@@ -148,7 +148,7 @@ export class MemoryService {
    * when the stores already agree. Safe to call at startup or on demand.
    * Returns whether a divergence was found and repaired.
    */
-  reconcileLegacy(): { repaired: boolean; factDiff: number; articleDiff: number } {
+  reconcileLegacy(): { repaired: boolean; factDiff: number; summaryDiff: number } {
     return this.legacyProjection.reconcile()
   }
 }

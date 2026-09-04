@@ -13,7 +13,7 @@ import { CONTEXT_CONFIG } from '../../src/common/context-config.js'
  * 1. persona 类目收敛补 constraint(漏网类目);
  * 2. persona×layer3 去重 — 全局 identity 类 facts 不再落 layer3 碎片;
  * 3. layer3 降级"未成文记忆" — importance/时效阈值参数化 + 段文案;
- * 4. knowledge_inject article 优先于裸 facts。
+ * 4. knowledge_inject summary 优先于裸 facts。
  */
 
 const DAY = 86400_000
@@ -105,7 +105,7 @@ describe('#814 layer3 降级 + persona×layer3 去重', () => {
     facts.commit()
     const { systemPrompt } = await project(facts.all())
     expect(systemPrompt).toContain('未成文记忆')
-    expect(systemPrompt).toContain('可能已有文章覆盖')
+    expect(systemPrompt).toContain('可能已有摘要覆盖')
     // 引用规则仍随段注入(#188 溯源纪律不回退)
     expect(systemPrompt).toContain('[置信度, 来源]')
   })
@@ -116,12 +116,12 @@ describe('#814 layer3 降级 + persona×layer3 去重', () => {
   })
 })
 
-describe('#814 knowledge_inject article 优先', () => {
+describe('#814 knowledge_inject summary 优先', () => {
   let baseDir: string
-  beforeEach(() => { baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'article-first-')) })
+  beforeEach(() => { baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-first-')) })
   afterEach(() => fs.rmSync(baseDir, { recursive: true, force: true }))
 
-  test('article 与 facts 同时命中 → article 排最前,facts 兜底', async () => {
+  test('summary 与 facts 同时命中 → summary 排最前,facts 兜底', async () => {
     const facts = new FactsStore(baseDir)
     const knowledge = new KnowledgeStore(baseDir)
     facts.add({ content: 'EGFR 一线方案事实甲', category: 'fact', importance: 5, sourceType: 'research' })

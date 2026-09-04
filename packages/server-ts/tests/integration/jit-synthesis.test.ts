@@ -62,13 +62,13 @@ describe('#815 maybeJitSynthesize', () => {
     expect(out).not.toBeNull()
     expect(out).toContain('### 结论')
 
-    // ephemeral:图谱无新 article 节点
-    expect(memory.graph.getCurrentNodesByType('article').filter((a: any) => a.title === 'JIT 综合结果')).toHaveLength(0)
+    // ephemeral:图谱无新 summary 节点
+    expect(memory.graph.getCurrentNodesByType('summary').filter((a: any) => a.title === 'JIT 综合结果')).toHaveLength(0)
 
     // 沉淀走 pending 闸门(等待异步落库)
     await vi.waitFor(async () => {
       const row = await prisma.memoryProposal.findFirst({
-        where: { userId: 'user_jit', kind: 'article', status: 'pending', reason: { contains: 'JIT' } },
+        where: { userId: 'user_jit', kind: 'summary', status: 'pending', reason: { contains: 'JIT' } },
       })
       expect(row).toBeTruthy()
       const parsed = JSON.parse(row.relatedFacts)

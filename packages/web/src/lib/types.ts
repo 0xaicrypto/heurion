@@ -303,7 +303,7 @@ export interface BrainStats {
   totalEntries: number;
 }
 
-export type MemoryProposalKind = 'fact' | 'article' | 'episode_summary' | 'compaction_summary';
+export type MemoryProposalKind = 'fact' | 'summary' | 'episode_summary' | 'compaction_summary';
 
 export interface MemoryProposal {
   id: string;
@@ -343,7 +343,7 @@ export interface AdminUser {
   has_password: boolean;
 }
 
-export interface Article {
+export interface Summary {
   id: string;
   title: string;
   content: string;
@@ -351,12 +351,12 @@ export interface Article {
   version: number;
   status: 'current' | 'stale' | 'superseded';
   staleBecause?: string[];
-  impact?: ArticleImpact[];
+  impact?: SummaryImpact[];
   createdAt: number;
   updatedAt: number;
 }
 
-export interface ArticleImpact {
+export interface SummaryImpact {
   factId: string;
   status: string;
   content: string;
@@ -440,7 +440,7 @@ export interface MemoryHealthResponse {
   };
   contradictions_7d: number;
   stale: { pending_over_7d: number; high_importance_pinned: number; archived: number };
-  scale: { facts: number; articles: number; open_gaps: number; pending: number; episodes: number };
+  scale: { facts: number; summaries: number; open_gaps: number; pending: number; episodes: number };
 }
 
 /* ────────────────────────── submission workflow (#362) ────────── */

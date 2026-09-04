@@ -84,7 +84,7 @@ export function MemoryPage() {
       {
         icon: <BookOpen size={24} />,
         title: 'Knowledge',
-        desc: isZh ? '当 ≥3 条相关 Facts 累积后，自动合成为可读的综述文章并版本化。' : 'When ≥3 related facts accumulate, they are synthesized into versioned summary articles.',
+        desc: isZh ? '当 ≥3 条相关 Facts 累积后，自动合成为可读的综述文章并版本化。' : 'When ≥3 related facts accumulate, they are synthesized into versioned summary summaries.',
       },
       {
         icon: <Brain size={24} />,
@@ -145,11 +145,11 @@ export function MemoryPage() {
               <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
                 <StatCard value={stats.facts} label={isZh ? 'Facts' : 'Facts'} />
                 <StatCard value={stats.episodes} label={isZh ? 'Episodes' : 'Episodes'} />
-                <StatCard value={stats.knowledge} label={isZh ? 'Articles' : 'Articles'} />
+                <StatCard value={stats.knowledge} label={isZh ? 'Summaries' : 'Summaries'} />
                 <StatCard value={stats.events} label={isZh ? '事件' : 'Events'} />
               </div>
             )}
-            {/* #816: facts→article 覆盖率 — 记忆沉淀健康度 */}
+            {/* #816: facts→summary 覆盖率 — 记忆沉淀健康度 */}
             {coverage && !loading && (
               <div className="mx-auto mt-8 max-w-3xl">
                 <CoveragePanel coverage={coverage} isZh={isZh} />
@@ -258,7 +258,7 @@ function CoveragePanel({ coverage, isZh }: { coverage: CoverageView; isZh: boole
     <Card className="p-6 text-left">
       <div className="mb-4 flex items-center gap-2 text-accent">
         <Gauge size={18} />
-        <span className="font-semibold">{isZh ? '知识覆盖率（facts → article）' : 'Knowledge coverage (facts → articles)'}</span>
+        <span className="font-semibold">{isZh ? '知识覆盖率（facts → summary）' : 'Knowledge coverage (facts → summaries)'}</span>
       </div>
       <div className="space-y-3">
         {rows.map((r) => (
@@ -281,7 +281,7 @@ function CoveragePanel({ coverage, isZh }: { coverage: CoverageView; isZh: boole
               <p className="mt-1 text-xs text-text-tertiary">
                 {isZh
                   ? `覆盖率偏低 — 可在对话中说"总结知识库"或对相关事实手动合成文章（如：${r.uncoveredSample[0]?.slice(0, 40) || '…'}）`
-                  : `Coverage below threshold — ask the assistant to summarize the knowledge base or synthesize an article from uncovered facts (e.g. "${r.uncoveredSample[0]?.slice(0, 40) || '…'}")`}
+                  : `Coverage below threshold — ask the assistant to summarize the knowledge base or synthesize an summary from uncovered facts (e.g. "${r.uncoveredSample[0]?.slice(0, 40) || '…'}")`}
               </p>
             )}
           </div>

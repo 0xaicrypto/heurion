@@ -61,31 +61,31 @@ describe('MemoryService', () => {
     expect(versions[1].status).toBe('superseded')
   })
 
-  it('marks dependent articles stale when a fact is edited', () => {
+  it('marks dependent summaries stale when a fact is edited', () => {
     const { memory, knowledge } = setup()
     const fact = memory.addFact({ content: 'ZL has EGFR exon19del', importance: 5 })
-    const article = memory.addArticle({
+    const summary = memory.addSummary({
       title: 'ZL EGFR status',
       content: 'ZL has EGFR mutation.',
       sourceFactNodeIds: [fact.id],
     })
 
-    expect(article.status).toBe('current')
+    expect(summary.status).toBe('current')
 
     memory.editFact(fact.stableId, { content: 'ZL has EGFR L858R' })
 
-    const latestArticle = memory.graph.getLatestByStableId(article.stableId) as any
-    expect(latestArticle.status).toBe('stale')
-    expect(latestArticle.staleBecause).toContain(fact.stableId)
+    const latestSummary = memory.graph.getLatestByStableId(summary.stableId) as any
+    expect(latestSummary.status).toBe('stale')
+    expect(latestSummary.staleBecause).toContain(fact.stableId)
 
-    const legacyArticle = knowledge.all().find(a => a.id === article.stableId)
-    expect(legacyArticle?.status).toBe('stale')
+    const legacySummary = knowledge.all().find(a => a.id === summary.stableId)
+    expect(legacySummary?.status).toBe('stale')
   })
 
-  it('supersedes an article when its only source fact is deleted', () => {
+  it('supersedes an summary when its only source fact is deleted', () => {
     const { memory } = setup()
     const fact = memory.addFact({ content: 'ZL has EGFR exon19del', importance: 5 })
-    const article = memory.addArticle({
+    const summary = memory.addSummary({
       title: 'ZL EGFR status',
       content: 'ZL has EGFR mutation.',
       sourceFactNodeIds: [fact.id],
@@ -93,14 +93,14 @@ describe('MemoryService', () => {
 
     memory.deleteFact(fact.stableId)
 
-    const latestArticle = memory.graph.getLatestByStableId(article.stableId) as any
-    expect(latestArticle.status).toBe('superseded')
+    const latestSummary = memory.graph.getLatestByStableId(summary.stableId) as any
+    expect(latestSummary.status).toBe('superseded')
   })
 
-  it('supersedes article when too many source facts are deleted', () => {
+  it('supersedes summary when too many source facts are deleted', () => {
     const { memory } = setup()
     const fact = memory.addFact({ content: 'ZL has EGFR exon19del', importance: 5 })
-    const article = memory.addArticle({
+    const summary = memory.addSummary({
       title: 'ZL EGFR status',
       content: 'ZL has EGFR mutation.',
       sourceFactNodeIds: [fact.id],
@@ -108,11 +108,11 @@ describe('MemoryService', () => {
 
     memory.deleteFact(fact.stableId)
 
-    const latestArticle = memory.graph.getLatestByStableId(article.stableId) as any
-    expect(latestArticle.status).toBe('superseded')
+    const latestSummary = memory.graph.getLatestByStableId(summary.stableId) as any
+    expect(latestSummary.status).toBe('superseded')
   })
 
-  it('propagates document deletion to derived facts and dependent articles', () => {
+  it('propagates document deletion to derived facts and dependent summaries', () => {
     const { memory } = setup()
     const doc = memory.addDocument({
       fileId: 'file_001',
@@ -130,7 +130,7 @@ describe('MemoryService', () => {
     })
     memory.graph.commit()
 
-    const article = memory.addArticle({
+    const summary = memory.addSummary({
       title: 'ZL RUL nodule',
       content: 'RUL nodule 18mm.',
       sourceFactNodeIds: [fact.id],
@@ -141,8 +141,8 @@ describe('MemoryService', () => {
     const latestFact = memory.graph.getLatestByStableId(fact.stableId) as any
     expect(latestFact.status).toBe('superseded')
 
-    const latestArticle = memory.graph.getLatestByStableId(article.stableId) as any
-    expect(latestArticle.status).toBe('superseded')
+    const latestSummary = memory.graph.getLatestByStableId(summary.stableId) as any
+    expect(latestSummary.status).toBe('superseded')
   })
 
   it('re-opens a gap when its answering fact is deleted', async () => {

@@ -48,7 +48,7 @@ export interface LearnedSkill {
   createdAt: number
 }
 
-export interface KnowledgeArticle {
+export interface KnowledgeSummary {
   id: string
   title: string
   content: string
@@ -248,7 +248,7 @@ export class SkillsStore {
 
 export class KnowledgeStore {
   private store: VersionedStore
-  private working: KnowledgeArticle[] = []
+  private working: KnowledgeSummary[] = []
 
   constructor(baseDir: string) {
     const dir = path.join(baseDir, 'knowledge')
@@ -257,7 +257,7 @@ export class KnowledgeStore {
     this.working = this.readFromDisk()
   }
 
-  private readFromDisk(): KnowledgeArticle[] {
+  private readFromDisk(): KnowledgeSummary[] {
     const current = this.store.current()
     if (current && Array.isArray(current)) {
       return current.map((a: any) => ({
@@ -276,15 +276,15 @@ export class KnowledgeStore {
   }
 
   /** Replace the in-memory state wholesale (compensating write, #192). */
-  replaceAll(articles: KnowledgeArticle[]): void {
-    this.working = articles.map(a => ({ ...a }))
+  replaceAll(summaries: KnowledgeSummary[]): void {
+    this.working = summaries.map(a => ({ ...a }))
   }
 
-  add(article: Omit<KnowledgeArticle, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'status'>): KnowledgeArticle {
+  add(summary: Omit<KnowledgeSummary, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'status'>): KnowledgeSummary {
     const now = Date.now()
-    const a: KnowledgeArticle = {
+    const a: KnowledgeSummary = {
       id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
-      ...article,
+      ...summary,
       version: 1,
       status: 'current',
       createdAt: now,
@@ -294,7 +294,7 @@ export class KnowledgeStore {
     return a
   }
 
-  update(id: string, patch: Partial<Pick<KnowledgeArticle, 'title' | 'content' | 'sources'>>): KnowledgeArticle | null {
+  update(id: string, patch: Partial<Pick<KnowledgeSummary, 'title' | 'content' | 'sources'>>): KnowledgeSummary | null {
     const idx = this.working.findIndex(a => a.id === id)
     if (idx === -1) return null
     const now = Date.now()
@@ -316,20 +316,20 @@ export class KnowledgeStore {
   }
 
   markStale(id: string, changedSources: string[]): boolean {
-    const article = this.working.find(a => a.id === id)
-    if (!article) return false
-    article.status = 'stale'
-    article.staleBecause = changedSources
-    article.updatedAt = Date.now()
+    const summary = this.working.find(a => a.id === id)
+    if (!summary) return false
+    summary.status = 'stale'
+    summary.staleBecause = changedSources
+    summary.updatedAt = Date.now()
     return true
   }
 
   markFresh(id: string): boolean {
-    const article = this.working.find(a => a.id === id)
-    if (!article) return false
-    article.status = 'current'
-    article.staleBecause = undefined
-    article.updatedAt = Date.now()
+    const summary = this.working.find(a => a.id === id)
+    if (!summary) return false
+    summary.status = 'current'
+    summary.staleBecause = undefined
+    summary.updatedAt = Date.now()
     return true
   }
 
@@ -337,15 +337,15 @@ export class KnowledgeStore {
     return this.working.find(a => a.id === id)?.status === 'stale'
   }
 
-  getStale(): KnowledgeArticle[] {
+  getStale(): KnowledgeSummary[] {
     return this.working.filter(a => a.status === 'stale')
   }
 
-  compile(article: Omit<KnowledgeArticle, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'status'>): KnowledgeArticle {
-    return this.add(article)
+  compile(summary: Omit<KnowledgeSummary, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'status'>): KnowledgeSummary {
+    return this.add(summary)
   }
 
-  all(): KnowledgeArticle[] { return [...this.working] }
+  all(): KnowledgeSummary[] { return [...this.working] }
   currentVersion() { return this.store.currentVersion() }
   commit(): string { return this.store.propose(this.working) }
 }

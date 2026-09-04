@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { isNodeSuperseded, isNodeStale, isFactCurrent, isArticleStale, type FactNode, type ArticleNode } from '../../src/memory/memory.types.js'
+import { isNodeSuperseded, isNodeStale, isFactCurrent, isSummaryStale, type FactNode, type SummaryNode } from '../../src/memory/memory.types.js'
 
 function base(over: Partial<FactNode> = {}): FactNode {
   return {
@@ -10,9 +10,9 @@ function base(over: Partial<FactNode> = {}): FactNode {
   }
 }
 
-function article(over: Partial<ArticleNode> = {}): ArticleNode {
+function summary(over: Partial<SummaryNode> = {}): SummaryNode {
   return {
-    id: 'art_x@v1', stableId: 'art_x', type: 'article', ownerId: 'u1', status: 'current',
+    id: 'art_x@v1', stableId: 'art_x', type: 'summary', ownerId: 'u1', status: 'current',
     content: 'c', contentHash: 'h', version: 1, createdAt: 1, updatedAt: 1, createdBy: 'system',
     provenance: { sourceKind: 'chat' }, meta: {}, title: 't', sourceFacts: [{ nodeId: 'f@v1', stableId: 'fact_a', version: 1, snapshot: 's' }],
     ...over,
@@ -33,9 +33,9 @@ describe('node behavior predicates (#305)', () => {
     expect(isFactCurrent(base({ status: 'superseded' }))).toBe(false)
   })
 
-  test('isArticleStale flags articles whose source facts were superseded', () => {
-    expect(isArticleStale(article(), ['other'])).toBe(false)
-    expect(isArticleStale(article(), ['fact_a'])).toBe(true)
-    expect(isArticleStale(article({ status: 'superseded' }), [])).toBe(true)
+  test('isSummaryStale flags summaries whose source facts were superseded', () => {
+    expect(isSummaryStale(summary(), ['other'])).toBe(false)
+    expect(isSummaryStale(summary(), ['fact_a'])).toBe(true)
+    expect(isSummaryStale(summary({ status: 'superseded' }), [])).toBe(true)
   })
 })

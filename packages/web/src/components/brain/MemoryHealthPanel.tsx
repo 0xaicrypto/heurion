@@ -76,7 +76,7 @@ export function MemoryHealthPanel() {
         <StatCard
           icon={<Database size={14} />}
           label={t('brain.healthScale', '记忆规模')}
-          value={`${data.scale.facts} facts · ${data.scale.articles} articles`}
+          value={`${data.scale.facts} facts · ${data.scale.summaries} summaries`}
         />
       </div>
       {data.acceptance.by_category.length > 0 && (

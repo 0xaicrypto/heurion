@@ -55,7 +55,7 @@ describe('#621 knowledge injection', () => {
   })
 })
 
-describe('#813 article citation enrichment', () => {
+describe('#813 summary citation enrichment', () => {
   let baseDir: string
   beforeEach(() => { baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-cite-meta-')) })
   afterEach(() => fs.rmSync(baseDir, { recursive: true, force: true }))
@@ -68,10 +68,10 @@ describe('#813 article citation enrichment', () => {
     return { facts, knowledge }
   }
 
-  test('resolveArticle 接线 → 文章条目带标题/来源摘要,并附引用指令', async () => {
+  test('resolveSummary 接线 → 文章条目带标题/来源摘要,并附引用指令', async () => {
     const { facts, knowledge } = makeKnowledgeStores()
     const inj = await buildKnowledgeInjection('NSCLC 靶向治疗', facts, knowledge, {
-      resolveArticle: () => ({ title: 'NSCLC 靶向治疗进展', stale: false, sourceSummary: 'fact_x[0.9,patient] fact_y[0.8,chat]' }),
+      resolveSummary: () => ({ title: 'NSCLC 靶向治疗进展', stale: false, sourceSummary: 'fact_x[0.9,patient] fact_y[0.8,chat]' }),
     })
     expect(inj).toContain('《NSCLC 靶向治疗进展》')
     expect(inj).toContain('来源: fact_x[0.9,patient] fact_y[0.8,chat]')
@@ -81,13 +81,13 @@ describe('#813 article citation enrichment', () => {
   test('stale 文章 → 注入带失效标注', async () => {
     const { facts, knowledge } = makeKnowledgeStores()
     const inj = await buildKnowledgeInjection('NSCLC 靶向治疗', facts, knowledge, {
-      resolveArticle: () => ({ title: 'NSCLC 靶向治疗进展', stale: true, staleSummary: 'fact_x 已修订', sourceSummary: 'fact_x[0.9,patient]' }),
+      resolveSummary: () => ({ title: 'NSCLC 靶向治疗进展', stale: true, staleSummary: 'fact_x 已修订', sourceSummary: 'fact_x[0.9,patient]' }),
     })
     expect(inj).toContain('⚠️已过时(fact_x 已修订)')
     expect(inj).toContain('引用前注意时效')
   })
 
-  test('未接线 resolveArticle → 保持原始渲染,无引用指令', async () => {
+  test('未接线 resolveSummary → 保持原始渲染,无引用指令', async () => {
     const { facts, knowledge } = makeKnowledgeStores()
     const inj = await buildKnowledgeInjection('NSCLC 靶向治疗', facts, knowledge)
     expect(inj).not.toContain('《')
@@ -103,7 +103,7 @@ describe('#813 article citation enrichment', () => {
       facts.add({ content: '患者 EGFR 突变阳性特殊标记词', category: 'fact', importance: 4, sourceType: 'patient' })
       facts.commit(); knowledge.commit()
       const inj = await buildKnowledgeInjection('EGFR 突变阳性特殊标记词', facts, knowledge, {
-        resolveArticle: () => ({ title: 'T', stale: false, sourceSummary: '' }),
+        resolveSummary: () => ({ title: 'T', stale: false, sourceSummary: '' }),
       })
       expect(inj).not.toContain(KB_CITATION_RULE)
     } finally {

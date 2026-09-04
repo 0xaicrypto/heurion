@@ -302,7 +302,7 @@ export function ChatPage() {
 
   const handleAddToKnowledge = async (msg: ChatMessage) => {
     if (!msg.knowledgePayload) return;
-    await api.createKnowledgeArticle(msg.knowledgePayload).catch(() => {});
+    await api.createKnowledgeSummary(msg.knowledgePayload).catch(() => {});
     setKbAdded(prev => ({ ...prev, [msg.id]: true }));
   };
 

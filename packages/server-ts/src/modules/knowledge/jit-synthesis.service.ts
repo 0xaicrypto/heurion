@@ -4,7 +4,7 @@
  * 触发面:knowledge_inject 检索命中 ≥3 条 facts 且无任何文章覆盖、
  * 预算处于充足档(合成是追加 LLM 调用,紧张档不做)。产物为
  * ephemeral 注入块(不落图谱);同帧异步经 pending 闸门提案沉淀
- * — 审核通过才成为正式 article(无直写,BRAIN2 §13.0 闸门语义)。
+ * — 审核通过才成为正式 summary(无直写,BRAIN2 §13.0 闸门语义)。
  *
  * 防抖:同 (userId, query) 10 分钟内只综合一次;in-flight 去重防并发
  * 重复调用。患者隔离:facts 来自 knowledge-inject 的患者过滤检索,
@@ -14,8 +14,8 @@ import { resolveTierModel } from '../../common/llm-gateway.js'
 import { makeLogger } from '../../common/logger.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import type { MemoryService } from '../../memory/memory.service.js'
-import { articleSynthesisPrompt } from '../../memory/prompts.js'
-import { normalizeSynthesizedArticle } from '../../memory/article-contract.js'
+import { summarySynthesisPrompt } from '../../memory/prompts.js'
+import { normalizeSynthesizedSummary } from '../../memory/summary-contract.js'
 
 const log = makeLogger('knowledge.jit-synthesis')
 
@@ -75,7 +75,7 @@ export async function maybeJitSynthesize(input: JitSynthesisInput): Promise<stri
     const { deepseekChat, getApiKey } = await import('../../common/llm.js')
     const { parseLlmJson } = await import('../../common/llm-json.js')
     const raw = await deepseekChat(
-      [{ role: 'user', content: articleSynthesisPrompt(factList) }],
+      [{ role: 'user', content: summarySynthesisPrompt(factList) }],
       getApiKey(),
       {
         model: resolveTierModel('fast'),
@@ -83,7 +83,7 @@ export async function maybeJitSynthesize(input: JitSynthesisInput): Promise<stri
         telemetryContext: { userId: input.userId, workspaceId: input.userId, action: 'memory.jit_synthesis' },
       },
     )
-    const normalized = normalizeSynthesizedArticle(parseLlmJson<unknown>(raw), picked.map((f) => f.stableId))
+    const normalized = normalizeSynthesizedSummary(parseLlmJson<unknown>(raw), picked.map((f) => f.stableId))
     if (!normalized) {
       log.info('[JIT] synthesis skipped: unparseable contract', { userId: input.userId })
       return null
@@ -112,12 +112,12 @@ async function proposeForReview(
   await gateway.propose({
     scopeType: input.patientHash ? 'patient' : 'global',
     patientHash: input.patientHash || undefined,
-    kind: 'article',
+    kind: 'summary',
     content: normalized.content,
     importance: 3,
     confidence: 'medium',
     reason: 'JIT read-time synthesis (ephemeral; awaiting review)',
     relatedFacts,
   })
-  log.info('[JIT] article proposed for review', { userId: input.userId, title: normalized.title })
+  log.info('[JIT] summary proposed for review', { userId: input.userId, title: normalized.title })
 }

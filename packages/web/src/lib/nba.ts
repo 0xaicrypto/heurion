@@ -41,7 +41,7 @@ export interface NbaAction {
 }
 
 /**
- * #761: 只读现有数据计算下一步建议(FilePipelineJob/gaps/stale articles)。
+ * #761: 只读现有数据计算下一步建议(FilePipelineJob/gaps/stale summaries)。
  * 组件层负责把 targetPath 渲染为跳转按钮与图标。
  */
 export function useNextBestActionSignals(): Array<{ id: string; text: string; actionLabel: string; targetPath: string; tone: 'accent' | 'warning' }> {
@@ -54,7 +54,7 @@ export function useNextBestActionSignals(): Array<{ id: string; text: string; ac
       const signals = await Promise.allSettled([
         api.listFiles(10).then((r) => r.files.slice(0, 3)),
         api.getKnowledgeGaps({ status: 'open', pageSize: 5 }).then((r) => r.gaps),
-        api.getKnowledgeArticles().then((r) => r.articles.filter((a) => a.status === 'stale')),
+        api.getKnowledgeSummaries().then((r) => r.summaries.filter((a) => a.status === 'stale')),
       ]);
       const found: Array<{ id: string; text: string; actionLabel: string; targetPath: string; tone: 'accent' | 'warning' }> = [];
 
@@ -86,10 +86,10 @@ export function useNextBestActionSignals(): Array<{ id: string; text: string; ac
       const stale = signals[2].status === 'fulfilled' ? signals[2].value : [];
       if (stale.length >= 2) {
         found.push({
-          id: 'nba-articles-stale',
+          id: 'nba-summaries-stale',
           text: t('nba.stale', '{{n}} 篇文章因新事实过期', { n: stale.length }),
           actionLabel: t('nba.viewAction', '查看'),
-          targetPath: '/app/knowledge?view=articles',
+          targetPath: '/app/knowledge?view=summaries',
           tone: 'warning',
         });
       }

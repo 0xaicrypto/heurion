@@ -59,15 +59,15 @@ describe('P7 — RRF Fusion', () => {
 })
 
 describe('P8 — Knowledge Cascade', () => {
-  test('markStale marks article when dependent fact changes', () => {
-    const articles = [{
+  test('markStale marks summary when dependent fact changes', () => {
+    const summaries = [{
       id: 'k1', title: 'NSCLC review', content: 'Review',
       sources: [{ type: 'fact' as const, id: 'f1', version: 1, content: 'RUL 18mm' }],
       version: 1, status: 'current' as const, createdAt: 0, updatedAt: 0,
     }]
     const changedFacts = new Set(['f1'])
 
-    const updated = articles.map(a => ({
+    const updated = summaries.map(a => ({
       ...a,
       status: a.sources.some(s => changedFacts.has(s.id)) ? ('stale' as const) : a.status,
       staleBecause: a.sources.some(s => changedFacts.has(s.id)) ? a.sources.filter(s => changedFacts.has(s.id)).map(s => s.id) : undefined,
@@ -77,15 +77,15 @@ describe('P8 — Knowledge Cascade', () => {
     expect(updated[0].staleBecause).toContain('f1')
   })
 
-  test('unchanged facts keep article current', () => {
-    const articles = [{
+  test('unchanged facts keep summary current', () => {
+    const summaries = [{
       id: 'k2', title: 'Other', content: 'X',
       sources: [{ type: 'fact' as const, id: 'f2', version: 1, content: 'Other' }],
       version: 1, status: 'current' as const, createdAt: 0, updatedAt: 0,
     }]
     const changedFacts = new Set(['f1'])
 
-    const updated = articles.map(a => ({
+    const updated = summaries.map(a => ({
       ...a,
       status: a.sources.some(s => changedFacts.has(s.id)) ? ('stale' as const) : a.status,
     }))

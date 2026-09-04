@@ -1,11 +1,11 @@
 /**
- * Knowledge articles / gaps / telemetry HTTP surface.
+ * Knowledge summaries / gaps / telemetry HTTP surface.
  *
  * #687 双 router 边界:本文件 = 文章(生成/重生成/编辑)/gap 检测/遥测的
  * HTTP 面;knowledge-stores.router.ts = 记忆图谱(facts/nodes/versions)与
  * 工具商店的存储面。两者共享 authGuard 与 gapService,但端点前缀不同
  * (/api/v1/knowledge/* vs /api/v1/memory/* + tool-store),不构成重复路由。
- * LLM 生成在 article-synthesis.service,展示序列化在 article-view.service。
+ * LLM 生成在 summary-synthesis.service,展示序列化在 summary-view.service。
  */
 import { FastifyInstance } from 'fastify'
 import { authGuard, adminGuard } from '../../common/auth.guard'
@@ -15,8 +15,8 @@ import { SidecarFeedbackService, type SidecarOutputType } from './sidecar-feedba
 import { isNodeSuperseded } from '../../memory/memory.types.js'
 import { PrismaTelemetryService } from './telemetry.service.js'
 import type { PickerNode } from './knowledge-picker.service.js'
-import { regenerateArticleWithLlm } from './article-synthesis.service.js'
-import { serializeArticle } from './article-view.service.js'
+import { regenerateSummaryWithLlm } from './summary-synthesis.service.js'
+import { serializeSummary } from './summary-view.service.js'
 
 const gapService = new PrismaKnowledgeGapService()
 const telemetry = new PrismaTelemetryService()
@@ -207,8 +207,8 @@ export async function knowledgeRouter(app: FastifyInstance) {
     return updated
   })
 
-  // Create a knowledge article directly (e.g. from a Sidecar-generated document)
-  app.post('/api/v1/knowledge/articles', async (request, reply) => {
+  // Create a knowledge summary directly (e.g. from a Sidecar-generated document)
+  app.post('/api/v1/knowledge/summaries', async (request, reply) => {
     const userId = request.user!.userId
     const body = request.body as any
     if (!body?.title || !body?.content) {
@@ -216,7 +216,7 @@ export async function knowledgeRouter(app: FastifyInstance) {
     }
 
     const ctx = getUserContext(userId)
-    const article = ctx.memory.addArticle({
+    const summary = ctx.memory.addSummary({
       title: String(body.title),
       content: String(body.content),
       sourceFactStableIds: Array.isArray(body.sources) ? body.sources.map(String) : [],
@@ -227,24 +227,24 @@ export async function knowledgeRouter(app: FastifyInstance) {
       userId,
       workspaceId: userId,
       category: 'kb_command',
-      action: 'article_created',
-      metadata: { articleId: article.stableId, source: 'sidecar' },
+      action: 'summary_created',
+      metadata: { summaryId: summary.stableId, source: 'sidecar' },
     }).catch(() => {})
 
     return {
-      id: article.stableId,
-      title: article.title,
-      content: article.content,
-      sources: article.sourceFacts.map(s => s.stableId),
-      version: article.version,
-      status: article.status,
-      createdAt: article.createdAt,
-      updatedAt: article.updatedAt,
+      id: summary.stableId,
+      title: summary.title,
+      content: summary.content,
+      sources: summary.sourceFacts.map(s => s.stableId),
+      version: summary.version,
+      status: summary.status,
+      createdAt: summary.createdAt,
+      updatedAt: summary.updatedAt,
     }
   })
 
   // #620: 知识库选择器 — chat 从知识库显式添加文章到上下文.
-  // #628: 除合成文章(article)外,同时列出用户上传过的文件(document),
+  // #628: 除合成文章(summary)外,同时列出用户上传过的文件(document),
   // 否则上传的文件永远不会出现在选择器里(文章需 ≥3 条 7 天内确认事实才合成)。
   app.get('/api/v1/knowledge/picker', async (request) => {
     const userId = request.user!.userId
@@ -253,16 +253,16 @@ export async function knowledgeRouter(app: FastifyInstance) {
     // #633: 选择器改用统一检索(keyword + vector RRF) — 语义相近词可命中
     // (如搜"放疗抵抗"命中 ATR 论文);embedding 故障自动回落词法。
     const nodes = ctx.memory.graph
-      .getCurrentNodesByType('article')
+      .getCurrentNodesByType('summary')
       .concat(ctx.memory.graph.getCurrentNodesByType('document'))
     const { EmbeddingService } = await import('../../memory/embedding/embedding.service.js')
     const embedding = new EmbeddingService(userId)
     const { searchPickerItems } = await import('./knowledge-picker.service.js')
     const hits = await searchPickerItems(
-      nodes.map((n): PickerNode => n.type === 'article'
+      nodes.map((n): PickerNode => n.type === 'summary'
         ? {
-            stableId: n.stableId, type: 'article', title: n.title,
-            content: String((n as import('../../memory/memory.types.js').ArticleNode).content || '').slice(0, 2000),
+            stableId: n.stableId, type: 'summary', title: n.title,
+            content: String((n as import('../../memory/memory.types.js').SummaryNode).content || '').slice(0, 2000),
             updatedAt: n.updatedAt,
           }
         : {
@@ -274,10 +274,10 @@ export async function knowledgeRouter(app: FastifyInstance) {
       embedding,
     )
     const items = hits.map(({ node }): any => {
-      if (node.type === 'article') {
+      if (node.type === 'summary') {
         return {
           id: node.stableId,
-          kind: 'article',
+          kind: 'summary',
           title: node.title,
           summary: String(node.content || '').slice(0, 120),
           updatedAt: node.updatedAt,
@@ -291,10 +291,10 @@ export async function knowledgeRouter(app: FastifyInstance) {
         updatedAt: node.updatedAt,
       }
     })
-    return { articles: items.map((a) => ({ id: a.id, title: a.title, summary: a.summary, kind: a.kind, updated_at: a.updatedAt })) }
+    return { summaries: items.map((a) => ({ id: a.id, title: a.title, summary: a.summary, kind: a.kind, updated_at: a.updatedAt })) }
   })
 
-  // #816: facts→article 覆盖率仪表盘(global + 患者 scope)
+  // #816: facts→summary 覆盖率仪表盘(global + 患者 scope)
   app.get('/api/v1/knowledge/coverage', async (request) => {
     const userId = request.user!.userId
     const ctx = getUserContext(userId)
@@ -302,39 +302,39 @@ export async function knowledgeRouter(app: FastifyInstance) {
     return buildCoverageDashboard(userId, ctx.memory)
   })
 
-  // List knowledge articles with stale/impact metadata
-  app.get('/api/v1/knowledge/articles', async (request) => {
+  // List knowledge summaries with stale/impact metadata
+  app.get('/api/v1/knowledge/summaries', async (request) => {
     const userId = request.user!.userId
     const ctx = getUserContext(userId)
-    const articles = ctx.memory.graph.getCurrentNodesByType('article')
-      .filter((n): n is import('../../memory/memory.types.js').ArticleNode => n.type === 'article')
-      .map(a => serializeArticle(a, ctx.memory))
-    return { articles }
+    const summaries = ctx.memory.graph.getCurrentNodesByType('summary')
+      .filter((n): n is import('../../memory/memory.types.js').SummaryNode => n.type === 'summary')
+      .map(a => serializeSummary(a, ctx.memory))
+    return { summaries }
   })
 
-  // Get a single article with impact details
-  app.get('/api/v1/knowledge/articles/:id', async (request, reply) => {
+  // Get a single summary with impact details
+  app.get('/api/v1/knowledge/summaries/:id', async (request, reply) => {
     const userId = request.user!.userId
     const { id } = request.params as { id: string }
     const ctx = getUserContext(userId)
-    const article = ctx.memory.graph.getLatestByStableId(id)
-    if (!article || article.type !== 'article' || isNodeSuperseded(article)) {
-      return reply.status(404).send({ error: 'article not found' })
+    const summary = ctx.memory.graph.getLatestByStableId(id)
+    if (!summary || summary.type !== 'summary' || isNodeSuperseded(summary)) {
+      return reply.status(404).send({ error: 'summary not found' })
     }
-    return serializeArticle(article as import('../../memory/memory.types.js').ArticleNode, ctx.memory)
+    return serializeSummary(summary as import('../../memory/memory.types.js').SummaryNode, ctx.memory)
   })
 
-  // Regenerate a stale article from its current source facts
-  app.post('/api/v1/knowledge/articles/:id/regenerate', async (request, reply) => {
+  // Regenerate a stale summary from its current source facts
+  app.post('/api/v1/knowledge/summaries/:id/regenerate', async (request, reply) => {
     const userId = request.user!.userId
     const { id } = request.params as { id: string }
     const ctx = getUserContext(userId)
-    const article = ctx.memory.graph.getLatestByStableId(id) as import('../../memory/memory.types.js').ArticleNode | undefined
-    if (!article || article.type !== 'article' || isNodeSuperseded(article)) {
-      return reply.status(404).send({ error: 'article not found' })
+    const summary = ctx.memory.graph.getLatestByStableId(id) as import('../../memory/memory.types.js').SummaryNode | undefined
+    if (!summary || summary.type !== 'summary' || isNodeSuperseded(summary)) {
+      return reply.status(404).send({ error: 'summary not found' })
     }
 
-    const regenerated = await regenerateArticleWithLlm(article, ctx.memory, userId)
+    const regenerated = await regenerateSummaryWithLlm(summary, ctx.memory, userId)
     if (!regenerated.ok) {
       return reply.status(500).send({ error: regenerated.error })
     }
@@ -343,20 +343,20 @@ export async function knowledgeRouter(app: FastifyInstance) {
       userId,
       workspaceId: userId,
       category: 'kb_command',
-      action: 'article_regenerated',
-      metadata: { articleId: regenerated.value.stableId, previousVersion: article.id },
+      action: 'summary_regenerated',
+      metadata: { summaryId: regenerated.value.stableId, previousVersion: summary.id },
     }).catch(() => {})
 
-    return serializeArticle(regenerated.value, ctx.memory)
+    return serializeSummary(regenerated.value, ctx.memory)
   })
 
-  // Manually edit an article
-  app.put('/api/v1/knowledge/articles/:id', async (request, reply) => {
+  // Manually edit an summary
+  app.put('/api/v1/knowledge/summaries/:id', async (request, reply) => {
     const userId = request.user!.userId
     const { id } = request.params as { id: string }
     const body = request.body as any
     const ctx = getUserContext(userId)
-    const edited = ctx.memory.editArticle(id, {
+    const edited = ctx.memory.editSummary(id, {
       title: body?.title,
       content: body?.content,
     }, 'user')
@@ -369,10 +369,10 @@ export async function knowledgeRouter(app: FastifyInstance) {
       workspaceId: userId,
       category: 'kb_command',
       action: 'article_edited',
-      metadata: { articleId: edited.value.stableId },
+      metadata: { summaryId: edited.value.stableId },
     }).catch(() => {})
 
-    return serializeArticle(edited.value, ctx.memory)
+    return serializeSummary(edited.value, ctx.memory)
   })
 
   // Sidecar output feedback: extract candidates and optionally save facts

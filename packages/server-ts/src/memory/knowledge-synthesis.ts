@@ -6,7 +6,7 @@ import { makeLogger } from '../common/logger.js'
 const log = makeLogger('documents.summary')
 
 /**
- * K3/K4 — session summaries and knowledge-article synthesis driven by NEW
+ * K3/K4 — session summaries and knowledge-summary synthesis driven by NEW
  * confirmed facts (BRAIN2_MEMORY_LIFECYCLE §5.3–5.4, issue #110).
  */
 
@@ -56,23 +56,23 @@ export async function updateEpisodeSummary(input: EpisodeSummaryInput): Promise<
 }
 
 /**
- * K4 — knowledge-article synthesis. #816: 触发改为覆盖率驱动 — 按类目
- * 聚合"未被任何 article 覆盖(且未被 pending 提案占用)"的 facts,最大簇
+ * K4 — knowledge-summary synthesis. #816: 触发改为覆盖率驱动 — 按类目
+ * 聚合"未被任何 summary 覆盖(且未被 pending 提案占用)"的 facts,最大簇
  * ≥3 即合成,替代原先的"近 7 天确认 ≥3"硬编码时间条件(长尾主题从此
  * 有覆盖路径);时间窗保留为 coverage 数据不可用时的兜底。
  *
  * 缺陷修复(#816 顺带):
  * ① 全局 scope 患者隔离 — 空 scope 只聚合无 patientHash/studyId 的
  *    facts;此前两个过滤条件退化为 true,跨患者碎片会混入"全局"文章。
- * ② "used" 判定纳入 pending — pending 的 article 提案已通过 relatedFacts
- *    占用其源 facts;此前只统计 current article,同一批 facts 在审批前
+ * ② "used" 判定纳入 pending — pending 的 summary 提案已通过 relatedFacts
+ *    占用其源 facts;此前只统计 current summary,同一批 facts 在审批前
  *    可被重复触发合成。
  * ③ "确认时间"语义:提案制下 fact 在审批通过时才经 defaultProposalApplier
  *    写入 graph(addFact),createdAt 即确认时间;直写路径(chat 提取)
  *    createdAt 即提取确认时间。故沿用 createdAt 是准确近似,不新增
  *    confirmedAt 字段 — 此注释即为该决策的显式记录。
  */
-export async function maybeSynthesizeArticle(
+export async function maybeSynthesizeSummary(
   userId: string,
   scope: { patientHash?: string; studyId?: string },
   memory: MemoryService,
@@ -90,10 +90,10 @@ export async function maybeSynthesizeArticle(
     )
     if (scoped.length < 3) return
 
-    // ② "Used" = current article 的 sourceFacts ∪ pending article 提案占用。
-    const articles = memory.graph.getCurrentNodesByType('article') as any[]
+    // ② "Used" = current summary 的 sourceFacts ∪ pending summary 提案占用。
+    const summaries = memory.graph.getCurrentNodesByType('summary') as any[]
     const usedStableIds = new Set<string>()
-    for (const a of articles) {
+    for (const a of summaries) {
       for (const sf of a.sourceFacts || []) usedStableIds.add(sf.stableId)
     }
     const { getPendingOccupiedFactIds } = await import('./coverage.js')
@@ -123,20 +123,20 @@ export async function maybeSynthesizeArticle(
       patientIsolated: !!scope.patientHash || !!scope.studyId,
     })
 
-    const articleFacts = best[1]
+    const summaryFacts = best[1]
       .sort((a, b) => (b.importance ?? 3) - (a.importance ?? 3))
       .slice(0, 10)
 
     const { deepseekChat, getApiKey } = await import('../common/llm.js')
     const { parseLlmJson } = await import('../common/llm-json.js')
-    const { articleSynthesisPrompt } = await import('./prompts.js')
-    const { normalizeSynthesizedArticle } = await import('./article-contract.js')
+    const { summarySynthesisPrompt } = await import('./prompts.js')
+    const { normalizeSynthesizedSummary } = await import('./summary-contract.js')
     const apiKey = getApiKey()
     // #813: 每行前置 fact stableId — 合成模型按 ID 回指,归一化层过滤编造 ID。
-    const factList = articleFacts
+    const factList = summaryFacts
       .map((f) => `[${f.stableId}] importance=${f.importance ?? 3} source=${f.sourceType || 'general'}: ${f.content}`)
       .join('\n')
-    const prompt = articleSynthesisPrompt(factList)
+    const prompt = summarySynthesisPrompt(factList)
 
     const result = await deepseekChat(
       [{ role: 'user', content: prompt }],
@@ -144,15 +144,15 @@ export async function maybeSynthesizeArticle(
       {
         model: resolveTierModel('fast'),
         maxTokens: 900,
-        telemetryContext: { userId, workspaceId: userId, action: 'memory.article_synthesis' },
+        telemetryContext: { userId, workspaceId: userId, action: 'memory.summary_synthesis' },
       },
     )
     const parsed = parseLlmJson<unknown>(result)
     // #813: answer-ready 契约归一化(结论/依据/caveat + factId 白名单过滤);
     // 结构不可用时返回 null,本轮不提案(宁缺毋滥,不让摘要体文章静默通过)。
-    const normalized = normalizeSynthesizedArticle(parsed, articleFacts.map(f => f.stableId))
+    const normalized = normalizeSynthesizedSummary(parsed, summaryFacts.map(f => f.stableId))
     if (!normalized) {
-      log.info('[KNOWLEDGE] Article synthesis skipped: unparseable contract')
+      log.info('[KNOWLEDGE] Summary synthesis skipped: unparseable contract')
       return
     }
 
@@ -162,17 +162,17 @@ export async function maybeSynthesizeArticle(
       scopeType: scope.patientHash ? 'patient' : scope.studyId ? 'study' : 'global',
       patientHash: scope.patientHash,
       studyId: scope.studyId,
-      kind: 'article',
+      kind: 'summary',
       content: normalized.content,
       importance: 3,
       confidence: 'medium',
-      reason: `AI synthesis from ${articleFacts.length} confirmed ${best[0]} facts`,
-      // #736/#748: provenance — on approval the article binds these so the
+      reason: `AI synthesis from ${summaryFacts.length} confirmed ${best[0]} facts`,
+      // #736/#748: provenance — on approval the summary binds these so the
       // "used" set excludes them from future synthesis rounds.
-      relatedFacts: articleFacts.map(f => f.stableId),
+      relatedFacts: summaryFacts.map(f => f.stableId),
     })
-    log.info(`[KNOWLEDGE] Article proposed: ${normalized.title}`)
+    log.info(`[KNOWLEDGE] Summary proposed: ${normalized.title}`)
   } catch (err) {
-    log.info('[KNOWLEDGE] Article synthesis skipped:', (err as Error).message.slice(0, 120))
+    log.info('[KNOWLEDGE] Summary synthesis skipped:', (err as Error).message.slice(0, 120))
   }
 }

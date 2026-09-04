@@ -52,7 +52,7 @@ function parseEvents(payload: string): any[] {
 
 /**
  * #628 — 知识库选择器必须能列出用户上传的文件(document 节点),
- * 而不仅是合成文章(article)。合成文章需 ≥3 条 7 天内确认事实,
+ * 而不仅是合成文章(summary)。合成文章需 ≥3 条 7 天内确认事实,
  * 普通用户上传的文件永远不该因此从选择器消失。
  */
 describe('#628 选择器列出上传文件 + 注入文档内容', () => {
@@ -86,8 +86,8 @@ describe('#628 选择器列出上传文件 + 注入文档内容', () => {
       headers: await authHeader(),
     })
     expect(picker.statusCode).toBe(200)
-    const { articles } = JSON.parse(picker.payload)
-    const doc = articles.find((a: any) => a.kind === 'document' && a.id === file_id)
+    const { summaries } = JSON.parse(picker.payload)
+    const doc = summaries.find((a: any) => a.kind === 'document' && a.id === file_id)
     expect(doc).toBeTruthy()
     expect(doc.title).toContain('atr')
   })

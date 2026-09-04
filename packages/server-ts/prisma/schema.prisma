@@ -425,7 +425,7 @@ model MemoryProposal {
   scopeType      String  @map("scope_type") // 'patient' | 'global' | 'study'
   patientHash    String? @map("patient_hash")
   studyId        String? @map("study_id")
-  kind           String  // fact | article | episode_summary | compaction_summary
+  kind           String  // fact | summary | episode_summary | compaction_summary (legacy rows: 'article' migrated at boot)
   content        String
   importance     Int     @default(3)
   confidence     String  @default("medium") // high | medium | low

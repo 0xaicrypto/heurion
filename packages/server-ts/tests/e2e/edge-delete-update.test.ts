@@ -75,7 +75,7 @@ describe('nonexistent resources 404/400 (边界 #253)', () => {
     expect(roster.statusCode).toBe(404)
   })
 
-  test('knowledge: gaps resolve/ignore nonexistent → 404; articles PUT nonexistent → 404', async () => {
+  test('knowledge: gaps resolve/ignore nonexistent → 404; summaries PUT nonexistent → 404', async () => {
     const app = await getApp()
     const h = await authHeader()
     const resolve = await app.inject({
@@ -91,7 +91,7 @@ describe('nonexistent resources 404/400 (边界 #253)', () => {
     })
     expect([400, 404]).toContain(ignore.statusCode)
     const put = await app.inject({
-      method: 'PUT', url: '/api/v1/knowledge/articles/article_nonexistent',
+      method: 'PUT', url: '/api/v1/knowledge/summaries/summary_nonexistent',
       headers: { ...h, 'content-type': 'application/json' },
       payload: JSON.stringify({ title: 'x', content: 'y' }),
     })

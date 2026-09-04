@@ -1,5 +1,5 @@
 /**
- * #816 — facts→article 覆盖率:记忆系统的健康度量与合成调度依据。
+ * #816 — facts→summary 覆盖率:记忆系统的健康度量与合成调度依据。
  *
  * 口径(患者隔离,BRAIN2_MEMORY_LIFECYCLE §4.2):
  * - patient scope  → 只统计该患者的 facts;
@@ -7,17 +7,17 @@
  * - global scope   → 只统计无 patientHash 且无 studyId 的 facts
  *   (K4 缺陷①修复:此前空 scope 会把所有患者的 facts 混入"全局"统计)。
  *
- * 覆盖 = fact stableId 被 ≥1 篇 current article 的 sourceFacts 引用,
- * 或被 pending 的 article 提案占用(K4 缺陷②:审批前同批 facts 不再
+ * 覆盖 = fact stableId 被 ≥1 篇 current summary 的 sourceFacts 引用,
+ * 或被 pending 的 summary 提案占用(K4 缺陷②:审批前同批 facts 不再
  * 重复触发合成 — pending 是"已在路上"的覆盖)。
  *
- * 实时性:fact 审批通过 / article 落库 / supersede 失效传播都直接改变
+ * 实时性:fact 审批通过 / summary 落库 / supersede 失效传播都直接改变
  * graph 状态,本函数每次从 graph 现算(无缓存即无失效问题,#816 验收
  * 要求的"实时变化"由此保证;规模 ≤ 数千节点,O(N) 现算足够)。
  */
 import prisma from '../common/prisma.js'
 import type { MemoryService } from './memory.service.js'
-import type { FactNode, ArticleNode } from './memory.types.js'
+import type { FactNode, SummaryNode } from './memory.types.js'
 
 export interface CoverageScope {
   patientHash?: string
@@ -36,9 +36,9 @@ export interface ScopeCoverage {
   uncoveredSample: string[]
 }
 
-/** 待审 article 提案占用的 fact stableIds(pending 即"覆盖在路上")。 */
+/** 待审 summary 提案占用的 fact stableIds(pending 即"覆盖在路上")。 */
 export async function getPendingOccupiedFactIds(userId: string, scope: CoverageScope): Promise<Set<string>> {
-  const where: any = { userId, status: 'pending', kind: 'article' }
+  const where: any = { userId, status: 'pending', kind: 'summary' }
   if (scope.patientHash) {
     where.scopeType = 'patient'
     where.patientHash = scope.patientHash
@@ -60,7 +60,7 @@ export async function getPendingOccupiedFactIds(userId: string, scope: CoverageS
     }
     return ids
   } catch {
-    // 表缺失/库不可达 → 空集(覆盖率退化为仅 current article 口径)
+    // 表缺失/库不可达 → 空集(覆盖率退化为仅 current summary 口径)
     return new Set()
   }
 }
@@ -79,7 +79,7 @@ export async function computeScopeCoverage(userId: string, memory: MemoryService
   )
 
   const used = new Set<string>()
-  for (const a of memory.graph.getCurrentNodesByType('article') as ArticleNode[]) {
+  for (const a of memory.graph.getCurrentNodesByType('summary') as SummaryNode[]) {
     for (const sf of a.sourceFacts || []) used.add(sf.stableId)
   }
   for (const id of await getPendingOccupiedFactIds(userId, scope)) used.add(id)
