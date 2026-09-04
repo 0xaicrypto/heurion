@@ -11,10 +11,21 @@ describe('MemoryService', () => {
   // 定时器可能在任意时刻重建文件,使下一个测试的清理 rmdir 偶发
   // ENOTEMPTY(CI flake 根因,共享目录 + 跨实例写入竞争)。
   let baseDir = ''
+  // #639-r5: 同目录内的**全部** EventLog 实例(含 reload 测试内联新建的)
+  // 都要登记 — afterEach 先 flush 各自写队列再删目录,否则未落盘的
+  // appendFile 会在 rm 过程中重建文件,rmSync(maxRetries) 也救不了
+  // (文件在重试窗口之后才出现)。CI 偶发 ENOTEMPTY 的最终根因。
+  const logs: EventLog[] = []
+
+  function newLog(userId = 'user_1'): EventLog {
+    const log = new EventLog(baseDir, userId)
+    logs.push(log)
+    return log
+  }
 
   function setup(userId = 'user_1') {
     baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-memory-service-'))
-    const eventLog = new EventLog(baseDir, userId)
+    const eventLog = newLog(userId)
     const facts = new FactsStore(baseDir)
     const knowledge = new KnowledgeStore(baseDir)
     const memory = new MemoryService({
@@ -27,7 +38,8 @@ describe('MemoryService', () => {
     return { eventLog, facts, knowledge, memory }
   }
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(logs.splice(0).map((l) => l.flush().catch(() => {})))
     if (baseDir) fs.rmSync(baseDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   })
 
@@ -165,8 +177,8 @@ describe('MemoryService', () => {
     const fact = memory.addFact({ content: 'ZL EGFR exon19del', importance: 5 })
     const firstVersion = memory.graph.currentVersion()
 
-    // Reload
-    const eventLog2 = new EventLog(baseDir, 'user_1')
+    // Reload(内联第二实例 — 必须走 newLog 登记,flush 才能覆盖)
+    const eventLog2 = newLog('user_1')
     const facts2 = new FactsStore(baseDir)
     const knowledge2 = new KnowledgeStore(baseDir)
     const memory2 = new MemoryService({
