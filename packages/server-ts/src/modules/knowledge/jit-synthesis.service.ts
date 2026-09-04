@@ -13,6 +13,7 @@
 import { resolveTierModel } from '../../common/llm-gateway.js'
 import { makeLogger } from '../../common/logger.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
+import prisma from '../../common/prisma.js'
 import type { MemoryService } from '../../memory/memory.service.js'
 import { summarySynthesisPrompt } from '../../memory/prompts.js'
 import { normalizeSynthesizedSummary } from '../../memory/summary-contract.js'
@@ -107,6 +108,33 @@ async function proposeForReview(
   normalized: { title: string; content: string },
   relatedFacts: string[],
 ): Promise<void> {
+  // #836-followup: 相同事实簇去重 — pending 队列已有 ≥2 条相同事实(或
+  // ≥50% 重叠)的总结时跳过。生产实例:同一 PPT 问题换 6 种问法 → 6 份
+  // 重复总结提案。10 分钟 TTL 只防同查询,防不住近义问法。
+  const pendings = await (prisma as any).memoryProposal.findMany({
+    where: { userId: input.userId, status: 'pending', kind: 'summary' },
+    select: { relatedFacts: true },
+  })
+  const newIds = new Set(relatedFacts)
+  for (const p of pendings) {
+    let ids: string[] = []
+    try {
+      const parsed = typeof p.relatedFacts === 'string' ? JSON.parse(p.relatedFacts) : p.relatedFacts
+      ids = Array.isArray(parsed) ? parsed.map(String) : []
+    } catch {
+      continue
+    }
+    const shared = ids.filter((id) => newIds.has(id)).length
+    if (shared >= 2 || (ids.length > 0 && shared / Math.max(ids.length, relatedFacts.length) >= 0.5)) {
+      log.info('[JIT] summary deduped against pending cluster', {
+        userId: input.userId,
+        shared,
+        pendingCount: pendings.length,
+      })
+      return
+    }
+  }
+
   const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
   const gateway = new MemoryGraphGateway(input.userId, input.memory)
   await gateway.propose({

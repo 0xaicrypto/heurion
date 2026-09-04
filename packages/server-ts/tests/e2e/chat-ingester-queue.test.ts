@@ -44,6 +44,8 @@ describe('ChatIngester review-queue routing (§4.5 #186)', () => {
     expect(pending.length).toBeGreaterThanOrEqual(body.emitted)
     for (const p of pending) {
       expect(p.status).toBe('pending')
+      // #836-followup: 聊天提取的事实必须携带会话出处,否则溯源链断裂。
+      expect(p.sourceRange).toMatch(/^session:/)
     }
   })
 

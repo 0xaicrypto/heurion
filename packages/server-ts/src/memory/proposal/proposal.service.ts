@@ -1,7 +1,7 @@
 import prisma from '../../common/prisma.js'
 import { makeLogger } from '../../common/logger.js'
 import type { MemoryService } from '../memory.service.js'
-import { sanitizeFactFields } from '../memory.types'
+import { sanitizeFactFields, isToolArtifactNotification } from '../memory.types'
 import type { EmbeddingService } from '../embedding/embedding.service.js'
 import type { MemoryScope, ProposalInput, MemoryProposalRow, MemoryNodeLike } from '../contracts.js'
 import { serializeProposal } from '../contracts.js'
@@ -35,6 +35,32 @@ export class ProposalService {
       category = clean.category
     } else {
       content = content.slice(0, 300)
+    }
+
+    // #836-followup: 工具完成通知("已生成 xxx.pptx")不是知识 — 统一在
+    // 闸门拦截,不建行、不进审核队列(压缩/聊天提取都从这里过)。
+    if (isToolArtifactNotification(content)) {
+      const now = new Date().toISOString()
+      return {
+        id: `dropped_${now}`,
+        userId: this.userId,
+        scopeType: input.scopeType,
+        patientHash: input.patientHash || null,
+        studyId: input.studyId || null,
+        kind: input.kind,
+        content,
+        importance: input.importance ?? 3,
+        confidence: input.confidence ?? 'medium',
+        reason: input.reason || null,
+        sourceRange: input.sourceRange || null,
+        category,
+        conflictsWith: null,
+        status: 'rejected',
+        rejectedReason: '工具完成通知不作为记忆入库（自动过滤）',
+        createdAt: now,
+        resolvedAt: now,
+        resolvedBy: 'system',
+      }
     }
 
     // Semantic dedup against reviewed memories in the same scope.

@@ -204,7 +204,9 @@ async function enrichProposalProvenance(serialized: Array<Record<string, any>>):
             out.fileId = mp.sourceRange.slice('file:'.length).split('#')[0]
           }
           if (mp?.sourceRange?.startsWith('session:')) {
-            out.sessionId = mp.sourceRange.slice('session:'.length)
+            // #836-followup: session:<id>#<quote> — 引号证据附加在 '#' 之后,
+            // 会话标题解析只取 id 部分(sessionId 永不含 '#')。
+            out.sessionId = mp.sourceRange.slice('session:'.length).split('#')[0]
           }
           const m = mp?.reason?.match(/^extracted from file (.+)$/)
           if (m) out.fileName = m[1]
@@ -242,7 +244,7 @@ async function enrichProposalProvenance(serialized: Array<Record<string, any>>):
           if (ref?.startsWith('file:')) {
             fileId = ref.slice('file:'.length).split('#')[0]
           } else if (ref?.startsWith('session:')) {
-            refSessionId = ref.slice('session:'.length)
+            refSessionId = ref.slice('session:'.length).split('#')[0]
           } else if (ref && !ref.startsWith('doc_')) {
             const origin = await resolveOrigin(ref)
             fileId = origin.fileId

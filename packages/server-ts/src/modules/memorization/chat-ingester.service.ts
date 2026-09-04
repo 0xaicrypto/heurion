@@ -54,6 +54,11 @@ export class ChatIngester {
         : 'fact'
       // §4.5 (#186): every write goes through the review queue — no direct
       // addFact path. The gateway also semantically dedups (0.95, same scope).
+      // #836-followup: sourceRange 必须携带会话出处(session:<id>#<quote>),
+      // 否则事实溯源链路从这里就断了(历史事实已无法回溯)。quote 是
+      // 证据原文,只作辅助展示; sessionId 永不含 '#',enrichment 按首个
+      // '#' 切分。
+      const quote = entity.evidence_quote ? String(entity.evidence_quote).slice(0, 120) : ''
       const proposal = await this.gateway.propose({
         scopeType: patientHash ? 'patient' : 'global',
         patientHash,
@@ -62,7 +67,7 @@ export class ChatIngester {
         importance: Math.round(entity.confidence * 5),
         confidence: entity.confidence >= 0.6 ? 'high' : 'medium',
         reason: `聊天/手动导入：${entity.content.label}`,
-        sourceRange: entity.evidence_quote || undefined,
+        sourceRange: `session:${encounterId}${quote ? `#${quote}` : ''}`,
         category,
         conflictsWith: undefined,
       })

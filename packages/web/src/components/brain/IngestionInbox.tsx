@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useNavigate } from 'react-router-dom';
 import { Brain, Check, ChevronDown, ExternalLink, FileText, Inbox, MessageSquare, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
@@ -34,6 +35,29 @@ interface FactFileGroup {
 }
 
 /**
+ * #836-followup:提案 reason 是服务端内部机器串(英文),直接展示给用户
+ * 很突兀。已知模式映射为本地化文案;未识别的原样保留(如"聊天/手动导入：…"
+ * 本就是中文)。
+ */
+function localizeReason(reason: string, t: TFunction): string {
+  const jit = reason.match(/^JIT read-time synthesis/)
+  if (jit) return t('brain.reasonJit', '读时综合：临时产物，审核通过后沉淀为知识')
+  const synth = reason.match(/^AI synthesis from (\d+) confirmed fact/)
+  if (synth) return t('brain.reasonSynthesized', '基于 {{n}} 条已确认事实合成', { n: synth[1] })
+  const comp = reason.match(/^Compaction extraction \((.+?), source: (.+?)\)$/)
+  if (comp) {
+    const roleMap: Record<string, string> = { doctor: '医生', patient: '患者', research: '研究', user: '用户' }
+    return t('brain.reasonCompaction', '会话压缩提取（{{cat}}，来源：{{role}}）', {
+      cat: comp[1],
+      role: roleMap[comp[2]] || comp[2],
+    })
+  }
+  const file = reason.match(/^extracted from file (.+)$/)
+  if (file) return t('brain.reasonFromFile', '从文档《{{name}}》提取', { name: file[1] })
+  return reason
+}
+
+/**
  * 按来源聚合 fact 提案 — 一个文档(或一次会话)一张审批卡,一键全收/全拒,
  * 展开可逐条复核。非文件/会话来源的提案/病历条目原样进 rest。
  * 文件名取自提案 reason(pipeline 固定写 "extracted from file <name>"),
@@ -57,8 +81,10 @@ function partitionFactGroups(rows: InboxRow[]): { groups: FactFileGroup[]; rest:
       label = m?.[1] || key.slice(FILE_SOURCE_PREFIX.length)
       icon = 'file'
     } else if (sr.startsWith(SESSION_SOURCE_PREFIX)) {
-      key = sr
-      label = r.proposal.sourceSession || `会话 ${sr.slice(SESSION_SOURCE_PREFIX.length).slice(-8)}`
+      // #836-followup: session:<id>#<quote> — 引号证据在 '#' 后,分组与回退
+      // 标签只取 id 部分,否则每个事实各成一组。
+      key = sr.split('#')[0]
+      label = r.proposal.sourceSession || `会话 ${key.slice(SESSION_SOURCE_PREFIX.length).slice(-8)}`
       icon = 'session'
     }
     if (!key || !label) {
@@ -114,6 +140,11 @@ function SummaryProvenance({ proposal }: { proposal: MemoryProposal }) {
       )}
       {facts.length > 0 && (
         <>
+          {docs.length === 0 && sessions.length === 0 && (
+            <p className="mt-1 text-[11px] text-text-tertiary">
+              {t('brain.legacyFactsNoOrigin', '以上为历史事实，当时未记录来源')}
+            </p>
+          )}
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
@@ -326,7 +357,9 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
                   <p className="mt-1 text-xs text-error">{t('brain.conflictWarning')}</p>
                 )}
                 {proposal.reason && (
-                  <p className="mt-0.5 text-[11px] text-text-tertiary">{proposal.reason}</p>
+                  <p className="mt-0.5 text-[11px] text-text-tertiary">
+                    {localizeReason(proposal.reason, t)}
+                  </p>
                 )}
                 {proposal.kind === 'summary' && (
                   <SummaryProvenance proposal={proposal} />

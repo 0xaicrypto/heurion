@@ -8,7 +8,7 @@ export type MemoryNodeStatus = 'current' | 'stale' | 'superseded' | 'pending_rev
 export type MemoryCreatedBy = 'system' | 'user' | 'sidecar' | 'import'
 
 export interface Provenance {
-  sourceKind: 'chat' | 'document' | 'sidecar' | 'user' | 'system' | 'import' | 'proposal'
+  sourceKind: 'chat' | 'session' | 'document' | 'sidecar' | 'user' | 'system' | 'import' | 'proposal'
   sourceRef?: string
   sourceLocator?: Record<string, unknown>
   evidenceQuote?: string
@@ -188,6 +188,23 @@ export function sanitizeFactFields(input: {
     sourceType: (FACT_SOURCE_TYPES as string[]).includes(input.sourceType || '') ? (input.sourceType as FactNode['sourceType']) : 'general',
     uncertain: typeof input.confidence === 'number' ? input.confidence < 0.6 : (input.uncertain ?? false),
   }
+}
+
+/**
+ * #836-followup:工具完成通知不得成为记忆。
+ *
+ * 压缩/聊天提取会把「已生成 "xxx.pptx"。」「Rendered "y.docx".」这类
+ * 插件执行回执当成知识沉淀(生产实例:Anlotinib_*.pptx.pptx 被立为
+ * summary)。此类内容不是临床知识,在 propose 闸门统一拦截。
+ */
+export function isToolArtifactNotification(text: unknown): boolean {
+  const s = String(text || '').slice(0, 160)
+  if (!s) return false
+  if (/^(已生成|已渲染|文件已生成|AI已生成|AI已渲染|已输出|成功生成)/.test(s)) {
+    if (/\.(pptx?|docx?|pdf|md|csv|xlsx?|txt|json)\b/i.test(s)) return true
+  }
+  if (/^Rendered\s+["「']/.test(s)) return true
+  return false
 }
 
 export interface EditFactInput {

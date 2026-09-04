@@ -80,9 +80,11 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
   }
   if (proposal.kind === 'fact') {
     // 溯源保留(#836-followup):文件管道的 fact 提案带 sourceRange `file:<fileId>#w`,
-    // 审批通过写入图谱时必须保留 — 否则 summary 合成与审批列表无法回溯来源文档。
+    // 聊天/压缩管道带 `session:<sessionId>#<quote>` — 审批通过写入图谱时必须保留,
+    // 否则 summary 合成与审批列表无法回溯来源文档/会话。
     // 历史事实的 sourceRef 仍是 proposal id,由审批列表侧回查 memoryProposal 行兜底。
     const fileRange = proposal.sourceRange?.startsWith('file:') ? proposal.sourceRange : null
+    const sessionRange = proposal.sourceRange?.startsWith('session:') ? proposal.sourceRange : null
     return ctx.memory.addFact(
       {
         content: proposal.content,
@@ -90,7 +92,10 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
         importance: proposal.importance,
         patientHash: proposal.patientHash || undefined,
         sourceType: fileRange ? 'document' : proposal.scopeType === 'patient' ? 'patient' : 'general',
-        provenance: { sourceKind: fileRange ? 'document' : 'proposal', sourceRef: fileRange ?? proposal.id },
+        provenance: {
+          sourceKind: fileRange ? 'document' : sessionRange ? 'session' : 'proposal',
+          sourceRef: fileRange ?? sessionRange ?? proposal.id,
+        },
       },
       'system',
     )
