@@ -102,27 +102,47 @@ export async function extractAndProposeFacts(
   })
   return extracted
 }
+/**
+ * #display: 压缩结果对象 — 让调用方(完成 reporter)能对用户如实展示
+ * 「压缩了什么/多少条」,而不是失败后静默蒸发。
+ *   - noop: 无可压缩段(游标已覆盖/事件过少)
+ *   - done: 摘要+事实提取成功,游标已推进
+ *   - failed: LLM 摘要失败,游标不推进(下轮重试同段)
+ */
+export interface CompactionOutcome {
+  kind: 'noop' | 'done' | 'failed'
+  /** 本次合并进 Session Memory 的摘要文本(done 且 LLM 产出时非空)。 */
+  summary: string
+  /** 本次覆盖的事件区间 [prevCoveredIdx, coveredIdx]。 */
+  prevCoveredIdx: number
+  coveredIdx: number
+  /** 被压缩的 user/assistant 消息条数。 */
+  events: number
+}
+
 export async function runSessionCompaction(
   ctx: CompactionCtx,
   sessionId: string,
   firstRetainedIdx: number,
   patientHash?: string,
-): Promise<void> {
+): Promise<CompactionOutcome> {
   // S2: kbCompaction keeps ONLY the per-session compaction cursor (no
   // summary content) — anchored summaries now live in the Session Memory
   // (episodes). Works for sessions without a Session row (default global).
+  // #display: summary 列现在落**本次** episodeUpdate — 纯展示用途
+  // (注入仍走 episodes),用户可见"这次压缩了什么"。
   const last = await (prisma as any).kbCompaction.findFirst({
     where: { userId: ctx.userId, sessionId },
     orderBy: { coveredUptoIdx: 'desc' },
   })
   const covered = last?.coveredUptoIdx ?? 0
   const target = firstRetainedIdx - 1
-  if (target <= covered) return
+  if (target <= covered) return { kind: 'noop', summary: '', prevCoveredIdx: covered, coveredIdx: covered, events: 0 }
 
   const events = ctx.eventLog
     .query({ sessionId, afterIdx: covered })
     .filter((e: any) => e.idx <= target && (e.eventType === 'user_message' || e.eventType === 'assistant_response'))
-  if (events.length < 4) return
+  if (events.length < 4) return { kind: 'noop', summary: '', prevCoveredIdx: covered, coveredIdx: target, events: events.length }
 
   const conversation = events
     .map((e: any) => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
@@ -165,7 +185,12 @@ ${conversation}
     facts?: Array<Record<string, any>>
     episodeUpdate?: string
   }>(result)
-  if (!parsed) return
+  // #display: 解析失败 — 游标不推进(下轮重试同段),但结果如实上抛,
+  // reporter 对用户可见;此前静默 return,压缩发生了用户却永远看不到。
+  if (!parsed) {
+    log.warn('compaction: LLM extraction unparseable — cursor NOT advanced (will retry)', { sessionId, covered, target })
+    return { kind: 'failed', summary: '', prevCoveredIdx: covered, coveredIdx: target, events: events.length }
+  }
 
   const now = new Date().toISOString()
 
@@ -206,12 +231,13 @@ ${conversation}
 
   // 3) S2: no anchored-summary store — the episodeUpdate already merged the
   // segment into the Session Memory (episodes). The cursor row advances so
-  // segments are never re-compacted; summary column stays empty.
+  // segments are never re-compacted; #display: summary 列落本次
+  // episodeUpdate(纯展示,注入仍走 episodes)。
   await (prisma as any).kbCompaction.create({
     data: {
       userId: ctx.userId,
       sessionId,
-      summary: '',
+      summary: (parsed.episodeUpdate || '').trim(),
       coveredUptoIdx: target,
       tokenSavings: null,
       createdAt: now,
@@ -240,6 +266,13 @@ ${conversation}
     agentId: ctx.userId, sessionId,
   })
   log.info('session compacted', { sessionId, compactedUptoIdx: target, proposedFacts: proposed, events: events.length })
+  return {
+    kind: 'done',
+    summary: (parsed.episodeUpdate || '').trim(),
+    prevCoveredIdx: covered,
+    coveredIdx: target,
+    events: events.length,
+  }
 }
 
 /**

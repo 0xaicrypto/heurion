@@ -14,7 +14,7 @@ import { getUserContext } from '../shared/user-context.js'
 import { MAX_HISTORY_TOKENS } from '../shared/chat-context.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import { buildHistoryMessages } from '../../retrieval/context-compressor.js'
-import { ensureSessionCompaction, getInFlightCompaction } from '../../memory/compaction/index.js'
+import { ensureSessionCompaction, getInFlightCompaction, type CompactionOutcome } from '../../memory/compaction/index.js'
 
 export interface CompactionTriggers {
   userId: string
@@ -31,11 +31,30 @@ export interface CompactionTriggers {
   maxHistoryTokens: number
 }
 
+/**
+ * #display: 压缩结果对用户可见的通知文本。返回 null = 不打扰(noop)。
+ * 此前压缩完成后,摘要只在 LLM 成功且 episodes 命中时才展示 — LLM 失败
+ * 时压缩"无声消失",用户完全不知道发生了什么。现在 done/failed 都有
+ * 如实通知,noop 保持沉默。
+ */
+export function buildCompactionNotice(outcome: CompactionOutcome, fallbackSummary: string): string | null {
+  if (outcome.kind === 'noop') return null
+  if (outcome.kind === 'failed') {
+    return `⚠️ 已压缩检测：历史超窗（${outcome.events} 条消息），本轮摘要生成失败 — 下一回合自动重试，对话不受影响。`
+  }
+  const events = outcome.events
+  const summaryText = outcome.summary?.trim() || fallbackSummary.trim()
+  if (summaryText) {
+    return `📋 已压缩前序对话（${events} 条消息），上下文预算已恢复。\n要点：\n${summaryText}`
+  }
+  return `📋 已压缩前序对话（${events} 条消息），上下文预算已恢复。（本轮未生成摘要文本）`
+}
+
 /** Build the compaction-completed reporter: reloads the cursor, recomputes
  *  the restored budget and surfaces the session summary (if any). */
 function buildCompactionCompletedReporter(t: CompactionTriggers) {
   const { userId, sid, ctx, send, historyTurns, maxHistoryTokens } = t
-  return async () => {
+  return async (outcome: CompactionOutcome) => {
     // #598: 压缩已写入新 compactedUpto — 必须重新读取,否则用本轮
     // 压缩前的旧 cursor 计算,预算仍显示压缩前的高水位(如 70%)。
     const latest = await loadCompactedUpto(userId, sid)
@@ -49,27 +68,29 @@ function buildCompactionCompletedReporter(t: CompactionTriggers) {
     })
     send({ type: 'compaction_completed', history_tokens: restoredTokens, history_budget: maxHistoryTokens, history_turns: historyTurns })
 
-    // #612: 压缩结果作为聊天记录展示 — 读取会话最新摘要(episode),
-    // 写入 event log(刷新后历史可见)+ 发 SSE 给当前窗口。
+    // #612/#display: 压缩结果作为聊天记录展示 — 通知文本(event log 落库,
+    // 刷新后历史可见)+ SSE 给当前窗口。摘要来源: 本次 episodeUpdate →
+    // kbCompaction 行 → episodes 全量会话摘要(向后兼容)。
     try {
-      const summary = ctx.episodes.all().find((e) => e.sessionId === sid)?.summary
-      if (summary && summary.trim()) {
-        const content = `📋 已压缩前序对话,要点:\n${summary}`
-        ctx.eventLog.append({
-          timestamp: Date.now() / 1000,
-          eventType: 'assistant_response',
-          content,
-          metadata: { compactionSummary: true },
-          agentId: userId,
-          sessionId: sid,
-        })
-        send({ type: 'compaction_summary', text: content })
-      }
+      const episodeSummary = ctx.episodes.all().find((e: any) => e.sessionId === sid)?.summary || ''
+      const content = buildCompactionNotice(outcome, episodeSummary)
+      if (!content) return
+      // fallback 摘要来自 episodes(含更早压缩的合并文本) — 用行内最新
+      // 摘要更精确,但 noop/一致性优先,这里保持简单。
+      ctx.eventLog.append({
+        timestamp: Date.now() / 1000,
+        eventType: 'assistant_response',
+        content,
+        metadata: { compactionSummary: true },
+        agentId: userId,
+        sessionId: sid,
+      })
+      send({ type: 'compaction_summary', text: content })
     } catch { /* best-effort: 摘要展示失败不影响对话 */ }
   }
 }
 
-function fireCompaction(t: CompactionTriggers, completed: () => void): void {
+function fireCompaction(t: CompactionTriggers, completed: (outcome: CompactionOutcome) => void): void {
   const oldestRetainedIdx = (t.history[t.historyMessages.length - 1] as any)?.idx ?? 0
   ensureSessionCompaction(
     {
@@ -108,8 +129,8 @@ export async function maybeTriggerCompaction(t: CompactionTriggers): Promise<voi
     // A compaction from an earlier turn is still running — wait for it
     // (and its anchored summary) before replying.
     t.send({ type: 'compaction_started' })
-    await inFlightCompaction
-    sendCompactionCompleted()
+    const outcome = await inFlightCompaction
+    sendCompactionCompleted(outcome)
   }
 }
 
@@ -119,7 +140,6 @@ export function triggerCompactionAfterTrim(t: CompactionTriggers): void {
   t.send({ type: 'compaction_started' })
   fireCompaction(t, () => t.send({ type: 'compaction_completed' }))
 }
-
 /** Load the session's latest compaction boundary (for the sidecar/plugin path). */
 export async function loadCompactedUpto(userId: string, sid: string): Promise<number> {
   try {
@@ -191,6 +211,7 @@ export async function upsertSessionRow(userId: string, sid: string, title: strin
 /** #598: stream a compaction summary that happened on an earlier turn but
  *  was never shown to the current client (event log compaction + episode). */
 export async function streamUnshownCompaction(
+  userId: string,
   ctx: Awaited<ReturnType<typeof getUserContext>>,
   sid: string,
   io: { send: (chunk: any) => void },
@@ -204,9 +225,19 @@ export async function streamUnshownCompaction(
       .filter((e: any) => e.eventType === 'evolution' && String(e.content || '').includes('自动压缩'))
       .sort((a: any, b: any) => b.idx - a.idx)[0]
     if (lastCompaction && (!lastReply || lastCompaction.idx > lastReply.idx)) {
-      const sessionMemory = ctx.episodes.all().find((e: any) => e.sessionId === sid)
-      const summaryText = sessionMemory?.summary || ''
-      if (summaryText) {
+      // #display: 摘要来源三连 — episodes 全量 → 最新 kbCompaction 行
+      // (runner 现在落本次 episodeUpdate) → 无摘要则不打扰。
+      let summaryText = ctx.episodes.all().find((e: any) => e.sessionId === sid)?.summary || ''
+      if (!summaryText.trim()) {
+        try {
+          const row = await (prisma as any).kbCompaction.findFirst({
+            where: { userId, sessionId: sid },
+            orderBy: { coveredUptoIdx: 'desc' },
+          })
+          summaryText = String(row?.summary || '')
+        } catch { /* fallback best-effort */ }
+      }
+      if (summaryText.trim()) {
         const header = `🧠 会话历史已压缩，上下文预算已恢复\n\n${summaryText}`
         for (const piece of header.match(/.{1,60}/gs) || []) {
           io.send({ type: 'compaction_chunk', text: piece })

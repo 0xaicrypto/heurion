@@ -137,7 +137,7 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       // 技术文本;前端 context_info 按 kind 过滤展示)。
       send({ type: 'context_info', text: '正在分析你的请求…', kind: 'router' })
 
-      await streamUnshownCompaction(ctx, sid, io)
+      await streamUnshownCompaction(userId, ctx, sid, io)
 
       // Knowledge commands are handled directly without calling the chat LLM
       if (routeResult.intent === 'knowledge_command') {

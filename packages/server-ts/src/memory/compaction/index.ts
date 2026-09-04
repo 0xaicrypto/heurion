@@ -9,4 +9,4 @@ export {
   parseExtractionResult,
 } from './budget.js'
 export { getInFlightCompaction, ensureSessionCompaction } from './state.js'
-export { extractAndProposeFacts, runSessionCompaction, extractSegment, flushUnextracted } from './runner.js'
+export { extractAndProposeFacts, runSessionCompaction, extractSegment, flushUnextracted, type CompactionOutcome } from './runner.js'
