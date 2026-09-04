@@ -65,6 +65,8 @@ interface DocEditorProps {
   };
   /** #764: 审阅模式标题(restore 场景显示「审阅版本恢复」)。 */
   reviewTitle?: string;
+  /** #837-ux: 累计修改队列的剩余轮数(banner 内展示"还有 N 轮排队")。 */
+  queuedRounds?: number;
 }
 
 /** #792: BubbleRunState 移至 selection-bubble.tsx,这里 re-export 兼容旧 import。 */
@@ -76,7 +78,7 @@ export type { BubbleRunState } from './selection-bubble';
  * the editor converts on load (md → HTML) and on save (HTML → md).
  * 审阅模式下:AI 编辑以绿(插入)/红(删除)标记呈现,逐条或全部接受/拒绝。
  */
-export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubble, reviewTitle }: DocEditorProps) {
+export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubble, reviewTitle, queuedRounds }: DocEditorProps) {
   const applyMdRef = useRef<string | null>(null);
   const reviewKeyRef = useRef<string | null>(null);
   const [reviewStats, setReviewStats] = useState<{ pending: number; accepted: number; rejected: number }>({ pending: 0, accepted: 0, rejected: 0 });
@@ -316,6 +318,22 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     setSelectedChange(first ? { id: first.changeId, text: first.text.slice(0, 40) } : null);
   };
 
+  // #837-ux: 审阅时 ←/→ 逐处导航(编辑被禁用,方向键空闲可用)。
+  // hooks 规则:必须在 early return 之前注册。
+  const navIdx = changeNav.idx;
+  const navTotal = changeNav.total;
+  useEffect(() => {
+    if (reviewKeyRef.current === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === 'ArrowRight') { e.preventDefault(); jumpTo(Math.min(navIdx + 1, navTotal - 1)); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); jumpTo(Math.max(navIdx - 1, 0)); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- jumpTo 读最新 editor
+  }, [navIdx, navTotal]);
+
   if (!editor) return null;
 
   const isActive = (name: string, attrs?: Record<string, unknown>) =>
@@ -326,12 +344,22 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   return (
     <div className={className}>
       {reviewing && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/40">
+        <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 shadow-sm dark:border-amber-900 dark:bg-amber-950/40">
           <span className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
             <Eye size={13} /> {reviewTitle ?? '审阅 AI 修改'}
             <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[11px] dark:bg-amber-900">
               {reviewStats.pending} 处待处理 · 已接受 {reviewStats.accepted} · 已拒绝 {reviewStats.rejected}
             </span>
+            {/* #837-ux: 颜色图例 — 绿=新增 红=删除。 */}
+            <span className="ml-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
+              <span className="inline-block h-2 w-2 rounded-sm bg-emerald-500" /> 新增
+              <span className="ml-0.5 inline-block h-2 w-2 rounded-sm bg-red-400" /> 删除
+            </span>
+            {typeof queuedRounds === 'number' && queuedRounds > 0 && (
+              <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[11px] dark:bg-amber-900">
+                还有 {queuedRounds} 轮排队
+              </span>
+            )}
           </span>
           {selectedChange && (
             <span className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-300">
@@ -363,8 +391,8 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
             <Button size="sm" variant="danger" disabled={reviewStats.pending === 0} onClick={() => resolveAll(false)}>
               <X size={13} /> 全部拒绝
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => finishReview(true)}>
-              <RotateCcw size={13} /> 放弃修改
+            <Button size="sm" variant="ghost" title="不应用任何 AI 修改，编辑器恢复原正文" onClick={() => finishReview(true)}>
+              <RotateCcw size={13} /> 放弃本轮修改
             </Button>
           </span>
         </div>

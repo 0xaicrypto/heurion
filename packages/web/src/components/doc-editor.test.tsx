@@ -149,4 +149,52 @@ describe('DocEditor behaviors', () => {
     expect(resultMd).not.toContain('\\#');
     expect(resultMd).not.toContain('## EGFR-Mutant NSCLC and the TKI Era EGFR mutations');
   });
+
+  // #837-ux: 多处变更必须**同时**全部标记 — 用户在左侧编辑框一次看到
+  // 所有 diff(逐条导航 第 N/M 处),而不是只显示一个。
+  test('#837-ux 多处变更同时标记(导航 第 1/N 处,全部可见)', async () => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    const md = [
+      '# 论文',
+      '',
+      '第一段原文。',
+      '',
+      '## Middle',
+      '',
+      '第二段原文。',
+      '',
+      '## Methods',
+      '',
+      '方法段落。',
+    ].join('\n');
+    const next = [
+      '# 论文',
+      '',
+      '第一段已润色。',
+      '',
+      '## Middle',
+      '',
+      '第二段已润色。',
+      '',
+      '## Results',
+      '',
+      '新增结果章节。',
+      '',
+      '## Methods',
+      '',
+      '方法段落。',
+    ].join('\n');
+    const { container } = render(
+      <DocEditor value={md} onChange={() => {}} diffReview={{ key: 'rev_multi', old: md, next }} onDiffResolve={() => {}} />,
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    // 两处替换 + 一处新增 = 3 组,全部同时标记
+    expect(screen.getByText(/3 处待处理/)).toBeInTheDocument();
+    expect(screen.getByText(/第 1\/3 处/)).toBeInTheDocument();
+    // 新增章节与两处润色的内容都已在编辑框中(标记态)
+    const editorText = container.querySelector('.ProseMirror')?.textContent ?? '';
+    expect(editorText).toContain('新增结果章节。');
+    expect(editorText).toContain('第一段已润色。');
+    expect(editorText).toContain('第二段已润色。');
+  });
 });

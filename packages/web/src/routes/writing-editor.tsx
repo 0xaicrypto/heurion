@@ -196,6 +196,10 @@ export function WritingEditorPage() {
       writeBackQueueRef.current = [];
       serverBodyRef.current = null;
       reviewResumeDoneRef.current = false;
+      // #837-ux: 同轮合批评也要清(计时器一并撤销)。
+      if (pendingWriteBackRef.current?.timer) clearTimeout(pendingWriteBackRef.current.timer);
+      pendingWriteBackRef.current = null;
+      setQueuedRounds(0);
     }
     if (doc && serverBodyRef.current === null) serverBodyRef.current = doc.body;
   }, [doc, docId]);
@@ -225,6 +229,7 @@ export function WritingEditorPage() {
   /** 弹出下一轮写回:以「用户当前正文」为新基线做三路合并重放;冲突则丢弃并明示。 */
   const popNextWriteBack = useCallback((currentMd: string) => {
     const entry = writeBackQueueRef.current.shift();
+    setQueuedRounds(writeBackQueueRef.current.length);
     if (!entry) return;
     const remaining = writeBackQueueRef.current.length;
     const merged = mergeThreeWay(entry.base, currentMd, entry.next);
@@ -269,30 +274,67 @@ export function WritingEditorPage() {
   const chatSession = chat.chatSession;
   const chatSessionId = docId ? `doc-${docId}` : '';
 
+  // #837-ux: 同轮写回合批 — AI 一轮里逐节写回会连发多个 doc_updated,
+  // 逐个进审阅 = "每次只能看到一个 diff"。正确交互:同一轮的全部变更
+  // **一次性标记**在一个审阅里。触发时机:turn 结束(chatLoading true→false)
+  // 或 60s 无新写回(流丢失兜底,每次新写回重置)。
+  const pendingWriteBackRef = useRef<{ base: string; body: string; timer: ReturnType<typeof setTimeout> | null } | null>(null);
+  const BATCH_FALLBACK_MS = 60_000;
+  const [queuedRounds, setQueuedRounds] = useState(0);
+
+  const flushPendingWriteBack = useCallback(() => {
+    const pend = pendingWriteBackRef.current;
+    if (!pend) return;
+    if (pend.timer) clearTimeout(pend.timer);
+    pendingWriteBackRef.current = null;
+    if (diffPendingRef.current) {
+      // 跨轮:审阅未决 → 累计队列,审阅结束后依次呈现。
+      writeBackQueueRef.current.push({ base: pend.base, next: pend.body });
+      setQueuedRounds(writeBackQueueRef.current.length);
+      showNotice(t('writing.reviewQueued', 'AI 又完成了一轮修改 — 当前审阅结束后将依次呈现'), 5000);
+      return;
+    }
+    appliedDocBody.current = pend.body;
+    serverBodyRef.current = pend.body;
+    setDiffReview({ key: `rev_${Date.now()}`, old: bodyRef.current, next: pend.body });
+    // #693: 审阅模式下编辑器选中的是 diff 内容,不再构成引用。
+    setChatSelection('');
+    // #837-ux: deck 视图下 markdown 审阅不可见 — 写回时自动切回文档视图。
+    setViewMode((m) => (m === 'deck' ? 'document' : m));
+  }, [showNotice, t]);
+
+  const prevChatLoadingRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (prevChatLoadingRef.current === true && !chat.chatLoading) flushPendingWriteBack();
+    prevChatLoadingRef.current = chat.chatLoading;
+  }, [chat.chatLoading, flushPendingWriteBack]);
+
   // #696: 润色气泡状态机下沉 usePolishBubble（#797: rAF 合帧）。
   const bubble = usePolishBubble({ docId, editorRef: polishEditorRef, onNotice: showNotice });
 
   // #636 doc write-back diff 审阅 — 依赖 chatSession。
+  // #837-ux: 同轮合批 — 写回到达只更新批次末值,turn 结束/兜底超时才进审阅。
   useEffect(() => {
     if (!docId || !chatSession?.lastDocBody) return;
     if (appliedDocBody.current === chatSession.lastDocBody) return;
     if (chatSession.lastDocBody === bodyRef.current) return;
-    const serverBase = serverBodyRef.current ?? bodyRef.current;
-    // #720/#837: 上一版审阅未决 → 写回入队(不再丢弃),审阅结束后依次呈现。
-    if (diffPendingRef.current) {
-      writeBackQueueRef.current.push({ base: serverBase, next: chatSession.lastDocBody });
-      appliedDocBody.current = chatSession.lastDocBody;
-      serverBodyRef.current = chatSession.lastDocBody;
-      showNotice(t('writing.reviewQueued', 'AI 又完成了一轮修改 — 当前审阅结束后将依次呈现'), 5000);
-      return;
+    if (!pendingWriteBackRef.current) {
+      // 批次起点:记录本批第一个写回的服务端基线。
+      const base = serverBodyRef.current ?? bodyRef.current;
+      pendingWriteBackRef.current = {
+        base,
+        body: chatSession.lastDocBody,
+        timer: setTimeout(() => flushPendingWriteBack(), BATCH_FALLBACK_MS),
+      };
+    } else {
+      pendingWriteBackRef.current.body = chatSession.lastDocBody;
+      // 活动重置兜底计时(纯流丢失保险,正常路径由 turn 结束冲刷)。
+      if (pendingWriteBackRef.current.timer) clearTimeout(pendingWriteBackRef.current.timer);
+      pendingWriteBackRef.current.timer = setTimeout(() => flushPendingWriteBack(), BATCH_FALLBACK_MS);
     }
     appliedDocBody.current = chatSession.lastDocBody;
     serverBodyRef.current = chatSession.lastDocBody;
-    setDiffReview({ key: `rev_${Date.now()}`, old: bodyRef.current, next: chatSession.lastDocBody });
-    // #693: 审阅模式下编辑器选中的是 diff 内容,不再构成引用。
-    setChatSelection('');
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定,避免抖动
-  }, [chatSession?.lastDocBody, docId, diffReview]);
+  }, [chatSession?.lastDocBody, docId, flushPendingWriteBack]);
 
   // #773: AI deck 写回（edit_deck / organize 落 deck）— 页级小改直接应用
   // + 服务端快照回滚（deck 页是天然结构化单元，整篇 markdown diff 反而难读）。
@@ -1044,6 +1086,7 @@ export function WritingEditorPage() {
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
                     <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} diffReview={diffReview} onDiffResolve={handleDiffResolve} onSelectionChange={setChatSelection}
+                      queuedRounds={queuedRounds}
                       reviewTitle={restoreReview ? t('writing.restoreReviewTitle', '审阅版本恢复') : undefined}
                       onBubbleAction={bubble.handleBubbleAction}
                       bubble={{
