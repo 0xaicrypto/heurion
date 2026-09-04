@@ -246,11 +246,12 @@ jobs:
           DEEPSEEK_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENCODE_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
         run: |
           scp -o StrictHostKeyChecking=no scripts/deploy-staging.sh scripts/regression-test.sh scripts/probe-staging.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:~/heurion/scripts/
           # #553/#565: 部署或回归失败必须失败本 job。probe 仅诊断,用 rc 捕获,
           # 不能让 `; bash probe ... || true` 吞掉前面的失败退出码。
-          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd ~/heurion && DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY OPENCODE_KEY=$OPENCODE_KEY bash scripts/deploy-staging.sh && bash scripts/regression-test.sh http://localhost:8002; rc=\$?; bash scripts/probe-staging.sh || true; echo "--- cleaning up staging pm2 (#591) ---"; pm2 delete heurion-staging 2>/dev/null || true; pm2 delete heurion-embedding-staging 2>/dev/null || true; pm2 kill 2>/dev/null || true; truncate -s 0 ~/.pm2/logs/heurion-*.log 2>/dev/null || true; exit \$rc"
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd ~/heurion && DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY OPENCODE_KEY=$OPENCODE_KEY NCBI_API_KEY=$NCBI_API_KEY bash scripts/deploy-staging.sh && bash scripts/regression-test.sh http://localhost:8002; rc=\$?; bash scripts/probe-staging.sh || true; echo "--- cleaning up staging pm2 (#591) ---"; pm2 delete heurion-staging 2>/dev/null || true; pm2 delete heurion-embedding-staging 2>/dev/null || true; pm2 kill 2>/dev/null || true; truncate -s 0 ~/.pm2/logs/heurion-*.log 2>/dev/null || true; exit \$rc"
 
 
   provision-reactome-diagrams:
@@ -346,6 +347,8 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          # #835: PubMed E-utilities 免费 API key(10 req/s,无 key 仅 3 req/s)。
+          NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
           EXECUTION_PLANE_URL: ${{ secrets.EXECUTION_PLANE_URL }}
           WORKER_API_TOKEN: ${{ secrets.WORKER_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -368,6 +371,8 @@ jobs:
           GEMINI_API_KEY=${GEMINI_API_KEY}
           DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
           OPENAI_API_KEY=${OPENAI_API_KEY}
+          # #835: PubMed E-utilities rate-limit uplift (3 → 10 req/s).
+          NCBI_API_KEY=${NCBI_API_KEY}
           # #283: email verification delivery (Resend) — falls back to
           # console logging in dev when unset.
           RESEND_API_KEY=${RESEND_API_KEY}
