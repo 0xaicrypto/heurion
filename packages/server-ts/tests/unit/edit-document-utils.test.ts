@@ -164,3 +164,49 @@ describe('findFuzzySpan', () => {
     expect(findFuzzySpan(body, '   ')).toBeNull()
   })
 })
+
+// #837: 写回卫生 — 双转义换行还原 + 块级边界空行分隔。
+import { unescapeLiteralNewlines, ensureBlockBoundaries } from '../../src/lib/document-span-match.js'
+
+describe('unescapeLiteralNewlines (#837)', () => {
+  test('无真实换行且含字面 \\n → 还原为换行', () => {
+    expect(unescapeLiteralNewlines('## Title\\n\\nBody text')).toBe('## Title\n\nBody text')
+  })
+
+  test('已有真实换行 → 原样返回(医学文本可能合法含字面 \\n)', () => {
+    expect(unescapeLiteralNewlines('line1\nline2 with \\n literal')).toBe('line1\nline2 with \\n literal')
+  })
+
+  test('无换行无转义 → 原样返回', () => {
+    expect(unescapeLiteralNewlines('plain text')).toBe('plain text')
+  })
+})
+
+describe('ensureBlockBoundaries (#837)', () => {
+  test('标题 new_text 锚在段落中间 → 前补空行(生产事故形态)', () => {
+    const before = '…individualized treatment decisions in this challenging population.'
+    const after = '\n\n## Sections'
+    const out = ensureBlockBoundaries(before, '## Introduction\n\nEGFR mutations occur.', after)
+    expect(out.startsWith('\n\n## Introduction')).toBe(true)
+  })
+
+  test('锚点前已有空行 → 不重复补', () => {
+    const out = ensureBlockBoundaries('previous para\n\n', '## Heading\n\nbody', '')
+    expect(out).toBe('## Heading\n\nbody')
+  })
+
+  test('尾部边界:块级 new_text 后接非换行文本 → 后补空行', () => {
+    const out = ensureBlockBoundaries('para\n\n', '## New block\n\nbody', 'more text')
+    expect(out.endsWith('\n\n')).toBe(true)
+  })
+
+  test('词级替换(无块标记)不受影响 — 不插入任何分隔', () => {
+    const out = ensureBlockBoundaries('dose was ', '100mg', ' per day')
+    expect(out).toBe('100mg')
+  })
+
+  test('列表 new_text 同样补边界', () => {
+    const out = ensureBlockBoundaries('para ends.', '- item one\n- item two', '')
+    expect(out.startsWith('\n\n- item one')).toBe(true)
+  })
+})

@@ -99,4 +99,54 @@ describe('DocEditor behaviors', () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(screen.getByText(/1 处待处理/)).toBeInTheDocument();
   });
+
+  // #837: AI 写回多块内容(小节标题+多段)接受后必须保持块结构 —
+  // 生产事故:扁平 diff 直接 markdownToHtml 把单换行当软换行,整块内容
+  // 粘进一个段落,接受后 htmlToMarkdown 再把行首 '#' 逃逸成 '\##'。
+  test('#837 写回多块内容全部接受后保持块结构(标题/段落不粘连、无逃逸)', async () => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    const md = [
+      '# 论文',
+      '',
+      '## Introduction',
+      '',
+      'Briefly present the background and current state of knowledge.',
+      '',
+      '## Methods',
+      '',
+      '方法段落。',
+    ].join('\n');
+    const next = [
+      '# 论文',
+      '',
+      '## Introduction',
+      '',
+      'EGFR-Mutant NSCLC and the TKI Era',
+      '',
+      'EGFR mutations occur in approximately 15–50% of patients with NSCLC.',
+      '',
+      '- 首次应用',
+      '- 填补空白',
+      '',
+      '## Methods',
+      '',
+      '方法段落。',
+    ].join('\n');
+    const onResolve = vi.fn();
+    render(
+      <DocEditor value={md} onChange={() => {}} diffReview={{ key: 'rev_837', old: md, next }} onDiffResolve={onResolve} />,
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    screen.getByRole('button', { name: /全部接受/ }).click();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(onResolve).toHaveBeenCalled();
+    const resultMd = String(onResolve.mock.calls[0][0].md);
+    // 小节标题独占一行、与正文分块
+    expect(resultMd).toMatch(/EGFR-Mutant NSCLC and the TKI Era\n\n?EGFR mutations occur/);
+    // 列表保持
+    expect(resultMd).toMatch(/-\s+首次应用/);
+    // 无 '#' 逃逸、无字面 ## 残留
+    expect(resultMd).not.toContain('\\#');
+    expect(resultMd).not.toContain('## EGFR-Mutant NSCLC and the TKI Era EGFR mutations');
+  });
 });

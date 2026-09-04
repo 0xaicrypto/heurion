@@ -41,7 +41,7 @@ export class WritingApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 
-  async getDocSnapshots(docId: string): Promise<{snapshots: Array<{snapshot_id: string; created_at: string; body_preview: string}>}> {
+  async getDocSnapshots(docId: string): Promise<{snapshots: Array<{snapshot_id: string; created_at: string; body_preview: string; label?: string}>}> {
     return this.fetch(`/api/v1/docs/${docId}/snapshots`);
   }
 

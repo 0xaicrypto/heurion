@@ -125,37 +125,41 @@ interface InsertionAction {
 /**
  * 核心:在 editor(当前内容为旧文档)上应用 AI 新文档的 diff,全部以
  * track-changes 标记呈现。返回应用的变更组数。
+ *
+ * #837 重写:diff 直接在 **markdown 源**上进行(old/next 本就是 md)——
+ * 标记(#/-/|)与空行都在,插入侧 markdownToHtml(hunk) 能还原真实块结构。
+ * 旧实现 diff 扁平文本(块标记被剥掉),新标题/列表项只能插成普通段落,
+ * 整块内容还被软换行粘成一段(生产事故)。扁平索引只用于**定位**:
+ * 删除/插入位置通过「md 行 → 纯文本投影」在旧文档 flat 文本中搜索对齐。
  */
 export function applyTrackedDiff(
   editor: Editor,
-  oldContentHtml: string,
-  newContentHtml: string,
+  oldMd: string,
+  newMd: string,
   author: ChangeAuthor,
 ): number {
-  // 1) 装载旧内容
-  editor.commands.setContent(oldContentHtml, { emitUpdate: false })
+  // 1) 装载旧内容(定位基准)
+  editor.commands.setContent(markdownToHtml(oldMd), { emitUpdate: false })
   const oldIdx = buildFlatIndex(editor)
 
-  // 2) 计算新旧 flat 文本的行级 diff(新文本取自临时编辑器状态)
-  editor.commands.setContent(newContentHtml, { emitUpdate: false })
-  const newText = buildFlatIndex(editor).text
-  editor.commands.setContent(oldContentHtml, { emitUpdate: false })
-  // jsdiff 行尾敏感("X" ≠ "X\n")— 两侧统一以 \n 结尾归一化
-  const oldFlat = oldIdx.text.endsWith('\n') ? oldIdx.text : oldIdx.text + '\n'
-  const newFlat = newText.endsWith('\n') ? newText : newText + '\n'
-  const changes = diffLines(oldFlat, newFlat)
+  // 2) markdown 源行级 diff(行尾敏感 — 两侧统一以 \n 结尾归一化)
+  const oldMdN = oldMd.endsWith('\n') ? oldMd : oldMd + '\n'
+  const newMdN = newMd.endsWith('\n') ? newMd : newMd + '\n'
+  const changes = diffLines(oldMdN, newMdN)
 
-  // 3) 把 hunk 归约为删除/插入动作(相邻 removed+added = 替换,共用 changeId)
+  // 3) 归约为删除/插入动作(md hunk 保留标记;定位用纯文本投影)
   const deletions: DeletionAction[] = []
   const insertions: InsertionAction[] = []
-  let oldOffset = 0
+  let cursor = 0 // oldIdx.text 偏移游标
+  const project = (mdText: string): string => mdLinesToFlatProjection(mdText)
   for (let i = 0; i < changes.length; i++) {
     const change = changes[i]
     const next = changes[i + 1]
     if (change.removed) {
-      const from = oldOffset
-      const to = oldOffset + change.value.length
-      oldOffset = to
+      const needle = project(change.value).replace(/\n+$/, '')
+      const from = needle ? locate(oldIdx, needle, cursor) : cursor
+      const to = from + needle.length
+      cursor = to
       const changeId = uid()
       const ranges = mapTextRange(oldIdx, from, to)
       if (ranges.length > 0) {
@@ -171,12 +175,14 @@ export function applyTrackedDiff(
         i++
       }
     } else if (change.added) {
-      insertions.push({ changeId: uid(), at: oldOffset, html: '', addedText: change.value })
+      // 纯插入:定位到下一个未变更 md 行的投影位置;找不到 → 文档末尾。
+      const at = locateNextAnchor(oldIdx, changes, i + 1, cursor)
+      insertions.push({ changeId: uid(), at, html: '', addedText: change.value })
     } else {
-      oldOffset += change.value.length
+      cursor += project(change.value).length
     }
   }
-  // 补充插入 HTML
+  // 插入侧:完整 md 片段(空行/标记都在)→ 真实块结构 HTML。
   for (const ins of insertions) {
     ins.html = markdownToHtml(ins.addedText)
   }
@@ -193,6 +199,62 @@ export function applyTrackedDiff(
   }
 
   return deletions.length + insertions.length
+}
+
+/** md 行 → 扁平文本投影(去掉块标记/行内标记,表格行拆成单元格行)。 */
+function mdLinesToFlatProjection(mdText: string): string {
+  const out: string[] = []
+  for (const raw of mdText.split('\n')) {
+    const line = raw.trimEnd()
+    if (!line.trim()) continue
+    if (/^\s*\|/.test(line)) {
+      // 表格行 → 每个单元格一行(与 buildFlatIndex 的单元格文本对齐)
+      for (const cell of line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|')) {
+        out.push(inlineToText(cell.trim()))
+      }
+      continue
+    }
+    out.push(inlineToText(line))
+  }
+  return out.join('\n')
+}
+
+/** 行内 md 标记 → 纯文本(与编辑器 textBetween 输出一致)。 */
+function inlineToText(line: string): string {
+  const html = markdownToHtml(line)
+  const el = document.createElement('div')
+  el.innerHTML = html
+  return (el.textContent ?? '').trim()
+}
+
+/** 在旧 flat 文本中定位 needle(带游标前进;找不到 → 游标处,退化为追加)。 */
+function locate(idx: FlatIndex, needle: string, cursor: number): number {
+  const found = idx.text.indexOf(needle, cursor)
+  return found >= 0 ? found : cursor
+}
+
+/** 纯插入:找下一个未变更 md 行的投影位置作为插入点;找不到 → 文档末尾。 */
+function locateNextAnchor(idx: FlatIndex, changes: Array<{ value: string; removed?: boolean; added?: boolean }>, from: number, cursor: number): number {
+  for (let i = from; i < changes.length; i++) {
+    const c = changes[i]
+    if (c.removed || c.added) continue
+    const projection = projectFirstLine(c.value)
+    if (!projection) continue
+    const found = idx.text.indexOf(projection, cursor)
+    if (found >= 0) return found
+  }
+  return idx.text.length
+}
+
+/** 未变更块的首行投影(只定位用,取第一个非空行避免长块开销)。 */
+function projectFirstLine(mdText: string): string {
+  for (const raw of mdText.split('\n')) {
+    const line = raw.trimEnd()
+    if (!line.trim()) continue
+    if (/^\s*\|/.test(line)) return inlineToText(line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|')[0] || '')
+    return inlineToText(line)
+  }
+  return ''
 }
 
 function applyDeletion(editor: Editor, del: DeletionAction, idx: FlatIndex, author: ChangeAuthor) {
@@ -253,7 +315,8 @@ function applyInsertion(
   // v3 的 insertContentAt 不再支持 updateSelection 选项 — 插入后按新增文本
   // 定位范围再打 insertion mark。
   editor.chain().insertContentAt(docPos, html).run()
-  const needle = addedText.replace(/\n+$/, '')
+  // #837: addedText 是 markdown 源 — 定位用纯文本投影(标记已剥)。
+  const needle = mdLinesToFlatProjection(addedText).replace(/\n+$/, '')
   if (!needle) return
   const idx = buildFlatIndex(editor)
   const hintOffset = idx.toDoc.indexOf(docPos)

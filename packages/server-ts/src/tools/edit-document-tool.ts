@@ -5,6 +5,8 @@ import { resolveImportTargets, extractRefText, ensureDraftBody } from './doc-imp
 import { writeDocVersion } from './doc-version-writer.js'
 // #697: 匹配算法族下沉 lib(纯函数,可独立单测)。
 import { normalizeForMatch, findNormalizedSpan, findFuzzySpan } from '../lib/document-span-match.js'
+// #837: 写回卫生 — 双转义换行还原 + 块级边界空行分隔。
+import { unescapeLiteralNewlines, ensureBlockBoundaries } from '../lib/document-span-match.js'
 // #697: import 模式拆到 edit-import.ts。
 import { executeImportReference } from './edit-import.js'
 
@@ -160,7 +162,11 @@ export class EditDocumentTool extends BaseTool {
         }
       }
 
-      const newBody = body.slice(0, span.start) + newText + body.slice(span.end)
+      // #837: 写回卫生 — ① 还原字面 \n 双转义;② 块级内容(标题/列表/
+      // 表格)与前后正文之间补空行,杜绝 "population.## Introduction" 粘连。
+      const cleanedNew = unescapeLiteralNewlines(newText)
+      const boundedNew = ensureBlockBoundaries(body.slice(0, span.start), cleanedNew, body.slice(span.end))
+      const newBody = body.slice(0, span.start) + boundedNew + body.slice(span.end)
       if (newBody === body) return { success: false, error: 'old_text 与 new_text 相同,没有任何变化' }
 
       // #789: 写回走 DocVersionWriter 单点(快照同帧带旧 deck + 事务)。
@@ -181,6 +187,8 @@ export class EditDocumentTool extends BaseTool {
     try {
       const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
       if (!existing) return { success: false, error: `Document not found: ${docId}` }
+      // #837: 字面 \n 双转义还原。
+      fullText = unescapeLiteralNewlines(fullText)
 
       // #fix: 长文档全量重写会超 LLM 输出预算(8192 token)→ 截断成半篇、
       // 长时间生成触发网关/Cloudflare 超时重置 SSE("网络连接中断")。

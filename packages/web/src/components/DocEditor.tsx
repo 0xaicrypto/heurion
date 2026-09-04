@@ -199,7 +199,8 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     // #812: 进入审阅同样保持滚动位置 — 用户视线不被拽走。
     const sc = captureScroll();
     const savedTop = sc?.top ?? null;
-    applyTrackedDiff(editor, markdownToHtml(diffReview.old), markdownToHtml(diffReview.next), AI_AUTHOR);
+    // #837: 直接传 markdown 源 — 块标记/空行保留,插入侧能还原真实块结构。
+    applyTrackedDiff(editor, diffReview.old, diffReview.next, AI_AUTHOR);
     applyMdRef.current = null;
     if (sc && savedTop !== null) sc.el.scrollTop = savedTop;
     (editor.commands as any).setTrackChangesMode('view');

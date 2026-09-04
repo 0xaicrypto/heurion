@@ -278,3 +278,36 @@ function expandSpanOverMarkers(body: string, start: number, end: number, needle:
   }
   return { start: s, end: e }
 }
+
+/** #837: LLM 双转义守卫 — 模型偶尔把换行写成字面 `\n` 两个字符(JSON 里
+ *  过度转义 \\n)。若 new_text 完全没有真实换行却含字面 \n 序列,按换行
+ *  还原(医学写作正文几乎不会出现字面 "\n" 文本;有真实换行则不动)。 */
+export function unescapeLiteralNewlines(text: string): string {
+  if (text.includes('\n')) return text
+  return /\\n/.test(text) ? text.replace(/\\n/g, '\n') : text
+}
+
+/**
+ * #837: 块级边界卫生 — new_text 含块级 markdown(标题/列表/表格)而锚点
+ * 前后不是空行边界时,补空行分隔,否则标题粘进正文段落(生产事故形态:
+ * "…population.## Introduction …" 标题失去块语义)。
+ * 仅当 new_text 本身带块级标记才生效 — 词级替换不受影响。
+ */
+export function ensureBlockBoundaries(before: string, newText: string, after: string): string {
+  if (!newText.trim()) return newText
+  const hasBlock =
+    /^#{1,6}\s/m.test(newText) ||
+    /^\s*\|/m.test(newText) ||
+    /^\s*(?:[-*+]|\d+[.)])\s/m.test(newText)
+  if (!hasBlock) return newText
+  let out = newText
+  if (before.length > 0) {
+    if (!before.endsWith('\n')) out = '\n\n' + out
+    else if (!before.endsWith('\n\n')) out = '\n' + out
+  }
+  if (after.length > 0) {
+    if (!after.startsWith('\n')) out = out + '\n\n'
+    else if (!after.startsWith('\n\n')) out = out + '\n'
+  }
+  return out
+}

@@ -188,13 +188,38 @@ export function WritingEditorPage() {
   const writeBackQueueRef = useRef<Array<{ base: string; next: string }>>([]);
   // 服务端基线初始化 + 切文档时清空队列/基线(单一 effect 保证顺序)。
   const queueDocIdRef = useRef(docId);
+  // #837: 刷新恢复审阅 — 每文档只探测一次。
+  const reviewResumeDoneRef = useRef(false);
   useEffect(() => {
     if (queueDocIdRef.current !== docId) {
       queueDocIdRef.current = docId;
       writeBackQueueRef.current = [];
       serverBodyRef.current = null;
+      reviewResumeDoneRef.current = false;
     }
     if (doc && serverBodyRef.current === null) serverBodyRef.current = doc.body;
+  }, [doc, docId]);
+
+  // #837: 刷新恢复审阅 — 服务端最后一笔快照是「AI edit」且其正文就是当前
+  // 正文时,说明上次审阅未完成(刷新/关闭丢失了客户端审阅态)。自动恢复:
+  // old = 前一条快照,当前正文作为 next 重新进入审阅,用户无需重发指令。
+  useEffect(() => {
+    if (!docId || !doc || reviewResumeDoneRef.current) return;
+    reviewResumeDoneRef.current = true;
+    api.getDocSnapshots(docId).then(async ({ snapshots }) => {
+      if (snapshots.length < 2) return;
+      // 服务端按 id desc 返回 — [0] 最新,[1] 上一条。
+      const last = snapshots[0];
+      const prev = snapshots[1];
+      if (last.label !== 'AI edit') return;
+      if ((last.body_preview ?? '') !== doc.body.slice(0, 80)) return;
+      const [lastFull, prevFull] = await Promise.all([
+        api.getSnapshotBody(docId, last.snapshot_id),
+        api.getSnapshotBody(docId, prev.snapshot_id),
+      ]);
+      if (lastFull.body !== doc.body) return;
+      setDiffReview({ key: `resume_${Date.now()}`, old: prevFull.body, next: lastFull.body });
+    }).catch(() => { /* 恢复失败不打扰 — 行为与旧版一致 */ });
   }, [doc, docId]);
 
   /** 弹出下一轮写回:以「用户当前正文」为新基线做三路合并重放;冲突则丢弃并明示。 */
@@ -295,7 +320,20 @@ export function WritingEditorPage() {
     if (result.cancelled) {
       if (restoreReview) { setRestoreReview(null); }
       showNotice(t('writing.reviewCancelled', '已放弃本次 AI 修改'), 3000);
-      // #837: 放弃 → 正文保持原样,队列中的下一轮以当前正文为基线重放。
+      // #837: 放弃 = 明确拒绝 — 服务端仍持有 AI 写回的版本,必须回滚为
+      // 用户正文(此前 DB 留着被拒绝的内容,用户下次保存/离开就污染)。
+      if (docId && serverBodyRef.current !== null && serverBodyRef.current !== bodyRef.current) {
+        const restoreBody = bodyRef.current;
+        api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: restoreBody })
+          .then((updated) => {
+            lastSavedBody.current = updated.body ?? restoreBody;
+            serverBodyRef.current = updated.body ?? restoreBody;
+          })
+          .catch(() => {
+            showNotice(t('writing.reviewSaveFailed', 'AI 修改已应用，但保存失败 — 请点击 Save 重试'), 6000);
+          });
+      }
+      // 放弃 → 正文保持原样,队列中的下一轮以当前正文为基线重放。
       popNextWriteBack(bodyRef.current);
       return;
     }
