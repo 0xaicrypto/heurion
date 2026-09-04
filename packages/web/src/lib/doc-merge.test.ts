@@ -1,0 +1,73 @@
+import { describe, it, expect } from 'vitest'
+import { mergeThreeWay } from './doc-merge'
+
+/**
+ * #837 — AI 写回三路合并。
+ * 生产事故:审阅未决时 AI 基于旧正文又写回一轮;用户接受上一轮后直接
+ * diff「当前正文 → 新写回」会把已接受的修改反转回去(顺序乱)。
+ */
+describe('mergeThreeWay', () => {
+  const base = ['# Title', 'para one', 'para two', 'para three'].join('\n')
+
+  it('基线相同(用户放弃上一轮)→ 直接采用新写回', () => {
+    const theirs = base.replace('para two', 'para two rewritten')
+    expect(mergeThreeWay(base, base, theirs)).toBe(theirs)
+  })
+
+  it('无重叠改动 → 两轮修改都保留(接受上一轮后重放下一轮)', () => {
+    // ours: 用户接受了上一轮对 para one 的修改
+    const ours = base.replace('para one', 'para one polished')
+    // theirs: AI 基于旧基线又改了 para three(与 para one 不重叠)
+    const theirs = base.replace('para three', 'para three expanded')
+    const merged = mergeThreeWay(base, ours, theirs)
+    expect(merged).toContain('para one polished')
+    expect(merged).toContain('para three expanded')
+    expect(merged).toContain('para two')
+  })
+
+  it('同一区域被双方修改 → 冲突返回 null(由调用方丢弃并提示)', () => {
+    const ours = base.replace('para two', 'para two accepted')
+    const theirs = base.replace('para two', 'para two from-second-round')
+    expect(mergeThreeWay(base, ours, theirs)).toBeNull()
+  })
+
+  it('相邻段落(不重叠)可合并', () => {
+    const lines = base.split('\n')
+    const ours = [...lines.slice(0, 2), 'inserted by round1', ...lines.slice(2)].join('\n')
+    const theirs = base.replace('para three', 'para three v2')
+    const merged = mergeThreeWay(base, ours, theirs)
+    expect(merged).toContain('inserted by round1')
+    expect(merged).toContain('para three v2')
+  })
+
+  it('双方在末尾各自追加 → 都保留', () => {
+    const ours = `${base}\n\n## Appendix A`
+    const theirs = `${base}\n\n## Section X`
+    const merged = mergeThreeWay(base, ours, theirs)
+    expect(merged).toContain('## Appendix A')
+    expect(merged).toContain('## Section X')
+  })
+
+  it('带标题结构的 markdown 写回(生产样本形态)合并后 heading 保留', () => {
+    const base = ['# 论文', '', '## Introduction', 'intro text'].join('\n')
+    const ours = base.replace('intro text', 'intro text polished')
+    const theirs = ['# 论文', '', '## Introduction', 'intro text', '', '## Methods', '### Cohort', '- n=120', '- 随访 24 个月'].join('\n')
+    const merged = mergeThreeWay(base, ours, theirs)
+    expect(merged).toContain('intro text polished')
+    expect(merged).toContain('## Methods')
+    expect(merged).toContain('### Cohort')
+    expect(merged).toContain('- n=120')
+  })
+
+  it('尾部换行保留', () => {
+    const base = 'a\nb\n'
+    const ours = 'a\nB\n'
+    const theirs = 'a\nb\nc\n'
+    const merged = mergeThreeWay(base, ours, theirs)
+    expect(merged).toBe('a\nB\nc\n')
+  })
+
+  it('空基线(用户从空文档开始)→ 直接采用新写回', () => {
+    expect(mergeThreeWay('', '', '# New doc\ncontent')).toBe('# New doc\ncontent')
+  })
+})

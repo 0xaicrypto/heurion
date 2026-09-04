@@ -16,6 +16,8 @@ import { chatFailureText } from '@/stores/chat';
 import { Alert, Button, Skeleton, Textarea, Input } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
+// #837: AI 写回三路合并(审阅未决时的累计队列重放)。
+import { mergeThreeWay } from '@/lib/doc-merge';
 import { toSlides, type Slide } from '@/lib/deck';
 import { isEnterSendKey } from '@/lib/chat-composer';
 import type { DeckWire } from '@/lib/types';
@@ -177,6 +179,38 @@ export function WritingEditorPage() {
     diffPendingRef.current = diffReview !== null;
   }, [diffReview]);
 
+  // #837: AI 写回累计队列 — 审阅未决时的新写回不再被拒绝(丢弃),而是
+  // 记录 { 服务端写回基线, 新正文 },当前审阅结束后重放。基线必须用
+  // serverBodyRef(服务端视角的正文):上一轮写回未被接受时,服务端仍持有
+  // 旧正文 — 若直接 diff「当前正文 → 新写回」,会把上一轮已接受的修改
+  // 反转回去(生产事故:修改队列顺序乱)。
+  const serverBodyRef = useRef<string | null>(null);
+  const writeBackQueueRef = useRef<Array<{ base: string; next: string }>>([]);
+  // 服务端基线初始化 + 切文档时清空队列/基线(单一 effect 保证顺序)。
+  const queueDocIdRef = useRef(docId);
+  useEffect(() => {
+    if (queueDocIdRef.current !== docId) {
+      queueDocIdRef.current = docId;
+      writeBackQueueRef.current = [];
+      serverBodyRef.current = null;
+    }
+    if (doc && serverBodyRef.current === null) serverBodyRef.current = doc.body;
+  }, [doc, docId]);
+
+  /** 弹出下一轮写回:以「用户当前正文」为新基线做三路合并重放;冲突则丢弃并明示。 */
+  const popNextWriteBack = useCallback((currentMd: string) => {
+    const entry = writeBackQueueRef.current.shift();
+    if (!entry) return;
+    const remaining = writeBackQueueRef.current.length;
+    const merged = mergeThreeWay(entry.base, currentMd, entry.next);
+    if (merged === null) {
+      showNotice(t('writing.reviewConflict', 'AI 的下一轮修改与当前内容有重叠冲突，该轮已丢弃 — 请在聊天中重新描述该修改'), 6000);
+      return;
+    }
+    setDiffReview({ key: `rev_${Date.now()}`, old: currentMd, next: merged });
+    if (remaining > 0) showNotice(t('writing.reviewQueuedNext', '已呈现下一轮 AI 修改（队列中还有 {{n}} 轮）', { n: remaining }), 4000);
+  }, [showNotice, t]);
+
   // #696: 参考材料管理下沉 useDocReferences。
   const references = useDocReferences({ docId, setError: (e) => setError(e ?? '') });
 
@@ -218,12 +252,17 @@ export function WritingEditorPage() {
     if (!docId || !chatSession?.lastDocBody) return;
     if (appliedDocBody.current === chatSession.lastDocBody) return;
     if (chatSession.lastDocBody === bodyRef.current) return;
-    // #720: 上一版审阅未决时拒绝新写回 — 提示先完成当前审阅,避免静默覆盖。
+    const serverBase = serverBodyRef.current ?? bodyRef.current;
+    // #720/#837: 上一版审阅未决 → 写回入队(不再丢弃),审阅结束后依次呈现。
     if (diffPendingRef.current) {
-      showNotice(t('writing.reviewPending', '有未完成的 AI 修改审阅 — 请先接受/拒绝后再继续'), 5000);
+      writeBackQueueRef.current.push({ base: serverBase, next: chatSession.lastDocBody });
+      appliedDocBody.current = chatSession.lastDocBody;
+      serverBodyRef.current = chatSession.lastDocBody;
+      showNotice(t('writing.reviewQueued', 'AI 又完成了一轮修改 — 当前审阅结束后将依次呈现'), 5000);
       return;
     }
     appliedDocBody.current = chatSession.lastDocBody;
+    serverBodyRef.current = chatSession.lastDocBody;
     setDiffReview({ key: `rev_${Date.now()}`, old: bodyRef.current, next: chatSession.lastDocBody });
     // #693: 审阅模式下编辑器选中的是 diff 内容,不再构成引用。
     setChatSelection('');
@@ -248,7 +287,7 @@ export function WritingEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ref 稳定(#696 hooks 下沉)
   }, [chatSession?.lastDocDeck, docId, deckJson]);
 
-  /** 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。 */
+  /** 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。#837: 结束后弹出队列中的下一轮写回。 */
   const handleDiffResolve = useCallback((result: { md: string; accepted: number; rejected: number; cancelled: boolean }) => {
     setDiffReview(null);
     // #720: 用显式 cancelled 字段区分"放弃"，不再用空串推断 — 全文删空的
@@ -256,6 +295,8 @@ export function WritingEditorPage() {
     if (result.cancelled) {
       if (restoreReview) { setRestoreReview(null); }
       showNotice(t('writing.reviewCancelled', '已放弃本次 AI 修改'), 3000);
+      // #837: 放弃 → 正文保持原样,队列中的下一轮以当前正文为基线重放。
+      popNextWriteBack(bodyRef.current);
       return;
     }
     setBody(result.md);
@@ -271,6 +312,7 @@ export function WritingEditorPage() {
       api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: result.md })
         .then((updated) => {
           lastSavedBody.current = updated.body ?? result.md;
+          serverBodyRef.current = updated.body ?? result.md;
           dirtyRef.current = false;
           setDirty(false);
         })
@@ -279,8 +321,11 @@ export function WritingEditorPage() {
           showNotice(t('writing.reviewSaveFailed', 'AI 修改已应用，但保存失败 — 请点击 Save 重试'), 6000);
         });
     }
+    // #837: 弹出队列中的下一轮写回 — 以本轮接受后的正文为用户基线做三路合并
+    // (bodyRef 同帧还未更新,显式传 result.md)。
+    popNextWriteBack(result.md);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定,避免抖动
-  }, [docId, doc?.title, restoreReview, showNotice]);
+  }, [docId, doc?.title, restoreReview, showNotice, popNextWriteBack]);
 
   // #402-merge: append a library figure to the document body.
   const handleInsertChart = (markdown: string) => {
@@ -452,6 +497,7 @@ export function WritingEditorPage() {
       // #773: deck 一并保存（deckAsset 为 null 时不触碰服务端 deck）。
       const updated = await api.updateDoc(docId, { title, body, ...(deckAsset ? { deck: deckAsset } : {}) });
       lastSavedBody.current = updated.body ?? body;
+      serverBodyRef.current = updated.body ?? body;
       lastSavedDeck.current = deckAsset ? JSON.stringify(deckAsset) : lastSavedDeck.current;
       dirtyRef.current = false;
       setDirty(false);
