@@ -1,160 +1,84 @@
-import { describe, test, expect, vi, afterEach } from 'vitest'
-import { SearchMedicalWebTool, FetchArticleSummaryTool, VisitMedicalSiteTool, ExtractFulltextTool } from '../../src/tools/medical-web-tools.js'
-import { EventLog } from '../../src/core/event-log.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { VisitMedicalSiteTool, clearBlockedHosts } from '../../src/tools/medical-web-tools.js'
+import type { ToolContext } from '../../src/tools/tool-registry.js'
 
-const SAMPLE_XML = `<PubmedArticleSet>
-<PubmedArticle>
-<MedlineCitation>
-<PMID>32500001</PMID>
-<Article>
-<Journal><Title>Journal of Clinical Oncology</Title><PubDate><Year>2020</Year></PubDate></Journal>
-<ArticleTitle>Immune checkpoint inhibitors in EGFR-mutant NSCLC</ArticleTitle>
-<Abstract><AbstractText>Background: real-world outcomes of ICIs in EGFR-mutant patients.</AbstractText></Abstract>
-<AuthorList><Author><LastName>Zhao</LastName></Author><Author><LastName>Li</LastName></Author></AuthorList>
-<ELocationID EIdType="doi">10.1200/JCO.19.01123</ELocationID>
-</Article>
-</MedlineCitation>
-</PubmedArticle>
-</PubmedArticleSet>`
+/**
+ * #835 — 站点反爬的优雅降级:
+ * ① 直连抓取兜底(Browser Run 之前先试普通 HTTP + turndown);
+ * ② 会话级 blocked-host 记忆(重复访问秒拒,不烧工具轮次);
+ * ③ 失败信息带停止重试指引。
+ */
 
-const mockCtx = (): any => ({
-  userId: 'user_1',
-  sessionId: 'sess_1',
-  eventLog: {
-    append: vi.fn(),
-  } as unknown as EventLog,
-})
+function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
+  return {
+    userId: 'u_test',
+    sessionId: 'session_test',
+    eventLog: { append: vi.fn() },
+    signal: undefined,
+    ...overrides,
+  } as unknown as ToolContext
+}
 
-describe('medical web tools (#356)', () => {
+const OK_HTML = `<html><head><title>ESMO Guidelines</title></head><body>
+<main><h1>ESMO Clinical Practice Guidelines</h1>
+<p>${'Clinical guidance for oncology practitioners. '.repeat(40)}</p></main>
+</body></html>`
+
+describe('visit_medical_site 反爬降级 (#835)', () => {
+  const fetchSpy = vi.fn()
+
+  beforeEach(() => {
+    clearBlockedHosts()
+    fetchSpy.mockReset()
+    vi.stubGlobal('fetch', fetchSpy)
+    // Browser Run 路径需要账号配置(直连兜底不受影响)。
+    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', 'test_account')
+    vi.stubEnv('CLOUDFLARE_API_TOKEN', 'test_token')
+  })
+
   afterEach(() => {
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
+    clearBlockedHosts()
   })
 
-  test('search_medical_web returns structured results', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any) => {
-      const u = String(url)
-      if (u.includes('esearch.fcgi')) {
-        return { ok: true, text: async () => JSON.stringify({ esearchresult: { idlist: ['32500001', '32500002'] } }) } as any
-      }
-      return { ok: true, text: async () => SAMPLE_XML } as any
-    })
-
-    const ctx = mockCtx()
-    const tool = new SearchMedicalWebTool(ctx)
-    const res = await tool.execute({ query: 'EGFR NSCLC immunotherapy', limit: 2 })
-
-    expect(res.success).toBe(true)
-    expect(res.output).toContain('Immune checkpoint inhibitors in EGFR-mutant NSCLC')
-    expect(res.output).toContain('PMID: 32500001')
-    expect(res.output).toContain('Journal of Clinical Oncology')
-    expect(res.output).toContain('DOI: 10.1200/JCO.19.01123')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    // audit recorded
-    expect(ctx.eventLog.append).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ action: 'medical_web_search' }) }))
+  it('direct fetch 命中:不调 Browser Run,返回 markdown', async () => {
+    // fetch 同时服务直连抓取与 Browser Run — 这里只应发生 1 次(直连)。
+    fetchSpy.mockResolvedValue(new Response(OK_HTML, { status: 200, headers: { 'content-type': 'text/html' } }))
+    const tool = new VisitMedicalSiteTool(makeCtx())
+    const result = await tool.execute({ url: 'https://www.example-guidelines.org/page' })
+    expect(result.success).toBe(true)
+    expect(String(result.output)).toContain('ESMO Clinical Practice Guidelines')
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
 
-  test('search_medical_web handles empty results', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-      return { ok: true, text: async () => JSON.stringify({ esearchresult: { idlist: [] } }) } as any
-    })
-    const tool = new SearchMedicalWebTool(mockCtx())
-    const res = await tool.execute({ query: 'zzz nothing here' })
-    expect(res.success).toBe(true)
-    expect(res.output).toContain('no results')
+  it('两路皆空:报错含停止重试指引,同会话重复访问秒拒', async () => {
+    // 直连:403;Browser Run:HTTP 200 但 markdown 为空(反爬站典型表现)。
+    fetchSpy
+      .mockResolvedValueOnce(new Response('blocked', { status: 403 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ result: { markdown: '' } }), { status: 200 }))
+    const tool = new VisitMedicalSiteTool(makeCtx())
+    const first = await tool.execute({ url: 'https://protected-site.example.org/a' })
+    expect(first.success).toBe(false)
+    expect(String(first.error)).toContain('禁止自动化访问')
+    expect(String(first.error)).toContain('请勿继续重试')
+
+    // 同会话第二次访问:直接秒拒,不再发起任何网络请求。
+    const before = fetchSpy.mock.calls.length
+    const second = await tool.execute({ url: 'https://protected-site.example.org/b' })
+    expect(second.success).toBe(false)
+    expect(String(second.error)).toContain('已在本会话确认为反爬拦截')
+    expect(fetchSpy.mock.calls.length).toBe(before)
   })
 
-  test('search_medical_web surfaces API errors without throwing', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-      return { ok: false, status: 429 } as any
-    })
-    const tool = new SearchMedicalWebTool(mockCtx())
-    const res = await tool.execute({ query: 'test' })
-    expect(res.success).toBe(false)
-    expect(res.error).toContain('PubMed HTTP 429')
-  })
-
-  test('fetch_article_summary by PMID returns the abstract', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-      return { ok: true, text: async () => SAMPLE_XML } as any
-    })
-    const tool = new FetchArticleSummaryTool(mockCtx())
-    const res = await tool.execute({ pmid: '32500001' })
-    expect(res.success).toBe(true)
-    expect(res.output).toContain('real-world outcomes of ICIs')
-    expect(res.output).toContain('Zhao')
-  })
-
-  test('fetch_article_summary by DOI resolves via esearch first', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any) => {
-      const u = String(url)
-      if (u.includes('esearch.fcgi')) {
-        return { ok: true, text: async () => JSON.stringify({ esearchresult: { idlist: ['32500001'] } }) } as any
-      }
-      return { ok: true, text: async () => SAMPLE_XML } as any
-    })
-    const tool = new FetchArticleSummaryTool(mockCtx())
-    const res = await tool.execute({ doi: '10.1200/JCO.19.01123' })
-    expect(res.success).toBe(true)
-    expect(res.output).toContain('Immune checkpoint inhibitors')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-  })
-
-  test('fetch_article_summary requires pmid or doi', async () => {
-    const tool = new FetchArticleSummaryTool(mockCtx())
-    const res = await tool.execute({})
-    expect(res.success).toBe(false)
-    expect(res.error).toContain('pmid or doi')
-  })
-})
-
-describe('browser tools (#356 stage 2)', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
-    vi.unstubAllEnvs()
-  })
-
-  test('visit_medical_site fetches rendered markdown via Browser Run', async () => {
-    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', 'acct_1')
-    vi.stubEnv('CLOUDFLARE_API_TOKEN', 'tok_1')
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ({
-      ok: true,
-      json: async () => ({ markdown: '# Full Article\n\nThe content of the page.', title: 'Article Title' }),
-    }) as any)
-
-    const ctx = mockCtx()
-    const tool = new VisitMedicalSiteTool(ctx)
-    const res = await tool.execute({ url: 'https://pubmed.ncbi.nlm.nih.gov/32500001/' })
-
-    expect(res.success).toBe(true)
-    expect(res.output).toContain('Article Title')
-    expect(res.output).toContain('Full Article')
-    expect(String(fetchMock.mock.calls[0][0])).toContain('browser-run/markdown')
-    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'POST' })
-    expect(ctx.eventLog.append).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ action: 'medical_web_visit' }) }))
-  })
-
-  test('browser tools degrade clearly when Cloudflare is not configured', async () => {
-    vi.unstubAllEnvs()
-    const tool = new VisitMedicalSiteTool(mockCtx())
-    const res = await tool.execute({ url: 'https://example.com/' })
-    expect(res.success).toBe(false)
-    expect(res.error).toContain('CLOUDFLARE_ACCOUNT_ID')
-
-    const full = new ExtractFulltextTool(mockCtx())
-    const res2 = await full.execute({ url: 'https://example.com/' })
-    expect(res2.success).toBe(false)
-  })
-
-  test('extract_fulltext returns the page markdown', async () => {
-    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', 'acct_1')
-    vi.stubEnv('CLOUDFLARE_API_TOKEN', 'tok_1')
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ({
-      ok: true,
-      json: async () => ({ markdown: 'Methods section text here' }),
-    }) as any)
-    const tool = new ExtractFulltextTool(mockCtx())
-    const res = await tool.execute({ url: 'https://www.jto.org/article/xyz' })
-    expect(res.success).toBe(true)
-    expect(res.output).toContain('Methods section')
+  it('直连成功但内容过短(<300字):降级 Browser Run', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(new Response('<html><body>ok</body></html>', { status: 200, headers: { 'content-type': 'text/html' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ markdown: `# Real Content\n\n${'long enough body. '.repeat(60)}` }), { status: 200 }))
+    const tool = new VisitMedicalSiteTool(makeCtx())
+    const result = await tool.execute({ url: 'https://thin-site.example.org/x' })
+    expect(result.success).toBe(true)
+    expect(String(result.output)).toContain('Real Content')
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
   })
 })

@@ -11,7 +11,7 @@ import type { ChatContentPart } from '../../common/llm-gateway.js'
 import { resolveTurnTimeoutMs } from '../../common/llm-gateway.js'
 import { deepseekChatWithMeta, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
 import { detectDoomLoop } from '../../tools/doom-loop.js'
-import { READ_ONLY_TOOLS } from '../../tools/tool-registry.js'
+import { READ_ONLY_TOOLS, BEST_EFFORT_RETRIEVAL_TOOLS } from '../../tools/tool-registry.js'
 import { makeLogger } from '../../common/logger.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 import type { getUserContext } from '../shared/user-context.js'
@@ -156,7 +156,7 @@ export async function runToolCallLoop(params: {
   /** #fix: 本回合模型覆盖(视觉模型自适应) — 缺省用 DEEPSEEK_PREMIUM_MODEL。 */
   model?: string
 }): Promise<{ finalContent: string; messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }> }> {
-  const { currentMessages, toolRegistry, tools, io, ctx, userId, sessionId } = params
+  const { currentMessages, toolRegistry, io, ctx, userId, sessionId } = params
   const turnModel = params.model || DEEPSEEK_PREMIUM_MODEL
 
   // R3 — tool-call persistence: per-session sequence numbers continue
@@ -203,6 +203,14 @@ export async function runToolCallLoop(params: {
   let toolRound = 0
   let finalContent = ''
 
+  // #835: 尽最大努力检索(best-effort retrieval) — 检索工具连续失败 ≥2 次
+  // 即从后续轮次移除这些工具(模型物理上无法再重试),配合注入指引让模型
+  // 基于已有上下文继续完成任务。finalContent 为空时 conversation-turn 的
+  // 无工具流式兜底会读到这些指引,产出"最佳努力"回答而非空转。
+  let activeTools = [...params.tools]
+  let retrievalFailures = 0
+  let degradationNoted = false
+
   while (toolRound < MAX_TOOL_ROUNDS) {
     toolRound++
     // #548: use chatWithMeta (truncation-aware) and the gateway default token
@@ -218,7 +226,7 @@ export async function runToolCallLoop(params: {
         // 整篇扩写类首调用,现场 9/2「扩充完整正文」309s 静默死亡)。
         timeoutMs: resolveTurnTimeoutMs(sessionId),
       },
-      tools,
+      activeTools,
       (reasoning) => io.send({ type: 'reasoning_chunk', text: reasoning }),
     )
     const callResult = call.text
@@ -328,9 +336,18 @@ export async function runToolCallLoop(params: {
             ? `{ body: <updated>, summary: ${JSON.stringify(summary)} }`
             : toolResultText.slice(0, 500)
         }
+        // #835: 检索类失败注入"尽最大努力"指引 — 失败不阻塞任务,禁止
+        // 换参反复重试,基于已有上下文继续并如实标注未核实来源。
+        const isRetrievalFailure = !result.success && BEST_EFFORT_RETRIEVAL_TOOLS.has(c.toolName)
+        if (isRetrievalFailure) {
+          retrievalFailures++
+        }
+        const retrievalGuidance = isRetrievalFailure
+          ? '\n【检索兜底策略】检索失败不阻塞任务：请勿再用不同参数重试同一工具（连续失败会被系统停用该类工具）；请基于已有上下文与自身知识继续完成用户请求；如需引用，请在文中如实标注"来源未能核实"。'
+          : ''
         messages.push({
           role: 'user',
-          content: `Tool "${c.toolName}" returned: ${result.success ? toolResultText : `Error: ${result.error}`}`,
+          content: `Tool "${c.toolName}" returned: ${result.success ? toolResultText : `Error: ${result.error}${retrievalGuidance}`}`,
         })
 
         if (result.success) {
@@ -351,6 +368,28 @@ export async function runToolCallLoop(params: {
           // #fix: 工具失败不 break — 错误已作为 tool_result 注入消息,
           // 让模型下一轮看到错误后自行修正锚点重试或正常回答用户。
           // doom-loop 已有 3 次同类告警,MAX_TOOL_ROUNDS=5 兜底总轮数。
+        }
+
+        // #835: 连续 ≥2 次检索失败 — 从后续轮次移除检索工具,强制进入
+        // "基于已有资料继续"的最佳努力模式(事件留痕,便于排障)。
+        if (retrievalFailures >= 2 && !degradationNoted) {
+          degradationNoted = true
+          const blocked = activeTools.filter((t) => BEST_EFFORT_RETRIEVAL_TOOLS.has(t.function.name)).map((t) => t.function.name)
+          if (blocked.length > 0) {
+            activeTools = activeTools.filter((t) => !BEST_EFFORT_RETRIEVAL_TOOLS.has(t.function.name))
+            log.warn('best-effort retrieval: disabling retrieval tools for remaining rounds', {
+              sessionId, failedTools: blocked, retrievalFailures,
+            })
+            try {
+              await appendToolEvent('tool_call', 'retrieval_degraded', {
+                tool: 'system', args: blocked.join(','), status: 'warning', seq: ++toolSeq,
+              })
+            } catch { /* best-effort */ }
+            messages.push({
+              role: 'user',
+              content: `【系统】检索工具（${blocked.join('、')}）已因连续失败被停用。请直接基于已有上下文、已注入的知识片段与你的专业知识继续完成用户请求；涉及外部资料的部分请如实标注"来源未能核实"。`,
+            })
+          }
         }
 
         // #829: tool_result SSE — 前端按 seq 闭合芯片并展示结果摘要。

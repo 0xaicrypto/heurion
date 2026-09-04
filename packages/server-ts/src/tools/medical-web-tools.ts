@@ -209,6 +209,126 @@ export class FetchArticleSummaryTool extends BaseTool {
  */
 const CF_BROWSER_RUN = 'https://api.cloudflare.com/client/v4/accounts'
 
+// #835: 站点反爬的优雅降级 — ASCO/ESMO 等强反爬站对 Browser Run 返回空内容,
+// 模型此前会换着 URL 反复重试(参数不同,doom-loop 不触发),烧完 5 轮后
+// 回合无产出,用户看到"不能继续写了"。三层对策:
+// ① 直连抓取兜底(多数静态渲染页可绕过);
+// ② 会话级 blocked-host 记忆(同 host 重复访问秒拒,不再烧轮次);
+// ③ 失败信息携带行为指引(告知模型停止重试、基于已有资料继续并如实标注)。
+
+/** 会话级反爬记忆:sessionId → { hosts, expires },30 分钟 TTL。 */
+const BLOCKED_HOSTS_TTL_MS = 30 * 60 * 1000
+const blockedHostsBySession = new Map<string, { hosts: Set<string>; expires: number }>()
+
+function noteBlockedHost(sessionId: string, host: string): void {
+  if (!sessionId) return
+  const now = Date.now()
+  const entry = blockedHostsBySession.get(sessionId)
+  if (entry && entry.expires > now) {
+    entry.hosts.add(host)
+    return
+  }
+  blockedHostsBySession.set(sessionId, { hosts: new Set([host]), expires: now + BLOCKED_HOSTS_TTL_MS })
+}
+
+function isHostBlocked(sessionId: string, host: string): boolean {
+  const entry = blockedHostsBySession.get(sessionId)
+  if (!entry) return false
+  if (entry.expires <= Date.now()) {
+    blockedHostsBySession.delete(sessionId)
+    return false
+  }
+  return entry.hosts.has(host)
+}
+
+/** 测试钩子:清空反爬记忆。 */
+export function clearBlockedHosts(): void {
+  blockedHostsBySession.clear()
+}
+
+const DIRECT_FETCH_TIMEOUT_MS = 15000
+const DIRECT_FETCH_MIN_CHARS = 300
+
+/**
+ * 直连抓取:普通 HTTP GET + turndown HTML→markdown。
+ * 不走浏览器 — 快(15s 超时内)、免费、且对服务端渲染页(ALOOC/指南/NCT 页等)
+ * 命中率高;被反爬或返回空时返回空串,由调用方降级到 Browser Run。
+ */
+async function directFetchMarkdown(url: string, ctx: ToolContext): Promise<string> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), DIRECT_FETCH_TIMEOUT_MS)
+  const signal = ctx.signal && typeof AbortSignal.any === 'function'
+    ? AbortSignal.any([controller.signal, ctx.signal])
+    : controller.signal
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8',
+      },
+      redirect: 'follow',
+      signal,
+    })
+    if (!res.ok) return ''
+    const ct = res.headers.get('content-type') || ''
+    if (!/text\/html|application\/xhtml|text\/plain/.test(ct)) return ''
+    const body = await res.text()
+    if (body.length < 500) return ''
+    const { default: TurndownService } = await import('turndown')
+    const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' })
+    const markdown = td.turndown(body)
+    return markdown.trim().length >= DIRECT_FETCH_MIN_CHARS ? markdown.slice(0, 20000) : ''
+  } catch {
+    return ''
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
+}
+
+/**
+ * 医学页面统一抓取入口:直连 → Browser Run → 诚实失败(带停止重试指引)。
+ * 同会话重复抓取已确认拦截的 host 会立即秒拒,不再消耗工具轮次。
+ */
+async function fetchMedicalPageMarkdown(url: string, ctx: ToolContext, auditLabel: string): Promise<{ markdown: string; title: string }> {
+  const host = hostOf(url)
+  const sessionId = ctx.sessionId || ''
+  if (isHostBlocked(sessionId, host)) {
+    throw new Error(`站点 ${host} 已在本会话确认为反爬拦截（直接抓取与浏览器渲染均无内容），已停止尝试。请基于已有资料继续当前任务，勿再请求该站点；如需引用请在文中如实标注"来源未能核实"。`)
+  }
+  // ① 直连抓取
+  const direct = await directFetchMarkdown(url, ctx)
+  if (direct) {
+    try {
+      ctx.eventLog.append({
+        timestamp: Date.now() / 1000,
+        eventType: 'evolution',
+        content: `🌐 站点访问：${auditLabel}`,
+        metadata: { action: 'medical_web_visit', url, source: 'direct-fetch' },
+        agentId: ctx.userId,
+        sessionId,
+      })
+    } catch { /* best-effort */ }
+    return { markdown: direct, title: '' }
+  }
+  // ② Browser Run
+  try {
+    const viaBrowser = await browserRunMarkdown(url, ctx, auditLabel)
+    if (viaBrowser.markdown) return viaBrowser
+  } catch { /* fall through to honest failure */ }
+  // ③ 两路皆空 — 记忆并给出行为指引
+  noteBlockedHost(sessionId, host)
+  throw new Error(`站点 ${host} 禁止自动化访问（反爬拦截）：直接抓取与浏览器渲染均未获得内容。请勿继续重试该站点；请基于已有资料继续当前任务，如需引用请在文中如实标注"来源未能核实"。`)
+}
+
 async function browserRunMarkdown(url: string, ctx: ToolContext, auditLabel: string): Promise<{ markdown: string; title: string }> {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID
   const token = process.env.CLOUDFLARE_API_TOKEN
@@ -258,7 +378,7 @@ export class VisitMedicalSiteTool extends BaseTool {
 
   get name(): string { return 'visit_medical_site' }
   get description(): string {
-    return 'Open a medical website (journal article page, guideline page, PubMed record) in a headless browser and read the rendered content as markdown. Use when PubMed search results are not enough and the full page context matters. Read-only; requires Cloudflare Browser Run configured.'
+    return 'Open a medical website (journal article page, guideline page, PubMed record) and read the rendered content as markdown. Tries a direct fetch first, then headless browser rendering. Read-only. If a site blocks automated access, do NOT retry it — continue with available material.'
   }
   get parameters(): Record<string, unknown> {
     return {
@@ -273,14 +393,13 @@ export class VisitMedicalSiteTool extends BaseTool {
     const url = String(args.url || '').trim()
     if (!/^https?:\/\//.test(url)) return { success: false, error: 'url must start with http(s)://' }
     try {
-      const { markdown, title } = await browserRunMarkdown(url, this.ctx, url)
-      if (!markdown) return { success: false, error: 'Browser Run returned no content' }
+      const { markdown, title } = await fetchMedicalPageMarkdown(url, this.ctx, url)
       return {
         success: true,
         output: `Page: ${title || url}\n\n${markdown.slice(0, 8000)}`,
       }
     } catch (err) {
-      return { success: false, error: `visit_medical_site failed: ${(err as Error).message.slice(0, 200)}` }
+      return { success: false, error: `visit_medical_site failed: ${(err as Error).message.slice(0, 300)}` }
     }
   }
 }
@@ -291,7 +410,7 @@ export class ExtractFulltextTool extends BaseTool {
 
   get name(): string { return 'extract_fulltext' }
   get description(): string {
-    return 'Extract the full text of a medical article or guideline page via headless browser rendering. Returns the page as clean markdown. Read-only; requires Cloudflare Browser Run configured.'
+    return 'Extract the full text of a medical article or guideline page. Tries a direct fetch first, then headless browser rendering. Returns the page as clean markdown. Read-only. If a site blocks automated access, do NOT retry it — continue with available material and mark the source as unverified.'
   }
   get parameters(): Record<string, unknown> {
     return {
@@ -306,11 +425,10 @@ export class ExtractFulltextTool extends BaseTool {
     const url = String(args.url || '').trim()
     if (!/^https?:\/\//.test(url)) return { success: false, error: 'url must start with http(s)://' }
     try {
-      const { markdown } = await browserRunMarkdown(url, this.ctx, url)
-      if (!markdown) return { success: false, error: 'Browser Run returned no content' }
+      const { markdown } = await fetchMedicalPageMarkdown(url, this.ctx, url)
       return { success: true, output: markdown.slice(0, 16000) }
     } catch (err) {
-      return { success: false, error: `extract_fulltext failed: ${(err as Error).message.slice(0, 200)}` }
+      return { success: false, error: `extract_fulltext failed: ${(err as Error).message.slice(0, 300)}` }
     }
   }
 }
