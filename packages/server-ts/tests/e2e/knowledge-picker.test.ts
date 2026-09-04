@@ -3,7 +3,13 @@ import { mockAiProvider, intentAware } from '../helpers/ai-mock.js'
 import { getApp, authHeader } from '../setup.js'
 import { deepseekChat, deepseekStream } from '../../src/common/llm.js'
 
-vi.mock('../../src/common/llm.js', () => mockAiProvider())
+// partial mock:llm.js 后来新增的 LlmTruncatedError 等导出须保真 —
+// 错误处理路径 `err instanceof LlmTruncatedError` 在缺导出的 mock 上会抛
+// ReferenceError 并吞掉整个回合(既有失败根因)。
+vi.mock('../../src/common/llm.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/common/llm.js')>()
+  return { ...actual, ...mockAiProvider() }
+})
 
 function buildMultipart(fields: Record<string, string>, file?: { name: string; mime: string; content: Buffer }): { body: Buffer; contentType: string } {
   const boundary = `----testboundary${Date.now()}`

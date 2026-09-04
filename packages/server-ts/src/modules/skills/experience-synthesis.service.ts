@@ -27,6 +27,9 @@ export interface ExperienceCandidate {
   prompt: string
   sources: string[] // fact stableIds
   sourceCount: number
+  /** #844 收编:走提案闸门后的提案行引用(未走闸门的旧运行无此字段)。 */
+  proposalId?: string
+  proposalStatus?: string
 }
 
 const SYNTHESIS_SYSTEM = `你是临床经验沉淀助手。根据多条已确认的诊疗事实，合成一条可复用的经验（skill）。
@@ -113,22 +116,33 @@ export async function synthesizeExperience(
         action: 'experience.synthesize',
       })
       if (!candidate) continue
-      // Persist as a pending-review skill with provenance.
-      const now = new Date().toISOString()
-      await (prisma as any).capturedSkill.create({
-        data: {
-          userId,
-          name: candidate.name,
-          description: candidate.description,
-          steps: JSON.stringify(candidate.steps),
-          prompt: candidate.prompt,
-          sourceSession: JSON.stringify({ kind: 'experience-synthesis', category, sources: candidate.sources, at: now }),
-          status: 'pending_review',
-          createdAt: now,
-          updatedAt: now,
-        },
+      // #844 收编:产物不再落 CapturedSkill pending_review(绕过写入闸门),
+      // 改走提案闸门(kind='skill' — PII 扫描 + 审批后经 applier 落图)。
+      const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
+      const gateway = new MemoryGraphGateway(userId, ctx.memory)
+      const proposal = await gateway.propose({
+        scopeType: 'global',
+        kind: 'skill',
+        content: `${candidate.name} — ${candidate.description}`,
+        importance: 3,
+        confidence: 'medium',
+        reason: `经验归纳(${candidate.sourceCount} 条已确认事实,主题 ${category})`,
+        payload: JSON.stringify({
+          skill: {
+            name: candidate.name,
+            description: candidate.description,
+            steps: candidate.steps,
+            promptTemplate: candidate.prompt,
+            taskKind: 'edit',
+            triggers: [candidate.name].filter(Boolean),
+            scope: 'personal',
+            source: 'synthesis',
+            evidence: { trajectoryIds: [], sessionIds: [], observationCount: candidate.sourceCount, correctionRate: 0 },
+          },
+          fingerprint: `experience:${category}`,
+        }),
       })
-      candidates.push(candidate)
+      candidates.push({ ...candidate, proposalId: proposal.id, proposalStatus: proposal.status })
     } catch (err) {
       log.warn('[experience-synthesis] group failed:', (err as Error).message.slice(0, 150))
     }

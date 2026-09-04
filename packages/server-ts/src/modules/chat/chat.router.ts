@@ -22,6 +22,8 @@ export async function chatRouter(app: FastifyInstance) {
   })
 
   // #6: Memory import
+  // #839 白名单例外(唯一登记的直写点):用户显式批量迁移自有数据,走闸门
+  // 会以数百条 pending 淹没审核队列;dedup 由导入方数据自洽保证。
   app.post('/api/v1/memory/import', async (request, reply) => {
     const ctx = getUserContext(request.user!.userId)
     // #349: zod-validated import payload.

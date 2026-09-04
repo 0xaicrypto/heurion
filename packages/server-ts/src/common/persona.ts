@@ -1,5 +1,32 @@
 import type { FactsStore, KnowledgeStore } from '../evolution/stores'
 import { CONTEXT_CONFIG } from './context-config.js' // #637 集中配置
+import { GraphFactProvider } from '../memory/fact-provider.js'
+
+/**
+ * #840 读路径第二批:persona 切 graph — 渲染来源与存储解耦。
+ * graph 提供时 facts/summaries 从单一事实源取(GraphFactProvider,与
+ * keyword/layer3 路同口径);缺省回落 legacy 投影(缓存版本信号沿用)。
+ */
+export interface PersonaSource {
+  facts: Array<{ content: string; category: string; importance: number; patientHash?: string | null; studyId?: string | null }>
+  summaries: Array<{ title: string; content?: string; status?: string }>
+}
+
+/** graph 最小形状 — 避免 common 层引入完整 MemoryGraph 类型。 */
+interface GraphLike {
+  getCurrentNodesByType(type: string): Array<Record<string, any>>
+}
+
+export function graphPersonaSource(memory: { graph: GraphLike }): PersonaSource {
+  const facts = new GraphFactProvider(memory.graph as any).listCurrent().map((f) => ({
+    content: f.content, category: f.category, importance: f.importance,
+    patientHash: f.patientHash, studyId: undefined as string | undefined,
+  }))
+  const summaries = (memory.graph.getCurrentNodesByType('summary') as Array<Record<string, any>>)
+    .filter((n) => n.status === 'current')
+    .map((n) => ({ title: String(n.title || ''), content: String(n.content || '') }))
+  return { facts, summaries }
+}
 
 /**
  * §5.4 (#197): single persona builder shared by user-context and the
@@ -26,20 +53,36 @@ const SCENE_GUIDANCE: Record<ChatScene, string> = {
   chart: `You are generating charts, figures, and statistical analyses. When the real data is missing, say so explicitly and ask for it — never fabricate data or present placeholder values as results. Do NOT search patient records unless the user explicitly asks.`,
 }
 
-export function buildScenePersona(scene: ChatScene, facts: FactsStore, knowledge: KnowledgeStore): string {
-  const base = buildPersona(facts, knowledge)
+export function buildScenePersona(
+  scene: ChatScene,
+  facts: FactsStore,
+  knowledge: KnowledgeStore,
+  /** #840: 提供时从 graph 渲染(单一事实源);缺省回落 legacy 投影。 */
+  memory?: { graph: GraphLike },
+): string {
+  const base = buildPersona(facts, knowledge, memory)
   const guidance = SCENE_GUIDANCE[scene]
   return guidance ? `${guidance}\n\n${base}` : base
 }
 
-export function buildPersona(facts: FactsStore, knowledge: KnowledgeStore): string {
-  const allFacts = facts.all().filter(f => !f.patientHash && !f.studyId)
+export function buildPersona(
+  facts: FactsStore,
+  knowledge: KnowledgeStore,
+  memory?: { graph: GraphLike },
+): string {
+  const source: PersonaSource = memory?.graph
+    ? graphPersonaSource(memory)
+    : {
+        facts: facts.all().map((f) => ({ content: f.content, category: f.category, importance: f.importance, patientHash: f.patientHash, studyId: f.studyId })),
+        summaries: knowledge.all().map((k) => ({ title: k.title, content: k.content, status: k.status })),
+      }
+  const allFacts = source.facts.filter(f => !f.patientHash && !f.studyId)
   const prefs = allFacts.filter(f => f.category === 'preference').sort((a, b) => b.importance - a.importance)
   // #814: constraint 与 preference/goal 同属身份级信息(天生无上下文),
   // 直接进 persona — 此前漏网落入 layer3 碎片。
   const constraints = allFacts.filter(f => f.category === 'constraint').sort((a, b) => b.importance - a.importance)
   const goals = allFacts.filter(f => f.category === 'goal').slice(0, CONTEXT_CONFIG.persona.goalsMax)
-  const knowledgeSummaries = knowledge.all().filter(k => k.status === 'current').slice(0, CONTEXT_CONFIG.persona.knowledgeTitlesMax)
+  const knowledgeSummaries = source.summaries.filter(k => (k.status ?? 'current') === 'current').slice(0, CONTEXT_CONFIG.persona.knowledgeTitlesMax)
 
   // #837-identity: 定位不限定肿瘤 — 面向医生与临床研究者的通用临床 AI 助手。
   const parts: string[] = [

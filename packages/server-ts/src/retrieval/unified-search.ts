@@ -5,7 +5,7 @@
  * 相关命中走 embedding 余弦。embedding 服务故障时自动回落纯词法。
  * 双 store(facts/knowledge 词法 vs graph/document 向量)在此收敛。
  */
-import { keywordSearch } from './keyword-search.js'
+import { keywordSearch, type GraphLike } from './keyword-search.js'
 import type { FactsStore, KnowledgeStore } from '../evolution/stores.js'
 import { rrfFusion, type RrfCandidate } from './rrf-fusion.js'
 import type { EmbeddingService } from '../memory/embedding/embedding.service.js'
@@ -38,6 +38,8 @@ export interface UnifiedSearchOptions {
   /** keyword 路的分数阈值(与 keywordSearch 语义一致,默认 1)。 */
   minScore?: number
   includeCrossPatient?: boolean
+  /** #840: keyword 读路径切 graph — 提供时词法路从 graph 取 facts/summaries。 */
+  graph?: GraphLike
 }
 
 /**
@@ -56,7 +58,7 @@ export async function unifiedSearch(
   const scope: MemoryScope = { patientHash: opts.patientHash ?? undefined }
   if (query.trim().length === 0) return []
 
-  const keywordHits = keywordSearch(query, facts, knowledge, undefined, opts.patientHash)
+  const keywordHits = keywordSearch(query, facts, knowledge, undefined, opts.patientHash, opts.graph)
     .filter((r) => r.score >= minScore)
     .slice(0, topK * 2)
 

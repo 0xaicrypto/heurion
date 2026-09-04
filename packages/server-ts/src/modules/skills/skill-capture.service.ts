@@ -2,6 +2,7 @@ import { resolveTierModel } from '../../common/llm-gateway.js'
 import prisma from '../../common/prisma.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
 import { parseLlmJson } from '../../common/llm-json.js'
+import { getUserContext } from '../shared/user-context.js'
 
 /**
  * #298: skill capture — turn a finished conversation into a reusable skill
@@ -101,13 +102,54 @@ export async function refineSkillDraft(
   return refined
 }
 
-/** Confirm a draft — the skill becomes usable (load_skill sees it). */
-export async function confirmSkillDraft(userId: string, draftId: string): Promise<boolean> {
-  const updated = await (prisma as any).capturedSkill.updateMany({
-    where: { id: draftId, userId, status: 'draft' },
-    data: { status: 'confirmed', updatedAt: new Date().toISOString() },
+/**
+ * Confirm a draft — #845/D6 确认语义:confirm = 进入审批闸门
+ * (kind='skill' 提案,PII 扫描 + 审批),审批通过后由 applier 落图
+ * SkillNode 并把本行标 promoted(纯归档)。行在此之前保持 draft。
+ */
+export async function confirmSkillDraft(
+  userId: string,
+  draftId: string,
+): Promise<{ ok: boolean; proposalId?: string }> {
+  const row = await (prisma as any).capturedSkill.findFirst({ where: { id: draftId, userId } })
+  if (!row || (row.status !== 'draft' && row.status !== 'confirmed')) return { ok: false }
+
+  let steps: string[] = []
+  try {
+    const parsed = JSON.parse(row.steps || '[]')
+    if (Array.isArray(parsed)) steps = parsed.map(String)
+  } catch { /* 旧格式 */ }
+  const name = String(row.name || '')
+  const description = String(row.description || '')
+  const promptTemplate = String(row.prompt || '')
+
+  const ctx = getUserContext(userId)
+  const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
+  const gateway = new MemoryGraphGateway(userId, ctx.memory)
+  const proposal = await gateway.propose({
+    scopeType: 'global',
+    kind: 'skill',
+    content: `${name} — ${description}`,
+    importance: 3,
+    confidence: 'medium',
+    reason: `医生确认捕捉技能(${draftId})`,
+    payload: JSON.stringify({
+      skill: {
+        stableId: `skill_cap_${draftId}`,
+        name,
+        description,
+        steps,
+        promptTemplate,
+        taskKind: 'edit',
+        triggers: [name].filter(Boolean),
+        scope: 'personal',
+        source: 'capture',
+        evidence: { trajectoryIds: [], sessionIds: row.sourceSession ? [String(row.sourceSession)] : [], observationCount: 0, correctionRate: 0 },
+      },
+      fingerprint: `capture:${draftId}`,
+    }),
   })
-  return updated.count > 0
+  return { ok: proposal.status !== 'rejected', proposalId: proposal.id }
 }
 
 /** #727: 对话内取消捕捉 — 删除尚未确认的草稿。 */

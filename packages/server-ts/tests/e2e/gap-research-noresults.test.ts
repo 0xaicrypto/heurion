@@ -53,9 +53,13 @@ describe('gap research no-result handling (#254)', () => {
 
     const gap = await (prisma as any).knowledgeGap.findFirst({ where: { id: gapId } })
     expect(gap.status).toBe('open')
+
+    // 也不应产生提案行(#254: 无结果不是知识)
+    const proposals = await (prisma as any).memoryProposal.findMany({ where: { userId, sourceRange: `gap:${gapId}` } })
+    expect(proposals.length).toBe(0)
   })
 
-  test('found results still write the fact and resolve the gap', async () => {
+  test('found results go through the gate: pending proposal + gap resolved, no direct graph write (#839)', async () => {
     const userId = await getAuthUserId()
     const gapId = await seedGap(userId, 'EGFR 突变检测方法')
     const ctx = getUserContext(userId)
@@ -64,11 +68,19 @@ describe('gap research no-result handling (#254)', () => {
     const service = new GapResearchService(makeProvider({ found: true, text: 'PubMed search results for "EGFR":\n\n- Summary title (Journal)' }))
     await service.researchOpenGaps({ maxPerRun: 5, minAgeMs: 0 })
 
+    // #839: 机器研究产物不再直写图谱 — 图谱保持原状,等待人工审批
     const factsAfter = ctx.memory.graph.getCurrentNodesByType('fact').length
-    expect(factsAfter).toBe(factsBefore + 1)
-    const newFact = ctx.memory.graph.getCurrentNodesByType('fact').find((n: any) => n.content.includes('PubMed search results'))
-    expect(newFact).toBeDefined()
+    expect(factsAfter).toBe(factsBefore)
 
+    // 提案行 pending,带 gap 溯源
+    const proposal = await (prisma as any).memoryProposal.findFirst({
+      where: { userId, kind: 'fact', sourceRange: `gap:${gapId}` },
+    })
+    expect(proposal).toBeTruthy()
+    expect(proposal.status).toBe('pending')
+    expect(proposal.content).toContain('PubMed search results')
+
+    // Prisma 侧 gap 即刻 resolve(防调度器同 gap 每 tick 重复研究)
     const gap = await (prisma as any).knowledgeGap.findFirst({ where: { id: gapId } })
     expect(gap.status).toBe('answered')
   })

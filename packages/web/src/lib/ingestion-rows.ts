@@ -16,6 +16,7 @@ export const kindVariant: Record<string, KindVariant> = {
   summary: 'warning',
   episode_summary: 'default',
   compaction_summary: 'default',
+  skill: 'default',
 };
 
 export interface IngestionRow {

@@ -111,6 +111,10 @@ async function main() {
   // KB 重命名(article→summary)数据迁移 — 幂等,详情见 kb-rename-migration.ts。
   await ensureArticleSummaryRenameMigration()
 
+  // #842: CapturedSkill(confirmed)→ graph SkillNode v2 — 幂等,PII 命中行跳过。
+  const { ensureSkillNodeMigration } = await import('./common/skill-node-migration.js')
+  await ensureSkillNodeMigration()
+
   // #764-admin: 回灌 admin 全局模型覆盖(持久化于 userSetting)
   try {
     const row = await (prisma as any).userSetting.findUnique({
@@ -152,8 +156,10 @@ async function main() {
   }
 
   // #24: periodic experience synthesis (multiple cases → skill candidates).
+  // #844 收编:周期触发改走轨迹归纳(轨迹聚类达标 = 触达);经验归纳保留
+  // 手动触发(POST /api/v1/skills/synthesize)且产物同走提案闸门。
   let experienceScheduler: ReturnType<typeof createExperienceSynthesisScheduler> | undefined
-  const experienceSynthesisEnabled = process.env.EXPERIENCE_SYNTHESIS_ENABLED !== 'false'
+  const experienceSynthesisEnabled = process.env.EXPERIENCE_SYNTHESIS_ENABLED === 'true'
   if (experienceSynthesisEnabled) {
     const intervalMs = parseInt(process.env.EXPERIENCE_SYNTHESIS_INTERVAL_MS || (24 * 3600 * 1000).toString(), 10)
     experienceScheduler = createExperienceSynthesisScheduler(intervalMs, {
@@ -162,6 +168,16 @@ async function main() {
     })
     experienceScheduler.start()
     log.info(`[EXPERIENCE-SYNTHESIS] Scheduler started (interval ${intervalMs}ms)`)
+  }
+
+  // #844: 周期轨迹归纳 — 写作流程聚类达标即产 skill 提案(经闸门待审)。
+  const skillInductionEnabled = process.env.SKILL_INDUCE_ENABLED !== 'false'
+  if (skillInductionEnabled) {
+    const intervalMs = parseInt(process.env.SKILL_INDUCE_INTERVAL_MS || (24 * 3600 * 1000).toString(), 10)
+    const { createSkillInductionScheduler } = await import('./modules/skills/trajectory-induction.service.js')
+    const inductionScheduler = createSkillInductionScheduler(intervalMs)
+    inductionScheduler.start()
+    log.info(`[SKILL-INDUCTION] Scheduler started (interval ${intervalMs}ms)`)
   }
 
   // Graceful shutdown: stop accepting new jobs, finish in-flight work, then exit.

@@ -3,13 +3,15 @@
  *
  * Design principles:
  * - Default: no automatic write. We return extraction candidates for the UI to confirm.
- * - `saveAll: true` is the explicit user/UI trigger that persists facts.
+ * - `saveAll: true` is the explicit user/UI trigger — #839: persists via the
+ *   memory proposal gate (pending review), never a direct graph write.
  * - Rule-based extractor runs locally with zero LLM cost. An optional LLM extractor
  *   can be plugged in for higher-quality extraction when budget allows.
  */
 
 import type { MemoryService } from '../../memory/memory.service.js'
 import type { FactNode } from '../../memory/memory.types'
+import { MemoryGraphGateway } from '../../memory/memory-gateway.js'
 
 export type SidecarOutputType = 'report' | 'summary' | 'analysis' | 'unknown'
 
@@ -30,9 +32,16 @@ export interface SidecarFeedbackInput {
   sourceId?: string
 }
 
+export interface SavedSidecarFact {
+  /** #839: memoryProposal row id — the audit record for the gated write. */
+  proposalId: string
+  status: 'pending' | 'approved' | 'rejected'
+  content: string
+}
+
 export interface SidecarFeedbackResult {
   candidates: ExtractedFactCandidate[]
-  saved: FactNode[]
+  saved: SavedSidecarFact[]
   gapsCreated: number
 }
 
@@ -129,25 +138,33 @@ export const ruleBasedSidecarExtractor: SidecarFactExtractor = {
 export class SidecarFeedbackService {
   constructor(
     private memory: MemoryService,
+    private userId: string,
     private extractor: SidecarFactExtractor = ruleBasedSidecarExtractor,
   ) {}
 
   async process(input: SidecarFeedbackInput): Promise<SidecarFeedbackResult> {
     const candidates = await this.extractor.extract(input.output, input.outputType)
 
-    const saved: FactNode[] = []
+    // #839: saveAll 的批量落库改走写入闸门(pending 人工审) — 机器提取内容
+    // 不再直写图谱,语义去重/冲突标记/审计链生效。sourceId 存在时以
+    // `file:` 溯源,审批通过后 provenance 指回来源文档。
+    const saved: SavedSidecarFact[] = []
     if (input.saveAll) {
+      const gateway = new MemoryGraphGateway(this.userId, this.memory)
       for (const c of candidates) {
         // Only persist high-confidence candidates without manual confirmation.
         if (c.confidence >= 0.5) {
-          saved.push(
-            this.memory.addFact({
-              category: c.category,
-              importance: c.importance,
-              content: c.content,
-              sourceType: 'sidecar',
-            }, 'sidecar'),
-          )
+          const proposal = await gateway.propose({
+            scopeType: 'global',
+            kind: 'fact',
+            content: c.content,
+            importance: c.importance,
+            confidence: c.confidence >= 0.8 ? 'high' : 'medium',
+            reason: `Sidecar 文档提取(${input.outputType || 'unknown'})`,
+            sourceRange: input.sourceId ? `file:${input.sourceId}` : undefined,
+            category: c.category,
+          })
+          saved.push({ proposalId: proposal.id, status: proposal.status, content: c.content })
         }
       }
     }

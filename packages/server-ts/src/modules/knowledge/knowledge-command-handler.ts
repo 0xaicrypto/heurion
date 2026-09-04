@@ -85,7 +85,8 @@ async function handleSearch(ctx: CommandContext, payload: string): Promise<Comma
     return { type: 'error', message: '请告诉我你想搜索什么，例如"搜索知识库关于 NSCLC"' }
   }
 
-  const items = keywordSearch(payload, ctx.factsStore, ctx.knowledgeStore)
+  // #840: keyword 读路径切 graph(缺省回落 legacy 投影)
+  const items = keywordSearch(payload, ctx.factsStore, ctx.knowledgeStore, undefined, undefined, ctx.memory?.graph)
 
   if (items.length === 0) {
     return {
@@ -118,24 +119,32 @@ async function handleRemember(ctx: CommandContext, payload: string): Promise<Com
     }
   }
 
-  if (ctx.memory) {
-    const fact = ctx.memory.addFact({
-      category: 'fact',
-      importance: 4,
-      content: extracted.content,
-      sourceType: 'doctor',
-    }, 'user')
-    return { type: 'kb_remembered', factId: fact.stableId, confidence: extracted.confidence }
+  if (!ctx.memory) {
+    // #839: 旧 factsStore 直写 fallback 已删除 — 它只写 legacy store,
+    // 永远不进图谱,还会造成双存储漂移。memory 未就绪时如实报错。
+    return { type: 'error', message: '记忆服务未就绪，请稍后重试' }
   }
 
-  const fact = ctx.factsStore.add({
-    category: 'fact',
-    importance: 4,
+  // #839: 医生显式"记住"是高置信直通信写入 — 走 fast-track 提案:
+  // 闸门三关(工具通知过滤/语义去重/冲突标记)照常生效,通过后经与人工
+  // 审批相同的 applier 立即落图,提案行 status='approved' 留痕可回溯。
+  const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
+  const gateway = new MemoryGraphGateway(ctx.userId, ctx.memory)
+  const proposal = await gateway.propose({
+    scopeType: 'global',
+    kind: 'fact',
     content: extracted.content,
-    sourceType: 'doctor',
+    importance: 4,
+    confidence: 'high',
+    reason: 'kb_remember 医生显式记忆',
+    fastTrack: true,
   })
 
-  return { type: 'kb_remembered', factId: fact.id, confidence: extracted.confidence }
+  if (proposal.status === 'rejected') {
+    return { type: 'error', message: `该内容与已有知识重复，未重复记录（${proposal.rejectedReason ?? '语义重复'}）` }
+  }
+
+  return { type: 'kb_remembered', factId: proposal.appliedStableId ?? proposal.id, confidence: extracted.confidence }
 }
 
 // ── kb_summarize ─────────────────────────────────────────────
@@ -145,7 +154,8 @@ async function handleSummarize(ctx: CommandContext, payload: string): Promise<Co
     return { type: 'error', message: '请告诉我你想总结什么主题' }
   }
 
-  const items = keywordSearch(payload, ctx.factsStore, ctx.knowledgeStore)
+  // #840: keyword 读路径切 graph(缺省回落 legacy 投影)
+  const items = keywordSearch(payload, ctx.factsStore, ctx.knowledgeStore, undefined, undefined, ctx.memory?.graph)
 
   if (items.length === 0) {
     return {

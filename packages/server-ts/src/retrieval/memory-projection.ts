@@ -44,7 +44,7 @@
  *   └────────────┴──────────┴─────────────────────┘
  */
 
-import { Fact, Episode, LearnedSkill } from '../evolution/stores'
+import type { Fact, Episode } from '../evolution/stores.js'
 import prisma from '../common/prisma'
 
 // ── 配置 ────────────────────────────────────────────────
@@ -106,7 +106,8 @@ export class MemoryProjection {
     persona: string
     facts: Fact[]
     episodes: Episode[]
-    skills: LearnedSkill[]
+    /** #841 环④: 剧本卡摘要(激活匹配后 ≤3)或 legacy LearnedSkill(兼容旧调用方)。 */
+    skills: Array<Record<string, any>>
   }): Promise<{
     systemPrompt: string
     /** R1 (#98): per-layer typed context segments for hash-diffing. */
@@ -200,13 +201,19 @@ export class MemoryProjection {
       downgradedOut,
     })
 
-    // ── Layer 4: Skills (固定, 低开销) ──
+    // ── Layer 4: Skills(#841 环④ — 剧本卡摘要,已由激活匹配筛过 ≤3)──
     let skillsText = ''
     if (params.skills.length > 0) {
       skillsText = params.skills
-        .filter(s => s.successCount > 0)
-        .slice(0, CONTEXT_CONFIG.projection.skillsMax) // 最多 N 个技能
-        .map(s => `- ${s.name}: ${s.bestStrategy} (${s.successCount}/${s.taskCount})`)
+        .filter((s: any) => (s.successCount ?? 0) > 0 || typeof s.followRate === 'number')
+        .slice(0, CONTEXT_CONFIG.projection.skillsMax)
+        .map((s: any) => {
+          const desc = s.description || s.bestStrategy || ''
+          const stats = typeof s.followRate === 'number'
+            ? `遵循率 ${(s.followRate * 100).toFixed(0)}%`
+            : `(${s.successCount}/${s.taskCount})`
+          return `- ${s.name}: ${desc} [${stats}] — 认为相关可用 load_skill 拉取全文`
+        })
         .join('\n')
     }
 

@@ -178,9 +178,10 @@ app.post('/api/v1/skills/capture/:id/refine', async (request, reply) => {
 app.post('/api/v1/skills/capture/:id/confirm', async (request, reply) => {
   const userId = request.user!.userId
   const { confirmSkillDraft } = await import('./skill-capture.service.js')
-  const ok = await confirmSkillDraft(userId, (request.params as any).id)
-  if (!ok) return reply.status(404).send({ error: 'Draft not found or already confirmed' })
-  return { status: 'confirmed' }
+  const result = await confirmSkillDraft(userId, (request.params as any).id)
+  if (!result.ok) return reply.status(404).send({ error: 'Draft not found or already confirmed' })
+  // #845/D6: confirm = 进入审批闸门;审批通过后落图 + 行标 promoted。
+  return { status: 'submitted_for_approval', proposalId: result.proposalId }
 })
 
 // #727: 对话内取消捕捉 — 删除服务端草稿,避免 Captured tab 残留

@@ -5,6 +5,7 @@
  */
 import prisma from '../../common/prisma.js'
 import { getUserContext } from '../shared/user-context.js'
+import { MemoryGraphGateway } from '../../memory/memory-gateway.js'
 
 /**
  * Append a labelled snippet to the patient's chiefComplaint. The target
@@ -32,30 +33,37 @@ export async function appendChiefComplaint(
 
 /**
  * Store quick-scan findings as MemoryGraph facts so the LLM can reference
- * them in chat. Best-effort by contract: failures are swallowed (telemetry
- * upstream decides visibility), never fail the scan response.
+ * them in chat. #839: machine-extracted findings go through the write gate
+ * as pending proposals (semantic dedup / conflict marking / audit chain);
+ * `file:<studyId>` sourceRange maps to the same document provenance the old
+ * direct write carried. Best-effort by contract: failures are swallowed
+ * (telemetry upstream decides visibility), never fail the scan response.
  */
-export function recordScanFindingsAsFacts(
+export async function recordScanFindingsAsFacts(
   userId: string,
   studyId: string,
   findings: Array<{ type: string; content: string }>,
-): void {
+): Promise<void> {
   try {
     const ctx = getUserContext(userId)
     const docNode = ctx.memory.graph.getLatestByStableId(studyId)
     const patientHash = (docNode as any)?.patientHash
+    const gateway = new MemoryGraphGateway(userId, ctx.memory)
     for (const f of findings) {
       if (f.type === 'meta' || f.type === 'error') continue
       const content = f.content.slice(0, 200)
       if (content.length > 5) {
-        ctx.memory.addFact({
-          category: 'fact',
-          importance: 4,
-          content,
-          sourceType: 'patient',
+        await gateway.propose({
+          scopeType: patientHash ? 'patient' : 'global',
           patientHash: patientHash || undefined,
-          provenance: { sourceKind: 'document', sourceRef: studyId },
-        }, 'system')
+          kind: 'fact',
+          content,
+          importance: 4,
+          confidence: 'medium',
+          reason: '检查报告扫描发现',
+          sourceRange: `file:${studyId}`,
+          category: 'fact',
+        })
       }
     }
   } catch { /* best-effort */ }

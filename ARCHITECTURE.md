@@ -67,7 +67,8 @@ Enforcement so far (manual greps, #666/#672):
   external→plugins/execution, figures→execution (#820 学术渲染编排),
   files→ingestion/knowledge/execution, ingestion→medical-records,
   medical-records→approvals, memorization→chat, patients→chat,
-  plugins→chat/execution, research→knowledge, skills→chat
+  plugins→chat/execution, research→knowledge, skills→chat/knowledge
+  (#841 环⑤: skills→knowledge 为 follow-through 复用 telemetry.service)
 - Pure crypto/util helpers used by both tools and modules live in `common/`
   (never import a `.router.ts` for non-HTTP functions — #666)
 

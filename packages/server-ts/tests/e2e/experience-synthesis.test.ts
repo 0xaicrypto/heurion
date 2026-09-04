@@ -54,15 +54,23 @@ describe('experience synthesis (#24)', () => {
     expect(result.candidates[0].sourceCount).toBe(3)
     expect(result.candidates[0].sources.length).toBe(3)
 
-    // Persisted with provenance in sourceSession + pending_review status.
+    // #844 收编:产物走提案闸门(kind='skill' 待审),payload 携带证据与溯源;
+    // 不再落 CapturedSkill pending_review 行。
+    const proposal = await (prisma as any).memoryProposal.findFirst({
+      where: { userId, kind: 'skill', status: 'pending' },
+      orderBy: { createdAt: 'desc' },
+    })
+    expect(proposal).toBeTruthy()
+    const payload = JSON.parse(proposal.payload)
+    expect(payload.skill.name).toContain('EGFR')
+    expect(payload.skill.source).toBe('synthesis')
+    expect(payload.skill.evidence.observationCount).toBe(3)
+    expect(payload.fingerprint).toContain('experience:')
+    // 旧 pending_review 路径已废除 — 无新行
     const rows = await (prisma as any).capturedSkill.findMany({
       where: { userId, status: 'pending_review' },
     })
-    expect(rows.length).toBe(1)
-    const meta = JSON.parse(rows[0].sourceSession)
-    expect(meta.kind).toBe('experience-synthesis')
-    expect(meta.category).toBe('fact')
-    expect(meta.sources.length).toBe(3)
+    expect(rows.length).toBe(0)
   }, 30000)
 
   test('thin graphs produce no candidates (minFacts gate)', async () => {

@@ -32,7 +32,7 @@ const peerEdges: Record<string, string[]> = {
   memorization: ['chat'],
   patients: ['chat'],
   documents: ['chat'],
-  skills: ['chat'],
+  skills: ['chat', 'knowledge'], // #841 环⑤: follow-through 复用 telemetry.service(knowledge 服务层)
   auth: ['chat'],
 }
 

@@ -10,6 +10,7 @@
 import type { KnowledgeGap } from './knowledge-gap.service'
 import { PrismaKnowledgeGapService } from './knowledge-gap.service'
 import { getUserContext } from '../shared/user-context'
+import { MemoryGraphGateway } from '../../memory/memory-gateway.js'
 import prisma from '../../common/prisma'
 import { createDefaultWebSearchProvider, type WebSearchProvider } from './web-search.service'
 import { PrismaTelemetryService } from './telemetry.service'
@@ -97,22 +98,22 @@ export class GapResearchService {
     }
 
     const ctx = getUserContext(gap.userId)
-    const fact = ctx.memory.addFact(
-      {
-        content: searchResult.text,
-        category: 'fact',
-        importance: 4,
-        sourceType: 'research',
-      },
-      'system',
-    )
-
-    // Best-effort link to any memory gap node.
-    try {
-      ctx.memory.answerGap(gap.id, fact)
-    } catch {
-      // Gap may only exist in Prisma; continue to resolve via the service.
-    }
+    // #839: 机器自动研究产物不再直写图谱 — 改走写入闸门(pending 人工审),
+    // 语义去重/冲突标记/审计链全部生效。图谱 gap 关联延迟到审批通过时
+    // (approval.service 识别 `gap:` sourceRange 补挂 answerGap)。
+    // Prisma 侧 gap 仍即刻 resolve:调度器按 status:'open' 扫描,不 resolve
+    // 会导致同一 gap 每 tick 重复研究、重复提案。
+    const gateway = new MemoryGraphGateway(gap.userId, ctx.memory)
+    const proposal = await gateway.propose({
+      scopeType: 'global',
+      kind: 'fact',
+      content: searchResult.text,
+      importance: 4,
+      confidence: 'medium',
+      reason: `自动研究命中(${this.provider.name})：${gap.content.slice(0, 60)}`,
+      sourceRange: `gap:${gap.id}`,
+      category: 'fact',
+    })
 
     const updated = await this.gapService.resolve(gap.id, searchResult.text)
     if (!updated) {
@@ -124,7 +125,7 @@ export class GapResearchService {
       workspaceId: gap.workspaceId,
       category: 'gap',
       action: 'auto_resolved',
-      metadata: { gapId: gap.id, factId: fact.stableId, source: this.provider.name },
+      metadata: { gapId: gap.id, proposalId: proposal.id, source: this.provider.name },
     }).catch(() => {})
   }
 }

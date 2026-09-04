@@ -53,10 +53,25 @@ registerProposalApplier(defaultProposalApplier)
 // #666: proposal→approval-request side effect wired from the modules layer
 // (memory/ never imports modules/*).
 registerProposalCreatedHandler(async (userId, proposal) => {
+  // #845: skill 提案附剧本卡 diff 预览 — 审批者看到"激活后医生会看到什么"
+  // 与证据展示(观察次数/修正率/溯源会话),而非抽象 JSON。
+  let payload: Record<string, unknown> = proposal as unknown as Record<string, unknown>
+  let diff: { before: string; after: string } | undefined
+  if (proposal.kind === 'skill' && proposal.payload) {
+    try {
+      const { renderSkillProposalCard, renderSkillDiff } = await import('../../memory/skill-card.js')
+      const card = renderSkillProposalCard(proposal)
+      if (card) {
+        payload = { ...payload, skillCard: card }
+        diff = renderSkillDiff(card)
+      }
+    } catch { /* best-effort — 卡片渲染失败不阻塞审批入列 */ }
+  }
   await createApprovalRequest(userId, {
     targetType: 'MemoryProposal',
     targetId: proposal.id,
-    payload: proposal,
+    payload,
+    diff,
   })
 })
 
@@ -133,7 +148,14 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
 const PERSONA_CACHE_MAX = 100
 const personaCache = new Map<string, { factsVersion: string | null; knowledgeVersion: string | null; persona: string }>()
 
-export function buildCachedPersona(userId: string, facts: FactsStore, knowledge: KnowledgeStore, scene: ChatScene = 'patient'): string {
+export function buildCachedPersona(
+  userId: string,
+  facts: FactsStore,
+  knowledge: KnowledgeStore,
+  scene: ChatScene = 'patient',
+  /** #840: 提供时 persona 渲染切 graph(单一事实源);缓存版本信号仍用 legacy store。 */
+  memory?: MemoryService,
+): string {
   const fv = facts.currentVersion()
   const kv = knowledge.currentVersion()
   // #510: cache key includes the scene — each entry scene gets its own
@@ -146,7 +168,7 @@ export function buildCachedPersona(userId: string, facts: FactsStore, knowledge:
     personaCache.set(cacheKey, cached)
     return cached.persona
   }
-  const persona = buildScenePersona(scene, facts, knowledge)
+  const persona = buildScenePersona(scene, facts, knowledge, memory)
   personaCache.delete(cacheKey)
   personaCache.set(cacheKey, { factsVersion: fv, knowledgeVersion: kv, persona })
   if (personaCache.size > PERSONA_CACHE_MAX) {

@@ -303,7 +303,7 @@ export interface BrainStats {
   totalEntries: number;
 }
 
-export type MemoryProposalKind = 'fact' | 'summary' | 'episode_summary' | 'compaction_summary';
+export type MemoryProposalKind = 'fact' | 'summary' | 'episode_summary' | 'compaction_summary' | 'skill';
 
 export interface MemoryProposal {
   id: string;

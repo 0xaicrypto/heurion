@@ -31,6 +31,8 @@ export interface KnowledgeInjectOptions {
   patientHash?: string | null
   /** #632: 向量路来源(embedding);缺省或故障时回落纯词法。 */
   embedding?: EmbeddingService
+  /** #840: keyword 读路径切 graph — 提供时词法路从 graph 取 facts/summaries。 */
+  graph?: import('../../retrieval/keyword-search.js').GraphLike
   /**
    * #756: 注入透明化 — 收集本轮实际注入条目(去重后),由调用方转为
    * citations SSE 事件;回调在过滤/截断后、渲染前触发。
@@ -122,6 +124,7 @@ export async function buildKnowledgeInjection(
   const results = await unifiedSearch(query, facts, knowledge, {
     embedding: options.embedding,
     patientHash: options.patientHash,
+    graph: options.graph,
     topK: maxItems * 3,
     minScore,
   })

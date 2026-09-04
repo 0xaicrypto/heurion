@@ -106,8 +106,9 @@ describe('parallel deep analysis (#420)', () => {
     })
     expect(res.statusCode).toBe(200)
     // Isolation: literature failed is reported, clinical still completed.
-    expect(res.payload).toContain('"task":"literature","success":false')
-    expect(res.payload).toContain('"task":"clinical","success":true')
+    // (#420 emitter 后补 scope 字段 — task 与 success 不再相邻,用行级正则)
+    expect(res.payload).toMatch(/"type":"subagent_done"[^\n]*"task":"literature"[^\n]*"success":false/)
+    expect(res.payload).toMatch(/"type":"subagent_done"[^\n]*"task":"clinical"[^\n]*"success":true/)
 
     const sessions = await (prisma as any).subAgentSession.findMany({})
     const failed = sessions.find((s: any) => s.topic === 'literature')

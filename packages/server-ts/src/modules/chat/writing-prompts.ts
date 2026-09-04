@@ -51,8 +51,8 @@ export const CHART_RULE = '图表/示意图规范:用户要求图表、曲线、
 /** #806: 修订意见批处理 — 计划→确认→逐条→对照表（+response letter）。 */
 export const REVISION_RULE = '修订意见批处理:当用户一次给出多条修改意见/审稿意见(编号列表或多段)时,先在回复中输出「意见→修改点」计划表(每条:意见摘要/目标章节/改动方案,不调用工具),经用户确认后逐条执行 — 每轮一次 edit_document,回复注明「意见 N/共 M 已落实」;全部完成后输出修订对照表(原意见×实际改动×所在章节)。修回(response letter)场景:对照表后追加给审稿人的正式回复信草稿(意见→回复→改动位置)。'
 
-/** #807: 引用纪律 — References 零编造。 */
-export const CITATION_RULE = '引用纪律:新增/修改 References 或正文内引用时,必须先用 search_citation 检索 PubMed 获取真实 PMID/作者/年份,只允许引用检索命中的文献(保留 PMID 便于核对);检索无命中或工具失败时如实告知用户,严禁编造任何 PMID/DOI/作者/年份。'
+/** #807: 引用纪律 — References 零编造。#836: 允许检索源扩展至 PubMed+Crossref。 */
+export const CITATION_RULE = '引用纪律:新增/修改 References 或正文内引用时,必须先用 search_citation 检索真实文献(PubMed 优先,无命中自动补 Crossref — 覆盖 preprint 与非 MEDLINE 期刊),只允许引用检索命中的文献(保留 PMID/DOI 便于核对);检索无命中或工具失败时如实告知用户,严禁编造任何 PMID/DOI/作者/年份。'
 
 /** #fix: 确认循环 — 确认信号后立即执行，不再重复询问。 */
 export const CONFIRM_RULE = '行动纪律:用户回复「同意」「可以」「开始」「继续」「好的」「按此计划」等确认信号后,不要再重复询问确认,立即执行计划的第一步:若文档正文为空,先调用 edit_document 的 import_reference 导入参考材料(或直接用 old_text/new_text 润色),然后逐段处理并写回草稿。不要只给计划不执行,不要在每步后重复询问同一问题。'

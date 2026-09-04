@@ -119,16 +119,31 @@ export async function knowledgeRouter(app: FastifyInstance) {
     }
 
     const ctx = getUserContext(userId)
-    const fact = ctx.memory.addFact({
-      category: 'fact',
+    // #839: 医生显式回答知识缺口 — fast-track 提案(闸门去重/冲突标记生效,
+    // 提案行留痕),通过后落图并补挂图谱 gap 节点。
+    const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
+    const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.episodes)
+    const proposal = await gateway.propose({
+      scopeType: 'global',
+      kind: 'fact',
+      content: String(body.answer),
       importance: 4,
-      content: body.answer,
-      sourceType: 'doctor',
-    }, 'user')
-    // Best-effort link to a memory gap node (gap may only exist in Prisma).
-    ctx.memory.answerGap(id, fact)
+      confidence: 'high',
+      reason: `医生回答知识缺口 ${id}`,
+      sourceRange: `gap:${id}`,
+      fastTrack: true,
+    })
 
-    const updated = await gapService.resolve(id, body.answer)
+    let factId = proposal.appliedStableId ?? proposal.id
+    if (proposal.status === 'approved' && proposal.appliedStableId) {
+      // Best-effort link to a memory gap node (gap may only exist in Prisma).
+      try {
+        const node = ctx.memory.graph.getLatestByStableId(proposal.appliedStableId)
+        if (node) ctx.memory.answerGap(id, node)
+      } catch { /* gap may only exist in Prisma */ }
+    }
+
+    const updated = await gapService.resolve(id, String(body.answer))
     if (!updated) {
       return reply.status(500).send({ error: 'failed to resolve gap' })
     }
@@ -138,12 +153,12 @@ export async function knowledgeRouter(app: FastifyInstance) {
       workspaceId: userId,
       category: 'gap',
       action: 'answered',
-      metadata: { gapId: id, factId: fact.stableId },
+      metadata: { gapId: id, factId: proposal.id },
     }).catch(() => {})
 
     return {
       ...updated,
-      answerId: fact.stableId,
+      answerId: factId,
       status: 'answered',
     }
   })
@@ -208,6 +223,7 @@ export async function knowledgeRouter(app: FastifyInstance) {
   })
 
   // Create a knowledge summary directly (e.g. from a Sidecar-generated document)
+  // #839: fast-track 提案 — 立即落图(响应形状不变),但提案行留痕、语义去重生效。
   app.post('/api/v1/knowledge/summaries', async (request, reply) => {
     const userId = request.user!.userId
     const body = request.body as any
@@ -216,30 +232,47 @@ export async function knowledgeRouter(app: FastifyInstance) {
     }
 
     const ctx = getUserContext(userId)
-    const summary = ctx.memory.addSummary({
-      title: String(body.title),
-      content: String(body.content),
-      sourceFactStableIds: Array.isArray(body.sources) ? body.sources.map(String) : [],
-      sourceDocuments: body.sourceId ? [String(body.sourceId)] : [],
+    const title = String(body.title)
+    const summaryContent = String(body.content)
+    const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
+    const gateway = new MemoryGraphGateway(userId, ctx.memory, ctx.episodes)
+    const proposal = await gateway.propose({
+      scopeType: 'global',
+      kind: 'summary',
+      content: `${title}\n${summaryContent}`,
+      confidence: 'medium',
+      reason: 'Sidecar 文档知识总结',
+      relatedFacts: Array.isArray(body.sources) ? body.sources.map(String) : [],
+      fastTrack: true,
     })
+
+    if (proposal.status === 'rejected') {
+      return reply.status(409).send({ error: proposal.rejectedReason ?? 'duplicate summary' })
+    }
 
     await telemetry.record({
       userId,
       workspaceId: userId,
       category: 'kb_command',
       action: 'summary_created',
-      metadata: { summaryId: summary.stableId, source: 'sidecar' },
+      metadata: { summaryId: proposal.appliedStableId ?? proposal.id, source: 'sidecar' },
     }).catch(() => {})
 
+    // fast-track 已落图 → 从图谱取节点保持原响应形状;降级 pending(无
+    // applier 的测试环境)时以提案 id 返回,DELETE 语义由列表侧兼容。
+    const node: any = proposal.appliedStableId
+      ? ctx.memory.graph.getLatestByStableId(proposal.appliedStableId)
+      : null
+    const id = node?.stableId ?? proposal.id
     return {
-      id: summary.stableId,
-      title: summary.title,
-      content: summary.content,
-      sources: summary.sourceFacts.map(s => s.stableId),
-      version: summary.version,
-      status: summary.status,
-      createdAt: summary.createdAt,
-      updatedAt: summary.updatedAt,
+      id,
+      title: node?.title ?? title,
+      content: node?.content ?? summaryContent,
+      sources: node?.sourceFacts?.map((s: any) => s.stableId) ?? (Array.isArray(body.sources) ? body.sources.map(String) : []),
+      version: node?.version ?? 1,
+      status: node?.status ?? proposal.status,
+      createdAt: node?.createdAt ?? proposal.createdAt,
+      updatedAt: node?.updatedAt ?? proposal.createdAt,
     }
   })
 
@@ -384,7 +417,7 @@ export async function knowledgeRouter(app: FastifyInstance) {
     }
 
     const ctx = getUserContext(userId)
-    const service = new SidecarFeedbackService(ctx.memory)
+    const service = new SidecarFeedbackService(ctx.memory, userId)
     const result = await service.process({
       userId,
       workspaceId: userId,

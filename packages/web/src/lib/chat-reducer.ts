@@ -80,6 +80,8 @@ export interface ChatMessage {
   truncated?: boolean;
   /** #582: 通用会话编辑附件的结果落地出口（保存为文档/导出PDF/继续讨论）。 */
   exportOptions?: Array<'save_as_document' | 'export_pdf' | 'continue_discussion'>;
+  /** #839: 记忆引用对账 — 本条回复存在未命中注入集合的引用(已由服务端标注"未溯源")。 */
+  citationAudit?: { total: number; verified: number; unverified: string[]; message: string };
   /** #582: 导出动作的进行/完成状态。 */
   exportState?: 'saving' | 'saved';
   /** #725: 保存为文档后的 docId — 消息内提供跳转链接。 */
@@ -169,6 +171,17 @@ function applyChunk(msg: ChatMessage, chunk: ChatStreamChunk): ChatMessage {
     // #582: 附件编辑结果落地出口。
     case 'attachment_export_option':
       return { ...msg, exportOptions: chunk.options };
+    // #839: 记忆引用输出侧对账 — 含未溯源引用的消息打标记(不静默)。
+    case 'citation_audit':
+      return {
+        ...msg,
+        citationAudit: {
+          total: chunk.total,
+          verified: chunk.verified,
+          unverified: chunk.unverified,
+          message: chunk.message,
+        },
+      };
     default:
       return msg;
   }

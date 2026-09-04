@@ -53,10 +53,17 @@ describe('skill capture (#298)', () => {
       headers: h,
     })
     expect(confirmed.statusCode).toBe(200)
+    // #845/D6: confirm = 进入审批闸门(提案 pending),行保持 draft 直至审批
+    const confirmBody = JSON.parse(confirmed.payload)
+    expect(confirmBody.status).toBe('submitted_for_approval')
+    expect(confirmBody.proposalId).toBeTruthy()
+    const proposal = await (prisma as any).memoryProposal.findUnique({ where: { id: confirmBody.proposalId } })
+    expect(proposal.kind).toBe('skill')
+    expect(proposal.status).toBe('pending')
 
     const list = await app.inject({ method: 'GET', url: '/api/v1/skills/captured', headers: h })
     const skills = JSON.parse(list.payload).skills
-    expect(skills.some((s: any) => s.id === draft.draft_id && s.status === 'confirmed')).toBe(true)
+    expect(skills.some((s: any) => s.id === draft.draft_id && s.status === 'draft')).toBe(true)
   })
 
   test('capture without conversation → 400; refine unknown draft → 404', async () => {

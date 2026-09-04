@@ -211,7 +211,8 @@ export async function patientsRouter(app: FastifyInstance) {
     }
 
     // Store findings as MemoryGraph facts so the LLM can reference them in chat
-    recordScanFindingsAsFacts(userId, studyId, findings)
+    // (#839: async — lands as pending gate proposals, never blocks the scan response)
+    void recordScanFindingsAsFacts(userId, studyId, findings)
 
     return { ok: true, findings, study_id: studyId }
   })

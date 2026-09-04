@@ -57,8 +57,15 @@ export async function createApprovalRequest(
   input: ApprovalRequestInput,
 ) {
   const now = new Date().toISOString()
+  // #845: institution scope 的 skill 提案不受 allow 规则自动放行 —
+  // 跨主体数据流动必须机构管理员逐条显式确认,规则引擎只对 personal 生效。
+  const payload: any = input.payload
+  const institutionSkill = input.targetType === 'MemoryProposal'
+    && (payload?.skillCard?.scope === 'institution'
+      // 未渲染卡片的调用方(直接传 proposal 行)— 从 payload JSON 兜底识别
+      || (typeof payload?.payload === 'string' && payload.payload.includes('"scope":"institution"')))
   // #105: rule-based auto decision before anything enters the queue.
-  const decision = await decideApproval(userId, 'doctor', 'approve', input.targetType)
+  const decision = institutionSkill ? 'ask' : await decideApproval(userId, 'doctor', 'approve', input.targetType)
   if (decision === 'allow') {
     return { status: 'auto_allowed', targetType: input.targetType, targetId: input.targetId }
   }
@@ -394,8 +401,22 @@ async function applyProposalViaGateway(userId: string, row: any): Promise<any> {
     createdAt: row.createdAt,
     resolvedAt: row.resolvedAt,
     resolvedBy: row.resolvedBy,
+    payload: row.payload ?? null,
   }
   const node = await gateway.applyApproved(proposal)
+  // #839: 自动研究(gap-research)产出的 fact 提案带 `gap:<gapId>` 溯源 —
+  // 研究时 gap 已在 Prisma 侧 resolve,图谱 fact 要等审批通过才落图;
+  // 这里补挂图谱 gap 节点与已确认事实的关联(best-effort,gap 可能只存在于 Prisma)。
+  const gapId = typeof row.sourceRange === 'string' && row.sourceRange.startsWith('gap:')
+    ? row.sourceRange.slice('gap:'.length)
+    : null
+  if (node && row.kind === 'fact' && gapId) {
+    try {
+      ctx.memory.answerGap(gapId, node)
+    } catch (err) {
+      log.info('[APPROVAL] gap link skipped:', (err as Error).message.slice(0, 120))
+    }
+  }
   // K4: once a fact is confirmed, check whether a new knowledge summary can
   // be synthesized from >= 3 unused confirmed facts of the same category.
   if (node && row.kind === 'fact') {
@@ -451,8 +472,37 @@ async function applyTargetUpdate(
       return
     }
 
+    // #845: skill 提案 scope 判定 — institution(跨医生共享=跨主体数据流动)
+    // 需机构管理员显式逐条确认;确认者非 admin 直接拒绝落图。
+    if (row.kind === 'skill' && row.payload) {
+      try {
+        const scope = JSON.parse(row.payload)?.skill?.scope
+        if (scope === 'institution') {
+          const actor = await (prisma as any).user.findUnique({ where: { id: actorId } })
+          if (actor?.role !== 'admin') {
+            throw new Error('institution scope 提案需机构管理员确认 — 当前确认者无管理员权限')
+          }
+        }
+      } catch (err) {
+        if ((err as Error).message.includes('institution scope')) throw err
+        // payload 解析失败不阻塞(scope 缺省按 personal)
+      }
+    }
+
     const node = await applyProposalViaGateway(row.userId, row)
     if (!node) throw new Error('Memory proposal could not be applied')
+
+    // #845 确认语义(D6,与迁移一致):capture 来源的 skill 提案通过后,
+    // CapturedSkill 原行标 promoted 纯归档(stableId=skill_cap_<capturedId>)。
+    if (row.kind === 'skill' && node && typeof (node as any).stableId === 'string'
+      && (node as any).stableId.startsWith('skill_cap_')) {
+      const capturedId = (node as any).stableId.slice('skill_cap_'.length)
+      await (prisma as any).capturedSkill.updateMany({
+        where: { id: capturedId, userId: row.userId, status: { not: 'promoted' } },
+        data: { status: 'promoted', updatedAt: now },
+      }).catch(() => { /* 行可能已被清理 — best-effort */ })
+    }
+
     await (prisma as any).memoryProposal.update({
       where: { id: targetId },
       data: { status: 'approved', resolvedAt: now, resolvedBy: actorId },

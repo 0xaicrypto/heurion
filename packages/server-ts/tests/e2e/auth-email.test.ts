@@ -9,26 +9,22 @@ import prisma from '../../src/common/prisma.js'
  */
 
 describe('auth email verification (#283)', () => {
-  let lastCode: string | null = null
-
   beforeEach(async () => {
     await (prisma as any).verificationCode.deleteMany({})
-    lastCode = null
-    // Capture dev-mode codes printed by the verification service.
-    const origLog = console.log
-    vi.spyOn(console, 'log').mockImplementation((...args: any[]) => {
-      const line = String(args[0] || '')
-      const m = line.match(/verification code for ([^ ]+) \(([^)]+)\): (\d{6})/)
-      if (m) {
-        lastCode = m[3]
-      }
-      origLog(...args)
-    })
   })
 
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
+  /**
+   * dev 模式验证码经 makeLogger 结构化日志输出(pino,不经过 console.log —
+   * 原 console.log spy 因此永不命中),且明文落 verificationCode.code —
+   * 直接查库取码,比日志抓取稳定。
+   */
+  async function lastCodeFor(email: string): Promise<string> {
+    const row = await (prisma as any).verificationCode.findFirst({
+      where: { target: email },
+      orderBy: { createdAt: 'desc' },
+    })
+    return row?.code ?? ''
+  }
 
   test('send-code → bind-email → login by email', async () => {
     const app = await getApp()
@@ -43,6 +39,7 @@ describe('auth email verification (#283)', () => {
       payload: JSON.stringify({ email, purpose: 'bind' }),
     })
     expect(sent.statusCode).toBe(200)
+    const lastCode = await lastCodeFor(email)
     expect(lastCode).toBeTruthy()
 
     const bound = await app.inject({
@@ -103,7 +100,7 @@ describe('auth email verification (#283)', () => {
     }
     const locked = await app.inject({
       method: 'POST', url: '/api/v1/auth/bind-email',
-      headers: hj, payload: JSON.stringify({ email, code: lastCode }),
+      headers: hj, payload: JSON.stringify({ email, code: await lastCodeFor(email) }),
     })
     expect(locked.statusCode).toBe(400)
   }, 30000)
@@ -118,6 +115,7 @@ describe('auth email verification (#283)', () => {
       headers: { 'content-type': 'application/json' },
       payload: JSON.stringify({ email, purpose: 'register' }),
     })
+    const lastCode = await lastCodeFor(email)
     expect(lastCode).toBeTruthy()
 
     const res = await app.inject({
@@ -191,10 +189,10 @@ describe('auth email verification (#283)', () => {
     const email = `reset_${Date.now()}@example.com`
 
     await app.inject({ method: 'POST', url: '/api/v1/auth/send-code', headers: hj, payload: JSON.stringify({ email, purpose: 'bind' }) })
-    await app.inject({ method: 'POST', url: '/api/v1/auth/bind-email', headers: hj, payload: JSON.stringify({ email, code: lastCode }) })
+    await app.inject({ method: 'POST', url: '/api/v1/auth/bind-email', headers: hj, payload: JSON.stringify({ email, code: await lastCodeFor(email) }) })
 
-    lastCode = null
     await app.inject({ method: 'POST', url: '/api/v1/auth/send-code', headers: hj, payload: JSON.stringify({ email, purpose: 'reset' }) })
+    const lastCode = await lastCodeFor(email)
     expect(lastCode).toBeTruthy()
 
     const reset = await app.inject({

@@ -197,16 +197,30 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // until facts/knowledge versions change). #510: persona variant follows
   // the entry scene so non-patient scenes stop inheriting the
   // patient-centric guidance.
-  const persona = buildCachedPersona(userId, ctx.facts, ctx.knowledge, scene)
+  // #840: persona 渲染切 graph(单一事实源;缓存版本信号沿用 legacy store)。
+  const persona = buildCachedPersona(userId, ctx.facts, ctx.knowledge, scene, ctx.memory)
 
   // #2: Weighted attention context projection (filtered by router intent)
   const projectionInputs = selectProjectionInputs(routeResult, ctx, patientHash, sid)
+  // #841 环④: Layer 4 按需激活 — 数据源从 LearnedSkill 全量换为 graph
+  // SkillNode trigger 匹配(零 LLM;answer/uncertain 回合不激活)。
+  let skillCards: any[] = []
+  try {
+    const { matchSkillsForTurn } = await import('../skills/activation.js')
+    const skillNodes = (ctx.memory?.graph.getCurrentNodesByType('skill') ?? []) as any[]
+    skillCards = matchSkillsForTurn({
+      skills: skillNodes,
+      taskKind: turnIntent.action === 'answer' ? '' : turnIntent.action,
+      queryText: `${body.text} ${scene}`,
+      uncertain: turnIntent.needsClarify === true,
+    })
+  } catch { /* best-effort — 激活失败退回空索引 */ }
   const projected = await ctx.orchestrator.projection.project({
     userId, patientHash,
     persona,
     facts: projectionInputs.facts,
     episodes: projectionInputs.episodes,
-    skills: projectionInputs.skills,
+    skills: skillCards as any,
   })
   send({ type: 'context_info', text: projected.budget.map((b: any) => `${b.layer}: ${b.tokens}t/${b.items}i`).join(' | '), kind: 'projection' })
 
@@ -431,6 +445,8 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         excludeFactHashes: input.layer3FactHashes,
         patientHash: input.patientHash ?? undefined,
         embedding: new EmbeddingService(userId, ctx.memory),
+        // #840: keyword 读路径切 graph — facts/summaries 从单一事实源取。
+        graph: ctx.memory?.graph,
         // #756: 自动注入条目进入 citations 上报清单。
         onItems: (items) => items.forEach((it) => kbCitations.push({
           kind: it.kind,
@@ -740,10 +756,60 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       ...(timelineSubs.length > 0 ? { subagents: timelineSubs } : {}),
     }
   }
+  // #839 缺口 2: 记忆引用输出侧对账 — 输出中的 KB 引用标注(（来源：《标题》）)
+  // 必须命中本轮注入集合;未命中的降级"未溯源"标注并 SSE 上报,不静默。
+  // citations SSE(#756)只披露注入了什么,不校验输出了什么(移植 #807 强制命中模式)。
+  let responseForLog = fullResponse
+  try {
+    const { auditMemoryCitations, titlesFromCitationLabels } = await import('../../modules/knowledge/citation-audit.js')
+    const audit = auditMemoryCitations(fullResponse, titlesFromCitationLabels(kbCitations.map((c) => c.label)))
+    if (audit.unverified.length > 0) {
+      responseForLog = audit.annotatedText
+      send({
+        type: 'citation_audit',
+        total: audit.total,
+        verified: audit.verified,
+        unverified: audit.unverified.map((u) => u.title).slice(0, 5),
+        message: `检测到 ${audit.unverified.length} 处引用未命中本轮注入的知识库条目，已标注"未溯源"`,
+      })
+    }
+  } catch { /* best-effort — 对账失败不阻断回复落盘 */ }
+
   ctx.eventLog.append({
-    timestamp: Date.now() / 1000, eventType: 'assistant_response', content: fullResponse,
+    timestamp: Date.now() / 1000, eventType: 'assistant_response', content: responseForLog,
     metadata: timelineMeta, agentId: userId, sessionId: sid,
   })
+
+  // #843 环①: 任务轨迹采集 — 仅任务型回合(edit/generate/retrieve/command),
+  // answer 不记(D1: eventLog 投影,零正文,零 LLM/零外呼)。
+  try {
+    const { recordTaskTrajectory } = await import('../../evolution/trajectory.js')
+    recordTaskTrajectory(ctx.eventLog, {
+      userId,
+      sessionId: sid,
+      action: turnIntent.action,
+      scene,
+      toolsUsed: timelineTools.map((t) => t.tool),
+      docEdits: timelineTools.filter((t) => t.tool === 'edit_document').length,
+      outcome: fullResponse ? 'completed' : 'abandoned',
+    })
+  } catch { /* best-effort — 轨迹采集失败不影响回合 */ }
+
+  // #841 环⑤: 遵循度度量(零 LLM)— 激活的剧本卡按实际工具序列/产出物判定
+  // 遵循与否,滑动窗口维护 followRate,达降级线自动 suspended(不删除)。
+  if (skillCards.length > 0) {
+    try {
+      const { recordFollowThrough } = await import('../skills/follow-through.js')
+      await recordFollowThrough({
+        memory: ctx.memory,
+        userId,
+        activated: skillCards,
+        toolsUsed: timelineTools.map((t) => t.tool),
+        docEdits: timelineTools.filter((t) => t.tool === 'edit_document').length,
+        outcome: fullResponse ? 'completed' : 'abandoned',
+      })
+    } catch { /* best-effort — 度量失败不影响回合 */ }
+  }
 
   // #582 — 例 A：通用会话编辑附件（action=edit, target=attachment）时，给
   // 一条可落地出口（保存为文档 / 导出），避免"结果只留在对话里"的死路。

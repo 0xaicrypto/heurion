@@ -8,7 +8,10 @@ import {
 } from '../../src/modules/knowledge/knowledge-command-handler'
 // #666: keywordSearch moved to the retrieval layer.
 import { keywordSearch } from '../../src/retrieval/keyword-search'
-import { FactsStore, KnowledgeStore } from '../../src/evolution/stores'
+import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../src/evolution/stores'
+import { MemoryService } from '../../src/memory/memory.service.js'
+import { EventLog } from '../../src/core/event-log.js'
+import { registerContextResolver, registerProposalApplier, defaultProposalApplier } from '../../src/memory/registry.js'
 import { InMemoryKnowledgeGapService } from '../../src/modules/knowledge/knowledge-gap.service'
 import fs from 'fs'
 import path from 'path'
@@ -86,16 +89,32 @@ describe('knowledge-command-handler', () => {
       ctx = createTestContext()
     })
 
-    test('saves clear assertion as fact', async () => {
+    test('without memory service returns error — legacy factsStore fallback eliminated (#839)', async () => {
       const result = await executeCommand(ctx, 'kb_remember', 'ZQ 对 osimertinib 不耐受')
+      expect(result.type).toBe('error')
+      expect(ctx.factsStore.all().length).toBe(0)
+    })
+
+    test('with memory service fast-tracks through the gate and writes the fact (#839)', async () => {
+      const baseDir = path.join(os.tmpdir(), `nexus-cmd-mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+      fs.mkdirSync(baseDir, { recursive: true })
+      const facts = new FactsStore(baseDir)
+      const knowledge = new KnowledgeStore(baseDir)
+      const episodesStore = new EpisodesStore(baseDir)
+      const skillsStore = new SkillsStore(baseDir)
+      const memory = new MemoryService({ eventLog: new EventLog(baseDir), baseDir, legacyFacts: facts, legacyKnowledge: knowledge, ownerId: 'user_test' })
+      // #839: fast-track 经 registry applier 落图 — 注册与 user-context 相同的默认实现
+      registerContextResolver(() => ({ memory, facts, episodes: episodesStore, skills: skillsStore, knowledge }))
+      registerProposalApplier(defaultProposalApplier)
+
+      const result = await executeCommand({ ...ctx, memory }, 'kb_remember', 'ZQ 对 osimertinib 不耐受')
       expect(result.type).toBe('kb_remembered')
       const r = result as any
       expect(r.factId).toBeTruthy()
       expect(r.confidence).toBe(0.92)
-
-      const fact = ctx.factsStore.all()[0]
-      expect(fact.content).toBe('ZQ 对 osimertinib 不耐受')
-      expect(fact.sourceType).toBe('doctor')
+      // 同一 applier 双写:legacy store 与图谱都有该事实
+      expect(facts.all()[0]?.content).toBe('ZQ 对 osimertinib 不耐受')
+      expect(memory.graph.getLatestByStableId(r.factId)).toBeTruthy()
     })
 
     test('uncertain assertion goes to pending confirmation', async () => {

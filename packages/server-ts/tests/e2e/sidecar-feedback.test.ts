@@ -4,6 +4,7 @@ import { FactsStore, KnowledgeStore } from '../../src/evolution/stores'
 import { EventLog } from '../../src/core/event-log'
 import { MemoryService } from '../../src/memory/memory.service'
 import { getApp, authHeader } from '../setup.js'
+import prisma from '../../src/common/prisma.js'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
@@ -52,7 +53,7 @@ describe('Sidecar feedback — service', () => {
     const facts = new FactsStore(baseDir)
     const knowledge = new KnowledgeStore(baseDir)
     const memory = new MemoryService({ eventLog, baseDir, legacyFacts: facts, legacyKnowledge: knowledge, ownerId: 'u1' })
-    return { service: new SidecarFeedbackService(memory), facts, memory }
+    return { service: new SidecarFeedbackService(memory, 'u1'), facts, memory }
   }
 
   test('saveAll false returns candidates without persisting', async () => {
@@ -69,7 +70,7 @@ describe('Sidecar feedback — service', () => {
     expect(facts.all().length).toBe(0)
   })
 
-  test('saveAll true persists high-confidence facts', async () => {
+  test('saveAll true routes high-confidence candidates through the gate (#839)', async () => {
     const { service, facts } = makeService()
     const output = 'EGFR exon 19 deletion detected in 45% of samples. PD-L1 TPS = 80%.'
     const result = await service.process({
@@ -78,11 +79,14 @@ describe('Sidecar feedback — service', () => {
       output,
       saveAll: true,
     })
+    // #839: 机器提取走写入闸门 — 生成 pending 提案留痕,不直写 legacy/graph。
     expect(result.saved.length).toBeGreaterThan(0)
-    expect(facts.all().length).toBe(result.saved.length)
-    for (const f of facts.all()) {
-      expect(f.sourceType).toBe('sidecar')
+    for (const s of result.saved) {
+      expect(s.status).toBe('pending')
+      expect(s.proposalId).toBeTruthy()
+      expect(s.content).toBeTruthy()
     }
+    expect(facts.all().length).toBe(0)
   })
 })
 
@@ -97,7 +101,8 @@ describe('Sidecar feedback — API', () => {
       payload: { username, password: 'test123456', display_name: `Sidecar User ${Math.random().toString(36).slice(2, 6)}` },
     })
     const token = JSON.parse(register.payload).jwt_token
-    return { token, headers: { authorization: `Bearer ${token}` } }
+    const userId = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString()).userId
+    return { token, userId, headers: { authorization: `Bearer ${token}` } }
   }
 
   test('POST requires output', async () => {
@@ -130,9 +135,9 @@ describe('Sidecar feedback — API', () => {
     expect(body.saved.length).toBe(0)
   })
 
-  test('POST with saveAll true persists facts', async () => {
+  test('POST with saveAll true creates pending gate proposals (#839, no direct write)', async () => {
     const app = await getApp()
-    const { token, headers } = await freshUser()
+    const { headers, userId } = await freshUser()
 
     const res = await app.inject({
       method: 'POST',
@@ -146,11 +151,17 @@ describe('Sidecar feedback — API', () => {
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.payload)
     expect(body.saved.length).toBeGreaterThan(0)
+    for (const s of body.saved) {
+      expect(s.status).toBe('pending')
+      // 提案行真实存在且待审
+      const row = await (prisma as any).memoryProposal.findUnique({ where: { id: s.proposalId } })
+      expect(row?.status).toBe('pending')
+      expect(row?.userId).toBe(userId)
+    }
 
-    // Verify user context has new facts
+    // #839: 图谱/legacy store 在审批前保持干净
     const ctxModule = await import('../../src/modules/shared/user-context.js')
-    const userId = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString()).userId
     const ctx = ctxModule.getUserContext(userId)
-    expect(ctx.facts.all().some((f: any) => f.sourceType === 'sidecar')).toBe(true)
+    expect(ctx.facts.all().some((f: any) => f.sourceType === 'sidecar')).toBe(false)
   })
 })

@@ -68,15 +68,15 @@ describe('R2 anchored compaction', () => {
 
     await ensureSessionCompaction(ctx, sessionId, dropped.firstRetainedIdx, undefined)
 
-    // S2: kbCompaction keeps ONLY the cursor (empty summary); the anchored
-    // content lives in the Session Memory (episodes).
+    // S2: kbCompaction 是纯游标 — summary 列只是 episodeUpdate 的展示快照
+    // (注入仍走 episodes);anchor 内容以 Session Memory 为唯一权威存储。
     const compactions = await (prisma as any).kbCompaction.findMany({
       where: { userId, sessionId },
       orderBy: { coveredUptoIdx: 'desc' },
     })
     expect(compactions.length).toBe(1)
     expect(compactions[0].coveredUptoIdx).toBe(dropped.lastCoveredIdx)
-    expect(compactions[0].summary).toBe('')
+    expect(compactions[0].summary).toContain('ZQ')
 
     // Facts land in the pending review queue
     const proposals = await (prisma as any).memoryProposal.findMany({
@@ -141,7 +141,7 @@ describe('S2 — no anchored-summary payload in kbCompaction', () => {
 
     const rows = await (prisma as any).kbCompaction.findMany({ where: { userId, sessionId } })
     expect(rows.length).toBe(1)
-    expect(rows[0].summary).toBe('')
+    expect(rows[0].summary).toContain('ZQ') // #display 快照;权威摘要在 episodes
     // Episode summary updated (K3 merge) — Session Memory is the single store
     expect(ctx.episodes.all().find(e => e.sessionId === sessionId)?.summary).toContain('ZQ')
     // No anchoredSummary JSON anywhere

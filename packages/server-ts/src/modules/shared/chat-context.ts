@@ -5,7 +5,8 @@
  * honest: one implementation, one test surface.
  */
 import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
-import { CONTEXT_CONFIG } from '../../common/context-config.js' // #637 集中配置
+import { CONTEXT_CONFIG } from '../../common/context-config.js'
+import { GraphFactProvider } from '../../memory/fact-provider.js' // #637 集中配置
 import { router } from '../../retrieval/query-router.js'
 import { getUserContext } from './user-context.js'
 import { providerSupportsVision, modelSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
@@ -193,6 +194,17 @@ export function enforceTotalBudget(
  * in a patient-scoped chat only that patient's facts are injected in full;
  * cross-patient facts appear only when importance >= 4 (limited, tagged).
  */
+/**
+ * #840 读路径第二批: layer3 facts 注入切 graph — memory 存在时从单一
+ * 事实源取(GraphFactProvider,与 keyword/向量路同口径),legacy 投影仅回落。
+ */
+function projectionFacts(ctx: { memory?: { graph: any } | null; facts: { all(): any[] } }, patientHash?: string | null): any[] {
+  const all = ctx.memory?.graph
+    ? new GraphFactProvider(ctx.memory.graph).listCurrent()
+    : ctx.facts.all()
+  return isolateFactsByScope(all, patientHash).slice(0, CONTEXT_CONFIG.retrieval.factsCap)
+}
+
 export function isolateFactsByScope(allFacts: any[], patientHash?: string | null): any[] {
   if (!patientHash) return allFacts
   const own = allFacts.filter((f) => f.patientHash === patientHash)
@@ -227,7 +239,7 @@ export function selectProjectionInputs(
       return { facts: [], episodes: [], skills: [] }
     case 'vector':
       // Knowledge questions: keep facts/knowledge, skip episodic chat history
-      return { facts: isolateFactsByScope(ctx.facts.all(), patientHash).slice(0, CONTEXT_CONFIG.retrieval.factsCap), episodes: [], skills: [] }
+      return { facts: projectionFacts(ctx, patientHash), episodes: [], skills: [] }
     case 'file':
       // File queries: context comes from attachments; skip accumulated memory
       return { facts: [], episodes: [], skills: [] }
@@ -236,7 +248,7 @@ export function selectProjectionInputs(
       // Ambiguous or summary questions: keep full context (patient-isolated);
       // episodes are limited to the current session's un-reviewed summary.
       return {
-        facts: isolateFactsByScope(ctx.facts.all(), patientHash).slice(0, CONTEXT_CONFIG.retrieval.factsCap),
+        facts: projectionFacts(ctx, patientHash),
         episodes: sessionId ? ctx.episodes.all().filter((e) => e.sessionId === sessionId) : [],
         skills: ctx.skills.all(),
       }

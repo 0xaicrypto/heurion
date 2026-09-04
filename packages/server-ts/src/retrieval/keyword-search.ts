@@ -4,7 +4,12 @@
  * (unified-search used it, creating a retrieval→knowledge→retrieval cycle).
  */
 import { FactsStore, KnowledgeStore } from '../evolution/stores.js'
-import { LegacyFactProvider, type FactProvider } from '../memory/fact-provider.js'
+import { LegacyFactProvider, GraphFactProvider, type FactProvider } from '../memory/fact-provider.js'
+
+/** #840: graph 最小形状 — 避免 retrieval 层引入完整 MemoryGraph 类型依赖。 */
+export interface GraphLike {
+  getCurrentNodesByType(type: string): Array<Record<string, any>>
+}
 
 export interface SearchResult {
   kind: 'fact' | 'knowledge'
@@ -21,7 +26,8 @@ export interface SearchResult {
   stableId?: string
 }
 
-function tokenize(text: string): string[] {
+/** #841 环④: 激活匹配复用同一分词器(中英混排,短 token 过滤)。 */
+export function tokenize(text: string): string[] {
   const lower = text.toLowerCase()
   // Keep Chinese characters and Latin alphanumeric tokens
   const tokens = lower.match(/[\u4e00-\u9fa5]+|[a-z0-9]+/g) || []
@@ -56,16 +62,19 @@ export function keywordSearch(
   knowledgeStore: KnowledgeStore,
   factProvider?: FactProvider,
   patientHash?: string | null,
+  /** #840: graph 读路径 — 提供时 facts/summaries 均从 graph 取(单一事实源);缺省回落 legacy 投影。 */
+  graph?: GraphLike,
 ): SearchResult[] {
   const queryTerms = tokenize(query)
   if (queryTerms.length === 0) return []
 
   const results: SearchResult[] = []
 
-  // #637: 注入/检索层默认走 legacy 适配器;传 provider 时(如 graph 双轨
-  // 收敛)按同一接口访问 — 双 store 去重不再依赖具体存储。
+  // #840: 默认反转 — 传 graph 时 facts 走 GraphFactProvider(graph 单一事实源),
+  // 未传时回落 legacy 适配器(投影缓存)。显式传 provider 时按同一接口访问。
   // #629: patientHash 过滤 — 患者场景只检索该患者的 facts,跨患者泄漏防护。
-  const facts = (factProvider ?? new LegacyFactProvider(factsStore)).listCurrent({ patientHash: patientHash ?? undefined })
+  const facts = (factProvider ?? (graph ? new GraphFactProvider(graph as any) : new LegacyFactProvider(factsStore)))
+    .listCurrent({ patientHash: patientHash ?? undefined })
   for (const fact of facts) {
     const score = scoreText(`${fact.content} ${fact.category}`, queryTerms)
     if (score > 0) {
@@ -82,7 +91,13 @@ export function keywordSearch(
     }
   }
 
-  for (const summary of knowledgeStore.all()) {
+  // #840: summaries 同批切换 — graph 提供时从 graph summary 节点取(legacy
+  // KnowledgeStore 仅作缺省回落)。
+  const summaries: Array<{ id: string; title: string; content: string }> = graph
+    ? (graph.getCurrentNodesByType('summary') as Array<Record<string, any>>)
+        .map((n) => ({ id: String(n.stableId), title: String(n.title || ''), content: String(n.content || '') }))
+    : knowledgeStore.all()
+  for (const summary of summaries) {
     const score = scoreText(`${summary.title} ${summary.content}`, queryTerms)
     if (score > 0) {
       results.push({

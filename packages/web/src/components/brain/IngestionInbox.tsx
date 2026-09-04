@@ -364,6 +364,29 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
                 {proposal.kind === 'summary' && (
                   <SummaryProvenance proposal={proposal} />
                 )}
+                {/* #845: skill 提案的剧本卡 diff 预览 — 激活后医生会看到什么 + 证据展示 */}
+                {(() => {
+                  const skillCard = (approval.payload as Record<string, any> | null)?.skillCard as
+                    | { title: string; description: string; steps: string[]; followRate: string; evidence?: { observationCount?: number; correctionRate?: number; trajectoryCount?: number; sessionIds?: string[] } }
+                    | undefined;
+                  if (!skillCard) return null;
+                  return (
+                    <div data-testid="skill-card-preview" className="mt-2 rounded-lg border border-border bg-surface-2 p-3 text-xs">
+                      <p className="font-medium text-text-primary">🧩 {skillCard.title}</p>
+                      {skillCard.description && <p className="mt-0.5 text-text-secondary">{skillCard.description}</p>}
+                      {skillCard.steps?.length > 0 && (
+                        <ol className="mt-1 list-decimal pl-4 text-text-secondary">
+                          {skillCard.steps.map((s, i) => <li key={i}>{s}</li>)}
+                        </ol>
+                      )}
+                      <p className="mt-1 text-text-tertiary">
+                        证据:{skillCard.evidence?.observationCount ?? 0} 次观察 ·
+                        修正率 {Math.round((skillCard.evidence?.correctionRate ?? 0) * 100)}% ·
+                        {skillCard.evidence?.trajectoryCount ?? 0} 条轨迹 · 遵循率 {skillCard.followRate}
+                      </p>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">

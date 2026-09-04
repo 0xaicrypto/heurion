@@ -147,6 +147,7 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
           factsStore: ctx.facts,
           knowledgeStore: ctx.knowledge,
           gapService,
+          memory: ctx.memory,
         }, body.text)
         const response = formatCommandResult(kbResult)
 
