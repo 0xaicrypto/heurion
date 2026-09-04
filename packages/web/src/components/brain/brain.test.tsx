@@ -168,6 +168,55 @@ describe('IngestionInbox', () => {
     await waitFor(() => expect(screen.getByText('所有分析结果已处理')).toBeInTheDocument());
   });
 
+  const factProposalRequest = (approvalId: string, proposalId: string, window: number, content: string) => ({
+    id: approvalId,
+    userId: 'u1',
+    targetType: 'MemoryProposal',
+    targetId: proposalId,
+    status: 'pending',
+    payload: {
+      id: proposalId,
+      kind: 'fact',
+      content,
+      confidence: 'medium',
+      importance: 3,
+      patientHash: null,
+      reason: 'extracted from file EGFR_综述.pdf',
+      sourceRange: `file:f1#${window}`,
+      conflictsWith: null,
+      createdAt: '2026-07-30T00:00:00.000Z',
+    },
+    createdAt: '2026-07-30T00:00:00.000Z',
+  });
+
+  it('groups file-derived facts into one document card with batch actions', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ requests: [] }))
+      .mockResolvedValueOnce(jsonResponse({ requests: [
+        factProposalRequest('apr_f1', 'mp_1', 0, 'EGFR T790M 突变常见于非小细胞肺癌'),
+        factProposalRequest('apr_f2', 'mp_2', 1, '奥希替尼针对 T790M 耐药突变有效'),
+      ] }))
+      .mockResolvedValueOnce(jsonResponse(mockPatients()));
+
+    render(<IngestionInbox />);
+    await waitFor(() => expect(screen.getByText('EGFR_综述.pdf')).toBeInTheDocument());
+
+    // 折叠态:fact 内容不直接展示,只显示文档卡
+    expect(screen.queryByText('EGFR T790M 突变常见于非小细胞肺癌')).not.toBeInTheDocument();
+
+    // 展开后逐条可见
+    fireEvent.click(screen.getByText('EGFR_综述.pdf'));
+    expect(screen.getByText('EGFR T790M 突变常见于非小细胞肺癌')).toBeInTheDocument();
+    expect(screen.getByText('奥希替尼针对 T790M 耐药突变有效')).toBeInTheDocument();
+
+    // 一键全收:两条提案都被确认
+    const confirmSpy = vi.spyOn(api, 'confirmApproval').mockResolvedValue({ ...pendingRequest, status: 'approved' });
+    fireEvent.click(screen.getByRole('button', { name: /全部接受/ }));
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledWith('apr_f1'));
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledWith('apr_f2'));
+    await waitFor(() => expect(screen.getByText('所有分析结果已处理')).toBeInTheDocument());
+  });
+
   it('shows empty state when nothing pending', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [] }))
@@ -259,7 +308,7 @@ describe('BrainPage', () => {
   it('renders stats, inbox and activity feed together', async () => {
     fetchMock.mockImplementation((url: unknown) => {
       const u = String(url)
-      if (u.includes('/memory/health')) return Promise.resolve(jsonResponse({ acceptance: { approved: 0, rejected: 0, rate: null, by_category: [] }, contradictions_7d: 0, stale: { pending_over_7d: 0, high_importance_pinned: 0, archived: 0 }, scale: { facts: 0, articles: 0, open_gaps: 0, pending: 0, episodes: 0 } }))
+      if (u.includes('/memory/health')) return Promise.resolve(jsonResponse({ acceptance: { approved: 0, rejected: 0, rate: null, by_category: [] }, contradictions_7d: 0, stale: { pending_over_7d: 0, high_importance_pinned: 0, archived: 0 }, scale: { facts: 0, summaries: 0, open_gaps: 0, pending: 0, episodes: 0 } }))
       if (u.includes('/brain/stats')) return Promise.resolve(jsonResponse({ pending: 12, confirmedToday: 5, totalEntries: 247 }))
       if (u.includes('/approvals/pending') && u.includes('MemoryProposal')) return Promise.resolve(jsonResponse({ requests: [] }))
       if (u.includes('/approvals/pending')) return Promise.resolve(jsonResponse({ requests: [pendingRequest] }))
