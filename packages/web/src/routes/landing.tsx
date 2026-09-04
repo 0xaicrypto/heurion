@@ -413,6 +413,7 @@ export function LandingPage() {
       : 'Heurion grows with clinicians and medical data ecosystems — built for real-world care.',
     hospitalName: isZh ? '中国科学技术大学附属第一医院（安徽省立医院）' : 'The First Affiliated Hospital of USTC (Anhui Provincial Hospital)',
     reactomeDesc: isZh ? '通路数据（CC BY 4.0）' : 'Pathway data (CC BY 4.0)',
+    ncbiDesc: isZh ? 'PubMed 文献与医学检索数据' : 'PubMed literature & medical search data',
     techLine: isZh
       ? '技术生态致谢：Cloudflare Workers · Vercel AI SDK · GitHub 开源社区，以及所有为开源与医疗信息化做出贡献的开发者。'
       : 'Built on Cloudflare Workers · Vercel AI SDK · GitHub open source — and every developer contributing to open source and health informatics.',
@@ -739,6 +740,20 @@ export function LandingPage() {
               <img
                 src="/partners/reactome.png"
                 alt="Reactome"
+                loading="lazy"
+                className="h-14 w-auto max-w-[320px] object-contain opacity-85 transition-opacity hover:opacity-100"
+              />
+            </a>
+            <a
+              href="https://www.ncbi.nlm.nih.gov/"
+              target="_blank"
+              rel="noreferrer"
+              title={`NCBI · ${T.ncbiDesc}`}
+              className="flex min-w-[300px] items-center justify-center rounded-2xl border border-border bg-surface-elevated px-10 py-6 transition-all hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-md"
+            >
+              <img
+                src="/partners/ncbi.svg"
+                alt="NCBI — National Center for Biotechnology Information"
                 loading="lazy"
                 className="h-14 w-auto max-w-[320px] object-contain opacity-85 transition-opacity hover:opacity-100"
               />
