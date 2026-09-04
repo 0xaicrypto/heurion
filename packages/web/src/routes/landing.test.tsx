@@ -6,7 +6,7 @@ describe('LandingPage', () => {
   it('renders hero, pain points, dual-plane sections, and route examples', () => {
     render(<LandingPage />);
 
-    expect(screen.getByRole('heading', { name: /give ai clinical memory and execution/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /give ai clinical memory/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /three failure modes of medical llms/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /dual-plane architecture: brain \+ hands/i })).toBeInTheDocument();
     // 能力徽章并入双平面(原独立区块已删)
@@ -15,10 +15,11 @@ describe('LandingPage', () => {
     // 合规为紧凑条(不再是大标题区块)
     expect(screen.getByText(/not a medical device/i)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /formal statistical figures, methodology annotated/i })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /partners & acknowledgements/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /clinical & medical partners/i })).toBeInTheDocument();
     expect(screen.getAllByText(/cloudflare/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/reactome/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/built on cloudflare workers/i)).toBeInTheDocument();
+    expect(screen.getByAltText(/reactome/i)).toBeInTheDocument();
+    expect(screen.getByAltText(/anhui provincial hospital|安徽省立医院/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/built on cloudflare workers/i).length).toBeGreaterThan(0);
 
     const nav = screen.getByTestId('marketing-nav');
     expect(within(nav).getByRole('link', { name: /docs/i })).toHaveAttribute('href', '/docs/');

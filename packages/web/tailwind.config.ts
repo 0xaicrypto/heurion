@@ -43,6 +43,15 @@ export default {
         lg: 'var(--radius-lg)',
         full: '999px',
       },
+      keyframes: {
+        floaty: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-8px)' },
+        },
+      },
+      animation: {
+        floaty: 'floaty 5s ease-in-out infinite',
+      },
     },
   },
   plugins: [require('@tailwindcss/typography')],
