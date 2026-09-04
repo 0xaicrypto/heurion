@@ -8,7 +8,7 @@ import type { ExtractedPdfImage } from './document-extractor.js'
  * 与 export 互为镜像（epic #775 三轮走查）：`ppt/slides/slideN.xml` 按页
  * 提取占位符文本（`<a:t>` 文本串）→ `{ slides: [{ title, paragraphs }] }`
  * 天然对齐 presentationContentSchema（deck 落点），同时渲染 markdown
- * （`## 页标题` + 正文，文章落点）。
+ * （`## 页标题` + 正文，文档落点）。
  *
  * 安全（不可信 XML/zip，五轮走查）：
  *   - zip 炸弹：zip-reader 条目数/解压总量上限；
@@ -271,7 +271,7 @@ export function pptxSlidesToDeck(slides: PptxSlide[], images: ExtractedPdfImage[
   return { schemaVersion, title: (title || 'Presentation').slice(0, 500), slides: deckSlides }
 }
 
-/** 文章落点：slides → markdown（`##` 分节 + 页标记供 embedDocumentImages 嵌图）。 */
+/** 文档落点：slides → markdown（`##` 分节 + 页标记供 embedDocumentImages 嵌图）。 */
 export function pptxSlidesToMarkdown(result: PptxParseResult): string {
   const parts: string[] = []
   result.slides.forEach((s, i) => {

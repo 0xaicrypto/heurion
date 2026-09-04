@@ -84,7 +84,7 @@ export function MemoryPage() {
       {
         icon: <BookOpen size={24} />,
         title: 'Knowledge',
-        desc: isZh ? '当 ≥3 条相关 Facts 累积后，自动合成为可读的综述文章并版本化。' : 'When ≥3 related facts accumulate, they are synthesized into versioned summary summaries.',
+        desc: isZh ? '当 ≥3 条相关 Facts 累积后，自动合成为可读的知识总结并版本化。' : 'When ≥3 related facts accumulate, they are synthesized into versioned summaries.',
       },
       {
         icon: <Brain size={24} />,
@@ -280,7 +280,7 @@ function CoveragePanel({ coverage, isZh }: { coverage: CoverageView; isZh: boole
             {r.ratio < coverage.hintThreshold && (
               <p className="mt-1 text-xs text-text-tertiary">
                 {isZh
-                  ? `覆盖率偏低 — 可在对话中说"总结知识库"或对相关事实手动合成文章（如：${r.uncoveredSample[0]?.slice(0, 40) || '…'}）`
+                  ? `覆盖率偏低 — 可在对话中说"总结知识库"或对相关事实手动合成总结（如：${r.uncoveredSample[0]?.slice(0, 40) || '…'}）`
                   : `Coverage below threshold — ask the assistant to summarize the knowledge base or synthesize an summary from uncovered facts (e.g. "${r.uncoveredSample[0]?.slice(0, 40) || '…'}")`}
               </p>
             )}

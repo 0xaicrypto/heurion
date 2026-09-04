@@ -94,7 +94,7 @@ export class InsertAssetTool extends BaseTool {
         },
         // shared
         format: { type: 'string', enum: ['docx', 'pptx', 'pdf'], description: 'export: output format.' },
-        organize: { type: 'boolean', description: 'export+pptx only: true = AI 编排做 PPT（你在 slides 参数里直供 deck 内容，文章只是素材）；false/缺省 = 保真导出（草稿机械转换）。' },
+        organize: { type: 'boolean', description: 'export+pptx only: true = AI 编排做 PPT（你在 slides 参数里直供 deck 内容，正文只是素材）；false/缺省 = 保真导出（草稿机械转换）。' },
         slides: {
           type: 'array',
           items: {

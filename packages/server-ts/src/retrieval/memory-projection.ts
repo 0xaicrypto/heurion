@@ -216,7 +216,7 @@ export class MemoryProjection {
       params.persona,
       patientContext ? `\n## Patient Context\n${patientContext}` : '',
       layer2Text ? `\n## Recent Sessions\n${layer2Text}` : '',
-      // #814: 段文案明示碎片属性 — 模型优先参考知识库注入的文章,
+      // #814: 段文案明示碎片属性 — 模型优先参考知识库注入的总结,
       // 碎片仅作未成文记忆补充。§4.3 (#188) 引用标注规则保留(含示例)。
       layer3Text ? `\n## 未成文记忆(碎片)\n以下为尚未合成知识摘要的记忆碎片,可能已有摘要覆盖(以知识库注入为准)。引用记忆中的事实时请附带 [置信度, 来源],例如 [0.9, chat];不确定的记忆请标注 "不确定"。\n${layer3Text}` : '',
       skillsText ? `\n## Active Skills\n${skillsText}` : '',

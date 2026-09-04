@@ -59,7 +59,7 @@ export function useDocReferences(input: {
     }
   };
 
-  // #757: 共享 KbPicker — 从知识库选文章/文件直接登记为参考(kind=summary/file)。
+  // #757: 共享 KbPicker — 从知识库选总结/文件直接登记为参考(kind=summary/file)。
   const handleKbPickConfirm = async (items: Array<{ id: string; title: string; kind: 'summary' | 'document' }>) => {
     if (!docId || items.length === 0) return;
     for (const it of items) {

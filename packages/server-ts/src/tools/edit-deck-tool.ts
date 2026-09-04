@@ -8,7 +8,7 @@ import { writeDocVersion } from './doc-version-writer.js'
  * #773 — edit_deck: deck 资产（Doc.deck）的 AI 编辑工具。
  *
  * deck 是 AI 编排产物（insert_asset export organize=true 落 Doc.deck），
- * 独立于文章正文（body）— 编辑 deck 不污染原文。画布 deck 视图每页
+ * 独立于文档正文（body）— 编辑 deck 不污染原文。画布 deck 视图每页
  * 可编辑（web 端直接写 Doc.deck），本工具提供 AI 编辑路径：
  * - update：改第 N 页的标题/要点（slide_index 1-based）
  * - delete：删除第 N 页
@@ -107,7 +107,7 @@ export class EditDeckTool extends BaseTool {
       })
       if (written.error) return { success: false, error: written.error }
 
-      const summary = String(args.summary || `已${action === 'update' ? '更新' : action === 'delete' ? '删除' : '插入'}第 ${slideIndex} 页（现共 ${slides.length} 页）；文章正文未改动`)
+      const summary = String(args.summary || `已${action === 'update' ? '更新' : action === 'delete' ? '删除' : '插入'}第 ${slideIndex} 页（现共 ${slides.length} 页）；正文未改动`)
       return { success: true, output: JSON.stringify({ body: written.body, deck: nextDeck, summary }) }
     } catch (err) {
       return { success: false, error: `edit_deck failed: ${(err as Error).message.slice(0, 200)}` }

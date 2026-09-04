@@ -23,7 +23,7 @@ import { splitDocumentSections, resolveDocumentFocus } from '../../lib/doc-secti
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
 import { maybeJitSynthesize } from '../../modules/knowledge/jit-synthesis.service.js' // #815 JIT 兜底
 import { EmbeddingService } from '../../memory/embedding/embedding.service.js' // #731 向量路接线
-import { describeSummaryForInjection } from '../../memory/staleness.js' // #813 文章溯源/stale 单一判定入口
+import { describeSummaryForInjection } from '../../memory/staleness.js' // #813 总结溯源/stale 单一判定入口
 import { ContextAssembler } from './context-assembler.js'
 import { ToolRegistry, type ToolContext } from '../../tools/tool-registry.js'
 import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
@@ -410,7 +410,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
               }
             })
             const deckMd = fitTextToTokens(deckLines.join('\n'), CONTEXT_CONFIG.scene.docBodyTokens / 2)
-            deckBlock = `\n\n## Current Deck（AI 编排的 PPT 资产 — 与正文独立,编辑它不会改动文章）\n页码定位用于 edit_deck 的 slide_index(1-based):\n${deckMd}`
+            deckBlock = `\n\n## Current Deck（AI 编排的 PPT 资产 — 与正文独立,编辑它不会改动正文）\n页码定位用于 edit_deck 的 slide_index(1-based):\n${deckMd}`
           } catch {
             deckBlock = ''
           }
@@ -437,24 +437,24 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           label: resolveKbLabel(ctx, it),
           sourceId: it.stableId ?? it.label,
         })),
-        // #813: 文章条目附溯源增强 — 标题/源 facts 置信度摘要/stale 失效标注
+        // #813: 总结条目附溯源增强 — 标题/源 facts 置信度摘要/stale 失效标注
         // (判定走 memory/staleness.ts 单一入口,与 curation 传播同源)。
         resolveSummary: (summaryStableId) => describeSummaryForInjection(ctx.memory.graph, summaryStableId),
-        // #815: JIT 惰性合成 — 无文章覆盖的 facts 簇读时综合,异步沉淀待审。
+        // #815: JIT 惰性合成 — 无总结覆盖的 facts 簇读时综合,异步沉淀待审。
         jitSynthesize: (q, factHits) => maybeJitSynthesize({
           userId, query: q, patientHash: input.patientHash, memory: ctx.memory, facts: factHits,
         }),
       }),
     },
     {
-      // #620/#633: 用户显式选定的文章/文档(用户强制保留,不入稳定段)。
+      // #620/#633: 用户显式选定的总结/文档(用户强制保留,不入稳定段)。
       key: 'picked_kb',
       // #814: 用户钉选最后让位。
       fallbackOrder: 1,
       build: async (input) => {
         const pickedIds: string[] = Array.isArray(input.body.picked_kb_ids) ? input.body.picked_kb_ids.map(String) : []
         if (pickedIds.length === 0 || input.scene.startsWith('patient')) return ''
-        // #628: 选择器同时返回合成文章(summary)与上传文件(document)。
+        // #628: 选择器同时返回合成总结(summary)与上传文件(document)。
         const summaries = (ctx.memory.graph.getCurrentNodesByType('summary') as any[])
           .filter((n: any) => n.type === 'summary' && pickedIds.includes(n.stableId))
           .slice(0, CONTEXT_CONFIG.injection.pickedMax)

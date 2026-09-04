@@ -59,7 +59,7 @@ export const CONTEXT_CONFIG = {
     /** 显式选择(#620/#633)。 */
     pickedMax: 3,
     pickedCharsPerItem: 4000,
-    /** #815: JIT 惰性合成 — 无文章覆盖时的读时综合兜底(env 可关)。 */
+    /** #815: JIT 惰性合成 — 无总结覆盖时的读时综合兜底(env 可关)。 */
     jitEnabled: process.env.JIT_SYNTHESIS_ENABLED !== 'false',
     jitMinFacts: 3,
     jitFactsMax: 10,

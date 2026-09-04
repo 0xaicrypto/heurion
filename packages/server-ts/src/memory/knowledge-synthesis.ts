@@ -63,7 +63,7 @@ export async function updateEpisodeSummary(input: EpisodeSummaryInput): Promise<
  *
  * 缺陷修复(#816 顺带):
  * ① 全局 scope 患者隔离 — 空 scope 只聚合无 patientHash/studyId 的
- *    facts;此前两个过滤条件退化为 true,跨患者碎片会混入"全局"文章。
+ *    facts;此前两个过滤条件退化为 true,跨患者碎片会混入"全局"总结。
  * ② "used" 判定纳入 pending — pending 的 summary 提案已通过 relatedFacts
  *    占用其源 facts;此前只统计 current summary,同一批 facts 在审批前
  *    可被重复触发合成。
@@ -149,7 +149,7 @@ export async function maybeSynthesizeSummary(
     )
     const parsed = parseLlmJson<unknown>(result)
     // #813: answer-ready 契约归一化(结论/依据/caveat + factId 白名单过滤);
-    // 结构不可用时返回 null,本轮不提案(宁缺毋滥,不让摘要体文章静默通过)。
+    // 结构不可用时返回 null,本轮不提案(宁缺毋滥,不让摘要体总结静默通过)。
     const normalized = normalizeSynthesizedSummary(parsed, summaryFacts.map(f => f.stableId))
     if (!normalized) {
       log.info('[KNOWLEDGE] Summary synthesis skipped: unparseable contract')

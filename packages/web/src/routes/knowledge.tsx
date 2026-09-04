@@ -138,7 +138,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
     setLoading(true);
     setLoadErrors([]);
     Promise.all([
-      api.getKnowledgeSummaries().then(r => setSummaries(r.summaries)).catch(recordLoadError(t('kb.loadSummaries', '文章加载失败'))),
+      api.getKnowledgeSummaries().then(r => setSummaries(r.summaries)).catch(recordLoadError(t('kb.loadSummaries', '总结加载失败'))),
       api.getFacts().then(r => setFacts(r.facts)).catch(recordLoadError(t('kb.loadFacts', '事实加载失败'))),
       api.getKnowledgeGaps().then(r => setGaps(r.gaps)).catch(recordLoadError(t('kb.loadGaps', 'Gaps 加载失败'))),
       api.getKnowledgeTools().then(r => setTools(r.tools)).catch(recordLoadError(t('kb.loadTools', '工具加载失败'))),

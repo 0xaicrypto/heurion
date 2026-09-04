@@ -5,7 +5,7 @@ export class KnowledgeApi extends ApiCore {
   /* ────────────────────────── knowledge & facts ────────────────────────── */
 
   /** #620: 知识库选择器搜索(标题/内容关键词)。 */
-  // #620/#628: 选择器返回合成文章(summary)与上传文件(document)
+  // #620/#628: 选择器返回合成总结(summary)与上传文件(document)
   async getKnowledgePicker(q: string): Promise<{ summaries: Array<{ id: string; title: string; summary: string; updated_at: string; kind: 'summary' | 'document' }> }> {
     return this.fetch(`/api/v1/knowledge/picker?q=${encodeURIComponent(q)}`);
   }

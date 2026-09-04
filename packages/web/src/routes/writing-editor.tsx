@@ -773,7 +773,7 @@ export function WritingEditorPage() {
               variant="ghost"
               size="sm"
               onClick={() => setKbPickerOpen(true)}
-              title={t('writing.pickFromKb', '从知识库选择文章/文件作为参考')}
+              title={t('writing.pickFromKb', '从知识库选择总结/文件作为参考')}
             >
               📚 {t('writing.fromKb', '知识库')}
             </Button>
@@ -844,7 +844,7 @@ export function WritingEditorPage() {
                     {deckAsset ? (
                       <div className="flex items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent/5 px-4 py-2">
                         <span className="text-xs text-accent">
-                          {t('writing.deckAssetBadge', 'AI 编排 deck 资产 — 卡片内可直接编辑（改标题/调要点/删页），保存不会改动文章原文。')}
+                          {t('writing.deckAssetBadge', 'AI 编排 deck 资产 — 卡片内可直接编辑（改标题/调要点/删页），保存不会改动文档正文。')}
                         </span>
                         <Button size="sm" variant="secondary" onClick={deckCtl.addDeckSlide}>
                           <FilePlus size={13} className="mr-1" /> {t('writing.deckAddSlide', '添加一页')}

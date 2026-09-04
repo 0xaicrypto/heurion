@@ -94,7 +94,7 @@ describe('#813 resolveSummaryStaleness — derivation semantics', () => {
     graph.markStatus(art.id, 'superseded')
     const r = resolveSummaryStaleness(graph, graph.getNode(art.id) as SummaryNode)
     expect(r.stale).toBe(true)
-    expect(r.reasons).toEqual(['article_superseded'])
+    expect(r.reasons).toEqual(['summary_superseded'])
   })
 
   test('historical stale status survives when sources look healthy (no silent revival)', () => {

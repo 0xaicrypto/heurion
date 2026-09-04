@@ -89,10 +89,10 @@ export function ChatPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   // #619: 上传命中知识库(sha256 dedup)提示。
   const [kbDedupNotice, setKbDedupNotice] = useState<string | null>(null);
-  // #620: 知识库选择器 — 显式选定文章加入上下文.
+  // #620: 知识库选择器 — 显式选定总结加入上下文.
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   // #721: kbPicker 搜索 debounce。
-  // #712: kbPicked 按会话隔离(同 attachedFiles 模式) — A 会话选的文章
+  // #712: kbPicked 按会话隔离(同 attachedFiles 模式) — A 会话选的总结
   // 不得静默带入 B 会话。#786: 保留完整 item(id+title+kind+summary),
   // KbPicker 打开时按 item 回显勾选。
   const [kbPickedBySession, setKbPickedBySession] = useState<Record<string, KbPickerItem[]>>({});

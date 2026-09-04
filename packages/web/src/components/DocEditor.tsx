@@ -147,7 +147,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
 
   /** #752-cursor/#812: 外部内容替换的统一入口 — 快照当前选区+滚动位置,
    *  setContent 后原位恢复。所有 AI apply / restore / doc load 的内容替换
-   *  都走这里,用户不再被甩到文章末尾。 */
+   *  都走这里,用户不再被甩到文档末尾。 */
   const applyExternalContent = useCallback((md: string) => {
     const { from, to } = editor.state.selection;
     const sc = captureScroll();
@@ -169,7 +169,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     if (reviewKeyRef.current !== null) return;
     // #752-cursor: round-trip no-op guard — 自己的 insertContentAt 已更新
     // 文档,onChange → 父组件 setBody → value 回流;若此处再 setContent 会
-    // 重建文档并把光标冲到文末(AI apply 后跳到文章末尾的根因)。
+    // 重建文档并把光标冲到文末(AI apply 后跳到文档末尾的根因)。
     // incoming 与当前编辑器内容等价时直接跳过。
     const currentMd = htmlToMarkdown(editor.getHTML());
     if (currentMd === value) return;

@@ -87,7 +87,7 @@ export function useNextBestActionSignals(): Array<{ id: string; text: string; ac
       if (stale.length >= 2) {
         found.push({
           id: 'nba-summaries-stale',
-          text: t('nba.stale', '{{n}} 篇文章因新事实过期', { n: stale.length }),
+          text: t('nba.stale', '{{n}} 篇总结因新事实过期', { n: stale.length }),
           actionLabel: t('nba.viewAction', '查看'),
           targetPath: '/app/knowledge?view=summaries',
           tone: 'warning',

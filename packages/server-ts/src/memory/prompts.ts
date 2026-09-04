@@ -53,7 +53,7 @@ Synthesize the following facts into an answer-ready knowledge unit: self-contain
 /**
  * #813: answer-ready 合成契约 — 结论/依据/caveat 结构化,每个论断回指
  * 源 fact stableId(注入层据此渲染溯源标记;合成期幻觉经 factId 过滤
- * 后不会静默进入文章)。factList 每行格式:`[<stableId>] ...<content>`。
+ * 后不会静默进入总结)。factList 每行格式:`[<stableId>] ...<content>`。
  */
 export function summarySynthesisPrompt(factList: string, persona: string = SUMMARY_SYNTHESIS_PERSONA.zh): string {
   const isEn = persona.includes('You are')
