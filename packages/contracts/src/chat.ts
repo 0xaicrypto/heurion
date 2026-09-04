@@ -178,6 +178,8 @@ export type ChatStreamChunk =
   | { type: 'intent_clarify'; text: string; options?: string[] }
   // #582 — 通用会话编辑附件（action=edit, target=attachment）的落地出口。
   | { type: 'attachment_export_option'; options: Array<'save_as_document' | 'export_pdf' | 'continue_discussion'> }
+  // #839 — 记忆引用输出侧对账:输出引用未命中本轮注入集合时上报(前端可标记"含未溯源引用")。
+  | { type: 'citation_audit'; total: number; verified: number; unverified: string[]; message: string }
   | { type: 'turn_complete'; assistant_event_idx?: number }
   | { type: 'error'; message: string }
   // ── plugin pipeline events (plugin-chat-handler.ts) ──
@@ -233,6 +235,7 @@ export const CHAT_EVENT_TYPES = [
   'truncated',
   'intent_clarify',
   'attachment_export_option',
+  'citation_audit',
   'turn_complete',
   'error',
   'plugin_selected',

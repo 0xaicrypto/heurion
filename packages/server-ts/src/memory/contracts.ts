@@ -7,7 +7,8 @@ import type { FactNode, SummaryNode } from './memory.types'
 
 export type MemoryScope = { patientHash?: string; studyId?: string; global?: boolean }
 
-export type ProposalKind = 'fact' | 'summary' | 'episode_summary' | 'compaction_summary'
+/** #844: 'skill' — 轨迹归纳/capture/marketplace 产出的技能提案(payload 携带候选+证据链)。 */
+export type ProposalKind = 'fact' | 'summary' | 'episode_summary' | 'compaction_summary' | 'skill'
 
 export interface ProposalInput {
   scopeType: 'patient' | 'global' | 'study'
@@ -29,6 +30,22 @@ export interface ProposalInput {
    * used-set can exclude already-covered facts (stops repeat synthesis).
    */
   relatedFacts?: string[]
+  /**
+   * #839: high-confidence EXPLICIT writes (kb_remember / gap answer / direct
+   * summary) skip the review wait: the gate checks (artifact filter, semantic
+   * dedup, conflict marking) still run, then the standard applier commits the
+   * node immediately and the proposal row is kept as the audit record
+   * (status 'approved', resolvedBy 'fast-track'). Machine-derived writes
+   * (gap-research / sidecar / scan findings) must NOT set this — they stay
+   * pending for human review.
+   */
+  fastTrack?: boolean
+  /**
+   * #844: skill 提案专用 — 完整候选 JSON(name/description/steps/promptTemplate/
+   * triggers/taskKind/scope/source + evidence 证据链 + fingerprint)。原样落库
+   * 不裁剪(上限 12KB),applier 审批通过时解析落图。
+   */
+  payload?: string
 }
 
 export interface MemoryProposalRow {
@@ -53,6 +70,15 @@ export interface MemoryProposalRow {
   resolvedBy: string | null
   /** #736/#748: JSON-encoded string[] of source fact stableIds (summary synthesis provenance). */
   relatedFacts?: string | null
+  /**
+   * #839: fast-track only — stableId of the node written by the standard
+   * applier when the proposal was auto-approved at propose() time. Not a DB
+   * column; attached in-memory to the returned row. Null for normal
+   * pending→reviewed proposals.
+   */
+  appliedStableId?: string | null
+  /** #844: skill 提案候选 payload(JSON)— DB 列直通,其他 kind 为 null。 */
+  payload?: string | null
 }
 
 export interface ContextBundle {
@@ -95,6 +121,8 @@ export function serializeProposal(r: any): MemoryProposalRow {
     resolvedAt: r.resolvedAt,
     resolvedBy: r.resolvedBy,
     relatedFacts: r.relatedFacts ?? null,
+    appliedStableId: r.appliedStableId ?? null,
+    payload: r.payload ?? null,
   }
 }
 

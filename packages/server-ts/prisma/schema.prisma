@@ -440,6 +440,7 @@ model MemoryProposal {
   archivedAt     String? @map("archived_at") // 13.4D: auto-archived after 7 days (low importance / summaries)
   category       String? // 13.4F: extraction category for quality feedback stats
   relatedFacts   String? @map("related_facts") // #736/#748: JSON string[] of source fact stableIds — carried to addArticle so synthesis dedup can work
+  payload        String? // #844: skill 提案候选 payload(JSON: candidate 剧本 + evidence 证据链 + fingerprint);其他 kind 为 null
 
   @@index([userId, status, createdAt(sort: Desc)])
   @@index([scopeType, patientHash, status])
@@ -709,7 +710,7 @@ model CapturedSkill {
   steps     String @default("") // JSON array of step descriptions
   prompt    String @default("") // full reusable prompt/template
   sourceSession String? @map("source_session") // session the skill came from
-  status    String @default("draft") // 'draft' | 'confirmed'
+  status    String @default("draft") // 'draft' | 'confirmed' | 'promoted' (#842: promoted = 已迁 graph SkillNode,纯归档零逻辑参与)
   createdAt String @map("created_at")
   updatedAt String @map("updated_at")
   @@index([userId, status])

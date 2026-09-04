@@ -7,7 +7,8 @@ import type { MemoryService } from './memory.service.js'
 import { makeLogger } from '../common/logger.js'
 import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores'
 import type { MemoryProposalRow } from './contracts.js'
-import type { MemoryNode } from './memory.types'
+import type { FactNode, MemoryNode } from './memory.types'
+import { buildSkillNode, parseSkillPayload } from './skill-node-factory.js'
 
 export type ContextResolver = (userId: string) => {
   memory: MemoryService
@@ -88,7 +89,9 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
     return ctx.memory.addFact(
       {
         content: proposal.content,
-        category: 'fact',
+        // #839: proposal.category 已经过闸门白名单(sanitizeFactFields),
+        // 透传以保留 13.4F 抽取类别;空值回落 'fact'(旧行为)。
+        category: (proposal.category as FactNode['category']) || 'fact',
         importance: proposal.importance,
         patientHash: proposal.patientHash || undefined,
         sourceType: fileRange ? 'document' : proposal.scopeType === 'patient' ? 'patient' : 'general',
@@ -122,6 +125,20 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
       },
       'system',
     )
+  }
+  if (proposal.kind === 'skill') {
+    // #844: skill 提案审批通过 → SkillNode 落图(v2 契约,payload 携带候选+证据链)。
+    // PII 已在闸门入口扫描(proposal.service);scope 尊重 payload — institution
+    // 的到达前提是 #845 的管理员闸门放行(applyTargetUpdate)。
+    try {
+      const parsed = parseSkillPayload(proposal.payload || '')
+      const node = buildSkillNode(userId, parsed.skill)
+      ctx.memory.graph.addNode(node)
+      return node as unknown as MemoryNode
+    } catch (err) {
+      log.warn('skill proposal applier failed', { reason: (err as Error).message.slice(0, 160) })
+      return null
+    }
   }
   return null
 }

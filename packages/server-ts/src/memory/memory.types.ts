@@ -70,13 +70,49 @@ export interface GapNode extends MemoryNodeBase {
   answerNodeId?: string
 }
 
+export type SkillSource = 'capture' | 'synthesis' | 'marketplace'
+export type SkillLifecycle = 'active' | 'suspended' | 'deprecated'
+export type SkillScope = 'personal' | 'institution'
+
+/** #842 SkillNode v2 — 证据链(诞生证据,不可变,审批时看)。 */
+export interface SkillEvidence {
+  /** 支撑本 skill 的任务轨迹 id(归纳产物 ≥5;capture 产物可为空)。 */
+  trajectoryIds: string[]
+  /** 溯源会话(审批 UI 反查用)。 */
+  sessionIds: string[]
+  observationCount: number
+  correctionRate: number
+}
+
 export interface SkillNode extends MemoryNodeBase {
   type: 'skill'
+  // ── 剧本(来自 CapturedSkill 富契约)──
+  name: string
+  description: string
+  steps: string[]
+  promptTemplate: string
+  // ── 检索与激活(#841 环④)──
+  /** 对齐 TurnIntent 动作枚举(TURN_INTENT_DESIGN §3),激活匹配零额外 LLM。 */
   taskKind: string
-  bestStrategy: string
+  triggers: string[]
+  scope: SkillScope
+  // ── 证据链 ──
+  evidence: SkillEvidence
+  source: SkillSource
+  // ── 统计(来自 recordTask,沿用;运行证据,降级判定看)──
   taskCount: number
   successCount: number
   failureCount: number
+  /** 遵循率(#841 环⑤ 维护)。 */
+  followRate: number
+  /**
+   * 生命周期(设计 §2 的 `status`)— 独立字段:graph 通用 `status` 保持
+   * MemoryNodeStatus 版本语义(current/superseded),lifecycle 承载
+   * active/suspended/deprecated(降级不删除,医生重审可恢复)。
+   */
+  lifecycle: SkillLifecycle
+  /** legacy:旧 Layer 4 注入渲染用;#840 读路径切换后删除。 */
+  bestStrategy?: string
 }
 
 export interface EntityNode extends MemoryNodeBase {

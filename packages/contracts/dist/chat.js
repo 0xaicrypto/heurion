@@ -59,6 +59,7 @@ export const CHAT_EVENT_TYPES = [
     'truncated',
     'intent_clarify',
     'attachment_export_option',
+    'citation_audit',
     'turn_complete',
     'error',
     'plugin_selected',

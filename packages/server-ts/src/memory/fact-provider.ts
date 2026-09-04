@@ -7,6 +7,7 @@
  */
 import type { FactsStore } from '../evolution/stores.js'
 import { factContentHash } from '../common/fact-render.js'
+import type { MemoryGraph } from './memory.graph.js'
 
 export interface ScoredFact {
   content: string
@@ -51,5 +52,32 @@ export class LegacyFactProvider implements FactProvider {
       // #748: legacy id === graph stableId (legacy-projection maps 1:1).
       stableId: f.id,
     }))
+  }
+}
+
+/**
+ * #840: graph FactNode 适配器 — keyword 检索路切 graph 的读侧实现。
+ * graph 是单一事实源;legacy FactsStore 降级为投影缓存(fallback)。
+ * getCurrentNodesByType 已滤 superseded(与 listCurrent 语义一致)。
+ */
+export class GraphFactProvider implements FactProvider {
+  constructor(private graph: MemoryGraph) {}
+
+  listCurrent(opts?: { patientHash?: string | null }): ScoredFact[] {
+    const nodes = this.graph.getCurrentNodesByType('fact') as Array<Record<string, any>>
+    return nodes
+      .filter((n) => (opts?.patientHash ? n.patientHash === opts.patientHash : true))
+      .map((n) => ({
+        content: String(n.content || ''),
+        category: String(n.category || 'fact'),
+        importance: Number(n.importance) || 3,
+        confidence: n.confidence,
+        provenance: n.provenance,
+        patientHash: n.patientHash,
+        factHash: factContentHash({ content: String(n.content || ''), category: n.category, patientHash: n.patientHash }),
+        createdAt: typeof n.createdAt === 'string' ? Date.parse(n.createdAt) : n.createdAt,
+        source: `fact:${n.stableId}`,
+        stableId: n.stableId,
+      }))
   }
 }

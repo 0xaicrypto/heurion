@@ -25,6 +25,7 @@ interface PubmedArticle {
  * 主 chat 的 PubMed 流量实际不受控。
  */
 import { eutilsRequest } from './search-citation-tool.js'
+import { crossrefResolveDoi, formatCrossrefSummary, looksLikeDoi } from './crossref.client.js'
 
 async function eutilsFetch(path: string, params: Record<string, string>, ctx?: ToolContext, queryForAudit?: string): Promise<string> {
   const text = await eutilsRequest(path, params, { signal: ctx?.signal })
@@ -138,7 +139,7 @@ export class FetchArticleSummaryTool extends BaseTool {
 
   get name(): string { return 'fetch_article_summary' }
   get description(): string {
-    return 'Fetch a PubMed article summary (title, authors, journal, abstract, DOI) by PMID or DOI. Use to verify a citation or read the abstract before citing. Read-only.'
+    return 'Fetch an article summary (title, authors, journal, abstract, DOI) by PMID or DOI. #836: DOI inputs resolve via Crossref first (faster, saves PubMed quota; abstract only available via PubMed). Use to verify a citation or read the abstract before citing. Read-only.'
   }
   get parameters(): Record<string, unknown> {
     return {
@@ -158,6 +159,18 @@ export class FetchArticleSummaryTool extends BaseTool {
     try {
       let id = pmid
       if (!id && doi) {
+        // #836: DOI 优先走 Crossref 直解 — 省一次 PubMed esearch 绕路配额;
+        // Crossref 失败(如网络/限流)回落 PubMed esearch [aid] 原路径。
+        try {
+          const cr = await crossrefResolveDoi(doi)
+          if (cr) {
+            return { success: true, output: formatCrossrefSummary(cr) }
+          }
+          if (!looksLikeDoi(doi)) {
+            return { success: false, error: `DOI 形式不合法: ${doi} — 应形如 10.1056/NEJMoa2004416` }
+          }
+          // 404(null)且 DOI 形式合法 → Crossref 无记录,继续 PubMed 兜底
+        } catch { /* Crossref 失败 → PubMed 兜底 */ }
         const esearch = await eutilsFetch('esearch.fcgi', {
           db: 'pubmed',
           term: `${doi}[aid]`,

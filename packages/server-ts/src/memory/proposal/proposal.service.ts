@@ -37,6 +37,49 @@ export class ProposalService {
       content = content.slice(0, 300)
     }
 
+    // #844: skill 提案 PII 硬线(设计 §3.3)— 候选剧本落库前强制患者标识
+    // 扫描,命中即拒(零静默脱敏)。轨迹/归纳输入本就零正文,这是第二道防线。
+    if (input.kind === 'skill' && input.payload) {
+      try {
+        const { scanSkillPii } = await import('../../common/pii-scanner.js')
+        const candidate = JSON.parse(input.payload) as any
+        const skill = candidate?.skill || candidate
+        const pii = scanSkillPii({
+          name: String(skill?.name || ''),
+          description: String(skill?.description || ''),
+          steps: Array.isArray(skill?.steps) ? skill.steps.map(String) : [],
+          promptTemplate: String(skill?.promptTemplate || skill?.prompt || ''),
+        })
+        if (!pii.clean) {
+          const now2 = new Date().toISOString()
+          return {
+            id: `pii_${now2}`,
+            userId: this.userId,
+            scopeType: input.scopeType,
+            patientHash: input.patientHash || null,
+            studyId: input.studyId || null,
+            kind: input.kind,
+            content,
+            importance: input.importance ?? 3,
+            confidence: input.confidence ?? 'medium',
+            reason: input.reason || null,
+            sourceRange: input.sourceRange || null,
+            category,
+            conflictsWith: null,
+            status: 'rejected',
+            rejectedReason: `PII 扫描命中，拒绝入库（${pii.hits.map((h) => h.kind).join(',')}）`,
+            createdAt: now2,
+            resolvedAt: now2,
+            resolvedBy: 'system',
+            appliedStableId: null,
+            payload: null,
+          }
+        }
+      } catch (err) {
+        log.warn('skill payload PII scan skipped', { reason: (err as Error).message.slice(0, 120) })
+      }
+    }
+
     // #836-followup: 工具完成通知("已生成 xxx.pptx")不是知识 — 统一在
     // 闸门拦截,不建行、不进审核队列(压缩/聊天提取都从这里过)。
     if (isToolArtifactNotification(content)) {
@@ -113,22 +156,47 @@ export class ProposalService {
         category,
         conflictsWith: conflictsWith ? JSON.stringify(conflictsWith) : null,
         relatedFacts: input.relatedFacts && input.relatedFacts.length > 0 ? JSON.stringify(input.relatedFacts) : null,
+        payload: input.payload ? input.payload.slice(0, 12 * 1024) : null,
         status: 'pending',
         createdAt: now,
       },
     })
+    const serialized = serializeProposal(row)
+
+    // #839: fast-track for high-confidence EXPLICIT writes — the gate checks
+    // above (artifact filter, semantic dedup, conflict marking) already ran,
+    // so commit through the SAME applier human approvals use and keep the row
+    // as the audit record. Any failure degrades to the normal review queue.
+    if (input.fastTrack) {
+      try {
+        const node = await this.applyApproved(serialized)
+        if (node) {
+          const resolvedAt = new Date().toISOString()
+          const updated = await (prisma as any).memoryProposal.updateMany({
+            where: { id: row.id, status: 'pending' },
+            data: { status: 'approved', resolvedAt, resolvedBy: 'fast-track' },
+          })
+          if (updated.count > 0) {
+            return { ...serialized, status: 'approved', resolvedAt, resolvedBy: 'fast-track', appliedStableId: node.stableId }
+          }
+        }
+      } catch (err) {
+        log.warn('fast-track apply failed; falling back to review queue', { reason: (err as Error).message.slice(0, 120) })
+      }
+    }
+
     try {
       // #666: approval request enqueued via the module-level hook (wired by
       // user-context) — memory layer never imports modules/*.
       const { getProposalCreatedHandler } = await import('../registry.js')
       const handler = getProposalCreatedHandler()
       if (handler) {
-        await handler(this.userId, serializeProposal(row))
+        await handler(this.userId, serialized)
       }
     } catch (err) {
       log.warn('approval request enqueue skipped', { reason: (err as Error).message.slice(0, 120) })
     }
-    return serializeProposal(row)
+    return serialized
   }
 
   async listPending(scope?: MemoryScope): Promise<MemoryProposalRow[]> {

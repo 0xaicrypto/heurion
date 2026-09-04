@@ -10,6 +10,7 @@ import { InsertAssetTool } from './insert-asset-tool.js'
 import { FixDocumentImagesTool } from './fix-document-images-tool.js'
 import { QueryLogsTool, isUserAdmin } from './query-logs-tool.js'
 import { SearchCitationTool } from './search-citation-tool.js'
+import { OaPdfLookupTool } from './oa-pdf-tool.js'
 import { EditDeckTool } from './edit-deck-tool.js'
 import { LoadSkillTool } from './skill-tools.js'
 import { RenderChartTool } from './render-chart-tool.js'
@@ -241,6 +242,8 @@ export class ToolRegistry {
     this.register(new QueryLogsTool(ctx))
     // #807: 引用实体化 — PubMed 真实检索,治 References 编造。
     this.register(new SearchCitationTool(ctx))    // #454-followup: plugin-gated renderers — registered so execute() can
+    // #837: OA 全文获取 — Unpaywall + Crossref combo(阅读全文,非引用编造治理)。
+    this.register(new OaPdfLookupTool(ctx))
     // give a clear error, but excluded from definitions unless installed.
     this.register(new RenderChartTool(ctx))
     this.register(new LoadSkillTool(ctx))
