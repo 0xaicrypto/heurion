@@ -111,4 +111,22 @@ describe('#637 阶段2 ContextAssembler', () => {
     expect(messages[0].content).not.toContain('FRAGMENTS')
     expect(messages[0].content).toContain('persona')
   })
+
+  // #fix 2026-09 回归:组装阶段进度 — 带 stageLabel 的动态段开始构建时
+  // 按注册序回调 onStage,无 label 的段不触发;onStage 抛错不影响组装。
+  test('onStage 按序下发阶段提示,throw 被吞掉', async () => {
+    const order: string[] = []
+    const a = new ContextAssembler([
+      { key: 'study_context', fallbackOrder: 3, build: async () => 'S' },
+      { key: 'document_context', fallbackOrder: 2, stageLabel: '正在解析文档与参考材料…', build: async () => 'D' },
+      { key: 'knowledge_inject', fallbackOrder: 0, stageLabel: '正在检索知识库…', build: async () => 'K' },
+    ])
+    const res = await a.assemble(input(), (label) => {
+      order.push(label)
+      if (label === '正在解析文档与参考材料…') throw new Error('sse down')
+    })
+    expect(order).toEqual(['正在解析文档与参考材料…', '正在检索知识库…'])
+    expect(res.systemPrompt).toContain('D')
+    expect(res.systemPrompt).toContain('K')
+  })
 })

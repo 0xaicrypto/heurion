@@ -35,6 +35,12 @@ export interface SegmentBuilderSpec {
   key: string
   /** 回退优先级: 0=最先回退; -1=不可回退。 */
   fallbackOrder: number
+  /**
+   * #fix 2026-09: 用户可见的组装阶段提示 — 组装慢段(文档解析/知识检索)
+   * 此前全程只有一条静态"正在读取文档与参考资料…",5 分钟无任何进展展示。
+   * 配置后装配器在每个 builder 开始时回调 onStage,由调用方经 SSE 下发。
+   */
+  stageLabel?: string
   /** 出口断言: required 段缺失/失败 → 记 telemetry,不静默。 */
   required?: boolean
   build(input: SegmentBuildInput): Promise<string>
@@ -67,8 +73,14 @@ export class ContextAssembler {
    * 组装 system prompt: 稳定段前置 + 动态段按注册序构建追加。
    * 每个 builder 完成后刷新 budget.allocateSystem — 后续 builder
    * (如知识注入)读到的是最新剩余预算(#630)。
+   *
+   * #fix 2026-09: onStage — 每个带 stageLabel 的动态段开始构建时回调
+   * (SSE 下发进度),慢段等待期用户可见阶段推进而非静态提示。
    */
-  async assemble(input: SegmentBuildInput): Promise<AssemblyResult> {
+  async assemble(
+    input: SegmentBuildInput,
+    onStage?: (label: string) => void,
+  ): Promise<AssemblyResult> {
     const { projected, budget, historyTokens } = input
     const stableSegments: Array<{ key: string; text: string }> = [
       ...(projected.segments || []),
@@ -80,6 +92,11 @@ export class ContextAssembler {
     const telemetry: string[] = []
     const built: Array<{ key: string; text: string }> = []
     for (const b of this.builders) {
+      if (onStage && b.stageLabel) {
+        try {
+          onStage(b.stageLabel)
+        } catch { /* best-effort — 进度提示不影响组装 */ }
+      }
       let text = ''
       try {
         text = await b.build(input)

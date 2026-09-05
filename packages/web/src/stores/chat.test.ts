@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useChatStore, type ChatMessage } from '@/stores/chat';
 
 vi.mock('@/lib/api', () => ({
@@ -226,5 +226,54 @@ describe('chat store — 追加问题排队(#fix)', () => {
     expect(s.loading).toBe(false);
     expect(s.pending).toBeNull();
     expect(sent).toEqual(['第一轮']);
+  });
+});
+
+describe('chat store — 停滞提示起点保留(#fix 2026-09)', () => {
+  beforeEach(() => {
+    useChatStore.setState({ sessions: {} });
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test('长时间静默:stallSince 保持最早起点不重置,数据恢复后清除', async () => {
+    const { api } = await import('@/lib/api');
+    const sendChatFull = api.sendChatFull as any;
+    // 流:发一条事件后挂起(模拟上下文组装/长思考期无 SSE 事件),由测试
+    // 手动放行结束。
+    // 用对象持有 resolve：裸 let 会在 TS 控制流下被窄化为 null/never
+    // （回调内赋值不可见），调用点报 TS2349。
+    const release: { resolve: (() => void) | null } = { resolve: null };
+    sendChatFull.mockImplementationOnce(async function* () {
+      yield { type: 'context_info', text: '正在读取文档与参考资料…', kind: 'file_context' };
+      await new Promise<void>((resolve) => { release.resolve = resolve; });
+      yield { type: 'final_answer_chunk', text: 'done' };
+      yield { type: 'turn_complete' };
+    });
+
+    const p = useChatStore.getState().sendMessage('s1', { sessionId: 's1', text: 'hi', attachments: [], skills: [] });
+
+    // 90s 无新事件 → 停滞置位。
+    await vi.advanceTimersByTimeAsync(95_000);
+    const first = useChatStore.getState().sessions.s1.stallSince;
+    expect(first).not.toBeNull();
+
+    // 再过 5s:起点不变(UI 时长随 tick 增长,不回 "<1s")。
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(useChatStore.getState().sessions.s1.stallSince).toBe(first);
+
+    // 再过 90s(第二次停滞触发):仍不重置 — 此前 bug 每 100ms 重置为 now。
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(useChatStore.getState().sessions.s1.stallSince).toBe(first);
+
+    // 数据恢复 → 停滞清除,流正常走完。
+    release.resolve?.();
+    await p;
+    const s = useChatStore.getState().sessions.s1;
+    expect(s.stallSince).toBeNull();
+    expect(s.messages[s.messages.length - 1].text).toBe('done');
   });
 });

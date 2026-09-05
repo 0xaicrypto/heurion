@@ -59,14 +59,27 @@ async function consumeStream(
 ): Promise<boolean> {
   let gotChunks = false;
   let lastEventAt = Date.now();
+  // #fix 2026-09: 上次停滞触发时刻 — 下一次停滞探测必须从它起算满窗口。
+  // 此前 stall 触发后 lastEventAt 不更新,remain = 90s - (now-lastEventAt)
+  // ≤ 0 → Math.max(100, remain) = 100ms → 每 100ms 重复触发并把 stallSince
+  // 重置为 now → UI"已 <1s 无新进展"永远不动(生产可见)。
+  let lastStallAt = 0;
   let pending: Promise<IteratorResult<ChatStreamChunk[]>> | null = null;
   const iter = batchChunks(stream)[Symbol.asyncIterator]();
-  const setStall = (since: number | null) => {
+  /** 停滞置位 — 已停滞时保留最早起点(时长随 tick 增长,不重置)。 */
+  const markStall = () => {
+    set((state) => {
+      const s = state.sessions[sessionId];
+      if (!s || s.stallSince != null) return state;
+      return { sessions: { ...state.sessions, [sessionId]: { ...s, stallSince: Date.now() } } };
+    });
+  };
+  const clearStall = () => {
     set((state) => {
       const s = state.sessions[sessionId];
       if (!s) return state;
-      if ((s.stallSince ?? null) === since) return state;
-      return { sessions: { ...state.sessions, [sessionId]: { ...s, stallSince: since } } };
+      if (s.stallSince == null) return state;
+      return { sessions: { ...state.sessions, [sessionId]: { ...s, stallSince: null } } };
     });
   };
   // for(;;) — web eslint (v8) flags while(true) as constant condition.
@@ -74,8 +87,12 @@ async function consumeStream(
     const nextP: Promise<IteratorResult<ChatStreamChunk[]>> = pending ?? iter.next();
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
     const stallP = new Promise<'stall'>((resolve) => {
-      const remain = STALL_DETECT_MS - (Date.now() - lastEventAt);
-      stallTimer = setTimeout(() => resolve('stall'), Math.max(100, remain));
+      const since = Math.max(lastEventAt, lastStallAt);
+      const remain = STALL_DETECT_MS - (Date.now() - since);
+      stallTimer = setTimeout(() => {
+        lastStallAt = Date.now();
+        resolve('stall');
+      }, Math.max(100, remain));
     });
     let r: IteratorResult<ChatStreamChunk[]> | 'stall';
     try {
@@ -85,12 +102,13 @@ async function consumeStream(
     }
     if (r === 'stall') {
       pending = nextP;
-      setStall(Date.now());
+      markStall();
       continue;
     }
     pending = null;
     lastEventAt = Date.now();
-    setStall(null);
+    lastStallAt = 0;
+    clearStall();
     if (r.done) break;
     if (r.value.length === 0) continue;
     gotChunks = true;

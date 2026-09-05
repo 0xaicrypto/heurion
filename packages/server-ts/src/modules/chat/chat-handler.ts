@@ -95,7 +95,9 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
     // #828: 回合级 watchdog — 最后防线，任何下游（LLM/工具/子代理）的挂死
     // 都不再表现为"永久转圈"。超时发可解释错误 + turn_complete，并 abort
     // 整条工具链路（ToolContext.signal 已在 conversation-turn 装配）。
-    const TURN_MAX_MS = Number(process.env.TURN_MAX_MS) || 15 * 60_000
+    // 2026-09: 默认放宽到 1 小时 — 综述写作单回合含多轮工具+长生成，
+    // 15 分钟会掐断仍在正常推进的回合（TURN_MAX_MS env 可覆盖）。
+    const TURN_MAX_MS = Number(process.env.TURN_MAX_MS) || 60 * 60_000
     let turnSettled = false
     const watchdog = setTimeout(() => {
       if (turnSettled) return
