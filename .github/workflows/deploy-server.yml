@@ -418,6 +418,16 @@ jobs:
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             "cd /opt/heurion && docker compose -f docker-compose.monitoring.yml --env-file .env.production up -d"
 
+      # #854: 部署后冒烟探针 — 在新镜像容器内用部署的 dist 代码打真实外部
+      # 文献源(eutils/crossref)。背景:external-fetch URL 拼接 bug 导致生产
+      # PubMed 全量 404 多日未被发现(单测 mock fetch + /healthz 均探不到)。
+      # 失败即本 job 失败,部署可感知可回滚。
+      - name: Smoke probe (in-container external sources)
+        run: |
+          scp -o StrictHostKeyChecking=no scripts/smoke-probe-production.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/scripts/
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "chmod +x /opt/heurion/scripts/smoke-probe-production.sh && /opt/heurion/scripts/smoke-probe-production.sh"
+
       - name: Purge Cloudflare cache (stale HTML references removed bundles)
         env:
           CF_TOKEN: ${{ secrets.CF_API_TOKEN }}
