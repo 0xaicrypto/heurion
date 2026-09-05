@@ -104,6 +104,25 @@ describe('external-fetch 统一管道 (#835)', () => {
   it('未知 host 报错', async () => {
     await expect(externalRequest('unknown-host', '/x')).rejects.toThrow('Unknown external host')
   })
+
+  // #fix 2026-09 回归:baseUrl(无尾斜杠) + path 拼接必须归一化。
+  // 生产事故:eutils path 'esearch.fcgi' 无头斜杠 → 拼成
+  // '/entrez/eutilsesearch.fcgi' → NCBI 永远 404 → Crossref 兜底 429。
+  it('path 无头斜杠时补齐分隔符(eutils 调用风格)', async () => {
+    fetchSpy.mockResolvedValue(new Response('{"esearchresult":{"idlist":[]}}', { status: 200 }))
+    await externalRequest('eutils', 'esearch.fcgi', { db: 'pubmed', term: 'x' })
+    const called = String(fetchSpy.mock.calls[0][0])
+    expect(called).toContain('/entrez/eutils/esearch.fcgi')
+    expect(called).not.toContain('eutilsesearch.fcgi')
+  })
+
+  it('path 带头斜杠不产生双斜杠(crossref 调用风格)', async () => {
+    fetchSpy.mockResolvedValue(new Response('{}', { status: 200 }))
+    await externalRequest('crossref', '/works', { query: 'x' })
+    const called = String(fetchSpy.mock.calls[0][0])
+    expect(called).toContain('api.crossref.org/works?')
+    expect(called).not.toContain('//works')
+  })
 })
 
 describe('eutils 委托兼容 (#835 重构)', () => {
@@ -136,5 +155,15 @@ describe('eutils 委托兼容 (#835 重构)', () => {
     resetEutilsState()
     await eutilsRequest('esearch.fcgi', { db: 'pubmed', term: 'reset-probe' })
     expect(fetchSpy).toHaveBeenCalledTimes(2)
+  })
+
+  // #fix 2026-09 回归:调用方传 'esearch.fcgi'(无头斜杠)最终 URL 必须是
+  // /entrez/eutils/esearch.fcgi — 此前拼接成 /entrez/eutilsesearch.fcgi 404。
+  it('eutils 最终 URL 斜杠归一(生产 404 事故回归)', async () => {
+    fetchSpy.mockResolvedValue(new Response('{"esearchresult":{"idlist":[]}}', { status: 200 }))
+    await eutilsRequest('esearch.fcgi', { db: 'pubmed', term: 'x' })
+    const called = String(fetchSpy.mock.calls[0][0])
+    expect(called).toContain('/entrez/eutils/esearch.fcgi')
+    expect(called).not.toContain('eutilsesearch.fcgi')
   })
 })

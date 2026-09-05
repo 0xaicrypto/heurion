@@ -158,7 +158,12 @@ export async function externalRequest(
   if (!cfg) throw new Error(`Unknown external host: ${hostName}`)
   const state = hostState(hostName)
 
-  const url = new URL(`${cfg.baseUrl}${path}`)
+  // #fix 2026-09: 归一化拼接 — 生产事故:baseUrl 无尾斜杠 + 调用方 path 无
+  // 头斜杠(eutils 传 'esearch.fcgi')拼成 '/entrez/eutilsesearch.fcgi' →
+  // NCBI 永远 404 → 全部落到 Crossref 兜底 → Crossref 429 双源全灭。两侧
+  // 斜杠归一后 '/works'(带头斜杠)与 'esearch.fcgi'(不带头斜杠)两种
+  // 调用风格都正确。
+  const url = new URL(`${cfg.baseUrl.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`)
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
   if (cfg.authParam && process.env[cfg.authParam.env]) {
     url.searchParams.set(cfg.authParam.key, String(process.env[cfg.authParam.env]))
