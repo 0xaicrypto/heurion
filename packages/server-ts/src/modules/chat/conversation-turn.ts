@@ -278,6 +278,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       // #5/#631: 研究上下文 — shortCode 排序保证不更新时字节稳定。
       key: 'study_context',
       fallbackOrder: 3,
+      stageLabel: '正在载入研究上下文…',
       build: async () => {
         const studies = await (prisma as any).researchStudy.findMany({
           where: { userId },
@@ -300,6 +301,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       // §15.4: 写作会话注入当前文档 + 引用。
       key: 'document_context',
       fallbackOrder: 2,
+      stageLabel: '正在解析文档与参考材料…',
       build: async () => {
         if (!sid.startsWith('doc-')) return ''
         const docId = sid.slice(4)
@@ -440,6 +442,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       // #814: 让位顺序 layer3 > knowledge_inject > picked_kb — 自动注入
       // 先于用户钉选让位(见 context-assembler.segmentFallback)。
       fallbackOrder: 0,
+      stageLabel: '正在检索知识库…',
       build: (input) => buildKnowledgeInjection(input.body.text, ctx.facts, ctx.knowledge, {
         remainingBudget: input.budget.remaining(),
         excludeFactHashes: input.layer3FactHashes,
@@ -467,6 +470,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       key: 'picked_kb',
       // #814: 用户钉选最后让位。
       fallbackOrder: 1,
+      stageLabel: '正在载入钉选参考…',
       build: async (input) => {
         const pickedIds: string[] = Array.isArray(input.body.picked_kb_ids) ? input.body.picked_kb_ids.map(String) : []
         if (pickedIds.length === 0 || input.scene.startsWith('patient')) return ''
@@ -504,10 +508,18 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   } else {
     send({ type: 'context_info', text: '正在整理上下文…', kind: 'file_context' })
   }
+  // #fix 2026-09: 组装阶段逐段进度 — 慢段(文档解析/知识检索)此前只有一条
+  // 静态提示,5 分钟无任何变化;现在每个动态段开始构建时实时下发阶段文案,
+  // 状态行随阶段推进。失败静默(进度提示绝不阻塞组装)。
+  const sendStage = (label: string) => {
+    try {
+      send({ type: 'context_info', text: label, kind: 'file_context' })
+    } catch { /* best-effort */ }
+  }
   const assembled = await assembler.assemble({
     userId, sid, patientHash, scene, body, ctx,
     projected, budget, layer3FactHashes, historyTokens,
-  })
+  }, sendStage)
   if (assembled.telemetry.length > 0) {
     log.warn('context assembly telemetry (required segments degraded)', { issues: assembled.telemetry })
   }
