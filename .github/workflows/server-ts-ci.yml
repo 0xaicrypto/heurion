@@ -73,10 +73,13 @@ jobs:
       - name: Run unit tests (tests/unit, no DB/IO)
         # timeout guards against runner-level hangs (observed: job stuck at
         # 15m while the same suite runs in ~10s locally) — fails loudly.
-        # TEMP #886-debug: url-cache 测试拆出单独跑(fork 挂死二分定位)
-        run: |
-          timeout 240 pnpm exec vitest run tests/unit tests/integration --testTimeout=20000 --exclude='**/url-cache.test.ts'
-          timeout 120 pnpm exec vitest run tests/unit/url-cache.test.ts --testTimeout=20000 --pool=threads
+        run: timeout 240 pnpm exec vitest run tests/unit tests/integration --testTimeout=20000 --exclude='**/url-cache.test.ts'
+
+      - name: Run url-cache tests (node 26)
+        # #886: node22+ubuntu 下 url-cache(唯一使用 node:sqlite 的文件)在
+        # forks/threads 两种池下均启动挂死(本地 mac node22/26 全过) —
+        # 该文件拆出用 runner 侧 node 26 执行,CI 照常把关。
+        run: timeout 120 npx -y -p node@26 node node_modules/vitest/vitest.mjs run tests/unit/url-cache.test.ts --pool=threads --testTimeout=20000
 
   build-and-test:
     name: Build + Phase 0 regression
