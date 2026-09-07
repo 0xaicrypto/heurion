@@ -40,7 +40,7 @@ export async function extractRefText(userId: string, docId: string, ref: any, la
   // #fix: 导入走 markdown+图片提取 — PDF 恢复标题/段落结构,DOCX 保留
   // mammoth 结构;内嵌图落盘为托管文件并在文档里渲染(取代 [图])。
   const extracted = await extractDocumentMarkdownWithImagesFromUpload(userId, fileId)
-  let text = embedDocumentImages(userId, docId, extracted.text, extracted.images)
+  let text = await embedDocumentImages(userId, docId, extracted.text, extracted.images)
   // #fix(方案 A):PDF 公式视觉 OCR → LaTeX 追加文末 — PDF 文本层没有
   // 公式语义,视觉模型把公式转 $$...$$,AI 才能理解数学内容。仅导入时
   // 一次(非每轮),失败静默降级。
@@ -157,7 +157,7 @@ function findUploadByFileName(userId: string, name: string): string | null {
  *   3) 剩余图片按严格 "Figure N:" / "图 N:" 标题行就近插入;
  *   4) 仍未插入的追加到文末 "## 图" 段;清理未消费的分页标记。
  */
-function embedDocumentImages(userId: string, docId: string, text: string, images: ExtractedPdfImage[]): string {
+async function embedDocumentImages(userId: string, docId: string, text: string, images: ExtractedPdfImage[]): Promise<string> {
   if (!images.length) {
     // 无图也要清理分页标记(它们只服务于图片定位)。
     return text.replace(/<!-- page:\d+ -->/g, '')
@@ -178,6 +178,25 @@ function embedDocumentImages(userId: string, docId: string, text: string, images
     return `/api/v1/files/download/${fileId}?token=${token}`
   })
 
+  // #fix 2026-09(方案 B): 导入期逐图 vision 图题 — 模型被动阅读 markdown
+  // 时就知道每张图画的是什么(不再只见「图 N」)。best-effort:无视觉模型
+  // /调用失败/超量(imgCaptionMax)→ 保留「图 N」占位,绝不阻断导入。
+  let captions: string[] = []
+  try {
+    const { describeImage, mapLimit, visionModelForActiveProvider } = await import('../lib/image-vision.js')
+    if (visionModelForActiveProvider() && images.length > 0) {
+      const capMax = parseInt(process.env.IMG_CAPTION_MAX || '12', 10)
+      const targets = images.slice(0, Math.max(1, capMax)).map((img, i) => `img_${docId}_${i + 1}.${extByMime[img.mime] || 'png'}`)
+      captions = await mapLimit(targets, 3, (fid) => describeImage(userId, fid))
+    }
+  } catch { /* 图题失败不阻断导入 */ }
+
+  const altText = (n: number): string => {
+    const base = `图 ${n}`
+    const cap = captions[n - 1]?.trim().slice(0, 60)
+    return cap ? `${base}：${cap}` : base
+  }
+
   let body = text
   let used = 0
   // 1) DOCX 占位符 [图] / \[图\](turndown 转义方括号)按序替换。
@@ -185,7 +204,7 @@ function embedDocumentImages(userId: string, docId: string, text: string, images
     if (used < urls.length) {
       const n = used + 1
       used++
-      return `![图 ${n}](${urls[n - 1]})`
+      return `![${altText(n)}](${urls[n - 1]})`
     }
     return '[图]'
   })
@@ -196,7 +215,7 @@ function embedDocumentImages(userId: string, docId: string, text: string, images
     for (let i = used; i < images.length; i++) {
       const p = images[i].page || 1
       const list = byPage.get(p) || []
-      list.push(`![图 ${i + 1}](${urls[i]})`)
+      list.push(`![${altText(i + 1)}](${urls[i]})`)
       byPage.set(p, list)
     }
     body = body.replace(/<!-- page:(\d+) -->/g, (marker, p: string) => {
@@ -215,7 +234,7 @@ function embedDocumentImages(userId: string, docId: string, text: string, images
       outLines.push(line)
       if (used < urls.length && /^\s*(?:Figure|Fig\.?|图)\s*\d+\s*[:.．]/i.test(line)) {
         used++
-        outLines.push(`![图 ${used}](${urls[used - 1]})`)
+        outLines.push(`![${altText(used)}](${urls[used - 1]})`)
       }
     }
     body = outLines.join('\n')
@@ -223,7 +242,7 @@ function embedDocumentImages(userId: string, docId: string, text: string, images
 
   // 4) 仍未插入的追加到文末。
   if (used < urls.length) {
-    const leftover = urls.slice(used).map((u, i) => `![图 ${used + 1 + i}](${u})`).join('\n\n')
+    const leftover = urls.slice(used).map((u, i) => `![${altText(used + 1 + i)}](${u})`).join('\n\n')
     body = `${body}\n\n## 图\n${leftover}`
   }
   return body

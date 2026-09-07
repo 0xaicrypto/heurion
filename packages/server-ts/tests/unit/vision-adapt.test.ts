@@ -51,18 +51,21 @@ describe('pickVisionTurnModel 视觉模型自适应', () => {
     provider: process.env.DEFAULT_LLM_PROVIDER,
     premium: process.env.DEEPSEEK_PREMIUM_MODEL,
     chat: process.env.DEEPSEEK_CHAT_MODEL,
+    active: process.env.DEFAULT_LLM_MODEL,
   }
 
   beforeEach(() => {
     process.env.DEFAULT_LLM_PROVIDER = 'deepseek'
     process.env.DEEPSEEK_PREMIUM_MODEL = 'deepseek-reasoner'
     process.env.DEEPSEEK_CHAT_MODEL = 'deepseek-v4-flash'
+    delete process.env.DEFAULT_LLM_MODEL
   })
 
   afterEach(() => {
     if (saved.provider === undefined) delete process.env.DEFAULT_LLM_PROVIDER; else process.env.DEFAULT_LLM_PROVIDER = saved.provider
     if (saved.premium === undefined) delete process.env.DEEPSEEK_PREMIUM_MODEL; else process.env.DEEPSEEK_PREMIUM_MODEL = saved.premium
     if (saved.chat === undefined) delete process.env.DEEPSEEK_CHAT_MODEL; else process.env.DEEPSEEK_CHAT_MODEL = saved.chat
+    if (saved.active === undefined) delete process.env.DEFAULT_LLM_MODEL; else process.env.DEFAULT_LLM_MODEL = saved.active
   })
 
   test('图片附件 + 纯文本模型(deepseek) → 自动切到视觉模型', () => {
@@ -107,5 +110,14 @@ describe('pickVisionTurnModel 视觉模型自适应', () => {
     const res = pickVisionTurnModel({ turnModel: 'deepseek-chat', hasImages: true })
     expect(res.switched).toBe(true)
     expect(res.vision).toBe(true)
+  })
+
+  test('#fix 2026-09: opencode + 主模型 glm-5.3-flash → 视觉切换首选主模型,不用不稳定的 deepseek-v4-flash', () => {
+    process.env.DEFAULT_LLM_PROVIDER = 'opencode'
+    process.env.DEFAULT_LLM_MODEL = 'glm-5.3-flash'
+    const res = pickVisionTurnModel({ turnModel: 'deepseek-chat', hasImages: true })
+    expect(res.switched).toBe(true)
+    expect(res.vision).toBe(true)
+    expect(res.model).toBe('glm-5.3-flash')
   })
 })

@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'vitest'
 import { ContextAssembler, OUTPUT_FORMAT_RULES } from '../../src/modules/chat/context-assembler.js'
 import { ContextBudget } from '../../src/modules/shared/chat-context.js'
+import { CONTEXT_CONFIG } from '../../src/common/context-config.js'
 import type { SegmentBuildInput } from '../../src/modules/chat/context-assembler.js'
 
 function input(overrides: Partial<SegmentBuildInput> = {}): SegmentBuildInput {
@@ -49,9 +50,10 @@ describe('#637 阶段2 ContextAssembler', () => {
     ])
     await a.assemble(input())
     expect(seen.length).toBe(2)
-    // 后注册 builder 读到的是扣减后(big 段已占用)的剩余预算
+    // 后注册 builder 读到的是扣减后(big 段已占用)的剩余预算 — 相对默认
+    // 总预算断言(不与具体数值耦合,总预算上调测试不需改)。
     expect(seen[1]).toBeGreaterThan(0)
-    expect(seen[1]).toBeLessThan(64000)
+    expect(seen[1]).toBeLessThan(CONTEXT_CONFIG.maxTotalTokens)
   })
 
   test('required 段缺失 → 记入 telemetry(不静默)', async () => {

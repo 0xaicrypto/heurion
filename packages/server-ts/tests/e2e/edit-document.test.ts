@@ -56,7 +56,10 @@ describe('#171 edit_document tool', () => {
     expect(result.success).toBe(false)
   }, 30000)
 
-  test('#fix 长文档 full_text 全量重写被拒绝(防输出截断/连接超时)', async () => {
+  test('#fix 2026-09 输出预算不足时 full_text 被拒(引导逐段,文档不破坏)', async () => {
+    // deepseek-chat 输出预算 8192 − 思维链预留 8192 = 0 → 任何全量重写都装不下。
+    vi.stubEnv('DEFAULT_LLM_PROVIDER', 'deepseek')
+    vi.stubEnv('DEEPSEEK_CHAT_MODEL', 'deepseek-chat')
     const app = await getApp()
     const userId = await getAuthUserId()
     const longBody = ('这是一段很长的文档内容，用来撑大 token 数量，确保超过全量重写的保护阈值。'.repeat(100))
@@ -65,12 +68,74 @@ describe('#171 edit_document tool', () => {
     const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
     const result = await tool.execute({ full_text: '重写后的内容', summary: '重写' })
     expect(result.success).toBe(false)
-    expect(result.error).toContain('full_text')
+    expect(result.error).toContain('输出预算')
     expect(result.error).toContain('old_text/new_text')
 
     // 文档未被破坏。
     const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
     expect(doc.body).toBe(longBody)
+  }, 30000)
+
+  test('#868 焦点优先 — 同一片段在两个段落出现,焦点段内命中优先(位置必然正确)', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const sentence = '统计分析采用 R 软件完成组间比较并计算双侧 P 值。'
+    const focusContent = `## 统计方法\n\n${sentence}\n\n本段其余内容。`
+    const body = `## 前言\n\n${sentence}\n\n前言其余内容。\n\n${focusContent}\n\n## 结论\n\n结论内容。`
+    const docId = await createDoc(app, body)
+
+    // 模型只看到焦点段(统计方法),old_text 是段内的短句 — 全文首个命中
+    // 会落在「前言」;焦点优先匹配必须落在「统计方法」段。
+    const tool = new EditDocumentTool({
+      userId,
+      sessionId: `doc-${docId}`,
+      editHint: { focusSectionContent: focusContent, focusIndex: 2, focusTitle: '统计方法', selectionText: null },
+    })
+    const result = await tool.execute({ old_text: sentence, new_text: '统计分析采用 SAS 软件完成组间比较。', summary: '改统计软件' })
+    expect(result.success).toBe(true)
+    const out = JSON.parse(result.output as string)
+    expect(out.location).toContain('统计方法')
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    // 「前言」中的原句保持不变,焦点段内的被替换
+    expect(doc.body.indexOf('统计分析采用 R 软件完成组间比较并计算双侧 P 值。')).toBeGreaterThan(0)
+    expect(doc.body).toContain('统计分析采用 SAS 软件完成组间比较。')
+    expect(doc.body.indexOf('统计分析采用 SAS 软件完成组间比较。')).toBeGreaterThan(doc.body.indexOf('## 统计方法'))
+  }, 30000)
+
+  test('#868 焦点段内失配 → 全文路径仍可用(旧行为兜底)', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const body = '## 方法\n\n焦点段内容。\n\n## 结果\n\n需要修改的是结果段里的这句话。'
+    const docId = await createDoc(app, body)
+    const tool = new EditDocumentTool({
+      userId,
+      sessionId: `doc-${docId}`,
+      editHint: { focusSectionContent: '## 方法\n\n焦点段内容。', focusIndex: 1, focusTitle: '方法', selectionText: null },
+    })
+    const result = await tool.execute({ old_text: '需要修改的是结果段里的这句话。', new_text: '修改后的句子。', summary: '改结果段' })
+    expect(result.success).toBe(true)
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.body).toContain('修改后的句子。')
+  }, 30000)
+
+  test('#fix 2026-09 主模型预算充足(glm-5.3-flash/96000) → 7000+ token 长文档 full_text 直接放行', async () => {
+    // 生产 2026-09-07 实测:7075 token 文档被旧硬编码 2000 误拦,现按预算判定。
+    vi.stubEnv('DEFAULT_LLM_PROVIDER', 'opencode')
+    vi.stubEnv('DEFAULT_LLM_MODEL', 'glm-5.3-flash')
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const longBody = ('这是一段很长的文档内容，用来撑大 token 数量，全量重写应当在输出预算内直接放行。'.repeat(200))
+    const docId = await createDoc(app, longBody)
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ full_text: '# EGFR 全量重写版\n\n' + longBody, summary: '整篇重写' })
+    expect(result.success).toBe(true)
+    const body = JSON.parse(result.output as string).body
+    expect(body).toContain('# EGFR 全量重写版')
+
+    const snap = await (prisma as any).docSnapshot.findFirst({ where: { docId }, orderBy: { createdAt: 'desc' } })
+    expect(snap.label).toBe('AI edit')
+    expect(snap.body).toBe(longBody)
   }, 30000)
 
   test('#2 LLM tool loop: chat call edit_document → doc updated + doc_updated SSE', async () => {
@@ -565,10 +630,10 @@ describe('#171 edit_document tool', () => {
 
   test('#693 长文档:selection 优先定位焦点段,注入包含选中文本的完整段', async () => {
     const app = await getApp()
-    // 默认 DOC_BODY_TOKENS=20000(约 30000 中文字符),构造超预算文档触发分段注入。
+    // 默认 DOC_BODY_TOKENS=48000(#fix 2026-09 全文层扩容),构造超预算文档触发分段注入。
     // 每句带序号保证全文唯一(重复句会触发 edit_document 的"出现多次"检查)。
     const makeSection = (prefix: string) =>
-      Array.from({ length: 200 }, (_, i) => `${prefix}第${i + 1}句：这是详细内容，用于撑大 token 数量，确保文档超出上下文预算而走分段注入路径。该句包含足够的文字使得段落总长超过两万 token 的阈值，从而触发长文档的分段注入与焦点定位逻辑。`).join('\n')
+      Array.from({ length: 600 }, (_, i) => `${prefix}第${i + 1}句：这是详细内容，用于撑大 token 数量，确保文档超出上下文预算而走分段注入路径。该句包含足够的文字使得段落总长超过四万八千 token 的阈值，从而触发长文档的分段注入与焦点定位逻辑。`).join('\n')
     const longA = makeSection('第一段')
     const longB = makeSection('第二段')
     const body = `# 第一段\n\n${longA}\n\n# 第二段\n\n${longB}`

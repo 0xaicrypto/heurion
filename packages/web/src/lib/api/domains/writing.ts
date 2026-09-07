@@ -96,4 +96,15 @@ export class WritingApi extends ApiCore {
     yield* parseSseStream<PolishStreamChunk>(r);
   }
 
+  /**
+   * #870: 气泡 apply 补版本快照 — 与聊天 edit_document 的 'AI edit'
+   * 快照对齐(撤销/审计一致)。调用方 fire-and-forget,失败不阻塞编辑。
+   */
+  async createDocSnapshot(docId: string, body: string, label = 'AI polish'): Promise<{ ok: boolean }> {
+    return this.fetch(`/api/v1/docs/${docId}/snapshots`, {
+      method: 'POST',
+      headers: this.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ body, label }),
+    });
+  }
 }

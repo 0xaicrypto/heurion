@@ -5,6 +5,7 @@ import { SearchPastChatsTool } from './memory-tools.js'
 import { DelegateTool, SpawnSubagentTool } from './subagent-tools.js'
 import { DeferToBackgroundTool } from './async-tools.js'
 import { OCRImageTool } from './ocr-tools.js'
+import { ViewImageTool } from './view-image-tool.js'
 import { EditDocumentTool } from './edit-document-tool.js'
 import { InsertAssetTool } from './insert-asset-tool.js'
 import { FixDocumentImagesTool } from './fix-document-images-tool.js'
@@ -140,6 +141,22 @@ export interface ToolContext {
    * Absent ⇒ sub-agents run silently (old behavior).
    */
   emitSubagentEvent?: (ev: SubagentEvent) => void
+  /**
+   * #866-868: 编辑定位提示 — rangeEdit 焦点优先匹配用。conversation-turn
+   * 在上下文组装期间回填(组装期写、工具执行期读的 holder),工具层保持
+   * 对 modules 层无依赖。Absent ⇒ 全文匹配(旧行为)。
+   */
+  editHint?: EditHint
+}
+
+/** #866-868: 焦点段/选中文本定位提示。 */
+export interface EditHint {
+  /** 当前焦点段原文(#866 分段内容,未截断版) — rangeEdit 先在段内匹配。 */
+  focusSectionContent?: string | null
+  focusIndex?: number | null
+  focusTitle?: string | null
+  /** 用户选中文本(#693) — 比焦点段更具体,匹配优先级最高。 */
+  selectionText?: string | null
 }
 
 /**
@@ -230,6 +247,8 @@ export class ToolRegistry {
     this.register(new SpawnSubagentTool(ctx))
     this.register(new DeferToBackgroundTool(ctx))
     this.register(new OCRImageTool(ctx))
+    // #fix 2026-09: view_image — 文档内嵌图/截图的按需视觉理解(方案 A)。
+    this.register(new ViewImageTool(ctx))
     this.register(new EditDocumentTool(ctx))
     // #765: 写作画布结构化资产工具（表格）— 与 edit_document 同管道
     // （快照 + doc_updated），仅 doc- 会话暴露。

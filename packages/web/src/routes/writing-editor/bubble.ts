@@ -5,7 +5,7 @@ import type { BubbleRunState } from '@/components/DocEditor';
 import { sanitizePolishOutput } from '@/lib/polish-sanitize';
 import { captureScrollContainer } from '@/lib/scroll-utils';
 import { api, ApiError } from '@/lib/api';
-import { markdownToHtml } from '@/lib/doc-convert';
+import { markdownToHtml, htmlToMarkdown } from '@/lib/doc-convert';
 
 // #792: 润色预设提为模块级常量 — 此前定义在组件体内,每次渲染重建数组。
 export const POLISH_PRESETS: Array<{ id: string; icon: string; label: string; instruction: string }> = [
@@ -26,6 +26,8 @@ export interface PolishBubble {
   handleBubbleRetry: () => void;
   handleBubbleRefine: (instruction: string, currentText: string) => void;
   handleBubbleAction: (action: string, sel: { text: string; from: number; to: number }) => void;
+  /** #871: 送入聊天 — 选区上下文随行,任务超出单段润色时转聊天流。 */
+  handleSendToChat: (instruction?: string) => void;
 }
 
 /**
@@ -39,9 +41,11 @@ export function usePolishBubble(input: {
   editorRef: React.MutableRefObject<Editor | null>;
   /** 顶部轻提示(与 aiEditNotice 同一通道)。 */
   onNotice: (text: string, ttlMs?: number) => void;
+  /** #871: 送入聊天 — 由路由层接(chatSelection/chatInput/chatOpen)。 */
+  onSendToChat?: (selection: string, instruction: string) => void;
 }): PolishBubble {
   const { t } = useTranslation();
-  const { docId, editorRef, onNotice } = input;
+  const { docId, editorRef, onNotice, onSendToChat } = input;
 
   const [bubbleSel, setBubbleSel] = useState<{ text: string; from: number; to: number } | null>(null);
   const [bubbleRun, setBubbleRun] = useState<BubbleRunState | null>(null);
@@ -153,6 +157,14 @@ export function usePolishBubble(input: {
     const savedTop = scrollEl?.top ?? 0;
     editor.chain().focus().insertContentAt({ from: snap.from, to: snap.to }, markdownToHtml(clean)).run();
     if (scrollEl) scrollEl.el.scrollTop = savedTop;
+    // #870: 补版本快照 — 与聊天 edit_document 的 'AI edit' 快照对齐
+    // (撤销/审计一致)。fire-and-forget,失败不阻塞编辑。
+    if (docId) {
+      try {
+        const md = htmlToMarkdown(editor.getHTML());
+        void api.createDocSnapshot(docId, md, 'AI polish').catch(() => {});
+      } catch { /* best-effort */ }
+    }
     setBubbleRun(null);
     onNotice(t('writing.polishApplied', '✨ 已按 AI 结果替换选中文本'));
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定
@@ -199,6 +211,18 @@ export function usePolishBubble(input: {
     void runPolish(preset?.instruction ?? '', action);
   }
 
+  /** #871: 送入聊天 — 选区文本走聊天上下文通道(chatSelection),指令预填
+   *  聊天输入,由用户确认发送。任务超出单段润色(多步/跨段/带引用)时用。 */
+  const handleSendToChat = useCallback((instruction?: string) => {
+    const snap = polishRangeRef.current;
+    if (!snap || !onSendToChat) return;
+    onSendToChat(
+      snap.original,
+      instruction?.trim() || t('writing.sendToChatDefault', '请基于我选中的这段文字继续优化'),
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定
+  }, [onSendToChat]);
+
   return {
     bubbleSel,
     bubbleRun,
@@ -209,5 +233,6 @@ export function usePolishBubble(input: {
     handleBubbleRetry,
     handleBubbleRefine,
     handleBubbleAction,
+    handleSendToChat,
   };
 }

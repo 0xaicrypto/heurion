@@ -153,9 +153,11 @@ export function findNormalizedSpan(body: string, needle: string): NormalizedSpan
   return { ...expandSpanOverMarkers(body, start2, end2, needle), k: k2, normBody: fb, normNeedle: fn }
 }
 
-/** 锚点片段长度与模糊匹配的编辑预算上限(needle 长度的比例)。 */
+/** 锚点片段长度与模糊匹配的编辑预算上限(needle 长度的比例)。
+ *  #868: FUZZY_MIN_EDITS 10→6 — 10 对短锚点过松(100 字 needle 允许 10%
+ *  差异,相似段落误配率高)。 */
 const FUZZY_EDIT_RATIO = 0.02
-const FUZZY_MIN_EDITS = 10
+const FUZZY_MIN_EDITS = 6
 const FUZZY_SLACK_RATIO = 0.05
 const FUZZY_SLACK_MIN = 20
 const FUZZY_SLACK_MAX = 120
@@ -176,12 +178,14 @@ export function findFuzzySpan(body: string, needle: string): NormalizedSpan | nu
   // 锚片段会把差异包含进去,退化为找不到)。
   let bp = -1
   let np = 0
+  let anchorText = ''
   for (const len of [80, 60, 40, 24]) {
     const prefix = nn.slice(0, len)
     const p = nb.indexOf(prefix)
     if (p !== -1) {
       bp = p
       np = 0
+      anchorText = prefix
       break
     }
     const suffix = nn.slice(-len)
@@ -189,10 +193,16 @@ export function findFuzzySpan(body: string, needle: string): NormalizedSpan | nu
     if (s !== -1) {
       bp = s
       np = nn.length - len
+      anchorText = suffix
       break
     }
   }
   if (bp === -1) return null
+  // #868: 锚点唯一性护栏 — 锚点在全文多处出现时,首个命中锁定的窗口可能
+  // 是结构相似但错误的段落(医学综述平行结构:统计句/伦理句/重复标题),
+  // DP 在容差内照样「成功」→ 静默改错位置。此时不信任模糊结果,返回 null
+  // 让调用方走显式报错引导(逐字复制/补上下文)。
+  if (nb.indexOf(anchorText, bp + anchorText.length) !== -1) return null
 
   const slack = Math.min(FUZZY_SLACK_MAX, Math.max(FUZZY_SLACK_MIN, Math.round(nn.length * FUZZY_SLACK_RATIO)))
   const winStart = Math.max(0, bp - np - slack)

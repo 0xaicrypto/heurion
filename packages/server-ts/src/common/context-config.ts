@@ -9,7 +9,7 @@
 // ── 预算（#630 口径:剩余 = maxTotal − system − history）──
 export const CONTEXT_CONFIG = {
   /** 全链路 token 上限。 */
-  maxTotalTokens: parseInt(process.env.MAX_TOTAL_TOKENS || '64000', 10),
+  maxTotalTokens: parseInt(process.env.MAX_TOTAL_TOKENS || '128000', 10),
   /** 历史消息 token 预算。 */
   maxHistoryTokens: parseInt(process.env.MAX_HISTORY_TOKENS || '32000', 10),
   /** 历史轮数窗口。 */
@@ -71,8 +71,13 @@ export const CONTEXT_CONFIG = {
     studiesMax: 10,
     protocolChars: 700,
     /** #fix: 写作会话注入的当前文档 token 预算(脚本感知裁剪,见
-     *  token-estimate.fitTextToTokens)。 */
-    docBodyTokens: parseInt(process.env.DOC_BODY_TOKENS || '20000', 10),
+     *  token-estimate.fitTextToTokens)。
+     *  #fix 2026-09: 20000 → 48000 — 全文层扩容,长文综述(数万 token)
+     *  也整篇注入,由模型自主定位编辑点(上下文装配质量 >> 服务端焦点
+     *  启发式);成本核算 glm-5.3-flash $0.15/1M ≈ $0.007/回合,且有
+     *  x-opencode-session 会话头 prompt cache。焦点机制(#866-868)降级
+     *  为超过此阈值的超大文档兜底层。 */
+    docBodyTokens: parseInt(process.env.DOC_BODY_TOKENS || '48000', 10),
     /** #writing-cost: 单轮注入参考材料的文件数上限(按 label 与用户消息
      *  相关性优先) — 不相关参考不每轮全量注入。 */
     docRefFilesMax: parseInt(process.env.DOC_REF_FILES_MAX || '3', 10),

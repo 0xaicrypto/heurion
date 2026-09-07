@@ -38,9 +38,11 @@ export interface BubbleResultPanelProps {
   onRetry: () => void;
   /** #778: 多轮 — instruction=新要求，currentText=用户可能已修改的当前版本。 */
   onRefine: (instruction: string, currentText: string) => void;
+  /** #871: 送入聊天 — 任务超出单段润色(多步/跨段/带引用检索)时转入聊天流。 */
+  onSendToChat?: (instruction?: string) => void;
 }
 
-export function BubbleResultPanel({ run, onApply, onDiscard, onRetry, onRefine }: BubbleResultPanelProps) {
+export function BubbleResultPanel({ run, onApply, onDiscard, onRetry, onRefine, onSendToChat }: BubbleResultPanelProps) {
   const { t } = useTranslation();
   /** 用户编辑中的结果（done 时从 stream 初始化，可自由修改）。 */
   const [draft, setDraft] = useState('');
@@ -145,6 +147,12 @@ export function BubbleResultPanel({ run, onApply, onDiscard, onRetry, onRefine }
         )}
         {run.status === 'done' && (
           <>
+            {onSendToChat && (
+              /* #871: 任务超出单段润色时转聊天流(选区上下文自动随行) */
+              <Button size="sm" variant="ghost" onClick={(e: ReactMouseEvent<HTMLButtonElement>) => { e.preventDefault(); onSendToChat(refineText.trim() || undefined); }}>
+                {t('writing.bubbleSendToChat', '在聊天中继续')}
+              </Button>
+            )}
             <Button size="sm" variant="ghost" onClick={(e: ReactMouseEvent<HTMLButtonElement>) => { e.preventDefault(); onDiscard(); }}>{t('writing.bubbleDiscard', '丢弃')}</Button>
             <Button
               size="sm"
