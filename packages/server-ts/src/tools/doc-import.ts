@@ -1,9 +1,13 @@
 import fs from 'fs'
 import path from 'path'
+import crypto from 'crypto'
 import prisma from '../common/prisma.js'
 import { extractDocumentMarkdownWithImagesFromUpload, type ExtractedPdfImage } from '../lib/document-extractor.js'
 import { issueChartToken } from '../common/chart-token.js'
 import { writeDocVersion } from './doc-version-writer.js'
+import { sanitizeFilename } from '../lib/upload-path.js'
+import { downloadPdfFromUrl, UrlDownloadError } from '../lib/url-download.js'
+import { isOaUrlForDoi } from './oa-pdf-tool.js'
 
 /**
  * #774 — doc 工具共享导入面。
@@ -58,6 +62,92 @@ export async function writeDocBody(userId: string, docId: string, text: string, 
   const result = await writeDocVersion({ userId, docId, body: text, snapshotLabel })
   if (result.error) return { body: '', error: result.error }
   return { body: result.body }
+}
+
+/**
+ * #875 — URL 导入:下载 OA 全文 PDF 直链入库(文件库 + docReference)并把
+ * 提取的正文写入文档 — 打通「检索(oa_pdf_lookup)→ 读全文 → 引用」闭环。
+ * 与 import_reference 同管线(结构恢复 + 图片落盘/图题 + 公式 LaTeX)。
+ * 付费墙红线:带 doi 时经 Unpaywall 校验 URL 归属,明确非 OA 即拒绝;
+ * 校验不可达(Unpaywall 故障)时 best-effort 放行并如实标注。
+ */
+export async function executeImportFromUrl(
+  userId: string,
+  docId: string,
+  rawUrl: string,
+  summary: string,
+  doi?: string,
+): Promise<{ success: boolean; output?: string; error?: string }> {
+  try {
+    // 1) 受控下载(SSRF/大小/超时/重定向逐跳校验/%PDF- magic)
+    let pdf: { buffer: Buffer; filename: string }
+    try {
+      pdf = await downloadPdfFromUrl(rawUrl)
+    } catch (err) {
+      if (err instanceof UrlDownloadError) {
+        return { success: false, error: `URL 导入失败(${err.code}): ${err.message} — 仅支持 OA 开放获取的 PDF 直链;付费墙内容不可入库。` }
+      }
+      throw err
+    }
+
+    // 2) OA 归属校验(best-effort):明确非 OA → 拒绝;Unpaywall 不可达 → 放行
+    if (doi && doi.trim()) {
+      const oa = await isOaUrlForDoi(doi.trim(), rawUrl)
+      if (oa === false) {
+        return { success: false, error: `Unpaywall 校验该 URL 不属于 DOI「${doi.trim()}」的开放获取位置 — 疑似付费墙内容,拒绝入库(不绕付费墙)。请使用 oa_pdf_lookup 返回的 OA 链接。` }
+      }
+    }
+
+    // 3) 文件库落盘(sha256 去重复用)+ FileIndex 登记
+    const filename = pdf.filename
+    const sha256 = crypto.createHash('sha256').update(pdf.buffer).digest('hex')
+    const dup = await (prisma as any).fileIndex.findFirst({ where: { userId, sha256, deletedAt: null } }).catch(() => null)
+    let fileId: string
+    if (dup) {
+      fileId = dup.id
+    } else {
+      fileId = `${Date.now()}_${sanitizeFilename(filename)}`
+      const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, fileId), pdf.buffer)
+      const now = new Date().toISOString()
+      await (prisma as any).fileIndex.create({
+        data: { id: fileId, userId, sha256, name: filename, mime: 'application/pdf', sizeBytes: pdf.buffer.length, createdAt: now, updatedAt: now },
+      })
+    }
+
+    // 4) 建 docReference(Reference Materials 可见,支持后续重新导入) — 幂等
+    const refDup = await (prisma as any).docReference.findFirst({ where: { userId, docId, refType: 'pdf', snapshot: filename } })
+    if (!refDup) {
+      await (prisma as any).docReference.create({
+        data: {
+          id: `ref_${crypto.randomBytes(8).toString('hex')}`,
+          docId,
+          userId,
+          refType: 'pdf',
+          targetId: fileId,
+          snapshot: filename,
+          sourceNodes: JSON.stringify({ label: filename }),
+          granularity: 'doc',
+          createdAt: new Date().toISOString(),
+        },
+      })
+    }
+
+    // 5) 提取正文(与 import_reference 同管线)并写回
+    const { text, error } = await extractRefText(userId, docId, { refType: 'pdf', snapshot: filename }, filename)
+    if (error || !text) {
+      return { success: false, error: error || `PDF 已入库(「${filename}」),但无法提取正文 — 可稍后用 import_reference「${filename}」重试` }
+    }
+    const { body, error: writeError } = await writeDocBody(userId, docId, text, 'AI import')
+    if (writeError) return { success: false, error: writeError }
+    return {
+      success: true,
+      output: JSON.stringify({ body, summary: `已从 URL 入库「${filename}」并导入正文(${text.length} 字符)${dup ? '(内容去重,复用已有文件)' : ''}` }),
+    }
+  } catch (err) {
+    return { success: false, error: `edit_document url import failed: ${(err as Error).message.slice(0, 200)}` }
+  }
 }
 
 // ── #787: 「空正文自动导入唯一参考材料」单点编排 ──────────────────────

@@ -13,6 +13,7 @@ import { executeImportReference } from './edit-import.js'
 // #868: 落点章节透明化 + 焦点段定位提示类型。
 import { nearestHeadingBefore } from '../lib/doc-sections.js'
 import type { EditHint } from './tool-registry.js'
+import { executeImportFromUrl } from './doc-import.js'
 
 /**
  * §15.4/#171 — edit_document: the conversational-writing write-back tool.
@@ -40,7 +41,7 @@ export class EditDocumentTool extends BaseTool {
   get description(): string {
     return [
       'Edit the current writing-session document. Three modes:',
-      '- Import: pass `import_reference` (the reference-material name to import) when the document body is EMPTY and the user wants to work on an uploaded reference (PDF/DOCX/txt). This copies the reference text into the document.',
+      '- Import: pass `import_reference` (the reference-material name to import) when the document body is EMPTY and the user wants to work on an uploaded reference (PDF/DOCX/txt). This copies the reference text into the document. Alternatively pass `url` (+ optional `doi`) to download an OA full-text PDF directly into the reference library — use the URL from oa_pdf_lookup results (#875: closes the search→read→cite loop).',
       '- Range edit (preferred for polishing long documents): pass `old_text` (the original text to replace, copied from the current document — line breaks/whitespace differences are tolerated) and `new_text` (the replacement). One edit per call; make multiple calls to edit multiple parts. When the document body is EMPTY and exactly one reference exists, the tool auto-imports it before applying the edit (so you can polish an uploaded reference without a separate import call). To replace a figure/link, include its image markdown together with surrounding caption text — image URLs must match exactly, and an old_text that spans an image must include the image.',
       '- Full rewrite: pass `full_text` (complete new document in markdown). Allowed within the model single-response output budget (the main model budget is generous — full rewrites of multi-thousand-token documents work). If it exceeds the budget the tool refuses with guidance; for long-document cleanup/polish prefer range edits.',
       'Formatting: write-back content must arrive pre-structured in markdown — organize new content by its logic (### / ## headings for topics or steps, bullet/numbered lists for enumerations, bold for key conclusions, GFM pipe tables for comparisons). Never write back unstructured prose walls; match the heading level style already used in the document.',
@@ -53,6 +54,8 @@ export class EditDocumentTool extends BaseTool {
       type: 'object',
       properties: {
         import_reference: { type: 'string', description: 'Import mode: the label/name of the reference material to import into the empty document (e.g. the uploaded file name).' },
+        url: { type: 'string', description: 'Import via URL: direct OA full-text PDF link (e.g. the url_for_pdf returned by oa_pdf_lookup). Downloads into the reference library and sets the extracted content as the document body.' },
+        doi: { type: 'string', description: 'Optional DOI alongside url — enables Unpaywall OA verification (refuses paywalled / non-OA links).' },
         old_text: { type: 'string', description: 'Range mode: the original text to replace (must match the current document — whitespace/line-break differences are tolerated).' },
         new_text: { type: 'string', description: 'Range mode: the replacement text (empty to delete).' },
         full_text: { type: 'string', description: 'Full mode: the complete new document content in markdown.' },
@@ -71,6 +74,15 @@ export class EditDocumentTool extends BaseTool {
 
     const importRef = typeof args.import_reference === 'string' ? args.import_reference.trim() : ''
     if (importRef) return this.importReference(docId, importRef, String(args.summary || 'imported reference'))
+
+    // #875: URL 导入 — OA 全文 PDF 直链入库(检索→阅读→引用闭环)。
+    const importUrl = typeof args.url === 'string' ? args.url.trim() : ''
+    if (importUrl) {
+      const doi = typeof args.doi === 'string' ? args.doi.trim() : undefined
+      const r = await executeImportFromUrl(this.ctx.userId, docId, importUrl, String(args.summary || 'imported from URL'), doi)
+      if (r.error) return { success: false, error: r.error }
+      return { success: true, output: r.output }
+    }
 
     const oldText = typeof args.old_text === 'string' ? args.old_text : ''
     const newText = typeof args.new_text === 'string' ? args.new_text : ''
