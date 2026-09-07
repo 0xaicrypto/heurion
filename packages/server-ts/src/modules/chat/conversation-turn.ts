@@ -365,6 +365,8 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           findFileByName: async (name) => findUploadFileByName(userId, name),
           // #fix 2026-09: 逐文件子进度 — 参考材料提取可达分钟级。
           onProgress: (i, total, label) => input.stage?.(`正在解析参考材料 ${i}/${total}：${String(label).slice(0, 40)}`),
+          // #833: 参考材料超预算时按用户指名章节定位注入。
+          userText: body.text,
         })
         const refBlock = refBlocks.join('\n\n')
 
@@ -550,6 +552,10 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   if (assembled.telemetry.length > 0) {
     log.warn('context assembly telemetry (required segments degraded)', { issues: assembled.telemetry })
   }
+  // #fix: 组装完成 → 显式切换到生成阶段 — 此前状态行停在最后一个组装段
+  // (如「正在载入钉选参考…」),LLM 长思考/上游排队期间用户误以为还在
+  // 读文件(实测 9-11 分钟黑盒后 600s 超时报错)。
+  send({ type: 'context_info', text: '上下文就绪，AI 正在生成…（长任务可能需要数分钟）', kind: 'file_context' })
   let systemPrompt = assembled.systemPrompt
   let segmentState = assembled.segmentState
   let segmentRenderFiltered = assembled.renderFiltered

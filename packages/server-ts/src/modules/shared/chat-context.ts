@@ -5,6 +5,8 @@
  * honest: one implementation, one test surface.
  */
 import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
+import { splitDocumentSections, matchSectionRef } from '../../lib/doc-sections.js'
+import { mapLimit } from '../../lib/image-vision.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import { GraphFactProvider } from '../../memory/fact-provider.js' // #637 集中配置
 import { router } from '../../retrieval/query-router.js'
@@ -438,25 +440,50 @@ export async function findUploadFileByName(
  * (resolved)与渲染块;解析失败/无上传时回退为纯文件名(不中断整块)。
  */
 
+/**
+ * #833: 参考材料正文渲染 — 超预算时不再盲头部截断,而是**按用户指名章节
+ * 定位**(消息含「第 N 章/节/段」(含中文数字)或章节标题 → 注入该章正文 +
+ * 结构清单;其余情况保持头部截断)。参考材料注入上限(DOC_REF_FILE_TOKENS=8K)
+ * 独立于文档全文层,该缺口不随全文层扩容消失。
+ */
+export function renderReferenceBody(text: string, userText?: string): string {
+  const budget = CONTEXT_CONFIG.scene.docRefFileTokens
+  if (estimateTokens(text) <= budget) return `[已解析上传文件正文]\n${text}`
+  const sections = splitDocumentSections(text, 1500)
+  if (userText && sections.sections.length >= 2) {
+    const named = matchSectionRef(userText)
+      ?? sections.sections.find((s) => s.title.length >= 2 && userText.includes(s.title))?.index
+      ?? null
+    if (named) {
+      const idx = Math.min(sections.sections.length, Math.max(1, named))
+      const focused = sections.sections[idx - 1]
+      if (focused) {
+        const inventory = sections.sections.map((s) => `${s.index}. ${s.title}`).slice(0, 40).join('\n')
+        return `[已解析上传文件正文 — 全文超预算,已按用户指名章节定位:第 ${idx}/${sections.sections.length} 段「${focused.title}」]\n${inventory}\n---\n${fitTextToTokens(focused.content, budget)}`
+      }
+    }
+  }
+  return `[已解析上传文件正文]\n${fitTextToTokens(text, budget)}`
+}
+
 export async function buildDocReferenceBlocks(
   userId: string,
   refs: Array<{ id?: string; refType?: string | null; snapshot?: string | null; label?: string | null }>,
-  opts: { findFileByName: (name: string) => Promise<{ id: string } | null>; /** #fix 2026-09: 段内子进度(逐文件提取可达分钟级,发文案消除黑盒) */ onProgress?: (i: number, total: number, label: string) => void },
+  opts: { findFileByName: (name: string) => Promise<{ id: string } | null>; /** #fix 2026-09: 段内子进度(逐文件提取可达分钟级,发文案消除黑盒) */ onProgress?: (i: number, total: number, label: string) => void; /** #833: 用户消息 — 参考材料超预算时按指名章节定位注入 */ userText?: string },
 ): Promise<{ blocks: string[]; resolved: number }> {
-  const blocks: string[] = []
-  let resolved = 0
-  let fileIdx = 0
   const fileTotal = refs.filter((r) => DOC_FILE_REF_KINDS.has(String(r.refType || '')) && r.snapshot).length
-  for (const r of refs) {
+  // #fix 2026-09: 并行提取(×3,mapLimit 保序)+ 预分配文件序号(并行下
+  // 不能用递增计数器发进度) — 多份参考材料逐个串行提取是分钟级黑盒。
+  let fileCounter = 0
+  const fileOrdinals = refs.map((r) => (DOC_FILE_REF_KINDS.has(String(r.refType || '')) && r.snapshot) ? ++fileCounter : 0)
+  const results = await mapLimit(refs, 3, async (r, i) => {
     const header = `### ${r.label || r.id || ''}`
     const kind = String(r.refType || '')
     const snapshot = String(r.snapshot || '')
     if (!DOC_FILE_REF_KINDS.has(kind) || !snapshot) {
-      blocks.push(`${header}\n${snapshot.slice(0, CONTEXT_CONFIG.scene.docRefChars)}`)
-      continue
+      return { block: `${header}\n${snapshot.slice(0, CONTEXT_CONFIG.scene.docRefChars)}`, resolved: false }
     }
-    fileIdx++
-    try { opts.onProgress?.(fileIdx, fileTotal, r.label || snapshot) } catch { /* best-effort */ }
+    try { opts.onProgress?.(fileOrdinals[i], fileTotal, r.label || snapshot) } catch { /* best-effort */ }
     try {
       const found = await opts.findFileByName(snapshot)
       // #fix: 文件类引用用与"导入文档"同一提取器(markdown 结构恢复) —
@@ -467,10 +494,7 @@ export async function buildDocReferenceBlocks(
       const text = found ? await cachedExtractDocumentMarkdownFromUpload(userId, found.id, { maxChars: attachmentExtractChars() }) : ''
       const usable = Boolean(text) && !text.startsWith('[PDF') && !text.startsWith('[DOCX')
       if (found && usable) {
-        resolved++
-        const body = fitTextToTokens(text, CONTEXT_CONFIG.scene.docRefFileTokens)
-        blocks.push(`${header}\n[已解析上传文件正文]\n${body}`)
-        continue
+        return { block: `${header}\n${renderReferenceBody(text, opts.userText)}`, resolved: true }
       }
     } catch (err) {
       // #fix: 记录注入失败原因 — 生产上"模型拿文件名去读文件"的根因
@@ -478,9 +502,9 @@ export async function buildDocReferenceBlocks(
       log.warn(`[doc-ref] body injection failed for ref ${r.id || ''} (kind=${kind}, snapshot=${snapshot}):`, (err as Error).message.slice(0, 160))
       // fall through to name-only
     }
-    blocks.push(`${header}\n${snapshot.slice(0, CONTEXT_CONFIG.scene.docRefChars)}`)
-  }
-  return { blocks, resolved }
+    return { block: `${header}\n${snapshot.slice(0, CONTEXT_CONFIG.scene.docRefChars)}`, resolved: false }
+  })
+  return { blocks: results.map((x) => x.block), resolved: results.filter((x) => x.resolved).length }
 }
 
 /**

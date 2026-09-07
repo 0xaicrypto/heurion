@@ -391,6 +391,16 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
       }
       return { ...s, ...patch };
     }
+    case 'error': {
+      // #fix: 错误即回合终结 — 清会话级 streamNote(此前 SSE 断连/超时后
+      // streamNote 粘住,状态卡会泄漏到所有历史消息上)。
+      const msgs = [...s.messages];
+      const last = msgs[msgs.length - 1];
+      if (last?.role === 'assistant') {
+        msgs[msgs.length - 1] = applyChunk(last, chunk);
+      }
+      return { ...s, messages: msgs, streamNote: undefined };
+    }
     default: {
       const msgs = [...s.messages];
       const last = msgs[msgs.length - 1];

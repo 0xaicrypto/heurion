@@ -561,6 +561,38 @@ export function cachedExtractDocumentMarkdownFromUpload(
   })
 }
 
+/**
+ * #fix 2026-09: 纯文本提取缓存 — picked_kb(钉选参考)每轮对同一批文件重
+ * 跑 extractTextFromUpload(PDF 解析+视觉 OCR,大文件分钟级),而 uploads
+ * 文件不可变。与 markdown 缓存同口径(LRU 50 条/TTL 30min/哨兵不缓存),
+ * key 前缀区分变体。
+ */
+const textExtractCache = new Map<string, { text: string; at: number }>()
+
+export function cachedExtractTextFromUpload(
+  userId: string,
+  fileId: string,
+  options?: ExtractOptions,
+): Promise<string> {
+  const key = `text:${userId}:${fileId}:${options?.maxChars ?? ''}`
+  const hit = textExtractCache.get(key)
+  if (hit && Date.now() - hit.at < EXTRACT_CACHE_TTL_MS) return Promise.resolve(hit.text)
+  return extractTextFromUpload(userId, fileId, options).then((text) => {
+    if (text && !isExtractionSentinel(text)) {
+      if (textExtractCache.size >= EXTRACT_CACHE_MAX) {
+        let oldest: string | null = null
+        let oldestAt = Infinity
+        for (const [k, v] of textExtractCache) {
+          if (v.at < oldestAt) { oldestAt = v.at; oldest = k }
+        }
+        if (oldest) textExtractCache.delete(oldest)
+      }
+      textExtractCache.set(key, { text, at: Date.now() })
+    }
+    return text
+  })
+}
+
 export interface ExtractedMarkdownContent {
   text: string
   images: ExtractedPdfImage[]

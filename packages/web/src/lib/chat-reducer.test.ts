@@ -83,3 +83,23 @@ describe('chat-reducer #831 — subagent events', () => {
     expect(subs?.find((e) => e.id === 'a')?.status).toBe('done');
   });
 });
+
+// #fix — 错误即回合终结: streamNote 清除(此前错误后状态卡泄漏到所有历史消息)。
+describe('chat-reducer — error 清 streamNote', () => {
+  test('error 事件清除会话级 streamNote 且消息落错误文本', () => {
+    let s = sessionWithAssistant();
+    s = send(s, { type: 'context_info', text: '正在载入钉选参考…', kind: 'file_context' } as any);
+    expect(s.streamNote).toBe('正在载入钉选参考…');
+    s = send(s, { type: 'error', message: 'LLM request timed out after 600000ms' } as any);
+    expect(s.streamNote).toBeUndefined();
+    expect(s.messages.at(-1)?.text).toContain('LLM request timed out');
+    expect(s.messages.at(-1)?.isStreaming).toBe(false);
+  });
+
+  test('turn_complete 同样清除(既有语义回归)', () => {
+    let s = sessionWithAssistant();
+    s = send(s, { type: 'context_info', text: '正在分析…', kind: 'file_context' } as any);
+    s = send(s, { type: 'turn_complete' });
+    expect(s.streamNote).toBeUndefined();
+  });
+});

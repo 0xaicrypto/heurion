@@ -179,8 +179,14 @@ export function ChatMessages({
                 )}
                 {m.tier && <div className="mb-1 text-xs opacity-70">Tier: {m.tier}</div>}
                 {/* #832: 任务活动时间线 — 推理/工具/子代理/前置阶段提示
-                    收敛为分层活动流（状态行/折叠行/展开三层）。 */}
-                <ActivityTimeline message={m} stallSince={stallSince} streamNote={streamNote} />
+                    收敛为分层活动流（状态行/折叠行/展开三层）。
+                    #fix: 会话级 streamNote/stallSince 只属于进行中的消息 —
+                    此前传给每条消息,错误回合后状态卡泄漏到所有历史消息。 */}
+                <ActivityTimeline
+                  message={m}
+                  stallSince={m.isStreaming ? stallSince : undefined}
+                  streamNote={m.isStreaming ? streamNote : undefined}
+                />
                 {m.pluginCalls && m.pluginCalls.length > 0 && (
                   <div className="mb-2 flex flex-wrap items-center gap-1.5" aria-label={t('chat.pluginCalls', '插件调用')}>
                     {m.pluginCalls.map((pc, i) => (
