@@ -13,8 +13,8 @@
 import prisma from '../../common/prisma'
 import { makeLogger } from '../../common/logger.js'
 import type { ChatScene } from '../../common/persona.js'
-import { deepseekStream, LlmTruncatedError, DEEPSEEK_PREMIUM_MODEL, resolveTurnTimeoutMs } from '../../common/llm.js'
-import type { ChatContentPart } from '../../common/llm-gateway.js'
+import { deepseekStream, LlmTruncatedError, resolveTurnTimeoutMs } from '../../common/llm.js'
+import { resolveActiveModel, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from '../shared/user-context.js'
 import { buildAttachmentParts, buildDocReferenceBlocks, findUploadFileByName, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from '../shared/chat-context.js'
@@ -25,7 +25,7 @@ import { maybeJitSynthesize } from '../../modules/knowledge/jit-synthesis.servic
 import { EmbeddingService } from '../../memory/embedding/embedding.service.js' // #731 向量路接线
 import { describeSummaryForInjection } from '../../memory/staleness.js' // #813 总结溯源/stale 单一判定入口
 import { ContextAssembler } from './context-assembler.js'
-import { ToolRegistry, type ToolContext } from '../../tools/tool-registry.js'
+import { ToolRegistry, type ToolContext, type EditHint } from '../../tools/tool-registry.js'
 import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
 import { createExecutionPlaneService } from '../execution/execution-plane.service.js'
 import { runToolCallLoop, type TurnIO } from './tool-loop.js'
@@ -85,7 +85,11 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // #fix: 视觉能力按本回合实际调用模型判定,并做模型自适应 — 图片附件
   // + 当前模型纯文本时自动切换到视觉模型(deepseek/opencode 同源端点),
   // 否则按文本降级提示。
-  const turnModel = DEEPSEEK_PREMIUM_MODEL
+  // #fix 2026-09: 主回合模型走 resolveActiveModel()(admin 覆盖 → env
+  // DEFAULT_LLM_MODEL → legacy) — 此前硬编码 DEEPSEEK_PREMIUM_MODEL,生产
+  // env DEFAULT_LLM_MODEL=glm-5.3-flash 被完全绕过,且 Console Go 上游对
+  // deepseek-v4-flash 不稳定(400 stub + 600s 挂死),全回合失败。
+  const turnModel = resolveActiveModel()
   const hasImageAttachments = await detectImageAttachments(userId, body.attachments)
   const { model: visionModel, vision, switched } = pickVisionTurnModel({ turnModel, hasImages: hasImageAttachments })
   if (switched) {
@@ -273,6 +277,14 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       return it.label || it.kind
     }
   }
+  // #868: 编辑定位提示 — document_context builder 组装期间回填焦点段/
+  // 选中文本,工具执行期(edit_document rangeEdit)读取做焦点优先匹配。
+  const editHint: EditHint = {
+    focusSectionContent: null,
+    focusIndex: null,
+    focusTitle: null,
+    selectionText: null,
+  }
   const assembler = new ContextAssembler([
     {
       // #5/#631: 研究上下文 — shortCode 排序保证不更新时字节稳定。
@@ -372,6 +384,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         // #693: 选中即引用 — 用户选中的文本(来自编辑器选区,与 body 同源)
         // 优先成为编辑目标:注入独立上下文块,焦点段定位到包含它的段。
         const selection = typeof body.selection === 'string' && body.selection.trim() ? body.selection.trim() : null
+        let selectionSection: { index: number; title: string } | null = null
 
         let focus = 1
         let focusTitle = ''
@@ -383,6 +396,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
             if (idx >= 0) {
               focus = idx + 1
               focusTitle = sections.sections[idx].title
+              selectionSection = { index: focus, title: focusTitle }
             }
           }
           if (focusTitle === '') {
@@ -394,7 +408,14 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
             const focused = sections.sections[focus - 1]
             if (focused) focusTitle = focused.title
           }
+          // #868: 焦点段原文回填(未截断版 — bodyInjection 走 fitTextToTokens
+          // 可能截断,工具侧定位必须用完整原文)。
+          editHint.focusSectionContent = sections.sections[focus - 1]?.content ?? null
+          editHint.focusIndex = focus
+          editHint.focusTitle = focusTitle
         }
+        // #868: 选中文本始终回填(短文档也受益于选区优先定位)。
+        editHint.selectionText = selection
         const bodyInjection = docFits
           ? fitTextToTokens(docText, CONTEXT_CONFIG.scene.docBodyTokens)
           : fitTextToTokens(sections.sections[focus - 1]?.content || docText, CONTEXT_CONFIG.scene.docBodyTokens)
@@ -403,7 +424,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         // 调用 edit_document 的 old_text/new_text 把参考资料第一部分的
         // 润色结果写回草稿(正文为空时工具会自动先导入唯一的参考材料),
         // 然后询问用户是否继续下一部分。禁止停在"要不要先导入"。
-        const rules = documentRules({ docFits, selection, docBodyEmpty: !docText.trim() })
+        const rules = documentRules({ docFits, selection, docBodyEmpty: !docText.trim(), selectionSection })
 
         // #773: deck 资产上下文可见性 — deck 存在时注入 ## Current Deck
         // (markdown 化表示,有界),模型才能执行"把第 3 页拆成两页"类请求
@@ -631,6 +652,8 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     emitSubagentEvent: (ev) => send(ev),
     // #766: insert_asset plot 渲染 — execution plane 端口（modules 层提供）。
     executionPlane: createExecutionPlaneService(),
+    // #868: 编辑定位提示(焦点段/选中文本) — rangeEdit 焦点优先匹配。
+    editHint,
   }
   const toolRegistry = new ToolRegistry(toolCtx)
   // #454-followup: plugin-gated renderers (render_chart / render_scene)

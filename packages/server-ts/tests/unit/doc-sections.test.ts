@@ -87,4 +87,14 @@ describe('resolveDocumentFocus 段落焦点解析', () => {
     expect(resolveDocumentFocus('随便聊聊', sections)).toBe(1)
     expect(resolveDocumentFocus('', sections)).toBe(1)
   })
+
+  test('#866 焦点继承 — 模糊指令沿用助手最近播报的段,不再回退第 1 段', () => {
+    expect(resolveDocumentFocus('这句再自然一点', sections, '已完成 第 2/3 段「方法」的润色,是否继续?')).toBe(2)
+    // 多次播报(批量模式连做)取最后一个
+    expect(resolveDocumentFocus('太啰嗦了,压缩一下', sections, '已完成 第 1/3 段。已完成 第 3/3 段「结果」。')).toBe(3)
+    // 助手没播报过段号 → 文档头
+    expect(resolveDocumentFocus('这句话什么意思', sections, '这段讨论的是 EGFR 突变机制。')).toBe(1)
+    // 显式信号优先级不变:用户点名第 1 段覆盖继承
+    expect(resolveDocumentFocus('回到第 1 段看看', sections, '已完成 第 2/3 段「方法」')).toBe(1)
+  })
 })

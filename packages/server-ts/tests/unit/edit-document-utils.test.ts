@@ -163,6 +163,13 @@ describe('findFuzzySpan', () => {
   test('empty needle rejected', () => {
     expect(findFuzzySpan(body, '   ')).toBeNull()
   })
+
+  test('#868: 锚点在全文多处出现 → 不信任模糊结果(防静默改错位置)', () => {
+    // 两个结构相同的平行句 — 锚点(前 80 字符)在两处出现
+    const parallel = '统计分析采用 R 软件版本 4.3.0 完成组间比较并计算双侧 P 值设定显著性水平为 0.05。第一组结果如下。统计分析采用 R 软件版本 4.3.0 完成组间比较并计算双侧 P 值设定显著性水平为 0.05。第二组结果如下。'
+    const span = findFuzzySpan(parallel, '统计分析采用 R 软件版本 4.3.0 完成组间比较并计算双侧 P 值设定显著性水平为 0.05。第一组结果稍微不同的表述。')
+    expect(span).toBeNull()
+  })
 })
 
 // #837: 写回卫生 — 双转义换行还原 + 块级边界空行分隔。

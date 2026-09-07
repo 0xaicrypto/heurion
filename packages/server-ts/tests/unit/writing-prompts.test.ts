@@ -36,7 +36,7 @@ describe('writing-prompts (#699 — 文档场景规则可单测)', () => {
 
   it('documentRules 短文档档:允许整篇可见 + 禁带序号', () => {
     const r = documentRules({ docFits: true, selection: 'sel', docBodyEmpty: false })
-    expect(r).toContain('文档较短已完整展示')
+    expect(r).toContain('文档已完整展示')
     expect(r).toContain('逐字复制')
     expect(r).not.toContain('一次只处理一个段落')
     expect(r).toContain('逐字复制')
@@ -47,6 +47,20 @@ describe('writing-prompts (#699 — 文档场景规则可单测)', () => {
     expect(r).toContain('一次只处理一个段落')
     expect(r).toContain('full_text')
     expect(r).toContain('已完成 第 i/N 段')
+  })
+
+  it('#867 带选区回合:焦点规则让位于选区(消除矛盾指令)', () => {
+    const r = documentRules({ docFits: false, selection: '选中的文字', docBodyEmpty: false, selectionSection: { index: 5, title: '统计方法' } })
+    expect(r).toContain('本回合以用户选中文本为准')
+    expect(r).toContain('第 5 段「统计方法」')
+    // 矛盾的「只能编辑当前编辑段落」不再出现
+    expect(r).not.toContain('只能编辑「当前编辑段落」范围内的原文')
+  })
+
+  it('#872 批量模式:长文档档含自动连做指令', () => {
+    const r = documentRules({ docFits: false, selection: null, docBodyEmpty: false })
+    expect(r).toContain('批量模式')
+    expect(r).toContain('不要每段停下等确认')
   })
 
   it('documentRules 空文档档包含 emptyDocRule + 扩写纪律', () => {

@@ -61,11 +61,24 @@ export const CONFIRM_RULE = '行动纪律:用户回复「同意」「可以」�
 const OLD_TEXT_COPY_RULE = 'old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制（空格/换行差异会被自动忽略，不要从 Reference Materials 复制；「文档结构」清单里的序号不是正文内容，复制时不要带序号，也不要从工具报错信息里复制片段）'
 
 /** 编辑总规则 — 按文档是否整篇可见分两档。 */
-export function documentRules(input: { docFits: boolean; selection: string | null; docBodyEmpty: boolean }): string {
+export function documentRules(input: {
+  docFits: boolean
+  selection: string | null
+  docBodyEmpty: boolean
+  /** #867: 选中文本所属段 — 存在时长文档规则让位于选区,消除
+   *  「只能编辑焦点段」与「选中文本优先」的矛盾指令。 */
+  selectionSection?: { index: number; title: string } | null
+}): string {
   const head = `规则：用户在编辑这份文档。回答用中文。${EXPANSION_RULE}${emptyDocRule(input.docBodyEmpty)}`
   const tail = `${selectionRule(input.selection)}`
   if (input.docFits) {
-    return `${head}文档较短已完整展示，可直接修改任意部分；优先用 edit_document 的 old_text/new_text 做局部编辑（${OLD_TEXT_COPY_RULE}）。${tail}`
+    // #fix 2026-09: 全文层扩容到 48K token — 长文综述也整篇注入,"较短"
+    // 措辞不再准确;全文模式下由模型自主定位编辑点。
+    return `${head}文档已完整展示（全文模式），可直接修改任意部分，由你根据用户意图判断应修改的位置；优先用 edit_document 的 old_text/new_text 做局部编辑（${OLD_TEXT_COPY_RULE}）。${tail}`
   }
-  return `${head}本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。${OLD_TEXT_COPY_RULE}。不要用 full_text 全量替换：即使内容很短，full_text 也只适用于全文不足约 2000 token 的短文档；当用户要求「整理/润色/格式化全文」时，逐段用 old_text/new_text 依次处理（每次调用整理一段），并报告进度。${tail}`
+  // #867: 带选区的回合 — 选区即本回合编辑目标,焦点规则让位。
+  if (input.selection && input.selectionSection) {
+    return `${head}本文档较长，已按段划分（结构见上）。本回合以用户选中文本为准：选中文本属于第 ${input.selectionSection.index} 段${input.selectionSection.title ? `「${input.selectionSection.title}」` : ''}（其正文见下方「当前编辑段落」区，选中部分已在「用户选中文本」区单独标出）— 编辑选中范围及其紧邻上下文即可，选中范围之外的内容不要主动改动。${OLD_TEXT_COPY_RULE}。${tail}`
+  }
+  return `${head}本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。#872 批量模式：用户要求「自动处理」「一直处理到第 N 段」「全部处理」时，逐段连续 edit_document 写回，每段完成后仅用一行播报「已完成 第 i/N 段「标题」」并直接继续下一段，不要每段停下等确认；用户发来任何新消息即暂停。焦点有记忆：模糊指令（如「这句再自然一点」）沿用上一回合正在处理的段落。${OLD_TEXT_COPY_RULE}。full_text 全量重写受模型单次输出预算约束（预算内可用；用户明确要求整篇重写且文档在预算内时可以执行）。但长文档的「整理/润色/格式化」仍必须逐段用 old_text/new_text 依次处理（每次调用整理一段）并报告进度 — 逐段更稳、不会因超长截断。${tail}`
 }

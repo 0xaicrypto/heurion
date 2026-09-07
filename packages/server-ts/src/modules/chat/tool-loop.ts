@@ -8,8 +8,8 @@
 import type { ToolRegistry } from '../../tools/tool-registry.js'
 import type { ToolDefinition } from '../../tools/base-tool.js'
 import type { ChatContentPart } from '../../common/llm-gateway.js'
-import { resolveTurnTimeoutMs } from '../../common/llm-gateway.js'
-import { deepseekChatWithMeta, DEEPSEEK_PREMIUM_MODEL } from '../../common/llm.js'
+import { resolveActiveModel, resolveTurnTimeoutMs } from '../../common/llm-gateway.js'
+import { deepseekChatWithMeta } from '../../common/llm.js'
 import { detectDoomLoop } from '../../tools/doom-loop.js'
 import { READ_ONLY_TOOLS, BEST_EFFORT_RETRIEVAL_TOOLS } from '../../tools/tool-registry.js'
 import { makeLogger } from '../../common/logger.js'
@@ -157,7 +157,10 @@ export async function runToolCallLoop(params: {
   model?: string
 }): Promise<{ finalContent: string; messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }> }> {
   const { currentMessages, toolRegistry, io, ctx, userId, sessionId } = params
-  const turnModel = params.model || DEEPSEEK_PREMIUM_MODEL
+  // #fix 2026-09: 缺省走 resolveActiveModel()(admin 覆盖 → env → legacy) —
+  // 此前硬编码 DEEPSEEK_PREMIUM_MODEL('deepseek-v4-flash'),生产主模型
+  // glm-5.3-flash 被绕过且该模型在 Console Go 上游不稳定。
+  const turnModel = params.model || resolveActiveModel()
 
   // R3 — tool-call persistence: per-session sequence numbers continue
   // across turns (and process restarts) by deriving from the log.

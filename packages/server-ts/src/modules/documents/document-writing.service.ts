@@ -1,4 +1,5 @@
-import { resolveTierModel } from '../../common/llm-gateway.js'
+import { resolveTierModel, resolveDefaultMaxTokens } from '../../common/llm-gateway.js'
+import { estimateTokens } from '../../common/token-estimate.js'
 /**
  * Document writing service (#687) — the three inline LLM prompts that used
  * to live in documents.router.ts (polish / methods / background). The
@@ -43,6 +44,22 @@ export function resolvePolishModel(): string {
   return resolveTierModel('reasoner')
 }
 
+/**
+ * #869: 输出预算随选区自适应 — 思维链与正文共享输出预算,50K 字选区
+ * 上限配 4096 固定预算必然高截断(用户被引导「缩小选中范围」)。
+ * glm-5.3-flash 预算 96000 且 Go 网关实测接受大 max_tokens(2026-09)。
+ * 公式:clamp(选区 tokens × 2, 4096, 模型原生预算)。
+ */
+export function resolvePolishMaxTokens(selection: string, model: string): number {
+  const need = estimateTokens(selection) * 2
+  return Math.min(resolveDefaultMaxTokens(model), Math.max(4096, need))
+}
+
+/** #869: 总超时随选区放宽 — 150s 基线 + 10ms/字符,上限 600s。 */
+export function resolvePolishDeadlineMs(selectionChars: number): number {
+  return Math.min(600_000, 150_000 + selectionChars * 10)
+}
+
 export async function* polishSelection(
   selection: string,
   instruction: string | undefined,
@@ -70,7 +87,8 @@ export async function* polishSelection(
   const trackReasoning = (t: string) => { reasoningChars += t.length; onReasoning?.(t) }
   for await (const chunk of deepseekStream([{ role: 'user', content: prompt }], apiKey, {
     model,
-    maxTokens: 4096,
+    // #869: 随选区自适应(下限 4096,上限模型原生预算)。
+    maxTokens: resolvePolishMaxTokens(selection, model),
     thinking: POLISH_THINKING, // 仅 glm-* 模型生效,gateway 内部守卫
     signal,
     telemetryContext: { userId, workspaceId: userId, action: 'document.polish' },
@@ -96,7 +114,8 @@ export async function polishSelectionFallback(
     getApiKey(),
     {
       model,
-      maxTokens: 4096,
+      // #869: 随选区自适应(同流式路径)。
+      maxTokens: resolvePolishMaxTokens(selection, model),
       signal,
       telemetryContext: { userId, workspaceId: userId, action: 'document.polish_fallback' },
     },

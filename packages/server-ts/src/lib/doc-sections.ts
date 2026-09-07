@@ -121,11 +121,14 @@ function clampIndex(index: number, total: number): number {
 }
 
 /**
- * 解析用户消息中的段落焦点。
+ * 解析用户消息中的段落焦点(#866: 未识别信号时焦点继承,不再回退第 1 段)。
  * 1. 显式 "第 N 段/节/部分" → N;
  * 2. 消息中包含章节标题(长度 ≥2) → 该段;
  * 3. "继续/下一段/next" → 上一条助手消息提到的段 + 1(越界钳制);
- * 4. 其余 → 第 1 段(文档头)。
+ * 4. #866: 上一条助手消息播报过「第 i/N 段」(FOCUS_RULE 分步进度纪律)
+ *    → 继承 i — 模糊指令(「这句再自然一点」)不再静默跳回文档头
+ *    (生产形态:用户优化第 5 段中途发模糊消息,焦点重置,模型改错段);
+ * 5. 其余 → 第 1 段(文档头)。
  */
 export function resolveDocumentFocus(userText: string, sections: DocSection[], lastAssistantText?: string): number {
   const text = userText || ''
@@ -140,5 +143,24 @@ export function resolveDocumentFocus(userText: string, sections: DocSection[], l
     if (m) return clampIndex(parseInt(m[1], 10) + 1, sections.length)
   }
 
+  // #866: 继承助手最近一次播报的段(取最后一个匹配 — 批量模式连做多段
+  // 时最后一处即停下的位置)。
+  const progress = lastAssistantText?.match(new RegExp(SECTION_REF_RE.source, 'g'))
+  if (progress && progress.length > 0) {
+    const last = progress[progress.length - 1].match(SECTION_REF_RE)
+    if (last) return clampIndex(parseInt(last[1], 10), sections.length)
+  }
+
   return 1
+}
+
+/** #868: 落点透明化 — span 起点之前最近的一个 markdown 标题(章节归属)。 */
+export function nearestHeadingBefore(body: string, pos: number): string {
+  const before = body.slice(0, pos)
+  const lines = before.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = HEADING_RE.exec(lines[i])
+    if (m) return m[2].trim().slice(0, 80)
+  }
+  return ''
 }

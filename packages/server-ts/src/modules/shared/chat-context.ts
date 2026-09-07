@@ -9,7 +9,7 @@ import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import { GraphFactProvider } from '../../memory/fact-provider.js' // #637 集中配置
 import { router } from '../../retrieval/query-router.js'
 import { getUserContext } from './user-context.js'
-import { providerSupportsVision, modelSupportsVision, type ChatContentPart } from '../../common/llm-gateway.js'
+import { providerSupportsVision, modelSupportsVision, resolveActiveModel, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { CommandResult } from '../knowledge/knowledge-command-handler.js'
 import { extractTextFromUpload, extractImageUpload, isImageFile, isPdf, isDocx, extractPdfContentFromUpload, extractDocxContentFromUpload, cachedExtractDocumentMarkdownFromUpload, type ExtractedPdfImage } from '../../lib/document-extractor.js'
 // #777: pptx 解析导入 — 主 chat 附件管道共用 extractor 层解析。
@@ -515,10 +515,19 @@ export function pickVisionTurnModel(opts: { turnModel: string; hasImages: boolea
   if (!opts.hasImages || vision) return { model: opts.turnModel, vision, switched: false }
   const prov = (process.env.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase()
   if (prov === 'deepseek' || prov === 'opencode') {
-    const candidates = [
-      envModel('DEEPSEEK_PREMIUM_MODEL', 'deepseek-v4-flash'),
-      envModel('DEEPSEEK_CHAT_MODEL', 'deepseek-v4-flash'),
-    ]
+    // #fix 2026-09: opencode(Go 订阅)优先用当前主模型(resolveActiveModel,
+    // 多模态 glm-5.3-flash)— Console Go 上游对 deepseek-v4-flash 不稳定
+    // (HTTP 400 stub / 600s 挂死),不再作为 opencode 首选视觉候选。
+    const candidates = prov === 'opencode'
+      ? [
+          resolveActiveModel(),
+          envModel('DEEPSEEK_PREMIUM_MODEL', 'deepseek-v4-flash'),
+          envModel('DEEPSEEK_CHAT_MODEL', 'deepseek-v4-flash'),
+        ]
+      : [
+          envModel('DEEPSEEK_PREMIUM_MODEL', 'deepseek-v4-flash'),
+          envModel('DEEPSEEK_CHAT_MODEL', 'deepseek-v4-flash'),
+        ]
     for (const candidate of candidates) {
       if (candidate !== opts.turnModel && modelSupportsVision(candidate)) {
         return { model: candidate, vision: true, switched: true }

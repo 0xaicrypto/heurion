@@ -5,7 +5,7 @@ import crypto from 'crypto'
 import { SCHEMA_VERSION } from '@heurion/contracts'
 import type { PolishStreamChunk } from '@heurion/contracts'
 import { renderDocxBuffer, renderPdfBuffer, isExportFormat } from './markdown-export.js'
-import { polishSelection, polishSelectionFallback, writeMethodsSection, writePaperBackground, MAX_POLISH_CHARS, resolvePolishModel } from './document-writing.service.js'
+import { polishSelection, polishSelectionFallback, writeMethodsSection, writePaperBackground, MAX_POLISH_CHARS, resolvePolishModel, resolvePolishDeadlineMs } from './document-writing.service.js'
 // #777: pptx 解析导入 — deck/文章双落点（后台执行）。
 import { extractPptxContentFromUpload, pptxSlidesToDeck } from '../../lib/pptx-extractor.js'
 // #787: 上传即草稿的导入编排收敛到 doc-import 单点。
@@ -193,6 +193,23 @@ export async function documentsRouter(app: FastifyInstance) {
     })) }
   })
 
+  // #870: 气泡 apply 补快照 — 客户端已就地替换选区,这里补一条版本快照,
+  // 与聊天 edit_document 的 'AI edit' 快照对齐(撤销/审计能力一致)。
+  // 写回走 DocVersionWriter 单点(同帧带旧 deck)。
+  app.post('/api/v1/docs/:docId/snapshots', async (request, reply) => {
+    const { docId } = request.params as any
+    const userId = request.user!.userId
+    const { body, label } = (request.body || {}) as { body?: string; label?: string }
+    if (typeof body !== 'string' || !body.trim()) {
+      return reply.status(400).send({ error: 'body required' })
+    }
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    if (!doc) return reply.status(404).send({ error: 'Doc not found' })
+    const written = await writeDocVersion({ userId, docId, body, snapshotLabel: String(label || 'AI polish').slice(0, 40) })
+    if (written.error) return reply.status(400).send({ error: written.error })
+    return { ok: true }
+  })
+
   // #764: 快照全文 — Restore 前先与当前版本做 diff 审阅,确认后才 apply。
   app.get('/api/v1/docs/:docId/snapshots/:snapId', async (request, reply) => {
     const { docId, snapId } = request.params as any
@@ -257,12 +274,13 @@ export async function documentsRouter(app: FastifyInstance) {
     // #797: 产出端过契约 — 发送形状由 PolishStreamChunk 编译期锁定。
     const send = (d: PolishStreamChunk) => sse.send(d)
 
-    // S3+S5: 取消传导 — 客户端断开或 150s 总超时都 abort 上游生成
+    // S3+S5: 取消传导 — 客户端断开或总超时(随选区放宽,#869)都 abort 上游生成
     const controller = new AbortController()
     let finished = false
     const finish = () => { if (!finished) { finished = true; sse.end() } }
     reply.raw.on('close', () => controller.abort())
-    const deadline = setTimeout(() => controller.abort(), 150_000)
+    // #869: 150s 基线 + 10ms/字符,上限 600s — 大选区+思维链不再被掐。
+    const deadline = setTimeout(() => controller.abort(), resolvePolishDeadlineMs(selection.length))
     // S4: 心跳 — 长思考静默期防代理空闲掐断(SSE 注释行,客户端解析器自动忽略)
     const heartbeat = setInterval(() => {
       try { reply.raw.write(': ping\n\n') } catch { /* closed */ }
