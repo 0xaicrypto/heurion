@@ -73,8 +73,10 @@ jobs:
       - name: Run unit tests (tests/unit, no DB/IO)
         # timeout guards against runner-level hangs (observed: job stuck at
         # 15m while the same suite runs in ~10s locally) — fails loudly.
-        # TEMP #886-debug: verbose reporter 定位 fork 挂死点(合并前移除)
-        run: timeout 240 pnpm exec vitest run tests/unit tests/integration --testTimeout=20000 --reporter=verbose
+        # TEMP #886-debug: url-cache 测试拆出单独跑(fork 挂死二分定位)
+        run: |
+          timeout 240 pnpm exec vitest run tests/unit tests/integration --testTimeout=20000 --exclude='**/url-cache.test.ts'
+          timeout 120 pnpm exec vitest run tests/unit/url-cache.test.ts --testTimeout=20000 --pool=threads
 
   build-and-test:
     name: Build + Phase 0 regression
