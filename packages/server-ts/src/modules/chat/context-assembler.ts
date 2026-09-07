@@ -29,6 +29,10 @@ export interface SegmentBuildInput {
   layer3FactHashes: Set<string>
   /** 历史占用 token — budget.allocateHistory 用(#630 口径)。 */
   historyTokens: number
+  /** #fix 2026-09: 段内子进度 — 慢段(钉选文档提取/参考材料解析)在段内
+   *  逐项发进度文案,消除"一个阶段卡 9 分钟零事件"的黑盒。由 assemble
+   *  注入(转发 onStage),builder best-effort 调用。 */
+  stage?: (label: string) => void
 }
 
 export interface SegmentBuilderSpec {
@@ -99,7 +103,12 @@ export class ContextAssembler {
       }
       let text = ''
       try {
-        text = await b.build(input)
+        // #fix 2026-09: build 输入附带 stage 转发 — builder 内部慢子步骤
+        // (逐文件提取)可实时发进度文案。
+        const buildInput: SegmentBuildInput = onStage
+          ? { ...input, stage: (label: string) => { try { onStage(label) } catch { /* ignore */ } } }
+          : input
+        text = await b.build(buildInput)
       } catch (err) {
         const reason = (err as Error).message.slice(0, 120)
         if (b.required) telemetry.push(`segment ${b.key} FAILED: ${reason}`)

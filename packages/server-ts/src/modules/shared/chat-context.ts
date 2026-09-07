@@ -441,10 +441,12 @@ export async function findUploadFileByName(
 export async function buildDocReferenceBlocks(
   userId: string,
   refs: Array<{ id?: string; refType?: string | null; snapshot?: string | null; label?: string | null }>,
-  opts: { findFileByName: (name: string) => Promise<{ id: string } | null> },
+  opts: { findFileByName: (name: string) => Promise<{ id: string } | null>; /** #fix 2026-09: 段内子进度(逐文件提取可达分钟级,发文案消除黑盒) */ onProgress?: (i: number, total: number, label: string) => void },
 ): Promise<{ blocks: string[]; resolved: number }> {
   const blocks: string[] = []
   let resolved = 0
+  let fileIdx = 0
+  const fileTotal = refs.filter((r) => DOC_FILE_REF_KINDS.has(String(r.refType || '')) && r.snapshot).length
   for (const r of refs) {
     const header = `### ${r.label || r.id || ''}`
     const kind = String(r.refType || '')
@@ -453,6 +455,8 @@ export async function buildDocReferenceBlocks(
       blocks.push(`${header}\n${snapshot.slice(0, CONTEXT_CONFIG.scene.docRefChars)}`)
       continue
     }
+    fileIdx++
+    try { opts.onProgress?.(fileIdx, fileTotal, r.label || snapshot) } catch { /* best-effort */ }
     try {
       const found = await opts.findFileByName(snapshot)
       // #fix: 文件类引用用与"导入文档"同一提取器(markdown 结构恢复) —
