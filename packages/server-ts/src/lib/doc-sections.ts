@@ -23,8 +23,48 @@ export interface DocSections {
 }
 
 const HEADING_RE = /^(#{1,3})\s+(.+)$/
-/** "第 N 段"、"第 2/3 段"、"第 N 节" — 支持 i/N 形式(模型播报进度时的写法)。 */
-const SECTION_REF_RE = /第\s*(\d+)\s*(?:\/\s*\d+\s*)?(?:段|节|部分)/
+/**
+ * 段落引用解析(#833: 支持中文数字 + 「章」)。
+ *  - 阿拉伯数字:「第 3 段」「第 2/5 节」(i/N 为模型进度播报写法)
+ *  - 中文数字:「第三章」「第十二节」「廿一」不常见,支持 一-九十九 + 「两」
+ *  - 单位:段/节/部分/章
+ */
+const SECTION_REF_RE = /第\s*(\d+)\s*(?:\/\s*\d+\s*)?(?:段|节|部分|章)/
+const CN_DIGIT: Record<string, number> = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
+/** 中文数字 → 阿拉伯(支持 一-九十九;非法/超范围返回 null)。 */
+export function parseChineseNumeral(s: string): number | null {
+  const t = s.trim()
+  if (!t) return null
+  if (/^\d+$/.test(t)) {
+    const n = parseInt(t, 10)
+    return n > 0 && n < 10000 ? n : null
+  }
+  if ([...t].some((c) => !(c in CN_DIGIT) && c !== '十')) return null
+  if (t === '十') return 10
+  const tenIdx = t.indexOf('十')
+  if (tenIdx === -1) return CN_DIGIT[t] ?? null
+  const tensPart = t.slice(0, tenIdx)
+  const onesPart = t.slice(tenIdx + 1)
+  const tens = tensPart === '' ? 1 : CN_DIGIT[tensPart] ?? -1
+  const ones = onesPart === '' ? 0 : CN_DIGIT[onesPart] ?? -1
+  if (tens < 0 || ones < 0 || tens > 9) return null
+  const n = tens * 10 + ones
+  return n > 0 ? n : null
+}
+/** 匹配消息中的段落引用,返回段号;无引用返回 null。 */
+export function matchSectionRef(text: string): number | null {
+  const arabic = text.match(SECTION_REF_RE)
+  if (arabic) {
+    const n = parseInt(arabic[1], 10)
+    if (n > 0) return n
+  }
+  const chinese = text.match(/第\s*([零一二两三四五六七八九十]{1,4})\s*(?:段|节|部分|章)/)
+  if (chinese) {
+    const n = parseChineseNumeral(chinese[1])
+    if (n && n > 0) return n
+  }
+  return null
+}
 /** 句子边界(中文/英文标点),用于超大段落硬切。 */
 const SENTENCE_RE = /(?<=[。！？；.!?;])\s*/
 
@@ -132,23 +172,26 @@ function clampIndex(index: number, total: number): number {
  */
 export function resolveDocumentFocus(userText: string, sections: DocSection[], lastAssistantText?: string): number {
   const text = userText || ''
-  const explicit = text.match(SECTION_REF_RE)
-  if (explicit) return clampIndex(parseInt(explicit[1], 10), sections.length)
+  // #833: 统一走 matchSectionRef(支持中文数字 + 「章」)。
+  const explicit = matchSectionRef(text)
+  if (explicit) return clampIndex(explicit, sections.length)
 
   const byTitle = sections.find((s) => s.title.length >= 2 && text.includes(s.title))
   if (byTitle) return byTitle.index
 
   if (/继续|下一段|下一部分|下部分|next/i.test(text)) {
-    const m = (lastAssistantText || '').match(SECTION_REF_RE)
-    if (m) return clampIndex(parseInt(m[1], 10) + 1, sections.length)
+    const m = lastAssistantText ? matchSectionRef(lastAssistantText) : null
+    if (m) return clampIndex(m + 1, sections.length)
   }
 
   // #866: 继承助手最近一次播报的段(取最后一个匹配 — 批量模式连做多段
   // 时最后一处即停下的位置)。
-  const progress = lastAssistantText?.match(new RegExp(SECTION_REF_RE.source, 'g'))
-  if (progress && progress.length > 0) {
-    const last = progress[progress.length - 1].match(SECTION_REF_RE)
-    if (last) return clampIndex(parseInt(last[1], 10), sections.length)
+  if (lastAssistantText) {
+    const matches = [...lastAssistantText.matchAll(/第\s*((?:\d+)(?:\s*\/\s*\d+)?|[零一二两三四五六七八九十]{1,4})\s*(?:段|节|部分|章)/g)]
+    if (matches.length > 0) {
+      const last = parseChineseNumeral(matches[matches.length - 1][1].split('/')[0].trim())
+      if (last) return clampIndex(last, sections.length)
+    }
   }
 
   return 1

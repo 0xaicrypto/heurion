@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'vitest'
-import { splitDocumentSections, resolveDocumentFocus, type DocSection } from '../../src/lib/doc-sections.js'
+import { splitDocumentSections, resolveDocumentFocus, matchSectionRef, parseChineseNumeral, type DocSection } from '../../src/lib/doc-sections.js'
+import { renderReferenceBody } from '../../src/modules/shared/chat-context.js'
 
 describe('#fix 长文档分段 splitDocumentSections', () => {
   test('heading 模式:按 ## 标题切分,含标题行与后续内容', () => {
@@ -96,5 +97,60 @@ describe('resolveDocumentFocus 段落焦点解析', () => {
     expect(resolveDocumentFocus('这句话什么意思', sections, '这段讨论的是 EGFR 突变机制。')).toBe(1)
     // 显式信号优先级不变:用户点名第 1 段覆盖继承
     expect(resolveDocumentFocus('回到第 1 段看看', sections, '已完成 第 2/3 段「方法」')).toBe(1)
+  })
+})
+
+// #833 — 中文数字与「章」单元寻址。
+describe('#833 中文数字/章寻址', () => {
+  const sections: DocSection[] = Array.from({ length: 12 }, (_, i) => ({
+    index: i + 1,
+    title: `第${['一','二','三','四','五','六','七','八','九','十','十一','十二'][i]}章 第${i + 1}部分`,
+    content: 'x',
+  }))
+
+  test('matchSectionRef: 中文数字 + 章/节/段单位', () => {
+    expect(matchSectionRef('请你检查原文第三章')).toBe(3)
+    expect(matchSectionRef('看看第 3 章')).toBe(3)
+    expect(matchSectionRef('润色第十二节')).toBe(12)
+    expect(matchSectionRef('第两段改一下')).toBe(2)
+    expect(matchSectionRef('第 2/5 节怎么改')).toBe(2)
+    expect(matchSectionRef('没有引用任何段落')).toBeNull()
+  })
+
+  test('parseChineseNumeral 边界', () => {
+    expect(parseChineseNumeral('三')).toBe(3)
+    expect(parseChineseNumeral('十')).toBe(10)
+    expect(parseChineseNumeral('十二')).toBe(12)
+    expect(parseChineseNumeral('二十')).toBe(20)
+    expect(parseChineseNumeral('两')).toBe(2)
+    expect(parseChineseNumeral('abc')).toBeNull()
+    expect(parseChineseNumeral('三三')).toBeNull()
+  })
+
+  test('resolveDocumentFocus: 「检查第三章」命中第 3 段(不再静默落第 1 段)', () => {
+    expect(resolveDocumentFocus('请你检查原文第三章', sections)).toBe(3)
+    // 章节标题包含「第三章」时 byTitle 亦可达(顺序: 显式引用优先)
+    expect(resolveDocumentFocus('第十二节讨论一下', sections)).toBe(12)
+  })
+})
+
+// #833 修复 3 — 参考材料超预算按指名章节注入。
+describe('#833 renderReferenceBody 参考材料章节定位', () => {
+  test('超预算 + 用户指名章节 → 注入该章正文+结构清单,而非头部截断', () => {
+    const chapters = Array.from({ length: 6 }, (_, i) => `## 第${['一','二','三','四','五','六'][i]}章 第${i + 1}章内容\n\n${`第${i + 1}章独有内容标记CH${i + 1}。`.repeat(400)}`).join('\n\n')
+    const body = renderReferenceBody(chapters, '请你检查原文第三章')
+    expect(body).toContain('已按用户指名章节定位')
+    expect(body).toContain('第 3/6 段「第三章')
+    expect(body).toContain('CH3')
+    expect(body).not.toContain('CH6')
+    expect(body).toContain('1. 第一章')
+  })
+
+  test('预算内 → 原文直出;无指名 → 保持头部截断', () => {
+    expect(renderReferenceBody('短正文', '随便')).toBe('[已解析上传文件正文]\n短正文')
+    const big = `## 第一章\n\n${'头部内容HEAD。'.repeat(500)}\n\n## 第六章\n\n${'尾部TAIL。'.repeat(500)}`
+    const head = renderReferenceBody(big)
+    expect(head).toContain('HEAD')
+    expect(head).not.toContain('已按用户指名章节定位')
   })
 })

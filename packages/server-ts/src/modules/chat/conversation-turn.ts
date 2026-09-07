@@ -365,6 +365,8 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           findFileByName: async (name) => findUploadFileByName(userId, name),
           // #fix 2026-09: 逐文件子进度 — 参考材料提取可达分钟级。
           onProgress: (i, total, label) => input.stage?.(`正在解析参考材料 ${i}/${total}：${String(label).slice(0, 40)}`),
+          // #833: 参考材料超预算时按用户指名章节定位注入。
+          userText: body.text,
         })
         const refBlock = refBlocks.join('\n\n')
 
