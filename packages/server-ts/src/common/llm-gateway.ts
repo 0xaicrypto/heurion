@@ -460,7 +460,8 @@ export async function fetchWithRetry(
       if (timer) clearTimeout(timer)
       lastErr = err
       if (err?.name === 'AbortError') {
-        throw new Error(`LLM request timed out after ${timeoutMs}ms`)
+        // #fix: 超时错误人话化 — 原样英文技术文案对用户不可行动。
+        throw new Error(`AI 生成超时（${Math.round(timeoutMs / 1000)} 秒无响应）— 长任务可能超出单次生成上限，请拆分步骤后重试；若持续出现请稍后再试（上游服务可能繁忙）`)
       }
       if (attempt < maxRetries) {
         const delay = opts.delayMs ?? Math.pow(2, attempt) * 500
@@ -709,6 +710,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       await recordFailure(model, options, err, promptChars(messages), Date.now() - startedAt)
       throw err
     }
+    log.info(`[LLM] headers=${Date.now() - startedAt}ms model=${model}`)
     if (!res.ok) {
       // 上游明确拒绝(401 key 失效 / 402 余额 / 429 限流 / 413 超长) —
       // 带状态码 + 上游响应体片段,前端/日志可定位真实原因(如某模型
@@ -908,6 +910,8 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
     // not end silently with zero output.
     let sawContent = false
     let sawReasoning = false
+    // #fix: TTFB 观测 — 首字节耗时是"上游排队 vs 任务本身重"的判据。
+    let ttfbLogged = false
 
     try {
       while (true) {
@@ -923,6 +927,10 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
         }
         const { done, value } = readResult
         if (done) break
+        if (!ttfbLogged && value.length > 0) {
+          ttfbLogged = true
+          log.info(`[LLM] ttfb=${Date.now() - startedAt}ms model=${model}`)
+        }
         buffer += decoder.decode(value, { stream: true })
 
         const lines = buffer.split('\n')

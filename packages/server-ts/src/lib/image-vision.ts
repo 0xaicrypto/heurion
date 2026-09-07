@@ -114,13 +114,13 @@ export async function describeImage(userId: string, fileId: string, question?: s
 }
 
 /** 并发受限的 map(同 pdf-formula 口径) — 导入期批量图题用。 */
-export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length)
   let cursor = 0
   const worker = async () => {
     while (cursor < items.length) {
       const idx = cursor++
-      results[idx] = await fn(items[idx])
+      results[idx] = await fn(items[idx], idx)
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))

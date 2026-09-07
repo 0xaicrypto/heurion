@@ -25,7 +25,7 @@ describe('#184 LLM timeout & retry', () => {
 
     await expect(
       fetchWithRetry('https://x', {}, { timeoutMs: 5, delayMs: 0 }),
-    ).rejects.toThrow(/timed out/)
+    ).rejects.toThrow(/生成超时/)
   })
 
   test('5xx exhausts retries and surfaces a friendly error', async () => {
