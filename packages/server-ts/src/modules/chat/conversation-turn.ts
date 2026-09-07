@@ -314,7 +314,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       key: 'document_context',
       fallbackOrder: 2,
       stageLabel: '正在解析文档与参考材料…',
-      build: async () => {
+      build: async (input) => {
         if (!sid.startsWith('doc-')) return ''
         const docId = sid.slice(4)
         const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
@@ -363,6 +363,8 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           // #fix: fileIndex 优先 + 上传目录文件名兜底 — 用户上传的文件
           // 一定在磁盘上,正文注入不依赖 fileIndex 表是否有记录。
           findFileByName: async (name) => findUploadFileByName(userId, name),
+          // #fix 2026-09: 逐文件子进度 — 参考材料提取可达分钟级。
+          onProgress: (i, total, label) => input.stage?.(`正在解析参考材料 ${i}/${total}：${String(label).slice(0, 40)}`),
         })
         const refBlock = refBlocks.join('\n\n')
 
@@ -504,7 +506,11 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           .slice(0, CONTEXT_CONFIG.injection.pickedMax)
         const { extractTextFromUpload } = await import('../../lib/document-extractor.js')
         const docBlocks: string[] = []
-        for (const d of docs) {
+        // #fix 2026-09: 逐文件子进度 — 钉选 PDF 提取(解析+图片+公式 OCR)
+        // 单文件可达数分钟,整段此前零事件,用户面对 9 分钟黑盒。
+        for (let i = 0; i < docs.length; i++) {
+          const d = docs[i]
+          input.stage?.(`正在读取钉选文档 ${i + 1}/${docs.length}：${String(d.name || d.stableId).slice(0, 40)}`)
           const text = await extractTextFromUpload(userId, d.stableId, { maxChars: CONTEXT_CONFIG.injection.pickedCharsPerItem })
           docBlocks.push(`- [document] (${d.stableId}) ${d.name}: ${(text || d.name).slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`)
         }
