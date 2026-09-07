@@ -17,13 +17,18 @@ import path from 'path'
 import { createRequire } from 'node:module'
 import { makeLogger } from '../../common/logger.js'
 
-// #859: node:sqlite 用 createRequire 加载 — vite/vitest 对 `import 'node:sqlite'`
-// 的静态解析会把 node: 前缀剥掉当 npm 包而失败(builtin 清单未收录);
-// createRequire 运行时由 node 原生解析,绕过打包器。类型见 src/types/node-sqlite.d.ts。
-const requireNative = createRequire(import.meta.url)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const { DatabaseSync } = requireNative('node:sqlite') as any
-type Db = InstanceType<typeof DatabaseSync>
+// #859: node:sqlite 惰性加载 — vite/vitest 对 `import 'node:sqlite'` 的静态
+// 解析会把 node: 前缀剥掉当 npm 包而失败(builtin 清单未收录);createRequire
+// 运行时由 node 原生解析。类型见 src/types/node-sqlite.d.ts。
+let DatabaseSyncCtor: any = null
+function getDatabaseCtor(): any {
+  if (!DatabaseSyncCtor) {
+    const requireNative = createRequire(import.meta.url)
+    DatabaseSyncCtor = requireNative('node:sqlite').DatabaseSync
+  }
+  return DatabaseSyncCtor
+}
+type Db = any
 
 const log = makeLogger('tools.url-cache')
 
@@ -69,7 +74,7 @@ function ensureDb(): Db | null {
   try {
     const target = process.env.URL_CACHE_DB_PATH || DEFAULT_DB_PATH
     if (target !== ':memory:') fs.mkdirSync(path.dirname(target), { recursive: true })
-    const d = new DatabaseSync(target)
+    const d = new (getDatabaseCtor())(target)
     if (target !== ':memory:') d.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;')
     initSchema(d)
     db = d
