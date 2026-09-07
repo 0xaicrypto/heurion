@@ -69,6 +69,14 @@ export function buildLlm(env: Record<string, unknown>): unknown {
   const apiKey = String(env.LLM_API_KEY || '')
   const baseUrl = String(env.LLM_BASE_URL || 'https://api.openai.com/v1')
   const model = String(env.LLM_MODEL || 'gpt-4o-mini')
-  const provider = createOpenAI({ apiKey, baseURL: baseUrl })
+  // OpenCode Go(LLM_BASE_URL 指向 zen/go/v1 时)要求自报 UA + 稳定会话头,
+  // 缺失时 Console Go 上游 400 MissingSessionID(与 llm-gateway 同源问题)。
+  const headers: Record<string, string> = {
+    'User-Agent': 'Heurion-BrowserAgent/1.0',
+  }
+  if (baseUrl.includes('opencode.ai')) {
+    headers['x-opencode-session'] = 'heurion-browser-agent'
+  }
+  const provider = createOpenAI({ apiKey, baseURL: baseUrl, headers })
   return provider.chat(model)
 }

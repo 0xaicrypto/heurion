@@ -733,6 +733,8 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         model: visionModel,
         telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
         signal: chatAbort.signal,
+        // #fix 2026-09: OpenCode Go 要求 per-conversation 会话头(x-opencode-session)。
+        sessionId: sid,
         // #802: doc 会话长生成 TTFB 放宽(同 tool-loop — 见 resolveTurnTimeoutMs)。
         timeoutMs: resolveTurnTimeoutMs(sid),
       }, (reasoning) => send({ type: 'reasoning_chunk', text: reasoning }))) {
