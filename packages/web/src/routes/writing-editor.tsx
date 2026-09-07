@@ -605,7 +605,6 @@ export function WritingEditorPage() {
       ...(base_sha ? { base_sha } : {}),
       ...(opts.force ? { force: true } : {}),
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- docId 稳定
   }, [docId]);
 
   const handleSave = async () => {
