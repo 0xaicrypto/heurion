@@ -20,6 +20,9 @@ export default defineConfig({
     fileParallelism: false,
     env: {
       DATABASE_URL: 'file:./test.db',
+      // #859: 全部测试用 :memory:(CI 无 /data/db 写权限,显式注入消除
+      // EACCES 噪音与打开路径差异)
+      URL_CACHE_DB_PATH: ':memory:',
       TWIN_BASE_DIR: '.nexus/test-twins',
       SERVER_SECRET: 'test-secret',
       CORS_ALLOW_ORIGINS: '*',

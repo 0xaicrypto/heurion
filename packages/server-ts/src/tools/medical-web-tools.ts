@@ -26,6 +26,9 @@ interface PubmedArticle {
  */
 import { eutilsRequest } from './search-citation-tool.js'
 import { crossrefResolveDoi, formatCrossrefSummary, looksLikeDoi } from './crossref.client.js'
+import { normalizeCacheKey } from './url-cache/normalize.js'
+import { cacheGet, cacheSet } from './url-cache/store.js'
+import { makeLogger } from '../common/logger.js'
 
 async function eutilsFetch(path: string, params: Record<string, string>, ctx?: ToolContext, queryForAudit?: string): Promise<string> {
   const text = await eutilsRequest(path, params, { signal: ctx?.signal })
@@ -315,8 +318,13 @@ export function isStructuredApiEndpoint(url: string): boolean {
 const EUTILS_MISUSE_GUIDANCE = 'eutils.ncbi.nlm.nih.gov 是 NCBI E-utilities 结构化 API 端点，不是网页 — 本工具不抓取 API。检索 PubMed 请改用 search_citation 工具（内置限速/缓存/API key，传入检索式而非拼好的 URL）。'
 
 /**
- * 医学页面统一抓取入口:直连 → Browser Run → 诚实失败(带停止重试指引)。
+ * 医学页面统一抓取入口:缓存 → 直连 → Browser Run → 诚实失败(带停止重试指引)。
  * 同会话重复抓取已确认拦截的 host 会立即秒拒,不再消耗工具轮次。
+ * #861: page_md 持久缓存(#857/#859)— 入口查缓存(命中直接返回,跳过
+ * 直连与 Browser Run 计费路径);direct/browser 成功后写回;两路皆空时
+ * 先回退过期缓存(stale-on-error),无才走 blocked-host 抛错。
+ * TTL 7 天(URL_CACHE_TTL_PAGE_H,文献页面发布后近乎不可变);
+ * `URL_CACHE_ENABLED=false` 关闭。
  */
 async function fetchMedicalPageMarkdown(url: string, ctx: ToolContext, auditLabel: string): Promise<{ markdown: string; title: string }> {
   const host = hostOf(url)
@@ -324,9 +332,35 @@ async function fetchMedicalPageMarkdown(url: string, ctx: ToolContext, auditLabe
   if (isHostBlocked(sessionId, host)) {
     throw new Error(`站点 ${host} 已在本会话确认为反爬拦截（直接抓取与浏览器渲染均无内容），已停止尝试。请基于已有资料继续当前任务，勿再请求该站点；如需引用请在文中如实标注"来源未能核实"。`)
   }
+  // #861: page_md 持久缓存 — key 归一化(#858),TTL 天级(页面近不可变)。
+  const cacheEnabled = process.env.URL_CACHE_ENABLED !== 'false'
+  const pageTtlMs = (Number(process.env.URL_CACHE_TTL_PAGE_H) || 168) * 3600_000
+  let staleFallback: string | undefined
+  if (cacheEnabled) {
+    try {
+      const hit = cacheGet('page_md', normalizeCacheKey(url))
+      if (hit) {
+        if (!hit.stale) {
+          try {
+            ctx.eventLog.append({
+              timestamp: Date.now() / 1000,
+              eventType: 'evolution',
+              content: `🌐 站点访问：${auditLabel}`,
+              metadata: { action: 'medical_web_visit', url, source: 'cache' },
+              agentId: ctx.userId,
+              sessionId,
+            })
+          } catch { /* best-effort */ }
+          return { markdown: hit.body, title: '' }
+        }
+        staleFallback = hit.body
+      }
+    } catch { /* 缓存故障降级直连 */ }
+  }
   // ① 直连抓取
   const direct = await directFetchMarkdown(url, ctx)
   if (direct) {
+    if (cacheEnabled) cacheSet('page_md', normalizeCacheKey(url), direct, pageTtlMs)
     try {
       ctx.eventLog.append({
         timestamp: Date.now() / 1000,
@@ -342,9 +376,17 @@ async function fetchMedicalPageMarkdown(url: string, ctx: ToolContext, auditLabe
   // ② Browser Run
   try {
     const viaBrowser = await browserRunMarkdown(url, ctx, auditLabel)
-    if (viaBrowser.markdown) return viaBrowser
+    if (viaBrowser.markdown) {
+      if (cacheEnabled) cacheSet('page_md', normalizeCacheKey(url), viaBrowser.markdown, pageTtlMs)
+      return viaBrowser
+    }
   } catch { /* fall through to honest failure */ }
-  // ③ 两路皆空 — 记忆并给出行为指引
+  // ③ stale-on-error:两路皆空 — 过期缓存优于抛错(#857 对症药)
+  if (staleFallback !== undefined) {
+    makeLogger('tools.medical-web').warn(`[medical-web] stale page cache served: ${host}`)
+    return { markdown: staleFallback, title: '' }
+  }
+  // ④ 两路皆空且无缓存 — 记忆并给出行为指引
   noteBlockedHost(sessionId, host)
   throw new Error(`站点 ${host} 禁止自动化访问（反爬拦截）：直接抓取与浏览器渲染均未获得内容。请勿继续重试该站点；请基于已有资料继续当前任务，如需引用请在文中如实标注"来源未能核实"。`)
 }
