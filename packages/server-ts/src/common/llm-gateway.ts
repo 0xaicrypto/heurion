@@ -365,6 +365,10 @@ export interface LlmChatOptions {
   /** External abort signal (client disconnect) — combined with the
    *  internal timeout via AbortSignal.any. */
   signal?: AbortSignal
+  /** OpenCode Go 要求 per-conversation 稳定会话 ID(x-opencode-session 头,
+   *  用于路由与 prompt caching);生产 2026-09 起 Console Go 上游对缺失
+   *  直接 400(MissingSessionID)。有会话上下文的调用方尽量传入。 */
+  sessionId?: string
   /** @internal — pure-reasoning truncation retry guard (never set by callers). */
   retryDepth?: number
 }
@@ -642,6 +646,25 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
     return legacyDefault
   }
 
+  /**
+   * #fix 2026-09 — 统一请求头。OpenCode Go 网关除鉴权外还要求:
+   *  1. 自报 UA(不能是泛用 SDK/HTTP 库名,否则可能被判为非编码代理流量);
+   *  2. `x-opencode-session` 稳定会话 ID — 缺失时 Console Go 上游直接
+   *     HTTP 400 MissingSessionID(生产 48h 内 18 次,间歇性命中)。
+   *  回落常量:无会话上下文的后台任务归入同一路由桶,满足网关校验即可。
+   */
+  private headers(options: LlmChatOptions): Record<string, string> {
+    const h: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${this.getApiKey()}`,
+      'User-Agent': 'Heurion/1.0 (medical research agent)',
+    }
+    if (currentLlmProvider() === 'opencode') {
+      h['x-opencode-session'] = options.sessionId || 'heurion-server'
+    }
+    return h
+  }
+
   async chat(
     messages: ChatMessage[],
     options: LlmChatOptions = {},
@@ -678,7 +701,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
     try {
       res = await fetchWithRetry(`${this.endpoint().baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
+        headers: this.headers(options),
         body: JSON.stringify(body),
       }, { signal: options.signal, timeoutMs: options.timeoutMs })
     } catch (err) {
@@ -698,7 +721,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
         log.warn('image parts rejected — retrying with images stripped', { model })
         const res2 = await fetchWithRetry(`${this.endpoint().baseUrl}/chat/completions`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
+          headers: this.headers(options),
           body: JSON.stringify({ ...body, messages: serializeMessages(stripImageParts(messages), model) }),
         }, { signal: options.signal, timeoutMs: options.timeoutMs })
         if (res2.ok) {
@@ -821,7 +844,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
     try {
       res = await fetchWithRetry(`${this.endpoint().baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
+        headers: this.headers(options),
         body: JSON.stringify({
           model,
           messages: serializeMessages(messages, model),
@@ -858,7 +881,7 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
         }
         const res2 = await fetchWithRetry(`${this.endpoint().baseUrl}/chat/completions`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.getApiKey()}` },
+          headers: this.headers(options),
           body: JSON.stringify(bodyJson),
         }, { signal: options.signal, timeoutMs: options.timeoutMs })
         if (res2.ok) {

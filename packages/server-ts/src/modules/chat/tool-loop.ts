@@ -225,6 +225,8 @@ export async function runToolCallLoop(params: {
         model: turnModel,
         telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
         signal: io.signal,
+        // #fix 2026-09: OpenCode Go 要求 per-conversation 会话头(x-opencode-session)。
+        sessionId,
         // #802: doc 会话长生成任务 TTFB 预算放宽到 600s(默认 300s 掐死
         // 整篇扩写类首调用,现场 9/2「扩充完整正文」309s 静默死亡)。
         timeoutMs: resolveTurnTimeoutMs(sessionId),
