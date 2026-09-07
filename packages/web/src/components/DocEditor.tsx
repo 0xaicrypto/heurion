@@ -62,6 +62,8 @@ interface DocEditorProps {
     onDiscard: () => void;
     onRetry: () => void;
     onRefine: (instruction: string, currentText: string) => void;
+    /** #871: 送入聊天 — 选区+指令转聊天流。 */
+    onSendToChat?: (instruction?: string) => void;
   };
   /** #764: 审阅模式标题(restore 场景显示「审阅版本恢复」)。 */
   reviewTitle?: string;
@@ -451,6 +453,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
             onDiscard={bubble.onDiscard}
             onRetry={bubble.onRetry}
             onRefine={bubble.onRefine}
+            onSendToChat={bubble.onSendToChat}
           />
         )}
       </div>

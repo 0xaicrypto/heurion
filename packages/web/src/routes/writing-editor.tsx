@@ -310,7 +310,18 @@ export function WritingEditorPage() {
   }, [chat.chatLoading, flushPendingWriteBack]);
 
   // #696: 润色气泡状态机下沉 usePolishBubble（#797: rAF 合帧）。
-  const bubble = usePolishBubble({ docId, editorRef: polishEditorRef, onNotice: showNotice });
+  const bubble = usePolishBubble({
+    docId,
+    editorRef: polishEditorRef,
+    onNotice: showNotice,
+    // #871: 气泡「在聊天中继续」— 选区文本走聊天上下文通道,指令预填
+    // 聊天输入,打开聊天面板由用户确认发送。
+    onSendToChat: (selection, instruction) => {
+      setChatSelection(selection);
+      setChatInput(instruction);
+      setChatOpen(true);
+    },
+  });
 
   // #636 doc write-back diff 审阅 — 依赖 chatSession。
   // #837-ux: 同轮合批 — 写回到达只更新批次末值,turn 结束/兜底超时才进审阅。
@@ -1096,6 +1107,7 @@ export function WritingEditorPage() {
                         onDiscard: bubble.handleBubbleDiscard,
                         onRetry: bubble.handleBubbleRetry,
                         onRefine: bubble.handleBubbleRefine,
+                        onSendToChat: bubble.handleSendToChat,
                       }}
                     />
                   </div>

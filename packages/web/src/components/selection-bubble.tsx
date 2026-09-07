@@ -46,6 +46,8 @@ export interface SelectionBubbleProps {
   onRetry: () => void;
   /** #778: 多轮 — instruction=新要求,currentText=用户可能已改的当前版本。 */
   onRefine: (instruction: string, currentText: string) => void;
+  /** #871: 送入聊天 — done 态把选区+指令转入聊天流。 */
+  onSendToChat?: (instruction?: string) => void;
 }
 
 const ACTIONS: ReadonlyArray<readonly [string, string, string]> = [
@@ -55,7 +57,7 @@ const ACTIONS: ReadonlyArray<readonly [string, string, string]> = [
   ['summarize', '📄', 'bubbleSummarize'],
 ];
 
-export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, onApply, onDiscard, onRetry, onRefine }: SelectionBubbleProps) {
+export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, onApply, onDiscard, onRetry, onRefine, onSendToChat }: SelectionBubbleProps) {
   const { t } = useTranslation();
   const [instruction, setInstruction] = useState('');
   /** pointerdown/click 双通道去重:同一次按下只分发一次。 */
@@ -133,6 +135,7 @@ export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, o
             onDiscard={onDiscard}
             onRetry={onRetry}
             onRefine={onRefine}
+            onSendToChat={onSendToChat}
           />
           )}
         </div>
