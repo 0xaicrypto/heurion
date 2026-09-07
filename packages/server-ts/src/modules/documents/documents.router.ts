@@ -93,7 +93,7 @@ export async function documentsRouter(app: FastifyInstance) {
 
   app.put('/api/v1/docs/:docId', async (request, reply) => {
     const { docId } = request.params as any
-    const { title, body, deck } = request.body as any
+    const { title, body, deck, base_sha, force } = request.body as any
     const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId: request.user!.userId } })
     if (!existing) return reply.status(404).send({ error: 'Document not found' })
 
@@ -115,6 +115,18 @@ export async function documentsRouter(app: FastifyInstance) {
     // (#773 方案 A — 恢复时一致回滚)。
     const bodyChanged = body !== undefined && body !== existing.body
     if (bodyChanged) {
+      // #882: 并发保护(僵尸 tab)— base_sha 是客户端最后同步的服务端正文
+      // 指纹(sha1)。不匹配 = 客户端视图过期,整篇覆盖会静默丢失另一窗口的
+      // 修改(AI 写回/新 tab 编辑)。显式 force: true 跳过(冲突横幅的
+      // 「保留我的版本」)。不带 base_sha 的旧客户端不受影响(向后兼容)。
+      if (!force && typeof base_sha === 'string' && base_sha.length > 0 &&
+          crypto.createHash('sha1').update(String(existing.body)).digest('hex') !== base_sha) {
+        return reply.status(409).send({
+          error: '文档已在其他窗口被修改，为避免覆盖未做保存',
+          code: 'stale_base',
+          current_updated_at: existing.updatedAt,
+        })
+      }
       data.body = body
     }
     if (bodyChanged || deckChanged) {

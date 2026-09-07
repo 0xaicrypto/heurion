@@ -15,6 +15,7 @@ import { ChartLibrary } from '@/components/chat/ChartLibrary';
 import { chatFailureText } from '@/stores/chat';
 import { Alert, Button, Skeleton, Textarea, Input } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
+import { sha1Hex } from '@/lib/hash';
 import { cn } from '@/lib/utils';
 // #837: AI 写回三路合并(审阅未决时的累计队列重放)。
 import { mergeThreeWay } from '@/lib/doc-merge';
@@ -110,6 +111,9 @@ export function WritingEditorPage() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveConfirmed = useRef(false);
   const [dirty, setDirty] = useState(false);
+  // #882: 并发保存冲突 — 409(stale_base) 时记录待保存内容,横幅供用户选择
+  // (载入最新/保留我的版本),绝不静默覆盖另一窗口的修改。
+  const [saveConflict, setSaveConflict] = useState<{ title: string; body: string; deck?: unknown } | null>(null);
 
   const markDirty = useCallback((nextBody: string, nextTitle: string) => {
     if (!docId) return;
@@ -377,13 +381,18 @@ export function WritingEditorPage() {
       // 用户正文(此前 DB 留着被拒绝的内容,用户下次保存/离开就污染)。
       if (docId && serverBodyRef.current !== null && serverBodyRef.current !== bodyRef.current) {
         const restoreBody = bodyRef.current;
-        api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: restoreBody })
+        saveDoc((doc?.title) ?? 'Untitled', restoreBody)
           .then((updated) => {
             lastSavedBody.current = updated.body ?? restoreBody;
             serverBodyRef.current = updated.body ?? restoreBody;
           })
-          .catch(() => {
-            showNotice(t('writing.reviewSaveFailed', 'AI 修改已应用，但保存失败 — 请点击 Save 重试'), 6000);
+          .catch((err) => {
+            if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {
+              setSaveConflict({ title: (doc?.title) ?? 'Untitled', body: restoreBody });
+              showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
+            } else {
+              showNotice(t('writing.reviewSaveFailed', 'AI 修改已应用，但保存失败 — 请点击 Save 重试'), 6000);
+            }
           });
       }
       // 放弃 → 正文保持原样,队列中的下一轮以当前正文为基线重放。
@@ -400,7 +409,7 @@ export function WritingEditorPage() {
     }
     // #598/#711: 落地后自动保存到服务端 — 失败必须可见,不能静默吞掉。
     if (docId) {
-      api.updateDoc(docId, { title: (doc?.title) ?? 'Untitled', body: result.md })
+      saveDoc((doc?.title) ?? 'Untitled', result.md)
         .then((updated) => {
           lastSavedBody.current = updated.body ?? result.md;
           serverBodyRef.current = updated.body ?? result.md;
@@ -408,8 +417,13 @@ export function WritingEditorPage() {
           setDirty(false);
         })
         .catch((err) => {
-          setError(err instanceof ApiError ? err.messageText : String(err));
-          showNotice(t('writing.reviewSaveFailed', 'AI 修改已应用，但保存失败 — 请点击 Save 重试'), 6000);
+          if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {
+            setSaveConflict({ title: (doc?.title) ?? 'Untitled', body: result.md });
+            showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
+          } else {
+            setError(err instanceof ApiError ? err.messageText : String(err));
+            showNotice(t('writing.reviewSaveFailed', 'AI 修改已应用，但保存失败 — 请点击 Save 重试'), 6000);
+          }
         });
     }
     // #837: 弹出队列中的下一轮写回 — 以本轮接受后的正文为用户基线做三路合并
@@ -580,13 +594,26 @@ export function WritingEditorPage() {
     if (next) loadSnapshots();
   };
 
+  // #882: 带 base_sha 的保存(服务端并发保护)— 指纹取服务端视角正文
+  // (serverBodyRef),409 → 冲突横幅。force 跳过(「保留我的版本」)。
+  const saveDoc = useCallback(async (title: string, body: string, opts: { deck?: unknown; force?: boolean } = {}) => {
+    const base = serverBodyRef.current;
+    const base_sha = !opts.force && base !== null ? await sha1Hex(base) : undefined;
+    return api.updateDoc(docId!, {
+      title, body,
+      ...(opts.deck !== undefined ? { deck: opts.deck } : {}),
+      ...(base_sha ? { base_sha } : {}),
+      ...(opts.force ? { force: true } : {}),
+    });
+  }, [docId]);
+
   const handleSave = async () => {
     if (!docId) return;
     setSaving(true);
     setError(null);
     try {
       // #773: deck 一并保存（deckAsset 为 null 时不触碰服务端 deck）。
-      const updated = await api.updateDoc(docId, { title, body, ...(deckAsset ? { deck: deckAsset } : {}) });
+      const updated = await saveDoc(title, body, { deck: deckAsset ?? undefined });
       lastSavedBody.current = updated.body ?? body;
       serverBodyRef.current = updated.body ?? body;
       lastSavedDeck.current = deckAsset ? JSON.stringify(deckAsset) : lastSavedDeck.current;
@@ -603,9 +630,45 @@ export function WritingEditorPage() {
         showNotice(t('writing.savedVersion', '已保存并创建版本'), 3000);
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err));
+      if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {
+        // #882: 视图过期(僵尸 tab) — 弹冲突横幅由用户决策。
+        setSaveConflict({ title, body, deck: deckAsset ?? undefined });
+        showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
+      } else {
+        setError(err instanceof ApiError ? err.messageText : String(err));
+      }
     } finally {
       setSaving(false);
+    }
+  };
+
+  // #882: 冲突横幅动作。
+  const resolveConflictKeepMine = async () => {
+    if (!docId || !saveConflict) return;
+    try {
+      const updated = await saveDoc(saveConflict.title, saveConflict.body, { deck: saveConflict.deck, force: true });
+      lastSavedBody.current = updated.body ?? saveConflict.body;
+      serverBodyRef.current = updated.body ?? saveConflict.body;
+      setDoc((prev) => prev ? { ...prev, body: updated.body } : prev);
+      setSaveConflict(null);
+      showNotice(t('writing.conflictKeptMine', '已保留当前窗口的版本'), 3000);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    }
+  };
+
+  const resolveConflictLoadLatest = async () => {
+    if (!docId) return;
+    try {
+      const fresh = await api.getDoc(docId);
+      setBody(fresh.body);
+      lastSavedBody.current = fresh.body;
+      serverBodyRef.current = fresh.body;
+      setDoc((prev) => prev ? { ...prev, body: fresh.body, updated_at: fresh.updated_at } : prev);
+      setSaveConflict(null);
+      showNotice(t('writing.conflictLoadedLatest', '已载入服务端最新内容'), 3000);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
     }
   };
 
@@ -1096,6 +1159,16 @@ export function WritingEditorPage() {
                   </div>
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
+                    {saveConflict && (
+                      /* #882: 并发保存冲突横幅 — 用户决策,不静默覆盖另一窗口的修改 */
+                      <div className="flex items-center justify-between gap-2 border-b border-warning/40 bg-warning/10 px-3 py-2 text-[12px] text-text-primary">
+                        <span>⚠ {t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存')}</span>
+                        <div className="flex shrink-0 gap-1">
+                          <Button size="sm" variant="ghost" onClick={() => void resolveConflictLoadLatest()}>{t('writing.conflictLoadLatest', '载入最新')}</Button>
+                          <Button size="sm" onClick={() => void resolveConflictKeepMine()}>{t('writing.conflictKeepMine', '保留我的版本')}</Button>
+                        </div>
+                      </div>
+                    )}
                     <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} diffReview={diffReview} onDiffResolve={handleDiffResolve} onSelectionChange={setChatSelection}
                       queuedRounds={queuedRounds}
                       reviewTitle={restoreReview ? t('writing.restoreReviewTitle', '审阅版本恢复') : undefined}

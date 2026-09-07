@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeAll } from 'vitest'
+import crypto from 'crypto'
 import mammoth from 'mammoth'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
@@ -132,6 +133,75 @@ describe('Documents', () => {
     // #598: 返回结构为 snapshot_id/body_preview(原 body 已调整)
     expect(snapshots[0].snapshot_id).toBeTruthy()
     expect(snapshots[0].body_preview).toBe('')
+  })
+
+  // #882: 并发保存保护(僵尸 tab)— base_sha 指纹不匹配 → 409,不静默覆盖。
+  test('#882 base_sha 匹配 → 正常保存', async () => {
+    const app = await getApp()
+    const docId = JSON.parse((await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Conflict OK' },
+    })).payload).id
+    await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '版本一内容' },
+    })
+    const sha = crypto.createHash('sha1').update('版本一内容').digest('hex')
+    const res = await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '版本二内容', base_sha: sha },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.payload).body).toBe('版本二内容')
+  })
+
+  test('#882 base_sha 不匹配(僵尸 tab)→ 409 stale_base,服务端内容不被覆盖', async () => {
+    const app = await getApp()
+    const docId = JSON.parse((await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Conflict Stale' },
+    })).payload).id
+    await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '另一窗口写入的最新内容' },
+    })
+    const staleSha = crypto.createHash('sha1').update('旧窗口内存里的过期正文').digest('hex')
+    const res = await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '旧窗口的过期编辑', base_sha: staleSha },
+    })
+    expect(res.statusCode).toBe(409)
+    const errBody = JSON.parse(res.payload)
+    expect(errBody.code).toBe('stale_base')
+    const get = await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}`, headers: await authHeader() })
+    expect(JSON.parse(get.payload).body).toBe('另一窗口写入的最新内容')
+  })
+
+  test('#882 force 跳过检查(冲突横幅「保留我的版本」)', async () => {
+    const app = await getApp()
+    const docId = JSON.parse((await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Conflict Force' },
+    })).payload).id
+    await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '服务端当前内容' },
+    })
+    const res = await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '用户选择保留的版本', base_sha: 'wrong', force: true },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.payload).body).toBe('用户选择保留的版本')
   })
 
   test('non-existent document returns 404', async () => {

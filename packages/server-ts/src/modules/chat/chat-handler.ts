@@ -99,15 +99,29 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
     // 15 分钟会掐断仍在正常推进的回合（TURN_MAX_MS env 可覆盖）。
     const TURN_MAX_MS = Number(process.env.TURN_MAX_MS) || 60 * 60_000
     let turnSettled = false
+    let interruptMarked = false
     const watchdog = setTimeout(() => {
       if (turnSettled) return
       log.warn('[chat] turn watchdog fired', { userId, sessionId: sid, elapsedMs: TURN_MAX_MS })
+      // watchdog 是有交代的终止(错误+turn_complete 已发) — 不打中断标记。
+      interruptMarked = true
       send({ type: 'error', message: `本回合执行超过 ${Math.round(TURN_MAX_MS / 60_000)} 分钟仍未完成，已中止。可将任务拆分为多步后重试。` })
       send({ type: 'turn_complete' })
       try { chatAbort.abort() } catch { /* ignore */ }
       sseEnd()
     }, TURN_MAX_MS)
     watchdog.unref?.()
+
+    // #883: 回合中断标记 — SSE close(页面刷新/手动停止)触发 abort 且回合
+    // 未正常结束时,在 eventLog 落一条助手侧标记。历史重放后用户能看到中断
+    // 点与继续入口(回复「继续」接力,CONFIRM_RULE + 焦点继承保证上下文),
+    // 不再是悬空的用户消息。正常完成/错误/watchdog 路径 turnSettled 已置位,
+    // 不误标。
+    chatAbort.signal.addEventListener('abort', () => {
+      if (turnSettled || interruptMarked) return
+      interruptMarked = true
+      appendTurnInterruptedMarker(ctx, userId, sid)
+    })
 
     try {
       // #185: persist the user message BEFORE any LLM work — a mid-stream
@@ -445,4 +459,24 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       clearTimeout(watchdog)
       sseEnd()
     }
+}
+
+/** #883: 回合中断标记 — 助手侧提示落 eventLog,历史重放可见中断点与继续
+ *  入口(用户回复「继续」→ CONFIRM_RULE + 焦点继承接力)。watchdog/正常
+ *  结束路径不打此标记(调用方守卫);append 失败静默(不影响中断处理)。 */
+export function appendTurnInterruptedMarker(
+  ctx: { eventLog: { append: (event: Omit<import('../../core/event-log.js').Event, 'idx'>) => unknown } },
+  userId: string,
+  sessionId: string,
+): void {
+  try {
+    ctx.eventLog.append({
+      timestamp: Date.now() / 1000,
+      eventType: 'assistant_response',
+      content: '[系统提示:上一回合因页面刷新或手动停止被中断,已完成的部分已保存。回复「继续」可接着完成剩余工作。]',
+      metadata: { interrupted: true },
+      agentId: userId,
+      sessionId,
+    })
+  } catch { /* best-effort */ }
 }
