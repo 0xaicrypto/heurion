@@ -35,18 +35,17 @@ import {
   triggerCompactionAfterTrim,
   upsertSessionRow,
 } from './history-budget.js'
-import { analyzeChatForMedicalRecord, updatePatientFromFindings, updateMedicalRecordFromChat } from '../patients/clinical-analysis.js'
 import type { TurnIntent } from './turn-intent.js'
 // #699: 文档场景规则外置 — 提示词工程不再混在对话主流程里。
 import { refUnresolvedHint, refSourceRule, documentRules, FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE } from './writing-prompts.js'
 import { factContentHash } from '../../common/fact-render.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import type { SendEvent } from './chat-sse.js'
+import { runPostTurnPipeline } from './post-turn-pipeline.js'
 
 const log = makeLogger('chat.conversation')
 
 /** #6: per-patient LLM analysis throttle (ms) — avoid an extra call per message. */
-const chatAnalysisThrottle = new Map<string, number>()
 
 /** Fetch the patient record (or null) for the chat scope. */
 export async function findPatient(userId: string, patientHash?: string | null): Promise<any | null> {
@@ -795,136 +794,27 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     }
   }
 
-  // Log the assistant response (user_message was persisted upfront)
-  // #832-缺3: timeline 快照(有界)随 metadata 落库 — 刷新后前端重建时间线。
-  const timelineMeta: Record<string, unknown> = {}
-  if (chartMeta.length > 0) timelineMeta.chart = chartMeta
-  if (timelineTools.length > 0 || timelineSubs.length > 0) {
-    timelineMeta.timeline = {
-      ...(timelineTools.length > 0 ? { tools: timelineTools } : {}),
-      ...(timelineSubs.length > 0 ? { subagents: timelineSubs } : {}),
-    }
-  }
-  // #839 缺口 2: 记忆引用输出侧对账 — 输出中的 KB 引用标注(（来源：《标题》）)
-  // 必须命中本轮注入集合;未命中的降级"未溯源"标注并 SSE 上报,不静默。
-  // citations SSE(#756)只披露注入了什么,不校验输出了什么(移植 #807 强制命中模式)。
-  let responseForLog = fullResponse
-  try {
-    const { auditMemoryCitations, titlesFromCitationLabels } = await import('../../modules/knowledge/citation-audit.js')
-    const audit = auditMemoryCitations(fullResponse, titlesFromCitationLabels(kbCitations.map((c) => c.label)))
-    if (audit.unverified.length > 0) {
-      responseForLog = audit.annotatedText
-      send({
-        type: 'citation_audit',
-        total: audit.total,
-        verified: audit.verified,
-        unverified: audit.unverified.map((u) => u.title).slice(0, 5),
-        message: `检测到 ${audit.unverified.length} 处引用未命中本轮注入的知识库条目，已标注"未溯源"`,
-      })
-    }
-  } catch { /* best-effort — 对账失败不阻断回复落盘 */ }
-
-  ctx.eventLog.append({
-    timestamp: Date.now() / 1000, eventType: 'assistant_response', content: responseForLog,
-    metadata: timelineMeta, agentId: userId, sessionId: sid,
+  // #846: 后处理收敛 — 引用对账/落盘/轨迹/遵循度/演化投递/患者分析/
+  // 会话行/引用 chips/技能建议 全部收敛为有序 pipeline(段级 best-effort,
+  // critical 段失败上抛),主路径只调 pipeline。
+  await runPostTurnPipeline({
+    ctx,
+    userId,
+    sessionId: sid,
+    scene,
+    bodyText: body.text,
+    turnIntent,
+    fullResponse,
+    responseForLog: fullResponse,
+    kbCitations,
+    timelineTools,
+    timelineSubs,
+    chartMeta,
+    skillCards,
+    attachmentText,
+    patientHash: patientHash || null,
+    evolutionQueue: p.evolutionQueue,
+    send,
   })
-
-  // #843 环①: 任务轨迹采集 — 仅任务型回合(edit/generate/retrieve/command),
-  // answer 不记(D1: eventLog 投影,零正文,零 LLM/零外呼)。
-  try {
-    const { recordTaskTrajectory } = await import('../../evolution/trajectory.js')
-    recordTaskTrajectory(ctx.eventLog, {
-      userId,
-      sessionId: sid,
-      action: turnIntent.action,
-      scene,
-      toolsUsed: timelineTools.map((t) => t.tool),
-      docEdits: timelineTools.filter((t) => t.tool === 'edit_document').length,
-      outcome: fullResponse ? 'completed' : 'abandoned',
-    })
-  } catch { /* best-effort — 轨迹采集失败不影响回合 */ }
-
-  // #841 环⑤: 遵循度度量(零 LLM)— 激活的剧本卡按实际工具序列/产出物判定
-  // 遵循与否,滑动窗口维护 followRate,达降级线自动 suspended(不删除)。
-  if (skillCards.length > 0) {
-    try {
-      const { recordFollowThrough } = await import('../skills/follow-through.js')
-      await recordFollowThrough({
-        memory: ctx.memory,
-        userId,
-        activated: skillCards,
-        toolsUsed: timelineTools.map((t) => t.tool),
-        docEdits: timelineTools.filter((t) => t.tool === 'edit_document').length,
-        outcome: fullResponse ? 'completed' : 'abandoned',
-      })
-    } catch { /* best-effort — 度量失败不影响回合 */ }
-  }
-
-  // #582 — 例 A：通用会话编辑附件（action=edit, target=attachment）时，给
-  // 一条可落地出口（保存为文档 / 导出），避免"结果只留在对话里"的死路。
-  if (turnIntent.action === 'edit' && turnIntent.target === 'attachment') {
-    send({
-      type: 'attachment_export_option',
-      options: ['save_as_document', 'export_pdf', 'continue_discussion'],
-    })
-  }
-
-  // #2: Extract takeaway + evolve facts + analyze patient chat (async evolution worker)
-  // Writing sessions (doc-*) are excluded — their content must not
-  // become global memory (leak into patient chats).
-  if (p.evolutionQueue && !sid.startsWith('doc-')) {
-    p.evolutionQueue.add({ userId, sessionId: sid, userMessage: body.text, patientHash: patientHash || undefined }).catch(() => {})
-  }
-
-  // #6: analyze patient turns (attachments AND plain text) into both
-  // free findings (patient profile) and structured record sections.
-  // Fire-and-forget; rate-limited to avoid an extra LLM call per
-  // message (every ~15s max per patient, or when new files arrived).
-  if (patientHash && (attachmentText || body.text.length >= 6)) {
-    const analysisText = attachmentText
-      ? `[FILE CONTENT]\n${attachmentText}\n[CHAT]\nUser: ${body.text}\nAI: ${fullResponse}`
-      : `[CHAT]\nUser: ${body.text}\nAI: ${fullResponse}`
-    const lastRun = chatAnalysisThrottle.get(`${userId}:${patientHash}`) ?? 0
-    const now = Date.now()
-    if (now - lastRun >= 15000) {
-      chatAnalysisThrottle.set(`${userId}:${patientHash}`, now)
-      if (chatAnalysisThrottle.size > 5000) chatAnalysisThrottle.clear()
-      analyzeChatForMedicalRecord(userId, patientHash, analysisText, {
-        userId,
-        workspaceId: userId,
-        action: 'clinical.analysis',
-      })
-        .then(async ({ findings, sections }) => {
-          if (findings.length > 0) {
-            await updatePatientFromFindings(userId, patientHash, findings)
-          }
-          if (Object.keys(sections).length > 0) {
-            await updateMedicalRecordFromChat(userId, patientHash, sections)
-          }
-        })
-        .catch(() => {})
-    }
-  }
-
-  // Update session (writing doc-* sessions never get a Session row;
-  // legacy global-* default sessions must never be recreated).
-  await upsertSessionRow(userId, sid, body.text.slice(0, 50))
-
-  // #756: 注入透明化 — 本轮实际进入 system 的 kb 条目作为引用 chips。
-  const seenCitation = new Set<string>()
-  send({
-    type: 'citations',
-    items: kbCitations
-      .filter((c) => !seenCitation.has(c.sourceId) && seenCitation.add(c.sourceId))
-      .slice(0, 8)
-      .map((c) => ({ text: c.label, source: `/app/knowledge?q=${encodeURIComponent(c.sourceId)}`, kind: c.kind })),
-  })
-  // #298: suggest saving a reusable procedure as a skill.
-  try {
-    const { looksLikeProcedure } = await import('../skills/skill-capture.service.js')
-    if (looksLikeProcedure(fullResponse) && !sid.startsWith('doc-')) {
-      send({ type: 'skill_capture_suggest', text: '这个流程我帮你整理成了技能，下次可以直接调用。要保存吗？' })
-    }
-  } catch { /* best-effort */ }
   send({ type: 'turn_complete', assistant_event_idx: ctx.eventLog.count() })
 }
