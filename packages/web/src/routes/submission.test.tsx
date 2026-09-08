@@ -7,11 +7,57 @@ vi.mock('@/lib/api', () => ({
   api: {
     listSubmissionDrafts: vi.fn().mockResolvedValue({ drafts: [] }),
     saveSubmissionDraft: vi.fn().mockResolvedValue({ draft: { id: 'd1' }, ok: true }),
+    // #848: 三档梯度推荐契约(tiers.reach/match/safety + breakdown)
     recommendJournals: vi.fn().mockResolvedValue({
-      journals: [
-        { id: 'jto', name: 'Journal of Thoracic Oncology', impact_factor: 21.0, acceptance_rate: 20, review_weeks: 5, cas_zone: '1区', match_score: 4, reason: 'lung keywords matched' },
-        { id: 'lung-cancer', name: 'Lung Cancer', impact_factor: 5.3, acceptance_rate: 32, review_weeks: 6, cas_zone: '2区', match_score: 3, reason: 'lung keywords matched' },
-      ],
+      engine: 'selection-v2',
+      profile_echo: { priority: 'impact', article_type: null, self_pay_oa: false },
+      tiers: {
+        reach: [],
+        match: [
+          {
+            journal: {
+              id: 'jto', name: 'Journal of Thoracic Oncology', issn: null, publisher: null, zh_name: null,
+              description: '胸部肿瘤专科旗舰刊',
+              metrics: {
+                impact_factor: { value: 21.0, asOf: '2025-06', source: 'jcr_snapshot' },
+                cas_zone: { value: '1区', asOf: '2025-12', source: 'cas_snapshot' },
+                acceptance_rate: { value: 20, asOf: '2025-06', source: 'curated_estimate' },
+                review_weeks_median: { value: 5, asOf: '2025-06', source: 'curated_estimate' },
+                apc: null, open_alex: null, article_type_distribution: null,
+              },
+              scope: ['oncology'], article_types: [], oa: false, guide_url: null, similar_works: null,
+              warnings: [], logo: { monogram: 'JT', color: '#1d4ed8' },
+              freshness: { seed: true, updatedAt: '2026-09-08', stale: false },
+            },
+            tier: 'match', total_score: 54.8,
+            breakdown: [
+              { dimension: 'scope', score: 80, evidence: '标题命中 lung / immunotherapy' },
+              { dimension: 'impact', score: 58, evidence: 'IF 21.0（jcr_snapshot,截至 2025-06）' },
+            ],
+          },
+          {
+            journal: {
+              id: 'lung-cancer', name: 'Lung Cancer', issn: null, publisher: null, zh_name: null,
+              description: '肺癌专科刊',
+              metrics: {
+                impact_factor: { value: 5.3, asOf: '2025-06', source: 'jcr_snapshot' },
+                cas_zone: { value: '2区', asOf: '2025-12', source: 'cas_snapshot' },
+                acceptance_rate: { value: 32, asOf: '2025-06', source: 'curated_estimate' },
+                review_weeks_median: { value: 6, asOf: '2025-06', source: 'curated_estimate' },
+                apc: null, open_alex: null, article_type_distribution: null,
+              },
+              scope: ['oncology'], article_types: [], oa: false, guide_url: null, similar_works: null,
+              warnings: [], logo: { monogram: 'LC', color: '#0f766e' },
+              freshness: { seed: true, updatedAt: '2026-09-08', stale: false },
+            },
+            tier: 'match', total_score: 43.2,
+            breakdown: [{ dimension: 'scope', score: 60, evidence: '标题命中 lung' }],
+          },
+        ],
+        safety: [],
+      },
+      redline: [],
+      warning_list_asof: null,
     }),
     generateCoverLetter: vi.fn().mockResolvedValue({ cover_letter: 'Dear Editor, ...', highlights: [] }),
     listFormatTemplates: vi.fn().mockResolvedValue({
@@ -31,7 +77,7 @@ describe('SubmissionWorkbench (#362)', () => {
     vi.clearAllMocks();
   });
 
-  it('recommends journals after entering a title', async () => {
+  it('recommends journals after entering a title (#848 三档契约)', async () => {
     render(<SubmissionWorkbench embedded />);
 
     const titleInput = screen.getByLabelText('Title');
@@ -43,6 +89,9 @@ describe('SubmissionWorkbench (#362)', () => {
     expect(await screen.findByText('Journal of Thoracic Oncology')).toBeTruthy();
     expect(screen.getByText(/IF 21/)).toBeTruthy();
     expect(screen.getByText(/Lung Cancer/)).toBeTruthy();
+    // 结构化 breakdown 可展开(D4)
+    fireEvent.click(screen.getAllByText(/为什么推荐|Why recommended|Why/i)[0]);
+    expect(await screen.findByText(/标题命中/)).toBeTruthy();
   });
 
   it('generates a cover letter in the cover tab', async () => {
