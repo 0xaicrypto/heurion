@@ -59,6 +59,22 @@ export async function deepseekChatWithMeta(
 }
 
 /**
+ * #fix 2026-09 — 工具回合流式调用(治中转站非流式的 CF ~100s 掐断/600s 超时):
+ *  reasoning 实时回调(工具回合内思维链可见),返回与 chatWithMeta 同构
+ *  (finish_reason='tool_calls' 时 text 为 tool_call 块拼接)。
+ * `apiKey` is accepted for backward compatibility and ignored.
+ */
+export async function deepseekChatWithToolsStream(
+  messages: ChatMessage[],
+  _apiKey: string,
+  options: DeepSeekCallOptions = {},
+  tools?: LlmToolDefinition[],
+  onReasoning?: (text: string) => void,
+): Promise<LlmChatResult & { toolCalls?: Array<{ name: string; arguments: string }> }> {
+  return getLlmGateway().chatWithToolsStream(messages, options, tools, onReasoning)
+}
+
+/**
  * Streaming call — yields chunks via AsyncGenerator.
  * `apiKey` is accepted for backward compatibility and ignored.
  */

@@ -9,7 +9,7 @@ import type { ToolRegistry } from '../../tools/tool-registry.js'
 import type { ToolDefinition } from '../../tools/base-tool.js'
 import type { ChatContentPart } from '../../common/llm-gateway.js'
 import { resolveActiveModel, resolveTurnTimeoutMs } from '../../common/llm-gateway.js'
-import { deepseekChatWithMeta } from '../../common/llm.js'
+import { deepseekChatWithMeta, deepseekChatWithToolsStream } from '../../common/llm.js'
 import { detectDoomLoop } from '../../tools/doom-loop.js'
 import { READ_ONLY_TOOLS, BEST_EFFORT_RETRIEVAL_TOOLS } from '../../tools/tool-registry.js'
 import { makeLogger } from '../../common/logger.js'
@@ -219,24 +219,30 @@ export async function runToolCallLoop(params: {
 
   while (toolRound < MAX_TOOL_ROUNDS) {
     toolRound++
-    // #548: use chatWithMeta (truncation-aware) and the gateway default token
-    // budget (MAX_OUTPUT_TOKENS, 8192) instead of a hardcoded 4096.
-    const call = await deepseekChatWithMeta(
-      messages,
-      params.apiKey,
-      {
-        model: turnModel,
-        telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
-        signal: io.signal,
-        // #fix 2026-09: OpenCode Go 要求 per-conversation 会话头(x-opencode-session)。
-        sessionId,
-        // #802: doc 会话长生成任务 TTFB 预算放宽到 600s(默认 300s 掐死
-        // 整篇扩写类首调用,现场 9/2「扩充完整正文」309s 静默死亡)。
-        timeoutMs: resolveTurnTimeoutMs(sessionId),
-      },
-      activeTools,
-      (reasoning) => io.send({ type: 'reasoning_chunk', text: reasoning }),
-    )
+    // #fix 2026-09: 工具回合流式调用 — 中转站(opencode Go)模式下非流式是
+    // 结构性缺陷: 零字节直到完整生成,整篇重写类大任务(thinking+工具参数
+    // 5-10 分钟)被中转层 CF(~100s 掐 → "fetch failed")与本地 TTFB 超时
+    // (600s 掐 → "LLM request timed out")双重杀死。流式让字节持续流动,
+    // reasoning 实时可见(用户还能看到思维链推进)。流式失败(上游不支持
+    // tools-over-stream)回退非流式一次。
+    const turnCallOptions = {
+      model: turnModel,
+      telemetryContext: { userId, workspaceId: userId, action: 'chat.main' },
+      signal: io.signal,
+      // #fix 2026-09: OpenCode Go 要求 per-conversation 会话头(x-opencode-session)。
+      sessionId,
+      // #802: doc 会话长生成任务 TTFB 预算放宽到 600s(默认 300s 掐死
+      // 整篇扩写类首调用,现场 9/2「扩充完整正文」309s 静默死亡)。
+      timeoutMs: resolveTurnTimeoutMs(sessionId),
+    }
+    const onTurnReasoning = (reasoning: string) => io.send({ type: 'reasoning_chunk', text: reasoning })
+    let call
+    try {
+      call = await deepseekChatWithToolsStream(messages, params.apiKey, turnCallOptions, activeTools, onTurnReasoning)
+    } catch (streamErr) {
+      log.warn(`[tool-loop] tools-stream failed → non-streaming fallback: ${(streamErr as Error).message.slice(0, 120)}`)
+      call = await deepseekChatWithMeta(messages, params.apiKey, turnCallOptions, activeTools, onTurnReasoning)
+    }
     const callResult = call.text
 
     if (!callResult) {

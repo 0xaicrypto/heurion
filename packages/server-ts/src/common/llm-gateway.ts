@@ -35,6 +35,8 @@ export interface LlmChatResult {
   text: string
   /** True when the provider stopped at finish_reason='length'. */
   truncated: boolean
+  /** #fix 2026-09: 工具回合流式调用(chatWithToolsStream)返回 — finish_reason='tool_calls' 时的解析结果。 */
+  toolCalls?: Array<{ name: string; arguments: string }>
   /**
    * #827: 多模态输出 — provider 在 message.images(OpenAI-compat 约定)或
    * content 内联 data-URI/https 图片时填充(data: 或 https:// URL)。
@@ -516,7 +518,7 @@ export function resolveTurnTimeoutMs(sessionId?: string): number | undefined {
 export const DEEPSEEK_PREMIUM_MODEL = process.env.DEEPSEEK_PREMIUM_MODEL || 'deepseek-v4-flash'
 
 interface LlmChunk {
-  choices?: Array<{ delta?: { content?: string; reasoning_content?: string; role?: string }; message?: { content?: string; reasoning_content?: string; tool_calls?: Array<{ type: string; function: { name: string; arguments: string } }> }; finish_reason?: string | null }>
+  choices?: Array<{ delta?: { content?: string; reasoning_content?: string; role?: string; tool_calls?: Array<{ index?: number; id?: string; type?: string; function?: { name?: string; arguments?: string } }> }; message?: { content?: string; reasoning_content?: string; tool_calls?: Array<{ type: string; function: { name: string; arguments: string } }> }; finish_reason?: string | null }>
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number }
 }
 
@@ -608,12 +610,15 @@ export interface LlmGateway {
   ): Promise<LlmChatResult>
   /** Streaming call — yields content deltas via AsyncGenerator. */
   stream(messages: ChatMessage[], options?: LlmChatOptions, onReasoning?: (text: string) => void): AsyncGenerator<string>
+  /** #fix 2026-09: 工具回合流式调用 — 非流式在中转站模式被 CF ~100s 掐断。 */
+  chatWithToolsStream(
+    messages: ChatMessage[],
+    options?: LlmChatOptions,
+    tools?: LlmToolDefinition[],
+    onReasoning?: (text: string) => void,
+  ): Promise<LlmChatResult & { toolCalls?: Array<{ name: string; arguments: string }> }>
   /** API key for the active provider (from the provider's env var). */
   getApiKey(): string
-  /**
-   * #827 — 用当前主模型直接生成图像(取代独立图像 API 配置)。
-   * 主模型非多模态或上游未返回图片 → IMAGE_UNSUPPORTED 明确报错。
-   */
   generateImage(prompt: string, options?: LlmChatOptions): Promise<{ dataBase64: string; mime: string }>
 }
 
@@ -809,6 +814,166 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
    * 主模型非多模态 → IMAGE_UNSUPPORTED 明确报错;多模态但上游未返回
    * 图片(该模型不支持图像输出)→ 同样明确报错,绝不静默降级。
    */
+  /**
+   * #fix 2026-09 — 工具回合流式调用(治中转站模式非流式的结构性缺陷):
+   *  非流式在工具回合是零字节直到完整生成 — 整篇重写类大任务的
+   *  thinking+工具参数生成 5-10 分钟,中转层 Cloudflare ~100s 无字节即掐断
+   *  ("fetch failed"),本地 TTFB 超时再掐死("LLM request timed out")。
+   *  流式让字节持续流动,空闲超时语义才正确;reasoning 实时回调
+   *  (工具回合内思维链对用户可见)。
+   *  返回与 chatWithMeta 同构: finish_reason='tool_calls' 时 text 为
+   *  tool_call 块拼接(消费方零逻辑变更)。
+   */
+  async chatWithToolsStream(
+    messages: ChatMessage[],
+    options: LlmChatOptions = {},
+    tools?: LlmToolDefinition[],
+    onReasoning?: (text: string) => void,
+  ): Promise<LlmChatResult & { toolCalls?: Array<{ name: string; arguments: string }> }> {
+    const model = this.resolveModel(options, DEEPSEEK_CHAT_MODEL)
+    const startedAt = Date.now()
+    const body: any = {
+      model,
+      messages: serializeMessages(messages, model),
+      max_tokens: options.maxTokens ?? resolveDefaultMaxTokens(model),
+      temperature: options.temperature ?? 0.7,
+      stream: true,
+      stream_options: { include_usage: true },
+      // #752: GLM 混合思考开关(仅 glm-* 生效)
+      ...(options.thinking && model.toLowerCase().startsWith('glm') ? { thinking: { type: options.thinking } } : {}),
+    }
+    if (tools && tools.length > 0) {
+      body.tools = tools
+      body.tool_choice = 'auto'
+    }
+    let res: Awaited<ReturnType<typeof fetch>>
+    try {
+      res = await fetchWithRetry(`${this.endpoint().baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: this.headers(options),
+        body: JSON.stringify(body),
+      }, { signal: options.signal, timeoutMs: options.timeoutMs })
+    } catch (err) {
+      await recordFailure(model, options, err, promptChars(messages), Date.now() - startedAt)
+      throw err
+    }
+    log.info(`[LLM] tools-stream headers=${Date.now() - startedAt}ms model=${model}`)
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '')
+      // #fix 2026-09: 图片被纯文本上游拒收 → 剥离重试一次(同 chatWithMeta)。
+      if (isImageUnsupportedError(res.status, errBody)) {
+        log.warn('image parts rejected (tools stream) — retrying with images stripped', { model })
+        const stripped: any = { ...body, messages: serializeMessages(stripImageParts(messages), model) }
+        const res2 = await fetchWithRetry(`${this.endpoint().baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: this.headers(options),
+          body: JSON.stringify(stripped),
+        }, { signal: options.signal, timeoutMs: options.timeoutMs })
+        if (!res2.ok) {
+          const body2 = await res2.text().catch(() => '')
+          await recordFailure(model, options, new Error(`HTTP ${res2.status} after image-strip retry: ${body2.slice(0, 200)}`), promptChars(messages), Date.now() - startedAt)
+          throw new Error(`LLM 请求失败 (HTTP ${res2.status}): ${body2.slice(0, 300)}`)
+        }
+        res = res2
+      } else {
+        await recordFailure(model, options, new Error(`HTTP ${res.status}: ${errBody.slice(0, 200)}`), promptChars(messages), Date.now() - startedAt)
+        throw new Error(`LLM 请求失败 (HTTP ${res.status}): ${errBody.slice(0, 300)}`)
+      }
+    }
+
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let text = ''
+    let finishReason: string | null = null
+    let finalUsage: LlmChunk['usage'] | undefined
+    let completionChars = 0
+    let ttfbLogged = false
+    const toolAcc = new Map<number, { id?: string; name: string; arguments: string }>()
+
+    try {
+      while (true) {
+        let readResult: Awaited<ReturnType<typeof reader.read>>
+        try {
+          readResult = await withBodyIdleTimeout(reader.read(), 'LLM stream stalled')
+        } catch (err) {
+          try { await reader.cancel() } catch { /* already broken */ }
+          throw err
+        }
+        const { done, value } = readResult
+        if (done) break
+        if (!ttfbLogged && value.length > 0) {
+          ttfbLogged = true
+          log.info(`[LLM] tools-stream ttfb=${Date.now() - startedAt}ms model=${model}`)
+        }
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6).trim()
+          if (data === '[DONE]') continue
+          try {
+            const chunk: LlmChunk = JSON.parse(data)
+            if (chunk.usage) { finalUsage = chunk.usage; continue }
+            const choice = chunk.choices?.[0]
+            if (choice?.finish_reason) finishReason = choice.finish_reason
+            const delta = choice?.delta
+            if (delta?.reasoning_content) onReasoning?.(delta.reasoning_content)
+            if (delta?.content) { text += delta.content; completionChars += delta.content.length }
+            for (const tc of delta?.tool_calls ?? []) {
+              const idx = typeof tc.index === 'number' ? tc.index : toolAcc.size
+              const cur = toolAcc.get(idx) ?? { name: '', arguments: '' }
+              if (tc.id) cur.id = tc.id
+              if (tc.function?.name) cur.name = tc.function.name
+              if (tc.function?.arguments) cur.arguments += tc.function.arguments
+              toolAcc.set(idx, cur)
+            }
+          } catch { /* skip parse errors */ }
+        }
+      }
+    } finally {
+      reader.releaseLock()
+    }
+
+    if (finalUsage && typeof finalUsage.prompt_tokens === 'number' && typeof finalUsage.completion_tokens === 'number') {
+      await recordUsage(model, options, finalUsage.prompt_tokens, finalUsage.completion_tokens, finalUsage.prompt_cache_hit_tokens || 0, finalUsage.prompt_cache_miss_tokens || 0)
+    } else {
+      await recordUsage(model, options, approximateTokensFromChars(promptChars(messages)), approximateTokensFromChars(completionChars))
+    }
+
+    const parsedToolCalls: Array<{ name: string; arguments: string }> = []
+    if (finishReason === 'tool_calls' && toolAcc.size > 0) {
+      // tool_call 标签用 unicode 转义构造 — 与 parseChatResponse 的块格式
+      // 完全一致,tool-loop 的块解析零变更。
+      const OPEN = '\u003ctool_call\u003e'
+      const CLOSE = '\u003c/tool_call\u003e'
+      const blocks: string[] = []
+      for (const tc of toolAcc.values()) {
+        if (!tc.name) continue
+        let args: unknown
+        try { args = JSON.parse(tc.arguments || '{}') } catch { args = { _raw: tc.arguments } }
+        blocks.push(`${OPEN}${JSON.stringify({ name: tc.name, arguments: args })}${CLOSE}`)
+        parsedToolCalls.push({ name: tc.name, arguments: tc.arguments || '{}' })
+      }
+      if (blocks.length > 0) {
+        return { text: blocks.join('\n'), truncated: false, toolCalls: parsedToolCalls }
+      }
+    }
+    if (finishReason === 'length') {
+      const retryDepth = options.retryDepth ?? 0
+      if (!text.trim() && retryDepth < MAX_TRUNCATION_RETRY_DEPTH) {
+        return await this.chatWithToolsStream(
+          messages,
+          { ...options, maxTokens: truncationRetryBudget(model, options.maxTokens), retryDepth: retryDepth + 1 },
+          tools,
+          onReasoning,
+        )
+      }
+    }
+    return { text, truncated: finishReason === 'length', toolCalls: parsedToolCalls.length > 0 ? parsedToolCalls : undefined }
+  }
+
   async generateImage(prompt: string, options: LlmChatOptions = {}): Promise<{ dataBase64: string; mime: string }> {
     const model = this.resolveModel(options, resolveActiveModel())
     if (!providerSupportsVision(currentLlmProvider(), model)) {
