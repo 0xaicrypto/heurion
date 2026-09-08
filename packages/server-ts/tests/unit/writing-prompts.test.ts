@@ -7,6 +7,8 @@ import {
   documentRules,
   EXPANSION_RULE,
   CITATION_RULE,
+  REVISION_RULE,
+  ACTION_RULE,
 } from '../../src/modules/chat/writing-prompts.js'
 
 describe('writing-prompts (#699 — 文档场景规则可单测)', () => {
@@ -23,9 +25,10 @@ describe('writing-prompts (#699 — 文档场景规则可单测)', () => {
     expect(refSourceRule(false)).toBe('')
   })
 
-  it('emptyDocRule 空文档时分步润色指令', () => {
+  it('emptyDocRule 空文档时分步润色指令(写回后连做,不逐段确认)', () => {
     expect(emptyDocRule(true)).toContain('当前文档正文为空')
     expect(emptyDocRule(true)).toContain('已完成第 1/N 段')
+    expect(emptyDocRule(true)).toContain('不要停下来等用户确认')
     expect(emptyDocRule(false)).toBe('')
   })
 
@@ -73,5 +76,23 @@ describe('writing-prompts (#699 — 文档场景规则可单测)', () => {
     expect(EXPANSION_RULE).toContain('禁止单轮生成整篇文档')
     expect(CITATION_RULE).toContain('search_citation')
     expect(CITATION_RULE).toContain('严禁编造')
+  })
+
+  it('#fix 2026-09 行动优先 — 两种文档档位都注入,治确认太极', () => {
+    expect(ACTION_RULE).toContain('立即调用 edit_document')
+    expect(ACTION_RULE).toContain('严禁只输出方案/计划/确认话术而不调用工具')
+    const short = documentRules({ docFits: true, selection: null, docBodyEmpty: false })
+    const long = documentRules({ docFits: false, selection: null, docBodyEmpty: false })
+    expect(short).toContain('行动优先')
+    expect(long).toContain('行动优先')
+    // 扩写:大纲后同回合写第一节,不等确认
+    expect(EXPANSION_RULE).toContain('不要输出大纲后停下等确认')
+  })
+
+  it('#fix 2026-09 修订意见 — ≤2 条直接执行,≥3 条才计划表', () => {
+    expect(REVISION_RULE).toContain('1-2 条明确的修改意见时,直接逐条调用 edit_document 执行')
+    expect(REVISION_RULE).toContain('不要先输出计划表等待确认')
+    expect(REVISION_RULE).toContain('≥3 条')
+    expect(REVISION_RULE).toContain('跳过计划立即执行')
   })
 })
