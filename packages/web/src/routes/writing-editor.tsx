@@ -1202,9 +1202,12 @@ export function WritingEditorPage() {
               <div className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setChatOpen(false)} />
               <aside
                 style={{ ['--chatw' as string]: `${chatWidth}px` }}
-                className="fixed inset-y-0 right-0 z-40 flex w-[85vw] max-w-sm flex-col border-l border-border bg-surface shadow-xl md:static md:inset-auto md:z-auto md:w-[var(--chatw)] md:max-w-none md:shrink-0 md:border-l-0 md:shadow-none"
+                className="fixed inset-y-0 right-0 z-40 flex w-[85vw] max-w-sm flex-col border-l border-border bg-surface shadow-xl md:relative md:inset-auto md:z-auto md:w-[var(--chatw)] md:max-w-none md:shrink-0 md:border-l-0 md:shadow-none"
               >
-                {/* #382: desktop resize handle — drag to change chat width */}
+                {/* #382: desktop resize handle — drag to change chat width.
+                    #fix 2026-09: aside 此前是 md:static(非定位),absolute 把手
+                    锚到外层定位祖先,把手从面板左缘消失 → 无法拖拽。
+                    改 md:relative(不改变文档流,同时成为把手包含块)。 */}
                 <div
                   onMouseDown={(e) => {
                     resizingRef.current = true;
@@ -1212,8 +1215,8 @@ export function WritingEditorPage() {
                     document.body.style.cursor = 'col-resize';
                     document.body.style.userSelect = 'none';
                   }}
-                  className="absolute left-0 top-0 z-10 hidden h-full w-1 cursor-col-resize bg-transparent hover:bg-accent/40 md:block"
-                  style={{ width: 5 }}
+                  className="absolute left-0 top-0 z-10 hidden h-full w-1 cursor-col-resize bg-border/40 hover:bg-accent/60 md:block"
+                  style={{ width: 6 }}
                 />
               <div className="flex h-10 items-center justify-between border-b border-border px-3">
                 <div className="flex gap-1">

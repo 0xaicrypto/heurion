@@ -16,6 +16,7 @@ import { EditDeckTool } from './edit-deck-tool.js'
 import { LoadSkillTool } from './skill-tools.js'
 import { RenderChartTool } from './render-chart-tool.js'
 import { SearchMedicalWebTool, FetchArticleSummaryTool, VisitMedicalSiteTool, ExtractFulltextTool } from './medical-web-tools.js'
+import { SearchOpenAlexTool } from './openalex-search-tool.js'
 import { StatDescribeTool, StatTTestTool, StatChiSqTool, StatKmTool, StatPlotTool } from './stat-tools.js'
 import { StatAdvisorTool } from './stat-advisor-tool.js'
 import { RunStatsAnalysisTool } from './stats-analysis-tool.js'
@@ -270,6 +271,8 @@ export class ToolRegistry {
     this.register(new FetchArticleSummaryTool(ctx))
     this.register(new VisitMedicalSiteTool(ctx))
     this.register(new ExtractFulltextTool(ctx))
+    // 方案2: OpenAlex 学术检索 — PubMed 之外的第二路(全文索引/引文量/OA 状态)。
+    this.register(new SearchOpenAlexTool(ctx))
     this.register(new StatDescribeTool())
     this.register(new StatTTestTool())
     this.register(new StatChiSqTool())

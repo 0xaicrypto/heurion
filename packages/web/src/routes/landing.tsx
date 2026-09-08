@@ -414,6 +414,7 @@ export function LandingPage() {
     hospitalName: isZh ? '中国科学技术大学附属第一医院（安徽省立医院）' : 'The First Affiliated Hospital of USTC (Anhui Provincial Hospital)',
     reactomeDesc: isZh ? '通路数据（CC BY 4.0）' : 'Pathway data (CC BY 4.0)',
     ncbiDesc: isZh ? 'PubMed 文献与医学检索数据' : 'PubMed literature & medical search data',
+    openalexDesc: isZh ? '2.5 亿+ 学术作品开放索引（全文检索/引文数据）' : 'Open index of 250M+ scholarly works (fulltext search & citations)',
     techLine: isZh
       ? '技术生态致谢：Cloudflare Workers · Vercel AI SDK · GitHub 开源社区，以及所有为开源与医疗信息化做出贡献的开发者。'
       : 'Built on Cloudflare Workers · Vercel AI SDK · GitHub open source — and every developer contributing to open source and health informatics.',
@@ -717,20 +718,6 @@ export function LandingPage() {
           </Reveal>
           <Reveal className="mt-11 flex flex-wrap justify-center gap-7">
             <a
-              href="https://www.ahslyy.com.cn/"
-              target="_blank"
-              rel="noreferrer"
-              title={T.hospitalName}
-              className="flex min-w-[300px] items-center justify-center rounded-2xl border border-border bg-surface-elevated px-10 py-6 transition-all hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-md"
-            >
-              <img
-                src="/partners/ustc-1st-hospital.png"
-                alt={T.hospitalName}
-                loading="lazy"
-                className="h-14 w-auto max-w-[320px] object-contain opacity-85 transition-opacity hover:opacity-100 dark:brightness-0 dark:invert dark:opacity-80"
-              />
-            </a>
-            <a
               href="https://reactome.org"
               target="_blank"
               rel="noreferrer"
@@ -756,6 +743,20 @@ export function LandingPage() {
                 alt="NCBI — National Center for Biotechnology Information"
                 loading="lazy"
                 className="h-14 w-auto max-w-[320px] object-contain opacity-85 transition-opacity hover:opacity-100"
+              />
+            </a>
+            <a
+              href="https://openalex.org"
+              target="_blank"
+              rel="noreferrer"
+              title={`OpenAlex · ${T.openalexDesc}`}
+              className="flex min-w-[300px] items-center justify-center rounded-2xl border border-border bg-surface-elevated px-10 py-6 transition-all hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-md"
+            >
+              <img
+                src="/partners/openalex.svg"
+                alt="OpenAlex — open scholarly metadata index"
+                loading="lazy"
+                className="h-14 w-auto max-w-[320px] object-contain opacity-85 transition-opacity hover:opacity-100 dark:brightness-0 dark:invert dark:opacity-80"
               />
             </a>
           </Reveal>

@@ -6,33 +6,165 @@
 import type { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
-import { matchJournals } from './journals.js'
+import { getJournalRepository } from './journal-repository.js'
+import { recommendTiers } from './selection-engine.js'
+import { enrichJournal, enrichRecommendations } from './journal-enrich.js'
+import { fetchGuideForAuthors, precheckAgainstGuide } from './guide-for-authors.js'
+import type { JournalRecord, Recommendation, SelectionProfile } from './journal-types.js'
 import { generateCoverLetter, FORMAT_TEMPLATES, buildPrefilledTemplate } from './cover-letter.js'
+
+/** JournalRecord → snake_case DTO(前端契约)。 */
+function toJournalDto(j: JournalRecord) {
+  return {
+    id: j.id,
+    name: j.name,
+    issn: j.issn ?? null,
+    publisher: j.publisher ?? null,
+    zh_name: j.zhName ?? null,
+    description: j.description ?? null,
+    metrics: {
+      impact_factor: j.metrics.impactFactor ?? null,
+      cas_zone: j.metrics.casZone ?? null,
+      acceptance_rate: j.metrics.acceptanceRate ?? null,
+      review_weeks_median: j.metrics.reviewWeeksMedian ?? null,
+      apc: j.metrics.apc ?? null,
+      open_alex: j.metrics.openAlex ?? null,
+      article_type_distribution: j.metrics.articleTypeDistribution ?? null,
+    },
+    scope: j.scope,
+    article_types: j.articleTypes,
+    oa: j.oa ?? false,
+    guide_url: j.guideUrl ?? null,
+    similar_works: j.similarWorks ?? null,
+    warnings: j.warnings,
+    logo: j.logo,
+    freshness: j.freshness,
+  }
+}
+
+function toRecommendationDto(r: Recommendation) {
+  return {
+    journal: toJournalDto(r.journal),
+    tier: r.tier,
+    total_score: r.totalScore,
+    breakdown: r.breakdown.map((b) => ({ dimension: b.dimension, score: b.score, evidence: b.evidence })),
+  }
+}
 
 export async function submissionRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
-  // ── 选刊推荐：标题/摘要 → Top 5 期刊 ──────────────────────────────
+  // ── 选刊推荐 v2(#848/#850):SelectionProfile → 三档梯度 + 红线区 ──
   app.post('/api/v1/submission/recommend-journals', async (request, reply) => {
-    const { title, abstract, limit } = request.body as { title?: string; abstract?: string; limit?: number }
-    if (!title || !String(title).trim()) {
+    const body = request.body as {
+      title?: string; abstract?: string; article_type?: string
+      priority?: string; self_pay_oa?: boolean; language?: string
+    }
+    if (!body.title || !String(body.title).trim()) {
       return reply.status(400).send({ error: '标题不能为空' })
     }
-    const matches = matchJournals(String(title), String(abstract || ''), Math.min(limit || 5, 10))
-    if (matches.length === 0) {
-      return { journals: [], message: '未找到匹配期刊，可尝试补充摘要关键词' }
+    const profile: SelectionProfile = {
+      title: String(body.title),
+      abstract: body.abstract ? String(body.abstract) : undefined,
+      articleType: body.article_type || undefined,
+      priority: (['impact', 'speed', 'acceptance'] as const).includes(body.priority as never) ? body.priority as SelectionProfile['priority'] : undefined,
+      selfPayOa: !!body.self_pay_oa,
+      language: body.language === 'zh' || body.language === 'en' ? body.language : undefined,
+    }
+    const result = recommendTiers(profile)
+    // #852 动态富化:仅对入档 picks 外呼(≤9 本);失败回落 seed,不阻塞。
+    // 方案1:稿件标题作为同类文章检索词 — 每本 pick 附该刊近两年相似工作。
+    const tiers = {
+      reach: await enrichRecommendations(result.tiers.reach, profile.title),
+      match: await enrichRecommendations(result.tiers.match, profile.title),
+      safety: await enrichRecommendations(result.tiers.safety, profile.title),
     }
     return {
-      journals: matches.map(({ journal, score, reason }) => ({
-        id: journal.id,
-        name: journal.name,
-        impact_factor: journal.impactFactor,
-        acceptance_rate: journal.acceptanceRate,
-        review_weeks: journal.reviewWeeks,
-        cas_zone: journal.casZone,
-        match_score: score,
-        reason,
-      })),
+      engine: result.engine,
+      profile_echo: {
+        priority: result.profileEcho.priority,
+        article_type: result.profileEcho.articleType ?? null,
+        self_pay_oa: result.profileEcho.selfPayOa,
+      },
+      tiers: {
+        reach: tiers.reach.map(toRecommendationDto),
+        match: tiers.match.map(toRecommendationDto),
+        safety: tiers.safety.map(toRecommendationDto),
+      },
+      redline: result.redline.map(({ journal }) => toJournalDto(journal)),
+      warning_list_asof: result.redline[0]?.journal.warnings[0]?.asOf ?? null,
+    }
+  })
+
+  // ── 期刊检索/目录(#849 Repository 直查)─────────────────────────
+  app.get('/api/v1/submission/journals', async (request) => {
+    const { q, scope } = request.query as { q?: string; scope?: string }
+    const repo = getJournalRepository()
+    const journals = q ? repo.search(q) : scope ? repo.listByScope(scope) : repo.listAll()
+    return {
+      total: repo.count,
+      journals: journals.slice(0, 50).map(toJournalDto),
+    }
+  })
+
+  // ── 期刊详情(动态富化:OpenAlex/DOAJ,失败回落 seed)────────────
+  app.get('/api/v1/submission/journals/:id', async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const journal = getJournalRepository().get(id)
+    if (!journal) return reply.status(404).send({ error: '期刊不存在' })
+    const enriched = await enrichJournal(journal)
+    return { journal: toJournalDto(enriched) }
+  })
+
+  // ── Guide for Authors(#851):抓取 + 结构化抽取(24h 缓存)────────
+  app.post('/api/v1/submission/guide-for-authors', async (request, reply) => {
+    const { journal_id } = request.body as { journal_id?: string }
+    const journal = journal_id ? getJournalRepository().get(journal_id) : null
+    if (!journal) return reply.status(400).send({ error: 'journal_id 无效' })
+    const result = await fetchGuideForAuthors(journal)
+    if (!result.ok) {
+      // 降级不是错误:HTTP 200 + ok:false + 人工核对路径
+      return { ok: false, reason: result.reason, manual_url: result.manualUrl ?? null }
+    }
+    return {
+      ok: true,
+      requirements: {
+        journal_id: result.requirements.journalId,
+        journal_name: result.requirements.journalName,
+        body_word_limit: result.requirements.bodyWordLimit ?? null,
+        abstract_word_limit: result.requirements.abstractWordLimit ?? null,
+        abstract_structure: result.requirements.abstractStructure ?? null,
+        figure_limit: result.requirements.figureLimit ?? null,
+        reference_style: result.requirements.referenceStyle ?? null,
+        required_statements: result.requirements.requiredStatements ?? [],
+        confidence: result.requirements.confidence,
+        source_url: result.requirements.sourceUrl ?? null,
+        fetched_at: result.requirements.fetchedAt,
+      },
+    }
+  })
+
+  // ── 投稿前检查(#851):文档 vs 该刊要求逐项 ✓✗/人工 ─────────────
+  app.post('/api/v1/submission/precheck', async (request, reply) => {
+    const { journal_id, doc_id, text } = request.body as { journal_id?: string; doc_id?: string; text?: string }
+    const journal = journal_id ? getJournalRepository().get(journal_id) : null
+    if (!journal) return reply.status(400).send({ error: 'journal_id 无效' })
+    let docText = String(text || '')
+    if (!docText && doc_id) {
+      const doc = await prisma.doc.findFirst({ where: { id: doc_id, userId: request.user!.userId } })
+      if (doc?.body) docText = doc.body
+    }
+    const guide = await fetchGuideForAuthors(journal)
+    const requirements = guide.ok ? guide.requirements : null
+    const items = precheckAgainstGuide(requirements, docText)
+    return {
+      journal_id: journal.id,
+      ok: guide.ok,
+      reason: guide.ok ? null : guide.reason,
+      manual_url: guide.ok ? null : guide.manualUrl ?? null,
+      items,
+      passed: items.filter((i) => i.ok === true).length,
+      manual_count: items.filter((i) => i.ok === null).length,
     }
   })
 

@@ -23,10 +23,10 @@ export function refSourceRule(hasRefs: boolean): string {
     : ''
 }
 
-/** #fix: 文档为空 + 参考材料有内容 — 分步润色,禁止停在"要不要先导入"。 */
+/** #fix: 文档为空 + 参考材料有内容 — 直接开始润色,首段写回后连做,不逐段确认。 */
 export function emptyDocRule(docBodyEmpty: boolean): string {
   return docBodyEmpty
-    ? '注意:当前文档正文为空。Reference Materials 中的内容只是参考资料,尚未写入文档。若用户要求润色/整理参考材料中的内容:直接开始第一步润色 — 调用 edit_document 的 old_text/new_text 把参考资料第一部分的润色结果写回草稿(正文为空时工具会自动先导入唯一的参考材料;old_text 从上方 Reference Materials 部分复制,空格/换行差异会被忽略)。写回后告知用户「已完成第 1/N 段」,并询问是否继续处理下一部分;用户确认后逐段继续。除非参考材料很短,否则不要用 full_text 一次性输出全部内容(超出输出上限)。\n\n'
+    ? '注意:当前文档正文为空。Reference Materials 中的内容只是参考资料,尚未写入文档。若用户要求润色/整理参考材料中的内容:直接开始第一步润色 — 调用 edit_document 的 old_text/new_text 把参考资料第一部分的润色结果写回草稿(正文为空时工具会自动先导入唯一的参考材料;old_text 从上方 Reference Materials 部分复制,空格/换行差异会被忽略)。写回后告知「已完成第 1/N 段」,随即直接继续处理下一部分并依次写回 — 不要停下来等用户确认(用户发来任何新消息即转向新指令)。除非参考材料很短,否则不要用 full_text 一次性输出全部内容(超出输出上限)。\n\n'
     : ''
 }
 
@@ -37,8 +37,9 @@ export function selectionRule(selection: string | null): string {
     : ''
 }
 
-/** #803: 扩写纪律 — 先大纲后逐节是唯一稳定路径（TTFB 防掐死）。 */
-export const EXPANSION_RULE = '扩写/创作纪律:当用户要求扩充/撰写/续写完整正文或一次新增多个章节时,先在回复中输出章节大纲(不调用工具),然后逐节写入 — 每轮只调用一次 edit_document 写一个章节(old_text 锚定该章节标题行或相邻既有文字,new_text 为该节完整内容),写完注明进度(如「已完成 1/5:Introduction」),下一轮继续下一节;禁止单轮生成整篇文档,禁止对长文档用 full_text。例外:空文档且无参考材料时,第一节用 full_text 写入(标题+大纲+第一节,总量控制在 full_text 限额内),之后各节用 edit_document 锚定文末末段追加(new_text = 末段原文 + 新章节)。'
+/** #803: 扩写纪律 — 先大纲后逐节是唯一稳定路径（TTFB 防掐死）。
+ * #fix 2026-09: 大纲输出后同一回合立即写入第一节 — 严禁停下等确认。 */
+export const EXPANSION_RULE = '扩写/创作纪律:当用户要求扩充/撰写/续写完整正文或一次新增多个章节时,先用一两行列出章节大纲(不调用工具),随后同一回合立即调用 edit_document 写入第一节 — 不要输出大纲后停下等确认;之后每轮只调用一次 edit_document 写一个章节(old_text 锚定该章节标题行或相邻既有文字,new_text 为该节完整内容),写完注明进度(如「已完成 1/5:Introduction」),下一轮继续下一节;禁止单轮生成整篇文档,禁止对长文档用 full_text。例外:空文档且无参考材料时,第一节用 full_text 写入(标题+大纲+第一节,总量控制在 full_text 限额内),之后各节用 edit_document 锚定文末末段追加(new_text = 末段原文 + 新章节)。'
 
 /** #fix: 格式规范 — heading 层级语义正确，草稿是人类阅读的。
  * #837: 从「被要求时才整理」改为「写回内容必须自带结构」 — 模型此前
@@ -48,17 +49,22 @@ export const FORMAT_RULE = '格式规范:正文使用正确的 markdown 结构 �
 /** #801-review: 图表请求降级路径 — 工具不可用时明确告知，不静默退化。 */
 export const CHART_RULE = '图表/示意图规范:用户要求图表、曲线、示意图时,优先调用 render_chart(图表/曲线/示意图);需要照片级插图时用 generate_image(走当前多模态主模型)。若工具不可用(render_chart 插件未安装 / 主模型非多模态无法生图),明确告诉用户原因(如"当前主模型不支持图像生成,请在设置页切换多模态模型"),不要假装已生成,也不要输出 ASCII 假图。'
 
-/** #806: 修订意见批处理 — 计划→确认→逐条→对照表（+response letter）。 */
-export const REVISION_RULE = '修订意见批处理:当用户一次给出多条修改意见/审稿意见(编号列表或多段)时,先在回复中输出「意见→修改点」计划表(每条:意见摘要/目标章节/改动方案,不调用工具),经用户确认后逐条执行 — 每轮一次 edit_document,回复注明「意见 N/共 M 已落实」;全部完成后输出修订对照表(原意见×实际改动×所在章节)。修回(response letter)场景:对照表后追加给审稿人的正式回复信草稿(意见→回复→改动位置)。'
+/** #806: 修订意见处理 — #fix 2026-09:≤2 条直接执行,≥3 条才计划表;
+ * 此前"一律先计划表经确认"是模型对直接修改指令打太极的主要源头。 */
+export const REVISION_RULE = '修订意见处理:用户给出 1-2 条明确的修改意见时,直接逐条调用 edit_document 执行,完成后一句话汇报改动 — 不要先输出计划表等待确认。一次给出 ≥3 条编号意见/审稿意见时,可先输出「意见→修改点」计划表经确认后逐条执行;但用户表示「直接改」「不用确认」或指令语气明确时,跳过计划立即执行。每轮一次 edit_document,回复注明「意见 N/共 M 已落实」;全部完成后输出修订对照表(原意见×实际改动×所在章节)。修回(response letter)场景:对照表后追加给审稿人的正式回复信草稿(意见→回复→改动位置)。'
 
 /** #807: 引用纪律 — References 零编造。#836: 允许检索源扩展至 PubMed+Crossref。 */
 export const CITATION_RULE = '引用纪律:新增/修改 References 或正文内引用时,必须先用 search_citation 检索真实文献(PubMed 优先,无命中自动补 Crossref — 覆盖 preprint 与非 MEDLINE 期刊),只允许引用检索命中的文献(保留 PMID/DOI 便于核对);检索无命中或工具失败时如实告知用户,严禁编造任何 PMID/DOI/作者/年份。'
 
 /** #fix: 确认循环 — 确认信号后立即执行，不再重复询问。 */
-export const CONFIRM_RULE = '行动纪律:用户回复「同意」「可以」「开始」「继续」「好的」「按此计划」等确认信号后,不要再重复询问确认,立即执行计划的第一步:若文档正文为空,先调用 edit_document 的 import_reference 导入参考材料(或直接用 old_text/new_text 润色),然后逐段处理并写回草稿。不要只给计划不执行,不要在每步后重复询问同一问题。'
+export const CONFIRM_RULE = '行动纪律:用户回复「同意」「可以」「开始」「继续」「好的」「按此计划」等确认信号后,不要再重复询问确认,立即执行计划的第一步:若文档正文为空,先调用 edit_document 的 import_reference 导入参考材料(或直接用 old_text/new_text 润色),然后逐段处理并写回草稿。第一步必须是对工具的真实调用,不是复述计划。不要只给计划不执行,不要在每步后重复询问同一问题。'
 
 /** old_text 复制来源纪律 — 短/长文档共用的尾注。 */
 const OLD_TEXT_COPY_RULE = 'old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制（空格/换行差异会被自动忽略，不要从 Reference Materials 复制；「文档结构」清单里的序号不是正文内容，复制时不要带序号，也不要从工具报错信息里复制片段）'
+
+/** #fix 2026-09: 行动优先 — 治「反复确认、只出计划不动手」。
+ * 明确的修改指令 → 先做后说;计划/大纲/二次确认默认跳过。 */
+export const ACTION_RULE = '行动优先(最高优先):用户明确要求修改/插入/删除/整理/润色/续写文档内容时,立即调用 edit_document(或对应工具)真实执行 — 先做后说,完成后用一两句话汇报改了什么;严禁只输出方案/计划/确认话术而不调用工具。计划表、大纲、二次确认一律默认跳过(用户主动要求「先给方案/大纲」时除外)。仅当指令模糊到无法定位修改点(如无选区时说「改得好一点」)才先提一个澄清问题。'
 
 /** 编辑总规则 — 按文档是否整篇可见分两档。 */
 export function documentRules(input: {
@@ -69,7 +75,7 @@ export function documentRules(input: {
    *  「只能编辑焦点段」与「选中文本优先」的矛盾指令。 */
   selectionSection?: { index: number; title: string } | null
 }): string {
-  const head = `规则：用户在编辑这份文档。回答用中文。${EXPANSION_RULE}${emptyDocRule(input.docBodyEmpty)}`
+  const head = `规则：用户在编辑这份文档。回答用中文。${ACTION_RULE}${EXPANSION_RULE}${emptyDocRule(input.docBodyEmpty)}`
   const tail = `${selectionRule(input.selection)}`
   if (input.docFits) {
     // #fix 2026-09: 全文层扩容到 48K token — 长文综述也整篇注入,"较短"

@@ -121,3 +121,4 @@ interface SelectionProfile {      // ① 输入画像
 > 实施中发现决策前提不成立,须回到本节修订并注明日期,不得静默偏离(同 SKILL_EVOLUTION_DESIGN §6.1)。
 
 - D1-D6 定案于 2026-09-04 评审(本轮会话);"实时更新"采纳为 D2 分层新鲜度而非全量真实时 — 专有指标无免费 API,假装实时=数据撒谎
+- 2026-09-08 实施修订(落地 #848 时):apc 契约由 `apcUsd` 调整为 `{ value, currency }`(记录 DOAJ 原币种)— 无官方汇率源时强行换算 USD 属伪造精度;JournalRecord 补充 `oa` 布尔(DOAJ 全 OA 口径)与 `guideUrl`(GfA 抓取地址,仅收 https 来源)两字段,属 D1 契约补充,不改决策方向;seed 快照值为人工维护的年度近似快照,每条均带 asOf/source 可回查,动态层(OpenAlex/DOAJ)成功时覆盖并重新标注来源

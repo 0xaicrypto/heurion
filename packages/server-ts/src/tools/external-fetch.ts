@@ -103,6 +103,17 @@ export const EXTERNAL_HOSTS: Record<string, ExternalHostConfig> = {
     politeParam: { key: 'email', env: 'UNPAYWALL_EMAIL' },
     userAgent: 'Heurion/1.0',
   },
+  // #852: DOAJ — OA 状态/APC/许可(期刊选刊动态层)。
+  doaj: {
+    baseUrl: 'https://doaj.org',
+    label: 'DOAJ',
+    minIntervalMs: 200,
+    ttlMs: 24 * HOUR,
+    cacheMax: 200,
+    timeoutMs: 15000,
+    backoffMs: 1200,
+    userAgent: 'Heurion/1.0 (journal selection; DOAJ API polite client)',
+  },
 }
 
 export interface ExternalRequestOptions { signal?: AbortSignal }
