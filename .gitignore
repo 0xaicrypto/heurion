@@ -112,6 +112,8 @@ contracts/typechain-types/
 _attic/
 scratch/
 TODO.local.md
+# #924: 本地营销首页草稿，不入库
+homepage-draft.html
 packages/server-ts/web-dist/
 # #917: dist 一律不入库（含 llm-markdown-fix，此前两行 ! 放行已删）。
 packages/server-ts/test-results/

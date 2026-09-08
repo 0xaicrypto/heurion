@@ -4,6 +4,7 @@ import { api, ApiError } from '@/lib/api';
 import { mapWireMessages } from '@/lib/message-map';
 import type { UploadProgressState } from '@/components/UploadProgressModal';
 import { useChatStore } from '@/stores/chat';
+import { runUploadAttachFlow } from '@/lib/upload-flow';
 import type { DeckWire } from '@/lib/types';
 
 export interface DocChat {
@@ -181,17 +182,21 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   };
 
   const attachUploaded = async (file: File) => {
-    const result = await uploadWithProgress(file);
-    setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
-    if (result.dedup) {
-      setKbDedupNotice(t('writing.kbDedup', '📚 已在知识库,已加入上下文: {{name}}', { name: result.name }));
-      setTimeout(() => setKbDedupNotice(null), 4000);
-    }
-    // #fix: 上传即写入聊天记录（与服务端 user_message 事件一致），刷新后仍可见。
-    if (chatSessionId) {
-      appendMessage(chatSessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
-      api.logAttachments(chatSessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
-    }
+    // #922: 上传落地公共流程收敛到 lib/upload-flow(与 chat.tsx 同一实现);
+    // doc 专属后续(addDocReference / pptx 轮询)留在本调用点。
+    const result = await runUploadAttachFlow(
+      () => uploadWithProgress(file),
+      {
+        addAttached: (entry) => setChatAttachedFiles((prev) => [...prev, entry]),
+        setKbDedupNotice,
+        appendMessage,
+      },
+      {
+        sessionId: chatSessionId,
+        // dedup 提示保持本处已有 i18n 行为(chat.tsx 为硬编码中文,见 lib/upload-flow TODO)。
+        dedupNoticeText: (name) => t('writing.kbDedup', '📚 已在知识库,已加入上下文: {{name}}', { name }),
+      },
+    );
     if (docId) api.addDocReference(docId, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
     // #777: pptx 上传即后台解析 — 轮询刷新 deck。
     if (/\.pptx$/i.test(result.name)) schedulePptxReload();
@@ -316,7 +321,7 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
       // #fix: 上传即草稿 — 空文档 + 文件类参考时服务端自动导入正文,
       // 响应携带 imported_body,前端立即刷新编辑框(用户马上看到原文)。
       // #714: 已存在的同名参考不重复写入(服务端 dedup 命中时 result.dedup)。
-      let refResult: unknown = null;
+      let refResult: Awaited<ReturnType<typeof api.addDocReference>> | null = null;
       if (!result.dedup) {
         refResult = await api.addDocReference(docId, {
           kind: f.name.endsWith('.pdf') ? 'pdf' : f.name.endsWith('.docx') || f.name.endsWith('.doc') ? 'docx' : 'file',
@@ -330,8 +335,8 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
         input.onNotice(t('writing.pptxParsing', 'PPT 后台解析中 — 稍后 deck 视图将呈现每一页'), 6000);
       }
       void input.loadReferences();
-      if ((refResult as any)?.imported && !bodyRef.current.trim()) {
-        const importedBody = (refResult as any)?.imported_body as string | undefined;
+      if (refResult?.imported && !bodyRef.current.trim()) {
+        const importedBody = refResult.imported_body || undefined;
         if (importedBody) {
           input.setBody(importedBody);
           input.setDoc((prev) => (prev ? { ...prev, body: importedBody, updated_at: new Date().toISOString() } : prev));

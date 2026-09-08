@@ -363,6 +363,9 @@ export function ResearchDetailPage() {
     }
   };
 
+  // TODO(#922): 本映射已收敛到 lib/status-variant(research.tsx/medical-records.tsx/
+  // knowledge.tsx 已换用)— 本页与该实现 key 完全一致,留待下一 wave 换 import
+  // (本 wave 跳过 research-detail.tsx,避免与并行改动冲突)。
   const statusVariant = (s: string): 'default' | 'success' | 'warning' | 'error' => {
     switch (s.toLowerCase()) {
       case 'completed': return 'success';
@@ -891,6 +894,8 @@ export function ResearchDetailPage() {
         </main>
 
         {showEnroll && (
+          // TODO(#922): 待换 components/ui/Modal.tsx(本 wave 跳过 research-detail.tsx;
+          // 原行为:无 backdrop 点击关闭、无 Esc、bg-black/30、max-w-md)。
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
             <div className="w-full max-w-md rounded-xl border border-border bg-surface-elevated p-6 shadow-lg">
               <h2 className="mb-4 text-lg font-semibold text-text-primary">{t('research.enrollPatient', '入组患者')}</h2>

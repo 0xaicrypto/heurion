@@ -6,6 +6,7 @@ import { BaseTool, ToolResult } from './base-tool.js'
 import { renderSvgChart, type ChartInput } from './chart-renderer.js'
 import prisma from '../common/prisma.js'
 import { makeLogger } from '../common/logger.js'
+import { uploadsBaseDir } from '../lib/upload-path.js'
 
 const log = makeLogger('tools.chart')
 
@@ -89,7 +90,7 @@ export class RenderChartTool extends BaseTool {
     try {
       const svg = renderSvgChart(input)
       const userId = this.ctx.userId
-      const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+      const dir = uploadsBaseDir(userId)
       fs.mkdirSync(dir, { recursive: true })
       const fileId = `chart_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.svg`
       const filepath = path.join(dir, fileId)

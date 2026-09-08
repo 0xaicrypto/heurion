@@ -12,7 +12,7 @@ import {
 import { factExtractionPrompt, EXTRACTION_RULES } from '../prompts.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 
-const slog = makeLogger('documents.extract')
+const slog = makeLogger('memory.compaction')
 
 /**
  * #353: compaction/extraction runner — Tier 2 (compaction-time batch) and

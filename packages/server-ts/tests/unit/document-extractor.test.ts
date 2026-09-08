@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'vitest'
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -549,5 +549,63 @@ describe('#914 提取缓存 key 含文件版本维度(mtime)— 覆盖重写后�
     fs.writeFileSync(path.join(uploadsDir, fileId), 'md v2', 'utf-8')
     fs.utimesSync(path.join(uploadsDir, fileId), new Date(2000000000000), new Date(2000000000000))
     expect(await cachedExtractDocumentMarkdownFromUpload('u1', fileId)).toBe('md v2')
+  })
+})
+
+/**
+ * #922 — 手写 LRU 收敛到 lib/lru-cache.ts(MiniLruCache)+ 新增 inflight
+ * 去重(参照 tools/external-fetch.ts #860)。用 readFileSync 调用次数作为
+ * "是否重新读盘提取"的观测点(txt 路径提取恰好一次 readFileSync)。
+ */
+describe('#922 提取缓存 MiniLruCache 收敛(命中不读盘 + inflight 合并)', () => {
+  const tmpDir = path.join(os.tmpdir(), `heurion-extract-lru-${Date.now()}`)
+  const uploadsDir = path.join(tmpDir, 'u1', 'uploads')
+
+  beforeEach(() => {
+    process.env.TWIN_BASE_DIR = tmpDir
+    fs.mkdirSync(uploadsDir, { recursive: true })
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    delete process.env.TWIN_BASE_DIR
+  })
+
+  test('第二次调用命中缓存 — 不再 readFileSync(不重新读盘)', async () => {
+    const fileId = '1750000000700_lru.txt'
+    fs.writeFileSync(path.join(uploadsDir, fileId), 'lru cached text', 'utf-8')
+
+    const readSpy = vi.spyOn(fs, 'readFileSync')
+    try {
+      const a = await cachedExtractTextFromUpload('u1', fileId)
+      expect(a).toBe('lru cached text')
+      const firstRunReads = readSpy.mock.calls.length
+      expect(firstRunReads).toBeGreaterThan(0)
+
+      const b = await cachedExtractTextFromUpload('u1', fileId)
+      expect(b).toBe('lru cached text')
+      expect(readSpy.mock.calls.length).toBe(firstRunReads)
+    } finally {
+      readSpy.mockRestore()
+    }
+  })
+
+  test('同文件并发请求 inflight 合并 — 只读盘提取一次', async () => {
+    const fileId = '1750000000701_inflight.txt'
+    fs.writeFileSync(path.join(uploadsDir, fileId), 'inflight merged', 'utf-8')
+
+    const readSpy = vi.spyOn(fs, 'readFileSync')
+    try {
+      const [a, b] = await Promise.all([
+        cachedExtractTextFromUpload('u1', fileId),
+        cachedExtractTextFromUpload('u1', fileId),
+      ])
+      expect(a).toBe('inflight merged')
+      expect(b).toBe('inflight merged')
+      // 两次并发只触发一次提取(txt 路径 = 恰一次 readFileSync)。
+      expect(readSpy.mock.calls.length).toBe(1)
+    } finally {
+      readSpy.mockRestore()
+    }
   })
 })

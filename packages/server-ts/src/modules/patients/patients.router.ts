@@ -4,10 +4,10 @@ import { registerPatientSchema } from '../shared/chat.dto.js'
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import fs from 'fs'
-import path from 'path'
 import { quickScanDicom, renderDicomSlice, analyzeWithGeminiVision } from './dicom-scanner.js'
 import { appendChiefComplaint, recordScanFindingsAsFacts } from './patient-record.service.js'
 import { getUserContext } from '../shared/user-context.js'
+import { uploadsBaseDir } from '../../lib/upload-path.js'
 import { makeLogger } from '../../common/logger.js'
 
 const log = makeLogger('knowledge.quick-scan')
@@ -111,7 +111,7 @@ export async function patientsRouter(app: FastifyInstance) {
   // ── Studies (stub) ──
   app.get('/api/v1/dicom/patients/:patientHash/studies', async (request) => {
     // Return uploaded files as DICOM studies for this patient
-    const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', (request as any).user?.userId || '', 'uploads')
+    const dir = uploadsBaseDir((request as any).user?.userId || '')
     const files: Array<{study_id: string; modality: string; series_count: number; created_at: string}> = []
     if (fs.existsSync(dir)) {
       for (const f of fs.readdirSync(dir)) {

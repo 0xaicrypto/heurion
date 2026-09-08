@@ -1,3 +1,7 @@
+# 一次性/诊断探针 — 长期不用可删（#924 归档标记）
+# 用途：手动触发，SSH 到 VPS 深度清理磁盘（docker system prune -a / builder prune / journal vacuum）。
+# 注意：prune -a 会删除未使用镜像，属有损运维操作，仅在磁盘告急时用。
+# 归档建议见 .github/workflows/README.md
 name: VPS Disk Clean
 
 on:

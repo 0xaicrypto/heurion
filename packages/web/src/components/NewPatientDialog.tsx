@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Button, Input, Textarea } from '@/components/ui';
+import { Modal } from '@/components/ui/Modal';
 
 interface NewPatientDialogProps {
   open: boolean;
@@ -61,16 +62,15 @@ export function NewPatientDialog({ open, onClose, onCreated }: NewPatientDialogP
     }
   };
 
-  const handleBackdrop = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) onClose();
-  };
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={handleBackdrop}
+    // #922: 弹窗外壳收敛到共享 Modal(backdrop 点击关闭 — 原行为保持,无 Esc)。
+    <Modal
+      open={open}
+      onClose={onClose}
+      backdropClose
+      backdropClassName="bg-black/40"
+      panelClassName="w-full max-w-md rounded-xl border border-border bg-surface-elevated p-6 shadow-xl"
     >
-      <div className="w-full max-w-md rounded-xl border border-border bg-surface-elevated p-6 shadow-xl">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-text-primary">New Patient</h2>
           <button
@@ -144,7 +144,6 @@ export function NewPatientDialog({ open, onClose, onCreated }: NewPatientDialogP
             </Button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }

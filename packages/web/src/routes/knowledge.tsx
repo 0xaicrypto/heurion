@@ -5,7 +5,11 @@ import { AppShell } from '@/components/layout/AppShell';
 import { api } from '@/lib/api';
 import { Button, Card, Skeleton, Badge, Input, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
+// #922: 三处重复的状态→Badge variant 映射收敛到 lib/status-variant(gaps fallback='default' 同旧 else)。
+import { statusVariant as libStatusVariant } from '@/lib/status-variant';
 import { EmptyState } from '@/components/ui/EmptyState';
+// #922: 弹窗外壳收敛到共享 Modal。
+import { Modal } from '@/components/ui/Modal';
 import { NextBestActions } from '@/components/NextBestActions';
 import type { Summary } from '@/lib/types';
 import { KB_SOURCE_TYPES, type KbSourceType } from '@heurion/contracts'; // #744/#750 single source of truth
@@ -494,8 +498,9 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                   ))}
 
                   {/* Summary edit modal */}
+                  {/* #922: 弹窗外壳收敛到共享 Modal(原行为:无 backdrop 关、无 Esc;Card 直挂面板) */}
                   {editingSummary && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                    <Modal open backdropClassName="bg-black/40 p-4">
                       <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto p-5">
                         <div className="flex items-center justify-between mb-4">
                           <h3 className="text-lg font-semibold text-text-primary">{t('knowledge.editSummary', '编辑总结')}</h3>
@@ -516,7 +521,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                           </div>
                         </div>
                       </Card>
-                    </div>
+                    </Modal>
                   )}
                   {renderPagination(summaryPagination.page, summaryPagination.totalPages, setSummaryPage, summaryPagination.start, filteredSummaries.length)}
                 </div>
@@ -652,7 +657,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                   )}
                   {gapPagination.pageItems.map(g => {
                     const statusLabel = g.status === 'open' ? t('knowledge.gapPending', '待处理') : g.status === 'answered' ? t('knowledge.gapAnswered', '已回答') : t('knowledge.gapIgnored', '已忽略');
-                    const statusVariant = g.status === 'open' ? 'warning' : g.status === 'answered' ? 'success' : 'default';
+                    const statusVariant = libStatusVariant(g.status);
                     return (
                       <Card key={g.id} className="p-4">
                         <div className="flex items-start justify-between">

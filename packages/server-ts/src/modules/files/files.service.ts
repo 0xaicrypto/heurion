@@ -14,7 +14,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import prisma from '../../common/prisma.js'
-import { sanitizeFilename } from '../../lib/upload-path.js'
+import { sanitizeFilename, uploadsBaseDir } from '../../lib/upload-path.js'
 import { createAndRunPipeline } from './file-pipeline.service.js'
 import { makeLogger } from '../../common/logger.js'
 
@@ -22,7 +22,8 @@ const log = makeLogger('files')
 
 // ── Upload limits & paths ─────────────────────────────────────
 
-export const uploadsDir = (userId: string) => path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+// #922: 目录拼接统一走 lib/upload-path(唯一 TWIN_BASE_DIR 读取点)。
+export const uploadsDir = uploadsBaseDir
 export const chunkDir = (userId: string, uploadId: string) => path.join(uploadsDir(userId), '.tmp', uploadId)
 
 // #fix: 分片上传 — 大文件(>100MB 单请求上限)拆成分片逐段上传,避免

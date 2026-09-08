@@ -143,7 +143,7 @@ The agent uses two tools to install capabilities at chat time **without code cha
 - `manage_skill(action='install', identifier='anthropic:pdf')` — installs an Anthropic-style skill (clones a repo, drops `SKILL.md` into `/data/twins/<user>/skills/<name>/`)
 - `manage_mcp(action='install', identifier='lobehub:slack-mcp')` — installs an MCP server (resolves to `npx -y <package>`, registers it as a function-callable tool)
 
-Both write under `/data` which is the persistent volume — so installs survive container rebuilds. Both shell out to `npx` (Node 20 is baked into the runtime image), so the agent doesn't need outbound `apt-get install` to get tools.
+Both write under `/data` which is the persistent volume — so installs survive container rebuilds. Both shell out to `npx` (Node 22 is baked into the runtime image), so the agent doesn't need outbound `apt-get install` to get tools.
 
 This means: deploy once, then let the agent grow itself. No `docker compose up --build` needed when it learns a new skill.
 
@@ -206,7 +206,7 @@ Port 80 isn't reachable from the public internet. Check VPS firewall + cloud pro
 Likely you set `HOSTNAME` to something nip.io can't resolve (typo) or your VPS IP changed and the cert is for the old one. `docker compose down && rm -rf <caddy-data-volume>/* && docker compose up -d` to force re-issuance.
 
 **Agent says "npx not found" when installing an MCP server**  
-You're on an old Docker image. `docker compose build --no-cache` to rebuild from scratch — Node 20 is in the runtime stage.
+You're on an old Docker image. `docker compose build --no-cache` to rebuild from scratch — Node 22 is in the runtime stage (`node:22-bookworm-slim`, see `packages/server-ts/Dockerfile`).
 
 **SQLite saying `database is locked`**  
 You exceeded SQLite's write throughput (rare with < 50 concurrent users). Migrate to Postgres: change `DATABASE_URL` to `postgresql://…`, add a Postgres service to `docker-compose.yml`. The schema is portable.

@@ -151,8 +151,8 @@ pnpm exec vite --host
 Tests:
 
 ```bash
-cd packages/server-ts && pnpm vitest run   # 72 files / 474 tests (AI mocked, hermetic)
-cd packages/web && pnpm test               # 14 files / 93 tests
+cd packages/server-ts && pnpm vitest run   # full suite (AI mocked, hermetic) — 见 CI 统计，不在此写死规模
+cd packages/web && pnpm test               # unit suite
 bash scripts/regression-test.sh http://localhost:8002   # 96 checks, LLM-dependent ones retried
 ```
 

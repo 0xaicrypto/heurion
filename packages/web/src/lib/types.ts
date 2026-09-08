@@ -371,6 +371,39 @@ export interface SummaryImpact {
   message: string;
 }
 
+/**
+ * #923: /api/v1/memory/graph(与 /memory/nodes/:id/versions)节点形状 —
+ * 服务端 MemoryNode union(fact/summary/gap/skill/entity/document)的
+ * web 侧投影:基座字段 + 各类型消费点用到的可选字段。
+ */
+export interface MemoryGraphNode {
+  id: string;
+  stableId: string;
+  type: 'fact' | 'summary' | 'gap' | 'skill' | 'entity' | 'document';
+  status: 'current' | 'stale' | 'superseded' | 'pending_review';
+  content: string;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+  title?: string;
+  name?: string;
+  category?: string;
+  sourceType?: string;
+  patientHash?: string;
+  importance?: number;
+  staleBecause?: string[];
+  impact?: SummaryImpact[];
+}
+
+/** /api/v1/memory/graph 关系边(服务端可见关系投影,stableId 已替换原始 nodeId)。 */
+export interface MemoryGraphRelation {
+  id?: string;
+  sourceId: string;
+  targetId: string;
+  relation: string;
+  createdAt?: number;
+}
+
 export interface LlmCostDashboard {
   totalCalls: number;
   totalTokens: number;
@@ -491,18 +524,6 @@ export interface PrecheckResult {
   items: Array<{ id: string; label: string; ok: boolean | null; detail?: string }>;
   passed: number;
   manual_count: number;
-}
-
-/** @deprecated #848 旧 Top5 契约 — 由 RecommendJournalsResult 替代。 */
-export interface JournalRecommendation {
-  id: string;
-  name: string;
-  impact_factor: number;
-  acceptance_rate: number;
-  review_weeks: number;
-  cas_zone: string;
-  match_score: number;
-  reason: string;
 }
 
 export interface CoverLetterResult {

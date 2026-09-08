@@ -12,6 +12,7 @@ import { resolveActiveModel, resolveTurnTimeoutMs } from '../../common/llm-gatew
 import { deepseekChatWithMeta, deepseekChatWithToolsStream } from '../../common/llm.js'
 import { detectDoomLoop } from '../../tools/doom-loop.js'
 import { READ_ONLY_TOOLS, BEST_EFFORT_RETRIEVAL_TOOLS } from '../../tools/tool-registry.js'
+import { twinsRoot } from '../../lib/upload-path.js'
 import { makeLogger } from '../../common/logger.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 import type { getUserContext } from '../shared/user-context.js'
@@ -182,7 +183,7 @@ export async function runToolCallLoop(params: {
       try {
         const { mkdir, writeFile } = await import('fs/promises')
         const { join } = await import('path')
-        const baseDir = process.env.TWIN_BASE_DIR || '.nexus/twins'
+        const baseDir = twinsRoot()
         const dir = join(baseDir, userId, 'truncation')
         await mkdir(dir, { recursive: true })
         const name = `tool_${sessionId.replace(/[^\w-]/g, '_')}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.txt`

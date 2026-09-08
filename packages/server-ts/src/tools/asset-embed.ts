@@ -6,6 +6,7 @@
 import fs from 'fs'
 import path from 'path'
 import sharp from 'sharp'
+import { uploadsBaseDir } from '../lib/upload-path.js'
 
 /**
  * #769 — 契约内容模型里的图片 markdown 段落 → 内嵌 base64 image block
@@ -33,7 +34,7 @@ export async function embedContentImages(userId: string, blocks: Array<Record<st
  *  正确渲染；density 150 保证清晰度）。 */
 export async function resolveLocalImageBlock(userId: string, url: string, caption: string): Promise<{ type: 'image'; ref: string; caption?: string; data: string } | null> {
   const name = path.basename(url.split('?')[0] || '')
-  const p = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads', name)
+  const p = path.join(uploadsBaseDir(userId), name)
   try {
     if (!name || !fs.existsSync(p)) return null
     let buf = fs.readFileSync(p)

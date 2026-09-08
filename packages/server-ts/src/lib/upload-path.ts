@@ -5,8 +5,23 @@
  */
 import path from 'path'
 
+/**
+ * #922 重复实现收敛 — TWIN_BASE_DIR 根目录的唯一读取点。此前 ~25 处调用点
+ * 各自 `path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', …)`,env 名或
+ * 默认值一旦调整必然漏改。全部经 twinsRoot / twinsBaseDir / uploadsBaseDir
+ * 衍生,默认值拼接结果逐点等价(对照脚本已验证:未设/空串/绝对/相对路径)。
+ */
+export function twinsRoot(): string {
+  return process.env.TWIN_BASE_DIR || '.nexus/twins'
+}
+
+/** 用户 twin 目录(事件日志/记忆索引/截断输出等直接落在用户根下)。 */
+export function twinsBaseDir(userId: string): string {
+  return path.join(twinsRoot(), userId)
+}
+
 export function uploadsBaseDir(userId: string): string {
-  return path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+  return path.join(twinsBaseDir(userId), 'uploads')
 }
 
 /**

@@ -1,6 +1,7 @@
 import prisma from '../../common/prisma.js'
 import { createMedicalRecordEntry } from '../medical-records/medical-record-entry.service.js'
 import { extractDocumentText } from '../../lib/document-extractor.js'
+import { uploadsBaseDir } from '../../lib/upload-path.js'
 import { analyzerRegistry, registerAnalyzer } from './analyzer-registry.js'
 import crypto from 'crypto'
 import fs from 'fs'
@@ -234,7 +235,7 @@ async function extractTextForJob(job: any): Promise<{ text: string; json?: any }
   }
 
   // Try to locate the uploaded file on disk. This is a best-effort default.
-  const uploadBase = process.env.UPLOAD_DIR || path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', job.userId, 'uploads')
+  const uploadBase = process.env.UPLOAD_DIR || uploadsBaseDir(job.userId)
   const filePath = path.join(uploadBase, job.fileId)
 
   if (job.mimeType === 'application/dicom') {

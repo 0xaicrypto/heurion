@@ -11,6 +11,7 @@ import { resolvePathway, searchPathways, fetchPathwayDiagram, reactomeCatalog } 
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
+import { uploadsBaseDir } from '../../lib/upload-path.js'
 
 export class RenderSceneTool extends BaseTool {
   constructor(private ctx: { userId: string }) { super() }
@@ -78,7 +79,7 @@ LAYOUT RULES (bioscene mode, mandatory): coordinates are 0-100 (percent of canva
       // #468: palette — clinical/journal colored schemes, default = legacy.
       const palette = args.palette === 'clinical' || args.palette === 'journal' ? args.palette : 'default'
       const svg = renderBioScene(check.data as any, palette)
-      const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', this.ctx.userId, 'uploads')
+      const dir = uploadsBaseDir(this.ctx.userId)
       fs.mkdirSync(dir, { recursive: true })
       const fileId = `scene_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.svg`
       fs.writeFileSync(path.join(dir, fileId), svg, 'utf-8')
@@ -129,12 +130,12 @@ LAYOUT RULES (bioscene mode, mandatory): coordinates are 0-100 (percent of canva
     if (!svg) {
       return {
         success: false,
-        error: `Pathway "${entry.name}" (${entry.id}) is not available: REACTOME_DIAGRAMS_BASE_URL is not configured or the diagram could not be fetched. Run scripts/upload-reactome-diagrams.js to publish the diagrams to object storage.`,
+        error: `Pathway "${entry.name}" (${entry.id}) is not available: neither REACTOME_DIAGRAMS_DIR (pre-provisioned directory, populated by the deploy pipeline's provision-reactome-diagrams job) nor REACTOME_DIAGRAMS_BASE_URL (object storage) is configured, or the diagram could not be fetched.`,
       }
     }
 
     try {
-      const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', this.ctx.userId, 'uploads')
+      const dir = uploadsBaseDir(this.ctx.userId)
       fs.mkdirSync(dir, { recursive: true })
       const fileId = `scene_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.svg`
       fs.writeFileSync(path.join(dir, fileId), svg, 'utf-8')

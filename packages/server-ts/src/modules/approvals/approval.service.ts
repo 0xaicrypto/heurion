@@ -1,4 +1,5 @@
 import prisma from '../../common/prisma.js'
+import type { DocumentNode } from '../../memory/memory.types.js'
 import { resolvePermission, type PermissionRule } from '../../common/permission.js'
 import { makeLogger } from '../../common/logger.js'
 import { safeJsonParse } from '../../common/llm-json.js'
@@ -191,7 +192,7 @@ async function enrichProposalProvenance(serialized: Array<Record<string, any>>):
     try {
       const ctx = getContextResolver()?.(ownerId)
       if (!ctx?.memory) continue
-      const documents = (ctx.memory.graph.getCurrentNodesByType('document') as any[]) ?? []
+      const documents = (ctx.memory.graph.getCurrentNodesByType('document') as DocumentNode[]) ?? []
       const docNameByFileId = new Map<string, string>()
       for (const d of documents) {
         if (d?.fileId && d?.name) docNameByFileId.set(d.fileId, d.name)
@@ -243,7 +244,7 @@ async function enrichProposalProvenance(serialized: Array<Record<string, any>>):
         const docNames = new Set<string>()
         const sessionTitles = new Set<string>()
         for (const stableId of factIds.slice(0, 10)) {
-          const node = ctx.memory.graph.getLatestByStableId(stableId) as any
+          const node = ctx.memory.graph.getLatestByStableId(stableId)
           if (!node || node.type !== 'fact') continue
           const ref: string | undefined = node.provenance?.sourceRef
           let fileId: string | null = null
@@ -495,9 +496,9 @@ async function applyTargetUpdate(
 
     // #845 确认语义(D6,与迁移一致):capture 来源的 skill 提案通过后,
     // CapturedSkill 原行标 promoted 纯归档(stableId=skill_cap_<capturedId>)。
-    if (row.kind === 'skill' && node && typeof (node as any).stableId === 'string'
-      && (node as any).stableId.startsWith('skill_cap_')) {
-      const capturedId = (node as any).stableId.slice('skill_cap_'.length)
+    if (row.kind === 'skill' && node && typeof node.stableId === 'string'
+      && node.stableId.startsWith('skill_cap_')) {
+      const capturedId = node.stableId.slice('skill_cap_'.length)
       await prisma.capturedSkill.updateMany({
         where: { id: capturedId, userId: row.userId, status: { not: 'promoted' } },
         data: { status: 'promoted', updatedAt: now },

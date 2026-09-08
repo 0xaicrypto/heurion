@@ -16,6 +16,7 @@ import type { SendEvent } from './chat-sse.js'
 import type { TurnIntent } from './turn-intent.js'
 import type { ChatScene } from '../../common/persona.js'
 import type { getUserContext } from '../shared/user-context.js'
+import type { SkillCardSummary } from '../skills/activation.js'
 import { upsertSessionRow } from './history-budget.js'
 import { detectUnbackedEditClaim } from './writing-prompts.js'
 import { analyzeChatForMedicalRecord, updatePatientFromFindings, updateMedicalRecordFromChat } from '../patients/clinical-analysis.js'
@@ -38,7 +39,8 @@ export interface PostTurnContext {
   timelineTools: Array<{ tool: string; round?: number }>
   chartMeta: Array<{ url: string; chartType?: string }>
   timelineSubs: Array<{ id: string; task: string; status: 'running' | 'done' | 'failed' }>
-  skillCards: any[]
+  /** 本轮激活的剧本卡(matchSkillsForTurn 输出,follow-through 段消费)。 */
+  skillCards: SkillCardSummary[]
   attachmentText: string
   patientHash: string | null
   evolutionQueue?: EvolutionQueue

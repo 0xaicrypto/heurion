@@ -11,28 +11,6 @@
   "landing": {
     "navLogin": "登录",
     "navGetStarted": "免费开始",
-    "heroTitle": "为临床工作者打造的",
-    "heroHighlight": "自我进化数字分身",
-    "heroSubtitle": "Heurion 从每次问诊中学习，记住关键信息，并在您的授权下采取行动——云端部署，任何设备皆可访问。",
-    "heroCtaPrimary": "免费开始使用",
-    "heroCtaSecondary": "在 GitHub 上查看",
-    "feature1Title": "患者为中心的工作流",
-    "feature1Desc": "统一的患者摘要、问诊、影像、检验与报告，所有临床信息一目了然。",
-    "feature2Title": "持续学习的记忆网络",
-    "feature2Desc": "自动提取并关联临床实体，构建可解释、可审计的记忆图谱。",
-    "feature3Title": "研究 + 写作一体化",
-    "feature3Desc": "从临床试验到文档协作，AI 助手与您并肩完成复杂知识工作。",
-    "feature4Title": "自托管友好",
-    "feature4Desc": "数据完全由您掌控。支持私有部署，也提供云端 SaaS 版本。",
-    "trustTitle": "值得信赖的临床 AI 基础设施",
-    "trustDescription": "安全、可解释、可审计——为医疗场景设计的 AI 基础设施。",
-    "trust1": "数据隐私优先设计",
-    "trust2": "可审计的推理与引用",
-    "trust3": "符合医疗场景的角色权限控制",
-    "ctaTitle": "准备好提升您的临床效率？",
-    "ctaSubtitle": "立即注册，体验新一代临床智能助手。",
-    "ctaButton": "立即开始",
-    "versionBadge": "Clinical AI Twin v0.1",
     "footer": "© {{year}} Heurion. 保留所有权利。"
   },
   "common": {
@@ -368,9 +346,7 @@
     "saved": "已保存",
     "currentActive": "当前生效: "
   },
-  "admin": {
-    "title": "管理"
-  },
+  "admin": {},
   "research": {
     "title": "研究",
     "writePaper": "写论文",
@@ -546,7 +522,6 @@
     "failed": "失败"
   },
   "audit": {
-    "title": "审计日志",
     "filterType": "按目标类型筛选",
     "allTypes": "全部目标类型",
     "filterAction": "按操作筛选",

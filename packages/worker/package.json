@@ -22,7 +22,7 @@
     "zod": "^3.22.0"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^22.0.0",
     "@types/pdfkit": "^0.17.6",
     "@types/uuid": "^9.0.0",
     "tsx": "^4.0.0",

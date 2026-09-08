@@ -1,4 +1,5 @@
 import { resolveTierModel } from '../../common/llm-gateway.js'
+import { twinsRoot } from '../../lib/upload-path.js'
 /**
  * #747 — File post-upload pipeline: a single job state machine replacing the
  * three fire-and-forget async paths that previously lived in finalizeUpload
@@ -102,7 +103,9 @@ export const FACT_MAX_WINDOWS = parseInt(process.env.FILE_FACT_WINDOWS || '12', 
 type PipelineRow = Awaited<ReturnType<typeof prisma.filePipelineJob.findUniqueOrThrow>>
 
 function uploadsBase(): string {
-  return process.env.TWIN_BASE_DIR || '.nexus/twins'
+  // #922: 根目录唯一读取点(lib/upload-path)。注意下游是模板字符串拼接,
+  // 不能换成 path.join 版 uploadsBaseDir(会归一化 '..' 等路径段,行为变化)。
+  return twinsRoot()
 }
 
 function isExtractableMime(mimeType?: string | null, filename?: string | null): boolean {

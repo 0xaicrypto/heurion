@@ -192,7 +192,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       // #909: 退出审阅恢复编辑能力(审阅期 setEditable(false) 的对称操作;
       // 初次渲染时本 effect 由 editor 就绪触发,无需 onCreate 兜底)。
       editor.setEditable(true);
-      (editor.commands as any).setTrackChangesMode('edit');
+      (editor.commands).setTrackChangesMode('edit');
       // 退出审阅(含"放弃修改")→ 还原为当前正文。
       // #812: accept 后的落地也走位置保持 — 用户停在原选区/滚动处,
       // 不再被 setContent 甩到文档末尾。
@@ -210,7 +210,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     applyTrackedDiff(editor, diffReview.old, diffReview.next, AI_AUTHOR);
     applyMdRef.current = null;
     if (sc && savedTop !== null) sc.el.scrollTop = savedTop;
-    (editor.commands as any).setTrackChangesMode('view');
+    (editor.commands).setTrackChangesMode('view');
     // #909: 审阅只读化 — 此前仅靠 onUpdate 抑制,IME 组合/撤销栈等旁路
     // 仍可在带标记的文档上改写内容;显式 setEditable(false) 封死入口,
     // ←/→ 键也因编辑器失焦而空闲给审阅导航使用。
@@ -254,10 +254,10 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     const n = ids.size;
     applyMdRef.current = value;
     if (accept) {
-      (editor.commands as any).acceptAll();
+      (editor.commands).acceptAll();
       stats.accepted += n;
     } else {
-      (editor.commands as any).rejectAll();
+      (editor.commands).rejectAll();
       stats.rejected += n;
     }
     cleanupEmptyBlocks(editor);
@@ -285,8 +285,8 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     if (!editor) return;
     const stats = statsRef.current;
     applyMdRef.current = value;
-    if (accept) { (editor.commands as any).acceptChange(changeId); stats.accepted += 1; }
-    else { (editor.commands as any).rejectChange(changeId); stats.rejected += 1; }
+    if (accept) { (editor.commands).acceptChange(changeId); stats.accepted += 1; }
+    else { (editor.commands).rejectChange(changeId); stats.rejected += 1; }
     cleanupEmptyBlocks(editor);
     applyMdRef.current = null;
     setSelectedChange(null);
@@ -354,7 +354,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   if (!editor) return null;
 
   const isActive = (name: string, attrs?: Record<string, unknown>) =>
-    editor.isActive(name, attrs as any);
+    editor.isActive(name, attrs);
 
   const reviewing = reviewKeyRef.current !== null;
 

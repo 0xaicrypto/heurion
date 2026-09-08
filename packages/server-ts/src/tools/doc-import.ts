@@ -5,7 +5,7 @@ import prisma from '../common/prisma.js'
 import { extractDocumentMarkdownWithImagesFromUpload, type ExtractedPdfImage } from '../lib/document-extractor.js'
 import { issueChartToken } from '../common/chart-token.js'
 import { writeDocVersion } from './doc-version-writer.js'
-import { sanitizeFilename } from '../lib/upload-path.js'
+import { sanitizeFilename, uploadsBaseDir } from '../lib/upload-path.js'
 import { downloadPdfFromUrl, UrlDownloadError } from '../lib/url-download.js'
 import { isOaUrlForDoi } from './oa-pdf-tool.js'
 
@@ -107,7 +107,7 @@ export async function executeImportFromUrl(
       fileId = dup.id
     } else {
       fileId = `${Date.now()}_${sanitizeFilename(filename)}`
-      const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+      const dir = uploadsBaseDir(userId)
       fs.mkdirSync(dir, { recursive: true })
       fs.writeFileSync(path.join(dir, fileId), pdf.buffer)
       const now = new Date().toISOString()
@@ -226,7 +226,7 @@ export async function ensureDraftBody(
 /** FileIndex 表缺失时的兜底:扫描上传目录,按文件名(去 fileId 前缀)定位。 */
 function findUploadByFileName(userId: string, name: string): string | null {
   if (!name) return null
-  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+  const dir = uploadsBaseDir(userId)
   if (!fs.existsSync(dir)) return null
   for (const f of fs.readdirSync(dir)) {
     const derived = f.split('_').slice(1).join('_') || f
@@ -257,7 +257,7 @@ async function embedDocumentImages(userId: string, docId: string, text: string, 
     'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp',
     'image/gif': 'gif', 'image/bmp': 'bmp',
   }
-  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+  const dir = uploadsBaseDir(userId)
   fs.mkdirSync(dir, { recursive: true })
 
   const urls = images.map((img, i) => {

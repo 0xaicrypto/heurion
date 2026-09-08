@@ -35,6 +35,26 @@ interface FactFileGroup {
 }
 
 /**
+ * #845 skill 提案审批 payload 内嵌的剧本卡 — 服务端
+ * memory/skill-card.ts renderSkillProposalCard(SkillProposalCard) 的形状。
+ */
+interface SkillProposalCard {
+  kind: string;
+  title: string;
+  description: string;
+  steps: string[];
+  followRate: string;
+  evidence?: {
+    observationCount?: number;
+    correctionRate?: number;
+    trajectoryCount?: number;
+    sessionIds?: string[];
+  };
+  scope?: string;
+  source?: string;
+}
+
+/**
  * #836-followup:提案 reason 是服务端内部机器串(英文),直接展示给用户
  * 很突兀。已知模式映射为本地化文案;未识别的原样保留(如"聊天/手动导入：…"
  * 本就是中文)。
@@ -366,9 +386,9 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
                 )}
                 {/* #845: skill 提案的剧本卡 diff 预览 — 激活后医生会看到什么 + 证据展示 */}
                 {(() => {
-                  const skillCard = (approval.payload as Record<string, any> | null)?.skillCard as
-                    | { title: string; description: string; steps: string[]; followRate: string; evidence?: { observationCount?: number; correctionRate?: number; trajectoryCount?: number; sessionIds?: string[] } }
-                    | undefined;
+                  const raw = approval.payload?.skillCard;
+                  // payload 是 JSON 边界(Record<string, unknown>) — 仅在确为对象时收窄。
+                  const skillCard = (raw && typeof raw === 'object' ? raw : null) as SkillProposalCard | null;
                   if (!skillCard) return null;
                   return (
                     <div data-testid="skill-card-preview" className="mt-2 rounded-lg border border-border bg-surface-2 p-3 text-xs">

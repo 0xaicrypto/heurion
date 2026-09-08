@@ -14,37 +14,12 @@ export interface DocxInput {
   sections?: DocxSection[]
 }
 
-/**
- * Sidecar/plugin jobs arrive as { template_id, data: {...}, output_name }.
- * The actual content lives under `data` (see generateDocx).
- */
-function str(v: unknown): string {
-  return v == null ? '' : String(v)
-}
-
-/**
- * Build document sections from legacy template-placeholder fields
- * (patient_initials, diagnosis, findings_html, treatment_plan, generated_at).
- * Kept as a fallback when the payload carries no explicit `sections`.
- */
-function sectionsFromTemplateData(data: Record<string, unknown>): DocxSection[] {
-  const sections: DocxSection[] = []
-  const patientBits = [
-    data.patient_initials ? `Initials: ${str(data.patient_initials)}` : '',
-    data.age !== undefined && data.age !== null ? `Age: ${str(data.age)}` : '',
-    data.sex ? `Sex: ${str(data.sex)}` : '',
-  ].filter(Boolean)
-  if (patientBits.length > 0) sections.push({ heading: 'Patient', paragraphs: [patientBits.join(', ')] })
-  if (data.diagnosis) sections.push({ heading: 'Diagnosis', paragraphs: [str(data.diagnosis)] })
-  if (data.findings_html) sections.push({ heading: 'Findings', paragraphs: [str(data.findings_html)] })
-  if (data.treatment_plan) sections.push({ heading: 'Treatment Plan', paragraphs: [str(data.treatment_plan)] })
-  if (data.generated_at) sections.push({ heading: 'Generated', paragraphs: [`Date: ${str(data.generated_at)}`] })
-  return sections
-}
-
 export async function generateDocx(payload: any) {
   // New validated contract: { schema_version, content_type, data: {schemaVersion, title, sections} }.
-  // Legacy tolerance: { template_id, data: {...legacy fields} } → sectionsFromTemplateData.
+  // Legacy tolerance: when validation fails, sections are rebuilt from
+  // whatever `sections` array arrived (top-level or nested under `data`,
+  // flat or partial); a payload with no sections at all degrades to a
+  // single placeholder section — never an empty document.
   let raw = payload?.data ?? payload
   const check = validateRenderContent('sidecar.generate_docx', raw)
   let input: DocumentContent

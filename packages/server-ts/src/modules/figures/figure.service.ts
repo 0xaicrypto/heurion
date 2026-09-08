@@ -19,6 +19,7 @@ import { makeLogger } from '../../common/logger.js'
 import { issueChartToken } from '../../common/chart-token.js'
 import { createExecutionPlaneService } from '../execution/execution-plane.service.js'
 import { pollRenderJob } from '../../tools/asset-render-pipeline.js'
+import { uploadsBaseDir } from '../../lib/upload-path.js'
 
 const log = makeLogger('figures.figure-service')
 
@@ -50,7 +51,7 @@ export function figureSha256(input: FigureInput): string {
 }
 
 function uploadsDir(userId: string): string {
-  return path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+  return uploadsBaseDir(userId)
 }
 
 function buildPayload(input: FigureInput): Record<string, unknown> {

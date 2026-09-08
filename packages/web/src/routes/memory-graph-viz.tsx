@@ -9,32 +9,11 @@ import {
 import { AppShell } from '@/components/layout/AppShell';
 import { api, ApiError } from '@/lib/api';
 import { Alert, Badge, Button, Card, Input, Skeleton } from '@/components/ui';
+import type { MemoryGraphNode, MemoryGraphRelation } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
-interface MemoryNode {
-  id: string;
-  stableId: string;
-  type: 'fact' | 'summary' | 'gap' | 'document' | 'entity' | 'skill';
-  status: 'current' | 'stale' | 'superseded' | 'pending_review';
-  content: string;
-  title?: string;
-  category?: string;
-  sourceType?: string;
-  patientHash?: string;
-  version?: number;
-  importance?: number;
-  updatedAt?: number;
-  createdAt?: number;
-  staleBecause?: string[];
-  impact?: { factId: string; status: string; content: string; message: string }[];
-}
-
-interface MemoryRelation {
-  id: string;
-  sourceId: string;
-  targetId: string;
-  relation: string;
-}
+type MemoryNode = MemoryGraphNode;
+type MemoryRelation = MemoryGraphRelation;
 
 const NODE_TYPES: MemoryNode['type'][] = ['fact', 'summary', 'gap', 'document', 'entity', 'skill'];
 const NODE_STATUS: MemoryNode['status'][] = ['current', 'stale', 'superseded', 'pending_review'];
@@ -96,8 +75,9 @@ export function MemoryGraphVizPage() {
     setError(null);
     try {
       const data = await api.getMemoryGraph(patientHash, includeSuperseded);
-      setNodes(data.nodes.map((n: any) => ({ ...n, stableId: n.stableId || n.id })));
-      setRelations(data.relations.map((r: any) => ({ ...r, id: r.id || `${r.sourceId}-${r.relation}-${r.targetId}` })));
+      // 服务端节点 stableId 恒有 — `|| n.id` 保留为 legacy 兜底。
+      setNodes(data.nodes.map((n) => ({ ...n, stableId: n.stableId || n.id })));
+      setRelations(data.relations.map((r) => ({ ...r, id: r.id || `${r.sourceId}-${r.relation}-${r.targetId}` })));
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : t('settings.loadFailed'));
     } finally {

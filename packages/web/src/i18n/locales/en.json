@@ -11,28 +11,6 @@
   "landing": {
     "navLogin": "Log in",
     "navGetStarted": "Get started free",
-    "heroTitle": "A self-evolving digital twin",
-    "heroHighlight": "built for clinicians",
-    "heroSubtitle": "Heurion learns from every encounter, remembers what matters, and acts on your behalf — cloud-deployed and accessible from any device.",
-    "heroCtaPrimary": "Start for free",
-    "heroCtaSecondary": "View on GitHub",
-    "feature1Title": "Patient-centric workflow",
-    "feature1Desc": "Unified patient summary, encounters, imaging, labs, and reports — all clinical information in one place.",
-    "feature2Title": "Continuously learning memory",
-    "feature2Desc": "Automatically extract and link clinical entities into an explainable, auditable memory graph.",
-    "feature3Title": "Research + writing unified",
-    "feature3Desc": "From clinical trials to document collaboration, an AI assistant that works alongside you on complex knowledge work.",
-    "feature4Title": "Self-host friendly",
-    "feature4Desc": "Your data stays under your control. Supports private deployment as well as cloud SaaS.",
-    "trustTitle": "Trustworthy clinical AI infrastructure",
-    "trustDescription": "Secure, explainable, and auditable AI infrastructure designed for healthcare.",
-    "trust1": "Privacy-first data architecture",
-    "trust2": "Auditable reasoning with citations",
-    "trust3": "Role-based access for clinical teams",
-    "ctaTitle": "Ready to accelerate your clinical workflow?",
-    "ctaSubtitle": "Sign up now and experience the next generation of clinical intelligence.",
-    "ctaButton": "Get started",
-    "versionBadge": "Clinical AI Twin v0.1",
     "footer": "© {{year}} Heurion. All rights reserved."
   },
   "common": {
@@ -368,9 +346,7 @@
     "saved": "Saved",
     "currentActive": "Active: "
   },
-  "admin": {
-    "title": "Admin"
-  },
+  "admin": {},
   "research": {
     "title": "Research",
     "writePaper": "Write paper",
@@ -546,7 +522,6 @@
     "failed": "Failed"
   },
   "audit": {
-    "title": "Audit Log",
     "filterType": "Filter by target type",
     "allTypes": "All target types",
     "filterAction": "Filter by action",

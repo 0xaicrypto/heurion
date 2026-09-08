@@ -114,7 +114,7 @@ export function SkillsPage() {
             ) : (
               <div className="space-y-8">
                 {Object.entries(CATEGORIES).map(([cat, { label, icon }]) => {
-                  const catSkills = skills.filter(s => (s as any).identifier?.startsWith?.(`official/${cat}`) || (s as any).identifier?.startsWith?.(`github/${cat}`) || (s as any).identifier?.startsWith?.(`anthropic/${cat}`))
+                  const catSkills = skills.filter(s => s.identifier?.startsWith?.(`official/${cat}`) || s.identifier?.startsWith?.(`github/${cat}`) || s.identifier?.startsWith?.(`anthropic/${cat}`))
                   if (catSkills.length === 0) return null
                   return (
                     <section key={cat}>
@@ -134,7 +134,7 @@ export function SkillsPage() {
                             </div>
                             <div className="flex gap-2 mt-3">
                               {!s.installed ? (
-                                <Button size="sm" className="w-full" onClick={() => handleInstall((s as any).identifier || s.name)} isLoading={installing === (s as any).identifier}>
+                                <Button size="sm" className="w-full" onClick={() => handleInstall(s.identifier || s.name)} isLoading={installing === s.identifier}>
                                   <Download size={14} className="mr-1" /> Install
                                 </Button>
                               ) : (

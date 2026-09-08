@@ -14,6 +14,7 @@ import fs from 'fs'
 import path from 'path'
 import sharp from 'sharp'
 import { makeLogger } from '../../common/logger.js'
+import { uploadsBaseDir } from '../../lib/upload-path.js'
 
 const log = makeLogger('documents.export')
 
@@ -209,7 +210,7 @@ export async function loadExportImage(userId: string, url: string): Promise<Expo
     const fileId = decodeURIComponent(m[1])
     if (fileId.includes('..') || fileId.includes('/') || fileId.includes('\\')) return null
 
-    const filepath = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads', fileId)
+    const filepath = path.join(uploadsBaseDir(userId), fileId)
     if (!fs.existsSync(filepath)) return null
 
     let buffer = fs.readFileSync(filepath)

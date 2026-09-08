@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Sparkles, Check, X, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button, Input } from '@/components/ui';
+import { Modal } from '@/components/ui/Modal';
 
 interface SkillDraft {
   name: string;
@@ -107,8 +108,12 @@ export function SkillCapturePrompt({ conversation, sessionId, onDone }: {
       {error && <span className="text-xs text-error">{error}</span>}
 
       {open && draft && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-lg rounded-lg border border-border bg-surface p-5 shadow-lg">
+        // #922: 弹窗外壳收敛到共享 Modal(原行为:无 backdrop 关、无 Esc,显式保持)。
+        <Modal
+          open
+          backdropClassName="bg-black/50 p-4"
+          panelClassName="w-full max-w-lg rounded-lg border border-border bg-surface p-5 shadow-lg"
+        >
             <div className="mb-1 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-text-primary">{t('skills.captureTitle', '保存为技能')}</h2>
               <button onClick={handleCancel} aria-label="Close" className="text-text-tertiary hover:text-text-primary">
@@ -154,8 +159,7 @@ export function SkillCapturePrompt({ conversation, sessionId, onDone }: {
                 {t('skills.save', '保存')}
               </Button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
+import { twinsBaseDir } from '../lib/upload-path.js'
 
 /**
  * R1 — typed context sources (BRAIN2_MEMORY_LIFECYCLE §4.3, #98).
@@ -33,7 +34,7 @@ export function hashText(text: string): string {
 }
 
 export function snapshotPath(userId: string): string {
-  return path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'context-snapshot.json')
+  return path.join(twinsBaseDir(userId), 'context-snapshot.json')
 }
 
 /** Load the persisted snapshot. Corrupt/missing → null (full rebuild). */

@@ -2,32 +2,32 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { Editor } from '@tiptap/react';
-import { ArrowLeft, Download, Eye, FilePlus, FileText, History, MessageSquare, Paperclip, Pencil, Presentation, ShieldAlert, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, Download, Eye, FileText, History, Presentation } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor, type DiffReviewState } from '@/components/DocEditor';
 import { KbPicker } from '@/components/KbPicker';
 import { SpotHint } from '@/components/SpotHint';
 import { UploadProgressModal } from '@/components/UploadProgressModal';
-import { ChatMessages } from '@/components/chat/ChatMessages';
-import { ChartLibrary } from '@/components/chat/ChartLibrary';
 import { chatFailureText } from '@/stores/chat';
-import { Alert, Button, Skeleton, Textarea, Input } from '@/components/ui';
+import { Alert, Button, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { sha1Hex } from '@/lib/hash';
 import { cn } from '@/lib/utils';
 // #837: AI 写回三路合并(审阅未决时的累计队列重放)。
 import { mergeThreeWay } from '@/lib/doc-merge';
 import { toSlides, type Slide } from '@/lib/deck';
-import { isEnterSendKey } from '@/lib/chat-composer';
 import type { DeckWire } from '@/lib/types';
 // #696: 状态机全部下沉 hooks — 路由只保留编排与布局。
 import { usePolishBubble } from './writing-editor/bubble';
 import { useDeckAsset } from './writing-editor/deck-asset';
 import { useDocChat } from './writing-editor/doc-chat';
 import { useDocReferences } from './writing-editor/references';
-import { HistoryDialog, PhiDialog, AddReferenceDialog, ReferenceListPopover, ExportDonePanel } from './writing-editor/dialogs';
+import { HistoryDialog, PhiDialog, AddReferenceDialog } from './writing-editor/dialogs';
+// #688: 渲染块拆出 — deck 网格 / 右侧聊天面板 / 工具栏。
+import { DeckView } from './writing-editor/deck-view';
+import { ChatPanel } from './writing-editor/chat-panel';
+import { Toolbar } from './writing-editor/toolbar';
 import type { DocDetail, SnapshotEntry, PhiFinding } from './writing-editor/types';
 
 export function WritingEditorPage() {
@@ -533,9 +533,6 @@ export function WritingEditorPage() {
     setViewMode('document');
   };
 
-  const chatEndRef = chat.chatEndRef;
-  const docUploadRef = chat.docUploadRef;
-
   // #383: generate the Methods draft from the linked study's protocol.
   const handleGenerateMethods = async () => {
     if (!docId) return;
@@ -569,6 +566,12 @@ export function WritingEditorPage() {
   };
 
   // #382: drag the chat panel edge to resize (desktop); width persists.
+  const handleChatResizeStart = (e: React.MouseEvent<HTMLDivElement>) => {
+    resizingRef.current = true;
+    e.preventDefault();
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!resizingRef.current) return;
@@ -801,8 +804,8 @@ export function WritingEditorPage() {
     }
   };
 
-  const { chatInput, setChatInput, chatMessages, chatLoading, chatPending } = chat;
-  const { refDialogOpen, setRefDialogOpen, refForm, setRefForm, refSubmitting, refList, refListOpen, setRefListOpen, refDeleting, loadReferences, handleAddReference, handleKbPickConfirm, deleteReference } = references;
+  const { setChatInput } = chat;
+  const { refDialogOpen, setRefDialogOpen, refForm, setRefForm, refSubmitting, handleAddReference, handleKbPickConfirm } = references;
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
 
   if (loading) {
@@ -933,125 +936,34 @@ export function WritingEditorPage() {
           </div>
         </header>
 
-        <div className="flex items-center gap-1 border-b border-border bg-surface px-6 py-1.5 shrink-0">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handlePhiScan}
-            disabled={phiScanning}
-            isLoading={phiScanning}
-            >
-              <ShieldAlert size={14} className="mr-1" /> Scan PHI
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => docUploadRef.current?.click()}
-            >
-              <FileText size={14} className="mr-1" /> Upload
-            </Button>
-            <input
-              ref={docUploadRef}
-              type="file"
-              accept=".pdf,.docx,.doc,.txt,.md"
-              onChange={chat.handleDocUpload}
-              className="hidden"
-            />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleExportDocx}
-            disabled={exporting}
-            isLoading={exporting}
-          >
-            <Download size={14} className="mr-1" /> Export DOCX
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => handleExportPdf()}
-            disabled={exporting}
-          >
-            <FileText size={14} className="mr-1" /> Export PDF
-          </Button>
-          {studyId && (
-            <>
-              <Button variant="ghost" size="sm" onClick={handleGenerateMethods} isLoading={methodsLoading} disabled={!studyId}>
-                <Sparkles size={14} className="mr-1" /> {t('writing.genMethods', '生成方法')}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setInjectOpen((v) => !v)}>
-                <FileText size={14} className="mr-1" /> {t('writing.injectResults', '注入结果')}
-              </Button>
-            </>
-          )}
-          {methodsError && (
-            <span className="text-xs text-error">{methodsError}</span>
-          )}
-          {injectOpen && (
-            <div className="absolute right-2 top-14 z-30 w-[min(92vw,420px)] rounded-xl border border-border bg-surface-elevated p-4 shadow-lg">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-sm font-medium text-text-secondary">{t('writing.injectResultsTitle', '注入统计结果')}</span>
-                <button onClick={() => setInjectOpen(false)} className="text-text-tertiary hover:text-text-primary"><X size={14} /></button>
-              </div>
-              <Input
-                value={injectLabel}
-                onChange={(e) => setInjectLabel(e.target.value)}
-                placeholder={t('writing.injectLabel', '小节标题，如 Overall survival')}
-                className="mb-2"
-              />
-              <textarea
-                value={injectResult}
-                onChange={(e) => setInjectResult(e.target.value)}
-                rows={6}
-                placeholder={t('writing.injectHint', '粘贴 #361 统计输出（JSON），如 {"method":"kaplan_meier_logrank","p_value":0.012}')}
-                className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-              <div className="mt-2 flex justify-end gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setInjectOpen(false)}>Cancel</Button>
-                <Button size="sm" onClick={handleInjectResults} isLoading={injecting} disabled={!injectLabel.trim() || !injectResult.trim()}>
-                  {t('writing.injectNow', '注入')}
-                </Button>
-              </div>
-            </div>
-          )}
-          <div className="relative">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => { setRefListOpen((v) => !v); if (!refListOpen) void loadReferences(); }}
-            >
-              <FilePlus size={14} className="mr-1" /> Reference
-              {refList.length > 0 && (
-                <span className="ml-1 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">{refList.length}</span>
-              )}
-            </Button>
-            {/* #757: 从知识库选择 — 同一文件不再重传,一次上传处处引用。 */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setKbPickerOpen(true)}
-              title={t('writing.pickFromKb', '从知识库选择总结/文件作为参考')}
-            >
-              📚 {t('writing.fromKb', '知识库')}
-            </Button>
-            {refListOpen && (
-              <ReferenceListPopover list={refList} deleting={refDeleting} onClose={() => setRefListOpen(false)} onDelete={(id) => void deleteReference(id)} />
-            )}
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setChatOpen((v) => !v)}
-          >
-            <MessageSquare size={14} className="mr-1" /> Chat
-          </Button>
-
-          {/* #754: 导出完成态面板 — 取代路径字符串;api 层已触发下载,
-              面板补齐确认感 + 历史入口。 */}
-          {(exportResult || exportHistory.length > 0) && exportPanelOpen && (
-            <ExportDonePanel exportResult={exportResult} exportHistory={exportHistory} onClose={() => setExportPanelOpen(false)} />
-          )}
-        </div>
+        {/* #688: 工具栏 + inject 弹层 + 导出完成面板 — UI 拆出,状态/handler 仍归路由。 */}
+        <Toolbar
+          chat={chat}
+          references={references}
+          phiScanning={phiScanning}
+          onPhiScan={handlePhiScan}
+          exporting={exporting}
+          onExportDocx={handleExportDocx}
+          onExportPdf={() => handleExportPdf()}
+          studyId={studyId}
+          methodsLoading={methodsLoading}
+          methodsError={methodsError}
+          onGenerateMethods={handleGenerateMethods}
+          injectOpen={injectOpen}
+          setInjectOpen={setInjectOpen}
+          injectLabel={injectLabel}
+          setInjectLabel={setInjectLabel}
+          injectResult={injectResult}
+          setInjectResult={setInjectResult}
+          injecting={injecting}
+          onInjectResults={handleInjectResults}
+          onOpenKbPicker={() => setKbPickerOpen(true)}
+          setChatOpen={setChatOpen}
+          exportResult={exportResult}
+          exportHistory={exportHistory}
+          exportPanelOpen={exportPanelOpen}
+          setExportPanelOpen={setExportPanelOpen}
+        />
 
         <div className="flex flex-1 overflow-hidden">
           <main className={cn('flex-1 overflow-y-auto p-6', chatOpen ? 'border-r border-border' : '')}>
@@ -1097,123 +1009,14 @@ export function WritingEditorPage() {
                      #773: 双来源 — Doc.deck 存在时为可编辑 deck 卡片（写
                      Doc.deck，不动正文）；否则回落 body 的 markdown 投影
                      （只读 + 锚点跳回文档编辑）。 */
-                  <div className="space-y-3">
-                    {deckAsset ? (
-                      <div className="flex items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent/5 px-4 py-2">
-                        <span className="text-xs text-accent">
-                          {t('writing.deckAssetBadge', 'AI 编排 deck 资产 — 卡片内可直接编辑（改标题/调要点/删页），保存不会改动文档正文。')}
-                        </span>
-                        <Button size="sm" variant="secondary" onClick={deckCtl.addDeckSlide}>
-                          <FilePlus size={13} className="mr-1" /> {t('writing.deckAddSlide', '添加一页')}
-                        </Button>
-                      </div>
-                    ) : deck.slides.length <= 1 && body.trim() && (
-                      <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-surface-elevated px-4 py-2.5">
-                        <span className="text-xs text-text-secondary">
-                          {t('writing.deckSinglePageHint', '文档还没有 ## 分页结构，导出 PPT 只会有一页。可让 AI 按内容语义拆页。')}
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => void chat.sendChatText(t('writing.aiSplitPrompt', '请把当前稿件按内容语义拆成多页（每页一个 ## 二级标题），为生成 PPT 做准备。'))}
-                        >
-                          <Sparkles size={13} className="mr-1" /> {t('writing.aiSplitPages', 'AI 帮我拆页')}
-                        </Button>
-                      </div>
-                    )}
-                    {deckAsset ? (
-                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                        {deckAsset.slides.map((slide, i) => (
-                          <div key={i} className="flex aspect-video flex-col overflow-hidden rounded-lg border border-border bg-surface-elevated shadow-sm transition-shadow hover:shadow-md">
-                            <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
-                              <span className="shrink-0 text-[11px] font-semibold text-text-tertiary">{i + 1}.</span>
-                              <input
-                                value={slide.title}
-                                onChange={(e) => deckCtl.updateDeckSlide(i, { title: e.target.value })}
-                                className="min-w-0 flex-1 rounded bg-transparent px-1 py-0.5 text-xs font-semibold text-text-primary outline-none focus:bg-surface focus:ring-1 focus:ring-ring"
-                              />
-                              <button
-                                onClick={() => deckCtl.deleteDeckSlide(i)}
-                                title={t('writing.deckDeleteSlide', '删除此页')}
-                                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface hover:text-error"
-                              >
-                                <X size={12} />
-                              </button>
-                            </div>
-                            <div className="flex flex-1 flex-col gap-1 overflow-hidden px-3 py-2 text-xs leading-relaxed text-text-secondary">
-                              {deckCtl.slideBullets(slide).map((b, j) => (
-                                <div key={j} className="flex min-w-0 items-start gap-1.5">
-                                  <span className="mt-[6px] h-1 w-1 shrink-0 rounded-full bg-text-tertiary" />
-                                  <input
-                                    value={b}
-                                    onChange={(e) => {
-                                      const bullets = deckCtl.slideBullets(slide).map((x, k) => (k === j ? e.target.value : x));
-                                      deckCtl.updateDeckSlide(i, { bullets });
-                                    }}
-                                    className="min-w-0 flex-1 rounded bg-transparent px-1 py-0.5 outline-none focus:bg-surface focus:ring-1 focus:ring-ring"
-                                  />
-                                </div>
-                              ))}
-                              <button
-                                onClick={() => deckCtl.updateDeckSlide(i, { bullets: [...deckCtl.slideBullets(slide), ''] })}
-                                className="self-start rounded px-1.5 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface hover:text-accent"
-                              >
-                                + {t('writing.deckAddBullet', '要点')}
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                      {deck.slides.map((slide, i) => (
-                        <div
-                          key={i}
-                          className="group relative flex aspect-video flex-col overflow-hidden rounded-lg border border-border bg-surface-elevated shadow-sm transition-shadow hover:shadow-md"
-                        >
-                          <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
-                            <span className="truncate text-xs font-semibold text-text-primary">
-                              {i + 1}. {slide.title}
-                            </span>
-                            <button
-                              onClick={() => handleDeckCardEdit(slide)}
-                              title={t('writing.deckCardEdit', '跳回文档编辑此页')}
-                              className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-text-tertiary transition-opacity hover:bg-surface hover:text-accent group-hover:opacity-100 md:opacity-0"
-                            >
-                              <Pencil size={11} /> {t('writing.deckCardEdit', '编辑')}
-                            </button>
-                          </div>
-                          <div className="flex flex-1 flex-col gap-1.5 overflow-hidden px-3 py-2 text-xs leading-relaxed text-text-secondary">
-                            {slide.blocks.slice(0, 8).map((b, j) =>
-                              b.type === 'image' ? (
-                                <img key={j} src={b.url} alt={b.caption || ''} className="max-h-[55%] w-auto self-start rounded border border-border object-contain" />
-                              ) : b.type === 'bullet' ? (
-                                <div key={j} className="flex min-w-0 items-start gap-1.5">
-                                  <span className="mt-[6px] h-1 w-1 shrink-0 rounded-full bg-text-tertiary" />
-                                  <span className="line-clamp-2">{b.text}</span>
-                                </div>
-                              ) : (
-                                <p key={j} className="line-clamp-2">{b.text}</p>
-                              ),
-                            )}
-                            {slide.blocks.length > 8 && (
-                              <span className="text-[11px] text-text-tertiary">…{t('writing.deckMoreBlocks', '还有 {{n}} 段', { n: slide.blocks.length - 8 })}</span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                      </div>
-                    )}
-                    {/* #770 设计更新 2：导出交互 = 预填 chat 消息发送，不新建旁路 API。
-                        #773: deck 资产存在时导出内容源 = Doc.deck（所见即所导）。 */}
-                    <div className="flex justify-end">
-                      <Button size="sm" onClick={() => void chat.sendChatText(deckAsset
-                        ? t('writing.aiExportDeckPrompt', '请把当前 deck 导出为 PPT（使用现有 deck 内容，不要重新编排）。')
-                        : t('writing.aiExportPptPrompt', '请把当前稿件导出为 PPT。'))}>
-                        <Presentation size={13} className="mr-1" /> {t('writing.aiExportPpt', 'AI 导出 PPT')}
-                      </Button>
-                    </div>
-                  </div>
+                  <DeckView
+                    deckAsset={deckAsset}
+                    slides={deck.slides}
+                    body={body}
+                    deckCtl={deckCtl}
+                    sendChatText={chat.sendChatText}
+                    onCardEdit={handleDeckCardEdit}
+                  />
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
                     {saveConflict && (
@@ -1253,128 +1056,19 @@ export function WritingEditorPage() {
             </div>
           </main>
 
+          {/* #688: 右侧 Doc Chat / Charts 面板 — UI 拆出;chat 状态经
+              useDocChat 保持在路由,宽度/resize/标签/selection 经 props 透传。 */}
           {chatOpen && (
-            <>
-              {/* #351: tap the scrim to close the mobile chat drawer */}
-              <div className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setChatOpen(false)} />
-              <aside
-                style={{ ['--chatw' as string]: `${chatWidth}px` }}
-                className="fixed inset-y-0 right-0 z-40 flex w-[85vw] max-w-sm flex-col border-l border-border bg-surface shadow-xl md:relative md:inset-auto md:z-auto md:w-[var(--chatw)] md:max-w-none md:shrink-0 md:border-l-0 md:shadow-none"
-              >
-                {/* #382: desktop resize handle — drag to change chat width.
-                    #fix 2026-09: aside 此前是 md:static(非定位),absolute 把手
-                    锚到外层定位祖先,把手从面板左缘消失 → 无法拖拽。
-                    改 md:relative(不改变文档流,同时成为把手包含块)。 */}
-                <div
-                  onMouseDown={(e) => {
-                    resizingRef.current = true;
-                    e.preventDefault();
-                    document.body.style.cursor = 'col-resize';
-                    document.body.style.userSelect = 'none';
-                  }}
-                  className="absolute left-0 top-0 z-10 hidden h-full w-1 cursor-col-resize bg-border/40 hover:bg-accent/60 md:block"
-                  style={{ width: 6 }}
-                />
-              <div className="flex h-10 items-center justify-between border-b border-border px-3">
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => setSidePanelTab('chat')}
-                    className={cn('rounded-lg px-2.5 py-1 text-xs font-medium transition-colors', sidePanelTab === 'chat' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:text-text-primary')}
-                  >Chat</button>
-                  <button
-                    onClick={() => setSidePanelTab('charts')}
-                    className={cn('rounded-lg px-2.5 py-1 text-xs font-medium transition-colors', sidePanelTab === 'charts' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:text-text-primary')}
-                  >Charts</button>
-                </div>
-                <button onClick={() => setChatOpen(false)} className="text-text-tertiary hover:text-text-primary">
-                  <X size={14} />
-                </button>
-              </div>
-              {sidePanelTab === 'chat' && (
-                <>
-              <SkillsBar active={chat.activeSkills} onToggle={(name) => chat.setActiveSkills((prev) => prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name])} />
-              <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                <ChatMessages
-                  variant="compact"
-                  messages={chatMessages}
-                  streamNote={chatSession?.streamNote}
-                  stallSince={chatSession?.stallSince}
-                  bottomRef={chatEndRef}
-                  emptyState={
-                    <p className="text-sm text-text-tertiary text-center mt-4 leading-relaxed">
-                      Ask the AI to write or research content.<br />
-                      It will update this document automatically.<br />
-                      <span className="text-xs">e.g. "Write a clinical review on..."</span>
-                    </p>
-                  }
-                />
-              </div>
-              <div className="border-t border-border p-3">
-                {chat.kbDedupNotice && (
-              <div className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-text-secondary">{chat.kbDedupNotice}</div>
-            )}
-            {chat.chatAttachedFiles.length > 0 && (
-                  <div className="mb-2 flex gap-1 flex-wrap">
-                    {chat.chatAttachedFiles.map((f) => (
-                      <span key={f.fileId} className="inline-flex items-center rounded-full bg-surface-elevated border border-border px-2 py-0.5 text-xs text-text-secondary">{f.name}</span>
-                    ))}
-                  </div>
-                )}
-                {/* #fix: 追加问题排队提示 — 回复完成后自动发送,不打断。 */}
-                {chatPending && (
-                  <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-2 py-1">
-                    <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">已排队 — 当前回复完成后自动发送</span>
-                  </div>
-                )}
-                {/* #693: 选中即引用 — 当前编辑器选中文本将随下一条消息发送。 */}
-                {chatSelection && (
-                  <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-2 py-1">
-                    <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
-                      {chatSelection.length > 48 ? `${chatSelection.slice(0, 48)}…` : chatSelection}
-                    </span>
-                    <button
-                      onClick={() => setChatSelection('')}
-                      className="shrink-0 text-text-tertiary hover:text-text-primary"
-                      title="Clear selection reference"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                )}
-                <div className="flex gap-2">
-                  <input ref={chat.chatFileRef} type="file" onChange={chat.handleChatFile} className="hidden" disabled={chat.chatUploadingFile} />
-                  <Button variant="ghost" size="sm" onClick={() => chat.chatFileRef.current?.click()} disabled={chatLoading || chat.chatUploadingFile} isLoading={chat.chatUploadingFile} className="shrink-0">
-                    <Paperclip size={16} />
-                  </Button>
-                  <Textarea
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => { if (!isEnterSendKey(e)) return; e.preventDefault(); void chat.handleSendChat(); }}
-                    onPaste={chat.handleChatPaste}
-                    placeholder="Ask a question..."
-                    rows={1}
-                    className="min-h-0 flex-1 resize-none py-1.5"
-                    style={{ maxHeight: '120px' }}
-                  />
-                  {/* #fix: 回复进行中显示 Stop(停止分析,含排队消息);平时发送=排队。 */}
-                  {chatLoading ? (
-                    <Button size="sm" variant="secondary" onClick={() => chat.stopStream(chatSessionId)} className="shrink-0">
-                      Stop
-                    </Button>
-                  ) : (
-                    <Button size="sm" onClick={() => void chat.handleSendChat()} disabled={!chatInput.trim()} className="shrink-0">
-                      Send
-                    </Button>
-                  )}
-                </div>
-              </div>
-                </>
-              )}
-              {sidePanelTab === 'charts' && (
-                <ChartLibrary onInsert={handleInsertChart} />
-              )}
-              </aside>
-            </>
+            <ChatPanel
+              chat={chat}
+              chatWidth={chatWidth}
+              sidePanelTab={sidePanelTab}
+              setSidePanelTab={setSidePanelTab}
+              onClose={() => setChatOpen(false)}
+              onResizeStart={handleChatResizeStart}
+              chatSessionId={chatSessionId}
+              onInsertChart={handleInsertChart}
+            />
           )}
         </div>
 
