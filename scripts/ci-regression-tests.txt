@@ -1,0 +1,25 @@
+# #917: CI 回归测试清单单一事实源 — deploy-server.yml 与 server-ts-ci.yml
+# 共用（此前两份内联清单已分叉：deploy 侧漏 7 个回归文件）。
+# 语法：每行一个 vitest 测试文件路径（相对 packages/server-ts）。
+# 修改时两处 workflow 自动同步；新增关键回归文件请加到这里。
+tests/e2e/medical-record-entry.test.ts
+tests/e2e/approval-audit.test.ts
+tests/e2e/ingestion-worker.test.ts
+tests/e2e/lab-ingestion.test.ts
+tests/e2e/imaging-ingestion.test.ts
+tests/unit/ai-provider.test.ts
+tests/e2e/protocol-ingestion.test.ts
+tests/unit/local-embedding.test.ts
+tests/unit/provider-runtime.test.ts
+tests/unit/stats-engine.test.ts
+tests/unit/bioscene.test.ts
+tests/unit/context-budget.test.ts
+tests/unit/episode-isolation.test.ts
+tests/unit/llm-telemetry.test.ts
+tests/e2e/plugin.test.ts
+tests/e2e/sidecar-content.test.ts
+tests/e2e/sidecar-metadata.test.ts
+tests/e2e/chart-download.test.ts
+tests/e2e/render-chart.test.ts
+tests/integration/sidecar-chat-context.test.ts
+tests/unit/query-router.test.ts

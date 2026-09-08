@@ -4,7 +4,8 @@
 # contracts package the worker imports). Verifies:
 #   - TypeScript compiles
 #   - Generator/handler tests pass
-#   - Contracts build (dist is committed, but rebuilds catch drift)
+#   - Contracts build (#917: dist 不再入库 — 本地/CI 均先 build contracts
+#     再 install 消费方，file: 依赖快照取构建产物)
 
 name: Worker CI
 

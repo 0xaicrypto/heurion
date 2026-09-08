@@ -113,8 +113,7 @@ _attic/
 scratch/
 TODO.local.md
 packages/server-ts/web-dist/
-!packages/llm-markdown-fix/dist/
-!packages/llm-markdown-fix/dist/rules/
+# #917: dist 一律不入库（含 llm-markdown-fix，此前两行 ! 放行已删）。
 packages/server-ts/test-results/
 packages/server-ts/playwright-report/
 

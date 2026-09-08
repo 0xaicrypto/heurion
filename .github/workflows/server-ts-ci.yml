@@ -144,25 +144,6 @@ jobs:
         # gateway, stats engine, plugin lifecycle, sidecar content
         # guarantee, chart tokens, router classification.
         run: |
-          pnpm exec vitest run \
-            tests/e2e/medical-record-entry.test.ts \
-            tests/e2e/approval-audit.test.ts \
-            tests/e2e/ingestion-worker.test.ts \
-            tests/e2e/lab-ingestion.test.ts \
-            tests/e2e/imaging-ingestion.test.ts \
-            tests/unit/ai-provider.test.ts \
-            tests/e2e/protocol-ingestion.test.ts \
-            tests/unit/local-embedding.test.ts \
-            tests/unit/provider-runtime.test.ts \
-            tests/unit/stats-engine.test.ts \
-            tests/unit/bioscene.test.ts \
-            tests/unit/context-budget.test.ts \
-            tests/unit/episode-isolation.test.ts \
-            tests/unit/llm-telemetry.test.ts \
-            tests/e2e/plugin.test.ts \
-            tests/e2e/sidecar-content.test.ts \
-            tests/e2e/sidecar-metadata.test.ts \
-            tests/e2e/chart-download.test.ts \
-            tests/e2e/render-chart.test.ts \
-            tests/integration/sidecar-chat-context.test.ts \
-            tests/unit/query-router.test.ts
+          # #917: 清单单一事实源 = scripts/ci-regression-tests.txt（与
+          # deploy-server.yml 共用，防双份清单再次分叉）。
+          pnpm exec vitest run $(grep -v '^#' ../../scripts/ci-regression-tests.txt | grep -v '^$')
