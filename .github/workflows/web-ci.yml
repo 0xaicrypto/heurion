@@ -24,6 +24,11 @@ on:
       - '.github/workflows/web-ci.yml'
   workflow_dispatch:
 
+# 省配额:同分支/PR 新推送取消未完成的旧 run
+concurrency:
+  group: web-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   NODE_VERSION: '22'
   PNPM_VERSION: '10'

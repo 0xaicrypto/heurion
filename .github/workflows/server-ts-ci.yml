@@ -12,6 +12,19 @@ name: Server TS CI
 
 on:
   pull_request:
+    # 省配额:PR 路径过滤 — 此前 PR 无过滤,任何文件改动(含纯文档)都跑全量 server CI
+    paths:
+      - 'packages/server-ts/**'
+      - 'packages/embedding-server/**'
+      - 'packages/worker/**'
+      - '.github/workflows/server-ts-ci.yml'
+      - '.github/workflows/deploy-server.yml'
+      - 'CONTRIBUTING.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'scripts/deploy*.sh'
+      - 'docker-compose.yml'
+      - 'Dockerfile'
+      - '.env.production.example'
   push:
     branches: [main]
     paths:
@@ -27,6 +40,11 @@ on:
       - 'Dockerfile'
       - '.env.production.example'
   workflow_dispatch:
+
+# 省配额:同分支/PR 新推送取消未完成的旧 run(分钟按已运行时间计,早取消早止损)
+concurrency:
+  group: server-ts-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   NODE_VERSION: '22'

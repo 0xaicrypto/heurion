@@ -3,6 +3,11 @@ name: Deploy Server
 on:
   push:
     branches: [main]
+    # 省配额:纯文档/workflow 改动不需要重新构建镜像部署
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/**'
   workflow_dispatch:
     inputs:
       # #596: staging 默认跳过(资源占用大:embedding 模型 3.4GB + pm2),

@@ -12,6 +12,11 @@ on:
       - '.github/workflows/cf-browser-agent.yml'
   workflow_dispatch:
 
+# 省配额:同分支/PR 新推送取消未完成的旧 run
+concurrency:
+  group: cf-browser-agent-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test (mocked browser)
