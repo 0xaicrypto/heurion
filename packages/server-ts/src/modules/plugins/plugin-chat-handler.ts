@@ -2,6 +2,7 @@ import { createExecutionPlaneService, type ExecutionJobStatus } from '../executi
 import { buildPayload, hasActivePlugins, matchIntent, resolveRenderJobType, type PayloadBuildInput } from './plugin-capability.service.js'
 import { buildInputSummary, recordPluginInvocation } from './plugin-audit-log.service.js'
 import type { TurnIntent } from '../chat/turn-intent.js'
+import type { ChatStreamChunk } from '@heurion/contracts'
 
 const executionService = createExecutionPlaneService()
 
@@ -15,7 +16,7 @@ export interface PluginChatHandlerOptions {
   /** Prior conversation messages in this session, injected as context. */
   history?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
   telemetryContext?: { userId: string; workspaceId?: string; action: string }
-  send: (event: Record<string, unknown>) => void
+  send: (event: ChatStreamChunk) => void
 }
 
 export interface PluginChatResult {
@@ -36,7 +37,7 @@ export interface PluginChatResult {
   fallback?: boolean
 }
 
-async function pollJob(jobId: string, send: (event: Record<string, unknown>) => void, maxWaitMs = 30000, intervalMs = 1000): Promise<ExecutionJobStatus | null> {
+async function pollJob(jobId: string, send: (event: ChatStreamChunk) => void, maxWaitMs = 30000, intervalMs = 1000): Promise<ExecutionJobStatus | null> {
   const deadline = Date.now() + maxWaitMs
   while (Date.now() < deadline) {
     const status = await executionService.getStatus(jobId)

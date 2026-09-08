@@ -7,11 +7,11 @@ export async function settingsRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
   const getSetting = async (userId: string, key: string) => {
-    const row = await (prisma as any).userSetting.findUnique({ where: { userId_key: { userId, key } } })
+    const row = await prisma.userSetting.findUnique({ where: { userId_key: { userId, key } } })
     return row?.value || null
   }
   const setSetting = async (userId: string, key: string, value: string) => {
-    await (prisma as any).userSetting.upsert({
+    await prisma.userSetting.upsert({
       where: { userId_key: { userId, key } },
       update: { value, updatedAt: Math.floor(Date.now() / 1000) },
       create: { userId, key, value, updatedAt: Math.floor(Date.now() / 1000) },

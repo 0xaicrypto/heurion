@@ -92,7 +92,7 @@ export async function createIngestionJob(input: CreateIngestionJobInput) {
   const now = new Date().toISOString()
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
 
-  const existing = await (prisma as any).ingestionJob.findFirst({
+  const existing = await prisma.ingestionJob.findFirst({
     where: {
       userId: input.userId,
       fileId: input.fileId,
@@ -104,7 +104,7 @@ export async function createIngestionJob(input: CreateIngestionJobInput) {
   })
   if (existing) return serializeJob(existing)
 
-  const job = await (prisma as any).ingestionJob.create({
+  const job = await prisma.ingestionJob.create({
     data: {
       id: `ing_${uid()}`,
       userId: input.userId,
@@ -125,12 +125,12 @@ export async function createIngestionJob(input: CreateIngestionJobInput) {
 }
 
 export async function getIngestionJob(id: string) {
-  const job = await (prisma as any).ingestionJob.findUnique({ where: { id } })
+  const job = await prisma.ingestionJob.findUnique({ where: { id } })
   return job ? serializeJob(job) : null
 }
 
 export async function processIngestionJob(id: string) {
-  let job = await (prisma as any).ingestionJob.findUnique({ where: { id } })
+  let job = await prisma.ingestionJob.findUnique({ where: { id } })
   if (!job) throw new Error('Job not found')
   if (job.status !== 'pending') return serializeJob(job)
 
@@ -141,7 +141,7 @@ export async function processIngestionJob(id: string) {
   if (!job.extractedText) {
     try {
       const extracted = await extractTextForJob(job)
-      await (prisma as any).ingestionJob.update({
+      await prisma.ingestionJob.update({
         where: { id: job.id },
         data: {
           extractedText: extracted.text,
@@ -166,12 +166,12 @@ export async function processIngestionJob(id: string) {
   const maxRetries = 3
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const fresh = await (prisma as any).ingestionJob.findUnique({ where: { id: job.id } })
+      const fresh = await prisma.ingestionJob.findUnique({ where: { id: job.id } })
       result = await analyzer.analyze(serializeJob(fresh))
       break
     } catch (err: any) {
       lastError = err
-      await (prisma as any).ingestionJob.update({
+      await prisma.ingestionJob.update({
         where: { id: job.id },
         data: { retryCount: attempt + 1, updatedAt: now() },
       })
@@ -183,7 +183,10 @@ export async function processIngestionJob(id: string) {
   }
 
   // Create entries and approval requests
-  const fresh = await (prisma as any).ingestionJob.findUnique({ where: { id: job.id } })
+  const fresh = await prisma.ingestionJob.findUnique({ where: { id: job.id } })
+  if (!fresh) {
+    return await failJob(job.id, 'ingestion job vanished before entry creation')
+  }
   const entries: any[] = []
   for (const draft of result.entries) {
     if (!fresh.patientHash) continue
@@ -196,7 +199,7 @@ export async function processIngestionJob(id: string) {
     entries.push(entry)
   }
 
-  const completed = await (prisma as any).ingestionJob.update({
+  const completed = await prisma.ingestionJob.update({
     where: { id: job.id },
     data: {
       status: 'awaiting_review',
@@ -210,14 +213,14 @@ export async function processIngestionJob(id: string) {
 }
 
 async function updateJobStatus(id: string, status: string) {
-  await (prisma as any).ingestionJob.update({
+  await prisma.ingestionJob.update({
     where: { id },
     data: { status, updatedAt: new Date().toISOString() },
   })
 }
 
 async function failJob(id: string, reason: string) {
-  const job = await (prisma as any).ingestionJob.update({
+  const job = await prisma.ingestionJob.update({
     where: { id },
     data: { status: 'failed', failedReason: reason, updatedAt: new Date().toISOString() },
   })

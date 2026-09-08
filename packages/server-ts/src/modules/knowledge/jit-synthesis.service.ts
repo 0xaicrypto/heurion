@@ -111,7 +111,7 @@ async function proposeForReview(
   // #836-followup: 相同事实簇去重 — pending 队列已有 ≥2 条相同事实(或
   // ≥50% 重叠)的总结时跳过。生产实例:同一 PPT 问题换 6 种问法 → 6 份
   // 重复总结提案。10 分钟 TTL 只防同查询,防不住近义问法。
-  const pendings = await (prisma as any).memoryProposal.findMany({
+  const pendings = await prisma.memoryProposal.findMany({
     where: { userId: input.userId, status: 'pending', kind: 'summary' },
     select: { relatedFacts: true },
   })

@@ -167,7 +167,7 @@ export function createExperienceSynthesisScheduler(
         try {
           // Facts live in per-user JSONL (memory graph), not Prisma —
           // enumerate users and let synthesizeExperience skip thin graphs.
-          const rows = await (prisma as any).user.findMany({
+          const rows = await prisma.user.findMany({
             select: { id: true },
             take: 50,
           }).catch(() => [] as Array<{ id: string }>)

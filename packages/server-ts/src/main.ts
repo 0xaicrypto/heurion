@@ -76,7 +76,7 @@ function syncSchema(): void {
 
 // #746: startup schema assertion — every prisma model the hot paths rely on
 // must exist at boot. Missing table = actionable fatal error, never a runtime
-// silent-degradation (`(prisma as any).x` TypeError swallowed by a bare catch).
+// silent-degradation (`prisma.x` TypeError swallowed by a bare catch).
 async function assertSchema(): Promise<void> {
   const required: Array<[string, () => Promise<unknown>]> = [
     ['FileIndex', async () => prisma.fileIndex.count()],
@@ -117,7 +117,7 @@ async function main() {
 
   // #764-admin: 回灌 admin 全局模型覆盖(持久化于 userSetting)
   try {
-    const row = await (prisma as any).userSetting.findUnique({
+    const row = await prisma.userSetting.findUnique({
       where: { userId_key: { userId: '__global__', key: 'global_llm_model' } },
     })
     if (row?.value?.trim()) {

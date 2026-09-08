@@ -124,7 +124,7 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
   async create(input: CreateGapInput): Promise<KnowledgeGap> {
     const now = new Date().toISOString()
     const since = new Date(Date.now() - 7 * 86400_000).toISOString()
-    const recent = await (prisma as any).knowledgeGap.findMany({
+    const recent = await prisma.knowledgeGap.findMany({
       where: { userId: input.userId, status: 'open', createdAt: { gte: since } },
     })
     const norm = (s: string) => s.toLowerCase().replace(/[\s，。,.?!？!?：:；;、\-_]+/g, '')
@@ -141,14 +141,14 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
     })
     if (dup) {
       // Refresh the dedup window so the same question stays suppressed.
-      await (prisma as any).knowledgeGap.update({
+      await prisma.knowledgeGap.update({
         where: { id: dup.id },
         data: { updatedAt: now },
       })
       return mapPrismaToGap({ ...dup, updatedAt: now })
     }
 
-    const row = await (prisma as any).knowledgeGap.create({
+    const row = await prisma.knowledgeGap.create({
       data: {
         userId: input.userId,
         workspaceId: input.workspaceId,
@@ -198,7 +198,7 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
       where.source = options.source
     }
 
-    const rows: any[] = await (prisma as any).knowledgeGap.findMany({
+    const rows: any[] = await prisma.knowledgeGap.findMany({
       where,
       orderBy: { createdAt: 'desc' },
     })
@@ -218,13 +218,13 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
   }
 
   async getById(id: string): Promise<KnowledgeGap | null> {
-    const row = await (prisma as any).knowledgeGap.findUnique({ where: { id } })
+    const row = await prisma.knowledgeGap.findUnique({ where: { id } })
     return row ? mapPrismaToGap(row) : null
   }
 
   async delete(id: string): Promise<boolean> {
     try {
-      await (prisma as any).knowledgeGap.delete({ where: { id } })
+      await prisma.knowledgeGap.delete({ where: { id } })
       return true
     } catch {
       return false
@@ -235,7 +235,7 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
     const existing = await this.getById(id)
     if (!existing) return null
 
-    const row = await (prisma as any).knowledgeGap.update({
+    const row = await prisma.knowledgeGap.update({
       where: { id },
       data: {
         status: 'answered',
@@ -250,7 +250,7 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
     const existing = await this.getById(id)
     if (!existing) return null
 
-    const row = await (prisma as any).knowledgeGap.update({
+    const row = await prisma.knowledgeGap.update({
       where: { id },
       data: {
         status: 'ignored',
@@ -261,7 +261,7 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
   }
 
   async getStats(workspaceId: string): Promise<GapStats> {
-    const rows: any[] = await (prisma as any).knowledgeGap.findMany({ where: { workspaceId } })
+    const rows: any[] = await prisma.knowledgeGap.findMany({ where: { workspaceId } })
     const gaps: KnowledgeGap[] = rows.map(mapPrismaToGap)
     const total = gaps.length
     const open = gaps.filter(g => g.status === 'open').length

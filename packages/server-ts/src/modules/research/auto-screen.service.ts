@@ -22,14 +22,14 @@ const telemetry = new PrismaTelemetryService()
 
 /** Evidence revision: registry passes 0, medical-record entries bump by count. */
 async function evidenceRevision(userId: string, patientHash: string): Promise<number> {
-  const count = await (prisma as any).medicalRecord.count({
+  const count = await prisma.medicalRecord.count({
     where: { userId, patientHash },
   }).catch(() => 0)
   return count || 0
 }
 
 async function alreadyScreened(studyId: string, patientHash: string, revision: number): Promise<boolean> {
-  const latest = await (prisma as any).researchScreening.findFirst({
+  const latest = await prisma.researchScreening.findFirst({
     where: { studyId, patientHash, reason: { contains: `rev:${revision}` } },
     orderBy: { scannedAt: 'desc' },
   })
@@ -48,13 +48,12 @@ function withRevision(reason: string | null | undefined, revision: number): stri
 export async function autoScreenPatient(userId: string, patientHash: string): Promise<{ studies: number; eligible: number }> {
   try {
     // Only patients with some clinical context are worth an LLM call.
-    const hasProfile = await (prisma as any).patientRecord.findFirst({ where: { hash: patientHash, userId } })
+    const hasProfile = await prisma.patientRecord.findFirst({ where: { hash: patientHash, userId } })
     if (!hasProfile) return { studies: 0, eligible: 0 }
 
-    const studies = await (prisma as any).researchStudy.findMany({
-      where: { status: 'active' },
-      select: { id: true },
-    })
+    // #701: ResearchStudy 无 status 字段 — 原过滤在运行时被 Prisma 拒绝
+    // (try/catch 吞掉),整个自动筛选功能实际从未生效。
+    const studies = await prisma.researchStudy.findMany({ select: { id: true } })
     if (!studies.length) return { studies: 0, eligible: 0 }
 
     const revision = await evidenceRevision(userId, patientHash)
@@ -67,7 +66,7 @@ export async function autoScreenPatient(userId: string, patientHash: string): Pr
         const result = await screenPatient(s.id, patientHash, userId)
         // Annotate the persisted reason with the evidence revision marker
         // (screenPatient already wrote its row — patch it).
-        await (prisma as any).researchScreening.updateMany({
+        await prisma.researchScreening.updateMany({
           where: { studyId: s.id, patientHash, scannedAt: { gte: new Date(Date.now() - 60000).toISOString() } },
           data: { reason: withRevision(result.reason, revision) },
         })

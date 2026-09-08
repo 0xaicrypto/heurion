@@ -91,7 +91,7 @@ function safeJsonParse(text: string | undefined | null): Record<string, unknown>
 export class PrismaTelemetryService implements TelemetryService {
   async record(input: TelemetryInput): Promise<void> {
     try {
-      await (prisma as any).telemetryEvent.create({
+      await prisma.telemetryEvent.create({
         data: {
           userId: input.userId,
           workspaceId: input.workspaceId,
@@ -117,7 +117,7 @@ export class PrismaTelemetryService implements TelemetryService {
       if (to) where.createdAt.lte = to
     }
 
-    const rows: any[] = await (prisma as any).telemetryEvent.findMany({
+    const rows: any[] = await prisma.telemetryEvent.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       take: limit ?? 100,
@@ -142,7 +142,7 @@ export class PrismaTelemetryService implements TelemetryService {
       if (to) where.createdAt.lte = to
     }
 
-    const rows = await (prisma as any).telemetryEvent.findMany({ where })
+    const rows = await prisma.telemetryEvent.findMany({ where })
 
     const byCategory = (cat: TelemetryCategory) => rows.filter((r: any) => r.category === cat)
 
@@ -200,7 +200,7 @@ export class PrismaTelemetryService implements TelemetryService {
       if (to) where.createdAt.lte = to
     }
 
-    const rows = await (prisma as any).telemetryEvent.findMany({ where })
+    const rows = await prisma.telemetryEvent.findMany({ where })
     return this.aggregateLlmCost(rows)
   }
 

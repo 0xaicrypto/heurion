@@ -25,7 +25,7 @@ export async function mcpAdminRouter(app: FastifyInstance) {
 
   // ── CRUD ──
   app.get('/api/v1/settings/mcp-servers', async (request) => {
-    const rows = await (prisma as any).mcpServer.findMany({
+    const rows = await prisma.mcpServer.findMany({
       where: { userId: request.user!.userId },
       orderBy: { createdAt: 'desc' },
     })
@@ -44,7 +44,7 @@ export async function mcpAdminRouter(app: FastifyInstance) {
     if (!url || !/^https?:\/\//.test(String(url))) return reply.status(400).send({ error: 'url must start with http(s)://' })
     const caps = Array.isArray(capabilities) ? capabilities.filter((c) => c === 'read' || c === 'write') : ['read']
     const now = new Date().toISOString()
-    const row = await (prisma as any).mcpServer.create({
+    const row = await prisma.mcpServer.create({
       data: {
         userId: request.user!.userId,
         name: String(name).trim(),
@@ -59,16 +59,16 @@ export async function mcpAdminRouter(app: FastifyInstance) {
 
   app.delete('/api/v1/settings/mcp-servers/:id', async (request, reply) => {
     const { id } = request.params as any
-    const row = await (prisma as any).mcpServer.findFirst({ where: { id, userId: request.user!.userId } })
+    const row = await prisma.mcpServer.findFirst({ where: { id, userId: request.user!.userId } })
     if (!row) return reply.status(404).send({ error: 'server not found' })
-    await (prisma as any).mcpServer.delete({ where: { id } })
+    await prisma.mcpServer.delete({ where: { id } })
     return { deleted: true }
   })
 
   // ── Test connection + list tools ───────────────────────────────────
   app.post('/api/v1/settings/mcp-servers/:id/test', async (request, reply) => {
     const { id } = request.params as any
-    const row = await (prisma as any).mcpServer.findFirst({ where: { id, userId: request.user!.userId } })
+    const row = await prisma.mcpServer.findFirst({ where: { id, userId: request.user!.userId } })
     if (!row) return reply.status(404).send({ error: 'server not found' })
     try {
       const client = new McpClient({ url: row.url, capabilities: parseCaps(row.capabilities), token: row.tokenEnc ? decryptSettingValue(row.tokenEnc) : undefined })
@@ -85,7 +85,7 @@ export async function mcpAdminRouter(app: FastifyInstance) {
     const { id } = request.params as any
     const { tool, arguments: toolArgs } = request.body as any
     // Own-server access only — the write-gate lives in the tool layer (#105).
-    const row = await (prisma as any).mcpServer.findFirst({ where: { id, userId: request.user!.userId } })
+    const row = await prisma.mcpServer.findFirst({ where: { id, userId: request.user!.userId } })
     if (!row) return reply.status(404).send({ error: 'server not found' })
     if (!tool) return reply.status(400).send({ error: 'tool required' })
     try {

@@ -16,9 +16,10 @@ export interface Takeaway {
   scopeKind: 'session' | 'patient' | 'global'
   scopeRef: string
   text: string
-  tag: string
+  tag: string | null
   confidence: number
-  createdAt: string
+  /** #701: schema 真实字段(蒸馏时间,epoch 秒) — 原 createdAt 是不存在的列。 */
+  distilledAt: number
 }
 
 const TAKEAWAY_SYSTEM = `You capture clinical takeaways from a conversation. A takeaway is a concise, actionable insight that should persist beyond the current session.
@@ -47,7 +48,7 @@ export async function extractTakeaways(input: TakeawayInput): Promise<Takeaway[]
     const created: Takeaway[] = []
     for (const item of items) {
       if (!item.text) continue
-      const takeaway = await (prisma as any).chatTakeaway.create({
+      const takeaway = await prisma.chatTakeaway.create({
         data: {
           userId,
           scopeKind: patientHash ? 'patient' : 'session',
@@ -59,7 +60,8 @@ export async function extractTakeaways(input: TakeawayInput): Promise<Takeaway[]
           distilledAt: Math.floor(Date.now() / 1000),
         },
       })
-      created.push(takeaway)
+      // prisma 返回的 scopeKind 是 string — 收敛到 Takeaway 的字面量联合
+      created.push({ ...takeaway, scopeKind: takeaway.scopeKind as Takeaway['scopeKind'] })
     }
     return created
   } catch {
@@ -71,15 +73,20 @@ export async function listTakeaways(userId: string, scopeKind?: string, scopeRef
   const where: any = { userId }
   if (scopeKind) where.scopeKind = scopeKind
   if (scopeRef) where.scopeRef = scopeRef
-  return (prisma as any).chatTakeaway.findMany({ where, orderBy: { id: 'desc' } })
+  const rows = await prisma.chatTakeaway.findMany({ where, orderBy: { id: 'desc' } })
+  return rows.map((t) => ({ ...t, scopeKind: t.scopeKind as Takeaway['scopeKind'] }))
 }
 
 export async function acknowledgeTakeaway(id: number, userId: string, action: 'accept' | 'reject'): Promise<boolean> {
-  const t = await (prisma as any).chatTakeaway.findFirst({ where: { id, userId } })
+  const t = await prisma.chatTakeaway.findFirst({ where: { id, userId } })
   if (!t) return false
-  await (prisma as any).chatTakeaway.update({
+  // #701: schema 真实字段是 medicAckedAt/medicRejectedAt(epoch) —
+  // 原 medicAction 字段不存在,update 在运行时被 Prisma 拒绝(被上层吞掉),
+  // 医生确认/拒绝功能实际从未生效。
+  const now = Math.floor(Date.now() / 1000)
+  await prisma.chatTakeaway.update({
     where: { id },
-    data: { medicAction: action === 'accept' ? 'accepted' : 'rejected' },
+    data: action === 'accept' ? { medicAckedAt: now } : { medicRejectedAt: now },
   })
   return true
 }

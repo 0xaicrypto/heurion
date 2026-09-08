@@ -50,7 +50,7 @@ export async function runDeepAnalysis(input: {
       const sessionId = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
       try {
         const res = await runSubAgent({ task, scope, context, id }, ctx)
-        await (prisma as any).subAgentSession.create({
+        await prisma.subAgentSession.create({
           data: {
             id: sessionId, userId, task, scope, topic,
             summary: res.summary, status: 'done',
@@ -65,7 +65,7 @@ export async function runDeepAnalysis(input: {
         return { topic, summary: res.summary, turns: res.turns, costTokens: res.costTokens, failed: false }
       } catch (err) {
         const msg = (err as Error).message.slice(0, 200)
-        await (prisma as any).subAgentSession.create({
+        await prisma.subAgentSession.create({
           data: {
             id: sessionId, userId, task, scope, topic,
             summary: `FAILED: ${msg}`, status: 'failed', turns: 0, costTokens: 0, createdAt: new Date().toISOString(),

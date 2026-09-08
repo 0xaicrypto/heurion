@@ -14,7 +14,7 @@ export async function ingestionRouter(app: FastifyInstance) {
     if (patient_hash) where.patientHash = patient_hash
     if (status) where.status = status
 
-    const rows = await (prisma as any).ingestionJob.findMany({
+    const rows = await prisma.ingestionJob.findMany({
       where,
       orderBy: { createdAt: 'desc' },
     })
@@ -25,7 +25,7 @@ export async function ingestionRouter(app: FastifyInstance) {
     const userId = request.user!.userId
     const { id } = request.params as any
 
-    const row = await (prisma as any).ingestionJob.findFirst({
+    const row = await prisma.ingestionJob.findFirst({
       where: { id, userId },
     })
     if (!row) return reply.status(404).send({ error: 'Ingestion job not found' })
@@ -38,7 +38,7 @@ export async function ingestionRouter(app: FastifyInstance) {
     const userId = request.user!.userId
     const { id } = request.params as any
 
-    const row = await (prisma as any).ingestionJob.findFirst({
+    const row = await prisma.ingestionJob.findFirst({
       where: { id, userId },
     })
     if (!row) return reply.status(404).send({ error: 'Ingestion job not found' })

@@ -1,6 +1,7 @@
 import { resolveTierModel } from '../../common/llm-gateway.js'
 import prisma from '../../common/prisma.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
+import { getUserContext } from '../shared/user-context.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 
 export interface ScreeningResult {
@@ -50,10 +51,10 @@ export async function screenPatient(
   patientHash: string,
   userId: string,
 ): Promise<ScreeningResult> {
-  const study = await (prisma as any).researchStudy.findUnique({ where: { id: studyId } })
+  const study = await prisma.researchStudy.findUnique({ where: { id: studyId } })
   if (!study) throw new Error('Study not found')
 
-  const rules = await (prisma as any).studyProtocolRule.findMany({
+  const rules = await prisma.studyProtocolRule.findMany({
     where: { studyId, status: 'confirmed' },
   })
   if (rules.length === 0) {
@@ -66,15 +67,18 @@ export async function screenPatient(
     }
   }
 
-  const patient = await (prisma as any).patientRecord.findUnique({ where: { hash: patientHash, userId } })
+  const patient = await prisma.patientRecord.findUnique({ where: { hash: patientHash, userId } })
 
-  const facts = await (prisma as any).memoryGraphNode.findMany({
-    where: { ownerId: userId, patientHash, type: 'fact' },
-    select: { content: true, category: true, importance: true },
-    take: 50,
-  }) || []
+  // #701: memoryGraphNode 模型已在双存储收敛中移除 — 原查询运行时抛错
+  // (catch 吞掉,患者档案退化为空),改为经 FactsStore 读取同一事实源。
+  const userCtx = await getUserContext(userId)
+  const facts = userCtx.facts
+    .all()
+    .filter((f) => f.patientHash === patientHash && f.category === 'fact')
+    .slice(0, 50)
+    .map((f) => ({ content: f.content, category: f.category, importance: f.importance }))
 
-  const medicalRecords = await (prisma as any).medicalRecord.findMany({
+  const medicalRecords = await prisma.medicalRecord.findMany({
     where: { patientHash, userId },
     select: { title: true, sections: true },
     take: 20,
@@ -117,7 +121,7 @@ export async function screenPatient(
       ruleResults,
     }
 
-    await (prisma as any).researchScreening.create({
+    await prisma.researchScreening.create({
       data: {
         id: `scr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         studyId,
@@ -146,7 +150,7 @@ export async function screenAllEnrolled(
   studyId: string,
   userId: string,
 ): Promise<ScreeningResult[]> {
-  const enrollments = await (prisma as any).researchEnrollment.findMany({
+  const enrollments = await prisma.researchEnrollment.findMany({
     where: { studyId, unenrolledAt: null },
   })
 

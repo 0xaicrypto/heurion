@@ -54,7 +54,7 @@ export async function submissionRouter(app: FastifyInstance) {
       // #382 联动点 5: 若论文已写入写作文档，把正文交给 LLM 提取亮点。
       let docText = ''
       if (body.doc_id) {
-        const doc = await (prisma as any).doc.findFirst({ where: { id: body.doc_id, userId: request.user!.userId } })
+        const doc = await prisma.doc.findFirst({ where: { id: body.doc_id, userId: request.user!.userId } })
         if (doc?.body) docText = doc.body.slice(0, 6000)
       }
       const { coverLetter, highlights } = await generateCoverLetter({
@@ -108,11 +108,11 @@ export async function submissionRouter(app: FastifyInstance) {
     const docId = (request.query as any).doc_id as string | undefined
     // #726: 按文档隔离 — 无 doc_id 时回退旧行为(最新一条)。
     const draft = docId
-      ? await (prisma as any).submissionDraft.findFirst({
+      ? await prisma.submissionDraft.findFirst({
           where: { userId, docId },
           orderBy: { updatedAt: 'desc' },
         })
-      : await (prisma as any).submissionDraft.findFirst({
+      : await prisma.submissionDraft.findFirst({
           where: { userId, status: { not: 'submitted' } },
           orderBy: { updatedAt: 'desc' },
         })
@@ -138,17 +138,17 @@ export async function submissionRouter(app: FastifyInstance) {
     if (!allowed.includes(status)) return reply.status(400).send({ error: `status must be one of: ${allowed.join(', ')}` })
     // #726: 按文档隔离状态追踪。
     const draft = doc_id
-      ? await (prisma as any).submissionDraft.findFirst({
+      ? await prisma.submissionDraft.findFirst({
           where: { userId: request.user!.userId, docId: doc_id },
           orderBy: { updatedAt: 'desc' },
         })
-      : await (prisma as any).submissionDraft.findFirst({
+      : await prisma.submissionDraft.findFirst({
           where: { userId: request.user!.userId, status: { not: 'submitted' } },
           orderBy: { updatedAt: 'desc' },
         })
     if (!draft) return reply.status(404).send({ error: 'No draft to update' })
     const now = new Date().toISOString()
-    const updated = await (prisma as any).submissionDraft.update({
+    const updated = await prisma.submissionDraft.update({
       where: { id: draft.id },
       data: { status, updatedAt: now },
     })
@@ -157,7 +157,7 @@ export async function submissionRouter(app: FastifyInstance) {
 
   // ── 投稿草稿（刷新不丢失）────────────────────────────────────────
   app.get('/api/v1/submission/drafts', async (request) => {
-    const drafts = await (prisma as any).submissionDraft.findMany({
+    const drafts = await prisma.submissionDraft.findMany({
       where: { userId: request.user!.userId },
       orderBy: { updatedAt: 'desc' },
     })
@@ -184,11 +184,11 @@ export async function submissionRouter(app: FastifyInstance) {
     // #726: 按 docId 隔离投稿草稿 — 无 docId 时回退到"该状态最新一条"
     // (兼容旧前端/未关联文档的投稿面板)。
     const existing = body.doc_id
-      ? await (prisma as any).submissionDraft.findFirst({
+      ? await prisma.submissionDraft.findFirst({
           where: { userId: request.user!.userId, docId: body.doc_id },
           orderBy: { updatedAt: 'desc' },
         })
-      : await (prisma as any).submissionDraft.findFirst({
+      : await prisma.submissionDraft.findFirst({
           where: { userId: request.user!.userId, status: body.status || 'draft' },
           orderBy: { updatedAt: 'desc' },
         })
@@ -207,9 +207,9 @@ export async function submissionRouter(app: FastifyInstance) {
     }
     let saved
     if (existing) {
-      saved = await (prisma as any).submissionDraft.update({ where: { id: existing.id }, data })
+      saved = await prisma.submissionDraft.update({ where: { id: existing.id }, data })
     } else {
-      saved = await (prisma as any).submissionDraft.create({ data: { ...data, createdAt: now } })
+      saved = await prisma.submissionDraft.create({ data: { ...data, createdAt: now } })
     }
     return { draft: toDraft(saved), ok: true }
   })

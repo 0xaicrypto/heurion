@@ -20,7 +20,7 @@ import { isOaUrlForDoi } from './oa-pdf-tool.js'
 
 /** 当前文档的全部参考材料(label 与原始记录)。 */
 export async function resolveImportTargets(userId: string, docId: string): Promise<Array<{ r: any; label: string }>> {
-  const refs = await (prisma as any).docReference.findMany({ where: { userId, docId } })
+  const refs = await prisma.docReference.findMany({ where: { userId, docId } })
   return (refs || []).map((r: any) => {
     let label = ''
     try { label = JSON.parse(r.sourceNodes || '{}').label || '' } catch { /* ignore */ }
@@ -101,7 +101,7 @@ export async function executeImportFromUrl(
     // 3) 文件库落盘(sha256 去重复用)+ FileIndex 登记
     const filename = pdf.filename
     const sha256 = crypto.createHash('sha256').update(pdf.buffer).digest('hex')
-    const dup = await (prisma as any).fileIndex.findFirst({ where: { userId, sha256, deletedAt: null } }).catch(() => null)
+    const dup = await prisma.fileIndex.findFirst({ where: { userId, sha256, deletedAt: null } }).catch(() => null)
     let fileId: string
     if (dup) {
       fileId = dup.id
@@ -111,15 +111,15 @@ export async function executeImportFromUrl(
       fs.mkdirSync(dir, { recursive: true })
       fs.writeFileSync(path.join(dir, fileId), pdf.buffer)
       const now = new Date().toISOString()
-      await (prisma as any).fileIndex.create({
+      await prisma.fileIndex.create({
         data: { id: fileId, userId, sha256, name: filename, mime: 'application/pdf', sizeBytes: pdf.buffer.length, createdAt: now, updatedAt: now },
       })
     }
 
     // 4) 建 docReference(Reference Materials 可见,支持后续重新导入) — 幂等
-    const refDup = await (prisma as any).docReference.findFirst({ where: { userId, docId, refType: 'pdf', snapshot: filename } })
+    const refDup = await prisma.docReference.findFirst({ where: { userId, docId, refType: 'pdf', snapshot: filename } })
     if (!refDup) {
-      await (prisma as any).docReference.create({
+      await prisma.docReference.create({
         data: {
           id: `ref_${crypto.randomBytes(8).toString('hex')}`,
           docId,
@@ -194,7 +194,7 @@ export async function ensureDraftBody(
   docId: string,
   opts: EnsureDraftBodyOptions,
 ): Promise<{ body: string; note?: string; error?: string }> {
-  const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+  const existing = await prisma.doc.findFirst({ where: { id: docId, userId } })
   if (!existing) return { body: '', error: `Document not found: ${docId}` }
   const currentBody = String(existing.body || '')
   if (currentBody.trim()) return { body: currentBody }

@@ -175,7 +175,7 @@ export class InsertAssetTool extends BaseTool {
   // deck 用 'AI deck'）。
   private async writeBlock(docId: string, block: string, args: Record<string, unknown>, summaryBase: string, opts: { deckJson?: string | null; snapshotLabel?: string } = {}): Promise<ToolResult> {
     const anchor = typeof args.anchor === 'string' ? args.anchor.trim() : ''
-    const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
+    const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
     if (!existing) return { success: false, error: `Document not found: ${docId}` }
     const body = String(existing.body || '')
     // #789: deck 变更判定保持字符串比较(避免 parse→stringify 键序漂移

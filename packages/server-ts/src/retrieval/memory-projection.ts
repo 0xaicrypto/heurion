@@ -259,7 +259,7 @@ export class MemoryProjection {
       // Try clinical_graph_nodes first (may not exist)
       let nodes: Array<{ node_type: string; content_json: string; weight: number; updated_at: number }> | null = null
       try {
-        nodes = await (prisma as any).$queryRawUnsafe(
+        nodes = await prisma.$queryRawUnsafe(
           `SELECT node_type, content_json, weight, updated_at
            FROM clinical_graph_nodes
            WHERE user_id = ? AND patient_hash = ?
@@ -271,7 +271,7 @@ export class MemoryProjection {
       // Fallback: read from patient_records
       let patientBasicInfo = ''
       if (!nodes || !nodes.length) {
-        const patient = await (prisma as any).patientRecord.findFirst({
+        const patient = await prisma.patientRecord.findFirst({
           where: { hash: patientHash, userId },
         })
         if (patient) {

@@ -104,7 +104,7 @@ export async function updateMedicalRecordFromChat(
   if (keys.length === 0) return false
 
   const now = new Date().toISOString()
-  const existing = await (prisma as any).medicalRecord.findFirst({
+  const existing = await prisma.medicalRecord.findFirst({
     where: { userId, patientHash },
     orderBy: { createdAt: 'desc' },
   })
@@ -113,14 +113,14 @@ export async function updateMedicalRecordFromChat(
     let current: Record<string, string> = {}
     try { current = JSON.parse(existing.sections || '{}') } catch { /* invalid json */ }
     for (const key of keys) current[key] = sections[key]!
-    await (prisma as any).medicalRecord.update({
+    await prisma.medicalRecord.update({
       where: { id: existing.id },
       data: { sections: JSON.stringify(current), updatedAt: now },
     })
     return true
   }
 
-  await (prisma as any).medicalRecord.create({
+  await prisma.medicalRecord.create({
     data: {
       id: `mr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       userId,
@@ -139,7 +139,7 @@ export async function updatePatientFromFindings(
 ): Promise<void> {
   if (!findings.length) return
 
-  const patient = await (prisma as any).patientRecord.findFirst({
+  const patient = await prisma.patientRecord.findFirst({
     where: { hash: patientHash, userId },
   })
   if (!patient) return
@@ -150,7 +150,7 @@ export async function updatePatientFromFindings(
     .map(f => `[${f.finding_type}] ${f.content}`)
     .join('; ')
 
-  await (prisma as any).patientRecord.update({
+  await prisma.patientRecord.update({
     where: { hash: patientHash },
     data: {
       chiefComplaint: existingComplaint

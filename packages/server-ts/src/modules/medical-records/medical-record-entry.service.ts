@@ -56,7 +56,7 @@ export async function createMedicalRecordEntry(
   const status = input.status || 'confirmed'
   const createdBy = input.createdBy || 'user'
 
-  const data = await (prisma as any).medicalRecordEntry.create({
+  const data = await prisma.medicalRecordEntry.create({
     data: {
       id: `mre_${uid()}`,
       patientHash,

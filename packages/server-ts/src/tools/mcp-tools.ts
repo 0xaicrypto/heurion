@@ -16,7 +16,7 @@ async function dbServers(): Promise<Map<string, { url: string; capabilities: Arr
   try {
     const prisma = (await import('../common/prisma.js')).default
     const { decryptSettingValue } = await import('../common/settings-encryption.js')
-    const rows = await (prisma as any).mcpServer.findMany({ where: { enabled: 1 } })
+    const rows = await prisma.mcpServer.findMany({ where: { enabled: 1 } })
     const map = new Map<string, { url: string; capabilities: Array<'read' | 'write'>; token?: string }>()
     for (const r of rows) {
       let caps: Array<'read' | 'write'> = ['read']

@@ -20,12 +20,12 @@ export async function appendChiefComplaint(
   text: string,
 ): Promise<void> {
   if (!patientHash || !text || text.length <= 5) return
-  const patient = await (prisma as any).patientRecord.findFirst({ where: { hash: patientHash, userId } })
+  const patient = await prisma.patientRecord.findFirst({ where: { hash: patientHash, userId } })
   if (!patient) return
   const existing = patient.chiefComplaint || ''
   const snippet = text.slice(0, 50)
   if (existing.includes(snippet)) return
-  await (prisma as any).patientRecord.update({
+  await prisma.patientRecord.update({
     where: { hash: patientHash },
     data: { chiefComplaint: (existing + `\n[${prefix}] ` + text.slice(0, 300)).trim(), updatedAt: new Date().toISOString() },
   })

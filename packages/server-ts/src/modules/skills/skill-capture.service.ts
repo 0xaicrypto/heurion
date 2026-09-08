@@ -53,7 +53,7 @@ export async function captureSkillDraft(userId: string, conversation: string): P
 /** Persist a draft so the doctor can refine it in follow-up calls. */
 export async function saveDraft(userId: string, draft: SkillDraft, sourceSession?: string): Promise<string> {
   const now = new Date().toISOString()
-  const row = await (prisma as any).capturedSkill.create({
+  const row = await prisma.capturedSkill.create({
     data: {
       userId,
       name: draft.name || '未命名技能',
@@ -75,7 +75,7 @@ export async function refineSkillDraft(
   draftId: string,
   instruction: string,
 ): Promise<SkillDraft> {
-  const row = await (prisma as any).capturedSkill.findFirst({ where: { id: draftId, userId } })
+  const row = await prisma.capturedSkill.findFirst({ where: { id: draftId, userId } })
   if (!row) throw new Error('Draft not found')
   const current: SkillDraft = {
     name: row.name,
@@ -90,7 +90,7 @@ export async function refineSkillDraft(
 提示词模板：${current.prompt}`
   const refined = await draftFromConversation(userId, context, instruction)
   const now = new Date().toISOString()
-  await (prisma as any).capturedSkill.update({
+  await prisma.capturedSkill.update({
     where: { id: draftId },
     data: {
       name: refined.name || current.name,
@@ -112,7 +112,7 @@ export async function confirmSkillDraft(
   userId: string,
   draftId: string,
 ): Promise<{ ok: boolean; proposalId?: string }> {
-  const row = await (prisma as any).capturedSkill.findFirst({ where: { id: draftId, userId } })
+  const row = await prisma.capturedSkill.findFirst({ where: { id: draftId, userId } })
   if (!row || (row.status !== 'draft' && row.status !== 'confirmed')) return { ok: false }
 
   let steps: string[] = []
@@ -152,7 +152,7 @@ export async function confirmSkillDraft(
 
 /** #727: 对话内取消捕捉 — 删除尚未确认的草稿。 */
 export async function deleteSkillDraft(userId: string, draftId: string): Promise<boolean> {
-  const deleted = await (prisma as any).capturedSkill.deleteMany({
+  const deleted = await prisma.capturedSkill.deleteMany({
     where: { id: draftId, userId, status: 'draft' },
   })
   return deleted.count > 0
@@ -161,7 +161,7 @@ export async function deleteSkillDraft(userId: string, draftId: string): Promise
 export async function listCapturedSkills(userId: string, status?: string): Promise<any[]> {
   const where: any = { userId }
   if (status) where.status = status
-  const rows = await (prisma as any).capturedSkill.findMany({ where, orderBy: { updatedAt: 'desc' } })
+  const rows = await prisma.capturedSkill.findMany({ where, orderBy: { updatedAt: 'desc' } })
   return rows.map((r: any) => ({
     id: r.id,
     name: r.name,

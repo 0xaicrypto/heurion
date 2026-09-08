@@ -66,7 +66,7 @@ export async function medicalRecordEntriesRouter(app: FastifyInstance) {
       return reply.status(400).send({ error: body.error.format() })
     }
 
-    const patient = await (prisma as any).patientRecord.findFirst({
+    const patient = await prisma.patientRecord.findFirst({
       where: { hash, userId },
     })
     if (!patient) return reply.status(404).send({ error: 'Patient not found' })
@@ -81,7 +81,7 @@ export async function medicalRecordEntriesRouter(app: FastifyInstance) {
     const { hash } = request.params as any
     const { type, status } = request.query as any
 
-    const patient = await (prisma as any).patientRecord.findFirst({
+    const patient = await prisma.patientRecord.findFirst({
       where: { hash, userId },
     })
     if (!patient) return reply.status(404).send({ error: 'Patient not found' })
@@ -90,7 +90,7 @@ export async function medicalRecordEntriesRouter(app: FastifyInstance) {
     if (type) where.type = type
     if (status) where.status = status
 
-    const records = await (prisma as any).medicalRecordEntry.findMany({
+    const records = await prisma.medicalRecordEntry.findMany({
       where,
       orderBy: { date: 'desc' },
     })
@@ -103,7 +103,7 @@ export async function medicalRecordEntriesRouter(app: FastifyInstance) {
     const userId = request.user!.userId
     const { hash, id } = request.params as any
 
-    const r = await (prisma as any).medicalRecordEntry.findFirst({
+    const r = await prisma.medicalRecordEntry.findFirst({
       where: { id, patientHash: hash, userId },
     })
     if (!r) return reply.status(404).send({ error: 'Entry not found' })
@@ -120,7 +120,7 @@ export async function medicalRecordEntriesRouter(app: FastifyInstance) {
       return reply.status(400).send({ error: parsed.error.format() })
     }
 
-    const existing = await (prisma as any).medicalRecordEntry.findFirst({
+    const existing = await prisma.medicalRecordEntry.findFirst({
       where: { id, patientHash: hash, userId },
     })
     if (!existing) return reply.status(404).send({ error: 'Entry not found' })
@@ -143,7 +143,7 @@ export async function medicalRecordEntriesRouter(app: FastifyInstance) {
       : existing.linkedRecordIds
 
     // Versioned update: create a new record pointing back to the previous one.
-    const next = await (prisma as any).medicalRecordEntry.create({
+    const next = await prisma.medicalRecordEntry.create({
       data: {
         id: `mre_${uid()}`,
         patientHash: existing.patientHash,
@@ -179,12 +179,12 @@ export async function medicalRecordEntriesRouter(app: FastifyInstance) {
     const userId = request.user!.userId
     const { hash, id } = request.params as any
 
-    const existing = await (prisma as any).medicalRecordEntry.findFirst({
+    const existing = await prisma.medicalRecordEntry.findFirst({
       where: { id, patientHash: hash, userId },
     })
     if (!existing) return reply.status(404).send({ error: 'Entry not found' })
 
-    await (prisma as any).medicalRecordEntry.delete({ where: { id } })
+    await prisma.medicalRecordEntry.delete({ where: { id } })
     return { deleted: true }
   })
 }

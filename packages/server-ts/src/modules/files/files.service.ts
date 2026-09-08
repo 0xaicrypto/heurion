@@ -7,7 +7,7 @@
  * (file-pipeline.service.ts), not in the route layer.
  *
  * #730/#746: FileIndex is a first-class model — typed access, no
- * `(prisma as any)` and no silent catch. Missing table = startup failure
+ * `prisma` and no silent catch. Missing table = startup failure
  * (see main.ts assertSchema), never silent degradation.
  */
 import fs from 'fs'

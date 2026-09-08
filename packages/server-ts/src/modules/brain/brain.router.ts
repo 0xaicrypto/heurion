@@ -11,13 +11,13 @@ export async function brainRouter(app: FastifyInstance) {
     todayStart.setHours(0, 0, 0, 0)
 
     const [pending, confirmedToday, totalEntries] = await Promise.all([
-      (prisma as any).medicalRecordEntry.count({
+      prisma.medicalRecordEntry.count({
         where: { userId, status: 'pending_review' },
       }),
-      (prisma as any).medicalRecordEntry.count({
+      prisma.medicalRecordEntry.count({
         where: { userId, status: 'confirmed', confirmedAt: { gte: todayStart.toISOString() } },
       }),
-      (prisma as any).medicalRecordEntry.count({ where: { userId } }),
+      prisma.medicalRecordEntry.count({ where: { userId } }),
     ])
 
     return {

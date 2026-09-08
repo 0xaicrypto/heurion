@@ -10,7 +10,7 @@ import { queryLoki, type LogQueryFilters } from '../common/log-query.js'
  */
 export async function isUserAdmin(userId: string): Promise<boolean> {
   try {
-    const u = await (prisma as any).user.findUnique({ where: { id: userId }, select: { role: true } })
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } })
     return u?.role === 'admin'
   } catch {
     return false
