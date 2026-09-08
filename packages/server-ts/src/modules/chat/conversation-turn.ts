@@ -24,8 +24,9 @@ import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-injec
 import { maybeJitSynthesize } from '../../modules/knowledge/jit-synthesis.service.js' // #815 JIT 兜底
 import { EmbeddingService } from '../../memory/embedding/embedding.service.js' // #731 向量路接线
 import { describeSummaryForInjection } from '../../memory/staleness.js' // #813 总结溯源/stale 单一判定入口
-import { ContextAssembler } from './context-assembler.js'
-import { ToolRegistry, type ToolContext, type EditHint } from '../../tools/tool-registry.js'
+import { ContextAssembler, RequiredSegmentError, type AssemblyResult } from './context-assembler.js'
+// #905: doc- 会话 docId 解析/格式校验(工具面门控与 document_context 注入共用)。
+import { ToolRegistry, parseDocSessionId, type ToolContext, type EditHint } from '../../tools/tool-registry.js'
 import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
 import { createExecutionPlaneService } from '../execution/execution-plane.service.js'
 import { runToolCallLoop, type TurnIO } from './tool-loop.js'
@@ -317,12 +318,19 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     },
     {
       // §15.4: 写作会话注入当前文档 + 引用。
+      // #905: doc- 会话 required 段 — builder 抛错(参考材料提取/查库
+      // 崩溃等)不再被装配器吞成空段,而是硬失败中断本回合(错误 SSE),
+      // 杜绝模型在无文档上下文状态下继续"编辑"。非 doc 会话/无效
+      // sessionId 返回空串(合法降级,不算失败)。
       key: 'document_context',
       fallbackOrder: 2,
+      required: true,
       stageLabel: '正在解析文档与参考材料…',
       build: async (input) => {
-        if (!sid.startsWith('doc-')) return ''
-        const docId = sid.slice(4)
+        // #905: docId 格式校验(对齐 documents.router 的 doc_+16hex)—
+        // 此前 slice(4) 盲取,不匹配的会话按 general 处理:不注入文档段。
+        const docId = parseDocSessionId(sid)
+        if (!docId) return ''
         const doc = await prisma.doc.findFirst({ where: { id: docId, userId } })
         if (!doc) return ''
         const refs = await prisma.docReference.findMany({
@@ -516,14 +524,18 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         const docs = (ctx.memory.graph.getCurrentNodesByType('document') as any[])
           .filter((n: any) => n.type === 'document' && pickedIds.includes(n.stableId))
           .slice(0, CONTEXT_CONFIG.injection.pickedMax)
-        const { extractTextFromUpload } = await import('../../lib/document-extractor.js')
+        // #914: 提取走缓存版 — 钉选文件每轮重复提取(PDF 解析分钟级),
+        // uploads 文件不可变,进程内 LRU 缓存直接命中(与参考材料注入
+        // 同一缓存面)。缓存 key 含文件 mtime — 同名 fileId 被覆盖重写
+        // 后旧提取不再命中。
+        const { cachedExtractTextFromUpload } = await import('../../lib/document-extractor.js')
         const docBlocks: string[] = []
         // #fix 2026-09: 逐文件子进度 — 钉选 PDF 提取(解析+图片+公式 OCR)
         // 单文件可达数分钟,整段此前零事件,用户面对 9 分钟黑盒。
         for (let i = 0; i < docs.length; i++) {
           const d = docs[i]
           input.stage?.(`正在读取钉选文档 ${i + 1}/${docs.length}：${String(d.name || d.stableId).slice(0, 40)}`)
-          const text = await extractTextFromUpload(userId, d.stableId, { maxChars: CONTEXT_CONFIG.injection.pickedCharsPerItem })
+          const text = await cachedExtractTextFromUpload(userId, d.stableId, { maxChars: CONTEXT_CONFIG.injection.pickedCharsPerItem })
           docBlocks.push(`- [document] (${d.stableId}) ${d.name}: ${(text || d.name).slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`)
         }
         const summaryBlocks = summaries.map((a) => {
@@ -555,10 +567,23 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       send({ type: 'context_info', text: label, kind: 'file_context' })
     } catch { /* best-effort */ }
   }
-  const assembled = await assembler.assemble({
-    userId, sid, patientHash, scene, body, ctx,
-    projected, budget, layer3FactHashes, historyTokens,
-  }, sendStage)
+  let assembled: AssemblyResult
+  try {
+    assembled = await assembler.assemble({
+      userId, sid, patientHash, scene, body, ctx,
+      projected, budget, layer3FactHashes, historyTokens,
+    }, sendStage)
+  } catch (err) {
+    // #905: required 段(document_context)硬失败 — 不带残缺上下文进 LLM,
+    // 上抛走 chat-handler 的现有错误 SSE 通道(error 事件 + llm_error 落库)。
+    if (err instanceof RequiredSegmentError) {
+      log.error('required context segment failed — turn aborted before LLM', {
+        sessionId: sid, key: err.key, issues: err.telemetry,
+      })
+      throw new Error(`写作会话的文档上下文读取失败，本回合已中止。请重试；若持续出现，请刷新页面后重新进入该写作会话。（${(err as Error).message.slice(0, 160)}）`)
+    }
+    throw err
+  }
   if (assembled.telemetry.length > 0) {
     log.warn('context assembly telemetry (required segments degraded)', { issues: assembled.telemetry })
   }

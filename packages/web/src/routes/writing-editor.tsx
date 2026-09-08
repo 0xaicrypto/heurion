@@ -404,7 +404,9 @@ export function WritingEditorPage() {
     appliedDocDeck.current = deckKey;
     // 服务端已持久化该 deck — 同步"已保存"基线，本地无未保存编辑时直接换源。
     if (deckJson && deckJson !== lastSavedDeck.current && deckJson !== deckKey) {
-      showNotice(t('writing.deckConflict', 'AI 已更新 deck，但你有未保存的 deck 编辑 — 请先 Save，再刷新页面获取 AI 版本'), 6000);
+      // #910: 指引修正 — 旧文案「先 Save 再刷新」会把本地旧 deck 盖掉服务端
+      // AI deck 且无兜底;改为放弃本地/接受 AI 二选一。
+      showNotice(t('writing.deckConflict', '本地有未保存的画布编辑，AI 已更新服务端画布。建议先放弃本地画布修改并刷新获取 AI 版本，或接受 AI 版本后再做本地编辑'), 6000);
       return;
     }
     lastSavedDeck.current = deckKey;
@@ -726,6 +728,13 @@ export function WritingEditorPage() {
    */
   const handleRestoreRequest = async (snapshotId: string) => {
     if (!docId || !body) return;
+    // #910: Restore × 审阅互斥 — diff 审阅未决或 AI 写回批次待冲刷时,
+    // Restore 审阅会覆盖 diffReview 状态(正在审阅的 AI 修改/恢复内容互相
+    // 顶掉,恢复与写回混在一个 diff 里无法分辨)。明示用户先完成当前审阅。
+    if (diffReview !== null || pendingWriteBackRef.current !== null) {
+      showNotice(t('writing.restoreBlockedByReview', '请先处理当前的 AI 修改审阅，再恢复历史版本'));
+      return;
+    }
     setRestoring(snapshotId);
     try {
       const snap = await api.getSnapshotBody(docId, snapshotId);
@@ -1372,9 +1381,13 @@ export function WritingEditorPage() {
         {/* #fix: 上传进度 Modal — 上传中显示进度条,导入阶段不确定进度。 */}
         <UploadProgressModal state={chat.uploadState} onCancel={chat.cancelUpload} />
 
-        {/* #598: History 版本列表(#696: 对话框组件化) */}
+        {/* #598: History 版本列表(#696: 对话框组件化)
+            #910: 审阅未决/写回待冲刷时 Restore 按钮禁用 — 与 handleRestoreRequest
+            的互斥守卫同步(UI 层同样不给入口)。 */}
         {showHistory && (
-          <HistoryDialog snapshots={snapshots} snapshotsLoading={snapshotsLoading} restoring={restoring} onClose={() => setShowHistory(false)} onRestore={(id) => void handleRestoreRequest(id)} />
+          <HistoryDialog snapshots={snapshots} snapshotsLoading={snapshotsLoading} restoring={restoring}
+            reviewBlocked={diffReview !== null || pendingWriteBackRef.current !== null}
+            onClose={() => setShowHistory(false)} onRestore={(id) => void handleRestoreRequest(id)} />
         )}
 
         {/* PHI Findings Dialog(#696: HighlightedBody 组件化) */}

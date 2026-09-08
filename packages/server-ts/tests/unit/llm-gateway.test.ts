@@ -71,6 +71,37 @@ describe('#548 — LLM 输出截断检测', () => {
     expect(text).toContain('<tool_call>')
   })
 
+  test('#911: 非流式 tool_calls arguments 坏 JSON → 降级 _raw 块,不抛(对齐流式口径)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{
+        message: { tool_calls: [{ type: 'function', function: { name: 'search_node', arguments: 'not-json{' } }] },
+        finish_reason: 'tool_calls',
+      }],
+    }), { status: 200 })))
+
+    const text = await getLlmGateway().chat([{ role: 'user', content: 'hi' }], { model: 'deepseek-chat' })
+    expect(text).toContain('<tool_call>')
+    expect(text).toContain('"_raw"')
+    expect(text).toContain('not-json{')
+  })
+
+  test('#911: LLM_PRICING env 坏 JSON → 回退内置价目,计费主路径不炸', async () => {
+    const old = process.env.LLM_PRICING
+    process.env.LLM_PRICING = 'not-valid-json{{'
+    try {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      }), { status: 200 })))
+
+      const r = await getLlmGateway().chatWithMeta([{ role: 'user', content: 'hi' }], { model: 'deepseek-chat' })
+      expect(r.text).toBe('ok')
+    } finally {
+      if (old === undefined) delete process.env.LLM_PRICING
+      else process.env.LLM_PRICING = old
+    }
+  })
+
   test('default max_tokens comes from MAX_OUTPUT_TOKENS env instead of hardcoded 4096', async () => {
     const old = process.env.MAX_OUTPUT_TOKENS
     process.env.MAX_OUTPUT_TOKENS = '12000'

@@ -110,14 +110,25 @@ describe('#773 edit_deck 工具', () => {
 
   test('#773 edit_deck 仅 doc- 会话暴露（工具面门控）', async () => {
     const app = await getApp()
+    // #905: 门控含文档存在性校验 — 用真实建库的 docId(userId 归属一致)。
+    const userId = await getAuthUserId()
     const ctx = {
-      userId: 'u', memory: {} as any, facts: {} as any, episodes: {} as any,
+      userId, memory: {} as any, facts: {} as any, episodes: {} as any,
       skills: {} as any, knowledge: {} as any, eventLog: {} as any,
     }
     const { ToolRegistry } = await import('../../src/tools/tool-registry.js')
+    const created = await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Gate Deck' },
+    })
+    const gatedDocId = JSON.parse(created.payload).id
     const registry = new ToolRegistry(ctx as any)
-    const docDefs = await registry.getDefinitionsForUser('document', 'doc-7')
+    const docDefs = await registry.getDefinitionsForUser('document', `doc-${gatedDocId}`)
     expect(docDefs.map((d) => d.function.name)).toContain('edit_deck')
+    // 遗留/伪造 docId 格式 → 不暴露(#905)。
+    const fakeDefs = await registry.getDefinitionsForUser('document', 'doc-7')
+    expect(fakeDefs.map((d) => d.function.name)).not.toContain('edit_deck')
     const generalDefs = await registry.getDefinitionsForUser('general', 'session_abc')
     expect(generalDefs.map((d) => d.function.name)).not.toContain('edit_deck')
     void app

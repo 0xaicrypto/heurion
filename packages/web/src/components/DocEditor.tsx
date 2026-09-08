@@ -189,6 +189,9 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       statsRef.current = { accepted: 0, rejected: 0 };
       setSelectedChange(null);
       setChangeNav({ idx: -1, total: 0 });
+      // #909: 退出审阅恢复编辑能力(审阅期 setEditable(false) 的对称操作;
+      // 初次渲染时本 effect 由 editor 就绪触发,无需 onCreate 兜底)。
+      editor.setEditable(true);
       (editor.commands as any).setTrackChangesMode('edit');
       // 退出审阅(含"放弃修改")→ 还原为当前正文。
       // #812: accept 后的落地也走位置保持 — 用户停在原选区/滚动处,
@@ -208,6 +211,10 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     applyMdRef.current = null;
     if (sc && savedTop !== null) sc.el.scrollTop = savedTop;
     (editor.commands as any).setTrackChangesMode('view');
+    // #909: 审阅只读化 — 此前仅靠 onUpdate 抑制,IME 组合/撤销栈等旁路
+    // 仍可在带标记的文档上改写内容;显式 setEditable(false) 封死入口,
+    // ←/→ 键也因编辑器失焦而空闲给审阅导航使用。
+    editor.setEditable(false);
     setReviewStats({ pending: getPendingChangeCount(editor), accepted: 0, rejected: 0 });
     setSelectedChange(null);
     // #fix: 进入审阅自动聚焦第一处修改(用户可逐条遍历确认/拒绝)。
@@ -328,6 +335,14 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     if (reviewKeyRef.current === null) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // #909: target 判定 — 输入框/textarea/contenteditable(聊天输入、
+      // 标题框、气泡面板)里 ←/→ 是文本光标导航,不得被审阅导航劫持;
+      // 仅页面级方向键(编辑器区域/空白处)才做逐处导航。
+      const target = e.target as HTMLElement | null;
+      if (target instanceof HTMLInputElement
+        || target instanceof HTMLTextAreaElement
+        || target instanceof HTMLSelectElement
+        || target?.isContentEditable) return;
       if (e.key === 'ArrowRight') { e.preventDefault(); jumpTo(Math.min(navIdx + 1, navTotal - 1)); }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); jumpTo(Math.max(navIdx - 1, 0)); }
     };

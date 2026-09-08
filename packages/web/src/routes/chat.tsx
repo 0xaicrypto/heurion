@@ -302,8 +302,14 @@ export function ChatPage() {
 
   const handleAddToKnowledge = async (msg: ChatMessage) => {
     if (!msg.knowledgePayload) return;
-    await api.createKnowledgeSummary(msg.knowledgePayload).catch(() => {});
-    setKbAdded(prev => ({ ...prev, [msg.id]: true }));
+    // #920: 此前无论成败都 setKbAdded(true) — 入库失败被静默标记为成功。
+    // 现在仅在成功后置位，失败走现有错误横幅。
+    try {
+      await api.createKnowledgeSummary(msg.knowledgePayload);
+      setKbAdded(prev => ({ ...prev, [msg.id]: true }));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : t('chat.kbAddFailed', '加入知识库失败，请重试'));
+    }
   };
 
   const resolveDownloadUrl = async (fileId: string) => {

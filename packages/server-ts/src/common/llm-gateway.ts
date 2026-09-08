@@ -528,6 +528,8 @@ export function setLlmTelemetryService(service?: LlmTelemetryRecorder): void {
   telemetryRecorder = service
 }
 
+let llmPricingWarned = false
+
 function getPricing(model: string): { input: number; output: number } {
   const defaults: Record<string, { input: number; output: number }> = {
     'deepseek-chat': { input: 0.27, output: 1.10 },
@@ -536,7 +538,19 @@ function getPricing(model: string): { input: number; output: number } {
     'deepseek-v4-flash-vision-exp': { input: 0.27, output: 1.10 },
     'deepseek-v4-pro': { input: 0.55, output: 2.19 },
   }
-  const envPricing = process.env.LLM_PRICING ? JSON.parse(process.env.LLM_PRICING) : {}
+  // #911: 计费主路径不再裸 parse — env 坏 JSON 回退 {},只 warn 一次(避免每调用刷屏)。
+  let envPricing: Record<string, { input: number; output: number }> = {}
+  if (process.env.LLM_PRICING) {
+    try {
+      envPricing = JSON.parse(process.env.LLM_PRICING) || {}
+    } catch (err) {
+      if (!llmPricingWarned) {
+        llmPricingWarned = true
+        log.warn('LLM_PRICING env is not valid JSON — falling back to built-in pricing', { reason: (err as Error).message.slice(0, 120) })
+      }
+      envPricing = {}
+    }
+  }
   return (
     envPricing[model] ||
     defaults[model] || {
@@ -768,7 +782,11 @@ class OpenAICompatibleLlmGateway implements LlmGateway {
       const blocks: string[] = []
       for (const tc of choice.message.tool_calls) {
         if (tc.type === 'function') {
-          blocks.push(`<tool_call>${JSON.stringify({ name: tc.function.name, arguments: JSON.parse(tc.function.arguments) })}</tool_call>`)
+          // #911: 对齐流式孪生(chatWithToolsStream)口径 — arguments 坏 JSON
+          // 降级 { _raw } 不抛,单个坏工具调用不再炸掉整轮响应解析。
+          let args: unknown
+          try { args = JSON.parse(tc.function.arguments || '{}') } catch { args = { _raw: tc.function.arguments } }
+          blocks.push(`<tool_call>${JSON.stringify({ name: tc.function.name, arguments: args })}</tool_call>`)
         }
       }
       if (blocks.length > 0) return { text: blocks.join('\n'), truncated: false }

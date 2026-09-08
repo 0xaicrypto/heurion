@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { ContextAssembler, OUTPUT_FORMAT_RULES } from '../../src/modules/chat/context-assembler.js'
+import { ContextAssembler, OUTPUT_FORMAT_RULES, RequiredSegmentError } from '../../src/modules/chat/context-assembler.js'
 import { ContextBudget } from '../../src/modules/shared/chat-context.js'
 import { CONTEXT_CONFIG } from '../../src/common/context-config.js'
 import type { SegmentBuildInput } from '../../src/modules/chat/context-assembler.js'
@@ -56,14 +56,33 @@ describe('#637 阶段2 ContextAssembler', () => {
     expect(seen[1]).toBeLessThan(CONTEXT_CONFIG.maxTotalTokens)
   })
 
-  test('required 段缺失 → 记入 telemetry(不静默)', async () => {
+  test('#905 required 段 builder 抛错 → assemble 硬失败(rejects,带 key+telemetry),不再静默进 LLM', async () => {
     const a = new ContextAssembler([
       { key: 'must', fallbackOrder: 0, required: true, build: async () => { throw new Error('boom') } },
-      { key: 'optional', fallbackOrder: 0, build: async () => '' },
+      { key: 'optional', fallbackOrder: 0, build: async () => 'O' },
+    ])
+    let caught: unknown
+    try {
+      await a.assemble(input())
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(RequiredSegmentError)
+    const e = caught as RequiredSegmentError
+    expect(e.key).toBe('must')
+    expect(e.message).toContain('boom')
+    // telemetry 随错误携带,调用方可落日志/对账。
+    expect(e.telemetry.some((t) => t.startsWith('segment must FAILED'))).toBe(true)
+  })
+
+  test('#905 required 段返回空串 = 合法降级 → 仅记 MISSING,不硬失败', async () => {
+    const a = new ContextAssembler([
+      { key: 'document_context', fallbackOrder: 0, required: true, build: async () => '' },
+      { key: 'optional', fallbackOrder: 0, build: async () => 'O' },
     ])
     const res = await a.assemble(input())
-    expect(res.telemetry.some((t) => t.startsWith('segment must FAILED'))).toBe(true)
-    expect(res.systemPrompt).toContain('## 输出格式规范')
+    expect(res.telemetry).toContain('segment document_context MISSING')
+    expect(res.systemPrompt).toContain('O')
   })
 
   test('段级回退: 按 fallbackOrder 逆序移除(0 最先),未注册段不动', async () => {

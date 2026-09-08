@@ -12,6 +12,7 @@ import { enrichJournal, enrichRecommendations } from './journal-enrich.js'
 import { fetchGuideForAuthors, precheckAgainstGuide } from './guide-for-authors.js'
 import type { JournalRecord, Recommendation, SelectionProfile } from './journal-types.js'
 import { generateCoverLetter, FORMAT_TEMPLATES, buildPrefilledTemplate } from './cover-letter.js'
+import { safeJsonParse } from '../../common/llm-json.js'
 
 /** JournalRecord → snake_case DTO(前端契约)。 */
 function toJournalDto(j: JournalRecord) {
@@ -251,7 +252,7 @@ export async function submissionRouter(app: FastifyInstance) {
     const checks = [
       { id: 'title', label: '标题已填写', ok: !!(draft?.articleTitle && String(draft.articleTitle).trim().length >= 5) },
       { id: 'abstract', label: '摘要已填写', ok: !!(draft?.abstract && String(draft.abstract).trim().length >= 50) },
-      { id: 'authors', label: '作者列表完整', ok: !!(draft?.authors && JSON.parse(draft.authors).length > 0) },
+      { id: 'authors', label: '作者列表完整', ok: parseAuthorsColumn(draft?.authors).length > 0 },
       { id: 'journal', label: '已选定目标期刊', ok: !!draft?.targetJournal },
       { id: 'cover', label: 'Cover letter 已生成', ok: !!(draft?.coverLetter && String(draft.coverLetter).length > 100) },
       { id: 'template', label: '已套用期刊模板', ok: !!draft?.templateId },
@@ -354,7 +355,8 @@ function toDraft(d: any) {
     article_title: d.articleTitle,
     abstract: d.abstract,
     keywords: d.keywords,
-    authors: d.authors ? JSON.parse(d.authors) : [],
+    // #911: authors 列安全解析 — 旧行坏 JSON 降级 [],草稿接口不再 500。
+    authors: parseAuthorsColumn(d.authors),
     target_journal: d.targetJournal,
     cover_letter: d.coverLetter,
     template_id: d.templateId,
@@ -362,4 +364,13 @@ function toDraft(d: any) {
     created_at: d.createdAt,
     updated_at: d.updatedAt,
   }
+}
+
+/**
+ * #911: submissionDraft.authors 列的唯一安全解析点(JSON.stringify 写入,
+ * 历史行可能坏)— 坏 JSON / 非数组降级 [],列表与 checklist 不再被单行炸掉。
+ */
+export function parseAuthorsColumn(raw: string | null | undefined): string[] {
+  const parsed = safeJsonParse<string[]>(raw)
+  return Array.isArray(parsed) ? parsed : []
 }

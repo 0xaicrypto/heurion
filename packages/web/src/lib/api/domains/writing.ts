@@ -99,12 +99,15 @@ export class WritingApi extends ApiCore {
   /**
    * #870: 气泡 apply 补版本快照 — 与聊天 edit_document 的 'AI edit'
    * 快照对齐(撤销/审计一致)。调用方 fire-and-forget,失败不阻塞编辑。
+   * #907: 可选 base_sha — 与 #882 PUT 保存同一指纹语义(客户端基于的
+   * 服务端正文字符串哈希),服务端与文档当前 body 指纹不匹配 → 409
+   * stale_base(另一窗口/AI 在此期间更新过文档)。
    */
-  async createDocSnapshot(docId: string, body: string, label = 'AI polish'): Promise<{ ok: boolean }> {
+  async createDocSnapshot(docId: string, body: string, label = 'AI polish', base_sha?: string): Promise<{ ok: boolean }> {
     return this.fetch(`/api/v1/docs/${docId}/snapshots`, {
       method: 'POST',
       headers: this.headers({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ body, label }),
+      body: JSON.stringify({ body, label, ...(base_sha ? { base_sha } : {}) }),
     });
   }
 }

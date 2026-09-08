@@ -66,10 +66,13 @@ export async function recordFollowThrough(input: FollowThroughInput): Promise<vo
   )
   if (activatedIds.size === 0 && activatedNames.size === 0) return
   const nodes = (input.memory.graph.getCurrentNodesByType('skill') ?? []) as any[]
+  let mutated = false
 
   for (const node of nodes) {
     // 优先 stableId 精确匹配;卡片缺 stableId(legacy)回落 name
     if (!(activatedIds.has(node.stableId) || (activatedNames.has(node.name) && !activatedIds.has(node.stableId)))) continue
+
+    mutated = true
 
     // skill_activated(每次激活可回放,审计要求 §5)
     await telemetry.record({
@@ -117,6 +120,12 @@ export async function recordFollowThrough(input: FollowThroughInput): Promise<vo
       log.warn('[follow-through] auto-suspended', { skill: node.name, followRate: node.followRate })
     }
   }
+
+  // #912: 回合内的 taskCount/followRate/lifecycle 变更持久化 —
+  // MemoryGraph 仅显式 commit 落盘(memory.graph.ts),不 commit 则重启后
+  // 统计蒸发。走与 fact 写路相同的 graph.commit() 通道;commit
+  // 失败由调用方(post-turn best-effort 段)吞掉,不阻断回合。
+  if (mutated) input.memory.graph.commit()
 
   // skill_task_outcome(回合级,success/abandoned)
   await telemetry.record({

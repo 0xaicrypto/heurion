@@ -453,67 +453,21 @@ export interface MemoryHealthResponse {
 
 /* ────────────────────────── submission workflow (#362) ────────── */
 
-/** #848/#849: JournalRecord snake_case DTO。 */
-export interface DatedMetricDto<T = number> {
-  value: T;
-  asOf: string;
-  source: string;
-}
-
-export interface JournalMetricsDto {
-  impact_factor: DatedMetricDto | null;
-  cas_zone: DatedMetricDto<string> | null;
-  acceptance_rate: DatedMetricDto | null;
-  review_weeks_median: DatedMetricDto | null;
-  apc: { value: number; currency: string; asOf: string; source: string } | null;
-  open_alex: { hIndex: number; worksCount: number; oaRatio?: number; asOf: string; source: string } | null;
-  article_type_distribution: DatedMetricDto<Array<{ type: string; share: number }>> | null;
-}
-
-export interface JournalWarningDto {
-  kind: 'cas_warning_list' | 'predatory_signal';
-  asOf: string;
-  note: string;
-}
-
-export interface JournalRecordDto {
-  id: string;
-  name: string;
-  issn: string | null;
-  publisher: string | null;
-  zh_name: string | null;
-  description: string | null;
-  metrics: JournalMetricsDto;
-  scope: string[];
-  article_types: string[];
-  oa: boolean;
-  guide_url: string | null;
-  similar_works: Array<{ title: string; year?: number; doi?: string; citedBy?: number }> | null;
-  warnings: JournalWarningDto[];
-  logo: { monogram: string; color: string };
-  freshness: { seed: boolean; updatedAt: string; stale: boolean };
-}
-
-export interface BreakdownRowDto {
-  dimension: string;
-  score: number;
-  evidence: string;
-}
-
-export interface TieredRecommendationDto {
-  journal: JournalRecordDto;
-  tier: 'reach' | 'match' | 'safety';
-  total_score: number;
-  breakdown: BreakdownRowDto[];
-}
-
-export interface RecommendJournalsResult {
-  engine: string;
-  profile_echo: { priority: string; article_type: string | null; self_pay_oa: boolean };
-  tiers: { reach: TieredRecommendationDto[]; match: TieredRecommendationDto[]; safety: TieredRecommendationDto[] };
-  redline: JournalRecordDto[];
-  warning_list_asof: string | null;
-}
+/**
+ * #916: 选刊 wire DTO(DatedMetric/JournalRecord/BreakdownRow/
+ * TieredRecommendation/RecommendJournalsResult)moved to
+ * @heurion/contracts — single source of truth shared with the server
+ * producer,不再手写镜像。此处仅 re-export,提交面板消费端命名不变。
+ */
+export type {
+  DatedMetricDto,
+  JournalMetricsDto,
+  JournalWarningDto,
+  JournalRecordDto,
+  BreakdownRowDto,
+  TieredRecommendationDto,
+  RecommendJournalsResult,
+} from '@heurion/contracts';
 
 export interface GuideRequirementsDto {
   journal_id: string;

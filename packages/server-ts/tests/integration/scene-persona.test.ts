@@ -9,6 +9,15 @@ import { ToolRegistry, SCENE_OMIT_TOOLS, PLUGIN_GATED_TOOLS } from '../../src/to
 import { resolveScene } from '../../src/modules/shared/chat-context.js'
 import { classifyQuery } from '../../src/retrieval/query-router.js'
 
+// #905: doc- 会话写回工具门控含文档存在性查库 — 本文件不建真实数据,
+// prisma mock 为"任意 docId 均存在"(execution-plane-fetchfile 同款 factory 模式)。
+vi.mock('../../src/common/prisma.js', () => ({
+  default: {
+    doc: { findFirst: vi.fn(async ({ where }: any) => ({ id: where.id, userId: where.userId })) },
+    user: { findUnique: vi.fn(async () => null) },
+  },
+}))
+
 /**
  * #510 — 场景化 system prompt: persona 变体 / 工具按场景裁剪 / 场景推断。
  * general/chart/document 场景不得继承患者导向人设与患者检索工具。
@@ -103,7 +112,8 @@ describe('#510 scene tool surface', () => {
     }
     const registry = new ToolRegistry(ctx as any)
     // 插件门控工具默认不可用，不影响本断言（它们不在 PATIENT_RETRIEVAL_TOOLS 中）
-    const defs = await registry.getDefinitionsForUser('general', 'doc-9')
+    // #905: sessionId 须为合法 docId 格式(且文档存在 — prisma 已 mock 为存在)。
+    const defs = await registry.getDefinitionsForUser('general', 'doc-doc_00aa11bb22cc33dd')
     const names = defs.map((d) => d.function.name)
     expect(names).not.toContain('search_node')
     expect(names).not.toContain('search_encounter')
@@ -127,8 +137,27 @@ describe('#510 scene tool surface', () => {
     const names = generalDefs.map((d) => d.function.name)
     expect(names).not.toContain('edit_document')
 
-    const docDefs = await registry.getDefinitionsForUser('document', 'doc-7')
+    // #905: 合法 docId 格式 + 文档存在(prisma mock)→ 暴露。
+    const docDefs = await registry.getDefinitionsForUser('document', 'doc-doc_00aa11bb22cc33dd')
     expect(docDefs.map((d) => d.function.name)).toContain('edit_document')
+  })
+
+  test('#905 docId 格式不符或文档不存在 → 写回工具不暴露', async () => {
+    const ctx = {
+      userId: 'u',
+      memory: {} as any,
+      facts: {} as any,
+      episodes: {} as any,
+      skills: {} as any,
+      knowledge: {} as any,
+      eventLog: {} as any,
+    }
+    const registry = new ToolRegistry(ctx as any)
+    // 遗留/伪造格式(doc- 后面不是 doc_<16hex>)→ 按 general 处理。
+    const fakeDefs = await registry.getDefinitionsForUser('document', 'doc-7')
+    expect(fakeDefs.map((d) => d.function.name)).not.toContain('edit_document')
+    const fake2 = await registry.getDefinitionsForUser('document', 'doc-doc1')
+    expect(fake2.map((d) => d.function.name)).not.toContain('edit_document')
   })
 
   test('getDefinitionsForUser() 默认 patient 全量(兼容旧调用)', async () => {

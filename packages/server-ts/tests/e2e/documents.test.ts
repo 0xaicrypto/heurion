@@ -204,6 +204,65 @@ describe('Documents', () => {
     expect(JSON.parse(res.payload).body).toBe('用户选择保留的版本')
   })
 
+  // #907(服务端)/#870: 气泡 apply 端点的 base_sha 守卫 — 与 PUT #882 同
+  // 语义同算法（sha1 指纹）：匹配正常落库，不匹配 409 且不写快照不覆盖。
+  test('#907 气泡 apply base_sha 匹配 → 200 且快照落库', async () => {
+    const app = await getApp()
+    const docId = JSON.parse((await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Apply Sha OK' },
+    })).payload).id
+    await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '服务端正文' },
+    })
+    const sha = crypto.createHash('sha1').update('服务端正文').digest('hex')
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/snapshots`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '气泡替换后的正文', base_sha: sha },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.payload).ok).toBe(true)
+    const get = await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}`, headers: await authHeader() })
+    expect(JSON.parse(get.payload).body).toBe('气泡替换后的正文')
+  })
+
+  test('#907 气泡 apply base_sha 不匹配 → 409，服务端内容与快照数不变', async () => {
+    const app = await getApp()
+    const docId = JSON.parse((await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Apply Sha Stale' },
+    })).payload).id
+    await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '另一会话刚写入的最新正文' },
+    })
+    const snapsBefore = JSON.parse((await app.inject({
+      method: 'GET', url: `/api/v1/docs/${docId}/snapshots`,
+      headers: await authHeader(),
+    })).payload).snapshots.length
+    const staleSha = crypto.createHash('sha1').update('客户端内存里的过期正文').digest('hex')
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/snapshots`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '基于过期正文的气泡替换', base_sha: staleSha },
+    })
+    expect(res.statusCode).toBe(409)
+    expect(JSON.parse(res.payload).error).toBe('stale_base')
+    const get = await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}`, headers: await authHeader() })
+    expect(JSON.parse(get.payload).body).toBe('另一会话刚写入的最新正文')
+    const snapsAfter = JSON.parse((await app.inject({
+      method: 'GET', url: `/api/v1/docs/${docId}/snapshots`,
+      headers: await authHeader(),
+    })).payload).snapshots.length
+    expect(snapsAfter).toBe(snapsBefore)
+  })
+
   test('non-existent document returns 404', async () => {
     const app = await getApp()
     const res = await app.inject({

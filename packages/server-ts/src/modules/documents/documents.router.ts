@@ -130,22 +130,28 @@ export async function documentsRouter(app: FastifyInstance) {
       data.body = body
     }
     if (bodyChanged || deckChanged) {
-      await prisma.docSnapshot.create({
-        data: {
-          docId,
-          userId: request.user!.userId,
-          body: existing.body,
-          deck: existing.deck ?? null,
-          label: '保存版本',
-          createdAt: now,
-        },
-      })
-    }
-    if (!bodyChanged && !deckChanged) {
+      // #908: 快照+更新包同一事务 — 此前两段写，中断会留下「有快照无更新」
+      // 错位（孤儿快照，History 面板出现幽灵版本）。与 doc-version-writer
+      // #789/#904 同款强度。
+      await prisma.$transaction([
+        prisma.docSnapshot.create({
+          data: {
+            docId,
+            userId: request.user!.userId,
+            body: existing.body,
+            deck: existing.deck ?? null,
+            label: '保存版本',
+            createdAt: now,
+          },
+        }),
+        prisma.doc.update({ where: { id: docId }, data }),
+      ])
+    } else {
+      // body/deck 未变化不刷新 updatedAt（保存按钮 unchanged 提示依赖），
+      // 仅 title 等字段仍可单独更新。
       delete data.updatedAt
+      await prisma.doc.update({ where: { id: docId }, data })
     }
-
-    await prisma.doc.update({ where: { id: docId }, data })
     const doc = await prisma.doc.findFirst({ where: { id: docId } })
 
     // #821: 保存时预渲染预热 — 扫描学术图 fire-and-forget ensureFigures,
@@ -215,14 +221,25 @@ export async function documentsRouter(app: FastifyInstance) {
   app.post('/api/v1/docs/:docId/snapshots', async (request, reply) => {
     const { docId } = request.params as any
     const userId = request.user!.userId
-    const { body, label } = (request.body || {}) as { body?: string; label?: string }
+    // #907(服务端): base_sha 可选 — 客户端最后一次读到的服务端正文指纹。
+    const { body, label, base_sha } = (request.body || {}) as { body?: string; label?: string; base_sha?: string }
     if (typeof body !== 'string' || !body.trim()) {
       return reply.status(400).send({ error: 'body required' })
     }
     const doc = await prisma.doc.findFirst({ where: { id: docId, userId } })
     if (!doc) return reply.status(404).send({ error: 'Doc not found' })
+    // #907(服务端)/#870: 气泡 apply 的 base_sha 守卫 — 与 PUT /docs/:docId
+    // #882 同语义同算法同字段名（sha1 指纹）：客户端就地替换选区后提交，
+    // 若服务端正文已被并发修改（AI 写回/其他窗口），不匹配 → 409，避免
+    // apply 静默覆盖丢改动。未提供 base_sha 的旧客户端不受影响（向后兼容，
+    // 前端接入由并行任务完成）。
+    if (typeof base_sha === 'string' && base_sha.length > 0 &&
+        crypto.createHash('sha1').update(String(doc.body)).digest('hex') !== base_sha) {
+      return reply.status(409).send({ error: 'stale_base' })
+    }
     const written = await writeDocVersion({ userId, docId, body, snapshotLabel: String(label || 'AI polish').slice(0, 40) })
-    if (written.error) return reply.status(400).send({ error: written.error })
+    // #904: writer 乐观锁冲突（服务端视角正文在读取后又变）→ 409 可重试。
+    if (written.error) return reply.status(written.conflict ? 409 : 400).send({ error: written.error })
     return { ok: true }
   })
 

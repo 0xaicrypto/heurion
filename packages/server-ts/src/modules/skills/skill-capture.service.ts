@@ -2,8 +2,12 @@ import { resolveTierModel } from '../../common/llm-gateway.js'
 import prisma from '../../common/prisma.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
 import { parseLlmJson } from '../../common/llm-json.js'
+import { scanSkillPii } from '../../common/pii-scanner.js'
 import { getUserContext } from '../shared/user-context.js'
 import { buildSkillProposalPayload } from '../../memory/skill-node-factory.js'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('skills.capture')
 
 /**
  * #298: skill capture — turn a finished conversation into a reusable skill
@@ -127,6 +131,16 @@ export async function confirmSkillDraft(
   const ctx = getUserContext(userId)
   const { MemoryGraphGateway } = await import('../../memory/memory-gateway.js')
   const gateway = new MemoryGraphGateway(userId, ctx.memory)
+  // #912: 第一道 PII 闸门(capture 侧,fail-closed)— common/pii-scanner
+  // 双层可引用(modules→common 合法),与 proposal.service 的第二道闸门同源。
+  // 命中即拒:不建提案、不进审批队列,行保持 draft 供医生回炉。
+  const pii = scanSkillPii({ name, description, steps, promptTemplate })
+  if (!pii.clean) {
+    log.warn('confirmSkillDraft: PII hit — capture rejected before proposal', {
+      draftId, hits: pii.hits.map((h) => h.kind).join(','),
+    })
+    return { ok: false }
+  }
   const proposal = await gateway.propose({
     scopeType: 'global',
     kind: 'skill',

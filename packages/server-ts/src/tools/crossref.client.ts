@@ -9,6 +9,10 @@
  */
 import { externalRequest, ExternalHttpError } from './external-fetch.js'
 import { formatAma, type CitationRecord } from './search-citation-tool.js'
+import { safeJsonParse } from '../common/llm-json.js'
+import { makeLogger } from '../common/logger.js'
+
+const log = makeLogger('tools.crossref')
 
 /** DOI 归一化:剥 URL/`doi:` 前缀与空白 — 模型常把 DOI 带着前缀复制进来。 */
 export function normalizeDoi(input: string): string {
@@ -73,7 +77,10 @@ export async function crossrefResolveDoi(doi: string): Promise<CitationRecord | 
     if (err instanceof ExternalHttpError && err.status === 404) return null
     throw err
   }
-  const msg = JSON.parse(text)?.message
+  // #911: 外部 HTTP body 安全解析 — 上游坏响应降级 null(同 404 业务分支),
+  // 不再抛 SyntaxError 炸掉整轮检索。
+  const msg = safeJsonParse<{ message?: any }>(text)?.message
+  if (!msg) log.warn(`crossrefResolveDoi: unparseable body for ${norm}`, { head: text.slice(0, 120) })
   return msg ? mapWork(msg) : null
 }
 
@@ -84,8 +91,13 @@ export async function crossrefSearchBibliographic(query: string, rows: number): 
     rows: String(Math.min(Math.max(rows, 1), 8)),
     select: 'DOI,title,author,container-title,issued,volume,page,abstract,resource',
   })
-  const items = JSON.parse(text)?.message?.items
-  return Array.isArray(items) ? items.map(mapWork) : []
+  // #911: 同上 — 坏 body 降级空列表,调用方(Crossref fallback)按零命中降级。
+  const items = safeJsonParse<{ message?: { items?: unknown } }>(text)?.message?.items
+  if (!Array.isArray(items)) {
+    log.warn('crossrefSearchBibliographic: unparseable body', { head: text.slice(0, 120) })
+    return []
+  }
+  return items.map(mapWork)
 }
 
 /** Crossref 记录 → fetch_article_summary 输出文本(与 PubMed 输出形状对齐)。 */

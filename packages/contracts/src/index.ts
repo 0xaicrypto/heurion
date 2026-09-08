@@ -18,6 +18,7 @@ export * from './chat.js'
 export * from './jobs.js'
 export * from './stats.js'
 export * from './knowledge.js'
+export * from './submission.js'
 
 export const SCHEMA_VERSION = 1
 

@@ -22,6 +22,8 @@ export function SubmissionWorkbench({ embedded = false }: { embedded?: boolean }
   const [draft, setDraft] = useState<SubmissionDraft | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  // #920: autosave 失败此前静默吞掉，用户以为已保存 — 走可见错误横幅。
+  const [saveError, setSaveError] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const persist = useCallback(async (patch: Partial<SubmissionDraft>) => {
@@ -41,14 +43,16 @@ export function SubmissionWorkbench({ embedded = false }: { embedded?: boolean }
       });
       setDraft(res.draft);
       setSavedFlash(true);
+      setSaveError(null);
       // #382: the submission inputs ARE the paper — keep the cross-tab link fresh.
       setPaperLink({ title: title.trim(), abstract: abstract || '', docId: getPaperLink()?.docId, updatedAt: Date.now() });
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => setSavedFlash(false), 1500);
-    } catch {
-      /* autosave is best-effort */
+    } catch (err) {
+      // #920: autosave is best-effort,但失败必须可见（内容仍留在本地输入框）。
+      setSaveError(err instanceof ApiError ? err.messageText : t('submission.autosaveFailed', '自动保存失败，内容仍在本页，请重试'));
     }
-  }, [title, abstract, keywords, authors]);
+  }, [title, abstract, keywords, authors, t]);
 
   // Restore the latest draft on mount (refresh never loses work).
   useEffect(() => {
@@ -89,6 +93,12 @@ export function SubmissionWorkbench({ embedded = false }: { embedded?: boolean }
           <h1 className="font-semibold text-text-primary">{t('submission.title', '投稿工作台')}</h1>
           {savedFlash && <span className="ml-auto text-xs text-success">✓ {t('submission.saved', '已自动保存')}</span>}
         </header>
+      )}
+      {/* #920: autosave 失败横幅（成功保存后自动清除）。 */}
+      {saveError && (
+        <div className="mx-6 mt-3">
+          <Alert variant="error">{saveError}</Alert>
+        </div>
       )}
       <div className="flex flex-col gap-4 p-6 lg:flex-row">
           {/* ① 论文信息面板 */}
@@ -639,15 +649,21 @@ function JournalPrecheckCard({ draft }: { draft: SubmissionDraft | null }) {
   const [result, setResult] = useState<PrecheckResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #920: 检索此前无 loading/防重 — 连点会并发请求并互相覆盖结果。
+  const [searching, setSearching] = useState(false);
 
   const search = async () => {
-    if (!query.trim()) return;
+    if (!query.trim() || searching) return;
+    setSearching(true);
+    setError(null);
     try {
       const res = await api.searchJournals(query.trim());
       setCandidates(res.journals.slice(0, 6));
       if (res.journals.length === 0) setError(t('submission.journalNotFound', '未找到期刊，可尝试英文名检索'));
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
+    } finally {
+      setSearching(false);
     }
   };
 
@@ -680,9 +696,9 @@ function JournalPrecheckCard({ draft }: { draft: SubmissionDraft | null }) {
           onChange={(e) => { setQuery(e.target.value); setJournalId(null); setResult(null); }}
           placeholder={t('submission.journalSearchPlaceholder', '输入期刊名检索，如 Lancet Oncology')}
           className="max-w-xs"
-          onKeyDown={(e) => { if (e.key === 'Enter') void search(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !searching) void search(); }}
         />
-        <Button size="sm" variant="ghost" onClick={search} disabled={!query.trim()}>{t('submission.journalSearch', '检索')}</Button>
+        <Button size="sm" variant="ghost" onClick={search} isLoading={searching} disabled={!query.trim() || searching}>{t('submission.journalSearch', '检索')}</Button>
       </div>
       {candidates.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -768,6 +784,8 @@ function CheckTab({ draft }: { draft: SubmissionDraft | null }) {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState(draft?.status || 'draft');
   const [statusSaving, setStatusSaving] = useState(false);
+  // #920: 状态更新失败此前静默 ignore — 用户以为状态已切换。
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   useEffect(() => {
     api.getSubmissionChecklist()
@@ -781,8 +799,9 @@ function CheckTab({ draft }: { draft: SubmissionDraft | null }) {
     try {
       const res = await api.updateSubmissionStatus(next as SubmissionDraft['status']);
       setStatus(res.draft.status);
-    } catch {
-      /* ignore */
+      setStatusError(null);
+    } catch (err) {
+      setStatusError(err instanceof ApiError ? err.messageText : t('submission.statusUpdateFailed', '状态更新失败，请重试'));
     } finally {
       setStatusSaving(false);
     }
@@ -815,6 +834,12 @@ function CheckTab({ draft }: { draft: SubmissionDraft | null }) {
             </button>
           ))}
         </div>
+        {/* #920: 状态更新失败可见。 */}
+        {statusError && (
+          <div className="mt-2">
+            <Alert variant="error">{statusError}</Alert>
+          </div>
+        )}
       </Card>
 
       {/* 检查清单 */}

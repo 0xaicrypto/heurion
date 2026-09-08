@@ -30,10 +30,12 @@ export function HistoryDialog(input: {
   snapshots: Array<{ snapshot_id: string; created_at: string; body_preview: string }>;
   snapshotsLoading: boolean;
   restoring: string | null;
+  /** #910: Restore × 审阅互斥 — 审阅未决时禁用 Restore(与路由守卫同步)。 */
+  reviewBlocked?: boolean;
   onClose: () => void;
   onRestore: (snapshotId: string) => void;
 }) {
-  const { snapshots, snapshotsLoading, restoring, onClose, onRestore } = input;
+  const { snapshots, snapshotsLoading, restoring, reviewBlocked, onClose, onRestore } = input;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="flex max-h-[70vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface-elevated p-6 shadow-xl m-4" onClick={(e) => e.stopPropagation()}>
@@ -58,7 +60,8 @@ export function HistoryDialog(input: {
                   <p className="text-xs text-text-tertiary">{new Date(s.created_at).toLocaleString()}</p>
                   <p className="mt-1 truncate text-sm text-text-secondary">{s.body_preview || '(empty)'}</p>
                 </div>
-                <Button size="sm" variant="ghost" onClick={() => onRestore(s.snapshot_id)} disabled={restoring === s.snapshot_id} isLoading={restoring === s.snapshot_id}>
+                {/* #910: 审阅未决时 Restore 禁用 — 避免 Restore diff 顶掉正在进行的 AI 修改审阅。 */}
+                <Button size="sm" variant="ghost" onClick={() => onRestore(s.snapshot_id)} disabled={restoring === s.snapshot_id || reviewBlocked} isLoading={restoring === s.snapshot_id} title={reviewBlocked ? '请先处理当前的 AI 修改审阅' : undefined}>
                   Restore
                 </Button>
               </div>

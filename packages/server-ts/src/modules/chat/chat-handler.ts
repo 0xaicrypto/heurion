@@ -27,6 +27,7 @@ import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { formatCommandResult, resolveScene } from '../shared/chat-context.js'
 import { resolveTargetCandidates, pickTarget, isGenerateRequest, recordTurnIntent, type TurnAction, type TurnIntent, type TurnSource, type TurnTarget } from './turn-intent.js'
+import { parseDocSessionId } from '../../tools/tool-registry.js'
 import { runConversationTurn, findPatient } from './conversation-turn.js'
 import { ensureSessionCompaction } from '../../memory/compaction/index.js'
 import { streamUnshownCompaction, loadCompactedUpto } from './history-budget.js'
@@ -256,6 +257,9 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         { scene, sessionId: sid, hasAttachment: Boolean(body.attachments?.length), patientHash },
       )
       const picked = pickTarget({ text: body.text, hasAttachment: Boolean(body.attachments?.length) }, candidates)
+      // #905: docId 格式校验 — sessionId 非 `doc-doc_<16hex>` 格式时降级
+      // general 语义:editDocumentId 不下发(不注入文档编辑目标)。
+      const docSessionDocId = parseDocSessionId(sid)
       // #776: doc 会话的 action 只按确定性编辑标记照记（遥测回归对比用），
       // 真正的生成/编排决策在工具循环内由模型做出 — 旁路不参与。
       const turnIntent: TurnIntent = isDocSession ? {
@@ -268,7 +272,7 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         payload: {
           rawText: body.text,
           patientHash: patientHash ?? undefined,
-          editDocumentId: picked.target === 'current_doc' ? sid.slice(4) : undefined,
+          editDocumentId: picked.target === 'current_doc' && docSessionDocId ? docSessionDocId : undefined,
         },
       } : {
         action: (sidecarDetail?.verdict === 'generate' ? 'generate'
@@ -284,7 +288,7 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
           rawText: body.text,
           patientHash: patientHash ?? undefined,
           historyTurns: sidecarDetail?.historyTurns,
-          editDocumentId: picked.target === 'current_doc' && sid.startsWith('doc-') ? sid.slice(4) : undefined,
+          editDocumentId: picked.target === 'current_doc' && docSessionDocId ? docSessionDocId : undefined,
         },
       }
       recordTurnIntent(ctx.eventLog, {

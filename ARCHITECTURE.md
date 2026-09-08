@@ -63,10 +63,15 @@ Enforcement so far (manual greps, #666/#672):
   module. 剩余已声明边（机器可执行版 =
   `tests/unit/arch-layers.test.ts` 的 peerEdges,新增边必须先改表再改代码）:
   auth→chat, calendar→research, chat→knowledge/plugins/evolution/patients/
-  execution, documents→chat, evolution→chat/memorization/practitioner,
+  execution/skills (#913: 会话内技能激活/遵循度/捕捉建议, 动态 import),
+  documents→chat/figures (#913: 文档图片扫描/渲染回填, 动态 import),
+  evolution→chat/memorization/practitioner,
   external→plugins/execution, figures→execution (#820 学术渲染编排),
-  files→ingestion/knowledge/execution, ingestion→medical-records,
-  medical-records→approvals, memorization→chat, patients→chat,
+  files→ingestion/knowledge/execution/patients (#913: DICOM 快扫, 动态 import),
+  ingestion→medical-records,
+  medical-records→approvals/research (#913: 病历入库自动筛查入队, 动态 import),
+  memorization→chat, patients→chat/research (#913: 患者入库自动筛查入队,
+  动态 import),
   plugins→chat/execution, research→knowledge, skills→chat/knowledge
   (#841 环⑤: skills→knowledge 为 follow-through 复用 telemetry.service)
 - Pure crypto/util helpers used by both tools and modules live in `common/`

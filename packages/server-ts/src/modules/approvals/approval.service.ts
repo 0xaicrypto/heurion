@@ -1,6 +1,7 @@
 import prisma from '../../common/prisma.js'
 import { resolvePermission, type PermissionRule } from '../../common/permission.js'
 import { makeLogger } from '../../common/logger.js'
+import { safeJsonParse } from '../../common/llm-json.js'
 
 const log = makeLogger('knowledge')
 
@@ -563,8 +564,10 @@ export async function listAuditLogs(filters: { targetType?: string; targetId?: s
       action: r.action,
       targetType: r.targetType,
       targetId: r.targetId,
-      before: r.before ? JSON.parse(r.before) : null,
-      after: r.after ? JSON.parse(r.after) : null,
+      // #911: DB 列安全解析 — 单行 before/after 损坏降级 null 跳过渲染,
+      // 不炸全列表。
+      before: safeJsonParse(r.before),
+      after: safeJsonParse(r.after),
       reason: r.reason,
       createdAt: r.createdAt,
     }
@@ -600,15 +603,17 @@ export async function writeAuditLog(entry: {
   })
 }
 
-function serializeApproval(r: any) {
+/** 审批请求行 → DTO(payload/diff 列安全解析,#911)。导出供单测锁定降级行为。 */
+export function serializeApproval(r: any) {
   return {
     id: r.id,
     userId: r.userId,
     targetType: r.targetType,
     targetId: r.targetId,
     status: r.status,
-    payload: r.payload ? JSON.parse(r.payload) : null,
-    diff: r.diff ? JSON.parse(r.diff) : null,
+    // #911: payload/diff 损坏降级 null — 单行坏 JSON 不炸审批列表。
+    payload: safeJsonParse(r.payload),
+    diff: safeJsonParse(r.diff),
     reason: r.reason,
     actorId: r.actorId,
     createdAt: r.createdAt,

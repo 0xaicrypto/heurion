@@ -4,7 +4,22 @@
  *
  * 实施修订(2026-09-08,设计 §8 决策记录同步):apc 记录 DOAJ 返回的原币种
  * (value+currency),不做汇率换算 — 假装精确换算等于伪造数据。
+ *
+ * #916: 对前端的 wire DTO(snake_case)single source of truth 在
+ * @heurion/contracts — 此处 re-export 保持兼容(submission.router.ts 把
+ * 下面的 camelCase 领域模型序列化成 contracts 形状;web 端 re-export 同一
+ * 组 contracts 类型)。以下 camelCase 领域模型为 producer 内部,不再外溢。
  */
+
+export type {
+  RecommendJournalsResult,
+  TieredRecommendationDto,
+  BreakdownRowDto,
+  JournalRecordDto,
+  JournalMetricsDto,
+  JournalWarningDto,
+  DatedMetricDto,
+} from '@heurion/contracts'
 
 /** 指标值:数值 + 数据截至 + 来源(可回查)。 */
 export interface DatedMetric<T = number> {

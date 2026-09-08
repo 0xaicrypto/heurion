@@ -76,6 +76,17 @@ interface SafetyStatus {
   triggered_rules: Array<{rule: string; description: string}>;
 }
 
+/* #919: getStudyProgress 响应形状 — 与 lib/api/domains/research.ts 的内联返回类型对齐（该处未导出命名类型）。 */
+interface StudyProgress {
+  study_id: string;
+  study_name: string;
+  enrollment: { total: number; by_arm: Record<string, number> };
+  rules: { total: number; confirmed: number; pending: number; rejected: number };
+  visits: { total: number; completed: number; by_visit: Record<string, { total: number; completed: number }> };
+  safety: { dlt_count: number; unconfirmed: number };
+  screenings: { eligible: number; ineligible: number; pending: number };
+}
+
 interface Enrollment {
   patient_hash: string;
   patient_id: string;
@@ -91,13 +102,14 @@ interface Enrollment {
 
 type Tab = 'overview' | 'roster' | 'eligibility' | 'schedule' | 'safety' | 'protocol';
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'overview', label: 'Overview' },
-  { key: 'roster', label: 'Roster' },
-  { key: 'eligibility', label: 'Eligibility' },
-  { key: 'schedule', label: 'Schedule' },
-  { key: 'safety', label: 'Safety' },
-  { key: 'protocol', label: 'Protocol' },
+// #918: tab 文案入 i18n — labelKey 在渲染时经 t() 解析。
+const TABS: { key: Tab; labelKey: string }[] = [
+  { key: 'overview', labelKey: 'research.tabOverview' },
+  { key: 'roster', labelKey: 'research.tabRoster' },
+  { key: 'eligibility', labelKey: 'research.tabEligibility' },
+  { key: 'schedule', labelKey: 'research.tabSchedule' },
+  { key: 'safety', labelKey: 'research.tabSafety' },
+  { key: 'protocol', labelKey: 'research.tabProtocol' },
 ];
 
 export function ResearchDetailPage() {
@@ -390,7 +402,7 @@ export function ResearchDetailPage() {
         <div className="flex h-full flex-col">
           <div className="flex h-14 items-center border-b border-border bg-surface px-6">
             <Button variant="ghost" size="sm" onClick={() => navigate('/app/research')}>
-              <ArrowLeft size={16} className="mr-1" /> Back
+              <ArrowLeft size={16} className="mr-1" /> {t('common.back', '返回')}
             </Button>
           </div>
           <div className="p-6">
@@ -407,11 +419,11 @@ export function ResearchDetailPage() {
         <div className="flex h-full flex-col">
           <div className="flex h-14 items-center border-b border-border bg-surface px-6">
             <Button variant="ghost" size="sm" onClick={() => navigate('/app/research')}>
-              <ArrowLeft size={16} className="mr-1" /> Back
+              <ArrowLeft size={16} className="mr-1" /> {t('common.back', '返回')}
             </Button>
           </div>
           <div className="flex flex-1 items-center justify-center">
-            <p className="text-text-tertiary">Study not found</p>
+            <p className="text-text-tertiary">{t('research.studyNotFound', '未找到该研究')}</p>
           </div>
         </div>
       </AppShell>
@@ -434,18 +446,18 @@ export function ResearchDetailPage() {
         </header>
 
         <nav className="flex gap-1 overflow-x-auto border-b border-border px-3 sm:px-6">
-          {TABS.map((t) => (
+          {TABS.map(({ key, labelKey }) => (
             <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
+              key={key}
+              onClick={() => setTab(key)}
               className={cn(
                 'border-b-2 px-3 py-3 text-sm font-medium transition-colors',
-                tab === t.key
+                tab === key
                   ? 'border-accent text-accent'
                   : 'border-transparent text-text-secondary hover:text-text-primary',
               )}
             >
-              {t.label}
+              {t(labelKey)}
             </button>
           ))}
         </nav>
@@ -461,37 +473,37 @@ export function ResearchDetailPage() {
             <div className="max-w-2xl space-y-4">
               <Card className="p-6 space-y-3">
                 <div>
-                  <div className="text-xs text-text-tertiary">Study ID</div>
+                  <div className="text-xs text-text-tertiary">{t('research.studyId', '研究 ID')}</div>
                   <div className="font-mono text-sm text-text-secondary">{study.study_id}</div>
                 </div>
                 {study.short_code && (
                   <div>
-                    <div className="text-xs text-text-tertiary">Short Code</div>
+                    <div className="text-xs text-text-tertiary">{t('research.shortCode', '短编号')}</div>
                     <div className="text-sm text-text-primary">{study.short_code}</div>
                   </div>
                 )}
                 <div>
-                  <div className="text-xs text-text-tertiary">Created</div>
+                  <div className="text-xs text-text-tertiary">{t('research.created', '创建时间')}</div>
                   <div className="text-sm text-text-primary">{new Date(study.created_at).toLocaleDateString()}</div>
                 </div>
                 {study.updated_at && (
                   <div>
-                    <div className="text-xs text-text-tertiary">Updated</div>
+                    <div className="text-xs text-text-tertiary">{t('research.updated', '更新时间')}</div>
                     <div className="text-sm text-text-primary">{new Date(study.updated_at).toLocaleDateString()}</div>
                   </div>
                 )}
                 {study.description && (
                   <div>
-                    <div className="text-xs text-text-tertiary">Description</div>
+                    <div className="text-xs text-text-tertiary">{t('research.description', '描述')}</div>
                     <div className="text-sm text-text-primary">{study.description}</div>
                   </div>
                 )}
               </Card>
 
               <Card className="p-6">
-                <h3 className="mb-3 text-sm font-semibold text-text-secondary">Recent Activity</h3>
+                <h3 className="mb-3 text-sm font-semibold text-text-secondary">{t('research.recentActivity', '近期动态')}</h3>
                 {enrollments.length === 0 ? (
-                  <p className="text-sm text-text-tertiary">No enrollments yet</p>
+                  <p className="text-sm text-text-tertiary">{t('research.noEnrollments', '暂无入组记录')}</p>
                 ) : (
                   <div className="space-y-2">
                     {enrollments.slice(0, 10).map((e, i) => (
@@ -526,7 +538,7 @@ export function ResearchDetailPage() {
                     else if (tab === 'eligibility') loadEligibility();
                     else if (tab === 'safety') loadSafety();
                     else if (tab === 'schedule') loadSchedule();
-                  }}>重试</Button>
+                  }}>{t('common.retry', '重试')}</Button>
                 </div>
               </Alert>
             </div>
@@ -535,9 +547,9 @@ export function ResearchDetailPage() {
           {tab === 'roster' && (
             <div className="max-w-3xl space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-text-secondary">Roster</h2>
+                <h2 className="text-sm font-semibold text-text-secondary">{t('research.tabRoster', '入组名单')}</h2>
                 <Button size="sm" onClick={openEnroll}>
-                  <Plus size={14} className="mr-1" /> Enroll Patient
+                  <Plus size={14} className="mr-1" /> {t('research.enrollPatient', '入组患者')}
                 </Button>
               </div>
               {rosterLoading ? (
@@ -548,19 +560,19 @@ export function ResearchDetailPage() {
               ) : roster.length === 0 ? (
                 <div className="flex flex-col items-center justify-center rounded-xl border border-border py-12 text-center">
                   <FlaskConical size={36} className="mb-3 text-text-tertiary" />
-                  <p className="text-text-tertiary">No patients enrolled</p>
+                  <p className="text-text-tertiary">{t('research.noPatientsEnrolled', '暂无入组患者')}</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-xl border border-border">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border bg-surface">
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Patient</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Patient ID</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Basic Info</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Status</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Arm</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Enrolled</th>
+                        <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.patient', '患者')}</th>
+                        <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.patientId', '患者 ID')}</th>
+                        <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.basicInfo', '基本信息')}</th>
+                        <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.status', '状态')}</th>
+                        <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.arm', '分组')}</th>
+                        <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.enrolledAt', '入组时间')}</th>
                         <th className="px-4 py-2 text-left font-medium text-text-secondary"></th>
                       </tr>
                     </thead>
@@ -593,7 +605,7 @@ export function ResearchDetailPage() {
                               className="rounded p-1 text-text-tertiary hover:bg-error/10 hover:text-error transition-colors"
                               onClick={(e) => { e.stopPropagation(); handleUnenroll(r.patient_hash); }}
                               disabled={unenrollingHash === r.patient_hash}
-                              title="Unenroll patient"
+                              title={t('research.unenrollTitle', '移出研究')}
                             >
                               <X size={14} />
                             </button>
@@ -610,9 +622,9 @@ export function ResearchDetailPage() {
           {tab === 'eligibility' && (
             <div className="max-w-3xl space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-text-secondary">Eligibility Screenings</h2>
+                <h2 className="text-sm font-semibold text-text-secondary">{t('research.eligibilityScreenings', '资格筛查记录')}</h2>
                 <Button size="sm" onClick={handleRescan} isLoading={rescanning} disabled={rescanning}>
-                  Re-scan
+                  {t('research.rescan', '重新筛查')}
                 </Button>
               </div>
               {eligLoading ? (
@@ -622,7 +634,7 @@ export function ResearchDetailPage() {
               ) : !eligibility || eligibility.screenings.length === 0 ? (
                 <div className="flex flex-col items-center justify-center rounded-xl border border-border py-12 text-center">
                   <FlaskConical size={36} className="mb-3 text-text-tertiary" />
-                  <p className="text-text-tertiary">No eligibility data</p>
+                  <p className="text-text-tertiary">{t('research.noEligibilityData', '暂无筛查数据')}</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -647,7 +659,7 @@ export function ResearchDetailPage() {
                             {/* #719: eligible 患者直达入组(预选),不必回 Roster 滚动找人。 */}
                             {s.status === 'eligible' && (
                               <Button size="sm" variant="secondary" onClick={() => handleEnroll(s.patient_hash)}>
-                                Enroll
+                                {t('research.enroll', '入组')}
                               </Button>
                             )}
                           </div>
@@ -673,7 +685,7 @@ export function ResearchDetailPage() {
 
           {tab === 'schedule' && (
             <div className="max-w-3xl space-y-4">
-              <h2 className="text-sm font-semibold text-text-secondary">Scheduled Assessments</h2>
+              <h2 className="text-sm font-semibold text-text-secondary">{t('research.scheduledAssessments', '随访评估')}</h2>
               {scheduleLoading ? (
                 <div className="space-y-3">
                   <Skeleton className="h-10 w-full rounded-xl" />
@@ -682,18 +694,18 @@ export function ResearchDetailPage() {
               ) : assessments.length === 0 ? (
                 <div className="flex flex-col items-center justify-center rounded-xl border border-border py-12 text-center">
                   <CalendarDays size={36} className="mb-3 text-text-tertiary" />
-                  <p className="text-text-tertiary">No scheduled assessments</p>
+                  <p className="text-text-tertiary">{t('research.noScheduledAssessments', '暂无随访计划')}</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-xl border border-border">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border bg-surface">
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Date</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Patient</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Patient ID</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Basic Info</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Status</th>
+                        <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.date', '日期')}</th>
+                        <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.patient', '患者')}</th>
+                        <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.patientId', '患者 ID')}</th>
+                        <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.basicInfo', '基本信息')}</th>
+                        <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.status', '状态')}</th>
                         <th className="px-4 py-2 text-left font-medium text-text-secondary"></th>
                       </tr>
                     </thead>
@@ -740,7 +752,7 @@ export function ResearchDetailPage() {
                                 isLoading={completingIds.has(a.visit_id)}
                                 disabled={completingIds.has(a.visit_id)}
                               >
-                                Complete
+                                {t('research.complete', '完成')}
                               </Button>
                             )}
                           </td>
@@ -755,7 +767,7 @@ export function ResearchDetailPage() {
 
           {tab === 'safety' && (
             <div className="max-w-3xl space-y-4">
-              <h2 className="text-sm font-semibold text-text-secondary">Safety</h2>
+              <h2 className="text-sm font-semibold text-text-secondary">{t('research.tabSafety', '安全性')}</h2>
 
               {safetyLoading ? (
                 <div className="space-y-3">
@@ -765,7 +777,7 @@ export function ResearchDetailPage() {
                 <>
                   {safetyStatus && safetyStatus.triggered_rules.length > 0 && (
                     <Card className="p-4">
-                      <h3 className="mb-2 text-sm font-medium text-text-primary">Stop Rules Triggered</h3>
+                      <h3 className="mb-2 text-sm font-medium text-text-primary">{t('research.stopRulesTriggered', '已触发停止规则')}</h3>
                       <div className="space-y-2">
                         {safetyStatus.triggered_rules.map((r, i) => (
                           <div key={i} className="flex items-start gap-2 text-sm">
@@ -780,20 +792,20 @@ export function ResearchDetailPage() {
                   {observations.length === 0 ? (
                     <div className="flex flex-col items-center justify-center rounded-xl border border-border py-12 text-center">
                       <FlaskConical size={36} className="mb-3 text-text-tertiary" />
-                      <p className="text-text-tertiary">No observations recorded</p>
+                      <p className="text-text-tertiary">{t('research.noObservations', '暂无安全性记录')}</p>
                     </div>
                   ) : (
                     <div className="overflow-x-auto rounded-xl border border-border">
                       <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b border-border bg-surface">
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">Patient</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">Patient ID</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">Basic Info</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">Category</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">AE Grade</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">DLT</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">Date</th>
+                              <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.patient', '患者')}</th>
+                              <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.patientId', '患者 ID')}</th>
+                              <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.basicInfo', '基本信息')}</th>
+                              <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.category', '类别')}</th>
+                              <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.aeGrade', 'AE 等级')}</th>
+                              <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.dltHeader', 'DLT')}</th>
+                              <th className="px-4 py-2 text-left font-medium text-text-secondary">{t('research.date', '日期')}</th>
                               <th className="px-4 py-2 text-left font-medium text-text-secondary"></th>
                             </tr>
                           </thead>
@@ -842,7 +854,7 @@ export function ResearchDetailPage() {
                               <td className="px-4 py-2">
                                 {o.confirmed ? (
                                   <span className="inline-flex items-center gap-1 text-success text-xs">
-                                    <Check size={14} /> Confirmed
+                                    <Check size={14} /> {t('research.confirmed', '已确认')}
                                   </span>
                                 ) : (
                                   <Button
@@ -851,7 +863,7 @@ export function ResearchDetailPage() {
                                     isLoading={confirmingIds.has(o.observation_id)}
                                     disabled={confirmingIds.has(o.observation_id)}
                                   >
-                                    Confirm
+                                    {t('research.confirm', '确认')}
                                   </Button>
                                 )}
                               </td>
@@ -881,7 +893,7 @@ export function ResearchDetailPage() {
         {showEnroll && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
             <div className="w-full max-w-md rounded-xl border border-border bg-surface-elevated p-6 shadow-lg">
-              <h2 className="mb-4 text-lg font-semibold text-text-primary">Enroll Patient</h2>
+              <h2 className="mb-4 text-lg font-semibold text-text-primary">{t('research.enrollPatient', '入组患者')}</h2>
               {patientsLoading ? (
                 <div className="space-y-3">
                   <Skeleton className="h-10 w-full rounded-xl" />
@@ -889,7 +901,7 @@ export function ResearchDetailPage() {
                 </div>
               ) : patients.length === 0 ? (
                 <div className="py-8 text-center">
-                  <p className="text-text-tertiary">No patients available</p>
+                  <p className="text-text-tertiary">{t('research.noPatientsAvailable', '没有可入组的患者')}</p>
                 </div>
               ) : (
                 <>
@@ -897,7 +909,7 @@ export function ResearchDetailPage() {
                   <Input
                     value={enrollQuery}
                     onChange={(e) => setEnrollQuery(e.target.value)}
-                    placeholder="搜索患者（姓名/缩写/ID）…"
+                    placeholder={t('research.searchPatientPlaceholder', '搜索患者（姓名/缩写/ID）…')}
                     className="mb-2"
                   />
                   <div className="max-h-80 space-y-2 overflow-y-auto">
@@ -930,7 +942,7 @@ export function ResearchDetailPage() {
                         disabled={enrollingHash === p.patient_hash}
                         isLoading={enrollingHash === p.patient_hash}
                       >
-                        Enroll
+                        {t('research.enroll', '入组')}
                       </Button>
                     </div>
                   ))}
@@ -941,12 +953,12 @@ export function ResearchDetailPage() {
                       || (p.initials || '').toLowerCase().includes(q)
                       || p.patient_hash.toLowerCase().includes(q);
                   }).length === 0 && (
-                    <p className="py-4 text-center text-xs text-text-tertiary">没有匹配的患者</p>
+                    <p className="py-4 text-center text-xs text-text-tertiary">{t('research.noPatientMatch', '没有匹配的患者')}</p>
                   )}
                 </>
               )}
               <div className="mt-4 flex justify-end">
-                <Button variant="ghost" onClick={() => setShowEnroll(false)}>Cancel</Button>
+                <Button variant="ghost" onClick={() => setShowEnroll(false)}>{t('common.cancel', '取消')}</Button>
               </div>
             </div>
           </div>
@@ -957,6 +969,7 @@ export function ResearchDetailPage() {
 }
 
 function ProtocolTab({ studyId }: { studyId: string }) {
+  const { t } = useTranslation();
   const [rules, setRules] = useState<Array<{ id: string; category: string; rule: string; confirmed: boolean }>>([])
   const [status, setStatus] = useState({ total: 0, confirmed: 0, pending: 0 })
   const [loading, setLoading] = useState(true)
@@ -1025,24 +1038,24 @@ function ProtocolTab({ studyId }: { studyId: string }) {
       await api.deleteProtocolRule(studyId, ruleId);
       loadRules()
     } catch {
-      setError('Failed to reject rule')
+      setError(t('research.rejectRuleFailed', '拒绝规则失败'))
     }
   }
 
   return (
     <div className="max-w-2xl space-y-4">
       <div className="rounded-xl border border-border bg-surface-elevated p-4">
-        <h3 className="mb-2 text-sm font-semibold text-text-primary">Import Protocol</h3>
+        <h3 className="mb-2 text-sm font-semibold text-text-primary">{t('research.importProtocol', '导入方案')}</h3>
         <textarea value={importText} onChange={e => setImportText(e.target.value)}
-          placeholder="Paste protocol text here, or upload a file (.txt, .md, .csv, .pdf, .docx) below"
+          placeholder={t('research.protocolPlaceholder', '在此粘贴方案文本，或在下方上传文件（.txt、.md、.csv、.pdf、.docx）')}
           className="mb-2 min-h-[120px] w-full rounded-lg border border-border bg-surface p-2 text-xs text-text-primary"
           rows={5} />
         <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={handleImport} isLoading={importing} disabled={!importText.trim()}>
-            Import & Extract Rules
+            {t('research.importExtract', '导入并提取规则')}
           </Button>
           <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()} isLoading={uploading} disabled={uploading}>
-            <Upload size={14} className="mr-1" /> Upload Protocol File
+            <Upload size={14} className="mr-1" /> {t('research.uploadProtocolFile', '上传方案文件')}
           </Button>
           <input
             ref={fileRef}
@@ -1053,7 +1066,7 @@ function ProtocolTab({ studyId }: { studyId: string }) {
           />
         </div>
         {lastFile && (
-          <p className="mt-2 text-xs text-text-tertiary">Last uploaded: {lastFile}</p>
+          <p className="mt-2 text-xs text-text-tertiary">{t('research.lastUploaded', '最近上传：{{name}}', { name: lastFile })}</p>
         )}
         {error && (
           <div className="mt-2">
@@ -1065,11 +1078,11 @@ function ProtocolTab({ studyId }: { studyId: string }) {
       {loading ? <Skeleton className="h-32 w-full rounded-xl" /> : (
         <div className="rounded-xl border border-border bg-surface-elevated p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-text-primary">Extracted Rules</h3>
-            <span className="text-xs text-text-tertiary">{status.confirmed}/{status.total} confirmed · {status.pending} pending</span>
+            <h3 className="text-sm font-semibold text-text-primary">{t('research.extractedRules', '已提取规则')}</h3>
+            <span className="text-xs text-text-tertiary">{t('research.rulesProgress', '已确认 {{confirmed}}/{{total}} · 待确认 {{pending}}', { confirmed: status.confirmed, total: status.total, pending: status.pending })}</span>
           </div>
           {rules.length === 0 ? (
-            <p className="text-sm text-text-tertiary">Import a protocol to extract rules</p>
+            <p className="text-sm text-text-tertiary">{t('research.noRulesHint', '先导入方案文本，再提取规则')}</p>
           ) : (
             <div className="space-y-2">
               {rules.map(r => (
@@ -1145,7 +1158,8 @@ function StudySummaryCard({ studyId }: { studyId: string }) {
 /* #10: structured study-progress overview (enrollment/rules/visits/safety). */
 function StudyProgressCard({ studyId }: { studyId: string }) {
   const { t } = useTranslation();
-  const [data, setData] = useState<any>(null);
+  // #919: 响应按 StudyProgress 形状收口 — 不再是裸 any。
+  const [data, setData] = useState<StudyProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1157,15 +1171,22 @@ function StudyProgressCard({ studyId }: { studyId: string }) {
   if (error) return <Card className="p-6"><p className="text-xs text-error">{error}</p></Card>;
   if (!data) return <Card className="p-6"><Skeleton className="h-24 w-full rounded-lg" /></Card>;
 
-  const arms = Object.entries(data.enrollment.by_arm);
-  const visits = Object.entries(data.visits.by_visit);
+  // #919: 服务端返回部分字段缺失时不崩 — 读取处全部走默认值防护。
+  const enrollment = data.enrollment ?? { total: 0, by_arm: {} as Record<string, number> };
+  const rules = data.rules ?? { total: 0, confirmed: 0, pending: 0, rejected: 0 };
+  const visitsAgg = data.visits ?? { total: 0, completed: 0, by_visit: {} as Record<string, { total: number; completed: number }> };
+  const screenings = data.screenings ?? { eligible: 0, ineligible: 0, pending: 0 };
+  const safety = data.safety ?? { dlt_count: 0, unconfirmed: 0 };
+  // #919: Object.entries 的入参给 ?? {} 兜底。
+  const arms = Object.entries(enrollment.by_arm ?? {});
+  const visits = Object.entries(visitsAgg.by_visit ?? {});
 
   return (
     <Card className="p-6">
       <h3 className="mb-3 text-sm font-semibold text-text-secondary">{t('research.progress', '研究进展')}</h3>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <div className="rounded-lg border border-border bg-surface-elevated p-3">
-          <div className="text-2xl font-semibold text-text-primary">{data.enrollment.total}</div>
+          <div className="text-2xl font-semibold text-text-primary">{enrollment.total ?? 0}</div>
           <div className="text-xs text-text-tertiary">{t('research.enrolled', '入组患者')}</div>
           {arms.length > 0 && (
             <div className="mt-1 space-y-0.5 text-[10px] text-text-tertiary">
@@ -1174,28 +1195,28 @@ function StudyProgressCard({ studyId }: { studyId: string }) {
           )}
         </div>
         <div className="rounded-lg border border-border bg-surface-elevated p-3">
-          <div className="text-2xl font-semibold text-text-primary">{data.rules.confirmed}/{data.rules.total}</div>
+          <div className="text-2xl font-semibold text-text-primary">{rules.confirmed ?? 0}/{rules.total ?? 0}</div>
           <div className="text-xs text-text-tertiary">{t('research.rulesConfirmed', '规则已确认')}</div>
-          {data.rules.pending > 0 && <div className="mt-1 text-[10px] text-warning">{data.rules.pending} pending</div>}
+          {(rules.pending ?? 0) > 0 && <div className="mt-1 text-[10px] text-warning">{rules.pending} {t('research.pending', '待确认')}</div>}
         </div>
         <div className="rounded-lg border border-border bg-surface-elevated p-3">
-          <div className="text-2xl font-semibold text-text-primary">{data.visits.completed}/{data.visits.total}</div>
+          <div className="text-2xl font-semibold text-text-primary">{visitsAgg.completed ?? 0}/{visitsAgg.total ?? 0}</div>
           <div className="text-xs text-text-tertiary">{t('research.visits', '随访完成')}</div>
           {visits.length > 0 && (
             <div className="mt-1 space-y-0.5 text-[10px] text-text-tertiary">
-              {visits.slice(0, 4).map(([v, s]) => { const st = s as {completed: number; total: number}; return <div key={String(v)}>{String(v)}: {st.completed}/{st.total}</div>; })}
+              {visits.slice(0, 4).map(([v, s]) => { const st = s as {completed: number; total: number}; return <div key={String(v)}>{String(v)}: {st.completed ?? 0}/{st.total ?? 0}</div>; })}
             </div>
           )}
         </div>
         <div className="rounded-lg border border-border bg-surface-elevated p-3">
-          <div className="text-2xl font-semibold text-text-primary">{data.screenings.eligible}</div>
+          <div className="text-2xl font-semibold text-text-primary">{screenings.eligible ?? 0}</div>
           <div className="text-xs text-text-tertiary">{t('research.eligible', '符合入组')}</div>
-          {data.screenings.pending > 0 && <div className="mt-1 text-[10px] text-warning">{data.screenings.pending} pending</div>}
+          {(screenings.pending ?? 0) > 0 && <div className="mt-1 text-[10px] text-warning">{screenings.pending} {t('research.pending', '待确认')}</div>}
         </div>
         <div className="rounded-lg border border-border bg-surface-elevated p-3">
-          <div className="text-2xl font-semibold text-text-primary">{data.safety.dlt_count}</div>
+          <div className="text-2xl font-semibold text-text-primary">{safety.dlt_count ?? 0}</div>
           <div className="text-xs text-text-tertiary">{t('research.dlt', '确认 DLT')}</div>
-          {data.safety.unconfirmed > 0 && <div className="mt-1 text-[10px] text-warning">{data.safety.unconfirmed} unconfirmed</div>}
+          {(safety.unconfirmed ?? 0) > 0 && <div className="mt-1 text-[10px] text-warning">{safety.unconfirmed} {t('research.unconfirmed', '未确认')}</div>}
         </div>
       </div>
     </Card>

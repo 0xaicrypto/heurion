@@ -534,12 +534,27 @@ export function isExtractionSentinel(text: string): boolean {
 }
 const extractCache = new Map<string, { text: string; at: number }>()
 
+/**
+ * #914: 缓存 key 的文件版本维度 — 上传文件通常"新上传 = 新 fileId",但
+ * 同一 fileId 被覆盖重写的场景真实存在(托管图重导入同名文件、测试覆盖
+ * 写入)。mtimeMs 进 key 后,覆盖写不再命中旧提取。文件缺失返回
+ * 'missing'(提取必然失败,不缓存)。
+ */
+function fileVersionStamp(userId: string, fileId: string): string {
+  try {
+    const filepath = safeUploadPath(userId, fileId)
+    return filepath && fs.existsSync(filepath) ? String(fs.statSync(filepath).mtimeMs) : 'missing'
+  } catch {
+    return 'missing'
+  }
+}
+
 export function cachedExtractDocumentMarkdownFromUpload(
   userId: string,
   fileId: string,
   options: { maxChars?: number } = {},
 ): Promise<string> {
-  const key = `${userId}:${fileId}:${options.maxChars ?? 300000}`
+  const key = `${userId}:${fileId}:${fileVersionStamp(userId, fileId)}:${options.maxChars ?? 300000}`
   const hit = extractCache.get(key)
   if (hit && Date.now() - hit.at < EXTRACT_CACHE_TTL_MS) return Promise.resolve(hit.text)
 
@@ -565,7 +580,8 @@ export function cachedExtractDocumentMarkdownFromUpload(
  * #fix 2026-09: 纯文本提取缓存 — picked_kb(钉选参考)每轮对同一批文件重
  * 跑 extractTextFromUpload(PDF 解析+视觉 OCR,大文件分钟级),而 uploads
  * 文件不可变。与 markdown 缓存同口径(LRU 50 条/TTL 30min/哨兵不缓存),
- * key 前缀区分变体。
+ * key 前缀区分变体。#914: key 含文件 mtime(版本维度)— 同一 fileId 被
+ * 覆盖重写后旧提取不再命中,防"重新上传/覆盖后拿到旧提取"。
  */
 const textExtractCache = new Map<string, { text: string; at: number }>()
 
@@ -574,7 +590,7 @@ export function cachedExtractTextFromUpload(
   fileId: string,
   options?: ExtractOptions,
 ): Promise<string> {
-  const key = `text:${userId}:${fileId}:${options?.maxChars ?? ''}`
+  const key = `text:${userId}:${fileId}:${fileVersionStamp(userId, fileId)}:${options?.maxChars ?? ''}`
   const hit = textExtractCache.get(key)
   if (hit && Date.now() - hit.at < EXTRACT_CACHE_TTL_MS) return Promise.resolve(hit.text)
   return extractTextFromUpload(userId, fileId, options).then((text) => {
