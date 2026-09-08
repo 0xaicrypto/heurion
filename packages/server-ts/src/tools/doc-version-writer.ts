@@ -43,7 +43,7 @@ function parseDeckJson(raw: unknown): unknown {
 }
 
 export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersionResult> {
-  const existing = await (prisma as any).doc.findFirst({ where: { id: input.docId, userId: input.userId } })
+  const existing = await prisma.doc.findFirst({ where: { id: input.docId, userId: input.userId } })
   if (!existing) return { body: '', deck: null, changed: false, error: `Document not found: ${input.docId}` }
 
   const prevBody = String(existing.body || '')
@@ -58,17 +58,17 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
   }
 
   const now = new Date().toISOString()
-  await (prisma as any).$transaction([
+  await prisma.$transaction([
     // 同帧快照旧 body+旧 deck — 恢复时一致回滚（#773 方案 A，此前仅
     // 用户保存路径保证，工具路径快照缺 deck）。
-    (prisma as any).docSnapshot.create({
+    prisma.docSnapshot.create({
       data: {
         docId: input.docId, userId: input.userId,
         body: prevBody, deck: prevDeckRaw,
         label: input.snapshotLabel, createdAt: now,
       },
     }),
-    (prisma as any).doc.update({
+    prisma.doc.update({
       where: { id: input.docId },
       data: { body: nextBody, deck: nextDeckRaw, updatedAt: now },
     }),

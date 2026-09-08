@@ -41,7 +41,7 @@ export async function documentsRouter(app: FastifyInstance) {
 
   // ── Docs CRUD ──
   app.get('/api/v1/docs', async (request) => {
-    const docs = await (prisma as any).doc.findMany({
+    const docs = await prisma.doc.findMany({
       where: { userId: request.user!.userId }, orderBy: { updatedAt: 'desc' },
     })
     return { docs: docs.map((d: any) => ({
@@ -61,11 +61,11 @@ export async function documentsRouter(app: FastifyInstance) {
     // and abstract from the study's name/purpose.
     let study: any = null
     if (study_id) {
-      study = await (prisma as any).researchStudy.findFirst({ where: { id: study_id, userId } })
+      study = await prisma.researchStudy.findFirst({ where: { id: study_id, userId } })
       if (!study) return { error: 'Study not found' }
     }
     try {
-      await (prisma as any).doc.create({ data: { id, userId, title: title || 'Untitled', body: '', studyId: study_id || null, createdAt: now, updatedAt: now } })
+      await prisma.doc.create({ data: { id, userId, title: title || 'Untitled', body: '', studyId: study_id || null, createdAt: now, updatedAt: now } })
     } catch (err: any) {
       // If FK constraint fails (user not in DB yet — staging/CI), retry without FK
       if (err?.message?.includes('foreign key')) {
@@ -80,12 +80,12 @@ export async function documentsRouter(app: FastifyInstance) {
   })
 
   app.get('/api/v1/docs/:docId', async (request, reply) => {
-    const doc = await (prisma as any).doc.findFirst({ where: { id: (request.params as any).docId, userId: request.user!.userId } })
+    const doc = await prisma.doc.findFirst({ where: { id: (request.params as any).docId, userId: request.user!.userId } })
     if (!doc) return reply.status(404).send({ error: 'Not found' })
     // #383: expose the linked study so the editor can show context + methods.
     let study_name: string | null = null
     if (doc.studyId) {
-      const st = await (prisma as any).researchStudy.findFirst({ where: { id: doc.studyId } })
+      const st = await prisma.researchStudy.findFirst({ where: { id: doc.studyId } })
       study_name = st?.name || null
     }
     return { id: doc.id, title: doc.title, body: refreshFileUrls(doc.body, request.user!.userId), deck: refreshDeckUrls(parseDeck(doc.deck), request.user!.userId), created_at: doc.createdAt, updated_at: doc.updatedAt, study_id: doc.studyId || null, study_name }
@@ -94,7 +94,7 @@ export async function documentsRouter(app: FastifyInstance) {
   app.put('/api/v1/docs/:docId', async (request, reply) => {
     const { docId } = request.params as any
     const { title, body, deck, base_sha, force } = request.body as any
-    const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId: request.user!.userId } })
+    const existing = await prisma.doc.findFirst({ where: { id: docId, userId: request.user!.userId } })
     if (!existing) return reply.status(404).send({ error: 'Document not found' })
 
     const now = new Date().toISOString()
@@ -130,7 +130,7 @@ export async function documentsRouter(app: FastifyInstance) {
       data.body = body
     }
     if (bodyChanged || deckChanged) {
-      await (prisma as any).docSnapshot.create({
+      await prisma.docSnapshot.create({
         data: {
           docId,
           userId: request.user!.userId,
@@ -145,8 +145,8 @@ export async function documentsRouter(app: FastifyInstance) {
       delete data.updatedAt
     }
 
-    await (prisma as any).doc.update({ where: { id: docId }, data })
-    const doc = await (prisma as any).doc.findFirst({ where: { id: docId } })
+    await prisma.doc.update({ where: { id: docId }, data })
+    const doc = await prisma.doc.findFirst({ where: { id: docId } })
 
     // #821: 保存时预渲染预热 — 扫描学术图 fire-and-forget ensureFigures,
     // 导出时基本全命中 FigureRender 缓存(冷导出 15s/图预算只是兜底)。
@@ -173,9 +173,9 @@ export async function documentsRouter(app: FastifyInstance) {
   app.delete('/api/v1/docs/:docId', async (request, reply) => {
     const { docId } = request.params as any
     const userId = request.user!.userId
-    const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    const existing = await prisma.doc.findFirst({ where: { id: docId, userId } })
     if (!existing) return reply.status(404).send({ error: 'Document not found' })
-    await (prisma as any).doc.delete({ where: { id: docId } })
+    await prisma.doc.delete({ where: { id: docId } })
     return { deleted: true }
   })
 
@@ -183,7 +183,7 @@ export async function documentsRouter(app: FastifyInstance) {
   // #809: 一致性 lint（纯规则）— 缩写纪律/图表编号/heading 跳级。
   app.get('/api/v1/docs/:docId/lint', async (request) => {
     const docId = (request.params as any).docId
-    const doc = await (prisma as any).doc.findFirst({
+    const doc = await prisma.doc.findFirst({
       where: { id: docId, userId: request.user!.userId },
       select: { body: true },
     })
@@ -192,7 +192,7 @@ export async function documentsRouter(app: FastifyInstance) {
   })
 
   app.get('/api/v1/docs/:docId/snapshots', async (request) => {
-    const snaps = await (prisma as any).docSnapshot.findMany({
+    const snaps = await prisma.docSnapshot.findMany({
       where: { docId: (request.params as any).docId }, orderBy: { id: 'desc' },
     })
     // #598: 返回字段与前端约定一致(snapshot_id / body_preview),此前
@@ -215,7 +215,7 @@ export async function documentsRouter(app: FastifyInstance) {
     if (typeof body !== 'string' || !body.trim()) {
       return reply.status(400).send({ error: 'body required' })
     }
-    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    const doc = await prisma.doc.findFirst({ where: { id: docId, userId } })
     if (!doc) return reply.status(404).send({ error: 'Doc not found' })
     const written = await writeDocVersion({ userId, docId, body, snapshotLabel: String(label || 'AI polish').slice(0, 40) })
     if (written.error) return reply.status(400).send({ error: written.error })
@@ -225,7 +225,7 @@ export async function documentsRouter(app: FastifyInstance) {
   // #764: 快照全文 — Restore 前先与当前版本做 diff 审阅,确认后才 apply。
   app.get('/api/v1/docs/:docId/snapshots/:snapId', async (request, reply) => {
     const { docId, snapId } = request.params as any
-    const snap = await (prisma as any).docSnapshot.findFirst({ where: { id: Number(snapId), docId } })
+    const snap = await prisma.docSnapshot.findFirst({ where: { id: Number(snapId), docId } })
     if (!snap) return reply.status(404).send({ error: 'Not found' })
     // #773: 同帧返回 deck — 恢复审阅可见,恢复时 body+deck 一致回滚。
     return { id: String(snap.id), created_at: snap.createdAt, label: snap.label || '保存版本', body: refreshFileUrls(snap.body || '', request.user!.userId), deck: refreshDeckUrls(parseDeck(snap.deck), request.user!.userId) }
@@ -233,16 +233,16 @@ export async function documentsRouter(app: FastifyInstance) {
 
   app.post('/api/v1/docs/:docId/snapshots/:snapId/restore', async (request, reply) => {
     const { docId, snapId } = request.params as any
-    const snap = await (prisma as any).docSnapshot.findFirst({ where: { id: Number(snapId), docId } })
+    const snap = await prisma.docSnapshot.findFirst({ where: { id: Number(snapId), docId } })
     if (!snap) return reply.status(404).send({ error: 'Not found' })
     // #773: body+deck 一致回滚（deck 未快照的历史行恢复为 null = 无 deck）。
-    await (prisma as any).doc.update({ where: { id: docId }, data: { body: snap.body, deck: snap.deck ?? null, updatedAt: new Date().toISOString() } })
+    await prisma.doc.update({ where: { id: docId }, data: { body: snap.body, deck: snap.deck ?? null, updatedAt: new Date().toISOString() } })
     return { restored: true }
   })
 
   // ── PHI Scan ──
   app.post('/api/v1/docs/:docId/phi-scan', async (request) => {
-    const doc = await (prisma as any).doc.findFirst({ where: { id: (request.params as any).docId, userId: request.user!.userId } })
+    const doc = await prisma.doc.findFirst({ where: { id: (request.params as any).docId, userId: request.user!.userId } })
     if (!doc) return { findings: [] }
     const suggestions: Record<string, string> = {
       SSN: 'Potential Social Security Number — consider removing or replacing with a surrogate ID.',
@@ -270,7 +270,7 @@ export async function documentsRouter(app: FastifyInstance) {
     const userId = request.user!.userId
 
     // S1: 文档归属校验 — 此前 docId 完全未使用,任意登录用户可调用
-    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    const doc = await prisma.doc.findFirst({ where: { id: docId, userId } })
     if (!doc) return reply.status(404).send({ error: 'Doc not found' })
     // S2: 选区长度上限
     if (typeof selection !== 'string' || !selection.trim()) {
@@ -349,7 +349,7 @@ export async function documentsRouter(app: FastifyInstance) {
   app.post('/api/v1/docs/:docId/export', async (request, reply) => {
     const { docId } = request.params as any
     const userId = request.user!.userId
-    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    const doc = await prisma.doc.findFirst({ where: { id: docId, userId } })
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
 
     // #fix: 支持 ?format=docx|pdf(默认 docx);两个渲染器共享块解析器。
@@ -385,13 +385,13 @@ export async function documentsRouter(app: FastifyInstance) {
   app.post('/api/v1/docs/:docId/references', async (request, reply) => {
     const { docId } = request.params as any
     const userId = request.user!.userId
-    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    const doc = await prisma.doc.findFirst({ where: { id: docId, userId } })
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
 
     const { kind, content, label, source_patient_hash } = request.body as any
     const id = `ref_${uid()}`
     const now = new Date().toISOString()
-    await (prisma as any).docReference.create({
+    await prisma.docReference.create({
       data: {
         id,
         docId,
@@ -413,7 +413,7 @@ export async function documentsRouter(app: FastifyInstance) {
     const isPptxRef = (kind || 'note') === 'file' && /\.pptx$/i.test(refFileName)
     let pptxParse: { started: boolean; reason?: string } | null = null
     if (isPptxRef) {
-      const fileIndex = await (prisma as any).fileIndex.findFirst({ where: { userId, name: refFileName, deletedAt: null } }).catch(() => null)
+      const fileIndex = await prisma.fileIndex.findFirst({ where: { userId, name: refFileName, deletedAt: null } }).catch(() => null)
       if (!fileIndex) {
         pptxParse = { started: false, reason: '上传记录缺失，无法解析 PPT' }
       } else if (Number(fileIndex.sizeBytes || 0) > 50 * 1024 * 1024) {
@@ -480,7 +480,7 @@ export async function documentsRouter(app: FastifyInstance) {
   app.get('/api/v1/docs/:docId/references', async (request, reply) => {
     const { docId } = request.params as any
     const userId = request.user!.userId
-    const refs = await (prisma as any).docReference.findMany({
+    const refs = await prisma.docReference.findMany({
       where: { docId, userId },
       orderBy: { createdAt: 'desc' },
     })
@@ -504,20 +504,20 @@ export async function documentsRouter(app: FastifyInstance) {
   app.delete('/api/v1/docs/:docId/references/:referenceId', async (request, reply) => {
     const { docId, referenceId } = request.params as any
     const userId = request.user!.userId
-    const ref = await (prisma as any).docReference.findFirst({ where: { id: referenceId, docId, userId } })
+    const ref = await prisma.docReference.findFirst({ where: { id: referenceId, docId, userId } })
     if (!ref) return reply.status(404).send({ error: 'Reference not found' })
-    await (prisma as any).docReference.delete({ where: { id: referenceId } })
+    await prisma.docReference.delete({ where: { id: referenceId } })
     return { ok: true }
   })
 
   // ── #383: research ↔ paper linkage ──
   // Generate a Methods draft from the linked study's protocol rules.
   app.post('/api/v1/docs/:docId/generate-methods', async (request, reply) => {
-    const doc = await (prisma as any).doc.findFirst({ where: { id: (request.params as any).docId, userId: request.user!.userId } })
+    const doc = await prisma.doc.findFirst({ where: { id: (request.params as any).docId, userId: request.user!.userId } })
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
     if (!doc.studyId) return reply.status(400).send({ error: 'This paper is not linked to a study' })
 
-    const rules = await (prisma as any).studyProtocolRule.findMany({
+    const rules = await prisma.studyProtocolRule.findMany({
       where: { studyId: doc.studyId, status: { not: 'superseded' } },
       orderBy: { category: 'asc' },
     })
@@ -525,19 +525,19 @@ export async function documentsRouter(app: FastifyInstance) {
     for (const r of rules) {
       (byCategory[r.category] ||= []).push(r.rule)
     }
-    const study = await (prisma as any).researchStudy.findFirst({ where: { id: doc.studyId } })
+    const study = await prisma.researchStudy.findFirst({ where: { id: doc.studyId } })
     const methods = await writeMethodsSection({ study, byCategory, userId: request.user!.userId })
     return { methods }
   })
 
   // Inject a statistics output block (from #361 stat tools) into the paper.
   app.post('/api/v1/docs/:docId/inject-results', async (request, reply) => {
-    const doc = await (prisma as any).doc.findFirst({ where: { id: (request.params as any).docId, userId: request.user!.userId } })
+    const doc = await prisma.doc.findFirst({ where: { id: (request.params as any).docId, userId: request.user!.userId } })
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
     const { label, result } = request.body as any
     if (!label || !result) return reply.status(400).send({ error: 'label and result required' })
     const block = `\n\n## ${String(label)}\n\n${String(result).slice(0, 8000)}\n`
-    await (prisma as any).doc.update({
+    await prisma.doc.update({
       where: { id: doc.id },
       data: { body: doc.body + block, updatedAt: new Date().toISOString() },
     })
@@ -547,13 +547,13 @@ export async function documentsRouter(app: FastifyInstance) {
   // One-shot: create a paper from a study with title/abstract background.
   app.post('/api/v1/research/studies/:studyId/paper', async (request, reply) => {
     const { studyId } = request.params as any
-    const study = await (prisma as any).researchStudy.findFirst({ where: { id: studyId, userId: request.user!.userId } })
+    const study = await prisma.researchStudy.findFirst({ where: { id: studyId, userId: request.user!.userId } })
     if (!study) return reply.status(404).send({ error: 'Study not found' })
     const id = `doc_${uid()}`
     const now = new Date().toISOString()
     const title = `${study.name} — Clinical Outcomes`
     const background = await writePaperBackground(title, request.user!.userId)
-    await (prisma as any).doc.create({ data: { id, userId: request.user!.userId, title, body: background, studyId, createdAt: now, updatedAt: now } })
+    await prisma.doc.create({ data: { id, userId: request.user!.userId, title, body: background, studyId, createdAt: now, updatedAt: now } })
     return { doc_id: id, title, body: background }
   })
 

@@ -57,7 +57,7 @@ export async function extractRulesFromProtocol(
     extractedFrom?: string
   } = {},
 ): Promise<ProtocolRule[]> {
-  const study = await (prisma as any).researchStudy.findUnique({ where: { id: studyId } })
+  const study = await prisma.researchStudy.findUnique({ where: { id: studyId } })
   if (!study) throw new Error(`Study ${studyId} not found`)
 
   const prompt = `Extract structured clinical trial rules from this protocol. Return ONLY a JSON object with these keys:
@@ -87,7 +87,7 @@ ${protocolText.slice(0, 8000)}`
   const now = new Date().toISOString()
 
   // Supersede previous pending rules before inserting the new batch.
-  await (prisma as any).studyProtocolRule.updateMany({
+  await prisma.studyProtocolRule.updateMany({
     where: { studyId, status: 'pending' },
     data: { status: 'superseded', updatedAt: now },
   })
@@ -124,15 +124,15 @@ ${protocolText.slice(0, 8000)}`
 
   if (records.length === 0) return []
 
-  await (prisma as any).studyProtocolRule.createMany({ data: records })
+  await prisma.studyProtocolRule.createMany({ data: records })
 
-  return (await (prisma as any).studyProtocolRule.findMany({
+  return (await prisma.studyProtocolRule.findMany({
     where: { studyId, status: 'pending', version: currentVersion },
   })).map(serializeRule)
 }
 
 async function getNextVersion(studyId: string): Promise<number> {
-  const agg = await (prisma as any).studyProtocolRule.aggregate({
+  const agg = await prisma.studyProtocolRule.aggregate({
     where: { studyId },
     _max: { version: true },
   })
@@ -153,7 +153,7 @@ function serializeRule(r: any): ProtocolRule {
 }
 
 export async function getPendingRules(studyId: string): Promise<ProtocolRule[]> {
-  const rules = await (prisma as any).studyProtocolRule.findMany({
+  const rules = await prisma.studyProtocolRule.findMany({
     where: { studyId, status: 'pending' },
     orderBy: { createdAt: 'asc' },
   })
@@ -161,7 +161,7 @@ export async function getPendingRules(studyId: string): Promise<ProtocolRule[]> 
 }
 
 export async function getConfirmedRules(studyId: string): Promise<ProtocolRule[]> {
-  const rules = await (prisma as any).studyProtocolRule.findMany({
+  const rules = await prisma.studyProtocolRule.findMany({
     where: { studyId, status: 'confirmed' },
     orderBy: { createdAt: 'asc' },
   })
@@ -169,13 +169,13 @@ export async function getConfirmedRules(studyId: string): Promise<ProtocolRule[]
 }
 
 export async function confirmRule(studyId: string, ruleId: string): Promise<ProtocolRule | null> {
-  const rule = await (prisma as any).studyProtocolRule.findFirst({
+  const rule = await prisma.studyProtocolRule.findFirst({
     where: { id: ruleId, studyId, status: 'pending' },
   })
   if (!rule) return null
 
   const now = new Date().toISOString()
-  const updated = await (prisma as any).studyProtocolRule.update({
+  const updated = await prisma.studyProtocolRule.update({
     where: { id: ruleId },
     data: { status: 'confirmed', updatedAt: now },
   })
@@ -193,7 +193,7 @@ async function createStudyEventFromRule(rule: any) {
   })()
   if (!detail) return
 
-  const study = await (prisma as any).researchStudy.findUnique({ where: { id: rule.studyId } })
+  const study = await prisma.researchStudy.findUnique({ where: { id: rule.studyId } })
   const studyStart = study ? new Date(study.createdAt) : new Date()
   const days = parseTimingForRule(detail.timing, studyStart)
 
@@ -202,7 +202,7 @@ async function createStudyEventFromRule(rule: any) {
     ? new Date(studyStart.getTime() + days * 24 * 60 * 60 * 1000).toISOString()
     : now
 
-  await (prisma as any).studyEvent.create({
+  await prisma.studyEvent.create({
     data: {
       id: `evt_${uid()}`,
       studyId: rule.studyId,
@@ -217,7 +217,7 @@ async function createStudyEventFromRule(rule: any) {
   })
 
   // Keep backward-compatible assessment generation for existing UI.
-  await (prisma as any).researchAssessment.create({
+  await prisma.researchAssessment.create({
     data: {
       id: `asmt_${uid()}`,
       studyId: rule.studyId,
@@ -230,12 +230,12 @@ async function createStudyEventFromRule(rule: any) {
 }
 
 export async function rejectRule(studyId: string, ruleId: string): Promise<boolean> {
-  const rule = await (prisma as any).studyProtocolRule.findFirst({
+  const rule = await prisma.studyProtocolRule.findFirst({
     where: { id: ruleId, studyId, status: 'pending' },
   })
   if (!rule) return false
 
-  await (prisma as any).studyProtocolRule.update({
+  await prisma.studyProtocolRule.update({
     where: { id: ruleId },
     data: { status: 'rejected', updatedAt: new Date().toISOString() },
   })
@@ -243,7 +243,7 @@ export async function rejectRule(studyId: string, ruleId: string): Promise<boole
 }
 
 export async function getConfirmationStatus(studyId: string): Promise<{ total: number; confirmed: number; pending: number; rejected: number }> {
-  const rules = await (prisma as any).studyProtocolRule.findMany({
+  const rules = await prisma.studyProtocolRule.findMany({
     where: { studyId, status: { not: 'superseded' } },
   })
   return {

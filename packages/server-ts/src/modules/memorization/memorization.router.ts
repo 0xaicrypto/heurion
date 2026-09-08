@@ -121,21 +121,21 @@ app.get('/api/v1/memory/health', async (request) => {
   const { getCategoryQuality } = await import('../../memory/extraction-quality.js')
   const [quality, byCategory, contradictions, staleRows, archivedRows, graphFacts, graphSummaries, gaps] = await Promise.all([
     getCategoryQuality(userId),
-    (prisma as any).memoryProposal.findMany({
+    prisma.memoryProposal.findMany({
       where: { userId, status: { in: ['approved', 'rejected'] }, resolvedAt: { not: null } },
       select: { status: true },
     }),
-    (prisma as any).memoryProposal.count({
+    prisma.memoryProposal.count({
       where: { userId, status: 'pending', conflictsWith: { not: null }, createdAt: { gte: sevenDaysAgo } },
     }),
-    (prisma as any).memoryProposal.findMany({
+    prisma.memoryProposal.findMany({
       where: { userId, status: 'pending', archivedAt: null, createdAt: { lt: sevenDaysAgo } },
       select: { importance: true, kind: true },
     }),
-    (prisma as any).memoryProposal.count({ where: { userId, archivedAt: { not: null } } }),
+    prisma.memoryProposal.count({ where: { userId, archivedAt: { not: null } } }),
     ctx.memory.graph.getCurrentNodesByType('fact'),
     ctx.memory.graph.getCurrentNodesByType('summary'),
-    (prisma as any).knowledgeGap.count({ where: { userId, status: 'open' } }),
+    prisma.knowledgeGap.count({ where: { userId, status: 'open' } }),
   ])
 
   const accepted = byCategory.filter((r: any) => r.status === 'approved').length

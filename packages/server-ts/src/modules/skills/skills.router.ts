@@ -46,7 +46,7 @@ export async function skillsRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
   app.get('/api/v1/skills', async (request) => {
-    const prefs = await (prisma as any).userSkillPref.findMany({ where: { userId: request.user!.userId } })
+    const prefs = await prisma.userSkillPref.findMany({ where: { userId: request.user!.userId } })
     const installed = new Map(prefs.map((p: any) => [p.skillName, p]))
     // Return ALL skills with installed flag — so page shows full catalog
     const skills = CATALOG.map(s => ({
@@ -66,7 +66,7 @@ export async function skillsRouter(app: FastifyInstance) {
     const pageNum = parseInt(page || '1')
     const pageSize = parseInt(page_size || '10')
 
-    const prefs = await (prisma as any).userSkillPref.findMany({ where: { userId: request.user!.userId } })
+    const prefs = await prisma.userSkillPref.findMany({ where: { userId: request.user!.userId } })
     const installed = new Set(prefs.map((p: any) => p.skillName))
 
     let results = CATALOG
@@ -86,7 +86,7 @@ export async function skillsRouter(app: FastifyInstance) {
     const skill = CATALOG.find(s => s.identifier === identifier)
     const name = skill?.name || identifier.split('/').pop()
     const source = skill?.source || 'manual'
-    await (prisma as any).userSkillPref.upsert({
+    await prisma.userSkillPref.upsert({
       where: { userId_skillName: { userId: request.user!.userId, skillName: name } },
       update: { enabled: 1 },
       create: { userId: request.user!.userId, skillName: name, enabled: 1, autoApply: 0, source, createdAt: new Date().toISOString() },
@@ -97,7 +97,7 @@ export async function skillsRouter(app: FastifyInstance) {
   app.post('/api/v1/skills/:name/toggle', async (request) => {
     const { name } = request.params as any
     const { enabled } = request.body as any
-    await (prisma as any).userSkillPref.upsert({
+    await prisma.userSkillPref.upsert({
       where: { userId_skillName: { userId: request.user!.userId, skillName: name } },
       update: { enabled: enabled ? 1 : 0 },
       create: { userId: request.user!.userId, skillName: name, enabled: enabled ? 1 : 0, source: 'manual', createdAt: new Date().toISOString() },
@@ -107,7 +107,7 @@ export async function skillsRouter(app: FastifyInstance) {
 
   app.delete('/api/v1/skills/:name', async (request) => {
     const { name } = request.params as any
-    try { await (prisma as any).userSkillPref.delete({ where: { userId_skillName: { userId: request.user!.userId, skillName: name } } }) } catch { /* ok */ }
+    try { await prisma.userSkillPref.delete({ where: { userId_skillName: { userId: request.user!.userId, skillName: name } } }) } catch { /* ok */ }
     return { uninstalled: true }
   })
 
@@ -116,7 +116,7 @@ export async function skillsRouter(app: FastifyInstance) {
     const { query } = request.query as any
     const q = (query || '').toLowerCase()
     const skills = await fetchGitHubSkills()
-    const prefs = await (prisma as any).userSkillPref.findMany({ where: { userId: request.user!.userId } })
+    const prefs = await prisma.userSkillPref.findMany({ where: { userId: request.user!.userId } })
     const installed = new Set(prefs.map((p: any) => p.skillName))
     const filtered = skills
       .filter(s => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))

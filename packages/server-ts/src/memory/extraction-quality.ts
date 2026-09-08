@@ -18,7 +18,7 @@ export interface CategoryQuality {
 }
 
 export async function getCategoryQuality(userId: string, days = 7): Promise<CategoryQuality[]> {
-  const rows = await (prisma as any).memoryProposal.findMany({
+  const rows = await prisma.memoryProposal.findMany({
     where: {
       userId,
       status: { in: ['approved', 'rejected'] },

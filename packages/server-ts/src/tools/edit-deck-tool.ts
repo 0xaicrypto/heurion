@@ -65,7 +65,7 @@ export class EditDeckTool extends BaseTool {
     }
 
     try {
-      const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
+      const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
       if (!existing) return { success: false, error: `Document not found: ${docId}` }
       if (!existing.deck) {
         return { success: false, error: '当前文档没有 deck（AI 编排产物）。请先用 insert_asset 的 export+organize 生成 deck，再编辑。' }

@@ -325,8 +325,9 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
             : null,
           history,
           telemetryContext: { userId, workspaceId: userId, action: 'plugin.build_payload' },
-          // #637: 插件事件流独立于 ChatEvent(自有载荷),透传未知载荷。
-          send: (d: unknown) => send(d as ChatStreamChunk),
+          // #637: 插件事件流 — 载荷是 ChatStreamChunk 的子集(白名单类型
+          // 透传,#695),不再 as 硬断言;插件侧发未知载荷编译期即报错。
+          send: (d: ChatStreamChunk) => send(d),
         })
 
         // #558: the request was editing/polishing existing content that only

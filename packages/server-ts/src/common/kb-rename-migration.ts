@@ -13,13 +13,13 @@ const log = makeLogger('migrate.kb-summary')
  */
 export async function ensureArticleSummaryRenameMigration(): Promise<void> {
   try {
-    const proposals = await (prisma as any).memoryProposal.updateMany({
+    const proposals = await prisma.memoryProposal.updateMany({
       where: { kind: 'article' },
       data: { kind: 'summary' },
     })
     let payloads = 0
     try {
-      payloads = await (prisma as any).$executeRawUnsafe(
+      payloads = await prisma.$executeRawUnsafe(
         `UPDATE approval_requests SET payload = replace(payload, '"kind":"article"', '"kind":"summary"')
          WHERE status = 'pending' AND payload LIKE '%"kind":"article"%'`,
       )

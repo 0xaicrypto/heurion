@@ -19,7 +19,7 @@ export async function patientsRouter(app: FastifyInstance) {
 
   // ── List patients (frontend: /api/v1/dicom/patients/full) ──
   app.get('/api/v1/dicom/patients/full', async (request) => {
-    const records = await (prisma as any).patientRecord.findMany({
+    const records = await prisma.patientRecord.findMany({
       where: { userId: request.user!.userId },
       orderBy: { createdAt: 'desc' },
     })
@@ -39,7 +39,7 @@ export async function patientsRouter(app: FastifyInstance) {
   // ── Patient detail ──
   app.get('/api/v1/dicom/patients/:hash/detail', async (request, reply) => {
     const { hash } = request.params as any
-    const r = await (prisma as any).patientRecord.findFirst({ where: { hash, userId: request.user!.userId } })
+    const r = await prisma.patientRecord.findFirst({ where: { hash, userId: request.user!.userId } })
     if (!r) return reply.status(404).send({ error: 'Patient not found' })
     return {
       patient_hash: r.hash, initials: r.initials || r.name || '',
@@ -59,7 +59,7 @@ export async function patientsRouter(app: FastifyInstance) {
     const body = parsed.data
     const hash = `patient_${uid()}`
     const now = new Date().toISOString()
-    await (prisma as any).patientRecord.create({
+    await prisma.patientRecord.create({
       data: {
         hash, userId: request.user!.userId,
         initials: body.initials,
@@ -87,19 +87,19 @@ export async function patientsRouter(app: FastifyInstance) {
     // 边界审计（#253）: ownership must be verified BEFORE any cascade —
     // otherwise user B could delete user A's research assessments by using
     // A's patient hash.
-    const owned = await (prisma as any).patientRecord.findFirst({ where: { hash, userId } })
+    const owned = await prisma.patientRecord.findFirst({ where: { hash, userId } })
     if (!owned) {
       return reply.status(404).send({ error: 'Patient not found' })
     }
 
     // Remove related structured records first
-    await (prisma as any).medicalRecord.deleteMany({ where: { patientHash: hash, userId } })
-    await (prisma as any).researchAssessment.deleteMany({ where: { patientHash: hash } })
+    await prisma.medicalRecord.deleteMany({ where: { patientHash: hash, userId } })
+    await prisma.researchAssessment.deleteMany({ where: { patientHash: hash } })
     // #730: FileIndex 是真实表 — typed 访问。
     await prisma.fileIndex.deleteMany({ where: { patientHash: hash, userId } })
 
     // Delete the patient row
-    await (prisma as any).patientRecord.deleteMany({ where: { hash, userId } })
+    await prisma.patientRecord.deleteMany({ where: { hash, userId } })
 
     // Cascade-delete memory facts tied to this patient so dependent summaries become stale/superseded
     const ctx = getUserContext(userId)
@@ -226,7 +226,7 @@ export async function patientsRouter(app: FastifyInstance) {
     const { patientHash } = request.params as any
     const userId = request.user!.userId
 
-    const patient = await (prisma as any).patientRecord.findFirst({ where: { hash: patientHash, userId } })
+    const patient = await prisma.patientRecord.findFirst({ where: { hash: patientHash, userId } })
     if (!patient) return { findings: [], medications: [], timeline: [], medical_record: null }
 
     const findings: Array<{ node_id: string; node_type: string; content: string }> = []
@@ -234,7 +234,7 @@ export async function patientsRouter(app: FastifyInstance) {
     const timeline: Array<{ event_id: string; event_type: string; content: string; timestamp: string }> = []
 
     // ── 1. Pull structured data from latest medical record (primary source) ──
-    const latestMr = await (prisma as any).medicalRecord.findFirst({
+    const latestMr = await prisma.medicalRecord.findFirst({
       where: { patientHash, userId },
       orderBy: { updatedAt: 'desc' },
     })
@@ -333,7 +333,7 @@ export async function patientsRouter(app: FastifyInstance) {
   async function getPatientProjection(request: any) {
     const { patientHash } = request.params as any
     const userId = request.user!.userId
-    const patient = await (prisma as any).patientRecord.findFirst({ where: { hash: patientHash, userId } })
+    const patient = await prisma.patientRecord.findFirst({ where: { hash: patientHash, userId } })
     if (!patient) return { findings: [], timeline: [] }
     const complaint = patient.chiefComplaint || ''
     const findings: Array<{ node_id: string; node_type: string; content: string }> = []

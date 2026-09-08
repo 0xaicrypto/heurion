@@ -310,7 +310,7 @@ export async function agentRouter(app: FastifyInstance, opts: AgentRouterOptions
 
   // ── Sub-agent session history ──────────────────────────────────────
   app.get('/api/v1/agent/subagent-sessions', async (request: FastifyRequest) => {
-    const rows = await (prisma as any).subAgentSession.findMany({
+    const rows = await prisma.subAgentSession.findMany({
       where: { userId: request.user!.userId },
       orderBy: { createdAt: 'desc' },
       take: 30,

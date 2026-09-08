@@ -30,7 +30,7 @@ export async function adminRouter(app: FastifyInstance) {
 
   // ── List users (frontend expects { users: [...] }) ──
   app.get('/api/v1/admin/users', async () => {
-    const users = await (prisma as any).user.findMany({
+    const users = await prisma.user.findMany({
       orderBy: { createdAt: 'desc' },
       select: { id: true, displayName: true, email: true, role: true, createdAt: true, disabledAt: true, lastLoginAt: true },
     })
@@ -53,7 +53,7 @@ export async function adminRouter(app: FastifyInstance) {
     const { userId } = request.params as any
     const now = new Date().toISOString()
     try {
-      await (prisma as any).user.update({ where: { id: userId }, data: { disabledAt: now } })
+      await prisma.user.update({ where: { id: userId }, data: { disabledAt: now } })
       return { user_id: userId, disabled_at: now, ok: true }
     } catch {
       return reply.status(404).send({ error: 'User not found' })
@@ -64,7 +64,7 @@ export async function adminRouter(app: FastifyInstance) {
   app.post('/api/v1/admin/users/:userId/enable', async (request, reply) => {
     const { userId } = request.params as any
     try {
-      await (prisma as any).user.update({ where: { id: userId }, data: { disabledAt: null } })
+      await prisma.user.update({ where: { id: userId }, data: { disabledAt: null } })
       return { user_id: userId, disabled_at: null, ok: true }
     } catch {
       return reply.status(404).send({ error: 'User not found' })
@@ -78,7 +78,7 @@ export async function adminRouter(app: FastifyInstance) {
     if (!new_password) return reply.status(400).send({ error: 'new_password required' })
     const hash = await bcrypt.hash(new_password, 10)
     try {
-      await (prisma as any).user.update({ where: { id: userId }, data: { passwordHash: hash } })
+      await prisma.user.update({ where: { id: userId }, data: { passwordHash: hash } })
       return { user_id: userId, ok: true }
     } catch {
       return reply.status(404).send({ error: 'User not found' })

@@ -46,7 +46,7 @@ const toAssessment = (a: any, p?: any) => ({ visit_id: a.visit, patient_hash: a.
 
 async function getPatientMap(hashes: string[], userId: string): Promise<Map<string, any>> {
   if (hashes.length === 0) return new Map()
-  const patients = await (prisma as any).patientRecord.findMany({
+  const patients = await prisma.patientRecord.findMany({
     where: { hash: { in: hashes }, userId },
     select: { hash: true, name: true, initials: true, age: true, sex: true, chiefComplaint: true },
   })
@@ -86,7 +86,7 @@ export async function researchRouter(app: FastifyInstance) {
       service.getRoster(studyId).catch(() => []),
       getConfirmationStatus(studyId).catch(() => ({ total: 0, confirmed: 0, by_category: {} })),
       service.getSafetyStatus(studyId).catch(() => ({ triggered_rules: [], open_issues: 0 })),
-      (prisma as any).researchAssessment.findMany({ where: { studyId }, orderBy: { dueAt: 'asc' } }).catch(() => []),
+      prisma.researchAssessment.findMany({ where: { studyId }, orderBy: { dueAt: 'asc' } }).catch(() => []),
     ])
 
     const enrolled = (roster as any[]).filter((r: any) => r.arm).length
@@ -192,9 +192,9 @@ export async function researchRouter(app: FastifyInstance) {
     const [roster, rules, assessments, observations, screenings] = await Promise.all([
       service.getRoster(studyId).catch(() => []),
       getConfirmationStatus(studyId).catch(() => ({ total: 0, confirmed: 0, pending: 0, rejected: 0 })),
-      (prisma as any).researchAssessment.findMany({ where: { studyId }, orderBy: { dueAt: 'asc' } }).catch(() => []),
-      (prisma as any).researchObservation.findMany({ where: { studyId } }).catch(() => []),
-      (prisma as any).researchScreening.findMany({ where: { studyId } }).catch(() => []),
+      prisma.researchAssessment.findMany({ where: { studyId }, orderBy: { dueAt: 'asc' } }).catch(() => []),
+      prisma.researchObservation.findMany({ where: { studyId } }).catch(() => []),
+      prisma.researchScreening.findMany({ where: { studyId } }).catch(() => []),
     ])
 
     const arms = new Map<string, number>()
@@ -288,7 +288,7 @@ export async function researchRouter(app: FastifyInstance) {
     // the visit point.
     const hashes = Array.from(new Set(assessments.map((a: any) => a.patientHash)))
     const entries = hashes.length > 0
-      ? await (prisma as any).medicalRecordEntry.findMany({
+      ? await prisma.medicalRecordEntry.findMany({
           where: { userId, patientHash: { in: hashes } },
           orderBy: { date: 'desc' },
           take: 200,
@@ -438,27 +438,27 @@ export async function researchRouter(app: FastifyInstance) {
   app.get('/api/v1/patients/:patientHash/research-suggestions', async (request, reply) => {
     const { patientHash } = request.params as any
     const userId = request.user!.userId
-    const patient = await (prisma as any).patientRecord.findFirst({ where: { hash: patientHash, userId } })
+    const patient = await prisma.patientRecord.findFirst({ where: { hash: patientHash, userId } })
     if (!patient) return reply.status(404).send({ error: 'Patient not found' })
 
-    const myStudies = await (prisma as any).researchStudy.findMany({
+    const myStudies = await prisma.researchStudy.findMany({
       where: { userId }, select: { id: true },
     })
     const myStudyIds = myStudies.map((s: any) => s.id)
     if (myStudyIds.length === 0) return { suggestions: [] }
 
-    const rows = await (prisma as any).researchScreening.findMany({
+    const rows = await prisma.researchScreening.findMany({
       where: { patientHash, studyId: { in: myStudyIds }, verdict: { in: ['eligible', 'pending_review'] } },
       orderBy: { scannedAt: 'desc' },
       take: 20,
     })
     // Batch: enrolled studies for this patient + study titles.
-    const enrolledRows = rows.length > 0 ? await (prisma as any).researchEnrollment.findMany({
+    const enrolledRows = rows.length > 0 ? await prisma.researchEnrollment.findMany({
       where: { patientHash, studyId: { in: rows.map((r: any) => r.studyId) }, unenrolledAt: null },
       select: { studyId: true },
     }) : []
     const enrolledStudyIds = new Set(enrolledRows.map((e: any) => e.studyId))
-    const studyRows = rows.length > 0 ? await (prisma as any).researchStudy.findMany({
+    const studyRows = rows.length > 0 ? await prisma.researchStudy.findMany({
       // #783: ResearchStudy has no `title` column — the pre-fix code selected
       // `title` and 500'd on every patient with ≥1 screening row.
       where: { id: { in: rows.map((r: any) => r.studyId) } }, select: { id: true, name: true },
@@ -491,13 +491,13 @@ export async function researchRouter(app: FastifyInstance) {
     // enrolled, positive-leaning verdicts only.
     // #783: scoped to the requester's studies (was:全表捞 60 条跨租户泄露).
     const userId = request.user!.userId
-    const myStudies = await (prisma as any).researchStudy.findMany({
+    const myStudies = await prisma.researchStudy.findMany({
       where: { userId }, select: { id: true },
     })
     const myStudyIds = myStudies.map((s: any) => s.id)
     if (myStudyIds.length === 0) return { suggestions: [] }
 
-    const rows = await (prisma as any).researchScreening.findMany({
+    const rows = await prisma.researchScreening.findMany({
       where: { studyId: { in: myStudyIds }, verdict: { in: ['eligible', 'pending_review'] } },
       orderBy: { scannedAt: 'desc' },
       take: 60,
@@ -505,12 +505,12 @@ export async function researchRouter(app: FastifyInstance) {
     // Batch: enrollments + patient initials for all candidate rows.
     const studyIdSet = [...new Set(rows.map((r: any) => r.studyId))]
     const patientHashes = [...new Set(rows.map((r: any) => r.patientHash))]
-    const enrolledRows = studyIdSet.length > 0 && patientHashes.length > 0 ? await (prisma as any).researchEnrollment.findMany({
+    const enrolledRows = studyIdSet.length > 0 && patientHashes.length > 0 ? await prisma.researchEnrollment.findMany({
       where: { studyId: { in: studyIdSet }, patientHash: { in: patientHashes }, unenrolledAt: null },
       select: { studyId: true, patientHash: true },
     }) : []
     const enrolledKeys = new Set(enrolledRows.map((e: any) => `${e.studyId}:${e.patientHash}`))
-    const patientRows = patientHashes.length > 0 ? await (prisma as any).patientRecord.findMany({
+    const patientRows = patientHashes.length > 0 ? await prisma.patientRecord.findMany({
       where: { hash: { in: patientHashes }, userId }, select: { hash: true, initials: true },
     }) : []
     const initialsByHash = new Map<string, string>(patientRows.map((p: any) => [p.hash, p.initials] as [string, string]))

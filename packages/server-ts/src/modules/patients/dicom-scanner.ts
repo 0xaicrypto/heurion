@@ -199,7 +199,7 @@ export async function analyzeWithGeminiVision(userId: string, fileId: string): P
       datasources: { db: { url: resolveDatabaseUrl(process.env.DATABASE_URL || 'file:./nexus_server.db') } },
     })
     await prisma.$queryRawUnsafe('PRAGMA busy_timeout=10000').catch(() => {})
-    const setting = await (prisma as any).userSetting.findUnique({
+    const setting = await prisma.userSetting.findUnique({
       where: { userId_key: { userId, key: 'gemini_api_key' } },
     })
     await prisma.$disconnect()

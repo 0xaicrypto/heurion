@@ -41,7 +41,7 @@ export async function executeInsertExport(deps: ExportExecutorDeps, docId: strin
     return { success: false, error: `导出 ${spec.label} 需要先在「插件市场」安装 ${spec.pluginId} 插件。` }
   }
 
-  const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+  const existing = await prisma.doc.findFirst({ where: { id: docId, userId } })
   if (!existing) return { success: false, error: `Document not found: ${docId}` }
   let body = String(existing.body || '')
 

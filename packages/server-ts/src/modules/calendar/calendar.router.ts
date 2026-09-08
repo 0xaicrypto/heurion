@@ -20,7 +20,7 @@ export async function calendarRouter(app: FastifyInstance) {
     ]
 
     // 1. Generate events from each study
-    const studies = await (prisma as any).researchStudy.findMany({ where: { userId } })
+    const studies = await prisma.researchStudy.findMany({ where: { userId } })
     for (const study of studies) {
       const studyStart = new Date(study.createdAt)
       const rules = await getConfirmedRules(study.id)
@@ -68,7 +68,7 @@ export async function calendarRouter(app: FastifyInstance) {
       }
 
       // 2. Enrolled patient treatment cycles
-      const rosterEntries = await (prisma as any).researchEnrollment.findMany({
+      const rosterEntries = await prisma.researchEnrollment.findMany({
         where: { studyId: study.id, unenrolledAt: null },
       })
       for (const entry of rosterEntries) {

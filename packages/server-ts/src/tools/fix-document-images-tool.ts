@@ -150,7 +150,7 @@ export class FixDocumentImagesTool extends BaseTool {
     }
     const docId = sessionId.slice(4)
     try {
-      const existing = await (prisma as any).doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
+      const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
       if (!existing) return { success: false, error: `Document not found: ${docId}` }
 
       const body = String(existing.body || '')

@@ -98,7 +98,7 @@ export class ResearchService {
   }
 
   async importProtocol(studyId: string, text: string) {
-    await (prisma as any).researchStudy.update({ where: { id: studyId }, data: { protocol: text } })
+    await prisma.researchStudy.update({ where: { id: studyId }, data: { protocol: text } })
     return { imported: true, study_id: studyId, content_length: text.length }
   }
 }

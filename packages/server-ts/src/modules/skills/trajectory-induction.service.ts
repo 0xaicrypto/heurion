@@ -147,7 +147,7 @@ export async function induceSkillsFromTrajectories(
 
   // #840-r5: pending 去重闸 — 闸门语义去重索引只含已审批内容,pending 提案
   // 不在其中;不做本闸,同一聚类会随每次 tick 重复提案直到审批完成。
-  const pendingSkillRows = await (prisma as any).memoryProposal.findMany({
+  const pendingSkillRows = await prisma.memoryProposal.findMany({
     where: { userId, kind: 'skill', status: 'pending' },
     select: { payload: true },
   }).catch(() => [] as Array<{ payload: string | null }>)
@@ -264,7 +264,7 @@ export function createSkillInductionScheduler(intervalMs: number): SkillInductio
       timer = setInterval(async () => {
         try {
           // 轨迹在 per-user eventLog(JSONL)— 枚举用户,归纳器内部自查薄数据。
-          const rows = await (prisma as any).user.findMany({ select: { id: true }, take: 50 }).catch(() => [] as Array<{ id: string }>)
+          const rows = await prisma.user.findMany({ select: { id: true }, take: 50 }).catch(() => [] as Array<{ id: string }>)
           let proposed = 0
           for (const r of rows as Array<{ id: string }>) {
             const res = await induceSkillsFromTrajectories(r.id).catch(() => null)

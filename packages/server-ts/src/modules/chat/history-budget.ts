@@ -10,6 +10,7 @@
  * Also: session-memory summary surfacing (compaction_summary event + log).
  */
 import prisma from '../../common/prisma'
+import type { ChatStreamChunk } from '@heurion/contracts'
 import { getUserContext } from '../shared/user-context.js'
 import { MAX_HISTORY_TOKENS } from '../shared/chat-context.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
@@ -21,7 +22,7 @@ export interface CompactionTriggers {
   sid: string
   patientHash?: string | null
   ctx: Awaited<ReturnType<typeof getUserContext>>
-  send: (chunk: any) => void
+  send: (chunk: ChatStreamChunk) => void
   /** Newest-first user/assistant history (raw event log rows). */
   history: any[]
   /** Newest-first history messages under the token budget. */
@@ -143,7 +144,7 @@ export function triggerCompactionAfterTrim(t: CompactionTriggers): void {
 /** Load the session's latest compaction boundary (for the sidecar/plugin path). */
 export async function loadCompactedUpto(userId: string, sid: string): Promise<number> {
   try {
-    const compacted = await (prisma as any).kbCompaction.findFirst({
+    const compacted = await prisma.kbCompaction.findFirst({
       where: { userId, sessionId: sid },
       orderBy: { coveredUptoIdx: 'desc' },
     })
@@ -174,7 +175,7 @@ export async function loadHistoryBudget(
   const historyTurns = parseInt(process.env.HISTORY_TURNS || '20', 10)
   let compactedUpto = 0
   try {
-    const lastCompaction = await (prisma as any).kbCompaction.findFirst({
+    const lastCompaction = await prisma.kbCompaction.findFirst({
       where: { userId, sessionId: sid },
       orderBy: { coveredUptoIdx: 'desc' },
     })
@@ -214,7 +215,7 @@ export async function streamUnshownCompaction(
   userId: string,
   ctx: Awaited<ReturnType<typeof getUserContext>>,
   sid: string,
-  io: { send: (chunk: any) => void },
+  io: { send: (chunk: ChatStreamChunk) => void },
 ): Promise<void> {
   try {
     const allEvents = ctx.eventLog.query({ sessionId: sid })
@@ -230,7 +231,7 @@ export async function streamUnshownCompaction(
       let summaryText = ctx.episodes.all().find((e: any) => e.sessionId === sid)?.summary || ''
       if (!summaryText.trim()) {
         try {
-          const row = await (prisma as any).kbCompaction.findFirst({
+          const row = await prisma.kbCompaction.findFirst({
             where: { userId, sessionId: sid },
             orderBy: { coveredUptoIdx: 'desc' },
           })

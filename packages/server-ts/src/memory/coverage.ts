@@ -49,7 +49,7 @@ export async function getPendingOccupiedFactIds(userId: string, scope: CoverageS
     where.scopeType = 'global'
   }
   try {
-    const rows = await (prisma as any).memoryProposal.findMany({ where, select: { relatedFacts: true } })
+    const rows = await prisma.memoryProposal.findMany({ where, select: { relatedFacts: true } })
     const ids = new Set<string>()
     for (const row of rows) {
       if (!row.relatedFacts) continue

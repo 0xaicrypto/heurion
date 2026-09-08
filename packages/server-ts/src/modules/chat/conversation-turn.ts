@@ -51,7 +51,7 @@ const chatAnalysisThrottle = new Map<string, number>()
 /** Fetch the patient record (or null) for the chat scope. */
 export async function findPatient(userId: string, patientHash?: string | null): Promise<any | null> {
   if (!patientHash) return null
-  return (prisma as any).patientRecord.findFirst({ where: { hash: patientHash, userId } })
+  return prisma.patientRecord.findFirst({ where: { hash: patientHash, userId } })
 }
 
 export interface ConversationTurnParams {
@@ -130,7 +130,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // #636: roster 按场景裁剪 — patient scene(或患者相关意图)全量注入
   // (含 age/sex/CC);general/chart/document 场景简化(仅姓名缩写),
   // token 显著下降;'list my patients' 类确定性查询走下方独立路径。
-  const allPatients = await (prisma as any).patientRecord.findMany({
+  const allPatients = await prisma.patientRecord.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
     take: CONTEXT_CONFIG.scene.rosterMax,
@@ -292,7 +292,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       fallbackOrder: 3,
       stageLabel: '正在载入研究上下文…',
       build: async () => {
-        const studies = await (prisma as any).researchStudy.findMany({
+        const studies = await prisma.researchStudy.findMany({
           where: { userId },
           take: CONTEXT_CONFIG.scene.studiesMax,
         })
@@ -317,9 +317,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       build: async (input) => {
         if (!sid.startsWith('doc-')) return ''
         const docId = sid.slice(4)
-        const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+        const doc = await prisma.doc.findFirst({ where: { id: docId, userId } })
         if (!doc) return ''
-        const refs = await (prisma as any).docReference.findMany({
+        const refs = await prisma.docReference.findMany({
           where: { userId, docId },
           orderBy: { createdAt: 'asc' },
         })

@@ -36,19 +36,19 @@ function whereOf(key: ExtractionCursorKey) {
 }
 
 export async function getExtractedUptoIdx(key: ExtractionCursorKey): Promise<number> {
-  const row = await (prisma as any).kbExtractCursor.findUnique({ where: whereOf(key) })
+  const row = await prisma.kbExtractCursor.findUnique({ where: whereOf(key) })
   return row?.extractedUptoIdx ?? 0
 }
 
 export async function advanceExtractedUptoIdx(key: ExtractionCursorKey, idx: number): Promise<void> {
   const now = new Date().toISOString()
   const where = whereOf(key)
-  const existing = await (prisma as any).kbExtractCursor.findUnique({ where })
+  const existing = await prisma.kbExtractCursor.findUnique({ where })
   if (existing && existing.extractedUptoIdx >= idx) {
     // Never regress the cursor (concurrent sessions / stale writes).
     return
   }
-  await (prisma as any).kbExtractCursor.upsert({
+  await prisma.kbExtractCursor.upsert({
     where,
     update: { extractedUptoIdx: idx, updatedAt: now },
     create: {

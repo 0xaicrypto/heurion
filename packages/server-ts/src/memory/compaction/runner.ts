@@ -133,7 +133,7 @@ export async function runSessionCompaction(
   // (episodes). Works for sessions without a Session row (default global).
   // #display: summary 列现在落**本次** episodeUpdate — 纯展示用途
   // (注入仍走 episodes),用户可见"这次压缩了什么"。
-  const last = await (prisma as any).kbCompaction.findFirst({
+  const last = await prisma.kbCompaction.findFirst({
     where: { userId: ctx.userId, sessionId },
     orderBy: { coveredUptoIdx: 'desc' },
   })
@@ -237,7 +237,7 @@ ${conversation}
   // segment into the Session Memory (episodes). The cursor row advances so
   // segments are never re-compacted; #display: summary 列落本次
   // episodeUpdate(纯展示,注入仍走 episodes)。
-  await (prisma as any).kbCompaction.create({
+  await prisma.kbCompaction.create({
     data: {
       userId: ctx.userId,
       sessionId,
@@ -359,7 +359,7 @@ export async function flushUnextracted(
     sessionId,
   }
   const cursor = await getExtractedUptoIdx(scopeKey)
-  const last = await (prisma as any).kbCompaction.findFirst({
+  const last = await prisma.kbCompaction.findFirst({
     where: { userId: ctx.userId, sessionId },
     orderBy: { coveredUptoIdx: 'desc' },
   })

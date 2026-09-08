@@ -31,7 +31,7 @@ export async function approvalsRouter(app: FastifyInstance) {
     if (request.user!.role !== 'admin') {
       return reply.status(403).send({ error: 'Admin only' })
     }
-    const rows = await (prisma as any).approvalRule.findMany({ orderBy: { priority: 'asc' } })
+    const rows = await prisma.approvalRule.findMany({ orderBy: { priority: 'asc' } })
     return { rules: rows }
   })
 
@@ -44,7 +44,7 @@ export async function approvalsRouter(app: FastifyInstance) {
       return reply.status(400).send({ error: parsed.error.format() })
     }
     const now = new Date().toISOString()
-    const row = await (prisma as any).approvalRule.create({
+    const row = await prisma.approvalRule.create({
       data: { ...parsed.data, createdAt: now, updatedAt: now },
     })
     return row
@@ -55,7 +55,7 @@ export async function approvalsRouter(app: FastifyInstance) {
       return reply.status(403).send({ error: 'Admin only' })
     }
     const { id } = request.params as any
-    const deleted = await (prisma as any).approvalRule.deleteMany({ where: { id } })
+    const deleted = await prisma.approvalRule.deleteMany({ where: { id } })
     if (deleted.count === 0) {
       return reply.status(404).send({ error: 'Rule not found' })
     }

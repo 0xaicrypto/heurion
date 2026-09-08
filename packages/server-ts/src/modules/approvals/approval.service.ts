@@ -16,7 +16,7 @@ export interface ApprovalRequestInput {
 /** Load enabled permission rules, most specific last (later wins). */
 export async function listPermissionRules(): Promise<PermissionRule[]> {
   try {
-    const rows = await (prisma as any).approvalRule.findMany({
+    const rows = await prisma.approvalRule.findMany({
       where: { enabled: 1 },
       orderBy: { priority: 'asc' },
     })
@@ -72,7 +72,7 @@ export async function createApprovalRequest(
   if (decision === 'deny') {
     return { status: 'auto_denied', targetType: input.targetType, targetId: input.targetId }
   }
-  return await (prisma as any).approvalRequest.create({
+  return await prisma.approvalRequest.create({
     data: {
       userId,
       targetType: input.targetType,
@@ -96,14 +96,14 @@ export async function createApprovalRequest(
  */
 export async function archiveStaleProposals(): Promise<number> {
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString()
-  const stale = await (prisma as any).memoryProposal.findMany({
+  const stale = await prisma.memoryProposal.findMany({
     where: { status: 'pending', archivedAt: null, createdAt: { lt: sevenDaysAgo } },
   })
   let archived = 0
   for (const p of stale) {
     const autoArchive = p.kind !== 'fact' || (p.importance ?? 3) <= 2
     if (!autoArchive) continue
-    await (prisma as any).memoryProposal.update({
+    await prisma.memoryProposal.update({
       where: { id: p.id },
       data: { archivedAt: new Date().toISOString() },
     })
@@ -130,7 +130,7 @@ export async function listPendingApprovals(userId: string, targetType?: string, 
   const where: any = { status: 'pending', userId }
   if (scopeAll) delete where.userId
   if (targetType) where.targetType = targetType
-  const rows = await (prisma as any).approvalRequest.findMany({
+  const rows = await prisma.approvalRequest.findMany({
     where,
     orderBy: { createdAt: 'desc' },
   })
@@ -139,7 +139,7 @@ export async function listPendingApprovals(userId: string, targetType?: string, 
   const proposalRows = rows.filter((r: any) => r.targetType === 'MemoryProposal')
   const archivedIds = new Set<string>()
   if (proposalRows.length > 0) {
-    const archived = await (prisma as any).memoryProposal.findMany({
+    const archived = await prisma.memoryProposal.findMany({
       where: { id: { in: proposalRows.map((r: any) => r.targetId) }, archivedAt: { not: null } },
       select: { id: true },
     })
@@ -203,7 +203,7 @@ async function enrichProposalProvenance(serialized: Array<Record<string, any>>):
         if (cached) return cached
         const out = { fileId: null as string | null, fileName: null as string | null, sessionId: null as string | null }
         try {
-          const mp = await (prisma as any).memoryProposal.findFirst({
+          const mp = await prisma.memoryProposal.findFirst({
             where: { id: ref },
             select: { sourceRange: true, reason: true },
           })
@@ -300,7 +300,7 @@ async function makeSessionTitleResolver(): Promise<(sessionId: string) => Promis
     if (cache.has(sessionId)) return cache.get(sessionId)!
     let title: string | null = null
     try {
-      const s = await (prisma as any).session.findFirst({
+      const s = await prisma.session.findFirst({
         where: { id: sessionId },
         select: { title: true },
       })
@@ -317,14 +317,14 @@ export async function confirmApproval(userId: string, id: string) {
   // #794: writes are always owner-scoped — no admin bypass. An approval may
   // only be resolved by the user whose context produced it.
   const where: any = { id, status: 'pending', userId }
-  const req = await (prisma as any).approvalRequest.findFirst({ where })
+  const req = await prisma.approvalRequest.findFirst({ where })
   if (!req) throw new Error('Approval request not found')
 
   const now = new Date().toISOString()
 
   await applyTargetUpdate(req.targetType, req.targetId, { status: 'confirmed' }, userId, now)
 
-  const updated = await (prisma as any).approvalRequest.update({
+  const updated = await prisma.approvalRequest.update({
     where: { id },
     data: { status: 'approved', actorId: userId, resolvedAt: now },
   })
@@ -347,14 +347,14 @@ export async function rejectApproval(userId: string, id: string, reason: string 
   // Reason is OPTIONAL — rejecting without a note is allowed.
   // #794: owner-scoped like confirmApproval.
   const where: any = { id, status: 'pending', userId }
-  const req = await (prisma as any).approvalRequest.findFirst({ where })
+  const req = await prisma.approvalRequest.findFirst({ where })
   if (!req) throw new Error('Approval request not found')
 
   const now = new Date().toISOString()
 
   await applyTargetUpdate(req.targetType, req.targetId, { status: 'rejected', rejectedReason: reason || null }, userId, now)
 
-  const updated = await (prisma as any).approvalRequest.update({
+  const updated = await prisma.approvalRequest.update({
     where: { id },
     data: { status: 'rejected', actorId: userId, reason: reason || null, resolvedAt: now },
   })
@@ -440,21 +440,21 @@ async function applyTargetUpdate(
       data.confirmedAt = now
       data.confirmedBy = actorId
     }
-    await (prisma as any).medicalRecordEntry.update({
+    await prisma.medicalRecordEntry.update({
       where: { id: targetId },
       data,
     })
     return
   }
   if (targetType === 'MemoryProposal') {
-    const row = await (prisma as any).memoryProposal.findFirst({
+    const row = await prisma.memoryProposal.findFirst({
       where: { id: targetId },
     })
     if (!row) throw new Error('Memory proposal not found')
 
     // Rejection path: record the reason, do not touch the graph.
     if (updates.status === 'rejected') {
-      await (prisma as any).memoryProposal.update({
+      await prisma.memoryProposal.update({
         where: { id: targetId },
         data: { status: 'rejected', rejectedReason: updates.rejectedReason, resolvedAt: now, resolvedBy: actorId },
       })
@@ -465,7 +465,7 @@ async function applyTargetUpdate(
     // human verdict on the content without a graph write (the applier only
     // supports fact/summary).
     if (row.kind === 'episode_summary' || row.kind === 'compaction_summary') {
-      await (prisma as any).memoryProposal.update({
+      await prisma.memoryProposal.update({
         where: { id: targetId },
         data: { status: 'approved', resolvedAt: now, resolvedBy: actorId },
       })
@@ -478,7 +478,7 @@ async function applyTargetUpdate(
       try {
         const scope = JSON.parse(row.payload)?.skill?.scope
         if (scope === 'institution') {
-          const actor = await (prisma as any).user.findUnique({ where: { id: actorId } })
+          const actor = await prisma.user.findUnique({ where: { id: actorId } })
           if (actor?.role !== 'admin') {
             throw new Error('institution scope 提案需机构管理员确认 — 当前确认者无管理员权限')
           }
@@ -497,13 +497,13 @@ async function applyTargetUpdate(
     if (row.kind === 'skill' && node && typeof (node as any).stableId === 'string'
       && (node as any).stableId.startsWith('skill_cap_')) {
       const capturedId = (node as any).stableId.slice('skill_cap_'.length)
-      await (prisma as any).capturedSkill.updateMany({
+      await prisma.capturedSkill.updateMany({
         where: { id: capturedId, userId: row.userId, status: { not: 'promoted' } },
         data: { status: 'promoted', updatedAt: now },
       }).catch(() => { /* 行可能已被清理 — best-effort */ })
     }
 
-    await (prisma as any).memoryProposal.update({
+    await prisma.memoryProposal.update({
       where: { id: targetId },
       data: { status: 'approved', resolvedAt: now, resolvedBy: actorId },
     })
@@ -529,7 +529,7 @@ export async function listAuditLogs(filters: { targetType?: string; targetId?: s
   }
   if (filters.targetType) where.targetType = filters.targetType
   if (filters.targetId) where.targetId = filters.targetId
-  const rows = await (prisma as any).auditLog.findMany({
+  const rows = await prisma.auditLog.findMany({
     where,
     orderBy: { createdAt: 'desc' },
   })
@@ -538,7 +538,7 @@ export async function listAuditLogs(filters: { targetType?: string; targetId?: s
     .filter((r: any) => r.targetType === 'MedicalRecordEntry')
     .map((r: any) => r.targetId)
   const entries = entryIds.length > 0
-    ? await (prisma as any).medicalRecordEntry.findMany({
+    ? await prisma.medicalRecordEntry.findMany({
         where: { id: { in: entryIds } },
         select: { id: true, patientHash: true, title: true, type: true },
       })
@@ -549,7 +549,7 @@ export async function listAuditLogs(filters: { targetType?: string; targetId?: s
     .filter((r: any) => r.targetType === 'MemoryProposal')
     .map((r: any) => r.targetId)
   const proposals = proposalIds.length > 0
-    ? await (prisma as any).memoryProposal.findMany({
+    ? await prisma.memoryProposal.findMany({
         where: { id: { in: proposalIds } },
         select: { id: true, kind: true, content: true, importance: true, confidence: true },
       })
@@ -586,7 +586,7 @@ export async function writeAuditLog(entry: {
   reason?: string
   createdAt: string
 }) {
-  await (prisma as any).auditLog.create({
+  await prisma.auditLog.create({
     data: {
       actor: entry.actor,
       action: entry.action,

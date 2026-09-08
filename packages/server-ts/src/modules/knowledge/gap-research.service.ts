@@ -42,7 +42,7 @@ export class GapResearchService {
     const minAgeMs = options.minAgeMs ?? 60_000
     const cutoff = new Date(Date.now() - minAgeMs).toISOString()
 
-    const rows: any[] = await (prisma as any).knowledgeGap.findMany({
+    const rows: any[] = await prisma.knowledgeGap.findMany({
       where: {
         status: 'open',
         createdAt: { lte: cutoff },

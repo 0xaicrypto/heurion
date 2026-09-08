@@ -66,7 +66,7 @@ export function buildSkillNodeFromCaptured(
 export async function ensureSkillNodeMigration(): Promise<SkillNodeMigrationResult> {
   const result: SkillNodeMigrationResult = { migrated: 0, skippedPii: 0, promoted: 0 }
   try {
-    const rows = await (prisma as any).capturedSkill.findMany({ where: { status: 'confirmed' } })
+    const rows = await prisma.capturedSkill.findMany({ where: { status: 'confirmed' } })
     if (!rows || rows.length === 0) return result
 
     // 按 userId 分组,逐用户在其 graph 中落地。
@@ -97,7 +97,7 @@ export async function ensureSkillNodeMigration(): Promise<SkillNodeMigrationResu
           continue
         }
         ctx.memory.graph.addNode(node)
-        await (prisma as any).capturedSkill.update({
+        await prisma.capturedSkill.update({
           where: { id: row.id },
           data: { status: 'promoted', updatedAt: new Date().toISOString() },
         })

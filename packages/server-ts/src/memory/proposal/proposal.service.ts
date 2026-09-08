@@ -141,7 +141,7 @@ export class ProposalService {
     const now = new Date().toISOString()
     // §5.7: conflict markers must point at same-scope confirmed facts.
     const conflictsWith = this.filterSameScopeConflicts(input)
-    const row = await (prisma as any).memoryProposal.create({
+    const row = await prisma.memoryProposal.create({
       data: {
         userId: this.userId,
         scopeType: input.scopeType,
@@ -172,7 +172,7 @@ export class ProposalService {
         const node = await this.applyApproved(serialized)
         if (node) {
           const resolvedAt = new Date().toISOString()
-          const updated = await (prisma as any).memoryProposal.updateMany({
+          const updated = await prisma.memoryProposal.updateMany({
             where: { id: row.id, status: 'pending' },
             data: { status: 'approved', resolvedAt, resolvedBy: 'fast-track' },
           })
@@ -210,7 +210,7 @@ export class ProposalService {
     } else if (scope?.global) {
       where.scopeType = 'global'
     }
-    const rows = await (prisma as any).memoryProposal.findMany({
+    const rows = await prisma.memoryProposal.findMany({
       where,
       orderBy: { createdAt: 'desc' },
     })
@@ -232,7 +232,7 @@ export class ProposalService {
 
   async rejectProposal(proposalId: string, reason: string, actorId: string): Promise<boolean> {
     const now = new Date().toISOString()
-    const updated = await (prisma as any).memoryProposal.updateMany({
+    const updated = await prisma.memoryProposal.updateMany({
       where: { id: proposalId, userId: this.userId, status: 'pending' },
       data: { status: 'rejected', rejectedReason: reason, resolvedAt: now, resolvedBy: actorId },
     })
@@ -241,7 +241,7 @@ export class ProposalService {
 
   async markApproved(proposalId: string, actorId: string): Promise<boolean> {
     const now = new Date().toISOString()
-    const updated = await (prisma as any).memoryProposal.updateMany({
+    const updated = await prisma.memoryProposal.updateMany({
       where: { id: proposalId, userId: this.userId, status: 'pending' },
       data: { status: 'approved', resolvedAt: now, resolvedBy: actorId },
     })

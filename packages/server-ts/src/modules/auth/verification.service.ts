@@ -70,7 +70,7 @@ export async function sendVerificationCode(email: string, purpose: VerificationP
 
   const now = Date.now()
   // Throttle: the most recent code for this target+purpose must be old enough.
-  const recent = await (prisma as any).verificationCode.findFirst({
+  const recent = await prisma.verificationCode.findFirst({
     where: { target, purpose, usedAt: null },
     orderBy: { createdAt: 'desc' },
   })
@@ -80,7 +80,7 @@ export async function sendVerificationCode(email: string, purpose: VerificationP
 
   // #344: per-IP cap — reject when this IP sent too many codes recently.
   if (ip) {
-    const recentByIp = await (prisma as any).verificationCode.count({
+    const recentByIp = await prisma.verificationCode.count({
       where: {
         ip,
         createdAt: { gte: new Date(now - IP_WINDOW_MS).toISOString() },
@@ -92,7 +92,7 @@ export async function sendVerificationCode(email: string, purpose: VerificationP
   }
 
   const code = generateCode()
-  await (prisma as any).verificationCode.create({
+  await prisma.verificationCode.create({
     data: {
       target,
       code,
@@ -115,7 +115,7 @@ export async function sendVerificationCode(email: string, purpose: VerificationP
 export async function verifyCode(email: string, code: string, purpose: VerificationPurpose): Promise<boolean> {
   const target = normalizeEmail(email)
   const now = Date.now()
-  const row = await (prisma as any).verificationCode.findFirst({
+  const row = await prisma.verificationCode.findFirst({
     where: { target, purpose, usedAt: null },
     orderBy: { createdAt: 'desc' },
   })
@@ -124,14 +124,14 @@ export async function verifyCode(email: string, code: string, purpose: Verificat
   if (row.attempts >= MAX_ATTEMPTS) return false
 
   if (String(row.code).trim() !== String(code).trim()) {
-    await (prisma as any).verificationCode.update({
+    await prisma.verificationCode.update({
       where: { id: row.id },
       data: { attempts: { increment: 1 } },
     })
     return false
   }
 
-  await (prisma as any).verificationCode.update({
+  await prisma.verificationCode.update({
     where: { id: row.id },
     data: { usedAt: new Date(now).toISOString() },
   })
