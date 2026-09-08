@@ -99,6 +99,11 @@ export interface SessionState {
   lastDocBody?: string;
   /** #773: AI 写回同帧携带的 deck 资产（null = 无 deck 变更）。 */
   lastDocDeck?: DeckWire | null;
+  /**
+   * #927: 最近一次 doc_updated 的服务端写回 rev（单调递增）— 消费方
+   * （writing-editor）按 shouldApplyDocRev 幂等防乱序。
+   */
+  lastDocRev?: number;
   /** #459: shared UI shape (ChatContextUsage in lib/types). */
   contextUsage?: ChatContextUsage;
   /** #298: skill-capture suggestion shown after a procedural reply. */
@@ -238,7 +243,14 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
     case 'doc_updated':
       // #773: deck 与 body 同帧到达 — lastDocDeck 供 deck 视图直apply
       // (AI 改页不走 markdown diffReview，页级小改直接应用 + 快照回滚)。
-      return { ...s, lastDocBody: chunk.body, lastDocDeck: chunk.deck ?? null };
+      // #927: rev 随帧存储 — 消费方按 shouldApplyDocRev 幂等防乱序;
+      // 无 rev 的旧后端事件保留既有 lastDocRev（或 undefined）。
+      return {
+        ...s,
+        lastDocBody: chunk.body,
+        lastDocDeck: chunk.deck ?? null,
+        lastDocRev: typeof chunk.rev === 'number' ? chunk.rev : s.lastDocRev,
+      };
     case 'skill_capture_suggest':
       return { ...s, skillCapture: { text: chunk.text } };
     case 'tool_call': {
@@ -416,4 +428,14 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
 export function applyChunkToSession(s: SessionState, chunk: ChatStreamChunk): SessionState {
   const next = applyChunkToSessionInner(s, chunk);
   return next === s ? next : withTouch(next);
+}
+
+/**
+ * #927: doc_updated rev 幂等 — 收到 rev 时，只有比已应用值更大才应用
+ * （防 SSE 乱序/重放把旧写回盖到新写回上）；rev 缺失（旧后端）保持应用。
+ */
+export function shouldApplyDocRev(applied: number | undefined, incoming: number | undefined): boolean {
+  if (typeof incoming !== 'number') return true;
+  if (applied === undefined) return true;
+  return incoming > applied;
 }

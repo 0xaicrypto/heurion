@@ -18,8 +18,8 @@ import { cn } from '@/lib/utils';
  * | NewPatientDialog     | ✓          | ✗      | black/40 | max-w-md      |
  * | SkillCapturePrompt   | ✗          | ✗      | black/50 | max-w-lg      |
  *
- * TODO(#922): research-detail.tsx(入组弹窗)与 writing-editor/dialogs.tsx
- * 各有同类手写弹窗,归属其他 wave/agent,本 wave 不动。
+ * research-detail.tsx(入组弹窗,#921 wave)已换用;TODO(#922): writing-editor/dialogs.tsx
+ * 仍有同类手写弹窗,归属其他 wave/agent。
  */
 export interface ModalProps {
   open: boolean;

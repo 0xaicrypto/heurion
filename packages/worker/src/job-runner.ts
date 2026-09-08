@@ -7,7 +7,23 @@
 import type { PersistentJobStore } from './job-store.js'
 import type { RenderJobType } from '@heurion/contracts'
 
-const MAX_CONCURRENT_JOBS = parseInt(process.env.WORKER_MAX_CONCURRENT || '4', 10)
+const DEFAULT_MAX_CONCURRENT_JOBS = 4
+
+/**
+ * #928: WORKER_MAX_CONCURRENT 解析 clamp — 0/NaN/负数此前静默生效:
+ * whenSlotFree 的 `activeJobs < MAX` 对 0 恒假、对 NaN 恒假(比较恒 false),
+ * 作业全部进 jobQueue 永久排队且无任何日志。非法值 → warn + 回退默认 4。
+ */
+export function parseMaxConcurrentJobs(raw: string | undefined): number {
+  const value = Number.parseInt(raw ?? '', 10)
+  if (!Number.isFinite(value) || value <= 0) {
+    console.warn(`[JOB-RUNNER] WORKER_MAX_CONCURRENT=${JSON.stringify(raw ?? null)} is not a positive integer — falling back to ${DEFAULT_MAX_CONCURRENT_JOBS}`)
+    return DEFAULT_MAX_CONCURRENT_JOBS
+  }
+  return value
+}
+
+const MAX_CONCURRENT_JOBS = parseMaxConcurrentJobs(process.env.WORKER_MAX_CONCURRENT)
 let activeJobs = 0
 const jobQueue: Array<() => void> = []
 
@@ -30,12 +46,22 @@ function releaseSlot(): void {
 
 export type JobHandler = (payload: unknown) => Promise<unknown>
 
+const CALLBACK_TIMEOUT_MS = 30_000
+
+/** #928: callback_url 只接受 http/https — 此前任意字符串直接 fetch:
+ *  相对路径在 undici 下抛 TypeError 被静默吞掉,畸形 scheme 无意义出网。
+ *  校验不过 → 跳过 notify + warn 留痕;补 30s 超时避免挂死连接堆积。 */
 function notify(url: string | undefined, body: Record<string, unknown>): void {
   if (!url) return
+  if (!/^https?:\/\//i.test(url)) {
+    console.warn(`[JOB-RUNNER] callback_url skipped (must be http/https): ${url.slice(0, 200)}`)
+    return
+  }
   fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(CALLBACK_TIMEOUT_MS),
   }).catch(() => {})
 }
 

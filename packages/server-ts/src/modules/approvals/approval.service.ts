@@ -98,20 +98,22 @@ export async function createApprovalRequest(
  */
 export async function archiveStaleProposals(): Promise<number> {
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString()
-  const stale = await prisma.memoryProposal.findMany({
-    where: { status: 'pending', archivedAt: null, createdAt: { lt: sevenDaysAgo } },
+  // #928: N+1(findMany + 逐行 update)→ 单条 updateMany。归档条件与原
+  // 逐行判定等价:非 fact 一律归档;fact 仅 importance <= 2(非 fact 行的
+  // importance 判定不再参与,与原逻辑一致)。
+  const res = await prisma.memoryProposal.updateMany({
+    where: {
+      status: 'pending',
+      archivedAt: null,
+      createdAt: { lt: sevenDaysAgo },
+      OR: [
+        { kind: { not: 'fact' } },
+        { kind: 'fact', importance: { lte: 2 } },
+      ],
+    },
+    data: { archivedAt: new Date().toISOString() },
   })
-  let archived = 0
-  for (const p of stale) {
-    const autoArchive = p.kind !== 'fact' || (p.importance ?? 3) <= 2
-    if (!autoArchive) continue
-    await prisma.memoryProposal.update({
-      where: { id: p.id },
-      data: { archivedAt: new Date().toISOString() },
-    })
-    archived++
-  }
-  return archived
+  return res.count
 }
 
 /**
@@ -442,10 +444,16 @@ async function applyTargetUpdate(
       data.confirmedAt = now
       data.confirmedBy = actorId
     }
-    await prisma.medicalRecordEntry.update({
-      where: { id: targetId },
+    // #928/#794 纵深防御:target update 以 actor 为 owner 限定 — 审批写入
+    // 恒 owner-scoped(confirmApproval 无 admin bypass),targetId 即便被
+    // 篡改也跨不出本人数据。count=0 时按原 update 语义报"找不到"。
+    const updated = await prisma.medicalRecordEntry.updateMany({
+      where: { id: targetId, userId: actorId },
       data,
     })
+    if (updated.count === 0) {
+      throw new Error('MedicalRecordEntry not found or not owned by the approving user')
+    }
     return
   }
   if (targetType === 'MemoryProposal') {

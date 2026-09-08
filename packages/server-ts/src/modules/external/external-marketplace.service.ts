@@ -49,36 +49,67 @@ export async function getExternalCatalogPlugin(id: string) {
   }
 }
 
+/** Prisma 唯一键冲突(P2002)判定 — 与 files.service.ts 同款判定。 */
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as any).code === 'P2002'
+}
+
 async function ensureHeurionUser(externalAppId: string, externalUserId: string): Promise<string> {
   const existing = await prisma.externalUserMapping.findUnique({
     where: { externalAppId_externalUserId: { externalAppId, externalUserId } },
   })
   if (existing) return existing.heurionUserId
 
-  const id = `ext_${externalAppId.slice(0, 16)}_${externalUserId.slice(0, 32)}_${Date.now()}`
+  // #928: check-then-create 竞态修复 — 并发首次安装/调用时双方都会走到
+  // create,输家在 mapping 唯一键(externalAppId+externalUserId)上炸 P2002
+  // (裸错 500,且留下孤儿 user 行)。displayName 是 (appId,userId) 的
+  // 确定性唯一键 → user upsert 幂等收敛到同一行;mapping 冲突时重查一次
+  // 赢家行返回,不再抛错。
   const displayName = `ext:${externalAppId}:${externalUserId}`
   const now = new Date().toISOString()
 
-  await prisma.user.create({
-    data: {
-      id,
-      displayName,
-      role: 'user',
-      createdAt: now,
-      updatedAt: now,
-    },
-  })
+  let user
+  try {
+    user = await prisma.user.upsert({
+      where: { displayName },
+      update: {},
+      create: {
+        id: `ext_${externalAppId.slice(0, 16)}_${externalUserId.slice(0, 32)}_${Date.now()}`,
+        displayName,
+        role: 'user',
+        createdAt: now,
+        updatedAt: now,
+      },
+    })
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err
+    const winner = await prisma.externalUserMapping.findUnique({
+      where: { externalAppId_externalUserId: { externalAppId, externalUserId } },
+    })
+    if (winner) return winner.heurionUserId
+    throw err
+  }
 
-  await prisma.externalUserMapping.create({
-    data: {
-      externalAppId,
-      externalUserId,
-      heurionUserId: id,
-      createdAt: now,
-    },
-  })
+  try {
+    await prisma.externalUserMapping.create({
+      data: {
+        externalAppId,
+        externalUserId,
+        heurionUserId: user.id,
+        createdAt: now,
+      },
+    })
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err
+    // 并发赢家已建好映射 → 以赢家的 heurionUserId 为准。
+    const winner = await prisma.externalUserMapping.findUnique({
+      where: { externalAppId_externalUserId: { externalAppId, externalUserId } },
+    })
+    if (!winner) throw err
+    return winner.heurionUserId
+  }
 
-  return id
+  return user.id
 }
 
 function buildDefaultConfig(schema: Record<string, unknown> | undefined): Record<string, unknown> {

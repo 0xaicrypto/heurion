@@ -114,7 +114,6 @@ describe('SubmissionWorkbench (#362)', () => {
     fireEvent.click(screen.getByText('Prefill'));
     expect(await screen.findByText(/My Study/)).toBeTruthy();
   });
-});
 
   it('applies a template to the Write tab (creates a Doc with the skeleton) (#382)', async () => {
     const { api } = await import('@/lib/api');
@@ -176,3 +175,4 @@ describe('SubmissionWorkbench (#362)', () => {
       localStorage.removeItem('nexus.paper.link');
     }
   });
+});

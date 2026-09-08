@@ -494,7 +494,10 @@
     "conflictKeepMine": "保留我的版本",
     "conflictKeptMine": "已保留当前窗口的版本",
     "conflictLoadLatest": "载入最新",
-    "conflictLoadedLatest": "已载入服务端最新内容"
+    "conflictLoadedLatest": "已载入服务端最新内容",
+    "conflictKeepLocal": "已保留本地未保存修改 — 可选择「保留我的版本」或重新载入最新",
+    "aiChangesApplied": "已采纳 AI 修改：接受 {{a}} / 拒绝 {{r}}",
+    "uploadedAsReference": "已上传 {{name}} 并挂为参考材料"
   },
   "preview": {
     "open": "预览",

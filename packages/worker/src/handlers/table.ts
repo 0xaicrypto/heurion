@@ -21,7 +21,7 @@ export async function renderTable(payload: unknown) {
   }
   const input = p as unknown as TableContent
 
-  return renderPdf((doc) => {
+  return renderPdf((doc, hasCjk) => {
     doc.fontSize(20).text(input.title, { align: 'center' })
     doc.moveDown(1)
 
@@ -35,9 +35,12 @@ export async function renderTable(payload: unknown) {
       const cellHeight = isHeader ? rowHeight + 5 : rowHeight
       cells.forEach((cell, i) => {
         doc.rect(x, y, colWidth, cellHeight).stroke()
-        // #fix 2026-09: 'cjk' 单字体统一（applyCjkFont 已注册）——表头中文
-        // 不能用 Helvetica（CJK 全方块）。粗体视觉由字号/底纹弥补。
-        doc.font('cjk').fontSize(fontSize).text(cell, x + 2, y + 3, {
+        // #fix 2026-09: 'cjk' 单字体统一——表头中文不能用 Helvetica（CJK
+        // 全方块）。粗体视觉由字号/底纹弥补。
+        // #928: 条件使用 — 缺 CJK 字体的部署里 'cjk' 未注册,此前无条件
+        // doc.font('cjk') 让 render_table 整个必败;现在降级 Helvetica。
+        if (hasCjk) doc.font('cjk')
+        doc.fontSize(fontSize).text(cell, x + 2, y + 3, {
           width: colWidth - 4,
           align: 'left',
         })

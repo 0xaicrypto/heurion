@@ -98,6 +98,23 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   const onResolveRef = useRef(onDiffResolve);
   onResolveRef.current = onDiffResolve;
 
+  // #927: 选区上报 rAF 合帧(#797 气泡流同模式)— 拖动选区时
+  // onSelectionUpdate 高频触发,每次 setState 上游(writing-editor)整页
+  // 重渲染;改为最新值存 ref,每帧最多上报一次,卸载时取消挂起的帧。
+  const selRafRef = useRef<number | null>(null);
+  const latestSelTextRef = useRef('');
+  const reportSelection = useCallback((text: string) => {
+    latestSelTextRef.current = text;
+    if (selRafRef.current !== null) return;
+    selRafRef.current = requestAnimationFrame(() => {
+      selRafRef.current = null;
+      onSelRef.current?.(latestSelTextRef.current);
+    });
+  }, []);
+  useEffect(() => () => {
+    if (selRafRef.current !== null) { cancelAnimationFrame(selRafRef.current); selRafRef.current = null; }
+  }, []);
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -119,9 +136,9 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     onSelectionUpdate: ({ editor }) => {
       const sel = editor.state.selection;
       // #693: 非审阅模式下把选中文本上报给外部(选中即引用);审阅模式下
-      // 选中的是 diff 内容,不构成引用。
+      // 选中的是 diff 内容,不构成引用。#927: 上报走 rAF 合帧。
       if (reviewKeyRef.current === null) {
-        onSelRef.current?.(editor.state.doc.textBetween(sel.from, sel.to, '\n').trim());
+        reportSelection(editor.state.doc.textBetween(sel.from, sel.to, '\n').trim());
         return;
       }
       if (sel.empty) { setSelectedChange(null); return; }

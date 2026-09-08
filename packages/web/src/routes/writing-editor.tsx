@@ -16,6 +16,8 @@ import { sha1Hex } from '@/lib/hash';
 import { cn } from '@/lib/utils';
 // #837: AI 写回三路合并(审阅未决时的累计队列重放)。
 import { mergeThreeWay } from '@/lib/doc-merge';
+// #927: doc_updated rev 幂等防乱序(与 chat-reducer 同源判定)。
+import { shouldApplyDocRev } from '@/lib/chat-reducer';
 import { toSlides, type Slide } from '@/lib/deck';
 import type { DeckWire } from '@/lib/types';
 // #696: 状态机全部下沉 hooks — 路由只保留编排与布局。
@@ -114,6 +116,9 @@ export function WritingEditorPage() {
   // #882: 并发保存冲突 — 409(stale_base) 时记录待保存内容,横幅供用户选择
   // (载入最新/保留我的版本),绝不静默覆盖另一窗口的修改。
   const [saveConflict, setSaveConflict] = useState<{ title: string; body: string; deck?: unknown } | null>(null);
+  // #927: 「载入最新」确认审阅挂起的服务端最新内容 — handleDiffResolve 据此
+  // 分流(接受 = 原样采用服务端版本,不走常规落地保存路径)。
+  const conflictLoadRef = useRef<{ body: string; updatedAt: string } | null>(null);
 
   const markDirty = useCallback((nextBody: string, nextTitle: string) => {
     if (!docId) return;
@@ -138,14 +143,16 @@ export function WritingEditorPage() {
     // 暂停 autosave — 此时 serverBodyRef 已指向 AI 版本,自动保存会把审阅前
     // 的正文盖回服务端(覆盖 AI 写回)。不排下一次定时器;守卫解除后由
     // dirty 机制自然恢复(effect 依赖 diffReview)。
-    if (diffReview !== null || pendingWriteBackRef.current !== null) return;
+    // #927: 保存冲突横幅打开期间同样暂停 — 冲突未决时自动保存必然再 409,
+    // 由用户决策(载入最新/保留我的版本)后再恢复。
+    if (diffReview !== null || pendingWriteBackRef.current !== null || saveConflict !== null) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       void handleSave();
     }, 2500);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [body, title, docId, dirty, diffReview]);
+  }, [body, title, docId, dirty, diffReview, saveConflict]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -183,6 +190,8 @@ export function WritingEditorPage() {
   // §15.4 / #553: AI write-back 不再静默替换正文 — 进入审阅模式,用户
   // 逐条/全部接受或拒绝后由 onDiffResolve 落地。
   const appliedDocBody = useRef<string | null>(null);
+  // #927: 已应用的 doc_updated rev 基线(见下方消费 effect 的幂等防乱序)。
+  const appliedDocRevRef = useRef<number | undefined>(undefined);
   const diffPendingRef = useRef(false);
   useEffect(() => {
     diffPendingRef.current = diffReview !== null;
@@ -205,6 +214,8 @@ export function WritingEditorPage() {
       writeBackQueueRef.current = [];
       serverBodyRef.current = null;
       reviewResumeDoneRef.current = false;
+      // #927: 切文档同时复位写回 rev 基线 — 旧文档的 rev 不得拦截新文档首笔写回。
+      appliedDocRevRef.current = undefined;
       // #837-ux: 同轮合批评也要清(计时器一并撤销)。
       if (pendingWriteBackRef.current?.timer) clearTimeout(pendingWriteBackRef.current.timer);
       pendingWriteBackRef.current = null;
@@ -372,8 +383,11 @@ export function WritingEditorPage() {
 
   // #636 doc write-back diff 审阅 — 依赖 chatSession。
   // #837-ux: 同轮合批 — 写回到达只更新批次末值,turn 结束/兜底超时才进审阅。
+  // #927: rev 幂等防乱序 — 服务端写回带单调 rev,已应用 rev 之后的旧事件
+  // (SSE 重放/乱序)直接忽略;无 rev 的旧后端事件保持原行为。
   useEffect(() => {
     if (!docId || !chatSession?.lastDocBody) return;
+    if (!shouldApplyDocRev(appliedDocRevRef.current, chatSession.lastDocRev)) return;
     if (appliedDocBody.current === chatSession.lastDocBody) return;
     if (chatSession.lastDocBody === bodyRef.current) return;
     if (!pendingWriteBackRef.current) {
@@ -392,7 +406,8 @@ export function WritingEditorPage() {
     }
     appliedDocBody.current = chatSession.lastDocBody;
     serverBodyRef.current = chatSession.lastDocBody;
-  }, [chatSession?.lastDocBody, docId, flushPendingWriteBack]);
+    if (typeof chatSession.lastDocRev === 'number') appliedDocRevRef.current = chatSession.lastDocRev;
+  }, [chatSession?.lastDocBody, chatSession?.lastDocRev, docId, flushPendingWriteBack]);
 
   // #773: AI deck 写回（edit_deck / organize 落 deck）— 页级小改直接应用
   // + 服务端快照回滚（deck 页是天然结构化单元，整篇 markdown diff 反而难读）。
@@ -414,8 +429,30 @@ export function WritingEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ref 稳定(#696 hooks 下沉)
   }, [chatSession?.lastDocDeck, docId, deckJson]);
 
-  /** 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。#837: 结束后弹出队列中的下一轮写回。 */
+  /**
+   * 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。#837: 结束后弹出队列中的下一轮写回。
+   * #927: 冲突「载入最新」的确认审阅 — 接受 = 丢弃本地未保存修改、原样采用
+   * 服务端最新(无需再保存,服务端已是该版本);取消 = 保留本地,冲突横幅仍在。
+   */
   const handleDiffResolve = useCallback((result: { md: string; accepted: number; rejected: number; cancelled: boolean }) => {
+    if (conflictLoadRef.current) {
+      const fresh = conflictLoadRef.current;
+      conflictLoadRef.current = null;
+      setDiffReview(null);
+      if (result.cancelled) {
+        showNotice(t('writing.conflictKeepLocal', '已保留本地未保存修改 — 可选择「保留我的版本」或重新载入最新'), 4000);
+        return;
+      }
+      setBody(fresh.body);
+      lastSavedBody.current = fresh.body;
+      serverBodyRef.current = fresh.body;
+      setDoc((prev) => (prev ? { ...prev, body: fresh.body, updated_at: fresh.updatedAt } : prev));
+      dirtyRef.current = false;
+      setDirty(false);
+      setSaveConflict(null);
+      showNotice(t('writing.conflictLoadedLatest', '已载入服务端最新内容'), 3000);
+      return;
+    }
     setDiffReview(null);
     // #720: 用显式 cancelled 字段区分"放弃"，不再用空串推断 — 全文删空的
     // 接受结果(空 md)应落地为空正文,而不是被当成放弃。
@@ -426,14 +463,16 @@ export function WritingEditorPage() {
       // 用户正文(此前 DB 留着被拒绝的内容,用户下次保存/离开就污染)。
       if (docId && serverBodyRef.current !== null && serverBodyRef.current !== bodyRef.current) {
         const restoreBody = bodyRef.current;
-        saveDoc((doc?.title) ?? 'Untitled', restoreBody)
+        // #927: 落盘 title 用输入框当前值(state)而非 doc?.title — 本地
+        // 标题编辑未保存时,doc.title 是旧值,会把改过的标题盖回去。
+        saveDoc(title || 'Untitled', restoreBody)
           .then((updated) => {
             lastSavedBody.current = updated.body ?? restoreBody;
             serverBodyRef.current = updated.body ?? restoreBody;
           })
           .catch((err) => {
             if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {
-              setSaveConflict({ title: (doc?.title) ?? 'Untitled', body: restoreBody });
+              setSaveConflict({ title: title || 'Untitled', body: restoreBody });
               showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
             } else {
               showNotice(t('writing.reviewSaveFailed', 'AI 修改已应用，但保存失败 — 请点击 Save 重试'), 6000);
@@ -450,11 +489,13 @@ export function WritingEditorPage() {
       showNotice(t('writing.restoreApplied', '已恢复到「{{label}}」：接受 {{a}} / 拒绝 {{r}} 处差异', { label: restoreReview.label, a: result.accepted, r: result.rejected }));
       setRestoreReview(null);
     } else {
-      showNotice(`已采纳 AI 修改：接受 ${result.accepted} / 拒绝 ${result.rejected}`);
+      // #927: 硬编码文案 i18n 化(en/zh-CN 同步)。
+      showNotice(t('writing.aiChangesApplied', '已采纳 AI 修改：接受 {{a}} / 拒绝 {{r}}', { a: result.accepted, r: result.rejected }));
     }
     // #598/#711: 落地后自动保存到服务端 — 失败必须可见,不能静默吞掉。
     if (docId) {
-      saveDoc((doc?.title) ?? 'Untitled', result.md)
+      // #927: 同上 — 落盘 title 用 state 当前值。
+      saveDoc(title || 'Untitled', result.md)
         .then((updated) => {
           lastSavedBody.current = updated.body ?? result.md;
           serverBodyRef.current = updated.body ?? result.md;
@@ -463,7 +504,7 @@ export function WritingEditorPage() {
         })
         .catch((err) => {
           if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {
-            setSaveConflict({ title: (doc?.title) ?? 'Untitled', body: result.md });
+            setSaveConflict({ title: title || 'Untitled', body: result.md });
             showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
           } else {
             setError(err instanceof ApiError ? err.messageText : String(err));
@@ -475,7 +516,7 @@ export function WritingEditorPage() {
     // (bodyRef 同帧还未更新,显式传 result.md)。
     popNextWriteBack(result.md);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定,避免抖动
-  }, [docId, doc?.title, restoreReview, showNotice, popNextWriteBack]);
+  }, [docId, title, restoreReview, showNotice, popNextWriteBack]);
 
   // #402-merge: append a library figure to the document body.
   const handleInsertChart = (markdown: string) => {
@@ -607,12 +648,14 @@ export function WritingEditorPage() {
     // #726: 按 docId 取对应投稿草稿,不再所有文档共享 drafts[0]。
     api.listSubmissionDrafts().then((r) => {
       if (cancelled) return;
-      // #726: 按 docId 取对应投稿草稿,不再所有文档共享 drafts[0]。
+      // #726: 按 docId 取对应投稿草稿。
+      // #927: 不再回退 r.drafts[0] — 未命中即视为无关联草稿,避免其他
+      // 文档的期刊/模板串台到当前文档头部(消费点仅有 header 徽标,
+      // 空串安全)。
       const mine = docId ? r.drafts.find((d) => d.doc_id === docId) : undefined;
-      const d = mine ?? r.drafts[0];
-      if (d) {
-        setLinkedJournal(d.target_journal || '');
-        setLinkedTemplate(d.template_id || '');
+      if (mine) {
+        setLinkedJournal(mine.target_journal || '');
+        setLinkedTemplate(mine.template_id || '');
       }
     }).catch(() => {});
     api.getDoc(docId)
@@ -710,16 +753,26 @@ export function WritingEditorPage() {
     }
   };
 
+  // #927: 「载入最新」改为 diff 审阅确认 — 本地未保存内容(old)与服务端
+  // 最新(new)进 diffReview,用户看到将被丢弃的修改并逐条确认;不再直接
+  // setBody 静默丢弃本地编辑。取消则保留本地,冲突横幅仍在。
   const resolveConflictLoadLatest = async () => {
-    if (!docId) return;
+    if (!docId || !saveConflict) return;
     try {
       const fresh = await api.getDoc(docId);
-      setBody(fresh.body);
-      lastSavedBody.current = fresh.body;
-      serverBodyRef.current = fresh.body;
-      setDoc((prev) => prev ? { ...prev, body: fresh.body, updated_at: fresh.updated_at } : prev);
-      setSaveConflict(null);
-      showNotice(t('writing.conflictLoadedLatest', '已载入服务端最新内容'), 3000);
+      if (fresh.body === bodyRef.current) {
+        // 本地与服务端已一致 — 直接收口,无需审阅。
+        lastSavedBody.current = fresh.body;
+        serverBodyRef.current = fresh.body;
+        setDoc((prev) => (prev ? { ...prev, body: fresh.body, updated_at: fresh.updated_at } : prev));
+        setSaveConflict(null);
+        showNotice(t('writing.conflictLoadedLatest', '已载入服务端最新内容'), 3000);
+        return;
+      }
+      conflictLoadRef.current = { body: fresh.body, updatedAt: fresh.updated_at };
+      setDiffReview({ key: `conflict_${Date.now()}`, old: bodyRef.current, next: fresh.body });
+      // 审阅模式下 markdown diff 不可见 — deck 视图先切回文档视图(同写回路径)。
+      setViewMode((m) => (m === 'deck' ? 'document' : m));
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     }

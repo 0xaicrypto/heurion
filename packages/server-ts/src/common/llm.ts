@@ -23,14 +23,15 @@ export {
   LlmChatResult,
   LlmTruncatedError,
   fetchWithRetry,
-  DEEPSEEK_CHAT_MODEL,
-  DEEPSEEK_PREMIUM_MODEL,
   resolveTurnTimeoutMs,
   setLlmTelemetryService,
   getLlmGateway,
   setLlmGatewayForTest,
 } from './llm-gateway.js'
 export { ChatMessage } from './llm-gateway.js'
+// #925/#921: DEEPSEEK_CHAT_MODEL / DEEPSEEK_PREMIUM_MODEL 原是模块加载时
+// 快照的 const(运行时改 env 不生效),拆分时改为惰性读取的函数。
+export { resolveLegacyChatModel, resolveLegacyPremiumModel } from './llm-gateway.js'
 
 /**
  * Non-streaming call — used for simple completions and tool calls.

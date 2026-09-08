@@ -10,10 +10,12 @@ import { screenPatient, screenAllEnrolled } from './eligibility-screening.servic
 import { extractDocumentText } from '../../lib/document-extractor.js'
 import { sanitizeFilename, uploadsBaseDir } from '../../lib/upload-path.js'
 import { parseDbJson } from '../../common/llm-json.js' // #783
+import { makeLogger } from '../../common/logger.js'
 import fs from 'fs'
 import path from 'path'
 
 const service = new ResearchService()
+const log = makeLogger('research')
 
 // #923 类型收口:路由参数显式类型(替代 request.params as any)。
 interface StudyParams { studyId: string }
@@ -368,9 +370,13 @@ export async function researchRouter(app: FastifyInstance) {
     if (!(await getOwnedStudy(userId, studyId, reply))) return
     if (!text) return reply.status(400).send({ error: 'text required' })
     // Trigger AI extraction in background
+    // #928: `.catch(() => {})` 此前完全吞错 — 后台提取失败用户无感知且
+    // 无从排查(协议导入后 rules 恒空)。带 studyId + 错误摘要留痕。
     extractRulesFromProtocol(studyId, text, {
       telemetryContext: { userId, workspaceId: userId, action: 'research.extract_protocol' },
-    }).catch(() => {})
+    }).catch((err: Error) => {
+      log.warn('background protocol extraction failed', { studyId, reason: (err?.message || String(err)).slice(0, 200) })
+    })
     return service.importProtocol(studyId, text)
   })
 

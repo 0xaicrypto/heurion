@@ -584,10 +584,18 @@ export async function documentsRouter(app: FastifyInstance) {
     const { label, result } = request.body
     if (!label || !result) return reply.status(400).send({ error: 'label and result required' })
     const block = `\n\n## ${String(label)}\n\n${String(result).slice(0, 8000)}\n`
-    await prisma.doc.update({
-      where: { id: doc.id },
-      data: { body: doc.body + block, updatedAt: new Date().toISOString() },
+    // #927: 写回走 DocVersionWriter 单点 — 事务 + 同帧快照(label 'AI inject
+    // results')+ #904 乐观锁;并发修改时拒绝而非静默覆盖,与 edit_document
+    // 等工具路径同语义(此前裸 doc.update 无快照无并发保护)。
+    const written = await writeDocVersion({
+      userId: request.user!.userId,
+      docId: doc.id,
+      body: doc.body + block,
+      snapshotLabel: 'AI inject results',
     })
+    if (written.error) {
+      return reply.status(written.conflict ? 409 : 500).send({ error: written.error })
+    }
     return { ok: true }
   })
 

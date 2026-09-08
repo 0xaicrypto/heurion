@@ -97,6 +97,8 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatFileRef = useRef<HTMLInputElement>(null);
   const docUploadRef = useRef<HTMLInputElement>(null);
+  // #927: kbDedupNotice 4s 自动清空定时器 — 卸载/切文档时 clearTimeout。
+  const kbDedupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // #297: doc chat history lives on the server (event log under doc-<id>);
   // reload it on mount so a refresh doesn't lose the conversation. The
@@ -189,6 +191,8 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
       {
         addAttached: (entry) => setChatAttachedFiles((prev) => [...prev, entry]),
         setKbDedupNotice,
+        // #927: dedup 提示 4s 定时器登记 — 卸载/切文档时 clearTimeout。
+        onDedupTimer: (timer) => { kbDedupTimerRef.current = timer; },
         appendMessage,
       },
       {
@@ -303,10 +307,12 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   };
 
   // #792: 卸载/切换文档时清理未触发的轮询 timer(旧实现泄漏)。
+  // #927: kbDedupNotice 4s 定时器一并登记清理。
   useEffect(() => {
     return () => {
       for (const timer of pptxReloadTimers.current) clearTimeout(timer);
       pptxReloadTimers.current = [];
+      if (kbDedupTimerRef.current) { clearTimeout(kbDedupTimerRef.current); kbDedupTimerRef.current = null; }
     };
   }, [docId]);
 
@@ -348,7 +354,8 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
       input.setError('');
       // #714: 不再强制打开 chat 面板 + 预填英文 prompt — 导入是独立动作,
       // 用 toast 引导即可;用户想对话时自己点开。
-      input.onNotice(`已上传 ${f.name} 并挂为参考材料`);
+      // #927: 硬编码文案 i18n 化(en/zh-CN 同步)。
+      input.onNotice(t('writing.uploadedAsReference', '已上传 {{name}} 并挂为参考材料', { name: f.name }));
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       input.setError(err instanceof ApiError ? err.messageText : 'Upload failed');

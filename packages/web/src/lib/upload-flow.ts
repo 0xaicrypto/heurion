@@ -18,6 +18,12 @@ export interface UploadFlowHooks {
   addAttached: (entry: { name: string; fileId: string }) => void;
   /** #619 dedup 命中提示 setter(4s 后由本流程自动清空)。 */
   setKbDedupNotice: (text: string | null) => void;
+  /**
+   * #927: dedup 提示 4s 定时器登记 — 调用方(unmount/docId 变化清理)据此
+   * clearTimeout,防止卸载/切文档后定时器仍在 setState。缺省不登记(行为
+   * 与旧版一致,现有调用点逐步接入)。
+   */
+  onDedupTimer?: (timer: ReturnType<typeof setTimeout>) => void;
   /** 上传即入聊天记录(store action 注入;sessionId 为空则跳过)。 */
   appendMessage: (
     sessionId: string,
@@ -57,7 +63,9 @@ export async function runUploadAttachFlow(
       ? options.dedupNoticeText(name)
       : `📚 已在知识库,已加入上下文: ${name}`;
     hooks.setKbDedupNotice(text);
-    setTimeout(() => hooks.setKbDedupNotice(null), 4000);
+    // #927: 定时器交由调用方登记 — 卸载/切文档时 clearTimeout(不泄漏)。
+    const timer = setTimeout(() => hooks.setKbDedupNotice(null), 4000);
+    hooks.onDedupTimer?.(timer);
   }
 
   // #598/#fix: 上传即入聊天历史(与服务端 user_message 事件一致),刷新后仍可见。

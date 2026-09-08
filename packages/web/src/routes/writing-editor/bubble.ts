@@ -33,6 +33,62 @@ export interface PolishBubble {
   handleSendToChat: (instruction?: string) => void;
 }
 
+/** #927: 重锚查找的结构化最小形状 — 真实 ProseMirror Node 满足此接口
+ *  (测试可用极简替身,避免引入 prosemirror-model 直接依赖)。 */
+interface RelocatableNode {
+  isText: boolean;
+  text?: string;
+  isBlock: boolean;
+}
+interface RelocatableDoc {
+  content: { size: number };
+  nodesBetween: (from: number, to: number, callback: (node: RelocatableNode, pos: number) => void) => void;
+}
+
+/**
+ * #927: C3 漂移重锚 — 在全文档平面文本中查找 needle(与
+ * `doc.textBetween(0, size, '\n')` 同源:文本顺序拼接,块间补分隔符)。
+ * 唯一命中才返回其 ProseMirror 坐标(按文本节点绝对位置映射,跨块/行内
+ * 图片均安全);未命中或多命中返回 null(调用方维持拒绝行为,不猜)。
+ */
+export function findUniqueTextRange(doc: RelocatableDoc, needle: string): { from: number; to: number } | null {
+  if (!needle) return null;
+  let text = '';
+  let separated = true; // 与 Node.textBetween 相同的块分隔语义
+  const pieces: Array<{ textStart: number; textLen: number; posFrom: number }> = [];
+  doc.nodesBetween(0, doc.content.size, (node, pos) => {
+    if (node.isText) {
+      const t = node.text ?? '';
+      pieces.push({ textStart: text.length, textLen: t.length, posFrom: pos });
+      text += t;
+      separated = false;
+      return;
+    }
+    if (node.isBlock && !separated) {
+      text += '\n';
+      separated = true;
+    }
+  });
+  let count = 0;
+  let found: { from: number; to: number } | null = null;
+  let idx = text.indexOf(needle);
+  while (idx !== -1) {
+    count++;
+    if (count > 1) return null;
+    const end = idx + needle.length;
+    const startPiece = pieces.find((p) => p.textStart <= idx && idx < p.textStart + p.textLen);
+    const endPiece = pieces.find((p) => p.textStart < end && end <= p.textStart + p.textLen);
+    if (startPiece && endPiece) {
+      found = {
+        from: startPiece.posFrom + (idx - startPiece.textStart),
+        to: endPiece.posFrom + (end - endPiece.textStart),
+      };
+    }
+    idx = text.indexOf(needle, idx + 1);
+  }
+  return count === 1 ? found : null;
+}
+
 /**
  * #696 — Selection Bubble 润色状态机,从 writing-editor 路由下沉:
  * 选区快照(C3 漂移校验)/并发守卫(C2)/净化(C1)/多轮 refine。
@@ -171,10 +227,18 @@ export function usePolishBubble(input: {
       return;
     }
     // C3 漂移校验:流式期间用户编辑过该区域 → 拒绝盲替换,防错位
+    // #927: 漂移后先全文重锚 — snap.original 在全文档唯一命中时更新坐标
+    // 应用(修复假阳性:选区未变仅因前后编辑导致坐标位移的场景);未命中
+    // 或多命中维持现有拒绝行为+提示。
     const current = editor.state.doc.textBetween(snap.from, snap.to, '\n').trim();
     if (current !== snap.original) {
-      onNotice(t('writing.selectionChanged', '选区内容已变化,为避免错位替换未应用 — 请重新选中后重试'), 4000);
-      return;
+      const relocated = findUniqueTextRange(editor.state.doc, snap.original);
+      if (!relocated) {
+        onNotice(t('writing.selectionChanged', '选区内容已变化,为避免错位替换未应用 — 请重新选中后重试'), 4000);
+        return;
+      }
+      snap.from = relocated.from;
+      snap.to = relocated.to;
     }
     // C1 净化:元评论/javascript: 链接不得进入文档
     // #778: 应用的是面板内用户编辑后的最终版(未改即 AI 原文)
@@ -237,7 +301,11 @@ export function usePolishBubble(input: {
    *  #752-feedback: 到达性 console 标记 — 若用户端仍"无响应",console 有
    *  [bubble] 日志即可区分「handler 未触发」与「下游失败」。 */
   function handleBubbleAction(action: string, sel: { text: string; from: number; to: number }) {
-    console.info('[bubble] action=', action, 'selLen=', sel.text.length, 'from=', sel.from, 'to=', sel.to);
+    // #927: 到达性标记降为 dev-only — 生产 console 噪音清理(#752-feedback
+    // 的排查价值保留在开发环境)。
+    if (import.meta.env.DEV) {
+      console.info('[bubble] action=', action, 'selLen=', sel.text.length, 'from=', sel.from, 'to=', sel.to);
+    }
     setBubbleSel(sel);
     if (action === 'polish') {
       // ✨润色 = 气泡内输入自定义指令(可留空),⌘+Enter 或「开始」执行

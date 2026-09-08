@@ -40,6 +40,9 @@ export interface TurnIO {
 interface PresentEnv {
   io: TurnIO
   toolName: string
+  /** #927: doc_updated 版本标识 — rev 单调递增,updatedAt 为服务端写回时间(ISO)。 */
+  docRev?: number
+  docUpdatedAt?: string
 }
 
 interface ToolResultPresenter {
@@ -49,6 +52,15 @@ interface ToolResultPresenter {
 
 /** Tools whose output carries a full document body for the writing canvas. */
 const DOC_WRITE_TOOLS = new Set(['edit_document', 'insert_asset', 'edit_deck', 'fix_document_images'])
+
+// #927: doc_updated rev — 进程内单调递增计数器,SSE 消费方(writing-editor)
+// 据此幂等防乱序(rev 不大于已应用值的写回直接忽略)。
+let docWriteRev = 0
+
+// #927: doom-loop 拦截 — 同参三连调用不再照常执行,注入纠偏后由模型
+// 换策略或直接向用户说明。
+const DOOM_LOOP_CORRECTION = '该工具已以相同参数连续调用 3 次未产生新结果，请更换策略或直接向用户说明'
+const DOOM_INTERCEPTED_PREVIEW = '已拦截：相同参数重复调用'
 
 const PRESENTERS: ToolResultPresenter[] = [
   {
@@ -84,7 +96,7 @@ const PRESENTERS: ToolResultPresenter[] = [
     // doc_updated (body+deck 同帧) plus insert_asset's sidecar_file
     // (export 产物下载卡片 + knowledge_payload 进知识索引).
     matches: (t) => DOC_WRITE_TOOLS.has(t),
-    present: (parsed, { io, toolName }) => {
+    present: (parsed, { io, toolName, docRev, docUpdatedAt }) => {
       if (typeof parsed.body === 'string') {
         // #790: deck 产出端过 deckWireSchema — 形状损坏降级 null
         // (前端 as DeckWire 强转兜不住坏数据)。
@@ -99,6 +111,8 @@ const PRESENTERS: ToolResultPresenter[] = [
           body: parsed.body,
           summary: typeof parsed.summary === 'string' ? parsed.summary : '',
           ...(parsed.deck !== undefined ? { deck } : {}),
+          // #927: 版本标识 — 前端按 rev 幂等防乱序(rev ≤ 已应用值忽略)。
+          ...(docRev !== undefined ? { rev: docRev, updatedAt: docUpdatedAt } : {}),
         })
       }
       if (toolName === 'insert_asset') {
@@ -311,20 +325,29 @@ export async function runToolCallLoop(params: {
       const isSubagent = (t: string) => t === 'delegate'
       const subTaskOf = (c: ExecutableCall) => String((c.toolArgs as any)?.task || c.argsPreview)
 
-      /** #829: pre-execution lifecycle — pending/running 事件 + SSE 芯片 +
-       *  doom-loop 检查 + delegate 的 subagent_started。 */
-      const startCall = async (c: ExecutableCall) => {
+      /**
+       * #829: pre-execution lifecycle — pending/running 事件 + SSE 芯片 +
+       * doom-loop 检查 + delegate 的 subagent_started。
+       * #927: 返回 true = doom-loop 命中,调用方必须跳过执行(拦截优先于
+       * 一切后置逻辑,含检索类 best-effort 降级 — 后者在 finishCall 内,
+       * 被本次拦截自然短路)。
+       */
+      const startCall = async (c: ExecutableCall): Promise<boolean> => {
         await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
           tool: c.toolName, args: c.argsPreview, status: 'pending', seq: c.seq,
         })
         // Doom-loop guard: same tool + identical args 3x consecutively.
+        let doomBlocked = false
         if (detectDoomLoop(doomHistory, c.toolName, c.toolArgs)) {
+          doomBlocked = true
           log.warn('doom-loop detected', { tool: c.toolName, seq: c.seq })
           await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
             tool: c.toolName, args: c.argsPreview, status: 'warning', seq: c.seq,
           })
         }
         io.send({ type: 'tool_call', tool: c.toolName, args: c.toolArgs, seq: c.seq, round: toolRound })
+        // #927: 拦截 — 不发 running/子代理事件,不执行(调用方注入纠偏)。
+        if (doomBlocked) return true
         await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
           tool: c.toolName, args: c.argsPreview, status: 'running', seq: c.seq,
         })
@@ -335,6 +358,24 @@ export async function runToolCallLoop(params: {
           const scope = String((c.toolArgs as any)?.scope || 'global')
           io.send({ type: 'subagent_started', id: `sub_${c.seq}`, task: subTaskOf(c).slice(0, 200), scope })
         }
+        return false
+      }
+
+      /** #927: doom-loop 拦截收尾 — 芯片按 seq 闭合 + 事件留痕 + 纠偏消息入上下文。 */
+      const interceptDoomCall = async (c: ExecutableCall) => {
+        io.send({
+          type: 'tool_result',
+          seq: c.seq,
+          tool: c.toolName,
+          success: false,
+          elapsed_ms: 0,
+          preview: DOOM_INTERCEPTED_PREVIEW,
+          round: toolRound,
+        })
+        await appendToolEvent('tool_result', DOOM_LOOP_CORRECTION, {
+          toolCallId: c.seq, success: false, error: 'doom-loop intercepted',
+        })
+        messages.push({ role: 'user', content: DOOM_LOOP_CORRECTION })
       }
 
       /** #829: post-execution lifecycle — 状态机落盘 + tool_result 事件
@@ -365,9 +406,11 @@ export async function runToolCallLoop(params: {
         let toolResultText = result.output || 'Success'
         if (DOC_WRITE_TOOLS.has(c.toolName) && result.success) {
           const summary = typeof parsedOutput?.summary === 'string' ? parsedOutput.summary : ''
+          // #927: summary 缺失时固定占位 — 不再把原文前 500 字符切片注入
+          // 模型上下文(与 SSE tool_result preview 的「文档已写回」同语义)。
           toolResultText = summary
             ? `{ body: <updated>, summary: ${JSON.stringify(summary)} }`
-            : toolResultText.slice(0, 500)
+            : '文档已写回（无摘要）'
         }
         // #835: 检索类失败注入"尽最大努力"指引 — 失败不阻塞任务,禁止
         // 换参反复重试,基于已有上下文继续并如实标注未核实来源。
@@ -445,7 +488,15 @@ export async function runToolCallLoop(params: {
         // #789③: per-tool SSE 投影走 presenter 注册表 — 新媒体工具只需
         // 注册一个 presenter,不再往 loop 里加 if 分支。
         if (result.success && parsedOutput) {
-          const env: PresentEnv = { io, toolName: c.toolName }
+          // #927: doc_updated 版本标识 — rev 进程内单调递增,updatedAt 取
+          // 写回完成时刻(SSE 投影即写回后瞬间)。
+          const env: PresentEnv = {
+            io,
+            toolName: c.toolName,
+            ...(DOC_WRITE_TOOLS.has(c.toolName)
+              ? { docRev: ++docWriteRev, docUpdatedAt: new Date().toISOString() }
+              : {}),
+          }
           for (const presenter of PRESENTERS) {
             if (presenter.matches(c.toolName)) presenter.present(parsedOutput, env)
           }
@@ -475,9 +526,14 @@ export async function runToolCallLoop(params: {
         }
         const call = item.call
         if (!READ_ONLY_TOOLS.has(call.toolName)) {
-          await startCall(call)
-          const result = await toolRegistry.execute(call.toolName, call.toolArgs)
-          await finishCall(call, result)
+          const blocked = await startCall(call)
+          if (blocked) {
+            // #927: doom-loop 拦截 — 跳过执行,注入纠偏,下一轮换策略。
+            await interceptDoomCall(call)
+          } else {
+            const result = await toolRegistry.execute(call.toolName, call.toolArgs)
+            await finishCall(call, result)
+          }
           executedAny = true
           i++
           continue
@@ -491,9 +547,16 @@ export async function runToolCallLoop(params: {
             j++
           } else break
         }
-        for (const c of group) await startCall(c)
-        const results = await Promise.all(group.map((c) => toolRegistry.execute(c.toolName, c.toolArgs)))
-        for (let k = 0; k < group.length; k++) await finishCall(group[k], results[k])
+        // #927: doom 拦截优先 — 命中的调用不进执行批次,原 block 顺序注入纠偏。
+        const blockedFlags: boolean[] = []
+        for (const c of group) blockedFlags.push(await startCall(c))
+        const runnable = group.filter((_, idx) => !blockedFlags[idx])
+        const results = await Promise.all(runnable.map((c) => toolRegistry.execute(c.toolName, c.toolArgs)))
+        let runIdx = 0
+        for (let k = 0; k < group.length; k++) {
+          if (blockedFlags[k]) await interceptDoomCall(group[k])
+          else await finishCall(group[k], results[runIdx++])
+        }
         executedAny = true
         i = j
       }

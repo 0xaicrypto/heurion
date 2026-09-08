@@ -17,9 +17,8 @@ import { deepseekStream, LlmTruncatedError, resolveTurnTimeoutMs } from '../../c
 import { resolveActiveModel, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from '../shared/user-context.js'
-import { buildAttachmentParts, buildDocReferenceBlocks, findUploadFileByName, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, shouldInjectPatientRoster, isResearchIntent, docSessionFactGraphView, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from '../shared/chat-context.js'
-import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
-import { splitDocumentSections, resolveDocumentFocus } from '../../lib/doc-sections.js'
+import { buildAttachmentParts, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, shouldInjectPatientRoster, isResearchIntent, docSessionFactGraphView, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from '../shared/chat-context.js'
+import { estimateTokens } from '../../common/token-estimate.js'
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
 import { maybeJitSynthesize } from '../../modules/knowledge/jit-synthesis.service.js' // #815 JIT 兜底
 import { EmbeddingService } from '../../memory/embedding/embedding.service.js' // #731 向量路接线
@@ -37,8 +36,9 @@ import {
   upsertSessionRow,
 } from './history-budget.js'
 import type { TurnIntent } from './turn-intent.js'
-// #699: 文档场景规则外置 — 提示词工程不再混在对话主流程里。
-import { refUnresolvedHint, refSourceRule, documentRules, FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE } from './writing-prompts.js'
+// #921/#927: document_context builder 已拆至 doc-context-builder.ts —
+// 场景规则组装(FORMAT/CHART/REVISION/CITATION/CONFIRM)随 builder 迁移。
+import { buildDocumentContext } from './doc-context-builder.js'
 import { factContentHash } from '../../common/fact-render.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import type { SendEvent } from './chat-sse.js'
@@ -331,147 +331,22 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         // 此前 slice(4) 盲取,不匹配的会话按 general 处理:不注入文档段。
         const docId = parseDocSessionId(sid)
         if (!docId) return ''
-        const doc = await prisma.doc.findFirst({ where: { id: docId, userId } })
-        if (!doc) return ''
-        const refs = await prisma.docReference.findMany({
-          where: { userId, docId },
-          orderBy: { createdAt: 'asc' },
+        // #921/#927 拆分:builder 主体移至 doc-context-builder.ts
+        // (依赖显式入参)。required 段语义/段级回退(P1)保持不变。
+        // 焦点记忆:上一条 assistant 回复(模糊指令沿用上一回合焦点段)。
+        const lastAssistant = ctx.eventLog
+          .query({ sessionId: sid })
+          .reverse()
+          .find((e: any) => e.eventType === 'assistant_response')
+        return buildDocumentContext({
+          userId,
+          docId,
+          messageText: body.text,
+          rawSelection: body.selection,
+          editHint,
+          lastAssistantContent: lastAssistant?.content ?? null,
+          stage: input.stage,
         })
-        // #writing-cost: 参考材料按用户消息相关性裁剪 — 只注入命中的
-        // 文件(label/文件名关键词匹配),其余降级为"仅文件名"占位;避免
-        // 每次轮询都全量提取所有参考正文(多文件时成本与 TTFB 飙升)。
-        // 匹配失败时保留前 N 个(有正文优先),保证模型始终有上下文可用。
-        const allRefs: Array<{ id?: string; label?: string | null; snapshot?: string | null; refType?: string | null }> = refs || []
-        const msgText = String(body.text || '')
-        const maxFiles = CONTEXT_CONFIG.scene.docRefFilesMax
-        let refsToInject = allRefs
-        if (allRefs.length > maxFiles) {
-          const scored = allRefs.map((r) => {
-            const label = String(r.label || r.snapshot || '')
-            let score = 0
-            if (msgText && label && msgText.toLowerCase().includes(label.toLowerCase())) score = 10
-            else if (msgText && label) {
-              // 部分词命中(label 的子串出现在消息中)
-              const words = label.toLowerCase().split(/[\s._-]+/).filter((w) => w.length > 2)
-              if (words.some((w) => msgText.toLowerCase().includes(w))) score = 5
-            }
-            return { r, score }
-          })
-          scored.sort((a, b) => b.score - a.score)
-          const top = scored.slice(0, maxFiles)
-          const withBody = top.some((x) => x.score > 0)
-          if (withBody) {
-            // 命中时:命中文件全量 + 其余降级为文件名占位(列表可见,不注入正文)。
-            refsToInject = top.map((x) => x.r)
-            const placeholder = allRefs
-              .filter((r) => !top.some((t) => t.r.id === r.id))
-              .map((r) => ({ ...r, snapshot: `[未注入正文 — 参考文件 ${r.label || r.snapshot || r.id} 未命中当前问题]` }))
-            refsToInject = [...refsToInject, ...placeholder]
-          } else {
-            refsToInject = top.map((x) => x.r)
-          }
-        }
-        // #fix: 上传文件引用(PDF/DOCX/txt)按文件名定位上传并注入提取的
-        // 正文,LLM 才能真正读到稿件内容(此前只有文件名)。
-        const { blocks: refBlocks } = await buildDocReferenceBlocks(userId, refsToInject || [], {
-          // #fix: fileIndex 优先 + 上传目录文件名兜底 — 用户上传的文件
-          // 一定在磁盘上,正文注入不依赖 fileIndex 表是否有记录。
-          findFileByName: async (name) => findUploadFileByName(userId, name),
-          // #fix 2026-09: 逐文件子进度 — 参考材料提取可达分钟级。
-          onProgress: (i, total, label) => input.stage?.(`正在解析参考材料 ${i}/${total}：${String(label).slice(0, 40)}`),
-          // #833: 参考材料超预算时按用户指名章节定位注入。
-          userText: body.text,
-        })
-        const refBlock = refBlocks.join('\n\n')
-
-        // #fix: 文件类参考材料未解析出正文时(如上传未入库),模型手里只有
-        // 文件名,会误拿文件名调 ocr_image(只接受图片 file_id)而报错。
-        // 明确引导:读 PDF/DOCX 正文用 import_reference,不用 ocr_image。
-        // #699: 全部场景规则外置 writing-prompts.ts — 本文件只做组装。
-        const refHint = refUnresolvedHint(allRefs.length > 0, refBlock)
-        const refSource = refSourceRule(allRefs.length > 0)
-
-        // #fix: 长文档分步润色 — 混合分段:有 markdown 标题按章节切,
-        // 无标题按段落+token 长度兜底。文档超预算时按焦点段注入
-        // (用户"继续"/"编辑第 N 段"切换焦点),模型始终只编辑可见段。
-        const docText = String(doc.body || '')
-        const sections = splitDocumentSections(docText, CONTEXT_CONFIG.scene.docSectionTokens)
-        const docFits = estimateTokens(docText) <= CONTEXT_CONFIG.scene.docBodyTokens
-        const inventory = sections.sections.map((s) => `${s.index}. ${s.title || `第 ${s.index} 段`}`).join('\n')
-
-        // #693: 选中即引用 — 用户选中的文本(来自编辑器选区,与 body 同源)
-        // 优先成为编辑目标:注入独立上下文块,焦点段定位到包含它的段。
-        const selection = typeof body.selection === 'string' && body.selection.trim() ? body.selection.trim() : null
-        let selectionSection: { index: number; title: string } | null = null
-
-        let focus = 1
-        let focusTitle = ''
-        if (!docFits && sections.sections.length > 0) {
-          if (selection) {
-            const norm = (s: string) => s.replace(/\s+/g, ' ').trim()
-            const needle = norm(selection.slice(0, 200))
-            const idx = sections.sections.findIndex((s) => norm(s.content).includes(needle))
-            if (idx >= 0) {
-              focus = idx + 1
-              focusTitle = sections.sections[idx].title
-              selectionSection = { index: focus, title: focusTitle }
-            }
-          }
-          if (focusTitle === '') {
-            const lastAssistant = ctx.eventLog
-              .query({ sessionId: sid })
-              .reverse()
-              .find((e: any) => e.eventType === 'assistant_response')
-            focus = resolveDocumentFocus(body.text, sections.sections, lastAssistant?.content)
-            const focused = sections.sections[focus - 1]
-            if (focused) focusTitle = focused.title
-          }
-          // #868: 焦点段原文回填(未截断版 — bodyInjection 走 fitTextToTokens
-          // 可能截断,工具侧定位必须用完整原文)。
-          editHint.focusSectionContent = sections.sections[focus - 1]?.content ?? null
-          editHint.focusIndex = focus
-          editHint.focusTitle = focusTitle
-        }
-        // #868: 选中文本始终回填(短文档也受益于选区优先定位)。
-        editHint.selectionText = selection
-        const bodyInjection = docFits
-          ? fitTextToTokens(docText, CONTEXT_CONFIG.scene.docBodyTokens)
-          : fitTextToTokens(sections.sections[focus - 1]?.content || docText, CONTEXT_CONFIG.scene.docBodyTokens)
-
-        // #fix: 文档为空 + 参考材料有内容 — 分步润色:直接开始第一步,
-        // 调用 edit_document 的 old_text/new_text 把参考资料第一部分的
-        // 润色结果写回草稿(正文为空时工具会自动先导入唯一的参考材料),
-        // 然后询问用户是否继续下一部分。禁止停在"要不要先导入"。
-        const rules = documentRules({ docFits, selection, docBodyEmpty: !docText.trim(), selectionSection })
-
-        // #773: deck 资产上下文可见性 — deck 存在时注入 ## Current Deck
-        // (markdown 化表示,有界),模型才能执行"把第 3 页拆成两页"类请求
-        // (走 edit_deck,slide_index 定位);与 #777 上传 pptx 联动。
-        let deckBlock = ''
-        if (doc.deck) {
-          try {
-            const deckJson = JSON.parse(String(doc.deck)) as {
-              title?: string
-              slides?: Array<{ title?: string; content?: Array<{ type?: string; text?: string; style?: string; url?: string; caption?: string; ref?: string }> }>
-            }
-            const deckLines: string[] = []
-            if (deckJson.title) deckLines.push(`标题：${deckJson.title}`)
-            const slides = Array.isArray(deckJson.slides) ? deckJson.slides : []
-            slides.forEach((s, i) => {
-              deckLines.push(`${i + 1}. ${String(s?.title || '未命名页').slice(0, 200)}`)
-              for (const c of Array.isArray(s?.content) ? s.content : []) {
-                if (c?.type === 'image') deckLines.push(`   ![${String(c.caption || '')}](${String(c.url || c.ref || '')})`)
-                else if (typeof c?.text === 'string') deckLines.push(`   - ${c.text.slice(0, 200)}`)
-              }
-            })
-            const deckMd = fitTextToTokens(deckLines.join('\n'), CONTEXT_CONFIG.scene.docBodyTokens / 2)
-            deckBlock = `\n\n## Current Deck（AI 编排的 PPT 资产 — 与正文独立,编辑它不会改动正文）\n页码定位用于 edit_deck 的 slide_index(1-based):\n${deckMd}`
-          } catch {
-            deckBlock = ''
-          }
-        }
-
-        return `\n\n## Current Document\n标题：${doc.title}（正文约 ${Math.round(docText.replace(/\s+/g, ' ').length / 2)} 字）\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n${selection ? `## 用户选中文本\n[用户选中的文本 — 如需修改请从此处逐字复制 old_text(空格/换行差异会被自动忽略)。]\n${selection}\n\n` : ''}## Reference Materials\n${refBlock || '(none)'}${refHint}\n\n${refSource}\n\n${rules}\n\n${FORMAT_RULE}\n\n${CHART_RULE}\n\n${REVISION_RULE}\n\n${CITATION_RULE}\n\n${CONFIRM_RULE}${deckBlock}`
       },
     },
     {
