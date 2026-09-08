@@ -21,7 +21,7 @@ export declare const SCHEMA_VERSION = 1;
 export declare const imageBlockSchema: z.ZodObject<{
     type: z.ZodLiteral<"image">;
     /** "asset://name" (resolved from a configured asset dir) or an inline data/base64 string. */
-    ref: z.ZodString;
+    ref: z.ZodEffects<z.ZodString, string, string>;
     caption: z.ZodOptional<z.ZodString>;
     /** Inline base64 data (alternative to ref). */
     data: z.ZodOptional<z.ZodString>;
@@ -66,7 +66,7 @@ export declare const contentBlockSchema: z.ZodUnion<[z.ZodObject<{
 }>, z.ZodObject<{
     type: z.ZodLiteral<"image">;
     /** "asset://name" (resolved from a configured asset dir) or an inline data/base64 string. */
-    ref: z.ZodString;
+    ref: z.ZodEffects<z.ZodString, string, string>;
     caption: z.ZodOptional<z.ZodString>;
     /** Inline base64 data (alternative to ref). */
     data: z.ZodOptional<z.ZodString>;
@@ -99,7 +99,7 @@ export declare const presentationSlideSchema: z.ZodObject<{
     }>, z.ZodObject<{
         type: z.ZodLiteral<"image">;
         /** "asset://name" (resolved from a configured asset dir) or an inline data/base64 string. */
-        ref: z.ZodString;
+        ref: z.ZodEffects<z.ZodString, string, string>;
         caption: z.ZodOptional<z.ZodString>;
         /** Inline base64 data (alternative to ref). */
         data: z.ZodOptional<z.ZodString>;
@@ -163,7 +163,7 @@ export declare const presentationContentSchema: z.ZodObject<{
         }>, z.ZodObject<{
             type: z.ZodLiteral<"image">;
             /** "asset://name" (resolved from a configured asset dir) or an inline data/base64 string. */
-            ref: z.ZodString;
+            ref: z.ZodEffects<z.ZodString, string, string>;
             caption: z.ZodOptional<z.ZodString>;
             /** Inline base64 data (alternative to ref). */
             data: z.ZodOptional<z.ZodString>;
@@ -260,7 +260,7 @@ export declare const documentSectionSchema: z.ZodObject<{
     }>, z.ZodObject<{
         type: z.ZodLiteral<"image">;
         /** "asset://name" (resolved from a configured asset dir) or an inline data/base64 string. */
-        ref: z.ZodString;
+        ref: z.ZodEffects<z.ZodString, string, string>;
         caption: z.ZodOptional<z.ZodString>;
         /** Inline base64 data (alternative to ref). */
         data: z.ZodOptional<z.ZodString>;
@@ -321,7 +321,7 @@ export declare const documentContentSchema: z.ZodObject<{
         }>, z.ZodObject<{
             type: z.ZodLiteral<"image">;
             /** "asset://name" (resolved from a configured asset dir) or an inline data/base64 string. */
-            ref: z.ZodString;
+            ref: z.ZodEffects<z.ZodString, string, string>;
             caption: z.ZodOptional<z.ZodString>;
             /** Inline base64 data (alternative to ref). */
             data: z.ZodOptional<z.ZodString>;

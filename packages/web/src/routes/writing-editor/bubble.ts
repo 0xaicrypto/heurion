@@ -78,6 +78,10 @@ export function usePolishBubble(input: {
     }
     const controller = new AbortController();
     polishAbortRef.current = controller;
+    // #897: 流归属校验 — 本流是否仍是活跃流(abort 句柄未被新润色/取消替换)。
+    // 旧流被 C2 abort 后,其 catch/done 分支不得改写 bubbleRun(否则新润色
+    // 的运行态/结果被旧流静默清掉),也不得清掉新流的 abort 句柄。
+    const isOwner = () => polishAbortRef.current === controller;
     setBubbleRun({ action, status: 'running', stream: '', reasoning: '', error: null, startedAt: Date.now(), round: opts.round ?? 1 });
     polishRangeRef.current = { from, to, original: selection };
     // #797: rAF 合帧 — chunk 先积累,每帧最多 flush 一次。
@@ -86,6 +90,7 @@ export function usePolishBubble(input: {
     let rafId: number | null = null;
     const flush = () => {
       rafId = null;
+      if (!isOwner()) return; // #897: 归属校验 — 旧流的合帧不得覆盖新流内容
       setBubbleRun((prev) => (prev ? { ...prev, stream: streamText, reasoning: reasoningText } : prev));
     };
     const schedule = () => {
@@ -105,6 +110,8 @@ export function usePolishBubble(input: {
         if (chunk.done) break;
       }
       if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+      // #897: 归属校验 — 流结束的瞬间本流可能已被新润色/取消取代,不再改写状态。
+      if (!isOwner()) return;
       setBubbleRun((prev) => (prev ? { ...prev, stream: streamText, reasoning: reasoningText } : prev));
       if (!streamText.trim()) {
         const msg = reasoningText
@@ -115,6 +122,10 @@ export function usePolishBubble(input: {
       }
       setBubbleRun((prev) => (prev ? { ...prev, status: 'done' } : prev));
     } catch (err) {
+      // #897: abort 竞态归属校验 — 仅当本流仍是活跃流时才允许改 bubbleRun
+      // 状态(清空/报错);被新流取代的旧流直接 return,不 setBubbleRun(null)、
+      // 不报错 — 否则新润色的运行态/结果会被旧流的收尾覆盖而静默消失。
+      if (!isOwner()) return;
       // 用户主动取消 → 静默收起,不算错误
       if ((err as Error)?.name === 'AbortError') {
         setBubbleRun(null);
@@ -124,7 +135,9 @@ export function usePolishBubble(input: {
       setBubbleRun((prev) => (prev ? { ...prev, status: 'error', error: msg } : prev));
     } finally {
       if (rafId !== null) cancelAnimationFrame(rafId);
-      polishAbortRef.current = null;
+      // #897: 只清理属于本流的 abort 句柄 — 防止旧流 finally 清掉新流的
+      // cancel 能力(handleBubbleDiscard 将 abort 不到任何东西)。
+      if (polishAbortRef.current === controller) polishAbortRef.current = null;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定
   }, [docId, editorRef]);

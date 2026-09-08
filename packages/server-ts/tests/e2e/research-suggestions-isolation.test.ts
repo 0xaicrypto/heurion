@@ -72,3 +72,54 @@ describe('research suggestions isolation (#783)', () => {
     await (prisma as any).patientRecord.deleteMany({ where: { hash } })
   })
 })
+
+/**
+ * #899 验收 — /studies/:studyId/* 各端点此前缺归属校验（跨用户读写他人
+ * 研究的入组/筛查/观察/评估/协议规则），修复后非属主一律 404。
+ */
+describe('research study access isolation (#899)', () => {
+  test('B 访问 A 的 study 各端点一律 404', async () => {
+    const app = await getApp()
+    const a = await authHeader()
+    const b = await registerSecondUser()
+
+    const study = await app.inject({
+      method: 'POST', url: '/api/v1/research/studies',
+      headers: { ...a, 'content-type': 'application/json' },
+      payload: JSON.stringify({ display_name: 'A 独享研究', short_code: 'IDOR899' }),
+    })
+    const studyId = JSON.parse(study.payload).study_id ?? JSON.parse(study.payload).id
+    expect(studyId).toBeTruthy()
+
+    const cases: Array<{ method: 'GET' | 'POST' | 'DELETE'; url: string }> = [
+      { method: 'GET', url: `/api/v1/research/studies/${studyId}/roster` },
+      { method: 'POST', url: `/api/v1/research/studies/${studyId}/enrollments` },
+      { method: 'DELETE', url: `/api/v1/research/studies/${studyId}/enrollments/p_hash` },
+      { method: 'GET', url: `/api/v1/research/studies/${studyId}/eligibility` },
+      { method: 'POST', url: `/api/v1/research/studies/${studyId}/eligibility/rescan` },
+      { method: 'GET', url: `/api/v1/research/studies/${studyId}/observations` },
+      { method: 'GET', url: `/api/v1/research/studies/${studyId}/safety/stop-rule-status` },
+      { method: 'GET', url: `/api/v1/research/studies/${studyId}/assessments` },
+      { method: 'POST', url: `/api/v1/research/studies/${studyId}/assessments/visit1/complete` },
+      { method: 'POST', url: `/api/v1/research/studies/${studyId}/import-protocol` },
+      { method: 'POST', url: `/api/v1/research/studies/${studyId}/extract-rules` },
+      { method: 'GET', url: `/api/v1/research/studies/${studyId}/protocol-rules` },
+      { method: 'POST', url: `/api/v1/research/studies/${studyId}/protocol-rules/r1/confirm` },
+      { method: 'DELETE', url: `/api/v1/research/studies/${studyId}/protocol-rules/r1` },
+      { method: 'POST', url: `/api/v1/research/studies/${studyId}/screen/p_hash` },
+      { method: 'POST', url: `/api/v1/research/studies/${studyId}/screen-all` },
+    ]
+    for (const c of cases) {
+      const res = await app.inject({
+        method: c.method,
+        url: c.url,
+        headers: { authorization: `Bearer ${b.token}`, 'content-type': 'application/json' },
+        payload: c.method === 'POST' ? JSON.stringify({}) : undefined,
+      })
+      expect(res.statusCode, `${c.method} ${c.url}`).toBe(404)
+    }
+
+    // 清理
+    await (prisma as any).researchStudy.deleteMany({ where: { id: studyId } })
+  })
+})

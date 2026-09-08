@@ -42,7 +42,6 @@ export interface DocChat {
  */
 export function useDocChat<const TDoc extends { body: string; updated_at: string; title?: string }>(input: {
   docId: string | undefined;
-  title: string;
   /** 编辑框当前正文（ref — 发送前比对保存）。 */
   bodyRef: React.MutableRefObject<string>;
   /** 服务端已保存正文（ref — 内容有变化才先 PUT）。 */
@@ -50,6 +49,13 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   /** 本地未保存 dirty（pptx 轮询不覆盖本地编辑）。 */
   dirtyRef: React.MutableRefObject<boolean>;
   diffReview: unknown;
+  /**
+   * #896: 发送前预保存回调 — 由路由层提供(内部走 saveDoc 完整语义:
+   * 带 base_sha 并发保护 + 成功后同步 serverBodyRef/lastSavedBody)。
+   * 此前 hook 内裸 PUT 不带 base_sha,与其他窗口/审阅落地路径并发时必然
+   * 假 409。失败由本 hook 吞掉,不阻断发送。
+   */
+  presave: () => Promise<{ body?: string | null }>;
   chatSelection: string;
   setChatSelection: React.Dispatch<React.SetStateAction<string>>;
   setBody: React.Dispatch<React.SetStateAction<string>>;
@@ -66,7 +72,7 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   editorSelection: () => string;
 }): DocChat {
   const { t } = useTranslation();
-  const { docId, title, bodyRef, lastSavedBody, dirtyRef, diffReview } = input;
+  const { docId, bodyRef, lastSavedBody, dirtyRef, diffReview } = input;
 
   const [chatInput, setChatInput] = useState('');
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
@@ -141,9 +147,11 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
     // #fix: 发送前总是把编辑框当前内容保存到服务端(内容有变化才 PUT) —
     // 上下文注入的是数据库 body,必须与用户看到的编辑框一致;否则模型
     // 基于旧内容编辑写回,会覆盖/丢失用户未保存的本地修改。
+    // #896: 预保存统一走路由注入的 presave(saveDoc 语义 — 带 base_sha,
+    // 成功后同步 serverBodyRef/lastSavedBody),不再裸 PUT。
     if (lastSavedBody.current !== bodyRef.current) {
       try {
-        const saved = await api.updateDoc(docId, { title, body: bodyRef.current });
+        const saved = await input.presave();
         lastSavedBody.current = saved.body ?? bodyRef.current;
       } catch {
         // 保存失败仍继续发送 — 锚点不匹配时由服务端归一化兜底/报错引导。

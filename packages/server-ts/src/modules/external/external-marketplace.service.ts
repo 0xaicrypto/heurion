@@ -7,6 +7,8 @@ import {
 } from '../../common/settings-encryption'
 import { createExecutionPlaneService } from '../execution/execution-plane.service'
 import { buildInputSummary, recordPluginInvocation } from '../plugins/plugin-audit-log.service'
+import { resolveRenderJobType } from '../plugins/plugin-capability.service'
+import { renderJobType } from '@heurion/contracts'
 
 const executionService = createExecutionPlaneService()
 
@@ -243,7 +245,14 @@ export async function invokeExternalPlugin(input: ExternalInvokeInput) {
   const heurionUserId = await ensureHeurionUser(input.externalAppId, input.externalUserId)
   const tenantPrefix = `external_apps/${input.externalAppId}/users/${input.externalUserId}`
 
-  const jobType = `sidecar.${input.pluginId}.${input.tool}`
+  // #901: worker 只注册契约 render job type — 此前硬编码的
+  // `sidecar.<pluginId>.<tool>` 命名空间形式会命中 worker 的未知 type
+  // （先 enqueue 必败作业）。官方渲染插件经 resolveRenderJobType 映射；
+  // 非渲染工具（无映射）直接报错给调用方，绝不入队。
+  const jobType = resolveRenderJobType(input.pluginId, input.tool)
+  if (!renderJobType.safeParse(jobType).success) {
+    throw new Error(`tool '${input.tool}' of plugin '${input.pluginId}' is not a render tool — no worker job type mapping`)
+  }
   const startedAt = Date.now()
   const job = await executionService.enqueue({
     type: jobType,

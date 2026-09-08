@@ -1,4 +1,4 @@
-import { FastifyInstance } from 'fastify'
+import { FastifyInstance, FastifyReply } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import { generateResearchSummary } from './research-summary.service.js'
@@ -7,6 +7,7 @@ import { createStudySchema, enrollPatientSchema } from './research.dto'
 import { extractRulesFromProtocol, getPendingRules, confirmRule, rejectRule, getConfirmationStatus } from './protocol-extractor.js'
 import { screenPatient, screenAllEnrolled } from './eligibility-screening.service.js'
 import { extractDocumentText } from '../../lib/document-extractor.js'
+import { sanitizeFilename, uploadsBaseDir } from '../../lib/upload-path.js'
 import { parseDbJson } from '../../common/llm-json.js' // #783
 import fs from 'fs'
 import path from 'path'
@@ -56,6 +57,17 @@ async function getPatientMap(hashes: string[], userId: string): Promise<Map<stri
 export async function researchRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
+  // #899: study 归属守卫 — 所有 /studies/:studyId/* 端点必须先过这道闸
+  // （roster #253 同款 404 模式），否则跨用户可读/写他人研究数据。
+  async function getOwnedStudy(userId: string, studyId: string, reply: FastifyReply) {
+    const study = await service.getStudy(userId, studyId)
+    if (!study) {
+      reply.status(404).send({ error: 'Study not found' })
+      return null
+    }
+    return study
+  }
+
   app.get('/api/v1/research/studies', async (request) => {
     const studies = await service.listStudies(request.user!.userId)
     return studies.map(toStudy)
@@ -68,8 +80,10 @@ export async function researchRouter(app: FastifyInstance) {
   })
 
   app.get('/api/v1/research/studies/:studyId', async (request, reply) => {
-    const s = await service.getStudy(request.user!.userId, (request.params as any).studyId)
-    if (!s) return reply.status(404).send({ error: 'Study not found' })
+    const userId = request.user!.userId
+    const studyId = (request.params as any).studyId
+    const s = await getOwnedStudy(userId, studyId, reply)
+    if (!s) return
     return { ...toStudy(s), description: '' }
   })
 
@@ -79,8 +93,8 @@ export async function researchRouter(app: FastifyInstance) {
   app.get('/api/v1/research/studies/:studyId/summary', async (request, reply) => {
     const userId = request.user!.userId
     const studyId = (request.params as any).studyId
-    const study = await service.getStudy(userId, studyId)
-    if (!study) return reply.status(404).send({ error: 'Study not found' })
+    const study = await getOwnedStudy(userId, studyId, reply)
+    if (!study) return
 
     const [roster, rules, safety, assessments] = await Promise.all([
       service.getRoster(studyId).catch(() => []),
@@ -118,9 +132,9 @@ export async function researchRouter(app: FastifyInstance) {
     const userId = request.user!.userId
     // 边界审计（#253）: the study must exist and belong to the caller —
     // otherwise this leaked other users' rosters and returned 200 for
-    // nonexistent studies.
-    const study = await service.getStudy(userId, studyId)
-    if (!study) return reply.status(404).send({ error: 'Study not found' })
+    // nonexistent studies. #899: 统一走 getOwnedStudy 守卫。
+    const study = await getOwnedStudy(userId, studyId, reply)
+    if (!study) return
     const enrollments = await service.getRoster(studyId)
     const patientMap = await getPatientMap(enrollments.map((e: any) => e.patientHash), userId)
     return enrollments.map((e: any) => toRoster(e, patientMap.get(e.patientHash)))
@@ -129,24 +143,26 @@ export async function researchRouter(app: FastifyInstance) {
   app.get('/api/v1/research/studies/:studyId/enrollments', async (request, reply) => {
     const studyId = (request.params as any).studyId
     const userId = request.user!.userId
-    const study = await service.getStudy(userId, studyId)
-    if (!study) return reply.status(404).send({ error: 'Study not found' })
+    const study = await getOwnedStudy(userId, studyId, reply)
+    if (!study) return
     const enrollments = await service.getRoster(studyId)
     const patientMap = await getPatientMap(enrollments.map((e: any) => e.patientHash), userId)
     return enrollments.map((e: any) => toRoster(e, patientMap.get(e.patientHash)))
   })
 
-  app.post('/api/v1/research/studies/:studyId/enrollments', async (request) => {
-    const body = enrollPatientSchema.parse(request.body)
-    const studyId = (request.params as any).studyId
-    const e = await service.enroll(studyId, body.patient_hash, body.arm)
+  app.post('/api/v1/research/studies/:studyId/enrollments', async (request, reply) => {
     const userId = request.user!.userId
+    const studyId = (request.params as any).studyId
+    if (!(await getOwnedStudy(userId, studyId, reply))) return
+    const body = enrollPatientSchema.parse(request.body)
+    const e = await service.enroll(studyId, body.patient_hash, body.arm)
     const patientMap = await getPatientMap([e.patientHash], userId)
     return toRoster(e, patientMap.get(e.patientHash))
   })
 
-  app.delete('/api/v1/research/studies/:studyId/enrollments/:patientHash', async (request) => {
+  app.delete('/api/v1/research/studies/:studyId/enrollments/:patientHash', async (request, reply) => {
     const { studyId, patientHash } = request.params as any
+    if (!(await getOwnedStudy(request.user!.userId, studyId, reply))) return
     return { ok: await service.unenroll(studyId, patientHash) }
   })
 
@@ -173,9 +189,10 @@ export async function researchRouter(app: FastifyInstance) {
     return { enrollments: out }
   })
 
-  app.get('/api/v1/research/studies/:studyId/eligibility', async (request) => {
+  app.get('/api/v1/research/studies/:studyId/eligibility', async (request, reply) => {
     const studyId = (request.params as any).studyId
     const userId = request.user!.userId
+    if (!(await getOwnedStudy(userId, studyId, reply))) return
     const screenings = await service.getEligibility(studyId)
     const patientMap = await getPatientMap(screenings.map((s: any) => s.patientHash), userId)
     return { screenings: screenings.map((s: any) => toScreening(s, patientMap.get(s.patientHash))) }
@@ -186,8 +203,8 @@ export async function researchRouter(app: FastifyInstance) {
   app.get('/api/v1/research/studies/:studyId/progress', async (request, reply) => {
     const userId = request.user!.userId
     const studyId = (request.params as any).studyId
-    const study = await service.getStudy(userId, studyId)
-    if (!study) return reply.status(404).send({ error: 'Study not found' })
+    const study = await getOwnedStudy(userId, studyId, reply)
+    if (!study) return
 
     const [roster, rules, assessments, observations, screenings] = await Promise.all([
       service.getRoster(studyId).catch(() => []),
@@ -242,12 +259,16 @@ export async function researchRouter(app: FastifyInstance) {
     }
   })
 
-  app.post('/api/v1/research/studies/:studyId/eligibility/rescan', async (request) =>
-    service.rescanEligibility((request.params as any).studyId))
+  app.post('/api/v1/research/studies/:studyId/eligibility/rescan', async (request, reply) => {
+    const { studyId } = request.params as any
+    if (!(await getOwnedStudy(request.user!.userId, studyId, reply))) return
+    return service.rescanEligibility(studyId)
+  })
 
-  app.get('/api/v1/research/studies/:studyId/observations', async (request) => {
+  app.get('/api/v1/research/studies/:studyId/observations', async (request, reply) => {
     const studyId = (request.params as any).studyId
     const userId = request.user!.userId
+    if (!(await getOwnedStudy(userId, studyId, reply))) return
     const observations = await service.getObservations(studyId)
     const patientMap = await getPatientMap(observations.map((o: any) => o.patientHash), userId)
     return observations.map((o: any) => toObservation(o, patientMap.get(o.patientHash)))
@@ -257,6 +278,7 @@ export async function researchRouter(app: FastifyInstance) {
     const { studyId, obsId } = request.params as any
     const body = request.body as any
     const userId = request.user!.userId
+    if (!(await getOwnedStudy(userId, studyId, reply))) return
     const o = await service.confirmObservation(studyId, obsId, {
       confirmed: body.confirmed ?? true,
       grade: body.ae_grade ?? body.grade,
@@ -268,8 +290,10 @@ export async function researchRouter(app: FastifyInstance) {
     return toObservation(o, patientMap.get(o.patientHash))
   })
 
-  app.get('/api/v1/research/studies/:studyId/safety/stop-rule-status', async (request) => {
-    const status = await service.getSafetyStatus((request.params as any).studyId)
+  app.get('/api/v1/research/studies/:studyId/safety/stop-rule-status', async (request, reply) => {
+    const { studyId } = request.params as any
+    if (!(await getOwnedStudy(request.user!.userId, studyId, reply))) return
+    const status = await service.getSafetyStatus(studyId)
     return {
       triggered_rules: status.stopRules
         .filter(r => r.triggered)
@@ -277,9 +301,10 @@ export async function researchRouter(app: FastifyInstance) {
     }
   })
 
-  app.get('/api/v1/research/studies/:studyId/assessments', async (request) => {
+  app.get('/api/v1/research/studies/:studyId/assessments', async (request, reply) => {
     const studyId = (request.params as any).studyId
     const userId = request.user!.userId
+    if (!(await getOwnedStudy(userId, studyId, reply))) return
     const assessments = await service.getAssessments(studyId)
     const patientMap = await getPatientMap(assessments.map((a: any) => a.patientHash), userId)
 
@@ -313,8 +338,9 @@ export async function researchRouter(app: FastifyInstance) {
     }))
   })
 
-  app.post('/api/v1/research/studies/:studyId/assessments/:visitName/complete', async (request) => {
+  app.post('/api/v1/research/studies/:studyId/assessments/:visitName/complete', async (request, reply) => {
     const { studyId, visitName } = request.params as any
+    if (!(await getOwnedStudy(request.user!.userId, studyId, reply))) return
     return { ok: await service.completeAssessment(studyId, visitName) }
   })
 
@@ -323,6 +349,7 @@ export async function researchRouter(app: FastifyInstance) {
     const { studyId } = request.params as any
     const { text } = request.body as any
     const userId = request.user!.userId
+    if (!(await getOwnedStudy(userId, studyId, reply))) return
     if (!text) return reply.status(400).send({ error: 'text required' })
     // Trigger AI extraction in background
     extractRulesFromProtocol(studyId, text, {
@@ -336,6 +363,7 @@ export async function researchRouter(app: FastifyInstance) {
     const { studyId } = request.params as any
     const { text } = request.body as any
     const userId = request.user!.userId
+    if (!(await getOwnedStudy(userId, studyId, reply))) return
     if (!text) return reply.status(400).send({ error: 'text required' })
     const rules = await extractRulesFromProtocol(studyId, text, {
       telemetryContext: { userId, workspaceId: userId, action: 'research.extract_protocol' },
@@ -348,25 +376,29 @@ export async function researchRouter(app: FastifyInstance) {
   app.post('/api/v1/research/studies/:studyId/protocol-file', async (request, reply) => {
     const { studyId } = request.params as any
     const userId = request.user!.userId
+    if (!(await getOwnedStudy(userId, studyId, reply))) return
     const data = await request.file()
     if (!data) return reply.status(400).send({ error: 'No file uploaded' })
 
     const buffer = await data.toBuffer()
     if (buffer.length === 0) return reply.status(400).send({ error: 'Empty file' })
 
+    // #899: multipart filename 不可信 — 清洗后再落盘/拼接,防路径穿越
+    // （../../x.txt 原样 path.join 会写出 uploads 目录）。
+    const filename = sanitizeFilename(data.filename)
     const SUPPORTED_EXT = /\.(txt|md|csv|pdf|docx)$/i
-    if (!SUPPORTED_EXT.test(data.filename)) {
+    if (!SUPPORTED_EXT.test(filename)) {
       return reply.status(400).send({ error: 'Unsupported file type (supported: .txt/.md/.csv/.pdf/.docx)' })
     }
 
-    const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+    const dir = uploadsBaseDir(userId)
     fs.mkdirSync(dir, { recursive: true })
-    const fileId = `${Date.now()}_${data.filename}`
+    const fileId = `${Date.now()}_${filename}`
     fs.writeFileSync(path.join(dir, fileId), buffer)
 
     let text = ''
     try {
-      text = await extractDocumentText(buffer, data.filename, data.mimetype, { maxChars: 50000 })
+      text = await extractDocumentText(buffer, filename, data.mimetype, { maxChars: 50000 })
     } catch (err: any) {
       return reply.status(400).send({ error: `Text extraction failed: ${err.message}` })
     }
@@ -377,13 +409,13 @@ export async function researchRouter(app: FastifyInstance) {
     const rules = await extractRulesFromProtocol(studyId, text, {
       telemetryContext: { userId, workspaceId: userId, action: 'research.extract_protocol' },
       sourceJobId: fileId,
-      extractedFrom: data.filename,
+      extractedFrom: filename,
     })
 
     return {
       study_id: studyId,
       file_id: fileId,
-      file_name: data.filename,
+      file_name: filename,
       text_length: text.length,
       rules,
       status: await getConfirmationStatus(studyId),
@@ -391,8 +423,9 @@ export async function researchRouter(app: FastifyInstance) {
   })
 
   // List pending extracted rules
-  app.get('/api/v1/research/studies/:studyId/protocol-rules', async (request) => {
+  app.get('/api/v1/research/studies/:studyId/protocol-rules', async (request, reply) => {
     const { studyId } = request.params as any
+    if (!(await getOwnedStudy(request.user!.userId, studyId, reply))) return
     return {
       rules: await getPendingRules(studyId),
       status: await getConfirmationStatus(studyId),
@@ -402,6 +435,7 @@ export async function researchRouter(app: FastifyInstance) {
   // Doctor confirms a rule — schedule rules also generate StudyEvent + assessment
   app.post('/api/v1/research/studies/:studyId/protocol-rules/:ruleId/confirm', async (request, reply) => {
     const { studyId, ruleId } = request.params as any
+    if (!(await getOwnedStudy(request.user!.userId, studyId, reply))) return
     const rule = await confirmRule(studyId, ruleId)
     if (!rule) return reply.status(404).send({ error: 'Rule not found' })
     return { rule, status: await getConfirmationStatus(studyId) }
@@ -410,6 +444,7 @@ export async function researchRouter(app: FastifyInstance) {
   // Doctor rejects a rule
   app.delete('/api/v1/research/studies/:studyId/protocol-rules/:ruleId', async (request, reply) => {
     const { studyId, ruleId } = request.params as any
+    if (!(await getOwnedStudy(request.user!.userId, studyId, reply))) return
     const ok = await rejectRule(studyId, ruleId)
     return { rejected: ok, study_id: studyId, status: await getConfirmationStatus(studyId) }
   })
@@ -418,13 +453,15 @@ export async function researchRouter(app: FastifyInstance) {
   app.post('/api/v1/research/studies/:studyId/screen/:patientHash', async (request, reply) => {
     const { studyId, patientHash } = request.params as any
     const userId = request.user!.userId
+    if (!(await getOwnedStudy(userId, studyId, reply))) return
     const result = await screenPatient(studyId, patientHash, userId)
     return result
   })
 
-  app.post('/api/v1/research/studies/:studyId/screen-all', async (request) => {
+  app.post('/api/v1/research/studies/:studyId/screen-all', async (request, reply) => {
     const { studyId } = request.params as any
     const userId = request.user!.userId
+    if (!(await getOwnedStudy(userId, studyId, reply))) return
     const results = await screenAllEnrolled(studyId, userId)
     return { screenings: results }
   })

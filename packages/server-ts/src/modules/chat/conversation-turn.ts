@@ -17,7 +17,7 @@ import { deepseekStream, LlmTruncatedError, resolveTurnTimeoutMs } from '../../c
 import { resolveActiveModel, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from '../shared/user-context.js'
-import { buildAttachmentParts, buildDocReferenceBlocks, findUploadFileByName, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from '../shared/chat-context.js'
+import { buildAttachmentParts, buildDocReferenceBlocks, findUploadFileByName, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, shouldInjectPatientRoster, isResearchIntent, docSessionFactGraphView, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from '../shared/chat-context.js'
 import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
 import { splitDocumentSections, resolveDocumentFocus } from '../../lib/doc-sections.js'
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
@@ -127,29 +127,32 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   }
 
   // #636: roster 按场景裁剪 — patient scene(或患者相关意图)全量注入
-  // (含 age/sex/CC);general/chart/document 场景简化(仅姓名缩写),
-  // token 显著下降;'list my patients' 类确定性查询走下方独立路径。
+  // (含 age/sex/CC);'list my patients' 类确定性查询走下方独立路径。
+  // #894: 注入治理(事故根因③) — roster 仅在患者意图时注入;doc- 写作
+  // 会话与 general 闲聊不再无条件注入患者名单(哪怕简化版),空名单占位
+  // 「No patients registered yet.」同样仅患者意图时注入。
   const allPatients = await prisma.patientRecord.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
     take: CONTEXT_CONFIG.scene.rosterMax,
   })
-  const isPatientIntent = patientHash !== null || /患者|病人|patient|roster/i.test(body.text)
-  const fullRoster = isPatientIntent
-  if (allPatients.length > 0) {
-    const roster = fullRoster
-      ? allPatients.map((p: any) => {
-          const parts = [`- ${p.initials || 'Unknown'}`]
-          if (p.age) parts.push(`${p.age}y/o`)
-          if (p.sex) parts.push(p.sex)
-          if (p.chiefComplaint) parts.push(`CC: ${p.chiefComplaint}`)
-          return parts.join(', ')
-        }).join('\n')
-      : allPatients.map((p: any) => `- ${p.initials || 'Unknown'}`).join('\n')
-    send({ type: 'context_info', text: `## Patient Roster (${allPatients.length} patients)\n${roster}`, kind: 'patient_roster' })
-    fullMessage = `## Patient Roster (${allPatients.length} patients)\n${roster}\n\n` + fullMessage
-  } else {
-    fullMessage = '## Patient Roster\nNo patients registered yet.\n\n' + fullMessage
+  const isPatientIntent = shouldInjectPatientRoster({ sessionId: sid, patientHash, text: body.text })
+  if (isPatientIntent) {
+    // 患者意图回合全量注入(含 age/sex/CC);#894 后非患者意图回合不再注入
+    // (#636 的简化版名单随之退役)。
+    if (allPatients.length > 0) {
+      const roster = allPatients.map((p: any) => {
+        const parts = [`- ${p.initials || 'Unknown'}`]
+        if (p.age) parts.push(`${p.age}y/o`)
+        if (p.sex) parts.push(p.sex)
+        if (p.chiefComplaint) parts.push(`CC: ${p.chiefComplaint}`)
+        return parts.join(', ')
+      }).join('\n')
+      send({ type: 'context_info', text: `## Patient Roster (${allPatients.length} patients)\n${roster}`, kind: 'patient_roster' })
+      fullMessage = `## Patient Roster (${allPatients.length} patients)\n${roster}\n\n` + fullMessage
+    } else {
+      fullMessage = '## Patient Roster\nNo patients registered yet.\n\n' + fullMessage
+    }
   }
 
   // Deterministic handler for "list my patients" to avoid LLM hallucination
@@ -290,7 +293,11 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       key: 'study_context',
       fallbackOrder: 3,
       stageLabel: '正在载入研究上下文…',
-      build: async () => {
+      build: async (input) => {
+        // #894: 研究上下文按需注入 — 仅消息命中研究相关意图(研究/study/
+        // protocol/试验/随访/入组/方案)时注入;写作与闲聊轮次不再每轮
+        // 携带研究清单(上下文预算与注意力治理)。
+        if (!isResearchIntent(input.body.text)) return ''
         const studies = await prisma.researchStudy.findMany({
           where: { userId },
           take: CONTEXT_CONFIG.scene.studiesMax,
@@ -473,7 +480,11 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         patientHash: input.patientHash ?? undefined,
         embedding: new EmbeddingService(userId, ctx.memory),
         // #840: keyword 读路径切 graph — facts/summaries 从单一事实源取。
-        graph: ctx.memory?.graph,
+        // #894: doc- 会话(无患者上下文)换用过滤视图 — 患者范围的 fact
+        // 节点不进入知识注入(与 roster/layer3 治理同口径,JD 隐私分心)。
+        graph: sid.startsWith('doc-') && !patientHash
+          ? docSessionFactGraphView(ctx.memory?.graph)
+          : ctx.memory?.graph,
         // #756: 自动注入条目进入 citations 上报清单。
         onItems: (items) => items.forEach((it) => kbCitations.push({
           kind: it.kind,

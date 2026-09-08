@@ -5,6 +5,7 @@
  */
 import PDFDocument from 'pdfkit'
 import fs from 'fs'
+import path from 'path'
 import type { ContentBlock } from '@heurion/contracts'
 import { saveFile } from '../storage.js'
 
@@ -40,10 +41,20 @@ export async function resolveImage(block: ImageBlock): Promise<{ data: Buffer; c
   }
   if (block.ref.startsWith('asset://')) {
     const name = block.ref.slice('asset://'.length)
+    // #900: asset name is untrusted input — `../.env` would read arbitrary
+    // files from the worker FS. Reject separators/dot-segments/NUL up front,
+    // then basename + resolve-inside-dir as a second gate. Unresolvable →
+    // null (renders skip the block, same as a missing file).
+    const base = path.basename(name)
+    if (!base || base === '.' || base === '..' || base.includes('..') || /[/\\\0]/.test(name)) {
+      return null
+    }
     try {
       const { readFile } = await import('node:fs/promises')
-      const dir = process.env.ASSET_DIR || '/opt/heurion/assets'
-      const data = await readFile(`${dir}/${name}`)
+      const dir = path.resolve(process.env.ASSET_DIR || '/opt/heurion/assets')
+      const target = path.resolve(dir, base)
+      if (!target.startsWith(dir + path.sep)) return null
+      const data = await readFile(target)
       return { data, caption: block.caption }
     } catch {
       return null

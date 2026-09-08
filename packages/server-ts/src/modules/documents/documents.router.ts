@@ -191,9 +191,13 @@ export async function documentsRouter(app: FastifyInstance) {
     return { issues: lintDocument(String(doc.body || '')) }
   })
 
-  app.get('/api/v1/docs/:docId/snapshots', async (request) => {
+  app.get('/api/v1/docs/:docId/snapshots', async (request, reply) => {
+    const docId = (request.params as any).docId
+    // #898: 归属守卫 — 文档不属于调用者一律 404（此前任意用户可枚举他人快照）。
+    const doc = await prisma.doc.findFirst({ where: { id: docId, userId: request.user!.userId } })
+    if (!doc) return reply.status(404).send({ error: 'Not found' })
     const snaps = await prisma.docSnapshot.findMany({
-      where: { docId: (request.params as any).docId }, orderBy: { id: 'desc' },
+      where: { docId, userId: request.user!.userId }, orderBy: { id: 'desc' },
     })
     // #598: 返回字段与前端约定一致(snapshot_id / body_preview),此前
     // id/body 不匹配导致 History 面板渲染 undefined、点击无反应。
@@ -225,7 +229,10 @@ export async function documentsRouter(app: FastifyInstance) {
   // #764: 快照全文 — Restore 前先与当前版本做 diff 审阅,确认后才 apply。
   app.get('/api/v1/docs/:docId/snapshots/:snapId', async (request, reply) => {
     const { docId, snapId } = request.params as any
-    const snap = await prisma.docSnapshot.findFirst({ where: { id: Number(snapId), docId } })
+    // #898: 归属守卫 — doc 归属 + 快照带 userId 双重过滤,防跨用户读快照全文。
+    const doc = await prisma.doc.findFirst({ where: { id: docId, userId: request.user!.userId } })
+    if (!doc) return reply.status(404).send({ error: 'Not found' })
+    const snap = await prisma.docSnapshot.findFirst({ where: { id: Number(snapId), docId, userId: request.user!.userId } })
     if (!snap) return reply.status(404).send({ error: 'Not found' })
     // #773: 同帧返回 deck — 恢复审阅可见,恢复时 body+deck 一致回滚。
     return { id: String(snap.id), created_at: snap.createdAt, label: snap.label || '保存版本', body: refreshFileUrls(snap.body || '', request.user!.userId), deck: refreshDeckUrls(parseDeck(snap.deck), request.user!.userId) }
@@ -233,8 +240,23 @@ export async function documentsRouter(app: FastifyInstance) {
 
   app.post('/api/v1/docs/:docId/snapshots/:snapId/restore', async (request, reply) => {
     const { docId, snapId } = request.params as any
-    const snap = await prisma.docSnapshot.findFirst({ where: { id: Number(snapId), docId } })
+    const userId = request.user!.userId
+    // #898: 归属守卫 — doc 与快照都必须属于调用者,否则可篡改他人文档。
+    const doc = await prisma.doc.findFirst({ where: { id: docId, userId } })
+    if (!doc) return reply.status(404).send({ error: 'Not found' })
+    const snap = await prisma.docSnapshot.findFirst({ where: { id: Number(snapId), docId, userId } })
     if (!snap) return reply.status(404).send({ error: 'Not found' })
+    // #898: 恢复前先把当前 body+deck 落一条快照 — 当前态可再撤销,不被永久覆盖。
+    await prisma.docSnapshot.create({
+      data: {
+        docId,
+        userId,
+        body: doc.body,
+        deck: doc.deck ?? null,
+        label: '恢复前版本',
+        createdAt: new Date().toISOString(),
+      },
+    })
     // #773: body+deck 一致回滚（deck 未快照的历史行恢复为 null = 无 deck）。
     await prisma.doc.update({ where: { id: docId }, data: { body: snap.body, deck: snap.deck ?? null, updatedAt: new Date().toISOString() } })
     return { restored: true }

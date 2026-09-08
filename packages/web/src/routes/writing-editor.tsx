@@ -134,13 +134,18 @@ export function WritingEditorPage() {
 
   useEffect(() => {
     if (!docId || doc === null || !dirty) return;
+    // #895: 审阅未决(diffReview)或 AI 写回批次待冲刷(pendingWriteBack)时
+    // 暂停 autosave — 此时 serverBodyRef 已指向 AI 版本,自动保存会把审阅前
+    // 的正文盖回服务端(覆盖 AI 写回)。不排下一次定时器;守卫解除后由
+    // dirty 机制自然恢复(effect 依赖 diffReview)。
+    if (diffReview !== null || pendingWriteBackRef.current !== null) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       void handleSave();
     }, 2500);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [body, title, docId, dirty]);
+  }, [body, title, docId, dirty, diffReview]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -204,6 +209,11 @@ export function WritingEditorPage() {
       if (pendingWriteBackRef.current?.timer) clearTimeout(pendingWriteBackRef.current.timer);
       pendingWriteBackRef.current = null;
       setQueuedRounds(0);
+      // #903: 切文档同时清保存基线与 dirty — 旧文档的 body/base 不得跨文档
+      // 参与新文档的 dirty 判断(旧响应晚到时不再误标/误存)。
+      lastSavedBody.current = null;
+      dirtyRef.current = false;
+      setDirty(false);
     }
     if (doc && serverBodyRef.current === null) serverBodyRef.current = doc.body;
   }, [doc, docId]);
@@ -214,7 +224,10 @@ export function WritingEditorPage() {
   useEffect(() => {
     if (!docId || !doc || reviewResumeDoneRef.current) return;
     reviewResumeDoneRef.current = true;
+    // #903: stale-response 守卫 — 切文档后晚到的快照探测不得给新文档恢复旧审阅。
+    let cancelled = false;
     api.getDocSnapshots(docId).then(async ({ snapshots }) => {
+      if (cancelled) return;
       if (snapshots.length < 2) return;
       // 服务端按 id desc 返回 — [0] 最新,[1] 上一条。
       const last = snapshots[0];
@@ -225,10 +238,39 @@ export function WritingEditorPage() {
         api.getSnapshotBody(docId, last.snapshot_id),
         api.getSnapshotBody(docId, prev.snapshot_id),
       ]);
+      if (cancelled) return;
       if (lastFull.body !== doc.body) return;
       setDiffReview({ key: `resume_${Date.now()}`, old: prevFull.body, next: lastFull.body });
     }).catch(() => { /* 恢复失败不打扰 — 行为与旧版一致 */ });
+    // #903: cleanup 丢弃在途响应(切文档后晚到的快照探测不得给新文档恢复旧
+    // 审阅);同时复位一次性探测标记 — StrictMode 首次挂载即被 cleanup 丢弃,
+    // 不复位会让恢复探测在 dev 下永远缺席。误恢复由 label('AI edit')条件兜住。
+    return () => { cancelled = true; reviewResumeDoneRef.current = false; };
   }, [doc, docId]);
+
+  // #882: 带 base_sha 的保存(服务端并发保护)— 指纹取服务端视角正文
+  // (serverBodyRef),409 → 冲突横幅。force 跳过(「保留我的版本」)。
+  // #896: 前移到 useDocChat 之前 — doc-chat 发送前预保存复用同一语义。
+  const saveDoc = useCallback(async (title: string, body: string, opts: { deck?: unknown; force?: boolean } = {}) => {
+    const base = serverBodyRef.current;
+    const base_sha = !opts.force && base !== null ? await sha1Hex(base) : undefined;
+    return api.updateDoc(docId!, {
+      title, body,
+      ...(opts.deck !== undefined ? { deck: opts.deck } : {}),
+      ...(base_sha ? { base_sha } : {}),
+      ...(opts.force ? { force: true } : {}),
+    });
+  }, [docId]);
+
+  // #896: doc-chat 发送前预保存 — 复用 saveDoc 完整语义(带 base_sha 并发
+  // 保护),成功后同步服务端基线(serverBodyRef/lastSavedBody);此前裸 PUT
+  // 不带 base_sha,多窗口/审阅场景下必然假 409。失败由 hook 侧吞掉(不阻断发送)。
+  const presaveForChat = useCallback(async () => {
+    const updated = await saveDoc(title, bodyRef.current);
+    lastSavedBody.current = updated.body ?? bodyRef.current;
+    serverBodyRef.current = updated.body ?? bodyRef.current;
+    return updated;
+  }, [saveDoc, title]);
 
   /** 弹出下一轮写回:以「用户当前正文」为新基线做三路合并重放;冲突则丢弃并明示。 */
   const popNextWriteBack = useCallback((currentMd: string) => {
@@ -252,11 +294,12 @@ export function WritingEditorPage() {
   const polishEditorRef = useRef<Editor | null>(null);
   const chat = useDocChat<DocDetail>({
     docId,
-    title,
     bodyRef,
     lastSavedBody,
     dirtyRef,
     diffReview,
+    // #896: 预保存走 saveDoc 完整语义(base_sha + 服务端基线同步)。
+    presave: presaveForChat,
     chatSelection,
     setChatSelection,
     setBody,
@@ -548,11 +591,17 @@ export function WritingEditorPage() {
 
   useEffect(() => {
     if (!docId) return;
+    // #903: stale-response 守卫 — 切文档后,上一个 docId 的晚到响应不得覆盖
+    // 新文档状态(cancelled 由 cleanup 置位,effect 闭包内的 docId 即本次请求目标)。
+    let cancelled = false;
     setLoading(true);
     setError(null);
+    // #903: 立即清空旧文档 — 阻断旧 body/title 参与新文档的 dirty/autosave 判断。
+    setDoc(null);
     // #382/#726: linked submission state (target journal / applied template).
     // #726: 按 docId 取对应投稿草稿,不再所有文档共享 drafts[0]。
     api.listSubmissionDrafts().then((r) => {
+      if (cancelled) return;
       // #726: 按 docId 取对应投稿草稿,不再所有文档共享 drafts[0]。
       const mine = docId ? r.drafts.find((d) => d.doc_id === docId) : undefined;
       const d = mine ?? r.drafts[0];
@@ -563,6 +612,7 @@ export function WritingEditorPage() {
     }).catch(() => {});
     api.getDoc(docId)
       .then((d) => {
+        if (cancelled) return;
         setDoc(d);
         setTitle(d.title);
         setBody(d.body);
@@ -574,8 +624,15 @@ export function WritingEditorPage() {
         setStudyId(d.study_id || '');
         setStudyName(d.study_name || '');
       })
-      .catch((err) => setError(err instanceof ApiError ? err.messageText : String(err)))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof ApiError ? err.messageText : String(err));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ref 稳定(#696 hooks 下沉)
   }, [docId]);
 
@@ -594,21 +651,12 @@ export function WritingEditorPage() {
     if (next) loadSnapshots();
   };
 
-  // #882: 带 base_sha 的保存(服务端并发保护)— 指纹取服务端视角正文
-  // (serverBodyRef),409 → 冲突横幅。force 跳过(「保留我的版本」)。
-  const saveDoc = useCallback(async (title: string, body: string, opts: { deck?: unknown; force?: boolean } = {}) => {
-    const base = serverBodyRef.current;
-    const base_sha = !opts.force && base !== null ? await sha1Hex(base) : undefined;
-    return api.updateDoc(docId!, {
-      title, body,
-      ...(opts.deck !== undefined ? { deck: opts.deck } : {}),
-      ...(base_sha ? { base_sha } : {}),
-      ...(opts.force ? { force: true } : {}),
-    });
-  }, [docId]);
-
   const handleSave = async () => {
     if (!docId) return;
+    // #895: 审阅未决或写回批次待冲刷时禁止保存 — 防止把审阅前的正文盖回
+    // 服务端(覆盖 AI 写回版本)。接受/放弃落地路径(handleDiffResolve)直连
+    // saveDoc,不经过本守卫,落地不受影响。
+    if (diffReview !== null || pendingWriteBackRef.current !== null) return;
     setSaving(true);
     setError(null);
     try {

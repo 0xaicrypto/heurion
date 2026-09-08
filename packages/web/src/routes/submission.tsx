@@ -27,7 +27,10 @@ export function SubmissionWorkbench({ embedded = false }: { embedded?: boolean }
   const persist = useCallback(async (patch: Partial<SubmissionDraft>) => {
     if (!title.trim()) return;
     try {
+      // #902: 载荷带上当前关联文档 — 服务端按 docId 隔离草稿（#726），
+      // 缺 doc_id 会错误命中「该状态最新一条」的旧草稿。
       const res = await api.saveSubmissionDraft({
+        doc_id: getPaperLink()?.docId,
         article_title: title,
         abstract,
         keywords,

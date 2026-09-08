@@ -19,8 +19,16 @@ describe('Research 边界', () => {
   })
   test('import protocol with empty text rejected', async () => {
     const app = await getApp()
+    // #899: import-protocol 先过归属守卫 — 不存在的 study 现在返回 404,
+    // 空 text 的 400 语义用属主自己的 study 验证。
+    const s = await app.inject({
+      method: 'POST', url: '/api/v1/research/studies',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { display_name: 'Edge Protocol', short_code: 'EP01' },
+    })
+    const sid = JSON.parse(s.payload).study_id
     const res = await app.inject({
-      method: 'POST', url: '/api/v1/research/studies/test/import-protocol',
+      method: 'POST', url: `/api/v1/research/studies/${sid}/import-protocol`,
       headers: { ...await authHeader(), 'content-type': 'application/json' },
       payload: { text: '' },
     })
