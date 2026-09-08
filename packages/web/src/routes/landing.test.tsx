@@ -18,7 +18,8 @@ describe('LandingPage', () => {
     expect(screen.getByRole('heading', { name: /clinical & medical partners/i })).toBeInTheDocument();
     expect(screen.getAllByText(/cloudflare/i).length).toBeGreaterThan(0);
     expect(screen.getByAltText(/reactome/i)).toBeInTheDocument();
-    expect(screen.getByAltText(/anhui provincial hospital|安徽省立医院/i)).toBeInTheDocument();
+    expect(screen.getByAltText(/openalex/i)).toBeInTheDocument();
+    expect(screen.queryByAltText(/anhui provincial hospital|安徽省立医院/i)).not.toBeInTheDocument();
     expect(screen.getAllByText(/built on cloudflare workers/i).length).toBeGreaterThan(0);
 
     const nav = screen.getByTestId('marketing-nav');

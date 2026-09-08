@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="340" height="96" viewBox="0 0 340 96" role="img" aria-label="OpenAlex">
+  <!-- OpenAlex partner mark:六边形知识图谱隐喻 + 字标(本地绘制,非官方资产) -->
+  <g fill="none">
+    <path d="M48 10 L79 28 V64 L48 82 L17 64 V28 Z" stroke="#1558d6" stroke-width="7" stroke-linejoin="round"/>
+    <path d="M48 30 L61 37.5 V52.5 L48 60 L35 52.5 V37.5 Z" fill="#f7b32b"/>
+  </g>
+  <text x="98" y="61" font-family="'Inter','Segoe UI',-apple-system,'PingFang SC',sans-serif" font-size="42" font-weight="700" letter-spacing="-1" fill="#1f2937">OpenAlex</text>
+</svg>

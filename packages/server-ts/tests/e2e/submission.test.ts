@@ -9,13 +9,16 @@ import prisma from '../../src/common/prisma.js'
 
 describe('submission workflow (#362)', () => {
   beforeAll(async () => {
+    // #852: e2e 保持封闭 — 关闭 OpenAlex/DOAJ 动态富化,全部回落 seed 快照。
+    process.env.JOURNAL_DYNAMIC_DATA = 'off'
     await (prisma as any).submissionDraft.deleteMany({})
   })
   afterAll(async () => {
+    delete process.env.JOURNAL_DYNAMIC_DATA
     await (prisma as any).submissionDraft.deleteMany({})
   })
 
-  test('recommend-journals returns top journals for an NSCLC abstract', async () => {
+  test('recommend-journals returns tiered recommendations (#848/#850)', async () => {
     const app = await getApp()
     const res = await app.inject({
       method: 'POST', url: '/api/v1/submission/recommend-journals',
@@ -23,22 +26,70 @@ describe('submission workflow (#362)', () => {
       payload: JSON.stringify({
         title: 'EGFR-mutant non-small cell lung cancer treated with immune checkpoint inhibitors',
         abstract: 'Retrospective cohort of patients with EGFR mutation and NSCLC receiving immunotherapy; overall survival and progression-free survival analyzed.',
+        article_type: 'real_world',
+        priority: 'impact',
       }),
     })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.payload)
+    expect(body.engine).toBe('selection-v2')
+    // 三档梯度:匹配档 2-3 本,每本带结构化 breakdown(D4)
+    expect(body.tiers.match.length).toBeGreaterThanOrEqual(2)
+    expect(body.tiers.match.length).toBeLessThanOrEqual(3)
+    const top = body.tiers.match[0]
+    expect(top.journal.name).toBeTruthy()
+    expect(top.journal.metrics.impact_factor.value).toBeGreaterThan(0)
+    expect(top.journal.metrics.acceptance_rate.value).toBeGreaterThan(0)
+    expect(top.journal.metrics.review_weeks_median.value).toBeGreaterThan(0)
+    expect(top.journal.metrics.cas_zone.value).toBeTruthy()
+    expect(top.breakdown.length).toBeGreaterThan(0)
+    expect(top.breakdown.some((b: any) => b.dimension === 'scope' && b.evidence)).toBe(true)
+    // 肺癌关键词刊应出现在推荐档位中
+    const ids = [...body.tiers.reach, ...body.tiers.match, ...body.tiers.safety].map((r: any) => r.journal.id)
+    expect(ids.join(' ').toLowerCase()).toMatch(/lung|thoracic|jto/)
+    // 预警刊不入档,红线区可见(D5)
+    for (const id of ids) {
+      const red = body.redline.find((j: any) => j.id === id)
+      expect(red).toBeUndefined()
+    }
+    expect(body.redline.length).toBeGreaterThan(0)
+    expect(body.redline[0].warnings[0].kind).toBe('cas_warning_list')
+  })
+
+  test('journals search + detail endpoints (#849)', async () => {
+    const app = await getApp()
+    const list = await app.inject({
+      method: 'GET', url: '/api/v1/submission/journals?q=lancet',
+      headers: await authHeader(),
+    })
+    expect(list.statusCode).toBe(200)
+    const body = JSON.parse(list.payload)
+    expect(body.total).toBeGreaterThan(190)
     expect(body.journals.length).toBeGreaterThan(0)
-    expect(body.journals.length).toBeLessThanOrEqual(5)
-    const top = body.journals[0]
-    expect(top.name).toBeTruthy()
-    expect(top.impact_factor).toBeGreaterThan(0)
-    expect(top.acceptance_rate).toBeGreaterThan(0)
-    expect(top.review_weeks).toBeGreaterThan(0)
-    expect(top.cas_zone).toBeTruthy()
-    expect(top.reason).toBeTruthy()
-    // lung-cancer-keyword journals should rank at or near the top
-    const names = body.journals.map((j: any) => j.name)
-    expect(names.join(' ').toLowerCase()).toMatch(/lung|thoracic/i)
+
+    const detail = await app.inject({
+      method: 'GET', url: '/api/v1/submission/journals/bmc-cancer',
+      headers: await authHeader(),
+    })
+    expect(detail.statusCode).toBe(200)
+    const dj = JSON.parse(detail.payload).journal
+    expect(dj.metrics.apc.value).toBeGreaterThan(0)
+    expect(dj.logo.monogram).toBeTruthy()
+  })
+
+  test('precheck endpoint degrades gracefully (#851)', async () => {
+    const app = await getApp()
+    const h = { ...(await authHeader()), 'content-type': 'application/json' }
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/submission/precheck',
+      headers: h,
+      payload: JSON.stringify({ journal_id: 'bmc-cancer', text: '# T\n\n## Abstract\n\nBackground short abstract. Methods and results.\n\nBody text with [1] citation.' }),
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    // 无 guideUrl 的刊 → 降级 + 人工核对项(不编造)
+    expect(body.ok).toBe(false)
+    expect(body.items.some((i: any) => i.ok === null)).toBe(true)
   })
 
   test('recommend-journals rejects empty title', async () => {

@@ -453,6 +453,93 @@ export interface MemoryHealthResponse {
 
 /* ────────────────────────── submission workflow (#362) ────────── */
 
+/** #848/#849: JournalRecord snake_case DTO。 */
+export interface DatedMetricDto<T = number> {
+  value: T;
+  asOf: string;
+  source: string;
+}
+
+export interface JournalMetricsDto {
+  impact_factor: DatedMetricDto | null;
+  cas_zone: DatedMetricDto<string> | null;
+  acceptance_rate: DatedMetricDto | null;
+  review_weeks_median: DatedMetricDto | null;
+  apc: { value: number; currency: string; asOf: string; source: string } | null;
+  open_alex: { hIndex: number; worksCount: number; oaRatio?: number; asOf: string; source: string } | null;
+  article_type_distribution: DatedMetricDto<Array<{ type: string; share: number }>> | null;
+}
+
+export interface JournalWarningDto {
+  kind: 'cas_warning_list' | 'predatory_signal';
+  asOf: string;
+  note: string;
+}
+
+export interface JournalRecordDto {
+  id: string;
+  name: string;
+  issn: string | null;
+  publisher: string | null;
+  zh_name: string | null;
+  description: string | null;
+  metrics: JournalMetricsDto;
+  scope: string[];
+  article_types: string[];
+  oa: boolean;
+  guide_url: string | null;
+  similar_works: Array<{ title: string; year?: number; doi?: string; citedBy?: number }> | null;
+  warnings: JournalWarningDto[];
+  logo: { monogram: string; color: string };
+  freshness: { seed: boolean; updatedAt: string; stale: boolean };
+}
+
+export interface BreakdownRowDto {
+  dimension: string;
+  score: number;
+  evidence: string;
+}
+
+export interface TieredRecommendationDto {
+  journal: JournalRecordDto;
+  tier: 'reach' | 'match' | 'safety';
+  total_score: number;
+  breakdown: BreakdownRowDto[];
+}
+
+export interface RecommendJournalsResult {
+  engine: string;
+  profile_echo: { priority: string; article_type: string | null; self_pay_oa: boolean };
+  tiers: { reach: TieredRecommendationDto[]; match: TieredRecommendationDto[]; safety: TieredRecommendationDto[] };
+  redline: JournalRecordDto[];
+  warning_list_asof: string | null;
+}
+
+export interface GuideRequirementsDto {
+  journal_id: string;
+  journal_name: string;
+  body_word_limit: number | null;
+  abstract_word_limit: number | null;
+  abstract_structure: string | null;
+  figure_limit: number | null;
+  reference_style: string | null;
+  required_statements: string[];
+  confidence: 'high' | 'medium' | 'low';
+  source_url: string | null;
+  fetched_at: string;
+}
+
+export interface PrecheckResult {
+  journal_id: string;
+  ok: boolean;
+  reason: string | null;
+  manual_url: string | null;
+  items: Array<{ id: string; label: string; ok: boolean | null; detail?: string }>;
+  passed: number;
+  manual_count: number;
+}
+
+/** @deprecated #848 旧 Top5 契约 — 由 RecommendJournalsResult 替代。 */
 export interface JournalRecommendation {
   id: string;
   name: string;

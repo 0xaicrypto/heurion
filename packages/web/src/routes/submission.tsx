@@ -5,7 +5,7 @@ import { api, ApiError } from '@/lib/api';
 import { downloadBlob } from '@/lib/download';
 import { Alert, Button, Card, Input, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
-import type { JournalRecommendation, FormatTemplate, SubmissionDraft } from '@/lib/types';
+import type { JournalRecordDto, RecommendJournalsResult, TieredRecommendationDto, PrecheckResult, FormatTemplate, SubmissionDraft } from '@/lib/types';
 import { getPaperLink, setPaperLink } from '@/lib/paper-link';
 
 type Tab = 'journals' | 'cover' | 'template' | 'check';
@@ -128,7 +128,7 @@ export function SubmissionWorkbench({ embedded = false }: { embedded?: boolean }
               <TabBtn active={tab === 'check'} onClick={() => setTab('check')} icon={<Check size={14} />} label={t('submission.checkTab', '投稿前检查')} />
             </nav>
 
-            {tab === 'journals' && <JournalsTab title={title} abstract={abstract} onPick={(j) => persist({ target_journal: j.name })} />}
+            {tab === 'journals' && <JournalsTab title={title} abstract={abstract} language={undefined} onPick={(j) => persist({ target_journal: j.zh_name || j.name })} />}
             {tab === 'cover' && <CoverTab title={title} abstract={abstract} authors={authors} draft={draft} onSaved={(cl) => persist({ cover_letter: cl })} />}
             {tab === 'template' && <TemplateTab title={title} abstract={abstract} authors={authors} onSaved={(tid) => persist({ template_id: tid })} />}
             {tab === 'check' && <CheckTab draft={draft} />}
@@ -155,10 +155,139 @@ function TabBtn({ active, onClick, icon, label }: { active: boolean; onClick: ()
   );
 }
 
-/* ══════════════ Tab 1: 选刊推荐 ══════════════ */
-function JournalsTab({ title, abstract, onPick }: { title: string; abstract: string; onPick: (j: JournalRecommendation) => void }) {
+/* ══════════════ Tab 1: 选刊推荐(#848 三档梯度)══════════════ */
+
+const ARTICLE_TYPE_OPTIONS = [
+  { value: '', label: '自动/不限' },
+  { value: 'rct', label: 'RCT' },
+  { value: 'cohort', label: '队列研究' },
+  { value: 'real_world', label: '真实世界/回顾性' },
+  { value: 'case_report', label: '病例报告' },
+  { value: 'review', label: '综述' },
+  { value: 'meta', label: 'Meta 分析' },
+];
+const PRIORITY_OPTIONS = [
+  { value: 'impact', label: '冲影响力' },
+  { value: 'speed', label: '求速度' },
+  { value: 'acceptance', label: '保接受' },
+] as const;
+const TIER_META: Record<'reach' | 'match' | 'safety', { label: string; hint: string; accent: string }> = {
+  reach: { label: '冲刺', hint: '影响力高于当前匹配带,接受率低 — 值得一试', accent: 'border-l-rose-400' },
+  match: { label: '匹配', hint: 'Scope 与研究类型最贴合的现实档', accent: 'border-l-emerald-400' },
+  safety: { label: '保底', hint: '接受率/速度优先的稳妥选择', accent: 'border-l-sky-400' },
+};
+const DIM_LABELS: Record<string, string> = {
+  scope: 'Scope 匹配',
+  articleType: '研究类型适配',
+  impact: '影响力',
+  speed: '速度',
+  acceptance: '接受率',
+  cost: '费用',
+};
+
+function Monogram({ logo, large = false }: { logo: { monogram: string; color: string }; large?: boolean }) {
+  return (
+    <span
+      className={cn('flex shrink-0 items-center justify-center rounded-lg font-bold text-white', large ? 'h-10 w-10 text-base' : 'h-8 w-8 text-sm')}
+      style={{ backgroundColor: logo.color }}
+      aria-hidden
+    >
+      {logo.monogram}
+    </span>
+  );
+}
+
+function MetricBadge({ children }: { children: React.ReactNode }) {
+  return <BadgePill>{children}</BadgePill>;
+}
+
+function JournalCard({ rec, picked, onPick }: { rec: TieredRecommendationDto; picked: boolean; onPick: (j: JournalRecordDto) => void }) {
   const { t } = useTranslation();
-  const [journals, setJournals] = useState<JournalRecommendation[]>([]);
+  const [open, setOpen] = useState(false);
+  const j = rec.journal;
+  const ifMetric = j.metrics.impact_factor;
+  return (
+    <Card className={cn('border-l-4 p-4', TIER_META[rec.tier].accent)}>
+      <div className="flex items-start gap-3">
+        <Monogram logo={j.logo} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-text-primary">{j.zh_name || j.name}</span>
+            {j.zh_name && j.name !== j.zh_name && <span className="text-xs text-text-tertiary">{j.name}</span>}
+            <span className="ml-auto text-sm font-medium text-text-secondary">{t('submission.matchScore', '匹配分')} {rec.total_score}</span>
+          </div>
+          {j.description && <p className="mt-0.5 text-xs text-text-tertiary">{j.description}</p>}
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {ifMetric && (
+              <MetricBadge>
+                IF {ifMetric.value}
+                <span className="ml-1 text-[10px] text-text-tertiary">({t('submission.asOf', '截至')} {ifMetric.asOf})</span>
+              </MetricBadge>
+            )}
+            {j.metrics.cas_zone && <MetricBadge>{j.metrics.cas_zone.value}</MetricBadge>}
+            {j.metrics.acceptance_rate && <MetricBadge>{t('submission.acceptRate', '接受率')} ~{j.metrics.acceptance_rate.value}%</MetricBadge>}
+            {j.metrics.review_weeks_median && <MetricBadge>{t('submission.reviewWeeks', '一审')} ~{j.metrics.review_weeks_median.value}{t('submission.weeks', '周')}</MetricBadge>}
+            {j.metrics.apc && (
+              <MetricBadge>
+                APC ≈ {j.metrics.apc.currency === 'USD' ? '$' : `${j.metrics.apc.currency} `}{j.metrics.apc.value.toLocaleString('en-US')}
+              </MetricBadge>
+            )}
+            {j.metrics.open_alex && <MetricBadge>h-index {j.metrics.open_alex.hIndex}</MetricBadge>}
+            {j.freshness.stale && <span className="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-xs text-warning">{t('submission.staleData', '数据较旧')}</span>}
+          </div>
+          {rec.breakdown.length > 0 && (
+            <button type="button" onClick={() => setOpen(!open)} className="mt-2 text-xs font-medium text-accent hover:underline">
+              {open ? t('submission.whyCollapse', '收起理由') : t('submission.whyExpand', '为什么推荐 / 为什么不是顶刊')}
+            </button>
+          )}
+          {open && (
+            <ul className="mt-2 space-y-1 rounded-lg border border-border bg-surface-elevated p-2.5">
+              {rec.breakdown.map((b) => (
+                <li key={b.dimension} className="flex items-start gap-2 text-xs">
+                  <span className="w-20 shrink-0 font-medium text-text-secondary">{DIM_LABELS[b.dimension] ?? b.dimension}</span>
+                  <span className="w-8 shrink-0 tabular-nums text-text-tertiary">{b.score}</span>
+                  <span className="text-text-secondary">{b.evidence}</span>
+                </li>
+              ))}
+              {/* 方案1: 同类文章证据(OpenAlex 全文检索,该刊近两年) */}
+              {(j.similar_works?.length ?? 0) > 0 && (
+                <li className="flex items-start gap-2 border-t border-border pt-1.5 text-xs">
+                  <span className="w-20 shrink-0 font-medium text-text-secondary">{t('submission.similarWorks', '同类文章')}</span>
+                  <span className="text-text-secondary">
+                    {t('submission.similarWorksHint', '该刊近两年发表过相近工作：')}
+                    <ul className="mt-0.5 space-y-0.5">
+                      {j.similar_works!.slice(0, 2).map((w) => (
+                        <li key={w.doi ?? w.title} className="truncate text-text-tertiary">
+                          {w.doi
+                            ? <a href={`https://doi.org/${w.doi}`} target="_blank" rel="noreferrer" className="hover:underline">{w.title}</a>
+                            : w.title}
+                          {w.year ? ` (${w.year})` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                    <span className="text-[10px] text-text-tertiary">OpenAlex</span>
+                  </span>
+                </li>
+              )}
+            </ul>
+          )}
+          <div className="mt-2">
+            <Button size="sm" variant="ghost" onClick={() => onPick(j)}>
+              {picked ? <><Check size={13} className="mr-1" />{t('submission.selected', '已选用')}</> : t('submission.useTemplate', '使用该刊')}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function JournalsTab({ title, abstract, language, onPick }: { title: string; abstract: string; language: 'en' | 'zh' | undefined; onPick: (j: JournalRecordDto) => void }) {
+  const { t } = useTranslation();
+  const [result, setResult] = useState<RecommendJournalsResult | null>(null);
+  const [priority, setPriority] = useState<'impact' | 'speed' | 'acceptance'>('impact');
+  const [articleType, setArticleType] = useState('');
+  const [selfPayOa, setSelfPayOa] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickedId, setPickedId] = useState<string | null>(null);
@@ -171,8 +300,15 @@ function JournalsTab({ title, abstract, onPick }: { title: string; abstract: str
     setLoading(true);
     setError(null);
     try {
-      const res = await api.recommendJournals({ title, abstract });
-      setJournals(res.journals);
+      const res = await api.recommendJournals({
+        title,
+        abstract: abstract || undefined,
+        article_type: articleType || undefined,
+        priority,
+        self_pay_oa: selfPayOa,
+        language,
+      });
+      setResult(res);
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
@@ -180,49 +316,107 @@ function JournalsTab({ title, abstract, onPick }: { title: string; abstract: str
     }
   };
 
+  const pick = (j: JournalRecordDto) => {
+    setPickedId(j.id);
+    onPick(j);
+  };
+
+  const tierCount = result ? result.tiers.reach.length + result.tiers.match.length + result.tiers.safety.length : 0;
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <Button size="sm" onClick={recommend} isLoading={loading}>
-          {t('submission.recommend', '推荐期刊')}
-        </Button>
-        {journals.length > 0 && (
-          <span className="text-xs text-text-tertiary">{journals.length} {t('submission.topJournals', '个推荐期刊')}</span>
-        )}
-      </div>
+      {/* 画像控制(D3:priority 权重预设) */}
+      <Card className="space-y-2 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-text-secondary">{t('submission.priorityLabel', '档位偏好')}</span>
+          <div className="flex gap-1">
+            {PRIORITY_OPTIONS.map((p) => (
+              <button
+                key={p.value}
+                type="button"
+                onClick={() => setPriority(p.value)}
+                className={cn(
+                  'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                  priority === p.value ? 'border-accent bg-accent/10 text-accent' : 'border-border bg-surface-elevated text-text-secondary hover:text-text-primary',
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <label className="ml-auto flex items-center gap-1.5 text-xs text-text-secondary">
+            <input type="checkbox" checked={selfPayOa} onChange={(e) => setSelfPayOa(e.target.checked)} className="accent-[var(--accent)]" />
+            {t('submission.selfPayOa', '接受自费 OA(APC)')}
+          </label>
+        </div>
+        <select
+          value={articleType}
+          onChange={(e) => setArticleType(e.target.value)}
+          aria-label={t('submission.articleTypeLabel', '研究类型')}
+          className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {ARTICLE_TYPE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={recommend} isLoading={loading}>{t('submission.recommend', '推荐期刊')}</Button>
+          {tierCount > 0 && (
+            <span className="text-xs text-text-tertiary">
+              {t('submission.tierSummary', '冲 {{reach}} / 稳 {{match}} / 保 {{safety}}', { reach: result!.tiers.reach.length, match: result!.tiers.match.length, safety: result!.tiers.safety.length })}
+            </span>
+          )}
+        </div>
+      </Card>
+
       {error && <Alert variant="error">{error}</Alert>}
+
+      {/* 红线区(D5:预警期刊灰显,任何档位不得推荐) */}
+      {result && result.redline.length > 0 && (
+        <Card className="border-warning/40 bg-warning/5 p-3">
+          <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-warning">
+            ⚠ {t('submission.redlineTitle', '红线预警(中科院预警名单{{asOf}})— 不推荐投稿', { asOf: result.warning_list_asof ? ` ${result.warning_list_asof}` : '' })}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {result.redline.map((j) => (
+              <span key={j.id} className="rounded-lg border border-warning/30 bg-surface px-2 py-1 text-xs text-text-tertiary line-through decoration-warning/60">
+                {j.zh_name || j.name}
+                <span className="ml-1 no-underline">— {j.warnings[0]?.note}</span>
+              </span>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {loading ? (
         <div className="space-y-3">
           <Skeleton className="h-24 w-full rounded-xl" />
           <Skeleton className="h-24 w-full rounded-xl" />
         </div>
-      ) : journals.length === 0 ? (
+      ) : !result ? (
         <Card className="p-8 text-center text-sm text-text-tertiary">
-          {t('submission.journalsHint', '填写标题/摘要后点击「推荐期刊」，获取 Top 5 期刊匹配')}
+          {t('submission.journalsHint', '填写标题/摘要后点击「推荐期刊」，获取冲/稳/保三档梯度推荐')}
+        </Card>
+      ) : tierCount === 0 ? (
+        <Card className="p-8 text-center text-sm text-text-tertiary">
+          {t('submission.noMatch', '未找到有命中证据的期刊，可尝试补充摘要关键词')}
         </Card>
       ) : (
-        journals.map((j) => (
-          <Card key={j.id} className="p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold text-text-primary">{j.name}</span>
-              <BadgePill>IF {j.impact_factor}</BadgePill>
-              <BadgePill>{t('submission.acceptRate', '接受率')} {j.acceptance_rate}%</BadgePill>
-              <BadgePill>{t('submission.reviewWeeks', '审稿')} ~{j.review_weeks}{t('submission.weeks', '周')}</BadgePill>
-              <BadgePill>{j.cas_zone}</BadgePill>
-              <span className="ml-auto text-sm text-text-secondary">{'★'.repeat(Math.min(5, Math.max(1, Math.round(j.match_score))))}</span>
-            </div>
-            <p className="mt-2 text-xs text-text-tertiary">{j.reason}</p>
-            <div className="mt-2 flex gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => { onPick(j); setPickedId(j.id); }}
-              >
-                {pickedId === j.id ? <><Check size={13} className="mr-1" />{t('submission.selected', '已选用')}</> : t('submission.useTemplate', '使用该刊')}
-              </Button>
-            </div>
-          </Card>
-        ))
+        (['reach', 'match', 'safety'] as const).map((tier) => {
+          const recs = result.tiers[tier];
+          if (recs.length === 0) return null;
+          return (
+            <section key={tier} className="space-y-2">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                {TIER_META[tier].label}
+                <span className="text-xs font-normal text-text-tertiary">{TIER_META[tier].hint}</span>
+              </h3>
+              {recs.map((rec) => (
+                <JournalCard key={rec.journal.id} rec={rec} picked={pickedId === rec.journal.id} onPick={pick} />
+              ))}
+            </section>
+          );
+        })
       )}
     </div>
   );
@@ -433,6 +627,116 @@ function TemplateTab({ title, abstract, authors, onSaved }: { title: string; abs
   );
 }
 
+/* ══════════════ #851: 期刊要求对照检查 ══════════════ */
+function JournalPrecheckCard({ draft }: { draft: SubmissionDraft | null }) {
+  const { t } = useTranslation();
+  const [query, setQuery] = useState(draft?.target_journal || '');
+  const [candidates, setCandidates] = useState<JournalRecordDto[]>([]);
+  const [journalId, setJournalId] = useState<string | null>(null);
+  const [result, setResult] = useState<PrecheckResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const search = async () => {
+    if (!query.trim()) return;
+    try {
+      const res = await api.searchJournals(query.trim());
+      setCandidates(res.journals.slice(0, 6));
+      if (res.journals.length === 0) setError(t('submission.journalNotFound', '未找到期刊，可尝试英文名检索'));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    }
+  };
+
+  const runPrecheck = async (id: string) => {
+    setJournalId(id);
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.precheck({
+        journal_id: id,
+        doc_id: getPaperLink()?.docId,
+        text: draft?.abstract || undefined,
+      });
+      setResult(res);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card className="p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-sm font-medium text-text-secondary">{t('submission.journalPrecheck', '投稿前检查（对照期刊 Guide for Authors）')}</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Input
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setJournalId(null); setResult(null); }}
+          placeholder={t('submission.journalSearchPlaceholder', '输入期刊名检索，如 Lancet Oncology')}
+          className="max-w-xs"
+          onKeyDown={(e) => { if (e.key === 'Enter') void search(); }}
+        />
+        <Button size="sm" variant="ghost" onClick={search} disabled={!query.trim()}>{t('submission.journalSearch', '检索')}</Button>
+      </div>
+      {candidates.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {candidates.map((j) => (
+            <button
+              key={j.id}
+              type="button"
+              onClick={() => void runPrecheck(j.id)}
+              className={cn(
+                'flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors',
+                journalId === j.id ? 'border-accent bg-accent/10 text-accent' : 'border-border bg-surface-elevated text-text-secondary hover:text-text-primary',
+              )}
+            >
+              <Monogram logo={j.logo} />
+              {j.zh_name || j.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {loading && <Skeleton className="mt-3 h-16 w-full rounded-lg" />}
+      {error && <Alert variant="error">{error}</Alert>}
+      {result && (
+        <div className="mt-3 space-y-2">
+          {!result.ok && (
+            <Alert variant="warning">
+              {result.reason}
+              {result.manual_url && (
+                <> <a href={result.manual_url} target="_blank" rel="noreferrer" className="font-medium underline">{t('submission.openGuide', '打开官方要求')}</a></>
+              )}
+            </Alert>
+          )}
+          <ul className="space-y-1.5">
+            {result.items.map((item) => (
+              <li key={item.id} className="flex items-start gap-2 text-sm">
+                {item.ok === true ? (
+                  <Check size={14} className="mt-0.5 shrink-0 text-success" />
+                ) : item.ok === false ? (
+                  <span className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-error text-[10px] text-error">✕</span>
+                ) : (
+                  <span className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-warning text-[10px] text-warning">?</span>
+                )}
+                <span className={cn(item.ok === false ? 'text-text-primary' : 'text-text-secondary')}>
+                  {item.label}
+                  {item.detail && <span className="ml-1 text-xs text-text-tertiary">{item.detail}</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-text-tertiary">
+            {t('submission.precheckLegend', '✓ 自动通过 · ✕ 需修改 · ? 人工核对')}
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /* ══════════════ Tab 4: 投稿前检查 + 状态追踪 ══════════════ */
 // #718: 状态标签走 t() — 语言切换后跟随。
 function statusLabel(v: string, t: (k: string, def: string) => string): string {
@@ -483,6 +787,9 @@ function CheckTab({ draft }: { draft: SubmissionDraft | null }) {
 
   return (
     <div className="space-y-4">
+      {/* #851: 期刊要求对照检查 */}
+      <JournalPrecheckCard draft={draft} />
+
       {/* 状态追踪 */}
       <Card className="p-4">
         <div className="mb-2 flex items-center justify-between">
