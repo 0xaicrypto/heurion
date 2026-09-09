@@ -78,6 +78,19 @@ export function parseDbJson<T = Record<string, unknown>>(text: string | null | u
 }
 
 /**
+ * #911 — bare `JSON.parse` hardening: the single safe parse for untrusted
+ * text from non-LLM sources (DB columns, external HTTP bodies, env vars).
+ * Malformed input returns null instead of throwing — one corrupted row /
+ * one bad upstream response must never take down the whole listing or the
+ * billing path. (LLM output keeps `parseLlmJson`; our own DB columns keep
+ * the historical `parseDbJson` alias.)
+ */
+export function safeJsonParse<T = unknown>(text: string | null | undefined): T | null {
+  if (!text) return null
+  try { return JSON.parse(text) as T } catch { return null }
+}
+
+/**
  * #694 — array-shaped LLM output. Several extractors ask the model for a
  * bare JSON array; models still fence them or wrap in prose. Returns the
  * array when the output parses to one, an object's `items`-style array

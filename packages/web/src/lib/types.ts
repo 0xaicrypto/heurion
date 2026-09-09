@@ -371,6 +371,39 @@ export interface SummaryImpact {
   message: string;
 }
 
+/**
+ * #923: /api/v1/memory/graph(与 /memory/nodes/:id/versions)节点形状 —
+ * 服务端 MemoryNode union(fact/summary/gap/skill/entity/document)的
+ * web 侧投影:基座字段 + 各类型消费点用到的可选字段。
+ */
+export interface MemoryGraphNode {
+  id: string;
+  stableId: string;
+  type: 'fact' | 'summary' | 'gap' | 'skill' | 'entity' | 'document';
+  status: 'current' | 'stale' | 'superseded' | 'pending_review';
+  content: string;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+  title?: string;
+  name?: string;
+  category?: string;
+  sourceType?: string;
+  patientHash?: string;
+  importance?: number;
+  staleBecause?: string[];
+  impact?: SummaryImpact[];
+}
+
+/** /api/v1/memory/graph 关系边(服务端可见关系投影,stableId 已替换原始 nodeId)。 */
+export interface MemoryGraphRelation {
+  id?: string;
+  sourceId: string;
+  targetId: string;
+  relation: string;
+  createdAt?: number;
+}
+
 export interface LlmCostDashboard {
   totalCalls: number;
   totalTokens: number;
@@ -453,67 +486,21 @@ export interface MemoryHealthResponse {
 
 /* ────────────────────────── submission workflow (#362) ────────── */
 
-/** #848/#849: JournalRecord snake_case DTO。 */
-export interface DatedMetricDto<T = number> {
-  value: T;
-  asOf: string;
-  source: string;
-}
-
-export interface JournalMetricsDto {
-  impact_factor: DatedMetricDto | null;
-  cas_zone: DatedMetricDto<string> | null;
-  acceptance_rate: DatedMetricDto | null;
-  review_weeks_median: DatedMetricDto | null;
-  apc: { value: number; currency: string; asOf: string; source: string } | null;
-  open_alex: { hIndex: number; worksCount: number; oaRatio?: number; asOf: string; source: string } | null;
-  article_type_distribution: DatedMetricDto<Array<{ type: string; share: number }>> | null;
-}
-
-export interface JournalWarningDto {
-  kind: 'cas_warning_list' | 'predatory_signal';
-  asOf: string;
-  note: string;
-}
-
-export interface JournalRecordDto {
-  id: string;
-  name: string;
-  issn: string | null;
-  publisher: string | null;
-  zh_name: string | null;
-  description: string | null;
-  metrics: JournalMetricsDto;
-  scope: string[];
-  article_types: string[];
-  oa: boolean;
-  guide_url: string | null;
-  similar_works: Array<{ title: string; year?: number; doi?: string; citedBy?: number }> | null;
-  warnings: JournalWarningDto[];
-  logo: { monogram: string; color: string };
-  freshness: { seed: boolean; updatedAt: string; stale: boolean };
-}
-
-export interface BreakdownRowDto {
-  dimension: string;
-  score: number;
-  evidence: string;
-}
-
-export interface TieredRecommendationDto {
-  journal: JournalRecordDto;
-  tier: 'reach' | 'match' | 'safety';
-  total_score: number;
-  breakdown: BreakdownRowDto[];
-}
-
-export interface RecommendJournalsResult {
-  engine: string;
-  profile_echo: { priority: string; article_type: string | null; self_pay_oa: boolean };
-  tiers: { reach: TieredRecommendationDto[]; match: TieredRecommendationDto[]; safety: TieredRecommendationDto[] };
-  redline: JournalRecordDto[];
-  warning_list_asof: string | null;
-}
+/**
+ * #916: 选刊 wire DTO(DatedMetric/JournalRecord/BreakdownRow/
+ * TieredRecommendation/RecommendJournalsResult)moved to
+ * @heurion/contracts — single source of truth shared with the server
+ * producer,不再手写镜像。此处仅 re-export,提交面板消费端命名不变。
+ */
+export type {
+  DatedMetricDto,
+  JournalMetricsDto,
+  JournalWarningDto,
+  JournalRecordDto,
+  BreakdownRowDto,
+  TieredRecommendationDto,
+  RecommendJournalsResult,
+} from '@heurion/contracts';
 
 export interface GuideRequirementsDto {
   journal_id: string;
@@ -537,18 +524,6 @@ export interface PrecheckResult {
   items: Array<{ id: string; label: string; ok: boolean | null; detail?: string }>;
   passed: number;
   manual_count: number;
-}
-
-/** @deprecated #848 旧 Top5 契约 — 由 RecommendJournalsResult 替代。 */
-export interface JournalRecommendation {
-  id: string;
-  name: string;
-  impact_factor: number;
-  acceptance_rate: number;
-  review_weeks: number;
-  cas_zone: string;
-  match_score: number;
-  reason: string;
 }
 
 export interface CoverLetterResult {

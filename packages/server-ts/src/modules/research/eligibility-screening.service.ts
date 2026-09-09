@@ -3,6 +3,9 @@ import prisma from '../../common/prisma.js'
 import { getApiKey, deepseekChat} from '../../common/llm.js'
 import { getUserContext } from '../shared/user-context.js'
 import { parseLlmJson } from '../../common/llm-json.js'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('research.screening')
 
 export interface ScreeningResult {
   patientHash: string
@@ -24,7 +27,7 @@ Return JSON: {"verdict": "eligible|ineligible|pending_review", "reason": "summar
 
 Be conservative — when uncertain, mark as pending_review.`
 
-function buildPatientProfile(patient: any, facts: any[], medicalRecords: any[]): string {
+export function buildPatientProfile(patient: any, facts: any[], medicalRecords: any[]): string {
   const parts: string[] = []
   if (patient) {
     parts.push(`Patient: ${patient.name || 'Unknown'}, Age: ${patient.age || 'N/A'}, Sex: ${patient.sex || 'N/A'}`)
@@ -38,10 +41,19 @@ function buildPatientProfile(patient: any, facts: any[], medicalRecords: any[]):
   }
   if (medicalRecords.length > 0) {
     parts.push('Medical Records:')
+    // #911: sections 列逐条安全解析 — 单行坏 JSON 跳过并计数,不再中断全筛查。
+    let badSections = 0
     medicalRecords.forEach((r: any) => {
-      const sections = typeof r.sections === 'string' ? JSON.parse(r.sections) : r.sections
-      if (sections) parts.push(`- ${r.title}: ${JSON.stringify(sections).slice(0, 500)}`)
+      try {
+        const sections = typeof r.sections === 'string' ? JSON.parse(r.sections) : r.sections
+        if (sections) parts.push(`- ${r.title}: ${JSON.stringify(sections).slice(0, 500)}`)
+      } catch {
+        badSections++
+      }
     })
+    if (badSections > 0) {
+      log.warn(`buildPatientProfile: ${badSections}/${medicalRecords.length} 条病历 sections 列损坏,已跳过`)
+    }
   }
   return parts.join('\n')
 }

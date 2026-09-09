@@ -1,5 +1,5 @@
 import { ApiCore } from './core.js';
-import type { Summary, LlmCostDashboard, QueueMetrics, TelemetryDashboard } from '../../types';
+import type { Summary, SummaryImpact, LlmCostDashboard, QueueMetrics, TelemetryDashboard, MemoryGraphNode, MemoryGraphRelation } from '../../types';
 
 export class KnowledgeApi extends ApiCore {
   /* ────────────────────────── knowledge & facts ────────────────────────── */
@@ -70,15 +70,18 @@ export class KnowledgeApi extends ApiCore {
     return this.fetch('/api/v1/knowledge/facts', { method: 'DELETE', body: JSON.stringify({ ids }) });
   }
 
-  async getNodeVersions(id: string): Promise<{versions: any[]}> {
+  /** 服务端:knowledge-stores.router — graph.getVersions(stableId) → MemoryNode[]。 */
+  async getNodeVersions(id: string): Promise<{ versions: MemoryGraphNode[] }> {
     return this.fetch(`/api/v1/memory/nodes/${id}/versions`);
   }
 
-  async getSummaryImpact(id: string): Promise<{impact: any[]}> {
+  /** 服务端:knowledge-stores.router — SummaryNode.impact(缺省/未知节点为 [])。 */
+  async getSummaryImpact(id: string): Promise<{ impact: SummaryImpact[] }> {
     return this.fetch(`/api/v1/memory/summaries/${id}/impact`);
   }
 
-  async getMemoryGraph(patientHash?: string, includeSuperseded?: boolean): Promise<{nodes: any[]; relations: any[]}> {
+  /** 服务端:knowledge-stores.router — { nodes: MemoryNode[], relations: 可见边(stableId 化) }。 */
+  async getMemoryGraph(patientHash?: string, includeSuperseded?: boolean): Promise<{ nodes: MemoryGraphNode[]; relations: MemoryGraphRelation[] }> {
     const params = new URLSearchParams();
     if (patientHash) params.set('patient_hash', patientHash);
     if (includeSuperseded) params.set('include_superseded', 'true');

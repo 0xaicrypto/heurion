@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui';
+import { Modal } from '@/components/ui/Modal';
 
 /**
  * #757 — shared knowledge-base picker modal (chat / writing references /
@@ -69,8 +70,14 @@ export function KbPicker({ open, onClose, onConfirm, initialItems = [], max = 3 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="m-4 flex max-h-[70vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface-elevated p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+    // #922: 弹窗外壳收敛到共享 Modal(backdrop 点击关闭 — 原行为保持)。
+    <Modal
+      open={open}
+      onClose={onClose}
+      backdropClose
+      backdropClassName="bg-black/50"
+      panelClassName="m-4 flex max-h-[70vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface-elevated p-6 shadow-xl"
+    >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-text-primary">📚 {t('chat.kbPicker', '从知识库添加')}</h2>
           <button onClick={onClose} className="text-text-tertiary hover:text-text-primary"><X size={18} /></button>
@@ -117,8 +124,7 @@ export function KbPicker({ open, onClose, onConfirm, initialItems = [], max = 3 
           <span className="text-xs text-text-tertiary">{t('chat.kbPicked', '已选 {{n}}/{{max}}', { n: picked.length, max })}</span>
           <Button size="sm" onClick={() => { onConfirm(picked); onClose(); }}>{t('chat.kbDone', '完成')}</Button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 
   function togglePick(a: KbPickerItem) {

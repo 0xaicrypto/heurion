@@ -5,6 +5,8 @@ import { Plus, FlaskConical } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Button, Input, Card, Badge, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
+// #922: 三处重复的状态→Badge variant 映射收敛到 lib/status-variant。
+import { statusVariant } from '@/lib/status-variant';
 import { cn } from '@/lib/utils';
 
 interface Study {
@@ -54,17 +56,6 @@ export function ResearchPage() {
       setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
       setCreating(false);
-    }
-  };
-
-  const statusVariant = (s: string): 'default' | 'success' | 'warning' | 'error' => {
-    switch (s.toLowerCase()) {
-      case 'completed': return 'success';
-      case 'in_progress':
-      case 'running': return 'warning';
-      case 'failed':
-      case 'error': return 'error';
-      default: return 'default';
     }
   };
 

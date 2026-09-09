@@ -5,6 +5,7 @@ import { PDFParse } from 'pdf-parse'
 import { createWorker, type Worker } from 'tesseract.js'
 import sharp from 'sharp'
 import { safeUploadPath } from './upload-path.js'
+import { MiniLruCache } from './lru-cache.js'
 // #777: pptx 解析导入 — zip-reader + OOXML 文本提取（零 XML 解析器依赖）。
 // pptx-extractor 仅以 type 引用本文件类型（无运行时环）。
 import { parsePptx, pptxSlidesToMarkdown, isPptx } from './pptx-extractor.js'
@@ -518,6 +519,10 @@ export async function extractDocumentMarkdownFromUpload(
  * 纯函数且 uploads 文件不可变(新上传 = 新 fileId),缓存完全安全。
  * TTL 30 分钟、上限 50 条(单条约 100-300KB,峰值 ~15MB,可接受)。
  * 失败结果(空/跳过提示)不缓存,下次可重试。
+ * #922: 两个手写 LRU(extractCache/textExtractCache)+ 手写最旧淘汰循环
+ * 收敛到 lib/lru-cache.ts 的 MiniLruCache,并补齐 inflight 去重(参照
+ * tools/external-fetch.ts #860)—— 并发对同一文件重复提取(大 PDF 分钟级)
+ * 只跑一次。
  */
 const EXTRACT_CACHE_MAX = 50
 const EXTRACT_CACHE_TTL_MS = 30 * 60 * 1000
@@ -532,65 +537,55 @@ const SENTINEL_PREFIX_RE = /^\[(PDF|DOCX|PPTX|附件)/
 export function isExtractionSentinel(text: string): boolean {
   return SENTINEL_PREFIX_RE.test(text)
 }
-const extractCache = new Map<string, { text: string; at: number }>()
+
+/** 缓存落库谓词:空文本与哨兵(失败/跳过)不缓存,下次可重试。 */
+function cacheableExtractText(text: string): boolean {
+  return Boolean(text) && !isExtractionSentinel(text)
+}
+
+/**
+ * #914: 缓存 key 的文件版本维度 — 上传文件通常"新上传 = 新 fileId",但
+ * 同一 fileId 被覆盖重写的场景真实存在(托管图重导入同名文件、测试覆盖
+ * 写入)。mtimeMs 进 key 后,覆盖写不再命中旧提取。文件缺失返回
+ * 'missing'(提取必然失败,不缓存)。
+ */
+function fileVersionStamp(userId: string, fileId: string): string {
+  try {
+    const filepath = safeUploadPath(userId, fileId)
+    return filepath && fs.existsSync(filepath) ? String(fs.statSync(filepath).mtimeMs) : 'missing'
+  } catch {
+    return 'missing'
+  }
+}
+
+const extractCache = new MiniLruCache<string>(EXTRACT_CACHE_MAX, EXTRACT_CACHE_TTL_MS, cacheableExtractText)
 
 export function cachedExtractDocumentMarkdownFromUpload(
   userId: string,
   fileId: string,
   options: { maxChars?: number } = {},
 ): Promise<string> {
-  const key = `${userId}:${fileId}:${options.maxChars ?? 300000}`
-  const hit = extractCache.get(key)
-  if (hit && Date.now() - hit.at < EXTRACT_CACHE_TTL_MS) return Promise.resolve(hit.text)
-
-  return extractDocumentMarkdownFromUpload(userId, fileId, options).then((text) => {
-    // 提取失败/跳过标记不缓存(#788 isExtractionSentinel 单一口径),下次可重试;
-    // 正常 markdown 文本(可能以 # 标题开头)照常缓存。
-    if (text && !isExtractionSentinel(text)) {
-      if (extractCache.size >= EXTRACT_CACHE_MAX) {
-        let oldest: string | null = null
-        let oldestAt = Infinity
-        for (const [k, v] of extractCache) {
-          if (v.at < oldestAt) { oldestAt = v.at; oldest = k }
-        }
-        if (oldest) extractCache.delete(oldest)
-      }
-      extractCache.set(key, { text, at: Date.now() })
-    }
-    return text
-  })
+  const key = `${userId}:${fileId}:${fileVersionStamp(userId, fileId)}:${options.maxChars ?? 300000}`
+  return extractCache.load(key, () => extractDocumentMarkdownFromUpload(userId, fileId, options))
 }
 
 /**
  * #fix 2026-09: 纯文本提取缓存 — picked_kb(钉选参考)每轮对同一批文件重
  * 跑 extractTextFromUpload(PDF 解析+视觉 OCR,大文件分钟级),而 uploads
  * 文件不可变。与 markdown 缓存同口径(LRU 50 条/TTL 30min/哨兵不缓存),
- * key 前缀区分变体。
+ * key 前缀区分变体。#914: key 含文件 mtime(版本维度)— 同一 fileId 被
+ * 覆盖重写后旧提取不再命中,防"重新上传/覆盖后拿到旧提取"。
+ * #922: 与 markdown 缓存共用 MiniLruCache(含 inflight 去重)。
  */
-const textExtractCache = new Map<string, { text: string; at: number }>()
+const textExtractCache = new MiniLruCache<string>(EXTRACT_CACHE_MAX, EXTRACT_CACHE_TTL_MS, cacheableExtractText)
 
 export function cachedExtractTextFromUpload(
   userId: string,
   fileId: string,
   options?: ExtractOptions,
 ): Promise<string> {
-  const key = `text:${userId}:${fileId}:${options?.maxChars ?? ''}`
-  const hit = textExtractCache.get(key)
-  if (hit && Date.now() - hit.at < EXTRACT_CACHE_TTL_MS) return Promise.resolve(hit.text)
-  return extractTextFromUpload(userId, fileId, options).then((text) => {
-    if (text && !isExtractionSentinel(text)) {
-      if (textExtractCache.size >= EXTRACT_CACHE_MAX) {
-        let oldest: string | null = null
-        let oldestAt = Infinity
-        for (const [k, v] of textExtractCache) {
-          if (v.at < oldestAt) { oldestAt = v.at; oldest = k }
-        }
-        if (oldest) textExtractCache.delete(oldest)
-      }
-      textExtractCache.set(key, { text, at: Date.now() })
-    }
-    return text
-  })
+  const key = `text:${userId}:${fileId}:${fileVersionStamp(userId, fileId)}:${options?.maxChars ?? ''}`
+  return textExtractCache.load(key, () => extractTextFromUpload(userId, fileId, options))
 }
 
 export interface ExtractedMarkdownContent {

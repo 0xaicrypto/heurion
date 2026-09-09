@@ -17,15 +17,15 @@ import { deepseekStream, LlmTruncatedError, resolveTurnTimeoutMs } from '../../c
 import { resolveActiveModel, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from '../shared/user-context.js'
-import { buildAttachmentParts, buildDocReferenceBlocks, findUploadFileByName, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from '../shared/chat-context.js'
-import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
-import { splitDocumentSections, resolveDocumentFocus } from '../../lib/doc-sections.js'
+import { buildAttachmentParts, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, shouldInjectPatientRoster, isResearchIntent, docSessionFactGraphView, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from '../shared/chat-context.js'
+import { estimateTokens } from '../../common/token-estimate.js'
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
 import { maybeJitSynthesize } from '../../modules/knowledge/jit-synthesis.service.js' // #815 JIT 兜底
 import { EmbeddingService } from '../../memory/embedding/embedding.service.js' // #731 向量路接线
 import { describeSummaryForInjection } from '../../memory/staleness.js' // #813 总结溯源/stale 单一判定入口
-import { ContextAssembler } from './context-assembler.js'
-import { ToolRegistry, type ToolContext, type EditHint } from '../../tools/tool-registry.js'
+import { ContextAssembler, RequiredSegmentError, type AssemblyResult } from './context-assembler.js'
+// #905: doc- 会话 docId 解析/格式校验(工具面门控与 document_context 注入共用)。
+import { ToolRegistry, parseDocSessionId, type ToolContext, type EditHint } from '../../tools/tool-registry.js'
 import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
 import { createExecutionPlaneService } from '../execution/execution-plane.service.js'
 import { runToolCallLoop, type TurnIO } from './tool-loop.js'
@@ -36,8 +36,9 @@ import {
   upsertSessionRow,
 } from './history-budget.js'
 import type { TurnIntent } from './turn-intent.js'
-// #699: 文档场景规则外置 — 提示词工程不再混在对话主流程里。
-import { refUnresolvedHint, refSourceRule, documentRules, FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE } from './writing-prompts.js'
+// #921/#927: document_context builder 已拆至 doc-context-builder.ts —
+// 场景规则组装(FORMAT/CHART/REVISION/CITATION/CONFIRM)随 builder 迁移。
+import { buildDocumentContext } from './doc-context-builder.js'
 import { factContentHash } from '../../common/fact-render.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import type { SendEvent } from './chat-sse.js'
@@ -127,29 +128,32 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   }
 
   // #636: roster 按场景裁剪 — patient scene(或患者相关意图)全量注入
-  // (含 age/sex/CC);general/chart/document 场景简化(仅姓名缩写),
-  // token 显著下降;'list my patients' 类确定性查询走下方独立路径。
+  // (含 age/sex/CC);'list my patients' 类确定性查询走下方独立路径。
+  // #894: 注入治理(事故根因③) — roster 仅在患者意图时注入;doc- 写作
+  // 会话与 general 闲聊不再无条件注入患者名单(哪怕简化版),空名单占位
+  // 「No patients registered yet.」同样仅患者意图时注入。
   const allPatients = await prisma.patientRecord.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
     take: CONTEXT_CONFIG.scene.rosterMax,
   })
-  const isPatientIntent = patientHash !== null || /患者|病人|patient|roster/i.test(body.text)
-  const fullRoster = isPatientIntent
-  if (allPatients.length > 0) {
-    const roster = fullRoster
-      ? allPatients.map((p: any) => {
-          const parts = [`- ${p.initials || 'Unknown'}`]
-          if (p.age) parts.push(`${p.age}y/o`)
-          if (p.sex) parts.push(p.sex)
-          if (p.chiefComplaint) parts.push(`CC: ${p.chiefComplaint}`)
-          return parts.join(', ')
-        }).join('\n')
-      : allPatients.map((p: any) => `- ${p.initials || 'Unknown'}`).join('\n')
-    send({ type: 'context_info', text: `## Patient Roster (${allPatients.length} patients)\n${roster}`, kind: 'patient_roster' })
-    fullMessage = `## Patient Roster (${allPatients.length} patients)\n${roster}\n\n` + fullMessage
-  } else {
-    fullMessage = '## Patient Roster\nNo patients registered yet.\n\n' + fullMessage
+  const isPatientIntent = shouldInjectPatientRoster({ sessionId: sid, patientHash, text: body.text })
+  if (isPatientIntent) {
+    // 患者意图回合全量注入(含 age/sex/CC);#894 后非患者意图回合不再注入
+    // (#636 的简化版名单随之退役)。
+    if (allPatients.length > 0) {
+      const roster = allPatients.map((p: any) => {
+        const parts = [`- ${p.initials || 'Unknown'}`]
+        if (p.age) parts.push(`${p.age}y/o`)
+        if (p.sex) parts.push(p.sex)
+        if (p.chiefComplaint) parts.push(`CC: ${p.chiefComplaint}`)
+        return parts.join(', ')
+      }).join('\n')
+      send({ type: 'context_info', text: `## Patient Roster (${allPatients.length} patients)\n${roster}`, kind: 'patient_roster' })
+      fullMessage = `## Patient Roster (${allPatients.length} patients)\n${roster}\n\n` + fullMessage
+    } else {
+      fullMessage = '## Patient Roster\nNo patients registered yet.\n\n' + fullMessage
+    }
   }
 
   // Deterministic handler for "list my patients" to avoid LLM hallucination
@@ -290,7 +294,11 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       key: 'study_context',
       fallbackOrder: 3,
       stageLabel: '正在载入研究上下文…',
-      build: async () => {
+      build: async (input) => {
+        // #894: 研究上下文按需注入 — 仅消息命中研究相关意图(研究/study/
+        // protocol/试验/随访/入组/方案)时注入;写作与闲聊轮次不再每轮
+        // 携带研究清单(上下文预算与注意力治理)。
+        if (!isResearchIntent(input.body.text)) return ''
         const studies = await prisma.researchStudy.findMany({
           where: { userId },
           take: CONTEXT_CONFIG.scene.studiesMax,
@@ -310,153 +318,35 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     },
     {
       // §15.4: 写作会话注入当前文档 + 引用。
+      // #905: doc- 会话 required 段 — builder 抛错(参考材料提取/查库
+      // 崩溃等)不再被装配器吞成空段,而是硬失败中断本回合(错误 SSE),
+      // 杜绝模型在无文档上下文状态下继续"编辑"。非 doc 会话/无效
+      // sessionId 返回空串(合法降级,不算失败)。
       key: 'document_context',
       fallbackOrder: 2,
+      required: true,
       stageLabel: '正在解析文档与参考材料…',
       build: async (input) => {
-        if (!sid.startsWith('doc-')) return ''
-        const docId = sid.slice(4)
-        const doc = await prisma.doc.findFirst({ where: { id: docId, userId } })
-        if (!doc) return ''
-        const refs = await prisma.docReference.findMany({
-          where: { userId, docId },
-          orderBy: { createdAt: 'asc' },
+        // #905: docId 格式校验(对齐 documents.router 的 doc_+16hex)—
+        // 此前 slice(4) 盲取,不匹配的会话按 general 处理:不注入文档段。
+        const docId = parseDocSessionId(sid)
+        if (!docId) return ''
+        // #921/#927 拆分:builder 主体移至 doc-context-builder.ts
+        // (依赖显式入参)。required 段语义/段级回退(P1)保持不变。
+        // 焦点记忆:上一条 assistant 回复(模糊指令沿用上一回合焦点段)。
+        const lastAssistant = ctx.eventLog
+          .query({ sessionId: sid })
+          .reverse()
+          .find((e: any) => e.eventType === 'assistant_response')
+        return buildDocumentContext({
+          userId,
+          docId,
+          messageText: body.text,
+          rawSelection: body.selection,
+          editHint,
+          lastAssistantContent: lastAssistant?.content ?? null,
+          stage: input.stage,
         })
-        // #writing-cost: 参考材料按用户消息相关性裁剪 — 只注入命中的
-        // 文件(label/文件名关键词匹配),其余降级为"仅文件名"占位;避免
-        // 每次轮询都全量提取所有参考正文(多文件时成本与 TTFB 飙升)。
-        // 匹配失败时保留前 N 个(有正文优先),保证模型始终有上下文可用。
-        const allRefs: Array<{ id?: string; label?: string | null; snapshot?: string | null; refType?: string | null }> = refs || []
-        const msgText = String(body.text || '')
-        const maxFiles = CONTEXT_CONFIG.scene.docRefFilesMax
-        let refsToInject = allRefs
-        if (allRefs.length > maxFiles) {
-          const scored = allRefs.map((r) => {
-            const label = String(r.label || r.snapshot || '')
-            let score = 0
-            if (msgText && label && msgText.toLowerCase().includes(label.toLowerCase())) score = 10
-            else if (msgText && label) {
-              // 部分词命中(label 的子串出现在消息中)
-              const words = label.toLowerCase().split(/[\s._-]+/).filter((w) => w.length > 2)
-              if (words.some((w) => msgText.toLowerCase().includes(w))) score = 5
-            }
-            return { r, score }
-          })
-          scored.sort((a, b) => b.score - a.score)
-          const top = scored.slice(0, maxFiles)
-          const withBody = top.some((x) => x.score > 0)
-          if (withBody) {
-            // 命中时:命中文件全量 + 其余降级为文件名占位(列表可见,不注入正文)。
-            refsToInject = top.map((x) => x.r)
-            const placeholder = allRefs
-              .filter((r) => !top.some((t) => t.r.id === r.id))
-              .map((r) => ({ ...r, snapshot: `[未注入正文 — 参考文件 ${r.label || r.snapshot || r.id} 未命中当前问题]` }))
-            refsToInject = [...refsToInject, ...placeholder]
-          } else {
-            refsToInject = top.map((x) => x.r)
-          }
-        }
-        // #fix: 上传文件引用(PDF/DOCX/txt)按文件名定位上传并注入提取的
-        // 正文,LLM 才能真正读到稿件内容(此前只有文件名)。
-        const { blocks: refBlocks } = await buildDocReferenceBlocks(userId, refsToInject || [], {
-          // #fix: fileIndex 优先 + 上传目录文件名兜底 — 用户上传的文件
-          // 一定在磁盘上,正文注入不依赖 fileIndex 表是否有记录。
-          findFileByName: async (name) => findUploadFileByName(userId, name),
-          // #fix 2026-09: 逐文件子进度 — 参考材料提取可达分钟级。
-          onProgress: (i, total, label) => input.stage?.(`正在解析参考材料 ${i}/${total}：${String(label).slice(0, 40)}`),
-          // #833: 参考材料超预算时按用户指名章节定位注入。
-          userText: body.text,
-        })
-        const refBlock = refBlocks.join('\n\n')
-
-        // #fix: 文件类参考材料未解析出正文时(如上传未入库),模型手里只有
-        // 文件名,会误拿文件名调 ocr_image(只接受图片 file_id)而报错。
-        // 明确引导:读 PDF/DOCX 正文用 import_reference,不用 ocr_image。
-        // #699: 全部场景规则外置 writing-prompts.ts — 本文件只做组装。
-        const refHint = refUnresolvedHint(allRefs.length > 0, refBlock)
-        const refSource = refSourceRule(allRefs.length > 0)
-
-        // #fix: 长文档分步润色 — 混合分段:有 markdown 标题按章节切,
-        // 无标题按段落+token 长度兜底。文档超预算时按焦点段注入
-        // (用户"继续"/"编辑第 N 段"切换焦点),模型始终只编辑可见段。
-        const docText = String(doc.body || '')
-        const sections = splitDocumentSections(docText, CONTEXT_CONFIG.scene.docSectionTokens)
-        const docFits = estimateTokens(docText) <= CONTEXT_CONFIG.scene.docBodyTokens
-        const inventory = sections.sections.map((s) => `${s.index}. ${s.title || `第 ${s.index} 段`}`).join('\n')
-
-        // #693: 选中即引用 — 用户选中的文本(来自编辑器选区,与 body 同源)
-        // 优先成为编辑目标:注入独立上下文块,焦点段定位到包含它的段。
-        const selection = typeof body.selection === 'string' && body.selection.trim() ? body.selection.trim() : null
-        let selectionSection: { index: number; title: string } | null = null
-
-        let focus = 1
-        let focusTitle = ''
-        if (!docFits && sections.sections.length > 0) {
-          if (selection) {
-            const norm = (s: string) => s.replace(/\s+/g, ' ').trim()
-            const needle = norm(selection.slice(0, 200))
-            const idx = sections.sections.findIndex((s) => norm(s.content).includes(needle))
-            if (idx >= 0) {
-              focus = idx + 1
-              focusTitle = sections.sections[idx].title
-              selectionSection = { index: focus, title: focusTitle }
-            }
-          }
-          if (focusTitle === '') {
-            const lastAssistant = ctx.eventLog
-              .query({ sessionId: sid })
-              .reverse()
-              .find((e: any) => e.eventType === 'assistant_response')
-            focus = resolveDocumentFocus(body.text, sections.sections, lastAssistant?.content)
-            const focused = sections.sections[focus - 1]
-            if (focused) focusTitle = focused.title
-          }
-          // #868: 焦点段原文回填(未截断版 — bodyInjection 走 fitTextToTokens
-          // 可能截断,工具侧定位必须用完整原文)。
-          editHint.focusSectionContent = sections.sections[focus - 1]?.content ?? null
-          editHint.focusIndex = focus
-          editHint.focusTitle = focusTitle
-        }
-        // #868: 选中文本始终回填(短文档也受益于选区优先定位)。
-        editHint.selectionText = selection
-        const bodyInjection = docFits
-          ? fitTextToTokens(docText, CONTEXT_CONFIG.scene.docBodyTokens)
-          : fitTextToTokens(sections.sections[focus - 1]?.content || docText, CONTEXT_CONFIG.scene.docBodyTokens)
-
-        // #fix: 文档为空 + 参考材料有内容 — 分步润色:直接开始第一步,
-        // 调用 edit_document 的 old_text/new_text 把参考资料第一部分的
-        // 润色结果写回草稿(正文为空时工具会自动先导入唯一的参考材料),
-        // 然后询问用户是否继续下一部分。禁止停在"要不要先导入"。
-        const rules = documentRules({ docFits, selection, docBodyEmpty: !docText.trim(), selectionSection })
-
-        // #773: deck 资产上下文可见性 — deck 存在时注入 ## Current Deck
-        // (markdown 化表示,有界),模型才能执行"把第 3 页拆成两页"类请求
-        // (走 edit_deck,slide_index 定位);与 #777 上传 pptx 联动。
-        let deckBlock = ''
-        if (doc.deck) {
-          try {
-            const deckJson = JSON.parse(String(doc.deck)) as {
-              title?: string
-              slides?: Array<{ title?: string; content?: Array<{ type?: string; text?: string; style?: string; url?: string; caption?: string; ref?: string }> }>
-            }
-            const deckLines: string[] = []
-            if (deckJson.title) deckLines.push(`标题：${deckJson.title}`)
-            const slides = Array.isArray(deckJson.slides) ? deckJson.slides : []
-            slides.forEach((s, i) => {
-              deckLines.push(`${i + 1}. ${String(s?.title || '未命名页').slice(0, 200)}`)
-              for (const c of Array.isArray(s?.content) ? s.content : []) {
-                if (c?.type === 'image') deckLines.push(`   ![${String(c.caption || '')}](${String(c.url || c.ref || '')})`)
-                else if (typeof c?.text === 'string') deckLines.push(`   - ${c.text.slice(0, 200)}`)
-              }
-            })
-            const deckMd = fitTextToTokens(deckLines.join('\n'), CONTEXT_CONFIG.scene.docBodyTokens / 2)
-            deckBlock = `\n\n## Current Deck（AI 编排的 PPT 资产 — 与正文独立,编辑它不会改动正文）\n页码定位用于 edit_deck 的 slide_index(1-based):\n${deckMd}`
-          } catch {
-            deckBlock = ''
-          }
-        }
-
-        return `\n\n## Current Document\n标题：${doc.title}（正文约 ${Math.round(docText.replace(/\s+/g, ' ').length / 2)} 字）\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n${selection ? `## 用户选中文本\n[用户选中的文本 — 如需修改请从此处逐字复制 old_text(空格/换行差异会被自动忽略)。]\n${selection}\n\n` : ''}## Reference Materials\n${refBlock || '(none)'}${refHint}\n\n${refSource}\n\n${rules}\n\n${FORMAT_RULE}\n\n${CHART_RULE}\n\n${REVISION_RULE}\n\n${CITATION_RULE}\n\n${CONFIRM_RULE}${deckBlock}`
       },
     },
     {
@@ -473,7 +363,11 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         patientHash: input.patientHash ?? undefined,
         embedding: new EmbeddingService(userId, ctx.memory),
         // #840: keyword 读路径切 graph — facts/summaries 从单一事实源取。
-        graph: ctx.memory?.graph,
+        // #894: doc- 会话(无患者上下文)换用过滤视图 — 患者范围的 fact
+        // 节点不进入知识注入(与 roster/layer3 治理同口径,JD 隐私分心)。
+        graph: sid.startsWith('doc-') && !patientHash
+          ? docSessionFactGraphView(ctx.memory?.graph)
+          : ctx.memory?.graph,
         // #756: 自动注入条目进入 citations 上报清单。
         onItems: (items) => items.forEach((it) => kbCitations.push({
           kind: it.kind,
@@ -505,14 +399,18 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         const docs = (ctx.memory.graph.getCurrentNodesByType('document') as any[])
           .filter((n: any) => n.type === 'document' && pickedIds.includes(n.stableId))
           .slice(0, CONTEXT_CONFIG.injection.pickedMax)
-        const { extractTextFromUpload } = await import('../../lib/document-extractor.js')
+        // #914: 提取走缓存版 — 钉选文件每轮重复提取(PDF 解析分钟级),
+        // uploads 文件不可变,进程内 LRU 缓存直接命中(与参考材料注入
+        // 同一缓存面)。缓存 key 含文件 mtime — 同名 fileId 被覆盖重写
+        // 后旧提取不再命中。
+        const { cachedExtractTextFromUpload } = await import('../../lib/document-extractor.js')
         const docBlocks: string[] = []
         // #fix 2026-09: 逐文件子进度 — 钉选 PDF 提取(解析+图片+公式 OCR)
         // 单文件可达数分钟,整段此前零事件,用户面对 9 分钟黑盒。
         for (let i = 0; i < docs.length; i++) {
           const d = docs[i]
           input.stage?.(`正在读取钉选文档 ${i + 1}/${docs.length}：${String(d.name || d.stableId).slice(0, 40)}`)
-          const text = await extractTextFromUpload(userId, d.stableId, { maxChars: CONTEXT_CONFIG.injection.pickedCharsPerItem })
+          const text = await cachedExtractTextFromUpload(userId, d.stableId, { maxChars: CONTEXT_CONFIG.injection.pickedCharsPerItem })
           docBlocks.push(`- [document] (${d.stableId}) ${d.name}: ${(text || d.name).slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`)
         }
         const summaryBlocks = summaries.map((a) => {
@@ -544,10 +442,23 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       send({ type: 'context_info', text: label, kind: 'file_context' })
     } catch { /* best-effort */ }
   }
-  const assembled = await assembler.assemble({
-    userId, sid, patientHash, scene, body, ctx,
-    projected, budget, layer3FactHashes, historyTokens,
-  }, sendStage)
+  let assembled: AssemblyResult
+  try {
+    assembled = await assembler.assemble({
+      userId, sid, patientHash, scene, body, ctx,
+      projected, budget, layer3FactHashes, historyTokens,
+    }, sendStage)
+  } catch (err) {
+    // #905: required 段(document_context)硬失败 — 不带残缺上下文进 LLM,
+    // 上抛走 chat-handler 的现有错误 SSE 通道(error 事件 + llm_error 落库)。
+    if (err instanceof RequiredSegmentError) {
+      log.error('required context segment failed — turn aborted before LLM', {
+        sessionId: sid, key: err.key, issues: err.telemetry,
+      })
+      throw new Error(`写作会话的文档上下文读取失败，本回合已中止。请重试；若持续出现，请刷新页面后重新进入该写作会话。（${(err as Error).message.slice(0, 160)}）`)
+    }
+    throw err
+  }
   if (assembled.telemetry.length > 0) {
     log.warn('context assembly telemetry (required segments degraded)', { issues: assembled.telemetry })
   }

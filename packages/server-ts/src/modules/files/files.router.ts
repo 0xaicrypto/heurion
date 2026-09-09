@@ -1,6 +1,8 @@
 import { FastifyInstance } from 'fastify'
+import type { MultipartFile, MultipartFields } from '@fastify/multipart'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
+import { Prisma } from '@prisma/client'
 import { getUserContext } from '../shared/user-context.js'
 import { safeUploadPath } from '../../lib/upload-path.js'
 import { extractDocumentText } from '../../lib/document-extractor.js'
@@ -21,6 +23,17 @@ import { retryPipelineJob } from './file-pipeline.service.js'
 import fs from 'fs'
 import path from 'path'
 
+// #923 类型收口:路由参数/查询/请求体显式类型(替代 request.params as any)。
+interface FileIdParams { fileId: string }
+interface JobIdParams { jobId: string }
+
+/** multipart 文本字段取值 — 数组/file 字段取空,与原 `(x as any)?.value || ''` 口径一致。 */
+function textValue(fields: MultipartFields | undefined, name: string): string {
+  const raw = fields?.[name]
+  const field = Array.isArray(raw) ? undefined : raw
+  return field?.type === 'field' && typeof field.value === 'string' ? field.value : ''
+}
+
 export async function filesRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
@@ -28,7 +41,7 @@ export async function filesRouter(app: FastifyInstance) {
 
   app.post('/api/v1/files/upload', async (request, reply) => {
     // 边界审计（#253）: non-multipart requests must 400, not 500.
-    let data: any
+    let data: MultipartFile | undefined
     try {
       data = await request.file()
     } catch {
@@ -38,7 +51,7 @@ export async function filesRouter(app: FastifyInstance) {
 
     const buffer = await data.toBuffer()
     // #681/#700: 去重/落盘/收尾在 service — router 只解析 multipart。
-    const patientHash = (data.fields?.patient_hash as any)?.value || ''
+    const patientHash = textValue(data.fields, 'patient_hash')
     return completeSimpleUpload({
       userId: request.user!.userId,
       filename: data.filename,
@@ -53,7 +66,7 @@ export async function filesRouter(app: FastifyInstance) {
   // 合并 + 去重 + 收尾。失败可 upload-abort 清理;崩溃残留的 .tmp 目录
   // 不会进入文件列表(见下方 isDirectory 过滤)。
   app.post('/api/v1/files/upload-chunk', async (request, reply) => {
-    let data: any
+    let data: MultipartFile | undefined
     try {
       data = await request.file({ limits: { fileSize: CHUNK_MAX_BYTES } })
     } catch (err: any) {
@@ -64,9 +77,9 @@ export async function filesRouter(app: FastifyInstance) {
     }
     if (!data) return reply.status(400).send({ error: 'No file uploaded' })
 
-    const uploadId = String(data.fields?.upload_id?.value || '')
-    const index = parseInt(String(data.fields?.index?.value || ''), 10)
-    const total = parseInt(String(data.fields?.total?.value || ''), 10)
+    const uploadId = textValue(data.fields, 'upload_id')
+    const index = parseInt(textValue(data.fields, 'index'), 10)
+    const total = parseInt(textValue(data.fields, 'total'), 10)
     if (!UPLOAD_ID_RE.test(uploadId)) {
       return reply.status(400).send({ error: 'Invalid upload_id' })
     }
@@ -81,10 +94,10 @@ export async function filesRouter(app: FastifyInstance) {
     return { received: index, total }
   })
 
-  app.post('/api/v1/files/upload-complete', async (request, reply) => {
+  app.post<{ Body: { upload_id?: string; filename?: string; total?: string | number; mime?: string; patient_hash?: string } }>('/api/v1/files/upload-complete', async (request, reply) => {
     // #700: 合并/去重/收尾全部下沉 files.service — router 只做参数校验
     // 与 HTTP 状态映射。
-    const body = (request.body || {}) as any
+    const body = request.body || {}
     const uploadId = String(body.upload_id || '')
     const filename = String(body.filename || '')
     const total = parseInt(String(body.total || ''), 10)
@@ -106,20 +119,20 @@ export async function filesRouter(app: FastifyInstance) {
     return result.payload
   })
 
-  app.post('/api/v1/files/upload-abort', async (request, reply) => {
-    const uploadId = String((request.body as any)?.upload_id || '')
+  app.post<{ Body: { upload_id?: string } }>('/api/v1/files/upload-abort', async (request, reply) => {
+    const uploadId = String(request.body?.upload_id || '')
     if (!UPLOAD_ID_RE.test(uploadId)) return reply.status(400).send({ error: 'Invalid upload_id' })
     fs.rmSync(chunkDir(request.user!.userId, uploadId), { recursive: true, force: true })
     return { aborted: true }
   })
 
   // ── Uploads list (imaging page) ──
-  app.get('/api/v1/files/uploads', async (request) => {
+  app.get<{ Querystring: { patient_hash?: string; limit?: string } }>('/api/v1/files/uploads', async (request) => {
     const userId = request.user!.userId
     const dir = uploadsDir(userId)
     if (!fs.existsSync(dir)) return []
 
-    const { patient_hash, limit } = request.query as any
+    const { patient_hash, limit } = request.query
     const files = fs.readdirSync(dir)
       .map(f => {
         const stat = fs.statSync(path.join(dir, f))
@@ -139,19 +152,19 @@ export async function filesRouter(app: FastifyInstance) {
       .filter((x): x is { file_id: string; name: string; mime: string; size_bytes: number; created_at: string; patient_hash: string | null; dicom_status: string; dicom_study_id: string | null } => x !== null)
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
-    return limit ? files.slice(0, parseInt(limit as string)) : files
+    return limit ? files.slice(0, parseInt(limit)) : files
   })
 
   // ── List all files ──
   // #745: unified pagination contract — offset/limit + independent total.
-  app.get('/api/v1/files', async (request) => {
+  app.get<{ Querystring: { patientHash?: string; limit?: string; offset?: string } }>('/api/v1/files', async (request) => {
     const userId = request.user!.userId
     const dir = uploadsDir(userId)
     if (!fs.existsSync(dir)) return { files: [], total: 0, limit: 0, offset: 0 }
 
-    const { patientHash, limit: limitRaw, offset: offsetRaw } = request.query as any
-    const limit = limitRaw ? Math.max(1, parseInt(limitRaw as string, 10)) : 0
-    const offset = offsetRaw ? Math.max(0, parseInt(offsetRaw as string, 10)) : 0
+    const { patientHash, limit: limitRaw, offset: offsetRaw } = request.query
+    const limit = limitRaw ? Math.max(1, parseInt(limitRaw, 10)) : 0
+    const offset = offsetRaw ? Math.max(0, parseInt(offsetRaw, 10)) : 0
     const files = fs.readdirSync(dir)
       .map(f => {
         const stat = fs.statSync(path.join(dir, f))
@@ -178,12 +191,12 @@ export async function filesRouter(app: FastifyInstance) {
   })
 
   // ── Post-upload pipeline visibility (#733/#747) ──
-  app.get('/api/v1/files/pipeline/jobs', async (request) => {
+  app.get<{ Querystring: { limit?: string; offset?: string; stage?: string } }>('/api/v1/files/pipeline/jobs', async (request) => {
     const userId = request.user!.userId
-    const q = request.query as any
+    const q = request.query
     const limit = Math.min(200, Math.max(1, parseInt(q?.limit || '50', 10)))
     const offset = Math.max(0, parseInt(q?.offset || '0', 10))
-    const where: any = { userId }
+    const where: Prisma.FilePipelineJobWhereInput = { userId }
     if (q?.stage && q.stage !== 'all') where.stage = q.stage
     const [rows, total] = await Promise.all([
       prisma.filePipelineJob.findMany({ where, orderBy: { updatedAt: 'desc' }, take: limit, skip: offset }),
@@ -192,9 +205,9 @@ export async function filesRouter(app: FastifyInstance) {
     return { jobs: rows, total, limit, offset }
   })
 
-  app.post('/api/v1/files/pipeline/jobs/:jobId/retry', async (request, reply) => {
+  app.post<{ Params: JobIdParams }>('/api/v1/files/pipeline/jobs/:jobId/retry', async (request, reply) => {
     const userId = request.user!.userId
-    const { jobId } = request.params as any
+    const { jobId } = request.params
     const result = await retryPipelineJob(userId, String(jobId))
     if (!result.ok) return reply.status(400).send({ error: result.error })
     return { retried: true }
@@ -202,9 +215,9 @@ export async function filesRouter(app: FastifyInstance) {
 
   // ── Chat file picker (#440; #740/#745 fixed — typed read of id, real
   //    pagination via offset/limit + total count) ──
-  app.get('/api/v1/chat/files', async (request: any) => {
+  app.get<{ Querystring: { limit?: string; offset?: string; patient_hash?: string } }>('/api/v1/chat/files', async (request) => {
     const userId = request.user!.userId
-    const q = request.query as any
+    const q = request.query
     const limit = Math.min(500, Math.max(1, parseInt(q?.limit || '50', 10)))
     const offset = Math.max(0, parseInt(q?.offset || '0', 10))
     const patientHash = q?.patient_hash ? String(q.patient_hash) : undefined
@@ -234,9 +247,9 @@ export async function filesRouter(app: FastifyInstance) {
   })
 
   // #402-followup: delete a generated chart file.
-  app.delete('/api/v1/files/generated/:fileId', async (request, reply) => {
+  app.delete<{ Params: FileIdParams }>('/api/v1/files/generated/:fileId', async (request, reply) => {
     const userId = request.user!.userId
-    const fileId = (request.params as any).fileId
+    const fileId = request.params.fileId
     if (!isGeneratedFileId(fileId)) {
       return reply.status(400).send({ error: 'not a generated chart' })
     }
@@ -251,8 +264,8 @@ export async function filesRouter(app: FastifyInstance) {
   })
 
   // ── File content preview (Labs page) ──
-  app.get('/api/v1/files/:fileId/content', async (request, reply) => {
-    const { fileId } = request.params as any
+  app.get<{ Params: FileIdParams }>('/api/v1/files/:fileId/content', async (request, reply) => {
+    const { fileId } = request.params
     const userId = request.user!.userId
     const filepath = safeUploadPath(userId, fileId)
 
@@ -274,7 +287,7 @@ export async function filesRouter(app: FastifyInstance) {
         file_id: fileId,
         type: 'dicom',
         size_bytes: stat.size,
-        findings: findings.filter((f: any) => f.type !== 'meta' && f.type !== 'error'),
+        findings: findings.filter((f) => f.type !== 'meta' && f.type !== 'error'),
       }
     }
 
@@ -296,9 +309,9 @@ export async function filesRouter(app: FastifyInstance) {
       content: `Binary file (${stat.size} bytes)`,
     }
   })
-  app.delete('/api/v1/files/bulk', async (request) => {
+  app.delete<{ Body: { ids?: unknown } }>('/api/v1/files/bulk', async (request) => {
     const userId = request.user!.userId
-    const ids = (request.body as any)?.ids
+    const ids = request.body?.ids
     if (!Array.isArray(ids)) return { deleted: 0 }
     const ctx = getUserContext(userId)
     let deleted = 0
@@ -319,8 +332,8 @@ export async function filesRouter(app: FastifyInstance) {
     return { deleted }
   })
 
-  app.delete('/api/v1/files/:fileId', async (request, reply) => {
-    const { fileId } = request.params as any
+  app.delete<{ Params: FileIdParams }>('/api/v1/files/:fileId', async (request, reply) => {
+    const { fileId } = request.params
     const userId = request.user!.userId
     const ctx = getUserContext(userId)
     const filepath = safeUploadPath(userId, fileId)
@@ -337,10 +350,10 @@ export async function filesRouter(app: FastifyInstance) {
     }
     return reply.status(404).send({ error: 'File not found' })
   })
-app.get('/api/v1/files/download/:fileId', async (request, reply) => {
-  const fileId = (request.params as any).fileId
+app.get<{ Params: FileIdParams; Querystring: { token?: string } }>('/api/v1/files/download/:fileId', async (request, reply) => {
+  const fileId = request.params.fileId
   const userId = request.user?.userId
-  const queryToken = (request.query as any).token
+  const queryToken = request.query.token
   // #fix 2026-09: 图片不显示的诊断日志 — 每个请求一条结论,定位失败环节:
   // token_missing/invalid_signature/expired(401) vs path_rejected/not_on_disk(404) vs ok。
   const dlog = makeLogger('files.download')
@@ -414,8 +427,8 @@ app.get('/api/v1/files/download/:fileId', async (request, reply) => {
   // frontend repair legacy generate_image URLs (`/api/v1/files/<id>/download`,
   // a shape that matched no route and carried no chart token) and refresh
   // expired chart tokens for <img> without a page reload.
-  app.get('/api/v1/files/:fileId/download-url', async (request, reply) => {
-    const { fileId } = request.params as any
+  app.get<{ Params: FileIdParams }>('/api/v1/files/:fileId/download-url', async (request, reply) => {
+    const { fileId } = request.params
     const userId = request.user!.userId
     const filepath = safeUploadPath(userId, fileId)
     if (!filepath || !fs.existsSync(filepath)) return reply.status(404).send({ error: 'File not found' })
@@ -461,14 +474,14 @@ app.get('/api/v1/files/download/:fileId', async (request, reply) => {
       const status = await plane.getStatus(job.job_id)
       if (status && status.status !== 'pending' && status.status !== 'running') {
         if (status.status !== 'completed') {
-          const reason = String(status.error || (status.result as any)?.error || status.status)
+          const reason = String(status.error || status.result?.error || status.status)
           // 优雅降级：worker 未配置 LibreOffice → 明确的降级信号（前端回落仅下载）。
           if (reason.includes('PREVIEW_UNAVAILABLE')) {
             return reply.status(501).send({ error: '预览能力未配置（worker 缺少 LibreOffice），请下载后查看', degraded: true })
           }
           return reply.status(502).send({ error: `预览失败：${reason.slice(0, 200)}` })
         }
-        const pages = (status.result as any)?.pages as Array<{ fileId?: string; fileName?: string; mimeType?: string }> | undefined
+        const pages = status.result?.pages as Array<{ fileId?: string; fileName?: string; mimeType?: string }> | undefined
         if (!pages || pages.length === 0) return reply.status(502).send({ error: '预览失败：未生成任何页面' })
         return reply.send({
           page_count: pages.length,
@@ -484,9 +497,9 @@ app.get('/api/v1/files/download/:fileId', async (request, reply) => {
     return reply.status(504).send({ error: '预览超时，请稍后重试或下载查看' })
   })
 
-  app.get('/api/v1/files/preview-page/:fileId', async (request, reply) => {
-    const fileId = (request.params as any).fileId
-    const token = (request.query as any).token
+  app.get<{ Params: FileIdParams; Querystring: { token?: string } }>('/api/v1/files/preview-page/:fileId', async (request, reply) => {
+    const fileId = request.params.fileId
+    const token = request.query.token
     const userId = request.user?.userId || (token ? verifyChartToken(fileId, token) : null)
     if (!userId) return reply.status(401).send({ error: 'Unauthorized' })
     const plane = createExecutionPlaneService()

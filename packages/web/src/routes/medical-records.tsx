@@ -6,6 +6,8 @@ import { Alert, Badge, Button, Card, Input, Skeleton, Textarea } from '@/compone
 import { PatientTabs } from '@/routes/patients';
 import { api, ApiError } from '@/lib/api';
 import type { MedicalRecordEntry, MedicalRecordEntryType } from '@/lib/types';
+// #922: 三处重复的状态→Badge variant 映射收敛到 lib/status-variant。
+import { statusVariant as libStatusVariant } from '@/lib/status-variant';
 import { cn } from '@/lib/utils';
 
 const ENTRY_TYPES: Array<{ value: MedicalRecordEntryType; label: string }> = [
@@ -140,8 +142,9 @@ export function MedicalRecordsPage() {
     }
   };
 
-  const statusVariant = (s: MedicalRecordEntry['status']): 'default' | 'success' | 'warning' | 'error' =>
-    s === 'confirmed' ? 'success' : s === 'pending_review' ? 'warning' : 'error';
+  // #922: 映射收敛到 lib/status-variant — fallback 'error' 保持旧 else 分支
+  // (confirmed→success / pending_review→warning / 其余→error)。
+  const statusVariant = (s: MedicalRecordEntry['status']) => libStatusVariant(s, 'error');
 
   if (!hash) {
     return (

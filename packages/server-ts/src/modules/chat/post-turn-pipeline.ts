@@ -16,7 +16,9 @@ import type { SendEvent } from './chat-sse.js'
 import type { TurnIntent } from './turn-intent.js'
 import type { ChatScene } from '../../common/persona.js'
 import type { getUserContext } from '../shared/user-context.js'
+import type { SkillCardSummary } from '../skills/activation.js'
 import { upsertSessionRow } from './history-budget.js'
+import { detectUnbackedEditClaim } from './writing-prompts.js'
 import { analyzeChatForMedicalRecord, updatePatientFromFindings, updateMedicalRecordFromChat } from '../patients/clinical-analysis.js'
 
 const log = makeLogger('chat.post-turn')
@@ -37,7 +39,8 @@ export interface PostTurnContext {
   timelineTools: Array<{ tool: string; round?: number }>
   chartMeta: Array<{ url: string; chartType?: string }>
   timelineSubs: Array<{ id: string; task: string; status: 'running' | 'done' | 'failed' }>
-  skillCards: any[]
+  /** 本轮激活的剧本卡(matchSkillsForTurn 输出,follow-through 段消费)。 */
+  skillCards: SkillCardSummary[]
   attachmentText: string
   patientHash: string | null
   evolutionQueue?: EvolutionQueue
@@ -100,14 +103,21 @@ export const POST_TURN_SEGMENTS: PostTurnSegment[] = [
     // answer 不记(D1: eventLog 投影,零正文,零 LLM/零外呼)。
     run: async (c) => {
       const { recordTaskTrajectory } = await import('../../evolution/trajectory.js')
+      const docEdits = c.timelineTools.filter((t) => t.tool === 'edit_document').length
+      // #892: 声明-执行对账(生产事故根因①) — doc- 会话零写回且回复声称
+      // 已完成编辑 → outcome 标记 claimed_no_edit(轨迹层可见的"未兑现
+      // 声明",喂环②归纳;非 doc 会话的「已完成」属普通任务汇报,不标记)。
+      const claimedNoEdit = c.sessionId.startsWith('doc-')
+        && docEdits === 0
+        && detectUnbackedEditClaim(c.fullResponse)
       recordTaskTrajectory(c.ctx.eventLog, {
         userId: c.userId,
         sessionId: c.sessionId,
         action: c.turnIntent.action,
         scene: c.scene,
         toolsUsed: c.timelineTools.map((t) => t.tool),
-        docEdits: c.timelineTools.filter((t) => t.tool === 'edit_document').length,
-        outcome: c.fullResponse ? 'completed' : 'abandoned',
+        docEdits,
+        outcome: claimedNoEdit ? 'claimed_no_edit' : (c.fullResponse ? 'completed' : 'abandoned'),
       })
     },
   },

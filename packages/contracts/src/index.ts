@@ -18,6 +18,7 @@ export * from './chat.js'
 export * from './jobs.js'
 export * from './stats.js'
 export * from './knowledge.js'
+export * from './submission.js'
 
 export const SCHEMA_VERSION = 1
 
@@ -26,7 +27,20 @@ export const SCHEMA_VERSION = 1
 export const imageBlockSchema = z.object({
   type: z.literal('image'),
   /** "asset://name" (resolved from a configured asset dir) or an inline data/base64 string. */
-  ref: z.string().min(1),
+  ref: z
+    .string()
+    .min(1)
+    // #900: asset:// refs must be a bare file name — traversal (../etc/passwd,
+    // ..\.env) or separators would have the worker read arbitrary files.
+    // Non-asset refs (inline base64 data strings, http URLs) stay unmodified.
+    .refine(
+      (ref) => {
+        if (!ref.startsWith('asset://')) return true
+        const name = ref.slice('asset://'.length)
+        return /^[A-Za-z0-9._-]+$/.test(name) && !name.includes('..')
+      },
+      { message: 'asset:// ref must be a bare file name (letters/digits/._- only, no "..")' },
+    ),
   caption: z.string().max(500).optional(),
   /** Inline base64 data (alternative to ref). */
   data: z.string().optional(),

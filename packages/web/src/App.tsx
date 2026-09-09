@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
-import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { ErrorBoundary, RouteBoundary } from '@/components/ErrorBoundary';
 import { ChatPage } from '@/routes/chat';
 import { LandingPage } from '@/routes/landing';
 import { LoginPage } from '@/routes/login';
@@ -44,7 +44,9 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
-  return <>{children}</>;
+  // #919: 每个 /app/* 路由段包一层轻量 ErrorBoundary — 单页崩溃不再拖垮
+  // 整个应用（根级边界保持不变），切路由自动复位。
+  return <RouteBoundary>{children}</RouteBoundary>;
 }
 
 /** #716 — 仅管理员可访问（侧边栏隐藏只是视觉层，路由必须有真实守卫）。 */

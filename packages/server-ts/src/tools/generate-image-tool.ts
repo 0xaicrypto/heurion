@@ -10,6 +10,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { getLlmGateway } from '../common/llm-gateway.js'
+import { uploadsBaseDir } from '../lib/upload-path.js'
 
 export class GenerateImageTool extends BaseTool {
   constructor(private ctx?: ToolContext) { super() }
@@ -39,7 +40,7 @@ export class GenerateImageTool extends BaseTool {
       })
 
       // Save to the user's attachments dir (same layout as render_chart).
-      const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+      const dir = uploadsBaseDir(userId)
       fs.mkdirSync(dir, { recursive: true })
       const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png'
       const fileId = `img_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`

@@ -7,6 +7,7 @@
 import fs from 'fs'
 import path from 'path'
 import { getUserContext } from '../shared/user-context.js'
+import { uploadsBaseDir } from '../../lib/upload-path.js'
 
 export interface GeneratedChartEntry {
   file_id: string
@@ -65,7 +66,7 @@ function findEventMeta(
 
 /** List every generated chart SVG for a user, newest first. */
 export async function listGeneratedCharts(userId: string): Promise<GeneratedChartEntry[]> {
-  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+  const dir = uploadsBaseDir(userId)
   if (!fs.existsSync(dir)) return []
 
   const files = fs.readdirSync(dir)

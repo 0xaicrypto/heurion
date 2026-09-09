@@ -2,32 +2,34 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { Editor } from '@tiptap/react';
-import { ArrowLeft, Download, Eye, FilePlus, FileText, History, MessageSquare, Paperclip, Pencil, Presentation, ShieldAlert, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, Download, Eye, FileText, History, Presentation } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { SkillsBar } from '@/components/SkillsBar';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor, type DiffReviewState } from '@/components/DocEditor';
 import { KbPicker } from '@/components/KbPicker';
 import { SpotHint } from '@/components/SpotHint';
 import { UploadProgressModal } from '@/components/UploadProgressModal';
-import { ChatMessages } from '@/components/chat/ChatMessages';
-import { ChartLibrary } from '@/components/chat/ChartLibrary';
 import { chatFailureText } from '@/stores/chat';
-import { Alert, Button, Skeleton, Textarea, Input } from '@/components/ui';
+import { Alert, Button, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { sha1Hex } from '@/lib/hash';
 import { cn } from '@/lib/utils';
 // #837: AI 写回三路合并(审阅未决时的累计队列重放)。
 import { mergeThreeWay } from '@/lib/doc-merge';
+// #927: doc_updated rev 幂等防乱序(与 chat-reducer 同源判定)。
+import { shouldApplyDocRev } from '@/lib/chat-reducer';
 import { toSlides, type Slide } from '@/lib/deck';
-import { isEnterSendKey } from '@/lib/chat-composer';
 import type { DeckWire } from '@/lib/types';
 // #696: 状态机全部下沉 hooks — 路由只保留编排与布局。
 import { usePolishBubble } from './writing-editor/bubble';
 import { useDeckAsset } from './writing-editor/deck-asset';
 import { useDocChat } from './writing-editor/doc-chat';
 import { useDocReferences } from './writing-editor/references';
-import { HistoryDialog, PhiDialog, AddReferenceDialog, ReferenceListPopover, ExportDonePanel } from './writing-editor/dialogs';
+import { HistoryDialog, PhiDialog, AddReferenceDialog } from './writing-editor/dialogs';
+// #688: 渲染块拆出 — deck 网格 / 右侧聊天面板 / 工具栏。
+import { DeckView } from './writing-editor/deck-view';
+import { ChatPanel } from './writing-editor/chat-panel';
+import { Toolbar } from './writing-editor/toolbar';
 import type { DocDetail, SnapshotEntry, PhiFinding } from './writing-editor/types';
 
 export function WritingEditorPage() {
@@ -114,6 +116,9 @@ export function WritingEditorPage() {
   // #882: 并发保存冲突 — 409(stale_base) 时记录待保存内容,横幅供用户选择
   // (载入最新/保留我的版本),绝不静默覆盖另一窗口的修改。
   const [saveConflict, setSaveConflict] = useState<{ title: string; body: string; deck?: unknown } | null>(null);
+  // #927: 「载入最新」确认审阅挂起的服务端最新内容 — handleDiffResolve 据此
+  // 分流(接受 = 原样采用服务端版本,不走常规落地保存路径)。
+  const conflictLoadRef = useRef<{ body: string; updatedAt: string } | null>(null);
 
   const markDirty = useCallback((nextBody: string, nextTitle: string) => {
     if (!docId) return;
@@ -134,13 +139,20 @@ export function WritingEditorPage() {
 
   useEffect(() => {
     if (!docId || doc === null || !dirty) return;
+    // #895: 审阅未决(diffReview)或 AI 写回批次待冲刷(pendingWriteBack)时
+    // 暂停 autosave — 此时 serverBodyRef 已指向 AI 版本,自动保存会把审阅前
+    // 的正文盖回服务端(覆盖 AI 写回)。不排下一次定时器;守卫解除后由
+    // dirty 机制自然恢复(effect 依赖 diffReview)。
+    // #927: 保存冲突横幅打开期间同样暂停 — 冲突未决时自动保存必然再 409,
+    // 由用户决策(载入最新/保留我的版本)后再恢复。
+    if (diffReview !== null || pendingWriteBackRef.current !== null || saveConflict !== null) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       void handleSave();
     }, 2500);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [body, title, docId, dirty]);
+  }, [body, title, docId, dirty, diffReview, saveConflict]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -178,6 +190,8 @@ export function WritingEditorPage() {
   // §15.4 / #553: AI write-back 不再静默替换正文 — 进入审阅模式,用户
   // 逐条/全部接受或拒绝后由 onDiffResolve 落地。
   const appliedDocBody = useRef<string | null>(null);
+  // #927: 已应用的 doc_updated rev 基线(见下方消费 effect 的幂等防乱序)。
+  const appliedDocRevRef = useRef<number | undefined>(undefined);
   const diffPendingRef = useRef(false);
   useEffect(() => {
     diffPendingRef.current = diffReview !== null;
@@ -200,10 +214,17 @@ export function WritingEditorPage() {
       writeBackQueueRef.current = [];
       serverBodyRef.current = null;
       reviewResumeDoneRef.current = false;
+      // #927: 切文档同时复位写回 rev 基线 — 旧文档的 rev 不得拦截新文档首笔写回。
+      appliedDocRevRef.current = undefined;
       // #837-ux: 同轮合批评也要清(计时器一并撤销)。
       if (pendingWriteBackRef.current?.timer) clearTimeout(pendingWriteBackRef.current.timer);
       pendingWriteBackRef.current = null;
       setQueuedRounds(0);
+      // #903: 切文档同时清保存基线与 dirty — 旧文档的 body/base 不得跨文档
+      // 参与新文档的 dirty 判断(旧响应晚到时不再误标/误存)。
+      lastSavedBody.current = null;
+      dirtyRef.current = false;
+      setDirty(false);
     }
     if (doc && serverBodyRef.current === null) serverBodyRef.current = doc.body;
   }, [doc, docId]);
@@ -214,7 +235,10 @@ export function WritingEditorPage() {
   useEffect(() => {
     if (!docId || !doc || reviewResumeDoneRef.current) return;
     reviewResumeDoneRef.current = true;
+    // #903: stale-response 守卫 — 切文档后晚到的快照探测不得给新文档恢复旧审阅。
+    let cancelled = false;
     api.getDocSnapshots(docId).then(async ({ snapshots }) => {
+      if (cancelled) return;
       if (snapshots.length < 2) return;
       // 服务端按 id desc 返回 — [0] 最新,[1] 上一条。
       const last = snapshots[0];
@@ -225,10 +249,39 @@ export function WritingEditorPage() {
         api.getSnapshotBody(docId, last.snapshot_id),
         api.getSnapshotBody(docId, prev.snapshot_id),
       ]);
+      if (cancelled) return;
       if (lastFull.body !== doc.body) return;
       setDiffReview({ key: `resume_${Date.now()}`, old: prevFull.body, next: lastFull.body });
     }).catch(() => { /* 恢复失败不打扰 — 行为与旧版一致 */ });
+    // #903: cleanup 丢弃在途响应(切文档后晚到的快照探测不得给新文档恢复旧
+    // 审阅);同时复位一次性探测标记 — StrictMode 首次挂载即被 cleanup 丢弃,
+    // 不复位会让恢复探测在 dev 下永远缺席。误恢复由 label('AI edit')条件兜住。
+    return () => { cancelled = true; reviewResumeDoneRef.current = false; };
   }, [doc, docId]);
+
+  // #882: 带 base_sha 的保存(服务端并发保护)— 指纹取服务端视角正文
+  // (serverBodyRef),409 → 冲突横幅。force 跳过(「保留我的版本」)。
+  // #896: 前移到 useDocChat 之前 — doc-chat 发送前预保存复用同一语义。
+  const saveDoc = useCallback(async (title: string, body: string, opts: { deck?: unknown; force?: boolean } = {}) => {
+    const base = serverBodyRef.current;
+    const base_sha = !opts.force && base !== null ? await sha1Hex(base) : undefined;
+    return api.updateDoc(docId!, {
+      title, body,
+      ...(opts.deck !== undefined ? { deck: opts.deck } : {}),
+      ...(base_sha ? { base_sha } : {}),
+      ...(opts.force ? { force: true } : {}),
+    });
+  }, [docId]);
+
+  // #896: doc-chat 发送前预保存 — 复用 saveDoc 完整语义(带 base_sha 并发
+  // 保护),成功后同步服务端基线(serverBodyRef/lastSavedBody);此前裸 PUT
+  // 不带 base_sha,多窗口/审阅场景下必然假 409。失败由 hook 侧吞掉(不阻断发送)。
+  const presaveForChat = useCallback(async () => {
+    const updated = await saveDoc(title, bodyRef.current);
+    lastSavedBody.current = updated.body ?? bodyRef.current;
+    serverBodyRef.current = updated.body ?? bodyRef.current;
+    return updated;
+  }, [saveDoc, title]);
 
   /** 弹出下一轮写回:以「用户当前正文」为新基线做三路合并重放;冲突则丢弃并明示。 */
   const popNextWriteBack = useCallback((currentMd: string) => {
@@ -252,11 +305,12 @@ export function WritingEditorPage() {
   const polishEditorRef = useRef<Editor | null>(null);
   const chat = useDocChat<DocDetail>({
     docId,
-    title,
     bodyRef,
     lastSavedBody,
     dirtyRef,
     diffReview,
+    // #896: 预保存走 saveDoc 完整语义(base_sha + 服务端基线同步)。
+    presave: presaveForChat,
     chatSelection,
     setChatSelection,
     setBody,
@@ -329,8 +383,11 @@ export function WritingEditorPage() {
 
   // #636 doc write-back diff 审阅 — 依赖 chatSession。
   // #837-ux: 同轮合批 — 写回到达只更新批次末值,turn 结束/兜底超时才进审阅。
+  // #927: rev 幂等防乱序 — 服务端写回带单调 rev,已应用 rev 之后的旧事件
+  // (SSE 重放/乱序)直接忽略;无 rev 的旧后端事件保持原行为。
   useEffect(() => {
     if (!docId || !chatSession?.lastDocBody) return;
+    if (!shouldApplyDocRev(appliedDocRevRef.current, chatSession.lastDocRev)) return;
     if (appliedDocBody.current === chatSession.lastDocBody) return;
     if (chatSession.lastDocBody === bodyRef.current) return;
     if (!pendingWriteBackRef.current) {
@@ -349,7 +406,8 @@ export function WritingEditorPage() {
     }
     appliedDocBody.current = chatSession.lastDocBody;
     serverBodyRef.current = chatSession.lastDocBody;
-  }, [chatSession?.lastDocBody, docId, flushPendingWriteBack]);
+    if (typeof chatSession.lastDocRev === 'number') appliedDocRevRef.current = chatSession.lastDocRev;
+  }, [chatSession?.lastDocBody, chatSession?.lastDocRev, docId, flushPendingWriteBack]);
 
   // #773: AI deck 写回（edit_deck / organize 落 deck）— 页级小改直接应用
   // + 服务端快照回滚（deck 页是天然结构化单元，整篇 markdown diff 反而难读）。
@@ -361,7 +419,9 @@ export function WritingEditorPage() {
     appliedDocDeck.current = deckKey;
     // 服务端已持久化该 deck — 同步"已保存"基线，本地无未保存编辑时直接换源。
     if (deckJson && deckJson !== lastSavedDeck.current && deckJson !== deckKey) {
-      showNotice(t('writing.deckConflict', 'AI 已更新 deck，但你有未保存的 deck 编辑 — 请先 Save，再刷新页面获取 AI 版本'), 6000);
+      // #910: 指引修正 — 旧文案「先 Save 再刷新」会把本地旧 deck 盖掉服务端
+      // AI deck 且无兜底;改为放弃本地/接受 AI 二选一。
+      showNotice(t('writing.deckConflict', '本地有未保存的画布编辑，AI 已更新服务端画布。建议先放弃本地画布修改并刷新获取 AI 版本，或接受 AI 版本后再做本地编辑'), 6000);
       return;
     }
     lastSavedDeck.current = deckKey;
@@ -369,8 +429,30 @@ export function WritingEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ref 稳定(#696 hooks 下沉)
   }, [chatSession?.lastDocDeck, docId, deckJson]);
 
-  /** 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。#837: 结束后弹出队列中的下一轮写回。 */
+  /**
+   * 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。#837: 结束后弹出队列中的下一轮写回。
+   * #927: 冲突「载入最新」的确认审阅 — 接受 = 丢弃本地未保存修改、原样采用
+   * 服务端最新(无需再保存,服务端已是该版本);取消 = 保留本地,冲突横幅仍在。
+   */
   const handleDiffResolve = useCallback((result: { md: string; accepted: number; rejected: number; cancelled: boolean }) => {
+    if (conflictLoadRef.current) {
+      const fresh = conflictLoadRef.current;
+      conflictLoadRef.current = null;
+      setDiffReview(null);
+      if (result.cancelled) {
+        showNotice(t('writing.conflictKeepLocal', '已保留本地未保存修改 — 可选择「保留我的版本」或重新载入最新'), 4000);
+        return;
+      }
+      setBody(fresh.body);
+      lastSavedBody.current = fresh.body;
+      serverBodyRef.current = fresh.body;
+      setDoc((prev) => (prev ? { ...prev, body: fresh.body, updated_at: fresh.updatedAt } : prev));
+      dirtyRef.current = false;
+      setDirty(false);
+      setSaveConflict(null);
+      showNotice(t('writing.conflictLoadedLatest', '已载入服务端最新内容'), 3000);
+      return;
+    }
     setDiffReview(null);
     // #720: 用显式 cancelled 字段区分"放弃"，不再用空串推断 — 全文删空的
     // 接受结果(空 md)应落地为空正文,而不是被当成放弃。
@@ -381,14 +463,16 @@ export function WritingEditorPage() {
       // 用户正文(此前 DB 留着被拒绝的内容,用户下次保存/离开就污染)。
       if (docId && serverBodyRef.current !== null && serverBodyRef.current !== bodyRef.current) {
         const restoreBody = bodyRef.current;
-        saveDoc((doc?.title) ?? 'Untitled', restoreBody)
+        // #927: 落盘 title 用输入框当前值(state)而非 doc?.title — 本地
+        // 标题编辑未保存时,doc.title 是旧值,会把改过的标题盖回去。
+        saveDoc(title || 'Untitled', restoreBody)
           .then((updated) => {
             lastSavedBody.current = updated.body ?? restoreBody;
             serverBodyRef.current = updated.body ?? restoreBody;
           })
           .catch((err) => {
             if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {
-              setSaveConflict({ title: (doc?.title) ?? 'Untitled', body: restoreBody });
+              setSaveConflict({ title: title || 'Untitled', body: restoreBody });
               showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
             } else {
               showNotice(t('writing.reviewSaveFailed', 'AI 修改已应用，但保存失败 — 请点击 Save 重试'), 6000);
@@ -405,11 +489,13 @@ export function WritingEditorPage() {
       showNotice(t('writing.restoreApplied', '已恢复到「{{label}}」：接受 {{a}} / 拒绝 {{r}} 处差异', { label: restoreReview.label, a: result.accepted, r: result.rejected }));
       setRestoreReview(null);
     } else {
-      showNotice(`已采纳 AI 修改：接受 ${result.accepted} / 拒绝 ${result.rejected}`);
+      // #927: 硬编码文案 i18n 化(en/zh-CN 同步)。
+      showNotice(t('writing.aiChangesApplied', '已采纳 AI 修改：接受 {{a}} / 拒绝 {{r}}', { a: result.accepted, r: result.rejected }));
     }
     // #598/#711: 落地后自动保存到服务端 — 失败必须可见,不能静默吞掉。
     if (docId) {
-      saveDoc((doc?.title) ?? 'Untitled', result.md)
+      // #927: 同上 — 落盘 title 用 state 当前值。
+      saveDoc(title || 'Untitled', result.md)
         .then((updated) => {
           lastSavedBody.current = updated.body ?? result.md;
           serverBodyRef.current = updated.body ?? result.md;
@@ -418,7 +504,7 @@ export function WritingEditorPage() {
         })
         .catch((err) => {
           if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {
-            setSaveConflict({ title: (doc?.title) ?? 'Untitled', body: result.md });
+            setSaveConflict({ title: title || 'Untitled', body: result.md });
             showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
           } else {
             setError(err instanceof ApiError ? err.messageText : String(err));
@@ -430,7 +516,7 @@ export function WritingEditorPage() {
     // (bodyRef 同帧还未更新,显式传 result.md)。
     popNextWriteBack(result.md);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定,避免抖动
-  }, [docId, doc?.title, restoreReview, showNotice, popNextWriteBack]);
+  }, [docId, title, restoreReview, showNotice, popNextWriteBack]);
 
   // #402-merge: append a library figure to the document body.
   const handleInsertChart = (markdown: string) => {
@@ -488,9 +574,6 @@ export function WritingEditorPage() {
     setViewMode('document');
   };
 
-  const chatEndRef = chat.chatEndRef;
-  const docUploadRef = chat.docUploadRef;
-
   // #383: generate the Methods draft from the linked study's protocol.
   const handleGenerateMethods = async () => {
     if (!docId) return;
@@ -524,6 +607,12 @@ export function WritingEditorPage() {
   };
 
   // #382: drag the chat panel edge to resize (desktop); width persists.
+  const handleChatResizeStart = (e: React.MouseEvent<HTMLDivElement>) => {
+    resizingRef.current = true;
+    e.preventDefault();
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!resizingRef.current) return;
@@ -548,21 +637,30 @@ export function WritingEditorPage() {
 
   useEffect(() => {
     if (!docId) return;
+    // #903: stale-response 守卫 — 切文档后,上一个 docId 的晚到响应不得覆盖
+    // 新文档状态(cancelled 由 cleanup 置位,effect 闭包内的 docId 即本次请求目标)。
+    let cancelled = false;
     setLoading(true);
     setError(null);
+    // #903: 立即清空旧文档 — 阻断旧 body/title 参与新文档的 dirty/autosave 判断。
+    setDoc(null);
     // #382/#726: linked submission state (target journal / applied template).
     // #726: 按 docId 取对应投稿草稿,不再所有文档共享 drafts[0]。
     api.listSubmissionDrafts().then((r) => {
-      // #726: 按 docId 取对应投稿草稿,不再所有文档共享 drafts[0]。
+      if (cancelled) return;
+      // #726: 按 docId 取对应投稿草稿。
+      // #927: 不再回退 r.drafts[0] — 未命中即视为无关联草稿,避免其他
+      // 文档的期刊/模板串台到当前文档头部(消费点仅有 header 徽标,
+      // 空串安全)。
       const mine = docId ? r.drafts.find((d) => d.doc_id === docId) : undefined;
-      const d = mine ?? r.drafts[0];
-      if (d) {
-        setLinkedJournal(d.target_journal || '');
-        setLinkedTemplate(d.template_id || '');
+      if (mine) {
+        setLinkedJournal(mine.target_journal || '');
+        setLinkedTemplate(mine.template_id || '');
       }
     }).catch(() => {});
     api.getDoc(docId)
       .then((d) => {
+        if (cancelled) return;
         setDoc(d);
         setTitle(d.title);
         setBody(d.body);
@@ -574,8 +672,15 @@ export function WritingEditorPage() {
         setStudyId(d.study_id || '');
         setStudyName(d.study_name || '');
       })
-      .catch((err) => setError(err instanceof ApiError ? err.messageText : String(err)))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof ApiError ? err.messageText : String(err));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ref 稳定(#696 hooks 下沉)
   }, [docId]);
 
@@ -594,21 +699,12 @@ export function WritingEditorPage() {
     if (next) loadSnapshots();
   };
 
-  // #882: 带 base_sha 的保存(服务端并发保护)— 指纹取服务端视角正文
-  // (serverBodyRef),409 → 冲突横幅。force 跳过(「保留我的版本」)。
-  const saveDoc = useCallback(async (title: string, body: string, opts: { deck?: unknown; force?: boolean } = {}) => {
-    const base = serverBodyRef.current;
-    const base_sha = !opts.force && base !== null ? await sha1Hex(base) : undefined;
-    return api.updateDoc(docId!, {
-      title, body,
-      ...(opts.deck !== undefined ? { deck: opts.deck } : {}),
-      ...(base_sha ? { base_sha } : {}),
-      ...(opts.force ? { force: true } : {}),
-    });
-  }, [docId]);
-
   const handleSave = async () => {
     if (!docId) return;
+    // #895: 审阅未决或写回批次待冲刷时禁止保存 — 防止把审阅前的正文盖回
+    // 服务端(覆盖 AI 写回版本)。接受/放弃落地路径(handleDiffResolve)直连
+    // saveDoc,不经过本守卫,落地不受影响。
+    if (diffReview !== null || pendingWriteBackRef.current !== null) return;
     setSaving(true);
     setError(null);
     try {
@@ -657,16 +753,26 @@ export function WritingEditorPage() {
     }
   };
 
+  // #927: 「载入最新」改为 diff 审阅确认 — 本地未保存内容(old)与服务端
+  // 最新(new)进 diffReview,用户看到将被丢弃的修改并逐条确认;不再直接
+  // setBody 静默丢弃本地编辑。取消则保留本地,冲突横幅仍在。
   const resolveConflictLoadLatest = async () => {
-    if (!docId) return;
+    if (!docId || !saveConflict) return;
     try {
       const fresh = await api.getDoc(docId);
-      setBody(fresh.body);
-      lastSavedBody.current = fresh.body;
-      serverBodyRef.current = fresh.body;
-      setDoc((prev) => prev ? { ...prev, body: fresh.body, updated_at: fresh.updated_at } : prev);
-      setSaveConflict(null);
-      showNotice(t('writing.conflictLoadedLatest', '已载入服务端最新内容'), 3000);
+      if (fresh.body === bodyRef.current) {
+        // 本地与服务端已一致 — 直接收口,无需审阅。
+        lastSavedBody.current = fresh.body;
+        serverBodyRef.current = fresh.body;
+        setDoc((prev) => (prev ? { ...prev, body: fresh.body, updated_at: fresh.updated_at } : prev));
+        setSaveConflict(null);
+        showNotice(t('writing.conflictLoadedLatest', '已载入服务端最新内容'), 3000);
+        return;
+      }
+      conflictLoadRef.current = { body: fresh.body, updatedAt: fresh.updated_at };
+      setDiffReview({ key: `conflict_${Date.now()}`, old: bodyRef.current, next: fresh.body });
+      // 审阅模式下 markdown diff 不可见 — deck 视图先切回文档视图(同写回路径)。
+      setViewMode((m) => (m === 'deck' ? 'document' : m));
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     }
@@ -678,6 +784,13 @@ export function WritingEditorPage() {
    */
   const handleRestoreRequest = async (snapshotId: string) => {
     if (!docId || !body) return;
+    // #910: Restore × 审阅互斥 — diff 审阅未决或 AI 写回批次待冲刷时,
+    // Restore 审阅会覆盖 diffReview 状态(正在审阅的 AI 修改/恢复内容互相
+    // 顶掉,恢复与写回混在一个 diff 里无法分辨)。明示用户先完成当前审阅。
+    if (diffReview !== null || pendingWriteBackRef.current !== null) {
+      showNotice(t('writing.restoreBlockedByReview', '请先处理当前的 AI 修改审阅，再恢复历史版本'));
+      return;
+    }
     setRestoring(snapshotId);
     try {
       const snap = await api.getSnapshotBody(docId, snapshotId);
@@ -744,8 +857,8 @@ export function WritingEditorPage() {
     }
   };
 
-  const { chatInput, setChatInput, chatMessages, chatLoading, chatPending } = chat;
-  const { refDialogOpen, setRefDialogOpen, refForm, setRefForm, refSubmitting, refList, refListOpen, setRefListOpen, refDeleting, loadReferences, handleAddReference, handleKbPickConfirm, deleteReference } = references;
+  const { setChatInput } = chat;
+  const { refDialogOpen, setRefDialogOpen, refForm, setRefForm, refSubmitting, handleAddReference, handleKbPickConfirm } = references;
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
 
   if (loading) {
@@ -876,125 +989,34 @@ export function WritingEditorPage() {
           </div>
         </header>
 
-        <div className="flex items-center gap-1 border-b border-border bg-surface px-6 py-1.5 shrink-0">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handlePhiScan}
-            disabled={phiScanning}
-            isLoading={phiScanning}
-            >
-              <ShieldAlert size={14} className="mr-1" /> Scan PHI
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => docUploadRef.current?.click()}
-            >
-              <FileText size={14} className="mr-1" /> Upload
-            </Button>
-            <input
-              ref={docUploadRef}
-              type="file"
-              accept=".pdf,.docx,.doc,.txt,.md"
-              onChange={chat.handleDocUpload}
-              className="hidden"
-            />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleExportDocx}
-            disabled={exporting}
-            isLoading={exporting}
-          >
-            <Download size={14} className="mr-1" /> Export DOCX
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => handleExportPdf()}
-            disabled={exporting}
-          >
-            <FileText size={14} className="mr-1" /> Export PDF
-          </Button>
-          {studyId && (
-            <>
-              <Button variant="ghost" size="sm" onClick={handleGenerateMethods} isLoading={methodsLoading} disabled={!studyId}>
-                <Sparkles size={14} className="mr-1" /> {t('writing.genMethods', '生成方法')}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setInjectOpen((v) => !v)}>
-                <FileText size={14} className="mr-1" /> {t('writing.injectResults', '注入结果')}
-              </Button>
-            </>
-          )}
-          {methodsError && (
-            <span className="text-xs text-error">{methodsError}</span>
-          )}
-          {injectOpen && (
-            <div className="absolute right-2 top-14 z-30 w-[min(92vw,420px)] rounded-xl border border-border bg-surface-elevated p-4 shadow-lg">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-sm font-medium text-text-secondary">{t('writing.injectResultsTitle', '注入统计结果')}</span>
-                <button onClick={() => setInjectOpen(false)} className="text-text-tertiary hover:text-text-primary"><X size={14} /></button>
-              </div>
-              <Input
-                value={injectLabel}
-                onChange={(e) => setInjectLabel(e.target.value)}
-                placeholder={t('writing.injectLabel', '小节标题，如 Overall survival')}
-                className="mb-2"
-              />
-              <textarea
-                value={injectResult}
-                onChange={(e) => setInjectResult(e.target.value)}
-                rows={6}
-                placeholder={t('writing.injectHint', '粘贴 #361 统计输出（JSON），如 {"method":"kaplan_meier_logrank","p_value":0.012}')}
-                className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-              <div className="mt-2 flex justify-end gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setInjectOpen(false)}>Cancel</Button>
-                <Button size="sm" onClick={handleInjectResults} isLoading={injecting} disabled={!injectLabel.trim() || !injectResult.trim()}>
-                  {t('writing.injectNow', '注入')}
-                </Button>
-              </div>
-            </div>
-          )}
-          <div className="relative">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => { setRefListOpen((v) => !v); if (!refListOpen) void loadReferences(); }}
-            >
-              <FilePlus size={14} className="mr-1" /> Reference
-              {refList.length > 0 && (
-                <span className="ml-1 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">{refList.length}</span>
-              )}
-            </Button>
-            {/* #757: 从知识库选择 — 同一文件不再重传,一次上传处处引用。 */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setKbPickerOpen(true)}
-              title={t('writing.pickFromKb', '从知识库选择总结/文件作为参考')}
-            >
-              📚 {t('writing.fromKb', '知识库')}
-            </Button>
-            {refListOpen && (
-              <ReferenceListPopover list={refList} deleting={refDeleting} onClose={() => setRefListOpen(false)} onDelete={(id) => void deleteReference(id)} />
-            )}
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setChatOpen((v) => !v)}
-          >
-            <MessageSquare size={14} className="mr-1" /> Chat
-          </Button>
-
-          {/* #754: 导出完成态面板 — 取代路径字符串;api 层已触发下载,
-              面板补齐确认感 + 历史入口。 */}
-          {(exportResult || exportHistory.length > 0) && exportPanelOpen && (
-            <ExportDonePanel exportResult={exportResult} exportHistory={exportHistory} onClose={() => setExportPanelOpen(false)} />
-          )}
-        </div>
+        {/* #688: 工具栏 + inject 弹层 + 导出完成面板 — UI 拆出,状态/handler 仍归路由。 */}
+        <Toolbar
+          chat={chat}
+          references={references}
+          phiScanning={phiScanning}
+          onPhiScan={handlePhiScan}
+          exporting={exporting}
+          onExportDocx={handleExportDocx}
+          onExportPdf={() => handleExportPdf()}
+          studyId={studyId}
+          methodsLoading={methodsLoading}
+          methodsError={methodsError}
+          onGenerateMethods={handleGenerateMethods}
+          injectOpen={injectOpen}
+          setInjectOpen={setInjectOpen}
+          injectLabel={injectLabel}
+          setInjectLabel={setInjectLabel}
+          injectResult={injectResult}
+          setInjectResult={setInjectResult}
+          injecting={injecting}
+          onInjectResults={handleInjectResults}
+          onOpenKbPicker={() => setKbPickerOpen(true)}
+          setChatOpen={setChatOpen}
+          exportResult={exportResult}
+          exportHistory={exportHistory}
+          exportPanelOpen={exportPanelOpen}
+          setExportPanelOpen={setExportPanelOpen}
+        />
 
         <div className="flex flex-1 overflow-hidden">
           <main className={cn('flex-1 overflow-y-auto p-6', chatOpen ? 'border-r border-border' : '')}>
@@ -1040,123 +1062,14 @@ export function WritingEditorPage() {
                      #773: 双来源 — Doc.deck 存在时为可编辑 deck 卡片（写
                      Doc.deck，不动正文）；否则回落 body 的 markdown 投影
                      （只读 + 锚点跳回文档编辑）。 */
-                  <div className="space-y-3">
-                    {deckAsset ? (
-                      <div className="flex items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent/5 px-4 py-2">
-                        <span className="text-xs text-accent">
-                          {t('writing.deckAssetBadge', 'AI 编排 deck 资产 — 卡片内可直接编辑（改标题/调要点/删页），保存不会改动文档正文。')}
-                        </span>
-                        <Button size="sm" variant="secondary" onClick={deckCtl.addDeckSlide}>
-                          <FilePlus size={13} className="mr-1" /> {t('writing.deckAddSlide', '添加一页')}
-                        </Button>
-                      </div>
-                    ) : deck.slides.length <= 1 && body.trim() && (
-                      <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-surface-elevated px-4 py-2.5">
-                        <span className="text-xs text-text-secondary">
-                          {t('writing.deckSinglePageHint', '文档还没有 ## 分页结构，导出 PPT 只会有一页。可让 AI 按内容语义拆页。')}
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => void chat.sendChatText(t('writing.aiSplitPrompt', '请把当前稿件按内容语义拆成多页（每页一个 ## 二级标题），为生成 PPT 做准备。'))}
-                        >
-                          <Sparkles size={13} className="mr-1" /> {t('writing.aiSplitPages', 'AI 帮我拆页')}
-                        </Button>
-                      </div>
-                    )}
-                    {deckAsset ? (
-                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                        {deckAsset.slides.map((slide, i) => (
-                          <div key={i} className="flex aspect-video flex-col overflow-hidden rounded-lg border border-border bg-surface-elevated shadow-sm transition-shadow hover:shadow-md">
-                            <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
-                              <span className="shrink-0 text-[11px] font-semibold text-text-tertiary">{i + 1}.</span>
-                              <input
-                                value={slide.title}
-                                onChange={(e) => deckCtl.updateDeckSlide(i, { title: e.target.value })}
-                                className="min-w-0 flex-1 rounded bg-transparent px-1 py-0.5 text-xs font-semibold text-text-primary outline-none focus:bg-surface focus:ring-1 focus:ring-ring"
-                              />
-                              <button
-                                onClick={() => deckCtl.deleteDeckSlide(i)}
-                                title={t('writing.deckDeleteSlide', '删除此页')}
-                                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface hover:text-error"
-                              >
-                                <X size={12} />
-                              </button>
-                            </div>
-                            <div className="flex flex-1 flex-col gap-1 overflow-hidden px-3 py-2 text-xs leading-relaxed text-text-secondary">
-                              {deckCtl.slideBullets(slide).map((b, j) => (
-                                <div key={j} className="flex min-w-0 items-start gap-1.5">
-                                  <span className="mt-[6px] h-1 w-1 shrink-0 rounded-full bg-text-tertiary" />
-                                  <input
-                                    value={b}
-                                    onChange={(e) => {
-                                      const bullets = deckCtl.slideBullets(slide).map((x, k) => (k === j ? e.target.value : x));
-                                      deckCtl.updateDeckSlide(i, { bullets });
-                                    }}
-                                    className="min-w-0 flex-1 rounded bg-transparent px-1 py-0.5 outline-none focus:bg-surface focus:ring-1 focus:ring-ring"
-                                  />
-                                </div>
-                              ))}
-                              <button
-                                onClick={() => deckCtl.updateDeckSlide(i, { bullets: [...deckCtl.slideBullets(slide), ''] })}
-                                className="self-start rounded px-1.5 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface hover:text-accent"
-                              >
-                                + {t('writing.deckAddBullet', '要点')}
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                      {deck.slides.map((slide, i) => (
-                        <div
-                          key={i}
-                          className="group relative flex aspect-video flex-col overflow-hidden rounded-lg border border-border bg-surface-elevated shadow-sm transition-shadow hover:shadow-md"
-                        >
-                          <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
-                            <span className="truncate text-xs font-semibold text-text-primary">
-                              {i + 1}. {slide.title}
-                            </span>
-                            <button
-                              onClick={() => handleDeckCardEdit(slide)}
-                              title={t('writing.deckCardEdit', '跳回文档编辑此页')}
-                              className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-text-tertiary transition-opacity hover:bg-surface hover:text-accent group-hover:opacity-100 md:opacity-0"
-                            >
-                              <Pencil size={11} /> {t('writing.deckCardEdit', '编辑')}
-                            </button>
-                          </div>
-                          <div className="flex flex-1 flex-col gap-1.5 overflow-hidden px-3 py-2 text-xs leading-relaxed text-text-secondary">
-                            {slide.blocks.slice(0, 8).map((b, j) =>
-                              b.type === 'image' ? (
-                                <img key={j} src={b.url} alt={b.caption || ''} className="max-h-[55%] w-auto self-start rounded border border-border object-contain" />
-                              ) : b.type === 'bullet' ? (
-                                <div key={j} className="flex min-w-0 items-start gap-1.5">
-                                  <span className="mt-[6px] h-1 w-1 shrink-0 rounded-full bg-text-tertiary" />
-                                  <span className="line-clamp-2">{b.text}</span>
-                                </div>
-                              ) : (
-                                <p key={j} className="line-clamp-2">{b.text}</p>
-                              ),
-                            )}
-                            {slide.blocks.length > 8 && (
-                              <span className="text-[11px] text-text-tertiary">…{t('writing.deckMoreBlocks', '还有 {{n}} 段', { n: slide.blocks.length - 8 })}</span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                      </div>
-                    )}
-                    {/* #770 设计更新 2：导出交互 = 预填 chat 消息发送，不新建旁路 API。
-                        #773: deck 资产存在时导出内容源 = Doc.deck（所见即所导）。 */}
-                    <div className="flex justify-end">
-                      <Button size="sm" onClick={() => void chat.sendChatText(deckAsset
-                        ? t('writing.aiExportDeckPrompt', '请把当前 deck 导出为 PPT（使用现有 deck 内容，不要重新编排）。')
-                        : t('writing.aiExportPptPrompt', '请把当前稿件导出为 PPT。'))}>
-                        <Presentation size={13} className="mr-1" /> {t('writing.aiExportPpt', 'AI 导出 PPT')}
-                      </Button>
-                    </div>
-                  </div>
+                  <DeckView
+                    deckAsset={deckAsset}
+                    slides={deck.slides}
+                    body={body}
+                    deckCtl={deckCtl}
+                    sendChatText={chat.sendChatText}
+                    onCardEdit={handleDeckCardEdit}
+                  />
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
                     {saveConflict && (
@@ -1196,137 +1109,32 @@ export function WritingEditorPage() {
             </div>
           </main>
 
+          {/* #688: 右侧 Doc Chat / Charts 面板 — UI 拆出;chat 状态经
+              useDocChat 保持在路由,宽度/resize/标签/selection 经 props 透传。 */}
           {chatOpen && (
-            <>
-              {/* #351: tap the scrim to close the mobile chat drawer */}
-              <div className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setChatOpen(false)} />
-              <aside
-                style={{ ['--chatw' as string]: `${chatWidth}px` }}
-                className="fixed inset-y-0 right-0 z-40 flex w-[85vw] max-w-sm flex-col border-l border-border bg-surface shadow-xl md:relative md:inset-auto md:z-auto md:w-[var(--chatw)] md:max-w-none md:shrink-0 md:border-l-0 md:shadow-none"
-              >
-                {/* #382: desktop resize handle — drag to change chat width.
-                    #fix 2026-09: aside 此前是 md:static(非定位),absolute 把手
-                    锚到外层定位祖先,把手从面板左缘消失 → 无法拖拽。
-                    改 md:relative(不改变文档流,同时成为把手包含块)。 */}
-                <div
-                  onMouseDown={(e) => {
-                    resizingRef.current = true;
-                    e.preventDefault();
-                    document.body.style.cursor = 'col-resize';
-                    document.body.style.userSelect = 'none';
-                  }}
-                  className="absolute left-0 top-0 z-10 hidden h-full w-1 cursor-col-resize bg-border/40 hover:bg-accent/60 md:block"
-                  style={{ width: 6 }}
-                />
-              <div className="flex h-10 items-center justify-between border-b border-border px-3">
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => setSidePanelTab('chat')}
-                    className={cn('rounded-lg px-2.5 py-1 text-xs font-medium transition-colors', sidePanelTab === 'chat' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:text-text-primary')}
-                  >Chat</button>
-                  <button
-                    onClick={() => setSidePanelTab('charts')}
-                    className={cn('rounded-lg px-2.5 py-1 text-xs font-medium transition-colors', sidePanelTab === 'charts' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:text-text-primary')}
-                  >Charts</button>
-                </div>
-                <button onClick={() => setChatOpen(false)} className="text-text-tertiary hover:text-text-primary">
-                  <X size={14} />
-                </button>
-              </div>
-              {sidePanelTab === 'chat' && (
-                <>
-              <SkillsBar active={chat.activeSkills} onToggle={(name) => chat.setActiveSkills((prev) => prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name])} />
-              <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                <ChatMessages
-                  variant="compact"
-                  messages={chatMessages}
-                  streamNote={chatSession?.streamNote}
-                  stallSince={chatSession?.stallSince}
-                  bottomRef={chatEndRef}
-                  emptyState={
-                    <p className="text-sm text-text-tertiary text-center mt-4 leading-relaxed">
-                      Ask the AI to write or research content.<br />
-                      It will update this document automatically.<br />
-                      <span className="text-xs">e.g. "Write a clinical review on..."</span>
-                    </p>
-                  }
-                />
-              </div>
-              <div className="border-t border-border p-3">
-                {chat.kbDedupNotice && (
-              <div className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-text-secondary">{chat.kbDedupNotice}</div>
-            )}
-            {chat.chatAttachedFiles.length > 0 && (
-                  <div className="mb-2 flex gap-1 flex-wrap">
-                    {chat.chatAttachedFiles.map((f) => (
-                      <span key={f.fileId} className="inline-flex items-center rounded-full bg-surface-elevated border border-border px-2 py-0.5 text-xs text-text-secondary">{f.name}</span>
-                    ))}
-                  </div>
-                )}
-                {/* #fix: 追加问题排队提示 — 回复完成后自动发送,不打断。 */}
-                {chatPending && (
-                  <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-2 py-1">
-                    <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">已排队 — 当前回复完成后自动发送</span>
-                  </div>
-                )}
-                {/* #693: 选中即引用 — 当前编辑器选中文本将随下一条消息发送。 */}
-                {chatSelection && (
-                  <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-2 py-1">
-                    <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
-                      {chatSelection.length > 48 ? `${chatSelection.slice(0, 48)}…` : chatSelection}
-                    </span>
-                    <button
-                      onClick={() => setChatSelection('')}
-                      className="shrink-0 text-text-tertiary hover:text-text-primary"
-                      title="Clear selection reference"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                )}
-                <div className="flex gap-2">
-                  <input ref={chat.chatFileRef} type="file" onChange={chat.handleChatFile} className="hidden" disabled={chat.chatUploadingFile} />
-                  <Button variant="ghost" size="sm" onClick={() => chat.chatFileRef.current?.click()} disabled={chatLoading || chat.chatUploadingFile} isLoading={chat.chatUploadingFile} className="shrink-0">
-                    <Paperclip size={16} />
-                  </Button>
-                  <Textarea
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => { if (!isEnterSendKey(e)) return; e.preventDefault(); void chat.handleSendChat(); }}
-                    onPaste={chat.handleChatPaste}
-                    placeholder="Ask a question..."
-                    rows={1}
-                    className="min-h-0 flex-1 resize-none py-1.5"
-                    style={{ maxHeight: '120px' }}
-                  />
-                  {/* #fix: 回复进行中显示 Stop(停止分析,含排队消息);平时发送=排队。 */}
-                  {chatLoading ? (
-                    <Button size="sm" variant="secondary" onClick={() => chat.stopStream(chatSessionId)} className="shrink-0">
-                      Stop
-                    </Button>
-                  ) : (
-                    <Button size="sm" onClick={() => void chat.handleSendChat()} disabled={!chatInput.trim()} className="shrink-0">
-                      Send
-                    </Button>
-                  )}
-                </div>
-              </div>
-                </>
-              )}
-              {sidePanelTab === 'charts' && (
-                <ChartLibrary onInsert={handleInsertChart} />
-              )}
-              </aside>
-            </>
+            <ChatPanel
+              chat={chat}
+              chatWidth={chatWidth}
+              sidePanelTab={sidePanelTab}
+              setSidePanelTab={setSidePanelTab}
+              onClose={() => setChatOpen(false)}
+              onResizeStart={handleChatResizeStart}
+              chatSessionId={chatSessionId}
+              onInsertChart={handleInsertChart}
+            />
           )}
         </div>
 
         {/* #fix: 上传进度 Modal — 上传中显示进度条,导入阶段不确定进度。 */}
         <UploadProgressModal state={chat.uploadState} onCancel={chat.cancelUpload} />
 
-        {/* #598: History 版本列表(#696: 对话框组件化) */}
+        {/* #598: History 版本列表(#696: 对话框组件化)
+            #910: 审阅未决/写回待冲刷时 Restore 按钮禁用 — 与 handleRestoreRequest
+            的互斥守卫同步(UI 层同样不给入口)。 */}
         {showHistory && (
-          <HistoryDialog snapshots={snapshots} snapshotsLoading={snapshotsLoading} restoring={restoring} onClose={() => setShowHistory(false)} onRestore={(id) => void handleRestoreRequest(id)} />
+          <HistoryDialog snapshots={snapshots} snapshotsLoading={snapshotsLoading} restoring={restoring}
+            reviewBlocked={diffReview !== null || pendingWriteBackRef.current !== null}
+            onClose={() => setShowHistory(false)} onRestore={(id) => void handleRestoreRequest(id)} />
         )}
 
         {/* PHI Findings Dialog(#696: HighlightedBody 组件化) */}

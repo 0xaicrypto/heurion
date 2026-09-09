@@ -6,6 +6,7 @@
 
 import prisma from '../../common/prisma'
 import type { Fact, KnowledgeSummary } from '../../evolution/stores'
+import { paginate } from '../../lib/paginate.js' // #922: 分页唯一实现(lib/paginate)
 
 export type GapStatus = 'open' | 'answered' | 'ignored'
 export type GapSource = 'chat' | 'user' | 'sidecar'
@@ -101,14 +102,12 @@ function sortGaps(gaps: KnowledgeGap[], sortBy: 'createdAt' | 'updatedAt', sortO
   })
 }
 
-function paginate<T>(items: T[], page: number, pageSize: number): { items: T[]; pagination: PaginatedGaps['pagination'] } {
-  const total = items.length
-  const totalPages = Math.max(1, Math.ceil(total / pageSize))
-  const safePage = Math.min(Math.max(1, page), totalPages)
-  const start = (safePage - 1) * pageSize
+function paginateGaps(items: KnowledgeGap[], page: number, pageSize: number): { items: KnowledgeGap[]; pagination: PaginatedGaps['pagination'] } {
+  // #922: 切片/clamp 逻辑收敛到 lib/paginate(同一实现供 skills.router 共用)。
+  const result = paginate(items, page, pageSize)
   return {
-    items: items.slice(start, start + pageSize),
-    pagination: { page: safePage, pageSize, total, totalPages },
+    items: result.items,
+    pagination: { page: result.page, pageSize: result.pageSize, total: result.total, totalPages: Math.max(1, result.totalPages) },
   }
 }
 
@@ -213,7 +212,7 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
     const sortOrder = options.sortOrder ?? 'desc'
 
     gaps = sortGaps(gaps, sortBy, sortOrder)
-    const result = paginate(gaps, page, pageSize)
+    const result = paginateGaps(gaps, page, pageSize)
     return { gaps: result.items, pagination: result.pagination }
   }
 
@@ -357,7 +356,7 @@ export class InMemoryKnowledgeGapService implements KnowledgeGapService {
     const sortOrder = options.sortOrder ?? 'desc'
 
     gaps = sortGaps(gaps, sortBy, sortOrder)
-    const result = paginate(gaps, page, pageSize)
+    const result = paginateGaps(gaps, page, pageSize)
     return { gaps: result.items, pagination: result.pagination }
   }
 

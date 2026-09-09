@@ -98,6 +98,23 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   const onResolveRef = useRef(onDiffResolve);
   onResolveRef.current = onDiffResolve;
 
+  // #927: 选区上报 rAF 合帧(#797 气泡流同模式)— 拖动选区时
+  // onSelectionUpdate 高频触发,每次 setState 上游(writing-editor)整页
+  // 重渲染;改为最新值存 ref,每帧最多上报一次,卸载时取消挂起的帧。
+  const selRafRef = useRef<number | null>(null);
+  const latestSelTextRef = useRef('');
+  const reportSelection = useCallback((text: string) => {
+    latestSelTextRef.current = text;
+    if (selRafRef.current !== null) return;
+    selRafRef.current = requestAnimationFrame(() => {
+      selRafRef.current = null;
+      onSelRef.current?.(latestSelTextRef.current);
+    });
+  }, []);
+  useEffect(() => () => {
+    if (selRafRef.current !== null) { cancelAnimationFrame(selRafRef.current); selRafRef.current = null; }
+  }, []);
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -119,9 +136,9 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     onSelectionUpdate: ({ editor }) => {
       const sel = editor.state.selection;
       // #693: 非审阅模式下把选中文本上报给外部(选中即引用);审阅模式下
-      // 选中的是 diff 内容,不构成引用。
+      // 选中的是 diff 内容,不构成引用。#927: 上报走 rAF 合帧。
       if (reviewKeyRef.current === null) {
-        onSelRef.current?.(editor.state.doc.textBetween(sel.from, sel.to, '\n').trim());
+        reportSelection(editor.state.doc.textBetween(sel.from, sel.to, '\n').trim());
         return;
       }
       if (sel.empty) { setSelectedChange(null); return; }
@@ -189,7 +206,10 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       statsRef.current = { accepted: 0, rejected: 0 };
       setSelectedChange(null);
       setChangeNav({ idx: -1, total: 0 });
-      (editor.commands as any).setTrackChangesMode('edit');
+      // #909: 退出审阅恢复编辑能力(审阅期 setEditable(false) 的对称操作;
+      // 初次渲染时本 effect 由 editor 就绪触发,无需 onCreate 兜底)。
+      editor.setEditable(true);
+      (editor.commands).setTrackChangesMode('edit');
       // 退出审阅(含"放弃修改")→ 还原为当前正文。
       // #812: accept 后的落地也走位置保持 — 用户停在原选区/滚动处,
       // 不再被 setContent 甩到文档末尾。
@@ -207,7 +227,11 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     applyTrackedDiff(editor, diffReview.old, diffReview.next, AI_AUTHOR);
     applyMdRef.current = null;
     if (sc && savedTop !== null) sc.el.scrollTop = savedTop;
-    (editor.commands as any).setTrackChangesMode('view');
+    (editor.commands).setTrackChangesMode('view');
+    // #909: 审阅只读化 — 此前仅靠 onUpdate 抑制,IME 组合/撤销栈等旁路
+    // 仍可在带标记的文档上改写内容;显式 setEditable(false) 封死入口,
+    // ←/→ 键也因编辑器失焦而空闲给审阅导航使用。
+    editor.setEditable(false);
     setReviewStats({ pending: getPendingChangeCount(editor), accepted: 0, rejected: 0 });
     setSelectedChange(null);
     // #fix: 进入审阅自动聚焦第一处修改(用户可逐条遍历确认/拒绝)。
@@ -247,10 +271,10 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     const n = ids.size;
     applyMdRef.current = value;
     if (accept) {
-      (editor.commands as any).acceptAll();
+      (editor.commands).acceptAll();
       stats.accepted += n;
     } else {
-      (editor.commands as any).rejectAll();
+      (editor.commands).rejectAll();
       stats.rejected += n;
     }
     cleanupEmptyBlocks(editor);
@@ -278,8 +302,8 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     if (!editor) return;
     const stats = statsRef.current;
     applyMdRef.current = value;
-    if (accept) { (editor.commands as any).acceptChange(changeId); stats.accepted += 1; }
-    else { (editor.commands as any).rejectChange(changeId); stats.rejected += 1; }
+    if (accept) { (editor.commands).acceptChange(changeId); stats.accepted += 1; }
+    else { (editor.commands).rejectChange(changeId); stats.rejected += 1; }
     cleanupEmptyBlocks(editor);
     applyMdRef.current = null;
     setSelectedChange(null);
@@ -328,6 +352,14 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     if (reviewKeyRef.current === null) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // #909: target 判定 — 输入框/textarea/contenteditable(聊天输入、
+      // 标题框、气泡面板)里 ←/→ 是文本光标导航,不得被审阅导航劫持;
+      // 仅页面级方向键(编辑器区域/空白处)才做逐处导航。
+      const target = e.target as HTMLElement | null;
+      if (target instanceof HTMLInputElement
+        || target instanceof HTMLTextAreaElement
+        || target instanceof HTMLSelectElement
+        || target?.isContentEditable) return;
       if (e.key === 'ArrowRight') { e.preventDefault(); jumpTo(Math.min(navIdx + 1, navTotal - 1)); }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); jumpTo(Math.max(navIdx - 1, 0)); }
     };
@@ -339,7 +371,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   if (!editor) return null;
 
   const isActive = (name: string, attrs?: Record<string, unknown>) =>
-    editor.isActive(name, attrs as any);
+    editor.isActive(name, attrs);
 
   const reviewing = reviewKeyRef.current !== null;
 

@@ -1,8 +1,9 @@
+import fs from 'fs'
 import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { estimateTokens } from '../common/token-estimate.js'
 import { resolveDefaultMaxTokens, resolveActiveModel } from '../common/llm-gateway.js'
-import { resolveImportTargets, extractRefText, ensureDraftBody } from './doc-import.js'
+import { resolveImportTargets, ensureDraftBody } from './doc-import.js'
 import { writeDocVersion } from './doc-version-writer.js'
 // #697: 匹配算法族下沉 lib(纯函数,可独立单测)。
 import { normalizeForMatch, findNormalizedSpan, findFuzzySpan } from '../lib/document-span-match.js'
@@ -11,8 +12,10 @@ import { unescapeLiteralNewlines, ensureBlockBoundaries } from '../lib/document-
 // #697: import 模式拆到 edit-import.ts。
 import { executeImportReference } from './edit-import.js'
 // #868: 落点章节透明化 + 焦点段定位提示类型。
-import { nearestHeadingBefore } from '../lib/doc-sections.js'
+import { nearestHeadingBefore, splitDocumentSections } from '../lib/doc-sections.js'
 import type { EditHint } from './tool-registry.js'
+import { parseDocSessionId } from './tool-registry.js'
+import { CONTEXT_CONFIG } from '../common/context-config.js'
 import { executeImportFromUrl } from './doc-import.js'
 
 /**
@@ -32,6 +35,14 @@ import { executeImportFromUrl } from './doc-import.js'
  * 版本化 + 自动快照 + 前端 diff 审阅(doc_updated SSE)对三种模式一致。
  */
 export class EditDocumentTool extends BaseTool {
+  /**
+   * #906: 本轮最新正文缓存 — applySpan/fullReplace/import 写回成功后更新。
+   * 组装期回填的 editHint(焦点段/选中文本)来自组装时的旧正文,同一回合
+   * 连续编辑时已失配;区域定位改从最新正文取。每回合新建 ToolRegistry →
+   * 新建本工具实例,缓存生命周期天然等于一回合,无需额外重置。
+   */
+  private latestBody: string | null = null
+
   constructor(private ctx: { userId: string; sessionId?: string; editHint?: EditHint }) {
     super()
   }
@@ -66,11 +77,12 @@ export class EditDocumentTool extends BaseTool {
   }
 
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
-    const sessionId = this.ctx.sessionId || ''
-    if (!sessionId.startsWith('doc-')) {
+    // #905: docId 格式校验(对齐 documents.router 的 doc_+16hex)— 此前
+    // slice(4) 盲取,任意 `doc-<x>` 会话都能拼出无效 docId 去查库。
+    const docId = parseDocSessionId(this.ctx.sessionId)
+    if (!docId) {
       return { success: false, error: 'edit_document is only available in a document writing session' }
     }
-    const docId = sessionId.slice(4)
 
     const importRef = typeof args.import_reference === 'string' ? args.import_reference.trim() : ''
     if (importRef) return this.importReference(docId, importRef, String(args.summary || 'imported reference'))
@@ -110,8 +122,17 @@ export class EditDocumentTool extends BaseTool {
   }
 
   /** 导入模式:按 label 定位参考材料,把提取的正文写入文档(#697 拆到 edit-import.ts)。 */
-  private importReference(docId: string, reference: string, summary: string): Promise<ToolResult> {
-    return executeImportReference(this.ctx.userId, docId, reference, summary)
+  private async importReference(docId: string, reference: string, summary: string): Promise<ToolResult> {
+    const result = await executeImportReference(this.ctx.userId, docId, reference, summary)
+    // #906: 导入覆盖了整篇正文 — 同步本轮最新正文缓存,后续 rangeEdit
+    // 的区域定位基于导入后的正文。
+    if (result.success && typeof result.output === 'string') {
+      try {
+        const parsed = JSON.parse(result.output) as { body?: string }
+        if (typeof parsed.body === 'string') this.latestBody = parsed.body
+      } catch { /* 输出非 JSON — 不更新缓存 */ }
+    }
+    return result
   }
 
   /** 局部编辑:在文档中精确匹配 oldText 并替换为 newText。
@@ -135,6 +156,10 @@ export class EditDocumentTool extends BaseTool {
 
       // #868: 焦点优先区域 — 选中文本(最具体)→ 焦点段。在区域内命中后
       // 位置可信,直接写回;两处皆失配才走全文匹配。
+      // #906: 区域定位源 — 组装期回填的 hint 区域来自组装时正文,同一
+      // 回合前一次编辑成功后该区域可能已失配;定位源优先用本轮最新正文
+      // (latestBody),无缓存时回退 DB 当前正文。span 定位与写回必须用
+      // 同一份 body(applySpan 的 body 参数与定位源一致),否则索引错位。
       const hint = this.ctx.editHint
       const regions: Array<{ label: string; text: string }> = []
       if (hint?.selectionText) regions.push({ label: '用户选中文本', text: hint.selectionText })
@@ -144,17 +169,46 @@ export class EditDocumentTool extends BaseTool {
           text: hint.focusSectionContent,
         })
       }
+      const matchSource = this.latestBody ?? body
       for (const region of regions) {
-        const regionSpan = findNormalizedSpan(body, region.text)
+        const regionSpan = findNormalizedSpan(matchSource, region.text)
         if (!regionSpan || regionSpan.end <= regionSpan.start) continue
-        const slice = body.slice(regionSpan.start, regionSpan.end)
+        const slice = matchSource.slice(regionSpan.start, regionSpan.end)
         const local = findNormalizedSpan(slice, oldText) ?? findFuzzySpan(slice, oldText)
         if (!local) continue
-        const heading = nearestHeadingBefore(body, regionSpan.start + local.start)
+        const heading = nearestHeadingBefore(matchSource, regionSpan.start + local.start)
         const location = region.label === '用户选中文本'
           ? `用户选中文本${heading ? `（${heading} 内）` : ''}`
           : `${region.label}${heading ? `（${heading} 内）` : ''}`
-        return await this.applySpan(body, docId, regionSpan.start + local.start, regionSpan.start + local.end, newText, summary, location)
+        return await this.applySpan(matchSource, docId, regionSpan.start + local.start, regionSpan.start + local.end, newText, summary, location)
+      }
+
+      // #906: 焦点段回合内失效兜底 — hint 焦点段在最新正文已失配(上一
+      // 次编辑改写过该段)时,按 focusIndex 从本轮最新正文重新切分出该段
+      // (区域内容来自新正文)再定位,区域优先级在回合内不失效。失败或
+      // 局部仍失配 → 落到全文路径。跨回合不受影响(新实例无缓存)。
+      if (this.latestBody && hint?.focusSectionContent && hint.focusIndex) {
+        try {
+          const fresh = splitDocumentSections(this.latestBody, CONTEXT_CONFIG.scene.docSectionTokens)
+            .sections[hint.focusIndex - 1]
+          if (fresh?.content) {
+            const regionSpan = findNormalizedSpan(this.latestBody, fresh.content)
+            if (regionSpan && regionSpan.end > regionSpan.start) {
+              const slice = this.latestBody.slice(regionSpan.start, regionSpan.end)
+              const local = findNormalizedSpan(slice, oldText) ?? findFuzzySpan(slice, oldText)
+              if (local) {
+                const heading = nearestHeadingBefore(this.latestBody, regionSpan.start + local.start)
+                const regionLabel = `第 ${hint.focusIndex} 段${hint.focusTitle ? `「${hint.focusTitle}」` : ''}`
+                return await this.applySpan(
+                  this.latestBody, docId,
+                  regionSpan.start + local.start, regionSpan.start + local.end,
+                  newText, summary,
+                  `${regionLabel}${heading ? `（${heading} 内）` : ''}`,
+                )
+              }
+            }
+          }
+        } catch { /* 重切失败 → 走全文路径 */ }
       }
 
       // #fix: 三级匹配 — 空白归一化(换行/连续空格/软连字符/markdown
@@ -170,7 +224,9 @@ export class EditDocumentTool extends BaseTool {
         try {
           const targets = await resolveImportTargets(this.ctx.userId, docId)
           for (const { r, label } of targets.slice(0, 3)) {
-            const { text } = await extractRefText(this.ctx.userId, docId, r, label)
+            // #914: 探测走缓存提取(与 picked_kb/参考注入同一缓存面) —
+            // 此前逐个走无缓存 extractRefText,大 PDF 失配报错路径可达分钟级。
+            const text = await this.probeRefText(r)
             if (text && findNormalizedSpan(text, oldText)) { refMatchLabel = label; break }
           }
         } catch {
@@ -216,7 +272,8 @@ export class EditDocumentTool extends BaseTool {
   }
 
   /** #868: span 写回单点 — 区域命中与全文命中共用;输出带落点章节
-   *  (location),模型与用户可核对修改是否落在预期位置。 */
+   *  (location),模型与用户可核对修改是否落在预期位置。#906: 写回成功
+   *  后同步本轮最新正文缓存。 */
   private async applySpan(body: string, docId: string, start: number, end: number, newText: string, summary: string, location: string): Promise<ToolResult> {
     // #837: 写回卫生 — ① 还原字面 \n 双转义;② 块级内容(标题/列表/
     // 表格)与前后正文之间补空行,杜绝 "population.## Introduction" 粘连。
@@ -229,10 +286,48 @@ export class EditDocumentTool extends BaseTool {
     const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: newBody, snapshotLabel: 'AI edit' })
     if (written.error) return { success: false, error: written.error }
 
+    this.latestBody = written.body
     return {
       success: true,
       output: JSON.stringify({ body: written.body, summary, location: `已修改:${location}附近` }),
     }
+  }
+
+  /**
+   * #914: 失配探测的参考材料文本提取 — 与注入/钉选同走缓存面
+   * (cachedExtractDocumentMarkdownFromUpload)。薄适配:文件类引用按
+   * 文件名定位上传记录(FileIndex 优先,目录扫描兜底 — 与
+   * findUploadFileByName 同口径),非文件引用直接用 snapshot 文本;
+   * 探测只需文本匹配,不需要图片托管/公式 LaTeX。
+   */
+  private async probeRefText(ref: { refType?: string | null; snapshot?: string | null }): Promise<string> {
+    const kind = String(ref.refType || '')
+    if (kind !== 'file' && kind !== 'pdf' && kind !== 'docx') {
+      return String(ref.snapshot || '')
+    }
+    const name = String(ref.snapshot || '')
+    if (!name) return ''
+    const byIndex = await prisma.fileIndex.findFirst({
+      where: { userId: this.ctx.userId, name, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    }).catch(() => null)
+    let fileId = byIndex?.id || null
+    if (!fileId) {
+      // FileIndex 缺记录 → 按文件名扫描上传目录兜底(与 doc-import 同口径)。
+      try {
+        const { uploadsBaseDir } = await import('../lib/upload-path.js')
+        const dir = uploadsBaseDir(this.ctx.userId)
+        if (fs.existsSync(dir)) {
+          for (const f of fs.readdirSync(dir)) {
+            const derived = f.split('_').slice(1).join('_') || f
+            if (derived === name) { fileId = f; break }
+          }
+        }
+      } catch { /* 目录不可读 — 探测按未命中处理 */ }
+    }
+    if (!fileId) return ''
+    const { cachedExtractDocumentMarkdownFromUpload } = await import('../lib/document-extractor.js')
+    return cachedExtractDocumentMarkdownFromUpload(this.ctx.userId, fileId)
   }
 
   /** 全量替换(#fix 2026-09:护栏按真实输出预算动态判定)。 */
@@ -265,6 +360,9 @@ export class EditDocumentTool extends BaseTool {
       const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: fullText, snapshotLabel: 'AI edit' })
       if (written.error) return { success: false, error: written.error }
 
+      // #906: 全量重写同样推进本轮最新正文缓存 — 同回合后续 rangeEdit
+      // 的区域定位基于重写后的正文。
+      this.latestBody = written.body
       return {
         success: true,
         output: JSON.stringify({ body: written.body, summary }),

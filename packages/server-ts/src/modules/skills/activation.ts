@@ -25,6 +25,8 @@ export interface SkillCardSummary {
 /** graph SkillNode / legacy LearnedSkill 的最小读取形状。 */
 export interface SkillLike {
   name: string
+  /** #840-r5 稳定 ID(graph SkillNode 必有;legacy 卡片可缺)。 */
+  stableId?: string
   taskKind: string
   description?: string
   bestStrategy?: string
@@ -70,7 +72,7 @@ export function matchSkillsForTurn(input: MatchSkillsInput): SkillCardSummary[] 
       : (s.taskCount ?? 0) > 0 ? (s.successCount ?? 0) / (s.taskCount ?? 1) : 0
     matched.push({
       name: s.name,
-      stableId: (s as any).stableId,
+      stableId: s.stableId,
       taskKind: s.taskKind,
       description: s.description || s.bestStrategy || '',
       followRate,

@@ -5,7 +5,11 @@ import { AppShell } from '@/components/layout/AppShell';
 import { api } from '@/lib/api';
 import { Button, Card, Skeleton, Badge, Input, Textarea } from '@/components/ui';
 import { cn } from '@/lib/utils';
+// #922: 三处重复的状态→Badge variant 映射收敛到 lib/status-variant(gaps fallback='default' 同旧 else)。
+import { statusVariant as libStatusVariant } from '@/lib/status-variant';
 import { EmptyState } from '@/components/ui/EmptyState';
+// #922: 弹窗外壳收敛到共享 Modal。
+import { Modal } from '@/components/ui/Modal';
 import { NextBestActions } from '@/components/NextBestActions';
 import type { Summary } from '@/lib/types';
 import { KB_SOURCE_TYPES, type KbSourceType } from '@heurion/contracts'; // #744/#750 single source of truth
@@ -43,12 +47,13 @@ const PIPELINE_BADGE: Record<PipelineStage, { key: string; cls: string }> = {
 
 type Tab = 'summaries' | 'facts' | 'gaps' | 'tools' | 'files';
 
-const TABS: { key: Tab; label: string; icon: typeof BookOpen }[] = [
-  { key: 'summaries', label: 'Summaries', icon: BookOpen },
-  { key: 'facts', label: 'Facts', icon: Brain },
-  { key: 'gaps', label: 'Pending', icon: Clock },
-  { key: 'tools', label: 'Tools', icon: Wrench },
-  { key: 'files', label: 'Files', icon: FileText },
+// #918: tab 文案入 i18n — labelKey 在渲染时经 t() 解析。
+const TABS: { key: Tab; labelKey: string; icon: typeof BookOpen }[] = [
+  { key: 'summaries', labelKey: 'knowledge.tabSummaries', icon: BookOpen },
+  { key: 'facts', labelKey: 'knowledge.tabFacts', icon: Brain },
+  { key: 'gaps', labelKey: 'knowledge.tabGaps', icon: Clock },
+  { key: 'tools', labelKey: 'knowledge.tabTools', icon: Wrench },
+  { key: 'files', labelKey: 'knowledge.tabFiles', icon: FileText },
 ];
 
 // #744/#750: enum imported from @heurion/contracts — server and client share
@@ -143,8 +148,9 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
       api.getKnowledgeGaps().then(r => setGaps(r.gaps)).catch(recordLoadError(t('kb.loadGaps', 'Gaps 加载失败'))),
       api.getKnowledgeTools().then(r => setTools(r.tools)).catch(recordLoadError(t('kb.loadTools', '工具加载失败'))),
       api.listFiles().then(r => setFiles(r.files)).catch(recordLoadError(t('kb.loadFiles', '文件列表加载失败'))),
-      api.listGeneratedCharts().then(r => setCharts(r.charts)).catch(() => {}),
-      api.getPipelineJobs().then(r => setPipelineStages(Object.fromEntries(r.jobs.map(j => [j.fileId, j.stage as PipelineStage])))).catch(() => {}),
+      // #920: 图库/管线状态此前 .catch(() => {}) 静默吞错 — 统一走 recordLoadError。
+      api.listGeneratedCharts().then(r => setCharts(r.charts)).catch(recordLoadError(t('kb.loadCharts', '图库加载失败'))),
+      api.getPipelineJobs().then(r => setPipelineStages(Object.fromEntries(r.jobs.map(j => [j.fileId, j.stage as PipelineStage])))).catch(recordLoadError(t('kb.loadPipeline', '文件管线状态加载失败'))),
     ]).finally(() => setLoading(false));
   }, [t, recordLoadError]);
 
@@ -153,8 +159,8 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
     try {
       const r = await api.getDownloadUrl(fileId);
       window.open(r.url, '_blank');
-    } catch { recordLoadError('下载失败'); }
-  }, [recordLoadError]);
+    } catch { recordLoadError(t('knowledge.downloadFailed', '下载失败')); }
+  }, [recordLoadError, t]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -198,39 +204,39 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
   const filePagination = usePagination(filteredFiles, filePage);
 
   const resolveGap = async (gapId: string) => {
-    try { await api.resolveKnowledgeGap(gapId); } catch (err) { setActionError(`标记失败:${(err as Error)?.message || '请重试'}`); return; }
+    try { await api.resolveKnowledgeGap(gapId); } catch (err) { setActionError(t('knowledge.resolveFailed', '标记失败：{{msg}}', { msg: (err as Error)?.message || t('kb.requestFailed', '请求失败') })); return; }
     loadAll();
   };
 
   const answerGap = async (gapId: string) => {
     const text = gapAnswer.trim();
     if (!text) return;
-    try { await api.answerKnowledgeGap(gapId, text); } catch (err) { setActionError(`提交回答失败:${(err as Error)?.message || '请重试'}`); return; }
+    try { await api.answerKnowledgeGap(gapId, text); } catch (err) { setActionError(t('knowledge.answerFailed', '提交回答失败：{{msg}}', { msg: (err as Error)?.message || t('kb.requestFailed', '请求失败') })); return; }
     setAnsweringGapId(null);
     setGapAnswer('');
     loadAll();
   };
 
   const ignoreGap = async (gapId: string) => {
-    try { await api.ignoreKnowledgeGap(gapId); } catch (err) { setActionError(`忽略失败:${(err as Error)?.message || '请重试'}`); return; }
+    try { await api.ignoreKnowledgeGap(gapId); } catch (err) { setActionError(t('knowledge.ignoreFailed', '忽略失败：{{msg}}', { msg: (err as Error)?.message || t('kb.requestFailed', '请求失败') })); return; }
     loadAll();
   };
 
   const deleteFact = async (id: string) => {
-    try { await api.deleteFact(id); } catch (err) { setActionError(`删除失败:${(err as Error)?.message || '请重试'}`); return; }
+    try { await api.deleteFact(id); } catch (err) { setActionError(t('knowledge.deleteFailed', '删除失败：{{msg}}', { msg: (err as Error)?.message || t('kb.requestFailed', '请求失败') })); return; }
     loadAll();
   };
 
   const saveFact = async () => {
     if (!editingFact) return;
-    try { await api.updateFact(editingFact.id, { content: editContent, sourceType: editSource }); } catch (err) { setActionError(`保存失败:${(err as Error)?.message || '请重试'}`); return; }
+    try { await api.updateFact(editingFact.id, { content: editContent, sourceType: editSource }); } catch (err) { setActionError(t('knowledge.saveFailed', '保存失败：{{msg}}', { msg: (err as Error)?.message || t('kb.requestFailed', '请求失败') })); return; }
     setEditingFact(null);
     loadAll();
   };
 
   const regenerateSummary = async (id: string) => {
     setSummaryBusy(prev => new Set(prev).add(id));
-    try { await api.regenerateKnowledgeSummary(id); } catch (err) { setSummaryBusy(prev => { const next = new Set(prev); next.delete(id); return next; }); setActionError(`重新生成失败:${(err as Error)?.message || '请稍后再试'}`); return; }
+    try { await api.regenerateKnowledgeSummary(id); } catch (err) { setSummaryBusy(prev => { const next = new Set(prev); next.delete(id); return next; }); setActionError(t('knowledge.regenerateFailed', '重新生成失败：{{msg}}', { msg: (err as Error)?.message || t('kb.requestFailed', '请求失败') })); return; }
     setSummaryBusy(prev => { const next = new Set(prev); next.delete(id); return next; });
     loadAll();
   };
@@ -240,7 +246,14 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
     const patch: {title?: string; content?: string} = {};
     if (editSummaryTitle.trim()) patch.title = editSummaryTitle.trim();
     if (editSummaryContent.trim()) patch.content = editSummaryContent.trim();
-    await api.updateKnowledgeSummary(editingSummary.id, patch).catch(() => {});
+    try {
+      await api.updateKnowledgeSummary(editingSummary.id, patch);
+    } catch (err) {
+      // #920: 保存失败此前被 .catch(() => {}) 吞掉 — 用户以为改成功了。
+      // 失败时保留弹窗以便重试。
+      setActionError(t('knowledge.saveSummaryFailed', '保存总结失败：{{msg}}', { msg: (err as Error)?.message || t('kb.requestFailed', '请求失败') }));
+      return;
+    }
     setEditingSummary(null);
     loadAll();
   };
@@ -267,14 +280,15 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
 
   const handleBulkDelete = async (label: string, ids: string[], deleteFn: (ids: string[]) => Promise<{deleted: number}>) => {
     if (ids.length === 0) return;
-    if (!confirm(`Delete ${ids.length} selected ${label}?`)) return;
+    if (!confirm(t('knowledge.bulkDeleteConfirm', '删除选中的 {{count}} 条{{label}}？', { count: ids.length, label }))) return;
     try {
       const result = await deleteFn(ids);
       console.log(`[KB] Deleted ${result.deleted} ${label}`, ids);
       await loadAll();
     } catch (err) {
       console.error(`Failed to delete ${label}:`, err);
-      alert(`Failed to delete ${label}. See console for details.`);
+      // #920: 失败走 actionError 通道，不再 alert。
+      setActionError(t('knowledge.bulkDeleteFailed', '删除{{label}}失败，详情见控制台', { label }));
     }
   };
 
@@ -287,7 +301,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
   ) => (
     <div className="flex items-center justify-between border-t border-border pt-3">
       <p className="text-xs text-text-tertiary">
-        Showing {total === 0 ? 0 : start + 1}–{Math.min(start + PAGE_SIZE, total)} of {total}
+        {t('knowledge.showing', '显示 {{from}}–{{to}} 条，共 {{total}} 条', { from: total === 0 ? 0 : start + 1, to: Math.min(start + PAGE_SIZE, total), total })}
       </p>
       <div className="flex items-center gap-1">
         <Button
@@ -330,14 +344,14 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
         />
         <div className="flex items-center gap-3">
           {selected.size > 0 && (
-            <span className="text-xs text-text-secondary">{selected.size} selected</span>
+            <span className="text-xs text-text-secondary">{t('knowledge.selectedCount', '已选 {{n}} 项', { n: selected.size })}</span>
           )}
           <Button
             size="sm"
             variant="danger"
             disabled={selected.size === 0}
             onClick={() => handleBulkDelete(label, Array.from(selected), deleteFn).then(() => setSelected(new Set()))}
-          ><Trash2 size={14} className="mr-1" /> Delete selected</Button>
+          ><Trash2 size={14} className="mr-1" /> {t('knowledge.deleteSelected', '删除所选')}</Button>
           <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer select-none">
             <input
               type="checkbox"
@@ -345,7 +359,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
               checked={allSelected}
               onChange={() => selectAllOnPage(pageIds, setSelected, !allSelected)}
             />
-            Select all on page
+            {t('knowledge.selectAllOnPage', '全选本页')}
           </label>
         </div>
       </div>
@@ -357,19 +371,19 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
         <header className="flex min-h-14 flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2 sm:px-6">
           <div className="flex items-center gap-3">
             <BookOpen size={20} className="text-accent" />
-            <h1 className="font-semibold text-text-primary">Knowledge Base</h1>
+            <h1 className="font-semibold text-text-primary">{t('knowledge.title', '知识库')}</h1>
             {staleCount > 0 && (
-              <Badge variant="warning"><AlertTriangle size={12} className="mr-1" /> {staleCount} stale</Badge>
+              <Badge variant="warning"><AlertTriangle size={12} className="mr-1" /> {t('knowledge.staleCount', '{{n}} 篇过期', { n: staleCount })}</Badge>
             )}
             {pendingCount > 0 && (
-              <Badge variant="default"><Clock size={12} className="mr-1" /> {pendingCount} pending</Badge>
+              <Badge variant="default"><Clock size={12} className="mr-1" /> {t('knowledge.pendingCount', '{{n}} 个待补', { n: pendingCount })}</Badge>
             )}
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="secondary" onClick={() => navigate('/app/memory-graph')}>
-              <GitGraph size={14} className="mr-1" /> Graph
+              <GitGraph size={14} className="mr-1" /> {t('knowledge.graph', '图谱')}
             </Button>
-            <Button size="sm" variant="ghost" onClick={loadAll}><RotateCcw size={14} className="mr-1" /> Refresh</Button>
+            <Button size="sm" variant="ghost" onClick={loadAll}><RotateCcw size={14} className="mr-1" /> {t('common.refresh', '刷新')}</Button>
           </div>
         </header>
 
@@ -387,7 +401,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
         )}
 
         <nav className="flex border-b border-border bg-surface px-6">
-          {TABS.map(({ key, label, icon: Icon }) => (
+          {TABS.map(({ key, labelKey, icon: Icon }) => (
             <button
               key={key}
               onClick={() => { setTab(key); }}
@@ -399,7 +413,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
               )}
             >
               <Icon size={14} />
-              {label}
+              {t(labelKey)}
             </button>
           ))}
         </nav>
@@ -425,15 +439,15 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                     selectedSummaries,
                     setSelectedSummaries,
                     summaryPagination.pageItems.map(a => a.id),
-                    'summaries',
+                    t('knowledge.bulkSummaries', '总结'),
                     (ids: string[]) => api.deleteKnowledgeSummaries(ids),
-                    'Filter summaries by title or content...',
+                    t('knowledge.filterSummaries', '按标题或内容筛选总结…'),
                   )}
                   {summaryPagination.pageItems.length === 0 && (
                     <EmptyState
                       icon={<BookOpen size={24} />}
-                      title="No knowledge summaries yet"
-                      hint="Summaries are auto-generated when 3+ related facts accumulate."
+                      title={t('knowledge.emptySummaries', '暂无知识总结')}
+                      hint={t('knowledge.emptySummariesHint', '相关事实积累到 3 条以上时会自动生成总结。')}
                     />
                   )}
                   {summaryPagination.pageItems.map(a => (
@@ -447,14 +461,14 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                               checked={selectedSummaries.has(a.id)}
                               onChange={() => toggleSelection(setSelectedSummaries, a.id)}
                             />
-                            <h3 className="font-medium text-text-primary truncate">{a.title || 'Untitled'}</h3>
+                            <h3 className="font-medium text-text-primary truncate">{a.title || t('knowledge.untitled', '未命名')}</h3>
                             <Badge variant="default">v{a.version || 1}</Badge>
-                            {a.status === 'stale' && <Badge variant="warning"><AlertTriangle size={10} className="mr-1" /> Stale</Badge>}
+                            {a.status === 'stale' && <Badge variant="warning"><AlertTriangle size={10} className="mr-1" /> {t('knowledge.stale', '已过期')}</Badge>}
                           </div>
                           {a.content && <p className="mt-1 text-xs text-text-tertiary line-clamp-2">{a.content.slice(0, 200)}</p>}
                           <p className="mt-1 text-xs text-text-tertiary">
                             {new Date(a.updatedAt || a.createdAt).toLocaleDateString()}
-                            {a.sources?.length > 0 && ` · ${a.sources.length} sources`}
+                            {a.sources?.length > 0 && ` · ${t('knowledge.sourcesCount', '{{n}} 个来源', { n: a.sources.length })}`}
                           </p>
                           {a.status === 'stale' && a.impact && a.impact.length > 0 && (
                             <div className="mt-2 space-y-1">
@@ -468,7 +482,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                           <button
                             className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-text-primary"
                             onClick={() => { setEditingSummary(a); setEditSummaryTitle(a.title || ''); setEditSummaryContent(a.content || ''); }}
-                            title="Edit summary"
+                            title={t('knowledge.editSummary', '编辑总结')}
                           ><Edit3 size={14} /></button>
                           {a.status === 'stale' && (
                             <Button
@@ -476,7 +490,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                               variant="secondary"
                               isLoading={summaryBusy.has(a.id)}
                               onClick={() => regenerateSummary(a.id)}
-                            ><RotateCcw size={14} className="mr-1" /> Regenerate</Button>
+                            ><RotateCcw size={14} className="mr-1" /> {t('knowledge.regenerate', '重新生成')}</Button>
                           )}
                         </div>
                       </div>
@@ -484,29 +498,30 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                   ))}
 
                   {/* Summary edit modal */}
+                  {/* #922: 弹窗外壳收敛到共享 Modal(原行为:无 backdrop 关、无 Esc;Card 直挂面板) */}
                   {editingSummary && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                    <Modal open backdropClassName="bg-black/40 p-4">
                       <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto p-5">
                         <div className="flex items-center justify-between mb-4">
-                          <h3 className="text-lg font-semibold text-text-primary">Edit Summary</h3>
+                          <h3 className="text-lg font-semibold text-text-primary">{t('knowledge.editSummary', '编辑总结')}</h3>
                           <button onClick={() => setEditingSummary(null)}><X size={18} className="text-text-tertiary" /></button>
                         </div>
                         <div className="space-y-3">
                           <div>
-                            <label className="block text-sm font-medium text-text-secondary mb-1">Title</label>
+                            <label className="block text-sm font-medium text-text-secondary mb-1">{t('knowledge.titleLabel', '标题')}</label>
                             <Input value={editSummaryTitle} onChange={e => setEditSummaryTitle(e.target.value)} />
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-text-secondary mb-1">Content</label>
+                            <label className="block text-sm font-medium text-text-secondary mb-1">{t('knowledge.contentLabel', '内容')}</label>
                             <Textarea value={editSummaryContent} onChange={e => setEditSummaryContent(e.target.value)} rows={12} />
                           </div>
                           <div className="flex gap-2 pt-2">
-                            <Button size="sm" onClick={saveSummary}><Check size={14} className="mr-1" /> Save</Button>
-                            <Button size="sm" variant="secondary" onClick={() => setEditingSummary(null)}>Cancel</Button>
+                            <Button size="sm" onClick={saveSummary}><Check size={14} className="mr-1" /> {t('common.save', '保存')}</Button>
+                            <Button size="sm" variant="secondary" onClick={() => setEditingSummary(null)}>{t('common.cancel', '取消')}</Button>
                           </div>
                         </div>
                       </Card>
-                    </div>
+                    </Modal>
                   )}
                   {renderPagination(summaryPagination.page, summaryPagination.totalPages, setSummaryPage, summaryPagination.start, filteredSummaries.length)}
                 </div>
@@ -522,16 +537,20 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                     selectedFacts,
                     setSelectedFacts,
                     factPagination.pageItems.map(f => f.id),
-                    'facts',
+                    t('knowledge.bulkFacts', '事实'),
                     (ids: string[]) => api.deleteFacts(ids),
-                    'Filter facts by content...',
+                    t('knowledge.filterFacts', '按内容筛选事实…'),
                   )}
                   {SOURCE_TYPES.map(sourceType => {
                     const groupFacts = factPagination.pageItems.filter(f => f.sourceType === sourceType || (!f.sourceType && sourceType === 'general'));
                     if (groupFacts.length === 0) return null;
                     // #744: sidecar now has its own group (was invisible/absorbed into general).
                     const Icon = sourceType === 'patient' ? User : sourceType === 'doctor' ? Stethoscope : sourceType === 'research' ? FlaskConical : sourceType === 'sidecar' ? GitGraph : Globe;
-                    const label = sourceType === 'patient' ? 'Patient Facts' : sourceType === 'doctor' ? 'Doctor & Preferences' : sourceType === 'research' ? 'Research & Studies' : sourceType === 'sidecar' ? 'Tool & Sidecar Facts' : 'General';
+                    const label = sourceType === 'patient' ? t('knowledge.groupPatient', '患者事实')
+                      : sourceType === 'doctor' ? t('knowledge.groupDoctor', '医生与偏好')
+                      : sourceType === 'research' ? t('knowledge.groupResearch', '研究与课题')
+                      : sourceType === 'sidecar' ? t('knowledge.groupSidecar', '工具与旁路事实')
+                      : t('knowledge.groupGeneral', '通用');
                     return (
                       <div key={sourceType}>
                         <h3 className="flex items-center gap-2 mb-3 text-sm font-semibold text-text-secondary">
@@ -543,7 +562,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                               {editingFact?.id === f.id ? (
                                 <div className="space-y-3">
                                   <div className="flex items-center justify-between">
-                                    <h4 className="text-sm font-medium text-text-primary">Edit Fact</h4>
+                                    <h4 className="text-sm font-medium text-text-primary">{t('knowledge.editFact', '编辑事实')}</h4>
                                     <button onClick={() => setEditingFact(null)}><X size={16} className="text-text-tertiary" /></button>
                                   </div>
                                   <textarea
@@ -560,8 +579,8 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                                     ))}
                                   </div>
                                   <div className="flex gap-2">
-                                    <Button size="sm" onClick={saveFact}><Check size={14} className="mr-1" /> Save</Button>
-                                    <Button size="sm" variant="secondary" onClick={() => setEditingFact(null)}>Cancel</Button>
+                                    <Button size="sm" onClick={saveFact}><Check size={14} className="mr-1" /> {t('common.save', '保存')}</Button>
+                                    <Button size="sm" variant="secondary" onClick={() => setEditingFact(null)}>{t('common.cancel', '取消')}</Button>
                                   </div>
                                 </div>
                               ) : (
@@ -583,7 +602,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                                   <div className="flex-1 min-w-0">
                                     <p className="text-sm text-text-primary">{f.content}</p>
                                     <p className="mt-1 text-xs text-text-tertiary">
-                                      Importance: {f.importance} · Seen {f.count}x · {new Date(f.updatedAt).toLocaleDateString()}
+                                      {t('knowledge.importance', '重要度：{{n}} · 出现 {{count}} 次', { n: f.importance, count: f.count })} · {new Date(f.updatedAt).toLocaleDateString()}
                                     </p>
                                   </div>
                                   <div className="flex items-center gap-1 shrink-0">
@@ -607,8 +626,8 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                   {filteredFacts.length === 0 && (
                     <EmptyState
                       icon={<Brain size={24} />}
-                      title="No facts stored yet"
-                      hint="Facts are extracted from conversations and imported data."
+                      title={t('knowledge.emptyFacts', '暂无事实')}
+                      hint={t('knowledge.emptyFactsHint', '事实会从对话与导入数据中自动提取。')}
                     />
                   )}
                   {filteredFacts.length > 0 && renderPagination(factPagination.page, factPagination.totalPages, setFactPage, factPagination.start, filteredFacts.length)}
@@ -625,20 +644,20 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                     selectedGaps,
                     setSelectedGaps,
                     gapPagination.pageItems.map(g => g.id),
-                    'gaps',
+                    t('knowledge.bulkGaps', '待补'),
                     (ids: string[]) => api.deleteKnowledgeGaps(ids),
-                    'Filter gaps by query or context...',
+                    t('knowledge.filterGaps', '按问题或上下文筛选待补…'),
                   )}
                   {gapPagination.pageItems.length === 0 && (
                     <EmptyState
                       icon={<Lightbulb size={24} />}
-                      title="No pending knowledge gaps"
-                      hint="Gaps appear when queries don't match existing knowledge."
+                      title={t('knowledge.emptyGaps', '暂无待补知识缺口')}
+                      hint={t('knowledge.emptyGapsHint', '当提问没有命中已有知识时会出现缺口。')}
                     />
                   )}
                   {gapPagination.pageItems.map(g => {
-                    const statusLabel = g.status === 'open' ? 'Pending' : g.status === 'answered' ? 'Answered' : 'Ignored';
-                    const statusVariant = g.status === 'open' ? 'warning' : g.status === 'answered' ? 'success' : 'default';
+                    const statusLabel = g.status === 'open' ? t('knowledge.gapPending', '待处理') : g.status === 'answered' ? t('knowledge.gapAnswered', '已回答') : t('knowledge.gapIgnored', '已忽略');
+                    const statusVariant = libStatusVariant(g.status);
                     return (
                       <Card key={g.id} className="p-4">
                         <div className="flex items-start justify-between">
@@ -658,13 +677,13 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                           {g.status === 'open' && answeringGapId !== g.id && (
                             <div className="ml-3 flex flex-shrink-0 items-center gap-2">
                               <Button size="sm" variant="secondary" onClick={() => { setAnsweringGapId(g.id); setGapAnswer(''); }}>
-                                <Edit3 size={14} className="mr-1" /> Answer
+                                <Edit3 size={14} className="mr-1" /> {t('knowledge.answer', '回答')}
                               </Button>
                               <Button size="sm" variant="ghost" onClick={() => ignoreGap(g.id)}>
-                                Ignore
+                                {t('knowledge.ignore', '忽略')}
                               </Button>
                               <Button size="sm" variant="ghost" className="border border-border" onClick={() => resolveGap(g.id)}>
-                                <Check size={14} className="mr-1" /> Mark resolved
+                                <Check size={14} className="mr-1" /> {t('knowledge.markResolved', '标记已解决')}
                               </Button>
                             </div>
                           )}
@@ -672,7 +691,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                         {g.status === 'open' && answeringGapId === g.id && (
                           <div className="mt-3 space-y-2 border-t border-border pt-3">
                             <Textarea
-                              placeholder="Type the answer or missing information here..."
+                              placeholder={t('knowledge.answerPlaceholder', '在此输入答案或缺失信息…')}
                               value={gapAnswer}
                               onChange={(e) => setGapAnswer(e.target.value)}
                               rows={3}
@@ -680,17 +699,17 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                             />
                             <div className="flex justify-end gap-2">
                               <Button size="sm" variant="ghost" onClick={() => { setAnsweringGapId(null); setGapAnswer(''); }}>
-                                Cancel
+                                {t('common.cancel', '取消')}
                               </Button>
                               <Button size="sm" variant="secondary" disabled={!gapAnswer.trim()} onClick={() => answerGap(g.id)}>
-                                Save answer
+                                {t('knowledge.saveAnswer', '保存答案')}
                               </Button>
                             </div>
                           </div>
                         )}
                         {g.status === 'answered' && g.answerText && (
                           <div className="mt-2 rounded-lg bg-surface-elevated p-2 text-xs text-text-secondary">
-                            <span className="font-medium text-text-primary">Answer:</span> {g.answerText}
+                            <span className="font-medium text-text-primary">{t('knowledge.answerLabel', '答案：')}</span> {g.answerText}
                           </div>
                         )}
                       </Card>
@@ -710,34 +729,34 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                     selectedTools,
                     setSelectedTools,
                     toolPagination.pageItems.map(t => t.id),
-                    'tools',
+                    t('knowledge.bulkTools', '工具'),
                     (ids: string[]) => api.deleteKnowledgeTools(ids),
-                    'Filter tools by name or description...',
+                    t('knowledge.filterTools', '按名称或描述筛选工具…'),
                   )}
                   {toolPagination.pageItems.length === 0 && (
                     <EmptyState
                       icon={<Wrench size={24} />}
-                      title="No auto-generated tools yet"
-                      hint="Tools are created automatically from knowledge patterns."
+                      title={t('knowledge.emptyTools', '暂无自动生成的工具')}
+                      hint={t('knowledge.emptyToolsHint', '工具会从知识模式中自动生成。')}
                     />
                   )}
-                  {toolPagination.pageItems.map(t => (
-                    <Card key={t.id} className={cn('p-4', !t.enabled && 'opacity-60')}>
+                  {toolPagination.pageItems.map(tool => (
+                    <Card key={tool.id} className={cn('p-4', !tool.enabled && 'opacity-60')}>
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <input
                               type="checkbox"
                               className="rounded border-border mr-2"
-                              checked={selectedTools.has(t.id)}
-                              onChange={() => toggleSelection(setSelectedTools, t.id)}
+                              checked={selectedTools.has(tool.id)}
+                              onChange={() => toggleSelection(setSelectedTools, tool.id)}
                             />
-                            <h3 className="font-medium text-sm text-text-primary">{t.name}</h3>
-                            <Badge variant="default">{t.language}</Badge>
-                            {!t.enabled && <Badge>Disabled</Badge>}
+                            <h3 className="font-medium text-sm text-text-primary">{tool.name}</h3>
+                            <Badge variant="default">{tool.language}</Badge>
+                            {!tool.enabled && <Badge>{t('knowledge.disabled', '已停用')}</Badge>}
                           </div>
-                          {t.description && <p className="mt-1 text-xs text-text-tertiary line-clamp-2">{t.description}</p>}
-                          <p className="mt-1 text-xs text-text-tertiary">{new Date(t.createdAt).toLocaleDateString()}</p>
+                          {tool.description && <p className="mt-1 text-xs text-text-tertiary line-clamp-2">{tool.description}</p>}
+                          <p className="mt-1 text-xs text-text-tertiary">{new Date(tool.createdAt).toLocaleDateString()}</p>
                         </div>
                       </div>
                     </Card>
@@ -756,15 +775,15 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                     selectedFiles,
                     setSelectedFiles,
                     filePagination.pageItems.map(f => f.file_id),
-                    'files',
+                    t('knowledge.bulkFiles', '文件'),
                     (ids: string[]) => api.deleteFiles(ids),
-                    'Filter files by name...',
+                    t('knowledge.filterFiles', '按名称筛选文件…'),
                   )}
                   {filePagination.pageItems.length === 0 && (
                     <Card className="p-8 text-center">
                       <FileText size={32} className="mx-auto mb-3 text-text-tertiary" />
-                      <p className="text-text-secondary">No uploaded files.</p>
-                      <p className="mt-1 text-sm text-text-tertiary">Upload files via chat or the Files page.</p>
+                      <p className="text-text-secondary">{t('knowledge.emptyFiles', '暂无上传文件。')}</p>
+                      <p className="mt-1 text-sm text-text-tertiary">{t('knowledge.emptyFilesHint', '可在对话或文件页上传。')}</p>
                     </Card>
                   )}
                   {filePagination.pageItems.map(f => (
@@ -797,15 +816,20 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                         {/* #811: 知识库文件重新下载入口。 */}
                         <button
                           className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-text-primary"
-                          title="Download"
+                          title={t('knowledge.download', '下载')}
                           onClick={() => downloadFile(f.file_id)}
                         ><Download size={14} /></button>
                         <button
                           className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-error"
                           onClick={async () => {
-                            if (confirm(`Delete ${f.name}?`)) {
-                              await api.deleteFile(f.file_id).catch(() => {});
-                              loadAll();
+                            if (confirm(t('knowledge.deleteFileConfirm', '删除 {{name}}？', { name: f.name }))) {
+                              // #920: 删除失败此前静默吞掉仍刷新列表 — 现在提示且不刷新。
+                              try {
+                                await api.deleteFile(f.file_id);
+                                loadAll();
+                              } catch (err) {
+                                setActionError(t('knowledge.deleteFailed', '删除失败：{{msg}}', { msg: (err as Error)?.message || t('kb.requestFailed', '请求失败') }));
+                              }
                             }
                           }}
                         ><Trash2 size={14} /></button>
@@ -842,23 +866,28 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
                              <img src={c.url} alt={c.title} className="max-h-full max-w-full object-contain" loading="lazy" />
                            </div>
                          )}
-                         <div className="flex items-center gap-1">
-                           <button
-                             className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-text-primary"
-                             title="Download"
-                             onClick={() => downloadFile(c.file_id)}
-                           ><Download size={14} /></button>
-                           <button
-                             className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-error"
-                             title="Delete"
-                             onClick={async () => {
-                               if (confirm(`Delete ${c.title}?`)) {
-                                 await api.deleteGeneratedChart(c.file_id).catch(() => {});
-                                 setCharts(prev => prev.filter(x => x.file_id !== c.file_id));
-                               }
-                             }}
-                           ><Trash2 size={14} /></button>
-                         </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-text-primary"
+                              title={t('knowledge.download', '下载')}
+                              onClick={() => downloadFile(c.file_id)}
+                            ><Download size={14} /></button>
+                            <button
+                              className="p-1.5 rounded hover:bg-surface-elevated text-text-tertiary hover:text-error"
+                              title={t('common.delete', '删除')}
+                              onClick={async () => {
+                                if (confirm(t('knowledge.deleteFileConfirm', '删除 {{name}}？', { name: c.title }))) {
+                                  // #920: 删除失败不再静默。
+                                  try {
+                                    await api.deleteGeneratedChart(c.file_id);
+                                    setCharts(prev => prev.filter(x => x.file_id !== c.file_id));
+                                  } catch (err) {
+                                    setActionError(t('knowledge.deleteFailed', '删除失败：{{msg}}', { msg: (err as Error)?.message || t('kb.requestFailed', '请求失败') }));
+                                  }
+                                }
+                              }}
+                            ><Trash2 size={14} /></button>
+                          </div>
                        </Card>
                      ))}
                    </div>

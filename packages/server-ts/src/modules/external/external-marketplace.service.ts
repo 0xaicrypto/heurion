@@ -7,6 +7,8 @@ import {
 } from '../../common/settings-encryption'
 import { createExecutionPlaneService } from '../execution/execution-plane.service'
 import { buildInputSummary, recordPluginInvocation } from '../plugins/plugin-audit-log.service'
+import { resolveRenderJobType } from '../plugins/plugin-capability.service'
+import { renderJobType } from '@heurion/contracts'
 
 const executionService = createExecutionPlaneService()
 
@@ -47,36 +49,67 @@ export async function getExternalCatalogPlugin(id: string) {
   }
 }
 
+/** Prisma 唯一键冲突(P2002)判定 — 与 files.service.ts 同款判定。 */
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as any).code === 'P2002'
+}
+
 async function ensureHeurionUser(externalAppId: string, externalUserId: string): Promise<string> {
   const existing = await prisma.externalUserMapping.findUnique({
     where: { externalAppId_externalUserId: { externalAppId, externalUserId } },
   })
   if (existing) return existing.heurionUserId
 
-  const id = `ext_${externalAppId.slice(0, 16)}_${externalUserId.slice(0, 32)}_${Date.now()}`
+  // #928: check-then-create 竞态修复 — 并发首次安装/调用时双方都会走到
+  // create,输家在 mapping 唯一键(externalAppId+externalUserId)上炸 P2002
+  // (裸错 500,且留下孤儿 user 行)。displayName 是 (appId,userId) 的
+  // 确定性唯一键 → user upsert 幂等收敛到同一行;mapping 冲突时重查一次
+  // 赢家行返回,不再抛错。
   const displayName = `ext:${externalAppId}:${externalUserId}`
   const now = new Date().toISOString()
 
-  await prisma.user.create({
-    data: {
-      id,
-      displayName,
-      role: 'user',
-      createdAt: now,
-      updatedAt: now,
-    },
-  })
+  let user
+  try {
+    user = await prisma.user.upsert({
+      where: { displayName },
+      update: {},
+      create: {
+        id: `ext_${externalAppId.slice(0, 16)}_${externalUserId.slice(0, 32)}_${Date.now()}`,
+        displayName,
+        role: 'user',
+        createdAt: now,
+        updatedAt: now,
+      },
+    })
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err
+    const winner = await prisma.externalUserMapping.findUnique({
+      where: { externalAppId_externalUserId: { externalAppId, externalUserId } },
+    })
+    if (winner) return winner.heurionUserId
+    throw err
+  }
 
-  await prisma.externalUserMapping.create({
-    data: {
-      externalAppId,
-      externalUserId,
-      heurionUserId: id,
-      createdAt: now,
-    },
-  })
+  try {
+    await prisma.externalUserMapping.create({
+      data: {
+        externalAppId,
+        externalUserId,
+        heurionUserId: user.id,
+        createdAt: now,
+      },
+    })
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err
+    // 并发赢家已建好映射 → 以赢家的 heurionUserId 为准。
+    const winner = await prisma.externalUserMapping.findUnique({
+      where: { externalAppId_externalUserId: { externalAppId, externalUserId } },
+    })
+    if (!winner) throw err
+    return winner.heurionUserId
+  }
 
-  return id
+  return user.id
 }
 
 function buildDefaultConfig(schema: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -243,7 +276,14 @@ export async function invokeExternalPlugin(input: ExternalInvokeInput) {
   const heurionUserId = await ensureHeurionUser(input.externalAppId, input.externalUserId)
   const tenantPrefix = `external_apps/${input.externalAppId}/users/${input.externalUserId}`
 
-  const jobType = `sidecar.${input.pluginId}.${input.tool}`
+  // #901: worker 只注册契约 render job type — 此前硬编码的
+  // `sidecar.<pluginId>.<tool>` 命名空间形式会命中 worker 的未知 type
+  // （先 enqueue 必败作业）。官方渲染插件经 resolveRenderJobType 映射；
+  // 非渲染工具（无映射）直接报错给调用方，绝不入队。
+  const jobType = resolveRenderJobType(input.pluginId, input.tool)
+  if (!renderJobType.safeParse(jobType).success) {
+    throw new Error(`tool '${input.tool}' of plugin '${input.pluginId}' is not a render tool — no worker job type mapping`)
+  }
   const startedAt = Date.now()
   const job = await executionService.enqueue({
     type: jobType,

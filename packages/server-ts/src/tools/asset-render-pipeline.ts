@@ -8,6 +8,7 @@ import fs from 'fs'
 import path from 'path'
 import type { ToolExecutionPlane } from './tool-registry.js'
 import { issueChartToken } from '../common/chart-token.js'
+import { uploadsBaseDir } from '../lib/upload-path.js'
 
 export type RenderJobOutcome =
   | { ok: true; file: RenderedFile }
@@ -75,7 +76,7 @@ export async function runRenderJob(input: {
   const head = bytes.subarray(0, 512).toString('utf-8').trimStart()
   const ext = head.startsWith('<svg') || head.startsWith('<?xml') ? 'svg' : requestedExt
 
-  const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+  const dir = uploadsBaseDir(userId)
   fs.mkdirSync(dir, { recursive: true })
   const localFileId = `${prefix}_${docId}_${Date.now()}.${ext}`
   const fileName = ext === 'png' || ext === 'svg' ? localFileId : `${displayBase || 'export'}.${ext}`

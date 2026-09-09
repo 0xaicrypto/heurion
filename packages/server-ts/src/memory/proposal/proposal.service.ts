@@ -39,10 +39,18 @@ export class ProposalService {
 
     // #844: skill 提案 PII 硬线(设计 §3.3)— 候选剧本落库前强制患者标识
     // 扫描,命中即拒(零静默脱敏)。轨迹/归纳输入本就零正文,这是第二道防线。
+    // #912: fail-closed — payload 坏 JSON / 扫描器异常一律拒绝建提案,
+    // 不再"跳过扫描即放行"地把未扫描的候选剧本送进审批队列。
     if (input.kind === 'skill' && input.payload) {
+      const { scanSkillPii } = await import('../../common/pii-scanner.js')
+      let candidate: any
       try {
-        const { scanSkillPii } = await import('../../common/pii-scanner.js')
-        const candidate = JSON.parse(input.payload) as any
+        candidate = JSON.parse(input.payload) as any
+      } catch (err) {
+        log.warn('skill payload unparseable — proposal rejected (PII gate fail-closed)', { reason: (err as Error).message.slice(0, 120) })
+        return this.skillGateRejected(input, content, category, 'skill payload 无法解析，拒绝入库（PII 闸门 fail-closed）')
+      }
+      try {
         const skill = candidate?.skill || candidate
         const pii = scanSkillPii({
           name: String(skill?.name || ''),
@@ -51,32 +59,11 @@ export class ProposalService {
           promptTemplate: String(skill?.promptTemplate || skill?.prompt || ''),
         })
         if (!pii.clean) {
-          const now2 = new Date().toISOString()
-          return {
-            id: `pii_${now2}`,
-            userId: this.userId,
-            scopeType: input.scopeType,
-            patientHash: input.patientHash || null,
-            studyId: input.studyId || null,
-            kind: input.kind,
-            content,
-            importance: input.importance ?? 3,
-            confidence: input.confidence ?? 'medium',
-            reason: input.reason || null,
-            sourceRange: input.sourceRange || null,
-            category,
-            conflictsWith: null,
-            status: 'rejected',
-            rejectedReason: `PII 扫描命中，拒绝入库（${pii.hits.map((h) => h.kind).join(',')}）`,
-            createdAt: now2,
-            resolvedAt: now2,
-            resolvedBy: 'system',
-            appliedStableId: null,
-            payload: null,
-          }
+          return this.skillGateRejected(input, content, category, `PII 扫描命中，拒绝入库（${pii.hits.map((h) => h.kind).join(',')}）`)
         }
       } catch (err) {
-        log.warn('skill payload PII scan skipped', { reason: (err as Error).message.slice(0, 120) })
+        log.warn('skill payload PII scan failed — proposal rejected (PII gate fail-closed)', { reason: (err as Error).message.slice(0, 120) })
+        return this.skillGateRejected(input, content, category, 'PII 扫描异常，拒绝入库（fail-closed）')
       }
     }
 
@@ -197,6 +184,33 @@ export class ProposalService {
       log.warn('approval request enqueue skipped', { reason: (err as Error).message.slice(0, 120) })
     }
     return serialized
+  }
+
+  /** #912: PII 闸门 fail-closed 的统一拒绝行(status=rejected,不进审批队列)。 */
+  private skillGateRejected(input: ProposalInput, content: string, category: string | null, rejectedReason: string): MemoryProposalRow {
+    const now = new Date().toISOString()
+    return {
+      id: `pii_${now}`,
+      userId: this.userId,
+      scopeType: input.scopeType,
+      patientHash: input.patientHash || null,
+      studyId: input.studyId || null,
+      kind: input.kind,
+      content,
+      importance: input.importance ?? 3,
+      confidence: input.confidence ?? 'medium',
+      reason: input.reason || null,
+      sourceRange: input.sourceRange || null,
+      category,
+      conflictsWith: null,
+      status: 'rejected',
+      rejectedReason,
+      createdAt: now,
+      resolvedAt: now,
+      resolvedBy: 'system',
+      appliedStableId: null,
+      payload: null,
+    }
   }
 
   async listPending(scope?: MemoryScope): Promise<MemoryProposalRow[]> {

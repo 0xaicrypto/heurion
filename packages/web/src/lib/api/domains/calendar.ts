@@ -18,7 +18,20 @@ export class CalendarApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}/references`);
   }
 
-  async addDocReference(docId: string, data: {kind: string; content: string; source_patient_hash?: string; label?: string}): Promise<{reference_id: string}> {
+  /** 服务端 documents.router POST /references 响应 — 上传即草稿含 imported_body。 */
+  async addDocReference(docId: string, data: {kind: string; content: string; source_patient_hash?: string; label?: string}): Promise<{
+    reference_id: string;
+    kind: string;
+    content: string;
+    label: string;
+    source_patient_hash: string;
+    created_at: string;
+    /** 自动导入后的正文(空文档 + 文件类参考时,否则 null)。 */
+    imported_body: string | null;
+    imported: boolean;
+    /** #777: pptx 走后台解析,前端据 started 轮询刷新。 */
+    pptx_parse: { started: boolean; reason?: string } | null;
+  }> {
     return this.fetch(`/api/v1/docs/${docId}/references`, { method: 'POST', body: JSON.stringify(data) });
   }
 

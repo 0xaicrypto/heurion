@@ -1,5 +1,5 @@
-import path from 'path'
 import { makeLogger } from '../../common/logger.js'
+import { twinsBaseDir } from '../../lib/upload-path.js'
 import { EmbeddingIndex, normalizeVector } from '../embedding-index.js'
 import type { MemoryService } from '../../memory/memory.service.js'
 import type { MemoryScope } from '../contracts.js'
@@ -26,7 +26,7 @@ export class EmbeddingService {
 
   embeddingIndex(): EmbeddingIndex {
     if (!this._embeddingIndex) {
-      const baseDir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', this.userId)
+      const baseDir = twinsBaseDir(this.userId)
       this._embeddingIndex = new EmbeddingIndex(baseDir)
     }
     return this._embeddingIndex

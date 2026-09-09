@@ -64,8 +64,9 @@ class HttpExecutionPlaneService implements ExecutionPlaneService {
       },
       body: JSON.stringify({
         type: job.type,
-        // Sidecar handlers read tenant isolation from the payload; merge it in
-        // so the worker can build the correct S3 object prefix.
+        // #928 备注:tenant 字段当前仅透传记录——worker 侧(storage.ts
+        // saveFile)并不读 payload.tenant,S3 key 只由 prefix/fileId/fileName
+        // 构成,S3 路径未按 tenant 隔离(实现属 feature,见 #928)。
         payload: { ...job.payload, tenant: job.tenant ?? {} },
         tenant: job.tenant ?? {},
         callback_url: job.callbackUrl,

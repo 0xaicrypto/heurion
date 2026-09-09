@@ -1,4 +1,3 @@
-import path from 'path'
 import fs from 'fs'
 import { EventLog } from '../../core/event-log'
 import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../evolution/stores'
@@ -7,6 +6,7 @@ import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { MemoryService } from '../../memory/memory.service.js'
 import { defaultProposalApplier, registerContextResolver, registerProposalApplier, registerProposalCreatedHandler } from '../../memory/memory-gateway.js'
 import { createApprovalRequest } from '../approvals/approval.service.js'
+import { twinsBaseDir } from '../../lib/upload-path.js'
 // §5.4 (#197): persona lives in common/persona.ts (shared with memory gateway).
 import { buildScenePersona, type ChatScene } from '../../common/persona.js'
 export { buildPersona } from '../../common/persona.js'
@@ -100,7 +100,7 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
   ensureGC()
   const existing = contexts.get(userId)
   if (existing) { existing.lastAccess = Date.now(); return existing }
-  const baseDir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId)
+  const baseDir = twinsBaseDir(userId)
   fs.mkdirSync(baseDir, { recursive: true })
   const eventLog = new EventLog(baseDir, userId)
   const facts = new FactsStore(baseDir)
@@ -121,7 +121,7 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
       void import('../../memory/embedding-index.js').then(({ EmbeddingIndex }) => {
         try {
           if (type !== 'fact' && type !== 'summary' && type !== 'document') return
-          const base = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId)
+          const base = twinsBaseDir(userId)
           new EmbeddingIndex(base).remove(stableId, type)
         } catch { /* best-effort */ }
       }).catch(() => {})

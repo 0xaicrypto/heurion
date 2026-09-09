@@ -45,9 +45,29 @@ export interface SegmentBuilderSpec {
    * 配置后装配器在每个 builder 开始时回调 onStage,由调用方经 SSE 下发。
    */
   stageLabel?: string
-  /** 出口断言: required 段缺失/失败 → 记 telemetry,不静默。 */
+  /**
+   * #905: required 段语义 — builder 抛错 = 硬失败,assemble 以
+   * RequiredSegmentError 中断上抛(调用方走错误通道终止本回合,不再带
+   * 残缺上下文进 LLM);builder 返回空串只记 telemetry(合法降级,如
+   * 非目标场景)不算失败。
+   */
   required?: boolean
   build(input: SegmentBuildInput): Promise<string>
+}
+
+/**
+ * #905: required 段硬失败 — 携带段 key 与已收集的 telemetry,调用方
+ * (conversation-turn)据此走现有错误 SSE 通道终止本回合。
+ */
+export class RequiredSegmentError extends Error {
+  constructor(
+    public readonly key: string,
+    reason: string,
+    public readonly telemetry: string[],
+  ) {
+    super(`required segment ${key} failed: ${reason}`)
+    this.name = 'RequiredSegmentError'
+  }
 }
 
 export interface AssemblyResult {
@@ -111,8 +131,12 @@ export class ContextAssembler {
         text = await b.build(buildInput)
       } catch (err) {
         const reason = (err as Error).message.slice(0, 120)
-        if (b.required) telemetry.push(`segment ${b.key} FAILED: ${reason}`)
-        else log.warn('segment build failed (best-effort)', { key: b.key, reason })
+        if (b.required) {
+          telemetry.push(`segment ${b.key} FAILED: ${reason}`)
+          // #905: required 段失败 = 硬失败 — 中断组装上抛,不静默降级进 LLM。
+          throw new RequiredSegmentError(b.key, reason, telemetry)
+        }
+        log.warn('segment build failed (best-effort)', { key: b.key, reason })
       }
       if (text) {
         built.push({ key: b.key, text })

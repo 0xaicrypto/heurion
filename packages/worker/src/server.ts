@@ -13,6 +13,7 @@ import { runJob } from './job-runner.js'
 import { createReadStream, existsSync } from 'fs'
 import { renderJobType, type RenderJobType } from '@heurion/contracts'
 import { enqueueJobRequestSchema, previewPayloadSchema, figurePayloadSchema } from '@heurion/contracts'
+import { isKnownJobType, KNOWN_JOB_TYPES } from './job-types.js'
 
 // #446: persistent job store (JSONL) — jobs + fileId index survive restarts.
 const jobStore = new PersistentJobStore()
@@ -86,6 +87,16 @@ async function main() {
       return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join('; ') || 'invalid job request' })
     }
     const { type, payload, callback_url } = parsed.data
+
+    // #901: 未知 job type 直接 400（信息含收到的 type 与合法值列表）—
+    // 此前会先创建 job 记录、再以 undefined handler 必败，留下一条永远
+    // failed 的脏 job。合法集合 = HANDLERS 键 == contracts renderJobType
+    // 枚举；worker 未注册插件命名空间的作业类型（见 job-types.ts）。
+    if (!isKnownJobType(type)) {
+      return reply.status(400).send({
+        error: `unknown job type: ${type} — valid types: ${KNOWN_JOB_TYPES.join(', ')}`,
+      })
+    }
 
     // #790: preview payload 此前零校验（CONTENT_SCHEMAS 里是 z.any()）—
     // 形状错错到 soffice 才炸。入口 zod 一刀（其余 jobType 的内容在

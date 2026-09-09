@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { render } from '@/test/render';
 import { SubmissionWorkbench } from './submission';
+import { setPaperLink } from '@/lib/paper-link';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -113,7 +114,6 @@ describe('SubmissionWorkbench (#362)', () => {
     fireEvent.click(screen.getByText('Prefill'));
     expect(await screen.findByText(/My Study/)).toBeTruthy();
   });
-});
 
   it('applies a template to the Write tab (creates a Doc with the skeleton) (#382)', async () => {
     const { api } = await import('@/lib/api');
@@ -148,3 +148,31 @@ describe('SubmissionWorkbench (#362)', () => {
       expect(screen.getAllByText(/Doc created/)).toHaveLength(1);
     });
   });
+
+  it('autosave carries the linked paper doc_id (#902)', async () => {
+    const { api } = await import('@/lib/api');
+    setPaperLink({ docId: 'doc_42', title: 'Linked paper', abstract: '', updatedAt: Date.now() });
+    try {
+      render(<SubmissionWorkbench embedded />);
+
+      // 等挂载恢复完成（paper link 标题回填）后再改标题 — 否则 restore
+      // 的 setTitle 会覆盖测试输入。
+      const titleInput = screen.getByLabelText('Title');
+      await waitFor(() => expect(titleInput).toHaveValue('Linked paper'));
+      fireEvent.change(titleInput, { target: { value: 'EGFR study' } });
+
+      // 800ms 防抖后 autosave — 载荷须带上 paper-link 的 docId（#726 按
+      // docId 隔离草稿；缺 doc_id 会错误命中旧草稿）。
+      await waitFor(
+        () => {
+          expect(api.saveSubmissionDraft).toHaveBeenCalledWith(
+            expect.objectContaining({ doc_id: 'doc_42', article_title: 'EGFR study' }),
+          );
+        },
+        { timeout: 2500 },
+      );
+    } finally {
+      localStorage.removeItem('nexus.paper.link');
+    }
+  });
+});

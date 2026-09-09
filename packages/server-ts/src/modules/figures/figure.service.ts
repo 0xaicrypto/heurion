@@ -19,12 +19,21 @@ import { makeLogger } from '../../common/logger.js'
 import { issueChartToken } from '../../common/chart-token.js'
 import { createExecutionPlaneService } from '../execution/execution-plane.service.js'
 import { pollRenderJob } from '../../tools/asset-render-pipeline.js'
+import { uploadsBaseDir } from '../../lib/upload-path.js'
 
 const log = makeLogger('figures.figure-service')
 
 /** 单图渲染轮询预算 — 同步导出降级路径依赖此预算(#821)。 */
 const RENDER_WAIT_MS = 15_000
 const POLL_INTERVAL_MS = 500
+
+/**
+ * #928: (userId, sha256) → in-flight 渲染 promise — 并发同源请求此前各自
+ * 走完整 miss 路径,双 enqueue + 双落盘(两个 fig_ 文件/两条 FigureRender)。
+ * 同 key 并发合并为一次渲染(inflight 模式参照 tools/external-fetch.ts);
+ * promise 结算后自清,失败不缓存,下次重试照常。
+ */
+const inflightFigures = new Map<string, Promise<{ ok: true; file: FigureFile } | { ok: false; reason: string }>>()
 
 export interface FigureInput {
   kind: 'mermaid' | 'latex_math'
@@ -50,7 +59,7 @@ export function figureSha256(input: FigureInput): string {
 }
 
 function uploadsDir(userId: string): string {
-  return path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', userId, 'uploads')
+  return uploadsBaseDir(userId)
 }
 
 function buildPayload(input: FigureInput): Record<string, unknown> {
@@ -61,39 +70,8 @@ function buildPayload(input: FigureInput): Record<string, unknown> {
   return payload
 }
 
-/**
- * 内容寻位的渲染入口。命中 FigureRender 缓存直接返回;miss 则
- * enqueue sidecar.render_figure → 轮询 → fetchFile → 落盘
- * `fig_{kind}_{hash8}_{ts}.svg` + FileIndex upsert + FigureRender 记录。
- * force=true 跳过缓存强制重渲染(渲染器升级后旧产物刷新用)。
- */
-export async function ensureFigure(userId: string, input: FigureInput, opts: { force?: boolean } = {}): Promise<{ ok: true; file: FigureFile } | { ok: false; reason: string }> {
-  const sha256 = figureSha256(input)
-  const startedAt = Date.now()
-
-  // L1 — FigureRender 表(DB):同源码不重复渲染。
-  if (!opts.force) {
-    try {
-      const cached = await prisma.figureRender.findUnique({
-        where: { userId_sha256: { userId, sha256 } },
-      })
-      if (cached) {
-        return {
-          ok: true,
-          file: {
-            cached: true,
-            fileId: cached.svgFileId,
-            url: `/api/v1/files/download/${cached.svgFileId}?token=${issueChartToken(cached.svgFileId, userId)}`,
-            width: cached.width ?? undefined,
-            height: cached.height ?? undefined,
-          },
-        }
-      }
-    } catch (err) {
-      log.warn('figure cache lookup skipped', { reason: (err as Error).message.slice(0, 120) })
-    }
-  }
-
+/** miss 路径:enqueue → 轮询 → fetchFile → 落盘 + FileIndex + FigureRender。 */
+async function renderFigureMiss(userId: string, input: FigureInput, sha256: string, startedAt: number): Promise<{ ok: true; file: FigureFile } | { ok: false; reason: string }> {
   // 渲染在执行面(worker Chromium),控制面只编排。
   const plane = createExecutionPlaneService()
   const job = await plane.enqueue({ type: 'sidecar.render_figure', payload: buildPayload(input), tenant: { userId } })
@@ -153,6 +131,50 @@ export async function ensureFigure(userId: string, input: FigureInput, opts: { f
       height: (final.result as any)?.height ?? undefined,
     },
   }
+}
+
+/**
+ * 内容寻位的渲染入口。命中 FigureRender 缓存直接返回;miss 则
+ * enqueue sidecar.render_figure → 轮询 → fetchFile → 落盘
+ * `fig_{kind}_{hash8}_{ts}.svg` + FileIndex upsert + FigureRender 记录。
+ * force=true 跳过缓存强制重渲染(渲染器升级后旧产物刷新用)。
+ * #928: 非 force 的并发同 (userId, sha256) 请求合并到同一 in-flight promise。
+ */
+export async function ensureFigure(userId: string, input: FigureInput, opts: { force?: boolean } = {}): Promise<{ ok: true; file: FigureFile } | { ok: false; reason: string }> {
+  const sha256 = figureSha256(input)
+  const startedAt = Date.now()
+
+  if (opts.force) return renderFigureMiss(userId, input, sha256, startedAt)
+
+  // L1 — FigureRender 表(DB):同源码不重复渲染。
+  try {
+    const cached = await prisma.figureRender.findUnique({
+      where: { userId_sha256: { userId, sha256 } },
+    })
+    if (cached) {
+      return {
+        ok: true,
+        file: {
+          cached: true,
+          fileId: cached.svgFileId,
+          url: `/api/v1/files/download/${cached.svgFileId}?token=${issueChartToken(cached.svgFileId, userId)}`,
+          width: cached.width ?? undefined,
+          height: cached.height ?? undefined,
+        },
+      }
+    }
+  } catch (err) {
+    log.warn('figure cache lookup skipped', { reason: (err as Error).message.slice(0, 120) })
+  }
+
+  // #928: in-flight 合并 — 首个请求创建 promise,后续并发请求等同一结果。
+  const key = `${userId}:${sha256}`
+  const pending = inflightFigures.get(key)
+  if (pending) return pending
+  const job = renderFigureMiss(userId, input, sha256, startedAt)
+    .finally(() => { inflightFigures.delete(key) })
+  inflightFigures.set(key, job)
+  return job
 }
 
 /** 批量预热(#821 保存钩子用)— 同批去重后逐个 ensure,失败项跳过。 */

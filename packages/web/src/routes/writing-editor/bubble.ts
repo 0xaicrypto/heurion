@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Editor } from '@tiptap/react';
 import type { BubbleRunState } from '@/components/DocEditor';
@@ -6,6 +6,9 @@ import { sanitizePolishOutput } from '@/lib/polish-sanitize';
 import { captureScrollContainer } from '@/lib/scroll-utils';
 import { api, ApiError } from '@/lib/api';
 import { markdownToHtml, htmlToMarkdown } from '@/lib/doc-convert';
+// #907: base_sha 指纹 — 与 #882 saveDoc 同一 helper,服务端 #870 以其比对
+// 文档当前 body,不匹配 → 409 stale_base。
+import { sha1Hex } from '@/lib/hash';
 
 // #792: 润色预设提为模块级常量 — 此前定义在组件体内,每次渲染重建数组。
 export const POLISH_PRESETS: Array<{ id: string; icon: string; label: string; instruction: string }> = [
@@ -28,6 +31,62 @@ export interface PolishBubble {
   handleBubbleAction: (action: string, sel: { text: string; from: number; to: number }) => void;
   /** #871: 送入聊天 — 选区上下文随行,任务超出单段润色时转聊天流。 */
   handleSendToChat: (instruction?: string) => void;
+}
+
+/** #927: 重锚查找的结构化最小形状 — 真实 ProseMirror Node 满足此接口
+ *  (测试可用极简替身,避免引入 prosemirror-model 直接依赖)。 */
+interface RelocatableNode {
+  isText: boolean;
+  text?: string;
+  isBlock: boolean;
+}
+interface RelocatableDoc {
+  content: { size: number };
+  nodesBetween: (from: number, to: number, callback: (node: RelocatableNode, pos: number) => void) => void;
+}
+
+/**
+ * #927: C3 漂移重锚 — 在全文档平面文本中查找 needle(与
+ * `doc.textBetween(0, size, '\n')` 同源:文本顺序拼接,块间补分隔符)。
+ * 唯一命中才返回其 ProseMirror 坐标(按文本节点绝对位置映射,跨块/行内
+ * 图片均安全);未命中或多命中返回 null(调用方维持拒绝行为,不猜)。
+ */
+export function findUniqueTextRange(doc: RelocatableDoc, needle: string): { from: number; to: number } | null {
+  if (!needle) return null;
+  let text = '';
+  let separated = true; // 与 Node.textBetween 相同的块分隔语义
+  const pieces: Array<{ textStart: number; textLen: number; posFrom: number }> = [];
+  doc.nodesBetween(0, doc.content.size, (node, pos) => {
+    if (node.isText) {
+      const t = node.text ?? '';
+      pieces.push({ textStart: text.length, textLen: t.length, posFrom: pos });
+      text += t;
+      separated = false;
+      return;
+    }
+    if (node.isBlock && !separated) {
+      text += '\n';
+      separated = true;
+    }
+  });
+  let count = 0;
+  let found: { from: number; to: number } | null = null;
+  let idx = text.indexOf(needle);
+  while (idx !== -1) {
+    count++;
+    if (count > 1) return null;
+    const end = idx + needle.length;
+    const startPiece = pieces.find((p) => p.textStart <= idx && idx < p.textStart + p.textLen);
+    const endPiece = pieces.find((p) => p.textStart < end && end <= p.textStart + p.textLen);
+    if (startPiece && endPiece) {
+      found = {
+        from: startPiece.posFrom + (idx - startPiece.textStart),
+        to: endPiece.posFrom + (end - endPiece.textStart),
+      };
+    }
+    idx = text.indexOf(needle, idx + 1);
+  }
+  return count === 1 ? found : null;
 }
 
 /**
@@ -56,6 +115,19 @@ export function usePolishBubble(input: {
   // C3: 运行开始时的选区快照 — apply 前校验漂移。
   const polishRangeRef = useRef<{ from: number; to: number; original: string } | null>(null);
 
+  // #909: 生命周期清理 — 卸载或 docId 变化时 abort 在途流,并复位气泡全套
+  // 状态(运行态/选区/漂移快照),防止旧文档的流收尾与选区跨文档串扰。
+  useEffect(() => {
+    return () => {
+      polishAbortRef.current?.abort();
+      polishAbortRef.current = null;
+      polishRangeRef.current = null;
+      bubbleRunRef.current = null;
+      setBubbleRun(null);
+      setBubbleSel(null);
+    };
+  }, [docId]);
+
   // #753: Polish 执行体 — 气泡内联(润色全文按钮已移除;全文场景可全选
   // 后走气泡,或用 doc-chat)。错误写入 bubbleRun.error 展示。
   // #778: opts.selection — 多轮 refine 时发用户手上的当前版本(不再重读
@@ -78,6 +150,10 @@ export function usePolishBubble(input: {
     }
     const controller = new AbortController();
     polishAbortRef.current = controller;
+    // #897: 流归属校验 — 本流是否仍是活跃流(abort 句柄未被新润色/取消替换)。
+    // 旧流被 C2 abort 后,其 catch/done 分支不得改写 bubbleRun(否则新润色
+    // 的运行态/结果被旧流静默清掉),也不得清掉新流的 abort 句柄。
+    const isOwner = () => polishAbortRef.current === controller;
     setBubbleRun({ action, status: 'running', stream: '', reasoning: '', error: null, startedAt: Date.now(), round: opts.round ?? 1 });
     polishRangeRef.current = { from, to, original: selection };
     // #797: rAF 合帧 — chunk 先积累,每帧最多 flush 一次。
@@ -86,6 +162,7 @@ export function usePolishBubble(input: {
     let rafId: number | null = null;
     const flush = () => {
       rafId = null;
+      if (!isOwner()) return; // #897: 归属校验 — 旧流的合帧不得覆盖新流内容
       setBubbleRun((prev) => (prev ? { ...prev, stream: streamText, reasoning: reasoningText } : prev));
     };
     const schedule = () => {
@@ -105,6 +182,8 @@ export function usePolishBubble(input: {
         if (chunk.done) break;
       }
       if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+      // #897: 归属校验 — 流结束的瞬间本流可能已被新润色/取消取代,不再改写状态。
+      if (!isOwner()) return;
       setBubbleRun((prev) => (prev ? { ...prev, stream: streamText, reasoning: reasoningText } : prev));
       if (!streamText.trim()) {
         const msg = reasoningText
@@ -115,6 +194,10 @@ export function usePolishBubble(input: {
       }
       setBubbleRun((prev) => (prev ? { ...prev, status: 'done' } : prev));
     } catch (err) {
+      // #897: abort 竞态归属校验 — 仅当本流仍是活跃流时才允许改 bubbleRun
+      // 状态(清空/报错);被新流取代的旧流直接 return,不 setBubbleRun(null)、
+      // 不报错 — 否则新润色的运行态/结果会被旧流的收尾覆盖而静默消失。
+      if (!isOwner()) return;
       // 用户主动取消 → 静默收起,不算错误
       if ((err as Error)?.name === 'AbortError') {
         setBubbleRun(null);
@@ -124,7 +207,9 @@ export function usePolishBubble(input: {
       setBubbleRun((prev) => (prev ? { ...prev, status: 'error', error: msg } : prev));
     } finally {
       if (rafId !== null) cancelAnimationFrame(rafId);
-      polishAbortRef.current = null;
+      // #897: 只清理属于本流的 abort 句柄 — 防止旧流 finally 清掉新流的
+      // cancel 能力(handleBubbleDiscard 将 abort 不到任何东西)。
+      if (polishAbortRef.current === controller) polishAbortRef.current = null;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定
   }, [docId, editorRef]);
@@ -142,33 +227,50 @@ export function usePolishBubble(input: {
       return;
     }
     // C3 漂移校验:流式期间用户编辑过该区域 → 拒绝盲替换,防错位
+    // #927: 漂移后先全文重锚 — snap.original 在全文档唯一命中时更新坐标
+    // 应用(修复假阳性:选区未变仅因前后编辑导致坐标位移的场景);未命中
+    // 或多命中维持现有拒绝行为+提示。
     const current = editor.state.doc.textBetween(snap.from, snap.to, '\n').trim();
     if (current !== snap.original) {
-      onNotice(t('writing.selectionChanged', '选区内容已变化,为避免错位替换未应用 — 请重新选中后重试'), 4000);
-      return;
+      const relocated = findUniqueTextRange(editor.state.doc, snap.original);
+      if (!relocated) {
+        onNotice(t('writing.selectionChanged', '选区内容已变化,为避免错位替换未应用 — 请重新选中后重试'), 4000);
+        return;
+      }
+      snap.from = relocated.from;
+      snap.to = relocated.to;
     }
     // C1 净化:元评论/javascript: 链接不得进入文档
     // #778: 应用的是面板内用户编辑后的最终版(未改即 AI 原文)
     const clean = sanitizePolishOutput(finalText ?? run.stream);
     if (!clean) { onNotice(t('writing.polishEmpty', 'AI 结果为空,已丢弃')); return; }
+    // #907: 替换前先取编辑器当前全文算 base_sha(与 #882 saveDoc 同一指纹
+    // 函数),随快照 body 一起 POST — 服务端与文档当前 body 比对,不匹配
+    // → 409 stale_base。
+    const preApplyMd = htmlToMarkdown(editor.getHTML());
     // #752-cursor: focus()+插入会触发浏览器 scrollIntoView — 快照/恢复
     // 滚动位置,把用户留在当前修改处。#792: 复用 lib/scroll-utils。
     const scrollEl = captureScrollContainer(editor.view.dom as HTMLElement);
     const savedTop = scrollEl?.top ?? 0;
     editor.chain().focus().insertContentAt({ from: snap.from, to: snap.to }, markdownToHtml(clean)).run();
     if (scrollEl) scrollEl.el.scrollTop = savedTop;
-    // #870: 补版本快照 — 与聊天 edit_document 的 'AI edit' 快照对齐
-    // (撤销/审计一致)。fire-and-forget,失败不阻塞编辑。
-    if (docId) {
-      try {
-        const md = htmlToMarkdown(editor.getHTML());
-        void api.createDocSnapshot(docId, md, 'AI polish').catch(() => {});
-      } catch { /* best-effort */ }
-    }
     setBubbleRun(null);
     onNotice(t('writing.polishApplied', '✨ 已按 AI 结果替换选中文本'));
+    // #870/#907: 补版本快照(带 base_sha 并发保护) — fire-and-forget。
+    // 409 stale_base(文档已被 AI/其他窗口更新):快照不落盘,但编辑器里的
+    // 本地替换保留 — 本地替换与未保存正文同源,回滚只会制造状态歧义;
+    // 明示用户重新选区重试,以不产生数据歧义为准。其他失败维持 best-effort。
+    if (docId) {
+      void sha1Hex(preApplyMd)
+        .then((base_sha) => api.createDocSnapshot(docId, htmlToMarkdown(editor.getHTML()), 'AI polish', base_sha))
+        .catch((err) => {
+          if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {
+            onNotice(t('writing.bubbleApplyStale', '文档已更新（可能是 AI 或其他窗口），请重新选区后重试'), 6000);
+          }
+        });
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定
-  }, [bubbleSel, editorRef, onNotice]);
+  }, [bubbleSel, editorRef, onNotice, docId]);
 
   const handleBubbleDiscard = useCallback(() => {
     // #752-ux-cancel: running 态 = 取消(abort 断流);done 态 = 丢弃结果。
@@ -199,7 +301,11 @@ export function usePolishBubble(input: {
    *  #752-feedback: 到达性 console 标记 — 若用户端仍"无响应",console 有
    *  [bubble] 日志即可区分「handler 未触发」与「下游失败」。 */
   function handleBubbleAction(action: string, sel: { text: string; from: number; to: number }) {
-    console.info('[bubble] action=', action, 'selLen=', sel.text.length, 'from=', sel.from, 'to=', sel.to);
+    // #927: 到达性标记降为 dev-only — 生产 console 噪音清理(#752-feedback
+    // 的排查价值保留在开发环境)。
+    if (import.meta.env.DEV) {
+      console.info('[bubble] action=', action, 'selLen=', sel.text.length, 'from=', sel.from, 'to=', sel.to);
+    }
     setBubbleSel(sel);
     if (action === 'polish') {
       // ✨润色 = 气泡内输入自定义指令(可留空),⌘+Enter 或「开始」执行

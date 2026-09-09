@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'vitest'
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -6,7 +6,7 @@ import zlib from 'zlib'
 import crypto from 'crypto'
 import PDFDocument from 'pdfkit'
 import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun, ImageRun } from 'docx'
-import { extractTextFromUpload, extractPdfImagesFromUpload, extractDocxContentFromUpload, extractImageUpload, sniffDocumentMime, pdfTextToMarkdown, extractDocumentMarkdownFromUpload, extractDocumentMarkdownWithImagesFromUpload, cachedExtractDocumentMarkdownFromUpload } from '../../src/lib/document-extractor.js'
+import { extractTextFromUpload, extractPdfImagesFromUpload, extractDocxContentFromUpload, extractImageUpload, sniffDocumentMime, pdfTextToMarkdown, extractDocumentMarkdownFromUpload, extractDocumentMarkdownWithImagesFromUpload, cachedExtractDocumentMarkdownFromUpload, cachedExtractTextFromUpload } from '../../src/lib/document-extractor.js'
 import { buildAttachmentParts, MAX_ATTACHMENT_IMAGES } from '../../src/modules/shared/chat-context.js'
 
 /** 生成一张合法 PNG(RGB,无压缩选项) — 测试用最小实现。 */
@@ -485,21 +485,127 @@ describe('cachedExtractDocumentMarkdownFromUpload 缓存', () => {
   test('同参数第二次命中缓存,不重新提取;失败结果不缓存', async () => {
     const fileId = '1750000000200_cached.txt'
     fs.writeFileSync(path.join(uploadsDir, fileId), 'Hello cached extraction.', 'utf-8')
+    // #914: key 含 mtime(文件版本)— 固定 mtime 使两次调用键稳定。
+    fs.utimesSync(path.join(uploadsDir, fileId), new Date(1000000000000), new Date(1000000000000))
 
     const a = await cachedExtractDocumentMarkdownFromUpload('u1', fileId)
-    const b = await cachedExtractDocumentMarkdownFromUpload('u1', fileId)
     expect(a).toBe('Hello cached extraction.')
-    expect(b).toBe(a)
 
-    // 直接删除文件后再取 — 命中缓存仍返回(证明没重新读盘)。
-    fs.rmSync(path.join(uploadsDir, fileId))
-    const c = await cachedExtractDocumentMarkdownFromUpload('u1', fileId)
-    expect(c).toBe('Hello cached extraction.')
+    // 覆盖写入不同内容但 mtime 不变 — 仍命中缓存(证明没重新读盘)。
+    fs.writeFileSync(path.join(uploadsDir, fileId), 'changed on disk', 'utf-8')
+    fs.utimesSync(path.join(uploadsDir, fileId), new Date(1000000000000), new Date(1000000000000))
+    const b = await cachedExtractDocumentMarkdownFromUpload('u1', fileId)
+    expect(b).toBe('Hello cached extraction.')
 
     // 不存在的文件(提取失败)不缓存 — 每次都会重新尝试(返回空)。
     const d1 = await cachedExtractDocumentMarkdownFromUpload('u1', 'nope.txt')
     const d2 = await cachedExtractDocumentMarkdownFromUpload('u1', 'nope.txt')
     expect(d1).toBe('')
     expect(d2).toBe('')
+  })
+})
+
+describe('#914 提取缓存 key 含文件版本维度(mtime)— 覆盖重写后不拿旧提取', () => {
+  const tmpDir = path.join(os.tmpdir(), `heurion-extract-cache-ver-${Date.now()}`)
+  const uploadsDir = path.join(tmpDir, 'u1', 'uploads')
+
+  beforeEach(() => {
+    process.env.TWIN_BASE_DIR = tmpDir
+    fs.mkdirSync(uploadsDir, { recursive: true })
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    delete process.env.TWIN_BASE_DIR
+  })
+
+  test('cachedExtractTextFromUpload: 第二次命中缓存;同一 fileId 覆盖新内容(mtime 推进)→ 重新提取', async () => {
+    const fileId = '1750000000600_ver.txt'
+    fs.writeFileSync(path.join(uploadsDir, fileId), 'v1 content', 'utf-8')
+    // 显式固定 mtime,避免"同毫秒写入"导致的键碰撞不确定性。
+    fs.utimesSync(path.join(uploadsDir, fileId), new Date(1000000000000), new Date(1000000000000))
+
+    const a = await cachedExtractTextFromUpload('u1', fileId)
+    expect(a).toBe('v1 content')
+
+    // 覆盖写入不同内容但 mtime 不变 — 仍命中缓存(证明没重新读盘)。
+    fs.writeFileSync(path.join(uploadsDir, fileId), 'changed on disk', 'utf-8')
+    fs.utimesSync(path.join(uploadsDir, fileId), new Date(1000000000000), new Date(1000000000000))
+    expect(await cachedExtractTextFromUpload('u1', fileId)).toBe('v1 content')
+
+    // 同一 fileId 被覆盖写入新内容 + mtime 推进 → key 版本变化,重新提取。
+    fs.writeFileSync(path.join(uploadsDir, fileId), 'v2 content', 'utf-8')
+    fs.utimesSync(path.join(uploadsDir, fileId), new Date(2000000000000), new Date(2000000000000))
+    expect(await cachedExtractTextFromUpload('u1', fileId)).toBe('v2 content')
+  })
+
+  test('cachedExtractDocumentMarkdownFromUpload 同样带文件版本维度', async () => {
+    const fileId = '1750000000601_ver.txt'
+    fs.writeFileSync(path.join(uploadsDir, fileId), 'md v1', 'utf-8')
+    fs.utimesSync(path.join(uploadsDir, fileId), new Date(1000000000000), new Date(1000000000000))
+
+    expect(await cachedExtractDocumentMarkdownFromUpload('u1', fileId)).toBe('md v1')
+
+    fs.writeFileSync(path.join(uploadsDir, fileId), 'md v2', 'utf-8')
+    fs.utimesSync(path.join(uploadsDir, fileId), new Date(2000000000000), new Date(2000000000000))
+    expect(await cachedExtractDocumentMarkdownFromUpload('u1', fileId)).toBe('md v2')
+  })
+})
+
+/**
+ * #922 — 手写 LRU 收敛到 lib/lru-cache.ts(MiniLruCache)+ 新增 inflight
+ * 去重(参照 tools/external-fetch.ts #860)。用 readFileSync 调用次数作为
+ * "是否重新读盘提取"的观测点(txt 路径提取恰好一次 readFileSync)。
+ */
+describe('#922 提取缓存 MiniLruCache 收敛(命中不读盘 + inflight 合并)', () => {
+  const tmpDir = path.join(os.tmpdir(), `heurion-extract-lru-${Date.now()}`)
+  const uploadsDir = path.join(tmpDir, 'u1', 'uploads')
+
+  beforeEach(() => {
+    process.env.TWIN_BASE_DIR = tmpDir
+    fs.mkdirSync(uploadsDir, { recursive: true })
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    delete process.env.TWIN_BASE_DIR
+  })
+
+  test('第二次调用命中缓存 — 不再 readFileSync(不重新读盘)', async () => {
+    const fileId = '1750000000700_lru.txt'
+    fs.writeFileSync(path.join(uploadsDir, fileId), 'lru cached text', 'utf-8')
+
+    const readSpy = vi.spyOn(fs, 'readFileSync')
+    try {
+      const a = await cachedExtractTextFromUpload('u1', fileId)
+      expect(a).toBe('lru cached text')
+      const firstRunReads = readSpy.mock.calls.length
+      expect(firstRunReads).toBeGreaterThan(0)
+
+      const b = await cachedExtractTextFromUpload('u1', fileId)
+      expect(b).toBe('lru cached text')
+      expect(readSpy.mock.calls.length).toBe(firstRunReads)
+    } finally {
+      readSpy.mockRestore()
+    }
+  })
+
+  test('同文件并发请求 inflight 合并 — 只读盘提取一次', async () => {
+    const fileId = '1750000000701_inflight.txt'
+    fs.writeFileSync(path.join(uploadsDir, fileId), 'inflight merged', 'utf-8')
+
+    const readSpy = vi.spyOn(fs, 'readFileSync')
+    try {
+      const [a, b] = await Promise.all([
+        cachedExtractTextFromUpload('u1', fileId),
+        cachedExtractTextFromUpload('u1', fileId),
+      ])
+      expect(a).toBe('inflight merged')
+      expect(b).toBe('inflight merged')
+      // 两次并发只触发一次提取(txt 路径 = 恰一次 readFileSync)。
+      expect(readSpy.mock.calls.length).toBe(1)
+    } finally {
+      readSpy.mockRestore()
+    }
   })
 })

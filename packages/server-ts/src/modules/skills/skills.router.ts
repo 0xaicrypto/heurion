@@ -2,6 +2,8 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
 import { fetchGitHubSkills } from './github-skills.js'
+// #922: 分页唯一实现(lib/paginate)—— 此前内联 parseInt 切片无 NaN 防护。
+import { normalizePage, normalizeLimit, paginate } from '../../lib/paginate.js'
 
 // #3: Expanded skill catalog (30+ skills)
 const CATALOG = [
@@ -45,46 +47,54 @@ const CATALOG = [
 export async function skillsRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
+  // #923 类型收口:路由参数/查询/请求体显式类型(替代 request.params as any)。
+  interface SkillNameParams { name: string }
+  interface DraftIdParams { id: string }
+
   app.get('/api/v1/skills', async (request) => {
     const prefs = await prisma.userSkillPref.findMany({ where: { userId: request.user!.userId } })
-    const installed = new Map(prefs.map((p: any) => [p.skillName, p]))
+    const installed = new Map(prefs.map((p) => [p.skillName, p]))
     // Return ALL skills with installed flag — so page shows full catalog
     const skills = CATALOG.map(s => ({
       name: s.name, title: s.name,
       description: s.description, version: s.version, author: s.author,
-      enabled: installed.has(s.name) ? (installed.get(s.name) as any)?.enabled !== 0 : false,
+      enabled: installed.has(s.name) ? installed.get(s.name)?.enabled !== 0 : false,
       installed: installed.has(s.name),
     }))
     return { skills }
   })
 
   // #3: Paginated search with page + page_size
-  app.get('/api/v1/skills/search', async (request) => {
-    const { query, source, page, page_size } = request.query as any
+  app.get<{ Querystring: { query?: string; source?: string; page?: string; page_size?: string } }>('/api/v1/skills/search', async (request) => {
+    const { query, source, page, page_size } = request.query
     const q = (query || '').toLowerCase()
     const src = source || 'all'
-    const pageNum = parseInt(page || '1')
-    const pageSize = parseInt(page_size || '10')
+    // #922: 防护取严格版 — page 非法(NaN/负/0)回落 1,page_size clamp 1..100
+    // (此前 parseInt('abc')=NaN 会让 offset 变 NaN、slice 返回空且页码回显 NaN)。
+    const pageNum = normalizePage(page, 1)
+    const pageSize = normalizeLimit(page_size, 10, 100)
 
     const prefs = await prisma.userSkillPref.findMany({ where: { userId: request.user!.userId } })
-    const installed = new Set(prefs.map((p: any) => p.skillName))
+    const installed = new Set(prefs.map((p) => p.skillName))
 
     let results = CATALOG
       .filter(s => src === 'all' || s.source === src)
       .filter(s => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))
       .map(s => ({ identifier: s.identifier, name: s.name, description: s.description, source: s.source, installed: installed.has(s.name), version: s.version, author: s.author }))
 
-    const total = results.length
-    const offset = (pageNum - 1) * pageSize
-    results = results.slice(offset, offset + pageSize)
+    // clampPageToTotal: false — 保持旧行为:越界页回显请求页 + 空结果,
+    // 不像 gap 列表那样收进最后页;total_pages 保持 ceil 口径(空结果为 0)。
+    const paged = paginate(results, pageNum, pageSize, { clampPageToTotal: false })
+    results = paged.items
 
-    return { results, total, page: pageNum, page_size: pageSize, total_pages: Math.ceil(total / pageSize) }
+    return { results, total: paged.total, page: paged.page, page_size: paged.pageSize, total_pages: paged.totalPages }
   })
 
-  app.post('/api/v1/skills/install', async (request) => {
-    const { identifier } = request.body as any
+  app.post<{ Body: { identifier?: string } }>('/api/v1/skills/install', async (request) => {
+    const { identifier } = request.body
     const skill = CATALOG.find(s => s.identifier === identifier)
-    const name = skill?.name || identifier.split('/').pop()
+    // split 永不产生空数组;identifier 缺省时保持原 as any 时代的 TypeError 语义。
+    const name = skill?.name || identifier!.split('/').pop() || ''
     const source = skill?.source || 'manual'
     await prisma.userSkillPref.upsert({
       where: { userId_skillName: { userId: request.user!.userId, skillName: name } },
@@ -94,9 +104,9 @@ export async function skillsRouter(app: FastifyInstance) {
     return { name, source }
   })
 
-  app.post('/api/v1/skills/:name/toggle', async (request) => {
-    const { name } = request.params as any
-    const { enabled } = request.body as any
+  app.post<{ Params: SkillNameParams; Body: { enabled?: boolean } }>('/api/v1/skills/:name/toggle', async (request) => {
+    const { name } = request.params
+    const { enabled } = request.body
     await prisma.userSkillPref.upsert({
       where: { userId_skillName: { userId: request.user!.userId, skillName: name } },
       update: { enabled: enabled ? 1 : 0 },
@@ -105,19 +115,19 @@ export async function skillsRouter(app: FastifyInstance) {
     return { name, enabled }
   })
 
-  app.delete('/api/v1/skills/:name', async (request) => {
-    const { name } = request.params as any
+  app.delete<{ Params: SkillNameParams }>('/api/v1/skills/:name', async (request) => {
+    const { name } = request.params
     try { await prisma.userSkillPref.delete({ where: { userId_skillName: { userId: request.user!.userId, skillName: name } } }) } catch { /* ok */ }
     return { uninstalled: true }
   })
 
   // ── GitHub Claude Skills marketplace ──
-  app.get('/api/v1/skills/github', async (request) => {
-    const { query } = request.query as any
+  app.get<{ Querystring: { query?: string } }>('/api/v1/skills/github', async (request) => {
+    const { query } = request.query
     const q = (query || '').toLowerCase()
     const skills = await fetchGitHubSkills()
     const prefs = await prisma.userSkillPref.findMany({ where: { userId: request.user!.userId } })
-    const installed = new Set(prefs.map((p: any) => p.skillName))
+    const installed = new Set(prefs.map((p) => p.skillName))
     const filtered = skills
       .filter(s => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))
       .map(s => ({
@@ -132,12 +142,12 @@ export async function skillsRouter(app: FastifyInstance) {
 
 // #24: experience synthesis — distill candidates from MULTIPLE confirmed
 // cases (facts grouped by category), persisted as pending_review skills.
-app.post('/api/v1/skills/synthesize', async (request) => {
+app.post<{ Querystring: { min_facts?: string; max_candidates?: string } }>('/api/v1/skills/synthesize', async (request) => {
   const userId = request.user!.userId
   const { synthesizeExperience } = await import('./experience-synthesis.service.js')
   const result = await synthesizeExperience(userId, {
-    minFacts: Number((request.query as any).min_facts || 3),
-    maxCandidates: Number((request.query as any).max_candidates || 3),
+    minFacts: Number(request.query.min_facts || 3),
+    maxCandidates: Number(request.query.max_candidates || 3),
   })
   return {
     candidates: result.candidates.map((c) => ({ name: c.name, description: c.description, source_count: c.sourceCount })),
@@ -145,8 +155,8 @@ app.post('/api/v1/skills/synthesize', async (request) => {
   }
 })
 
-app.post('/api/v1/skills/capture', async (request, reply) => {
-  const { conversation, session_id } = request.body as any
+app.post<{ Body: { conversation?: string; session_id?: string } }>('/api/v1/skills/capture', async (request, reply) => {
+  const { conversation, session_id } = request.body
   if (!conversation || !String(conversation).trim()) {
     return reply.status(400).send({ error: 'conversation required' })
   }
@@ -160,25 +170,25 @@ app.post('/api/v1/skills/capture', async (request, reply) => {
   return { draft_id: draftId, ...draft }
 })
 
-app.post('/api/v1/skills/capture/:id/refine', async (request, reply) => {
-  const { instruction } = request.body as any
+app.post<{ Params: DraftIdParams; Body: { instruction?: string } }>('/api/v1/skills/capture/:id/refine', async (request, reply) => {
+  const { instruction } = request.body
   if (!instruction || !String(instruction).trim()) {
     return reply.status(400).send({ error: 'instruction required' })
   }
   const userId = request.user!.userId
   const { refineSkillDraft } = await import('./skill-capture.service.js')
   try {
-    const draft = await refineSkillDraft(userId, (request.params as any).id, String(instruction))
+    const draft = await refineSkillDraft(userId, request.params.id, String(instruction))
     return draft
   } catch (err: any) {
     return reply.status(404).send({ error: err.message })
   }
 })
 
-app.post('/api/v1/skills/capture/:id/confirm', async (request, reply) => {
+app.post<{ Params: DraftIdParams }>('/api/v1/skills/capture/:id/confirm', async (request, reply) => {
   const userId = request.user!.userId
   const { confirmSkillDraft } = await import('./skill-capture.service.js')
-  const result = await confirmSkillDraft(userId, (request.params as any).id)
+  const result = await confirmSkillDraft(userId, request.params.id)
   if (!result.ok) return reply.status(404).send({ error: 'Draft not found or already confirmed' })
   // #845/D6: confirm = 进入审批闸门;审批通过后落图 + 行标 promoted。
   return { status: 'submitted_for_approval', proposalId: result.proposalId }
@@ -186,18 +196,18 @@ app.post('/api/v1/skills/capture/:id/confirm', async (request, reply) => {
 
 // #727: 对话内取消捕捉 — 删除服务端草稿,避免 Captured tab 残留
 // "我没保存过的技能"。
-app.delete('/api/v1/skills/capture/:id', async (request, reply) => {
+app.delete<{ Params: DraftIdParams }>('/api/v1/skills/capture/:id', async (request, reply) => {
   const userId = request.user!.userId
   const { deleteSkillDraft } = await import('./skill-capture.service.js')
-  const ok = await deleteSkillDraft(userId, (request.params as any).id)
+  const ok = await deleteSkillDraft(userId, request.params.id)
   if (!ok) return reply.status(404).send({ error: 'Draft not found' })
   return { ok: true }
 })
 
-app.get('/api/v1/skills/captured', async (request) => {
+app.get<{ Querystring: { status?: string } }>('/api/v1/skills/captured', async (request) => {
   const userId = request.user!.userId
   const { listCapturedSkills } = await import('./skill-capture.service.js')
-  const status = (request.query as any).status as string | undefined
+  const status = request.query.status
   return { skills: await listCapturedSkills(userId, status) }
 })
 }

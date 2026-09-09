@@ -7,6 +7,8 @@ import { mockAiProvider } from '../helpers/ai-mock.js'
  * prisma 走集成库(db push 含 figure_renders 表)。
  */
 
+const mockState = vi.hoisted(() => ({ enqueues: [] as string[] }))
+
 vi.mock('../../src/modules/execution/execution-plane.service.js', () => {
   const svg = Buffer.from('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240"></svg>')
   let call = 0
@@ -14,6 +16,7 @@ vi.mock('../../src/modules/execution/execution-plane.service.js', () => {
     createExecutionPlaneService: () => ({
       enqueue: vi.fn(async (job: any) => {
         call += 1
+        mockState.enqueues.push(`job_${call}`)
         return { job_id: `job_${call}`, status: 'pending' }
       }),
       getStatus: vi.fn(async (jobId: string) => ({
@@ -79,5 +82,17 @@ describe('#820 ensureFigure', () => {
     }
     const forced = await ensureFigure('user_fig', INPUT, { force: true })
     expect(forced.ok && forced.file.cached === false).toBe(true)
+  }, 30000)
+
+  test('#928 并发同 (userId, sha256) → in-flight 合并,只 enqueue 一次、同一产物', async () => {
+    mockState.enqueues.length = 0
+    const [a, b] = await Promise.all([ensureFigure('user_fig', INPUT), ensureFigure('user_fig', INPUT)])
+    expect(a.ok && b.ok).toBe(true)
+    // 修复前:两个并发请求各自走完整 miss 路径 → 双 enqueue + 双落盘。
+    expect(mockState.enqueues).toHaveLength(1)
+    if (a.ok && b.ok) {
+      expect(b.file.fileId).toBe(a.file.fileId)
+      expect(b.file.cached).toBe(false)
+    }
   }, 30000)
 })

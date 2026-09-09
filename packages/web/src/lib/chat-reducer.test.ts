@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { applyChunkToSession, emptySession, type SessionState } from './chat-reducer';
+import { applyChunkToSession, emptySession, shouldApplyDocRev, type SessionState } from './chat-reducer';
 import type { ChatStreamChunk } from './types';
 
 function send(s: SessionState, chunk: ChatStreamChunk): SessionState {
@@ -101,5 +101,33 @@ describe('chat-reducer — error 清 streamNote', () => {
     s = send(s, { type: 'context_info', text: '正在分析…', kind: 'file_context' } as any);
     s = send(s, { type: 'turn_complete' });
     expect(s.streamNote).toBeUndefined();
+  });
+});
+
+/** #927: doc_updated rev 幂等 — rev 随帧存储 + 消费方按 rev 防乱序。 */
+describe('chat-reducer #927 — doc_updated rev 幂等', () => {
+  test('doc_updated 携带 rev 时随 lastDocBody/lastDocDeck 一起存储', () => {
+    const s0 = sessionWithAssistant();
+    const s1 = send(s0, { type: 'doc_updated', body: 'v2 body', rev: 7, updatedAt: '2026-09-08T00:00:00Z' });
+    expect(s1.lastDocBody).toBe('v2 body');
+    expect(s1.lastDocRev).toBe(7);
+    // 无 deck 字段 → lastDocDeck null(既有语义)
+    expect(s1.lastDocDeck).toBeNull();
+  });
+
+  test('无 rev 的旧后端事件保留既有 lastDocRev(不回退)', () => {
+    const s0 = sessionWithAssistant();
+    const s1 = send(s0, { type: 'doc_updated', body: 'v2 body', rev: 7 });
+    const s2 = send(s1, { type: 'doc_updated', body: 'v3 body' });
+    expect(s2.lastDocBody).toBe('v3 body');
+    expect(s2.lastDocRev).toBe(7);
+  });
+
+  test('shouldApplyDocRev — rev 更大才应用,乱序/重放忽略,无 rev 兼容', () => {
+    expect(shouldApplyDocRev(undefined, 5)).toBe(true); // 首笔写回
+    expect(shouldApplyDocRev(5, 6)).toBe(true); // 正常递增
+    expect(shouldApplyDocRev(6, 5)).toBe(false); // 乱序旧包 → 忽略
+    expect(shouldApplyDocRev(6, 6)).toBe(false); // 重放 → 忽略
+    expect(shouldApplyDocRev(6, undefined)).toBe(true); // 旧后端无 rev → 兼容应用
   });
 });

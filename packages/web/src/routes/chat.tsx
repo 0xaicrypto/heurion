@@ -16,9 +16,13 @@ import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint'
 import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import { isEnterSendKey } from '@/lib/chat-composer';
+// #922: 上传落地公共流程收敛到 lib/upload-flow(chat 与 doc-chat 共用)。
+import { runUploadAttachFlow } from '@/lib/upload-flow';
 import { cn } from '@/lib/utils';
 import { Radar } from 'lucide-react';
 import { SkillCapturePrompt } from '@/components/SkillCapturePrompt';
+// #922: 弹窗外壳收敛到共享 Modal(backdrop/Esc 以 props 显式保持各处原行为)。
+import { Modal } from '@/components/ui/Modal';
 import { Button, Textarea } from '@/components/ui';
 
 /** §10.3 (#220): group separator when a gap exceeds this many minutes. — moved to ChatMessages (#456) */
@@ -302,8 +306,14 @@ export function ChatPage() {
 
   const handleAddToKnowledge = async (msg: ChatMessage) => {
     if (!msg.knowledgePayload) return;
-    await api.createKnowledgeSummary(msg.knowledgePayload).catch(() => {});
-    setKbAdded(prev => ({ ...prev, [msg.id]: true }));
+    // #920: 此前无论成败都 setKbAdded(true) — 入库失败被静默标记为成功。
+    // 现在仅在成功后置位，失败走现有错误横幅。
+    try {
+      await api.createKnowledgeSummary(msg.knowledgePayload);
+      setKbAdded(prev => ({ ...prev, [msg.id]: true }));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : t('chat.kbAddFailed', '加入知识库失败，请重试'));
+    }
   };
 
   const resolveDownloadUrl = async (fileId: string) => {
@@ -367,18 +377,16 @@ export function ChatPage() {
     setUploadingFile(true);
     setUploadProgress(0);
     try {
-      const result = await api.uploadFile(f, undefined, (p) => setUploadProgress(p));
-      setAttachedFiles((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), { name: result.name, fileId: result.file_id }] }));
-      // #619: 上传命中知识库(sha256 dedup)→ 提示,不重复存储.
-      if (result.dedup) {
-        setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
-        setTimeout(() => setKbDedupNotice(null), 4000);
-      }
-      // #598: 上传即入聊天历史(服务端 user_message),刷新后仍可见.
-      if (sessionId) {
-        appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
-        api.logAttachments(sessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
-      }
+      // #922: 上传落地公共流程收敛到 lib/upload-flow(与 doc-chat 同一实现)。
+      await runUploadAttachFlow(
+        () => api.uploadFile(f, undefined, (p) => setUploadProgress(p)),
+        {
+          addAttached: (entry) => setAttachedFiles((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), entry] })),
+          setKbDedupNotice,
+          appendMessage,
+        },
+        { sessionId },
+      );
     } catch (err) {
       // #fix: 大文件/上传失败此前静默吞掉,用户以为传上了 — 现在明示。
       setError(err instanceof ApiError ? err.messageText : String(err));
@@ -409,18 +417,16 @@ export function ChatPage() {
       setUploadingFile(true);
       setUploadProgress(0);
       try {
-        const result = await api.uploadFile(file, undefined, (p) => setUploadProgress(p));
-        setAttachedFiles((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), { name: result.name, fileId: result.file_id }] }));
-        // #619: 上传命中知识库(sha256 dedup)→ 提示.
-        if (result.dedup) {
-          setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
-          setTimeout(() => setKbDedupNotice(null), 4000);
-        }
-        // #598: 上传即入聊天历史.
-        if (sessionId) {
-          appendMessage(sessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
-          api.logAttachments(sessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
-        }
+        // #922: 上传落地公共流程收敛到 lib/upload-flow(与 doc-chat 同一实现)。
+        await runUploadAttachFlow(
+          () => api.uploadFile(file, undefined, (p) => setUploadProgress(p)),
+          {
+            addAttached: (entry) => setAttachedFiles((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), entry] })),
+            setKbDedupNotice,
+            appendMessage,
+          },
+          { sessionId },
+        );
       } catch (err) {
         // #fix: 大文件/上传失败此前静默吞掉 — 现在明示。
         setError(err instanceof ApiError ? err.messageText : String(err));
@@ -776,26 +782,27 @@ export function ChatPage() {
         onClose={() => setNewSessionOpen(false)}
         onCreated={handleSessionCreated}
       />
-      {confirmCloseOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-5 shadow-lg">
-            <div className="mb-3">
-              <h2 className="text-sm font-semibold text-text-primary">{t('chat.confirmCloseTitle', '关闭会话')}</h2>
-            </div>
-            <p className="mb-4 text-sm text-text-secondary">
-              {t('chat.confirmCloseBody', '关闭「{{title}}」后，该会话的聊天记录将被清除且无法恢复。确定关闭吗？', { title: currentSessionTitle || '?' })}
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setConfirmCloseOpen(false)}>
-                {t('common.cancel', '取消')}
-              </Button>
-              <Button variant="danger" onClick={confirmCloseSession}>
-                {t('chat.closeSession', 'Close')}
-              </Button>
-            </div>
-          </div>
+      {/* #922: 弹窗外壳收敛到共享 Modal(原行为:无 backdrop 关、无 Esc,显式 props 保持) */}
+      <Modal
+        open={confirmCloseOpen}
+        backdropClassName="bg-black/50 p-4"
+        panelClassName="w-full max-w-sm rounded-xl border border-border bg-surface p-5 shadow-lg"
+      >
+        <div className="mb-3">
+          <h2 className="text-sm font-semibold text-text-primary">{t('chat.confirmCloseTitle', '关闭会话')}</h2>
         </div>
-      )}
+        <p className="mb-4 text-sm text-text-secondary">
+          {t('chat.confirmCloseBody', '关闭「{{title}}」后，该会话的聊天记录将被清除且无法恢复。确定关闭吗？', { title: currentSessionTitle || '?' })}
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setConfirmCloseOpen(false)}>
+            {t('common.cancel', '取消')}
+          </Button>
+          <Button variant="danger" onClick={confirmCloseSession}>
+            {t('chat.closeSession', 'Close')}
+          </Button>
+        </div>
+      </Modal>
       {/* #620: 知识库选择器弹窗 */}
       {/* #757: 共享 KbPicker — 搜索/防抖/上限统一维护 */}
       <KbPicker

@@ -1,7 +1,7 @@
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { mkdir, writeFile } from 'fs/promises'
-import { existsSync } from 'fs'
+import { mkdirSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { v4 as uuid } from 'uuid'
 import { workerDataDir, loadJsonl, appendJsonl } from './data-dir.js'
@@ -54,6 +54,23 @@ for (const entry of loadJsonl<LocalFileManifestEntry>(localFilesPath)) {
   }
 }
 
+/**
+ * #915: local-files.jsonl 与 jobs.jsonl 同款压缩 — 同 fileId 保留最新
+ * 记录(内存 map 即权威态,已失效条目/重复行不再写回),append-only
+ * 日志不再无限增长;写满阈值触发(saveFile 内计数)。
+ */
+const COMPACTION_EVERY = 200
+let writesSinceCompact = 0
+
+export function compactLocalFiles(): void {
+  mkdirSync(workerDataDir(), { recursive: true })
+  const lines = [...localFiles.entries()]
+    .map(([fileId, e]) =>
+      JSON.stringify({ fileId, path: e.path, fileName: e.fileName, mimeType: e.mimeType } satisfies LocalFileManifestEntry))
+    .join('\n')
+  writeFileSync(localFilesPath, lines ? lines + '\n' : '', 'utf-8')
+}
+
 export async function saveFile(
   content: Buffer,
   fileName: string,
@@ -68,6 +85,12 @@ export async function saveFile(
   await writeFile(localPath, content)
   localFiles.set(fileId, { path: localPath, fileName, mimeType })
   appendJsonl(localFilesPath, { fileId, path: localPath, fileName, mimeType } satisfies LocalFileManifestEntry)
+  // #915: 写满阈值触发清单压缩
+  writesSinceCompact++
+  if (writesSinceCompact >= COMPACTION_EVERY) {
+    writesSinceCompact = 0
+    compactLocalFiles()
+  }
 
   if (s3) {
     await s3.send(

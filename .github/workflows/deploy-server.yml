@@ -59,21 +59,9 @@ jobs:
           cd ../server-ts
           pnpm install --frozen-lockfile
           npx prisma generate
-          pnpm exec vitest run \
-            tests/e2e/medical-record-entry.test.ts \
-            tests/e2e/approval-audit.test.ts \
-            tests/e2e/ingestion-worker.test.ts \
-            tests/e2e/lab-ingestion.test.ts \
-            tests/e2e/imaging-ingestion.test.ts \
-            tests/unit/ai-provider.test.ts \
-            tests/e2e/protocol-ingestion.test.ts \
-            tests/unit/local-embedding.test.ts \
-            tests/unit/provider-runtime.test.ts \
-            tests/unit/stats-engine.test.ts \
-            tests/e2e/plugin.test.ts \
-            tests/e2e/sidecar-content.test.ts \
-            tests/e2e/chart-download.test.ts \
-            tests/integration/sidecar-chat-context.test.ts
+          # #917: 清单单一事实源 = scripts/ci-regression-tests.txt（此前
+          # 与 server-ts-ci.yml 双份内联已分叉，deploy 侧漏 7 个回归文件）。
+          pnpm exec vitest run $(grep -v '^#' ../../scripts/ci-regression-tests.txt | grep -v '^$')
 
   build-web:
     name: Build Web Dist
@@ -358,7 +346,15 @@ jobs:
           WORKER_API_TOKEN: ${{ secrets.WORKER_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # #917: Grafana 管理密码 — 此前 compose 字面 fallback
+          # 「changeme-on-first-login」，生产一直以默认密码运行。
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         run: |
+          # #917: fail-closed — 缺 secret 直接失败，绝不以默认密码部署监控栈。
+          if [ -z "$GRAFANA_ADMIN_PASSWORD" ]; then
+            echo "::error::GRAFANA_ADMIN_PASSWORD secret is not set — refusing to deploy Grafana with a default password"
+            exit 1
+          fi
           cat > /tmp/heurion-deploy.env <<EOF
           HOSTNAME=${HOSTNAME}
           SERVER_HOST=0.0.0.0
@@ -397,6 +393,8 @@ jobs:
           EMBEDDING_FALLBACK_PROVIDER=none
           LOCAL_EMBEDDING_URL=http://nexus-embedding-server:8003/embed
           OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+          # #917: 监控栈 Grafana 管理密码（compose 侧无 fallback，缺失即 up 失败）。
+          GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
           EOF
 
       - name: Free disk space on VPS (stale images, builder caches, logs)
@@ -412,6 +410,8 @@ jobs:
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p /opt/heurion/packages/web/dist /opt/heurion/scripts && rm -rf /opt/heurion/packages/web/dist/assets"
           scp -o StrictHostKeyChecking=no -r packages/web/dist/* ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/packages/web/dist/
           scp -o StrictHostKeyChecking=no /tmp/heurion-deploy.env ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/.env.production
+          # #791 同款卫生：环境文件含全部 LLM key，落盘即收紧权限（scp 默认 0644）。
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "chmod 600 /opt/heurion/.env.production"
           scp -o StrictHostKeyChecking=no docker-compose.yml Caddyfile ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/
           scp -o StrictHostKeyChecking=no scripts/deploy-production-compose.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/scripts/
           # #801 P1: 日志栈(Loki/Alloy/Grafana)随部署同步配置并确保在跑 —

@@ -95,4 +95,15 @@ describe('writing-prompts (#699 — 文档场景规则可单测)', () => {
     expect(REVISION_RULE).toContain('≥3 条')
     expect(REVISION_RULE).toContain('跳过计划立即执行')
   })
+
+  it('#893 批量写回 — 不再限定每轮一次 edit_document(事故根因②)', () => {
+    expect(EXPANSION_RULE).toContain('一轮内可按序调用多次 edit_document')
+    expect(EXPANSION_RULE).not.toContain('每轮只调用一次')
+    expect(EXPANSION_RULE).not.toContain('下一轮继续下一节')
+    expect(REVISION_RULE).toContain('一轮内可按序调用多次 edit_document')
+    expect(REVISION_RULE).not.toContain('每轮一次')
+    // 「每完成一处播报一行进度」的精神保留
+    expect(EXPANSION_RULE).toContain('每完成一处用一行播报进度')
+    expect(REVISION_RULE).toContain('每完成一处播报「意见 N/共 M 已落实」')
+  })
 })

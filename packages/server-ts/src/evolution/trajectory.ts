@@ -24,7 +24,8 @@ export interface TaskTrajectory {
   toolsUsed: string[]
   /** 编辑类回合的写回次数(edit_document 调用数)。 */
   docEdits: number
-  outcome: 'completed' | 'abandoned'
+  /** #892: claimed_no_edit — doc- 会话零写回且回复声称已完成编辑(未兑现声明)。 */
+  outcome: 'completed' | 'abandoned' | 'claimed_no_edit'
   /** AI 产出后用户同会话近期重做同动作(隐式修正信号,投影期派生)。 */
   userCorrection: boolean
   /** 回合耗时:本轮 trajectory 事件距同 session 上一条 user_message 的间隔(ms)。 */
@@ -48,7 +49,7 @@ export interface TurnTrajectoryInput {
   scene: string
   toolsUsed: string[]
   docEdits: number
-  outcome?: 'completed' | 'abandoned'
+  outcome?: 'completed' | 'abandoned' | 'claimed_no_edit'
 }
 
 /**
@@ -143,7 +144,10 @@ export class TaskTrajectoryProjection {
         scene: String(m?.scene || 'general'),
         toolsUsed: Array.isArray(m?.toolsUsed) ? m.toolsUsed.map(String) : [],
         docEdits: Number(m?.docEdits) || 0,
-        outcome: m?.outcome === 'abandoned' ? 'abandoned' : 'completed',
+        // #892: 未兑现声明(claimed_no_edit)在投影层保留原值,不再折叠为 completed。
+        outcome: m?.outcome === 'abandoned' ? 'abandoned'
+          : m?.outcome === 'claimed_no_edit' ? 'claimed_no_edit'
+          : 'completed',
         userCorrection: false,
         durationMs: userMsgAt !== undefined && ev.timestamp >= userMsgAt ? Math.round((ev.timestamp - userMsgAt) * 1000) : 0,
         createdAt: ev.timestamp * 1000,

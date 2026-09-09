@@ -94,6 +94,11 @@ describe('crossrefResolveDoi', () => {
     await crossrefResolveDoi('10.1056/NEJMoa1709937')
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
+
+  it('#911: HTTP 200 但 body 坏 JSON → 降级 null,不抛', async () => {
+    fetchSpy.mockImplementation(async () => new Response('<html>gateway error</html>', { status: 200 }))
+    await expect(crossrefResolveDoi('10.1056/NEJMoa1709937')).resolves.toBeNull()
+  })
 })
 
 describe('crossrefSearchBibliographic', () => {
@@ -119,6 +124,11 @@ describe('crossrefSearchBibliographic', () => {
     const url = String(fetchSpy.mock.calls[0][0])
     expect(url).toContain('query.bibliographic=')
     expect(url).toContain('rows=5')
+  })
+
+  it('#911: HTTP 200 但 body 坏 JSON → 降级空列表,不抛', async () => {
+    fetchSpy.mockImplementation(async () => new Response('truncated{{', { status: 200 }))
+    await expect(crossrefSearchBibliographic('任意题名', 5)).resolves.toEqual([])
   })
 })
 

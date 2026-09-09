@@ -1,5 +1,6 @@
 import { BaseTool, ToolDefinition, ToolResult } from './base-tool.js'
 import type { SubagentEvent } from '@heurion/contracts'
+import prisma from '../common/prisma.js'
 import { SearchNodeTool, SearchEncounterTool } from './clinical-graph-tools.js'
 import { SearchPastChatsTool } from './memory-tools.js'
 import { DelegateTool, SpawnSubagentTool } from './subagent-tools.js'
@@ -161,6 +162,21 @@ export interface EditHint {
 }
 
 /**
+ * #905: doc- 会话的 docId 解析与格式校验 — sessionId 形如 `doc-<docId>`,
+ * docId 必须匹配 documents.router 的生成格式(`doc_` + 16 hex,uid() =
+ * crypto.randomBytes(8).toString('hex'))。不匹配的会话(伪造/遗留格式)
+ * 按 general 场景处理:不暴露 doc 工具、不注入 document_context、工具层
+ * 拒绝执行 — 杜绝用任意 sessionId 前缀拼出 docId 的盲取。
+ */
+const DOC_SESSION_DOC_ID_RE = /^doc_[a-f0-9]{16}$/
+
+export function parseDocSessionId(sessionId: string | null | undefined): string | null {
+  if (!sessionId || !sessionId.startsWith('doc-')) return null
+  const docId = sessionId.slice(4)
+  return DOC_SESSION_DOC_ID_RE.test(docId) ? docId : null
+}
+
+/**
  * #454-followup: tools whose availability is gated by an installable plugin.
  * The renderer implementation stays in-process (zero latency), but the tool
  * only appears in the LLM's tool list while the user has the plugin
@@ -238,6 +254,8 @@ export class ToolRegistry {
   private ctx: ToolContext
   /** Cached plugin availability per user (per registry instance = per turn). */
   private gatedAvailability: Record<string, boolean | undefined> = {}
+  /** #905: doc- 会话文档存在性 — 每实例(=每回合)缓存一次 DB 判定。 */
+  private docSessionExists: boolean | undefined = undefined
 
   constructor(ctx: ToolContext) {
     this.ctx = ctx
@@ -307,6 +325,29 @@ export class ToolRegistry {
   }
 
   /**
+   * #905: doc- 会话文档存在性校验 — findFirst({id, userId}) 归属读。
+   * 文档不存在(已删除/他人伪造 sessionId)时不暴露写回类工具,模型拿
+   * 不到一个必失败的 edit_document。判定失败按不存在处理(fail-closed),
+   * 结果按实例缓存(每回合一次 DB 查询)。
+   */
+  private async verifyDocSession(docId: string): Promise<boolean> {
+    if (this.docSessionExists !== undefined) return this.docSessionExists
+    try {
+      const doc = await prisma.doc.findFirst({
+        where: { id: docId, userId: this.ctx.userId },
+        select: { id: true },
+      })
+      this.docSessionExists = Boolean(doc)
+    } catch (err) {
+      log.warn('doc session existence check failed — treating as missing', {
+        docId, reason: (err as Error).message.slice(0, 120),
+      })
+      this.docSessionExists = false
+    }
+    return this.docSessionExists
+  }
+
+  /**
    * #454-followup: definitions for THIS user — plugin-gated tools are
    * omitted while the owning plugin is not installed/enabled. Async because
    * availability is read from the installation store.
@@ -314,10 +355,13 @@ export class ToolRegistry {
    * #580 (TURN_INTENT_DESIGN §8-4): edit_document is exposed ONLY inside a
    * document-writing session (sessionId prefix "doc-"); a non-doc / unknown
    * session must not present a write-back tool the runtime would refuse.
+   * #905: "doc-" 前缀不再足够 — docId 须通过 parseDocSessionId 格式校验,
+   * 且文档在本用户名下真实存在,写回类工具才进入工具面。
    */
   async getDefinitionsForUser(scene: string = 'patient', sessionId?: string): Promise<ToolDefinition[]> {
     const omit = SCENE_OMIT_TOOLS[scene]
-    const isDocSession = Boolean(sessionId?.startsWith('doc-'))
+    const docId = parseDocSessionId(sessionId)
+    const isDocSession = docId !== null && (await this.verifyDocSession(docId))
     const out: ToolDefinition[] = []
     for (const tool of this.tools.values()) {
       if (tool.name === 'edit_document' && !isDocSession) continue

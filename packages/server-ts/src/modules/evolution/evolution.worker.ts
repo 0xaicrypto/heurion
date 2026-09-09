@@ -44,9 +44,14 @@ export const processEvolutionTurn: EvolutionJobProcessor = async (job) => {
           patientHash,
           encounterId: sessionId,
           sourceText: conversation,
-        }).catch(() => {})
+        }).catch((err: Error) =>
+          // #928: 实体抽取/摄入失败此前完全静默 — 带用户/会话/患者上下文留痕。
+          log.warn(`[EVOLUTION] entity ingest failed (user=${userId} session=${sessionId} patient=${patientHash}):`, err.message.slice(0, 200)))
       }
-    } catch {}
+    } catch (err) {
+      // #928: 裸 catch{} 此前吞掉事件查询/组装阶段的错误 — 实体管道断供不可见。
+      log.warn(`[EVOLUTION] entity ingest skipped (user=${userId} session=${sessionId} patient=${patientHash ?? '-'}):`, (err as Error).message.slice(0, 200))
+    }
   }
 
   try {
@@ -65,10 +70,15 @@ export const processEvolutionTurn: EvolutionJobProcessor = async (job) => {
           sessionId,
           conversationText: conversation,
           patientHash,
-        }).catch(() => {})
+        }).catch((err: Error) =>
+          // #928: 要点提取失败此前静默 — 同样带上下文留痕。
+          log.warn(`[EVOLUTION] takeaway extraction failed (user=${userId} session=${sessionId}):`, err.message.slice(0, 200)))
       }
     }
-  } catch {}
+  } catch (err) {
+    // #928: 裸 catch{} 此前吞掉查询阶段的错误。
+    log.warn(`[EVOLUTION] takeaway extraction skipped (user=${userId} session=${sessionId}):`, (err as Error).message.slice(0, 200))
+  }
 }
 
 export function startEvolutionWorker(

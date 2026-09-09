@@ -1,104 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, CalendarDays, Check, FlaskConical, Plus, Upload, X, FileText, Sparkles } from 'lucide-react';
+import { ArrowLeft, FileText } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { Alert, Badge, Button, Card, Input, Skeleton } from '@/components/ui';
+import { Alert, Badge, Button, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
+import { statusVariant } from '@/lib/status-variant';
 import { cn } from '@/lib/utils';
 import type { Patient } from '@/lib/types';
-
-interface StudyDetail {
-  study_id: string;
-  display_name: string;
-  status: string;
-  short_code?: string;
-  created_at: string;
-  updated_at?: string;
-  description?: string;
-}
-
-interface RosterEntry {
-  patient_hash: string;
-  patient_id: string;
-  name?: string;
-  initials?: string;
-  age_value?: number;
-  sex?: string;
-  chief_complaint?: string;
-  status: string;
-  arm?: string;
-  enrolled_at: string;
-}
-
-interface Screening {
-  patient_hash: string;
-  patient_id: string;
-  name?: string;
-  initials?: string;
-  age_value?: number;
-  sex?: string;
-  status: string;
-  criteria_results?: Array<{criterion: string; passed: boolean}>;
-}
-
-interface Observation {
-  observation_id: string;
-  patient_hash: string;
-  patient_id: string;
-  name?: string;
-  initials?: string;
-  age_value?: number;
-  sex?: string;
-  category: string;
-  ae_grade?: number;
-  is_dlt?: boolean;
-  confirmed?: boolean;
-  created_at: string;
-}
-
-interface Assessment {
-  visit_id: string;
-  patient_hash: string;
-  patient_id: string;
-  name?: string;
-  initials?: string;
-  age_value?: number;
-  sex?: string;
-  scheduled_at: string;
-  status: string;
-  completed_at?: string;
-  // #11: recent check data (labs/imaging/notes) at the visit point.
-  recent_entries?: Array<{type: string; title: string; date: string; content: string; status?: string}>;
-}
-
-interface SafetyStatus {
-  triggered_rules: Array<{rule: string; description: string}>;
-}
-
-interface Enrollment {
-  patient_hash: string;
-  patient_id: string;
-  name?: string;
-  initials?: string;
-  age_value?: number;
-  sex?: string;
-  chief_complaint?: string;
-  status: string;
-  arm?: string;
-  enrolled_at: string;
-}
-
-type Tab = 'overview' | 'roster' | 'eligibility' | 'schedule' | 'safety' | 'protocol';
-
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'overview', label: 'Overview' },
-  { key: 'roster', label: 'Roster' },
-  { key: 'eligibility', label: 'Eligibility' },
-  { key: 'schedule', label: 'Schedule' },
-  { key: 'safety', label: 'Safety' },
-  { key: 'protocol', label: 'Protocol' },
-];
+import { EnrollDialog } from './research-detail/enroll-dialog';
+import { EligibilityTab } from './research-detail/eligibility';
+import { OverviewTab, StudyProgressCard, StudySummaryCard } from './research-detail/overview';
+import { ProtocolTab } from './research-detail/protocol';
+import { RosterTab } from './research-detail/roster';
+import { SafetyTab } from './research-detail/safety';
+import { ScheduleTab } from './research-detail/schedule';
+import { useStudyTabData } from './research-detail/use-study-tab-data';
+import { TABS } from './research-detail/types';
+import type { Enrollment, StudyDetail, Tab } from './research-detail/types';
 
 export function ResearchDetailPage() {
   const { t } = useTranslation();
@@ -124,36 +43,28 @@ export function ResearchDetailPage() {
   // overview
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
 
-  // roster
-  const [roster, setRoster] = useState<RosterEntry[]>([]);
-  const [rosterLoading, setRosterLoading] = useState(false);
-
-  // eligibility
-  const [eligibility, setEligibility] = useState<{screenings: Screening[]} | null>(null);
-  const [eligLoading, setEligLoading] = useState(false);
-  const [rescanning, setRescanning] = useState(false);
-
-  // safety
-  const [observations, setObservations] = useState<Observation[]>([]);
-  const [safetyStatus, setSafetyStatus] = useState<SafetyStatus | null>(null);
-  const [safetyLoading, setSafetyLoading] = useState(false);
-  const [confirmingObs, setConfirmingObs] = useState<Record<string, { aeGrade?: number; isDlt?: boolean }>>({});
-  const [confirmingIds, setConfirmingIds] = useState<Set<string>>(new Set());
-
-  // schedule
-  const [assessments, setAssessments] = useState<Assessment[]>([]);
-  const [scheduleLoading, setScheduleLoading] = useState(false);
-  const [completingIds, setCompletingIds] = useState<Set<string>>(new Set());
-
   // unenroll
   const [unenrollingHash, setUnenrollingHash] = useState<string | null>(null);
 
-  // #710: 各 tab 数据加载失败 — 区分"没有数据"与"加载失败"。
-  const [tabError, setTabError] = useState<string | null>(null);
+  const {
+    tabError,
+    roster, rosterLoading, loadRoster,
+    eligibility, eligLoading, loadEligibility,
+    observations, safetyStatus, safetyLoading, loadSafety, confirmingObs, updateObsForm,
+    assessments, scheduleLoading, loadSchedule,
+  } = useStudyTabData(studyId, study, tab);
+
+  // eligibility rescan
+  const [rescanning, setRescanning] = useState(false);
+
+  // safety confirm
+  const [confirmingIds, setConfirmingIds] = useState<Set<string>>(new Set());
+
+  // schedule complete
+  const [completingIds, setCompletingIds] = useState<Set<string>>(new Set());
 
   // enroll dialog
   const [showEnroll, setShowEnroll] = useState(false);
-  const [enrollQuery, setEnrollQuery] = useState('');
   const [paperCreating, setPaperCreating] = useState(false);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [patientsLoading, setPatientsLoading] = useState(false);
@@ -175,67 +86,6 @@ export function ResearchDetailPage() {
       .then(setEnrollments)
       .catch(() => {});
   }, [studyId, study]);
-
-  const loadRoster = useCallback(() => {
-    if (!studyId) return;
-    setRosterLoading(true);
-    setTabError(null);
-    api.getStudyRoster(studyId)
-      .then(setRoster)
-      .catch((err) => setTabError(err instanceof ApiError ? err.messageText : String(err)))
-      .finally(() => setRosterLoading(false));
-  }, [studyId]);
-
-  const loadEligibility = useCallback(() => {
-    if (!studyId) return;
-    setEligLoading(true);
-    setTabError(null);
-    api.getStudyEligibility(studyId)
-      .then(setEligibility)
-      .catch((err) => setTabError(err instanceof ApiError ? err.messageText : String(err)))
-      .finally(() => setEligLoading(false));
-  }, [studyId]);
-
-  const loadSafety = useCallback(() => {
-    if (!studyId) return;
-    setSafetyLoading(true);
-    setTabError(null);
-    Promise.all([
-      api.getStudyObservations(studyId),
-      api.getSafetyStatus(studyId),
-    ])
-      .then(([obs, status]) => {
-        setObservations(obs);
-        setSafetyStatus(status);
-        const init: Record<string, { aeGrade?: number; isDlt?: boolean }> = {};
-        obs.forEach((o) => {
-          if (!o.confirmed) {
-            init[o.observation_id] = { aeGrade: o.ae_grade, isDlt: o.is_dlt };
-          }
-        });
-        setConfirmingObs(init);
-      })
-      .catch((err) => setTabError(err instanceof ApiError ? err.messageText : String(err)))
-      .finally(() => setSafetyLoading(false));
-  }, [studyId]);
-
-  const loadSchedule = useCallback(() => {
-    if (!studyId) return;
-    setScheduleLoading(true);
-    setTabError(null);
-    api.getStudyAssessments(studyId)
-      .then(setAssessments)
-      .catch((err) => setTabError(err instanceof ApiError ? err.messageText : String(err)))
-      .finally(() => setScheduleLoading(false));
-  }, [studyId]);
-
-  useEffect(() => {
-    if (!study) return;
-    if (tab === 'roster') loadRoster();
-    else if (tab === 'eligibility') loadEligibility();
-    else if (tab === 'safety') loadSafety();
-    else if (tab === 'schedule') loadSchedule();
-  }, [tab, study, loadRoster, loadEligibility, loadSafety, loadSchedule]);
 
   const createPaper = async () => {
     if (!studyId) return;
@@ -327,13 +177,6 @@ export function ResearchDetailPage() {
     }
   };
 
-  const updateObsForm = (obsId: string, field: 'aeGrade' | 'isDlt', value: number | boolean) => {
-    setConfirmingObs((prev) => ({
-      ...prev,
-      [obsId]: { ...prev[obsId], [field]: value },
-    }));
-  };
-
   const handleCompleteAssessment = async (visitId: string) => {
     if (!studyId) return;
     const next = new Set(completingIds);
@@ -349,22 +192,6 @@ export function ResearchDetailPage() {
       after.delete(visitId);
       setCompletingIds(after);
     }
-  };
-
-  const statusVariant = (s: string): 'default' | 'success' | 'warning' | 'error' => {
-    switch (s.toLowerCase()) {
-      case 'completed': return 'success';
-      case 'in_progress':
-      case 'running': return 'warning';
-      case 'failed':
-      case 'error': return 'error';
-      default: return 'default';
-    }
-  };
-
-  const aeGradeColor = (grade?: number) => {
-    if (!grade) return 'text-text-secondary';
-    return grade >= 3 ? 'text-error' : 'text-warning';
   };
 
   if (loading) {
@@ -390,7 +217,7 @@ export function ResearchDetailPage() {
         <div className="flex h-full flex-col">
           <div className="flex h-14 items-center border-b border-border bg-surface px-6">
             <Button variant="ghost" size="sm" onClick={() => navigate('/app/research')}>
-              <ArrowLeft size={16} className="mr-1" /> Back
+              <ArrowLeft size={16} className="mr-1" /> {t('common.back', '返回')}
             </Button>
           </div>
           <div className="p-6">
@@ -407,11 +234,11 @@ export function ResearchDetailPage() {
         <div className="flex h-full flex-col">
           <div className="flex h-14 items-center border-b border-border bg-surface px-6">
             <Button variant="ghost" size="sm" onClick={() => navigate('/app/research')}>
-              <ArrowLeft size={16} className="mr-1" /> Back
+              <ArrowLeft size={16} className="mr-1" /> {t('common.back', '返回')}
             </Button>
           </div>
           <div className="flex flex-1 items-center justify-center">
-            <p className="text-text-tertiary">Study not found</p>
+            <p className="text-text-tertiary">{t('research.studyNotFound', '未找到该研究')}</p>
           </div>
         </div>
       </AppShell>
@@ -434,18 +261,18 @@ export function ResearchDetailPage() {
         </header>
 
         <nav className="flex gap-1 overflow-x-auto border-b border-border px-3 sm:px-6">
-          {TABS.map((t) => (
+          {TABS.map(({ key, labelKey }) => (
             <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
+              key={key}
+              onClick={() => setTab(key)}
               className={cn(
                 'border-b-2 px-3 py-3 text-sm font-medium transition-colors',
-                tab === t.key
+                tab === key
                   ? 'border-accent text-accent'
                   : 'border-transparent text-text-secondary hover:text-text-primary',
               )}
             >
-              {t.label}
+              {t(labelKey)}
             </button>
           ))}
         </nav>
@@ -458,62 +285,7 @@ export function ResearchDetailPage() {
           )}
 
           {tab === 'overview' && (
-            <div className="max-w-2xl space-y-4">
-              <Card className="p-6 space-y-3">
-                <div>
-                  <div className="text-xs text-text-tertiary">Study ID</div>
-                  <div className="font-mono text-sm text-text-secondary">{study.study_id}</div>
-                </div>
-                {study.short_code && (
-                  <div>
-                    <div className="text-xs text-text-tertiary">Short Code</div>
-                    <div className="text-sm text-text-primary">{study.short_code}</div>
-                  </div>
-                )}
-                <div>
-                  <div className="text-xs text-text-tertiary">Created</div>
-                  <div className="text-sm text-text-primary">{new Date(study.created_at).toLocaleDateString()}</div>
-                </div>
-                {study.updated_at && (
-                  <div>
-                    <div className="text-xs text-text-tertiary">Updated</div>
-                    <div className="text-sm text-text-primary">{new Date(study.updated_at).toLocaleDateString()}</div>
-                  </div>
-                )}
-                {study.description && (
-                  <div>
-                    <div className="text-xs text-text-tertiary">Description</div>
-                    <div className="text-sm text-text-primary">{study.description}</div>
-                  </div>
-                )}
-              </Card>
-
-              <Card className="p-6">
-                <h3 className="mb-3 text-sm font-semibold text-text-secondary">Recent Activity</h3>
-                {enrollments.length === 0 ? (
-                  <p className="text-sm text-text-tertiary">No enrollments yet</p>
-                ) : (
-                  <div className="space-y-2">
-                    {enrollments.slice(0, 10).map((e, i) => (
-                      <div key={`${e.patient_hash}-${i}`} className="flex items-center justify-between text-sm">
-                        <span className="text-text-secondary">
-                          {e.name || e.initials || e.patient_hash.slice(0, 12)}
-                          {e.age_value != null || e.sex ? (
-                            <span className="ml-2 text-xs text-text-tertiary">
-                              {e.age_value != null ? `${e.age_value}y` : ''}
-                              {e.age_value != null && e.sex ? ' / ' : ''}
-                              {e.sex || ''}
-                            </span>
-                          ) : null}
-                        </span>
-                        <Badge variant={e.status === 'active' ? 'success' : 'default'}>{e.status}</Badge>
-                        <span className="text-text-tertiary">{new Date(e.enrolled_at).toLocaleDateString()}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Card>
-            </div>
+            <OverviewTab study={study} enrollments={enrollments} />
           )}
 
           {tabError && (
@@ -526,344 +298,51 @@ export function ResearchDetailPage() {
                     else if (tab === 'eligibility') loadEligibility();
                     else if (tab === 'safety') loadSafety();
                     else if (tab === 'schedule') loadSchedule();
-                  }}>重试</Button>
+                  }}>{t('common.retry', '重试')}</Button>
                 </div>
               </Alert>
             </div>
           )}
 
           {tab === 'roster' && (
-            <div className="max-w-3xl space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-text-secondary">Roster</h2>
-                <Button size="sm" onClick={openEnroll}>
-                  <Plus size={14} className="mr-1" /> Enroll Patient
-                </Button>
-              </div>
-              {rosterLoading ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-10 w-full rounded-xl" />
-                  <Skeleton className="h-10 w-full rounded-xl" />
-                </div>
-              ) : roster.length === 0 ? (
-                <div className="flex flex-col items-center justify-center rounded-xl border border-border py-12 text-center">
-                  <FlaskConical size={36} className="mb-3 text-text-tertiary" />
-                  <p className="text-text-tertiary">No patients enrolled</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto rounded-xl border border-border">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border bg-surface">
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Patient</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Patient ID</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Basic Info</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Status</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Arm</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Enrolled</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {roster.map((r) => (
-                        // #724: 行点击跳回患者详情(科研↔患者双向桥)。
-                        <tr
-                          key={r.patient_hash}
-                          onClick={() => navigate(`/app/patients/${r.patient_hash}`)}
-                          className="cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-surface-elevated"
-                        >
-                          <td className="px-4 py-2 text-text-primary">
-                            <span className="underline decoration-dotted underline-offset-2">{r.name || r.initials || '—'}</span>
-                          </td>
-                          <td className="px-4 py-2 font-mono text-text-secondary">
-                            {r.patient_hash.slice(0, 16)}...
-                          </td>
-                          <td className="px-4 py-2 text-text-secondary">
-                            {r.age_value != null ? `${r.age_value}y` : '—'}
-                            {r.age_value != null && r.sex ? ' / ' : ''}
-                            {r.sex || ''}
-                          </td>
-                          <td className="px-4 py-2">
-                            <Badge variant={r.status === 'active' ? 'success' : 'default'}>{r.status}</Badge>
-                          </td>
-                          <td className="px-4 py-2 text-text-secondary">{r.arm || '—'}</td>
-                          <td className="px-4 py-2 text-text-tertiary">{new Date(r.enrolled_at).toLocaleDateString()}</td>
-                          <td className="px-4 py-2">
-                            <button
-                              className="rounded p-1 text-text-tertiary hover:bg-error/10 hover:text-error transition-colors"
-                              onClick={(e) => { e.stopPropagation(); handleUnenroll(r.patient_hash); }}
-                              disabled={unenrollingHash === r.patient_hash}
-                              title="Unenroll patient"
-                            >
-                              <X size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+            <RosterTab
+              roster={roster}
+              loading={rosterLoading}
+              unenrollingHash={unenrollingHash}
+              onUnenroll={handleUnenroll}
+              onOpenEnroll={openEnroll}
+            />
           )}
 
           {tab === 'eligibility' && (
-            <div className="max-w-3xl space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-text-secondary">Eligibility Screenings</h2>
-                <Button size="sm" onClick={handleRescan} isLoading={rescanning} disabled={rescanning}>
-                  Re-scan
-                </Button>
-              </div>
-              {eligLoading ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-10 w-full rounded-xl" />
-                </div>
-              ) : !eligibility || eligibility.screenings.length === 0 ? (
-                <div className="flex flex-col items-center justify-center rounded-xl border border-border py-12 text-center">
-                  <FlaskConical size={36} className="mb-3 text-text-tertiary" />
-                  <p className="text-text-tertiary">No eligibility data</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                    {eligibility.screenings.map((s, i) => (
-                      <Card key={`${s.patient_hash}-${i}`} className="p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          {/* #724: 点击跳回患者详情。 */}
-                          <button onClick={() => navigate(`/app/patients/${s.patient_hash}`)} className="text-left">
-                            <p className="text-sm font-medium text-text-primary hover:underline">{s.name || s.initials || s.patient_hash.slice(0, 12)}</p>
-                            <p className="text-xs text-text-tertiary">
-                              ID: {s.patient_hash.slice(0, 16)}...
-                              {s.age_value != null || s.sex ? ' · ' : ''}
-                              {s.age_value != null ? `${s.age_value}y` : ''}
-                              {s.age_value != null && s.sex ? ' / ' : ''}
-                              {s.sex || ''}
-                            </p>
-                          </button>
-                          <div className="flex items-center gap-2">
-                            <Badge variant={s.status === 'eligible' ? 'success' : s.status === 'ineligible' ? 'error' : 'default'}>
-                              {s.status}
-                            </Badge>
-                            {/* #719: eligible 患者直达入组(预选),不必回 Roster 滚动找人。 */}
-                            {s.status === 'eligible' && (
-                              <Button size="sm" variant="secondary" onClick={() => handleEnroll(s.patient_hash)}>
-                                Enroll
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      {s.criteria_results && s.criteria_results.length > 0 && (
-                        <div className="space-y-1 mt-2">
-                          {s.criteria_results.map((c, j) => (
-                            <div key={j} className="flex items-center gap-2 text-xs">
-                              <span className={c.passed ? 'text-success' : 'text-error'}>
-                                {c.passed ? '\u2713' : '\u2717'}
-                              </span>
-                              <span className="text-text-secondary">{c.criterion}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </Card>
-                  ))}
-                </div>
-              )}
-            </div>
+            <EligibilityTab
+              eligibility={eligibility}
+              loading={eligLoading}
+              rescanning={rescanning}
+              onRescan={handleRescan}
+              onEnroll={handleEnroll}
+            />
           )}
 
           {tab === 'schedule' && (
-            <div className="max-w-3xl space-y-4">
-              <h2 className="text-sm font-semibold text-text-secondary">Scheduled Assessments</h2>
-              {scheduleLoading ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-10 w-full rounded-xl" />
-                  <Skeleton className="h-10 w-full rounded-xl" />
-                </div>
-              ) : assessments.length === 0 ? (
-                <div className="flex flex-col items-center justify-center rounded-xl border border-border py-12 text-center">
-                  <CalendarDays size={36} className="mb-3 text-text-tertiary" />
-                  <p className="text-text-tertiary">No scheduled assessments</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto rounded-xl border border-border">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border bg-surface">
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Date</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Patient</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Patient ID</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Basic Info</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary">Status</th>
-                        <th className="px-4 py-2 text-left font-medium text-text-secondary"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {assessments.map((a) => (
-                        <tr key={a.visit_id} className="border-b border-border last:border-0">
-                          <td className="px-4 py-2 text-text-primary">{new Date(a.scheduled_at).toLocaleString()}</td>
-                          <td className="px-4 py-2 text-text-primary">{a.name || a.initials || '—'}</td>
-                          <td className="px-4 py-2 font-mono text-text-secondary">{a.patient_hash.slice(0, 16)}...</td>
-                          <td className="px-4 py-2 text-text-secondary">
-                            {a.age_value != null ? `${a.age_value}y` : '—'}
-                            {a.age_value != null && a.sex ? ' / ' : ''}
-                            {a.sex || ''}
-                          </td>
-                          <td className="px-4 py-2">
-                            <Badge variant={a.status === 'completed' ? 'success' : a.status === 'pending' ? 'warning' : 'default'}>
-                              {a.status}
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-2">
-                            {a.recent_entries && a.recent_entries.length > 0 ? (
-                              <details className="max-w-[260px]">
-                                <summary className="cursor-pointer text-xs text-accent">{t('research.visitEntries', '检查数据')} ({a.recent_entries.length})</summary>
-                                <ul className="mt-1 space-y-1">
-                                  {a.recent_entries.map((e, i) => (
-                                    <li key={i} className="text-[11px] text-text-secondary">
-                                      <span className="rounded border border-border px-1 text-[9px] text-text-tertiary">{e.type}</span>{' '}
-                                      <span className="font-medium">{e.title}</span>
-                                      <span className="text-text-tertiary"> · {e.date ? new Date(e.date).toLocaleDateString() : ''}</span>
-                                      <div className="line-clamp-2 text-text-tertiary">{e.content}</div>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </details>
-                            ) : (
-                              <span className="text-xs text-text-tertiary">—</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2">
-                            {a.status !== 'completed' && (
-                              <Button
-                                size="sm"
-                                onClick={() => handleCompleteAssessment(a.visit_id)}
-                                isLoading={completingIds.has(a.visit_id)}
-                                disabled={completingIds.has(a.visit_id)}
-                              >
-                                Complete
-                              </Button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+            <ScheduleTab
+              assessments={assessments}
+              loading={scheduleLoading}
+              completingIds={completingIds}
+              onComplete={handleCompleteAssessment}
+            />
           )}
 
           {tab === 'safety' && (
-            <div className="max-w-3xl space-y-4">
-              <h2 className="text-sm font-semibold text-text-secondary">Safety</h2>
-
-              {safetyLoading ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-10 w-full rounded-xl" />
-                </div>
-              ) : (
-                <>
-                  {safetyStatus && safetyStatus.triggered_rules.length > 0 && (
-                    <Card className="p-4">
-                      <h3 className="mb-2 text-sm font-medium text-text-primary">Stop Rules Triggered</h3>
-                      <div className="space-y-2">
-                        {safetyStatus.triggered_rules.map((r, i) => (
-                          <div key={i} className="flex items-start gap-2 text-sm">
-                            <Badge variant="error">{r.rule}</Badge>
-                            <span className="text-text-secondary">{r.description}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </Card>
-                  )}
-
-                  {observations.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center rounded-xl border border-border py-12 text-center">
-                      <FlaskConical size={36} className="mb-3 text-text-tertiary" />
-                      <p className="text-text-tertiary">No observations recorded</p>
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto rounded-xl border border-border">
-                      <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-border bg-surface">
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">Patient</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">Patient ID</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">Basic Info</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">Category</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">AE Grade</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">DLT</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary">Date</th>
-                              <th className="px-4 py-2 text-left font-medium text-text-secondary"></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {observations.map((o) => (
-                              <tr key={o.observation_id} className="border-b border-border last:border-0">
-                                <td className="px-4 py-2 text-text-primary">{o.name || o.initials || '—'}</td>
-                                <td className="px-4 py-2 font-mono text-text-secondary">{o.patient_hash.slice(0, 16)}...</td>
-                                <td className="px-4 py-2 text-text-secondary">
-                                  {o.age_value != null ? `${o.age_value}y` : '—'}
-                                  {o.age_value != null && o.sex ? ' / ' : ''}
-                                  {o.sex || ''}
-                                </td>
-                                <td className="px-4 py-2 text-text-secondary">{o.category}</td>
-                              <td className={cn('px-4 py-2 font-medium', aeGradeColor(o.ae_grade))}>
-                                {o.confirmed ? (
-                                  o.ae_grade ?? '—'
-                                ) : (
-                                  <select
-                                    className="rounded border border-border bg-surface px-2 py-1 text-sm"
-                                    value={confirmingObs[o.observation_id]?.aeGrade ?? ''}
-                                    onChange={(e) => updateObsForm(o.observation_id, 'aeGrade', e.target.value ? Number(e.target.value) : undefined as unknown as number)}
-                                  >
-                                    <option value="">—</option>
-                                    <option value="1">1</option>
-                                    <option value="2">2</option>
-                                    <option value="3">3</option>
-                                    <option value="4">4</option>
-                                    <option value="5">5</option>
-                                  </select>
-                                )}
-                              </td>
-                              <td className="px-4 py-2">
-                                {o.confirmed ? (
-                                  o.is_dlt ? <Badge variant="error">DLT</Badge> : '—'
-                                ) : (
-                                  <input
-                                    type="checkbox"
-                                    checked={!!confirmingObs[o.observation_id]?.isDlt}
-                                    onChange={(e) => updateObsForm(o.observation_id, 'isDlt', e.target.checked)}
-                                    className="h-4 w-4"
-                                  />
-                                )}
-                              </td>
-                              <td className="px-4 py-2 text-text-tertiary">{new Date(o.created_at).toLocaleDateString()}</td>
-                              <td className="px-4 py-2">
-                                {o.confirmed ? (
-                                  <span className="inline-flex items-center gap-1 text-success text-xs">
-                                    <Check size={14} /> Confirmed
-                                  </span>
-                                ) : (
-                                  <Button
-                                    size="sm"
-                                    onClick={() => handleConfirmObservation(o.observation_id)}
-                                    isLoading={confirmingIds.has(o.observation_id)}
-                                    disabled={confirmingIds.has(o.observation_id)}
-                                  >
-                                    Confirm
-                                  </Button>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+            <SafetyTab
+              observations={observations}
+              safetyStatus={safetyStatus}
+              loading={safetyLoading}
+              confirmingObs={confirmingObs}
+              confirmingIds={confirmingIds}
+              onConfirm={handleConfirmObservation}
+              onFormChange={updateObsForm}
+            />
           )}
 
           {tab === 'overview' && studyId && (
@@ -878,326 +357,15 @@ export function ResearchDetailPage() {
           )}
         </main>
 
-        {showEnroll && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-            <div className="w-full max-w-md rounded-xl border border-border bg-surface-elevated p-6 shadow-lg">
-              <h2 className="mb-4 text-lg font-semibold text-text-primary">Enroll Patient</h2>
-              {patientsLoading ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-10 w-full rounded-xl" />
-                  <Skeleton className="h-10 w-full rounded-xl" />
-                </div>
-              ) : patients.length === 0 ? (
-                <div className="py-8 text-center">
-                  <p className="text-text-tertiary">No patients available</p>
-                </div>
-              ) : (
-                <>
-                  {/* #719: 患者多时入组弹窗需可搜索。 */}
-                  <Input
-                    value={enrollQuery}
-                    onChange={(e) => setEnrollQuery(e.target.value)}
-                    placeholder="搜索患者（姓名/缩写/ID）…"
-                    className="mb-2"
-                  />
-                  <div className="max-h-80 space-y-2 overflow-y-auto">
-                    {patients.filter((p) => {
-                      const q = enrollQuery.trim().toLowerCase();
-                      if (!q) return true;
-                      return (p.name || '').toLowerCase().includes(q)
-                        || (p.initials || '').toLowerCase().includes(q)
-                        || p.patient_hash.toLowerCase().includes(q);
-                    }).map((p) => (
-                    <div
-                      key={p.patient_hash}
-                      className="flex items-center justify-between rounded-lg border border-border p-3"
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-text-primary">
-                          {p.name || p.initials || '—'}
-                        </p>
-                        <p className="text-xs text-text-tertiary">
-                          ID: {p.patient_hash.slice(0, 16)}...
-                          {p.age_value != null || p.sex ? ' · ' : ''}
-                          {p.age_value != null ? `${p.age_value}y` : ''}
-                          {p.age_value != null && p.sex ? ' / ' : ''}
-                          {p.sex || ''}
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        onClick={() => handleEnroll(p.patient_hash)}
-                        disabled={enrollingHash === p.patient_hash}
-                        isLoading={enrollingHash === p.patient_hash}
-                      >
-                        Enroll
-                      </Button>
-                    </div>
-                  ))}
-                  </div>
-                  {enrollQuery.trim() && patients.filter((p) => {
-                    const q = enrollQuery.trim().toLowerCase();
-                    return (p.name || '').toLowerCase().includes(q)
-                      || (p.initials || '').toLowerCase().includes(q)
-                      || p.patient_hash.toLowerCase().includes(q);
-                  }).length === 0 && (
-                    <p className="py-4 text-center text-xs text-text-tertiary">没有匹配的患者</p>
-                  )}
-                </>
-              )}
-              <div className="mt-4 flex justify-end">
-                <Button variant="ghost" onClick={() => setShowEnroll(false)}>Cancel</Button>
-              </div>
-            </div>
-          </div>
-        )}
+        <EnrollDialog
+          open={showEnroll}
+          patients={patients}
+          patientsLoading={patientsLoading}
+          enrollingHash={enrollingHash}
+          onEnroll={handleEnroll}
+          onClose={() => setShowEnroll(false)}
+        />
       </div>
     </AppShell>
-  );
-}
-
-function ProtocolTab({ studyId }: { studyId: string }) {
-  const [rules, setRules] = useState<Array<{ id: string; category: string; rule: string; confirmed: boolean }>>([])
-  const [status, setStatus] = useState({ total: 0, confirmed: 0, pending: 0 })
-  const [loading, setLoading] = useState(true)
-  const [importText, setImportText] = useState('')
-  const [importing, setImporting] = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [lastFile, setLastFile] = useState<string | null>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
-
-  const loadRules = useCallback(() => {
-    setLoading(true)
-    api.getProtocolRules(studyId)
-      .then((data) => { setRules(data.rules); setStatus(data.status) })
-      .catch((err) => setError(err instanceof ApiError ? err.messageText : String(err)))
-      .finally(() => setLoading(false))
-  }, [studyId])
-
-  useEffect(() => { loadRules() }, [loadRules])
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (fileRef.current) fileRef.current.value = ''
-    setUploading(true)
-    setError(null)
-    try {
-      const res = await api.importProtocolFile(studyId, file)
-      setRules(res.rules)
-      setStatus(res.status)
-      setLastFile(res.file_name)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err))
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  const handleImport = async () => {
-    if (!importText.trim()) return
-    setImporting(true)
-    setError(null)
-    try {
-      await api.importProtocol(studyId, importText)
-      await api.extractRules(studyId, importText)
-      setImportText('')
-      loadRules()
-    } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err))
-    } finally {
-      setImporting(false)
-    }
-  }
-
-  const handleConfirm = async (ruleId: string) => {
-    try {
-      await api.confirmRule(studyId, ruleId)
-      loadRules()
-    } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err))
-    }
-  }
-  const handleReject = async (ruleId: string) => {
-    try {
-      // #462: auth handled centrally by the api layer (was raw fetch + manual Bearer).
-      await api.deleteProtocolRule(studyId, ruleId);
-      loadRules()
-    } catch {
-      setError('Failed to reject rule')
-    }
-  }
-
-  return (
-    <div className="max-w-2xl space-y-4">
-      <div className="rounded-xl border border-border bg-surface-elevated p-4">
-        <h3 className="mb-2 text-sm font-semibold text-text-primary">Import Protocol</h3>
-        <textarea value={importText} onChange={e => setImportText(e.target.value)}
-          placeholder="Paste protocol text here, or upload a file (.txt, .md, .csv, .pdf, .docx) below"
-          className="mb-2 min-h-[120px] w-full rounded-lg border border-border bg-surface p-2 text-xs text-text-primary"
-          rows={5} />
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={handleImport} isLoading={importing} disabled={!importText.trim()}>
-            Import & Extract Rules
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()} isLoading={uploading} disabled={uploading}>
-            <Upload size={14} className="mr-1" /> Upload Protocol File
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".txt,.md,.csv,.pdf,.docx"
-            onChange={handleFileUpload}
-            className="hidden"
-          />
-        </div>
-        {lastFile && (
-          <p className="mt-2 text-xs text-text-tertiary">Last uploaded: {lastFile}</p>
-        )}
-        {error && (
-          <div className="mt-2">
-            <Alert variant="error">{error}</Alert>
-          </div>
-        )}
-      </div>
-
-      {loading ? <Skeleton className="h-32 w-full rounded-xl" /> : (
-        <div className="rounded-xl border border-border bg-surface-elevated p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-text-primary">Extracted Rules</h3>
-            <span className="text-xs text-text-tertiary">{status.confirmed}/{status.total} confirmed · {status.pending} pending</span>
-          </div>
-          {rules.length === 0 ? (
-            <p className="text-sm text-text-tertiary">Import a protocol to extract rules</p>
-          ) : (
-            <div className="space-y-2">
-              {rules.map(r => (
-                <div key={r.id} className={`flex items-start gap-3 rounded-lg p-2 ${r.confirmed ? 'bg-green-50/10' : 'bg-surface'}`}>
-                  <Badge variant={r.category === 'inclusion' ? 'success' : r.category === 'exclusion' ? 'error' : r.category === 'safety' ? 'warning' : 'default'}>
-                    {r.category}
-                  </Badge>
-                  <span className="flex-1 text-xs text-text-primary">{r.rule}</span>
-                  {r.confirmed ? (
-                    <span className="text-xs text-green-500">✓</span>
-                  ) : (
-                    <div className="flex gap-1">
-                      <button onClick={() => handleConfirm(r.id)} className="rounded px-2 py-0.5 text-xs text-green-500 hover:bg-green-50/10">✓</button>
-                      <button onClick={() => handleReject(r.id)} className="rounded px-2 py-0.5 text-xs text-red-400 hover:bg-red-50/10">✗</button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/* #12: AI research-progress summary for citations / internal reporting. */
-function StudySummaryCard({ studyId }: { studyId: string }) {
-  const { t } = useTranslation();
-  const [summary, setSummary] = useState<{ facts: string[]; summary: string } | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const generate = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setSummary(await api.getStudySummary(studyId));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Card className="max-w-2xl p-6">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-text-secondary">{t('research.summary', 'AI 研究进展摘要')}</h3>
-        <Button size="sm" onClick={generate} isLoading={loading}>
-          <Sparkles size={14} className="mr-1" />
-          {t('research.generateSummary', '生成摘要')}
-        </Button>
-      </div>
-      {error && <p className="mt-3 text-xs text-error">{error}</p>}
-      {summary && (
-        <div className="mt-4 space-y-3">
-          <p className="rounded-lg border border-border bg-surface-elevated p-3 text-sm leading-relaxed text-text-primary">
-            {summary.summary}
-          </p>
-          <details className="rounded-lg border border-border bg-surface p-3">
-            <summary className="cursor-pointer text-xs text-text-tertiary">{t('research.summaryFacts', '依据事实')}</summary>
-            <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-text-secondary">
-              {summary.facts.map((f, i) => <li key={i}>{f}</li>)}
-            </ul>
-          </details>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-/* #10: structured study-progress overview (enrollment/rules/visits/safety). */
-function StudyProgressCard({ studyId }: { studyId: string }) {
-  const { t } = useTranslation();
-  const [data, setData] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.getStudyProgress(studyId)
-      .then(setData)
-      .catch(err => setError(err instanceof ApiError ? err.messageText : String(err)));
-  }, [studyId]);
-
-  if (error) return <Card className="p-6"><p className="text-xs text-error">{error}</p></Card>;
-  if (!data) return <Card className="p-6"><Skeleton className="h-24 w-full rounded-lg" /></Card>;
-
-  const arms = Object.entries(data.enrollment.by_arm);
-  const visits = Object.entries(data.visits.by_visit);
-
-  return (
-    <Card className="p-6">
-      <h3 className="mb-3 text-sm font-semibold text-text-secondary">{t('research.progress', '研究进展')}</h3>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border border-border bg-surface-elevated p-3">
-          <div className="text-2xl font-semibold text-text-primary">{data.enrollment.total}</div>
-          <div className="text-xs text-text-tertiary">{t('research.enrolled', '入组患者')}</div>
-          {arms.length > 0 && (
-            <div className="mt-1 space-y-0.5 text-[10px] text-text-tertiary">
-              {arms.map(([arm, n]) => <div key={String(arm)}>{String(arm)}: {String(n)}</div>)}
-            </div>
-          )}
-        </div>
-        <div className="rounded-lg border border-border bg-surface-elevated p-3">
-          <div className="text-2xl font-semibold text-text-primary">{data.rules.confirmed}/{data.rules.total}</div>
-          <div className="text-xs text-text-tertiary">{t('research.rulesConfirmed', '规则已确认')}</div>
-          {data.rules.pending > 0 && <div className="mt-1 text-[10px] text-warning">{data.rules.pending} pending</div>}
-        </div>
-        <div className="rounded-lg border border-border bg-surface-elevated p-3">
-          <div className="text-2xl font-semibold text-text-primary">{data.visits.completed}/{data.visits.total}</div>
-          <div className="text-xs text-text-tertiary">{t('research.visits', '随访完成')}</div>
-          {visits.length > 0 && (
-            <div className="mt-1 space-y-0.5 text-[10px] text-text-tertiary">
-              {visits.slice(0, 4).map(([v, s]) => { const st = s as {completed: number; total: number}; return <div key={String(v)}>{String(v)}: {st.completed}/{st.total}</div>; })}
-            </div>
-          )}
-        </div>
-        <div className="rounded-lg border border-border bg-surface-elevated p-3">
-          <div className="text-2xl font-semibold text-text-primary">{data.screenings.eligible}</div>
-          <div className="text-xs text-text-tertiary">{t('research.eligible', '符合入组')}</div>
-          {data.screenings.pending > 0 && <div className="mt-1 text-[10px] text-warning">{data.screenings.pending} pending</div>}
-        </div>
-        <div className="rounded-lg border border-border bg-surface-elevated p-3">
-          <div className="text-2xl font-semibold text-text-primary">{data.safety.dlt_count}</div>
-          <div className="text-xs text-text-tertiary">{t('research.dlt', '确认 DLT')}</div>
-          {data.safety.unconfirmed > 0 && <div className="mt-1 text-[10px] text-warning">{data.safety.unconfirmed} unconfirmed</div>}
-        </div>
-      </div>
-    </Card>
   );
 }

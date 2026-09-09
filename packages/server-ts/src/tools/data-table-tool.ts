@@ -5,6 +5,7 @@
  */
 import { BaseTool, ToolResult } from './base-tool.js'
 import { analyzeCsvText } from '../lib/data-table.js'
+import { uploadsBaseDir } from '../lib/upload-path.js'
 import fs from 'fs'
 import path from 'path'
 
@@ -28,7 +29,7 @@ export class LoadDataTableTool extends BaseTool {
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     let text = String(args.csv_text || '')
     if (!text && args.file_id) {
-      const dir = path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', this.ctx.userId, 'uploads')
+      const dir = uploadsBaseDir(this.ctx.userId)
       const fp = path.join(dir, String(args.file_id))
       if (!fs.existsSync(fp)) return { success: false, error: `file not found: ${args.file_id}` }
       text = fs.readFileSync(fp, 'utf-8').slice(0, 200000)

@@ -13,25 +13,30 @@ import path from 'path'
  * shared/ 是被 8+ 模块引用的事实共享层(user-context / chat-context /
  * chat.dto / chat-orchestrator),所有模块可直接引用;shared 自身不进
  * peer 校验(它只允许依赖 core/common/memory/knowledge service)。
+ *
+ * #913 — 检测升级:正则同时覆盖静态 `from '../X/'` 与动态
+ * `import('../X/')`(此前动态编排边全部漏报),并把实查出的 5 条未申报
+ * 边补进 peerEdges + ARCHITECTURE.md(chat→skills、documents→figures、
+ * files→patients、medical-records→research、patients→research)。
  */
 
 const MODULES_DIR = path.resolve(__dirname, '../../src/modules')
 
 /** 已接受的跨模块边(from → 允许的 to 列表)。 */
 const peerEdges: Record<string, string[]> = {
-  chat: ['knowledge', 'plugins', 'evolution', 'patients', 'execution'],
+  chat: ['knowledge', 'plugins', 'evolution', 'patients', 'execution', 'skills'], // #913: skills 为会话内技能激活/遵循度/捕捉建议(动态 import)
   evolution: ['memorization', 'practitioner', 'chat'],
-  files: ['ingestion', 'knowledge', 'execution'],
+  files: ['ingestion', 'knowledge', 'execution', 'patients'], // #913: patients 为 DICOM 快扫(动态 import)
   ingestion: ['medical-records'],
-  'medical-records': ['approvals'],
+  'medical-records': ['approvals', 'research'], // #913: research 为病历入库自动筛查入队(动态 import)
   research: ['knowledge'],
   calendar: ['research'],
   external: ['plugins', 'execution'],
   plugins: ['chat', 'execution'],
   figures: ['execution'], // #820: figure.service 编排执行面 render_figure
   memorization: ['chat'],
-  patients: ['chat'],
-  documents: ['chat'],
+  patients: ['chat', 'research'], // #913: research 为患者入库自动筛查入队(动态 import)
+  documents: ['chat', 'figures'], // #913: figures 为文档图片扫描/渲染回填(动态 import)
   skills: ['chat', 'knowledge'], // #841 环⑤: follow-through 复用 telemetry.service(knowledge 服务层)
   auth: ['chat'],
 }
@@ -49,30 +54,60 @@ function listModuleFiles(): string[] {
   return out
 }
 
-/** 静态 import 源里的跨模块目标(排除 shared 与相对同层)。 */
+/**
+ * #913 — 跨模块 import 提取:静态 `from '../X/'` 与动态 `import('../X/')`
+ * 同时覆盖(此前正则只匹配静态形式,post-turn-pipeline 等动态编排边全部
+ * 漏报)。两个 regex 导出供断言样例直接验证行为。
+ */
+export const STATIC_FROM_RE = /from\s+['"]\.\.\/([a-z-]+)\//g
+export const DYNAMIC_IMPORT_RE = /import\(\s*['"]\.\.\/([a-z-]+)\//g
+
 function crossModuleImports(src: string): Array<{ mod: string; target: string }> {
-  const re = /from\s+['"]\.\.\/([a-z-]+)\/[a-z_.-]+\.js['"]/g
   const hits: Array<{ mod: string; target: string }> = []
-  for (const m of src.matchAll(re)) hits.push({ mod: m[1], target: m[1] })
+  for (const re of [STATIC_FROM_RE, DYNAMIC_IMPORT_RE]) {
+    for (const m of src.matchAll(re)) hits.push({ mod: m[1], target: m[1] })
+  }
   return hits
 }
 
+/** 主体扫描用:单文件全部跨模块目标(静态+动态,排除 shared/同层)。 */
+function crossModuleTargets(src: string, from: string): Set<string> {
+  const targets = new Set<string>()
+  for (const { mod } of crossModuleImports(src)) {
+    if (mod === 'shared' || mod === from) continue
+    targets.add(mod)
+  }
+  return targets
+}
+
 describe('#679 模块分层规则', () => {
-  test('peer 跨模块 import 必须在 peerEdges 例外表内', () => {
+  test('#913 动态 import 检出:import(../X/) 与 from ../X/ 同等可见(盲区回归锁)', () => {
+    const sample = [
+      "import { x } from '../knowledge/citation-audit.js'",
+      "const { recordFollowThrough } = await import('../skills/follow-through.js')",
+      "void import( '../research/auto-screen.service.js' )",
+      "import y from '../shared/user-context.js'", // shared 不计入
+      "import z from './sibling.js'", // 同层不计入
+    ].join('\n')
+    const targets = crossModuleTargets(sample, 'chat')
+    expect(targets.has('knowledge')).toBe(true)
+    expect(targets.has('skills')).toBe(true)
+    expect(targets.has('research')).toBe(true)
+    expect(targets.has('shared')).toBe(false)
+    expect(targets.size).toBe(3)
+    // regex 常量本身可独立复用(ARCHITECTURE.md 同步登记的机器可执行版)
+    expect([...sample.matchAll(DYNAMIC_IMPORT_RE)].map((m) => m[1])).toEqual(['skills', 'research'])
+    expect([...sample.matchAll(STATIC_FROM_RE)].map((m) => m[1])).toEqual(['knowledge', 'shared'])
+  })
+
+  test('peer 跨模块 import 必须在 peerEdges 例外表内(静态+动态,#913)', () => {
     const offenders: string[] = []
     for (const file of listModuleFiles()) {
       const rel = path.relative(MODULES_DIR, file)
       const from = rel.split(path.sep)[0]
       if (from === 'shared') continue
       const src = fs.readFileSync(file, 'utf-8')
-      const targets = new Set<string>()
-      for (const m of src.matchAll(/from\s+['"]\.\.\/([a-z-]+)\//g)) {
-        const to = m[1]
-        if (to === 'shared') continue
-        if (to === from) continue
-        targets.add(to)
-      }
-      for (const to of targets) {
+      for (const to of crossModuleTargets(src, from)) {
         if (!(peerEdges[from] || []).includes(to)) {
           offenders.push(`${from} -> ${to} (${rel})`)
         }
@@ -88,8 +123,11 @@ describe('#679 模块分层规则', () => {
     for (const f of fs.readdirSync(sharedDir)) {
       if (!f.endsWith('.ts')) continue
       const src = fs.readFileSync(path.join(sharedDir, f), 'utf-8')
-      for (const m of src.matchAll(/from\s+['"]\.\.\/([a-z-]+)\//g)) {
-        if (!allowed.has(m[1])) offenders.push(`shared/${f} -> ${m[1]}`)
+      // #913: shared 同样覆盖动态 import 盲区。
+      for (const re of [STATIC_FROM_RE, DYNAMIC_IMPORT_RE]) {
+        for (const m of src.matchAll(re)) {
+          if (!allowed.has(m[1])) offenders.push(`shared/${f} -> ${m[1]}`)
+        }
       }
     }
     expect(offenders).toEqual([])

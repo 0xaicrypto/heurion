@@ -4,6 +4,7 @@ import { api, ApiError } from '@/lib/api';
 import { mapWireMessages } from '@/lib/message-map';
 import type { UploadProgressState } from '@/components/UploadProgressModal';
 import { useChatStore } from '@/stores/chat';
+import { runUploadAttachFlow } from '@/lib/upload-flow';
 import type { DeckWire } from '@/lib/types';
 
 export interface DocChat {
@@ -42,7 +43,6 @@ export interface DocChat {
  */
 export function useDocChat<const TDoc extends { body: string; updated_at: string; title?: string }>(input: {
   docId: string | undefined;
-  title: string;
   /** 编辑框当前正文（ref — 发送前比对保存）。 */
   bodyRef: React.MutableRefObject<string>;
   /** 服务端已保存正文（ref — 内容有变化才先 PUT）。 */
@@ -50,6 +50,13 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   /** 本地未保存 dirty（pptx 轮询不覆盖本地编辑）。 */
   dirtyRef: React.MutableRefObject<boolean>;
   diffReview: unknown;
+  /**
+   * #896: 发送前预保存回调 — 由路由层提供(内部走 saveDoc 完整语义:
+   * 带 base_sha 并发保护 + 成功后同步 serverBodyRef/lastSavedBody)。
+   * 此前 hook 内裸 PUT 不带 base_sha,与其他窗口/审阅落地路径并发时必然
+   * 假 409。失败由本 hook 吞掉,不阻断发送。
+   */
+  presave: () => Promise<{ body?: string | null }>;
   chatSelection: string;
   setChatSelection: React.Dispatch<React.SetStateAction<string>>;
   setBody: React.Dispatch<React.SetStateAction<string>>;
@@ -66,7 +73,7 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   editorSelection: () => string;
 }): DocChat {
   const { t } = useTranslation();
-  const { docId, title, bodyRef, lastSavedBody, dirtyRef, diffReview } = input;
+  const { docId, bodyRef, lastSavedBody, dirtyRef, diffReview } = input;
 
   const [chatInput, setChatInput] = useState('');
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
@@ -90,6 +97,8 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatFileRef = useRef<HTMLInputElement>(null);
   const docUploadRef = useRef<HTMLInputElement>(null);
+  // #927: kbDedupNotice 4s 自动清空定时器 — 卸载/切文档时 clearTimeout。
+  const kbDedupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // #297: doc chat history lives on the server (event log under doc-<id>);
   // reload it on mount so a refresh doesn't lose the conversation. The
@@ -141,9 +150,11 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
     // #fix: 发送前总是把编辑框当前内容保存到服务端(内容有变化才 PUT) —
     // 上下文注入的是数据库 body,必须与用户看到的编辑框一致;否则模型
     // 基于旧内容编辑写回,会覆盖/丢失用户未保存的本地修改。
+    // #896: 预保存统一走路由注入的 presave(saveDoc 语义 — 带 base_sha,
+    // 成功后同步 serverBodyRef/lastSavedBody),不再裸 PUT。
     if (lastSavedBody.current !== bodyRef.current) {
       try {
-        const saved = await api.updateDoc(docId, { title, body: bodyRef.current });
+        const saved = await input.presave();
         lastSavedBody.current = saved.body ?? bodyRef.current;
       } catch {
         // 保存失败仍继续发送 — 锚点不匹配时由服务端归一化兜底/报错引导。
@@ -173,17 +184,23 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   };
 
   const attachUploaded = async (file: File) => {
-    const result = await uploadWithProgress(file);
-    setChatAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
-    if (result.dedup) {
-      setKbDedupNotice(t('writing.kbDedup', '📚 已在知识库,已加入上下文: {{name}}', { name: result.name }));
-      setTimeout(() => setKbDedupNotice(null), 4000);
-    }
-    // #fix: 上传即写入聊天记录（与服务端 user_message 事件一致），刷新后仍可见。
-    if (chatSessionId) {
-      appendMessage(chatSessionId, { id: crypto.randomUUID(), role: 'user', text: `[📎 已上传] ${result.name}`, createdAt: Date.now() });
-      api.logAttachments(chatSessionId, [{ name: result.name, file_id: result.file_id }]).catch(() => {});
-    }
+    // #922: 上传落地公共流程收敛到 lib/upload-flow(与 chat.tsx 同一实现);
+    // doc 专属后续(addDocReference / pptx 轮询)留在本调用点。
+    const result = await runUploadAttachFlow(
+      () => uploadWithProgress(file),
+      {
+        addAttached: (entry) => setChatAttachedFiles((prev) => [...prev, entry]),
+        setKbDedupNotice,
+        // #927: dedup 提示 4s 定时器登记 — 卸载/切文档时 clearTimeout。
+        onDedupTimer: (timer) => { kbDedupTimerRef.current = timer; },
+        appendMessage,
+      },
+      {
+        sessionId: chatSessionId,
+        // dedup 提示保持本处已有 i18n 行为(chat.tsx 为硬编码中文,见 lib/upload-flow TODO)。
+        dedupNoticeText: (name) => t('writing.kbDedup', '📚 已在知识库,已加入上下文: {{name}}', { name }),
+      },
+    );
     if (docId) api.addDocReference(docId, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
     // #777: pptx 上传即后台解析 — 轮询刷新 deck。
     if (/\.pptx$/i.test(result.name)) schedulePptxReload();
@@ -290,10 +307,12 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   };
 
   // #792: 卸载/切换文档时清理未触发的轮询 timer(旧实现泄漏)。
+  // #927: kbDedupNotice 4s 定时器一并登记清理。
   useEffect(() => {
     return () => {
       for (const timer of pptxReloadTimers.current) clearTimeout(timer);
       pptxReloadTimers.current = [];
+      if (kbDedupTimerRef.current) { clearTimeout(kbDedupTimerRef.current); kbDedupTimerRef.current = null; }
     };
   }, [docId]);
 
@@ -308,7 +327,7 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
       // #fix: 上传即草稿 — 空文档 + 文件类参考时服务端自动导入正文,
       // 响应携带 imported_body,前端立即刷新编辑框(用户马上看到原文)。
       // #714: 已存在的同名参考不重复写入(服务端 dedup 命中时 result.dedup)。
-      let refResult: unknown = null;
+      let refResult: Awaited<ReturnType<typeof api.addDocReference>> | null = null;
       if (!result.dedup) {
         refResult = await api.addDocReference(docId, {
           kind: f.name.endsWith('.pdf') ? 'pdf' : f.name.endsWith('.docx') || f.name.endsWith('.doc') ? 'docx' : 'file',
@@ -322,8 +341,8 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
         input.onNotice(t('writing.pptxParsing', 'PPT 后台解析中 — 稍后 deck 视图将呈现每一页'), 6000);
       }
       void input.loadReferences();
-      if ((refResult as any)?.imported && !bodyRef.current.trim()) {
-        const importedBody = (refResult as any)?.imported_body as string | undefined;
+      if (refResult?.imported && !bodyRef.current.trim()) {
+        const importedBody = refResult.imported_body || undefined;
         if (importedBody) {
           input.setBody(importedBody);
           input.setDoc((prev) => (prev ? { ...prev, body: importedBody, updated_at: new Date().toISOString() } : prev));
@@ -335,7 +354,8 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
       input.setError('');
       // #714: 不再强制打开 chat 面板 + 预填英文 prompt — 导入是独立动作,
       // 用 toast 引导即可;用户想对话时自己点开。
-      input.onNotice(`已上传 ${f.name} 并挂为参考材料`);
+      // #927: 硬编码文案 i18n 化(en/zh-CN 同步)。
+      input.onNotice(t('writing.uploadedAsReference', '已上传 {{name}} 并挂为参考材料', { name: f.name }));
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       input.setError(err instanceof ApiError ? err.messageText : 'Upload failed');

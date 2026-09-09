@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { twinsRoot } from '../lib/upload-path.js'
 
 /**
  * T1 — bounded tool output (#101, opencode tool-output-store parity).
@@ -24,7 +25,7 @@ export interface BoundedResult {
 }
 
 export function toolOutputDir(): string {
-  return path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', 'tool-output')
+  return path.join(twinsRoot(), 'tool-output')
 }
 
 function safeSliceToBytes(text: string, maxBytes: number): string {

@@ -15,6 +15,7 @@
 import fs from 'fs'
 import path from 'path'
 import { readFileSync } from 'fs'
+import { twinsRoot } from '../../lib/upload-path.js'
 
 interface PathwayEntry {
   id: string
@@ -97,7 +98,7 @@ export function searchPathways(query: string, limit = 8): PathwayEntry[] {
 }
 
 function cacheDir(): string {
-  return path.join(process.env.TWIN_BASE_DIR || '.nexus/twins', 'reactome-diagrams')
+  return path.join(twinsRoot(), 'reactome-diagrams')
 }
 
 function cachedPath(stId: string): string {
