@@ -76,7 +76,9 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
           cache-dependency-path: packages/web/pnpm-lock.yaml
-      - run: cd packages/contracts && pnpm install --frozen-lockfile && pnpm build && cd ../web && pnpm install --frozen-lockfile && pnpm build
+      # #917 后 dist 不再入库：file: 依赖在 install 时快照目录，因此每个
+      # 被 web 消费的包（contracts、llm-markdown-fix）都必须先 build 再 install。
+      - run: cd packages/contracts && pnpm install --frozen-lockfile && pnpm build && cd ../llm-markdown-fix && pnpm install --frozen-lockfile && pnpm build && cd ../web && pnpm install --frozen-lockfile && pnpm build
       # #545: docs 构建与部署解耦 — 文档站故障只产生告警,不阻塞主应用
       # 发布(web-dist 照常产出,仅不含 /docs)。
       - name: Build docs site
