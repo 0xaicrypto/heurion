@@ -413,6 +413,52 @@ describe('Documents', () => {
     expect(refs.some((r: any) => r.reference_id === refId && r.content === 'NCCN')).toBe(true)
   })
 
+  test('#930 references registration is idempotent (duplicate pick does not create a second row)', async () => {
+    const app = await getApp()
+    const create = await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Ref Dedup', body: 'has body' },
+    })
+    const docId = JSON.parse(create.payload).id
+
+    const first = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/references`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ kind: 'guideline', content: 'WHO guideline text', label: 'WHO' }),
+    })
+    expect(first.statusCode).toBe(200)
+    const firstBody = JSON.parse(first.payload)
+    expect(firstBody.created).toBe(true)
+
+    // 重复点选同一 content → 幂等命中,不新建行。
+    const second = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/references`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ kind: 'guideline', content: 'WHO guideline text', label: 'WHO' }),
+    })
+    expect(second.statusCode).toBe(200)
+    const secondBody = JSON.parse(second.payload)
+    expect(secondBody.created).toBe(false)
+    expect(secondBody.reference_id).toBe(firstBody.reference_id)
+
+    // 不同 content 正常新建。
+    const third = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/references`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ kind: 'guideline', content: 'Other text', label: 'Other' }),
+    })
+    expect(JSON.parse(third.payload).created).toBe(true)
+
+    const list = await app.inject({
+      method: 'GET', url: `/api/v1/docs/${docId}/references`,
+      headers: await authHeader(),
+    })
+    const refs = JSON.parse(list.payload).references
+    expect(refs.filter((r: any) => r.content === 'WHO guideline text').length).toBe(1)
+    expect(refs.length).toBe(2)
+  })
+
   test('delete document removes it', async () => {
     const app = await getApp()
     const create = await app.inject({

@@ -299,7 +299,17 @@ export function WritingEditorPage() {
   }, [showNotice, t]);
 
   // #696: 参考材料管理下沉 useDocReferences。
-  const references = useDocReferences({ docId, setError: (e) => setError(e ?? '') });
+  // #930: onImportedBody — 文件库/知识库登记触发空文档自动导入时回填编辑器。
+  const references = useDocReferences({
+    docId,
+    setError: (e) => setError(e ?? ''),
+    onImportedBody: (importedBody) => {
+      setBody(importedBody);
+      setDoc((prev) => (prev ? { ...prev, body: importedBody, updated_at: new Date().toISOString() } : prev));
+      lastSavedBody.current = importedBody;
+      showNotice(t('writing.importedBody', '已导入原文，可直接编辑草稿，或在右侧与 AI 对话调整内容'), 6000);
+    },
+  });
 
   // #696: doc-chat 面板逻辑下沉 useDocChat（发送/排队/附件/上传/pptx 轮询）。
   const polishEditorRef = useRef<Editor | null>(null);
