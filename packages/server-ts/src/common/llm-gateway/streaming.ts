@@ -139,7 +139,12 @@ export async function chatWithToolsStreamImpl(
   }
 
   const parsedToolCalls: Array<{ name: string; arguments: string }> = []
-  if (finishReason === 'tool_calls' && toolAcc.size > 0) {
+  // #fix 2026-09-09: 只要流里累积到了工具调用就转换 — 此前要求
+  // finish_reason==='tool_calls',而 GLM 经 opencode 中转站发
+  // delta.tool_calls 时 finish_reason 常为 null/stop(生产实证:模型逐条
+  // 发出 12 个 edit_document 调用全被此门丢弃,tool-loop 只看到引导语,
+  // 用户看到纯文本计划)。判定以「流中出现过工具调用增量」为准。
+  if (toolAcc.size > 0) {
     // tool_call 标签用 unicode 转义构造 — 与 parseChatResponse 的块格式
     // 完全一致,tool-loop 的块解析零变更。
     const OPEN = '\u003ctool_call\u003e'
@@ -153,7 +158,10 @@ export async function chatWithToolsStreamImpl(
       parsedToolCalls.push({ name: tc.name, arguments: tc.arguments || '{}' })
     }
     if (blocks.length > 0) {
-      return { text: blocks.join('\n'), truncated: false, toolCalls: parsedToolCalls }
+      // 保留引导语正文(模型常在工具调用前输出一句话说明)— 拼在块前,
+      // tool-loop 的块解析与最终文本清洗(:488 剥离工具标记)兼容。
+      const leadIn = text.trim() ? `${text.trim()}\n` : ''
+      return { text: leadIn + blocks.join('\n'), truncated: false, toolCalls: parsedToolCalls }
     }
   }
   if (finishReason === 'length') {

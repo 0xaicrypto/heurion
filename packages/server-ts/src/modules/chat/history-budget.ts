@@ -170,9 +170,14 @@ export async function loadHistoryBudget(
 }> {
   // #writing-cost: 写作(doc-*)会话历史预算降额 — 润色聚焦当前文档,
   // 老对话价值低;防"文档+参考+历史"冲顶总预算导致 TTFB 长/成本高。
+  // P0 hotfix 2026-09: 轮数窗口同步收紧(docHistoryTurns=6,预算 1.5k)
+  // — 实测 27k+ 上下文下 glm 工具调用可靠性坍塌、≤10k 全正常,历史
+  // 灌水是主凶之一;非 doc 会话保持 HISTORY_TURNS(20 轮)不变。
   const isDocSession = sid.startsWith('doc-')
   const maxHistoryTokens = isDocSession ? CONTEXT_CONFIG.docHistoryTokens : MAX_HISTORY_TOKENS
-  const historyTurns = parseInt(process.env.HISTORY_TURNS || '20', 10)
+  const historyTurns = isDocSession
+    ? CONTEXT_CONFIG.docHistoryTurns
+    : parseInt(process.env.HISTORY_TURNS || '20', 10)
   let compactedUpto = 0
   try {
     const lastCompaction = await prisma.kbCompaction.findFirst({

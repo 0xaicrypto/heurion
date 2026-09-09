@@ -478,7 +478,10 @@ export function appendTurnInterruptedMarker(
     ctx.eventLog.append({
       timestamp: Date.now() / 1000,
       eventType: 'assistant_response',
-      content: '[系统提示:上一回合因页面刷新或手动停止被中断,已完成的部分已保存。回复「继续」可接着完成剩余工作。]',
+      // P0 hotfix 2026-09: 去掉「已保存/已完成」暗示 — 防模型把中断标记
+      // 当"已落盘"事实并在后续轮次幻觉「已完成修改」;改为明确的工具执行
+      // 承诺(与 CONFIRM_RULE 行动优先一致)。
+      content: '[系统提示:上一回合被中断，未执行的修改不会自动完成；回复「继续」，我会立即调用工具执行剩余工作。]',
       metadata: { interrupted: true },
       agentId: userId,
       sessionId,

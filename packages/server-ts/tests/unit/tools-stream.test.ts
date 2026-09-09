@@ -91,4 +91,39 @@ describe('chatWithToolsStream — tool_calls 增量累积', () => {
     expect(r.truncated).toBe(true)
     expect(r.text).toBe('')
   })
+
+  // #fix 2026-09-09: GLM 经 opencode 中转站发 delta.tool_calls 时
+  // finish_reason 常为 null/stop — 生产实证模型逐条发出 12 个
+  // edit_document 全被 finish_reason 门丢弃。回归锁:只要有工具调用
+  // 增量就必须转换,finish_reason 仅供日志。
+  test('finish_reason=null + delta.tool_calls → 块照常返回(生产事故回归锁)', async () => {
+    const fetchMock = vi.fn(async () => sseChunks([
+      { choices: [{ delta: { reasoning_content: '逐条整理' } }] },
+      { choices: [{ delta: { content: '我将逐条整理参考文献：' } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'edit_document', arguments: '{"old_text":"[1]","new_text":"1."}' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 1, id: 'c2', function: { name: 'edit_document', arguments: '{"old_text":"[2]","new_text":"2."}' } }] } }] },
+      { usage: { prompt_tokens: 8664, completion_tokens: 13262, total_tokens: 21926 } },
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const r = await getLlmGateway().chatWithToolsStream([{ role: 'user', content: '整理参考文献' }], {}, TOOLS)
+    expect(r.toolCalls).toHaveLength(2)
+    expect(r.text).toContain('我将逐条整理参考文献')
+    expect((r.text?.match(/edit_document/g) || []).length).toBe(2)
+    expect(r.truncated).toBe(false)
+  })
+
+  test('finish_reason=stop + delta.tool_calls + 引导语 → 引导语保留 + 块返回', async () => {
+    const fetchMock = vi.fn(async () => sseChunks([
+      { choices: [{ delta: { content: '直接执行编辑：' } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'edit_document', arguments: '{"old_text":"A","new_text":"B"}' } }] } }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const r = await getLlmGateway().chatWithToolsStream([{ role: 'user', content: '改' }], {}, TOOLS)
+    expect(r.toolCalls).toHaveLength(1)
+    expect(r.text).toContain('直接执行编辑：')
+    expect(r.text).toContain('edit_document')
+  })
 })

@@ -29,6 +29,9 @@ import { ToolRegistry, parseDocSessionId, type ToolContext, type EditHint } from
 import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
 import { createExecutionPlaneService } from '../execution/execution-plane.service.js'
 import { runToolCallLoop, type TurnIO } from './tool-loop.js'
+// P0 hotfix 2026-09: doc 执行器兜底 — tool-loop 零写回 + 编辑意图时的
+// 精简上下文重跑(治 glm 27k+ 上下文工具调用可靠性坍塌)。
+import { runDocExecutorFallback, shouldRunDocExecutor } from './doc-executor.js'
 import {
   loadHistoryBudget,
   maybeTriggerCompaction,
@@ -648,7 +651,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       io.send(chunk)
     },
   }
-  const { finalContent, messages: loopMessages } = await runToolCallLoop({
+  const loopResult = await runToolCallLoop({
     currentMessages: messages,
     toolRegistry,
     tools,
@@ -659,6 +662,32 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     sessionId: sid,
     model: visionModel,
   })
+  let finalContent = loopResult.finalContent
+  const loopMessages = loopResult.messages
+
+  // P0 hotfix 2026-09: doc 执行器兜底(executor retry)— 主回路零写回
+  // 且用户消息命中编辑意图时,用精简上下文(执行器规则+文档全文+任务+方案,
+  // 不含历史)只挂写回工具面重跑一轮 runToolCallLoop。执行器成功 → 采纳其
+  // 汇报文本;执行器后仍零写回 → 兜底内部已诚实告知 + edit_claim_unbacked
+  // 留痕,finalContent 保持原样(避免把真实产出换成空串)。非 doc 会话 /
+  // 非编辑意图 / 已有写回 → 不触发,行为与既有完全一致。
+  if (shouldRunDocExecutor({ sessionId: sid, userText: body.text, executedWriteTools: loopResult.executedWriteTools })) {
+    const rescue = await runDocExecutorFallback({
+      userId,
+      sessionId: sid,
+      userText: body.text,
+      planText: finalContent,
+      apiKey,
+      io: ioWithChart,
+      ctx,
+      toolRegistry,
+      tools,
+      model: visionModel,
+    })
+    if (rescue.executedWriteTools.length > 0) {
+      finalContent = rescue.finalContent || finalContent
+    }
+  }
 
   // Stream the final response
   let fullResponse = ''

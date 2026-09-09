@@ -20,8 +20,10 @@ import type { getUserContext } from '../shared/user-context.js'
 // 检查，契约类型化停在传输层（chat-sse）。
 import type { ChatStreamChunk, DeckWire } from '@heurion/contracts'
 import { deckWireSchema } from '@heurion/contracts'
-// #892: 声明-执行对账 — 判定纯函数与纠偏消息外置 writing-prompts(可单测)。
-import { detectUnbackedEditClaim, EDIT_CLAIM_CORRECTION } from './writing-prompts.js'
+// #892: 声明-执行对账 — 判定纯函数外置 writing-prompts(可单测)。
+// P0 hotfix 2026-09: 原对话内纠偏重试已移除(毒上下文里重试无效),
+// 重试职责移交 doc-executor;tool-loop 只负责留痕与警示。
+import { detectUnbackedEditClaim } from './writing-prompts.js'
 
 const log = makeLogger('chat.tool-loop')
 
@@ -50,8 +52,10 @@ interface ToolResultPresenter {
   present: (parsed: Record<string, unknown>, env: PresentEnv) => void
 }
 
-/** Tools whose output carries a full document body for the writing canvas. */
-const DOC_WRITE_TOOLS = new Set(['edit_document', 'insert_asset', 'edit_deck', 'fix_document_images'])
+/** Tools whose output carries a full document body for the writing canvas.
+ *  P0 hotfix 2026-09: 导出 — doc-executor 兜底只用这份写回工具面组装
+ *  精简重试回路,复用同一集合避免两处手写。 */
+export const DOC_WRITE_TOOLS = new Set(['edit_document', 'insert_asset', 'edit_deck', 'fix_document_images'])
 
 // #927: doc_updated rev — 进程内单调递增计数器,SSE 消费方(writing-editor)
 // 据此幂等防乱序(rev 不大于已应用值的写回直接忽略)。
@@ -172,7 +176,13 @@ export async function runToolCallLoop(params: {
   sessionId: string
   /** #fix: 本回合模型覆盖(视觉模型自适应) — 缺省用 DEEPSEEK_PREMIUM_MODEL。 */
   model?: string
-}): Promise<{ finalContent: string; messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }> }> {
+}): Promise<{
+  finalContent: string
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }>
+  /** P0 hotfix 2026-09: 本轮实际执行过的 DOC_WRITE_TOOLS 名单(去重) —
+   *  doc-executor 兜底触发判据之一(零写回 + 编辑意图 → 精简重试)。 */
+  executedWriteTools: string[]
+}> {
   const { currentMessages, toolRegistry, io, ctx, userId, sessionId } = params
   // #fix 2026-09: 缺省走 resolveActiveModel()(admin 覆盖 → env → legacy) —
   // 此前硬编码 DEEPSEEK_PREMIUM_MODEL('deepseek-v4-flash'),生产主模型
@@ -224,10 +234,13 @@ export async function runToolCallLoop(params: {
   let finalContent = ''
 
   // #892: 声明-执行对账守卫 — 统计本轮写回工具(DOC_WRITE_TOOLS)实际执行
-  // 次数(成功或失败都算「已执行」);doc- 会话零执行且回复声称完成编辑时,
-  // 纠偏并重试一轮(仅一次)。
+  // 次数(成功或失败都算「已执行」);doc- 会话零执行且回复声称完成编辑时
+  // 留痕警示(原对话内纠偏重试已移交 doc-executor)。
   let docWriteExecuted = 0
-  let editClaimRetried = false
+  // P0 hotfix 2026-09: 本轮实际执行过的写回工具名单 — 供调用方
+  // (conversation-turn → doc-executor)判断"声称完成但零写回"并触发
+  // 精简上下文兜底重试。去重,顺序为首次执行顺序。
+  const executedWriteToolNames: string[] = []
   // #893: 轮次上限提示 — doc- 会话按轮次耗尽退出(而非模型主动收尾)且
   // 本轮执行过工具时,告知用户可回复「继续」接力完成剩余编辑。
   let anyToolExecuted = false
@@ -383,7 +396,11 @@ export async function runToolCallLoop(params: {
       const finishCall = async (c: ExecutableCall, result: Awaited<ReturnType<typeof toolRegistry.execute>>) => {
         // #892: 写回工具每次真实执行(成功或失败)都计入 — 对账守卫的
         // "文档是否被修改过"事实依据。
-        if (DOC_WRITE_TOOLS.has(c.toolName)) docWriteExecuted++
+        if (DOC_WRITE_TOOLS.has(c.toolName)) {
+          docWriteExecuted++
+          // P0 hotfix 2026-09: 写回工具名单(去重)。
+          if (!executedWriteToolNames.includes(c.toolName)) executedWriteToolNames.push(c.toolName)
+        }
         // #789③/#694: parse the tool output ONCE per result —此前
         // generate_image/search_node/insert_asset/render_chart 各自
         // JSON.parse 同一份 output(insert_asset 单轮 3 次),逐处静默
@@ -571,18 +588,17 @@ export async function runToolCallLoop(params: {
     const cleaned = (callResult || '').replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim()
     finalContent = cleaned || '抱歉，我未能完成这个操作，请再试一次或换一种说法描述需求。'
 
-    // #892: 声明-执行对账守卫(生产事故根因①) — doc- 会话回合内没有任何
-    // 写回工具执行,回复却声称已完成编辑:事件留痕 + 用户可见警示 + 注入
-    // 纠偏消息后重试一轮(只重试一次)。纠偏消息走对话内系统注入(同
-    // 「Tool returned」/检索兜底指引做法),不落 user_message 事件;
-    // finalContent 清空,避免重试后轮次耗尽时把旧声明文本当最终回复流出。
+    // #892: 声明-执行对账守卫(生产事故根因①) — doc- 会话对话正常结束,
+    // 没有任何写回工具执行,回复却声称已完成编辑:事件留痕 + 用户可见警示。
+    // P0 hotfix 2026-09: 原「注入纠偏消息后重试一轮」已移除 — 纠偏重试
+    // 仍跑在同一份 27k+ 毒上下文里,实测无效(模型继续输出计划文本);
+    // 重试职责移交 doc-executor(精简上下文 + 仅写回工具面重跑,见
+    // conversation-turn 的接线)。此处只留痕,不动 finalContent。
     if (
       sessionId.startsWith('doc-')
       && docWriteExecuted === 0
       && detectUnbackedEditClaim(finalContent)
-      && !editClaimRetried
     ) {
-      editClaimRetried = true
       await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
         claimedEdit: true,
         docWriteExecuted,
@@ -592,11 +608,6 @@ export async function runToolCallLoop(params: {
         text: '⚠️ 上面的回复声称已完成文档编辑，但本轮未产生任何写回工具调用，文档未被修改',
         kind: 'warning',
       })
-      messages.push({ role: 'user', content: EDIT_CLAIM_CORRECTION })
-      finalContent = ''
-      toolRound-- // 回退 1,给纠偏后的重试留一轮预算
-      // exitedByRoundCap 保持 true — 纠偏轮若再耗尽轮次,#893 提示照常触发
-      continue
     }
 
     exitedByRoundCap = false
@@ -616,5 +627,5 @@ export async function runToolCallLoop(params: {
   // 注意:finalContent 为空时不能在这里兜底 — conversation-turn 会走
   // deepseekStream 流式 fallback(511-517 行的 if(finalContent) 分支)。
   // 硬编码兜底文案会截胡流式路径。
-  return { finalContent, messages }
+  return { finalContent, messages, executedWriteTools: executedWriteToolNames }
 }

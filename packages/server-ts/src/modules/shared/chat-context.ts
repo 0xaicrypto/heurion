@@ -204,7 +204,8 @@ function projectionFacts(
   ctx: { memory?: { graph: any } | null; facts: { all(): any[] } },
   patientHash?: string | null,
   /** #894: doc- 写作会话(无患者上下文)过滤患者范围 facts。 */
-  opts?: { excludePatientScope?: boolean },
+  /** P0 hotfix 2026-09: doc- 会话注入条数封顶(retrieval.docFactsCap=10)。 */
+  opts?: { excludePatientScope?: boolean; factsCap?: number },
 ): any[] {
   const all = ctx.memory?.graph
     ? new GraphFactProvider(ctx.memory.graph).listCurrent()
@@ -212,7 +213,11 @@ function projectionFacts(
   // #894: 患者范围以显式 patientHash 字段标记(Fact/FactNode 均有该字段),
   // 按字段过滤即可可靠区分,无需内容猜测(保守方案的兜底分支不启用)。
   const scoped = opts?.excludePatientScope ? all.filter((f) => !f.patientHash) : all
-  return isolateFactsByScope(scoped, patientHash).slice(0, CONTEXT_CONFIG.retrieval.factsCap)
+  // P0 hotfix 2026-09: doc- 会话 facts 封顶 — 27k 上下文下 glm 工具调用
+  // 可靠性坍塌(≤10k 全正常),facts 对润色价值低,10 条(≈500 token)封顶;
+  // 非 doc 会话保持 retrieval.factsCap(50)不变。
+  const factsCap = opts?.factsCap ?? CONTEXT_CONFIG.retrieval.factsCap
+  return isolateFactsByScope(scoped, patientHash).slice(0, factsCap)
 }
 
 export function isolateFactsByScope(allFacts: any[], patientHash?: string | null): any[] {
@@ -289,13 +294,15 @@ export function selectProjectionInputs(
   // #894: doc- 写作会话(无患者上下文)不注入患者范围 facts — 与 roster/
   // study_context 注入治理同口径(事故根因③)。
   const excludePatientScope = Boolean(sessionId?.startsWith('doc-')) && !patientHash
+  // P0 hotfix 2026-09: doc- 会话(无患者上下文)facts 注入封顶 10 条。
+  const docFactsCap = excludePatientScope ? CONTEXT_CONFIG.retrieval.docFactsCap : undefined
   switch (routeResult.intent) {
     case 'sql':
       // Factual queries: rely on SQL-retrieved patient/study context; skip accumulated memory
       return { facts: [], episodes: [], skills: [] }
     case 'vector':
       // Knowledge questions: keep facts/knowledge, skip episodic chat history
-      return { facts: projectionFacts(ctx, patientHash, { excludePatientScope }), episodes: [], skills: [] }
+      return { facts: projectionFacts(ctx, patientHash, { excludePatientScope, factsCap: docFactsCap }), episodes: [], skills: [] }
     case 'file':
       // File queries: context comes from attachments; skip accumulated memory
       return { facts: [], episodes: [], skills: [] }
@@ -304,7 +311,7 @@ export function selectProjectionInputs(
       // Ambiguous or summary questions: keep full context (patient-isolated);
       // episodes are limited to the current session's un-reviewed summary.
       return {
-        facts: projectionFacts(ctx, patientHash, { excludePatientScope }),
+        facts: projectionFacts(ctx, patientHash, { excludePatientScope, factsCap: docFactsCap }),
         episodes: sessionId ? ctx.episodes.all().filter((e) => e.sessionId === sessionId) : [],
         // #841 环④: skills 注入源已改 conversation-turn 的激活匹配 — 此处死值置空
         skills: [],

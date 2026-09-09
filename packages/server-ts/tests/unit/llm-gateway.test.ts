@@ -39,6 +39,30 @@ describe('#548 — LLM 输出截断检测', () => {
     expect(r.truncated).toBe(true)
   })
 
+  // #fix 2026-09-09: 非流式同款 — GLM 经中转站 message.tool_calls 存在但
+  // finish_reason='stop' → 块照常返回(不再要求 finish_reason==='tool_calls')。
+  test('chatWithMeta: message.tool_calls + finish stop → 块返回 + 引导语保留', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: '直接执行编辑：',
+          tool_calls: [{ type: 'function', function: { name: 'edit_document', arguments: '{"old_text":"A","new_text":"B"}' } }],
+        },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+    }), { status: 200 })))
+
+    const r = await getLlmGateway().chatWithMeta(
+      [{ role: 'user', content: '改' }],
+      { model: 'deepseek-chat' },
+      [{ type: 'function', function: { name: 'edit_document', description: 'e', parameters: { type: 'object', properties: {} } } }],
+    )
+    expect(r.text).toContain('直接执行编辑：')
+    expect(r.text).toContain('edit_document')
+    expect(r.text).toContain('"old_text":"A"')
+  })
+
   test('chatWithMeta not truncated on normal stop', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       choices: [{ message: { content: '完整回答' }, finish_reason: 'stop' }],

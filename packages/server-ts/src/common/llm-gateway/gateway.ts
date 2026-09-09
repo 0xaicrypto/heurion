@@ -184,7 +184,10 @@ export class OpenAICompatibleLlmGateway implements LlmGateway {
     }
 
     // Handle tool_calls
-    if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls) {
+    // #fix 2026-09-09: 对齐流式孪生 — 只要 message.tool_calls 存在就转换,
+    // 不再要求 finish_reason==='tool_calls'(GLM 经中转站常以 stop/null 收尾,
+    // 12 个 edit_document 调用曾因此被整体丢弃)。
+    if (choice?.message?.tool_calls?.length) {
       const blocks: string[] = []
       for (const tc of choice.message.tool_calls) {
         if (tc.type === 'function') {
@@ -195,7 +198,11 @@ export class OpenAICompatibleLlmGateway implements LlmGateway {
           blocks.push(`<tool_call>${JSON.stringify({ name: tc.function.name, arguments: args })}</tool_call>`)
         }
       }
-      if (blocks.length > 0) return { text: blocks.join('\n'), truncated: false }
+      if (blocks.length > 0) {
+        // 保留引导语正文(模型常在工具调用前输出一句话说明),拼在块前。
+        const leadIn = (choice.message.content || '').trim()
+        return { text: (leadIn ? leadIn + '\n' : '') + blocks.join('\n'), truncated: false }
+      }
     }
 
     // #548: surface finish_reason='length' so callers can tell the user the

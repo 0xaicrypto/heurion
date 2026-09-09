@@ -14,10 +14,16 @@ export const CONTEXT_CONFIG = {
   maxHistoryTokens: parseInt(process.env.MAX_HISTORY_TOKENS || '32000', 10),
   /** 历史轮数窗口。 */
   historyTurns: parseInt(process.env.HISTORY_TURNS || '20', 10),
-  /** #writing-cost: 写作(doc-*)会话的历史预算 — 润色任务的历史价值低
-   *  (每轮聚焦当前文档),降到 12k 防止“文档 20k + 参考 + 历史 32k”冲顶
-   *  64k 总预算 → TTFB 长/成本高/易触发上游限流。 */
-  docHistoryTokens: parseInt(process.env.DOC_HISTORY_TOKENS || '12000', 10),
+  /** #writing-cost: 写作(doc-*)会话的历史预算 — P0 hotfix 2026-09:
+   *  实测 27k+ 上下文(旧值 12k 历史 + 文档正文 + 规则 + facts)下 glm
+   *  工具调用可靠性坍塌(每轮 completion 全是思考、零 tool_calls),
+   *  ≤10k 上下文探针 100% 正常;且历史对润色任务价值低(每轮聚焦当前
+   *  文档)。降到 1.5k — 足够承接「继续」/焦点记忆,不再把上下文顶到
+   *  工具失效区。 */
+  docHistoryTokens: parseInt(process.env.DOC_HISTORY_TOKENS || '1500', 10),
+  /** P0 hotfix 2026-09: doc 会话历史轮数窗口(与 docHistoryTokens 同步
+   *  收紧)— 非 doc 会话仍走 HISTORY_TURNS(默认 20 轮)。 */
+  docHistoryTurns: parseInt(process.env.DOC_HISTORY_TURNS || '6', 10),
 
   // ── projection 内部配额（memory-projection.ts）──
   projection: {
@@ -101,6 +107,10 @@ export const CONTEXT_CONFIG = {
   // ── 检索（chat-context.ts / picker）──
   retrieval: {
     factsCap: 50,
+    /** P0 hotfix 2026-09: doc- 写作会话(无患者上下文)的 layer3 facts
+     *  注入条数封顶 — 27k 上下文下 glm 工具调用可靠性坍塌(≤10k 全正常),
+     *  facts 对润色价值低,10 条(≈500 token)封顶。 */
+    docFactsCap: 10,
     crossPatientMax: 5,
     pickerTopK: 50,
   },

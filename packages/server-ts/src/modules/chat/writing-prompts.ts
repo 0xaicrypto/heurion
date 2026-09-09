@@ -99,6 +99,8 @@ export function detectUnbackedEditClaim(finalContent: string): boolean {
   return EDIT_CLAIM_RE.test(finalContent)
 }
 
-/** #892: 声明-执行对账纠偏消息 — 以对话内系统注入(不落 user_message,
- * 与「Tool returned」/检索兜底指引同一做法),驱动模型立即兑现或明确否认。 */
-export const EDIT_CLAIM_CORRECTION = '系统提醒：你上一条回复声称已完成文档编辑，但本轮没有调用任何文档写回工具，文档实际未被修改。若确需修改请立即调用 edit_document 执行；若无需修改，请明确告知用户文档未做任何修改。'
+/** P0 hotfix 2026-09: doc 执行器兜底(executor retry)的系统角色规则 —
+ *  精简消息里唯一的 system 段(不含 persona/规则/历史),把模型钉死在
+ *  "逐项调用 edit_document 落盘"上。27k 毒上下文里模型只输出计划文本,
+ *  ≤10k 精简上下文实测 100% 正常返回工具调用。 */
+export const EXECUTOR_RULE = '你是文档编辑执行器。立即逐项调用 edit_document（old_text/new_text）执行任务，每处一次调用可多项；严禁输出计划/方案/进度表而不调用工具；全部写回后用 2-3 行汇报每处改动落点。'
