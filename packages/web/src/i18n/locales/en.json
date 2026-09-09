@@ -199,6 +199,8 @@
   },
   "chat": {
     "title": "Chat",
+    "kbGroupSummaries": "Summaries",
+    "kbGroupDocuments": "Files",
     "placeholder": "Type a message…",
     "startConversation": "Start a conversation with your twin",
     "contextHint": "It remembers context across turns",
