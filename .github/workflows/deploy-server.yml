@@ -409,8 +409,14 @@ jobs:
           EMBEDDING_IMAGE: ${{ env.EMBEDDING_IMAGE_NAME }}:${{ steps.vars.outputs.sha }}
           STATS_IMAGE: ${{ env.STATS_IMAGE_NAME }}:${{ steps.vars.outputs.sha }}
         run: |
-          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p /opt/heurion/packages/web/dist /opt/heurion/scripts && rm -rf /opt/heurion/packages/web/dist/assets"
-          scp -o StrictHostKeyChecking=no -r packages/web/dist/* ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/packages/web/dist/
+          # #934: 原子化 dist 发布 — 此前 rm -rf assets + scp 是非原子替换,
+          # 窗口内 index.html 与 assets 混合态,访客 404(#931/#933 连发时实际
+          # 触发)。现拷到版本目录再原子翻转符号链接:访客始终看到完整旧版
+          # 或完整新版;compose up 重建容器时解析新链接。保留最近 3 个版本。
+          SHA=${{ steps.vars.outputs.sha }}
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p /opt/heurion/packages/web/dist-releases /opt/heurion/scripts && rm -rf /opt/heurion/packages/web/dist-releases/$SHA"
+          scp -o StrictHostKeyChecking=no -r packages/web/dist ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/packages/web/dist-releases/$SHA
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd /opt/heurion/packages/web && if [ ! -L dist ]; then mv dist dist.bak-\$(date +%s); fi && ln -sfn dist-releases/$SHA dist.tmp && mv -Tf dist.tmp dist && ls -1dt dist-releases/* | tail -n +4 | xargs -r rm -rf"
           scp -o StrictHostKeyChecking=no /tmp/heurion-deploy.env ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/.env.production
           # #791 同款卫生：环境文件含全部 LLM key，落盘即收紧权限（scp 默认 0644）。
           ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "chmod 600 /opt/heurion/.env.production"
