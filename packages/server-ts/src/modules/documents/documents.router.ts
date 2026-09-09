@@ -436,6 +436,36 @@ export async function documentsRouter(app: FastifyInstance) {
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
 
     const { kind, content, label, source_patient_hash } = request.body
+    // #930: 幂等登记 — 同 (docId, refType, snapshot) 已存在时不再重复建行
+    // (文件库/知识库选择器重复点选/双击提交不再产生重复参考)。命中时跳过
+    // create 与 pptx 后台解析,但空正文的自动导入(ensureDraftBody)仍执行 —
+    // 首次注册时导入失败的文件类参考,重新点选仍可补导入。
+    if (String(content || '').trim()) {
+      const dup = await prisma.docReference.findFirst({
+        where: { docId, userId, refType: kind || 'note', snapshot: content },
+      })
+      if (dup) {
+        let importedBody: string | null = null
+        if (kind === 'file' || kind === 'pdf' || kind === 'docx') {
+          try {
+            if (!String(doc.body || '').trim()) {
+              const ensured = await ensureDraftBody(userId, docId, { scenario: 'upload', preferLabel: label || content || '' })
+              importedBody = ensured.error ? null : ensured.body
+            }
+          } catch (err) {
+            log.warn('reference dedup auto-import failed', { docId, reason: (err as Error)?.message?.slice(0, 200) })
+          }
+        }
+        let dupLabel = ''
+        try { dupLabel = JSON.parse(dup.sourceNodes || '{}').label || '' } catch { /* ignore */ }
+        return {
+          reference_id: dup.id, kind: dup.refType, content: dup.snapshot,
+          label: dupLabel, source_patient_hash: dup.targetId, created_at: dup.createdAt,
+          imported: importedBody !== null, imported_body: importedBody, pptx_parse: null,
+          created: false,
+        }
+      }
+    }
     const id = `ref_${uid()}`
     const now = new Date().toISOString()
     await prisma.docReference.create({
@@ -521,6 +551,8 @@ export async function documentsRouter(app: FastifyInstance) {
       imported: importedBody !== null,
       // #777: pptx 上传即后台解析（deck 落点）— 前端据 started 轮询刷新。
       pptx_parse: pptxParse,
+      // #930: created=false 表示命中幂等(未新建),文件库选择器据此刷新列表。
+      created: true,
     }
   })
 

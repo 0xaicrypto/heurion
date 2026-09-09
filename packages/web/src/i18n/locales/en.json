@@ -497,7 +497,17 @@
     "conflictLoadedLatest": "Loaded the latest server content",
     "conflictKeepLocal": "Kept your unsaved local changes — choose \"Keep mine\" or load the latest again",
     "aiChangesApplied": "AI changes applied: {{a}} accepted / {{r}} rejected",
-    "uploadedAsReference": "Uploaded {{name}} and attached as reference material"
+    "uploadedAsReference": "Uploaded {{name}} and attached as reference material",
+    "refTitle": "Reference Materials",
+    "refFromFiles": "Pick from files",
+    "refPaste": "Paste text",
+    "refFilesSearch": "Search uploaded files…",
+    "refFilesEmpty": "No uploaded files yet",
+    "refAlreadyAdded": "Added",
+    "refFilesPicked": "{{n}}/{{max}} selected",
+    "refAddSelected": "Add as reference",
+    "refEmpty": "No reference materials yet — click Reference to add; AI will write based on them",
+    "refDelete": "Delete reference material"
   },
   "preview": {
     "open": "Preview",

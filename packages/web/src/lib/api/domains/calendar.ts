@@ -31,6 +31,8 @@ export class CalendarApi extends ApiCore {
     imported: boolean;
     /** #777: pptx 走后台解析,前端据 started 轮询刷新。 */
     pptx_parse: { started: boolean; reason?: string } | null;
+    /** #930: 幂等登记 — false 表示命中去重(未新建),文件库选择器据此刷新。 */
+    created: boolean;
   }> {
     return this.fetch(`/api/v1/docs/${docId}/references`, { method: 'POST', body: JSON.stringify(data) });
   }

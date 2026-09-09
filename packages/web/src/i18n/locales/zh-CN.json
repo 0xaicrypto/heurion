@@ -497,7 +497,17 @@
     "conflictLoadedLatest": "已载入服务端最新内容",
     "conflictKeepLocal": "已保留本地未保存修改 — 可选择「保留我的版本」或重新载入最新",
     "aiChangesApplied": "已采纳 AI 修改：接受 {{a}} / 拒绝 {{r}}",
-    "uploadedAsReference": "已上传 {{name}} 并挂为参考材料"
+    "uploadedAsReference": "已上传 {{name}} 并挂为参考材料",
+    "refTitle": "参考材料",
+    "refFromFiles": "从文件库选择",
+    "refPaste": "粘贴文本",
+    "refFilesSearch": "搜索已上传文件…",
+    "refFilesEmpty": "暂无已上传文件",
+    "refAlreadyAdded": "已添加",
+    "refFilesPicked": "已选 {{n}}/{{max}}",
+    "refAddSelected": "添加为参考",
+    "refEmpty": "暂无参考材料 — 点击 Reference 添加，AI 将基于这些材料写作",
+    "refDelete": "删除参考材料"
   },
   "preview": {
     "open": "预览",

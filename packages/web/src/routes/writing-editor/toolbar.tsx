@@ -37,7 +37,7 @@ export function Toolbar(input: {
 }) {
   const { t } = useTranslation();
   const { chat, references, phiScanning, onPhiScan, exporting, onExportDocx, onExportPdf, studyId, methodsLoading, methodsError, onGenerateMethods, injectOpen, setInjectOpen, injectLabel, setInjectLabel, injectResult, setInjectResult, injecting, onInjectResults, onOpenKbPicker, setChatOpen, exportResult, exportHistory, exportPanelOpen, setExportPanelOpen } = input;
-  const { refListOpen, setRefListOpen, refList, refDeleting, loadReferences, deleteReference } = references;
+  const { refListOpen, setRefListOpen, refList, refDeleting, loadReferences, deleteReference, setRefDialogOpen, filesLibOpen, setFilesLibOpen, filesLibLoading, filesLibAdding, filesLibList, loadFilesLibrary, addFileLibraryRefs } = references;
   return (
     <div className="flex items-center gap-1 border-b border-border bg-surface px-6 py-1.5 shrink-0">
           <Button
@@ -141,7 +141,24 @@ export function Toolbar(input: {
               📚 {t('writing.fromKb', '知识库')}
             </Button>
             {refListOpen && (
-              <ReferenceListPopover list={refList} deleting={refDeleting} onClose={() => setRefListOpen(false)} onDelete={(id) => void deleteReference(id)} />
+              <ReferenceListPopover
+                list={refList}
+                deleting={refDeleting}
+                onClose={() => setRefListOpen(false)}
+                onDelete={(id) => void deleteReference(id)}
+                // #930: 粘贴文本(复活 AddReferenceDialog)/文件库勾选登记。
+                onOpenPaste={() => { setRefDialogOpen(true); setRefListOpen(false); }}
+                filesLibOpen={filesLibOpen}
+                onToggleFilesLib={() => {
+                  const next = !filesLibOpen;
+                  setFilesLibOpen(next);
+                  if (next) void loadFilesLibrary();
+                }}
+                filesLibLoading={filesLibLoading}
+                filesLibAdding={filesLibAdding}
+                filesLibList={filesLibList}
+                onAddFiles={(files) => void addFileLibraryRefs(files)}
+              />
             )}
           </div>
           <Button
