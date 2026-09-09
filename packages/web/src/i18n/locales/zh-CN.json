@@ -199,6 +199,8 @@
   },
   "chat": {
     "title": "对话",
+    "kbGroupSummaries": "总结",
+    "kbGroupDocuments": "文件",
     "placeholder": "输入消息…",
     "startConversation": "开始与你的分身对话",
     "contextHint": "它会记住跨轮次的上下文",

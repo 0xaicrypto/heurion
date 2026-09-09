@@ -100,24 +100,30 @@ export function KbPicker({ open, onClose, onConfirm, initialItems = [], max = 3 
           ) : results.length === 0 ? (
             <p className="text-sm text-text-tertiary">{t('chat.kbEmpty', '暂无匹配的知识条目')}</p>
           ) : (
-            results.map((a) => (
-              <label key={`${a.kind}:${a.id}`} className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 hover:bg-surface">
-                <input
-                  type="checkbox"
-                  checked={picked.some((p) => p.id === a.id)}
-                  disabled={!picked.some((p) => p.id === a.id) && picked.length >= max}
-                  onChange={() => togglePick(a)}
-                  className="mt-1"
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-text-primary">
-                    {a.kind === 'document' && <span className="mr-1 rounded bg-surface-muted px-1 py-0.5 text-[10px] text-text-secondary">{t('kb.file', '文件')}</span>}
-                    {a.title}
+            <>
+              {/* #932: 按类型分组 — 总结(📝)与上传文件(📎)是两类资产,混排时
+                  用户难以定位;同组内保持检索相关性排序。 */}
+              {results.some((a) => a.kind === 'summary') && (
+                <div>
+                  <p className="mb-1 px-1 text-xs font-medium text-text-tertiary">
+                    📝 {t('chat.kbGroupSummaries', '总结')} ({results.filter((a) => a.kind === 'summary').length})
                   </p>
-                  <p className="mt-0.5 truncate text-xs text-text-tertiary">{a.summary}</p>
+                  <div className="space-y-2">
+                    {results.filter((a) => a.kind === 'summary').map((a) => renderRow(a))}
+                  </div>
                 </div>
-              </label>
-            ))
+              )}
+              {results.some((a) => a.kind === 'document') && (
+                <div>
+                  <p className="mb-1 px-1 text-xs font-medium text-text-tertiary">
+                    📎 {t('chat.kbGroupDocuments', '文件')} ({results.filter((a) => a.kind === 'document').length})
+                  </p>
+                  <div className="space-y-2">
+                    {results.filter((a) => a.kind === 'document').map((a) => renderRow(a))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
         <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
@@ -131,5 +137,24 @@ export function KbPicker({ open, onClose, onConfirm, initialItems = [], max = 3 
     setPicked((prev) => prev.some((p) => p.id === a.id)
       ? prev.filter((p) => p.id !== a.id)
       : (prev.length >= max ? prev : [...prev, a]));
+  }
+
+  // #932: 行渲染抽出 — 分组 section 复用;文件标记移除(组头已标明类型)。
+  function renderRow(a: KbPickerItem) {
+    return (
+      <label key={`${a.kind}:${a.id}`} className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 hover:bg-surface">
+        <input
+          type="checkbox"
+          checked={picked.some((p) => p.id === a.id)}
+          disabled={!picked.some((p) => p.id === a.id) && picked.length >= max}
+          onChange={() => togglePick(a)}
+          className="mt-1"
+        />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">{a.title}</p>
+          <p className="mt-0.5 truncate text-xs text-text-tertiary">{a.summary}</p>
+        </div>
+      </label>
+    );
   }
 }

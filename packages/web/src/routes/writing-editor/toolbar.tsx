@@ -131,15 +131,8 @@ export function Toolbar(input: {
                 <span className="ml-1 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">{refList.length}</span>
               )}
             </Button>
-            {/* #757: 从知识库选择 — 同一文件不再重传,一次上传处处引用。 */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onOpenKbPicker}
-              title={t('writing.pickFromKb', '从知识库选择总结/文件作为参考')}
-            >
-              📚 {t('writing.fromKb', '知识库')}
-            </Button>
+            {/* #932: 知识库入口合并进 Reference 弹层(下方 onOpenKbPicker)—
+                工具栏不再保留独立按钮,三个添加来源统一在一个弹层里。 */}
             {refListOpen && (
               <ReferenceListPopover
                 list={refList}
@@ -148,6 +141,8 @@ export function Toolbar(input: {
                 onDelete={(id) => void deleteReference(id)}
                 // #930: 粘贴文本(复活 AddReferenceDialog)/文件库勾选登记。
                 onOpenPaste={() => { setRefDialogOpen(true); setRefListOpen(false); }}
+                // #932: 知识库入口 — 打开共享 KbPicker(总结/文件按类型分组)。
+                onOpenKbPicker={onOpenKbPicker}
                 filesLibOpen={filesLibOpen}
                 onToggleFilesLib={() => {
                   const next = !filesLibOpen;

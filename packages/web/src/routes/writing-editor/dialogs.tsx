@@ -202,6 +202,8 @@ export function ReferenceListPopover(input: {
   onClose: () => void;
   onDelete: (referenceId: string) => void;
   onOpenPaste: () => void;
+  /** #932: 知识库入口合并进 Reference 弹层(工具栏独立按钮移除)。 */
+  onOpenKbPicker: () => void;
   filesLibOpen: boolean;
   onToggleFilesLib: () => void;
   filesLibLoading: boolean;
@@ -210,7 +212,7 @@ export function ReferenceListPopover(input: {
   onAddFiles: (files: Array<{ file_id: string; name: string; mime: string; size_bytes: number; created_at: string }>) => void;
 }) {
   const { t } = useTranslation();
-  const { list, deleting, onClose, onDelete, onOpenPaste, filesLibOpen, onToggleFilesLib, filesLibLoading, filesLibAdding, filesLibList, onAddFiles } = input;
+  const { list, deleting, onClose, onDelete, onOpenPaste, onOpenKbPicker, filesLibOpen, onToggleFilesLib, filesLibLoading, filesLibAdding, filesLibList, onAddFiles } = input;
   // #930: 文件库选择器局部状态 — 勾选/搜索,弹层卸载即重置。
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<Array<{ file_id: string; name: string; mime: string; size_bytes: number; created_at: string }>>([]);
@@ -233,6 +235,9 @@ export function ReferenceListPopover(input: {
       <div className="mb-2 flex gap-1.5">
         <Button size="sm" variant={filesLibOpen ? 'secondary' : 'ghost'} onClick={onToggleFilesLib} className="flex-1">
           <FilePlus size={13} className="mr-1" /> {t('writing.refFromFiles', '从文件库选择')}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onOpenKbPicker} className="flex-1" title={t('writing.pickFromKb', '从知识库选择总结/文件作为参考')}>
+          📚 {t('writing.fromKb', '知识库')}
         </Button>
         <Button size="sm" variant="ghost" onClick={onOpenPaste} className="flex-1">
           <ClipboardPaste size={13} className="mr-1" /> {t('writing.refPaste', '粘贴文本')}
