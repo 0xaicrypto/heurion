@@ -26,7 +26,7 @@ import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import { buildDocReferenceBlocks, findUploadFileByName } from '../shared/chat-context.js'
 import type { EditHint } from '../../tools/tool-registry.js'
 // #699: 文档场景规则外置 — 本文件只做组装。
-import { refUnresolvedHint, refSourceRule, documentRules, FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE, PLAN_RULE, shouldInjectPlanRule } from './writing-prompts.js'
+import { refUnresolvedHint, refSourceRule, documentRules, FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE, PLAN_RULE } from './writing-prompts.js'
 // #976: 任务清单状态与稳定段渲染（common 层,tools/modules 共用）。
 import { loadActivePlan, renderPlanBlock } from '../../common/plan-store.js'
 
@@ -193,7 +193,6 @@ export async function buildDocumentContext(input: DocumentContextInput): Promise
   // 同 #927 item 2 的规则前置逻辑）;无清单时为空串。闸门 2 的
   // hasActivePlan 在此一并取得（PLAN_RULE 门控用）。
   const activePlan = await loadActivePlan(userId, `doc-${docId}`).catch(() => null)
-  const hasActivePlan = activePlan !== null
   const planBlock = renderPlanBlock(activePlan)
 
   const staticRules = [
@@ -202,9 +201,9 @@ export async function buildDocumentContext(input: DocumentContextInput): Promise
     REVISION_RULE,
     ...(wantChartCitation ? [CITATION_RULE] : []),
     CONFIRM_RULE,
-    // #976 闸门 2: PLAN_RULE 只在多任务信号回合或已有活跃清单时注入
-    //（防 #806 打太极复发 — 简单任务回合不携带清单纪律）。
-    ...(shouldInjectPlanRule(msgText, hasActivePlan) ? [PLAN_RULE] : []),
+    // #976: PLAN_RULE 常驻 — 何时建清单归模型意图判断（工具侧 <3 步硬闸
+    // 兜底,防 #806 打太极），不做回合门控 hardcode（#979 复盘修正）。
+    PLAN_RULE,
   ].join('\n\n')
 
   // #773: deck 资产上下文可见性 — deck 存在时注入 ## Current Deck

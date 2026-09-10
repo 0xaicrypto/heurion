@@ -3,7 +3,7 @@ import { mockAiProvider } from '../helpers/ai-mock.js'
 import { SetTaskPlanTool, buildPlanUpdatedEvent } from '../../src/tools/set-task-plan-tool.js'
 import { shouldRunDocExecutor, PLAN_RELAY_RE } from '../../src/modules/chat/doc-executor.js'
 import { renderPlanBlock, planBacklog, renderPendingSteps } from '../../src/common/plan-store.js'
-import { shouldInjectPlanRule } from '../../src/modules/chat/writing-prompts.js'
+import { PLAN_RULE } from '../../src/modules/chat/writing-prompts.js'
 import { runToolCallLoop, type TurnIO } from '../../src/modules/chat/tool-loop.js'
 import { ToolRegistry } from '../../src/tools/tool-registry.js'
 import { BaseTool, type ToolResult } from '../../src/tools/base-tool.js'
@@ -332,18 +332,10 @@ describe('#971/#972 纯函数（renderPlanBlock/planBacklog/renderPendingSteps�
     expect(ev.source).toBe('system')
   })
 })
-describe('#969 闸门 2 — PLAN_RULE 回合门控（简单回合不注入）', () => {
-  test('多任务信号触发', () => {
-    for (const t of ['把全文按章节逐节填充', '全部处理这三条意见', '一直处理到第 5 段', '分多步完成它']) {
-      expect(shouldInjectPlanRule(t, false)).toBe(true)
-    }
-  })
-  test('普通回合不注入（无活跃清单）', () => {
-    for (const t of ['润色这一段', '把表格改成英文', '这句再自然一点', '你好']) {
-      expect(shouldInjectPlanRule(t, false)).toBe(false)
-    }
-  })
-  test('已有活跃清单 → 恒注入（跨轮纪律）', () => {
-    expect(shouldInjectPlanRule('随便说点什么', true)).toBe(true)
+describe('#969 闸门 2 修正（#979 复盘）— PLAN_RULE 常驻,意图判断归模型', () => {
+  test('PLAN_RULE 存在且含判断边界（≥3 步建清单 / 1-2 步直接执行）', () => {
+    expect(PLAN_RULE).toContain('≥3 个独立步骤')
+    expect(PLAN_RULE).toContain('禁止建清单')
+    expect(PLAN_RULE).toContain('账本')
   })
 })
