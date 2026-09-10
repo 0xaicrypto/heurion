@@ -12,6 +12,7 @@ export async function reportRouter(app: FastifyInstance) {
     const { hash } = request.params as any
     const pdf = await generateReportPdf({
       patient_hash: hash,
+      userId: request.user?.userId || '',
       findings: [],
       impression: 'Report generated on demand.',
     }).catch(() => null)
@@ -28,6 +29,7 @@ export async function reportRouter(app: FastifyInstance) {
     const body = (request.body || {}) as any
     const pdf = await generateReportPdf({
       patient_hash: body.patient_hash || '',
+      userId: request.user?.userId || '',
       findings: body.findings || [],
       impression: body.impression,
       recommendation: body.recommendation,

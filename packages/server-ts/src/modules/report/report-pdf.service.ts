@@ -3,6 +3,8 @@ import prisma from '../../common/prisma.js'
 
 export interface ReportInput {
   patient_hash: string
+  /** #936 归属校验 — patientRecord 查询必须带 userId（防跨用户读取）。 */
+  userId: string
   findings?: Array<{ name: string; description: string; date?: string }>
   impression?: string
   recommendation?: string
@@ -11,7 +13,7 @@ export interface ReportInput {
 
 export async function generateReportPdf(input: ReportInput): Promise<Buffer> {
   const patient = input.patient_hash
-    ? await prisma.patientRecord.findUnique({ where: { hash: input.patient_hash } }).catch(() => null)
+    ? await prisma.patientRecord.findFirst({ where: { hash: input.patient_hash, userId: input.userId } }).catch(() => null)
     : null
 
   return new Promise<Buffer>((resolve, reject) => {
