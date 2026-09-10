@@ -132,6 +132,20 @@ fi
 # and silently no-op'd via `|| true` — removed to avoid the illusion of
 # coverage.
 
+# #937: non-root 上线迁移（幂等）— 既有卷由 root 写入时属主为 0，
+# 新镜像以 UID 1000 运行会打不开 SQLite。仅当属主不是 1000 时一次性
+# chown（DB / 用户文件 / 杂项缓存卷）；reactome host 目录为 :ro 只读不受影响。
+DB_VOL_OWNER=$(docker run --rm -v "$NEXUS_DB_VOL:/check" alpine stat -c '%u' /check 2>/dev/null || echo 0)
+if [ "$DB_VOL_OWNER" != "1000" ] && [ -n "$NEXUS_DB_VOL" ]; then
+  echo "One-time volume ownership migration → UID 1000 (#937)..."
+  docker run --rm \
+    ${NEXUS_DB_VOL:+-v "$NEXUS_DB_VOL":/db} \
+    ${NEXUS_FILES_VOL:+-v "$NEXUS_FILES_VOL":/twins} \
+    ${NEXUS_DATA_VOL:+-v "$NEXUS_DATA_VOL":/data} \
+    alpine sh -c 'chown -R 1000:1000 /db /twins /data 2>/dev/null || true'
+  echo "✓ volume ownership migrated (nexus, UID 1000)"
+fi
+
 # Pull the images tagged by CI and recreate containers.
 export NEXUS_IMAGE="${NEXUS_IMAGE:-ghcr.io/0xaicrypto/nexus-server:latest}"
 export EMBEDDING_IMAGE="${EMBEDDING_IMAGE:-ghcr.io/0xaicrypto/nexus-embedding-server:latest}"
