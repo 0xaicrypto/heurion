@@ -72,12 +72,17 @@ export class SetTaskPlanTool extends BaseTool {
     const sessionId = this.ctx.sessionId || ''
     if (!sessionId) return { success: false, error: 'set_task_plan 需要会话上下文' }
     const userId = this.ctx.userId
+    // #979 意图推断（生产实证：模型发完整 create 参数但漏 action 字段）—
+    // 从参数形态推断：steps 数组=create；step_index=advance；否则可读报错。
     const action = String(args.action || '')
+      || (Array.isArray(args.steps) && args.steps.length ? 'create' : '')
+      || (Number.isInteger(Number(args.step_index)) && Number(args.step_index) >= 1 ? 'advance' : '')
 
     try {
       if (action === 'create') {
-        const title = String(args.title || '').trim().slice(0, 500)
+        // #979:title 缺省推断（第一步标题 → 「任务清单」）
         const rawSteps = Array.isArray(args.steps) ? args.steps : []
+        const title = (String(args.title || '').trim() || (rawSteps[0] as any)?.title || '任务清单').slice(0, 500)
         const steps = rawSteps.slice(0, 20).map((s: unknown) => {
           const o = (s ?? {}) as Record<string, unknown>
           return {

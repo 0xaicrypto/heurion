@@ -339,3 +339,25 @@ describe('#969 闸门 2 修正（#979 复盘）— PLAN_RULE 常驻,意图判断
     expect(PLAN_RULE).toContain('账本')
   })
 })
+describe('#979 意图推断 — 无 action 字段时从参数推断', () => {
+  test('steps 数组在、action 缺 → 按 create 处理', async () => {
+    const sid = UNIQUE()
+    await ensureUser('user_plan8')
+    const tool = new SetTaskPlanTool({ userId: 'user_plan8', sessionId: sid })
+    const r = await tool.execute({ steps: [{ title: 'A', tool: 'edit_document' }, { title: 'B', tool: 'edit_document' }, { title: 'C' }] })
+    expect(r.success).toBe(true)
+    const { plan } = JSON.parse(r.output as string)
+    expect(plan.steps).toHaveLength(3)
+  })
+
+  test('step_index 在、action 缺失 → 按 advance 处理', async () => {
+    const sid = UNIQUE()
+    await ensureUser('user_plan9')
+    const tool = new SetTaskPlanTool({ userId: 'user_plan9', sessionId: sid })
+    await tool.execute({ action: 'create', title: 'T', steps: [{ title: 'A' }, { title: 'B' }, { title: 'C' }] })
+    const r = await tool.execute({ step_index: 2 })
+    expect(r.success).toBe(true)
+    const { plan } = JSON.parse(r.output as string)
+    expect(plan.steps[1].status).toBe('done')
+  })
+})
