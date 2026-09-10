@@ -33,7 +33,7 @@ import { runToolCallLoop, type TurnIO } from './tool-loop.js'
 // 精简上下文重跑(治 glm 27k+ 上下文工具调用可靠性坍塌)。
 import { runDocExecutorFallback, shouldRunDocExecutor, PLAN_RELAY_RE } from './doc-executor.js'
 // #976: 任务清单状态与接力方案渲染（common 层）。
-import { loadActivePlan, planBacklog, renderPendingSteps } from '../../common/plan-store.js'
+import { loadActivePlan, planBacklog, renderPendingSteps, renderPlanBlock } from '../../common/plan-store.js'
 import {
   loadHistoryBudget,
   maybeTriggerCompaction,
@@ -294,6 +294,16 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     selectionText: null,
   }
   const assembler = new ContextAssembler([
+    {
+      // #971: 任务清单稳定段 — activePlan 在所有段之前注入（最高注意力
+      // 位置）;无清单时空串。普通 chat 与 doc 会话通用（账本机制统一）。
+      key: 'task_plan',
+      fallbackOrder: 1,
+      build: async () => {
+        const plan = await loadActivePlan(userId, sid).catch(() => null)
+        return renderPlanBlock(plan)
+      },
+    },
     {
       // #5/#631: 研究上下文 — shortCode 排序保证不更新时字节稳定。
       key: 'study_context',
