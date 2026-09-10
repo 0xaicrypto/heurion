@@ -52,6 +52,12 @@ export function buildDocumentContent(body: string, title: string): { schemaVersi
     else if (current.paragraphs.length === 100) current.paragraphs.push({ type: 'paragraph', text: '（内容过长，其余段落已省略）' })
   }
   if (sections.length > 30) sections.length = 30
+  // #966 契约要求每节 ≥1 段（documentSectionSchema.paragraphs.min(1)）：空标题节
+  // （大纲骨架/文末悬空标题）补注明式占位段（惯例同 :52 超长折叠），结构与内容都不丢；
+  // pptx 派生路径（slides content 同样 min(1)）随之满足。
+  for (const s of sections) {
+    if (s.paragraphs.length === 0) s.paragraphs.push({ type: 'paragraph', text: '（本节暂无内容）' })
+  }
   return { schemaVersion: SCHEMA_VERSION, title: docTitle.slice(0, 500), sections }
 }
 
