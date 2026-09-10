@@ -26,7 +26,9 @@ import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import { buildDocReferenceBlocks, findUploadFileByName } from '../shared/chat-context.js'
 import type { EditHint } from '../../tools/tool-registry.js'
 // #699: 文档场景规则外置 — 本文件只做组装。
-import { refUnresolvedHint, refSourceRule, documentRules, FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE } from './writing-prompts.js'
+import { refUnresolvedHint, refSourceRule, documentRules, FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE, PLAN_RULE, shouldInjectPlanRule } from './writing-prompts.js'
+// #976: 任务清单状态与稳定段渲染（common 层,tools/modules 共用）。
+import { loadActivePlan, renderPlanBlock } from '../../common/plan-store.js'
 
 export interface DocumentContextInput {
   userId: string
@@ -187,12 +189,22 @@ export async function buildDocumentContext(input: DocumentContextInput): Promise
   // FORMAT → CHART → REVISION → CITATION → CONFIRM。
   // CHART/CITATION 按回合诉求门控(见 shouldInjectChartCitationRules)。
   const wantChartCitation = shouldInjectChartCitationRules({ hasRefs: allRefs.length > 0, messageText: msgText })
+  // #971: 任务清单稳定段 — 活跃清单在文档正文之前注入（注意力位置
+  // 同 #927 item 2 的规则前置逻辑）;无清单时为空串。闸门 2 的
+  // hasActivePlan 在此一并取得（PLAN_RULE 门控用）。
+  const activePlan = await loadActivePlan(userId, `doc-${docId}`).catch(() => null)
+  const hasActivePlan = activePlan !== null
+  const planBlock = renderPlanBlock(activePlan)
+
   const staticRules = [
     FORMAT_RULE,
     ...(wantChartCitation ? [CHART_RULE] : []),
     REVISION_RULE,
     ...(wantChartCitation ? [CITATION_RULE] : []),
     CONFIRM_RULE,
+    // #976 闸门 2: PLAN_RULE 只在多任务信号回合或已有活跃清单时注入
+    //（防 #806 打太极复发 — 简单任务回合不携带清单纪律）。
+    ...(shouldInjectPlanRule(msgText, hasActivePlan) ? [PLAN_RULE] : []),
   ].join('\n\n')
 
   // #773: deck 资产上下文可见性 — deck 存在时注入 ## Current Deck
@@ -235,5 +247,5 @@ export async function buildDocumentContext(input: DocumentContextInput): Promise
     selectionBlock = `## 用户选中文本\n[用户选中的文本 — 如需修改请从此处逐字复制 old_text(空格/换行差异会被自动忽略)。]\n${fitSelectionForPrompt(selection)}\n\n`
   }
 
-  return `\n\n## Current Document\n标题：${doc.title}（正文约 ${Math.round(docText.replace(/\s+/g, ' ').length / 2)} 字）\n\n${staticRules}\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n${selectionBlock}## Reference Materials\n${refBlock || '(none)'}${refHint}\n\n${refSource}\n\n${rules}${deckBlock}`
+  return `${planBlock}\n\n## Current Document\n标题：${doc.title}（正文约 ${Math.round(docText.replace(/\s+/g, ' ').length / 2)} 字）\n\n${staticRules}\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n${selectionBlock}## Reference Materials\n${refBlock || '(none)'}${refHint}\n\n${refSource}\n\n${rules}${deckBlock}`
 }

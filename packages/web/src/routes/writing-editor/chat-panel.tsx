@@ -62,6 +62,7 @@ export function ChatPanel(input: {
                   variant="compact"
                   messages={chatMessages}
                   streamNote={chatSession?.streamNote}
+              plan={chatSession?.lastPlan}
                   stallSince={chatSession?.stallSince}
                   bottomRef={chatEndRef}
                   emptyState={

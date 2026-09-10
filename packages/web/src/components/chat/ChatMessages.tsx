@@ -10,6 +10,9 @@ import { StatusDot } from '@/components/ui/StatusDot';
 import { FilePreviewButton } from '@/components/chat/FilePreview';
 import { Button } from '@/components/ui';
 import { cn } from '@/lib/utils';
+// #976: 任务清单进度卡片（agent todo-list 用户面）。
+import { PlanCard } from './PlanCard';
+import type { TaskPlan } from '@heurion/contracts';
 
 /** §10.3 (#220): group separator when a gap exceeds this many minutes. */
 const TIME_GROUP_GAP_MS = 5 * 60 * 1000;
@@ -67,6 +70,8 @@ export interface ChatMessagesProps {
   streamNote?: string;
   /** #828: 会话停滞起点 — 透传给时间线状态行。 */
   stallSince?: number | null;
+  /** #976: 会话任务清单快照 — 进度卡片数据源（SSE plan_updated 实时更新）。 */
+  plan?: TaskPlan | null;
 }
 
 /**
@@ -115,6 +120,7 @@ export function ChatMessages({
   bottomRef,
   streamNote,
   stallSince,
+  plan,
 }: ChatMessagesProps) {
   const { t } = useTranslation();
   const compact = variant === 'compact';
@@ -123,6 +129,8 @@ export function ChatMessages({
 
   return (
     <div className="space-y-4">
+      {/* #976: 任务清单进度卡片 — active/completed 清单置于消息流顶部。 */}
+      {plan && (plan.status === 'active' || plan.status === 'completed') && <PlanCard plan={plan} compact={compact} />}
       {messages.map((m, idx) => {
         const prevMsg = idx > 0 ? messages[idx - 1] : undefined;
         const isLastAssistant = m.role === 'assistant' && idx === messages.length - 1 && !m.isStreaming;

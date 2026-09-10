@@ -14,6 +14,8 @@ import { QueryLogsTool, isUserAdmin } from './query-logs-tool.js'
 import { SearchCitationTool } from './search-citation-tool.js'
 import { OaPdfLookupTool } from './oa-pdf-tool.js'
 import { EditDeckTool } from './edit-deck-tool.js'
+// #976: 会话级任务清单（agent todo-list）— 全场景可用（chat/doc 通用账本）。
+import { SetTaskPlanTool } from './set-task-plan-tool.js'
 import { LoadSkillTool } from './skill-tools.js'
 import { RenderChartTool } from './render-chart-tool.js'
 import { SearchMedicalWebTool, FetchArticleSummaryTool, VisitMedicalSiteTool, ExtractFulltextTool } from './medical-web-tools.js'
@@ -286,6 +288,8 @@ export class ToolRegistry {
     this.register(new EditDeckTool(ctx))
     // #fix 2026-09: 图片链接先审计后修复 — 仅 doc- 会话暴露（与 edit_document 同门控）。
     this.register(new FixDocumentImagesTool(ctx))
+    // #976: 任务清单 — 复杂任务（≥3 步）的结构化账本（闸门见工具内）。
+    this.register(new SetTaskPlanTool(ctx))
     // #801: AI 日志检索 — 排障一等能力,仅 admin 用户暴露。
     this.register(new QueryLogsTool(ctx))
     // #807: 引用实体化 — PubMed 真实检索,治 References 编造。

@@ -275,7 +275,12 @@
     "subagentTurns": "{{turns}} turns",
     "subagentFailed": "Sub-task failed (other sub-tasks unaffected)",
     "compactingSoonTurns": "Turn window ({{turns}}) full — compacting next turn",
-    "kbAddFailed": "Failed to add to the knowledge base — please retry"
+    "kbAddFailed": "Failed to add to the knowledge base — please retry",
+    "planFailedCount": "{{n}} step(s) failed",
+    "planStepFailed": "failed",
+    "planRetryCount": "retried {{n}} time(s)",
+    "planContinueHint": "Reply「continue」to let AI resume from the pending steps",
+    "planCompleted": "Task plan completed"
   },
   "patient": {
     "summary": "Summary",

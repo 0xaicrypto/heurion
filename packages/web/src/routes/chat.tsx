@@ -497,6 +497,7 @@ export function ChatPage() {
               variant="full"
               messages={messages}
               streamNote={session?.streamNote}
+              plan={session?.lastPlan}
               bottomRef={bottomRef}
               onCopy={handleCopy}
               copiedId={copiedId}

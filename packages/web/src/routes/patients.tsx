@@ -692,6 +692,7 @@ export function PatientChatPage() {
              variant="compact"
              messages={messages}
              streamNote={session?.streamNote}
+              plan={session?.lastPlan}
              stallSince={session?.stallSince}
              bottomRef={bottomRef}
              onDownloadClick={handleDownloadClick}

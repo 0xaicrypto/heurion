@@ -41,6 +41,7 @@ model User {
   skillPrefs    UserSkillPref[]
   settings      UserSetting[]
   chatTakeaways ChatTakeaway[]
+  taskPlans     TaskPlan[]
   figureRenders FigureRender[]
   studies       ResearchStudy[]
   patients      PatientRecord[]
@@ -805,4 +806,22 @@ model FigureRender {
   @@unique([userId, sha256])
   @@index([userId, createdAt(sort: Desc)])
   @@map("figure_renders")
+}
+
+// #976: 会话级任务清单 — 复杂任务的步骤账本（set_task_plan 工具 +
+// context 注入 + 写回对账）。steps 存 JSON（contracts taskPlanSchema）。
+// sessionId 维度一活跃清单：同会话新 create 语义上取代旧清单（旧置 cancelled）。
+model TaskPlan {
+  id        String @id @default(cuid())
+  userId    String @map("user_id")
+  sessionId String @map("session_id")
+  title     String
+  stepsJson String @map("steps_json")
+  status    String @default("active") // 'active' | 'completed' | 'cancelled'
+  createdAt String @map("created_at")
+  updatedAt String @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+  @@index([userId, sessionId, status])
+  @@map("task_plans")
 }

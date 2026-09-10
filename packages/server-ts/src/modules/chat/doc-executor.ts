@@ -41,6 +41,9 @@ export const DOC_EDIT_INTENT_RE = /修改|编辑|删除|插入|整理|润色|重
  *        (生产实例:edit_document({}) 空参连败 2 轮,直接精简兜底)。
  * 非 doc 会话 / 非编辑意图轮次 → 一律不触发(零行为回归)。
  */
+/** #973: 接力触发词 — 继续/接着/下一步/重试第 K 步（清单接力语义）。 */
+export const PLAN_RELAY_RE = /继续|接着|下一步|重试第?\s*\d*\s*步/
+
 export function shouldRunDocExecutor(input: {
   sessionId: string
   userText: string
@@ -50,14 +53,26 @@ export function shouldRunDocExecutor(input: {
   /** #977: 写回执行统计,缺省与 executedWriteTools 同源。 */
   writeAttempts?: number
   writeSuccesses?: number
+  /** #976: 活跃清单缺口步数（pending+failed），缺省 0。 */
+  planBacklogCount?: number
+  /** #976: 用户消息是否命中接力触发词（继续/重试第 K 步）。 */
+  relayIntent?: boolean
 }): boolean {
   if (!input.sessionId.startsWith('doc-')) return false
-  if (!DOC_EDIT_INTENT_RE.test(input.userText)) return false
-  if (input.executedWriteTools.length === 0) return true
-  if ((input.unbackedClaimCount ?? 0) > input.executedWriteTools.length) return true
-  const attempts = input.writeAttempts ?? input.executedWriteTools.length
-  const successes = input.writeSuccesses ?? input.executedWriteTools.length
-  return attempts >= 2 && successes === 0
+  if (input.executedWriteTools.length === 0) {
+    // 零写回 + 编辑意图（#892）
+    if (DOC_EDIT_INTENT_RE.test(input.userText)) return true
+    // 清单接力：有 pending 步 + 用户「继续」语义（不需要命中编辑意图）
+    return (input.planBacklogCount ?? 0) > 0 && (input.relayIntent ?? false)
+  }
+  if (DOC_EDIT_INTENT_RE.test(input.userText)) {
+    if ((input.unbackedClaimCount ?? 0) > input.executedWriteTools.length) return true
+    const attempts = input.writeAttempts ?? input.executedWriteTools.length
+    const successes = input.writeSuccesses ?? input.executedWriteTools.length
+    if (attempts >= 2 && successes === 0) return true
+  }
+  // #976: 清单 pending + 用户继续/重试语义 → 接力（不受编辑意图正则约束）。
+  return (input.planBacklogCount ?? 0) > 0 && (input.relayIntent ?? false)
 }
 
 /** 执行器后仍零写回的诚实告知(#892 语义延伸)。 */
@@ -82,6 +97,8 @@ export interface DocExecutorParams {
   model?: string
   /** #967: 部分执行接力 — >0 时既定方案加「已写入条目跳过」纪律。 */
   unbackedClaimCount?: number
+  /** #976: 接力方案覆盖 — 活跃清单的 pending 步骤渲染（优先于 finalContent）。 */
+  planOverride?: string
 }
 
 /**
@@ -112,6 +129,8 @@ export async function runDocExecutorFallback(
   // #967: 部分执行接力 — 上轮已写回部分条目,既定方案前置「已写入跳过」
   // 纪律(执行器对照文档全文现状,严禁重复写回产生重复内容)。
   const partialRescue = (params.unbackedClaimCount ?? 0) > 0
+  // #976: 清单接力 — planOverride（清单 pending 步骤）优先于上轮汇报文本。
+  const effectivePlan = params.planOverride?.trim() || planText
   const body = fitTextToTokens(String(doc.body || ''), CONTEXT_CONFIG.scene.docBodyTokens)
   const executorMessages: Array<{ role: 'system' | 'user'; content: string }> = [
     { role: 'system', content: EXECUTOR_RULE },
@@ -123,7 +142,7 @@ export async function runDocExecutorFallback(
         '\n\n## 用户任务\n',
         userText,
         '\n\n## 既定方案（逐项用工具执行）\n',
-        planText.trim() || '(无既定方案 — 直接按用户任务执行)',
+        effectivePlan.trim() || '(无既定方案 — 直接按用户任务执行)',
         partialRescue
           ? '\n\n【接力纪律】上一回合仅写回了部分条目。对照既定方案与「当前文档全文」现状：内容已存在于文档中的条目一律跳过（重复写回会产生重复内容）；只执行仍未写入的条目，逐项调用 edit_document。'
           : '',

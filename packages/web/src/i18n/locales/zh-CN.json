@@ -275,7 +275,12 @@
     "subagentTurns": "{{turns}} 轮",
     "subagentFailed": "子任务失败（不影响其他子任务）",
     "compactingSoonTurns": "对话已达 {{turns}} 轮窗口，下一句自动压缩",
-    "kbAddFailed": "加入知识库失败，请重试"
+    "kbAddFailed": "加入知识库失败，请重试",
+    "planFailedCount": "{{n}} 步失败",
+    "planStepFailed": "失败",
+    "planRetryCount": "已重试 {{n}} 次",
+    "planContinueHint": "回复「继续」让 AI 从未完成步骤接着执行",
+    "planCompleted": "任务清单已全部完成"
   },
   "patient": {
     "summary": "摘要",

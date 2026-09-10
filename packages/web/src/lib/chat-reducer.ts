@@ -99,6 +99,8 @@ export interface SessionState {
   lastDocBody?: string;
   /** #773: AI 写回同帧携带的 deck 资产（null = 无 deck 变更）。 */
   lastDocDeck?: DeckWire | null;
+  /** #976: 最近一次 plan_updated 的任务清单快照 — 前端进度卡片数据源。 */
+  lastPlan?: import('@heurion/contracts').TaskPlan | null;
   /**
    * #927: 最近一次 doc_updated 的服务端写回 rev（单调递增）— 消费方
    * （writing-editor）按 shouldApplyDocRev 幂等防乱序。
@@ -240,6 +242,10 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
       }
       return { ...s, messages: msgs };
     }
+    // #976: 任务清单更新 — lastPlan 供 ChatMessages 进度卡片渲染
+    //（实时勾选态;随 turn 时间线持久化逻辑与 doc 同源）。
+    case 'plan_updated':
+      return { ...s, lastPlan: chunk.plan };
     case 'doc_updated':
       // #773: deck 与 body 同帧到达 — lastDocDeck 供 deck 视图直apply
       // (AI 改页不走 markdown diffReview，页级小改直接应用 + 快照回滚)。

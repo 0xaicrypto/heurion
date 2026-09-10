@@ -10,6 +10,27 @@
  */
 import { z } from 'zod'
 
+/** #976: 任务清单 zod 校验（工具参数/DB JSON 往返的单一形状）。 */
+export const taskPlanStepSchema = z.object({
+  index: z.number().int().min(1).max(20),
+  title: z.string().min(1).max(500),
+  status: z.enum(['pending', 'done', 'failed', 'skipped']),
+  tool: z.string().max(100).optional(),
+  note: z.string().max(500).optional(),
+  retry_count: z.number().int().min(0).max(10).optional(),
+  failure_note: z.string().max(500).optional(),
+})
+
+export const taskPlanSchema = z.object({
+  plan_id: z.string().min(1).max(100),
+  session_id: z.string().min(1).max(120),
+  title: z.string().min(1).max(500),
+  steps: z.array(taskPlanStepSchema).min(1).max(20),
+  status: z.enum(['active', 'completed', 'cancelled']),
+  created_at: z.string().max(60).optional(),
+  updated_at: z.string().max(60).optional(),
+})
+
 /** Context-budget snapshot sent at the start of a turn (U3). */
 export interface ContextUsage {
   history_tokens: number
@@ -151,6 +172,46 @@ export interface SubagentDoneEvent {
 }
 export type SubagentEvent = SubagentStartedEvent | SubagentProgressEvent | SubagentDoneEvent
 
+/* ── 会话级任务清单（#976）──────────────────────────────────────
+ * 复杂任务的步骤账本：模型经 set_task_plan 创建/推进，写回步骤由系统
+ * 在工具真实执行成功时自动推进（反编造）。注入上下文的稳定段与前端
+ * 进度卡片共用此形状。 */
+
+export type TaskPlanStepStatus = 'pending' | 'done' | 'failed' | 'skipped'
+
+export interface TaskPlanStep {
+  index: number
+  title: string
+  status: TaskPlanStepStatus
+  /** 写回类步骤的工具名 — 系统在该工具执行成功时自动 advance（闸门 3）。 */
+  tool?: string
+  note?: string
+  retry_count?: number
+  failure_note?: string
+}
+
+export interface TaskPlan {
+  plan_id: string
+  session_id: string
+  title: string
+  steps: TaskPlanStep[]
+  status: 'active' | 'completed' | 'cancelled'
+  created_at?: string
+  updated_at?: string
+}
+
+/**
+ * #976: 任务清单 SSE 事件 — 前端进度卡片数据源。source 区分模型推进
+ * （model）与系统自动推进（system — 写回步骤，模型无法手动声明完成）。
+ */
+export interface PlanUpdatedEvent {
+  type: 'plan_updated'
+  plan: TaskPlan
+  kind: 'created' | 'advanced' | 'failed' | 'skipped' | 'completed' | 'cancelled'
+  source?: 'model' | 'system'
+  progress: { done: number; total: number }
+}
+
 /** One chunk of the chat SSE stream. */
 export type ChatStreamChunk =
   | { type: 'turn_started'; event_idx: number; patient_hash: string | null }
@@ -185,6 +246,7 @@ export type ChatStreamChunk =
   | SubagentStartedEvent
   | SubagentProgressEvent
   | SubagentDoneEvent
+  | PlanUpdatedEvent
   | { type: 'memory_hits'; count: number; hits: MemoryHit[] }
   | { type: 'image_attached'; url?: string; study_id?: string; caption?: string }
   | ({ type: 'sidecar_file' } & SidecarFileInfo)

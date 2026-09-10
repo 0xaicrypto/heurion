@@ -31,7 +31,9 @@ import { createExecutionPlaneService } from '../execution/execution-plane.servic
 import { runToolCallLoop, type TurnIO } from './tool-loop.js'
 // P0 hotfix 2026-09: doc 执行器兜底 — tool-loop 零写回 + 编辑意图时的
 // 精简上下文重跑(治 glm 27k+ 上下文工具调用可靠性坍塌)。
-import { runDocExecutorFallback, shouldRunDocExecutor } from './doc-executor.js'
+import { runDocExecutorFallback, shouldRunDocExecutor, PLAN_RELAY_RE } from './doc-executor.js'
+// #976: 任务清单状态与接力方案渲染（common 层）。
+import { loadActivePlan, planBacklog, renderPendingSteps } from '../../common/plan-store.js'
 import {
   loadHistoryBudget,
   maybeTriggerCompaction,
@@ -695,6 +697,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // 非编辑意图 / 已有写回 → 不触发,行为与既有完全一致。
   // #967: 部分执行接力 — 主回路「声称 N 项但仅写回 K 项」(对照表编造
   // 未执行条目的实际改动)时同样触发执行器,既定方案前置跳过已写入纪律。
+  // #976: 接力判据 — 活跃清单 backlog + 用户「继续/重试第 K 步」语义。
+  const activePlanForRescue = await loadActivePlan(userId, sid).catch(() => null)
+  const planBacklogForRescue = planBacklog(activePlanForRescue)
   if (shouldRunDocExecutor({
     sessionId: sid,
     userText: body.text,
@@ -702,12 +707,16 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     unbackedClaimCount: loopResult.unbackedClaimCount,
     writeAttempts: loopResult.writeAttempts,
     writeSuccesses: loopResult.writeSuccesses,
+    planBacklogCount: loopResult.planBacklogCount || planBacklogForRescue,
+    relayIntent: PLAN_RELAY_RE.test(body.text.trim()),
   })) {
     const rescue = await runDocExecutorFallback({
       userId,
       sessionId: sid,
       userText: body.text,
-      planText: finalContent,
+      // #976: 清单接力 — pending 步骤优先作为既定方案（替代上轮汇报文本）。
+      planText: loopResult.planPendingText || finalContent,
+      planOverride: renderPendingSteps(activePlanForRescue),
       apiKey,
       io: ioWithChart,
       ctx,

@@ -24,6 +24,15 @@ import { deckWireSchema } from '@heurion/contracts'
 // P0 hotfix 2026-09: 原对话内纠偏重试已移除(毒上下文里重试无效),
 // 重试职责移交 doc-executor;tool-loop 只负责留痕与警示。
 import { detectUnbackedEditClaim, countClaimedEditItems } from './writing-prompts.js'
+import type { TaskPlan } from '@heurion/contracts'
+// #976: 任务清单状态与上下文注入（common 层,tools/modules 共用）。
+import {
+  loadActivePlan,
+  autoAdvanceWriteStep,
+  markWriteStepFailed,
+  planBacklog,
+  renderPendingSteps,
+} from '../../common/plan-store.js'
 
 const log = makeLogger('chat.tool-loop')
 
@@ -67,6 +76,21 @@ const DOOM_LOOP_CORRECTION = '该工具已以相同参数连续调用 3 次未�
 const DOOM_INTERCEPTED_PREVIEW = '已拦截：相同参数重复调用'
 
 const PRESENTERS: ToolResultPresenter[] = [
+  // #976: set_task_plan 输出 → plan_updated SSE（source: model）。
+  {
+    matches: (toolName) => toolName === 'set_task_plan',
+    present: (parsed, env) => {
+      const plan = parsed?.plan as TaskPlan | undefined
+      if (!plan) return
+      env.io.send({
+        type: 'plan_updated',
+        plan: plan as never,
+        kind: (String(parsed?.kind || 'advanced') as never),
+        source: 'model',
+        progress: { done: plan.steps.filter((s: { status?: string }) => s.status === 'done').length, total: plan.steps.length },
+      })
+    },
+  },
   {
     // #419: generated images render in the chat stream.
     matches: (t) => t === 'generate_image',
@@ -189,6 +213,10 @@ export async function runToolCallLoop(params: {
    *  （尝试 ≥2 且成功 0 → 不等 doom-loop/模型收尾,直接精简兜底）。 */
   writeAttempts: number
   writeSuccesses: number
+  /** #976: 活跃任务清单缺口（pending+failed 步数;0=无清单或已清零）—
+   *  conversation-turn 依此触发执行器接力;planPendingText 为接力方案段。 */
+  planBacklogCount: number
+  planPendingText: string
 }> {
   const { currentMessages, toolRegistry, io, ctx, userId, sessionId } = params
   // #fix 2026-09: 缺省走 resolveActiveModel()(admin 覆盖 → env → legacy) —
@@ -260,6 +288,10 @@ export async function runToolCallLoop(params: {
   let exitedByRoundCap = true
   // #967: 部分执行对账缺口 — 守卫检出「声称 > 实际写回」时记录 claimed 数。
   let unbackedClaimCount = 0
+  // #972: 活跃清单收尾对账 — backlog > 0 且收尾声称完成时警示并透出接力材料。
+  let planBacklogCount = 0
+  let planPendingText = ''
+  void planBacklog
 
   // #835: 尽最大努力检索(best-effort retrieval) — 检索工具连续失败 ≥2 次
   // 即从后续轮次移除这些工具(模型物理上无法再重试),配合注入指引让模型
@@ -414,6 +446,24 @@ export async function runToolCallLoop(params: {
           if (result.success) docWriteSucceeded++
           // P0 hotfix 2026-09: 写回工具名单(去重)。
           if (!executedWriteToolNames.includes(c.toolName)) executedWriteToolNames.push(c.toolName)
+          // #976 闸门 3 — 写回步骤系统自动推进/失败标注（反编造核心）：
+          // 活跃清单中第一个 pending 且 tool 匹配的步骤,系统在真实执行后
+          // 推进/标失败,模型无法自行声称写回步骤完成。同步 await（一次
+          // DB 查询 ~ms）保证 SSE 与 DB 状态在工具结果事件前一致。
+          try {
+            const planStep = result.success
+              ? await autoAdvanceWriteStep(userId, sessionId, c.toolName)
+              : await markWriteStepFailed(userId, sessionId, c.toolName, (result.error || '').slice(0, 200))
+            if (planStep) {
+              io.send({
+                type: 'plan_updated',
+                plan: planStep as never,
+                kind: result.success ? 'advanced' : 'failed',
+                source: 'system',
+                progress: { done: planStep.steps.filter((s: { status?: string }) => s.status === 'done').length, total: planStep.steps.length },
+              })
+            }
+          } catch { /* 清单联动失败不阻断工具流 */ }
         }
         // #789③/#694: parse the tool output ONCE per result —此前
         // generate_image/search_node/insert_asset/render_chart 各自
@@ -613,21 +663,44 @@ export async function runToolCallLoop(params: {
     // 对照表给其余 7 节编造「实际改动」),同样留痕 + 警示 + 暴露缺口数
     // 供 doc-executor 接力。
     if (sessionId.startsWith('doc-')) {
+      // #972: 活跃任务清单收尾对账 — backlog（pending+failed 步）> 0 且
+      // 收尾命中完成声明 → 警示 + 事件 + 接力材料（替代文本解析启发式）。
+      const activePlan = await loadActivePlan(userId, sessionId).catch(() => null)
+      const backlog = planBacklog(activePlan)
+      planBacklogCount = backlog
+      planPendingText = renderPendingSteps(activePlan)
       const claimedCount = countClaimedEditItems(finalContent)
       // #977: 守卫口径统一为「成功写回」——失败执行不算写回（文档未被
       // 修改的事实依据）。
+      // 分支序：零写回（最严重）→ 清单 backlog → 文本计数部分执行。
       if (docWriteSucceeded === 0 && detectUnbackedEditClaim(finalContent)) {
         await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
           claimedEdit: true,
           docWriteExecuted,
           docWriteSucceeded,
+          ...(backlog > 0 ? { planBacklog: backlog } : {}),
         })
         io.send({
           type: 'context_info',
-          text: '⚠️ 上面的回复声称已完成文档编辑，但本轮未产生任何成功写回，文档未被修改',
+          text: backlog > 0
+            ? `⚠️ 上面的回复声称已完成文档编辑，但本轮无成功写回，且任务清单仍有 ${backlog} 步未完成 — 文档未被修改`
+            : '⚠️ 上面的回复声称已完成文档编辑，但本轮未产生任何成功写回，文档未被修改',
           kind: 'warning',
         })
-        unbackedClaimCount = claimedCount > 0 ? claimedCount : 0
+        unbackedClaimCount = Math.max(claimedCount, backlog)
+      } else if (backlog > 0 && detectUnbackedEditClaim(finalContent)) {
+        await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
+          kind: 'plan_backlog',
+          planId: activePlan?.plan_id,
+          backlog,
+          docWriteSucceeded,
+        })
+        io.send({
+          type: 'context_info',
+          text: `⚠️ 上面的回复声称已完成文档编辑，但任务清单仍有 ${backlog} 步未完成 — 可回复「继续」从剩余步骤接着执行`,
+          kind: 'warning',
+        })
+        unbackedClaimCount = Math.max(unbackedClaimCount, backlog)
       } else if (claimedCount > docWriteSucceeded) {
         await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
           claimedCount,
@@ -660,5 +733,5 @@ export async function runToolCallLoop(params: {
   // 注意:finalContent 为空时不能在这里兜底 — conversation-turn 会走
   // deepseekStream 流式 fallback(511-517 行的 if(finalContent) 分支)。
   // 硬编码兜底文案会截胡流式路径。
-  return { finalContent, messages, executedWriteTools: executedWriteToolNames, unbackedClaimCount, writeAttempts: docWriteExecuted, writeSuccesses: docWriteSucceeded }
+  return { finalContent, messages, executedWriteTools: executedWriteToolNames, unbackedClaimCount, writeAttempts: docWriteExecuted, writeSuccesses: docWriteSucceeded, planBacklogCount, planPendingText }
 }
