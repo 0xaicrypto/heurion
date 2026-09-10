@@ -39,7 +39,7 @@ export function selectionRule(selection: string | null): string {
 
 /** #893: 扩写纪律 — 大纲后同回合写第一节,之后一轮内可批量写回多个章节。
  * #fix 2026-09: 大纲输出后同一回合立即写入第一节 — 严禁停下等确认。 */
-export const EXPANSION_RULE = '扩写/创作纪律:当用户要求扩充/撰写/续写完整正文或一次新增多个章节时,先用一两行列出章节大纲(不调用工具),随后同一回合立即调用 edit_document 写入第一节 — 不要输出大纲后停下等确认;之后一轮内可按序调用多次 edit_document 依次完成多个章节的批量写回(old_text 锚定该章节标题行或相邻既有文字,new_text 为该节完整内容),每完成一处用一行播报进度(如「已完成 1/5:Introduction」),全部完成后注明完成进度(如「已完成 3/5,剩余 2 节」);禁止单轮生成整篇文档,禁止对长文档用 full_text。例外:空文档且无参考材料时,第一节用 full_text 写入(标题+大纲+第一节,总量控制在 full_text 限额内),之后各节用 edit_document 锚定文末末段追加(new_text = 末段原文 + 新章节)。'
+export const EXPANSION_RULE = '扩写/创作纪律:任务含 ≥3 个章节时,先调用 set_task_plan 建清单(每步 tool=edit_document,系统会自动勾选写回步骤),逐项执行;当用户要求扩充/撰写/续写完整正文或一次新增多个章节时,先用一两行列出章节大纲(不调用工具),随后同一回合立即调用 edit_document 写入第一节 — 不要输出大纲后停下等确认;之后一轮内可按序调用多次 edit_document 依次完成多个章节的批量写回(old_text 锚定该章节标题行或相邻既有文字,new_text 为该节完整内容),每完成一处用一行播报进度(如「已完成 1/5:Introduction」),全部完成后注明完成进度(如「已完成 3/5,剩余 2 节」);禁止单轮生成整篇文档,禁止对长文档用 full_text。例外:空文档且无参考材料时,第一节用 full_text 写入(标题+大纲+第一节,总量控制在 full_text 限额内),之后各节用 edit_document 锚定文末末段追加(new_text = 末段原文 + 新章节)。'
 
 /** #fix: 格式规范 — heading 层级语义正确，草稿是人类阅读的。
  * #837: 从「被要求时才整理」改为「写回内容必须自带结构」 — 模型此前
@@ -57,14 +57,14 @@ export const CHART_RULE = '图表/示意图规范:用户要求图表、曲线、
 export const PLAN_RULE = '任务清单纪律:任务可拆解为 ≥3 个独立步骤(多章节填充/多条意见/多阶段)时,先调用 set_task_plan 创建清单并立即开始第一项 — 清单是执行的账本,不是前置确认,严禁停在清单等待确认。写回类步骤(edit_document 等)由系统在工具执行成功后自动勾选,不要手动推进;报告/分析类步骤完成后手动 advance。达到轮次上限时如实播报「已完成 X/N 步,回复继续处理剩余」,严禁给未执行步骤编造改动。1-2 步的简单任务直接执行,禁止建清单。'
 
 /** #976 闸门 2: PLAN_RULE 回合门控 — 多任务信号或已有活跃清单时注入。 */
-export const PLAN_TRIGGER_RE = /全部处理|一直处理|逐节|逐段|逐条|按.{0,6}(章节|部分|阶段)|分多步|任务清单|多个意见|任务列表|分几步/
+export const PLAN_TRIGGER_RE = /全部处理|一直处理|逐节|逐段|逐条|按.{0,6}(章节|部分|阶段)|分多步|任务清单|多个意见|任务列表|分几步|section|chapter|step/i
 export function shouldInjectPlanRule(messageText: string, hasActivePlan: boolean): boolean {
   return hasActivePlan || PLAN_TRIGGER_RE.test(String(messageText || ''))
 }
 
 /** #806: 修订意见处理 — #fix 2026-09:≤2 条直接执行,≥3 条才计划表;
  * 此前"一律先计划表经确认"是模型对直接修改指令打太极的主要源头。 */
-export const REVISION_RULE = '修订意见处理:用户给出 1-2 条明确的修改意见时,直接逐条调用 edit_document 执行,完成后一句话汇报改动 — 不要先输出计划表等待确认。一次给出 ≥3 条编号意见/审稿意见时,可先输出「意见→修改点」计划表经确认后逐条执行;但用户表示「直接改」「不用确认」或指令语气明确时,跳过计划立即执行。一轮内可按序调用多次 edit_document 依次完成多条意见的批量写回,每完成一处播报「意见 N/共 M 已落实」,全部完成后输出修订对照表(原意见×实际改动×所在章节)。修回(response letter)场景:对照表后追加给审稿人的正式回复信草稿(意见→回复→改动位置)。'
+export const REVISION_RULE = '修订意见处理:意见 ≥3 条时先调用 set_task_plan 建清单(每步一条意见,系统自动勾选写回步骤),逐项执行;用户给出 1-2 条明确的修改意见时,直接逐条调用 edit_document 执行,完成后一句话汇报改动 — 不要先输出计划表等待确认。一次给出 ≥3 条编号意见/审稿意见时,可先输出「意见→修改点」计划表经确认后逐条执行;但用户表示「直接改」「不用确认」或指令语气明确时,跳过计划立即执行。一轮内可按序调用多次 edit_document 依次完成多条意见的批量写回,每完成一处播报「意见 N/共 M 已落实」,全部完成后输出修订对照表(原意见×实际改动×所在章节)。修回(response letter)场景:对照表后追加给审稿人的正式回复信草稿(意见→回复→改动位置)。'
 
 /** #807: 引用纪律 — References 零编造。#836: 允许检索源扩展至 PubMed+Crossref。 */
 export const CITATION_RULE = '引用纪律:新增/修改 References 或正文内引用时,必须先用 search_citation 检索真实文献(PubMed 优先,无命中自动补 Crossref — 覆盖 preprint 与非 MEDLINE 期刊),只允许引用检索命中的文献(保留 PMID/DOI 便于核对);检索无命中或工具失败时如实告知用户,严禁编造任何 PMID/DOI/作者/年份。'
