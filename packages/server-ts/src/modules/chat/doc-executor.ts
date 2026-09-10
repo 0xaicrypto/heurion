@@ -33,17 +33,22 @@ export const DOC_EDIT_INTENT_RE = /修改|编辑|删除|插入|整理|润色|重
  * 执行器触发判据(纯函数,可单测):
  *   scene 为 doc 会话(sid 前缀 doc-)
  *   && 用户消息命中编辑意图正则
- *   && tool-loop 结果 executedWriteTools 为空(本轮零写回)。
- * 非 doc 会话 / 非编辑意图轮次 / 已有写回 → 一律不触发(零行为回归)。
+ *   && (tool-loop 结果 executedWriteTools 为空(本轮零写回)
+ *       || unbackedClaimCount > 实际写回数(部分执行 — #967:回复对照表
+ *          声称完成 N 项但仅写回 K 项,剩余条目用精简上下文接力))。
+ * 非 doc 会话 / 非编辑意图轮次 → 一律不触发(零行为回归)。
  */
 export function shouldRunDocExecutor(input: {
   sessionId: string
   userText: string
   executedWriteTools: string[]
+  /** #967: tool-loop 部分对账缺口(claimed 数),缺省 0(对账一致)。 */
+  unbackedClaimCount?: number
 }): boolean {
   return input.sessionId.startsWith('doc-')
-    && input.executedWriteTools.length === 0
     && DOC_EDIT_INTENT_RE.test(input.userText)
+    && (input.executedWriteTools.length === 0
+      || (input.unbackedClaimCount ?? 0) > input.executedWriteTools.length)
 }
 
 /** 执行器后仍零写回的诚实告知(#892 语义延伸)。 */
@@ -66,6 +71,8 @@ export interface DocExecutorParams {
   tools: ToolDefinition[]
   /** 模型覆盖(视觉模型自适应,与主回路一致)。 */
   model?: string
+  /** #967: 部分执行接力 — >0 时既定方案加「已写入条目跳过」纪律。 */
+  unbackedClaimCount?: number
 }
 
 /**
@@ -93,6 +100,9 @@ export async function runDocExecutorFallback(
   if (writeTools.length === 0) return empty
 
   // 精简消息:[system: 执行器规则, user: 文档全文+任务+方案]。不含历史。
+  // #967: 部分执行接力 — 上轮已写回部分条目,既定方案前置「已写入跳过」
+  // 纪律(执行器对照文档全文现状,严禁重复写回产生重复内容)。
+  const partialRescue = (params.unbackedClaimCount ?? 0) > 0
   const body = fitTextToTokens(String(doc.body || ''), CONTEXT_CONFIG.scene.docBodyTokens)
   const executorMessages: Array<{ role: 'system' | 'user'; content: string }> = [
     { role: 'system', content: EXECUTOR_RULE },
@@ -105,6 +115,9 @@ export async function runDocExecutorFallback(
         userText,
         '\n\n## 既定方案（逐项用工具执行）\n',
         planText.trim() || '(无既定方案 — 直接按用户任务执行)',
+        partialRescue
+          ? '\n\n【接力纪律】上一回合仅写回了部分条目。对照既定方案与「当前文档全文」现状：内容已存在于文档中的条目一律跳过（重复写回会产生重复内容）；只执行仍未写入的条目，逐项调用 edit_document。'
+          : '',
       ].join('\n'),
     },
   ]

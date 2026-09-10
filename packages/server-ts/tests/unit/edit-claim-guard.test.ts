@@ -1,6 +1,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { runToolCallLoop, type TurnIO } from '../../src/modules/chat/tool-loop.js'
+import { countClaimedEditItems } from '../../src/modules/chat/writing-prompts.js'
 import { ToolRegistry } from '../../src/tools/tool-registry.js'
 import { BaseTool, type ToolResult } from '../../src/tools/base-tool.js'
 import type { ChatStreamChunk } from '@heurion/contracts'
@@ -195,5 +196,103 @@ describe('#893 轮次上限提示', () => {
     })
 
     expect(chunks.some((c) => c.type === 'context_info' && String((c as any).text).includes('轮次已达上限'))).toBe(false)
+  })
+})
+
+describe('#967 部分执行对账 — countClaimedEditItems(纯函数)', () => {
+  test('对照表行数计条数(表头/分隔行排除)', () => {
+    const reply = [
+      '| 原意见（Sections 清单） | 实际改动 | 所在章节 |',
+      '|---|---|---|',
+      '| Title page | 已有，未改动 | 文首 |',
+      '| Introduction | 新增：EGFR-TKI 标准治疗 → 免疫 | Introduction |',
+      '| Patients and methods | 新增：设计与患者 | Patients and methods |',
+      '| Results | 新增：患者特征 | Results |',
+      '| Discussion | 新增：主要发现 | Discussion |',
+    ].join('\n')
+    expect(countClaimedEditItems(reply)).toBe(5)
+  })
+
+  test('进度话术「已完成 X/Y」取最大 claimed', () => {
+    expect(countClaimedEditItems('已完成 3/5：PFS、OS、安全性；剩余 2 节')).toBe(3)
+    expect(countClaimedEditItems('意见 2/共 5 已落实')).toBe(2)
+  })
+
+  test('诚实单条进度(已完成 1/5)不虚报', () => {
+    expect(countClaimedEditItems('已完成 1/5：Introduction')).toBe(1)
+  })
+
+  test('无声明内容 → 0', () => {
+    expect(countClaimedEditItems('这是一段普通的说明文字。')).toBe(0)
+  })
+
+  test('tool-loop 守卫:声称 6 处但仅写回 1 处 → partial 警示 + 事件 + unbackedClaimCount 透出', async () => {
+    const ctx = makeCtx('doc-doc9')
+    const registry = new ToolRegistry(ctx)
+    const probe = new ProbeTool(() => Promise.resolve({ success: true, output: '{"body":"x","summary":"已写入 Introduction"}' }))
+    Object.defineProperty(probe, 'name', { value: 'edit_document' })
+    registry.register(probe)
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"Introduction 段落","new_text":"Introduction 新内容"}}'))
+      .mockResolvedValueOnce([
+        '| 原意见（Sections 清单） | 实际改动 | 所在章节 |',
+        '|---|---|---|',
+        '| Introduction | 新增：A | Introduction |',
+        '| Patients and methods | 新增：设计与患者 | Methods |',
+        '| Results | 新增：患者特征 | Results |',
+        '| Discussion | 新增：主要发现 | Discussion |',
+      ].join('\n'))
+
+    const { io, chunks } = makeIO()
+    const result = await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '按 section 逐节填充内容' }],
+      toolRegistry: registry,
+      tools: [],
+      apiKey: 'k',
+      io,
+      ctx,
+      userId: 'user_1',
+      sessionId: 'doc-doc9',
+    })
+
+    expect(result.executedWriteTools).toEqual(['edit_document'])
+    expect(result.unbackedClaimCount).toBe(4)
+
+    const events = ctx.eventLog.append.mock.calls.map((c: any[]) => c[0])
+    const partial = events.filter((e: any) => e.eventType === 'edit_claim_unbacked')
+    expect(partial).toHaveLength(1)
+    expect(partial[0].metadata).toMatchObject({ claimedCount: 4, docWriteExecuted: 1, kind: 'partial' })
+
+    const infos = chunks.filter((c) => c.type === 'context_info')
+    expect(infos.some((c) => String((c as any).text).includes('实际写回 1 处'))).toBe(true)
+  })
+
+  test('对账一致(声称 1 写回 1)→ 不触发 partial 警示', async () => {
+    const ctx = makeCtx('doc-doc10')
+    const registry = new ToolRegistry(ctx)
+    const probe = new ProbeTool(() => Promise.resolve({ success: true, output: '{"body":"x","summary":"已写入"}' }))
+    Object.defineProperty(probe, 'name', { value: 'edit_document' })
+    registry.register(probe)
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"a","new_text":"b"}}'))
+      .mockResolvedValueOnce('已完成 1/5：Introduction 写入完成。回复「继续」处理下一节。')
+
+    const { io } = makeIO()
+    const result = await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '逐节填充' }],
+      toolRegistry: registry,
+      tools: [],
+      apiKey: 'k',
+      io,
+      ctx,
+      userId: 'user_1',
+      sessionId: 'doc-doc10',
+    })
+
+    expect(result.unbackedClaimCount).toBe(0)
+    const events = ctx.eventLog.append.mock.calls.map((c: any[]) => c[0])
+    expect(events.some((e: any) => e.eventType === 'edit_claim_unbacked')).toBe(false)
   })
 })

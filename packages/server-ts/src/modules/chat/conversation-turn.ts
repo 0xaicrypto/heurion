@@ -693,7 +693,14 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // 汇报文本;执行器后仍零写回 → 兜底内部已诚实告知 + edit_claim_unbacked
   // 留痕,finalContent 保持原样(避免把真实产出换成空串)。非 doc 会话 /
   // 非编辑意图 / 已有写回 → 不触发,行为与既有完全一致。
-  if (shouldRunDocExecutor({ sessionId: sid, userText: body.text, executedWriteTools: loopResult.executedWriteTools })) {
+  // #967: 部分执行接力 — 主回路「声称 N 项但仅写回 K 项」(对照表编造
+  // 未执行条目的实际改动)时同样触发执行器,既定方案前置跳过已写入纪律。
+  if (shouldRunDocExecutor({
+    sessionId: sid,
+    userText: body.text,
+    executedWriteTools: loopResult.executedWriteTools,
+    unbackedClaimCount: loopResult.unbackedClaimCount,
+  })) {
     const rescue = await runDocExecutorFallback({
       userId,
       sessionId: sid,
@@ -705,6 +712,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       toolRegistry,
       tools,
       model: visionModel,
+      unbackedClaimCount: loopResult.unbackedClaimCount,
     })
     if (rescue.executedWriteTools.length > 0) {
       finalContent = rescue.finalContent || finalContent

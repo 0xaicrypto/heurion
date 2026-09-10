@@ -23,7 +23,7 @@ import { deckWireSchema } from '@heurion/contracts'
 // #892: 声明-执行对账 — 判定纯函数外置 writing-prompts(可单测)。
 // P0 hotfix 2026-09: 原对话内纠偏重试已移除(毒上下文里重试无效),
 // 重试职责移交 doc-executor;tool-loop 只负责留痕与警示。
-import { detectUnbackedEditClaim } from './writing-prompts.js'
+import { detectUnbackedEditClaim, countClaimedEditItems } from './writing-prompts.js'
 
 const log = makeLogger('chat.tool-loop')
 
@@ -182,6 +182,9 @@ export async function runToolCallLoop(params: {
   /** P0 hotfix 2026-09: 本轮实际执行过的 DOC_WRITE_TOOLS 名单(去重) —
    *  doc-executor 兜底触发判据之一(零写回 + 编辑意图 → 精简重试)。 */
   executedWriteTools: string[]
+  /** #967: 部分执行对账缺口 — 回复声称完成条目数 > 实际写回数时的
+   *  claimed 数(=0 表示对账一致),doc-executor 依此触发部分接力重试。 */
+  unbackedClaimCount: number
 }> {
   const { currentMessages, toolRegistry, io, ctx, userId, sessionId } = params
   // #fix 2026-09: 缺省走 resolveActiveModel()(admin 覆盖 → env → legacy) —
@@ -247,6 +250,8 @@ export async function runToolCallLoop(params: {
   // while 自然结束(轮次耗尽)保持 true;break 出口(模型主动收尾/空回复/
   // 守卫后续 break)置 false。
   let exitedByRoundCap = true
+  // #967: 部分执行对账缺口 — 守卫检出「声称 > 实际写回」时记录 claimed 数。
+  let unbackedClaimCount = 0
 
   // #835: 尽最大努力检索(best-effort retrieval) — 检索工具连续失败 ≥2 次
   // 即从后续轮次移除这些工具(模型物理上无法再重试),配合注入指引让模型
@@ -594,20 +599,36 @@ export async function runToolCallLoop(params: {
     // 仍跑在同一份 27k+ 毒上下文里,实测无效(模型继续输出计划文本);
     // 重试职责移交 doc-executor(精简上下文 + 仅写回工具面重跑,见
     // conversation-turn 的接线)。此处只留痕,不动 finalContent。
-    if (
-      sessionId.startsWith('doc-')
-      && docWriteExecuted === 0
-      && detectUnbackedEditClaim(finalContent)
-    ) {
-      await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
-        claimedEdit: true,
-        docWriteExecuted,
-      })
-      io.send({
-        type: 'context_info',
-        text: '⚠️ 上面的回复声称已完成文档编辑，但本轮未产生任何写回工具调用，文档未被修改',
-        kind: 'warning',
-      })
+    // #967: 部分执行对账 — 写回次数 ≥1 但回复(对照表/进度话术)声称完成
+    // 的条目数超过实际写回数(生产实例:长文档逐段协议下只写了第 1 节,
+    // 对照表给其余 7 节编造「实际改动」),同样留痕 + 警示 + 暴露缺口数
+    // 供 doc-executor 接力。
+    if (sessionId.startsWith('doc-')) {
+      const claimedCount = countClaimedEditItems(finalContent)
+      if (docWriteExecuted === 0 && detectUnbackedEditClaim(finalContent)) {
+        await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
+          claimedEdit: true,
+          docWriteExecuted,
+        })
+        io.send({
+          type: 'context_info',
+          text: '⚠️ 上面的回复声称已完成文档编辑，但本轮未产生任何写回工具调用，文档未被修改',
+          kind: 'warning',
+        })
+        unbackedClaimCount = claimedCount > 0 ? claimedCount : 0
+      } else if (claimedCount > docWriteExecuted) {
+        await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
+          claimedCount,
+          docWriteExecuted,
+          kind: 'partial',
+        })
+        io.send({
+          type: 'context_info',
+          text: `⚠️ 上面的回复声称已完成 ${claimedCount} 处编辑，但本轮实际写回 ${docWriteExecuted} 处 — 其余条目未写入文档。可回复「继续」让 AI 执行剩余部分`,
+          kind: 'warning',
+        })
+        unbackedClaimCount = claimedCount
+      }
     }
 
     exitedByRoundCap = false
@@ -627,5 +648,5 @@ export async function runToolCallLoop(params: {
   // 注意:finalContent 为空时不能在这里兜底 — conversation-turn 会走
   // deepseekStream 流式 fallback(511-517 行的 if(finalContent) 分支)。
   // 硬编码兜底文案会截胡流式路径。
-  return { finalContent, messages, executedWriteTools: executedWriteToolNames }
+  return { finalContent, messages, executedWriteTools: executedWriteToolNames, unbackedClaimCount }
 }

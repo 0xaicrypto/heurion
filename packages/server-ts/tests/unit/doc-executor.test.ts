@@ -98,9 +98,22 @@ describe('shouldRunDocExecutor 触发条件', () => {
   test.each([
     ['非 doc 会话', { sessionId: 'session_x1', userText: USER_TASK, executedWriteTools: [] as string[] }],
     ['非编辑意图', { sessionId: VALID_SESSION, userText: '谢谢，请总结一下文档主旨', executedWriteTools: [] as string[] }],
-    ['已有写回', { sessionId: VALID_SESSION, userText: USER_TASK, executedWriteTools: ['edit_document'] }],
+    ['已有写回且对账一致', { sessionId: VALID_SESSION, userText: USER_TASK, executedWriteTools: ['edit_document'], unbackedClaimCount: 0 }],
+    ['已有写回且缺口小于等于写回数', { sessionId: VALID_SESSION, userText: USER_TASK, executedWriteTools: ['edit_document'], unbackedClaimCount: 1 }],
   ])('%s → 不触发', (_name, input) => {
     expect(shouldRunDocExecutor(input)).toBe(false)
+  })
+
+  test('#967 部分执行:声称 7 项但仅写回 1 项 → 触发接力', () => {
+    expect(shouldRunDocExecutor({
+      sessionId: VALID_SESSION, userText: USER_TASK, executedWriteTools: ['edit_document'], unbackedClaimCount: 7,
+    })).toBe(true)
+  })
+
+  test('#967 部分执行:缺口 0(已全部兑现)→ 不触发', () => {
+    expect(shouldRunDocExecutor({
+      sessionId: VALID_SESSION, userText: USER_TASK, executedWriteTools: ['edit_document', 'edit_document'], unbackedClaimCount: 2,
+    })).toBe(false)
   })
 
   test('编辑意图正则覆盖中英关键词', () => {
