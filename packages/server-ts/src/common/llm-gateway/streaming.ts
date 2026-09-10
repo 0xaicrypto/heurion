@@ -86,6 +86,12 @@ export async function chatWithToolsStreamImpl(
   let completionChars = 0
   let ttfbLogged = false
   let currentToolIdx: number | null = null
+  // #979 诊断计数器
+  let toolDeltaCount = 0
+  let noIndexCount = 0
+  let noIdCount = 0
+  let argFragCount = 0
+  let argFragChars = 0
   const toolAcc = new Map<number, { id?: string; name: string; arguments: string }>()
 
   try {
@@ -119,6 +125,11 @@ export async function chatWithToolsStreamImpl(
           if (delta?.reasoning_content) onReasoning?.(delta.reasoning_content)
           if (delta?.content) { text += delta.content; completionChars += delta.content.length }
           for (const tc of delta?.tool_calls ?? []) {
+            // #979 诊断:增量形态统计（定位空参丢失层）
+            toolDeltaCount++
+            if (typeof tc.index !== 'number') noIndexCount++
+            if (!tc.id) noIdCount++
+            if (tc.function?.arguments) { argFragCount++; argFragChars += String(tc.function.arguments).length }
             // #979 — OpenAI 语义的 index 归属修复：GLM 经 opencode 中转的
             // delta.tool_calls 不带 index（生产实证），此前「无 index 一律
             // toolAcc.size」把每个 arguments 增量都开成新条目 → 构建块时
@@ -154,6 +165,11 @@ export async function chatWithToolsStreamImpl(
     await recordUsage(model, options, approximateTokensFromChars(promptChars(messages)), approximateTokensFromChars(completionChars))
   }
 
+  // #979 诊断:增量形态摘要 — 一行定位「参数在哪层丢失」
+  if (toolDeltaCount > 0) {
+    const entries = [...toolAcc.values()].map((e) => ({ name: e.name || '(无名)', id: e.id || '-', argsLen: e.arguments.length, preview: e.arguments.slice(0, 120) }))
+    log.info(`[LLM] tools-stream tool_calls shape: deltas=${toolDeltaCount} noIndex=${noIndexCount} noId=${noIdCount} argFrags=${argFragCount}(${argFragChars}B) entries=${JSON.stringify(entries)}`)
+  }
   const parsedToolCalls: Array<{ name: string; arguments: string }> = []
   // #fix 2026-09-09: 只要流里累积到了工具调用就转换 — 此前要求
   // finish_reason==='tool_calls',而 GLM 经 opencode 中转站发

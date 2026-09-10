@@ -375,6 +375,14 @@ export async function runToolCallLoop(params: {
         }
         const toolName = String(toolCall.name || toolCall.tool || '')
         const toolArgs = (toolCall.arguments || toolCall.args || {}) as Record<string, unknown>
+        // #979 诊断:空参工具调用 — 记录到达 tool-loop 的原始块文本,
+        // 二分「网关装配层丢参」vs「模型/中转产出即空」。
+        if (
+          (DOC_WRITE_TOOLS.has(toolName) || toolName === 'set_task_plan')
+          && Object.keys(toolArgs).length === 0
+        ) {
+          log.warn(`[tool-loop] empty-args tool call — raw block: ${block.slice(0, 300)}`)
+        }
         plan.push({
           kind: 'call',
           call: { toolName, toolArgs, seq: ++toolSeq, argsPreview: String(JSON.stringify(toolArgs) || '').slice(0, 300), startedAt: Date.now() },
