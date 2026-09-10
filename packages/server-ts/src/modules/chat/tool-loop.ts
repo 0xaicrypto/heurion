@@ -495,6 +495,16 @@ export async function runToolCallLoop(params: {
           ? parseLlmJson<Record<string, unknown>>(result.output)
           : null
 
+        // #976 账本纪律执行化 — create 成功后立即注入强指令：下一轮必须
+        // 真实调用第一个写回工具（防「建完清单停下等确认」——#806 打太极
+        // 在清单流程里的复发形态，用户生产实例 2026-09-10）。
+        if (c.toolName === 'set_task_plan' && result.success && parsedOutput?.plan && String(parsedOutput?.kind) === 'created') {
+          messages.push({
+            role: 'user',
+            content: '【系统】任务清单已建立。现在立即调用第一个写回工具（edit_document）执行第 1 步 — 不要输出任何确认/计划文本，直接干活；写回步骤由系统自动勾选。',
+          })
+        }
+
         // #350: sub-agent done — 成败都要发(cost 仅成功时有值)。
         if (isSubagent(c.toolName)) {
           const cost = parsedOutput ? Number(parsedOutput.cost_tokens) || 0 : 0
@@ -700,7 +710,23 @@ export async function runToolCallLoop(params: {
       // #977: 守卫口径统一为「成功写回」——失败执行不算写回（文档未被
       // 修改的事实依据）。
       // 分支序：零写回（最严重）→ 清单 backlog → 文本计数部分执行。
-      if (docWriteSucceeded === 0 && detectUnbackedEditClaim(finalContent)) {
+      // #976 补丁：backlog > 0 且零成功写回 → 无条件警示（建了清单没执行的
+      // 空转形态——收尾文本是「回复开始」类等待确认话术，不命中声明词）。
+      if (docWriteSucceeded === 0 && backlog > 0 && !detectUnbackedEditClaim(finalContent)) {
+        await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
+          kind: 'plan_backlog',
+          planId: activePlan?.plan_id,
+          backlog,
+          docWriteSucceeded,
+          note: 'plan created but no write executed this turn',
+        })
+        io.send({
+          type: 'context_info',
+          text: `⚠️ 任务清单已建立但本轮尚未执行任何写回（${backlog} 步待办）— 可回复「开始」或「继续」让 AI 接力执行`,
+          kind: 'warning',
+        })
+        unbackedClaimCount = Math.max(unbackedClaimCount, backlog)
+      } else if (docWriteSucceeded === 0 && detectUnbackedEditClaim(finalContent)) {
         await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
           claimedEdit: true,
           docWriteExecuted,

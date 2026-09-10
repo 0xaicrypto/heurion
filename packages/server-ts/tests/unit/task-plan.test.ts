@@ -34,6 +34,14 @@ const makeCtx = (sessionId: string): any => ({
   knowledge: { all: () => [] },
 })
 
+class ProbeTool extends BaseTool {
+  constructor(private run: () => Promise<ToolResult>) { super() }
+  get name(): string { return 'probe' }
+  get description(): string { return 'probe' }
+  get parameters(): Record<string, unknown> { return { type: 'object', properties: {} } }
+  async execute(): Promise<ToolResult> { return this.run() }
+}
+
 class WriteTool extends BaseTool {
   constructor(private fail: boolean) { super() }
   get name(): string { return 'edit_document' }
@@ -359,5 +367,45 @@ describe('#979 意图推断 — 无 action 字段时从参数推断', () => {
     expect(r.success).toBe(true)
     const { plan } = JSON.parse(r.output as string)
     expect(plan.steps[1].status).toBe('done')
+  })
+})
+describe('#976 收尾空转守卫 + 开始接力（重试回合生产实例）', () => {
+  test('backlog > 0 且本轮零写回（收尾是等待确认话术）→ 无条件警示', async () => {
+    const sid = UNIQUE()
+    await ensureUser('user_plan10')
+    const setup = new SetTaskPlanTool({ userId: 'user_plan10', sessionId: sid })
+    await setup.execute({ action: 'create', title: 'T', steps: [
+      { title: '写第一节', tool: 'edit_document' },
+      { title: '写第二节', tool: 'edit_document' },
+      { title: '写第三节', tool: 'edit_document' },
+    ] })
+
+    const ctx = makeCtx(sid)
+    const registry = new ToolRegistry(ctx)
+    // 只读工具（模拟模型建完清单后输出了读操作而非写回）
+    const readProbe = new ProbeTool(() => Promise.resolve({ success: true, output: '{"hits":[]}' }))
+    Object.defineProperty(readProbe, 'name', { value: 'search_past_chats' })
+    registry.register(readProbe)
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"search_past_chats","arguments":{}}'))
+      .mockResolvedValueOnce('清单已建立，回复「开始」我就逐项真实写回。')
+
+    const { io, chunks } = makeIO()
+    const result = await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '开始' }],
+      toolRegistry: registry, tools: [], apiKey: 'k', io, ctx,
+      userId: 'user_plan10', sessionId: sid,
+    })
+
+    expect(result.planBacklogCount).toBe(3)
+    expect(result.unbackedClaimCount).toBe(3)
+    const infos = chunks.filter((c) => c.type === 'context_info')
+    expect(infos.some((c) => String((c as any).text).includes('尚未执行任何写回'))).toBe(true)
+  })
+
+  test('PLAN_RELAY_RE 认「开始」（确认信号）', () => {
+    expect(PLAN_RELAY_RE.test('开始')).toBe(true)
+    expect(PLAN_RELAY_RE.test('开始吧')).toBe(true)
   })
 })

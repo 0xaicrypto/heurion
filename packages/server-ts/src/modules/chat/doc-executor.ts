@@ -43,7 +43,7 @@ export const DOC_EDIT_INTENT_RE = /修改|编辑|删除|插入|整理|润色|重
  * 非 doc 会话 / 非编辑意图轮次 → 一律不触发(零行为回归)。
  */
 /** #973: 接力触发词 — 继续/接着/下一步/重试第 K 步（清单接力语义）。 */
-export const PLAN_RELAY_RE = /继续|接着|下一步|重试第?\s*\d*\s*步/
+export const PLAN_RELAY_RE = /继续|接着|下一步|重试第?\s*\d*\s*步|^开始|开始吧|按此计划|^go\b/i
 
 export function shouldRunDocExecutor(input: {
   sessionId: string
