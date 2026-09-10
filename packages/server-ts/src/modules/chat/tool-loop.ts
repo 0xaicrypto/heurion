@@ -291,7 +291,8 @@ export async function runToolCallLoop(params: {
   // #972: 活跃清单收尾对账 — backlog > 0 且收尾声称完成时警示并透出接力材料。
   let planBacklogCount = 0
   let planPendingText = ''
-  void planBacklog
+  // #978: 写回连败早退标志（finishCall 内置位,walker 检查后 break）。
+  let writeFailStreakExit = false
 
   // #835: 尽最大努力检索(best-effort retrieval) — 检索工具连续失败 ≥2 次
   // 即从后续轮次移除这些工具(模型物理上无法再重试),配合注入指引让模型
@@ -464,6 +465,18 @@ export async function runToolCallLoop(params: {
               })
             }
           } catch { /* 清单联动失败不阻断工具流 */ }
+          // #978: 写回连败早退 — doc- 会话写回尝试 ≥2 且成功 0 时,毒上下文
+          // 内的继续重试已被证伪(#892/doom-loop 拦截后模型仍空参连发),
+          // 立即结束循环,转入 doc-executor 精简兜底（连败直通条件接手）。
+          if (sessionId.startsWith('doc-') && docWriteSucceeded === 0 && docWriteExecuted - docWriteSucceeded >= 2) {
+            io.send({
+              type: 'context_info',
+              text: '写回连续失败 — 转入精简上下文自动重试',
+              kind: 'warning',
+            })
+            exitedByRoundCap = false
+            writeFailStreakExit = true
+          }
         }
         // #789③/#694: parse the tool output ONCE per result —此前
         // generate_image/search_node/insert_asset/render_chart 各自
@@ -640,6 +653,12 @@ export async function runToolCallLoop(params: {
         }
         executedAny = true
         i = j
+      }
+      // #978: 写回连败早退 — finishCall 内置位,直接结束轮次循环
+      // （walker 的 break 只出计划遍历;这里出轮次循环转 doc-executor 兜底）。
+      if (writeFailStreakExit) {
+        exitedByRoundCap = false
+        break
       }
       if (executedAny) {
         anyToolExecuted = true

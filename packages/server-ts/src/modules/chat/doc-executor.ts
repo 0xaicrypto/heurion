@@ -27,7 +27,8 @@ const log = makeLogger('chat.doc-executor')
 
 /** P0 hotfix: 编辑意图判据 — 用户消息命中即视为"要求动文档"(不区分
  *  语言;大小写不敏感)。 */
-export const DOC_EDIT_INTENT_RE = /修改|编辑|删除|插入|整理|润色|重写|重构|调整|扩写|续写|执行|落实|落盘|改好|restructur|reorgan|edit|polish|revise/i
+// #977 复盘:填充/补全/完善/改写/重试是写作高频词,此前漏配导致重试回合连败直通被意图闸门挡住。
+export const DOC_EDIT_INTENT_RE = /修改|编辑|删除|插入|整理|润色|重写|重构|调整|扩写|续写|执行|落实|落盘|改好|填充|补全|补充|完善|改写|重试|restructur|reorgan|edit|polish|revise|retry/i
 
 /**
  * 执行器触发判据(纯函数,可单测):
@@ -65,12 +66,13 @@ export function shouldRunDocExecutor(input: {
     // 清单接力：有 pending 步 + 用户「继续」语义（不需要命中编辑意图）
     return (input.planBacklogCount ?? 0) > 0 && (input.relayIntent ?? false)
   }
-  if (DOC_EDIT_INTENT_RE.test(input.userText)) {
-    if ((input.unbackedClaimCount ?? 0) > input.executedWriteTools.length) return true
-    const attempts = input.writeAttempts ?? input.executedWriteTools.length
-    const successes = input.writeSuccesses ?? input.executedWriteTools.length
-    if (attempts >= 2 && successes === 0) return true
-  }
+  if ((input.unbackedClaimCount ?? 0) > input.executedWriteTools.length) return true
+  // #977/#978: 连败直通不再要求编辑意图 — 生产实例:重试按钮重发的原文
+  // 未必命中意图词(填充/补全),doc- 会话内写回尝试 ≥2 且成功 0 本身就是
+  // 兜底的充分条件(写回全失败,毒上下文内自愈已被证伪)。
+  const attempts = input.writeAttempts ?? input.executedWriteTools.length
+  const successes = input.writeSuccesses ?? input.executedWriteTools.length
+  if (attempts >= 2 && successes === 0) return true
   // #976: 清单 pending + 用户继续/重试语义 → 接力（不受编辑意图正则约束）。
   return (input.planBacklogCount ?? 0) > 0 && (input.relayIntent ?? false)
 }

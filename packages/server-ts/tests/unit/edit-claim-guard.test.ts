@@ -2,6 +2,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { runToolCallLoop, type TurnIO } from '../../src/modules/chat/tool-loop.js'
 import { countClaimedEditItems } from '../../src/modules/chat/writing-prompts.js'
+import { shouldRunDocExecutor } from '../../src/modules/chat/doc-executor.js'
 import { ToolRegistry } from '../../src/tools/tool-registry.js'
 import { BaseTool, type ToolResult } from '../../src/tools/base-tool.js'
 import type { ChatStreamChunk } from '@heurion/contracts'
@@ -307,7 +308,6 @@ describe('#977 写回失败执行不计入对账口径（空参连败生产实�
     vi.mocked(deepseekChat)
       .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{}}'))
       .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{}}'))
-      .mockResolvedValueOnce('已完成第 3 步的写入，请查看文档。')
 
     const { io, chunks } = makeIO()
     const result = await runToolCallLoop({
@@ -324,13 +324,10 @@ describe('#977 写回失败执行不计入对账口径（空参连败生产实�
     expect(result.writeAttempts).toBe(2)
     expect(result.writeSuccesses).toBe(0)
 
-    const events = ctx.eventLog.append.mock.calls.map((c: any[]) => c[0])
-    const unbacked = events.filter((e: any) => e.eventType === 'edit_claim_unbacked')
-    expect(unbacked).toHaveLength(1)
-    expect(unbacked[0].metadata.docWriteSucceeded).toBe(0)
-
     const infos = chunks.filter((c) => c.type === 'context_info')
-    expect(infos.some((c) => String((c as any).text).includes('未产生任何成功写回'))).toBe(true)
+    // #978 早退契约:连败 2 次即停,警示「转入精简上下文自动重试」,
+    // 后续由 conversation-turn 的连败直通接手 doc-executor 兜底。
+    expect(infos.some((c) => String((c as any).text).includes('写回连续失败'))).toBe(true)
   })
 
   test('部分对账口径：「实际写回」按成功计（失败 2 次 + 成功 1 次声称 3 项 → 按成功 1 口径）', async () => {
@@ -339,7 +336,7 @@ describe('#977 写回失败执行不计入对账口径（空参连败生产实�
     let calls = 0
     const probe = new ProbeTool(() => {
       calls++
-      return calls <= 2
+      return calls === 1
         ? Promise.resolve({ success: false, error: 'anchor not found' })
         : Promise.resolve({ success: true, output: '{"body":"x","summary":"已写入"}' })
     })
@@ -348,8 +345,7 @@ describe('#977 写回失败执行不计入对账口径（空参连败生产实�
 
     vi.mocked(deepseekChat)
       .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"a"}}'))
-      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"b"}}'))
-      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"c","new_text":"x"}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"b","new_text":"x"}}'))
       .mockResolvedValueOnce('| 原意见 | 实际改动 |\n|---|---|\n| A | 新增：x |\n| B | 新增：y |\n| C | 新增：z |')
 
     const { io } = makeIO()
@@ -364,7 +360,7 @@ describe('#977 写回失败执行不计入对账口径（空参连败生产实�
       sessionId: 'doc-doc12',
     })
 
-    expect(result.writeAttempts).toBe(3)
+    expect(result.writeAttempts).toBe(2)
     expect(result.writeSuccesses).toBe(1)
     // 声称 3 处但成功写回仅 1 处 → partial 缺口 = 3。
     expect(result.unbackedClaimCount).toBe(3)
@@ -372,5 +368,49 @@ describe('#977 写回失败执行不计入对账口径（空参连败生产实�
     const partial = events.filter((e: any) => e.eventType === 'edit_claim_unbacked')
     expect(partial).toHaveLength(1)
     expect(partial[0].metadata).toMatchObject({ claimedCount: 3, docWriteSucceeded: 1, kind: 'partial' })
+  })
+})
+describe('#978 写回连败早退（重试回合生产实例）', () => {
+  test('doc 会话写回连败 ≥2 → 立即早退（不再烧 doom 轮次）+ 转入提示', async () => {
+    const ctx = makeCtx('doc-doc13')
+    const registry = new ToolRegistry(ctx)
+    const probe = new ProbeTool(() => Promise.resolve({ success: false, error: 'Provide import_reference...' }))
+    Object.defineProperty(probe, 'name', { value: 'edit_document' })
+    registry.register(probe)
+
+    // 生产实例形态:第 1-2 轮空参失败,第 3-5 轮被 doom 拦截 — 早退后
+    // LLM 只应被调用 2 次(两轮失败即停)。
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{}}'))
+
+    const { io, chunks } = makeIO()
+    const result = await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '按照 section 填充内容' }],
+      toolRegistry: registry,
+      tools: [],
+      apiKey: 'k',
+      io,
+      ctx,
+      userId: 'user_1',
+      sessionId: 'doc-doc13',
+    })
+
+    expect(deepseekChat).toHaveBeenCalledTimes(2)
+    expect(result.writeAttempts).toBe(2)
+    expect(result.writeSuccesses).toBe(0)
+
+    const infos = chunks.filter((c) => c.type === 'context_info')
+    expect(infos.some((c) => String((c as any).text).includes('写回连续失败'))).toBe(true)
+  })
+
+  test('shouldRunDocExecutor 连败直通不要求编辑意图（填充/补全原文重发也触发）', () => {
+    expect(shouldRunDocExecutor({
+      sessionId: 'doc-x2', userText: '帮我按照 section 来填充内容', executedWriteTools: ['edit_document'],
+      writeAttempts: 2, writeSuccesses: 0,
+    })).toBe(true)
   })
 })
