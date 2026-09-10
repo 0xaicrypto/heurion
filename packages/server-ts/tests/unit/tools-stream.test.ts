@@ -176,3 +176,37 @@ describe('#979 — index 缺失的 delta 归属（GLM/opencode 中转生产形�
     expect(JSON.parse(r.toolCalls![1].arguments)).toEqual({ old_text: 'b' })
   })
 })
+describe('#979 流式退化检测 — argsFrags=0 → 非流式重取完整 tool_calls', () => {
+  beforeEach(() => {
+    process.env.DEFAULT_LLM_PROVIDER = 'opencode'
+    process.env.OPENCODE_API_KEY = 'test-key'
+    process.env.DEFAULT_LLM_MODEL = 'glm-5.3-flash'
+  })
+
+  test('流式增量 0 参数字节（中转丢参生产形态）→ 非流式重取,工具收到完整参数', async () => {
+    // 第 1 次 fetch:流式增量只有 name,参数字节为 0（生产实锤形态）
+    // 第 2 次 fetch（非流式降级）:完整 tool_calls
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => sseChunks([
+        { choices: [{ delta: { tool_calls: [{ id: 'call_x', function: { name: 'edit_document', arguments: '' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: {} } ] } }] },
+        { choices: [{ delta: {}, finish_reason: 'stop' }] },
+        { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+      ]))
+      .mockImplementationOnce(async () => new Response(JSON.stringify({
+        choices: [{ message: { tool_calls: [{ type: 'function', function: { name: 'edit_document', arguments: '{"old_text":"第三段原文","new_text":"Third section"}' } }] }, finish_reason: 'tool_calls' }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const r = await getLlmGateway().chatWithToolsStream(
+      [{ role: 'user', content: '继续第三步' }], { sessionId: 'doc-x' }, TOOLS,
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    // 最终输出 = 完整参数的 tool_call 块（工具不再收到 {}）
+    expect(r.text).toContain('edit_document')
+    expect(r.text).toContain('old_text')
+    expect(r.text).not.toContain('"arguments":{}')
+  })
+})

@@ -169,6 +169,17 @@ export async function chatWithToolsStreamImpl(
   if (toolDeltaCount > 0) {
     const entries = [...toolAcc.values()].map((e) => ({ name: e.name || '(无名)', id: e.id || '-', argsLen: e.arguments.length, preview: e.arguments.slice(0, 120) }))
     log.info(`[LLM] tools-stream tool_calls shape: deltas=${toolDeltaCount} noIndex=${noIndexCount} noId=${noIdCount} argFrags=${argFragCount}(${argFragChars}B) entries=${JSON.stringify(entries)}`)
+    // 流式退化检测：增量出现过但参数字节为 0（中转流式通道丢参,生产实锤）
+    // → 非流式重取完整 tool_calls。非流式通道完好（doc-executor 兜底实证）。
+    if (argFragCount === 0 && toolAcc.size > 0) {
+      log.warn(`[LLM] tools-stream degenerate: deltas=${toolDeltaCount} argsFrags=0 — retrying non-streaming for complete tool_calls`)
+      try {
+        const retry = await degenerateNonStreamRetry(messages, options, tools, onReasoning)
+        return retry
+      } catch (err) {
+        log.warn(`[LLM] degenerate non-stream retry failed — returning degenerate stream result: ${(err as Error).message.slice(0, 120)}`, { model })
+      }
+    }
   }
   const parsedToolCalls: Array<{ name: string; arguments: string }> = []
   // #fix 2026-09-09: 只要流里累积到了工具调用就转换 — 此前要求
@@ -208,6 +219,66 @@ export async function chatWithToolsStreamImpl(
     }
   }
   return { text, truncated: finishReason === 'length', toolCalls: parsedToolCalls.length > 0 ? parsedToolCalls : undefined }
+}
+
+/**
+ * #979 — 流式退化形态的非流式重取：上游中转的流式通道丢 tool_calls 参数
+ * （生产实锤：480 个增量 argFrags=0B），服务端无法从空流恢复。流式保住
+ * TTFB/心跳价值，但增量字节为零时换非流式一次（非流式 tool_calls 参数
+ * 完整，doc-executor 兜底的生产实证）。
+ */
+async function degenerateNonStreamRetry(
+  messages: ChatMessage[],
+  options: LlmChatOptions,
+  tools?: LlmToolDefinition[],
+  onReasoning?: (text: string) => void,
+): Promise<LlmChatResult> {
+  const model = resolveRequestModel(options, resolveLegacyChatModel())
+  const body: any = {
+    model,
+    messages: serializeMessages(messages, model),
+    max_tokens: options.maxTokens ?? resolveDefaultMaxTokens(model),
+    temperature: options.temperature ?? 0.7,
+    ...(options.thinking && model.toLowerCase().startsWith('glm') ? { thinking: { type: options.thinking } } : {}),
+  }
+  if (tools && tools.length > 0) {
+    body.tools = tools
+    body.tool_choice = 'auto'
+  }
+  const res = await fetchWithRetry(`${resolveLlmEndpoint().baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: buildRequestHeaders(options),
+    body: JSON.stringify(body),
+  }, { signal: options.signal, timeoutMs: options.timeoutMs })
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '')
+    throw new Error(`HTTP ${res.status}: ${errBody.slice(0, 160)}`)
+  }
+  const json: any = await withBodyIdleTimeout(res.json(), 'LLM non-stream fallback body stalled')
+  const choice = json?.choices?.[0]
+  const reasoning = choice?.message?.reasoning_content
+  if (reasoning && onReasoning) onReasoning(reasoning)
+  const usage = json?.usage
+  if (usage && typeof usage.prompt_tokens === 'number' && typeof usage.completion_tokens === 'number') {
+    await recordUsage(model, options, usage.prompt_tokens, usage.completion_tokens, usage.prompt_cache_hit_tokens || 0, usage.prompt_cache_miss_tokens || 0)
+  }
+  // tool_calls → 块格式（与 parseChatResponse 同构）
+  if (choice?.message?.tool_calls?.length) {
+    const OPEN = '\u003ctool_call\u003e'
+    const CLOSE = '\u003c/tool_call\u003e'
+    const blocks: string[] = []
+    for (const tc of choice.message.tool_calls) {
+      if (tc.type !== 'function') continue
+      let args: unknown
+      try { args = JSON.parse(tc.function.arguments || '{}') } catch { args = { _raw: tc.function.arguments } }
+      blocks.push(`${OPEN}${JSON.stringify({ name: tc.function.name, arguments: args })}${CLOSE}`)
+    }
+    if (blocks.length > 0) {
+      const leadIn = (choice.message.content || '').trim()
+      return { text: (leadIn ? leadIn + '\n' : '') + blocks.join('\n'), truncated: false }
+    }
+  }
+  return { text: choice?.message?.content || '', truncated: choice?.finish_reason === 'length' }
 }
 
 export async function* streamImpl(
