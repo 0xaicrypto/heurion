@@ -1,7 +1,9 @@
-fastapi>=0.110
-uvicorn>=0.29
-scipy>=1.12
-statsmodels>=0.14
-lifelines>=0.28
-numpy>=1.26
-pydantic>=2.6
+# #941: 上界收敛 — 全浮动版本曾把构建打入源码编译泥潭（缺 wheel 时
+# meson 无编译器），上界约束防止未来 major/minor 漂移静默破坏构建。
+fastapi>=0.110,<1.0
+uvicorn>=0.29,<1.0
+scipy>=1.12,<2.0
+statsmodels>=0.14,<0.15
+lifelines>=0.28,<0.30
+numpy>=1.26,<3.0
+pydantic>=2.6,<3.0

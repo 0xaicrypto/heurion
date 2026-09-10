@@ -74,7 +74,9 @@ describe('chat store — regenerate (§10.3 #220)', () => {
     await useChatStore.getState().sendMessage('s1', { sessionId: 's1', text: '润色一下', attachments: [], skills: [] });
     const last = useChatStore.getState().sessions.s1.messages[1];
     expect(last.failed).toBe(true);
-    expect(last.text).toBe('网络连接中断（服务器可能已重启或网络不稳定），请重试。');
+    // #947: 文案走 i18n（语言由检测器决定），断言任一 locale 变体而非裸 TypeError。
+    expect(last.text === '网络连接中断（服务器可能已重启或网络不稳定），请重试。' ||
+      last.text === 'Network connection interrupted (the server may have restarted or the network is unstable). Please retry.').toBe(true);
     expect(last.text).not.toContain('TypeError');
   });
 });

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import i18n from '../i18n';
 import { batchChunks } from '@/lib/sse';
 import { api } from '@/lib/api';
 import type { ChatStreamChunk, SendChatOptions } from '@/lib/types';
@@ -38,7 +39,8 @@ interface ChatStore {
 export function chatFailureText(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
   if (/network error|failed to fetch|fetch failed|load failed|net::/i.test(msg)) {
-    return '网络连接中断（服务器可能已重启或网络不稳定），请重试。'
+    // #947: 非 React 代码（zustand store）走 i18n 实例直取,英文用户不再看到中文原文。
+    return i18n.t('chat.failureNetwork', '网络连接中断（服务器可能已重启或网络不稳定），请重试。')
   }
   return `Error: ${msg}`
 }
@@ -247,7 +249,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           const msgs = [...cur.messages];
           const last = msgs[msgs.length - 1];
           if (last?.role === 'assistant') {
-            msgs[msgs.length - 1] = { ...last, text: last.text || '分析完成', isStreaming: false };
+            msgs[msgs.length - 1] = { ...last, text: last.text || i18n.t('chat.analysisComplete', '分析完成'), isStreaming: false };
           }
           return { sessions: { ...state.sessions, [sessionId]: { ...cur, messages: msgs } } };
         });

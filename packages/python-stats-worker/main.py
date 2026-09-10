@@ -10,7 +10,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import stats_core
 
@@ -18,8 +18,11 @@ app = FastAPI(title="Heurion Python Stats Worker")
 
 
 class AnalyzeRequest(BaseModel):
-    """Mirror of contracts/src/stats.ts statsRequestSchema (#689)."""
-    test: str
+    """Mirror of contracts/src/stats.ts statsRequestSchema (#689).
+    形状对齐由 scripts/check-stats-schema-alignment.sh 机读锁定（#941）。
+    """
+    # zod 侧 test 为 min(1) — pydantic 镜像同口径（裸 str 会接受空串，漂移）。
+    test: str = Field(min_length=1)
     group_a: Optional[List[float]] = None
     group_b: Optional[List[float]] = None
     table: Optional[List[List[float]]] = None

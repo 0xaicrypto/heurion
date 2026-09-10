@@ -65,3 +65,11 @@ jobs:
 
       - name: Test
         run: pnpm exec vitest run --testTimeout=20000
+
+      # #941: contracts(zod) × python-stats-worker(pydantic) 镜像 schema
+      # 形状对齐检查（golden 正样本 + 负样本双端拒绝）。
+      - name: Stats schema cross-check (contracts ↔ python)
+        working-directory: .
+        run: |
+          python3 -m pip install --quiet -r packages/python-stats-worker/requirements.txt
+          bash scripts/check-stats-schema-alignment.sh

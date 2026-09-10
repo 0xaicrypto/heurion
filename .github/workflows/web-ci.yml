@@ -82,6 +82,11 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # #947: i18n key 存在性校验 — 报告模式（缺失不阻塞,131 key 批量补全
+      # 后切为门禁模式；脚本无参 = 阻塞校验）。
+      - name: i18n key audit (report)
+        run: node ../../scripts/check-i18n-keys.mjs --report
+
       - name: Upload build artifact
         if: github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4

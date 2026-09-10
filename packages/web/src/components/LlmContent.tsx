@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo } from 'react';
 import { cn, normalizeLlmText } from '@/lib/utils';
+import { useRafValue } from '@/hooks/useRaf';
 import { MarkdownRenderer, CodeBlock } from './MarkdownRenderer';
 
 /**
@@ -126,26 +127,8 @@ function LiveTail({ text }: { text: string }) {
 }
 
 export function StreamingLlmContent({ content, isStreaming, className }: { content: string; isStreaming?: boolean; className?: string }) {
-  const [display, setDisplay] = useState(content);
-  const rafRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!isStreaming) {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-      setDisplay(content);
-      return;
-    }
-    // Throttle: coalesce chunk updates to once per animation frame.
-    if (rafRef.current !== null) return;
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null;
-      setDisplay(content);
-    });
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    };
-  }, [content, isStreaming]);
+  // #949: RAF 合帧抽为共享 hook（useRafValue），与 DocEditor 选区上报同模式。
+  const display = useRafValue(content, !!isStreaming);
 
   if (!isStreaming) {
     return <LlmContent content={content} className={className} />;

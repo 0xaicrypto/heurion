@@ -1,0 +1,17 @@
+{
+  "name": "heurion",
+  "private": true,
+  "description": "Heurion monorepo root — build/test orchestration entry. Each package keeps its own pnpm install context (no workspace lockfile yet — #950: full workspace migration touches 4 CI workflows + Dockerfiles, deferred until the contracts file: snapshot problem is re-evaluated).",
+  "scripts": {
+    "build:contracts": "pnpm --dir packages/contracts install --frozen-lockfile && pnpm --dir packages/contracts build",
+    "build:server": "pnpm run build:contracts && pnpm --dir packages/server-ts install --frozen-lockfile && pnpm --dir packages/server-ts build",
+    "build:worker": "pnpm run build:contracts && pnpm --dir packages/worker install --frozen-lockfile && pnpm --dir packages/worker build",
+    "build:web": "pnpm run build:contracts && pnpm --dir packages/web install --frozen-lockfile && pnpm --dir packages/web build",
+    "test:server": "cd packages/server-ts && ./node_modules/.bin/vitest run",
+    "test:worker": "cd packages/worker && ./node_modules/.bin/vitest run",
+    "test:web": "cd packages/web && ./node_modules/.bin/vitest run",
+    "test": "pnpm run test:server && pnpm run test:worker && pnpm run test:web",
+    "check:i18n": "node scripts/check-i18n-keys.mjs --report",
+    "check:stats-schema": "bash scripts/check-stats-schema-alignment.sh"
+  }
+}

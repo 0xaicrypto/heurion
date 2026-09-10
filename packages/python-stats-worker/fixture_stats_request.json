@@ -1,0 +1,13 @@
+{
+  "request": {
+    "test": "kaplan-meier",
+    "group_a": [1.2, 2.3, 3.4],
+    "group_b": [4.5, 5.6],
+    "table": [[10, 2], [8, 5]],
+    "values": [1, 2, 3],
+    "survival_a": [{ "time": 1, "event": true }, { "time": 2, "event": false }],
+    "survival_b": [{ "time": 3, "event": false }],
+    "group": ["g1", "g2"],
+    "factor_a": ["f1", "f2"]
+  }
+}

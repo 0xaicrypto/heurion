@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRafCallback } from '@/hooks/useRaf';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Table } from '@tiptap/extension-table';
@@ -93,27 +94,13 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   const [changeNav, setChangeNav] = useState<{ idx: number; total: number }>({ idx: -1, total: 0 });
   const statsRef = useRef({ accepted: 0, rejected: 0 });
   // #693: useEditor 选项只在创建时生效 — 经 ref 取最新回调。
-  const onSelRef = useRef(onSelectionChange);
-  onSelRef.current = onSelectionChange;
   const onResolveRef = useRef(onDiffResolve);
   onResolveRef.current = onDiffResolve;
 
   // #927: 选区上报 rAF 合帧(#797 气泡流同模式)— 拖动选区时
   // onSelectionUpdate 高频触发,每次 setState 上游(writing-editor)整页
-  // 重渲染;改为最新值存 ref,每帧最多上报一次,卸载时取消挂起的帧。
-  const selRafRef = useRef<number | null>(null);
-  const latestSelTextRef = useRef('');
-  const reportSelection = useCallback((text: string) => {
-    latestSelTextRef.current = text;
-    if (selRafRef.current !== null) return;
-    selRafRef.current = requestAnimationFrame(() => {
-      selRafRef.current = null;
-      onSelRef.current?.(latestSelTextRef.current);
-    });
-  }, []);
-  useEffect(() => () => {
-    if (selRafRef.current !== null) { cancelAnimationFrame(selRafRef.current); selRafRef.current = null; }
-  }, []);
+  // 重渲染;#949 抽为共享 hook（ref 最新回调 + 每帧一次上报,卸载取消挂起帧）。
+  const reportSelection = useRafCallback(onSelectionChange);
 
   const editor = useEditor({
     extensions: [
