@@ -63,7 +63,8 @@ Enforcement so far (manual greps, #666/#672):
   module. 剩余已声明边（机器可执行版 =
   `tests/unit/arch-layers.test.ts` 的 peerEdges,新增边必须先改表再改代码）:
   auth→chat, calendar→research, chat→knowledge/plugins/evolution/patients/
-  execution/skills (#913: 会话内技能激活/遵循度/捕捉建议, 动态 import),
+  execution/skills/figures (#913: 会话内技能激活/遵循度/捕捉建议, 动态 import;
+  #939: figures 为 figure 渲染管线 port 注入, 动态 import),
   documents→chat/figures (#913: 文档图片扫描/渲染回填, 动态 import),
   evolution→chat/memorization/practitioner,
   external→plugins/execution, figures→execution (#820 学术渲染编排),
@@ -76,6 +77,13 @@ Enforcement so far (manual greps, #666/#672):
   (#841 环⑤: skills→knowledge 为 follow-through 复用 telemetry.service)
 - Pure crypto/util helpers used by both tools and modules live in `common/`
   (never import a `.router.ts` for non-HTTP functions — #666)
+- **leaf 层反向依赖（#939 修复）**: `common/persona.ts → memory/fact-provider`
+  曾构成 common↔memory 真实循环（persona graph 投影已下移
+  `memory/persona-source.ts`，persona 只收已渲染 PersonaSource）；
+  `common/skill-node-migration` 已下移 `memory/`（user-context 依赖经
+  registry 钩子反转）；`tools/insert-asset-export` 的 figures 依赖改为
+  ToolContext 端口注入（#672 同款）。leaf→上层检测已入机读回归锁
+  `tests/unit/arch-layers.test.ts`（#940）。
 
 ## 会话后提取器与触发时机 (#645)
 

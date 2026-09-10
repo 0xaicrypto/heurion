@@ -24,7 +24,7 @@ const MODULES_DIR = path.resolve(__dirname, '../../src/modules')
 
 /** 已接受的跨模块边(from → 允许的 to 列表)。 */
 const peerEdges: Record<string, string[]> = {
-  chat: ['knowledge', 'plugins', 'evolution', 'patients', 'execution', 'skills'], // #913: skills 为会话内技能激活/遵循度/捕捉建议(动态 import)
+  chat: ['knowledge', 'plugins', 'evolution', 'patients', 'execution', 'skills', 'figures'], // #913: skills 为会话内技能激活/遵循度/捕捉建议(动态 import);#939: figures 为 figure 渲染管线 port 注入(动态 import)
   evolution: ['memorization', 'practitioner', 'chat'],
   files: ['ingestion', 'knowledge', 'execution', 'patients'], // #913: patients 为 DICOM 快扫(动态 import)
   ingestion: ['medical-records'],
@@ -137,5 +137,53 @@ describe('#679 模块分层规则', () => {
     for (const f of ['user-context.ts', 'chat-context.ts', 'chat.dto.ts', 'chat-orchestrator.ts']) {
       expect(fs.existsSync(path.join(MODULES_DIR, 'shared', f)), `shared/${f} 缺失 — #679 上提被回退?`).toBe(true)
     }
+  })
+
+  /**
+   * #940 — leaf 层反向依赖检测（对应根 ARCHITECTURE.md #672 分层图）：
+   *   common/core       不得 import memory/retrieval/tools/modules/*
+   *   memory/retrieval  不得 import modules/*
+   *   tools             不得 import modules/*
+   * evolution/store 类型 import 为已登记债务（leaf 规则未列 evolution），
+   * 不在拦截范围。此前只守 modules 横向边,4 处反向依赖（含 persona↔memory
+   * 真实循环）全部漏报 — #939 修复后本锁防复发。
+   */
+  const COMMON_FORBIDDEN = new Set(['memory', 'retrieval', 'tools', 'modules'])
+  const MODULES_FORBIDDEN = new Set(['modules'])
+
+  function leafScan(dir: string, forbidden: Set<string>): string[] {
+    const out: string[] = []
+    const walk = (d: string) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name)
+        if (e.isDirectory()) walk(p)
+        else if (e.name.endsWith('.ts')) {
+          const src = fs.readFileSync(p, 'utf-8')
+          const rel = path.relative(path.resolve(__dirname, '../../src'), p)
+          for (const re of [STATIC_FROM_RE, DYNAMIC_IMPORT_RE]) {
+            for (const m of src.matchAll(re)) {
+              if (forbidden.has(m[1])) out.push(`${rel} -> ${m[1]}/`)
+            }
+          }
+        }
+      }
+    }
+    walk(dir)
+    return out
+  }
+
+  test('#940 common/core 零反向依赖（memory/retrieval/tools/modules 全禁）', () => {
+    const offenders = [
+      ...leafScan(path.join(MODULES_DIR, '..', 'common'), COMMON_FORBIDDEN),
+      ...leafScan(path.join(MODULES_DIR, '..', 'core'), COMMON_FORBIDDEN),
+    ]
+    expect(offenders, `common/core 反向依赖(更新代码而非例外表 — 分层 #672):\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  test('#940 memory/retrieval/tools 零 modules 依赖', () => {
+    const offenders = ['memory', 'retrieval', 'tools'].flatMap((d) =>
+      leafScan(path.join(MODULES_DIR, '..', d), MODULES_FORBIDDEN),
+    )
+    expect(offenders, `leaf 层依赖 modules/*(port 注入或下移,分层 #672):\n${offenders.join('\n')}`).toEqual([])
   })
 })

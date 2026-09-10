@@ -11,11 +11,12 @@
  *     同 stableId 高版本号才替换,重复构建无副作用;
  *  3. PII 命中行跳过不迁移(行保持 confirmed,日志留痕,人工回炉)。
  */
-import prisma from './prisma.js'
-import { makeLogger } from './logger.js'
-import { scanSkillPii } from './pii-scanner.js'
-import type { SkillNode } from '../memory/memory.types.js'
-import { buildSkillNode } from '../memory/skill-node-factory.js'
+import prisma from '../common/prisma.js'
+import { makeLogger } from '../common/logger.js'
+import { scanSkillPii } from '../common/pii-scanner.js'
+import type { SkillNode } from './memory.types.js'
+import { buildSkillNode } from './skill-node-factory.js'
+import { getContextResolver } from './registry.js'
 
 const log = makeLogger('migrate.skill-node')
 
@@ -70,7 +71,9 @@ export async function ensureSkillNodeMigration(): Promise<SkillNodeMigrationResu
     if (!rows || rows.length === 0) return result
 
     // 按 userId 分组,逐用户在其 graph 中落地。
-    const { getUserContext } = await import('../modules/shared/user-context.js')
+    // #939: user-context 依赖经 memory/registry 钩子反转(分层 #672:
+    // memory 零依赖 modules),由 modules/shared 注册 contextResolver。
+    const resolveCtx = getContextResolver()
     const byUser = new Map<string, any[]>()
     for (const row of rows) {
       const list = byUser.get(row.userId) || []
@@ -79,11 +82,15 @@ export async function ensureSkillNodeMigration(): Promise<SkillNodeMigrationResu
     }
 
     for (const [userId, userRows] of byUser) {
-      let ctx: ReturnType<typeof getUserContext> | null = null
+      let ctx: NonNullable<ReturnType<NonNullable<typeof resolveCtx>>> | null = null
       try {
-        ctx = getUserContext(userId)
+        ctx = resolveCtx ? resolveCtx(userId) : null
       } catch (err) {
         log.warn('skill migration: user context unavailable', { userId, reason: (err as Error).message.slice(0, 120) })
+        continue
+      }
+      if (!ctx) {
+        log.warn('skill migration: user context unavailable', { userId })
         continue
       }
       for (const row of userRows) {

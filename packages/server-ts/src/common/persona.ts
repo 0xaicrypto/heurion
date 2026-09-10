@@ -1,31 +1,15 @@
 import type { FactsStore, KnowledgeStore } from '../evolution/stores'
 import { CONTEXT_CONFIG } from './context-config.js' // #637 集中配置
-import { GraphFactProvider } from '../memory/fact-provider.js'
 
 /**
  * #840 读路径第二批:persona 切 graph — 渲染来源与存储解耦。
- * graph 提供时 facts/summaries 从单一事实源取(GraphFactProvider,与
- * keyword/layer3 路同口径);缺省回落 legacy 投影(缓存版本信号沿用)。
+ * #939: graph → PersonaSource 投影下移到 memory/persona-source.ts
+ * (分层 #672: common 零依赖 memory),common 只消费已渲染的
+ * PersonaSource(纯数据),缺省回落 legacy 投影(缓存版本信号沿用)。
  */
 export interface PersonaSource {
   facts: Array<{ content: string; category: string; importance: number; patientHash?: string | null; studyId?: string | null }>
   summaries: Array<{ title: string; content?: string; status?: string }>
-}
-
-/** graph 最小形状 — 避免 common 层引入完整 MemoryGraph 类型。 */
-interface GraphLike {
-  getCurrentNodesByType(type: string): Array<Record<string, any>>
-}
-
-export function graphPersonaSource(memory: { graph: GraphLike }): PersonaSource {
-  const facts = new GraphFactProvider(memory.graph as any).listCurrent().map((f) => ({
-    content: f.content, category: f.category, importance: f.importance,
-    patientHash: f.patientHash, studyId: f.studyId,
-  }))
-  const summaries = (memory.graph.getCurrentNodesByType('summary') as Array<Record<string, any>>)
-    .filter((n) => n.status === 'current')
-    .map((n) => ({ title: String(n.title || ''), content: String(n.content || '') }))
-  return { facts, summaries }
 }
 
 /**
@@ -57,10 +41,10 @@ export function buildScenePersona(
   scene: ChatScene,
   facts: FactsStore,
   knowledge: KnowledgeStore,
-  /** #840: 提供时从 graph 渲染(单一事实源);缺省回落 legacy 投影。 */
-  memory?: { graph: GraphLike },
+  /** #840: 提供时以 graph 渲染源(单一事实源);缺省回落 legacy 投影。#939 改收已渲染 PersonaSource。 */
+  graphSource?: PersonaSource,
 ): string {
-  const base = buildPersona(facts, knowledge, memory)
+  const base = buildPersona(facts, knowledge, graphSource)
   const guidance = SCENE_GUIDANCE[scene]
   return guidance ? `${guidance}\n\n${base}` : base
 }
@@ -68,11 +52,10 @@ export function buildScenePersona(
 export function buildPersona(
   facts: FactsStore,
   knowledge: KnowledgeStore,
-  memory?: { graph: GraphLike },
+  graphSource?: PersonaSource,
 ): string {
-  const source: PersonaSource = memory?.graph
-    ? graphPersonaSource(memory)
-    : {
+  const source: PersonaSource = graphSource
+    ?? {
         facts: facts.all().map((f) => ({ content: f.content, category: f.category, importance: f.importance, patientHash: f.patientHash, studyId: f.studyId })),
         summaries: knowledge.all().map((k) => ({ title: k.title, content: k.content, status: k.status })),
       }

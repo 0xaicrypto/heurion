@@ -9,6 +9,8 @@ import { createApprovalRequest } from '../approvals/approval.service.js'
 import { twinsBaseDir } from '../../lib/upload-path.js'
 // §5.4 (#197): persona lives in common/persona.ts (shared with memory gateway).
 import { buildScenePersona, type ChatScene } from '../../common/persona.js'
+// #939: graph → PersonaSource 投影在 memory 层(modules 可依赖 memory)。
+import { graphPersonaSource } from '../../memory/persona-source.js'
 export { buildPersona } from '../../common/persona.js'
 
 const TTL_MS = 30 * 60 * 1000 // 30 minutes idle → evict
@@ -168,7 +170,7 @@ export function buildCachedPersona(
     personaCache.set(cacheKey, cached)
     return cached.persona
   }
-  const persona = buildScenePersona(scene, facts, knowledge, memory)
+  const persona = buildScenePersona(scene, facts, knowledge, memory?.graph ? graphPersonaSource(memory) : undefined)
   personaCache.delete(cacheKey)
   personaCache.set(cacheKey, { factsVersion: fv, knowledgeVersion: kv, persona })
   if (personaCache.size > PERSONA_CACHE_MAX) {

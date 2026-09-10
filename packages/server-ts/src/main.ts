@@ -112,7 +112,7 @@ async function main() {
   await ensureArticleSummaryRenameMigration()
 
   // #842: CapturedSkill(confirmed)→ graph SkillNode v2 — 幂等,PII 命中行跳过。
-  const { ensureSkillNodeMigration } = await import('./common/skill-node-migration.js')
+  const { ensureSkillNodeMigration } = await import('./memory/skill-node-migration.js')
   await ensureSkillNodeMigration()
 
   // #764-admin: 回灌 admin 全局模型覆盖(持久化于 userSetting)

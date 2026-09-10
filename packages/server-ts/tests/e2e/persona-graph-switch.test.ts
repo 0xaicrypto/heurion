@@ -1,5 +1,7 @@
 import { describe, test, expect } from 'vitest'
-import { graphPersonaSource, buildScenePersona } from '../../src/common/persona.js'
+import { buildScenePersona } from '../../src/common/persona.js'
+// #939: graphPersonaSource 下移 memory/persona-source(分层 #672),buildScenePersona 改收已渲染源。
+import { graphPersonaSource } from '../../src/memory/persona-source.js'
 import { MemoryService } from '../../src/memory/memory.service.js'
 import { EventLog } from '../../src/core/event-log.js'
 import { FactsStore, KnowledgeStore } from '../../src/evolution/stores.js'
@@ -40,7 +42,7 @@ describe('#840 persona / layer3 读路径切 graph', () => {
     memory.addFact({ content: '医生偏好简洁结论', category: 'preference', importance: 4, sourceType: 'doctor' }, 'user')
     memory.addSummary({ title: 'TKI 耐药总结', content: '' }, 'system')
 
-    const persona = buildScenePersona('general', memory.legacyFacts as any, memory.legacyKnowledge as any, memory as any)
+    const persona = buildScenePersona('general', memory.legacyFacts as any, memory.legacyKnowledge as any, graphPersonaSource(memory))
     expect(persona).toContain('医生偏好简洁结论')
     expect(persona).toContain('TKI 耐药总结')
   })

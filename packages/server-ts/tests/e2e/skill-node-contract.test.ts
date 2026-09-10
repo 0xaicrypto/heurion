@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach } from 'vitest'
 import { getApp, getAuthUserId } from '../setup.js'
 import prisma from '../../src/common/prisma.js'
 import { getUserContext } from '../../src/modules/shared/user-context.js'
-import { ensureSkillNodeMigration, skillCapStableId } from '../../src/common/skill-node-migration.js'
+import { ensureSkillNodeMigration, skillCapStableId } from '../../src/memory/skill-node-migration.js'
 import { listCapturedSkills } from '../../src/modules/skills/skill-capture.service.js'
 
 /**
