@@ -26,9 +26,11 @@ COPY --from=builder /build/package.json ./
 RUN EMBEDDING_QUANTIZED=false node dist/precache.js || echo 'model precache failed (HF 429/timeout) — will download at runtime'
 
 # #937: non-root 运行（nexus, UID 1000）— 与 DEPLOY.md 安全声明对齐。
-# transformers.js 缓存目录（cwd 相对 ./.cache）预建并 chown，运行期
+# node 基础镜像自带 UID/GID 1000 的 node 用户 — 改名复用（新建会 GID 冲突）。
+# transformers.js 缓存目录（cwd 相对 ./.cache）随 /app 一起 chown，运行期
 # 下载兜底（HF 429 后重取）可写。
-RUN groupadd -r -g 1000 nexus && useradd -r -u 1000 -g nexus -m nexus \
+RUN groupmod -n nexus node \
+    && usermod -l nexus -d /home/nexus -m node \
     && mkdir -p /app/.cache && chown -R nexus:nexus /app
 
 USER nexus

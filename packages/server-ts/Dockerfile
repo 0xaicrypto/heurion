@@ -25,16 +25,15 @@ RUN npx prisma generate
 FROM node:22-bookworm-slim
 WORKDIR /app
 
-# fonts-droid-fallback: 单面 .ttf 中文字体(DroidSansFallbackFull.ttf) —
-# pdfkit/fontkit 不支持 .ttc 集合,noto-cjk 包不可用;无字体时 PDF 中文
-# 全部渲染为空白方块(生产乱码根因)。
 # #937: 容器以 non-root（nexus, UID 1000）运行 — 与 DEPLOY.md 安全声明对齐。
-# 卷目录预建并 chown：首次挂载的 named volume 会继承镜像内目录属主；
-# 既有生产卷为 root 属主，上线本镜像前需一次性 chown（见 DEPLOY.md 迁移注记）。
+# node 基础镜像自带 UID/GID 1000 的 node 用户 — 直接改名复用（新建会
+# groupadd GID 冲突）。卷目录预建并 chown：首次挂载的 named volume 会
+# 继承镜像内目录属主；既有生产卷的属主迁移由 deploy 脚本幂等处理。
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates fonts-droid-fallback \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd -r -g 1000 nexus && useradd -r -u 1000 -g nexus -m nexus \
+    && groupmod -n nexus node \
+    && usermod -l nexus -d /home/nexus -m node \
     && mkdir -p /data/db /data/twins /data/reactome-diagrams \
     && chown -R nexus:nexus /data
 
