@@ -6,6 +6,11 @@ glossary so those tags aren't insider knowledge.
 
 If you grep `S4` in source, this is where you land.
 
+> **冻结注记（#952，2026-09）**：本文件自 TS 重写（`packages/server` 删除、
+> monorepo 化）后未再更新，`#791` 起的 issue 与当前演进未收录。历史词条
+> （`[S4]`/`Round 2-A` 等）仍有效；新演进请以 git log + issue 编号为准，
+> 本文件不再逐条补录。
+
 > **Note**: an early version of this product included a blockchain
 > anchoring layer (external ledger / object storage / identity registration)
 > that has since been removed. History entries below that touched that layer

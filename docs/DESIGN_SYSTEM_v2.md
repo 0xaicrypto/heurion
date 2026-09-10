@@ -2,7 +2,16 @@
 
 > 状态：草案 v0.1，待医生审。  
 > 触发：#182。基础参考：design-taste-frontend / high-end-visual-design / brandkit skills。  
-> 范围：Avalonia 11.3 desktop（macOS 优先），全 surface 应用。
+> 范围：Avalonia 11.3 desktop（macOS 优先），全 surface 应用。  
+>
+> **⚠️ 采纳状态（#944，2026-09 核实）**：本文档的主色/字体决策
+> **截至 2026-09 未被主界面采纳**——web 应用现行浅色主题为 sky-blue
+> `hsl(199 89% 48%)` + 纯白底（`packages/web/src/index.css`），根目录
+> `homepage-draft.html` 同为 #0ea5e9 + Inter。上文"禁用 Inter/禁用 cyan"
+> 等措辞描述的是**未执行的决策**，勿据此认为产品已在用 Apothecary Green。
+> 例外：**PPT 导出已落一套 `warm-paper` 主题**（Apothecary Green #2F4F47 +
+> 暖色纸面 #FAF7F2，contracts `deckThemeSchema` / worker 母版，#957/#958），
+> 可作为该方向的试行交付面。主界面是否切换由产品拍板（epic #965/#944）。
 
 ---
 

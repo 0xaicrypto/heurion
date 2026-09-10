@@ -40,8 +40,8 @@ Branch naming:
   # Web frontend
   cd packages/web && pnpm test
 
-  # Python server
-  cd packages/server && pytest
+  # Execution-plane worker
+  cd packages/worker && npx vitest run
   ```
 
 ### 4. Create a Pull Request

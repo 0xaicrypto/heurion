@@ -1,133 +1,32 @@
 # Roadmap
 
-What's next, in approximate order. Items in **Now** are actively being
-worked on; **Next** is queued; **Later** is shape-known but not
-prioritised.
+> 本文档 2026-09-10 重写（#943）：旧版 "Now/Next" 讲的是 2026-07 已删除
+> 产品线（Python server / Tauri desktop / .dmg 打包）的重组计划，无法回答
+> "团队现在在做什么"。现在只写当前真实计划，过期即重写。
 
-## Now
+## Now（在途，按 epic）
 
-### Reorg Phase A — docs resync
+| Epic | 主题 | 状态 |
+|---|---|---|
+| #956 | 代码体检第七轮收口 — 安全缺口（IDOR）/ 部署完整性（root 容器/自动回滚）/ 分层循环依赖 / 文档失真 | 进行中（#936/#939/#940/#937/#938 等已落地） |
+| #965 | PPT/deck 能力升级 — 布局母版 + 主题系统 + 图表插入（文字编辑 → 设计/排版/图表可编辑） | contracts v2 + worker 母版 + edit_deck 扩 action 已落地 |
+| #929 | 体检第六轮 — 写作链路事故复盘 + 全仓三维审查（#892-#928） | 在途 |
+| #840 | 双存储收敛 — graph 单一事实源，LegacyProjection 读路径退役（高优先级） | 在途 |
+| #841 | Skills 进化环 — 程序性记忆闭环 | 在途 |
 
-- Phase A1 — initial docs pass (Phase A description, ASCII diagrams).
-  **Done** (earlier commits).
-- Phase A2 — resync with desktop-v2 + clinical pivot (M0..M4, DICOM,
-  MONAI, event-sourcing graph, research workspace). **Done in this
-  cycle**: ARCHITECTURE.md rewritten; README five-minute tour + repo
-  layout updated; DEPLOY.md desktop section pointed at desktop-v2.
+## Next（当前批次的自然延伸）
 
-### Reorg Phase B — delete dead code
+1. **deck 画布级编辑（Phase 4 评估）** — #965 Phase 1~3 落地、产品验证
+   需求后，评估 Gamma 式自由坐标画布 + Chromium 截图高清导出双轨。
+2. **根 workspace 编排**（#950）— pnpm workspace 消除 contracts 构建重复
+   与本地静默旧类型（file: 依赖 store 快照问题已是现实痛点）。
+3. **覆盖率量化**（#948 延伸）— vitest coverage provider 接入，产出
+   量化覆盖率而非存在性判断。
+4. **contracts/py 机读对齐**（#941）— CI 形状校验 + Python 依赖锁版本。
+5. **i18n 收口**（#947）— 131 缺失 key 补齐 + CI key 存在性校验。
 
-- **Done**: removed `packages/desktop` (legacy Avalonia client); git
-  tag `legacy/avalonia-final` preserves the last commit.
-- **Done earlier**: `nexus_server/sync_hub.py` + `/sync/push` `/sync/pull`
-  endpoints retired; `nexus_server/memory_service.py` placeholder
-  removed (ImportError tombstone in earlier phase).
-- **Open**: the legacy `sync_events` mirror writes — `/agent/*`
-  endpoints read from the twin's own EventLog; the mirror is no longer
-  consulted on the read path, but the table is still being written.
+## 不做的（明确排除）
 
-### Reorg Phase C — server internal grouping
-
-Reorganise `nexus_server/*.py` flat layout into domain folders:
-`auth/`, `twins/`, `chat/`, `views/`. Each with a one-page
-README. Tests split by domain too.
-
-## Next
-
-### Chat context budget & auto-compaction
-
-Design: [`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMORY_LIFECYCLE.md)（§5–§6）. — 原 CHAT_CONTEXT_COMPACTION 已并入
-
-Token-budgeted conversation history with automatic compression:
-
-- **C.1** real token estimation (`estimateTokens` BPE-style) +
-  `MODEL_CONTEXT_WINDOW`-relative budgets
-- **C.2** auto-compact agent — structured clinical summary of older
-  turns, async + idempotent, persisted as episodes
-- **C.3** `compact_summary` injection into `buildHistoryMessages` +
-  pinned-message preservation; dedupe projection layer1 vs raw history
-- **C.4** `search_conversation` tool (semantic retrieval of older turns)
-- **C.5** `context_usage` SSE chunk + frontend usage gauge
-- **C.6** admin compaction events page + pin UI
-
-### Phase P — Recursive Projection (RLM-style chat context)
-
-Detailed design lives in
-[`docs/design/nexus-architecture.md`](docs/design/nexus-architecture.md).
-
-Replace the single-call chat projection with a Recursive Language
-Model: load the EventLog as a REPL variable, let the root LLM write
-code to slice / sub-LM-call / stitch. Inspired by Zhang, Kraska &
-Khattab, *Recursive Language Models* (arXiv:2512.24601, Dec 2025),
-which proved this pattern handles inputs ~2 orders of magnitude
-beyond the base model's context window at the same or lower cost per
-query.
-
-Sub-phases (~3 weeks total):
-
-- **P.1** `project_for_chat()` using `RLMRunner`; feature-flagged
-  side-by-side dogfooding (1 wk)
-- **P.2** verdict scorer built on `RLMRunner` for long observation
-  windows (3 days)
-- **P.3** Attachment-by-reference — drop upfront distillation,
-  use RLM at chat time (1 wk, deferrable, gated on cost analysis)
-- **P.4** Operator monitoring — RLM iterations / sub-calls /
-  truncated runs metrics + alerts (3 days)
-
-**Risks** (all with mitigations in design doc): cost variance
-from long-tail runs (capped via `RLMConfig` budgets + per-day
-ceiling); quality regression on short queries (fast-path: skip
-RLM if EventLog < threshold); sub-LM hallucination (caught by
-contract checks on final output).
-
-## Later
-
-### Planning support — the missing capability
-
-Today the agent reacts. It doesn't plan. Add:
-
-- `nexus_core.planning` — `Plan` / `PlanStep` data model,
-  `EventLogPlanStore` (plans are events in the event log).
-- `nexus.planning` — `Planner` (LLM decompose / re-plan) +
-  `PlanExecutor` (run steps via tools, persist progress).
-- `twin.chat` integration: detect planning intent → decompose →
-  return "I've broken this into N steps" + run in background.
-- `/agent/plans` server endpoint + desktop Plans panel.
-
-### OpenAPI-driven view types
-
-Server's view types (`ChatMessageView`, `MemoryEntry`,
-`AgentStateSnapshot`, `FileUploadResponse`, …) are duplicated in the
-desktop's C# code. Hand-maintained. When server adds a field, desktop
-silently doesn't see it.
-
-Generate C# DTO from server OpenAPI schema (via
-`datamodel-code-generator` or similar). Keeps types in lockstep, no
-silent drift.
-
-### Test taxonomy cleanup
-
-`test_server_regression.py` is 65 tests in one file (>2000 lines).
-Split by domain matching the Phase C server reorg:
-`test_auth.py`, `test_twins.py`, `test_chat.py`,
-`test_views.py`. Plus `tests/integration/` for end-to-end SDK + Nexus
-+ Server.
-
-## Done (selected)
-
-See [`HISTORY.md`](HISTORY.md) for the full chronology. Highlights:
-
-- **S1–S6** — server-side cleanup. Each step retired a piece of the
-  server's parallel intelligence layer in favour of routing through
-  Nexus's `DigitalTwin`. The result: server is a pure HTTP frontend,
-  Nexus is the single agent runtime.
-- **Round 2-A/B/C** — desktop became a thin client. Deleted
-  `LocalEventLog`, `RuneEngine`, JWT decoder for user-id scoping, the
-  per-user data directory, the `_build_system_prompt` /
-  `_build_context_messages` logic. `MainViewModel` is ~140 lines
-  total now.
-- **Bug 1/2/3** — post-S6 stability fixes around bucket auto-create
-  and UI visibility into sync failures.
-- **Distiller move to SDK** — `attachment_distiller`'s reusable
-  pipeline lives in `nexus_core.distiller`; server keeps a thin shim
-  for the `record_distilled_event` persistence half.
+- 恢复已删除的 Python server / Tauri 桌面端 / .dmg 打包线。
+- 自由坐标式的"自由设计编辑器"（削弱 AI 编排优势；受控枚举 +
+  母版是当前答案，见 #957）。
