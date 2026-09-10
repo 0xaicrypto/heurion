@@ -116,6 +116,20 @@ describe('shouldRunDocExecutor 触发条件', () => {
     })).toBe(false)
   })
 
+  test('#977 连败直通:写回尝试 ≥2 且成功 0 → 触发兜底', () => {
+    expect(shouldRunDocExecutor({
+      sessionId: VALID_SESSION, userText: USER_TASK, executedWriteTools: ['edit_document'],
+      writeAttempts: 2, writeSuccesses: 0,
+    })).toBe(true)
+  })
+
+  test('#977 连败但已有成功写回 → 不触发(正常对账)', () => {
+    expect(shouldRunDocExecutor({
+      sessionId: VALID_SESSION, userText: USER_TASK, executedWriteTools: ['edit_document'],
+      writeAttempts: 3, writeSuccesses: 2,
+    })).toBe(false)
+  })
+
   test('编辑意图正则覆盖中英关键词', () => {
     for (const t of ['润色这段', 'restructure the outline', 'please polish it', '把表格插入第二章']) {
       expect(DOC_EDIT_INTENT_RE.test(t)).toBe(true)

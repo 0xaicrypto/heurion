@@ -87,7 +87,7 @@ describe('声明-执行对账守卫(P0 hotfix 新语义:零写回+声明 → 留
 
     // SSE 警示对用户可见
     const infos = chunks.filter((c) => c.type === 'context_info')
-    expect(infos.some((c) => String((c as any).text).includes('未产生任何写回工具调用'))).toBe(true)
+    expect(infos.some((c) => String((c as any).text).includes('未产生任何成功写回'))).toBe(true)
   })
 
   test('写回工具已执行(即使失败) → 不触发守卫,executedWriteTools 含工具名', async () => {
@@ -262,7 +262,7 @@ describe('#967 部分执行对账 — countClaimedEditItems(纯函数)', () => {
     const events = ctx.eventLog.append.mock.calls.map((c: any[]) => c[0])
     const partial = events.filter((e: any) => e.eventType === 'edit_claim_unbacked')
     expect(partial).toHaveLength(1)
-    expect(partial[0].metadata).toMatchObject({ claimedCount: 4, docWriteExecuted: 1, kind: 'partial' })
+    expect(partial[0].metadata).toMatchObject({ claimedCount: 4, docWriteSucceeded: 1, kind: 'partial' })
 
     const infos = chunks.filter((c) => c.type === 'context_info')
     expect(infos.some((c) => String((c as any).text).includes('实际写回 1 处'))).toBe(true)
@@ -294,5 +294,83 @@ describe('#967 部分执行对账 — countClaimedEditItems(纯函数)', () => {
     expect(result.unbackedClaimCount).toBe(0)
     const events = ctx.eventLog.append.mock.calls.map((c: any[]) => c[0])
     expect(events.some((e: any) => e.eventType === 'edit_claim_unbacked')).toBe(false)
+  })
+})
+describe('#977 写回失败执行不计入对账口径（空参连败生产实例）', () => {
+  test('空参失败 ×2 + 完成声明 → 零写回守卫触发（成功口径 0）', async () => {
+    const ctx = makeCtx('doc-doc11')
+    const registry = new ToolRegistry(ctx)
+    const probe = new ProbeTool(() => Promise.resolve({ success: false, error: 'Provide import_reference (empty document), old_text+new_text (range edit), or full_text.' }))
+    Object.defineProperty(probe, 'name', { value: 'edit_document' })
+    registry.register(probe)
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{}}'))
+      .mockResolvedValueOnce('已完成第 3 步的写入，请查看文档。')
+
+    const { io, chunks } = makeIO()
+    const result = await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '继续第三步' }],
+      toolRegistry: registry,
+      tools: [],
+      apiKey: 'k',
+      io,
+      ctx,
+      userId: 'user_1',
+      sessionId: 'doc-doc11',
+    })
+
+    expect(result.writeAttempts).toBe(2)
+    expect(result.writeSuccesses).toBe(0)
+
+    const events = ctx.eventLog.append.mock.calls.map((c: any[]) => c[0])
+    const unbacked = events.filter((e: any) => e.eventType === 'edit_claim_unbacked')
+    expect(unbacked).toHaveLength(1)
+    expect(unbacked[0].metadata.docWriteSucceeded).toBe(0)
+
+    const infos = chunks.filter((c) => c.type === 'context_info')
+    expect(infos.some((c) => String((c as any).text).includes('未产生任何成功写回'))).toBe(true)
+  })
+
+  test('部分对账口径：「实际写回」按成功计（失败 2 次 + 成功 1 次声称 3 项 → 按成功 1 口径）', async () => {
+    const ctx = makeCtx('doc-doc12')
+    const registry = new ToolRegistry(ctx)
+    let calls = 0
+    const probe = new ProbeTool(() => {
+      calls++
+      return calls <= 2
+        ? Promise.resolve({ success: false, error: 'anchor not found' })
+        : Promise.resolve({ success: true, output: '{"body":"x","summary":"已写入"}' })
+    })
+    Object.defineProperty(probe, 'name', { value: 'edit_document' })
+    registry.register(probe)
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"a"}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"b"}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"c","new_text":"x"}}'))
+      .mockResolvedValueOnce('| 原意见 | 实际改动 |\n|---|---|\n| A | 新增：x |\n| B | 新增：y |\n| C | 新增：z |')
+
+    const { io } = makeIO()
+    const result = await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '逐节填充' }],
+      toolRegistry: registry,
+      tools: [],
+      apiKey: 'k',
+      io,
+      ctx,
+      userId: 'user_1',
+      sessionId: 'doc-doc12',
+    })
+
+    expect(result.writeAttempts).toBe(3)
+    expect(result.writeSuccesses).toBe(1)
+    // 声称 3 处但成功写回仅 1 处 → partial 缺口 = 3。
+    expect(result.unbackedClaimCount).toBe(3)
+    const events = ctx.eventLog.append.mock.calls.map((c: any[]) => c[0])
+    const partial = events.filter((e: any) => e.eventType === 'edit_claim_unbacked')
+    expect(partial).toHaveLength(1)
+    expect(partial[0].metadata).toMatchObject({ claimedCount: 3, docWriteSucceeded: 1, kind: 'partial' })
   })
 })

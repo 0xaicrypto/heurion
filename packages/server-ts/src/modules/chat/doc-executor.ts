@@ -33,9 +33,12 @@ export const DOC_EDIT_INTENT_RE = /修改|编辑|删除|插入|整理|润色|重
  * 执行器触发判据(纯函数,可单测):
  *   scene 为 doc 会话(sid 前缀 doc-)
  *   && 用户消息命中编辑意图正则
- *   && (tool-loop 结果 executedWriteTools 为空(本轮零写回)
- *       || unbackedClaimCount > 实际写回数(部分执行 — #967:回复对照表
- *          声称完成 N 项但仅写回 K 项,剩余条目用精简上下文接力))。
+ *   && 其一:
+ *     a) tool-loop 结果 executedWriteTools 为空(本轮零写回)
+ *     b) unbackedClaimCount > 实际写回数(部分执行 — #967:回复对照表
+ *        声称完成 N 项但仅写回 K 项,剩余条目用精简上下文接力)
+ *     c) #977 连败直通:写回尝试 ≥2 且成功 0 — 不等 doom-loop/模型收尾
+ *        (生产实例:edit_document({}) 空参连败 2 轮,直接精简兜底)。
  * 非 doc 会话 / 非编辑意图轮次 → 一律不触发(零行为回归)。
  */
 export function shouldRunDocExecutor(input: {
@@ -44,11 +47,17 @@ export function shouldRunDocExecutor(input: {
   executedWriteTools: string[]
   /** #967: tool-loop 部分对账缺口(claimed 数),缺省 0(对账一致)。 */
   unbackedClaimCount?: number
+  /** #977: 写回执行统计,缺省与 executedWriteTools 同源。 */
+  writeAttempts?: number
+  writeSuccesses?: number
 }): boolean {
-  return input.sessionId.startsWith('doc-')
-    && DOC_EDIT_INTENT_RE.test(input.userText)
-    && (input.executedWriteTools.length === 0
-      || (input.unbackedClaimCount ?? 0) > input.executedWriteTools.length)
+  if (!input.sessionId.startsWith('doc-')) return false
+  if (!DOC_EDIT_INTENT_RE.test(input.userText)) return false
+  if (input.executedWriteTools.length === 0) return true
+  if ((input.unbackedClaimCount ?? 0) > input.executedWriteTools.length) return true
+  const attempts = input.writeAttempts ?? input.executedWriteTools.length
+  const successes = input.writeSuccesses ?? input.executedWriteTools.length
+  return attempts >= 2 && successes === 0
 }
 
 /** 执行器后仍零写回的诚实告知(#892 语义延伸)。 */

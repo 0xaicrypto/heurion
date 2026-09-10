@@ -700,6 +700,8 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     userText: body.text,
     executedWriteTools: loopResult.executedWriteTools,
     unbackedClaimCount: loopResult.unbackedClaimCount,
+    writeAttempts: loopResult.writeAttempts,
+    writeSuccesses: loopResult.writeSuccesses,
   })) {
     const rescue = await runDocExecutorFallback({
       userId,
