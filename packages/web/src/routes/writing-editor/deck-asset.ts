@@ -12,6 +12,10 @@ export interface DeckAsset {
   deleteDeckSlide: (index: number) => void;
   addDeckSlide: () => void;
   slideBullets: (slide: DeckWire['slides'][number]) => string[];
+  /** #959 排版编辑（contracts deck v2）：拖拽排序 / 布局母版 / 主题。 */
+  moveDeckSlide: (from: number, to: number) => void;
+  setDeckSlideLayout: (index: number, layout: string | undefined) => void;
+  setDeckTheme: (theme: string | undefined) => void;
 }
 
 /**
@@ -58,5 +62,28 @@ export function useDeckAsset(): DeckAsset {
   const slideBullets = (slide: DeckWire['slides'][number]): string[] =>
     slide.content.filter((c) => typeof c.text === 'string').map((c) => c.text as string);
 
-  return { deckAsset, setDeckAsset, lastSavedDeck, appliedDocDeck, deckJson, updateDeckSlide, deleteDeckSlide, addDeckSlide, slideBullets };
+  // ── #959 排版编辑（contracts deck v2）──────────────────────────
+  const moveDeckSlide = (from: number, to: number) => {
+    setDeckAsset((prev) => {
+      if (!prev || from === to || from < 0 || to < 0 || from >= prev.slides.length || to >= prev.slides.length) return prev;
+      const slides = [...prev.slides];
+      const [moved] = slides.splice(from, 1);
+      slides.splice(to, 0, moved);
+      return { ...prev, slides };
+    });
+  };
+  const setDeckSlideLayout = (index: number, layout: string | undefined) => {
+    setDeckAsset((prev) => {
+      if (!prev) return prev;
+      return { ...prev, slides: prev.slides.map((s, i) => (i === index ? { ...s, layout } : s)) };
+    });
+  };
+  const setDeckTheme = (theme: string | undefined) => {
+    setDeckAsset((prev) => {
+      if (!prev) return prev;
+      return { ...prev, theme };
+    });
+  };
+
+  return { deckAsset, setDeckAsset, lastSavedDeck, appliedDocDeck, deckJson, updateDeckSlide, deleteDeckSlide, addDeckSlide, slideBullets, moveDeckSlide, setDeckSlideLayout, setDeckTheme };
 }

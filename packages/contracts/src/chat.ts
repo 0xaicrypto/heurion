@@ -49,9 +49,13 @@ export interface Citation {
 export interface DeckWire {
   title: string
   subtitle?: string
+  /** #957: deck 级主题（v2）；缺省 clinical。 */
+  theme?: string
   slides: Array<{
     title: string
-    content: Array<{ type: string; text?: string; style?: string; url?: string; caption?: string; data?: string; ref?: string }>
+    /** #957: 布局母版（v2,optional）— 缺省 bullets。 */
+    layout?: string
+    content: Array<{ type: string; text?: string; style?: string; url?: string; caption?: string; data?: string; ref?: string; spec?: unknown; source?: string; kind?: string; display?: boolean }>
   }>
 }
 
@@ -63,13 +67,22 @@ const deckSlideContentSchema = z.object({
   caption: z.string().optional(),
   data: z.string().optional(),
   ref: z.string().optional(),
+  /** #957: chart/figure block 的宽松 wire 形状 — 严格形状在导出边界
+   * presentationContentSchema（index.ts）校验，避免 chat↔index 循环依赖。 */
+  spec: z.unknown().optional(),
+  source: z.string().optional(),
+  display: z.boolean().optional(),
 })
 
 export const deckWireSchema = z.object({
   title: z.string(),
   subtitle: z.string().optional(),
+  /** #957: deck 级主题（v2,optional）— 宽松 wire 校验，严格枚举在导出边界。 */
+  theme: z.string().optional(),
   slides: z.array(z.object({
     title: z.string(),
+    /** #957: slide 布局（v2,optional）。 */
+    layout: z.string().optional(),
     content: z.array(deckSlideContentSchema),
   })),
 })

@@ -1,7 +1,6 @@
 import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
-import { validateRenderContent } from '@heurion/contracts'
-import { SCHEMA_VERSION } from '@heurion/contracts'
+import { validateRenderContent, SCHEMA_VERSION, slideLayoutSchema, deckThemeSchema, chartBlockSchema } from '@heurion/contracts'
 import { writeDocVersion } from './doc-version-writer.js'
 
 /**
@@ -13,6 +12,12 @@ import { writeDocVersion } from './doc-version-writer.js'
  * - update：改第 N 页的标题/要点（slide_index 1-based）
  * - delete：删除第 N 页
  * - insert_after：在第 N 页后插入新页
+ * #960 deck v2 布局/主题/图表能力（contracts slideLayout/deckTheme/chart）：
+ * - set_layout：设置第 N 页布局母版（title/section/bullets/bullets+image/chart-full/quote/blank）
+ * - set_theme：deck 级主题（clinical | warm-paper）
+ * - move：把第 N 页移动到第 M 位
+ * - insert_chart：在第 N 页后插入结构化图表（spec 走契约校验，渲染确定性
+ *   #176 管线 — 临床图表禁止生成式模型，AI 只产结构化 spec）
  *
  * 与 edit_document 同管道：快照（label 'AI deck edit'，同帧带旧 deck）+
  * doc_updated（deck 字段随帧推画布）。模型注入面只保留摘要（tool-loop
@@ -30,8 +35,9 @@ export class EditDeckTool extends BaseTool {
       'Edit the AI-organized deck (PPT asset) of the current writing session — the deck is separate from the document body (editing it never touches the summary text).',
       'Requires an existing deck (generated via insert_asset export organize=true, or uploaded PPT).',
       "Actions: 'update' = replace slide N's title/bullets; 'delete' = remove slide N; 'insert_after' = insert a new slide after slide N.",
+      '#960 v2 actions: set_layout (slide_index + layout enum) sets the slide layout master; set_theme (theme: clinical|warm-paper) sets the deck-wide theme; move (slide_index = from, to = target position) reorders slides; insert_chart (slide_index + chart spec {chart_type: line|bar|dose_curve, data: [{label, value}], errors?, sig?, title?, x_label?, y_label?}) inserts a structured chart slide rendered deterministically (never fabricate data — cite the source numbers in the spec).',
       'slide_index is 1-based. See ## Current Deck in the context for the current deck content.',
-      'Use when the user asks to modify/reorder/remove slides of the organized deck (把第 3 页拆成两页 / 删掉结论页 / 改第 2 页标题). Do NOT use edit_document for deck changes.',
+      'Use when the user asks to modify/reorder/remove slides or adjust slide layout/theme of the organized deck (把第 3 页拆成两页 / 删掉结论页 / 改第 2 页标题 / 给第 2 页换布局 / 整体换成暖色纸面主题 / 插一页柱状图对比两组 PFS). Do NOT use edit_document for deck changes.',
     ].join(' ')
   }
 
@@ -39,13 +45,33 @@ export class EditDeckTool extends BaseTool {
     return {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['update', 'delete', 'insert_after'], description: 'Deck edit action.' },
-        slide_index: { type: 'number', description: '1-based slide number to operate on.' },
+        action: {
+          type: 'string',
+          enum: ['update', 'delete', 'insert_after', 'set_layout', 'set_theme', 'move', 'insert_chart'],
+          description: 'Deck edit action.',
+        },
+        slide_index: { type: 'number', description: '1-based slide number. Required for update/delete/insert_after/set_layout/move(from)/insert_chart; not required for set_theme.' },
+        to: { type: 'number', description: "move: target 1-based position." },
         title: { type: 'string', description: 'update/insert_after: new slide title.' },
-        bullets: { type: 'array', items: { type: 'string' }, description: 'update/insert_after: new bullet lines (may embed ![caption](hosted URL) images).' },
+        bullets: { type: 'array', items: { type: 'string' }, description: 'update/insert_after: new bullet lines (may embed ![caption](hosted URL) images). insert_chart: optional bullets appended after the chart.' },
+        layout: { type: 'string', enum: ['title', 'section', 'bullets', 'bullets+image', 'chart-full', 'quote', 'blank'], description: 'set_layout: layout master.' },
+        theme: { type: 'string', enum: ['clinical', 'warm-paper'], description: 'set_theme: deck theme.' },
+        chart: {
+          type: 'object',
+          description: 'insert_chart: structured chart spec (deterministic rendering — provide the real numbers, never fabricated).',
+          properties: {
+            chart_type: { type: 'string', enum: ['line', 'bar', 'dose_curve'] },
+            data: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, value: { type: 'number' } }, required: ['label', 'value'] } },
+            errors: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, error: { type: 'number' } } } },
+            sig: { type: 'object', properties: { pair: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 2 }, stars: { type: 'string' }, p: { type: 'string' } } },
+            title: { type: 'string' },
+            x_label: { type: 'string' },
+            y_label: { type: 'string' },
+          },
+        },
         summary: { type: 'string', description: 'A one-line summary of what changed.' },
       },
-      required: ['action', 'slide_index'],
+      required: ['action'],
     }
   }
 
@@ -56,12 +82,14 @@ export class EditDeckTool extends BaseTool {
     }
     const docId = sessionId.slice(4)
     const action = String(args.action || '')
-    if (!['update', 'delete', 'insert_after'].includes(action)) {
-      return { success: false, error: 'action 必须是 update | delete | insert_after' }
+    if (!['update', 'delete', 'insert_after', 'set_layout', 'set_theme', 'move', 'insert_chart'].includes(action)) {
+      return { success: false, error: 'action 必须是 update | delete | insert_after | set_layout | set_theme | move | insert_chart' }
     }
     const slideIndex = Number(args.slide_index)
-    if (!Number.isInteger(slideIndex) || slideIndex < 1) {
-      return { success: false, error: 'slide_index 必须是 ≥1 的整数（1-based）' }
+    if (action !== 'set_theme') {
+      if (!Number.isInteger(slideIndex) || slideIndex < 1) {
+        return { success: false, error: 'slide_index 必须是 ≥1 的整数（1-based）' }
+      }
     }
 
     try {
@@ -73,7 +101,7 @@ export class EditDeckTool extends BaseTool {
       let deck: any
       try { deck = JSON.parse(existing.deck) } catch { return { success: false, error: 'deck 数据损坏（无法解析），请重新编排生成。' } }
       const slides: any[] = Array.isArray(deck.slides) ? [...deck.slides] : []
-      if (slideIndex > slides.length) {
+      if (action !== 'set_theme' && slideIndex > slides.length) {
         return { success: false, error: `slide_index ${slideIndex} 超出范围（当前共 ${slides.length} 页）` }
       }
 
@@ -84,7 +112,7 @@ export class EditDeckTool extends BaseTool {
       if (action === 'delete') {
         if (slides.length <= 1) return { success: false, error: '至少保留 1 页，不能删除最后一页。' }
         slides.splice(slideIndex - 1, 1)
-      } else {
+      } else if (action === 'update' || action === 'insert_after') {
         if (!title) return { success: false, error: `${action} 需要 title` }
         if (bullets.length === 0) return { success: false, error: `${action} 需要 bullets（至少 1 条要点）` }
         const slide = {
@@ -93,6 +121,40 @@ export class EditDeckTool extends BaseTool {
         }
         if (action === 'update') slides[slideIndex - 1] = slide
         else slides.splice(slideIndex, 0, slide)
+      } else if (action === 'set_layout') {
+        const layout = String(args.layout || '')
+        const check = slideLayoutSchema.safeParse(layout)
+        if (!check.success) return { success: false, error: 'layout 必须是 title | section | bullets | bullets+image | chart-full | quote | blank' }
+        slides[slideIndex - 1] = { ...slides[slideIndex - 1], layout: check.data }
+      } else if (action === 'set_theme') {
+        const theme = String(args.theme || '')
+        const check = deckThemeSchema.safeParse(theme)
+        if (!check.success) return { success: false, error: 'theme 必须是 clinical | warm-paper' }
+        deck = { ...deck, theme }
+      } else if (action === 'move') {
+        const to = Number(args.to)
+        if (!Number.isInteger(to) || to < 1 || to > slides.length) {
+          return { success: false, error: `to 必须是 1~${slides.length} 的整数（1-based 目标位置）` }
+        }
+        if (to === slideIndex) return { success: false, error: 'to 与当前位置相同，无需移动。' }
+        const [moved] = slides.splice(slideIndex - 1, 1)
+        slides.splice(to - 1, 0, moved)
+      } else if (action === 'insert_chart') {
+        const chart = (args.chart ?? null) as Record<string, unknown> | null
+        if (!chart) return { success: false, error: 'insert_chart 需要 chart 参数（{chart_type, data[{label,value}], ...}）。' }
+        const blockCheck = chartBlockSchema.safeParse({ type: 'chart', spec: chart })
+        if (!blockCheck.success) {
+          return { success: false, error: `chart spec 未通过契约校验：${blockCheck.error.issues.map((i) => i.message).join('；').slice(0, 300)}` }
+        }
+        const newSlide = {
+          title: title || String(chart.title || '图表').slice(0, 500),
+          layout: 'chart-full',
+          content: [
+            { type: 'chart', spec: chart, caption: (String(args.summary || '') || undefined) as string | undefined },
+            ...bullets.map((b: string) => ({ type: 'paragraph', text: b.slice(0, 2000), style: 'bullet' })),
+          ],
+        }
+        slides.splice(slideIndex, 0, newSlide)
       }
       if (slides.length > 30) return { success: false, error: 'deck 最多 30 页（契约上限）。' }
 
@@ -107,7 +169,11 @@ export class EditDeckTool extends BaseTool {
       })
       if (written.error) return { success: false, error: written.error }
 
-      const summary = String(args.summary || `已${action === 'update' ? '更新' : action === 'delete' ? '删除' : '插入'}第 ${slideIndex} 页（现共 ${slides.length} 页）；正文未改动`)
+      const ACTION_LABEL: Record<string, string> = {
+        update: '更新', delete: '删除', insert_after: '插入',
+        set_layout: '设置布局', set_theme: '设置主题', move: '移动', insert_chart: '插入图表',
+      }
+      const summary = String(args.summary || `已${ACTION_LABEL[action] || action}${action === 'set_theme' ? '' : ` 第 ${slideIndex} 页`}（现共 ${slides.length} 页）；正文未改动`)
       return { success: true, output: JSON.stringify({ body: written.body, deck: nextDeck, summary }) }
     } catch (err) {
       return { success: false, error: `edit_deck failed: ${(err as Error).message.slice(0, 200)}` }

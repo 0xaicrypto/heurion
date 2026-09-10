@@ -24,9 +24,22 @@ export function DeckView(input: {
                         <span className="text-xs text-accent">
                           {t('writing.deckAssetBadge', 'AI 编排 deck 资产 — 卡片内可直接编辑（改标题/调要点/删页），保存不会改动文档正文。')}
                         </span>
-                        <Button size="sm" variant="secondary" onClick={deckCtl.addDeckSlide}>
-                          <FilePlus size={13} className="mr-1" /> {t('writing.deckAddSlide', '添加一页')}
-                        </Button>
+                        <div className="flex shrink-0 items-center gap-2">
+                          {/* #959: deck 级主题选择（contracts v2）— 预览与导出（worker 母版）同语义。 */}
+                          <select
+                            value={deckAsset.theme ?? ''}
+                            onChange={(e) => deckCtl.setDeckTheme(e.target.value || undefined)}
+                            title={t('writing.deckTheme', 'deck 主题（导出 PPT 应用主题母版）')}
+                            className="rounded border border-border bg-surface px-1.5 py-1 text-[11px] text-text-secondary outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            <option value="">{t('writing.deckThemeDefault', '主题：默认')}</option>
+                            <option value="clinical">{t('writing.deckThemeClinical', '临床蓝')}</option>
+                            <option value="warm-paper">{t('writing.deckThemeWarmPaper', '暖色纸面')}</option>
+                          </select>
+                          <Button size="sm" variant="secondary" onClick={deckCtl.addDeckSlide}>
+                            <FilePlus size={13} className="mr-1" /> {t('writing.deckAddSlide', '添加一页')}
+                          </Button>
+                        </div>
                       </div>
                     ) : slides.length <= 1 && body.trim() && (
                       <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-surface-elevated px-4 py-2.5">
@@ -45,7 +58,19 @@ export function DeckView(input: {
                     {deckAsset ? (
                       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         {deckAsset.slides.map((slide, i) => (
-                          <div key={i} className="flex aspect-video flex-col overflow-hidden rounded-lg border border-border bg-surface-elevated shadow-sm transition-shadow hover:shadow-md">
+                          <div
+                            key={i}
+                            draggable
+                            onDragStart={(e) => { e.dataTransfer.setData('text/deck-index', String(i)); e.dataTransfer.effectAllowed = 'move'; }}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const from = Number(e.dataTransfer.getData('text/deck-index'));
+                              if (Number.isInteger(from) && from !== i) deckCtl.moveDeckSlide(from, i);
+                            }}
+                            title={t('writing.deckDragHint', '拖拽卡片可调整页序')}
+                            className="flex aspect-video flex-col overflow-hidden rounded-lg border border-border bg-surface-elevated shadow-sm transition-shadow hover:shadow-md"
+                          >
                             <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
                               <span className="shrink-0 text-[11px] font-semibold text-text-tertiary">{i + 1}.</span>
                               <input
@@ -53,6 +78,22 @@ export function DeckView(input: {
                                 onChange={(e) => deckCtl.updateDeckSlide(i, { title: e.target.value })}
                                 className="min-w-0 flex-1 rounded bg-transparent px-1 py-0.5 text-xs font-semibold text-text-primary outline-none focus:bg-surface focus:ring-1 focus:ring-ring"
                               />
+                              {/* #959: 每页布局母版选择（contracts v2）— 预览/导出同语义。 */}
+                              <select
+                                value={slide.layout ?? ''}
+                                onChange={(e) => deckCtl.setDeckSlideLayout(i, e.target.value || undefined)}
+                                title={t('writing.deckLayout', '布局母版')}
+                                className="shrink-0 rounded border border-border bg-surface px-1 py-0.5 text-[10px] text-text-secondary outline-none focus:ring-1 focus:ring-ring"
+                              >
+                                <option value="">{t('writing.deckLayoutDefault', '默认')}</option>
+                                <option value="title">{t('writing.deckLayoutTitle', '封面')}</option>
+                                <option value="section">{t('writing.deckLayoutSection', '章节页')}</option>
+                                <option value="bullets">{t('writing.deckLayoutBullets', '要点')}</option>
+                                <option value="bullets+image">{t('writing.deckLayoutBulletsImage', '要点+图')}</option>
+                                <option value="chart-full">{t('writing.deckLayoutChartFull', '整页图表')}</option>
+                                <option value="quote">{t('writing.deckLayoutQuote', '引用')}</option>
+                                <option value="blank">{t('writing.deckLayoutBlank', '空白')}</option>
+                              </select>
                               <button
                                 onClick={() => deckCtl.deleteDeckSlide(i)}
                                 title={t('writing.deckDeleteSlide', '删除此页')}

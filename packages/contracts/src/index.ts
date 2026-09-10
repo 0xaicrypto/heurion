@@ -56,25 +56,101 @@ export const paragraphBlockSchema = z.object({
 
 export type ParagraphBlock = z.infer<typeof paragraphBlockSchema>
 
-export const contentBlockSchema = z.union([paragraphBlockSchema, imageBlockSchema])
+/* ── deck v2 blocks (#957/#965) ────────────────────────────────── */
+
+/**
+ * #957: 结构化图表 block — AI/编辑器只产 spec,渲染走确定性管道
+ * (#176 哲学:渲染零生成式模型)。导出边界(server)把 chart → SVG
+ * (tools/chart-renderer)→ 光栅化 → image block,worker 零改动。
+ */
+export const chartBlockSchema = z.object({
+  type: z.literal('chart'),
+  spec: z.object({
+    chart_type: z.enum(['line', 'bar', 'dose_curve']),
+    data: z
+      .array(
+        z.object({
+          label: z.string().max(200),
+          value: z.number(),
+        }),
+      )
+      .min(1)
+      .max(200),
+    /** #407: 每点误差(SD/SEM/CI 半宽),与 data 同序对齐。 */
+    errors: z.array(z.object({ label: z.string().max(200), error: z.number().min(0) })).max(200).optional(),
+    /** #407: 显著性括号 — 星号 + 可选 p 标注。 */
+    sig: z
+      .object({
+        pair: z.tuple([z.string().max(200), z.string().max(200)]),
+        stars: z.string().max(10),
+        p: z.string().max(50).optional(),
+      })
+      .optional(),
+    title: z.string().max(500).optional(),
+    x_label: z.string().max(200).optional(),
+    y_label: z.string().max(200).optional(),
+  }),
+  caption: z.string().max(500).optional(),
+})
+
+export type ChartBlock = z.infer<typeof chartBlockSchema>
+
+/**
+ * #957: mermaid/LaTeX 源码 block — 渲染走 figures #820 管道
+ * (headless Chromium,三级缓存),导出边界转 image block。
+ */
+export const figureBlockSchema = z.object({
+  type: z.literal('figure'),
+  kind: z.enum(['mermaid', 'latex_math']),
+  source: z.string().min(1).max(32 * 1024),
+  display: z.boolean().optional(),
+  caption: z.string().max(500).optional(),
+})
+
+export type FigureBlock = z.infer<typeof figureBlockSchema>
+
+export const contentBlockSchema = z.union([paragraphBlockSchema, imageBlockSchema, chartBlockSchema, figureBlockSchema])
 
 export type ContentBlock = z.infer<typeof contentBlockSchema>
 
 /* ── presentation ──────────────────────────────────────────────── */
 
+/**
+ * #957: slide 布局枚举 — 布局母版语义(worker 按母版渲染,#958),
+ * 缺省 'bullets' 向后兼容 v1。受控枚举而非自由坐标:保住 AI 编排
+ * 优势与 pptx 原生可编辑文本。
+ */
+export const slideLayoutSchema = z.enum(['title', 'section', 'bullets', 'bullets+image', 'chart-full', 'quote', 'blank'])
+
+export type SlideLayout = z.infer<typeof slideLayoutSchema>
+
+/**
+ * #957: deck 主题枚举 — 2~4 套精选主题(色板/字体/accent),用受控枚举
+ * 顶替自由设计编辑器。'warm-paper' = DESIGN_SYSTEM_v2 的 Apothecary
+ * Green + 暖色纸面方向(#944 联动);缺省 'clinical' 维持现状。
+ */
+export const deckThemeSchema = z.enum(['clinical', 'warm-paper'])
+
+export type DeckTheme = z.infer<typeof deckThemeSchema>
+
 export const presentationSlideSchema = z.object({
   title: z.string().min(1).max(500),
+  /** #957: 布局母版(v2,optional);缺省 bullets。 */
+  layout: slideLayoutSchema.optional(),
   content: z.array(contentBlockSchema).min(1).max(50),
 })
 
 export type PresentationSlide = z.infer<typeof presentationSlideSchema>
 
 export const presentationContentSchema = z.object({
-  schemaVersion: z.literal(SCHEMA_VERSION),
+  /** v1 载荷不受影响;v2(#957)载含 layout/theme/chart/figure 的新形状。 */
+  schemaVersion: z.union([z.literal(1), z.literal(2)]),
   title: z.string().min(1).max(500),
   subtitle: z.string().max(500).optional(),
   presenter: z.string().max(300).optional(),
   date: z.string().max(100).optional(),
+  /** #957: deck 级主题(v2,optional);缺省 clinical。 */
+  theme: deckThemeSchema.optional(),
   slides: z.array(presentationSlideSchema).min(1).max(30),
 })
 

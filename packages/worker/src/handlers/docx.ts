@@ -66,7 +66,9 @@ export async function generateDocx(payload: any) {
         }
         continue
       }
-      children.push(new Paragraph({ children: [new TextRun(String(block.text || ''))], spacing: { after: 120 } }))
+      // #957: contentBlock 联合扩展(chart/figure 在导出边界已转 image)，
+      // docx 渲染器按 paragraph/image 处理，其余块降级为空行。
+      children.push(new Paragraph({ children: [new TextRun(String((block as { text?: string }).text || ''))], spacing: { after: 120 } }))
     }
   }
 

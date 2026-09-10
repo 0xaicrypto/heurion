@@ -577,6 +577,28 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     emitSubagentEvent: (ev) => send(ev),
     // #766: insert_asset plot 渲染 — execution plane 端口（modules 层提供）。
     executionPlane: createExecutionPlaneService(),
+    // #939: figure 渲染管线 port（mermaid/公式 → 托管图片行）—
+    // modules/figures 注入,tools 层零 modules import(#672 分层)。
+    // #960: ensureFigure 面向 deck v2 figure block（SVG 产物 → 数据 URL）。
+    figurePipeline: {
+      resolveBody: async (uid, bodyText) => {
+        const { resolveFiguresToImageLines } = await import('../figures/figure-markdown.js')
+        const { ensureFigure } = await import('../figures/figure.service.js')
+        return resolveFiguresToImageLines(uid, bodyText, ensureFigure)
+      },
+      ensureFigure: async (uid, source, kind, caption) => {
+        const { ensureFigure } = await import('../figures/figure.service.js')
+        const { issueChartToken } = await import('../../common/chart-token.js')
+        const r = await ensureFigure(uid, { kind, source })
+        if (!r.ok) return null
+        // SVG 字节经 resolveLocalImageBlock 同口径光栅化（docx/pptx 按 PNG 声明）。
+        const { resolveFigureSvg } = await import('../../tools/deck-chart-embed.js')
+        const data = await resolveFigureSvg(uid, r.file.fileId)
+        if (!data) return null
+        const url = `/api/v1/files/preview-page/${r.file.fileId}?token=${issueChartToken(r.file.fileId, uid)}`
+        return { ref: url, caption, data }
+      },
+    },
     // #868: 编辑定位提示(焦点段/选中文本) — rangeEdit 焦点优先匹配。
     editHint,
   }

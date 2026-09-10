@@ -272,6 +272,17 @@ describe('#767 buildDocumentContent / buildPresentationContent', () => {
     expect(ppt.slides.map((s) => s.title)).toEqual(['概述', '结果', '讨论'])
     expect(ppt.slides[1].content[0].text).toBe('PFS 5.2 个月。')
   })
+
+  test('#966 空标题节（连续标题/文末悬空/纯骨架）→ 占位段补齐，契约 min(1) 不再拒绝', () => {
+    const skeleton = '# 大纲\n\n## 方法\n\n## 结果\n\n## 讨论'
+    const doc = buildDocumentContent(skeleton, 'fallback')
+    expect(doc.title).toBe('大纲')
+    expect(doc.sections.map((s) => s.heading)).toEqual(['方法', '结果', '讨论'])
+    for (const s of doc.sections) expect(s.paragraphs.length).toBeGreaterThan(0)
+    const ppt = buildPresentationContent(skeleton, 'fallback')
+    expect(ppt.slides.map((s) => s.title)).toEqual(['方法', '结果', '讨论'])
+    for (const s of ppt.slides) expect(s.content.length).toBeGreaterThan(0)
+  })
 })
 
 describe('#767 insert_asset export 分支（fake execution plane）', () => {
@@ -665,5 +676,48 @@ describe('#769 导出时草稿内嵌图片转 image block', () => {
     const payload = (plane.enqueue as any).mock.calls[0][0].payload
     expect(payload.data.slides[0].content[0].type).toBe('image')
     expect(Buffer.from(payload.data.slides[0].content[0].data, 'base64').toString()).toBe('pfs-png-bytes')
+  }, 30000)
+})
+
+describe('#963 organize v2（layout/chart/theme 按语义编排）', () => {
+  const ORG_BODY = '# EGFR 研究\n\n中位 PFS 5.2 个月。\n\n- PD-L1 ≥50% 获益\n- HR 0.48'
+
+  function fakePlane(over: Record<string, any> = {}) {
+    return {
+      enqueue: vi.fn(async () => ({ job_id: 'j1', status: 'pending' })),
+      getStatus: vi.fn(async () => ({ job_id: 'j1', status: 'completed', result: { file_id: 'f1', file_name: 'out.pptx' } })),
+      fetchFile: vi.fn(async () => Buffer.from('PK\x03\x04fake')),
+      ...over,
+    }
+  }
+
+  test('slides 直供 layout/chart/theme → 落 deck 且通过契约校验', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, ORG_BODY)
+    const plane = fakePlane()
+
+    const tool = new InsertAssetTool({ userId, sessionId: `doc-${docId}`, executionPlane: plane, isPluginInstalled: async () => true })
+    const result = await tool.execute({
+      asset_type: 'export', format: 'pptx', organize: true, title: '汇报', theme: 'warm-paper',
+      slides: [
+        { title: '结果', layout: 'chart-full', chart: { chart_type: 'bar', data: [{ label: 'PFS', value: 5.2 }, { label: 'OS', value: 14.1 }] }, bullets: ['中位 PFS 5.2 个月'] },
+        { title: '章节', layout: 'section', bullets: ['背景与动机'] },
+        { title: '普通页', bullets: ['普通要点'] },
+      ],
+    })
+
+    expect(result.success).toBe(true)
+    const payload = (plane.enqueue as any).mock.calls[0][0].payload
+    expect(payload.data.theme).toBe('warm-paper')
+    expect(payload.data.slides[0].layout).toBe('chart-full')
+    expect(payload.data.slides[0].content[0]).toMatchObject({ type: 'chart', spec: { chart_type: 'bar' } })
+    expect(payload.data.slides[1].layout).toBe('section')
+    expect(payload.data.slides[2].layout).toBeUndefined() // bullets 缺省不写 layout
+
+    const deckJson = JSON.parse((result.output as string)).deck ?? null
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    const stored = deckJson ?? (doc?.deck ? JSON.parse(doc.deck) : null)
+    expect(stored?.slides[0]?.layout).toBe('chart-full')
   }, 30000)
 })

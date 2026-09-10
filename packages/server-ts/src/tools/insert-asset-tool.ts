@@ -46,6 +46,11 @@ export interface InsertAssetContext {
   /** #766: plot/export 渲染需要 execution plane + 对应插件。 */
   executionPlane?: ToolExecutionPlane
   isPluginInstalled?: (pluginId: string) => Promise<boolean>
+  /** #939: figure 渲染管线 port（同 ToolContext.figurePipeline）。 */
+  figurePipeline?: {
+    resolveBody: (userId: string, body: string) => Promise<string>
+    ensureFigure: (userId: string, source: string, kind: 'mermaid' | 'latex_math', caption?: string) => Promise<{ ref: string; caption?: string; data: string } | null>
+  }
 }
 
 export class InsertAssetTool extends BaseTool {
@@ -60,7 +65,7 @@ export class InsertAssetTool extends BaseTool {
       'Insert a structured asset into the current writing-session document.',
       "asset_type='table': pass headers + rows — a markdown table is generated and written into the document.",
       "asset_type='plot': pass plot_type (bar/line/pie), title and series [{label, x, y}] — the chart is rendered to PNG (requires the heurion/plot plugin) and embedded as an image.",
-      "asset_type='export': pass format (docx/pptx/pdf). TWO export semantics: (a) organize=false (default) = FAITHFUL export — the CURRENT DRAFT is converted as-is (mechanical '##' → slide/section mapping); requires a non-empty draft, but when the draft is empty and exactly one reference material exists it is auto-imported first. Use when the user says 导出/转 Word/保真导出. (b) organize=true (pptx only) = AI-ORGANIZED deck — the draft is just SOURCE MATERIAL, not the target structure: you read the draft (## Current Document) or the conversation context and PROVIDE the deck content directly in the `slides` argument (aim for 8–15 content slides, max 30; each slide {title, bullets[]}; cover is generated from `title`/`subtitle`). A deck does not require a non-empty draft (素材=对话上下文). If you call organize=true WITHOUT slides, the tool replies with an auto-imported body digest — call it again with slides. Use when the user says 把这篇文章做成 PPT/做个演示.",
+      "asset_type='export': pass format (docx/pptx/pdf). TWO export semantics: (a) organize=false (default) = FAITHFUL export — the CURRENT DRAFT is converted as-is (mechanical '##' → slide/section mapping); requires a non-empty draft, but when the draft is empty and exactly one reference material exists it is auto-imported first. Use when the user says 导出/转 Word/保真导出. (b) organize=true (pptx only) = AI-ORGANIZED deck — the draft is just SOURCE MATERIAL, not the target structure: you read the draft (## Current Document) or the conversation context and PROVIDE the deck content directly in the `slides` argument (aim for 8–15 content slides, max 30; each slide {title, bullets[], layout?, chart?}; cover is generated from `title`/`subtitle`). layout picks the design master per slide semantics: 数据/统计结果页 → 'chart-full' + chart spec {chart_type: line|bar|dose_curve, data:[{label,value}], errors?, sig?, title?, x_label?, y_label?}（数值必须来自正文/统计结果，禁止编造）; 单信息/章节页 → 'section'; 结论金句页 → 'quote'. theme 可选 clinical|warm-paper（deck 级配色）。A deck does not require a non-empty draft (素材=对话上下文). If you call organize=true WITHOUT slides, the tool replies with an auto-imported body digest — call it again with slides. Use when the user says 把这篇文章做成 PPT/做个演示.",
       'Optionally pass anchor (a text fragment copied VERBATIM from the current document; whitespace/line-break differences are tolerated) to place the asset right AFTER that fragment. Without a match (or without anchor) it is appended at the end.',
       "Use this when the user asks for a table or chart IN the draft (Table 1, 基线特征表, 画图, 曲线, 图表…), or asks to export the draft (导出 Word, 生成 PPT, 转 PDF…) — do NOT paste raw markdown tables/image links yourself and do NOT use edit_document for this.",
     ].join(' ')
@@ -147,6 +152,7 @@ export class InsertAssetTool extends BaseTool {
           userId: this.ctx.userId,
           plane: this.ctx.executionPlane,
           isPluginInstalled: this.ctx.isPluginInstalled,
+          figurePipeline: this.ctx.figurePipeline,
           writeBlock: (d, block, a, s, opts) => this.writeBlock(d, block, a, s, opts),
         }, docId, args)
       }

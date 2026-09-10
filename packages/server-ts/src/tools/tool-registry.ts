@@ -132,6 +132,16 @@ export interface ToolContext {
    */
   getPluginConfig?: (pluginId: string) => Promise<Record<string, unknown>>
   /**
+   * #939: figure 渲染管线 port（mermaid 围栏/公式行 → 托管图片行）—
+   * 由 modules/figures 提供，tools 零 modules import（#672 分层）。
+   * Absent ⇒ 导出跳过 figure 解析（原文本降级，不阻塞导出）。
+   * #960: ensureFigure 面向 figure block（deck v2）——source→托管 image 块。
+   */
+  figurePipeline?: {
+    resolveBody: (userId: string, body: string) => Promise<string>
+    ensureFigure: (userId: string, source: string, kind: 'mermaid' | 'latex_math', caption?: string) => Promise<{ ref: string; caption?: string; data: string } | null>
+  }
+  /**
    * #828: turn abort signal (client disconnect / stop / watchdog) — tools
    * and sub-agents observe it so a dead client stops burning tokens.
    * Absent ⇒ tools run to completion as before.

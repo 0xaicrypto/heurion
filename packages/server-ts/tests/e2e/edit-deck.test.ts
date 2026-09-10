@@ -177,3 +177,83 @@ describe('#773 deck REST（GET/PUT docs + 再导出内容源）', () => {
     expect(JSON.parse(snaps2[0].deck)).toEqual(DECK)
   }, 30000)
 })
+
+describe('#960 edit_deck v2 actions（布局/主题/排序/图表）', () => {
+  test('set_layout: 第 2 页 → bullets+image;非法枚举拒绝', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDocWithDeck(app, DECK)
+
+    const bad = await new EditDeckTool({ userId, sessionId: `doc-${docId}` })
+      .execute({ action: 'set_layout', slide_index: 2, layout: 'freeform' })
+    expect(bad.success).toBe(false)
+    expect(bad.error).toContain('layout')
+
+    const ok = await new EditDeckTool({ userId, sessionId: `doc-${docId}` })
+      .execute({ action: 'set_layout', slide_index: 2, layout: 'bullets+image' })
+    expect(ok.success).toBe(true)
+    const { deck } = JSON.parse(ok.output as string)
+    expect(deck.slides[1].layout).toBe('bullets+image')
+    expect(deck.slides[0].layout).toBeUndefined() // 未触碰页保持无 layout（v1 兼容）
+  })
+
+  test('set_theme: deck 级主题写入;非法主题拒绝', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDocWithDeck(app, DECK)
+
+    const bad = await new EditDeckTool({ userId, sessionId: `doc-${docId}` })
+      .execute({ action: 'set_theme', theme: 'neon-night' })
+    expect(bad.success).toBe(false)
+
+    const ok = await new EditDeckTool({ userId, sessionId: `doc-${docId}` })
+      .execute({ action: 'set_theme', theme: 'warm-paper' })
+    expect(ok.success).toBe(true)
+    const { deck } = JSON.parse(ok.output as string)
+    expect(deck.theme).toBe('warm-paper')
+    expect(deck.slides).toHaveLength(3)
+  })
+
+  test('move: 第 3 页移到第 1 位;非法目标拒绝', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDocWithDeck(app, DECK)
+
+    const bad = await new EditDeckTool({ userId, sessionId: `doc-${docId}` })
+      .execute({ action: 'move', slide_index: 3, to: 9 })
+    expect(bad.success).toBe(false)
+
+    const ok = await new EditDeckTool({ userId, sessionId: `doc-${docId}` })
+      .execute({ action: 'move', slide_index: 3, to: 1 })
+    expect(ok.success).toBe(true)
+    const { deck } = JSON.parse(ok.output as string)
+    expect(deck.slides.map((s: any) => s.title)).toEqual(['结论', '研究背景', '关键结果'])
+  })
+
+  test('insert_chart: 合法 spec → chart-full 新页;非法 spec 拒绝(不落库)', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDocWithDeck(app, DECK)
+
+    const bad = await new EditDeckTool({ userId, sessionId: `doc-${docId}` })
+      .execute({ action: 'insert_chart', slide_index: 2, chart: { chart_type: 'spline', data: [{ label: 'a', value: 1 }] } })
+    expect(bad.success).toBe(false)
+    expect(bad.error).toContain('契约校验')
+
+    const ok = await new EditDeckTool({ userId, sessionId: `doc-${docId}` })
+      .execute({
+        action: 'insert_chart', slide_index: 2,
+        chart: { chart_type: 'bar', data: [{ label: 'PFS', value: 5.2 }, { label: 'OS', value: 14.1 }], title: '中位生存', y_label: '月' },
+        summary: 'PFS vs OS',
+      })
+    expect(ok.success).toBe(true)
+    const { deck } = JSON.parse(ok.output as string)
+    expect(deck.slides).toHaveLength(4)
+    expect(deck.slides[2].layout).toBe('chart-full')
+    expect(deck.slides[2].content[0]).toMatchObject({ type: 'chart', spec: { chart_type: 'bar' } })
+    expect(deck.schemaVersion).toBe(1)
+
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(JSON.parse(doc.deck).slides[2].content[0].type).toBe('chart')
+  })
+})
