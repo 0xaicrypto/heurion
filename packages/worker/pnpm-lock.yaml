@@ -48,6 +48,9 @@ importers:
       '@types/uuid':
         specifier: ^9.0.0
         version: 9.0.8
+      jszip:
+        specifier: ^3.10.2
+        version: 3.10.2
       tsx:
         specifier: ^4.0.0
         version: 4.23.11
@@ -989,8 +992,8 @@ packages:
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
 
-  jszip@3.10.1:
-    resolution: {integrity: sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==}
+  jszip@3.10.2:
+    resolution: {integrity: sha512-3l+rb15IOWtUhU0H5MFqES/T6Kh7abYwjosBey/vD6hDt8zoEffkSC5Ws5SGtgVw3gBx2NEbhTeSW1+kWkpyTQ==}
 
   lie@3.3.0:
     resolution: {integrity: sha512-UaiMJzeWRlEujzAuw5LokY1L5ecNQYZKfmyZ9L7wDHb/p5etKaxXhohBcrw0EYby+G/NA52vRSN4N39dxHAIwQ==}
@@ -2193,7 +2196,7 @@ snapshots:
     dependencies:
       '@types/node': 25.9.5
       hash.js: 1.1.7
-      jszip: 3.10.1
+      jszip: 3.10.2
       nanoid: 5.1.16
       xml: 1.0.1
       xml-js: 1.6.11
@@ -2414,7 +2417,7 @@ snapshots:
 
   json-schema-traverse@1.0.0: {}
 
-  jszip@3.10.1:
+  jszip@3.10.2:
     dependencies:
       lie: 3.3.0
       pako: 1.0.11
@@ -2585,7 +2588,7 @@ snapshots:
       '@types/node': 18.19.130
       https: 1.0.0
       image-size: 1.2.1
-      jszip: 3.10.1
+      jszip: 3.10.2
 
   process-nextick-args@2.0.1: {}
 
