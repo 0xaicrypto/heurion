@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Heurion 完整回归测试 v2 — 覆盖所有用户场景
+set -euo pipefail
 BASE="${1:-}"
 if [ -z "$BASE" ]; then
   echo "Usage: $0 <base-url>  (e.g., http://localhost:8002 for staging)"

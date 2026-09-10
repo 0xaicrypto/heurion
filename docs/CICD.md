@@ -105,10 +105,9 @@ S3-compatible bucket. Store credentials in GitHub Secrets for the
 
 ## Rollback
 
-Deploys are pinned to immutable `sha-<short>` image tags. `vps_deploy.sh`
-keeps the last good image tag in `.last-good-image` — a failed deploy can
-flip back by re-running it with the previous tag. There is no push-based
-rollback: you cannot "un-push" main, so roll forward with a fix instead.
+`scripts/deploy-production-compose.sh` 在每次部署前记录当前在跑镜像 ID（容器 inspect，非 tag — CI 固定 `:latest` 时按 tag 回滚只会拉回新镜像），并在 `https://$HOSTNAME/healthz` 健康检查失败（30 次 × 5s 重试）时**自动回滚**：用旧镜像 ID 重建 `nexus-server` + `nexus-embedding-server`，再等健康（成功则提示排查新镜像，仍失败则报人工介入）。
+
+注意：没有 push-based rollback — 你无法 un-push main，最终应带着修复 roll forward。
 
 ## Failure modes
 

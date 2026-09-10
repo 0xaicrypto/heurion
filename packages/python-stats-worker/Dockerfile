@@ -6,7 +6,10 @@ COPY requirements.txt ./
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc g++ pkg-config \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt \
+    # #937: non-root 运行（nexus, UID 1000）— 与 DEPLOY.md 安全声明对齐。
+    && groupadd -r -g 1000 nexus && useradd -r -u 1000 -g nexus -m nexus
 COPY stats_core.py main.py ./
+USER nexus
 EXPOSE 8005
 CMD ["python", "main.py"]

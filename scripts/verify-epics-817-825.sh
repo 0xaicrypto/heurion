@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # verify-epics-817-825.sh — 两个 epic 的生产环境手工验证脚本
+set -euo pipefail
 #
 # 验证范围:
 #   Epic #825 学术渲染: 导出嵌图(docx/pdf)/FigureRender 溯源/重渲染/图库域分离

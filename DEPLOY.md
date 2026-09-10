@@ -190,6 +190,12 @@ PDF_FORMULA_OCR_CONCURRENCY=3     # 并行视觉调用数
 ## Security notes
 
 - The container runs as a **non-root user** (`nexus`, UID 1000). Nothing in the image needs root post-build.
+  - #937 迁移注记（2026-09）：`server-ts` / `embedding-server` / `python-stats-worker` 三个镜像已补 `USER nexus`；**既有生产卷为 root 属主**，首次部署新镜像前需一次性迁移：
+    ```bash
+    docker run --rm -v nexus-db-data:/db -v nexus-data:/d alpine sh -c "chown -R 1000:1000 /db /d 2>/dev/null || true"
+    ```
+    （`/data/db` SQLite 与 `/data/twins` 用户文件必须 UID 1000 可写，否则启动失败。）
+  - **已知例外**：execution-plane worker（`heurion-worker`）保持 root 运行 — headless Chromium 在容器内以 root 无法启用 setuid sandbox（`--no-sandbox` 的既有理由记录于 `handlers/figure.ts`）。如需非 root 需配套 user namespaces/seccomp 方案，另行评估。
 - `SERVER_SECRET` is the JWT signing key — treat it like a password. Don't commit `.env.production`.
 - Caddy uses Let's Encrypt's prod ACME endpoint. If you're testing repeatedly, switch to staging in the Caddyfile to avoid rate limits.
 - The `/llm/chat` endpoint is per-user rate-limited via `RATE_LIMIT_LLM_REQUESTS_PER_MINUTE`. Tune for your traffic.

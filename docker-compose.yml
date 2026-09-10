@@ -65,6 +65,14 @@ services:
       - STATS_PORT=8005
     networks:
       - nexus-net
+    # #951: /healthz 已存在（服务暴露）— 接入 compose healthcheck，
+    # nexus-server 的 depends_on 按 service_healthy 门控。
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   nexus-server:
     # TypeScript-based Nexus server. Built from packages/server-ts/Dockerfile.
@@ -88,7 +96,9 @@ services:
       # #466: pre-provisioned Reactome pathway diagrams (read-only mount).
       - REACTOME_DIAGRAMS_DIR=/data/reactome-diagrams
     depends_on:
-      - nexus-stats-worker
+      nexus-stats-worker:
+        # #951: healthcheck 门控 — stats worker 未就绪前 server 不启动。
+        condition: service_healthy
     volumes:
       # /data persistence — cache, embedding models, misc (#281 remainder).
       - nexus-data:/data
@@ -103,6 +113,13 @@ services:
       - ./packages/web/dist:/app/web-dist:ro
     networks:
       - nexus-net
+    # #951: /healthz 已存在 — 接入 compose healthcheck（部署脚本与运维状态可见）。
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8001/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     # No `ports:` here — Caddy is the only thing the host exposes.
 
   caddy:

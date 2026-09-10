@@ -22,6 +22,10 @@ RUN pnpm run build
 FROM node:22-bookworm-slim
 WORKDIR /app
 
+# #937: 本容器保持 root 运行 — 已知例外（DEPLOY.md 同步注明）：
+# headless Chromium 以 --no-sandbox 运行，容器内 root 无法启用 setuid
+# sandbox（理由记录于 handlers/figure.ts）；如需非 root 需给 chromium
+# 配套 user namespaces/seccomp 方案，单独立项评估。
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates \
     # #771: 翻页预览 — LibreOffice（pptx/docx→PDF）+ poppler（PDF→PNG）。

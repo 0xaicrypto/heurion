@@ -135,6 +135,22 @@ fi
 # Pull the images tagged by CI and recreate containers.
 export NEXUS_IMAGE="${NEXUS_IMAGE:-ghcr.io/0xaicrypto/nexus-server:latest}"
 export EMBEDDING_IMAGE="${EMBEDDING_IMAGE:-ghcr.io/0xaicrypto/nexus-embedding-server:latest}"
+
+# #938 — 部署前记录当前在跑镜像 ID（不是 tag：CI 固定 :latest 时按 tag 回滚
+# 只会拉回新镜像，回滚无效）。健康检查失败时用旧镜像重建容器（自动回滚）。
+PREV_NEXUS_IMAGE=""
+PREV_EMBEDDING_IMAGE=""
+for c in nexus-server nexus-embedding-server; do
+  if docker inspect "$c" >/dev/null 2>&1; then
+    img=$(docker inspect --format '{{.Image}}' "$c")
+    case "$c" in
+      nexus-server) PREV_NEXUS_IMAGE="$img" ;;
+      nexus-embedding-server) PREV_EMBEDDING_IMAGE="$img" ;;
+    esac
+  fi
+done
+if [ -n "$PREV_NEXUS_IMAGE" ]; then echo "Rollback point (server): $PREV_NEXUS_IMAGE"; fi
+
 # Free disk before pulling: stale images/build caches accumulate across
 # deployments and have blocked production pulls (no space left on device).
 docker image prune -f 2>/dev/null || true
@@ -168,17 +184,38 @@ HEALTH_URL="https://${HOSTNAME}/healthz"
 MAX_RETRIES=30
 RETRY_DELAY=5
 
-echo "Waiting for $HEALTH_URL ..."
-for i in $(seq 1 $MAX_RETRIES); do
-  if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
-    echo "✓ Production healthy: $HEALTH_URL"
-    exit 0
-  fi
-  echo "  health check attempt $i/$MAX_RETRIES failed, retrying in ${RETRY_DELAY}s..."
-  sleep $RETRY_DELAY
-done
+wait_health() {
+  for i in $(seq 1 $MAX_RETRIES); do
+    if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
+      echo "✓ Production healthy: $HEALTH_URL"
+      return 0
+    fi
+    echo "  health check attempt $i/$MAX_RETRIES failed, retrying in ${RETRY_DELAY}s..."
+    sleep $RETRY_DELAY
+  done
+  return 1
+}
 
+echo "Waiting for $HEALTH_URL ..."
+if wait_health; then
+  exit 0
+fi
+
+# ── #938: 自动回滚 — 新容器已替换旧容器,仅打日志=回滚名存实亡(#938 体检)。
+# 有旧镜像可回滚 → 用旧镜像 ID 重建 server+embedding,再等健康。
 echo "❌ Production health check failed after ${MAX_RETRIES} attempts"
-docker compose --env-file .env.production logs --tail=50 nexus-server
-docker compose --env-file .env.production logs --tail=50 nexus-embedding-server
+docker compose --env-file .env.production logs --tail=50 nexus-server || true
+docker compose --env-file .env.production logs --tail=50 nexus-embedding-server || true
+if [ -n "$PREV_NEXUS_IMAGE" ]; then
+  echo "↩️  Rolling back to previous image: $PREV_NEXUS_IMAGE"
+  NEXUS_IMAGE="$PREV_NEXUS_IMAGE" EMBEDDING_IMAGE="${PREV_EMBEDDING_IMAGE:-$EMBEDDING_IMAGE}" \
+    docker compose --env-file .env.production up -d --no-deps nexus-server nexus-embedding-server
+  if wait_health; then
+    echo "↩️  Rollback completed and healthy — 新镜像已回滚,请排查日志后修复再发"
+    exit 1
+  fi
+  echo "❌ Rollback still unhealthy — 需要人工介入（上一镜像: $PREV_NEXUS_IMAGE）"
+  exit 1
+fi
+echo "❌ 无回滚点（首次部署或原容器不在跑）— 保持失败状态,需人工介入"
 exit 1
