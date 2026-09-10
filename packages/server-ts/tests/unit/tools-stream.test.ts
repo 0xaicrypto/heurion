@@ -127,3 +127,52 @@ describe('chatWithToolsStream — tool_calls 增量累积', () => {
     expect(r.text).toContain('edit_document')
   })
 })
+describe('#979 — index 缺失的 delta 归属（GLM/opencode 中转生产形态）', () => {
+  beforeEach(() => {
+    process.env.DEFAULT_LLM_PROVIDER = 'opencode'
+    process.env.OPENCODE_API_KEY = 'test-key'
+    process.env.DEFAULT_LLM_MODEL = 'glm-5.3-flash'
+  })
+
+  test('name 与 arguments 分处无 index 的不同 delta → 参数不再碎片化丢失', async () => {
+    // 生产实例形态:name 在首个 delta(无 index),后续每个 arguments 增量
+    // 均无 index — 旧逻辑「无 index 一律 toolAcc.size」把增量开成无名新
+    // 条目再丢弃 → edit_document({}) 空参。
+    const fetchMock = vi.fn(async () => sseChunks([
+      { choices: [{ delta: { tool_calls: [{ id: 'call_a', function: { name: 'edit_document', arguments: '' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ function: { arguments: '{"old_text":"第三段",\n' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ function: { arguments: '"new_text":"内容"}' } }] } }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+      { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const r = await getLlmGateway().chatWithToolsStream(
+      [{ role: 'user', content: '继续第三步' }], { sessionId: 'doc-x' }, TOOLS,
+    )
+
+    // 一个工具调用,参数完整(不再是 {})
+    expect(r.toolCalls).toHaveLength(1)
+    expect(r.toolCalls![0].name).toBe('edit_document')
+    const parsed = JSON.parse(r.toolCalls![0].arguments)
+    expect(parsed).toEqual({ old_text: '第三段', new_text: '内容' })
+    expect(r.text).toContain('"old_text"')
+  })
+
+  test('多个无 index 工具调用(以 id 分界)→ 各自归位', async () => {
+    const fetchMock = vi.fn(async () => sseChunks([
+      { choices: [{ delta: { tool_calls: [{ id: 'c1', function: { name: 'edit_document', arguments: '{"old_text":"a"}' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ id: 'c2', function: { name: 'edit_document', arguments: '{"old_text":"b"}' } }] } }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+      { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const r = await getLlmGateway().chatWithToolsStream(
+      [{ role: 'user', content: '逐节填充' }], { sessionId: 'doc-x' }, TOOLS,
+    )
+    expect(r.toolCalls).toHaveLength(2)
+    expect(JSON.parse(r.toolCalls![0].arguments)).toEqual({ old_text: 'a' })
+    expect(JSON.parse(r.toolCalls![1].arguments)).toEqual({ old_text: 'b' })
+  })
+})

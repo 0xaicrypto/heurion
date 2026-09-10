@@ -85,6 +85,7 @@ export async function chatWithToolsStreamImpl(
   let finalUsage: LlmChunk['usage'] | undefined
   let completionChars = 0
   let ttfbLogged = false
+  let currentToolIdx: number | null = null
   const toolAcc = new Map<number, { id?: string; name: string; arguments: string }>()
 
   try {
@@ -118,7 +119,22 @@ export async function chatWithToolsStreamImpl(
           if (delta?.reasoning_content) onReasoning?.(delta.reasoning_content)
           if (delta?.content) { text += delta.content; completionChars += delta.content.length }
           for (const tc of delta?.tool_calls ?? []) {
-            const idx = typeof tc.index === 'number' ? tc.index : toolAcc.size
+            // #979 — OpenAI 语义的 index 归属修复：GLM 经 opencode 中转的
+            // delta.tool_calls 不带 index（生产实证），此前「无 index 一律
+            // toolAcc.size」把每个 arguments 增量都开成新条目 → 构建块时
+            // 无名碎片全被丢弃 → 工具收到 {} 空参（模型自称"参数完整构造"
+            // 属实 — 参数丢在流式装配层）。正确归属：带 index 用 index；
+            // 无 index 时 id 出现=新调用，否则追加到当前调用。
+            let idx: number
+            if (typeof tc.index === 'number') {
+              idx = tc.index
+              currentToolIdx = idx
+            } else if (tc.id || currentToolIdx === null) {
+              idx = toolAcc.size
+              currentToolIdx = idx
+            } else {
+              idx = currentToolIdx
+            }
             const cur = toolAcc.get(idx) ?? { name: '', arguments: '' }
             if (tc.id) cur.id = tc.id
             if (tc.function?.name) cur.name = tc.function.name
