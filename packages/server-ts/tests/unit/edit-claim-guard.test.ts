@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { runToolCallLoop, type TurnIO } from '../../src/modules/chat/tool-loop.js'
-import { countClaimedEditItems } from '../../src/modules/chat/writing-prompts.js'
+import { countClaimedEditItems } from '../../src/modules/chat/edit-reconciliation.js'
 import { shouldRunDocExecutor } from '../../src/modules/chat/doc-executor.js'
 import { ToolRegistry } from '../../src/tools/tool-registry.js'
 import { BaseTool, type ToolResult } from '../../src/tools/base-tool.js'

@@ -20,10 +20,13 @@ import type { getUserContext } from '../shared/user-context.js'
 // 检查，契约类型化停在传输层（chat-sse）。
 import type { ChatStreamChunk, DeckWire } from '@heurion/contracts'
 import { deckWireSchema } from '@heurion/contracts'
-// #892: 声明-执行对账 — 判定纯函数外置 writing-prompts(可单测)。
+// #892: 声明-执行对账 — 判定纯函数外置(可单测)。
 // P0 hotfix 2026-09: 原对话内纠偏重试已移除(毒上下文里重试无效),
 // 重试职责移交 doc-executor;tool-loop 只负责留痕与警示。
-import { detectUnbackedEditClaim, countClaimedEditItems, PLAN_PROGRESS_QUERY_RE } from './writing-prompts.js'
+// #985: 三套对账实现合并单一模块(双语 — 英文回复的对账安全网)。
+import { detectUnbackedEditClaim, countClaimedEditItems, detectTextOnlyPlan } from './edit-reconciliation.js'
+// #979 方案 D: 进度问答识别仍属 prompt 纪律(writing-prompts)。
+import { PLAN_PROGRESS_QUERY_RE } from './writing-prompts.js'
 import type { TaskPlan } from '@heurion/contracts'
 // #976: 任务清单状态与上下文注入（common 层,tools/modules 共用）。
 import {
@@ -765,17 +768,17 @@ export async function runToolCallLoop(params: {
       const claimedCount = countClaimedEditItems(finalContent)
       // #977: 守卫口径统一为「成功写回」——失败执行不算写回（文档未被
       // 修改的事实依据）。
-      // #979 文本计划表守卫 — 收尾输出 ≥3 个编号步骤的文本计划/对照表
-      // 且本轮无 set_task_plan 调用 → 模型在用纯文本管理进度（用户生产
-      // 实例：两次问进度给出互不一致的口头清单）。逼向结构化账本。
+      // #979 文本计划表守卫(#985 提取为 edit-reconciliation 纯函数)— 收尾
+      // 输出 ≥3 个编号步骤的文本计划/对照表且本轮无 set_task_plan 调用 →
+      // 模型在用纯文本管理进度(用户生产实例:两次问进度给出互不一致的口头
+      // 清单)。逼向结构化账本。
       if (!planWasManaged) {
-        const numberedStepLines = finalContent.split('\n').filter((l) => /^\s*\d+\s*[.、）)]\s*\S/.test(l)).length
-        const tableLike = /对照表|计划表|步骤如下|整改计划/.test(finalContent)
-        if (process.env.DEBUG_GUARD) console.log('GUARD_DBG numbered=' + numberedStepLines + ' tableLike=' + tableLike + ' len=' + finalContent.length + ' sess=' + sessionId)
-        if ((numberedStepLines >= 3 || tableLike) && /任务|步骤|计划|填写|修改/.test(finalContent)) {
+        const textPlan = detectTextOnlyPlan(finalContent)
+        if (process.env.DEBUG_GUARD) console.log('GUARD_DBG numbered=' + textPlan.numberedStepLines + ' tableLike=' + textPlan.tableLike + ' len=' + finalContent.length + ' sess=' + sessionId)
+        if (textPlan.hit) {
           await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
             kind: 'text_plan',
-            numberedStepLines,
+            numberedStepLines: textPlan.numberedStepLines,
             note: 'text-only plan table without set_task_plan',
           })
           io.send({

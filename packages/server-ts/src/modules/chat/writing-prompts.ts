@@ -104,42 +104,9 @@ export function documentRules(input: {
   return `${head}本文档较长，已按段划分（结构见上），一次只处理一个段落。你只能编辑「当前编辑段落」范围内的原文，不要编辑未展示的内容。每次完成一段后，回复开头注明进度：已完成 第 i/N 段「标题」，说明改动后询问用户：回复「继续」处理下一段，或直接说「编辑第 N 段 / 章节名」跳转；用户继续后系统会自动切换焦点段落。#872 批量模式：用户要求「自动处理」「一直处理到第 N 段」「全部处理」或「按章节逐节填充全部内容」这类整篇任务时，视为批量模式：逐节连续 edit_document 写回（new_text 锚定文末末段追加新章节），每节完成后仅用一行播报「已完成 第 i/N 节「标题」」并直接继续下一节，不要每段停下等确认；达到轮次上限时如实播报「已完成 X/N 节，回复继续处理剩余」，严禁给未编辑的章节编造「实际改动」；用户发来任何新消息即暂停。焦点有记忆：模糊指令（如「这句再自然一点」）沿用上一回合正在处理的段落。${OLD_TEXT_COPY_RULE}。full_text 全量重写受模型单次输出预算约束（预算内可用；用户明确要求整篇重写且文档在预算内时可以执行）。但长文档的「整理/润色/格式化」仍必须逐段用 old_text/new_text 依次处理（每次调用整理一段）并报告进度 — 逐段更稳、不会因超长截断。${HONEST_REPORT_RULE}${tail}`
 }
 
-/** #892: 「编辑完成声明」识别 — 回复声称已完成编辑动作的措辞。供
- * tool-loop 声明-执行对账守卫与 post-turn 轨迹标记共用(纯函数可单测)。 */
-export const EDIT_CLAIM_RE = /已落实|已完成|已修改|已写回|已插入|已更新|已整理|已重构|已应用/
-
-/** #892: 声明-执行对账判定(纯函数) — finalContent 是否含编辑完成声明。
- * 配合"本轮写回工具实际执行次数"使用:命中声明 && 执行次数为 0 → 未兑现声明。 */
-export function detectUnbackedEditClaim(finalContent: string): boolean {
-  return EDIT_CLAIM_RE.test(finalContent)
-}
-
-/**
- * 部分执行对账（#967 家族：声称全部完成、实际只写了第一处）— 数"声称
- * 已完成"的条目数(纯函数,可单测)。解析教过的进度格式:
- *   EXPANSION_RULE「已完成 X/Y」、REVISION_RULE「意见 N/共 M 已落实」;
- * 修订对照表(REVISION_RULE「全部完成后输出修订对照表」)按含完成话术的
- * 行数计(排除表头/分隔行)。逐条如实播报(已完成 1/5)不计入对账缺口
- * — claimed == executed 是诚实进度。
- */
-export function countClaimedEditItems(finalContent: string): number {
-  let claimed = 0
-  for (const m of finalContent.matchAll(/(?:已完成|已落实)\s*(\d+)\s*\/\s*(\d+)/g)) {
-    claimed = Math.max(claimed, parseInt(m[1], 10) || 0)
-  }
-  for (const m of finalContent.matchAll(/意见\s*(\d+)\s*\/\s*共\s*(\d+)\s*已落实/g)) {
-    claimed = Math.max(claimed, parseInt(m[1], 10) || 0)
-  }
-  // 对照表行：markdown 表格行且含改动词（表头「实际改动」不含这些词）。
-  if (/修订对照|原意见|实际改动/.test(finalContent)) {
-    const claimWord = /新增|修改|更新|插入|落实|替换|已有/
-    const rows = finalContent
-      .split('\n')
-      .filter((l) => /^\s*\|/.test(l) && !/^\s*\|[\s|:-]+\|\s*$/.test(l) && claimWord.test(l))
-    claimed = Math.max(claimed, rows.length)
-  }
-  return claimed
-}
+/* #985: 声明-执行对账三件套(EDIT_CLAIM_RE / detectUnbackedEditClaim /
+ * countClaimedEditItems)与 #979 text-plan 形态识别已合并迁至
+ * edit-reconciliation.ts(双语 + 单一出口)— 本文件不再维护第二份词表。 */
 
 /** P0 hotfix 2026-09: doc 执行器兜底(executor retry)的系统角色规则 —
  *  精简消息里唯一的 system 段(不含 persona/规则/历史),把模型钉死在

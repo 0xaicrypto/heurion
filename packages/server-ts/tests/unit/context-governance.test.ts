@@ -5,7 +5,7 @@ import {
   isResearchIntent,
   docSessionFactGraphView,
 } from '../../src/modules/shared/chat-context.js'
-import { detectUnbackedEditClaim, EDIT_CLAIM_RE } from '../../src/modules/chat/writing-prompts.js'
+import { detectUnbackedEditClaim, EDIT_CLAIM_RE } from '../../src/modules/chat/edit-reconciliation.js'
 
 /**
  * #894 — 写作会话上下文注入治理(事故根因③,JD 隐私分心):

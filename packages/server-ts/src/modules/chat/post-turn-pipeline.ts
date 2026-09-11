@@ -18,7 +18,7 @@ import type { ChatScene } from '../../common/persona.js'
 import type { getUserContext } from '../shared/user-context.js'
 import type { SkillCardSummary } from '../skills/activation.js'
 import { upsertSessionRow } from './history-budget.js'
-import { detectUnbackedEditClaim } from './writing-prompts.js'
+import { detectUnbackedEditClaim } from './edit-reconciliation.js'
 import { analyzeChatForMedicalRecord, updatePatientFromFindings, updateMedicalRecordFromChat } from '../patients/clinical-analysis.js'
 
 const log = makeLogger('chat.post-turn')
