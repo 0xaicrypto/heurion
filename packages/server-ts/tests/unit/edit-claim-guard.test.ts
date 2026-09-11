@@ -50,7 +50,7 @@ function makeIO() {
   return { io, chunks }
 }
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => { vi.clearAllMocks(); vi.mocked(deepseekChat).mockReset() })
 afterEach(() => vi.clearAllMocks())
 
 describe('声明-执行对账守卫(P0 hotfix 新语义:零写回+声明 → 留痕,不重试)', () => {
@@ -412,5 +412,62 @@ describe('#978 写回连败早退（重试回合生产实例）', () => {
       sessionId: 'doc-x2', userText: '帮我按照 section 来填充内容', executedWriteTools: ['edit_document'],
       writeAttempts: 2, writeSuccesses: 0,
     })).toBe(true)
+  })
+})
+describe('#979 文本计划表守卫（两次问进度清单不一致的生产实例）', () => {
+  test('收尾输出 ≥3 编号步骤且无 set_task_plan → text_plan 警示', async () => {
+    const ctx = makeCtx('doc-doc14')
+    const registry = new ToolRegistry(ctx)
+
+    vi.mocked(deepseekChat).mockResolvedValueOnce([
+      '当前状态：0/6 步已执行——刚才只完成了草稿审阅和整改计划，还没有开始写回。',
+      '✅ 审阅完成：确认 Methods 末尾有错位重复摘要段。',
+      '1. 删除错位段落',
+      '2. 补写 Results',
+      '3. 补写 Discussion',
+      '4. 补写 Conclusion',
+      '回复「开始」我立即执行第 1 步。',
+    ].join('\n'))
+
+    const { io, chunks } = makeIO()
+    const result = await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '到哪里了' }],
+      toolRegistry: registry, tools: [], apiKey: 'k', io, ctx,
+      userId: 'user_1', sessionId: 'doc-doc14',
+    })
+
+    const events = ctx.eventLog.append.mock.calls.map((c: any[]) => c[0])
+    const textPlan = events.filter((e: any) => e.eventType === 'edit_claim_unbacked' && e.metadata?.kind === 'text_plan')
+    expect(textPlan).toHaveLength(1)
+
+    const infos = chunks.filter((c) => c.type === 'context_info')
+    expect(infos.some((c) => String((c as any).text).includes('文本版计划表'))).toBe(true)
+    // 无清单 → 无 backlog 缺口
+    expect(result.planBacklogCount).toBe(0)
+  })
+
+  test('本轮执行过 set_task_plan → 豁免（不警示）', async () => {
+    const ctx = makeCtx('doc-doc15')
+    const registry = new ToolRegistry(ctx)
+    const planProbe = new ProbeTool(() => Promise.resolve({
+      success: true,
+      output: JSON.stringify({ plan: { plan_id: 'p1', session_id: 'doc-doc15', title: 'T', steps: [{ index: 1, title: 'A', status: 'pending' }, { index: 2, title: 'B', status: 'pending' }, { index: 3, title: 'C', status: 'pending' }], status: 'active' }, kind: 'created', summary: '已创建' }),
+    }))
+    Object.defineProperty(planProbe, 'name', { value: 'set_task_plan' })
+    registry.register(planProbe)
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"set_task_plan","arguments":{"action":"create","title":"T","steps":[{"title":"A"},{"title":"B"},{"title":"C"}]}}'))
+      .mockResolvedValueOnce('清单已建立，步骤 1.删除 2.补写 Results 3.补写 Discussion，现在开始执行。')
+
+    const { io, chunks } = makeIO()
+    await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '开始' }],
+      toolRegistry: registry, tools: [], apiKey: 'k', io, ctx,
+      userId: 'user_1', sessionId: 'doc-doc15',
+    })
+
+    const events = ctx.eventLog.append.mock.calls.map((c: any[]) => c[0])
+    expect(events.some((e: any) => e.eventType === 'edit_claim_unbacked' && e.metadata?.kind === 'text_plan')).toBe(false)
   })
 })

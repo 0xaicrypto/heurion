@@ -293,6 +293,8 @@ export async function runToolCallLoop(params: {
   let planPendingText = ''
   // #978: 写回连败早退标志（finishCall 内置位,walker 检查后 break）。
   let writeFailStreakExit = false
+  // #979: 本轮是否执行过 set_task_plan（文本计划表守卫的豁免依据）。
+  let planWasManaged = false
 
   // #835: 尽最大努力检索(best-effort retrieval) — 检索工具连续失败 ≥2 次
   // 即从后续轮次移除这些工具(模型物理上无法再重试),配合注入指引让模型
@@ -495,6 +497,7 @@ export async function runToolCallLoop(params: {
           ? parseLlmJson<Record<string, unknown>>(result.output)
           : null
 
+        planWasManaged = true
         // #976 账本纪律执行化 — create 成功后立即注入强指令：下一轮必须
         // 真实调用第一个写回工具（防「建完清单停下等确认」——#806 打太极
         // 在清单流程里的复发形态，用户生产实例 2026-09-10）。
@@ -709,6 +712,27 @@ export async function runToolCallLoop(params: {
       const claimedCount = countClaimedEditItems(finalContent)
       // #977: 守卫口径统一为「成功写回」——失败执行不算写回（文档未被
       // 修改的事实依据）。
+      // #979 文本计划表守卫 — 收尾输出 ≥3 个编号步骤的文本计划/对照表
+      // 且本轮无 set_task_plan 调用 → 模型在用纯文本管理进度（用户生产
+      // 实例：两次问进度给出互不一致的口头清单）。逼向结构化账本。
+      if (!planWasManaged) {
+        const numberedStepLines = finalContent.split('\n').filter((l) => /^\s*\d+\s*[.、）)]\s*\S/.test(l)).length
+        const tableLike = /对照表|计划表|步骤如下|整改计划/.test(finalContent)
+        if (process.env.DEBUG_GUARD) console.log('GUARD_DBG numbered=' + numberedStepLines + ' tableLike=' + tableLike + ' len=' + finalContent.length + ' sess=' + sessionId)
+        if ((numberedStepLines >= 3 || tableLike) && /任务|步骤|计划|填写|修改/.test(finalContent)) {
+          await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
+            kind: 'text_plan',
+            numberedStepLines,
+            note: 'text-only plan table without set_task_plan',
+          })
+          io.send({
+            type: 'context_info',
+            text: '⚠️ 检测到文本版计划表 — 文本清单无法自动推进与进度追踪，请让 AI 用 set_task_plan 建立正式清单（回复「开始」即可）',
+            kind: 'warning',
+          })
+        }
+      }
+
       // 分支序：零写回（最严重）→ 清单 backlog → 文本计数部分执行。
       // #976 补丁：backlog > 0 且零成功写回 → 无条件警示（建了清单没执行的
       // 空转形态——收尾文本是「回复开始」类等待确认话术，不命中声明词）。
