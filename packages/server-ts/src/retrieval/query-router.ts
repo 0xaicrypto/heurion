@@ -101,8 +101,11 @@ export const DISCUSSION_MARKERS = /(怎么|为什么|如何|解释|解读|什么
 /** #551-followup — edit/refine markers: "帮我润色这篇论文" operates on an
  *  EXISTING document. File generation requires the source material, which the
  *  chat usually does not carry — never route these to a generator plugin, or
- *  the AI invents clinical content instead of polishing the user's paper. */
-export const EDIT_MARKERS = /(润色|修改|改一下|完善|续写|改写|重写|修正|排版|polish|edit|revise|rewrite|improve)/i
+ *  the AI invents clinical content instead of polishing the user's paper.
+ *  #984: 词表单一来源 — 词源迁至 common/edit-intent.ts(与 doc-executor
+ *  编辑意图词同源维护,漏词返工不再分叉);本处 re-export 保持既有 import 兼容。 */
+export { EDIT_MARKERS } from '../common/edit-intent.js'
+import { EDIT_MARKERS } from '../common/edit-intent.js'
 
 /**
  * #557 — deterministic veto: when one of these markers is present the message

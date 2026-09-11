@@ -22,13 +22,12 @@ import type { ToolDefinition } from '../../tools/base-tool.js'
 import type { getUserContext } from '../shared/user-context.js'
 import { runToolCallLoop, DOC_WRITE_TOOLS, type TurnIO } from './tool-loop.js'
 import { EXECUTOR_RULE } from './writing-prompts.js'
+// #984: 编辑意图/接力词表单一来源(common 层,retrieval 层同源引用)。
+import { DOC_EDIT_INTENT_RE, PLAN_RELAY_RE } from '../../common/edit-intent.js'
+
+export { DOC_EDIT_INTENT_RE, PLAN_RELAY_RE }
 
 const log = makeLogger('chat.doc-executor')
-
-/** P0 hotfix: 编辑意图判据 — 用户消息命中即视为"要求动文档"(不区分
- *  语言;大小写不敏感)。 */
-// #977 复盘:填充/补全/完善/改写/重试是写作高频词,此前漏配导致重试回合连败直通被意图闸门挡住。
-export const DOC_EDIT_INTENT_RE = /修改|编辑|删除|插入|整理|润色|重写|重构|调整|扩写|续写|执行|落实|落盘|改好|填充|补全|补充|完善|改写|重试|restructur|reorgan|edit|polish|revise|retry/i
 
 /**
  * 执行器触发判据(纯函数,可单测):
@@ -42,8 +41,7 @@ export const DOC_EDIT_INTENT_RE = /修改|编辑|删除|插入|整理|润色|重
  *        (生产实例:edit_document({}) 空参连败 2 轮,直接精简兜底)。
  * 非 doc 会话 / 非编辑意图轮次 → 一律不触发(零行为回归)。
  */
-/** #973: 接力触发词 — 继续/接着/下一步/重试第 K 步（清单接力语义）。 */
-export const PLAN_RELAY_RE = /继续|接着|下一步|重试第?\s*\d*\s*步|^开始|开始吧|按此计划|^go\b/i
+/** #973: 接力触发词已迁至 common/edit-intent.ts(#984 词表单一来源)— 本模块 re-export 保持既有 import 兼容。 */
 
 export function shouldRunDocExecutor(input: {
   sessionId: string

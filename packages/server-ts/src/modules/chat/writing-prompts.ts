@@ -8,6 +8,9 @@
  * govern the chat-side editing discipline for doc-* sessions; memory/prompts
  * owns extraction/synthesis templates.
  */
+// #984: 确认词单一来源 — common/edit-intent.ts(CONFIRM_SIGNAL_ZH_WORDS),
+// PLAN_RELAY_RE 接力判定同源,文案与判定不再分叉。
+import { CONFIRM_SIGNAL_ZH_WORDS } from '../../common/edit-intent.js'
 
 /** #fix: 参考材料未解析出正文时的工具引导（import_reference ≠ ocr_image）。 */
 export function refUnresolvedHint(hasRefs: boolean, refBlock: string): string {
@@ -68,8 +71,8 @@ export const REVISION_RULE = '修订意见处理:意见 ≥3 条时先调用 set
 /** #807: 引用纪律 — References 零编造。#836: 允许检索源扩展至 PubMed+Crossref。 */
 export const CITATION_RULE = '引用纪律:新增/修改 References 或正文内引用时,必须先用 search_citation 检索真实文献(PubMed 优先,无命中自动补 Crossref — 覆盖 preprint 与非 MEDLINE 期刊),只允许引用检索命中的文献(保留 PMID/DOI 便于核对);检索无命中或工具失败时如实告知用户,严禁编造任何 PMID/DOI/作者/年份。'
 
-/** #fix: 确认循环 — 确认信号后立即执行，不再重复询问。 */
-export const CONFIRM_RULE = '行动纪律:用户回复「同意」「可以」「开始」「继续」「好的」「按此计划」等确认信号后,不要再重复询问确认,立即执行计划的第一步:若文档正文为空,先调用 edit_document 的 import_reference 导入参考材料(或直接用 old_text/new_text 润色),然后逐段处理并写回草稿。第一步必须是对工具的真实调用,不是复述计划。不要只给计划不执行,不要在每步后重复询问同一问题。'
+/** #fix: 确认循环 — 确认信号后立即执行，不再重复询问。词源见文件头 #984 注释。 */
+export const CONFIRM_RULE = `行动纪律:用户回复「${CONFIRM_SIGNAL_ZH_WORDS.join('」「')}」等确认信号后,不要再重复询问确认,立即执行计划的第一步:若文档正文为空,先调用 edit_document 的 import_reference 导入参考材料(或直接用 old_text/new_text 润色),然后逐段处理并写回草稿。第一步必须是对工具的真实调用,不是复述计划。不要只给计划不执行,不要在每步后重复询问同一问题。`
 
 /** old_text 复制来源纪律 — 短/长文档共用的尾注。 */
 const OLD_TEXT_COPY_RULE = 'old_text 必须从上方「用户选中文本」(如有)或 ## Current Document 部分逐字复制（空格/换行差异会被自动忽略，不要从 Reference Materials 复制；「文档结构」清单里的序号不是正文内容，复制时不要带序号，也不要从工具报错信息里复制片段）'
