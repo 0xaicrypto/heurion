@@ -31,6 +31,24 @@ describe('mergeThreeWay', () => {
     expect(mergeThreeWay(base, ours, theirs)).toBeNull()
   })
 
+  // #986: 同一锚位双方各自插入(相邻/零宽 hunk)— 旧逻辑按 sort 偶然顺序
+  // 静默合并(AI 编辑与手动保存改到同一段边界的产品实例),现在必须判冲突。
+  it('同一锚位双方各自插入(零宽 hunk)→ 冲突返回 null', () => {
+    const ours = ['# Title', 'para one', 'inserted by user', 'para two', 'para three'].join('\n')
+    const theirs = ['# Title', 'para one', 'inserted by ai', 'para two', 'para three'].join('\n')
+    expect(mergeThreeWay(base, ours, theirs)).toBeNull()
+  })
+
+  it('相邻行各自修改(不同 base 行)仍可合并(逐段追加/尾部换行依赖)', () => {
+    const lines = base.split('\n')
+    // ours 改第 2 行,theirs 改第 3 行 — 触及不同 base 行,可安全合并。
+    const ours = [...lines.slice(0, 1), 'para one polished', ...lines.slice(2)].join('\n')
+    const theirs = [...lines.slice(0, 2), 'para two rewritten', ...lines.slice(3)].join('\n')
+    const merged = mergeThreeWay(base, ours, theirs)
+    expect(merged).toContain('para one polished')
+    expect(merged).toContain('para two rewritten')
+  })
+
   it('相邻段落(不重叠)可合并', () => {
     const lines = base.split('\n')
     const ours = [...lines.slice(0, 2), 'inserted by round1', ...lines.slice(2)].join('\n')

@@ -523,6 +523,7 @@
     "reviewFirstForChart": "Finish reviewing the current AI changes before inserting a chart",
     "reviewFirstForMethods": "Finish reviewing the current AI changes before generating content",
     "injectConflictReview": "Result injection conflicts with unsaved local changes — review opened for confirmation",
+    "saveFailedBanner": "Save failed — your changes live in this window only; auto-retry is running",
     "uploadedAsReference": "Uploaded {{name}} and attached as reference material",
     "refTitle": "Reference Materials",
     "refFromFiles": "Pick from files",

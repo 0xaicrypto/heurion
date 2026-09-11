@@ -219,6 +219,28 @@ describe('#979 切换文档写状态清零(路由 key 重挂载)', () => {
   });
 });
 
+describe('#986 二次保存失败 — dirty 回灌 + autosave 重试 + 常驻警示条', () => {
+  test('接受 AI 修改后保存失败(非 409)→ 警示条常驻,autosave 重试成功后消除', async () => {
+    renderEditor(false);
+    await screen.findByDisplayValue('A doc');
+    // 第一次 updateDoc(接受后的落地保存)网络错误(非 409);第二次 autosave 重试成功。
+    apiMock.updateDoc
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce({ ...DOC_A, updated_at: '2026-01-06T00:00:00Z' });
+
+    await sendTurn([{ body: 'A body\n\nR1 段落', rev: 1 }]);
+    await waitFor(() => expect(screen.getByRole('button', { name: /全部接受|Accept all/ })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: /全部接受|Accept all/ }));
+
+    // 失败即刻可见(不再是 6 秒后即消失的 toast)
+    expect(await screen.findByText(/保存失败 — 修改仅在本窗口|Save failed — your changes/)).toBeTruthy();
+
+    // dirty 回灌 → autosave(2.5s)自动重试 → 第二次成功 → 警示条消除
+    await waitFor(() => expect(apiMock.updateDoc).toHaveBeenCalledTimes(2), { timeout: 6000 });
+    await waitFor(() => expect(screen.queryByText(/保存失败 — 修改仅在本窗口|Save failed — your changes/)).toBeNull());
+  });
+});
+
 describe('#983 生成/注入走统一写回流程', () => {
   test('生成 Methods → 进 diff 审阅(不直接落盘),接受才保存', async () => {
     const { container } = renderEditor(false);

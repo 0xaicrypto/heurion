@@ -37,14 +37,21 @@ export function mergeThreeWay(base: string, ours: string, theirs: string): strin
   const patchA = structuredPatch('base', 'ours', base, ours, undefined, undefined, { context: 0 })
   const patchB = structuredPatch('base', 'theirs', base, theirs, undefined, undefined, { context: 0 })
 
-  // 冲突检测:A/B 任一 hunk 在 base 坐标上区间相交 → 无法安全合并。
+  // 冲突检测(#986):共享 base 行(严格相交)或同点零宽 hunk(同一锚位的两个
+  // 插入 — 应用顺序纯属 sort 偶然,AI 编辑与手动保存改到同一段边界的生产
+  // 实例)→ 冲突返回 null,由调用方提示用户,绝不静默合并。
+  // 注:仅相邻但触及不同 base 行(编辑第 N 行 + 插入/编辑第 N+1 行)仍可
+  // 安全合并 — 逐段追加/尾部换行(#837 重放/整篇导出)依赖该路径;审计
+  // 建议的全量 <= 会把尾部换行保留这类合法合并误判为冲突。
   for (const ha of patchA.hunks) {
     for (const hb of patchB.hunks) {
       const aStart = ha.oldStart
       const aEnd = ha.oldStart + ha.oldLines
       const bStart = hb.oldStart
       const bEnd = hb.oldStart + hb.oldLines
-      if (aStart < bEnd && bStart < aEnd) return null
+      const overlap = aStart < bEnd && bStart < aEnd
+      const sameAnchorZeroWidth = aStart === aEnd && bStart === bEnd && aStart === bStart
+      if (overlap || sameAnchorZeroWidth) return null
     }
   }
 

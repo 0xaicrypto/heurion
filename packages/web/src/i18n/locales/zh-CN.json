@@ -523,6 +523,7 @@
     "reviewFirstForChart": "请先完成当前 AI 修改的审阅，再插入图表",
     "reviewFirstForMethods": "请先完成当前 AI 修改的审阅，再生成内容",
     "injectConflictReview": "结果注入与本地未保存修改冲突 — 已进入审阅确认",
+    "saveFailedBanner": "保存失败 — 修改仅在本窗口，系统持续自动重试中",
     "uploadedAsReference": "已上传 {{name}} 并挂为参考材料",
     "refTitle": "参考材料",
     "refFromFiles": "从文件库选择",

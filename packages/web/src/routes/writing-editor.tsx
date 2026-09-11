@@ -116,6 +116,17 @@ export function WritingEditorPage() {
   // #882: 并发保存冲突 — 409(stale_base) 时记录待保存内容,横幅供用户选择
   // (载入最新/保留我的版本),绝不静默覆盖另一窗口的修改。
   const [saveConflict, setSaveConflict] = useState<{ title: string; body: string; deck?: unknown } | null>(null);
+  // #986: 保存失败常驻警示 — 二次保存(diff 落地/回滚)失败且非 409 时,
+  // 失败内容回灌 dirty 并进入 autosave 重试;横幅常驻直至保存成功,不再
+  // 只弹 6 秒 toast(#920 静默失败家族)。
+  const [saveFailure, setSaveFailure] = useState<{ count: number; message: string } | null>(null);
+  /** 保存失败统一处置:回灌 dirty(autosave 重试)+ 常驻警示条。 */
+  const markSaveFailed = useCallback((err: unknown) => {
+    const message = err instanceof ApiError ? err.messageText : String(err);
+    dirtyRef.current = true;
+    setDirty(true);
+    setSaveFailure((prev) => ({ count: (prev?.count ?? 0) + 1, message }));
+  }, []);
   // #927: 「载入最新」确认审阅挂起的服务端最新内容 — handleDiffResolve 据此
   // 分流(接受 = 原样采用服务端版本,不走常规落地保存路径)。
   const conflictLoadRef = useRef<{ body: string; updatedAt: string } | null>(null);
@@ -151,8 +162,10 @@ export function WritingEditorPage() {
       void handleSave();
     }, 2500);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+    // #986: saveFailure 计数入依赖 — 保存失败后自动重试(重试仍失败则继续,
+    // 直至成功清警示)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [body, title, docId, dirty, diffReview, saveConflict]);
+  }, [body, title, docId, dirty, diffReview, saveConflict, saveFailure]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -460,6 +473,7 @@ export function WritingEditorPage() {
       dirtyRef.current = false;
       setDirty(false);
       setSaveConflict(null);
+      setSaveFailure(null); // #986: 已与服务端对齐,清常驻警示。
       showNotice(t('writing.conflictLoadedLatest', '已载入服务端最新内容'), 3000);
       return;
     }
@@ -485,7 +499,8 @@ export function WritingEditorPage() {
               setSaveConflict({ title: title || 'Untitled', body: restoreBody });
               showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
             } else {
-              showNotice(t('writing.reviewSaveFailed', 'AI 修改已应用，但保存失败 — 请点击 Save 重试'), 6000);
+              // #986: 回滚保存失败 → 常驻警示 + dirty 回灌(autosave 重试)。
+              markSaveFailed(err);
             }
           });
       }
@@ -511,14 +526,16 @@ export function WritingEditorPage() {
           serverBodyRef.current = updated.body ?? result.md;
           dirtyRef.current = false;
           setDirty(false);
+          setSaveFailure(null); // #986: 保存成功清常驻警示。
         })
         .catch((err) => {
           if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {
             setSaveConflict({ title: title || 'Untitled', body: result.md });
             showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
           } else {
-            setError(err instanceof ApiError ? err.messageText : String(err));
-            showNotice(t('writing.reviewSaveFailed', 'AI 修改已应用，但保存失败 — 请点击 Save 重试'), 6000);
+            // #986: 二次保存失败 → 常驻警示条 + dirty 回灌(autosave 自动
+            // 重试),不再 6 秒 toast 后静默。
+            markSaveFailed(err);
           }
         });
     }
@@ -778,6 +795,7 @@ export function WritingEditorPage() {
       lastSavedDeck.current = deckAsset ? JSON.stringify(deckAsset) : lastSavedDeck.current;
       dirtyRef.current = false;
       setDirty(false);
+      setSaveFailure(null); // #986: 保存成功清常驻警示。
       if (updated.unchanged) {
         // #598: 内容未变化 — 提示且不刷新时间戳.
         showNotice(t('writing.unchanged', '内容未变化，未创建新版本'), 3000);
@@ -794,7 +812,8 @@ export function WritingEditorPage() {
         setSaveConflict({ title, body, deck: deckAsset ?? undefined });
         showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
       } else {
-        setError(err instanceof ApiError ? err.messageText : String(err));
+        // #986: 非冲突失败 → 回灌 dirty + 常驻警示条(autosave 自动重试)。
+        markSaveFailed(err);
       }
     } finally {
       setSaving(false);
@@ -810,9 +829,11 @@ export function WritingEditorPage() {
       serverBodyRef.current = updated.body ?? saveConflict.body;
       setDoc((prev) => prev ? { ...prev, body: updated.body } : prev);
       setSaveConflict(null);
+      setSaveFailure(null); // #986: 保存成功清常驻警示。
       showNotice(t('writing.conflictKeptMine', '已保留当前窗口的版本'), 3000);
     } catch (err) {
-      setError(err instanceof ApiError ? err.messageText : String(err));
+      // #986: KeepMine 保存失败 → 常驻警示 + dirty 回灌(横幅保留可重试)。
+      markSaveFailed(err);
     }
   };
 
@@ -1143,6 +1164,13 @@ export function WritingEditorPage() {
                           <Button size="sm" variant="ghost" onClick={() => void resolveConflictLoadLatest()}>{t('writing.conflictLoadLatest', '载入最新')}</Button>
                           <Button size="sm" onClick={() => void resolveConflictKeepMine()}>{t('writing.conflictKeepMine', '保留我的版本')}</Button>
                         </div>
+                      </div>
+                    )}
+                    {saveFailure && (
+                      /* #986: 保存失败常驻警示条 — 保存成功自动消除;失败期间
+                         dirty 保持、autosave 持续重试,内容不会静默丢失。 */
+                      <div className="flex items-center justify-between gap-2 border-b border-warning/40 bg-warning/10 px-3 py-2 text-[12px] text-text-primary">
+                        <span>⚠ {t('writing.saveFailedBanner', '保存失败 — 修改仅在本窗口，系统持续自动重试中')}{saveFailure.message ? `：${saveFailure.message}` : ''}</span>
                       </div>
                     )}
                     <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} diffReview={diffReview} onDiffResolve={handleDiffResolve} onSelectionChange={setChatSelection}
