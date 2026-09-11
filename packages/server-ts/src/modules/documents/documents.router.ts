@@ -3,7 +3,6 @@ import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import type { DocSnapshot, ResearchStudy } from '@prisma/client'
-import { Prisma } from '@prisma/client'
 import { SCHEMA_VERSION } from '@heurion/contracts'
 import type { PolishStreamChunk } from '@heurion/contracts'
 import { renderDocxBuffer, renderPdfBuffer, isExportFormat } from './markdown-export.js'
@@ -75,11 +74,16 @@ export async function documentsRouter(app: FastifyInstance) {
     try {
       await prisma.doc.create({ data: { id, userId, title: title || 'Untitled', body: '', studyId: study_id || null, createdAt: now, updatedAt: now } })
     } catch (err: any) {
-      // If FK constraint fails (user not in DB yet — staging/CI), retry without FK
+      // If FK constraint fails (user not in DB yet — staging/CI), retry without FK.
+      // #980: PRAGMA 是连接级状态 — fallback insert 抛错时必须恢复 ON,
+      // 否则连接池复用后外键约束对后续无关请求保持关闭(约束失效扩散)。
       if (err?.message?.includes('foreign key')) {
         await prisma.$executeRawUnsafe("PRAGMA foreign_keys = OFF")
-        await prisma.$executeRawUnsafe("INSERT INTO docs (id, user_id, title, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", id, userId, title || 'Untitled', '', now, now)
-        await prisma.$executeRawUnsafe("PRAGMA foreign_keys = ON")
+        try {
+          await prisma.$executeRawUnsafe("INSERT INTO docs (id, user_id, title, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", id, userId, title || 'Untitled', '', now, now)
+        } finally {
+          await prisma.$executeRawUnsafe("PRAGMA foreign_keys = ON")
+        }
       } else {
         throw err
       }
@@ -106,8 +110,6 @@ export async function documentsRouter(app: FastifyInstance) {
     if (!existing) return reply.status(404).send({ error: 'Document not found' })
 
     const now = new Date().toISOString()
-    const data: Prisma.DocUpdateInput = { updatedAt: now }
-    if (title !== undefined) data.title = title
 
     // #773: deck 视图手动编辑的保存路径 — deck 以对象传入，序列化落库；
     // undefined = 不触碰 deck。
@@ -115,12 +117,10 @@ export async function documentsRouter(app: FastifyInstance) {
     if (deck !== undefined) {
       const deckJson = deck === null ? null : JSON.stringify(deck)
       deckChanged = deckJson !== (existing.deck ?? null)
-      if (deckChanged) data.deck = deckJson
     }
 
-    // 查重 + 版本:body/deck 未变化时不创建快照、不刷新 updatedAt(避免
-    // 重复保存产生空版本/列表跳动);变化时快照旧 body+deck 同帧作为版本
-    // (#773 方案 A — 恢复时一致回滚)。
+    // 查重:body/deck 未变化时不产生快照、不刷新 updatedAt(避免重复保存
+    // 产生空版本/列表跳动)。
     const bodyChanged = body !== undefined && body !== existing.body
     if (bodyChanged) {
       // #882: 并发保护(僵尸 tab)— base_sha 是客户端最后同步的服务端正文
@@ -135,31 +135,41 @@ export async function documentsRouter(app: FastifyInstance) {
           current_updated_at: existing.updatedAt,
         })
       }
-      data.body = body
     }
+
+    // #980: 写回走 DocVersionWriter 单点 — 与 edit_document 等工具路径同
+    // 管道(#904 乐观锁条件更新:两客户端并发 PUT 时后写者被拒绝而非静默
+    // 覆盖前写者,同帧快照可回滚)。此前裸 prisma.doc.update 绕过单点,
+    // 无快照无并发保护。title 合并在单点之外单独更新(单点只管 body/deck
+    // 不变量)。
     if (bodyChanged || deckChanged) {
-      // #908: 快照+更新包同一事务 — 此前两段写，中断会留下「有快照无更新」
-      // 错位（孤儿快照，History 面板出现幽灵版本）。与 doc-version-writer
-      // #789/#904 同款强度。
-      await prisma.$transaction([
-        prisma.docSnapshot.create({
-          data: {
-            docId,
-            userId: request.user!.userId,
-            body: existing.body,
-            deck: existing.deck ?? null,
-            label: '保存版本',
-            createdAt: now,
-          },
-        }),
-        prisma.doc.update({ where: { id: docId }, data }),
-      ])
-    } else {
-      // body/deck 未变化不刷新 updatedAt（保存按钮 unchanged 提示依赖），
-      // 仅 title 等字段仍可单独更新。
-      delete data.updatedAt
-      await prisma.doc.update({ where: { id: docId }, data })
+      const written = await writeDocVersion({
+        userId: request.user!.userId,
+        docId,
+        ...(bodyChanged ? { body } : {}),
+        ...(deckChanged ? { deck: deck as Record<string, unknown> | null } : {}),
+        snapshotLabel: '保存版本',
+      })
+      if (written.error) {
+        // #904: writer 乐观锁冲突(读旧值后底层行已被并发修改)→ 与
+        // base_sha 失配同语义(409 stale_base),前端冲突横幅据此弹出。
+        const current = written.conflict
+          ? await prisma.doc.findFirst({ where: { id: docId }, select: { updatedAt: true } })
+          : null
+        return reply.status(written.conflict ? 409 : 500).send({
+          error: '文档已在其他窗口被修改，为避免覆盖未做保存',
+          code: 'stale_base',
+          current_updated_at: current?.updatedAt ?? now,
+        })
+      }
     }
+
+    // title 与正文/deck 解耦:单独变化时仅更新 title,不刷 updatedAt
+    // (unchanged 提示与列表排序不受纯标题保存影响,保持原 PUT 语义)。
+    if (title !== undefined && title !== existing.title) {
+      await prisma.doc.update({ where: { id: docId }, data: { title } })
+    }
+
     const doc = await prisma.doc.findFirst({ where: { id: docId } })
 
     // #821: 保存时预渲染预热 — 扫描学术图 fire-and-forget ensureFigures,
@@ -381,17 +391,8 @@ export async function documentsRouter(app: FastifyInstance) {
     }
   })
 
-  // #3: Doc Chat SSE — structured output that can edit the document
-  // §15.4: the standalone doc chat is deprecated — writing chat now runs
-  // through the unified /agent/chat pipeline (session doc-{docId}).
-  // §15.4: the standalone doc chat is deprecated — writing chat now runs
-  // through the unified /agent/chat pipeline (session doc-{docId}).
-  app.post('/api/v1/docs/:docId/chat', async (_request, reply) => {
-    return reply.status(410).send({
-      error: 'Gone',
-      message: 'Document chat is now part of the main chat pipeline — use /api/v1/agent/chat with session_id doc-<docId>',
-    })
-  })
+  // #980: /docs/:docId/chat 410 废弃端点已删除 — §15.4 起写作聊天统一走
+  // /agent/chat(session_id doc-<docId>),废弃端点继续挂路由只会扩大攻击面。
 
   app.post<{ Params: DocParams; Querystring: { format?: string } }>('/api/v1/docs/:docId/export', async (request, reply) => {
     const { docId } = request.params

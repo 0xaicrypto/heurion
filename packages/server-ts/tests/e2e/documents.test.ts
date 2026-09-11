@@ -272,7 +272,9 @@ describe('Documents', () => {
     expect(res.statusCode).toBe(404)
   })
 
-  test('doc chat endpoint is deprecated (410, §15.4)', async () => {
+  // #980: 废弃端点从「410 保留」升级为「彻底删除」— §15.4 起写作聊天
+  // 统一走 /agent/chat,废弃路由不再挂载(404 = 端点不存在)。
+  test('doc chat endpoint is removed (was 410 deprecated, #980)', async () => {
     const app = await getApp()
     const create = await app.inject({
       method: 'POST', url: '/api/v1/docs',
@@ -286,8 +288,7 @@ describe('Documents', () => {
       headers: { ...await authHeader(), 'content-type': 'application/json' },
       payload: JSON.stringify({ message: 'Summarize this doc' }),
     })
-    expect(res.statusCode).toBe(410)
-    expect(JSON.parse(res.payload).message).toContain('agent/chat')
+    expect(res.statusCode).toBe(404)
   })
 
   test('doc polish endpoint responds with SSE', async () => {

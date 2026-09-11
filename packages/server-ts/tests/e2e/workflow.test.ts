@@ -232,13 +232,13 @@ describe('Workflow Step 6 — Writing + Citations', () => {
     })
     const docId = JSON.parse(doc.payload).id
 
-    // Doc chat is deprecated (410) — writing chat runs through /agent/chat
+    // #980: doc chat 端点已删除(原 410 废弃)— writing chat 走 /agent/chat
     const chat = await app.inject({
       method: 'POST', url: `/api/v1/docs/${docId}/chat`,
       headers: { ...await authHeader(), 'content-type': 'application/json' },
       payload: JSON.stringify({ message: 'Summarize findings' }),
     })
-    expect(chat.statusCode).toBe(410)
+    expect(chat.statusCode).toBe(404)
   })
 
   test('polish document text', async () => {
