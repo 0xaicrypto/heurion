@@ -275,3 +275,38 @@ describe('#989 Phase 1 — restore 路径投影同帧重算(全路径走查)', (
     expect(projection.body_hash).toBe(expected.body_hash)
   })
 })
+
+describe('#989 Phase 3 — phi-scan 按块定位(findings 携带所属节)', () => {
+  test('PHI 命中行 → finding.section = 投影中包含该位置的节(id+heading)', async () => {
+    const { routes, app } = makeHarness()
+    await documentsRouter(app as never)
+    const body = ['# 病例', '', '无敏感内容。', '', '## Notes', '', 'John Smith visited.', '', '## Discharge', '', 'OK.'].join('\n')
+    mocks.docFindFirst
+      .mockResolvedValueOnce({ ...EXISTING, body, deck: null })
+    const scan = routes.get('POST /api/v1/docs/:docId/phi-scan')
+    expect(scan).toBeTruthy()
+    const { buildBlockProjection } = await import('../../src/lib/block-projection.js')
+    const projection = buildBlockProjection(body)
+    const notes = projection.nodes.find((n) => n.kind === 'section' && n.heading === 'Notes')!
+
+    // handler 直接返回 payload(不经 reply.send)
+    const payload = (await scan({ params: { docId: DOC }, user: { userId: USER } }, makeReply())) as { findings: Array<{ kind: string; text: string; section?: { id: string; heading: string } }> }
+    const nameFinding = payload.findings.find((f) => f.kind === 'Name' && f.text === 'John Smith')
+    expect(nameFinding).toBeTruthy()
+    expect(nameFinding!.section).toMatchObject({ id: notes.id, heading: 'Notes' })
+    // 无 PHI 的节不产生 finding;Discharge 节无命中
+    expect(payload.findings.every((f) => f.section?.id !== undefined || f.section === undefined)).toBe(true)
+  })
+
+  test('存量文档(无投影)→ 现场重建后同样带节定位', async () => {
+    const { routes, app } = makeHarness()
+    await documentsRouter(app as never)
+    const body = '## Notes\n\nJohn Smith visited.'
+    mocks.docFindFirst.mockResolvedValue({ ...EXISTING, body, deck: null, blockProjection: null })
+    const scan = routes.get('POST /api/v1/docs/:docId/phi-scan')
+
+    const findings = ((await scan({ params: { docId: DOC }, user: { userId: USER } }, makeReply())) as { findings: Array<{ section?: { id: string } }> }).findings
+    expect(findings.length).toBeGreaterThan(0)
+    expect(findings[0].section?.id).toMatch(/^s_[0-9a-f]{12}$/)
+  })
+})

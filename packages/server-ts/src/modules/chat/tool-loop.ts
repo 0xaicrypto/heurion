@@ -19,7 +19,7 @@ import type { getUserContext } from '../shared/user-context.js'
 // #790: SSE 出口类型化 — 此前 (chunk: any) 使 loop 内新事件绕过编译期
 // 检查，契约类型化停在传输层（chat-sse）。
 import type { ChatStreamChunk, DeckWire } from '@heurion/contracts'
-import { deckWireSchema } from '@heurion/contracts'
+import { deckWireSchema, blockProjectionSchema } from '@heurion/contracts'
 // #892: 声明-执行对账 — 判定纯函数外置(可单测)。
 // P0 hotfix 2026-09: 原对话内纠偏重试已移除(毒上下文里重试无效),
 // 重试职责移交 doc-executor;tool-loop 只负责留痕与警示。
@@ -145,6 +145,15 @@ const PRESENTERS: ToolResultPresenter[] = [
           ...(parsed.deck !== undefined ? { deck } : {}),
           // #927: 版本标识 — 前端按 rev 幂等防乱序(rev ≤ 已应用值忽略)。
           ...(docRev !== undefined ? { rev: docRev, updatedAt: docUpdatedAt } : {}),
+          // #989 Phase 3: 块级结构投影(写回单点同帧派生)— 产出端过 schema,
+          // 损坏降级不携带(前端按无投影处理)。
+          ...(parsed.projection !== undefined && parsed.projection !== null
+            ? (() => {
+                const check = blockProjectionSchema.safeParse(parsed.projection)
+                if (!check.success) { log.warn('doc_updated.projection failed schema check — degraded to absent'); return {} }
+                return { projection: check.data }
+              })()
+            : {}),
         })
       }
       if (toolName === 'insert_asset') {

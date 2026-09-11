@@ -161,9 +161,10 @@ export class EditDocumentTool extends BaseTool {
       const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: applied.body, snapshotLabel: 'AI edit' })
       if (written.error) return { success: false, error: written.error }
       this.latestBody = written.body
+      // #989 Phase 3: 输出携带块投影 — tool-loop 转 doc_updated.projection 推前端。
       return {
         success: true,
-        output: JSON.stringify({ body: written.body, summary, location: `已${action === 'replace' ? '重写' : action === 'append' ? '追加' : '插入'}:「${applied.location}」` }),
+        output: JSON.stringify({ body: written.body, summary, location: `已${action === 'replace' ? '重写' : action === 'append' ? '追加' : '插入'}:「${applied.location}」`, projection: written.projection }),
       }
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }
@@ -336,9 +337,10 @@ export class EditDocumentTool extends BaseTool {
     if (written.error) return { success: false, error: written.error }
 
     this.latestBody = written.body
+    // #989 Phase 3: 输出携带块投影 — tool-loop 转 doc_updated.projection 推前端。
     return {
       success: true,
-      output: JSON.stringify({ body: written.body, summary, location: `已修改:${location}附近` }),
+      output: JSON.stringify({ body: written.body, summary, location: `已修改:${location}附近`, projection: written.projection }),
     }
   }
 
@@ -412,9 +414,10 @@ export class EditDocumentTool extends BaseTool {
       // #906: 全量重写同样推进本轮最新正文缓存 — 同回合后续 rangeEdit
       // 的区域定位基于重写后的正文。
       this.latestBody = written.body
+      // #989 Phase 3: 输出携带块投影。
       return {
         success: true,
-        output: JSON.stringify({ body: written.body, summary }),
+        output: JSON.stringify({ body: written.body, summary, projection: written.projection }),
       }
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }

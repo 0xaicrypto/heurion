@@ -13,8 +13,8 @@ import { extractPptxContentFromUpload, pptxSlidesToDeck } from '../../lib/pptx-e
 import { ensureDraftBody } from '../../tools/doc-import.js'
 // #789: doc 写回单点 owner。
 import { writeDocVersion } from '../../tools/doc-version-writer.js'
-// #989 Phase 1: 块投影构建（restore 路径同帧重算 — 全路径走查强一致）。
-import { buildBlockProjection } from '../../lib/block-projection.js'
+// #989 Phase 1/3: 块投影构建（restore 路径同帧重算）与装载（PHI 按块定位）。
+import { buildBlockProjection, loadProjection } from '../../lib/block-projection.js'
 import { makeLogger } from '../../common/logger.js'
 import { refreshFileUrls } from '../../common/chart-token.js'
 import { lintDocument } from '../../common/doc-lint.js'
@@ -303,6 +303,8 @@ export async function documentsRouter(app: FastifyInstance) {
   })
 
   // ── PHI Scan ──
+  // #989 Phase 3: findings 携带所属节(id + 标题)— 按块定位告警(#988),
+  // 投影缺失/过期时确定性重建。
   app.post<{ Params: DocParams }>('/api/v1/docs/:docId/phi-scan', async (request) => {
     const doc = await prisma.doc.findFirst({ where: { id: request.params.docId, userId: request.user!.userId } })
     if (!doc) return { findings: [] }
@@ -310,14 +312,21 @@ export async function documentsRouter(app: FastifyInstance) {
       SSN: 'Potential Social Security Number — consider removing or replacing with a surrogate ID.',
       Name: 'Potential patient name — consider using initials or a de-identified label.',
     }
-    const findings: Array<{ kind: string; text: string; start: number; end: number; suggestion: string }> = []
+    const docText = String(doc.body || '')
+    const projection = loadProjection(docText, doc.blockProjection)
+    const sectionNodes = projection.nodes.filter((n) => n.kind === 'section')
+    const sectionOf = (pos: number): { id: string; heading: string } | null => {
+      const hit = sectionNodes.find((n) => pos >= n.start && pos < n.end)
+      return hit ? { id: hit.id, heading: hit.heading || '' } : null
+    }
+    const findings: Array<{ kind: string; text: string; start: number; end: number; suggestion: string; section?: { id: string; heading: string } }> = []
     for (const { regex, kind } of [
       { regex: /\b\d{3}-\d{2}-\d{4}\b/g, kind: 'SSN' },
       { regex: /\b[A-Z][a-z]+ [A-Z][a-z]+\b/g, kind: 'Name' },
     ]) {
       let match
-      while ((match = regex.exec(doc.body)) !== null) {
-        findings.push({ kind, text: match[0], start: match.index, end: match.index + match[0].length, suggestion: suggestions[kind] || 'Review for potential PHI.' })
+      while ((match = regex.exec(docText)) !== null) {
+        findings.push({ kind, text: match[0], start: match.index, end: match.index + match[0].length, suggestion: suggestions[kind] || 'Review for potential PHI.', section: sectionOf(match.index) ?? undefined })
       }
     }
     return { findings }

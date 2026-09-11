@@ -265,11 +265,12 @@ export type ChatStreamChunk =
   | { type: 'compaction_completed'; history_tokens?: number; history_budget?: number; history_turns?: number }
   | { type: 'compaction_summary'; text: string }
   /**
-   * #927: rev = 服务端写回版本号（进程内单调递增），updatedAt = 写回时间
-   * （ISO）— 前端消费方按 rev 幂等防乱序（rev ≤ 已应用值的写回直接忽略）。
+   * #927: rev 单调递增版本标识 — 前端按 rev 幂等防乱序（rev ≤ 已应用值忽略）。
    * 旧后端事件无此字段，消费方按无 rev 保持原行为。
+   * #989 Phase 3: projection = 与 body 同帧的块级结构投影（派生；schema
+   * 见 blockProjectionSchema）— 前端按块展示变更/按块定位（#987 可见性）。
    */
-  | { type: 'doc_updated'; body: string; summary?: string; deck?: DeckWire | null; rev?: number; updatedAt?: string }
+  | { type: 'doc_updated'; body: string; summary?: string; deck?: DeckWire | null; rev?: number; updatedAt?: string; projection?: BlockProjection }
   | { type: 'chart_created'; url: string; markdown?: string; chart_type?: string }
   | { type: 'tier_classified'; tier: 'T1' | 'T2' | 'T3'; view_kind?: string; anchor?: string }
   | { type: 'context_info'; text: string; kind?: string }

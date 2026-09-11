@@ -214,8 +214,9 @@ export class InsertAssetTool extends BaseTool {
 
     // #789: 写回走 DocVersionWriter 单点 — 快照同帧带旧 body+deck 且包
     // 事务(旧代码两段写,快照仅在 deckChanged 时才带旧 deck)。
+    let written: Awaited<ReturnType<typeof writeDocVersion>> | null = null
     if (newBody !== body || deckChanged) {
-      const written = await writeDocVersion({
+      written = await writeDocVersion({
         userId: this.ctx.userId,
         docId,
         body: newBody,
@@ -226,7 +227,8 @@ export class InsertAssetTool extends BaseTool {
     }
 
     const summary = String(args.summary || `${summaryBase}，${placement}`)
-    const output: Record<string, unknown> = { body: newBody, summary }
+    // #989 Phase 3: 输出携带块投影 — tool-loop 转 doc_updated.projection 推前端。
+    const output: Record<string, unknown> = { body: newBody, summary, ...(written?.projection ? { projection: written.projection } : {}) }
     // #773: deck JSON 随工具输出返回 — tool-loop 转成 doc_updated.deck 推画布。
     if (opts.deckJson) {
       try { output.deck = JSON.parse(opts.deckJson) } catch { /* ignore */ }

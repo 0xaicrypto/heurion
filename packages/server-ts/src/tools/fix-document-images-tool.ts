@@ -232,7 +232,8 @@ export class FixDocumentImagesTool extends BaseTool {
 
       return {
         success: true,
-        output: JSON.stringify({ body: written.body, summary, fixed, missing }),
+        // #989 Phase 3: 输出携带块投影 — tool-loop 转 doc_updated.projection 推前端。
+        output: JSON.stringify({ body: written.body, summary, fixed, missing, projection: written.projection }),
       }
     } catch (err) {
       return { success: false, error: `fix_document_images failed: ${(err as Error).message.slice(0, 200)}` }

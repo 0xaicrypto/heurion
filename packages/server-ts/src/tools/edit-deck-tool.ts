@@ -174,7 +174,8 @@ export class EditDeckTool extends BaseTool {
         set_layout: '设置布局', set_theme: '设置主题', move: '移动', insert_chart: '插入图表',
       }
       const summary = String(args.summary || `已${ACTION_LABEL[action] || action}${action === 'set_theme' ? '' : ` 第 ${slideIndex} 页`}（现共 ${slides.length} 页）；正文未改动`)
-      return { success: true, output: JSON.stringify({ body: written.body, deck: nextDeck, summary }) }
+      // #989 Phase 3: 输出携带块投影 — tool-loop 转 doc_updated.projection 推前端。
+      return { success: true, output: JSON.stringify({ body: written.body, deck: nextDeck, summary, projection: written.projection }) }
     } catch (err) {
       return { success: false, error: `edit_deck failed: ${(err as Error).message.slice(0, 200)}` }
     }
