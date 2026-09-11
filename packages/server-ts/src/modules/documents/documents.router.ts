@@ -13,6 +13,8 @@ import { extractPptxContentFromUpload, pptxSlidesToDeck } from '../../lib/pptx-e
 import { ensureDraftBody } from '../../tools/doc-import.js'
 // #789: doc 写回单点 owner。
 import { writeDocVersion } from '../../tools/doc-version-writer.js'
+// #989 Phase 1: 块投影构建（restore 路径同帧重算 — 全路径走查强一致）。
+import { buildBlockProjection } from '../../lib/block-projection.js'
 import { makeLogger } from '../../common/logger.js'
 import { refreshFileUrls } from '../../common/chart-token.js'
 import { lintDocument } from '../../common/doc-lint.js'
@@ -293,7 +295,10 @@ export async function documentsRouter(app: FastifyInstance) {
       },
     })
     // #773: body+deck 一致回滚（deck 未快照的历史行恢复为 null = 无 deck）。
-    await prisma.doc.update({ where: { id: docId }, data: { body: snap.body, deck: snap.deck ?? null, updatedAt: new Date().toISOString() } })
+    // #989 Phase 1: 投影与 body 强一致 — 恢复同样同帧重算投影（该路径此前
+    // 绕过写回单点,是全路径走查中仅剩的两处 body 直写之一;title-only 不动
+    // body 不需要重算）。
+    await prisma.doc.update({ where: { id: docId }, data: { body: snap.body, deck: snap.deck ?? null, blockProjection: JSON.stringify(buildBlockProjection(String(snap.body || ''))), updatedAt: new Date().toISOString() } })
     return { restored: true }
   })
 

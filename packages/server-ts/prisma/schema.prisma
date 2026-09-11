@@ -109,6 +109,11 @@ model Doc {
   // 独立数据源（presentationContentSchema JSON 字符串，可空）。
   // 与 body 分治：文档视图编辑 body，deck 视图编辑 deck，互不污染。
   deck      String? @map("deck")
+  // #989 Phase 1: 块级结构投影 — 真相源 body 的派生投影（blockProjectionSchema
+  // JSON 字符串，可空）。写回单点（writeDocVersion）同帧维护：body 变则投影
+  // 同帧重算，强一致；存量文档首次写回时自动建投影。读侧发现 bodyHash 与
+  // body 不符（投影过期）按无投影处理，绝不信任过期投影。
+  blockProjection String? @map("block_projection")
   createdAt String @map("created_at")
   updatedAt String @map("updated_at")
   studyId   String? @map("study_id") // #383: linked research study

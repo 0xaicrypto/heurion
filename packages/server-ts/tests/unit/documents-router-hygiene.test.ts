@@ -18,12 +18,13 @@ const mocks = vi.hoisted(() => ({
   docCreate: vi.fn(),
   executeRaw: vi.fn(),
   writeDocVersion: vi.fn(),
+  snapFindFirst: vi.fn(),
 }))
 
 vi.mock('../../src/common/prisma.js', () => ({
   default: {
     doc: { findFirst: mocks.docFindFirst, update: mocks.docUpdate, create: mocks.docCreate },
-    docSnapshot: { create: vi.fn() },
+    docSnapshot: { create: vi.fn(), findFirst: mocks.snapFindFirst },
     $executeRawUnsafe: mocks.executeRaw,
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
       doc: { update: mocks.docUpdate },
@@ -246,5 +247,31 @@ describe('#980 废弃端点清理', () => {
     const { routes, app } = makeHarness()
     await documentsRouter(app as never)
     expect(routes.has('POST /api/v1/docs/:docId/chat')).toBe(false)
+  })
+})
+
+describe('#989 Phase 1 — restore 路径投影同帧重算(全路径走查)', () => {
+  test('恢复快照 → doc.update data 携带与新 body 一致的 blockProjection', async () => {
+    const { routes, app } = makeHarness()
+    await documentsRouter(app as never)
+    const restore = routes.get('POST /api/v1/docs/:docId/snapshots/:snapId/restore')
+    expect(restore).toBeTruthy()
+    // 归属:doc + 快照都属于调用者
+    mocks.docFindFirst
+      .mockResolvedValueOnce({ ...EXISTING, body: 'current body' })   // doc
+      .mockResolvedValue({ id: 7, body: 'snapshot body', deck: null }) // snap
+    mocks.snapFindFirst.mockResolvedValue({ id: 7, body: 'snapshot body', deck: null })
+    const { buildBlockProjection } = await import('../../src/lib/block-projection.js')
+
+    await restore(
+      { params: { docId: DOC, snapId: '7' }, user: { userId: USER } },
+      makeReply(),
+    )
+
+    const [args] = mocks.docUpdate.mock.calls[0]
+    expect(args.data.body).toBe('snapshot body')
+    const projection = JSON.parse(args.data.blockProjection)
+    const expected = buildBlockProjection('snapshot body')
+    expect(projection.body_hash).toBe(expected.body_hash)
   })
 })

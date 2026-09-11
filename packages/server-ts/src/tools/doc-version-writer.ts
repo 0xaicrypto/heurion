@@ -1,4 +1,6 @@
 import prisma from '../common/prisma.js'
+import { buildBlockProjection } from '../lib/block-projection.js'
+import type { BlockProjection } from '@heurion/contracts'
 
 /**
  * #789 — doc 写回单点 owner（body+deck 同帧不变量）。
@@ -14,9 +16,12 @@ import prisma from '../common/prisma.js'
  *     （另一会话的 edit_document / 气泡 apply / 手动保存），0 行命中直接
  *     拒绝写回并标记冲突，不再静默覆盖丢改动；
  *   - 无变化不写快照、不碰 updatedAt（保存按钮 unchanged 提示依赖）。
+ *   - #989 Phase 1: 同帧维护块投影 — body 变则投影同帧重算并落库
+ *     （blockProjection 列），任意写回路径的投影与 body 强一致；存量文档
+ *     首次写回（含 unchanged 保存）自动建/修投影。
  *
  * 用户手动保存路径（documents.router PUT /docs/:docId）已自含同帧语义
- * 且需合并 title 等字段，不经此函数（保持现状，不变量等价）。
+ * 且需合并 title 等字段，不经此函数（#980 起改走本函数单点）。
  */
 
 export interface DocVersionWrite {
@@ -37,6 +42,9 @@ export interface DocVersionResult {
   error?: string
   /** #904: 条件更新 0 行命中 — 读到的旧值已过期（并发修改），可重读后重试。 */
   conflict?: boolean
+  /** #989 Phase 1: 与 body 同帧维护的块投影（body 真相源的派生结构，消费方
+   *  Phase 2/3 接线；conflict/error 时为 null）。 */
+  projection: BlockProjection | null
 }
 
 function parseDeckJson(raw: unknown): unknown {
@@ -50,7 +58,7 @@ function parseDeckJson(raw: unknown): unknown {
 
 export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersionResult> {
   const existing = await prisma.doc.findFirst({ where: { id: input.docId, userId: input.userId } })
-  if (!existing) return { body: '', deck: null, changed: false, error: `Document not found: ${input.docId}` }
+  if (!existing) return { body: '', deck: null, changed: false, error: `Document not found: ${input.docId}`, projection: null }
 
   const prevBody = String(existing.body || '')
   const prevDeckRaw = existing.deck ?? null
@@ -59,8 +67,21 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
   const bodyChanged = nextBody !== prevBody
   const deckChanged = nextDeckRaw !== prevDeckRaw
 
+  // #989 Phase 1: 投影与 body 同帧 — nextBody 的块投影在此单点重算（确定性
+  // 纯函数），与 updateMany 包同一事务，中断不会留下「body 新投影旧」错位。
+  const projection = buildBlockProjection(nextBody)
+  const projectionJson = JSON.stringify(projection)
+
   if (!bodyChanged && !deckChanged) {
-    return { body: prevBody, deck: parseDeckJson(prevDeckRaw), changed: false }
+    // #989: body/deck 未变化 — 存量文档首次写回（含 unchanged 保存）自动建/
+    // 修投影（旧值缺失或与 body 不一致时回填；一致则零写入）。
+    if (existing.blockProjection !== projectionJson) {
+      await prisma.doc.updateMany({
+        where: { id: input.docId, userId: input.userId, body: prevBody, deck: prevDeckRaw },
+        data: { blockProjection: projectionJson },
+      }).catch(() => undefined)
+    }
+    return { body: prevBody, deck: parseDeckJson(prevDeckRaw), changed: false, projection }
   }
 
   const now = new Date().toISOString()
@@ -77,7 +98,8 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
         body: prevBody,
         deck: prevDeckRaw,
       },
-      data: { body: nextBody, deck: nextDeckRaw, updatedAt: now },
+      // #989 Phase 1: 投影与 body 同帧落库 — 任意写回路径的投影强一致。
+      data: { body: nextBody, deck: nextDeckRaw, updatedAt: now, blockProjection: projectionJson },
     })
     if (res.count === 0) { stale = true; return }
     // 同帧快照旧 body+旧 deck — 恢复时一致回滚（#773 方案 A，此前仅
@@ -96,6 +118,7 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
     return {
       body: '', deck: null, changed: false,
       conflict: true,
+      projection: null,
       error: '文档已被并发修改，本次写回基于过期内容被拒绝，请重新读取文档后重试',
     }
   }
@@ -103,5 +126,6 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
     body: nextBody,
     deck: input.deck === undefined ? parseDeckJson(prevDeckRaw) : input.deck,
     changed: true,
+    projection,
   }
 }

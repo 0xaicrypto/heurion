@@ -5,13 +5,14 @@ import { describe, test, expect, vi, beforeEach } from 'vitest'
 // 传回给被测函数，断言 updateMany 的乐观锁 where 与快照同帧内容）。
 const mocks = vi.hoisted(() => ({
   docFindFirst: vi.fn(),
+  docUpdateMany: vi.fn(),
   txDocUpdateMany: vi.fn(),
   txDocSnapshotCreate: vi.fn(),
 }))
 
 vi.mock('../../src/common/prisma.js', () => ({
   default: {
-    doc: { findFirst: mocks.docFindFirst },
+    doc: { findFirst: mocks.docFindFirst, updateMany: mocks.docUpdateMany },
     $transaction: async (fn: (tx: unknown) => Promise<void>) =>
       fn({
         doc: { updateMany: mocks.txDocUpdateMany },
@@ -30,14 +31,22 @@ describe('#904 writeDocVersion 乐观锁条件更新', () => {
     vi.clearAllMocks()
     mocks.txDocUpdateMany.mockResolvedValue({ count: 1 })
     mocks.txDocSnapshotCreate.mockResolvedValue({})
+    mocks.docUpdateMany.mockResolvedValue({ count: 1 })
   })
 
-  test('未变化不落库不写快照（updatedAt 不被触碰）', async () => {
+  test('未变化不落库不写快照（updatedAt 不被触碰；存量行回填投影）', async () => {
     mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: null })
     const res = await writeDocVersion({ userId: USER, docId: DOC, body: 'A', snapshotLabel: 't' })
-    expect(res).toEqual({ body: 'A', deck: null, changed: false })
+    // #989: changed=false — body/deck 不变(零事务写),返回派生投影。
+    expect(res).toMatchObject({ body: 'A', deck: null, changed: false })
+    expect(res.projection).not.toBeNull()
+    // 正文/快照零写入。
     expect(mocks.txDocUpdateMany).not.toHaveBeenCalled()
     expect(mocks.txDocSnapshotCreate).not.toHaveBeenCalled()
+    // 存量行无投影字段 → 首次写回自动建投影(条件更新,body 匹配)。
+    expect(mocks.docUpdateMany).toHaveBeenCalledTimes(1)
+    const [backfill] = mocks.docUpdateMany.mock.calls[0]
+    expect(backfill.where).toMatchObject({ id: DOC, userId: USER, body: 'A', deck: null })
   })
 
   test('变化时 updateMany 以读到的旧 body+旧 deck 为 where（deck null → IS NULL）', async () => {
@@ -93,5 +102,68 @@ describe('#904 writeDocVersion 乐观锁条件更新', () => {
     expect(res.changed).toBe(false)
     expect(mocks.txDocUpdateMany).not.toHaveBeenCalled()
     expect(mocks.txDocSnapshotCreate).not.toHaveBeenCalled()
+  })
+})
+
+describe('#989 Phase 1 — 块投影与 body 同帧(写回单点强一致)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.txDocUpdateMany.mockResolvedValue({ count: 1 })
+    mocks.txDocSnapshotCreate.mockResolvedValue({})
+    mocks.docUpdateMany.mockResolvedValue({ count: 1 })
+  })
+  test('body 变化 → updateMany data 同帧携带 blockProjection(与 body 同事务)', async () => {
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: null })
+    const res = await writeDocVersion({ userId: USER, docId: DOC, body: '# T\n\n## S\nnew content', snapshotLabel: 't' })
+    const [args] = mocks.txDocUpdateMany.mock.calls[0]
+    // 投影 JSON 合法且与 nextBody 强一致
+    const projection = JSON.parse(args.data.blockProjection)
+    expect(projection.schema_version).toBe(1)
+    expect(projection.nodes.some((n: any) => n.kind === 'section' && n.heading === 'S')).toBe(true)
+    // 返回投影对象
+    expect(res.projection).toEqual(projection)
+    expect(res.projection!.body_hash).toHaveLength(12)
+  })
+
+  test('并发冲突 → 投影不落库不返回(null)', async () => {
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: null })
+    mocks.txDocUpdateMany.mockResolvedValue({ count: 0 })
+    const res = await writeDocVersion({ userId: USER, docId: DOC, body: 'B', snapshotLabel: 't' })
+    expect(res.conflict).toBe(true)
+    expect(res.projection).toBeNull()
+  })
+
+  test('存量文档首次写回(unchanged 保存)→ 自动回填缺失投影', async () => {
+    // 旧文档行无投影字段(存量)
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: null, blockProjection: null })
+    const res = await writeDocVersion({ userId: USER, docId: DOC, body: 'A', snapshotLabel: '保存版本' })
+    expect(res.changed).toBe(false)
+    // 回填投影(条件更新,body 匹配 — 非事务路径,投影缺失/过期修复)
+    expect(mocks.docUpdateMany).toHaveBeenCalledTimes(1)
+    const [args] = mocks.docUpdateMany.mock.calls[0]
+    expect(args.where).toMatchObject({ id: DOC, userId: USER, body: 'A', deck: null })
+    const projection = JSON.parse(args.data.blockProjection)
+    expect(projection.body_hash).toHaveLength(12)
+    expect(res.projection).toEqual(projection)
+    // unchanged 不产生快照
+    expect(mocks.txDocSnapshotCreate).not.toHaveBeenCalled()
+  })
+
+  test('投影已与 body 一致 → 零写入(unchanged 语义不破坏)', async () => {
+    const { buildBlockProjection } = await import('../../src/lib/block-projection.js')
+    const fresh = JSON.stringify(buildBlockProjection('A'))
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: null, blockProjection: fresh })
+    const res = await writeDocVersion({ userId: USER, docId: DOC, body: 'A', snapshotLabel: '保存版本' })
+    expect(res.changed).toBe(false)
+    expect(mocks.docUpdateMany).not.toHaveBeenCalled()
+    expect(mocks.txDocUpdateMany).not.toHaveBeenCalled()
+  })
+
+  test('投影与 body 不一致(过期)→ unchanged 保存时修复', async () => {
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: null, blockProjection: '{"schema_version":1,"body_hash":"000000000000","nodes":[]}' })
+    const res = await writeDocVersion({ userId: USER, docId: DOC, body: 'A', snapshotLabel: '保存版本' })
+    expect(res.changed).toBe(false)
+    const [args] = mocks.docUpdateMany.mock.calls[0]
+    expect(JSON.parse(args.data.blockProjection).body_hash).not.toBe('000000000000')
   })
 })

@@ -31,6 +31,50 @@ export const taskPlanSchema = z.object({
   updated_at: z.string().max(60).optional(),
 })
 
+/**
+ * #989 Phase 1 — 块级结构投影（真相源 body 的派生投影）。
+ *
+ * 真相源不变（markdown body），writeDocVersion 写回单点同帧解析 body →
+ * 块树（H1-H3 节 sec + 段落/表格/图/列表/代码块 blk）并落库投影。模型侧
+ * Phase 2 起上下文注入带 ID（[sec:s_xxx] Introduction），edit_document
+ * target_section 按投影 span 确定性替换 — 锚点模糊匹配降级为兜底。
+ *
+ * ID 稳定性约定（验证标准）：section id = 标题规范化哈希（正文编辑不换
+ * 节 ID，仅改标题才失效）；block id = 块内容规范化哈希。同名标题/重复
+ * 块按出现序号消歧（前置同名内容被删除时序号漂移 — 已知边界，注释记录）。
+ * 读侧校验 body_hash 与 body 不符 = 投影过期，按无投影处理。
+ */
+export const blockProjectionNodeSchema = z.object({
+  /** 稳定 ID：'s_<hash12>'（section）/ 'b_<hash12>'（block），重复内容加 '_<n>' 消歧。 */
+  id: z.string().min(2).max(48),
+  kind: z.enum(['section', 'block']),
+  /** block 内容类型（section 无此字段）。 */
+  block_type: z.enum(['paragraph', 'table', 'image', 'list', 'code']).optional(),
+  /** section 标题文本（block 无此字段）。 */
+  heading: z.string().max(300).optional(),
+  /** heading 层级 1-3（section 专用）。 */
+  level: z.number().int().min(1).max(3).optional(),
+  /** 内容哈希（sha1 前 12 位）— 变更检测位（section 的 id 在正文编辑下不变，hash 变）。 */
+  hash: z.string().length(12),
+  /** body 中的字符区间 [start, end) — Phase 2 确定性替换的精确依据。 */
+  start: z.number().int().min(0),
+  end: z.number().int().min(0),
+  /** block → 所属 section id；section → null；首个标题前的 block → null。 */
+  parent_id: z.string().nullable(),
+})
+
+export const blockProjectionSchema = z.object({
+  schema_version: z.literal(1),
+  /** 整篇 body 原文哈希 — 投影与 body 强一致的快速校验位（不一致 = 过期）。 */
+  body_hash: z.string().length(12),
+  nodes: z.array(blockProjectionNodeSchema).max(2000),
+})
+
+export type BlockProjection = z.infer<typeof blockProjectionSchema>
+export type BlockProjectionNode = z.infer<typeof blockProjectionNodeSchema>
+export type BlockProjectionNodeKind = BlockProjectionNode['kind']
+export type BlockType = NonNullable<BlockProjectionNode['block_type']>
+
 /** Context-budget snapshot sent at the start of a turn (U3). */
 export interface ContextUsage {
   history_tokens: number
