@@ -494,10 +494,15 @@ export async function runToolCallLoop(params: {
           // 活跃清单中第一个 pending 且 tool 匹配的步骤,系统在真实执行后
           // 推进/标失败,模型无法自行声称写回步骤完成。同步 await（一次
           // DB 查询 ~ms）保证 SSE 与 DB 状态在工具结果事件前一致。
+          // #982: step_index 精确推进 — 模型在写回工具参数中携带目标步骤
+          // 序号时按序号匹配(乱序/跳步编辑不再把完成记到 FIFO 错误步骤);
+          // 未携带时保持 FIFO 兜底。
           try {
+            const stepIdxRaw = (c.toolArgs as Record<string, unknown> | undefined)?.step_index
+            const stepIndex = typeof stepIdxRaw === 'number' && Number.isInteger(stepIdxRaw) ? stepIdxRaw : undefined
             const planStep = result.success
-              ? await autoAdvanceWriteStep(userId, sessionId, c.toolName)
-              : await markWriteStepFailed(userId, sessionId, c.toolName, (result.error || '').slice(0, 200))
+              ? await autoAdvanceWriteStep(userId, sessionId, c.toolName, stepIndex)
+              : await markWriteStepFailed(userId, sessionId, c.toolName, (result.error || '').slice(0, 200), stepIndex)
             if (planStep) {
               io.send({
                 type: 'plan_updated',

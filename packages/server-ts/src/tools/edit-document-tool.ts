@@ -71,6 +71,7 @@ export class EditDocumentTool extends BaseTool {
         new_text: { type: 'string', description: 'Range mode: the replacement text (empty to delete).' },
         full_text: { type: 'string', description: 'Full mode: the complete new document content in markdown.' },
         summary: { type: 'string', description: 'A one-line summary of what changed.' },
+        step_index: { type: 'number', description: 'When the task plan (set_task_plan) is active, the plan step number (1-based, from the injected checklist) this edit implements. Required while a plan is active — the system uses it to tick the correct step (out-of-order edits are recorded accurately). Omit when no plan exists.' },
       },
       required: [],
     }

@@ -185,13 +185,19 @@ export async function cancelPlan(userId: string, sessionId: string): Promise<voi
 
 /**
  * 闸门 3 — 写回步骤系统自动推进：tool-loop 在写回工具执行成功后调用。
- * 命中规则：活跃清单中第一个 pending 且 tool === 执行工具名的步骤。
+ * #982: 模型可携带 step_index(工具参数)精确指定本次写回对应的目标步骤 —
+ * 按序号匹配(仍校验 status=pending && tool 匹配);乱序/跳步编辑不再把
+ * 完成记到 FIFO 的错误步骤上(系统误判变种:前端以 source:system 的
+ * 「已验证」可信度展示错误勾选态,比模型编造更具误导性)。
+ * 无 step_index 时保持 FIFO 兜底(兼容旧调用与未建清单场景)。
  * 返回更新后的 plan（无活跃清单/无命中步骤 → null，调用方不发 SSE）。
  */
-export async function autoAdvanceWriteStep(userId: string, sessionId: string, toolName: string): Promise<TaskPlan | null> {
+export async function autoAdvanceWriteStep(userId: string, sessionId: string, toolName: string, stepIndex?: number): Promise<TaskPlan | null> {
   const active = await loadActivePlan(userId, sessionId)
   if (!active) return null
-  const target = active.steps.find((s) => s.status === 'pending' && s.tool === toolName)
+  const target = typeof stepIndex === 'number'
+    ? active.steps.find((s) => s.index === stepIndex && s.status === 'pending' && s.tool === toolName)
+    : active.steps.find((s) => s.status === 'pending' && s.tool === toolName)
   if (!target) return null
   return updateSteps(userId, sessionId, (steps) => {
     const step = steps.find((s) => s.index === target.index)
@@ -201,11 +207,14 @@ export async function autoAdvanceWriteStep(userId: string, sessionId: string, to
   })
 }
 
-/** 写回步骤失败标记（tool-loop 在写回失败时标注 — 重试计数供预算控制）。 */
-export async function markWriteStepFailed(userId: string, sessionId: string, toolName: string, failureNote: string): Promise<TaskPlan | null> {
+/** 写回步骤失败标记（tool-loop 在写回失败时标注 — 重试计数供预算控制）。
+ *  #982: 同 autoAdvanceWriteStep — step_index 精确匹配优先,FIFO 兜底。 */
+export async function markWriteStepFailed(userId: string, sessionId: string, toolName: string, failureNote: string, stepIndex?: number): Promise<TaskPlan | null> {
   const active = await loadActivePlan(userId, sessionId)
   if (!active) return null
-  const target = active.steps.find((s) => s.status === 'pending' && s.tool === toolName)
+  const target = typeof stepIndex === 'number'
+    ? active.steps.find((s) => s.index === stepIndex && s.status === 'pending' && s.tool === toolName)
+    : active.steps.find((s) => s.status === 'pending' && s.tool === toolName)
   if (!target) return null
   return updateSteps(userId, sessionId, (steps) => {
     const step = steps.find((s) => s.index === target.index)
@@ -250,7 +259,7 @@ export function renderPlanBlock(plan: TaskPlan | null): string {
     const failure = s.status === 'failed' ? ` — 失败${s.failure_note ? `：${s.failure_note}` : '，可重试或跳过'}` : ''
     lines.push(`- [${STEP_MARK[s.status]}] ${s.index}. ${s.title}${failure}`)
   }
-  lines.push('（逐项执行任务清单；每完成一项会自动勾选；用户回复「继续」时从第一个未完成步骤接着做；未完成的步骤严禁声称已完成。）')
+  lines.push('（逐项执行任务清单；每完成一项会自动勾选；调用 edit_document 等写回工具时携带目标步骤的 step_index（本清单中「N.」的序号）；用户回复「继续」时从第一个未完成步骤接着做；未完成的步骤严禁声称已完成。）')
   return `\n${lines.join('\n')}\n`
 }
 

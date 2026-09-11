@@ -409,6 +409,76 @@ describe('#976 收尾空转守卫 + 开始接力（重试回合生产实例）',
     expect(PLAN_RELAY_RE.test('开始吧')).toBe(true)
   })
 })
+describe('#982 step_index 精确推进 — 乱序编辑不再记错账', () => {
+  test('乱序调用(先 step_index 3 再 1)→ 各自正确勾选,FIFO 不顶替', async () => {
+    const sid = UNIQUE()
+    await ensureUser('user_plan14')
+    const setup = new SetTaskPlanTool({ userId: 'user_plan14', sessionId: sid })
+    await setup.execute({ action: 'create', title: 'T', steps: [
+      { title: '写第一节', tool: 'edit_document' },
+      { title: '写第二节', tool: 'edit_document' },
+      { title: '写第三节', tool: 'edit_document' },
+    ] })
+
+    await ensureUser('user_plan14')
+    const ctx = makeCtx(sid)
+    const registry = new ToolRegistry(ctx)
+    registry.register(new WriteTool(false))
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"c","new_text":"x","step_index":3}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"a","new_text":"y","step_index":1}}'))
+      .mockResolvedValueOnce('第 3、1 步已完成。')
+
+    const { io, chunks } = makeIO()
+    await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '乱序执行' }],
+      toolRegistry: registry, tools: [], apiKey: 'k', io, ctx,
+      userId: 'user_plan14', sessionId: sid,
+    })
+
+    const row = await (prisma as any).taskPlan.findFirst({ where: { sessionId: sid, status: 'active' } })
+    const steps = JSON.parse(row.stepsJson)
+    // 各自归位:第 3、1 步 done,第 2 步 pending(旧 FIFO 会把第 3 步的完成记到第 1 步)
+    expect(steps[2].status).toBe('done')
+    expect(steps[0].status).toBe('done')
+    expect(steps[1].status).toBe('pending')
+
+    // SSE 侧:两次 system 推进均发出
+    const sys = chunks.filter((c) => c.type === 'plan_updated' && (c as any).source === 'system')
+    expect(sys.length).toBe(2)
+  })
+
+  test('step_index 指向不存在/非 pending 步骤 → 不推进(精确匹配不误跳)', async () => {
+    const sid = UNIQUE()
+    await ensureUser('user_plan15')
+    const setup = new SetTaskPlanTool({ userId: 'user_plan15', sessionId: sid })
+    await setup.execute({ action: 'create', title: 'T', steps: [
+      { title: 'A', tool: 'edit_document' }, { title: 'B' }, { title: 'C' },
+    ] })
+
+    const ctx = makeCtx(sid)
+    const registry = new ToolRegistry(ctx)
+    registry.register(new WriteTool(false))
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"a","new_text":"x","step_index":9}}'))
+      .mockResolvedValueOnce('done')
+
+    const { io, chunks } = makeIO()
+    await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '执行' }],
+      toolRegistry: registry, tools: [], apiKey: 'k', io, ctx,
+      userId: 'user_plan15', sessionId: sid,
+    })
+
+    const row = await (prisma as any).taskPlan.findFirst({ where: { sessionId: sid, status: 'active' } })
+    const steps = JSON.parse(row.stepsJson)
+    expect(steps[0].status).toBe('pending')
+    expect(chunks.filter((c) => c.type === 'plan_updated' && (c as any).source === 'system')).toHaveLength(0)
+  })
+})
+
 describe('#979 方案 A/B/D — 行为 nudge / 轮次预警 / 进度读账本', () => {
   test('方案 A: 无清单 + 已执行 ≥3 工具调用 → 注入中性 nudge（一次性）', async () => {
     const ctx = makeCtx('doc-doc16')
