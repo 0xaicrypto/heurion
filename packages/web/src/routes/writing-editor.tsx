@@ -584,14 +584,25 @@ export function WritingEditorPage() {
     setViewMode('document');
   };
 
-  // #383: generate the Methods draft from the linked study's protocol.
   const handleGenerateMethods = async () => {
     if (!docId) return;
+    // #983: 生成 Methods 不再 setBody 直写 — 与 AI 编辑同一确认通道
+    // （diff-review,接受后经 handleDiffResolve → saveDoc 带 base_sha 冲突
+    // 检测）。此前是全应用唯一「无确认直接写文档」的 AI 路径,与 autosave/
+    // AI 写回并发时可能静默吞掉未保存修改。
+    if (diffReview !== null || pendingWriteBackRef.current !== null) {
+      showNotice(t('writing.reviewFirstForMethods', '请先完成当前 AI 修改的审阅，再生成内容'));
+      return;
+    }
     setMethodsLoading(true);
     setMethodsError(null);
     try {
       const res = await api.generateMethods(docId);
-      setBody((prev) => `${prev}${prev ? '\n\n' : ''}## Methods\n\n${res.methods}\n`);
+      const next = `${bodyRef.current}${bodyRef.current ? '\n\n' : ''}## Methods\n\n${res.methods}\n`;
+      if (next === bodyRef.current) return;
+      setDiffReview({ key: `methods_${Date.now()}`, old: bodyRef.current, next });
+      // deck 视图下 markdown 审阅不可见 — 自动切回文档视图(同写回路径)。
+      setViewMode((m) => (m === 'deck' ? 'document' : m));
     } catch (err) {
       setMethodsError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
@@ -601,11 +612,36 @@ export function WritingEditorPage() {
 
   const handleInjectResults = async () => {
     if (!docId || !injectLabel.trim() || !injectResult.trim()) return;
+    // #983: 审阅未决时注入会与 diffReview 驱动的编辑器内容互相踩踏 — 同
+    // handleInsertChart 守卫,明示先完成当前审阅。
+    if (diffReview !== null || pendingWriteBackRef.current !== null) {
+      showNotice(t('writing.reviewFirstForMethods', '请先完成当前 AI 修改的审阅，再生成内容'));
+      return;
+    }
     setInjecting(true);
     try {
       await api.injectResults(docId, injectLabel.trim(), injectResult.trim());
       const d = await api.getDoc(docId);
-      setBody(d.body);
+      // #983: 服务端已在「服务端正文 + 注入块」上落库（writeDocVersion 单点）。
+      // 本地改用三路合并应用增量 — 此前「拉最新 body 整篇覆盖」会静默吞掉
+      // 本地未保存修改。base = 最后同步的服务端正文,ours = 本地(可能含
+      // 未保存编辑),theirs = 注入后的服务端正文。
+      const base = serverBodyRef.current ?? bodyRef.current;
+      const merged = mergeThreeWay(base, bodyRef.current, d.body);
+      if (merged === null) {
+        // 注入块与本地未保存修改在基线坐标上重叠 → 三路合并不安全:
+        // 进冲突确认审阅（接受 = 采用服务端版本,不再保存;取消 = 保留本地,
+        // 后续保存经 base_sha 失配 409 走冲突横幅），绝不静默覆盖任一侧。
+        conflictLoadRef.current = { body: d.body, updatedAt: d.updated_at };
+        setDiffReview({ key: `inject_${Date.now()}`, old: bodyRef.current, next: d.body });
+        setViewMode((m) => (m === 'deck' ? 'document' : m));
+        showNotice(t('writing.injectConflictReview', '结果注入与本地未保存修改冲突 — 已进入审阅确认'), 6000);
+      } else {
+        // 服务端视角基线推进到注入后的正文 — 后续保存的 base_sha 指纹正确。
+        serverBodyRef.current = d.body;
+        if (merged !== bodyRef.current) setBody(merged);
+        setDoc((prev) => (prev ? { ...prev, body: merged, updated_at: d.updated_at } : prev));
+      }
       setInjectOpen(false);
       setInjectLabel('');
       setInjectResult('');
