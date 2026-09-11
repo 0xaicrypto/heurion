@@ -730,6 +730,23 @@ export function WritingEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ref 稳定(#696 hooks 下沉)
   }, [docId]);
 
+  // #979: 双保险 — 路由层 key={docId}（App.tsx WritingEditorRoute）已让切
+  // 文档重挂清零;本 effect 防未来路由重构回归:key 失效时切文档仍强制清空
+  // 核心写状态,防 A 文档的审阅/冲突/PHI/导出态串染到 B 文档（历史上
+  // #902/#903 的 reset 清单漂移教训:逐项补不可靠,这里一次性全清）。
+  useEffect(() => {
+    setDiffReview(null);
+    setRestoreReview(null);
+    conflictLoadRef.current = null;
+    setSaveConflict(null);
+    setPhiFindings(null);
+    setShowPhiDialog(false);
+    setExportResult(null);
+    setExportPanelOpen(false);
+    setMethodsError(null);
+    setShowHistory(false);
+  }, [docId]);
+
   const loadSnapshots = useCallback(() => {
     if (!docId) return;
     setSnapshotsLoading(true);

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { ErrorBoundary, RouteBoundary } from '@/components/ErrorBoundary';
 import { ChatPage } from '@/routes/chat';
@@ -47,6 +47,19 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   // #919: 每个 /app/* 路由段包一层轻量 ErrorBoundary — 单页崩溃不再拖垮
   // 整个应用（根级边界保持不变），切路由自动复位。
   return <RouteBoundary>{children}</RouteBoundary>;
+}
+
+/**
+ * #979 — 文档编辑器随 docId 重建。切换文档时 key 变化触发重挂载，写状态
+ * （diffReview/saveConflict/appliedDocBody/审阅队列/PHI/导出态）天然清零 —
+ * 根治「切换文档 reset 清单持续漂移」的串染问题（历史上 #902/#903 修过
+ * 一批，reset 清单后来新增状态未跟上：A 文档未处理的 diff/冲突横幅可能
+ * 残留渲染在 B 文档上，点「接受」会把 A 的合并内容写进 B）。路由层
+ * key 一次性根治，组件内另有双保险 effect（writing-editor.tsx）。
+ */
+function WritingEditorRoute() {
+  const { docId } = useParams<{ docId: string }>();
+  return <WritingEditorPage key={docId ?? 'none'} />;
 }
 
 /** #716 — 仅管理员可访问（侧边栏隐藏只是视觉层，路由必须有真实守卫）。 */
@@ -190,7 +203,7 @@ export default function App() {
             path="/app/writing/:docId"
             element={
               <RequireAuth>
-                <WritingEditorPage />
+                <WritingEditorRoute />
               </RequireAuth>
             }
           />
