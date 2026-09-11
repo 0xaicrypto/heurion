@@ -88,6 +88,7 @@ export async function chatWithToolsStreamImpl(
   let currentToolIdx: number | null = null
   // #979 诊断计数器
   let toolDeltaCount = 0
+  let reasoningChars = 0
   let noIndexCount = 0
   let noIdCount = 0
   let argFragCount = 0
@@ -122,7 +123,11 @@ export async function chatWithToolsStreamImpl(
           const choice = chunk.choices?.[0]
           if (choice?.finish_reason) finishReason = choice.finish_reason
           const delta = choice?.delta
-          if (delta?.reasoning_content) onReasoning?.(delta.reasoning_content)
+          if (delta?.reasoning_content) {
+            onReasoning?.(delta.reasoning_content)
+            // 方案 C 观测: reasoning 字数计量（治理 41 万字过度思考的数据基础）
+            reasoningChars += delta.reasoning_content.length
+          }
           if (delta?.content) { text += delta.content; completionChars += delta.content.length }
           for (const tc of delta?.tool_calls ?? []) {
             // #979 诊断:增量形态统计（定位空参丢失层）
@@ -166,9 +171,15 @@ export async function chatWithToolsStreamImpl(
   }
 
   // #979 诊断:增量形态摘要 — 一行定位「参数在哪层丢失」
+  // 方案 C 观测: reasoning 字数（过度思考治理的数据基础）
+  if (reasoningChars > 150_000) {
+    log.warn(`[LLM] tools-stream reasoning runaway: ${reasoningChars} chars (~${Math.round(reasoningChars / 2)} tokens) model=${model}`)
+  } else if (reasoningChars > 0) {
+    log.info(`[LLM] tools-stream reasoning chars=${reasoningChars} model=${model}`)
+  }
   if (toolDeltaCount > 0) {
     const entries = [...toolAcc.values()].map((e) => ({ name: e.name || '(无名)', id: e.id || '-', argsLen: e.arguments.length, preview: e.arguments.slice(0, 120) }))
-    log.info(`[LLM] tools-stream tool_calls shape: deltas=${toolDeltaCount} noIndex=${noIndexCount} noId=${noIdCount} argFrags=${argFragCount}(${argFragChars}B) entries=${JSON.stringify(entries)}`)
+    log.info(`[LLM] tools-stream tool_calls shape: deltas=${toolDeltaCount} noIndex=${noIndexCount} noId=${noIdCount} argFrags=${argFragCount}(${argFragChars}B) reasoning=${reasoningChars}B entries=${JSON.stringify(entries)}`)
     // 流式退化检测：增量出现过但参数字节为 0（中转流式通道丢参,生产实锤）
     // → 非流式重取完整 tool_calls。非流式通道完好（doc-executor 兜底实证）。
     if (argFragCount === 0 && toolAcc.size > 0) {

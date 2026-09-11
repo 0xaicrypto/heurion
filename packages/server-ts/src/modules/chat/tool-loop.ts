@@ -23,7 +23,7 @@ import { deckWireSchema } from '@heurion/contracts'
 // #892: 声明-执行对账 — 判定纯函数外置 writing-prompts(可单测)。
 // P0 hotfix 2026-09: 原对话内纠偏重试已移除(毒上下文里重试无效),
 // 重试职责移交 doc-executor;tool-loop 只负责留痕与警示。
-import { detectUnbackedEditClaim, countClaimedEditItems } from './writing-prompts.js'
+import { detectUnbackedEditClaim, countClaimedEditItems, PLAN_PROGRESS_QUERY_RE } from './writing-prompts.js'
 import type { TaskPlan } from '@heurion/contracts'
 // #976: 任务清单状态与上下文注入（common 层,tools/modules 共用）。
 import {
@@ -31,6 +31,7 @@ import {
   autoAdvanceWriteStep,
   markWriteStepFailed,
   planBacklog,
+  backlogExceedsRounds,
   renderPendingSteps,
 } from '../../common/plan-store.js'
 
@@ -295,6 +296,9 @@ export async function runToolCallLoop(params: {
   let writeFailStreakExit = false
   // #979: 本轮是否执行过 set_task_plan（文本计划表守卫的豁免依据）。
   let planWasManaged = false
+  // 方案 A: 回合内已执行工具调用总数（任意工具）+ nudge 注入标志。
+  let executedToolCallsTotal = 0
+  let planNudgeInjected = false
 
   // #835: 尽最大努力检索(best-effort retrieval) — 检索工具连续失败 ≥2 次
   // 即从后续轮次移除这些工具(模型物理上无法再重试),配合注入指引让模型
@@ -306,6 +310,34 @@ export async function runToolCallLoop(params: {
   // 全部检索工具被停用 → PubMed 明明可用却被判"已停用")。
   const retrievalFailuresByTool = new Map<string, number>()
   const degradedTools = new Set<string>()
+
+  // #979 方案 B/D — 回合开局：活跃清单状态注入（进度问答读账本 + backlog
+  // 超轮次预警）。一次查询，供全程 nudge 判定复用。
+  const activePlanAtStart = sessionId.startsWith('doc-')
+    ? await loadActivePlan(userId, sessionId).catch(() => null)
+    : null
+  if (sessionId.startsWith('doc-') && activePlanAtStart) {
+    const lastUserMsg = [...currentMessages].reverse().find((m) => m.role === 'user')
+    const lastUserText = typeof lastUserMsg?.content === 'string'
+      ? lastUserMsg.content
+      : Array.isArray(lastUserMsg?.content)
+        ? (lastUserMsg.content as Array<{ text?: string }>).map((p) => p.text || '').join('')
+        : ''
+    // 方案 D: 进度问答 → 强制读账本
+    if (PLAN_PROGRESS_QUERY_RE.test(lastUserText)) {
+      messages.push({
+        role: 'user',
+        content: '【系统】用户在询问进度。回答必须逐字依据「当前任务清单」段的勾选状态（步骤标题/顺序/完成态），禁止凭记忆重构步骤或进度数字。',
+      })
+    }
+    // 方案 B: backlog 超出轮次上限 → 提前预警（不等到耗尽）
+    if (backlogExceedsRounds(activePlanAtStart, MAX_TOOL_ROUNDS)) {
+      messages.push({
+        role: 'user',
+        content: `【系统】当前任务清单剩余 ${planBacklog(activePlanAtStart)} 步，超过本回合工具轮次上限（${MAX_TOOL_ROUNDS} 轮）。请合并相邻步骤、按优先级执行，或明确告知用户本回合完成后将分批继续——严禁在轮次耗尽时编造未执行步骤的完成状态。`,
+      })
+    }
+  }
 
   while (toolRound < MAX_TOOL_ROUNDS) {
     toolRound++
@@ -452,6 +484,7 @@ export async function runToolCallLoop(params: {
       const finishCall = async (c: ExecutableCall, result: Awaited<ReturnType<typeof toolRegistry.execute>>) => {
         // #892: 写回工具每次真实执行(成功或失败)都计入 — 对账守卫的
         // "文档是否被修改过"事实依据。
+        executedToolCallsTotal++
         if (DOC_WRITE_TOOLS.has(c.toolName)) {
           docWriteExecuted++
           if (result.success) docWriteSucceeded++
@@ -677,12 +710,27 @@ export async function runToolCallLoop(params: {
       }
       // #978: 写回连败早退 — finishCall 内置位,直接结束轮次循环
       // （walker 的 break 只出计划遍历;这里出轮次循环转 doc-executor 兜底）。
+      // 方案 A: 行为观察 nudge — 已执行 ≥3 个工具调用（或轮次过半）且
+      // 无活跃清单 → 一次性中性提醒（判断权在模型，无意图词表）。
+      // #978: 写回连败早退 — finishCall 内置位，直接结束轮次循环转兜底。
       if (writeFailStreakExit) {
         exitedByRoundCap = false
         break
       }
       if (executedAny) {
         anyToolExecuted = true
+        if (
+          !planNudgeInjected
+          && sessionId.startsWith('doc-')
+          && !activePlanAtStart
+          && (executedToolCallsTotal >= 3 || toolRound >= Math.ceil(MAX_TOOL_ROUNDS / 2))
+        ) {
+          planNudgeInjected = true
+          messages.push({
+            role: 'user',
+            content: `【系统】本回合已执行 ${executedToolCallsTotal} 个工具调用（第 ${toolRound}/${MAX_TOOL_ROUNDS} 轮）。如果这是可拆解为 ≥3 个独立步骤的任务，建议先调用 set_task_plan 建立任务清单——用户可见进度、失败可重试、轮次耗尽可接力。是否建立由你根据任务性质判断；简单任务（1-2 步）直接继续执行即可。`,
+          })
+        }
         continue
       }
     }

@@ -216,6 +216,11 @@ export async function markWriteStepFailed(userId: string, sessionId: string, too
   })
 }
 
+/** 方案 B: backlog 是否超出轮次预算（预警判定，纯函数）。 */
+export function backlogExceedsRounds(plan: TaskPlan | null, maxRounds: number): boolean {
+  return planBacklog(plan) > maxRounds
+}
+
 /** 对账口径（#972）：failed 与 pending 都算缺口 — 收尾时不可能带着失败步骤声称全完成。 */
 export function planBacklog(plan: TaskPlan | null): number {
   if (!plan) return 0

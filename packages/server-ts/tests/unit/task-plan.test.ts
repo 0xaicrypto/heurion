@@ -77,7 +77,7 @@ async function ensureUser(userId: string): Promise<void> {
   })
 }
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => { vi.clearAllMocks(); vi.mocked(deepseekChat).mockReset() })
 afterEach(() => vi.clearAllMocks())
 
 describe('#969 闸门 1 — 步数硬闸（简单任务不建清单）', () => {
@@ -407,5 +407,107 @@ describe('#976 收尾空转守卫 + 开始接力（重试回合生产实例）',
   test('PLAN_RELAY_RE 认「开始」（确认信号）', () => {
     expect(PLAN_RELAY_RE.test('开始')).toBe(true)
     expect(PLAN_RELAY_RE.test('开始吧')).toBe(true)
+  })
+})
+describe('#979 方案 A/B/D — 行为 nudge / 轮次预警 / 进度读账本', () => {
+  test('方案 A: 无清单 + 已执行 ≥3 工具调用 → 注入中性 nudge（一次性）', async () => {
+    const ctx = makeCtx('doc-doc16')
+    const registry = new ToolRegistry(ctx)
+    let n = 0
+    const probe = new ProbeTool(() => Promise.resolve({ success: true, output: '{"hits":[]}' }))
+    Object.defineProperty(probe, 'name', { value: 'search_past_chats' })
+    registry.register(probe)
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"search_past_chats","arguments":{"query":"a"}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"search_past_chats","arguments":{"query":"b"}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"search_past_chats","arguments":{"query":"c"}}'))
+      .mockResolvedValueOnce('基于三次检索的结果……')
+
+    const { io } = makeIO()
+    const result = await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '查查相关研究' }],
+      toolRegistry: registry, tools: [], apiKey: 'k', io, ctx,
+      userId: 'user_1', sessionId: 'doc-doc16',
+    })
+
+    const nudges = result.messages.filter((m: any) => m.role === 'user' && String(m.content).includes('建议先调用 set_task_plan'))
+    console.log('DBG_CALLS', vi.mocked(deepseekChat).mock.calls.length, 'DBG_COUNTS', nudges.map((m: any) => String(m.content).match(/已执行 (\\d+) 个/)?.[1]))
+    expect(nudges).toHaveLength(1)
+    expect(String(nudges[0].content)).toContain('已执行 3 个工具调用')
+  })
+
+  test('方案 A: 有活跃清单 → 不 nudge', async () => {
+    const sid = UNIQUE()
+    await ensureUser('user_plan11')
+    await new SetTaskPlanTool({ userId: 'user_plan11', sessionId: sid }).execute({
+      action: 'create', title: 'T',
+      steps: [{ title: 'A', tool: 'edit_document' }, { title: 'B', tool: 'edit_document' }, { title: 'C', tool: 'edit_document' }],
+    })
+
+    const ctx = makeCtx(sid)
+    const registry = new ToolRegistry(ctx)
+    const probe = new ProbeTool(() => Promise.resolve({ success: true, output: '{"hits":[]}' }))
+    Object.defineProperty(probe, 'name', { value: 'search_past_chats' })
+    registry.register(probe)
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"search_past_chats","arguments":{}}'))
+      .mockResolvedValueOnce('继续。')
+
+    const { io } = makeIO()
+    const result = await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '继续' }],
+      toolRegistry: registry, tools: [], apiKey: 'k', io, ctx,
+      userId: 'user_plan11', sessionId: sid,
+    })
+    expect(result.messages.some((m: any) => String(m.content).includes('建议先调用 set_task_plan'))).toBe(false)
+  })
+
+  test('方案 D: 进度问答 + 活跃清单 → 读账本强指令注入', async () => {
+    const sid = UNIQUE()
+    await ensureUser('user_plan12')
+    await new SetTaskPlanTool({ userId: 'user_plan12', sessionId: sid }).execute({
+      action: 'create', title: 'T',
+      steps: [{ title: 'A', tool: 'edit_document' }, { title: 'B', tool: 'edit_document' }, { title: 'C', tool: 'edit_document' }],
+    })
+
+    const ctx = makeCtx(sid)
+    const registry = new ToolRegistry(ctx)
+
+    vi.mocked(deepseekChat).mockResolvedValueOnce('根据任务清单：1/3 步已完成（A）。')
+
+    const { io } = makeIO()
+    const result = await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '到哪里了' }],
+      toolRegistry: registry, tools: [], apiKey: 'k', io, ctx,
+      userId: 'user_plan12', sessionId: sid,
+    })
+
+    const instruction = result.messages.find((m: any) => String(m.content).includes('回答必须逐字依据「当前任务清单」段'))
+    expect(instruction).toBeTruthy()
+  })
+
+  test('方案 D: 无进度问答 → 不注入', async () => {
+    const sid = UNIQUE()
+    await ensureUser('user_plan13')
+    await new SetTaskPlanTool({ userId: 'user_plan13', sessionId: sid }).execute({
+      action: 'create', title: 'T',
+      steps: [{ title: 'A', tool: 'edit_document' }, { title: 'B', tool: 'edit_document' }, { title: 'C', tool: 'edit_document' }],
+    })
+
+    const ctx = makeCtx(sid)
+    const registry = new ToolRegistry(ctx)
+
+    vi.mocked(deepseekChat).mockResolvedValueOnce('好的。')
+
+    const { io } = makeIO()
+    const result = await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '谢谢' }],
+      toolRegistry: registry, tools: [], apiKey: 'k', io, ctx,
+      userId: 'user_plan13', sessionId: sid,
+    })
+
+    expect(result.messages.some((m: any) => String(m.content).includes('回答必须逐字依据'))).toBe(false)
   })
 })
