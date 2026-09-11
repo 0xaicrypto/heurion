@@ -4,7 +4,11 @@
  * accuracy matters — no generative model involved.
  * #228: schematic now draws real programmatic diagrams (element primitives
  * + the beam_scan template) instead of an empty placeholder box.
+ * #981: 入口运行时校验 — 模型工具参数可直达 SVG 拼接,toolArgs 的
+ * contracts 校验不在直接调用路径上(deck-chart-embed 等),非法形状在
+ * 渲染入口拒绝而非拼进 SVG;内部数值/颜色/文本全部强转或转义后内插。
  */
+import { z } from 'zod'
 import { esc } from '../lib/xml-escape.js'
 
 export interface ChartInput {
@@ -43,6 +47,55 @@ export interface SchematicElement {
   angle?: number
   /** beam: 束道出口宽度。 */
   exitWidth?: number
+}
+
+// #981: ChartInput 运行时校验（taskPlanSchema 同款 zod safeParse 模式）—
+// 数值字段强制 number(拒绝字符串内插进 SVG 属性),文本字段强制 string。
+// renderSvgChart 入口 safeParse,非法抛错由调用方降级/报错,不拼进 SVG。
+export const chartInputSchema = z.object({
+  type: z.enum(['line', 'bar', 'dose_curve', 'schematic']),
+  data: z.array(z.object({ label: z.string(), value: z.number().finite() })).optional(),
+  errors: z.array(z.object({ label: z.string(), error: z.number().finite() })).optional(),
+  sig: z.object({
+    pair: z.tuple([z.string(), z.string()]),
+    stars: z.string(),
+    p: z.string().optional(),
+  }).optional(),
+  title: z.string().optional(),
+  x_label: z.string().optional(),
+  y_label: z.string().optional(),
+  description: z.string().optional(),
+  template: z.enum(['beam_scan']).optional(),
+  elements: z.array(z.object({
+    kind: z.enum(['rect', 'circle', 'line', 'arrow', 'text', 'beam']),
+    x: z.number().finite(),
+    y: z.number().finite(),
+    w: z.number().finite().optional(),
+    h: z.number().finite().optional(),
+    r: z.number().finite().optional(),
+    x2: z.number().finite().optional(),
+    y2: z.number().finite().optional(),
+    text: z.string().optional(),
+    color: z.string().optional(),
+    fill: z.string().optional(),
+    dashed: z.boolean().optional(),
+    width: z.number().finite().optional(),
+    angle: z.number().finite().optional(),
+    exitWidth: z.number().finite().optional(),
+  })).optional(),
+})
+
+/** #981: 颜色只允许 hex / 常用 CSS 色名形态 — 防引号/尖括号逃逸出属性。 */
+const SAFE_COLOR_RE = /^#[0-9a-fA-F]{3,8}$|^[a-zA-Z]+$/
+function safeColor(v: string | undefined, fallback: string): string {
+  const raw = String(v || '')
+  return SAFE_COLOR_RE.test(raw) ? raw : fallback
+}
+
+/** #981: 坐标/尺寸强制有限数字 — 非数字(NaN/字符串)退回 0,属性位只出数字。 */
+function safeNum(v: unknown): number {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
 }
 
 
@@ -125,39 +178,51 @@ ${parts.join('\n')}
 </svg>`
 }
 
-/** #228: generic element renderer for schematic diagrams. */
+/** #228: generic element renderer for schematic diagrams.
+ *  #981: 坐标/颜色强转校验后内插,文本 esc — 模型可控输入不逃逸 SVG 属性。 */
 function renderElements(elements: SchematicElement[]): string {
   return elements.map((e) => {
+    const x = safeNum(e.x)
+    const y = safeNum(e.y)
+    const x2 = safeNum(e.x2 ?? e.x)
+    const y2 = safeNum(e.y2 ?? e.y)
+    const strokeDefault = e.kind === 'circle' ? '#ef4444' : e.kind === 'rect' ? '#0ea5e9' : e.kind === 'beam' ? '#0ea5e9' : '#64748b'
+    const color = safeColor(e.color, strokeDefault)
     switch (e.kind) {
-      case 'rect':
-        return `<rect x="${e.x}" y="${e.y}" width="${e.w ?? 40}" height="${e.h ?? 20}" rx="3" fill="${e.fill || '#e0f2fe'}" stroke="${e.color || '#0ea5e9'}" stroke-width="1.2"${e.dashed ? ' stroke-dasharray="4 3"' : ''}/>${e.text ? `<text x="${e.x + (e.w ?? 40) / 2}" y="${e.y + (e.h ?? 20) / 2 + 3}" fill="#334155" font-size="9" text-anchor="middle">${esc(e.text)}</text>` : ''}`
-      case 'circle':
-        return `<circle cx="${e.x}" cy="${e.y}" r="${e.r ?? 10}" fill="${e.fill || '#fee2e2'}" stroke="${e.color || '#ef4444'}" stroke-width="1.2"${e.dashed ? ' stroke-dasharray="4 3"' : ''}/>${e.text ? `<text x="${e.x}" y="${e.y + 3}" fill="#334155" font-size="9" text-anchor="middle">${esc(e.text)}</text>` : ''}`
+      case 'rect': {
+        const w = safeNum(e.w ?? 40)
+        const h = safeNum(e.h ?? 20)
+        return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${safeColor(e.fill, '#e0f2fe')}" stroke="${color}" stroke-width="1.2"${e.dashed ? ' stroke-dasharray="4 3"' : ''}/>${e.text ? `<text x="${x + w / 2}" y="${y + h / 2 + 3}" fill="#334155" font-size="9" text-anchor="middle">${esc(e.text)}</text>` : ''}`
+      }
+      case 'circle': {
+        const r = safeNum(e.r ?? 10)
+        return `<circle cx="${x}" cy="${y}" r="${r}" fill="${safeColor(e.fill, '#fee2e2')}" stroke="${color}" stroke-width="1.2"${e.dashed ? ' stroke-dasharray="4 3"' : ''}/>${e.text ? `<text x="${x}" y="${y + 3}" fill="#334155" font-size="9" text-anchor="middle">${esc(e.text)}</text>` : ''}`
+      }
       case 'line':
-        return `<line x1="${e.x}" y1="${e.y}" x2="${e.x2 ?? e.x}" y2="${e.y2 ?? e.y}" stroke="${e.color || '#64748b'}" stroke-width="1.5"${e.dashed ? ' stroke-dasharray="4 3"' : ''}/>`
+        return `<line x1="${x}" y1="${y}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="1.5"${e.dashed ? ' stroke-dasharray="4 3"' : ''}/>`
       case 'arrow': {
-        const x1 = e.x, y1 = e.y, x2 = e.x2 ?? e.x, y2 = e.y2 ?? e.y
+        const x1 = x, y1 = y
         const angle = Math.atan2(y2 - y1, x2 - x1)
         const a = 8
-        return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${e.color || '#64748b'}" stroke-width="1.5"/>
-<polygon points="${x2},${y2} ${(x2 - a * Math.cos(angle - 0.4)).toFixed(1)},${(y2 - a * Math.sin(angle - 0.4)).toFixed(1)} ${(x2 - a * Math.cos(angle + 0.4)).toFixed(1)},${(y2 - a * Math.sin(angle + 0.4)).toFixed(1)}" fill="${e.color || '#64748b'}"/>`
+        return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="1.5"/>
+<polygon points="${x2},${y2} ${(x2 - a * Math.cos(angle - 0.4)).toFixed(1)},${(y2 - a * Math.sin(angle - 0.4)).toFixed(1)} ${(x2 - a * Math.cos(angle + 0.4)).toFixed(1)},${(y2 - a * Math.sin(angle + 0.4)).toFixed(1)}" fill="${color}"/>`
       }
       case 'text':
-        return `<text x="${e.x}" y="${e.y}" fill="${e.color || '#334155'}" font-size="${e.w || 11}" text-anchor="middle">${esc(e.text || '')}</text>`
+        return `<text x="${x}" y="${y}" fill="${color}" font-size="${safeNum(e.w || 11)}" text-anchor="middle">${esc(e.text || '')}</text>`
       case 'beam': {
         // Beam channel: trapezoid from (x,y) angled, width → exitWidth.
-        const rad = ((e.angle ?? 0) * Math.PI) / 180
-        const len = e.h ?? 100
-        const w0 = (e.width ?? 24) / 2
-        const w1 = (e.exitWidth ?? 12) / 2
+        const rad = ((safeNum(e.angle ?? 0)) * Math.PI) / 180
+        const len = safeNum(e.h ?? 100)
+        const w0 = safeNum(e.width ?? 24) / 2
+        const w1 = safeNum(e.exitWidth ?? 12) / 2
         const dx = Math.sin(rad) * len
         const dy = Math.cos(rad) * len
         const cx = Math.cos(rad), sx = Math.sin(rad)
-        const p1 = `${(e.x - w0 * cx).toFixed(1)},${(e.y + w0 * sx).toFixed(1)}`
-        const p2 = `${(e.x + w0 * cx).toFixed(1)},${(e.y - w0 * sx).toFixed(1)}`
-        const p3 = `${(e.x + dx + w1 * cx).toFixed(1)},${(e.y + dy - w1 * sx).toFixed(1)}`
-        const p4 = `${(e.x + dx - w1 * cx).toFixed(1)},${(e.y + dy + w1 * sx).toFixed(1)}`
-        return `<polygon points="${p1} ${p2} ${p3} ${p4}" fill="${hexToRgba(e.color || '#0ea5e9', 0.18)}" stroke="${e.color || '#0ea5e9'}" stroke-width="1.3"/>${e.text ? `<text x="${(e.x + dx / 2).toFixed(1)}" y="${(e.y + dy / 2 + 3).toFixed(1)}" fill="#0369a1" font-size="9" text-anchor="middle">${esc(e.text)}</text>` : ''}`
+        const p1 = `${(x - w0 * cx).toFixed(1)},${(y + w0 * sx).toFixed(1)}`
+        const p2 = `${(x + w0 * cx).toFixed(1)},${(y - w0 * sx).toFixed(1)}`
+        const p3 = `${(x + dx + w1 * cx).toFixed(1)},${(y + dy - w1 * sx).toFixed(1)}`
+        const p4 = `${(x + dx - w1 * cx).toFixed(1)},${(y + dy + w1 * sx).toFixed(1)}`
+        return `<polygon points="${p1} ${p2} ${p3} ${p4}" fill="${hexToRgba(color, 0.18)}" stroke="${color}" stroke-width="1.3"/>${e.text ? `<text x="${(x + dx / 2).toFixed(1)}" y="${(y + dy / 2 + 3).toFixed(1)}" fill="#0369a1" font-size="9" text-anchor="middle">${esc(e.text)}</text>` : ''}`
       }
       default:
         return ''
@@ -166,6 +231,13 @@ function renderElements(elements: SchematicElement[]): string {
 }
 
 export function renderSvgChart(input: ChartInput): string {
+  // #981: 入口运行时校验 — toolArgs 的 contracts 校验不在直接调用路径上
+  // (render_chart 工具 / deck-chart-embed 均直调本函数),非法形状在这里
+  // 拒绝(抛错由调用方降级/报错),绝不把非数值/越形输入拼进 SVG。
+  const check = chartInputSchema.safeParse(input)
+  if (!check.success) {
+    throw new Error(`invalid chart input: ${check.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`)
+  }
   const W = 500
   const H = 300
   const title = input.title || ''
@@ -204,7 +276,7 @@ export function renderSvgChart(input: ChartInput): string {
       const h = (d.value / maxV) * 230
       body += `<rect x="${x + bw * 0.15}" y="${260 - h}" width="${bw * 0.7}" height="${h}" fill="#6366f1" rx="2"/>`
       body += `<text x="${x + bw / 2}" y="275" fill="#64748b" font-size="9" text-anchor="middle">${esc(d.label)}</text>`
-      body += `<text x="${x + bw / 2}" y="${262 - h}" fill="#334155" font-size="9" text-anchor="middle">${d.value}</text>`
+      body += `<text x="${x + bw / 2}" y="${262 - h}" fill="#334155" font-size="9" text-anchor="middle">${esc(String(d.value))}</text>`
       // #407: error bars (SD/SEM/CI half-width scaled to the chart).
       const err = errMap.get(d.label)
       if (err && err > 0) {
