@@ -172,3 +172,97 @@ function makeBlock(
     parent_id: parentId,
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// #989 Phase 2 — 编辑引用模式：ID 挂标题行 + 确定性节编辑。
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * 上下文注入的标题行挂 ID：`## Introduction` → `## [sec:s_xxx] Introduction`。
+ * 匹配按规范化标题文本顺序对齐（同名标题按出现序消费）——被截断注入
+ * （fitTextToTokens）丢掉的标题自然拿不到 marker，模型对其用锚点模式。
+ * ID marker 由 edit_document 侧剥离（old_text 复制含 marker 也安全）。
+ */
+export function withSectionIds(bodyText: string, projection: BlockProjection): string {
+  const text = String(bodyText ?? '')
+  if (!projection) return text
+  const sections = projection.nodes.filter((n) => n.kind === 'section')
+  if (sections.length === 0) return text
+  // 顺序消费队列 — 同名标题依次取对应 section 节点。
+  const queue = [...sections]
+  return text
+    .split('\n')
+    .map((line) => {
+      const m = HEADING_RE.exec(line)
+      if (!m) return line
+      const normalized = normalizeForId(m[2].trim())
+      const idx = queue.findIndex((s) => normalizeForId(s.heading || '') === normalized)
+      if (idx === -1) return line
+      const [section] = queue.splice(idx, 1)
+      return `${m[1]} [sec:${section.id}] ${m[2]}`
+    })
+    .join('\n')
+}
+
+/** 投影装载：读侧校验 body_hash，不符/缺失按重建（确定性纯函数，重建必一致）。 */
+export function loadProjection(body: string, stored: unknown): BlockProjection {
+  const text = String(body ?? '')
+  if (typeof stored === 'string' && stored) {
+    try {
+      const parsed = JSON.parse(stored) as BlockProjection
+      if (parsed?.schema_version === 1 && parsed.body_hash === hash12(text)) return parsed
+    } catch { /* 损坏 → 重建 */ }
+  }
+  return buildBlockProjection(text)
+}
+
+export interface SectionEditResult {
+  body: string
+  location: string
+}
+
+/**
+ * 确定性节编辑（Phase 2 核心操作）：按投影 span 精确改写一个 section 的
+ * 内容区（标题行之后 → 下一标题之前），不再依赖原文模糊锚点。
+ *  - replace: 整节内容替换
+ *  - append:  节内容末尾追加
+ *  - prepend: 标题行之后插入
+ * ID 失效（投影中无此节）→ error，调用方降级锚点模式兜底。
+ * 内容与现状一致 → 返回原 body（无变化，调用方按 unchanged 处理）。
+ */
+export function applySectionEdit(
+  body: string,
+  projection: BlockProjection,
+  sectionId: string,
+  action: 'replace' | 'append' | 'prepend',
+  content: string,
+): SectionEditResult | { error: string } {
+  const text = String(body ?? '')
+  const section = projection.nodes.find((n) => n.kind === 'section' && n.id === sectionId)
+  if (!section) {
+    return { error: `section ${sectionId} 在当前文档投影中不存在（ID 已失效或文档已重构）— 请改用 old_text/new_text 锚点编辑，或重新读取文档获取最新节 ID` }
+  }
+  // 节内容区 = 标题行之后 → 节 span 末（下一标题起始 | EOF）。
+  // 节 span.start 即标题行起始;标题行原文 = span 起始后的第一行。
+  const headingLine = text.slice(section.start).split('\n')[0] || ''
+  const contentStart = section.start + headingLine.length + 1
+  const raw = text.slice(contentStart, section.end)
+  // core = 内容区去首尾空白(append/prepend 重建用;replace 直接换掉整区)
+  const core = raw.replace(/^\s+/, '').replace(/\s+$/, '')
+  const before = text.slice(0, contentStart)
+  const after = text.slice(section.end) // 下一标题行原文起（或 ''）
+  const next = String(content ?? '').trim()
+  if (!next) return { error: 'content is empty — 提供要写入的内容' }
+  // before 以标题行的 '\n' 结尾 → 内容紧随标题;节间以空行分隔;
+  // 节尾含到下一标题前的空白 — 由 core(去尾空白)+ 固定 '\n\n' 重建。
+  const coreLead = core ? `${core}\n\n` : ''
+
+  if (action === 'replace') {
+    return { body: `${before}${next}\n\n${after}`, location: `${section.heading || sectionId}（${sectionId}）` }
+  }
+  if (action === 'append') {
+    return { body: `${before}${coreLead}${next}\n\n${after}`, location: `${section.heading || sectionId}（${sectionId}）` }
+  }
+  // prepend
+  return { body: `${before}${next}\n\n${coreLead}${after}`, location: `${section.heading || sectionId}（${sectionId}）` }
+}

@@ -22,11 +22,13 @@
 import prisma from '../../common/prisma'
 import { estimateTokens, fitTextToTokens } from '../../common/token-estimate.js'
 import { splitDocumentSections, resolveDocumentFocus } from '../../lib/doc-sections.js'
+// #989 Phase 2: 块投影 — 上下文注入挂节 ID(target_section 确定性编辑)。
+import { loadProjection, withSectionIds } from '../../lib/block-projection.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import { buildDocReferenceBlocks, findUploadFileByName } from '../shared/chat-context.js'
 import type { EditHint } from '../../tools/tool-registry.js'
 // #699: 文档场景规则外置 — 本文件只做组装。
-import { refUnresolvedHint, refSourceRule, documentRules, FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE, PLAN_RULE } from './writing-prompts.js'
+import { refUnresolvedHint, refSourceRule, documentRules, FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE, PLAN_RULE, SECTION_EDIT_RULE } from './writing-prompts.js'
 // #976: 任务清单状态与稳定段渲染（common 层,tools/modules 共用）。
 import { loadActivePlan, renderPlanBlock } from '../../common/plan-store.js'
 
@@ -68,6 +70,29 @@ const CHART_CITATION_TRIGGER_RE = /引用|文献|citation|图|figure|chart/i
 
 export function shouldInjectChartCitationRules(input: { hasRefs: boolean; messageText: string }): boolean {
   return input.hasRefs || CHART_CITATION_TRIGGER_RE.test(String(input.messageText || ''))
+}
+
+/** #989 Phase 2: 节 ID 查询 — 按规范化标题对齐(同名标题按出现序,与
+ *  withSectionIds 同一匹配规则)。next = 顺序消费(结构清单遍历);
+ *  peek = 非消费查找(焦点段头 — 清单遍历后仍可查)。 */
+function makeSectionIdResolver(projection: ReturnType<typeof loadProjection>) {
+  const all = projection.nodes.filter((n) => n.kind === 'section')
+  const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase()
+  let cursor = 0
+  return {
+    next(title: string): string {
+      if (!title) return ''
+      const idx = all.findIndex((n, i) => i >= cursor && norm(n.heading || '') === norm(title))
+      if (idx === -1) return ''
+      cursor = idx + 1
+      return all[idx]?.id ?? ''
+    },
+    peek(title: string): string {
+      if (!title) return ''
+      const idx = all.findIndex((n) => norm(n.heading || '') === norm(title))
+      return idx === -1 ? '' : all[idx]?.id ?? ''
+    },
+  }
 }
 
 /** document_context 段装配(原 conversation-turn.ts builder 主体,机械搬移
@@ -140,7 +165,19 @@ export async function buildDocumentContext(input: DocumentContextInput): Promise
   const docText = String(doc.body || '')
   const sections = splitDocumentSections(docText, CONTEXT_CONFIG.scene.docSectionTokens)
   const docFits = estimateTokens(docText) <= CONTEXT_CONFIG.scene.docBodyTokens
-  const inventory = sections.sections.map((s) => `${s.index}. ${s.title || `第 ${s.index} 段`}`).join('\n')
+  // #989 Phase 2: 结构清单行带节 ID(section id 查询在下方 projection 装载后
+  // 才可用 — inventory 改为惰性函数)。
+  let inventory = ''
+  const buildInventory = () => {
+    if (inventory) return inventory
+    inventory = sections.sections
+      .map((s) => {
+        const id = sectionIdOf.next(s.title || '')
+        return `${s.index}. ${id ? `[sec:${id}] ` : ''}${s.title || `第 ${s.index} 段`}`
+      })
+      .join('\n')
+    return inventory
+  }
 
   // #693: 选中即引用 — 用户选中的文本(来自编辑器选区,与 body 同源)
   // 优先成为编辑目标:注入独立上下文块,焦点段定位到包含它的段。
@@ -174,8 +211,14 @@ export async function buildDocumentContext(input: DocumentContextInput): Promise
   }
   // #868: 选中文本始终回填(短文档也受益于选区优先定位;未截断原文)。
   editHint.selectionText = selection
+
+  // #989 Phase 2: 投影装载(存读校验 body_hash,不符/缺失确定性重建) —
+  // 全文模式标题行挂 [sec:...];长文档模式结构清单/焦点段头带节 ID。
+  const projection = loadProjection(docText, doc.blockProjection)
+  const sectionIdOf = makeSectionIdResolver(projection)
+
   const bodyInjection = docFits
-    ? fitTextToTokens(docText, CONTEXT_CONFIG.scene.docBodyTokens)
+    ? withSectionIds(fitTextToTokens(docText, CONTEXT_CONFIG.scene.docBodyTokens), projection)
     : fitTextToTokens(sections.sections[focus - 1]?.content || docText, CONTEXT_CONFIG.scene.docBodyTokens)
 
   // #fix: 文档为空 + 参考材料有内容 — 分步润色:直接开始第一步,
@@ -197,6 +240,8 @@ export async function buildDocumentContext(input: DocumentContextInput): Promise
 
   const staticRules = [
     FORMAT_RULE,
+    // #989 Phase 2: 节引用纪律常驻 — ID 可见即优先确定性节编辑。
+    SECTION_EDIT_RULE,
     ...(wantChartCitation ? [CHART_RULE] : []),
     REVISION_RULE,
     ...(wantChartCitation ? [CITATION_RULE] : []),
@@ -246,5 +291,7 @@ export async function buildDocumentContext(input: DocumentContextInput): Promise
     selectionBlock = `## 用户选中文本\n[用户选中的文本 — 如需修改请从此处逐字复制 old_text(空格/换行差异会被自动忽略)。]\n${fitSelectionForPrompt(selection)}\n\n`
   }
 
-  return `${planBlock}\n\n## Current Document\n标题：${doc.title}（正文约 ${Math.round(docText.replace(/\s+/g, ' ').length / 2)} 字）\n\n${staticRules}\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分）\n${inventory}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}）\n`}${bodyInjection}\n\n${selectionBlock}## Reference Materials\n${refBlock || '(none)'}${refHint}\n\n${refSource}\n\n${rules}${deckBlock}`
+  // #989 Phase 2: 焦点段头带节 ID — 模型可用 target_section 确定性编辑本节。
+  const focusId = sectionIdOf.peek(focusTitle || '')
+  return `${planBlock}\n\n## Current Document\n标题：${doc.title}（正文约 ${Math.round(docText.replace(/\s+/g, ' ').length / 2)} 字）\n\n${staticRules}\n\n${docFits ? '' : `## 文档结构（共 ${sections.sections.length} 段,按${sections.mode === 'heading' ? '章节' : '长度'}划分;行内 [sec:...] 为节 ID,edit_document 用 target_section 引用）\n${buildInventory()}\n\n## 当前编辑段落（第 ${focus}/${sections.sections.length} 段${focusTitle ? `「${focusTitle}」` : ''}${focusId ? `— 节 ID [sec:${focusId}]` : ''}）\n`}${bodyInjection}\n\n${selectionBlock}## Reference Materials\n${refBlock || '(none)'}${refHint}\n\n${refSource}\n\n${rules}${deckBlock}`
 }

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { buildBlockProjection, hash12 } from '../../src/lib/block-projection.js'
+import { buildBlockProjection, withSectionIds, applySectionEdit, loadProjection, hash12 } from '../../src/lib/block-projection.js'
 import { blockProjectionSchema } from '@heurion/contracts'
 
 /**
@@ -181,5 +181,124 @@ describe('#989 边界:无标题文档/空文档/同名标题', () => {
     expect(same).toHaveLength(2)
     expect(same[0].id).not.toBe(same[1].id)
     expect(same[1].id).toContain('_2')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// #989 Phase 2 — 编辑引用模式:ID 挂标题行 + 确定性节编辑。
+// ─────────────────────────────────────────────────────────────────────────
+describe('#989 Phase 2 — withSectionIds(标题行挂 ID)', () => {
+  test('heading 行插入 [sec:<id>] marker,正文行不动', () => {
+    const proj = buildBlockProjection(DOC)
+    const withIds = withSectionIds(DOC, proj)
+    const intro = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    expect(withIds).toContain(`## [sec:${intro.id}] Introduction`)
+    // 原正文行不受影响
+    expect(withIds).toContain('intro text with **bold** marker.')
+    // 非标题行无 marker
+    expect(withIds).not.toContain('point one [sec:')
+  })
+
+  test('同名标题按出现序消费(与构建器一致)', () => {
+    const doc = '## Notes\nfirst\n\n## Notes\nsecond'
+    const proj = buildBlockProjection(doc)
+    const sections = proj.nodes.filter((n) => n.kind === 'section')
+    const withIds = withSectionIds(doc, proj)
+    expect(withIds).toContain(`## [sec:${sections[0].id}] Notes`)
+    expect(withIds).toContain(`## [sec:${sections[1].id}] Notes`)
+  })
+
+  test('截断文本中丢失的标题不挂 marker(头部截断形态)', () => {
+    const proj = buildBlockProjection(DOC)
+    const truncated = DOC.split('\n').slice(10).join('\n') // 丢前 10 行
+    const withIds = withSectionIds(truncated, proj)
+    // 存活的标题行仍可挂;前面的 heading 文本不在截断内,queue 未消费不会错位
+    expect(withIds).toContain('## [sec:')
+  })
+
+  test('无投影 → 原文返回', () => {
+    expect(withSectionIds('## A\nx', { schema_version: 1, body_hash: '', nodes: [] })).toBe('## A\nx')
+  })
+})
+
+describe('#989 Phase 2 — applySectionEdit(确定性节编辑)', () => {
+  test('replace:整节内容替换,前后节不动,round-trip 一致', () => {
+    const proj = buildBlockProjection(DOC)
+    const intro = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    const r = applySectionEdit(DOC, proj, intro.id, 'replace', 'brand new intro content')
+    expect('error' in r && r.error).toBeFalsy()
+    if ('error' in r) return
+    expect(r.body).toContain('brand new intro content')
+    expect(r.body).not.toContain('intro text with **bold** marker.')
+    // 前后节保持
+    expect(r.body).toContain('# Paper Title')
+    expect(r.body).toContain('## Methods')
+    // 新 body 的投影可重建且 Introduction 节 id 不变(标题未动)
+    const after = buildBlockProjection(r.body)
+    const introAfter = after.nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    expect(introAfter.id).toBe(intro.id)
+  })
+
+  test('append:节内容末尾追加', () => {
+    const proj = buildBlockProjection(DOC)
+    const intro = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    const r = applySectionEdit(DOC, proj, intro.id, 'append', 'Appended sentence.')
+    if ('error' in r) return expect.unreachable(r.error)
+    expect(r.body).toContain('intro text with **bold** marker.')
+    expect(r.body).toContain('Appended sentence.')
+    // 追加内容位于 Introduction 与 Methods 之间
+    expect(r.body.indexOf('Appended sentence.')).toBeGreaterThan(r.body.indexOf('intro text'))
+    expect(r.body.indexOf('Appended sentence.')).toBeLessThan(r.body.indexOf('## Methods'))
+  })
+
+  test('prepend:标题行之后插入', () => {
+    const proj = buildBlockProjection(DOC)
+    const methods = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!
+    const r = applySectionEdit(DOC, proj, methods.id, 'prepend', 'Overview paragraph first.')
+    if ('error' in r) return expect.unreachable(r.error)
+    expect(r.body).toContain('Overview paragraph first.')
+    expect(r.body.indexOf('Overview paragraph first.')).toBeGreaterThan(r.body.indexOf('## Methods'))
+    expect(r.body.indexOf('Overview paragraph first.')).toBeLessThan(r.body.indexOf('### Cohort'))
+    expect(r.body).toContain('n=120 patients.')
+  })
+
+  test('ID 失效(文档重构后旧 id)→ error 引导降级锚点', () => {
+    const proj = buildBlockProjection(DOC)
+    const r = applySectionEdit(DOC, proj, 's_nonexistent0000', 'replace', 'x')
+    expect('error' in r && r.error).toBeTruthy()
+    if ('error' in r) expect(r.error).toContain('锚点')
+  })
+
+  test('空 content → error', () => {
+    const proj = buildBlockProjection(DOC)
+    const intro = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    const r = applySectionEdit(DOC, proj, intro.id, 'replace', '   ')
+    expect('error' in r && r.error).toBeTruthy()
+  })
+
+  test('loadProjection:stored 与 body 一致 → 用 stored;不一致 → 重建(确定性)', () => {
+    const proj = buildBlockProjection(DOC)
+    const stored = JSON.stringify(proj)
+    expect(loadProjection(DOC, stored)).toEqual(proj)
+    // 过期(stored 是别的 body 的投影)→ 重建
+    const stale = JSON.stringify(buildBlockProjection('other body'))
+    expect(loadProjection(DOC, stale)).toEqual(proj)
+    // 损坏 → 重建
+    expect(loadProjection(DOC, '{broken')).toEqual(proj)
+    expect(loadProjection(DOC, null)).toEqual(proj)
+    expect(loadProjection(DOC, undefined)).toEqual(proj)
+  })
+
+  test('section 编辑后的新投影:被编辑节标题 id 不变,块 id 更新(Phase 2 闭环)', () => {
+    const proj = buildBlockProjection(DOC)
+    const intro = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    const listBefore = proj.nodes.find((n) => n.kind === 'block' && n.block_type === 'list')!
+    const r = applySectionEdit(DOC, proj, intro.id, 'replace', 'Fully rewritten intro body.')
+    if ('error' in r) return expect.unreachable(r.error)
+    const after = buildBlockProjection(r.body)
+    const introAfter = after.nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    expect(introAfter.id).toBe(intro.id)
+    // 旧 list 块被替换掉 — id 消失
+    expect(after.nodes.find((n) => n.id === listBefore.id)).toBeUndefined()
   })
 })

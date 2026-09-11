@@ -51,10 +51,11 @@ export class EditDocumentTool extends BaseTool {
 
   get description(): string {
     return [
-      'Edit the current writing-session document. Three modes:',
+      'Edit the current writing-session document. Four modes:',
+      '- Section edit (preferred when section IDs are visible): pass `target_section` (the [sec:...] id from the injected document, e.g. s_xxx) + `section_action` (replace | append | prepend) + `content`. The server locates the section precisely by its structure projection — no fuzzy matching, deterministic. Use this for whole-section rewrites/appends; it never fails on anchor mismatch.',
       '- Import: pass `import_reference` (the reference-material name to import) when the document body is EMPTY and the user wants to work on an uploaded reference (PDF/DOCX/txt). This copies the reference text into the document. Alternatively pass `url` (+ optional `doi`) to download an OA full-text PDF directly into the reference library — use the URL from oa_pdf_lookup results (#875: closes the search→read→cite loop).',
-      '- Range edit (preferred for polishing long documents): pass `old_text` (the original text to replace, copied from the current document — line breaks/whitespace differences are tolerated) and `new_text` (the replacement). One edit per call; make multiple calls to edit multiple parts. When the document body is EMPTY and exactly one reference exists, the tool auto-imports it before applying the edit (so you can polish an uploaded reference without a separate import call). To replace a figure/link, include its image markdown together with surrounding caption text — image URLs must match exactly, and an old_text that spans an image must include the image.',
-      '- Full rewrite: pass `full_text` (complete new document in markdown). Allowed within the model single-response output budget (the main model budget is generous — full rewrites of multi-thousand-token documents work). If it exceeds the budget the tool refuses with guidance; for long-document cleanup/polish prefer range edits.',
+      '- Range edit (preferred for polishing long documents without section IDs, or fine-grained in-section tweaks): pass `old_text` (the original text to replace, copied from the current document — line breaks/whitespace differences are tolerated; [sec:...] markers are stripped automatically) and `new_text` (the replacement). One edit per call; make multiple calls to edit multiple parts. When the document body is EMPTY and exactly one reference exists, the tool auto-imports it before applying the edit (so you can polish an uploaded reference without a separate import call). To replace a figure/link, include its image markdown together with surrounding caption text — image URLs must match exactly, and an old_text that spans an image must include the image.',
+      '- Full rewrite: pass `full_text` (complete new document in markdown). Allowed within the model single-response output budget (the main model budget is generous — full rewrites of multi-thousand-token documents work). If it exceeds the budget the tool refuses with guidance; for long-document cleanup/polish prefer section edits or range edits.',
       'Formatting: write-back content must arrive pre-structured in markdown — organize new content by its logic (### / ## headings for topics or steps, bullet/numbered lists for enumerations, bold for key conclusions, GFM pipe tables for comparisons). Never write back unstructured prose walls; match the heading level style already used in the document.',
       'Use this instead of explaining changes.',
     ].join(' ')
@@ -64,6 +65,9 @@ export class EditDocumentTool extends BaseTool {
     return {
       type: 'object',
       properties: {
+        target_section: { type: 'string', description: 'Section-edit mode: the section id from [sec:...] markers in the injected document (e.g. s_xxx). Deterministic whole-section edit — preferred over old_text when visible.' },
+        section_action: { type: 'string', enum: ['replace', 'append', 'prepend'], description: 'Section-edit action: replace the section content / append after it / insert right after the heading.' },
+        content: { type: 'string', description: 'Section-edit payload: the markdown content for replace/append/prepend.' },
         import_reference: { type: 'string', description: 'Import mode: the label/name of the reference material to import into the empty document (e.g. the uploaded file name).' },
         url: { type: 'string', description: 'Import via URL: direct OA full-text PDF link (e.g. the url_for_pdf returned by oa_pdf_lookup). Downloads into the reference library and sets the extracted content as the document body.' },
         doi: { type: 'string', description: 'Optional DOI alongside url — enables Unpaywall OA verification (refuses paywalled / non-OA links).' },
@@ -97,29 +101,73 @@ export class EditDocumentTool extends BaseTool {
       return { success: true, output: r.output }
     }
 
+    // #989 Phase 2: 节引用模式 — target_section 优先(确定性,无模糊匹配)。
+    const targetSection = typeof args.target_section === 'string' ? args.target_section.trim() : ''
+    if (targetSection) {
+      return this.sectionEdit(docId, targetSection, args)
+    }
+
     const oldText = typeof args.old_text === 'string' ? args.old_text : ''
     const newText = typeof args.new_text === 'string' ? args.new_text : ''
     const fullText = typeof args.full_text === 'string' ? args.full_text : ''
 
     // #fix: 分步编辑 — 提供了 old_text 就走局部替换,不要求完整文档。
     if (oldText) {
-      if (!oldText.trim()) return { success: false, error: 'old_text is empty' }
-      // #fix: 空锚点守卫 — 纯空白/markdown 标记归一化后为空,此前会退化
-      // 为 indexOf('') 恒命中并假报「出现多次」,模型反复补上下文重试
-      // 进入死循环。此处直接给出可执行的修正方向。
-      if (!normalizeForMatch(oldText)) {
+      // #989 Phase 2: [sec:...] marker 剥离 — 模型从带 ID 的注入文本复制
+      // old_text 时 marker 一并复制,剥离后锚点匹配不受影响。
+      const cleanedOld = oldText.replace(/\s*\[sec:[^\]]*\]/g, '')
+      if (!cleanedOld.trim()) return { success: false, error: 'old_text is empty' }
+      if (!normalizeForMatch(cleanedOld)) {
         return {
           success: false,
           error: 'old_text 归一化后为空(仅含空白或 markdown 标记,没有可定位的文字或图片 URL)。请从 ## Current Document 复制包含实际文字的片段作为 old_text(替换图片时连同图题文字一起复制)。',
         }
       }
-      return this.rangeEdit(docId, oldText, newText, String(args.summary || 'range edit'))
+      return this.rangeEdit(docId, cleanedOld, newText, String(args.summary || 'range edit'))
     }
 
     if (!fullText.trim()) {
       return { success: false, error: 'Provide import_reference (empty document), old_text+new_text (range edit), or full_text (full rewrite).' }
     }
     return this.fullReplace(docId, fullText, String(args.summary || 'document updated'))
+  }
+
+  /**
+   * #989 Phase 2: 确定性节编辑 — 按投影 span 精确改写节内容(锚点失配的
+   * 根因治理路径)。投影缺失/过期时重建(确定性);section ID 失效 → 报错
+   * 引导降级锚点模式(兜底)。写回仍走 DocVersionWriter 单点。
+   */
+  private async sectionEdit(docId: string, targetSection: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const action = args.section_action === 'append' ? 'append' : args.section_action === 'prepend' ? 'prepend' : 'replace'
+    const content = typeof args.content === 'string' ? args.content : ''
+    try {
+      const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
+      if (!existing) return { success: false, error: `Document not found: ${docId}` }
+      const body = String(existing.body || '')
+      if (!body.trim()) {
+        // 空正文 — 无结构可引用;引导导入(空文档时 import_reference 才有意义)。
+        return { success: false, error: '文档正文为空 — 节引用不可用;请先用 import_reference 导入参考材料,或改用 full_text 首写。' }
+      }
+      // 投影:存读校验 body_hash,不符/缺失重建(loadProjection 确定性)。
+      const { loadProjection, applySectionEdit } = await import('../lib/block-projection.js')
+      const projection = loadProjection(body, existing.blockProjection)
+      const applied = applySectionEdit(body, projection, targetSection, action, content)
+      if ('error' in applied) return { success: false, error: applied.error }
+      if (applied.body === body) {
+        return { success: false, error: '节内容与提供内容相同,没有任何变化' }
+      }
+      const summary = String(args.summary || `${action} section ${targetSection}`)
+      // #789: 写回走 DocVersionWriter 单点(快照同帧带旧 deck + 事务 + 投影同帧)。
+      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: applied.body, snapshotLabel: 'AI edit' })
+      if (written.error) return { success: false, error: written.error }
+      this.latestBody = written.body
+      return {
+        success: true,
+        output: JSON.stringify({ body: written.body, summary, location: `已${action === 'replace' ? '重写' : action === 'append' ? '追加' : '插入'}:「${applied.location}」` }),
+      }
+    } catch (err) {
+      return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }
+    }
   }
 
   /** 导入模式:按 label 定位参考材料,把提取的正文写入文档(#697 拆到 edit-import.ts)。 */

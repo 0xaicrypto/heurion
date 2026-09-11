@@ -28,7 +28,7 @@ import {
   fitSelectionForPrompt,
   SELECTION_TRUNCATION_MARKER,
 } from '../../src/modules/chat/doc-context-builder.js'
-import { FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE } from '../../src/modules/chat/writing-prompts.js'
+import { FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE, SECTION_EDIT_RULE } from '../../src/modules/chat/writing-prompts.js'
 
 function makeHint() {
   return { focusSectionContent: null, focusIndex: null, focusTitle: null, selectionText: null }
@@ -176,4 +176,52 @@ describe('#927 — buildDocumentContext 装配(规则位置/门控/选区去重)
     })
     expect(seg).toBe('')
   })
+})
+
+describe('#989 Phase 2 — 上下文注入带节 ID(全文模式标题行挂 [sec:...])', () => {
+  beforeEach(() => {
+    mocks.docFindFirst.mockReset()
+    mocks.docRefFindMany.mockReset()
+  })
+
+  test('全文模式:标题行带 [sec:<id>] marker + SECTION_EDIT_RULE 常驻', async () => {
+    const body = '# 摘要\n\n原始摘要内容一句话。\n\n# 方法\n\n研究方法内容。'
+    mocks.docFindFirst.mockResolvedValue({ id: 'doc_x', userId: 'u1', title: 'T', body, deck: null })
+    mocks.docRefFindMany.mockResolvedValue([])
+
+    const hint = makeHint()
+    const seg = await buildDocumentContext({
+      userId: 'u1', docId: 'doc_x', messageText: '润色这段', rawSelection: null,
+      editHint: hint, lastAssistantContent: null,
+    })
+
+    // 标题行挂节 ID(确定性投影构建)
+    expect(seg).toMatch(/# \[sec:s_[0-9a-f]{12}\] 摘要/)
+    expect(seg).toMatch(/# \[sec:s_[0-9a-f]{12}\] 方法/)
+    // 节引用纪律注入
+    expect(seg).toContain(SECTION_EDIT_RULE)
+    // 正文行无 marker
+    expect(seg).toContain('\n原始摘要内容一句话。')
+  })
+
+  test('长文档模式:结构清单行带节 ID + 焦点段头带节 ID', async () => {
+    // 超预算正文(> 48k token) → 长文档模式;方法节内容超大
+    const body = [
+      '# 摘要', '', '原始摘要内容。', '',
+      '# 方法', '', '研究方法内容很详细。'.repeat(12000),
+    ].join('\n')
+    mocks.docFindFirst.mockResolvedValue({ id: 'doc_x', userId: 'u1', title: 'T', body, deck: null })
+    mocks.docRefFindMany.mockResolvedValue([])
+
+    const hint = makeHint()
+    const seg = await buildDocumentContext({
+      userId: 'u1', docId: 'doc_x', messageText: '编辑方法段', rawSelection: null,
+      editHint: hint, lastAssistantContent: null,
+    })
+
+    // 结构清单行带节 ID
+    expect(seg).toMatch(/\d+\. \[sec:s_[0-9a-f]{12}\] 方法/)
+    // 焦点段落在方法段 → 焦点段头带节 ID
+    expect(seg).toMatch(/## 当前编辑段落（第 \d+\/\d+ 段「方法」— 节 ID \[sec:s_[0-9a-f]{12}\]）/)
+  }, 20_000)
 })
