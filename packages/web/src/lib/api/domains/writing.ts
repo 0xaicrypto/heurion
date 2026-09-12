@@ -36,6 +36,11 @@ export class WritingApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}`, { method: 'DELETE' });
   }
 
+  /** #995: 批量删除 — 归属内联(where userId),子表 Cascade。 */
+  async batchDeleteDocs(ids: string[]): Promise<{ deleted: number; requested: number }> {
+    return this.fetch('/api/v1/docs/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) });
+  }
+
   // #773: deck 为可编辑资产（deck 视图编辑保存路径）；undefined = 不触碰。
   async updateDoc(docId: string, data: {title: string; body: string; deck?: unknown; /** #882: 客户端最后同步的服务端正文指纹 — 不匹配 → 409 stale_base */ base_sha?: string; /** #882: 显式覆盖(冲突横幅「保留我的版本」) */ force?: boolean}): Promise<{id: string; title: string; body: string; deck?: unknown; updated_at: string; unchanged?: boolean}> {
     return this.fetch(`/api/v1/docs/${docId}`, { method: 'PUT', body: JSON.stringify(data) });

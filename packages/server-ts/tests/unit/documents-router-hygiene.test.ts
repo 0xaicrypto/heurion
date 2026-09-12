@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   docFindFirst: vi.fn(),
   docUpdate: vi.fn(),
   docCreate: vi.fn(),
+  docDeleteMany: vi.fn(),
   executeRaw: vi.fn(),
   writeDocVersion: vi.fn(),
   snapFindFirst: vi.fn(),
@@ -23,7 +24,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../src/common/prisma.js', () => ({
   default: {
-    doc: { findFirst: mocks.docFindFirst, update: mocks.docUpdate, create: mocks.docCreate },
+    doc: { findFirst: mocks.docFindFirst, update: mocks.docUpdate, create: mocks.docCreate, deleteMany: mocks.docDeleteMany },
     docSnapshot: { create: vi.fn(), findFirst: mocks.snapFindFirst },
     $executeRawUnsafe: mocks.executeRaw,
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
@@ -108,6 +109,7 @@ beforeEach(() => {
   mocks.docFindFirst.mockReset()
   mocks.docUpdate.mockReset()
   mocks.docCreate.mockReset()
+  mocks.docDeleteMany.mockReset()
   mocks.executeRaw.mockReset()
   mocks.writeDocVersion.mockReset()
   mocks.executeRaw.mockResolvedValue(undefined)
@@ -273,6 +275,36 @@ describe('#989 Phase 1 — restore 路径投影同帧重算(全路径走查)', (
     const projection = JSON.parse(args.data.blockProjection)
     const expected = buildBlockProjection('snapshot body')
     expect(projection.body_hash).toBe(expected.body_hash)
+  })
+})
+
+describe('#995 批量删除 — 归属内联 + 上限/形状护栏', () => {
+  test('批量删除 → deleteMany 以 (id in ids, userId) 归属内联,返回计数', async () => {
+    const { routes, app } = makeHarness()
+    await documentsRouter(app as never)
+    const batchDelete = routes.get('POST /api/v1/docs/batch-delete')
+    expect(batchDelete).toBeTruthy()
+    mocks.docDeleteMany.mockResolvedValue({ count: 2 })
+
+    const res = await batchDelete(
+      { body: { ids: ['doc_0123456789abcdef', 'doc_abcdef0123456789', 'not-a-doc-id'] }, user: { userId: USER } },
+      makeReply(),
+    )
+
+    const [args] = mocks.docDeleteMany.mock.calls[0]
+    // 归属内联:where 带 userId;非法 id 已过滤
+    expect(args.where).toEqual({ id: { in: ['doc_0123456789abcdef', 'doc_abcdef0123456789'] }, userId: USER })
+    expect(res).toEqual({ deleted: 2, requested: 2 })
+  })
+
+  test('空/非法 ids → 400', async () => {
+    const { routes, app } = makeHarness()
+    await documentsRouter(app as never)
+    const batchDelete = routes.get('POST /api/v1/docs/batch-delete')
+    const reply = makeReply()
+    await batchDelete({ body: { ids: ['x'] }, user: { userId: USER } }, reply)
+    expect(reply.status).toHaveBeenCalledWith(400)
+    expect(mocks.docDeleteMany).not.toHaveBeenCalled()
   })
 })
 

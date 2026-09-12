@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus, FileText, Send, Trash2, Loader2 , BarChart3 } from 'lucide-react';
+import { Plus, FileText, Send, Trash2, Loader2 , BarChart3, CheckSquare, X } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ChartLibrary } from '@/components/chat/ChartLibrary';
 import { SubmissionWorkbench } from '@/routes/submission';
@@ -124,6 +124,39 @@ function WritingList() {
   }, []);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // #995: 批量删除 — 多选模式(checkbox)+ 批量操作栏。
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const toggleSelect = (docId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId); else next.add(docId);
+      return next;
+    });
+  };
+  const toggleSelectAll = () => {
+    setSelected((prev) => (prev.size === docs.length ? new Set() : new Set(docs.map((d) => d.id))));
+  };
+  const exitSelection = () => setSelected(new Set());
+
+  const handleBatchDelete = async () => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    if (!window.confirm(t('writing.confirmBatchDelete', '确定删除选中的 {{n}} 篇文档？此操作不可撤销。', { n: ids.length }))) return;
+    setBatchDeleting(true);
+    try {
+      const res = await api.batchDeleteDocs(ids);
+      setDocs((prev) => prev.filter((d) => !selected.has(d.id)));
+      setSelected(new Set());
+      if (res.deleted < res.requested) {
+        setError(t('writing.batchDeletePartial', '{{n}} 篇已删除，{{m}} 篇未能删除（可能已不存在）', { n: res.deleted, m: res.requested - res.deleted }));
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    } finally {
+      setBatchDeleting(false);
+    }
+  };
   // #383: 新建论文可选关联研究。
   const [studies, setStudies] = useState<Array<{ study_id: string; display_name: string }>>([]);
   const [selectedStudy, setSelectedStudy] = useState('');
@@ -214,6 +247,25 @@ function WritingList() {
           </div>
         )}
 
+        {selected.size > 0 && (
+          /* #995: 批量操作栏 — 选中态常驻顶部,不随滚动消失 */
+          <div className="flex items-center justify-between gap-3 border-b border-border bg-accent/5 px-6 py-2.5">
+            <div className="flex items-center gap-2 text-sm text-text-primary">
+              <CheckSquare size={15} className="text-accent" />
+              {t('writing.selectedCount', '已选 {{n}} 篇', { n: selected.size })}
+              <button onClick={toggleSelectAll} className="text-xs text-text-secondary underline-offset-2 hover:text-text-primary hover:underline">
+                {selected.size === docs.length ? t('writing.selectAllNone', '取消全选') : t('writing.selectAll', '全选')}
+              </button>
+              <button onClick={exitSelection} className="rounded p-1 text-text-tertiary hover:text-text-primary" aria-label={t('writing.exitSelection', '退出多选')}>
+                <X size={14} />
+              </button>
+            </div>
+            <Button size="sm" variant="ghost" onClick={handleBatchDelete} disabled={batchDeleting} isLoading={batchDeleting} className="text-error">
+              <Trash2 size={14} className="mr-1" /> {t('writing.batchDelete', '删除 {{n}} 篇', { n: selected.size })}
+            </Button>
+          </div>
+        )}
+
         <main className="flex-1 overflow-y-auto p-6">
           {loading ? (
             <div className="space-y-3">
@@ -230,7 +282,16 @@ function WritingList() {
           ) : (
             <div className="space-y-2">
               {docs.map((d) => (
-                <div key={d.id} className="group relative block rounded-xl transition-colors hover:bg-surface">
+                <div key={d.id} className={cn('group relative block rounded-xl transition-colors', selected.has(d.id) ? 'bg-accent/5' : 'hover:bg-surface')}>
+                {/* #995: 多选 checkbox — 批量删除入口(与单个删除按钮并存) */}
+                <label className="absolute left-3 top-1/2 z-10 -translate-y-1/2 cursor-pointer p-1" aria-label={t('writing.selectDoc', '选择文档')}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(d.id)}
+                    onChange={() => toggleSelect(d.id)}
+                    className="h-4 w-4 cursor-pointer accent-accent"
+                  />
+                </label>
                 <Link
                   to={`/app/writing/${d.id}`}
                   onClick={() => setPaperLink({ title: d.title || '', abstract: '', docId: d.id, updatedAt: Date.now() })}
@@ -239,7 +300,7 @@ function WritingList() {
                   <Card className="p-4">
                     <div className="flex items-center justify-between gap-3">
                       {/* 文档标识图标移左侧 — 与删除按钮分开,不再重叠 */}
-                      <FileText size={18} className="shrink-0 text-accent/70" />
+                      <FileText size={18} className="ml-7 shrink-0 text-accent/70" />
                       <div className="min-w-0 flex-1">
                         <h3 className="truncate font-medium text-text-primary">{d.title || t('writing.untitled', 'Untitled')}</h3>
                         <p className="text-xs text-text-tertiary">

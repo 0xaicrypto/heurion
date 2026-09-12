@@ -213,6 +213,19 @@ export async function documentsRouter(app: FastifyInstance) {
     return { deleted: true }
   })
 
+  // #995: 写作列表批量删除 — 归属内联(where userId)+ 单请求 deleteMany
+  // (快照/引用等子表 Cascade)。不存在的 id 只是不命中,不报错(deleted 计数
+  // 与 requested 对比可感知)。上限 100 — 列表分页前的量级护栏。
+  app.post<{ Body: { ids?: unknown } }>('/api/v1/docs/batch-delete', async (request, reply) => {
+    const raw = request.body?.ids
+    const ids = Array.isArray(raw)
+      ? raw.filter((i): i is string => typeof i === 'string' && /^doc_[0-9a-f]+$/.test(i)).slice(0, 100)
+      : []
+    if (ids.length === 0) return reply.status(400).send({ error: 'ids required (doc_ prefixed, ≤100)' })
+    const res = await prisma.doc.deleteMany({ where: { id: { in: ids }, userId: request.user!.userId } })
+    return { deleted: res.count, requested: ids.length }
+  })
+
   // ── Snapshots ──
   // #809: 一致性 lint（纯规则）— 缩写纪律/图表编号/heading 跳级。
   app.get<{ Params: DocParams }>('/api/v1/docs/:docId/lint', async (request) => {
