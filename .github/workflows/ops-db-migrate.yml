@@ -28,7 +28,7 @@ jobs:
             echo '=== schema sync 日志(失败原因留痕) ===';
             cd /opt/heurion && docker compose --env-file .env.production logs nexus-server 2>/dev/null | grep -iE 'Schema sync|db push|[Dd]eploying' | tail -8 || true;
             echo '=== docs 列 ===';
-            echo \"SELECT name FROM pragma_table_info('docs');\" | docker compose --env-file .env.production exec -T nexus-server npx prisma db execute --schema prisma/schema.prisma --stdin;
+            echo \"SELECT name FROM pragma_table_info('docs');\" | docker compose --env-file .env.production exec -T -u root nexus-server npx prisma db execute --schema prisma/schema.prisma --stdin;
             echo '=== 接口状态(401=鉴权挡住属正常;500=Prisma 层炸) ===';
             curl -sS -o /dev/null -w 'healthz %{http_code}\n' https://heurion.org/healthz;
             curl -sS -o /dev/null -w 'docs %{http_code}\n' https://heurion.org/api/v1/docs
@@ -38,15 +38,15 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
             cd /opt/heurion
-            HAS=\$(echo \"SELECT name FROM pragma_table_info('docs');\" | docker compose --env-file .env.production exec -T nexus-server npx prisma db execute --schema prisma/schema.prisma --stdin | grep -c block_projection || true)
+            HAS=\$(echo \"SELECT name FROM pragma_table_info('docs');\" | docker compose --env-file .env.production exec -T -u root nexus-server npx prisma db execute --schema prisma/schema.prisma --stdin | grep -c block_projection || true)
             if [ \"\$HAS\" -gt 0 ]; then
               echo 'column already present — skip';
             else
-              echo 'ALTER TABLE docs ADD COLUMN block_projection TEXT;' | docker compose --env-file .env.production exec -T nexus-server npx prisma db execute --schema prisma/schema.prisma --stdin
+              echo 'ALTER TABLE docs ADD COLUMN block_projection TEXT;' | docker compose --env-file .env.production exec -T -u root nexus-server npx prisma db execute --schema prisma/schema.prisma --stdin
               echo 'ALTER applied';
             fi
             echo '=== docs 列(确认) ===';
-            echo \"SELECT name FROM pragma_table_info('docs');\" | docker compose --env-file .env.production exec -T nexus-server npx prisma db execute --schema prisma/schema.prisma --stdin
+            echo \"SELECT name FROM pragma_table_info('docs');\" | docker compose --env-file .env.production exec -T -u root nexus-server npx prisma db execute --schema prisma/schema.prisma --stdin
           "
       - name: Verify — docs 接口不再炸
         run: |
