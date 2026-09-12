@@ -99,6 +99,12 @@ export interface SessionState {
   lastDocBody?: string;
   /** #773: AI 写回同帧携带的 deck 资产（null = 无 deck 变更）。 */
   lastDocDeck?: DeckWire | null;
+  /**
+   * #989 Phase 3: 最近一次 doc_updated 的块级结构投影（派生，可选）—
+   * writing-editor 批内 diff 得出「AI 正在编辑哪些节」（#987 流式可见）。
+   * 旧后端事件无此字段时保留既有值（与 lastDocRev 同策略）。
+   */
+  lastDocProjection?: import('@heurion/contracts').BlockProjection | null;
   /** #976: 最近一次 plan_updated 的任务清单快照 — 前端进度卡片数据源。 */
   lastPlan?: import('@heurion/contracts').TaskPlan | null;
   /**
@@ -256,6 +262,8 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
         lastDocBody: chunk.body,
         lastDocDeck: chunk.deck ?? null,
         lastDocRev: typeof chunk.rev === 'number' ? chunk.rev : s.lastDocRev,
+        // #989 Phase 3: 投影随帧存储(旧事件无字段时保留既有值)。
+        ...(chunk.projection !== undefined ? { lastDocProjection: chunk.projection } : {}),
       };
     case 'skill_capture_suggest':
       return { ...s, skillCapture: { text: chunk.text } };

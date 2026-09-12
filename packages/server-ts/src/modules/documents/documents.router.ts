@@ -45,6 +45,12 @@ function refreshDeckUrls(deck: unknown, userId: string): unknown {
   try { return JSON.parse(refreshFileUrls(JSON.stringify(deck), userId)) } catch { return deck }
 }
 
+/** #989 Phase 3: 投影 JSON 解析（损坏容错为 null，同 parseDeck 口径）。 */
+function parseBlockProjection(raw: unknown): unknown {
+  if (typeof raw !== 'string' || !raw) return null
+  try { return JSON.parse(raw) } catch { return null }
+}
+
 export async function documentsRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
@@ -102,7 +108,9 @@ export async function documentsRouter(app: FastifyInstance) {
       const st = await prisma.researchStudy.findFirst({ where: { id: doc.studyId } })
       study_name = st?.name || null
     }
-    return { id: doc.id, title: doc.title, body: refreshFileUrls(doc.body, request.user!.userId), deck: refreshDeckUrls(parseDeck(doc.deck), request.user!.userId), created_at: doc.createdAt, updated_at: doc.updatedAt, study_id: doc.studyId || null, study_name }
+    // #989 Phase 3: 返回块投影 — 前端拿它作「编辑过程流式可见」的批次基线
+    // (#987);投影缺失(存量未回填)为 null,前端按无基线处理。
+    return { id: doc.id, title: doc.title, body: refreshFileUrls(doc.body, request.user!.userId), deck: refreshDeckUrls(parseDeck(doc.deck), request.user!.userId), block_projection: parseBlockProjection(doc.blockProjection), created_at: doc.createdAt, updated_at: doc.updatedAt, study_id: doc.studyId || null, study_name }
   })
 
   app.put<{ Params: DocParams; Body: { title?: string; body?: string; deck?: unknown; base_sha?: string; force?: boolean } }>('/api/v1/docs/:docId', async (request, reply) => {

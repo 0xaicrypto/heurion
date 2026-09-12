@@ -16,6 +16,8 @@ import { sha1Hex } from '@/lib/hash';
 import { cn } from '@/lib/utils';
 // #837: AI 写回三路合并(审阅未决时的累计队列重放)。
 import { mergeThreeWay } from '@/lib/doc-merge';
+// #989 Phase 3: 块投影前端消费 — 批内节 diff(编辑过程流式可见,#987)。
+import { diffProjectionSections, type SectionLite } from '@/lib/block-projection';
 // #927: doc_updated rev 幂等防乱序(与 chat-reducer 同源判定)。
 import { shouldApplyDocRev } from '@/lib/chat-reducer';
 import { toSlides, type Slide } from '@/lib/deck';
@@ -362,12 +364,19 @@ export function WritingEditorPage() {
   const pendingWriteBackRef = useRef<{ base: string; body: string; timer: ReturnType<typeof setTimeout> | null } | null>(null);
   const BATCH_FALLBACK_MS = 60_000;
   const [queuedRounds, setQueuedRounds] = useState(0);
+  // #989 Phase 3: 批次基线投影 + 「正在编辑」节列表(流式可见,#987 —
+  // 替代 60 秒黑盒缓冲:写回进行时画布实时展示节定位,turn 结束进审阅)。
+  const batchBaseProjectionRef = useRef<import('@heurion/contracts').BlockProjection | undefined>(undefined);
+  const [editingSections, setEditingSections] = useState<SectionLite[]>([]);
+
 
   const flushPendingWriteBack = useCallback(() => {
     const pend = pendingWriteBackRef.current;
     if (!pend) return;
     if (pend.timer) clearTimeout(pend.timer);
     pendingWriteBackRef.current = null;
+    // #989 Phase 3: 批结束 — 指示条让位于 diff 审阅。
+    setEditingSections([]);
     if (diffPendingRef.current) {
       // 跨轮:审阅未决 → 累计队列,审阅结束后依次呈现。
       writeBackQueueRef.current.push({ base: pend.base, next: pend.body });
@@ -387,7 +396,15 @@ export function WritingEditorPage() {
   const prevChatLoadingRef = useRef<boolean | null>(null);
   useEffect(() => {
     if (prevChatLoadingRef.current === true && !chat.chatLoading) flushPendingWriteBack();
+    // #989 Phase 3: turn 开始沿(false→true)冻结批次基线投影 — 此刻 store
+    // 的投影仍是上一轮末态( consumption effect 消费事件后 store 已前移,
+    // 批内首事件不可作基线)。上一轮无投影时回退文档加载时的服务端投影。
+    if (prevChatLoadingRef.current === false && chat.chatLoading) {
+      batchBaseProjectionRef.current = chatSession?.lastDocProjection ?? doc?.block_projection ?? undefined;
+      setEditingSections([]);
+    }
     prevChatLoadingRef.current = chat.chatLoading;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 沿检测仅依赖 chatLoading;doc/投影经 store 快照读取
   }, [chat.chatLoading, flushPendingWriteBack]);
 
   // #696: 润色气泡状态机下沉 usePolishBubble（#797: rAF 合帧）。
@@ -421,6 +438,9 @@ export function WritingEditorPage() {
         body: chatSession.lastDocBody,
         timer: setTimeout(() => flushPendingWriteBack(), BATCH_FALLBACK_MS),
       };
+      // #989 Phase 3: 批开始 — 清空上轮「正在编辑」残留(基线已在 turn
+      // 开始沿冻结;批内 diff 在下方逐事件更新)。
+      setEditingSections([]);
     } else {
       pendingWriteBackRef.current.body = chatSession.lastDocBody;
       // 活动重置兜底计时(纯流丢失保险,正常路径由 turn 结束冲刷)。
@@ -430,7 +450,13 @@ export function WritingEditorPage() {
     appliedDocBody.current = chatSession.lastDocBody;
     serverBodyRef.current = chatSession.lastDocBody;
     if (typeof chatSession.lastDocRev === 'number') appliedDocRevRef.current = chatSession.lastDocRev;
-  }, [chatSession?.lastDocBody, chatSession?.lastDocRev, docId, flushPendingWriteBack]);
+    // #989 Phase 3: 流式可见 — 每笔写回到达即更新「正在编辑」节列表
+    // (对照批次基线投影;无投影的旧后端事件不影响既有行为)。
+    if (chatSession.lastDocProjection) {
+      const dbg = diffProjectionSections(batchBaseProjectionRef.current, chatSession.lastDocProjection);
+      setEditingSections(dbg);
+    }
+  }, [chatSession?.lastDocBody, chatSession?.lastDocRev, chatSession?.lastDocProjection, docId, flushPendingWriteBack]);
 
   // #773: AI deck 写回（edit_deck / organize 落 deck）— 页级小改直接应用
   // + 服务端快照回滚（deck 页是天然结构化单元，整篇 markdown diff 反而难读）。
@@ -756,6 +782,8 @@ export function WritingEditorPage() {
     setRestoreReview(null);
     conflictLoadRef.current = null;
     setSaveConflict(null);
+    // #989 Phase 3: 切文档同时清「正在编辑」指示状态。
+    setEditingSections([]);
     setPhiFindings(null);
     setShowPhiDialog(false);
     setExportResult(null);
@@ -1156,6 +1184,17 @@ export function WritingEditorPage() {
                   />
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
+                    {!diffReview && editingSections.length > 0 && (
+                      /* #989 Phase 3: 编辑过程流式可见(#987)— 写回进行时
+                         实时展示 AI 正在编辑的节,替代 60 秒黑盒缓冲;
+                         turn 结束自动让位于 diff 审阅。 */
+                      <div className="flex items-center gap-2 border-b border-accent/20 bg-accent/5 px-3 py-2 text-[12px] text-text-primary">
+                        <span data-testid="editing-live">🛠 {t('writing.editingLive', 'AI 正在编辑')}</span>
+                        <span className="truncate text-text-secondary">
+                          {editingSections.map((s) => (s.heading || s.id)).join('、')}
+                        </span>
+                      </div>
+                    )}
                     {saveConflict && (
                       /* #882: 并发保存冲突横幅 — 用户决策,不静默覆盖另一窗口的修改 */
                       <div className="flex items-center justify-between gap-2 border-b border-warning/40 bg-warning/10 px-3 py-2 text-[12px] text-text-primary">

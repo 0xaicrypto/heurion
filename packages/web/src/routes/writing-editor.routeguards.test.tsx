@@ -84,6 +84,17 @@ function KeyedRoute() {
   return <WritingEditorPage key={docId ?? 'none'} />;
 }
 
+/** #989 Phase 3: 投影构造 helper(前端消费测试用 — id 为不透明字符串)。 */
+const projSec = (id: string, heading: string, hash: string) => ({ id, kind: 'section', heading, level: 2, hash, start: 0, end: 1, parent_id: null });
+const BASELINE_PROJECTION = {
+  schema_version: 1,
+  body_hash: 'baseline0000',
+  nodes: [
+    projSec('s_intro', 'Introduction', 'hash-intro-1'),
+    projSec('s_methods', 'Methods', 'hash-methods-1'),
+    projSec('s_results', 'Results', 'hash-results-1'),
+  ],
+};
 const DOC_A = {
   id: 'd1',
   title: 'A doc',
@@ -92,6 +103,8 @@ const DOC_A = {
   updated_at: '2026-01-02T00:00:00Z',
   study_id: 'st1',
   study_name: 'Study A',
+  // #989 Phase 3: 服务端 getDoc 返回投影 — 前端批次基线。
+  block_projection: BASELINE_PROJECTION,
 };
 const DOC_B = {
   id: 'd2',
@@ -104,17 +117,20 @@ const DOC_B = {
 };
 
 const SESSION_A = 'doc-d1';
-type Write = { body: string; rev: number };
+type Write = { body: string; rev: number; projection?: unknown };
 const turnScripts: Write[][] = [];
+/** #989 Phase 3: 流式观察测试需要更长的事件间隔(React 18 批处理会把
+ *  10ms 间隔的整轮事件合并成一次提交,瞬态指示条不可观察)。 */
+let TURN_GAP_MS = 10;
 
 function mockTurns() {
   apiMock.sendChatFull.mockImplementation(async function* () {
     const writes = turnScripts.shift() ?? [];
     for (const w of writes) {
-      await new Promise((r) => setTimeout(r, 10));
-      yield { type: 'doc_updated', body: w.body, rev: w.rev };
+      await new Promise((r) => setTimeout(r, TURN_GAP_MS));
+      yield { type: 'doc_updated', body: w.body, rev: w.rev, ...(w.projection !== undefined ? { projection: w.projection } : {}) };
     }
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, TURN_GAP_MS));
     yield { type: 'final_answer_chunk', text: 'ok' };
     yield { type: 'turn_complete' };
   });
@@ -311,5 +327,77 @@ describe('#983 生成/注入走统一写回流程', () => {
     fireEvent.click(screen.getByRole('button', { name: /^注入$|^Inject$/ }));
     expect(apiMock.injectResults).not.toHaveBeenCalled();
     expect(screen.getAllByText(/请先完成当前 AI 修改的审阅|Finish reviewing the current AI changes/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('#989 Phase 3 — 编辑过程流式可见(块投影消费,#987)', () => {
+  /**
+   * 发起 turn 但**不等待完成** — mock 流跨宏任务发射,指示条只在
+   * loading=true 的窗口内可见(生产即流式窗口)。断言须在流进行中完成,
+   * 再等 turn 结束让位于审阅。
+   */
+  async function startTurnStreaming(writes: Write[]) {
+    TURN_GAP_MS = 120; // 事件间隔 > React 批处理窗口,瞬态可观察
+    turnScripts.push(writes);
+    void useChatStore.getState().sendMessageQueued(SESSION_A, {
+      text: '下一轮修改',
+      sessionId: SESSION_A,
+      patientHash: null,
+      skills: [],
+      attachments: [],
+      scene: 'document',
+    });
+    await waitFor(() => {
+      expect(useChatStore.getState().sessions[SESSION_A]?.loading).toBe(true);
+    });
+  }
+
+  test('写回进行时画布实时展示「正在编辑」节,批结束让位于审阅', async () => {
+    renderEditor(false);
+    await screen.findByDisplayValue('A doc');
+
+    // 单 turn 两笔写回:1=Introduction 变(对照文档基线 hash-intro-1),
+    // 2=Results 也变 — 流进行中逐笔观察指示条。
+    void startTurnStreaming([
+      {
+        body: 'A body\n\nIntro edited',
+        rev: 1,
+        projection: { schema_version: 1, body_hash: 'p1aaaaaaaa', nodes: [
+          projSec('s_intro', 'Introduction', 'hash-intro-2'),
+          projSec('s_methods', 'Methods', 'hash-methods-1'),
+          projSec('s_results', 'Results', 'hash-results-1'),
+        ] },
+      },
+      {
+        body: 'A body\n\nIntro edited\n\nResults edited',
+        rev: 2,
+        projection: { schema_version: 1, body_hash: 'p2aaaaaaaa', nodes: [
+          projSec('s_intro', 'Introduction', 'hash-intro-2'),
+          projSec('s_methods', 'Methods', 'hash-methods-1'),
+          projSec('s_results', 'Results', 'hash-results-2'),
+        ] },
+      },
+    ]);
+
+    // 指示条实时出现(替代 60 秒黑盒缓冲)— 列表为对照基线的累积 diff
+    // (批内事件可能被 React 批处理合并消费,断言 span 累积文本而非瞬时态)。
+    const chipText = () => (document.querySelector('[data-testid="editing-live"]')?.parentElement as HTMLElement | null)?.textContent ?? '';
+    await waitFor(() => expect(chipText()).toContain('Introduction'), { timeout: 3000 });
+    await waitFor(() => expect(chipText()).toContain('Results'), { timeout: 3000 });
+
+    // turn 结束 → 批冲刷进 diff 审阅,指示条自动消失
+    await waitFor(() => {
+      expect(useChatStore.getState().sessions[SESSION_A]?.loading).toBe(false);
+    }, { timeout: 5000 });
+    await waitFor(() => expect(screen.queryByText(/AI 正在编辑|AI is editing/)).toBeNull(), { timeout: 3000 });
+    expect(await screen.findByText(/审阅 AI 修改|Review AI changes/)).toBeTruthy();
+  }, 30_000);
+
+  test('无投影的旧后端事件不破坏既有写回流(向后兼容)', async () => {
+    renderEditor(false);
+    await screen.findByDisplayValue('A doc');
+    await sendTurn([{ body: 'A body\n\nR1 段落', rev: 1 }]);
+    expect(await screen.findByText(/审阅 AI 修改|Review AI changes/)).toBeTruthy();
+    expect(screen.queryByText(/AI 正在编辑|AI is editing/)).toBeNull();
   });
 });

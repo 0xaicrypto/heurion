@@ -15,7 +15,7 @@ export class WritingApi extends ApiCore {
     return this.fetch('/api/v1/docs', { method: 'POST', body: JSON.stringify({ title, study_id: studyId }) });
   }
 
-  async getDoc(docId: string): Promise<{id: string; title: string; body: string; deck?: unknown; created_at: string; updated_at: string; study_id?: string | null; study_name?: string | null}> {
+  async getDoc(docId: string): Promise<{id: string; title: string; body: string; deck?: unknown; /** #989 Phase 3: 块投影 — 「编辑过程流式可见」的批次基线(缺失 null)。 */ block_projection?: import('@heurion/contracts').BlockProjection | null; created_at: string; updated_at: string; study_id?: string | null; study_name?: string | null}> {
     return this.fetch(`/api/v1/docs/${docId}`);
   }
 
