@@ -145,6 +145,22 @@ describe('#989 Phase 2 — edit_document target_section(工具层)', () => {
     expect(output.location).toContain('删除')
   })
 
+  test('new_text 别名:模型沿用 range 模式参数习惯(生产实例 2026-09-12)→ 同样生效', async () => {
+    const proj = buildBlockProjection(BODY)
+    mocks.docFindFirst.mockResolvedValue(makeDoc(JSON.stringify(proj)))
+    const intro = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const r = await tool.execute({
+      target_section: intro.id,
+      section_action: 'replace',
+      new_text: 'Rewritten via new_text alias.',
+    })
+    expect(r.success).toBe(true)
+    const output = JSON.parse(r.output as string)
+    expect(output.body).toContain('Rewritten via new_text alias.')
+    expect(output.body).not.toContain('intro body text.')
+  })
+
   test('old_text 含 [sec:...] marker → 自动剥离后锚点命中(锚点兜底共存)', async () => {
     const proj = buildBlockProjection(BODY)
     mocks.docFindFirst.mockResolvedValue(makeDoc(JSON.stringify(proj)))

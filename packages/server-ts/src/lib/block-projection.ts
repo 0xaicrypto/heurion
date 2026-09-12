@@ -264,7 +264,7 @@ export function applySectionEdit(
   const after = text.slice(section.end) // 下一标题行原文起（或 ''）
   const next = String(content ?? '').trim()
   if (!next) {
-    return { error: 'content is empty — 要删除整节请用 section_action:"delete"（不需要 content）;要写入内容请提供 content' }
+    return { error: 'content is empty — 要删除整节请用 section_action:"delete"（不需要 content）;要写入内容请在 content（或 new_text）提供' }
   }
   // before 以标题行的 '\n' 结尾 → 内容紧随标题;节间以空行分隔;
   // 节尾含到下一标题前的空白 — 由 core(去尾空白)+ 固定 '\n\n' 重建。

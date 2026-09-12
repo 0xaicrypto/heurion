@@ -77,7 +77,7 @@ export class EditDocumentTool extends BaseTool {
       properties: {
         target_section: { type: 'string', description: 'Section-edit mode: the section id from [sec:...] markers in the injected document (e.g. s_xxx). Deterministic whole-section edit — preferred over old_text when visible.' },
         section_action: { type: 'string', enum: ['replace', 'append', 'prepend', 'delete'], description: 'Section-edit action: replace the section content / append after it / insert right after the heading / delete removes the ENTIRE section (heading + content, no content needed).' },
-        content: { type: 'string', description: 'Section-edit payload: the markdown content for replace/append/prepend.' },
+        content: { type: 'string', description: 'Section-edit payload: the markdown content for replace/append/prepend (alias: new_text is accepted).' },
         import_reference: { type: 'string', description: 'Import mode: the label/name of the reference material to import into the empty document (e.g. the uploaded file name).' },
         url: { type: 'string', description: 'Import via URL: direct OA full-text PDF link (e.g. the url_for_pdf returned by oa_pdf_lookup). Downloads into the reference library and sets the extracted content as the document body.' },
         doi: { type: 'string', description: 'Optional DOI alongside url — enables Unpaywall OA verification (refuses paywalled / non-OA links).' },
@@ -152,7 +152,12 @@ export class EditDocumentTool extends BaseTool {
       : args.section_action === 'prepend' ? 'prepend'
       : args.section_action === 'delete' ? 'delete'
       : 'replace'
-    const content = typeof args.content === 'string' ? args.content : ''
+    // #989 生产实例(2026-09-12):模型沿用 range 模式的参数习惯传 new_text
+    // 而非 content → 节模式收到空 content 被拒。content 为空时接受
+    // new_text 别名(与工具既有词表一致,杜绝参数名混用类失败)。
+    const content = typeof args.content === 'string' && args.content.trim()
+      ? args.content
+      : (typeof args.new_text === 'string' ? args.new_text : '')
     try {
       const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
       if (!existing) return { success: false, error: `Document not found: ${docId}` }
