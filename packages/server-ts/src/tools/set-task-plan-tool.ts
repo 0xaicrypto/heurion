@@ -56,6 +56,7 @@ export class SetTaskPlanTool extends BaseTool {
               title: { type: 'string', description: 'Step title (one actionable item).' },
               tool: { type: 'string', description: 'Write tools (edit_document/edit_deck/insert_asset/fix_document_images): the system advances this step when that tool succeeds — do NOT hand-advance.' },
               note: { type: 'string', description: 'Step detail/progress note.' },
+              section: { type: 'string', description: '#989: target section id ([sec:...] from the injected document, e.g. s_xxx) when the step maps to a document section — keeps the ledger aligned with document structure.' },
             },
             required: ['title'],
           },
@@ -89,6 +90,8 @@ export class SetTaskPlanTool extends BaseTool {
             title: String(o.title || '').trim(),
             ...(o.tool ? { tool: String(o.tool).slice(0, 100) } : {}),
             ...(o.note ? { note: String(o.note).slice(0, 500) } : {}),
+            // #989: 步骤×节对账 — 目标节 ID 随步骤入账本。
+            ...(o.section ? { section: String(o.section).slice(0, 48) } : {}),
           }
         }).filter((s) => s.title)
         // 闸门 1 — 步数硬闸（机读可测，防 #806 打太极复发）。

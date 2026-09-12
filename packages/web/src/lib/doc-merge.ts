@@ -81,3 +81,39 @@ export function mergeThreeWay(base: string, ours: string, theirs: string): strin
   while (cursor < baseLines.length) out.push(baseLines[cursor++])
   return out.join('\n')
 }
+
+/** #986/#989: 冲突 hunk 的 base 行号 → 最近标题行文本(块级冲突归属)。 */
+function nearestHeadingIn(base: string, baseLine1: number): string {
+  const lines = base.split('\n')
+  for (let i = Math.min(baseLine1, lines.length) - 1; i >= 0; i--) {
+    const m = /^(#{1,3})\s+(.+)$/.exec(lines[i])
+    if (m) return m[2].trim().slice(0, 60)
+  }
+  return ''
+}
+
+/**
+ * #989 Phase 3: 块级冲突归属 — 三路合并失败时,找出相交 hunk 触及的
+ * base 行,归属到最近的标题节,供冲突提示指名「冲突在哪些节」。
+ * (#986 同点冲突在块级自然解决的前端呈现;同一判定逻辑 — 相交或同锚
+ * 零宽,与 mergeThreeWay 的冲突检测完全一致。)
+ */
+export function describeConflictSections(base: string, ours: string, theirs: string): string[] {
+  if (!base || base === ours || base === theirs) return []
+  const patchA = structuredPatch('base', 'ours', base, ours, undefined, undefined, { context: 0 })
+  const patchB = structuredPatch('base', 'theirs', base, theirs, undefined, undefined, { context: 0 })
+  const lineIdx: number[] = []
+  for (const ha of patchA.hunks) {
+    for (const hb of patchB.hunks) {
+      const aStart = ha.oldStart
+      const aEnd = ha.oldStart + ha.oldLines
+      const bStart = hb.oldStart
+      const bEnd = hb.oldStart + hb.oldLines
+      const overlap = aStart < bEnd && bStart < aEnd
+      const sameAnchorZeroWidth = aStart === aEnd && bStart === bEnd && aStart === bStart
+      if (overlap || sameAnchorZeroWidth) lineIdx.push(Math.min(aStart, bStart))
+    }
+  }
+  const sections = [...new Set(lineIdx.map((l) => nearestHeadingIn(base, l)).filter(Boolean))]
+  return sections
+}

@@ -54,7 +54,7 @@ export async function loadActivePlan(userId: string, sessionId: string): Promise
 }
 
 /** 创建清单（同会话旧活跃清单置 cancelled — 新 create 语义上取代）。 */
-export async function createPlan(userId: string, sessionId: string, title: string, steps: Array<{ title: string; tool?: string; note?: string }>): Promise<TaskPlan> {
+export async function createPlan(userId: string, sessionId: string, title: string, steps: Array<{ title: string; tool?: string; note?: string; section?: string }>): Promise<TaskPlan> {
   await prisma.taskPlan.updateMany({
     where: { userId, sessionId, status: 'active' },
     data: { status: 'cancelled', updatedAt: new Date().toISOString() },
@@ -66,6 +66,8 @@ export async function createPlan(userId: string, sessionId: string, title: strin
     status: 'pending' as const,
     ...(s.tool ? { tool: s.tool.slice(0, 100) } : {}),
     ...(s.note ? { note: s.note.slice(0, 500) } : {}),
+    // #989: 步骤×节对账 — section id 入账本(renderPlanBlock 展示)。
+    ...(s.section ? { section: s.section.slice(0, 48) } : {}),
   }))
   const row = await prisma.taskPlan.create({
     data: {
@@ -257,7 +259,9 @@ export function renderPlanBlock(plan: TaskPlan | null): string {
     }
     shown++
     const failure = s.status === 'failed' ? ` — 失败${s.failure_note ? `：${s.failure_note}` : '，可重试或跳过'}` : ''
-    lines.push(`- [${STEP_MARK[s.status]}] ${s.index}. ${s.title}${failure}`)
+    // #989: 步骤引用的目标节随行展示 — 账本与文档结构对齐。
+    const sectionMark = s.section ? `（节 [sec:${s.section}]）` : ''
+    lines.push(`- [${STEP_MARK[s.status]}] ${s.index}. ${s.title}${sectionMark}${failure}`)
   }
   lines.push('（逐项执行任务清单；每完成一项会自动勾选；调用 edit_document 等写回工具时携带目标步骤的 step_index（本清单中「N.」的序号）；用户回复「继续」时从第一个未完成步骤接着做；未完成的步骤严禁声称已完成。）')
   return `\n${lines.join('\n')}\n`

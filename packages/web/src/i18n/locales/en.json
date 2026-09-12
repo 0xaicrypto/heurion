@@ -523,6 +523,8 @@
     "reviewFirstForChart": "Finish reviewing the current AI changes before inserting a chart",
     "reviewFirstForMethods": "Finish reviewing the current AI changes before generating content",
     "injectConflictReview": "Result injection conflicts with unsaved local changes — review opened for confirmation",
+    "injectConflictReviewSections": "Result injection conflicts with unsaved local changes in {{sections}} — review opened for confirmation",
+    "reviewConflictSections": "The next round of AI edits overlaps your changes in {{sections}} — that round was dropped; describe it again in chat",
     "saveFailedBanner": "Save failed — your changes live in this window only; auto-retry is running",
     "editingLive": "AI is editing",
     "uploadedAsReference": "Uploaded {{name}} and attached as reference material",

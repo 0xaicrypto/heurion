@@ -1,6 +1,7 @@
 import fs from 'fs'
 import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
+import { makeLogger } from '../common/logger.js'
 import { estimateTokens } from '../common/token-estimate.js'
 import { resolveDefaultMaxTokens, resolveActiveModel } from '../common/llm-gateway.js'
 import { resolveImportTargets, ensureDraftBody } from './doc-import.js'
@@ -34,6 +35,15 @@ import { executeImportFromUrl } from './doc-import.js'
  *
  * 版本化 + 自动快照 + 前端 diff 审阅(doc_updated SSE)对三种模式一致。
  */
+const log = makeLogger('tools.edit-document')
+
+/**
+ * #989 Phase 2 验证标准 — target_section vs 锚点模式的 A/B 观测计数器
+ * (进程内累计 + 结构化日志;生产事件日志 tool_call 事件亦含 args 可复核)。
+ */
+const sectionEditTelemetry = { attempts: 0, success: 0, idInvalid: 0 }
+const anchorEditTelemetry = { attempts: 0, success: 0 }
+
 export class EditDocumentTool extends BaseTool {
   /**
    * #906: 本轮最新正文缓存 — applySpan/fullReplace/import 写回成功后更新。
@@ -152,7 +162,12 @@ export class EditDocumentTool extends BaseTool {
       const { loadProjection, applySectionEdit } = await import('../lib/block-projection.js')
       const projection = loadProjection(body, existing.blockProjection)
       const applied = applySectionEdit(body, projection, targetSection, action, content)
-      if ('error' in applied) return { success: false, error: applied.error }
+      if ('error' in applied) {
+        // #989: A/B 观测 — ID 失效走锚点兜底的比例(Phase 2 验证标准)。
+        sectionEditTelemetry.idInvalid++
+        log.info(`[edit_document] target_section miss id=${targetSection} action=${action} (fallback to anchor) total={ok:${sectionEditTelemetry.success} miss:${sectionEditTelemetry.idInvalid}}`)
+        return { success: false, error: applied.error }
+      }
       if (applied.body === body) {
         return { success: false, error: '节内容与提供内容相同,没有任何变化' }
       }
@@ -161,6 +176,9 @@ export class EditDocumentTool extends BaseTool {
       const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: applied.body, snapshotLabel: 'AI edit' })
       if (written.error) return { success: false, error: written.error }
       this.latestBody = written.body
+      sectionEditTelemetry.attempts++
+      sectionEditTelemetry.success++
+      log.info(`[edit_document] target_section ok action=${action} id=${targetSection} total={ok:${sectionEditTelemetry.success} miss:${sectionEditTelemetry.idInvalid}}`)
       // #989 Phase 3: 输出携带块投影 — tool-loop 转 doc_updated.projection 推前端。
       return {
         success: true,
@@ -299,6 +317,8 @@ export class EditDocumentTool extends BaseTool {
         const guide = refMatchLabel
           ? `你复制的 old_text 与参考材料「${refMatchLabel}」一致,但与正文(## Current Document)不符 — 正文与参考材料来自不同文件格式/版本,提取的文本有差异。请先调用 edit_document 的 import_reference 导入「${refMatchLabel}」把该参考材料设为正文(覆盖后 old_text 即可匹配),或从 ## Current Document 逐字复制待修改的原文。`
           : '请从上方 ## Current Document 部分逐字复制待修改的原文,不要从「文档结构」清单复制(带序号),不要从 Reference Materials 复制。'
+        anchorEditTelemetry.attempts++
+        log.info(`[edit_document] anchor-edit miss len=${oldText.length} total={ok:${anchorEditTelemetry.success} fail:${anchorEditTelemetry.attempts - anchorEditTelemetry.success}}`)
         return {
           success: false,
           error: `old_text 在文档中未找到(已忽略空格/换行/标题标记差异后仍不匹配)。${guide} ${probeLabel}: "${probe}"`,
@@ -315,6 +335,9 @@ export class EditDocumentTool extends BaseTool {
 
       const heading = nearestHeadingBefore(body, span.start)
       const location = heading ? `「${heading}」章节内` : '文档中'
+      anchorEditTelemetry.attempts++
+      anchorEditTelemetry.success++
+      log.info(`[edit_document] anchor-edit ok len=${oldText.length} total={ok:${anchorEditTelemetry.success} fail:${anchorEditTelemetry.attempts - anchorEditTelemetry.success}}`)
       return await this.applySpan(body, docId, span.start, span.end, newText, summary, location)
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }

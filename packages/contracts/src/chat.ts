@@ -19,6 +19,12 @@ export const taskPlanStepSchema = z.object({
   note: z.string().max(500).optional(),
   retry_count: z.number().int().min(0).max(10).optional(),
   failure_note: z.string().max(500).optional(),
+  /**
+   * #989 Phase 3: 步骤可引用目标节（块投影的 section id）— 清单与文档
+   * 结构对齐（前端展示节标题/编辑器可跳转；autoAdvance 的 step_index
+   * 精确推进已按 #982 落地，节引用是账本的结构化补充）。
+   */
+  section: z.string().max(48).optional(),
 })
 
 export const taskPlanSchema = z.object({
@@ -232,6 +238,8 @@ export interface TaskPlanStep {
   note?: string
   retry_count?: number
   failure_note?: string
+  /** #989 Phase 3: 目标节 ID（块投影 section）— 步骤×节对账（taskPlanStepSchema 同步）。 */
+  section?: string
 }
 
 export interface TaskPlan {

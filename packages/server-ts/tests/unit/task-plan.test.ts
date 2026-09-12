@@ -328,6 +328,21 @@ describe('#971/#972 纯函数（renderPlanBlock/planBacklog/renderPendingSteps�
     expect(block).toContain('失败')
     expect(block).toContain('严禁声称已完成')
   })
+
+  test('#989 步骤×节对账:section 随步骤展示(节 [sec:...])', () => {
+    const withSection: TaskPlan = {
+      plan_id: 'p2', session_id: 's2', title: 'T',
+      steps: [
+        { index: 1, title: 'Abstract', status: 'pending', tool: 'edit_document', section: 's_abc123456789' },
+        { index: 2, title: 'Methods', status: 'pending', tool: 'edit_document' },
+      ],
+      status: 'active',
+    }
+    const block = renderPlanBlock(withSection)
+    expect(block).toContain('1. Abstract（节 [sec:s_abc123456789]）')
+    // 无 section 的步骤不展示
+    expect(block).not.toContain('Methods（节')
+  })
   test('renderPendingSteps 只列未完成步骤', () => {
     const text = renderPendingSteps(plan)
     expect(text).toContain('3. Results')

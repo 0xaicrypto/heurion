@@ -15,7 +15,7 @@ import { api, ApiError } from '@/lib/api';
 import { sha1Hex } from '@/lib/hash';
 import { cn } from '@/lib/utils';
 // #837: AI 写回三路合并(审阅未决时的累计队列重放)。
-import { mergeThreeWay } from '@/lib/doc-merge';
+import { mergeThreeWay, describeConflictSections } from '@/lib/doc-merge';
 // #989 Phase 3: 块投影前端消费 — 批内节 diff(编辑过程流式可见,#987)。
 import { diffProjectionSections, type SectionLite } from '@/lib/block-projection';
 // #927: doc_updated rev 幂等防乱序(与 chat-reducer 同源判定)。
@@ -306,7 +306,13 @@ export function WritingEditorPage() {
     const remaining = writeBackQueueRef.current.length;
     const merged = mergeThreeWay(entry.base, currentMd, entry.next);
     if (merged === null) {
-      showNotice(t('writing.reviewConflict', 'AI 的下一轮修改与当前内容有重叠冲突，该轮已丢弃 — 请在聊天中重新描述该修改'), 6000);
+      // #989 Phase 3: 冲突节归属(#986 块级收口)— 指名冲突落在哪些节。
+      const sections = describeConflictSections(entry.base, currentMd, entry.next);
+      if (sections.length > 0) {
+        showNotice(t('writing.reviewConflictSections', 'AI 的下一轮修改与当前内容在「{{sections}}」重叠冲突，该轮已丢弃 — 请在聊天中重新描述该修改', { sections: sections.join('、') }), 6000);
+      } else {
+        showNotice(t('writing.reviewConflict', 'AI 的下一轮修改与当前内容有重叠冲突，该轮已丢弃 — 请在聊天中重新描述该修改'), 6000);
+      }
       return;
     }
     setDiffReview({ key: `rev_${Date.now()}`, old: currentMd, next: merged });

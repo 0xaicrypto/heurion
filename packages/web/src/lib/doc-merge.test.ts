@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeThreeWay } from './doc-merge'
+import { mergeThreeWay, describeConflictSections } from './doc-merge'
 
 /**
  * #837 — AI 写回三路合并。
@@ -87,5 +87,35 @@ describe('mergeThreeWay', () => {
 
   it('空基线(用户从空文档开始)→ 直接采用新写回', () => {
     expect(mergeThreeWay('', '', '# New doc\ncontent')).toBe('# New doc\ncontent')
+  })
+})
+
+/** #989 Phase 3: 块级冲突归属 — 冲突 hunk 归属到最近标题节。 */
+describe('describeConflictSections', () => {
+  const base = ['# Title', 'para one', '', '## Methods', 'methods text', '', '## Results', 'results text'].join('\n')
+
+  it('冲突 hunk 归属最近标题节(同节双方修改)', () => {
+    const ours = base.replace('methods text', 'methods user edit')
+    const theirs = base.replace('methods text', 'methods ai edit')
+    expect(describeConflictSections(base, ours, theirs)).toEqual(['Methods'])
+  })
+
+  it('多节冲突 → 去重后的节名列表', () => {
+    const ours = base.replace('methods text', 'm1').replace('results text', 'r1')
+    const theirs = base.replace('methods text', 'm2').replace('results text', 'r2')
+    const sections = describeConflictSections(base, ours, theirs)
+    expect(sections).toEqual(['Methods', 'Results'])
+  })
+
+  it('首标题前冲突归属文档头标题(H1)', () => {
+    const ours = base.replace('para one', 'p1')
+    const theirs = base.replace('para one', 'p2')
+    expect(describeConflictSections(base, ours, theirs)).toEqual(['Title'])
+  })
+
+  it('无冲突(不相交 hunk)→ 空列表', () => {
+    const ours = base.replace('methods text', 'm1')
+    const theirs = base.replace('results text', 'r2')
+    expect(describeConflictSections(base, ours, theirs)).toEqual([])
   })
 })
