@@ -1,8 +1,3 @@
-# #989 部署事故运维通道 — 生产 DB schema 手术（非破坏,只加列,幂等可重跑）。
-# 背景:syncSchema 的非破坏 db push 在生产库有漂移时拒绝执行（main.ts 只
-# log.warn 非致命）→ 新列缺失 → docs 接口 Prisma P2022。本通道显式执行
-# 幂等 ALTER TABLE ADD COLUMN,并留痕 schema sync 失败原因（根因诊断）。
-# 归档建议见 .github/workflows/README.md（#924 家族）。
 name: Ops DB Migrate (add missing columns, non-destructive)
 
 on:
@@ -26,9 +21,9 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
             echo '=== schema sync 日志(失败原因留痕) ===';
-            cd /opt/heurion && docker compose --env-file .env.production logs nexus-server 2>/dev/null | grep -iE 'Schema sync|db push|[Dd]eploying' | tail -8 || true;
-            echo '=== docs 列 ===';
-            echo \"SELECT name FROM pragma_table_info('docs');\" | docker compose --env-file .env.production exec -T -u root nexus-server npx prisma db execute --schema prisma/schema.prisma --stdin;
+            cd /opt/heurion && docker compose --env-file .env.production logs nexus-server 2>/dev/null | grep -iE 'Schema sync|db push|[Dd]eploying' | tail -5 || true;
+            echo '=== docs 列(node:sqlite 直查) ===';
+            docker compose --env-file .env.production exec -T -u root nexus-server node --experimental-sqlite -e \"const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('/data/db/nexus_server.db');console.log(db.prepare(\\\"SELECT name FROM pragma_table_info('docs')\\\").all().map(r=>r.name).join(','))\" 2>/dev/null || true;
             echo '=== 接口状态(401=鉴权挡住属正常;500=Prisma 层炸) ===';
             curl -sS -o /dev/null -w 'healthz %{http_code}\n' https://heurion.org/healthz;
             curl -sS -o /dev/null -w 'docs %{http_code}\n' https://heurion.org/api/v1/docs
@@ -38,15 +33,15 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
             cd /opt/heurion
-            HAS=\$(echo \"SELECT name FROM pragma_table_info('docs');\" | docker compose --env-file .env.production exec -T -u root nexus-server npx prisma db execute --schema prisma/schema.prisma --stdin | grep -c block_projection || true)
-            if [ \"\$HAS\" -gt 0 ]; then
+            HAS=\$(docker compose --env-file .env.production exec -T -u root nexus-server node --experimental-sqlite -e \"const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('/data/db/nexus_server.db');const names=db.prepare(\\\"SELECT name FROM pragma_table_info('docs')\\\").all().map(r=>r.name).join(',');console.log(names.includes('block_projection')?1:0)\" 2>/dev/null || echo 0)
+            echo \"HAS=\$HAS\"
+            if [ \"\$HAS\" = '1' ]; then
               echo 'column already present — skip';
             else
-              echo 'ALTER TABLE docs ADD COLUMN block_projection TEXT;' | docker compose --env-file .env.production exec -T -u root nexus-server npx prisma db execute --schema prisma/schema.prisma --stdin
-              echo 'ALTER applied';
+              docker compose --env-file .env.production exec -T -u root nexus-server node --experimental-sqlite -e \"const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('/data/db/nexus_server.db');db.exec('ALTER TABLE docs ADD COLUMN block_projection TEXT;');console.log('ALTER applied')\" 2>/dev/null
             fi
             echo '=== docs 列(确认) ===';
-            echo \"SELECT name FROM pragma_table_info('docs');\" | docker compose --env-file .env.production exec -T -u root nexus-server npx prisma db execute --schema prisma/schema.prisma --stdin
+            docker compose --env-file .env.production exec -T -u root nexus-server node --experimental-sqlite -e \"const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('/data/db/nexus_server.db');console.log(db.prepare(\\\"SELECT name FROM pragma_table_info('docs')\\\").all().map(r=>r.name).join(','))\" 2>/dev/null || true
           "
       - name: Verify — docs 接口不再炸
         run: |
