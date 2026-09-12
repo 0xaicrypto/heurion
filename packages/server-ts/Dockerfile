@@ -41,6 +41,10 @@ USER nexus
 
 COPY --from=builder /build/packages/server-ts/dist ./dist
 COPY --from=builder /build/packages/server-ts/node_modules ./node_modules
+# #989 部署事故根因:#937 non-root 后 node_modules 仍为 root 属主 → 容器内
+# prisma CLI(engines 目录)对 nexus 用户拒绝写入 → 启动 syncSchema 的
+# db push 静默失败,新列永远落不下去。chown 交还属主。
+RUN chown -R nexus:nexus /app/node_modules
 COPY --from=builder /build/packages/server-ts/package.json ./
 COPY --from=builder /build/packages/server-ts/prisma ./prisma
 COPY --from=builder /build/packages/server-ts/data ./data

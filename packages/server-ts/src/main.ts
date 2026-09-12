@@ -49,7 +49,9 @@ function syncSchema(): void {
   if (process.env.NODE_ENV === 'test') return
   const dbUrl = resolveDatabaseUrl(config.databaseUrl)
   const baseEnv = { ...process.env, DATABASE_URL: dbUrl }
-  const isProd = process.env.NODE_ENV === 'production'
+  // #989: prod 判定走显式 APP_ENV(compose 设定)— NODE_ENV 未设(邮箱
+  // 验证码的 dev 日志回退依赖它),不作为 prod 信号。
+  const isProd = process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production'
   const migrationsDir = new URL('../prisma/migrations/', import.meta.url)
   const hasMigrations = existsSync(fileURLToPath(migrationsDir))
   const allowDataLoss = !isProd && process.env.ALLOW_DB_PUSH_ACCEPT_DATA_LOSS !== 'false'

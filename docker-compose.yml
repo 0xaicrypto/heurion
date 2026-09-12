@@ -86,6 +86,11 @@ services:
     env_file:
       - .env.production
     environment:
+      # #989 部署事故根因:此前未设 → isProd=false,schema sync 失败仅
+      # log.warn(#641 fail-fast 失效)+ db push 带 --accept-data-loss。
+      # APP_ENV(而非 NODE_ENV)驱动 prod 判定 — 不触碰 NODE_ENV 的行为面
+      # (如邮箱验证码的 dev 日志回退)。prod sync 失败即 fail-fast(回滚)。
+      - APP_ENV=production
       - SERVER_PORT=8001
       - DATABASE_URL=file:/data/db/nexus_server.db
       # #281: user memory files live under /data/twins on their own volume.
