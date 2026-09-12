@@ -227,6 +227,8 @@ export interface SectionEditResult {
  *  - replace: 整节内容替换
  *  - append:  节内容末尾追加
  *  - prepend: 标题行之后插入
+ *  - delete:  整节移除（标题+内容；生产实例：模型要清理占位节却只能传
+ *    空 content 被拒 → 空参退化，2026-09-12）
  * ID 失效（投影中无此节）→ error，调用方降级锚点模式兜底。
  * 内容与现状一致 → 返回原 body（无变化，调用方按 unchanged 处理）。
  */
@@ -234,13 +236,22 @@ export function applySectionEdit(
   body: string,
   projection: BlockProjection,
   sectionId: string,
-  action: 'replace' | 'append' | 'prepend',
+  action: 'replace' | 'append' | 'prepend' | 'delete',
   content: string,
 ): SectionEditResult | { error: string } {
   const text = String(body ?? '')
   const section = projection.nodes.find((n) => n.kind === 'section' && n.id === sectionId)
   if (!section) {
     return { error: `section ${sectionId} 在当前文档投影中不存在（ID 已失效或文档已重构）— 请改用 old_text/new_text 锚点编辑，或重新读取文档获取最新节 ID` }
+  }
+  if (action === 'delete') {
+    // 整节移除:[标题行起始, 下一标题起始) — span 恰好覆盖标题+内容+节尾空白。
+    // 块边界卫生:前一内容与下一标题之间保留一个空行(标题前空行纪律)。
+    const before = text.slice(0, section.start).replace(/\s+$/, '')
+    const after = text.slice(section.end).replace(/^\s+/, '')
+    const newBody = before ? `${before}\n\n${after}` : after
+    if (newBody === text) return { error: '节已是文档末尾且无内容，没有变化' }
+    return { body: newBody, location: `${section.heading || sectionId}（${sectionId}）` }
   }
   // 节内容区 = 标题行之后 → 节 span 末（下一标题起始 | EOF）。
   // 节 span.start 即标题行起始;标题行原文 = span 起始后的第一行。
@@ -252,7 +263,9 @@ export function applySectionEdit(
   const before = text.slice(0, contentStart)
   const after = text.slice(section.end) // 下一标题行原文起（或 ''）
   const next = String(content ?? '').trim()
-  if (!next) return { error: 'content is empty — 提供要写入的内容' }
+  if (!next) {
+    return { error: 'content is empty — 要删除整节请用 section_action:"delete"（不需要 content）;要写入内容请提供 content' }
+  }
   // before 以标题行的 '\n' 结尾 → 内容紧随标题;节间以空行分隔;
   // 节尾含到下一标题前的空白 — 由 core(去尾空白)+ 固定 '\n\n' 重建。
   const coreLead = core ? `${core}\n\n` : ''

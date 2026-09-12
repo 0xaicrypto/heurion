@@ -76,7 +76,7 @@ export class EditDocumentTool extends BaseTool {
       type: 'object',
       properties: {
         target_section: { type: 'string', description: 'Section-edit mode: the section id from [sec:...] markers in the injected document (e.g. s_xxx). Deterministic whole-section edit — preferred over old_text when visible.' },
-        section_action: { type: 'string', enum: ['replace', 'append', 'prepend'], description: 'Section-edit action: replace the section content / append after it / insert right after the heading.' },
+        section_action: { type: 'string', enum: ['replace', 'append', 'prepend', 'delete'], description: 'Section-edit action: replace the section content / append after it / insert right after the heading / delete removes the ENTIRE section (heading + content, no content needed).' },
         content: { type: 'string', description: 'Section-edit payload: the markdown content for replace/append/prepend.' },
         import_reference: { type: 'string', description: 'Import mode: the label/name of the reference material to import into the empty document (e.g. the uploaded file name).' },
         url: { type: 'string', description: 'Import via URL: direct OA full-text PDF link (e.g. the url_for_pdf returned by oa_pdf_lookup). Downloads into the reference library and sets the extracted content as the document body.' },
@@ -148,7 +148,10 @@ export class EditDocumentTool extends BaseTool {
    * 引导降级锚点模式(兜底)。写回仍走 DocVersionWriter 单点。
    */
   private async sectionEdit(docId: string, targetSection: string, args: Record<string, unknown>): Promise<ToolResult> {
-    const action = args.section_action === 'append' ? 'append' : args.section_action === 'prepend' ? 'prepend' : 'replace'
+    const action = args.section_action === 'append' ? 'append'
+      : args.section_action === 'prepend' ? 'prepend'
+      : args.section_action === 'delete' ? 'delete'
+      : 'replace'
     const content = typeof args.content === 'string' ? args.content : ''
     try {
       const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
@@ -171,7 +174,7 @@ export class EditDocumentTool extends BaseTool {
       if (applied.body === body) {
         return { success: false, error: '节内容与提供内容相同,没有任何变化' }
       }
-      const summary = String(args.summary || `${action} section ${targetSection}`)
+      const summary = String(args.summary || `${action === 'delete' ? '删除' : action} section ${targetSection}`)
       // #789: 写回走 DocVersionWriter 单点(快照同帧带旧 deck + 事务 + 投影同帧)。
       const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: applied.body, snapshotLabel: 'AI edit' })
       if (written.error) return { success: false, error: written.error }
@@ -182,7 +185,7 @@ export class EditDocumentTool extends BaseTool {
       // #989 Phase 3: 输出携带块投影 — tool-loop 转 doc_updated.projection 推前端。
       return {
         success: true,
-        output: JSON.stringify({ body: written.body, summary, location: `已${action === 'replace' ? '重写' : action === 'append' ? '追加' : '插入'}:「${applied.location}」`, projection: written.projection }),
+        output: JSON.stringify({ body: written.body, summary, location: `已${action === 'replace' ? '重写' : action === 'append' ? '追加' : action === 'prepend' ? '插入' : '删除'}:「${applied.location}」`, projection: written.projection }),
       }
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }

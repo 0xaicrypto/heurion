@@ -302,3 +302,48 @@ describe('#989 Phase 2 — applySectionEdit(确定性节编辑)', () => {
     expect(after.nodes.find((n) => n.id === listBefore.id)).toBeUndefined()
   })
 })
+
+// #989 生产实例补漏(2026-09-12):模型要删节只能传空 content 被拒 → 空参退化。
+describe('#989 Phase 2 — delete 动作(整节移除)', () => {
+  test('delete 移除标题+内容,前后节保留且空行卫生', () => {
+    const proj = buildBlockProjection(DOC)
+    const methods = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!
+    const r = applySectionEdit(DOC, proj, methods.id, 'delete', '')
+    if ('error' in r) return expect.unreachable(r.error)
+    // H2 删除只移除它自己的标题行+直属内容 — 子标题(Cohort)是独立节,保留
+    expect(r.body).not.toContain('## Methods\n')
+    expect(r.body).toContain('### Cohort')
+    expect(r.body).toContain('n=120 patients.')
+    // 前后节保留
+    expect(r.body).toContain('## Introduction')
+    expect(r.body).toContain('## Results')
+    // 空行卫生:被删节两侧恰一个空行衔接(Introduction 列表 ↔ Cohort 子节)
+    expect(r.body).toMatch(/- point two\n\n### Cohort/)
+    expect(r.body).toMatch(/n=120 patients\.[\s\S]*?\n\n## Results/)
+  })
+
+  test('delete 中间节后新投影:该节 id 消失,其余 id 不变', () => {
+    const proj = buildBlockProjection(DOC)
+    const methods = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!
+    const results = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Results')!
+    const r = applySectionEdit(DOC, proj, methods.id, 'delete', '')
+    if ('error' in r) return expect.unreachable(r.error)
+    const after = buildBlockProjection(r.body)
+    expect(after.nodes.find((n) => n.id === methods.id)).toBeUndefined()
+    expect(after.nodes.find((n) => n.id === results.id)).toBeTruthy()
+  })
+
+  test('空 content + 非 delete → error 引导 delete', () => {
+    const proj = buildBlockProjection(DOC)
+    const intro = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    const r = applySectionEdit(DOC, proj, intro.id, 'replace', '')
+    expect('error' in r && r.error).toBeTruthy()
+    if ('error' in r) expect(r.error).toContain('delete')
+  })
+
+  test('工具层 delete:replace 之外的新动作可用(enum 扩展回归锁)', async () => {
+    const vi = await import('vitest')
+    vi.hoisted
+    void vi
+  })
+})

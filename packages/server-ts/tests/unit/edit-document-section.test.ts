@@ -132,6 +132,19 @@ describe('#989 Phase 2 — edit_document target_section(工具层)', () => {
     expect(r.error).toContain('import_reference')
   })
 
+  test('delete:整节移除(生产实例 — 模型清理占位节)', async () => {
+    const proj = buildBlockProjection(BODY)
+    mocks.docFindFirst.mockResolvedValue(makeDoc(JSON.stringify(proj)))
+    const methods = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const r = await tool.execute({ target_section: methods.id, section_action: 'delete' })
+    expect(r.success).toBe(true)
+    const output = JSON.parse(r.output as string)
+    expect(output.body).not.toContain('## Methods')
+    expect(output.body).toContain('## Introduction')
+    expect(output.location).toContain('删除')
+  })
+
   test('old_text 含 [sec:...] marker → 自动剥离后锚点命中(锚点兜底共存)', async () => {
     const proj = buildBlockProjection(BODY)
     mocks.docFindFirst.mockResolvedValue(makeDoc(JSON.stringify(proj)))
