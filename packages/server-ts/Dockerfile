@@ -37,17 +37,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir -p /data/db /data/twins /data/reactome-diagrams \
     && chown -R nexus:nexus /data
 
-USER nexus
-
-COPY --from=builder /build/packages/server-ts/dist ./dist
-COPY --from=builder /build/packages/server-ts/node_modules ./node_modules
 # #989 部署事故根因:#937 non-root 后 node_modules 仍为 root 属主 → 容器内
 # prisma CLI(engines 目录)对 nexus 用户拒绝写入 → 启动 syncSchema 的
-# db push 静默失败,新列永远落不下去。chown 交还属主。
-RUN chown -R nexus:nexus /app/node_modules
+# db push 静默失败,新列永远落不下去。chown 在 USER 切换前(root)执行。
+COPY --from=builder /build/packages/server-ts/dist ./dist
+COPY --from=builder /build/packages/server-ts/node_modules ./node_modules
 COPY --from=builder /build/packages/server-ts/package.json ./
 COPY --from=builder /build/packages/server-ts/prisma ./prisma
 COPY --from=builder /build/packages/server-ts/data ./data
+RUN chown -R nexus:nexus /app/node_modules /app/prisma /app/data
+
+USER nexus
 
 EXPOSE 8001
 # #280: the SQLite DB lives on its own volume at /data/db — ensure the
