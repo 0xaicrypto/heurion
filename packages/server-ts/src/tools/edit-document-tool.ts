@@ -137,7 +137,13 @@ export class EditDocumentTool extends BaseTool {
     }
 
     if (!fullText.trim()) {
-      return { success: false, error: 'Provide import_reference (empty document), old_text+new_text (range edit), or full_text (full rewrite).' }
+      // #978/#989: 空参形态 — 模型侧自认已构造参数,实际到达为空(传输丢参
+      // 或模型空发)。复读用法无恢复价值,给可执行的纠偏:指认空参事实 +
+      // 最简重试配方 + 明令禁止空参重发(doom-loop 家族的燃料)。
+      return {
+        success: false,
+        error: '本次调用没有任何参数（参数在传输中丢失或未生成 — 若你确信已构造，请换一种构造方式重试）。最简重试配方二选一：① old_text（从 ## Current Document 逐字复制）+ new_text；② target_section + section_action + content（节 ID 见 [sec:...] 标注）。严禁重发空参数 {}。',
+      }
     }
     return this.fullReplace(docId, fullText, String(args.summary || 'document updated'))
   }

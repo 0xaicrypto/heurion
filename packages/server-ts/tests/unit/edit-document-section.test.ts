@@ -161,6 +161,17 @@ describe('#989 Phase 2 — edit_document target_section(工具层)', () => {
     expect(output.body).not.toContain('intro body text.')
   })
 
+  test('空参 edit_document({}) → 纠偏指引(指认空参 + 重试配方 + 禁止空参重发,#978 家族)', async () => {
+    mocks.docFindFirst.mockResolvedValue(makeDoc())
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const r = await tool.execute({})
+    expect(r.success).toBe(false)
+    expect(r.error).toContain('没有任何参数')
+    expect(r.error).toContain('old_text')
+    expect(r.error).toContain('target_section')
+    expect(r.error).toContain('严禁重发空参数')
+  })
+
   test('old_text 含 [sec:...] marker → 自动剥离后锚点命中(锚点兜底共存)', async () => {
     const proj = buildBlockProjection(BODY)
     mocks.docFindFirst.mockResolvedValue(makeDoc(JSON.stringify(proj)))
