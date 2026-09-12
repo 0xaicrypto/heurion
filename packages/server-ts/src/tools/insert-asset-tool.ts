@@ -10,6 +10,7 @@ import { writeDocVersion } from './doc-version-writer.js'
 import { executeInsertPlot } from './insert-asset-plot.js'
 import { executeInsertExport } from './insert-asset-export.js'
 import type { ToolExecutionPlane } from './tool-registry.js'
+import { parseDocSessionId } from './tool-registry.js'
 
 export { buildMarkdownTable, buildDocumentContent, buildPresentationContent, digestBody } from '../lib/asset-content.js'
 
@@ -122,11 +123,13 @@ export class InsertAssetTool extends BaseTool {
   }
 
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
-    const sessionId = this.ctx.sessionId || ''
-    if (!sessionId.startsWith('doc-')) {
+    // #905 同款(review 复核补漏):裸 slice(4) 改走 parseDocSessionId 格式
+    // 校验 — 与 edit-document-tool 同口径,任意 `doc-<x>` 会话不再拼出无效
+    // docId 去查库。
+    const docId = parseDocSessionId(this.ctx.sessionId)
+    if (!docId) {
       return { success: false, error: 'insert_asset is only available in a document writing session' }
     }
-    const docId = sessionId.slice(4)
     const assetType = String(args.asset_type || 'table')
 
     try {

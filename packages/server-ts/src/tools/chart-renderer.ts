@@ -52,10 +52,13 @@ export interface SchematicElement {
 // #981: ChartInput 运行时校验（taskPlanSchema 同款 zod safeParse 模式）—
 // 数值字段强制 number(拒绝字符串内插进 SVG 属性),文本字段强制 string。
 // renderSvgChart 入口 safeParse,非法抛错由调用方降级/报错,不拼进 SVG。
+// review 复核#7: 数值字段 z.coerce.number() — LLM 工具调用把数值输出成
+// 字符串("5")不算罕见,coerce 容忍数字字符串(z.coerce 先 Number() 转换,
+// 非数值字符串/NaN/Infinity 仍被 finite 拒绝,注入防护不变)。
 export const chartInputSchema = z.object({
   type: z.enum(['line', 'bar', 'dose_curve', 'schematic']),
-  data: z.array(z.object({ label: z.string(), value: z.number().finite() })).optional(),
-  errors: z.array(z.object({ label: z.string(), error: z.number().finite() })).optional(),
+  data: z.array(z.object({ label: z.string(), value: z.coerce.number().finite() })).optional(),
+  errors: z.array(z.object({ label: z.string(), error: z.coerce.number().finite() })).optional(),
   sig: z.object({
     pair: z.tuple([z.string(), z.string()]),
     stars: z.string(),
@@ -68,20 +71,20 @@ export const chartInputSchema = z.object({
   template: z.enum(['beam_scan']).optional(),
   elements: z.array(z.object({
     kind: z.enum(['rect', 'circle', 'line', 'arrow', 'text', 'beam']),
-    x: z.number().finite(),
-    y: z.number().finite(),
-    w: z.number().finite().optional(),
-    h: z.number().finite().optional(),
-    r: z.number().finite().optional(),
-    x2: z.number().finite().optional(),
-    y2: z.number().finite().optional(),
+    x: z.coerce.number().finite(),
+    y: z.coerce.number().finite(),
+    w: z.coerce.number().finite().optional(),
+    h: z.coerce.number().finite().optional(),
+    r: z.coerce.number().finite().optional(),
+    x2: z.coerce.number().finite().optional(),
+    y2: z.coerce.number().finite().optional(),
     text: z.string().optional(),
     color: z.string().optional(),
     fill: z.string().optional(),
     dashed: z.boolean().optional(),
-    width: z.number().finite().optional(),
-    angle: z.number().finite().optional(),
-    exitWidth: z.number().finite().optional(),
+    width: z.coerce.number().finite().optional(),
+    angle: z.coerce.number().finite().optional(),
+    exitWidth: z.coerce.number().finite().optional(),
   })).optional(),
 })
 
@@ -208,7 +211,9 @@ function renderElements(elements: SchematicElement[]): string {
 <polygon points="${x2},${y2} ${(x2 - a * Math.cos(angle - 0.4)).toFixed(1)},${(y2 - a * Math.sin(angle - 0.4)).toFixed(1)} ${(x2 - a * Math.cos(angle + 0.4)).toFixed(1)},${(y2 - a * Math.sin(angle + 0.4)).toFixed(1)}" fill="${color}"/>`
       }
       case 'text':
-        return `<text x="${x}" y="${y}" fill="${color}" font-size="${safeNum(e.w || 11)}" text-anchor="middle">${esc(e.text || '')}</text>`
+        // review 复核#3: `??` 替代 `||` — e.w 显式传 0 不再被 falsy-zero 误判
+        // 成"没传"(与同文件其它可选坐标字段一致)。
+        return `<text x="${x}" y="${y}" fill="${color}" font-size="${safeNum(e.w ?? 11)}" text-anchor="middle">${esc(e.text || '')}</text>`
       case 'beam': {
         // Beam channel: trapezoid from (x,y) angled, width → exitWidth.
         const rad = ((safeNum(e.angle ?? 0)) * Math.PI) / 180

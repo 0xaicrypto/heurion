@@ -280,12 +280,20 @@ export function WritingEditorPage() {
   const saveDoc = useCallback(async (title: string, body: string, opts: { deck?: unknown; force?: boolean } = {}) => {
     const base = serverBodyRef.current;
     const base_sha = !opts.force && base !== null ? await sha1Hex(base) : undefined;
-    return api.updateDoc(docId!, {
+    const updated = await api.updateDoc(docId!, {
       title, body,
       ...(opts.deck !== undefined ? { deck: opts.deck } : {}),
       ...(base_sha ? { base_sha } : {}),
       ...(opts.force ? { force: true } : {}),
     });
+    // review 复核#8a: 手动保存后同步服务端最新块投影 — 此前 doc.block_projection
+    // 停留在文档加载时的值,「AI 正在编辑哪个节」的批次基线(line 409 fallback)
+    // 在"保存后才发起 AI 轮次"的顺序下取到过期投影,指示器可能标错节。
+    // 仅在服务端返回有效投影时覆盖(存量文档首次保存前为 null,不冲掉本地值)。
+    if (updated.block_projection) {
+      setDoc((prev) => (prev ? { ...prev, block_projection: updated.block_projection! } : prev));
+    }
+    return updated;
   }, [docId]);
 
   // #896: doc-chat 发送前预保存 — 复用 saveDoc 完整语义(带 base_sha 并发

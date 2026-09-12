@@ -149,15 +149,22 @@ export async function documentsRouter(app: FastifyInstance) {
 
     // #980: 写回走 DocVersionWriter 单点 — 与 edit_document 等工具路径同
     // 管道(#904 乐观锁条件更新:两客户端并发 PUT 时后写者被拒绝而非静默
-    // 覆盖前写者,同帧快照可回滚)。此前裸 prisma.doc.update 绕过单点,
-    // 无快照无并发保护。title 合并在单点之外单独更新(单点只管 body/deck
-    // 不变量)。
-    if (bodyChanged || deckChanged) {
+    // 覆盖前写者,同帧快照可回滚)。
+    // review 复核#1: title 并入单点原子写入 — 此前 title 在单点之外单独
+    // update 且无 try/catch,body 落库后 title 更新失败会静默留在旧值
+    // (原子性恰好在 title 字段上开了口子)。title-only 变化走 writer 的
+    // 不变更路径:不刷 updatedAt、不产生快照(保持原 PUT 语义)。
+    // review 复核#5: baseBody 用本次 handler 读到的 existing.body — 把
+    // 「路由读 → writer 读」窗口并入乐观锁保护(base_sha 校验之后的窗口)。
+    const titleChanged = title !== undefined && title !== existing.title
+    if (bodyChanged || deckChanged || titleChanged) {
       const written = await writeDocVersion({
         userId: request.user!.userId,
         docId,
         ...(bodyChanged ? { body } : {}),
         ...(deckChanged ? { deck: deck as Record<string, unknown> | null } : {}),
+        ...(titleChanged ? { title } : {}),
+        baseBody: String(existing.body),
         snapshotLabel: '保存版本',
       })
       if (written.error) {
@@ -174,11 +181,7 @@ export async function documentsRouter(app: FastifyInstance) {
       }
     }
 
-    // title 与正文/deck 解耦:单独变化时仅更新 title,不刷 updatedAt
-    // (unchanged 提示与列表排序不受纯标题保存影响,保持原 PUT 语义)。
-    if (title !== undefined && title !== existing.title) {
-      await prisma.doc.update({ where: { id: docId }, data: { title } })
-    }
+    // review 复核#8a: title 已并入单点(同帧/同乐观锁),不再事务外单独更新。
 
     const doc = await prisma.doc.findFirst({ where: { id: docId } })
 
@@ -198,6 +201,9 @@ export async function documentsRouter(app: FastifyInstance) {
 
     return {
       id: doc!.id, title: doc!.title, body: doc!.body, deck: parseDeck(doc!.deck),
+      // review 复核#8a: 保存响应携带块投影 — 前端据此同步本地投影,
+      // 「AI 正在编辑哪个节」的批次基线在手动保存后不再过期。
+      block_projection: parseBlockProjection(doc!.blockProjection),
       created_at: doc!.createdAt, updated_at: doc!.updatedAt,
       // #598: 前端保存按钮据此提示'内容未变化'.
       unchanged: !bodyChanged && !deckChanged,
@@ -337,8 +343,13 @@ export async function documentsRouter(app: FastifyInstance) {
     const projection = loadProjection(docText, doc.blockProjection)
     const sectionNodes = projection.nodes.filter((n) => n.kind === 'section')
     const sectionOf = (pos: number): { id: string; heading: string } | null => {
-      const hit = sectionNodes.find((n) => pos >= n.start && pos < n.end)
-      return hit ? { id: hit.id, heading: hit.heading || '' } : null
+      // review 复核#6: 投影节 span 大纲语义(父节嵌套包含子节)— 定位取
+      // 包含位置的最内层节(最深 level),子节内容归子节而非父节。
+      let best: (typeof sectionNodes)[number] | null = null
+      for (const n of sectionNodes) {
+        if (pos >= n.start && pos < n.end && (best === null || (n.level ?? 0) > (best.level ?? 0))) best = n
+      }
+      return best ? { id: best.id, heading: best.heading || '' } : null
     }
     const findings: Array<{ kind: string; text: string; start: number; end: number; suggestion: string; section?: { id: string; heading: string } }> = []
     for (const { regex, kind } of [

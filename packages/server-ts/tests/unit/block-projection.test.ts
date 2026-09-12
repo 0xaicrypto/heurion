@@ -95,6 +95,17 @@ describe('#989 投影构建 — 节/块分类与 span 走查', () => {
     expect(leadBlock.parent_id).toBeNull()
   })
 
+  test('节 span 大纲语义:父节 span 含嵌套子节(review 复核#6)', () => {
+    const proj = buildBlockProjection(DOC)
+    const methods = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!
+    const raw = DOC.slice(methods.start, methods.end)
+    // Methods 的 span 覆盖整个子树(标题 + 直属内容 + Cohort 子节)
+    expect(raw).toContain('## Methods')
+    expect(raw).toContain('### Cohort')
+    expect(raw).toContain('n=120 patients.')
+    expect(raw).not.toContain('## Results')
+  })
+
   test('确定性:同输入同输出', () => {
     expect(buildBlockProjection(DOC)).toEqual(proj)
   })
@@ -304,22 +315,47 @@ describe('#989 Phase 2 — applySectionEdit(确定性节编辑)', () => {
 })
 
 // #989 生产实例补漏(2026-09-12):模型要删节只能传空 content 被拒 → 空参退化。
+// review 复核#6: 节 span 大纲语义 — delete/replace 携带嵌套子节(直觉预期)。
 describe('#989 Phase 2 — delete 动作(整节移除)', () => {
-  test('delete 移除标题+内容,前后节保留且空行卫生', () => {
+  test('delete 移除标题+内容+嵌套子节,前后节保留且空行卫生', () => {
     const proj = buildBlockProjection(DOC)
     const methods = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!
     const r = applySectionEdit(DOC, proj, methods.id, 'delete', '')
     if ('error' in r) return expect.unreachable(r.error)
-    // H2 删除只移除它自己的标题行+直属内容 — 子标题(Cohort)是独立节,保留
-    expect(r.body).not.toContain('## Methods\n')
-    expect(r.body).toContain('### Cohort')
-    expect(r.body).toContain('n=120 patients.')
+    // 整个子树被移除:标题、直属内容、Cohort 子节
+    expect(r.body).not.toContain('## Methods')
+    expect(r.body).not.toContain('### Cohort')
+    expect(r.body).not.toContain('n=120 patients.')
     // 前后节保留
     expect(r.body).toContain('## Introduction')
     expect(r.body).toContain('## Results')
-    // 空行卫生:被删节两侧恰一个空行衔接(Introduction 列表 ↔ Cohort 子节)
-    expect(r.body).toMatch(/- point two\n\n### Cohort/)
-    expect(r.body).toMatch(/n=120 patients\.[\s\S]*?\n\n## Results/)
+    // 空行卫生:被删子树两侧恰一个空行衔接(Introduction 列表 ↔ Results)
+    expect(r.body).toMatch(/- point two\n\n## Results/)
+  })
+
+  test('replace 携带嵌套子节:重写父节带走子节(review 复核#6)', () => {
+    const proj = buildBlockProjection(DOC)
+    const methods = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!
+    const r = applySectionEdit(DOC, proj, methods.id, 'replace', 'Fully rewritten methods.')
+    if ('error' in r) return expect.unreachable(r.error)
+    expect(r.body).toContain('Fully rewritten methods.')
+    expect(r.body).not.toContain('### Cohort')
+    expect(r.body).not.toContain('n=120 patients.')
+    expect(r.body).toContain('## Introduction')
+    expect(r.body).toContain('## Results')
+    // 新投影可重建,Methods id 稳定
+    const after = buildBlockProjection(r.body)
+    expect(after.nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!.id).toBe(methods.id)
+  })
+
+  test('子节自身仍可独立编辑(span 嵌套包含不互斥)', () => {
+    const proj = buildBlockProjection(DOC)
+    const cohort = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Cohort')!
+    const r = applySectionEdit(DOC, proj, cohort.id, 'replace', 'n=200 patients.')
+    if ('error' in r) return expect.unreachable(r.error)
+    expect(r.body).toContain('n=200 patients.')
+    expect(r.body).toContain('## Methods')
+    expect(r.body).toContain('## Results')
   })
 
   test('delete 中间节后新投影:该节 id 消失,其余 id 不变', () => {
@@ -331,6 +367,14 @@ describe('#989 Phase 2 — delete 动作(整节移除)', () => {
     const after = buildBlockProjection(r.body)
     expect(after.nodes.find((n) => n.id === methods.id)).toBeUndefined()
     expect(after.nodes.find((n) => n.id === results.id)).toBeTruthy()
+  })
+
+  test('action 值非法 → error(review 复核#2,防御性校验)', () => {
+    const proj = buildBlockProjection(DOC)
+    const intro = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    const r = applySectionEdit(DOC, proj, intro.id, 'rewrite' as never, 'x')
+    expect('error' in r && r.error).toBeTruthy()
+    if ('error' in r) expect(r.error).toContain('replace / append / prepend / delete')
   })
 
   test('空 content + 非 delete → error 引导 delete', () => {

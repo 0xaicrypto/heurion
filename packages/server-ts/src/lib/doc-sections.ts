@@ -22,7 +22,8 @@ export interface DocSections {
   sections: DocSection[]
 }
 
-const HEADING_RE = /^(#{1,3})\s+(.+)$/
+/** H1-H3 标题行(单一来源 — block-projection 等模块直接 import,不再复制)。 */
+export const HEADING_RE = /^(#{1,3})\s+(.+)$/
 /**
  * 段落引用解析(#833: 支持中文数字 + 「章」)。
  *  - 阿拉伯数字:「第 3 段」「第 2/5 节」(i/N 为模型进度播报写法)

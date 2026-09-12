@@ -11,10 +11,24 @@ import { renderSvgChart } from '../../src/tools/chart-renderer.js'
 const PAYLOADS = ['<img src=x onerror=a>', '" onload="a', '<script>a</script>', '</text><rect x=1>']
 
 describe('#981 renderSvgChart 运行时校验(非法形状拒绝)', () => {
-  test('data.value 为字符串 → 抛错拒绝(数值语义,不内插)', () => {
-    expect(() => renderSvgChart({
+  test('data.value 为数字字符串 → coerce 容忍(review 复核#7:LLM 数值字符串形态)', () => {
+    const svg = renderSvgChart({
       type: 'bar',
       data: [{ label: 'x', value: '5' as unknown as number }],
+    })
+    expect(svg).toContain('<svg')
+    // 柱顶数值标签 = 数字
+    expect(svg).toMatch(/>5</)
+  })
+
+  test('data.value 为非数值/注入字符串 → 仍拒绝(coerce 后 NaN,注入防护不变)', () => {
+    expect(() => renderSvgChart({
+      type: 'bar',
+      data: [{ label: 'x', value: '" onload="a' as unknown as number }],
+    })).toThrow(/invalid chart input/)
+    expect(() => renderSvgChart({
+      type: 'bar',
+      data: [{ label: 'x', value: '<img src=x onerror=a>' as unknown as number }],
     })).toThrow(/invalid chart input/)
   })
 
@@ -84,6 +98,14 @@ describe('#981 文本内插全部转义(模型可控输入不逃逸 SVG)', () =>
       elements: [{ kind: 'rect', x: 1, y: 1, color: '#ff0000' }],
     })
     expect(withHex).toContain('#ff0000')
+  })
+
+  test('text 元素 w 显式 0 → 保留(不再 falsy-zero 替换为 11,review 复核#3)', () => {
+    const svg = renderSvgChart({
+      type: 'schematic',
+      elements: [{ kind: 'text', x: 10, y: 10, w: 0, text: 'tiny' }],
+    })
+    expect(svg).toContain('font-size="0"')
   })
 
   test('合法输入仍正常渲染(smoke):bar/dose_curve/schematic', () => {

@@ -16,7 +16,6 @@ import { taskPlanSchema, type TaskPlan, type TaskPlanStep, type TaskPlanStepStat
 import { makeLogger } from './logger.js'
 
 const log = makeLogger('chat.plan-store')
-void log
 
 const STEP_MARK: Record<TaskPlanStepStatus, string> = { done: 'x', pending: ' ', failed: '!', skipped: '-' }
 
@@ -186,6 +185,20 @@ export async function cancelPlan(userId: string, sessionId: string): Promise<voi
 }
 
 /**
+ * step_index 精确匹配失败的警示(review 复核#4)— 此前不匹配直接静默
+ * return null:写回其实成功,账本却永远卡在"未完成"且无任何痕迹,恰是
+ * "账本纪律"机制最不该发生的失真形态。至少落一条 warn 留痕。
+ */
+function warnStepIndexMiss(plan: TaskPlan, toolName: string, stepIndex: number | undefined): void {
+  if (typeof stepIndex !== 'number') return
+  const byIndex = plan.steps.find((s) => s.index === stepIndex)
+  const detail = byIndex
+    ? `该序号存在但条件不匹配(tool=${byIndex.tool || '无'}, status=${byIndex.status})`
+    : '该序号不在活跃清单中'
+  log.warn(`[plan] 写回结果未能入账本: tool=${toolName} step_index=${stepIndex} — ${detail}(FIFO 兜底已按 #982 关闭,不猜测归属)`)
+}
+
+/**
  * 闸门 3 — 写回步骤系统自动推进：tool-loop 在写回工具执行成功后调用。
  * #982: 模型可携带 step_index(工具参数)精确指定本次写回对应的目标步骤 —
  * 按序号匹配(仍校验 status=pending && tool 匹配);乱序/跳步编辑不再把
@@ -193,6 +206,7 @@ export async function cancelPlan(userId: string, sessionId: string): Promise<voi
  * 「已验证」可信度展示错误勾选态,比模型编造更具误导性)。
  * 无 step_index 时保持 FIFO 兜底(兼容旧调用与未建清单场景)。
  * 返回更新后的 plan（无活跃清单/无命中步骤 → null，调用方不发 SSE）。
+ * review 复核#4: step_index 提供但精确匹配失败 → warn 留痕(不再静默)。
  */
 export async function autoAdvanceWriteStep(userId: string, sessionId: string, toolName: string, stepIndex?: number): Promise<TaskPlan | null> {
   const active = await loadActivePlan(userId, sessionId)
@@ -200,7 +214,10 @@ export async function autoAdvanceWriteStep(userId: string, sessionId: string, to
   const target = typeof stepIndex === 'number'
     ? active.steps.find((s) => s.index === stepIndex && s.status === 'pending' && s.tool === toolName)
     : active.steps.find((s) => s.status === 'pending' && s.tool === toolName)
-  if (!target) return null
+  if (!target) {
+    warnStepIndexMiss(active, toolName, stepIndex)
+    return null
+  }
   return updateSteps(userId, sessionId, (steps) => {
     const step = steps.find((s) => s.index === target.index)
     if (!step || step.status !== 'pending') return null
@@ -217,7 +234,10 @@ export async function markWriteStepFailed(userId: string, sessionId: string, too
   const target = typeof stepIndex === 'number'
     ? active.steps.find((s) => s.index === stepIndex && s.status === 'pending' && s.tool === toolName)
     : active.steps.find((s) => s.status === 'pending' && s.tool === toolName)
-  if (!target) return null
+  if (!target) {
+    warnStepIndexMiss(active, toolName, stepIndex)
+    return null
+  }
   return updateSteps(userId, sessionId, (steps) => {
     const step = steps.find((s) => s.index === target.index)
     if (!step || step.status !== 'pending') return null

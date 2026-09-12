@@ -19,9 +19,14 @@ import type { BlockProjection } from '@heurion/contracts'
  *   - #989 Phase 1: 同帧维护块投影 — body 变则投影同帧重算并落库
  *     （blockProjection 列），任意写回路径的投影与 body 强一致；存量文档
  *     首次写回（含 unchanged 保存）自动建/修投影。
+ *   - review 复核#1: title 可随写回原子落库（同一事务同一乐观锁条件更新）—
+ *     title-only 变化走不变更路径（不刷 updatedAt、不建快照）。
+ *   - review 复核#5: baseBody — 调用方计算新内容所基于的旧正文快照,与
+ *     writer 读到的当前 body 比对,把「调用方读 → writer 读」窗口并入
+ *     乐观锁保护（此前该窗口不受保护,写入会静默基于过期快照覆盖并发修改）。
  *
- * 用户手动保存路径（documents.router PUT /docs/:docId）已自含同帧语义
- * 且需合并 title 等字段，不经此函数（#980 起改走本函数单点）。
+ * 用户手动保存路径（documents.router PUT /docs/:docId）#980 起改走本函数
+ * 单点（title/baseBody 一并传入）。
  */
 
 export interface DocVersionWrite {
@@ -31,6 +36,19 @@ export interface DocVersionWrite {
   body?: string
   /** 新 deck（对象）— 省略保持现值；null 清空。 */
   deck?: Record<string, unknown> | null
+  /**
+   * 新标题 — 省略保持现值。title 与 body/deck 进同一事务/同一乐观锁
+   * 条件更新（review 复核#1：此前调用方在单点之外单独 update title 且无
+   * try/catch，body 落库后 title 更新失败会静默留在旧值 — 原子性缺口）。
+   */
+  title?: string
+  /**
+   * 调用方计算新 body 时所基于的旧正文快照（review 复核#5）。提供时与本函数
+   * 读到的当前 body 比对，不一致 = 「调用方读 → writer 读」窗口内文档已被
+   * 并发修改，直接按冲突拒绝（0 行命中同语义）。此后乐观锁继续覆盖
+   * 「writer 读 → 落库」窗口 — 两段窗口合并后读-算-写全程受保护。
+   */
+  baseBody?: string
   snapshotLabel: string
 }
 
@@ -62,10 +80,22 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
 
   const prevBody = String(existing.body || '')
   const prevDeckRaw = existing.deck ?? null
+  // review 复核#5: 调用方基于 baseBody 计算新内容 — writer 读到的 body 若
+  // 已不是 baseBody,说明「调用方读 → 此处」窗口内发生了并发修改,本次写入
+  // 基于过期快照,拒绝而非静默覆盖中间变更。
+  if (input.baseBody !== undefined && input.baseBody !== prevBody) {
+    return {
+      body: '', deck: null, changed: false,
+      conflict: true,
+      projection: null,
+      error: '文档已被并发修改，本次写回基于过期内容被拒绝，请重新读取文档后重试',
+    }
+  }
   const nextBody = input.body ?? prevBody
   const nextDeckRaw = input.deck === undefined ? prevDeckRaw : JSON.stringify(input.deck)
   const bodyChanged = nextBody !== prevBody
   const deckChanged = nextDeckRaw !== prevDeckRaw
+  const titleChanged = input.title !== undefined && input.title !== existing.title
 
   // #989 Phase 1: 投影与 body 同帧 — nextBody 的块投影在此单点重算（确定性
   // 纯函数），与 updateMany 包同一事务，中断不会留下「body 新投影旧」错位。
@@ -80,6 +110,22 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
         where: { id: input.docId, userId: input.userId, body: prevBody, deck: prevDeckRaw },
         data: { blockProjection: projectionJson },
       }).catch(() => undefined)
+    }
+    // title-only 变化（body/deck 未动）— 条件更新 title,不刷 updatedAt、
+    // 不产生快照（原 PUT 语义:title-only 保存不触发版本与列表跳动）。
+    if (titleChanged) {
+      const res = await prisma.doc.updateMany({
+        where: { id: input.docId, userId: input.userId, body: prevBody, deck: prevDeckRaw },
+        data: { title: input.title },
+      }).catch(() => undefined)
+      if (!res || res.count === 0) {
+        return {
+          body: '', deck: null, changed: false,
+          conflict: true,
+          projection: null,
+          error: '文档已被并发修改，title 未写入，请重新读取文档后重试',
+        }
+      }
     }
     return { body: prevBody, deck: parseDeckJson(prevDeckRaw), changed: false, projection }
   }
@@ -99,7 +145,11 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
         deck: prevDeckRaw,
       },
       // #989 Phase 1: 投影与 body 同帧落库 — 任意写回路径的投影强一致。
-      data: { body: nextBody, deck: nextDeckRaw, updatedAt: now, blockProjection: projectionJson },
+      // title 同帧原子写入(review 复核#1):不再有事务外的补充 title 更新。
+      data: {
+        body: nextBody, deck: nextDeckRaw, updatedAt: now, blockProjection: projectionJson,
+        ...(titleChanged ? { title: input.title } : {}),
+      },
     })
     if (res.count === 0) { stale = true; return }
     // 同帧快照旧 body+旧 deck — 恢复时一致回滚（#773 方案 A，此前仅

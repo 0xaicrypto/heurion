@@ -134,9 +134,10 @@ describe('#980 PUT /docs/:docId 走写回单点', () => {
       makeReply(),
     )
 
-    // 写回单点参数:body + 快照 label(与工具路径同管道),deck 未传不触碰
+    // 写回单点参数:body + 快照 label(与工具路径同管道),deck 未传不触碰;
+    // baseBody 用 handler 读到的正文(读→写窗口并入乐观锁,review 复核#5)
     expect(mocks.writeDocVersion).toHaveBeenCalledWith({
-      userId: USER, docId: DOC, body: 'B', snapshotLabel: '保存版本',
+      userId: USER, docId: DOC, body: 'B', baseBody: 'A', snapshotLabel: '保存版本',
     })
     // 不再直接落库正文
     expect(mocks.docUpdate).not.toHaveBeenCalled()
@@ -186,21 +187,24 @@ describe('#980 PUT /docs/:docId 走写回单点', () => {
     }))
   })
 
-  test('仅 title 变化 → 不走写回单点、不刷 updatedAt、unchanged=true', async () => {
+  test('仅 title 变化 → 写回单点不变更路径(title 原子写入,不刷 updatedAt,unchanged=true)', async () => {
     const { routes, app } = makeHarness()
     await documentsRouter(app as never)
     const put = routes.get('PUT /api/v1/docs/:docId')
     setupFind(EXISTING, EXISTING)
+    mocks.writeDocVersion.mockResolvedValue({ body: 'A', deck: null, changed: false })
 
     const res = await put(
       { params: { docId: DOC }, body: { title: 'New' }, user: { userId: USER } },
       makeReply(),
     )
 
-    expect(mocks.writeDocVersion).not.toHaveBeenCalled()
-    expect(mocks.docUpdate).toHaveBeenCalledWith(
-      { where: { id: DOC }, data: { title: 'New' } },
-    )
+    // review 复核#1: title 并入写回单点(同帧/同乐观锁,事务外补写移除) —
+    // title-only 走 writer 不变更路径(不刷 updatedAt、不建快照)
+    expect(mocks.writeDocVersion).toHaveBeenCalledWith({
+      userId: USER, docId: DOC, title: 'New', baseBody: 'A', snapshotLabel: '保存版本',
+    })
+    expect(mocks.docUpdate).not.toHaveBeenCalled()
     expect(res.unchanged).toBe(true)
   })
 })

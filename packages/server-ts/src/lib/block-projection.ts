@@ -16,9 +16,17 @@
  *
  * 已知边界：同名标题/相同内容块按出现序号消歧，前置同名内容被删除时
  * 序号会漂移（ID 变化）— 读侧/兜底路径按 ID 失效处理（Phase 2 覆盖）。
+ *
+ * review 复核#6: section span 采用大纲语义 — end 停在下一个同级或更高级
+ * 标题(而不是任意标题行),嵌套子节包含在父节 span 内。delete/replace 一个
+ * 标题会带上它嵌套的子节(直觉预期),子节自身仍是独立节点(span 嵌套包含,
+ * 定位/编辑子节不受影响)。块节点仍按相邻标题行区域分组,不随父节扩展。
  */
 import { createHash } from 'crypto'
 import type { BlockProjection, BlockProjectionNode, BlockType } from '@heurion/contracts'
+// review 复核#8c: HEADING_RE 单一来源 — 直接 import doc-sections 的导出,
+// 不再复制正则(此前「两份正则表分叉」问题在新模块复发的风险点)。
+import { HEADING_RE } from './doc-sections.js'
 
 /** sha1 前 12 位 — 投影内哈希统一口径。 */
 export function hash12(s: string): string {
@@ -37,8 +45,7 @@ function normalizeForId(s: string): string {
     .toLowerCase()
 }
 
-/** H1-H3 标题行（与 doc-sections HEADING_RE 同口径 — 不识别 #### 及更深）。 */
-const HEADING_RE = /^(#{1,3})\s+(.+)$/
+/** H1-H3 标题行 — 与 doc-sections HEADING_RE 同口径(直接 import 单一来源)。 */
 const FENCE_RE = /^\s*(```|~~~)/
 const TABLE_LINE_RE = /^\s*\|/
 const IMAGE_LINE_RE = /^\s*!\[[^\]]*\]\([^)]+\)\s*$/
@@ -73,10 +80,16 @@ export function buildBlockProjection(body: string): BlockProjection {
   }
 
   // ── 先建 section 节点(id/hash/span) ──
+  // review 复核#6: span 大纲语义 — end = 下一个 level<=自身 的标题行(或
+  // 文末),嵌套子节包含在父节 span 内。子节节点照常独立建立(span 相互
+  // 嵌套包含;块分组按相邻标题行区域进行,不受父节 span 扩展影响)。
   const sectionNodes: BlockProjectionNode[] = []
   for (let s = 0; s < headingLines.length; s++) {
     const { line, title, level } = headingLines[s]
-    const endLine = s + 1 < headingLines.length ? headingLines[s + 1].line : lines.length
+    let endLine = lines.length
+    for (let k = s + 1; k < headingLines.length; k++) {
+      if (headingLines[k].level <= level) { endLine = headingLines[k].line; break }
+    }
     const contentLines = lines.slice(line + 1, endLine)
     sectionNodes.push({
       id: idFor('s', normalizeForId(title)),
@@ -85,7 +98,7 @@ export function buildBlockProjection(body: string): BlockProjection {
       level,
       hash: hash12(normalizeForId(contentLines.join('\n'))),
       start: lineOffsets[line],
-      end: s + 1 < headingLines.length ? lineOffsets[endLine] : text.length,
+      end: endLine < lines.length ? lineOffsets[endLine] : text.length,
       parent_id: null,
     })
   }
@@ -223,14 +236,15 @@ export interface SectionEditResult {
 
 /**
  * 确定性节编辑（Phase 2 核心操作）：按投影 span 精确改写一个 section 的
- * 内容区（标题行之后 → 下一标题之前），不再依赖原文模糊锚点。
- *  - replace: 整节内容替换
+ * 内容区（标题行之后 → 下一同级/更高级标题之前），不再依赖原文模糊锚点。
+ *  - replace: 整节内容替换（review 复核#6: span 大纲语义 — 含嵌套子节）
  *  - append:  节内容末尾追加
  *  - prepend: 标题行之后插入
- *  - delete:  整节移除（标题+内容；生产实例：模型要清理占位节却只能传
- *    空 content 被拒 → 空参退化，2026-09-12）
+ *  - delete:  整节移除（标题+内容+嵌套子节；生产实例：模型要清理占位节
+ *    却只能传空 content 被拒 → 空参退化，2026-09-12）
  * ID 失效（投影中无此节）→ error，调用方降级锚点模式兜底。
  * 内容与现状一致 → 返回原 body（无变化，调用方按 unchanged 处理）。
+ * review 复核#2: action 显式校验 — 未知/缺失值报错拒绝,不静默退化。
  */
 export function applySectionEdit(
   body: string,
@@ -239,21 +253,26 @@ export function applySectionEdit(
   action: 'replace' | 'append' | 'prepend' | 'delete',
   content: string,
 ): SectionEditResult | { error: string } {
+  if (action !== 'replace' && action !== 'append' && action !== 'prepend' && action !== 'delete') {
+    return { error: `section_action 值非法:"${String(action).slice(0, 40)}" — 必须是 replace / append / prepend / delete 之一` }
+  }
   const text = String(body ?? '')
   const section = projection.nodes.find((n) => n.kind === 'section' && n.id === sectionId)
   if (!section) {
     return { error: `section ${sectionId} 在当前文档投影中不存在（ID 已失效或文档已重构）— 请改用 old_text/new_text 锚点编辑，或重新读取文档获取最新节 ID` }
   }
   if (action === 'delete') {
-    // 整节移除:[标题行起始, 下一标题起始) — span 恰好覆盖标题+内容+节尾空白。
-    // 块边界卫生:前一内容与下一标题之间保留一个空行(标题前空行纪律)。
+    // 整节移除:[标题行起始, 节 end) — span 大纲语义覆盖标题+直属内容+
+    // 嵌套子节+节尾空白。块边界卫生:前一内容与下一(同级)标题之间保留
+    // 一个空行(标题前空行纪律)。
     const before = text.slice(0, section.start).replace(/\s+$/, '')
     const after = text.slice(section.end).replace(/^\s+/, '')
     const newBody = before ? `${before}\n\n${after}` : after
     if (newBody === text) return { error: '节已是文档末尾且无内容，没有变化' }
     return { body: newBody, location: `${section.heading || sectionId}（${sectionId}）` }
   }
-  // 节内容区 = 标题行之后 → 节 span 末（下一标题起始 | EOF）。
+  // 节内容区 = 标题行之后 → 节 span 末（下一同级/更高级标题起始 | EOF，
+  // 含嵌套子节 — review 复核#6 replace/append 均覆盖整棵子树）。
   // 节 span.start 即标题行起始;标题行原文 = span 起始后的第一行。
   const headingLine = text.slice(section.start).split('\n')[0] || ''
   const contentStart = section.start + headingLine.length + 1
@@ -261,7 +280,7 @@ export function applySectionEdit(
   // core = 内容区去首尾空白(append/prepend 重建用;replace 直接换掉整区)
   const core = raw.replace(/^\s+/, '').replace(/\s+$/, '')
   const before = text.slice(0, contentStart)
-  const after = text.slice(section.end) // 下一标题行原文起（或 ''）
+  const after = text.slice(section.end) // 下一同级/更高级标题行原文起（或 ''）
   const next = String(content ?? '').trim()
   if (!next) {
     return { error: 'content is empty — 要删除整节请用 section_action:"delete"（不需要 content）;要写入内容请在 content（或 new_text）提供' }

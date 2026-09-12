@@ -71,9 +71,9 @@ describe('#989 Phase 2 — edit_document target_section(工具层)', () => {
     expect(output.body).toContain('Fully rewritten intro.')
     expect(output.body).not.toContain('intro body text.')
     expect(output.body).toContain('## Methods')
-    // 写回单点调用:body 为替换后正文
+    // 写回单点调用:body 为替换后正文;baseBody 锁定读→写窗口(review 复核#5)
     expect(mocks.writeDocVersion).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: USER, docId: DOC, body: expect.stringContaining('Fully rewritten intro.'), snapshotLabel: 'AI edit' }),
+      expect.objectContaining({ userId: USER, docId: DOC, body: expect.stringContaining('Fully rewritten intro.'), baseBody: BODY, snapshotLabel: 'AI edit' }),
     )
   })
 
@@ -99,6 +99,22 @@ describe('#989 Phase 2 — edit_document target_section(工具层)', () => {
     const preBody = JSON.parse(pre.output as string).body as string
     expect(preBody.indexOf('Overview first.')).toBeGreaterThan(preBody.indexOf('## Methods'))
     expect(preBody.indexOf('Overview first.')).toBeLessThan(preBody.indexOf('methods body text.'))
+  })
+
+  test('section_action 缺失/非法 → 拒绝,不静默退化 replace(review 复核#2)', async () => {
+    const proj = buildBlockProjection(BODY)
+    const intro = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    mocks.docFindFirst.mockResolvedValue(makeDoc(JSON.stringify(proj)))
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const missing = await tool.execute({ target_section: intro.id, content: 'x' })
+    expect(missing.success).toBe(false)
+    expect(missing.error).toContain('section_action')
+    expect(missing.error).toContain('缺失')
+    const bad = await tool.execute({ target_section: intro.id, section_action: 'rewrite', content: 'x' })
+    expect(bad.success).toBe(false)
+    expect(bad.error).toContain('rewrite')
+    // 校验在读取/写回之前 — 破坏性 replace 未被静默执行
+    expect(mocks.writeDocVersion).not.toHaveBeenCalled()
   })
 
   test('ID 失效 → error 引导降级锚点(工具报错形态)', async () => {

@@ -62,7 +62,7 @@ export class EditDocumentTool extends BaseTool {
   get description(): string {
     return [
       'Edit the current writing-session document. Four modes:',
-      '- Section edit (preferred when section IDs are visible): pass `target_section` (the [sec:...] id from the injected document, e.g. s_xxx) + `section_action` (replace | append | prepend) + `content`. The server locates the section precisely by its structure projection — no fuzzy matching, deterministic. Use this for whole-section rewrites/appends; it never fails on anchor mismatch.',
+      '- Section edit (preferred when section IDs are visible): pass `target_section` (the [sec:...] id from the injected document, e.g. s_xxx) + `section_action` (required: replace | append | prepend | delete — invalid/missing values are rejected, never defaulted) + `content`. The server locates the section precisely by its structure projection — no fuzzy matching, deterministic. Use this for whole-section rewrites/appends; it never fails on anchor mismatch. delete/replace cover nested subsections under the target heading.',
       '- Import: pass `import_reference` (the reference-material name to import) when the document body is EMPTY and the user wants to work on an uploaded reference (PDF/DOCX/txt). This copies the reference text into the document. Alternatively pass `url` (+ optional `doi`) to download an OA full-text PDF directly into the reference library — use the URL from oa_pdf_lookup results (#875: closes the search→read→cite loop).',
       '- Range edit (preferred for polishing long documents without section IDs, or fine-grained in-section tweaks): pass `old_text` (the original text to replace, copied from the current document — line breaks/whitespace differences are tolerated; [sec:...] markers are stripped automatically) and `new_text` (the replacement). One edit per call; make multiple calls to edit multiple parts. When the document body is EMPTY and exactly one reference exists, the tool auto-imports it before applying the edit (so you can polish an uploaded reference without a separate import call). To replace a figure/link, include its image markdown together with surrounding caption text — image URLs must match exactly, and an old_text that spans an image must include the image.',
       '- Full rewrite: pass `full_text` (complete new document in markdown). Allowed within the model single-response output budget (the main model budget is generous — full rewrites of multi-thousand-token documents work). If it exceeds the budget the tool refuses with guidance; for long-document cleanup/polish prefer section edits or range edits.',
@@ -76,7 +76,7 @@ export class EditDocumentTool extends BaseTool {
       type: 'object',
       properties: {
         target_section: { type: 'string', description: 'Section-edit mode: the section id from [sec:...] markers in the injected document (e.g. s_xxx). Deterministic whole-section edit — preferred over old_text when visible.' },
-        section_action: { type: 'string', enum: ['replace', 'append', 'prepend', 'delete'], description: 'Section-edit action: replace the section content / append after it / insert right after the heading / delete removes the ENTIRE section (heading + content, no content needed).' },
+        section_action: { type: 'string', enum: ['replace', 'append', 'prepend', 'delete'], description: 'Section-edit action (REQUIRED when target_section is used — invalid or missing values are rejected, never silently defaulted): replace = rewrite the section content / append = add after it / prepend = insert right after the heading / delete removes the ENTIRE section (heading + content + nested subsections, no content needed).' },
         content: { type: 'string', description: 'Section-edit payload: the markdown content for replace/append/prepend (alias: new_text is accepted).' },
         import_reference: { type: 'string', description: 'Import mode: the label/name of the reference material to import into the empty document (e.g. the uploaded file name).' },
         url: { type: 'string', description: 'Import via URL: direct OA full-text PDF link (e.g. the url_for_pdf returned by oa_pdf_lookup). Downloads into the reference library and sets the extracted content as the document body.' },
@@ -154,10 +154,19 @@ export class EditDocumentTool extends BaseTool {
    * 引导降级锚点模式(兜底)。写回仍走 DocVersionWriter 单点。
    */
   private async sectionEdit(docId: string, targetSection: string, args: Record<string, unknown>): Promise<ToolResult> {
-    const action = args.section_action === 'append' ? 'append'
-      : args.section_action === 'prepend' ? 'prepend'
-      : args.section_action === 'delete' ? 'delete'
-      : 'replace'
+    // review 复核#2: 显式校验 section_action — 此前三元判断链把任何不认识的
+    // 值或字段缺失静默落到 'replace'(最具破坏性的动作:整节内容被覆盖且
+    // 无报错)。replace 必须显式指定,传错/漏传一律拒绝并给出可执行指引。
+    const SECTION_ACTIONS = ['replace', 'append', 'prepend', 'delete'] as const
+    type SectionAction = (typeof SECTION_ACTIONS)[number]
+    const rawAction = typeof args.section_action === 'string' ? args.section_action.trim() : ''
+    if (!(SECTION_ACTIONS as readonly string[]).includes(rawAction)) {
+      return {
+        success: false,
+        error: `section_action ${rawAction ? `值非法:"${rawAction.slice(0, 40)}"` : '缺失(未提供)'} — 必须显式传 replace / append / prepend / delete 之一(不会静默默认为整节覆盖的 replace)。重写整节传 replace+content;节尾追加 append;标题后插入 prepend;删除整节(含子节)传 delete。`,
+      }
+    }
+    const action = rawAction as SectionAction
     // #989 生产实例(2026-09-12):模型沿用 range 模式的参数习惯传 new_text
     // 而非 content → 节模式收到空 content 被拒。content 为空时接受
     // new_text 别名(与工具既有词表一致,杜绝参数名混用类失败)。
@@ -187,7 +196,9 @@ export class EditDocumentTool extends BaseTool {
       }
       const summary = String(args.summary || `${action === 'delete' ? '删除' : action} section ${targetSection}`)
       // #789: 写回走 DocVersionWriter 单点(快照同帧带旧 deck + 事务 + 投影同帧)。
-      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: applied.body, snapshotLabel: 'AI edit' })
+      // review 复核#5: baseBody 锁定「本次读取 → 写回」窗口 — 写回内容基于
+      // 此处读到的 body 计算,期间被并发修改则拒绝(模型重读后自纠)。
+      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: applied.body, baseBody: body, snapshotLabel: 'AI edit' })
       if (written.error) return { success: false, error: written.error }
       this.latestBody = written.body
       sectionEditTelemetry.attempts++
@@ -370,7 +381,9 @@ export class EditDocumentTool extends BaseTool {
     if (newBody === body) return { success: false, error: 'old_text 与 new_text 相同,没有任何变化' }
 
     // #789: 写回走 DocVersionWriter 单点(快照同帧带旧 deck + 事务)。
-    const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: newBody, snapshotLabel: 'AI edit' })
+    // review 复核#5: baseBody — body 参数即计算源(可能是 latestBody 缓存
+    // 或 DB 当前正文),写回期间被并发修改则拒绝,防过期快照静默覆盖。
+    const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: newBody, baseBody: body, snapshotLabel: 'AI edit' })
     if (written.error) return { success: false, error: written.error }
 
     this.latestBody = written.body
@@ -445,7 +458,10 @@ export class EditDocumentTool extends BaseTool {
       }
 
       // #789: 写回走 DocVersionWriter 单点(无变化不产生空版本)。
-      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: fullText, snapshotLabel: 'AI edit' })
+      // review 复核#5: 全量重写同样受并发保护 — baseBody 用入口读取的
+      // 旧正文,期间被并发修改则拒绝(full_text 基于过期视图整篇覆盖
+      // 恰是最该拦的形态)。
+      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: fullText, baseBody: String(existing.body || ''), snapshotLabel: 'AI edit' })
       if (written.error) return { success: false, error: written.error }
 
       // #906: 全量重写同样推进本轮最新正文缓存 — 同回合后续 rangeEdit
