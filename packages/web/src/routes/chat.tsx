@@ -113,6 +113,7 @@ export function ChatPage() {
     resolving: suggestionResolving,
     resolve: resolveSuggestion,
     refresh: refreshSuggestions,
+    scan: scanSuggestions,
   } = useSessionSuggestions({
     sessionId: sessionId || undefined,
     setError,
@@ -124,6 +125,15 @@ export function ChatPage() {
     if (!sessionId) return;
     void refreshSuggestions();
   }, [sessionMessageCount, sessionId, refreshSuggestions]);
+  // #1008: 打开会话跑一次开局检测（标题 + 最近消息关键词）；同会话只跑一次。
+  const scannedSessionRef = useRef<string>('');
+  useEffect(() => {
+    if (!sessionId || scannedSessionRef.current === sessionId) return;
+    const ctx = [currentSessionTitle, ...(session?.messages || []).slice(-4).map((m) => m.text)].join(' ').trim();
+    if (!ctx) return;
+    scannedSessionRef.current = sessionId;
+    void scanSuggestions(ctx);
+  }, [sessionId, currentSessionTitle, session, scanSuggestions]);
   // #1007: KbPicker 双用途 — context=临时选总结带入下一条消息; reference=登记为会话引用。
   const [kbPickerMode, setKbPickerMode] = useState<'context' | 'reference'>('context');
   // #721: kbPicker 搜索 debounce。

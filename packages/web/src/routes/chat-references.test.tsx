@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   getSessionSuggestions: vi.fn(),
   resolveSessionSuggestion: vi.fn(),
   getReferencePool: vi.fn(),
+  scanSessionSuggestions: vi.fn(),
 }));
 
 vi.mock('@/components/plugins/PluginExtensionPoint', () => ({
@@ -36,6 +37,7 @@ vi.mock('@/lib/api', () => ({
     getSessionSuggestions: mocks.getSessionSuggestions,
     resolveSessionSuggestion: mocks.resolveSessionSuggestion,
     getReferencePool: mocks.getReferencePool,
+    scanSessionSuggestions: mocks.scanSessionSuggestions,
   },
 }));
 
@@ -64,6 +66,7 @@ beforeEach(() => {
   mocks.getSessionReferences.mockResolvedValue({ references: [] });
   mocks.getSessionSuggestions.mockResolvedValue({ suggestions: [] });
   mocks.getReferencePool.mockResolvedValue({ items: [] });
+  mocks.scanSessionSuggestions.mockResolvedValue({ suggestions: [] });
   mocks.resolveSessionSuggestion.mockResolvedValue({ ok: true });
   mocks.addSessionReference.mockResolvedValue({ ...refRow, reference_id: 'r_new' });
   mocks.deleteSessionReference.mockResolvedValue({ ok: true });
@@ -117,6 +120,7 @@ describe('#1012 建议态引用', () => {
 
   test('横幅与引用弹层都有建议态；采纳后转正式引用并消失', async () => {
     mocks.getSessionSuggestions.mockResolvedValue({ suggestions: [suggestion] });
+    mocks.scanSessionSuggestions.mockResolvedValue({ suggestions: [suggestion] });
     render(<ChatPage />);
 
     const banner = await screen.findByTestId('suggested-reference-banner');
@@ -136,6 +140,7 @@ describe('#1012 建议态引用', () => {
 
   test('忽略后横幅消失且调用 resolve(accept=false)', async () => {
     mocks.getSessionSuggestions.mockResolvedValue({ suggestions: [suggestion] });
+    mocks.scanSessionSuggestions.mockResolvedValue({ suggestions: [suggestion] });
     render(<ChatPage />);
 
     const banner = await screen.findByTestId('suggested-reference-banner');
@@ -186,6 +191,15 @@ describe('#1010 引用池隐式排序', () => {
     fireEvent.click(screen.getByRole('button', { name: /添加为参考|Add as reference/ }));
     await waitFor(() => {
       expect(mocks.addSessionReference).toHaveBeenCalledWith('s1', expect.objectContaining({ reference_id: 'pool1' }));
+    });
+  });
+});
+
+describe('#1008 开局检测', () => {
+  test('打开会话跑一次关键词扫描（上下文=标题+最近消息）', async () => {
+    render(<ChatPage />);
+    await waitFor(() => {
+      expect(mocks.scanSessionSuggestions).toHaveBeenCalledWith('s1', expect.stringContaining('会话一'));
     });
   });
 });

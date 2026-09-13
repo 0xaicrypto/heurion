@@ -17,11 +17,15 @@ import { EmbeddingService } from '../../memory/embedding/embedding.service.js'
 import { recordMemoryUsage } from '../../memory/memory-usage-bus.js'
 import { addSessionReference, listSessionReferences, type ReferenceItemInput } from '../../lib/reference-store.js'
 import { ReferenceTierStore } from '../../memory/memory-tier-store.js'
+import { extractKeywords, overlapScore } from '../../retrieval/text-overlap.js'
 
 const log = makeLogger('chat.suggested-reference')
 
 /** 语义命中阈值 — 低于该分不算"内容相关"（宁缺勿扰）。 */
 const SUGGEST_MIN_SCORE = 0.5
+
+/** #1008 开局检测阈值 — 至少两个关键词命中（宁缺勿扰）。 */
+const OPENING_MIN_SCORE = 2
 
 export interface SuggestedReferenceRow {
   id: string
@@ -111,6 +115,70 @@ export async function detectSuggestedReference(input: DetectSuggestedInput): Pro
   } catch (err) {
     log.warn('suggested reference detection skipped (best-effort)', { err: String(err).slice(0, 120) })
     return null
+  }
+}
+
+export interface OpeningDetectInput {
+  userId: string
+  sessionId: string
+  /** 会话标题 + 最近消息（客户端提供，避免开局多打一次历史接口）。 */
+  context: string
+  /** 单次扫描最多产出条数（默认 2）。 */
+  maxSuggestions?: number
+}
+
+/**
+ * #1008 开局检测（关键词版）：打开会话时，用标题/近期消息与用户名下未引用
+ * 材料做关键词重叠 → pending 建议。与对话中语义检测（#1009）互补，不调用
+ * embedding（每次打开都跑，成本可控）。已挂载/已建议（pending 或 dismissed）
+ * 的材料永不重复打扰。返回新建的建议 id（best-effort，失败不抛）。
+ */
+export async function detectOpeningSuggestions(input: OpeningDetectInput): Promise<{ suggestionIds: string[] }> {
+  try {
+    const context = String(input.context || '').slice(0, 2000)
+    if (!context.trim()) return { suggestionIds: [] }
+    const keywords = extractKeywords(context)
+    if (keywords.length === 0) return { suggestionIds: [] }
+
+    const items = await prisma.referenceItem.findMany({
+      where: { userId: input.userId },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    })
+    const mounted = new Set((await listSessionReferences(input.userId, input.sessionId)).map((r) => r.referenceId))
+    const surfaced = new Set(
+      (await prisma.suggestedReference.findMany({
+        where: { userId: input.userId, sessionId: input.sessionId, status: { in: ['pending', 'dismissed'] } },
+        select: { referenceId: true },
+      })).map((r) => r.referenceId),
+    )
+
+    const picked = items
+      .filter((i) => !mounted.has(i.id) && !surfaced.has(i.id))
+      .map((i) => ({ item: i, score: overlapScore(keywords, `${i.label} ${i.snapshot}`) }))
+      .filter((x) => x.score >= OPENING_MIN_SCORE)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, input.maxSuggestions ?? 2)
+
+    const suggestionIds: string[] = []
+    for (const { item, score } of picked) {
+      const row = await prisma.suggestedReference.create({
+        data: {
+          sessionId: input.sessionId,
+          userId: input.userId,
+          referenceId: item.id,
+          reason: `开局关键词命中（相关度 ${score}）`,
+          suggestedAt: new Date().toISOString(),
+          status: 'pending',
+        },
+      })
+      recordMemoryUsage({ userId: input.userId, unitType: 'reference', unitId: item.id, action: 'suggested', sessionId: input.sessionId })
+      suggestionIds.push(row.id)
+    }
+    return { suggestionIds }
+  } catch (err) {
+    log.warn('opening suggestion detection skipped (best-effort)', { err: String(err).slice(0, 120) })
+    return { suggestionIds: [] }
   }
 }
 

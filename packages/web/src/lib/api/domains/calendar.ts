@@ -104,6 +104,22 @@ export class CalendarApi extends ApiCore {
     return this.fetch(`/api/v1/sessions/${sessionId}/references/suggestions`);
   }
 
+  /** #1008: 开局检测 — 打开会话时用标题/近期消息关键词命中未引用材料。 */
+  async scanSessionSuggestions(sessionId: string, context: string): Promise<{suggestions: Array<{
+    id: string;
+    sessionId: string;
+    referenceId: string;
+    reason: string;
+    suggestedAt: string;
+    status: string;
+    reference: { id: string; kind: string; label: string; snapshot: string; sourceRef: string | null };
+  }>}> {
+    return this.fetch(`/api/v1/sessions/${sessionId}/references/suggestions/scan`, {
+      method: 'POST',
+      body: JSON.stringify({ context }),
+    });
+  }
+
   async resolveSessionSuggestion(sessionId: string, suggestionId: string, accept: boolean): Promise<{ok: boolean; reference_id?: string}> {
     return this.fetch(`/api/v1/sessions/${sessionId}/references/suggestions/${suggestionId}/resolve`, {
       method: 'POST',

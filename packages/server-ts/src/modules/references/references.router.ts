@@ -20,7 +20,7 @@ import {
 import { classifyGuidelineBySummaryTitle } from '../shared/summary-lookup.js'
 // #1009: 语义索引 + 对话中建议（pending 列表 / 接受或忽略）。
 import { indexReferenceItem } from '../../memory/reference-embedding.js'
-import { listPendingSuggestions, resolveSuggestedReference } from '../shared/suggested-reference.service.js'
+import { detectOpeningSuggestions, listPendingSuggestions, resolveSuggestedReference } from '../shared/suggested-reference.service.js'
 // #1014: 摘要登记为引用材料 → 使用反馈（referenced）。
 import { recordMemoryUsage } from '../../memory/memory-usage-bus.js'
 // #1017: 「固定为引用 / 取消引用」统一走 MemoryTierStore 留痕。
@@ -251,6 +251,18 @@ export async function referencesRouter(app: FastifyInstance): Promise<void> {
     if (!sessionId) return { suggestions: [] }
     return { suggestions: await listPendingSuggestions(userId, sessionId) }
   })
+
+  // #1008: 开局检测 — 打开会话时用标题/近期消息关键词命中未引用材料。
+  app.post<{ Params: { sessionId: string }; Body: { context?: string } }>(
+    '/api/v1/sessions/:sessionId/references/suggestions/scan',
+    async (request) => {
+      const userId = request.user!.userId
+      const sessionId = String(request.params.sessionId || '').slice(0, MAX_SESSION_ID)
+      if (!sessionId) return { suggestions: [] }
+      await detectOpeningSuggestions({ userId, sessionId, context: String(request.body?.context || '') })
+      return { suggestions: await listPendingSuggestions(userId, sessionId) }
+    },
+  )
 
   // #1009: 接受（生成正式引用，source='suggestion_accepted'）/ 忽略。
   app.post<{ Params: { sessionId: string; suggestionId: string }; Body: { accept?: boolean } }>(

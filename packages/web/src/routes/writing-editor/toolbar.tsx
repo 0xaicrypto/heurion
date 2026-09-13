@@ -48,9 +48,14 @@ export function Toolbar(input: {
   exportHistory: Array<{ format: 'docx' | 'pdf'; filename: string; size: number; at: number }>;
   exportPanelOpen: boolean;
   setExportPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  /** #1008/#1012: 建议态引用（写作会话开局检测产出）。 */
+  refSuggestions?: Array<{ id: string; reason: string; reference: { kind: string; label: string; snapshot: string } }>;
+  refSuggestionResolving?: string | null;
+  onAcceptRefSuggestion?: (id: string) => void;
+  onDismissRefSuggestion?: (id: string) => void;
 }) {
   const { t } = useTranslation();
-  const { chat, references, phiScanning, onPhiScan, exporting, onExportDocx, onExportPdf, studyId, methodsLoading, methodsError, onGenerateMethods, injectOpen, setInjectOpen, injectLabel, setInjectLabel, injectResult, setInjectResult, injecting, onInjectResults, onOpenKbPicker, setChatOpen, chatOpen, onToggleHistory, previewing, onTogglePreview, viewMode, onToggleViewMode, deckSlideCount, exportResult, exportHistory, exportPanelOpen, setExportPanelOpen } = input;
+  const { chat, references, phiScanning, onPhiScan, exporting, onExportDocx, onExportPdf, studyId, methodsLoading, methodsError, onGenerateMethods, injectOpen, setInjectOpen, injectLabel, setInjectLabel, injectResult, setInjectResult, injecting, onInjectResults, onOpenKbPicker, setChatOpen, chatOpen, onToggleHistory, previewing, onTogglePreview, viewMode, onToggleViewMode, deckSlideCount, exportResult, exportHistory, exportPanelOpen, setExportPanelOpen, refSuggestions, refSuggestionResolving, onAcceptRefSuggestion, onDismissRefSuggestion } = input;
   const { refListOpen, setRefListOpen, refList, refDeleting, loadReferences, deleteReference, setRefDialogOpen, filesLibOpen, setFilesLibOpen, filesLibLoading, filesLibAdding, filesLibList, loadFilesLibrary, addFileLibraryRefs, poolOpen, setPoolOpen, poolLoading, poolSort, setPoolSort, poolList, poolAdding, loadPool, addPoolRefs } = references;
 
   // Export ▾ 下拉（DOCX/PDF）。
@@ -224,6 +229,10 @@ export function Toolbar(input: {
             poolList={poolList}
             poolAdding={poolAdding}
             onAddPool={(items) => void addPoolRefs(items)}
+            suggestions={refSuggestions}
+            suggestionResolving={refSuggestionResolving}
+            onAcceptSuggestion={onAcceptRefSuggestion}
+            onDismissSuggestion={onDismissRefSuggestion}
           />
         )}
       </div>

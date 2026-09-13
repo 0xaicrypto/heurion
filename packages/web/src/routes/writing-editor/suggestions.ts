@@ -17,6 +17,8 @@ export interface SessionSuggestions {
   resolving: string | null;
   resolve: (suggestionId: string, accept: boolean) => Promise<void>;
   refresh: () => Promise<void>;
+  /** #1008: 开局检测（关键词）— 打开会话时调用一次。 */
+  scan: (context: string) => Promise<void>;
 }
 
 export function useSessionSuggestions(input: {
@@ -44,6 +46,15 @@ export function useSessionSuggestions(input: {
     void refresh();
   }, [refresh]);
 
+  // #1008: 开局检测 — 命中则把返回的 pending 列表直接同步到本地状态。
+  const scan = useCallback(async (context: string) => {
+    if (!sessionId || !context.trim()) return;
+    try {
+      const r = await api.scanSessionSuggestions(sessionId, context);
+      if (r.suggestions) setSuggestions(r.suggestions);
+    } catch { /* 开局扫描失败不阻断对话 */ }
+  }, [sessionId]);
+
   const resolve = async (suggestionId: string, accept: boolean) => {
     if (!sessionId) return;
     setResolving(suggestionId);
@@ -59,5 +70,5 @@ export function useSessionSuggestions(input: {
     }
   };
 
-  return { suggestions, resolving, resolve, refresh };
+  return { suggestions, resolving, resolve, refresh, scan };
 }

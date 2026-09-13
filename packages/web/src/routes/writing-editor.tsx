@@ -6,6 +6,7 @@ import type { Editor } from '@tiptap/react';
 import { ArrowLeft, FileText, MessageSquare, Presentation } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
+import { useSessionSuggestions } from './writing-editor/suggestions';
 import { DocEditor, type DiffReviewState } from '@/components/DocEditor';
 import { ProposalCard } from '@/components/ProposalCard';
 import { KbPicker } from '@/components/KbPicker';
@@ -404,6 +405,28 @@ export function WritingEditorPage() {
     // #1010: 引用池"当前场景相关"上下文 = 文档标题。
     poolContext: () => (doc as { title?: string } | null)?.title || '',
   });
+
+  // #1008: 写作会话（doc-<docId>）开局检测 — 弹层建议区展示，采纳后刷新正式引用。
+  const {
+    suggestions: refSuggestions,
+    resolving: refSuggestionResolving,
+    resolve: resolveRefSuggestion,
+    scan: scanRefSuggestions,
+  } = useSessionSuggestions({
+    sessionId: docId ? `doc-${docId}` : undefined,
+    setError: (e) => setError(e ?? ''),
+    onAccepted: () => void references.loadReferences(),
+  });
+  const refScannedRef = useRef<string>('');
+  useEffect(() => {
+    const sid = docId ? `doc-${docId}` : '';
+    if (!sid || refScannedRef.current === sid) return;
+    const ctx = String((doc as { title?: string } | null)?.title || '').trim();
+    if (!ctx) return;
+    refScannedRef.current = sid;
+    void scanRefSuggestions(ctx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId, (doc as { title?: string } | null)?.title, scanRefSuggestions]);
 
   // #696: doc-chat 面板逻辑下沉 useDocChat（发送/排队/附件/上传/pptx 轮询）。
   const polishEditorRef = useRef<Editor | null>(null);
@@ -1266,6 +1289,10 @@ export function WritingEditorPage() {
             </Button>
             {/* #996/#1000: Export ▾ + ··· 更多菜单(工具栏收敛进页头)。 */}
             <Toolbar
+              refSuggestions={refSuggestions}
+              refSuggestionResolving={refSuggestionResolving}
+              onAcceptRefSuggestion={(id) => void resolveRefSuggestion(id, true)}
+              onDismissRefSuggestion={(id) => void resolveRefSuggestion(id, false)}
               chat={chat}
               references={references}
               phiScanning={phiScanning}
