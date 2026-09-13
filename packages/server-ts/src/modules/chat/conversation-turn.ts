@@ -31,6 +31,8 @@ import { ToolRegistry, parseDocSessionId, type ToolContext, type EditHint } from
 import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
 import { createExecutionPlaneService } from '../execution/execution-plane.service.js'
 import { runToolCallLoop, type TurnIO } from './tool-loop.js'
+// #1033: fallback 流式通道的 <tool_call> 过滤（历史里带原始调用时模型会复读）。
+import { createToolCallStreamFilter, stripToolCallBlocks } from './tool-call-text.js'
 import { TurnBudget, turnBudgetExhaustedNotice, type TurnBudgetExhaustReason } from './turn-budget.js'
 // P0 hotfix 2026-09: doc 执行器兜底 — tool-loop 零写回 + 编辑意图时的
 // 精简上下文重跑(治 glm 27k+ 上下文工具调用可靠性坍塌)。
@@ -794,6 +796,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
 
   // Stream the final response
   let fullResponse = ''
+  // #1033: 双保险 — tool-loop 已清理，但 rescue/拼接路径仍可能带回原始
+  // <tool_call>（含未闭合变体），进入用户可见通道前统一兜底。
+  finalContent = stripToolCallBlocks(finalContent)
   if (finalContent) {
     // #fix: 分块必须带 /s 标志 — `.` 默认不匹配 \n,丢掉换行后前端拼回的
     // 回答整段粘连(markdown 表格行尾 | 与下行行首 | 相接成 ||、接 ## 成
@@ -805,6 +810,11 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     }
   } else {
     // Fallback: use streaming for the response
+    // #1033 事故根因:此分支把含原始 <tool_call> 的 loopMessages 再喂给
+    // 模型,且此前**不做任何清理**——模型复读调用块直接泄漏给用户。文本与
+    // 推理两个通道都过流式过滤器(跨 chunk 标记 + 未闭合块)。
+    const textFilter = createToolCallStreamFilter()
+    const reasonFilter = createToolCallStreamFilter()
     try {
       for await (const chunk of deepseekStream(loopMessages, apiKey, {
         model: visionModel,
@@ -812,11 +822,23 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
         signal: chatAbort.signal,
         // #fix 2026-09: OpenCode Go 要求 per-conversation 会话头(x-opencode-session)。
         sessionId: sid,
-        // #802: doc 会话长生成 TTFB 放宽(同 tool-loop — 见 resolveTurnTimeoutMs)。
+        // #802: doc 会话长生成任务 TTFB 放宽(同 tool-loop — 见 resolveTurnTimeoutMs)。
         timeoutMs: resolveTurnTimeoutMs(sid),
-      }, (reasoning) => send({ type: 'reasoning_chunk', text: reasoning }))) {
-        fullResponse += chunk
-        send({ type: 'final_answer_chunk', text: chunk })
+      }, (reasoning) => {
+        const clean = reasonFilter.push(reasoning)
+        if (clean) send({ type: 'reasoning_chunk', text: clean })
+      })) {
+        const clean = textFilter.push(chunk)
+        if (!clean) continue
+        fullResponse += clean
+        send({ type: 'final_answer_chunk', text: clean })
+      }
+      const reasonTail = reasonFilter.flush()
+      if (reasonTail) send({ type: 'reasoning_chunk', text: reasonTail })
+      const textTail = textFilter.flush()
+      if (textTail) {
+        fullResponse += textTail
+        send({ type: 'final_answer_chunk', text: textTail })
       }
     } catch (err) {
       // #548: finish_reason='length' — keep the partial answer, but

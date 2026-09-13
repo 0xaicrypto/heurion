@@ -2,9 +2,14 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getApp, authHeader } from '../setup.js'
 
-vi.mock('../../src/common/llm.js', () => mockAiProvider())
+// #1033: 部分 mock — fallback 分支用 `instanceof LlmTruncatedError` 判定，
+// 纯 mock 缺该导出时错误处理会再抛 ReferenceError 吞掉原始错误。
+vi.mock('../../src/common/llm.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/common/llm.js')>()
+  return { ...actual, ...mockAiProvider() }
+})
 
-import { deepseekChat } from '../../src/common/llm.js'
+import { deepseekChat, deepseekStream } from '../../src/common/llm.js'
 
 beforeEach(() => {
   vi.stubEnv('DEEPSEEK_API_KEY', 'test-key')
@@ -202,3 +207,42 @@ describe('chat tool-call parsing (regression: nested arguments JSON)', () => {
     // only assert when hits exist (search_node ran at least).
     expect(res.payload).toContain('search_node')
   })
+
+test('#1033 fallback 流式通道不泄漏 <tool_call>（模型复读 + 跨 chunk 标记）', async () => {
+  const app = await getApp()
+  const hash = await createPatient(app)
+
+  vi.mocked(deepseekChat).mockImplementation((messages: any[]) => {
+    const text = messages.map((m: any) => m.content || '').join('\n')
+    if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
+    // 工具已执行后模型返回空文本 → tool-loop 以空 finalContent 结束，
+    // conversation-turn 走流式 fallback（#1033 泄漏路径）。
+    if (text.includes('Tool "search_node" returned')) return Promise.resolve('')
+    return Promise.resolve(`<tool_call>${JSON.stringify({ name: 'search_node', arguments: { patient_hash: hash, query: '胸痛', top_k: 5 } })}</tool_call>`)
+  })
+  vi.mocked(deepseekStream).mockImplementation(async function* (_messages: any, _key: any, _opts: any, onReasoning?: (r: string) => void) {
+    onReasoning?.('<tool_call>{"name":"render_scene","arguments":{}}</tool_call>推理尾巴')
+    yield '<tool_'
+    yield 'call>{"name":"render_scene","arguments":{"title":"泄漏"}}</tool_call>'
+    yield '这是正常回答'
+  })
+
+  const res = await app.inject({
+    method: 'POST', url: '/api/v1/agent/chat',
+    headers: { ...await authHeader(), 'content-type': 'application/json' },
+    payload: JSON.stringify({ text: '分析患者胸痛', patient_hash: hash }),
+  })
+  expect(res.statusCode).toBe(200)
+  expect(res.payload).not.toContain('<tool_call>')
+  expect(res.payload).not.toContain('render_scene')
+
+  const events = res.payload.split('\n').filter((l: string) => l.startsWith('data: ')).map((l: string) => {
+    try { return JSON.parse(l.slice('data: '.length)) } catch { return null }
+  }).filter(Boolean)
+  const finalText = events.filter((e: any) => e.type === 'final_answer_chunk').map((e: any) => e.text).join('')
+  console.error('DBG payloadTail', res.payload.slice(-600))
+  expect(finalText).toBe('这是正常回答')
+  const reasoning = events.filter((e: any) => e.type === 'reasoning_chunk').map((e: any) => e.text).join('')
+  expect(reasoning).not.toContain('render_scene')
+  expect(reasoning).toContain('推理尾巴')
+})

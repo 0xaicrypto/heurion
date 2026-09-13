@@ -16,6 +16,8 @@ import { TurnBudget, type TurnBudgetExhaustReason, type TurnBudgetSnapshot } fro
 import { twinsRoot } from '../../lib/upload-path.js'
 import { makeLogger } from '../../common/logger.js'
 import { parseLlmJson } from '../../common/llm-json.js'
+// #1033: <tool_call> 清理（终态 + 推理流式通道）。
+import { createToolCallStreamFilter, stripToolCallBlocks } from './tool-call-text.js'
 import type { getUserContext } from '../shared/user-context.js'
 // #790: SSE 出口类型化 — 此前 (chunk: any) 使 loop 内新事件绕过编译期
 // 检查，契约类型化停在传输层（chat-sse）。
@@ -415,6 +417,8 @@ export async function runToolCallLoop(params: {
     const correctiveRetry = lastRoundHadFailure
     lastRoundHadFailure = false
     let roundReasoningChars = 0
+    // #1033: 本轮推理流的 <tool_call> 过滤器（跨 chunk / 未闭合块）。
+    const roundReasonFilter = createToolCallStreamFilter()
     // #fix 2026-09: 工具回合流式调用 — 中转站(opencode Go)模式下非流式是
     // 结构性缺陷: 零字节直到完整生成,整篇重写类大任务(thinking+工具参数
     // 5-10 分钟)被中转层 CF(~100s 掐 → "fetch failed")与本地 TTFB 超时
@@ -441,7 +445,9 @@ export async function runToolCallLoop(params: {
       // #1019: 累计回合级推理字数（跨 main/rescue），供预算熔断与提示文案。
       roundReasoningChars += reasoning.length
       if (params.budget?.countReasoning(reasoning.length)) reasoningOverBudget = true
-      io.send({ type: 'reasoning_chunk', text: reasoning })
+      // #1033: 推理通道同样过滤 <tool_call> 块（GLM 偶尔把调用写进思考流）。
+      const clean = roundReasonFilter.push(reasoning)
+      if (clean) io.send({ type: 'reasoning_chunk', text: clean })
     }
     let call
     try {
@@ -458,6 +464,9 @@ export async function runToolCallLoop(params: {
       log.warn(`[tool-loop] tools-stream failed → non-streaming fallback: ${(streamErr as Error).message.slice(0, 120)}`)
       call = await deepseekChatWithMeta(messages, params.apiKey, turnCallOptions, activeTools, onTurnReasoning)
     }
+    // #1033: 本轮推理流收尾（缓冲尾巴放行/未闭合块丢弃）。
+    const reasonTail = roundReasonFilter.flush()
+    if (reasonTail) io.send({ type: 'reasoning_chunk', text: reasonTail })
     // #1023: 每轮推理量 + 是否修正性重试 — 为"重试轮推理下降"提供可验证埋点。
     log.info(`[tool-loop] round=${toolRound} correctiveRetry=${correctiveRetry} reasoningChars=${roundReasoningChars} maxTokens=${(turnCallOptions as { maxTokens?: number }).maxTokens ?? 'default'}`)
     // #1026: 非流式回退路径没有流内中止 — 事后判定，越线即结束回合。
@@ -896,7 +905,8 @@ export async function runToolCallLoop(params: {
 
     // §3.3: never surface raw <tool_call> markers to the user — strip
     // any unparsed blocks before sending the final answer.
-    const cleaned = (callResult || '').replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim()
+    // #1033: 统一清理器同时处理未闭合块（正则匹配失败时此前会泄漏）。
+    const cleaned = stripToolCallBlocks(callResult)
     finalContent = cleaned || '抱歉，我未能完成这个操作，请再试一次或换一种说法描述需求。'
 
     // #892: 声明-执行对账守卫(生产事故根因①) — doc- 会话对话正常结束,
