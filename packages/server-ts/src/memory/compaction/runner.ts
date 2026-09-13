@@ -11,6 +11,8 @@ import {
 } from './budget.js'
 import { factExtractionPrompt, EXTRACTION_RULES } from '../prompts.js'
 import { parseLlmJson } from '../../common/llm-json.js'
+// #1013: 颗粒度决策集中点 — 情景边界规则不再内联。
+import { memoryGranularity } from '../granularity-controller.js'
 
 const slog = makeLogger('memory.compaction')
 
@@ -144,7 +146,9 @@ export async function runSessionCompaction(
   const events = ctx.eventLog
     .query({ sessionId, afterIdx: covered })
     .filter((e: any) => e.idx <= target && (e.eventType === 'user_message' || e.eventType === 'assistant_response'))
-  if (events.length < 4) return { kind: 'noop', summary: '', prevCoveredIdx: covered, coveredIdx: target, events: events.length }
+  if (!memoryGranularity.shouldConsolidate('episodic', { kind: 'compaction_segment', eventCount: events.length })) {
+    return { kind: 'noop', summary: '', prevCoveredIdx: covered, coveredIdx: target, events: events.length }
+  }
 
   const conversation = events
     .map((e: any) => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)
@@ -294,7 +298,8 @@ export async function extractSegment(
   const events = ctx.eventLog
     .query({ sessionId, afterIdx: fromIdx })
     .filter((e: any) => e.idx <= toIdx && (e.eventType === 'user_message' || e.eventType === 'assistant_response'))
-  if (events.length < 2) return 0
+  // #1013: 片段提取边界走统一决策入口。
+  if (!memoryGranularity.shouldConsolidate('episodic', { kind: 'extract_segment', eventCount: events.length })) return 0
 
   const conversation = events
     .map((e: any) => `${e.eventType === 'user_message' ? 'USER' : 'AI'}: ${String(e.content || '').slice(0, 500)}`)

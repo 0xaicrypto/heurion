@@ -2,6 +2,8 @@ import { resolveTierModel } from '../common/llm-gateway.js'
 import type { MemoryService } from './memory.service.js'
 import type { EpisodesStore } from '../evolution/stores'
 import { makeLogger } from '../common/logger.js'
+// #1013: 合成时机规则收敛到统一颗粒度决策入口。
+import { memoryGranularity } from './granularity-controller.js'
 
 const log = makeLogger('documents.summary')
 
@@ -88,7 +90,7 @@ export async function maybeSynthesizeSummary(
           ? n.studyId === scope.studyId
           : !n.patientHash && !n.studyId),
     )
-    if (scoped.length < 3) return
+    if (!memoryGranularity.shouldConsolidate('semantic', { kind: 'summary_synthesis', scopedCount: scoped.length })) return
 
     // ② "Used" = current summary 的 sourceFacts ∪ pending summary 提案占用。
     const summaries = memory.graph.getCurrentNodesByType('summary') as any[]
@@ -99,7 +101,7 @@ export async function maybeSynthesizeSummary(
     const { getPendingOccupiedFactIds } = await import('./coverage.js')
     for (const id of await getPendingOccupiedFactIds(userId, scope)) usedStableIds.add(id)
     const unused = scoped.filter((f) => !usedStableIds.has(f.stableId))
-    if (unused.length < 3) return
+    if (!memoryGranularity.shouldConsolidate('semantic', { kind: 'summary_synthesis', unusedCount: unused.length })) return
 
     // #816: 覆盖率驱动 — 按类目聚合未覆盖 facts,最大簇胜出(≥3)。
     // 7 天硬门槛移除:长尾陈旧 facts 正是覆盖率要补的对象;原门槛防的
@@ -112,7 +114,7 @@ export async function maybeSynthesizeSummary(
       byCategory.get(cat)!.push(f)
     }
     const best = [...byCategory.entries()].sort((a, b) => b[1].length - a[1].length)[0]
-    if (!best || best[1].length < 3) return
+    if (!best || !memoryGranularity.shouldConsolidate('semantic', { kind: 'summary_synthesis', bestClusterCount: best[1].length })) return
 
     const sevenDaysAgo = Date.now() - 7 * 86400_000
     const recentCount = best[1].filter((f) => (f.createdAt || 0) >= sevenDaysAgo).length

@@ -5,6 +5,8 @@
  */
 
 import prisma from '../../common/prisma'
+// #1013: K6 缺口判定收敛到统一颗粒度决策入口。
+import { memoryGranularity } from '../../memory/granularity-controller.js'
 import type { Fact, KnowledgeSummary } from '../../evolution/stores'
 import { paginate } from '../../lib/paginate.js' // #922: 分页唯一实现(lib/paginate)
 
@@ -177,7 +179,12 @@ export class PrismaKnowledgeGapService implements KnowledgeGapService {
     const { extractCjkKeywords, detectQuestionShaped } = await import('./gap-detect.js')
     const keywords = extractCjkKeywords(input.message)
     const covered = input.facts.some((f) => keywords.some((w) => f.content.toLowerCase().includes(w)))
-    if (covered || !detectQuestionShaped(input.message) || input.message.length <= 5) return false
+    if (!memoryGranularity.shouldPromote({
+      kind: 'gap',
+      covered,
+      questionShaped: detectQuestionShaped(input.message),
+      messageLength: input.message.length,
+    })) return false
     await this.create({
       userId: input.userId,
       workspaceId: input.userId,
