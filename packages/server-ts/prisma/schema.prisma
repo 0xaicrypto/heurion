@@ -186,6 +186,23 @@ model DocReference {
   @@map("doc_references")
 }
 
+/// #1008/#1009（SECOND_BRAIN）— 建议态引用：待用户确认的材料建议
+/// （pending → accepted/dismissed；accepted 时才产生 SessionReference）。
+model SuggestedReference {
+  id          String  @id @default(cuid())
+  sessionId   String  @map("session_id")
+  userId      String  @map("user_id")
+  referenceId String  @map("reference_id")
+  reason      String  @default("")
+  suggestedAt String  @map("suggested_at")
+  status      String  @default("pending")
+  resolvedAt  String? @map("resolved_at")
+
+  @@index([userId, sessionId, status])
+  @@index([userId, referenceId, status])
+  @@map("suggested_references")
+}
+
 /// #1015（SECOND_BRAIN Phase C）— 记忆层级升降级留痕（可见可回滚，原则 4）：
 /// 每次 promote/demote 一条；/api/v1/memory/health 回溯。
 model MemoryTierEvent {

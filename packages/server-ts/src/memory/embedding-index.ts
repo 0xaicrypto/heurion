@@ -10,7 +10,7 @@ import path from 'path'
 export interface EmbeddingRecord {
   nodeId: string
   stableId: string
-  type: 'fact' | 'summary' | 'document'
+  type: 'fact' | 'summary' | 'document' | 'reference'
   patientHash?: string
   studyId?: string
   contentHash: string
@@ -87,7 +87,7 @@ export class EmbeddingIndex {
     this.persist()
   }
 
-  remove(stableId: string, type: 'fact' | 'summary' | 'document'): void {
+  remove(stableId: string, type: 'fact' | 'summary' | 'document' | 'reference'): void {
     // #749-fix: document chunks live under `<stableId>::cN` — removing the
     // parent must sweep its chunk namespace too, otherwise deleted files
     // stay retrievable (orphaned vectors injected into chat).

@@ -53,12 +53,12 @@ describe('#1014 getUsageStats / bulk', () => {
       { action: 'referenced', at: 't2' },
     ])
     const stats = await getUsageStats('u1', 'sum_1')
-    expect(stats).toEqual({ uses: 3, retrieved: 2, referenced: 1, accepted: 0, dismissed: 0, lastUsedAt: 't3' })
+    expect(stats).toEqual({ uses: 3, retrieved: 2, referenced: 1, accepted: 0, dismissed: 0, suggested: 0, lastUsedAt: 't3' })
   })
 
   test('空记录：全零 + lastUsedAt null', async () => {
     const stats = await getUsageStats('u1', 'none')
-    expect(stats).toEqual({ uses: 0, retrieved: 0, referenced: 0, accepted: 0, dismissed: 0, lastUsedAt: null })
+    expect(stats).toEqual({ uses: 0, retrieved: 0, referenced: 0, accepted: 0, dismissed: 0, suggested: 0, lastUsedAt: null })
   })
 
   test('批量：按 unitId 分组，未命中条目零值补齐', async () => {

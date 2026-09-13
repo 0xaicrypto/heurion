@@ -19,6 +19,8 @@ import { classifyGuidelineBySummaryTitle } from '../shared/summary-lookup.js'
 // #1014: 摘要登记为引用材料 → 使用反馈（referenced）。
 import { recordMemoryUsage } from '../../memory/memory-usage-bus.js'
 import { ReferenceTierStore } from '../../memory/memory-tier-store.js'
+// #1009: 引用正文语义索引（对话中建议的检索面）。
+import { indexReferenceItem } from '../../memory/reference-embedding.js'
 // #996/#999: 节级元数据（作者轴+可信度轴）读侧 — GET/PUT 响应附带。
 import type { SectionMetaMap } from '@heurion/contracts'
 import { makeLogger as makeMetaLogger } from '../../common/logger.js'
@@ -602,8 +604,11 @@ export async function documentsRouter(app: FastifyInstance) {
       if (item.kind === 'kb_summary' && item.sourceRef) {
         recordMemoryUsage({ userId, unitType: 'summary', unitId: item.sourceRef, action: 'referenced', sessionId: `doc-${docId}` })
       }
+      const { referenceItemId, referenceIdentityKey } = await import('../../lib/reference-store.js')
+      const itemId = referenceItemId(userId, referenceIdentityKey(item))
+      // #1009: 新建登记送语义索引（dedup 分支不重复索引）。
+      void indexReferenceItem({ id: itemId, userId, kind: item.kind, sourceRef: item.sourceRef ?? null, snapshot: item.snapshot ?? '', label: item.label })
       // #1017: 旧写作端点的新建登记同样留痕（dedup 分支不重复 promote）。
-      const itemId = (await import('../../lib/reference-store.js')).referenceItemId(userId, (await import('../../lib/reference-store.js')).referenceIdentityKey(item))
       await new ReferenceTierStore(userId)
         .promote(itemId, 'reference', 'reference', `mounted to session doc-${docId}`)
         .catch((err) => log.warn('reference tier trace failed (create)', { docId, reason: (err as Error)?.message?.slice(0, 120) }))

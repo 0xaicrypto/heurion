@@ -18,6 +18,9 @@ import {
   type ReferenceKind,
 } from '../../lib/reference-store.js'
 import { classifyGuidelineBySummaryTitle } from '../shared/summary-lookup.js'
+// #1009: 语义索引 + 对话中建议（pending 列表 / 接受或忽略）。
+import { indexReferenceItem } from '../../memory/reference-embedding.js'
+import { listPendingSuggestions, resolveSuggestedReference } from '../shared/suggested-reference.service.js'
 // #1014: 摘要登记为引用材料 → 使用反馈（referenced）。
 import { recordMemoryUsage } from '../../memory/memory-usage-bus.js'
 // #1017: 「固定为引用 / 取消引用」统一走 MemoryTierStore 留痕。
@@ -107,6 +110,8 @@ export async function referencesRouter(app: FastifyInstance): Promise<void> {
     if (kind === 'kb_summary' && sourceRef) {
       recordMemoryUsage({ userId, unitType: 'summary', unitId: sourceRef, action: 'referenced', sessionId })
     }
+    // #1009: 引用正文（file 懒解析）送语义索引 — fire-and-forget。
+    void indexReferenceItem({ id: mounted.referenceId, userId, kind, sourceRef, snapshot, label: label || snapshot.slice(0, 120) })
     // #1017: 固定为引用的层级留痕（reference 层 promote；实际挂载已落库）。
     await new ReferenceTierStore(userId)
       .promote(mounted.referenceId, 'reference', 'reference', `mounted to session ${sessionId}`)
@@ -122,6 +127,28 @@ export async function referencesRouter(app: FastifyInstance): Promise<void> {
       created_at: mounted.addedAt,
     }
   })
+
+  // #1009: 待确认建议列表（跟随回复展示）。
+  app.get<{ Params: { sessionId: string } }>('/api/v1/sessions/:sessionId/references/suggestions', async (request) => {
+    const userId = request.user!.userId
+    const sessionId = String(request.params.sessionId || '').slice(0, MAX_SESSION_ID)
+    if (!sessionId) return { suggestions: [] }
+    return { suggestions: await listPendingSuggestions(userId, sessionId) }
+  })
+
+  // #1009: 接受（生成正式引用，source='suggestion_accepted'）/ 忽略。
+  app.post<{ Params: { sessionId: string; suggestionId: string }; Body: { accept?: boolean } }>(
+    '/api/v1/sessions/:sessionId/references/suggestions/:suggestionId/resolve',
+    async (request, reply) => {
+      const userId = request.user!.userId
+      const sessionId = String(request.params.sessionId || '').slice(0, MAX_SESSION_ID)
+      const suggestionId = String(request.params.suggestionId || '')
+      if (!sessionId || !suggestionId) return reply.status(400).send({ error: 'sessionId and suggestionId required' })
+      const result = await resolveSuggestedReference(userId, sessionId, suggestionId, request.body?.accept !== false)
+      if (!result.ok) return reply.status(404).send({ error: result.error })
+      return { ok: true, reference_id: result.referenceId }
+    },
+  )
 
   app.delete<{ Params: { sessionId: string; referenceId: string } }>(
     '/api/v1/sessions/:sessionId/references/:referenceId',

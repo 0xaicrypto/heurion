@@ -19,7 +19,7 @@ import { makeLogger } from '../common/logger.js'
 const log = makeLogger('memory.usage-bus')
 
 export type MemoryUnitType = 'fact' | 'summary' | 'reference' | 'skill'
-export type MemoryUsageAction = 'retrieved' | 'accepted' | 'dismissed' | 'referenced'
+export type MemoryUsageAction = 'retrieved' | 'accepted' | 'dismissed' | 'referenced' | 'suggested'
 
 export interface MemoryUsageInput {
   userId: string
@@ -56,17 +56,19 @@ export interface MemoryUsageStats {
   referenced: number
   accepted: number
   dismissed: number
+  suggested: number
   /** 最近一次使用时间（ISO；无记录为 null）。 */
   lastUsedAt: string | null
 }
 
 function summarize(rows: Array<{ action: string; at: string }>): MemoryUsageStats {
-  const stats: MemoryUsageStats = { uses: rows.length, retrieved: 0, referenced: 0, accepted: 0, dismissed: 0, lastUsedAt: null }
+  const stats: MemoryUsageStats = { uses: rows.length, retrieved: 0, referenced: 0, accepted: 0, dismissed: 0, suggested: 0, lastUsedAt: null }
   for (const r of rows) {
     if (r.action === 'retrieved') stats.retrieved++
     else if (r.action === 'referenced') stats.referenced++
     else if (r.action === 'accepted') stats.accepted++
     else if (r.action === 'dismissed') stats.dismissed++
+    else if (r.action === 'suggested') stats.suggested++
     if (!stats.lastUsedAt || r.at > stats.lastUsedAt) stats.lastUsedAt = r.at
   }
   return stats

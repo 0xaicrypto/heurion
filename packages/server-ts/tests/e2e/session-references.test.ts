@@ -117,3 +117,42 @@ describe('#1015 memory health — tier events', () => {
     expect(Array.isArray(body.tier_events)).toBe(true)
   })
 })
+
+// #1009: 建议态 API — pending 列表 + 接受生成正式引用。
+describe('#1009 reference suggestions API', () => {
+  test('列出 pending 建议；接受 → SessionReference(source=suggestion_accepted)', async () => {
+    const app = await getApp()
+    const { default: prisma } = await import('../../src/common/prisma.js')
+    const h = { ...await authHeader(), 'content-type': 'application/json' }
+    const sessionId = `sess_sug_${Date.now()}`
+    const content = `建议材料正文_${Date.now()}`
+
+    const user = await (prisma as any).user.findFirst({ orderBy: { createdAt: 'desc' } })
+    // 直接建未挂载的 ReferenceItem（避免 POST 顺带挂载使建议失去意义）。
+    const itemId = `ref_sug_${Date.now()}`
+    const nowIso = new Date().toISOString()
+    await (prisma as any).referenceItem.create({
+      data: { id: itemId, userId: user.id, kind: 'pasted_text', sourceRef: null, label: '建议材料', snapshot: content, createdAt: nowIso, updatedAt: nowIso },
+    })
+    const suggested = await (prisma as any).suggestedReference.create({
+      data: { sessionId, userId: user.id, referenceId: itemId, reason: '对话内容命中未引用材料', suggestedAt: nowIso, status: 'pending' },
+    })
+
+    const list = await app.inject({ method: 'GET', url: `/api/v1/sessions/${sessionId}/references/suggestions`, headers: h })
+    expect(JSON.parse(list.payload).suggestions.some((s: any) => s.id === suggested.id)).toBe(true)
+
+    const resolve = await app.inject({
+      method: 'POST', url: `/api/v1/sessions/${sessionId}/references/suggestions/${suggested.id}/resolve`, headers: h,
+      payload: JSON.stringify({ accept: true }),
+    })
+    expect(resolve.statusCode).toBe(200)
+    expect(JSON.parse(resolve.payload).ok).toBe(true)
+    const mounted = await (prisma as any).sessionReference.findMany({ where: { sessionId } })
+    expect(mounted.some((r: any) => r.source === 'suggestion_accepted')).toBe(true)
+
+    const listAfter = await app.inject({ method: 'GET', url: `/api/v1/sessions/${sessionId}/references/suggestions`, headers: h })
+    expect(JSON.parse(listAfter.payload).suggestions.some((s: any) => s.id === suggested.id)).toBe(false)
+    // #1014: 接受事件写使用反馈
+    expect(await (prisma as any).memoryUsageEvent.count({ where: { userId: suggested.userId, unitId: itemId, action: 'accepted' } })).toBeGreaterThanOrEqual(1)
+  })
+})

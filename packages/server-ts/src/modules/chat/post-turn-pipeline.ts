@@ -147,6 +147,22 @@ export const POST_TURN_SEGMENTS: PostTurnSegment[] = [
     },
   },
   {
+    name: 'suggest-references',
+    // #1009：对话中建议（语义版）— 问题形态 + 被未引用材料语义覆盖时
+    // 生成 pending SuggestedReference（跟随回复展示，前端 #1012）。
+    // 患者会话按 patientHash 隔离；写作会话暂不生成（UI 未接）。
+    run: async (c) => {
+      if (c.sessionId.startsWith('doc-')) return
+      const { detectSuggestedReference } = await import('../shared/suggested-reference.service.js')
+      await detectSuggestedReference({
+        userId: c.userId,
+        sessionId: c.sessionId,
+        patientHash: c.patientHash,
+        message: c.bodyText,
+      })
+    },
+  },
+  {
     name: 'attachment-export-option',
     // #582 — 例 A: 通用会话编辑附件时给一条可落地出口。
     run: async (c) => {
