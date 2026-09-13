@@ -127,9 +127,11 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
     try {
       // #185: persist the user message BEFORE any LLM work — a mid-stream
       // failure must never lose the turn from the event log.
+      // #996/#1003: section_ref 随 metadata 持久化(节跳转标签)。
       ctx.eventLog.append({
         timestamp: Date.now() / 1000, eventType: 'user_message', content: body.text,
-        metadata: { patientHash }, agentId: userId, sessionId: sid,
+        metadata: { patientHash, ...(body.section_ref ? { section_ref: body.section_ref } : {}) },
+        agentId: userId, sessionId: sid,
       })
       send({ type: 'turn_started', event_idx: ctx.eventLog.count() + 1, patient_hash: patientHash })
 

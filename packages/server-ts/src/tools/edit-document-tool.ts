@@ -198,16 +198,17 @@ export class EditDocumentTool extends BaseTool {
       // #789: 写回走 DocVersionWriter 单点(快照同帧带旧 deck + 事务 + 投影同帧)。
       // review 复核#5: baseBody 锁定「本次读取 → 写回」窗口 — 写回内容基于
       // 此处读到的 body 计算,期间被并发修改则拒绝(模型重读后自纠)。
-      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: applied.body, baseBody: body, snapshotLabel: 'AI edit' })
+      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: applied.body, baseBody: body, writeSource: 'ai', snapshotLabel: 'AI edit' })
       if (written.error) return { success: false, error: written.error }
       this.latestBody = written.body
       sectionEditTelemetry.attempts++
       sectionEditTelemetry.success++
       log.info(`[edit_document] target_section ok action=${action} id=${targetSection} total={ok:${sectionEditTelemetry.success} miss:${sectionEditTelemetry.idInvalid}}`)
       // #989 Phase 3: 输出携带块投影 — tool-loop 转 doc_updated.projection 推前端。
+      // #999: 输出附带 section_meta(作者轴+可信度轴),透传到 doc_updated。
       return {
         success: true,
-        output: JSON.stringify({ body: written.body, summary, location: `已${action === 'replace' ? '重写' : action === 'append' ? '追加' : action === 'prepend' ? '插入' : '删除'}:「${applied.location}」`, projection: written.projection }),
+        output: JSON.stringify({ body: written.body, summary, location: `已${action === 'replace' ? '重写' : action === 'append' ? '追加' : action === 'prepend' ? '插入' : '删除'}:「${applied.location}」`, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}) }),
       }
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }
@@ -383,14 +384,15 @@ export class EditDocumentTool extends BaseTool {
     // #789: 写回走 DocVersionWriter 单点(快照同帧带旧 deck + 事务)。
     // review 复核#5: baseBody — body 参数即计算源(可能是 latestBody 缓存
     // 或 DB 当前正文),写回期间被并发修改则拒绝,防过期快照静默覆盖。
-    const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: newBody, baseBody: body, snapshotLabel: 'AI edit' })
+    const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: newBody, baseBody: body, writeSource: 'ai', snapshotLabel: 'AI edit' })
     if (written.error) return { success: false, error: written.error }
 
     this.latestBody = written.body
     // #989 Phase 3: 输出携带块投影 — tool-loop 转 doc_updated.projection 推前端。
+    // #999: 输出附带 section_meta。
     return {
       success: true,
-      output: JSON.stringify({ body: written.body, summary, location: `已修改:${location}附近`, projection: written.projection }),
+      output: JSON.stringify({ body: written.body, summary, location: `已修改:${location}附近`, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}) }),
     }
   }
 
@@ -461,16 +463,16 @@ export class EditDocumentTool extends BaseTool {
       // review 复核#5: 全量重写同样受并发保护 — baseBody 用入口读取的
       // 旧正文,期间被并发修改则拒绝(full_text 基于过期视图整篇覆盖
       // 恰是最该拦的形态)。
-      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: fullText, baseBody: String(existing.body || ''), snapshotLabel: 'AI edit' })
+      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: fullText, baseBody: String(existing.body || ''), writeSource: 'ai', snapshotLabel: 'AI edit' })
       if (written.error) return { success: false, error: written.error }
 
       // #906: 全量重写同样推进本轮最新正文缓存 — 同回合后续 rangeEdit
       // 的区域定位基于重写后的正文。
       this.latestBody = written.body
-      // #989 Phase 3: 输出携带块投影。
+      // #989 Phase 3: 输出携带块投影。#999: 输出附带 section_meta。
       return {
         success: true,
-        output: JSON.stringify({ body: written.body, summary, projection: written.projection }),
+        output: JSON.stringify({ body: written.body, summary, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}) }),
       }
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }

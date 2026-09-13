@@ -1,6 +1,9 @@
 import prisma from '../common/prisma.js'
 import { buildBlockProjection } from '../lib/block-projection.js'
-import type { BlockProjection } from '@heurion/contracts'
+import type { BlockProjection, SectionMetaMap } from '@heurion/contracts'
+import { makeLogger } from '../common/logger.js'
+
+const log = makeLogger('doc-version-writer')
 
 /**
  * #789 — doc 写回单点 owner（body+deck 同帧不变量）。
@@ -50,6 +53,13 @@ export interface DocVersionWrite {
    */
   baseBody?: string
   snapshotLabel: string
+  /**
+   * #996/#999: 写回来源 — 节级元数据作者轴。'ai' = 工具/AI 写回路径
+   * （edit_document/insert_results 等，落 pending 交终态化器）；
+   * 'human' = 用户手动路径（PUT 保存，直接 verified — 用户自己的输入
+   * 无需系统验证）。缺省 'human'。
+   */
+  writeSource?: 'ai' | 'human'
 }
 
 export interface DocVersionResult {
@@ -63,6 +73,12 @@ export interface DocVersionResult {
   /** #989 Phase 1: 与 body 同帧维护的块投影（body 真相源的派生结构，消费方
    *  Phase 2/3 接线；conflict/error 时为 null）。 */
   projection: BlockProjection | null
+  /**
+   * #996/#999: 写回后全文档节级元数据（作者轴 + 可信度轴）— 仅 body 有变化
+   * 的成功写回返回；conflict/error 或未触碰 body 时为 undefined（调用方
+   * 按无数据处理）。
+   */
+  sectionMeta?: SectionMetaMap
 }
 
 function parseDeckJson(raw: unknown): unknown {
@@ -71,6 +87,115 @@ function parseDeckJson(raw: unknown): unknown {
     return JSON.parse(raw)
   } catch {
     return null // deck 损坏容错 — 与线上 parseDeck 行为一致
+  }
+}
+
+/* ── #996/#999: 节级元数据（作者轴 + 可信度轴） ─────────────────────── */
+
+/** 读全文档节级元数据 → SSE/响应透传形状。 */
+async function loadSectionMetaMap(docId: string): Promise<SectionMetaMap> {
+  const rows = await prisma.docSectionMeta.findMany({ where: { docId } })
+  const out: SectionMetaMap = {}
+  for (const r of rows) {
+    out[r.sectionId] = {
+      author: r.author === 'ai' ? 'ai' : 'human',
+      verify_status: r.verifyStatus === 'pending' ? 'pending' : r.verifyStatus === 'failed' ? 'failed' : 'verified',
+      updated_at: r.updatedAt,
+    }
+  }
+  return out
+}
+
+/**
+ * 节级元数据维护（body 有变化的成功写回后调用）：旧/新投影都用确定性纯
+ * 函数重建（不信任存量投影列），diff section hash → 变更节 upsert（最后
+ * 编辑者语义：author=writeSource；AI 路径落 pending，human 路径直接
+ * verified），消失节清理旧行。best-effort：元数据是 UX 信任信号，任何
+ * 失败只降级（卡片缺标签），不回滚已落库的正文。
+ * 返回 { meta, changedIds } — changedIds 供 AI 终态化器限定翻牌范围。
+ */
+async function applySectionMetaWrites(args: {
+  docId: string
+  userId: string
+  writeSource: 'ai' | 'human'
+  prevBody: string
+  nextBody: string
+}): Promise<{ meta: SectionMetaMap; changedIds: string[] } | undefined> {
+  const prevNodes = buildBlockProjection(args.prevBody).nodes.filter((n) => n.kind === 'section')
+  const nextNodes = buildBlockProjection(args.nextBody).nodes.filter((n) => n.kind === 'section')
+  const prevHash = new Map(prevNodes.map((n) => [n.id, n.hash]))
+  const changed = nextNodes.filter((n) => prevHash.get(n.id) !== n.hash)
+  const nextIds = new Set(nextNodes.map((n) => n.id))
+  const removedIds = prevNodes.filter((n) => !nextIds.has(n.id)).map((n) => n.id)
+  const changedIds = changed.map((n) => n.id)
+  if (changed.length === 0 && removedIds.length === 0) {
+    // 节级无变化（body 级微调）— 现有 meta 即最终态，读出供透传。
+    return { meta: await loadSectionMetaMap(args.docId), changedIds: [] }
+  }
+  const now = new Date().toISOString()
+  for (const node of changed) {
+    await prisma.docSectionMeta.upsert({
+      where: { docId_sectionId: { docId: args.docId, sectionId: node.id } },
+      create: {
+        docId: args.docId, userId: args.userId, sectionId: node.id,
+        author: args.writeSource,
+        verifyStatus: args.writeSource === 'ai' ? 'pending' : 'verified',
+        updatedAt: now,
+      },
+      update: {
+        author: args.writeSource,
+        verifyStatus: args.writeSource === 'ai' ? 'pending' : 'verified',
+        updatedAt: now,
+      },
+    })
+  }
+  if (removedIds.length > 0) {
+    await prisma.docSectionMeta.deleteMany({ where: { docId: args.docId, sectionId: { in: removedIds } } })
+  }
+  return { meta: await loadSectionMetaMap(args.docId), changedIds }
+}
+
+/**
+ * AI 写回终态化器（fire-and-forget）— pending → verified / failed。
+ * 校验：重读正文，已被并发推进则不碰（下一次写回的 pending 接管）；
+ * 投影重建 body_hash 与写回一致 → verified，否则 failed（卡片显式失败态，
+ * 不做只有绿/琥珀两态的假可信）。updateMany 限定 pending — 不冲掉期间
+ * 人工编辑已置的 verified/最后编辑者覆盖。
+ */
+function scheduleSectionMetaFinalize(args: {
+  docId: string
+  userId: string
+  body: string
+  bodyHash: string
+  sectionIds: string[]
+}): void {
+  void (async () => {
+    const fresh = await prisma.doc.findFirst({
+      where: { id: args.docId, userId: args.userId },
+      select: { body: true },
+    })
+    if (!fresh || String(fresh.body) !== args.body) return
+    const rebuilt = buildBlockProjection(args.body)
+    const status = rebuilt.body_hash === args.bodyHash ? 'verified' : 'failed'
+    await prisma.docSectionMeta.updateMany({
+      where: { docId: args.docId, sectionId: { in: args.sectionIds }, verifyStatus: 'pending' },
+      data: { verifyStatus: status, updatedAt: new Date().toISOString() },
+    })
+  })().catch((err) => log.warn('section meta finalize failed (best-effort)', { err: String(err) }))
+}
+
+/** #996/#999: restore 路径（绕过单点的仅存写回路径之一）的元数据同步 —
+ * 最后编辑者语义：恢复动作是用户操作，受影响节 → human/verified；消失节清理。 */
+export async function refreshSectionMetaForRestore(args: {
+  docId: string
+  userId: string
+  prevBody: string
+  nextBody: string
+}): Promise<void> {
+  try {
+    await applySectionMetaWrites({ ...args, writeSource: 'human' })
+  } catch (err) {
+    log.warn('section meta refresh after restore failed (best-effort)', { err: String(err) })
   }
 }
 
@@ -172,10 +297,31 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
       error: '文档已被并发修改，本次写回基于过期内容被拒绝，请重新读取文档后重试',
     }
   }
+  // #996/#999: 节级元数据 — 变更节 upsert（AI 路径 pending → 终态化器翻
+  // verified/failed；human 路径直接 verified）+ 消失节清理。best-effort:
+  // 失败只降级为"卡片缺标签"，不影响已落库正文。
+  const writeSource = input.writeSource ?? 'human'
+  let sectionMeta: SectionMetaMap | undefined
+  try {
+    const applied = await applySectionMetaWrites({ docId: input.docId, userId: input.userId, writeSource, prevBody, nextBody })
+    if (applied) {
+      sectionMeta = applied.meta
+      if (writeSource === 'ai' && applied.changedIds.length > 0) {
+        scheduleSectionMetaFinalize({
+          docId: input.docId, userId: input.userId,
+          body: nextBody, bodyHash: projection.body_hash, sectionIds: applied.changedIds,
+        })
+      }
+    }
+  } catch (err) {
+    log.warn('section meta upsert failed (best-effort)', { err: String(err) })
+    sectionMeta = undefined
+  }
   return {
     body: nextBody,
     deck: input.deck === undefined ? parseDeckJson(prevDeckRaw) : input.deck,
     changed: true,
     projection,
+    ...(sectionMeta ? { sectionMeta } : {}),
   }
 }

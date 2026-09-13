@@ -179,6 +179,11 @@ describe('Documents', () => {
     expect(res.statusCode).toBe(409)
     const errBody = JSON.parse(res.payload)
     expect(errBody.code).toBe('stale_base')
+    // #996/#997: 409 携带服务端当前完整态 — 前端 Yours/AI's 双栏对照零额外请求
+    expect(errBody.current_updated_at).toBeTypeOf('string')
+    expect(errBody.current).toMatchObject({ title: 'Conflict Stale', body: '另一窗口写入的最新内容' })
+    expect(errBody.current).toHaveProperty('block_projection')
+    expect(errBody.current).toHaveProperty('updated_at')
     const get = await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}`, headers: await authHeader() })
     expect(JSON.parse(get.payload).body).toBe('另一窗口写入的最新内容')
   })

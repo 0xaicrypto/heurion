@@ -17,6 +17,12 @@ export const chatSendSchema = z.object({
   /** #693: 用户在写作编辑器选中的文本(选中即引用) — 注入对话上下文,
    *  模型 old_text 从此处逐字复制,同源保证锚点必然命中。 */
   selection: z.string().min(1).max(20000).optional(),
+  /** #996/#1003: 用户消息的节引用(选中即引用 → 投影反查) — 随 user_message
+   *  metadata 持久化,前端渲染"→ 节名"跳转标签(刷新后仍可用)。 */
+  section_ref: z.object({
+    id: z.string().min(1).max(64),
+    heading: z.string().max(300),
+  }).optional(),
   attachments: z
     .array(
       z.union([

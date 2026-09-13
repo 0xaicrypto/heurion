@@ -81,6 +81,23 @@ export type BlockProjectionNode = z.infer<typeof blockProjectionNodeSchema>
 export type BlockProjectionNodeKind = BlockProjectionNode['kind']
 export type BlockType = NonNullable<BlockProjectionNode['block_type']>
 
+/**
+ * #996/#999 — 节级元数据（作者轴 + 可信度轴）：用户可见的信任信号，
+ * 由 writeDocVersion 单点在写回后维护（旁路表 doc_section_meta，键 =
+ * section 稳定 ID）。不进 BlockProjectionNode — 投影是 body 的确定性
+ * 纯函数，可变元数据混入会破坏"重建必一致"不变量。
+ */
+export const sectionMetaLiteSchema = z.object({
+  /** 最后编辑者：'ai'（写回工具路径）/ 'human'（手动保存，混合作者按最后编辑覆盖）。 */
+  author: z.enum(['ai', 'human']),
+  /** pending=验证中（AI 写回落库后）;verified=系统已验证;failed=一致性校验不通过。 */
+  verify_status: z.enum(['pending', 'verified', 'failed']),
+  updated_at: z.string(),
+})
+export const sectionMetaMapSchema = z.record(sectionMetaLiteSchema)
+export type SectionMetaLite = z.infer<typeof sectionMetaLiteSchema>
+export type SectionMetaMap = z.infer<typeof sectionMetaMapSchema>
+
 /** Context-budget snapshot sent at the start of a turn (U3). */
 export interface ContextUsage {
   history_tokens: number
@@ -277,8 +294,9 @@ export type ChatStreamChunk =
    * 旧后端事件无此字段，消费方按无 rev 保持原行为。
    * #989 Phase 3: projection = 与 body 同帧的块级结构投影（派生；schema
    * 见 blockProjectionSchema）— 前端按块展示变更/按块定位（#987 可见性）。
+   * #996/#999: section_meta = 节级作者/可信度标签（工具输出透传，损坏降级不携带）。
    */
-  | { type: 'doc_updated'; body: string; summary?: string; deck?: DeckWire | null; rev?: number; updatedAt?: string; projection?: BlockProjection }
+  | { type: 'doc_updated'; body: string; summary?: string; deck?: DeckWire | null; rev?: number; updatedAt?: string; projection?: BlockProjection; section_meta?: SectionMetaMap }
   | { type: 'chart_created'; url: string; markdown?: string; chart_type?: string }
   | { type: 'tier_classified'; tier: 'T1' | 'T2' | 'T3'; view_kind?: string; anchor?: string }
   | { type: 'context_info'; text: string; kind?: string }

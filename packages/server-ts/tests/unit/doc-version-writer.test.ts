@@ -8,11 +8,22 @@ const mocks = vi.hoisted(() => ({
   docUpdateMany: vi.fn(),
   txDocUpdateMany: vi.fn(),
   txDocSnapshotCreate: vi.fn(),
+  metaFindMany: vi.fn(),
+  metaUpsert: vi.fn(),
+  metaDeleteMany: vi.fn(),
+  metaUpdateMany: vi.fn(),
 }))
 
 vi.mock('../../src/common/prisma.js', () => ({
   default: {
     doc: { findFirst: mocks.docFindFirst, updateMany: mocks.docUpdateMany },
+    // #996/#999: 节级元数据旁路表。
+    docSectionMeta: {
+      findMany: mocks.metaFindMany,
+      upsert: mocks.metaUpsert,
+      deleteMany: mocks.metaDeleteMany,
+      updateMany: mocks.metaUpdateMany,
+    },
     $transaction: async (fn: (tx: unknown) => Promise<void>) =>
       fn({
         doc: { updateMany: mocks.txDocUpdateMany },
@@ -20,6 +31,8 @@ vi.mock('../../src/common/prisma.js', () => ({
       }),
   },
 }))
+// #999: best-effort 日志降级 — 静音(避免单测噪音)。
+vi.mock('../../src/common/logger.js', () => ({ makeLogger: () => new Proxy({}, { get: () => vi.fn() }) }))
 
 import { writeDocVersion } from '../../src/tools/doc-version-writer.js'
 
@@ -230,5 +243,119 @@ describe('#989 Phase 1 — 块投影与 body 同帧(写回单点强一致)', () 
     expect(res.changed).toBe(false)
     const [args] = mocks.docUpdateMany.mock.calls[0]
     expect(JSON.parse(args.data.blockProjection).body_hash).not.toBe('000000000000')
+  })
+})
+
+describe('#996/#999 — 节级元数据（作者轴+可信度轴,写回单点挂钩）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.txDocUpdateMany.mockResolvedValue({ count: 1 })
+    mocks.txDocSnapshotCreate.mockResolvedValue({})
+    mocks.docUpdateMany.mockResolvedValue({ count: 1 })
+    mocks.metaUpsert.mockResolvedValue({})
+    mocks.metaDeleteMany.mockResolvedValue({ count: 1 })
+    mocks.metaUpdateMany.mockResolvedValue({ count: 1 })
+    mocks.metaFindMany.mockResolvedValue([])
+  })
+
+  /** 让 fire-and-forget 的终态化器跑完(微任务 + 定时器队列各排空一轮)。 */
+  async function drainFinalizer() {
+    for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0))
+  }
+
+  test('AI 写回:变更节 upsert author=ai + pending,sectionMeta 随返回;终态化器翻 verified', async () => {
+    mocks.docFindFirst
+      .mockResolvedValueOnce({ id: DOC, body: '## S\n旧内容', deck: null })            // writer 读旧行
+      .mockResolvedValueOnce({ id: DOC, body: '## S\n新内容', deck: null })            // 终态化器重读(一致)
+    mocks.metaFindMany.mockResolvedValue([
+      { sectionId: 's_new', author: 'ai', verifyStatus: 'pending', updatedAt: 't1' },
+    ])
+
+    const res = await writeDocVersion({ userId: USER, docId: DOC, body: '## S\n新内容', writeSource: 'ai', snapshotLabel: 't' })
+    expect(res.changed).toBe(true)
+    // 变更节(hash 变)upsert 为 ai/pending
+    expect(mocks.metaUpsert).toHaveBeenCalledTimes(1)
+    const [upsertArgs] = mocks.metaUpsert.mock.calls[0]
+    expect(upsertArgs.create).toMatchObject({ docId: DOC, userId: USER, author: 'ai', verifyStatus: 'pending' })
+    expect(upsertArgs.update).toMatchObject({ author: 'ai', verifyStatus: 'pending' })
+    // sectionMeta 全量 map 随返回(SSE/响应透传)
+    expect(res.sectionMeta).toEqual({ s_new: { author: 'ai', verify_status: 'pending', updated_at: 't1' } })
+
+    // 终态化器:重读正文一致 + body_hash 重建一致 → pending 翻 verified
+    await drainFinalizer()
+    expect(mocks.metaUpdateMany).toHaveBeenCalledTimes(1)
+    const [fin] = mocks.metaUpdateMany.mock.calls[0]
+    expect(fin.where).toMatchObject({ docId: DOC, verifyStatus: 'pending' })
+    expect(fin.where.sectionId.in.length).toBe(1)
+    expect(fin.data.verifyStatus).toBe('verified')
+  })
+
+  test('human 写回:变更节直接 verified(用户自己的输入无需系统验证)', async () => {
+    mocks.docFindFirst.mockResolvedValueOnce({ id: DOC, body: '## S\n旧内容', deck: null })
+    mocks.metaFindMany.mockResolvedValue([])
+
+    const res = await writeDocVersion({ userId: USER, docId: DOC, body: '## S\n用户改过的内容', writeSource: 'human', snapshotLabel: 't' })
+    expect(res.changed).toBe(true)
+    expect(mocks.metaUpsert).toHaveBeenCalledTimes(1)
+    const [upsertArgs] = mocks.metaUpsert.mock.calls[0]
+    expect(upsertArgs.create).toMatchObject({ author: 'human', verifyStatus: 'verified' })
+    // 不安排终态化器(human 无 pending)
+    await drainFinalizer()
+    expect(mocks.metaUpdateMany).not.toHaveBeenCalled()
+  })
+
+  test('节 hash 未变的 body 微调:不 upsert 不清理,meta 原样返回(最后编辑者不被误覆盖)', async () => {
+    // prev 与 next 的节内容/标题完全一致(仅 frontmatter 级微调形态)
+    mocks.docFindFirst.mockResolvedValueOnce({ id: DOC, body: 'A', deck: null })
+    mocks.metaFindMany.mockResolvedValue([{ sectionId: 's_x', author: 'human', verifyStatus: 'verified', updatedAt: 't0' }])
+
+    const res = await writeDocVersion({ userId: USER, docId: DOC, body: 'B', writeSource: 'ai', snapshotLabel: 't' })
+    expect(res.changed).toBe(true)
+    expect(mocks.metaUpsert).not.toHaveBeenCalled()
+    expect(mocks.metaDeleteMany).not.toHaveBeenCalled()
+    expect(res.sectionMeta).toEqual({ s_x: { author: 'human', verify_status: 'verified', updated_at: 't0' } })
+    await drainFinalizer()
+    expect(mocks.metaUpdateMany).not.toHaveBeenCalled()
+  })
+
+  test('节被删除:该节 meta 清理(deleteMany),终态化器不触达已消失节', async () => {
+    const oldBody = '## Keep\n内容\n\n## Gone\n被删节'
+    const nextBody = '## Keep\n内容'
+    mocks.docFindFirst
+      .mockResolvedValueOnce({ id: DOC, body: oldBody, deck: null })
+      .mockResolvedValueOnce({ id: DOC, body: nextBody, deck: null }) // 终态化器重读
+    mocks.metaFindMany.mockResolvedValue([{ sectionId: 's_keep', author: 'ai', verifyStatus: 'pending', updatedAt: 't1' }])
+
+    const res = await writeDocVersion({ userId: USER, docId: DOC, body: nextBody, writeSource: 'ai', snapshotLabel: 't' })
+    expect(res.changed).toBe(true)
+    // 删除节 → 另一节 hash 未变?全文变化会让 Keep 节 hash 不变(内容一致) —
+    // 只剩 Gone 消失 → deleteMany 清理,upsert 不发生
+    expect(mocks.metaDeleteMany).toHaveBeenCalledTimes(1)
+    const [del] = mocks.metaDeleteMany.mock.calls[0]
+    expect(del.where.sectionId.in).toHaveLength(1)
+    await drainFinalizer()
+    // 无变更节 → 终态化器不触发
+    expect(mocks.metaUpdateMany).not.toHaveBeenCalled()
+  })
+
+  test('终态化器重读发现正文已被并发推进 → 不翻牌(下一次写回的 pending 接管)', async () => {
+    mocks.docFindFirst
+      .mockResolvedValueOnce({ id: DOC, body: 'A', deck: null })
+      .mockResolvedValueOnce({ id: DOC, body: '已变成别的正文', deck: null })
+    mocks.metaFindMany.mockResolvedValue([])
+
+    await writeDocVersion({ userId: USER, docId: DOC, body: '# T\n\n## S\nx', writeSource: 'ai', snapshotLabel: 't' })
+    await drainFinalizer()
+    expect(mocks.metaUpdateMany).not.toHaveBeenCalled()
+  })
+
+  test('元数据写入失败 → best-effort 降级(sectionMeta 缺省),正文写回不受影响', async () => {
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: null })
+    mocks.metaFindMany.mockRejectedValue(new Error('meta db down'))
+
+    const res = await writeDocVersion({ userId: USER, docId: DOC, body: 'B', snapshotLabel: 't' })
+    expect(res.changed).toBe(true)
+    expect(res.body).toBe('B')
+    expect(res.sectionMeta).toBeUndefined()
   })
 })

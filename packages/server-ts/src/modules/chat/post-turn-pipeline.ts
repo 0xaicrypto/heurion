@@ -39,6 +39,8 @@ export interface PostTurnContext {
   timelineTools: Array<{ tool: string; round?: number }>
   chartMeta: Array<{ url: string; chartType?: string }>
   timelineSubs: Array<{ id: string; task: string; status: 'running' | 'done' | 'failed' }>
+  /** #996/#1003: 本轮文档写回的节(id→标题)— 随 assistant metadata 持久化。 */
+  turnDocSections?: Map<string, string>
   /** 本轮激活的剧本卡(matchSkillsForTurn 输出,follow-through 段消费)。 */
   skillCards: SkillCardSummary[]
   attachmentText: string
@@ -90,6 +92,11 @@ export const POST_TURN_SEGMENTS: PostTurnSegment[] = [
           ...(c.timelineTools.length > 0 ? { tools: c.timelineTools } : {}),
           ...(c.timelineSubs.length > 0 ? { subagents: c.timelineSubs } : {}),
         }
+      }
+      // #996/#1003: 本轮文档写回的节(id+标题)— 聊天改动日志持久化,
+      // 刷新后 AI 回复下的"已改动"卡片仍可重建。
+      if (c.turnDocSections && c.turnDocSections.size > 0) {
+        timelineMeta.doc_sections = [...c.turnDocSections].map(([id, heading]) => ({ id, heading }))
       }
       c.ctx.eventLog.append({
         timestamp: Date.now() / 1000, eventType: 'assistant_response', content: c.responseForLog,

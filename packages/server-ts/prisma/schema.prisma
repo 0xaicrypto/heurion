@@ -123,6 +123,7 @@ model Doc {
   snapshots  DocSnapshot[]
   references DocReference[]
   chatMsgs   DocChatMessage[]
+  sectionMeta DocSectionMeta[]
   @@index([userId, updatedAt(sort: Desc)])
   @@index([studyId])
   @@map("docs")
@@ -141,6 +142,32 @@ model DocSnapshot {
   doc Doc @relation(fields: [docId], references: [id], onDelete: Cascade)
   @@index([userId, docId, id(sort: Desc)])
   @@map("doc_snapshots")
+}
+
+// #996/#999: 节级元数据旁路表 — 作者轴（AI 写的=ai / 你写的=human）与
+// 可信度轴（pending=验证中 / verified=已验证 / failed=失败）的用户可见
+// 信任信号。刻意不进 BlockProjectionNode：投影是 body 的确定性纯函数
+// （loadProjection 依赖"重建必一致"不变量），可变元数据混入会破坏它。
+// 键 = 块投影 section 稳定 ID（s_<sha1前12>，正文编辑不换 ID）。
+// 写回单点（writeDocVersion）挂钩：diff 旧/新投影 section hash → 变更节
+// upsert（最后编辑者语义）；section 失效（改标题/删节）时清理旧行。
+model DocSectionMeta {
+  id           String @id @default(cuid())
+  docId        String @map("doc_id")
+  userId       String @map("user_id")
+  sectionId    String @map("section_id")
+  // 最后编辑者 — 混合作者（AI 初稿+人工修改）按最后编辑覆盖为 human。
+  author       String @default("human") // 'ai' | 'human'
+  // pending 由写回单点置入（AI 路径）；终态化器（异步、非阻塞）校验
+  // 投影一致性后翻 verified；failed = 一致性校验不通过。human 写入直接
+  // verified（用户自己的输入无需系统验证）。
+  verifyStatus String @default("pending") @map("verify_status") // 'pending' | 'verified' | 'failed'
+  updatedAt    String @map("updated_at")
+
+  doc Doc @relation(fields: [docId], references: [id], onDelete: Cascade)
+  @@unique([docId, sectionId])
+  @@index([userId, docId])
+  @@map("doc_section_meta")
 }
 
 model DocReference {

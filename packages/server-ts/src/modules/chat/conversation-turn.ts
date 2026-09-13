@@ -637,6 +637,10 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     id: string; task: string; status: 'running' | 'done' | 'failed'
     summaryPreview?: string; turns?: number; costTokens?: number
   }> = []
+  // #996/#1003: 本轮文档写回的节集合 — edit_document 的 target_section 采集
+  // + doc_updated 投影回填标题;随 assistant_response metadata 持久化,
+  // 聊天记录成为可回溯的改动日志(刷新后"已改动"卡片仍可重建)。
+  const turnDocSections = new Map<string, string>()
   const ioWithChart: TurnIO = {
     ...io,
     send: (chunk) => {
@@ -644,6 +648,10 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       if (chunk.type === 'chart_created') {
         chartMeta.push({ url: chunk.url, chartType: chunk.chart_type })
       } else if (chunk.type === 'tool_call' && chunk.seq !== undefined) {
+        if (chunk.tool === 'edit_document') {
+          const ts = String((chunk.args as Record<string, unknown> | undefined)?.target_section || '')
+          if (ts) turnDocSections.set(ts, turnDocSections.get(ts) || '')
+        }
         if (timelineTools.length < 40) {
           timelineTools.push({
             tool: chunk.tool,
@@ -659,6 +667,13 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           entry.status = chunk.success ? 'completed' : 'error'
           if (chunk.preview) entry.resultPreview = chunk.preview.slice(0, 80)
           if (chunk.elapsed_ms !== undefined) entry.elapsedMs = chunk.elapsed_ms
+        }
+      } else if (chunk.type === 'doc_updated' && chunk.projection) {
+        // #996/#1003: 已采集的 target_section 用同帧投影回填节标题。
+        for (const n of chunk.projection.nodes) {
+          if (n.kind === 'section' && turnDocSections.has(n.id)) {
+            turnDocSections.set(n.id, n.heading || turnDocSections.get(n.id) || '')
+          }
         }
       } else if (chunk.type === 'subagent_started') {
         if (timelineSubs.length < 12) {
@@ -801,6 +816,8 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     timelineTools,
     timelineSubs,
     chartMeta,
+    // #996/#1003: 本轮文档写回的节 → assistant metadata(聊天改动日志)。
+    turnDocSections,
     skillCards,
     attachmentText,
     patientHash: patientHash || null,

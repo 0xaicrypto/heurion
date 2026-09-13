@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
-import type { DocSnapshot, ResearchStudy } from '@prisma/client'
+import type { Doc, DocSnapshot, ResearchStudy } from '@prisma/client'
 import { SCHEMA_VERSION } from '@heurion/contracts'
 import type { PolishStreamChunk } from '@heurion/contracts'
 import { renderDocxBuffer, renderPdfBuffer, isExportFormat } from './markdown-export.js'
@@ -12,7 +12,31 @@ import { extractPptxContentFromUpload, pptxSlidesToDeck } from '../../lib/pptx-e
 // #787: 上传即草稿的导入编排收敛到 doc-import 单点。
 import { ensureDraftBody } from '../../tools/doc-import.js'
 // #789: doc 写回单点 owner。
-import { writeDocVersion } from '../../tools/doc-version-writer.js'
+import { writeDocVersion, refreshSectionMetaForRestore } from '../../tools/doc-version-writer.js'
+// #996/#999: 节级元数据（作者轴+可信度轴）读侧 — GET/PUT 响应附带。
+import type { SectionMetaMap } from '@heurion/contracts'
+import { makeLogger as makeMetaLogger } from '../../common/logger.js'
+const metaLog = makeMetaLogger('documents.section-meta')
+
+/** #996/#999: 读全文档节级元数据 — GET/PUT 响应附带(前端节卡片徽标数据源)。 */
+async function loadSectionMeta(docId: string): Promise<SectionMetaMap | undefined> {
+  try {
+    const rows = await prisma.docSectionMeta.findMany({ where: { docId } })
+    const out: SectionMetaMap = {}
+    for (const r of rows) {
+      out[r.sectionId] = {
+        author: r.author === 'ai' ? 'ai' : 'human',
+        verify_status: r.verifyStatus === 'pending' ? 'pending' : r.verifyStatus === 'failed' ? 'failed' : 'verified',
+        updated_at: r.updatedAt,
+      }
+    }
+    // 空行集返回 undefined(降级不携带)— 避免下发空对象。
+    return Object.keys(out).length > 0 ? out : undefined
+  } catch (err) {
+    metaLog.warn('section meta read failed (degrade to absent)', { docId, err: String(err) })
+    return undefined
+  }
+}
 // #989 Phase 1/3: 块投影构建（restore 路径同帧重算）与装载（PHI 按块定位）。
 import { buildBlockProjection, loadProjection } from '../../lib/block-projection.js'
 import { makeLogger } from '../../common/logger.js'
@@ -51,6 +75,20 @@ function parseBlockProjection(raw: unknown): unknown {
   try { return JSON.parse(raw) } catch { return null }
 }
 
+/** #996/#997: 409 冲突响应携带服务端当前完整态 — 旧契约只有
+ *  current_updated_at，前端渲染「Yours / AI's」双栏对照需再发一次 GET 全文；
+ *  现将当前 title/body/deck/投影一次性随 409 下发，双栏零额外请求。
+ *  口径与 GET /docs/:docId 一致（refreshFileUrls/refreshDeckUrls 自愈文件 URL）。 */
+function buildConflictCurrent(doc: Doc, userId: string) {
+  return {
+    title: doc.title,
+    body: refreshFileUrls(String(doc.body ?? ''), userId),
+    deck: refreshDeckUrls(parseDeck(doc.deck), userId),
+    block_projection: parseBlockProjection(doc.blockProjection),
+    updated_at: doc.updatedAt,
+  }
+}
+
 export async function documentsRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
 
@@ -64,6 +102,8 @@ export async function documentsRouter(app: FastifyInstance) {
       // #fix: 图片 URL 自愈 — 旧版坏链/过期 token 在读取时统一重签。
       body: refreshFileUrls(d.body, request.user!.userId),
       updated_at: d.updatedAt, created_at: d.createdAt, ref_count: 0,
+      // #996/#1000: 工作台 Slides tab — 有 deck 资产的文档列表标记。
+      has_deck: Boolean(d.deck && d.deck !== 'null' && d.deck !== ''),
     }))}
   })
 
@@ -110,7 +150,9 @@ export async function documentsRouter(app: FastifyInstance) {
     }
     // #989 Phase 3: 返回块投影 — 前端拿它作「编辑过程流式可见」的批次基线
     // (#987);投影缺失(存量未回填)为 null,前端按无基线处理。
-    return { id: doc.id, title: doc.title, body: refreshFileUrls(doc.body, request.user!.userId), deck: refreshDeckUrls(parseDeck(doc.deck), request.user!.userId), block_projection: parseBlockProjection(doc.blockProjection), created_at: doc.createdAt, updated_at: doc.updatedAt, study_id: doc.studyId || null, study_name }
+    // #996/#999: section_meta 节级作者/可信度标签随行(缺失降级不携带)。
+    const section_meta = await loadSectionMeta(doc.id)
+    return { id: doc.id, title: doc.title, body: refreshFileUrls(doc.body, request.user!.userId), deck: refreshDeckUrls(parseDeck(doc.deck), request.user!.userId), block_projection: parseBlockProjection(doc.blockProjection), ...(section_meta ? { section_meta } : {}), created_at: doc.createdAt, updated_at: doc.updatedAt, study_id: doc.studyId || null, study_name }
   })
 
   app.put<{ Params: DocParams; Body: { title?: string; body?: string; deck?: unknown; base_sha?: string; force?: boolean } }>('/api/v1/docs/:docId', async (request, reply) => {
@@ -139,10 +181,13 @@ export async function documentsRouter(app: FastifyInstance) {
       // 「保留我的版本」)。不带 base_sha 的旧客户端不受影响(向后兼容)。
       if (!force && typeof base_sha === 'string' && base_sha.length > 0 &&
           crypto.createHash('sha1').update(String(existing.body)).digest('hex') !== base_sha) {
+        // #996/#997: existing 即服务端当前态 — 直接随 409 下发完整 current,
+        // 前端双栏对照(Yours=本地 dirty / AI's=已保存版)不再二次拉全文。
         return reply.status(409).send({
           error: '文档已在其他窗口被修改，为避免覆盖未做保存',
           code: 'stale_base',
           current_updated_at: existing.updatedAt,
+          current: buildConflictCurrent(existing, request.user!.userId),
         })
       }
     }
@@ -165,18 +210,22 @@ export async function documentsRouter(app: FastifyInstance) {
         ...(deckChanged ? { deck: deck as Record<string, unknown> | null } : {}),
         ...(titleChanged ? { title } : {}),
         baseBody: String(existing.body),
+        // #999: human 写入 — 变更节作者轴直接 human/verified(writer 缺省同值,显式声明)
+        writeSource: 'human',
         snapshotLabel: '保存版本',
       })
       if (written.error) {
         // #904: writer 乐观锁冲突(读旧值后底层行已被并发修改)→ 与
         // base_sha 失配同语义(409 stale_base),前端冲突横幅据此弹出。
+        // #996/#997: 冲突时重读完整当前态随响应下发(双栏对照零额外请求)。
         const current = written.conflict
-          ? await prisma.doc.findFirst({ where: { id: docId }, select: { updatedAt: true } })
+          ? await prisma.doc.findFirst({ where: { id: docId } })
           : null
         return reply.status(written.conflict ? 409 : 500).send({
           error: '文档已在其他窗口被修改，为避免覆盖未做保存',
           code: 'stale_base',
           current_updated_at: current?.updatedAt ?? now,
+          ...(current ? { current: buildConflictCurrent(current, request.user!.userId) } : {}),
         })
       }
     }
@@ -204,6 +253,11 @@ export async function documentsRouter(app: FastifyInstance) {
       // review 复核#8a: 保存响应携带块投影 — 前端据此同步本地投影,
       // 「AI 正在编辑哪个节」的批次基线在手动保存后不再过期。
       block_projection: parseBlockProjection(doc!.blockProjection),
+      // #996/#999: 保存响应携带节级元数据 — 手动编辑后作者轴即时翻 human。
+      ...(await (async () => {
+        const meta = await loadSectionMeta(docId)
+        return meta ? { section_meta: meta } : {}
+      })()),
       created_at: doc!.createdAt, updated_at: doc!.updatedAt,
       // #598: 前端保存按钮据此提示'内容未变化'.
       unchanged: !bodyChanged && !deckChanged,
@@ -284,7 +338,8 @@ export async function documentsRouter(app: FastifyInstance) {
         crypto.createHash('sha1').update(String(doc.body)).digest('hex') !== base_sha) {
       return reply.status(409).send({ error: 'stale_base' })
     }
-    const written = await writeDocVersion({ userId, docId, body, snapshotLabel: String(label || 'AI polish').slice(0, 40) })
+    // #999: AI 润色写回 — 变更节作者轴 ai(pending 交终态化器)。
+    const written = await writeDocVersion({ userId, docId, body, writeSource: 'ai', snapshotLabel: String(label || 'AI polish').slice(0, 40) })
     // #904: writer 乐观锁冲突（服务端视角正文在读取后又变）→ 409 可重试。
     if (written.error) return reply.status(written.conflict ? 409 : 400).send({ error: written.error })
     return { ok: true }
@@ -326,6 +381,9 @@ export async function documentsRouter(app: FastifyInstance) {
     // 绕过写回单点,是全路径走查中仅剩的两处 body 直写之一;title-only 不动
     // body 不需要重算）。
     await prisma.doc.update({ where: { id: docId }, data: { body: snap.body, deck: snap.deck ?? null, blockProjection: JSON.stringify(buildBlockProjection(String(snap.body || ''))), updatedAt: new Date().toISOString() } })
+    // #996/#999: 恢复是用户动作 — 受影响节作者轴翻 human/verified、消失节清理
+    // (best-effort,失败只降级为卡片缺标签)。
+    void refreshSectionMetaForRestore({ docId, userId, prevBody: doc.body, nextBody: String(snap.body || '') })
     return { restored: true }
   })
 
@@ -666,16 +724,43 @@ export async function documentsRouter(app: FastifyInstance) {
     // #927: 写回走 DocVersionWriter 单点 — 事务 + 同帧快照(label 'AI inject
     // results')+ #904 乐观锁;并发修改时拒绝而非静默覆盖,与 edit_document
     // 等工具路径同语义(此前裸 doc.update 无快照无并发保护)。
+    // #996/#997: baseBody 用 handler 读到的 doc.body — 「路由读 → writer 读」
+    // 窗口并入乐观锁(同 PUT 的 review 复核#5 口径)。#999: writeSource ai —
+    // 变更节落 pending 交终态化器。
     const written = await writeDocVersion({
       userId: request.user!.userId,
       docId: doc.id,
       body: doc.body + block,
+      baseBody: doc.body,
+      writeSource: 'ai',
       snapshotLabel: 'AI inject results',
     })
     if (written.error) {
-      return reply.status(written.conflict ? 409 : 500).send({ error: written.error })
+      // #996/#997: 冲突同 PUT 语义(409 stale_base + 当前完整态);
+      // 前端提议卡据此呈现,而非 {ok} 后二次 GET。
+      const current = written.conflict
+        ? await prisma.doc.findFirst({ where: { id: doc.id } })
+        : null
+      return reply.status(written.conflict ? 409 : 500).send({
+        error: written.error,
+        ...(written.conflict ? {
+          code: 'stale_base',
+          current_updated_at: current?.updatedAt ?? new Date().toISOString(),
+        } : {}),
+        ...(current ? { current: buildConflictCurrent(current, request.user!.userId) } : {}),
+      })
     }
-    return { ok: true }
+    // #996/#997: 返回写回后的新正文 + 同帧投影 + updated_at — 前端把注入结果
+    // 直接路由进统一提议卡(#998),不再 {ok:true} 后自行 GET 全文做三路合并。
+    // #999: section_meta 随行。
+    const updated = await prisma.doc.findFirst({ where: { id: doc.id }, select: { updatedAt: true } })
+    return {
+      ok: true,
+      body: written.body,
+      block_projection: written.projection,
+      ...(written.sectionMeta ? { section_meta: written.sectionMeta } : {}),
+      updated_at: updated?.updatedAt ?? null,
+    }
   })
 
   // One-shot: create a paper from a study with title/abstract background.

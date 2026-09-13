@@ -97,9 +97,18 @@ describe('research ↔ paper linkage (#383)', () => {
       payload: JSON.stringify({ label: 'Overall survival', result: '{"method":"kaplan_meier_logrank","p_value":0.012,"median_survival_a":18.6}' }),
     })
     expect(res.statusCode).toBe(200)
+    // #996/#997: 响应直接携带写回后的新正文 + 同帧投影 — 前端路由进统一
+    // 提议卡(#998),不再 {ok:true} 后自行 GET 全文。
+    const injected = JSON.parse(res.payload)
+    expect(injected.ok).toBe(true)
+    expect(injected.body).toContain('## Overall survival')
+    expect(injected.body).toContain('kaplan_meier_logrank')
+    expect(injected.block_projection).toBeTruthy()
+    expect(injected.block_projection.body_hash).toBeTypeOf('string')
+    expect(injected.updated_at).toBeTypeOf('string')
 
     const doc = await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}`, headers: await authHeader() })
-    expect(JSON.parse(doc.payload).body).toContain('## Overall survival')
+    expect(JSON.parse(doc.payload).body).toBe(injected.body)
     expect(JSON.parse(doc.payload).body).toContain('kaplan_meier_logrank')
 
     // Missing label → 400

@@ -226,6 +226,7 @@ export class FixDocumentImagesTool extends BaseTool {
         docId,
         body: bodyRes.text,
         ...(deckChanged ? { deck: nextDeckObj as Record<string, unknown> } : {}),
+        writeSource: 'ai', // #999: 变更节作者轴 ai(pending 交终态化器)
         snapshotLabel: 'AI fix image links',
       })
       if (written.error) return { success: false, error: written.error }
@@ -233,7 +234,8 @@ export class FixDocumentImagesTool extends BaseTool {
       return {
         success: true,
         // #989 Phase 3: 输出携带块投影 — tool-loop 转 doc_updated.projection 推前端。
-        output: JSON.stringify({ body: written.body, summary, fixed, missing, projection: written.projection }),
+        // #999: 输出附带 section_meta。
+        output: JSON.stringify({ body: written.body, summary, fixed, missing, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}) }),
       }
     } catch (err) {
       return { success: false, error: `fix_document_images failed: ${(err as Error).message.slice(0, 200)}` }

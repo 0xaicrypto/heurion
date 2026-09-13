@@ -20,12 +20,15 @@ const mocks = vi.hoisted(() => ({
   executeRaw: vi.fn(),
   writeDocVersion: vi.fn(),
   snapFindFirst: vi.fn(),
+  metaFindMany: vi.fn(),
 }))
 
 vi.mock('../../src/common/prisma.js', () => ({
   default: {
     doc: { findFirst: mocks.docFindFirst, update: mocks.docUpdate, create: mocks.docCreate, deleteMany: mocks.docDeleteMany },
     docSnapshot: { create: vi.fn(), findFirst: mocks.snapFindFirst },
+    // #996/#999: 节级元数据 — GET/PUT 响应附带。
+    docSectionMeta: { findMany: mocks.metaFindMany },
     $executeRawUnsafe: mocks.executeRaw,
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
       doc: { update: mocks.docUpdate },
@@ -38,7 +41,11 @@ vi.mock('../../src/common/prisma.js', () => ({
   },
 }))
 vi.mock('../../src/common/auth.guard.js', () => ({ authGuard: async () => {} }))
-vi.mock('../../src/tools/doc-version-writer.js', () => ({ writeDocVersion: mocks.writeDocVersion }))
+vi.mock('../../src/tools/doc-version-writer.js', () => ({
+  writeDocVersion: mocks.writeDocVersion,
+  // #996/#999: restore 元数据同步 — 路由内 fire-and-forget,单测不触达。
+  refreshSectionMetaForRestore: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('../../src/modules/documents/markdown-export.js', () => ({
   renderDocxBuffer: vi.fn(),
   renderPdfBuffer: vi.fn(),
@@ -112,8 +119,11 @@ beforeEach(() => {
   mocks.docDeleteMany.mockReset()
   mocks.executeRaw.mockReset()
   mocks.writeDocVersion.mockReset()
+  mocks.metaFindMany.mockReset()
   mocks.executeRaw.mockResolvedValue(undefined)
   mocks.docUpdate.mockResolvedValue(EXISTING)
+  // #996/#999: 默认无元数据行(降级不携带),专项用例内覆写。
+  mocks.metaFindMany.mockResolvedValue([])
 })
 
 describe('#980 PUT /docs/:docId 走写回单点', () => {
@@ -137,7 +147,7 @@ describe('#980 PUT /docs/:docId 走写回单点', () => {
     // 写回单点参数:body + 快照 label(与工具路径同管道),deck 未传不触碰;
     // baseBody 用 handler 读到的正文(读→写窗口并入乐观锁,review 复核#5)
     expect(mocks.writeDocVersion).toHaveBeenCalledWith({
-      userId: USER, docId: DOC, body: 'B', baseBody: 'A', snapshotLabel: '保存版本',
+      userId: USER, docId: DOC, body: 'B', baseBody: 'A', writeSource: 'human', snapshotLabel: '保存版本',
     })
     // 不再直接落库正文
     expect(mocks.docUpdate).not.toHaveBeenCalled()
@@ -163,7 +173,7 @@ describe('#980 PUT /docs/:docId 走写回单点', () => {
     expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ code: 'stale_base' }))
   })
 
-  test('writer 乐观锁冲突(#904)→ 409 stale_base + current_updated_at', async () => {
+  test('writer 乐观锁冲突(#904)→ 409 stale_base + current_updated_at + current 完整态(#996)', async () => {
     const { routes, app } = makeHarness()
     await documentsRouter(app as never)
     const put = routes.get('PUT /api/v1/docs/:docId')
@@ -171,8 +181,8 @@ describe('#980 PUT /docs/:docId 走写回单点', () => {
     mocks.writeDocVersion.mockResolvedValue({
       body: '', deck: null, changed: false, conflict: true, error: '文档已被并发修改',
     })
-    // 冲突路径重读最新 updatedAt(本次调用是 findFirst 的第 2 次)
-    mocks.docFindFirst.mockResolvedValueOnce({ updatedAt: '2026-01-09T00:00:00Z' })
+    // 冲突路径重读最新全量 doc(#996/#997:current 随 409 下发,本次是第 2 次)
+    mocks.docFindFirst.mockResolvedValueOnce({ ...EXISTING, updatedAt: '2026-01-09T00:00:00Z' })
     const reply = makeReply()
 
     await put(
@@ -184,6 +194,8 @@ describe('#980 PUT /docs/:docId 走写回单点', () => {
     expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({
       code: 'stale_base',
       current_updated_at: '2026-01-09T00:00:00Z',
+      // 双栏对照数据源:服务端当前 title/body/deck/投影一次性下发
+      current: expect.objectContaining({ title: 'Old', body: 'A', deck: null }),
     }))
   })
 
@@ -202,7 +214,7 @@ describe('#980 PUT /docs/:docId 走写回单点', () => {
     // review 复核#1: title 并入写回单点(同帧/同乐观锁,事务外补写移除) —
     // title-only 走 writer 不变更路径(不刷 updatedAt、不建快照)
     expect(mocks.writeDocVersion).toHaveBeenCalledWith({
-      userId: USER, docId: DOC, title: 'New', baseBody: 'A', snapshotLabel: '保存版本',
+      userId: USER, docId: DOC, title: 'New', baseBody: 'A', writeSource: 'human', snapshotLabel: '保存版本',
     })
     expect(mocks.docUpdate).not.toHaveBeenCalled()
     expect(res.unchanged).toBe(true)
@@ -309,6 +321,59 @@ describe('#995 批量删除 — 归属内联 + 上限/形状护栏', () => {
     await batchDelete({ body: { ids: ['x'] }, user: { userId: USER } }, reply)
     expect(reply.status).toHaveBeenCalledWith(400)
     expect(mocks.docDeleteMany).not.toHaveBeenCalled()
+  })
+})
+
+describe('#996/#999 — GET/PUT 响应携带节级元数据 section_meta', () => {
+  test('GET:有 meta 行 → section_meta 随响应(作者轴+可信度轴)', async () => {
+    const { routes, app } = makeHarness()
+    await documentsRouter(app as never)
+    const get = routes.get('GET /api/v1/docs/:docId')
+    mocks.docFindFirst.mockResolvedValue(EXISTING)
+    mocks.metaFindMany.mockResolvedValue([
+      { sectionId: 's_a1b2c3d4e5f6', author: 'ai', verifyStatus: 'pending', updatedAt: '2026-01-05T00:00:00Z' },
+      { sectionId: 's_9999aaaa0000', author: 'human', verifyStatus: 'verified', updatedAt: '2026-01-06T00:00:00Z' },
+    ])
+
+    const res = await get({ params: { docId: DOC }, user: { userId: USER } }, makeReply())
+
+    expect(res.section_meta).toEqual({
+      s_a1b2c3d4e5f6: { author: 'ai', verify_status: 'pending', updated_at: '2026-01-05T00:00:00Z' },
+      s_9999aaaa0000: { author: 'human', verify_status: 'verified', updated_at: '2026-01-06T00:00:00Z' },
+    })
+  })
+
+  test('GET:无 meta 行 → 不携带 section_meta(降级不携带,前端按无数据处理)', async () => {
+    const { routes, app } = makeHarness()
+    await documentsRouter(app as never)
+    const get = routes.get('GET /api/v1/docs/:docId')
+    mocks.docFindFirst.mockResolvedValue(EXISTING)
+
+    const res = await get({ params: { docId: DOC }, user: { userId: USER } }, makeReply())
+
+    expect(res).not.toHaveProperty('section_meta')
+  })
+
+  test('PUT:保存响应携带 section_meta(手动编辑后作者轴即时可读)', async () => {
+    const { routes, app } = makeHarness()
+    await documentsRouter(app as never)
+    const put = routes.get('PUT /api/v1/docs/:docId')
+    mocks.docFindFirst
+      .mockResolvedValueOnce(EXISTING)   // handler 读 existing
+      .mockResolvedValueOnce(EXISTING)   // 写回后重读
+    mocks.writeDocVersion.mockResolvedValue({ body: 'B', deck: null, changed: true, projection: null })
+    mocks.metaFindMany.mockResolvedValue([
+      { sectionId: 's_x1y2z3w4v5u6', author: 'human', verifyStatus: 'verified', updatedAt: '2026-01-07T00:00:00Z' },
+    ])
+
+    const res = await put(
+      { params: { docId: DOC }, body: { title: 'Old', body: 'B' }, user: { userId: USER } },
+      makeReply(),
+    )
+
+    expect(res.section_meta).toEqual({
+      s_x1y2z3w4v5u6: { author: 'human', verify_status: 'verified', updated_at: '2026-01-07T00:00:00Z' },
+    })
   })
 })
 
