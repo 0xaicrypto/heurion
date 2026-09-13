@@ -141,7 +141,7 @@ export class SummaryService extends MemoryNodeService {
 
     this.commitGraphLast(legacyBefore)
 
-    this.appendEvent('memory_article_edited', `Edited summary ${stableId}`, {
+    this.appendEvent('memory_summary_edited', `Edited summary ${stableId}`, {
       summaryId: stableId,
       previousVersionId: current.id,
       newVersionId: newNodeId,
@@ -166,7 +166,7 @@ export class SummaryService extends MemoryNodeService {
     // #439: keep derived indexes (embedding vectors) in sync with the graph.
     this.c.onNodeRemoved?.(stableId, 'summary')
 
-    this.appendEvent('memory_article_deleted', `Deleted summary ${stableId}`, {
+    this.appendEvent('memory_summary_deleted', `Deleted summary ${stableId}`, {
       summaryId: stableId,
       deletedBy,
     })

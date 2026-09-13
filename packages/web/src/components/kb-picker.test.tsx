@@ -6,7 +6,7 @@ import { KbPicker, type KbPickerItem } from './KbPicker';
 const pickerMock = vi.hoisted(() => vi.fn(async () => ({
   summaries: [
     { id: 'a1', title: '_km 文章', summary: 's', kind: 'summary' },
-    { id: 'd1', title: 'km 文件', summary: 's', kind: 'document' },
+    { id: 'd1', title: 'km 文件', summary: 's', kind: 'file' },
   ] satisfies KbPickerItem[],
 })));
 
@@ -53,7 +53,7 @@ describe('KbPicker pre-selection (#786)', () => {
         onConfirm={onConfirm}
         initialItems={[
           { id: 'a1', title: '_km 文章', summary: 's', kind: 'summary' },
-          { id: 'd1', title: 'km 文件', summary: 's', kind: 'document' },
+          { id: 'd1', title: 'km 文件', summary: 's', kind: 'file' },
         ]}
       />,
     );

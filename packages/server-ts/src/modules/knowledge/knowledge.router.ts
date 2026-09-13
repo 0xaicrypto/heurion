@@ -318,7 +318,9 @@ export async function knowledgeRouter(app: FastifyInstance) {
       }
       return {
         id: node.stableId,
-        kind: 'document',
+        // #1011: 文件类命名与 ReferenceItem.kind 统一为 'file'（图节点内部
+        // 仍叫 document，仅 wire 命名收口）。
+        kind: 'file',
         title: node.title,
         summary: '📎 文件',
         updatedAt: node.updatedAt,
@@ -401,7 +403,7 @@ export async function knowledgeRouter(app: FastifyInstance) {
       userId,
       workspaceId: userId,
       category: 'kb_command',
-      action: 'article_edited',
+      action: 'summary_edited',
       metadata: { summaryId: edited.value.stableId },
     }).catch(() => {})
 

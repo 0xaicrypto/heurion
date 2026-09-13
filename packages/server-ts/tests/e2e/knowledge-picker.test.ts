@@ -93,7 +93,7 @@ describe('#628 选择器列出上传文件 + 注入文档内容', () => {
     })
     expect(picker.statusCode).toBe(200)
     const { summaries } = JSON.parse(picker.payload)
-    const doc = summaries.find((a: any) => a.kind === 'document' && a.id === file_id)
+    const doc = summaries.find((a: any) => a.kind === 'file' && a.id === file_id)
     expect(doc).toBeTruthy()
     expect(doc.title).toContain('atr')
   })

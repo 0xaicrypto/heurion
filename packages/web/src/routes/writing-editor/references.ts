@@ -50,7 +50,7 @@ export interface DocReferences {
   loadReferences: () => Promise<void>;
   loadFilesLibrary: () => Promise<void>;
   handleAddReference: () => Promise<void>;
-  handleKbPickConfirm: (items: Array<{ id: string; title: string; summary: string; kind: 'summary' | 'document' }>) => Promise<void>;
+  handleKbPickConfirm: (items: Array<{ id: string; title: string; summary: string; kind: 'summary' | 'file' }>) => Promise<void>;
   addFileLibraryRefs: (files: FileLibraryItem[]) => Promise<void>;
   deleteReference: (referenceId: string) => Promise<void>;
 }
@@ -123,11 +123,11 @@ export function useDocReferences(input: {
   // #930: summary 类此前只登记标题(picker 仅回传 120 字预览,AI 读不到
   // 实质内容) — 确认时经 getKnowledgeSummary 取全文登记;document 类保持
   // 文件名契约(content=文件名,注入侧按名定位上传文件解析正文)。
-  const handleKbPickConfirm = async (items: Array<{ id: string; title: string; summary: string; kind: 'summary' | 'document' }>) => {
+  const handleKbPickConfirm = async (items: Array<{ id: string; title: string; summary: string; kind: 'summary' | 'file' }>) => {
     if (!docId || items.length === 0) return;
     for (const it of items) {
       try {
-        const kind = it.kind === 'document' ? 'file' : 'guideline';
+        const kind = it.kind === 'file' ? 'file' : 'guideline';
         let content = it.title;
         if (it.kind === 'summary') {
           try {

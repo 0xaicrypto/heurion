@@ -126,6 +126,9 @@ export async function agentRouter(app: FastifyInstance, opts: AgentRouterOptions
       memory_fact_edited: 'Edited fact',
       memory_fact_deleted: 'Deleted fact',
       memory_summary_added: 'Added summary',
+      memory_summary_edited: 'Edited summary',
+      memory_summary_deleted: 'Deleted summary',
+      // 历史 eventLog(append-only JSONL)里仍可能残留旧事件名 — 保留读兼容映射。
       memory_article_edited: 'Edited summary',
       memory_article_deleted: 'Deleted summary',
       memory_document_uploaded: 'Uploaded document',

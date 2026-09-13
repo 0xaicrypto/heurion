@@ -16,7 +16,7 @@ export interface KbPickerItem {
   id: string;
   title: string;
   summary: string;
-  kind: 'summary' | 'document';
+  kind: 'summary' | 'file';
 }
 
 interface KbPickerProps {
@@ -113,13 +113,13 @@ export function KbPicker({ open, onClose, onConfirm, initialItems = [], max = 3 
                   </div>
                 </div>
               )}
-              {results.some((a) => a.kind === 'document') && (
+              {results.some((a) => a.kind === 'file') && (
                 <div>
                   <p className="mb-1 px-1 text-xs font-medium text-text-tertiary">
-                    📎 {t('chat.kbGroupDocuments', '文件')} ({results.filter((a) => a.kind === 'document').length})
+                    📎 {t('chat.kbGroupDocuments', '文件')} ({results.filter((a) => a.kind === 'file').length})
                   </p>
                   <div className="space-y-2">
-                    {results.filter((a) => a.kind === 'document').map((a) => renderRow(a))}
+                    {results.filter((a) => a.kind === 'file').map((a) => renderRow(a))}
                   </div>
                 </div>
               )}
