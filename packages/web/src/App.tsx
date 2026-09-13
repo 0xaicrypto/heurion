@@ -22,6 +22,7 @@ import { MedicalRecordsPage } from '@/routes/medical-records';
 import { ViewerPage } from '@/routes/viewer';
 import { SettingsPage } from '@/routes/settings';
 import { AdminUsersPage } from '@/routes/admin/users';
+import { AdminMetricsPage } from '@/routes/admin/metrics';
 import { ResearchPage } from '@/routes/research';
 
 import { ResearchDetailPage } from '@/routes/research-detail';
@@ -294,6 +295,16 @@ export default function App() {
               <RequireAuth>
                 <RequireRole role="admin">
                   <AdminUsersPage />
+                </RequireRole>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/app/admin/metrics"
+            element={
+              <RequireAuth>
+                <RequireRole role="admin">
+                  <AdminMetricsPage />
                 </RequireRole>
               </RequireAuth>
             }

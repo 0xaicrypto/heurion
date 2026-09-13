@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, Brain, CalendarClock, Cpu, Download, FileText, FlaskConical, FolderOpen, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, PanelLeftClose, PanelLeftOpen, Puzzle, Settings, Shield, Users, X, BarChart3 } from 'lucide-react';
+import { ChevronDown, Brain, CalendarClock, Cpu, Download, FileText, FlaskConical, FolderOpen, Gauge, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, PanelLeftClose, PanelLeftOpen, Puzzle, Settings, Shield, Users, X, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/lib/api';
@@ -46,6 +46,7 @@ const navItems: NavItem[] = [
   { to: '/app/export', labelKey: 'nav.export', icon: <Download size={18} />, section: 'tools' },
   { to: '/app/settings', labelKey: 'nav.settings', icon: <Settings size={18} />, section: 'tools' },
   { to: '/app/admin/users', labelKey: 'nav.admin', icon: <Shield size={18} />, admin: true, section: 'tools' },
+  { to: '/app/admin/metrics', labelKey: 'nav.adminMetrics', icon: <Gauge size={18} />, admin: true, section: 'tools' },
 ];
 
 function LanguageMenu() {

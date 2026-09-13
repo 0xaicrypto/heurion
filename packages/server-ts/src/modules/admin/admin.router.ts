@@ -3,6 +3,12 @@ import bcrypt from 'bcryptjs'
 import prisma from '../../common/prisma'
 import { adminGuard } from '../../common/auth.guard'
 import { queryLoki, type LogQueryFilters } from '../../common/log-query'
+import {
+  getGapMetrics,
+  getMemoryOverview,
+  getReferenceMetrics,
+  getSuggestionMetrics,
+} from './memory-metrics.service.js'
 
 export async function adminRouter(app: FastifyInstance) {
   app.addHook('preHandler', adminGuard)
@@ -26,6 +32,27 @@ export async function adminRouter(app: FastifyInstance) {
     const result = await queryLoki(filters)
     if (result.error) return reply.status(502).send({ error: result.error })
     return { lines: result.lines, total: result.total }
+  })
+
+  // ── #1030: 记忆使用观察指标（admin-only，只读聚合；供 #1018 校准）──
+  app.get('/api/v1/admin/metrics/memory/overview', async (request) => {
+    const q = request.query as any
+    return getMemoryOverview(q?.days)
+  })
+
+  app.get('/api/v1/admin/metrics/memory/suggestions', async (request) => {
+    const q = request.query as any
+    return getSuggestionMetrics(q?.days)
+  })
+
+  app.get('/api/v1/admin/metrics/memory/gaps', async (request) => {
+    const q = request.query as any
+    return getGapMetrics(q?.days)
+  })
+
+  app.get('/api/v1/admin/metrics/memory/references', async (request) => {
+    const q = request.query as any
+    return getReferenceMetrics(q?.days, q?.limit)
   })
 
   // ── List users (frontend expects { users: [...] }) ──

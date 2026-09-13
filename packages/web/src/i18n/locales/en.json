@@ -73,7 +73,8 @@
     "schedule": "Schedule",
     "export": "Export",
     "collapseRail": "Collapse to icon rail",
-    "expandRail": "Expand sidebar"
+    "expandRail": "Expand sidebar",
+    "adminMetrics": "Memory Metrics"
   },
   "auth": {
     "welcomeBack": "Welcome back",

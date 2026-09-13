@@ -73,7 +73,8 @@
     "schedule": "定时任务",
     "export": "数据导出",
     "collapseRail": "收起为图标栏",
-    "expandRail": "展开侧栏"
+    "expandRail": "展开侧栏",
+    "adminMetrics": "记忆指标"
   },
   "auth": {
     "welcomeBack": "欢迎回来",
