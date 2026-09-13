@@ -1,4 +1,5 @@
-import { Paperclip, X } from 'lucide-react';
+import { Paperclip, Pin, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { SkillsBar } from '@/components/SkillsBar';
 import { ChatMessages, ChatChangeCard } from '@/components/chat/ChatMessages';
 import { ChartLibrary } from '@/components/chat/ChartLibrary';
@@ -21,8 +22,12 @@ export function ChatPanel(input: {
   onInsertChart: (markdown: string) => void;
   /** #996/#1003: 聊天 ↔ 文档跳转（节标签/改动卡 → 编辑器节卡片）。 */
   onJumpToSection: (sectionId: string) => void;
+  /** #1032: 临时附件固定为引用（登记 SessionReference，后续轮次持续生效）。 */
+  onPinAttachment: (f: { name: string; fileId: string }) => void;
+  attachmentPinning?: boolean;
 }) {
-  const { chat, chatWidth, sidePanelTab, setSidePanelTab, onClose, onResizeStart, chatSessionId, onInsertChart, onJumpToSection } = input;
+  const { t } = useTranslation();
+  const { chat, chatWidth, sidePanelTab, setSidePanelTab, onClose, onResizeStart, chatSessionId, onInsertChart, onJumpToSection, onPinAttachment, attachmentPinning } = input;
   const { chatInput, setChatInput, chatMessages, chatSession, chatLoading, chatPending, chatEndRef, chatSelection, setChatSelection } = chat;
   return (
     <>
@@ -94,7 +99,19 @@ export function ChatPanel(input: {
             {chat.chatAttachedFiles.length > 0 && (
                   <div className="mb-2 flex gap-1 flex-wrap">
                     {chat.chatAttachedFiles.map((f) => (
-                      <span key={f.fileId} className="inline-flex items-center rounded-full bg-surface-elevated border border-border px-2 py-0.5 text-xs text-text-secondary">{f.name}</span>
+                      <span key={f.fileId} className="inline-flex items-center gap-1 rounded-full bg-surface-elevated border border-border px-2 py-0.5 text-xs text-text-secondary">
+                        {f.name}
+                        {/* #1032: 与主 chat 一致的"固定为引用"。 */}
+                        <button
+                          onClick={() => onPinAttachment(f)}
+                          disabled={attachmentPinning}
+                          className="rounded p-0.5 text-text-tertiary transition-colors hover:text-accent disabled:opacity-50"
+                          title={t('chat.pinAsReference', '固定为引用（本会话持续生效）')}
+                          aria-label={t('chat.pinAsReference', '固定为引用（本会话持续生效）')}
+                        >
+                          <Pin size={11} />
+                        </button>
+                      </span>
                     ))}
                   </div>
                 )}

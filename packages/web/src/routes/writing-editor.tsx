@@ -1493,6 +1493,8 @@ export function WritingEditorPage() {
               chatSessionId={chatSessionId}
               onInsertChart={handleInsertChart}
               onJumpToSection={jumpToSection}
+              attachmentPinning={references.filesLibAdding}
+              onPinAttachment={(f) => void references.addFileLibraryRefs([{ file_id: f.fileId, name: f.name, mime: '', size_bytes: 0, created_at: '' }])}
             />
           )}
         </div>
