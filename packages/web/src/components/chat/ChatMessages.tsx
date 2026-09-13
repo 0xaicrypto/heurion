@@ -1,7 +1,7 @@
 import { useState, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Check, ChevronDown, Copy, Download, FileText, Puzzle, Quote, RefreshCw, RotateCcw } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Check, ChevronDown, Copy, Download, FileText, Puzzle, Quote, RefreshCw, RotateCcw } from 'lucide-react';
 import type { ChatMessage } from '@/stores/chat';
 import { StreamingLlmContent } from '@/components/LlmContent';
 import { SmartImg } from '@/components/SmartImg';
@@ -45,6 +45,67 @@ function isPreviewable(mimeType?: string, fileName?: string): boolean {
   return false;
 }
 
+/** #996/#1003: 聊天改动卡 — "✓ Changed · 节名"可展开,含节跳转 + 迷你 diff
+ *  （rows 由 SSE 聚合传入；历史重建仅节列表）。 */
+export function ChatChangeCard({
+  sections, rows, onJumpToSection,
+}: {
+  sections: Array<{ id: string; heading: string }>;
+  rows?: Record<string, Array<{ type: 'add' | 'del'; text: string }>>;
+  onJumpToSection: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2 overflow-hidden rounded-lg border border-verify-verified/40 bg-verify-verified/[0.07]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] font-medium text-verify-verified"
+      >
+        <Check size={12} className="shrink-0" />
+        <span className="shrink-0">{t('chat.changed', '已改动')}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {sections.slice(0, 2).map((s) => s.heading || s.id).join(' · ')}
+          {sections.length > 2 ? ` +${sections.length - 2}` : ''}
+        </span>
+        <ChevronDown size={12} className={cn('shrink-0 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div className="space-y-2 border-t border-verify-verified/25 bg-surface-elevated px-2.5 py-2">
+          {sections.map((s) => (
+            <div key={s.id}>
+              <button
+                onClick={() => onJumpToSection(s.id)}
+                className="inline-flex max-w-full items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-[11px] text-accent transition-colors hover:bg-accent/20"
+              >
+                <ArrowRight size={10} className="shrink-0" />
+                <span className="truncate">{s.heading || s.id}</span>
+              </button>
+              {rows?.[s.id]?.length ? (
+                <div className="mt-1 space-y-0.5 font-mono text-[10px] leading-4">
+                  {rows[s.id].slice(0, 12).map((r, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        'rounded px-1',
+                        r.type === 'add' ? 'bg-[rgba(34,197,94,0.14)] text-[rgba(21,128,61,0.95)]' : 'bg-[rgba(239,68,68,0.12)] text-[rgba(185,28,28,0.9)] line-through',
+                      )}
+                    >
+                      {r.text}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface ChatMessagesProps {
   messages: ChatMessage[];
   /** Compact mode: no day/time separators, no copy / regenerate / retry /
@@ -72,6 +133,11 @@ export interface ChatMessagesProps {
   stallSince?: number | null;
   /** #976: 会话任务清单快照 — 进度卡片数据源（SSE plan_updated 实时更新）。 */
   plan?: TaskPlan | null;
+  /**
+   * #996/#1003: 聊天 ↔ 文档跳转回调 — 用户消息节标签 / assistant 改动卡
+   * 的"→ 节名"点击跳转到对应节卡片（写作编辑器场景注入）。
+   */
+  onJumpToSection?: (sectionId: string) => void;
 }
 
 /**
@@ -121,6 +187,7 @@ export function ChatMessages({
   streamNote,
   stallSince,
   plan,
+  onJumpToSection,
 }: ChatMessagesProps) {
   const { t } = useTranslation();
   const compact = variant === 'compact';
@@ -217,6 +284,16 @@ export function ChatMessages({
                 ) : (
                   <StreamingLlmContent content={m.text || ''} isStreaming={m.isStreaming} className={m.role === 'user' ? 'prose-invert' : undefined} />
                 )}
+                {/* #996/#1003: 用户消息节标签 — "→ 节名"点击跳到对应节卡片。 */}
+                {m.role === 'user' && m.sectionRef && onJumpToSection && (
+                  <button
+                    onClick={() => onJumpToSection(m.sectionRef!.id)}
+                    className="mt-1.5 inline-flex max-w-full items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-[11px] text-white transition-colors hover:bg-white/30"
+                  >
+                    <ArrowRight size={10} className="shrink-0" />
+                    <span className="truncate">{m.sectionRef.heading || m.sectionRef.id}</span>
+                  </button>
+                )}
                 {/* #fix: 流式等待提示 — 时间线(StatusLine)未渲染时的兜底
                     (无推理/工具/子代理/前置提示的纯流式回合)。 */}
                 {m.isStreaming && !m.text && !m.reasoning && !(m.toolCalls?.length) && !(m.subagents?.length) && !streamNote && (
@@ -229,6 +306,12 @@ export function ChatMessages({
                     <AlertTriangle size={12} className="shrink-0" />
                     <span>{t('chat.truncated', '回答因输出长度限制被截断，请重试或简化问题')}</span>
                   </div>
+                )}
+                {/* #996/#1003: 聊天改动卡 — assistant 本轮文档改动节
+                    (持久化自 assistant metadata.doc_sections,刷新后可重建);
+                    聊天记录本身成为可回溯的改动日志。 */}
+                {m.role === 'assistant' && !m.isStreaming && m.docSections && m.docSections.length > 0 && onJumpToSection && (
+                  <ChatChangeCard sections={m.docSections} onJumpToSection={onJumpToSection} />
                 )}
                 {m.imageUrl && (
                   <SmartImg

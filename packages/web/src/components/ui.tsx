@@ -77,7 +77,7 @@ export function Badge({
   children,
 }: {
   className?: string;
-  variant?: 'default' | 'success' | 'warning' | 'error';
+  variant?: 'default' | 'success' | 'warning' | 'error' | 'ai' | 'human' | 'verified' | 'verifying' | 'conflict';
   children: React.ReactNode;
 }) {
   return (
@@ -89,6 +89,13 @@ export function Badge({
           'bg-success/10 text-success': variant === 'success',
           'bg-warning/10 text-warning': variant === 'warning',
           'bg-error/10 text-error': variant === 'error',
+          /* WRITING_MODULE_REDESIGN 两轴语义:作者轴(AI=紫/你=灰)
+             与可信度轴(已验证=绿/验证中=蓝)/来源轴(冲突=琥珀) */
+          'bg-author-ai/10 text-author-ai': variant === 'ai',
+          'bg-author-human/10 text-author-human': variant === 'human',
+          'bg-verify-verified/10 text-verify-verified': variant === 'verified',
+          'bg-verify-pending/10 text-verify-pending': variant === 'verifying',
+          'bg-source-conflict/10 text-source-conflict': variant === 'conflict',
         },
         className,
       )}

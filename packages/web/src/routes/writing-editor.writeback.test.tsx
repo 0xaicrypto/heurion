@@ -149,7 +149,7 @@ function renderEditor() {
 
 const editorText = (container: HTMLElement) => container.querySelector('.ProseMirror')?.textContent ?? '';
 /** #882 冲突横幅的专属锚点 — 同文案也会出现在 header 轻提示(无 ⚠ 前缀),须区分。 */
-const conflictBanner = /⚠ .*(modified in another window|文档已在其他窗口被修改)/;
+const conflictBanner = /Your version and a saved AI edit differ|你的版本与已保存的 AI 修改不一致/;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -183,7 +183,7 @@ describe('#926 flushPendingWriteBack 三分支(路由级编排)', () => {
     await sendTurn([{ body: `${BASE_BODY}\n\nR1 段落`, rev: 1 }]);
 
     // 冲刷后进入审阅:审阅横幅出现,写回内容在编辑器中以变更标记可见。
-    expect(await screen.findByText('审阅 AI 修改')).toBeTruthy();
+    expect(await screen.findByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
     await waitFor(() => expect(editorText(container)).toContain('R1 段落'));
     // 审阅未决 — 不得静默落盘(#553 写回必经审阅)。
     expect(apiMock.updateDoc).not.toHaveBeenCalled();
@@ -194,14 +194,14 @@ describe('#926 flushPendingWriteBack 三分支(路由级编排)', () => {
     await screen.findByDisplayValue('Original');
 
     await sendTurn([{ body: `${BASE_BODY}\n\nR1 段落`, rev: 1 }]);
-    expect(await screen.findByText('审阅 AI 修改')).toBeTruthy();
+    expect(await screen.findByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
 
     // 审阅未决时新写回到达 → 不顶掉当前审阅,入累计队列。
     await sendTurn([{ body: `${BASE_BODY}\n\nR2 段落`, rev: 2 }]);
 
     expect(await screen.findByText(/another round of edits|又完成了一轮修改/)).toBeTruthy();
     // #837-ux: 队列轮数徽章。
-    expect(await screen.findByText('还有 1 轮排队')).toBeTruthy();
+    expect(await screen.findByText(/1 more queued|还有 1 轮排队/)).toBeTruthy();
     // 当前审阅仍是第 1 轮内容,未被覆盖。
     expect(editorText(container)).toContain('R1 段落');
     expect(editorText(container)).not.toContain('R2 段落');
@@ -212,27 +212,27 @@ describe('#926 flushPendingWriteBack 三分支(路由级编排)', () => {
     await screen.findByDisplayValue('Original');
 
     await sendTurn([{ body: `${BASE_BODY}\n\nR1 段落`, rev: 1 }]);
-    expect(await screen.findByText('审阅 AI 修改')).toBeTruthy();
+    expect(await screen.findByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
     await sendTurn([{ body: `${BASE_BODY}\n\nR2 段落`, rev: 2 }]);
-    expect(await screen.findByText('还有 1 轮排队')).toBeTruthy();
+    expect(await screen.findByText(/1 more queued|还有 1 轮排队/)).toBeTruthy();
 
     // 接受第 1 轮 → 落盘保存 → popNextWriteBack 以本轮正文为基线重放队列。
-    await waitFor(() => expect(screen.getByRole('button', { name: /全部接受/ })).not.toBeDisabled());
-    fireEvent.click(screen.getByRole('button', { name: /全部接受/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ }));
     await waitFor(() => expect(apiMock.updateDoc).toHaveBeenCalledTimes(1));
     expect(apiMock.updateDoc.mock.calls[0][1].body).toContain('R1 段落');
 
     // 下一轮审阅自动呈现(队列余 0,无排队提示;remaining>0 才提示) —
     // 重放 diff 的插入侧(R2)在编辑器中以变更标记可见。
     await waitFor(() => expect(editorText(document.body)).toContain('R2 段落'));
-    expect(screen.getByText('审阅 AI 修改')).toBeTruthy();
+    expect(screen.getByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
 
     // 接受重放轮 → 落盘合并结果,审阅全部结束。
-    await waitFor(() => expect(screen.getByRole('button', { name: /全部接受/ })).not.toBeDisabled());
-    fireEvent.click(screen.getByRole('button', { name: /全部接受/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ }));
     await waitFor(() => expect(apiMock.updateDoc).toHaveBeenCalledTimes(2));
     expect(apiMock.updateDoc.mock.calls[1][1].body).toContain('R2 段落');
-    await waitFor(() => expect(screen.queryByText('审阅 AI 修改')).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/AI updated this section|AI 更新了这个节/)).toBeNull());
     expect(editorText(container)).toContain('R2 段落');
   });
 });
@@ -266,13 +266,14 @@ describe('#882 并发保存 409 → saveConflict 横幅两分支', () => {
     await triggerConflict();
     apiMock.getDoc.mockResolvedValueOnce({ ...BASE_DOC, body: 'Server latest', updated_at: '2026-01-04T00:00:00Z' });
 
-    fireEvent.click(screen.getByRole('button', { name: /Load latest|载入最新/ }));
-    // 本地未保存内容与服务端最新进 diff 审阅(#927 语义)。
-    expect(await screen.findByText('审阅 AI 修改')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Use AI's version|采用 AI 版本/ }));
+    // 本地未保存内容与服务端最新进 diff 审阅(#927 语义)— legacy 无 payload
+    // 走旧「载入最新」流,表头 = conflict 变体(#998 对照表)。
+    expect(await screen.findByText(/Your version and a saved AI edit differ|你的版本与已保存的 AI 修改不一致/)).toBeTruthy();
     await waitFor(() => expect(editorText(document.body)).toContain('Server latest'));
-    await waitFor(() => expect(screen.getByRole('button', { name: /全部接受/ })).not.toBeDisabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ })).not.toBeDisabled());
 
-    fireEvent.click(screen.getByRole('button', { name: /全部接受/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ }));
     // 服务端已是最新 — 直接采用,不再 PUT。
     expect(await screen.findByText(/Loaded the latest server content|已载入服务端最新内容/)).toBeTruthy();
     await waitFor(() => expect(screen.queryByText(conflictBanner)).toBeNull());
@@ -288,7 +289,7 @@ describe('#927 doc_updated rev 幂等守卫(路由级 consumption effect)', () =
 
     // rev 5 写回 → 审阅打开,appliedDocRev 基线 = 5。
     await sendTurn([{ body: `${BASE_BODY}\n\nV5`, rev: 5 }]);
-    expect(await screen.findByText('审阅 AI 修改')).toBeTruthy();
+    expect(await screen.findByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
 
     // SSE 乱序/重放:rev 4(旧于已应用)→ 守卫必须忽略。
     await sendTurn([{ body: 'Stale V4', rev: 4 }]);
@@ -299,7 +300,7 @@ describe('#927 doc_updated rev 幂等守卫(路由级 consumption effect)', () =
     // 对照组:rev 6(> 5)→ 守卫放行 → 审阅打开时入队。
     await sendTurn([{ body: `${BASE_BODY}\n\nV6`, rev: 6 }]);
     expect(await screen.findByText(/another round of edits|又完成了一轮修改/)).toBeTruthy();
-    expect(await screen.findByText('还有 1 轮排队')).toBeTruthy();
+    expect(await screen.findByText(/1 more queued|还有 1 轮排队/)).toBeTruthy();
   });
 });
 
@@ -321,7 +322,7 @@ describe('#895 审阅未决时保存守卫', () => {
 
     // turn 结束进入审阅 → 审阅未决。
     await sendTurn([{ body: `${BASE_BODY}\n\nR1 段落`, rev: 1 }]);
-    expect(await screen.findByText('审阅 AI 修改')).toBeTruthy();
+    expect(await screen.findByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
 
     // dirty 状态下推进超过 autosave 阈值:守卫必须让定时器根本不排。
     vi.useFakeTimers();

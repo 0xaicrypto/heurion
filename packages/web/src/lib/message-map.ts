@@ -33,6 +33,10 @@ export function mapWireMessage(m: ChatWireMessage): ChatMessage {
             summaryPreview?: string; turns?: number; costTokens?: number
           }>;
         };
+        /** #996/#1003: 用户消息节引用(节跳转标签)。 */
+        section_ref?: { id?: unknown; heading?: unknown };
+        /** #996/#1003: 本轮文档写回的节(id+标题) — 聊天改动日志。 */
+        doc_sections?: Array<{ id?: unknown; heading?: unknown }>;
       }
     | undefined;
 
@@ -81,6 +85,9 @@ export function mapWireMessage(m: ChatWireMessage): ChatMessage {
     compactionSummary: meta?.compactionSummary === true,
     // #723: 恢复该轮生成的图表(取最后一张)。
     chart: meta?.chart?.length ? meta.chart[meta.chart.length - 1] : undefined,
+    // #996/#1003: 用户消息节引用 / assistant 本轮改动节(聊天改动日志)。
+    ...(meta?.section_ref ? { sectionRef: { id: String(meta.section_ref.id || ''), heading: String(meta.section_ref.heading || '') } } : {}),
+    ...(meta?.doc_sections ? { docSections: (meta.doc_sections as Array<{ id: string; heading: string }>).map((s) => ({ id: String(s.id || ''), heading: String(s.heading || '') })) } : {}),
     ...(restoredTools ? { toolCalls: restoredTools } : {}),
     ...(restoredSubs ? { subagents: restoredSubs } : {}),
   };

@@ -5,6 +5,11 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      fontFamily: {
+        /* 正文/界面控件 = 系统无衬线;标题/节名 = Source Serif 4(学术编辑气质) */
+        sans: ['system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Noto Sans SC', 'sans-serif'],
+        serif: ['var(--font-serif)'],
+      },
       colors: {
         background: 'hsl(var(--background))',
         surface: 'hsl(var(--surface))',
@@ -22,6 +27,13 @@ export default {
         ring: 'hsl(var(--ring))',
         /* §11.3 (#221): clinical semantic palette */
         'clinical-low-conf': 'hsl(var(--clinical-low-conf))',
+        /* WRITING_MODULE_REDESIGN 视觉系统:作者轴 + 可信度轴 + 提议来源轴
+           (带 alpha-value 占位,支持 bg-x/10 一类的软底色徽标) */
+        'author-ai': 'hsl(var(--author-ai) / <alpha-value>)',
+        'author-human': 'hsl(var(--author-human) / <alpha-value>)',
+        'verify-verified': 'hsl(var(--verify-verified) / <alpha-value>)',
+        'verify-pending': 'hsl(var(--verify-pending) / <alpha-value>)',
+        'source-conflict': 'hsl(var(--source-conflict) / <alpha-value>)',
         nexus: {
           50: '#f0f9ff',
           100: '#e0f2fe',

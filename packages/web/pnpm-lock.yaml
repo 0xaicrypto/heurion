@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@fontsource/source-serif-4':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@heurion/contracts':
         specifier: file:../contracts
         version: file:../contracts
@@ -32,6 +35,9 @@ importers:
       '@tiptap/extension-table-row':
         specifier: ^3.29.2
         version: 3.29.2(@tiptap/extension-table@3.29.2(@tiptap/core@3.30.2(@tiptap/pm@3.29.2))(@tiptap/pm@3.29.2))
+      '@tiptap/pm':
+        specifier: 3.29.2
+        version: 3.29.2
       '@tiptap/react':
         specifier: ^3.29.2
         version: 3.29.2(@floating-ui/dom@1.8.0)(@tiptap/core@3.30.2(@tiptap/pm@3.29.2))(@tiptap/pm@3.29.2)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -523,6 +529,9 @@ packages:
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
+
+  '@fontsource/source-serif-4@5.3.0':
+    resolution: {integrity: sha512-yQz8xmIgMzks8zQbpuca3UYtjxK798XCyQAGdDXmzBgvV7sdoK6d0YvE9F9kiYxORCEMRBgGZDZsSYcXj5KvwA==}
 
   '@heurion/contracts@file:../contracts':
     resolution: {directory: ../contracts, type: directory}
@@ -3278,6 +3287,8 @@ snapshots:
       '@floating-ui/utils': 0.2.12
 
   '@floating-ui/utils@0.2.12': {}
+
+  '@fontsource/source-serif-4@5.3.0': {}
 
   '@heurion/contracts@file:../contracts':
     dependencies:

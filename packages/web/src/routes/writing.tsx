@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus, FileText, Send, Trash2, Loader2 , BarChart3, CheckSquare, X } from 'lucide-react';
+import { Plus, FileText, Send, Trash2, Loader2 , BarChart3, CheckSquare, X, Presentation, ChevronDown } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { ChartLibrary } from '@/components/chat/ChartLibrary';
 import { SubmissionWorkbench } from '@/routes/submission';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { BottomSheet } from '@/components/ui/Sheet';
 import { Alert, Button, Input, Card, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -15,20 +17,25 @@ interface Doc {
   title: string;
   updated_at: string;
   ref_count: number;
+  /** #996/#1000: 工作台 Slides tab — 有 deck 资产的文档标记。 */
+  has_deck?: boolean;
 }
 
-type Tab = 'submission' | 'write' | 'library';
+type Tab = 'submission' | 'write' | 'slides' | 'library';
 
-/** #362 合并决策: 论文工作台 — 写作 + 投稿一个入口两个 Tab。 */
+/** #362 合并决策: 论文工作台 — 写作 + 投稿一个入口多个 Tab。
+ *  #996/#1000: SegmentedControl 收敛 + 新增 Slides tab（deck 库视图，
+ *  设计稿口径；无 deck 文档时给引导空态）。 */
 export function WritingPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   // #382: 投稿在前、默认投稿 — 线性流程从选刊开始；?tab=write 直达写作。
   const tab: Tab = useMemo(() => {
     const p = new URLSearchParams(location.search).get('tab');
-    return p === 'write' ? 'write' : p === 'library' ? 'library' : 'submission';
+    return p === 'write' ? 'write' : p === 'slides' ? 'slides' : p === 'library' ? 'library' : 'submission';
   }, [location.search]);
 
   const switchTab = (next: Tab) => {
@@ -37,50 +44,65 @@ export function WritingPage() {
     navigate({ pathname: '/app/writing', search: params.toString() });
   };
 
+  const tabItems: Array<{ value: Tab; label: string; icon: React.ReactNode }> = [
+    { value: 'submission', label: t('submission.title', '投稿'), icon: <Send size={15} /> },
+    { value: 'write', label: t('writing.tabWrite', '写作'), icon: <FileText size={15} /> },
+    { value: 'slides', label: t('writing.tabSlides', 'Slides'), icon: <Presentation size={15} /> },
+    { value: 'library', label: t('charts.library', '图表图库'), icon: <BarChart3 size={15} /> },
+  ];
+
   return (
     <AppShell>
       <div className="flex h-full flex-col">
         <header className="flex h-14 items-center gap-4 border-b border-border bg-surface px-6">
           <h1 className="font-semibold text-text-primary">{t('writing.title', '论文工作台')}</h1>
-          <div className="flex items-center gap-1 rounded-lg border border-border bg-surface-elevated p-0.5">
-            <button
-              onClick={() => switchTab('submission')}
-              className={cn(
-                'flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors',
-                tab === 'submission' ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary',
-              )}
+          {/* #996/#1001: 桌面 = 胶囊分段控件;窄屏 = 单胶囊 + 底部弹层。 */}
+          <div className="hidden md:inline-flex">
+            <SegmentedControl
+              ariaLabel={t('writing.viewSwitch', '切换视图')}
+              value={tab}
+              onChange={switchTab}
+              items={tabItems}
+            />
+          </div>
+          <div className="md:hidden">
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-expanded={sheetOpen}
+              onClick={() => setSheetOpen(true)}
             >
-              <Send size={15} />
-              {t('submission.title', '投稿')}
-            </button>
-            <button
-              onClick={() => switchTab('write')}
-              className={cn(
-                'flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors',
-                tab === 'write' ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary',
-              )}
-            >
-              <FileText size={15} />
-              {t('writing.tabWrite', '写作')}
-            </button>
-            <button
-              onClick={() => switchTab('library')}
-              className={cn(
-                'flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors',
-                tab === 'library' ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary',
-              )}
-            >
-              <BarChart3 size={15} />
-              {t('charts.library', '图表图库')}
-            </button>
+              {tabItems.find((it) => it.value === tab)?.label}
+              <ChevronDown size={12} className="ml-1" />
+            </Button>
           </div>
         </header>
         <div className="min-h-0 flex-1">
           {tab === 'submission' && <SubmissionWorkbench embedded />}
           {tab === 'write' && <WritingList />}
+          {tab === 'slides' && <SlidesView />}
           {tab === 'library' && <LibraryView />}
         </div>
       </div>
+
+      <BottomSheet open={sheetOpen} onClose={() => setSheetOpen(false)} title={t('writing.viewSwitch', '切换视图')}>
+        <div className="space-y-1">
+          {tabItems.map((it) => (
+            <button
+              key={it.value}
+              onClick={() => { setSheetOpen(false); switchTab(it.value); }}
+              className={cn(
+                'flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-[15px] transition-colors',
+                it.value === tab ? 'bg-accent/10 text-accent' : 'text-text-primary hover:bg-surface',
+              )}
+            >
+              {it.icon}
+              <span className="flex-1">{it.label}</span>
+              {it.value === tab && <CheckSquare size={15} className="text-accent" />}
+            </button>
+          ))}
+        </div>
+      </BottomSheet>
     </AppShell>
   );
 }
@@ -330,6 +352,78 @@ function WritingList() {
   );
 }
 
+
+/** #996/#1000: Slides tab（deck 库视图，设计稿口径）— 有 deck 资产的文档
+ *  列表，直达编辑器幻灯片视图（?view=deck）；无 deck 时给引导空态。 */
+function SlidesView() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const [docs, setDocs] = useState<Doc[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    api.listDocs()
+      .then((r) => setDocs(r.docs.filter((d) => d.has_deck)))
+      .catch((err) => setError(err instanceof ApiError ? err.messageText : String(err)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="border-b border-border px-6 py-3">
+        <h2 className="text-sm font-semibold text-text-primary">{t('writing.tabSlides', 'Slides')}</h2>
+        <p className="text-xs text-text-tertiary">{t('writing.slidesHint', 'AI 编排过的幻灯片资产（每篇论文一份）。打开后可编辑页标题/要点并导出 PPT。')}</p>
+      </div>
+      <main className="flex-1 overflow-y-auto p-6">
+        {error && (
+          <div className="mb-4">
+            <Alert variant="error">{error}</Alert>
+          </div>
+        )}
+        {loading ? (
+          <div className="space-y-3">
+            <Skeleton className="h-14 w-full rounded-xl" />
+            <Skeleton className="h-14 w-full rounded-xl" />
+          </div>
+        ) : docs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <Presentation size={40} className="mb-3 text-text-tertiary" />
+            <p className="text-lg text-text-tertiary">{t('writing.slidesEmpty', '还没有幻灯片')}</p>
+            <p className="text-sm text-text-tertiary">{t('writing.slidesEmptyHint', '打开一篇论文，切换到「幻灯片」视图让 AI 编排内容')}</p>
+            <Button size="sm" className="mt-4" onClick={() => navigate('/app/writing?tab=write')}>
+              {t('writing.tabWrite', '写作')}
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {docs.map((d) => (
+              <Card key={d.id} className="p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Presentation size={18} className="shrink-0 text-accent/70" />
+                    <div className="min-w-0 flex-1">
+                      <h3 className="truncate font-medium text-text-primary">{d.title || t('writing.untitled', 'Untitled')}</h3>
+                      <p className="text-xs text-text-tertiary">{new Date(d.updated_at).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => navigate(`/app/writing/${d.id}?view=deck`)}
+                  >
+                    <Presentation size={14} className="mr-1" /> {t('writing.openSlides', '打开幻灯片')}
+                  </Button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
 
 /* #481-followup: chart library entry point on the writing workbench.
  * Read-only management here (view/copy/delete) — inserting into a

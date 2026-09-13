@@ -23,6 +23,18 @@
     --radius-sm: 8px;
     --radius-md: 12px;
     --radius-lg: 16px;
+    /* WRITING_MODULE_REDESIGN 视觉系统:衬线标题字体(学术编辑气质),
+       正文与界面控件保持无衬线 */
+    --font-serif: 'Source Serif 4', ui-serif, Georgia, 'Times New Roman', serif;
+    /* 作者轴 — AI 写的=紫 / 你写的=灰(独立于可信度轴上色) */
+    --author-ai: 258 84% 56%;
+    --author-human: 215 14% 46%;
+    /* 可信度轴 — 已验证=绿 / 验证中(AI 编辑中)=天蓝(与 accent 同源,独立 token
+       便于日后切换);失败态复用 --error */
+    --verify-verified: 161 90% 30%;
+    --verify-pending: 199 89% 48%;
+    /* 提议来源图标轴 — 并发保存冲突=琥珀(其余来源复用 accent/verify-verified/author-ai) */
+    --source-conflict: 35 94% 42%;
   }
 
   .dark {
@@ -44,6 +56,12 @@
     --radius-sm: 8px;
     --radius-md: 12px;
     --radius-lg: 16px;
+    --font-serif: 'Source Serif 4', ui-serif, Georgia, 'Times New Roman', serif;
+    --author-ai: 258 90% 76%;
+    --author-human: 215 18% 72%;
+    --verify-verified: 158 76% 56%;
+    --verify-pending: 199 95% 64%;
+    --source-conflict: 38 92% 62%;
   }
 
   html {
@@ -91,4 +109,135 @@
 }
 .ProseMirror [data-tracked] {
   opacity: 0.7;
+}
+
+/* ── #996/#1002: 节卡片化 chrome — 按节 span 上框线（decoration 驱动） ── */
+.ProseMirror .sec-top {
+  margin-top: 10px;
+  border-top: 1px solid hsl(var(--border-strong));
+  border-left: 1px solid hsl(var(--border-strong));
+  border-right: 1px solid hsl(var(--border-strong));
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  padding: 10px 14px 2px;
+  background: hsl(var(--surface-elevated));
+}
+.ProseMirror .sec-in {
+  border-left: 1px solid hsl(var(--border-strong));
+  border-right: 1px solid hsl(var(--border-strong));
+  padding: 2px 14px;
+  background: hsl(var(--surface-elevated));
+}
+.ProseMirror .sec-bottom {
+  border-left: 1px solid hsl(var(--border-strong));
+  border-right: 1px solid hsl(var(--border-strong));
+  border-bottom: 1px solid hsl(var(--border-strong));
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 12px;
+  padding: 2px 14px 12px;
+  background: hsl(var(--surface-elevated));
+}
+/* AI 编辑中：蓝框 + 轻底色（可信度轴 pending 同源，独立于作者轴） */
+.ProseMirror .sec-editing {
+  border-color: hsl(var(--verify-pending));
+}
+.ProseMirror .sec-editing.sec-top,
+.ProseMirror .sec-editing.sec-in,
+.ProseMirror .sec-editing.sec-bottom {
+  background: hsl(var(--verify-pending) / 0.05);
+}
+/* 可信度失败态（独立于蓝框语义） */
+.ProseMirror .sec-verify-failed-node {
+  border-color: hsl(var(--error));
+}
+/* 折叠：标题保留、其余子节点隐藏（decoration node class） */
+.ProseMirror .sec-collapsed {
+  display: none;
+}
+/* ── 节徽标（标题内 inline widget） ── */
+.sec-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  vertical-align: middle;
+}
+.sec-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+}
+.sec-badge-level {
+  background: hsl(var(--border) / 0.6);
+  color: hsl(var(--text-secondary));
+}
+.sec-badge-author-ai {
+  background: hsl(var(--author-ai) / 0.14);
+  color: hsl(var(--author-ai));
+}
+.sec-badge-author-human {
+  background: hsl(var(--author-human) / 0.12);
+  color: hsl(var(--author-human));
+}
+.sec-badge-verify-verified {
+  background: hsl(var(--verify-verified) / 0.12);
+  color: hsl(var(--verify-verified));
+}
+.sec-badge-verify-pending {
+  background: hsl(var(--verify-pending) / 0.12);
+  color: hsl(var(--verify-pending));
+}
+.sec-badge-verify-failed {
+  background: hsl(var(--error) / 0.12);
+  color: hsl(var(--error));
+}
+.sec-chevron {
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--surface));
+  color: hsl(var(--text-tertiary));
+  cursor: pointer;
+  padding: 1px 4px;
+  line-height: 1;
+}
+.sec-chevron:hover {
+  color: hsl(var(--text-primary));
+}
+.sec-badges-collapsed .sec-chevron {
+  transform: rotate(-90deg);
+}
+/* ── 流式迷你 diff（块级 widget，标题与正文之间） ── */
+.sec-diff {
+  border-radius: 8px;
+  border: 1px solid hsl(var(--border));
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.5;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  margin: 4px 0 6px;
+}
+.sec-diff-add {
+  background: rgba(34, 197, 94, 0.14);
+  color: rgba(21, 128, 61, 0.95);
+  padding: 1px 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.sec-diff-del {
+  background: rgba(239, 68, 68, 0.12);
+  color: rgba(185, 28, 28, 0.9);
+  text-decoration: line-through;
+  text-decoration-color: rgba(220, 38, 38, 0.55);
+  padding: 1px 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.sec-diff-more {
+  color: hsl(var(--text-tertiary));
+  padding: 1px 8px;
+  background: hsl(var(--surface));
 }

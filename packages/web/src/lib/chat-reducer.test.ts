@@ -148,3 +148,54 @@ describe('chat-reducer #989 — doc_updated projection 存储', () => {
     expect(s3.lastDocProjection).toEqual(p2);
   });
 });
+
+describe('chat-reducer #996/#1003 — 本轮节改动累积（聊天改动日志）', () => {
+  const proj = (hashA: string, hashB: string) => ({
+    schema_version: 1 as const,
+    body_hash: 'bh0000000000',
+    nodes: [
+      { id: 's_intro', kind: 'section' as const, heading: 'Intro', level: 2, hash: hashA, start: 0, end: 15, parent_id: null },
+      { id: 's_methods', kind: 'section' as const, heading: 'Methods', level: 2, hash: hashB, start: 15, end: 29, parent_id: null },
+    ],
+  })
+
+  test('首笔写回冻结基线（上一轮末态），逐笔 diff 累积到 turn_complete 翻入 lastTurnChanges', () => {
+    let s = sessionWithAssistant();
+    // 上一轮末态（基线）：投影 hash-A 版本
+    s = { ...s, lastDocBody: '## Intro\n旧内容。\n\n## Methods\n方法。', lastDocProjection: proj('h_intro_1', 'h_methods_1') };
+    // 本轮第一笔写回：Intro 变了
+    s = send(s, {
+      type: 'doc_updated',
+      body: '## Intro\n新内容。\n\n## Methods\n方法。',
+      rev: 1,
+      projection: proj('h_intro_2', 'h_methods_1'),
+    });
+    expect(s.turnDocBase?.body).toContain('旧内容。');
+    expect(s.turnChanges?.sections.map((x) => x.id)).toEqual(['s_intro']);
+    expect(s.turnChanges?.rows.s_intro?.length).toBeGreaterThan(0);
+    // 第二笔：Methods 也变
+    s = send(s, {
+      type: 'doc_updated',
+      body: '## Intro\n新内容。\n\n## Methods\n方法改。',
+      rev: 2,
+      projection: proj('h_intro_2', 'h_methods_2'),
+    });
+    expect(s.turnChanges?.sections.map((x) => x.id).sort()).toEqual(['s_intro', 's_methods']);
+    // turn 完成 → 改动卡数据落 lastTurnChanges，累积态清零
+    s = send(s, { type: 'turn_complete', assistant_event_idx: 9 });
+    expect(s.lastTurnChanges?.sections.map((x) => x.id).sort()).toEqual(['s_intro', 's_methods']);
+    expect(s.turnChanges).toBeUndefined();
+    expect(s.turnDocBase).toBeUndefined();
+    // 下一轮无写回 → 旧改动卡保留（不误清）
+    s = send(s, { type: 'turn_started', event_idx: 10, patient_hash: null });
+    s = send(s, { type: 'turn_complete', assistant_event_idx: 12 });
+    expect(s.lastTurnChanges?.sections.length).toBe(2);
+  })
+
+  test('无投影的旧后端事件不产生改动卡（向后兼容）', () => {
+    let s = sessionWithAssistant();
+    s = send(s, { type: 'doc_updated', body: 'v2', rev: 1 });
+    s = send(s, { type: 'turn_complete', assistant_event_idx: 4 });
+    expect(s.lastTurnChanges).toBeUndefined();
+  })
+})

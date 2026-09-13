@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource/source-serif-4": "^5.3.0",
     "@heurion/contracts": "file:../contracts",
     "@tiptap/extension-bubble-menu": "3.29.2",
     "@tiptap/extension-image": "^3.29.2",
@@ -19,6 +20,7 @@
     "@tiptap/extension-table-cell": "^3.29.2",
     "@tiptap/extension-table-header": "^3.29.2",
     "@tiptap/extension-table-row": "^3.29.2",
+    "@tiptap/pm": "3.29.2",
     "@tiptap/react": "^3.29.2",
     "@tiptap/starter-kit": "^3.29.2",
     "clsx": "^2.1.1",

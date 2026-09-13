@@ -7,7 +7,8 @@ import type { PolishStreamChunk } from '@heurion/contracts';
 export class WritingApi extends ApiCore {
   /* ────────────────────────── writing ────────────────────────── */
 
-  async listDocs(): Promise<{docs: Array<{id: string; title: string; updated_at: string; ref_count: number}>}> {
+  // #996/#1000: has_deck = 工作台 Slides tab 的文档标记。
+  async listDocs(): Promise<{docs: Array<{id: string; title: string; updated_at: string; ref_count: number; has_deck?: boolean}>}> {
     return this.fetch('/api/v1/docs');
   }
 
@@ -15,7 +16,8 @@ export class WritingApi extends ApiCore {
     return this.fetch('/api/v1/docs', { method: 'POST', body: JSON.stringify({ title, study_id: studyId }) });
   }
 
-  async getDoc(docId: string): Promise<{id: string; title: string; body: string; deck?: unknown; /** #989 Phase 3: 块投影 — 「编辑过程流式可见」的批次基线(缺失 null)。 */ block_projection?: import('@heurion/contracts').BlockProjection | null; created_at: string; updated_at: string; study_id?: string | null; study_name?: string | null}> {
+  // #996/#999: section_meta = 节级作者/可信度标签(缺失降级不携带,#1002 节卡片徽标数据源)。
+  async getDoc(docId: string): Promise<{id: string; title: string; body: string; deck?: unknown; /** #989 Phase 3: 块投影 — 「编辑过程流式可见」的批次基线(缺失 null)。 */ block_projection?: import('@heurion/contracts').BlockProjection | null; /** #999: 节级作者/可信度标签 */ section_meta?: import('@heurion/contracts').SectionMetaMap; created_at: string; updated_at: string; study_id?: string | null; study_name?: string | null}> {
     return this.fetch(`/api/v1/docs/${docId}`);
   }
 
@@ -28,7 +30,9 @@ export class WritingApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}/generate-methods`, { method: 'POST', body: JSON.stringify({}) });
   }
 
-  async injectResults(docId: string, label: string, result: string): Promise<{ ok: boolean }> {
+  // #996/#997: 响应携带写回后的新正文 + 同帧投影(#998 直接路由进统一提议卡);
+  // #999: section_meta 随行。旧后端仅 {ok:true} — 前端按 body 缺省走 getDoc 兜底。
+  async injectResults(docId: string, label: string, result: string): Promise<{ ok: boolean; body?: string; block_projection?: import('@heurion/contracts').BlockProjection | null; section_meta?: import('@heurion/contracts').SectionMetaMap; updated_at?: string | null }> {
     return this.fetch(`/api/v1/docs/${docId}/inject-results`, { method: 'POST', body: JSON.stringify({ label, result }) });
   }
 
@@ -44,7 +48,7 @@ export class WritingApi extends ApiCore {
   // #773: deck 为可编辑资产（deck 视图编辑保存路径）；undefined = 不触碰。
   // review 复核#8a: 响应携带服务端最新 block_projection — 前端据此同步本地
   // 投影（手动保存后「AI 正在编辑哪个节」的批次基线不再过期）。
-  async updateDoc(docId: string, data: {title: string; body: string; deck?: unknown; /** #882: 客户端最后同步的服务端正文指纹 — 不匹配 → 409 stale_base */ base_sha?: string; /** #882: 显式覆盖(冲突横幅「保留我的版本」) */ force?: boolean}): Promise<{id: string; title: string; body: string; deck?: unknown; /** 服务端最新块投影(缺失 null) */ block_projection?: import('@heurion/contracts').BlockProjection | null; updated_at: string; unchanged?: boolean}> {
+  async updateDoc(docId: string, data: {title: string; body: string; deck?: unknown; /** #882: 客户端最后同步的服务端正文指纹 — 不匹配 → 409 stale_base */ base_sha?: string; /** #882: 显式覆盖(冲突横幅「保留我的版本」) */ force?: boolean}): Promise<{id: string; title: string; body: string; deck?: unknown; /** 服务端最新块投影(缺失 null) */ block_projection?: import('@heurion/contracts').BlockProjection | null; /** #999: 节级作者/可信度标签(缺失不携带) */ section_meta?: import('@heurion/contracts').SectionMetaMap; updated_at: string; unchanged?: boolean}> {
     return this.fetch(`/api/v1/docs/${docId}`, { method: 'PUT', body: JSON.stringify(data) });
   }
 

@@ -2,14 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { Editor } from '@tiptap/react';
-import { ArrowLeft, Download, Eye, FileText, History, Presentation } from 'lucide-react';
+import { ArrowLeft, FileText, MessageSquare, Presentation } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { DocEditor, type DiffReviewState } from '@/components/DocEditor';
+import { ProposalCard } from '@/components/ProposalCard';
 import { KbPicker } from '@/components/KbPicker';
 import { SpotHint } from '@/components/SpotHint';
 import { UploadProgressModal } from '@/components/UploadProgressModal';
-import { chatFailureText } from '@/stores/chat';
+import { chatFailureText, useChatStore } from '@/stores/chat';
 import { Alert, Button, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { sha1Hex } from '@/lib/hash';
@@ -18,6 +19,8 @@ import { cn } from '@/lib/utils';
 import { mergeThreeWay, describeConflictSections } from '@/lib/doc-merge';
 // #989 Phase 3: 块投影前端消费 — 批内节 diff(编辑过程流式可见,#987)。
 import { diffProjectionSections, type SectionLite } from '@/lib/block-projection';
+// #996/#1002: 节卡片化数据流 — 流式迷你 diff 行（编辑中的节）。
+import { lineDiffRows, extractSectionText, type SectionCardRow } from '@/lib/section-cards';
 // #927: doc_updated rev 幂等防乱序(与 chat-reducer 同源判定)。
 import { shouldApplyDocRev } from '@/lib/chat-reducer';
 import { toSlides, type Slide } from '@/lib/deck';
@@ -31,6 +34,8 @@ import { HistoryDialog, PhiDialog, AddReferenceDialog } from './writing-editor/d
 // #688: 渲染块拆出 — deck 网格 / 右侧聊天面板 / 工具栏。
 import { DeckView } from './writing-editor/deck-view';
 import { ChatPanel } from './writing-editor/chat-panel';
+// #996/#1000: 共享 SegmentedControl（视图胶囊）/页头 Toolbar 收敛。
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Toolbar } from './writing-editor/toolbar';
 import type { DocDetail, SnapshotEntry, PhiFinding } from './writing-editor/types';
 
@@ -38,6 +43,9 @@ export function WritingEditorPage() {
   const { t } = useTranslation();
   const { docId } = useParams<{ docId: string }>();
   const navigate = useNavigate();
+  // #996/#1000: 工作台 Slides tab 直达 — ?view=deck 初始化幻灯片视图（仅挂载时读一次）。
+  const [viewMode, setViewMode] = useState<'document' | 'deck'>(() =>
+    new URLSearchParams(window.location.search).get('view') === 'deck' ? 'deck' : 'document');
   const [doc, setDoc] = useState<DocDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -117,7 +125,12 @@ export function WritingEditorPage() {
   const [dirty, setDirty] = useState(false);
   // #882: 并发保存冲突 — 409(stale_base) 时记录待保存内容,横幅供用户选择
   // (载入最新/保留我的版本),绝不静默覆盖另一窗口的修改。
-  const [saveConflict, setSaveConflict] = useState<{ title: string; body: string; deck?: unknown } | null>(null);
+  // #996/#997: current = 409 payload 携带的服务端当前完整态 — 双栏对照
+  // (Yours/AI's)零额外请求;旧后端无 payload 时走 getDoc 兜底。
+  const [saveConflict, setSaveConflict] = useState<{
+    title: string; body: string; deck?: unknown;
+    current?: { title: string; body: string; deck?: unknown; updated_at: string };
+  } | null>(null);
   // #986: 保存失败常驻警示 — 二次保存(diff 落地/回滚)失败且非 409 时,
   // 失败内容回灌 dirty 并进入 autosave 重试;横幅常驻直至保存成功,不再
   // 只弹 6 秒 toast(#920 静默失败家族)。
@@ -266,7 +279,7 @@ export function WritingEditorPage() {
       ]);
       if (cancelled) return;
       if (lastFull.body !== doc.body) return;
-      setDiffReview({ key: `resume_${Date.now()}`, old: prevFull.body, next: lastFull.body });
+      setDiffReview({ key: `resume_${Date.now()}`, old: prevFull.body, next: lastFull.body, source: 'ai_edit' });
     }).catch(() => { /* 恢复失败不打扰 — 行为与旧版一致 */ });
     // #903: cleanup 丢弃在途响应(切文档后晚到的快照探测不得给新文档恢复旧
     // 审阅);同时复位一次性探测标记 — StrictMode 首次挂载即被 cleanup 丢弃,
@@ -293,8 +306,25 @@ export function WritingEditorPage() {
     if (updated.block_projection) {
       setDoc((prev) => (prev ? { ...prev, block_projection: updated.block_projection! } : prev));
     }
+    // #996/#999: 保存响应携带节级元数据 — 作者轴(human)/可信度轴即时同步。
+    if (updated.section_meta) {
+      setDoc((prev) => (prev ? { ...prev, section_meta: updated.section_meta } : prev));
+    }
     return updated;
   }, [docId]);
+
+  // #996/#997: 从 409 响应体提取服务端当前完整态(current) — 双栏对照
+  // 数据源;旧后端无 payload 时返回 undefined(前端 getDoc 兜底)。
+  const extractConflictCurrent = useCallback((err: unknown) => {
+    if (!(err instanceof ApiError) || err.status !== 409) return undefined;
+    try {
+      const parsed = JSON.parse(err.body) as {
+        current?: { title: string; body: string; deck?: unknown; updated_at: string };
+      };
+      if (parsed.current && typeof parsed.current.body === 'string') return parsed.current;
+    } catch { /* 非 JSON body — 无 current,走兜底 */ }
+    return undefined;
+  }, []);
 
   // #896: doc-chat 发送前预保存 — 复用 saveDoc 完整语义(带 base_sha 并发
   // 保护),成功后同步服务端基线(serverBodyRef/lastSavedBody);此前裸 PUT
@@ -367,9 +397,51 @@ export function WritingEditorPage() {
       const { from, to } = editor.state.selection;
       return editor.state.doc.textBetween(from, to, '\n').trim();
     },
+    // #996/#1003: 选中即引用 → 投影反查节引用(节跳转标签持久化)。
+    // 投影经 store getState 读(chatSession 声明在本 hook 之后,不可闭包引用)。
+    resolveSection: (sel) => {
+      if (!sel || !docId) return null;
+      const sess = useChatStore.getState().sessions[`doc-${docId}`];
+      const proj = sess?.lastDocProjection ?? doc?.block_projection;
+      if (!proj) return null;
+      const offset = bodyRef.current.indexOf(sel.slice(0, 80));
+      if (offset < 0) return null;
+      const sec = proj.nodes.find((n) => n.kind === 'section' && offset >= n.start && offset < n.end);
+      return sec ? { id: sec.id, heading: sec.heading || '' } : null;
+    },
   });
+
   const chatSession = chat.chatSession;
   const chatSessionId = docId ? `doc-${docId}` : '';
+  // #996/#1003: 聊天 → 文档跳转 — 按节 id 反查标题,编辑器内定位滚动
+  // (复用 deck 卡片锚点定位的同款机制),打开聊天面板/文档视图。
+  const jumpToSection = useCallback((sectionId: string) => {
+    const proj = chatSession?.lastDocProjection ?? doc?.block_projection;
+    const sec = proj?.nodes.find((n) => n.kind === 'section' && n.id === sectionId);
+    if (!sec) return;
+    setPreview(false);
+    if (viewMode !== 'document') setViewMode('document');
+    const heading = sec.heading || '';
+    const timer = setTimeout(() => {
+      const editor = polishEditorRef.current;
+      if (!editor) return;
+      let target: number | null = null;
+      editor.state.doc.descendants((node, pos) => {
+        if (target !== null) return false;
+        if (node.type.name === 'heading' && node.textContent.trim() === heading.trim()) {
+          target = pos;
+          return false;
+        }
+        return true;
+      });
+      if (target !== null) {
+        editor.commands.setTextSelection((target as number) + 1);
+        editor.commands.scrollIntoView();
+        editor.commands.focus();
+      }
+    }, 120);
+    void timer;
+  }, [chatSession?.lastDocProjection, doc?.block_projection, viewMode, setViewMode]);
 
   // #837-ux: 同轮写回合批 — AI 一轮里逐节写回会连发多个 doc_updated,
   // 逐个进审阅 = "每次只能看到一个 diff"。正确交互:同一轮的全部变更
@@ -382,6 +454,8 @@ export function WritingEditorPage() {
   // 替代 60 秒黑盒缓冲:写回进行时画布实时展示节定位,turn 结束进审阅)。
   const batchBaseProjectionRef = useRef<import('@heurion/contracts').BlockProjection | undefined>(undefined);
   const [editingSections, setEditingSections] = useState<SectionLite[]>([]);
+  // #996/#1002: 流式迷你 diff 行（键 = section id；批结束随审阅清空）。
+  const [sectionDiffRows, setSectionDiffRows] = useState<Record<string, SectionCardRow[]>>({});
 
 
   const flushPendingWriteBack = useCallback(() => {
@@ -391,6 +465,8 @@ export function WritingEditorPage() {
     pendingWriteBackRef.current = null;
     // #989 Phase 3: 批结束 — 指示条让位于 diff 审阅。
     setEditingSections([]);
+    // #996/#1002: 迷你 diff 同批结束清空（审阅即完整呈现）。
+    setSectionDiffRows({});
     if (diffPendingRef.current) {
       // 跨轮:审阅未决 → 累计队列,审阅结束后依次呈现。
       writeBackQueueRef.current.push({ base: pend.base, next: pend.body });
@@ -400,7 +476,8 @@ export function WritingEditorPage() {
     }
     appliedDocBody.current = pend.body;
     serverBodyRef.current = pend.body;
-    setDiffReview({ key: `rev_${Date.now()}`, old: bodyRef.current, next: pend.body });
+    // #996/#998: AI 写回提议卡表头 — 批内最后 summary 无节信息,subject 留空。
+    setDiffReview({ key: `rev_${Date.now()}`, old: bodyRef.current, next: pend.body, source: 'ai_edit' });
     // #693: 审阅模式下编辑器选中的是 diff 内容,不再构成引用。
     setChatSelection('');
     // #837-ux: deck 视图下 markdown 审阅不可见 — 写回时自动切回文档视图。
@@ -469,6 +546,18 @@ export function WritingEditorPage() {
     if (chatSession.lastDocProjection) {
       const dbg = diffProjectionSections(batchBaseProjectionRef.current, chatSession.lastDocProjection);
       setEditingSections(dbg);
+      // #996/#1002: 流式迷你 diff — 编辑中的节,旧(基线 body+基线投影)/
+      // 新(最新 body+最新投影)节文本的行级增删行,经装饰层显示在卡片内。
+      const baseProj = batchBaseProjectionRef.current;
+      const baseBodyStr = pendingWriteBackRef.current?.base ?? '';
+      const rows: Record<string, SectionCardRow[]> = {};
+      for (const sec of dbg) {
+        const oldText = extractSectionText(baseBodyStr, baseProj, sec.id);
+        const newText = extractSectionText(chatSession.lastDocBody, chatSession.lastDocProjection, sec.id);
+        if (oldText === null || newText === null || oldText === newText) continue;
+        rows[sec.id] = lineDiffRows(oldText, newText);
+      }
+      setSectionDiffRows(rows);
     }
   }, [chatSession?.lastDocBody, chatSession?.lastDocRev, chatSession?.lastDocProjection, docId, flushPendingWriteBack]);
 
@@ -536,7 +625,7 @@ export function WritingEditorPage() {
           })
           .catch((err) => {
             if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {
-              setSaveConflict({ title: title || 'Untitled', body: restoreBody });
+              setSaveConflict({ title: title || 'Untitled', body: restoreBody, current: extractConflictCurrent(err) });
               showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
             } else {
               // #986: 回滚保存失败 → 常驻警示 + dirty 回灌(autosave 重试)。
@@ -570,7 +659,7 @@ export function WritingEditorPage() {
         })
         .catch((err) => {
           if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {
-            setSaveConflict({ title: title || 'Untitled', body: result.md });
+            setSaveConflict({ title: title || 'Untitled', body: result.md, current: extractConflictCurrent(err) });
             showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
           } else {
             // #986: 二次保存失败 → 常驻警示条 + dirty 回灌(autosave 自动
@@ -583,7 +672,7 @@ export function WritingEditorPage() {
     // (bodyRef 同帧还未更新,显式传 result.md)。
     popNextWriteBack(result.md);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定,避免抖动
-  }, [docId, title, restoreReview, showNotice, popNextWriteBack]);
+  }, [docId, title, restoreReview, showNotice, popNextWriteBack, extractConflictCurrent]);
 
   // #402-merge: append a library figure to the document body.
   const handleInsertChart = (markdown: string) => {
@@ -601,7 +690,7 @@ export function WritingEditorPage() {
   // #770: 画布视图模式 — body 仍是唯一数据源，幻灯片视图 = toSlides(body) 投影；
   // AI 写回（doc_updated → setBody）与文档视图编辑自动同步到卡片，零额外状态。
   // #773: Doc.deck 存在时 deck 视图切换为 deck 资产来源（可编辑，独立于 body）。
-  const [viewMode, setViewMode] = useState<'document' | 'deck'>('document');
+  // #996/#1000: viewMode 初始化上移（?view=deck 直达 Slides tab）。
   const pendingDeckAnchorRef = useRef<string | null>(null);
 
   // #770: 幻灯片卡片 = body 派生（useMemo），doc_updated / 手动编辑即时反映。
@@ -657,7 +746,8 @@ export function WritingEditorPage() {
       const res = await api.generateMethods(docId);
       const next = `${bodyRef.current}${bodyRef.current ? '\n\n' : ''}## Methods\n\n${res.methods}\n`;
       if (next === bodyRef.current) return;
-      setDiffReview({ key: `methods_${Date.now()}`, old: bodyRef.current, next });
+      // #996/#998: methods 提议卡表头("Drafted from the linked study protocol")。
+      setDiffReview({ key: `methods_${Date.now()}`, old: bodyRef.current, next, source: 'methods', subject: 'Methods' });
       // deck 视图下 markdown 审阅不可见 — 自动切回文档视图(同写回路径)。
       setViewMode((m) => (m === 'deck' ? 'document' : m));
     } catch (err) {
@@ -677,27 +767,42 @@ export function WritingEditorPage() {
     }
     setInjecting(true);
     try {
-      await api.injectResults(docId, injectLabel.trim(), injectResult.trim());
-      const d = await api.getDoc(docId);
-      // #983: 服务端已在「服务端正文 + 注入块」上落库（writeDocVersion 单点）。
-      // 本地改用三路合并应用增量 — 此前「拉最新 body 整篇覆盖」会静默吞掉
-      // 本地未保存修改。base = 最后同步的服务端正文,ours = 本地(可能含
-      // 未保存编辑),theirs = 注入后的服务端正文。
-      const base = serverBodyRef.current ?? bodyRef.current;
-      const merged = mergeThreeWay(base, bodyRef.current, d.body);
-      if (merged === null) {
-        // 注入块与本地未保存修改在基线坐标上重叠 → 三路合并不安全:
-        // 进冲突确认审阅（接受 = 采用服务端版本,不再保存;取消 = 保留本地,
-        // 后续保存经 base_sha 失配 409 走冲突横幅），绝不静默覆盖任一侧。
-        conflictLoadRef.current = { body: d.body, updatedAt: d.updated_at };
-        setDiffReview({ key: `inject_${Date.now()}`, old: bodyRef.current, next: d.body });
-        setViewMode((m) => (m === 'deck' ? 'document' : m));
-        showNotice(t('writing.injectConflictReview', '结果注入与本地未保存修改冲突 — 已进入审阅确认'), 6000);
+      const res = await api.injectResults(docId, injectLabel.trim(), injectResult.trim());
+      const subject = injectLabel.trim();
+      // #996/#997: 服务端返回写回后的新正文 + 同帧投影 — 注入结果直接路由进
+      // 统一提议卡(#998: results 表头),与 AI 写回同语义(先落库后审阅,
+      // 放弃 = 反向保存回滚);此前 {ok} 后自行 GET 全文三路合并/静默应用。
+      if (typeof res.body === 'string') {
+        serverBodyRef.current = res.body;
+        appliedDocBody.current = res.body;
+        if (res.body !== bodyRef.current) {
+          setDiffReview({ key: `inject_${Date.now()}`, old: bodyRef.current, next: res.body, source: 'results', subject });
+          setViewMode((m) => (m === 'deck' ? 'document' : m));
+          setChatSelection('');
+        }
       } else {
-        // 服务端视角基线推进到注入后的正文 — 后续保存的 base_sha 指纹正确。
-        serverBodyRef.current = d.body;
-        if (merged !== bodyRef.current) setBody(merged);
-        setDoc((prev) => (prev ? { ...prev, body: merged, updated_at: d.updated_at } : prev));
+        // 旧后端兜底(响应无 body):沿用 getDoc + 三路合并路径。
+        const d = await api.getDoc(docId);
+        // #983: 服务端已在「服务端正文 + 注入块」上落库（writeDocVersion 单点）。
+        // 本地改用三路合并应用增量 — 此前「拉最新 body 整篇覆盖」会静默吞掉
+        // 本地未保存修改。base = 最后同步的服务端正文,ours = 本地(可能含
+        // 未保存编辑),theirs = 注入后的服务端正文。
+        const base = serverBodyRef.current ?? bodyRef.current;
+        const merged = mergeThreeWay(base, bodyRef.current, d.body);
+        if (merged === null) {
+          // 注入块与本地未保存修改在基线坐标上重叠 → 三路合并不安全:
+          // 进冲突确认审阅（接受 = 采用服务端版本,不再保存;取消 = 保留本地,
+          // 后续保存经 base_sha 失配 409 走冲突横幅），绝不静默覆盖任一侧。
+          conflictLoadRef.current = { body: d.body, updatedAt: d.updated_at };
+          setDiffReview({ key: `inject_${Date.now()}`, old: bodyRef.current, next: d.body, source: 'results', subject });
+          setViewMode((m) => (m === 'deck' ? 'document' : m));
+          showNotice(t('writing.injectConflictReview', '结果注入与本地未保存修改冲突 — 已进入审阅确认'), 6000);
+        } else {
+          // 服务端视角基线推进到注入后的正文 — 后续保存的 base_sha 指纹正确。
+          serverBodyRef.current = d.body;
+          if (merged !== bodyRef.current) setBody(merged);
+          setDoc((prev) => (prev ? { ...prev, body: merged, updated_at: d.updated_at } : prev));
+        }
       }
       setInjectOpen(false);
       setInjectLabel('');
@@ -851,7 +956,8 @@ export function WritingEditorPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {
         // #882: 视图过期(僵尸 tab) — 弹冲突横幅由用户决策。
-        setSaveConflict({ title, body, deck: deckAsset ?? undefined });
+        // #996/#997: 409 payload 的 current 随行 — 双栏对照零额外请求。
+        setSaveConflict({ title, body, deck: deckAsset ?? undefined, current: extractConflictCurrent(err) });
         showNotice(t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存'), 6000);
       } else {
         // #986: 非冲突失败 → 回灌 dirty + 常驻警示条(autosave 自动重试)。
@@ -879,9 +985,27 @@ export function WritingEditorPage() {
     }
   };
 
+  // #996/#997: 「Use AI's version」— 直接采用 409 payload 携带的服务端当前
+  // 态(语义同旧「载入最新」确认审阅的接受分支:服务端已是该版本,无需再保存)。
+  const resolveConflictUseSaved = () => {
+    const fresh = saveConflict?.current;
+    if (!fresh) return;
+    setBody(fresh.body);
+    lastSavedBody.current = fresh.body;
+    serverBodyRef.current = fresh.body;
+    setDoc((prev) => (prev ? { ...prev, body: fresh.body, updated_at: fresh.updated_at } : prev));
+    dirtyRef.current = false;
+    setDirty(false);
+    setSaveConflict(null);
+    setSaveFailure(null);
+    showNotice(t('writing.conflictLoadedLatest', '已载入服务端最新内容'), 3000);
+  };
+
   // #927: 「载入最新」改为 diff 审阅确认 — 本地未保存内容(old)与服务端
   // 最新(new)进 diffReview,用户看到将被丢弃的修改并逐条确认;不再直接
   // setBody 静默丢弃本地编辑。取消则保留本地,冲突横幅仍在。
+  // #996/#997: 有 409 payload 时双栏卡的「Use AI's version」已覆盖此场景;
+  // 本路径保留为旧后端(无 payload)的兜底。
   const resolveConflictLoadLatest = async () => {
     if (!docId || !saveConflict) return;
     try {
@@ -896,7 +1020,7 @@ export function WritingEditorPage() {
         return;
       }
       conflictLoadRef.current = { body: fresh.body, updatedAt: fresh.updated_at };
-      setDiffReview({ key: `conflict_${Date.now()}`, old: bodyRef.current, next: fresh.body });
+      setDiffReview({ key: `conflict_${Date.now()}`, old: bodyRef.current, next: fresh.body, source: 'conflict', subject: fresh.title });
       // 审阅模式下 markdown diff 不可见 — deck 视图先切回文档视图(同写回路径)。
       setViewMode((m) => (m === 'deck' ? 'document' : m));
     } catch (err) {
@@ -922,7 +1046,8 @@ export function WritingEditorPage() {
       const snap = await api.getSnapshotBody(docId, snapshotId);
       setShowHistory(false);
       setRestoreReview({ snapshotId, label: snap.label });
-      setDiffReview({ key: `restore-${snapshotId}`, old: body, next: snap.body });
+      // #996/#998: restore 走 ProposalCard(restore 表头,reviewTitle 由下方传入)。
+      setDiffReview({ key: `restore-${snapshotId}`, old: body, next: snap.body, source: 'restore' });
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
@@ -1042,11 +1167,11 @@ export function WritingEditorPage() {
     <AppShell>
       <div className="flex h-full flex-col overflow-hidden">
         <header className="flex h-14 items-center gap-3 border-b border-border bg-surface px-6 shrink-0">
-          <Button variant="ghost" size="sm" onClick={leaveEditor}>
+          <Button variant="ghost" size="sm" onClick={leaveEditor} className="shrink-0">
             <ArrowLeft size={16} />
           </Button>
-          <FileText size={18} className="text-text-tertiary" />
-          <h1 className="font-semibold text-text-primary">{doc.title || 'Untitled'}</h1>
+          <FileText size={18} className="hidden shrink-0 text-text-tertiary sm:block" />
+          <h1 className="min-w-0 flex-1 truncate font-serif text-[17px] font-bold tracking-tight text-text-primary sm:flex-none">{doc.title || 'Untitled'}</h1>
           {studyName && (
             <button
               onClick={() => studyId && navigate(`/app/research/${studyId}`)}
@@ -1066,32 +1191,20 @@ export function WritingEditorPage() {
               {t('submission.templateAppliedShort', '已应用模板')}: {linkedTemplate}
             </span>
           )}
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setPreview((v) => !v)}
-            className="ml-3"
-          >
-            <Eye size={14} className="mr-1" /> {preview ? 'Edit' : 'Preview'}
-          </Button>
-          {/* #770: 文档 | 幻灯片视图切换 — deck 视图是 body 的只读投影。 */}
-          <div className="ml-2 flex items-center overflow-hidden rounded-md border border-border" role="tablist" aria-label={t('writing.viewMode', '视图模式')}>
-            <button
-              role="tab"
-              aria-selected={viewMode === 'document'}
-              onClick={() => { setPreview(false); setViewMode('document'); }}
-              className={cn('flex items-center gap-1 px-2.5 py-1.5 text-xs transition-colors', viewMode === 'document' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-surface-elevated')}
-            >
-              <FileText size={13} className="mr-0.5" /> {t('writing.docView', '文档')}
-            </button>
-            <button
-              role="tab"
-              aria-selected={viewMode === 'deck'}
-              onClick={() => setViewMode('deck')}
-              className={cn('flex items-center gap-1 px-2.5 py-1.5 text-xs transition-colors', viewMode === 'deck' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-surface-elevated')}
-            >
-              <Presentation size={13} className="mr-0.5" /> {t('writing.deckView', '幻灯片')} · {deck.slides.length}
-            </button>
+          {/* #996/#1000: Preview/History/DOCX 常驻按钮收进 ··· 菜单(Toolbar)。 */}
+          {/* #770: 文档 | 幻灯片视图切换 — deck 视图是 body 的只读投影。
+              #1000: 共享 SegmentedControl(窄屏隐藏,#1001 经 ··· 可达)。 */}
+          <div className="ml-2 hidden sm:inline-flex">
+            <SegmentedControl
+              size="xs"
+              ariaLabel={t('writing.viewMode', '视图模式')}
+              value={viewMode}
+              onChange={(next) => { if (next === 'document') setPreview(false); setViewMode(next); }}
+              items={[
+                { value: 'document', label: t('writing.docView', '文档'), icon: <FileText size={13} /> },
+                { value: 'deck', label: `${t('writing.deckView', '幻灯片')} · ${deck.slides.length}`, icon: <Presentation size={13} /> },
+              ]}
+            />
           </div>
           {aiEditNotice && (
             <span className="ml-3 rounded-full border border-success/30 bg-success/5 px-2 py-0.5 text-xs text-success">
@@ -1099,50 +1212,46 @@ export function WritingEditorPage() {
             </span>
           )}
           <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleToggleHistory}
-            >
-              <History size={14} className="mr-1" /> History
-            </Button>
             <Button size="sm" onClick={handleSave} isLoading={saving} disabled={saving}>
               {dirty ? t('writing.unsaved', '● 未保存') : 'Save'}
             </Button>
-            <Button size="sm" variant="secondary" onClick={handleExportDocx}>
-              <Download size={14} className="mr-1" /> DOCX
-            </Button>
+            {/* #996/#1000: Export ▾ + ··· 更多菜单(工具栏收敛进页头)。 */}
+            <Toolbar
+              chat={chat}
+              references={references}
+              phiScanning={phiScanning}
+              onPhiScan={handlePhiScan}
+              exporting={exporting}
+              onExportDocx={handleExportDocx}
+              onExportPdf={() => handleExportPdf()}
+              studyId={studyId}
+              methodsLoading={methodsLoading}
+              methodsError={methodsError}
+              onGenerateMethods={handleGenerateMethods}
+              injectOpen={injectOpen}
+              setInjectOpen={setInjectOpen}
+              injectLabel={injectLabel}
+              setInjectLabel={setInjectLabel}
+              injectResult={injectResult}
+              setInjectResult={setInjectResult}
+              injecting={injecting}
+              onInjectResults={handleInjectResults}
+              onOpenKbPicker={() => setKbPickerOpen(true)}
+              setChatOpen={setChatOpen}
+              chatOpen={chatOpen}
+              onToggleHistory={handleToggleHistory}
+              previewing={preview}
+              onTogglePreview={() => setPreview((v) => !v)}
+              viewMode={viewMode}
+              onToggleViewMode={() => setViewMode((m) => (m === 'deck' ? 'document' : 'deck'))}
+              deckSlideCount={deck.slides.length}
+              exportResult={exportResult}
+              exportHistory={exportHistory}
+              exportPanelOpen={exportPanelOpen}
+              setExportPanelOpen={setExportPanelOpen}
+            />
           </div>
         </header>
-
-        {/* #688: 工具栏 + inject 弹层 + 导出完成面板 — UI 拆出,状态/handler 仍归路由。 */}
-        <Toolbar
-          chat={chat}
-          references={references}
-          phiScanning={phiScanning}
-          onPhiScan={handlePhiScan}
-          exporting={exporting}
-          onExportDocx={handleExportDocx}
-          onExportPdf={() => handleExportPdf()}
-          studyId={studyId}
-          methodsLoading={methodsLoading}
-          methodsError={methodsError}
-          onGenerateMethods={handleGenerateMethods}
-          injectOpen={injectOpen}
-          setInjectOpen={setInjectOpen}
-          injectLabel={injectLabel}
-          setInjectLabel={setInjectLabel}
-          injectResult={injectResult}
-          setInjectResult={setInjectResult}
-          injecting={injecting}
-          onInjectResults={handleInjectResults}
-          onOpenKbPicker={() => setKbPickerOpen(true)}
-          setChatOpen={setChatOpen}
-          exportResult={exportResult}
-          exportHistory={exportHistory}
-          exportPanelOpen={exportPanelOpen}
-          setExportPanelOpen={setExportPanelOpen}
-        />
 
         <div className="flex flex-1 overflow-hidden">
           <main className={cn('flex-1 overflow-y-auto p-6', chatOpen ? 'border-r border-border' : '')}>
@@ -1210,14 +1319,21 @@ export function WritingEditorPage() {
                       </div>
                     )}
                     {saveConflict && (
-                      /* #882: 并发保存冲突横幅 — 用户决策,不静默覆盖另一窗口的修改 */
-                      <div className="flex items-center justify-between gap-2 border-b border-warning/40 bg-warning/10 px-3 py-2 text-[12px] text-text-primary">
-                        <span>⚠ {t('writing.conflictDetected', '文档已在其他窗口被修改，当前窗口内容未保存')}</span>
-                        <div className="flex shrink-0 gap-1">
-                          <Button size="sm" variant="ghost" onClick={() => void resolveConflictLoadLatest()}>{t('writing.conflictLoadLatest', '载入最新')}</Button>
-                          <Button size="sm" onClick={() => void resolveConflictKeepMine()}>{t('writing.conflictKeepMine', '保留我的版本')}</Button>
-                        </div>
-                      </div>
+                      /* #996/#997: 并发保存冲突 → 统一提议卡(conflict 变体) —
+                         Yours/AI's 双栏对照(409 payload 数据源),Keep mine /
+                         View full diff / Use AI's version;旧后端无 payload 时
+                         saved 为空串,「Use AI's version」自动落回旧「载入最新」流。 */
+                      <ProposalCard
+                        source="conflict"
+                        subject={saveConflict.title}
+                        note={saveConflict.current ? undefined : t('writing.conflictLegacyNotice', '服务端版本信息需重新载入')}
+                        conflict={{
+                          yours: saveConflict.body,
+                          saved: saveConflict.current?.body ?? '',
+                          onKeepMine: () => void resolveConflictKeepMine(),
+                          onUseSaved: () => (saveConflict.current ? resolveConflictUseSaved() : void resolveConflictLoadLatest()),
+                        }}
+                      />
                     )}
                     {saveFailure && (
                       /* #986: 保存失败常驻警示条 — 保存成功自动消除;失败期间
@@ -1229,6 +1345,13 @@ export function WritingEditorPage() {
                     <DocEditor value={body} onChange={setBody} editorRef={polishEditorRef} diffReview={diffReview} onDiffResolve={handleDiffResolve} onSelectionChange={setChatSelection}
                       queuedRounds={queuedRounds}
                       reviewTitle={restoreReview ? t('writing.restoreReviewTitle', '审阅版本恢复') : undefined}
+                      /* #996/#1002: 节卡片化数据流 — 投影对位/节级徽标/AI 编辑高亮/流式迷你 diff。 */
+                      sectionCards={{
+                        projection: chatSession?.lastDocProjection ?? doc?.block_projection ?? undefined,
+                        meta: chatSession?.lastDocSectionMeta ?? doc?.section_meta,
+                        editingIds: editingSections.map((s) => s.id),
+                        diffRows: sectionDiffRows,
+                      }}
                       onBubbleAction={bubble.handleBubbleAction}
                       bubble={{
                         run: bubble.bubbleRun,
@@ -1265,12 +1388,25 @@ export function WritingEditorPage() {
               onResizeStart={handleChatResizeStart}
               chatSessionId={chatSessionId}
               onInsertChart={handleInsertChart}
+              onJumpToSection={jumpToSection}
             />
           )}
         </div>
 
         {/* #fix: 上传进度 Modal — 上传中显示进度条,导入阶段不确定进度。 */}
         <UploadProgressModal state={chat.uploadState} onCancel={chat.cancelUpload} />
+
+        {/* #996/#1001: 移动端聊天悬浮按钮 — 窄屏无侧栏空间,FAB → 全屏抽屉。 */}
+        {!chatOpen && (
+          <button
+            type="button"
+            onClick={() => setChatOpen(true)}
+            aria-label={t('writing.openChat', 'Chat')}
+            className="fixed bottom-5 right-5 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-white shadow-lg transition-colors hover:bg-accent-hover md:hidden"
+          >
+            <MessageSquare size={20} />
+          </button>
+        )}
 
         {/* #598: History 版本列表(#696: 对话框组件化)
             #910: 审阅未决/写回待冲刷时 Restore 按钮禁用 — 与 handleRestoreRequest

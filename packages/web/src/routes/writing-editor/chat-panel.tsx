@@ -1,6 +1,6 @@
 import { Paperclip, X } from 'lucide-react';
 import { SkillsBar } from '@/components/SkillsBar';
-import { ChatMessages } from '@/components/chat/ChatMessages';
+import { ChatMessages, ChatChangeCard } from '@/components/chat/ChatMessages';
 import { ChartLibrary } from '@/components/chat/ChartLibrary';
 import { Button, Textarea } from '@/components/ui';
 import { isEnterSendKey } from '@/lib/chat-composer';
@@ -19,8 +19,10 @@ export function ChatPanel(input: {
   onResizeStart: (e: React.MouseEvent<HTMLDivElement>) => void;
   chatSessionId: string;
   onInsertChart: (markdown: string) => void;
+  /** #996/#1003: 聊天 ↔ 文档跳转（节标签/改动卡 → 编辑器节卡片）。 */
+  onJumpToSection: (sectionId: string) => void;
 }) {
-  const { chat, chatWidth, sidePanelTab, setSidePanelTab, onClose, onResizeStart, chatSessionId, onInsertChart } = input;
+  const { chat, chatWidth, sidePanelTab, setSidePanelTab, onClose, onResizeStart, chatSessionId, onInsertChart, onJumpToSection } = input;
   const { chatInput, setChatInput, chatMessages, chatSession, chatLoading, chatPending, chatEndRef, chatSelection, setChatSelection } = chat;
   return (
     <>
@@ -65,6 +67,7 @@ export function ChatPanel(input: {
               plan={chatSession?.lastPlan}
                   stallSince={chatSession?.stallSince}
                   bottomRef={chatEndRef}
+                  onJumpToSection={onJumpToSection}
                   emptyState={
                     <p className="text-sm text-text-tertiary text-center mt-4 leading-relaxed">
                       Ask the AI to write or research content.<br />
@@ -73,6 +76,16 @@ export function ChatPanel(input: {
                     </p>
                   }
                 />
+                {/* #996/#1003: 实时改动卡 — 本轮（最近一轮）写回的节 + 迷你 diff
+                    (SSE 聚合于 chat-reducer;turn 完成即呈现)。历史重建卡在
+                    assistant 消息上(ChatChangeCard via docSections)。 */}
+                {chatSession?.lastTurnChanges && !chatSession?.loading && (
+                  <ChatChangeCard
+                    sections={chatSession.lastTurnChanges.sections}
+                    rows={chatSession.lastTurnChanges.rows}
+                    onJumpToSection={onJumpToSection}
+                  />
+                )}
               </div>
               <div className="border-t border-border p-3">
                 {chat.kbDedupNotice && (

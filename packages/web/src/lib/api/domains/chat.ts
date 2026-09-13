@@ -45,6 +45,7 @@ export class ChatApi extends ApiCore {
     if (opts.scene) body.scene = opts.scene;
     if (opts.pickedKbIds && opts.pickedKbIds.length > 0) body.picked_kb_ids = opts.pickedKbIds;
     if (opts.selection) body.selection = opts.selection;
+    if (opts.sectionRef) body.section_ref = opts.sectionRef;
     const r = await fetch('/api/v1/agent/chat', {
       method: 'POST',
       headers: this.headers({ 'Content-Type': 'application/json' }),

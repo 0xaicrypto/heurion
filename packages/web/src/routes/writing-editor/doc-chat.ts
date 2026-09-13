@@ -71,6 +71,11 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   setViewMode: (mode: 'document' | 'deck') => void;
   /** 外部已有的编辑器选中文本(选中即引用)。 */
   editorSelection: () => string;
+  /**
+   * #996/#1003: 选中文本 → 节引用反查（投影 span 定位）— 随消息持久化，
+   * 用户消息渲染"→ 节名"跳转标签。返回 null = 不带标签。
+   */
+  resolveSection?: (selection: string) => { id: string; heading: string } | null;
 }): DocChat {
   const { t } = useTranslation();
   const { docId, bodyRef, lastSavedBody, dirtyRef, diffReview } = input;
@@ -173,6 +178,8 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
       // from the doc- session id).
       scene: 'document',
       selection: selection || undefined,
+      // #996/#1003: 节引用随消息持久化(节跳转标签)。
+      ...(input.resolveSection && selection ? { sectionRef: input.resolveSection(selection) ?? undefined } : {}),
     });
   };
 

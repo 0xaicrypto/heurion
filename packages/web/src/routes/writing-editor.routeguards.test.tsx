@@ -170,7 +170,8 @@ function renderEditor(keyed: boolean) {
 }
 
 const editorText = (container: HTMLElement) => container.querySelector('.ProseMirror')?.textContent ?? '';
-const reviewBanner = () => screen.queryByText(/Review AI changes|审阅 AI 修改/);
+const moreMenu = () => screen.getByRole('button', { name: /More actions|更多操作/ });
+const reviewBanner = () => screen.queryByText(/AI updated this section|AI 更新了这个节/);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -203,7 +204,7 @@ describe('#979 切换文档写状态清零(路由 key 重挂载)', () => {
 
     // A 文档:AI 写回进入审阅(未决)
     await sendTurn([{ body: 'A body\n\nA 未接受段落', rev: 1 }]);
-    expect(await screen.findByText(/审阅 AI 修改|Review AI changes/)).toBeTruthy();
+    expect(await screen.findByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
 
     // 切到 B 文档 — key 变化重挂载,A 的审阅/未接受内容不得串染
     fireEvent.click(screen.getByRole('button', { name: 'go-d2' }));
@@ -219,7 +220,7 @@ describe('#979 切换文档写状态清零(路由 key 重挂载)', () => {
     renderEditor(false);
     await screen.findByDisplayValue('A doc');
     await sendTurn([{ body: 'A body\n\nA 未接受段落', rev: 1 }]);
-    expect(await screen.findByText(/审阅 AI 修改|Review AI changes/)).toBeTruthy();
+    expect(await screen.findByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'go-d2' }));
     await screen.findByDisplayValue('B doc');
@@ -245,8 +246,8 @@ describe('#986 二次保存失败 — dirty 回灌 + autosave 重试 + 常驻警
       .mockResolvedValueOnce({ ...DOC_A, updated_at: '2026-01-06T00:00:00Z' });
 
     await sendTurn([{ body: 'A body\n\nR1 段落', rev: 1 }]);
-    await waitFor(() => expect(screen.getByRole('button', { name: /全部接受|Accept all/ })).not.toBeDisabled());
-    fireEvent.click(screen.getByRole('button', { name: /全部接受|Accept all/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ }));
 
     // 失败即刻可见(不再是 6 秒后即消失的 toast)
     expect(await screen.findByText(/保存失败 — 修改仅在本窗口|Save failed — your changes/)).toBeTruthy();
@@ -263,16 +264,18 @@ describe('#983 生成/注入走统一写回流程', () => {
     await screen.findByDisplayValue('A doc');
     apiMock.generateMethods.mockResolvedValue({ methods: 'Generated Methods text' });
 
-    fireEvent.click(screen.getByRole('button', { name: /生成方法|Generate Methods/ }));
+    fireEvent.click(moreMenu());
+    fireEvent.click(await screen.findByRole('button', { name: /生成方法|Generate Methods/ }));
 
-    // 生成结果进审阅,编辑器以变更标记可见;未接受前不得落盘
-    expect(await screen.findByText(/审阅 AI 修改|Review AI changes/)).toBeTruthy();
+    // 生成结果进审阅(methods 提议卡表头,#998 对照表),编辑器以变更标记可见;未接受前不得落盘
+    expect(await screen.findByText(/Drafted from the linked study protocol|已按关联研究的方案起草/)).toBeTruthy();
     await waitFor(() => expect(editorText(container)).toContain('Generated Methods text'));
     expect(apiMock.updateDoc).not.toHaveBeenCalled();
 
-    // 接受 → saveDoc 落盘(带 base_sha 冲突检测指纹)
-    await waitFor(() => expect(screen.getByRole('button', { name: /全部接受|Accept all/ })).not.toBeDisabled());
-    fireEvent.click(screen.getByRole('button', { name: /全部接受|Accept all/ }));
+    // 接受 → saveDoc 落盘(带 base_sha 冲突检测指纹)— methods 提议卡主操作
+    // ("Insert into document",#998 对照表)
+    await waitFor(() => expect(screen.getByRole('button', { name: /Insert into document|插入文档/ })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: /Insert into document|插入文档/ }));
     await waitFor(() => expect(apiMock.updateDoc).toHaveBeenCalledTimes(1));
     expect(apiMock.updateDoc.mock.calls[0][1].body).toContain('## Methods');
     expect(apiMock.updateDoc.mock.calls[0][1].body).toContain('Generated Methods text');
@@ -290,7 +293,8 @@ describe('#983 生成/注入走统一写回流程', () => {
     apiMock.getDoc
       .mockResolvedValueOnce({ ...DOC_A, body: injected, updated_at: '2026-01-05T00:00:00Z' });
 
-    fireEvent.click(screen.getByRole('button', { name: /注入结果|Inject Results/ }));
+    fireEvent.click(moreMenu());
+    fireEvent.click(await screen.findByRole('button', { name: /注入结果|Inject Results/ }));
     fireEvent.change(screen.getByPlaceholderText(/小节标题|Section label/), { target: { value: 'Overall survival' } });
     fireEvent.change(screen.getByPlaceholderText(/统计输出|stat output/), { target: { value: '{"p":0.012}' } });
     fireEvent.click(screen.getByRole('button', { name: /^注入$|^Inject$/ }));
@@ -311,17 +315,19 @@ describe('#983 生成/注入走统一写回流程', () => {
     renderEditor(false);
     await screen.findByDisplayValue('A doc');
     await sendTurn([{ body: 'A body\n\nR1 段落', rev: 1 }]);
-    expect(await screen.findByText(/审阅 AI 修改|Review AI changes/)).toBeTruthy();
+    expect(await screen.findByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
 
     // 生成被拦截
     apiMock.generateMethods.mockResolvedValue({ methods: 'x' });
-    fireEvent.click(screen.getByRole('button', { name: /生成方法|Generate Methods/ }));
+    fireEvent.click(moreMenu());
+    fireEvent.click(await screen.findByRole('button', { name: /生成方法|Generate Methods/ }));
     expect(screen.getByText(/请先完成当前 AI 修改的审阅|Finish reviewing the current AI changes/)).toBeTruthy();
     expect(apiMock.generateMethods).not.toHaveBeenCalled();
 
     // 注入被拦截
     apiMock.injectResults.mockResolvedValue({ ok: true });
-    fireEvent.click(screen.getByRole('button', { name: /注入结果|Inject Results/ }));
+    fireEvent.click(moreMenu());
+    fireEvent.click(await screen.findByRole('button', { name: /注入结果|Inject Results/ }));
     fireEvent.change(screen.getByPlaceholderText(/小节标题|Section label/), { target: { value: 'L' } });
     fireEvent.change(screen.getByPlaceholderText(/统计输出|stat output/), { target: { value: 'r' } });
     fireEvent.click(screen.getByRole('button', { name: /^注入$|^Inject$/ }));
@@ -390,14 +396,14 @@ describe('#989 Phase 3 — 编辑过程流式可见(块投影消费,#987)', () =
       expect(useChatStore.getState().sessions[SESSION_A]?.loading).toBe(false);
     }, { timeout: 5000 });
     await waitFor(() => expect(screen.queryByText(/AI 正在编辑|AI is editing/)).toBeNull(), { timeout: 3000 });
-    expect(await screen.findByText(/审阅 AI 修改|Review AI changes/)).toBeTruthy();
+    expect(await screen.findByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
   }, 30_000);
 
   test('无投影的旧后端事件不破坏既有写回流(向后兼容)', async () => {
     renderEditor(false);
     await screen.findByDisplayValue('A doc');
     await sendTurn([{ body: 'A body\n\nR1 段落', rev: 1 }]);
-    expect(await screen.findByText(/审阅 AI 修改|Review AI changes/)).toBeTruthy();
+    expect(await screen.findByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
     expect(screen.queryByText(/AI 正在编辑|AI is editing/)).toBeNull();
   });
 });

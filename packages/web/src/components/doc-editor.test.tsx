@@ -1,6 +1,9 @@
 import { describe, test, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DocEditor } from './DocEditor';
+// i18n 初始化 — ProposalCard 的统计文案经 t() 插值,未初始化时 notReadyT
+// 不做插值(渲染原始 {{a}} 模板),断言会拿到假串。
+import '@/i18n';
 
 // TipTap needs a real selection API in jsdom
 class FakeRange {
@@ -77,27 +80,25 @@ describe('DocEditor behaviors', () => {
     );
     await new Promise((r) => setTimeout(r, 300));
     // 两处修改:进入审阅自动聚焦第 1 处。
-    expect(screen.getByText('第 1/2 处')).toBeInTheDocument();
-    expect(screen.getByText(/2 处待处理/)).toBeInTheDocument();
+    expect(screen.getByText('1/2')).toBeInTheDocument();
+    expect(screen.getByText(/2 pending|2 处待处理/)).toBeInTheDocument();
     // #fix: 逐条确认 — 导航即选中,显示「选中修改」+ 接受/拒绝按钮
     // (此前覆盖判定对导航选区不成立,只能全部接受/全部拒绝)。
-    expect(screen.getByText(/选中修改/)).toBeInTheDocument();
-    const acceptOne = screen.getByRole('button', { name: /^接受$/ });
+    const acceptOne = screen.getByTitle(/Accept|接受/);
     expect(acceptOne).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^拒绝$/ })).toBeInTheDocument();
+    expect(screen.getByTitle(/Reject|拒绝/)).toBeInTheDocument();
     // 下一处可点,选中同步。
-    screen.getByTitle('下一处修改').click();
+    screen.getByTitle(/Next change|下一处修改/).click();
     await new Promise((r) => setTimeout(r, 100));
-    expect(screen.getByText('第 2/2 处')).toBeInTheDocument();
-    expect(screen.getByText(/选中修改/)).toBeInTheDocument();
+    expect(screen.getByText('2/2')).toBeInTheDocument();
     // 上一处回退。
-    screen.getByTitle('上一处修改').click();
+    screen.getByTitle(/Previous change|上一处修改/).click();
     await new Promise((r) => setTimeout(r, 100));
-    expect(screen.getByText('第 1/2 处')).toBeInTheDocument();
+    expect(screen.getByText('1/2')).toBeInTheDocument();
     // 逐条接受后 pending 减少,自动跳到下一处。
     acceptOne.click();
     await new Promise((r) => setTimeout(r, 100));
-    expect(screen.getByText(/1 处待处理/)).toBeInTheDocument();
+    expect(screen.getByText(/1 pending|1 处待处理/)).toBeInTheDocument();
   });
 
   // #837: AI 写回多块内容(小节标题+多段)接受后必须保持块结构 —
@@ -137,7 +138,7 @@ describe('DocEditor behaviors', () => {
       <DocEditor value={md} onChange={() => {}} diffReview={{ key: 'rev_837', old: md, next }} onDiffResolve={onResolve} />,
     );
     await new Promise((r) => setTimeout(r, 300));
-    screen.getByRole('button', { name: /全部接受/ }).click();
+    screen.getByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ }).click();
     await new Promise((r) => setTimeout(r, 300));
     expect(onResolve).toHaveBeenCalled();
     const resultMd = String(onResolve.mock.calls[0][0].md);
@@ -189,8 +190,8 @@ describe('DocEditor behaviors', () => {
     );
     await new Promise((r) => setTimeout(r, 300));
     // 两处替换 + 一处新增 = 3 组,全部同时标记
-    expect(screen.getByText(/3 处待处理/)).toBeInTheDocument();
-    expect(screen.getByText(/第 1\/3 处/)).toBeInTheDocument();
+    expect(screen.getByText(/3 pending|3 处待处理/)).toBeInTheDocument();
+    expect(screen.getByText('1/3')).toBeInTheDocument();
     // 新增章节与两处润色的内容都已在编辑框中(标记态)
     const editorText = container.querySelector('.ProseMirror')?.textContent ?? '';
     expect(editorText).toContain('新增结果章节。');

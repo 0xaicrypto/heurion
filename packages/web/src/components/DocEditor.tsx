@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRafCallback } from '@/hooks/useRaf';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -14,10 +14,12 @@ import { markdownToHtml, htmlToMarkdown } from '@/lib/doc-convert';
 import { applyTrackedDiff, cleanupEmptyBlocks } from '@/lib/doc-diff';
 import { captureScrollContainer } from '@/lib/scroll-utils';
 import { SelectionBubble } from './selection-bubble';
+import { ProposalCard, type ProposalSource } from './ProposalCard';
+import { SectionCardsExtension, setSectionCards, type SectionCardsData } from '@/lib/section-cards';
 import { Button } from '@/components/ui';
 import {
   Bold, Italic, Heading2, List, ListOrdered, Table as TableIcon,
-  Plus, Trash2, Undo2, Redo2, Check, X, Eye, RotateCcw, ChevronLeft, ChevronRight,
+  Plus, Trash2, Undo2, Redo2,
 } from 'lucide-react';
 
 /** AI 作者身份 — 审阅模式下的变更标记作者色。 */
@@ -30,6 +32,10 @@ export interface DiffReviewState {
   old: string;
   /** AI 新内容(markdown) */
   next: string;
+  /** #996/#998: 提议来源 — ProposalCard 表头变体(缺省按 ai_edit 呈现)。 */
+  source?: ProposalSource;
+  /** #996/#998: 副标题(节名/来源说明,如 "2. Methods")。 */
+  subject?: string;
 }
 
 interface DocEditorProps {
@@ -70,6 +76,11 @@ interface DocEditorProps {
   reviewTitle?: string;
   /** #837-ux: 累计修改队列的剩余轮数(banner 内展示"还有 N 轮排队")。 */
   queuedRounds?: number;
+  /**
+   * #996/#1002: 节卡片化数据流 — 投影对位/节级徽标/AI 编辑高亮/流式迷你 diff。
+   * 折叠态由 DocEditor 内部持有（与审阅互斥：审阅期间清空装饰）。
+   */
+  sectionCards?: SectionCardsData;
 }
 
 /** #792: BubbleRunState 移至 selection-bubble.tsx,这里 re-export 兼容旧 import。 */
@@ -81,11 +92,27 @@ export type { BubbleRunState } from './selection-bubble';
  * the editor converts on load (md → HTML) and on save (HTML → md).
  * 审阅模式下:AI 编辑以绿(插入)/红(删除)标记呈现,逐条或全部接受/拒绝。
  */
-export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubble, reviewTitle, queuedRounds }: DocEditorProps) {
+export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubble, reviewTitle, queuedRounds, sectionCards }: DocEditorProps) {
   const applyMdRef = useRef<string | null>(null);
   const reviewKeyRef = useRef<string | null>(null);
   const [reviewStats, setReviewStats] = useState<{ pending: number; accepted: number; rejected: number }>({ pending: 0, accepted: 0, rejected: 0 });
   const [selectedChange, setSelectedChange] = useState<{ id: string; text: string } | null>(null);
+  // #996/#1002: 节折叠态（DocEditor 内部持有；与审阅互斥 — 审阅期间清空装饰）。
+  const [collapsedKeys, setCollapsedKeys] = useState<string[]>([]);
+  // #996/#1001: 移动端默认折叠 — 每篇文档一次性初始化：收起全部节、保留
+  // 正在编辑节（AI 编辑中）或最近改动节（section_meta.updatedAt）或第一节。
+  const mobileDefaultDoneRef = useRef(false);
+  const sectionCardsData = useMemo<SectionCardsData>(() => ({
+    ...(sectionCards ?? {}),
+    collapsedKeys,
+    onToggleCollapse: (key: string) =>
+      setCollapsedKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key])),
+  }), [sectionCards, collapsedKeys]);
+  // 折叠态随文档切换/重挂载清零（value 全量替换即新文档形态）。
+  useEffect(() => {
+    setCollapsedKeys([]);
+    mobileDefaultDoneRef.current = false;
+  }, [value]);
   /** #752: bubble 动作点击时读取当前选区后分发给父组件。 */
   const onActionRef = useRef(onBubbleAction);
   onActionRef.current = onBubbleAction;
@@ -113,6 +140,8 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       // #fix: 学术论文渲染 — $...$ / $$...$$ LaTeX 以 KaTeX 渲染成数学符号。
       Mathematics.configure({ katexOptions: { throwOnError: false } }),
       TrackChangesExtension.configure({ author: AI_AUTHOR, mode: 'edit' }),
+      // #996/#1002: 节卡片化 chrome（decoration 驱动，不改文档结构）。
+      SectionCardsExtension,
     ],
     content: markdownToHtml(value),
     onUpdate: ({ editor }) => {
@@ -170,6 +199,17 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     if (sc) sc.el.scrollTop = sc.top;
   }, [editor, captureScroll]);
 
+  // #996/#1002: 节卡片装饰下发 — 审阅期间清空（track-changes 内容与节
+  // chrome 错位，且审阅本身有 ProposalCard 呈现）。
+  useEffect(() => {
+    if (!editor) return;
+    if (reviewKeyRef.current !== null || diffReview) {
+      setSectionCards(editor, {});
+      return;
+    }
+    setSectionCards(editor, sectionCardsData);
+  }, [editor, sectionCardsData, diffReview]);
+
   // External markdown update (AI edit / doc load) → convert and apply.
   useEffect(() => {
     if (!editor) return;
@@ -184,7 +224,24 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     applyExternalContent(value);
   }, [value, editor, captureScroll, applyExternalContent]);
 
-  // 审阅模式:应用 AI diff 并进入只读审阅
+  useEffect(() => {
+    if (!editor || mobileDefaultDoneRef.current) return;
+    const sections = (sectionCardsData.projection?.nodes ?? []).filter((n) => n.kind === 'section');
+    if (sections.length === 0) return;
+    mobileDefaultDoneRef.current = true;
+    // 桌面不自动折叠（设计口径为移动端扫读形态）。
+    if (!window.matchMedia('(max-width: 767px)').matches) return;
+    const editingFirst = sectionCardsData.editingIds?.[0];
+    let keepId = editingFirst;
+    if (!keepId) {
+      const latest = Object.entries(sectionCardsData.meta ?? {})
+        .sort((a, b) => (b[1].updated_at || '').localeCompare(a[1].updated_at || ''));
+      keepId = latest[0]?.[0] ?? sections[0]?.id;
+    }
+    setCollapsedKeys(sections.map((s) => s.id).filter((id) => id !== keepId));
+  }, [editor, sectionCardsData]);
+
+    // 审阅模式:应用 AI diff 并进入只读审阅
   useEffect(() => {
     if (!editor) return;
     if (!diffReview) {
@@ -364,59 +421,25 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
 
   return (
     <div className={className}>
-      {reviewing && (
-        <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 shadow-sm dark:border-amber-900 dark:bg-amber-950/40">
-          <span className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
-            <Eye size={13} /> {reviewTitle ?? '审阅 AI 修改'}
-            <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[11px] dark:bg-amber-900">
-              {reviewStats.pending} 处待处理 · 已接受 {reviewStats.accepted} · 已拒绝 {reviewStats.rejected}
-            </span>
-            {/* #837-ux: 颜色图例 — 绿=新增 红=删除。 */}
-            <span className="ml-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
-              <span className="inline-block h-2 w-2 rounded-sm bg-emerald-500" /> 新增
-              <span className="ml-0.5 inline-block h-2 w-2 rounded-sm bg-red-400" /> 删除
-            </span>
-            {typeof queuedRounds === 'number' && queuedRounds > 0 && (
-              <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[11px] dark:bg-amber-900">
-                还有 {queuedRounds} 轮排队
-              </span>
-            )}
-          </span>
-          {selectedChange && (
-            <span className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-300">
-              选中修改:「{selectedChange.text}」
-              <Button size="sm" variant="primary" onClick={() => resolveOne(selectedChange.id, true)}>
-                <Check size={12} /> 接受
-              </Button>
-              <Button size="sm" variant="danger" onClick={() => resolveOne(selectedChange.id, false)}>
-                <X size={12} /> 拒绝
-              </Button>
-            </span>
-          )}
-          {/* #fix: 逐条确认导航 — 上一处/下一处,接受/拒绝当前处后自动跳转。 */}
-          <span className="flex items-center gap-1">
-            <Button size="sm" variant="ghost" disabled={changeNav.total === 0 || changeNav.idx <= 0} onClick={() => jumpTo(changeNav.idx - 1)} title="上一处修改">
-              <ChevronLeft size={13} />
-            </Button>
-            <span className="text-xs tabular-nums text-amber-700 dark:text-amber-300">
-              {changeNav.total > 0 ? `第 ${changeNav.idx + 1}/${changeNav.total} 处` : '无修改'}
-            </span>
-            <Button size="sm" variant="ghost" disabled={changeNav.total === 0 || changeNav.idx >= changeNav.total - 1} onClick={() => jumpTo(changeNav.idx + 1)} title="下一处修改">
-              <ChevronRight size={13} />
-            </Button>
-          </span>
-          <span className="ml-auto flex items-center gap-1">
-            <Button size="sm" variant="primary" disabled={reviewStats.pending === 0} onClick={() => resolveAll(true)}>
-              <Check size={13} /> 全部接受
-            </Button>
-            <Button size="sm" variant="danger" disabled={reviewStats.pending === 0} onClick={() => resolveAll(false)}>
-              <X size={13} /> 全部拒绝
-            </Button>
-            <Button size="sm" variant="ghost" title="不应用任何 AI 修改，编辑器恢复原正文" onClick={() => finishReview(true)}>
-              <RotateCcw size={13} /> 放弃本轮修改
-            </Button>
-          </span>
-        </div>
+      {reviewing && diffReview && (
+        /* #996/#998: 统一变更提议卡(ProposalCard) — 四触发场景同构表头,
+           审阅能力(逐条/全部接受拒绝、←/→ 导航、排队轮数)与旧横幅一致。 */
+        <ProposalCard
+          sticky
+          source={diffReview.source ?? 'ai_edit'}
+          subject={diffReview.subject}
+          titleOverride={reviewTitle}
+          queuedRounds={queuedRounds}
+          review={{
+            stats: reviewStats,
+            changeNav,
+            selectedChange,
+            onJumpTo: jumpTo,
+            onResolveOne: resolveOne,
+            onResolveAll: resolveAll,
+            onFinish: finishReview,
+          }}
+        />
       )}
       <div className="flex flex-wrap items-center gap-1 border-b border-border px-2 py-1.5">
         <Button size="sm" variant="ghost" className={isActive('bold') ? 'bg-surface' : ''} onClick={() => editor.chain().focus().toggleBold().run()} title="Bold">
@@ -455,8 +478,9 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       {/* #517-followup: prose defaults are light-theme colors — without
           dark:prose-invert the editor body is unreadable on dark surface.
           Semantic overrides keep headings/links/code on theme tokens.
-          #fix: 学术论文排版 — 衬线字体、宽松行距、标题层级、公式/图片居中。 */}
-      <div className="prose prose-sm max-w-none p-4 dark:prose-invert [&_.ProseMirror]:min-h-[300px] [&_.ProseMirror]:outline-none [&_.ProseMirror]:font-serif [&_.ProseMirror]:text-[15px] [&_.ProseMirror]:leading-loose prose-headings:text-text-primary prose-headings:font-semibold prose-p:text-text-secondary prose-p:leading-relaxed prose-a:text-accent hover:prose-a:underline prose-strong:text-text-primary prose-code:text-text-primary prose-code:bg-surface prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:font-mono prose-ol:text-text-secondary prose-ul:text-text-secondary prose-li:my-0.5 prose-blockquote:border-l-4 prose-blockquote:border-accent prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-text-secondary prose-hr:border-border [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-1.5 [&_th]:border [&_th]:border-border [&_th]:bg-surface-elevated [&_th]:p-1.5 [&_th]:text-left [&_img]:my-2 [&_img]:max-h-72 [&_img]:rounded-lg [&_img]:border [&_img]:border-border [&_.ProseMirror_img]:mx-auto [&_[data-type='block-math']]:my-4 [&_[data-type='block-math']]:overflow-x-auto [&_[data-type='inline-math']]:px-0.5">
+          #fix: 学术论文排版 — 宽松行距、标题层级、公式/图片居中。
+          WRITING_MODULE_REDESIGN 视觉系统:正文/界面 = 无衬线,标题/节名 = 衬线。 */}
+      <div className="prose prose-sm max-w-none p-4 dark:prose-invert [&_.ProseMirror]:min-h-[300px] [&_.ProseMirror]:outline-none [&_.ProseMirror]:font-sans [&_.ProseMirror]:text-[15px] [&_.ProseMirror]:leading-loose prose-headings:font-serif prose-headings:text-text-primary prose-headings:font-semibold prose-p:text-text-secondary prose-p:leading-relaxed prose-a:text-accent hover:prose-a:underline prose-strong:text-text-primary prose-code:text-text-primary prose-code:bg-surface prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:font-mono prose-ol:text-text-secondary prose-ul:text-text-secondary prose-li:my-0.5 prose-blockquote:border-l-4 prose-blockquote:border-accent prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-text-secondary prose-hr:border-border [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-1.5 [&_th]:border [&_th]:border-border [&_th]:bg-surface-elevated [&_th]:p-1.5 [&_th]:text-left [&_img]:my-2 [&_img]:max-h-72 [&_img]:rounded-lg [&_img]:border [&_img]:border-border [&_.ProseMirror_img]:mx-auto [&_[data-type='block-math']]:my-4 [&_[data-type='block-math']]:overflow-x-auto [&_[data-type='inline-math']]:px-0.5">
         <EditorContent editor={editor} />
         {onBubbleAction && editor && bubble && (
           /* #752/#792: Selection Bubble — 组件与运行态卡片已抽至

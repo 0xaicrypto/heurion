@@ -455,6 +455,8 @@ export interface SendChatOptions {
   pickedKbIds?: string[];
   /** #693: 编辑器选中的文本(选中即引用) — 随消息传给服务端注入上下文。 */
   selection?: string;
+  /** #996/#1003: 用户消息的节引用(选中即引用→投影反查)— pill 跳转标签。 */
+  sectionRef?: { id: string; heading: string };
 }
 
 /**

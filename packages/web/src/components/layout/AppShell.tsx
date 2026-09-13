@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, Brain, CalendarClock, Cpu, Download, FileText, FlaskConical, FolderOpen, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, Puzzle, Settings, Shield, Users, X, BarChart3 } from 'lucide-react';
+import { ChevronDown, Brain, CalendarClock, Cpu, Download, FileText, FlaskConical, FolderOpen, Globe, LayoutDashboard, LogOut, Menu, MessageSquare, PanelLeftClose, PanelLeftOpen, Puzzle, Settings, Shield, Users, X, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/lib/api';
@@ -118,12 +118,55 @@ function UserMenu() {
   );
 }
 
+/** #996/#1000: 图标栏形态的用户块 — 头像 + 登出，无文字。 */
+function CompactUserMenu() {
+  const { t } = useTranslation();
+  const { displayName, role } = useAuthStore();
+  const navigate = useNavigate();
+  return (
+    <div className="flex flex-col items-center gap-0.5 py-1">
+      <span title={`${displayName || 'User'}${role === 'admin' ? ' · Administrator' : ''}`}>
+        <Avatar name={displayName || 'User'} />
+      </span>
+      <IconButton
+        onClick={() => { api.logout(); navigate('/login', { replace: true }); }}
+        aria-label={t('common.logout')}
+        title={t('common.logout')}
+        className="!h-7 !w-7"
+      >
+        <LogOut size={14} />
+      </IconButton>
+    </div>
+  );
+}
+
 function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => void }) {
   const { t } = useTranslation();
   const { role } = useAuthStore();
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLElement>(null);
+
+  // #996/#1000: 图标化 rail 模式（设计稿口径 — 图标 + 悬停 tooltip）。
+  // 桌面(lg+)生效，偏好持久化；移动端抽屉不受影响。
+  const [railMode, setRailMode] = useState(() => {
+    try { return localStorage.getItem('nexus.nav.rail') === '1'; } catch { return false; }
+  });
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 1024px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const fn = () => setIsDesktop(mq.matches);
+    mq.addEventListener('change', fn);
+    return () => mq.removeEventListener('change', fn);
+  }, []);
+  const rail = railMode && isDesktop;
+  const toggleRail = () => {
+    setRailMode((v) => {
+      const next = !v;
+      try { localStorage.setItem('nexus.nav.rail', next ? '1' : '0'); } catch { /* 私隐模式忽略 */ }
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!isResizing) return;
@@ -161,15 +204,18 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
         className={cn(
           'fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border bg-surface transition-transform lg:static lg:translate-x-0',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
+          rail && 'items-center',
         )}
-        style={{ width: `min(${sidebarWidth}px, 85vw)` }}
+        style={{ width: rail ? 64 : `min(${sidebarWidth}px, 85vw)` }}
       >
-        <header className="flex h-14 items-center gap-2 border-b border-border px-4">
+        <header className={cn('flex h-14 shrink-0 items-center border-b border-border', rail ? 'justify-center px-0' : 'gap-2 px-4')}>
           <img src="/heurion-icon.svg" alt="" className="h-7 w-7 dark:hidden" />
           <img src="/heurion-icon-dark.svg" alt="" className="hidden h-7 w-7 dark:block" />
-          <Link to="/app/today" className="flex-1 text-lg font-bold text-text-primary">
-            {t('appName')}
-          </Link>
+          {!rail && (
+            <Link to="/app/today" className="flex-1 text-lg font-bold text-text-primary">
+              {t('appName')}
+            </Link>
+          )}
           <IconButton
             className="lg:hidden"
             onClick={onClose}
@@ -177,13 +223,69 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
           >
             <X size={20} />
           </IconButton>
+          {!rail && (
+            <IconButton
+              className="hidden lg:inline-flex"
+              onClick={toggleRail}
+              aria-label={t('nav.collapseRail', '收起为图标栏')}
+              title={t('nav.collapseRail', '收起为图标栏')}
+            >
+              <PanelLeftClose size={18} />
+            </IconButton>
+          )}
         </header>
 
-        <nav aria-label="Main navigation" className="flex-1 overflow-y-auto px-3 py-3">
+        {rail && (
+          /* #996/#1000: 图标栏展开/收回开关（收起态置于图标栏顶部下方）。 */
+          <button
+            type="button"
+            onClick={toggleRail}
+            aria-label={t('nav.expandRail', '展开侧栏')}
+            title={t('nav.expandRail', '展开侧栏')}
+            className="mt-1.5 rounded-lg p-1.5 text-text-tertiary transition-colors hover:bg-surface hover:text-text-primary"
+          >
+            <PanelLeftOpen size={18} />
+          </button>
+        )}
+
+        <nav aria-label="Main navigation" className={cn('flex-1 overflow-y-auto py-3', rail ? 'w-full px-1.5' : 'px-3')}>
           {/* §11.5 (#221): workflow-grouped navigation */}
           {NAV_SECTIONS.map((section) => {
             const items = visibleItems.filter((i) => i.section === section.key);
             if (items.length === 0) return null;
+
+            // #996/#1000: 图标栏形态 — 仅图标 + title tooltip，组间加分隔。
+            if (rail) {
+              return (
+                <div key={section.key} className="mb-2 border-b border-border/60 pb-2 last:border-none">
+                  {items.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      onClick={onClose}
+                      title={t(item.labelKey)}
+                      aria-label={t(item.labelKey)}
+                      className={({ isActive }) =>
+                        cn(
+                          'relative mx-auto flex h-9 w-9 items-center justify-center rounded-lg transition-colors',
+                          isActive && !item.inactiveQuery && (!item.activeQuery || search.includes(item.activeQuery))
+                            ? 'bg-accent/10 text-accent'
+                            : 'text-text-secondary hover:bg-surface hover:text-text-primary',
+                        )
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          {item.icon}
+                          {isActive && !item.inactiveQuery && (!item.activeQuery || search.includes(item.activeQuery)) && <StatusDot tone="active" className="absolute right-1 top-1 !h-1.5 !w-1.5" />}
+                        </>
+                      )}
+                    </NavLink>
+                  ))}
+                </div>
+              );
+            }
+
             // #764-nav: 工具与设置组可折叠(当前路由在该组内时自动展开)
             const isTools = section.key === 'tools';
             const toolsActive = items.some((i) => search.includes(new URL(i.to, 'http://x').search));
@@ -239,21 +341,33 @@ function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => 
           })}
         </nav>
 
-        <div className="border-t border-border p-2">
-          <div className="mb-2 flex gap-1 px-1">
-            <ThemeMenu />
-            <LanguageMenu />
-          </div>
-          <UserMenu />
+        <div className={cn('shrink-0 border-t border-border', rail ? 'flex w-full flex-col items-center gap-1 p-1.5' : 'p-2')}>
+          {rail ? (
+            <>
+              <ThemeMenu />
+              <LanguageMenu />
+              <CompactUserMenu />
+            </>
+          ) : (
+            <>
+              <div className="mb-2 flex gap-1 px-1">
+                <ThemeMenu />
+                <LanguageMenu />
+              </div>
+              <UserMenu />
+            </>
+          )}
         </div>
 
-        <div
-          className="absolute right-0 top-0 z-10 hidden h-full cursor-col-resize transition-colors lg:block"
-          style={{ width: 6, background: 'hsl(var(--border))', opacity: 0.3 }}
-          onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.6'; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.3'; }}
-        />
+        {!rail && (
+          <div
+            className="absolute right-0 top-0 z-10 hidden h-full cursor-col-resize transition-colors lg:block"
+            style={{ width: 6, background: 'hsl(var(--border))', opacity: 0.3 }}
+            onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.6'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = '0.3'; }}
+          />
+        )}
       </aside>
     </>
   );

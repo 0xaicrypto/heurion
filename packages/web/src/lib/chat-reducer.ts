@@ -7,11 +7,20 @@
  * SessionState out.
  */
 import type { ChatStreamChunk, ChatContextUsage, DeckWire, SendChatOptions } from './types';
+// #996/#1003: 节改动累积 — 投影 diff(节列表) + span 提取/行级增删行。
+import { diffProjectionSections } from './block-projection';
+import { extractSectionText, lineDiffRows } from './section-cards';
 
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  /**
+   * #996/#1003: 用户消息的节引用（选中即引用→投影反查）— "→ 节名"
+   * 跳转标签；assistant 消息为 docSections（本轮改动节，聊天改动日志）。
+   */
+  sectionRef?: { id: string; heading: string };
+  docSections?: Array<{ id: string; heading: string }>;
   /** #708: user 消息携带的附件 fileId — 重试/重新生成时恢复附件上下文。 */
   attachments?: string[];
   reasoning?: string;
@@ -105,6 +114,19 @@ export interface SessionState {
    * 旧后端事件无此字段时保留既有值（与 lastDocRev 同策略）。
    */
   lastDocProjection?: import('@heurion/contracts').BlockProjection | null;
+  /**
+   * #996/#999: 最近一次 doc_updated 的节级元数据（作者轴+可信度轴）—
+   * 旧后端事件无此字段时保留既有值（与 lastDocProjection 同策略）。
+   */
+  lastDocSectionMeta?: import('@heurion/contracts').SectionMetaMap;
+  /**
+   * #996/#1003: 本轮（进行中）文档写回的节改动累积 — 首 doc_updated 时
+   * 以"上一轮末态"（lastDocBody/lastDocProjection）为基线快照，之后逐笔
+   * diff 增删行；turn_complete 翻入 lastTurnChanges 供聊天改动卡渲染。
+   */
+  turnDocBase?: { body: string; projection?: import('@heurion/contracts').BlockProjection };
+  turnChanges?: { sections: import('./block-projection').SectionLite[]; rows: Record<string, import('./section-cards').SectionCardRow[]> };
+  lastTurnChanges?: { sections: import('./block-projection').SectionLite[]; rows: Record<string, import('./section-cards').SectionCardRow[]> };
   /** #976: 最近一次 plan_updated 的任务清单快照 — 前端进度卡片数据源。 */
   lastPlan?: import('@heurion/contracts').TaskPlan | null;
   /**
@@ -233,12 +255,21 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
     case 'turn_complete': {
       // #fix: 清 streamNote 的同时必须保留消息级 isStreaming 清理
       // (applyChunk 的 turn_complete 分支被本 case 截获,不会执行)。
+      // #996/#1003: 本轮节改动翻入 lastTurnChanges(聊天改动卡),累积态清零。
       const msgs = [...s.messages];
       const last = msgs[msgs.length - 1];
       if (last?.role === 'assistant') {
         msgs[msgs.length - 1] = { ...last, isStreaming: false };
       }
-      return { ...s, messages: msgs, streamNote: undefined };
+      const hasChanges = !!s.turnChanges && s.turnChanges.sections.length > 0;
+      return {
+        ...s,
+        messages: msgs,
+        streamNote: undefined,
+        ...(hasChanges ? { lastTurnChanges: s.turnChanges } : {}),
+        turnDocBase: undefined,
+        turnChanges: undefined,
+      };
     }
     case 'chart_created': {
       const msgs = [...s.messages];
@@ -252,19 +283,44 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
     //（实时勾选态;随 turn 时间线持久化逻辑与 doc 同源）。
     case 'plan_updated':
       return { ...s, lastPlan: chunk.plan };
-    case 'doc_updated':
+    case 'doc_updated': {
       // #773: deck 与 body 同帧到达 — lastDocDeck 供 deck 视图直apply
       // (AI 改页不走 markdown diffReview，页级小改直接应用 + 快照回滚)。
       // #927: rev 随帧存储 — 消费方按 shouldApplyDocRev 幂等防乱序;
       // 无 rev 的旧后端事件保留既有 lastDocRev（或 undefined）。
+      // #996/#1003: 节改动累积 — 首笔写回快照基线(上一轮末态),逐笔 diff。
+      const turnDocBase = s.turnDocBase ?? {
+        body: s.lastDocBody ?? '',
+        projection: s.lastDocProjection ?? undefined,
+      };
+      let turnChanges = s.turnChanges;
+      if (chunk.projection) {
+        const changed = diffProjectionSections(turnDocBase.projection, chunk.projection);
+        const rows = { ...(s.turnChanges?.rows ?? {}) };
+        for (const sec of changed) {
+          const oldText = extractSectionText(turnDocBase.body, turnDocBase.projection, sec.id);
+          const newText = extractSectionText(chunk.body, chunk.projection, sec.id);
+          if (oldText !== null && newText !== null && oldText !== newText) {
+            rows[sec.id] = lineDiffRows(oldText, newText);
+          }
+        }
+        const prev = new Map((s.turnChanges?.sections ?? []).map((x) => [x.id, x]));
+        for (const c of changed) prev.set(c.id, c);
+        turnChanges = { sections: [...prev.values()], rows };
+      }
       return {
         ...s,
         lastDocBody: chunk.body,
         lastDocDeck: chunk.deck ?? null,
         lastDocRev: typeof chunk.rev === 'number' ? chunk.rev : s.lastDocRev,
         // #989 Phase 3: 投影随帧存储(旧事件无字段时保留既有值)。
+        // #996/#999: 节级元数据随帧存储(同策略)。
         ...(chunk.projection !== undefined ? { lastDocProjection: chunk.projection } : {}),
+        ...(chunk.section_meta !== undefined ? { lastDocSectionMeta: chunk.section_meta } : {}),
+        turnDocBase,
+        ...(turnChanges ? { turnChanges } : {}),
       };
+    }
     case 'skill_capture_suggest':
       return { ...s, skillCapture: { text: chunk.text } };
     case 'tool_call': {

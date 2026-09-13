@@ -134,7 +134,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     const abort = new AbortController();
     const now = Date.now();
-    const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: opts.text, createdAt: now, attachments: opts.attachments as string[] | undefined };
+    // #996/#1003: 用户消息携带节引用(选中即引用→投影反查)— pill 跳转标签。
+    const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: opts.text, createdAt: now, attachments: opts.attachments as string[] | undefined, ...(opts.sectionRef ? { sectionRef: opts.sectionRef } : {}) };
     const asstMsg: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', isStreaming: true, createdAt: now };
 
     set((state) => ({
