@@ -202,6 +202,39 @@ function FoldedRow({ group }: { group: FoldGroupData }) {
   );
 }
 
+/** #1025: 单个「尝试」块 — 所属循环 + 轮次 + 本轮推理 + 本轮工具芯片。
+ *  主循环与 rescue 的轮次号各自独立,不再把整回合揉成一条推理流。 */
+function AttemptBlock({ attempt, toolCalls, streaming }: {
+  attempt: NonNullable<ChatMessage['attempts']>[number];
+  toolCalls: ToolEntry[];
+  streaming: boolean;
+}) {
+  const { t } = useTranslation();
+  const rows = buildRows(toolCalls);
+  const roundLabel = attempt.round > 0 ? t('chat.activityRound', { round: attempt.round }) : t('chat.attemptPrepare', '准备');
+  const loopLabel = attempt.loop === 'rescue' ? t('chat.attemptRescue', '精简重试') : t('chat.attemptMain', '主循环');
+  return (
+    <div className="space-y-1 border-l-2 border-border/60 pl-2">
+      <div className="flex flex-wrap items-center gap-x-2 text-[10px] text-text-tertiary">
+        <span className={cn(
+          'rounded px-1 py-0.5',
+          attempt.loop === 'rescue' ? 'bg-warning/10 text-warning' : 'bg-surface text-text-secondary',
+        )}>
+          {loopLabel}
+        </span>
+        <span>{roundLabel}</span>
+        {attempt.reasoning && <span>· {t('chat.attemptReasoning', { chars: attempt.reasoning.length })}</span>}
+      </div>
+      {attempt.reasoning && <ReasoningBlock text={attempt.reasoning} streaming={streaming} />}
+      {rows.map((row, i) => {
+        if (row.kind === 'fold') return <FoldedRow key={`g${i}`} group={row} />;
+        if (row.kind === 'round') return null; // 尝试头已表达轮次
+        return <ToolRow key={`t${i}`} item={row.item} />;
+      })}
+    </div>
+  );
+}
+
 const PHASE_KEY: Record<'thinking' | 'tool' | 'summarizing', string> = {
   thinking: 'chat.subagentPhaseThinking',
   tool: 'chat.subagentPhaseTool',
@@ -262,24 +295,37 @@ function StatusLine({ message, stallSince, streamNote }: Pick<ActivityTimelinePr
   const { t } = useTranslation();
   const streaming = Boolean(message.isStreaming);
   useTick(streaming || Boolean(stallSince));
-  const runningTool = (message.toolCalls ?? []).find((tc) => tc.status === 'running');
+  const toolCalls = message.toolCalls ?? [];
+  const runningTool = toolCalls.find((tc) => tc.status === 'running');
   const runningSub = (message.subagents ?? []).find((sa) => sa.status === 'running');
   const stalledMs = stallSince ? Date.now() - stallSince : 0;
+  // 最近一次已知轮次(含已完成的工具)— 工具间隙的 LLM 生成/结果分析也带
+  // 轮次。此前轮次只在有工具运行中显示:长任务里状态行长期粘在开局
+  // streamNote(「上下文就绪…」),看起来像卡住。
+  const lastRound = toolCalls.reduce<number | undefined>(
+    (acc, tc) => (tc.round !== undefined ? tc.round : acc),
+    undefined,
+  );
   let activity = streamNote || t('chat.activityWorking');
   if (runningTool) {
     activity = t('chat.activityRunningTool', { tool: t(`chat.tool.${runningTool.tool}`, { defaultValue: runningTool.tool }) });
   } else if (runningSub) {
     activity = t('chat.activitySubagent', { task: runningSub.task });
+  } else if (streaming && toolCalls.length > 0) {
+    // 已有工具执行过 → 当前在生成下一轮/分析工具结果,不再显示开局的
+    // 「上下文就绪」提示(粘住 = 疑似卡死)。
+    activity = t('chat.thinking', '思考中…');
   } else if (message.reasoning && !message.text) {
     activity = streamNote || t('chat.thinking', '思考中…');
   }
+  const round = runningTool?.round ?? lastRound;
   const startedAt = message.createdAt ?? Date.now();
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-1 text-[11px] text-text-tertiary">
       <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
       <span className="truncate">{activity}</span>
-      {streaming && runningTool?.round !== undefined && (
-        <span>· {t('chat.activityRound', { round: runningTool.round })}</span>
+      {streaming && round !== undefined && (
+        <span>· {t('chat.activityRound', { round })}</span>
       )}
       {streaming && <span>· ⏱ {fmtDuration(Date.now() - startedAt)}</span>}
       {stallSince && (
@@ -325,23 +371,35 @@ export function ActivityTimeline({ message, stallSince, streamNote, isStreaming 
   if (!hasContent && !streamNote) return null;
 
   const rows = buildRows(message.toolCalls ?? []);
+  // #1025: 有尝试结构时按尝试分组渲染（旧消息/无工具时退回扁平渲染）。
+  const attempts = message.attempts ?? [];
+  const useAttempts = attempts.length > 0 && (message.toolCalls?.length ?? 0) > 0;
 
   return (
     <div className="mb-2 space-y-1.5" data-testid="activity-timeline">
       {(streaming || stallSince) && <StatusLine message={message} stallSince={stallSince} streamNote={streamNote} />}
-      {message.reasoning && <ReasoningBlock text={message.reasoning} streaming={streaming && !message.text} />}
-      {rows.map((row, i) => {
-        if (row.kind === 'fold') return <FoldedRow key={`g${i}`} group={row} />;
-        if (row.kind === 'round') {
-          return (
-            <div key={`r${i}`} className="flex items-center gap-2 pt-0.5 text-[10px] text-text-tertiary/80">
-              <span className="h-px w-4 bg-border" />
-              {t('chat.activityRound', { round: row.round })}
-            </div>
-          );
-        }
-        return <ToolRow key={`t${i}`} item={row.item} />;
-      })}
+      {message.reasoning && !useAttempts && <ReasoningBlock text={message.reasoning} streaming={streaming && !message.text} />}
+      {useAttempts
+        ? attempts.map((a, i) => (
+            <AttemptBlock
+              key={`a${i}`}
+              attempt={a}
+              toolCalls={(message.toolCalls ?? []).filter((tc) => tc.seq !== undefined && a.seqs.includes(tc.seq))}
+              streaming={streaming && i === attempts.length - 1 && !message.text}
+            />
+          ))
+        : rows.map((row, i) => {
+            if (row.kind === 'fold') return <FoldedRow key={`g${i}`} group={row} />;
+            if (row.kind === 'round') {
+              return (
+                <div key={`r${i}`} className="flex items-center gap-2 pt-0.5 text-[10px] text-text-tertiary/80">
+                  <span className="h-px w-4 bg-border" />
+                  {t('chat.activityRound', { round: row.round })}
+                </div>
+              );
+            }
+            return <ToolRow key={`t${i}`} item={row.item} />;
+          })}
       {(message.subagents ?? []).map((sa) => <SubagentRow key={sa.id} sa={sa} />)}
     </div>
   );

@@ -234,4 +234,20 @@ describe('#996-followup 标题级别选择器(H1-H3)', () => {
     await new Promise((r) => setTimeout(r, 150));
     expect(ref.current?.getHTML()).not.toContain('<h3');
   });
+
+  test('review 复核#7: 点击当前已生效的级别 → 保持标题,不再 toggle 降级', async () => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    const ref: { current: Editor | null } = { current: null };
+    render(<DocEditor value={'## 原标题\n\n段落'} onChange={() => {}} editorRef={ref} />);
+    await new Promise((r) => setTimeout(r, 250));
+
+    // 当前是 H2;点菜单里的 H2(radio 语义 = 确认当前项)不应取消标题
+    fireEvent.click(screen.getByRole('button', { name: /文本样式|Text style/ }));
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'H2' }));
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(ref.current?.getHTML()).toContain('<h2');
+    expect(ref.current?.getHTML()).not.toContain('<p>原标题</p>');
+    expect(screen.getByRole('button', { name: /文本样式|Text style/ }).textContent).toContain('H2');
+  });
 });

@@ -3,7 +3,7 @@ import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
 import type { Doc, DocSnapshot, ResearchStudy } from '@prisma/client'
-import { SCHEMA_VERSION } from '@heurion/contracts'
+import { SCHEMA_VERSION, findSectionAtOffset } from '@heurion/contracts'
 import type { PolishStreamChunk } from '@heurion/contracts'
 import { renderDocxBuffer, renderPdfBuffer, isExportFormat } from './markdown-export.js'
 import { polishSelection, polishSelectionFallback, writeMethodsSection, writePaperBackground, MAX_POLISH_CHARS, resolvePolishModel, resolvePolishDeadlineMs } from './document-writing.service.js'
@@ -12,7 +12,7 @@ import { extractPptxContentFromUpload, pptxSlidesToDeck } from '../../lib/pptx-e
 // #787: 上传即草稿的导入编排收敛到 doc-import 单点。
 import { ensureDraftBody } from '../../tools/doc-import.js'
 // #789: doc 写回单点 owner。
-import { writeDocVersion, refreshSectionMetaForRestore } from '../../tools/doc-version-writer.js'
+import { writeDocVersion } from '../../tools/doc-version-writer.js'
 // #996/#999: 节级元数据（作者轴+可信度轴）读侧 — GET/PUT 响应附带。
 import type { SectionMetaMap } from '@heurion/contracts'
 import { makeLogger as makeMetaLogger } from '../../common/logger.js'
@@ -37,8 +37,8 @@ async function loadSectionMeta(docId: string): Promise<SectionMetaMap | undefine
     return undefined
   }
 }
-// #989 Phase 1/3: 块投影构建（restore 路径同帧重算）与装载（PHI 按块定位）。
-import { buildBlockProjection, loadProjection } from '../../lib/block-projection.js'
+// #989 Phase 1/3: 块投影装载（PHI 按块定位;写回路径由 doc-version-writer 单点维护）。
+import { loadProjection } from '../../lib/block-projection.js'
 import { makeLogger } from '../../common/logger.js'
 import { refreshFileUrls } from '../../common/chart-token.js'
 import { lintDocument } from '../../common/doc-lint.js'
@@ -365,25 +365,21 @@ export async function documentsRouter(app: FastifyInstance) {
     if (!doc) return reply.status(404).send({ error: 'Not found' })
     const snap = await prisma.docSnapshot.findFirst({ where: { id: Number(snapId), docId, userId } })
     if (!snap) return reply.status(404).send({ error: 'Not found' })
-    // #898: 恢复前先把当前 body+deck 落一条快照 — 当前态可再撤销,不被永久覆盖。
-    await prisma.docSnapshot.create({
-      data: {
-        docId,
-        userId,
-        body: doc.body,
-        deck: doc.deck ?? null,
-        label: '恢复前版本',
-        createdAt: new Date().toISOString(),
-      },
+    // #898/#789/#980: 恢复也走 DocVersionWriter 单点 — 同帧快照旧 body+旧
+    // deck(label「恢复前版本」，当前态可再撤销)+ 乐观锁 + 投影同帧重算 +
+    // 节级元数据同步(await；此前手写 doc.update 再 void 元数据刷新,正文与
+    // 元数据可能不一致,且是全路径走查中仅剩的绕过单点写回)。
+    // #773: deck 未快照的历史行恢复为 null = 无 deck(parseDeck 损坏容错)。
+    const written = await writeDocVersion({
+      userId,
+      docId,
+      body: String(snap.body ?? ''),
+      deck: parseDeck(snap.deck) as Record<string, unknown> | null,
+      baseBody: String(doc.body ?? ''),
+      writeSource: 'human',
+      snapshotLabel: '恢复前版本',
     })
-    // #773: body+deck 一致回滚（deck 未快照的历史行恢复为 null = 无 deck）。
-    // #989 Phase 1: 投影与 body 强一致 — 恢复同样同帧重算投影（该路径此前
-    // 绕过写回单点,是全路径走查中仅剩的两处 body 直写之一;title-only 不动
-    // body 不需要重算）。
-    await prisma.doc.update({ where: { id: docId }, data: { body: snap.body, deck: snap.deck ?? null, blockProjection: JSON.stringify(buildBlockProjection(String(snap.body || ''))), updatedAt: new Date().toISOString() } })
-    // #996/#999: 恢复是用户动作 — 受影响节作者轴翻 human/verified、消失节清理
-    // (best-effort,失败只降级为卡片缺标签)。
-    void refreshSectionMetaForRestore({ docId, userId, prevBody: doc.body, nextBody: String(snap.body || '') })
+    if (written.error) return reply.status(written.conflict ? 409 : 500).send({ error: written.error })
     return { restored: true }
   })
 
@@ -399,14 +395,11 @@ export async function documentsRouter(app: FastifyInstance) {
     }
     const docText = String(doc.body || '')
     const projection = loadProjection(docText, doc.blockProjection)
-    const sectionNodes = projection.nodes.filter((n) => n.kind === 'section')
     const sectionOf = (pos: number): { id: string; heading: string } | null => {
       // review 复核#6: 投影节 span 大纲语义(父节嵌套包含子节)— 定位取
       // 包含位置的最内层节(最深 level),子节内容归子节而非父节。
-      let best: (typeof sectionNodes)[number] | null = null
-      for (const n of sectionNodes) {
-        if (pos >= n.start && pos < n.end && (best === null || (n.level ?? 0) > (best.level ?? 0))) best = n
-      }
+      // 单一实现收敛于 contracts.findSectionAtOffset(与前端选区反查同源)。
+      const best = findSectionAtOffset(projection, pos)
       return best ? { id: best.id, heading: best.heading || '' } : null
     }
     const findings: Array<{ kind: string; text: string; start: number; end: number; suggestion: string; section?: { id: string; heading: string } }> = []

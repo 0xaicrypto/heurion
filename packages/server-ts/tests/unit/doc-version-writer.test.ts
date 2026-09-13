@@ -280,6 +280,10 @@ describe('#996/#999 — 节级元数据（作者轴+可信度轴,写回单点挂
     expect(upsertArgs.update).toMatchObject({ author: 'ai', verifyStatus: 'pending' })
     // sectionMeta 全量 map 随返回(SSE/响应透传)
     expect(res.sectionMeta).toEqual({ s_new: { author: 'ai', verify_status: 'pending', updated_at: 't1' } })
+    // #996/#1003: 实际变更节(id+标题)随返回 — 聊天改动日志按轮持久化数据源。
+    const { buildBlockProjection } = await import('../../src/lib/block-projection.js')
+    const expected = buildBlockProjection('## S\n新内容').nodes.find((n) => n.kind === 'section')!
+    expect(res.changedSections).toEqual([{ id: expected.id, heading: 'S' }])
 
     // 终态化器:重读正文一致 + body_hash 重建一致 → pending 翻 verified
     await drainFinalizer()
@@ -333,6 +337,10 @@ describe('#996/#999 — 节级元数据（作者轴+可信度轴,写回单点挂
     expect(mocks.metaDeleteMany).toHaveBeenCalledTimes(1)
     const [del] = mocks.metaDeleteMany.mock.calls[0]
     expect(del.where.sectionId.in).toHaveLength(1)
+    // #996/#1003: 被删除节也计入改动日志(连同旧投影标题)
+    const { buildBlockProjection } = await import('../../src/lib/block-projection.js')
+    const gone = buildBlockProjection(oldBody).nodes.find((n) => n.kind === 'section' && n.heading === 'Gone')!
+    expect(res.changedSections).toEqual([{ id: gone.id, heading: 'Gone' }])
     await drainFinalizer()
     // 无变更节 → 终态化器不触发
     expect(mocks.metaUpdateMany).not.toHaveBeenCalled()

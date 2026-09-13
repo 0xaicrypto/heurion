@@ -241,6 +241,10 @@
     "activityRunningTool": "执行 {{tool}}",
     "activitySubagent": "子代理 {{task}}",
     "activityRound": "第 {{round}} 轮",
+    "attemptMain": "主循环",
+    "attemptRescue": "精简重试",
+    "attemptPrepare": "准备",
+    "attemptReasoning": "推理 {{chars}} 字",
     "activityStalled": "已 {{duration}} 无新进展 — 仍在执行，复杂任务可能较慢",
     "activityReasoningStreaming": "推理中",
     "activityReasoningDone": "推理完成",
@@ -570,7 +574,8 @@
       "noChanges": "无修改",
       "pendingStats": "{{n}} 处待处理 · 已接受 {{a}} · 已拒绝 {{r}}",
       "queuedRounds": "还有 {{n}} 轮排队",
-      "reject": "拒绝"
+      "reject": "拒绝",
+      "forwardToChat": "转发到聊天"
     },
     "conflictLegacyNotice": "服务端版本信息需重新载入",
     "tabSlides": "Slides",
@@ -592,7 +597,19 @@
     "previewToggle": "预览",
     "editToggle": "编辑",
     "paragraphStyle": "正文",
-    "textStyle": "文本样式"
+    "textStyle": "文本样式",
+    "polishConflictDetected": "润色期间文档已被 AI 或其他窗口更新 — 请选择如何应用润色结果",
+    "polishConflictSubject": "选区润色与文档更新冲突",
+    "polishConflictNote": "润色基于旧版本生成；右侧为文档当前内容",
+    "polishConflictInsert": "插入到最新版本",
+    "polishConflictDrop": "丢弃润色结果",
+    "polishConflictForward": "转发到聊天",
+    "polishConflictInserted": "已把润色结果插入最新版本文档（未保存 — 请确认后保存）",
+    "polishConflictLocateFailed": "最新版本中未能唯一定位该选区 — 已把润色结果带入聊天，可手动处理",
+    "polishConflictDiscarded": "已丢弃本次替换 — 润色结果已带入聊天输入框",
+    "polishConflictToChat": "这是刚才生成但未采用的润色结果，请帮我把它应用到文档合适的位置（原文：{{orig}}）",
+    "polishConflictTimedOut": "冲突未处理 — 已把润色结果带入聊天输入框，不会丢失",
+    "_proposalForward": "转发到聊天"
   },
   "preview": {
     "open": "预览",

@@ -36,7 +36,7 @@ export interface PostTurnContext {
   /** 引用对账(citation-audit)可改写的落盘文本 — 初始= fullResponse。 */
   responseForLog: string
   kbCitations: Array<{ kind: 'fact' | 'knowledge' | 'document'; label: string; sourceId: string }>
-  timelineTools: Array<{ tool: string; round?: number }>
+  timelineTools: Array<{ tool: string; round?: number; loop?: 'main' | 'rescue' }>
   chartMeta: Array<{ url: string; chartType?: string }>
   timelineSubs: Array<{ id: string; task: string; status: 'running' | 'done' | 'failed' }>
   /** #996/#1003: 本轮文档写回的节(id→标题)— 随 assistant metadata 持久化。 */

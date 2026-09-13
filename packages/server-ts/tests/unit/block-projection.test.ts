@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest'
 import { buildBlockProjection, withSectionIds, applySectionEdit, loadProjection, hash12 } from '../../src/lib/block-projection.js'
-import { blockProjectionSchema } from '@heurion/contracts'
+import { blockProjectionSchema, findSectionAtOffset } from '@heurion/contracts'
 
 /**
  * #989 Phase 1 — 投影与 body 强一致走查（验证标准）：
@@ -104,6 +104,33 @@ describe('#989 投影构建 — 节/块分类与 span 走查', () => {
     expect(raw).toContain('### Cohort')
     expect(raw).toContain('n=120 patients.')
     expect(raw).not.toContain('## Results')
+  })
+
+  test('节 hash 扁平口径:子节变更不污染父节 hash(review 复核嵌套节)', () => {
+    const before = buildBlockProjection(DOC)
+    const after = buildBlockProjection(DOC.replace('n=120 patients.', 'n=200 patients.'))
+    const cohortBefore = before.nodes.find((n) => n.kind === 'section' && n.heading === 'Cohort')!
+    const cohortAfter = after.nodes.find((n) => n.kind === 'section' && n.heading === 'Cohort')!
+    const methodsBefore = before.nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!
+    const methodsAfter = after.nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!
+    // 子节自身变更 → hash 变;父节没被碰 → hash 不变(节级元数据不误标)
+    expect(cohortAfter.hash).not.toBe(cohortBefore.hash)
+    expect(methodsAfter.hash).toBe(methodsBefore.hash)
+  })
+
+  test('findSectionAtOffset:嵌套 span 下取最深匹配节(与前端选区反查同源)', () => {
+    const proj = buildBlockProjection(DOC)
+    const methods = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!
+    const cohort = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Cohort')!
+    // Cohort 内容偏移落在父(Methods)与子(Cohort)span 内 → 取子节
+    const cohortBodyPos = DOC.indexOf('n=120 patients.')
+    expect(findSectionAtOffset(proj, cohortBodyPos)?.id).toBe(cohort.id)
+    // Methods 直属区域(标题与 Cohort 标题之间)无更深节 → 父节
+    const methodsOwnPos = DOC.indexOf('## Methods')
+    expect(findSectionAtOffset(proj, methodsOwnPos)?.id).toBe(methods.id)
+    // span 之外 → null
+    expect(findSectionAtOffset(proj, 10_000)).toBeNull()
+    expect(findSectionAtOffset(null, 0)).toBeNull()
   })
 
   test('确定性:同输入同输出', () => {

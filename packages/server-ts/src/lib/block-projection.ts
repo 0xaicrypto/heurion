@@ -21,6 +21,8 @@
  * 标题(而不是任意标题行),嵌套子节包含在父节 span 内。delete/replace 一个
  * 标题会带上它嵌套的子节(直觉预期),子节自身仍是独立节点(span 嵌套包含,
  * 定位/编辑子节不受影响)。块节点仍按相邻标题行区域分组,不随父节扩展。
+ * 注意:section hash 不随 span 走大纲语义 — 只哈希自身直接内容(扁平区,
+ * 到下一个任意级标题),子节变更不污染祖先节的变更检测位。
  */
 import { createHash } from 'crypto'
 import type { BlockProjection, BlockProjectionNode, BlockType } from '@heurion/contracts'
@@ -83,6 +85,10 @@ export function buildBlockProjection(body: string): BlockProjection {
   // review 复核#6: span 大纲语义 — end = 下一个 level<=自身 的标题行(或
   // 文末),嵌套子节包含在父节 span 内。子节节点照常独立建立(span 相互
   // 嵌套包含;块分组按相邻标题行区域进行,不受父节 span 扩展影响)。
+  // review 复核(嵌套节): hash 与 span 口径分离 — hash 只覆盖「自身直接
+  // 内容」(到下一个任意级标题为止的扁平区),不含嵌套子节。否则改一个
+  // 子节会带动全部祖先节 hash 变化,父节被节级元数据误标为 author=ai/
+  // pending(信任标签把没碰过的人工内容标成未验证的 AI 内容)。
   const sectionNodes: BlockProjectionNode[] = []
   for (let s = 0; s < headingLines.length; s++) {
     const { line, title, level } = headingLines[s]
@@ -90,13 +96,14 @@ export function buildBlockProjection(body: string): BlockProjection {
     for (let k = s + 1; k < headingLines.length; k++) {
       if (headingLines[k].level <= level) { endLine = headingLines[k].line; break }
     }
-    const contentLines = lines.slice(line + 1, endLine)
+    const flatEndLine = s + 1 < headingLines.length ? headingLines[s + 1].line : lines.length
+    const ownLines = lines.slice(line + 1, flatEndLine)
     sectionNodes.push({
       id: idFor('s', normalizeForId(title)),
       kind: 'section',
       heading: title.slice(0, 300),
       level,
-      hash: hash12(normalizeForId(contentLines.join('\n'))),
+      hash: hash12(normalizeForId(ownLines.join('\n'))),
       start: lineOffsets[line],
       end: endLine < lines.length ? lineOffsets[endLine] : text.length,
       parent_id: null,

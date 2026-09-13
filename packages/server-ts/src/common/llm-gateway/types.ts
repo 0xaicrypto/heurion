@@ -22,6 +22,20 @@ export class LlmTruncatedError extends Error {
   }
 }
 
+/** #1026 — raised when a single streaming call exceeds the reasoning budget.
+ *  The turn loop catches this, stops immediately (instead of waiting for the
+ *  call to finish) and surfaces an actionable breaker notice to the user. */
+export class LlmReasoningBudgetExceededError extends Error {
+  readonly reasoningChars: number
+  readonly maxReasoningChars: number
+  constructor(meta: { reasoningChars: number; maxReasoningChars: number }) {
+    super(`LLM reasoning exceeded budget (${meta.reasoningChars} > ${meta.maxReasoningChars} chars)`)
+    this.name = 'LlmReasoningBudgetExceededError'
+    this.reasoningChars = meta.reasoningChars
+    this.maxReasoningChars = meta.maxReasoningChars
+  }
+}
+
 /** #548 — non-streaming result with truncation metadata. */
 export interface LlmChatResult {
   text: string
@@ -86,6 +100,9 @@ export interface LlmChatOptions {
    *  用于路由与 prompt caching);生产 2026-09 起 Console Go 上游对缺失
    *  直接 400(MissingSessionID)。有会话上下文的调用方尽量传入。 */
   sessionId?: string
+  /** #1026: 单次调用 reasoning 字数上限 — 流式累计越线即以
+   *  LlmReasoningBudgetExceededError 中止（回合级熔断器传入剩余额度）。 */
+  maxReasoningChars?: number
   /** @internal — pure-reasoning truncation retry guard (never set by callers). */
   retryDepth?: number
 }

@@ -13,6 +13,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { createSseSender } from './chat-sse.js'
+import { registerActiveTurn } from './active-turns.js'
 import { makeLogger } from '../../common/logger.js'
 import type { ChatStreamChunk } from '@heurion/contracts'
 import { getUserContext } from '../shared/user-context.js'
@@ -122,6 +123,25 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       if (turnSettled || interruptMarked) return
       interruptMarked = true
       appendTurnInterruptedMarker(ctx, userId, sid)
+    })
+
+    // #1028（阶段一）: 在飞回合登记 — SIGTERM/关停时由 active-turns 排空：
+    // 落中断标记 + 发交代过的终止信号（error + turn_complete）+ 关 SSE，
+    // 事件日志由 main.shutdown 统一 flush；长任务不再无声丢事件/无交代。
+    const unregisterTurn = registerActiveTurn({
+      sessionId: sid,
+      userId,
+      abort: chatAbort,
+      settled: () => turnSettled,
+      onShutdown: async () => {
+        if (turnSettled) return
+        turnSettled = true
+        interruptMarked = true
+        appendTurnInterruptedMarker(ctx, userId, sid)
+        send({ type: 'error', message: '服务器正在重启，本回合已中断 — 回复「继续」可接着完成剩余部分。' })
+        send({ type: 'turn_complete' })
+        sseEnd()
+      },
     })
 
     try {
@@ -463,6 +483,7 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
       // #828: settle the turn watchdog — normal completion/error paths must
       // never fire it.
       turnSettled = true
+      unregisterTurn()
       clearTimeout(watchdog)
       sseEnd()
     }

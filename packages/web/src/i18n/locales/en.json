@@ -241,6 +241,10 @@
     "activityRunningTool": "Running {{tool}}",
     "activitySubagent": "Sub-agent {{task}}",
     "activityRound": "Round {{round}}",
+    "attemptMain": "Main loop",
+    "attemptRescue": "Condensed retry",
+    "attemptPrepare": "Preparation",
+    "attemptReasoning": "{{chars}} reasoning chars",
     "activityStalled": "No progress for {{duration}} — still running; complex tasks can take a while",
     "activityReasoningStreaming": "Reasoning…",
     "activityReasoningDone": "Reasoning done",
@@ -570,7 +574,8 @@
       "noChanges": "No changes",
       "pendingStats": "{{n}} pending · accepted {{a}} · rejected {{r}}",
       "queuedRounds": "{{n}} more queued",
-      "reject": "Reject"
+      "reject": "Reject",
+      "forwardToChat": "Forward to chat"
     },
     "conflictLegacyNotice": "Server version info needs reloading",
     "tabSlides": "Slides",
@@ -592,7 +597,19 @@
     "previewToggle": "Preview",
     "editToggle": "Edit",
     "paragraphStyle": "Paragraph",
-    "textStyle": "Text style"
+    "textStyle": "Text style",
+    "polishConflictDetected": "The document changed during polishing (AI or another window) — choose how to apply the result",
+    "polishConflictSubject": "Polish result vs document update",
+    "polishConflictNote": "The polish was generated from an older revision; the right panel shows the current content",
+    "polishConflictInsert": "Insert into latest version",
+    "polishConflictDrop": "Discard polish result",
+    "polishConflictForward": "Forward to chat",
+    "polishConflictInserted": "Polish result inserted into the latest document (unsaved — review and save)",
+    "polishConflictLocateFailed": "The selection could not be uniquely located in the latest version — the polish result was moved to the chat input",
+    "polishConflictDiscarded": "Replacement discarded — the polish result was moved to the chat input",
+    "polishConflictToChat": "This polish result was generated but not applied; help me insert it at the right place (original: {{orig}})",
+    "polishConflictTimedOut": "Conflict left unresolved — the polish result was moved to the chat input so it is not lost",
+    "_proposalForward": "Forward to chat"
   },
   "preview": {
     "open": "Preview",

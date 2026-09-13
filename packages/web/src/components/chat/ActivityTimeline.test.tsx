@@ -116,4 +116,64 @@ describe('ActivityTimeline (#832)', () => {
     expect(line.textContent).not.toContain('分析问题的第一步');
     expect(container.querySelector('details')).toBeNull(); // no <details open> dump
   });
+
+  test('长任务生成间隙:状态行显示思考中 + 最近轮次,不粘住开局 streamNote', () => {
+    render(
+      <ActivityTimeline
+        message={baseMessage({
+          reasoning: '继续分析失败原因……',
+          toolCalls: [
+            { tool: 'edit_document', argsPreview: '{}', status: 'done', seq: 1, round: 2, elapsedMs: 500 },
+          ],
+        })}
+        streamNote="上下文就绪，AI 正在生成…（长任务可能需要数分钟）"
+      />,
+    );
+    const line = screen.getByTestId('activity-timeline');
+    // 工具间隙 = 模型在生成下一轮 → 显示思考中,且带最近轮次(进度可见)
+    expect(line.textContent).toContain('思考中');
+    expect(line.textContent).toContain('第 2 轮');
+    expect(line.textContent).not.toContain('上下文就绪');
+  });
+
+  test('首个工具执行前:streamNote 仍作为等待期提示', () => {
+    render(
+      <ActivityTimeline
+        message={baseMessage({ reasoning: '拆解任务……' })}
+        streamNote="上下文就绪，AI 正在生成…（长任务可能需要数分钟）"
+      />,
+    );
+    const line = screen.getByTestId('activity-timeline');
+    expect(line.textContent).toContain('上下文就绪');
+  });
 });
+
+/** #1025: 尝试列表 — 按循环/轮次分组展示,不再揉成一条推理流。 */
+describe('ActivityTimeline #1025 — 尝试分组', () => {
+  test('主循环与 rescue 分组展示,各自推理量可见', () => {
+    render(
+      <ActivityTimeline
+        message={baseMessage({
+          isStreaming: false,
+          attempts: [
+            { loop: 'main', round: 1, reasoning: '第一轮推理内容', seqs: [1] },
+            { loop: 'rescue', round: 1, reasoning: '精简重试推理', seqs: [2] },
+          ],
+          toolCalls: [
+            { tool: 'edit_document', argsPreview: '{}', status: 'done', seq: 1, round: 1, loop: 'main', elapsedMs: 500 },
+            { tool: 'edit_document', argsPreview: '{}', status: 'error', seq: 2, round: 1, loop: 'rescue', resultPreview: 'old_text 未找到' },
+          ],
+        })}
+      />,
+    );
+    const line = screen.getByTestId('activity-timeline');
+    expect(line.textContent).toContain('主循环');
+    expect(line.textContent).toContain('精简重试');
+    // 推理默认折叠 — 展开后可见各自内容（尝试分组不混流）
+    fireEvent.click(screen.getAllByText(/推理完成/)[0]);
+    expect(line.textContent).toContain('第一轮推理内容');
+    fireEvent.click(screen.getAllByText(/推理完成/)[1]);
+    expect(line.textContent).toContain('精简重试推理');
+    expect(line.querySelectorAll('button').length).toBeGreaterThanOrEqual(4); // 2 reasoning + 2 tool rows
+  });
+})

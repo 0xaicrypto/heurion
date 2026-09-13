@@ -85,6 +85,12 @@ export function evictUserContext(userId: string): void {
   }
 }
 
+/** #1028: 关停排空 — flush 所有已装载用户的 event log 写队列（JSONL 追加
+ *  是异步队列，process.exit 前不 flush 会丢最后几条事件/中断标记）。 */
+export async function flushAllUserContexts(): Promise<void> {
+  await Promise.all([...contexts.values()].map((ctx) => ctx.eventLog.flush().catch(() => { /* best-effort */ })))
+}
+
 function ensureGC() {
   if (gcTimer) return
   gcTimer = setInterval(() => {

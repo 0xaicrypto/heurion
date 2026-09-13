@@ -82,6 +82,24 @@ export type BlockProjectionNodeKind = BlockProjectionNode['kind']
 export type BlockType = NonNullable<BlockProjectionNode['block_type']>
 
 /**
+ * review 复核(嵌套节):投影 span 大纲语义下父节 span 包含子节 — 按偏移量
+ * 定位节必须取包含该偏移量的「最深层」节。父节在文档序中排在子节之前,
+ * 浅层优先会永远命中外层父节(选中子节文字却跳去父节)。服务端 PHI 定位与
+ * 前端选区节引用反查共用此单一实现,避免同类逻辑两处分叉、一处修一处漏。
+ */
+export function findSectionAtOffset(
+  projection: BlockProjection | null | undefined,
+  offset: number,
+): BlockProjectionNode | null {
+  let best: BlockProjectionNode | null = null
+  for (const n of projection?.nodes ?? []) {
+    if (n.kind !== 'section' || offset < n.start || offset >= n.end) continue
+    if (!best || (n.level ?? 0) > (best.level ?? 0)) best = n
+  }
+  return best
+}
+
+/**
  * #996/#999 — 节级元数据（作者轴 + 可信度轴）：用户可见的信任信号，
  * 由 writeDocVersion 单点在写回后维护（旁路表 doc_section_meta，键 =
  * section 稳定 ID）。不进 BlockProjectionNode — 投影是 body 的确定性
@@ -295,8 +313,11 @@ export type ChatStreamChunk =
    * #989 Phase 3: projection = 与 body 同帧的块级结构投影（派生；schema
    * 见 blockProjectionSchema）— 前端按块展示变更/按块定位（#987 可见性）。
    * #996/#999: section_meta = 节级作者/可信度标签（工具输出透传，损坏降级不携带）。
+   * #996/#1003: changed_sections = 本次写回实际变更的节（写回单点按投影
+   * hash diff 派生）— 聊天改动日志按轮持久化，range-edit/full_text/
+   * insert_asset 等全部编辑模式覆盖；失败写回不会有该字段。
    */
-  | { type: 'doc_updated'; body: string; summary?: string; deck?: DeckWire | null; rev?: number; updatedAt?: string; projection?: BlockProjection; section_meta?: SectionMetaMap }
+  | { type: 'doc_updated'; body: string; summary?: string; deck?: DeckWire | null; rev?: number; updatedAt?: string; projection?: BlockProjection; section_meta?: SectionMetaMap; changed_sections?: Array<{ id: string; heading: string }> }
   | { type: 'chart_created'; url: string; markdown?: string; chart_type?: string }
   | { type: 'tier_classified'; tier: 'T1' | 'T2' | 'T3'; view_kind?: string; anchor?: string }
   | { type: 'context_info'; text: string; kind?: string }
@@ -307,13 +328,15 @@ export type ChatStreamChunk =
    * 时多个工具同时 running，"下一个调用关闭上一个"不再成立）。
    * #832: round = 模型工具循环轮次（1-based，MAX_TOOL_ROUNDS 状态机同源）
    * — 前端时间线按轮分组。
+   * #1025: loop = 该调用所属循环（main 主循环 / rescue 精简上下文重试）—
+   * 前端把推理与工具按「尝试」分组展示，两层循环的轮次号不再混淆。
    */
-  | { type: 'tool_call'; tool: string; args: Record<string, unknown>; seq?: number; round?: number }
+  | { type: 'tool_call'; tool: string; args: Record<string, unknown>; seq?: number; round?: number; loop?: 'main' | 'rescue' }
   /**
    * #829: 工具结果事件 — 每个工具执行完成（成功/失败）即发，前端据此
    * 关闭对应芯片并展示结果摘要。preview ≤80 字（命中数/页面标题/错误首行）。
    */
-  | { type: 'tool_result'; seq?: number; tool?: string; success: boolean; elapsed_ms?: number; preview?: string; round?: number }
+  | { type: 'tool_result'; seq?: number; tool?: string; success: boolean; elapsed_ms?: number; preview?: string; round?: number; loop?: 'main' | 'rescue' }
   | SubagentStartedEvent
   | SubagentProgressEvent
   | SubagentDoneEvent

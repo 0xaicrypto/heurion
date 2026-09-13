@@ -219,6 +219,26 @@ async function main() {
       log.error('[SHUTDOWN] Queue close error:', err)
     }
 
+    // #1028（阶段一）: 关停排空在飞回合 — 先给 grace 窗口自然收尾；未收尾
+    // 的落 interrupted marker + 发 error/turn_complete + 关 SSE，随后 flush
+    // 事件日志。热重载/部署/崩溃不再无声丢弃长任务且前端能收到"交代"。
+    try {
+      const { drainActiveTurns } = await import('./modules/chat/active-turns.js')
+      const graceMs = Number(process.env.SHUTDOWN_GRACE_MS) || 3000
+      const { drained, forced } = await drainActiveTurns(graceMs)
+      if (drained > 0) log.info(`[SHUTDOWN] Active turns drained=${drained} forced=${forced}`)
+    } catch (err) {
+      log.error('[SHUTDOWN] active-turn drain error:', err)
+    }
+
+    try {
+      const { flushAllUserContexts } = await import('./modules/shared/user-context.js')
+      await flushAllUserContexts()
+      log.info('[SHUTDOWN] Event logs flushed')
+    } catch (err) {
+      log.error('[SHUTDOWN] event log flush error:', err)
+    }
+
     try {
       await app.close()
       log.info('[SHUTDOWN] Server closed')

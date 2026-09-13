@@ -5,6 +5,7 @@ import type { Node as PMNode } from '@tiptap/pm/model';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { diffLines } from 'diff';
 import type { BlockProjection, SectionMetaMap } from '@heurion/contracts';
+import { normalizeHeadingText } from './section-jump';
 
 /**
  * #996/#1002 — 节卡片化画布的装饰层。
@@ -77,11 +78,18 @@ interface PluginState {
 const stateKey = new PluginKey<PluginState>('sectionCardsData');
 
 /** 标题内徽标（inline widget）：H 级 + 作者轴 + 可信度轴 + 折叠 chevron。 */
-function buildBadgeEl(data: SectionCardsData, sectionId: string, level: number, secMeta: SectionMetaMap[string] | undefined): HTMLElement {
+function buildBadgeEl(data: SectionCardsData, sectionId: string, level: number, secMeta: SectionMetaMap[string] | undefined, unmatched = false): HTMLElement {
   const wrap = document.createElement('span');
   wrap.className = 'sec-badges';
   wrap.setAttribute('contenteditable', 'false');
   wrap.dataset.secId = sectionId;
+  // #1021: 投影对位失败（fallback 键）时给可见标记 — 徽标可能滞后于正文,
+  // 不再静默无提示（title 说明 + 样式类供 CSS 弱化）。
+  if (unmatched) {
+    wrap.classList.add('sec-badges-unmatched');
+    wrap.title = '未匹配到投影节（显示可能滞后）';
+    wrap.dataset.secFallback = '1';
+  }
 
   const levelChip = document.createElement('span');
   levelChip.className = 'sec-badge sec-badge-level';
@@ -169,13 +177,29 @@ function buildSectionDecorations(doc: PMNode, data: SectionCardsData): Decoratio
   // 「自身内容」(到下一个任意级标题为止),不再把子节内容圈进父卡(旧行为
   // 会让嵌套节的框线互相重叠);折叠仍按大纲语义(到下一个 level<=自身
   // 的标题)联动隐藏全部子孙节。
+  // review 复核(嵌套节批): 投影只含 H1-H3(HEADING_RE),编辑器可输入
+  // H4-H6 — H4+ 不是节,不得占用投影节索引(旧回退用 sections[hi] 位置
+  // 对齐,H4 出现后所有后续标题拿错节 id,点 H4 的折叠会控制隔壁 H2)。
+  // 对位纪律:level<=3 标题数 === 投影节数时按序位置对位(与原行为一致,
+  // 兼容标题带强调标记的文本差异);数量不符时按规范化标题文本顺序对位,
+  // H4+ 直接 fallback(徽标消失,chrome 保留)。
+  const sectionHeadings = headings.filter((h) => h.level <= 3);
+  const positional = sections.length > 0 && sections.length === sectionHeadings.length;
+  let sectionCursor = 0;
   const sectionIds = headings.map((h, hi) => {
-    let section: { id: string } | null = null;
-    if (sections.length === headings.length) section = sections[hi] ?? null;
-    else if (sections.length > 0) {
-      section = sections.find((s) => (s.heading ?? '').trim() === h.text.trim()) ?? sections[hi] ?? null;
+    if (h.level > 3) return `h_${hi}`;
+    if (positional) return sections[sectionCursor++]?.id ?? `h_${hi}`;
+    const next = sections[sectionCursor];
+    if (next && normalizeHeadingText(next.heading) === normalizeHeadingText(h.text)) {
+      sectionCursor++;
+      return next.id;
     }
-    return section?.id ?? `h_${hi}`;
+    const found = sections.findIndex((s, i) => i >= sectionCursor && normalizeHeadingText(s.heading) === normalizeHeadingText(h.text));
+    if (found >= 0) {
+      sectionCursor = found + 1;
+      return sections[found].id;
+    }
+    return `h_${hi}`;
   });
   const spans = headings.map((h, hi) => {
     let flatEnd = children.length;
@@ -226,7 +250,7 @@ function buildSectionDecorations(doc: PMNode, data: SectionCardsData): Decoratio
     // 标题内徽标（inline widget，紧随标题文本之后；随标题节点隐藏而隐藏）。
     decorations.push(Decoration.widget(
       h.pos + 1 + h.contentSize,
-      buildBadgeEl(data, sectionId, h.level, secMeta),
+      buildBadgeEl(data, sectionId, h.level, secMeta, sectionId.startsWith('h_')),
       { side: 10, ignoreSelection: true },
     ));
 

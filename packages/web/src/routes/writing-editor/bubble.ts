@@ -31,6 +31,39 @@ export interface PolishBubble {
   handleBubbleAction: (action: string, sel: { text: string; from: number; to: number }) => void;
   /** #871: 送入聊天 — 选区上下文随行,任务超出单段润色时转聊天流。 */
   handleSendToChat: (instruction?: string) => void;
+  /** #1029: 润色应用时检测到文档已被其他来源改动 — 冲突双栏数据。 */
+  bubbleConflict: PolishConflict | null;
+  /** #1029: 在服务端最新正文里重新定位并插入润色结果。 */
+  handleBubbleConflictInsert: () => void;
+  /** #1029: 丢弃润色结果（仍自动带入聊天输入，结果不彻底丢失）。 */
+  handleBubbleConflictDiscard: () => void;
+  /** #1029: 主动把润色结果转发到聊天（冲突卡的推荐出口）。 */
+  handleBubbleConflictSendToChat: () => void;
+}
+
+/** #1029: 润色冲突态 — polishText = 本次润色结果（基于旧版本原文），
+ *  serverBody = 服务端最新正文（用于定位原文/展示"现在的样子"）。 */
+export interface PolishConflict {
+  polishText: string;
+  original: string;
+  serverBody: string;
+}
+
+/** #1029: 唯一子串定位 — 恰好命中一次才返回下标（0 次/多次 → -1）。 */
+export function uniqueIndexOf(body: string, needle: string): number {
+  if (!needle) return -1;
+  const first = body.indexOf(needle);
+  if (first < 0) return -1;
+  return body.indexOf(needle, first + 1) === -1 ? first : -1;
+}
+
+/** #1029: 冲突双栏 saved 侧预览 — 原文在最新正文中的位置/上下文。 */
+export function conflictSavedPreview(conflict: { original: string; serverBody: string }, span = 120): string {
+  const idx = uniqueIndexOf(conflict.serverBody, conflict.original);
+  if (idx >= 0) {
+    return conflict.serverBody.slice(Math.max(0, idx - span), idx + conflict.original.length + span);
+  }
+  return conflict.serverBody.slice(0, span * 2);
 }
 
 /** #927: 重锚查找的结构化最小形状 — 真实 ProseMirror Node 满足此接口
@@ -102,14 +135,23 @@ export function usePolishBubble(input: {
   onNotice: (text: string, ttlMs?: number) => void;
   /** #871: 送入聊天 — 由路由层接(chatSelection/chatInput/chatOpen)。 */
   onSendToChat?: (selection: string, instruction: string) => void;
+  /** #1029: 路由层的服务端正文基线 — 应用前与 GET 最新正文比对，权威检测
+   *  其他来源（chat 写回/其他标签页）是否已改动文档。 */
+  serverBodyRef?: React.MutableRefObject<string | null>;
+  /** #1029: 冲突选择「插入到最新版本」时由路由落地（设置 body/基线/dirty）。 */
+  onApplyExternalBody?: (md: string, freshServerBody: string) => void;
 }): PolishBubble {
   const { t } = useTranslation();
-  const { docId, editorRef, onNotice, onSendToChat } = input;
+  const { docId, editorRef, onNotice, onSendToChat, serverBodyRef, onApplyExternalBody } = input;
 
   const [bubbleSel, setBubbleSel] = useState<{ text: string; from: number; to: number } | null>(null);
   const [bubbleRun, setBubbleRun] = useState<BubbleRunState | null>(null);
   const bubbleRunRef = useRef<BubbleRunState | null>(null);
   bubbleRunRef.current = bubbleRun;
+  // #1029: 应用冲突态（ProposalCard 双栏）— 润色期间文档被并发修改。
+  const [bubbleConflict, setBubbleConflict] = useState<PolishConflict | null>(null);
+  const bubbleConflictRef = useRef<PolishConflict | null>(null);
+  bubbleConflictRef.current = bubbleConflict;
   // #752-ux-cancel: 运行中的 AbortController — 取消即断流。
   const polishAbortRef = useRef<AbortController | null>(null);
   // C3: 运行开始时的选区快照 — apply 前校验漂移。
@@ -125,8 +167,34 @@ export function usePolishBubble(input: {
       bubbleRunRef.current = null;
       setBubbleRun(null);
       setBubbleSel(null);
+      setBubbleConflict(null);
     };
   }, [docId]);
+
+  /** #1029: 冲突结果转发到聊天输入 — 复用已有「在聊天中继续」路径，
+   *  润色文本作为选区上下文随行，用户确认后发送，结果不彻底丢失。 */
+  const forwardConflictToChat = useCallback((conflict: PolishConflict) => {
+    onSendToChat?.(
+      conflict.polishText,
+      t('writing.polishConflictToChat', '这是刚才生成但未采用的润色结果，请帮我把它应用到文档合适的位置（原文：{{orig}}）', {
+        orig: conflict.original.slice(0, 60),
+      }),
+    );
+    setBubbleConflict(null);
+    setBubbleRun(null);
+  }, [onSendToChat, t]);
+
+  /** #1029: 冲突对话框超时未处理 → 自动把结果带入聊天输入（不静默丢弃）。 */
+  useEffect(() => {
+    if (!bubbleConflict) return;
+    const timer = setTimeout(() => {
+      const conflict = bubbleConflictRef.current;
+      if (!conflict) return;
+      onNotice(t('writing.polishConflictTimedOut', '冲突未处理 — 已把润色结果带入聊天输入框，不会丢失'), 6000);
+      forwardConflictToChat(conflict);
+    }, 60_000);
+    return () => clearTimeout(timer);
+  }, [bubbleConflict, forwardConflictToChat, onNotice, t]);
 
   // #753: Polish 执行体 — 气泡内联(润色全文按钮已移除;全文场景可全选
   // 后走气泡,或用 doc-chat)。错误写入 bubbleRun.error 展示。
@@ -215,8 +283,10 @@ export function usePolishBubble(input: {
   }, [docId, editorRef]);
 
   /** #752-ux: 气泡内「替换选中」 — 用运行开始时记录的 from/to 应用结果,
-      不重读选区(点击应用按钮时选区可能已变化)。 */
-  const handleBubbleApply = useCallback((finalText?: string) => {
+      不重读选区(点击应用按钮时选区可能已变化)。
+      #1029: 应用前先与服务端最新正文比对（serverBodyRef 基线）；被并发
+      改动时进入冲突双栏，而不是本地盲替换后 toast+丢弃。 */
+  const handleBubbleApply = useCallback(async (finalText?: string) => {
     const editor = editorRef.current;
     const run = bubbleRunRef.current;
     if (!editor || !run || run.status !== 'done' || !run.stream.trim()) return;
@@ -244,6 +314,19 @@ export function usePolishBubble(input: {
     // #778: 应用的是面板内用户编辑后的最终版(未改即 AI 原文)
     const clean = sanitizePolishOutput(finalText ?? run.stream);
     if (!clean) { onNotice(t('writing.polishEmpty', 'AI 结果为空,已丢弃')); return; }
+    // #1029: 服务端权威预检（base_sha 同源语义）— 润色期间文档被
+    // edit_document / 其他窗口改动 → 进冲突双栏，不再本地盲替换 + toast 丢弃。
+    const serverBase = serverBodyRef?.current ?? null;
+    if (docId && serverBase !== null) {
+      try {
+        const fresh = await api.getDoc(docId);
+        if (fresh.body !== serverBase) {
+          setBubbleConflict({ polishText: clean, original: snap.original, serverBody: fresh.body });
+          onNotice(t('writing.polishConflictDetected', '润色期间文档已被 AI 或其他窗口更新 — 请选择如何应用润色结果'), 6000);
+          return;
+        }
+      } catch { /* 预检不可用 → 退回本地校验 + base_sha 快照（原行为） */ }
+    }
     // #907: 替换前先取编辑器当前全文算 base_sha(与 #882 saveDoc 同一指纹
     // 函数),随快照 body 一起 POST — 服务端与文档当前 body 比对,不匹配
     // → 409 stale_base。
@@ -270,7 +353,38 @@ export function usePolishBubble(input: {
         });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定
-  }, [bubbleSel, editorRef, onNotice, docId]);
+  }, [bubbleSel, editorRef, onNotice, docId, serverBodyRef]);
+
+  /** #1029: 冲突「插入到最新版本」— 在服务端最新正文里唯一定位原文并替换为
+   *  润色结果（未定位到 → 转聊天，不静默改错位置）。 */
+  const handleBubbleConflictInsert = useCallback(() => {
+    const conflict = bubbleConflictRef.current;
+    if (!conflict) return;
+    const idx = uniqueIndexOf(conflict.serverBody, conflict.original);
+    if (idx < 0 || !onApplyExternalBody) {
+      onNotice(t('writing.polishConflictLocateFailed', '最新版本中未能唯一定位该选区 — 已把润色结果带入聊天，可手动处理'), 6000);
+      forwardConflictToChat(conflict);
+      return;
+    }
+    const nextMd = conflict.serverBody.slice(0, idx) + conflict.polishText + conflict.serverBody.slice(idx + conflict.original.length);
+    onApplyExternalBody(nextMd, conflict.serverBody);
+    setBubbleConflict(null);
+    setBubbleRun(null);
+    onNotice(t('writing.polishConflictInserted', '已把润色结果插入最新版本文档（未保存 — 请确认后保存）'), 6000);
+  }, [forwardConflictToChat, onApplyExternalBody, onNotice, t]);
+
+  /** #1029: 丢弃本次替换 — 润色结果仍自动带入聊天输入，不彻底丢失。 */
+  const handleBubbleConflictDiscard = useCallback(() => {
+    const conflict = bubbleConflictRef.current;
+    if (!conflict) return;
+    forwardConflictToChat(conflict);
+    onNotice(t('writing.polishConflictDiscarded', '已丢弃本次替换 — 润色结果已带入聊天输入框'), 5000);
+  }, [forwardConflictToChat, onNotice, t]);
+
+  const handleBubbleConflictSendToChat = useCallback(() => {
+    const conflict = bubbleConflictRef.current;
+    if (conflict) forwardConflictToChat(conflict);
+  }, [forwardConflictToChat]);
 
   const handleBubbleDiscard = useCallback(() => {
     // #752-ux-cancel: running 态 = 取消(abort 断流);done 态 = 丢弃结果。
@@ -340,5 +454,9 @@ export function usePolishBubble(input: {
     handleBubbleRefine,
     handleBubbleAction,
     handleSendToChat,
+    bubbleConflict,
+    handleBubbleConflictInsert,
+    handleBubbleConflictDiscard,
+    handleBubbleConflictSendToChat,
   };
 }

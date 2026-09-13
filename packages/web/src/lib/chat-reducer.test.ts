@@ -199,3 +199,32 @@ describe('chat-reducer #996/#1003 — 本轮节改动累积（聊天改动日志
     expect(s.lastTurnChanges).toBeUndefined();
   })
 })
+
+/** #1025: 尝试分组 — 推理与工具按 loop(main/rescue)+round 归段。 */
+describe('chat-reducer #1025 — attempts 分组', () => {
+  test('首个工具前的推理归入准备段,工具调用补上真实 loop/round', () => {
+    let s = sessionWithAssistant();
+    s = send(s, { type: 'reasoning_chunk', text: '准备推理' });
+    s = send(s, { type: 'tool_call', tool: 'edit_document', args: {}, seq: 1, round: 1, loop: 'main' });
+    const attempts = s.messages.at(-1)?.attempts ?? [];
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({ loop: 'main', round: 1, seqs: [1] });
+    expect(attempts[0].reasoning).toBe('准备推理');
+  });
+
+  test('换轮/换循环开新尝试;同轮多工具复用同一尝试', () => {
+    let s = sessionWithAssistant();
+    s = send(s, { type: 'tool_call', tool: 'edit_document', args: {}, seq: 1, round: 1, loop: 'main' });
+    s = send(s, { type: 'tool_call', tool: 'insert_asset', args: {}, seq: 2, round: 1, loop: 'main' });
+    s = send(s, { type: 'reasoning_chunk', text: '第二轮推理' });
+    s = send(s, { type: 'tool_call', tool: 'edit_document', args: {}, seq: 3, round: 2, loop: 'main' });
+    s = send(s, { type: 'tool_call', tool: 'edit_document', args: {}, seq: 4, round: 1, loop: 'rescue' });
+    const attempts = s.messages.at(-1)?.attempts ?? [];
+    expect(attempts.map((a) => ({ loop: a.loop, round: a.round, seqs: a.seqs }))).toEqual([
+      { loop: 'main', round: 1, seqs: [1, 2] },
+      { loop: 'main', round: 2, seqs: [3] },
+      { loop: 'rescue', round: 1, seqs: [4] },
+    ]);
+    expect(attempts[1].reasoning).toBe('第二轮推理');
+  });
+});

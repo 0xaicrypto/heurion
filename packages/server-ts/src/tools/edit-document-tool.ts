@@ -18,6 +18,8 @@ import type { EditHint } from './tool-registry.js'
 import { parseDocSessionId } from './tool-registry.js'
 import { CONTEXT_CONFIG } from '../common/context-config.js'
 import { executeImportFromUrl } from './doc-import.js'
+// #1020/#1022: 锚点失败结构化诊断（最接近候选 + 可用节清单）— 纯函数可单测。
+import { closestTextCandidates, formatAnchorCandidates, describeSectionList } from './anchor-diagnostics.js'
 
 /**
  * §15.4/#171 — edit_document: the conversational-writing write-back tool.
@@ -62,7 +64,8 @@ export class EditDocumentTool extends BaseTool {
   get description(): string {
     return [
       'Edit the current writing-session document. Four modes:',
-      '- Section edit (preferred when section IDs are visible): pass `target_section` (the [sec:...] id from the injected document, e.g. s_xxx) + `section_action` (required: replace | append | prepend | delete — invalid/missing values are rejected, never defaulted) + `content`. The server locates the section precisely by its structure projection — no fuzzy matching, deterministic. Use this for whole-section rewrites/appends; it never fails on anchor mismatch. delete/replace cover nested subsections under the target heading.',
+      '- Section edit (preferred when section IDs are visible): pass `target_section` (the [sec:...] id from the injected document, e.g. s_xxx; alias: `section_id`) + `section_action` (required: replace | append | prepend | delete — invalid/missing values are rejected, never defaulted) + `content`. The server locates the section precisely by its structure projection — no fuzzy matching, deterministic. Use this for whole-section rewrites/appends; it never fails on anchor mismatch. delete/replace cover nested subsections under the target heading.',
+      '- In-section range edit (robust when the exact wording may have drifted): pass `section_id` (stable id, same as target_section) + `old_text` + `new_text` — the search is restricted to that section and tolerates whitespace/markup differences. If old_text is not found inside the section, the tool returns the closest candidate snippets within that section instead of silently editing another section.',
       '- Import: pass `import_reference` (the reference-material name to import) when the document body is EMPTY and the user wants to work on an uploaded reference (PDF/DOCX/txt). This copies the reference text into the document. Alternatively pass `url` (+ optional `doi`) to download an OA full-text PDF directly into the reference library — use the URL from oa_pdf_lookup results (#875: closes the search→read→cite loop).',
       '- Range edit (preferred for polishing long documents without section IDs, or fine-grained in-section tweaks): pass `old_text` (the original text to replace, copied from the current document — line breaks/whitespace differences are tolerated; [sec:...] markers are stripped automatically) and `new_text` (the replacement). One edit per call; make multiple calls to edit multiple parts. When the document body is EMPTY and exactly one reference exists, the tool auto-imports it before applying the edit (so you can polish an uploaded reference without a separate import call). To replace a figure/link, include its image markdown together with surrounding caption text — image URLs must match exactly, and an old_text that spans an image must include the image.',
       '- Full rewrite: pass `full_text` (complete new document in markdown). Allowed within the model single-response output budget (the main model budget is generous — full rewrites of multi-thousand-token documents work). If it exceeds the budget the tool refuses with guidance; for long-document cleanup/polish prefer section edits or range edits.',
@@ -75,7 +78,8 @@ export class EditDocumentTool extends BaseTool {
     return {
       type: 'object',
       properties: {
-        target_section: { type: 'string', description: 'Section-edit mode: the section id from [sec:...] markers in the injected document (e.g. s_xxx). Deterministic whole-section edit — preferred over old_text when visible.' },
+        target_section: { type: 'string', description: 'Section-edit mode: the section id from [sec:...] markers in the injected document (e.g. s_xxx). Deterministic whole-section edit — preferred over old_text when visible. Alias: section_id.' },
+        section_id: { type: 'string', description: 'Stable section id (same as target_section / [sec:...] marker). Use with old_text+new_text for an in-section range edit (tolerates minor wording/whitespace drift; misses report the closest in-section candidates), or with section_action+content for a whole-section edit.' },
         section_action: { type: 'string', enum: ['replace', 'append', 'prepend', 'delete'], description: 'Section-edit action (REQUIRED when target_section is used — invalid or missing values are rejected, never silently defaulted): replace = rewrite the section content / append = add after it / prepend = insert right after the heading / delete removes the ENTIRE section (heading + content + nested subsections, no content needed).' },
         content: { type: 'string', description: 'Section-edit payload: the markdown content for replace/append/prepend (alias: new_text is accepted).' },
         import_reference: { type: 'string', description: 'Import mode: the label/name of the reference material to import into the empty document (e.g. the uploaded file name).' },
@@ -111,14 +115,30 @@ export class EditDocumentTool extends BaseTool {
       return { success: true, output: r.output }
     }
 
-    // #989 Phase 2: 节引用模式 — target_section 优先(确定性,无模糊匹配)。
+    // #989 Phase 2 / #1020: 节引用模式 — target_section/section_id 等价
+    //（同一稳定 ID 的两个叫法,同时传且不一致直接拒绝）。
     const targetSection = typeof args.target_section === 'string' ? args.target_section.trim() : ''
-    if (targetSection) {
-      return this.sectionEdit(docId, targetSection, args)
+    const sectionIdArg = typeof args.section_id === 'string' ? args.section_id.trim() : ''
+    if (targetSection && sectionIdArg && targetSection !== sectionIdArg) {
+      return {
+        success: false,
+        error: `target_section 与 section_id 不一致（"${targetSection}" vs "${sectionIdArg}"）— 二者是同一个节 ID 的别名，请只保留一个或传相同值。`,
+      }
     }
-
+    const sectionRef = targetSection || sectionIdArg
     const oldText = typeof args.old_text === 'string' ? args.old_text : ''
     const newText = typeof args.new_text === 'string' ? args.new_text : ''
+    if (sectionRef) {
+      const rawAction = typeof args.section_action === 'string' ? args.section_action.trim() : ''
+      // #1020: 仅给节 ID + old_text（未声明 section_action）→ 节内锚点编辑：
+      // 匹配范围限定在该节 span 内,容忍空白/markdown 差异;节内找不到时报
+      // 节内最近候选,绝不静默退化到全文搜索改错节。
+      if (!rawAction && oldText.trim()) {
+        return this.sectionRangeEdit(docId, sectionRef, oldText, newText, String(args.summary || 'in-section range edit'))
+      }
+      return this.sectionEdit(docId, sectionRef, args)
+    }
+
     const fullText = typeof args.full_text === 'string' ? args.full_text : ''
 
     // #fix: 分步编辑 — 提供了 old_text 就走局部替换,不要求完整文档。
@@ -189,7 +209,11 @@ export class EditDocumentTool extends BaseTool {
         // #989: A/B 观测 — ID 失效走锚点兜底的比例(Phase 2 验证标准)。
         sectionEditTelemetry.idInvalid++
         log.info(`[edit_document] target_section miss id=${targetSection} action=${action} (fallback to anchor) total={ok:${sectionEditTelemetry.success} miss:${sectionEditTelemetry.idInvalid}}`)
-        return { success: false, error: applied.error }
+        // #1020: ID 失效/不存在 → 附当前可用节清单（id+标题），模型无需再猜。
+        const available = applied.error.includes('不存在')
+          ? ` 当前可用节：${describeSectionList(projection)}`
+          : ''
+        return { success: false, error: `${applied.error}${available}` }
       }
       if (applied.body === body) {
         return { success: false, error: '节内容与提供内容相同,没有任何变化' }
@@ -208,7 +232,69 @@ export class EditDocumentTool extends BaseTool {
       // #999: 输出附带 section_meta(作者轴+可信度轴),透传到 doc_updated。
       return {
         success: true,
-        output: JSON.stringify({ body: written.body, summary, location: `已${action === 'replace' ? '重写' : action === 'append' ? '追加' : action === 'prepend' ? '插入' : '删除'}:「${applied.location}」`, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}) }),
+        output: JSON.stringify({ body: written.body, summary, location: `已${action === 'replace' ? '重写' : action === 'append' ? '追加' : action === 'prepend' ? '插入' : '删除'}:「${applied.location}」`, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
+      }
+    } catch (err) {
+      return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }
+    }
+  }
+
+  /**
+   * #1020: 节内锚点编辑 — section_id（稳定 ID）+ old_text/new_text。
+   * 匹配范围限定在该节 span 内（容忍空白/markdown 差异）；节内找不到时返回
+   * 节内最近候选（#1022），绝不静默退化到全文搜索改错节。写回走同一单点。
+   */
+  private async sectionRangeEdit(docId: string, sectionId: string, oldText: string, newText: string, summary: string): Promise<ToolResult> {
+    try {
+      const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
+      if (!existing) return { success: false, error: `Document not found: ${docId}` }
+      const body = String(existing.body || '')
+      if (!body.trim()) {
+        return { success: false, error: '文档正文为空 — 节引用不可用;请先用 import_reference 导入参考材料,或改用 full_text 首写。' }
+      }
+      const { loadProjection } = await import('../lib/block-projection.js')
+      const projection = loadProjection(body, existing.blockProjection)
+      const section = projection.nodes.find((n) => n.kind === 'section' && n.id === sectionId)
+      if (!section) {
+        sectionEditTelemetry.idInvalid++
+        return {
+          success: false,
+          error: `section_id ${sectionId} 在当前文档投影中不存在（ID 已失效或文档已重构）。当前可用节：${describeSectionList(projection)}`,
+        }
+      }
+      const cleanedOld = oldText.replace(/\s*\[sec:[^\]]*\]/g, '')
+      if (!cleanedOld.trim() || !normalizeForMatch(cleanedOld)) {
+        return { success: false, error: 'old_text 为空或归一化后为空(仅含空白/markdown 标记)。请提供节内实际文字片段。' }
+      }
+      const region = body.slice(section.start, section.end)
+      const local = findNormalizedSpan(region, cleanedOld) ?? findFuzzySpan(region, cleanedOld)
+      if (!local) {
+        // #1022: 只报节内候选 — 引导一次修正,而不是全局盲猜/改错节。
+        const candidates = closestTextCandidates(body, cleanedOld, { within: { start: section.start, end: section.end }, limit: 3 })
+        const hint = formatAnchorCandidates(candidates)
+        return {
+          success: false,
+          error: `old_text 在节「${section.heading || sectionId}」（${sectionId}）内未找到（已忽略空格/换行/标题标记差异后仍不匹配）。${hint ? `该节内最接近的候选（可直接复制）: ${hint}` : '该节内没有相近文本。'} 请改用候选原文重试，或改用 section_action（replace/append/prepend/delete）+ content 整节编辑。`,
+        }
+      }
+      // 节内多次命中 → 要求补上下文（与全局路径同纪律）。
+      if (!local.fuzzy && local.normBody.indexOf(local.normNeedle, local.k + local.normNeedle.length) !== -1) {
+        return { success: false, error: `old_text 在节「${section.heading || sectionId}」内出现多次,请包含更多上下文让锚点唯一,或改用 section_action+content。` }
+      }
+      const absStart = section.start + local.start
+      const absEnd = section.start + local.end
+      const cleanedNew = unescapeLiteralNewlines(newText)
+      const boundedNew = ensureBlockBoundaries(body.slice(0, absStart), cleanedNew, body.slice(absEnd))
+      const newBody = body.slice(0, absStart) + boundedNew + body.slice(absEnd)
+      if (newBody === body) return { success: false, error: 'old_text 与 new_text 相同,没有任何变化' }
+      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: newBody, baseBody: body, writeSource: 'ai', snapshotLabel: 'AI edit' })
+      if (written.error) return { success: false, error: written.error }
+      this.latestBody = written.body
+      anchorEditTelemetry.attempts++
+      anchorEditTelemetry.success++
+      return {
+        success: true,
+        output: JSON.stringify({ body: written.body, summary, location: `已修改:节「${section.heading || sectionId}」内`, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
       }
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }
@@ -326,28 +412,38 @@ export class EditDocumentTool extends BaseTool {
         } catch {
           // 检测失败不阻断 — 走普通提示
         }
-        // 帮助模型修正锚点:给出可匹配片段(保留大小写与标题标记,便于逐字
-        // 复制)。#868: 长文档模式模型只看到焦点段 — probe 从焦点段取,
-        // 不再取文档头(复制了也违反焦点规则)。
-        const probeSource = hint?.focusSectionContent || body
-        const probeLine = probeSource.split('\n').map((l) => l.trim()).filter(Boolean)[0] || ''
-        let probe = probeLine.slice(0, 300)
-        if (probe.length > 120) {
-          const cut = Math.max(
-            probe.lastIndexOf('。'), probe.lastIndexOf('. '), probe.lastIndexOf('；'),
-            probe.lastIndexOf('; '), probe.lastIndexOf('，'), probe.lastIndexOf(', '),
-          )
-          if (cut > 40) probe = probe.slice(0, cut + 1)
+        // #1022: 结构化诊断 — 最接近候选（行/多行窗口 + 相似度 + 所属章节）。
+        // 模型复制候选原文即可一次修正；候选为空才退回旧的 probe 片段。
+        const candidates = closestTextCandidates(body, oldText, { limit: 3 })
+        const candidateHint = formatAnchorCandidates(candidates)
+        let probeHint = ''
+        if (!candidateHint) {
+          // #868: 长文档模式模型只看到焦点段 — probe 从焦点段取,
+          // 不再取文档头(复制了也违反焦点规则)。
+          const probeSource = hint?.focusSectionContent || body
+          const probeLine = probeSource.split('\n').map((l) => l.trim()).filter(Boolean)[0] || ''
+          let probe = probeLine.slice(0, 300)
+          if (probe.length > 120) {
+            const cut = Math.max(
+              probe.lastIndexOf('。'), probe.lastIndexOf('. '), probe.lastIndexOf('；'),
+              probe.lastIndexOf('; '), probe.lastIndexOf('，'), probe.lastIndexOf(', '),
+            )
+            if (cut > 40) probe = probe.slice(0, cut + 1)
+          }
+          const probeLabel = hint?.focusSectionContent ? '当前编辑段落开头完整片段(可直接复制)' : '文档开头附近完整片段(可直接复制)'
+          probeHint = `${probeLabel}: "${probe}"`
         }
-        const probeLabel = hint?.focusSectionContent ? '当前编辑段落开头完整片段(可直接复制)' : '文档开头附近完整片段(可直接复制)'
         const guide = refMatchLabel
           ? `你复制的 old_text 与参考材料「${refMatchLabel}」一致,但与正文(## Current Document)不符 — 正文与参考材料来自不同文件格式/版本,提取的文本有差异。请先调用 edit_document 的 import_reference 导入「${refMatchLabel}」把该参考材料设为正文(覆盖后 old_text 即可匹配),或从 ## Current Document 逐字复制待修改的原文。`
           : '请从上方 ## Current Document 部分逐字复制待修改的原文,不要从「文档结构」清单复制(带序号),不要从 Reference Materials 复制。'
+        const diag = candidateHint
+          ? `最接近的候选（可直接复制其一作为 old_text）: ${candidateHint}`
+          : probeHint
         anchorEditTelemetry.attempts++
-        log.info(`[edit_document] anchor-edit miss len=${oldText.length} total={ok:${anchorEditTelemetry.success} fail:${anchorEditTelemetry.attempts - anchorEditTelemetry.success}}`)
+        log.info(`[edit_document] anchor-edit miss len=${oldText.length} candidates=${candidates.length} total={ok:${anchorEditTelemetry.success} fail:${anchorEditTelemetry.attempts - anchorEditTelemetry.success}}`)
         return {
           success: false,
-          error: `old_text 在文档中未找到(已忽略空格/换行/标题标记差异后仍不匹配)。${guide} ${probeLabel}: "${probe}"`,
+          error: `old_text 在文档中未找到(已忽略空格/换行/标题标记差异后仍不匹配)。${guide} ${diag}`,
         }
       }
       // 归一化匹配同样参与多次命中判定 — 两个片段仅空白不同也视为重复;
@@ -392,7 +488,7 @@ export class EditDocumentTool extends BaseTool {
     // #999: 输出附带 section_meta。
     return {
       success: true,
-      output: JSON.stringify({ body: written.body, summary, location: `已修改:${location}附近`, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}) }),
+      output: JSON.stringify({ body: written.body, summary, location: `已修改:${location}附近`, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
     }
   }
 
@@ -472,7 +568,7 @@ export class EditDocumentTool extends BaseTool {
       // #989 Phase 3: 输出携带块投影。#999: 输出附带 section_meta。
       return {
         success: true,
-        output: JSON.stringify({ body: written.body, summary, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}) }),
+        output: JSON.stringify({ body: written.body, summary, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
       }
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }

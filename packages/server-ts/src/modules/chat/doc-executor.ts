@@ -21,6 +21,7 @@ import { parseDocSessionId, type ToolRegistry } from '../../tools/tool-registry.
 import type { ToolDefinition } from '../../tools/base-tool.js'
 import type { getUserContext } from '../shared/user-context.js'
 import { runToolCallLoop, DOC_WRITE_TOOLS, type TurnIO } from './tool-loop.js'
+import type { TurnBudget, TurnBudgetExhaustReason } from './turn-budget.js'
 import { EXECUTOR_RULE } from './writing-prompts.js'
 // #984: 编辑意图/接力词表单一来源(common 层,retrieval 层同源引用)。
 import { DOC_EDIT_INTENT_RE, PLAN_RELAY_RE } from '../../common/edit-intent.js'
@@ -99,6 +100,8 @@ export interface DocExecutorParams {
   unbackedClaimCount?: number
   /** #976: 接力方案覆盖 — 活跃清单的 pending 步骤渲染（优先于 finalContent）。 */
   planOverride?: string
+  /** #1019: 回合级共享预算 — rescue 消费主循环剩余额度，不再另起 5 轮。 */
+  budget?: TurnBudget
 }
 
 /**
@@ -108,9 +111,16 @@ export interface DocExecutorParams {
  */
 export async function runDocExecutorFallback(
   params: DocExecutorParams,
-): Promise<{ executedWriteTools: string[]; finalContent: string }> {
+): Promise<{ executedWriteTools: string[]; finalContent: string; exhaustedReason?: TurnBudgetExhaustReason }> {
   const { userId, sessionId, userText, planText, apiKey, io, ctx, toolRegistry, tools } = params
   const empty = { executedWriteTools: [] as string[], finalContent: '' }
+  // #1019: 主循环已耗尽回合预算 → rescue 不再开新命（这是统一预算的核心：
+  // rescue 消费的是主循环剩余额度，额度没了就诚实停手）。
+  const budgetExhausted = params.budget?.exhausted() ?? null
+  if (budgetExhausted) {
+    log.warn('doc executor skipped — turn budget exhausted', { sessionId, reason: budgetExhausted })
+    return { ...empty, exhaustedReason: budgetExhausted }
+  }
   // docId 已有(主回路已解析过);这里再走一次格式校验防御性兜底。
   const docId = parseDocSessionId(sessionId)
   if (!docId) return empty
@@ -160,27 +170,42 @@ export async function runDocExecutorFallback(
     userId,
     sessionId,
     ...(params.model ? { model: params.model } : {}),
+    // #1019: 消费主循环剩余额度（rescue 局部轮次上限仍是 5，但总额度封顶）。
+    ...(params.budget ? { budget: params.budget } : {}),
+    // #1025: rescue 循环身份（前端与主循环轮次分组展示）。
+    loop: 'rescue',
   })
 
+  const exhaustedReason = loop.exhaustedReason ?? (params.budget?.exhausted() ?? null)
   if (loop.executedWriteTools.length > 0) {
     log.info('doc executor rescue succeeded', {
       sessionId, tools: loop.executedWriteTools, reportChars: loop.finalContent.length,
     })
-    return { executedWriteTools: loop.executedWriteTools, finalContent: loop.finalContent }
+    return {
+      executedWriteTools: loop.executedWriteTools, finalContent: loop.finalContent,
+      ...(exhaustedReason ? { exhaustedReason } : {}),
+    }
   }
 
   // 执行器后仍零写回 → 诚实告知 + 事件留痕(保留 #892 语义)。
-  log.warn('doc executor rescue exhausted — zero write-back', { sessionId, docId })
+  // #1019: 预算耗尽时由 conversation-turn 统一发可行动的熔断提示,这里不再
+  // 叠加"已自动重试一次仍失败"的误导文案（rescue 可能一轮都没跑）。
+  log.warn('doc executor rescue exhausted — zero write-back', { sessionId, docId, exhaustedReason })
   try {
     ctx.eventLog.append({
       timestamp: Date.now() / 1000,
       eventType: 'edit_claim_unbacked',
       content: `doc-executor retry exhausted: ${userText.slice(0, 160)}`,
-      metadata: { executorRetry: true, claimedEdit: true, docWriteExecuted: 0 },
+      metadata: { executorRetry: true, claimedEdit: true, docWriteExecuted: 0, ...(exhaustedReason ? { exhaustedReason } : {}) },
       agentId: userId,
       sessionId,
     })
   } catch { /* 留痕失败不阻断 */ }
-  io.send({ type: 'context_info', text: DOC_EXECUTOR_FAILED_NOTICE, kind: 'warning' })
-  return { executedWriteTools: [], finalContent: loop.finalContent }
+  if (!exhaustedReason) {
+    io.send({ type: 'context_info', text: DOC_EXECUTOR_FAILED_NOTICE, kind: 'warning' })
+  }
+  return {
+    executedWriteTools: [], finalContent: loop.finalContent,
+    ...(exhaustedReason ? { exhaustedReason } : {}),
+  }
 }

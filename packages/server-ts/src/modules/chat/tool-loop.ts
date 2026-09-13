@@ -8,10 +8,11 @@
 import type { ToolRegistry } from '../../tools/tool-registry.js'
 import type { ToolDefinition } from '../../tools/base-tool.js'
 import type { ChatContentPart } from '../../common/llm-gateway.js'
-import { resolveActiveModel, resolveTurnTimeoutMs } from '../../common/llm-gateway.js'
+import { resolveActiveModel, resolveTurnTimeoutMs, LlmReasoningBudgetExceededError } from '../../common/llm-gateway.js'
 import { deepseekChatWithMeta, deepseekChatWithToolsStream } from '../../common/llm.js'
-import { detectDoomLoop } from '../../tools/doom-loop.js'
+import { detectDoomLoop, classifyToolFailure, detectFailureStreak, failureStreakCorrection, type ToolFailureEntry } from '../../tools/doom-loop.js'
 import { READ_ONLY_TOOLS, BEST_EFFORT_RETRIEVAL_TOOLS } from '../../tools/tool-registry.js'
+import { TurnBudget, type TurnBudgetExhaustReason, type TurnBudgetSnapshot } from './turn-budget.js'
 import { twinsRoot } from '../../lib/upload-path.js'
 import { makeLogger } from '../../common/logger.js'
 import { parseLlmJson } from '../../common/llm-json.js'
@@ -78,6 +79,9 @@ let docWriteRev = 0
 // 换策略或直接向用户说明。
 const DOOM_LOOP_CORRECTION = '该工具已以相同参数连续调用 3 次未产生新结果，请更换策略或直接向用户说明'
 const DOOM_INTERCEPTED_PREVIEW = '已拦截：相同参数重复调用'
+// #1023: 修正性重试（上一轮有工具失败）的完成预算上限 — 修正一个已被
+// 诊断的错误不需要重新全局推理。首轮/无失败轮不受影响。
+const RETRY_MAX_TOKENS = Number(process.env.TOOL_RETRY_MAX_TOKENS) || 8192
 
 const PRESENTERS: ToolResultPresenter[] = [
   // #976: set_task_plan 输出 → plan_updated SSE（source: model）。
@@ -162,6 +166,18 @@ const PRESENTERS: ToolResultPresenter[] = [
                 return { section_meta: check.data }
               })()
             : {}),
+          // #996/#1003: 本轮实际变更节(写回单点派生)— 聊天改动日志持久化
+          // 数据源;覆盖 range-edit/full_text/insert_asset 等全路径。形状
+          // 简单的内联校验,损坏/空降级不携带。
+          ...(() => {
+            const raw = parsed.changedSections
+            if (!Array.isArray(raw)) return {}
+            const sections = raw
+              .filter((s): s is Record<string, unknown> => Boolean(s) && typeof (s as Record<string, unknown>).id === 'string' && Boolean((s as Record<string, unknown>).id))
+              .slice(0, 50)
+              .map((s) => ({ id: String(s.id), heading: typeof s.heading === 'string' ? s.heading.slice(0, 300) : '' }))
+            return sections.length > 0 ? { changed_sections: sections } : {}
+          })(),
         })
       }
       if (toolName === 'insert_asset') {
@@ -221,6 +237,16 @@ export async function runToolCallLoop(params: {
   sessionId: string
   /** #fix: 本回合模型覆盖(视觉模型自适应) — 缺省用 DEEPSEEK_PREMIUM_MODEL。 */
   model?: string
+  /**
+   * #1019: 回合级共享预算 — main 与 doc-executor rescue 传同一个实例,
+   * rescue 消费主循环剩余额度（不再各领 5 轮）。省略时退回本循环局部
+   * MAX_TOOL_ROUNDS=5 的旧行为（单测/独立调用方零改动）。
+   */
+  budget?: TurnBudget
+  /** #1019: 本循环局部轮次上限（策略切换点），缺省 5；总额度仍由 budget 封顶。 */
+  maxRounds?: number
+  /** #1025: 该循环身份 — 前端按尝试分组展示（main 主循环 / rescue 精简重试）。 */
+  loop?: 'main' | 'rescue'
 }): Promise<{
   finalContent: string
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }>
@@ -238,8 +264,14 @@ export async function runToolCallLoop(params: {
    *  conversation-turn 依此触发执行器接力;planPendingText 为接力方案段。 */
   planBacklogCount: number
   planPendingText: string
+  /** #1019: 因回合级预算耗尽停止（而非模型收尾/局部轮次上限）时的原因。 */
+  exhaustedReason?: TurnBudgetExhaustReason
+  /** #1019: 停止时的预算快照（观测/用户提示文案用）。 */
+  budget?: TurnBudgetSnapshot
 }> {
   const { currentMessages, toolRegistry, io, ctx, userId, sessionId } = params
+  // #1025: 循环身份贯穿 tool_call/tool_result SSE（前端尝试分组用）。
+  const loopName: 'main' | 'rescue' = params.loop ?? 'main'
   // #fix 2026-09: 缺省走 resolveActiveModel()(admin 覆盖 → env → legacy) —
   // 此前硬编码 DEEPSEEK_PREMIUM_MODEL('deepseek-v4-flash'),生产主模型
   // glm-5.3-flash 被绕过且该模型在 Console Go 上游不稳定。
@@ -250,6 +282,10 @@ export async function runToolCallLoop(params: {
   const existingToolEvents = ctx.eventLog.query({ sessionId }).filter((e: any) => e.eventType === 'tool_call')
   let toolSeq = existingToolEvents.length
   const doomHistory: Array<{ tool: string; argsKey: string }> = []
+  // #1024: 同工具 + 同错误分类连续失败（语义熔断，参数不同也拦）。成功即
+  // 清空该工具历史；命中后工具进入 haltedTools，后续调用直接跳过并纠偏。
+  const failureHistory = new Map<string, ToolFailureEntry[]>()
+  const haltedTools = new Set<string>()
 
   // #658: write-time truncation — tool outputs are capped on write so the
   // event log (and every LLM context that reads it: history / extraction /
@@ -285,9 +321,15 @@ export async function runToolCallLoop(params: {
   }
 
   let messages = [...currentMessages]
-  const MAX_TOOL_ROUNDS = 5
+  const MAX_TOOL_ROUNDS = params.maxRounds ?? 5
   let toolRound = 0
   let finalContent = ''
+  // #1019: 回合级预算耗尽退出（区别于局部轮次上限）。
+  let exitedByBudget = false
+  // #1023: 上一轮是否有工具失败 → 下一轮按"修正性重试"收紧完成预算。
+  let lastRoundHadFailure = false
+  // #1026: reasoning 已越过回合预算（非流式回退路径的事后兜底判定）。
+  let reasoningOverBudget = false
 
   // #892: 声明-执行对账守卫 — 统计本轮写回工具(DOC_WRITE_TOOLS)实际执行
   // 次数(成功或失败都算「已执行」);doc- 会话零执行且回复声称完成编辑时
@@ -360,7 +402,19 @@ export async function runToolCallLoop(params: {
   }
 
   while (toolRound < MAX_TOOL_ROUNDS) {
+    // #1019: 回合级预算（main + rescue 共享）— 任何维度超限立即停止本回合
+    // 的后续 LLM 调用，不再进入下一轮。
+    if (params.budget && !params.budget.tryStartRound()) {
+      exitedByBudget = true
+      exitedByRoundCap = false
+      break
+    }
     toolRound++
+    // #1023: 本轮是否为修正性重试（消费上一轮的失败标记）— 是则收紧
+    // 完成预算（RETRY_MAX_TOKENS），修正已知错误不必重新全局推理。
+    const correctiveRetry = lastRoundHadFailure
+    lastRoundHadFailure = false
+    let roundReasoningChars = 0
     // #fix 2026-09: 工具回合流式调用 — 中转站(opencode Go)模式下非流式是
     // 结构性缺陷: 零字节直到完整生成,整篇重写类大任务(thinking+工具参数
     // 5-10 分钟)被中转层 CF(~100s 掐 → "fetch failed")与本地 TTFB 超时
@@ -376,14 +430,42 @@ export async function runToolCallLoop(params: {
       // #802: doc 会话长生成任务 TTFB 预算放宽到 600s(默认 300s 掐死
       // 整篇扩写类首调用,现场 9/2「扩充完整正文」309s 静默死亡)。
       timeoutMs: resolveTurnTimeoutMs(sessionId),
+      // #1023: 修正性重试收紧完成预算（首轮/无失败轮不加限制）。
+      ...(correctiveRetry ? { maxTokens: RETRY_MAX_TOKENS } : {}),
+      // #1026: 单次调用的 reasoning 上限 = 回合剩余额度（越线流内中止）。
+      ...(params.budget
+        ? { maxReasoningChars: Math.max(1, params.budget.limits.maxReasoningChars - params.budget.snapshot().reasoningChars) }
+        : {}),
     }
-    const onTurnReasoning = (reasoning: string) => io.send({ type: 'reasoning_chunk', text: reasoning })
+    const onTurnReasoning = (reasoning: string) => {
+      // #1019: 累计回合级推理字数（跨 main/rescue），供预算熔断与提示文案。
+      roundReasoningChars += reasoning.length
+      if (params.budget?.countReasoning(reasoning.length)) reasoningOverBudget = true
+      io.send({ type: 'reasoning_chunk', text: reasoning })
+    }
     let call
     try {
       call = await deepseekChatWithToolsStream(messages, params.apiKey, turnCallOptions, activeTools, onTurnReasoning)
     } catch (streamErr) {
+      // #1026: reasoning 熔断 → 预算已尽，不回退非流式（否则继续烧），
+      // 直接结束回合由 conversation-turn 发熔断提示。
+      if (streamErr instanceof LlmReasoningBudgetExceededError) {
+        params.budget?.forceExhaust('reasoning')
+        exitedByBudget = true
+        exitedByRoundCap = false
+        break
+      }
       log.warn(`[tool-loop] tools-stream failed → non-streaming fallback: ${(streamErr as Error).message.slice(0, 120)}`)
       call = await deepseekChatWithMeta(messages, params.apiKey, turnCallOptions, activeTools, onTurnReasoning)
+    }
+    // #1023: 每轮推理量 + 是否修正性重试 — 为"重试轮推理下降"提供可验证埋点。
+    log.info(`[tool-loop] round=${toolRound} correctiveRetry=${correctiveRetry} reasoningChars=${roundReasoningChars} maxTokens=${(turnCallOptions as { maxTokens?: number }).maxTokens ?? 'default'}`)
+    // #1026: 非流式回退路径没有流内中止 — 事后判定，越线即结束回合。
+    if (reasoningOverBudget) {
+      params.budget?.forceExhaust('reasoning')
+      exitedByBudget = true
+      exitedByRoundCap = false
+      break
     }
     const callResult = call.text
 
@@ -449,26 +531,35 @@ export async function runToolCallLoop(params: {
       /**
        * #829: pre-execution lifecycle — pending/running 事件 + SSE 芯片 +
        * doom-loop 检查 + delegate 的 subagent_started。
-       * #927: 返回 true = doom-loop 命中,调用方必须跳过执行(拦截优先于
-       * 一切后置逻辑,含检索类 best-effort 降级 — 后者在 finishCall 内,
-       * 被本次拦截自然短路)。
+       * #927: 返回非 null = 命中拦截,调用方必须跳过执行(拦截优先于一切
+       * 后置逻辑,含检索类 best-effort 降级 — 后者在 finishCall 内,被本次
+       * 拦截自然短路)。
+       * #1024: 'failure_streak' = 同工具 + 同错误分类连续失败熔断（参数
+       * 不同也拦）; 'doom' = 同参三连（原语义保留，两者 OR）。
        */
-      const startCall = async (c: ExecutableCall): Promise<boolean> => {
+      const startCall = async (c: ExecutableCall): Promise<'doom' | 'failure_streak' | null> => {
         await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
           tool: c.toolName, args: c.argsPreview, status: 'pending', seq: c.seq,
         })
         // Doom-loop guard: same tool + identical args 3x consecutively.
-        let doomBlocked = false
+        let blocked: 'doom' | 'failure_streak' | null = null
         if (detectDoomLoop(doomHistory, c.toolName, c.toolArgs)) {
-          doomBlocked = true
+          blocked = 'doom'
           log.warn('doom-loop detected', { tool: c.toolName, seq: c.seq })
+        } else if (haltedTools.has(c.toolName)) {
+          // #1024: 语义熔断 — 已达同工具同错误分类连续失败上限。
+          blocked = 'failure_streak'
+          const history = failureHistory.get(c.toolName) ?? []
+          log.warn('failure-streak intercepted', { tool: c.toolName, seq: c.seq, failureClass: history[history.length - 1]?.failureClass })
+        }
+        if (blocked) {
           await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
             tool: c.toolName, args: c.argsPreview, status: 'warning', seq: c.seq,
           })
         }
-        io.send({ type: 'tool_call', tool: c.toolName, args: c.toolArgs, seq: c.seq, round: toolRound })
+        io.send({ type: 'tool_call', tool: c.toolName, args: c.toolArgs, seq: c.seq, round: toolRound, loop: loopName })
         // #927: 拦截 — 不发 running/子代理事件,不执行(调用方注入纠偏)。
-        if (doomBlocked) return true
+        if (blocked) return blocked
         await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
           tool: c.toolName, args: c.argsPreview, status: 'running', seq: c.seq,
         })
@@ -479,24 +570,40 @@ export async function runToolCallLoop(params: {
           const scope = String((c.toolArgs as any)?.scope || 'global')
           io.send({ type: 'subagent_started', id: `sub_${c.seq}`, task: subTaskOf(c).slice(0, 200), scope })
         }
-        return false
+        return null
       }
 
-      /** #927: doom-loop 拦截收尾 — 芯片按 seq 闭合 + 事件留痕 + 纠偏消息入上下文。 */
-      const interceptDoomCall = async (c: ExecutableCall) => {
+      /** #927/#1024: 拦截收尾 — 芯片按 seq 闭合 + 事件留痕 + 纠偏消息入上下文。 */
+      const interceptCall = async (
+        c: ExecutableCall,
+        reason: 'doom' | 'failure_streak',
+      ) => {
+        const history = failureHistory.get(c.toolName) ?? []
+        const lastClass = history[history.length - 1]?.failureClass ?? 'tool_error'
+        let streakCount = 0
+        for (let i = history.length - 1; i >= 0 && history[i].failureClass === lastClass; i--) streakCount++
+        const correction = reason === 'doom'
+          ? DOOM_LOOP_CORRECTION
+          : failureStreakCorrection(c.toolName, lastClass, streakCount)
+        const preview = reason === 'doom'
+          ? DOOM_INTERCEPTED_PREVIEW
+          : `已拦截：同类错误连续失败（${lastClass}）`
         io.send({
           type: 'tool_result',
           seq: c.seq,
           tool: c.toolName,
           success: false,
           elapsed_ms: 0,
-          preview: DOOM_INTERCEPTED_PREVIEW,
+          preview,
           round: toolRound,
+          loop: loopName,
         })
-        await appendToolEvent('tool_result', DOOM_LOOP_CORRECTION, {
-          toolCallId: c.seq, success: false, error: 'doom-loop intercepted',
+        await appendToolEvent('tool_result', correction, {
+          toolCallId: c.seq, success: false,
+          error: reason === 'doom' ? 'doom-loop intercepted' : 'failure-streak intercepted',
+          ...(reason === 'failure_streak' ? { failureClass: lastClass } : {}),
         })
-        messages.push({ role: 'user', content: DOOM_LOOP_CORRECTION })
+        messages.push({ role: 'user', content: correction })
       }
 
       /** #829: post-execution lifecycle — 状态机落盘 + tool_result 事件
@@ -505,6 +612,32 @@ export async function runToolCallLoop(params: {
         // #892: 写回工具每次真实执行(成功或失败)都计入 — 对账守卫的
         // "文档是否被修改过"事实依据。
         executedToolCallsTotal++
+        // #1019: 回合级工具调用计数（拦截调用不经过 finishCall，天然不计）。
+        params.budget?.countToolCall()
+        // #1024: 失败语义分类 + 同工具同分类连续失败熔断（成功清空历史）。
+        // 命中时立即注入纠偏（下一轮 LLM 就能看到），若模型仍重调该工具，
+        // startCall 直接拦截，不再消耗工具执行与后续轮次。
+        if (!result.success) {
+          // #1023: 标记下一轮为修正性重试（收紧完成预算）。
+          lastRoundHadFailure = true
+          const failureClass = classifyToolFailure(result.error)
+          const history = failureHistory.get(c.toolName) ?? []
+          history.push({ tool: c.toolName, failureClass })
+          failureHistory.set(c.toolName, history)
+          if (detectFailureStreak(history, c.toolName, failureClass) && !haltedTools.has(c.toolName)) {
+            let count = 1
+            for (let i = history.length - 1; i > 0 && history[i - 1].failureClass === failureClass; i--) count++
+            haltedTools.add(c.toolName)
+            io.send({
+              type: 'context_info',
+              text: `工具 ${c.toolName} 已因同类错误（${failureClass}）连续失败 ${count} 次，本轮暂停该工具 — AI 将换策略或向你说明失败原因`,
+              kind: 'warning',
+            })
+            messages.push({ role: 'user', content: failureStreakCorrection(c.toolName, failureClass, count) })
+          }
+        } else {
+          failureHistory.delete(c.toolName)
+        }
         if (DOC_WRITE_TOOLS.has(c.toolName)) {
           docWriteExecuted++
           if (result.success) docWriteSucceeded++
@@ -656,6 +789,7 @@ export async function runToolCallLoop(params: {
           elapsed_ms: Date.now() - c.startedAt,
           preview: preview || undefined,
           round: toolRound,
+          loop: loopName,
         })
 
         // #789③: per-tool SSE 投影走 presenter 注册表 — 新媒体工具只需
@@ -701,8 +835,8 @@ export async function runToolCallLoop(params: {
         if (!READ_ONLY_TOOLS.has(call.toolName)) {
           const blocked = await startCall(call)
           if (blocked) {
-            // #927: doom-loop 拦截 — 跳过执行,注入纠偏,下一轮换策略。
-            await interceptDoomCall(call)
+            // #927/#1024: 拦截 — 跳过执行,注入纠偏,下一轮换策略。
+            await interceptCall(call, blocked)
           } else {
             const result = await toolRegistry.execute(call.toolName, call.toolArgs)
             await finishCall(call, result)
@@ -721,13 +855,13 @@ export async function runToolCallLoop(params: {
           } else break
         }
         // #927: doom 拦截优先 — 命中的调用不进执行批次,原 block 顺序注入纠偏。
-        const blockedFlags: boolean[] = []
+        const blockedFlags: Array<'doom' | 'failure_streak' | null> = []
         for (const c of group) blockedFlags.push(await startCall(c))
         const runnable = group.filter((_, idx) => !blockedFlags[idx])
         const results = await Promise.all(runnable.map((c) => toolRegistry.execute(c.toolName, c.toolArgs)))
         let runIdx = 0
         for (let k = 0; k < group.length; k++) {
-          if (blockedFlags[k]) await interceptDoomCall(group[k])
+          if (blockedFlags[k]) await interceptCall(group[k], blockedFlags[k] as 'doom' | 'failure_streak')
           else await finishCall(group[k], results[runIdx++])
         }
         executedAny = true
@@ -870,12 +1004,14 @@ export async function runToolCallLoop(params: {
     break
   }
 
-  // #893: doc- 会话轮次耗尽(模型连跑 5 轮工具仍未收尾) — 告知用户剩余
-  // 编辑可回复「继续」接力,不再静默截断(事故根因②)。
+  // #893: doc- 会话局部轮次耗尽(模型连跑 MAX_TOOL_ROUNDS 轮工具仍未收尾) —
+  // 告知用户剩余编辑可回复「继续」接力,不再静默截断(事故根因②)。
+  // #1019: 预算耗尽（exitedByBudget）时 exitedByRoundCap 已置 false,由
+  // conversation-turn 统一发可行动的熔断提示。
   if (exitedByRoundCap && sessionId.startsWith('doc-') && anyToolExecuted) {
     io.send({
       type: 'context_info',
-      text: '本轮编辑轮次已达上限（5 轮），若回复中尚有未执行的编辑，请回复“继续”让 AI 完成剩余部分',
+      text: `本轮编辑轮次已达上限（${MAX_TOOL_ROUNDS} 轮），若回复中尚有未执行的编辑，请回复“继续”让 AI 完成剩余部分`,
       kind: 'warning',
     })
   }
@@ -883,5 +1019,11 @@ export async function runToolCallLoop(params: {
   // 注意:finalContent 为空时不能在这里兜底 — conversation-turn 会走
   // deepseekStream 流式 fallback(511-517 行的 if(finalContent) 分支)。
   // 硬编码兜底文案会截胡流式路径。
-  return { finalContent, messages, executedWriteTools: executedWriteToolNames, unbackedClaimCount, writeAttempts: docWriteExecuted, writeSuccesses: docWriteSucceeded, planBacklogCount, planPendingText }
+  return {
+    finalContent, messages, executedWriteTools: executedWriteToolNames,
+    unbackedClaimCount, writeAttempts: docWriteExecuted, writeSuccesses: docWriteSucceeded,
+    planBacklogCount, planPendingText,
+    ...(exitedByBudget ? { exhaustedReason: params.budget?.exhausted() ?? 'rounds' } : {}),
+    ...(params.budget ? { budget: params.budget.snapshot() } : {}),
+  }
 }

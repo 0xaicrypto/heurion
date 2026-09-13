@@ -224,8 +224,9 @@ describe('#171 edit_document tool', () => {
     // 文案引导:不从「文档结构」清单复制(带序号)。
     expect(result.error).toContain('不要从「文档结构」清单复制')
 
-    // 模拟模型按报错提示复制 probe 重试 → 必然命中。
-    const probe = (result.error.match(/"(.*)"$/) || [])[1] || ''
+    // 模拟模型按报错提示复制候选片段重试 → 必然命中。
+    // #1022: 报错从单 probe 升级为「最接近候选」，取第一个引号片段。
+    const probe = (result.error.match(/"([^"]+)"/) || [])[1] || ''
     expect(probe.length).toBeGreaterThan(50)
     const retry = await tool.execute({ old_text: probe, new_text: '新标题。' })
     expect(retry.success).toBe(true)

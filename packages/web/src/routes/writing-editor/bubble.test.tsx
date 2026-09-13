@@ -14,6 +14,8 @@ const streams = vi.hoisted(() => [] as Array<{ chunks: string[]; waiters: Array<
 const abortError = vi.hoisted(() => () => Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
 // #907: 快照 POST mock — 按 test 配置 resolve/reject。
 const createSnapshotMock = vi.hoisted(() => vi.fn());
+// #1029: GET 文档 mock — 应用前服务端权威预检（润色期间是否被并发改动）。
+const getDocMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/api', () => ({
   ApiError: class ApiError extends Error {
@@ -56,6 +58,7 @@ vi.mock('@/lib/api', () => ({
       })();
     },
     createDocSnapshot: createSnapshotMock,
+    getDoc: getDocMock,
   },
 }));
 
@@ -384,5 +387,124 @@ describe('#926 气泡四态抽查(input / error 转移)', () => {
     await act(async () => { await wait(); });
     expect(result.current.bubbleRun?.status).toBe('done');
     expect(result.current.bubbleRun?.stream).toContain('重试结果');
+  });
+});
+
+// #1029: 润色应用与服务端并发改动冲突 — 复用 base_sha 检测语义 + ProposalCard
+// 双栏解决路径（不再本地盲替换后 toast+丢弃）。
+describe('#1029 润色应用冲突（服务端权威检测 + 双栏解决）', () => {
+  const runToDone = async (result: { current: ReturnType<typeof usePolishBubble> }) => {
+    await act(async () => { result.current.handleBubbleAction('rewrite', { text: 'hello', from: 2, to: 7 }); });
+    const entry = streams[streams.length - 1];
+    entry.chunks.push('AI 结果', '__END__');
+    entry.waiters.forEach((w) => w());
+    entry.waiters.length = 0;
+    await act(async () => { await wait(); });
+    expect(result.current.bubbleRun?.status).toBe('done');
+  };
+
+  test('润色期间服务端已更新 → 不本地替换,进冲突双栏（bubbleConflict）', async () => {
+    createSnapshotMock.mockReset();
+    getDocMock.mockReset();
+    getDocMock.mockResolvedValue({ body: 'server body changed' });
+    const editorRef = { current: applyEditor() };
+    const onNotice = vi.fn();
+    const serverBodyRef = { current: 'server body old' };
+    const { result } = renderHook(
+      () => usePolishBubble({ docId: 'doc-1', editorRef, onNotice, serverBodyRef }),
+      { wrapper },
+    );
+    await runToDone(result);
+    await act(async () => { void result.current.handleBubbleApply('AI 结果'); await wait(10); });
+
+    expect(result.current.bubbleConflict?.polishText).toBe('AI 结果');
+    expect(result.current.bubbleConflict?.serverBody).toBe('server body changed');
+    expect(createSnapshotMock).not.toHaveBeenCalled();
+    expect(onNotice).toHaveBeenCalledWith(expect.stringMatching(/润色期间文档已被|document changed during polishing/i), 6000);
+  });
+
+  test('服务端未变 → 照旧本地替换 + base_sha 快照（原行为不受影响）', async () => {
+    createSnapshotMock.mockReset();
+    createSnapshotMock.mockResolvedValue({ ok: true });
+    getDocMock.mockReset();
+    getDocMock.mockResolvedValue({ body: 'server body old' });
+    const editorRef = { current: applyEditor() };
+    const serverBodyRef = { current: 'server body old' };
+    const { result } = renderHook(
+      () => usePolishBubble({ docId: 'doc-1', editorRef, onNotice: () => {}, serverBodyRef }),
+      { wrapper },
+    );
+    await runToDone(result);
+    await act(async () => { void result.current.handleBubbleApply('AI 结果'); await wait(10); });
+
+    expect(result.current.bubbleConflict).toBeNull();
+    expect(createSnapshotMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('「插入到最新版本」:在服务端新正文中唯一定位原文并落盘（onApplyExternalBody）', async () => {
+    createSnapshotMock.mockReset();
+    getDocMock.mockReset();
+    getDocMock.mockResolvedValue({ body: 'intro\n\nhello\n\noutro' });
+    const editorRef = { current: applyEditor() };
+    const onApplyExternalBody = vi.fn();
+    const serverBodyRef = { current: 'server body old' };
+    const { result } = renderHook(
+      () => usePolishBubble({ docId: 'doc-1', editorRef, onNotice: () => {}, serverBodyRef, onApplyExternalBody }),
+      { wrapper },
+    );
+    await runToDone(result);
+    await act(async () => { void result.current.handleBubbleApply('AI 结果'); await wait(10); });
+    expect(result.current.bubbleConflict).not.toBeNull();
+
+    await act(async () => { result.current.handleBubbleConflictInsert(); });
+    expect(onApplyExternalBody).toHaveBeenCalledTimes(1);
+    const [md, fresh] = onApplyExternalBody.mock.calls[0];
+    expect(fresh).toBe('intro\n\nhello\n\noutro');
+    expect(md).toBe('intro\n\nAI 结果\n\noutro');
+    expect(result.current.bubbleConflict).toBeNull();
+  });
+
+  test('「丢弃」不彻底丢结果 — 润色文本自动带入聊天输入', async () => {
+    createSnapshotMock.mockReset();
+    getDocMock.mockReset();
+    getDocMock.mockResolvedValue({ body: 'server body changed' });
+    const editorRef = { current: applyEditor() };
+    const onSendToChat = vi.fn();
+    const serverBodyRef = { current: 'server body old' };
+    const { result } = renderHook(
+      () => usePolishBubble({ docId: 'doc-1', editorRef, onNotice: () => {}, serverBodyRef, onSendToChat }),
+      { wrapper },
+    );
+    await runToDone(result);
+    await act(async () => { void result.current.handleBubbleApply('AI 结果'); await wait(10); });
+    expect(result.current.bubbleConflict).not.toBeNull();
+
+    await act(async () => { result.current.handleBubbleConflictDiscard(); });
+    expect(onSendToChat).toHaveBeenCalledWith('AI 结果', expect.stringMatching(/润色结果|polish result/i));
+    expect(result.current.bubbleConflict).toBeNull();
+    expect(result.current.bubbleRun).toBeNull();
+  });
+
+  test('原文在最新正文中多处/缺失 → 不猜位置,自动转聊天', async () => {
+    createSnapshotMock.mockReset();
+    getDocMock.mockReset();
+    getDocMock.mockResolvedValue({ body: 'hello and hello again' }); // 两处命中
+    const editorRef = { current: applyEditor() };
+    const onApplyExternalBody = vi.fn();
+    const onSendToChat = vi.fn();
+    const onNotice = vi.fn();
+    const serverBodyRef = { current: 'server body old' };
+    const { result } = renderHook(
+      () => usePolishBubble({ docId: 'doc-1', editorRef, onNotice, serverBodyRef, onApplyExternalBody, onSendToChat }),
+      { wrapper },
+    );
+    await runToDone(result);
+    await act(async () => { void result.current.handleBubbleApply('AI 结果'); await wait(10); });
+    expect(result.current.bubbleConflict).not.toBeNull();
+
+    await act(async () => { result.current.handleBubbleConflictInsert(); });
+    expect(onApplyExternalBody).not.toHaveBeenCalled();
+    expect(onSendToChat).toHaveBeenCalledWith('AI 结果', expect.stringMatching(/润色结果|polish result/i));
+    expect(onNotice).toHaveBeenCalledWith(expect.stringMatching(/未能唯一定位|could not be uniquely located/i), 6000);
   });
 });

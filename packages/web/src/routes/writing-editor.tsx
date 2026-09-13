@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
+import { findSectionAtOffset, type BlockProjection } from '@heurion/contracts';
 import type { Editor } from '@tiptap/react';
 import { ArrowLeft, FileText, MessageSquare, Presentation } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
@@ -21,12 +22,14 @@ import { mergeThreeWay, describeConflictSections } from '@/lib/doc-merge';
 import { diffProjectionSections, type SectionLite } from '@/lib/block-projection';
 // #996/#1002: 节卡片化数据流 — 流式迷你 diff 行（编辑中的节）。
 import { lineDiffRows, extractSectionText, type SectionCardRow } from '@/lib/section-cards';
+// #1021: 稳定 section id 的跳转定位（重名标题按出现序 + 回退提示）。
+import { resolveSectionJumpTarget } from '@/lib/section-jump';
 // #927: doc_updated rev 幂等防乱序(与 chat-reducer 同源判定)。
 import { shouldApplyDocRev } from '@/lib/chat-reducer';
 import { toSlides, type Slide } from '@/lib/deck';
 import type { DeckWire } from '@/lib/types';
 // #696: 状态机全部下沉 hooks — 路由只保留编排与布局。
-import { usePolishBubble } from './writing-editor/bubble';
+import { usePolishBubble, conflictSavedPreview } from './writing-editor/bubble';
 import { useDeckAsset } from './writing-editor/deck-asset';
 import { useDocChat } from './writing-editor/doc-chat';
 import { useDocReferences } from './writing-editor/references';
@@ -129,7 +132,7 @@ export function WritingEditorPage() {
   // (Yours/AI's)零额外请求;旧后端无 payload 时走 getDoc 兜底。
   const [saveConflict, setSaveConflict] = useState<{
     title: string; body: string; deck?: unknown;
-    current?: { title: string; body: string; deck?: unknown; updated_at: string };
+        current?: { title: string; body: string; deck?: unknown; block_projection?: BlockProjection | null; updated_at: string };
   } | null>(null);
   // #986: 保存失败常驻警示 — 二次保存(diff 落地/回滚)失败且非 409 时,
   // 失败内容回灌 dirty 并进入 autosave 重试;横幅常驻直至保存成功,不再
@@ -144,7 +147,7 @@ export function WritingEditorPage() {
   }, []);
   // #927: 「载入最新」确认审阅挂起的服务端最新内容 — handleDiffResolve 据此
   // 分流(接受 = 原样采用服务端版本,不走常规落地保存路径)。
-  const conflictLoadRef = useRef<{ body: string; updatedAt: string } | null>(null);
+  const conflictLoadRef = useRef<DocDetail | null>(null);
 
   const markDirty = useCallback((nextBody: string, nextTitle: string) => {
     if (!docId) return;
@@ -257,6 +260,36 @@ export function WritingEditorPage() {
     if (doc && serverBodyRef.current === null) serverBodyRef.current = doc.body;
   }, [doc, docId]);
 
+  /** #996/#997 + review 复核(嵌套节批): 应用服务端当前完整态 — title/
+   *  body/deck/块投影一次到位,并同步已保存基线与 dirty。「Use AI's
+   *  version」与旧后端「载入最新」确认路径共用;此前只换 body/updated_at,
+   *  用户采纳后标题/幻灯片/投影基线仍停在本地旧值(视图只换了一半)。 */
+  const applyServerDoc = useCallback((fresh: {
+    title: string; body: string; deck?: unknown;
+    block_projection?: BlockProjection | null; updated_at: string;
+  }) => {
+    setBody(fresh.body);
+    setTitle(fresh.title);
+    lastSavedBody.current = fresh.body;
+    serverBodyRef.current = fresh.body;
+    const freshDeck = (fresh.deck ?? null) as DeckWire | null;
+    setDeckAsset(freshDeck);
+    const freshDeckKey = freshDeck ? JSON.stringify(freshDeck) : '';
+    lastSavedDeck.current = freshDeckKey;
+    appliedDocDeck.current = freshDeckKey;
+    setDoc((prev) => (prev ? {
+      ...prev,
+      title: fresh.title,
+      body: fresh.body,
+      deck: freshDeck,
+      ...(fresh.block_projection ? { block_projection: fresh.block_projection } : {}),
+      updated_at: fresh.updated_at,
+    } : prev));
+    dirtyRef.current = false;
+    setDirty(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ref/setter 稳定(#696 hooks 下沉)
+  }, []);
+
   // #837: 刷新恢复审阅 — 服务端最后一笔快照是「AI edit」且其正文就是当前
   // 正文时,说明上次审阅未完成(刷新/关闭丢失了客户端审阅态)。自动恢复:
   // old = 前一条快照,当前正文作为 next 重新进入审阅,用户无需重发指令。
@@ -319,7 +352,7 @@ export function WritingEditorPage() {
     if (!(err instanceof ApiError) || err.status !== 409) return undefined;
     try {
       const parsed = JSON.parse(err.body) as {
-        current?: { title: string; body: string; deck?: unknown; updated_at: string };
+    current?: { title: string; body: string; deck?: unknown; block_projection?: BlockProjection | null; updated_at: string };
       };
       if (parsed.current && typeof parsed.current.body === 'string') return parsed.current;
     } catch { /* 非 JSON body — 无 current,走兜底 */ }
@@ -406,7 +439,9 @@ export function WritingEditorPage() {
       if (!proj) return null;
       const offset = bodyRef.current.indexOf(sel.slice(0, 80));
       if (offset < 0) return null;
-      const sec = proj.nodes.find((n) => n.kind === 'section' && offset >= n.start && offset < n.end);
+      // review 复核(嵌套节): span 大纲语义下取最深层匹配节 — 此前 find()
+      // 从文档序首个匹配返回,选中嵌套子节文字永远先命中外层父节。
+      const sec = findSectionAtOffset(proj, offset);
       return sec ? { id: sec.id, heading: sec.heading || '' } : null;
     },
   });
@@ -415,33 +450,41 @@ export function WritingEditorPage() {
   const chatSessionId = docId ? `doc-${docId}` : '';
   // #996/#1003: 聊天 → 文档跳转 — 按节 id 反查标题,编辑器内定位滚动
   // (复用 deck 卡片锚点定位的同款机制),打开聊天面板/文档视图。
+  // #1021: 以稳定 section id 为第一入口;重名标题按出现序落位,文本对不上
+  // 时给最接近标题 + 可见提示,不再静默跳错/不动。
   const jumpToSection = useCallback((sectionId: string) => {
     const proj = chatSession?.lastDocProjection ?? doc?.block_projection;
-    const sec = proj?.nodes.find((n) => n.kind === 'section' && n.id === sectionId);
-    if (!sec) return;
+    const sections = (proj?.nodes ?? []).filter((n) => n.kind === 'section');
+    if (!sections.some((s) => s.id === sectionId)) {
+      showNotice(t('writing.sectionGone', '该节已不存在（文档可能已重构），未跳转'), 4000);
+      return;
+    }
     setPreview(false);
     if (viewMode !== 'document') setViewMode('document');
-    const heading = sec.heading || '';
     const timer = setTimeout(() => {
       const editor = polishEditorRef.current;
       if (!editor) return;
-      let target: number | null = null;
+      const headings: Array<{ text: string; level: number; pos: number }> = [];
       editor.state.doc.descendants((node, pos) => {
-        if (target !== null) return false;
-        if (node.type.name === 'heading' && node.textContent.trim() === heading.trim()) {
-          target = pos;
-          return false;
-        }
+        if (node.type.name === 'heading') headings.push({ text: node.textContent, level: Number(node.attrs.level ?? 2), pos });
         return true;
       });
-      if (target !== null) {
-        editor.commands.setTextSelection((target as number) + 1);
-        editor.commands.scrollIntoView();
-        editor.commands.focus();
+      const target = resolveSectionJumpTarget(sections, headings, sectionId);
+      if (!target) {
+        showNotice(t('writing.sectionJumpNotFound', '未能在编辑器中定位该节（可能正在同步），请稍后重试'), 4000);
+        return;
       }
+      if (!target.exact) {
+        showNotice(t('writing.sectionJumpApprox', '未精确定位到该节，已跳转到最接近位置'), 4000);
+      }
+      const hit = headings[target.index];
+      if (!hit) return;
+      editor.commands.setTextSelection(hit.pos + 1);
+      editor.commands.scrollIntoView();
+      editor.commands.focus();
     }, 120);
     void timer;
-  }, [chatSession?.lastDocProjection, doc?.block_projection, viewMode, setViewMode]);
+  }, [chatSession?.lastDocProjection, doc?.block_projection, viewMode, setViewMode, showNotice, t]);
 
   // #837-ux: 同轮写回合批 — AI 一轮里逐节写回会连发多个 doc_updated,
   // 逐个进审阅 = "每次只能看到一个 diff"。正确交互:同一轮的全部变更
@@ -509,6 +552,17 @@ export function WritingEditorPage() {
       setChatSelection(selection);
       setChatInput(instruction);
       setChatOpen(true);
+    },
+    // #1029: 服务端基线 + 冲突「插入到最新版本」落地 — 与 AI 写回同语义
+    // （应用后服务端基线前移，本地内容标 dirty 待保存）。
+    serverBodyRef,
+    onApplyExternalBody: (md, freshServerBody) => {
+      setBody(md);
+      lastSavedBody.current = freshServerBody;
+      serverBodyRef.current = freshServerBody;
+      setDoc((prev) => (prev ? { ...prev, body: freshServerBody, updated_at: new Date().toISOString() } : prev));
+      dirtyRef.current = true;
+      setDirty(true);
     },
   });
 
@@ -595,12 +649,9 @@ export function WritingEditorPage() {
         showNotice(t('writing.conflictKeepLocal', '已保留本地未保存修改 — 可选择「保留我的版本」或重新载入最新'), 4000);
         return;
       }
-      setBody(fresh.body);
-      lastSavedBody.current = fresh.body;
-      serverBodyRef.current = fresh.body;
-      setDoc((prev) => (prev ? { ...prev, body: fresh.body, updated_at: fresh.updatedAt } : prev));
-      dirtyRef.current = false;
-      setDirty(false);
+      // review 复核(嵌套节批): 接受 = 应用服务端完整态(title/deck/投影
+      // 一并到位,与「Use AI's version」同语义),不再只换 body。
+      applyServerDoc(fresh);
       setSaveConflict(null);
       setSaveFailure(null); // #986: 已与服务端对齐,清常驻警示。
       showNotice(t('writing.conflictLoadedLatest', '已载入服务端最新内容'), 3000);
@@ -793,7 +844,7 @@ export function WritingEditorPage() {
           // 注入块与本地未保存修改在基线坐标上重叠 → 三路合并不安全:
           // 进冲突确认审阅（接受 = 采用服务端版本,不再保存;取消 = 保留本地,
           // 后续保存经 base_sha 失配 409 走冲突横幅），绝不静默覆盖任一侧。
-          conflictLoadRef.current = { body: d.body, updatedAt: d.updated_at };
+          conflictLoadRef.current = d;
           setDiffReview({ key: `inject_${Date.now()}`, old: bodyRef.current, next: d.body, source: 'results', subject });
           setViewMode((m) => (m === 'deck' ? 'document' : m));
           showNotice(t('writing.injectConflictReview', '结果注入与本地未保存修改冲突 — 已进入审阅确认'), 6000);
@@ -987,15 +1038,13 @@ export function WritingEditorPage() {
 
   // #996/#997: 「Use AI's version」— 直接采用 409 payload 携带的服务端当前
   // 态(语义同旧「载入最新」确认审阅的接受分支:服务端已是该版本,无需再保存)。
+  // review 复核(嵌套节批): current 是 #997 加的完整服务端态 — title/deck/
+  // block_projection 必须一并应用,否则采纳后标题/幻灯片/AI 编辑批次基线
+  // 仍停在本地旧值(弹窗显示"已载入"但视图只换了一半)。
   const resolveConflictUseSaved = () => {
     const fresh = saveConflict?.current;
     if (!fresh) return;
-    setBody(fresh.body);
-    lastSavedBody.current = fresh.body;
-    serverBodyRef.current = fresh.body;
-    setDoc((prev) => (prev ? { ...prev, body: fresh.body, updated_at: fresh.updated_at } : prev));
-    dirtyRef.current = false;
-    setDirty(false);
+    applyServerDoc(fresh);
     setSaveConflict(null);
     setSaveFailure(null);
     showNotice(t('writing.conflictLoadedLatest', '已载入服务端最新内容'), 3000);
@@ -1011,15 +1060,13 @@ export function WritingEditorPage() {
     try {
       const fresh = await api.getDoc(docId);
       if (fresh.body === bodyRef.current) {
-        // 本地与服务端已一致 — 直接收口,无需审阅。
-        lastSavedBody.current = fresh.body;
-        serverBodyRef.current = fresh.body;
-        setDoc((prev) => (prev ? { ...prev, body: fresh.body, updated_at: fresh.updated_at } : prev));
+        // 本地与服务端已一致 — 直接收口,无需审阅(完整态一并应用)。
+        applyServerDoc(fresh);
         setSaveConflict(null);
         showNotice(t('writing.conflictLoadedLatest', '已载入服务端最新内容'), 3000);
         return;
       }
-      conflictLoadRef.current = { body: fresh.body, updatedAt: fresh.updated_at };
+      conflictLoadRef.current = fresh;
       setDiffReview({ key: `conflict_${Date.now()}`, old: bodyRef.current, next: fresh.body, source: 'conflict', subject: fresh.title });
       // 审阅模式下 markdown diff 不可见 — deck 视图先切回文档视图(同写回路径)。
       setViewMode((m) => (m === 'deck' ? 'document' : m));
@@ -1317,6 +1364,26 @@ export function WritingEditorPage() {
                           {editingSections.map((s) => (s.heading || s.id)).join('、')}
                         </span>
                       </div>
+                    )}
+                    {bubble.bubbleConflict && (
+                      /* #1029: 润色应用冲突 → 同一 ProposalCard(conflict 变体) —
+                         润色结果 vs 文档当前内容双栏;可插入最新版本 / 转发到
+                         聊天 / 丢弃(丢弃也自动带入聊天输入,结果不彻底丢失)。 */
+                      <ProposalCard
+                        source="conflict"
+                        subject={t('writing.polishConflictSubject', '选区润色与文档更新冲突')}
+                        note={t('writing.polishConflictNote', '润色基于旧版本生成；右侧为文档当前内容')}
+                        conflict={{
+                          yours: bubble.bubbleConflict.polishText,
+                          saved: conflictSavedPreview(bubble.bubbleConflict),
+                          onKeepMine: bubble.handleBubbleConflictInsert,
+                          onUseSaved: bubble.handleBubbleConflictDiscard,
+                          keepMineLabel: t('writing.polishConflictInsert', '插入到最新版本'),
+                          useSavedLabel: t('writing.polishConflictDrop', '丢弃润色结果'),
+                          forwardLabel: t('writing.polishConflictForward', '转发到聊天'),
+                          onForward: bubble.handleBubbleConflictSendToChat,
+                        }}
+                      />
                     )}
                     {saveConflict && (
                       /* #996/#997: 并发保存冲突 → 统一提议卡(conflict 变体) —

@@ -32,6 +32,31 @@ describe('#981 renderSvgChart 运行时校验(非法形状拒绝)', () => {
     })).toThrow(/invalid chart input/)
   })
 
+  test('空串/null 不再被 coerce 成 0(review 复核#8:漏填坐标必须可重试报错)', () => {
+    expect(() => renderSvgChart({
+      type: 'bar',
+      data: [{ label: 'x', value: '' as unknown as number }],
+    })).toThrow(/invalid chart input/)
+    expect(() => renderSvgChart({
+      type: 'bar',
+      data: [{ label: 'x', value: null as unknown as number }],
+    })).toThrow(/invalid chart input/)
+    expect(() => renderSvgChart({
+      type: 'schematic',
+      elements: [{ kind: 'rect', x: '' as unknown as number, y: 0 }],
+    })).toThrow(/invalid chart input/)
+    // 数字 0 本身是合法坐标(不要误伤)
+    expect(renderSvgChart({
+      type: 'schematic',
+      elements: [{ kind: 'rect', x: 0, y: 0 }],
+    })).toContain('<svg')
+    // 空白串同样拒绝
+    expect(() => renderSvgChart({
+      type: 'bar',
+      data: [{ label: 'x', value: '   ' as unknown as number }],
+    })).toThrow(/invalid chart input/)
+  })
+
   test('data.value 为 NaN/Infinity → finite 校验拒绝', () => {
     expect(() => renderSvgChart({
       type: 'line',

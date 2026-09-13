@@ -235,7 +235,7 @@ export class FixDocumentImagesTool extends BaseTool {
         success: true,
         // #989 Phase 3: 输出携带块投影 — tool-loop 转 doc_updated.projection 推前端。
         // #999: 输出附带 section_meta。
-        output: JSON.stringify({ body: written.body, summary, fixed, missing, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}) }),
+        output: JSON.stringify({ body: written.body, summary, fixed, missing, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
       }
     } catch (err) {
       return { success: false, error: `fix_document_images failed: ${(err as Error).message.slice(0, 200)}` }

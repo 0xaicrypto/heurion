@@ -117,4 +117,50 @@ describe('#989 Phase 3 — doc_updated 携带块投影(presenter 接线)', () =>
     expect(docUpdated).toBeTruthy()
     expect(docUpdated!.projection).toBeUndefined()
   })
+
+  test('工具输出 changedSections → doc_updated.changed_sections(改动日志全路径)', async () => {
+    const projection = buildBlockProjection(BODY)
+    const sections = projection.nodes
+      .filter((n) => n.kind === 'section')
+      .map((n) => ({ id: n.id, heading: n.heading || '' }))
+    const ctx = makeCtx('doc-docupd4')
+    const registry = new ToolRegistry(ctx)
+    registry.register(new WriteTool(JSON.stringify({ body: BODY, summary: '已写入', projection, changedSections: sections })))
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"a","new_text":"x"}}' as never))
+      .mockResolvedValueOnce('完成。') as never
+
+    const { io, chunks } = makeIO()
+    await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '编辑' }],
+      toolRegistry: registry, tools: [], apiKey: 'k', io, ctx,
+      userId: 'user_docupd4', sessionId: 'doc-docupd4',
+    })
+
+    const docUpdated = chunks.find((c) => c.type === 'doc_updated') as { changed_sections?: unknown } | undefined
+    expect(docUpdated).toBeTruthy()
+    expect(docUpdated!.changed_sections).toEqual(sections)
+  })
+
+  test('changedSections 形状损坏(非字符串 id)→ 降级为不携带', async () => {
+    const ctx = makeCtx('doc-docupd5')
+    const registry = new ToolRegistry(ctx)
+    registry.register(new WriteTool(JSON.stringify({ body: BODY, summary: '已写入', changedSections: [{ id: 42 }, null, 'x'] })))
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"old_text":"a","new_text":"x"}}' as never))
+      .mockResolvedValueOnce('完成。') as never
+
+    const { io, chunks } = makeIO()
+    await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '编辑' }],
+      toolRegistry: registry, tools: [], apiKey: 'k', io, ctx,
+      userId: 'user_docupd5', sessionId: 'doc-docupd5',
+    })
+
+    const docUpdated = chunks.find((c) => c.type === 'doc_updated') as { changed_sections?: unknown } | undefined
+    expect(docUpdated).toBeTruthy()
+    expect(docUpdated!.changed_sections).toBeUndefined()
+  })
 })

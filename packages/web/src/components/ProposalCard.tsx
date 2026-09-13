@@ -22,12 +22,21 @@ export interface ProposalReviewState {
   onFinish: (cancelled: boolean) => void;
 }
 
-/** 冲突双栏(#996/#997):yours = 本地待保存,saved = 服务端已保存版(409 payload)。 */
+/** 冲突双栏(#996/#997):yours = 本地待保存,saved = 服务端已保存版(409 payload)。
+ *  #1029: 润色应用冲突复用同一双栏 — 可选标签覆盖与「转发到聊天」第三动作
+ *  （已生成的润色结果不因冲突被丢弃）。 */
 export interface ProposalConflictState {
   yours: string;
   saved: string;
   onKeepMine: () => void;
   onUseSaved: () => void;
+  /** 主按钮文案覆盖（润色冲突："插入到最新版本"）。 */
+  keepMineLabel?: string;
+  /** 次按钮文案覆盖（润色冲突："丢弃润色结果"）。 */
+  useSavedLabel?: string;
+  /** #1029: 第三动作（转发到聊天）— 有 onForward 时渲染中间按钮。 */
+  forwardLabel?: string;
+  onForward?: () => void;
 }
 
 type LucideIcon = typeof Sparkles;
@@ -210,10 +219,15 @@ export function ProposalCard({
         {conflictMode ? (
           <>
             <Button size="sm" variant="secondary" onClick={conflict.onKeepMine}>
-              {t('writing.conflictKeepMine', '保留我的版本')}
+              {conflict.keepMineLabel ?? t('writing.conflictKeepMine', '保留我的版本')}
             </Button>
-            <Button size="sm" onClick={conflict.onUseSaved}>
-              {t('writing.proposal.useAisVersion', "Use AI's version")}
+            {conflict.onForward && (
+              <Button size="sm" variant="ghost" onClick={conflict.onForward}>
+                {conflict.forwardLabel ?? t('writing.proposal.forwardToChat', '转发到聊天')}
+              </Button>
+            )}
+            <Button size="sm" className="ml-auto" onClick={conflict.onUseSaved}>
+              {conflict.useSavedLabel ?? t('writing.proposal.useAisVersion', "Use AI's version")}
             </Button>
           </>
         ) : review ? (

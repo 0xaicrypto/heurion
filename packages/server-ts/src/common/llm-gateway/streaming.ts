@@ -4,7 +4,7 @@
  * .chatWithToolsStream / .stream 方法体 — 零行为变化(类方法委托到这里的
  * 自由函数,递归同样直达 impl,与原 this.X() 递归等价)。
  */
-import { log, LlmTruncatedError, type ChatMessage, type LlmChatOptions, type LlmToolDefinition, type LlmChatResult, type LlmChunk } from './types.js'
+import { log, LlmTruncatedError, LlmReasoningBudgetExceededError, type ChatMessage, type LlmChatOptions, type LlmToolDefinition, type LlmChatResult, type LlmChunk } from './types.js'
 import { resolveDefaultMaxTokens, truncationRetryBudget, MAX_TRUNCATION_RETRY_DEPTH, resolveRequestModel, resolveLlmEndpoint, resolveLegacyChatModel, resolveLegacyPremiumModel } from './provider.js'
 import { fetchWithRetry, withBodyIdleTimeout, buildRequestHeaders } from './http.js'
 import { recordUsage, recordFailure, approximateTokensFromChars, promptChars } from './pricing.js'
@@ -158,6 +158,12 @@ export async function chatWithToolsStreamImpl(
             toolAcc.set(idx, cur)
           }
         } catch { /* skip parse errors */ }
+        // #1026: 流内 reasoning 熔断 — 越线立即取消上游并抛类型化错误，
+        // 不再等整段生成完（回合循环捕获后即刻结束，用户立刻收到熔断提示）。
+        if (options.maxReasoningChars && reasoningChars > options.maxReasoningChars) {
+          try { await reader.cancel() } catch { /* already broken */ }
+          throw new LlmReasoningBudgetExceededError({ reasoningChars, maxReasoningChars: options.maxReasoningChars })
+        }
       }
     }
   } finally {

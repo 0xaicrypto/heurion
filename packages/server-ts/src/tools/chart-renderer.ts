@@ -55,10 +55,19 @@ export interface SchematicElement {
 // review 复核#7: 数值字段 z.coerce.number() — LLM 工具调用把数值输出成
 // 字符串("5")不算罕见,coerce 容忍数字字符串(z.coerce 先 Number() 转换,
 // 非数值字符串/NaN/Infinity 仍被 finite 拒绝,注入防护不变)。
+// review 复核#8: 仅 coerce 会把空串/null 强转成 0 — 模型漏填坐标会被
+// 静默画到原点而不是收到可重试的校验错误。chartNum 预处理只放行 number
+// 与非空数字字符串,其余(含 ''、null、bool、数组/对象)→ NaN 被 finite 拒绝。
+const chartNum = z.preprocess((v) => {
+  if (typeof v === 'number') return v
+  if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) return v
+  return Number.NaN
+}, z.coerce.number().finite())
+
 export const chartInputSchema = z.object({
   type: z.enum(['line', 'bar', 'dose_curve', 'schematic']),
-  data: z.array(z.object({ label: z.string(), value: z.coerce.number().finite() })).optional(),
-  errors: z.array(z.object({ label: z.string(), error: z.coerce.number().finite() })).optional(),
+  data: z.array(z.object({ label: z.string(), value: chartNum })).optional(),
+  errors: z.array(z.object({ label: z.string(), error: chartNum })).optional(),
   sig: z.object({
     pair: z.tuple([z.string(), z.string()]),
     stars: z.string(),
@@ -71,20 +80,20 @@ export const chartInputSchema = z.object({
   template: z.enum(['beam_scan']).optional(),
   elements: z.array(z.object({
     kind: z.enum(['rect', 'circle', 'line', 'arrow', 'text', 'beam']),
-    x: z.coerce.number().finite(),
-    y: z.coerce.number().finite(),
-    w: z.coerce.number().finite().optional(),
-    h: z.coerce.number().finite().optional(),
-    r: z.coerce.number().finite().optional(),
-    x2: z.coerce.number().finite().optional(),
-    y2: z.coerce.number().finite().optional(),
+    x: chartNum,
+    y: chartNum,
+    w: chartNum.optional(),
+    h: chartNum.optional(),
+    r: chartNum.optional(),
+    x2: chartNum.optional(),
+    y2: chartNum.optional(),
     text: z.string().optional(),
     color: z.string().optional(),
     fill: z.string().optional(),
     dashed: z.boolean().optional(),
-    width: z.coerce.number().finite().optional(),
-    angle: z.coerce.number().finite().optional(),
-    exitWidth: z.coerce.number().finite().optional(),
+    width: chartNum.optional(),
+    angle: chartNum.optional(),
+    exitWidth: chartNum.optional(),
   })).optional(),
 })
 

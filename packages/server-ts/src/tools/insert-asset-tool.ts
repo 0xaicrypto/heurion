@@ -233,7 +233,7 @@ export class InsertAssetTool extends BaseTool {
     const summary = String(args.summary || `${summaryBase}，${placement}`)
     // #989 Phase 3: 输出携带块投影 — tool-loop 转 doc_updated.projection 推前端。
     // #999: 输出附带 section_meta。
-    const output: Record<string, unknown> = { body: newBody, summary, ...(written?.projection ? { projection: written.projection } : {}), ...(written?.sectionMeta ? { sectionMeta: written.sectionMeta } : {}) }
+    const output: Record<string, unknown> = { body: newBody, summary, ...(written?.projection ? { projection: written.projection } : {}), ...(written?.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written?.changedSections ? { changedSections: written.changedSections } : {}) }
     // #773: deck JSON 随工具输出返回 — tool-loop 转成 doc_updated.deck 推画布。
     if (opts.deckJson) {
       try { output.deck = JSON.parse(opts.deckJson) } catch { /* ignore */ }

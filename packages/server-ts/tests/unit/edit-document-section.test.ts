@@ -205,3 +205,94 @@ describe('#989 Phase 2 — edit_document target_section(工具层)', () => {
     expect(output.body).toContain('methods body polished.')
   })
 })
+
+describe('#1020/#1022 — 稳定 section_id + 节内锚点 + 结构化诊断', () => {
+  function projStr() { return JSON.stringify(buildBlockProjection(BODY)) }
+
+  test('section_id + 有细微偏差的 old_text → 节内模糊命中(定位成功)', async () => {
+    // 长句才有可用的模糊锚点（findFuzzySpan 需要 ≥24 字符的相同锚片）。
+    const LONG_BODY = [
+      '# Paper',
+      '',
+      '## Introduction',
+      'intro body text.',
+      '',
+      '## Methods',
+      'The cohort included one hundred twenty patients with complete follow-up data.',
+      '',
+      'Second methods sentence with additional detail about the assay.',
+    ].join('\n')
+    const longProj = buildBlockProjection(LONG_BODY)
+    const methods = longProj.nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, userId: USER, title: 'T', body: LONG_BODY, deck: null, blockProjection: JSON.stringify(longProj) })
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const r = await tool.execute({
+      section_id: methods.id,
+      old_text: 'The cohort included one hundred twenty patients with complete follow-up datas.', // 结尾多一个 s → fuzzy 命中
+      new_text: 'The cohort included 120 patients with complete follow-up.',
+      summary: 'in-section polish',
+    })
+    expect(r.success, String(r.error)).toBe(true)
+    const output = JSON.parse(r.output as string)
+    expect(output.body).toContain('The cohort included 120 patients with complete follow-up.')
+    expect(output.body).toContain('## Introduction')
+    expect(output.location).toContain('Methods')
+    expect(mocks.writeDocVersion).toHaveBeenCalledWith(
+      expect.objectContaining({ baseBody: LONG_BODY, body: expect.stringContaining('120 patients') }),
+    )
+  })
+
+  test('section_id 不存在 → 明确报错并附可用节清单,不静默全局搜索', async () => {
+    mocks.docFindFirst.mockResolvedValue(makeDoc(projStr()))
+    const intro = buildBlockProjection(BODY).nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const r = await tool.execute({
+      section_id: 's_gone00000000',
+      old_text: 'intro body text.',
+      new_text: 'x',
+    })
+    expect(r.success).toBe(false)
+    expect(r.error).toContain('不存在')
+    expect(r.error).toContain('当前可用节')
+    expect(r.error).toContain(intro.id)
+    expect(mocks.writeDocVersion).not.toHaveBeenCalled()
+  })
+
+  test('section_id + old_text 节内未命中 → 返回节内最接近候选,不改错节', async () => {
+    mocks.docFindFirst.mockResolvedValue(makeDoc(projStr()))
+    const methods = buildBlockProjection(BODY).nodes.find((n) => n.kind === 'section' && n.heading === 'Methods')!
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const r = await tool.execute({
+      section_id: methods.id,
+      old_text: 'methods protocol summary sentence.',
+      new_text: 'x',
+    })
+    expect(r.success).toBe(false)
+    expect(r.error).toContain('最接近的候选')
+    expect(r.error).toContain('methods body text.')
+    expect(mocks.writeDocVersion).not.toHaveBeenCalled()
+  })
+
+  test('#1022 全局锚点失败 → 错误里带最接近候选（可直接复制）', async () => {
+    mocks.docFindFirst.mockResolvedValue(makeDoc(projStr()))
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const r = await tool.execute({
+      old_text: 'introduction overview sentence not present.',
+      new_text: 'x',
+    })
+    expect(r.success).toBe(false)
+    expect(r.error).toContain('最接近的候选')
+    expect(r.error).toContain('intro body text.')
+    expect(r.error).toContain('相似度')
+  })
+
+  test('target_section 与 section_id 同时传且不一致 → 拒绝', async () => {
+    mocks.docFindFirst.mockResolvedValue(makeDoc(projStr()))
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const r = await tool.execute({
+      target_section: 's_aaa', section_id: 's_bbb', section_action: 'replace', content: 'x',
+    })
+    expect(r.success).toBe(false)
+    expect(r.error).toContain('不一致')
+  })
+})

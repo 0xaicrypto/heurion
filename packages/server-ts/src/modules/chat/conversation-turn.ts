@@ -29,6 +29,7 @@ import { ToolRegistry, parseDocSessionId, type ToolContext, type EditHint } from
 import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
 import { createExecutionPlaneService } from '../execution/execution-plane.service.js'
 import { runToolCallLoop, type TurnIO } from './tool-loop.js'
+import { TurnBudget, turnBudgetExhaustedNotice, type TurnBudgetExhaustReason } from './turn-budget.js'
 // P0 hotfix 2026-09: doc 执行器兜底 — tool-loop 零写回 + 编辑意图时的
 // 精简上下文重跑(治 glm 27k+ 上下文工具调用可靠性坍塌)。
 import { runDocExecutorFallback, shouldRunDocExecutor, PLAN_RELAY_RE } from './doc-executor.js'
@@ -630,6 +631,8 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   const chartMeta: Array<{ url: string; chartType?: string }> = []
   const timelineTools: Array<{
     tool: string; seq: number; round?: number; argsPreview: string
+    /** #1025: 循环身份（main/rescue）— 刷新后前端仍能按尝试分组。 */
+    loop?: 'main' | 'rescue'
     status: 'running' | 'completed' | 'error'
     resultPreview?: string; elapsedMs?: number
   }> = []
@@ -637,9 +640,11 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     id: string; task: string; status: 'running' | 'done' | 'failed'
     summaryPreview?: string; turns?: number; costTokens?: number
   }> = []
-  // #996/#1003: 本轮文档写回的节集合 — edit_document 的 target_section 采集
-  // + doc_updated 投影回填标题;随 assistant_response metadata 持久化,
-  // 聊天记录成为可回溯的改动日志(刷新后"已改动"卡片仍可重建)。
+  // #996/#1003: 本轮文档写回的节集合 — 写回单点随 doc_updated 下发的
+  // changed_sections(实际变更节,覆盖 range-edit/full_text/insert_asset/
+  // fix_document_images 全路径);随 assistant_response metadata 持久化,
+  // 聊天记录成为可回溯的改动日志(刷新后"已改动"卡片仍可重建)。失败的
+  // 工具调用不产生 doc_updated,因此不会假称"改了这节"。
   const turnDocSections = new Map<string, string>()
   const ioWithChart: TurnIO = {
     ...io,
@@ -648,15 +653,12 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       if (chunk.type === 'chart_created') {
         chartMeta.push({ url: chunk.url, chartType: chunk.chart_type })
       } else if (chunk.type === 'tool_call' && chunk.seq !== undefined) {
-        if (chunk.tool === 'edit_document') {
-          const ts = String((chunk.args as Record<string, unknown> | undefined)?.target_section || '')
-          if (ts) turnDocSections.set(ts, turnDocSections.get(ts) || '')
-        }
         if (timelineTools.length < 40) {
           timelineTools.push({
             tool: chunk.tool,
             seq: chunk.seq,
             ...(chunk.round !== undefined ? { round: chunk.round } : {}),
+            ...(chunk.loop !== undefined ? { loop: chunk.loop } : {}),
             argsPreview: String(JSON.stringify(chunk.args) || '').slice(0, 120),
             status: 'running',
           })
@@ -668,12 +670,11 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           if (chunk.preview) entry.resultPreview = chunk.preview.slice(0, 80)
           if (chunk.elapsed_ms !== undefined) entry.elapsedMs = chunk.elapsed_ms
         }
-      } else if (chunk.type === 'doc_updated' && chunk.projection) {
-        // #996/#1003: 已采集的 target_section 用同帧投影回填节标题。
-        for (const n of chunk.projection.nodes) {
-          if (n.kind === 'section' && turnDocSections.has(n.id)) {
-            turnDocSections.set(n.id, n.heading || turnDocSections.get(n.id) || '')
-          }
+      } else if (chunk.type === 'doc_updated') {
+        // #996/#1003: 实际变更节(写回单点按新旧投影 hash diff 派生)回填
+        // 标题;这是唯一记录点,target_section 预记已移除(失败调用曾残留)。
+        for (const s of chunk.changed_sections ?? []) {
+          if (s.id) turnDocSections.set(s.id, s.heading || turnDocSections.get(s.id) || '')
         }
       } else if (chunk.type === 'subagent_started') {
         if (timelineSubs.length < 12) {
@@ -700,6 +701,10 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       io.send(chunk)
     },
   }
+  // #1019: 回合级共享预算 — main 与 doc-executor rescue 使用同一个实例，
+  // rescue 消费主循环剩余额度（不再各领 5 轮），推理字数/工具调用数/墙钟
+  // 也是全回合口径。
+  const turnBudget = new TurnBudget()
   const loopResult = await runToolCallLoop({
     currentMessages: messages,
     toolRegistry,
@@ -710,6 +715,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     userId,
     sessionId: sid,
     model: visionModel,
+    budget: turnBudget,
+    // #1025: 主循环身份（rescue 在 doc-executor 内标注）。
+    loop: 'main',
   })
   let finalContent = loopResult.finalContent
   const loopMessages = loopResult.messages
@@ -725,6 +733,7 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // #976: 接力判据 — 活跃清单 backlog + 用户「继续/重试第 K 步」语义。
   const activePlanForRescue = await loadActivePlan(userId, sid).catch(() => null)
   const planBacklogForRescue = planBacklog(activePlanForRescue)
+  let rescueExhaustedReason: TurnBudgetExhaustReason | undefined
   if (shouldRunDocExecutor({
     sessionId: sid,
     userText: body.text,
@@ -749,10 +758,24 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
       tools,
       model: visionModel,
       unbackedClaimCount: loopResult.unbackedClaimCount,
+      // #1019: 同一份回合预算 — rescue 不再另起 5 轮。
+      budget: turnBudget,
     })
     if (rescue.executedWriteTools.length > 0) {
       finalContent = rescue.finalContent || finalContent
     }
+    rescueExhaustedReason = rescue.exhaustedReason
+  }
+
+  // #1019/#1026: 回合预算耗尽（轮次/工具调用/推理字数/墙钟任一维度）—
+  // 用户可见、可行动的熔断提示；此刻远早于 chat-handler 的 60 分钟
+  // watchdog，不再让用户盯着"正在分析…"等兜底。提示同时并入 finalContent
+  // 以便刷新后仍可回溯。
+  const exhaustedReason = loopResult.exhaustedReason ?? rescueExhaustedReason
+  if (exhaustedReason) {
+    const notice = turnBudgetExhaustedNotice(turnBudget)
+    send({ type: 'context_info', text: notice, kind: 'warning' })
+    finalContent = finalContent ? `${finalContent}\n\n${notice}` : notice
   }
 
   // Stream the final response

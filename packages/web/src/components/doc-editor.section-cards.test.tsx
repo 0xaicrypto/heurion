@@ -210,3 +210,116 @@ describe('#996-followup 多级标题(H1-H3)扁平卡片', () => {
     expect((container.querySelector('.ProseMirror > h3') as HTMLElement).classList.contains('sec-collapsed')).toBe(false);
   });
 });
+
+describe('#996-followup 移动端自动折叠 — 正在编辑的嵌套子节不被祖先折叠遮挡', () => {
+  const NESTED_BODY = ['## Parent', '', 'parent text', '', '### Child', '', 'child text', '', '## Next', '', 'next text'].join('\n');
+
+  /** span 按大纲语义:父节 span 包含子节(与 buildBlockProjection 同口径)。 */
+  function mobileNestedData(): NonNullable<Parameters<typeof DocEditor>[0]['sectionCards']> {
+    return {
+      projection: {
+        schema_version: 1 as const,
+        body_hash: 'mobile0000000',
+        nodes: [
+          { id: 's_parent', kind: 'section' as const, heading: 'Parent', level: 2, hash: 'h_parent', start: 0, end: 47, parent_id: null },
+          { id: 's_child', kind: 'section' as const, heading: 'Child', level: 3, hash: 'h_child', start: 24, end: 47, parent_id: null },
+          { id: 's_next', kind: 'section' as const, heading: 'Next', level: 2, hash: 'h_next', start: 47, end: 65, parent_id: null },
+        ],
+      },
+      editingIds: ['s_child'],
+    };
+  }
+
+  beforeEach(() => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+    (window as any).matchMedia = vi.fn().mockReturnValue({
+      matches: true, media: '(max-width: 767px)', onchange: null,
+      addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn(),
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    (window as any).matchMedia = (query: string) => ({
+      matches: false, media: query, onchange: null,
+      addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
+    });
+  });
+
+  test('父节(祖先)与正在编辑的子节都不自动折叠,其他同级节照常折叠', async () => {
+    const { container } = render(
+      <DocEditor value={NESTED_BODY} onChange={() => {}} diffReview={null} sectionCards={mobileNestedData()} />,
+    );
+    await new Promise((r) => setTimeout(r, 200));
+
+    const h2s = container.querySelectorAll('.ProseMirror > h2');
+    const childHeading = container.querySelector('.ProseMirror > h3') as HTMLElement;
+    const parentPara = h2s[0].nextElementSibling as HTMLElement;
+    // 正在编辑的嵌套子节没有被父节折叠遮挡
+    expect(childHeading.classList.contains('sec-collapsed')).toBe(false);
+    expect(parentPara.classList.contains('sec-collapsed')).toBe(false);
+    // 其他同级节(Next)照常自动折叠:标题保留、内容隐藏
+    const nextPara = h2s[1].nextElementSibling as HTMLElement;
+    expect(nextPara.classList.contains('sec-collapsed')).toBe(true);
+  });
+});
+
+describe('#996-followup H4-H6 不占用投影节索引(防折叠按钮控错节)', () => {
+  // Alpha 带 markdown 强调标记:投影 heading 是原文(**)而编辑器 textContent
+  // 是纯文本 — H4 存在走文本对位路径,验证规范化后仍能挂上 meta。
+  const BODY_H4 = ['## **Alpha**', '', 'alpha text', '', '#### Deep Note', '', 'deep text', '', '## Beta', '', 'beta text'].join('\n');
+  const BETA_POS = BODY_H4.indexOf('## Beta');
+
+  /** 投影只含 H1-H3(HEADING_RE);正文含 H4 — 旧回退 sections[hi] 会错位。 */
+  function dataWithH4(): NonNullable<Parameters<typeof DocEditor>[0]['sectionCards']> {
+    return {
+      projection: {
+        schema_version: 1 as const,
+        body_hash: 'h4h4h4h4h4h4',
+        nodes: [
+          { id: 's_alpha', kind: 'section' as const, heading: '**Alpha**', level: 2, hash: 'h_alpha', start: 0, end: BETA_POS, parent_id: null },
+          { id: 's_beta', kind: 'section' as const, heading: 'Beta', level: 2, hash: 'h_beta', start: BETA_POS, end: BODY_H4.length, parent_id: null },
+        ],
+      },
+      meta: {
+        s_alpha: { author: 'ai' as const, verify_status: 'pending' as const, updated_at: 't1' },
+        s_beta: { author: 'human' as const, verify_status: 'verified' as const, updated_at: 't0' },
+      },
+    };
+  }
+
+  beforeEach(() => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+  });
+  afterEach(() => cleanup());
+
+  test('H4 卡片不误挂相邻 H2 的 meta;点 H4 折叠只折叠自己,不动 Beta', async () => {
+    const { container } = render(
+      <DocEditor value={BODY_H4} onChange={() => {}} diffReview={null} sectionCards={dataWithH4()} />,
+    );
+    await new Promise((r) => setTimeout(r, 200));
+
+    const h4 = container.querySelector('.ProseMirror > h4') as HTMLElement;
+    expect(h4).toBeTruthy();
+    // H4 不是节:不得拿到 Beta(旧位置回退 sections[1])的 meta
+    expect(h4.querySelector('.sec-badge-author-human')).toBeNull();
+    expect(h4.querySelector('.sec-badge-author-ai')).toBeNull();
+    // #1021: 投影对位失败有可见标记（不再静默无提示）
+    expect(h4.querySelector('.sec-badges-unmatched')).toBeTruthy();
+    // 两个 H2 各自对位正确
+    const h2s = container.querySelectorAll('.ProseMirror > h2');
+    expect(h2s[0].querySelector('.sec-badge-author-ai')).toBeTruthy();
+    expect(h2s[1].querySelector('.sec-badge-author-human')).toBeTruthy();
+    expect(h2s[0].querySelector('.sec-badges-unmatched')).toBeNull();
+
+    // 点 H4 折叠 → 只隐藏 H4 自身内容;Beta 内容不受影响(旧行为会折叠 Beta)
+    fireEvent.click(h4.querySelector('.sec-chevron') as HTMLElement);
+    await new Promise((r) => setTimeout(r, 100));
+    const deepPara = h4.nextElementSibling as HTMLElement;
+    const beta2 = container.querySelectorAll('.ProseMirror > h2')[1] as HTMLElement;
+    const betaPara = beta2.nextElementSibling as HTMLElement;
+    expect(deepPara.classList.contains('sec-collapsed')).toBe(true);
+    expect(betaPara.classList.contains('sec-collapsed')).toBe(false);
+  });
+});

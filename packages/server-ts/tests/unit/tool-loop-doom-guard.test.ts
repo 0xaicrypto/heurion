@@ -141,3 +141,88 @@ describe('#927 tool-call loop — doom-loop 拦截', () => {
   })
 })
 
+describe('#1024 语义熔断 — 同工具 + 同错误分类连续失败', () => {
+  test('参数不同但同类错误第 3 次后熔断:第 4 次调用被跳过并纠偏', async () => {
+    let runs = 0
+    const registry = new ToolRegistry(testCtx)
+    const probe = new ProbeTool(() => {
+      runs++
+      return Promise.resolve({ success: false, error: 'old_text 在文档中未找到（已忽略空格/换行差异后仍不匹配）' })
+    })
+    Object.defineProperty(probe, 'name', { value: 'generate_image' })
+    registry.register(probe)
+    const defs = [{ type: 'function' as const, function: { name: 'generate_image', description: '', parameters: { type: 'object', properties: {} } } }]
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"generate_image","arguments":{"prompt":"a1"}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"generate_image","arguments":{"prompt":"a2"}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"generate_image","arguments":{"prompt":"a3"}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"generate_image","arguments":{"prompt":"a4"}}'))
+      .mockResolvedValueOnce('已改用其他方式，并说明失败原因。')
+
+    const { io, chunks } = makeIO()
+    const { finalContent } = await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '生成图' }],
+      toolRegistry: registry,
+      tools: defs,
+      apiKey: 'k',
+      io,
+      ctx: testCtx,
+      userId: 'user_1',
+      sessionId: 'sess_1',
+    })
+
+    // 前 3 次真实执行(参数不同,doom 字节比对不命中);第 4 次被语义熔断跳过
+    expect(runs).toBe(3)
+    expect(finalContent).toContain('已改用其他方式')
+    const results = chunks.filter((c) => c.type === 'tool_result')
+    expect(results).toHaveLength(4)
+    expect((results[3] as any).success).toBe(false)
+    expect((results[3] as any).preview).toContain('已拦截')
+
+    // 纠偏消息进入下一轮上下文 + warning 可见
+    const fourthCallMessages = (vi.mocked(deepseekChat).mock.calls[3]?.[0] ?? []) as any[]
+    expect(fourthCallMessages.some((m) => String(m.content).includes('同类错误'))).toBe(true)
+    expect(chunks.some((c) => c.type === 'context_info' && (c as any).kind === 'warning')).toBe(true)
+  })
+
+  test('错误分类交替时不误熔断(参数不同 + 错误不同)', async () => {
+    const errors = ['old_text 在文档中未找到', '工具执行超时', 'old_text 在文档中未找到', '工具执行超时']
+    let runs = 0
+    const registry = new ToolRegistry(testCtx)
+    const probe = new ProbeTool(() => {
+      const error = errors[runs] ?? errors[0]
+      runs++
+      return Promise.resolve({ success: false, error })
+    })
+    Object.defineProperty(probe, 'name', { value: 'generate_image' })
+    registry.register(probe)
+    const defs = [{ type: 'function' as const, function: { name: 'generate_image', description: '', parameters: { type: 'object', properties: {} } } }]
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"generate_image","arguments":{"prompt":"b1"}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"generate_image","arguments":{"prompt":"b2"}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"generate_image","arguments":{"prompt":"b3"}}'))
+      .mockResolvedValueOnce(callBlock('{"name":"generate_image","arguments":{"prompt":"b4"}}'))
+      .mockResolvedValueOnce('done')
+
+    const { io, chunks } = makeIO()
+    await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '生成图' }],
+      toolRegistry: registry,
+      tools: defs,
+      apiKey: 'k',
+      io,
+      ctx: testCtx,
+      userId: 'user_1',
+      sessionId: 'sess_1',
+    })
+
+    // 分类交替 → 连续同类计数始终不足 3,四次都真实执行
+    expect(runs).toBe(4)
+    const results = chunks.filter((c) => c.type === 'tool_result')
+    expect(results).toHaveLength(4)
+    expect(results.some((c) => String((c as any).preview || '').includes('已拦截'))).toBe(false)
+  })
+})
+

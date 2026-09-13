@@ -79,6 +79,14 @@ export interface DocVersionResult {
    * 按无数据处理）。
    */
   sectionMeta?: SectionMetaMap
+  /**
+   * #996/#1003: 本次写回实际变更的节（id + 标题）— 由写回单点按新旧投影
+   * hash diff 派生，覆盖 range-edit/full_text/insert_asset/fix_document_images
+   * 等全部写回路径（此前只有 edit_document 带 target_section 时前端能记录）。
+   * 仅成功且 body 有变化、节级确有变更时返回；失败的写回不产生此字段，
+   * 聊天改动日志不会假称"改了这节"。
+   */
+  changedSections?: Array<{ id: string; heading: string }>
 }
 
 function parseDeckJson(raw: unknown): unknown {
@@ -107,12 +115,14 @@ async function loadSectionMetaMap(docId: string): Promise<SectionMetaMap> {
 }
 
 /**
- * 节级元数据维护（body 有变化的成功写回后调用）：旧/新投影都用确定性纯
- * 函数重建（不信任存量投影列），diff section hash → 变更节 upsert（最后
- * 编辑者语义：author=writeSource；AI 路径落 pending，human 路径直接
- * verified），消失节清理旧行。best-effort：元数据是 UX 信任信号，任何
- * 失败只降级（卡片缺标签），不回滚已落库的正文。
- * 返回 { meta, changedIds } — changedIds 供 AI 终态化器限定翻牌范围。
+ * 节级元数据维护（body 有变化的成功写回后调用）：diff 旧/新投影 section
+ * hash → 变更节 upsert（最后编辑者语义：author=writeSource；AI 路径落
+ * pending，human 路径直接 verified），消失节清理旧行。best-effort：元数据
+ * 是 UX 信任信号，任何失败只降级（卡片缺标签），不回滚已落库的正文。
+ * 返回 { meta, changedIds, changedSections } — changedIds 供 AI 终态化器
+ * 限定翻牌范围；changedSections 供聊天改动日志。
+ * review 复核#10: 新旧投影可传入（写回单点已算 / loadProjection 复用存量
+ * 列），缺省才重建 — 长文档不再每次写回多解析 2 遍全文。
  */
 async function applySectionMetaWrites(args: {
   docId: string
@@ -120,17 +130,27 @@ async function applySectionMetaWrites(args: {
   writeSource: 'ai' | 'human'
   prevBody: string
   nextBody: string
-}): Promise<{ meta: SectionMetaMap; changedIds: string[] } | undefined> {
-  const prevNodes = buildBlockProjection(args.prevBody).nodes.filter((n) => n.kind === 'section')
-  const nextNodes = buildBlockProjection(args.nextBody).nodes.filter((n) => n.kind === 'section')
+  prevProjection?: BlockProjection
+  nextProjection?: BlockProjection
+}): Promise<{ meta: SectionMetaMap; changedIds: string[]; changedSections: Array<{ id: string; heading: string }> } | undefined> {
+  const prevProjection = args.prevProjection ?? buildBlockProjection(args.prevBody)
+  const nextProjection = args.nextProjection ?? buildBlockProjection(args.nextBody)
+  const prevNodes = prevProjection.nodes.filter((n) => n.kind === 'section')
+  const nextNodes = nextProjection.nodes.filter((n) => n.kind === 'section')
   const prevHash = new Map(prevNodes.map((n) => [n.id, n.hash]))
   const changed = nextNodes.filter((n) => prevHash.get(n.id) !== n.hash)
   const nextIds = new Set(nextNodes.map((n) => n.id))
-  const removedIds = prevNodes.filter((n) => !nextIds.has(n.id)).map((n) => n.id)
+  const removedNodes = prevNodes.filter((n) => !nextIds.has(n.id))
+  const removedIds = removedNodes.map((n) => n.id)
   const changedIds = changed.map((n) => n.id)
+  // 变更节 + 被删除节(连同标题从旧投影取)— 聊天改动日志的完整"改了哪节"。
+  const changedSections = [
+    ...changed.map((n) => ({ id: n.id, heading: (n.heading || '').slice(0, 300) })),
+    ...removedNodes.map((n) => ({ id: n.id, heading: (n.heading || '').slice(0, 300) })),
+  ]
   if (changed.length === 0 && removedIds.length === 0) {
     // 节级无变化（body 级微调）— 现有 meta 即最终态，读出供透传。
-    return { meta: await loadSectionMetaMap(args.docId), changedIds: [] }
+    return { meta: await loadSectionMetaMap(args.docId), changedIds: [], changedSections: [] }
   }
   const now = new Date().toISOString()
   for (const node of changed) {
@@ -152,21 +172,21 @@ async function applySectionMetaWrites(args: {
   if (removedIds.length > 0) {
     await prisma.docSectionMeta.deleteMany({ where: { docId: args.docId, sectionId: { in: removedIds } } })
   }
-  return { meta: await loadSectionMetaMap(args.docId), changedIds }
+  return { meta: await loadSectionMetaMap(args.docId), changedIds, changedSections }
 }
 
 /**
- * AI 写回终态化器（fire-and-forget）— pending → verified / failed。
- * 校验：重读正文，已被并发推进则不碰（下一次写回的 pending 接管）；
- * 投影重建 body_hash 与写回一致 → verified，否则 failed（卡片显式失败态，
- * 不做只有绿/琥珀两态的假可信）。updateMany 限定 pending — 不冲掉期间
- * 人工编辑已置的 verified/最后编辑者覆盖。
+ * AI 写回终态化器（fire-and-forget）— pending → verified。
+ * 校验：重读正文，已被并发推进则不碰（下一次写回的 pending 接管）。
+ * review 复核#10: 正文逐字一致即 verified — 投影是 body 的确定性纯函数
+ * （#989 不变量），写回时已按同一 body 算过 hash，再解析一遍全文重建只是
+ * 浪费；原先的 failed 分支在此前置条件下不可达（body 不一致已提前 return）。
+ * updateMany 限定 pending — 不冲掉期间人工编辑已置的 verified/最后编辑者覆盖。
  */
 function scheduleSectionMetaFinalize(args: {
   docId: string
   userId: string
   body: string
-  bodyHash: string
   sectionIds: string[]
 }): void {
   void (async () => {
@@ -175,28 +195,11 @@ function scheduleSectionMetaFinalize(args: {
       select: { body: true },
     })
     if (!fresh || String(fresh.body) !== args.body) return
-    const rebuilt = buildBlockProjection(args.body)
-    const status = rebuilt.body_hash === args.bodyHash ? 'verified' : 'failed'
     await prisma.docSectionMeta.updateMany({
       where: { docId: args.docId, sectionId: { in: args.sectionIds }, verifyStatus: 'pending' },
-      data: { verifyStatus: status, updatedAt: new Date().toISOString() },
+      data: { verifyStatus: 'verified', updatedAt: new Date().toISOString() },
     })
   })().catch((err) => log.warn('section meta finalize failed (best-effort)', { err: String(err) }))
-}
-
-/** #996/#999: restore 路径（绕过单点的仅存写回路径之一）的元数据同步 —
- * 最后编辑者语义：恢复动作是用户操作，受影响节 → human/verified；消失节清理。 */
-export async function refreshSectionMetaForRestore(args: {
-  docId: string
-  userId: string
-  prevBody: string
-  nextBody: string
-}): Promise<void> {
-  try {
-    await applySectionMetaWrites({ ...args, writeSource: 'human' })
-  } catch (err) {
-    log.warn('section meta refresh after restore failed (best-effort)', { err: String(err) })
-  }
 }
 
 export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersionResult> {
@@ -298,18 +301,26 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
     }
   }
   // #996/#999: 节级元数据 — 变更节 upsert（AI 路径 pending → 终态化器翻
-  // verified/failed；human 路径直接 verified）+ 消失节清理。best-effort:
+  // verified；human 路径直接 verified）+ 消失节清理。best-effort:
   // 失败只降级为"卡片缺标签"，不影响已落库正文。
+  // review 复核#10: 传入已算好的 next 投影 — 不再指针级元数据比对时重解析
+  // 新正文。prev 投影必须现场重建:存量投影列可能是旧 hash 规则(含子节)
+  // 算的历史数据,复用会让"子节变更污染父节"的误标借道回归。
   const writeSource = input.writeSource ?? 'human'
   let sectionMeta: SectionMetaMap | undefined
+  let changedSections: Array<{ id: string; heading: string }> | undefined
   try {
-    const applied = await applySectionMetaWrites({ docId: input.docId, userId: input.userId, writeSource, prevBody, nextBody })
+    const applied = await applySectionMetaWrites({
+      docId: input.docId, userId: input.userId, writeSource, prevBody, nextBody,
+      nextProjection: projection,
+    })
     if (applied) {
       sectionMeta = applied.meta
+      changedSections = applied.changedSections
       if (writeSource === 'ai' && applied.changedIds.length > 0) {
         scheduleSectionMetaFinalize({
           docId: input.docId, userId: input.userId,
-          body: nextBody, bodyHash: projection.body_hash, sectionIds: applied.changedIds,
+          body: nextBody, sectionIds: applied.changedIds,
         })
       }
     }
@@ -323,5 +334,6 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
     changed: true,
     projection,
     ...(sectionMeta ? { sectionMeta } : {}),
+    ...(changedSections && changedSections.length > 0 ? { changedSections } : {}),
   }
 }

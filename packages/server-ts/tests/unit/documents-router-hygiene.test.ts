@@ -43,8 +43,6 @@ vi.mock('../../src/common/prisma.js', () => ({
 vi.mock('../../src/common/auth.guard.js', () => ({ authGuard: async () => {} }))
 vi.mock('../../src/tools/doc-version-writer.js', () => ({
   writeDocVersion: mocks.writeDocVersion,
-  // #996/#999: restore 元数据同步 — 路由内 fire-and-forget,单测不触达。
-  refreshSectionMetaForRestore: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('../../src/modules/documents/markdown-export.js', () => ({
   renderDocxBuffer: vi.fn(),
@@ -268,29 +266,62 @@ describe('#980 废弃端点清理', () => {
   })
 })
 
-describe('#989 Phase 1 — restore 路径投影同帧重算(全路径走查)', () => {
-  test('恢复快照 → doc.update data 携带与新 body 一致的 blockProjection', async () => {
+describe('#989 Phase 1 — restore 路径走写回单点(投影/元数据同帧,全路径走查)', () => {
+  test('恢复快照 → writeDocVersion(body+deck+baseBody,label 恢复前版本),不再裸 doc.update', async () => {
     const { routes, app } = makeHarness()
     await documentsRouter(app as never)
     const restore = routes.get('POST /api/v1/docs/:docId/snapshots/:snapId/restore')
     expect(restore).toBeTruthy()
     // 归属:doc + 快照都属于调用者
-    mocks.docFindFirst
-      .mockResolvedValueOnce({ ...EXISTING, body: 'current body' })   // doc
-      .mockResolvedValue({ id: 7, body: 'snapshot body', deck: null }) // snap
-    mocks.snapFindFirst.mockResolvedValue({ id: 7, body: 'snapshot body', deck: null })
-    const { buildBlockProjection } = await import('../../src/lib/block-projection.js')
+    mocks.docFindFirst.mockResolvedValue({ ...EXISTING, body: 'current body' })
+    mocks.snapFindFirst.mockResolvedValue({ id: 7, body: 'snapshot body', deck: '{"title":"d","slides":[]}' })
+    mocks.writeDocVersion.mockResolvedValue({ body: 'snapshot body', deck: { title: 'd', slides: [] }, changed: true })
 
-    await restore(
+    const res = await restore(
       { params: { docId: DOC, snapId: '7' }, user: { userId: USER } },
       makeReply(),
     )
 
-    const [args] = mocks.docUpdate.mock.calls[0]
-    expect(args.data.body).toBe('snapshot body')
-    const projection = JSON.parse(args.data.blockProjection)
-    const expected = buildBlockProjection('snapshot body')
-    expect(projection.body_hash).toBe(expected.body_hash)
+    // 单点参数:恢复正文 + 解析后的 deck + baseBody(乐观锁)+ 恢复前版本快照 label
+    expect(mocks.writeDocVersion).toHaveBeenCalledWith({
+      userId: USER, docId: DOC,
+      body: 'snapshot body',
+      deck: { title: 'd', slides: [] },
+      baseBody: 'current body',
+      writeSource: 'human',
+      snapshotLabel: '恢复前版本',
+    })
+    // 不再路由内手写 doc.update / docSnapshot.create
+    expect(mocks.docUpdate).not.toHaveBeenCalled()
+    expect(res).toEqual({ restored: true })
+  })
+
+  test('deck 未快照的历史行 → deck:null(清空),不残留旧画布', async () => {
+    const { routes, app } = makeHarness()
+    await documentsRouter(app as never)
+    const restore = routes.get('POST /api/v1/docs/:docId/snapshots/:snapId/restore')
+    mocks.docFindFirst.mockResolvedValue({ ...EXISTING, body: 'current body' })
+    mocks.snapFindFirst.mockResolvedValue({ id: 7, body: 'snapshot body', deck: null })
+    mocks.writeDocVersion.mockResolvedValue({ body: 'snapshot body', deck: null, changed: true })
+
+    await restore({ params: { docId: DOC, snapId: '7' }, user: { userId: USER } }, makeReply())
+
+    expect(mocks.writeDocVersion).toHaveBeenCalledWith(expect.objectContaining({ deck: null }))
+  })
+
+  test('writer 乐观锁冲突 → 409,不返回 restored', async () => {
+    const { routes, app } = makeHarness()
+    await documentsRouter(app as never)
+    const restore = routes.get('POST /api/v1/docs/:docId/snapshots/:snapId/restore')
+    mocks.docFindFirst.mockResolvedValue(EXISTING)
+    mocks.snapFindFirst.mockResolvedValue({ id: 7, body: 'snapshot body', deck: null })
+    mocks.writeDocVersion.mockResolvedValue({ body: '', deck: null, changed: false, conflict: true, error: 'stale' })
+    const reply = makeReply()
+
+    await restore({ params: { docId: DOC, snapId: '7' }, user: { userId: USER } }, reply)
+
+    expect(reply.status).toHaveBeenCalledWith(409)
+    expect(reply.send).toHaveBeenCalledWith({ error: 'stale' })
   })
 })
 

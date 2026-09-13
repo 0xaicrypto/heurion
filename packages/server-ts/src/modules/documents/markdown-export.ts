@@ -8,7 +8,7 @@
  * images are read from the uploads dir and embedded (webp/gif/bmp 经 sharp
  * 转 png 后嵌入 — docx/pdfkit 不支持 webp)。
  */
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table as DocxTable, TableRow as DocxTableRow, TableCell as DocxTableCell, WidthType, ImageRun } from 'docx'
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table as DocxTable, TableRow as DocxTableRow, TableCell as DocxTableCell, WidthType, ImageRun, LevelFormat, AlignmentType, ExternalHyperlink } from 'docx'
 import PDFDocument from 'pdfkit'
 import fs from 'fs'
 import path from 'path'
@@ -33,6 +33,20 @@ export type ExportFormat = 'docx' | 'pdf'
 
 export function isExportFormat(v: string | undefined): v is ExportFormat {
   return v === 'docx' || v === 'pdf'
+}
+
+/**
+ * Loose-list continuation index — CommonMark 允许列表项之间夹空行(loose
+ * list),整体仍是同一个列表。返回下一个同类列表项的行号(跳过空行),没有
+ * 则返回 null(空行交回主循环按 blank 块处理)。
+ * review 复核(导出编号): 此前空行直接截断列表,References 每条 `1.`
+ * 分属独立 ordered 块 → docx/pdf 导出全部显示 1(页面 marked 渲染为
+ * 一个 <ol> 正常递增,故只有导出暴露)。
+ */
+function nextListContinuation(lines: string[], from: number, isItem: (l: string) => boolean): number | null {
+  let j = from
+  while (j < lines.length && !lines[j].trim()) j++
+  return j < lines.length && isItem(lines[j]) ? j : null
 }
 
 // ── Block parser ─────────────────────────────────────────────────────────
@@ -81,23 +95,28 @@ export function parseMarkdownBlocks(body: string): ExportBlock[] {
       continue
     }
 
-    // Unordered list
+    // Unordered list (blank lines between items = loose list, still one list)
     if (/^[-*+]\s/.test(line)) {
       const items: string[] = []
       while (i < lines.length && /^[-*+]\s/.test(lines[i])) {
         items.push(lines[i].replace(/^[-*+]\s/, ''))
         i++
+        const next = nextListContinuation(lines, i, (l) => /^[-*+]\s/.test(l))
+        if (next !== null) i = next
       }
       blocks.push({ kind: 'bullet', items })
       continue
     }
 
-    // Ordered list
+    // Ordered list (blank lines between items = loose list, still one list).
+    // 源文常见 lazy 编号(每项都写 `1.`)不再逐条成块 — 渲染时统一重排 1..n。
     if (/^\d+[.)]\s/.test(line)) {
       const items: string[] = []
       while (i < lines.length && /^\d+[.)]\s/.test(lines[i])) {
         items.push(lines[i].replace(/^\d+[.)]\s/, ''))
         i++
+        const next = nextListContinuation(lines, i, (l) => /^\d+[.)]\s/.test(l))
+        if (next !== null) i = next
       }
       blocks.push({ kind: 'ordered', items })
       continue
@@ -124,10 +143,32 @@ export function parseMarkdownBlocks(body: string): ExportBlock[] {
       continue
     }
 
-    blocks.push({ kind: 'paragraph', text: line })
+    // Paragraph: consecutive plain lines form ONE markdown paragraph (CommonMark
+    // soft wrap) — previously each line became its own Paragraph, so hard-wrapped
+    // LLM output导出后排版松散(与页面 marked 渲染不一致)。
+    const parts: string[] = [line.trim()]
     i++
+    while (i < lines.length && !isBlockStart(lines[i])) {
+      parts.push(lines[i].trim())
+      i++
+    }
+    blocks.push({ kind: 'paragraph', text: parts.join(' ') })
   }
   return blocks
+}
+
+/** 该行是否是块级结构(标题/列表/围栏/表格/图片/分割线/空行)的起点。 */
+function isBlockStart(line: string): boolean {
+  const t = line.trim()
+  if (!t) return true
+  if (t.startsWith('```') || t.startsWith('~~~')) return true
+  if (t.startsWith('|') && line.includes('|')) return true
+  if (/^#{1,6}\s+/.test(t)) return true
+  if (/^[-*+]\s/.test(line)) return true
+  if (/^\d+[.)]\s/.test(line)) return true
+  if (/^[-*_]{3,}$/.test(t)) return true
+  if (/^!\[([^\]]*)\]\(([^)]+)\)\s*$/.test(t)) return true
+  return false
 }
 
 function parseTableBlock(lines: string[]): ExportBlock | null {
@@ -153,20 +194,28 @@ export function parseInlineMarkdown(text: string): any[] {
   const italicRegex = /\*(.+?)\*|_(.+?)_/g
   // Inline code `text`
   const codeRegex = /`([^`]+)`/g
+  // Links [text](url) — 参考条目常见 DOI/URL;不再原样输出 markdown。
+  const linkRegex = /(?<!!)\[([^\]]*)\]\(([^)\s]+)\)/g
 
-  type Token = { type: 'bold' | 'italic' | 'code'; text: string; start: number; end: number }
+  type Token = { type: 'bold' | 'italic' | 'code' | 'link'; text: string; url?: string; start: number; end: number }
   const tokens: Token[] = []
+  // 先收集 link,再收其余 token 并跳过与已收 token 重叠者(嵌套强调按外层
+  // 处理,避免同一段文本被重复输出)。
+  const push = (t: Token) => {
+    if (!tokens.some((x) => x.start < t.end && x.end > t.start)) tokens.push(t)
+  }
 
+  for (const match of remaining.matchAll(linkRegex)) {
+    push({ type: 'link', text: match[1], url: match[2], start: match.index!, end: match.index! + match[0].length })
+  }
   for (const match of remaining.matchAll(boldRegex)) {
-    tokens.push({ type: 'bold', text: match[1] || match[2], start: match.index!, end: match.index! + match[0].length })
+    push({ type: 'bold', text: match[1] || match[2], start: match.index!, end: match.index! + match[0].length })
   }
   for (const match of remaining.matchAll(codeRegex)) {
-    tokens.push({ type: 'code', text: match[1], start: match.index!, end: match.index! + match[0].length })
+    push({ type: 'code', text: match[1], start: match.index!, end: match.index! + match[0].length })
   }
   for (const match of remaining.matchAll(italicRegex)) {
-    if (!tokens.some(t => t.start <= match.index! && t.end >= match.index! + match[0].length)) {
-      tokens.push({ type: 'italic', text: match[1] || match[2], start: match.index!, end: match.index! + match[0].length })
-    }
+    push({ type: 'italic', text: match[1] || match[2], start: match.index!, end: match.index! + match[0].length })
   }
 
   if (tokens.length === 0) return [new TextRun(remaining)]
@@ -175,11 +224,23 @@ export function parseInlineMarkdown(text: string): any[] {
   let pos = 0
   for (const tok of tokens) {
     if (pos < tok.start) runs.push(new TextRun(remaining.slice(pos, tok.start)))
-    const opts: any = {}
-    if (tok.type === 'bold') opts.bold = true
-    if (tok.type === 'italic') opts.italics = true
-    if (tok.type === 'code') opts.font = 'Consolas'
-    runs.push(new TextRun({ text: tok.text, ...opts }))
+    if (tok.type === 'link') {
+      // 只对 http(s)/mailto 生成真实超链接;其余(javascript: 等)退化为纯文本。
+      if (tok.url && /^(https?:|mailto:)/i.test(tok.url)) {
+        runs.push(new ExternalHyperlink({
+          children: [new TextRun({ text: tok.text, style: 'Hyperlink' })],
+          link: tok.url,
+        }))
+      } else {
+        runs.push(new TextRun(tok.text))
+      }
+    } else {
+      const opts: any = {}
+      if (tok.type === 'bold') opts.bold = true
+      if (tok.type === 'italic') opts.italics = true
+      if (tok.type === 'code') opts.font = 'Consolas'
+      runs.push(new TextRun({ text: tok.text, ...opts }))
+    }
     pos = tok.end
   }
   if (pos < remaining.length) runs.push(new TextRun(remaining.slice(pos)))
@@ -238,6 +299,9 @@ export async function loadExportImage(userId: string, url: string): Promise<Expo
 export async function renderDocxBuffer(title: string, body: string, userId?: string): Promise<Buffer> {
   const blocks = parseMarkdownBlocks(body)
   const children: any[] = []
+  // review 复核(导出编号): 每个有序列表块独立 concrete numbering instance —
+  // 同一文档多个列表各自从 1 开始(而不是延续上一列表),编号由 Word 生成。
+  let orderedInstance = 0
 
   // Title
   children.push(new Paragraph({
@@ -250,10 +314,16 @@ export async function renderDocxBuffer(title: string, body: string, userId?: str
     switch (block.kind) {
       case 'heading': {
         const level = block.level
+        // H4-H6 逐级映射(此前 4-6 全落到 Heading3,层级在导出后丢失)。
+        const headingLevels = [
+          undefined,
+          HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3,
+          HeadingLevel.HEADING_4, HeadingLevel.HEADING_5, HeadingLevel.HEADING_6,
+        ] as const
         children.push(new Paragraph({
           spacing: { before: 240, after: 120 },
           children: parseInlineMarkdown(block.text),
-          heading: (['', HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3, HeadingLevel.HEADING_3, HeadingLevel.HEADING_3, HeadingLevel.HEADING_3] as any)[level] || HeadingLevel.HEADING_1,
+          heading: headingLevels[level] ?? HeadingLevel.HEADING_1,
         }))
         break
       }
@@ -268,15 +338,15 @@ export async function renderDocxBuffer(title: string, body: string, userId?: str
         }
         break
       case 'ordered': {
-        let num = 1
+        // 自动编号(不再拼字面 `${n}. `,避免与 numbering 双重编号);
+        // instance 每块递增 → 各列表从 1 重新开始。
+        const instance = orderedInstance++
         for (const item of block.items) {
           children.push(new Paragraph({
             spacing: { before: 40, after: 40 },
-            numbering: { reference: 'ordered', level: 0 },
-            indent: { left: 400 },
-            children: [new TextRun({ text: `${num}. ` }), ...parseInlineMarkdown(item)],
+            numbering: { reference: 'ordered', level: 0, instance },
+            children: parseInlineMarkdown(item),
           }))
-          num++
         }
         break
       }
@@ -343,6 +413,22 @@ export async function renderDocxBuffer(title: string, body: string, userId?: str
   }
 
   const docx = new Document({
+    // review 复核(导出编号): reference 'ordered' 必须在 Document 注册 —
+    // 此前只写 `numbering: { reference: 'ordered' }` 而未注册 config,docx
+    // 库下发的 `w:numId="{ordered-0}"` 占位符无法解析成数字编号,Word 端
+    // 编号全部异常。注册后占位符在打包时替换为真实 numId。
+    numbering: {
+      config: [{
+        reference: 'ordered',
+        levels: [{
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: '%1.',
+          alignment: AlignmentType.START,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+        }],
+      }],
+    },
     sections: [{ properties: {}, children }],
   })
   return Packer.toBuffer(docx)

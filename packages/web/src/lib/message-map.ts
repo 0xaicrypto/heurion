@@ -24,7 +24,7 @@ export function mapWireMessage(m: ChatWireMessage): ChatMessage {
          */
         timeline?: {
           tools?: Array<{
-            tool: string; seq: number; round?: number; argsPreview?: string
+            tool: string; seq: number; round?: number; loop?: 'main' | 'rescue'; argsPreview?: string
             status: 'running' | 'completed' | 'error'
             resultPreview?: string; elapsedMs?: number
           }>;
@@ -60,6 +60,7 @@ export function mapWireMessage(m: ChatWireMessage): ChatMessage {
         status: (t.status === 'error' ? 'error' : 'done') as 'error' | 'done',
         seq: t.seq,
         ...(t.round !== undefined ? { round: t.round } : {}),
+        ...(t.loop !== undefined ? { loop: t.loop } : {}),
         ...(t.resultPreview ? { resultPreview: t.resultPreview } : {}),
         ...(t.elapsedMs !== undefined ? { elapsedMs: t.elapsedMs } : {}),
       }))

@@ -62,7 +62,13 @@ function HeadingMenu({ editor }: { editor: Editor }) {
       key: `h${level}`,
       label: `H${level}`,
       active: current === level,
-      run: () => { editor.chain().focus().toggleHeading({ level }).run(); },
+      // review 复核(写回批#7): menuitemradio 语义下点击已选中项应是确认
+      // 而非取消 — 此前统一走 toggleHeading,用户点当前 H2 想确认样式却把
+      // 标题降成正文。已生效 → no-op;切换只从其他级别经 setHeading 进入。
+      run: () => {
+        if (current === level) return;
+        editor.chain().focus().setHeading({ level }).run();
+      },
     })),
   ];
 
@@ -322,7 +328,24 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
         .sort((a, b) => (b[1].updated_at || '').localeCompare(a[1].updated_at || ''));
       keepId = latest[0]?.[0] ?? sections[0]?.id;
     }
-    setCollapsedKeys(sections.map((s) => s.id).filter((id) => id !== keepId));
+    // #996-followup: 折叠按大纲语义级联隐藏子孙 — keepId 的祖先节必须一并
+    // 保持展开,否则父节折叠会把正在编辑的嵌套子节整段盖住(移动端自动
+    // 折叠本意是聚焦当前节,反而看不见 AI 正在改哪儿)。祖先判定用投影 span
+    // 包含关系(父节 span 含子树)+ level 更浅。
+    const keepIds = new Set<string>();
+    const keep = sections.find((s) => s.id === keepId);
+    if (keep) {
+      keepIds.add(keep.id);
+      for (const s of sections) {
+        if (s.id !== keep.id && (s.level ?? 0) < (keep.level ?? 0) &&
+            s.start <= keep.start && s.end >= keep.end) {
+          keepIds.add(s.id);
+        }
+      }
+    } else if (keepId) {
+      keepIds.add(keepId);
+    }
+    setCollapsedKeys(sections.map((s) => s.id).filter((id) => !keepIds.has(id)));
   }, [editor, sectionCardsData]);
 
     // 审阅模式:应用 AI diff 并进入只读审阅

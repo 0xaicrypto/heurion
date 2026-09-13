@@ -55,9 +55,26 @@ export interface ChatMessage {
     status: 'running' | 'done' | 'error';
     seq?: number;
     round?: number;
+    /** #1025: 所属循环（main 主循环 / rescue 精简重试）。 */
+    loop?: 'main' | 'rescue';
     resultPreview?: string;
     elapsedMs?: number;
     startedAt?: number;
+  }>;
+  /**
+   * #1025: 结构化「尝试」— 按循环（main/rescue）+ 轮次分组推理与工具
+   * seq，替代"整回合一条不断增长的推理字符串"。UI 按尝试折叠展示：
+   * 第几次尝试、属于哪个循环、各自推理量多少。
+   */
+  attempts?: Array<{
+    loop: 'main' | 'rescue';
+    /** 0 = 首个工具调用前的准备阶段。 */
+    round: number;
+    reasoning: string;
+    seqs: number[];
+    /** 内部：最后一个 seq 落位时的 reasoning 长度 — 换轮时把之后的思考
+     *  归入新尝试（round 边界处的推理归属）。 */
+    mark?: number;
   }>;
   /**
    * #831: 子代理可见性 — 消息级（时间线渲染），按 id 聚合批量扇出；
@@ -160,8 +177,18 @@ function applyChunk(msg: ChatMessage, chunk: ChatStreamChunk): ChatMessage {
     case 'tier_classified':
       return { ...msg, tier: chunk.tier };
     case 'reasoning_chunk':
-    case 'thought':
-      return { ...msg, reasoning: (msg.reasoning || '') + chunk.text };
+    case 'thought': {
+      // #1025: 推理按尝试分段 — 追加到最后一个尝试；没有则建"准备阶段"
+      // （首个工具调用到达时会补上真实 loop/round）。
+      const attempts = [...(msg.attempts ?? [])];
+      const lastA = attempts[attempts.length - 1];
+      if (lastA) {
+        attempts[attempts.length - 1] = { ...lastA, reasoning: lastA.reasoning + chunk.text };
+      } else {
+        attempts.push({ loop: 'main', round: 0, reasoning: chunk.text, seqs: [] });
+      }
+      return { ...msg, reasoning: (msg.reasoning || '') + chunk.text, attempts };
+    }
     case 'final_answer_chunk':
       return {
         ...msg,
@@ -336,9 +363,33 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
         const prev = (last.toolCalls ?? []).map((tc) =>
           seq === undefined && tc.status === 'running' ? { ...tc, status: 'done' as const } : tc,
         );
+        // #1025: 归属尝试 — 同 loop+round 复用（一轮多次工具调用），否则开
+        // 新尝试；首个工具调用前的"准备阶段"推理补上真实 loop/round。
+        const loop = chunk.loop ?? 'main';
+        const round = chunk.round ?? 0;
+        const attempts = [...(last.attempts ?? [])];
+        const lastA = attempts[attempts.length - 1];
+        if (lastA && lastA.loop === loop && lastA.round === round) {
+          attempts[attempts.length - 1] = {
+            ...lastA,
+            seqs: seq !== undefined ? [...lastA.seqs, seq] : lastA.seqs,
+            mark: lastA.reasoning.length,
+          };
+        } else if (lastA && lastA.seqs.length === 0) {
+          attempts[attempts.length - 1] = { ...lastA, loop, round, seqs: seq !== undefined ? [seq] : [], mark: lastA.reasoning.length };
+        } else {
+          // 换轮/换循环：把上一尝试最后一次工具调用之后的推理（下一轮的
+          // 思考）切给新尝试，round 归属不再错位。
+          const carry = lastA ? lastA.reasoning.slice(lastA.mark ?? 0) : '';
+          if (lastA) {
+            attempts[attempts.length - 1] = { ...lastA, reasoning: lastA.reasoning.slice(0, lastA.mark ?? 0) };
+          }
+          attempts.push({ loop, round, reasoning: carry, seqs: seq !== undefined ? [seq] : [], mark: carry.length });
+        }
         msgs[msgs.length - 1] = {
           ...last,
-          toolCalls: [...prev, { tool: chunk.tool, argsPreview, status: 'running' as const, seq, round: chunk.round, startedAt: Date.now() }],
+          toolCalls: [...prev, { tool: chunk.tool, argsPreview, status: 'running' as const, seq, round: chunk.round, loop: chunk.loop, startedAt: Date.now() }],
+          attempts,
         };
       }
       return { ...s, messages: msgs };
