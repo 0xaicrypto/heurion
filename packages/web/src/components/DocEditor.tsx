@@ -17,13 +17,97 @@ import { SelectionBubble } from './selection-bubble';
 import { ProposalCard, type ProposalSource } from './ProposalCard';
 import { SectionCardsExtension, setSectionCards, type SectionCardsData } from '@/lib/section-cards';
 import { Button } from '@/components/ui';
+import { cn } from '@/lib/utils';
+import { useTranslation } from 'react-i18next';
 import {
-  Bold, Italic, Heading2, List, ListOrdered, Table as TableIcon,
+  Bold, Check, ChevronDown, Italic, List, ListOrdered, Table as TableIcon,
   Plus, Trash2, Undo2, Redo2,
 } from 'lucide-react';
 
 /** AI 作者身份 — 审阅模式下的变更标记作者色。 */
 const AI_AUTHOR: ChangeAuthor = { id: 'ai', name: 'AI', color: '#0ea5e9' };
+
+/**
+ * #996-followup: 标题级别选择器 — 正文 / H1 / H2 / H3（系统"节"口径
+ * H1-H3：节卡片、作者/可信度元数据、节级 AI 编辑、聊天节跳转都认这三层；
+ * H4+ 编辑器可输入但不建节）。替代原单一 H2 按钮。
+ */
+function HeadingMenu({ editor }: { editor: Editor }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const current = ([1, 2, 3] as const).find((level) => editor.isActive('heading', { level }));
+  const options: Array<{ key: string; label: string; active: boolean; run: () => void }> = [
+    {
+      key: 'paragraph',
+      label: t('writing.paragraphStyle', '正文'),
+      active: !current,
+      run: () => { editor.chain().focus().setParagraph().run(); },
+    },
+    ...([1, 2, 3] as const).map((level) => ({
+      key: `h${level}`,
+      label: `H${level}`,
+      active: current === level,
+      run: () => { editor.chain().focus().toggleHeading({ level }).run(); },
+    })),
+  ];
+
+  return (
+    <div ref={rootRef} className="relative">
+      <Button
+        size="sm"
+        variant="ghost"
+        className={cn('min-w-[36px] px-1.5', current && 'bg-surface')}
+        aria-label={t('writing.textStyle', '文本样式')}
+        aria-expanded={open}
+        title={t('writing.textStyle', '文本样式')}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="text-xs font-semibold">{current ? `H${current}` : '¶'}</span>
+        <ChevronDown size={10} className="ml-0.5 opacity-60" />
+      </Button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute left-0 top-full z-30 mt-1 w-28 rounded-lg border border-border bg-surface-elevated p-1 shadow-lg"
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          {options.map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              role="menuitemradio"
+              aria-checked={opt.active}
+              onClick={() => { opt.run(); setOpen(false); }}
+              className={cn(
+                'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-[13px] transition-colors',
+                opt.active ? 'bg-accent/10 text-accent' : 'text-text-primary hover:bg-surface',
+              )}
+            >
+              <span className={opt.key === 'paragraph' ? '' : 'font-serif font-semibold'}>{opt.label}</span>
+              {opt.active && <Check size={12} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export interface DiffReviewState {
   /** 审阅批次 key — 变化时重新应用 diff */
@@ -448,9 +532,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
         <Button size="sm" variant="ghost" className={isActive('italic') ? 'bg-surface' : ''} onClick={() => editor.chain().focus().toggleItalic().run()} title="Italic">
           <Italic size={14} />
         </Button>
-        <Button size="sm" variant="ghost" className={isActive('heading', { level: 2 }) ? 'bg-surface' : ''} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} title="Heading 2">
-          <Heading2 size={14} />
-        </Button>
+        <HeadingMenu editor={editor} />
         <Button size="sm" variant="ghost" className={isActive('bulletList') ? 'bg-surface' : ''} onClick={() => editor.chain().focus().toggleBulletList().run()} title="List">
           <List size={14} />
         </Button>

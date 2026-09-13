@@ -590,7 +590,9 @@
     "openChat": "Chat",
     "closeChat": "收起 Chat",
     "previewToggle": "预览",
-    "editToggle": "编辑"
+    "editToggle": "编辑",
+    "paragraphStyle": "正文",
+    "textStyle": "文本样式"
   },
   "preview": {
     "open": "预览",

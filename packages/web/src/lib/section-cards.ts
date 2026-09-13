@@ -15,6 +15,8 @@ import type { BlockProjection, SectionMetaMap } from '@heurion/contracts';
  * 实现约束与决策：
  * - 卡片 chrome 用 ProseMirror decoration 呈现（不拆编辑器、不改 markdown
  *   往返与 #837 块结构不变量）；真相源翻转（#994）Go 后可换原生块寻址。
+ * - #996-followup: H1-H3 多级标题采用扁平卡片 — 每卡只包自身内容（到下一个
+ *   任意级标题），层级靠字号+徽标体现；父节折叠按大纲语义联动收起全部子孙。
  * - 零服务端哈希复制（与 web/src/lib/block-projection.ts 同纪律）：编辑器
  *   标题 → 投影 section 用 (标题文本, 文档序) 对位；投影缺失/标题已改时
  *   降级为 fallback 键（徽标消失，chrome 保留）。
@@ -162,55 +164,75 @@ function buildSectionDecorations(doc: PMNode, data: SectionCardsData): Decoratio
   });
 
   const sections = (data.projection?.nodes ?? []).filter((n) => n.kind === 'section');
-  const decorations: Decoration[] = [];
 
-  headings.forEach((h, hi) => {
-    // span：到下一个 level<=自身 的标题（大纲语义，嵌套子节含在父 span 内 —
-    // 与服务端 block-projection 的 section span 同口径）。
-    let endIdx = children.length;
-    for (let j = h.index + 1; j < children.length; j++) {
-      const n = children[j].node;
-      if (n.type.name === 'heading' && Number(n.attrs.level ?? 2) <= h.level) {
-        endIdx = j;
-        break;
-      }
-    }
-
-    // 对位：数量相等按序对位；数量不等（投影过期/标题已改）按文本匹配，
-    // 退化同序号；对位失败 → fallback key（chrome 保留、徽标降级）。
-    let section: { id: string; heading?: string } | null = null;
+  // #996-followup: 多级标题(H1-H3)扁平卡片 — 每个标题的 chrome 只覆盖
+  // 「自身内容」(到下一个任意级标题为止),不再把子节内容圈进父卡(旧行为
+  // 会让嵌套节的框线互相重叠);折叠仍按大纲语义(到下一个 level<=自身
+  // 的标题)联动隐藏全部子孙节。
+  const sectionIds = headings.map((h, hi) => {
+    let section: { id: string } | null = null;
     if (sections.length === headings.length) section = sections[hi] ?? null;
     else if (sections.length > 0) {
       section = sections.find((s) => (s.heading ?? '').trim() === h.text.trim()) ?? sections[hi] ?? null;
     }
-    const sectionId = section?.id ?? `h_${hi}`;
-    const secMeta = section ? data.meta?.[section.id] : undefined;
-    const isEditing = (data.editingIds ?? []).includes(sectionId);
-    const isCollapsed = collapsed.has(sectionId);
+    return section?.id ?? `h_${hi}`;
+  });
+  const spans = headings.map((h, hi) => {
+    let flatEnd = children.length;
+    let outlineEnd = children.length;
+    for (let j = h.index + 1; j < children.length; j++) {
+      const n = children[j].node;
+      if (n.type.name !== 'heading') continue;
+      if (flatEnd === children.length) flatEnd = j;
+      if (Number(n.attrs.level ?? 2) <= h.level) { outlineEnd = j; break; }
+    }
+    return { h, flatEnd, outlineEnd, sectionId: sectionIds[hi] };
+  });
+  /** 该标题是否落在某个已折叠祖先节的大纲范围内(父折叠 → 整段子孙隐藏)。 */
+  const hiddenByAncestor = (si: number) => spans.some((a, ai) =>
+    ai !== si
+    && a.h.index < spans[si].h.index
+    && collapsed.has(a.sectionId)
+    && a.outlineEnd > spans[si].h.index);
 
-    for (let i = h.index; i < endIdx; i++) {
+  const decorations: Decoration[] = [];
+  spans.forEach((span, si) => {
+    const { h, flatEnd, sectionId } = span;
+    const secMeta = (() => {
+      // 仅当对位成功(非 fallback key)才取元数据。
+      const matched = sections.find((s) => s.id === sectionId);
+      return matched ? data.meta?.[sectionId] : undefined;
+    })();
+    const isEditing = (data.editingIds ?? []).includes(sectionId);
+    const selfCollapsed = collapsed.has(sectionId);
+    const hidden = hiddenByAncestor(si);
+
+    for (let i = h.index; i < flatEnd; i++) {
       const c = children[i];
       const classes: string[] = [];
-      if (endIdx - 1 === h.index) classes.push('sec-top', 'sec-bottom');
+      if (flatEnd - 1 === h.index) classes.push('sec-top', 'sec-bottom');
       else if (i === h.index) classes.push('sec-top');
-      else if (i === endIdx - 1) classes.push('sec-in', 'sec-bottom');
+      else if (i === flatEnd - 1) classes.push('sec-in', 'sec-bottom');
       else classes.push('sec-in');
       if (isEditing) classes.push('sec-editing');
       if (secMeta) classes.push(`sec-author-${secMeta.author}`, `sec-verify-${secMeta.verify_status}`);
       if (isEditing && secMeta?.verify_status === 'failed') classes.push('sec-verify-failed-node');
-      if (isCollapsed && i > h.index) classes.push('sec-collapsed');
+      // 折叠:祖先折叠 → 整节(含标题)隐藏;自身折叠 → 标题保留、内容隐藏。
+      if (hidden) classes.push('sec-collapsed');
+      else if (selfCollapsed && i > h.index) classes.push('sec-collapsed');
       decorations.push(Decoration.node(c.pos, c.pos + c.node.nodeSize, { class: classes.join(' ') }));
     }
 
-    // 标题内徽标（inline widget，紧随标题文本之后）。
+    // 标题内徽标（inline widget，紧随标题文本之后；随标题节点隐藏而隐藏）。
     decorations.push(Decoration.widget(
       h.pos + 1 + h.contentSize,
       buildBadgeEl(data, sectionId, h.level, secMeta),
       { side: 10, ignoreSelection: true },
     ));
 
-    // 流式迷你 diff（块级 widget，标题与正文之间 — 与截图一致的位置）。
-    const rows = isEditing ? data.diffRows?.[sectionId] : undefined;
+    // 流式迷你 diff（块级 widget，标题与正文之间）— 折叠/祖先折叠时跳过
+    // （块级 widget 不随标题节点隐藏，需显式省略）。
+    const rows = isEditing && !hidden && !selfCollapsed ? data.diffRows?.[sectionId] : undefined;
     if (rows && rows.length > 0) {
       decorations.push(Decoration.widget(
         h.pos + h.nodeSize,

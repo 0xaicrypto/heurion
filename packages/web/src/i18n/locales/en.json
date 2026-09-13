@@ -590,7 +590,9 @@
     "openChat": "Chat",
     "closeChat": "Hide chat",
     "previewToggle": "Preview",
-    "editToggle": "Edit"
+    "editToggle": "Edit",
+    "paragraphStyle": "Paragraph",
+    "textStyle": "Text style"
   },
   "preview": {
     "open": "Preview",

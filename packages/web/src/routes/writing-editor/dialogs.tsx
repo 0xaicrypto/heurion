@@ -227,7 +227,9 @@ export function ReferenceListPopover(input: {
   };
 
   return (
-    <div className="absolute left-0 top-full z-30 mt-1 w-[min(92vw,420px)] rounded-xl border border-border bg-surface-elevated p-3 shadow-lg">
+    /* #996-fix: 触发点已随工具栏移入页头最右侧(right-0 向左展开;此前
+       left-0 向右展开超出视口被裁 — Reference 点开不可见)。 */
+    <div className="absolute right-0 top-full z-30 mt-1 w-[min(92vw,420px)] rounded-xl border border-border bg-surface-elevated p-3 shadow-lg">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-sm font-medium text-text-secondary">{t('writing.refTitle', '参考材料')} ({list.length})</span>
         <button onClick={onClose} className="text-text-tertiary hover:text-text-primary"><X size={14} /></button>

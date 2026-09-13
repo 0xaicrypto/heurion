@@ -132,3 +132,81 @@ describe('#996/#1002 节卡片化画布(装饰层)', () => {
     expect(container.querySelectorAll('.sec-diff').length).toBe(0);
   });
 });
+
+describe('#996-followup 多级标题(H1-H3)扁平卡片', () => {
+  beforeEach(() => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+  });
+  afterEach(() => cleanup());
+
+  const NESTED_BODY = ['## Parent', '', 'parent text', '', '### Child', '', 'child text', '', '## Next', '', 'next text'].join('\n');
+
+  function nestedData(): NonNullable<Parameters<typeof DocEditor>[0]['sectionCards']> {
+    return {
+      projection: {
+        schema_version: 1 as const,
+        body_hash: 'nested000000',
+        nodes: [
+          { id: 's_parent', kind: 'section' as const, heading: 'Parent', level: 2, hash: 'h_parent', start: 0, end: 15, parent_id: null },
+          { id: 's_child', kind: 'section' as const, heading: 'Child', level: 3, hash: 'h_child', start: 15, end: 28, parent_id: null },
+          { id: 's_next', kind: 'section' as const, heading: 'Next', level: 2, hash: 'h_next', start: 28, end: 40, parent_id: null },
+        ],
+      },
+      meta: { s_parent: { author: 'ai' as const, verify_status: 'pending' as const, updated_at: 't1' } },
+    };
+  }
+
+  test('每卡只包自身内容(到下一个任意级标题)— 子节独立成卡,框线不重叠', async () => {
+    const { container } = render(
+      <DocEditor value={NESTED_BODY} onChange={() => {}} diffReview={null} sectionCards={nestedData()} />,
+    );
+    await new Promise((r) => setTimeout(r, 150));
+
+    const h2s = container.querySelectorAll('.ProseMirror > h2');
+    const h3 = container.querySelector('.ProseMirror > h3') as HTMLElement;
+    expect(h2s.length).toBe(2);
+    expect(h3).toBeTruthy();
+
+    // 父节标题:卡顶;其后的段落收底(flat span 到 H3 为止)
+    const parentHeading = h2s[0] as HTMLElement;
+    expect(parentHeading.classList.contains('sec-top')).toBe(true);
+    const parentPara = parentHeading.nextElementSibling as HTMLElement;
+    expect(parentPara.classList.contains('sec-in')).toBe(true);
+    expect(parentPara.classList.contains('sec-bottom')).toBe(true);
+
+    // 子节(H3)独立卡:有自己的卡顶,且不带父卡的 sec-in(旧行为会重叠)
+    expect(h3.classList.contains('sec-top')).toBe(true);
+    expect(h3.classList.contains('sec-in')).toBe(false);
+
+    // 徽标:父节 AI/pending;子节仅 H3 级芯片(无 meta)
+    expect(parentHeading.querySelector('.sec-badges')?.textContent).toContain('AI');
+    expect(h3.querySelector('.sec-badge-level')?.textContent).toBe('H3');
+  });
+
+  test('折叠父节(H2)→ 子节(H3)标题与内容整段隐藏,大纲语义联动', async () => {
+    const { container } = render(
+      <DocEditor value={NESTED_BODY} onChange={() => {}} diffReview={null} sectionCards={nestedData()} />,
+    );
+    await new Promise((r) => setTimeout(r, 150));
+
+    const parentHeading = container.querySelectorAll('.ProseMirror > h2')[0] as HTMLElement;
+    const parentChevron = parentHeading.querySelector('.sec-chevron') as HTMLElement;
+    fireEvent.click(parentChevron);
+    await new Promise((r) => setTimeout(r, 100));
+
+    // 父节自身内容 + 子节(标题节点/内容)全部 sec-collapsed
+    const childHeading = container.querySelector('.ProseMirror > h3') as HTMLElement;
+    expect(childHeading.classList.contains('sec-collapsed')).toBe(true);
+    const collapsedNodes = container.querySelectorAll('.ProseMirror .sec-collapsed');
+    expect(collapsedNodes.length).toBeGreaterThanOrEqual(3); // 父正文段 + H3 + 子正文段
+    // 同级 Next(H2)不受影响
+    const nextHeading = container.querySelectorAll('.ProseMirror > h2')[1] as HTMLElement;
+    expect(nextHeading.classList.contains('sec-collapsed')).toBe(false);
+
+    // 再点展开 → 子节恢复
+    fireEvent.click(container.querySelectorAll('.sec-chevron')[0]);
+    await new Promise((r) => setTimeout(r, 100));
+    expect((container.querySelector('.ProseMirror > h3') as HTMLElement).classList.contains('sec-collapsed')).toBe(false);
+  });
+});

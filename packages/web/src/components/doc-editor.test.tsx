@@ -1,13 +1,13 @@
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
+import type { Editor } from '@tiptap/react';
 import { DocEditor } from './DocEditor';
 // i18n 初始化 — ProposalCard 的统计文案经 t() 插值,未初始化时 notReadyT
 // 不做插值(渲染原始 {{a}} 模板),断言会拿到假串。
 import '@/i18n';
 
 // TipTap needs a real selection API in jsdom
-class FakeRange {
-  startContainer: Node = document;
+class FakeRange {  startContainer: Node = document;
   startOffset = 0;
   endContainer: Node = document;
   endOffset = 0;
@@ -21,6 +21,18 @@ class FakeRange {
   insertNode() {}
   createContextualFragment = () => document.createDocumentFragment();
   toString = () => '';
+  // #996-followup: heading 切换命令的 focus→scrollToSelection 路径需要
+  // getClientRects（jsdom 缺失，此前用例不触发该路径）。
+  getClientRects = () => [] as unknown as DOMRectList;
+  getBoundingClientRect = () => ({ top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+}
+// jsdom Selection.getRangeAt 返回内部 Range（非上面的 FakeRange）— 同步补桩。
+if (!(Range.prototype as unknown as { getClientRects?: unknown }).getClientRects) {
+  (Range.prototype as unknown as { getClientRects: () => DOMRectList }).getClientRects = () => [] as unknown as DOMRectList;
+}
+if (!(Range.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect) {
+  (Range.prototype as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect =
+    () => ({ top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
 }
 
 describe('DocEditor (TipTap canvas)', () => {
@@ -197,5 +209,29 @@ describe('DocEditor behaviors', () => {
     expect(editorText).toContain('新增结果章节。');
     expect(editorText).toContain('第一段已润色。');
     expect(editorText).toContain('第二段已润色。');
+  });
+});
+
+describe('#996-followup 标题级别选择器(H1-H3)', () => {
+  test('触发器显示当前级别;选择 H3 即把当前块转为三级标题', async () => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    const ref: { current: Editor | null } = { current: null };
+    render(<DocEditor value={'## 原标题\n\n段落'} onChange={() => {}} editorRef={ref} />);
+    await new Promise((r) => setTimeout(r, 250));
+
+    // 光标默认在文档首(标题行)→ 触发器显示 H2
+    const trigger = screen.getByRole('button', { name: /文本样式|Text style/ });
+    expect(trigger.textContent).toContain('H2');
+
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'H3' }));
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(ref.current?.getHTML()).toContain('<h3');
+    // 选择正文 → 标题退回段落
+    fireEvent.click(screen.getByRole('button', { name: /文本样式|Text style/ }));
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: /正文|Paragraph/ }));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(ref.current?.getHTML()).not.toContain('<h3');
   });
 });
