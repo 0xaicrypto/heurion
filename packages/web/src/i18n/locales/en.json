@@ -287,7 +287,12 @@
     "planRetryCount": "retried {{n}} time(s)",
     "planContinueHint": "Reply「continue」to let AI resume from the pending steps",
     "planCompleted": "Task plan completed",
-    "changed": "Changed"
+    "changed": "Changed",
+    "references": "References",
+    "referencesHint": "Manage this session’s references — the AI keeps using them in later turns",
+    "refStripTitle": "Active",
+    "refRemove": "Remove reference",
+    "pinAsReference": "Pin as reference (persists for this session)"
   },
   "patient": {
     "summary": "Summary",

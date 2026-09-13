@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 
 export interface DocReferenceItem {
@@ -55,14 +55,22 @@ export interface DocReferences {
   deleteReference: (referenceId: string) => Promise<void>;
 }
 
-/** #696/#711 — 参考材料管理（表单对话框 + 列表 + KbPicker 登记）下沉。 */
-export function useDocReferences(input: {
-  docId: string | undefined;
+/** #1007: 引用面板后端适配器 — 写作编辑器(docId)/主 chat(sessionId)共用同一状态机与弹层。 */
+export interface ReferenceAdapter {
+  list: () => Promise<DocReferenceItem[]>;
+  add: (data: { kind: string; content: string; label?: string; source_patient_hash?: string }) => Promise<{ imported?: boolean; imported_body?: string | null }>;
+  remove: (referenceId: string) => Promise<void>;
+}
+
+/** #696/#711 — 参考材料管理状态机（表单对话框 + 列表 + KbPicker 登记 + 文件库勾选）。
+ *  #1007: 后端访问抽成 ReferenceAdapter，doc/session 两条链路共用。 */
+function useReferenceManager(input: {
+  adapter: ReferenceAdapter | null;
   setError: (e: string) => void;
   /** #930: 文件类参考登记触发空文档自动导入时,把导入正文回填编辑器。 */
   onImportedBody?: (body: string) => void;
 }): DocReferences {
-  const { docId, setError } = input;
+  const { adapter, setError } = input;
 
   const [refDialogOpen, setRefDialogOpen] = useState(false);
   const [refForm, setRefForm] = useState({ kind: 'guideline', content: '', label: '', source_patient_hash: '' });
@@ -78,12 +86,11 @@ export function useDocReferences(input: {
   const [filesLibAdding, setFilesLibAdding] = useState(false);
 
   const loadReferences = useCallback(async () => {
-    if (!docId) return;
+    if (!adapter) return;
     try {
-      const r = await api.getDocReferences(docId);
-      setRefList(r.references);
+      setRefList(await adapter.list());
     } catch { /* 列表加载失败不阻断编辑 */ }
-  }, [docId]);
+  }, [adapter]);
 
   const loadFilesLibrary = useCallback(async () => {
     setFilesLibLoading(true);
@@ -98,10 +105,10 @@ export function useDocReferences(input: {
   }, [setError]);
 
   const handleAddReference = async () => {
-    if (!docId || !refForm.content.trim() || !refForm.kind.trim()) return;
+    if (!adapter || !refForm.content.trim() || !refForm.kind.trim()) return;
     setRefSubmitting(true);
     try {
-      const r = await api.addDocReference(docId, {
+      const r = await adapter.add({
         kind: refForm.kind,
         content: refForm.content,
         label: refForm.label || undefined,
@@ -112,6 +119,7 @@ export function useDocReferences(input: {
       if (r.imported && r.imported_body) input.onImportedBody?.(r.imported_body);
       setRefDialogOpen(false);
       setRefForm({ kind: 'guideline', content: '', label: '', source_patient_hash: '' });
+      void loadReferences();
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
     } finally {
@@ -124,7 +132,7 @@ export function useDocReferences(input: {
   // 实质内容) — 确认时经 getKnowledgeSummary 取全文登记;document 类保持
   // 文件名契约(content=文件名,注入侧按名定位上传文件解析正文)。
   const handleKbPickConfirm = async (items: Array<{ id: string; title: string; summary: string; kind: 'summary' | 'file' }>) => {
-    if (!docId || items.length === 0) return;
+    if (!adapter || items.length === 0) return;
     for (const it of items) {
       try {
         const kind = it.kind === 'file' ? 'file' : 'guideline';
@@ -135,24 +143,24 @@ export function useDocReferences(input: {
             content = full.content || it.summary || it.title;
           } catch { /* 取全文失败回退摘要预览 */ content = it.summary || it.title; }
         }
-        const r = await api.addDocReference(docId, { kind, content, label: it.title });
+        const r = await adapter.add({ kind, content, label: it.title });
         if (r.imported && r.imported_body) input.onImportedBody?.(r.imported_body);
       } catch (err) {
         setError(err instanceof ApiError ? err.messageText : String(err));
       }
     }
-    void loadReferences();
+    await loadReferences();
   };
 
   // #930: 文件库勾选登记 — 走 POST /references(空文档自动导入 ensureDraftBody
   // 复用现有语义;服务端幂等去重防重复点选)。
   const addFileLibraryRefs = async (files: FileLibraryItem[]) => {
-    if (!docId || files.length === 0) return;
+    if (!adapter || files.length === 0) return;
     setFilesLibAdding(true);
     try {
       for (const f of filterNewFileRefs(files, refList)) {
         try {
-          const r = await api.addDocReference(docId, { kind: fileRefKindFromName(f.name), content: f.name, label: f.name });
+          const r = await adapter.add({ kind: fileRefKindFromName(f.name), content: f.name, label: f.name, source_patient_hash: f.file_id });
           if (r.imported && r.imported_body) input.onImportedBody?.(r.imported_body);
         } catch (err) {
           setError(err instanceof ApiError ? err.messageText : String(err));
@@ -165,10 +173,10 @@ export function useDocReferences(input: {
   };
 
   const deleteReference = async (referenceId: string) => {
-    if (!docId) return;
+    if (!adapter) return;
     setRefDeleting(referenceId);
     try {
-      await api.deleteDocReference(docId, referenceId);
+      await adapter.remove(referenceId);
       setRefList((prev) => prev.filter((x) => x.reference_id !== referenceId));
     } catch (err) {
       setError(err instanceof ApiError ? err.messageText : String(err));
@@ -179,8 +187,7 @@ export function useDocReferences(input: {
 
   useEffect(() => {
     void loadReferences();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docId]);
+  }, [loadReferences]);
 
   return {
     refDialogOpen,
@@ -204,4 +211,34 @@ export function useDocReferences(input: {
     addFileLibraryRefs,
     deleteReference,
   };
+}
+
+/** #696/#711 — 写作编辑器文档级参考材料管理（docId 链路）。 */
+export function useDocReferences(input: {
+  docId: string | undefined;
+  setError: (e: string) => void;
+  /** #930: 文件类参考登记触发空文档自动导入时,把导入正文回填编辑器。 */
+  onImportedBody?: (body: string) => void;
+}): DocReferences {
+  const { docId, setError } = input;
+  const adapter = useMemo<ReferenceAdapter | null>(() => (docId ? {
+    list: async () => (await api.getDocReferences(docId)).references,
+    add: (data) => api.addDocReference(docId, data),
+    remove: async (referenceId) => { await api.deleteDocReference(docId, referenceId); },
+  } : null), [docId]);
+  return useReferenceManager({ adapter, setError, onImportedBody: input.onImportedBody });
+}
+
+/** #1007 — 主 chat 会话级引用管理（sessionId 链路，与写作编辑器共用弹层/状态机）。 */
+export function useSessionReferences(input: {
+  sessionId: string | undefined;
+  setError: (e: string) => void;
+}): DocReferences {
+  const { sessionId, setError } = input;
+  const adapter = useMemo<ReferenceAdapter | null>(() => (sessionId ? {
+    list: async () => (await api.getSessionReferences(sessionId)).references,
+    add: (data) => api.addSessionReference(sessionId, data),
+    remove: async (referenceId) => { await api.deleteSessionReference(sessionId, referenceId); },
+  } : null), [sessionId]);
+  return useReferenceManager({ adapter, setError });
 }

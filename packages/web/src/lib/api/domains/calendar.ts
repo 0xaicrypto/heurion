@@ -42,4 +42,29 @@ export class CalendarApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}/references/${referenceId}`, { method: 'DELETE' });
   }
 
+  /* ────────── #1007: 会话级引用(主 chat 与写作编辑器共用) ────────── */
+
+  async getSessionReferences(sessionId: string): Promise<{references: Array<{reference_id: string; session_reference_id: string; kind: string; label: string; content: string; source_ref: string | null; source: string; created_at: string}>}> {
+    return this.fetch(`/api/v1/sessions/${sessionId}/references`);
+  }
+
+  async addSessionReference(sessionId: string, data: {kind: string; content: string; label?: string; source_ref?: string; source_patient_hash?: string}): Promise<{
+    reference_id: string;
+    kind: string;
+    content: string;
+    label: string;
+    source_ref: string | null;
+    source: string;
+    created_at: string;
+    /** 与 doc 端点对齐的可选字段 — 会话端点不触发空文档导入,恒为空。 */
+    imported?: boolean;
+    imported_body?: string | null;
+  }> {
+    return this.fetch(`/api/v1/sessions/${sessionId}/references`, { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async deleteSessionReference(sessionId: string, referenceId: string): Promise<{ ok: boolean }> {
+    return this.fetch(`/api/v1/sessions/${sessionId}/references/${referenceId}`, { method: 'DELETE' });
+  }
+
 }

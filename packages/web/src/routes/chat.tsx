@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Paperclip, FileText, Plus, X, BookOpen } from 'lucide-react';
+import { Paperclip, FileText, Plus, X, BookOpen, Pin, Library } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { mapWireMessages } from '@/lib/message-map';
 import type { LlmStatus } from '@/lib/types';
@@ -15,6 +15,9 @@ import { ChatMessages } from '@/components/chat/ChatMessages';
 import { PluginExtensionPoint } from '@/components/plugins/PluginExtensionPoint';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
+// #1007: 主 chat 引用能力对称化 — 复用写作编辑器的引用弹层与状态机。
+import { useSessionReferences } from './writing-editor/references';
+import { AddReferenceDialog, ReferenceListPopover } from './writing-editor/dialogs';
 import { isEnterSendKey } from '@/lib/chat-composer';
 // #922: 上传落地公共流程收敛到 lib/upload-flow(chat 与 doc-chat 共用)。
 import { runUploadAttachFlow } from '@/lib/upload-flow';
@@ -95,6 +98,10 @@ export function ChatPage() {
   const [kbDedupNotice, setKbDedupNotice] = useState<string | null>(null);
   // #620: 知识库选择器 — 显式选定总结加入上下文.
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
+  // #1007: 会话级引用(与写作编辑器共用弹层/状态机) — 引用材料跨消息持续生效。
+  const refs = useSessionReferences({ sessionId: sessionId || undefined, setError });
+  // #1007: KbPicker 双用途 — context=临时选总结带入下一条消息; reference=登记为会话引用。
+  const [kbPickerMode, setKbPickerMode] = useState<'context' | 'reference'>('context');
   // #721: kbPicker 搜索 debounce。
   // #712: kbPicked 按会话隔离(同 attachedFiles 模式) — A 会话选的总结
   // 不得静默带入 B 会话。#786: 保留完整 item(id+title+kind+summary),
@@ -483,6 +490,38 @@ export function ChatPage() {
             >
               {t('chat.closeSession', 'Close')}
             </button>
+            {/* #1007: 与写作编辑器一致的引用入口 — 弹层管理本会话持续生效的引用材料。 */}
+            <div className="relative shrink-0">
+              <button
+                onClick={() => refs.setRefListOpen((v) => !v)}
+                disabled={!sessionId}
+                className="rounded-lg border border-border bg-surface-elevated px-2 py-1 text-xs text-text-secondary hover:bg-surface disabled:opacity-50"
+                title={t('chat.referencesHint', '管理本会话引用材料 — AI 回答时持续基于这些材料')}
+              >
+                <Library size={13} className="mr-1 inline" />
+                {t('chat.references', '引用')}{refs.refList.length > 0 ? ` (${refs.refList.length})` : ''}
+              </button>
+              {refs.refListOpen && (
+                <ReferenceListPopover
+                  list={refs.refList}
+                  deleting={refs.refDeleting}
+                  onClose={() => refs.setRefListOpen(false)}
+                  onDelete={(id) => void refs.deleteReference(id)}
+                  onOpenPaste={() => { refs.setRefDialogOpen(true); refs.setRefListOpen(false); }}
+                  onOpenKbPicker={() => { setKbPickerMode('reference'); setKbPickerOpen(true); refs.setRefListOpen(false); }}
+                  filesLibOpen={refs.filesLibOpen}
+                  onToggleFilesLib={() => {
+                    const next = !refs.filesLibOpen;
+                    refs.setFilesLibOpen(next);
+                    if (next) void refs.loadFilesLibrary();
+                  }}
+                  filesLibLoading={refs.filesLibLoading}
+                  filesLibAdding={refs.filesLibAdding}
+                  filesLibList={refs.filesLibList}
+                  onAddFiles={(files) => void refs.addFileLibraryRefs(files)}
+                />
+              )}
+            </div>
             {llmStatus && (
               <span className="hidden shrink-0 rounded-full border border-border bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary sm:inline">
                 {llmStatus.provider}/{llmStatus.model}
@@ -490,6 +529,27 @@ export function ChatPage() {
             )}
           </div>
         </header>
+
+        {/* #1007: 生效中的引用条 — 不用打开弹层即可确认当前会话带着哪些材料。 */}
+        {sessionId && refs.refList.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-surface px-3 py-1.5 sm:px-6">
+            <span className="text-[10px] uppercase tracking-wide text-text-tertiary">{t('chat.refStripTitle', '生效中')}</span>
+            {refs.refList.map((r) => (
+              <span key={r.reference_id} className="inline-flex max-w-[240px] items-center gap-1 rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-text-secondary">
+                <span className="shrink-0 rounded bg-accent/10 px-1 text-[10px] text-accent">{r.kind}</span>
+                <span className="truncate">{r.label || r.content.slice(0, 40)}</span>
+                <button
+                  onClick={() => void refs.deleteReference(r.reference_id)}
+                  disabled={refs.refDeleting !== null}
+                  className="shrink-0 rounded p-0.5 text-text-tertiary transition-colors hover:text-error"
+                  aria-label={t('chat.refRemove', '取消引用')}
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
 
         <main ref={containerRef} className="flex-1 overflow-y-auto px-4 py-6">
           <div className="mx-auto max-w-3xl space-y-6">
@@ -641,6 +701,16 @@ export function ChatPage() {
                   <span key={f.fileId} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-elevated px-2 py-1 text-xs text-text-secondary">
                     <FileText size={12} className="shrink-0" />
                     <span className="max-w-[180px] truncate">{f.name}</span>
+                    {/* #1007: 临时附件升级为正式引用 — 之后的消息无需重复附加。 */}
+                    <button
+                      onClick={() => void refs.addFileLibraryRefs([{ file_id: f.fileId, name: f.name, mime: '', size_bytes: 0, created_at: '' }])}
+                      disabled={refs.filesLibAdding}
+                      className="rounded p-0.5 text-text-tertiary transition-colors hover:bg-surface hover:text-accent"
+                      title={t('chat.pinAsReference', '固定为引用（本会话持续生效）')}
+                      aria-label={t('chat.pinAsReference', '固定为引用（本会话持续生效）')}
+                    >
+                      <Pin size={11} />
+                    </button>
                     <button
                       onClick={() => setAttachedFiles((prev) => ({ ...prev, [sessionId]: (prev[sessionId] ?? []).filter((a) => a.fileId !== f.fileId) }))}
                       className="rounded p-0.5 text-text-tertiary transition-colors hover:bg-surface hover:text-error"
@@ -728,7 +798,7 @@ export function ChatPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setKbPickerOpen(true)}
+                onClick={() => { setKbPickerMode('context'); setKbPickerOpen(true); }}
                 disabled={session?.loading || !sessionId}
                 className="shrink-0"
                 title={t('chat.kbPicker', '从知识库添加')}
@@ -804,17 +874,29 @@ export function ChatPage() {
           </Button>
         </div>
       </Modal>
+      {/* #1007: 粘贴文本登记为会话引用 — 与写作编辑器共用对话框。 */}
+      {refs.refDialogOpen && (
+        <AddReferenceDialog
+          form={refs.refForm}
+          setForm={refs.setRefForm}
+          submitting={refs.refSubmitting}
+          onClose={() => refs.setRefDialogOpen(false)}
+          onSubmit={() => void refs.handleAddReference()}
+        />
+      )}
       {/* #620: 知识库选择器弹窗 */}
       {/* #757: 共享 KbPicker — 搜索/防抖/上限统一维护 */}
       <KbPicker
         open={kbPickerOpen}
         onClose={() => setKbPickerOpen(false)}
         onConfirm={(items) => {
+          // #1007: 引用登记模式复用同一 picker;上下文模式保持按会话暂存行为。
+          if (kbPickerMode === 'reference') { void refs.handleKbPickConfirm(items); return; }
           // #712: 按会话隔离存储。
           setKbPickedBySession((prevBySession) => ({ ...prevBySession, [sessionId]: items }));
         }}
-        initialItems={kbPicked}
-        max={3}
+        initialItems={kbPickerMode === 'reference' ? [] : kbPicked}
+        max={kbPickerMode === 'reference' ? 5 : 3}
       />
     </AppShell>
   );

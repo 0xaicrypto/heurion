@@ -287,7 +287,12 @@
     "planRetryCount": "已重试 {{n}} 次",
     "planContinueHint": "回复「继续」让 AI 从未完成步骤接着执行",
     "planCompleted": "任务清单已全部完成",
-    "changed": "已改动"
+    "changed": "已改动",
+    "references": "引用",
+    "referencesHint": "管理本会话引用材料 — AI 回答时持续基于这些材料",
+    "refStripTitle": "生效中",
+    "refRemove": "取消引用",
+    "pinAsReference": "固定为引用（本会话持续生效）"
   },
   "patient": {
     "summary": "摘要",
