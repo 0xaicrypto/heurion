@@ -18,6 +18,8 @@ import { extractTextFromUpload, extractImageUpload, isImageFile, isPdf, isDocx, 
 import { isPptx, extractPptxContentFromUpload } from '../../lib/pptx-extractor.js'
 import type { ChatScene } from '../../common/persona.js'
 import { makeLogger } from '../../common/logger.js'
+// #1006: 引用材料两层模型 — 旧 refType→kind 归一化(单一来源)。
+import { normalizeLegacyRefType } from '../../lib/reference-store.js'
 
 const log = makeLogger('chat.doc-ref')
 
@@ -527,31 +529,57 @@ export function renderReferenceBody(text: string, userText?: string): string {
   return `[已解析上传文件正文]\n${fitTextToTokens(text, budget)}`
 }
 
-export async function buildDocReferenceBlocks(
+/** #1006: 会话引用材料（新模型视图）— 写作与主 chat 共用的注入输入。 */
+export interface SessionRefBlockItem {
+  id?: string
+  kind?: string | null
+  /** file → FileIndex.id（稳定来源；缺省按文件名反查）。 */
+  sourceRef?: string | null
+  snapshot?: string | null
+  label?: string | null
+}
+
+/**
+ * #1006 — 会话引用材料 → 注入块（写作 / 主 chat 单一实现）。
+ *
+ * 与旧 buildDocReferenceBlocks 的差异只有取数形态：`kind` 取代 `refType`，
+ * file 类优先按稳定 `sourceRef`（FileIndex.id）取正文，缺失/失效时回退按
+ * 文件名反查（与旧行为一致）。提取走同一缓存管线（结构恢复 + 图片托管），
+ * 超预算仍按用户指名章节定位（#833）。
+ */
+export async function buildSessionReferenceBlocks(
   userId: string,
-  refs: Array<{ id?: string; refType?: string | null; snapshot?: string | null; label?: string | null }>,
-  opts: { findFileByName: (name: string) => Promise<{ id: string } | null>; /** #fix 2026-09: 段内子进度(逐文件提取可达分钟级,发文案消除黑盒) */ onProgress?: (i: number, total: number, label: string) => void; /** #833: 用户消息 — 参考材料超预算时按指名章节定位注入 */ userText?: string },
+  items: SessionRefBlockItem[],
+  opts: {
+    findFileByName: (name: string) => Promise<{ id: string } | null>
+    /** 段内子进度（逐文件提取可达分钟级）。 */
+    onProgress?: (i: number, total: number, label: string) => void
+    /** #833: 用户消息 — 参考材料超预算时按指名章节定位注入。 */
+    userText?: string
+  },
 ): Promise<{ blocks: string[]; resolved: number }> {
-  const fileTotal = refs.filter((r) => DOC_FILE_REF_KINDS.has(String(r.refType || '')) && r.snapshot).length
-  // #fix 2026-09: 并行提取(×3,mapLimit 保序)+ 预分配文件序号(并行下
-  // 不能用递增计数器发进度) — 多份参考材料逐个串行提取是分钟级黑盒。
+  const isFileItem = (it: SessionRefBlockItem) => String(it.kind || '') === 'file' && Boolean(it.sourceRef || it.snapshot)
+  const fileTotal = items.filter(isFileItem).length
   let fileCounter = 0
-  const fileOrdinals = refs.map((r) => (DOC_FILE_REF_KINDS.has(String(r.refType || '')) && r.snapshot) ? ++fileCounter : 0)
-  const results = await mapLimit(refs, 3, async (r, i) => {
-    const header = `### ${r.label || r.id || ''}`
-    const kind = String(r.refType || '')
-    const snapshot = String(r.snapshot || '')
-    if (!DOC_FILE_REF_KINDS.has(kind) || !snapshot) {
+  const fileOrdinals = items.map((it) => (isFileItem(it) ? ++fileCounter : 0))
+  const results = await mapLimit(items, 3, async (it, i) => {
+    const header = `### ${it.label || it.id || ''}`
+    const kind = String(it.kind || '')
+    const snapshot = String(it.snapshot || '')
+    if (kind !== 'file' || (!it.sourceRef && !snapshot)) {
       return { block: `${header}\n${snapshot.slice(0, CONTEXT_CONFIG.scene.docRefChars)}`, resolved: false }
     }
-    try { opts.onProgress?.(fileOrdinals[i], fileTotal, r.label || snapshot) } catch { /* best-effort */ }
+    try { opts.onProgress?.(fileOrdinals[i], fileTotal, it.label || snapshot) } catch { /* best-effort */ }
     try {
+      // 1) 稳定来源 id 优先（#1005 新模型：file → FileIndex.id）。
+      const stableId = it.sourceRef ? String(it.sourceRef) : ''
+      if (stableId) {
+        const text = await cachedExtractDocumentMarkdownFromUpload(userId, stableId, { maxChars: attachmentExtractChars() })
+        const usable = Boolean(text) && !text.startsWith('[PDF') && !text.startsWith('[DOCX')
+        if (usable) return { block: `${header}\n${renderReferenceBody(text, opts.userText)}`, resolved: true }
+      }
+      // 2) 按文件名反查（旧路径完全保留：sourceRef 缺失或已失效时兜底）。
       const found = await opts.findFileByName(snapshot)
-      // #fix: 文件类引用用与"导入文档"同一提取器(markdown 结构恢复) —
-      // 此前用 raw 文本提取(保留 PDF 原始换行),而 import_reference 写入
-      // 文档的是 pdfTextToMarkdown 合并段落,两处文本换行不一致,LLM 从
-      // 参考材料块复制的 old_text 在文档里匹配不上 → 润色反复报错。
-      // #fix: 走进程内缓存(每轮对话都重新提取 34 页 PDF 要 1-5 秒)。
       const text = found ? await cachedExtractDocumentMarkdownFromUpload(userId, found.id, { maxChars: attachmentExtractChars() }) : ''
       const usable = Boolean(text) && !text.startsWith('[PDF') && !text.startsWith('[DOCX')
       if (found && usable) {
@@ -560,12 +588,30 @@ export async function buildDocReferenceBlocks(
     } catch (err) {
       // #fix: 记录注入失败原因 — 生产上"模型拿文件名去读文件"的根因
       // 都是这里静默降级,必须留痕便于诊断。
-      log.warn(`[doc-ref] body injection failed for ref ${r.id || ''} (kind=${kind}, snapshot=${snapshot}):`, (err as Error).message.slice(0, 160))
-      // fall through to name-only
+      log.warn(`[session-ref] body injection failed for ref ${it.id || ''} (kind=${kind}, snapshot=${snapshot}):`, (err as Error).message.slice(0, 160))
     }
     return { block: `${header}\n${snapshot.slice(0, CONTEXT_CONFIG.scene.docRefChars)}`, resolved: false }
   })
   return { blocks: results.map((x) => x.block), resolved: results.filter((x) => x.resolved).length }
+}
+
+/**
+ * @deprecated #1006 — 旧 `refType` 形态兼容包装：内部映射为 kind 后复用
+ * buildSessionReferenceBlocks（保留既有单测/调用方零改动）。
+ */
+export async function buildDocReferenceBlocks(
+  userId: string,
+  refs: Array<{ id?: string; refType?: string | null; snapshot?: string | null; label?: string | null }>,
+  opts: { findFileByName: (name: string) => Promise<{ id: string } | null>; onProgress?: (i: number, total: number, label: string) => void; userText?: string },
+): Promise<{ blocks: string[]; resolved: number }> {
+  const items: SessionRefBlockItem[] = (refs || []).map((r) => ({
+    id: r.id,
+    kind: normalizeLegacyRefType(r.refType),
+    sourceRef: null,
+    snapshot: r.snapshot ?? null,
+    label: r.label ?? null,
+  }))
+  return buildSessionReferenceBlocks(userId, items, opts)
 }
 
 /**

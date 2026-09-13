@@ -18,6 +18,8 @@ import { resolveActiveModel, type ChatContentPart } from '../../common/llm-gatew
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from '../shared/user-context.js'
 import { buildAttachmentParts, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, shouldInjectPatientRoster, isResearchIntent, docSessionFactGraphView, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from '../shared/chat-context.js'
+// #1006: 主 chat 会话引用材料段（与写作会话共用注入实现）。
+import { buildSessionReferencesBlock } from './session-refs-builder.js'
 import { estimateTokens } from '../../common/token-estimate.js'
 import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
 import { maybeJitSynthesize } from '../../modules/knowledge/jit-synthesis.service.js' // #815 JIT 兜底
@@ -364,6 +366,18 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
           stage: input.stage,
         })
       },
+    },
+    {
+      // #1006: 会话引用材料（主 chat 对称化）— 与写作会话共用注入实现。
+      key: 'session_references',
+      fallbackOrder: 2,
+      stageLabel: '正在载入引用材料…',
+      build: (input) => buildSessionReferencesBlock({
+        userId,
+        sessionId: sid,
+        messageText: input.body.text,
+        stage: input.stage,
+      }),
     },
     {
       // #621/#629/#630/#627/#731: 知识库语义自动注入 — 患者过滤 + 预算自适应

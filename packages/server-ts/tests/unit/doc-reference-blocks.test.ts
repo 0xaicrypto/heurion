@@ -104,3 +104,41 @@ describe('buildDocReferenceBlocks 文件引用正文注入', () => {
     expect(blocks[0]).toContain('ATR confers radioresistance')
   })
 })
+
+// #1006: 新模型 file 项带稳定 sourceRef（FileIndex.id）时直接按 id 提取，
+// 不再依赖文件名反查（findFileByName 不被调用即为证明）。
+describe('#1006 buildSessionReferenceBlocks — sourceRef 稳定来源优先', () => {
+  const tmpDir = path.join(os.tmpdir(), `heurion-session-ref-${Date.now()}`)
+  const uploadsDir = path.join(tmpDir, 'u1', 'uploads')
+  const fileId = '1750000000400_paper.txt'
+
+  beforeEach(() => {
+    process.env.TWIN_BASE_DIR = tmpDir
+    fs.mkdirSync(uploadsDir, { recursive: true })
+    fs.writeFileSync(path.join(uploadsDir, fileId), 'Abstract: sourceRef stable path.', 'utf-8')
+  })
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    delete process.env.TWIN_BASE_DIR
+  })
+
+  test('file 项 sourceRef 命中 → 注入正文,不触发按名反查', async () => {
+    const { buildSessionReferenceBlocks } = await import('../../src/modules/shared/chat-context.js')
+    const findFileByName = vi.fn(async () => null)
+    const { blocks, resolved } = await buildSessionReferenceBlocks('u1', [
+      { id: 'ref_1', kind: 'file', sourceRef: fileId, snapshot: 'paper.txt', label: 'paper.txt' },
+    ], { findFileByName })
+    expect(resolved).toBe(1)
+    expect(blocks[0]).toContain('sourceRef stable path')
+    expect(findFileByName).not.toHaveBeenCalled()
+  })
+
+  test('sourceRef 失效且名字也找不到 → 降级文件名占位', async () => {
+    const { buildSessionReferenceBlocks } = await import('../../src/modules/shared/chat-context.js')
+    const { blocks, resolved } = await buildSessionReferenceBlocks('u1', [
+      { id: 'ref_2', kind: 'file', sourceRef: 'missing_file_id', snapshot: 'ghost.pdf', label: 'ghost.pdf' },
+    ], { findFileByName: async () => null })
+    expect(resolved).toBe(0)
+    expect(blocks[0]).toContain('ghost.pdf')
+  })
+})

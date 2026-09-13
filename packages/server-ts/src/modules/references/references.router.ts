@@ -1,0 +1,129 @@
+/**
+ * #1006（SECOND_BRAIN Phase 1）— 会话级引用材料端点。
+ *
+ * `/api/v1/sessions/:sessionId/references`（GET/POST/DELETE）：写作
+ * （'doc-<docId>'）与主 chat 共用的同一套引用能力；旧
+ * `/api/v1/docs/:docId/references` 保留（写双写 + 旧响应形状），前端
+ * 无需同批改造。取消引用只删 SessionReference，ReferenceItem 本体保留。
+ */
+import type { FastifyInstance } from 'fastify'
+import { authGuard } from '../../common/auth.guard.js'
+import { makeLogger } from '../../common/logger.js'
+import {
+  addSessionReference,
+  listSessionReferences,
+  removeSessionReference,
+  resolveFileSourceRef,
+  normalizeLegacyRefType,
+  type ReferenceKind,
+} from '../../lib/reference-store.js'
+import { classifyGuidelineBySummaryTitle } from '../shared/summary-lookup.js'
+
+const log = makeLogger('references.router')
+
+/** snapshot 上限（粘贴正文/摘要全文）— 防超大请求。 */
+const MAX_CONTENT_CHARS = 200_000
+const MAX_SESSION_ID = 200
+
+function isCanonicalKind(v: string): v is ReferenceKind {
+  return v === 'file' || v === 'kb_summary' || v === 'pasted_text'
+}
+
+export async function referencesRouter(app: FastifyInstance): Promise<void> {
+  app.addHook('preHandler', authGuard)
+
+  app.get<{ Params: { sessionId: string } }>('/api/v1/sessions/:sessionId/references', async (request) => {
+    const userId = request.user!.userId
+    const sessionId = String(request.params.sessionId || '').slice(0, MAX_SESSION_ID)
+    if (!sessionId) return { references: [] }
+    const rows = await listSessionReferences(userId, sessionId)
+    return {
+      references: rows.map((r) => ({
+        reference_id: r.referenceId,
+        session_reference_id: r.sessionReferenceId,
+        kind: r.item.kind,
+        content: r.item.snapshot,
+        label: r.item.label,
+        source_ref: r.item.sourceRef,
+        source: r.source,
+        created_at: r.addedAt,
+      })),
+    }
+  })
+
+  app.post<{
+    Params: { sessionId: string }
+    Body: { kind?: string; content?: string; label?: string; source_ref?: string; source_patient_hash?: string }
+  }>('/api/v1/sessions/:sessionId/references', async (request, reply) => {
+    const userId = request.user!.userId
+    const sessionId = String(request.params.sessionId || '').slice(0, MAX_SESSION_ID)
+    if (!sessionId) return reply.status(400).send({ error: 'sessionId required' })
+    const body = request.body || {}
+
+    const rawKind = String(body.kind || '').trim()
+    const label = String(body.label || '').trim()
+    let kind: ReferenceKind
+    let sourceRef: string | null = null
+    if (rawKind === 'guideline') {
+      // 旧前端语义：知识库摘要/临床指南粘贴混用 — 以标题命中 Summary 归类。
+      const classified = await classifyGuidelineBySummaryTitle(userId, label)
+      kind = classified.kind
+      sourceRef = classified.sourceRef
+    } else if (rawKind) {
+      kind = normalizeLegacyRefType(rawKind)
+    } else {
+      kind = 'pasted_text'
+    }
+    if (!isCanonicalKind(kind)) return reply.status(400).send({ error: `invalid kind: ${rawKind}` })
+
+    const content = String(body.content || '')
+    if (content.length > MAX_CONTENT_CHARS) return reply.status(413).send({ error: `content too large (max ${MAX_CONTENT_CHARS} chars)` })
+    if (kind === 'pasted_text' && !content.trim()) return reply.status(400).send({ error: 'content required for pasted_text' })
+
+    const snapshot = kind === 'file' ? (label || content).trim() : content
+    if (kind === 'file' && !snapshot) return reply.status(400).send({ error: 'label (file name) required for file kind' })
+
+    if (kind === 'file' && !sourceRef) {
+      sourceRef = await resolveFileSourceRef(userId, body.source_patient_hash, snapshot)
+    }
+    if (kind === 'kb_summary' && !sourceRef && typeof body.source_ref === 'string' && body.source_ref.trim()) {
+      sourceRef = body.source_ref.trim()
+    }
+
+    const mounted = await addSessionReference({
+      userId,
+      sessionId,
+      item: {
+        userId, kind, sourceRef,
+        label: label || snapshot.slice(0, 120),
+        snapshot,
+      },
+      source: 'manual',
+    })
+    log.info('session reference mounted', { userId, sessionId, kind, referenceId: mounted.referenceId })
+    return {
+      reference_id: mounted.referenceId,
+      kind,
+      content: snapshot,
+      label: label || snapshot.slice(0, 120),
+      source_ref: sourceRef,
+      source: mounted.source,
+      created_at: mounted.addedAt,
+    }
+  })
+
+  app.delete<{ Params: { sessionId: string; referenceId: string } }>(
+    '/api/v1/sessions/:sessionId/references/:referenceId',
+    async (request, reply) => {
+      const userId = request.user!.userId
+      const sessionId = String(request.params.sessionId || '').slice(0, MAX_SESSION_ID)
+      const referenceId = String(request.params.referenceId || '')
+      if (!sessionId || !referenceId) return reply.status(400).send({ error: 'sessionId and referenceId required' })
+      const mounted = (await listSessionReferences(userId, sessionId)).some((r) => r.referenceId === referenceId)
+      if (!mounted) return reply.status(404).send({ error: 'Reference not mounted in this session' })
+      // 只删会话挂载 — item 本体保留（设计红线：取消引用 ≠ 删除内容）。
+      await removeSessionReference(userId, sessionId, referenceId)
+      return { ok: true }
+    },
+  )
+}

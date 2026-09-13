@@ -25,7 +25,11 @@ import { splitDocumentSections, resolveDocumentFocus } from '../../lib/doc-secti
 // #989 Phase 2: 块投影 — 上下文注入挂节 ID(target_section 确定性编辑)。
 import { loadProjection, withSectionIds } from '../../lib/block-projection.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
-import { buildDocReferenceBlocks, findUploadFileByName } from '../shared/chat-context.js'
+import { buildSessionReferenceBlocks, findUploadFileByName } from '../shared/chat-context.js'
+// #1006: 引用材料取数切两层模型（新表优先，旧表懒修复回退）。
+import { loadSessionReferenceItems } from '../../lib/reference-store.js'
+import { docSessionId } from '../../lib/reference-store.js'
+import { classifyGuidelineBySummaryTitle } from '../shared/summary-lookup.js'
 import type { EditHint } from '../../tools/tool-registry.js'
 // #699: 文档场景规则外置 — 本文件只做组装。
 import { refUnresolvedHint, refSourceRule, documentRules, FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE, PLAN_RULE, SECTION_EDIT_RULE } from './writing-prompts.js'
@@ -101,15 +105,15 @@ export async function buildDocumentContext(input: DocumentContextInput): Promise
   const { userId, docId, messageText, editHint, stage } = input
   const doc = await prisma.doc.findFirst({ where: { id: docId, userId } })
   if (!doc) return ''
-  const refs = await prisma.docReference.findMany({
-    where: { userId, docId },
-    orderBy: { createdAt: 'asc' },
+  // #1006: 走统一会话装载（新表优先；新表为空时回退旧表并懒修复）。
+  const refs = await loadSessionReferenceItems(userId, docSessionId(docId), {
+    classifyGuideline: classifyGuidelineBySummaryTitle,
   })
   // #writing-cost: 参考材料按用户消息相关性裁剪 — 只注入命中的
   // 文件(label/文件名关键词匹配),其余降级为"仅文件名"占位;避免
   // 每次轮询都全量提取所有参考正文(多文件时成本与 TTFB 飙升)。
   // 匹配失败时保留前 N 个(有正文优先),保证模型始终有上下文可用。
-  const allRefs: Array<{ id?: string; label?: string | null; snapshot?: string | null; refType?: string | null }> = refs || []
+  const allRefs: Array<{ id?: string; label?: string | null; snapshot?: string | null; kind?: string | null; sourceRef?: string | null }> = refs || []
   const msgText = String(messageText || '')
   const maxFiles = CONTEXT_CONFIG.scene.docRefFilesMax
   let refsToInject = allRefs
@@ -141,7 +145,7 @@ export async function buildDocumentContext(input: DocumentContextInput): Promise
   }
   // #fix: 上传文件引用(PDF/DOCX/txt)按文件名定位上传并注入提取的
   // 正文,LLM 才能真正读到稿件内容(此前只有文件名)。
-  const { blocks: refBlocks } = await buildDocReferenceBlocks(userId, refsToInject || [], {
+  const { blocks: refBlocks } = await buildSessionReferenceBlocks(userId, refsToInject || [], {
     // #fix: fileIndex 优先 + 上传目录文件名兜底 — 用户上传的文件
     // 一定在磁盘上,正文注入不依赖 fileIndex 表是否有记录。
     findFileByName: async (name) => findUploadFileByName(userId, name),

@@ -14,6 +14,7 @@ import { researchRouter } from './modules/research/research.router.js'
 import { submissionRouter } from './modules/submission/submission.router.js'
 import { mcpAdminRouter } from './modules/settings/mcp-admin.router.js'
 import { documentsRouter } from './modules/documents/documents.router.js'
+import { referencesRouter } from './modules/references/references.router.js'
 import { skillsRouter } from './modules/skills/skills.router.js'
 import { settingsRouter } from './modules/settings/settings.router.js'
 import { filesRouter } from './modules/files/files.router.js'
@@ -93,6 +94,7 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   await app.register(submissionRouter)
   await app.register(mcpAdminRouter)
   await app.register(documentsRouter)
+  await app.register(referencesRouter)
   await app.register(skillsRouter)
   await app.register(settingsRouter)
   await app.register(filesRouter)

@@ -8,6 +8,8 @@ import { writeDocVersion } from './doc-version-writer.js'
 import { sanitizeFilename, uploadsBaseDir } from '../lib/upload-path.js'
 import { downloadPdfFromUrl, UrlDownloadError } from '../lib/url-download.js'
 import { isOaUrlForDoi } from './oa-pdf-tool.js'
+// #1006: 导入目标取数切两层模型（新表优先，旧表懒修复回退）。
+import { loadSessionReferenceItems, docSessionId } from '../lib/reference-store.js'
 
 /**
  * #774 — doc 工具共享导入面。
@@ -18,28 +20,43 @@ import { isOaUrlForDoi } from './oa-pdf-tool.js'
  * 供两个工具共用，避免复制粘贴漂移。
  */
 
-/** 当前文档的全部参考材料(label 与原始记录)。 */
+/**
+ * 当前文档的全部参考材料(label 与原始记录)。#1006: 取数切到两层模型，
+ * 对外保持既有 r 形状（refType/snapshot/targetId）供工具链消费。
+ */
 export async function resolveImportTargets(userId: string, docId: string): Promise<Array<{ r: any; label: string }>> {
-  const refs = await prisma.docReference.findMany({ where: { userId, docId } })
-  return (refs || []).map((r: any) => {
-    let label = ''
-    try { label = JSON.parse(r.sourceNodes || '{}').label || '' } catch { /* ignore */ }
-    return { r, label: label || r.snapshot || r.id }
-  })
+  const items = await loadSessionReferenceItems(userId, docSessionId(docId))
+  return items.map((it) => ({
+    r: {
+      id: it.id,
+      kind: it.kind,
+      refType: it.kind === 'file' ? 'file' : 'note',
+      sourceRef: it.sourceRef,
+      targetId: it.sourceRef || '',
+      snapshot: it.snapshot,
+    },
+    label: it.label || it.snapshot || it.id,
+  }))
 }
 
 /** 提取参考材料正文:文件类走 markdown+图片提取;纯文本引用直接用 snapshot。 */
 export async function extractRefText(userId: string, docId: string, ref: any, label: string): Promise<{ text: string; error?: string }> {
-  const kind = String(ref.refType || '')
-  if (kind !== 'file' && kind !== 'pdf' && kind !== 'docx') {
+  // #1006: 兼容两种形状 — 新模型 { kind, sourceRef } 与旧 { refType }。
+  const canonical = ref.kind
+    ? String(ref.kind)
+    : (['file', 'pdf', 'docx'].includes(String(ref.refType || '')) ? 'file' : 'note')
+  if (canonical !== 'file') {
     return { text: String(ref.snapshot || '') }
   }
-  // #730: FileIndex 是真实表 — typed 访问,查不到按文件名扫描磁盘兜底。
-  const byIndex = await prisma.fileIndex.findFirst({
-    where: { userId, name: String(ref.snapshot || ''), deletedAt: null },
-    orderBy: { createdAt: 'desc' },
-  }).catch(() => null)
-  const fileId = byIndex?.id || findUploadByFileName(userId, String(ref.snapshot || ''))
+  // 稳定 sourceRef（FileIndex.id）优先；缺失/失效回退按文件名（旧路径）。
+  let fileId: string | null = ref.sourceRef ? String(ref.sourceRef) : ''
+  if (!fileId) {
+    const byIndex = await prisma.fileIndex.findFirst({
+      where: { userId, name: String(ref.snapshot || ''), deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    }).catch(() => null)
+    fileId = byIndex?.id || findUploadByFileName(userId, String(ref.snapshot || ''))
+  }
   if (!fileId) return { text: '', error: `参考材料「${label}」对应的上传文件不存在` }
   // #fix: 导入走 markdown+图片提取 — PDF 恢复标题/段落结构,DOCX 保留
   // mammoth 结构;内嵌图落盘为托管文件并在文档里渲染(取代 [图])。
@@ -48,7 +65,7 @@ export async function extractRefText(userId: string, docId: string, ref: any, la
   // #fix(方案 A):PDF 公式视觉 OCR → LaTeX 追加文末 — PDF 文本层没有
   // 公式语义,视觉模型把公式转 $$...$$,AI 才能理解数学内容。仅导入时
   // 一次(非每轮),失败静默降级。
-  if (kind === 'pdf' && text) {
+  if ((String(ref.refType || '') === 'pdf' || String(ref.snapshot || '').toLowerCase().endsWith('.pdf')) && text) {
     const { extractFormulasFromPdf } = await import('../lib/pdf-formula.js')
     const formulas = await extractFormulasFromPdf(userId, fileId)
     if (formulas) text += formulas
@@ -119,6 +136,7 @@ export async function executeImportFromUrl(
     // 4) 建 docReference(Reference Materials 可见,支持后续重新导入) — 幂等
     const refDup = await prisma.docReference.findFirst({ where: { userId, docId, refType: 'pdf', snapshot: filename } })
     if (!refDup) {
+      const createdAt = new Date().toISOString()
       await prisma.docReference.create({
         data: {
           id: `ref_${crypto.randomBytes(8).toString('hex')}`,
@@ -129,9 +147,14 @@ export async function executeImportFromUrl(
           snapshot: filename,
           sourceNodes: JSON.stringify({ label: filename }),
           granularity: 'doc',
-          createdAt: new Date().toISOString(),
+          createdAt,
         },
       })
+      // #1005 双写：URL 导入的 PDF 同步新模型（targetId 即真实 FileIndex id）。
+      try {
+        const { writeThroughLegacyRef } = await import('../lib/reference-store.js')
+        await writeThroughLegacyRef(userId, docId, { refType: 'pdf', targetId: fileId, snapshot: filename, label: filename, createdAt })
+      } catch { /* best-effort */ }
     }
 
     // 5) 提取正文(与 import_reference 同管线)并写回

@@ -19,6 +19,8 @@ vi.mock('../../src/common/prisma.js', () => ({
   default: {
     doc: { findFirst: mocks.docFindFirst },
     docReference: { findMany: mocks.docRefFindMany },
+    // #1006: 会话装载先查新表 — mock 返回空 → 自动回退旧表（本文件保持旧行为）。
+    sessionReference: { findMany: vi.fn(async () => []) },
   },
 }))
 
