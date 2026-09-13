@@ -102,3 +102,14 @@ describe('#1014 reference → usage bus', () => {
     expect(after).toBe(before + 1)
   })
 })
+
+// #1015: 记忆健康面板回溯分层升降级留痕。
+describe('#1015 memory health — tier events', () => {
+  test('health 返回 tier_events 数组（MemoryTierStore 留痕入口）', async () => {
+    const app = await getApp()
+    const res = await app.inject({ method: 'GET', url: '/api/v1/memory/health', headers: await authHeader() })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(Array.isArray(body.tier_events)).toBe(true)
+  })
+})

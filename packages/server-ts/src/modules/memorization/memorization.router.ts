@@ -163,6 +163,9 @@ app.get('/api/v1/memory/health', async (request) => {
       pending: staleRows.length + archivedRows,
       episodes: ctx.episodes.all().length,
     },
+    // #1015: 分层升降级留痕（最近 10 条，可见可回滚）— MemoryTierStore
+    // 的 promote/demote 写入，health 面板回溯。
+    tier_events: await (await import('../../memory/memory-tier-store.js')).listTierEvents(userId, 10),
   }
 })
 }

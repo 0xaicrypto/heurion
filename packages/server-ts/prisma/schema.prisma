@@ -186,6 +186,23 @@ model DocReference {
   @@map("doc_references")
 }
 
+/// #1015（SECOND_BRAIN Phase C）— 记忆层级升降级留痕（可见可回滚，原则 4）：
+/// 每次 promote/demote 一条；/api/v1/memory/health 回溯。
+model MemoryTierEvent {
+  id       String @id @default(cuid())
+  userId   String @map("user_id")
+  unitId   String @map("unit_id")
+  fromTier String @map("from_tier")
+  toTier   String @map("to_tier")
+  action   String
+  reason   String @default("")
+  at       String
+
+  @@index([userId, at])
+  @@index([userId, unitId, at])
+  @@map("memory_tier_events")
+}
+
 /// #1014（SECOND_BRAIN Phase B）— 记忆使用反馈总线（append-only）：
 /// 谁用了哪条记忆（fact/summary/reference/skill）— MemoryGranularityController
 /// (#1013) 的输入源；写入 fire-and-forget，不阻塞调用方响应。
