@@ -15,7 +15,7 @@ vi.mock('../../src/common/prisma.js', () => ({
 }))
 vi.mock('../../src/common/logger.js', () => ({ makeLogger: () => new Proxy({}, { get: () => vi.fn() }) }))
 
-import { FactTierStore, SummaryTierStore, PersonaTierStore, listTierEvents } from '../../src/memory/memory-tier-store.js'
+import { FactTierStore, SummaryTierStore, PersonaTierStore, SkillTierStore, listTierEvents } from '../../src/memory/memory-tier-store.js'
 
 function fakeMemory() {
   const facts = [
@@ -26,9 +26,14 @@ function fakeMemory() {
     { type: 'summary', stableId: 's1', title: 'EGFR 总结', content: '总结正文', status: 'current', sourceFacts: [{ stableId: 'f1' }], staleBecause: [] },
     { type: 'summary', stableId: 's2', title: '旧总结', content: '旧', status: 'superseded' },
   ]
+  const skills = [
+    { type: 'skill', stableId: 'sk1', name: '文献写作流程', description: '检索→写入', lifecycle: 'active', successCount: 3, taskCount: 4, followRate: 0.75 },
+  ]
   return {
     graph: {
-      getCurrentNodesByType: (t: string) => (t === 'fact' ? facts : t === 'summary' ? summaries : []),
+      getCurrentNodesByType: (t: string) =>
+        t === 'fact' ? facts : t === 'summary' ? summaries : t === 'skill' ? skills : [],
+      commit: vi.fn(),
     },
     addFact: vi.fn(),
     addSummary: vi.fn(),
@@ -99,5 +104,37 @@ describe('#1015 MemoryTierStore', () => {
     ])
     const events = await listTierEvents('u1', 5)
     expect(events[0]).toMatchObject({ id: 'e2', fromTier: 'fact', toTier: 'summary', action: 'promote' })
+  })
+})
+
+describe('#1016 SkillTierStore', () => {
+  test('read：graph SkillNode 映射（lifecycle/统计入 meta）', async () => {
+    const store = new SkillTierStore('u1', fakeMemory())
+    const units = await store.read()
+    expect(units).toHaveLength(1)
+    expect(units[0]).toMatchObject({ id: 'sk1', tier: 'skill', label: '文献写作流程', meta: { lifecycle: 'active', followRate: 0.75 } })
+  })
+
+  test('write 为边界 no-op（技能创建走捕获/审批/晋升管线）', async () => {
+    const mem = fakeMemory()
+    const store = new SkillTierStore('u1', mem)
+    await expect(store.write({ id: 'x', label: 'n', content: 'c' })).resolves.toBeUndefined()
+    expect(mem.addFact).not.toHaveBeenCalled()
+  })
+
+  test('demote → lifecycle=suspended + commit + 留痕；promote → active', async () => {
+    const mem = fakeMemory()
+    const store = new SkillTierStore('u1', mem)
+    const ev = await store.demote('sk1', 'skill', 'skill', 'auto-suspend: followRate 0.25')
+    expect(ev.action).toBe('demote')
+    expect(mem.graph.commit).toHaveBeenCalled()
+    const skill = mem.graph.getCurrentNodesByType('skill')[0]
+    expect(skill.lifecycle).toBe('suspended')
+    expect(mocks.tierCreate).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({ unitId: 'sk1', action: 'demote', reason: 'auto-suspend: followRate 0.25' }),
+    })
+
+    await store.promote('sk1', 'skill', 'skill', 'manual restore')
+    expect(skill.lifecycle).toBe('active')
   })
 })

@@ -20,7 +20,7 @@ import type { FactNode, SummaryNode } from './memory.types.js'
 
 const log = makeLogger('memory.tier-store')
 
-export type MemoryTier = 'fact' | 'summary' | 'persona'
+export type MemoryTier = 'fact' | 'summary' | 'persona' | 'skill'
 
 export interface MemoryTierUnit {
   id: string
@@ -188,6 +188,69 @@ export class SummaryTierStore extends BaseTierStore {
       title: unit.label || 'Summary',
       content: unit.content,
     }, 'system')
+  }
+}
+
+/**
+ * Skills 层（程序性记忆 #1016）：
+ *  - 单元 = graph SkillNode（#842 v2；CapturedSkill 只是 draft→confirmed→
+ *    promoted 的归档暂存表，不是正式存储）；
+ *  - promote/demote = 层内生命周期（active / suspended），不只是跨层 tier —
+ *    留痕的 from/toTier 均为 'skill'，具体生命周期在 reason 里；
+ *  - write = 边界 no-op：技能创建必须走捕获→审批→晋升（#842）管线，禁止
+ *    经通用接口直写；创建逻辑属 Skills 特有，不套入通用契约。
+ */
+export class SkillTierStore extends BaseTierStore {
+  readonly tier = 'skill' as const
+  constructor(userId: string, private readonly memory: MemoryService) {
+    super(userId)
+  }
+
+  async read(query: MemoryTierQuery = {}): Promise<MemoryTierUnit[]> {
+    let nodes = (this.memory.graph.getCurrentNodesByType('skill') ?? []) as Array<Record<string, any>>
+    if (query.limit && query.limit > 0) nodes = nodes.slice(0, query.limit)
+    return nodes.map((n) => ({
+      id: String(n.stableId),
+      tier: 'skill' as const,
+      label: String(n.name || ''),
+      content: String(n.description || n.bestStrategy || ''),
+      meta: {
+        lifecycle: n.lifecycle, successCount: n.successCount, taskCount: n.taskCount,
+        followRate: n.followRate, taskKind: n.taskKind,
+      },
+    }))
+  }
+
+  async write(): Promise<void> {
+    // 边界：技能创建走捕获/审批/晋升管线（#842），通用 write 不直写。
+  }
+
+  private async applyLifecycle(
+    unitId: string,
+    lifecycle: 'active' | 'suspended',
+    action: 'promote' | 'demote',
+    fromTier: MemoryTier,
+    toTier: MemoryTier,
+    reason: string,
+  ): Promise<TierChangeEvent> {
+    const node = ((this.memory.graph.getCurrentNodesByType('skill') ?? []) as Array<Record<string, any>>)
+      .find((n) => String(n.stableId) === unitId)
+    if (node) {
+      node.lifecycle = lifecycle
+      node.updatedAt = Date.now()
+      this.memory.graph.commit()
+    }
+    return this.change(action, unitId, fromTier, toTier, reason)
+  }
+
+  /** 晋升（重审恢复/成为常用技能）→ lifecycle='active' + 留痕。 */
+  promote(unitId: string, fromTier: MemoryTier, toTier: MemoryTier, reason: string): Promise<TierChangeEvent> {
+    return this.applyLifecycle(unitId, 'active', 'promote', fromTier, toTier, reason)
+  }
+
+  /** 淘汰（长期未匹配/遵循度过低）→ lifecycle='suspended'（降级不删除）+ 留痕。 */
+  demote(unitId: string, fromTier: MemoryTier, toTier: MemoryTier, reason: string): Promise<TierChangeEvent> {
+    return this.applyLifecycle(unitId, 'suspended', 'demote', fromTier, toTier, reason)
   }
 }
 

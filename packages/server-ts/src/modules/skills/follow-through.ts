@@ -16,6 +16,9 @@
 import type { MemoryService } from '../../memory/memory.service.js'
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { makeLogger } from '../../common/logger.js'
+// #1016: 使用信号统一进 MemoryUsageBus；淘汰走 MemoryTierStore（留痕）。
+import { recordMemoryUsage } from '../../memory/memory-usage-bus.js'
+import { SkillTierStore } from '../../memory/memory-tier-store.js'
 
 const log = makeLogger('skills.follow-through')
 const telemetry = new PrismaTelemetryService()
@@ -48,6 +51,8 @@ export function judgeFollowed(
 export interface FollowThroughInput {
   memory: MemoryService
   userId: string
+  /** #1016: 使用反馈的会话归属（可选）。 */
+  sessionId?: string
   /** 本轮激活的剧本卡(matchSkillsForTurn 输出)— stableId 精确关联,缺省回落 name。 */
   activated: Array<{ name: string; stableId?: string }>
   toolsUsed: string[]
@@ -67,6 +72,9 @@ export async function recordFollowThrough(input: FollowThroughInput): Promise<vo
   if (activatedIds.size === 0 && activatedNames.size === 0) return
   const nodes = (input.memory.graph.getCurrentNodesByType('skill') ?? []) as any[]
   let mutated = false
+  // #1016: 待淘汰技能（auto-suspend）— 统计落盘后统一走 SkillTierStore.demote
+  // （层内生命周期 + memory_tier_events 留痕），不再直接改 lifecycle。
+  const pendingDemotions: Array<{ id: string; name: string; reason: string }> = []
 
   for (const node of nodes) {
     // 优先 stableId 精确匹配;卡片缺 stableId(legacy)回落 name
@@ -84,6 +92,21 @@ export async function recordFollowThrough(input: FollowThroughInput): Promise<vo
     }).catch(() => {})
 
     const followed = judgeFollowed(node, { toolsUsed: input.toolsUsed, docEdits: input.docEdits })
+
+    // #1016: 激活 = retrieved；被遵循 = accepted（使用信号统一总线，
+    // 替代散落的局部统计 — graph 节点字段仍维护以支持 followRate 判定）。
+    if (node.stableId) {
+      recordMemoryUsage({
+        userId: input.userId, unitType: 'skill', unitId: String(node.stableId), action: 'retrieved',
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      })
+      if (followed) {
+        recordMemoryUsage({
+          userId: input.userId, unitType: 'skill', unitId: String(node.stableId), action: 'accepted',
+          ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        })
+      }
+    }
 
     // skill_followed / skill_ignored
     await telemetry.record({
@@ -108,8 +131,12 @@ export async function recordFollowThrough(input: FollowThroughInput): Promise<vo
     node.updatedAt = Date.now()
 
     // 自动降级(仅新数据足够时判定;降级不删除,重审可恢复)
-    if (recent.length >= WINDOW && followRate < SUSPEND_THRESHOLD && node.lifecycle === 'active') {
-      node.lifecycle = 'suspended'
+    if (recent.length >= WINDOW && followRate < SUSPEND_THRESHOLD && node.lifecycle === 'active' && node.stableId) {
+      pendingDemotions.push({
+        id: String(node.stableId),
+        name: String(node.name || ''),
+        reason: `auto-suspend: followRate=${node.followRate} < ${SUSPEND_THRESHOLD} (window=${recent.length})`,
+      })
       await telemetry.record({
         userId: input.userId,
         workspaceId: input.userId,
@@ -126,6 +153,16 @@ export async function recordFollowThrough(input: FollowThroughInput): Promise<vo
   // 统计蒸发。走与 fact 写路相同的 graph.commit() 通道;commit
   // 失败由调用方(post-turn best-effort 段)吞掉,不阻断回合。
   if (mutated) input.memory.graph.commit()
+
+  // #1016: 淘汰统一走 MemoryTierStore.demote（更新 lifecycle + commit + 留痕）。
+  if (pendingDemotions.length > 0) {
+    const skillStore = new SkillTierStore(input.userId, input.memory)
+    for (const d of pendingDemotions) {
+      await skillStore.demote(d.id, 'skill', 'skill', d.reason).catch((err) => {
+        log.warn('[follow-through] tier demote trace failed (best-effort)', { skill: d.name, err: String(err).slice(0, 120) })
+      })
+    }
+  }
 
   // skill_task_outcome(回合级,success/abandoned)
   await telemetry.record({

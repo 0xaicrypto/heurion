@@ -53,9 +53,18 @@ describe('#912 recordFollowThrough 持久化', () => {
     const { memory, baseDir } = makeMemory()
     const node = addSkill(memory)
 
+    const { default: prisma } = await import('../../src/common/prisma.js')
+    const usageBefore = await (prisma as any).memoryUsageEvent.count({ where: { userId: 'u_ftp', unitType: 'skill', unitId: node.stableId } })
+
     await follow(memory, '文献写作流程', ['kb_search', 'edit_document', 'render_chart'], 1)
     expect(node.taskCount).toBe(1)
     expect(node.followRate).toBe(1)
+
+    // #1016: 激活/遵循写入 MemoryUsageBus（retrieved + accepted）
+    const usage = await (prisma as any).memoryUsageEvent.findMany({ where: { userId: 'u_ftp', unitType: 'skill', unitId: node.stableId } })
+    expect(usage.length).toBe(usageBefore + 2)
+    expect(usage.some((r: any) => r.action === 'retrieved')).toBe(true)
+    expect(usage.some((r: any) => r.action === 'accepted')).toBe(true)
 
     // 模拟重启:同一 baseDir 重建 MemoryService — 统计必须存活。
     const reloaded = new MemoryService({
@@ -90,6 +99,14 @@ describe('#912 recordFollowThrough 持久化', () => {
       await follow(memory, 'SOAP 笔记流程', ['render_chart'], 0)
     }
     expect(node.lifecycle).toBe('suspended')
+
+    // #1016: 淘汰走 SkillTierStore.demote — memory_tier_events 留痕可查。
+    const { default: prisma } = await import('../../src/common/prisma.js')
+    const tierEvents = await (prisma as any).memoryTierEvent.findMany({
+      where: { userId: 'u_ftp', unitId: node.stableId, action: 'demote' },
+    })
+    expect(tierEvents.length).toBeGreaterThanOrEqual(1)
+    expect(String(tierEvents[tierEvents.length - 1].reason)).toContain('auto-suspend')
 
     const reloaded = new MemoryService({
       eventLog: new EventLog(baseDir), baseDir,

@@ -138,6 +138,7 @@ export const POST_TURN_SEGMENTS: PostTurnSegment[] = [
       await recordFollowThrough({
         memory: c.ctx.memory,
         userId: c.userId,
+        sessionId: c.sessionId,
         activated: c.skillCards,
         toolsUsed: c.timelineTools.map((t) => t.tool),
         docEdits: c.timelineTools.filter((t) => t.tool === 'edit_document').length,
