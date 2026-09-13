@@ -51,7 +51,7 @@ export function Toolbar(input: {
 }) {
   const { t } = useTranslation();
   const { chat, references, phiScanning, onPhiScan, exporting, onExportDocx, onExportPdf, studyId, methodsLoading, methodsError, onGenerateMethods, injectOpen, setInjectOpen, injectLabel, setInjectLabel, injectResult, setInjectResult, injecting, onInjectResults, onOpenKbPicker, setChatOpen, chatOpen, onToggleHistory, previewing, onTogglePreview, viewMode, onToggleViewMode, deckSlideCount, exportResult, exportHistory, exportPanelOpen, setExportPanelOpen } = input;
-  const { refListOpen, setRefListOpen, refList, refDeleting, loadReferences, deleteReference, setRefDialogOpen, filesLibOpen, setFilesLibOpen, filesLibLoading, filesLibAdding, filesLibList, loadFilesLibrary, addFileLibraryRefs } = references;
+  const { refListOpen, setRefListOpen, refList, refDeleting, loadReferences, deleteReference, setRefDialogOpen, filesLibOpen, setFilesLibOpen, filesLibLoading, filesLibAdding, filesLibList, loadFilesLibrary, addFileLibraryRefs, poolOpen, setPoolOpen, poolLoading, poolSort, setPoolSort, poolList, poolAdding, loadPool, addPoolRefs } = references;
 
   // Export ▾ 下拉（DOCX/PDF）。
   const [exportOpen, setExportOpen] = useState(false);
@@ -216,6 +216,14 @@ export function Toolbar(input: {
             filesLibAdding={filesLibAdding}
             filesLibList={filesLibList}
             onAddFiles={(files) => void addFileLibraryRefs(files)}
+            poolOpen={poolOpen}
+            onTogglePool={() => { const next = !poolOpen; setPoolOpen(next); if (next) void loadPool(); }}
+            poolLoading={poolLoading}
+            poolSort={poolSort}
+            onPoolSort={setPoolSort}
+            poolList={poolList}
+            poolAdding={poolAdding}
+            onAddPool={(items) => void addPoolRefs(items)}
           />
         )}
       </div>

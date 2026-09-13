@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   deleteSessionReference: vi.fn(),
   getSessionSuggestions: vi.fn(),
   resolveSessionSuggestion: vi.fn(),
+  getReferencePool: vi.fn(),
 }));
 
 vi.mock('@/components/plugins/PluginExtensionPoint', () => ({
@@ -34,6 +35,7 @@ vi.mock('@/lib/api', () => ({
     deleteSessionReference: mocks.deleteSessionReference,
     getSessionSuggestions: mocks.getSessionSuggestions,
     resolveSessionSuggestion: mocks.resolveSessionSuggestion,
+    getReferencePool: mocks.getReferencePool,
   },
 }));
 
@@ -61,6 +63,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getSessionReferences.mockResolvedValue({ references: [] });
   mocks.getSessionSuggestions.mockResolvedValue({ suggestions: [] });
+  mocks.getReferencePool.mockResolvedValue({ items: [] });
   mocks.resolveSessionSuggestion.mockResolvedValue({ ok: true });
   mocks.addSessionReference.mockResolvedValue({ ...refRow, reference_id: 'r_new' });
   mocks.deleteSessionReference.mockResolvedValue({ ok: true });
@@ -140,5 +143,49 @@ describe('#1012 建议态引用', () => {
 
     await waitFor(() => expect(mocks.resolveSessionSuggestion).toHaveBeenCalledWith('s1', 'sug1', false));
     await waitFor(() => expect(screen.queryByTestId('suggested-reference-banner')).not.toBeInTheDocument());
+  });
+});
+
+describe('#1010 引用池隐式排序', () => {
+  const poolItem = {
+    reference_id: 'pool1', kind: 'pasted_text', label: '旧材料', content: '正文预览',
+    source_ref: null, created_at: '',
+    usage: {
+      session_count: 2,
+      last_used_at: new Date(Date.now() - 3_600_000).toISOString(),
+      last_session_id: 'sx',
+      last_session_title: '放疗课题',
+    },
+    score: 0,
+  };
+
+  test('池面板：使用痕迹展示、三种排序切换、按 item id 复用', async () => {
+    mocks.getSessionReferences.mockResolvedValue({ references: [] });
+    mocks.getReferencePool.mockResolvedValue({ items: [poolItem] });
+    mocks.addSessionReference.mockResolvedValue({ ...refRow, reference_id: 'pool1' });
+    render(<ChatPage />);
+
+    // 会话选中后才启用引用入口（否则 disabled 点击无效）。
+    await waitFor(() => expect(mocks.getSessionReferences).toHaveBeenCalledWith('s1'));
+    fireEvent.click(screen.getByTitle(/管理本会话引用材料|Manage this session/));
+    fireEvent.click(await screen.findByRole('button', { name: /最近引用|Reuse/ }));
+    expect(await screen.findByTestId('ref-pool')).toBeInTheDocument();
+
+    // 使用痕迹元信息（会话数 + 最近会话标题）。
+    expect(await screen.findByText(/用于 2 个会话|Used in 2 sessions/)).toBeInTheDocument();
+    expect(screen.getByText(/最近用于《放疗课题》|Last in "放疗课题"/)).toBeInTheDocument();
+
+    // 切换"用得最多" → 以 frequent 重新拉取。
+    fireEvent.click(screen.getByRole('button', { name: /用得最多|Most used/ }));
+    await waitFor(() => {
+      expect(mocks.getReferencePool).toHaveBeenCalledWith(expect.objectContaining({ sort: 'frequent' }));
+    });
+
+    // 勾选并复用 → 以 reference_id 精确挂载（不重算 identity）。
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: /添加为参考|Add as reference/ }));
+    await waitFor(() => {
+      expect(mocks.addSessionReference).toHaveBeenCalledWith('s1', expect.objectContaining({ reference_id: 'pool1' }));
+    });
   });
 });

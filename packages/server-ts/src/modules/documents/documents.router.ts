@@ -535,13 +535,23 @@ export async function documentsRouter(app: FastifyInstance) {
   })
 
   // ── References ──
-  app.post<{ Params: DocParams; Body: { kind?: string; content?: string; label?: string; source_patient_hash?: string } }>('/api/v1/docs/:docId/references', async (request, reply) => {
+  app.post<{ Params: DocParams; Body: { kind?: string; content?: string; label?: string; source_patient_hash?: string; reference_id?: string } }>('/api/v1/docs/:docId/references', async (request, reply) => {
     const { docId } = request.params
     const userId = request.user!.userId
     const doc = await prisma.doc.findFirst({ where: { id: docId, userId } })
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
 
-    const { kind, content, label, source_patient_hash } = request.body
+    let { kind, content, label, source_patient_hash } = request.body
+    // #1010: 从引用池复用时按 item id 取回完整正文（会话端点已支持，旧写作端点补齐）。
+    const existingRefId = String(request.body.reference_id || '').trim()
+    if (existingRefId) {
+      const item = await prisma.referenceItem.findFirst({ where: { id: existingRefId, userId } })
+      if (!item) return reply.status(404).send({ error: 'reference item not found' })
+      kind = item.kind === 'kb_summary' ? 'guideline' : item.kind
+      content = item.snapshot
+      label = item.label
+      source_patient_hash = item.sourceRef ?? undefined
+    }
     // #930: 幂等登记 — 同 (docId, refType, snapshot) 已存在时不再重复建行
     // (文件库/知识库选择器重复点选/双击提交不再产生重复参考)。命中时跳过
     // create 与 pptx 后台解析,但空正文的自动导入(ensureDraftBody)仍执行 —
@@ -572,6 +582,9 @@ export async function documentsRouter(app: FastifyInstance) {
           if (item.kind === 'kb_summary' && item.sourceRef) {
             recordMemoryUsage({ userId, unitType: 'summary', unitId: item.sourceRef, action: 'referenced', sessionId: `doc-${docId}` })
           }
+          // #1010: 引用池使用留痕（doc 侧幂等命中同样计一次使用）。
+          const { referenceItemId: rid, referenceIdentityKey: rkey } = await import('../../lib/reference-store.js')
+          recordMemoryUsage({ userId, unitType: 'reference', unitId: rid(userId, rkey(item)), action: 'referenced', sessionId: `doc-${docId}` })
         } catch (err) { log.warn('reference dual-write failed (dedup)', { docId, reason: (err as Error)?.message?.slice(0, 160) }) }
         return {
           reference_id: dup.id, kind: dup.refType, content: dup.snapshot,
@@ -606,6 +619,8 @@ export async function documentsRouter(app: FastifyInstance) {
       }
       const { referenceItemId, referenceIdentityKey } = await import('../../lib/reference-store.js')
       const itemId = referenceItemId(userId, referenceIdentityKey(item))
+      // #1010: 引用池使用留痕（doc 侧新建登记计一次使用）。
+      recordMemoryUsage({ userId, unitType: 'reference', unitId: itemId, action: 'referenced', sessionId: `doc-${docId}` })
       // #1009: 新建登记送语义索引（dedup 分支不重复索引）。
       void indexReferenceItem({ id: itemId, userId, kind: item.kind, sourceRef: item.sourceRef ?? null, snapshot: item.snapshot ?? '', label: item.label })
       // #1017: 旧写作端点的新建登记同样留痕（dedup 分支不重复 promote）。

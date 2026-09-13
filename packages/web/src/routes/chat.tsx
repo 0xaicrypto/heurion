@@ -101,7 +101,12 @@ export function ChatPage() {
   // #620: 知识库选择器 — 显式选定总结加入上下文.
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   // #1007: 会话级引用(与写作编辑器共用弹层/状态机) — 引用材料跨消息持续生效。
-  const refs = useSessionReferences({ sessionId: sessionId || undefined, setError });
+  const refs = useSessionReferences({
+    sessionId: sessionId || undefined,
+    setError,
+    // #1010: 引用池"当前场景相关"上下文 = 会话标题 + 最近消息。
+    poolContext: () => [currentSessionTitle, ...(session?.messages || []).slice(-4).map((m) => m.text)].join(' '),
+  });
   // #1012: 建议态引用 — post-turn 检测产出 pending 建议；采纳即转正式引用。
   const {
     suggestions: pendingSuggestions,
@@ -542,6 +547,14 @@ export function ChatPage() {
                   suggestionResolving={suggestionResolving}
                   onAcceptSuggestion={(id) => void resolveSuggestion(id, true)}
                   onDismissSuggestion={(id) => void resolveSuggestion(id, false)}
+                  poolOpen={refs.poolOpen}
+                  onTogglePool={() => { const next = !refs.poolOpen; refs.setPoolOpen(next); if (next) void refs.loadPool(); }}
+                  poolLoading={refs.poolLoading}
+                  poolSort={refs.poolSort}
+                  onPoolSort={refs.setPoolSort}
+                  poolList={refs.poolList}
+                  poolAdding={refs.poolAdding}
+                  onAddPool={(items) => void refs.addPoolRefs(items)}
                 />
               )}
             </div>

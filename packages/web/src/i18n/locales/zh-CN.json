@@ -618,7 +618,15 @@
     "polishConflictDiscarded": "已丢弃本次替换 — 润色结果已带入聊天输入框",
     "polishConflictToChat": "这是刚才生成但未采用的润色结果，请帮我把它应用到文档合适的位置（原文：{{orig}}）",
     "polishConflictTimedOut": "冲突未处理 — 已把润色结果带入聊天输入框，不会丢失",
-    "_proposalForward": "转发到聊天"
+    "_proposalForward": "转发到聊天",
+    "refPool": "最近引用",
+    "refPoolHint": "复用本会话之前用过的引用材料",
+    "refPoolSort_recent": "最近用过",
+    "refPoolSort_frequent": "用得最多",
+    "refPoolSort_relevant": "当前场景相关",
+    "refPoolEmpty": "暂无可复用的引用材料",
+    "refPoolMeta": "用于 {{n}} 个会话",
+    "refPoolLastUsed": "最近用于《{{title}}》"
   },
   "preview": {
     "open": "预览",

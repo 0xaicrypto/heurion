@@ -618,7 +618,15 @@
     "polishConflictDiscarded": "Replacement discarded — the polish result was moved to the chat input",
     "polishConflictToChat": "This polish result was generated but not applied; help me insert it at the right place (original: {{orig}})",
     "polishConflictTimedOut": "Conflict left unresolved — the polish result was moved to the chat input so it is not lost",
-    "_proposalForward": "Forward to chat"
+    "_proposalForward": "Forward to chat",
+    "refPool": "Reuse",
+    "refPoolHint": "Reuse reference materials from earlier sessions",
+    "refPoolSort_recent": "Recently used",
+    "refPoolSort_frequent": "Most used",
+    "refPoolSort_relevant": "Relevant now",
+    "refPoolEmpty": "No reusable references yet",
+    "refPoolMeta": "Used in {{n}} sessions",
+    "refPoolLastUsed": "Last in \"{{title}}\""
   },
   "preview": {
     "open": "Preview",

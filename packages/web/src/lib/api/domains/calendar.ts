@@ -19,7 +19,7 @@ export class CalendarApi extends ApiCore {
   }
 
   /** 服务端 documents.router POST /references 响应 — 上传即草稿含 imported_body。 */
-  async addDocReference(docId: string, data: {kind: string; content: string; source_patient_hash?: string; label?: string}): Promise<{
+  async addDocReference(docId: string, data: {kind: string; content: string; source_patient_hash?: string; label?: string; reference_id?: string}): Promise<{
     reference_id: string;
     kind: string;
     content: string;
@@ -48,7 +48,7 @@ export class CalendarApi extends ApiCore {
     return this.fetch(`/api/v1/sessions/${sessionId}/references`);
   }
 
-  async addSessionReference(sessionId: string, data: {kind: string; content: string; label?: string; source_ref?: string; source_patient_hash?: string}): Promise<{
+  async addSessionReference(sessionId: string, data: {kind: string; content: string; label?: string; source_ref?: string; source_patient_hash?: string; reference_id?: string}): Promise<{
     reference_id: string;
     kind: string;
     content: string;
@@ -65,6 +65,29 @@ export class CalendarApi extends ApiCore {
 
   async deleteSessionReference(sessionId: string, referenceId: string): Promise<{ ok: boolean }> {
     return this.fetch(`/api/v1/sessions/${sessionId}/references/${referenceId}`, { method: 'DELETE' });
+  }
+
+  /* ────────── #1010: 引用材料池（选择器隐式排序） ────────── */
+
+  async getReferencePool(params: {sort: 'recent' | 'frequent' | 'relevant'; context?: string; limit?: number}): Promise<{items: Array<{
+    reference_id: string;
+    kind: string;
+    label: string;
+    content: string;
+    source_ref: string | null;
+    created_at: string;
+    usage: {
+      session_count: number;
+      last_used_at: string | null;
+      last_session_id: string | null;
+      last_session_title: string | null;
+    };
+    score: number;
+  }>}> {
+    const qs = new URLSearchParams({ sort: params.sort });
+    if (params.context) qs.set('context', params.context);
+    if (params.limit) qs.set('limit', String(params.limit));
+    return this.fetch(`/api/v1/references?${qs.toString()}`);
   }
 
   /* ────────── #1009/#1012: 建议态引用（pending 建议的展示与采纳/忽略） ────────── */

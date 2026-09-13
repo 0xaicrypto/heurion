@@ -31,6 +31,25 @@ export function filterNewFileRefs(files: FileLibraryItem[], refList: DocReferenc
   return files.filter((f) => !taken.has(f.name.toLowerCase()));
 }
 
+/** #1010: 引用材料池条目 — 选择器隐式排序（最近用过/用得最多/当前场景相关）。 */
+export interface ReferencePoolItem {
+  reference_id: string;
+  kind: string;
+  label: string;
+  content: string;
+  source_ref: string | null;
+  created_at: string;
+  usage: {
+    session_count: number;
+    last_used_at: string | null;
+    last_session_id: string | null;
+    last_session_title: string | null;
+  };
+  score: number;
+}
+
+export type ReferencePoolSort = 'recent' | 'frequent' | 'relevant';
+
 export interface DocReferences {
   refDialogOpen: boolean;
   setRefDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -53,12 +72,22 @@ export interface DocReferences {
   handleKbPickConfirm: (items: Array<{ id: string; title: string; summary: string; kind: 'summary' | 'file' }>) => Promise<void>;
   addFileLibraryRefs: (files: FileLibraryItem[]) => Promise<void>;
   deleteReference: (referenceId: string) => Promise<void>;
+  /** #1010: 引用池（跨会话复用 + 隐式排序 + 使用痕迹）。 */
+  poolOpen: boolean;
+  setPoolOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  poolLoading: boolean;
+  poolSort: ReferencePoolSort;
+  setPoolSort: (sort: ReferencePoolSort) => void;
+  poolList: ReferencePoolItem[];
+  poolAdding: boolean;
+  loadPool: (sort?: ReferencePoolSort) => Promise<void>;
+  addPoolRefs: (items: ReferencePoolItem[]) => Promise<void>;
 }
 
 /** #1007: 引用面板后端适配器 — 写作编辑器(docId)/主 chat(sessionId)共用同一状态机与弹层。 */
 export interface ReferenceAdapter {
   list: () => Promise<DocReferenceItem[]>;
-  add: (data: { kind: string; content: string; label?: string; source_patient_hash?: string }) => Promise<{ imported?: boolean; imported_body?: string | null }>;
+  add: (data: { kind: string; content: string; label?: string; source_patient_hash?: string; reference_id?: string }) => Promise<{ imported?: boolean; imported_body?: string | null }>;
   remove: (referenceId: string) => Promise<void>;
 }
 
@@ -69,8 +98,11 @@ function useReferenceManager(input: {
   setError: (e: string) => void;
   /** #930: 文件类参考登记触发空文档自动导入时,把导入正文回填编辑器。 */
   onImportedBody?: (body: string) => void;
+  /** #1010: 当前场景上下文（会话标题/近期消息/文档标题）— "当前场景相关"排序用。 */
+  poolContext?: () => string;
 }): DocReferences {
   const { adapter, setError } = input;
+  const poolContext = input.poolContext;
 
   const [refDialogOpen, setRefDialogOpen] = useState(false);
   const [refForm, setRefForm] = useState({ kind: 'guideline', content: '', label: '', source_patient_hash: '' });
@@ -84,6 +116,12 @@ function useReferenceManager(input: {
   const [filesLibLoading, setFilesLibLoading] = useState(false);
   const [filesLibList, setFilesLibList] = useState<FileLibraryItem[]>([]);
   const [filesLibAdding, setFilesLibAdding] = useState(false);
+  // #1010: 引用池 — 跨会话复用已登记材料；排序数据来自 MemoryUsageBus 聚合。
+  const [poolOpen, setPoolOpen] = useState(false);
+  const [poolLoading, setPoolLoading] = useState(false);
+  const [poolSort, setPoolSortState] = useState<ReferencePoolSort>('recent');
+  const [poolList, setPoolList] = useState<ReferencePoolItem[]>([]);
+  const [poolAdding, setPoolAdding] = useState(false);
 
   const loadReferences = useCallback(async () => {
     if (!adapter) return;
@@ -185,6 +223,49 @@ function useReferenceManager(input: {
     }
   };
 
+  // #1010: 拉取引用池（按隐式排序）；"当前场景相关"由上下文关键词重叠决胜。
+  const loadPool = useCallback(async (sort?: ReferencePoolSort) => {
+    const useSort = sort ?? poolSort;
+    setPoolLoading(true);
+    try {
+      const r = await api.getReferencePool({ sort: useSort, context: poolContext?.() || '', limit: 30 });
+      setPoolList(r.items || []);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.messageText : String(err));
+    } finally {
+      setPoolLoading(false);
+    }
+  }, [poolSort, setError, poolContext]);
+
+  const setPoolSort = (sort: ReferencePoolSort) => {
+    setPoolSortState(sort);
+    void loadPool(sort);
+  };
+
+  // #1010: 从池子复用 — 按 item id 精确挂载（不重算 identity，正文完整）。
+  const addPoolRefs = async (items: ReferencePoolItem[]) => {
+    if (!adapter || items.length === 0) return;
+    setPoolAdding(true);
+    try {
+      for (const it of items) {
+        try {
+          const r = await adapter.add({
+            kind: it.kind === 'kb_summary' ? 'guideline' : it.kind,
+            content: it.content || it.label,
+            label: it.label,
+            reference_id: it.reference_id,
+          });
+          if (r.imported && r.imported_body) input.onImportedBody?.(r.imported_body);
+        } catch (err) {
+          setError(err instanceof ApiError ? err.messageText : String(err));
+        }
+      }
+      await loadReferences();
+    } finally {
+      setPoolAdding(false);
+    }
+  };
+
   useEffect(() => {
     void loadReferences();
   }, [loadReferences]);
@@ -210,6 +291,15 @@ function useReferenceManager(input: {
     handleKbPickConfirm,
     addFileLibraryRefs,
     deleteReference,
+    poolOpen,
+    setPoolOpen,
+    poolLoading,
+    poolSort,
+    setPoolSort,
+    poolList,
+    poolAdding,
+    loadPool,
+    addPoolRefs,
   };
 }
 
@@ -219,6 +309,8 @@ export function useDocReferences(input: {
   setError: (e: string) => void;
   /** #930: 文件类参考登记触发空文档自动导入时,把导入正文回填编辑器。 */
   onImportedBody?: (body: string) => void;
+  /** #1010: 当前场景上下文（文档标题等）。 */
+  poolContext?: () => string;
 }): DocReferences {
   const { docId, setError } = input;
   const adapter = useMemo<ReferenceAdapter | null>(() => (docId ? {
@@ -226,13 +318,15 @@ export function useDocReferences(input: {
     add: (data) => api.addDocReference(docId, data),
     remove: async (referenceId) => { await api.deleteDocReference(docId, referenceId); },
   } : null), [docId]);
-  return useReferenceManager({ adapter, setError, onImportedBody: input.onImportedBody });
+  return useReferenceManager({ adapter, setError, onImportedBody: input.onImportedBody, poolContext: input.poolContext });
 }
 
 /** #1007 — 主 chat 会话级引用管理（sessionId 链路，与写作编辑器共用弹层/状态机）。 */
 export function useSessionReferences(input: {
   sessionId: string | undefined;
   setError: (e: string) => void;
+  /** #1010: 当前场景上下文（会话标题 + 近期消息）。 */
+  poolContext?: () => string;
 }): DocReferences {
   const { sessionId, setError } = input;
   const adapter = useMemo<ReferenceAdapter | null>(() => (sessionId ? {
@@ -240,5 +334,5 @@ export function useSessionReferences(input: {
     add: (data) => api.addSessionReference(sessionId, data),
     remove: async (referenceId) => { await api.deleteSessionReference(sessionId, referenceId); },
   } : null), [sessionId]);
-  return useReferenceManager({ adapter, setError });
+  return useReferenceManager({ adapter, setError, poolContext: input.poolContext });
 }

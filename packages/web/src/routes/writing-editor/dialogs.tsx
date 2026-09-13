@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ClipboardPaste, FilePlus, X } from 'lucide-react';
+import { ClipboardPaste, FilePlus, History, X } from 'lucide-react';
 import { Button, Skeleton } from '@/components/ui';
+import { formatRelativeTime } from '@/lib/utils';
 import type { PhiFinding } from './types';
+import type { ReferencePoolItem, ReferencePoolSort } from './references';
 
 /** #696: PHI 高亮渲染抽为组件(原 94 行内联 JSX)。 */
 export function HighlightedBody({ body, findings }: { body: string; findings: PhiFinding[] }) {
@@ -215,15 +217,32 @@ export function ReferenceListPopover(input: {
   suggestionResolving?: string | null;
   onAcceptSuggestion?: (id: string) => void;
   onDismissSuggestion?: (id: string) => void;
+  /** #1010: 引用池 — 跨会话复用 + 隐式排序 + 使用痕迹。 */
+  poolOpen?: boolean;
+  onTogglePool?: () => void;
+  poolLoading?: boolean;
+  poolSort?: ReferencePoolSort;
+  onPoolSort?: (sort: ReferencePoolSort) => void;
+  poolList?: ReferencePoolItem[];
+  poolAdding?: boolean;
+  onAddPool?: (items: ReferencePoolItem[]) => void;
 }) {
-  const { t } = useTranslation();
-  const { list, deleting, onClose, onDelete, onOpenPaste, onOpenKbPicker, filesLibOpen, onToggleFilesLib, filesLibLoading, filesLibAdding, filesLibList, onAddFiles, suggestions, suggestionResolving, onAcceptSuggestion, onDismissSuggestion } = input;
+  const { t, i18n } = useTranslation();
+  const { list, deleting, onClose, onDelete, onOpenPaste, onOpenKbPicker, filesLibOpen, onToggleFilesLib, filesLibLoading, filesLibAdding, filesLibList, onAddFiles, suggestions, suggestionResolving, onAcceptSuggestion, onDismissSuggestion, poolOpen, onTogglePool, poolLoading, poolSort, onPoolSort, poolList, poolAdding, onAddPool } = input;
   // #930: 文件库选择器局部状态 — 勾选/搜索,弹层卸载即重置。
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<Array<{ file_id: string; name: string; mime: string; size_bytes: number; created_at: string }>>([]);
+  // #1010: 引用池勾选（复用已登记材料）。
+  const [poolPicked, setPoolPicked] = useState<ReferencePoolItem[]>([]);
   const maxPick = 5;
   const taken = new Set(list.map((r) => (r.label || r.content).toLowerCase()));
   const candidates = filesLibList.filter((f) => f.name.toLowerCase().includes(query.trim().toLowerCase()));
+
+  const togglePoolPick = (item: ReferencePoolItem) => {
+    setPoolPicked((prev) => prev.some((p) => p.reference_id === item.reference_id)
+      ? prev.filter((p) => p.reference_id !== item.reference_id)
+      : (prev.length >= maxPick ? prev : [...prev, item]));
+  };
 
   const togglePick = (f: { file_id: string; name: string; mime: string; size_bytes: number; created_at: string }) => {
     setPicked((prev) => prev.some((p) => p.file_id === f.file_id)
@@ -242,6 +261,10 @@ export function ReferenceListPopover(input: {
       <div className="mb-2 flex gap-1.5">
         <Button size="sm" variant={filesLibOpen ? 'secondary' : 'ghost'} onClick={onToggleFilesLib} className="flex-1">
           <FilePlus size={13} className="mr-1" /> {t('writing.refFromFiles', '从文件库选择')}
+        </Button>
+        {/* #1010: 引用池入口 — 跨会话复用已登记材料，隐式排序 + 使用痕迹。 */}
+        <Button size="sm" variant={poolOpen ? 'secondary' : 'ghost'} onClick={onTogglePool} className="flex-1" title={t('writing.refPoolHint', '复用本会话之前用过的引用材料')}>
+          <History size={13} className="mr-1" /> {t('writing.refPool', '最近引用')}
         </Button>
         <Button size="sm" variant="ghost" onClick={onOpenKbPicker} className="flex-1" title={t('writing.pickFromKb', '从知识库选择总结/文件作为参考')}>
           📚 {t('writing.fromKb', '知识库')}
@@ -289,6 +312,70 @@ export function ReferenceListPopover(input: {
           <div className="mt-1.5 flex items-center justify-between border-t border-border pt-1.5">
             <span className="text-[10px] text-text-tertiary">{t('writing.refFilesPicked', '已选 {{n}}/{{max}}', { n: picked.length, max: maxPick })}</span>
             <Button size="sm" onClick={() => { onAddFiles(picked); setPicked([]); }} isLoading={filesLibAdding} disabled={filesLibAdding || picked.length === 0}>
+              {t('writing.refAddSelected', '添加为参考')}
+            </Button>
+          </div>
+        </div>
+      )}
+      {poolOpen && (
+        <div className="mb-2 rounded-lg border border-border bg-surface p-2" data-testid="ref-pool">
+          <div className="mb-1.5 flex gap-1">
+            {([
+              ['recent', t('writing.refPoolSort_recent', '最近用过')],
+              ['frequent', t('writing.refPoolSort_frequent', '用得最多')],
+              ['relevant', t('writing.refPoolSort_relevant', '当前场景相关')],
+            ] as Array<[ReferencePoolSort, string]>).map(([s, label]) => (
+              <button
+                key={s}
+                onClick={() => onPoolSort?.(s)}
+                className={`flex-1 rounded-md border px-1.5 py-1 text-[10px] transition-colors ${poolSort === s ? 'border-accent bg-accent/10 text-accent' : 'border-border bg-surface-elevated text-text-secondary hover:text-text-primary'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="max-h-48 space-y-1 overflow-y-auto">
+            {poolLoading ? (
+              <p className="py-2 text-center text-xs text-text-tertiary">…</p>
+            ) : (poolList?.length ?? 0) === 0 ? (
+              <p className="py-2 text-center text-xs text-text-tertiary">{t('writing.refPoolEmpty', '暂无可复用的引用材料')}</p>
+            ) : (
+              poolList?.map((item) => {
+                const added = taken.has((item.label || item.content).toLowerCase());
+                const checked = poolPicked.some((p) => p.reference_id === item.reference_id);
+                const metaBits: string[] = [
+                  t('writing.refPoolMeta', '用于 {{n}} 个会话', { n: item.usage.session_count }),
+                ];
+                if (item.usage.last_session_title) {
+                  metaBits.push(t('writing.refPoolLastUsed', '最近用于《{{title}}》', { title: item.usage.last_session_title }));
+                }
+                if (item.usage.last_used_at) {
+                  metaBits.push(formatRelativeTime(item.usage.last_used_at, i18n.language));
+                }
+                return (
+                  <label key={item.reference_id} className={`flex items-start gap-2 rounded-md border border-border px-2 py-1 ${added ? 'opacity-50' : 'cursor-pointer hover:bg-surface-elevated'}`}>
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={checked}
+                      disabled={added || (!checked && poolPicked.length >= maxPick)}
+                      onChange={() => togglePoolPick(item)}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs text-text-primary">{item.label || item.content.slice(0, 40)}</span>
+                      <span className="block truncate text-[10px] text-text-tertiary">{metaBits.join(' · ')}</span>
+                    </span>
+                    {added && (
+                      <span className="shrink-0 rounded bg-surface-muted px-1 py-0.5 text-[10px] text-text-secondary">{t('writing.refAlreadyAdded', '已添加')}</span>
+                    )}
+                  </label>
+                );
+              })
+            )}
+          </div>
+          <div className="mt-1.5 flex items-center justify-between border-t border-border pt-1.5">
+            <span className="text-[10px] text-text-tertiary">{t('writing.refFilesPicked', '已选 {{n}}/{{max}}', { n: poolPicked.length, max: maxPick })}</span>
+            <Button size="sm" onClick={() => { onAddPool?.(poolPicked); setPoolPicked([]); }} isLoading={poolAdding} disabled={poolAdding || poolPicked.length === 0}>
               {t('writing.refAddSelected', '添加为参考')}
             </Button>
           </div>

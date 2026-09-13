@@ -401,6 +401,8 @@ export function WritingEditorPage() {
       lastSavedBody.current = importedBody;
       showNotice(t('writing.importedBody', '已导入原文，可直接编辑草稿，或在右侧与 AI 对话调整内容'), 6000);
     },
+    // #1010: 引用池"当前场景相关"上下文 = 文档标题。
+    poolContext: () => (doc as { title?: string } | null)?.title || '',
   });
 
   // #696: doc-chat 面板逻辑下沉 useDocChat（发送/排队/附件/上传/pptx 轮询）。
