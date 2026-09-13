@@ -465,6 +465,41 @@ describe('Documents', () => {
     expect(refs.length).toBe(2)
   })
 
+  test('#1005 双写:同一内容跨文档复用 1 个 ReferenceItem + 2 个挂载;删除只取消挂载', async () => {
+    const app = await getApp()
+    const h = { ...await authHeader(), 'content-type': 'application/json' }
+    const mk = async (title: string) => {
+      const r = await app.inject({ method: 'POST', url: '/api/v1/docs', headers: h, payload: { title, body: 'body' } })
+      return JSON.parse(r.payload).id as string
+    }
+    const docA = await mk('Ref Reuse A')
+    const docB = await mk('Ref Reuse B')
+    const snapshot = `共享引用正文_${Date.now()}`
+    const payload = JSON.stringify({ kind: 'note', content: snapshot, label: '共享材料' })
+
+    const addA = await app.inject({ method: 'POST', url: `/api/v1/docs/${docA}/references`, headers: h, payload })
+    const addB = await app.inject({ method: 'POST', url: `/api/v1/docs/${docB}/references`, headers: h, payload })
+    expect(JSON.parse(addA.payload).created).toBe(true)
+    expect(JSON.parse(addB.payload).created).toBe(true)
+    const refA = JSON.parse(addA.payload).reference_id
+
+    const { default: prisma } = await import('../../src/common/prisma.js')
+    const items = await (prisma as any).referenceItem.findMany({ where: { snapshot } })
+    expect(items).toHaveLength(1)
+    expect(items[0].kind).toBe('pasted_text')
+    const mounts = await (prisma as any).sessionReference.count({
+      where: { sessionId: { in: [`doc-${docA}`, `doc-${docB}`] }, referenceId: items[0].id },
+    })
+    expect(mounts).toBe(2)
+
+    // 删除 A 的引用 → 只删会话挂载;ReferenceItem 本体保留(B 仍引用)。
+    const del = await app.inject({ method: 'DELETE', url: `/api/v1/docs/${docA}/references/${refA}`, headers: h })
+    expect(del.statusCode).toBe(200)
+    expect(await (prisma as any).sessionReference.count({ where: { sessionId: `doc-${docA}`, referenceId: items[0].id } })).toBe(0)
+    expect(await (prisma as any).referenceItem.findUnique({ where: { id: items[0].id } })).toBeTruthy()
+    expect(await (prisma as any).sessionReference.count({ where: { sessionId: `doc-${docB}`, referenceId: items[0].id } })).toBe(1)
+  })
+
   test('delete document removes it', async () => {
     const app = await getApp()
     const create = await app.inject({

@@ -13,6 +13,9 @@ import { extractPptxContentFromUpload, pptxSlidesToDeck } from '../../lib/pptx-e
 import { ensureDraftBody } from '../../tools/doc-import.js'
 // #789: doc 写回单点 owner。
 import { writeDocVersion } from '../../tools/doc-version-writer.js'
+// #1005: 引用材料两层模型（Phase 0 写路径双写，读路径暂保持旧表）。
+import { writeThroughLegacyRef, removeSessionReferenceByContent } from '../../lib/reference-store.js'
+import { classifyGuidelineBySummaryTitle } from '../shared/summary-lookup.js'
 // #996/#999: 节级元数据（作者轴+可信度轴）读侧 — GET/PUT 响应附带。
 import type { SectionMetaMap } from '@heurion/contracts'
 import { makeLogger as makeMetaLogger } from '../../common/logger.js'
@@ -556,6 +559,12 @@ export async function documentsRouter(app: FastifyInstance) {
         }
         let dupLabel = ''
         try { dupLabel = JSON.parse(dup.sourceNodes || '{}').label || '' } catch { /* ignore */ }
+        // #1005 双写：幂等命中旧行时同步新模型（覆盖部署前存量行）。
+        try {
+          await writeThroughLegacyRef(userId, docId, {
+            refType: dup.refType, targetId: dup.targetId, snapshot: dup.snapshot, label: dupLabel, createdAt: dup.createdAt,
+          }, { classifyGuideline: classifyGuidelineBySummaryTitle })
+        } catch (err) { log.warn('reference dual-write failed (dedup)', { docId, reason: (err as Error)?.message?.slice(0, 160) }) }
         return {
           reference_id: dup.id, kind: dup.refType, content: dup.snapshot,
           label: dupLabel, source_patient_hash: dup.targetId, created_at: dup.createdAt,
@@ -579,6 +588,12 @@ export async function documentsRouter(app: FastifyInstance) {
         createdAt: now,
       },
     })
+    // #1005 双写：新模型同步（失败仅日志，不影响旧路径响应）。
+    try {
+      await writeThroughLegacyRef(userId, docId, {
+        refType: kind || 'note', targetId: source_patient_hash || '', snapshot: content || '', label: label || '', createdAt: now,
+      }, { classifyGuideline: classifyGuidelineBySummaryTitle })
+    } catch (err) { log.warn('reference dual-write failed (create)', { docId, reason: (err as Error)?.message?.slice(0, 160) }) }
     // #fix: 上传即草稿 — 文件类参考(pdf/docx/file)挂到空文档时自动导入
     // 为正文(含图片托管 + 快照),用户上传后立即能在编辑框看到原文,
     // 模型上下文也直接有 Current Document,不再"解读+计划+确认"循环。
@@ -684,6 +699,12 @@ export async function documentsRouter(app: FastifyInstance) {
     const ref = await prisma.docReference.findFirst({ where: { id: referenceId, docId, userId } })
     if (!ref) return reply.status(404).send({ error: 'Reference not found' })
     await prisma.docReference.delete({ where: { id: referenceId } })
+    // #1005 双写清理：取消引用只删会话挂载，ReferenceItem 本体保留（设计红线）。
+    try {
+      let label = ''
+      try { label = JSON.parse(ref.sourceNodes || '{}').label || '' } catch { /* ignore */ }
+      await removeSessionReferenceByContent(userId, `doc-${docId}`, { label, snapshot: ref.snapshot })
+    } catch (err) { log.warn('reference dual-write cleanup failed (delete)', { docId, reason: (err as Error)?.message?.slice(0, 160) }) }
     return { ok: true }
   })
 

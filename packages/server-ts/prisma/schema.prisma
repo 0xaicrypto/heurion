@@ -186,6 +186,49 @@ model DocReference {
   @@map("doc_references")
 }
 
+/// #1005（SECOND_BRAIN Phase 0）— 用户级引用内容池：一份内容只存一次，
+/// 跨写作/主 chat 会话复用（区别于 DocReference 绑 docId 的旧模型）。
+/// kind: 'file' | 'kb_summary' | 'pasted_text'。
+/// 本表与 DocReference 并行（additive + 写路径双写过渡），读路径在 #1006
+/// 统一切换；回填迁移见 common/reference-migration.ts。
+model ReferenceItem {
+  id        String  @id
+  userId    String  @map("user_id")
+  kind      String
+  /// file → FileIndex.id；kb_summary → Summary stableId；pasted_text → null。
+  sourceRef String? @map("source_ref")
+  label     String  @default("")
+  /// kb_summary/pasted_text 直接是正文；file 类为文件名（注入时懒解析）。
+  snapshot  String  @default("")
+  createdAt String  @map("created_at")
+  updatedAt String  @map("updated_at")
+
+  sessionRefs SessionReference[]
+
+  @@index([userId, updatedAt])
+  @@index([userId, kind])
+  @@map("reference_items")
+}
+
+/// #1005（SECOND_BRAIN Phase 0）— 会话级引用挂载（正式生效）。
+/// sessionId 复用项目既有约定：写作 'doc-<docId>'，主 chat 普通 sessionId。
+/// 取消引用只删本表（不影响 ReferenceItem 本体与其他会话）。
+model SessionReference {
+  id          String @id
+  sessionId   String @map("session_id")
+  userId      String @map("user_id")
+  referenceId String @map("reference_id")
+  addedAt     String @map("added_at")
+  /// 'manual' | 'suggestion_accepted'（#1008 起写入建议采纳来源）。
+  source      String @default("manual")
+
+  reference ReferenceItem @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, referenceId])
+  @@index([userId, sessionId, addedAt])
+  @@map("session_references")
+}
+
 model DocChatMessage {
   id         String @id
   docId      String @map("doc_id")

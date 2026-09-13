@@ -11,6 +11,8 @@ import { createGapResearchScheduler, type GapResearchScheduler } from './modules
 import { createExperienceSynthesisScheduler } from './modules/skills/experience-synthesis.service.js'
 import { makeLogger } from './common/logger.js'
 import { ensureArticleSummaryRenameMigration } from './common/kb-rename-migration.js'
+import { ensureReferenceMigration } from './common/reference-migration.js'
+import { classifyGuidelineBySummaryTitle } from './modules/shared/summary-lookup.js'
 
 const log = makeLogger('db')
 
@@ -112,6 +114,10 @@ async function main() {
 
   // KB 重命名(article→summary)数据迁移 — 幂等,详情见 kb-rename-migration.ts。
   await ensureArticleSummaryRenameMigration()
+
+  // #1005（SECOND_BRAIN Phase 0）: DocReference → ReferenceItem/SessionReference
+  // 幂等回填（best-effort，不阻塞启动）。
+  await ensureReferenceMigration({ classifyGuideline: classifyGuidelineBySummaryTitle })
 
   // #842: CapturedSkill(confirmed)→ graph SkillNode v2 — 幂等,PII 命中行跳过。
   const { ensureSkillNodeMigration } = await import('./memory/skill-node-migration.js')
