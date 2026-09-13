@@ -56,9 +56,10 @@ export class CalendarApi extends ApiCore {
     source_ref: string | null;
     source: string;
     created_at: string;
-    /** 与 doc 端点对齐的可选字段 — 会话端点不触发空文档导入,恒为空。 */
+    /** #1034: doc 会话（doc-<docId>）的自动导入/pptx 响应与旧端点对齐。 */
     imported?: boolean;
     imported_body?: string | null;
+    pptx_parse?: { started: boolean; reason?: string } | null;
   }> {
     return this.fetch(`/api/v1/sessions/${sessionId}/references`, { method: 'POST', body: JSON.stringify(data) });
   }

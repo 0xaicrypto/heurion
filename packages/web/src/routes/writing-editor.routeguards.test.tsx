@@ -61,6 +61,8 @@ const apiMock = vi.hoisted(() => ({
   injectResults: vi.fn(),
   uploadFile: vi.fn(),
   getSessionReferences: vi.fn(),
+  addSessionReference: vi.fn(),
+  deleteSessionReference: vi.fn(),
   getSessionSuggestions: vi.fn(),
   scanSessionSuggestions: vi.fn(),
   resolveSessionSuggestion: vi.fn(),
@@ -190,6 +192,8 @@ beforeEach(() => {
   apiMock.listSubmissionDrafts.mockResolvedValue({ drafts: [] });
   apiMock.getDocReferences.mockResolvedValue({ references: [] });
   apiMock.getSessionReferences.mockResolvedValue({ references: [] });
+  apiMock.addSessionReference.mockResolvedValue({ reference_id: 'ref_new', kind: 'pasted_text', content: '', label: '', source_ref: null, source: 'manual', created_at: '' });
+  apiMock.deleteSessionReference.mockResolvedValue({ ok: true });
   apiMock.getSessionSuggestions.mockResolvedValue({ suggestions: [] });
   apiMock.scanSessionSuggestions.mockResolvedValue({ suggestions: [] });
   apiMock.resolveSessionSuggestion.mockResolvedValue({ ok: true });
@@ -433,12 +437,12 @@ describe('#1031 写作编辑器建议横幅', () => {
     const banner = await screen.findByTestId('suggested-reference-banner');
     expect(within(banner).getByText('建议材料')).toBeTruthy();
 
-    const refCallsBefore = apiMock.getDocReferences.mock.calls.length;
+    const refCallsBefore = apiMock.getSessionReferences.mock.calls.length;
     fireEvent.click(within(banner).getByRole('button', { name: /^引用$|^Use$/ }));
     await waitFor(() => expect(apiMock.resolveSessionSuggestion).toHaveBeenCalledWith('doc-d1', 'sug1', true));
     await waitFor(() => expect(screen.queryByTestId('suggested-reference-banner')).toBeNull());
     // 采纳回调刷新正式引用列表。
-    await waitFor(() => expect(apiMock.getDocReferences.mock.calls.length).toBeGreaterThan(refCallsBefore));
+    await waitFor(() => expect(apiMock.getSessionReferences.mock.calls.length).toBeGreaterThan(refCallsBefore));
   });
 });
 
@@ -488,7 +492,7 @@ describe('#1035 写作引用池与开局扫描', () => {
     fireEvent.click(screen.getByRole('checkbox'));
     fireEvent.click(screen.getByRole('button', { name: /添加为参考|Add as reference/ }));
     await waitFor(() => {
-      expect(apiMock.addDocReference).toHaveBeenCalledWith('d1', expect.objectContaining({ reference_id: 'pool1' }));
+      expect(apiMock.addSessionReference).toHaveBeenCalledWith('doc-d1', expect.objectContaining({ reference_id: 'pool1' }));
     });
   });
 });

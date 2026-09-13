@@ -208,7 +208,7 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
         dedupNoticeText: (name) => t('writing.kbDedup', '📚 已在知识库,已加入上下文: {{name}}', { name }),
       },
     );
-    if (docId) api.addDocReference(docId, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
+    if (docId) api.addSessionReference(`doc-${docId}`, { kind: 'file', content: result.name, label: result.name }).catch(() => {});
     // #777: pptx 上传即后台解析 — 轮询刷新 deck。
     if (/\.pptx$/i.test(result.name)) schedulePptxReload();
     return result;
@@ -334,9 +334,9 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
       // #fix: 上传即草稿 — 空文档 + 文件类参考时服务端自动导入正文,
       // 响应携带 imported_body,前端立即刷新编辑框(用户马上看到原文)。
       // #714: 已存在的同名参考不重复写入(服务端 dedup 命中时 result.dedup)。
-      let refResult: Awaited<ReturnType<typeof api.addDocReference>> | null = null;
+      let refResult: Awaited<ReturnType<typeof api.addSessionReference>> | null = null;
       if (!result.dedup) {
-        refResult = await api.addDocReference(docId, {
+        refResult = await api.addSessionReference(`doc-${docId}`, {
           kind: f.name.endsWith('.pdf') ? 'pdf' : f.name.endsWith('.docx') || f.name.endsWith('.doc') ? 'docx' : 'file',
           content: f.name,
           label: f.name,

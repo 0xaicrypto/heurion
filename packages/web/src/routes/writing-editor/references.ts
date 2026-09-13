@@ -319,11 +319,14 @@ export function useDocReferences(input: {
   poolContext?: () => string;
 }): DocReferences {
   const { docId, setError } = input;
-  const adapter = useMemo<ReferenceAdapter | null>(() => (docId ? {
-    list: async () => (await api.getDocReferences(docId)).references,
-    add: (data) => api.addDocReference(docId, data),
-    remove: async (referenceId) => { await api.deleteDocReference(docId, referenceId); },
-  } : null), [docId]);
+  // #1034: 写作引用迁移到统一会话链路（doc-<docId>）；自动导入/pptx 由
+  // 服务端 doc-reference-effects 在同一端点保留，响应形状与旧端点对齐。
+  const sessionId = docId ? `doc-${docId}` : undefined;
+  const adapter = useMemo<ReferenceAdapter | null>(() => (sessionId ? {
+    list: async () => (await api.getSessionReferences(sessionId)).references,
+    add: (data) => api.addSessionReference(sessionId, data),
+    remove: async (referenceId) => { await api.deleteSessionReference(sessionId, referenceId); },
+  } : null), [sessionId]);
   return useReferenceManager({ adapter, setError, onImportedBody: input.onImportedBody, poolContext: input.poolContext });
 }
 

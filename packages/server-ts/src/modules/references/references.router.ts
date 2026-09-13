@@ -28,6 +28,8 @@ import { ReferenceTierStore } from '../../memory/memory-tier-store.js'
 // #1010: 引用材料池（选择器隐式排序）— 关键词重叠做"当前场景相关"。
 import prisma from '../../common/prisma.js'
 import { extractKeywords, overlapScore } from '../../retrieval/text-overlap.js'
+// #1034: 写作会话（doc-<docId>）的 doc 专属副作用（自动导入/pptx 后台解析）。
+import { runDocReferenceSideEffects } from '../shared/doc-reference-effects.js'
 
 const log = makeLogger('references.router')
 
@@ -178,6 +180,10 @@ export async function referencesRouter(app: FastifyInstance): Promise<void> {
         source_ref: item.sourceRef,
         source: mounted.source,
         created_at: mounted.addedAt,
+        // 池复用是已有 item 的重新挂载 — 不触发自动导入/pptx 解析。
+        imported: false,
+        imported_body: null,
+        pptx_parse: null,
       }
     }
 
@@ -226,6 +232,8 @@ export async function referencesRouter(app: FastifyInstance): Promise<void> {
     }
     // #1010: 引用池使用留痕（全部 kind）— 选择器隐式排序/使用痕迹的数据源。
     recordMemoryUsage({ userId, unitType: 'reference', unitId: mounted.referenceId, action: 'referenced', sessionId })
+    // #1034: doc 会话保留上传即草稿/pptx 后台解析（统一链路迁移）。
+    const docEffects = await runDocReferenceSideEffects({ userId, sessionId, kind, label: label || snapshot.slice(0, 120), content })
     // #1009: 引用正文（file 懒解析）送语义索引 — fire-and-forget。
     void indexReferenceItem({ id: mounted.referenceId, userId, kind, sourceRef, snapshot, label: label || snapshot.slice(0, 120) })
     // #1017: 固定为引用的层级留痕（reference 层 promote；实际挂载已落库）。
@@ -241,6 +249,10 @@ export async function referencesRouter(app: FastifyInstance): Promise<void> {
       source_ref: sourceRef,
       source: mounted.source,
       created_at: mounted.addedAt,
+      // #1034: 与旧写作端点响应对齐（前端迁移后无需分支）。
+      imported: docEffects.imported,
+      imported_body: docEffects.imported_body,
+      pptx_parse: docEffects.pptx_parse,
     }
   })
 
