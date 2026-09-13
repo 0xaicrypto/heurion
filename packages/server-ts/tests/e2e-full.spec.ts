@@ -181,3 +181,62 @@ test.describe('7. Full workflow', () => {
     await expect(page.locator('body')).toContainText(/hz|e2e-doctor/i)
   })
 })
+
+// ── 8. References & suggestions user flow (#1035) ──────
+// 纯 UI + 数据库链路（不依赖 LLM，不产生模型费用）：
+// 8.1 固定引用 → 生效条 → 刷新仍生效；8.2 开局建议 → 采纳转正式引用。
+
+async function createSession(page: any, title: string) {
+  await page.goto(`${BASE}/app/chat`, { timeout: 10000, waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: /新建会话|New Session/i }).last().click()
+  const titleInput = page.getByPlaceholder(/会话名称|session name/i)
+  await titleInput.fill(title)
+  await page.getByRole('button', { name: /^(创建|新建|create)$/i }).click()
+  const refBtn = page.getByTitle(/管理本会话引用材料|Manage this session/)
+  await expect(refBtn).toBeEnabled({ timeout: 10000 })
+  return refBtn
+}
+
+async function addPastedReference(page: any, label: string, content: string) {
+  await page.getByTitle(/管理本会话引用材料|Manage this session/).click()
+  await page.getByRole('button', { name: /粘贴文本|Paste text/ }).click()
+  await page.getByPlaceholder(/WHO Guideline/).fill(label)
+  await page.getByPlaceholder(/Paste or type reference content/).fill(content)
+  await page.getByRole('button', { name: /^Add$/ }).click()
+}
+
+test.describe('8. References & suggestions', () => {
+  test.beforeEach(async ({ page }) => { await login(page) })
+
+  test('8.1 固定引用 → 生效条可见且刷新后仍生效', async ({ page }) => {
+    const uniq = Date.now().toString(36)
+    const label = `E2E材料_${uniq}`
+    await createSession(page, `E2E引用_${uniq}`)
+    await addPastedReference(page, label, `正文材料 ${label}`)
+
+    await expect(page.getByText(label).first()).toBeVisible({ timeout: 10000 })
+
+    // 刷新后按会话恢复 → 引用持续生效（不依赖重新附加）。
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await expect(page.getByText(label).first()).toBeVisible({ timeout: 12000 })
+  })
+
+  test('8.2 开局建议横幅 → 采纳转正式引用', async ({ page }) => {
+    const uniq = Date.now().toString(36)
+    const keyword = `ZZE${uniq}`
+    // 会话 A：登记一条含关键词的引用材料（用户资产，跨会话复用）。
+    await createSession(page, `材料会话_${uniq}`)
+    await addPastedReference(page, `${keyword} 材料`, `${keyword} 治疗相关正文`)
+
+    // 会话 B：标题含关键词 → 开局扫描命中 → 建议横幅。
+    await createSession(page, `${keyword} 目标`)
+    const banner = page.getByTestId('suggested-reference-banner')
+    await expect(banner).toBeVisible({ timeout: 12000 })
+    await expect(banner).toContainText(keyword)
+
+    await banner.getByRole('button', { name: /^引用$|^Use$/ }).click()
+    await expect(banner).toBeHidden({ timeout: 8000 })
+    // 采纳后立即出现在正式引用（生效条）。
+    await expect(page.getByText(`${keyword} 材料`).first()).toBeVisible({ timeout: 8000 })
+  })
+})

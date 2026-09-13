@@ -193,6 +193,7 @@ beforeEach(() => {
   apiMock.getSessionSuggestions.mockResolvedValue({ suggestions: [] });
   apiMock.scanSessionSuggestions.mockResolvedValue({ suggestions: [] });
   apiMock.resolveSessionSuggestion.mockResolvedValue({ ok: true });
+  apiMock.getReferencePool.mockResolvedValue({ items: [] });
   apiMock.getMessages.mockResolvedValue({ messages: [], total: 0 });
   apiMock.listSkills.mockResolvedValue({ skills: [] });
   mockTurns();
@@ -438,5 +439,56 @@ describe('#1031 写作编辑器建议横幅', () => {
     await waitFor(() => expect(screen.queryByTestId('suggested-reference-banner')).toBeNull());
     // 采纳回调刷新正式引用列表。
     await waitFor(() => expect(apiMock.getDocReferences.mock.calls.length).toBeGreaterThan(refCallsBefore));
+  });
+});
+
+describe('#1035 写作引用池与开局扫描', () => {
+  const POOL = {
+    reference_id: 'pool1', kind: 'pasted_text', label: '旧材料', content: '正文',
+    source_ref: null, created_at: '',
+    usage: {
+      session_count: 2,
+      last_used_at: new Date(Date.now() - 3_600_000).toISOString(),
+      last_session_id: 'sx',
+      last_session_title: '放疗课题',
+    },
+    score: 0,
+  };
+
+  test('开局扫描以 doc-<docId> + 文档标题调用一次', async () => {
+    renderEditor(true);
+    await screen.findByDisplayValue('A doc');
+    await waitFor(() => {
+      expect(apiMock.scanSessionSuggestions).toHaveBeenCalledWith('doc-d1', expect.stringContaining('A doc'));
+    });
+    expect(apiMock.scanSessionSuggestions).toHaveBeenCalledTimes(1);
+  });
+
+  test('引用池：三种排序切换 / 使用痕迹展示 / 按 reference_id 复用', async () => {
+    apiMock.getReferencePool.mockResolvedValue({ items: [POOL] });
+    renderEditor(true);
+    await screen.findByDisplayValue('A doc');
+
+    fireEvent.click(moreMenu());
+    fireEvent.click(await screen.findByText(/参考材料|^References/));
+    fireEvent.click(await screen.findByRole('button', { name: /最近引用|Reuse/ }));
+
+    expect(await screen.findByTestId('ref-pool')).toBeTruthy();
+    // 使用痕迹（会话数 + 最近会话标题）。
+    expect(await screen.findByText(/用于 2 个会话|Used in 2 sessions/)).toBeTruthy();
+    expect(screen.getByText(/最近用于《放疗课题》|Last in "放疗课题"/)).toBeTruthy();
+
+    // 切换"用得最多" → frequent 重新拉取。
+    fireEvent.click(screen.getByRole('button', { name: /用得最多|Most used/ }));
+    await waitFor(() => {
+      expect(apiMock.getReferencePool).toHaveBeenCalledWith(expect.objectContaining({ sort: 'frequent' }));
+    });
+
+    // 勾选并复用 → 旧写作端点以 reference_id 精确挂载。
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: /添加为参考|Add as reference/ }));
+    await waitFor(() => {
+      expect(apiMock.addDocReference).toHaveBeenCalledWith('d1', expect.objectContaining({ reference_id: 'pool1' }));
+    });
   });
 });
