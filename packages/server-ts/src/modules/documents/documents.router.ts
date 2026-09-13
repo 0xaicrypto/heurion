@@ -18,6 +18,7 @@ import { writeThroughLegacyRef, removeSessionReferenceByContent } from '../../li
 import { classifyGuidelineBySummaryTitle } from '../shared/summary-lookup.js'
 // #1014: 摘要登记为引用材料 → 使用反馈（referenced）。
 import { recordMemoryUsage } from '../../memory/memory-usage-bus.js'
+import { ReferenceTierStore } from '../../memory/memory-tier-store.js'
 // #996/#999: 节级元数据（作者轴+可信度轴）读侧 — GET/PUT 响应附带。
 import type { SectionMetaMap } from '@heurion/contracts'
 import { makeLogger as makeMetaLogger } from '../../common/logger.js'
@@ -601,6 +602,11 @@ export async function documentsRouter(app: FastifyInstance) {
       if (item.kind === 'kb_summary' && item.sourceRef) {
         recordMemoryUsage({ userId, unitType: 'summary', unitId: item.sourceRef, action: 'referenced', sessionId: `doc-${docId}` })
       }
+      // #1017: 旧写作端点的新建登记同样留痕（dedup 分支不重复 promote）。
+      const itemId = (await import('../../lib/reference-store.js')).referenceItemId(userId, (await import('../../lib/reference-store.js')).referenceIdentityKey(item))
+      await new ReferenceTierStore(userId)
+        .promote(itemId, 'reference', 'reference', `mounted to session doc-${docId}`)
+        .catch((err) => log.warn('reference tier trace failed (create)', { docId, reason: (err as Error)?.message?.slice(0, 120) }))
     } catch (err) { log.warn('reference dual-write failed (create)', { docId, reason: (err as Error)?.message?.slice(0, 160) }) }
     // #fix: 上传即草稿 — 文件类参考(pdf/docx/file)挂到空文档时自动导入
     // 为正文(含图片托管 + 快照),用户上传后立即能在编辑框看到原文,
@@ -711,7 +717,15 @@ export async function documentsRouter(app: FastifyInstance) {
     try {
       let label = ''
       try { label = JSON.parse(ref.sourceNodes || '{}').label || '' } catch { /* ignore */ }
-      await removeSessionReferenceByContent(userId, `doc-${docId}`, { label, snapshot: ref.snapshot })
+      const removed = await removeSessionReferenceByContent(userId, `doc-${docId}`, { label, snapshot: ref.snapshot })
+      if (removed) {
+        // #1017: 取消引用的层级留痕（best-effort，找不到挂载则不留）。
+        const { legacyRefToItemInput, referenceIdentityKey, referenceItemId } = await import('../../lib/reference-store.js')
+        const item = await legacyRefToItemInput(userId, { refType: ref.refType, targetId: ref.targetId, snapshot: ref.snapshot, label })
+        await new ReferenceTierStore(userId)
+          .demote(referenceItemId(userId, referenceIdentityKey(item)), 'reference', 'reference', `unmounted from session doc-${docId}`)
+          .catch(() => { /* best-effort */ })
+      }
     } catch (err) { log.warn('reference dual-write cleanup failed (delete)', { docId, reason: (err as Error)?.message?.slice(0, 160) }) }
     return { ok: true }
   })

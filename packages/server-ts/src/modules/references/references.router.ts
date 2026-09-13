@@ -20,6 +20,8 @@ import {
 import { classifyGuidelineBySummaryTitle } from '../shared/summary-lookup.js'
 // #1014: 摘要登记为引用材料 → 使用反馈（referenced）。
 import { recordMemoryUsage } from '../../memory/memory-usage-bus.js'
+// #1017: 「固定为引用 / 取消引用」统一走 MemoryTierStore 留痕。
+import { ReferenceTierStore } from '../../memory/memory-tier-store.js'
 
 const log = makeLogger('references.router')
 
@@ -105,6 +107,10 @@ export async function referencesRouter(app: FastifyInstance): Promise<void> {
     if (kind === 'kb_summary' && sourceRef) {
       recordMemoryUsage({ userId, unitType: 'summary', unitId: sourceRef, action: 'referenced', sessionId })
     }
+    // #1017: 固定为引用的层级留痕（reference 层 promote；实际挂载已落库）。
+    await new ReferenceTierStore(userId)
+      .promote(mounted.referenceId, 'reference', 'reference', `mounted to session ${sessionId}`)
+      .catch((err) => log.warn('reference tier trace failed (best-effort)', { err: String(err).slice(0, 120) }))
     log.info('session reference mounted', { userId, sessionId, kind, referenceId: mounted.referenceId })
     return {
       reference_id: mounted.referenceId,
@@ -128,6 +134,10 @@ export async function referencesRouter(app: FastifyInstance): Promise<void> {
       if (!mounted) return reply.status(404).send({ error: 'Reference not mounted in this session' })
       // 只删会话挂载 — item 本体保留（设计红线：取消引用 ≠ 删除内容）。
       await removeSessionReference(userId, sessionId, referenceId)
+      // #1017: 取消引用的层级留痕（reference 层 demote）。
+      await new ReferenceTierStore(userId)
+        .demote(referenceId, 'reference', 'reference', `unmounted from session ${sessionId}`)
+        .catch((err) => log.warn('reference tier trace failed (best-effort)', { err: String(err).slice(0, 120) }))
       return { ok: true }
     },
   )

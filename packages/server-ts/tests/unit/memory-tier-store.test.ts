@@ -6,16 +6,20 @@ import { describe, test, expect, vi, beforeEach } from 'vitest'
 const mocks = vi.hoisted(() => ({
   tierCreate: vi.fn(),
   tierFindMany: vi.fn(),
+  refFindMany: vi.fn(),
+  refFindUnique: vi.fn(),
+  refCreate: vi.fn(),
 }))
 
 vi.mock('../../src/common/prisma.js', () => ({
   default: {
     memoryTierEvent: { create: mocks.tierCreate, findMany: mocks.tierFindMany },
+    referenceItem: { findMany: mocks.refFindMany, findUnique: mocks.refFindUnique, create: mocks.refCreate },
   },
 }))
 vi.mock('../../src/common/logger.js', () => ({ makeLogger: () => new Proxy({}, { get: () => vi.fn() }) }))
 
-import { FactTierStore, SummaryTierStore, PersonaTierStore, SkillTierStore, listTierEvents } from '../../src/memory/memory-tier-store.js'
+import { FactTierStore, SummaryTierStore, PersonaTierStore, SkillTierStore, ReferenceTierStore, listTierEvents } from '../../src/memory/memory-tier-store.js'
 
 function fakeMemory() {
   const facts = [
@@ -43,6 +47,9 @@ function fakeMemory() {
 beforeEach(() => {
   mocks.tierCreate.mockReset().mockImplementation(async ({ data }: any) => ({ id: 'evt_1', ...data }))
   mocks.tierFindMany.mockReset().mockResolvedValue([])
+  mocks.refFindMany.mockReset().mockResolvedValue([])
+  mocks.refFindUnique.mockReset().mockResolvedValue(null)
+  mocks.refCreate.mockReset().mockImplementation(async ({ data }: any) => data)
 })
 
 describe('#1015 MemoryTierStore', () => {
@@ -136,5 +143,38 @@ describe('#1016 SkillTierStore', () => {
 
     await store.promote('sk1', 'skill', 'skill', 'manual restore')
     expect(skill.lifecycle).toBe('active')
+  })
+})
+
+describe('#1017 ReferenceTierStore', () => {
+  test('read：ReferenceItem 映射为 reference 单元', async () => {
+    mocks.refFindMany.mockResolvedValueOnce([
+      { id: 'ref_1', userId: 'u1', kind: 'kb_summary', sourceRef: 'sum_1', label: '总结材料', snapshot: '正文' },
+    ])
+    const store = new ReferenceTierStore('u1')
+    const units = await store.read()
+    expect(units[0]).toMatchObject({ id: 'ref_1', tier: 'reference', label: '总结材料', meta: { kind: 'kb_summary', sourceRef: 'sum_1' } })
+  })
+
+  test('write：经确定性 ID 幂等落库（lib/reference-store）', async () => {
+    const store = new ReferenceTierStore('u1')
+    await store.write({ id: 'x', label: '材料', content: '正文', meta: { kind: 'pasted_text' } })
+    expect(mocks.refFindUnique).toHaveBeenCalledTimes(1)
+    expect(mocks.refCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ userId: 'u1', kind: 'pasted_text', label: '材料', snapshot: '正文' }),
+    })
+  })
+
+  test('promote/demote：固定为引用/取消引用留痕（from/to 均 reference）', async () => {
+    const store = new ReferenceTierStore('u1')
+    const ev = await store.promote('ref_1', 'reference', 'reference', 'mounted to session sess_1')
+    expect(ev.action).toBe('promote')
+    expect(mocks.tierCreate).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({ unitId: 'ref_1', fromTier: 'reference', toTier: 'reference', action: 'promote' }),
+    })
+    await store.demote('ref_1', 'reference', 'reference', 'unmounted from session sess_1')
+    expect(mocks.tierCreate).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({ action: 'demote', reason: 'unmounted from session sess_1' }),
+    })
   })
 })

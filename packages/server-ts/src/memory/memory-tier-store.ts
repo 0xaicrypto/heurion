@@ -20,7 +20,7 @@ import type { FactNode, SummaryNode } from './memory.types.js'
 
 const log = makeLogger('memory.tier-store')
 
-export type MemoryTier = 'fact' | 'summary' | 'persona' | 'skill'
+export type MemoryTier = 'fact' | 'summary' | 'persona' | 'skill' | 'reference'
 
 export interface MemoryTierUnit {
   id: string
@@ -251,6 +251,47 @@ export class SkillTierStore extends BaseTierStore {
   /** 淘汰（长期未匹配/遵循度过低）→ lifecycle='suspended'（降级不删除）+ 留痕。 */
   demote(unitId: string, fromTier: MemoryTier, toTier: MemoryTier, reason: string): Promise<TierChangeEvent> {
     return this.applyLifecycle(unitId, 'suspended', 'demote', fromTier, toTier, reason)
+  }
+}
+
+/**
+ * Reference 层（引用材料 #1017）：
+ *  - 单元 = ReferenceItem（用户级内容池；SessionReference 只是会话挂载）；
+ *  - read/write 走 lib/reference-store（确定性 ID 幂等）；
+ *  - promote/demote = 「固定为引用 / 取消引用」的留痕 — 实际挂载/卸载由
+ *    调用方（references 路由的 add/removeSessionReference）完成，本层保证
+ *    每次动作产生 memory_tier_events（from/to 均 'reference'，会话在 reason）。
+ */
+export class ReferenceTierStore extends BaseTierStore {
+  readonly tier = 'reference' as const
+  constructor(userId: string) {
+    super(userId)
+  }
+
+  async read(query: MemoryTierQuery = {}): Promise<MemoryTierUnit[]> {
+    const rows = await prisma.referenceItem.findMany({
+      where: { userId: this.userId },
+      orderBy: { updatedAt: 'desc' },
+      ...(query.limit && query.limit > 0 ? { take: query.limit } : {}),
+    })
+    return rows.map((r) => ({
+      id: r.id,
+      tier: 'reference' as const,
+      label: r.label,
+      content: r.snapshot,
+      meta: { kind: r.kind, sourceRef: r.sourceRef },
+    }))
+  }
+
+  async write(unit: Omit<MemoryTierUnit, 'tier'>): Promise<void> {
+    const { resolveOrCreateReferenceItem } = await import('../lib/reference-store.js')
+    await resolveOrCreateReferenceItem({
+      userId: this.userId,
+      kind: (unit.meta?.kind as 'file' | 'kb_summary' | 'pasted_text') || 'pasted_text',
+      sourceRef: typeof unit.meta?.sourceRef === 'string' ? unit.meta.sourceRef : null,
+      label: unit.label,
+      snapshot: unit.content,
+    })
   }
 }
 

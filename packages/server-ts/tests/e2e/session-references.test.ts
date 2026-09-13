@@ -28,6 +28,8 @@ describe('#1006 session references endpoint', () => {
 
     const { default: prisma } = await import('../../src/common/prisma.js')
     expect(await (prisma as any).referenceItem.count({ where: { snapshot: content } })).toBe(1)
+    // #1017: 固定为引用 → reference 层 promote 留痕
+    expect(await (prisma as any).memoryTierEvent.count({ where: { unitId: a.reference_id, action: 'promote' } })).toBeGreaterThanOrEqual(1)
     expect(await (prisma as any).sessionReference.count({ where: { referenceId: a.reference_id } })).toBe(2)
 
     const listA = await app.inject({ method: 'GET', url: `/api/v1/sessions/${sessionA}/references`, headers: h })
@@ -40,6 +42,8 @@ describe('#1006 session references endpoint', () => {
     expect(await (prisma as any).sessionReference.count({ where: { sessionId: sessionA, referenceId: a.reference_id } })).toBe(0)
     expect(await (prisma as any).referenceItem.findUnique({ where: { id: a.reference_id } })).toBeTruthy()
     expect(await (prisma as any).sessionReference.count({ where: { sessionId: sessionB, referenceId: a.reference_id } })).toBe(1)
+    // #1017: 取消引用 → demote 留痕
+    expect(await (prisma as any).memoryTierEvent.count({ where: { unitId: a.reference_id, action: 'demote' } })).toBeGreaterThanOrEqual(1)
 
     // 重复删除未挂载 → 404
     const again = await app.inject({ method: 'DELETE', url: `/api/v1/sessions/${sessionA}/references/${a.reference_id}`, headers: h })
