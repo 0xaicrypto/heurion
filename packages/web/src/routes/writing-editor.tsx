@@ -7,6 +7,7 @@ import { ArrowLeft, FileText, MessageSquare, Presentation } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { useSessionSuggestions } from './writing-editor/suggestions';
+import { SuggestedReferenceBanner } from '@/components/SuggestedReferenceBanner';
 import { DocEditor, type DiffReviewState } from '@/components/DocEditor';
 import { ProposalCard } from '@/components/ProposalCard';
 import { KbPicker } from '@/components/KbPicker';
@@ -1353,6 +1354,13 @@ export function WritingEditorPage() {
             )}
 
             <div className="mx-auto max-w-3xl space-y-4">
+              {/* #1031: 建议态横幅 — 与主 chat 同一组件；不打断编辑，采纳才转正式引用。 */}
+              <SuggestedReferenceBanner
+                suggestions={refSuggestions}
+                resolving={refSuggestionResolving}
+                onAccept={(id) => void resolveRefSuggestion(id, true)}
+                onDismiss={(id) => void resolveRefSuggestion(id, false)}
+              />
               <div>
                 <input
                   type="text"

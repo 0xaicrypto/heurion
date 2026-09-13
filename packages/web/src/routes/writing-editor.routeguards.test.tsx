@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, cleanup, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useParams, useNavigate } from 'react-router-dom';
 // i18n 实例初始化(与 @/test/render 的 provider 同源) — 不导入则 t() 走
 // notReadyT 中文默认值,断言需兼容两种环境。
@@ -60,6 +60,11 @@ const apiMock = vi.hoisted(() => ({
   generateMethods: vi.fn(),
   injectResults: vi.fn(),
   uploadFile: vi.fn(),
+  getSessionReferences: vi.fn(),
+  getSessionSuggestions: vi.fn(),
+  scanSessionSuggestions: vi.fn(),
+  resolveSessionSuggestion: vi.fn(),
+  getReferencePool: vi.fn(),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -184,6 +189,10 @@ beforeEach(() => {
   apiMock.getSnapshotBody.mockResolvedValue({ id: 's1', created_at: '', label: '', body: 'A body' });
   apiMock.listSubmissionDrafts.mockResolvedValue({ drafts: [] });
   apiMock.getDocReferences.mockResolvedValue({ references: [] });
+  apiMock.getSessionReferences.mockResolvedValue({ references: [] });
+  apiMock.getSessionSuggestions.mockResolvedValue({ suggestions: [] });
+  apiMock.scanSessionSuggestions.mockResolvedValue({ suggestions: [] });
+  apiMock.resolveSessionSuggestion.mockResolvedValue({ ok: true });
   apiMock.getMessages.mockResolvedValue({ messages: [], total: 0 });
   apiMock.listSkills.mockResolvedValue({ skills: [] });
   mockTurns();
@@ -405,5 +414,29 @@ describe('#989 Phase 3 — 编辑过程流式可见(块投影消费,#987)', () =
     await sendTurn([{ body: 'A body\n\nR1 段落', rev: 1 }]);
     expect(await screen.findByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
     expect(screen.queryByText(/AI 正在编辑|AI is editing/)).toBeNull();
+  });
+});
+
+describe('#1031 写作编辑器建议横幅', () => {
+  const SUG = {
+    id: 'sug1', sessionId: 'doc-d1', referenceId: 'r1', reason: '开局关键词命中（相关度 3）',
+    suggestedAt: '', status: 'pending',
+    reference: { id: 'r1', kind: 'file', label: '建议材料', snapshot: '摘要预览', sourceRef: null },
+  };
+
+  test('文档顶部渲染建议横幅；采纳后消失并刷新正式引用', async () => {
+    apiMock.getSessionSuggestions.mockResolvedValue({ suggestions: [SUG] });
+    apiMock.scanSessionSuggestions.mockResolvedValue({ suggestions: [SUG] });
+    renderEditor(true);
+
+    const banner = await screen.findByTestId('suggested-reference-banner');
+    expect(within(banner).getByText('建议材料')).toBeTruthy();
+
+    const refCallsBefore = apiMock.getDocReferences.mock.calls.length;
+    fireEvent.click(within(banner).getByRole('button', { name: /^引用$|^Use$/ }));
+    await waitFor(() => expect(apiMock.resolveSessionSuggestion).toHaveBeenCalledWith('doc-d1', 'sug1', true));
+    await waitFor(() => expect(screen.queryByTestId('suggested-reference-banner')).toBeNull());
+    // 采纳回调刷新正式引用列表。
+    await waitFor(() => expect(apiMock.getDocReferences.mock.calls.length).toBeGreaterThan(refCallsBefore));
   });
 });
