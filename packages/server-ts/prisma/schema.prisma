@@ -186,6 +186,23 @@ model DocReference {
   @@map("doc_references")
 }
 
+/// #1014（SECOND_BRAIN Phase B）— 记忆使用反馈总线（append-only）：
+/// 谁用了哪条记忆（fact/summary/reference/skill）— MemoryGranularityController
+/// (#1013) 的输入源；写入 fire-and-forget，不阻塞调用方响应。
+model MemoryUsageEvent {
+  id        String  @id @default(cuid())
+  userId    String  @map("user_id")
+  unitType  String  @map("unit_type")
+  unitId    String  @map("unit_id")
+  action    String
+  sessionId String? @map("session_id")
+  at        String
+
+  @@index([userId, unitId, at])
+  @@index([userId, at])
+  @@map("memory_usage_events")
+}
+
 /// #1005（SECOND_BRAIN Phase 0）— 用户级引用内容池：一份内容只存一次，
 /// 跨写作/主 chat 会话复用（区别于 DocReference 绑 docId 的旧模型）。
 /// kind: 'file' | 'kb_summary' | 'pasted_text'。

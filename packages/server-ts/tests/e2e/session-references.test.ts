@@ -75,3 +75,30 @@ describe('#1006 session references endpoint', () => {
     expect(res.statusCode).toBe(400)
   })
 })
+
+// #1014: 摘要登记为引用材料 → MemoryUsageBus 写 referenced（Facts/Summary 信号先行）。
+describe('#1014 reference → usage bus', () => {
+  test('POST kb_summary + source_ref → 写 referenced 事件', async () => {
+    const app = await getApp()
+    const { default: prisma } = await import('../../src/common/prisma.js')
+    const userId = (await (prisma as any).user.findFirst({ orderBy: { createdAt: 'desc' } })).id
+    const unitId = `sum_usage_${Date.now()}`
+    const before = await (prisma as any).memoryUsageEvent.count({ where: { userId, unitId } })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/sessions/sess_usage_${Date.now()}/references`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ kind: 'kb_summary', content: '摘要正文', label: '使用统计测试', source_ref: unitId }),
+    })
+    expect(res.statusCode).toBe(200)
+
+    // fire-and-forget：轮询等待写入落地（上限 ~1s）。
+    let after = before
+    for (let i = 0; i < 20 && after === before; i++) {
+      await new Promise((r) => setTimeout(r, 50))
+      after = await (prisma as any).memoryUsageEvent.count({ where: { userId, unitId, action: 'referenced' } })
+    }
+    expect(after).toBe(before + 1)
+  })
+})

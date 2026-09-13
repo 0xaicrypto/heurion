@@ -183,6 +183,7 @@ export async function handleAgentChat(request: FastifyRequest, reply: FastifyRep
         const kbResult = await handleKnowledgeCommand({
           workspaceId: userId,
           userId,
+          sessionId: sid,
           factsStore: ctx.facts,
           knowledgeStore: ctx.knowledge,
           gapService,

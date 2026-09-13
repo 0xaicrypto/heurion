@@ -10,6 +10,8 @@ import { FactsStore, KnowledgeStore } from '../../evolution/stores'
 import { type KnowledgeGap, type KnowledgeGapService } from './knowledge-gap.service'
 import type { MemoryService } from '../../memory/memory.service.js'
 import { keywordSearch, type SearchResult } from '../../retrieval/keyword-search.js' // #666: 检索逻辑归属 retrieval 层
+// #1014: 命中即记录使用反馈（Facts/Summary 信号先行）。
+import { recordMemoryUsage } from '../../memory/memory-usage-bus.js'
 
 export interface LLMSummarizer {
   summarize(text: string): Promise<string>
@@ -18,6 +20,8 @@ export interface LLMSummarizer {
 export interface CommandContext {
   workspaceId: string
   userId: string
+  /** #1014: 使用反馈的会话归属（可选 — 无会话上下文的后台调用不传）。 */
+  sessionId?: string
   factsStore: FactsStore
   knowledgeStore: KnowledgeStore
   gapService: KnowledgeGapService
@@ -98,6 +102,18 @@ async function handleSearch(ctx: CommandContext, payload: string): Promise<Comma
 
   const summary = `找到 ${items.length} 条相关知识：\n` +
     items.slice(0, 5).map((item, i) => `${i + 1}. [${item.kind}] ${item.content.slice(0, 120)}`).join('\n')
+
+  // #1014: 命中即反馈 — fact → 'fact'，knowledge（Summary/文档）→ 'summary'。
+  for (const item of items) {
+    if (!item.stableId) continue
+    recordMemoryUsage({
+      userId: ctx.userId,
+      unitType: item.kind === 'fact' ? 'fact' : 'summary',
+      unitId: item.stableId,
+      action: 'retrieved',
+      ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+    })
+  }
 
   return { type: 'kb_search_result', items, summary }
 }

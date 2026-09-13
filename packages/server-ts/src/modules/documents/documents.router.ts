@@ -16,6 +16,8 @@ import { writeDocVersion } from '../../tools/doc-version-writer.js'
 // #1005: 引用材料两层模型（Phase 0 写路径双写，读路径暂保持旧表）。
 import { writeThroughLegacyRef, removeSessionReferenceByContent } from '../../lib/reference-store.js'
 import { classifyGuidelineBySummaryTitle } from '../shared/summary-lookup.js'
+// #1014: 摘要登记为引用材料 → 使用反馈（referenced）。
+import { recordMemoryUsage } from '../../memory/memory-usage-bus.js'
 // #996/#999: 节级元数据（作者轴+可信度轴）读侧 — GET/PUT 响应附带。
 import type { SectionMetaMap } from '@heurion/contracts'
 import { makeLogger as makeMetaLogger } from '../../common/logger.js'
@@ -561,9 +563,12 @@ export async function documentsRouter(app: FastifyInstance) {
         try { dupLabel = JSON.parse(dup.sourceNodes || '{}').label || '' } catch { /* ignore */ }
         // #1005 双写：幂等命中旧行时同步新模型（覆盖部署前存量行）。
         try {
-          await writeThroughLegacyRef(userId, docId, {
+          const item = await writeThroughLegacyRef(userId, docId, {
             refType: dup.refType, targetId: dup.targetId, snapshot: dup.snapshot, label: dupLabel, createdAt: dup.createdAt,
           }, { classifyGuideline: classifyGuidelineBySummaryTitle })
+          if (item.kind === 'kb_summary' && item.sourceRef) {
+            recordMemoryUsage({ userId, unitType: 'summary', unitId: item.sourceRef, action: 'referenced', sessionId: `doc-${docId}` })
+          }
         } catch (err) { log.warn('reference dual-write failed (dedup)', { docId, reason: (err as Error)?.message?.slice(0, 160) }) }
         return {
           reference_id: dup.id, kind: dup.refType, content: dup.snapshot,
@@ -590,9 +595,12 @@ export async function documentsRouter(app: FastifyInstance) {
     })
     // #1005 双写：新模型同步（失败仅日志，不影响旧路径响应）。
     try {
-      await writeThroughLegacyRef(userId, docId, {
+      const item = await writeThroughLegacyRef(userId, docId, {
         refType: kind || 'note', targetId: source_patient_hash || '', snapshot: content || '', label: label || '', createdAt: now,
       }, { classifyGuideline: classifyGuidelineBySummaryTitle })
+      if (item.kind === 'kb_summary' && item.sourceRef) {
+        recordMemoryUsage({ userId, unitType: 'summary', unitId: item.sourceRef, action: 'referenced', sessionId: `doc-${docId}` })
+      }
     } catch (err) { log.warn('reference dual-write failed (create)', { docId, reason: (err as Error)?.message?.slice(0, 160) }) }
     // #fix: 上传即草稿 — 文件类参考(pdf/docx/file)挂到空文档时自动导入
     // 为正文(含图片托管 + 快照),用户上传后立即能在编辑框看到原文,

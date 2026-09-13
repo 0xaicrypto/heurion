@@ -18,6 +18,8 @@ import {
   type ReferenceKind,
 } from '../../lib/reference-store.js'
 import { classifyGuidelineBySummaryTitle } from '../shared/summary-lookup.js'
+// #1014: 摘要登记为引用材料 → 使用反馈（referenced）。
+import { recordMemoryUsage } from '../../memory/memory-usage-bus.js'
 
 const log = makeLogger('references.router')
 
@@ -100,6 +102,9 @@ export async function referencesRouter(app: FastifyInstance): Promise<void> {
       },
       source: 'manual',
     })
+    if (kind === 'kb_summary' && sourceRef) {
+      recordMemoryUsage({ userId, unitType: 'summary', unitId: sourceRef, action: 'referenced', sessionId })
+    }
     log.info('session reference mounted', { userId, sessionId, kind, referenceId: mounted.referenceId })
     return {
       reference_id: mounted.referenceId,

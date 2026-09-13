@@ -324,7 +324,7 @@ export async function writeThroughLegacyRef(
   docId: string,
   row: LegacyRefLike & { createdAt?: string | null },
   opts: { classifyGuideline?: GuidelineClassifier } = {},
-): Promise<void> {
+): Promise<ReferenceItemInput> {
   const input = await legacyRefToItemInput(userId, row, opts)
   await addSessionReference({
     userId,
@@ -333,4 +333,6 @@ export async function writeThroughLegacyRef(
     source: 'manual',
     ...(row.createdAt ? { addedAt: row.createdAt } : {}),
   })
+  // 返回归类结果 — 调用方（#1014）据此写使用反馈（如 kb_summary → referenced）。
+  return input
 }
