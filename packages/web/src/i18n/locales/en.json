@@ -292,7 +292,11 @@
     "referencesHint": "Manage this session’s references — the AI keeps using them in later turns",
     "refStripTitle": "Active",
     "refRemove": "Remove reference",
-    "pinAsReference": "Pin as reference (persists for this session)"
+    "pinAsReference": "Pin as reference (persists for this session)",
+    "suggestionBannerTitle": "Might be useful (suggested, not yet referenced)",
+    "suggestionBadge": "Suggested",
+    "suggestionUse": "Use",
+    "suggestionIgnore": "Ignore"
   },
   "patient": {
     "summary": "Summary",

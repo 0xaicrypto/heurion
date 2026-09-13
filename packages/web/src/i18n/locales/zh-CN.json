@@ -292,7 +292,11 @@
     "referencesHint": "管理本会话引用材料 — AI 回答时持续基于这些材料",
     "refStripTitle": "生效中",
     "refRemove": "取消引用",
-    "pinAsReference": "固定为引用（本会话持续生效）"
+    "pinAsReference": "固定为引用（本会话持续生效）",
+    "suggestionBannerTitle": "可能用得上（建议，尚未引用）",
+    "suggestionBadge": "建议",
+    "suggestionUse": "引用",
+    "suggestionIgnore": "忽略"
   },
   "patient": {
     "summary": "摘要",

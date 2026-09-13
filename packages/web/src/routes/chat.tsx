@@ -18,6 +18,8 @@ import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 // #1007: 主 chat 引用能力对称化 — 复用写作编辑器的引用弹层与状态机。
 import { useSessionReferences } from './writing-editor/references';
 import { AddReferenceDialog, ReferenceListPopover } from './writing-editor/dialogs';
+import { useSessionSuggestions } from './writing-editor/suggestions';
+import { SuggestedReferenceBanner } from '@/components/SuggestedReferenceBanner';
 import { isEnterSendKey } from '@/lib/chat-composer';
 // #922: 上传落地公共流程收敛到 lib/upload-flow(chat 与 doc-chat 共用)。
 import { runUploadAttachFlow } from '@/lib/upload-flow';
@@ -100,6 +102,23 @@ export function ChatPage() {
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   // #1007: 会话级引用(与写作编辑器共用弹层/状态机) — 引用材料跨消息持续生效。
   const refs = useSessionReferences({ sessionId: sessionId || undefined, setError });
+  // #1012: 建议态引用 — post-turn 检测产出 pending 建议；采纳即转正式引用。
+  const {
+    suggestions: pendingSuggestions,
+    resolving: suggestionResolving,
+    resolve: resolveSuggestion,
+    refresh: refreshSuggestions,
+  } = useSessionSuggestions({
+    sessionId: sessionId || undefined,
+    setError,
+    onAccepted: () => void refs.loadReferences(),
+  });
+  // #1012: 每轮对话结束后刷新建议(post-turn 语义检测新增 pending 建议)。
+  const sessionMessageCount = session?.messages?.length ?? 0;
+  useEffect(() => {
+    if (!sessionId) return;
+    void refreshSuggestions();
+  }, [sessionMessageCount, sessionId, refreshSuggestions]);
   // #1007: KbPicker 双用途 — context=临时选总结带入下一条消息; reference=登记为会话引用。
   const [kbPickerMode, setKbPickerMode] = useState<'context' | 'reference'>('context');
   // #721: kbPicker 搜索 debounce。
@@ -519,6 +538,10 @@ export function ChatPage() {
                   filesLibAdding={refs.filesLibAdding}
                   filesLibList={refs.filesLibList}
                   onAddFiles={(files) => void refs.addFileLibraryRefs(files)}
+                  suggestions={pendingSuggestions}
+                  suggestionResolving={suggestionResolving}
+                  onAcceptSuggestion={(id) => void resolveSuggestion(id, true)}
+                  onDismissSuggestion={(id) => void resolveSuggestion(id, false)}
                 />
               )}
             </div>
@@ -553,6 +576,13 @@ export function ChatPage() {
 
         <main ref={containerRef} className="flex-1 overflow-y-auto px-4 py-6">
           <div className="mx-auto max-w-3xl space-y-6">
+            {/* #1012: 建议态横幅 — 不打断操作；虚线样式与正式引用区分，忽略后不再重复。 */}
+            <SuggestedReferenceBanner
+              suggestions={pendingSuggestions}
+              resolving={suggestionResolving}
+              onAccept={(id) => void resolveSuggestion(id, true)}
+              onDismiss={(id) => void resolveSuggestion(id, false)}
+            />
             <ChatMessages
               variant="full"
               messages={messages}

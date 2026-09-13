@@ -67,4 +67,25 @@ export class CalendarApi extends ApiCore {
     return this.fetch(`/api/v1/sessions/${sessionId}/references/${referenceId}`, { method: 'DELETE' });
   }
 
+  /* ────────── #1009/#1012: 建议态引用（pending 建议的展示与采纳/忽略） ────────── */
+
+  async getSessionSuggestions(sessionId: string): Promise<{suggestions: Array<{
+    id: string;
+    sessionId: string;
+    referenceId: string;
+    reason: string;
+    suggestedAt: string;
+    status: string;
+    reference: { id: string; kind: string; label: string; snapshot: string; sourceRef: string | null };
+  }>}> {
+    return this.fetch(`/api/v1/sessions/${sessionId}/references/suggestions`);
+  }
+
+  async resolveSessionSuggestion(sessionId: string, suggestionId: string, accept: boolean): Promise<{ok: boolean; reference_id?: string}> {
+    return this.fetch(`/api/v1/sessions/${sessionId}/references/suggestions/${suggestionId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ accept }),
+    });
+  }
+
 }

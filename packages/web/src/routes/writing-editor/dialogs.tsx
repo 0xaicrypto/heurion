@@ -210,9 +210,14 @@ export function ReferenceListPopover(input: {
   filesLibAdding: boolean;
   filesLibList: Array<{ file_id: string; name: string; mime: string; size_bytes: number; created_at: string }>;
   onAddFiles: (files: Array<{ file_id: string; name: string; mime: string; size_bytes: number; created_at: string }>) => void;
+  /** #1012: 建议态引用 — 虚线边框 + "建议"标签，与正式引用（实线）视觉区分。 */
+  suggestions?: Array<{ id: string; reason: string; reference: { kind: string; label: string; snapshot: string } }>;
+  suggestionResolving?: string | null;
+  onAcceptSuggestion?: (id: string) => void;
+  onDismissSuggestion?: (id: string) => void;
 }) {
   const { t } = useTranslation();
-  const { list, deleting, onClose, onDelete, onOpenPaste, onOpenKbPicker, filesLibOpen, onToggleFilesLib, filesLibLoading, filesLibAdding, filesLibList, onAddFiles } = input;
+  const { list, deleting, onClose, onDelete, onOpenPaste, onOpenKbPicker, filesLibOpen, onToggleFilesLib, filesLibLoading, filesLibAdding, filesLibList, onAddFiles, suggestions, suggestionResolving, onAcceptSuggestion, onDismissSuggestion } = input;
   // #930: 文件库选择器局部状态 — 勾选/搜索,弹层卸载即重置。
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<Array<{ file_id: string; name: string; mime: string; size_bytes: number; created_at: string }>>([]);
@@ -287,6 +292,31 @@ export function ReferenceListPopover(input: {
               {t('writing.refAddSelected', '添加为参考')}
             </Button>
           </div>
+        </div>
+      )}
+      {suggestions && suggestions.length > 0 && (
+        <div className="mb-2 space-y-1" data-testid="ref-suggestions">
+          <p className="text-[10px] uppercase tracking-wide text-text-tertiary">{t('chat.suggestionBannerTitle', '可能用得上（建议，尚未引用）')}</p>
+          {suggestions.map((s) => (
+            <div key={s.id} className="flex items-center gap-2 rounded-lg border border-dashed border-accent/50 bg-accent/5 px-2 py-1.5 text-xs">
+              <span className="shrink-0 rounded bg-accent/10 px-1 py-0.5 text-[10px] text-accent">{t('chat.suggestionBadge', '建议')}</span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-text-primary">{s.reference.label || s.reference.snapshot.slice(0, 40)}</p>
+                <p className="truncate text-[10px] text-text-tertiary">{s.reason}</p>
+              </div>
+              <Button size="sm" variant="secondary" disabled={suggestionResolving != null} onClick={() => onAcceptSuggestion?.(s.id)}>
+                {t('chat.suggestionUse', '引用')}
+              </Button>
+              <button
+                onClick={() => onDismissSuggestion?.(s.id)}
+                disabled={suggestionResolving != null}
+                className="shrink-0 rounded p-0.5 text-text-tertiary transition-colors hover:text-text-primary"
+                aria-label={t('chat.suggestionIgnore', '忽略')}
+              >
+                <X size={11} />
+              </button>
+            </div>
+          ))}
         </div>
       )}
       {list.length === 0 ? (

@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render } from '@/test/render';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { ChatPage } from '@/routes/chat';
 import { useChatStore } from '@/stores/chat';
 import { useAuthStore } from '@/stores/auth';
@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   getSessionReferences: vi.fn(),
   addSessionReference: vi.fn(),
   deleteSessionReference: vi.fn(),
+  getSessionSuggestions: vi.fn(),
+  resolveSessionSuggestion: vi.fn(),
 }));
 
 vi.mock('@/components/plugins/PluginExtensionPoint', () => ({
@@ -30,6 +32,8 @@ vi.mock('@/lib/api', () => ({
     getSessionReferences: mocks.getSessionReferences,
     addSessionReference: mocks.addSessionReference,
     deleteSessionReference: mocks.deleteSessionReference,
+    getSessionSuggestions: mocks.getSessionSuggestions,
+    resolveSessionSuggestion: mocks.resolveSessionSuggestion,
   },
 }));
 
@@ -56,6 +60,8 @@ beforeEach(() => {
   useAuthStore.setState({ isAuthenticated: true, token: 't', userId: 'u1', displayName: 'Doc' } as any);
   vi.clearAllMocks();
   mocks.getSessionReferences.mockResolvedValue({ references: [] });
+  mocks.getSessionSuggestions.mockResolvedValue({ suggestions: [] });
+  mocks.resolveSessionSuggestion.mockResolvedValue({ ok: true });
   mocks.addSessionReference.mockResolvedValue({ ...refRow, reference_id: 'r_new' });
   mocks.deleteSessionReference.mockResolvedValue({ ok: true });
 });
@@ -96,5 +102,43 @@ describe('#1007 主 chat 引用', () => {
 
     await waitFor(() => expect(mocks.deleteSessionReference).toHaveBeenCalledWith('s1', 'r1'));
     await waitFor(() => expect(screen.queryByText('paper.pdf')).not.toBeInTheDocument());
+  });
+});
+
+describe('#1012 建议态引用', () => {
+  const suggestion = {
+    id: 'sug1', sessionId: 's1', referenceId: 'r1', reason: '对话内容命中未引用材料',
+    suggestedAt: '', status: 'pending',
+    reference: { id: 'r1', kind: 'file', label: '建议材料', snapshot: '正文摘要', sourceRef: 'f1' },
+  };
+
+  test('横幅与引用弹层都有建议态；采纳后转正式引用并消失', async () => {
+    mocks.getSessionSuggestions.mockResolvedValue({ suggestions: [suggestion] });
+    render(<ChatPage />);
+
+    const banner = await screen.findByTestId('suggested-reference-banner');
+    expect(within(banner).getByText('建议材料')).toBeInTheDocument();
+    expect(within(banner).getByText('对话内容命中未引用材料')).toBeInTheDocument();
+
+    // 引用弹层里建议态与正式引用同区展示（虚线 + 建议标签）。
+    fireEvent.click(screen.getByTitle(/管理本会话引用材料|Manage this session/));
+    expect(await screen.findByTestId('ref-suggestions')).toBeInTheDocument();
+
+    fireEvent.click(within(banner).getByRole('button', { name: /^引用$|^Use$/ }));
+    await waitFor(() => expect(mocks.resolveSessionSuggestion).toHaveBeenCalledWith('s1', 'sug1', true));
+    await waitFor(() => expect(screen.queryByTestId('suggested-reference-banner')).not.toBeInTheDocument());
+    // 采纳即刷新正式引用列表（供生效条/弹层立即展示）。
+    await waitFor(() => expect(mocks.getSessionReferences.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  test('忽略后横幅消失且调用 resolve(accept=false)', async () => {
+    mocks.getSessionSuggestions.mockResolvedValue({ suggestions: [suggestion] });
+    render(<ChatPage />);
+
+    const banner = await screen.findByTestId('suggested-reference-banner');
+    fireEvent.click(within(banner).getByRole('button', { name: /忽略|Ignore/ }));
+
+    await waitFor(() => expect(mocks.resolveSessionSuggestion).toHaveBeenCalledWith('s1', 'sug1', false));
+    await waitFor(() => expect(screen.queryByTestId('suggested-reference-banner')).not.toBeInTheDocument());
   });
 });
