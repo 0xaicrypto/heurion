@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { api, ApiError } from '@/lib/api';
+import { showToast } from '@/lib/plugin-dom-ui';
 
 export interface DocReferenceItem {
   reference_id: string;
@@ -103,6 +105,7 @@ function useReferenceManager(input: {
 }): DocReferences {
   const { adapter, setError } = input;
   const poolContext = input.poolContext;
+  const { t } = useTranslation();
 
   const [refDialogOpen, setRefDialogOpen] = useState(false);
   const [refForm, setRefForm] = useState({ kind: 'guideline', content: '', label: '', source_patient_hash: '' });
@@ -205,6 +208,8 @@ function useReferenceManager(input: {
         }
       }
       await loadReferences();
+      // #1036: 固定/登记成功反馈。
+      showToast(t('chat.refAdded', '已添加为引用'), 'success');
     } finally {
       setFilesLibAdding(false);
     }
@@ -261,6 +266,7 @@ function useReferenceManager(input: {
         }
       }
       await loadReferences();
+      showToast(t('chat.refAdded', '已添加为引用'), 'success');
     } finally {
       setPoolAdding(false);
     }

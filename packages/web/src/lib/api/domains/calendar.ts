@@ -97,6 +97,8 @@ export class CalendarApi extends ApiCore {
     sessionId: string;
     referenceId: string;
     reason: string;
+    reasonCode: string | null;
+    score: number | null;
     suggestedAt: string;
     status: string;
     reference: { id: string; kind: string; label: string; snapshot: string; sourceRef: string | null };
@@ -110,6 +112,8 @@ export class CalendarApi extends ApiCore {
     sessionId: string;
     referenceId: string;
     reason: string;
+    reasonCode: string | null;
+    score: number | null;
     suggestedAt: string;
     status: string;
     reference: { id: string; kind: string; label: string; snapshot: string; sourceRef: string | null };

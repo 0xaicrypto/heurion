@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Lightbulb, X } from 'lucide-react';
 import { Button } from '@/components/ui';
-import type { SessionSuggestion } from '@/routes/writing-editor/suggestions';
+import { suggestionReasonText, type SessionSuggestion } from '@/routes/writing-editor/suggestions';
 
 /** #1012: 建议态引用横幅 — 不打断操作；虚线边框与正式引用（实线）明确区分；
  *  建议永远不会自动变成正式引用（设计原则 4 红线）。 */
@@ -31,7 +31,7 @@ export function SuggestedReferenceBanner(input: {
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-xs font-medium text-text-primary">{s.reference.label || s.reference.snapshot.slice(0, 40)}</p>
-            <p className="truncate text-[10px] text-text-tertiary">{s.reason}</p>
+            <p className="truncate text-[10px] text-text-tertiary">{suggestionReasonText(s, t)}</p>
           </div>
           <Button
             size="sm"

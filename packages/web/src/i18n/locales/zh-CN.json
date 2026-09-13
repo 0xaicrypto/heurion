@@ -297,7 +297,12 @@
     "suggestionBannerTitle": "可能用得上（建议，尚未引用）",
     "suggestionBadge": "建议",
     "suggestionUse": "引用",
-    "suggestionIgnore": "忽略"
+    "suggestionIgnore": "忽略",
+    "suggestReasonOpening": "当前场景关键词匹配（相关度 {{score}}）",
+    "suggestReasonConversation": "对话内容命中未引用材料",
+    "suggestionAccepted": "已引用「{{label}}」",
+    "suggestionIgnored": "已忽略该建议",
+    "refAdded": "已添加为引用"
   },
   "patient": {
     "summary": "摘要",

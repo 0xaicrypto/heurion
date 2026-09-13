@@ -53,6 +53,8 @@ describe('#1008 开局建议检测', () => {
     expect(labels).not.toContain('ZZQXOPEN 已挂载材料');
     expect(first.suggestions).toHaveLength(1);
     expect(String(first.suggestions[0].reason)).toContain('开局关键词命中');
+    expect(first.suggestions[0].reasonCode).toBe('opening_keyword');
+    expect(typeof first.suggestions[0].score).toBe('number');
 
     // 重复扫描不重复建建议。
     const second = await scan();

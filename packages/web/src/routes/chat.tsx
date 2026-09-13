@@ -581,7 +581,7 @@ export function ChatPage() {
           <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-surface px-3 py-1.5 sm:px-6">
             <span className="text-[10px] uppercase tracking-wide text-text-tertiary">{t('chat.refStripTitle', '生效中')}</span>
             {refs.refList.map((r) => (
-              <span key={r.reference_id} className="inline-flex max-w-[240px] items-center gap-1 rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-text-secondary">
+              <span key={r.reference_id} className="inline-flex min-w-0 max-w-[240px] items-center gap-1 rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-text-secondary">
                 <span className="shrink-0 rounded bg-accent/10 px-1 text-[10px] text-accent">{r.kind}</span>
                 <span className="truncate">{r.label || r.content.slice(0, 40)}</span>
                 <button

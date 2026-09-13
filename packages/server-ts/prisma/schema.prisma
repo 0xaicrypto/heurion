@@ -194,6 +194,9 @@ model SuggestedReference {
   userId      String  @map("user_id")
   referenceId String  @map("reference_id")
   reason      String  @default("")
+  /// #1036: 结构化原因（i18n）— 前端按 code 本地化渲染；reason 保留原文兼容旧行。
+  reasonCode  String? @map("reason_code")
+  score       Int?
   suggestedAt String  @map("suggested_at")
   status      String  @default("pending")
   resolvedAt  String? @map("resolved_at")

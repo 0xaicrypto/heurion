@@ -5,6 +5,7 @@ import { Button, Skeleton } from '@/components/ui';
 import { formatRelativeTime } from '@/lib/utils';
 import type { PhiFinding } from './types';
 import type { ReferencePoolItem, ReferencePoolSort } from './references';
+import { suggestionReasonText } from './suggestions';
 
 /** #696: PHI 高亮渲染抽为组件(原 94 行内联 JSX)。 */
 export function HighlightedBody({ body, findings }: { body: string; findings: PhiFinding[] }) {
@@ -213,7 +214,7 @@ export function ReferenceListPopover(input: {
   filesLibList: Array<{ file_id: string; name: string; mime: string; size_bytes: number; created_at: string }>;
   onAddFiles: (files: Array<{ file_id: string; name: string; mime: string; size_bytes: number; created_at: string }>) => void;
   /** #1012: 建议态引用 — 虚线边框 + "建议"标签，与正式引用（实线）视觉区分。 */
-  suggestions?: Array<{ id: string; reason: string; reference: { kind: string; label: string; snapshot: string } }>;
+  suggestions?: Array<{ id: string; reason: string; reasonCode?: string | null; score?: number | null; reference: { kind: string; label: string; snapshot: string } }>;
   suggestionResolving?: string | null;
   onAcceptSuggestion?: (id: string) => void;
   onDismissSuggestion?: (id: string) => void;
@@ -328,7 +329,7 @@ export function ReferenceListPopover(input: {
               <button
                 key={s}
                 onClick={() => onPoolSort?.(s)}
-                className={`flex-1 rounded-md border px-1.5 py-1 text-[10px] transition-colors ${poolSort === s ? 'border-accent bg-accent/10 text-accent' : 'border-border bg-surface-elevated text-text-secondary hover:text-text-primary'}`}
+                className={`flex-1 whitespace-nowrap rounded-md border px-1.5 py-1 text-[10px] transition-colors ${poolSort === s ? 'border-accent bg-accent/10 text-accent' : 'border-border bg-surface-elevated text-text-secondary hover:text-text-primary'}`}
               >
                 {label}
               </button>
@@ -389,7 +390,7 @@ export function ReferenceListPopover(input: {
               <span className="shrink-0 rounded bg-accent/10 px-1 py-0.5 text-[10px] text-accent">{t('chat.suggestionBadge', '建议')}</span>
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium text-text-primary">{s.reference.label || s.reference.snapshot.slice(0, 40)}</p>
-                <p className="truncate text-[10px] text-text-tertiary">{s.reason}</p>
+                <p className="truncate text-[10px] text-text-tertiary">{suggestionReasonText(s, t)}</p>
               </div>
               <Button size="sm" variant="secondary" disabled={suggestionResolving != null} onClick={() => onAcceptSuggestion?.(s.id)}>
                 {t('chat.suggestionUse', '引用')}

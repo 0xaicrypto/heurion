@@ -297,7 +297,12 @@
     "suggestionBannerTitle": "Might be useful (suggested, not yet referenced)",
     "suggestionBadge": "Suggested",
     "suggestionUse": "Use",
-    "suggestionIgnore": "Ignore"
+    "suggestionIgnore": "Ignore",
+    "suggestReasonOpening": "Keyword match with current context (score {{score}})",
+    "suggestReasonConversation": "Conversation content matched an unreferenced material",
+    "suggestionAccepted": "Referenced “{{label}}”",
+    "suggestionIgnored": "Suggestion dismissed",
+    "refAdded": "Added as reference"
   },
   "patient": {
     "summary": "Summary",

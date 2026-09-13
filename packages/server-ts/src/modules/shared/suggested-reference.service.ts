@@ -32,6 +32,9 @@ export interface SuggestedReferenceRow {
   sessionId: string
   referenceId: string
   reason: string
+  /** #1036: 结构化原因码（前端 i18n）；旧行可能为 null，前端回退 reason 原文。 */
+  reasonCode: string | null
+  score: number | null
   suggestedAt: string
   status: string
   reference: { id: string; kind: string; label: string; snapshot: string; sourceRef: string | null }
@@ -49,6 +52,7 @@ export async function listPendingSuggestions(userId: string, sessionId: string):
     if (!item) continue
     out.push({
       id: r.id, sessionId: r.sessionId, referenceId: r.referenceId, reason: r.reason,
+      reasonCode: r.reasonCode ?? null, score: r.score ?? null,
       suggestedAt: r.suggestedAt, status: r.status,
       reference: { id: item.id, kind: item.kind, label: item.label, snapshot: item.snapshot.slice(0, 400), sourceRef: item.sourceRef },
     })
@@ -168,6 +172,8 @@ export async function detectOpeningSuggestions(input: OpeningDetectInput): Promi
           userId: input.userId,
           referenceId: item.id,
           reason: `开局关键词命中（相关度 ${score}）`,
+          reasonCode: 'opening_keyword',
+          score,
           suggestedAt: new Date().toISOString(),
           status: 'pending',
         },
