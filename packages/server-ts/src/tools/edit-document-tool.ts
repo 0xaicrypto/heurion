@@ -46,6 +46,43 @@ const log = makeLogger('tools.edit-document')
 const sectionEditTelemetry = { attempts: 0, success: 0, idInvalid: 0 }
 const anchorEditTelemetry = { attempts: 0, success: 0 }
 
+const normTitle = (s: string): string => s.replace(/\s+/g, ' ').trim().toLowerCase()
+
+/** 正文首个非空块是 heading 时返回其文本(剥离 [sec:...] 标记),否则 null。 */
+export function leadingTitleHeading(body: string): string | null {
+  if (!body) return null
+  const lines = body.split('\n')
+  let idx = 0
+  while (idx < lines.length && !lines[idx].trim()) idx++
+  const m = idx < lines.length ? /^(#{1,6})[ \t]+(.+?)[ \t]*$/.exec(lines[idx]) : null
+  if (!m) return null
+  const heading = m[2].replace(/\s*\[sec:[^\]]*\]/g, '').trim()
+  return heading || null
+}
+
+/**
+ * #408-followup-2: 标题写回同步正文首行标题 heading。
+ *
+ * 文档正文常以论文标题作为首个 heading(导入稿/模板),而 Doc.title 只是
+ * 元数据(页头/导出文件名)。只改元数据在用户视角就是"标题没变"(生产
+ * 实例:AI 声称已改英文标题,正文 ## 中文标题 原样保留)。
+ *
+ * 仅当首行 heading 文本 == 旧元数据标题时确定性替换(保留 heading 层级),
+ * 其余一律返回 null — 绝不误改正文首节(如首块是 ### Introduction)。
+ */
+export function syncLeadingTitleHeading(body: string, oldTitle: string, newTitle: string): string | null {
+  if (!body || !newTitle) return null
+  const heading = leadingTitleHeading(body)
+  if (!heading) return null
+  if (normTitle(heading) !== normTitle(oldTitle) || normTitle(oldTitle) === normTitle(newTitle)) return null
+  const lines = body.split('\n')
+  let idx = 0
+  while (idx < lines.length && !lines[idx].trim()) idx++
+  const m = /^(#{1,6})[ \t]+/.exec(lines[idx])!
+  lines[idx] = `${m[1]} ${newTitle}`
+  return lines.join('\n')
+}
+
 export class EditDocumentTool extends BaseTool {
   /**
    * #906: 本轮最新正文缓存 — applySpan/fullReplace/import 写回成功后更新。
@@ -70,7 +107,7 @@ export class EditDocumentTool extends BaseTool {
       '- Range edit (preferred for polishing long documents without section IDs, or fine-grained in-section tweaks): pass `old_text` (the original text to replace, copied from the current document — line breaks/whitespace differences are tolerated; [sec:...] markers are stripped automatically) and `new_text` (the replacement). One edit per call; make multiple calls to edit multiple parts. When the document body is EMPTY and exactly one reference exists, the tool auto-imports it before applying the edit (so you can polish an uploaded reference without a separate import call). To replace a figure/link, include its image markdown together with surrounding caption text — image URLs must match exactly, and an old_text that spans an image must include the image.',
       '- Full rewrite: pass `full_text` (complete new document in markdown). Allowed within the model single-response output budget (the main model budget is generous — full rewrites of multi-thousand-token documents work). If it exceeds the budget the tool refuses with guidance; for long-document cleanup/polish prefer section edits or range edits.',
       'Formatting: write-back content must arrive pre-structured in markdown — organize new content by its logic (### / ## headings for topics or steps, bullet/numbered lists for enumerations, bold for key conclusions, GFM pipe tables for comparisons). Never write back unstructured prose walls; match the heading level style already used in the document.',
-      'Rename: pass `title` (the new document title) — use it alone for a title-only rename, or combine it with any edit mode (section/range/full); the title is written atomically with the body. To change the document title ALWAYS use this parameter — never fake a rename with old_text/new_text.',
+      'Rename: pass `title` (the new document title) — use it alone for a title-only rename, or combine it with any edit mode (section/range/full); the title is written atomically with the body. Imported manuscripts often start with a title heading inside the body: the tool auto-syncs it when it matches the old title. If that first heading still differs from the new title (stale old title, or the output carries `title_sync_warning`), you MUST also edit that heading (section replace or old_text/new_text) in the same turn before claiming the rename is done — the metadata title alone does not change what the user sees.',
       'Use this instead of explaining changes.',
     ].join(' ')
   }
@@ -89,7 +126,7 @@ export class EditDocumentTool extends BaseTool {
         old_text: { type: 'string', description: 'Range mode: the original text to replace (must match the current document — whitespace/line-break differences are tolerated).' },
         new_text: { type: 'string', description: 'Range mode: the replacement text (empty to delete).' },
         full_text: { type: 'string', description: 'Full mode: the complete new document content in markdown.' },
-        title: { type: 'string', description: 'New document title (1-500 chars). Use alone for a title-only rename (no body edit), or combine with section/range/full edits — written atomically with the body. Required for "把标题改成 X" requests; never simulate a title change with old_text/new_text.' },
+        title: { type: 'string', description: 'New document title (1-500 chars). Use alone for a title-only rename (no body edit), or combine with section/range/full edits — written atomically with the body. The tool auto-syncs the document\'s leading title heading when it matches the old title; if that heading still differs from the new title (or the output carries `title_sync_warning`), edit that heading too in the same turn.' },
         summary: { type: 'string', description: 'A one-line summary of what changed.' },
         step_index: { type: 'number', description: 'When the task plan (set_task_plan) is active, the plan step number (1-based, from the injected checklist) this edit implements. Required while a plan is active — the system uses it to tick the correct step (out-of-order edits are recorded accurately). Omit when no plan exists.' },
       },
@@ -182,27 +219,63 @@ export class EditDocumentTool extends BaseTool {
     return this.fullReplace(docId, fullText, String(args.summary || 'document updated'), titleArg)
   }
 
-  /** #408-followup: title-only 重命名 — 走同一写回单点(title-only 不刷
-   *  updatedAt/不建快照);输出带 body 供 doc_updated 投影透传。 */
+  /** #408-followup: title-only 重命名 — 走同一写回单点;正文首行标题
+   *  heading 与元数据同步(确定性匹配时),无法同步时输出可执行的纠偏。 */
   private async titleOnly(docId: string, title: string): Promise<ToolResult> {
-    const written = await writeDocVersion({ userId: this.ctx.userId, docId, title, snapshotLabel: 'AI rename' })
+    const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
+    if (!existing) return { success: false, error: `Document not found: ${docId}` }
+    const oldTitle = String(existing.title || '')
+    const prevBody = String(existing.body || '')
+    // #408-followup-2: 可见标题 = 正文首行 heading(导入稿/模板的惯例) —
+    // 仅当它等于旧元数据标题时替换,绝不误改首节(如 ### Introduction)。
+    const syncedBody = syncLeadingTitleHeading(prevBody, oldTitle, title)
+    const written = await writeDocVersion({
+      userId: this.ctx.userId, docId,
+      ...(syncedBody !== null ? { body: syncedBody, baseBody: prevBody } : {}),
+      title, writeSource: 'ai', snapshotLabel: 'AI rename',
+    })
     if (written.error) return { success: false, error: written.error }
     this.latestBody = written.body
-    return {
-      success: true,
-      output: JSON.stringify({ body: written.body, title, summary: `已重命名文档为「${title}」` }),
+    const out: Record<string, unknown> = {
+      body: written.body,
+      title,
+      summary: syncedBody !== null ? `已重命名文档为「${title}」并同步正文标题` : `已重命名文档为「${title}」`,
+      ...(written.projection ? { projection: written.projection } : {}),
+      ...(written.changedSections ? { changedSections: written.changedSections } : {}),
+      ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}),
     }
+    // #408-followup-2: 元数据已是目标标题但正文首行 heading 仍是旧标题
+    // (生产实例:上一轮只改了元数据,用户重试仍然"看不到变化")→ 明确要求
+    // 模型在同一回合改正文首节,避免再次声称已改而可见标题原样。
+    const heading = leadingTitleHeading(written.body)
+    if (
+      syncedBody === null && heading
+      && normTitle(heading) !== normTitle(title)
+      && normTitle(oldTitle) === normTitle(title)
+    ) {
+      out.title_sync_warning = `文档正文首行标题仍是「${heading}」 — 这是用户在正文里看到的标题,title 字段的改名不会改变它。请立即在同一回合用 section 编辑(section_action=replace, target_section 为标题节)或 old_text/new_text 把该 heading 改为「${title}」,然后再声明完成。`
+    }
+    return { success: true, output: JSON.stringify(out) }
   }
 
   /** #408-followup: 导入类模式不支持 title 同帧(导入写入在下游单点),成功后
-   *  补一次 title 写回并合并输出 — 用户仍是一次指令完成改名。 */
+   *  补一次 title 写回并合并输出 — 用户仍是一次指令完成改名;正文首行标题
+   *  heading 与 titleOnly 同规则同步。 */
   private async withTitle(docId: string, result: ToolResult, title: string): Promise<ToolResult> {
     if (!title || !result.success) return result
-    const written = await writeDocVersion({ userId: this.ctx.userId, docId, title, snapshotLabel: 'AI rename' })
+    const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
+    const oldTitle = String(existing?.title || '')
+    const prevBody = String(existing?.body || '')
+    const syncedBody = syncLeadingTitleHeading(prevBody, oldTitle, title)
+    const written = await writeDocVersion({
+      userId: this.ctx.userId, docId,
+      ...(syncedBody !== null ? { body: syncedBody, baseBody: prevBody } : {}),
+      title, writeSource: 'ai', snapshotLabel: 'AI rename',
+    })
     if (written.error) return { success: false, error: written.error }
     let out: Record<string, unknown> = {}
     try { out = JSON.parse(String(result.output || '{}')) as Record<string, unknown> } catch { out = {} }
-    return { success: true, output: JSON.stringify({ ...out, title }) }
+    return { success: true, output: JSON.stringify({ ...out, body: written.body, title }) }
   }
 
   /**

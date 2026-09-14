@@ -222,6 +222,63 @@ describe('#171 edit_document tool', () => {
     expect(doc.title).toBe('Edit Test')
   }, 30000)
 
+  test('#408-followup-2 title 写回同步正文首行标题 heading(可见标题才真正变化)', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '## 中文旧标题\n\nAbstract\n\n正文。')
+    // 正文首行标题与元数据标题一致(导入稿/模板的常规形态)。
+    await (prisma as any).doc.update({ where: { id: docId }, data: { title: '中文旧标题' } })
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ title: 'New English Title', summary: '标题英文化' })
+    expect(result.success).toBe(true)
+    const out = JSON.parse(result.output as string)
+    expect(out.title).toBe('New English Title')
+    expect(out.body).toBe('## New English Title\n\nAbstract\n\n正文。')
+    expect(out.title_sync_warning).toBeUndefined()
+
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.title).toBe('New English Title')
+    expect(doc.body).toContain('## New English Title')
+    // 正文变更产生快照(可回滚)。
+    const snap = await (prisma as any).docSnapshot.findFirst({ where: { docId }, orderBy: { createdAt: 'desc' } })
+    expect(snap.body).toContain('## 中文旧标题')
+  }, 30000)
+
+  test('#408-followup-2 元数据已是目标标题但正文 heading 未同步 → title_sync_warning', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '## 中文旧标题\n\n正文。')
+    // 模拟"上一轮只写了元数据":title 已是英文,正文 heading 仍中文。
+    await (prisma as any).doc.update({ where: { id: docId }, data: { title: 'New English Title' } })
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ title: 'New English Title' })
+    expect(result.success).toBe(true)
+    const out = JSON.parse(result.output as string)
+    expect(out.title_sync_warning).toContain('中文旧标题')
+
+    // 不误改正文 — 由模型按 warning 显式做 section/range 编辑。
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.body).toBe('## 中文旧标题\n\n正文。')
+  }, 30000)
+
+  test('#408-followup-2 首节是 Introduction(非标题)时改名不误改正文', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '## Introduction\n\n正文。')
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ title: 'My Paper' })
+    expect(result.success).toBe(true)
+    const out = JSON.parse(result.output as string)
+    expect(out.title_sync_warning).toBeUndefined()
+
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.title).toBe('My Paper')
+    expect(doc.body).toBe('## Introduction\n\n正文。')
+  }, 30000)
+
   test('#408-followup LLM tool loop: edit_document title → doc_updated.title SSE', async () => {
     const app = await getApp()
     const docId = await createDoc(app, '旧正文')
