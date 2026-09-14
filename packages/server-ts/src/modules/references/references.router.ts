@@ -12,6 +12,7 @@ import { makeLogger } from '../../common/logger.js'
 import {
   addSessionReference,
   listSessionReferences,
+  loadSessionReferenceItems,
   removeSessionReference,
   resolveFileSourceRef,
   normalizeLegacyRefType,
@@ -130,18 +131,38 @@ export async function referencesRouter(app: FastifyInstance): Promise<void> {
     const sessionId = String(request.params.sessionId || '').slice(0, MAX_SESSION_ID)
     if (!sessionId) return { references: [] }
     const rows = await listSessionReferences(userId, sessionId)
-    return {
-      references: rows.map((r) => ({
-        reference_id: r.referenceId,
-        session_reference_id: r.sessionReferenceId,
-        kind: r.item.kind,
-        content: r.item.snapshot,
-        label: r.item.label,
-        source_ref: r.item.sourceRef,
-        source: r.source,
-        created_at: r.addedAt,
-      })),
+    if (rows.length > 0) {
+      return {
+        references: rows.map((r) => ({
+          reference_id: r.referenceId,
+          session_reference_id: r.sessionReferenceId,
+          kind: r.item.kind,
+          content: r.item.snapshot,
+          label: r.item.label,
+          source_ref: r.item.sourceRef,
+          source: r.source,
+          created_at: r.addedAt,
+        })),
+      }
     }
+    // #1034: 写作引用迁移到统一链路后，旧 DocReference 存量（#1005 前未双写）
+    // 首次读取时按需自愈回填 SessionReference，避免编辑器列表显示为空。
+    if (sessionId.startsWith('doc-')) {
+      const views = await loadSessionReferenceItems(userId, sessionId, { classifyGuideline: classifyGuidelineBySummaryTitle })
+      return {
+        references: views.map((v) => ({
+          reference_id: v.id,
+          session_reference_id: null,
+          kind: v.kind,
+          content: v.snapshot,
+          label: v.label,
+          source_ref: v.sourceRef,
+          source: v.source,
+          created_at: v.addedAt,
+        })),
+      }
+    }
+    return { references: [] }
   })
 
   app.post<{

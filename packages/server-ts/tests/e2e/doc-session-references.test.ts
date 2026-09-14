@@ -81,6 +81,36 @@ describe('#1034 doc 会话引用端点', () => {
     expect(poolBody.pptx_parse).toBeNull();
   });
 
+  test('旧 DocReference 存量首读自愈到 session 列表（#1034 迁移无缝）', async () => {
+    const app = await getApp();
+    const jsonH = { ...(await authHeader()), 'content-type': 'application/json' };
+    const now = Date.now();
+    const doc = await app.inject({
+      method: 'POST', url: '/api/v1/docs', headers: jsonH,
+      payload: JSON.stringify({ title: `Legacy Ref Doc ${now}` }),
+    });
+    const docId = JSON.parse(doc.payload).id;
+
+    // 仅走旧端点登记（模拟 #1005 之前的存量行）→ 再清掉新表行，构造"未双写"状态。
+    const legacy = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/references`, headers: jsonH,
+      payload: JSON.stringify({ kind: 'note', content: `legacy pasted content ${now}`, label: '旧存量材料' }),
+    });
+    expect(legacy.statusCode).toBe(200);
+    const { default: prisma } = await import('../../src/common/prisma.js');
+    await (prisma as any).sessionReference.deleteMany({ where: { sessionId: `doc-${docId}` } });
+
+    const list = JSON.parse((await app.inject({
+      method: 'GET', url: `/api/v1/sessions/doc-${docId}/references`, headers: jsonH,
+    })).payload);
+    expect(list.references.some((r: any) => r.label === '旧存量材料')).toBe(true);
+    // 自愈已回填新表 → 再读走常规路径。
+    const again = JSON.parse((await app.inject({
+      method: 'GET', url: `/api/v1/sessions/doc-${docId}/references`, headers: jsonH,
+    })).payload);
+    expect(again.references.some((r: any) => r.label === '旧存量材料')).toBe(true);
+  });
+
   test('非 doc 会话不触发副作用（imported=false）', async () => {
     const app = await getApp();
     const jsonH = { ...(await authHeader()), 'content-type': 'application/json' };
