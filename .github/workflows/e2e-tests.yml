@@ -51,7 +51,5 @@ jobs:
             # #1035-fix: seed 在三层测试目录重构后移到 tests/integration/fixtures。
             npx tsx tests/integration/fixtures/seed.ts http://127.0.0.1:$TARGET_PORT
             npx playwright install chromium 2>/dev/null || true
-            # #1035 诊断（临时）：先跑单项探针把浏览器侧状态打进日志。
-            BASE_URL=http://127.0.0.1:$TARGET_PORT npx playwright test tests/e2e-login-debug.spec.ts --config=playwright.config.ts || true
             BASE_URL=http://127.0.0.1:$TARGET_PORT npx playwright test --config=playwright.config.ts
           "
