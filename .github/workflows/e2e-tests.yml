@@ -22,22 +22,27 @@ jobs:
           PORT="${{ inputs.target || '8002' }}"
           echo "Target port: $PORT"
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
+            set -e
             export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
             cd ~/heurion/packages/server-ts
             git fetch origin main && git reset --hard origin/main
 
-            # Build web frontend for SPA serving
-            (cd ~/heurion/packages/web && pnpm install --frozen-lockfile 2>/dev/null || pnpm install) &
-            WEB_PID=\$!
-            pnpm install --prefer-offline
-            wait \$WEB_PID 2>/dev/null || true
-            cd ~/heurion/packages/web && pnpm build && cp -rf dist ~/heurion/packages/server-ts/web-dist
+            # Build web frontend for SPA serving.
+            # #1035-fix: file: 依赖（contracts/llm-markdown-fix）必须先 build 再
+            # install web，否则 web tsc 找不到模块 → dist 不刷新、staging 用旧
+            # 前端（此前失败还因无 set -e 被吞掉，表现为 login 全体超时）。
+            (cd ~/heurion/packages/contracts && pnpm install --frozen-lockfile && pnpm build)
+            (cd ~/heurion/packages/llm-markdown-fix && pnpm install --frozen-lockfile && pnpm build)
+            (cd ~/heurion/packages/web && pnpm install --frozen-lockfile && pnpm build && cp -rf dist ~/heurion/packages/server-ts/web-dist)
 
             cd ~/heurion/packages/server-ts
+            pnpm install --prefer-offline
             pm2 restart heurion-staging 2>/dev/null || pm2 start npx --name heurion-staging -- tsx src/main.ts
             for i in \$(seq 1 20); do curl -sf http://127.0.0.1:\$PORT/healthz >/dev/null 2>&1 && break; echo \"  waiting... \$i\"; sleep 3; done
+            curl -sf http://127.0.0.1:\$PORT/healthz >/dev/null || { echo 'staging not healthy after wait'; exit 1; }
 
-            npx tsx tests/fixtures/seed.ts http://127.0.0.1:\$PORT
+            # #1035-fix: seed 在三层测试目录重构后移到 tests/integration/fixtures。
+            npx tsx tests/integration/fixtures/seed.ts http://127.0.0.1:\$PORT
             npx playwright install chromium 2>/dev/null || true
             BASE_URL=http://127.0.0.1:\$PORT npx playwright test --config=playwright.config.ts
           "
