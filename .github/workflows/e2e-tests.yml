@@ -12,6 +12,11 @@ jobs:
   e2e:
     name: Run E2E Tests
     runs-on: ubuntu-latest
+    env:
+      # #1035-fix: 端口用 GitHub 表达式在渲染期替换（此前 `\$PORT` 只是 runner
+      # 本地变量，ssh 远端为空 → BASE_URL=http://127.0.0.1: → 命中 80 端口
+      # Caddy 被重定向到生产 heurion.org，用 hz 账号自然 401，24 例全挂）。
+      TARGET_PORT: ${{ inputs.target || '8002' }}
     steps:
       - uses: actions/checkout@v4
       - uses: webfactory/ssh-agent@v0.9.0
@@ -19,8 +24,7 @@ jobs:
           ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
       - name: Seed data + run E2E
         run: |
-          PORT="${{ inputs.target || '8002' }}"
-          echo "Target port: $PORT"
+          echo "Target port: $TARGET_PORT"
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
             set -e
             export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
@@ -29,25 +33,25 @@ jobs:
 
             # Build web frontend for SPA serving.
             # #1035-fix: file: 依赖（contracts/llm-markdown-fix）必须先 build 再
-            # install web，否则 web tsc 找不到模块 → dist 不刷新、staging 用旧
-            # 前端（此前失败还因无 set -e 被吞掉，表现为 login 全体超时）。
+            # install web，否则 web tsc 找不到模块 → dist 不刷新。
             (cd ~/heurion/packages/contracts && pnpm install --frozen-lockfile && pnpm build)
             (cd ~/heurion/packages/llm-markdown-fix && pnpm install --frozen-lockfile && pnpm build)
             # #1035-fix: web-dist 必须先删再拷 — 目标已存在时 `cp -rf dist web-dist`
-            # 会嵌套成 web-dist/dist，根目录仍是旧 index.html（staging 长期跑旧
-            # 前端，与旧服务端交互导致 login 全体失败）。
+            # 会嵌套成 web-dist/dist，根目录仍是旧 index.html。
             (cd ~/heurion/packages/web && pnpm install --frozen-lockfile && pnpm build && rm -rf ~/heurion/packages/server-ts/web-dist && cp -r dist ~/heurion/packages/server-ts/web-dist)
 
             cd ~/heurion/packages/server-ts
             pnpm install --prefer-offline
-            pm2 restart heurion-staging 2>/dev/null || pm2 start npx --name heurion-staging -- tsx src/main.ts
-            for i in \$(seq 1 20); do curl -sf http://127.0.0.1:\$PORT/healthz >/dev/null 2>&1 && break; echo \"  waiting... \$i\"; sleep 3; done
-            curl -sf http://127.0.0.1:\$PORT/healthz >/dev/null || { echo 'staging not healthy after wait'; exit 1; }
+            # #1035-fix: 与 scripts/deploy-staging.sh 对齐 — 显式 SERVER_PORT +
+            # tsx 真实入口（npx 会留下孤儿进程占端口）。
+            SERVER_PORT=$TARGET_PORT pm2 restart heurion-staging 2>/dev/null || SERVER_PORT=$TARGET_PORT pm2 start node --name heurion-staging --max-restarts 3 --time -- \$(pwd)/node_modules/tsx/dist/cli.mjs src/main.ts
+            for i in \$(seq 1 20); do curl -sf http://127.0.0.1:$TARGET_PORT/healthz >/dev/null 2>&1 && break; echo \"  waiting... \$i\"; sleep 3; done
+            curl -sf http://127.0.0.1:$TARGET_PORT/healthz >/dev/null || { echo 'staging not healthy after wait'; exit 1; }
 
             # #1035-fix: seed 在三层测试目录重构后移到 tests/integration/fixtures。
-            npx tsx tests/integration/fixtures/seed.ts http://127.0.0.1:\$PORT
+            npx tsx tests/integration/fixtures/seed.ts http://127.0.0.1:$TARGET_PORT
             npx playwright install chromium 2>/dev/null || true
             # #1035 诊断（临时）：先跑单项探针把浏览器侧状态打进日志。
-            BASE_URL=http://127.0.0.1:\$PORT npx playwright test tests/e2e-login-debug.spec.ts --config=playwright.config.ts || true
-            BASE_URL=http://127.0.0.1:\$PORT npx playwright test --config=playwright.config.ts
+            BASE_URL=http://127.0.0.1:$TARGET_PORT npx playwright test tests/e2e-login-debug.spec.ts --config=playwright.config.ts || true
+            BASE_URL=http://127.0.0.1:$TARGET_PORT npx playwright test --config=playwright.config.ts
           "
