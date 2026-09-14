@@ -33,7 +33,10 @@ jobs:
             # 前端（此前失败还因无 set -e 被吞掉，表现为 login 全体超时）。
             (cd ~/heurion/packages/contracts && pnpm install --frozen-lockfile && pnpm build)
             (cd ~/heurion/packages/llm-markdown-fix && pnpm install --frozen-lockfile && pnpm build)
-            (cd ~/heurion/packages/web && pnpm install --frozen-lockfile && pnpm build && cp -rf dist ~/heurion/packages/server-ts/web-dist)
+            # #1035-fix: web-dist 必须先删再拷 — 目标已存在时 `cp -rf dist web-dist`
+            # 会嵌套成 web-dist/dist，根目录仍是旧 index.html（staging 长期跑旧
+            # 前端，与旧服务端交互导致 login 全体失败）。
+            (cd ~/heurion/packages/web && pnpm install --frozen-lockfile && pnpm build && rm -rf ~/heurion/packages/server-ts/web-dist && cp -r dist ~/heurion/packages/server-ts/web-dist)
 
             cd ~/heurion/packages/server-ts
             pnpm install --prefer-offline
