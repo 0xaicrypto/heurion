@@ -61,6 +61,12 @@ export default {
           '50%': { transform: 'translateY(-8px)' },
         },
       },
+      /* #408-followup: 层级 token — 模态/浮层的 z-index 不再散落硬编码数字。 */
+      zIndex: {
+        popover: '30',
+        modal: '50',
+        'modal-top': '60',
+      },
       animation: {
         floaty: 'floaty 5s ease-in-out infinite',
       },

@@ -123,6 +123,9 @@ export interface SessionState {
    *  不打断正在执行的工具/写回,避免文档状态不一致)。 */
   pending?: { text: string; opts: SendChatOptions } | null;
   lastDocBody?: string;
+  /** #408-followup: 最近一次 doc_updated 携带的文档标题（AI 改名写回）—
+   *  writing-editor 同步页头/标题输入框；body 未变时为 title-only 写回。 */
+  lastDocTitle?: string;
   /** #773: AI 写回同帧携带的 deck 资产（null = 无 deck 变更）。 */
   lastDocDeck?: DeckWire | null;
   /**
@@ -338,6 +341,7 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
       return {
         ...s,
         lastDocBody: chunk.body,
+        ...(chunk.title ? { lastDocTitle: chunk.title } : {}),
         lastDocDeck: chunk.deck ?? null,
         lastDocRev: typeof chunk.rev === 'number' ? chunk.rev : s.lastDocRev,
         // #989 Phase 3: 投影随帧存储(旧事件无字段时保留既有值)。

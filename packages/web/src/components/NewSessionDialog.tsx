@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import type { ChatSession } from '@/lib/types';
 import { Button, Input } from '@/components/ui';
+import { Modal } from '@/components/ui/Modal';
 
 interface NewSessionDialogProps {
   open: boolean;
@@ -37,11 +38,8 @@ export function NewSessionDialog({ open, onClose, onCreated }: NewSessionDialogP
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-sm rounded-xl border border-border bg-surface p-5 shadow-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal open onClose={onClose} backdropClose escClose backdropClassName="bg-black/50 p-4">
+      <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-5 shadow-lg">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-text-primary">{t('chat.newSession', '新建会话')}</h2>
           <button onClick={onClose} className="text-text-secondary hover:text-text-primary" aria-label="Close">
@@ -68,6 +66,6 @@ export function NewSessionDialog({ open, onClose, onCreated }: NewSessionDialogP
           </div>
         </form>
       </div>
-    </div>
+    </Modal>
   );
 }

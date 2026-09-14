@@ -1,8 +1,13 @@
 import { useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
 
 /**
  * #922 重复实现收敛 — 共享 Modal 容器。
+ * #408-followup: 增加 Portal(挂到 document.body)+ z-index token(z-modal) —
+ * 此前内联渲染的 fixed 层会受祖先 stacking context/transform 影响,多个弹窗
+ * 同 z-index 叠加时层级不可控;Portal 保证所有模态同层竞争,配合调用方
+ * 的互斥(同一时刻只有一个)彻底消除叠影。
  *
  * 统一 6 处手写 `fixed inset-0 z-50 …bg-black/xx` 弹窗外壳(chat.tsx 关闭确认、
  * knowledge.tsx 总结编辑、KbPicker、RejectReasonDialog、NewPatientDialog、
@@ -17,9 +22,10 @@ import { cn } from '@/lib/utils';
  * | RejectReasonDialog   | ✓          | (输入框内)✗ | black/40 | max-w-md      |
  * | NewPatientDialog     | ✓          | ✗      | black/40 | max-w-md      |
  * | SkillCapturePrompt   | ✗          | ✗      | black/50 | max-w-lg      |
+ * | writing-editor/*     | ✓          | ✓      | black/50 | 各自面板       |
  *
- * research-detail.tsx(入组弹窗,#921 wave)已换用;TODO(#922): writing-editor/dialogs.tsx
- * 仍有同类手写弹窗,归属其他 wave/agent。
+ * research-detail.tsx(入组弹窗,#921 wave)已换用;writing-editor/dialogs.tsx
+ * 与 UploadProgressModal/NewSessionDialog 已在 #408-followup 完成迁移。
  */
 export interface ModalProps {
   open: boolean;
@@ -28,7 +34,7 @@ export interface ModalProps {
   backdropClose?: boolean;
   /** 按 Esc 关闭(全局 keydown,open 时挂载)。 */
   escClose?: boolean;
-  /** 遮罩定位/层级(默认 z-50 — 现有各处均为 z-50)。 */
+  /** 遮罩定位/层级(默认 z-modal — 设计 token,tailwind zIndex。原各处 z-50)。 */
   zIndex?: string;
   /** 遮罩附加类(调暗程度/内边距,如 bg-black/40 p-4)。 */
   backdropClassName?: string;
@@ -45,7 +51,7 @@ export function Modal({
   onClose,
   backdropClose = false,
   escClose = false,
-  zIndex = 'z-50',
+  zIndex = 'z-modal',
   backdropClassName,
   panelClassName,
   role = 'dialog',
@@ -63,7 +69,7 @@ export function Modal({
 
   if (!open) return null;
 
-  return (
+  const shell = (
     <div
       role={role}
       aria-modal="true"
@@ -80,4 +86,6 @@ export function Modal({
       )}
     </div>
   );
+  // #408-followup: Portal — 脱离祖先 stacking context,固定层与所有模态同级。
+  return typeof document === 'undefined' ? shell : createPortal(shell, document.body);
 }

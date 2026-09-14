@@ -96,7 +96,7 @@ const BASE_DOC = {
 };
 
 /** 每轮 chat turn 的 doc_updated 写回脚本(rev 单调 = 服务端写回序)。 */
-type Write = { body: string; rev: number };
+type Write = { body: string; rev: number; title?: string };
 const turnScripts: Write[][] = [];
 
 function mockTurns() {
@@ -106,7 +106,7 @@ function mockTurns() {
     // 路由的冲刷 effect(true→false 沿)就永远看不到 turn 边界。
     for (const w of writes) {
       await new Promise((r) => setTimeout(r, 10));
-      yield { type: 'doc_updated', body: w.body, rev: w.rev };
+      yield { type: 'doc_updated', body: w.body, rev: w.rev, ...(w.title ? { title: w.title } : {}) };
     }
     await new Promise((r) => setTimeout(r, 10));
     yield { type: 'final_answer_chunk', text: 'ok' };
@@ -186,6 +186,20 @@ describe('#926 flushPendingWriteBack 三分支(路由级编排)', () => {
     expect(await screen.findByText(/AI updated this section|AI 更新了这个节/)).toBeTruthy();
     await waitFor(() => expect(editorText(container)).toContain('R1 段落'));
     // 审阅未决 — 不得静默落盘(#553 写回必经审阅)。
+    expect(apiMock.updateDoc).not.toHaveBeenCalled();
+  });
+
+  test('#408-followup AI 改名写回(title-only):输入框/页头同步且不触发本地保存', async () => {
+    renderEditor();
+    await screen.findByDisplayValue('Original');
+
+    await sendTurn([{ body: BASE_BODY, rev: 1, title: 'AI 新标题' }]);
+
+    // 标题输入框与页头(唯一编辑源)同步为服务端新标题。
+    await waitFor(() => expect(screen.getByDisplayValue('AI 新标题')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'AI 新标题' })).toBeTruthy();
+    // 服务端已落库 — 不进入正文审阅,也不触发本地保存(dirty 不置位)。
+    expect(screen.queryByText(/AI updated this section|AI 更新了这个节/)).toBeNull();
     expect(apiMock.updateDoc).not.toHaveBeenCalled();
   });
 

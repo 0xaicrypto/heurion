@@ -70,6 +70,7 @@ export class EditDocumentTool extends BaseTool {
       '- Range edit (preferred for polishing long documents without section IDs, or fine-grained in-section tweaks): pass `old_text` (the original text to replace, copied from the current document — line breaks/whitespace differences are tolerated; [sec:...] markers are stripped automatically) and `new_text` (the replacement). One edit per call; make multiple calls to edit multiple parts. When the document body is EMPTY and exactly one reference exists, the tool auto-imports it before applying the edit (so you can polish an uploaded reference without a separate import call). To replace a figure/link, include its image markdown together with surrounding caption text — image URLs must match exactly, and an old_text that spans an image must include the image.',
       '- Full rewrite: pass `full_text` (complete new document in markdown). Allowed within the model single-response output budget (the main model budget is generous — full rewrites of multi-thousand-token documents work). If it exceeds the budget the tool refuses with guidance; for long-document cleanup/polish prefer section edits or range edits.',
       'Formatting: write-back content must arrive pre-structured in markdown — organize new content by its logic (### / ## headings for topics or steps, bullet/numbered lists for enumerations, bold for key conclusions, GFM pipe tables for comparisons). Never write back unstructured prose walls; match the heading level style already used in the document.',
+      'Rename: pass `title` (the new document title) — use it alone for a title-only rename, or combine it with any edit mode (section/range/full); the title is written atomically with the body. To change the document title ALWAYS use this parameter — never fake a rename with old_text/new_text.',
       'Use this instead of explaining changes.',
     ].join(' ')
   }
@@ -88,6 +89,7 @@ export class EditDocumentTool extends BaseTool {
         old_text: { type: 'string', description: 'Range mode: the original text to replace (must match the current document — whitespace/line-break differences are tolerated).' },
         new_text: { type: 'string', description: 'Range mode: the replacement text (empty to delete).' },
         full_text: { type: 'string', description: 'Full mode: the complete new document content in markdown.' },
+        title: { type: 'string', description: 'New document title (1-500 chars). Use alone for a title-only rename (no body edit), or combine with section/range/full edits — written atomically with the body. Required for "把标题改成 X" requests; never simulate a title change with old_text/new_text.' },
         summary: { type: 'string', description: 'A one-line summary of what changed.' },
         step_index: { type: 'number', description: 'When the task plan (set_task_plan) is active, the plan step number (1-based, from the injected checklist) this edit implements. Required while a plan is active — the system uses it to tick the correct step (out-of-order edits are recorded accurately). Omit when no plan exists.' },
       },
@@ -103,8 +105,18 @@ export class EditDocumentTool extends BaseTool {
       return { success: false, error: 'edit_document is only available in a document writing session' }
     }
 
+    // #408-followup: title 参数 — 可单独重命名,也可与正文编辑在同一写回
+    // 单点/同一事务原子落库(writeDocVersion)。
+    const titleArg = typeof args.title === 'string' ? args.title.trim() : ''
+    if (args.title !== undefined && !titleArg) {
+      return { success: false, error: 'title 不能为空 — 若要改标题请传新的标题文本(1-500 字符)。' }
+    }
+    if (titleArg.length > 500) {
+      return { success: false, error: `title 过长(${titleArg.length} 字符,上限 500)— 请缩短标题后重试。` }
+    }
+
     const importRef = typeof args.import_reference === 'string' ? args.import_reference.trim() : ''
-    if (importRef) return this.importReference(docId, importRef, String(args.summary || 'imported reference'))
+    if (importRef) return this.withTitle(docId, await this.importReference(docId, importRef, String(args.summary || 'imported reference')), titleArg)
 
     // #875: URL 导入 — OA 全文 PDF 直链入库(检索→阅读→引用闭环)。
     const importUrl = typeof args.url === 'string' ? args.url.trim() : ''
@@ -112,7 +124,7 @@ export class EditDocumentTool extends BaseTool {
       const doi = typeof args.doi === 'string' ? args.doi.trim() : undefined
       const r = await executeImportFromUrl(this.ctx.userId, docId, importUrl, String(args.summary || 'imported from URL'), doi)
       if (r.error) return { success: false, error: r.error }
-      return { success: true, output: r.output }
+      return this.withTitle(docId, { success: true, output: r.output }, titleArg)
     }
 
     // #989 Phase 2 / #1020: 节引用模式 — target_section/section_id 等价
@@ -134,9 +146,9 @@ export class EditDocumentTool extends BaseTool {
       // 匹配范围限定在该节 span 内,容忍空白/markdown 差异;节内找不到时报
       // 节内最近候选,绝不静默退化到全文搜索改错节。
       if (!rawAction && oldText.trim()) {
-        return this.sectionRangeEdit(docId, sectionRef, oldText, newText, String(args.summary || 'in-section range edit'))
+        return this.sectionRangeEdit(docId, sectionRef, oldText, newText, String(args.summary || 'in-section range edit'), titleArg)
       }
-      return this.sectionEdit(docId, sectionRef, args)
+      return this.sectionEdit(docId, sectionRef, args, titleArg)
     }
 
     const fullText = typeof args.full_text === 'string' ? args.full_text : ''
@@ -153,19 +165,44 @@ export class EditDocumentTool extends BaseTool {
           error: 'old_text 归一化后为空(仅含空白或 markdown 标记,没有可定位的文字或图片 URL)。请从 ## Current Document 复制包含实际文字的片段作为 old_text(替换图片时连同图题文字一起复制)。',
         }
       }
-      return this.rangeEdit(docId, cleanedOld, newText, String(args.summary || 'range edit'))
+      return this.rangeEdit(docId, cleanedOld, newText, String(args.summary || 'range edit'), titleArg)
     }
 
     if (!fullText.trim()) {
+      // #408-followup: 仅 title — 标题重命名不需要正文编辑。
+      if (titleArg) return this.titleOnly(docId, titleArg)
       // #978/#989: 空参形态 — 模型侧自认已构造参数,实际到达为空(传输丢参
       // 或模型空发)。复读用法无恢复价值,给可执行的纠偏:指认空参事实 +
       // 最简重试配方 + 明令禁止空参重发(doom-loop 家族的燃料)。
       return {
         success: false,
-        error: '本次调用没有任何参数（参数在传输中丢失或未生成 — 若你确信已构造，请换一种构造方式重试）。最简重试配方二选一：① old_text（从 ## Current Document 逐字复制）+ new_text；② target_section + section_action + content（节 ID 见 [sec:...] 标注）。严禁重发空参数 {}。',
+        error: '本次调用没有任何参数（参数在传输中丢失或未生成 — 若你确信已构造，请换一种构造方式重试）。最简重试配方二选一：① old_text（从 ## Current Document 逐字复制）+ new_text；② target_section + section_action + content（节 ID 见 [sec:...] 标注）。改标题传 title。严禁重发空参数 {}。',
       }
     }
-    return this.fullReplace(docId, fullText, String(args.summary || 'document updated'))
+    return this.fullReplace(docId, fullText, String(args.summary || 'document updated'), titleArg)
+  }
+
+  /** #408-followup: title-only 重命名 — 走同一写回单点(title-only 不刷
+   *  updatedAt/不建快照);输出带 body 供 doc_updated 投影透传。 */
+  private async titleOnly(docId: string, title: string): Promise<ToolResult> {
+    const written = await writeDocVersion({ userId: this.ctx.userId, docId, title, snapshotLabel: 'AI rename' })
+    if (written.error) return { success: false, error: written.error }
+    this.latestBody = written.body
+    return {
+      success: true,
+      output: JSON.stringify({ body: written.body, title, summary: `已重命名文档为「${title}」` }),
+    }
+  }
+
+  /** #408-followup: 导入类模式不支持 title 同帧(导入写入在下游单点),成功后
+   *  补一次 title 写回并合并输出 — 用户仍是一次指令完成改名。 */
+  private async withTitle(docId: string, result: ToolResult, title: string): Promise<ToolResult> {
+    if (!title || !result.success) return result
+    const written = await writeDocVersion({ userId: this.ctx.userId, docId, title, snapshotLabel: 'AI rename' })
+    if (written.error) return { success: false, error: written.error }
+    let out: Record<string, unknown> = {}
+    try { out = JSON.parse(String(result.output || '{}')) as Record<string, unknown> } catch { out = {} }
+    return { success: true, output: JSON.stringify({ ...out, title }) }
   }
 
   /**
@@ -173,7 +210,7 @@ export class EditDocumentTool extends BaseTool {
    * 根因治理路径)。投影缺失/过期时重建(确定性);section ID 失效 → 报错
    * 引导降级锚点模式(兜底)。写回仍走 DocVersionWriter 单点。
    */
-  private async sectionEdit(docId: string, targetSection: string, args: Record<string, unknown>): Promise<ToolResult> {
+  private async sectionEdit(docId: string, targetSection: string, args: Record<string, unknown>, title = ''): Promise<ToolResult> {
     // review 复核#2: 显式校验 section_action — 此前三元判断链把任何不认识的
     // 值或字段缺失静默落到 'replace'(最具破坏性的动作:整节内容被覆盖且
     // 无报错)。replace 必须显式指定,传错/漏传一律拒绝并给出可执行指引。
@@ -222,7 +259,7 @@ export class EditDocumentTool extends BaseTool {
       // #789: 写回走 DocVersionWriter 单点(快照同帧带旧 deck + 事务 + 投影同帧)。
       // review 复核#5: baseBody 锁定「本次读取 → 写回」窗口 — 写回内容基于
       // 此处读到的 body 计算,期间被并发修改则拒绝(模型重读后自纠)。
-      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: applied.body, baseBody: body, writeSource: 'ai', snapshotLabel: 'AI edit' })
+      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: applied.body, baseBody: body, writeSource: 'ai', snapshotLabel: 'AI edit', ...(title ? { title } : {}) })
       if (written.error) return { success: false, error: written.error }
       this.latestBody = written.body
       sectionEditTelemetry.attempts++
@@ -232,7 +269,7 @@ export class EditDocumentTool extends BaseTool {
       // #999: 输出附带 section_meta(作者轴+可信度轴),透传到 doc_updated。
       return {
         success: true,
-        output: JSON.stringify({ body: written.body, summary, location: `已${action === 'replace' ? '重写' : action === 'append' ? '追加' : action === 'prepend' ? '插入' : '删除'}:「${applied.location}」`, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
+        output: JSON.stringify({ body: written.body, summary, location: `已${action === 'replace' ? '重写' : action === 'append' ? '追加' : action === 'prepend' ? '插入' : '删除'}:「${applied.location}」`, projection: written.projection, ...(title ? { title } : {}), ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
       }
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }
@@ -244,7 +281,7 @@ export class EditDocumentTool extends BaseTool {
    * 匹配范围限定在该节 span 内（容忍空白/markdown 差异）；节内找不到时返回
    * 节内最近候选（#1022），绝不静默退化到全文搜索改错节。写回走同一单点。
    */
-  private async sectionRangeEdit(docId: string, sectionId: string, oldText: string, newText: string, summary: string): Promise<ToolResult> {
+  private async sectionRangeEdit(docId: string, sectionId: string, oldText: string, newText: string, summary: string, title = ''): Promise<ToolResult> {
     try {
       const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
       if (!existing) return { success: false, error: `Document not found: ${docId}` }
@@ -287,14 +324,14 @@ export class EditDocumentTool extends BaseTool {
       const boundedNew = ensureBlockBoundaries(body.slice(0, absStart), cleanedNew, body.slice(absEnd))
       const newBody = body.slice(0, absStart) + boundedNew + body.slice(absEnd)
       if (newBody === body) return { success: false, error: 'old_text 与 new_text 相同,没有任何变化' }
-      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: newBody, baseBody: body, writeSource: 'ai', snapshotLabel: 'AI edit' })
+      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: newBody, baseBody: body, writeSource: 'ai', snapshotLabel: 'AI edit', ...(title ? { title } : {}) })
       if (written.error) return { success: false, error: written.error }
       this.latestBody = written.body
       anchorEditTelemetry.attempts++
       anchorEditTelemetry.success++
       return {
         success: true,
-        output: JSON.stringify({ body: written.body, summary, location: `已修改:节「${section.heading || sectionId}」内`, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
+        output: JSON.stringify({ body: written.body, summary, location: `已修改:节「${section.heading || sectionId}」内`, projection: written.projection, ...(title ? { title } : {}), ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
       }
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }
@@ -318,7 +355,7 @@ export class EditDocumentTool extends BaseTool {
   /** 局部编辑:在文档中精确匹配 oldText 并替换为 newText。
    *  #868: 焦点优先 — 先在用户选中文本/焦点段内匹配(位置必然正确),
    *  段内失败再全文匹配(带模糊锚点唯一性护栏,见 document-span-match)。 */
-  private async rangeEdit(docId: string, oldText: string, newText: string, summary: string): Promise<ToolResult> {
+  private async rangeEdit(docId: string, oldText: string, newText: string, summary: string, title = ''): Promise<ToolResult> {
     try {
       const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
       if (!existing) return { success: false, error: `Document not found: ${docId}` }
@@ -360,7 +397,7 @@ export class EditDocumentTool extends BaseTool {
         const location = region.label === '用户选中文本'
           ? `用户选中文本${heading ? `（${heading} 内）` : ''}`
           : `${region.label}${heading ? `（${heading} 内）` : ''}`
-        return await this.applySpan(matchSource, docId, regionSpan.start + local.start, regionSpan.start + local.end, newText, summary, location)
+        return await this.applySpan(matchSource, docId, regionSpan.start + local.start, regionSpan.start + local.end, newText, summary, location, title)
       }
 
       // #906: 焦点段回合内失效兜底 — hint 焦点段在最新正文已失配(上一
@@ -384,6 +421,7 @@ export class EditDocumentTool extends BaseTool {
                   regionSpan.start + local.start, regionSpan.start + local.end,
                   newText, summary,
                   `${regionLabel}${heading ? `（${heading} 内）` : ''}`,
+                  title,
                 )
               }
             }
@@ -460,7 +498,7 @@ export class EditDocumentTool extends BaseTool {
       anchorEditTelemetry.attempts++
       anchorEditTelemetry.success++
       log.info(`[edit_document] anchor-edit ok len=${oldText.length} total={ok:${anchorEditTelemetry.success} fail:${anchorEditTelemetry.attempts - anchorEditTelemetry.success}}`)
-      return await this.applySpan(body, docId, span.start, span.end, newText, summary, location)
+      return await this.applySpan(body, docId, span.start, span.end, newText, summary, location, title)
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }
     }
@@ -469,7 +507,7 @@ export class EditDocumentTool extends BaseTool {
   /** #868: span 写回单点 — 区域命中与全文命中共用;输出带落点章节
    *  (location),模型与用户可核对修改是否落在预期位置。#906: 写回成功
    *  后同步本轮最新正文缓存。 */
-  private async applySpan(body: string, docId: string, start: number, end: number, newText: string, summary: string, location: string): Promise<ToolResult> {
+  private async applySpan(body: string, docId: string, start: number, end: number, newText: string, summary: string, location: string, title = ''): Promise<ToolResult> {
     // #837: 写回卫生 — ① 还原字面 \n 双转义;② 块级内容(标题/列表/
     // 表格)与前后正文之间补空行,杜绝 "population.## Introduction" 粘连。
     const cleanedNew = unescapeLiteralNewlines(newText)
@@ -480,7 +518,7 @@ export class EditDocumentTool extends BaseTool {
     // #789: 写回走 DocVersionWriter 单点(快照同帧带旧 deck + 事务)。
     // review 复核#5: baseBody — body 参数即计算源(可能是 latestBody 缓存
     // 或 DB 当前正文),写回期间被并发修改则拒绝,防过期快照静默覆盖。
-    const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: newBody, baseBody: body, writeSource: 'ai', snapshotLabel: 'AI edit' })
+    const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: newBody, baseBody: body, writeSource: 'ai', snapshotLabel: 'AI edit', ...(title ? { title } : {}) })
     if (written.error) return { success: false, error: written.error }
 
     this.latestBody = written.body
@@ -488,7 +526,7 @@ export class EditDocumentTool extends BaseTool {
     // #999: 输出附带 section_meta。
     return {
       success: true,
-      output: JSON.stringify({ body: written.body, summary, location: `已修改:${location}附近`, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
+      output: JSON.stringify({ body: written.body, summary, location: `已修改:${location}附近`, projection: written.projection, ...(title ? { title } : {}), ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
     }
   }
 
@@ -530,7 +568,7 @@ export class EditDocumentTool extends BaseTool {
   }
 
   /** 全量替换(#fix 2026-09:护栏按真实输出预算动态判定)。 */
-  private async fullReplace(docId: string, fullText: string, summary: string): Promise<ToolResult> {
+  private async fullReplace(docId: string, fullText: string, summary: string, title = ''): Promise<ToolResult> {
     try {
       const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
       if (!existing) return { success: false, error: `Document not found: ${docId}` }
@@ -559,7 +597,7 @@ export class EditDocumentTool extends BaseTool {
       // review 复核#5: 全量重写同样受并发保护 — baseBody 用入口读取的
       // 旧正文,期间被并发修改则拒绝(full_text 基于过期视图整篇覆盖
       // 恰是最该拦的形态)。
-      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: fullText, baseBody: String(existing.body || ''), writeSource: 'ai', snapshotLabel: 'AI edit' })
+      const written = await writeDocVersion({ userId: this.ctx.userId, docId, body: fullText, baseBody: String(existing.body || ''), writeSource: 'ai', snapshotLabel: 'AI edit', ...(title ? { title } : {}) })
       if (written.error) return { success: false, error: written.error }
 
       // #906: 全量重写同样推进本轮最新正文缓存 — 同回合后续 rangeEdit
@@ -568,7 +606,7 @@ export class EditDocumentTool extends BaseTool {
       // #989 Phase 3: 输出携带块投影。#999: 输出附带 section_meta。
       return {
         success: true,
-        output: JSON.stringify({ body: written.body, summary, projection: written.projection, ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
+        output: JSON.stringify({ body: written.body, summary, projection: written.projection, ...(title ? { title } : {}), ...(written.sectionMeta ? { sectionMeta: written.sectionMeta } : {}), ...(written.changedSections ? { changedSections: written.changedSections } : {}) }),
       }
     } catch (err) {
       return { success: false, error: `edit_document failed: ${(err as Error).message.slice(0, 200)}` }

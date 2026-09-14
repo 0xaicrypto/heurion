@@ -316,8 +316,10 @@ export type ChatStreamChunk =
    * #996/#1003: changed_sections = 本次写回实际变更的节（写回单点按投影
    * hash diff 派生）— 聊天改动日志按轮持久化，range-edit/full_text/
    * insert_asset 等全部编辑模式覆盖；失败写回不会有该字段。
+   * #408-followup: title = 本次写回同时改动的文档标题（title-only 改名或
+   * 与正文同帧原子写入）— 前端同步页头/标题输入框。
    */
-  | { type: 'doc_updated'; body: string; summary?: string; deck?: DeckWire | null; rev?: number; updatedAt?: string; projection?: BlockProjection; section_meta?: SectionMetaMap; changed_sections?: Array<{ id: string; heading: string }> }
+  | { type: 'doc_updated'; body: string; summary?: string; title?: string; deck?: DeckWire | null; rev?: number; updatedAt?: string; projection?: BlockProjection; section_meta?: SectionMetaMap; changed_sections?: Array<{ id: string; heading: string }> }
   | { type: 'chart_created'; url: string; markdown?: string; chart_type?: string }
   | { type: 'tier_classified'; tier: 'T1' | 'T2' | 'T3'; view_kind?: string; anchor?: string }
   | { type: 'context_info'; text: string; kind?: string }

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ClipboardPaste, FilePlus, History, X } from 'lucide-react';
 import { Button, Skeleton } from '@/components/ui';
+import { Modal } from '@/components/ui/Modal';
 import { formatRelativeTime } from '@/lib/utils';
 import type { PhiFinding } from './types';
 import type { ReferencePoolItem, ReferencePoolSort } from './references';
@@ -42,8 +43,8 @@ export function HistoryDialog(input: {
 }) {
   const { snapshots, snapshotsLoading, restoring, reviewBlocked, onClose, onRestore } = input;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="flex max-h-[70vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface-elevated p-6 shadow-xl m-4" onClick={(e) => e.stopPropagation()}>
+    <Modal open onClose={onClose} backdropClose escClose backdropClassName="bg-black/50">
+      <div className="flex max-h-[70vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface-elevated p-6 shadow-xl m-4">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-text-primary">历史版本 (Snapshots)</h2>
           <button onClick={onClose} className="text-text-tertiary hover:text-text-primary">
@@ -74,15 +75,15 @@ export function HistoryDialog(input: {
           )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
 /** PHI Findings Dialog(#696: HighlightedBody 组件化)。 */
 export function PhiDialog({ body, findings, onClose }: { body: string; findings: PhiFinding[]; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-xl border border-border bg-surface-elevated shadow-xl p-6 m-4" onClick={(e) => e.stopPropagation()}>
+    <Modal open onClose={onClose} backdropClose escClose backdropClassName="bg-black/50">
+      <div className="w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-xl border border-border bg-surface-elevated shadow-xl p-6 m-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-text-primary">PHI Findings</h2>
           <button onClick={onClose} className="text-text-tertiary hover:text-text-primary">
@@ -117,7 +118,7 @@ export function PhiDialog({ body, findings, onClose }: { body: string; findings:
           <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -131,8 +132,8 @@ export function AddReferenceDialog(input: {
 }) {
   const { form, setForm, submitting, onClose, onSubmit } = input;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="w-full max-w-md rounded-xl border border-border bg-surface-elevated shadow-xl p-6 m-4" onClick={(e) => e.stopPropagation()}>
+    <Modal open onClose={onClose} backdropClose escClose backdropClassName="bg-black/50">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface-elevated shadow-xl p-6 m-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-text-primary">Add Reference</h2>
           <button onClick={onClose} className="text-text-tertiary hover:text-text-primary">
@@ -192,7 +193,7 @@ export function AddReferenceDialog(input: {
           </Button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 

@@ -253,6 +253,8 @@
     "activityRetrievalFold": "Retrieval/read",
     "activityFailed": "failed",
     "activityDone": "done",
+    "activityViewReason": "View reason",
+    "activityHideReason": "Collapse",
     "tool": {
       "search_node": "Search patient memory",
       "search_encounter": "Search encounters",
@@ -526,6 +528,7 @@
     "kbDedup": "📚 Already in the knowledge base, added to context: {{name}}",
     "restoreApplied": "Restored \"{{label}}\": {{a}} accepted / {{r}} rejected",
     "restoreBlockedByReview": "Finish the current AI edit review before restoring a version",
+    "renameHint": "Edit title",
     "restoreReviewTitle": "Review version restore",
     "exportDownloadStarted": "download started",
     "exportKbSync": "Synced to the knowledge base — reference it in chat",

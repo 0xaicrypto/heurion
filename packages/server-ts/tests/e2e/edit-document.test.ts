@@ -170,6 +170,88 @@ describe('#171 edit_document tool', () => {
     expect(res.payload).toContain('新文档内容')
   }, 30000)
 
+  test('#408-followup title-only 重命名:标题落库,正文与快照不变', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '正文内容')
+    const snapsBefore = await (prisma as any).docSnapshot.count({ where: { docId } })
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ title: 'TKI 耐药机制', summary: '改标题' })
+    expect(result.success).toBe(true)
+    const out = JSON.parse(result.output as string)
+    expect(out.title).toBe('TKI 耐药机制')
+    expect(out.body).toBe('正文内容')
+
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.title).toBe('TKI 耐药机制')
+    expect(doc.body).toBe('正文内容')
+    // title-only 不建快照(与 writeDocVersion 语义一致)。
+    const snapsAfter = await (prisma as any).docSnapshot.count({ where: { docId } })
+    expect(snapsAfter).toBe(snapsBefore)
+  }, 30000)
+
+  test('#408-followup title 与 full_text 同一写回原子落库', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '旧正文')
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ title: '新标题', full_text: '新正文', summary: '改名+重写' })
+    expect(result.success).toBe(true)
+    const out = JSON.parse(result.output as string)
+    expect(out.title).toBe('新标题')
+    expect(out.body).toBe('新正文')
+
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.title).toBe('新标题')
+    expect(doc.body).toBe('新正文')
+  }, 30000)
+
+  test('#408-followup 空 title 被拒(不会静默清空标题)', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDoc(app, '正文内容')
+
+    const tool = new EditDocumentTool({ userId, sessionId: `doc-${docId}` })
+    const result = await tool.execute({ title: '   ' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('title 不能为空')
+
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+    expect(doc.title).toBe('Edit Test')
+  }, 30000)
+
+  test('#408-followup LLM tool loop: edit_document title → doc_updated.title SSE', async () => {
+    const app = await getApp()
+    const docId = await createDoc(app, '旧正文')
+    const sessionId = `doc-${docId}`
+
+    let calls = 0
+    vi.mocked(deepseekChat).mockImplementation((messages: any) => {
+      const text = JSON.stringify(messages)
+      if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
+      calls++
+      if (calls === 1) {
+        return Promise.resolve(`<tool_call>${JSON.stringify({ name: 'edit_document', arguments: { title: 'SSE 新标题', full_text: 'SSE 新正文', summary: '改名' } })}</tool_call>`)
+      }
+      return Promise.resolve('标题已更新。')
+    })
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/agent/chat',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: JSON.stringify({ text: '把标题改成 SSE 新标题', session_id: sessionId }),
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toContain('"type":"doc_updated"')
+    expect(res.payload).toContain('"title":"SSE 新标题"')
+
+    const doc = await (prisma as any).doc.findFirst({ where: { id: docId } })
+    expect(doc.title).toBe('SSE 新标题')
+    expect(doc.body).toBe('SSE 新正文')
+  }, 30000)
+
   test('#fix 分步润色:range 模式 old_text/new_text 局部替换,其余内容不动', async () => {
     const app = await getApp()
     const userId = await getAuthUserId()

@@ -1,4 +1,5 @@
 import { FileText, Loader2, X } from 'lucide-react';
+import { Modal } from '@/components/ui/Modal';
 
 /** 上传进度状态(由调用方驱动,stage=importing 时显示服务端导入阶段)。 */
 export interface UploadProgressState {
@@ -24,7 +25,7 @@ export function UploadProgressModal({ state, onCancel }: { state: UploadProgress
   const pct = importing ? 100 : percent;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true">
+    <Modal open backdropClassName="bg-black/50" aria-label="上传进度">
       <div className="m-4 w-full max-w-sm rounded-xl border border-border bg-surface-elevated p-6 shadow-xl">
         <div className="mb-3 flex items-center gap-3">
           <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${error ? 'bg-error/10 text-error' : 'bg-accent/10 text-accent'}`}>
@@ -78,6 +79,6 @@ export function UploadProgressModal({ state, onCancel }: { state: UploadProgress
         </div>
       </div>
       <style>{`@keyframes upload-indeterminate { 0% { left: -33%; } 100% { left: 100%; } }`}</style>
-    </div>
+    </Modal>
   );
 }

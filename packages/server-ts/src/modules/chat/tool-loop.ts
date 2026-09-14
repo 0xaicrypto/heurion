@@ -148,6 +148,8 @@ const PRESENTERS: ToolResultPresenter[] = [
           type: 'doc_updated',
           body: parsed.body,
           summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+          // #408-followup: 标题写回(可单独或与正文同帧)— 前端同步页头/输入框。
+          ...(typeof parsed.title === 'string' && parsed.title ? { title: parsed.title } : {}),
           ...(parsed.deck !== undefined ? { deck } : {}),
           // #927: 版本标识 — 前端按 rev 幂等防乱序(rev ≤ 已应用值忽略)。
           ...(docRev !== undefined ? { rev: docRev, updatedAt: docUpdatedAt } : {}),
@@ -217,6 +219,23 @@ const PRESENTERS: ToolResultPresenter[] = [
           url: parsed.url,
           markdown: typeof parsed.markdown === 'string' ? parsed.markdown : '',
           chart_type: typeof parsed.type === 'string' ? parsed.type : '',
+        })
+      }
+    },
+  },
+  {
+    // #408-followup: scene diagrams render automatically too — previously
+    // they only appeared when the model echoed the tool's markdown into its
+    // final answer (often omitted), and unlike render_chart there was no SSE
+    // projection. Same pipeline: live <img> + chartMeta persistence (#723).
+    matches: (t) => t === 'render_scene',
+    present: (parsed, { io }) => {
+      if (typeof parsed.url === 'string' && parsed.url) {
+        io.send({
+          type: 'chart_created',
+          url: parsed.url,
+          markdown: typeof parsed.markdown === 'string' ? parsed.markdown : '',
+          chart_type: typeof parsed.pathway_id === 'string' && parsed.pathway_id ? 'reactome' : 'scene',
         })
       }
     },

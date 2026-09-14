@@ -223,6 +223,10 @@ export function WritingEditorPage() {
   // §15.4 / #553: AI write-back 不再静默替换正文 — 进入审阅模式,用户
   // 逐条/全部接受或拒绝后由 onDiffResolve 落地。
   const appliedDocBody = useRef<string | null>(null);
+  // #408-followup: AI 改名写回(doc_updated.title)的已应用基线 — 与 body 同理幂等。
+  const appliedDocTitle = useRef<string | null>(null);
+  // #408-followup: 页头标题点击 → 聚焦正文区标题输入框(页头是入口,唯一编辑源是输入框)。
+  const titleInputRef = useRef<HTMLInputElement>(null);
   // #927: 已应用的 doc_updated rev 基线(见下方消费 effect 的幂等防乱序)。
   const appliedDocRevRef = useRef<number | undefined>(undefined);
   const diffPendingRef = useRef(false);
@@ -258,6 +262,8 @@ export function WritingEditorPage() {
       lastSavedBody.current = null;
       dirtyRef.current = false;
       setDirty(false);
+      // #408-followup: 切文档复位改名写回基线 — 旧文档的标题不得被新文档事件比对吞掉。
+      appliedDocTitle.current = null;
     }
     if (doc && serverBodyRef.current === null) serverBodyRef.current = doc.body;
   }, [doc, docId]);
@@ -472,6 +478,25 @@ export function WritingEditorPage() {
     },
   });
 
+  // #408-followup: 弹窗互斥 — history / PHI / 引用 / 上传 四类模态同一时刻
+  // 只允许一个可见(最后打开者胜)。此前各自独立 boolean,保存触发的 PHI
+  // 检测可与已打开的历史/引用弹层叠加,两层遮罩层层堆叠。
+  useEffect(() => {
+    if (showHistory) { setShowPhiDialog(false); references.setRefDialogOpen(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setter 稳定,避免 references 对象身份触发重跑
+  }, [showHistory]);
+  useEffect(() => {
+    if (showPhiDialog) { setShowHistory(false); references.setRefDialogOpen(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setter 稳定
+  }, [showPhiDialog]);
+  useEffect(() => {
+    if (references.refDialogOpen) { setShowHistory(false); setShowPhiDialog(false); }
+  }, [references.refDialogOpen]);
+  useEffect(() => {
+    if (chat.uploadState) { setShowHistory(false); setShowPhiDialog(false); references.setRefDialogOpen(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 上传态驱动
+  }, [chat.uploadState]);
+
   const chatSession = chat.chatSession;
   const chatSessionId = docId ? `doc-${docId}` : '';
   // #996/#1003: 聊天 → 文档跳转 — 按节 id 反查标题,编辑器内定位滚动
@@ -640,6 +665,17 @@ export function WritingEditorPage() {
       setSectionDiffRows(rows);
     }
   }, [chatSession?.lastDocBody, chatSession?.lastDocRev, chatSession?.lastDocProjection, docId, flushPendingWriteBack]);
+
+  // #408-followup: AI 改名写回(doc_updated.title)— 服务端已落库,本地同步
+  // 输入框 state + doc.title 基线(单一数据源:title state 是唯一编辑源,
+  // doc.title 只做服务端镜像),不标 dirty(服务端已是该值)。
+  useEffect(() => {
+    const next = chatSession?.lastDocTitle;
+    if (!docId || !next || appliedDocTitle.current === next) return;
+    appliedDocTitle.current = next;
+    setTitle(next);
+    setDoc((prev) => (prev ? { ...prev, title: next } : prev));
+  }, [chatSession?.lastDocTitle, docId]);
 
   // #773: AI deck 写回（edit_deck / organize 落 deck）— 页级小改直接应用
   // + 服务端快照回滚（deck 页是天然结构化单元，整篇 markdown diff 反而难读）。
@@ -1244,7 +1280,16 @@ export function WritingEditorPage() {
             <ArrowLeft size={16} />
           </Button>
           <FileText size={18} className="hidden shrink-0 text-text-tertiary sm:block" />
-          <h1 className="min-w-0 flex-1 truncate font-serif text-[17px] font-bold tracking-tight text-text-primary sm:flex-none">{doc.title || 'Untitled'}</h1>
+          {/* #408-followup: 页头标题从 title state 派生(单一数据源);点击
+              聚焦唯一的标题编辑入口(正文区输入框),不再是不可交互的死文本。 */}
+          <button
+            type="button"
+            onClick={() => { titleInputRef.current?.focus(); titleInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
+            title={t('writing.renameHint', '编辑标题')}
+            className="min-w-0 flex-1 truncate text-left font-serif text-[17px] font-bold tracking-tight text-text-primary transition-colors hover:text-accent sm:flex-none"
+          >
+            {title || 'Untitled'}
+          </button>
           {studyName && (
             <button
               onClick={() => studyId && navigate(`/app/research/${studyId}`)}
@@ -1363,6 +1408,7 @@ export function WritingEditorPage() {
               />
               <div>
                 <input
+                  ref={titleInputRef}
                   type="text"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}

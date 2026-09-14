@@ -132,8 +132,24 @@ describe('chat-reducer #927 — doc_updated rev 幂等', () => {
   });
 });
 
-/** #989 Phase 3: 投影随帧存储 — 前端「编辑过程流式可见」数据源。 */
-describe('chat-reducer #989 — doc_updated projection 存储', () => {
+/** #408-followup: AI 改名写回 — title 随 doc_updated 存储,body 未变也生效。 */
+describe('chat-reducer #408-followup — doc_updated title', () => {
+  test('title-only 写回(body 未变)仍存储 lastDocTitle', () => {
+    let s = sessionWithAssistant();
+    s = send(s, { type: 'doc_updated', body: 'same body', title: '新标题' });
+    expect(s.lastDocTitle).toBe('新标题');
+    expect(s.lastDocBody).toBe('same body');
+  });
+
+  test('无 title 的旧事件保留既有 lastDocTitle(与 rev 同策略)', () => {
+    let s = sessionWithAssistant();
+    s = send(s, { type: 'doc_updated', body: 'v2', title: '第一版标题' });
+    s = send(s, { type: 'doc_updated', body: 'v3' });
+    expect(s.lastDocTitle).toBe('第一版标题');
+  });
+});
+
+/** #989 Phase 3: 投影随帧存储 — 前端「编辑过程流式可见」数据源。 */describe('chat-reducer #989 — doc_updated projection 存储', () => {
   test('携带 projection 时随帧存储;旧事件无字段保留既有值(与 rev 同策略)', () => {
     let s = sessionWithAssistant();
     const p1: import('@heurion/contracts').BlockProjection = { schema_version: 1, body_hash: 'aaaaaaaaaaaa', nodes: [{ id: 's_intro', kind: 'section', heading: 'Introduction', level: 2, hash: 'hash-intro-1', start: 0, end: 1, parent_id: null }] };

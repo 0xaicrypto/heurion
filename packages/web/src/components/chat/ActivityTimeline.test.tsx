@@ -58,6 +58,23 @@ describe('ActivityTimeline (#832)', () => {
     expect(line.textContent).toContain('HTTP 429');
   });
 
+  test('#408-followup 失败工具卡显示「查看原因」入口,展开后可见真实错误', () => {
+    render(
+      <ActivityTimeline
+        message={baseMessage({
+          isStreaming: false,
+          toolCalls: [{ tool: 'edit_document', argsPreview: '{}', status: 'error', seq: 1, resultPreview: 'old_text 未找到', elapsedMs: 120 }],
+        })}
+      />,
+    );
+    const line = screen.getByTestId('activity-timeline');
+    expect(line.textContent).toContain('查看原因');
+    fireEvent.click(screen.getByText('查看原因'));
+    expect(screen.getByText(/old_text 未找到/)).toBeTruthy();
+    // 展开后提示翻转 — 入口语义随状态变化。
+    expect(screen.getByText('收起')).toBeTruthy();
+  });
+
   test('subagent rows show live phase and collapse into a result preview (#831)', () => {
     render(
       <ActivityTimeline

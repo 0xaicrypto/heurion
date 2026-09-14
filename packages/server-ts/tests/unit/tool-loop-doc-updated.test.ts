@@ -163,4 +163,25 @@ describe('#989 Phase 3 — doc_updated 携带块投影(presenter 接线)', () =>
     expect(docUpdated).toBeTruthy()
     expect(docUpdated!.changed_sections).toBeUndefined()
   })
+
+  test('#408-followup 工具输出 title → doc_updated.title(改名与正文同帧透传)', async () => {
+    const ctx = makeCtx('doc-docupd6')
+    const registry = new ToolRegistry(ctx)
+    registry.register(new WriteTool(JSON.stringify({ body: BODY, summary: '改名', title: '新标题' })))
+
+    vi.mocked(deepseekChat)
+      .mockResolvedValueOnce(callBlock('{"name":"edit_document","arguments":{"title":"新标题","old_text":"a","new_text":"x"}}' as never))
+      .mockResolvedValueOnce('完成。') as never
+
+    const { io, chunks } = makeIO()
+    await runToolCallLoop({
+      currentMessages: [{ role: 'user', content: '改标题' }],
+      toolRegistry: registry, tools: [], apiKey: 'k', io, ctx,
+      userId: 'user_docupd6', sessionId: 'doc-docupd6',
+    })
+
+    const docUpdated = chunks.find((c) => c.type === 'doc_updated') as { title?: string } | undefined
+    expect(docUpdated).toBeTruthy()
+    expect(docUpdated!.title).toBe('新标题')
+  })
 })

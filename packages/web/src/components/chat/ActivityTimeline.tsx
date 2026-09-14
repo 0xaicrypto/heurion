@@ -141,6 +141,15 @@ function ToolRow({ item }: { item: ToolEntry }) {
             <StatusIcon status={item.status} />
           </>
         )}
+        {/* #408-followup: 失败卡默认只有红叉 — 显式提示可展开查看真实错误原因。 */}
+        {!running && item.status === 'error' && item.resultPreview && (
+          <span className="shrink-0 text-[10px] text-error/90">
+            {open ? t('chat.activityHideReason', '收起') : t('chat.activityViewReason', '查看原因')}
+          </span>
+        )}
+        {!running && (item.argsPreview || item.resultPreview) && (
+          open ? <ChevronDown size={10} className="shrink-0" /> : <ChevronRight size={10} className="shrink-0" />
+        )}
       </button>
       {open && (
         <div className="mt-1 space-y-0.5 rounded-lg border border-border bg-surface p-2 text-[11px] text-text-tertiary">

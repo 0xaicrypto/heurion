@@ -253,6 +253,8 @@
     "activityRetrievalFold": "检索/读取",
     "activityFailed": "失败",
     "activityDone": "完成",
+    "activityViewReason": "查看原因",
+    "activityHideReason": "收起",
     "tool": {
       "search_node": "检索患者记忆",
       "search_encounter": "检索就诊记录",
@@ -526,6 +528,7 @@
     "kbDedup": "📚 已在知识库,已加入上下文: {{name}}",
     "restoreApplied": "已恢复到「{{label}}」：接受 {{a}} / 拒绝 {{r}} 处差异",
     "restoreBlockedByReview": "请先处理当前的 AI 修改审阅，再恢复历史版本",
+    "renameHint": "编辑标题",
     "restoreReviewTitle": "审阅版本恢复",
     "exportDownloadStarted": "已开始下载",
     "exportKbSync": "已同步知识库,可在聊天中引用",
