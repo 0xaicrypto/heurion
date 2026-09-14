@@ -8,6 +8,8 @@ on:
       - '**.md'
       - 'docs/**'
       - '.github/**'
+      # #1035: 测试代码不进入镜像，测试-only 改动不需要重建/部署生产。
+      - 'packages/server-ts/tests/**'
   workflow_dispatch:
     inputs:
       # #596: staging 默认跳过(资源占用大:embedding 模型 3.4GB + pm2),
