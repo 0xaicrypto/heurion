@@ -117,7 +117,8 @@ test.describe('5. Chat', () => {
   })
 
   test('5.2 SSE streaming', async ({ page }) => {
-    await page.goto(`${BASE}/app/chat`, { timeout: 10000, waitUntil: 'domcontentloaded' })
+    // #1035-fix: staging 可能没有 open 会话（textarea disabled）— 先建一个。
+    await createSession(page, `E2E chat ${Date.now().toString(36)}`)
     const input = page.locator('textarea, [contenteditable="true"], input[type="text"]').first()
     await input.fill('Hello, what is EGFR TKI therapy?')
     await page.keyboard.press('Enter')
@@ -188,7 +189,10 @@ test.describe('7. Full workflow', () => {
 
 async function createSession(page: any, title: string) {
   await page.goto(`${BASE}/app/chat`, { timeout: 10000, waitUntil: 'domcontentloaded' })
-  await page.getByRole('button', { name: /新建会话|New Session/i }).last().click()
+  // #1035-fix: 用页头按钮（永远可用）——footer 的同名按钮在部分状态下 disabled。
+  const newBtn = page.locator('header').getByRole('button', { name: /新建会话|New Session/i }).first()
+  await expect(newBtn).toBeEnabled({ timeout: 10000 })
+  await newBtn.click()
   const titleInput = page.getByPlaceholder(/会话名称|session name/i)
   await titleInput.fill(title)
   await page.getByRole('button', { name: /^(创建|新建|create)$/i }).click()
