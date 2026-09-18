@@ -89,10 +89,67 @@ turndown.addRule('inlineMath', {
   },
 });
 
+// ── 手动格式化扩展的 round-trip(#1037) ──
+// 编辑器补齐 Strike/Link/TaskList 等手动格式化入口后,保存链路必须保值:
+// turndown 内置规则不含删除线与任务列表,不补会静默丢 mark。
+
+// #1037: GFM 任务列表 — TipTap TaskItem(li[data-type=taskItem]) → `- [x] `/`- [ ] `。
+turndown.addRule('taskItem', {
+  filter: (node: HTMLElement) => node.nodeName === 'LI' && node.getAttribute('data-type') === 'taskItem',
+  replacement: (content: string, node: Node) => {
+    const checked = (node as HTMLElement).getAttribute('data-checked') === 'true';
+    return `- [${checked ? 'x' : ' '}] ${content.trim().replace(/\n+/g, '\n')}\n`;
+  },
+});
+
+// #1037: 删除线(s/del) → GFM ~~波浪线~~(marked/TipTap Strike 产出这两个标签)。
+turndown.addRule('strikethrough', {
+  filter: ['s', 'del'],
+  replacement: (content: string) => `~~${content}~~`,
+});
+
+// #1054: Underline 全链路 — markdown(CommonMark/GFM)没有下划线行内语法,
+// 采用 <u> HTML 直通存储(GitHub 同款方案)。turndown 默认规则会剥掉未识别
+// 的 <u> 标签(保存即丢 mark),补保留规则;replacement 重写标签,属性天然不回存。
+turndown.addRule('underline', {
+  filter: 'u',
+  replacement: (content: string) => `<u>${content}</u>`,
+});
+
+// #1054: <u> 白名单 sanitize(最小引入 — 此前正文链路无 sanitize 机制,
+// block-math/taskList 等既有 HTML 透传不受影响)。<u> 只允许纯文本内容:
+// 属性与嵌套标签一律剥离;script/style 连内容整体移除,不产生注入面。
+// 白名单之外的其他标签不做处理(保持既有透传行为,注入面不因本特性扩大)。
+function sanitizeUnderlineHtml(html: string): string {
+  return html
+    .replace(/<u\b[^>]*>([\s\S]*?)<\/u>/gi, (_m: string, inner: string) => {
+      const text = inner
+        .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, '')
+        .replace(/<[^>]*>/g, '');
+      return `<u>${text}</u>`;
+    })
+    // 未闭合/残缺的 <u …> 开标签统一重写为无属性 <u>。
+    .replace(/<u\b[^>]*>/gi, '<u>');
+}
+
+/**
+ * #1037: marked 产出的 GFM 任务列表(li + input[type=checkbox])不是
+ * TipTap TaskList/TaskItem 的解析形态,原样喂给编辑器会丢勾选态 —
+ * 这里把 checkbox 项升级为 ul[data-type=taskList]/li[data-type=taskItem]。
+ */
+function taskListToTiptap(html: string): string {
+  const out = html
+    .replace(/<li><input checked="" disabled="" type="checkbox">\s*/g, '<li data-type="taskItem" data-checked="true">')
+    .replace(/<li><input disabled="" type="checkbox">\s*/g, '<li data-type="taskItem" data-checked="false">');
+  // 直接包含任务项的 <ul> 升级为 taskList 容器(嵌套任务列表同样命中)。
+  return out.replace(/<ul>(\s*<li data-type="taskItem")/g, '<ul data-type="taskList">$1');
+}
+
 export function markdownToHtml(md: string): string {
   if (!md) return '';
   const html = marked.parse(mathToHtml(md), { async: false }) as string;
-  return html;
+  // #1054: <u> 直通放行前过白名单 sanitize(属性/嵌套标签剥离)。
+  return taskListToTiptap(sanitizeUnderlineHtml(html));
 }
 
 export function htmlToMarkdown(html: string): string {

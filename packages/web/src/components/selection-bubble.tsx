@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BubbleMenu as TiptapBubbleMenu } from '@tiptap/react/menus';
 import type { Editor } from '@tiptap/react';
+import { Bold, Italic, Underline as UnderlineIcon, Strikethrough, Link as LinkIcon, MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { BubbleResultPanel } from './BubbleResultPanel';
 
@@ -48,6 +49,8 @@ export interface SelectionBubbleProps {
   onRefine: (instruction: string, currentText: string) => void;
   /** #871: 送入聊天 — done 态把选区+指令转入聊天流。 */
   onSendToChat?: (instruction?: string) => void;
+  /** #1040: 「添加评论」入口 — 选区作为 anchorText,由父组件弹输入框。 */
+  onAddComment?: (sel: { text: string; from: number; to: number }) => void;
 }
 
 const ACTIONS: ReadonlyArray<readonly [string, string, string]> = [
@@ -57,7 +60,20 @@ const ACTIONS: ReadonlyArray<readonly [string, string, string]> = [
   ['summarize', '📄', 'bubbleSummarize'],
 ];
 
-export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, onApply, onDiscard, onRetry, onRefine, onSendToChat }: SelectionBubbleProps) {
+/** #1037: 浮层配置固定引用 — BubbleMenu 在 options 身份变化时会派发
+ * updateOptions 事务,本组件订阅事务重渲染,内联对象字面量会死循环。 */
+const BUBBLE_OPTIONS = { placement: 'top', offset: 8 } as const;
+
+/** #1037: 手动格式化按钮定义 — 与 AI 动作并列,直接对当前选区 toggle。 */
+interface FormatTool {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  isActive: (editor: Editor) => boolean;
+  run: (editor: Editor) => void;
+}
+
+export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, onApply, onDiscard, onRetry, onRefine, onSendToChat, onAddComment }: SelectionBubbleProps) {
   const { t } = useTranslation();
   const [instruction, setInstruction] = useState('');
   /** pointerdown/click 双通道去重:同一次按下只分发一次。 */
@@ -66,6 +82,67 @@ export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, o
   /** #752-ux: 最新运行态 — shouldShow 闭包经 updateOptions 每轮刷新可读。 */
   const runRef = useRef(run);
   runRef.current = run;
+  // #1037: isReviewing 同样经 ref 读取 — shouldShow 必须是稳定引用:
+  // BubbleMenu 组件在 shouldShow 身份变化时会向编辑器派发 updateOptions
+  // 事务,而本组件(#1037 起)订阅事务重渲染,闭包不固定会造成
+  // "渲染→派发→重渲染"死循环。
+  const isReviewingRef = useRef(isReviewing);
+  isReviewingRef.current = isReviewing;
+
+  // #1037: 手动格式化按钮的选中态高亮 — BubbleMenu 组件不因编辑器事务
+  // 重渲染子树(active 判定读 editor 状态),订阅事务强制同步。
+  const [, bumpFormatTick] = useState(0);
+  useEffect(() => {
+    const onTx = () => bumpFormatTick((n) => n + 1);
+    editor.on('transaction', onTx);
+    return () => { editor.off('transaction', onTx); };
+  }, [editor]);
+
+  // #1037: 气泡内 Link 输入 — 打开时预填当前 href,确认落 setLink,Esc/取消不生效。
+  const [linkEditing, setLinkEditing] = useState(false);
+  const [linkUrl, setLinkUrl] = useState('');
+  const openLinkInput = () => {
+    setLinkUrl((editor.getAttributes('link').href as string | undefined) ?? '');
+    setLinkEditing(true);
+  };
+  const applyLink = () => {
+    const href = linkUrl.trim();
+    if (href) editor.chain().focus().extendMarkRange('link').setLink({ href }).run();
+    else editor.chain().focus().extendMarkRange('link').unsetLink().run();
+    setLinkEditing(false);
+  };
+  const cancelLink = () => setLinkEditing(false);
+
+  const formatTools: FormatTool[] = [
+    {
+      id: 'bold',
+      label: t('writing.bubbleBold', '加粗'),
+      icon: <Bold size={14} />,
+      isActive: (ed) => ed.isActive('bold'),
+      run: (ed) => { ed.chain().focus().toggleBold().run(); },
+    },
+    {
+      id: 'italic',
+      label: t('writing.bubbleItalic', '斜体'),
+      icon: <Italic size={14} />,
+      isActive: (ed) => ed.isActive('italic'),
+      run: (ed) => { ed.chain().focus().toggleItalic().run(); },
+    },
+    {
+      id: 'underline',
+      label: t('writing.bubbleUnderline', '下划线'),
+      icon: <UnderlineIcon size={14} />,
+      isActive: (ed) => ed.isActive('underline'),
+      run: (ed) => { ed.chain().focus().toggleUnderline().run(); },
+    },
+    {
+      id: 'strike',
+      label: t('writing.bubbleStrike', '删除线'),
+      icon: <Strikethrough size={14} />,
+      isActive: (ed) => ed.isActive('strike'),
+      run: (ed) => { ed.chain().focus().toggleStrike().run(); },
+    },
+  ];
 
   const fireAction = (id: string) => {
     if (busyRef.current === id) return;
@@ -81,19 +158,22 @@ export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, o
     }
   };
 
+  // #1037: 稳定化的 shouldShow(依赖全部走 ref)— 见 isReviewingRef 注释。
+  const shouldShow = useCallback(({ state, from, to }: { state: { doc: { textBetween: (f: number, t: number, s: string) => string } }; from: number; to: number }) => {
+    if (isReviewingRef.current()) return false;
+    // #752-ux: 运行/完成卡片不被选区塌陷或点击空白打断
+    if (runRef.current && runRef.current.status !== 'error') return true;
+    if (runRef.current?.status === 'error') return true;
+    const selText = state.doc.textBetween(from, to, '\n').trim();
+    return selText.length > 10;
+  }, []);
+
   return (
     <TiptapBubbleMenu
       editor={editor}
       updateDelay={150}
-      options={{ placement: 'top', offset: 8 }}
-      shouldShow={({ state, from, to }: { state: { doc: { textBetween: (f: number, t: number, s: string) => string } }; from: number; to: number }) => {
-        if (isReviewing()) return false;
-        // #752-ux: 运行/完成卡片不被选区塌陷或点击空白打断
-        if (runRef.current && runRef.current.status !== 'error') return true;
-        if (runRef.current?.status === 'error') return true;
-        const selText = state.doc.textBetween(from, to, '\n').trim();
-        return selText.length > 10;
-      }}
+      options={BUBBLE_OPTIONS}
+      shouldShow={shouldShow}
     >
       {run ? (
         /* #752-ux: 全过程内联气泡 — 思考过程(折叠)/流式正文/结果操作,
@@ -139,8 +219,74 @@ export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, o
           />
           )}
         </div>
+      ) : linkEditing ? (
+        /* #1037: 气泡内 Link URL 输入 — 确认落 setLink(空值清除链接),
+            Esc/取消不落变更;输入期间选区保持在编辑器状态里。 */
+        <div className="flex items-center gap-1 rounded-lg border border-border bg-surface-elevated p-1 shadow-lg">
+          <input
+            autoFocus
+            value={linkUrl}
+            onChange={(e) => setLinkUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); applyLink(); }
+              else if (e.key === 'Escape') { e.preventDefault(); cancelLink(); }
+            }}
+            placeholder="https://example.com"
+            aria-label={t('writing.bubbleLinkInput', '链接地址')}
+            className="h-7 w-48 rounded-md border border-border bg-surface px-2 text-xs text-text-primary placeholder:text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <Button size="sm" onClick={(e) => { e.preventDefault(); applyLink(); }} title={t('writing.bubbleLinkConfirm', '确认链接')}>
+            {t('writing.bubbleLinkConfirm', '确认链接')}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={(e) => { e.preventDefault(); cancelLink(); }} title={t('writing.bubbleLinkCancel', '取消')}>
+            {t('writing.bubbleLinkCancel', '取消')}
+          </Button>
+        </div>
       ) : (
-      <div className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-elevated px-1 py-0.5 shadow-lg">
+      <div className="flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-surface-elevated px-1 py-0.5 shadow-lg">
+        {/* #1037: 手动格式化按钮组 — 排在 AI 动作之前,点击直接对选区
+            toggle(mousedown preventDefault 保选区),选中态高亮。 */}
+        {formatTools.map((tool) => (
+          <button
+            key={tool.id}
+            type="button"
+            aria-pressed={tool.isActive(editor)}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              tool.run(editor);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className={
+              tool.isActive(editor)
+                ? 'flex items-center rounded-md px-1.5 py-1 text-accent bg-accent/10'
+                : 'flex items-center rounded-md px-1.5 py-1 text-text-secondary hover:bg-surface hover:text-text-primary'
+            }
+            title={tool.label}
+          >
+            {tool.icon}
+          </button>
+        ))}
+        {/* #1037: Link 按钮 — 打开气泡内 URL 输入;光标在链接内时高亮。 */}
+        <button
+          type="button"
+          aria-pressed={editor.isActive('link')}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openLinkInput();
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className={
+            editor.isActive('link')
+              ? 'flex items-center rounded-md px-1.5 py-1 text-accent bg-accent/10'
+              : 'flex items-center rounded-md px-1.5 py-1 text-text-secondary hover:bg-surface hover:text-text-primary'
+          }
+          title={t('writing.bubbleLink', '链接')}
+        >
+          <LinkIcon size={14} />
+        </button>
+        <span className="mx-0.5 h-4 w-px bg-border" aria-hidden />
         {ACTIONS.map(([id, icon, labelKey]) => (
           <button
             key={id}
@@ -159,6 +305,27 @@ export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, o
             <span aria-hidden>{busy === id ? '⏳' : icon}</span>{t(`writing.${labelKey}`)}
           </button>
         ))}
+        {onAddComment && (
+          /* #1040: 「添加评论」— 选区作为 anchorText,弹出评论输入框;
+              pointerdown preventDefault 保选区(与格式化按钮同纪律)。 */
+          <button
+            type="button"
+            data-testid="bubble-add-comment"
+            aria-label={t('writing.bubbleAddComment', '添加评论')}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const sel = editor.state.selection;
+              onAddComment({ text: editor.state.doc.textBetween(sel.from, sel.to, '\n').trim(), from: sel.from, to: sel.to });
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-text-secondary hover:bg-surface hover:text-text-primary"
+            title={t('writing.bubbleAddComment', '添加评论')}
+          >
+            <MessageSquarePlus size={14} />
+            <span>{t('writing.bubbleAddComment', '添加评论')}</span>
+          </button>
+        )}
       </div>
       )}
     </TiptapBubbleMenu>

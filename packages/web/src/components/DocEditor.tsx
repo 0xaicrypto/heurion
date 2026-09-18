@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRafCallback } from '@/hooks/useRaf';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+// #1037: Link 显式登记(StarterKit 内置关闭,见 extensions 列表注释);
+// TaskList/TaskItem 为 StarterKit 未含的任务列表扩展(@tiptap/extension-list)。
+import { Link } from '@tiptap/extension-link';
+import { TaskList, TaskItem } from '@tiptap/extension-list';
 import { Table } from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
@@ -16,16 +20,22 @@ import { captureScrollContainer } from '@/lib/scroll-utils';
 import { SelectionBubble } from './selection-bubble';
 import { ProposalCard, type ProposalSource } from './ProposalCard';
 import { SectionCardsExtension, setSectionCards, type SectionCardsData } from '@/lib/section-cards';
+// #1040: 评论锚点高亮(decoration-only,不动 schema)。
+import { CommentAnchorExtension, setCommentAnchors, type CommentAnchorsData } from '@/lib/comment-anchor';
 import { Button } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { useTranslation } from 'react-i18next';
 import {
-  Bold, Check, ChevronDown, Italic, List, ListOrdered, Table as TableIcon,
-  Plus, Trash2, Undo2, Redo2,
+  Bold, Check, ChevronDown, Code, Image as ImageIcon, Italic, Link as LinkIcon, List, ListOrdered, ListTodo,
+  Table as TableIcon, TextQuote, Plus, Trash2, Undo2, Redo2,
 } from 'lucide-react';
+import { api } from '@/lib/api';
 
 /** AI 作者身份 — 审阅模式下的变更标记作者色。 */
 const AI_AUTHOR: ChangeAuthor = { id: 'ai', name: 'AI', color: '#0ea5e9' };
+
+/** #1040: 评论锚点空数据 — 模块级常量,避免内联对象身份抖动。 */
+const EMPTY_COMMENTS: CommentAnchorsData = { items: [] };
 
 /**
  * #996-followup: 标题级别选择器 — 正文 / H1 / H2 / H3（系统"节"口径
@@ -115,6 +125,192 @@ function HeadingMenu({ editor }: { editor: Editor }) {
   );
 }
 
+/** #1037: 代码块常用语言 — 语言选择下拉的固定清单(空值 = 无语言标注)。 */
+const CODE_LANGUAGES = ['typescript', 'javascript', 'python', 'rust', 'go', 'java', 'c', 'cpp', 'sql', 'json', 'bash'];
+
+/**
+ * #1037: CodeBlock 工具栏入口 — 点击 toggle 代码块;光标在代码块内时
+ * 出现语言选择下拉(updateAttributes 写 language,round-trip 保留 ```lang)。
+ */
+function CodeBlockMenu({ editor }: { editor: Editor }) {
+  const { t } = useTranslation();
+  const active = editor.isActive('codeBlock');
+  const language = (editor.getAttributes('codeBlock').language as string | undefined) ?? '';
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        className={active ? 'bg-surface' : ''}
+        onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+        title="Code block"
+      >
+        <Code size={14} />
+      </Button>
+      {active && (
+        <select
+          title="Code language"
+          value={language}
+          onChange={(e) => editor.chain().focus().updateAttributes('codeBlock', { language: e.target.value || null }).run()}
+          className="h-8 rounded-lg border border-border bg-surface-elevated px-1 text-xs text-text-primary"
+        >
+          <option value="">{t('writing.codeLanguagePlain', '纯文本')}</option>
+          {CODE_LANGUAGES.map((lang) => (
+            <option key={lang} value={lang}>{lang}</option>
+          ))}
+        </select>
+      )}
+    </>
+  );
+}
+
+/** #1037: 工具栏 Link 入口 — 弹层 URL 输入;确认落 setLink(空值清除),
+ * Esc/失焦关闭不落变更;光标在链接内时按钮高亮。与 HeadingMenu 同模式。 */
+function LinkMenuButton({ editor }: { editor: Editor }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState('');
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const apply = () => {
+    const href = url.trim();
+    if (href) editor.chain().focus().extendMarkRange('link').setLink({ href }).run();
+    else editor.chain().focus().extendMarkRange('link').unsetLink().run();
+    setOpen(false);
+  };
+
+  return (
+    <div ref={rootRef} className="relative">
+      <Button
+        size="sm"
+        variant="ghost"
+        className={editor.isActive('link') ? 'bg-surface' : ''}
+        aria-label={t('writing.toolbarLink', '链接')}
+        aria-expanded={open}
+        title="Link"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => {
+          if (open) { setOpen(false); return; }
+          setUrl((editor.getAttributes('link').href as string | undefined) ?? '');
+          setOpen(true);
+        }}
+      >
+        <LinkIcon size={14} />
+      </Button>
+      {open && (
+        <div
+          className="absolute left-0 top-full z-30 mt-1 flex items-center gap-1 rounded-lg border border-border bg-surface-elevated p-1 shadow-lg"
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <input
+            autoFocus
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); apply(); }
+            }}
+            placeholder="https://example.com"
+            aria-label={t('writing.toolbarLinkInput', '链接地址')}
+            className="h-7 w-48 rounded-md border border-border bg-surface px-2 text-xs text-text-primary placeholder:text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <Button size="sm" onClick={apply} title={t('writing.toolbarLinkConfirm', '确认链接')}>
+            {t('writing.toolbarLinkConfirm', '确认链接')}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** #1038: Image 节点扩展 — 上传占位态属性(loading/uploadId),仅在上传流程
+ *  内部使用:parseHTML 不回读,占位态不持久化,markdown round-trip 不受影响。 */
+const UploadableImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      uploadId: {
+        default: null,
+        parseHTML: () => null,
+        renderHTML: (attrs: Record<string, unknown>) =>
+          (attrs.uploadId ? { 'data-upload-id': String(attrs.uploadId) } : {}),
+      },
+      loading: {
+        default: null,
+        parseHTML: () => null,
+        renderHTML: (attrs: Record<string, unknown>) =>
+          (attrs.loading ? { 'data-loading': 'true' } : {}),
+      },
+    };
+  },
+});
+
+/** #1038: 按 uploadId 定位占位图片节点 — 成功写回真实 src,失败整节点移除
+ *  (不留坏图片节点)。占位已被用户删掉时返回 false,不误伤其他内容。 */
+function finalizeImageNode(ed: Editor, uploadId: string, attrs: Record<string, unknown> | null): boolean {
+  let targetPos = -1;
+  let nodeSize = 0;
+  ed.state.doc.descendants((node, pos) => {
+    if (node.type.name === 'image' && node.attrs.uploadId === uploadId) {
+      targetPos = pos;
+      nodeSize = node.nodeSize;
+      return false;
+    }
+    return true;
+  });
+  if (targetPos < 0) return false;
+  const tr = ed.state.tr;
+  if (attrs) tr.setNodeMarkup(targetPos, undefined, attrs);
+  else tr.delete(targetPos, targetPos + nodeSize);
+  ed.view.dispatch(tr);
+  return true;
+}
+
+/** #1038: 工具栏「插入图片」入口 — 触发隐藏 file input;选择文件后与
+ *  拖拽/粘贴走同一条上传链路(runImageUpload)。 */
+function ImageMenuButton({ onPick }: { onPick: (files: FileList) => void }) {
+  const { t } = useTranslation();
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-label={t('writing.toolbarImage', '插入图片')}
+        title={t('writing.toolbarImage', '插入图片')}
+        onClick={() => inputRef.current?.click()}
+      >
+        <ImageIcon size={14} />
+      </Button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(e) => {
+          if (e.target.files?.length) onPick(e.target.files);
+          e.target.value = '';
+        }}
+      />
+    </>
+  );
+}
+
 export interface DiffReviewState {
   /** 审阅批次 key — 变化时重新应用 diff */
   key: string;
@@ -171,6 +367,16 @@ interface DocEditorProps {
    * 折叠态由 DocEditor 内部持有（与审阅互斥：审阅期间清空装饰）。
    */
   sectionCards?: SectionCardsData;
+  /**
+   * #1040: 评论锚点数据流 — open/resolved 评论的高亮 decoration 与点击联动
+   * (点击高亮 → onAnchorClick 通知侧边栏定位线程)。缺省不渲染任何装饰。
+   */
+  comments?: CommentAnchorsData;
+  /**
+   * #1040: 气泡「添加评论」入口 — 提供后气泡出现该按钮;点击回调选区
+   * (text/from/to),弹窗与创建 API 由父组件处理。
+   */
+  onStartComment?: (sel: { text: string; from: number; to: number }) => void;
 }
 
 /** #792: BubbleRunState 移至 selection-bubble.tsx,这里 re-export 兼容旧 import。 */
@@ -182,7 +388,8 @@ export type { BubbleRunState } from './selection-bubble';
  * the editor converts on load (md → HTML) and on save (HTML → md).
  * 审阅模式下:AI 编辑以绿(插入)/红(删除)标记呈现,逐条或全部接受/拒绝。
  */
-export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubble, reviewTitle, queuedRounds, sectionCards }: DocEditorProps) {
+export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubble, reviewTitle, queuedRounds, sectionCards, comments, onStartComment }: DocEditorProps) {
+  const { t } = useTranslation();
   const applyMdRef = useRef<string | null>(null);
   const reviewKeyRef = useRef<string | null>(null);
   const [reviewStats, setReviewStats] = useState<{ pending: number; accepted: number; rejected: number }>({ pending: 0, accepted: 0, rejected: 0 });
@@ -219,21 +426,97 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   // 重渲染;#949 抽为共享 hook（ref 最新回调 + 每帧一次上报,卸载取消挂起帧）。
   const reportSelection = useRafCallback(onSelectionChange);
 
+  // #1038: 图片上传插入 — editorProps(handleDrop/handlePaste)在 useEditor
+  // 创建时固定,上传逻辑经 ref 转发取最新闭包;editor 实例就绪后写入 ref。
+  const liveEditorRef = useRef<Editor | null>(null);
+  const [imageError, setImageError] = useState<{ file: File; pos: number | null; message: string } | null>(null);
+
+  const runImageUpload = useCallback(async (file: File, pos: number | null) => {
+    const ed = liveEditorRef.current;
+    if (!ed) return;
+    const uploadId = `img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // 插入 loading 占位节点 — 与 editor.commands.setImage 同构(insertContent
+    // image 节点,见 @tiptap/extension-image 的 setImage 实现),额外携带
+    // loading/uploadId 占位态。
+    const at = Math.min(pos ?? ed.state.selection.from, ed.state.doc.content.size);
+    ed.chain().focus().insertContentAt(at, { type: 'image', attrs: { src: '', alt: file.name, uploadId, loading: true } }).run();
+    try {
+      // 复用既有上传端点(api.uploadFile,不新建),成功后经 download-url
+      // 换取带 token 的 canonical 图片 URL — 与 AI 出图(render_scene)同形态。
+      const up = await api.uploadFile(file);
+      const { url } = await api.getDownloadUrl(up.file_id);
+      finalizeImageNode(ed, uploadId, { src: url, alt: file.name, uploadId: null, loading: null });
+    } catch (err) {
+      // 失败:移除占位(不留坏图片节点),给出可重试错误提示(非静默失败)。
+      finalizeImageNode(ed, uploadId, null);
+      setImageError({ file, pos, message: err instanceof Error ? err.message : String(err) });
+    }
+  }, []);
+
+  const insertImageFilesRef = useRef<(files: File[], pos: number | null) => void>(() => {});
+  insertImageFilesRef.current = (files, pos) => {
+    for (const f of files) void runImageUpload(f, pos);
+  };
+
+  const retryImageUpload = () => {
+    if (!imageError) return;
+    const { file, pos } = imageError;
+    setImageError(null);
+    void runImageUpload(file, pos);
+  };
+
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      // #1037: StarterKit 自带 Link 扩展(v3 起)——关闭内置版,统一走下方
+      // 显式配置:编辑器内点击链接不跳走(openOnClick:false),避免写作中丢焦点。
+      StarterKit.configure({ link: false }),
+      // #1037: Link mark — 粘贴/输入的链接不再丢 mark;autolink 保持开输入即转链接。
+      Link.configure({
+        openOnClick: false,
+        autolink: true,
+        HTMLAttributes: { rel: 'noopener noreferrer nofollow' },
+      }),
+      // #1037: GFM 任务列表(- [ ] / - [x]),markdown round-trip 由 doc-convert 双向支撑。
+      TaskList,
+      TaskItem.configure({ nested: true }),
       Table.configure({ resizable: true }),
       TableRow,
       TableCell,
       TableHeader,
-      Image.configure({ allowBase64: false, inline: false }),
+      // #1038: 图片手动插入 — 上传占位态需要自定义 attrs(loading/uploadId)。
+      UploadableImage.configure({ allowBase64: false, inline: false }),
       // #fix: 学术论文渲染 — $...$ / $$...$$ LaTeX 以 KaTeX 渲染成数学符号。
       Mathematics.configure({ katexOptions: { throwOnError: false } }),
       TrackChangesExtension.configure({ author: AI_AUTHOR, mode: 'edit' }),
       // #996/#1002: 节卡片化 chrome（decoration 驱动，不改文档结构）。
       SectionCardsExtension,
+      // #1040: 评论锚点高亮（decoration-only，不动 schema/正文）。
+      CommentAnchorExtension,
     ],
     content: markdownToHtml(value),
+    editorProps: {
+      // #1038: 拖拽/粘贴图片文件走统一上传链路(与工具栏按钮同一条);
+      // 非图片文件或编辑器内部拖动(moved)交给默认行为。
+      handleDrop: (view, event, _slice, moved) => {
+        if (moved) return false;
+        const files = Array.from(event.dataTransfer?.files ?? []).filter((f) => f.type.startsWith('image/'));
+        if (files.length === 0) return false;
+        let pos: number | null = null;
+        try {
+          pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? null;
+        } catch {
+          pos = null;
+        }
+        insertImageFilesRef.current(files, pos);
+        return true;
+      },
+      handlePaste: (_view, event) => {
+        const files = Array.from(event.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
+        if (files.length === 0) return false;
+        insertImageFilesRef.current(files, null);
+        return true;
+      },
+    },
     onUpdate: ({ editor }) => {
       // Programmatic AI updates bypass the onChange round-trip.
       if (applyMdRef.current !== null || reviewKeyRef.current !== null) return;
@@ -255,12 +538,28 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     },
   });
 
+  // #1037: 工具栏 active 态实时刷新 — 按钮高亮读编辑器状态,而组件重渲染
+  // 仅由 value 变更驱动(纯 mark 切换/光标移动不改 markdown 时高亮会滞后),
+  // 订阅事务强制同步。
+  const [, bumpToolbarTick] = useState(0);
+  useEffect(() => {
+    if (!editor) return;
+    const onTx = () => bumpToolbarTick((n) => n + 1);
+    editor.on('transaction', onTx);
+    return () => { editor.off('transaction', onTx); };
+  }, [editor]);
+
   useEffect(() => {
     if (editorRef && editor) editorRef.current = editor;
     return () => {
       if (editorRef) editorRef.current = null;
     };
   }, [editor, editorRef]);
+
+  // #1038: 供上传链路取最新 editor 实例(editorProps 闭包早于实例创建)。
+  useEffect(() => {
+    liveEditorRef.current = editor;
+  }, [editor]);
 
 
   /** #752-cursor: 编辑器最近的滚动容器(main.overflow-y-auto 等)。
@@ -299,6 +598,15 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     }
     setSectionCards(editor, sectionCardsData);
   }, [editor, sectionCardsData, diffReview]);
+
+  // #1040: 评论锚点装饰下发 — 空数据用模块级常量,避免内联对象身份抖动
+  // 造成无谓重建(见 #1037 BUBBLE_OPTIONS 同类教训)。
+  const onStartCommentRef = useRef(onStartComment);
+  onStartCommentRef.current = onStartComment;
+  useEffect(() => {
+    if (!editor) return;
+    setCommentAnchors(editor, comments ?? EMPTY_COMMENTS);
+  }, [editor, comments]);
 
   // External markdown update (AI edit / doc load) → convert and apply.
   useEffect(() => {
@@ -562,6 +870,17 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
         <Button size="sm" variant="ghost" className={isActive('orderedList') ? 'bg-surface' : ''} onClick={() => editor.chain().focus().toggleOrderedList().run()} title="Ordered list">
           <ListOrdered size={14} />
         </Button>
+        {/* #1037: 工具栏补齐 — Link(弹层输入)/ TaskList / Blockquote / CodeBlock(带语言)。 */}
+        <LinkMenuButton editor={editor} />
+        <Button size="sm" variant="ghost" className={isActive('taskList') ? 'bg-surface' : ''} onClick={() => editor.chain().focus().toggleTaskList().run()} title="任务列表">
+          <ListTodo size={14} />
+        </Button>
+        <Button size="sm" variant="ghost" className={isActive('blockquote') ? 'bg-surface' : ''} onClick={() => editor.chain().focus().toggleBlockquote().run()} title="Blockquote">
+          <TextQuote size={14} />
+        </Button>
+        <CodeBlockMenu editor={editor} />
+        {/* #1038: 工具栏「插入图片」入口 — 文件选择后走 api.uploadFile 链路。 */}
+        <ImageMenuButton onPick={(files) => insertImageFilesRef.current(Array.from(files), null)} />
         <span className="mx-1 h-4 w-px bg-border" />
         <Button size="sm" variant="ghost" onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 2, withHeaderRow: true }).run()} title="Insert table">
           <TableIcon size={14} />
@@ -580,12 +899,22 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
           <Redo2 size={14} />
         </Button>
       </div>
+      {imageError && (
+        /* #1038: 上传失败可重试错误态 — 占位节点已移除,提示不静默。 */
+        <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-2 py-1.5 text-xs text-text-secondary">
+          <span className="font-medium text-text-primary">{t('writing.imageUploadFailed', '图片上传失败')}</span>
+          <span className="truncate">{imageError.file.name}: {imageError.message}</span>
+          <Button size="sm" variant="ghost" onClick={retryImageUpload}>{t('writing.imageRetry', '重试')}</Button>
+          <Button size="sm" variant="ghost" onClick={() => setImageError(null)}>{t('writing.imageDismiss', '忽略')}</Button>
+        </div>
+      )}
       {/* #517-followup: prose defaults are light-theme colors — without
           dark:prose-invert the editor body is unreadable on dark surface.
           Semantic overrides keep headings/links/code on theme tokens.
           #fix: 学术论文排版 — 宽松行距、标题层级、公式/图片居中。
           WRITING_MODULE_REDESIGN 视觉系统:正文/界面 = 无衬线,标题/节名 = 衬线。 */}
-      <div className="prose prose-sm max-w-none p-4 dark:prose-invert [&_.ProseMirror]:min-h-[300px] [&_.ProseMirror]:outline-none [&_.ProseMirror]:font-sans [&_.ProseMirror]:text-[15px] [&_.ProseMirror]:leading-loose prose-headings:font-serif prose-headings:text-text-primary prose-headings:font-semibold prose-p:text-text-secondary prose-p:leading-relaxed prose-a:text-accent hover:prose-a:underline prose-strong:text-text-primary prose-code:text-text-primary prose-code:bg-surface prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:font-mono prose-ol:text-text-secondary prose-ul:text-text-secondary prose-li:my-0.5 prose-blockquote:border-l-4 prose-blockquote:border-accent prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-text-secondary prose-hr:border-border [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-1.5 [&_th]:border [&_th]:border-border [&_th]:bg-surface-elevated [&_th]:p-1.5 [&_th]:text-left [&_img]:my-2 [&_img]:max-h-72 [&_img]:rounded-lg [&_img]:border [&_img]:border-border [&_.ProseMirror_img]:mx-auto [&_[data-type='block-math']]:my-4 [&_[data-type='block-math']]:overflow-x-auto [&_[data-type='inline-math']]:px-0.5">
+      <div className="prose prose-sm max-w-none p-4 dark:prose-invert [&_.ProseMirror]:min-h-[300px] [&_.ProseMirror]:outline-none [&_.ProseMirror]:font-sans [&_.ProseMirror]:text-[15px] [&_.ProseMirror]:leading-loose prose-headings:font-serif prose-headings:text-text-primary prose-headings:font-semibold prose-p:text-text-secondary prose-p:leading-relaxed prose-a:text-accent hover:prose-a:underline prose-strong:text-text-primary prose-code:text-text-primary prose-code:bg-surface prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:font-mono prose-ol:text-text-secondary prose-ul:text-text-secondary prose-li:my-0.5 prose-blockquote:border-l-4 prose-blockquote:border-accent prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-text-secondary prose-hr:border-border [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-1.5 [&_th]:border [&_th]:border-border [&_th]:bg-surface-elevated [&_th]:p-1.5 [&_th]:text-left [&_img]:my-2 [&_img]:max-h-72 [&_img]:rounded-lg [&_img]:border [&_img]:border-border [&_.ProseMirror_img]:mx-auto
+          [&_img[data-loading='true']]:h-24 [&_img[data-loading='true']]:w-full [&_img[data-loading='true']]:animate-pulse [&_img[data-loading='true']]:rounded-lg [&_img[data-loading='true']]:border [&_img[data-loading='true']]:border-dashed [&_img[data-loading='true']]:border-border [&_img[data-loading='true']]:bg-surface [&_img[data-loading='true']]:opacity-70 [&_[data-type='block-math']]:my-4 [&_[data-type='block-math']]:overflow-x-auto [&_[data-type='inline-math']]:px-0.5">
         <EditorContent editor={editor} />
         {onBubbleAction && editor && bubble && (
           /* #752/#792: Selection Bubble — 组件与运行态卡片已抽至
@@ -602,6 +931,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
             onRetry={bubble.onRetry}
             onRefine={bubble.onRefine}
             onSendToChat={bubble.onSendToChat}
+            onAddComment={onStartComment ? (sel) => onStartCommentRef.current?.(sel) : undefined}
           />
         )}
       </div>
