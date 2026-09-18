@@ -435,8 +435,39 @@ export function ReferenceListPopover(input: {
   );
 }
 
-/** #754: 导出完成态面板 — 下载反馈取代服务器路径字符串;记录本会话导出历史。 */
-export function ExportDonePanel(input: {
+/** #1043: deck 冲突二选一的二次确认 — 不可逆提示走 Modal 基础设施,不再原生 confirm。 */
+export function DeckConflictConfirmDialog(input: {
+  mode: 'keep' | 'use-ai';
+  resolving?: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const { mode, resolving, onConfirm, onClose } = input;
+  const keep = mode === 'keep';
+  return (
+    <Modal open onClose={onClose} backdropClose escClose backdropClassName="bg-black/50">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface-elevated shadow-xl p-6 m-4">
+        <h2 className="mb-3 text-lg font-semibold text-text-primary">
+          {keep ? t('writing.deckConflictKeepConfirmTitle', '确认保留本地画布？') : t('writing.deckConflictUseConfirmTitle', '确认采用 AI 的画布？')}
+        </h2>
+        <p className="text-sm text-text-secondary">
+          {keep
+            ? t('writing.deckConflictKeepConfirmNote', '将以本地画布为准并立即保存，服务端上 AI 的画布修改将被覆盖且不可恢复。')
+            : t('writing.deckConflictUseConfirmNote', '本地未保存的画布编辑将被丢弃且不可恢复，画布将采用 AI 的服务端版本。')}
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose}>{t('writing.deckConflictCancel', '取消')}</Button>
+          <Button variant={keep ? 'secondary' : 'danger'} size="sm" onClick={onConfirm} isLoading={resolving} disabled={resolving}>
+            {keep ? t('writing.deckConflictKeepConfirm', '确认保留') : t('writing.deckConflictUseConfirm', '确认采用')}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** #754: 导出完成态面板 — 下载反馈取代服务器路径字符串;记录本会话导出历史。 */export function ExportDonePanel(input: {
   exportResult: { docx_path: string; size_bytes: number } | null;
   exportHistory: Array<{ format: 'docx' | 'pdf'; filename: string; size: number; at: number }>;
   onClose: () => void;

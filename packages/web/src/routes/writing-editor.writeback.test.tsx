@@ -65,6 +65,11 @@ const apiMock = vi.hoisted(() => ({
   generateMethods: vi.fn(),
   injectResults: vi.fn(),
   uploadFile: vi.fn(),
+  // #1040: 评论 API mock(路由挂载期拉取列表,不 mock 会 TypeError)。
+  listDocComments: vi.fn(),
+  createDocComment: vi.fn(),
+  createDocCommentReply: vi.fn(),
+  updateDocComment: vi.fn(),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -161,6 +166,7 @@ beforeEach(() => {
   apiMock.getDocSnapshots.mockResolvedValue({ snapshots: [] });
   apiMock.getSnapshotBody.mockResolvedValue({ id: 's1', created_at: '', label: '', body: BASE_BODY });
   apiMock.listSubmissionDrafts.mockResolvedValue({ drafts: [] });
+  apiMock.listDocComments.mockResolvedValue({ comments: [] });
   apiMock.getDocReferences.mockResolvedValue({ references: [] });
   apiMock.getMessages.mockResolvedValue({ messages: [], total: 0 });
   apiMock.listSkills.mockResolvedValue({ skills: [] });

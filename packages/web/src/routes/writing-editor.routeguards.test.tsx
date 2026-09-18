@@ -60,6 +60,11 @@ const apiMock = vi.hoisted(() => ({
   generateMethods: vi.fn(),
   injectResults: vi.fn(),
   uploadFile: vi.fn(),
+  // #1040: 评论 API mock(路由挂载期拉取列表,不 mock 会 TypeError)。
+  listDocComments: vi.fn(),
+  createDocComment: vi.fn(),
+  createDocCommentReply: vi.fn(),
+  updateDocComment: vi.fn(),
   getSessionReferences: vi.fn(),
   addSessionReference: vi.fn(),
   deleteSessionReference: vi.fn(),
@@ -190,6 +195,7 @@ beforeEach(() => {
   apiMock.getDocSnapshots.mockResolvedValue({ snapshots: [] });
   apiMock.getSnapshotBody.mockResolvedValue({ id: 's1', created_at: '', label: '', body: 'A body' });
   apiMock.listSubmissionDrafts.mockResolvedValue({ drafts: [] });
+  apiMock.listDocComments.mockResolvedValue({ comments: [] });
   apiMock.getDocReferences.mockResolvedValue({ references: [] });
   apiMock.getSessionReferences.mockResolvedValue({ references: [] });
   apiMock.addSessionReference.mockResolvedValue({ reference_id: 'ref_new', kind: 'pasted_text', content: '', label: '', source_ref: null, source: 'manual', created_at: '' });

@@ -3,6 +3,39 @@ import { parseSseStream } from '../../sse';
 import { downloadBlob } from '../../download';
 import type { PolishStreamChunk } from '@heurion/contracts';
 
+/* ────────────────── #1040 文档评论(#1039 sidecar 旁路表,不进正文)────────────────── */
+
+/** 线程回复条目 — 与 comments.router.ts serializeReply 对齐。 */
+export interface DocCommentReplyWire { id: string; role: string; text: string; created_at: string }
+
+/** 锚点定位诊断候选(#1039 anchor-diagnostics)。 */
+export interface DocCommentAnchorCandidate { text: string; start: number; heading: string; similarity: number }
+
+/** open 评论附带的锚点定位诊断 — located=false 时附最近候选。 */
+export interface DocCommentAnchorWire { located: boolean; candidates?: DocCommentAnchorCandidate[] }
+
+/** 评论线程 — 与 comments.router.ts serializeComment 对齐。 */
+export interface DocCommentWire {
+  id: string;
+  doc_id: string;
+  /** #1051: deck_slide 评论为 null（锚点目标是幻灯片页，见 target/slide_index）。 */
+  section_id: string | null;
+  /** #1051: 锚点目标判别 — 'section'（正文节，默认）| 'deck_slide'（幻灯片页）。 */
+  target: string;
+  /** #1051: deck_slide 锚点 — 1-based 页码（与 edit_deck 的 slide_index 同口径）。 */
+  slide_index: number | null;
+  /** #1051: deck_slide 锚点 — 0-based 内容块序（整页评论为 null）。 */
+  block_index: number | null;
+  anchor_text: string;
+  status: string;
+  created_by: string;
+  created_at: string;
+  resolved_at: string | null;
+  replies: DocCommentReplyWire[];
+  /** 仅 open 评论携带 — 锚点定位诊断(漂移时附最近候选)。 */
+  anchor?: DocCommentAnchorWire;
+}
+
 
 export class WritingApi extends ApiCore {
   /* ────────────────────────── writing ────────────────────────── */
@@ -120,5 +153,30 @@ export class WritingApi extends ApiCore {
       headers: this.headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ body, label, ...(base_sha ? { base_sha } : {}) }),
     });
+  }
+
+  // #1040: 评论列表(含 replies;open 评论附锚点定位诊断)。
+  async listDocComments(docId: string, query: { section_id?: string; status?: 'open' | 'resolved' } = {}): Promise<{ comments: DocCommentWire[] }> {
+    const qs = new URLSearchParams();
+    if (query.section_id) qs.set('section_id', query.section_id);
+    if (query.status) qs.set('status', query.status);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return this.fetch(`/api/v1/docs/${docId}/comments${suffix}`);
+  }
+
+  // #1040: 创建评论(选区文字作 anchorText,首条内容落线程)。
+  // #1051: target='deck_slide' 时 section_id 省略、slide_index 必填（1-based）。
+  async createDocComment(docId: string, data: { section_id?: string; anchor_text: string; text: string; target?: 'section' | 'deck_slide'; slide_index?: number; block_index?: number }): Promise<DocCommentWire> {
+    return this.fetch(`/api/v1/docs/${docId}/comments`, { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  // #1040: 追加回复(role 缺省 user)。
+  async createDocCommentReply(docId: string, commentId: string, data: { role?: 'user' | 'ai'; text: string }): Promise<DocCommentReplyWire> {
+    return this.fetch(`/api/v1/docs/${docId}/comments/${commentId}/replies`, { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  // #1040: 切换 status(open/resolved)。
+  async updateDocComment(docId: string, commentId: string, status: 'open' | 'resolved'): Promise<DocCommentWire> {
+    return this.fetch(`/api/v1/docs/${docId}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify({ status }) });
   }
 }

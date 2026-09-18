@@ -35,10 +35,13 @@ import { usePolishBubble, conflictSavedPreview } from './writing-editor/bubble';
 import { useDeckAsset } from './writing-editor/deck-asset';
 import { useDocChat } from './writing-editor/doc-chat';
 import { useDocReferences } from './writing-editor/references';
-import { HistoryDialog, PhiDialog, AddReferenceDialog } from './writing-editor/dialogs';
+import { HistoryDialog, PhiDialog, AddReferenceDialog, DeckConflictConfirmDialog } from './writing-editor/dialogs';
 // #688: 渲染块拆出 — deck 网格 / 右侧聊天面板 / 工具栏。
 import { DeckView } from './writing-editor/deck-view';
 import { ChatPanel } from './writing-editor/chat-panel';
+// #1040: 侧边栏评论面板 + 评论创建弹窗(选区高亮标注线程列表)。
+import { AddCommentModal, CommentsPanel } from './writing-editor/comments-panel';
+import type { DocCommentWire } from '@/lib/api';
 // #996/#1000: 共享 SegmentedControl（视图胶囊）/页头 Toolbar 收敛。
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Toolbar } from './writing-editor/toolbar';
@@ -136,10 +139,28 @@ export function WritingEditorPage() {
     title: string; body: string; deck?: unknown;
         current?: { title: string; body: string; deck?: unknown; block_projection?: BlockProjection | null; updated_at: string };
   } | null>(null);
+  // #1043: deck 与正文分叉冲突 — 服务端 AI deck 写回到达而本地有未保存
+  // deck 编辑时置位;常驻提示条 + 二选一(保留我的编辑/使用 AI 的版本),
+  // 未决策前 autosave/手动保存暂停。此前仅 6 秒 toast 无操作出口,谁生效
+  // 完全不确定(#910 遗留半成品)。
+  const [deckConflict, setDeckConflict] = useState<{ serverDeck: DeckWire; serverDeckKey: string } | null>(null);
+  const [deckConflictConfirm, setDeckConflictConfirm] = useState<'keep' | 'use-ai' | null>(null);
+  const [deckConflictResolving, setDeckConflictResolving] = useState(false);
   // #986: 保存失败常驻警示 — 二次保存(diff 落地/回滚)失败且非 409 时,
   // 失败内容回灌 dirty 并进入 autosave 重试;横幅常驻直至保存成功,不再
   // 只弹 6 秒 toast(#920 静默失败家族)。
   const [saveFailure, setSaveFailure] = useState<{ count: number; message: string } | null>(null);
+  // #1040: 评论状态 — 线程列表(挂载/切文档拉取)、侧边栏开关、激活线程、
+  // 选区评论草稿(气泡「添加评论」→ 弹窗提交)。
+  // #1051: 草稿来源扩展判别联合 — 正文选区 { text, from, to } |
+  // deck slide { target:'deck_slide', slideIndex0(0-based), anchorText=页标题 }。
+  const [docComments, setDocComments] = useState<DocCommentWire[]>([]);
+  const [commentsPanelOpen, setCommentsPanelOpen] = useState(false);
+  const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  const [commentDraft, setCommentDraft] = useState<
+    { text: string; from: number; to: number } | { target: 'deck_slide'; slideIndex0: number; anchorText: string } | null
+  >(null);
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
   /** 保存失败统一处置:回灌 dirty(autosave 重试)+ 常驻警示条。 */
   const markSaveFailed = useCallback((err: unknown) => {
     const message = err instanceof ApiError ? err.messageText : String(err);
@@ -176,7 +197,9 @@ export function WritingEditorPage() {
     // dirty 机制自然恢复(effect 依赖 diffReview)。
     // #927: 保存冲突横幅打开期间同样暂停 — 冲突未决时自动保存必然再 409,
     // 由用户决策(载入最新/保留我的版本)后再恢复。
-    if (diffReview !== null || pendingWriteBackRef.current !== null || saveConflict !== null) return;
+    // #1043: deck 冲突未决时同样暂停 — 自动保存会以本地 deck 静默覆盖
+    // 服务端 AI deck,谁生效不再由定时器决定,由冲突提示条明示决策。
+    if (diffReview !== null || pendingWriteBackRef.current !== null || saveConflict !== null || deckConflict !== null) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       void handleSave();
@@ -185,7 +208,7 @@ export function WritingEditorPage() {
     // #986: saveFailure 计数入依赖 — 保存失败后自动重试(重试仍失败则继续,
     // 直至成功清警示)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [body, title, docId, dirty, diffReview, saveConflict, saveFailure]);
+  }, [body, title, docId, dirty, diffReview, saveConflict, deckConflict, saveFailure]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -232,6 +255,8 @@ export function WritingEditorPage() {
   const diffPendingRef = useRef(false);
   useEffect(() => {
     diffPendingRef.current = diffReview !== null;
+    // #1041: 审阅 key — 评论来源关联（diffCommentSourcesRef）的比对依据。
+    diffReviewKeyRef.current = diffReview?.key ?? null;
   }, [diffReview]);
 
   // #837: AI 写回累计队列 — 审阅未决时的新写回不再被拒绝(丢弃),而是
@@ -377,6 +402,130 @@ export function WritingEditorPage() {
     return updated;
   }, [saveDoc, title]);
 
+  // ── #1041: 「请AI处理」评论驱动 AI 编辑闭环 ──────────────────────────
+  // pendingCommentTurnsRef: 点击时同步登记(防同帧双击并发,issue 用例 6)。
+  // 收口分两条路:正文评论的写回进 diff 审阅时消费(flushPendingWriteBack /
+  // popNextWriteBack);deck 评论(#1051)无 diff 审阅(edit_deck 直接落画布),
+  // 在 turn 收口时比对 Doc.deck 变化判定成败。
+  const pendingCommentTurnsRef = useRef<Map<string, { target: 'section' | 'deck_slide'; deckKeyAtStart?: string; instruction: string }>>(new Map());
+  // #1041: 当前 diff 审阅 ← 评论来源关联(accept → 评论自动 resolved)。
+  const diffCommentSourcesRef = useRef<{ key: string; ids: string[] } | null>(null);
+  const diffReviewKeyRef = useRef<string | null>(null);
+  // #1041: 处理中按钮态(commentId → loading)。
+  const [commentProcessing, setCommentProcessing] = useState<Record<string, boolean>>({});
+  const docCommentsRef = useRef(docComments);
+  docCommentsRef.current = docComments;
+
+  /** #1041: turn 的最终 AI 答复 — 评论线程 AI 回复的内容来源(说明做了什么)。 */
+  const lastAssistantAnswer = useCallback((): string => {
+    if (!docId) return '';
+    const msgs = useChatStore.getState().sessions[`doc-${docId}`]?.messages ?? [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'assistant') {
+        const text = String(msgs[i].text || '').trim();
+        if (text) return text.slice(0, 500);
+      }
+    }
+    return '';
+  }, [docId]);
+
+  /** #1041: 评论线程追加 AI 回复（role:'ai'，本地按时间序并入）。 */
+  const appendAiReply = useCallback(async (commentId: string, text: string) => {
+    if (!docId || !text.trim()) return;
+    try {
+      const reply = await api.createDocCommentReply(docId, commentId, { role: 'ai', text });
+      setDocComments((prev) => prev.map((c) => (c.id === commentId ? { ...c, replies: [...c.replies, reply] } : c)));
+    } catch { /* 回复失败不阻断主流程 — 线程少一条说明,不产生数据歧义 */ }
+  }, [docId]);
+
+  /** #1041: 评论自动 resolved（diff 被接受 / #1051 deck 写回落地）。 */
+  const resolveCommentById = useCallback(async (commentId: string) => {
+    if (!docId) return;
+    try {
+      const updated = await api.updateDocComment(docId, commentId, 'resolved');
+      setDocComments((prev) => prev.map((c) => (c.id === commentId ? { ...c, status: updated.status, resolved_at: updated.resolved_at } : c)));
+    } catch { /* 状态更新失败保持 open — 用户可手动标记 */ }
+  }, [docId]);
+
+  /** #1041 用例 5: 失败/漂移的 AI 回复文案 — 附 anchor-diagnostics 候选,不静默。 */
+  const commentFailReply = useCallback((commentId: string, target: 'section' | 'deck_slide'): string => {
+    const c = docCommentsRef.current.find((x) => x.id === commentId);
+    if (c?.anchor?.located !== false) {
+      return t('writing.commentAiNoChange', 'AI 未能自动处理该评论：本轮没有产生文档修改。请检查评论内容后重试，或手动修改。');
+    }
+    const cands = (c.anchor.candidates ?? []).slice(0, 3).map((x) => `「${x.text.slice(0, 40)}」`).join('、');
+    const where = target === 'deck_slide'
+      ? t('writing.commentTargetSlide', '幻灯片第 {{n}} 页', { n: c.slide_index ?? '?' })
+      : t('writing.commentTargetSection', '正文');
+    return t('writing.commentAiLocateFail', 'AI 未能自动处理该评论：{{where}}的锚点片段「{{anchor}}」已无法定位（原文可能已改动）。最接近的候选：{{cands}}。请更新评论内容后重试，或手动处理。', {
+      where,
+      anchor: c.anchor_text,
+      cands: cands || '（无）',
+    });
+  }, [t]);
+
+  /** #1041: 消费待收口的正文评论来源（diff 审阅打开时调用）。 */
+  const takeSectionCommentTurns = useCallback((): string[] => {
+    const ids: string[] = [];
+    for (const [id, meta] of pendingCommentTurnsRef.current) {
+      if (meta.target === 'section') ids.push(id);
+    }
+    for (const id of ids) pendingCommentTurnsRef.current.delete(id);
+    return ids;
+  }, []);
+
+  /** #1041: 评论来源的写回进入 diff 审阅 — 线程追加 AI 回复 + 记录审阅关联
+   *  （handleDiffResolve accept 分支据此 PATCH resolved；拒绝/放弃保持 open）。 */
+  const attachCommentSourcesToReview = useCallback((reviewKey: string) => {
+    const ids = takeSectionCommentTurns();
+    if (ids.length === 0) return;
+    diffCommentSourcesRef.current = { key: reviewKey, ids };
+    const aiText = lastAssistantAnswer()
+      || t('writing.commentAiDiffReply', 'AI 已按评论意见生成修改建议 — 请审阅 diff；接受后将自动把该评论标记为已解决。');
+    for (const id of ids) void appendAiReply(id, aiText);
+  }, [takeSectionCommentTurns, lastAssistantAnswer, appendAiReply, t]);
+
+  /**
+   * #1041: 评论处理 turn 收口 — 产生 diff 的正文评论已由 attach 消费；剩余：
+   * - 正文评论未产生写回（edit_document 定位失败/模型未动文档）→ AI 回复失败
+   *   说明与候选（用例 5），评论保持 open 可重触发；
+   * - #1051 deck 评论：deck 无 diff 审阅（edit_deck 写回直接落画布）→ turn 期间
+   *   Doc.deck 有变化 = 修改已生效（AI 回复 + 自动 resolved），无变化则失败说明。
+   */
+  const settlePendingCommentTurns = useCallback(() => {
+    if (pendingCommentTurnsRef.current.size === 0) return;
+    const sess = docId ? useChatStore.getState().sessions[`doc-${docId}`] : undefined;
+    // 指令尚未真正发出（排队中，前一 turn 未结束）→ 留待实际运行的 turn 收口。
+    const sent = (sess?.messages ?? []).some((m) => {
+      if (m.role !== 'user') return false;
+      for (const [, meta] of pendingCommentTurnsRef.current) {
+        if (m.text === meta.instruction) return true;
+      }
+      return false;
+    });
+    if (!sent) return;
+    // #1051: deck 评论独立收口 — deck 无 diff 审阅（edit_deck 写回直接落画布），
+    // 不受正文审阅/写回队列状态影响。turn 期间 Doc.deck 有变化 = 修改已生效。
+    const deckNow = JSON.stringify(sess?.lastDocDeck ?? null);
+    for (const [id, meta] of [...pendingCommentTurnsRef.current.entries()]) {
+      if (meta.target !== 'deck_slide') continue;
+      pendingCommentTurnsRef.current.delete(id);
+      if (deckNow !== meta.deckKeyAtStart) {
+        void appendAiReply(id, lastAssistantAnswer() || t('writing.commentAiDeckDone', 'AI 已按评论意见修改幻灯片（画布已更新）。'));
+        void resolveCommentById(id);
+      } else {
+        void appendAiReply(id, commentFailReply(id, 'deck_slide'));
+      }
+    }
+    // #1041: 正文评论 — 写回排队中（审阅未决跨轮入队）→ 留待队列重放开审阅时
+    // 关联（attachCommentSourcesToReview），不误报失败；否则剩余 = 本轮未产生
+    // 任何写回（edit_document 定位失败/模型未动文档）→ 失败 AI 回复（用例 5）。
+    if (diffPendingRef.current || writeBackQueueRef.current.length > 0) return;
+    const sectionIds = [...pendingCommentTurnsRef.current.keys()];
+    for (const id of sectionIds) pendingCommentTurnsRef.current.delete(id);
+    for (const id of sectionIds) void appendAiReply(id, commentFailReply(id, 'section'));
+  }, [docId, appendAiReply, lastAssistantAnswer, resolveCommentById, commentFailReply, t]);
+
   /** 弹出下一轮写回:以「用户当前正文」为新基线做三路合并重放;冲突则丢弃并明示。 */
   const popNextWriteBack = useCallback((currentMd: string) => {
     const entry = writeBackQueueRef.current.shift();
@@ -394,9 +543,12 @@ export function WritingEditorPage() {
       }
       return;
     }
-    setDiffReview({ key: `rev_${Date.now()}`, old: currentMd, next: merged });
+    // #1041: 队列重放同样关联评论来源（写回跨轮排队时的兜底路径）。
+    const reviewKey = `rev_${Date.now()}`;
+    attachCommentSourcesToReview(reviewKey);
+    setDiffReview({ key: reviewKey, old: currentMd, next: merged });
     if (remaining > 0) showNotice(t('writing.reviewQueuedNext', '已呈现下一轮 AI 修改（队列中还有 {{n}} 轮）', { n: remaining }), 4000);
-  }, [showNotice, t]);
+  }, [showNotice, t, attachCommentSourcesToReview]);
 
   // #696: 参考材料管理下沉 useDocReferences。
   // #930: onImportedBody — 文件库/知识库登记触发空文档自动导入时回填编辑器。
@@ -571,16 +723,23 @@ export function WritingEditorPage() {
     appliedDocBody.current = pend.body;
     serverBodyRef.current = pend.body;
     // #996/#998: AI 写回提议卡表头 — 批内最后 summary 无节信息,subject 留空。
-    setDiffReview({ key: `rev_${Date.now()}`, old: bodyRef.current, next: pend.body, source: 'ai_edit' });
+    // #1041: 评论来源的写回到达 — 关联评论（AI 回复 + accept→resolved 的判定点）。
+    const reviewKey = `rev_${Date.now()}`;
+    attachCommentSourcesToReview(reviewKey);
+    setDiffReview({ key: reviewKey, old: bodyRef.current, next: pend.body, source: 'ai_edit' });
     // #693: 审阅模式下编辑器选中的是 diff 内容,不再构成引用。
     setChatSelection('');
     // #837-ux: deck 视图下 markdown 审阅不可见 — 写回时自动切回文档视图。
     setViewMode((m) => (m === 'deck' ? 'document' : m));
-  }, [showNotice, t]);
+  }, [showNotice, t, attachCommentSourcesToReview]);
 
   const prevChatLoadingRef = useRef<boolean | null>(null);
   useEffect(() => {
-    if (prevChatLoadingRef.current === true && !chat.chatLoading) flushPendingWriteBack();
+    if (prevChatLoadingRef.current === true && !chat.chatLoading) {
+      flushPendingWriteBack();
+      // #1041: turn 收口 — 未产生写回的评论处理给失败/漂移 AI 回复；#1051 deck 评论在此判定成败。
+      settlePendingCommentTurns();
+    }
     // #989 Phase 3: turn 开始沿(false→true)冻结批次基线投影 — 此刻 store
     // 的投影仍是上一轮末态( consumption effect 消费事件后 store 已前移,
     // 批内首事件不可作基线)。上一轮无投影时回退文档加载时的服务端投影。
@@ -590,7 +749,7 @@ export function WritingEditorPage() {
     }
     prevChatLoadingRef.current = chat.chatLoading;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 沿检测仅依赖 chatLoading;doc/投影经 store 快照读取
-  }, [chat.chatLoading, flushPendingWriteBack]);
+  }, [chat.chatLoading, flushPendingWriteBack, settlePendingCommentTurns]);
 
   // #696: 润色气泡状态机下沉 usePolishBubble（#797: rAF 合帧）。
   const bubble = usePolishBubble({
@@ -679,23 +838,66 @@ export function WritingEditorPage() {
 
   // #773: AI deck 写回（edit_deck / organize 落 deck）— 页级小改直接应用
   // + 服务端快照回滚（deck 页是天然结构化单元，整篇 markdown diff 反而难读）。
-  // 并发守卫：本地有未保存 deck 编辑时提示刷新，不直接覆盖。
+  // 并发守卫：本地有未保存 deck 编辑时不直接覆盖 — #1043: 常驻冲突提示条
+  // (非 6 秒 toast),由用户在「保留我的编辑/使用 AI 的版本」中明示决策。
   useEffect(() => {
     if (!docId || !chatSession?.lastDocDeck) return;
     const deckKey = JSON.stringify(chatSession.lastDocDeck);
     if (appliedDocDeck.current === deckKey) return;
     appliedDocDeck.current = deckKey;
-    // 服务端已持久化该 deck — 同步"已保存"基线，本地无未保存编辑时直接换源。
+    // 本地有未保存编辑且与服务端 AI deck 分叉 → 挂起冲突,等用户决策。
     if (deckJson && deckJson !== lastSavedDeck.current && deckJson !== deckKey) {
-      // #910: 指引修正 — 旧文案「先 Save 再刷新」会把本地旧 deck 盖掉服务端
-      // AI deck 且无兜底;改为放弃本地/接受 AI 二选一。
-      showNotice(t('writing.deckConflict', '本地有未保存的画布编辑，AI 已更新服务端画布。建议先放弃本地画布修改并刷新获取 AI 版本，或接受 AI 版本后再做本地编辑'), 6000);
+      setDeckConflict({ serverDeck: chatSession.lastDocDeck, serverDeckKey: deckKey });
       return;
     }
+    // 无分叉(本地无未保存编辑) — 静默换源并同步"已保存"基线。
+    setDeckConflict(null);
     lastSavedDeck.current = deckKey;
     setDeckAsset(chatSession.lastDocDeck);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ref 稳定(#696 hooks 下沉)
   }, [chatSession?.lastDocDeck, docId, deckJson]);
+
+  // #1043: 「保留我的编辑」— 本地 deck 为权威:force 落盘一次(语义同
+  // #882 saveConflict 的 KeepMine),覆盖服务端 AI deck;appliedDocDeck
+  // 不动(仍指向已消费的服务端事件 key,幂等守卫不得被破坏)。
+  const resolveDeckConflictKeepMine = async () => {
+    if (!docId || !deckConflict || deckConflictResolving) return;
+    // #895 同款守卫:正文审阅未决时 body 处于审阅前状态,连带 force 落盘
+    // 会把审阅前的正文盖回服务端 — 先让用户处理审阅,横幅保留。
+    if (diffReview !== null || pendingWriteBackRef.current !== null) {
+      setDeckConflictConfirm(null);
+      showNotice(t('writing.reviewFirstForDeckConflict', '请先处理当前的 AI 修改审阅，再解决画布冲突'));
+      return;
+    }
+    setDeckConflictResolving(true);
+    try {
+      const updated = await saveDoc(title, body, { deck: deckAsset ?? undefined, force: true });
+      lastSavedBody.current = updated.body ?? body;
+      serverBodyRef.current = updated.body ?? body;
+      lastSavedDeck.current = deckAsset ? JSON.stringify(deckAsset) : lastSavedDeck.current;
+      setDeckConflict(null);
+      setDeckConflictConfirm(null);
+      setSaveFailure(null);
+      showNotice(t('writing.deckConflictKeptMine', '已保留本地画布编辑（已成为权威版本）'), 3000);
+    } catch (err) {
+      // #986 同款:落盘失败 → 常驻警示 + dirty 回灌,横幅保留可重试。
+      markSaveFailed(err);
+    } finally {
+      setDeckConflictResolving(false);
+    }
+  };
+
+  // #1043: 「使用 AI 的版本」— 丢弃本地未保存编辑,采用服务端 AI deck。
+  // 服务端已是权威,无需再保存;dirty 随基线同步自动消除。
+  const resolveDeckConflictUseAI = () => {
+    if (!deckConflict) return;
+    setDeckAsset(deckConflict.serverDeck);
+    lastSavedDeck.current = deckConflict.serverDeckKey;
+    setDeckConflict(null);
+    setDeckConflictConfirm(null);
+    setSaveFailure(null);
+    showNotice(t('writing.deckConflictUsedAI', '已采用 AI 的画布版本'), 3000);
+  };
 
   /**
    * 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。#837: 结束后弹出队列中的下一轮写回。
@@ -720,6 +922,15 @@ export function WritingEditorPage() {
       return;
     }
     setDiffReview(null);
+    // #1041: 评论来源的审阅收口 — accept → 评论自动 resolved（用例 3）；
+    // 放弃/拒绝 → 保持 open 可重新编辑后再触发（用例 4）。
+    const commentSources = diffCommentSourcesRef.current;
+    if (commentSources && commentSources.key === diffReviewKeyRef.current) {
+      diffCommentSourcesRef.current = null;
+      if (!result.cancelled) {
+        for (const id of commentSources.ids) void resolveCommentById(id);
+      }
+    }
     // #720: 用显式 cancelled 字段区分"放弃"，不再用空串推断 — 全文删空的
     // 接受结果(空 md)应落地为空正文,而不是被当成放弃。
     if (result.cancelled) {
@@ -785,7 +996,7 @@ export function WritingEditorPage() {
     // (bodyRef 同帧还未更新,显式传 result.md)。
     popNextWriteBack(result.md);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定,避免抖动
-  }, [docId, title, restoreReview, showNotice, popNextWriteBack, extractConflictCurrent]);
+  }, [docId, title, restoreReview, showNotice, popNextWriteBack, extractConflictCurrent, resolveCommentById]);
 
   // #402-merge: append a library figure to the document body.
   const handleInsertChart = (markdown: string) => {
@@ -1022,6 +1233,14 @@ export function WritingEditorPage() {
     setExportPanelOpen(false);
     setMethodsError(null);
     setShowHistory(false);
+    // #1040: 切文档清评论态 — 旧文档线程/激活态/草稿不得串染新文档。
+    setDocComments([]);
+    setActiveCommentId(null);
+    setCommentDraft(null);
+    // #1041: 评论处理在途状态一并清 — 旧文档的 pending turn/审阅关联不得串染。
+    pendingCommentTurnsRef.current.clear();
+    diffCommentSourcesRef.current = null;
+    setCommentProcessing({});
   }, [docId]);
 
   const loadSnapshots = useCallback(() => {
@@ -1033,6 +1252,134 @@ export function WritingEditorPage() {
       .finally(() => setSnapshotsLoading(false));
   }, [docId]);
 
+  // #1040: 评论列表 — 文档挂载后拉取(resolved/漂移诊断都以服务端为准)。
+  // 拉取失败不打扰(侧边栏空态),下次操作后重拉。
+  const loadComments = useCallback(() => {
+    if (!docId) return;
+    api.listDocComments(docId)
+      .then((r) => setDocComments(r.comments))
+      .catch(() => {});
+  }, [docId]);
+  useEffect(() => {
+    loadComments();
+  }, [loadComments]);
+
+  // #1040: 提交选区评论 — 选区文字作 anchorText,节引用反查与「选中即引用」
+  // 同口径(投影缺失降级 'doc');本地乐观插入(located=true,刚创建必可定位)。
+  // #1051: deck slide 评论 — anchorText=页标题,锚点判别字段 target/slide_index
+  // (1-based)随创建请求上行,走同一套侧边栏线程(不建两套评论 UI)。
+  const submitComment = async (text: string) => {
+    if (!docId || !commentDraft) return;
+    setCommentSubmitting(true);
+    try {
+      let created: DocCommentWire;
+      if ('target' in commentDraft) {
+        created = await api.createDocComment(docId, {
+          target: 'deck_slide',
+          slide_index: commentDraft.slideIndex0 + 1,
+          anchor_text: commentDraft.anchorText,
+          text,
+        });
+      } else {
+        const anchorText = commentDraft.text;
+        const proj = chatSession?.lastDocProjection ?? doc?.block_projection;
+        const offset = bodyRef.current.indexOf(anchorText.slice(0, 80));
+        const sec = proj && offset >= 0 ? findSectionAtOffset(proj, offset) : null;
+        created = await api.createDocComment(docId, { section_id: sec?.id ?? 'doc', anchor_text: anchorText, text });
+      }
+      setDocComments((prev) => [...prev, { ...created, anchor: { located: true } }]);
+      setActiveCommentId(created.id);
+      setCommentsPanelOpen(true);
+      setCommentDraft(null);
+    } catch {
+      showNotice(t('writing.commentCreateFailed', '评论提交失败，请重试'), 4000);
+    } finally {
+      setCommentSubmitting(false);
+    }
+  };
+
+  // #1040: 追加回复 — 本地按时间序插入线程。
+  const replyToComment = async (commentId: string, text: string) => {
+    if (!docId) return;
+    try {
+      const reply = await api.createDocCommentReply(docId, commentId, { role: 'user', text });
+      setDocComments((prev) => prev.map((c) => (c.id === commentId ? { ...c, replies: [...c.replies, reply] } : c)));
+    } catch {
+      showNotice(t('writing.commentReplyFailed', '回复发送失败，请重试'), 4000);
+    }
+  };
+
+  // #1040: resolved/reopen — PATCH 后重拉列表(锚点诊断以服务端为准)。
+  const toggleCommentResolved = async (c: DocCommentWire) => {
+    if (!docId) return;
+    const next = c.status === 'resolved' ? 'open' : 'resolved';
+    try {
+      await api.updateDocComment(docId, c.id, next);
+      const r = await api.listDocComments(docId);
+      setDocComments(r.comments);
+    } catch {
+      showNotice(t('writing.commentUpdateFailed', '评论状态更新失败，请重试'), 4000);
+    }
+  };
+
+  /**
+   * #1041: 「请AI处理」— 评论正文（编辑指令）+ anchorText 定位上下文 +
+   * sectionId/slideIndex 组装成指令文本，走现有 chat 驱动编辑管道
+   * （sendChatText → doc- 工具循环）：正文评论 → edit_document（old_text
+   * 用 anchorText）；#1051 deck 评论 → edit_deck。产出复用既有
+   * doc_updated → diffReview → ProposalCard accept/reject 流，不做新 diff UI。
+   * 用例 6：处理中二次点击忽略（同步登记 + 按钮 loading/禁用双保险）。
+   */
+  const handleCommentAiProcess = useCallback((c: DocCommentWire) => {
+    if (!docId || c.status === 'resolved') return;
+    if (pendingCommentTurnsRef.current.has(c.id)) return;
+    // 与生成 Methods 同一互斥纪律：审阅未决/写回批次待冲刷时先完成审阅。
+    if (diffReview !== null || pendingWriteBackRef.current !== null) {
+      showNotice(t('writing.reviewFirstForComment', '请先完成当前的 AI 修改审阅，再处理评论'));
+      return;
+    }
+    const instructionText = c.replies.filter((r) => r.role === 'user').map((r) => r.text.trim()).filter(Boolean).join('\n');
+    if (!instructionText) return;
+    const isDeck = c.target === 'deck_slide';
+    // 用例 5：定位失败（located=false）时仍可发起，但指令注明锚点可能漂移。
+    const driftNote = c.anchor?.located === false
+      ? '- 注意：该锚点片段可能已在' + (isDeck ? '幻灯片' : '文档') + '中漂移，如无法精确定位，请基于最接近的原文处理，或在回复中说明定位失败与候选。\n'
+      : '';
+    const instruction = isDeck
+      ? [
+          '【评论处理】请按以下评论意见修改 deck（幻灯片）：',
+          `- 目标位置：第 ${c.slide_index ?? '?'} 页（slide_index，1-based）`,
+          `- 该页锚点片段（用于定位原文）：「${c.anchor_text}」`,
+          driftNote,
+          `- 评论意见（编辑指令）：${instructionText}`,
+          '请直接调用 edit_deck 工具完成修改（action 用 update，slide_index 用上面的页码；删页/插页/调布局选合适的 action）。完成后请在回复中说明你做了什么修改。',
+        ].filter(Boolean).join('\n')
+      : [
+          '【评论处理】请按以下评论意见修改文档正文：',
+          `- 目标位置：section「${c.section_id}」`,
+          `- 原文片段（edit_document 的 old_text）：「${c.anchor_text}」`,
+          driftNote,
+          `- 评论意见（编辑指令）：${instructionText}`,
+          '请直接调用 edit_document 工具完成修改（old_text 用上面的原文片段，new_text 为按评论意见修改后的内容）。完成后请在回复中说明你做了什么修改。',
+        ].filter(Boolean).join('\n');
+    // 同步登记 — 防同帧双击并发（用例 6）；deck 评论记录起始 deck 基线用于收口判定。
+    pendingCommentTurnsRef.current.set(c.id, {
+      target: isDeck ? 'deck_slide' : 'section',
+      ...(isDeck ? { deckKeyAtStart: JSON.stringify(useChatStore.getState().sessions[`doc-${docId}`]?.lastDocDeck ?? null) } : {}),
+      instruction,
+    });
+    setCommentProcessing((prev) => ({ ...prev, [c.id]: true }));
+    void chat.sendChatText(instruction).finally(() => {
+      // turn 结束清按钮 loading（线程 AI 回复/评论状态由收口逻辑处理）。
+      setCommentProcessing((prev) => {
+        const next = { ...prev };
+        delete next[c.id];
+        return next;
+      });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- chat 对象每渲染重建,sendChatText 引用稳定语义
+  }, [docId, diffReview, showNotice, t, chat]);
+
   const handleToggleHistory = () => {
     const next = !showHistory;
     setShowHistory(next);
@@ -1042,9 +1389,11 @@ export function WritingEditorPage() {
   const handleSave = async () => {
     if (!docId) return;
     // #895: 审阅未决或写回批次待冲刷时禁止保存 — 防止把审阅前的正文盖回
-    // 服务端(覆盖 AI 写回版本)。接受/放弃落地路径(handleDiffResolve)直连
+    // 服务端(覆盖 AI 写回)。接受/放弃落地路径(handleDiffResolve)直连
     // saveDoc,不经过本守卫,落地不受影响。
-    if (diffReview !== null || pendingWriteBackRef.current !== null) return;
+    // #1043: deck 冲突未决时同样禁止 — 手动保存会以本地 deck 静默覆盖
+    // 服务端 AI deck,决策必须经冲突提示条明示。
+    if (diffReview !== null || pendingWriteBackRef.current !== null || deckConflict !== null) return;
     setSaving(true);
     setError(null);
     try {
@@ -1330,6 +1679,13 @@ export function WritingEditorPage() {
             </span>
           )}
           <div className="ml-auto flex items-center gap-2">
+            {/* #1040: 评论面板开关 — 徽标数为 open 线程数。 */}
+            <Button size="sm" variant="ghost" onClick={() => setCommentsPanelOpen((v) => !v)} aria-label={t('writing.commentsPanel', '评论')} title={t('writing.commentsPanel', '评论')} className={cn(commentsPanelOpen && 'bg-surface')}>
+              <MessageSquare size={14} />
+              {docComments.some((c) => c.status !== 'resolved') && (
+                <span className="ml-0.5 text-xs">{docComments.filter((c) => c.status !== 'resolved').length}</span>
+              )}
+            </Button>
             <Button size="sm" onClick={handleSave} isLoading={saving} disabled={saving}>
               {dirty ? t('writing.unsaved', '● 未保存') : 'Save'}
             </Button>
@@ -1418,6 +1774,17 @@ export function WritingEditorPage() {
               </div>
 
               <div>
+                {deckConflict && (
+                  /* #1043: deck/正文分叉冲突 — 常驻提示条(不自动消失),
+                     两个明确出口;未决策前 autosave/手动保存均暂停。 */
+                  <div data-testid="deck-conflict-banner" role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[12px] text-text-primary">
+                    <span>⚠ {t('writing.deckConflictBanner', '画布冲突 — AI 已更新服务端画布，本地有未保存的画布编辑，请选择保留哪个版本')}</span>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => setDeckConflictConfirm('keep')}>{t('writing.deckConflictKeepMine', '保留我的编辑')}</Button>
+                      <Button size="sm" variant="danger" onClick={() => setDeckConflictConfirm('use-ai')}>{t('writing.deckConflictUseAI', '使用 AI 的版本')}</Button>
+                    </div>
+                  </div>
+                )}
                 {preview ? (
                   <div className="min-h-[300px] rounded-lg border border-border bg-surface-elevated p-4">
                     <MarkdownRenderer content={body} />
@@ -1434,6 +1801,20 @@ export function WritingEditorPage() {
                     deckCtl={deckCtl}
                     sendChatText={chat.sendChatText}
                     onCardEdit={handleDeckCardEdit}
+                    /* #1051: deck slide 评论 — 添加入口 + 卡片高亮/徽标与侧边栏联动
+                       （deck 非 TipTap,不做 decoration,卡片文字高亮替代）。 */
+                    deckComments={docComments
+                      .filter((c) => c.target === 'deck_slide')
+                      .map((c) => ({
+                        commentId: c.id,
+                        slideIndex: c.slide_index ?? 0,
+                        anchorText: c.anchor_text,
+                        status: c.status,
+                        located: c.anchor?.located ?? true,
+                        active: activeCommentId === c.id,
+                      }))}
+                    onAddSlideComment={(slideIndex0, anchorText) => setCommentDraft({ target: 'deck_slide', slideIndex0, anchorText })}
+                    onCommentClick={(id) => { setActiveCommentId(id); setCommentsPanelOpen(true); }}
                   />
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
@@ -1502,6 +1883,20 @@ export function WritingEditorPage() {
                         editingIds: editingSections.map((s) => s.id),
                         diffRows: sectionDiffRows,
                       }}
+                      /* #1040: 评论锚点高亮 + 气泡「添加评论」入口 — 点击高亮
+                          激活线程并展开侧边栏,双向联动。 */
+                      comments={{
+                        items: docComments.map((c) => ({
+                          commentId: c.id,
+                          anchorText: c.anchor_text,
+                          status: c.status,
+                          located: c.anchor?.located ?? true,
+                          candidates: c.anchor?.candidates?.map((x) => ({ text: x.text, similarity: x.similarity })),
+                        })),
+                        activeCommentId: activeCommentId,
+                        onAnchorClick: (id) => { setActiveCommentId(id); setCommentsPanelOpen(true); },
+                      }}
+                      onStartComment={(sel) => setCommentDraft(sel)}
                       onBubbleAction={bubble.handleBubbleAction}
                       bubble={{
                         run: bubble.bubbleRun,
@@ -1525,6 +1920,19 @@ export function WritingEditorPage() {
 
             </div>
           </main>
+
+          {/* #1040: 侧边栏评论面板 — 与 ChatPanel 并列(桌面右侧)。 */}
+          {commentsPanelOpen && (
+            <CommentsPanel
+              comments={docComments}
+              activeId={activeCommentId}
+              onSelect={setActiveCommentId}
+              onReply={replyToComment}
+              onToggleResolve={(c) => void toggleCommentResolved(c)}
+              onAiProcess={handleCommentAiProcess}
+              processingCommentIds={commentProcessing}
+            />
+          )}
 
           {/* #688: 右侧 Doc Chat / Charts 面板 — UI 拆出;chat 状态经
               useDocChat 保持在路由,宽度/resize/标签/selection 经 props 透传。 */}
@@ -1577,6 +1985,27 @@ export function WritingEditorPage() {
         {/* Add Reference Dialog(#696: 从路由拆出) */}
         {refDialogOpen && (
           <AddReferenceDialog form={refForm} setForm={setRefForm} submitting={refSubmitting} onClose={() => setRefDialogOpen(false)} onSubmit={() => void handleAddReference()} />
+        )}
+
+        {/* #1043: deck 冲突二选一的二次确认 — 不可逆提示走 Modal 基础设施。 */}
+        {deckConflict && deckConflictConfirm && (
+          <DeckConflictConfirmDialog
+            mode={deckConflictConfirm}
+            resolving={deckConflictResolving}
+            onConfirm={() => (deckConflictConfirm === 'keep' ? void resolveDeckConflictKeepMine() : resolveDeckConflictUseAI())}
+            onClose={() => setDeckConflictConfirm(null)}
+          />
+        )}
+
+        {/* #1040: 选区评论创建弹窗 — 气泡「添加评论」(选区文字作 anchorText)。
+            #1051: deck slide 评论复用同一弹窗（anchorText=页标题）。 */}
+        {commentDraft && (
+          <AddCommentModal
+            anchorText={'target' in commentDraft ? commentDraft.anchorText : commentDraft.text}
+            submitting={commentSubmitting}
+            onClose={() => setCommentDraft(null)}
+            onSubmit={(text) => void submitComment(text)}
+          />
         )}
       </div>
       {/* #757: 共享知识库选择器 */}
