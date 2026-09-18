@@ -6,7 +6,7 @@ import {
   type ContentBlock,
   type SlideLayout,
 } from '@heurion/contracts'
-import { resolveImage } from './common.js'
+import { resolveImage, toBase64DataUri } from './common.js'
 
 const PptxGenJSCtor = PptxGenJS as unknown as new () => any
 
@@ -18,7 +18,7 @@ const PptxGenJSCtor = PptxGenJS as unknown as new () => any
  * （内容不再静默丢失）。保持纯函数语义（同输入同输出）与 legacy 入参兼容。
  */
 
-interface GenSlide { title: string; layout?: string; content: ContentBlock[] }
+interface GenSlide { title: string; layout?: string; notes?: string; content: ContentBlock[] }
 interface GenDeck { title: string; subtitle?: string; presenter?: string; date?: string; theme?: string; slides: GenSlide[] }
 
 /** 主题映射表（#957 受控枚举）— clinical 维持 v1 观感，warm-paper 为 DESIGN_SYSTEM_v2 方向（#944 联动）。 */
@@ -91,6 +91,76 @@ function fitBullets(items: Array<{ text: string; bullet: boolean }>, widthIn: nu
   return { font: MIN_FONT, chunks: chunk(MIN_FONT) }
 }
 
+/** table 块 data 解析（#1047）— JSON 字符串 `{rows: string[][], header?: boolean}`；畸形返回 null。 */
+function parseTableBlockData(raw: unknown): { rows: string[][]; header: boolean } | null {
+  if (typeof raw !== 'string') return null
+  try {
+    const v = JSON.parse(raw) as { rows?: unknown; header?: unknown }
+    if (!Array.isArray(v.rows) || v.rows.length === 0) return null
+    const rows = v.rows
+      .filter((r): r is unknown[] => Array.isArray(r))
+      .slice(0, 200)
+      .map((r) => r.slice(0, 30).map((c) => String(c ?? '').slice(0, 2000)))
+    return { rows, header: v.header === true }
+  } catch {
+    return null
+  }
+}
+
+/** #1050: markdown 行内标记 → rich-text runs（bold/italic/strike/link）。
+ * 最小单层解析（不处理嵌套/转义），首尾空白不进标记（CommonMark 语义）；
+ * 链接 URL 仅接受 http(s)，避免对普通文案里的方括号误判。
+ * #1054: <u> 下划线直通（与正文/deck 同款 GitHub 方案）— 内容只匹配纯文本
+ * （[^<]+，不进嵌套标签），带属性（<u …>）或未闭合不成对 → 不匹配，原样纯文本。
+ * 无标记文本返回单 run 且无样式 → 调用方保持与改动前完全一致的纯文本路径。 */
+export interface InlineRun {
+  text: string
+  bold?: boolean
+  italic?: boolean
+  strike?: boolean
+  underline?: boolean
+  link?: string
+}
+
+const INLINE_MD_RE = /\*\*([^*\s](?:[^*]*[^*\s])?)\*\*|\*([^*\s](?:[^*]*[^*\s])?)\*|~~([^~\s](?:[^~]*[^~\s])?)~~|\[([^\]]+)\]\((https?:\/\/[^()\s]+)\)|<u>([^<]+)<\/u>/g
+
+export function parseInlineMarkdown(text: string): InlineRun[] {
+  const runs: InlineRun[] = []
+  if (!text) return runs
+  let last = 0
+  for (const m of text.matchAll(INLINE_MD_RE)) {
+    const start = m.index ?? 0
+    if (start > last) runs.push({ text: text.slice(last, start) })
+    if (m[1] !== undefined) runs.push({ text: m[1], bold: true })
+    else if (m[2] !== undefined) runs.push({ text: m[2], italic: true })
+    else if (m[3] !== undefined) runs.push({ text: m[3], strike: true })
+    else if (m[4] !== undefined && m[5]) runs.push({ text: m[4], link: m[5] })
+    else if (m[6] !== undefined) runs.push({ text: m[6], underline: true })
+    last = start + m[0].length
+  }
+  if (last < text.length) runs.push({ text: text.slice(last) })
+  return runs
+}
+
+/** #1050: 文本 → pptxgenjs text 数组（runs）或原字符串。
+ * 仅当解析出真实标记时才切 runs；否则返回原字符串，渲染与改动前逐字节一致（回归用例 4）。 */
+function toRunsOrString(text: string): string | Array<{ text: string; options: Record<string, unknown> }> {
+  const runs = parseInlineMarkdown(text)
+  if (runs.length === 0) return text
+  if (!runs.some((r) => r.bold || r.italic || r.strike || r.underline || r.link)) return text
+  return runs.map((r) => ({
+    text: r.text,
+    options: {
+      ...(r.bold ? { bold: true } : {}),
+      ...(r.italic ? { italic: true } : {}),
+      ...(r.strike ? { strike: true } : {}),
+      // #1054: pptxgenjs v3.5+ 下划线走对象形态（style: 'sng'）。
+      ...(r.underline ? { underline: { style: 'sng' } } : {}),
+      ...(r.link ? { hyperlink: { url: r.link } } : {}),
+    },
+  }))
+}
+
 export async function generatePptx(payload: any) {
   // The server now sends { schema_version, content_type, data: {schemaVersion,...} }.
   // Accept the legacy { template_id, data: {...} } and flat shapes too.
@@ -124,9 +194,9 @@ export async function generatePptx(payload: any) {
     s.addShape('rect', { x: PAGE.margin, y: 1.05, w: bodyW, h: 0.045, fill: { color: theme.accent } })
   }
 
-  /** 要点渲染 + 超页自动拆续页（fitBullets 已选字号；续页同布局标题（续））。 */
-  const renderBullets = (s: Slide, title: string, items: Array<{ text: string; bullet: boolean }>, x: number, w: number) => {
-    const { font, chunks } = fitBullets(items, w, areaH)
+  /** 要点渲染 + 超页自动拆续页（fitBullets 已选字号；续页同布局标题（续））。#1047: heightIn 供表格页让出下半区。 */
+  const renderBullets = (s: Slide, title: string, items: Array<{ text: string; bullet: boolean }>, x: number, w: number, heightIn: number = areaH) => {
+    const { font, chunks } = fitBullets(items, w, heightIn)
     let target = s
     let cy = BODY_TOP
     chunks.forEach((group, ci) => {
@@ -136,7 +206,9 @@ export async function generatePptx(payload: any) {
         cy = BODY_TOP
       }
       for (const it of group) {
-        target.addText(it.text, {
+        // #1050: 行内标记 → rich-text runs（真实粗体/斜体/删除线/超链接，非图片）；
+        // 无标记纯文本走原字符串路径，渲染与改动前完全一致。
+        target.addText(toRunsOrString(it.text), {
           x, y: cy, w, h: Math.max(estHeight(it.text, font, w), 0.34), fontSize: font, valign: 'top', breakLine: false,
           color: theme.text, fontFace: theme.font,
           ...(it.bullet ? { bullet: true, bulletColor: theme.accent } : {}),
@@ -164,6 +236,9 @@ export async function generatePptx(payload: any) {
   for (const slide of hasTitleSlide ? slides.slice(1) : slides) {
     const layout = layoutOf(slide)
     const s = pres.addSlide()
+    // #1046: speaker notes 写回（pptxgenjs slide.addNotes → notesSlideN.xml）—
+    // 导入提取的备注在导出侧不再丢失（放在 blank continue 之前，空白页也保留备注）。
+    if (slide.notes) s.addNotes(String(slide.notes).slice(0, 2000))
     if (layout === 'blank') continue // 空白页：仅母版底色
 
     addHeader(s, slide.title)
@@ -182,6 +257,36 @@ export async function generatePptx(payload: any) {
       }
     }
     const firstPara = items[0]?.text || ''
+
+    // #1047: 表格块 → pptxgenjs 原生表格对象（a:tbl graphicFrame，非图片）。
+    // 表格占上半区、要点渲染到表格下方（空间不足由 fitBullets 拆续页兜底）；
+    // data 畸形（非约定 JSON）→ 跳过该表格，不中断整份导出。
+    const tableBlocks = slide.content.filter((b) => b.type === 'table')
+    if (tableBlocks.length > 0) {
+      let tableBottom = BODY_TOP
+      for (const tb of tableBlocks.slice(0, 2)) {
+        const parsed = parseTableBlockData((tb as { data?: unknown }).data)
+        if (!parsed || parsed.rows.length === 0) continue
+        const rowH = 0.34
+        const tblH = Math.min(parsed.rows.length * rowH + 0.05, Math.max(BODY_BOTTOM - tableBottom, 0.4))
+        s.addTable(
+          parsed.rows.slice(0, 100).map((row, ri) => row.map((cell) => ({
+            text: cell,
+            options: {
+              fontSize: 12,
+              valign: 'middle' as const,
+              ...(parsed.header && ri === 0 ? { bold: true, fill: { color: theme.accentSoft }, color: theme.text } : {}),
+            },
+          }))),
+          { x: PAGE.margin, y: tableBottom, w: bodyW, rowH, border: { pt: 0.5, color: '94A3B8' }, fontFace: theme.font, autoPage: false },
+        )
+        tableBottom += tblH + 0.25
+      }
+      if (items.length > 0 && tableBottom < BODY_BOTTOM) {
+        renderBullets(s, slide.title, items, PAGE.margin, bodyW, BODY_BOTTOM - tableBottom)
+      }
+      continue
+    }
 
     if (layout === 'section') {
       s.background = { color: theme.accentSoft }
@@ -203,7 +308,9 @@ export async function generatePptx(payload: any) {
       if (img) {
         const resolved = await resolveImage(img)
         if (resolved) {
-          s.addImage({ data: resolved.data as any, x: 0.8, y: BODY_TOP, w: bodyW - 0.6, h: areaH - 0.2 })
+          // #1053: pptxgenjs addImage 仅接受 base64 字符串 — 传 Buffer 会被
+          // 静默丢弃（console.error 后 return null），图根本进不了 media。
+          s.addImage({ data: toBase64DataUri(resolved.data), x: 0.8, y: BODY_TOP, w: bodyW - 0.6, h: areaH - 0.2 })
           continue
         }
       }
@@ -217,7 +324,8 @@ export async function generatePptx(payload: any) {
       renderBullets(s, slide.title, items, PAGE.margin, textW)
       if (img) {
         const resolved = await resolveImage(img)
-        if (resolved) s.addImage({ data: resolved.data as any, x: 5.2, y: BODY_TOP, w: 4.2, h: areaH - 0.2 })
+        // #1053: 同上 — Buffer → base64 data URI，否则 addImage 静默丢图。
+        if (resolved) s.addImage({ data: toBase64DataUri(resolved.data), x: 5.2, y: BODY_TOP, w: 4.2, h: areaH - 0.2 })
       }
       continue
     }
