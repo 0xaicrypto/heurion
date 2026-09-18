@@ -16,10 +16,13 @@ import type { ExtractedPdfImage } from './document-extractor.js'
  *     基本实体解码，不存在外部实体解析路径；
  *   - 加密 zip：zip-reader 抛可读错误。
  *
- * 解析边界（首版降级策略 — 绝不静默丢内容）：表格（`<a:tbl>`）、图表
- * （chart part）、SmartArt（`<dgm:`）不解析，输出占位注记；speaker
- * notes（notesSlideN.xml）提取为页备注。页序优先 presentation.xml 的
- * sldIdLst（权威顺序），缺失/损坏时按文件名自然排序兜底。
+ * 解析边界（绝不静默丢内容）：表格（`<a:tbl>`，#1047）解析为结构化行列
+ * 数据（合并单元格降级为重复文本）；图表（chart part，#1048）解析常见类型
+ * （barChart/lineChart/pieChart）为结构化 chart 块，不支持的类型降级占位并
+ * 记录类型名；SmartArt（`<dgm:`，#1052）解析 PowerPoint 兼容用的降级绘图
+ * （dsp:drawing）提取形状文字为列表，降级绘图缺失才占位。speaker notes
+ * （notesSlideN.xml）提取为页备注。页序优先 presentation.xml 的 sldIdLst
+ * （权威顺序），缺失/损坏时按文件名自然排序兜底。
  */
 
 export interface PptxSlide {
@@ -27,6 +30,31 @@ export interface PptxSlide {
   paragraphs: string[]
   /** speaker notes（可选提取，演示场景有价值）。 */
   notes?: string
+  /** #1047: 解析出的表格（合并单元格降级为重复文本，mergedDegraded 标记）。 */
+  tables?: PptxTable[]
+  /** #1048: 解析出的图表（对齐 contracts chartBlockSchema 的 spec 形状）。 */
+  charts?: PptxChart[]
+}
+
+export interface PptxTable {
+  /** 逻辑网格（合并单元格已按重复文本展开，无空白格）。 */
+  rows: string[][]
+  /** 源表格含合并单元格（gridSpan/rowSpan/hMerge/vMerge）— 降级处理。 */
+  mergedDegraded?: boolean
+}
+
+export interface PptxChart {
+  /** OOXML 原生图表类型名（barChart/lineChart/pieChart/...），降级提示用。 */
+  ooxmlType: string
+  /**
+   * 结构化图表 spec（对齐 contracts chartBlockSchema：chart_type + data）。
+   * 不支持/未能提取数据的类型为 null（调用方降级占位）。
+   * #1048 决策：饼图在现有渲染管道（#176，chart_type 枚举 line|bar|dose_curve）
+   * 无原生饼图渲染 — 映射为 bar 保留全部数据（类别+数值），caption 记录原类型。
+   */
+  spec?: { chart_type: 'bar' | 'line'; data: Array<{ label: string; value: number }>; title?: string }
+  /** 降级说明（pie→bar / 多系列只保留第 1 个等），不静默。 */
+  caption?: string
 }
 
 export interface PptxParseResult {
@@ -82,18 +110,79 @@ function isTitleShape(spXml: string): boolean {
   return /<p:ph[^>]*\stype="(title|ctrTitle)"/.test(spXml)
 }
 
-/** graphicFrame 里的复杂对象 → 占位注记（表格/图表/SmartArt）。 */
-function noteFromGraphicFrame(frameXml: string): string | null {
-  if (/<a:tbl[\s>]/.test(frameXml)) return '[本页含表格，未解析]'
-  if (/<c:chart[\s/>]/.test(frameXml)) return '[本页含图表，未解析]'
-  if (/<dgm:/.test(frameXml)) return '[本页含 SmartArt，未解析]'
-  return null
+/** graphicFrame 里的表格 → 逻辑网格（#1047）。 */
+function parseTableFrame(frameXml: string): PptxTable | null {
+  const rawRows: Array<Array<{ text: string; attrs: string }>> = []
+  const trRe = /<a:tr\b[^>]*>([\s\S]*?)<\/a:tr>/g
+  let m: RegExpExecArray | null
+  while ((m = trRe.exec(frameXml)) !== null) {
+    const cells: Array<{ text: string; attrs: string }> = []
+    const tcRe = /<a:tc\b([^>]*)>([\s\S]*?)<\/a:tc>/g
+    let c: RegExpExecArray | null
+    while ((c = tcRe.exec(m[1])) !== null) {
+      cells.push({ text: paragraphsFromShape(c[2]).join(' ').slice(0, 2000), attrs: c[1] })
+    }
+    rawRows.push(cells)
+  }
+  if (rawRows.length === 0) return null
+
+  // 逻辑网格展开（最小可用降级方案 — 不追求合并单元格的像素级还原）：
+  //   gridSpan/rowSpan → 重复文本占位后续行列；hMerge/vMerge（续格）→
+  //   复制左格/上格文本。保证无空白格、无内容丢失。
+  const pending = new Map<number, Map<number, string>>() // 待填行号 → (列号 → 携带文本)
+  const grid: string[][] = []
+  let degraded = false
+  rawRows.forEach((cells, ri) => {
+    const fills = pending.get(ri)
+    const row: string[] = []
+    let ci = 0
+    const fillCarried = () => {
+      while (fills?.has(ci)) {
+        row.push(fills.get(ci)!)
+        ci += 1
+      }
+    }
+    for (const cell of cells) {
+      fillCarried()
+      const span = parseInt(/gridSpan="(\d+)"/.exec(cell.attrs)?.[1] || '', 10) || 1
+      const vSpan = parseInt(/rowSpan="(\d+)"/.exec(cell.attrs)?.[1] || '', 10) || 1
+      let text = cell.text
+      if (/hMerge="1"/.test(cell.attrs)) text = row[ci - 1] ?? text
+      if (/vMerge="1"/.test(cell.attrs)) text = grid[ri - 1]?.[ci] ?? text
+      if (span > 1 || vSpan > 1 || /hMerge="1"|vMerge="1"/.test(cell.attrs)) degraded = true
+      for (let k = 0; k < Math.min(span, 30 - ci); k += 1) row.push(text)
+      if (vSpan > 1) {
+        for (let r2 = 1; r2 < Math.min(vSpan, 200 - ri); r2 += 1) {
+          const carryRow = pending.get(ri + r2) ?? new Map<number, string>()
+          for (let k = 0; k < span; k += 1) carryRow.set(ci + k, text)
+          pending.set(ri + r2, carryRow)
+        }
+      }
+      ci += span
+    }
+    fillCarried()
+    grid.push(row.slice(0, 30))
+  })
+  // 全空表格无可解析内容 — 保留原占位注记（不产出空 table 块）。
+  if (!grid.some((row) => row.some((cell) => cell.trim() !== ''))) return null
+  return { rows: grid.slice(0, 200), ...(degraded ? { mergedDegraded: true } : {}) }
 }
 
-/** slide XML → { title, paragraphs }。 */
-function parseSlideXml(xml: string, slideIndex: number): PptxSlide {
+/** slide XML → { title, paragraphs, tables, chartRids, smartArtXmls }。 */
+function parseSlideXml(xml: string, slideIndex: number): {
+  title: string
+  paragraphs: string[]
+  tables: PptxTable[]
+  /** 图表 frame 的 r:id（#1048 — 由 parsePptx 经 slide rels 解析 chart part）。 */
+  chartRids: string[]
+  /** SmartArt frame XML（#1052 — 由 parsePptx 经 diagramDrawing 关系解析降级绘图）。 */
+  smartArtXmls: string[]
+} {
   let title = ''
   const paragraphs: string[] = []
+  const tables: PptxTable[] = []
+  const chartRids: string[] = []
+  const smartArtXmls: string[] = []
   let budget = MAX_SLIDE_TEXT_CHARS
 
   const pushTexts = (texts: string[]) => {
@@ -120,14 +209,127 @@ function parseSlideXml(xml: string, slideIndex: number): PptxSlide {
     pushTexts(paragraphsFromShape(spXml))
   }
 
-  // 2) 复杂对象（<p:graphicFrame>）：表格/图表/SmartArt 占位注记。
+  // 2) 复杂对象（<p:graphicFrame>）：表格就地结构化解析（#1047，无 rels
+  //    依赖）；图表/SmartArt 记录 frame 由 parsePptx 按 rels 解析对应 part
+  //    （#1048/#1052），解析失败降级为占位注记（不静默丢内容）。
   const frameRe = /<p:graphicFrame\b[^>]*>([\s\S]*?)<\/p:graphicFrame>/g
   while ((m = frameRe.exec(xml)) !== null) {
-    const note = noteFromGraphicFrame(m[1])
-    if (note) pushTexts([note])
+    const frameXml = m[1]
+    if (/<a:tbl[\s>]/.test(frameXml)) {
+      const table = parseTableFrame(frameXml)
+      if (table) tables.push(table)
+      else pushTexts(['[本页含表格，未解析]'])
+      continue
+    }
+    const chartRid = /<c:chart\b[^>]*r:id="([^"]+)"/.exec(frameXml)?.[1]
+    if (chartRid) {
+      chartRids.push(chartRid)
+      continue
+    }
+    if (/<dgm:/.test(frameXml)) smartArtXmls.push(frameXml)
   }
 
-  return { title: title || `第 ${slideIndex} 页`, paragraphs }
+  return { title: title || `第 ${slideIndex} 页`, paragraphs, tables, chartRids, smartArtXmls }
+}
+
+/** rels Target → zip 内 part 名（slide rels 相对于 ppt/slides/ 解析）。 */
+function normalizePartTarget(target: string): string {
+  if (target.startsWith('../')) return `ppt/${target.slice(3)}`
+  if (target.startsWith('/')) return target.slice(1)
+  return `ppt/slides/${target}`
+}
+
+/** slide rels + r:id → 关系目标 part 字节（关系断链/part 缺失返回 null）。 */
+function slidePartByRid(rid: string, relsXml: string, entries: Map<string, Buffer>): Buffer | null {
+  const relRe = /<Relationship\b([^>]*?)\/?>/g
+  let m: RegExpExecArray | null
+  while ((m = relRe.exec(relsXml)) !== null) {
+    const attrs = m[1]
+    if (!attrs.includes(`Id="${rid}"`)) continue
+    const target = /Target="([^"]+)"/.exec(attrs)?.[1]
+    return target ? entries.get(normalizePartTarget(target)) ?? null : null
+  }
+  return null
+}
+
+/** slide rels → SmartArt 降级绘图（diagramDrawing，MS 2007 扩展关系）part 名列表。 */
+function diagramDrawingTargets(relsXml: string): string[] {
+  const out: string[] = []
+  const relRe = /<Relationship\b([^>]*?)\/?>/g
+  let m: RegExpExecArray | null
+  while ((m = relRe.exec(relsXml)) !== null) {
+    const attrs = m[1]
+    if (!/diagramDrawing/.test(attrs)) continue
+    const target = /Target="([^"]+)"/.exec(attrs)?.[1]
+    if (target) out.push(normalizePartTarget(target))
+  }
+  return out
+}
+
+/** OOXML 图表类型 → contracts chartBlockSchema.chart_type（#1048）。 */
+const PPTX_CHART_TYPE_MAP: Record<string, 'bar' | 'line'> = {
+  barChart: 'bar',
+  lineChart: 'line',
+  // 饼图/环图在现有渲染管道（#176）无原生类型 — 映射为 bar 保留全部数据，
+  // caption 记录原类型（视觉形态降级、数据不丢，见 PptxChart 注释）。
+  pieChart: 'bar',
+  doughnutChart: 'bar',
+}
+
+/** chartN.xml → 结构化图表（首系列）。不支持类型/无数据 → spec 缺省。 */
+function parseChartXml(xml: string): PptxChart {
+  const ooxmlType = /<c:(\w+Chart)\b/.exec(xml)?.[1] || 'unknownChart'
+  const chartType = PPTX_CHART_TYPE_MAP[ooxmlType]
+  if (!chartType) return { ooxmlType }
+  const ser = /<c:ser>[\s\S]*?<\/c:ser>/.exec(xml)?.[0]
+  if (!ser) return { ooxmlType }
+
+  const collectPts = (block: string): string[] => {
+    const out: string[] = []
+    const ptRe = /<c:pt\b[^>]*idx="\d+"[^>]*>([\s\S]*?)<\/c:pt>/g
+    let m: RegExpExecArray | null
+    while ((m = ptRe.exec(block)) !== null) {
+      out.push(decodeXmlEntities(/<c:v>([\s\S]*?)<\/c:v>/.exec(m[1])?.[1] || '').trim())
+    }
+    return out
+  }
+  const labels = collectPts(/<c:cat>[\s\S]*?<\/c:cat>/.exec(ser)?.[0] || '')
+  const values = collectPts(/<c:val>[\s\S]*?<\/c:val>/.exec(ser)?.[0] || '')
+    .map((v) => Number(v))
+    .filter((n) => Number.isFinite(n))
+  const data = values.slice(0, 200).map((value, i) => ({ label: (labels[i] || `#${i + 1}`).slice(0, 200), value }))
+  if (data.length === 0) return { ooxmlType }
+
+  const title = decodeXmlEntities(/<c:title>[\s\S]*?<\/c:title>/.exec(xml)?.[0]?.match(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/)?.[1] || '').trim().slice(0, 500)
+  // 契约 spec 单系列 — 多系列保留第 1 个，其余系列数记入 caption（不静默）。
+  const seriesCount = (xml.match(/<c:ser>/g) || []).length
+  let caption: string | undefined
+  if (ooxmlType !== 'barChart' && ooxmlType !== 'lineChart') {
+    caption = `原图表类型 ${ooxmlType}，数据已按${chartType === 'bar' ? '柱状图' : '折线图'}保留`
+  }
+  if (seriesCount > 1) caption = `${caption ? `${caption}；` : ''}源文件共 ${seriesCount} 个系列，已保留第 1 个`
+  return {
+    ooxmlType,
+    spec: { chart_type: chartType, data, ...(title ? { title } : {}) },
+    ...(caption ? { caption } : {}),
+  }
+}
+
+/** SmartArt 降级绘图（dsp:drawing）→ 形状文字列表（按几何位置排序近似阅读序，#1052）。 */
+function parseSmartArtDrawingXml(xml: string): string[] {
+  const shapes: Array<{ x: number; y: number; text: string }> = []
+  const spRe = /<dsp:sp\b[^>]*>([\s\S]*?)<\/dsp:sp>/g
+  let m: RegExpExecArray | null
+  while ((m = spRe.exec(xml)) !== null) {
+    const text = paragraphsFromShape(m[1]).join(' ').trim()
+    if (!text) continue
+    const off = /<a:off\s+x="(-?\d+)"\s+y="(-?\d+)"/.exec(m[1])
+    shapes.push({ x: off ? parseInt(off[1], 10) : 0, y: off ? parseInt(off[2], 10) : 0, text: text.slice(0, 500) })
+  }
+  return shapes
+    .sort((a, b) => (a.y - b.y) || (a.x - b.x))
+    .slice(0, 30)
+    .map((s) => s.text)
 }
 
 /** notesSlide XML → 纯文本（有界，只取 body 占位符 — 跳过页码占位）。 */
@@ -191,7 +393,9 @@ export function parsePptx(buffer: Buffer): PptxParseResult {
       maxEntries: 3000,
       maxTotalUncompressed: 300 * 1024 * 1024,
       // 只解压文本/关系/媒体 — 其余（fonts/embeddings/thumbnails）跳过。
-      filter: (name) => /^(ppt\/slides\/slide\d+\.xml|ppt\/slides\/_rels\/|ppt\/notesSlides\/|ppt\/media\/|ppt\/presentation\.xml|ppt\/_rels\/presentation\.xml\.rels)/.test(name),
+      // #1048/#1052: chart part（ppt/charts/chartN.xml）与 SmartArt 降级绘图
+      // （ppt/diagrams/drawingN.xml）随批次解析纳入。
+      filter: (name) => /^(ppt\/slides\/slide\d+\.xml|ppt\/slides\/_rels\/|ppt\/notesSlides\/|ppt\/media\/|ppt\/presentation\.xml|ppt\/_rels\/presentation\.xml\.rels|ppt\/charts\/chart\d+\.xml|ppt\/diagrams\/drawing\d+\.xml)/.test(name),
     })
     entriesMap = new Map(entries.map((e) => [e.name, e.data]))
   } catch (err) {
@@ -218,7 +422,51 @@ export function parsePptx(buffer: Buffer): PptxParseResult {
   for (let i = 0; i < Math.min(slideNames.length, MAX_SLIDES); i++) {
     const slideName = slideNames[i]
     const xml = entriesMap.get(slideName)?.toString('utf-8') || ''
-    const slide = parseSlideXml(xml, i + 1)
+    const relsXml = entriesMap.get(`ppt/slides/_rels/${slideName.split('/').pop()}.rels`)?.toString('utf-8') || ''
+    const parsedSlide = parseSlideXml(xml, i + 1)
+    const slide: PptxSlide = {
+      title: parsedSlide.title,
+      paragraphs: parsedSlide.paragraphs,
+      ...(parsedSlide.tables.length ? { tables: parsedSlide.tables } : {}),
+    }
+
+    // #1048: 图表 part（rels r:id → ppt/charts/chartN.xml）→ 结构化 chart 数据；
+    // 关系断链 → 原占位注记；不支持类型 → 降级占位并记录类型名（不中断导入）。
+    const charts: PptxChart[] = []
+    for (const rid of parsedSlide.chartRids) {
+      const chartPart = slidePartByRid(rid, relsXml, entriesMap)
+      if (!chartPart) {
+        slide.paragraphs.push('[本页含图表，未解析]')
+        continue
+      }
+      const chart = parseChartXml(chartPart.toString('utf-8'))
+      if (chart.spec) charts.push(chart)
+      else slide.paragraphs.push(`[本页含图表（类型：${chart.ooxmlType}），暂不支持结构化解析]`)
+    }
+    if (charts.length > 0) slide.charts = charts
+
+    // #1052: SmartArt → 降级绘图（dsp:drawing）形状文字列表（信息不丢）；
+    // 降级绘图缺失/不可读（极少数旧版工具产物）→ 明确占位提示，不静默。
+    // drawing part 经 slide rels 的 diagramDrawing 关系定位（dgm:relIds 的
+    // dm/lo/qs/cs 不指向 drawing）— 同页多个 SmartArt 按 rels 出现序消费。
+    const drawingTargets = diagramDrawingTargets(relsXml)
+    for (let f = 0; f < parsedSlide.smartArtXmls.length; f++) {
+      const drawingXml = drawingTargets[f] ? entriesMap.get(drawingTargets[f])?.toString('utf-8') : undefined
+      const texts = drawingXml ? parseSmartArtDrawingXml(drawingXml) : []
+      if (texts.length > 0) {
+        slide.paragraphs.push('[SmartArt 已降级为文字列表，原图形排布未保留]')
+        let budget = 10000
+        for (const t of texts) {
+          if (budget <= 0) break
+          const piece = t.slice(0, budget)
+          budget -= piece.length
+          slide.paragraphs.push(piece)
+        }
+      } else {
+        slide.paragraphs.push('[本页含 SmartArt，未解析：降级绘图缺失或不可读]')
+      }
+    }
+
     // speaker notes（notesSlideN.xml，可选）— 页号与 slide 序号对齐。
     const notesXml = entriesMap.get(`ppt/notesSlides/notesSlide${i + 1}.xml`)?.toString('utf-8')
     if (notesXml) {
@@ -226,7 +474,6 @@ export function parsePptx(buffer: Buffer): PptxParseResult {
       if (notes) slide.notes = notes
     }
     // 该页引用的图片（按 rels → media 落位，页号 = 页码，供 markdown 分页嵌图）。
-    const relsXml = entriesMap.get(`ppt/slides/_rels/${slideName.split('/').pop()}.rels`)?.toString('utf-8') || ''
     for (const mediaName of mediaFromSlideRels(relsXml)) {
       const data = mediaEntries.get(mediaName)
       if (!data || images.length >= MAX_MEDIA_FILES) continue
@@ -262,11 +509,31 @@ export function pptxSlidesToDeck(slides: PptxSlide[], images: ExtractedPdfImage[
     for (const p of s.paragraphs.slice(0, 50)) {
       content.push({ type: 'paragraph', text: p.slice(0, 2000), style: 'bullet' })
     }
+    // #1047: 表格 → type:'table' 块（行列数据 JSON 字符串，contracts tableBlockSchema
+    // 形状）；合并单元格降级为重复文本时 caption 注明（不静默）。
+    for (const t of (s.tables || []).slice(0, 5)) {
+      content.push({
+        type: 'table',
+        data: JSON.stringify({ rows: t.rows }),
+        ...(t.mergedDegraded ? { caption: '（含合并单元格：已按重复文本降级）' } : {}),
+      })
+    }
+    // #1048: 图表 → type:'chart' 块（spec 对齐 contracts chartBlockSchema，复用
+    // insert_chart 的确定性渲染管道；导出边界转图片/原生图表，worker 零改动）。
+    for (const c of (s.charts || []).slice(0, 5)) {
+      if (c.spec) content.push({ type: 'chart', spec: c.spec, ...(c.caption ? { caption: c.caption } : {}) })
+    }
     for (const img of (byPage.get(i + 1) || []).slice(0, 3)) {
       content.push({ type: 'image', ref: `pptx-media-${i + 1}-${content.length}`, data: img.dataBase64, caption: `图 ${i + 1}` })
     }
     if (content.length === 0) content.push({ type: 'paragraph', text: '（本页待补充）', style: 'normal' })
-    return { title: s.title.slice(0, 500), content }
+    // #1046: speaker notes 映射到 DeckWire.slides[].notes（此前在此步被丢弃 —
+    // PptxSlide.notes 提取后没有任何消费方）。导出侧 worker slide.addNotes 写回。
+    return {
+      title: s.title.slice(0, 500),
+      ...(s.notes ? { notes: s.notes } : {}),
+      content: content.slice(0, 50), // 契约上限（presentationSlideSchema content max 50）
+    }
   })
   return { schemaVersion, title: (title || 'Presentation').slice(0, 500), slides: deckSlides }
 }

@@ -109,7 +109,38 @@ export const figureBlockSchema = z.object({
 
 export type FigureBlock = z.infer<typeof figureBlockSchema>
 
-export const contentBlockSchema = z.union([paragraphBlockSchema, imageBlockSchema, chartBlockSchema, figureBlockSchema])
+/**
+ * #1047: deck 表格 block — 行列数据放 data（JSON 字符串，与 DeckWire 宽松
+ * wire 形状的 data?: string 对齐）：`{ rows: string[][], header?: boolean }`。
+ * 导入侧（pptx <a:tbl>）与 AI 侧共用；合并单元格在导入时降级为重复文本。
+ */
+export const tableBlockSchema = z.object({
+  type: z.literal('table'),
+  data: z
+    .string()
+    .max(256 * 1024)
+    .refine((s) => {
+      try {
+        const v = JSON.parse(s) as unknown
+        if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+        const rows = (v as { rows?: unknown }).rows
+        if (!Array.isArray(rows) || rows.length === 0 || rows.length > 200) return false
+        return rows.every(
+          (row) =>
+            Array.isArray(row) &&
+            row.length <= 30 &&
+            row.every((cell) => typeof cell === 'string' && cell.length <= 2000),
+        )
+      } catch {
+        return false
+      }
+    }, { message: 'table data must be JSON "{rows: string[][], header?: boolean}" (rows 1..200, ≤30 cols, cell ≤2000 chars)' }),
+  caption: z.string().max(500).optional(),
+})
+
+export type TableBlock = z.infer<typeof tableBlockSchema>
+
+export const contentBlockSchema = z.union([paragraphBlockSchema, imageBlockSchema, chartBlockSchema, figureBlockSchema, tableBlockSchema])
 
 export type ContentBlock = z.infer<typeof contentBlockSchema>
 
@@ -137,6 +168,8 @@ export const presentationSlideSchema = z.object({
   title: z.string().min(1).max(500),
   /** #957: 布局母版(v2,optional);缺省 bullets。 */
   layout: slideLayoutSchema.optional(),
+  /** #1046: speaker notes(可选)— 提取上限 2000 字符(pptx-extractor parseNotesXml),导出写回 notesSlideN.xml。 */
+  notes: z.string().max(5000).optional(),
   content: z.array(contentBlockSchema).min(1).max(50),
 })
 

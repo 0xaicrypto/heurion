@@ -161,6 +161,8 @@ export interface DeckWire {
     title: string
     /** #957: 布局母版（v2,optional）— 缺省 bullets。 */
     layout?: string
+    /** #1046: speaker notes（可选）— pptx 导入提取（notesSlideN.xml）、导出写回（worker slide.addNotes）。 */
+    notes?: string
     content: Array<{ type: string; text?: string; style?: string; url?: string; caption?: string; data?: string; ref?: string; spec?: unknown; source?: string; kind?: string; display?: boolean }>
   }>
 }
@@ -189,6 +191,8 @@ export const deckWireSchema = z.object({
     title: z.string(),
     /** #957: slide 布局（v2,optional）。 */
     layout: z.string().optional(),
+    /** #1046: speaker notes（可选）— 宽松 wire 校验，长度上限在导出边界。 */
+    notes: z.string().optional(),
     content: z.array(deckSlideContentSchema),
   })),
 })
