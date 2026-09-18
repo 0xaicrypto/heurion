@@ -124,6 +124,7 @@ model Doc {
   references DocReference[]
   chatMsgs   DocChatMessage[]
   sectionMeta DocSectionMeta[]
+  comments   DocComment[]
   @@index([userId, updatedAt(sort: Desc)])
   @@index([studyId])
   @@map("docs")
@@ -295,6 +296,53 @@ model DocChatMessage {
   doc Doc @relation(fields: [docId], references: [id], onDelete: Cascade)
   @@index([userId, docId, createdAt])
   @@map("doc_chat_messages")
+}
+
+// #1039: 评论线程旁路表 — 评论锚点不能塞进正文（正文每次加载/写回都做
+// markdown↔html 转换，任何自定义 mark 会被 round-trip 吃掉），做成 sidecar
+// 数据，参照 DocSectionMeta / DocSnapshot 的旁路先例。anchorText 存被评论的
+// 原文片段，正文漂移时由列表接口跑 anchor-diagnostics 模糊重定位（与
+// edit_document 同一套容错，不重复造轮子）。
+model DocComment {
+  id        String  @id @default(cuid())
+  docId     String  @map("doc_id")
+  sectionId String  @map("section_id")
+  // #1051: 锚点目标判别 — 'section'（正文节，默认，存量数据兼容）|
+  // 'deck_slide'（deck 幻灯片页，section_id 为空串，slideIndex 必填）
+  target    String  @default("section")
+  // #1051: deck_slide 锚点 — slideIndex 1-based（与 edit_deck 的 slide_index
+  // 同口径）；blockIndex 可空（0-based 内容块序，整页评论为 null）
+  slideIndex Int?   @map("slide_index")
+  blockIndex Int?   @map("block_index")
+  // 被评论的原文片段（模糊重定位锚点 — 正文编辑后允许漂移）
+  anchorText String @map("anchor_text")
+  status    String  @default("open") // 'open' | 'resolved'
+  // 创建者 userId（归属校验以 Doc.userId 为准 — 跟随现有 doc 路由口径）
+  createdBy String  @map("created_by")
+  createdAt String  @map("created_at")
+  // status=open 为 null；resolved 写入切换时刻，reopen 置回 null
+  resolvedAt String? @map("resolved_at")
+
+  doc     Doc               @relation(fields: [docId], references: [id], onDelete: Cascade)
+  replies DocCommentReply[]
+
+  @@index([docId, status])
+  @@index([docId, sectionId])
+  @@map("doc_comments")
+}
+
+// #1039: 评论回复 — 结构比照 DocChatMessage，但挂在 comment 而不是 doc 上；
+// role 区分 user/ai，按 createdAt 时间序追加成线程。
+model DocCommentReply {
+  id        String @id @default(cuid())
+  commentId String @map("comment_id")
+  role      String // 'user' | 'ai'
+  text      String
+  createdAt String @map("created_at")
+
+  comment DocComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  @@index([commentId, createdAt])
+  @@map("doc_comment_replies")
 }
 
 model ChatTakeaway {

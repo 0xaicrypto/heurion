@@ -1,0 +1,283 @@
+/**
+ * #1039 — 评论（Comment）数据模型与 CRUD API。
+ *
+ * 路由面（均挂在 doc 归属校验之下 — 跟随现有 doc 相关路由的 404 语义，
+ * 不暴露 403 区分「不存在/无权」，避免枚举他人文档）：
+ *   POST   /api/v1/docs/:docId/comments               创建评论（含首条内容）
+ *   GET    /api/v1/docs/:docId/comments               列表（含 replies；section_id/status 过滤；
+ *                                                      open 评论附带锚点定位诊断）
+ *   POST   /api/v1/docs/:docId/comments/:commentId/replies   追加回复（role: user|ai）
+ *   PATCH  /api/v1/docs/:docId/comments/:commentId    切换 status（open/resolved）
+ *
+ * 数据模型为 sidecar 旁路表（DocComment/DocCommentReply，见 schema.prisma）：
+ * 评论锚点绝不塞进正文 — markdown↔html round-trip 会吃掉自定义 mark。
+ * anchorText 漂移诊断复用 edit_document 同一套容错（anchor-diagnostics +
+ * document-span-match），保证评论重定位与 AI 编辑重定位行为一致。
+ */
+import type { FastifyInstance } from 'fastify'
+import { z } from 'zod'
+import type { DocComment, DocCommentReply } from '@prisma/client'
+import { authGuard } from '../../common/auth.guard.js'
+import prisma from '../../common/prisma.js'
+import { makeLogger } from '../../common/logger.js'
+// #1039: 锚点漂移候选建议 — 与 edit_document 共用同一实现（只复用不改）。
+import { closestTextCandidates, type AnchorCandidate } from '../../tools/anchor-diagnostics.js'
+// #1039: 「当前正文里还能不能定位到」的判定 — 与 edit_document 的两级
+// 归一化匹配 + 模糊兜底同口径（空白/markdown 标记差异不算漂移）。
+import { findNormalizedSpan, findFuzzySpan } from '../../lib/document-span-match.js'
+
+const log = makeLogger('comments.router')
+
+// ── 校验（zod，跟随 approvals.router 的 safeParse + 400 模式）──
+
+// #1051: 锚点目标 — 可判别联合。'section'（正文节，默认/存量兼容）需要
+// section_id；'deck_slide'（deck 幻灯片页）需要 slide_index（1-based，与
+// edit_deck 的 slide_index 同口径），section_id 可空，block_index 可选（0-based）。
+const createCommentSchema = z
+  .object({
+    section_id: z.string().min(1).optional(),
+    anchor_text: z.string().min(1),
+    // 首条评论内容 — 作为线程第一条 user 回复落库
+    text: z.string().min(1),
+    target: z.enum(['section', 'deck_slide']).default('section'),
+    slide_index: z.number().int().min(1).optional(),
+    block_index: z.number().int().min(0).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.target === 'section' && !v.section_id) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['section_id'], message: 'section_id is required for section comments' })
+    }
+    if (v.target === 'deck_slide' && (v.slide_index === undefined || v.slide_index < 1)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['slide_index'], message: 'slide_index is required for deck_slide comments' })
+    }
+  })
+
+const createReplySchema = z.object({
+  role: z.enum(['user', 'ai']).default('user'),
+  text: z.string().min(1),
+})
+
+const patchCommentSchema = z.object({
+  status: z.enum(['open', 'resolved']),
+})
+
+const listQuerySchema = z.object({
+  section_id: z.string().optional(),
+  status: z.enum(['open', 'resolved']).optional(),
+})
+
+// #923 类型收口:路由参数显式类型(替代 request.params as any)。
+interface DocParams { docId: string }
+interface CommentParams extends DocParams { commentId: string }
+
+/** 锚点定位诊断 — located=false 时附最接近候选（模型/前端一次修正用）。 */
+interface AnchorDiagnosis {
+  located: boolean
+  candidates?: AnchorCandidate[]
+}
+
+interface SerializedReply { id: string; role: string; text: string; created_at: string }
+
+interface SerializedComment {
+  id: string
+  doc_id: string
+  section_id: string | null
+  // #1051: 锚点目标判别字段（'section' | 'deck_slide'）
+  target: string
+  slide_index: number | null
+  block_index: number | null
+  anchor_text: string
+  status: string
+  created_by: string
+  created_at: string
+  resolved_at: string | null
+  replies: SerializedReply[]
+  anchor?: AnchorDiagnosis
+}
+
+function serializeReply(r: DocCommentReply): SerializedReply {
+  return { id: r.id, role: r.role, text: r.text, created_at: r.createdAt }
+}
+
+function serializeComment(c: DocComment & { replies: DocCommentReply[] }): SerializedComment {
+  return {
+    id: c.id,
+    doc_id: c.docId,
+    section_id: c.sectionId || null,
+    target: c.target,
+    slide_index: c.slideIndex,
+    block_index: c.blockIndex,
+    anchor_text: c.anchorText,
+    status: c.status,
+    created_by: c.createdBy,
+    created_at: c.createdAt,
+    resolved_at: c.resolvedAt,
+    replies: c.replies.map(serializeReply),
+  }
+}
+
+/**
+ * #1039: 锚点定位诊断 — 判定与 edit_document 完全同口径：
+ * 归一化（空白塌缩/markdown 标记剥离/忽略大小写）精确匹配 + 模糊兜底。
+ * 定位不到才算漂移，此时给最接近的候选片段（bigram Dice 相似度排序），
+ * 不是裸的「找不到」。
+ */
+function diagnoseAnchor(anchorText: string, body: string): AnchorDiagnosis {
+  const found = findNormalizedSpan(body, anchorText) ?? findFuzzySpan(body, anchorText)
+  if (found) return { located: true }
+  return { located: false, candidates: closestTextCandidates(body, anchorText, { limit: 3 }) }
+}
+
+/**
+ * #1051: deck slide 文本拼接 — 标题 + content 块内所有文本行（block 顺序），
+ * 作为 deck 评论锚点诊断的宿主文本。定位/候选逻辑与正文共用同一套
+ * （findNormalizedSpan / findFuzzySpan / closestTextCandidates），不为 deck 换口径。
+ */
+function deckSlideText(deckRaw: string | null | undefined, slideIndex: number | null | undefined): string | null {
+  if (!deckRaw || !slideIndex || slideIndex < 1) return null
+  try {
+    const deck = JSON.parse(deckRaw) as { slides?: unknown }
+    if (!Array.isArray(deck.slides)) return null
+    const slide = deck.slides[slideIndex - 1] as { title?: unknown; content?: unknown } | undefined
+    if (!slide || typeof slide !== 'object') return null
+    const parts: string[] = []
+    if (typeof slide.title === 'string' && slide.title.trim()) parts.push(slide.title)
+    if (Array.isArray(slide.content)) {
+      for (const b of slide.content) {
+        if (b && typeof b === 'object' && typeof (b as { text?: unknown }).text === 'string') {
+          parts.push((b as { text: string }).text)
+        }
+      }
+    }
+    return parts.length > 0 ? parts.join('\n') : null
+  } catch {
+    return null
+  }
+}
+
+/** #1051: deck_slide 锚点诊断 — slide 缺失/越界/损坏 → located=false（不崩溃）。 */
+function diagnoseDeckAnchor(anchorText: string, deckRaw: string | null | undefined, slideIndex: number | null | undefined): AnchorDiagnosis {
+  const slideText = deckSlideText(deckRaw, slideIndex)
+  if (slideText === null) return { located: false }
+  return diagnoseAnchor(anchorText, slideText)
+}
+
+export async function commentsRouter(app: FastifyInstance): Promise<void> {
+  app.addHook('preHandler', authGuard)
+
+  // ── 创建评论（含首条评论内容 → 线程第一条 user 回复）──
+  app.post<{ Params: DocParams; Body: unknown }>('/api/v1/docs/:docId/comments', async (request, reply) => {
+    const userId = request.user!.userId
+    // 归属校验 — 与 GET/PUT /docs/:docId 同口径（不属于调用者一律 404）
+    const doc = await prisma.doc.findFirst({ where: { id: request.params.docId, userId } })
+    if (!doc) return reply.status(404).send({ error: 'Document not found' })
+    const parsed = createCommentSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Validation failed', details: parsed.error.format() })
+    }
+    const { section_id, anchor_text, text, target, slide_index, block_index } = parsed.data
+    const now = new Date().toISOString()
+    const comment = await prisma.docComment.create({
+      data: {
+        docId: doc.id,
+        // #1051: deck_slide 评论 sectionId 落空串（判别字段是 target）
+        sectionId: section_id ?? '',
+        anchorText: anchor_text,
+        target,
+        ...(target === 'deck_slide' ? { slideIndex: slide_index, ...(block_index !== undefined ? { blockIndex: block_index } : {}) } : {}),
+        status: 'open',
+        createdBy: userId,
+        createdAt: now,
+        replies: { create: { role: 'user', text, createdAt: now } },
+      },
+      include: { replies: true },
+    })
+    return reply.status(201).send(serializeComment(comment))
+  })
+
+  // ── 评论列表（含 replies；section_id/status 过滤；open 评论附锚点诊断）──
+  app.get<{ Params: DocParams; Querystring: unknown }>('/api/v1/docs/:docId/comments', async (request, reply) => {
+    const userId = request.user!.userId
+    const doc = await prisma.doc.findFirst({
+      where: { id: request.params.docId, userId },
+      // #1051: deck 评论锚点诊断需要 Doc.deck
+      select: { id: true, body: true, deck: true },
+    })
+    if (!doc) return reply.status(404).send({ error: 'Document not found' })
+    const query = listQuerySchema.safeParse(request.query)
+    if (!query.success) {
+      return reply.status(400).send({ error: 'Validation failed', details: query.error.format() })
+    }
+    const comments = await prisma.docComment.findMany({
+      where: {
+        docId: doc.id,
+        ...(query.data.section_id ? { sectionId: query.data.section_id } : {}),
+        ...(query.data.status ? { status: query.data.status } : {}),
+      },
+      // 线程时间序 — id 副键稳定同毫秒创建的次序（cuid 同毫秒单调）
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      include: { replies: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
+    })
+    const body = String(doc.body || '')
+    return {
+      comments: comments.map((c) => {
+        const out = serializeComment(c)
+        // #1039: 只对 open 评论跑定位诊断 — resolved 线程已完结，不再重定位。
+        // #1051: deck_slide 评论对 Doc.deck 里对应 slide 的文本诊断（同一套容错）。
+        if (c.status === 'open') {
+          out.anchor = c.target === 'deck_slide'
+            ? diagnoseDeckAnchor(c.anchorText, doc.deck, c.slideIndex)
+            : diagnoseAnchor(c.anchorText, body)
+        }
+        return out
+      }),
+    }
+  })
+
+  // ── 追加回复（role 区分 user/ai，按时间序追加进线程）──
+  app.post<{ Params: CommentParams; Body: unknown }>('/api/v1/docs/:docId/comments/:commentId/replies', async (request, reply) => {
+    const userId = request.user!.userId
+    const doc = await prisma.doc.findFirst({ where: { id: request.params.docId, userId } })
+    if (!doc) return reply.status(404).send({ error: 'Document not found' })
+    // 双重过滤（id + docId）— 防跨文档枚举评论 id，与快照端点同纪律
+    const comment = await prisma.docComment.findFirst({ where: { id: request.params.commentId, docId: doc.id } })
+    if (!comment) return reply.status(404).send({ error: 'Comment not found' })
+    const parsed = createReplySchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Validation failed', details: parsed.error.format() })
+    }
+    const replyRow = await prisma.docCommentReply.create({
+      data: {
+        commentId: comment.id,
+        role: parsed.data.role,
+        text: parsed.data.text,
+        createdAt: new Date().toISOString(),
+      },
+    })
+    return reply.status(201).send(serializeReply(replyRow))
+  })
+
+  // ── 切换 status（resolved ↔ reopen；resolvedAt 随之写入/置空）──
+  app.patch<{ Params: CommentParams; Body: unknown }>('/api/v1/docs/:docId/comments/:commentId', async (request, reply) => {
+    const userId = request.user!.userId
+    const doc = await prisma.doc.findFirst({ where: { id: request.params.docId, userId } })
+    if (!doc) return reply.status(404).send({ error: 'Document not found' })
+    const comment = await prisma.docComment.findFirst({ where: { id: request.params.commentId, docId: doc.id } })
+    if (!comment) return reply.status(404).send({ error: 'Comment not found' })
+    const parsed = patchCommentSchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Validation failed', details: parsed.error.format() })
+    }
+    const updated = await prisma.docComment.update({
+      where: { id: comment.id },
+      data: {
+        status: parsed.data.status,
+        // #1039 用例 4：resolved 写入切换时刻，reopen 置回 null
+        resolvedAt: parsed.data.status === 'resolved' ? new Date().toISOString() : null,
+      },
+      include: { replies: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
+    })
+    log.info(`[comments] status=${parsed.data.status} id=${comment.id} docId=${doc.id}`)
+    return serializeComment(updated)
+  })
+}
