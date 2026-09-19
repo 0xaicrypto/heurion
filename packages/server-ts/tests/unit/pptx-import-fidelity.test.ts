@@ -136,6 +136,80 @@ describe('#1047 表格（<a:tbl>）解析', () => {
   })
 })
 
+describe('#1067 表格 gridSpan + hMerge 标准组合（双重计数列修复）', () => {
+  test('标准组合：gridSpan=2 锚点 + 1 个 hMerge 占位 → 行列数与其他行一致、内容对齐', () => {
+    // 真实 PowerPoint 合并单元格标准写法：锚点 gridSpan="N" + N-1 个 hMerge="1" 占位格。
+    // 旧实现：锚点展开 2 列后，hMerge 占位又被当作新列 push → 该行 4 列（其他行 3 列）全表错位。
+    const built = buildPptxFixture([
+      {
+        title: '标准合并',
+        table: {
+          rows: [
+            [{ text: '组别' }, { text: '中位 PFS（月）' }, { text: '中位 OS（月）' }],
+            [{ text: '实验组', gridSpan: 2 }, { text: '', hMerge: true }, { text: '5.2' }],
+            [{ text: '对照组', gridSpan: 2 }, { text: '', hMerge: true }, { text: '3.1' }],
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    const rows = parsed.slides[0].tables?.[0]?.rows ?? []
+    expect(rows).toEqual([
+      ['组别', '中位 PFS（月）', '中位 OS（月）'],
+      ['实验组', '实验组', '5.2'],
+      ['对照组', '对照组', '3.1'],
+    ])
+    // 合并单元格降级标记不回退（锚点 gridSpan 仍标记 mergedDegraded → caption 可见）
+    expect(parsed.slides[0].tables?.[0]?.mergedDegraded).toBe(true)
+  })
+
+  test('畸形回退：锚点未声明 gridSpan 的 hMerge 续格 → 保持复制左格行为', () => {
+    // HTML 风格畸形产物：hMerge 续格前没有 gridSpan 锚点 — 回退「复制左格」，
+    // 行列数不丢（旧行为保持，#1067 不改变该路径）。
+    const built = buildPptxFixture([
+      {
+        title: '畸形续格',
+        table: {
+          rows: [
+            [{ text: 'A' }, { text: 'B' }, { text: 'C' }],
+            [{ text: '左格' }, { text: '', hMerge: true }, { text: '右格' }],
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    const rows = parsed.slides[0].tables?.[0]?.rows ?? []
+    expect(rows[0]).toHaveLength(3)
+    expect(rows[1]).toEqual(['左格', '左格', '右格'])
+  })
+
+  test('多行混合合并（回归）：标准组合与 rowSpan/vMerge 混用，#1062-7 既有行为不回退', () => {
+    const built = buildPptxFixture([
+      {
+        title: '混合合并',
+        table: {
+          rows: [
+            [{ text: '区域', gridSpan: 2 }, { text: '', hMerge: true }, { text: '合计' }],
+            [{ text: 'PFS', rowSpan: 2 }, { text: '5.2' }, { text: '3.1' }],
+            [{ text: '40%' }, { text: '25%' }],
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    const rows = parsed.slides[0].tables?.[0]?.rows ?? []
+    // 三行均为 3 逻辑列：标准组合行不再多计 N-1，rowSpan 携带行照旧
+    expect(rows).toEqual([
+      ['区域', '区域', '合计'],
+      ['PFS', '5.2', '3.1'],
+      ['PFS', '40%', '25%'],
+    ])
+    expect(parsed.slides[0].tables?.[0]?.mergedDegraded).toBe(true)
+  })
+})
+
 describe('#1048 图表（chartN.xml）解析 → 既有 chartBlockSchema', () => {
   test('柱状图 → chart 块通过 chartBlockSchema，系列/类别数据一致', () => {
     const built = buildPptxFixture([

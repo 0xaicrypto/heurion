@@ -148,6 +148,10 @@ function parseTableFrame(frameXml: string): PptxTable | null {
     const fills = pending.get(ri)
     const row: string[] = []
     let ci = 0
+    // #1067: 锚点剩余覆盖数 — 真实 PowerPoint 合并单元格的标准写法是「锚点
+    // gridSpan="N" + N-1 个 hMerge="1" 占位格」同时出现：锚点自身占 1 个列槽、
+    // 还覆盖后续 N-1 个槽。每个非续格处理完后重置为 span-1。
+    let anchorCover = 0
     const fillCarried = () => {
       while (fills?.has(ci)) {
         row.push(fills.get(ci)!)
@@ -158,10 +162,23 @@ function parseTableFrame(frameXml: string): PptxTable | null {
       fillCarried()
       const span = parseInt(/gridSpan="(\d+)"/.exec(cell.attrs)?.[1] || '', 10) || 1
       const vSpan = parseInt(/rowSpan="(\d+)"/.exec(cell.attrs)?.[1] || '', 10) || 1
+      const isHMerge = /hMerge="1"/.test(cell.attrs)
+      const isVMerge = /vMerge="1"/.test(cell.attrs)
+      // #1067: hMerge 占位格的列槽已被前一锚点的 gridSpan 覆盖 → 跳过 push、
+      // 仅 ci += 1（列槽已被锚点填过；旧实现把占位格又当新列 push，行宽多计
+      // N-1 → 全表内容错位）。锚点未声明 gridSpan 的畸形续格（HTML 风格产物）
+      // anchorCover 已耗尽 → 落到下方「复制左格」回退路径，旧行为保持。
+      if (isHMerge && anchorCover > 0) {
+        anchorCover -= 1
+        ci += 1
+        degraded = true
+        if (ci > 30) truncated = true
+        continue
+      }
       let text = cell.text
-      if (/hMerge="1"/.test(cell.attrs)) text = row[ci - 1] ?? text
-      if (/vMerge="1"/.test(cell.attrs)) text = grid[ri - 1]?.[ci] ?? text
-      if (span > 1 || vSpan > 1 || /hMerge="1"|vMerge="1"/.test(cell.attrs)) degraded = true
+      if (isHMerge) text = row[ci - 1] ?? text
+      if (isVMerge) text = grid[ri - 1]?.[ci] ?? text
+      if (span > 1 || vSpan > 1 || isHMerge || isVMerge) degraded = true
       for (let k = 0; k < Math.min(span, 30 - ci); k += 1) row.push(text)
       if (vSpan > 1) {
         for (let r2 = 1; r2 < Math.min(vSpan, 200 - ri); r2 += 1) {
@@ -171,6 +188,8 @@ function parseTableFrame(frameXml: string): PptxTable | null {
         }
       }
       ci += span
+      // #1067: 锚点展开后剩余覆盖 = span - 1（紧随的 hMerge 占位格各消费 1 槽）
+      anchorCover = span - 1
       // #1062-7: 逻辑网格越过 30 列（截断发生）标记
       if (ci > 30) truncated = true
     }
