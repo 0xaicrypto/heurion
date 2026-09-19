@@ -94,7 +94,8 @@ describe('#1039 comments API', () => {
     const driftedId = JSON.parse(drifted.payload).id
     const intactId = JSON.parse(intact.payload).id
 
-    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers: h })).payload)
+    // #1064: 锚点诊断改懒计算 — 显式 ?with_anchor=1 才跑定位诊断
+    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?with_anchor=1`, headers: h })).payload)
     const byId = new Map<string, any>(list.comments.map((c: any) => [c.id, c]))
     // 漂移评论：located=false + 候选建议（复用 anchor-diagnostics）
     const d = byId.get(driftedId)
@@ -111,7 +112,7 @@ describe('#1039 comments API', () => {
     expect(i.anchor.candidates).toBeUndefined()
   })
 
-  /** 用例 3：追加回复 → 线程按时间序追加，role 区分 user/ai。 */
+  /** 用例 3：追加回复 → 线程按时间序追加（#1064: role 'ai' 只能走服务端内部函数）。 */
   test('追加回复按时间顺序排列，role 区分 user/ai', async () => {
     const app = await getApp()
     const docId = await createDoc('# Intro\n\n正文。\n')
@@ -131,13 +132,17 @@ describe('#1039 comments API', () => {
     })
     expect(r1.statusCode).toBe(201)
     await sleep(20) // 保证 createdAt 时间序可判
+    // #1064: role:'ai' 不可由客户端自封 — HTTP 路径拒绝（400），
+    // AI 回复改由服务端内部函数写入（#1041 服务端收口后续接入）。
     const r2 = await app.inject({
       method: 'POST',
       url: `/api/v1/docs/${docId}/comments/${commentId}/replies`,
       headers: h,
       payload: JSON.stringify({ role: 'ai', text: 'AI 已按要求修改该节' }),
     })
-    expect(r2.statusCode).toBe(201)
+    expect(r2.statusCode).toBe(400)
+    const { appendCommentReplyInternal } = await import('../src/modules/comments/comments.router.js')
+    await appendCommentReplyInternal({ commentId, role: 'ai', text: 'AI 已按要求修改该节' })
     // role 非法值 → 400（zod 枚举）
     const badRole = await app.inject({
       method: 'POST',
@@ -376,7 +381,8 @@ describe('#1051 deck slide 锚点（comments API）', () => {
       return row.id
     })()
 
-    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers: h })).payload)
+    // #1064: 锚点诊断改懒计算 — 显式 ?with_anchor=1 才跑定位诊断
+    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?with_anchor=1`, headers: h })).payload)
     const byId = new Map<string, any>(list.comments.map((c: any) => [c.id, c]))
     // 完好锚点：slide 文本内精确定位
     expect(byId.get(intact).anchor.located).toBe(true)
@@ -411,5 +417,323 @@ describe('#1051 deck slide 锚点（comments API）', () => {
     const deckOne = list.comments.find((c: any) => c.target === 'deck_slide')
     expect(deckOne.slide_index).toBe(3)
     expect(deckOne.block_index).toBe(0)
+  })
+})
+
+/**
+ * #1064 — Comments API 健壮性批次（TDD）：
+ *   1. 逐字段长度上限（anchor_text 2000 / text 10000，超限 400）
+ *   2. GET 列表分页（limit 默认 50 上限 200 + offset）+ 锚点诊断懒计算（?with_anchor=1）
+ *      + deck JSON 单次解析复用
+ *   3. deckSlideText 纳入 table 块文本（表格锚点不再必然误报）
+ *   4. role:'ai' 不可由客户端自封（HTTP 拒绝，仅服务端内部路径可写）
+ *   5. 校验错误信封统一为仓库主流 { error: parsed.error.format() }
+ */
+describe('#1064 comments API 健壮性批次', () => {
+  afterAll(async () => {
+    const prisma = await getPrisma()
+    for (const id of createdDocIds) {
+      await prisma.doc.deleteMany({ where: { id } }).catch(() => {})
+    }
+  })
+
+  const h = async () => ({ ...(await authHeader()), 'content-type': 'application/json' })
+
+  // ── 项 1：逐字段长度上限 ────────────────────────────────────────────
+  test('anchor_text/text 超上限返回 400，边界值可用', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# Intro\n\n正文。\n')
+    const headers = await h()
+    const post = async (payload: Record<string, unknown>) =>
+      app.inject({ method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers, payload: JSON.stringify(payload) })
+
+    // 边界值可用：anchor_text 2000 / text 10000 → 201
+    const edge = await post({ section_id: 's1', anchor_text: '正'.repeat(2000), text: '评'.repeat(10000) })
+    expect(edge.statusCode).toBe(201)
+    // 超限 → 400：anchor_text 2001 / text 10001
+    const longAnchor = await post({ section_id: 's1', anchor_text: 'x'.repeat(2001), text: 'ok' })
+    expect(longAnchor.statusCode).toBe(400)
+    const longText = await post({ section_id: 's1', anchor_text: '正文。', text: 'x'.repeat(10001) })
+    expect(longText.statusCode).toBe(400)
+    // 回复同样受 cap：text 10001 → 400（10000 → 201）
+    const commentId = JSON.parse(edge.payload).id
+    const longReply = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/replies`, headers,
+      payload: JSON.stringify({ text: 'x'.repeat(10001) }),
+    })
+    expect(longReply.statusCode).toBe(400)
+    const edgeReply = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/replies`, headers,
+      payload: JSON.stringify({ text: 'x'.repeat(10000) }),
+    })
+    expect(edgeReply.statusCode).toBe(201)
+  })
+
+  // ── 项 2：列表分页 + 锚点诊断懒计算 ─────────────────────────────────
+  test('列表分页语义：limit 默认 50 上限 200，offset 翻页，has_more 正确', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# Intro\n\n正文。\n')
+    const headers = await h()
+    // 直接落库 51 条评论（createdAt 逐条递增保证确定性次序）
+    const prisma = await getPrisma()
+    const userId = await getAuthUserId()
+    const base = Date.now()
+    const ids: string[] = []
+    for (let i = 0; i < 51; i++) {
+      const id = `doccmtpage_${base}_${i}`
+      await prisma.docComment.create({
+        data: { docId, sectionId: 's1', anchorText: '正文。', status: 'open', createdBy: userId, createdAt: new Date(base + i).toISOString(), id },
+      })
+      ids.push(id)
+    }
+    // 默认 limit=50：返回前 50 条 + has_more=true
+    const page1 = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers })).payload)
+    expect(page1.limit).toBe(50)
+    expect(page1.comments).toHaveLength(50)
+    expect(page1.comments.map((c: any) => c.id)).toEqual(ids.slice(0, 50))
+    expect(page1.has_more).toBe(true)
+    // offset 翻页：offset=50 → 剩下 1 条，has_more=false
+    const page2 = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?offset=50`, headers })).payload)
+    expect(page2.comments.map((c: any) => c.id)).toEqual([ids[50]])
+    expect(page2.has_more).toBe(false)
+    // 中间窗口：limit=2&offset=2
+    const window = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?limit=2&offset=2`, headers })).payload)
+    expect(window.limit).toBe(2)
+    expect(window.offset).toBe(2)
+    expect(window.comments.map((c: any) => c.id)).toEqual([ids[2], ids[3]])
+    expect(window.has_more).toBe(true)
+    // 上限约束：limit=201 → 400；limit=200 → 200；非整数/非法 → 400
+    const over = await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?limit=201`, headers })
+    expect(over.statusCode).toBe(400)
+    const cap = await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?limit=200`, headers })
+    expect(cap.statusCode).toBe(200)
+    const zero = await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?limit=0`, headers })
+    expect(zero.statusCode).toBe(400)
+    const notInt = await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?limit=1.5`, headers })
+    expect(notInt.statusCode).toBe(400)
+  }, 20000)
+
+  test('锚点诊断懒计算：默认列表不算 anchor，?with_anchor=1 才算', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# Intro\n\n这是被评论的正文段落。\n')
+    const headers = await h()
+    const created = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers,
+      payload: JSON.stringify({ section_id: 'sec_intro', anchor_text: '这是被评论的正文段落。', text: '首条' }),
+    })
+    expect(created.statusCode).toBe(201)
+    // 默认：不跑诊断 — open 评论也无 anchor 字段
+    const plain = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers })).payload)
+    expect(plain.comments).toHaveLength(1)
+    expect(plain.comments[0].anchor).toBeUndefined()
+    // 显式 with_anchor=1：诊断在场
+    const withAnchor = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?with_anchor=1`, headers })).payload)
+    expect(withAnchor.comments[0].anchor).toBeTruthy()
+    expect(withAnchor.comments[0].anchor.located).toBe(true)
+  })
+
+  // ── 项 3：deckSlideText 纳入 table 块文本 ───────────────────────────
+  test('表格块文本进入宿主文本：表格锚点 located=true（不再必然误报）', async () => {
+    const app = await getApp()
+    const deck = JSON.stringify({
+      title: '表格 deck',
+      slides: [
+        {
+          title: '数据页',
+          content: [
+            { type: 'paragraph', text: '普通段落文本。', style: 'normal' },
+            { type: 'table', data: JSON.stringify({ rows: [['组别', '均值'], ['治疗组', '42.5'], ['对照组', '31.2']], header: true }) },
+          ],
+        },
+      ],
+    })
+    const prisma = await getPrisma()
+    const userId = await getAuthUserId()
+    const id = `doc_cmttable_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const now = new Date().toISOString()
+    await prisma.doc.create({ data: { id, userId, title: 'Table anchor doc', body: '# Intro\n\n正文。\n', deck, createdAt: now, updatedAt: now } })
+    createdDocIds.push(id)
+    const headers = await h()
+    const mk = async (anchor: string) => {
+      const res = await app.inject({
+        method: 'POST', url: `/api/v1/docs/${id}/comments`, headers,
+        payload: JSON.stringify({ target: 'deck_slide', slide_index: 1, anchor_text: anchor, text: '意见' }),
+      })
+      return JSON.parse(res.payload).id as string
+    }
+    // 锚点指向表格单元格 — 修复前必然 located=false
+    const cell = await mk('对照组')
+    const cell2 = await mk('42.5')
+    // 段落文本仍可定位（回归）
+    const para = await mk('普通段落文本。')
+
+    // 完好 deck：表格/段落锚点均可定位
+    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${id}/comments?with_anchor=1`, headers })).payload)
+    const byId = new Map<string, any>(list.comments.map((c: any) => [c.id, c]))
+    expect(byId.get(cell).anchor.located).toBe(true)
+    expect(byId.get(cell2).anchor.located).toBe(true)
+    expect(byId.get(para).anchor.located).toBe(true)
+
+    // 换上损坏 table data JSON 的 deck：table 块跳过（不崩溃），该 slide 已无宿主文本 → located=false
+    await prisma.doc.update({
+      where: { id },
+      data: { deck: JSON.stringify({ title: 'x', slides: [{ title: '数据页', content: [{ type: 'table', data: '{broken-json' }] }] }) },
+    })
+    const brokenAnchor = await mk('普通段落文本。')
+    const list2 = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${id}/comments?with_anchor=1`, headers })).payload)
+    const byId2 = new Map<string, any>(list2.comments.map((c: any) => [c.id, c]))
+    expect(byId2.get(brokenAnchor).anchor.located).toBe(false)
+  })
+
+  // ── 项 4：role:'ai' 不可由客户端自封 ────────────────────────────────
+  test('客户端自封 role:ai 被拒（400）；服务端内部函数可写 ai 回复', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# Intro\n\n正文。\n')
+    const headers = await h()
+    const created = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers,
+      payload: JSON.stringify({ section_id: 's1', anchor_text: '正文。', text: '首条' }),
+    })
+    const commentId = JSON.parse(created.payload).id
+    // 客户端自封 'ai' → 400
+    const selfAi = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/replies`, headers,
+      payload: JSON.stringify({ role: 'ai', text: '伪装 AI' }),
+    })
+    expect(selfAi.statusCode).toBe(400)
+    // 显式 'user' 与缺省（默认 user）均可用
+    const okUser = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/replies`, headers,
+      payload: JSON.stringify({ role: 'user', text: '显式 user' }),
+    })
+    expect(okUser.statusCode).toBe(201)
+    expect(JSON.parse(okUser.payload).role).toBe('user')
+    // 服务端内部路径：'ai' 仅内部函数可写
+    const { appendCommentReplyInternal } = await import('../src/modules/comments/comments.router.js')
+    const aiReply = await appendCommentReplyInternal({ commentId, role: 'ai', text: '内部 AI 回复' })
+    expect(aiReply.role).toBe('ai')
+    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers })).payload)
+    const thread = list.comments.find((c: any) => c.id === commentId)
+    expect(thread.replies.map((r: any) => r.role)).toEqual(['user', 'user', 'ai'])
+    expect(thread.replies.map((r: any) => r.text)).toEqual(['首条', '显式 user', '内部 AI 回复'])
+  })
+
+  // ── 项 5：校验错误信封统一 ──────────────────────────────────────────
+  test('校验错误信封为 { error: zod format() }（无 details 字段）', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# Intro\n\n正文。\n')
+    const headers = await h()
+    // 创建评论校验失败（缺 section_id — 基础对象通过、superRefine 生效）
+    const badCreate = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers,
+      payload: JSON.stringify({ anchor_text: '缺 section_id', text: 'ok' }),
+    })
+    expect(badCreate.statusCode).toBe(400)
+    const createBody = JSON.parse(badCreate.payload)
+    expect(createBody.details).toBeUndefined()
+    expect(typeof createBody.error).toBe('object')
+    // zod error.format() 形状：{ _errors: [], <field>: { _errors: [...] } }
+    expect(Array.isArray(createBody.error._errors)).toBe(true)
+    expect(createBody.error.section_id._errors.length).toBeGreaterThan(0)
+    // 列表 query 校验失败
+    const badList = await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?status=whatever`, headers })
+    expect(badList.statusCode).toBe(400)
+    const listBody = JSON.parse(badList.payload)
+    expect(listBody.details).toBeUndefined()
+    expect(typeof listBody.error).toBe('object')
+    expect(listBody.error.status._errors.length).toBeGreaterThan(0)
+    // 回复校验失败
+    const created = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers,
+      payload: JSON.stringify({ section_id: 's1', anchor_text: '正文。', text: '首条' }),
+    })
+    const commentId = JSON.parse(created.payload).id
+    const badReply = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/replies`, headers,
+      payload: JSON.stringify({ role: 'system', text: '非法角色' }),
+    })
+    expect(badReply.statusCode).toBe(400)
+    const replyBody = JSON.parse(badReply.payload)
+    expect(replyBody.details).toBeUndefined()
+    expect(typeof replyBody.error).toBe('object')
+    // PATCH 校验失败
+    const badPatch = await app.inject({
+      method: 'PATCH', url: `/api/v1/docs/${docId}/comments/${commentId}`, headers,
+      payload: JSON.stringify({ status: 'closed' }),
+    })
+    expect(badPatch.statusCode).toBe(400)
+    const patchBody = JSON.parse(badPatch.payload)
+    expect(patchBody.details).toBeUndefined()
+    expect(typeof patchBody.error).toBe('object')
+  })
+})
+
+// ── #1064 集成收口: AI 回复专用入口（web「请AI处理」闭环消费）──────────
+describe('#1064 集成收口 — POST /comments/:id/ai-replies', () => {
+  test('认证用户写入 AI 回复：role 服务端固定 ai，201 返回线程形回复', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# Intro\n\n正文。\n')
+    const h = { ...(await authHeader()), 'content-type': 'application/json' }
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/comments`,
+      headers: h,
+      payload: JSON.stringify({ section_id: 's1', anchor_text: '正文。', text: '请补充来源' }),
+    })
+    const commentId = JSON.parse(created.payload).id
+    const r = await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`,
+      headers: h,
+      payload: JSON.stringify({ text: 'AI 已修改该节' }),
+    })
+    expect(r.statusCode).toBe(201)
+    const reply = JSON.parse(r.payload)
+    expect(reply.role).toBe('ai')
+    expect(reply.text).toBe('AI 已修改该节')
+    // 客户端试图自封 role → 该入口只收 text，role 字段被忽略/拒绝
+    const bad = await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`,
+      headers: h,
+      payload: JSON.stringify({ text: 'x', role: 'system' }),
+    })
+    expect([201, 400]).toContain(bad.statusCode)
+    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers: h })).payload)
+    const thread = list.comments.find((c: any) => c.id === commentId)
+    expect(thread.replies.filter((x: any) => x.role !== 'user').every((x: any) => x.role === 'ai')).toBe(true)
+  })
+
+  test('跨用户 404 + 空 text 400（信封为 zod format）', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# A\n\n正文。\n')
+    const h = { ...(await authHeader()), 'content-type': 'application/json' }
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/comments`,
+      headers: h,
+      payload: JSON.stringify({ section_id: 's1', anchor_text: '正文。', text: '首条' }),
+    })
+    const commentId = JSON.parse(created.payload).id
+    // 第二个用户 → 404（归属校验，不暴露存在性）
+    const second = await registerSecondUser()
+    const other = await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`,
+      headers: { authorization: `Bearer ${second.token}`, 'content-type': 'application/json' },
+      payload: JSON.stringify({ text: '越权' }),
+    })
+    expect(other.statusCode).toBe(404)
+    // 空 text → 400，信封统一 { error: format }
+    const empty = await app.inject({
+      method: 'POST',
+      url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`,
+      headers: h,
+      payload: JSON.stringify({ text: '' }),
+    })
+    expect(empty.statusCode).toBe(400)
+    const body = JSON.parse(empty.payload)
+    expect(typeof body.error).toBe('object')
+    expect(body.error).not.toHaveProperty('details')
   })
 })
