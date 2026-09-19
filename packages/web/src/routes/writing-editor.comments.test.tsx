@@ -20,6 +20,23 @@ import { api, type DocCommentWire } from '@/lib/api';
 // i18n 初始化 — 组件内 t() 需插值。
 import i18n from '@/i18n';
 
+// #1056:读 index.css 源码原文做 CSS 规则存在性断言(防「decoration 类零 CSS」回归)。
+// 本包 tsconfig types 未含 node/@types/node,故经非字面量动态 import 绕开模块类型解析;
+// .css 的 ?raw 静态导入在 vitest 下返回空串,不可用。cwd 兼容 packages/web 与仓库根两种运行目录。
+declare const process: { cwd(): string };
+
+async function loadIndexCss(): Promise<string> {
+  const fs: { readFileSync(path: string, encoding: string): string } = await import('node:fs' as string);
+  for (const p of ['/src/index.css', '/packages/web/src/index.css']) {
+    try {
+      return fs.readFileSync(process.cwd() + p, 'utf8');
+    } catch {
+      /* 尝试下一候选路径 */
+    }
+  }
+  return '';
+}
+
 // #1055: en 词条补齐后 jsdom 探测语言为 en,组件会渲染英文 — 固定 zh-CN 维持中文文案断言。
 beforeAll(async () => {
   await i18n.changeLanguage('zh-CN');
@@ -188,6 +205,17 @@ async function renderHarness(initialComments: CommentFixture[] = []) {
   return { ...utils, editor, editorRef };
 }
 
+/**
+ * #1056:decoration 覆盖的正文文本 — 聚合同 data-comment-id 的全部 span
+ * (PM 可能在节点边界拆分 inline decoration,拼接后与 anchorText 全等比对)。
+ * 只断言 class 存在曾让 off-by-one 逃逸,文本内容断言才是定位精度的守门员。
+ */
+function coveredText(container: HTMLElement, commentId: string): string {
+  return Array.from(container.querySelectorAll(`.comment-anchor[data-comment-id="${commentId}"]`))
+    .map((el) => el.textContent)
+    .join('');
+}
+
 /** 展示气泡:设置选区后经 meta 'show' 事务强制展示(同 BubbleMenu transactionHandler)。 */
 async function showBubbleWithSelection(container: HTMLElement, editor: Editor, from: number, to: number) {
   const pm = container.querySelector('.ProseMirror') as HTMLElement;
@@ -247,10 +275,11 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     expect(thread.getAttribute('data-status')).toBe('open');
     expect(thread.textContent).toContain('这段需要补数据来源');
 
-    // 5. 正文对应位置出现高亮 decoration
+    // 5. 正文对应位置出现高亮 decoration,且覆盖文本与选区文字全等(#1056 定位精度)
     const highlight = container.querySelector('.comment-anchor[data-comment-id="c1"]');
     expect(highlight).toBeTruthy();
     expect(highlight!.classList.contains('comment-anchor-pending')).toBe(false);
+    expect(coveredText(container, 'c1')).toBe(payload.anchor_text);
   });
 
   /** 用例 2:点击正文高亮 → 侧边栏滚动定位并展开对应线程(jsdom 断言展开态)。 */
@@ -268,6 +297,7 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     const grey = container.querySelector('.comment-anchor[data-comment-id="c2"]');
     expect(grey).toBeTruthy();
     expect(grey!.classList.contains('comment-anchor-resolved')).toBe(true);
+    expect(coveredText(container, 'c2')).toBe(PARA2); // #1056: 覆盖文本全等
     // 高亮点击经插件 view.dom 事件委托 — fireEvent.click 即达。
     fireEvent.click(grey!);
     await wait(30);
@@ -278,6 +308,7 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     const solid = container.querySelector('.comment-anchor[data-comment-id="c1"]') as HTMLElement;
     expect(solid).toBeTruthy();
     expect(solid.classList.contains('comment-anchor-resolved')).toBe(false);
+    expect(coveredText(container, 'c1')).toBe(PARA1); // #1056: 覆盖文本全等
     fireEvent.click(solid);
     await wait(30);
     expect(screen.getByTestId('comment-thread-c1').getAttribute('data-active')).toBe('true');
@@ -304,6 +335,7 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     const grey = container.querySelector('.comment-anchor[data-comment-id="c1"]') as HTMLElement;
     expect(grey).toBeTruthy();
     expect(grey.classList.contains('comment-anchor-resolved')).toBe(true);
+    expect(coveredText(container, 'c1')).toBe(PARA1); // #1056: 置灰后定位仍精确
     const thread = screen.getByTestId('comment-thread-c1');
     expect(thread.getAttribute('data-status')).toBe('resolved');
     expect(thread.getAttribute('data-expanded')).toBe('false');
@@ -329,6 +361,7 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     expect(pending).toBeTruthy();
     expect(pending.getAttribute('title')).toContain('待重新定位');
     expect(pending.classList.contains('comment-anchor-resolved')).toBe(false);
+    expect(coveredText(container, 'c1')).toBe(PARA1); // #1056: 候选兜底覆盖文本全等
   });
 
   /** 用例 4 补充:候选也定位不到 → 不渲染正文高亮,面板徽标兜底,不报错。 */
@@ -345,5 +378,28 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     expect(screen.getByTestId('comment-anchor-drifted')).toBeTruthy();
     // 线程仍可用(可回复)
     expect(screen.getByTestId('comment-thread-c1')).toBeTruthy();
+  });
+
+  /** #1056 用例 1:anchorText 命中段落中间 → decoration 覆盖文本与 anchorText 逐字全等(off-by-one 防回归)。 */
+  test('高亮 decoration 覆盖文本与 anchorText 逐字一致(无偏移)', async () => {
+    const { container } = await renderHarness([
+      { id: 'c1', anchor_text: '足够长的一段文字', status: 'open', anchor: { located: true }, replies: [{ id: 'r1', role: 'user', text: '首条评论', created_at: 't0' }] },
+    ]);
+    const covered = coveredText(container, 'c1');
+    // off-by-one 时首字符漏亮、尾部多吞一字符 → 覆盖文本会变成「够长的一段文字用」
+    expect(covered).toBe('足够长的一段文字');
+    // 首字符必须被高亮覆盖(此前实现高亮整体右移一位导致漏亮)
+    expect(container.querySelector('.comment-anchor[data-comment-id="c1"]')!.textContent!.startsWith('足')).toBe(true);
+  });
+
+  /** #1056 用例 2:四个 decoration 类在 index.css 有规则定义(防「decoration 类零 CSS」回归)。 */
+  test('评论高亮四个类在 index.css 均有 CSS 规则', async () => {
+    const css = await loadIndexCss();
+    expect(css).not.toBe('');
+    // 基类独立成规则(后随 { ),派生类允许出现在选择器列表中(后随 { 或 ,)
+    expect(css).toMatch(/\.comment-anchor\s*\{/);
+    expect(css).toMatch(/\.comment-anchor-resolved\s*[,{]/);
+    expect(css).toMatch(/\.comment-anchor-pending\s*[,{]/);
+    expect(css).toMatch(/\.comment-anchor-active\s*[,{]/);
   });
 });

@@ -79,6 +79,10 @@ export function CommentsPanel(input: {
 }) {
   const { t } = useTranslation();
   const { comments, activeId, onSelect, onReply, onToggleResolve, onAiProcess, processingCommentIds, className } = input;
+  // #1060: 单评论单 turn — 任一评论处理中（含指令排队等待真实 turn）时，
+  // 其余「请AI处理」按钮一并禁用（ref 级守卫的状态层镜像），避免排队单槽
+  // 被第二条评论指令占用后被覆盖丢弃（卡死源）或与首条共享冲刷窗口（误归属源）。
+  const anyProcessing = Object.values(processingCommentIds ?? {}).some(Boolean);
   // 展开态覆盖:open 默认展开、resolved 默认收起;用户点开后记为展开。
   const [manualExpand, setManualExpand] = useState<Record<string, boolean>>({});
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
@@ -225,14 +229,15 @@ export function CommentsPanel(input: {
                 </div>
               )}
               <div className="flex justify-end gap-1 px-2.5 pb-2">
-                {/* #1041: 「请AI处理」— 处理中 loading/禁用（issue 用例 6 防并发）。 */}
+                {/* #1041: 「请AI处理」— 处理中 loading/禁用（issue 用例 6 防并发）。
+                    #1060: 其余按钮随任一评论处理中一并禁用（单评论单 turn）。 */}
                 {c.status !== 'resolved' && onAiProcess && (
                   <Button
                     size="sm"
                     variant="secondary"
                     data-testid={`comment-ai-process-${c.id}`}
                     isLoading={!!processingCommentIds?.[c.id]}
-                    disabled={!!processingCommentIds?.[c.id]}
+                    disabled={!!processingCommentIds?.[c.id] || anyProcessing}
                     onClick={() => onAiProcess(c)}
                   >
                     {t('writing.commentAiProcess', '请AI处理')}

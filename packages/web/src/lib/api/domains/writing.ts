@@ -155,11 +155,12 @@ export class WritingApi extends ApiCore {
     });
   }
 
-  // #1040: 评论列表(含 replies;open 评论附锚点定位诊断)。
-  async listDocComments(docId: string, query: { section_id?: string; status?: 'open' | 'resolved' } = {}): Promise<{ comments: DocCommentWire[] }> {
+  // #1040: 评论列表(含 replies;#1064 诊断懒计算 — with_anchor=1 才返回锚点定位诊断)。
+  async listDocComments(docId: string, query: { section_id?: string; status?: 'open' | 'resolved'; with_anchor?: boolean } = {}): Promise<{ comments: DocCommentWire[] }> {
     const qs = new URLSearchParams();
     if (query.section_id) qs.set('section_id', query.section_id);
     if (query.status) qs.set('status', query.status);
+    if (query.with_anchor) qs.set('with_anchor', '1');
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
     return this.fetch(`/api/v1/docs/${docId}/comments${suffix}`);
   }
@@ -170,9 +171,14 @@ export class WritingApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}/comments`, { method: 'POST', body: JSON.stringify(data) });
   }
 
-  // #1040: 追加回复(role 缺省 user)。
-  async createDocCommentReply(docId: string, commentId: string, data: { role?: 'user' | 'ai'; text: string }): Promise<DocCommentReplyWire> {
+  // #1040: 追加回复(role 缺省 user;#1064 role 收口 — 'ai' 不可自封,走专用入口)。
+  async createDocCommentReply(docId: string, commentId: string, data: { role?: 'user'; text: string }): Promise<DocCommentReplyWire> {
     return this.fetch(`/api/v1/docs/${docId}/comments/${commentId}/replies`, { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  // #1064 集成收口(#1041 消费): AI 回复专用入口 — 服务端固定 role:'ai'。
+  async createDocCommentAiReply(docId: string, commentId: string, text: string): Promise<DocCommentReplyWire> {
+    return this.fetch(`/api/v1/docs/${docId}/comments/${commentId}/ai-replies`, { method: 'POST', body: JSON.stringify({ text }) });
   }
 
   // #1040: 切换 status(open/resolved)。

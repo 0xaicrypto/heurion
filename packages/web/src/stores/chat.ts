@@ -45,6 +45,23 @@ export function chatFailureText(err: unknown): string {
   return `Error: ${msg}`
 }
 
+/** #1060: 排队单槽被覆盖 / Stop·regenerate 清空 pending 时的事件 — 被静默
+ *  丢弃的排队指令（如「请AI处理」的评论指令）据此解除路由层关联登记，
+ *  保证可重试、不永久卡死。监听者须自行匹配 sessionId。 */
+export interface ChatPendingDropped {
+  sessionId: string;
+  text: string;
+}
+const pendingDroppedListeners = new Set<(e: ChatPendingDropped) => void>();
+/** 订阅 pending 丢弃事件，返回解绑函数。 */
+export function onChatPendingDropped(fn: (e: ChatPendingDropped) => void): () => void {
+  pendingDroppedListeners.add(fn);
+  return () => { pendingDroppedListeners.delete(fn); };
+}
+function emitPendingDropped(sessionId: string, text: string) {
+  for (const fn of pendingDroppedListeners) fn({ sessionId, text });
+}
+
 /** #828: 距最近一条 SSE data 事件超过该阈值即标记会话停滞（心跳注释行
  *  让字节永远在流，必须基于 data 事件而非字节判断）。 */
 const STALL_DETECT_MS = 90_000;
@@ -202,6 +219,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const s = get().sessions[sessionId];
     if (s?.loading || s?.compacting) {
       // 回复进行中 → 排队;同一时刻只保留最后一条(用户可连续输入覆盖)。
+      // #1060: 覆盖即静默丢弃旧排队指令 — 发丢弃事件(路由层清理关联登记)。
+      const dropped = s.pending ?? null;
       set((state) => {
         const cur = state.sessions[sessionId] ?? emptySession();
         return {
@@ -211,6 +230,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           },
         };
       });
+      if (dropped) emitPendingDropped(sessionId, dropped.text);
       return;
     }
     return get().sendMessage(sessionId, opts);
@@ -291,6 +311,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   stopStream: (sessionId: string) => {
     const s = get().sessions[sessionId];
     s?.abort?.abort();
+    // #1060: Stop 丢弃排队指令 — 先取引用再清理,发丢弃事件(路由层清理关联登记)。
+    const dropped = s?.pending ?? null;
     set((state) => {
       const cur = state.sessions[sessionId];
       if (!cur) return state;
@@ -315,6 +337,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         },
       };
     });
+    if (dropped) emitPendingDropped(sessionId, dropped.text);
   },
 
   regenerate: async (sessionId: string, opts: SendChatOptions) => {
@@ -325,6 +348,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const lastUserIdx = s.messages.map((m) => m.role).lastIndexOf('user');
     if (lastUserIdx === -1) return;
     const userMsg = s.messages[lastUserIdx];
+    // #1060: regenerate 丢弃排队中的追加消息 — 发丢弃事件(路由层清理关联登记)。
+    const dropped = s.pending ?? null;
     const prev: SessionState = {
       ...s,
       messages: s.messages.slice(0, lastUserIdx),
@@ -334,6 +359,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set((state) => ({
       sessions: { ...state.sessions, [sessionId]: prev },
     }));
+    if (dropped) emitPendingDropped(sessionId, dropped.text);
     await get().sendMessage(sessionId, {
       ...opts,
       text: userMsg.text,

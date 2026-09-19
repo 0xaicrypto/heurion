@@ -60,6 +60,7 @@ const apiMock = vi.hoisted(() => ({
   listDocComments: vi.fn(),
   createDocComment: vi.fn(),
   createDocCommentReply: vi.fn(),
+  createDocCommentAiReply: vi.fn(),
   updateDocComment: vi.fn(),
 }));
 
@@ -199,6 +200,13 @@ beforeEach(() => {
     text: data.text,
     created_at: 't1',
   }));
+  // #1064 集成收口: AI 回复走专用 ai-replies 入口（参数 (docId, commentId, text)）。
+  apiMock.createDocCommentAiReply.mockImplementation(async (_docId: string, commentId: string, text: string) => ({
+    id: `aireply_${commentId}_${Date.now()}`,
+    role: 'ai',
+    text,
+    created_at: 't1',
+  }));
   apiMock.updateDocComment.mockImplementation(async (_docId: string, commentId: string, status: string) => ({
     ...DECK_COMMENT(),
     id: commentId,
@@ -292,10 +300,9 @@ describe('#1051 deck slide 评论（issue 用例表 5 条）', () => {
     await openCommentsPanel();
 
     fireEvent.click(screen.getByTestId('comment-ai-process-cdeck'));
-    // AI 回复入线程
-    await waitFor(() => expect(apiMock.createDocCommentReply).toHaveBeenCalled());
-    expect(apiMock.createDocCommentReply.mock.calls[0][2].role).toBe('ai');
-    expect(apiMock.createDocCommentReply.mock.calls[0][2].text).toContain('随访');
+    // AI 回复入线程（#1064 集成收口：专用 ai-replies 入口，参数 (docId, commentId, text)）
+    await waitFor(() => expect(apiMock.createDocCommentAiReply).toHaveBeenCalled());
+    expect(apiMock.createDocCommentAiReply.mock.calls[0][2]).toContain('随访');
     // deck 写回直接落画布（#773 无 diff 审阅）→ 评论自动 resolved
     await waitFor(() => expect(apiMock.updateDocComment).toHaveBeenCalledWith(DOC_ID, 'cdeck', 'resolved'));
     // deck 视图呈现更新后的 slide 内容
@@ -333,10 +340,9 @@ describe('#1051 deck slide 评论（issue 用例表 5 条）', () => {
 
     // 「请AI处理」→ turn 无写回 → AI 回复说明定位失败（含页码），评论保持 open
     fireEvent.click(screen.getByTestId('comment-ai-process-cdeck'));
-    await waitFor(() => expect(apiMock.createDocCommentReply).toHaveBeenCalled());
-    const reply = apiMock.createDocCommentReply.mock.calls[0][2];
-    expect(reply.role).toBe('ai');
-    expect(reply.text).toContain('9');
+    await waitFor(() => expect(apiMock.createDocCommentAiReply).toHaveBeenCalled());
+    const replyText = apiMock.createDocCommentAiReply.mock.calls[0][2] as string;
+    expect(replyText).toContain('9');
     expect(apiMock.updateDocComment).not.toHaveBeenCalled();
     await act(async () => {});
   });

@@ -241,3 +241,37 @@
   padding: 1px 8px;
   background: hsl(var(--surface));
 }
+/* ── #1056: 评论正文锚点高亮(decoration 驱动,点击联动侧边栏线程) ── */
+/* open/located:琥珀实心高亮(#1040 评论主视觉),cursor 表明可点击 */
+.ProseMirror .comment-anchor {
+  background: hsl(var(--warning) / 0.22);
+  border-bottom: 2px solid hsl(var(--warning) / 0.6);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.ProseMirror .comment-anchor:hover {
+  background: hsl(var(--warning) / 0.34);
+}
+/* resolved:置灰弱提示(线程完结,前端重定位) */
+.ProseMirror .comment-anchor-resolved {
+  background: hsl(var(--text-tertiary) / 0.12);
+  border-bottom-color: hsl(var(--text-tertiary) / 0.3);
+  color: hsl(var(--text-secondary));
+}
+.ProseMirror .comment-anchor-resolved:hover {
+  background: hsl(var(--text-tertiary) / 0.2);
+}
+/* pending:锚点漂移候选兜底 — 琥珀警示虚线(提示态,非静默消失) */
+.ProseMirror .comment-anchor-pending {
+  background: hsl(var(--source-conflict) / 0.14);
+  border-bottom: 2px dashed hsl(var(--source-conflict) / 0.7);
+}
+.ProseMirror .comment-anchor-pending:hover {
+  background: hsl(var(--source-conflict) / 0.24);
+}
+/* active:当前激活线程 — accent 描边(与侧边栏选中态联动) */
+.ProseMirror .comment-anchor-active {
+  box-shadow: 0 0 0 2px hsl(var(--accent) / 0.55);
+  border-radius: 2px;
+}

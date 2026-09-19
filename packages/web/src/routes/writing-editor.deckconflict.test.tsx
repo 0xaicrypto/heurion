@@ -223,8 +223,14 @@ describe('#1043 deck/正文分叉冲突解决 UI', () => {
     expect(screen.getByRole('button', { name: /Use AI's version|使用 AI 的版本/ })).toBeTruthy();
     expect(screen.queryByText(/建议先放弃本地画布修改/)).toBeNull();
 
+    // #1066-11: 此前睡 6.1s 验证「活过旧 6 秒 toast TTL」— 横幅是状态驱动
+    // 结构渲染(deckConflict 未清空就常驻,无 TTL),结构断言已足够;仍需等待
+    // 的时序语义只剩「autosave 暂停」— autosave 防抖 2.5s,若守卫回归会在
+    // 冲突到达后 ~2.5s 落盘,故等 3.1s(越过防抖 + 余量)而非 1s(防抖未过,
+    // updateDoc 断言会变空洞)。不用 fake timers:本文件 sendTurn/waitFor
+    // 全链路依赖真实宏任务流,混用会破坏 turn 边界。
     // 冲突未决期间 autosave 不得擅自落盘(暂停),本地编辑不被覆盖。
-    await new Promise((r) => setTimeout(r, 6100));
+    await new Promise((r) => setTimeout(r, 3100));
     expect(deckConflictBanner()).toBeTruthy();
     expect(screen.getByDisplayValue('Slide A (edited)')).toBeTruthy();
     expect(apiMock.updateDoc).not.toHaveBeenCalled();
@@ -279,6 +285,21 @@ describe('#1043 deck/正文分叉冲突解决 UI', () => {
 
     await waitFor(() => expect(screen.getByDisplayValue('AI Slide')).toBeTruthy());
     expect(deckConflictBanner()).toBeNull();
+    expect(apiMock.updateDoc).not.toHaveBeenCalled();
+  }, 15000);
+
+  test('用例 5(#1066-3):冲突未决时手动保存被拦截且给出提示,不再静默 return', async () => {
+    await setupConflict();
+    await sendTurn([{ body: BASE_BODY, rev: 1, deck: AI_DECK }]);
+    await screen.findByTestId('deck-conflict-banner');
+
+    // 点击 Save 前,冲突文案只出现 1 处(横幅自身),无 toast。
+    expect(screen.getAllByText(/画布冲突 — AI 已更新服务端画布/)).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: /未保存|Save/ }));
+
+    // #1066-3: 保存被拦但有反馈 — 提示条复用冲突文案,出现第 2 处;
+    // 且绝不落盘(决策必须经横幅)。
+    await waitFor(() => expect(screen.getAllByText(/画布冲突 — AI 已更新服务端画布/)).toHaveLength(2));
     expect(apiMock.updateDoc).not.toHaveBeenCalled();
   }, 15000);
 });

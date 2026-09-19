@@ -63,7 +63,9 @@ function buildDocTextIndex(doc: PMNode): DocTextIndex {
     if (node.isText) {
       const s = node.text ?? '';
       for (let i = 0; i < s.length; i++) {
-        posAt.push(pos + 1 + i);
+        // #1056:descendants 传给 text 节点的 pos 就是首字符位置(<p>abc</p> 里 text pos=1),
+        // 此前 +1 使高亮整体右移一位(首字符漏亮、尾部多吞一字符)。
+        posAt.push(pos + i);
         text += s[i];
       }
       return false;

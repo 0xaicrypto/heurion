@@ -61,6 +61,7 @@ const apiMock = vi.hoisted(() => ({
   listDocComments: vi.fn(),
   createDocComment: vi.fn(),
   createDocCommentReply: vi.fn(),
+  createDocCommentAiReply: vi.fn(),
   updateDocComment: vi.fn(),
 }));
 
@@ -173,10 +174,10 @@ beforeEach(() => {
   apiMock.getMessages.mockResolvedValue({ messages: [], total: 0 });
   apiMock.listSkills.mockResolvedValue({ skills: [] });
   apiMock.listDocComments.mockResolvedValue({ comments: [C1()] });
-  apiMock.createDocCommentReply.mockImplementation(async (_docId: string, commentId: string, data: { role: string; text: string }) => ({
+  apiMock.createDocCommentAiReply.mockImplementation(async (_docId: string, commentId: string, text: string) => ({
     id: `reply_${commentId}_${Date.now()}`,
-    role: data.role,
-    text: data.text,
+    role: 'ai',
+    text,
     created_at: 't1',
   }));
   apiMock.updateDocComment.mockImplementation(async (_docId: string, commentId: string, status: string) => ({
@@ -228,9 +229,9 @@ describe('#1041 请AI处理（issue 用例表 6 条）', () => {
     const acceptBtn = await screen.findByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ });
     expect(acceptBtn).toBeTruthy();
     // 线程追加 AI 回复（说明做了什么 — 取 turn 的最终答复文本）
-    await waitFor(() => expect(apiMock.createDocCommentReply).toHaveBeenCalled());
-    expect(apiMock.createDocCommentReply.mock.calls[0][2].role).toBe('ai');
-    expect(apiMock.createDocCommentReply.mock.calls[0][2].text).toContain('已在 Intro 节补充样本量说明');
+    await waitFor(() => expect(apiMock.createDocCommentAiReply).toHaveBeenCalled());
+    
+    expect(apiMock.createDocCommentAiReply.mock.calls[0][2]).toContain('已在 Intro 节补充样本量说明');
     // 评论本身保持 open（等用户 accept 后才 resolved）
     expect(apiMock.updateDocComment).not.toHaveBeenCalled();
   });
@@ -243,7 +244,7 @@ describe('#1041 请AI处理（issue 用例表 6 条）', () => {
     await openCommentsPanel();
     fireEvent.click(screen.getByTestId('comment-ai-process-c1'));
     await screen.findByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ });
-    await waitFor(() => expect(apiMock.createDocCommentReply).toHaveBeenCalled());
+    await waitFor(() => expect(apiMock.createDocCommentAiReply).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ }));
 
@@ -260,7 +261,7 @@ describe('#1041 请AI处理（issue 用例表 6 条）', () => {
     await openCommentsPanel();
     fireEvent.click(screen.getByTestId('comment-ai-process-c1'));
     await screen.findByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ });
-    await waitFor(() => expect(apiMock.createDocCommentReply).toHaveBeenCalled());
+    await waitFor(() => expect(apiMock.createDocCommentAiReply).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole('button', { name: /Discard|放弃/ }));
 
@@ -271,6 +272,10 @@ describe('#1041 请AI处理（issue 用例表 6 条）', () => {
     turnScripts.push({ body: `${BASE_BODY}\n第二轮修改。`, rev: 2, answer: '第二轮' });
     fireEvent.click(screen.getByTestId('comment-ai-process-c1'));
     await waitFor(() => expect(apiMock.sendChatFull).toHaveBeenCalledTimes(2));
+    // #1060: 等第二轮真正结束再收尾 — 否则在途 turn 的 chunk 会漏进下一
+    // 条用例的会话（本文件此前 case 5 的确定性污染源,base 上即红）。
+    await waitFor(() => expect(useChatStore.getState().sessions[SESSION]?.loading).toBe(false));
+    await act(async () => {});
   });
 
   /** 用例 5：anchorText 定位失败（漂移）→ AI 回复说明定位失败 + 候选，不静默失败。 */
@@ -295,11 +300,11 @@ describe('#1041 请AI处理（issue 用例表 6 条）', () => {
     expect(apiMock.sendChatFull.mock.calls[0][0].text).toContain('漂移');
 
     // turn 结束无写回 → AI 回复说明定位失败 + 候选建议（复用 anchor-diagnostics 输出）
-    await waitFor(() => expect(apiMock.createDocCommentReply).toHaveBeenCalled());
-    const reply = apiMock.createDocCommentReply.mock.calls[0][2];
-    expect(reply.role).toBe('ai');
+    // #1064 集成收口: 走专用 ai-replies 入口,参数为 (docId, commentId, text)。
+    await waitFor(() => expect(apiMock.createDocCommentAiReply).toHaveBeenCalled());
+    const replyText = apiMock.createDocCommentAiReply.mock.calls[0][2] as string;
     // 候选建议可见（复用 anchor-diagnostics 的最近候选）
-    expect(reply.text).toContain(PARA1.slice(0, 10));
+    expect(replyText).toContain(PARA1.slice(0, 10));
     // 评论保持 open（未产生修改 → 不得误标 resolved）
     expect(apiMock.updateDocComment).not.toHaveBeenCalled();
   });
@@ -318,9 +323,165 @@ describe('#1041 请AI处理（issue 用例表 6 条）', () => {
     await waitFor(() => expect(apiMock.sendChatFull).toHaveBeenCalledTimes(1));
     // 处理期间按钮禁用
     expect((btn() as HTMLButtonElement).disabled).toBe(true);
-    await waitFor(() => expect(apiMock.createDocCommentReply).toHaveBeenCalled());
+    await waitFor(() => expect(apiMock.createDocCommentAiReply).toHaveBeenCalled());
     // turn 结束后仍是 1 次调用（无并发）
     await act(async () => {});
     expect(apiMock.sendChatFull).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// #1060 — 评论↔审阅关联在并发/排队时序下误归属与卡死窗口（issue 用例表 4 条）。
+// 关联改为「单评论单 turn + 指令指纹匹配」：冲刷/收口只消费「本 turn 实际
+// 发出其指令」的评论；排队单槽被覆盖 / Stop 清空时经 store 事件清理登记，
+// 被覆盖的评论可重试；按钮 loading 与 turn 真实边界对齐（入队即 resolve
+// 不再提前收口）。
+// ─────────────────────────────────────────────────────────────────────────
+describe('#1060 评论关联并发/排队时序（issue 用例表 4 条）', () => {
+  const C2 = () => makeComment({
+    id: 'c2',
+    anchor_text: PARA1,
+    replies: [{ id: 'r2', role: 'user', text: '第二个评论的处理意见', created_at: 't0' }],
+  });
+  const btnFor = (id: string) => screen.getByTestId(`comment-ai-process-${id}`) as HTMLButtonElement;
+
+  /** 用例 1（误归属）：评论 A 处理中登记评论 B，A 的 diff 先冲刷 → B 不被 A 的 diff 误 resolved。 */
+  test('A 处理中登记 B：B 不被 A 的 diff 误关联，A 的审阅接受只 resolved A', async () => {
+    apiMock.listDocComments.mockResolvedValue({ comments: [C1(), C2()] });
+    turnScripts.push({ body: `${BASE_BODY}\nA 的修改。`, rev: 1, answer: 'A 完成' });
+    renderEditor();
+    await screen.findByDisplayValue('Original');
+    await openCommentsPanel();
+    await screen.findByTestId('comment-thread-c2');
+
+    // A 的 turn 运行中（流式 10ms 间隔）→ 立即点击 B（旧实现会登记 B 并误关联）
+    fireEvent.click(btnFor('c1'));
+    fireEvent.click(btnFor('c2'));
+
+    // #1060 单评论单 turn：A 处理中 B 的登记被 ref 级守卫拒绝 — B 的指令不发出
+    await waitFor(() => expect(apiMock.sendChatFull).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(apiMock.sendChatFull).toHaveBeenCalledTimes(1);
+
+    // A 的 diff 冲刷 → 审阅打开 → 接受
+    const acceptBtn = await screen.findByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ });
+    await waitFor(() => expect(apiMock.createDocCommentAiReply.mock.calls.some((c) => c[1] === 'c1')).toBe(true));
+    fireEvent.click(acceptBtn);
+
+    // 只有 A 被 resolved；B 保持 open
+    await waitFor(() => expect(apiMock.updateDocComment).toHaveBeenCalledWith(DOC_ID, 'c1', 'resolved'));
+    expect(apiMock.updateDocComment).not.toHaveBeenCalledWith(DOC_ID, 'c2', 'resolved');
+    await waitFor(() => expect(screen.getByTestId('comment-thread-c2').getAttribute('data-status')).toBe('open'));
+
+    // B 未被处理过 — 重试可正常发起（不被 has() 死锁）
+    turnScripts.push({ answer: 'B 完成' });
+    fireEvent.click(btnFor('c2'));
+    await waitFor(() => expect(apiMock.sendChatFull).toHaveBeenCalledTimes(2));
+    expect(apiMock.sendChatFull.mock.calls[1][0].text).toContain('第二个评论的处理意见');
+  });
+
+  /** 用例 2（覆盖清理）+ loading 对齐：排队中第二条消息覆盖第一条 → 被覆盖评论可重试。 */
+  test('排队指令被后续消息覆盖：pending 态被清理、loading 不提前收口、可重试', async () => {
+    // 挂起的第一轮普通 turn — 评论指令入队单槽后靠它验证覆盖清理。
+    let releaseTurn!: () => void;
+    const turnGate = new Promise<void>((r) => { releaseTurn = r; });
+    const scriptQueue: Array<'hang' | 'quick'> = [];
+    apiMock.sendChatFull.mockImplementation(async function* () {
+      const mode = scriptQueue.shift() ?? 'quick';
+      if (mode === 'hang') await turnGate;
+      await new Promise((r) => setTimeout(r, 10));
+      yield { type: 'final_answer_chunk', text: 'ok' };
+      yield { type: 'turn_complete' };
+    });
+    scriptQueue.push('hang');
+    void useChatStore.getState().sendMessageQueued(SESSION, {
+      text: '第一轮普通消息', sessionId: SESSION, patientHash: null, skills: [], attachments: [], scene: 'document',
+    });
+    await waitFor(() => expect(useChatStore.getState().sessions[SESSION]?.loading).toBe(true));
+
+    renderEditor();
+    await screen.findByDisplayValue('Original');
+    await openCommentsPanel();
+
+    // 评论 A 处理中（指令排队等待真实 turn）— loading 不提前收口（入队即 resolve 不清按钮）
+    fireEvent.click(btnFor('c1'));
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    expect(btnFor('c1').disabled).toBe(true);
+
+    // 第二条普通消息覆盖排队单槽 → 旧指令被静默丢弃 → store 事件清理评论登记
+    scriptQueue.push('quick');
+    void useChatStore.getState().sendMessageQueued(SESSION, {
+      text: '第二条覆盖消息', sessionId: SESSION, patientHash: null, skills: [], attachments: [], scene: 'document',
+    });
+    await waitFor(() => expect(btnFor('c1').disabled).toBe(false));
+
+    // 解除挂起：第一轮结束 → 自动发送覆盖消息（第二轮）→ 结束
+    releaseTurn();
+    await waitFor(() => expect(useChatStore.getState().sessions[SESSION]?.loading).toBe(false));
+    await act(async () => {});
+
+    // 被覆盖的评论 A 可重试 — 重新登记并发送指令（不永久卡死）
+    fireEvent.click(btnFor('c1'));
+    await waitFor(() => expect(apiMock.sendChatFull).toHaveBeenCalledTimes(3));
+    expect(apiMock.sendChatFull.mock.calls[2][0].text).toContain('这段需要补数据来源');
+  });
+
+  /** 用例 3（Stop 清理）：Stop 中断 turn → 清空排队指令 → 被停评论的 pending 态被清理，可重试。 */
+  test('Stop 中断：排队评论的 pending 态被清理，可重试不卡死', async () => {
+    let releaseTurn!: () => void;
+    const turnGate = new Promise<void>((r) => { releaseTurn = r; });
+    apiMock.sendChatFull.mockImplementation(async function* () {
+      await turnGate;
+      await new Promise((r) => setTimeout(r, 10));
+      yield { type: 'final_answer_chunk', text: 'ok' };
+      yield { type: 'turn_complete' };
+    });
+    void useChatStore.getState().sendMessageQueued(SESSION, {
+      text: '第一轮普通消息', sessionId: SESSION, patientHash: null, skills: [], attachments: [], scene: 'document',
+    });
+    await waitFor(() => expect(useChatStore.getState().sessions[SESSION]?.loading).toBe(true));
+
+    renderEditor();
+    await screen.findByDisplayValue('Original');
+    await openCommentsPanel();
+
+    fireEvent.click(btnFor('c1'));
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    expect(btnFor('c1').disabled).toBe(true);
+
+    // Stop：store 清空排队指令 + 发清理事件 → 评论登记同步清理
+    useChatStore.getState().stopStream(SESSION);
+    await waitFor(() => expect(btnFor('c1').disabled).toBe(false));
+
+    // 解除挂起让挂着的 turn 结束，随后重试评论 A — 正常发起
+    releaseTurn();
+    await waitFor(() => expect(useChatStore.getState().sessions[SESSION]?.loading).toBe(false));
+    await act(async () => {});
+
+    fireEvent.click(btnFor('c1'));
+    await waitFor(() => expect(apiMock.sendChatFull).toHaveBeenCalledTimes(2));
+    expect(apiMock.sendChatFull.mock.calls[1][0].text).toContain('这段需要补数据来源');
+  });
+
+  /** 用例 4（回归）：正常单评论闭环 — 行为不变（diff → AI 回复 → accept → resolved）。 */
+  test('正常单评论闭环回归：审阅、AI 回复、accept 自动 resolved', async () => {
+    turnScripts.push({ body: `${BASE_BODY}\n补充：样本量 130。`, rev: 1, answer: '已在 Intro 节补充样本量。' });
+    renderEditor();
+    await screen.findByDisplayValue('Original');
+    await openCommentsPanel();
+
+    fireEvent.click(btnFor('c1'));
+
+    // turn 运行中按钮 loading；diff 冲刷后审阅打开
+    await waitFor(() => expect(btnFor('c1').disabled).toBe(true));
+    const acceptBtn = await screen.findByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ });
+    // loading 与 turn 真实边界对齐：审阅打开（attach 消费）后 loading 收口
+    await waitFor(() => expect(btnFor('c1').disabled).toBe(false));
+
+    fireEvent.click(acceptBtn);
+    await waitFor(() => expect(apiMock.updateDocComment).toHaveBeenCalledWith(DOC_ID, 'c1', 'resolved'));
+    await waitFor(() => expect(screen.getByTestId('comment-thread-c1').getAttribute('data-status')).toBe('resolved'));
+    // 线程 AI 回复内容来自 turn 最终答复（#1064 集成收口: 参数 (docId, commentId, text)）
+    await waitFor(() => expect(apiMock.createDocCommentAiReply.mock.calls.some((c) => String(c[2]).includes('已在 Intro 节补充样本量'))).toBe(true));
   });
 });
