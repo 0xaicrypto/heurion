@@ -827,6 +827,7 @@
     "imageDismiss": "忽略",
     "imageRetry": "重试",
     "imageUploadFailed": "图片上传失败",
+    "imageUploadResultDropped": "图片已上传成功，但原插入位置已被替换，未能插入文档",
     "importedBody": "已导入原文，可直接编辑草稿，或在右侧与 AI 对话调整内容",
     "newDoc": "New Document",
     "noDocs": "No documents yet",

@@ -452,12 +452,13 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       // #1066-2: 占位已被外部内容替换(applyExternalContent 重建文档)时
       // finalizeImageNode 返回 false — 上传成功但图片无处落,提示而非静默。
       const placed = finalizeImageNode(ed, uploadId, { src: url, alt: file.name, uploadId: null, loading: null });
-      if (!placed) setImageNotice('图片已上传成功，但原插入位置已被替换，未能插入文档');
+      if (!placed) setImageNotice(t('writing.imageUploadResultDropped', '图片已上传成功，但原插入位置已被替换，未能插入文档'));
     } catch (err) {
       // 失败:移除占位(不留坏图片节点),给出可重试错误提示(非静默失败)。
       finalizeImageNode(ed, uploadId, null);
       setImageError({ file, pos, message: err instanceof Error ? err.message : String(err) });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 稳定引用回调(经 ref 转发),t 变化不重挂上传链
   }, []);
 
   const insertImageFilesRef = useRef<(files: File[], pos: number | null) => void>(() => {});

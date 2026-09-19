@@ -41,6 +41,13 @@ services:
       - S3_REGION=${S3_REGION:-}
       - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
       - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
+      # #1058: 相对路径图片 ref（/api/v1/files/download/...）导出嵌入的基址 —
+      # 填 Control Plane 的对外地址（如 https://api.example.com）；未配置时
+      # 相对路径图片导出会被跳过并留 [REMOTE-IMAGE] 日志。BACKEND_URL 为兼容别名。
+      - SERVER_ORIGIN=${SERVER_ORIGIN:-}
+      - BACKEND_URL=${BACKEND_URL:-}
+      # #1066-8: 单次导出内嵌图片总字节预算（base64 峰值 ~1.37x），默认 100MB。
+      - PPTX_IMAGE_BUDGET_BYTES=${PPTX_IMAGE_BUDGET_BYTES:-}
     volumes:
       - worker-data:/data
     healthcheck:

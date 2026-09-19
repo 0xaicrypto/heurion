@@ -827,6 +827,7 @@
     "imageDismiss": "Dismiss",
     "imageRetry": "Retry",
     "imageUploadFailed": "Image upload failed",
+    "imageUploadResultDropped": "Image uploaded successfully, but its original insertion point was replaced — it was not inserted",
     "importedBody": "Original text imported — edit the draft directly, or chat with the AI on the right to adjust it",
     "newDoc": "New Document",
     "noDocs": "No documents yet",
