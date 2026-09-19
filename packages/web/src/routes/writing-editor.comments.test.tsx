@@ -14,7 +14,7 @@ import { describe, test, expect, vi, beforeEach, afterEach, beforeAll } from 'vi
 import { render, fireEvent, screen, act, cleanup } from '@testing-library/react';
 import { useRef, useState, type MutableRefObject } from 'react';
 import type { Editor } from '@tiptap/react';
-import { DocEditor } from '@/components/DocEditor';
+import { DocEditor, selectionWithinSingleBlock } from '@/components/DocEditor';
 import { AddCommentModal, CommentsPanel } from './writing-editor/comments-panel';
 import { api, type DocCommentWire } from '@/lib/api';
 // i18n 初始化 — 组件内 t() 需插值。
@@ -125,7 +125,9 @@ function makeComment(fx: CommentFixture) {
   };
 }
 
-/** 与 writing-editor.tsx 相同的接线 — DocEditor + 弹窗 + 侧边栏面板。 */
+/** 与 writing-editor.tsx 相同的接线 — DocEditor + 弹窗 + 侧边栏面板。
+ * #1070: 创建拦截同款 — 跨块选区不建草稿、showNotice 通道提示（这里以
+ * 本地 state 具象化 notice,断言「有提示、无弹窗、无 API 调用」）。 */
 function CommentsHarness({ initialComments, editorRefOut }: {
   initialComments: CommentFixture[];
   editorRefOut?: MutableRefObject<Editor | null>;
@@ -137,6 +139,8 @@ function CommentsHarness({ initialComments, editorRefOut }: {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ text: string; from: number; to: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // #1070: showNotice 通道的 harness 具象（生产走路由 aiEditNotice 轻提示条）。
+  const [notice, setNotice] = useState<string | null>(null);
 
   const submit = async (text: string) => {
     if (!draft) return;
@@ -169,7 +173,15 @@ function CommentsHarness({ initialComments, editorRefOut }: {
         editorRef={refHolder}
         onBubbleAction={() => {}}
         bubble={{ run: null, onStart: () => {}, onApply: () => {}, onDiscard: () => {}, onRetry: () => {}, onRefine: () => {} }}
-        onStartComment={(sel) => setDraft(sel)}
+        onStartComment={(sel) => {
+          // 与 writing-editor.tsx 拦截处同一逻辑（共用 selectionWithinSingleBlock）。
+          const ed = refHolder.current;
+          if (ed && !selectionWithinSingleBlock(ed, sel.from, sel.to)) {
+            setNotice('评论仅支持同一段落内的选区');
+            return;
+          }
+          setDraft(sel);
+        }}
         comments={{
           items: comments.map((c) => ({
             commentId: c.id,
@@ -182,6 +194,7 @@ function CommentsHarness({ initialComments, editorRefOut }: {
           onAnchorClick: (id) => setActiveId(id),
         }}
       />
+      {notice && <div role="status" data-testid="cross-block-notice">{notice}</div>}
       {draft && (
         <AddCommentModal anchorText={draft.text} submitting={submitting} onClose={() => setDraft(null)} onSubmit={(text) => void submit(text)} />
       )}
@@ -401,5 +414,75 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     expect(css).toMatch(/\.comment-anchor-resolved\s*[,{]/);
     expect(css).toMatch(/\.comment-anchor-pending\s*[,{]/);
     expect(css).toMatch(/\.comment-anchor-active\s*[,{]/);
+  });
+});
+
+/**
+ * #1070 — 跨段落评论创建拦截（消灭"侧边栏有、正文无痕且无提示"的无痕第三态）。
+ * 方案 1（限制创建）：跨块选区点「添加评论」→ 创建被拦,showNotice 通道明确
+ * 提示,不创建;单块创建回归不变。
+ */
+describe('#1070 跨块评论创建拦截', () => {
+  /** 文档内文本首个字符的 ProseMirror 位置（按子串定位,段落内选点用）。 */
+  const posOf = (editor: Editor, needle: string): number => {
+    let found = -1;
+    editor.state.doc.descendants((node, pos) => {
+      if (found < 0 && node.isText && typeof node.text === 'string' && node.text.includes(needle)) {
+        found = pos + node.text.indexOf(needle);
+      }
+    });
+    expect(found).toBeGreaterThanOrEqual(0);
+    return found;
+  };
+
+  test('判定:同段选区在单块内,跨段/跨标题选区判为跨块', async () => {
+    const { editor } = await renderHarness();
+    const p1 = posOf(editor, '足够长');
+    const p1End = posOf(editor, '测试。') + 2; // 段内两处仍在同一文本块
+    expect(selectionWithinSingleBlock(editor, p1, p1End)).toBe(true);
+    // 跨两个段落 → 不同父文本块
+    const p2 = posOf(editor, '第二段');
+    expect(selectionWithinSingleBlock(editor, p1, p2)).toBe(false);
+    // 标题 → 段落 同样跨块
+    const heading = posOf(editor, 'Intro');
+    expect(selectionWithinSingleBlock(editor, heading, p1)).toBe(false);
+    // 空选区（折叠）恒视为单块 — 不拦
+    expect(selectionWithinSingleBlock(editor, p1, p1)).toBe(true);
+  });
+
+  test('用例1 跨两段落选区点添加评论 → 不弹输入框、提示可见、不调创建 API', async () => {
+    const { container, editor } = await renderHarness();
+
+    // 选区从第一段跨到第二段 → 气泡出现（气泡本身不拦跨块）
+    const from = posOf(editor, '足够长');
+    const to = posOf(editor, '第二段正文内容') + 6;
+    await showBubbleWithSelection(container, editor, from, to);
+    const addBtn = container.querySelector('[data-testid="bubble-add-comment"]') as HTMLButtonElement;
+    expect(addBtn).toBeTruthy();
+
+    // 点「添加评论」→ 创建被拦:无输入框弹窗,提示可见（showNotice 通道）
+    fireEvent.pointerDown(addBtn);
+    await wait(30);
+    expect(screen.queryByTestId('comment-input')).toBeNull();
+    expect(apiMock.createDocComment).not.toHaveBeenCalled();
+    expect(screen.getByTestId('cross-block-notice').textContent).toContain('评论仅支持同一段落内的选区');
+    // 侧边栏无线程产生（不创建）
+    expect(screen.queryByTestId(/^comment-thread-/)).toBeNull();
+  });
+
+  test('用例2 单段内选区创建回归不变 → 弹窗照常打开,无拦截提示', async () => {
+    const { container, editor } = await renderHarness();
+
+    const from = posOf(editor, '足够长');
+    const to = from + 12; // 同段内 12 字（气泡 shouldShow 阈值 selText > 10）
+    await showBubbleWithSelection(container, editor, from, to);
+    const addBtn = container.querySelector('[data-testid="bubble-add-comment"]') as HTMLButtonElement;
+    expect(addBtn).toBeTruthy();
+
+    fireEvent.pointerDown(addBtn);
+    await wait(30);
+    // 弹窗照常打开（创建链路不受拦截影响,既有 #1040 用例1 验证高亮落地）
+    expect(screen.getByTestId('comment-input')).toBeTruthy();
+    expect(screen.queryByTestId('cross-block-notice')).toBeNull();
   });
 });

@@ -5,7 +5,9 @@ import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 import { BarChart3, Bold, ChevronDown, ChevronUp, FilePlus, ImagePlus, Italic, Link2, MessageSquare, MessageSquarePlus, Pencil, Presentation, Sparkles, Strikethrough, Underline, X } from 'lucide-react';
+import { tableBlockSchema } from '@heurion/contracts';
 import { Button } from '@/components/ui';
+import { Modal } from '@/components/ui/Modal';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { Slide } from '@/lib/deck';
@@ -159,10 +161,43 @@ function DeckTextLine({ value, onChange }: { value: string; onChange: (next: str
   );
 }
 
+/** #1075: 表格块操作按钮 — 与图片/图表块的操作行同款式同位置（对等原则：
+ * deck 的编辑能力与正文保持一致）。数据无法解析的坏表格同样给入口
+ * （AI 导入/历史遗留可清理/替换，不必整页删除）。 */
+function DeckTableActions({ onReplace, onDelete }: { onReplace: () => void; onDelete: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <div className="mt-0.5 flex items-center justify-end gap-1">
+      <button
+        onClick={onReplace}
+        aria-label={t('writing.deckReplaceTable', '替换表格')}
+        title={t('writing.deckReplaceTable', '替换表格')}
+        className="shrink-0 rounded px-1 text-[10px] text-text-tertiary transition-colors hover:bg-surface hover:text-accent"
+      >
+        {t('writing.deckReplaceTable', '替换表格')}
+      </button>
+      <button
+        onClick={onDelete}
+        aria-label={t('writing.deckDeleteTable', '删除表格')}
+        title={t('writing.deckDeleteTable', '删除表格')}
+        className="shrink-0 rounded px-1 text-[10px] text-text-tertiary transition-colors hover:bg-surface hover:text-error"
+      >
+        {t('writing.deckDeleteTable', '删除表格')}
+      </button>
+    </div>
+  );
+}
+
 /** #1047: table 块只读渲染 — data 为 JSON 字符串 `{rows: string[][], header?: boolean}`；
  * 解析失败/形状不符降级为占位文本，不崩溃（导入侧已把合并单元格降级为重复文本，
- * 此处无需处理 gridSpan/rowSpan）。 */
-function DeckTableBlock({ block }: { block: { data?: string } }) {
+ * 此处无需处理 gridSpan/rowSpan）。
+ * #1075: 补替换/删除操作（此前唯一零操作块类型）— 走 deckCtl 既有
+ * replaceDeckSlideBlock / deleteDeckSlideBlock（min-1 防线沿用）。 */
+function DeckTableBlock({ block, onReplace, onDelete }: {
+  block: { data?: string };
+  onReplace: () => void;
+  onDelete: () => void;
+}) {
   const { t } = useTranslation();
   let parsed: { rows?: unknown; header?: unknown } | null = null;
   if (typeof block.data === 'string') {
@@ -176,34 +211,142 @@ function DeckTableBlock({ block }: { block: { data?: string } }) {
   const rows = Array.isArray(rowsRaw) ? rowsRaw.filter((r): r is unknown[] => Array.isArray(r)) : [];
   if (rows.length === 0) {
     return (
-      <p className="rounded border border-dashed border-border px-2 py-1 text-[11px] text-text-tertiary">
-        {t('writing.deckTableInvalid', '表格数据无法解析')}
-      </p>
+      <div className="min-w-0">
+        <p className="rounded border border-dashed border-border px-2 py-1 text-[11px] text-text-tertiary">
+          {t('writing.deckTableInvalid', '表格数据无法解析')}
+        </p>
+        <DeckTableActions onReplace={onReplace} onDelete={onDelete} />
+      </div>
     );
   }
   const header = parsed?.header === true;
   return (
-    <div className="max-h-[60%] overflow-auto rounded border border-border">
-      <table className="w-full border-collapse text-[11px]">
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri}>
-              {row.map((cell, ci) => {
-                const Cell = header && ri === 0 ? 'th' : 'td';
-                return (
-                  <Cell
-                    key={ci}
-                    className={`border border-border px-1.5 py-0.5 text-left align-top ${header && ri === 0 ? 'bg-surface-elevated font-medium text-text-primary' : 'text-text-secondary'}`}
-                  >
-                    {String(cell ?? '')}
-                  </Cell>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="min-w-0">
+      <div className="max-h-[60%] overflow-auto rounded border border-border">
+        <table className="w-full border-collapse text-[11px]">
+          <tbody>
+            {rows.map((row, ri) => (
+              <tr key={ri}>
+                {row.map((cell, ci) => {
+                  const Cell = header && ri === 0 ? 'th' : 'td';
+                  return (
+                    <Cell
+                      key={ci}
+                      className={`border border-border px-1.5 py-0.5 text-left align-top ${header && ri === 0 ? 'bg-surface-elevated font-medium text-text-primary' : 'text-text-secondary'}`}
+                    >
+                      {String(cell ?? '')}
+                    </Cell>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <DeckTableActions onReplace={onReplace} onDelete={onDelete} />
     </div>
+  );
+}
+
+/** #1075: 表格数据表单 — 结构对齐 deck-chart-form（同款 Modal/校验/确认流，
+ * 最小可用）：每行一条记录、单元格用 | 分隔，打开时回填原 rows、header
+ * 勾选态沿用。确认经 tableBlockSchema 校验（rows 1..200 / ≤30 列 / 单元格
+ * ≤2000 字符）后产出 { type:'table', data: JSON 字符串 } 供原位替换。
+ * 限制（最小可用取舍）：单元格内不能含 | 或换行（与 | 分隔形态冲突）；
+ * 各行允许缺格（contracts 对 ragged 行保持宽松）。 */
+function DeckTableFormDialog(input: {
+  /** 替换模式：预填原块（rows 回填文本形态，header 回填勾选态）。 */
+  initialBlock?: { data?: string };
+  onConfirm: (block: { type: 'table'; data: string }) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const { initialBlock, onConfirm, onClose } = input;
+  let parsed: { rows?: unknown; header?: unknown } | null = null;
+  if (typeof initialBlock?.data === 'string') {
+    try {
+      parsed = JSON.parse(initialBlock.data) as { rows?: unknown; header?: unknown };
+    } catch {
+      parsed = null;
+    }
+  }
+  const rowsRaw = Array.isArray(parsed?.rows) ? (parsed!.rows as unknown[]) : [];
+  const initialRows = rowsRaw
+    .filter((r): r is unknown[] => Array.isArray(r))
+    .map((r) => r.map((c) => String(c ?? '')));
+  const [text, setText] = useState(initialRows.map((r) => r.join(' | ')).join('\n'));
+  const [header, setHeader] = useState(parsed?.header === true);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = () => {
+    // 空行丢弃；行内单元格按 | 切分并去首尾空白 — 至少 1 行且每行至少
+    // 1 个单元格才进 schema 校验（失败给行内提示，不改 content）。
+    const rows = text
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => line.split('|').map((c) => c.trim()));
+    if (rows.length === 0 || rows.some((r) => r.every((c) => c === ''))) {
+      setError(t('writing.deckTableFormEmpty', '至少需要一行数据（单元格用 | 分隔）'));
+      return;
+    }
+    const data = JSON.stringify({ rows, ...(header ? { header: true } : {}) });
+    const check = tableBlockSchema.safeParse({ type: 'table', data });
+    if (!check.success) {
+      setError(check.error.issues.map((i) => i.message).join('；').slice(0, 200));
+      return;
+    }
+    onConfirm({ type: 'table', data });
+  };
+
+  return (
+    <Modal open onClose={onClose} backdropClose escClose backdropClassName="bg-black/50">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface-elevated shadow-xl p-6 m-4">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-text-primary">{t('writing.deckTableFormTitle', '替换表格')}</h2>
+          <button onClick={onClose} aria-label={t('writing.deckChartFormClose', '关闭')} className="text-text-tertiary hover:text-text-primary">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-text-secondary" htmlFor="deck-table-form-data">
+              {t('writing.deckTableFormData', '表格数据（每行一条，单元格用 | 分隔）')}
+            </label>
+            <textarea
+              id="deck-table-form-data"
+              aria-label={t('writing.deckTableFormData', '表格数据（每行一条，单元格用 | 分隔）')}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={6}
+              placeholder={t('writing.deckTableFormPlaceholder', '指标 | 值\nPFS | 5.2')}
+              className="w-full resize-y rounded-lg border border-border bg-surface px-2 py-1.5 text-xs font-mono text-text-primary placeholder:text-text-tertiary outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <label className="flex items-center gap-1.5 text-sm text-text-secondary">
+            <input
+              type="checkbox"
+              checked={header}
+              onChange={(e) => setHeader(e.target.checked)}
+              aria-label={t('writing.deckTableFormHeader', '首行为表头')}
+            />
+            {t('writing.deckTableFormHeader', '首行为表头')}
+          </label>
+          {error && (
+            <p role="alert" className="rounded border border-error/40 bg-error/10 px-2 py-1 text-xs text-error">
+              {t('writing.deckTableFormInvalid', '数据未通过校验')}：{error}
+            </p>
+          )}
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            {t('writing.deckChartFormCancel', '取消')}
+          </Button>
+          <Button size="sm" onClick={submit}>
+            {t('writing.deckChartFormConfirmReplace', '确认替换')}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -367,6 +510,8 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
   const [uploadTarget, setUploadTarget] = useState<{ mode: 'insert' } | { mode: 'replace'; blockIndex: number; oldCaption?: string }>({ mode: 'insert' });
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [chartForm, setChartForm] = useState<{ mode: 'insert' } | { mode: 'replace'; blockIndex: number } | null>(null);
+  // #1075: 表格数据表单（仅替换 — 表格无「插入」入口，替换对齐图片/图表块）。
+  const [tableForm, setTableForm] = useState<{ mode: 'replace'; blockIndex: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // #1063: 要点行容器 — 「+ 要点」追加新行后把焦点补到新行输入框。
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -504,7 +649,17 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
         {/* #1047: 按 content 原序交错渲染 — 文本块走要点编辑行，table 块走只读表格；
             #1044: image/chart 块走只读渲染 + 替换/删除操作（原位替换，非追加）。 */}
         {slide.content.map((b, ci) => {
-          if (b.type === 'table') return <DeckTableBlock key={`t-${ci}`} block={b} />;
+          if (b.type === 'table')
+            return (
+              <DeckTableBlock
+                key={`t-${ci}`}
+                block={b}
+                /* #1075: 替换/删除入口 — 删除走既有 deleteDeckSlideBlock
+                    （min-1 防线：唯一内容块拒删），替换打开表格数据表单。 */
+                onReplace={() => setTableForm({ mode: 'replace', blockIndex: ci })}
+                onDelete={() => deckCtl.deleteDeckSlideBlock(index, ci)}
+              />
+            );
           if (b.type === 'image')
             return (
               <DeckImageBlock
@@ -634,6 +789,17 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
             setChartForm(null);
           }}
           onClose={() => setChartForm(null)}
+        />
+      )}
+      {/* #1075: 表格数据表单（替换）— 原位替换 table 块，带块身份快照（同上）。 */}
+      {tableForm && (
+        <DeckTableFormDialog
+          initialBlock={slide.content[tableForm.blockIndex]}
+          onConfirm={(block: { type: 'table'; data: string }) => {
+            deckCtl.replaceDeckSlideBlock(index, tableForm.blockIndex, block, slide.content[tableForm.blockIndex]);
+            setTableForm(null);
+          }}
+          onClose={() => setTableForm(null)}
         />
       )}
     </div>

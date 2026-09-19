@@ -764,6 +764,127 @@ describe('#1063 图表非有限数校验与负值渲染', () => {
   });
 });
 
+// ── #1075: deck 表格块删除/替换入口 — 对等原则缺口（唯一零操作块类型）──
+// 与图片/图表块（#1044）对齐：onDelete 走既有 deleteDeckSlideBlock
+// （min-1 防线沿用），onReplace 打开表格数据表单回填原 rows 原位替换。
+describe('#1075 deck 表格块删除/替换', () => {
+  const seededTable = (rows: string[][], header = true) =>
+    ({ type: 'table', data: JSON.stringify({ rows, header }) }) as const;
+
+  test('用例1 表格块点删除 → 块从 content 移除，其余块保留', () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [seededTable([['指标', '值'], ['PFS', '5.2']]), { type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+        ])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    expect(container.querySelector('table')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '删除表格' }));
+
+    expect(container.querySelector('table')).toBeNull();
+    const content = lastDeck(onDeckChange).slides[0].content;
+    expect(content).toHaveLength(1);
+    expect(content[0].text).toBe('A-要点');
+  });
+
+  test('用例2 表格是唯一内容块 → 删除被拒（min-1 防线，与图片/图表一致）', () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [seededTable([['a', 'b']])] },
+        ])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '删除表格' }));
+
+    // content 仍保留该表格（不产出空数组，不违反导出契约 min(1)）
+    expect(container.querySelector('table')).not.toBeNull();
+    const content = lastDeck(onDeckChange).slides[0].content;
+    expect(content).toHaveLength(1);
+    expect(content[0].type).toBe('table');
+  });
+
+  test('数据无法解析的坏表格同样给删除入口（AI 导入/历史遗留可清理，不必整页删除）', () => {
+    const onDeckChange = deckProbe();
+    render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [{ type: 'table', data: 'not-json{{' }, { type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+        ])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    expect(screen.getByText('表格数据无法解析')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '删除表格' }));
+
+    expect(screen.queryByText('表格数据无法解析')).toBeNull();
+    const content = lastDeck(onDeckChange).slides[0].content;
+    expect(content).toHaveLength(1);
+    expect(content[0].text).toBe('A-要点');
+  });
+
+  test('替换：表单回填原 rows，确认后原位替换 data（不追加新块）', () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          {
+            title: 'A',
+            content: [
+              seededTable([['指标', '值'], ['PFS', '5.2']]),
+              { type: 'paragraph', text: 'A-要点', style: 'bullet' },
+            ],
+          },
+        ])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '替换表格' }));
+
+    // 表单回填原 rows（每行一条、单元格 | 分隔），header 勾选态沿用
+    const textarea = screen.getByLabelText('表格数据（每行一条，单元格用 | 分隔）') as HTMLTextAreaElement;
+    expect(textarea.value).toBe('指标 | 值\nPFS | 5.2');
+    expect((screen.getByLabelText('首行为表头') as HTMLInputElement).checked).toBe(true);
+
+    // 改写数据并确认 → 原位替换，块数不变
+    fireEvent.change(textarea, { target: { value: '指标 | 值\nPFS | 6.0' } });
+    fireEvent.click(screen.getByRole('button', { name: '确认替换' }));
+
+    const content = lastDeck(onDeckChange).slides[0].content;
+    expect(content).toHaveLength(2);
+    expect(content[0].type).toBe('table');
+    expect(JSON.parse((content[0] as { data: string }).data)).toEqual({ rows: [['指标', '值'], ['PFS', '6.0']], header: true });
+    expect(content.some((b) => b.text === 'A-要点')).toBe(true);
+    // 替换后的表格仍在视图渲染
+    expect(container.querySelector('table')!.textContent).toContain('6.0');
+  });
+
+  test('替换：清空数据确认 → 表单内报错，不改 content', () => {
+    const onDeckChange = deckProbe();
+    render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [seededTable([['a', 'b']]), { type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+        ])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '替换表格' }));
+    fireEvent.change(screen.getByLabelText('表格数据（每行一条，单元格用 | 分隔）'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: '确认替换' }));
+
+    expect(screen.getByRole('alert')).toBeTruthy();
+    const content = lastDeck(onDeckChange).slides[0].content;
+    expect(content[0].type).toBe('table');
+    expect(JSON.parse((content[0] as { data: string }).data).rows).toEqual([['a', 'b']]);
+  });
+});
+
 // 5) 外部拖拽不触发排序：dataTransfer 无专用 type（文件拖入等）→ 忽略
 describe('#1063 外部拖拽不误触发卡片排序', () => {
   test('dataTransfer types 不含 text/deck-index（外部文件拖入）→ 顺序不变', () => {

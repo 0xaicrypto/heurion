@@ -237,3 +237,61 @@ describe('#1066-2 上传结果无处落时不静默', () => {
     expect(screen.getByText(/图片已上传/)).toBeInTheDocument();
   });
 });
+
+// #1069: 多图拖拽/粘贴插入顺序 — 占位插入循环复用同一固定 pos 会导致
+// 后插占位顶在先插占位前面(落地顺序与操作顺序相反)。断言文档中图片
+// 出现顺序 === 操作顺序(占位顺序决定最终顺序:异步 finalize 按 uploadId
+// 原位替换,不重排)。
+describe('#1069 多图插入顺序与操作顺序一致', () => {
+  /** getDownloadUrl 按 file_id 回显 URL — 每张图 src 唯一,可作顺序标记。 */
+  const mockUploads = (n: number, prefix: string) => {
+    for (let i = 1; i <= n; i++) {
+      uploadFileMock.mockResolvedValueOnce({ file_id: `${prefix}_${i}`, name: `${prefix}-${i}.png`, mime: 'image/png', size_bytes: 1 });
+    }
+    getDownloadUrlMock.mockImplementation(async (fid: string) => ({ file_id: fid, url: `/api/v1/files/download/${fid}?token=tok` }));
+  };
+  /** 文档中各图片 src 的出现次序(重复 src 取首个占位 — 本用例 src 唯一)。 */
+  const imageOrder = (ref: { current: Editor | null }): string[] => {
+    const html = ref.current!.getHTML();
+    return [...html.matchAll(/\/api\/v1\/files\/download\/([\w-]+)\?/g)].map((m) => m[1]);
+  };
+
+  test('用例1 拖入 3 张图 → 文档中图片顺序 === 拖入顺序', async () => {
+    const { ref, container } = await setupEditor('拖拽目标段落。');
+    mockUploads(3, 'file_m');
+    const editorDom = container.querySelector('.ProseMirror') as HTMLElement;
+    ref.current!.view.posAtCoords = vi.fn(() => ({ pos: 4, inside: -1 }));
+
+    fireEvent.drop(editorDom, {
+      dataTransfer: { files: [pngFile('m-1.png'), pngFile('m-2.png'), pngFile('m-3.png')], getData: () => '' },
+    });
+
+    await waitFor(() => expect(ref.current!.getHTML()).toContain('src="/api/v1/files/download/file_m_3'));
+    expect(imageOrder(ref)).toEqual(['file_m_1', 'file_m_2', 'file_m_3']);
+  });
+
+  test('用例2 粘贴 2 张图 → 文档中图片顺序 === 粘贴顺序', async () => {
+    const { ref, container } = await setupEditor('粘贴目标段落。');
+    mockUploads(2, 'file_p');
+
+    const editorDom = container.querySelector('.ProseMirror') as HTMLElement;
+    fireEvent.paste(editorDom, {
+      clipboardData: { files: [pngFile('p-1.png'), pngFile('p-2.png')], getData: () => '' },
+    });
+
+    await waitFor(() => expect(ref.current!.getHTML()).toContain('src="/api/v1/files/download/file_p_2'));
+    expect(imageOrder(ref)).toEqual(['file_p_1', 'file_p_2']);
+  });
+
+  test('用例3 单图拖入(回归) → 不变,仍触发上传并落位', async () => {
+    const { ref, container } = await setupEditor('拖拽目标段落。');
+    mockUploads(1, 'file_s');
+    const editorDom = container.querySelector('.ProseMirror') as HTMLElement;
+    ref.current!.view.posAtCoords = vi.fn(() => ({ pos: 4, inside: -1 }));
+
+    fireEvent.drop(editorDom, { dataTransfer: { files: [pngFile('s-1.png')], getData: () => '' } });
+
+    await waitFor(() => expect(ref.current!.getHTML()).toContain('src="/api/v1/files/download/file_s_1'));
+    expect(imageOrder(ref)).toEqual(['file_s_1']);
+  });
+});

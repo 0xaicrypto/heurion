@@ -38,6 +38,23 @@ const AI_AUTHOR: ChangeAuthor = { id: 'ai', name: 'AI', color: '#0ea5e9' };
 const EMPTY_COMMENTS: CommentAnchorsData = { items: [] };
 
 /**
+ * #1070: 选区是否落在同一段落（同一文本块）内 — 评论锚点创建入口的前置校验。
+ * 跨块（跨两个段落/标题等）选区创建的评论,锚点算法设计上拒绝跨块 decoration
+ * （comment-anchor.ts 按块扫描）— 正文高亮永不出现且无提示,形成
+ * "侧边栏有、正文无痕"的无痕第三态;创建入口先拦,不产生这种评论。
+ * 与 selection-bubble → writing-editor.tsx onStartComment 拦截处共用同一判定
+ * （导出供测试接线复用,杜绝 harness 复制实现漂移）。位置非法时保守视为跨块。
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- #1070: 判定与编辑器同域,与组件同文件避免跨文件扩散(改动范围受限,同 editorUiStateSignature 先例)
+export function selectionWithinSingleBlock(ed: Editor, from: number, to: number): boolean {
+  try {
+    return ed.state.doc.resolve(from).sameParent(ed.state.doc.resolve(to));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * #996-followup: 标题级别选择器 — 正文 / H1 / H2 / H3（系统"节"口径
  * H1-H3：节卡片、作者/可信度元数据、节级 AI 编辑、聊天节跳转都认这三层；
  * H4+ 编辑器可输入但不建节）。替代原单一 H2 按钮。
@@ -463,7 +480,19 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
 
   const insertImageFilesRef = useRef<(files: File[], pos: number | null) => void>(() => {});
   insertImageFilesRef.current = (files, pos) => {
-    for (const f of files) void runImageUpload(f, pos);
+    // #1069: 多图循环复用同一固定 pos → 每次都插在同一位置,后插占位顶在
+    // 先插占位前面(落地顺序与操作顺序相反)。改为维护插入游标:首个文件用
+    // 给定 pos/当前光标,后续文件插到上一占位之后 — 占位恰 1 节点,
+    // insertContentAt 默认 updateSelection 会把光标落到刚插入内容之后,
+    // 依次读 selection.from 即得下一个插入点(段落分裂/块边界两种几何
+    // 通用,见 doc-editor-image.test.tsx #1069 用例)。异步 finalize 按
+    // uploadId 原位定位替换,不依赖 pos — 与占位插入顺序解耦。
+    let cursor: number | null = pos;
+    for (const f of files) {
+      void runImageUpload(f, cursor);
+      const ed = liveEditorRef.current;
+      cursor = ed ? ed.state.selection.from : null;
+    }
   };
 
   const retryImageUpload = () => {

@@ -8,7 +8,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { useSessionSuggestions } from './writing-editor/suggestions';
 import { SuggestedReferenceBanner } from '@/components/SuggestedReferenceBanner';
-import { DocEditor, type DiffReviewState } from '@/components/DocEditor';
+import { DocEditor, selectionWithinSingleBlock, type DiffReviewState } from '@/components/DocEditor';
 import { ProposalCard } from '@/components/ProposalCard';
 import { KbPicker } from '@/components/KbPicker';
 import { SpotHint } from '@/components/SpotHint';
@@ -1985,7 +1985,17 @@ export function WritingEditorPage() {
                         activeCommentId: activeCommentId,
                         onAnchorClick: (id) => { setActiveCommentId(id); setCommentsPanelOpen(true); },
                       }}
-                      onStartComment={(sel) => setCommentDraft(sel)}
+                      onStartComment={(sel) => {
+                        // #1070: 跨块选区不创建评论 — 锚点算法按块扫描,跨块
+                        // 评论正文高亮永不出现且无提示（无痕第三态）。创建入口
+                        // 拦截并经 showNotice 明确提示,不产生无痕评论。
+                        const ed = polishEditorRef.current;
+                        if (ed && !selectionWithinSingleBlock(ed, sel.from, sel.to)) {
+                          showNotice(t('writing.commentCrossBlockUnsupported', '评论仅支持同一段落内的选区'), 4000);
+                          return;
+                        }
+                        setCommentDraft(sel);
+                      }}
                       onBubbleAction={bubble.handleBubbleAction}
                       bubble={{
                         run: bubble.bubbleRun,
