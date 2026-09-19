@@ -17,6 +17,9 @@ name: Deploy Worker
 #   WORKER_API_TOKEN     控制面/worker 共享 token（已存在）
 #   S3_ENDPOINT / S3_BUCKET / S3_REGION / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY
 #                        worker 渲染产物 S3 上传（已存在，可留空 = 本地存储）
+#   SERVER_ORIGIN        控制面对外地址（#1058: 相对路径图片 ref 导出嵌入的
+#                        基址；未设置 = 相对路径图片导出跳过并留 [REMOTE-IMAGE] 日志）
+#   PPTX_IMAGE_BUDGET_BYTES  可选（#1066-8: 导出内嵌图片字节预算，默认 100MB）
 #
 # 首次部署前置（worker VPS 上一次性）：
 #   mkdir -p /opt/heurion-worker && 用户可写
@@ -94,6 +97,9 @@ jobs:
       S3_REGION: ${{ secrets.S3_REGION }}
       S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
       S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      # #1058: 相对路径图片导出嵌入基址;#1066-8: 可选导出图片预算覆盖。
+      SERVER_ORIGIN: ${{ secrets.SERVER_ORIGIN }}
+      PPTX_IMAGE_BUDGET_BYTES: ${{ secrets.PPTX_IMAGE_BUDGET_BYTES }}
     steps:
       - uses: actions/checkout@v4
 
@@ -138,6 +144,9 @@ jobs:
           S3_REGION='${S3_REGION}'
           S3_ACCESS_KEY_ID='${S3_ACCESS_KEY_ID}'
           S3_SECRET_ACCESS_KEY='${S3_SECRET_ACCESS_KEY}'
+          # #1058/#1066: 相对路径图片嵌入基址 + 可选导出图片预算。
+          SERVER_ORIGIN='${SERVER_ORIGIN}'
+          PPTX_IMAGE_BUDGET_BYTES='${PPTX_IMAGE_BUDGET_BYTES}'
           EOF
           scp -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new \
             docker-compose.worker.yml "$WORKER_VPS_USER@$WORKER_VPS_HOST":/opt/heurion-worker/
