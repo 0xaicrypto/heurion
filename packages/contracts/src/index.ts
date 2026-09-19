@@ -50,7 +50,9 @@ export type ImageBlock = z.infer<typeof imageBlockSchema>
 
 export const paragraphBlockSchema = z.object({
   type: z.literal('paragraph'),
-  text: z.string().min(1).max(20000),
+  // #1063 集成收口: 允许空文本占位块 — deck 编辑器以空行保持编辑态
+  // (#1063 修复「+要点」no-op 与清空行消失),渲染层跳过空块。
+  text: z.string().max(20000),
   style: z.enum(['normal', 'bullet', 'heading']).optional(),
 })
 
@@ -125,6 +127,14 @@ export const tableBlockSchema = z.object({
         if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
         const rows = (v as { rows?: unknown }).rows
         if (!Array.isArray(rows) || rows.length === 0 || rows.length > 200) return false
+        // #1066-10: header 必须为 boolean（可选）— 此前未校验类型，`"yes"` 等
+        // 畸形值可入库（消费侧虽按 === true 判定不致错，但契约应诚实）。
+        const header = (v as { header?: unknown }).header
+        if (header !== undefined && typeof header !== 'boolean') return false
+        // #1066-10: ragged 行（各行等长）**保持宽松** — 渲染侧（deck-view 逐行
+        // 独立渲染）与导出侧（worker pptxgenjs addTable 逐行消费）天然容忍缺格；
+        // 强制等长会让历史已存的 ragged deck 在重新校验时整体失败，收益不抵
+        // 破坏面。等长约束如未来需要，应配合一次性数据迁移再收紧。
         return rows.every(
           (row) =>
             Array.isArray(row) &&
@@ -134,7 +144,7 @@ export const tableBlockSchema = z.object({
       } catch {
         return false
       }
-    }, { message: 'table data must be JSON "{rows: string[][], header?: boolean}" (rows 1..200, ≤30 cols, cell ≤2000 chars)' }),
+    }, { message: 'table data must be JSON "{rows: string[][], header?: boolean}" (rows 1..200, ≤30 cols, cell ≤2000 chars, header boolean-optional)' }),
   caption: z.string().max(500).optional(),
 })
 
