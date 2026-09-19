@@ -253,13 +253,15 @@ export async function generatePptx(payload: any) {
   }
 
   /** 要点渲染 + 超页自动拆续页（fitBullets 已选字号；续页同布局标题（续））。#1047: heightIn 供表格页让出下半区。
-   * #1062-3: heightIn ≤ 0（表格撑满页高、无正文空间）→ 全部要点拆续页，不再静默不渲染。 */
-  const renderBullets = (s: Slide, title: string, items: Array<{ text: string; bullet: boolean }>, x: number, w: number, heightIn: number = areaH) => {
+   * #1062-3: heightIn ≤ 0（表格撑满页高、无正文空间）→ 全部要点拆续页，不再静默不渲染。
+   * #1068: startY — 表格页正文从表格下方（tableBottom）起渲染，而非固定 BODY_TOP
+   * （旧实现图表摘要/要点文本与表格区域视觉重叠）。续页仍从 BODY_TOP 起。 */
+  const renderBullets = (s: Slide, title: string, items: Array<{ text: string; bullet: boolean }>, x: number, w: number, heightIn: number = areaH, startY: number = BODY_TOP) => {
     // #1063 集成收口: 空文本占位块（deck 编辑器空行）不参与渲染/占高。
     const visible = items.filter((it) => it.text && it.text.trim() !== '')
     const { font, chunks } = fitBullets(visible, w, heightIn)
     let target = s
-    let cy = BODY_TOP
+    let cy = startY
     // #1062-3: 当前页无正文空间 → 从续页开始渲染（此前该页要点直接消失）
     const noRoomHere = heightIn < 0.4 && visible.length > 0
     chunks.forEach((group, ci) => {
@@ -330,7 +332,12 @@ export async function generatePptx(payload: any) {
     // data 畸形（非约定 JSON）→ 跳过该表格，不中断整份导出。
     const tableBlocks = slide.content.filter((b) => b.type === 'table')
     if (tableBlocks.length > 0) {
+      const rowH = 0.34
+      const TBL_PAD = 0.05 // 表格内边距（#1062-3 tblH 口径）
       let tableBottom = BODY_TOP
+      // #1068: 当前表格渲染目标页 — 放不下的行拆续页后前移（要点/图表摘要
+      // 跟进最后一个表格块所在页，而非固定首页）。
+      let tableSlide = s
       for (const tb of tableBlocks.slice(0, 2)) {
         const parsed = parseTableBlockData((tb as { data?: unknown }).data)
         if (!parsed || parsed.rows.length === 0) continue
@@ -341,24 +348,44 @@ export async function generatePptx(payload: any) {
         if (parsed.rows.length > renderedRows.length) {
           items.push({ text: `[表格过长：仅渲染前 100 行（源共 ${parsed.rows.length} 行）]`, bullet: false })
         }
-        const rowH = 0.34
-        const tblH = Math.min(renderedRows.length * rowH + 0.05, Math.max(BODY_BOTTOM - tableBottom, 0.4))
-        s.addTable(
-          renderedRows.map((row, ri) => row.map((cell) => ({
-            text: cell,
-            options: {
-              fontSize: 12,
-              valign: 'middle' as const,
-              ...(parsed.header && ri === 0 ? { bold: true, fill: { color: theme.accentSoft }, color: theme.text } : {}),
-            },
-          }))),
-          { x: PAGE.margin, y: tableBottom, w: bodyW, rowH, border: { pt: 0.5, color: '94A3B8' }, fontFace: theme.font, autoPage: false },
-        )
-        tableBottom += tblH + 0.25
+        // #1068: 按页高预算把行拆到续页（#1062-3 拆续页语义），而不是整表
+        // 塞一页。布局预算按「该页表格高度求和」累计（tableBottom 跨表格块
+        // 共享）— 两表高度求和超过页预算时，后表整体/部分行落到续页。
+        let ri = 0
+        while (ri < renderedRows.length) {
+          // 当页剩余高度放不下一行（含内边距）→ 开续页（标题（续）语义与
+          // renderBullets 一致；新页从 BODY_TOP 重新计预算）
+          if (BODY_BOTTOM - tableBottom - TBL_PAD < rowH) {
+            tableSlide = pres.addSlide()
+            addHeader(tableSlide, `${slide.title}（续）`)
+            tableBottom = BODY_TOP
+          }
+          const rowsHere = Math.max(1, Math.floor((BODY_BOTTOM - tableBottom - TBL_PAD) / rowH))
+          const chunk = renderedRows.slice(ri, ri + rowsHere)
+          // #1068: addTable 传 h（frame ext cy）— 与 #1062-3 表格区域计算共用
+          // 同一口径（行数×rowH+0.05，拆行后 ≤ 当页可用高度），渲染收敛到预算
+          // 内；旧实现未传 h → pptxgenjs 落 1in 兜底 cy，行高不受控外溢。
+          const chunkH = chunk.length * rowH + TBL_PAD
+          tableSlide.addTable(
+            chunk.map((row, k) => row.map((cell) => ({
+              text: cell,
+              options: {
+                fontSize: 12,
+                valign: 'middle' as const,
+                // 表头样式仅全表第 0 行（拆页后后续 chunk 的首行不是表头）
+                ...(parsed.header && ri + k === 0 ? { bold: true, fill: { color: theme.accentSoft }, color: theme.text } : {}),
+              },
+            }))),
+            { x: PAGE.margin, y: tableBottom, w: bodyW, h: chunkH, rowH, border: { pt: 0.5, color: '94A3B8' }, fontFace: theme.font, autoPage: false },
+          )
+          tableBottom += chunkH + 0.25
+          ri += rowsHere
+        }
       }
       // #1062-3: 表格撑满页高（heightIn ≤ 0）→ 要点全部拆续页（此前直接不渲染）。
+      // #1068: 正文目标页 = 最后一个表格块所在页，从表格下方（tableBottom）起渲染。
       if (items.length > 0) {
-        renderBullets(s, slide.title, items, PAGE.margin, bodyW, Math.max(BODY_BOTTOM - tableBottom, 0))
+        renderBullets(tableSlide, slide.title, items, PAGE.margin, bodyW, Math.max(BODY_BOTTOM - tableBottom, 0), tableBottom)
       }
       continue
     }

@@ -254,3 +254,135 @@ describe('#1062 PPTX 保真度跟进批次（导出侧 3/5/6）', () => {
     expect(all).not.toContain('已截断')
   })
 })
+
+describe('#1068 表格高度传导渲染（页高预算/拆续页/多表不重叠）', () => {
+  afterEach(() => vi.clearAllMocks())
+
+  const EMU_PER_IN = 914400
+  const PAGE_H_EMU = 5.625 * EMU_PER_IN // WIDE 画布高（in → EMU）
+
+  interface YRange { y: number; bottom: number }
+
+  /** slide XML 中所有表格 graphicFrame 的纵坐标区间（EMU）— h 传导后 frame ext cy 即表格预算高。 */
+  const tableRanges = (slideXml: string): YRange[] => {
+    const out: YRange[] = []
+    for (const m of slideXml.matchAll(/<p:graphicFrame>[\s\S]*?<\/p:graphicFrame>/g)) {
+      if (!m[0].includes('<a:tbl>')) continue
+      const y = parseInt(/<a:off x="\d+" y="(-?\d+)"/.exec(m[0])?.[1] || '', 10)
+      const cy = parseInt(/<a:ext cx="\d+" cy="(\d+)"/.exec(m[0])?.[1] || '', 10)
+      out.push({ y, bottom: y + cy })
+    }
+    return out
+  }
+
+  /** 指定文本所在形状（p:sp）的纵坐标区间（EMU）。 */
+  const textRange = (slideXml: string, needle: string): YRange | null => {
+    for (const m of slideXml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)) {
+      if (!m[0].includes(needle)) continue
+      const y = parseInt(/<a:off x="\d+" y="(-?\d+)"/.exec(m[0])?.[1] || '', 10)
+      const cy = parseInt(/<a:ext cx="\d+" cy="(\d+)"/.exec(m[0])?.[1] || '', 10)
+      return { y, bottom: y + cy }
+    }
+    return null
+  }
+
+  const generate = async (content: unknown) => {
+    const res = await generatePptx({ schema_version: 1, content_type: 'sidecar.generate_pptx', data: content })
+    return unzip((res as { buffer: Buffer }).buffer)
+  }
+
+  test('30 行表格导出 → 各表格 frame 的 y 坐标区间均在画布内（无页高越界），行不丢', async () => {
+    // 旧实现：未传 h、整表塞一页 — frame cy 停留在 1in 兜底值，行按 rowH 自然
+    // 外溢画布（超约 11 行即越界）。
+    const rows = Array.from({ length: 30 }, (_, i) => [`第${i}行`, `值${i}`])
+    const parts = await generate({
+      schemaVersion: 2,
+      title: 'T',
+      slides: [{ title: '长表页', content: [{ type: 'table', data: JSON.stringify({ rows }) }] }],
+    })
+    const slideNames = Object.keys(parts).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+    const frames = slideNames.flatMap((n) => tableRanges(parts[n]))
+    // 拆续页语义生效（页高预算 ~11 行/页 → 多页承载），且每个 frame 完整落在画布内
+    expect(frames.length).toBeGreaterThanOrEqual(2)
+    for (const f of frames) {
+      expect(f.y).toBeGreaterThanOrEqual(0)
+      expect(f.bottom).toBeLessThanOrEqual(PAGE_H_EMU)
+    }
+    // 拆页不丢行：30 行全部渲染（含续页）
+    const all = Object.values(parts).join('\n')
+    for (let i = 0; i < 30; i++) expect(all).toContain(`<a:t>第${i}行</a:t>`)
+  })
+
+  test('一页两表（表格 + 图表页）→ 表格与图表摘要文本坐标区间不相交（无视觉重叠）', async () => {
+    // 旧实现：图表摘要文本固定从 BODY_TOP 起渲染，压在表格区域上（视觉重叠）。
+    const parts = await generate({
+      schemaVersion: 2,
+      title: 'T',
+      slides: [
+        {
+          title: '数据页',
+          content: [
+            { type: 'table', data: JSON.stringify({ rows: [['A', 'B'], ['1', '2'], ['3', '4']] }) },
+            { type: 'chart', spec: { chart_type: 'bar', title: '疗效对比', data: [{ label: 'Arm A', value: 5.2 }] } },
+          ],
+        },
+      ],
+    })
+    const slideXml = parts['ppt/slides/slide2.xml'] || ''
+    const tbl = tableRanges(slideXml)[0]
+    const chartText = textRange(slideXml, '图表')
+    expect(tbl).toBeTruthy()
+    expect(chartText).toBeTruthy()
+    // 图表文本整体位于表格区间之下（区间不相交）
+    expect(chartText!.y).toBeGreaterThanOrEqual(tbl!.bottom)
+  })
+
+  test('两个 table 块高度求和超页预算 → 两者坐标区间不相交且均在画布内', async () => {
+    // 两表各 10 行（自然高 2×3.45=6.9 > 页预算 3.9）：求和判定 → 第二表整表拆续页。
+    // 旧实现：第二表 y 压到首页底部、实际渲染高度不收敛 → 画布外溢出。
+    const tenRows = Array.from({ length: 10 }, (_, i) => [`T${i}`, `V${i}`])
+    const parts = await generate({
+      schemaVersion: 2,
+      title: 'T',
+      slides: [
+        {
+          title: '双表页',
+          content: [
+            { type: 'table', data: JSON.stringify({ rows: tenRows.map((r) => [`${r[0]}a`, r[1]]) }) },
+            { type: 'table', data: JSON.stringify({ rows: tenRows.map((r) => [`${r[0]}b`, r[1]]) }) },
+          ],
+        },
+      ],
+    })
+    const slideNames = Object.keys(parts).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+    const frames = slideNames.flatMap((n) => tableRanges(parts[n]))
+    expect(frames.length).toBe(2)
+    for (const f of frames) expect(f.bottom).toBeLessThanOrEqual(PAGE_H_EMU)
+    // 两表不在同一页（求和超预算 → 拆续页），坐标区间天然不相交
+    for (const n of slideNames) expect(tableRanges(parts[n]).length).toBeLessThanOrEqual(1)
+    const all = Object.values(parts).join('\n')
+    expect(all).toContain('<a:t>T0a</a:t>')
+    expect(all).toContain('<a:t>T0b</a:t>')
+  })
+
+  test('回归：既有短表格（3 行）渲染不变 — 单 frame、y=BODY_TOP、行高 rowH', async () => {
+    const parts = await generate({
+      schemaVersion: 2,
+      title: 'T',
+      slides: [
+        {
+          title: '疗效数据',
+          content: [{ type: 'table', data: JSON.stringify({ rows: [['药名', 'PFS'], ['Arm A', '5.2'], ['Arm B', '3.1']] }) }],
+        },
+      ],
+    })
+    const slideXml = parts['ppt/slides/slide2.xml'] || ''
+    const frames = tableRanges(slideXml)
+    expect(frames).toHaveLength(1) // 不拆页
+    expect(frames[0].y).toBe(Math.round(1.25 * EMU_PER_IN)) // y = BODY_TOP
+    // frame ext cy = 行数×rowH+0.05（#1062-3 tblH 同口径）— 不再是 1in 兜底
+    expect(frames[0].bottom).toBe(Math.round((3 * 0.34 + 0.05) * EMU_PER_IN) + Math.round(1.25 * EMU_PER_IN))
+    expect(slideXml).toContain('<a:tr h="310896">') // 行高 0.34in 不变
+    expect(slideXml).toContain('药名')
+  })
+})
