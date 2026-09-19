@@ -1,7 +1,16 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import JSZip from 'jszip'
-import { generatePptx } from '../src/handlers/pptx.js'
-import { resolveImage, downloadRemoteImage, looksLikeImage, isPrivateIp, setRemoteImageLookupForTest } from '../src/handlers/common.js'
+import http from 'node:http'
+import dns from 'node:dns'
+import { generatePptx, imageBudgetExceeded, MAX_EMBEDDED_IMAGE_BYTES } from '../src/handlers/pptx.js'
+import {
+  resolveImage,
+  downloadRemoteImage,
+  looksLikeImage,
+  isPrivateIp,
+  setRemoteImageLookupForTest,
+  setRemoteImageTransportForTest,
+} from '../src/handlers/common.js'
 
 vi.mock('../src/storage.js', () => ({
   saveFile: vi.fn(async (buffer: Buffer, name: string, mime: string) => ({ fileId: 'f1', fileName: name, mimeType: mime, buffer })),
@@ -19,10 +28,16 @@ vi.mock('node:fs/promises', () => ({ readFile: mocks.readFile }))
  * 不再静默丢图。安全约束（SSRF 防护）与"失败返回 null、缺图跳块不中断导出"
  * 语义是本文件的核心验证点。
  *
- * mock 方式：全局 fetch stub（vi.stubGlobal）+ DNS 解析注入
+ * mock 方式：传输层注入（setRemoteImageTransportForTest，行为对齐旧版全局
+ * fetch stub：入参 (url, init) → 返回 Response）+ DNS 解析注入
  * （setRemoteImageLookupForTest，单测无外网）；超时/大小上限通过
  * downloadRemoteImage 的 opts 依赖注入实现快速测试（resolveImage 本身
  * 走默认 10s / 20MB）。
+ *
+ * #1057 — 传输层 init 携带钉定 lookup（校验那次解析的 IP）：mock 传输可
+ * 模拟连接期向钉定 lookup 取址，断言「连接目标 = 校验解析结果」而非二次解析。
+ * #1058 — 相对路径 ref（/api/v1/files/download/...）按 SERVER_ORIGIN 拼绝对
+ * URL 后走同一下载分支；跳块必须留下可观测日志。
  */
 
 // 16 字节最小 PNG 头（同 generators.test.ts 口径）。
@@ -39,16 +54,25 @@ function redirectResponse(location: string): Response {
   return new Response(null, { status: 302, headers: { location } })
 }
 
+/** 从传输 mock 的 init 里模拟连接期取址（钉定 lookup 回调风格）。 */
+function connectViaPinned(init: { lookup: ((host: string, opts: unknown, cb: (err: Error | null, address: string, family: number) => void) => void) | null }): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!init.lookup) return reject(new Error('transport 未携带钉定 lookup — #1057 钉定缺失'))
+    init.lookup('connect-target', {}, (err, address) => (err ? reject(err) : resolve(address)))
+  })
+}
+
 beforeEach(() => {
   fetchMock = vi.fn()
-  vi.stubGlobal('fetch', fetchMock)
+  setRemoteImageTransportForTest(fetchMock)
   // 默认：所有域名解析到公网 IP（SSRF 通过，逐用例覆写）。
   setRemoteImageLookupForTest(async () => [{ address: PUBLIC_IP }])
 })
 
 afterEach(() => {
   setRemoteImageLookupForTest(null)
-  vi.unstubAllGlobals()
+  setRemoteImageTransportForTest(null)
+  vi.unstubAllEnvs()
 })
 
 describe('#1053 resolveImage http(s) 分支（用例 1）', () => {
@@ -140,6 +164,225 @@ describe('#1053 SSRF 负例（用例 2）', () => {
     fetchMock.mockImplementation(async () => redirectResponse('https://cdn.example.com/next.png'))
     expect(await resolveImage({ type: 'image', ref: 'https://cdn.example.com/fig.png' })).toBeNull()
     expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(6)
+  })
+})
+
+describe('#1057 DNS rebinding TOCTOU（校验与连接共用同一次解析）', () => {
+  test('用例1: lookup 首次回公网、连接期回 127.0.0.1 — 钉定后连接目标只能是校验解析结果', async () => {
+    let lookups = 0
+    setRemoteImageLookupForTest(async () => {
+      lookups++
+      return lookups === 1 ? [{ address: PUBLIC_IP }] : [{ address: '127.0.0.1' }]
+    })
+    const connectAddrs: Array<string | null> = []
+    fetchMock.mockImplementation(async (_url: unknown, init: Parameters<typeof connectViaPinned>[0]) => {
+      connectAddrs.push(await connectViaPinned(init))
+      return okResponse(PNG)
+    })
+    const img = await resolveImage({ type: 'image', ref: 'https://evil.example.com/a.png' })
+    expect(img?.data.equals(PNG)).toBe(true)
+    // 连接期取到的地址 = 校验时那次解析（公网），而非二次解析的 127.0.0.1；
+    // 且校验只发生一次 DNS 解析（旧实现 fetch 会二次独立解析）。
+    expect(connectAddrs).toEqual([PUBLIC_IP])
+    expect(lookups).toBe(1)
+  })
+
+  test('用例1b: 真实双解析时序（真实 socket）— 钉定后攻击者本地服务器零请求', async () => {
+    setRemoteImageTransportForTest(null) // 走默认 node:http 真实传输
+    setRemoteImageLookupForTest(null) // 校验也走「真实」解析器（下方 dns 打补丁）
+    let hits = 0
+    const attacker = http.createServer((_req, res) => {
+      hits++
+      res.writeHead(200, { 'content-type': 'image/png' })
+      res.end(PNG)
+    })
+    await new Promise<void>((resolve) => attacker.listen(0, '127.0.0.1', resolve))
+    // 伪造真实 DNS：首次解析回公网 IP（过检），之后一律回 127.0.0.1（attacker）。
+    // 旧实现（校验与连接各自解析）会连进 attacker；钉定后不可能。
+    let lookups = 0
+    const fake = () => (++lookups === 1 ? [{ address: PUBLIC_IP, family: 4 }] : [{ address: '127.0.0.1', family: 4 }])
+    const realPromisesLookup = dns.promises.lookup
+    const realLookup = dns.lookup
+    ;(dns.promises as any).lookup = async () => fake()
+    ;(dns as any).lookup = (host: string, opts: any, cb: any) => {
+      const r = fake()
+      if (typeof opts === 'function') return opts(null, r[0].address, r[0].family)
+      if (opts?.all) return cb(null, r)
+      return cb(null, r[0].address, r[0].family)
+    }
+    try {
+      const port = (attacker.address() as { port: number }).port
+      // 钉定到公网 IP → 连不回 attacker（受 timeoutMs 约束，快速失败或超时都算拒绝）。
+      await expect(
+        downloadRemoteImage(`http://rebind.example.com:${port}/fig.png`, { timeoutMs: 900 }),
+      ).rejects.toThrow()
+      expect(hits).toBe(0)
+      expect(lookups).toBeGreaterThanOrEqual(1) // 校验确实解析过一次
+    } finally {
+      ;(dns.promises as any).lookup = realPromisesLookup
+      ;(dns as any).lookup = realLookup
+      await new Promise<void>((resolve) => attacker.close(() => resolve()))
+    }
+  }, 10_000)
+
+  test('用例2: IP 黑名单缺口字面量（CGNAT/基准测试段/::ffff:0:0）→ 全部拒绝', async () => {
+    for (const ref of [
+      'http://100.100.1.1/a.png', // CGNAT 100.64.0.0/10
+      'http://198.18.0.1/a.png', // 198.18.0.0/15 基准测试保留段
+      'http://[::ffff:0:0]/a.png', // IPv4-mapped 未指定地址
+    ]) {
+      expect(await resolveImage({ type: 'image', ref }), ref).toBeNull()
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test('用例3: 重定向到新域名 — 每跳重新解析并钉定该跳那次解析', async () => {
+    const seq: Record<string, string> = { 'cdn.example.com': PUBLIC_IP, 'other.example.com': '198.51.100.7' }
+    setRemoteImageLookupForTest(async (host) => {
+      const ip = seq[host]
+      if (!ip) throw new Error(`unexpected host ${host}`)
+      return [{ address: ip }]
+    })
+    const connectAddrs: string[] = []
+    fetchMock
+      .mockImplementationOnce(async (_url: unknown, init: Parameters<typeof connectViaPinned>[0]) => {
+        connectAddrs.push(await connectViaPinned(init))
+        return redirectResponse('https://other.example.com/real.png')
+      })
+      .mockImplementationOnce(async (_url: unknown, init: Parameters<typeof connectViaPinned>[0]) => {
+        connectAddrs.push(await connectViaPinned(init))
+        return okResponse(PNG)
+      })
+    const img = await resolveImage({ type: 'image', ref: 'https://cdn.example.com/fig.png' })
+    expect(img?.data.equals(PNG)).toBe(true)
+    // 第二跳连接目标 = 第二跳校验解析结果（不是第一跳的 IP，也不是二次解析）。
+    expect(connectAddrs).toEqual([PUBLIC_IP, '198.51.100.7'])
+  })
+
+  test('用例4: 重定向到私网字面量（回归）→ 仍拒绝', async () => {
+    fetchMock.mockResolvedValueOnce(redirectResponse('http://100.100.1.1/secret.png'))
+    expect(await resolveImage({ type: 'image', ref: 'https://cdn.example.com/fig.png' })).toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('#1058 相对路径 ref（deck 手动插图不再静默丢失）', () => {
+  test('用例1: /api/v1/files/download/... 相对路径 → 按 SERVER_ORIGIN 拼绝对 URL 下载嵌入', async () => {
+    vi.stubEnv('SERVER_ORIGIN', 'https://files.example.com')
+    fetchMock.mockResolvedValue(okResponse(PNG))
+    const img = await resolveImage({ type: 'image', ref: '/api/v1/files/download/abc123?token=t', caption: 'Fig' })
+    expect(img?.data.equals(PNG)).toBe(true)
+    expect(img?.caption).toBe('Fig')
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://files.example.com/api/v1/files/download/abc123?token=t')
+  })
+
+  test('用例2: 相对路径指向不存在文件（404）→ 跳块 + 可观测日志，不中断', async () => {
+    vi.stubEnv('SERVER_ORIGIN', 'https://files.example.com')
+    fetchMock.mockResolvedValue(new Response(null, { status: 404 }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await resolveImage({ type: 'image', ref: '/api/v1/files/download/gone?token=t' })).toBeNull()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('REMOTE-IMAGE'))
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('fetch_failed'))
+    warn.mockRestore()
+  })
+
+  test('用例3: 绝对 URL 回归 — 行为不变（SSRF 校验照常）', async () => {
+    vi.stubEnv('SERVER_ORIGIN', 'https://files.example.com')
+    fetchMock.mockResolvedValue(okResponse(PNG))
+    const img = await resolveImage({ type: 'image', ref: 'https://cdn.example.com/fig.png' })
+    expect(img?.data.equals(PNG)).toBe(true)
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://cdn.example.com/fig.png')
+  })
+
+  test('未配置 SERVER_ORIGIN/BACKEND_URL → 跳块 + 可观测日志（不静默吞图）', async () => {
+    delete process.env.SERVER_ORIGIN
+    delete process.env.BACKEND_URL
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await resolveImage({ type: 'image', ref: '/api/v1/files/download/abc' })).toBeNull()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('REMOTE-IMAGE'))
+    warn.mockRestore()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test('非下载前缀的相对路径（如 /etc/passwd）→ null + 日志，不发起请求', async () => {
+    vi.stubEnv('SERVER_ORIGIN', 'https://files.example.com')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await resolveImage({ type: 'image', ref: '/etc/passwd' })).toBeNull()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('REMOTE-IMAGE'))
+    warn.mockRestore()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test('SERVER_ORIGIN 为私网地址（内网部署）→ 受信 origin 放行 SSRF IP 校验', async () => {
+    vi.stubEnv('SERVER_ORIGIN', 'http://127.0.0.1:8000')
+    fetchMock.mockResolvedValue(okResponse(PNG))
+    const img = await resolveImage({ type: 'image', ref: '/api/v1/files/download/x' })
+    expect(img?.data.equals(PNG)).toBe(true)
+    expect(String(fetchMock.mock.calls[0][0])).toBe('http://127.0.0.1:8000/api/v1/files/download/x')
+  })
+
+  test('绝对 URL 不受受信 origin 影响 — 私网仍拒绝（信任只给相对路径派生）', async () => {
+    vi.stubEnv('SERVER_ORIGIN', 'http://127.0.0.1:8000')
+    expect(await resolveImage({ type: 'image', ref: 'http://127.0.0.1:8000/api/v1/files/download/x' })).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test('BACKEND_URL 兼容别名同样生效', async () => {
+    vi.stubEnv('BACKEND_URL', 'https://api.example.net')
+    fetchMock.mockResolvedValue(okResponse(PNG))
+    expect(await resolveImage({ type: 'image', ref: '/api/v1/files/download/y' })).not.toBeNull()
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://api.example.net/api/v1/files/download/y')
+  })
+})
+
+describe('#1066 worker 可观测性/资源清理', () => {
+  test('子项6: 重定向响应体被 cancel（不悬挂 socket）', async () => {
+    let cancelled = false
+    const stream = new ReadableStream({ cancel() { cancelled = true } })
+    fetchMock
+      .mockResolvedValueOnce(new Response(stream, { status: 302, headers: { location: 'https://cdn.example.com/real.png' } }))
+      .mockResolvedValueOnce(okResponse(PNG))
+    const img = await resolveImage({ type: 'image', ref: 'https://cdn.example.com/fig.png' })
+    expect(img?.data.equals(PNG)).toBe(true)
+    expect(cancelled).toBe(true)
+  })
+
+  test('子项7: SSRF 拦截也留下可观测日志（原因含 RemoteImageError code）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await resolveImage({ type: 'image', ref: 'http://127.0.0.1/a.png' })).toBeNull()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('private_address'))
+    warn.mockRestore()
+  })
+
+  test('子项8: 超内嵌图片预算 → 后续图片块跳过 + 可观测日志，导出不中断', async () => {
+    vi.stubEnv('PPTX_IMAGE_BUDGET_BYTES', '1200')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const bigPng = Buffer.concat([PNG, Buffer.alloc(800, 1)]) // 816 字节
+    const res = await generatePptx({
+      schema_version: 1,
+      content_type: 'sidecar.generate_pptx',
+      data: {
+        schemaVersion: 1,
+        title: '图片预算',
+        slides: [
+          { title: '一', layout: 'bullets+image', content: [{ type: 'image', ref: 'x', data: bigPng.toString('base64') }] },
+          { title: '二', layout: 'bullets+image', content: [{ type: 'image', ref: 'y', data: bigPng.toString('base64') }] },
+          { title: '三', layout: 'bullets+image', content: [{ type: 'image', ref: 'z', data: bigPng.toString('base64') }] },
+        ],
+      },
+    })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('#1066-8'))
+    warn.mockRestore()
+    const zip = await JSZip.loadAsync((res as { buffer: Buffer }).buffer)
+    const media = Object.keys(zip.files).filter((n) => n.startsWith('ppt/media/') && !n.endsWith('/'))
+    expect(media.length).toBe(1) // 第一张 816B 内嵌；第二张起 816+816 > 1200 超预算跳过
+  })
+
+  test('子项8: imageBudgetExceeded 边界（预算内不超、恰好等于不超、超 1 字节即超）', () => {
+    expect(imageBudgetExceeded(0, 100, 100)).toBe(false)
+    expect(imageBudgetExceeded(100, 1, 100)).toBe(true)
+    expect(imageBudgetExceeded(50, 50, 100)).toBe(false)
+    expect(imageBudgetExceeded(0, MAX_EMBEDDED_IMAGE_BYTES + 1)).toBe(true)
   })
 })
 
@@ -265,11 +508,15 @@ describe('#1053 deck 导出整链路（用例 5）', () => {
 })
 
 describe('#1053 单元：isPrivateIp / looksLikeImage', () => {
-  test('isPrivateIp 覆盖组播/保留/IPv4-mapped/ULA', () => {
-    for (const ip of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.0.1', '169.254.1.1', '0.0.0.0', '224.0.0.1', '239.255.255.250', '240.0.0.1', '255.255.255.255', '::', '::1', '[::1]', 'fe80::1', 'febf::1', 'fc00::1', 'fd12:3456::1', '::ffff:10.0.0.1', 'ff02::1']) {
+  test('isPrivateIp 覆盖组播/保留/IPv4-mapped/ULA/#1057 CGNAT 与 198.18.0.0/15', () => {
+    for (const ip of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.0.1', '169.254.1.1', '0.0.0.0', '224.0.0.1', '239.255.255.250', '240.0.0.1', '255.255.255.255', '::', '::1', '[::1]', 'fe80::1', 'febf::1', 'fc00::1', 'fd12:3456::1', '::ffff:10.0.0.1', 'ff02::1',
+      // #1057: CGNAT 100.64.0.0/10 与基准测试保留段 198.18.0.0/15
+      '100.64.0.0', '100.100.1.1', '100.127.255.255', '198.18.0.1', '198.19.255.255',
+      // #1057: IPv4-mapped 未指定地址（内核语义等同 ::/0.0.0.0）
+      '::ffff:0:0']) {
       expect(isPrivateIp(ip), ip).toBe(true)
     }
-    for (const ip of ['93.184.216.34', '8.8.8.8', '172.32.0.1', '172.15.255.255', '100.1.2.3', '2606:2800:220:1:248:1893:25c8:1946']) {
+    for (const ip of ['93.184.216.34', '8.8.8.8', '172.32.0.1', '172.15.255.255', '100.1.2.3', '100.128.0.1', '198.17.255.255', '198.20.0.1', '2606:2800:220:1:248:1893:25c8:1946']) {
       expect(isPrivateIp(ip), ip).toBe(false)
     }
   })

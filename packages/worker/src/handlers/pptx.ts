@@ -10,6 +10,27 @@ import { resolveImage, toBase64DataUri } from './common.js'
 
 const PptxGenJSCtor = PptxGenJS as unknown as new () => any
 
+/** pptxgenjs 幻灯片实例类型（模块级 — addNotesTruncated 等辅助函数共用）。 */
+export type Slide = ReturnType<typeof PptxGenJSCtor.prototype.addSlide>
+
+/** #1066-8: 单次导出内嵌图片总字节预算 — 图片以 base64 data URI 全驻留
+ *  pptxgenjs（写文件前无法释放），20MB×30 页最坏 ~800MB 可致 worker OOM。
+ *  超预算后跳过后续图片块（log 可观测），封顶内存峰值；仅伤恶意超大 deck
+ *  的自身导出，正常 deck 远低于该阈值。可用 PPTX_IMAGE_BUDGET_BYTES 覆盖
+ *  （部署调优/测试）。 */
+export const MAX_EMBEDDED_IMAGE_BYTES = 100 * 1024 * 1024
+
+/** #1066-8: 解析生效预算（env 覆盖非法值回退默认）。 */
+export function resolveImageBudget(): number {
+  const raw = Number(process.env.PPTX_IMAGE_BUDGET_BYTES)
+  return Number.isFinite(raw) && raw > 0 ? raw : MAX_EMBEDDED_IMAGE_BYTES
+}
+
+/** #1066-8: 累计已嵌入字节 + 本张字节是否超预算。 */
+export function imageBudgetExceeded(embeddedBytes: number, incomingBytes: number, budget: number = resolveImageBudget()): boolean {
+  return embeddedBytes + incomingBytes > budget
+}
+
 /**
  * #958 — 布局母版化渲染器。
  * v1 是写死坐标的线性堆叠器（标题 y=0.3 / 要点步进 0.55 / 图片固定 6×2.8，
@@ -28,6 +49,9 @@ const THEMES: Record<string, { bg: string; text: string; muted: string; accent: 
 }
 
 const SLIDE_LAYOUTS: ReadonlySet<string> = new Set(['title', 'section', 'bullets', 'bullets+image', 'chart-full', 'quote', 'blank'])
+
+/** #1062-6: notes 截断口径与 wire 统一（contracts presentationSlideSchema notes max 5000）。 */
+const NOTES_MAX_CHARS = 5000
 
 /** 画布几何（WIDE 10 × 5.625 in）。 */
 const PAGE = { w: 10, h: 5.625, margin: 0.5 }
@@ -105,6 +129,19 @@ function parseTableBlockData(raw: unknown): { rows: string[][]; header: boolean 
   } catch {
     return null
   }
+}
+
+/** #1062-6: notes 写回统一到 wire 口径（5000 字符）——超限截断且在备注尾部
+ * 加可见提示（原实现静默 slice(0,2000)，三处上限互不一致）。 */
+export function addNotesTruncated(s: Slide, notes: string | undefined) {
+  if (!notes) return
+  const raw = String(notes)
+  if (raw.length <= NOTES_MAX_CHARS) {
+    s.addNotes(raw)
+    return
+  }
+  const suffix = `……（备注超长：已截断至 ${NOTES_MAX_CHARS} 字符，源共 ${raw.length} 字符）`
+  s.addNotes(raw.slice(0, Math.max(0, NOTES_MAX_CHARS - suffix.length)) + suffix)
 }
 
 /** #1050: markdown 行内标记 → rich-text runs（bold/italic/strike/link）。
@@ -187,20 +224,46 @@ export async function generatePptx(payload: any) {
   const bodyW = PAGE.w - PAGE.margin * 2
   const areaH = BODY_BOTTOM - BODY_TOP
 
-  type Slide = ReturnType<typeof PptxGenJSCtor.prototype.addSlide>
   const addHeader = (s: Slide, title: string) => {
     s.background = { color: theme.bg }
     s.addText(title, { x: PAGE.margin, y: 0.35, w: bodyW, h: TITLE_H, fontSize: 26, bold: true, color: theme.text, fontFace: theme.font })
     s.addShape('rect', { x: PAGE.margin, y: 1.05, w: bodyW, h: 0.045, fill: { color: theme.accent } })
   }
 
-  /** 要点渲染 + 超页自动拆续页（fitBullets 已选字号；续页同布局标题（续））。#1047: heightIn 供表格页让出下半区。 */
+  // #1066-8: 导出期累计已内嵌图片字节；超预算的后续图片块跳过（log 可观测）。
+  // resolved Buffer 转 data URI 后即成为垃圾（本地引用随迭代结束释放），
+  // 真正的全驻留发生在 pptxgenjs 内部 — 预算封顶是对其唯一可行的内存上界。
+  let embeddedImageBytes = 0
+  const addImageBounded = async (
+    s: Slide,
+    box: { x: number; y: number; w: number; h: number },
+    img: Extract<ContentBlock, { type: 'image' }>,
+  ): Promise<boolean> => {
+    const resolved = await resolveImage(img)
+    if (!resolved) return false
+    if (imageBudgetExceeded(embeddedImageBytes, resolved.data.length)) {
+      console.warn(`[PPTX] #1066-8 内嵌图片总量超预算(${Math.round(resolveImageBudget() / 1024 / 1024)}MB) — 跳过后续图片块`)
+      return false
+    }
+    embeddedImageBytes += resolved.data.length
+    // #1053: pptxgenjs addImage 仅接受 base64 字符串 — 传 Buffer 会被
+    // 静默丢弃（console.error 后 return null），图根本进不了 media。
+    s.addImage({ data: toBase64DataUri(resolved.data), ...box })
+    return true
+  }
+
+  /** 要点渲染 + 超页自动拆续页（fitBullets 已选字号；续页同布局标题（续））。#1047: heightIn 供表格页让出下半区。
+   * #1062-3: heightIn ≤ 0（表格撑满页高、无正文空间）→ 全部要点拆续页，不再静默不渲染。 */
   const renderBullets = (s: Slide, title: string, items: Array<{ text: string; bullet: boolean }>, x: number, w: number, heightIn: number = areaH) => {
-    const { font, chunks } = fitBullets(items, w, heightIn)
+    // #1063 集成收口: 空文本占位块（deck 编辑器空行）不参与渲染/占高。
+    const visible = items.filter((it) => it.text && it.text.trim() !== '')
+    const { font, chunks } = fitBullets(visible, w, heightIn)
     let target = s
     let cy = BODY_TOP
+    // #1062-3: 当前页无正文空间 → 从续页开始渲染（此前该页要点直接消失）
+    const noRoomHere = heightIn < 0.4 && visible.length > 0
     chunks.forEach((group, ci) => {
-      if (ci > 0) {
+      if (ci > 0 || (noRoomHere && ci === 0)) {
         target = pres.addSlide()
         addHeader(target, `${title}（续）`)
         cy = BODY_TOP
@@ -232,13 +295,17 @@ export async function generatePptx(payload: any) {
   if (coverSub) {
     cover.addText(coverSub, { x: 0.5, y: 2.7, w: 9, h: 0.6, fontSize: 16, align: 'center', color: theme.muted, fontFace: theme.font })
   }
+  // #1062-5: 封面页（title 布局，由 slides[0] 合成）notes 写回 — 此前循环从
+  // slice(1) 起，封面 notes 永不写入。
+  if (hasTitleSlide) addNotesTruncated(cover, slides[0].notes)
 
   for (const slide of hasTitleSlide ? slides.slice(1) : slides) {
     const layout = layoutOf(slide)
     const s = pres.addSlide()
     // #1046: speaker notes 写回（pptxgenjs slide.addNotes → notesSlideN.xml）—
     // 导入提取的备注在导出侧不再丢失（放在 blank continue 之前，空白页也保留备注）。
-    if (slide.notes) s.addNotes(String(slide.notes).slice(0, 2000))
+    // #1062-6: 截断统一 5000 口径，截断有提示（不再静默 slice(0,2000)）。
+    addNotesTruncated(s, slide.notes)
     if (layout === 'blank') continue // 空白页：仅母版底色
 
     addHeader(s, slide.title)
@@ -267,10 +334,17 @@ export async function generatePptx(payload: any) {
       for (const tb of tableBlocks.slice(0, 2)) {
         const parsed = parseTableBlockData((tb as { data?: unknown }).data)
         if (!parsed || parsed.rows.length === 0) continue
+        // #1062-3: 行数口径统一 — 高度计算与实际渲染共用同一份 rows（此前
+        // :271 用 rows.length(≤200) 算高、:273 只渲染 100 行，互不一致且
+        // 截断静默）。
+        const renderedRows = parsed.rows.slice(0, 100)
+        if (parsed.rows.length > renderedRows.length) {
+          items.push({ text: `[表格过长：仅渲染前 100 行（源共 ${parsed.rows.length} 行）]`, bullet: false })
+        }
         const rowH = 0.34
-        const tblH = Math.min(parsed.rows.length * rowH + 0.05, Math.max(BODY_BOTTOM - tableBottom, 0.4))
+        const tblH = Math.min(renderedRows.length * rowH + 0.05, Math.max(BODY_BOTTOM - tableBottom, 0.4))
         s.addTable(
-          parsed.rows.slice(0, 100).map((row, ri) => row.map((cell) => ({
+          renderedRows.map((row, ri) => row.map((cell) => ({
             text: cell,
             options: {
               fontSize: 12,
@@ -282,8 +356,9 @@ export async function generatePptx(payload: any) {
         )
         tableBottom += tblH + 0.25
       }
-      if (items.length > 0 && tableBottom < BODY_BOTTOM) {
-        renderBullets(s, slide.title, items, PAGE.margin, bodyW, BODY_BOTTOM - tableBottom)
+      // #1062-3: 表格撑满页高（heightIn ≤ 0）→ 要点全部拆续页（此前直接不渲染）。
+      if (items.length > 0) {
+        renderBullets(s, slide.title, items, PAGE.margin, bodyW, Math.max(BODY_BOTTOM - tableBottom, 0))
       }
       continue
     }
@@ -306,13 +381,8 @@ export async function generatePptx(payload: any) {
     if (layout === 'chart-full') {
       const img = slide.content.find(isImageBlock)
       if (img) {
-        const resolved = await resolveImage(img)
-        if (resolved) {
-          // #1053: pptxgenjs addImage 仅接受 base64 字符串 — 传 Buffer 会被
-          // 静默丢弃（console.error 后 return null），图根本进不了 media。
-          s.addImage({ data: toBase64DataUri(resolved.data), x: 0.8, y: BODY_TOP, w: bodyW - 0.6, h: areaH - 0.2 })
-          continue
-        }
+        // #1066-8: 图被预算跳过（返回 false）→ 回退要点渲染，不静默空页。
+        if (await addImageBounded(s, { x: 0.8, y: BODY_TOP, w: bodyW - 0.6, h: areaH - 0.2 }, img)) continue
       }
       renderBullets(s, slide.title, items, PAGE.margin, bodyW)
       continue
@@ -323,9 +393,8 @@ export async function generatePptx(payload: any) {
       const textW = img ? 4.4 : bodyW
       renderBullets(s, slide.title, items, PAGE.margin, textW)
       if (img) {
-        const resolved = await resolveImage(img)
-        // #1053: 同上 — Buffer → base64 data URI，否则 addImage 静默丢图。
-        if (resolved) s.addImage({ data: toBase64DataUri(resolved.data), x: 5.2, y: BODY_TOP, w: 4.2, h: areaH - 0.2 })
+        // #1066-8: 同上 — 预算超限跳图可观测；要点已渲染，导出语义不变。
+        await addImageBounded(s, { x: 5.2, y: BODY_TOP, w: 4.2, h: areaH - 0.2 }, img)
       }
       continue
     }
