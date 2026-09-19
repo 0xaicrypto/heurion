@@ -17,7 +17,7 @@ import { TrackChangesExtension, getTrackedChanges, getPendingChangeCount, type C
 import { markdownToHtml, htmlToMarkdown } from '@/lib/doc-convert';
 import { applyTrackedDiff, cleanupEmptyBlocks } from '@/lib/doc-diff';
 import { captureScrollContainer } from '@/lib/scroll-utils';
-import { SelectionBubble } from './selection-bubble';
+import { SelectionBubble, editorUiStateSignature } from './selection-bubble';
 import { ProposalCard, type ProposalSource } from './ProposalCard';
 import { SectionCardsExtension, setSectionCards, type SectionCardsData } from '@/lib/section-cards';
 // #1040: 评论锚点高亮(decoration-only,不动 schema)。
@@ -430,6 +430,10 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   // 创建时固定,上传逻辑经 ref 转发取最新闭包;editor 实例就绪后写入 ref。
   const liveEditorRef = useRef<Editor | null>(null);
   const [imageError, setImageError] = useState<{ file: File; pos: number | null; message: string } | null>(null);
+  // #1066-2: 上传成功但占位节点已不存在(外部内容替换等) — 结果无处落时
+  // 给出提示,不再静默丢弃。文案为中文常量:#1066 批次禁改 locales(其他
+  // 批次在途),待 locale 解冻后补 t('writing.imageUploadResultDropped') 词条。
+  const [imageNotice, setImageNotice] = useState<string | null>(null);
 
   const runImageUpload = useCallback(async (file: File, pos: number | null) => {
     const ed = liveEditorRef.current;
@@ -445,7 +449,10 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       // 换取带 token 的 canonical 图片 URL — 与 AI 出图(render_scene)同形态。
       const up = await api.uploadFile(file);
       const { url } = await api.getDownloadUrl(up.file_id);
-      finalizeImageNode(ed, uploadId, { src: url, alt: file.name, uploadId: null, loading: null });
+      // #1066-2: 占位已被外部内容替换(applyExternalContent 重建文档)时
+      // finalizeImageNode 返回 false — 上传成功但图片无处落,提示而非静默。
+      const placed = finalizeImageNode(ed, uploadId, { src: url, alt: file.name, uploadId: null, loading: null });
+      if (!placed) setImageNotice('图片已上传成功，但原插入位置已被替换，未能插入文档');
     } catch (err) {
       // 失败:移除占位(不留坏图片节点),给出可重试错误提示(非静默失败)。
       finalizeImageNode(ed, uploadId, null);
@@ -460,9 +467,12 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
 
   const retryImageUpload = () => {
     if (!imageError) return;
-    const { file, pos } = imageError;
+    const { file } = imageError;
     setImageError(null);
-    void runImageUpload(file, pos);
+    // #1066-1: 重试不携带过期 pos — 失败到重试之间内容可能已位移,旧 pos
+    // 会把占位节点插到错误位置;传 null 由 runImageUpload 按当前光标位置
+    // (selection.from)重算。
+    void runImageUpload(file, null);
   };
 
   const editor = useEditor({
@@ -541,10 +551,19 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   // #1037: 工具栏 active 态实时刷新 — 按钮高亮读编辑器状态,而组件重渲染
   // 仅由 value 变更驱动(纯 mark 切换/光标移动不改 markdown 时高亮会滞后),
   // 订阅事务强制同步。
+  // #1066-5: 按「渲染相关状态签名」变化才 bump(selection-bubble 的
+  // editorUiStateSignature,覆盖工具栏/气泡读取的全部 active/disabled 态) —
+  // 此前每事务无条件 bump,流式写入期间全组件重渲染开销放大。
   const [, bumpToolbarTick] = useState(0);
   useEffect(() => {
     if (!editor) return;
-    const onTx = () => bumpToolbarTick((n) => n + 1);
+    let lastSig = editorUiStateSignature(editor);
+    const onTx = () => {
+      const sig = editorUiStateSignature(editor);
+      if (sig === lastSig) return;
+      lastSig = sig;
+      bumpToolbarTick((n) => n + 1);
+    };
     editor.on('transaction', onTx);
     return () => { editor.off('transaction', onTx); };
   }, [editor]);
@@ -899,6 +918,13 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
           <Redo2 size={14} />
         </Button>
       </div>
+      {imageNotice && (
+        /* #1066-2: 上传成功但占位已失效 — 结果不静默丢弃,提示可见。 */
+        <div role="status" className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-2 py-1.5 text-xs text-text-secondary">
+          <span>{imageNotice}</span>
+          <Button size="sm" variant="ghost" onClick={() => setImageNotice(null)}>{t('writing.imageDismiss', '忽略')}</Button>
+        </div>
+      )}
       {imageError && (
         /* #1038: 上传失败可重试错误态 — 占位节点已移除,提示不静默。 */
         <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-2 py-1.5 text-xs text-text-secondary">

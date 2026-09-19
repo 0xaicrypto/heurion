@@ -110,6 +110,29 @@ describe('doc-convert markdown round-trip (#837)', () => {
       expect(htmlToMarkdown('<u onclick="evil()">下划线</u>')).toContain('<u>下划线</u>')
     })
 
+    // #1066-4: 嵌套/残缺 <u> 的平衡输出 — 此前非贪婪配对把外层 </u> 留成
+    // 游离闭标签，</u > 变体不识别直接透传。
+    test('#1066-4: 嵌套 <u> 拍平输出，不残留游离 </u>', () => {
+      const html = markdownToHtml('段落<u>b<u>c</u>d</u>尾部')
+      // 嵌套内层被剥离后拍平为单层（配对消费非贪婪，外层残余闭标签被清除）
+      expect(html).toContain('<u>bc</u>')
+      // 开/闭标签数量平衡（修复前存在游离 </u>，闭多于开）
+      expect((html.match(/<u>/g) ?? []).length).toBe((html.match(/<\/u>/g) ?? []).length)
+    })
+
+    test('#1066-4: </u > 闭标签变体被识别，不透传原始形态', () => {
+      const html = markdownToHtml('<u>a</u >')
+      expect(html).toContain('<u>a</u>')
+      expect(html).not.toContain('</u >')
+    })
+
+    test('#1066-4: 孤立闭标签（无匹配开标签）被剥离', () => {
+      const html = markdownToHtml('前</u >中<u>后</u>')
+      expect(html).toContain('<u>后</u>')
+      expect(html).not.toContain('</u >')
+      expect((html.match(/<u>/g) ?? []).length).toBe((html.match(/<\/u>/g) ?? []).length)
+    })
+
     test('用例5: 无 <u> 的既有内容不受 sanitize 影响（回归）', () => {
       const html = markdownToHtml('含**加粗**与[链接](https://example.com)的段落')
       expect(html).toContain('<strong>加粗</strong>')
@@ -118,6 +141,35 @@ describe('doc-convert markdown round-trip (#837)', () => {
       // 数学预处理产出的 data 属性 HTML 不被误伤（#fix 链路回归）。
       const math = markdownToHtml('$$x^2$$')
       expect(math).toContain('data-type="block-math"')
+    })
+  })
+
+  // #1061: 嵌套任务列表 round-trip — 此前 turndown taskItem 规则丢失缩进,
+  // 保存重载后子项被拍平成同级任务项(结构静默丢失)。
+  describe('#1061 嵌套任务列表 round-trip', () => {
+    test('父子两级嵌套保存重载层级结构保留(GFM 子项缩进)', () => {
+      const out = roundTrip('- [x] 父任务\n  - [ ] 子任务')
+      expect(out).toMatch(/- \[x\] 父任务\n {2,4}- \[ \] 子任务/)
+      expect(out).not.toMatch(/- \[x\] 父任务\n- \[ \]/)
+    })
+
+    test('嵌套下父子勾选状态分别保留', () => {
+      const out = roundTrip('- [ ] 父任务\n  - [x] 子任务')
+      expect(out).toMatch(/- \[ \] 父任务\n {2,4}- \[x\] 子任务/)
+    })
+
+    test('保存侧: 编辑器 tiptap 形态的嵌套 taskItem HTML 缩进输出', () => {
+      const tiptapHtml =
+        '<ul data-type="taskList"><li data-type="taskItem" data-checked="true"><p>父任务</p>' +
+        '<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><p>子任务</p></li></ul></li></ul>'
+      const out = htmlToMarkdown(tiptapHtml)
+      expect(out).toMatch(/- \[x\] 父任务\n {2,4}- \[ \] 子任务/)
+    })
+
+    test('平铺任务列表回归: 不引入多余缩进', () => {
+      const out = roundTrip('- [x] 甲\n- [ ] 乙')
+      expect(out).toMatch(/- \[x\] 甲\n- \[ \] 乙/)
+      expect(out).not.toMatch(/\n {2,}-/)
     })
   })
 

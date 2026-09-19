@@ -1,4 +1,5 @@
 import { describe, test, expect, vi } from 'vitest';
+import { Profiler } from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import type { Editor } from '@tiptap/react';
 import { DocEditor } from './DocEditor';
@@ -249,5 +250,45 @@ describe('#996-followup 标题级别选择器(H1-H3)', () => {
     expect(ref.current?.getHTML()).toContain('<h2');
     expect(ref.current?.getHTML()).not.toContain('<p>原标题</p>');
     expect(screen.getByRole('button', { name: /文本样式|Text style/ }).textContent).toContain('H2');
+  });
+});
+
+// #1066-5: 事务订阅重渲染收敛 — 此前每事务无条件 bumpTick 全组件重渲染,
+// 流式写入期间开销放大。收敛为"渲染相关状态(签名)变化才 bump"。
+describe('#1066-5 事务订阅按渲染相关状态变化才重渲染', () => {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  test('渲染无关事务(内容位移但 marks/选区/可用态不变)不触发重渲染;active 变化仍刷新', async () => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    const ref: { current: Editor | null } = { current: null };
+    const phases: string[] = [];
+    const { container } = render(
+      <Profiler id="doc-editor" onRender={(_id, phase) => phases.push(phase)}>
+        <DocEditor value={'<p>签名测试段落。</p>'} onChange={() => {}} editorRef={ref} />
+      </Profiler>,
+    );
+    await wait(300);
+    // 等挂载期渲染平息后再清零计数,只观测后续事务的影响。
+    await wait(150);
+    phases.length = 0;
+    const ed = ref.current!;
+    expect(ed).toBeTruthy();
+
+    // 渲染无关事务:no-op transaction(marks/选区/undo/redo 等全部不变)
+    // — 收敛后不得触发重渲染(修复前每事务无条件 bump → 必然重渲染)。
+    ed.view.dispatch(ed.state.tr.setMeta('noop', true));
+    await wait(120);
+    const rendersAfterNoop = phases.length;
+
+    // 功能不回退:active mark 变化的事务仍触发重渲染(工具栏高亮刷新)。
+    ed.chain().focus().toggleBold().run();
+    await wait(120);
+    expect(ed.isActive('bold')).toBe(true);
+
+    expect(rendersAfterNoop).toBe(0);
+    expect(phases.length).toBeGreaterThan(0);
+    // 工具栏高亮确实随 active 刷新(bold 按钮高亮)。
+    const boldBtn = container.querySelector('button[title="Bold"]') as HTMLButtonElement;
+    expect(boldBtn.className).toContain('bg-surface');
   });
 });

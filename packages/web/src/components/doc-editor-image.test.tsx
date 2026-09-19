@@ -177,4 +177,63 @@ describe('#1038 用例4 上传失败可重试', () => {
     await waitFor(() => expect(ref.current!.getHTML()).toContain('src="/api/v1/files/download/file_retry1'));
     expect(screen.queryByRole('alert')).toBeNull();
   });
+
+  // #1066-1: 上传失败重试使用过期 pos — 内容位移后旧 pos 会把占位节点插到
+  // 错误位置;重试必须按当前光标位置重算。
+  test('#1066-1 重试时重算当前位置 — 内容位移后图片落在当前光标处而非旧 pos', async () => {
+    const { ref, container } = await setupEditor('拖拽目标段落。');
+    const file = pngFile('stale.png');
+    uploadFileMock
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce({ file_id: 'file_stale1', name: 'stale.png', mime: 'image/png', size_bytes: 1 });
+    getDownloadUrlMock.mockResolvedValue({ file_id: 'file_stale1', url: '/api/v1/files/download/file_stale1?token=tok' });
+
+    // 拖拽落点 pos=4(第一段中部),上传失败进入错误态。
+    const editorDom = container.querySelector('.ProseMirror') as HTMLElement;
+    ref.current!.view.posAtCoords = vi.fn(() => ({ pos: 4, inside: -1 }));
+    fireEvent.drop(editorDom, { dataTransfer: { files: [file], getData: () => '' } });
+    await screen.findByRole('alert');
+
+    // 内容位移:文档开头插入新段落,并把光标移到文末 — 旧 pos=4 已过期。
+    ref.current!.commands.insertContentAt(0, '前置');
+    ref.current!.commands.setTextSelection(ref.current!.state.doc.content.size);
+
+    // 重试成功:图片应落在文末(当前光标处),而不是旧 pos(文档中部,其后还有文本段落)。
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+    await waitFor(() => expect(ref.current!.getHTML()).toContain('src="/api/v1/files/download/file_stale1'));
+    // 图片之后不允许再有带文本的段落(旧代码按过期 pos=4 插入,图片落在
+    // 文档中部;修复后按当前光标插入,其后至多剩 insertContentAt 补出的空段落)。
+    const doc = ref.current!.state.doc;
+    let imageIdx = -1;
+    doc.forEach((node, _o, i) => { if (node.type.name === 'image') imageIdx = i; });
+    expect(imageIdx).toBeGreaterThanOrEqual(0);
+    let textAfterImage = false;
+    doc.forEach((node, _o, i) => { if (i > imageIdx && node.textContent) textAfterImage = true; });
+    expect(textAfterImage).toBe(false);
+  });
+});
+
+// #1066-2: 外部内容替换后上传结果静默丢弃 — 上传成功但占位节点已被外部
+// 内容替换掉时,给出提示,不再无声。
+describe('#1066-2 上传结果无处落时不静默', () => {
+  test('占位被外部内容替换后上传完成 → 提示可见(而非静默丢弃)', async () => {
+    const { ref, container } = await setupEditor('正文段落。');
+    const file = pngFile('replaced.png');
+    let resolveUpload!: (v: Record<string, unknown>) => void;
+    uploadFileMock.mockImplementation(() => new Promise((res) => { resolveUpload = res; }));
+    getDownloadUrlMock.mockResolvedValue({ file_id: 'file_rep1', url: '/api/v1/files/download/file_rep1?token=tok' });
+
+    fireEvent.click(screen.getByTitle('插入图片'));
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => expect(ref.current!.getHTML()).toContain('data-loading="true"'));
+
+    // 上传期间外部内容替换(占位节点被清掉 — 模拟 applyExternalContent 重建文档)。
+    ref.current!.commands.setContent('<p>外部替换后的内容</p>');
+    resolveUpload({ file_id: 'file_rep1', name: 'replaced.png', mime: 'image/png', size_bytes: 1 });
+
+    // 上传成功但占位找不到 → 提示(此前静默返回 false,无任何反馈)。
+    await screen.findByRole('status');
+    expect(screen.getByText(/图片已上传/)).toBeInTheDocument();
+  });
 });

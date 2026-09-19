@@ -93,12 +93,20 @@ turndown.addRule('inlineMath', {
 // 编辑器补齐 Strike/Link/TaskList 等手动格式化入口后,保存链路必须保值:
 // turndown 内置规则不含删除线与任务列表,不补会静默丢 mark。
 
-// #1037: GFM 任务列表 — TipTap TaskItem(li[data-type=taskItem]) → `- [x] `/`- [ ] `。
+// #1037/#1061: GFM 任务列表 — TipTap TaskItem(li[data-type=taskItem]) → `- [x] `/`- [ ] `。
+// #1061: 嵌套任务列表保存时子列表整体缩进输出(GFM 标准子项缩进 2/4 空格),
+// 否则重载后子项被拍平成同级任务项(结构静默丢失)。每级规则只加自己的
+// 2 空格缩进单位,多层嵌套时逐级累加;与 marked 解析侧的嵌套识别对齐。
 turndown.addRule('taskItem', {
   filter: (node: HTMLElement) => node.nodeName === 'LI' && node.getAttribute('data-type') === 'taskItem',
   replacement: (content: string, node: Node) => {
     const checked = (node as HTMLElement).getAttribute('data-checked') === 'true';
-    return `- [${checked ? 'x' : ' '}] ${content.trim().replace(/\n+/g, '\n')}\n`;
+    // 首行(任务文本本身)不缩进,其余行(嵌套子列表等)统一追加 2 空格。
+    const body = content
+      .trim()
+      .replace(/\n+/g, '\n')
+      .replace(/\n/g, '\n  ');
+    return `- [${checked ? 'x' : ' '}] ${body}\n`;
   },
 });
 
@@ -120,16 +128,34 @@ turndown.addRule('underline', {
 // block-math/taskList 等既有 HTML 透传不受影响)。<u> 只允许纯文本内容:
 // 属性与嵌套标签一律剥离;script/style 连内容整体移除,不产生注入面。
 // 白名单之外的其他标签不做处理(保持既有透传行为,注入面不因本特性扩大)。
+// #1066-4: 输出平衡保证 — 两趟处理:
+//   ① 非贪婪配对重写(既有语义:剥属性/嵌套标签,script/style 连内容移除),
+//     但嵌套(`<u>b<u>c</u>d</u>`)时外层 </u> 残成游离闭标签,`</u >` 变体
+//     不被配对直接透传;
+//   ② 残余 u 标签按深度扫描配对:游离闭标签(含 </u > 变体)剥离,残缺
+//     开标签重写为无属性 <u>(与浏览器未闭合标签恢复语义一致) — 产出保证
+//     开闭平衡,不再有游离 </u>。
 function sanitizeUnderlineHtml(html: string): string {
+  // 深度计数器 — ② 的 replace 回调间共享(同步单趟,无重入)。
+  let depth = 0;
   return html
-    .replace(/<u\b[^>]*>([\s\S]*?)<\/u>/gi, (_m: string, inner: string) => {
+    .replace(/<u\b[^>]*>([\s\S]*?)<\/u\s*>/gi, (_m: string, inner: string) => {
       const text = inner
-        .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, '')
+        .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, '')
         .replace(/<[^>]*>/g, '');
       return `<u>${text}</u>`;
     })
-    // 未闭合/残缺的 <u …> 开标签统一重写为无属性 <u>。
-    .replace(/<u\b[^>]*>/gi, '<u>');
+    .replace(/<\/?u\b[^>]*>/gi, (tag: string) => {
+      if (tag.startsWith('</')) {
+        // 游离闭标签(嵌套外层残余/孤立/</u > 变体)— 剥离,不透传。
+        if (depth === 0) return '';
+        depth -= 1;
+        return '</u>';
+      }
+      // 残缺开标签统一重写为无属性 <u>。
+      depth += 1;
+      return '<u>';
+    });
 }
 
 /**

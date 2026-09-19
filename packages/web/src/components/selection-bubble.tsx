@@ -64,6 +64,42 @@ const ACTIONS: ReadonlyArray<readonly [string, string, string]> = [
  * updateOptions 事务,本组件订阅事务重渲染,内联对象字面量会死循环。 */
 const BUBBLE_OPTIONS = { placement: 'top', offset: 8 } as const;
 
+/**
+ * #1066-5: 工具栏/气泡「渲染相关」编辑器状态签名 — 事务订阅按签名变化才
+ * 触发重渲染(此前每事务无条件 bumpTick,流式写入期间全组件重渲染放大)。
+ * 覆盖两类消费方实际读取的全部状态:
+ *   - 选区位置(from/to)+ 全部 active mark/块态(bold/italic/underline/
+ *     strike/link/code/codeBlock/列表/引用/标题级别);
+ *   - codeBlock 语言属性(下拉受控值);
+ *   - undo/redo/表格行操作可用态(工具栏 disabled 依据)。
+ * 选区/标记均未变的流式写入事务 → 签名不变 → 不重渲染。
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- #1066-5: 工具栏(DocEditor)与气泡共用签名,与组件同文件避免跨文件扩散(#1066 改动范围受限)
+export function editorUiStateSignature(ed: Editor): string {
+  const active = (name: string) => (ed.isActive(name) ? 1 : 0);
+  return [
+    ed.state.selection.from,
+    ed.state.selection.to,
+    ([1, 2, 3] as const).find((l) => ed.isActive('heading', { level: l })) ?? 0,
+    (ed.getAttributes('codeBlock').language as string | undefined) ?? '',
+    active('bold'),
+    active('italic'),
+    active('underline'),
+    active('strike'),
+    active('link'),
+    active('code'),
+    active('codeBlock'),
+    active('bulletList'),
+    active('orderedList'),
+    active('taskList'),
+    active('blockquote'),
+    ed.can().undo() ? 1 : 0,
+    ed.can().redo() ? 1 : 0,
+    ed.can().addRowAfter() ? 1 : 0,
+    ed.can().deleteRow() ? 1 : 0,
+  ].join('|');
+}
+
 /** #1037: 手动格式化按钮定义 — 与 AI 动作并列,直接对当前选区 toggle。 */
 interface FormatTool {
   id: string;
@@ -91,9 +127,17 @@ export function SelectionBubble({ editor, isReviewing, run, onAction, onStart, o
 
   // #1037: 手动格式化按钮的选中态高亮 — BubbleMenu 组件不因编辑器事务
   // 重渲染子树(active 判定读 editor 状态),订阅事务强制同步。
+  // #1066-5: 按「渲染相关状态签名」变化才 bump — 流式写入等渲染无关
+  // 事务(选区/标记均未变)不再触发重渲染。
   const [, bumpFormatTick] = useState(0);
   useEffect(() => {
-    const onTx = () => bumpFormatTick((n) => n + 1);
+    let lastSig = editorUiStateSignature(editor);
+    const onTx = () => {
+      const sig = editorUiStateSignature(editor);
+      if (sig === lastSig) return;
+      lastSig = sig;
+      bumpFormatTick((n) => n + 1);
+    };
     editor.on('transaction', onTx);
     return () => { editor.off('transaction', onTx); };
   }, [editor]);
