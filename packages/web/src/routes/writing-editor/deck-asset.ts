@@ -25,8 +25,12 @@ export interface DeckAsset {
   insertDeckSlideImage: (index: number, url: string, caption?: string) => void;
   /** #1044: 手动插入结构化图表块 — spec 须先经 chartBlockSchema 校验（表单内完成）。 */
   insertDeckSlideChart: (index: number, spec: unknown, caption?: string) => void;
-  /** #1044: 块原位替换（换图 URL / 换图数据），非追加。 */
-  replaceDeckSlideBlock: (slideIndex: number, blockIndex: number, next: DeckSlideBlock) => void;
+  /**
+   * #1044: 块原位替换（换图 URL / 换图数据），非追加。
+   * #1063: expectBlock（入口快照的目标块引用）提供时校验块身份，异步竞态下
+   * 目标块已被删/移动则放弃替换，不误写其他块。
+   */
+  replaceDeckSlideBlock: (slideIndex: number, blockIndex: number, next: DeckSlideBlock, expectBlock?: DeckSlideBlock) => void;
   /** #1044: 删除块（content 契约下限 1 块，最后一块不删）。 */
   deleteDeckSlideBlock: (slideIndex: number, blockIndex: number) => void;
 }
@@ -54,6 +58,11 @@ export function useDeckAsset(): DeckAsset {
   // ── #773: deck 资产卡片编辑（写 Doc.deck，独立于 body）──────────
   // #1047: bullets 编辑改为按序替换文本块、非文本块（table/image 等）原位保留 —
   // 旧实现整表重建 content 会把导入的表格块抹掉。
+  // #1063: 空文本块不再被 filter 吞掉（作为编辑占位保留）— 旧实现「清空一行 →
+  // 该行立即从 DOM 消失（丢焦点/丢行）」「+ 要点追加的空块立即被滤掉（按钮 no-op）」，
+  // 单页清空全部要点时更是产出 content: []，违反导出契约 content.min(1)，
+  // 导出时 validateRenderContent 整体失败 → 静默落回 body 重编排。
+  // 现约定：空文本块是编辑中态，行始终存在；仅兜底保证 content 永不为空数组。
   const updateDeckSlide = (index: number, next: { title?: string; bullets?: string[] }) => {
     setDeckAsset((prev) => {
       if (!prev) return prev;
@@ -62,7 +71,7 @@ export function useDeckAsset(): DeckAsset {
         const title = next.title !== undefined ? next.title : s.title;
         if (next.bullets === undefined) return { ...s, title };
         let bi = 0;
-        const content = [
+        let content: DeckSlideBlock[] = [
           ...s.content
             .map((c) => {
               if (typeof c.text !== 'string') return c; // 非文本块原位保留
@@ -70,9 +79,14 @@ export function useDeckAsset(): DeckAsset {
               return t !== undefined ? { ...c, text: t } : null; // 文本块按序替换
             })
             .filter((c): c is DeckSlideBlock => c !== null),
-          // 新增要点（超出原文本块数量）追加为 bullet 段。
-          ...next.bullets.slice(bi).map((b) => ({ type: 'paragraph', text: b, style: 'bullet' })),
-        ].filter((c) => (typeof c.text === 'string' ? c.text.trim().length > 0 : true));
+          // 新增要点（超出原文本块数量）追加为 bullet 段（含空串占位，#1063 不再滤掉）。
+          ...next.bullets.slice(bi).map((b) => ({ type: 'paragraph', text: b, style: 'bullet' }) as DeckSlideBlock),
+        ];
+        // #1063 兜底：编辑后一个块都不剩（仅剩非文本块被删光等极端场景）→
+        // 保留一个空文本块占位，绝不产出 content: []（导出契约 min(1)）。
+        if (content.length === 0) {
+          content = [{ type: 'paragraph', text: '', style: 'bullet' }];
+        }
         return { ...s, title, content };
       });
       return { ...prev, slides };
@@ -139,14 +153,24 @@ export function useDeckAsset(): DeckAsset {
   const insertDeckSlideChart = (index: number, spec: unknown, caption?: string) => {
     insertDeckSlideBlock(index, { type: 'chart', spec, ...(caption ? { caption } : {}) });
   };
-  const replaceDeckSlideBlock = (slideIndex: number, blockIndex: number, next: DeckSlideBlock) => {
+  /**
+   * #1044: 块原位替换（换图 URL / 换图数据），非追加。
+   * #1063: expectBlock 提供时校验「目标索引处仍是同一块」（引用相等 — 状态更新
+   * 对未改动块保持引用）后才替换。异步上传场景：入口快照目标块，await 两次网络
+   * 往返期间删块/移动/并发编辑会让索引指向别的块甚至越界 — 旧实现按索引盲写，
+   * 静默 no-op 或替换错图；现在身份不符则放弃替换（no-op 优于写错块）。
+   */
+  const replaceDeckSlideBlock = (slideIndex: number, blockIndex: number, next: DeckSlideBlock, expectBlock?: DeckSlideBlock) => {
     setDeckAsset((prev) => {
       if (!prev) return prev;
       return {
         ...prev,
-        slides: prev.slides.map((s, i) =>
-          i === slideIndex ? { ...s, content: s.content.map((c, ci) => (ci === blockIndex ? next : c)) } : s,
-        ),
+        slides: prev.slides.map((s, i) => {
+          if (i !== slideIndex) return s;
+          // #1063: 块身份校验 — 目标索引处块引用与快照不符（被删/移动/整表替换）→ 放弃。
+          if (expectBlock !== undefined && s.content[blockIndex] !== expectBlock) return s;
+          return { ...s, content: s.content.map((c, ci) => (ci === blockIndex ? next : c)) };
+        }),
       };
     });
   };

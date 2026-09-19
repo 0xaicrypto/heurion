@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
@@ -279,11 +279,21 @@ function DeckChartBlock({ block, onReplace, onDelete }: {
   const PAD_X = 28;
   const PAD_TOP = 8;
   const plotH = H - 8 - 18;
-  const max = Math.max(...data.map((d) => Math.abs(d.value)), 1e-9);
-  const baseline = PAD_TOP + plotH;
+  // #1063: 保留数值符号 — 旧实现 Math.abs 把负值画成正值（临床数据误导）。
+  // 有负值时基线上移，正/负极值按比例分摊绘图高度；纯正负同图时折线点/柱体
+  // 可落到基线下方。纯正值时几何与旧实现完全一致（基线贴底、向上绘制）。
+  const values = data.map((d) => d.value);
+  const hasNeg = values.some((v) => v < 0);
+  const maxPos = Math.max(...values, 1e-9);
+  const maxNegAbs = hasNeg ? Math.abs(Math.min(...values, 0)) : 0;
+  const span = plotH - 4;
+  const negSpan = hasNeg ? (span * maxNegAbs) / (maxPos + maxNegAbs) : 0;
+  const posSpan = span - negSpan;
+  const baseline = PAD_TOP + posSpan;
   const isLine = spec.chart_type === 'line' || spec.chart_type === 'dose_curve';
   const px = (i: number) => PAD_X + (data.length === 1 ? (W - PAD_X * 2) / 2 : (i * (W - PAD_X * 2)) / (data.length - 1));
-  const py = (v: number) => baseline - (Math.abs(v) / max) * (plotH - 4);
+  const py = (v: number) =>
+    v >= 0 ? baseline - (v / maxPos) * posSpan : baseline + (v / Math.min(...values, 0)) * negSpan;
   return (
     <figure className="min-w-0 rounded border border-border bg-surface p-1.5">
       {spec.title && <figcaption className="mb-0.5 truncate text-[11px] font-medium text-text-primary">{spec.title}</figcaption>}
@@ -300,8 +310,10 @@ function DeckChartBlock({ block, onReplace, onDelete }: {
         ) : (
           data.map((d, i) => {
             const bw = (W - PAD_X * 2) / data.length;
-            const h = Math.max((Math.abs(d.value) / max) * (plotH - 4), 1);
-            return <rect key={i} x={PAD_X + i * bw + bw * 0.15} y={baseline - h} width={bw * 0.7} height={h} fill="currentColor" rx="2" />;
+            // #1063: 负值柱向下 — y 从基线起、向下延伸 h；正值柱维持向上。
+            const frac = d.value >= 0 ? d.value / maxPos : d.value / Math.min(...values, 0);
+            const h = Math.max(frac * (d.value >= 0 ? posSpan : negSpan), 1);
+            return <rect key={i} x={PAD_X + i * bw + bw * 0.15} y={d.value >= 0 ? baseline - h : baseline} width={bw * 0.7} height={h} fill="currentColor" rx="2" />;
           })
         )}
         {data.map((d, i) => (
@@ -356,6 +368,20 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [chartForm, setChartForm] = useState<{ mode: 'insert' } | { mode: 'replace'; blockIndex: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // #1063: 要点行容器 — 「+ 要点」追加新行后把焦点补到新行输入框。
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // #1063: 以要点数变化为信号（+ 要点 → 数量增加）自动聚焦最后一个文本输入框；
+  // 计数不减不触发（编辑文本/插入图片块等不影响），首次挂载也不抢焦点。
+  const bulletCount = slide.content.filter((b) => typeof b.text === 'string').length;
+  const prevBulletCount = useRef<number | null>(null);
+  useEffect(() => {
+    const prev = prevBulletCount.current;
+    prevBulletCount.current = bulletCount;
+    if (prev !== null && bulletCount > prev) {
+      const inputs = bodyRef.current?.querySelectorAll<HTMLInputElement>('input:not([type="file"])');
+      inputs?.[inputs.length - 1]?.focus();
+    }
+  }, [bulletCount]);
   // #1051: 本页评论态 — open 评论驱动标题高亮（漂移 = 警示色），激活线程加描边。
   const openSlideComments = slideComments.filter((c) => c.status !== 'resolved');
   const driftedHere = openSlideComments.some((c) => !c.located);
@@ -366,12 +392,16 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
    * 失败给行内错误提示（非静默），不产生坏块。 */
   const runImageUpload = async (file: File) => {
     const target = uploadTarget;
+    // #1063: 竞态防护 — 入口快照目标块引用；两次网络往返期间删块/移动/并发编辑
+    // 会让 blockIndex 指向别的块（静默 no-op 或替换错图）。回写时由
+    // replaceDeckSlideBlock 校验块身份（引用相等），不符则放弃替换。
+    const expectBlock = target.mode === 'replace' ? slide.content[target.blockIndex] : undefined;
     try {
       const up = await api.uploadFile(file);
       const { url } = await api.getDownloadUrl(up.file_id);
       setUploadError(null);
       if (target.mode === 'insert') deckCtl.insertDeckSlideImage(index, url, file.name);
-      else deckCtl.replaceDeckSlideBlock(index, target.blockIndex, deckImageBlock(url, target.oldCaption ?? file.name));
+      else deckCtl.replaceDeckSlideBlock(index, target.blockIndex, deckImageBlock(url, target.oldCaption ?? file.name), expectBlock);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : String(err));
     }
@@ -383,8 +413,13 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
-        const from = Number(e.dataTransfer.getData('text/deck-index'));
-        if (Number.isInteger(from) && from !== index) deckCtl.moveDeckSlide(from, index);
+        // #1063: 只处理内部卡片排序拖拽 — dataTransfer 含专用 type 才读取。
+        // 外部文件/文本拖入时 getData('text/deck-index') 返回空串，
+        // 旧实现 Number('') = 0 过了 Number.isInteger 守卫 → 误触发 moveDeckSlide(0, index)。
+        if (!e.dataTransfer.types.includes('text/deck-index')) return;
+        const raw = e.dataTransfer.getData('text/deck-index');
+        const from = Number(raw);
+        if (raw !== '' && Number.isInteger(from) && from !== index) deckCtl.moveDeckSlide(from, index);
       }}
       title={t('writing.deckDragHint', '拖拽卡片可调整页序')}
       className="flex aspect-video flex-col overflow-hidden rounded-lg border border-border bg-surface-elevated shadow-sm transition-shadow hover:shadow-md"
@@ -465,7 +500,7 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
           <X size={12} />
         </button>
       </div>
-      <div className="flex flex-1 flex-col gap-1 overflow-hidden px-3 py-2 text-xs leading-relaxed text-text-secondary">
+      <div ref={bodyRef} className="flex flex-1 flex-col gap-1 overflow-hidden px-3 py-2 text-xs leading-relaxed text-text-secondary">
         {/* #1047: 按 content 原序交错渲染 — 文本块走要点编辑行，table 块走只读表格；
             #1044: image/chart 块走只读渲染 + 替换/删除操作（原位替换，非追加）。 */}
         {slide.content.map((b, ci) => {
@@ -511,6 +546,8 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
         <div className="flex flex-wrap items-center gap-1">
           <button
             onClick={() => deckCtl.updateDeckSlide(index, { bullets: [...deckCtl.slideBullets(slide), ''] })}
+            /* #1063: 追加的空块不再被 updateDeckSlide 的 filter 吞掉（旧实现 no-op），
+                新行落地后由上方 bulletCount 副作用自动聚焦。 */
             className="rounded px-1.5 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface hover:text-accent"
           >
             + {t('writing.deckAddBullet', '要点')}
@@ -592,7 +629,8 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
           initialBlock={chartForm.mode === 'replace' ? slide.content[chartForm.blockIndex] : undefined}
           onConfirm={(block: DeckChartFormResult) => {
             if (chartForm.mode === 'insert') deckCtl.insertDeckSlideChart(index, block.spec, block.caption);
-            else deckCtl.replaceDeckSlideBlock(index, chartForm.blockIndex, block);
+            // #1063: 替换同样带块身份快照（表单打开到确认之间块可能被删/移动）。
+            else deckCtl.replaceDeckSlideBlock(index, chartForm.blockIndex, block, slide.content[chartForm.blockIndex]);
             setChartForm(null);
           }}
           onClose={() => setChartForm(null)}

@@ -55,9 +55,15 @@ export function DeckChartFormDialog(input: {
   const submit = () => {
     // 全空行丢弃；填了 label/value 之一的行参与校验 — value 空/非数字时
     // 交给 chartBlockSchema 报错（表单内提示，不入 content）。
+    // #1063: Number() 可产出 ±Infinity（'Infinity'/'-Infinity'/'1e999' 溢出等），
+    // 而 zod z.number 只拒 NaN 不拒 Infinity，Infinity 会产出非法 SVG 坐标 —
+    // 非有限数归一为 NaN 走既有 zod 失败路径（表单内报错，不入 content）。
     const data = rows
       .filter((r) => r.label.trim() !== '' || r.value.trim() !== '')
-      .map((r) => ({ label: r.label.trim().slice(0, 200), value: r.value.trim() === '' ? NaN : Number(r.value) }));
+      .map((r) => {
+        const n = r.value.trim() === '' ? NaN : Number(r.value);
+        return { label: r.label.trim().slice(0, 200), value: Number.isFinite(n) ? n : NaN };
+      });
     const spec = { chart_type: chartType, data, ...(title.trim() ? { title: title.trim().slice(0, 500) } : {}) };
     const check = chartBlockSchema.safeParse({ type: 'chart', spec });
     if (!check.success) {

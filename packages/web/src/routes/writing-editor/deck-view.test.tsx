@@ -1,7 +1,7 @@
 // #1045: deck 幻灯片排序的键盘可访问替代方案 — 每张卡片补「上移/下移」按钮,
 // 复用 deckCtl.moveDeckSlide（与拖拽共享同一状态更新逻辑,不新造排序实现）。
 import { describe, test, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { useEffect, useRef } from 'react';
 import { chartBlockSchema } from '@heurion/contracts';
@@ -124,7 +124,8 @@ describe('#1045 deck 卡片上移/下移按钮', () => {
       dataTransfer: { setData: () => {}, effectAllowed: 'move' },
     });
     fireEvent.drop(cards[2], {
-      dataTransfer: { getData: () => '0' },
+      // #1063: 收紧后的 drop 处理只认 dataTransfer.types 含专用 type 的内部拖拽。
+      dataTransfer: { getData: () => '0', types: ['text/deck-index'] },
     });
     const afterDrag = cardOrder();
     expect(afterDrag).toEqual(['B', 'C', 'A']);
@@ -567,5 +568,219 @@ describe('#1044 deck 图片/图表块替换与删除', () => {
     const content = lastDeck(onDeckChange).slides[0].content;
     expect(content.some((b) => b.type === 'chart')).toBe(false);
     expect(content[0].text).toBe('A-要点');
+  });
+});
+
+// ── #1063: deck 视图交互健壮性批次 5 项 ─────────────────────────────
+// 1) 编辑要点清空不产出 content: []（行不消失/不丢焦点，导出侧不再违约）
+describe('#1063 编辑要点清空不产出 content 空数组', () => {
+  test('清空唯一要点 → 保留一个空文本占位块，content 不为 []，该行仍在 DOM', () => {
+    const onDeckChange = deckProbe();
+    render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    const input = screen.getAllByRole('textbox').find((el) => (el as HTMLInputElement).value === 'A-要点')!;
+    fireEvent.change(input, { target: { value: '' } });
+
+    // 行不消失：空文本输入框仍在 DOM（同一行以占位块形式保留，焦点不丢）
+    expect(screen.getAllByRole('textbox').some((el) => (el as HTMLInputElement).value === '')).toBe(true);
+    // content 不为 []：保留一个空文本块（编辑占位），不再违反导出契约 min(1)
+    const content = lastDeck(onDeckChange).slides[0].content;
+    expect(content).toHaveLength(1);
+    expect(content[0].text).toBe('');
+  });
+
+  test('清空多条要点中的一条 → 该行保留为空占位，其余要点不受影响', () => {
+    const onDeckChange = deckProbe();
+    render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          {
+            title: 'A',
+            content: [
+              { type: 'paragraph', text: 'b1', style: 'bullet' },
+              { type: 'paragraph', text: 'b2', style: 'bullet' },
+            ],
+          },
+        ])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    const input = screen.getAllByRole('textbox').find((el) => (el as HTMLInputElement).value === 'b1')!;
+    fireEvent.change(input, { target: { value: '' } });
+
+    // 空占位行 + 未动要点按原序保留
+    const texts = lastDeck(onDeckChange).slides[0].content.map((b) => b.text);
+    expect(texts).toEqual(['', 'b2']);
+  });
+});
+
+// 2) 「+ 要点」真正生效：追加空块不被 filter 吞掉，新行出现并自动聚焦
+describe('#1063 「+ 要点」按钮真正生效', () => {
+  test('点击「+ 要点」→ content 追加空文本块，新行出现并自动聚焦', () => {
+    const onDeckChange = deckProbe();
+    render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '+ 要点' }));
+
+    // content 追加了一个空文本块（不再被 filter 吞掉）
+    const content = lastDeck(onDeckChange).slides[0].content;
+    expect(content).toHaveLength(2);
+    expect(content[1].text).toBe('');
+    // 新行出现且自动聚焦（焦点管理补齐）
+    const newInput = screen.getAllByRole('textbox').find((el) => (el as HTMLInputElement).value === '')!;
+    expect(newInput).toBeTruthy();
+    expect(document.activeElement).toBe(newInput);
+  });
+});
+
+// 3) 替换图片异步竞态：await 后按块身份校验，目标块被删/变更时不再误替换
+describe('#1063 替换图片竞态防护（块身份校验）', () => {
+  const seededImg = { type: 'image', url: '/api/v1/files/download/file_old?token=t1', caption: '旧图' } as const;
+
+  test('上传期间目标图片块被删除 → 上传完成后不误替换其他块', async () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [{ ...seededImg }, { type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+        ])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    let resolveUpload: (v: unknown) => void = () => {};
+    uploadFileMock.mockImplementation(() => new Promise((resolve) => { resolveUpload = resolve; }));
+    getDownloadUrlMock.mockResolvedValue({ file_id: 'file_new', url: '/api/v1/files/download/file_new?token=t2' });
+
+    fireEvent.click(screen.getByRole('button', { name: '替换图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('竞态.png')] } });
+    await waitFor(() => expect(uploadFileMock).toHaveBeenCalled());
+
+    // 上传 pending 期间：删除目标图片块（索引 0 此后指向原 bullet）
+    fireEvent.click(screen.getByRole('button', { name: '删除图片' }));
+    await waitFor(() => expect(container.querySelector('img')).toBeNull());
+
+    // 上传完成：块身份已变 → 必须放弃替换，而非把新图写到 bullet 上
+    await act(async () => {
+      resolveUpload({ file_id: 'file_new', name: '竞态.png', mime: 'image/png', size_bytes: 1 });
+    });
+
+    const content = lastDeck(onDeckChange).slides[0].content;
+    expect(content.some((b) => b.type === 'image')).toBe(false);
+    expect(content.some((b) => b.text === 'A-要点')).toBe(true);
+    expect(container.querySelector('img')).toBeNull();
+  });
+
+  test('正常替换（期间无块变更）→ 原位替换不受身份校验影响（不回退）', async () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [{ ...seededImg }, { type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+        ])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    uploadFileMock.mockResolvedValue({ file_id: 'file_new', name: '新图.png', mime: 'image/png', size_bytes: 1 });
+    getDownloadUrlMock.mockResolvedValue({ file_id: 'file_new', url: '/api/v1/files/download/file_new?token=t2' });
+
+    fireEvent.click(screen.getByRole('button', { name: '替换图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('新图.png')] } });
+
+    await waitFor(() => expect((container.querySelector('img') as HTMLImageElement).getAttribute('src')).toBe('/api/v1/files/download/file_new?token=t2'));
+    const content = lastDeck(onDeckChange).slides[0].content;
+    expect(content).toHaveLength(2);
+    expect(content[0].url).toBe('/api/v1/files/download/file_new?token=t2');
+  });
+});
+
+// 4) 图表负值/非有限数：表单拒 ±Infinity；渲染保留符号（bar 向下/line 负区）
+describe('#1063 图表非有限数校验与负值渲染', () => {
+  let onDeckChange: ReturnType<typeof deckProbe>;
+  beforeEach(() => {
+    onDeckChange = deckProbe();
+  });
+
+  test('数值填 Infinity → 表单校验拒绝（alert 提示），不入 content', () => {
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '插入图表' }));
+    fireEvent.change(screen.getByLabelText('数据标签 1'), { target: { value: 'X' } });
+    fireEvent.change(screen.getByLabelText('数据值 1'), { target: { value: 'Infinity' } });
+    fireEvent.click(screen.getByRole('button', { name: '确认插入' }));
+
+    expect(screen.getByRole('alert')).toBeTruthy();
+    expect(container.querySelectorAll('svg rect')).toHaveLength(0);
+    expect(lastDeck(onDeckChange).slides[0].content.some((b) => b.type === 'chart')).toBe(false);
+  });
+
+  test('bar 图负值柱画在基线下方（不再 Math.abs 归一为向上）', () => {
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          {
+            title: 'A',
+            content: [{ type: 'chart', spec: { chart_type: 'bar', data: [{ label: '降', value: -5 }, { label: '升', value: 5 }] } }],
+          },
+        ])}
+      />,
+    );
+    const svg = container.querySelector('figure svg')!;
+    const baselineY = Number(svg.querySelector('line')!.getAttribute('y1'));
+    const rects = [...svg.querySelectorAll('rect')].map((r) => ({ y: Number(r.getAttribute('y')), h: Number(r.getAttribute('height')) }));
+    // 负值柱：柱体起点在基线上、向下延伸；正值柱：在基线上方收于基线
+    expect(rects[0].y).toBeGreaterThanOrEqual(baselineY);
+    expect(rects[1].y + rects[1].h).toBeCloseTo(baselineY, 5);
+    expect(rects[1].y).toBeLessThan(baselineY);
+  });
+
+  test('line 图负值点位于基线下方（polyline 保留符号）', () => {
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          {
+            title: 'A',
+            content: [{ type: 'chart', spec: { chart_type: 'line', data: [{ label: '谷', value: -5 }, { label: '峰', value: 5 }] } }],
+          },
+        ])}
+      />,
+    );
+    const svg = container.querySelector('figure svg')!;
+    const baselineY = Number(svg.querySelector('line')!.getAttribute('y1'));
+    const cys = [...svg.querySelectorAll('circle')].map((c) => Number(c.getAttribute('cy')));
+    expect(cys[0]).toBeGreaterThan(baselineY);
+    expect(cys[1]).toBeLessThan(baselineY);
+  });
+});
+
+// 5) 外部拖拽不触发排序：dataTransfer 无专用 type（文件拖入等）→ 忽略
+describe('#1063 外部拖拽不误触发卡片排序', () => {
+  test('dataTransfer types 不含 text/deck-index（外部文件拖入）→ 顺序不变', () => {
+    const { container } = renderDeck(['A', 'B']);
+    const cards = container.querySelectorAll('[draggable="true"]');
+    fireEvent.drop(cards[1], {
+      dataTransfer: { getData: () => '', types: ['Files'] },
+    });
+    expect(cardOrder()).toEqual(['A', 'B']);
+  });
+
+  test('内部拖拽（types 含 text/deck-index）→ 排序照常（不回退）', () => {
+    const { container } = renderDeck(['A', 'B']);
+    const cards = container.querySelectorAll('[draggable="true"]');
+    fireEvent.drop(cards[1], {
+      dataTransfer: { getData: () => '0', types: ['text/deck-index'] },
+    });
+    expect(cardOrder()).toEqual(['B', 'A']);
   });
 });
