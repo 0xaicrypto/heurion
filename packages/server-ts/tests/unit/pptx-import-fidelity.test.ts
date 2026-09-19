@@ -291,3 +291,237 @@ describe('#1052 SmartArt 降级（dsp:drawing 降级绘图）', () => {
     expect(validateRenderContent('sidecar.generate_pptx', { schemaVersion: 1, title: 'T', slides: deck.slides }).ok).toBe(true)
   })
 })
+
+describe('#1059 图表 <c:pt> 按 idx 属性对齐（弃下标位置假设）', () => {
+  // <c:pt> 原始 XML 构造器（fixture catPts/valPts 覆盖用）。
+  const pt = (idx: number, v: string | number) => `<c:pt idx="${idx}"><c:v>${v}</c:v></c:pt>`
+
+  test('用例 1：val 的 <c:pt> 缺 idx=1（空单元格）→ label/value 不整体错位', () => {
+    // 真实 Excel 产物：数值列含空单元格时 numCache 跳过该 <c:pt>，cat strCache 保留全部类别。
+    // 旧实现（按位置配对）：values 过滤后 [5.2, 2.8] 与 labels[0..1] 配对 → Arm B 拿到 2.8（静默串行）。
+    const built = buildPptxFixture([
+      {
+        title: '空单元格图表',
+        charts: [{
+          kind: 'barChart',
+          categories: ['Arm A', 'Arm B', 'Arm C'],
+          series: [{ name: '中位 PFS', values: [5.2, 2.8] }],
+          catPts: [pt(0, 'Arm A'), pt(1, 'Arm B'), pt(2, 'Arm C')],
+          valPts: [pt(0, 5.2), pt(2, 2.8)],
+        }],
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    const chart = parsed.slides[0].charts?.[0]
+    expect(chart?.spec?.data).toEqual([{ label: 'Arm A', value: 5.2 }, { label: 'Arm C', value: 2.8 }])
+  })
+
+  test('用例 2（回归）：cat/val 的 idx 均连续 → 结果与按位置配对一致', () => {
+    const built = buildPptxFixture([
+      {
+        charts: [{
+          kind: 'barChart',
+          categories: ['D1', 'D2', 'D3'],
+          series: [{ name: '肿瘤体积', values: [100, 80, 60] }],
+        }],
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.slides[0].charts?.[0].spec?.data).toEqual([
+      { label: 'D1', value: 100 },
+      { label: 'D2', value: 80 },
+      { label: 'D3', value: 60 },
+    ])
+  })
+
+  test('用例 3：idx 乱序出现 → 仍按 idx 正确对齐（升序输出）', () => {
+    const built = buildPptxFixture([
+      {
+        charts: [{
+          kind: 'lineChart',
+          categories: ['C0', 'C1', 'C2'],
+          series: [{ name: 'x', values: [1, 2, 3] }],
+          catPts: [pt(2, 'C2'), pt(0, 'C0'), pt(1, 'C1')],
+          valPts: [pt(2, 3), pt(0, 1), pt(1, 2)],
+        }],
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.slides[0].charts?.[0].spec?.data).toEqual([
+      { label: 'C0', value: 1 },
+      { label: 'C1', value: 2 },
+      { label: 'C2', value: 3 },
+    ])
+  })
+})
+
+describe('#1062 PPTX 保真度跟进批次（导入侧 1/2/4/6/7）', () => {
+  test('#1062-1 超大表（导出必炸 256KB）→ 导入侧预自检截断 + truncatedDegraded 标记', () => {
+    // 199 行 × 4 列 × ~400 字符 ≈ 318KB JSON — 可导入但超导出 schema
+    // （tableBlockSchema data ≤256KB），此前导入成功、导出永远报验证错。
+    const filler = 'x'.repeat(400)
+    const built = buildPptxFixture([
+      {
+        title: '超大表页',
+        table: {
+          rows: [
+            [{ text: '列A' }, { text: '列B' }, { text: '列C' }, { text: '列D' }],
+            ...Array.from({ length: 199 }, (_, i) => [{ text: `r${i}-${filler}` }, { text: filler }, { text: filler }, { text: filler }]),
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    const table = parsed.slides[0].tables?.[0]
+    expect(table).toBeTruthy()
+    // 截断到导出边界内 + 标记
+    const size = JSON.stringify({ rows: table!.rows }).length
+    expect(size).toBeLessThanOrEqual(256 * 1024)
+    expect(table!.rows.length).toBeLessThan(200)
+    expect(table!.truncatedDegraded).toBe(true)
+    // deck 落点带 caption（不静默），且能通过导出边界校验
+    const deck = pptxSlidesToDeck(parsed.slides, parsed.images, 'T', 2)!
+    const block = deck.slides[0].content.find((b) => b.type === 'table') as { caption?: string; data: string } | undefined
+    expect(block?.caption || '').toContain('截断')
+    expect(block && JSON.parse(block.data).rows.length).toBe(table!.rows.length)
+    expect(validateRenderContent('sidecar.generate_pptx', { schemaVersion: 2, title: 'T', slides: deck.slides }).ok).toBe(true)
+  })
+
+  test('#1062-1 预自检保留表头行（第 0 行不丢）', () => {
+    const filler = 'x'.repeat(900) // 180 行 × 2 列 × ~900 字符 ≈ 324KB JSON > 256KB
+    const built = buildPptxFixture([
+      {
+        table: {
+          rows: [
+            [{ text: '表头A' }, { text: '表头B' }],
+            ...Array.from({ length: 180 }, () => [{ text: filler }, { text: filler }]),
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    const table = parsed.slides[0].tables?.[0]
+    expect(table?.truncatedDegraded).toBe(true)
+    expect(table?.rows[0]).toEqual(['表头A', '表头B'])
+  })
+
+  test('#1062-2 notes 按 slide rels 定位：notesSlide 编号与页序错位（fixture 反同构）仍挂对页', () => {
+    // 反同构构造：第 1 页的备注落 notesSlide2.xml、第 2 页的落 notesSlide1.xml，
+    // 且 notes 关系写在 rels 最前 — 页序映射假设下备注会静默挂错页。
+    const built = buildPptxFixture([
+      { title: '第一页', paragraphs: ['P1'], notes: '第一页的备注', notesPart: 'notesSlide2.xml' },
+      { title: '第二页', paragraphs: ['P2'], notes: '第二页的备注', notesPart: 'notesSlide1.xml' },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    expect(parsed.slides[0].notes).toBe('第一页的备注')
+    expect(parsed.slides[1].notes).toBe('第二页的备注')
+  })
+
+  test('#1062-2 rels 缺 notesSlide 关系 → 按页序兜底（回归）', () => {
+    const built = buildPptxFixture([
+      { title: '旧产物页', notes: '兜底备注', omitNotesRel: true },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.slides[0].notes).toBe('兜底备注')
+  })
+
+  test('#1062-4 同页多 SmartArt 按 frame 引用的 r:id 配对（rels 逆序反同构）', () => {
+    // 反同构构造：fixture 将 SA2 的 rels 写在 SA1 之前（rels 无序映射）。
+    // 旧实现按 rels 出现序消费 → SA1 frame 拿到 SA2 的降级绘图（文字互相串）。
+    const built = buildPptxFixture([
+      {
+        title: '双 SmartArt 页',
+        smartArts: [
+          { shapes: ['流程A-入组', '流程A-评估'] },
+          { shapes: ['流程B-给药', '流程B-随访'] },
+        ],
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    const paras = parsed.slides[0].paragraphs
+    expect(paras.indexOf('流程A-入组')).toBeGreaterThan(-1)
+    expect(paras.indexOf('流程B-给药')).toBeGreaterThan(-1)
+    // 各 frame 与自己的降级绘图配对：A 组文字整体在 B 组之前（frame 顺序）
+    expect(paras.indexOf('流程A-入组')).toBeLessThan(paras.indexOf('流程B-给药'))
+    expect(paras.indexOf('流程A-评估')).toBeLessThan(paras.indexOf('流程B-给药'))
+  })
+
+  test('#1062-6 notes 提取上限统一到 wire 5000 字符口径（原 2000 静默截断）', () => {
+    const notes = 'N'.repeat(6000)
+    const built = buildPptxFixture([{ title: '长备注页', notes }])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.slides[0].notes?.length).toBe(5000)
+  })
+
+  test('#1062-7 表格列数超 30（row.slice(0,30)）→ truncatedDegraded 标记 + caption', () => {
+    const built = buildPptxFixture([
+      {
+        title: '宽表页',
+        table: {
+          rows: [
+            Array.from({ length: 35 }, (_, c) => ({ text: `列${c}` })),
+            Array.from({ length: 35 }, (_, c) => ({ text: `值${c}` })),
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    const table = parsed.slides[0].tables?.[0]
+    expect(table?.rows[0]).toHaveLength(30)
+    expect(table?.truncatedDegraded).toBe(true)
+    const deck = pptxSlidesToDeck(parsed.slides, parsed.images, 'T', 2)!
+    const block = deck.slides[0].content.find((b) => b.type === 'table') as { caption?: string } | undefined
+    expect(block?.caption || '').toContain('截断')
+  })
+
+  test('#1062-7 表格行数超 200（grid.slice(0,200)）→ truncatedDegraded 标记', () => {
+    const built = buildPptxFixture([
+      {
+        title: '长表页',
+        table: {
+          rows: Array.from({ length: 205 }, (_, r) => [{ text: `r${r}` }, { text: `v${r}` }]),
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    const table = parsed.slides[0].tables?.[0]
+    expect(table?.rows).toHaveLength(200)
+    expect(table?.truncatedDegraded).toBe(true)
+    // 无合并单元格 → 不误标 mergedDegraded
+    expect(table?.mergedDegraded).toBeUndefined()
+  })
+
+  test('#1062-7 段落超 50 块 → 保留降级注记块（丢弃数可见），总块数 ≤ 50', () => {
+    const built = buildPptxFixture([
+      { title: '超长页', paragraphs: Array.from({ length: 55 }, (_, i) => `P${i}`) },
+    ])
+    const parsed = parsePptx(built.buffer)
+    const deck = pptxSlidesToDeck(parsed.slides, parsed.images, 'T', 1)!
+    expect(deck.slides[0].content.length).toBeLessThanOrEqual(50)
+    expect(deck.slides[0].content[0]).toMatchObject({ type: 'paragraph', text: 'P0' })
+    // 降级注记：丢弃数可见（55 - 49 = 6），不再是静默截断
+    const marker = deck.slides[0].content.find((b) => (b as { text?: string }).text?.includes('已丢弃'))
+    expect(marker).toBeTruthy()
+    expect((marker as { text: string }).text).toContain('6')
+  })
+
+  test('#1062-7 段落满 50 块时表格等追加块不再被无痕丢弃', () => {
+    // 50 段落 + 1 表格：旧实现 content.slice(0,50) 会把表格无痕丢掉
+    const built = buildPptxFixture([
+      {
+        title: '满页',
+        paragraphs: Array.from({ length: 50 }, (_, i) => `P${i}`),
+        table: { rows: [[{ text: '关键数据' }, { text: '值' }]] },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    const deck = pptxSlidesToDeck(parsed.slides, parsed.images, 'T', 1)!
+    const blockTypes = deck.slides[0].content.map((b) => b.type)
+    expect(blockTypes).toContain('table')
+    expect(deck.slides[0].content.length).toBeLessThanOrEqual(50)
+  })
+})

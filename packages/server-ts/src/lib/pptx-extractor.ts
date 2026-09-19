@@ -17,12 +17,16 @@ import type { ExtractedPdfImage } from './document-extractor.js'
  *   - 加密 zip：zip-reader 抛可读错误。
  *
  * 解析边界（绝不静默丢内容）：表格（`<a:tbl>`，#1047）解析为结构化行列
- * 数据（合并单元格降级为重复文本）；图表（chart part，#1048）解析常见类型
- * （barChart/lineChart/pieChart）为结构化 chart 块，不支持的类型降级占位并
- * 记录类型名；SmartArt（`<dgm:`，#1052）解析 PowerPoint 兼容用的降级绘图
- * （dsp:drawing）提取形状文字为列表，降级绘图缺失才占位。speaker notes
- * （notesSlideN.xml）提取为页备注。页序优先 presentation.xml 的 sldIdLst
- * （权威顺序），缺失/损坏时按文件名自然排序兜底。
+ * 数据（合并单元格降级为重复文本；行列/尺寸超出导出 schema 时截断并标记
+ * truncatedDegraded，#1062-1/#1062-7）；图表（chart part，#1048）解析常见
+ * 类型（barChart/lineChart/pieChart）为结构化 chart 块，标签/数值按
+ * `<c:pt idx>` 对齐（#1059，弃下标位置假设），不支持的类型降级占位并记录
+ * 类型名；SmartArt（`<dgm:`，#1052）解析 PowerPoint 兼容用的降级绘图
+ * （dsp:drawing，经 dataModelExt relId 与 frame 权威配对，#1062-4）提取
+ * 形状文字为列表，降级绘图缺失才占位。speaker notes 按该页 rels 的
+ * notesSlide 关系定位（#1062-2，弃页序假设），关系缺失才按页序兜底。
+ * 页序优先 presentation.xml 的 sldIdLst（权威顺序），缺失/损坏时按文件名
+ * 自然排序兜底。
  */
 
 export interface PptxSlide {
@@ -41,6 +45,8 @@ export interface PptxTable {
   rows: string[][]
   /** 源表格含合并单元格（gridSpan/rowSpan/hMerge/vMerge）— 降级处理。 */
   mergedDegraded?: boolean
+  /** #1062-1/#1062-7: 行列/尺寸超出导出 schema（tableBlockSchema）被截断 — 降级标记。 */
+  truncatedDegraded?: boolean
 }
 
 export interface PptxChart {
@@ -72,6 +78,10 @@ const MAX_SLIDES = 100
 const MAX_MEDIA_FILES = 24
 const MAX_MEDIA_FILE_BYTES = 4 * 1024 * 1024
 const MAX_SLIDE_TEXT_CHARS = 20000
+
+/** #1062-1: 表格 data 导出上限（contracts tableBlockSchema data max 256KB）—
+ * 导入侧按导出 schema 预自检，避免"导入成功、导出永远报验证错"的延迟爆炸。 */
+const TABLE_DATA_EXPORT_LIMIT = 256 * 1024
 
 export function isPptx(filename: string, mimeType?: string): boolean {
   const lower = filename.toLowerCase()
@@ -132,6 +142,8 @@ function parseTableFrame(frameXml: string): PptxTable | null {
   const pending = new Map<number, Map<number, string>>() // 待填行号 → (列号 → 携带文本)
   const grid: string[][] = []
   let degraded = false
+  // #1062-7: 行/列截断不再静默 — 标记 truncatedDegraded（caption 可见）。
+  let truncated = false
   rawRows.forEach((cells, ri) => {
     const fills = pending.get(ri)
     const row: string[] = []
@@ -159,13 +171,36 @@ function parseTableFrame(frameXml: string): PptxTable | null {
         }
       }
       ci += span
+      // #1062-7: 逻辑网格越过 30 列（截断发生）标记
+      if (ci > 30) truncated = true
     }
     fillCarried()
+    // #1062-7: 合并填充使行越过 30 列（截断发生）标记
+    if (row.length > 30) truncated = true
     grid.push(row.slice(0, 30))
   })
   // 全空表格无可解析内容 — 保留原占位注记（不产出空 table 块）。
   if (!grid.some((row) => row.some((cell) => cell.trim() !== ''))) return null
-  return { rows: grid.slice(0, 200), ...(degraded ? { mergedDegraded: true } : {}) }
+  // #1062-7: 行截断（slice(0,200)）标记
+  if (grid.length > 200) truncated = true
+  let rows = grid.slice(0, 200)
+  // #1062-1: 按导出 schema 预自检（data JSON ≤256KB）— 超限丢尾部行（保表头）
+  // 并标记，杜绝"导入成功、导出永远报验证错"。
+  const sizeOf = (rs: string[][]): number => JSON.stringify({ rows: rs }).length
+  if (sizeOf(rows) > TABLE_DATA_EXPORT_LIMIT) {
+    truncated = true
+    const kept = [rows[0]]
+    for (let ri = 1; ri < rows.length; ri++) {
+      if (sizeOf([...kept, rows[ri]]) > TABLE_DATA_EXPORT_LIMIT) break
+      kept.push(rows[ri])
+    }
+    rows = kept
+  }
+  return {
+    rows,
+    ...(degraded ? { mergedDegraded: true } : {}),
+    ...(truncated ? { truncatedDegraded: true } : {}),
+  }
 }
 
 /** slide XML → { title, paragraphs, tables, chartRids, smartArtXmls }。 */
@@ -266,6 +301,24 @@ function diagramDrawingTargets(relsXml: string): string[] {
   return out
 }
 
+/**
+ * #1062-2: slide rels → 该页 notesSlide part 名（Type 含 notesSlide 的关系）。
+ * 真实 pptx 页重排/复制后 notesSlideN 编号与页序无关 — 按 rels 定位才能把
+ * 备注挂对页；rels 是无序映射，故按 Type 匹配而非出现序。无 → null（调用方
+ * 按页序兜底，兼容旧生成器产物）。
+ */
+function notesSlideTargetByRels(relsXml: string): string | null {
+  const relRe = /<Relationship\b([^>]*?)\/?>/g
+  let m: RegExpExecArray | null
+  while ((m = relRe.exec(relsXml)) !== null) {
+    const attrs = m[1]
+    if (!/Type="[^"]*notesSlide"/.test(attrs)) continue
+    const target = /Target="([^"]+)"/.exec(attrs)?.[1]
+    if (target) return normalizePartTarget(target)
+  }
+  return null
+}
+
 /** OOXML 图表类型 → contracts chartBlockSchema.chart_type（#1048）。 */
 const PPTX_CHART_TYPE_MAP: Record<string, 'bar' | 'line'> = {
   barChart: 'bar',
@@ -284,20 +337,35 @@ function parseChartXml(xml: string): PptxChart {
   const ser = /<c:ser>[\s\S]*?<\/c:ser>/.exec(xml)?.[0]
   if (!ser) return { ooxmlType }
 
-  const collectPts = (block: string): string[] => {
-    const out: string[] = []
-    const ptRe = /<c:pt\b[^>]*idx="\d+"[^>]*>([\s\S]*?)<\/c:pt>/g
+  /**
+   * #1059: `<c:pt>` 按 idx 属性建映射（idx → 解码后的 <c:v> 文本），弃按数组
+   * 位置配对。真实 OOXML 中数值列含空单元格时 Excel 在 numCache 里跳过该
+   * `<c:pt>`（cat strCache 保留全部类别）——按下标位置配对会使后续 label/value
+   * 整体错一位（静默数据串行）。
+   */
+  const collectPtsByIdx = (block: string): Map<number, string> => {
+    const out = new Map<number, string>()
+    const ptRe = /<c:pt\b[^>]*idx="(\d+)"[^>]*>([\s\S]*?)<\/c:pt>/g
     let m: RegExpExecArray | null
     while ((m = ptRe.exec(block)) !== null) {
-      out.push(decodeXmlEntities(/<c:v>([\s\S]*?)<\/c:v>/.exec(m[1])?.[1] || '').trim())
+      out.set(parseInt(m[1], 10), decodeXmlEntities(/<c:v>([\s\S]*?)<\/c:v>/.exec(m[2])?.[1] || '').trim())
     }
     return out
   }
-  const labels = collectPts(/<c:cat>[\s\S]*?<\/c:cat>/.exec(ser)?.[0] || '')
-  const values = collectPts(/<c:val>[\s\S]*?<\/c:val>/.exec(ser)?.[0] || '')
-    .map((v) => Number(v))
-    .filter((n) => Number.isFinite(n))
-  const data = values.slice(0, 200).map((value, i) => ({ label: (labels[i] || `#${i + 1}`).slice(0, 200), value }))
+  const catByIdx = collectPtsByIdx(/<c:cat>[\s\S]*?<\/c:cat>/.exec(ser)?.[0] || '')
+  const valByIdx = collectPtsByIdx(/<c:val>[\s\S]*?<\/c:val>/.exec(ser)?.[0] || '')
+  // val 侧沿用原数值过滤口径（非有限数 → 该 idx 不入列，只丢该点不整体错位）。
+  const valueByIdx = new Map<number, number>()
+  for (const [idx, v] of valByIdx) {
+    const n = Number(v)
+    if (Number.isFinite(n)) valueByIdx.set(idx, n)
+  }
+  // #1059: 按 idx 交集配对，升序输出（idx 乱序出现的 part 也按类别轴顺序还原）。
+  const data = [...valueByIdx.keys()]
+    .filter((idx) => catByIdx.has(idx))
+    .sort((a, b) => a - b)
+    .slice(0, 200)
+    .map((idx) => ({ label: (catByIdx.get(idx) || `#${idx + 1}`).slice(0, 200), value: valueByIdx.get(idx)! }))
   if (data.length === 0) return { ooxmlType }
 
   const title = decodeXmlEntities(/<c:title>[\s\S]*?<\/c:title>/.exec(xml)?.[0]?.match(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/)?.[1] || '').trim().slice(0, 500)
@@ -332,7 +400,9 @@ function parseSmartArtDrawingXml(xml: string): string[] {
     .map((s) => s.text)
 }
 
-/** notesSlide XML → 纯文本（有界，只取 body 占位符 — 跳过页码占位）。 */
+/** notesSlide XML → 纯文本（有界，只取 body 占位符 — 跳过页码占位）。
+ * #1062-6: 提取上限统一到 wire 口径（contracts notes max 5000，原 2000 与
+ * wire/worker 三处不一致）。 */
 function parseNotesXml(xml: string): string {
   const texts: string[] = []
   const shapeRe = /<p:sp\b[^>]*>([\s\S]*?)<\/p:sp>/g
@@ -341,7 +411,7 @@ function parseNotesXml(xml: string): string {
     if (!/<p:ph[^>]*\stype="body"/.test(m[1])) continue
     texts.push(...paragraphsFromShape(m[1]))
   }
-  return texts.join(' ').slice(0, 2000)
+  return texts.join(' ').slice(0, 5000)
 }
 
 /** slideN.xml.rels → 该页引用的 media 文件名（去重）。 */
@@ -448,10 +518,35 @@ export function parsePptx(buffer: Buffer): PptxParseResult {
     // #1052: SmartArt → 降级绘图（dsp:drawing）形状文字列表（信息不丢）；
     // 降级绘图缺失/不可读（极少数旧版工具产物）→ 明确占位提示，不静默。
     // drawing part 经 slide rels 的 diagramDrawing 关系定位（dgm:relIds 的
-    // dm/lo/qs/cs 不指向 drawing）— 同页多个 SmartArt 按 rels 出现序消费。
+    // dm/lo/qs/cs 不指向 drawing）。
+    // #1062-4: 同页多 SmartArt 的 frame↔drawing 配对弃「rels 出现序」假设
+    // （rels 是无序映射）— 以 frame 引用的 diagramData r:id（dgm:relIds
+    // r:dm）↔ drawing part 的 dsp:dataModelExt relId 权威配对（PowerPoint
+    // 写入的回链）；旧产物无 dataModelExt 时才按 rels 出现序兜底消费。
     const drawingTargets = diagramDrawingTargets(relsXml)
-    for (let f = 0; f < parsedSlide.smartArtXmls.length; f++) {
-      const drawingXml = drawingTargets[f] ? entriesMap.get(drawingTargets[f])?.toString('utf-8') : undefined
+    const drawingTargetByDataRid = new Map<string, string>()
+    for (const target of drawingTargets) {
+      const drawingXml = entriesMap.get(target)?.toString('utf-8') || ''
+      const relId = /<dsp:dataModelExt\b[^>]*relId="([^"]+)"/.exec(drawingXml)?.[1]
+      if (relId && !drawingTargetByDataRid.has(relId)) drawingTargetByDataRid.set(relId, target)
+    }
+    const availableDrawings = [...drawingTargets]
+    const takeDrawing = (frameXml: string): string | undefined => {
+      const dmRid = /<dgm:relIds\b[^>]*r:dm="([^"]+)"/.exec(frameXml)?.[1]
+      if (dmRid) {
+        const matched = drawingTargetByDataRid.get(dmRid)
+        if (matched) {
+          const pos = availableDrawings.indexOf(matched)
+          if (pos >= 0) availableDrawings.splice(pos, 1)
+          return matched
+        }
+      }
+      // 兜底：drawing part 无 dataModelExt（旧生成器产物）→ 按 rels 出现序消费
+      return availableDrawings.shift()
+    }
+    for (const frameXml of parsedSlide.smartArtXmls) {
+      const drawingTarget = takeDrawing(frameXml)
+      const drawingXml = drawingTarget ? entriesMap.get(drawingTarget)?.toString('utf-8') : undefined
       const texts = drawingXml ? parseSmartArtDrawingXml(drawingXml) : []
       if (texts.length > 0) {
         slide.paragraphs.push('[SmartArt 已降级为文字列表，原图形排布未保留]')
@@ -467,8 +562,11 @@ export function parsePptx(buffer: Buffer): PptxParseResult {
       }
     }
 
-    // speaker notes（notesSlideN.xml，可选）— 页号与 slide 序号对齐。
-    const notesXml = entriesMap.get(`ppt/notesSlides/notesSlide${i + 1}.xml`)?.toString('utf-8')
+    // speaker notes（notesSlide，可选）— #1062-2: 按 slide rels 的 notesSlide
+    // 关系定位（真实 pptx 页重排/复制后 notesSlideN 编号与页序无关，页序映射
+    // 会把备注静默挂错页）；关系缺失才按页序兜底（旧生成器产物）。
+    const notesTarget = notesSlideTargetByRels(relsXml) ?? `ppt/notesSlides/notesSlide${i + 1}.xml`
+    const notesXml = entriesMap.get(notesTarget)?.toString('utf-8')
     if (notesXml) {
       const notes = parseNotesXml(notesXml)
       if (notes) slide.notes = notes
@@ -496,7 +594,9 @@ function mimeFromExt(ext: string): string {
 }
 
 /** deck 落点：slides → presentationContent（契约模型，#773 的 Doc.deck）。 */
-export function pptxSlidesToDeck(slides: PptxSlide[], images: ExtractedPdfImage[], title: string, schemaVersion: number): { schemaVersion: number; title: string; slides: Array<{ title: string; content: Array<Record<string, unknown>> }> } | null {
+// #1066-9: 返回类型同步 slides[].notes — #1046 起运行时已回填 notes
+// （worker 导出侧 addNotes 写回），此前手写返回类型陈旧未跟上。
+export function pptxSlidesToDeck(slides: PptxSlide[], images: ExtractedPdfImage[], title: string, schemaVersion: number): { schemaVersion: number; title: string; slides: Array<{ title: string; notes?: string; content: Array<Record<string, unknown>> }> } | null {
   if (slides.length === 0) return null
   const byPage = new Map<number, ExtractedPdfImage[]>()
   for (const img of images) {
@@ -506,16 +606,31 @@ export function pptxSlidesToDeck(slides: PptxSlide[], images: ExtractedPdfImage[
   }
   const deckSlides = slides.slice(0, 30).map((s, i) => {
     const content: Array<Record<string, unknown>> = []
-    for (const p of s.paragraphs.slice(0, 50)) {
+    // #1062-7: 契约上限（presentationSlideSchema content max 50）内为表格/
+    // 图表/图片等追加块预留槽位 — 此前段落满 50 块时追加块被无痕丢弃。
+    const MAX_BLOCKS = 50
+    const reservedBlocks = Math.min((s.tables || []).length, 5) + Math.min((s.charts || []).length, 5) + Math.min((byPage.get(i + 1) || []).length, 3)
+    let paraBudget = MAX_BLOCKS - reservedBlocks
+    let paraDropped = 0
+    if (s.paragraphs.length > paraBudget) {
+      paraDropped = s.paragraphs.length - (paraBudget - 1)
+      paraBudget = Math.max(0, paraBudget - 1) // 留 1 块给降级注记
+    }
+    for (const p of s.paragraphs.slice(0, paraBudget)) {
       content.push({ type: 'paragraph', text: p.slice(0, 2000), style: 'bullet' })
     }
     // #1047: 表格 → type:'table' 块（行列数据 JSON 字符串，contracts tableBlockSchema
-    // 形状）；合并单元格降级为重复文本时 caption 注明（不静默）。
+    // 形状）；合并单元格/行列截断降级均以 caption 注明（不静默）。
     for (const t of (s.tables || []).slice(0, 5)) {
+      // #1062-1/#1062-7: 截断降级标记 → caption（含合并单元格时拼接说明）。
+      const caption = [
+        t.mergedDegraded ? '（含合并单元格：已按重复文本降级）' : '',
+        t.truncatedDegraded ? '（表格超出导出上限：已截断至边界内）' : '',
+      ].filter(Boolean).join('；')
       content.push({
         type: 'table',
         data: JSON.stringify({ rows: t.rows }),
-        ...(t.mergedDegraded ? { caption: '（含合并单元格：已按重复文本降级）' } : {}),
+        ...(caption ? { caption } : {}),
       })
     }
     // #1048: 图表 → type:'chart' 块（spec 对齐 contracts chartBlockSchema，复用
@@ -525,6 +640,10 @@ export function pptxSlidesToDeck(slides: PptxSlide[], images: ExtractedPdfImage[
     }
     for (const img of (byPage.get(i + 1) || []).slice(0, 3)) {
       content.push({ type: 'image', ref: `pptx-media-${i + 1}-${content.length}`, data: img.dataBase64, caption: `图 ${i + 1}` })
+    }
+    // #1062-7: 段落被 50 块上限截断 → 显式注记块（丢弃数可见，不再静默）。
+    if (paraDropped > 0) {
+      content.push({ type: 'paragraph', text: `（本页内容超出 ${MAX_BLOCKS} 块上限：已丢弃 ${paraDropped} 段落）`, style: 'normal' })
     }
     if (content.length === 0) content.push({ type: 'paragraph', text: '（本页待补充）', style: 'normal' })
     // #1046: speaker notes 映射到 DeckWire.slides[].notes（此前在此步被丢弃 —

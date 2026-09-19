@@ -3,7 +3,7 @@ import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getApp, authHeader, getAuthUserId } from '../setup.js'
 import prisma from '../../src/common/prisma.js'
 import { EditDocumentTool } from '../../src/tools/edit-document-tool.js'
-import { setUrlDownloadLookupForTest } from '../../src/lib/url-download.js'
+import { setUrlDownloadLookupForTest, setUrlDownloadTransportForTest } from '../../src/lib/url-download.js'
 
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
 
@@ -52,13 +52,15 @@ function makeTinyPdf(text: string): Buffer {
 
 describe('#875 edit_document url 导入(检索→全文入库闭环)', () => {
   beforeEach(() => {
-    // 受控下载与 OA 校验都走 fetch — 统一 mock;DNS 无外网 → 注入公网 IP
+    // 受控下载与 OA 校验都走 mock — #1057 起下载不再走全局 fetch(改钉定
+    // 传输层),单独注入传输 mock;DNS 无外网 → 注入公网 IP
     vi.stubGlobal('fetch', vi.fn())
     setUrlDownloadLookupForTest(async () => [{ address: '93.184.216.34' }])
   })
   afterEach(() => {
     vi.unstubAllGlobals()
     setUrlDownloadLookupForTest(null)
+    setUrlDownloadTransportForTest(null)
   })
 
   test('OA PDF 直链 → 入库(FileIndex+docReference)+ 正文导入', async () => {
@@ -67,6 +69,8 @@ describe('#875 edit_document url 导入(检索→全文入库闭环)', () => {
     const pdf = makeTinyPdf('EGFR mutation and NSCLC treatment review content')
     const fetchMock = vi.mocked(globalThis.fetch as any)
     fetchMock.mockImplementation(async (input: any) => new Response(pdf, { status: 200 }))
+    // #1057: 下载传输层注入(行为对齐原 fetch mock)
+    setUrlDownloadTransportForTest(async () => new Response(pdf, { status: 200 }))
 
     const tool = new EditDocumentTool({ userId: await getAuthUserId(), sessionId: `doc-${docId}` })
     const result = await tool.execute({
@@ -91,6 +95,7 @@ describe('#875 edit_document url 导入(检索→全文入库闭环)', () => {
     const docId = await createDoc(app)
     const fetchMock = vi.mocked(globalThis.fetch as any)
     fetchMock.mockImplementation(async () => new Response('payment required', { status: 402 }))
+    setUrlDownloadTransportForTest(async () => new Response('payment required', { status: 402 }))
 
     const tool = new EditDocumentTool({ userId: 'user_test', sessionId: `doc-${docId}` })
     const result = await tool.execute({ url: 'https://paywalled.example.org/paper.pdf', summary: '尝试导入付费墙' })
@@ -105,6 +110,7 @@ describe('#875 edit_document url 导入(检索→全文入库闭环)', () => {
     const docId = await createDoc(app)
     const fetchMock = vi.mocked(globalThis.fetch as any)
     fetchMock.mockImplementation(async () => new Response('<html>landing</html>', { status: 200 }))
+    setUrlDownloadTransportForTest(async () => new Response('<html>landing</html>', { status: 200 }))
 
     const tool = new EditDocumentTool({ userId: 'user_test', sessionId: `doc-${docId}` })
     const result = await tool.execute({ url: 'https://oa.example.org/landing-page' })
