@@ -41,7 +41,9 @@ jobs:
         with: { version: '10' }
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'pnpm', cache-dependency-path: packages/server-ts/pnpm-lock.yaml }
-      - run: cd packages/contracts && pnpm install --frozen-lockfile && pnpm build && cd ../server-ts && pnpm install --frozen-lockfile && npx prisma generate && npx tsc --noEmit
+      # #1074-1: ssrf-guard 为 server-ts 的 file: 共享包 — install 前必须先建 dist
+      #（pnpm file: 快照只拷 files:["dist"]）。
+      - run: cd packages/contracts && pnpm install --frozen-lockfile && pnpm build && cd ../ssrf-guard && pnpm install --frozen-lockfile && pnpm build && cd ../server-ts && pnpm install --frozen-lockfile && npx prisma generate && npx tsc --noEmit
 
   test:
     name: Unit Tests
@@ -56,6 +58,10 @@ jobs:
       - name: Run regression tests
         run: |
           cd packages/contracts
+          pnpm install --frozen-lockfile
+          pnpm build
+          # #1074-1: ssrf-guard 为 server-ts 的 file: 共享包 — install 前先建 dist。
+          cd ../ssrf-guard
           pnpm install --frozen-lockfile
           pnpm build
           cd ../server-ts
