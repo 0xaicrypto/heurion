@@ -130,6 +130,10 @@ type CommentFixture = {
   id: string;
   anchor_text: string;
   status: string;
+  // #1091: 锚点判别/快照字段可选 — deck 评论 fixture 与 wire 形状对齐。
+  target?: 'section' | 'deck_slide';
+  slide_index?: number | null;
+  deck_snapshot?: string;
   // #1089-5: start/heading 可选 — 服务端候选的精确偏移与标题摘要。
   anchor?: { located: boolean; candidates?: Array<{ text: string; start?: number; heading?: string; similarity: number }> };
   replies?: Array<{ id: string; role: string; text: string; created_at: string }>;
@@ -139,16 +143,18 @@ function makeComment(fx: CommentFixture) {
   return {
     id: fx.id,
     doc_id: DOC_ID,
-    section_id: 's1',
-    // #1051: 锚点判别字段 — 正文评论 fixture 恒为 section 锚点。
-    target: 'section' as const,
-    slide_index: null,
+    section_id: fx.target === 'deck_slide' ? null : 's1',
+    // #1051: 锚点判别字段 — 正文评论 fixture 恒为 section 锚点（#1091 可覆盖为 deck_slide）。
+    target: fx.target ?? ('section' as const),
+    slide_index: fx.slide_index ?? null,
     block_index: null,
     anchor_text: fx.anchor_text,
     status: fx.status,
     created_by: 'u1',
     created_at: '2026-01-01T00:00:00Z',
     resolved_at: fx.status === 'resolved' ? '2026-01-02T00:00:00Z' : null,
+    // #1091: deck 快照 — 服务端有则带（pending-confirm 按钮态恢复数据源）。
+    ...(fx.deck_snapshot !== undefined ? { deck_snapshot: fx.deck_snapshot } : {}),
     replies: fx.replies ?? [],
     // #1089-5: fixture 的 start/heading 可选（服务端 wire 里 start 必填 —
     // 缺失形态用于回归「无偏移不误判」路径，cast 越过 wire 的必填标注）。
@@ -542,6 +548,27 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     expect(highlight.classList.contains('comment-anchor-pending')).toBe(false);
     expect(highlight.getAttribute('data-ambiguous')).toBeNull();
     expect(coveredText(container, 'c1')).toBe(PARA1);
+  });
+
+  /**
+   * #1091 — deck 评论 pending-confirm 按钮态的 wire 恢复（面板渲染条件）：
+   * 渲染条件从纯内存 map 扩为「内存态 || wire.deck_snapshot 在场」— harness
+   * 未传 deckConfirming（纯内存态缺席），按钮态完全来自服务端快照，即刷新
+   * 后的恢复路径。正文评论不带快照 → 不出现按钮（正文路径不受影响）。
+   */
+  test('刷新恢复:deck 评论 wire.deck_snapshot 在场 → 确认/撤销按钮渲染;正文评论不受影响', async () => {
+    await renderHarness([
+      { id: 'cdeck', anchor_text: '方法页', status: 'open', target: 'deck_slide', slide_index: 2, deck_snapshot: JSON.stringify({ title: 'd', slides: [] }), replies: [{ id: 'r1', role: 'user', text: '这页要补随访时长', created_at: 't0' }] },
+      { id: 'csec', anchor_text: PARA1, status: 'open', anchor: { located: true } },
+    ]);
+    // deck 评论:仅凭 wire 快照(无内存态)恢复按钮
+    expect(screen.getByTestId('comment-deck-confirm-cdeck')).toBeTruthy();
+    expect(screen.getByTestId('comment-deck-confirm-btn-cdeck')).toBeTruthy();
+    expect(screen.getByTestId('comment-deck-undo-btn-cdeck')).toBeTruthy();
+    // 正文评论:无 deck 按钮(不受影响)
+    expect(screen.queryByTestId('comment-deck-confirm-csec')).toBeNull();
+    // 无快照的 deck 评论同样无按钮(仅有 wire 快照才恢复)
+    expect(screen.queryByTestId('comment-deck-confirm-c1')).toBeNull();
   });
 });
 

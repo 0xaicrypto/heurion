@@ -74,8 +74,31 @@ const aiReplySchema = z.object({
   turn_id: z.string().min(1),
 })
 
+// #1091: deck 评论 pending-confirm 快照 — 写回前画布 deck JSON。PATCH 可带：
+// string ≤1MB 且 JSON 可解析（与 #1047 table data 同风格校验；HTTP 层另有
+// Fastify 默认 1MiB bodyLimit 先挡，此处为 zod 纵深防御），null = 清除
+// （确认/撤销成功后清恢复点），undefined = 不触碰。语义上仅 deck_slide
+// 评论使用（序列化只对 deck_slide 带出，见 serializeComment）。
+const deckSnapshotMax = 1024 * 1024
+const deckSnapshotField = z.union([
+  z.null(),
+  z
+    .string()
+    .max(deckSnapshotMax)
+    .refine((s) => {
+      try {
+        JSON.parse(s) as unknown
+        return true
+      } catch {
+        return false
+      }
+    }, { message: 'deck_snapshot 必须是可解析的 JSON 字符串' }),
+])
+
+// #1091: status 变可选 — 仅落快照/仅清快照的 PATCH 不触碰 status/resolvedAt。
 const patchCommentSchema = z.object({
-  status: z.enum(['open', 'resolved']),
+  status: z.enum(['open', 'resolved']).optional(),
+  deck_snapshot: deckSnapshotField.optional(),
 })
 
 // #1064: 列表分页 + 诊断懒计算 — limit 默认 50 上限 200，offset 偏移；
@@ -113,6 +136,9 @@ interface SerializedComment {
   created_by: string
   created_at: string
   resolved_at: string | null
+  /** #1091: deck 评论 pending-confirm 快照（写回前画布 JSON）— 仅 deck_slide
+   *  且快照在场才携带（有则带，与 #1051 的 snake_case 序列化风格一致）。 */
+  deck_snapshot?: string
   replies: SerializedReply[]
   anchor?: AnchorDiagnosis
 }
@@ -122,7 +148,7 @@ function serializeReply(r: DocCommentReply): SerializedReply {
 }
 
 function serializeComment(c: DocComment & { replies: DocCommentReply[] }): SerializedComment {
-  return {
+  const out: SerializedComment = {
     id: c.id,
     doc_id: c.docId,
     section_id: c.sectionId || null,
@@ -136,6 +162,10 @@ function serializeComment(c: DocComment & { replies: DocCommentReply[] }): Seria
     resolved_at: c.resolvedAt,
     replies: c.replies.map(serializeReply),
   }
+  // #1091: deck 快照随序列化带出 — 仅 target='deck_slide' 且快照在场
+  // （pending-confirm 态恢复的数据源；确认/撤销清空后自然消失）。
+  if (c.target === 'deck_slide' && c.deckSnapshot) out.deck_snapshot = c.deckSnapshot
+  return out
 }
 
 /**
@@ -390,13 +420,21 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
     const updated = await prisma.docComment.update({
       where: { id: comment.id },
       data: {
-        status: parsed.data.status,
-        // #1039 用例 4：resolved 写入切换时刻，reopen 置回 null
-        resolvedAt: parsed.data.status === 'resolved' ? new Date().toISOString() : null,
+        // #1091: status 可选 — 仅快照 PATCH 不触碰 status/resolvedAt（撤销/确认
+        // 之外还剩纯快照读写两种调用形态，二者都要求线程保持 open 原状）。
+        ...(parsed.data.status !== undefined
+          ? {
+              status: parsed.data.status,
+              // #1039 用例 4：resolved 写入切换时刻，reopen 置回 null
+              resolvedAt: parsed.data.status === 'resolved' ? new Date().toISOString() : null,
+            }
+          : {}),
+        // #1091: 快照写入/清除（undefined = 不触碰；null/string 均为显式落库）
+        ...(parsed.data.deck_snapshot !== undefined ? { deckSnapshot: parsed.data.deck_snapshot } : {}),
       },
       include: { replies: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
     })
-    log.info(`[comments] status=${parsed.data.status} id=${comment.id} docId=${doc.id}`)
+    log.info(`[comments] status=${parsed.data.status ?? comment.status} id=${comment.id} docId=${doc.id} snapshot=${parsed.data.deck_snapshot === undefined ? 'keep' : parsed.data.deck_snapshot === null ? 'cleared' : 'set'}`)
     return serializeComment(updated)
   })
 }

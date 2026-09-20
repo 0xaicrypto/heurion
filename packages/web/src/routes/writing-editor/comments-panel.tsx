@@ -295,13 +295,15 @@ export function CommentsPanel(input: {
                 </div>
               )}
               {/* #1088: deck 评论 AI 写回待确认态 — 线程级「确认修改/撤销修改」
-                  (仅 target='deck_slide' 且待确认;撤销仅在快照可恢复时显示)。 */}
-              {c.target === 'deck_slide' && c.status !== 'resolved' && deckConfirming?.[c.id] && (
+                  (仅 target='deck_slide' 且待确认;撤销仅在快照可恢复时显示)。
+                  #1091: 渲染条件从纯内存 map 扩为「内存态 || wire.deck_snapshot
+                  在场」— 刷新后从服务端快照恢复 pending-confirm 按钮态。 */}
+              {c.target === 'deck_slide' && c.status !== 'resolved' && (!!deckConfirming?.[c.id] || !!c.deck_snapshot) && (
                 <div data-testid={`comment-deck-confirm-${c.id}`} className="flex gap-1 px-2.5 pb-1 pt-0.5">
                   <Button size="sm" data-testid={`comment-deck-confirm-btn-${c.id}`} onClick={() => onDeckConfirm?.(c.id)}>
                     {t('writing.commentDeckConfirm', '确认修改')}
                   </Button>
-                  {!!deckConfirming[c.id].undoable && (
+                  {(!!deckConfirming?.[c.id]?.undoable || !!c.deck_snapshot) && (
                     <Button size="sm" variant="ghost" data-testid={`comment-deck-undo-btn-${c.id}`} onClick={() => onDeckUndo?.(c.id)}>
                       {t('writing.commentDeckUndo', '撤销修改')}
                     </Button>

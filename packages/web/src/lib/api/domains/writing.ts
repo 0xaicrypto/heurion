@@ -31,6 +31,9 @@ export interface DocCommentWire {
   created_by: string;
   created_at: string;
   resolved_at: string | null;
+  /** #1091: deck 评论 pending-confirm 快照（写回前画布 deck JSON）— 仅
+   *  target='deck_slide' 且服务端快照在场才携带（有则带，对齐服务端序列化）。 */
+  deck_snapshot?: string | null;
   replies: DocCommentReplyWire[];
   /** 仅 open 评论携带 — 锚点定位诊断(漂移时附最近候选)。 */
   anchor?: DocCommentAnchorWire;
@@ -186,8 +189,17 @@ export class WritingApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}/comments/${commentId}/ai-replies`, { method: 'POST', body: JSON.stringify({ text, ...(turnId ? { turn_id: turnId } : {}) }) });
   }
 
-  // #1040: 切换 status(open/resolved)。
-  async updateDocComment(docId: string, commentId: string, status: 'open' | 'resolved'): Promise<DocCommentWire> {
-    return this.fetch(`/api/v1/docs/${docId}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+  // #1040: 切换 status(open/resolved)。#1091: PATCH 扩展 deck_snapshot —
+  // string = 落库快照（服务端校验 ≤1MB + JSON 可解析），null = 清除（确认/
+  // 撤销成功后清恢复点），undefined = 不触碰；status 可选（仅快照 PATCH
+  // 不触碰 status/resolvedAt，线程保持 open 原状）。
+  async updateDocComment(docId: string, commentId: string, status?: 'open' | 'resolved', opts?: { deck_snapshot?: string | null }): Promise<DocCommentWire> {
+    return this.fetch(`/api/v1/docs/${docId}/comments/${commentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ...(status !== undefined ? { status } : {}),
+        ...(opts && opts.deck_snapshot !== undefined ? { deck_snapshot: opts.deck_snapshot } : {}),
+      }),
+    });
   }
 }

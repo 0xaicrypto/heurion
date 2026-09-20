@@ -834,6 +834,184 @@ describe('#1064 集成收口 + #1072-2 — POST /comments/:id/ai-replies', () =>
   })
 })
 
+/**
+ * #1091 — deck 评论 pending-confirm 态持久化（TDD，issue 用例表 6 条，服务端侧）。
+ * PATCH /comments/:id 扩展 deck_snapshot?: string | null — string ≤1MB 且
+ * JSON 可解析（与 #1047 table data 同风格校验），null = 清除；status 变可选
+ * （仅清快照/仅落快照的 PATCH 不触碰 status/resolvedAt）。列表对 deck_slide
+ * 评论有快照则带出（字段名 snake_case 对齐 #1051 序列化风格）。
+ */
+describe('#1091 deck 评论快照持久化', () => {
+  afterAll(async () => {
+    const prisma = await getPrisma()
+    for (const id of createdDocIds) {
+      await prisma.doc.deleteMany({ where: { id } }).catch(() => {})
+    }
+  })
+
+  const h = async () => ({ ...(await authHeader()), 'content-type': 'application/json' })
+  const SNAP = JSON.stringify({ title: '写回前画布', slides: [{ title: '背景', content: [{ type: 'paragraph', text: '研究背景要点。', style: 'bullet' }] }] })
+
+  async function createDeckDoc(): Promise<string> {
+    const prisma = await getPrisma()
+    const userId = await getAuthUserId()
+    const id = `doc_cmtsnap_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const now = new Date().toISOString()
+    await prisma.doc.create({ data: { id, userId, title: 'Deck snapshot doc', body: '# Intro\n\n正文。\n', deck: '{"title":"d","slides":[]}', createdAt: now, updatedAt: now } })
+    createdDocIds.push(id)
+    return id
+  }
+
+  async function createDeckComment(docId: string): Promise<string> {
+    const app = await getApp()
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers: await h(),
+      payload: JSON.stringify({ target: 'deck_slide', slide_index: 1, anchor_text: '背景', text: '这页要改' }),
+    })
+    expect(res.statusCode).toBe(201)
+    return JSON.parse(res.payload).id as string
+  }
+
+  /** 用例 1：写回落地 — PATCH 带 deck_snapshot（非空 JSON）落库并回显。 */
+  test('PATCH deck_snapshot 落库：200 回显快照，仅快照 PATCH 不触碰 status/resolvedAt', async () => {
+    const app = await getApp()
+    const docId = await createDeckDoc()
+    const commentId = await createDeckComment(docId)
+    const headers = await h()
+    const patched = await app.inject({
+      method: 'PATCH', url: `/api/v1/docs/${docId}/comments/${commentId}`, headers,
+      payload: JSON.stringify({ deck_snapshot: SNAP }),
+    })
+    expect(patched.statusCode).toBe(200)
+    const body = JSON.parse(patched.payload)
+    expect(body.status).toBe('open')
+    expect(body.resolved_at).toBeNull()
+    expect(body.deck_snapshot).toBe(SNAP)
+    // 真落库（不是只回显）— prisma 直查
+    const prisma = await getPrisma()
+    const row = await prisma.docComment.findUnique({ where: { id: commentId } })
+    expect(row?.deckSnapshot).toBe(SNAP)
+  })
+
+  /** 用例 2：刷新（重新 list）— deck_slide open 评论带出 deck_snapshot。 */
+  test('列表带出快照：deck_slide 评论 deck_snapshot 随默认序列化返回', async () => {
+    const app = await getApp()
+    const docId = await createDeckDoc()
+    const commentId = await createDeckComment(docId)
+    await app.inject({
+      method: 'PATCH', url: `/api/v1/docs/${docId}/comments/${commentId}`, headers: await h(),
+      payload: JSON.stringify({ deck_snapshot: SNAP }),
+    })
+    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers: await h() })).payload)
+    const thread = list.comments.find((c: any) => c.id === commentId)
+    expect(thread.deck_snapshot).toBe(SNAP)
+  })
+
+  /** 用例 3：确认 — PATCH {status:'resolved', deck_snapshot: null} 一步完成。 */
+  test('确认：status=resolved 且快照清空（列表不再带出）', async () => {
+    const app = await getApp()
+    const docId = await createDeckDoc()
+    const commentId = await createDeckComment(docId)
+    const headers = await h()
+    await app.inject({
+      method: 'PATCH', url: `/api/v1/docs/${docId}/comments/${commentId}`, headers,
+      payload: JSON.stringify({ deck_snapshot: SNAP }),
+    })
+    const confirmed = await app.inject({
+      method: 'PATCH', url: `/api/v1/docs/${docId}/comments/${commentId}`, headers,
+      payload: JSON.stringify({ status: 'resolved', deck_snapshot: null }),
+    })
+    expect(confirmed.statusCode).toBe(200)
+    const body = JSON.parse(confirmed.payload)
+    expect(body.status).toBe('resolved')
+    expect(body.resolved_at).toBeTruthy()
+    expect(body.deck_snapshot).toBeUndefined()
+    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?status=resolved`, headers })).payload)
+    expect(list.comments.find((c: any) => c.id === commentId).deck_snapshot).toBeUndefined()
+  })
+
+  /** 用例 4（服务端侧）：撤销的清账半步 — PATCH {deck_snapshot: null}，status 保持 open 不触碰。 */
+  test('撤销清快照：PATCH deck_snapshot=null 后 status 仍 open，快照消失', async () => {
+    const app = await getApp()
+    const docId = await createDeckDoc()
+    const commentId = await createDeckComment(docId)
+    const headers = await h()
+    await app.inject({
+      method: 'PATCH', url: `/api/v1/docs/${docId}/comments/${commentId}`, headers,
+      payload: JSON.stringify({ deck_snapshot: SNAP }),
+    })
+    const cleared = await app.inject({
+      method: 'PATCH', url: `/api/v1/docs/${docId}/comments/${commentId}`, headers,
+      payload: JSON.stringify({ deck_snapshot: null }),
+    })
+    expect(cleared.statusCode).toBe(200)
+    const body = JSON.parse(cleared.payload)
+    expect(body.status).toBe('open')
+    expect(body.resolved_at).toBeNull()
+    expect(body.deck_snapshot).toBeUndefined()
+    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers })).payload)
+    expect(list.comments.find((c: any) => c.id === commentId).deck_snapshot).toBeUndefined()
+  })
+
+  /** 用例 5：非 JSON 快照 → 400（信封 format）；超限 → 非 2xx 拒绝。
+   *  注：Fastify 默认 bodyLimit=1MiB 在 HTTP 层先挡超限 body（413），zod 的
+   *  1MB cap 为纵深防御（app.ts 不在本 issue 改动面，bodyLimit 不动）。 */
+  test('快照校验：非 JSON → 400，超 1MB → 413（bodyLimit 先挡），边界内合法 JSON 可用', async () => {
+    const app = await getApp()
+    const docId = await createDeckDoc()
+    const commentId = await createDeckComment(docId)
+    const headers = await h()
+    // 非 JSON 字符串 → 400（zod refine，信封 { error: format }）
+    const badJson = await app.inject({
+      method: 'PATCH', url: `/api/v1/docs/${docId}/comments/${commentId}`, headers,
+      payload: JSON.stringify({ deck_snapshot: '{broken-json' }),
+    })
+    expect(badJson.statusCode).toBe(400)
+    expect(typeof JSON.parse(badJson.payload).error).toBe('object')
+    // 超限（1MiB + 1 字节，zod cap 同为 1MB）→ 413（Fastify bodyLimit 先挡）
+    const bigSnap = `"` + 'a'.repeat(1024 * 1024) + `"`
+    const tooBig = await app.inject({
+      method: 'PATCH', url: `/api/v1/docs/${docId}/comments/${commentId}`, headers,
+      payload: JSON.stringify({ deck_snapshot: bigSnap }),
+    })
+    expect(tooBig.statusCode).toBe(413)
+    // 边界内（1MB 减去 JSON 信封开销，合法 JSON）→ 200
+    const edgeSnap = `"` + 'a'.repeat(1024 * 1024 - 64) + `"`
+    const edge = await app.inject({
+      method: 'PATCH', url: `/api/v1/docs/${docId}/comments/${commentId}`, headers,
+      payload: JSON.stringify({ deck_snapshot: edgeSnap }),
+    })
+    expect(edge.statusCode).toBe(200)
+    // 校验失败不得写入 — 库里快照是边界值这一次（非 JSON 那次被拒未落库）
+    const prisma = await getPrisma()
+    const row = await prisma.docComment.findUnique({ where: { id: commentId } })
+    expect(row?.deckSnapshot).toBe(edgeSnap)
+  })
+
+  /** 用例 6：正文评论路径不受影响 — PATCH status 照旧，序列化不带 deck_snapshot。 */
+  test('正文评论不受影响：PATCH status 照旧可用，列表不带 deck_snapshot 字段', async () => {
+    const app = await getApp()
+    const docId = await createDeckDoc()
+    const h0 = await h()
+    const created = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers: h0,
+      payload: JSON.stringify({ section_id: 's1', anchor_text: '正文。', text: '首条' }),
+    })
+    const commentId = JSON.parse(created.payload).id
+    // PATCH status 照旧（不带 deck_snapshot）
+    const resolved = await app.inject({
+      method: 'PATCH', url: `/api/v1/docs/${docId}/comments/${commentId}`, headers: h0,
+      payload: JSON.stringify({ status: 'resolved' }),
+    })
+    expect(resolved.statusCode).toBe(200)
+    const body = JSON.parse(resolved.payload)
+    expect(body.status).toBe('resolved')
+    expect(body.resolved_at).toBeTruthy()
+    // deck_slide 之外的 target 不带 deck_snapshot（字段仅 deck 语义使用）
+    expect(body.deck_snapshot).toBeUndefined()
+  })
+})
+
 // ── #1074-6: 评论列表按需 select — with_anchor=1 才查 body/deck 大字段 ──
 // 「懒计算」此前只省 CPU 不省 DB I/O：doc.body/deck 大字段无论是否需要诊断
 // 都查出。现在 with_anchor=0（默认）只取 id（归属校验），大字段不进查询。

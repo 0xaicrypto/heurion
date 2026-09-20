@@ -322,6 +322,11 @@ model DocComment {
   createdAt String  @map("created_at")
   // status=open 为 null；resolved 写入切换时刻，reopen 置回 null
   resolvedAt String? @map("resolved_at")
+  // #1091: deck 评论 pending-confirm 态持久化 — 写回前画布 deck JSON 快照
+  // （仅 target='deck_slide' 语义使用）。AI 写回落地时上报落库，刷新后据此
+  // 恢复「确认修改/撤销修改」按钮态，撤销以服务端快照为准；确认/撤销成功
+  // 后清除（null）。TEXT 旁路同 deck 大字段先例，SQLite 无枚举/回填风险。
+  deckSnapshot String? @map("deck_snapshot")
 
   doc     Doc               @relation(fields: [docId], references: [id], onDelete: Cascade)
   replies DocCommentReply[]
