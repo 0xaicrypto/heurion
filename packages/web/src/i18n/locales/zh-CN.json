@@ -749,7 +749,7 @@
     "commentAiNoChange": "AI 未能自动处理该评论：本轮没有产生文档修改。请检查评论内容后重试，或手动修改。",
     "commentAiProcess": "请AI处理",
     "commentAiTurnMissing": "AI 回复未发送：本轮缺少服务端会话标识（turn_id），请稍后重试或手动处理。",
-    "commentAnchorAmbiguous": "锚点文本在文档中多处出现 — 请确认位置",
+    "commentAnchorAmbiguous": "锚点文本在文档中多处出现 — 点击后在侧边栏确认位置",
     "commentAnchorAdopt": "用此位置",
     "commentAnchorAdoptFailed": "未能在正文中定位该候选，请稍后重试",
     "commentAnchorConfirmHint": "请确认该评论锚定的位置：",

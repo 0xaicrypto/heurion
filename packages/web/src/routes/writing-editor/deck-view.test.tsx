@@ -1407,8 +1407,8 @@ describe('#1089-3 插入等待期 pulse 占位块', () => {
   });
 });
 
-describe('#1089-4 表格/图表表单错误提示样式对齐（同为行内 alert）', () => {
-  test('表格替换表单与图表表单的校验错误均为 role=alert 行内提示且类名一致', () => {
+describe('#1089-4 表单错误提示样式对齐（同为行内 alert）', () => {
+  test('表格替换表单与上传错误条走同一 DeckInlineAlert 类名（中性灰底防漂移），不再是红色错误条', async () => {
     // 表格表单：空数据提交 → 行内 alert，捕获类名
     const table = render(
       <Harness
@@ -1426,20 +1426,156 @@ describe('#1089-4 表格/图表表单错误提示样式对齐（同为行内 ale
     const tableAlertClass = tableAlert.className;
     table.unmount();
 
-    // 图表表单：空数据提交 → 行内 alert，捕获类名
-    const chart = render(
+    // 上传错误条：失败 → 行内 alert（同一 DeckInlineAlert 渲染路径），捕获类名
+    uploadFileMock.mockRejectedValue(new Error('boom'));
+    const upload = render(
       <Harness
         initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: '插入图表' }));
-    fireEvent.click(screen.getByRole('button', { name: '确认插入' }));
-    const chartAlert = screen.getByRole('alert');
-    expect(chartAlert.textContent).toContain('数据未通过校验');
-    const chartAlertClass = chartAlert.className;
-    chart.unmount();
+    fireEvent.click(screen.getByRole('button', { name: '插入图片' }));
+    fireEvent.change(upload.container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('对齐.png')] } });
+    const uploadAlert = await screen.findByRole('alert');
+    const uploadAlertClass = uploadAlert.className;
+    upload.unmount();
 
-    // 样式对齐锁定：同一套行内 alert 类名（防漂移）
-    expect(tableAlertClass).toBe(chartAlertClass);
+    // #1094 样式对齐锁定：两处错误条同一套类名（共享 DeckInlineAlert,防漂移）
+    expect(tableAlertClass).toBe(uploadAlertClass);
+    // 中性灰底（对齐 DocEditor 错误条语言）— 不再是手写红色配色
+    expect(tableAlertClass).toContain('bg-surface');
+    expect(tableAlertClass).toContain('border-border');
+    expect(tableAlertClass).not.toContain('border-error');
+    expect(tableAlertClass).not.toContain('bg-error');
+    expect(tableAlertClass).not.toContain('text-error');
+  });
+});
+
+describe('#1094 上传错误条走 DeckInlineAlert（中性灰底防漂移）', () => {
+  beforeEach(() => {
+    uploadFileMock.mockReset();
+    getDownloadUrlMock.mockReset();
+  });
+
+  test('上传失败错误条：中性灰底信息条（role=alert），重试/忽略按钮仍在，无红色配色', async () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    uploadFileMock.mockRejectedValue(new Error('network down'));
+
+    fireEvent.click(screen.getByRole('button', { name: '插入图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('失败.png')] } });
+    const alert = await screen.findByRole('alert');
+
+    // 类名断言防漂移：DeckInlineAlert 的中性灰底结构（对齐 DocEditor 错误条）
+    expect(alert.className).toContain('bg-surface');
+    expect(alert.className).toContain('border-border');
+    expect(alert.className).toContain('rounded');
+    expect(alert.className).not.toContain('border-error');
+    expect(alert.className).not.toContain('bg-error');
+    expect(alert.className).not.toContain('text-error');
+    // 操作槽：共享 Button 渲染的重试/忽略仍可用（既有重试链路不回退）
+    expect(screen.getByRole('button', { name: '重试' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '忽略' })).toBeTruthy();
+  });
+});
+
+describe('#1094 替换模式等待期半透明 pulse 覆盖层', () => {
+  beforeEach(() => {
+    uploadFileMock.mockReset();
+    getDownloadUrlMock.mockReset();
+  });
+
+  const seededImg = { type: 'image', url: '/api/v1/files/download/file_old?token=t1', caption: '旧图' } as const;
+
+  test('替换 pending：旧图仍在 + 覆盖层可见（旧块不删）；完成后覆盖层移除、src 换新', async () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [{ ...seededImg }, { type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+        ])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    let resolveUpload: (v: unknown) => void = () => {};
+    uploadFileMock.mockImplementation(() => new Promise((resolve) => { resolveUpload = resolve; }));
+    getDownloadUrlMock.mockResolvedValue({ file_id: 'file_new', url: '/api/v1/files/download/file_new?token=t2' });
+
+    fireEvent.click(screen.getByRole('button', { name: '替换图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('新图.png')] } });
+    await waitFor(() => expect(uploadFileMock).toHaveBeenCalled());
+
+    // 等待期：旧图仍在（不删旧块）+ 半透明 pulse 覆盖层可见
+    expect((container.querySelector('img') as HTMLImageElement).getAttribute('src')).toBe(seededImg.url);
+    expect(screen.getByTestId('deck-replace-pending-0')).toBeTruthy();
+    expect(screen.getByRole('status').className).toContain('animate-pulse');
+    // deck 数据不变（覆盖层是本地 state,不落 content）
+    expect(lastDeck(onDeckChange).slides[0].content[0].url).toBe(seededImg.url);
+
+    // 完成：旧块原位换 src、覆盖层移除、无错误条
+    await act(async () => {
+      resolveUpload({ file_id: 'file_new', name: '新图.png', mime: 'image/png', size_bytes: 1 });
+    });
+    await waitFor(() => expect((container.querySelector('img') as HTMLImageElement).getAttribute('src')).toBe('/api/v1/files/download/file_new?token=t2'));
+    expect(screen.queryByTestId('deck-replace-pending-0')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(lastDeck(onDeckChange).slides[0].content).toHaveLength(2);
+    expect(lastDeck(onDeckChange).slides[0].content.filter((b) => b.type === 'image')).toHaveLength(1);
+  });
+
+  test('替换失败：覆盖层移除、旧图仍在、错误条出现（不留悬挂覆盖）', async () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [{ ...seededImg }, { type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+        ])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    uploadFileMock.mockRejectedValue(new Error('network down'));
+
+    fireEvent.click(screen.getByRole('button', { name: '替换图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('失败.png')] } });
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('network down'));
+
+    // 覆盖层已移除、旧图保留、content 未被写坏
+    expect(screen.queryByTestId('deck-replace-pending-0')).toBeNull();
+    expect((container.querySelector('img') as HTMLImageElement).getAttribute('src')).toBe(seededImg.url);
+    expect(lastDeck(onDeckChange).slides[0].content[0].url).toBe(seededImg.url);
+  });
+
+  test('插入模式回归：等待期渲染行尾占位条（DeckInlineAlert role=status,不走覆盖层）', async () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    let resolveUpload: (v: unknown) => void = () => {};
+    uploadFileMock.mockImplementation(() => new Promise((resolve) => { resolveUpload = resolve; }));
+    getDownloadUrlMock.mockResolvedValue({ file_id: 'file_new', url: '/api/v1/files/download/file_new?token=t2' });
+
+    fireEvent.click(screen.getByRole('button', { name: '插入图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('占位.png')] } });
+    await waitFor(() => expect(uploadFileMock).toHaveBeenCalled());
+
+    // 等待期：占位条可见（无旧图可覆盖,不渲染替换覆盖层）
+    const pending = screen.getByTestId('deck-upload-pending-0');
+    expect(pending.className).toContain('bg-surface');
+    expect(pending.className).not.toContain('border-error');
+    expect(container.querySelector('img')).toBeNull();
+
+    await act(async () => {
+      resolveUpload({ file_id: 'file_new', name: '占位.png', mime: 'image/png', size_bytes: 1 });
+    });
+    await waitFor(() => expect(container.querySelector('img')).not.toBeNull());
+    expect(screen.queryByRole('status')).toBeNull();
   });
 });

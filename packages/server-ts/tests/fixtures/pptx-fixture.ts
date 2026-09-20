@@ -103,11 +103,16 @@ function bodyShape(paras: string[]): string {
 }
 
 /** 表格 graphicFrame（<a:tbl>）。单元格支持 gridSpan/rowSpan/hMerge/vMerge 属性（#1047 合并降级）。 */
-export interface FixtureTableCell { text: string; gridSpan?: number; rowSpan?: number; hMerge?: boolean; vMerge?: boolean }
+export interface FixtureTableCell { text: string; gridSpan?: number; rowSpan?: number; hMerge?: boolean; vMerge?: boolean; vMergeContinuation?: boolean }
 export interface FixtureTable { rows: FixtureTableCell[][] }
 
 function tableFrame(table: FixtureTable): string {
   const cellXml = (c: FixtureTableCell): string => {
+    // #1092: 显式 vMerge 续格构造能力 — 真实 PowerPoint 标准写法的续行占位格
+    // 是无 txBody 的裸格（<a:tc vMerge="1"><a:tcPr/></a:tc>），与泛用
+    // vMerge 标记 + 空文本形态区分，供「续格与 rowSpan carry 双重处理」
+    // 测试锚定真实产物结构。
+    if (c.vMergeContinuation) return `<a:tc vMerge="1"><a:tcPr/></a:tc>`
     const attrs = [
       c.gridSpan ? `gridSpan="${c.gridSpan}"` : '',
       c.rowSpan ? `rowSpan="${c.rowSpan}"` : '',

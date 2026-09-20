@@ -6,10 +6,11 @@
  * - migrateCommentDecorations: map() 迁移 + 失效重扫,与全量重扫同位等价
  *   (行为不变底线)。
  */
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, beforeAll } from 'vitest';
 import { Schema } from '@tiptap/pm/model';
 import { EditorState } from '@tiptap/pm/state';
 import type { Node as PMNode } from '@tiptap/pm/model';
+import i18n from '../i18n';
 import {
   buildAllCommentDecorations,
   locateAllSpans,
@@ -186,5 +187,76 @@ describe('#1074-5 增量迁移 — migrateCommentDecorations', () => {
     tr.delete(span.to - 2, span.to + 8);
     const migrated = migrateCommentDecorations(tr, { data, decorations });
     expect(spansOf(migrated)).toEqual(spansOf(buildAllCommentDecorations(tr.doc, data)));
+  });
+});
+
+/**
+ * #1093 歧义/漂移正文高亮视觉分离 — 装饰 class 单元测试。
+ *
+ * 此前 `drift || ambiguousSpan` 共用 comment-anchor-pending,用户从正文无法
+ * 区分「文本找不到了」与「文本多处请确认」。现在歧义 span 下发独立
+ * comment-anchor-ambiguous(漂移保持 -pending),title/hover 文案区分。
+ *
+ * inline decoration 的 class/title 存在 attrs(prosemirror-view InlineType
+ * 内部字段,结构化 cast 读取;spec 只携带 commentAnchorId/needle)。
+ */
+describe('#1093 歧义/漂移装饰 class 分离', () => {
+  beforeAll(async () => {
+    // title 断言固定 zh-CN(jsdom 探测语言为 en,与 deck-view.test.tsx 同口径)。
+    await i18n.changeLanguage('zh-CN');
+  });
+
+  type InternalDeco = { type: { attrs?: Record<string, unknown> } };
+  const attrsOf = (deco: unknown): Record<string, unknown> => (deco as InternalDeco).type.attrs ?? {};
+  const classOf = (deco: unknown): string => String(attrsOf(deco).class ?? '');
+
+  test('歧义(多命中无消歧上下文) → class 含 comment-anchor-ambiguous 且不含 -pending', () => {
+    const doc = makeDoc('这里有 beta 也有 beta 重复。');
+    const item = makeItem({ id: 'amb-cls-1', anchorText: 'beta' });
+    const decos = buildAllCommentDecorations(doc, { items: [item] }).find();
+    // 两处命中全部渲染(歧义不静默取首个)
+    expect(decos.length).toBe(2);
+    for (const deco of decos) {
+      expect(classOf(deco)).toContain('comment-anchor-ambiguous');
+      expect(classOf(deco)).not.toContain('comment-anchor-pending');
+    }
+  });
+
+  test('漂移(located=false 候选唯一命中) → class 含 comment-anchor-pending 且不含 -ambiguous', () => {
+    const doc = makeDoc('第一段里有 beta。');
+    const item = makeItem({ id: 'drift-cls-1', anchorText: '已漂移的原句。', located: false, candidates: [{ text: 'beta' }] });
+    const decos = buildAllCommentDecorations(doc, { items: [item] }).find();
+    expect(decos.length).toBe(1);
+    expect(classOf(decos[0])).toContain('comment-anchor-pending');
+    expect(classOf(decos[0])).not.toContain('comment-anchor-ambiguous');
+  });
+
+  test('漂移 + 多命中并存 → 歧义 class 优先(歧义态是需要用户确认的更具体状态)', () => {
+    const doc = makeDoc('前面 beta 后面 beta 收尾。');
+    const item = makeItem({ id: 'both-cls-1', anchorText: '已漂移的原句。', located: false, candidates: [{ text: 'beta' }] });
+    const decos = buildAllCommentDecorations(doc, { items: [item] }).find();
+    expect(decos.length).toBe(2);
+    for (const deco of decos) {
+      expect(classOf(deco)).toContain('comment-anchor-ambiguous');
+      expect(classOf(deco)).not.toContain('comment-anchor-pending');
+    }
+  });
+
+  test('title/hover 文案区分:歧义引导侧边栏确认位置,漂移提示待重新定位', () => {
+    const ambDoc = makeDoc('这里有 beta 也有 beta 重复。');
+    const ambDecos = buildAllCommentDecorations(ambDoc, { items: [makeItem({ id: 'amb-title-1', anchorText: 'beta' })] }).find();
+    const ambTitle = attrsOf(ambDecos[0]).title;
+    expect(ambTitle).toBe('锚点文本在文档中多处出现 — 点击后在侧边栏确认位置');
+
+    const driftDoc = makeDoc('第一段里有 beta。');
+    const driftDecos = buildAllCommentDecorations(driftDoc, { items: [makeItem({ id: 'drift-title-1', anchorText: '已漂移的原句。', located: false, candidates: [{ text: 'beta' }] })] }).find();
+    expect(attrsOf(driftDecos[0]).title).toBe('待重新定位 — 原文已改动');
+  });
+
+  test('回归:定位单命中 → 实心态(仅基类 comment-anchor,无 pending/ambiguous)', () => {
+    const doc = makeDoc('只有一处 beta 在这里。');
+    const decos = buildAllCommentDecorations(doc, { items: [makeItem({ id: 'ok-cls-1', anchorText: 'beta' })] }).find();
+    expect(decos.length).toBe(1);
+    expect(classOf(decos[0])).toBe('comment-anchor');
   });
 });

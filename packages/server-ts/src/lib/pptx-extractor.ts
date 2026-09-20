@@ -152,10 +152,15 @@ function parseTableFrame(frameXml: string): PptxTable | null {
     // gridSpan="N" + N-1 个 hMerge="1" 占位格」同时出现：锚点自身占 1 个列槽、
     // 还覆盖后续 N-1 个槽。每个非续格处理完后重置为 span-1。
     let anchorCover = 0
+    // #1092: 本行已被 fillCarried 消费的 carry 槽计数 — 显式续格的「槽已填」
+    // 凭据（与 #1086 hMerge 的 anchorCover 消费模型同款）。fillCarried 每推进
+    // 一个携带列槽计数 +1；续格按其占用的列数消费。
+    let carriedSlots = 0
     const fillCarried = () => {
       while (fills?.has(ci)) {
         row.push(fills.get(ci)!)
         ci += 1
+        carriedSlots += 1
       }
     }
     for (const cell of cells) {
@@ -173,6 +178,24 @@ function parseTableFrame(frameXml: string): PptxTable | null {
       // 产物）anchorCover 已耗尽 → 落到下方「复制左格」回退路径，旧行为保持。
       if (isHMerge && anchorCover > 0) {
         anchorCover -= 1
+        continue
+      }
+      // #1092: 显式 vMerge 续格（真实 PowerPoint 标准写法：锚点 rowSpan="N" +
+      // 续行 <a:tc vMerge="1"> 续格）— 其列槽已被锚点的 pending carry 在本次
+      // fillCarried 刚填过（carriedSlots > 0）→ 跳过 push（槽已填，不重复
+      // push、不推进 ci）。仅当无 carry（畸形：锚点未声明 rowSpan）时落到底部
+      // copy-above 回退路径，旧行为保持。带 gridSpan 的续格（LibreOffice 产物）
+      // 按其占用列数消费 carry 槽。
+      if (isVMerge && carriedSlots > 0) {
+        carriedSlots = Math.max(0, carriedSlots - span)
+        continue
+      }
+      // #1092: 携带行内的 hMerge 占位格同理 — 2D 合并（rowSpan+gridSpan 锚点）
+      // 的标准续行形态是「vMerge 续格 + span-1 个 hMerge 占位」，这些槽全部被
+      // 锚点 carry 填过 → 逐槽跳过。无 carry 时保持复制左格回退（#1067 畸形
+      // 路径不受影响：无 rowSpan 锚点则 carriedSlots 恒为 0）。
+      if (isHMerge && carriedSlots > 0) {
+        carriedSlots -= 1
         continue
       }
       let text = cell.text

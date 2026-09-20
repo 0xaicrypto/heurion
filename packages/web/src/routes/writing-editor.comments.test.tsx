@@ -471,6 +471,8 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     // 正文:候选命中处渲染提示态高亮(而非静默消失)
     const pending = container.querySelector('.comment-anchor-pending[data-comment-id="c1"]') as HTMLElement;
     expect(pending).toBeTruthy();
+    // #1093: 漂移保持 pending(不挂歧义的 ambiguous)
+    expect(pending.classList.contains('comment-anchor-ambiguous')).toBe(false);
     expect(pending.getAttribute('title')).toContain('待重新定位');
     expect(pending.classList.contains('comment-anchor-resolved')).toBe(false);
     expect(coveredText(container, 'c1')).toBe(PARA1); // #1056: 候选兜底覆盖文本全等
@@ -504,21 +506,30 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     expect(container.querySelector('.comment-anchor[data-comment-id="c1"]')!.textContent!.startsWith('足')).toBe(true);
   });
 
-  /** #1056 用例 2:四个 decoration 类在 index.css 有规则定义(防「decoration 类零 CSS」回归)。 */
-  test('评论高亮四个类在 index.css 均有 CSS 规则', async () => {
+  /** #1056 用例 2:五个 decoration 类在 index.css 有规则定义(防「decoration 类零 CSS」回归)。 */
+  test('评论高亮五个类在 index.css 均有 CSS 规则(歧义与漂移质感分离)', async () => {
     const css = await loadIndexCss();
     expect(css).not.toBe('');
     // 基类独立成规则(后随 { ),派生类允许出现在选择器列表中(后随 { 或 ,)
     expect(css).toMatch(/\.comment-anchor\s*\{/);
     expect(css).toMatch(/\.comment-anchor-resolved\s*[,{]/);
     expect(css).toMatch(/\.comment-anchor-pending\s*[,{]/);
+    expect(css).toMatch(/\.comment-anchor-ambiguous\s*[,{]/);
     expect(css).toMatch(/\.comment-anchor-active\s*[,{]/);
+    // #1093: 歧义与漂移同色系不同质感 — pending=警示实底(solid 描边,无虚线),
+    // ambiguous=警示虚线描边(dashed outline),视觉可区分。
+    const pendingBlock = css.match(/\.ProseMirror \.comment-anchor-pending\s*\{[^}]*\}/)?.[0] ?? '';
+    const ambiguousBlock = css.match(/\.ProseMirror \.comment-anchor-ambiguous\s*\{[^}]*\}/)?.[0] ?? '';
+    expect(pendingBlock).toMatch(/border-bottom:\s*2px solid/);
+    expect(pendingBlock).not.toMatch(/dashed/);
+    expect(ambiguousBlock).toMatch(/outline:\s*1\.5px dashed/);
   });
 
   /**
    * #1071-2 锚点歧义消歧:anchorText 在正文多处出现且无消歧上下文(首次
-   * 渲染无定位记忆)→ 全部命中渲染歧义提示态(pending 类 + title 说明),
-   * 不再静默取首个。BODY 中「正文」恰好出现在两段里。
+   * 渲染无定位记忆)→ 全部命中渲染歧义提示态(独立 ambiguous 类 + title
+   * 说明,#1093 起与漂移视觉分离),不再静默取首个。BODY 中「正文」恰好
+   * 出现在两段里。
    */
   test('锚点多命中且无消歧上下文:全部命中渲染歧义提示态,不静默取首个', async () => {
     const { container } = await renderHarness([
@@ -530,10 +541,12 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     // 两处命中全部渲染(此前静默取首个,只有一处)
     expect(highlights.length).toBe(2);
     for (const el of highlights) {
-      // 对齐 pending 徽标语义:歧义提示态
-      expect(el.classList.contains('comment-anchor-pending')).toBe(true);
+      // #1093: 歧义下发独立 class(不再挂漂移的 pending)
+      expect(el.classList.contains('comment-anchor-ambiguous')).toBe(true);
+      expect(el.classList.contains('comment-anchor-pending')).toBe(false);
       expect(el.getAttribute('data-ambiguous')).toBe('true');
       expect(el.getAttribute('title')).toContain('多处出现');
+      expect(el.getAttribute('title')).toContain('侧边栏确认位置');
     }
     expect(coveredText(container, 'camb')).toBe('正文正文');
   });
@@ -546,6 +559,7 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     const highlight = container.querySelector('.comment-anchor[data-comment-id="c1"]') as HTMLElement;
     expect(highlight).toBeTruthy();
     expect(highlight.classList.contains('comment-anchor-pending')).toBe(false);
+    expect(highlight.classList.contains('comment-anchor-ambiguous')).toBe(false);
     expect(highlight.getAttribute('data-ambiguous')).toBeNull();
     expect(coveredText(container, 'c1')).toBe(PARA1);
   });
@@ -843,10 +857,12 @@ describe('#1089 锚点偏移消费 + 待确认位置确认路径', () => {
       },
     ], dupBody);
     const decos = container.querySelectorAll('.comment-anchor[data-comment-id="coff"]');
-    // 服务端已定位 — 单命中落位（此前多命中全渲染歧义提示态）
+    // 服务端已定位 — 单命中落位(此前多命中全渲染歧义提示态)
     expect(decos.length).toBe(1);
     expect(decos[0].getAttribute('data-ambiguous')).toBeNull();
+    // #1093: 漂移落位保持 pending(不挂歧义的 ambiguous)
     expect(decos[0].classList.contains('comment-anchor-pending')).toBe(true);
+    expect(decos[0].classList.contains('comment-anchor-ambiguous')).toBe(false);
     // 落位 = 服务端 start 指向的第二处命中（最后一个段落）
     const paras = Array.from(container.querySelectorAll('.ProseMirror > p'));
     const hit = paras.findIndex((p) => p.querySelector('.comment-anchor[data-comment-id="coff"]'));
@@ -866,7 +882,12 @@ describe('#1089 锚点偏移消费 + 待确认位置确认路径', () => {
     ], dupBody);
     const decos = container.querySelectorAll('.comment-anchor[data-comment-id="coff2"]');
     expect(decos.length).toBe(2);
-    for (const el of decos) expect(el.getAttribute('data-ambiguous')).toBe('true');
+    for (const el of decos) {
+      expect(el.getAttribute('data-ambiguous')).toBe('true');
+      // #1093: 歧义态下发独立 class(不再与漂移共用 pending)
+      expect(el.classList.contains('comment-anchor-ambiguous')).toBe(true);
+      expect(el.classList.contains('comment-anchor-pending')).toBe(false);
+    }
   });
 
   /** #1089-6: 歧义态 — 侧边栏「待确认位置」徽标 + 候选列表（text/heading
@@ -883,12 +904,13 @@ describe('#1089 锚点偏移消费 + 待确认位置确认路径', () => {
     expect(list.textContent).toContain('目标句');
     expect(list.textContent).toContain('One');
     expect(list.textContent).toContain('Two');
-    // 采纳第二个候选 → 高亮单处落位（实心态，非歧义）
+    // 采纳第二个候选 → 高亮单处落位(实心态,非歧义)
     fireEvent.click(screen.getByTestId('comment-adopt-camb9-1'));
     await waitFor(() => {
       const decos = Array.from(container.querySelectorAll('.comment-anchor[data-comment-id="camb9"]'));
       expect(decos.length).toBe(1);
       expect(decos[0].classList.contains('comment-anchor-pending')).toBe(false);
+      expect(decos[0].classList.contains('comment-anchor-ambiguous')).toBe(false);
     });
     // 徽标与候选列表收口
     expect(screen.queryByTestId('comment-anchor-pending-pos')).toBeNull();

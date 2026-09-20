@@ -749,7 +749,7 @@
     "commentAiNoChange": "The AI could not process this comment automatically: no document changes were produced this round. Check the comment and retry, or edit manually.",
     "commentAiProcess": "Let AI handle",
     "commentAiTurnMissing": "AI reply not sent: this turn has no server session id (turn_id). Please retry shortly or handle it manually.",
-    "commentAnchorAmbiguous": "Anchor text appears in multiple places — please confirm the location",
+    "commentAnchorAmbiguous": "Anchor text appears in multiple places — click to confirm the location in the sidebar",
     "commentAnchorAdopt": "Use this location",
     "commentAnchorAdoptFailed": "Could not locate this candidate in the document — please retry shortly",
     "commentAnchorConfirmHint": "Confirm where this comment is anchored:",

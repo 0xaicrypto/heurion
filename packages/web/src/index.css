@@ -262,13 +262,24 @@
 .ProseMirror .comment-anchor-resolved:hover {
   background: hsl(var(--text-tertiary) / 0.2);
 }
-/* pending:锚点漂移候选兜底 — 琥珀警示虚线(提示态,非静默消失) */
+/* pending (#1093):锚点漂移候选兜底 — 警示实底(提示态,非静默消失;
+   #1093 起与歧义的虚线描边质感区分:漂移=找候选重定位,实底更醒目) */
 .ProseMirror .comment-anchor-pending {
-  background: hsl(var(--source-conflict) / 0.14);
-  border-bottom: 2px dashed hsl(var(--source-conflict) / 0.7);
+  background: hsl(var(--source-conflict) / 0.18);
+  border-bottom: 2px solid hsl(var(--source-conflict) / 0.7);
 }
 .ProseMirror .comment-anchor-pending:hover {
-  background: hsl(var(--source-conflict) / 0.24);
+  background: hsl(var(--source-conflict) / 0.28);
+}
+/* ambiguous (#1093):锚点歧义多命中 — 警示虚线描边(与 pending 同色系不同
+   质感:歧义=多处出现待确认位置,hover/title 引导去侧边栏确认) */
+.ProseMirror .comment-anchor-ambiguous {
+  background: hsl(var(--source-conflict) / 0.08);
+  outline: 1.5px dashed hsl(var(--source-conflict) / 0.8);
+  outline-offset: 1px;
+}
+.ProseMirror .comment-anchor-ambiguous:hover {
+  background: hsl(var(--source-conflict) / 0.16);
 }
 /* active:当前激活线程 — accent 描边(与侧边栏选中态联动) */
 .ProseMirror .comment-anchor-active {

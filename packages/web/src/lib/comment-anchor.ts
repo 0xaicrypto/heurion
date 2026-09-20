@@ -21,9 +21,11 @@ import i18n from '../i18n';
  * 静默定位到语义无关处。现在:
  * - 多命中时优先「距上次定位最近」(按 commentId 记忆最近一次确认的区间,
  *   就近消歧 — 编辑后的"原地小漂移"不再跳位);
- * - 无消歧上下文(首次渲染/并列最近)时不再静默取首个 — 全部命中按
- *   pending 徽标语义渲染提示态(高亮不灭 + title 说明多处匹配),
- *   定位决策显式化,配合侧边栏处理;
+ * - 无消歧上下文(首次渲染/并列最近)时不再静默取首个 — 全部命中渲染歧义
+ *   提示态(高亮不灭 + title 说明多处匹配),定位决策显式化,配合侧边栏处理;
+ * - #1093: 歧义与漂移视觉分离 — 歧义下发独立 class comment-anchor-ambiguous
+ *   (虚线描边),漂移保持 comment-anchor-pending(警示实底),用户动作不同
+ *   （歧义=确认位置,漂移=重定位）从正文即可区分;
  * - 跨块/跨 decoration 非法区间照旧放弃。
  *
  * #1074-5 — 增量维护:docChanged 时先 DecorationSet.map() 平移迁移既有
@@ -197,8 +199,8 @@ export interface ResolvedAnchor {
 
 /**
  * #1071-2: 多命中消歧 — 「距上次定位最近」优先(距离唯一最小才取;并列视作
- * 歧义,不猜);无记忆上下文或就近并列时标记 ambiguous(调用方按 pending
- * 徽标语义渲染提示态),绝不静默取首个。
+ * 歧义,不猜);无记忆上下文或就近并列时标记 ambiguous(调用方按歧义提示态
+ * 渲染,#1093 起独立 class 与漂移区分),绝不静默取首个。
  */
 export function resolveAnchorSpans(commentId: string, spans: AnchorSpan[]): ResolvedAnchor {
   if (spans.length === 0) return { span: null, ambiguous: false, all: spans };
@@ -332,6 +334,27 @@ function resolveOpenPlacements(
   return [];
 }
 
+/**
+ * #1093: open 评论单个装饰的渲染 — 全量重建与单评论重扫共用，两处渲染不漂移。
+ * 歧义与漂移视觉分离（此前共用 comment-anchor-pending，用户无法从正文区分
+ * 「文本找不到了」与「文本多处请确认」）：
+ * - 歧义（ambiguousSpan）→ 独立 class `comment-anchor-ambiguous`（警示虚线
+ *   描边质感）+ title 引导去侧边栏确认位置；
+ * - 漂移（drift）→ 保持 `comment-anchor-pending`（警示实底质感）+ 重定位
+ *   title。
+ */
+function openAnchorDecoration(p: OpenAnchorPlacement, item: CommentAnchorItem, active: boolean): Decoration {
+  return Decoration.inline(p.span.from, p.span.to, {
+    class: `comment-anchor${p.ambiguousSpan ? ' comment-anchor-ambiguous' : p.drift ? ' comment-anchor-pending' : ''}${active ? ' comment-anchor-active' : ''}`,
+    'data-comment-id': item.commentId,
+    ...(p.ambiguousSpan
+      ? { 'data-ambiguous': 'true', title: i18n.t('writing.commentAnchorAmbiguous', '锚点文本在文档中多处出现 — 点击后在侧边栏确认位置') }
+      : p.drift
+        ? { title: i18n.t('writing.commentAnchorDrift', '待重新定位 — 原文已改动') }
+        : {}),
+  }, { commentAnchorId: item.commentId, needle: p.needle });
+}
+
 /** 测试与增量路径共用 — 按数据全量重建装饰(初始化/兜底语义)。 */
 export function buildAllCommentDecorations(doc: PMNode, data: CommentAnchorsData): DecorationSet {
   if (!data.items || data.items.length === 0) return DecorationSet.empty;
@@ -358,15 +381,8 @@ export function buildAllCommentDecorations(doc: PMNode, data: CommentAnchorsData
     // #1089-5/#1089-6: 落位决策(候选序/消歧记忆/服务端偏移)统一走
     // resolveOpenPlacements — 与侧边栏 issue 描述同源。
     for (const p of resolveOpenPlacements(item, hay, index, data)) {
-      decorations.push(Decoration.inline(p.span.from, p.span.to, {
-        class: `comment-anchor${p.drift || p.ambiguousSpan ? ' comment-anchor-pending' : ''}${data.activeCommentId === item.commentId ? ' comment-anchor-active' : ''}`,
-        'data-comment-id': item.commentId,
-        ...(p.ambiguousSpan
-          ? { 'data-ambiguous': 'true', title: i18n.t('writing.commentAnchorAmbiguous', '锚点文本在文档中多处出现 — 请确认位置') }
-          : p.drift
-            ? { title: i18n.t('writing.commentAnchorDrift', '待重新定位 — 原文已改动') }
-            : {}),
-      }, { commentAnchorId: item.commentId, needle: p.needle }));
+      // #1093: class/title 统一走 openAnchorDecoration（歧义/漂移视觉分离）。
+      decorations.push(openAnchorDecoration(p, item, data.activeCommentId === item.commentId));
     }
   }
   return decorations.length > 0 ? DecorationSet.create(doc, decorations) : DecorationSet.empty;
@@ -446,15 +462,8 @@ function collectItemDecorations(item: CommentAnchorItem, hay: { norm: string; ma
     return decorations;
   }
   for (const p of resolveOpenPlacements(item, hay, index, data)) {
-    decorations.push(Decoration.inline(p.span.from, p.span.to, {
-      class: `comment-anchor${p.drift || p.ambiguousSpan ? ' comment-anchor-pending' : ''}${data.activeCommentId === item.commentId ? ' comment-anchor-active' : ''}`,
-      'data-comment-id': item.commentId,
-      ...(p.ambiguousSpan
-        ? { 'data-ambiguous': 'true', title: i18n.t('writing.commentAnchorAmbiguous', '锚点文本在文档中多处出现 — 请确认位置') }
-        : p.drift
-          ? { title: i18n.t('writing.commentAnchorDrift', '待重新定位 — 原文已改动') }
-          : {}),
-    }, { commentAnchorId: item.commentId, needle: p.needle }));
+    // #1093: class/title 统一走 openAnchorDecoration（歧义/漂移视觉分离）。
+    decorations.push(openAnchorDecoration(p, item, data.activeCommentId === item.commentId));
   }
   return decorations;
 }

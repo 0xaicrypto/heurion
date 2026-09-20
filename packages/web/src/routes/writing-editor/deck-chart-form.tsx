@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import { chartBlockSchema, type ChartBlock } from '@heurion/contracts';
 import { Button } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
+import { DeckInlineAlert } from './deck-view';
 
 /**
  * #1044: deck 图表结构化表单 — 选图表类型 + 填数据行，产出经 chartBlockSchema
@@ -151,9 +152,9 @@ export function DeckChartFormDialog(input: {
           </div>
           {/* #1044: 校验失败提示（chartBlockSchema.safeParse 不通过）— 表单内展示，不入 content。 */}
           {error && (
-            <p role="alert" className="rounded border border-error/40 bg-error/10 px-2 py-1 text-xs text-error">
-              {t('writing.deckChartFormInvalid', '数据未通过校验')}：{error}
-            </p>
+            <DeckInlineAlert role="alert" title={t('writing.deckChartFormInvalid', '数据未通过校验')}>
+              {error}
+            </DeckInlineAlert>
           )}
         </div>
         <div className="mt-4 flex justify-end gap-2">

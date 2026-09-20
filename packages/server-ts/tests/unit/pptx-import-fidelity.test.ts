@@ -255,6 +255,26 @@ describe('#1086 hMerge 跳过分支多推进 ci — 根因修复', () => {
     expect(table?.mergedDegraded).toBe(true)
   })
 
+  test('畸形续格（锚点未声明 gridSpan，anchorCover=0）回归 → 复制左格行为不变', () => {
+    // HTML 风格畸形产物：hMerge 续格前没有 gridSpan 锚点 — 回退「复制左格」
+    // （anchorCover=0 畸形路径，#1086 不改变该路径）。
+    const built = buildPptxFixture([
+      {
+        title: '畸形续格',
+        table: {
+          rows: [
+            [{ text: 'A' }, { text: 'B' }, { text: 'C' }],
+            [{ text: '左格' }, { text: '', hMerge: true }, { text: '右格' }],
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    const rows = parsed.slides[0].tables?.[0]?.rows ?? []
+    expect(rows[0]).toHaveLength(3)
+    expect(rows[1]).toEqual(['左格', '左格', '右格'])
+  })
+
   test('gridSpan+hMerge 与 rowSpan 组合 → 跨行携带列对齐正确', () => {
     // 旧实现：hMerge 占位格多推进 ci → 同行后续 rowSpan 锚点的携带列号虚高
     //（carry set 在错误列），下一行 fillCarried 找不到携带格 → 内容丢失、行宽错位。
@@ -295,6 +315,125 @@ describe('#1086 hMerge 跳过分支多推进 ci — 根因修复', () => {
     const rows = parsed.slides[0].tables?.[0]?.rows ?? []
     expect(rows[0]).toHaveLength(3)
     expect(rows[1]).toEqual(['左格', '左格', '右格'])
+  })
+})
+
+describe('#1092 显式 vMerge 续格与 rowSpan carry 双重处理（内容重复/列错位）', () => {
+  test('标准写法：rowSpan=2 锚点 + 续行显式 vMerge 续格 + 后续格 → 列对齐无重复', () => {
+    // 真实 PowerPoint 标准写法：锚点 rowSpan="2" + 续行 <a:tc vMerge="1"> 续格。
+    // 旧实现：fillCarried 先把携带文本 push（占列 0），随后的显式续格又被当
+    // 普通格处理（copy 上格 + push + ci+1）→ 同列内容重复 + 后续列错位
+    //（续格 copy-above 拿到的是上格「另一列」的内容）。
+    const built = buildPptxFixture([
+      {
+        title: '显式续格',
+        table: {
+          rows: [
+            [{ text: 'A', rowSpan: 2 }, { text: 'C' }],
+            [{ vMergeContinuation: true }, { text: 'B2' }, { text: 'C2' }],
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    // 期望 [A,A,C,B2,C2] 形态（列优先展开）：续行 = [A, B2, C2]，3 列对齐
+    expect(parsed.slides[0].tables?.[0]?.rows).toEqual([
+      ['A', 'C'],
+      ['A', 'B2', 'C2'],
+    ])
+    // 合并降级标记不回退（锚点 rowSpan 仍标记 mergedDegraded）
+    expect(parsed.slides[0].tables?.[0]?.mergedDegraded).toBe(true)
+  })
+
+  test('简化写法（续行省略续格 tc）回归 → 携带行为不变', () => {
+    // 旧 fixture 只有这种简化形态（续行不写占位 tc）— 回归锁定 #1047 行为。
+    const built = buildPptxFixture([
+      {
+        title: '省略续格',
+        table: {
+          rows: [
+            [{ text: 'A', rowSpan: 2 }, { text: 'C' }],
+            [{ text: 'B2' }, { text: 'C2' }],
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    expect(parsed.slides[0].tables?.[0]?.rows).toEqual([
+      ['A', 'C'],
+      ['A', 'B2', 'C2'],
+    ])
+  })
+
+  test('全组合（gridSpan+rowSpan+vMerge+hMerge）→ 全表对齐', () => {
+    // 4 种合并属性同时出现：行内横向合并（gridSpan 锚点 + hMerge 占位，
+    // #1067 路径）+ 跨行携带（rowSpan + 显式 vMerge 续格，#1092 路径）+
+    // 2D 合并续行（vMerge 续格 + hMerge 占位各消费 1 个 carry 槽）。
+    const built = buildPptxFixture([
+      {
+        title: '全组合',
+        table: {
+          rows: [
+            [{ text: '区域', gridSpan: 2, rowSpan: 2 }, { text: 'Q1' }, { text: 'Q2' }],
+            [{ vMergeContinuation: true }, { text: '', hMerge: true }, { text: '10' }, { text: '20' }],
+            [{ text: '合计', gridSpan: 2 }, { text: '', hMerge: true }, { text: '30' }, { text: 'X', rowSpan: 2 }],
+            [{ text: 'P' }, { text: 'Q' }, { text: 'R' }, { vMergeContinuation: true }],
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    expect(parsed.slides[0].tables?.[0]?.rows).toEqual([
+      ['区域', '区域', 'Q1', 'Q2'],
+      ['区域', '区域', '10', '20'],
+      ['合计', '合计', '30', 'X'],
+      ['P', 'Q', 'R', 'X'],
+    ])
+    expect(parsed.slides[0].tables?.[0]?.mergedDegraded).toBe(true)
+  })
+
+  test('携带行内显式续格不再虚高 ci（30 逻辑列上限内）→ 不误标 truncatedDegraded', () => {
+    // 与 #1086 hMerge 同款病灶的 vMerge 变体：续格被当普通格 push 时 ci 虚高
+    //（续格 copy-above 还把上格别列内容重复进携带行）→ 30 列内的表格被误判
+    // 超限截断丢列。4 个 rowSpan=2+gridSpan=2 锚点（8 槽）+ 11 组 gridSpan=2
+    // 锚点 + hMerge 占位（22 槽）= 30 逻辑列；携带行 8 续格槽 + 22 普通格。
+    const carryAnchor = (label: string): FixtureTableCell => ({ text: label, gridSpan: 2, rowSpan: 2 })
+    const plainAnchor = (label: string): FixtureTableCell[] => [{ text: label, gridSpan: 2 }, { text: '', hMerge: true }]
+    const headCells: FixtureTableCell[] = []
+    for (let g = 0; g < 11; g += 1) headCells.push(...plainAnchor(`头${g}`))
+    const built = buildPptxFixture([
+      {
+        title: '组合上限',
+        table: {
+          rows: [
+            [carryAnchor('A1'), carryAnchor('A2'), carryAnchor('A3'), carryAnchor('A4'), ...headCells],
+            [
+              { vMergeContinuation: true }, { text: '', hMerge: true },
+              { vMergeContinuation: true }, { text: '', hMerge: true },
+              { vMergeContinuation: true }, { text: '', hMerge: true },
+              { vMergeContinuation: true }, { text: '', hMerge: true },
+              ...Array.from({ length: 22 }, (_, i) => ({ text: `值${i}` })),
+            ],
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    const table = parsed.slides[0].tables?.[0]
+    // 携带行前 8 槽 = 4 个锚点的携带文本（续格跳过、hMerge 占位消费 carry），
+    // 其后 22 个普通格 → 恰好 30 逻辑列
+    expect(table?.rows[0]).toHaveLength(30)
+    expect(table?.rows[1]).toEqual([
+      'A1', 'A1', 'A2', 'A2', 'A3', 'A3', 'A4', 'A4',
+      ...Array.from({ length: 22 }, (_, i) => `值${i}`),
+    ])
+    // 30 逻辑列未超限 — 不误标截断（#1062-7 标记只对真超限触发）
+    expect(table?.truncatedDegraded).toBeUndefined()
+    expect(table?.mergedDegraded).toBe(true)
   })
 })
 

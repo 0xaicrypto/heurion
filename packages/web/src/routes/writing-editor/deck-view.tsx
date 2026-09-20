@@ -248,6 +248,32 @@ function DeckTableBlock({ block, onReplace, onDelete }: {
   );
 }
 
+/** #1094: deck 侧行内反馈条共享组件 — 结构对齐 DocEditor 错误条(DocEditor.tsx
+ * 只读参照):中性灰底信息条(border-border + bg-surface,不再是手写红色配色)
+ * + 共享 Button 操作槽;role 区分 status(进行中/结果通知)与 alert(失败/
+ * 校验错误)。两处错误条与 pulse 提示条统一走这里,防样式漂移。 */
+export function DeckInlineAlert({ role = 'status', title, children, actions, testId }: {
+  role?: 'status' | 'alert';
+  /** 可选粗体主语(如「图片上传失败」) — 对齐 DocEditor 错误条的标题 span。 */
+  title?: string;
+  children?: React.ReactNode;
+  /** 右侧操作按钮槽 — 用共享 Button(size=sm variant=ghost)排布。 */
+  actions?: React.ReactNode;
+  testId?: string;
+}) {
+  return (
+    <div
+      role={role}
+      data-testid={testId}
+      className="flex flex-wrap items-center gap-2 rounded border border-border bg-surface px-2 py-1.5 text-xs text-text-secondary"
+    >
+      {title && <span className="font-medium text-text-primary">{title}</span>}
+      {children && <span className="min-w-0 flex-1 truncate">{children}</span>}
+      {actions && <span className="flex shrink-0 items-center gap-1">{actions}</span>}
+    </div>
+  );
+}
+
 /** #1075: 表格数据表单 — 结构对齐 deck-chart-form（同款 Modal/校验/确认流，
  * 最小可用）：每行一条记录、单元格用 | 分隔，打开时回填原 rows、header
  * 勾选态沿用。确认经 tableBlockSchema 校验（rows 1..200 / ≤30 列 / 单元格
@@ -331,10 +357,12 @@ function DeckTableFormDialog(input: {
             />
             {t('writing.deckTableFormHeader', '首行为表头')}
           </label>
+          {/* #1094: 表单校验错误走 DeckInlineAlert(role=alert,中性灰底,
+              与上传错误条同源防漂移;不再手写红色配色)。 */}
           {error && (
-            <p role="alert" className="rounded border border-error/40 bg-error/10 px-2 py-1 text-xs text-error">
+            <DeckInlineAlert role="alert" testId="deck-table-form-error">
               {t('writing.deckTableFormInvalid', '数据未通过校验')}：{error}
-            </p>
+            </DeckInlineAlert>
           )}
         </div>
         <div className="mt-4 flex justify-end gap-2">
@@ -515,7 +543,9 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
   const [uploadTarget, setUploadTarget] = useState<{ mode: 'insert' } | { mode: 'replace'; blockIndex: number; oldCaption?: string }>({ mode: 'insert' });
   const [uploadError, setUploadError] = useState<{ file: File; message: string; dropped?: boolean } | null>(null);
   // #1089-3: 插入等待期占位（本地 state，成功替换/失败移除，不落 deck 数据）。
-  const [uploadPending, setUploadPending] = useState(false);
+  // #1094: 等待态携带模式与目标块下标 — insert 渲染行尾占位条，replace 在旧图
+  // 位置渲染半透明 pulse 覆盖层（不删旧块，成功换 src/失败移除覆盖层）。
+  const [uploadPending, setUploadPending] = useState<null | { mode: 'insert' } | { mode: 'replace'; blockIndex: number }>(null);
   const [chartForm, setChartForm] = useState<
     | { mode: 'insert'; expectEpoch: SlideEpochSnapshot | null }
     | { mode: 'replace'; blockIndex: number; expectBlock: DeckWire['slides'][number]['content'][number]; expectEpoch: SlideEpochSnapshot | null }
@@ -562,14 +592,16 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
     const expectBlock = target.mode === 'replace' ? slide.content[target.blockIndex] : undefined;
     const insertMode = target.mode === 'insert';
     setUploadError(null);
-    setUploadPending(insertMode);
+    // #1094: 等待态区分模式 — replace 记住目标块下标供覆盖层定位（纯表现层，
+    // epoch/快照/重试链路不变）。
+    setUploadPending(insertMode ? { mode: 'insert' } : { mode: 'replace', blockIndex: target.blockIndex });
     try {
       const up = await api.uploadFile(file);
       const { url } = await api.getDownloadUrl(up.file_id);
       // #1087: 完成时校验结构快照 — 失配即放弃（不误插/不误替换），提示非静默，
       // 错误条保留文件供重试（重试时在入口重新快照）。
       if (!snap || !deckCtl.verifySlideEpoch(snap)) {
-        setUploadPending(false);
+        setUploadPending(null);
         const msg = insertMode
           ? t('writing.deckInsertDropped', '图片上传完成，但该页已被修改或移除，未能自动插入')
           : t('writing.deckReplaceDropped', '图片上传完成，但原位置已被修改或移除，未能自动替换');
@@ -579,10 +611,10 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
       }
       if (insertMode) deckCtl.insertDeckSlideImage(index, url, file.name, snap);
       else deckCtl.replaceDeckSlideBlock(index, target.blockIndex, deckImageBlock(url, target.oldCaption ?? file.name), expectBlock, snap);
-      setUploadPending(false);
+      setUploadPending(null);
     } catch (err) {
       // #1089-2: 上传失败可重试错误态（对齐 DocEditor）— 占位已移除，提示不静默。
-      setUploadPending(false);
+      setUploadPending(null);
       setUploadError({ file, message: err instanceof Error ? err.message : String(err) });
     }
   };
@@ -711,20 +743,35 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
                 onDelete={() => deleteBlockWithGuard(ci)}
               />
             );
-          if (b.type === 'image')
+          if (b.type === 'image') {
+            // #1094: 替换等待期 — 旧图位置渲染半透明 pulse 覆盖层（不删旧块，
+            // 成功换 src/失败移除覆盖层 + 错误条），点了「替换图片」即刻有等待反馈。
+            const replacing = uploadPending?.mode === 'replace' && uploadPending.blockIndex === ci;
             return (
-              <DeckImageBlock
-                key={`img-${ci}`}
-                block={b}
-                onReplace={() => {
-                  setUploadError(null);
-                  // #1087: 替换目标在入口快照（块引用 + 页结构 epoch）。
-                  setUploadTarget({ mode: 'replace', blockIndex: ci, oldCaption: b.caption });
-                  fileInputRef.current?.click();
-                }}
-                onDelete={() => deleteBlockWithGuard(ci)}
-              />
+              <div key={`img-${ci}`} className="relative min-w-0">
+                <DeckImageBlock
+                  block={b}
+                  onReplace={() => {
+                    setUploadError(null);
+                    // #1087: 替换目标在入口快照（块引用 + 页结构 epoch）。
+                    setUploadTarget({ mode: 'replace', blockIndex: ci, oldCaption: b.caption });
+                    fileInputRef.current?.click();
+                  }}
+                  onDelete={() => deleteBlockWithGuard(ci)}
+                />
+                {replacing && (
+                  <div
+                    role="status"
+                    aria-label={t('writing.deckUploadPending', '图片上传中')}
+                    data-testid={`deck-replace-pending-${index}`}
+                    className="absolute inset-0 z-10 flex items-center justify-center rounded bg-background/60 opacity-70 animate-pulse"
+                  >
+                    <span className="h-4 w-4 rounded-full bg-border" />
+                  </div>
+                )}
+              </div>
             );
+          }
           if (b.type === 'chart')
             return (
               <DeckChartBlock
@@ -798,44 +845,34 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
             <BarChart3 size={11} /> {t('writing.deckInsertChart', '图表')}
           </button>
         </div>
-        {/* #1089-3: 插入等待期 pulse 占位块（本地 state，成功替换/失败移除，
-            不落 deck 数据；对齐 DocEditor 上传占位节点）。 */}
-        {uploadPending && (
-          <div
-            role="status"
-            aria-label={t('writing.deckUploadPending', '图片上传中')}
-            data-testid={`deck-upload-pending-${index}`}
-            className="flex h-14 w-full items-center justify-center rounded border border-dashed border-border bg-surface opacity-70"
-          >
-            <span className="h-4 w-4 animate-pulse rounded-full bg-border" />
-          </div>
+        {/* #1089-3/#1094: 插入等待期 pulse 占位条（本地 state，成功替换/失败移除，
+            不落 deck 数据）— 走 DeckInlineAlert(role=status,中性灰底,对齐 DocEditor)。 */}
+        {uploadPending?.mode === 'insert' && (
+          <DeckInlineAlert role="status" testId={`deck-upload-pending-${index}`}>
+            <span className="flex items-center gap-1.5">
+              <span className="h-3 w-3 shrink-0 animate-pulse rounded-full bg-border" />
+              {t('writing.deckUploadPending', '图片上传中')}
+            </span>
+          </DeckInlineAlert>
         )}
         {/* #1044: 上传失败行内错误（非静默）。#1089-2: 补「重试/忽略」—
-            对齐 DocEditor 错误态结构；重试走同链路同快照刷新（#1087）。 */}
+            对齐 DocEditor 错误态结构；#1094: 走 DeckInlineAlert（中性灰底 +
+            共享 Button 操作槽，不再手写红色错误条）；重试走同链路同快照刷新（#1087）。 */}
         {uploadError && (
-          <div role="alert" className="flex flex-wrap items-center gap-1 rounded border border-error/40 bg-error/10 px-1.5 py-0.5 text-[11px] text-error">
+          <DeckInlineAlert
+            role="alert"
+            testId={`deck-upload-error-${index}`}
+            title={uploadError.dropped ? undefined : t('writing.deckImageUploadFail', '图片上传失败')}
+            actions={(
+              <>
+                <Button size="sm" variant="ghost" onClick={retryImageUpload}>{t('writing.imageRetry', '重试')}</Button>
+                <Button size="sm" variant="ghost" onClick={() => setUploadError(null)}>{t('writing.imageDismiss', '忽略')}</Button>
+              </>
+            )}
+          >
             {/* #1087: dropped = 上传成功但结构失配被丢弃 — 不带「上传失败」前缀。 */}
-            {!uploadError.dropped && <span className="font-medium">{t('writing.deckImageUploadFail', '图片上传失败')}</span>}
-            <span className="min-w-0 flex-1 truncate">
-              {uploadError.dropped ? uploadError.message : `${uploadError.file.name}: ${uploadError.message}`}
-            </span>
-            <button
-              onClick={retryImageUpload}
-              aria-label={t('writing.imageRetry', '重试')}
-              title={t('writing.imageRetry', '重试')}
-              className="shrink-0 rounded px-1 py-0.5 text-[11px] text-error transition-colors hover:bg-surface"
-            >
-              {t('writing.imageRetry', '重试')}
-            </button>
-            <button
-              onClick={() => setUploadError(null)}
-              aria-label={t('writing.imageDismiss', '忽略')}
-              title={t('writing.imageDismiss', '忽略')}
-              className="shrink-0 rounded px-1 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface hover:text-text-primary"
-            >
-              {t('writing.imageDismiss', '忽略')}
-            </button>
-          </div>
+            {uploadError.dropped ? uploadError.message : `${uploadError.file.name}: ${uploadError.message}`}
+          </DeckInlineAlert>
         )}
         {/* #1044: 隐藏文件选择 — 插入与替换共用一个 input（uploadTarget 决定落点）。 */}
         <input
