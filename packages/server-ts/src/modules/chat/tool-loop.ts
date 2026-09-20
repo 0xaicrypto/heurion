@@ -73,9 +73,24 @@ interface ToolResultPresenter {
  *  精简重试回路,复用同一集合避免两处手写。 */
 export const DOC_WRITE_TOOLS = new Set(['edit_document', 'insert_asset', 'edit_deck', 'fix_document_images'])
 
-// #927: doc_updated rev — 进程内单调递增计数器,SSE 消费方(writing-editor)
-// 据此幂等防乱序(rev 不大于已应用值的写回直接忽略)。
+// #927: doc_updated rev — SSE 消费方(writing-editor)据此幂等防乱序(rev
+// 不大于已应用值的写回直接忽略)。
+// #1085: rev 必须跨进程重启保持单调 — 旧实现是纯内存小整数计数器（进程
+// 内单调），服务端重启（生产发版 / 崩溃 / dev 的 tsx watch 热重启）后从 0
+// 重新计数，而已打开标签页的 appliedDocRevRef 仍停在重启前高位，重启后的
+// 全部写回被幂等守卫误判为乱序并静默丢弃（必须手动刷新页面才能恢复）。
+// 修法：时间基单调 — 取 `max(计数器+1, 当前毫秒)`。同一进程内仍严格递增
+// （+1 兜底同毫秒并发写）；跨重启新进程首笔 rev 即当前毫秒，必然大于旧
+// 进程的历史小整数计数器，客户端守卫语义（#927 严格大于）零改动自然恢复。
+// 无需 schema 迁移；时钟大幅回拨（NTP 异常）是唯一理论边界——比旧实现
+// 的"每次重启必坏"严格更优。
 let docWriteRev = 0
+
+/** #1085: rev 生成器（导出仅供测试 — 单调性/重启归零恢复的行为锚定）。 */
+export function nextDocWriteRev(): number {
+  docWriteRev = Math.max(docWriteRev + 1, Date.now())
+  return docWriteRev
+}
 
 // #927: doom-loop 拦截 — 同参三连调用不再照常执行,注入纠偏后由模型
 // 换策略或直接向用户说明。
@@ -823,13 +838,13 @@ export async function runToolCallLoop(params: {
         // #789③: per-tool SSE 投影走 presenter 注册表 — 新媒体工具只需
         // 注册一个 presenter,不再往 loop 里加 if 分支。
         if (result.success && parsedOutput) {
-          // #927: doc_updated 版本标识 — rev 进程内单调递增,updatedAt 取
-          // 写回完成时刻(SSE 投影即写回后瞬间)。
+          // #927: doc_updated 版本标识 — rev 时间基单调（#1085），updatedAt
+          // 取写回完成时刻(SSE 投影即写回后瞬间)。
           const env: PresentEnv = {
             io,
             toolName: c.toolName,
             ...(DOC_WRITE_TOOLS.has(c.toolName)
-              ? { docRev: ++docWriteRev, docUpdatedAt: new Date().toISOString() }
+              ? { docRev: nextDocWriteRev(), docUpdatedAt: new Date().toISOString() }
               : {}),
           }
           for (const presenter of PRESENTERS) {
