@@ -48,7 +48,14 @@ export interface DeckConflict {
   deckConflictResolving: boolean;
   /** #1071-1: 可撤销窗口（非 null = 横幅可见，TTL 内有效）。 */
   deckUndo: { prevDeck: DeckWire | null } | null;
-  undoDeckWriteBack: () => Promise<void>;
+  /** #1071-1: 撤销窗口出口 — 恢复快照并 force 落盘；返回值 = 落盘是否成功
+   *  （#1088: 路由据它联动收口评论侧的待确认态）。 */
+  undoDeckWriteBack: () => Promise<boolean>;
+  /** #1088: 恢复指定 deck 快照并 force 落盘的共享内核 — 评论确认闭环的
+   *  「撤销修改」出口复用（true = 已恢复并落盘成功）。 */
+  restoreDeckSnapshot: (prevDeck: DeckWire | null) => Promise<boolean>;
+  /** #1088: 收掉 8s 撤销窗口横幅（评论出口先行撤销时调用 — 同一写回不重复出口）。 */
+  closeDeckUndoWindow: () => void;
   resolveDeckConflictKeepMine: () => Promise<void>;
   resolveDeckConflictUseAI: () => void;
   /** 切文档双保险 — 冲突/确认/撤销窗口一次清空。 */
@@ -92,22 +99,37 @@ export function useDeckConflict(input: DeckConflictInput): DeckConflict {
   // AI 改错页时用户可在 TTL 内一键回滚（此前仅评论线程收到 AI 说明,无回滚出口）。
   // prevDeck 为 null（首次建 deck）不提供撤销 — 服务端回滚需 force 落盘空 deck,
   // 语义另需产品决策;评论场景 edit_deck 修改的总是已有 deck。
-  const undoDeckWriteBack = async () => {
-    if (!docId || !deckUndo) return;
-    const prevDeck = deckUndo.prevDeck;
-    closeDeckUndoWindow();
+  /**
+   * #1088: 恢复指定 deck 快照并 force 落盘 — #1071-1 undoDeckWriteBack 的
+   * 共享内核（deck 评论确认闭环的「撤销修改」出口复用同一条快照+force 落盘
+   * 语义，见 comments-ai 的 undoDeckWriteBackForComment）。prevDeck 为 null
+   * 不动作（无可回滚对象，同 #1071-1 的取舍：评论场景 edit_deck 修改的总是
+   * 已有 deck）。返回值 = 落盘是否成功；失败时本地画布已先恢复（#986 常驻
+   * 警示 + dirty 回灌，重试保存即可）。
+   */
+  const restoreDeckSnapshot = useCallback(async (prevDeck: DeckWire | null): Promise<boolean> => {
+    if (!docId || !prevDeck) return false;
     setDeckAsset(prevDeck);
-    lastSavedDeck.current = prevDeck ? JSON.stringify(prevDeck) : '';
+    lastSavedDeck.current = JSON.stringify(prevDeck);
     try {
       // force 落盘覆盖服务端 AI 版本（撤销目标 = 落地前已保存状态,base 无并发意义）。
-      const updated = await saveDoc(title, body, { deck: prevDeck ?? undefined, force: true });
+      const updated = await saveDoc(title, body, { deck: prevDeck, force: true });
       lastSavedBody.current = updated.body ?? body;
       serverBodyRef.current = updated.body ?? body;
       onNotice(t('writing.deckUndoDone', '已撤销 AI 的画布修改，恢复为之前版本'), 3000);
+      return true;
     } catch (err) {
       // #986 同款:落盘失败 → 常驻警示 + dirty 回灌（本地画布已先恢复,重试保存即可）。
       markSaveFailed(err);
+      return false;
     }
+  }, [docId, setDeckAsset, lastSavedDeck, saveDoc, title, body, lastSavedBody, serverBodyRef, onNotice, t, markSaveFailed]);
+
+  const undoDeckWriteBack = async (): Promise<boolean> => {
+    if (!docId || !deckUndo) return false;
+    const prevDeck = deckUndo.prevDeck;
+    closeDeckUndoWindow();
+    return restoreDeckSnapshot(prevDeck);
   };
   useEffect(() => {
     if (!docId || !lastDocDeck) return;
@@ -189,6 +211,8 @@ export function useDeckConflict(input: DeckConflictInput): DeckConflict {
     deckConflictResolving,
     deckUndo,
     undoDeckWriteBack,
+    restoreDeckSnapshot,
+    closeDeckUndoWindow,
     resolveDeckConflictKeepMine,
     resolveDeckConflictUseAI,
     resetForDocSwitch,

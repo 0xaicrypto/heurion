@@ -1,9 +1,25 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DeckWire } from '@/lib/types';
 
 /** DeckWire slide content 块（contracts 内联形状）的本地别名。 */
 type DeckSlideBlock = DeckWire['slides'][number]['content'][number];
+
+/** #1087: slide 结构 epoch 快照 — 上传/表单发起时取（snapshotSlideEpoch），
+ * 完成/确认时校验（verifySlideEpoch / insert·replace 的 expect 参数）。 */
+export interface SlideEpochSnapshot {
+  index: number;
+  epoch: number;
+}
+
+/** #1087: hook 内部状态 — deck 与其结构 epoch 并行数组原子更新（单 state 对象，
+ * 避免双 setState 失步）。epochs 不落 wire（deckJson 只序列化 deck）。 */
+interface DeckWithEpochs {
+  deck: DeckWire | null;
+  /** 结构 epoch，按 slide 下标平行：文本/备注/布局/块级编辑不动；删页 splice、
+   * 移页 tandem 重排、增页追加新值、整 deck 替换全量重置（新页签发新值）。 */
+  epochs: number[];
+}
 
 export interface DeckAsset {
   deckAsset: DeckWire | null;
@@ -11,6 +27,10 @@ export interface DeckAsset {
   lastSavedDeck: React.MutableRefObject<string>;
   appliedDocDeck: React.MutableRefObject<string>;
   deckJson: string;
+  /** #1087: 读取当前目标页的结构 epoch 快照（页不存在/越界 → null）。 */
+  snapshotSlideEpoch: (index: number) => SlideEpochSnapshot | null;
+  /** #1087: 校验快照与当前结构一致（页未删/未移/未被整 deck 替换）。 */
+  verifySlideEpoch: (snap: SlideEpochSnapshot) => boolean;
   updateDeckSlide: (index: number, next: { title?: string; bullets?: string[] }) => void;
   /** #1046: 备注编辑（DeckWire.slides[].notes）— 空串归一为 undefined 保持 wire 干净。 */
   updateDeckSlideNotes: (index: number, notes: string) => void;
@@ -22,18 +42,19 @@ export interface DeckAsset {
   setDeckSlideLayout: (index: number, layout: string | undefined) => void;
   setDeckTheme: (theme: string | undefined) => void;
   /** #1044: 手动插入图片块（与 AI 图片 bullet 同字段形状，见 deckImageBlock）。
-   * #1071-3: expectSlide（入口快照的目标 slide）提供时校验 slide 身份，异步竞态
-   * 下目标页已被删/移则放弃插入，不误插别的页。 */
-  insertDeckSlideImage: (index: number, url: string, caption?: string, expectSlide?: DeckWire['slides'][number]) => void;
+   * #1087: expect（上传发起时的结构快照）提供时校验目标页 epoch — 页被删/移/
+   * 整 deck 替换则放弃插入（不误插别的页）；同页文本编辑不动 epoch，照常落块。 */
+  insertDeckSlideImage: (index: number, url: string, caption?: string, expect?: SlideEpochSnapshot) => void;
   /** #1044: 手动插入结构化图表块 — spec 须先经 chartBlockSchema 校验（表单内完成）。
-   * #1071-3: expectSlide 同上（表单打开时快照,确认时校验）。 */
-  insertDeckSlideChart: (index: number, spec: unknown, caption?: string, expectSlide?: DeckWire['slides'][number]) => void;
+   * #1087: expect 同上（表单打开时快照，确认时校验）。 */
+  insertDeckSlideChart: (index: number, spec: unknown, caption?: string, expect?: SlideEpochSnapshot) => void;
   /**
    * #1044: 块原位替换（换图 URL / 换图数据），非追加。
    * #1063: expectBlock（入口快照的目标块引用）提供时校验块身份，异步竞态下
    * 目标块已被删/移动则放弃替换，不误写其他块。
+   * #1087: expectEpoch（slide 结构快照）叠加校验 — 页被删/移/整 deck 替换则放弃。
    */
-  replaceDeckSlideBlock: (slideIndex: number, blockIndex: number, next: DeckSlideBlock, expectBlock?: DeckSlideBlock) => void;
+  replaceDeckSlideBlock: (slideIndex: number, blockIndex: number, next: DeckSlideBlock, expectBlock?: DeckSlideBlock, expectEpoch?: SlideEpochSnapshot) => void;
   /** #1044: 删除块（content 契约下限 1 块，最后一块不删）。 */
   deleteDeckSlideBlock: (slideIndex: number, blockIndex: number) => void;
 }
@@ -59,13 +80,50 @@ const newSlideId = (): string => `slide_${Math.random().toString(36).slice(2, 10
  * #696/#773 — Doc.deck 资产状态,从 writing-editor 路由下沉:
  * lastSavedDeck 跟踪服务端已保存版本（dirty 判定），
  * appliedDocDeck 跟踪 AI 写回已应用版本（doc_updated.deck 幂等）。
+ * #1087 — deck 与结构 epoch（slideEpochs）并入同一 state 原子更新：
+ * 判据从「slide 对象引用/稳定 id」（#1071-3）换成「快照 {index, epoch} 与当前
+ * epoch 一致」— 无 id slide 的同页文本编辑（对象必然重建）不再误判丢上传；
+ * 真危险变更（删页/移页/整 deck 替换）才失配。epoch 为进程内数据，不落 wire。
  */
 export function useDeckAsset(): DeckAsset {
   const { t } = useTranslation();
-  const [deckAsset, setDeckAsset] = useState<DeckWire | null>(null);
+  const [deckState, setDeckState] = useState<DeckWithEpochs>({ deck: null, epochs: [] });
+  const nextEpochRef = useRef(1);
+  const deckAsset = deckState.deck;
   const lastSavedDeck = useRef<string>('');
   const appliedDocDeck = useRef<string>('');
   const deckJson = useMemo(() => (deckAsset ? JSON.stringify(deckAsset) : ''), [deckAsset]);
+
+  // #1087: 最新结构态镜像（渲染期同步,幂等）— 上传 await 落地后闭包里的
+  // deckAsset 已过期,快照/校验经此读当前值;写回决策仍以 insert/replace 的
+  // 函数式更新内的权威校验兜底（双保险）。
+  const deckStateRef = useRef(deckState);
+  deckStateRef.current = deckState;
+
+  /** #1087: 上传/表单发起时读取目标页结构快照。 */
+  const snapshotSlideEpoch = useCallback((index: number): SlideEpochSnapshot | null => {
+    const { deck, epochs: eps } = deckStateRef.current;
+    if (!deck || index < 0 || index >= deck.slides.length || index >= eps.length) return null;
+    return { index, epoch: eps[index] };
+  }, []);
+  /** #1087: 校验快照 — 页仍在原位且 epoch 未变（文本编辑不变 epoch）。 */
+  const verifySlideEpoch = useCallback((snap: SlideEpochSnapshot): boolean => {
+    const { deck, epochs: eps } = deckStateRef.current;
+    return !!deck && snap.index < deck.slides.length && snap.index < eps.length && eps[snap.index] === snap.epoch;
+  }, []);
+
+  /** #1087: 整 deck 替换的 setter — 兼容直值与函数式两种入参（与
+   * React.Dispatch<SetStateAction<DeckWire|null>> 同签名,外部调用方
+   * writing-editor/deck-conflict/doc-chat 均传直值）。deck 引用变化 →
+   * 全体 epoch 重置签发新值（AI 写回/导入/冲突采用/撤销），在途上传快照
+   * 全部失配 → 调用方提示而非静默丢弃；同引用（无变更）不重置。 */
+  const setDeckAsset = useCallback((next: DeckWire | null | ((prev: DeckWire | null) => DeckWire | null)) => {
+    setDeckState((prev) => {
+      const deck = typeof next === 'function' ? next(prev.deck) : next;
+      if (deck === prev.deck) return prev;
+      return { deck, epochs: deck ? deck.slides.map(() => nextEpochRef.current++) : [] };
+    });
+  }, []);
 
   // ── #773: deck 资产卡片编辑（写 Doc.deck，独立于 body）──────────
   // #1047: bullets 编辑改为按序替换文本块、非文本块（table/image 等）原位保留 —
@@ -76,9 +134,9 @@ export function useDeckAsset(): DeckAsset {
   // 导出时 validateRenderContent 整体失败 → 静默落回 body 重编排。
   // 现约定：空文本块是编辑中态，行始终存在；仅兜底保证 content 永不为空数组。
   const updateDeckSlide = (index: number, next: { title?: string; bullets?: string[] }) => {
-    setDeckAsset((prev) => {
-      if (!prev) return prev;
-      const slides = prev.slides.map((s, i) => {
+    setDeckState((prev) => {
+      if (!prev.deck) return prev;
+      const slides = prev.deck.slides.map((s, i) => {
         if (i !== index) return s;
         const title = next.title !== undefined ? next.title : s.title;
         if (next.bullets === undefined) return { ...s, title };
@@ -101,22 +159,32 @@ export function useDeckAsset(): DeckAsset {
         }
         return { ...s, title, content };
       });
-      return { ...prev, slides };
+      // #1087: 标题/要点为文本编辑，不动结构 epoch（在途上传照常落本页）。
+      return { deck: { ...prev.deck, slides }, epochs: prev.epochs };
     });
   };
   const deleteDeckSlide = (index: number) => {
-    setDeckAsset((prev) => {
-      if (!prev || prev.slides.length <= 1) return prev;
-      return { ...prev, slides: prev.slides.filter((_, i) => i !== index) };
+    setDeckState((prev) => {
+      if (!prev.deck || prev.deck.slides.length <= 1) return prev;
+      // #1087: 删页 = 结构变更 — epoch 同步 splice（被删页及其后移位页上的
+      // 在途快照全部失配；被删页之前的页 epoch 不变，插入不受牵连）。
+      return {
+        deck: { ...prev.deck, slides: prev.deck.slides.filter((_, i) => i !== index) },
+        epochs: prev.epochs.filter((_, i) => i !== index),
+      };
     });
   };
   const addDeckSlide = () => {
-    setDeckAsset((prev) => {
-      if (!prev) return prev;
+    setDeckState((prev) => {
+      if (!prev.deck) return prev;
+      // #1087: 追加新页签发新 epoch（既有下标不变，在途快照不受影响）。
       return {
-        ...prev,
-        // #1071-4: 新建 slide 携带稳定 id（key 不随数组下标漂移）。
-        slides: [...prev.slides, { id: newSlideId(), title: t('writing.deckNewSlide', '新页'), content: [{ type: 'paragraph', text: t('writing.deckNewBullet', '要点'), style: 'bullet' }] }],
+        deck: {
+          ...prev.deck,
+          // #1071-4: 新建 slide 携带稳定 id（key 不随数组下标漂移）。
+          slides: [...prev.deck.slides, { id: newSlideId(), title: t('writing.deckNewSlide', '新页'), content: [{ type: 'paragraph', text: t('writing.deckNewBullet', '要点'), style: 'bullet' }] }],
+        },
+        epochs: [...prev.epochs, nextEpochRef.current++],
       };
     });
   };
@@ -125,59 +193,62 @@ export function useDeckAsset(): DeckAsset {
 
   // ── #959 排版编辑（contracts deck v2）──────────────────────────
   const moveDeckSlide = (from: number, to: number) => {
-    setDeckAsset((prev) => {
-      if (!prev || from === to || from < 0 || to < 0 || from >= prev.slides.length || to >= prev.slides.length) return prev;
-      const slides = [...prev.slides];
+    setDeckState((prev) => {
+      if (!prev.deck || from === to || from < 0 || to < 0 || from >= prev.deck.slides.length || to >= prev.deck.slides.length) return prev;
+      // #1087: 移页 = 结构变更 — epoch 与 slides 同步 tandem 重排：
+      // 移位区间内的页下标指向已换页 → 在途快照失配（提示后放弃）；
+      // 区间外（含目标页未被波及时）epoch 不变，插入不受牵连。
+      const slides = [...prev.deck.slides];
+      const epochs = [...prev.epochs];
       const [moved] = slides.splice(from, 1);
+      const [movedEpoch] = epochs.splice(from, 1);
       slides.splice(to, 0, moved);
-      return { ...prev, slides };
+      epochs.splice(to, 0, movedEpoch);
+      return { deck: { ...prev.deck, slides }, epochs };
     });
   };
   const setDeckSlideLayout = (index: number, layout: string | undefined) => {
-    setDeckAsset((prev) => {
-      if (!prev) return prev;
-      return { ...prev, slides: prev.slides.map((s, i) => (i === index ? { ...s, layout } : s)) };
+    setDeckState((prev) => {
+      if (!prev.deck) return prev;
+      // #1087: 布局是页内属性，页身份/位置不变 — 不动 epoch。
+      return { deck: { ...prev.deck, slides: prev.deck.slides.map((s, i) => (i === index ? { ...s, layout } : s)) }, epochs: prev.epochs };
     });
   };
   // ── #1046 备注编辑（导入显示 / 手动补录，导出经 worker addNotes 写回）──
   const updateDeckSlideNotes = (index: number, notes: string) => {
-    setDeckAsset((prev) => {
-      if (!prev) return prev;
-      return { ...prev, slides: prev.slides.map((s, i) => (i === index ? { ...s, notes: notes.trim() || undefined } : s)) };
+    setDeckState((prev) => {
+      if (!prev.deck) return prev;
+      // #1087: 备注为文本编辑 — 不动 epoch。
+      return { deck: { ...prev.deck, slides: prev.deck.slides.map((s, i) => (i === index ? { ...s, notes: notes.trim() || undefined } : s)) }, epochs: prev.epochs };
     });
   };
   const setDeckTheme = (theme: string | undefined) => {
-    setDeckAsset((prev) => {
-      if (!prev) return prev;
-      return { ...prev, theme };
+    setDeckState((prev) => {
+      if (!prev.deck) return prev;
+      return { deck: { ...prev.deck, theme }, epochs: prev.epochs };
     });
   };
 
   // ── #1044 块级操作：手动插入图片/结构化图表、原位替换、删除 ──
   /**
-   * #1071-3: 插入路径身份校验（对齐 #1063 replaceDeckSlideBlock 的 expectBlock
-   * 快照纪律）— expectSlide 为入口（上传发起 / 表单打开）时的目标 slide 快照。
-   * 回写时目标索引处的 slide 与快照「引用不同且稳定 id 不同」→ slide 已被删/
-   * 移/整页替换，放弃插入（no-op 优于插错页）。已回填 id 的 slide 在并发纯文本
-   * 编辑下 id 不变（对象重建但身份仍在）→ 仍可落块；无 id 旧数据退化为引用比对
-   * （同 #1063 口径）。
+   * #1087: 插入路径结构校验 — expect 为入口（上传发起 / 表单打开）时的目标页
+   * 结构快照 {index, epoch}。回写时目标页 epoch 与快照不一致（页被删/移位/
+   * 整 deck 替换）→ 放弃插入（no-op 优于插错页），放弃与否经 onNotice 由
+   * 调用方明示（非静默）。同页标题/要点文本编辑不动 epoch → 照常落块
+   * （修复 #1071-3 引用判据对无 id slide 的误杀）。
    */
-  const insertDeckSlideBlock = (index: number, block: DeckSlideBlock, expectSlide?: DeckWire['slides'][number]) => {
-    setDeckAsset((prev) => {
-      if (!prev) return prev;
-      if (expectSlide !== undefined) {
-        const cur = prev.slides[index];
-        const sameIdentity = cur === expectSlide || (expectSlide.id !== undefined && cur?.id === expectSlide.id);
-        if (!sameIdentity) return prev;
-      }
-      return { ...prev, slides: prev.slides.map((s, i) => (i === index ? { ...s, content: [...s.content, block] } : s)) };
+  const insertDeckSlideBlock = (index: number, block: DeckSlideBlock, expect?: SlideEpochSnapshot) => {
+    setDeckState((prev) => {
+      if (!prev.deck) return prev;
+      if (expect && prev.epochs[index] !== expect.epoch) return prev;
+      return { deck: { ...prev.deck, slides: prev.deck.slides.map((s, i) => (i === index ? { ...s, content: [...s.content, block] } : s)) }, epochs: prev.epochs };
     });
   };
-  const insertDeckSlideImage = (index: number, url: string, caption?: string, expectSlide?: DeckWire['slides'][number]) => {
-    insertDeckSlideBlock(index, deckImageBlock(url, caption), expectSlide);
+  const insertDeckSlideImage = (index: number, url: string, caption?: string, expect?: SlideEpochSnapshot) => {
+    insertDeckSlideBlock(index, deckImageBlock(url, caption), expect);
   };
-  const insertDeckSlideChart = (index: number, spec: unknown, caption?: string, expectSlide?: DeckWire['slides'][number]) => {
-    insertDeckSlideBlock(index, { type: 'chart', spec, ...(caption ? { caption } : {}) }, expectSlide);
+  const insertDeckSlideChart = (index: number, spec: unknown, caption?: string, expect?: SlideEpochSnapshot) => {
+    insertDeckSlideBlock(index, { type: 'chart', spec, ...(caption ? { caption } : {}) }, expect);
   };
   /**
    * #1044: 块原位替换（换图 URL / 换图数据），非追加。
@@ -185,33 +256,44 @@ export function useDeckAsset(): DeckAsset {
    * 对未改动块保持引用）后才替换。异步上传场景：入口快照目标块，await 两次网络
    * 往返期间删块/移动/并发编辑会让索引指向别的块甚至越界 — 旧实现按索引盲写，
    * 静默 no-op 或替换错图；现在身份不符则放弃替换（no-op 优于写错块）。
+   * #1087: expectEpoch（slide 结构快照）叠加校验 — 页被删/移/整 deck 替换则放弃。
    */
-  const replaceDeckSlideBlock = (slideIndex: number, blockIndex: number, next: DeckSlideBlock, expectBlock?: DeckSlideBlock) => {
-    setDeckAsset((prev) => {
-      if (!prev) return prev;
+  const replaceDeckSlideBlock = (slideIndex: number, blockIndex: number, next: DeckSlideBlock, expectBlock?: DeckSlideBlock, expectEpoch?: SlideEpochSnapshot) => {
+    setDeckState((prev) => {
+      if (!prev.deck) return prev;
+      // #1087: slide 层结构校验 — 页被删/移/整 deck 替换 → 放弃。
+      if (expectEpoch && prev.epochs[slideIndex] !== expectEpoch.epoch) return prev;
       return {
-        ...prev,
-        slides: prev.slides.map((s, i) => {
-          if (i !== slideIndex) return s;
-          // #1063: 块身份校验 — 目标索引处块引用与快照不符（被删/移动/整表替换）→ 放弃。
-          if (expectBlock !== undefined && s.content[blockIndex] !== expectBlock) return s;
-          return { ...s, content: s.content.map((c, ci) => (ci === blockIndex ? next : c)) };
-        }),
+        deck: {
+          ...prev.deck,
+          slides: prev.deck.slides.map((s, i) => {
+            if (i !== slideIndex) return s;
+            // #1063: 块身份校验 — 目标索引处块引用与快照不符（被删/移动/整表替换）→ 放弃。
+            if (expectBlock !== undefined && s.content[blockIndex] !== expectBlock) return s;
+            return { ...s, content: s.content.map((c, ci) => (ci === blockIndex ? next : c)) };
+          }),
+        },
+        // #1087: 块级编辑不动页结构 epoch（页身份/位置未变）。
+        epochs: prev.epochs,
       };
     });
   };
   // content 契约下限 1 块（presentationContentSchema content min 1）— 最后一块不删。
   const deleteDeckSlideBlock = (slideIndex: number, blockIndex: number) => {
-    setDeckAsset((prev) => {
-      if (!prev) return prev;
+    setDeckState((prev) => {
+      if (!prev.deck) return prev;
       return {
-        ...prev,
-        slides: prev.slides.map((s, i) =>
-          i === slideIndex && s.content.length > 1 ? { ...s, content: s.content.filter((_, ci) => ci !== blockIndex) } : s,
-        ),
+        deck: {
+          ...prev.deck,
+          slides: prev.deck.slides.map((s, i) =>
+            i === slideIndex && s.content.length > 1 ? { ...s, content: s.content.filter((_, ci) => ci !== blockIndex) } : s,
+          ),
+        },
+        // #1087: 块级编辑不动页结构 epoch；唯一块拒绝（min-1）提示在调用方补齐。
+        epochs: prev.epochs,
       };
     });
   };
 
-  return { deckAsset, setDeckAsset, lastSavedDeck, appliedDocDeck, deckJson, updateDeckSlide, updateDeckSlideNotes, deleteDeckSlide, addDeckSlide, slideBullets, moveDeckSlide, setDeckSlideLayout, setDeckTheme, insertDeckSlideImage, insertDeckSlideChart, replaceDeckSlideBlock, deleteDeckSlideBlock };
+  return { deckAsset, setDeckAsset, lastSavedDeck, appliedDocDeck, deckJson, snapshotSlideEpoch, verifySlideEpoch, updateDeckSlide, updateDeckSlideNotes, deleteDeckSlide, addDeckSlide, slideBullets, moveDeckSlide, setDeckSlideLayout, setDeckTheme, insertDeckSlideImage, insertDeckSlideChart, replaceDeckSlideBlock, deleteDeckSlideBlock };
 }

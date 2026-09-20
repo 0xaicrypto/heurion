@@ -11,9 +11,22 @@ import type { DocCommentWire } from '@/lib/api';
  * 面板:线程列表(anchorText 摘要 + 回复列表 + 回复输入框);open 线程默认
  * 展开、resolved 置灰收起(可点开);anchorText 漂移(located=false)的线程
  * 展示「待重新定位」徽标,不静默。
+ * #1089-6: 歧义/漂移态线程渲染「待确认位置」徽标 + 候选列表(text/heading
+ * 摘要)+ 每候选「用此位置」按钮 — 采纳即以该候选重定位(路由调
+ * comment-anchor 的显式注入入口),确认路径用户可操作,不只提示。
+ * #1088: deck 评论 AI 写回待确认态 — 线程级「确认修改/撤销修改」动作按钮
+ * (确认 = PATCH resolved;撤销 = 恢复写回前画布快照),与正文 diff
+ * accept/reject 审阅对等。
  * 弹窗:选区评论创建入口(气泡「添加评论」→ 路由持 draft → 本弹窗),提交
  * 由路由调创建 API。
  */
+
+/** #1089-6: 「用此位置」候选 — 漂移态为服务端候选(text/start/heading),
+ *  歧义态为编辑器扫描命中(text + 所属标题 + 命中序 hit)。 */
+export interface AnchorConfirmCandidate { text: string; heading?: string; start?: number; hit?: number }
+
+/** #1089-6: 线程级锚点确认态 — 歧义(编辑器扫描多命中无法消歧)或漂移(服务端候选)。 */
+export interface AnchorConfirmState { kind: 'ambiguous' | 'drift'; candidates: AnchorConfirmCandidate[] }
 
 export function AddCommentModal(input: {
   anchorText: string;
@@ -75,10 +88,22 @@ export function CommentsPanel(input: {
   onAiProcess?: (c: DocCommentWire) => void;
   /** #1041: 处理中的评论 id 集合 — 按钮 loading/禁用，防并发二次触发。 */
   processingCommentIds?: Record<string, boolean>;
+  /** #1088: deck 写回待确认态（commentId → { undoable }）— 线程级确认/撤销按钮。 */
+  deckConfirming?: Record<string, { undoable: boolean }>;
+  /** #1088: 「确认修改」— PATCH resolved。 */
+  onDeckConfirm?: (id: string) => void;
+  /** #1088: 「撤销修改」— 恢复写回前画布快照。 */
+  onDeckUndo?: (id: string) => void;
+  /** #1089-6: 待确认位置 — 歧义（编辑器扫描命中）或漂移（服务端候选）线程的候选列表。 */
+  anchorConfirms?: Record<string, AnchorConfirmState>;
+  /** #1089-6: 已采纳的候选（采纳后候选列表收起）。 */
+  adoptedAnchors?: Record<string, unknown>;
+  /** #1089-6: 「用此位置」采纳 — 路由调 comment-anchor 重定位注入。 */
+  onAdoptAnchor?: (c: DocCommentWire, cand: AnchorConfirmCandidate) => void;
   className?: string;
 }) {
   const { t } = useTranslation();
-  const { comments, activeId, onSelect, onReply, onToggleResolve, onAiProcess, processingCommentIds, className } = input;
+  const { comments, activeId, onSelect, onReply, onToggleResolve, onAiProcess, processingCommentIds, deckConfirming, onDeckConfirm, onDeckUndo, anchorConfirms, adoptedAnchors, onAdoptAnchor, className } = input;
   // #1060: 单评论单 turn — 任一评论处理中（含指令排队等待真实 turn）时，
   // 其余「请AI处理」按钮一并禁用（ref 级守卫的状态层镜像），避免排队单槽
   // 被第二条评论指令占用后被覆盖丢弃（卡死源）或与首条共享冲刷窗口（误归属源）。
@@ -138,6 +163,10 @@ export function CommentsPanel(input: {
           const active = activeId === c.id;
           // #1040 用例 4:漂移线程 — 「待重新定位」提示态(不静默消失)。
           const drifted = c.status !== 'resolved' && c.anchor?.located === false;
+          // #1089-6: 待确认位置 — 歧义态徽标 + 候选列表(漂移态沿用原徽标,同样给候选列表)。
+          const confirmState = c.status !== 'resolved' ? anchorConfirms?.[c.id] : undefined;
+          const ambiguous = confirmState?.kind === 'ambiguous';
+          const adopted = !!adoptedAnchors?.[c.id];
           return (
             <div
               key={c.id}
@@ -184,6 +213,15 @@ export function CommentsPanel(input: {
                       {t('writing.commentDrifted', '待重新定位')}
                     </span>
                   )}
+                  {ambiguous && (
+                    <span
+                      data-testid="comment-anchor-pending-pos"
+                      title={t('writing.commentAnchorAmbiguous', '锚点文本在文档中多处出现 — 请确认位置')}
+                      className="rounded border border-warning/40 bg-warning/10 px-1 py-0.5 text-[10px] text-warning"
+                    >
+                      {t('writing.commentAnchorPendingPos', '待确认位置')}
+                    </span>
+                  )}
                   {c.status === 'resolved' && (
                     <span className="rounded bg-surface-muted px-1 py-0.5 text-[10px] text-text-secondary">
                       {t('writing.commentResolvedTag', '已解决')}
@@ -193,6 +231,34 @@ export function CommentsPanel(input: {
               </button>
               {expanded && (
                 <div className="space-y-1.5 px-2.5 pb-2 pt-1">
+                  {/* #1089-6: 歧义/漂移态 — 「待确认位置」候选列表(text/heading 摘要)
+                      + 每候选「用此位置」按钮;采纳后列表收起(徽标随重定位消失)。 */}
+                  {confirmState && !adopted && confirmState.candidates.length > 0 && (
+                    <div
+                      data-testid={`comment-anchor-candidates-${c.id}`}
+                      className="rounded-md border border-warning/30 bg-warning/5 px-2 py-1.5"
+                    >
+                      <p className="text-[10px] text-text-secondary">
+                        {t('writing.commentAnchorConfirmHint', '请确认该评论锚定的位置：')}
+                      </p>
+                      {confirmState.candidates.slice(0, 5).map((cand, i) => (
+                        <div key={`${i}-${cand.text.slice(0, 16)}`} className="mt-1 flex items-center justify-between gap-2">
+                          <span className="min-w-0 flex-1 truncate text-[11px] text-text-primary" title={cand.text}>
+                            「{cand.text.slice(0, 40)}」
+                            {cand.heading ? <span className="text-text-tertiary"> · {cand.heading}</span> : null}
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            data-testid={`comment-adopt-${c.id}-${i}`}
+                            onClick={() => onAdoptAnchor?.(c, cand)}
+                          >
+                            {t('writing.commentAnchorAdopt', '用此位置')}
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {c.replies.map((r) => (
                     <div key={r.id} data-testid="comment-reply" className="rounded-md bg-surface px-2 py-1.5">
                       <span className={cn('text-[10px] font-medium', r.role === 'ai' ? 'text-accent' : 'text-text-tertiary')}>
@@ -225,6 +291,20 @@ export function CommentsPanel(input: {
                         {t('writing.commentReplySend', '回复')}
                       </Button>
                     </div>
+                  )}
+                </div>
+              )}
+              {/* #1088: deck 评论 AI 写回待确认态 — 线程级「确认修改/撤销修改」
+                  (仅 target='deck_slide' 且待确认;撤销仅在快照可恢复时显示)。 */}
+              {c.target === 'deck_slide' && c.status !== 'resolved' && deckConfirming?.[c.id] && (
+                <div data-testid={`comment-deck-confirm-${c.id}`} className="flex gap-1 px-2.5 pb-1 pt-0.5">
+                  <Button size="sm" data-testid={`comment-deck-confirm-btn-${c.id}`} onClick={() => onDeckConfirm?.(c.id)}>
+                    {t('writing.commentDeckConfirm', '确认修改')}
+                  </Button>
+                  {!!deckConfirming[c.id].undoable && (
+                    <Button size="sm" variant="ghost" data-testid={`comment-deck-undo-btn-${c.id}`} onClick={() => onDeckUndo?.(c.id)}>
+                      {t('writing.commentDeckUndo', '撤销修改')}
+                    </Button>
                   )}
                 </div>
               )}

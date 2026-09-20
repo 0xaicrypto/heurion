@@ -41,8 +41,9 @@ const makeDeck = (titles: string[]): DeckWire => ({
   })),
 });
 
-/** 测试挂载点:真实 useDeckAsset hook + 种子数据,DeckView 直连(与路由同构)。 */
-function Harness({ initialDeck, onDeckChange }: { initialDeck: DeckWire; onDeckChange?: (deck: DeckWire | null) => void }) {
+/** 测试挂载点:真实 useDeckAsset hook + 种子数据,DeckView 直连(与路由同构)。
+ * #1087: onNotice 透传 DeckView（路由 showNotice 同款签名），断言丢弃提示用。 */
+function Harness({ initialDeck, onDeckChange, onNotice }: { initialDeck: DeckWire; onDeckChange?: (deck: DeckWire | null) => void; onNotice?: (text: string, ttlMs?: number) => void }) {
   const ctl = useDeckAsset();
   const seededRef = useRef(false);
   // #1044 测试探针:deckAsset 每次变化回传最新 deck,断言 content 块形状用。
@@ -66,6 +67,7 @@ function Harness({ initialDeck, onDeckChange }: { initialDeck: DeckWire; onDeckC
         deckCtl={ctl}
         sendChatText={async () => {}}
         onCardEdit={() => {}}
+        onNotice={onNotice}
       />
     </I18nextProvider>
   );
@@ -1092,5 +1094,352 @@ describe('#1071-3 插入图片竞态防护（slide 身份校验）', () => {
     const deck = lastDeck(onDeckChange);
     expect(deck.slides[0].title).toBe('A（编辑中）');
     expect(deck.slides[0].content.some((b) => b.type === 'image' && b.url === '/api/v1/files/download/file_new?token=t2')).toBe(true);
+  });
+});
+
+// ── #1087: 插入竞态判据重构 — 结构 epoch（快照 {index, epoch}）─────────────
+// 旧判据（#1071-3 引用/稳定 id）对无 id slide 的同页文本编辑会误判「页已变」→
+// 上传结果静默丢弃。epoch 判据：标题/要点等文本编辑不动 epoch；删页/移页/
+// 整 deck 替换（AI 写回）才失配 — 失配放弃插入并经 onNotice 可见提示（非静默）。
+describe('#1087 插入竞态判据 — 结构 epoch', () => {
+  beforeEach(() => {
+    uploadFileMock.mockReset();
+    getDownloadUrlMock.mockReset();
+  });
+
+  /** 上传挂起（手动放行）+ canonical URL mock；返回放行函数。 */
+  const holdUpload = () => {
+    let resolveUpload: (v: unknown) => void = () => {};
+    uploadFileMock.mockImplementation(() => new Promise((resolve) => { resolveUpload = resolve; }));
+    getDownloadUrlMock.mockResolvedValue({ file_id: 'file_new', url: '/api/v1/files/download/file_new?token=t2' });
+    return () => resolveUpload({ file_id: 'file_new', name: '竞态.png', mime: 'image/png', size_bytes: 1 });
+  };
+
+  /** AI 写回 harness（可从外部整 deck 替换）— 与路由写回落地 effect 同语义。 */
+  function AiReplaceHarness({ initial, aiDeck, onNotice }: { initial: DeckWire; aiDeck: DeckWire; onNotice?: (text: string, ttlMs?: number) => void }) {
+    const ctl = useDeckAsset();
+    const [deck, setDeck] = useState<DeckWire | null>(initial);
+    useEffect(() => {
+      ctl.setDeckAsset(deck);
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- ctl 每次渲染为新对象,deck 即数据源(同 #1073-4 harness 口径)
+    }, [deck]);
+    return (
+      <I18nextProvider i18n={i18n}>
+        <button onClick={() => setDeck(aiDeck)}>模拟 AI 写回</button>
+        <DeckView deckAsset={ctl.deckAsset} slides={[]} body="" deckCtl={ctl} sendChatText={async () => {}} onCardEdit={() => {}} onNotice={onNotice} />
+      </I18nextProvider>
+    );
+  }
+
+  test('用例1 上传期间同页改标题+加要点（无 id slide）→ 插入成功落本页，无丢弃提示', async () => {
+    const onDeckChange = deckProbe();
+    const onNotice = vi.fn<(text: string, ttlMs?: number) => void>();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+        onNotice={onNotice}
+      />,
+    );
+    const release = holdUpload();
+
+    fireEvent.click(screen.getByRole('button', { name: '插入图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('并发.png')] } });
+    await waitFor(() => expect(uploadFileMock).toHaveBeenCalled());
+
+    // pending 期间同页文本编辑（无 id slide — 旧引用判据在此误杀）
+    fireEvent.change(screen.getByDisplayValue('A'), { target: { value: 'A（编辑中）' } });
+    fireEvent.click(screen.getByRole('button', { name: '+ 要点' }));
+
+    await act(async () => { release(); });
+    await waitFor(() => expect(container.querySelector('img')).not.toBeNull());
+    const deck = lastDeck(onDeckChange);
+    expect(deck.slides[0].title).toBe('A（编辑中）');
+    expect(deck.slides[0].content.some((b) => b.type === 'image' && b.url === '/api/v1/files/download/file_new?token=t2')).toBe(true);
+    // 正常落地不走丢弃提示（非静默通道只用于真丢弃）
+    expect(onNotice).not.toHaveBeenCalled();
+  });
+
+  test('用例2 上传期间删除目标页 → 放弃插入 + onNotice 可见提示（非静默）', async () => {
+    const onDeckChange = deckProbe();
+    const onNotice = vi.fn<(text: string, ttlMs?: number) => void>();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeck(['A', 'B'])}
+        onDeckChange={onDeckChange}
+        onNotice={onNotice}
+      />,
+    );
+    const release = holdUpload();
+
+    fireEvent.click(screen.getAllByRole('button', { name: '插入图片' })[0]);
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('竞态.png')] } });
+    await waitFor(() => expect(uploadFileMock).toHaveBeenCalled());
+
+    // pending 期间删除目标页（B 补位到 index 0）
+    fireEvent.click(screen.getAllByRole('button', { name: '删除此页' })[0]);
+    await act(async () => { release(); });
+
+    const deck = lastDeck(onDeckChange);
+    expect(deck.slides).toHaveLength(1);
+    expect(deck.slides[0].content.some((b) => b.type === 'image')).toBe(false);
+    expect(container.querySelector('img')).toBeNull();
+    // 非静默：经 onNotice 通道明示（路由横幅）
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('未能自动插入'), 6000));
+  });
+
+  test('用例2b 上传期间拖动页序（目标页被移位）→ 放弃 + 提示', async () => {
+    const onDeckChange = deckProbe();
+    const onNotice = vi.fn<(text: string, ttlMs?: number) => void>();
+    const { container } = render(
+      <Harness initialDeck={makeDeck(['A', 'B'])} onDeckChange={onDeckChange} onNotice={onNotice} />,
+    );
+    const release = holdUpload();
+
+    fireEvent.click(screen.getAllByRole('button', { name: '插入图片' })[0]);
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('竞态.png')] } });
+    await waitFor(() => expect(uploadFileMock).toHaveBeenCalled());
+
+    // pending 期间 A 下移一位（index 0 此后指向 B — 快照 {0, epoch} 失配）
+    fireEvent.click(screen.getAllByRole('button', { name: '下移此页' })[0]);
+    await act(async () => { release(); });
+
+    expect(cardOrder()).toEqual(['B', 'A']);
+    const deck = lastDeck(onDeckChange);
+    expect(deck.slides.every((s) => s.content.every((b) => b.type !== 'image'))).toBe(true);
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('未能自动插入'), 6000));
+  });
+
+  test('用例3 上传期间 AI 写回整 deck 替换 → 放弃 + 提示；错误条重试落新 deck（保留重试）', async () => {
+    const onNotice = vi.fn<(text: string, ttlMs?: number) => void>();
+    const { container } = render(
+      <AiReplaceHarness
+        initial={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        aiDeck={makeDeckSlides([{ title: 'A（AI 重写）', content: [{ type: 'paragraph', text: 'AI-要点', style: 'bullet' }] }])}
+        onNotice={onNotice}
+      />,
+    );
+    const release = holdUpload();
+
+    fireEvent.click(screen.getByRole('button', { name: '插入图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('竞态.png')] } });
+    await waitFor(() => expect(uploadFileMock).toHaveBeenCalled());
+
+    // pending 期间 AI 写回整 deck 替换（全体 epoch 重置 → 在途快照全部失配）
+    fireEvent.click(screen.getByRole('button', { name: '模拟 AI 写回' }));
+    await act(async () => { release(); });
+
+    expect(container.querySelector('img')).toBeNull();
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('未能自动插入'), 6000));
+    // 行内错误条同样可见（卡片存活场景），并提供重试路径
+    expect(screen.getByRole('alert').textContent).toContain('未能自动插入');
+    const retryBtn = screen.getByRole('button', { name: '重试' });
+    expect(retryBtn).toBeTruthy();
+
+    // 重试走同链路、快照刷新 → 落到当前（AI 写回后）的页
+    uploadFileMock.mockResolvedValue({ file_id: 'file_retry', name: '竞态.png', mime: 'image/png', size_bytes: 1 });
+    fireEvent.click(retryBtn);
+    await waitFor(() => expect(container.querySelector('img')).not.toBeNull());
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  test('回归：既有 #1071-3 身份校验场景在 epoch 判据下不回退（同页编辑落地/删页放弃）', async () => {
+    // 同页文本编辑（带 id）→ 落地（#1071-3 用例2 场景在 epoch 判据下语义不变）
+    const onDeckChange = deckProbe();
+    const onNotice = vi.fn<(text: string, ttlMs?: number) => void>();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([{ id: 'slide_a1', title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+        onNotice={onNotice}
+      />,
+    );
+    const release = holdUpload();
+    fireEvent.click(screen.getByRole('button', { name: '插入图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('并发.png')] } });
+    await waitFor(() => expect(uploadFileMock).toHaveBeenCalled());
+    fireEvent.change(screen.getByDisplayValue('A'), { target: { value: 'A（编辑中）' } });
+    await act(async () => { release(); });
+    await waitFor(() => expect(container.querySelector('img')).not.toBeNull());
+    expect(lastDeck(onDeckChange).slides[0].title).toBe('A（编辑中）');
+    expect(onNotice).not.toHaveBeenCalled();
+  });
+});
+
+// ── #1089 deck 侧反馈一致性（1 唯一块删除提示 / 2 上传失败重试 / 3 pulse 占位 / 4 表单错误样式对齐）──
+describe('#1089-1 唯一内容块删除 — 显式提示（非静默拒绝）', () => {
+  test('唯一内容块（table）删除被 min-1 防线拒绝 → onNotice 明示「每页至少保留一个内容块」，块保留', () => {
+    const onDeckChange = deckProbe();
+    const onNotice = vi.fn<(text: string, ttlMs?: number) => void>();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'table', data: JSON.stringify({ rows: [['a', 'b']] }) }] }])}
+        onDeckChange={onDeckChange}
+        onNotice={onNotice}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '删除表格' }));
+
+    // 块保留（min-1 防线既有行为不回退）+ 提示可见
+    expect(container.querySelector('table')).not.toBeNull();
+    expect(lastDeck(onDeckChange).slides[0].content).toHaveLength(1);
+    expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('每页至少保留一个内容块'));
+  });
+
+  test('非唯一块删除正常移除，不触发提示', () => {
+    const onDeckChange = deckProbe();
+    const onNotice = vi.fn<(text: string, ttlMs?: number) => void>();
+    render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [{ type: 'table', data: JSON.stringify({ rows: [['a', 'b']] }) }, { type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+        ])}
+        onDeckChange={onDeckChange}
+        onNotice={onNotice}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '删除表格' }));
+    expect(lastDeck(onDeckChange).slides[0].content).toHaveLength(1);
+    expect(onNotice).not.toHaveBeenCalled();
+  });
+});
+
+describe('#1089-2 上传失败错误条补「重试」按钮（对齐 DocEditor）', () => {
+  beforeEach(() => {
+    uploadFileMock.mockReset();
+    getDownloadUrlMock.mockReset();
+  });
+
+  test('上传失败 → 错误条含重试/忽略；点击重试走同链路成功，错误清除', async () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    uploadFileMock.mockRejectedValueOnce(new Error('network down'));
+    uploadFileMock.mockResolvedValue({ file_id: 'file_new', name: '失败.png', mime: 'image/png', size_bytes: 1 });
+    getDownloadUrlMock.mockResolvedValue({ file_id: 'file_new', url: '/api/v1/files/download/file_new?token=t2' });
+
+    fireEvent.click(screen.getByRole('button', { name: '插入图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('失败.png')] } });
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('network down'));
+
+    // 重试/忽略按钮在错误条上（对齐 DocEditor 错误态结构）
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+
+    // 重试走同链路（再次 uploadFile → getDownloadUrl → 插入），成功后错误清除
+    await waitFor(() => expect(container.querySelector('img')).not.toBeNull());
+    expect(lastDeck(onDeckChange).slides[0].content.some((b) => b.type === 'image')).toBe(true);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  test('忽略按钮清除错误条，不产生插入', async () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    uploadFileMock.mockRejectedValue(new Error('network down'));
+
+    fireEvent.click(screen.getByRole('button', { name: '插入图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('失败.png')] } });
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('network down'));
+
+    fireEvent.click(screen.getByRole('button', { name: '忽略' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(container.querySelector('img')).toBeNull();
+    expect(lastDeck(onDeckChange).slides[0].content.some((b) => b.type === 'image')).toBe(false);
+  });
+});
+
+describe('#1089-3 插入等待期 pulse 占位块', () => {
+  beforeEach(() => {
+    uploadFileMock.mockReset();
+    getDownloadUrlMock.mockReset();
+  });
+
+  test('上传 pending → 卡片内占位块可见；成功 → 占位移除、图片落地', async () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    let resolveUpload: (v: unknown) => void = () => {};
+    uploadFileMock.mockImplementation(() => new Promise((resolve) => { resolveUpload = resolve; }));
+    getDownloadUrlMock.mockResolvedValue({ file_id: 'file_new', url: '/api/v1/files/download/file_new?token=t2' });
+
+    fireEvent.click(screen.getByRole('button', { name: '插入图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('占位.png')] } });
+
+    // 等待期：pulse 占位块可见（本地 state，非 content 块 — 不落 deck 数据）
+    expect(screen.getByRole('status')).toBeTruthy();
+    expect(lastDeck(onDeckChange).slides[0].content.every((b) => b.type !== 'image')).toBe(true);
+
+    await act(async () => {
+      resolveUpload({ file_id: 'file_new', name: '占位.png', mime: 'image/png', size_bytes: 1 });
+    });
+    // 成功：占位移除、图片落地
+    await waitFor(() => expect(container.querySelector('img')).not.toBeNull());
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  test('上传失败 → 占位移除，错误条出现（不留悬挂占位）', async () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    uploadFileMock.mockRejectedValue(new Error('network down'));
+
+    fireEvent.click(screen.getByRole('button', { name: '插入图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('占位.png')] } });
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('network down'));
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(container.querySelector('img')).toBeNull();
+  });
+});
+
+describe('#1089-4 表格/图表表单错误提示样式对齐（同为行内 alert）', () => {
+  test('表格替换表单与图表表单的校验错误均为 role=alert 行内提示且类名一致', () => {
+    // 表格表单：空数据提交 → 行内 alert，捕获类名
+    const table = render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [{ type: 'table', data: JSON.stringify({ rows: [['a', 'b']] }) }, { type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+        ])}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '替换表格' }));
+    // 清空预填数据再确认 → 触发行内校验错误（同 #1075 既有用例口径）
+    fireEvent.change(screen.getByLabelText('表格数据（每行一条，单元格用 | 分隔）'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: '确认替换' }));
+    const tableAlert = screen.getByRole('alert');
+    expect(tableAlert.textContent).toContain('数据未通过校验');
+    const tableAlertClass = tableAlert.className;
+    table.unmount();
+
+    // 图表表单：空数据提交 → 行内 alert，捕获类名
+    const chart = render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '插入图表' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认插入' }));
+    const chartAlert = screen.getByRole('alert');
+    expect(chartAlert.textContent).toContain('数据未通过校验');
+    const chartAlertClass = chartAlert.className;
+    chart.unmount();
+
+    // 样式对齐锁定：同一套行内 alert 类名（防漂移）
+    expect(tableAlertClass).toBe(chartAlertClass);
   });
 });

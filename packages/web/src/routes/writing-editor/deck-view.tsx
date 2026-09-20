@@ -12,7 +12,7 @@ import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { Slide } from '@/lib/deck';
 import type { DeckWire } from '@/lib/types';
-import type { DeckAsset } from './deck-asset';
+import type { DeckAsset, SlideEpochSnapshot } from './deck-asset';
 import { deckImageBlock } from './deck-asset';
 import { DeckChartFormDialog, type DeckChartFormResult } from './deck-chart-form';
 
@@ -491,7 +491,7 @@ function DeckChartBlock({ block, onReplace, onDelete }: {
 }
 
 /** 单张 deck 卡片（deckAsset 分支）— 提取为组件承载卡片级 UI 状态（如 #1046 备注折叠、#1044 插入/替换目标）。 */
-function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComment, onCommentClick }: {
+function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComment, onCommentClick, onNotice }: {
   index: number;
   slide: DeckWire['slides'][number];
   deckCtl: DeckAsset;
@@ -502,17 +502,27 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
   onAddComment?: (slideIndex0: number, anchorText: string) => void;
   /** #1051: 点击评论标记 → 侧边栏定位/展开线程。 */
   onCommentClick?: (commentId: string) => void;
+  /** #1087: 丢弃/拒绝提示通道（路由 showNotice 横幅）— 非静默原则。 */
+  onNotice?: (text: string, ttlMs?: number) => void;
 }) {
   const { t } = useTranslation();
   // #1046: 备注折叠态 — 卡片级 UI 状态，默认收起不占视觉。
   const [notesOpen, setNotesOpen] = useState(false);
   // #1044: 图片上传目标（插入 / 原位替换某块）与错误态；图表表单（插入 / 替换某块）。
-  // #1071-3: 插入模式携带入口（表单打开）时的 slide 快照 — 表单确认时校验身份。
+  // #1087: 插入/替换的竞态判据换结构 epoch 快照 {index, epoch}（上传发起/表单打开
+  // 时取，完成/确认时校验）— 文本编辑不动 epoch 不误杀；删页/移页/整 deck 替换失配。
+  // #1089-2: 错误态携带失败文件供「重试」走同链路（对齐 DocEditor 错误结构）。
   const [uploadTarget, setUploadTarget] = useState<{ mode: 'insert' } | { mode: 'replace'; blockIndex: number; oldCaption?: string }>({ mode: 'insert' });
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [chartForm, setChartForm] = useState<{ mode: 'insert'; expectSlide: DeckWire['slides'][number] } | { mode: 'replace'; blockIndex: number } | null>(null);
+  const [uploadError, setUploadError] = useState<{ file: File; message: string; dropped?: boolean } | null>(null);
+  // #1089-3: 插入等待期占位（本地 state，成功替换/失败移除，不落 deck 数据）。
+  const [uploadPending, setUploadPending] = useState(false);
+  const [chartForm, setChartForm] = useState<
+    | { mode: 'insert'; expectEpoch: SlideEpochSnapshot | null }
+    | { mode: 'replace'; blockIndex: number; expectBlock: DeckWire['slides'][number]['content'][number]; expectEpoch: SlideEpochSnapshot | null }
+    | null
+  >(null);
   // #1075: 表格数据表单（仅替换 — 表格无「插入」入口，替换对齐图片/图表块）。
-  const [tableForm, setTableForm] = useState<{ mode: 'replace'; blockIndex: number } | null>(null);
+  const [tableForm, setTableForm] = useState<{ mode: 'replace'; blockIndex: number; expectBlock: DeckWire['slides'][number]['content'][number]; expectEpoch: SlideEpochSnapshot | null } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // #1063: 要点行容器 — 「+ 要点」追加新行后把焦点补到新行输入框。
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -541,25 +551,55 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
 
   /** #1044: 复用 #1038 打通的上传链路（api.uploadFile → getDownloadUrl canonical
    * URL，见 DocEditor.runImageUpload 同构），成功后按目标插入/原位替换 image 块；
-   * 失败给行内错误提示（非静默），不产生坏块。 */
+   * 失败给行内错误提示（非静默），不产生坏块。
+   * #1087: 上传发起时快照目标页结构 epoch，完成时校验 — 不一致（页被删/移/
+   * 整 deck 替换）→ 放弃写回 + onNotice 可见提示（非静默）+ 保留重试路径。
+   * #1089-3: 插入等待期渲染 pulse 占位块（本地 state），成功替换/失败移除。 */
   const runImageUpload = async (file: File) => {
     const target = uploadTarget;
-    // #1063: 竞态防护 — 入口快照目标块引用；两次网络往返期间删块/移动/并发编辑
-    // 会让 blockIndex 指向别的块（静默 no-op 或替换错图）。回写时由
-    // replaceDeckSlideBlock 校验块身份（引用相等），不符则放弃替换。
+    // #1087: 入口快照 — 目标页结构 epoch（index+epoch）与目标块引用（#1063）。
+    const snap = deckCtl.snapshotSlideEpoch(index);
     const expectBlock = target.mode === 'replace' ? slide.content[target.blockIndex] : undefined;
-    // #1071-3: 插入路径同款身份快照 — 入口（文件选定）时的目标 slide，
-    // 回写时校验身份（引用或稳定 id），不符则放弃（不误插别的页）。
-    const expectSlide = slide;
+    const insertMode = target.mode === 'insert';
+    setUploadError(null);
+    setUploadPending(insertMode);
     try {
       const up = await api.uploadFile(file);
       const { url } = await api.getDownloadUrl(up.file_id);
-      setUploadError(null);
-      if (target.mode === 'insert') deckCtl.insertDeckSlideImage(index, url, file.name, expectSlide);
-      else deckCtl.replaceDeckSlideBlock(index, target.blockIndex, deckImageBlock(url, target.oldCaption ?? file.name), expectBlock);
+      // #1087: 完成时校验结构快照 — 失配即放弃（不误插/不误替换），提示非静默，
+      // 错误条保留文件供重试（重试时在入口重新快照）。
+      if (!snap || !deckCtl.verifySlideEpoch(snap)) {
+        setUploadPending(false);
+        const msg = insertMode
+          ? t('writing.deckInsertDropped', '图片上传完成，但该页已被修改或移除，未能自动插入')
+          : t('writing.deckReplaceDropped', '图片上传完成，但原位置已被修改或移除，未能自动替换');
+        setUploadError({ file, message: msg, dropped: true });
+        onNotice?.(msg, 6000);
+        return;
+      }
+      if (insertMode) deckCtl.insertDeckSlideImage(index, url, file.name, snap);
+      else deckCtl.replaceDeckSlideBlock(index, target.blockIndex, deckImageBlock(url, target.oldCaption ?? file.name), expectBlock, snap);
+      setUploadPending(false);
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : String(err));
+      // #1089-2: 上传失败可重试错误态（对齐 DocEditor）— 占位已移除，提示不静默。
+      setUploadPending(false);
+      setUploadError({ file, message: err instanceof Error ? err.message : String(err) });
     }
+  };
+  /** #1089-2: 重试 — 走同链路同快照刷新（入口重新快照结构 epoch）。 */
+  const retryImageUpload = () => {
+    if (!uploadError) return;
+    const { file } = uploadError;
+    setUploadError(null);
+    void runImageUpload(file);
+  };
+  /** #1089-1: 唯一内容块删除被 min-1 防线拒绝 → 显式提示（非静默），块保留。 */
+  const deleteBlockWithGuard = (blockIndex: number) => {
+    if (slide.content.length <= 1) {
+      onNotice?.(t('writing.deckLastBlock', '每页至少保留一个内容块'));
+      return;
+    }
+    deckCtl.deleteDeckSlideBlock(index, blockIndex);
   };
   return (
     <div
@@ -664,10 +704,11 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
               <DeckTableBlock
                 key={`t-${ci}`}
                 block={b}
-                /* #1075: 替换/删除入口 — 删除走既有 deleteDeckSlideBlock
-                    （min-1 防线：唯一内容块拒删），替换打开表格数据表单。 */
-                onReplace={() => setTableForm({ mode: 'replace', blockIndex: ci })}
-                onDelete={() => deckCtl.deleteDeckSlideBlock(index, ci)}
+                /* #1075: 替换/删除入口 — 删除走 deleteBlockWithGuard
+                    （min-1 防线 + #1089-1 唯一块拒绝显式提示），
+                    替换打开表格数据表单（#1089-4 错误样式对齐图表表单）。 */
+                onReplace={() => setTableForm({ mode: 'replace', blockIndex: ci, expectBlock: b, expectEpoch: deckCtl.snapshotSlideEpoch(index) })}
+                onDelete={() => deleteBlockWithGuard(ci)}
               />
             );
           if (b.type === 'image')
@@ -677,10 +718,11 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
                 block={b}
                 onReplace={() => {
                   setUploadError(null);
+                  // #1087: 替换目标在入口快照（块引用 + 页结构 epoch）。
                   setUploadTarget({ mode: 'replace', blockIndex: ci, oldCaption: b.caption });
                   fileInputRef.current?.click();
                 }}
-                onDelete={() => deckCtl.deleteDeckSlideBlock(index, ci)}
+                onDelete={() => deleteBlockWithGuard(ci)}
               />
             );
           if (b.type === 'chart')
@@ -688,8 +730,8 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
               <DeckChartBlock
                 key={`chart-${ci}`}
                 block={b}
-                onReplace={() => setChartForm({ mode: 'replace', blockIndex: ci })}
-                onDelete={() => deckCtl.deleteDeckSlideBlock(index, ci)}
+                onReplace={() => setChartForm({ mode: 'replace', blockIndex: ci, expectBlock: b, expectEpoch: deckCtl.snapshotSlideEpoch(index) })}
+                onDelete={() => deleteBlockWithGuard(ci)}
               />
             );
           if (typeof b.text !== 'string') return null;
@@ -746,8 +788,8 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
           </button>
           <button
             onClick={() => {
-              // #1071-3: 表单打开时快照目标 slide（确认时校验身份）。
-              setChartForm({ mode: 'insert', expectSlide: slide });
+              // #1087: 表单打开时快照目标页结构 epoch（确认时校验，失配提示）。
+              setChartForm({ mode: 'insert', expectEpoch: deckCtl.snapshotSlideEpoch(index) });
             }}
             aria-label={t('writing.deckInsertChart', '插入图表')}
             title={t('writing.deckInsertChart', '插入图表')}
@@ -756,11 +798,44 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
             <BarChart3 size={11} /> {t('writing.deckInsertChart', '图表')}
           </button>
         </div>
-        {/* #1044: 上传失败行内错误（非静默），下次尝试自动清除。 */}
+        {/* #1089-3: 插入等待期 pulse 占位块（本地 state，成功替换/失败移除，
+            不落 deck 数据；对齐 DocEditor 上传占位节点）。 */}
+        {uploadPending && (
+          <div
+            role="status"
+            aria-label={t('writing.deckUploadPending', '图片上传中')}
+            data-testid={`deck-upload-pending-${index}`}
+            className="flex h-14 w-full items-center justify-center rounded border border-dashed border-border bg-surface opacity-70"
+          >
+            <span className="h-4 w-4 animate-pulse rounded-full bg-border" />
+          </div>
+        )}
+        {/* #1044: 上传失败行内错误（非静默）。#1089-2: 补「重试/忽略」—
+            对齐 DocEditor 错误态结构；重试走同链路同快照刷新（#1087）。 */}
         {uploadError && (
-          <p role="alert" className="rounded border border-error/40 bg-error/10 px-1.5 py-0.5 text-[11px] text-error">
-            {t('writing.deckImageUploadFail', '图片上传失败')}：{uploadError}
-          </p>
+          <div role="alert" className="flex flex-wrap items-center gap-1 rounded border border-error/40 bg-error/10 px-1.5 py-0.5 text-[11px] text-error">
+            {/* #1087: dropped = 上传成功但结构失配被丢弃 — 不带「上传失败」前缀。 */}
+            {!uploadError.dropped && <span className="font-medium">{t('writing.deckImageUploadFail', '图片上传失败')}</span>}
+            <span className="min-w-0 flex-1 truncate">
+              {uploadError.dropped ? uploadError.message : `${uploadError.file.name}: ${uploadError.message}`}
+            </span>
+            <button
+              onClick={retryImageUpload}
+              aria-label={t('writing.imageRetry', '重试')}
+              title={t('writing.imageRetry', '重试')}
+              className="shrink-0 rounded px-1 py-0.5 text-[11px] text-error transition-colors hover:bg-surface"
+            >
+              {t('writing.imageRetry', '重试')}
+            </button>
+            <button
+              onClick={() => setUploadError(null)}
+              aria-label={t('writing.imageDismiss', '忽略')}
+              title={t('writing.imageDismiss', '忽略')}
+              className="shrink-0 rounded px-1 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface hover:text-text-primary"
+            >
+              {t('writing.imageDismiss', '忽略')}
+            </button>
+          </div>
         )}
         {/* #1044: 隐藏文件选择 — 插入与替换共用一个 input（uploadTarget 决定落点）。 */}
         <input
@@ -796,27 +871,40 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
           />
         )}
       </div>
-      {/* #1044: 结构化图表表单 — 插入/替换共用；spec 经 chartBlockSchema 校验后入 content。 */}
+      {/* #1044: 结构化图表表单 — 插入/替换共用；spec 经 chartBlockSchema 校验后入 content。
+          #1087: 打开时快照页结构 epoch（+替换模式的块引用），确认时校验 — 打开到
+          确认之间页被删/移/整 deck 替换（如 AI 写回落地）→ 放弃 + onNotice 提示。 */}
       {chartForm && (
         <DeckChartFormDialog
           initialBlock={chartForm.mode === 'replace' ? slide.content[chartForm.blockIndex] : undefined}
           onConfirm={(block: DeckChartFormResult) => {
-            // #1071-3: 插入带入口快照（表单打开时的 slide）— 打开到确认之间
-            // slide 被删/移则放弃，不误插别的页。
-            if (chartForm.mode === 'insert') deckCtl.insertDeckSlideChart(index, block.spec, block.caption, chartForm.expectSlide);
+            if (!chartForm.expectEpoch || !deckCtl.verifySlideEpoch(chartForm.expectEpoch)) {
+              // #1087: 打开到确认之间页结构已变（如 AI 写回落地）→ 放弃 + 提示。
+              onNotice?.(t('writing.deckFormTargetGone', '该页已被修改或移除，未能完成插入/替换，请重试'), 6000);
+              setChartForm(null);
+              return;
+            }
+            // #1087: 插入带入口结构快照 — 确认（同步事件）到写回之间无 await，
+            // epoch 校验在 setter 内以最新状态权威兜底。
+            if (chartForm.mode === 'insert') deckCtl.insertDeckSlideChart(index, block.spec, block.caption, chartForm.expectEpoch);
             // #1063: 替换同样带块身份快照（表单打开到确认之间块可能被删/移动）。
-            else deckCtl.replaceDeckSlideBlock(index, chartForm.blockIndex, block, slide.content[chartForm.blockIndex]);
+            else deckCtl.replaceDeckSlideBlock(index, chartForm.blockIndex, block, chartForm.expectBlock, chartForm.expectEpoch);
             setChartForm(null);
           }}
           onClose={() => setChartForm(null)}
         />
       )}
-      {/* #1075: 表格数据表单（替换）— 原位替换 table 块，带块身份快照（同上）。 */}
+      {/* #1075: 表格数据表单（替换）— 原位替换 table 块，带块身份 + 页结构快照（同上）。 */}
       {tableForm && (
         <DeckTableFormDialog
           initialBlock={slide.content[tableForm.blockIndex]}
           onConfirm={(block: { type: 'table'; data: string }) => {
-            deckCtl.replaceDeckSlideBlock(index, tableForm.blockIndex, block, slide.content[tableForm.blockIndex]);
+            if (!tableForm.expectEpoch || !deckCtl.verifySlideEpoch(tableForm.expectEpoch)) {
+              onNotice?.(t('writing.deckFormTargetGone', '该页已被修改或移除，未能完成插入/替换，请重试'), 6000);
+              setTableForm(null);
+              return;
+            }
+            deckCtl.replaceDeckSlideBlock(index, tableForm.blockIndex, block, tableForm.expectBlock, tableForm.expectEpoch);
             setTableForm(null);
           }}
           onClose={() => setTableForm(null)}
@@ -839,9 +927,12 @@ export function DeckView(input: {
   onAddSlideComment?: (slideIndex0: number, anchorText: string) => void;
   /** #1051: 评论标记点击 → 侧边栏联动。 */
   onCommentClick?: (commentId: string) => void;
+  /** #1087: 丢弃/拒绝提示通道（路由 showNotice 横幅）— epoch 失配放弃插入、
+   * #1089-1 唯一块拒绝删除等场景明示（非静默）。 */
+  onNotice?: (text: string, ttlMs?: number) => void;
 }) {
   const { t } = useTranslation();
-  const { deckAsset, slides, body, deckCtl, sendChatText, onCardEdit, deckComments, onAddSlideComment, onCommentClick } = input;
+  const { deckAsset, slides, body, deckCtl, sendChatText, onCardEdit, deckComments, onAddSlideComment, onCommentClick, onNotice } = input;
   return (
     <div className="space-y-3">
                     {deckAsset ? (
@@ -895,6 +986,7 @@ export function DeckView(input: {
                             slideComments={(deckComments ?? []).filter((c) => c.slideIndex === i + 1)}
                             onAddComment={onAddSlideComment}
                             onCommentClick={onCommentClick}
+                            onNotice={onNotice}
                           />
                         ))}
                       </div>

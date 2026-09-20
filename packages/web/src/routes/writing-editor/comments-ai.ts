@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '@/lib/api';
 import type { DocCommentWire } from '@/lib/api';
+import type { DeckWire } from '@/lib/types';
 // #1074-4: 显式 turnId — 排队单槽入队 id;#1072-2 web 适配: SSE 服务端
 // assistant 消息 id 的记录/读取（latestAssistantTurnId）。
 import { latestAssistantTurnId, onChatPendingDropped, pendingTurnId, useChatStore, type ChatPendingDropped } from '@/stores/chat';
@@ -14,13 +15,19 @@ import { latestAssistantTurnId, onChatPendingDropped, pendingTurnId, useChatStor
  * - 「请AI处理」登记表（pendingCommentTurnsRef）+ 按钮 loading（commentProcessing）；
  * - 评论来源 ↔ diff 审阅关联（diffCommentSourcesRef/diffReviewKeyRef）；
  * - turn 收口/写回冲刷/排队丢弃三条清账路径；
- * - ai-replies 专用入口消费（#1064/#1064+#1072-2 turn_id 契约适配）。
+ * - ai-replies 专用入口消费（#1064/#1064+#1072-2 turn_id 契约适配）；
+ * - #1088: deck 评论写回的人工确认闭环（待确认态 + 确认/撤销动作）。
  */
 
 /** #1041/#1060: 单条评论的处理登记 — instruction 即收口匹配用的指令指纹。 */
 interface PendingCommentTurn {
   target: 'section' | 'deck_slide';
   deckKeyAtStart?: string;
+  /**
+   * #1088: 登记时捕获的画布快照（deckSnapshotNow()）— 撤销修改的恢复目标
+   * （null = 画布无 deck，不提供撤销，同 #1071-1 的取舍）。
+   */
+  prevDeck?: DeckWire | null;
   instruction: string;
   /**
    * #1074-4: 指令排队时捕获的显式 turnId（sendMessageQueued 入队 uuid）。
@@ -43,6 +50,18 @@ export interface CommentsAiInput {
   writeBackQueueRef: React.MutableRefObject<Array<{ base: string; next: string; fp: string | null }>>;
   /** 发送通道（doc-chat hook 的 sendChatText）。 */
   sendChatText: (text: string) => Promise<void>;
+  /**
+   * #1088: deck 撤销出口 — 路由接线 deck-conflict 的 restoreDeckSnapshot
+   * （恢复写回前快照 + force 落盘；true = 已恢复并落盘成功）。useCommentsAi
+   * 装配先于 useDeckConflict，路由经 ref 反向引用解耦装配顺序。
+   */
+  onRestoreDeckSnapshot: (prevDeck: DeckWire | null) => Promise<boolean>;
+  /**
+   * #1088: 撤销快照来源 — 登记时捕获当前画布 deck（deckAsset，含文档装载
+   * 与本地编辑的最新状态；store 的 lastDocDeck 只在 doc_updated 事件更新，
+   * 作撤销目标会回退到更早的版本）。
+   */
+  deckSnapshotNow: () => DeckWire | null;
   /** #696: 统一轻提示通道。 */
   onNotice: (text: string, ttlMs?: number) => void;
 }
@@ -67,6 +86,20 @@ export interface CommentsAi {
   failCommentTurnsByFp: (fp: string | null) => void;
   /** #1041: turn 收口 — deck 评论成败判定 + 正文评论失败兜底。 */
   settlePendingCommentTurns: () => void;
+  /**
+   * #1088: deck 写回待确认态（commentId → { undoable }）— 线程级
+   * 「确认修改/撤销修改」动作按钮的数据源（仅 target='deck_slide' 且
+   * 写回落地后进入该态，长期可用、无 TTL）。
+   */
+  deckPendingConfirm: Record<string, { undoable: boolean }>;
+  /** #1088: 「确认修改」— PATCH resolved（正文 diff accept 的对等语义）。 */
+  confirmDeckWriteBack: (commentId: string) => Promise<void>;
+  /** #1088: 「撤销修改」— 恢复写回前 deck 快照（force 落盘）+ 评论保持 open
+   *  + 线程追加「已撤销」说明。 */
+  undoDeckWriteBackForComment: (commentId: string) => Promise<void>;
+  /** #1088: 8s 撤销横幅先行撤销时的收口联动 — 快照一致的待确认态清账并补
+   *  「已撤销」说明（同一写回只有一个撤销出口，不重复）。 */
+  settleDeckConfirmUndo: (prevDeck: DeckWire | null) => Promise<void>;
   /** #1041: 「请AI处理」入口（面板按钮）。 */
   handleCommentAiProcess: (c: DocCommentWire) => void;
   /** 切文档双保险 — 登记/审阅关联/按钮 loading 一次清空。 */
@@ -75,7 +108,7 @@ export interface CommentsAi {
 
 export function useCommentsAi(input: CommentsAiInput): CommentsAi {
   const { t } = useTranslation();
-  const { docId, docComments, setDocComments, diffReview, pendingWriteBackRef, writeBackQueueRef, sendChatText, onNotice } = input;
+  const { docId, docComments, setDocComments, diffReview, pendingWriteBackRef, writeBackQueueRef, sendChatText, onNotice, onRestoreDeckSnapshot, deckSnapshotNow } = input;
 
   // ── #1041: 「请AI处理」评论驱动 AI 编辑闭环 ──────────────────────────
   // pendingCommentTurnsRef: 点击时同步登记(防同帧双击并发,issue 用例 6)。
@@ -102,6 +135,17 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
   const [commentProcessing, setCommentProcessing] = useState<Record<string, boolean>>({});
   const docCommentsRef = useRef(docComments);
   docCommentsRef.current = docComments;
+
+  /**
+   * #1088: deck 写回待确认态 — 写回落地（deck 有变化）后评论不再自动
+   * resolved，而是进入「确认修改/撤销修改」的待确认态（对齐正文评论的
+   * diff accept/reject 审阅环节）。快照（写回前 deck）留在 ref 供撤销恢复，
+   * 面板只需要 ids/undoable 布尔，走 state 镜像。无 TTL — 8s 撤销横幅
+   * （#1071-1）超时后待确认态长期可用；8s 横幅先行撤销时经
+   * settleDeckConfirmUndo 联动收口（同一写回不重复出口）。
+   */
+  const deckConfirmRef = useRef<Map<string, { prevDeck: DeckWire | null }>>(new Map());
+  const [deckPendingConfirm, setDeckPendingConfirm] = useState<Record<string, { undoable: boolean }>>({});
 
   /** #1060: 收口单个评论的按钮 loading(消费点统一走这里)。 */
   const clearCommentProcessing = useCallback((id: string) => {
@@ -262,10 +306,13 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
    * - 正文评论未产生写回（edit_document 定位失败/模型未动文档）→ AI 回复失败
    *   说明与候选（用例 5），评论保持 open 可重触发；
    * - #1051 deck 评论：deck 无 diff 审阅（edit_deck 写回直接落画布）→ turn 期间
-   *   Doc.deck 有变化 = 修改已生效（AI 回复 + 自动 resolved），无变化则失败说明。
+   *   Doc.deck 有变化 = 修改已生效（AI 回复 + #1088 进入待确认态），无变化则
+   *   失败说明（无修改失败路径维持现状，用例 4 回归）。
    * #1060: 只收口「本 turn 实际发出其指令」的评论（指纹 = 会话最后一条非附件
    * 提示的 user 消息）— 排队中/被覆盖的评论不被本 turn 误收口（此前扫全部
    * user 消息的 sent 判定会把排队评论一并冲掉，即误归属窗口之一）。
+   * #1088: deck 写回不再自动 resolved — 线程进入待确认态（确认/撤销按钮），
+   * 撤销快照 = 登记时的 deck 基线（deckKeyAtStart）。
    */
   const settlePendingCommentTurns = useCallback(() => {
     if (pendingCommentTurnsRef.current.size === 0) return;
@@ -284,7 +331,10 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
       if (meta.target !== 'deck_slide') continue;
       if (deckNow !== meta.deckKeyAtStart) {
         void appendAiReply(id, lastAssistantAnswer() || t('writing.commentAiDeckDone', 'AI 已按评论意见修改幻灯片（画布已更新）。'));
-        void resolveCommentById(id);
+        // #1088: 不再自动 resolved — 进入待确认态，撤销快照 = 登记时的画布 deck。
+        const prevDeck = meta.prevDeck ?? null;
+        deckConfirmRef.current.set(id, { prevDeck });
+        setDeckPendingConfirm((prev) => ({ ...prev, [id]: { undoable: prevDeck !== null } }));
       } else {
         void appendAiReply(id, commentFailReply(id, 'deck_slide'));
       }
@@ -297,7 +347,72 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
       if (meta.target !== 'section') continue;
       void appendAiReply(id, commentFailReply(id, 'section'));
     }
-  }, [docId, currentTurnInstruction, clearCommentProcessing, appendAiReply, lastAssistantAnswer, resolveCommentById, commentFailReply, t, writeBackQueueRef]);
+  }, [docId, currentTurnInstruction, clearCommentProcessing, appendAiReply, lastAssistantAnswer, commentFailReply, t, writeBackQueueRef]);
+
+  // ── #1088: deck 写回人工确认闭环 ────────────────────────────────────
+  // 状态机：processing →（写回落地）pending-confirm → 确认（resolved）/
+  // 撤销（恢复快照 + open + 线程补「已撤销」说明）。pending-confirm 无 TTL
+  // （8s 撤销横幅是 #1071-1 的独立补救出口，超时不再强制收口本态）。
+
+  /** 撤销收口（共享）— 清待确认态 + 线程追加「已撤销」说明；评论保持 open 可重新处理。 */
+  const finishDeckUndo = useCallback(async (commentId: string) => {
+    deckConfirmRef.current.delete(commentId);
+    setDeckPendingConfirm((prev) => {
+      if (!prev[commentId]) return prev;
+      const next = { ...prev };
+      delete next[commentId];
+      return next;
+    });
+    await appendAiReply(commentId, t('writing.commentAiDeckUndone', '已撤销本次 AI 的幻灯片修改，画布已恢复为处理前版本 — 评论保持打开，可重新处理。'));
+  }, [appendAiReply, t]);
+
+  /** #1088: 「确认修改」— PATCH resolved（正文 diff accept 的对等语义）。 */
+  const confirmDeckWriteBack = useCallback(async (commentId: string) => {
+    if (!deckConfirmRef.current.has(commentId)) return;
+    deckConfirmRef.current.delete(commentId);
+    setDeckPendingConfirm((prev) => {
+      if (!prev[commentId]) return prev;
+      const next = { ...prev };
+      delete next[commentId];
+      return next;
+    });
+    await resolveCommentById(commentId);
+    onNotice(t('writing.commentDeckConfirmDone', '已确认修改 — 评论已标记解决'), 3000);
+  }, [resolveCommentById, onNotice, t]);
+
+  /**
+   * #1088: 「撤销修改」— 恢复写回前 deck 快照（经路由接线的
+   * restoreDeckSnapshot：force 落盘覆盖服务端 AI 版本）+ 评论保持 open +
+   * 线程追加「已撤销」说明。互斥守卫同 #1043 KeepMine：正文审阅未决/
+   * 写回批次待冲刷时 body 处于审阅前状态，连带 force 落盘会盖回审阅前正文
+   * — 先让用户处理审阅，待确认态保留可重试。落盘失败同样保留待确认态
+   * （警示条已挂，重试撤销即可）。
+   */
+  const undoDeckWriteBackForComment = useCallback(async (commentId: string) => {
+    const entry = deckConfirmRef.current.get(commentId);
+    if (!entry || !entry.prevDeck) return;
+    if (diffReview !== null || pendingWriteBackRef.current !== null) {
+      onNotice(t('writing.reviewFirstForDeckUndo', '请先处理当前的 AI 修改审阅，再撤销幻灯片修改'));
+      return;
+    }
+    const ok = await onRestoreDeckSnapshot(entry.prevDeck);
+    if (!ok) return;
+    await finishDeckUndo(commentId);
+  }, [diffReview, pendingWriteBackRef, onNotice, t, onRestoreDeckSnapshot, finishDeckUndo]);
+
+  /**
+   * #1088: 8s 撤销横幅（#1071-1）先行撤销时的收口联动 — 快照一致（同一笔
+   * 写回）的待确认态同步清账并补「已撤销」说明；画布已被横幅出口恢复，
+   * 评论侧只做状态收口，不再重复落盘（不冲突：两个出口各自幂等）。
+   */
+  const settleDeckConfirmUndo = useCallback(async (prevDeck: DeckWire | null) => {
+    if (!prevDeck) return;
+    const key = JSON.stringify(prevDeck);
+    for (const [id, entry] of [...deckConfirmRef.current.entries()]) {
+      if (JSON.stringify(entry.prevDeck) !== key) continue;
+      await finishDeckUndo(id);
+    }
+  }, [finishDeckUndo]);
 
   /**
    * #1041: 「请AI处理」— 评论正文（编辑指令）+ anchorText 定位上下文 +
@@ -347,9 +462,12 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
           '请直接调用 edit_document 工具完成修改（old_text 用上面的原文片段，new_text 为按评论意见修改后的内容）。完成后请在回复中说明你做了什么修改。',
         ].filter(Boolean).join('\n');
     // 同步登记 — 防同帧双击并发（用例 6）；deck 评论记录起始 deck 基线用于收口判定。
+    // #1088: 同时捕获画布快照（撤销修改的恢复目标 — 画布是含文档装载/本地
+    // 编辑的最新 deck，比 store 的 lastDocDeck 更贴近「写回前」状态）。
     pendingCommentTurnsRef.current.set(c.id, {
       target: isDeck ? 'deck_slide' : 'section',
       ...(isDeck ? { deckKeyAtStart: JSON.stringify(useChatStore.getState().sessions[`doc-${docId}`]?.lastDocDeck ?? null) } : {}),
+      ...(isDeck ? { prevDeck: deckSnapshotNow() } : {}),
       instruction,
     });
     setCommentProcessing((prev) => ({ ...prev, [c.id]: true }));
@@ -367,7 +485,7 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
         if (reg) pendingCommentTurnsRef.current.set(c.id, { ...reg, turnId: queuedTurnId });
       }
     })();
-  }, [docId, diffReview, pendingWriteBackRef, onNotice, t, sendChatText]);
+  }, [docId, diffReview, pendingWriteBackRef, onNotice, t, sendChatText, deckSnapshotNow]);
 
   // #1060: 排队指令被覆盖/Stop/regenerate 清空 — store 单槽只保留最后一条,
   // 被静默丢弃的评论指令此前永久滞留登记表（has() 守卫反把合法重试挡死,
@@ -387,6 +505,9 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
   const resetForDocSwitch = useCallback(() => {
     pendingCommentTurnsRef.current.clear();
     diffCommentSourcesRef.current = null;
+    // #1088: 待确认态（快照属于旧文档）一并清空。
+    deckConfirmRef.current.clear();
+    setDeckPendingConfirm({});
     setCommentProcessing({});
   }, []);
 
@@ -406,6 +527,10 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
     attachCommentSourcesToReview,
     failCommentTurnsByFp,
     settlePendingCommentTurns,
+    deckPendingConfirm,
+    confirmDeckWriteBack,
+    undoDeckWriteBackForComment,
+    settleDeckConfirmUndo,
     handleCommentAiProcess,
     resetForDocSwitch,
   };

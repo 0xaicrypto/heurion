@@ -36,6 +36,15 @@ import i18n from '../i18n';
 export interface CommentAnchorCandidate {
   text: string;
   similarity?: number;
+  /**
+   * #1089-5: 服务端候选在 markdown 正文中的起点偏移（closestTextCandidates
+   * 的 raw body offset — 候选窗口首行去首部空白后的绝对下标）。装饰层按
+   * 归一化前缀就近消费（见 nearestSpanToServerOffset），重扫多命中不再
+   * 误判歧义。
+   */
+  start?: number;
+  /** #1089-5: 服务端候选的所属标题摘要（侧边栏候选列表展示用）。 */
+  heading?: string;
 }
 
 export interface CommentAnchorItem {
@@ -47,10 +56,21 @@ export interface CommentAnchorItem {
   located: boolean;
   /** #1039 漂移诊断 — located=false 时的最近候选(按相似度降序)。 */
   candidates?: CommentAnchorCandidate[];
+  /**
+   * #1089-6: 用户「用此位置」显式采纳的候选 — 重定位只认它（候选序自动
+   * 落位被覆盖）；多命中时消歧记忆（adoptAnchorCandidate 写入）钉住所选
+   * 命中。hit = 歧义态命中的出现序（编辑器扫描，无服务端偏移可用）。
+   */
+  chosen?: { text: string; start?: number; hit?: number };
 }
 
 export interface CommentAnchorsData {
   items: CommentAnchorItem[];
+  /**
+   * #1089-5: markdown 正文 — 服务端候选 start 偏移的对齐基准（与编辑器
+   * 文本同用 normalizeWithMap 归一化，前缀长度就近比较）。
+   */
+  bodyText?: string;
   /** 当前激活线程 — 对应高亮加 active 描边(与侧边栏联动)。 */
   activeCommentId?: string | null;
   /** 点击高亮回调 — 侧边栏滚动定位并展开对应线程。 */
@@ -211,6 +231,107 @@ function spanTextMatches(doc: PMNode, span: AnchorSpan, needleNorm: string): boo
   return normalizeWithMap(raw).norm === needleNorm;
 }
 
+/**
+ * #1089-5: raw 字符下标 → 归一化下标（map 严格递增，二分取首个 ≥ raw 的
+ * 位置；raw 落在折叠空白/块分隔符内时取其后字符 — 归一化位置近似，漂移
+ * 单调不影响就近比较）。
+ */
+function normIndexAt(map: ArrayLike<number>, raw: number): number {
+  let lo = 0;
+  let hi = map.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (map[mid] >= raw) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+/** PM 位置 → 文本 raw 下标（posAt 单调，二分取首个 ≥ pmPos 的下标）。 */
+function rawIndexAtPmPos(posAt: ArrayLike<number>, pmPos: number): number {
+  let lo = 0;
+  let hi = posAt.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (posAt[mid] >= pmPos) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+/**
+ * #1089-5: 服务端偏移消费 — 重扫多命中时按「归一化前缀长度」就近选定命中：
+ * want = 正文前缀（到服务端 start）的归一化长度；各命中的距离 = 编辑器全文
+ * 归一化前缀长度与之的差。两文本的 markdown 标记差异（body 有 ##/**，编辑器
+ * 文档无）使前缀长度存在单调漂移，就近比较不受影响 — 消除前端重扫对
+ * 服务端「已定位」结果的误判歧义。
+ */
+export function nearestSpanToServerOffset(
+  spans: AnchorSpan[],
+  index: DocTextIndex,
+  hay: { norm: string; map: number[] },
+  serverStart: number,
+  bodyText: string,
+): AnchorSpan {
+  const want = normalizeWithMap(bodyText.slice(0, Math.max(0, serverStart))).norm.length;
+  let best = spans[0];
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const s of spans) {
+    const raw = rawIndexAtPmPos(index.posAt, s.from);
+    const d = Math.abs(normIndexAt(hay.map, raw) - want);
+    if (d < bestDist) {
+      bestDist = d;
+      best = s;
+    }
+  }
+  return best;
+}
+
+/** #1089-6: open 线程的单条落位 — 装饰构建与侧边栏 issue 描述同源消费
+ *  （候选序 + 消歧记忆 + 服务端偏移，一处逻辑不漂移）。 */
+interface OpenAnchorPlacement {
+  span: AnchorSpan;
+  /** 实际命中的 needle（候选文本或 anchorText）— spec.needle 消费方依赖。 */
+  needle: string;
+  /** 漂移候选命中（提示态 + 漂移 title）。 */
+  drift: boolean;
+  /** 歧义态命中（全部命中提示渲染 + ambiguous title）。 */
+  ambiguousSpan: boolean;
+}
+
+function resolveOpenPlacements(
+  item: CommentAnchorItem,
+  hay: { norm: string; map: number[] },
+  index: DocTextIndex,
+  data: CommentAnchorsData,
+): OpenAnchorPlacement[] {
+  // #1089-6: 用户显式采纳的候选优先 — 重定位只认它（候选序自动落位被覆盖）。
+  const cands: Array<{ text: string; start?: number }> = item.chosen
+    ? [item.chosen]
+    : item.located
+      ? [{ text: item.anchorText }]
+      : (item.candidates ?? []).map((c) => ({ text: c.text, start: c.start }));
+  for (const cand of cands) {
+    const resolved = resolveAnchorSpans(item.commentId, locateAllSpans(hay, index, cand.text));
+    if (resolved.ambiguous && typeof cand.start === 'number' && data.bodyText) {
+      // #1089-5: 服务端候选带精确偏移 — 重扫多命中按偏移就近落位，不再误判
+      // 歧义（服务端已定位无歧义的结果被前端重扫推翻，即本分支消灭的缺陷）。
+      const span = nearestSpanToServerOffset(resolved.all, index, hay, cand.start, data.bodyText);
+      rememberAnchorSpan(item.commentId, span);
+      return [{ span, needle: cand.text, drift: !item.located, ambiguousSpan: false }];
+    }
+    if (resolved.ambiguous) {
+      // #1071-2: 歧义 — 全部命中渲染提示态，定位决策显式交给用户。
+      return resolved.all.map((span) => ({ span, needle: cand.text, drift: !item.located, ambiguousSpan: true }));
+    }
+    if (resolved.span) {
+      return [{ span: resolved.span, needle: cand.text, drift: !item.located, ambiguousSpan: false }];
+    }
+    // 零命中 → 尝试下一候选（现状）。
+  }
+  return [];
+}
+
 /** 测试与增量路径共用 — 按数据全量重建装饰(初始化/兜底语义)。 */
 export function buildAllCommentDecorations(doc: PMNode, data: CommentAnchorsData): DecorationSet {
   if (!data.items || data.items.length === 0) return DecorationSet.empty;
@@ -234,29 +355,18 @@ export function buildAllCommentDecorations(doc: PMNode, data: CommentAnchorsData
       continue;
     }
     // open:located 直配;漂移 → 逐个候选兜底(提示态,不静默消失)。
-    const needles = item.located ? [item.anchorText] : (item.candidates ?? []).map((c) => c.text);
-    for (const needle of needles) {
-      const resolved = resolveAnchorSpans(item.commentId, locateAllSpans(hay, index, needle));
-      if (resolved.ambiguous) {
-        // #1071-2: 歧义提示态 — 对齐 pending 徽标语义(pending 类 + title),
-        // 全部命中渲染,定位决策显式交给用户,不静默取首个。
-        for (const span of resolved.all) {
-          decorations.push(Decoration.inline(span.from, span.to, {
-            class: `comment-anchor comment-anchor-pending${data.activeCommentId === item.commentId ? ' comment-anchor-active' : ''}`,
-            'data-comment-id': item.commentId,
-            'data-ambiguous': 'true',
-            title: i18n.t('writing.commentAnchorAmbiguous', '锚点文本在文档中多处出现 — 请确认位置'),
-          }, { commentAnchorId: item.commentId, needle }));
-        }
-        break;
-      }
-      if (!resolved.span) continue;
-      decorations.push(Decoration.inline(resolved.span.from, resolved.span.to, {
-        class: `comment-anchor${item.located ? '' : ' comment-anchor-pending'}${data.activeCommentId === item.commentId ? ' comment-anchor-active' : ''}`,
+    // #1089-5/#1089-6: 落位决策(候选序/消歧记忆/服务端偏移)统一走
+    // resolveOpenPlacements — 与侧边栏 issue 描述同源。
+    for (const p of resolveOpenPlacements(item, hay, index, data)) {
+      decorations.push(Decoration.inline(p.span.from, p.span.to, {
+        class: `comment-anchor${p.drift || p.ambiguousSpan ? ' comment-anchor-pending' : ''}${data.activeCommentId === item.commentId ? ' comment-anchor-active' : ''}`,
         'data-comment-id': item.commentId,
-        ...(item.located ? {} : { title: i18n.t('writing.commentAnchorDrift', '待重新定位 — 原文已改动') }),
-      }, { commentAnchorId: item.commentId, needle }));
-      break;
+        ...(p.ambiguousSpan
+          ? { 'data-ambiguous': 'true', title: i18n.t('writing.commentAnchorAmbiguous', '锚点文本在文档中多处出现 — 请确认位置') }
+          : p.drift
+            ? { title: i18n.t('writing.commentAnchorDrift', '待重新定位 — 原文已改动') }
+            : {}),
+      }, { commentAnchorId: item.commentId, needle: p.needle }));
     }
   }
   return decorations.length > 0 ? DecorationSet.create(doc, decorations) : DecorationSet.empty;
@@ -335,29 +445,103 @@ function collectItemDecorations(item: CommentAnchorItem, hay: { norm: string; ma
     }
     return decorations;
   }
-  const needles = item.located ? [item.anchorText] : (item.candidates ?? []).map((c) => c.text);
-  for (const needle of needles) {
-    const resolved = resolveAnchorSpans(item.commentId, locateAllSpans(hay, index, needle));
-    if (resolved.ambiguous) {
-      for (const span of resolved.all) {
-        decorations.push(Decoration.inline(span.from, span.to, {
-          class: `comment-anchor comment-anchor-pending${data.activeCommentId === item.commentId ? ' comment-anchor-active' : ''}`,
-          'data-comment-id': item.commentId,
-          'data-ambiguous': 'true',
-          title: i18n.t('writing.commentAnchorAmbiguous', '锚点文本在文档中多处出现 — 请确认位置'),
-        }, { commentAnchorId: item.commentId, needle }));
-      }
-      break;
-    }
-    if (!resolved.span) continue;
-    decorations.push(Decoration.inline(resolved.span.from, resolved.span.to, {
-      class: `comment-anchor${item.located ? '' : ' comment-anchor-pending'}${data.activeCommentId === item.commentId ? ' comment-anchor-active' : ''}`,
+  for (const p of resolveOpenPlacements(item, hay, index, data)) {
+    decorations.push(Decoration.inline(p.span.from, p.span.to, {
+      class: `comment-anchor${p.drift || p.ambiguousSpan ? ' comment-anchor-pending' : ''}${data.activeCommentId === item.commentId ? ' comment-anchor-active' : ''}`,
       'data-comment-id': item.commentId,
-      ...(item.located ? {} : { title: i18n.t('writing.commentAnchorDrift', '待重新定位 — 原文已改动') }),
-    }, { commentAnchorId: item.commentId, needle }));
-    break;
+      ...(p.ambiguousSpan
+        ? { 'data-ambiguous': 'true', title: i18n.t('writing.commentAnchorAmbiguous', '锚点文本在文档中多处出现 — 请确认位置') }
+        : p.drift
+          ? { title: i18n.t('writing.commentAnchorDrift', '待重新定位 — 原文已改动') }
+          : {}),
+    }, { commentAnchorId: item.commentId, needle: p.needle }));
   }
   return decorations;
+}
+
+/**
+ * #1089-6: 编辑器文档的标题清单 + span 前所属标题（歧义候选的 heading 摘要）。
+ */
+function collectHeadings(doc: PMNode): Array<{ pos: number; text: string }> {
+  const out: Array<{ pos: number; text: string }> = [];
+  doc.descendants((node, pos) => {
+    if (node.type.name === 'heading' && node.textContent.trim()) out.push({ pos, text: node.textContent.trim() });
+    return true;
+  });
+  return out;
+}
+
+function headingBefore(headings: Array<{ pos: number; text: string }>, from: number): string {
+  let hit = '';
+  for (const h of headings) {
+    if (h.pos >= from) break;
+    hit = h.text;
+  }
+  return hit;
+}
+
+export interface AnchorIssueCandidate {
+  /** 候选文本 — 歧义态为锚点原文本身（编辑器扫描无替代候选）。 */
+  text: string;
+  /** 命中之前的最近标题（编辑器文档扫描）。 */
+  heading: string;
+  /** 同文本命中序（采纳时按它精确选定 — 见 adoptAnchorCandidate）。 */
+  hit: number;
+}
+
+export interface AnchorIssue {
+  candidates: AnchorIssueCandidate[];
+}
+
+/**
+ * #1089-6: 侧边栏「待确认位置」数据源 — open 且 located 的评论在当前文档
+ * 多命中且无法消歧（无就近记忆/并列）时给出候选（命中文本 + 所属标题 +
+ * 出现序）。与装饰层同一套定位/消歧逻辑（resolveAnchorSpans 同源）——用户
+ * 采纳后消歧记忆钉住所选命中，此处随之不再报告（徽标消失）。
+ */
+export function describeAnchorIssues(doc: PMNode, items: CommentAnchorItem[]): Record<string, AnchorIssue> {
+  const out: Record<string, AnchorIssue> = {};
+  if (!items || items.length === 0) return out;
+  const index = buildDocTextIndex(doc);
+  const hay = normalizeWithMap(index.text);
+  const headings = collectHeadings(doc);
+  for (const item of items) {
+    if (!item.anchorText || item.status === 'resolved' || !item.located || item.chosen) continue;
+    const resolved = resolveAnchorSpans(item.commentId, locateAllSpans(hay, index, item.anchorText));
+    if (!resolved.ambiguous) continue;
+    out[item.commentId] = {
+      candidates: resolved.all.map((s, i) => ({ text: item.anchorText, heading: headingBefore(headings, s.from), hit: i })),
+    };
+  }
+  return out;
+}
+
+/**
+ * #1089-6: 「用此位置」采纳 — 以候选（文本 + 可选服务端 start / 编辑器命中
+ * 序 hit）在当前文档重定位，选中 span 记入消歧记忆（显式覆盖入口）；返回
+ * 选中的 span，调用方随后以 items.chosen 下发数据重建装饰（侧边栏徽标/
+ * 候选列表随之收口）。无命中返回 null（调用方提示，不静默）。
+ * 选定优先级：hit（歧义态的显式命中序）> start（服务端偏移就近）> 首个。
+ */
+export function adoptAnchorCandidate(
+  doc: PMNode,
+  commentId: string,
+  cand: { text: string; start?: number; hit?: number },
+  bodyText?: string,
+): AnchorSpan | null {
+  if (!cand.text) return null;
+  const index = buildDocTextIndex(doc);
+  const hay = normalizeWithMap(index.text);
+  const spans = locateAllSpans(hay, index, cand.text);
+  if (spans.length === 0) return null;
+  let span = spans[0];
+  if (typeof cand.hit === 'number' && spans[cand.hit]) {
+    span = spans[cand.hit];
+  } else if (spans.length > 1 && typeof cand.start === 'number' && bodyText) {
+    span = nearestSpanToServerOffset(spans, index, hay, cand.start, bodyText);
+  }
+  rememberAnchorSpan(commentId, span);
+  return span;
 }
 
 /** React 侧下发数据 — dispatch 一个 meta 事务即可重建装饰。 */

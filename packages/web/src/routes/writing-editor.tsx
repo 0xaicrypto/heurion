@@ -45,7 +45,10 @@ import { HistoryDialog, PhiDialog, AddReferenceDialog, DeckConflictConfirmDialog
 import { DeckView } from './writing-editor/deck-view';
 import { ChatPanel } from './writing-editor/chat-panel';
 // #1040: 侧边栏评论面板 + 评论创建弹窗(选区高亮标注线程列表)。
-import { AddCommentModal, CommentsPanel } from './writing-editor/comments-panel';
+// #1089-6: AnchorConfirmState — 侧边栏「待确认位置」数据形状。
+import { AddCommentModal, CommentsPanel, type AnchorConfirmState } from './writing-editor/comments-panel';
+// #1089-5/#1089-6: 服务端偏移消费 + 「用此位置」显式重定位注入。
+import { adoptAnchorCandidate, describeAnchorIssues } from '@/lib/comment-anchor';
 import type { DocCommentWire } from '@/lib/api';
 // #996/#1000: 共享 SegmentedControl（视图胶囊）/页头 Toolbar 收敛。
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -472,6 +475,17 @@ export function WritingEditorPage() {
   const chatSessionId = docId ? `doc-${docId}` : '';
 
   // #1074-3: 评论-AI 状态机（登记/loading/收口/清账/ai-replies）— hook 化。
+  // #1088: 撤销出口接线 — useCommentsAi 装配先于 useDeckConflict，快照恢复
+  // （restoreDeckSnapshot）/8s 撤销窗口收口经 ref 反向引用（调用点读取，
+  // 与 hook 装配顺序解耦）；评论出口撤销成功后顺带收掉横幅窗口（同一写回
+  // 不重复出口）。
+  const deckRestoreRef = useRef<(prevDeck: DeckWire | null) => Promise<boolean>>(async () => false);
+  const deckUndoCloseRef = useRef<() => void>(() => {});
+  const onRestoreDeckSnapshot = useCallback(async (prevDeck: DeckWire | null) => {
+    const ok = await deckRestoreRef.current(prevDeck);
+    if (ok) deckUndoCloseRef.current();
+    return ok;
+  }, []);
   const commentsAi = useCommentsAi({
     docId,
     docComments,
@@ -480,6 +494,9 @@ export function WritingEditorPage() {
     pendingWriteBackRef,
     writeBackQueueRef,
     sendChatText: (text) => chat.sendChatText(text),
+    onRestoreDeckSnapshot,
+    // #1088: 撤销快照来源 — 登记时捕获当前画布 deck（deckAsset）。
+    deckSnapshotNow: () => deckAsset,
     onNotice: showNotice,
   });
 
@@ -503,7 +520,84 @@ export function WritingEditorPage() {
     clearSaveFailure: () => setSaveFailure(null),
     onNotice: showNotice,
   });
-  const { deckConflict, deckConflictConfirm, setDeckConflictConfirm, deckConflictResolving, deckUndo, undoDeckWriteBack, resolveDeckConflictKeepMine, resolveDeckConflictUseAI } = deckConflictCtl;
+  const { deckConflict, deckConflictConfirm, setDeckConflictConfirm, deckConflictResolving, deckUndo, undoDeckWriteBack, resolveDeckConflictKeepMine, resolveDeckConflictUseAI, restoreDeckSnapshot, closeDeckUndoWindow } = deckConflictCtl;
+  // #1088: ref 反向接线 — useCommentsAi 的「撤销修改」消费共享内核。
+  deckRestoreRef.current = restoreDeckSnapshot;
+  deckUndoCloseRef.current = closeDeckUndoWindow;
+  // #1088: 局部别名 — 依赖数组以稳定标识进入（对象成员表达式会触发
+  // exhaustive-deps 的整对象要求,同 resetCommentsAi 先例）。
+  const settleDeckConfirmUndo = commentsAi.settleDeckConfirmUndo;
+
+  /**
+   * #1088: 撤销横幅（#1071-1 的 8s 窗口）与评论确认闭环的收口联动 — 横幅
+   * 撤销成功后，快照一致（同一笔写回）的 deck 评论待确认态同步清账并在线程
+   * 补「已撤销」说明：画布已被横幅出口恢复，评论侧不得再对已撤销的修改点
+   * 「确认修改」（不重复/不冲突 — 两个撤销出口各自幂等，先到先得）。
+   */
+  const handleDeckUndoBanner = useCallback(async () => {
+    const prev = deckUndo?.prevDeck ?? null;
+    const ok = await undoDeckWriteBack();
+    if (ok) await settleDeckConfirmUndo(prev);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- undoDeckWriteBack 为 hook 返回值(稳定 useCallback)
+  }, [deckUndo, undoDeckWriteBack, settleDeckConfirmUndo]);
+
+  // ── #1089-5/#1089-6: 锚点偏移消费 + 「待确认位置」确认路径 ─────────────
+  // 用户「用此位置」采纳态（commentId → 候选）— 经 items.chosen 下发装饰层
+  // （重定位只认采纳的候选），采纳后候选列表收起、歧义徽标随重建消失。
+  const [anchorAdoptions, setAnchorAdoptions] = useState<Record<string, { text: string; start?: number; hit?: number }>>({});
+  // 编辑器实例为非响应式 ref — 就绪后 bump 一次触发首扫（徽标/候选列表不因
+  // 首扫空窗缺席）；此后 docComments/采纳态变化照常重扫。
+  const [anchorEditorTick, setAnchorEditorTick] = useState(0);
+  useEffect(() => {
+    if (polishEditorRef.current) {
+      setAnchorEditorTick((t) => t + 1);
+      return;
+    }
+    const timer = setInterval(() => {
+      if (polishEditorRef.current) {
+        clearInterval(timer);
+        setAnchorEditorTick((t) => t + 1);
+      }
+    }, 100);
+    return () => clearInterval(timer);
+  }, []);
+  // 侧边栏「待确认位置」数据 — 歧义态经编辑器全文扫描（describeAnchorIssues，
+  // 与装饰层同一套定位/消歧/服务端偏移逻辑，不漂移）；漂移态直接用服务端候选。
+  const anchorConfirms = useMemo(() => {
+    const out: Record<string, AnchorConfirmState> = {};
+    const ed = polishEditorRef.current;
+    const locatedItems = docComments
+      .filter((c) => c.status !== 'resolved' && c.target === 'section' && c.anchor?.located !== false && !anchorAdoptions[c.id])
+      .map((c) => ({ commentId: c.id, anchorText: c.anchor_text, status: c.status, located: true }));
+    const issues = ed && locatedItems.length > 0 ? describeAnchorIssues(ed.state.doc, locatedItems) : {};
+    for (const c of docComments) {
+      if (c.status === 'resolved' || c.target !== 'section') continue;
+      const issue = issues[c.id];
+      if (issue) {
+        out[c.id] = { kind: 'ambiguous', candidates: issue.candidates };
+        continue;
+      }
+      const driftCands = c.anchor?.located === false ? c.anchor.candidates : undefined;
+      if (driftCands && driftCands.length > 0 && !anchorAdoptions[c.id]) {
+        out[c.id] = { kind: 'drift', candidates: driftCands.map((x) => ({ text: x.text, heading: x.heading, start: x.start })) };
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 编辑器 ref 非响应式（anchorEditorTick 就绪触发重扫）
+  }, [docComments, anchorAdoptions, anchorEditorTick]);
+
+  /** #1089-6: 「用此位置」— 以候选重定位（显式 span/记忆注入）+ 采纳态记录。 */
+  const handleAdoptAnchorCandidate = useCallback((c: DocCommentWire, cand: { text: string; start?: number; hit?: number }) => {
+    const ed = polishEditorRef.current;
+    if (!ed) return;
+    const span = adoptAnchorCandidate(ed.state.doc, c.id, cand, bodyRef.current);
+    if (!span) {
+      showNotice(t('writing.commentAnchorAdoptFailed', '未能在正文中定位该候选，请稍后重试'), 4000);
+      return;
+    }
+    setAnchorAdoptions((prev) => ({ ...prev, [c.id]: cand }));
+    setActiveCommentId(c.id);
+  }, [showNotice, t]);
 
   // #1074-3: autosave 调度（守卫依赖 deckConflict → 必须位于其 hook 之后;
   // 此前位于 markDirty 旁,因 hook 装配顺序下移 — 行为不变）。
@@ -1112,6 +1206,8 @@ export function WritingEditorPage() {
     setDocComments([]);
     setActiveCommentId(null);
     setCommentDraft(null);
+    // #1089-6: 锚点采纳态随切文档清空（采纳候选属于旧文档正文）。
+    setAnchorAdoptions({});
     // #1041: 评论处理在途状态一并清 — 旧文档的 pending turn/审阅关联/
     // 按钮 loading 不得串染(#1074-3: 清单随状态机下沉 hook reset)。
     resetCommentsAi();
@@ -1612,7 +1708,7 @@ export function WritingEditorPage() {
                      TTL 内可一键回滚（no-op 优于 AI 改错页后无出口）。 */
                   <div data-testid="deck-undo-banner" role="status" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-[12px] text-text-primary">
                     <span>{t('writing.deckUndoBanner', 'AI 已更新幻灯片画布 — 如不符合预期可撤销')}</span>
-                    <Button size="sm" variant="secondary" onClick={() => void undoDeckWriteBack()}>{t('writing.deckUndo', '撤销')}</Button>
+                    <Button size="sm" variant="secondary" onClick={() => void handleDeckUndoBanner()}>{t('writing.deckUndo', '撤销')}</Button>
                   </div>
                 )}
                 {deckConflict && (
@@ -1656,6 +1752,8 @@ export function WritingEditorPage() {
                       }))}
                     onAddSlideComment={(slideIndex0, anchorText) => setCommentDraft({ target: 'deck_slide', slideIndex0, anchorText })}
                     onCommentClick={(id) => { setActiveCommentId(id); setCommentsPanelOpen(true); }}
+                    /* #1087: deck 插入竞态丢弃/唯一块拒绝（#1089-1）走统一轻提示通道。 */
+                    onNotice={showNotice}
                   />
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
@@ -1726,14 +1824,19 @@ export function WritingEditorPage() {
                       }}
                       /* #1040: 评论锚点高亮 + 气泡「添加评论」入口 — 点击高亮
                           激活线程并展开侧边栏,双向联动。 */
+                          /* #1089-5/#1089-6: 候选透传服务端 start/heading（偏移消歧 +
+                             侧边栏候选列表）；chosen = 用户「用此位置」采纳的候选；
+                             bodyText = 归一化前缀对齐用的 markdown 正文。 */
                       comments={{
                         items: docComments.map((c) => ({
                           commentId: c.id,
                           anchorText: c.anchor_text,
                           status: c.status,
                           located: c.anchor?.located ?? true,
-                          candidates: c.anchor?.candidates?.map((x) => ({ text: x.text, similarity: x.similarity })),
+                          candidates: c.anchor?.candidates?.map((x) => ({ text: x.text, start: x.start, heading: x.heading, similarity: x.similarity })),
+                          ...(anchorAdoptions[c.id] ? { chosen: anchorAdoptions[c.id] } : {}),
                         })),
+                        bodyText: body,
                         activeCommentId: activeCommentId,
                         onAnchorClick: (id) => { setActiveCommentId(id); setCommentsPanelOpen(true); },
                       }}
@@ -1782,6 +1885,14 @@ export function WritingEditorPage() {
               onToggleResolve={(c) => void toggleCommentResolved(c)}
               onAiProcess={commentsAi.handleCommentAiProcess}
               processingCommentIds={commentsAi.commentProcessing}
+              /* #1088: deck 写回待确认 — 线程级确认/撤销动作。 */
+              deckConfirming={commentsAi.deckPendingConfirm}
+              onDeckConfirm={(id) => void commentsAi.confirmDeckWriteBack(id)}
+              onDeckUndo={(id) => void commentsAi.undoDeckWriteBackForComment(id)}
+              /* #1089-6: 待确认位置 — 候选列表 + 「用此位置」采纳。 */
+              anchorConfirms={anchorConfirms}
+              adoptedAnchors={anchorAdoptions}
+              onAdoptAnchor={handleAdoptAnchorCandidate}
             />
           )}
 

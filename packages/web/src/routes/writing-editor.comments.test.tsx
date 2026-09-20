@@ -12,11 +12,12 @@
  */
 import { describe, test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, fireEvent, screen, act, cleanup, waitFor, within } from '@testing-library/react';
-import { useRef, useState, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import type { Editor } from '@tiptap/react';
 import { DocEditor, selectionWithinSingleBlock } from '@/components/DocEditor';
-import { AddCommentModal, CommentsPanel } from './writing-editor/comments-panel';
+import { AddCommentModal, CommentsPanel, type AnchorConfirmState } from './writing-editor/comments-panel';
+import { adoptAnchorCandidate, describeAnchorIssues } from '@/lib/comment-anchor';
 import { api, type DocCommentWire } from '@/lib/api';
 // i18n 初始化 — 组件内 t() 需插值。
 import i18n from '@/i18n';
@@ -129,7 +130,8 @@ type CommentFixture = {
   id: string;
   anchor_text: string;
   status: string;
-  anchor?: { located: boolean; candidates?: Array<{ text: string; start: number; heading: string; similarity: number }> };
+  // #1089-5: start/heading 可选 — 服务端候选的精确偏移与标题摘要。
+  anchor?: { located: boolean; candidates?: Array<{ text: string; start?: number; heading?: string; similarity: number }> };
   replies?: Array<{ id: string; role: string; text: string; created_at: string }>;
 };
 
@@ -148,19 +150,27 @@ function makeComment(fx: CommentFixture) {
     created_at: '2026-01-01T00:00:00Z',
     resolved_at: fx.status === 'resolved' ? '2026-01-02T00:00:00Z' : null,
     replies: fx.replies ?? [],
-    ...(fx.status === 'open' && fx.anchor ? { anchor: fx.anchor } : {}),
-  };
+    // #1089-5: fixture 的 start/heading 可选（服务端 wire 里 start 必填 —
+    // 缺失形态用于回归「无偏移不误判」路径，cast 越过 wire 的必填标注）。
+    ...(fx.status === 'open' && fx.anchor
+      ? { anchor: fx.anchor as unknown as DocCommentWire['anchor'] }
+      : {}),
+  } as DocCommentWire;
 }
 
 /** 与 writing-editor.tsx 相同的接线 — DocEditor + 弹窗 + 侧边栏面板。
  * #1070: 创建拦截同款 — 跨块选区不建草稿、showNotice 通道提示（这里以
- * 本地 state 具象化 notice,断言「有提示、无弹窗、无 API 调用」）。 */
-function CommentsHarness({ initialComments, editorRefOut }: {
+ * 本地 state 具象化 notice,断言「有提示、无弹窗、无 API 调用」）。
+ * #1089: body 可覆盖（偏移消歧/歧义扫描需要受控正文）+ 采纳态/确认数据
+ * 与路由同口径装配。 */
+function CommentsHarness({ initialComments, editorRefOut, body: bodyOverride }: {
   initialComments: CommentFixture[];
   editorRefOut?: MutableRefObject<Editor | null>;
+  body?: string;
 }) {
   const editorRef = useRef<Editor | null>(null);
   const refHolder = editorRefOut ?? editorRef;
+  const docBody = bodyOverride ?? BODY;
   // #1051: 显式 DocCommentWire[] — makeComment 产出与服务端 wire 形状对齐。
   const [comments, setComments] = useState<DocCommentWire[]>(initialComments.map(makeComment));
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -168,6 +178,55 @@ function CommentsHarness({ initialComments, editorRefOut }: {
   const [submitting, setSubmitting] = useState(false);
   // #1070: showNotice 通道的 harness 具象（生产走路由 aiEditNotice 轻提示条）。
   const [notice, setNotice] = useState<string | null>(null);
+  // #1089-6: 「用此位置」采纳态 + 侧边栏确认数据 — 与 writing-editor.tsx 同口径。
+  const [adoptions, setAdoptions] = useState<Record<string, { text: string; start?: number; hit?: number }>>({});
+  const [editorTick, setEditorTick] = useState(0);
+  useEffect(() => {
+    // 编辑器实例为非响应式 ref — 就绪后 bump 一次触发首扫。
+    if (refHolder.current) {
+      setEditorTick((t) => t + 1);
+      return;
+    }
+    const timer = setInterval(() => {
+      if (refHolder.current) {
+        clearInterval(timer);
+        setEditorTick((t) => t + 1);
+      }
+    }, 50);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refHolder 为稳定 ref（prop 或本地 useRef）
+  }, []);
+  const anchorConfirms = useMemo(() => {
+    const out: Record<string, AnchorConfirmState> = {};
+    const ed = refHolder.current;
+    const locatedItems = comments
+      .filter((c) => c.status !== 'resolved' && c.target === 'section' && c.anchor?.located !== false && !adoptions[c.id])
+      .map((c) => ({ commentId: c.id, anchorText: c.anchor_text, status: c.status, located: true }));
+    const issues = ed && locatedItems.length > 0 ? describeAnchorIssues(ed.state.doc, locatedItems) : {};
+    for (const c of comments) {
+      if (c.status === 'resolved' || c.target !== 'section') continue;
+      const issue = issues[c.id];
+      if (issue) {
+        out[c.id] = { kind: 'ambiguous', candidates: issue.candidates };
+        continue;
+      }
+      const driftCands = c.anchor?.located === false ? c.anchor.candidates : undefined;
+      if (driftCands && driftCands.length > 0 && !adoptions[c.id]) {
+        out[c.id] = { kind: 'drift', candidates: driftCands.map((x) => ({ text: x.text, heading: x.heading, start: x.start })) };
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refHolder.current 编辑器实例非响应式（editorTick 就绪触发重扫）
+  }, [comments, adoptions, editorTick]);
+  const adoptAnchor = useCallback((c: DocCommentWire, cand: { text: string; start?: number; hit?: number }) => {
+    const ed = refHolder.current;
+    if (!ed) return;
+    const span = adoptAnchorCandidate(ed.state.doc, c.id, cand, docBody);
+    if (!span) return;
+    setAdoptions((prev) => ({ ...prev, [c.id]: cand }));
+    setActiveId(c.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refHolder 为稳定 ref
+  }, [docBody]);
 
   const submit = async (text: string) => {
     if (!draft) return;
@@ -195,7 +254,7 @@ function CommentsHarness({ initialComments, editorRefOut }: {
   return (
     <div>
       <DocEditor
-        value={BODY}
+        value={docBody}
         onChange={() => {}}
         editorRef={refHolder}
         onBubbleAction={() => {}}
@@ -215,8 +274,12 @@ function CommentsHarness({ initialComments, editorRefOut }: {
             anchorText: c.anchor_text,
             status: c.status,
             located: c.anchor?.located ?? true,
-            candidates: c.anchor?.candidates?.map((x) => ({ text: x.text, similarity: x.similarity })),
+            // #1089-5: 候选透传服务端 start/heading（偏移消歧）+ 采纳的 chosen。
+            candidates: c.anchor?.candidates?.map((x) => ({ text: x.text, start: x.start, heading: x.heading, similarity: x.similarity })),
+            ...(adoptions[c.id] ? { chosen: adoptions[c.id] } : {}),
           })),
+          // #1089-5: 归一化前缀对齐用的 markdown 正文。
+          bodyText: docBody,
           activeCommentId: activeId,
           onAnchorClick: (id) => setActiveId(id),
         }}
@@ -231,14 +294,17 @@ function CommentsHarness({ initialComments, editorRefOut }: {
         onSelect={(id) => setActiveId(id)}
         onReply={reply}
         onToggleResolve={(c) => void toggleResolve(c)}
+        anchorConfirms={anchorConfirms}
+        adoptedAnchors={adoptions}
+        onAdoptAnchor={adoptAnchor}
       />
     </div>
   );
 }
 
-async function renderHarness(initialComments: CommentFixture[] = []) {
+async function renderHarness(initialComments: CommentFixture[] = [], body?: string) {
   const editorRef = { current: null } as MutableRefObject<Editor | null>;
-  const utils = render(<CommentsHarness initialComments={initialComments} editorRefOut={editorRef} />);
+  const utils = render(<CommentsHarness initialComments={initialComments} editorRefOut={editorRef} body={body} />);
   await wait(250);
   const editor = editorRef.current as Editor;
   expect(editor).toBeTruthy();
@@ -717,4 +783,121 @@ describe('#1071-1/#1072-5 路由级：deck 写回可撤销窗口 / deckConflict 
     await waitFor(() => expect(screen.getByDisplayValue('AI Slide')).toBeTruthy());
     expect(screen.queryByTestId('deck-undo-banner')).toBeNull();
   }, 15000);
+});
+
+/* ─────────────────────────────────────────────────────────────────────
+ * #1089 — 评论锚点偏移消费（issue 第 5 项）+ 歧义/漂移态侧边栏确认路径
+ * （issue 第 6 项）。harness 与 writing-editor.tsx 同口径接线。
+ * ───────────────────────────────────────────────────────────────────── */
+describe('#1089 锚点偏移消费 + 待确认位置确认路径', () => {
+  beforeEach(() => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+    apiMock.listDocComments.mockResolvedValue({ comments: [] });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  const DUP = '重复出现的候选句子，用于验证服务端偏移消歧。';
+  const dupBody = `## One\n\n开头段落。\n\n${DUP}\n\n## Two\n\n结尾段落。\n\n${DUP}\n`;
+
+  /** #1089-5: 服务端候选带精确偏移（start 指向第二处命中）→ 装饰按偏移
+   *  就近落位，重扫多命中不再误判歧义（不渲染 data-ambiguous 多命中）。 */
+  test('服务端候选偏移：重扫多命中按服务端 start 就近落位，不误判歧义', async () => {
+    const secondStart = dupBody.indexOf(DUP, dupBody.indexOf(DUP) + 1);
+    const { container } = await renderHarness([
+      {
+        id: 'coff',
+        anchor_text: '已漂移的原句。',
+        status: 'open',
+        anchor: { located: false, candidates: [{ text: DUP, start: secondStart, heading: 'Two', similarity: 0.9 }] },
+      },
+    ], dupBody);
+    const decos = container.querySelectorAll('.comment-anchor[data-comment-id="coff"]');
+    // 服务端已定位 — 单命中落位（此前多命中全渲染歧义提示态）
+    expect(decos.length).toBe(1);
+    expect(decos[0].getAttribute('data-ambiguous')).toBeNull();
+    expect(decos[0].classList.contains('comment-anchor-pending')).toBe(true);
+    // 落位 = 服务端 start 指向的第二处命中（最后一个段落）
+    const paras = Array.from(container.querySelectorAll('.ProseMirror > p'));
+    const hit = paras.findIndex((p) => p.querySelector('.comment-anchor[data-comment-id="coff"]'));
+    expect(hit).toBe(paras.length - 1);
+    expect(paras[hit].textContent).toBe(DUP);
+  });
+
+  /** #1089-5 回归：候选无服务端偏移且多命中 — 维持歧义提示态（不静默选边）。 */
+  test('候选无偏移且多命中：维持歧义提示态（回归不静默选边）', async () => {
+    const { container } = await renderHarness([
+      {
+        id: 'coff2',
+        anchor_text: '已漂移的原句。',
+        status: 'open',
+        anchor: { located: false, candidates: [{ text: DUP, heading: 'Two', similarity: 0.9 }] },
+      },
+    ], dupBody);
+    const decos = container.querySelectorAll('.comment-anchor[data-comment-id="coff2"]');
+    expect(decos.length).toBe(2);
+    for (const el of decos) expect(el.getAttribute('data-ambiguous')).toBe('true');
+  });
+
+  /** #1089-6: 歧义态 — 侧边栏「待确认位置」徽标 + 候选列表（text/heading
+   *  摘要）+「用此位置」采纳：正文高亮落到所选命中（单处非歧义实心态），
+   *  徽标与候选列表收口。 */
+  test('歧义态：侧边栏待确认位置徽标 + 候选列表 + 用此位置采纳生效', async () => {
+    const ambBody = '## One\n\n甲段内容目标句在这里。\n\n## Two\n\n乙段内容目标句在这里。\n';
+    const { container } = await renderHarness([
+      { id: 'camb9', anchor_text: '目标句', status: 'open', anchor: { located: true } },
+    ], ambBody);
+    // 徽标 + 候选列表（两条命中，heading 摘要 One/Two）
+    expect(screen.getByTestId('comment-anchor-pending-pos')).toBeTruthy();
+    const list = screen.getByTestId('comment-anchor-candidates-camb9');
+    expect(list.textContent).toContain('目标句');
+    expect(list.textContent).toContain('One');
+    expect(list.textContent).toContain('Two');
+    // 采纳第二个候选 → 高亮单处落位（实心态，非歧义）
+    fireEvent.click(screen.getByTestId('comment-adopt-camb9-1'));
+    await waitFor(() => {
+      const decos = Array.from(container.querySelectorAll('.comment-anchor[data-comment-id="camb9"]'));
+      expect(decos.length).toBe(1);
+      expect(decos[0].classList.contains('comment-anchor-pending')).toBe(false);
+    });
+    // 徽标与候选列表收口
+    expect(screen.queryByTestId('comment-anchor-pending-pos')).toBeNull();
+    expect(screen.queryByTestId('comment-anchor-candidates-camb9')).toBeNull();
+  });
+
+  /** #1089-6: 漂移态 — 候选列表（服务端 text/heading 摘要）+ 采纳第二个
+   *  候选 → 提示态高亮迁移到所选候选，列表收起（徽标保留：服务端仍报漂移）。 */
+  test('漂移态：候选列表 + 用此位置采纳 → 高亮迁移到所选候选', async () => {
+    const cand1 = '第一个候选片段，出现在正文中。';
+    const cand2 = '第二个候选片段，出现在正文中。';
+    const driftBody = `## One\n\n${cand1}\n\n## Two\n\n${cand2}\n`;
+    const { container } = await renderHarness([
+      {
+        id: 'cdr',
+        anchor_text: '已漂移的原句。',
+        status: 'open',
+        anchor: {
+          located: false,
+          candidates: [
+            { text: cand1, start: driftBody.indexOf(cand1), heading: 'One', similarity: 0.9 },
+            { text: cand2, start: driftBody.indexOf(cand2), heading: 'Two', similarity: 0.8 },
+          ],
+        },
+      },
+    ], driftBody);
+    // 现状：首个可定位候选自动落位（提示态）+ 漂移徽标
+    await waitFor(() => expect(container.querySelector('.comment-anchor[data-comment-id="cdr"]')).toBeTruthy());
+    expect(screen.getByTestId('comment-anchor-drifted')).toBeTruthy();
+    const list = screen.getByTestId('comment-anchor-candidates-cdr');
+    expect(list.textContent).toContain('第一个候选片段');
+    expect(list.textContent).toContain('Two');
+    // 采纳第二个候选 → 高亮迁移（覆盖文本 = 所选候选）
+    fireEvent.click(screen.getByTestId('comment-adopt-cdr-1'));
+    await waitFor(() => expect(coveredText(container, 'cdr')).toBe(cand2));
+    // 采纳后候选列表收起
+    expect(screen.queryByTestId('comment-anchor-candidates-cdr')).toBeNull();
+  });
 });

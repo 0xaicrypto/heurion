@@ -3,7 +3,10 @@
  *
  * 锚点判别联合：target 'section' | 'deck_slide'（slideIndex 1-based 与
  * edit_deck 同口径）。「请AI处理」对 deck 评论路由到 edit_deck 指令；
- * deck 写回直接落画布（#773 无 diff 审阅）→ 成功即 AI 回复 + 自动 resolved。
+ * deck 写回直接落画布（#773 无 diff 审阅）→ 成功即 AI 回复。
+ * #1088 — deck 写回不再自动 resolved：线程进入待确认态（确认修改/撤销修改
+ * 动作按钮），确认 = PATCH resolved，撤销 = 恢复写回前 deck 快照（force 落盘）
+ * + 评论保持 open + 线程追加「已撤销」说明。
  * Mock 策略与 writing-editor.comment-ai.test.tsx 同口径（mock @/lib/api +
  * sendChatFull turn 脚本）。
  */
@@ -80,7 +83,10 @@ vi.mock('@/lib/api', () => ({
 }));
 
 const DOC_ID = 'd1';
-const BASE_BODY = '## Intro\n\n正文。\n';
+// #1088: 无尾部换行 — 编辑器 markdown round-trip 会去掉尾部换行,deck turn
+// 携带的 body（脚本默认 BASE_BODY）须与 round-trip 形态一致,否则 deck 评论
+// 的撤销会被「正文审阅未决」互斥守卫挡住（守卫行为本身正确,#895 纪律）。
+const BASE_BODY = '## Intro\n\n正文。';
 const DECK = {
   title: '研究 deck',
   slides: [
@@ -290,8 +296,9 @@ describe('#1051 deck slide 评论（issue 用例表 5 条）', () => {
     expect(opts.text).not.toContain('edit_document');
   });
 
-  /** 用例 4：AI 处理成功 → AI 回复 + deck slide 更新；deck 写回直接落画布 → 评论 resolved。 */
-  test('处理成功：AI 回复入线程，deck 更新并自动 resolved', async () => {
+  /** 用例 4（#1088 用例 1 改写）：AI 处理成功 → AI 回复 + deck 更新；评论**不**自动
+   *  resolved，线程进入待确认态（确认修改/撤销修改动作按钮出现）。 */
+  test('处理成功：AI 回复入线程，deck 更新 — 评论不自动 resolved，线程出现确认/撤销按钮（#1088）', async () => {
     const nextDeck = {
       ...DECK,
       slides: DECK.slides.map((s, i) => (i === 1 ? { ...s, content: [{ type: 'paragraph', text: '120 例前瞻队列，随访 5 年。', style: 'bullet' }] } : s)),
@@ -305,15 +312,96 @@ describe('#1051 deck slide 评论（issue 用例表 5 条）', () => {
     // AI 回复入线程（#1064 集成收口：专用 ai-replies 入口，参数 (docId, commentId, text)）
     await waitFor(() => expect(apiMock.createDocCommentAiReply).toHaveBeenCalled());
     expect(apiMock.createDocCommentAiReply.mock.calls[0][2]).toContain('随访');
-    // deck 写回直接落画布（#773 无 diff 审阅）→ 评论自动 resolved
-    await waitFor(() => expect(apiMock.updateDocComment).toHaveBeenCalledWith(DOC_ID, 'cdeck', 'resolved'));
-    // deck 视图呈现更新后的 slide 内容
+    // #1088: 写回落地不再自动 resolved — 评论保持 open，进入待确认态
+    await waitFor(() => expect(screen.getByTestId('comment-deck-confirm-cdeck')).toBeTruthy());
+    expect(apiMock.updateDocComment).not.toHaveBeenCalled();
+    const thread = screen.getByTestId('comment-thread-cdeck');
+    expect(thread.getAttribute('data-status')).toBe('open');
+    // 线程级动作按钮：确认修改 + 撤销修改
+    expect(screen.getByTestId('comment-deck-confirm-btn-cdeck')).toBeTruthy();
+    expect(screen.getByTestId('comment-deck-undo-btn-cdeck')).toBeTruthy();
+    // deck 视图呈现更新后的 slide 内容（回归）
     await switchToDeckView();
     await waitFor(() => {
       const cards = screen.getAllByRole('textbox');
       expect(cards.some((el) => (el as HTMLInputElement).value.includes('随访 5 年'))).toBe(true);
     });
   });
+
+  /** 用例 4b（#1088 用例 2）：点「确认修改」→ PATCH resolved（正文 accept 语义对齐）。 */
+  test('确认修改：PATCH resolved，线程关闭，动作按钮消失（#1088）', async () => {
+    const nextDeck = {
+      ...DECK,
+      slides: DECK.slides.map((s, i) => (i === 1 ? { ...s, content: [{ type: 'paragraph', text: '修改后的内容。', style: 'bullet' }] } : s)),
+    };
+    turnScripts.push({ deck: nextDeck, answer: '已修改。' });
+    renderEditor();
+    await screen.findByDisplayValue('Original');
+    await openCommentsPanel();
+
+    fireEvent.click(screen.getByTestId('comment-ai-process-cdeck'));
+    await screen.findByTestId('comment-deck-confirm-cdeck');
+    fireEvent.click(screen.getByTestId('comment-deck-confirm-btn-cdeck'));
+
+    await waitFor(() => expect(apiMock.updateDocComment).toHaveBeenCalledWith(DOC_ID, 'cdeck', 'resolved'));
+    await waitFor(() => expect(screen.getByTestId('comment-thread-cdeck').getAttribute('data-status')).toBe('resolved'));
+    await waitFor(() => expect(screen.queryByTestId('comment-deck-confirm-cdeck')).toBeNull());
+  });
+
+  /** 用例 4c（#1088 用例 3）：点「撤销修改」→ deck 恢复写回前快照（force 落盘），
+   *  评论保持 open 可重新处理，线程追加「已撤销」说明。 */
+  test('撤销修改：deck 恢复写回前内容（force 落盘），评论保持 open，线程追加已撤销说明（#1088）', async () => {
+    const nextDeck = {
+      ...DECK,
+      slides: DECK.slides.map((s, i) => (i === 1 ? { ...s, content: [{ type: 'paragraph', text: '修改后的内容。', style: 'bullet' }] } : s)),
+    };
+    turnScripts.push({ deck: nextDeck, answer: '已修改。' });
+    renderEditor();
+    await screen.findByDisplayValue('Original');
+    await openCommentsPanel();
+
+    fireEvent.click(screen.getByTestId('comment-ai-process-cdeck'));
+    await screen.findByTestId('comment-deck-confirm-cdeck');
+    apiMock.updateDoc.mockClear();
+    fireEvent.click(screen.getByTestId('comment-deck-undo-btn-cdeck'));
+
+    // 恢复写回前 deck 快照并 force 落盘（覆盖服务端 AI 版本，复用 #1071-1 语义）
+    await waitFor(() => expect(apiMock.updateDoc).toHaveBeenCalledTimes(1));
+    const [, call] = apiMock.updateDoc.mock.calls[0];
+    expect(call).toMatchObject({ force: true });
+    expect(call.deck).toEqual(DECK);
+    // 评论保持 open（可重新处理）且未被 PATCH
+    expect(apiMock.updateDocComment).not.toHaveBeenCalled();
+    expect(screen.getByTestId('comment-thread-cdeck').getAttribute('data-status')).toBe('open');
+    // 线程追加「已撤销」系统说明
+    await waitFor(() => {
+      const replies = screen.getAllByTestId('comment-reply');
+      expect(replies.some((el) => (el.textContent ?? '').includes('已撤销'))).toBe(true);
+    });
+    // 待确认态收口 — 动作按钮消失
+    await waitFor(() => expect(screen.queryByTestId('comment-deck-confirm-cdeck')).toBeNull());
+  });
+
+  /** 用例 4d（#1088）：8s 撤销窗口超时后不再强制收口 — 待确认态长期可用，
+   *  确认动作在超时后仍可完成（pending-confirm 无 TTL）。 */
+  test('8s 撤销窗口超时后确认动作仍可用（pending-confirm 长期可用，#1088）', async () => {
+    const nextDeck = {
+      ...DECK,
+      slides: DECK.slides.map((s, i) => (i === 1 ? { ...s, content: [{ type: 'paragraph', text: '修改后的内容。', style: 'bullet' }] } : s)),
+    };
+    turnScripts.push({ deck: nextDeck, answer: '已修改。' });
+    renderEditor();
+    await screen.findByDisplayValue('Original');
+    await openCommentsPanel();
+
+    fireEvent.click(screen.getByTestId('comment-ai-process-cdeck'));
+    await screen.findByTestId('comment-deck-confirm-cdeck');
+    // 越过 #1071-1 的 8s 撤销窗口（窗口横幅自行收口），待确认态不受影响
+    await act(async () => { await new Promise((r) => setTimeout(r, 8300)); });
+    expect(screen.getByTestId('comment-deck-confirm-btn-cdeck')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('comment-deck-confirm-btn-cdeck'));
+    await waitFor(() => expect(apiMock.updateDocComment).toHaveBeenCalledWith(DOC_ID, 'cdeck', 'resolved'));
+  }, 15000);
 
   /** 用例 5：slide 内容锚点漂移（slide 删除/大改）→ 诊断展示，不崩溃。 */
   test('slide 锚点漂移：待重新定位徽标 + 失败 AI 回复含诊断，不崩溃', async () => {
