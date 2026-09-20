@@ -159,6 +159,13 @@ export interface DeckWire {
   theme?: string
   slides: Array<{
     title: string
+    /**
+     * #1071-4: slide 稳定 id（可选）— web 编辑器首次结构类变更时为无 id 的 slide
+     * 生成（slide_<random>）回填进 Doc.deck；用途：卡片 React key 稳定（排序后
+     * 本地状态不错挂）+ 插入路径的 slide 身份校验（#1071-3）。旧数据/AI 产出无
+     * 此字段，wire 宽松放行。
+     */
+    id?: string
     /** #957: 布局母版（v2,optional）— 缺省 bullets。 */
     layout?: string
     /** #1046: speaker notes（可选）— pptx 导入提取（notesSlideN.xml）、导出写回（worker slide.addNotes）。 */
@@ -189,6 +196,8 @@ export const deckWireSchema = z.object({
   theme: z.string().optional(),
   slides: z.array(z.object({
     title: z.string(),
+    /** #1071-4: slide 稳定 id（可选）— web 编辑器回填，宽松 wire 校验（长度上限在导出边界）。 */
+    id: z.string().optional(),
     /** #957: slide 布局（v2,optional）。 */
     layout: z.string().optional(),
     /** #1046: speaker notes（可选）— 宽松 wire 校验，长度上限在导出边界。 */

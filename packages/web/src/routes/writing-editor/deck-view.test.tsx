@@ -3,7 +3,7 @@
 import { describe, test, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { chartBlockSchema } from '@heurion/contracts';
 import i18n from '@/i18n';
 import type { DeckWire } from '@/lib/types';
@@ -641,6 +641,66 @@ describe('#1063 「+ 要点」按钮真正生效', () => {
   });
 });
 
+// ── #1073-4: 「+要点」聚焦改显式用户事件信号 ──────────────────────────
+// 聚焦只由「用户点击 +要点」驱动（ref 置位期望值,effect 消费后清除）；
+// AI 写回导致的块数变化不再误抢焦点（#1063 旧实现以数量变化为信号）。
+describe('#1073-4 「+要点」聚焦改显式用户事件信号', () => {
+  /** 可从外部触发「AI 写回」（setDeckAsset 替换整份 deck）的 harness — 与路由
+   * 的写回落地 effect 同语义（写回 = setDeckAsset 新 deck,无点击事件）。 */
+  function AiWriteBackHarness({ initial, aiDeck }: { initial: DeckWire; aiDeck: DeckWire }) {
+    const ctl = useDeckAsset();
+    const [deck, setDeck] = useState<DeckWire>(initial);
+    useEffect(() => {
+      ctl.setDeckAsset(deck);
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- ctl 每次渲染为新对象,入依赖会每渲染重跑;deck 即数据源
+    }, [deck]);
+    return (
+      <I18nextProvider i18n={i18n}>
+        <button onClick={() => setDeck(aiDeck)}>模拟 AI 写回</button>
+        <DeckView deckAsset={ctl.deckAsset} slides={[]} body="" deckCtl={ctl} sendChatText={async () => {}} onCardEdit={() => {}} />
+      </I18nextProvider>
+    );
+  }
+
+  test('AI 写回导致要点数增加 → 新行渲染但不抢焦点（无点击信号）', async () => {
+    render(
+      <AiWriteBackHarness
+        initial={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        aiDeck={makeDeckSlides([
+          { title: 'A', content: [
+            { type: 'paragraph', text: 'A-要点', style: 'bullet' },
+            { type: 'paragraph', text: 'AI 新增要点', style: 'bullet' },
+          ] },
+        ])}
+      />,
+    );
+    // 触发「AI 写回」（setDeckAsset 替换整份 deck,与路由写回落地同语义,无 +要点 点击）
+    fireEvent.click(screen.getByRole('button', { name: '模拟 AI 写回' }));
+    // AI 写回落地：新要点行出现
+    const newInput = await waitFor(() => {
+      const el = screen.getAllByRole('textbox').find((x) => (x as HTMLInputElement).value === 'AI 新增要点');
+      expect(el).toBeTruthy();
+      return el as HTMLInputElement;
+    });
+    // 焦点未被动（旧实现：bulletCount 1→2 增加即聚焦）
+    expect(document.activeElement).not.toBe(newInput);
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  test('回归：点击「+要点」仍自动聚焦新行（显式用户事件路径不回退）', () => {
+    const onDeckChange = deckProbe();
+    render(
+      <Harness
+        initialDeck={makeDeckSlides([{ title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '+ 要点' }));
+    const newInput = screen.getAllByRole('textbox').find((el) => (el as HTMLInputElement).value === '')!;
+    expect(document.activeElement).toBe(newInput);
+  });
+});
+
 // 3) 替换图片异步竞态：await 后按块身份校验，目标块被删/变更时不再误替换
 describe('#1063 替换图片竞态防护（块身份校验）', () => {
   const seededImg = { type: 'image', url: '/api/v1/files/download/file_old?token=t1', caption: '旧图' } as const;
@@ -903,5 +963,134 @@ describe('#1063 外部拖拽不误触发卡片排序', () => {
       dataTransfer: { getData: () => '0', types: ['text/deck-index'] },
     });
     expect(cardOrder()).toEqual(['B', 'A']);
+  });
+});
+
+// ── #1071-4: slide 稳定 id（结构类变更回填 + key 稳定）─────────────────
+describe('#1071-4 slide 稳定 id', () => {
+  test('新建 slide 携带稳定 id（添加一页 → 新页有 slide_ 前缀 id,后续变更不漂移）；既有 slide 不整批回填（避免 key 整批更换引发卡片重挂）', () => {
+    const onDeckChange = deckProbe();
+    render(
+      <Harness
+        initialDeck={makeDeck(['A', 'B'])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    // 添加一页 → 新页携带稳定 id；既有页不回填（key 不整批更换,本地状态不重置）
+    fireEvent.click(screen.getByRole('button', { name: '添加一页' }));
+    let deck = lastDeck(onDeckChange);
+    expect(deck.slides).toHaveLength(3);
+    expect(deck.slides[2].id).toMatch(/^slide_/);
+    expect(deck.slides[0].id).toBeUndefined();
+    expect(deck.slides[1].id).toBeUndefined();
+    const newId = deck.slides[2].id;
+    // 再次结构变更（删除一页）→ 其余 slide id 稳定不漂移
+    fireEvent.click(screen.getAllByRole('button', { name: '删除此页' })[0]);
+    deck = lastDeck(onDeckChange);
+    expect(deck.slides).toHaveLength(2);
+    expect(deck.slides.map((s) => s.id)).toEqual([undefined, newId]);
+  });
+
+  test('排序后卡片本地状态跟随 slide（key 用稳定 id）— 展开的备注不错挂到别的页', () => {
+    // fixture 带显式 id（wire 合法形态：服务端/迁移后的 deck 可携带 id）
+    render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { id: 'slide_a', title: 'A', notes: 'A 的备注', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+          { id: 'slide_b', title: 'B', content: [{ type: 'paragraph', text: 'B-要点', style: 'bullet' }] },
+        ])}
+      />,
+    );
+    // 展开 A 卡（第 1 张）的备注 — 卡片级 UI 状态
+    fireEvent.click(screen.getAllByRole('button', { name: '备注' })[0]);
+    expect((screen.getByLabelText('备注内容') as HTMLTextAreaElement).value).toBe('A 的备注');
+
+    // A 卡下移一位（B 补到第 1 位）— 旧实现 key={i}：展开态错挂到位置 0（现在是 B）
+    fireEvent.click(downButtons()[0]);
+    const areas = screen.getAllByLabelText('备注内容');
+    expect(areas).toHaveLength(1);
+    // 展开态仍属于 A（value 为 A 的备注,而非 B 的空备注）
+    expect((areas[0] as HTMLTextAreaElement).value).toBe('A 的备注');
+  });
+
+  test('文本编辑不漂移已有 id（updateDeckSlide 保留 id 字段）', () => {
+    const onDeckChange = deckProbe();
+    render(
+      <Harness
+        initialDeck={makeDeckSlides([{ id: 'slide_keep', title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] }])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    const input = screen.getAllByRole('textbox').find((el) => (el as HTMLInputElement).value === 'A-要点')!;
+    fireEvent.change(input, { target: { value: '改过的要点' } });
+    expect(lastDeck(onDeckChange).slides[0].id).toBe('slide_keep');
+  });
+});
+
+// ── #1071-3: 插入路径竞态防护（slide 身份校验,对齐 #1063 expectBlock）──
+describe('#1071-3 插入图片竞态防护（slide 身份校验）', () => {
+  test('上传期间目标 slide 被删 → 上传完成后不误插到别的页', async () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+          { title: 'B', content: [{ type: 'paragraph', text: 'B-要点', style: 'bullet' }] },
+        ])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    let resolveUpload: (v: unknown) => void = () => {};
+    uploadFileMock.mockImplementation(() => new Promise((resolve) => { resolveUpload = resolve; }));
+    getDownloadUrlMock.mockResolvedValue({ file_id: 'file_new', url: '/api/v1/files/download/file_new?token=t2' });
+
+    // 卡 A（第 1 张）发起插入图片 → 上传 pending
+    fireEvent.click(screen.getAllByRole('button', { name: '插入图片' })[0]);
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('竞态.png')] } });
+    await waitFor(() => expect(uploadFileMock).toHaveBeenCalled());
+
+    // pending 期间删除卡 A（B 补位到 index 0 — 无守卫时会把图插进 B）
+    fireEvent.click(screen.getAllByRole('button', { name: '删除此页' })[0]);
+
+    // 上传完成 → slide 身份不符（引用不同且无 id 可消歧）→ 放弃插入
+    await act(async () => {
+      resolveUpload({ file_id: 'file_new', name: '竞态.png', mime: 'image/png', size_bytes: 1 });
+    });
+    const deck = lastDeck(onDeckChange);
+    expect(deck.slides).toHaveLength(1);
+    expect(deck.slides[0].title).toBe('B');
+    expect(deck.slides[0].content.some((b) => b.type === 'image')).toBe(false);
+    expect(container.querySelector('img')).toBeNull();
+  });
+
+  test('上传期间同页被编辑（对象重建但稳定 id 不变）→ 插入仍落地（id 消歧,不误伤正常编辑）', async () => {
+    const onDeckChange = deckProbe();
+    const { container } = render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { id: 'slide_a1', title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+        ])}
+        onDeckChange={onDeckChange}
+      />,
+    );
+    let resolveUpload: (v: unknown) => void = () => {};
+    uploadFileMock.mockImplementation(() => new Promise((resolve) => { resolveUpload = resolve; }));
+    getDownloadUrlMock.mockResolvedValue({ file_id: 'file_new', url: '/api/v1/files/download/file_new?token=t2' });
+
+    fireEvent.click(screen.getByRole('button', { name: '插入图片' }));
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pngFile('并发.png')] } });
+    await waitFor(() => expect(uploadFileMock).toHaveBeenCalled());
+
+    // pending 期间编辑同页标题（updateDeckSlide 重建 slide 对象,id 保留）
+    fireEvent.change(screen.getByDisplayValue('A'), { target: { value: 'A（编辑中）' } });
+
+    // 上传完成 → 稳定 id 命中 → 图片照常插入该页
+    await act(async () => {
+      resolveUpload({ file_id: 'file_new', name: '并发.png', mime: 'image/png', size_bytes: 1 });
+    });
+    await waitFor(() => expect(container.querySelector('img')).not.toBeNull());
+    const deck = lastDeck(onDeckChange);
+    expect(deck.slides[0].title).toBe('A（编辑中）');
+    expect(deck.slides[0].content.some((b) => b.type === 'image' && b.url === '/api/v1/files/download/file_new?token=t2')).toBe(true);
   });
 });

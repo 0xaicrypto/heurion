@@ -45,12 +45,19 @@ export function chatFailureText(err: unknown): string {
   return `Error: ${msg}`
 }
 
-/** #1060: 排队单槽被覆盖 / Stop·regenerate 清空 pending 时的事件 — 被静默
+/**
+ * #1060: 排队单槽被覆盖 / Stop·regenerate 清空 pending 时的事件 — 被静默
  *  丢弃的排队指令（如「请AI处理」的评论指令）据此解除路由层关联登记，
- *  保证可重试、不永久卡死。监听者须自行匹配 sessionId。 */
+ *  保证可重试、不永久卡死。监听者须自行匹配 sessionId。
+ * #1074-4: 事件携带显式 turnId（入队时生成、随 pending 槽存储）— 消费方
+ *  按 id 清账；text（指令原文）匹配降级为二重校验，不再是唯一关联依据
+ *  （文本裁剪/改写不再静默打破评论↔turn 关联）。
+ */
 export interface ChatPendingDropped {
   sessionId: string;
   text: string;
+  /** #1074-4: 被丢弃排队指令的显式 turn id（uuid；旧事件/无槽场景缺省）。 */
+  turnId?: string;
 }
 const pendingDroppedListeners = new Set<(e: ChatPendingDropped) => void>();
 /** 订阅 pending 丢弃事件，返回解绑函数。 */
@@ -58,8 +65,45 @@ export function onChatPendingDropped(fn: (e: ChatPendingDropped) => void): () =>
   pendingDroppedListeners.add(fn);
   return () => { pendingDroppedListeners.delete(fn); };
 }
-function emitPendingDropped(sessionId: string, text: string) {
-  for (const fn of pendingDroppedListeners) fn({ sessionId, text });
+function emitPendingDropped(sessionId: string, text: string, turnId?: string) {
+  for (const fn of pendingDroppedListeners) fn({ sessionId, text, turnId });
+}
+
+/**
+ * #1074-4: pending 槽的完整形状 — SessionState.pending 的声明（chat-reducer）
+ * 只含 { text, opts }；turnId 以结构化子类型扩展（不入 reducer 类型，最小改动），
+ * 读取处经 pendingTurnId()/本类型断言消费。
+ */
+interface PendingSlotWithTurnId {
+  text: string;
+  opts: SendChatOptions;
+  turnId: string;
+}
+function pendingTurnIdOf(pending: unknown): string | undefined {
+  const slot = pending as PendingSlotWithTurnId | null | undefined;
+  return typeof slot?.turnId === 'string' ? slot.turnId : undefined;
+}
+
+/**
+ * #1072-2（web 侧 turn_id 适配）— 每会话最近一次 SSE `turn_complete` 携带的
+ * 服务端 assistant 消息 id（assistant_event_idx，事件日志序号 — 与
+ * GET /agent/messages 的 sync_id = String(event idx) 同源）。ai-replies 契约
+ * 要求 turn_id 为该用户该文档真实存在的 assistant 消息 id；web 侧唯一可得的
+ * 服务端消息 id 即 SSE 事件里的这个序号。模块级记录（不进 SessionState —
+ * chat-reducer 类型不动），供写作域 ai-replies 调用取用。
+ */
+const lastAssistantTurnIds = new Map<string, string>();
+/** 该会话最近一次完成的 assistant turn 的服务端消息 id（无 → null）。 */
+export function latestAssistantTurnId(sessionId: string): string | null {
+  return lastAssistantTurnIds.get(sessionId) ?? null;
+}
+/** 测试隔离 — 清空模块级 turn id 记录。 */
+export function resetAssistantTurnIdsForTests(): void {
+  lastAssistantTurnIds.clear();
+}
+/** #1074-4: 读取某会话排队单槽的显式 turnId（未排队/已消费 → undefined）。 */
+export function pendingTurnId(sessionId: string): string | undefined {
+  return pendingTurnIdOf(useChatStore.getState().sessions[sessionId]?.pending);
 }
 
 /** #828: 距最近一条 SSE data 事件超过该阈值即标记会话停滞（心跳注释行
@@ -131,6 +175,14 @@ async function consumeStream(
     if (r.done) break;
     if (r.value.length === 0) continue;
     gotChunks = true;
+    // #1072-2（web 侧 turn_id 适配）: 捕获 turn_complete 携带的服务端
+    // assistant 消息 id（见 latestAssistantTurnId）。watchdog/中断等无
+    // event_idx 的终止事件不记录（保留上一轮 id — 仍满足「真实存在」校验）。
+    for (const chunk of r.value) {
+      if (chunk.type === 'turn_complete' && typeof chunk.assistant_event_idx === 'number') {
+        lastAssistantTurnIds.set(sessionId, String(chunk.assistant_event_idx));
+      }
+    }
     set((state) => {
       const s = state.sessions[sessionId];
       if (!s) return state;
@@ -220,17 +272,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (s?.loading || s?.compacting) {
       // 回复进行中 → 排队;同一时刻只保留最后一条(用户可连续输入覆盖)。
       // #1060: 覆盖即静默丢弃旧排队指令 — 发丢弃事件(路由层清理关联登记)。
-      const dropped = s.pending ?? null;
+      // #1074-4: 入队生成显式 turnId(uuid)随槽存储;被覆盖指令的丢弃事件
+      // 携带其入队 id — 消费方按 id 精确清账。
+      const dropped = (s.pending ?? null) as PendingSlotWithTurnId | null;
+      const droppedTurnId = pendingTurnIdOf(dropped);
+      const slot: PendingSlotWithTurnId = { text: opts.text, opts, turnId: crypto.randomUUID() };
       set((state) => {
         const cur = state.sessions[sessionId] ?? emptySession();
         return {
           sessions: {
             ...state.sessions,
-            [sessionId]: { ...cur, pending: { text: opts.text, opts } },
+            // slot 为结构化子类型(多余字段合法) — SessionState.pending 声明不动。
+            [sessionId]: { ...cur, pending: slot },
           },
         };
       });
-      if (dropped) emitPendingDropped(sessionId, dropped.text);
+      if (dropped) emitPendingDropped(sessionId, dropped.text, droppedTurnId);
       return;
     }
     return get().sendMessage(sessionId, opts);
@@ -312,7 +369,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const s = get().sessions[sessionId];
     s?.abort?.abort();
     // #1060: Stop 丢弃排队指令 — 先取引用再清理,发丢弃事件(路由层清理关联登记)。
-    const dropped = s?.pending ?? null;
+    // #1074-4: 丢弃事件携带被清指令的入队 turnId。
+    const dropped = (s?.pending ?? null) as PendingSlotWithTurnId | null;
     set((state) => {
       const cur = state.sessions[sessionId];
       if (!cur) return state;
@@ -337,7 +395,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         },
       };
     });
-    if (dropped) emitPendingDropped(sessionId, dropped.text);
+    if (dropped) emitPendingDropped(sessionId, dropped.text, pendingTurnIdOf(dropped));
   },
 
   regenerate: async (sessionId: string, opts: SendChatOptions) => {
@@ -349,7 +407,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (lastUserIdx === -1) return;
     const userMsg = s.messages[lastUserIdx];
     // #1060: regenerate 丢弃排队中的追加消息 — 发丢弃事件(路由层清理关联登记)。
-    const dropped = s.pending ?? null;
+    // #1074-4: 丢弃事件携带被清指令的入队 turnId。
+    const dropped = (s.pending ?? null) as PendingSlotWithTurnId | null;
     const prev: SessionState = {
       ...s,
       messages: s.messages.slice(0, lastUserIdx),
@@ -359,7 +418,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set((state) => ({
       sessions: { ...state.sessions, [sessionId]: prev },
     }));
-    if (dropped) emitPendingDropped(sessionId, dropped.text);
+    if (dropped) emitPendingDropped(sessionId, dropped.text, pendingTurnIdOf(dropped));
     await get().sendMessage(sessionId, {
       ...opts,
       text: userMsg.text,
@@ -369,6 +428,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   clearSession: (sessionId: string) => {
+    // #1072-2: 会话删除 → 其服务端 turn id 记录一并清（防串会话/内存滞留）。
+    lastAssistantTurnIds.delete(sessionId);
     set((state) => {
       const sessions = { ...state.sessions };
       delete sessions[sessionId];

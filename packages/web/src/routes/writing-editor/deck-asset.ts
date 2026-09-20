@@ -21,10 +21,13 @@ export interface DeckAsset {
   moveDeckSlide: (from: number, to: number) => void;
   setDeckSlideLayout: (index: number, layout: string | undefined) => void;
   setDeckTheme: (theme: string | undefined) => void;
-  /** #1044: 手动插入图片块（与 AI 图片 bullet 同字段形状，见 deckImageBlock）。 */
-  insertDeckSlideImage: (index: number, url: string, caption?: string) => void;
-  /** #1044: 手动插入结构化图表块 — spec 须先经 chartBlockSchema 校验（表单内完成）。 */
-  insertDeckSlideChart: (index: number, spec: unknown, caption?: string) => void;
+  /** #1044: 手动插入图片块（与 AI 图片 bullet 同字段形状，见 deckImageBlock）。
+   * #1071-3: expectSlide（入口快照的目标 slide）提供时校验 slide 身份，异步竞态
+   * 下目标页已被删/移则放弃插入，不误插别的页。 */
+  insertDeckSlideImage: (index: number, url: string, caption?: string, expectSlide?: DeckWire['slides'][number]) => void;
+  /** #1044: 手动插入结构化图表块 — spec 须先经 chartBlockSchema 校验（表单内完成）。
+   * #1071-3: expectSlide 同上（表单打开时快照,确认时校验）。 */
+  insertDeckSlideChart: (index: number, spec: unknown, caption?: string, expectSlide?: DeckWire['slides'][number]) => void;
   /**
    * #1044: 块原位替换（换图 URL / 换图数据），非追加。
    * #1063: expectBlock（入口快照的目标块引用）提供时校验块身份，异步竞态下
@@ -42,6 +45,15 @@ export interface DeckAsset {
 export function deckImageBlock(url: string, caption?: string): DeckSlideBlock {
   return { type: 'image', ref: url, url, ...(caption ? { caption } : {}) };
 }
+
+/** #1071-4: slide 稳定 id 生成（slide_ 前缀 + 随机段，单 deck 30 页内撞码可忽略）。
+ * 范围取舍：只为**新建** slide 生成；不对既有无 id slide 整批回填 — 回填会整批
+ * 更换卡片 React key（idx-<i> → slide_<id>）触发重挂，卡片本地状态（备注展开/
+ * 上传目标）被重置（#1046 备注编辑回归网暴露）；且落盘 payload 形状漂移会扰动
+ * 切文档/冲突流程的精确断言。既有 slide 无 id 时 key 兜底 idx-<index>（与旧行为
+ * 一致），已有 id 在全部变更操作中原样保留（spread 不动）。服务端 wire/
+ * presentationSlideSchema 均已放行可选 id，数据迁移可后续一次性补齐。 */
+const newSlideId = (): string => `slide_${Math.random().toString(36).slice(2, 10)}`;
 
 /**
  * #696/#773 — Doc.deck 资产状态,从 writing-editor 路由下沉:
@@ -103,7 +115,8 @@ export function useDeckAsset(): DeckAsset {
       if (!prev) return prev;
       return {
         ...prev,
-        slides: [...prev.slides, { title: t('writing.deckNewSlide', '新页'), content: [{ type: 'paragraph', text: t('writing.deckNewBullet', '要点'), style: 'bullet' }] }],
+        // #1071-4: 新建 slide 携带稳定 id（key 不随数组下标漂移）。
+        slides: [...prev.slides, { id: newSlideId(), title: t('writing.deckNewSlide', '新页'), content: [{ type: 'paragraph', text: t('writing.deckNewBullet', '要点'), style: 'bullet' }] }],
       };
     });
   };
@@ -141,17 +154,30 @@ export function useDeckAsset(): DeckAsset {
   };
 
   // ── #1044 块级操作：手动插入图片/结构化图表、原位替换、删除 ──
-  const insertDeckSlideBlock = (index: number, block: DeckSlideBlock) => {
+  /**
+   * #1071-3: 插入路径身份校验（对齐 #1063 replaceDeckSlideBlock 的 expectBlock
+   * 快照纪律）— expectSlide 为入口（上传发起 / 表单打开）时的目标 slide 快照。
+   * 回写时目标索引处的 slide 与快照「引用不同且稳定 id 不同」→ slide 已被删/
+   * 移/整页替换，放弃插入（no-op 优于插错页）。已回填 id 的 slide 在并发纯文本
+   * 编辑下 id 不变（对象重建但身份仍在）→ 仍可落块；无 id 旧数据退化为引用比对
+   * （同 #1063 口径）。
+   */
+  const insertDeckSlideBlock = (index: number, block: DeckSlideBlock, expectSlide?: DeckWire['slides'][number]) => {
     setDeckAsset((prev) => {
       if (!prev) return prev;
+      if (expectSlide !== undefined) {
+        const cur = prev.slides[index];
+        const sameIdentity = cur === expectSlide || (expectSlide.id !== undefined && cur?.id === expectSlide.id);
+        if (!sameIdentity) return prev;
+      }
       return { ...prev, slides: prev.slides.map((s, i) => (i === index ? { ...s, content: [...s.content, block] } : s)) };
     });
   };
-  const insertDeckSlideImage = (index: number, url: string, caption?: string) => {
-    insertDeckSlideBlock(index, deckImageBlock(url, caption));
+  const insertDeckSlideImage = (index: number, url: string, caption?: string, expectSlide?: DeckWire['slides'][number]) => {
+    insertDeckSlideBlock(index, deckImageBlock(url, caption), expectSlide);
   };
-  const insertDeckSlideChart = (index: number, spec: unknown, caption?: string) => {
-    insertDeckSlideBlock(index, { type: 'chart', spec, ...(caption ? { caption } : {}) });
+  const insertDeckSlideChart = (index: number, spec: unknown, caption?: string, expectSlide?: DeckWire['slides'][number]) => {
+    insertDeckSlideBlock(index, { type: 'chart', spec, ...(caption ? { caption } : {}) }, expectSlide);
   };
   /**
    * #1044: 块原位替换（换图 URL / 换图数据），非追加。

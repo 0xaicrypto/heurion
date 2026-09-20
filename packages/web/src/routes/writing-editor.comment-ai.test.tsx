@@ -16,7 +16,7 @@ import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-libra
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import '@/i18n';
 import { WritingEditorPage } from './writing-editor';
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, resetAssistantTurnIdsForTests } from '@/stores/chat';
 import { useAuthStore } from '@/stores/auth';
 
 // TipTap needs a real selection API in jsdom（同 writeback.test.tsx）。
@@ -139,7 +139,10 @@ function mockTurns() {
     }
     await new Promise((r) => setTimeout(r, 10));
     yield { type: 'final_answer_chunk', text: script.answer ?? 'ok' };
-    yield { type: 'turn_complete' };
+    // #1072-2 web 适配: 真实服务端 turn_complete 携带 assistant_event_idx
+    // (conversation-turn.ts / chat-handler.ts 全部正常收尾路径) — ai-replies
+    // 的 turn_id 取数来源,mock 保持同保真度。
+    yield { type: 'turn_complete', assistant_event_idx: 3 };
   });
 }
 
@@ -189,6 +192,8 @@ beforeEach(() => {
   mockTurns();
   turnScripts.length = 0;
   useChatStore.setState({ sessions: {} });
+  // #1072-2: 服务端 turn id 记录是模块级 — 测试隔离(上一用例的 id 不得漏进本用例)。
+  resetAssistantTurnIdsForTests();
   useAuthStore.setState({ isAuthenticated: true, token: 't', userId: 'u1', displayName: 'Doc' } as never);
 });
 
@@ -331,6 +336,53 @@ describe('#1041 请AI处理（issue 用例表 6 条）', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// #1072-2 web 适配 — ai-replies 契约: body 必须携带 turn_id（该用户该文档
+// doc_chat_messages 真实存在的 assistant 消息 id）。取数路径:SSE
+// turn_complete.assistant_event_idx → chat store → appendAiReply。
+// ─────────────────────────────────────────────────────────────────────────
+describe('#1072-2 ai-replies turn_id 适配', () => {
+  test('turn 带服务端消息 id：ai-replies 调用携带 turn_id（非空字符串）', async () => {
+    turnScripts.push({ body: `${BASE_BODY}\n补充：样本量 120。`, rev: 1, answer: '已补充' });
+    renderEditor();
+    await screen.findByDisplayValue('Original');
+    await openCommentsPanel();
+
+    fireEvent.click(screen.getByTestId('comment-ai-process-c1'));
+    await waitFor(() => expect(apiMock.createDocCommentAiReply).toHaveBeenCalled());
+    const call = apiMock.createDocCommentAiReply.mock.calls[0];
+    // (docId, commentId, text, turnId)
+    expect(call[0]).toBe(DOC_ID);
+    expect(call[1]).toBe('c1');
+    const turnId = call[3] as string | undefined;
+    expect(typeof turnId).toBe('string');
+    expect(turnId).not.toBe('');
+  });
+
+  test('turn 无服务端消息 id：不调用 ai-replies（避免 403），线程补本地失败说明', async () => {
+    apiMock.sendChatFull.mockImplementation(async function* () {
+      // watchdog 型终止 — 无 assistant_event_idx（chat-handler 中断路径同款）。
+      await new Promise((r) => setTimeout(r, 10));
+      yield { type: 'final_answer_chunk', text: 'ok' };
+      yield { type: 'turn_complete' };
+    });
+    renderEditor();
+    await screen.findByDisplayValue('Original');
+    await openCommentsPanel();
+
+    fireEvent.click(screen.getByTestId('comment-ai-process-c1'));
+    await waitFor(() => expect(useChatStore.getState().sessions[SESSION]?.loading).toBe(false));
+    await act(async () => {});
+    // 无 turn_id 凭据 → 不调用（服务端必 400/403）
+    expect(apiMock.createDocCommentAiReply).not.toHaveBeenCalled();
+    // 线程内补本地失败说明（可理解、不静默）
+    const thread = screen.getByTestId('comment-thread-c1');
+    await waitFor(() => expect(thread.textContent).toContain('turn_id'));
+    // 评论保持 open（未产生修改）
+    expect(apiMock.updateDocComment).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // #1060 — 评论↔审阅关联在并发/排队时序下误归属与卡死窗口（issue 用例表 4 条）。
 // 关联改为「单评论单 turn + 指令指纹匹配」：冲刷/收口只消费「本 turn 实际
 // 发出其指令」的评论；排队单槽被覆盖 / Stop 清空时经 store 事件清理登记，
@@ -391,7 +443,8 @@ describe('#1060 评论关联并发/排队时序（issue 用例表 4 条）', () 
       if (mode === 'hang') await turnGate;
       await new Promise((r) => setTimeout(r, 10));
       yield { type: 'final_answer_chunk', text: 'ok' };
-      yield { type: 'turn_complete' };
+      // #1072-2 web 适配: 同 mockTurns — turn_complete 携带服务端消息 id。
+      yield { type: 'turn_complete', assistant_event_idx: 5 };
     });
     scriptQueue.push('hang');
     void useChatStore.getState().sendMessageQueued(SESSION, {
@@ -434,7 +487,8 @@ describe('#1060 评论关联并发/排队时序（issue 用例表 4 条）', () 
       await turnGate;
       await new Promise((r) => setTimeout(r, 10));
       yield { type: 'final_answer_chunk', text: 'ok' };
-      yield { type: 'turn_complete' };
+      // #1072-2 web 适配: 同 mockTurns — turn_complete 携带服务端消息 id。
+      yield { type: 'turn_complete', assistant_event_idx: 7 };
     });
     void useChatStore.getState().sendMessageQueued(SESSION, {
       text: '第一轮普通消息', sessionId: SESSION, patientHash: null, skills: [], attachments: [], scene: 'document',

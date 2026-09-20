@@ -507,22 +507,29 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
   // #1046: 备注折叠态 — 卡片级 UI 状态，默认收起不占视觉。
   const [notesOpen, setNotesOpen] = useState(false);
   // #1044: 图片上传目标（插入 / 原位替换某块）与错误态；图表表单（插入 / 替换某块）。
+  // #1071-3: 插入模式携带入口（表单打开）时的 slide 快照 — 表单确认时校验身份。
   const [uploadTarget, setUploadTarget] = useState<{ mode: 'insert' } | { mode: 'replace'; blockIndex: number; oldCaption?: string }>({ mode: 'insert' });
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [chartForm, setChartForm] = useState<{ mode: 'insert' } | { mode: 'replace'; blockIndex: number } | null>(null);
+  const [chartForm, setChartForm] = useState<{ mode: 'insert'; expectSlide: DeckWire['slides'][number] } | { mode: 'replace'; blockIndex: number } | null>(null);
   // #1075: 表格数据表单（仅替换 — 表格无「插入」入口，替换对齐图片/图表块）。
   const [tableForm, setTableForm] = useState<{ mode: 'replace'; blockIndex: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // #1063: 要点行容器 — 「+ 要点」追加新行后把焦点补到新行输入框。
   const bodyRef = useRef<HTMLDivElement>(null);
-  // #1063: 以要点数变化为信号（+ 要点 → 数量增加）自动聚焦最后一个文本输入框；
-  // 计数不减不触发（编辑文本/插入图片块等不影响），首次挂载也不抢焦点。
-  const bulletCount = slide.content.filter((b) => typeof b.text === 'string').length;
+  // #1073-4: 聚焦改显式用户事件信号 — 「+要点」onClick 记录期望的新要点数
+  // （当前数+1），effect 消费该信号后立即清除；AI 写回导致的块数变化不置位
+  // 信号 → 不再误抢焦点。信号与目标数绑定：过期信号（点击后块数被 AI 改动、
+  // 数值对不上）失效不聚焦，也不会滞留到后续 AI 写回时误触发。
   const prevBulletCount = useRef<number | null>(null);
+  const focusSignalRef = useRef<number | null>(null);
+  const bulletCount = slide.content.filter((b) => typeof b.text === 'string').length;
   useEffect(() => {
     const prev = prevBulletCount.current;
     prevBulletCount.current = bulletCount;
-    if (prev !== null && bulletCount > prev) {
+    const target = focusSignalRef.current;
+    if (target === null) return;
+    focusSignalRef.current = null;
+    if (prev !== null && bulletCount === target) {
       const inputs = bodyRef.current?.querySelectorAll<HTMLInputElement>('input:not([type="file"])');
       inputs?.[inputs.length - 1]?.focus();
     }
@@ -541,11 +548,14 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
     // 会让 blockIndex 指向别的块（静默 no-op 或替换错图）。回写时由
     // replaceDeckSlideBlock 校验块身份（引用相等），不符则放弃替换。
     const expectBlock = target.mode === 'replace' ? slide.content[target.blockIndex] : undefined;
+    // #1071-3: 插入路径同款身份快照 — 入口（文件选定）时的目标 slide，
+    // 回写时校验身份（引用或稳定 id），不符则放弃（不误插别的页）。
+    const expectSlide = slide;
     try {
       const up = await api.uploadFile(file);
       const { url } = await api.getDownloadUrl(up.file_id);
       setUploadError(null);
-      if (target.mode === 'insert') deckCtl.insertDeckSlideImage(index, url, file.name);
+      if (target.mode === 'insert') deckCtl.insertDeckSlideImage(index, url, file.name, expectSlide);
       else deckCtl.replaceDeckSlideBlock(index, target.blockIndex, deckImageBlock(url, target.oldCaption ?? file.name), expectBlock);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : String(err));
@@ -700,9 +710,14 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
         {/* #1044: 插入图片（复用 #1038 上传链路）/ 插入图表（结构化表单，非生成式）入口。 */}
         <div className="flex flex-wrap items-center gap-1">
           <button
-            onClick={() => deckCtl.updateDeckSlide(index, { bullets: [...deckCtl.slideBullets(slide), ''] })}
+            onClick={() => {
+              // #1073-4: 显式用户事件信号 — 点击置位期望新要点数,effect 消费后聚焦;
+              // AI 写回导致的块数变化不经过此处,不触发聚焦。
+              focusSignalRef.current = bulletCount + 1;
+              deckCtl.updateDeckSlide(index, { bullets: [...deckCtl.slideBullets(slide), ''] });
+            }}
             /* #1063: 追加的空块不再被 updateDeckSlide 的 filter 吞掉（旧实现 no-op），
-                新行落地后由上方 bulletCount 副作用自动聚焦。 */
+                新行落地后由上方「+要点」显式信号驱动自动聚焦。 */
             className="rounded px-1.5 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface hover:text-accent"
           >
             + {t('writing.deckAddBullet', '要点')}
@@ -730,7 +745,10 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
             <ImagePlus size={11} /> {t('writing.deckInsertImage', '图片')}
           </button>
           <button
-            onClick={() => setChartForm({ mode: 'insert' })}
+            onClick={() => {
+              // #1071-3: 表单打开时快照目标 slide（确认时校验身份）。
+              setChartForm({ mode: 'insert', expectSlide: slide });
+            }}
             aria-label={t('writing.deckInsertChart', '插入图表')}
             title={t('writing.deckInsertChart', '插入图表')}
             className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface hover:text-accent"
@@ -783,7 +801,9 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
         <DeckChartFormDialog
           initialBlock={chartForm.mode === 'replace' ? slide.content[chartForm.blockIndex] : undefined}
           onConfirm={(block: DeckChartFormResult) => {
-            if (chartForm.mode === 'insert') deckCtl.insertDeckSlideChart(index, block.spec, block.caption);
+            // #1071-3: 插入带入口快照（表单打开时的 slide）— 打开到确认之间
+            // slide 被删/移则放弃，不误插别的页。
+            if (chartForm.mode === 'insert') deckCtl.insertDeckSlideChart(index, block.spec, block.caption, chartForm.expectSlide);
             // #1063: 替换同样带块身份快照（表单打开到确认之间块可能被删/移动）。
             else deckCtl.replaceDeckSlideBlock(index, chartForm.blockIndex, block, slide.content[chartForm.blockIndex]);
             setChartForm(null);
@@ -864,7 +884,10 @@ export function DeckView(input: {
                       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         {deckAsset.slides.map((slide, i) => (
                           <DeckSlideCard
-                            key={i}
+                            /* #1071-4: key 用稳定 id（新建 slide 生成,见 deck-asset
+                                newSlideId）— 排序后卡片本地状态（备注展开/上传态）
+                                不错挂到别的 slide；无 id 旧数据兜底下标。 */
+                            key={slide.id ?? `idx-${i}`}
                             index={i}
                             slide={slide}
                             deckCtl={deckCtl}

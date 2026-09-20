@@ -141,7 +141,9 @@ function mockTurns() {
     }
     await new Promise((r) => setTimeout(r, 10));
     yield { type: 'final_answer_chunk', text: script.answer ?? 'ok' };
-    yield { type: 'turn_complete' };
+    // #1072-2 web 适配: 真实服务端 turn_complete 携带 assistant_event_idx —
+    // ai-replies 的 turn_id 取数来源,mock 保持同保真度。
+    yield { type: 'turn_complete', assistant_event_idx: 3 };
   });
 }
 

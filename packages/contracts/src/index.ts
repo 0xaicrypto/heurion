@@ -176,6 +176,9 @@ export type DeckTheme = z.infer<typeof deckThemeSchema>
 
 export const presentationSlideSchema = z.object({
   title: z.string().min(1).max(500),
+  /** #1071-4: slide 稳定 id（可选）— web 编辑器回填进 Doc.deck 的身份字段，导出边界
+   * 放行透传（渲染/导出管道不消费，仅身份对账）；上限防坏数据撑爆 wire。 */
+  id: z.string().max(80).optional(),
   /** #957: 布局母版(v2,optional);缺省 bullets。 */
   layout: slideLayoutSchema.optional(),
   /** #1046: speaker notes(可选)— 提取上限 2000 字符(pptx-extractor parseNotesXml),导出写回 notesSlideN.xml。 */

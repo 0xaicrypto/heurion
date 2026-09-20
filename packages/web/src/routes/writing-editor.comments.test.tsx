@@ -11,14 +11,21 @@
  * 布局,jsdom 无布局)。
  */
 import { describe, test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
-import { render, fireEvent, screen, act, cleanup } from '@testing-library/react';
+import { render, fireEvent, screen, act, cleanup, waitFor, within } from '@testing-library/react';
 import { useRef, useState, type MutableRefObject } from 'react';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import type { Editor } from '@tiptap/react';
 import { DocEditor, selectionWithinSingleBlock } from '@/components/DocEditor';
 import { AddCommentModal, CommentsPanel } from './writing-editor/comments-panel';
 import { api, type DocCommentWire } from '@/lib/api';
 // i18n 初始化 — 组件内 t() 需插值。
 import i18n from '@/i18n';
+// #1071-1/#1072-5: 路由级测试（deck AI 写回可撤销窗口 / deckConflict 切文档清空）
+// — 复用 writing-editor.deckconflict.test.tsx 的驱动方式（真实 chat store +
+// 真实路由 effect + mock 网络层），本文件为这两个 issue 指定的落点。
+import { WritingEditorPage } from './writing-editor';
+import { useChatStore } from '@/stores/chat';
+import { useAuthStore } from '@/stores/auth';
 
 // #1056:读 index.css 源码原文做 CSS 规则存在性断言(防「decoration 类零 CSS」回归)。
 // 本包 tsconfig types 未含 node/@types/node,故经非字面量动态 import 绕开模块类型解析;
@@ -66,6 +73,26 @@ const apiMock = vi.hoisted(() => ({
   createDocComment: vi.fn(),
   createDocCommentReply: vi.fn(),
   updateDocComment: vi.fn(),
+  // #1071-1/#1072-5: 路由级测试所需的网络层方法（渲染 WritingEditorPage 会触达）。
+  getDoc: vi.fn(),
+  updateDoc: vi.fn(),
+  getDocSnapshots: vi.fn(),
+  getSnapshotBody: vi.fn(),
+  listSubmissionDrafts: vi.fn(),
+  getDocReferences: vi.fn(),
+  addDocReference: vi.fn(),
+  deleteDocReference: vi.fn(),
+  getMessages: vi.fn(),
+  listSkills: vi.fn(),
+  sendChatFull: vi.fn(),
+  polishDoc: vi.fn(),
+  createDocSnapshot: vi.fn(),
+  exportDocx: vi.fn(),
+  exportDoc: vi.fn(),
+  runPhiScan: vi.fn(),
+  generateMethods: vi.fn(),
+  injectResults: vi.fn(),
+  uploadFile: vi.fn(),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -415,6 +442,41 @@ describe('#1040 评论 UI(issue 用例表)', () => {
     expect(css).toMatch(/\.comment-anchor-pending\s*[,{]/);
     expect(css).toMatch(/\.comment-anchor-active\s*[,{]/);
   });
+
+  /**
+   * #1071-2 锚点歧义消歧:anchorText 在正文多处出现且无消歧上下文(首次
+   * 渲染无定位记忆)→ 全部命中渲染歧义提示态(pending 类 + title 说明),
+   * 不再静默取首个。BODY 中「正文」恰好出现在两段里。
+   */
+  test('锚点多命中且无消歧上下文:全部命中渲染歧义提示态,不静默取首个', async () => {
+    const { container } = await renderHarness([
+      // 全新 commentId — resolveAnchorSpans 的「距上次定位」记忆是模块级,
+      // 复用其他用例的 id 会带上定位记忆(就近消歧 → 单命中)。
+      { id: 'camb', anchor_text: '正文', status: 'open', anchor: { located: true } },
+    ]);
+    const highlights = container.querySelectorAll('.comment-anchor[data-comment-id="camb"]');
+    // 两处命中全部渲染(此前静默取首个,只有一处)
+    expect(highlights.length).toBe(2);
+    for (const el of highlights) {
+      // 对齐 pending 徽标语义:歧义提示态
+      expect(el.classList.contains('comment-anchor-pending')).toBe(true);
+      expect(el.getAttribute('data-ambiguous')).toBe('true');
+      expect(el.getAttribute('title')).toContain('多处出现');
+    }
+    expect(coveredText(container, 'camb')).toBe('正文正文');
+  });
+
+  /** #1071-2 补充:唯一命中不受消歧影响 — 实心高亮(非提示态)回归不变。 */
+  test('唯一命中回归不变:实心高亮无歧义标记', async () => {
+    const { container } = await renderHarness([
+      { id: 'c1', anchor_text: PARA1, status: 'open', anchor: { located: true } },
+    ]);
+    const highlight = container.querySelector('.comment-anchor[data-comment-id="c1"]') as HTMLElement;
+    expect(highlight).toBeTruthy();
+    expect(highlight.classList.contains('comment-anchor-pending')).toBe(false);
+    expect(highlight.getAttribute('data-ambiguous')).toBeNull();
+    expect(coveredText(container, 'c1')).toBe(PARA1);
+  });
 });
 
 /**
@@ -485,4 +547,174 @@ describe('#1070 跨块评论创建拦截', () => {
     expect(screen.getByTestId('comment-input')).toBeTruthy();
     expect(screen.queryByTestId('cross-block-notice')).toBeNull();
   });
+});
+
+/* ─────────────────────────────────────────────────────────────────────
+ * #1071-1 / #1072-5 — 路由级测试（deck AI 写回可撤销窗口 / deckConflict
+ * 纳入切文档双保险清空清单）。驱动方式与 writing-editor.deckconflict.test.tsx
+ * 一致：真实 chat store + 真实路由 effect + 真实 DeckView，仅 mock 网络层。
+ * ───────────────────────────────────────────────────────────────────── */
+
+// TipTap 在 jsdom 需要真实 selection API（同 deckconflict 测试文件）。
+class RouteFakeRange {
+  startContainer: Node = document;
+  startOffset = 0;
+  endContainer: Node = document;
+  endOffset = 0;
+  collapsed = true;
+  commonAncestorContainer: Node = document;
+  setStart() {}
+  setEnd() {}
+  collapse() {}
+  selectNodeContents() {}
+  deleteContents() {}
+  insertNode() {}
+  createContextualFragment = () => document.createDocumentFragment();
+  toString = () => '';
+}
+
+const ROUTE_DOC_ID = 'd1';
+const ROUTE_SESSION = `doc-${ROUTE_DOC_ID}`;
+const ROUTE_BODY = 'Base';
+const ROUTE_BASE_DECK = {
+  title: 'Deck',
+  slides: [{ title: 'Slide A', content: [{ type: 'paragraph', text: 'a1', style: 'bullet' }] }],
+};
+const ROUTE_AI_DECK = {
+  title: 'Deck',
+  slides: [{ title: 'AI Slide', content: [{ type: 'paragraph', text: 'a2', style: 'bullet' }] }],
+};
+const routeBaseDoc = (id: string, deck: unknown) => ({
+  id,
+  title: 'Original',
+  body: ROUTE_BODY,
+  deck,
+  created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-02T00:00:00Z',
+  study_id: null,
+  study_name: null,
+});
+
+type RouteWrite = { body: string; rev: number; deck?: unknown };
+const routeTurnScripts: RouteWrite[][] = [];
+
+function mockRouteTurns() {
+  apiMock.sendChatFull.mockImplementation(async function* () {
+    const writes = routeTurnScripts.shift() ?? [];
+    for (const w of writes) {
+      await new Promise((r) => setTimeout(r, 10));
+      yield { type: 'doc_updated', body: w.body, rev: w.rev, ...(w.deck ? { deck: w.deck } : {}) };
+    }
+    await new Promise((r) => setTimeout(r, 10));
+    yield { type: 'final_answer_chunk', text: 'ok' };
+    yield { type: 'turn_complete' };
+  });
+}
+
+async function sendRouteTurn(writes: RouteWrite[]) {
+  routeTurnScripts.push(writes);
+  void useChatStore.getState().sendMessageQueued(ROUTE_SESSION, {
+    text: '修改 deck',
+    sessionId: ROUTE_SESSION,
+    patientHash: null,
+    skills: [],
+    attachments: [],
+    scene: 'document',
+  });
+  await waitFor(() => {
+    expect(useChatStore.getState().sessions[ROUTE_SESSION]?.loading).toBe(false);
+  });
+  await new Promise((r) => setTimeout(r, 40));
+}
+
+/** 路由渲染（不带 key={docId} — 切文档保持组件挂载，专测双保险 effect）+ 导航探针。 */
+function RouteNavProbe({ to }: { to: string }) {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate(to)}>跳转到{to}</button>;
+}
+
+function renderRouteEditor(docId: string) {
+  return render(
+    <MemoryRouter initialEntries={[`/app/writing/${docId}?view=deck`]}>
+      <RouteNavProbe to="/app/writing/d2" />
+      <Routes>
+        <Route path="/app/writing/:docId" element={<WritingEditorPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+describe('#1071-1/#1072-5 路由级：deck 写回可撤销窗口 / deckConflict 切文档清空', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+    window.history.pushState({}, '', `/app/writing/${ROUTE_DOC_ID}?view=deck`);
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new RouteFakeRange() as any);
+    apiMock.getDoc.mockImplementation(async (id: string) => routeBaseDoc(id, id === ROUTE_DOC_ID ? ROUTE_BASE_DECK : null));
+    apiMock.updateDoc.mockResolvedValue({ ...routeBaseDoc(ROUTE_DOC_ID, ROUTE_BASE_DECK), updated_at: '2026-01-03T00:00:00Z' });
+    apiMock.getDocSnapshots.mockResolvedValue({ snapshots: [] });
+    apiMock.getSnapshotBody.mockResolvedValue({ id: 's1', created_at: '', label: '', body: ROUTE_BODY });
+    apiMock.listSubmissionDrafts.mockResolvedValue({ drafts: [] });
+    apiMock.listDocComments.mockResolvedValue({ comments: [] });
+    apiMock.getDocReferences.mockResolvedValue({ references: [] });
+    apiMock.getMessages.mockResolvedValue({ messages: [], total: 0 });
+    apiMock.listSkills.mockResolvedValue({ skills: [] });
+    mockRouteTurns();
+    routeTurnScripts.length = 0;
+    useChatStore.setState({ sessions: {} });
+    useAuthStore.setState({ isAuthenticated: true, token: 't', userId: 'u1', displayName: 'Doc' } as never);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    window.history.pushState({}, '', '/');
+    cleanup();
+  });
+
+  test('#1072-5 deckConflict 未决时切文档（组件不重挂）→ 横幅清空,不串染新文档', async () => {
+    renderRouteEditor(ROUTE_DOC_ID);
+    // 本地做一处未保存的 slide 标题编辑 → AI deck 写回到达 → 冲突横幅。
+    const titleInput = await screen.findByDisplayValue('Slide A');
+    fireEvent.change(titleInput, { target: { value: 'Slide A (edited)' } });
+    await sendRouteTurn([{ body: ROUTE_BODY, rev: 1, deck: ROUTE_AI_DECK }]);
+    expect(await screen.findByTestId('deck-conflict-banner')).toBeTruthy();
+
+    // 切文档（组件保持挂载 — 双保险 effect 的守卫对象）→ 冲突态清空。
+    fireEvent.click(screen.getByRole('button', { name: '跳转到/app/writing/d2' }));
+    await waitFor(() => expect(screen.queryByTestId('deck-conflict-banner')).toBeNull());
+    // 新文档装载正常（无 deck 文档,旧冲突未复活）。
+    await waitFor(() => expect(screen.queryByTestId('deck-conflict-banner')).toBeNull());
+  }, 15000);
+
+  test('#1071-1 AI deck 写回落地（无本地未保存编辑）→ 撤销横幅出现,点撤销恢复落地前画布并 force 落盘', async () => {
+    renderRouteEditor(ROUTE_DOC_ID);
+    await screen.findByDisplayValue('Slide A');
+
+    await sendRouteTurn([{ body: ROUTE_BODY, rev: 1, deck: ROUTE_AI_DECK }]);
+    // 写回落地：画布换源为 AI 版。
+    await waitFor(() => expect(screen.getByDisplayValue('AI Slide')).toBeTruthy());
+    // 可撤销窗口出现（带「撤销」按钮）。
+    const banner = await screen.findByTestId('deck-undo-banner');
+    const undoBtn = within(banner).getByRole('button', { name: /撤销|Undo/ });
+    expect(undoBtn).toBeTruthy();
+
+    // 点撤销 → 本地画布恢复 + force 落盘（deck = 落地前版本,覆盖服务端 AI 版）。
+    fireEvent.click(undoBtn);
+    await waitFor(() => expect(screen.getByDisplayValue('Slide A')).toBeTruthy());
+    await waitFor(() => expect(apiMock.updateDoc).toHaveBeenCalledTimes(1));
+    const [, call] = apiMock.updateDoc.mock.calls[0];
+    expect(call).toMatchObject({ force: true, body: ROUTE_BODY });
+    expect(call.deck).toEqual(ROUTE_BASE_DECK);
+    expect(screen.queryByTestId('deck-undo-banner')).toBeNull();
+  }, 15000);
+
+  test('#1071-1 初次建 deck（落地前无画布）→ 不出撤销横幅（无可回滚对象）', async () => {
+    apiMock.getDoc.mockImplementation(async (id: string) => routeBaseDoc(id, null));
+    renderRouteEditor(ROUTE_DOC_ID);
+    await screen.findByText(/还没有 ## 分页结构|Single-page/).catch(() => {});
+
+    await sendRouteTurn([{ body: ROUTE_BODY, rev: 1, deck: ROUTE_AI_DECK }]);
+    await waitFor(() => expect(screen.getByDisplayValue('AI Slide')).toBeTruthy());
+    expect(screen.queryByTestId('deck-undo-banner')).toBeNull();
+  }, 15000);
 });

@@ -177,8 +177,13 @@ export class WritingApi extends ApiCore {
   }
 
   // #1064 集成收口(#1041 消费): AI 回复专用入口 — 服务端固定 role:'ai'。
-  async createDocCommentAiReply(docId: string, commentId: string, text: string): Promise<DocCommentReplyWire> {
-    return this.fetch(`/api/v1/docs/${docId}/comments/${commentId}/ai-replies`, { method: 'POST', body: JSON.stringify({ text }) });
+  // #1072-2 契约: body 必须携带 turn_id = 该用户该文档 doc_chat_messages 里
+  // 真实存在的 assistant 消息 id（伪造/跨文档/跨用户/user 消息 → 403；缺失
+  // → 400）。web 侧取数路径：SSE turn_complete.assistant_event_idx → chat
+  // store latestAssistantTurnId() → 调用方传入；缺省时不带（调用方应先拦截，
+  // 见 comments-ai hook 的「无 id 不调用」分支）。
+  async createDocCommentAiReply(docId: string, commentId: string, text: string, turnId?: string): Promise<DocCommentReplyWire> {
+    return this.fetch(`/api/v1/docs/${docId}/comments/${commentId}/ai-replies`, { method: 'POST', body: JSON.stringify({ text, ...(turnId ? { turn_id: turnId } : {}) }) });
   }
 
   // #1040: 切换 status(open/resolved)。
