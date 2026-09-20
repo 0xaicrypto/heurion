@@ -538,7 +538,6 @@ export function WritingEditorPage() {
     const prev = deckUndo?.prevDeck ?? null;
     const ok = await undoDeckWriteBack();
     if (ok) await settleDeckConfirmUndo(prev);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- undoDeckWriteBack 为 hook 返回值(稳定 useCallback)
   }, [deckUndo, undoDeckWriteBack, settleDeckConfirmUndo]);
 
   // ── #1089-5/#1089-6: 锚点偏移消费 + 「待确认位置」确认路径 ─────────────
