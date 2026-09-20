@@ -20,6 +20,9 @@ importers:
       '@heurion/contracts':
         specifier: file:../contracts
         version: file:../contracts
+      '@heurion/ssrf-guard':
+        specifier: file:../ssrf-guard
+        version: file:../ssrf-guard
       '@prisma/client':
         specifier: ^5.0.0
         version: 5.22.0(prisma@5.22.0)
@@ -441,6 +444,9 @@ packages:
 
   '@heurion/contracts@file:../contracts':
     resolution: {directory: ../contracts, type: directory}
+
+  '@heurion/ssrf-guard@file:../ssrf-guard':
+    resolution: {directory: ../ssrf-guard, type: directory}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -2255,6 +2261,8 @@ snapshots:
   '@heurion/contracts@file:../contracts':
     dependencies:
       zod: 3.25.76
+
+  '@heurion/ssrf-guard@file:../ssrf-guard': {}
 
   '@img/colour@1.1.0': {}
 

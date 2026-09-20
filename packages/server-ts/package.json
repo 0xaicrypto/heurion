@@ -19,6 +19,7 @@
     "@fastify/multipart": "^8.0.0",
     "@fastify/static": "^7.0.0",
     "@heurion/contracts": "file:../contracts",
+    "@heurion/ssrf-guard": "file:../ssrf-guard",
     "@prisma/client": "^5.0.0",
     "@types/pdfkit": "^0.17.6",
     "bcryptjs": "^2.4.3",
