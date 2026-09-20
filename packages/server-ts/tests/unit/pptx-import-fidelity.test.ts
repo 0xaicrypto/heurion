@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest'
 import { parsePptx, pptxSlidesToDeck } from '../../src/lib/pptx-extractor.js'
-import { buildPptxFixture } from '../fixtures/pptx-fixture.js'
+import { buildPptxFixture, type FixtureTableCell } from '../fixtures/pptx-fixture.js'
 import { validateRenderContent, deckWireSchema, chartBlockSchema } from '@heurion/contracts'
 /**
  * #1046 — PPTX 说话人备注（notes）链路保真测试。
@@ -207,6 +207,94 @@ describe('#1067 表格 gridSpan + hMerge 标准组合（双重计数列修复）
       ['PFS', '40%', '25%'],
     ])
     expect(parsed.slides[0].tables?.[0]?.mergedDegraded).toBe(true)
+  })
+})
+
+describe('#1086 hMerge 跳过分支多推进 ci — 根因修复', () => {
+  test('标准组合：gridSpan=2 锚点 + hMerge 占位 + 普通格 → 行长恰好 3（[A,A,C]）', () => {
+    // 锚点 gridSpan="2" 展开时 ci += 2 已越过全部 2 个列槽，紧随的 hMerge 占位格
+    // 对应槽早已被填 — 占位格零副作用（#1086：跳过分支不得再推进 ci）。
+    const built = buildPptxFixture([
+      {
+        title: '标准组合',
+        table: { rows: [[{ text: 'A', gridSpan: 2 }, { text: '', hMerge: true }, { text: 'C' }]] },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    expect(parsed.slides[0].tables?.[0]?.rows).toEqual([['A', 'A', 'C']])
+  })
+
+  test('多组 gridSpan+hMerge 组合（30 逻辑列恰在上限内）→ 不误判 30 列截断、锚点展开不丢列', () => {
+    // 5 组 gridSpan=6 锚点 + 各 5 个 hMerge 占位 = 恰好 30 逻辑列。旧实现每个
+    // 占位格多推进一次 ci（虚高 25）→ 后续锚点被 30-ci 上限截断（行宽 18 丢 12 列）
+    // 且 ci>30 误标 truncatedDegraded。
+    const combo = (label: string): FixtureTableCell[] => [
+      { text: label, gridSpan: 6 },
+      ...Array.from({ length: 5 }, () => ({ text: '', hMerge: true })),
+    ]
+    const built = buildPptxFixture([
+      {
+        title: '多组合并',
+        table: {
+          rows: [
+            [...combo('头1'), ...combo('头2'), ...combo('头3'), ...combo('头4'), ...combo('头5')],
+            Array.from({ length: 30 }, (_, i) => ({ text: `值${i}` })),
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    const table = parsed.slides[0].tables?.[0]
+    const expected = Array.from({ length: 5 }, (_, g) => Array.from({ length: 6 }, () => `头${g + 1}`)).flat()
+    expect(table?.rows[0]).toEqual(expected)
+    expect(table?.rows[1]).toEqual(Array.from({ length: 30 }, (_, i) => `值${i}`))
+    // 30 逻辑列未超限 — 不误标截断（合并降级标记保留）
+    expect(table?.truncatedDegraded).toBeUndefined()
+    expect(table?.mergedDegraded).toBe(true)
+  })
+
+  test('gridSpan+hMerge 与 rowSpan 组合 → 跨行携带列对齐正确', () => {
+    // 旧实现：hMerge 占位格多推进 ci → 同行后续 rowSpan 锚点的携带列号虚高
+    //（carry set 在错误列），下一行 fillCarried 找不到携带格 → 内容丢失、行宽错位。
+    const built = buildPptxFixture([
+      {
+        title: '组合对齐',
+        table: {
+          rows: [
+            [{ text: 'B', gridSpan: 2 }, { text: '', hMerge: true }, { text: 'C' }, { text: 'A', rowSpan: 2 }],
+            [{ text: 'D' }, { text: 'E' }, { text: 'F' }],
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.ok).toBe(true)
+    expect(parsed.slides[0].tables?.[0]?.rows).toEqual([
+      ['B', 'B', 'C', 'A'],
+      ['D', 'E', 'F', 'A'],
+    ])
+  })
+
+  test('畸形续格（锚点未声明 gridSpan，anchorCover=0）回归 → 复制左格行为不变', () => {
+    // HTML 风格畸形产物：hMerge 续格前没有 gridSpan 锚点 — 回退「复制左格」
+    // （anchorCover=0 畸形路径，#1086 不改变该路径）。
+    const built = buildPptxFixture([
+      {
+        title: '畸形续格',
+        table: {
+          rows: [
+            [{ text: 'A' }, { text: 'B' }, { text: 'C' }],
+            [{ text: '左格' }, { text: '', hMerge: true }, { text: '右格' }],
+          ],
+        },
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    const rows = parsed.slides[0].tables?.[0]?.rows ?? []
+    expect(rows[0]).toHaveLength(3)
+    expect(rows[1]).toEqual(['左格', '左格', '右格'])
   })
 })
 

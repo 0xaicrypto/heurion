@@ -164,15 +164,15 @@ function parseTableFrame(frameXml: string): PptxTable | null {
       const vSpan = parseInt(/rowSpan="(\d+)"/.exec(cell.attrs)?.[1] || '', 10) || 1
       const isHMerge = /hMerge="1"/.test(cell.attrs)
       const isVMerge = /vMerge="1"/.test(cell.attrs)
-      // #1067: hMerge 占位格的列槽已被前一锚点的 gridSpan 覆盖 → 跳过 push、
-      // 仅 ci += 1（列槽已被锚点填过；旧实现把占位格又当新列 push，行宽多计
-      // N-1 → 全表内容错位）。锚点未声明 gridSpan 的畸形续格（HTML 风格产物）
-      // anchorCover 已耗尽 → 落到下方「复制左格」回退路径，旧行为保持。
+      // #1067: hMerge 占位格的列槽已被前一锚点的 gridSpan 覆盖 → 跳过 push。
+      // #1086（根因修复）：锚点 gridSpan="N" 展开时 ci += span 已越过全部 N 个
+      // 列槽，紧随的占位格对应槽早已被填 — 占位格必须完全不推进 ci（旧实现在
+      // 此多 ci += 1 → 列游标按占位数继续虚高：中列数多组合并被误判超 30 列
+      // 截断丢数据；与 rowSpan 组合时携带列号错位丢内容）。占位格零副作用，
+      // 仅消费一个锚点覆盖计数。锚点未声明 gridSpan 的畸形续格（HTML 风格
+      // 产物）anchorCover 已耗尽 → 落到下方「复制左格」回退路径，旧行为保持。
       if (isHMerge && anchorCover > 0) {
         anchorCover -= 1
-        ci += 1
-        degraded = true
-        if (ci > 30) truncated = true
         continue
       }
       let text = cell.text

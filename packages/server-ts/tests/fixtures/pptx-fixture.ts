@@ -116,7 +116,10 @@ function tableFrame(table: FixtureTable): string {
     ].filter(Boolean).join(' ')
     return `<a:tc${attrs ? ` ${attrs}` : ''}>${txBody(c.text ? [c.text] : [])}<a:tcPr/></a:tc>`
   }
-  const tbl = `<a:tbl><a:tblPr firstRow="1"/><a:tblGrid>${'<a:gridCol w="3000000"/>'.repeat(3)}</a:tblGrid>${table.rows
+  // #1086: gridCol 数按最宽行生成（此前硬编码 3 — 多列/多组合并场景 fixture 失真；
+  // 解析器不读 tblGrid，仅还原真实表格结构）。
+  const gridCols = table.rows.reduce((w, row) => Math.max(w, row.length), 0)
+  const tbl = `<a:tbl><a:tblPr firstRow="1"/><a:tblGrid>${'<a:gridCol w="3000000"/>'.repeat(gridCols)}</a:tblGrid>${table.rows
     .map((row) => `<a:tr h="500000">${row.map(cellXml).join('')}</a:tr>`)
     .join('')}</a:tbl>`
   return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="4" name="Table"/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="838200" y="1143000"/><a:ext cx="6096000" cy="2133600"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">${tbl}</a:graphicData></a:graphic></p:graphicFrame>`
