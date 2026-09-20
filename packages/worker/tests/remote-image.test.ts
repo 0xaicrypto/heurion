@@ -2,15 +2,18 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import JSZip from 'jszip'
 import http from 'node:http'
 import dns from 'node:dns'
+import { gzipSync, deflateSync, brotliCompressSync } from 'node:zlib'
 import { generatePptx, imageBudgetExceeded, MAX_EMBEDDED_IMAGE_BYTES } from '../src/handlers/pptx.js'
 import {
   resolveImage,
   downloadRemoteImage,
   looksLikeImage,
   isPrivateIp,
+  toBase64DataUri,
+  base64InflatedBytes,
   setRemoteImageLookupForTest,
   setRemoteImageTransportForTest,
-} from '../src/handlers/common.js'
+} from '../src/handlers/remote-image.js' // #1074-2: remote-image 职责自 common.ts 拆出
 
 vi.mock('../src/storage.js', () => ({
   saveFile: vi.fn(async (buffer: Buffer, name: string, mime: string) => ({ fileId: 'f1', fileName: name, mimeType: mime, buffer })),
@@ -533,5 +536,150 @@ describe('#1053 单元：isPrivateIp / looksLikeImage', () => {
     expect(looksLikeImage(Buffer.from('%PDF-1.4'))).toBe(false)
     expect(looksLikeImage(Buffer.from('hi'))).toBe(false)
     expect(looksLikeImage(Buffer.alloc(0))).toBe(false)
+  })
+})
+
+describe('#1073-1 asset:// 读取失败可观测', () => {
+  test('asset:// 本地文件读取失败（IO/权限）→ 跳块 + [REMOTE-IMAGE] 日志（不再裸吞）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mocks.readFile.mockRejectedValueOnce(Object.assign(new Error('EACCES: permission denied, read'), { code: 'EACCES' }))
+    expect(await resolveImage({ type: 'image', ref: 'asset://chart.svg' })).toBeNull()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[REMOTE-IMAGE]'))
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('asset://chart.svg'))
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('EACCES'))
+    warn.mockRestore()
+  })
+})
+
+describe('#1072-1 导出图片预算按 base64 后字节计', () => {
+  test('base64InflatedBytes = ceil(n/3)*4 + data URI 前缀，且与 toBase64DataUri 实长一致', () => {
+    // 任意尺寸与真实 data URI 字节长一致（预算 = 实际驻留字节）；内容用
+    // PNG 头填充保证 mime 稳定为 image/png。
+    const makePng = (n: number) => Buffer.concat([PNG.subarray(0, 8), Buffer.alloc(Math.max(0, n - 8), 7)])
+    for (const n of [8, 9, 11, 16, 816, 4097, 1048577]) {
+      const buf = makePng(n)
+      expect(base64InflatedBytes(buf), `n=${n}`).toBe(toBase64DataUri(buf).length)
+      expect(base64InflatedBytes(buf), `n=${n}`).toBe(Math.ceil(n / 3) * 4 + 13 + 'image/png'.length)
+    }
+    // 空 buffer 无 magic → 兜底 svg mime（'data:;base64,'13 + mime 13）。
+    expect(base64InflatedBytes(Buffer.alloc(0))).toBe(26)
+  })
+
+  test('预算按 base64 后字节计的边界：两图 base64 恰好 ≤ 预算 → 全嵌；差 1 字节 → 第二张跳过', async () => {
+    const bigPng = Buffer.concat([PNG, Buffer.alloc(800, 1)]) // 816 字节 → base64 后 1088+22=1110
+    const inflated = base64InflatedBytes(bigPng)
+    expect(inflated).toBe(1110)
+    const deck = (count: number) => ({
+      schema_version: 1 as const,
+      content_type: 'sidecar.generate_pptx' as const,
+      data: {
+        schemaVersion: 1,
+        title: 'base64 预算边界',
+        slides: Array.from({ length: count }, (_, i) => ({
+          title: `页${i + 1}`, layout: 'bullets+image',
+          content: [{ type: 'image', ref: `x${i}`, data: bigPng.toString('base64') }],
+        })),
+      },
+    })
+    const mediaCount = async (budget: string) => {
+      vi.stubEnv('PPTX_IMAGE_BUDGET_BYTES', budget)
+      const res = await generatePptx(deck(3))
+      const zip = await JSZip.loadAsync((res as { buffer: Buffer }).buffer)
+      return Object.keys(zip.files).filter((n) => n.startsWith('ppt/media/') && !n.endsWith('/')).length
+    }
+    // 2×1110 = 2220 ≤ 预算 → 前两张嵌入（旧原始字节口径下 2219 也会嵌两张 —
+    // 该断言钉死"按 base64 后字节计"的语义，防回退）。
+    expect(await mediaCount('2220')).toBe(2)
+    expect(await mediaCount('2219')).toBe(1) // 第二张 1110+1110 > 2219 → 跳过
+  })
+})
+
+describe('#1072-3 重定向每跳 DNS 解析纳入总 deadline', () => {
+  test('注入 lookup 收到 deadline 信号：挂起 DNS 在 timeoutMs 处被中止（不逃出总超时）', async () => {
+    fetchMock.mockResolvedValue(okResponse(PNG))
+    let seenSignal: AbortSignal | null = null
+    const slowDnsLookup = (_host: string, opts?: { signal?: AbortSignal }) =>
+      new Promise<Array<{ address: string }>>((_resolve, reject) => {
+        seenSignal = opts?.signal ?? null
+        // 挂起的解析只有在信号触发时才落定 — 模拟慢/挂起 DNS。
+        opts?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true })
+      })
+    const started = Date.now()
+    await expect(
+      downloadRemoteImage('https://slow-dns.example.com/a.png', { timeoutMs: 200, lookup: slowDnsLookup }),
+    ).rejects.toThrow(/超时|deadline/)
+    const elapsed = Date.now() - started
+    expect(seenSignal).not.toBeNull() // lookup 确实收到了 deadline 信号
+    expect((seenSignal as AbortSignal).aborted).toBe(true)
+    expect(elapsed).toBeLessThan(2000) // 未被打补丁的挂起 DNS 拖过总 deadline
+  })
+
+  test('真实默认解析路径（无注入钩子）+ 挂起的真实 DNS → 同样在总 deadline 处中止', async () => {
+    setRemoteImageLookupForTest(null) // 校验走默认解析器（下方打补丁的真实 DNS）
+    const realPromisesLookup = dns.promises.lookup
+    ;(dns.promises as any).lookup = () => new Promise(() => { /* 挂起不落定 */ })
+    try {
+      const started = Date.now()
+      await expect(
+        downloadRemoteImage('https://hung-dns.example.com/a.png', { timeoutMs: 200 }),
+      ).rejects.toThrow(/超时|DNS/)
+      expect(Date.now() - started).toBeLessThan(2000)
+    } finally {
+      ;(dns.promises as any).lookup = realPromisesLookup
+    }
+  })
+
+  test('多跳重定向逐跳慢 DNS：累计超过总 deadline 即中止（每跳解析都在 deadline 内）', async () => {
+    let hops = 0
+    fetchMock.mockImplementation(async () => {
+      hops++
+      return redirectResponse('https://cdn.example.com/hop.png')
+    })
+    const slowPerHop = async (_host: string, opts?: { signal?: AbortSignal }) =>
+      new Promise<Array<{ address: string }>>((resolve, reject) => {
+        const t = setTimeout(() => resolve([{ address: PUBLIC_IP }]), 120)
+        opts?.signal?.addEventListener('abort', () => { clearTimeout(t); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })) }, { once: true })
+      })
+    const started = Date.now()
+    // 6 跳 × 120ms = 720ms（DNS 累计）> 300ms 总超时 → 必须在 deadline 处中止。
+    await expect(
+      downloadRemoteImage('https://cdn.example.com/fig.png', { timeoutMs: 300, lookup: slowPerHop }),
+    ).rejects.toThrow(/超时|deadline/)
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(hops).toBeLessThanOrEqual(4) // 未等到全部 6 跳就被 deadline 掐断
+  })
+})
+
+describe('#1072-4 Content-Encoding：响应体解压后再做 magic bytes 判定', () => {
+  test('gzip 压缩的 PNG（content-encoding: gzip）→ 解压后 magic bytes 通过，返回原始字节', async () => {
+    fetchMock.mockResolvedValue(okResponse(gzipSync(PNG), { 'content-encoding': 'gzip' }))
+    const img = await resolveImage({ type: 'image', ref: 'https://cdn.example.com/fig.png.gz' })
+    expect(img?.data.equals(PNG)).toBe(true)
+  })
+
+  test('deflate / br 同样解压后再判定', async () => {
+    fetchMock.mockResolvedValue(okResponse(deflateSync(PNG), { 'content-encoding': 'deflate' }))
+    expect((await downloadRemoteImage('https://cdn.example.com/a.png')).equals(PNG)).toBe(true)
+    fetchMock.mockResolvedValue(okResponse(brotliCompressSync(PNG), { 'content-encoding': 'br' }))
+    expect((await downloadRemoteImage('https://cdn.example.com/a.png')).equals(PNG)).toBe(true)
+  })
+
+  test('identity/缺省 content-encoding → 原样返回（回归）', async () => {
+    fetchMock.mockResolvedValue(okResponse(PNG, { 'content-encoding': 'identity' }))
+    expect((await downloadRemoteImage('https://cdn.example.com/a.png')).equals(PNG)).toBe(true)
+    fetchMock.mockResolvedValue(okResponse(PNG))
+    expect((await downloadRemoteImage('https://cdn.example.com/a.png')).equals(PNG)).toBe(true)
+  })
+
+  test('解压炸弹防护：线缆字节小、解压后超上限 → too_large', async () => {
+    const bomb = gzipSync(Buffer.alloc(3 * 1024 * 1024, 0)) // 3MB 全零 → gzip 后 ~3KB
+    fetchMock.mockResolvedValue(okResponse(bomb, { 'content-encoding': 'gzip' }))
+    await expect(downloadRemoteImage('https://cdn.example.com/bomb.png', { maxBytes: 1024 * 1024 })).rejects.toThrow(/上限/)
+  })
+
+  test('gzip 数据损坏 → fail-closed（解码失败，不当原始字节用）', async () => {
+    const corrupt = gzipSync(PNG).subarray(0, 8) // 截断的 gzip 流
+    fetchMock.mockResolvedValue(okResponse(corrupt, { 'content-encoding': 'gzip' }))
+    await expect(downloadRemoteImage('https://cdn.example.com/broken.png')).rejects.toThrow(/解码失败/)
   })
 })

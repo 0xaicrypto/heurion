@@ -17,6 +17,9 @@ importers:
       '@heurion/contracts':
         specifier: file:../contracts
         version: file:../contracts
+      '@heurion/ssrf-guard':
+        specifier: file:../ssrf-guard
+        version: file:../ssrf-guard
       docx:
         specifier: ^9.7.1
         version: 9.7.1
@@ -309,6 +312,9 @@ packages:
 
   '@heurion/contracts@file:../contracts':
     resolution: {directory: ../contracts, type: directory}
+
+  '@heurion/ssrf-guard@file:../ssrf-guard':
+    resolution: {directory: ../ssrf-guard, type: directory}
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
@@ -1809,6 +1815,8 @@ snapshots:
   '@heurion/contracts@file:../contracts':
     dependencies:
       zod: 3.25.76
+
+  '@heurion/ssrf-guard@file:../ssrf-guard': {}
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 

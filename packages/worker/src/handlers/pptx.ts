@@ -6,7 +6,7 @@ import {
   type ContentBlock,
   type SlideLayout,
 } from '@heurion/contracts'
-import { resolveImage, toBase64DataUri } from './common.js'
+import { resolveImage, toBase64DataUri, base64InflatedBytes } from './remote-image.js' // #1074-2: remote-image 职责自 common.ts 拆出
 
 const PptxGenJSCtor = PptxGenJS as unknown as new () => any
 
@@ -230,9 +230,14 @@ export async function generatePptx(payload: any) {
     s.addShape('rect', { x: PAGE.margin, y: 1.05, w: bodyW, h: 0.045, fill: { color: theme.accent } })
   }
 
-  // #1066-8: 导出期累计已内嵌图片字节；超预算的后续图片块跳过（log 可观测）。
+  // #1066-8/#1072-1: 导出期累计已内嵌图片字节；超预算的后续图片块跳过
+  // （log 可观测）。#1072-1: 预算按 base64 膨胀后字节计（原始字节 ×4/3
+  // 上浮 + data URI 前缀）而非原始字节 — 图片以 data URI 字符串全驻留
+  // pptxgenjs（写文件前无法释放），实际峰值由膨胀后字节决定，旧口径少计
+  // ~25%，20MB×30 页最坏峰值可到配置值 2-4×（叠加内部拷贝）致 worker OOM。
   // resolved Buffer 转 data URI 后即成为垃圾（本地引用随迭代结束释放），
   // 真正的全驻留发生在 pptxgenjs 内部 — 预算封顶是对其唯一可行的内存上界。
+  const budget = resolveImageBudget() // #1072-1: 单次导出生效预算（env 覆盖）
   let embeddedImageBytes = 0
   const addImageBounded = async (
     s: Slide,
@@ -241,11 +246,13 @@ export async function generatePptx(payload: any) {
   ): Promise<boolean> => {
     const resolved = await resolveImage(img)
     if (!resolved) return false
-    if (imageBudgetExceeded(embeddedImageBytes, resolved.data.length)) {
-      console.warn(`[PPTX] #1066-8 内嵌图片总量超预算(${Math.round(resolveImageBudget() / 1024 / 1024)}MB) — 跳过后续图片块`)
+    // #1072-1: base64 后字节计 — 与 addImage 实际驻留的 data URI 一致。
+    const incoming = base64InflatedBytes(resolved.data)
+    if (imageBudgetExceeded(embeddedImageBytes, incoming, budget)) {
+      console.warn(`[PPTX] #1066-8 内嵌图片总量超预算(${Math.round(budget / 1024 / 1024)}MB, 按 base64 后字节计) — 跳过后续图片块`)
       return false
     }
-    embeddedImageBytes += resolved.data.length
+    embeddedImageBytes += incoming
     // #1053: pptxgenjs addImage 仅接受 base64 字符串 — 传 Buffer 会被
     // 静默丢弃（console.error 后 return null），图根本进不了 media。
     s.addImage({ data: toBase64DataUri(resolved.data), ...box })

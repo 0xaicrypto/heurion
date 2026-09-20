@@ -15,6 +15,11 @@ RUN corepack enable && corepack prepare pnpm@10 --activate
 COPY packages/contracts ./packages/contracts
 RUN cd packages/contracts && pnpm install --frozen-lockfile && pnpm run build
 
+# #1074-1: @heurion/ssrf-guard — server-ts 的另一个 file: 共享包，同样先建 dist
+# （与 worker Dockerfile 同款接线）。
+COPY packages/ssrf-guard ./packages/ssrf-guard
+RUN cd packages/ssrf-guard && pnpm install --frozen-lockfile && pnpm run build
+
 COPY packages/server-ts ./packages/server-ts
 WORKDIR /build/packages/server-ts
 RUN pnpm install --frozen-lockfile

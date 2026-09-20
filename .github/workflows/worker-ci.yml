@@ -57,6 +57,11 @@ jobs:
       - name: Build shared contracts (drift guard)
         run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
 
+      # #1074-1: ssrf-guard 同为 file: 共享包 — install 前必须先建 dist
+      #（pnpm file: 快照只拷 files:["dist"]）。
+      - name: Build shared ssrf-guard (drift guard)
+        run: cd ../ssrf-guard && pnpm install --frozen-lockfile && pnpm build
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

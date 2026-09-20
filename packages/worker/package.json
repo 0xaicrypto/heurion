@@ -13,6 +13,7 @@
     "@aws-sdk/client-s3": "^3.500.0",
     "@aws-sdk/s3-request-presigner": "^3.1106.0",
     "@heurion/contracts": "file:../contracts",
+    "@heurion/ssrf-guard": "file:../ssrf-guard",
     "docx": "^9.7.1",
     "fastify": "^4.0.0",
     "pdfkit": "^0.19.1",

@@ -14,6 +14,10 @@ RUN corepack enable && corepack prepare pnpm@10 --activate
 COPY packages/contracts ./packages/contracts
 RUN cd packages/contracts && pnpm install --frozen-lockfile && pnpm run build
 
+# #1074-1: @heurion/ssrf-guard — worker 的另一个 file: 共享包，同样先建 dist。
+COPY packages/ssrf-guard ./packages/ssrf-guard
+RUN cd packages/ssrf-guard && pnpm install --frozen-lockfile && pnpm run build
+
 COPY packages/worker ./packages/worker
 WORKDIR /build/packages/worker
 RUN pnpm install --frozen-lockfile

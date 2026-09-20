@@ -1,7 +1,7 @@
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, AlignmentType, WidthType, ImageRun, convertMillimetersToTwip } from 'docx'
 import { saveFile } from '../storage.js'
 import { SCHEMA_VERSION, validateRenderContent, type ContentBlock, type DocumentContent } from '@heurion/contracts'
-import { resolveImage } from './common.js'
+import { resolveImage } from './remote-image.js' // #1074-2: remote-image 职责自 common.ts 拆出
 
 export interface DocxSection {
   heading?: string

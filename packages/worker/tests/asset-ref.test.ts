@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 import path from 'node:path'
 import { imageBlockSchema } from '@heurion/contracts'
-import { resolveImage } from '../src/handlers/common.js'
+import { resolveImage } from '../src/handlers/remote-image.js' // #1074-2: remote-image 职责自 common.ts 拆出
 import { isKnownJobType } from '../src/job-types.js'
 
 /**
