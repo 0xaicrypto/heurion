@@ -260,12 +260,16 @@ export class EditDocumentTool extends BaseTool {
 
   /** #408-followup: 导入类模式不支持 title 同帧(导入写入在下游单点),成功后
    *  补一次 title 写回并合并输出 — 用户仍是一次指令完成改名;正文首行标题
-   *  heading 与 titleOnly 同规则同步。 */
+   *  heading 与 titleOnly 同规则同步。
+   *  #1073-3: 文档不存在语义与 titleOnly/其余编辑路径统一 — 显式报错
+   *  （不静默跳过,文案同款）。此前该分支依赖 writeDocVersion 的兜底错误
+   *  且多一次冗余 findFirst;工具对缺失文档的惯例是显式失败让模型自纠。 */
   private async withTitle(docId: string, result: ToolResult, title: string): Promise<ToolResult> {
     if (!title || !result.success) return result
     const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
-    const oldTitle = String(existing?.title || '')
-    const prevBody = String(existing?.body || '')
+    if (!existing) return { success: false, error: `Document not found: ${docId}` }
+    const oldTitle = String(existing.title || '')
+    const prevBody = String(existing.body || '')
     const syncedBody = syncLeadingTitleHeading(prevBody, oldTitle, title)
     const written = await writeDocVersion({
       userId: this.ctx.userId, docId,

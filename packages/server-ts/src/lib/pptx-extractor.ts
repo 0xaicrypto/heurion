@@ -379,12 +379,17 @@ function parseChartXml(xml: string): PptxChart {
     const n = Number(v)
     if (Number.isFinite(n)) valueByIdx.set(idx, n)
   }
-  // #1059: 按 idx 交集配对，升序输出（idx 乱序出现的 part 也按类别轴顺序还原）。
+  // #1073-2: 以 val 侧为驱动配对（#1059 idx 交集的收紧）— cat 节点真缺失
+  //（无该 <c:pt>）回退 #idx+1 占位；空字符串标签是合法值（Excel 允许空类别
+  // 名），原样保留渲染为空标签，不误判缺失。此前 cat-presence 过滤让缺失
+  // 点整体丢弃、回退分支不可达，且 `||` 把空串也当缺失。
   const data = [...valueByIdx.keys()]
-    .filter((idx) => catByIdx.has(idx))
     .sort((a, b) => a - b)
     .slice(0, 200)
-    .map((idx) => ({ label: (catByIdx.get(idx) || `#${idx + 1}`).slice(0, 200), value: valueByIdx.get(idx)! }))
+    .map((idx) => {
+      const cat = catByIdx.get(idx)
+      return { label: (cat === undefined ? `#${idx + 1}` : cat).slice(0, 200), value: valueByIdx.get(idx)! }
+    })
   if (data.length === 0) return { ooxmlType }
 
   const title = decodeXmlEntities(/<c:title>[\s\S]*?<\/c:title>/.exec(xml)?.[0]?.match(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/)?.[1] || '').trim().slice(0, 500)

@@ -409,6 +409,53 @@ describe('#1059 图表 <c:pt> 按 idx 属性对齐（弃下标位置假设）', 
     ])
   })
 
+  // #1073-2: 类别 <c:pt> 空字符串标签是合法值（Excel 允许空类别名）—
+  // 必须区分「节点缺失」（回退 #idx+1）与「空串」（原样保留，渲染为空行）。
+  test('#1073-2：cat <c:pt> 空字符串标签为合法值，不回退 #idx+1', () => {
+    const built = buildPptxFixture([
+      {
+        title: '空类别标签',
+        charts: [{
+          kind: 'barChart',
+          categories: ['Arm A', '', 'Arm C'],
+          series: [{ name: 'x', values: [1, 2, 3] }],
+          catPts: [pt(0, 'Arm A'), pt(1, ''), pt(2, 'Arm C')],
+          valPts: [pt(0, 1), pt(1, 2), pt(2, 3)],
+        }],
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    // 修复前：catByIdx.get(idx) 为 '' 被 || 当缺失 → 误回退 '#2'
+    expect(parsed.slides[0].charts?.[0].spec?.data).toEqual([
+      { label: 'Arm A', value: 1 },
+      { label: '', value: 2 },
+      { label: 'Arm C', value: 3 },
+    ])
+  })
+
+  test('#1073-2：cat <c:pt> 节点真缺失回退 #idx+1（与空串区分）', () => {
+    const built = buildPptxFixture([
+      {
+        title: '缺失类别节点',
+        charts: [{
+          kind: 'barChart',
+          categories: ['A', 'B', 'C'],
+          series: [{ name: 'x', values: [1, 2, 3] }],
+          // idx=1 的 cat 节点整个缺失（无 <c:pt>）→ 无类别信息，回退占位标签。
+          // 修复前该点被 cat-presence 过滤整体丢弃（回退分支不可达）。
+          catPts: [pt(0, 'A'), pt(2, 'C')],
+          valPts: [pt(0, 1), pt(1, 2), pt(2, 3)],
+        }],
+      },
+    ])
+    const parsed = parsePptx(built.buffer)
+    expect(parsed.slides[0].charts?.[0].spec?.data).toEqual([
+      { label: 'A', value: 1 },
+      { label: '#2', value: 2 },
+      { label: 'C', value: 3 },
+    ])
+  })
+
   test('用例 3：idx 乱序出现 → 仍按 idx 正确对齐（升序输出）', () => {
     const built = buildPptxFixture([
       {

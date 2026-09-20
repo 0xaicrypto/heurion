@@ -5,7 +5,7 @@
  * 重置 test.db 并 db push 最新 schema），用例数据用后即删（doc 级联清理），
  * 不依赖事务回滚。评论 API 不触 LLM，无需 mock ai-provider。
  */
-import { describe, test, expect, afterAll } from 'vitest'
+import { describe, test, expect, afterAll, vi } from 'vitest'
 import { getApp, authHeader, getAuthUserId, registerSecondUser } from './setup.js'
 
 async function getPrisma() {
@@ -668,9 +668,37 @@ describe('#1064 comments API 健壮性批次', () => {
   })
 })
 
-// ── #1064 集成收口: AI 回复专用入口（web「请AI处理」闭环消费）──────────
-describe('#1064 集成收口 — POST /comments/:id/ai-replies', () => {
-  test('认证用户写入 AI 回复：role 服务端固定 ai，201 返回线程形回复', async () => {
+// ── #1064 集成收口 + #1072-2 来源可信: AI 回复专用入口 ──────────────────
+// #1072-2 契约（web 适配者必读）：POST body 必须携带 turn_id — 须是该用户
+// 该文档 chat 事件日志（per-user JSONL，core/event-log.ts，与 SSE
+// turn_complete.assistant_event_idx 同源）里真实存在的 assistant_response
+// 事件序号；doc chat 会话 id 固定 `doc-<docId>`。找不到/跨文档会话/跨用户/
+// user_message 冒充一律 403。取舍：不做时间窗（事件日志无 TTL，时间窗会
+// 误伤长会话；信任语义由「真实存在的 AI turn」承载）。
+// 注意：不是 doc_chat_messages 表 — 遗留表无写入方，事件日志才是 chat 的
+// 真实持久层。
+import { EventLog } from '../src/core/event-log.js'
+import { twinsBaseDir } from '../src/lib/upload-path.js'
+
+describe('#1064 集成收口 + #1072-2 — POST /comments/:id/ai-replies', () => {
+  /** 在认证用户的事件日志里追加一条事件，返回事件 idx（即 web 侧 assistant_event_idx 口径）。 */
+  async function appendTurn(docId: string, eventType: 'assistant_response' | 'user_message'): Promise<string> {
+    const userId = await getAuthUserId()
+    const log = new EventLog(twinsBaseDir(userId), userId)
+    const evt = log.append({
+      timestamp: Date.now() / 1000,
+      eventType,
+      content: eventType === 'assistant_response' ? 'AI 已按要求修改该节' : '用户指令',
+      metadata: {},
+      agentId: userId,
+      sessionId: `doc-${docId}`,
+    })
+    await log.flush()
+    log.close()
+    return String(evt.idx)
+  }
+
+  test('真实 AI turn 序号 → 201，role 服务端固定 ai', async () => {
     const app = await getApp()
     const docId = await createDoc('# Intro\n\n正文。\n')
     const h = { ...(await authHeader()), 'content-type': 'application/json' }
@@ -681,27 +709,95 @@ describe('#1064 集成收口 — POST /comments/:id/ai-replies', () => {
       payload: JSON.stringify({ section_id: 's1', anchor_text: '正文。', text: '请补充来源' }),
     })
     const commentId = JSON.parse(created.payload).id
+    const turnId = await appendTurn(docId, 'assistant_response')
     const r = await app.inject({
       method: 'POST',
       url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`,
       headers: h,
-      payload: JSON.stringify({ text: 'AI 已修改该节' }),
+      payload: JSON.stringify({ text: 'AI 已修改该节', turn_id: turnId }),
     })
     expect(r.statusCode).toBe(201)
     const reply = JSON.parse(r.payload)
     expect(reply.role).toBe('ai')
     expect(reply.text).toBe('AI 已修改该节')
-    // 客户端试图自封 role → 该入口只收 text，role 字段被忽略/拒绝
+  })
+
+  test('伪造 turn_id（事件日志中不存在）→ 403', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# Intro\n\n正文。\n')
+    const h = { ...(await authHeader()), 'content-type': 'application/json' }
+    const created = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers: h,
+      payload: JSON.stringify({ section_id: 's1', anchor_text: '正文。', text: '首条' }),
+    })
+    const commentId = JSON.parse(created.payload).id
+    const forged = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`, headers: h,
+      payload: JSON.stringify({ text: '伪造 AI 的话', turn_id: '999999' }),
+    })
+    expect(forged.statusCode).toBe(403)
+    // 自封 role 字段被忽略（zod 剥离）+ 缺 turn_id → 400
     const bad = await app.inject({
-      method: 'POST',
-      url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`,
-      headers: h,
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`, headers: h,
       payload: JSON.stringify({ text: 'x', role: 'system' }),
     })
-    expect([201, 400]).toContain(bad.statusCode)
-    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers: h })).payload)
-    const thread = list.comments.find((c: any) => c.id === commentId)
-    expect(thread.replies.filter((x: any) => x.role !== 'user').every((x: any) => x.role === 'ai')).toBe(true)
+    expect(bad.statusCode).toBe(400)
+  })
+
+  test('turn_id 校验按 user+doc+eventType 收紧：跨文档会话 / user 消息冒充 / 其他用户 turn → 403；缺 turn_id → 400', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# Intro\n\n正文。\n')
+    const h = { ...(await authHeader()), 'content-type': 'application/json' }
+    const created = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers: h,
+      payload: JSON.stringify({ section_id: 's1', anchor_text: '正文。', text: '首条' }),
+    })
+    const commentId = JSON.parse(created.payload).id
+
+    // 同一用户另一文档会话的 assistant_response（sessionId=doc-<otherDoc>）→ 会话不符 → 403
+    const otherDocId = await createDoc('# B\n\n另一文档。\n')
+    const crossDocTurn = await appendTurn(otherDocId, 'assistant_response')
+    const crossDoc = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`, headers: h,
+      payload: JSON.stringify({ text: '跨文档 turn', turn_id: crossDocTurn }),
+    })
+    expect(crossDoc.statusCode).toBe(403)
+
+    // 本文档会话内 user_message — 不是 AI turn → 403
+    const userTurn = await appendTurn(docId, 'user_message')
+    const userMsg = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`, headers: h,
+      payload: JSON.stringify({ text: '拿用户消息冒充', turn_id: userTurn }),
+    })
+    expect(userMsg.statusCode).toBe(403)
+
+    // 其他用户事件日志里的序号 — 加载的是认证用户自己的日志，天然不符 → 403
+    const second = await registerSecondUser()
+    const foreignLog = new EventLog(twinsBaseDir(second.userId), second.userId)
+    const foreignEvt = foreignLog.append({
+      timestamp: Date.now() / 1000, eventType: 'assistant_response', content: '他人 turn',
+      metadata: {}, agentId: second.userId, sessionId: `doc-${docId}`,
+    })
+    await foreignLog.flush()
+    foreignLog.close()
+    const foreign = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`, headers: h,
+      payload: JSON.stringify({ text: '他人 turn', turn_id: String(foreignEvt.idx) }),
+    })
+    expect(foreign.statusCode).toBe(403)
+
+    // 缺 turn_id → 400（zod）
+    const noTurn = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`, headers: h,
+      payload: JSON.stringify({ text: '没有凭据' }),
+    })
+    expect(noTurn.statusCode).toBe(400)
+    // 空 turn_id → 400
+    const emptyTurn = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`, headers: h,
+      payload: JSON.stringify({ text: '空凭据', turn_id: '' }),
+    })
+    expect(emptyTurn.statusCode).toBe(400)
   })
 
   test('跨用户 404 + 空 text 400（信封为 zod format）', async () => {
@@ -724,16 +820,69 @@ describe('#1064 集成收口 — POST /comments/:id/ai-replies', () => {
       payload: JSON.stringify({ text: '越权' }),
     })
     expect(other.statusCode).toBe(404)
-    // 空 text → 400，信封统一 { error: format }
+    // 空 text → 400，信封统一 { error: format }（turn_id 在场 — 400 只由空 text 触发）
     const empty = await app.inject({
       method: 'POST',
       url: `/api/v1/docs/${docId}/comments/${commentId}/ai-replies`,
       headers: h,
-      payload: JSON.stringify({ text: '' }),
+      payload: JSON.stringify({ text: '', turn_id: 'turn_any' }),
     })
     expect(empty.statusCode).toBe(400)
     const body = JSON.parse(empty.payload)
     expect(typeof body.error).toBe('object')
     expect(body.error).not.toHaveProperty('details')
+  })
+})
+
+// ── #1074-6: 评论列表按需 select — with_anchor=1 才查 body/deck 大字段 ──
+// 「懒计算」此前只省 CPU 不省 DB I/O：doc.body/deck 大字段无论是否需要诊断
+// 都查出。现在 with_anchor=0（默认）只取 id（归属校验），大字段不进查询。
+describe('#1074-6 评论列表按需 select', () => {
+  const h = async () => ({ ...(await authHeader()), 'content-type': 'application/json' })
+
+  test('行为不变：默认列表返回元数据无 anchor；with_anchor=1 返回 anchor', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# Intro\n\n这是被评论的正文段落。\n')
+    const headers = await h()
+    const created = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers,
+      payload: JSON.stringify({ section_id: 'sec_intro', anchor_text: '这是被评论的正文段落。', text: '首条' }),
+    })
+    expect(created.statusCode).toBe(201)
+    // 默认（with_anchor=0）：元数据齐全、无 anchor
+    const plain = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers })).payload)
+    expect(plain.comments).toHaveLength(1)
+    expect(plain.comments[0].anchor_text).toBe('这是被评论的正文段落。')
+    expect(plain.comments[0].anchor).toBeUndefined()
+    // with_anchor=1：anchor 在场且定位成功（大字段查询路径的回归护栏）
+    const withAnchor = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?with_anchor=1`, headers })).payload)
+    expect(withAnchor.comments[0].anchor).toBeTruthy()
+    expect(withAnchor.comments[0].anchor.located).toBe(true)
+  })
+
+  test('查询差异：默认不 select body/deck，with_anchor=1 才 select（大字段不进查询）', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# Intro\n\n正文。\n')
+    const headers = await h()
+    const prisma = await getPrisma()
+    const spy = vi.spyOn(prisma.doc, 'findFirst')
+    try {
+      await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers })
+      await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments?with_anchor=1`, headers })
+      expect(spy).toHaveBeenCalledTimes(2)
+      // 第 1 次（默认）：select 只取 id — body/deck 大字段不在查询投影里
+      const plainSelect = spy.mock.calls[0][0] as { select?: Record<string, unknown> }
+      expect(plainSelect.select).toBeTruthy()
+      expect(plainSelect.select!.id).toBe(true)
+      expect(plainSelect.select!.body).toBeUndefined()
+      expect(plainSelect.select!.deck).toBeUndefined()
+      // 第 2 次（with_anchor=1）：body/deck 在 select 里
+      const anchorSelect = spy.mock.calls[1][0] as { select?: Record<string, unknown> }
+      expect(anchorSelect.select!.id).toBe(true)
+      expect(anchorSelect.select!.body).toBe(true)
+      expect(anchorSelect.select!.deck).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

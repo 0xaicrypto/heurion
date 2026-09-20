@@ -15,9 +15,12 @@ import {
  * mock 传输可模拟连接期取址,断言「连接目标 = 校验解析结果」而非二次解析。
  */
 
-/** 从传输 mock 的 init 里模拟连接期取址(钉定 lookup 回调风格)。 */
+/** 从传输 mock 的 init 里模拟连接期取址(钉定 lookup 回调风格)。
+ *  #1074-1: 类型收敛到共享包后 lookup 为 `PinnedLookup | null`（worker 有
+ *  受信 origin 不钉定的场景；server 路径恒钉定）— 加与 worker 同款守卫。 */
 function connectViaPinned(init: UrlTransportInit): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (!init.lookup) return reject(new Error('transport 未携带钉定 lookup — #1057 钉定缺失'))
     init.lookup('connect-target', {}, (err, address) => (err ? reject(err) : resolve(address)))
   })
 }

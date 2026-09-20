@@ -21,6 +21,8 @@ import type { DocComment, DocCommentReply } from '@prisma/client'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
 import { makeLogger } from '../../common/logger.js'
+import { EventLog } from '../../core/event-log.js'
+import { twinsBaseDir } from '../../lib/upload-path.js'
 // #1039: 锚点漂移候选建议 — 与 edit_document 共用同一实现（只复用不改）。
 import { closestTextCandidates, type AnchorCandidate } from '../../tools/anchor-diagnostics.js'
 // #1039: 「当前正文里还能不能定位到」的判定 — 与 edit_document 的两级
@@ -65,8 +67,11 @@ const createReplySchema = z.object({
 
 // #1064 集成收口(#1041 web 闭环消费): AI 回复专用入口 — role 服务端固定
 // 'ai',body 只收文本;认证 + 归属校验在路由内做,与通用 replies 端点同纪律。
+// #1072-2 来源可信: body 必须携带 turn_id — 该用户该文档 doc chat 中真实
+// 存在的近期 AI turn 消息 id（doc_chat_messages 表校验,见路由内注释）。
 const aiReplySchema = z.object({
   text: z.string().min(1).max(10000),
+  turn_id: z.string().min(1),
 })
 
 const patchCommentSchema = z.object({
@@ -255,13 +260,19 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
   // ── 评论列表（含 replies；section_id/status 过滤；open 评论附锚点诊断）──
   app.get<{ Params: DocParams; Querystring: unknown }>('/api/v1/docs/:docId/comments', async (request, reply) => {
     const userId = request.user!.userId
+    // 先解析 query（404 优先级不变 — doc 归属校验仍在 query 校验之前返回）
+    const parsedQuery = listQuerySchema.safeParse(request.query)
+    // #1074-6: 大字段按需 select — with_anchor=1（要跑锚点诊断）才查
+    // doc.body/deck 大字段；默认列表只取 id 做归属校验，「懒计算」真正
+    // 省 DB I/O，不再无条件拖大字段。
+    const withAnchor = parsedQuery.success && parsedQuery.data.with_anchor === '1'
     const doc = await prisma.doc.findFirst({
       where: { id: request.params.docId, userId },
-      // #1051: deck 评论锚点诊断需要 Doc.deck
-      select: { id: true, body: true, deck: true },
+      // #1051: deck 评论锚点诊断需要 Doc.deck（仅 with_anchor=1 时）
+      select: { id: true, ...(withAnchor ? { body: true, deck: true } : {}) },
     })
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
-    const query = listQuerySchema.safeParse(request.query)
+    const query = parsedQuery
     if (!query.success) {
       // #1064: 信封统一为仓库主流 { error: parsed.error.format() }
       return reply.status(400).send({ error: query.error.format() })
@@ -283,7 +294,7 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
     if (hasMore) comments.pop()
     // #1064: 诊断懒计算 — 默认不算（列表页省 CPU），?with_anchor=1 才跑；
     // deck JSON 单次解析，列表内所有 deck_slide 评论复用，不逐评论 parse。
-    const withAnchor = query.data.with_anchor === '1'
+    // #1074-6: withAnchor 已在 doc 查询时决定 select — body/deck 仅该分支访问。
     const deckParsed = withAnchor ? parseDeckSlides(doc.deck) : null
     const body = String(doc.body || '')
     return {
@@ -340,6 +351,25 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
     const parsed = aiReplySchema.safeParse(request.body)
     if (!parsed.success) {
       return reply.status(400).send({ error: parsed.error.format() })
+    }
+    // #1072-2: 来源可信校验 — turn_id 必须指向该用户该文档 doc chat 的
+    // **真实 AI turn**。数据源是 chat 事件日志（per-user JSONL，core/event-log.ts，
+    // 与 SSE turn_complete.assistant_event_idx 同源）——注意不是 doc_chat_messages
+    // 表（遗留表，无写入方）。会话 id 约定：doc chat 固定 `doc-<docId>`（web
+    // 端 SESSION 常量），eventType 'assistant_response'；user_message 冒充/
+    // 跨文档会话/伪造 idx → 403。取合（报告）: 仅存在性校验不做时间窗——
+    // 事件日志无 TTL，时间窗会误伤长会话；如需收紧在 find 处加 idx 下界即可。
+    const turnIdx = Number(parsed.data.turn_id)
+    let turnValid = false
+    if (Number.isInteger(turnIdx) && turnIdx >= 1) {
+      // 每次调用独立加载同用户事件日志文件（校验低频，文件读成本可忽略；
+      // 不复用 getUserContext——那会连带装配记忆服务等重资源）。
+      const turnLog = new EventLog(twinsBaseDir(userId), userId)
+      const hits = turnLog.query({ sessionId: `doc-${doc.id}`, eventType: 'assistant_response', afterIdx: turnIdx - 1 })
+      turnValid = hits.some((e) => e.idx === turnIdx)
+    }
+    if (!turnValid) {
+      return reply.status(403).send({ error: 'turn_id 不合法 — 必须是当前用户在该文档 chat 中真实存在的 AI turn（assistant 响应）序号' })
     }
     const row = await appendCommentReplyInternal({ commentId: comment.id, role: 'ai', text: parsed.data.text })
     return reply.status(201).send(row)
