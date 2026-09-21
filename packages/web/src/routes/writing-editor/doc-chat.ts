@@ -26,7 +26,11 @@ export interface DocChat {
   kbDedupNotice: string | null;
   chatAttachedFiles: Array<{ name: string; fileId: string }>;
   stopStream: (sid: string) => void;
-  sendChatText: (text: string) => Promise<void>;
+  /**
+   * #1095: 返回值 = 排队时该槽的显式 turnId（直发为 undefined）— 评论
+   * 并行处理以它登记/清账。消费方不关心时按 Promise<void> 使用即可。
+   */
+  sendChatText: (text: string) => Promise<string | undefined>;
   handleSendChat: () => Promise<void>;
   handleChatPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => Promise<void>;
   handleChatFile: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
@@ -97,7 +101,8 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   const setMessages = useChatStore((s) => s.setMessages);
   const chatMessages = chatSession?.messages ?? [];
   const chatLoading = chatSession?.loading ?? false;
-  const chatPending = useChatStore((s) => (chatSessionId ? !!s.sessions[chatSessionId]?.pending : false));
+  // #1095: pending 单槽 → 多槽 FIFO 队列（排队不再互相覆盖）。
+  const chatPending = useChatStore((s) => (chatSessionId ? !!s.sessions[chatSessionId]?.pendingQueue?.length : false));
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatFileRef = useRef<HTMLInputElement>(null);
@@ -138,8 +143,8 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   // #770: 统一发送管道（先保存编辑框内容再走 doc- 工具循环）—
   // 幻灯片视图的一键指令（AI 拆页 / AI 导出 PPT）与 chat 输入框共用；
   // 不新建旁路 API，保持"AI 在工具循环里决策"单管道。
-  const sendChatText = async (text: string) => {
-    if (!docId || !text.trim()) return;
+  const sendChatText = async (text: string): Promise<string | undefined> => {
+    if (!docId || !text.trim()) return undefined;
     // §15.4: the writing chat runs through the unified pipeline (session
     // doc-{docId}); the doc context is injected via the docs/current source.
     // #fix: 上传的 doc/pdf 必须随消息传给服务端 — 此前只传 text,附件
@@ -167,8 +172,9 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
     }
     // #fix: 追加问题排队发送 — 回复进行中调用时不打断(工具写回中的
     // doc_updated 若被中断,前端与文档状态会不一致),由 store 在当前
-    // turn 完成后自动发出;排队状态经 session.pending 在输入框上方提示。
-    await sendMessageQueued(`doc-${docId}`, {
+    // turn 完成后自动发出;排队状态经 session.pendingQueue 在输入框上方提示。
+    // #1095: 返回入队槽的显式 turnId（直发为 undefined）。
+    return await sendMessageQueued(`doc-${docId}`, {
       text,
       sessionId: `doc-${docId}`,
       patientHash: null,

@@ -60,6 +60,8 @@ const apiMock = vi.hoisted(() => ({
   generateMethods: vi.fn(),
   injectResults: vi.fn(),
   uploadFile: vi.fn(),
+  // #1077: 引用 API mock — 路由挂载期拉取 + 30s 轮询，不 mock 会 TypeError。
+  listDocCitations: vi.fn().mockResolvedValue({ citations: [] }),
   // #1040: 评论 API mock(路由挂载期拉取列表,不 mock 会 TypeError)。
   listDocComments: vi.fn(),
   createDocComment: vi.fn(),

@@ -202,4 +202,33 @@ export class WritingApi extends ApiCore {
       }),
     });
   }
+
+  // #1083: 正式参考文献（DocCitation）— 结构化引用列表（唯一事实源）。
+  async listDocCitations(docId: string): Promise<{ citations: DocCitationWire[] }> {
+    return this.fetch(`/api/v1/docs/${docId}/citations`);
+  }
+
+  // #1081: 悬挂引用诊断 — 正文 [cite:id] 找不到对应记录的清单（供可视化提示）。
+  async listDanglingCitations(docId: string): Promise<{ dangling: Array<{ id: string; occurrences: number }>; citations: DocCitationWire[] }> {
+    return this.fetch(`/api/v1/docs/${docId}/citations/dangling`);
+  }
+
+  // #1081: 「删除该引用」— 移除 DocCitation 记录；正文标记由 AI 编辑链路移除。
+  async deleteDocCitation(docId: string, citationId: string): Promise<{ ok: boolean }> {
+    return this.fetch(`/api/v1/docs/${docId}/citations/${citationId}`, { method: 'DELETE' });
+  }
+}
+
+export interface DocCitationWire {
+  id: string;
+  doc_id?: string;
+  doi: string;
+  pmid?: string | null;
+  title: string;
+  authors: string[];
+  journal?: string | null;
+  year?: number | null;
+  url?: string | null;
+  source: string;
+  created_at?: string;
 }

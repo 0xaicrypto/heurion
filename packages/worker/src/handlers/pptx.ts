@@ -345,6 +345,13 @@ export async function generatePptx(payload: any) {
       // #1068: 当前表格渲染目标页 — 放不下的行拆续页后前移（要点/图表摘要
       // 跟进最后一个表格块所在页，而非固定首页）。
       let tableSlide = s
+      // #1090-3: 表格块 >2 时此前静默丢弃（slice(0,2) 无痕）— 与 #1062-7
+      // 导入侧「截断标注可见」同口径：warn 留痕 + 页面注记（沿用 #1062-3
+      // 行数截断的 items 注记形态），丢弃数可见。
+      if (tableBlocks.length > 2) {
+        console.warn(`[PPTX] #1090-3 单页表格块超上限(2) — 仅渲染前 2 个，其余 ${tableBlocks.length - 2} 个已省略`)
+        items.push({ text: `[表格过多：仅渲染前 2 个（源共 ${tableBlocks.length} 个），其余已省略]`, bullet: false })
+      }
       for (const tb of tableBlocks.slice(0, 2)) {
         const parsed = parseTableBlockData((tb as { data?: unknown }).data)
         if (!parsed || parsed.rows.length === 0) continue

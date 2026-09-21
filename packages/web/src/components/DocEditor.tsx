@@ -22,6 +22,9 @@ import { ProposalCard, type ProposalSource } from './ProposalCard';
 import { SectionCardsExtension, setSectionCards, type SectionCardsData } from '@/lib/section-cards';
 // #1040: 评论锚点高亮(decoration-only,不动 schema)。
 import { CommentAnchorExtension, setCommentAnchors, type CommentAnchorsData } from '@/lib/comment-anchor';
+// #1077: 正文引用 shortcode 渲染(decoration-only,[cite:id] 保持纯文本契约)。
+import { CitationViewExtension, setCitationView, type CitationViewData } from '@/lib/citation-view';
+import type { DocCitationWire } from '@/lib/api';
 import { Button } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { useTranslation } from 'react-i18next';
@@ -36,6 +39,9 @@ const AI_AUTHOR: ChangeAuthor = { id: 'ai', name: 'AI', color: '#0ea5e9' };
 
 /** #1040: 评论锚点空数据 — 模块级常量,避免内联对象身份抖动。 */
 const EMPTY_COMMENTS: CommentAnchorsData = { items: [] };
+
+/** #1077: 引用视图空数据 — 模块级常量(同 EMPTY_COMMENTS 教训)。 */
+const EMPTY_CITATIONS: DocCitationWire[] = [];
 
 /**
  * #1070: 选区是否落在同一段落（同一文本块）内 — 评论锚点创建入口的前置校验。
@@ -394,6 +400,15 @@ interface DocEditorProps {
    * (text/from/to),弹窗与创建 API 由父组件处理。
    */
   onStartComment?: (sel: { text: string; from: number; to: number }) => void;
+  /**
+   * #1077: 引用元数据列表 — `[cite:id]` shortcode 的编号徽标渲染数据源
+   * (id 不在列表内 = 悬挂引用,渲染 `[?]` 警示徽标)。缺省无徽标。
+   */
+  citations?: DocCitationWire[];
+  /**
+   * #1077: 点击引用徽标/shortcode 回调 — 路由层弹文献详情预览。
+   */
+  onCitationClick?: (citationId: string) => void;
 }
 
 /** #792: BubbleRunState 移至 selection-bubble.tsx,这里 re-export 兼容旧 import。 */
@@ -405,7 +420,7 @@ export type { BubbleRunState } from './selection-bubble';
  * the editor converts on load (md → HTML) and on save (HTML → md).
  * 审阅模式下:AI 编辑以绿(插入)/红(删除)标记呈现,逐条或全部接受/拒绝。
  */
-export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubble, reviewTitle, queuedRounds, sectionCards, comments, onStartComment }: DocEditorProps) {
+export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubble, reviewTitle, queuedRounds, sectionCards, comments, onStartComment, citations, onCitationClick }: DocEditorProps) {
   const { t } = useTranslation();
   const applyMdRef = useRef<string | null>(null);
   const reviewKeyRef = useRef<string | null>(null);
@@ -532,6 +547,8 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       SectionCardsExtension,
       // #1040: 评论锚点高亮（decoration-only，不动 schema/正文）。
       CommentAnchorExtension,
+      // #1077: 引用 shortcode 徽标（decoration-only，[cite:id] 保持纯文本）。
+      CitationViewExtension,
     ],
     content: markdownToHtml(value),
     editorProps: {
@@ -656,6 +673,19 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     if (!editor) return;
     setCommentAnchors(editor, comments ?? EMPTY_COMMENTS);
   }, [editor, comments]);
+
+  // #1077: 引用徽标装饰下发 — 回调经 ref 取最新(与 #693/#1040 ref 模式一致),
+  // citations 数组身份变化(轮询刷新)即重建编号徽标。
+  const onCitationClickRef = useRef(onCitationClick);
+  onCitationClickRef.current = onCitationClick;
+  useEffect(() => {
+    if (!editor) return;
+    const data: CitationViewData = {
+      citations: citations ?? EMPTY_CITATIONS,
+      onCitationClick: (id) => onCitationClickRef.current?.(id),
+    };
+    setCitationView(editor, data);
+  }, [editor, citations]);
 
   // External markdown update (AI edit / doc load) → convert and apply.
   useEffect(() => {

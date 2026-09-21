@@ -11,6 +11,16 @@ import type { ChatStreamChunk, ChatContextUsage, DeckWire, SendChatOptions } fro
 import { diffProjectionSections } from './block-projection';
 import { extractSectionText, lineDiffRows } from './section-cards';
 
+/**
+ * #1095: 排队槽 — 入队即生成显式 turnId（#1074-4 语义），丢弃事件按它
+ * 精确清账；评论并行处理（多评论同时「请AI处理」）以此为身份凭据。
+ */
+export interface PendingChatSlot {
+  text: string;
+  opts: SendChatOptions;
+  turnId: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -119,9 +129,13 @@ export interface SessionState {
   abort: AbortController | null;
   loading: boolean;
   compacting: boolean;
-  /** #fix: 回复进行中用户追加的消息 — 当前 turn 完成后自动发送(排队,
-   *  不打断正在执行的工具/写回,避免文档状态不一致)。 */
-  pending?: { text: string; opts: SendChatOptions } | null;
+  /**
+   * #1095: 回复进行中用户追加的消息 — **多槽 FIFO 队列**（此前单槽被覆盖
+   * 即静默丢弃，是「请AI处理」多评论卡死的根因）。当前 turn 完成后按序
+   * 自动发送（执行层仍串行 — 同文档写回经 chat 会话 FIFO 逐个执行）。
+   * turnId 为入队时生成的显式 id（#1074-4 语义延续），丢弃事件按它精确清账。
+   */
+  pendingQueue?: PendingChatSlot[];
   lastDocBody?: string;
   /** #408-followup: 最近一次 doc_updated 携带的文档标题（AI 改名写回）—
    *  writing-editor 同步页头/标题输入框；body 未变时为 title-only 写回。 */

@@ -28,6 +28,8 @@ vi.mock('../../src/tools/doc-version-writer.js', () => ({
 
 import { EditDocumentTool } from '../../src/tools/edit-document-tool.js'
 import { buildBlockProjection } from '../../src/lib/block-projection.js'
+// #1079: 引用纪律护栏 — 纯函数直接单测 + 工具层集成用例。
+import { looksLikeHandwrittenReferences } from '../../src/tools/citation-guard.js'
 
 const DOC = 'doc_0123456789abcdef'
 const USER = 'user_1'
@@ -294,5 +296,81 @@ describe('#1020/#1022 — 稳定 section_id + 节内锚点 + 结构化诊断', (
     })
     expect(r.success).toBe(false)
     expect(r.error).toContain('不一致')
+  })
+})
+
+describe('#1079 — 手写 References 护栏（looksLikeHandwrittenReferences + edit_document 拒绝路径）', () => {
+  const HAND = [
+    'References',
+    '[1] Smith J, et al. Some title. J Clin. 2020;5:1-9.',
+    '[2] Doe A, et al. Another title. Nature. 2021;2:3-4.',
+  ].join('\n')
+
+  test('纯函数:手写编号条目 ×2 → true', () => {
+    expect(looksLikeHandwrittenReferences(HAND)).toBe(true)
+    // "1." 编号形态同样命中
+    expect(looksLikeHandwrittenReferences('1. Smith J, et al. Some title. J Clin. 2020;5:1-9.\n2. Doe A, et al. Another title. Nature. 2021;2:3-4.')).toBe(true)
+    // 中文文献线索
+    expect(looksLikeHandwrittenReferences('[1] 张三, 等. 某论文. 中华医学杂志. 2020;5:1-9.\n[2] 李四, 等. 另一篇. 学报. 2021;2:3-4.')).toBe(true)
+  })
+
+  test('纯函数:正常编辑/单行编号/含 [cite:id] 标记 → false（不误伤）', () => {
+    expect(looksLikeHandwrittenReferences('请把这句话改成更简洁的表达')).toBe(false)
+    expect(looksLikeHandwrittenReferences('该方案参考了 [1] 中提出的剂量曲线。')).toBe(false)
+    // 含合法 [cite:id] 标记 → 即使混有编号行也放行（正式引用通道）
+    expect(looksLikeHandwrittenReferences('结论 [cite:abc-123]。[1] Smith J, et al. Title. J Clin. 2020.')).toBe(false)
+    expect(looksLikeHandwrittenReferences('')).toBe(false)
+  })
+
+  test('护栏集成:range 模式 new_text 手写 References → 拒绝并引导 insert_citation', async () => {
+    mocks.docFindFirst.mockResolvedValue(makeDoc(JSON.stringify(buildBlockProjection(BODY))))
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const r = await tool.execute({
+      old_text: 'intro body text.',
+      new_text: HAND,
+      summary: 'add references',
+    })
+    expect(r.success).toBe(false)
+    expect(r.error).toContain('insert_citation')
+    expect(r.error).toContain('[cite:')
+    expect(mocks.writeDocVersion).not.toHaveBeenCalled()
+  })
+
+  test('护栏集成:节编辑 content 手写 References → 拒绝', async () => {
+    const proj = buildBlockProjection(BODY)
+    const intro = proj.nodes.find((n) => n.kind === 'section' && n.heading === 'Introduction')!
+    mocks.docFindFirst.mockResolvedValue(makeDoc(JSON.stringify(proj)))
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const r = await tool.execute({
+      target_section: intro.id,
+      section_action: 'replace',
+      content: HAND,
+    })
+    expect(r.success).toBe(false)
+    expect(r.error).toContain('insert_citation')
+    expect(mocks.writeDocVersion).not.toHaveBeenCalled()
+  })
+
+  test('护栏集成:含合法 [cite:id] 标记的编号混排 → 放行', async () => {
+    mocks.docFindFirst.mockResolvedValue(makeDoc(JSON.stringify(buildBlockProjection(BODY))))
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const r = await tool.execute({
+      old_text: 'intro body text.',
+      new_text: 'Polished intro [cite:abc-123], see also [1] prior work.',
+      summary: 'polish with citation',
+    })
+    expect(r.success, String(r.error)).toBe(true)
+  })
+
+  test('护栏集成:普通编辑（无引用形态）→ 不受影响', async () => {
+    mocks.docFindFirst.mockResolvedValue(makeDoc(JSON.stringify(buildBlockProjection(BODY))))
+    const tool = new EditDocumentTool({ userId: USER, sessionId: `doc-${DOC}` })
+    const r = await tool.execute({
+      old_text: 'intro body text.',
+      new_text: '请把这句话改成更简洁的表达后的版本：intro polished.',
+      summary: 'polish',
+    })
+    expect(r.success, String(r.error)).toBe(true)
+    expect(JSON.parse(r.output as string).body).toContain('intro polished.')
   })
 })

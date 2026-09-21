@@ -4,7 +4,7 @@
  * EXPORT_FORMATS table, the two-phase organize protocol and the render →
  * store → download-card pipeline via asset-render-pipeline.
  */
-import { validateRenderContent, SCHEMA_VERSION, slideLayoutSchema, deckThemeSchema, chartBlockSchema } from '@heurion/contracts'
+import { validateRenderContent, SCHEMA_VERSION, slideLayoutSchema, deckThemeSchema, chartBlockSchema, assignCitationNumbers } from '@heurion/contracts'
 import prisma from '../common/prisma.js'
 import type { ToolResult } from './base-tool.js'
 import type { ToolExecutionPlane } from './tool-registry.js'
@@ -13,6 +13,8 @@ import { buildDocumentContent, buildPresentationContent, digestBody } from '../l
 import { embedContentImages, resolveLocalImageBlock } from './asset-embed.js'
 import { runRenderJob } from './asset-render-pipeline.js'
 import { chartSpecPng } from './deck-chart-embed.js'
+import { resolveBodyCitations, resolveDeckContentCitations, listDocCitations, serializeDocCitation, buildReferencesSection } from '../lib/citation-store.js'
+import { stripLegacyReferencesSection, hasCiteShortcode } from '../lib/asset-content.js'
 
 /** #767 — 导出格式 → 插件 id / 契约 content_type / job type / 模板 / mime。 */
 export const EXPORT_FORMATS: Record<string, { pluginId: string; contentType: 'sidecar.generate_docx' | 'sidecar.generate_pptx' | 'sidecar.convert_to_pdf'; templateId: string; ext: string; mime: string; label: string }> = {
@@ -77,6 +79,23 @@ export async function executeInsertExport(deps: ExportExecutorDeps, docId: strin
   if (deps.figurePipeline) {
     body = await deps.figurePipeline.resolveBody(userId, body)
   }
+  // #1099: 导出边界解析正文引用 shortcode → [n] 编号（悬挂引用 → [?] 占位
+  // + warn 日志；编号算法与 web 渲染/References 列表共用 contracts 单一实现）。
+  const citationNumbers = assignCitationNumbers(body)
+  body = await resolveBodyCitations(docId, body)
+  // #1078: 自动生成 References 节 — 正文含 [cite:id] 标记（尚未解析的形态）
+  // 时，以【strip 前原文】的编号为准（与正文首现顺序一致），先剥除遗留的
+  // 手写 References 节再追加 store 生成的列表；无标记的存量文档原样直通
+  // （不剥遗留内容 — 未迁移文档的 References 不丢失）。deck 编排路径
+  // （organize=true，上方已提前返回）不适用 — slides 不携带 References 节。
+  if (hasCiteShortcode(body)) {
+    const citations = (await listDocCitations(docId)).map(serializeDocCitation)
+    const references = buildReferencesSection(citations, citationNumbers)
+    if (references) {
+      const stripped = stripLegacyReferencesSection(body)
+      body = `${stripped.replace(/\s+$/, '')}\n\n${references}\n`
+    }
+  }
   let content = spec.contentType === 'sidecar.generate_pptx'
     ? buildPresentationContent(body, String(existing.title || 'Presentation'))
     : buildDocumentContent(body, String(existing.title || 'Document'))
@@ -112,6 +131,10 @@ async function organizedExport(deps: ExportExecutorDeps, docId: string, existing
         // #960: deck v2 chart/figure block → image block（所见即所导，
         // worker 零改动）。chart 走确定性 #176 管线；figure 走 figures 管道。
         const embedded = await embedDeckSpecialBlocks(deps, deckContent)
+        // #1099: deck 文本块/标题中的引用 shortcode 同样解析为 [n] 编号。
+        if (Array.isArray((embedded.content as { slides?: unknown }).slides)) {
+          await resolveDeckContentCitations(docId, (embedded.content as { slides: Array<Record<string, any>> }).slides)
+        }
         const deckCheck = validateRenderContent('sidecar.generate_pptx', embedded.content)
         if (deckCheck.ok) {
           const deckSlides = (embedded.content as { slides: Array<{ title: string; content: Array<{ type: string; text?: string }> }> }).slides || []
@@ -145,6 +168,8 @@ async function organizedExport(deps: ExportExecutorDeps, docId: string, existing
   // #963 v2：可选 layout（按内容语义选母版）与 chart spec（数据密集页
   // → chart-full；AI 只产结构化 spec，渲染确定性 #176 管线）。
   let skippedImages = 0
+  // #1099: AI 直供 slides 的 bullets/title 同样解析引用 shortcode。
+  await resolveDeckContentCitations(docId, rawSlides as Array<Record<string, any>>)
   const slides = await Promise.all(rawSlides.slice(0, 30).map(async (s: any) => {
     const title = String(s?.title || '').trim().slice(0, 500) || '未命名页'
     const layoutCheck = slideLayoutSchema.safeParse(String(s?.layout || ''))

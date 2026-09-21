@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { chartBlockSchema } from '@heurion/contracts';
 import i18n from '@/i18n';
 import type { DeckWire } from '@/lib/types';
+import type { Slide } from '@/lib/deck';
 import { useDeckAsset } from './deck-asset';
 import { DeckView } from './deck-view';
 
@@ -43,7 +44,7 @@ const makeDeck = (titles: string[]): DeckWire => ({
 
 /** 测试挂载点:真实 useDeckAsset hook + 种子数据,DeckView 直连(与路由同构)。
  * #1087: onNotice 透传 DeckView（路由 showNotice 同款签名），断言丢弃提示用。 */
-function Harness({ initialDeck, onDeckChange, onNotice }: { initialDeck: DeckWire; onDeckChange?: (deck: DeckWire | null) => void; onNotice?: (text: string, ttlMs?: number) => void }) {
+function Harness({ initialDeck, onDeckChange, onNotice, sendChatText, slides, body }: { initialDeck: DeckWire; onDeckChange?: (deck: DeckWire | null) => void; onNotice?: (text: string, ttlMs?: number) => void; sendChatText?: (text: string) => Promise<void>; slides?: Slide[]; body?: string }) {
   const ctl = useDeckAsset();
   const seededRef = useRef(false);
   // #1044 测试探针:deckAsset 每次变化回传最新 deck,断言 content 块形状用。
@@ -62,10 +63,10 @@ function Harness({ initialDeck, onDeckChange, onNotice }: { initialDeck: DeckWir
     <I18nextProvider i18n={i18n}>
       <DeckView
         deckAsset={ctl.deckAsset}
-        slides={[]}
-        body=""
+        slides={slides ?? []}
+        body={body ?? ''}
         deckCtl={ctl}
-        sendChatText={async () => {}}
+        sendChatText={sendChatText ?? (async () => {})}
         onCardEdit={() => {}}
         onNotice={onNotice}
       />
@@ -83,7 +84,7 @@ const cardOrder = (): string[] =>
   screen
     .getAllByRole('textbox')
     .map((el) => (el as HTMLInputElement).value)
-    .filter((v) => ['A', 'B', 'C'].includes(v));
+    .filter((v) => ['A', 'A1', 'A2', 'B', 'C'].includes(v));
 
 /** 语言无关定位:t() 对缺失 key 回落中文默认值,任何 locale 下均如此。 */
 const upButtons = () => screen.getAllByRole('button', { name: '上移此页' });
@@ -1579,3 +1580,106 @@ describe('#1094 替换模式等待期半透明 pulse 覆盖层', () => {
     expect(screen.queryByRole('status')).toBeNull();
   });
 });
+
+// ── #1098: 无 deck 资产时缺「生成幻灯片」入口与引导 ──────────────────────
+// 「AI 帮我拆页」只改 ## 分页,建不出可编辑 deck 资产（仅 AI 的 edit_deck 工具能建）
+// — fallback 分支需有显式生成入口 + 只读投影卡片旁的引导文案。
+describe('#1098 无 deck 资产时的「生成可编辑幻灯片」入口', () => {
+  /** 只读投影 slides fixture（fallback 卡片网格渲染用）。 */
+  const projectionSlides = (): Slide[] => [
+    { title: 'A', headingRaw: '## A', blocks: [{ type: 'paragraph', text: 'A-要点' }] },
+  ];
+
+  test('无 deckAsset：生成按钮存在，点击 sendChatText 恰一次且指令含 edit_deck', async () => {
+    const sendChatText = vi.fn<(text: string) => Promise<void>>();
+    render(<Harness initialDeck={null as unknown as DeckWire} slides={projectionSlides()} body="## A\n要点" sendChatText={sendChatText} />);
+    // initialDeck=null 时不 seed deck（Harness 种子逻辑仅在有 deck 时落地,此处直接以 null 走 fallback）。
+    await waitFor(() => expect(screen.getByRole('button', { name: '生成可编辑幻灯片' })).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '生成可编辑幻灯片' }));
+    });
+    expect(sendChatText).toHaveBeenCalledTimes(1);
+    expect(String(sendChatText.mock.calls[0][0])).toContain('edit_deck');
+    // 原「AI 帮我拆页」仍保留为次级选项。
+    expect(screen.getByRole('button', { name: 'AI 帮我拆页' })).toBeTruthy();
+  });
+
+  test('无 deckAsset：只读投影卡片旁出现引导文案（指向生成入口）', () => {
+    render(<Harness initialDeck={null as unknown as DeckWire} slides={projectionSlides()} body="## A\n要点" />);
+    expect(screen.getByText('想要直接编辑卡片？点击上方“生成可编辑幻灯片”创建 deck 资产')).toBeTruthy();
+  });
+
+  test('有 deckAsset：不出现生成按钮与引导文案（展示可编辑 UI）', () => {
+    renderDeck(['A']);
+    expect(screen.queryByRole('button', { name: '生成可编辑幻灯片' })).toBeNull();
+    expect(screen.queryByText(/想要直接编辑卡片/)).toBeNull();
+    // 可编辑 UI 仍在：添加一页入口。
+    expect(screen.getByRole('button', { name: '添加一页' })).toBeTruthy();
+  });
+});
+
+// #1090-1: deck 编辑撤销栈（限深 10）+ 撤销按钮 + Cmd/Ctrl+Z 快捷键 —
+// 对比正文完整 Undo 历史的 deck 侧补齐；恢复态经 deckJson 由既有 dirty/autosave 落盘。
+describe('#1090-1 deck 编辑撤销', () => {
+  test('删页 → 撤销按钮出现，点击恢复被删页（顺序回到 A/B/C）', async () => {
+    renderDeck(['A', 'B', 'C']);
+    await screen.findByDisplayValue('A');
+    // 未编辑时无撤销按钮。
+    expect(screen.queryByTestId('deck-undo-btn')).toBeNull();
+
+    // 删除第一页（A）→ 撤销按钮出现
+    fireEvent.click(screen.getAllByRole('button', { name: '删除此页' })[0]);
+    await waitFor(() => expect(cardOrder()).toEqual(['B', 'C']));
+    const undoBtn = screen.getByTestId('deck-undo-btn');
+
+    // 点击撤销 → 恢复 A/B/C
+    fireEvent.click(undoBtn);
+    await waitFor(() => expect(cardOrder()).toEqual(['A', 'B', 'C']));
+    // 撤销到空栈 → 按钮消失
+    await waitFor(() => expect(screen.queryByTestId('deck-undo-btn')).toBeNull());
+  });
+
+  test('文本编辑 800ms 合帧（连击一帧）；⌘Z 快捷键在输入框外可撤销', async () => {
+    renderDeck(['A', 'B']);
+    await screen.findByDisplayValue('A');
+    // 未编辑时无撤销按钮。
+    expect(screen.queryByTestId('deck-undo-btn')).toBeNull();
+    // 文本编辑（标题输入）— 800ms 内连击只占一帧：一次撤销回到原文。
+    const titleByValue = (v: string) => screen.getAllByRole('textbox').find((el) => (el as HTMLInputElement).value === v)!;
+    expect(titleByValue('A')).toBeTruthy();
+    fireEvent.change(titleByValue('A'), { target: { value: 'A1' } });
+    await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+    fireEvent.change(titleByValue('A1'), { target: { value: 'A2' } });
+    await waitFor(() => expect(cardOrder()[0]).toBe('A2'));
+    expect(screen.getByTestId('deck-undo-btn')).toBeTruthy();
+
+    // ⌘Z（焦点不在输入框）→ 一次撤销回到 A
+    fireEvent.keyDown(document, { key: 'z', metaKey: true });
+    await waitFor(() => expect(cardOrder()[0]).toBe('A'));
+    // 合帧语义：一次撤销即回到初态（两连击只占一帧）
+    await waitFor(() => expect(screen.queryByTestId('deck-undo-btn')).toBeNull());
+  });
+
+  test('栈深上限 10 — 连续 12 次添加后撤销最多回到第 10 步（最早 2 步丢失）', async () => {
+    renderDeck(['A', 'B']);
+    await screen.findByDisplayValue('A');
+    // 连续添加 12 页（每次结构操作入栈）
+    for (let i = 0; i < 12; i++) {
+      fireEvent.click(screen.getByRole('button', { name: '添加一页' }));
+      await act(async () => { await new Promise((r) => setTimeout(r, 15)); });
+    }
+    expect(slidesNow()).toBe(14);
+    // 撤销 10 次 → 回到 12 次添加前（栈深截断，最早 2 步丢失）
+    for (let i = 0; i < 10; i++) {
+      fireEvent.click(screen.getByTestId('deck-undo-btn'));
+      await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    }
+    expect(slidesNow()).toBe(4);
+    expect(screen.queryByTestId('deck-undo-btn')).toBeNull();
+  });
+});
+
+/** 当前 slide 总数（删除按钮数 = 页数）。 */
+function slidesNow(): number {
+  return screen.getAllByRole('button', { name: '删除此页' }).length;
+}

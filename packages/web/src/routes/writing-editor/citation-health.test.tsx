@@ -1,0 +1,84 @@
+/**
+ * #1081 — 悬挂引用可视化提示与清理入口（组件测试）。
+ *
+ * Mock 策略：mock @/lib/api（diagnostics/delete），jsdom 渲染断言。
+ * 用例：1) 有悬挂 → 警示横幅渲染（不崩溃、不静默隐藏）
+ *      2) 「删除该引用」→ DELETE 调用 + 条目移除
+ *      3) 「重新检索绑定」→ sendChatText 携带 insert_citation 引导指令
+ *      4) 多个悬挂引用各自独立可处理，互不影响
+ *      5) 无悬挂 → 不渲染（零噪音）
+ */
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { CitationHealthBanner } from './citation-health';
+
+const apiMock = vi.hoisted(() => ({
+  listDanglingCitations: vi.fn(),
+  deleteDocCitation: vi.fn(),
+}));
+vi.mock('@/lib/api', () => ({ api: apiMock }));
+
+const DOC = 'd1';
+const ITEM_A = { id: 'cite_ghostA', occurrences: 2 };
+const ITEM_B = { id: 'cite_ghostB', occurrences: 1 };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  apiMock.deleteDocCitation.mockResolvedValue({ ok: true });
+});
+
+afterEach(cleanup);
+
+describe('#1081 悬挂引用可视化与清理', () => {
+  test('正文含未知 citationId → 警示横幅渲染（不崩溃、不静默）', async () => {
+    apiMock.listDanglingCitations.mockResolvedValue({ dangling: [ITEM_A], citations: [] });
+    render(<CitationHealthBanner docId={DOC} />);
+    await waitFor(() => expect(screen.getByTestId('citation-dangling-banner')).toBeTruthy());
+    expect(screen.getByTestId('citation-dangling-banner').textContent).toContain('悬挂引用');
+    expect(screen.getByTestId('citation-dangling-item').getAttribute('data-citation-id')).toBe('cite_ghostA');
+  });
+
+  test('点击「删除该引用」→ DELETE 调用 + 条目从横幅移除', async () => {
+    apiMock.listDanglingCitations.mockResolvedValue({ dangling: [ITEM_A], citations: [] });
+    apiMock.deleteDocCitation.mockResolvedValue({ ok: true });
+    render(<CitationHealthBanner docId={DOC} />);
+    await waitFor(() => expect(screen.getByTestId('citation-dangling-item')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('citation-dangling-delete-cite_ghostA'));
+    await waitFor(() => expect(apiMock.deleteDocCitation).toHaveBeenCalledWith(DOC, 'cite_ghostA'));
+    await waitFor(() => expect(screen.queryByTestId('citation-dangling-item')).toBeNull());
+  });
+
+  test('点击「重新检索绑定」→ sendChatText 发出含 insert_citation 引导的指令', async () => {
+    apiMock.listDanglingCitations.mockResolvedValue({ dangling: [ITEM_A], citations: [] });
+    const sendChatText = vi.fn().mockResolvedValue(undefined);
+    render(<CitationHealthBanner docId={DOC} sendChatText={sendChatText} />);
+    await waitFor(() => expect(screen.getByTestId('citation-dangling-item')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('citation-dangling-rebind-cite_ghostA'));
+    await waitFor(() => expect(sendChatText).toHaveBeenCalledTimes(1));
+    const text = String(sendChatText.mock.calls[0][0]);
+    expect(text).toContain('cite_ghostA');
+    expect(text).toContain('search_citation');
+    expect(text).toContain('DOI');
+  });
+
+  test('多个悬挂引用各自独立处理，互不影响', async () => {
+    apiMock.listDanglingCitations.mockResolvedValue({ dangling: [ITEM_A, ITEM_B], citations: [] });
+    render(<CitationHealthBanner docId={DOC} />);
+    await waitFor(() => {
+      const items = screen.getAllByTestId('citation-dangling-item');
+      expect(items).toHaveLength(2);
+    });
+    fireEvent.click(screen.getByTestId('citation-dangling-delete-cite_ghostA'));
+    await waitFor(() => expect(screen.getAllByTestId('citation-dangling-item')).toHaveLength(1));
+    // B 仍在且可独立操作
+    expect(screen.getByTestId('citation-dangling-item').getAttribute('data-citation-id')).toBe('cite_ghostB');
+    expect(screen.getByTestId('citation-dangling-rebind-cite_ghostB')).toBeTruthy();
+  });
+
+  test('无悬挂 → 不渲染（零噪音）', async () => {
+    apiMock.listDanglingCitations.mockResolvedValue({ dangling: [], citations: [] });
+    render(<CitationHealthBanner docId={DOC} />);
+    await waitFor(() => expect(apiMock.listDanglingCitations).toHaveBeenCalled());
+    expect(screen.queryByTestId('citation-dangling-banner')).toBeNull();
+  });
+});

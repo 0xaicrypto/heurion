@@ -286,3 +286,63 @@
   box-shadow: 0 0 0 2px hsl(var(--accent) / 0.55);
   border-radius: 2px;
 }
+
+/* ── #1077: 正文引用 shortcode 渲染层(widget 徽标 + 原 shortcode 弱化) ── */
+/* widget:[n] 编号徽标(accent 芯片质感,渲染在 shortcode 之前) */
+.ProseMirror .citation-badge-widget {
+  display: inline-block;
+  margin-right: 2px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: hsl(var(--accent) / 0.12);
+  border: 1px solid hsl(var(--accent) / 0.4);
+  color: hsl(var(--accent));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: baseline;
+}
+.ProseMirror .citation-badge-widget:hover {
+  background: hsl(var(--accent) / 0.22);
+}
+/* widget:[?] 悬挂引用徽标 — 警示色(#1081 横幅同色系,不静默消失) */
+.ProseMirror .citation-dangling-widget {
+  display: inline-block;
+  margin-right: 2px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: hsl(var(--warning) / 0.15);
+  border: 1px solid hsl(var(--warning) / 0.5);
+  color: hsl(var(--warning));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: baseline;
+}
+.ProseMirror .citation-dangling-widget:hover {
+  background: hsl(var(--warning) / 0.28);
+}
+/* 原 shortcode 弱化(不完全隐藏 — 用户仍可选中/编辑文本,round-trip 安全);
+   已知引用:accent 下划点提示;悬挂:警示下划点 */
+.ProseMirror .citation-badge.citation-raw {
+  opacity: 0.55;
+  font-size: 0.85em;
+  text-decoration: underline dotted hsl(var(--accent) / 0.5);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ProseMirror .citation-dangling.citation-raw {
+  opacity: 0.55;
+  font-size: 0.85em;
+  text-decoration: underline dotted hsl(var(--warning) / 0.7);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ProseMirror .citation-badge.citation-raw:hover,
+.ProseMirror .citation-dangling.citation-raw:hover {
+  opacity: 0.9;
+}

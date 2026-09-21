@@ -122,6 +122,7 @@ model Doc {
   study      ResearchStudy?  @relation(fields: [studyId], references: [id])
   snapshots  DocSnapshot[]
   references DocReference[]
+  citations  DocCitation[]
   chatMsgs   DocChatMessage[]
   sectionMeta DocSectionMeta[]
   comments   DocComment[]
@@ -241,6 +242,34 @@ model MemoryUsageEvent {
   @@map("memory_usage_events")
 }
 
+/// #1083/#1084（epic）— 正式参考文献（结构化引用对象）：
+/// 与「参考材料池」（DocReference/ReferenceItem — 上传 PDF/URL/粘贴文本的
+/// 写作背景素材）架构隔离。正式引用必须来自文献检索（PubMed/Crossref）
+/// 且强制携带 DOI（格式校验在 contracts docCitationSchema + 写入路径双锁）。
+/// 序号不落库 — 渲染/导出时按正文中 [cite:id] 首次出现顺序动态计算
+/// （contracts assignCitationNumbers，#1077/#1079/#1099 共用）。
+model DocCitation {
+  id      String @id
+  docId   String @map("doc_id")
+  doi     String
+  pmid    String?
+  title   String
+  /// JSON 序列化的作者数组（["Zhang S","Li Q"]）
+  authors String
+  journal String?
+  year    Int?
+  url     String?
+  /// 'pubmed' | 'crossref'（检索来源 — 上传素材永远进不了本表）
+  source  String
+  createdAt String @map("created_at")
+  updatedAt String @map("updated_at")
+
+  doc Doc @relation(fields: [docId], references: [id], onDelete: Cascade)
+  @@unique([docId, doi])
+  @@index([docId])
+  @@map("doc_citations")
+}
+
 /// #1005（SECOND_BRAIN Phase 0）— 用户级引用内容池：一份内容只存一次，
 /// 跨写作/主 chat 会话复用（区别于 DocReference 绑 docId 的旧模型）。
 /// kind: 'file' | 'kb_summary' | 'pasted_text'。
@@ -309,6 +338,13 @@ model DocComment {
   sectionId String  @map("section_id")
   // #1051: 锚点目标判别 — 'section'（正文节，默认，存量数据兼容）|
   // 'deck_slide'（deck 幻灯片页，section_id 为空串，slideIndex 必填）
+  // #1090-6: 枚举约束说明 — Prisma 5.22 不支持 SQLite enum（prisma validate
+  // 报 P1012 "the current connector does not support enums"，已实测），SQLite
+  // 路径不存在「enum 即 TEXT CHECK」的自动处理；db push 也无迁移基建可挂
+  // CHECK 约束。故枚举合法性由写入路径边界强制：HTTP 层 zod（comments.router
+  // createCommentSchema 的 target 枚举 / patchCommentSchema 与 listQuerySchema
+  // 的 status 枚举）+ 内部写路径的类型收口（appendCommentReplyInternal 契约
+  // 类型化 #1090-5）。DB 层只能保证 TEXT — 非法值由 API 400 拒绝，不落库。
   target    String  @default("section")
   // #1051: deck_slide 锚点 — slideIndex 1-based（与 edit_deck 的 slide_index
   // 同口径）；blockIndex 可空（0-based 内容块序，整页评论为 null）
@@ -316,6 +352,8 @@ model DocComment {
   blockIndex Int?   @map("block_index")
   // 被评论的原文片段（模糊重定位锚点 — 正文编辑后允许漂移）
   anchorText String @map("anchor_text")
+  // #1090-6: status 枚举（'open'|'resolved'）— Prisma 5.22 + SQLite 无 enum
+  // 能力（P1012，见上方 target 注释），DB 层仅 TEXT；合法性由 zod 边界强制。
   status    String  @default("open") // 'open' | 'resolved'
   // 创建者 userId（归属校验以 Doc.userId 为准 — 跟随现有 doc 路由口径）
   createdBy String  @map("created_by")
@@ -338,6 +376,11 @@ model DocComment {
 
 // #1039: 评论回复 — 结构比照 DocChatMessage，但挂在 comment 而不是 doc 上；
 // role 区分 user/ai，按 createdAt 时间序追加成线程。
+// #1090-6: role 枚举（'user'|'ai'）— 同 DocComment：Prisma 5.22 + SQLite 无
+// enum/CHECK 能力（P1012），DB 层仅 TEXT。合法性由边界强制：HTTP 层 zod
+// （通用回复端点仅接受 role:'user'，自封 'ai' → 400；ai-replies 端点服务端
+// 固定 'ai'）+ 内部写路径类型收口（appendCommentReplyInternal 的
+// InternalCaller 契约，#1090-5）。
 model DocCommentReply {
   id        String @id @default(cuid())
   commentId String @map("comment_id")

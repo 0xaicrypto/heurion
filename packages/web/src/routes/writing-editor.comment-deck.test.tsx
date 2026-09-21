@@ -60,6 +60,8 @@ const apiMock = vi.hoisted(() => ({
   generateMethods: vi.fn(),
   injectResults: vi.fn(),
   uploadFile: vi.fn(),
+  // #1077: 引用 API mock — 路由挂载期拉取 + 30s 轮询，不 mock 会 TypeError。
+  listDocCitations: vi.fn().mockResolvedValue({ citations: [] }),
   listDocComments: vi.fn(),
   createDocComment: vi.fn(),
   createDocCommentReply: vi.fn(),
@@ -335,8 +337,9 @@ describe('#1051 deck slide 评论（issue 用例表 5 条）', () => {
     });
   });
 
-  /** 用例 4b（#1088 用例 2）：点「确认修改」→ PATCH resolved（正文 accept 语义对齐）。 */
-  test('确认修改：PATCH resolved，线程关闭，动作按钮消失（#1088）', async () => {
+  /** 用例 4b（#1096 改写）：点「采纳本轮修改」→ 只清服务端快照（status 不触碰），
+   *  评论保持 open 可多轮交互，待确认动作按钮消失。 */
+  test('采纳本轮修改：快照清空 + 评论保持 open，动作按钮消失（#1096）', async () => {
     const nextDeck = {
       ...DECK,
       slides: DECK.slides.map((s, i) => (i === 1 ? { ...s, content: [{ type: 'paragraph', text: '修改后的内容。', style: 'bullet' }] } : s)),
@@ -350,10 +353,18 @@ describe('#1051 deck slide 评论（issue 用例表 5 条）', () => {
     await screen.findByTestId('comment-deck-confirm-cdeck');
     fireEvent.click(screen.getByTestId('comment-deck-confirm-btn-cdeck'));
 
-    // #1091: 确认 = PATCH {status:'resolved', deck_snapshot: null} 一步完成
-    await waitFor(() => expect(apiMock.updateDocComment).toHaveBeenCalledWith(DOC_ID, 'cdeck', 'resolved', { deck_snapshot: null }));
-    await waitFor(() => expect(screen.getByTestId('comment-thread-cdeck').getAttribute('data-status')).toBe('resolved'));
+    // #1096: 确认 = 采纳本轮修改 — 仅清快照（status 不触碰），评论保持 open
+    await waitFor(() => expect(apiMock.updateDocComment).toHaveBeenCalledWith(DOC_ID, 'cdeck', undefined, { deck_snapshot: null }));
+    expect(apiMock.updateDocComment).not.toHaveBeenCalledWith(DOC_ID, 'cdeck', 'resolved', { deck_snapshot: null });
+    await waitFor(() => expect(screen.getByTestId('comment-thread-cdeck').getAttribute('data-status')).toBe('open'));
     await waitFor(() => expect(screen.queryByTestId('comment-deck-confirm-cdeck')).toBeNull());
+
+    // #1096 多轮交互：确认后同一评论可再次「请AI处理」
+    turnScripts.push({ deck: { ...DECK, slides: [...DECK.slides] }, answer: '再次修改。' });
+    fireEvent.click(screen.getByTestId('comment-ai-process-cdeck'));
+    await waitFor(() => expect(apiMock.createDocCommentAiReply.mock.calls.filter((c) => c[1] === 'cdeck').length).toBeGreaterThan(1));
+    await waitFor(() => expect(useChatStore.getState().sessions[`doc-${DOC_ID}`]?.loading).toBe(false));
+    await act(async () => {});
   });
 
   /** 用例 4c（#1088 用例 3）：点「撤销修改」→ deck 恢复写回前快照（force 落盘），
@@ -408,8 +419,8 @@ describe('#1051 deck slide 评论（issue 用例表 5 条）', () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 8300)); });
     expect(screen.getByTestId('comment-deck-confirm-btn-cdeck')).toBeTruthy();
     fireEvent.click(screen.getByTestId('comment-deck-confirm-btn-cdeck'));
-    // #1091: 确认 PATCH 携带快照清除语义
-    await waitFor(() => expect(apiMock.updateDocComment).toHaveBeenCalledWith(DOC_ID, 'cdeck', 'resolved', { deck_snapshot: null }));
+    // #1091 + #1096: 确认 PATCH 携带快照清除语义（status 不触碰）
+    await waitFor(() => expect(apiMock.updateDocComment).toHaveBeenCalledWith(DOC_ID, 'cdeck', undefined, { deck_snapshot: null }));
   }, 15000);
 
   /** 用例 5：slide 内容锚点漂移（slide 删除/大改）→ 诊断展示，不崩溃。 */
@@ -492,8 +503,8 @@ describe('#1091 deck 评论快照持久化（web 侧）', () => {
     expect(screen.getByTestId('comment-thread-cdeck').getAttribute('data-status')).toBe('open');
   });
 
-  /** #1091 用例 3（刷新态）：确认 — PATCH resolved 且清服务端快照。 */
-  test('刷新态确认：PATCH resolved + deck_snapshot 清空，线程关闭', async () => {
+  /** #1091 用例 3（刷新态）+ #1096：确认 — 清服务端快照，status 不触碰（open）。 */
+  test('刷新态确认：deck_snapshot 清空，线程保持 open（#1096）', async () => {
     apiMock.listDocComments.mockResolvedValue({ comments: [makeComment({ id: 'cdeck', anchor_text: '方法页', target: 'deck_slide', slide_index: 2, anchor: { located: true }, deck_snapshot: SNAPSHOT })] });
     renderEditor();
     await screen.findByDisplayValue('Original');
@@ -501,8 +512,8 @@ describe('#1091 deck 评论快照持久化（web 侧）', () => {
     await screen.findByTestId('comment-deck-confirm-cdeck');
 
     fireEvent.click(screen.getByTestId('comment-deck-confirm-btn-cdeck'));
-    await waitFor(() => expect(apiMock.updateDocComment).toHaveBeenCalledWith(DOC_ID, 'cdeck', 'resolved', { deck_snapshot: null }));
-    await waitFor(() => expect(screen.getByTestId('comment-thread-cdeck').getAttribute('data-status')).toBe('resolved'));
+    await waitFor(() => expect(apiMock.updateDocComment).toHaveBeenCalledWith(DOC_ID, 'cdeck', undefined, { deck_snapshot: null }));
+    await waitFor(() => expect(screen.getByTestId('comment-thread-cdeck').getAttribute('data-status')).toBe('open'));
     await waitFor(() => expect(screen.queryByTestId('comment-deck-confirm-cdeck')).toBeNull());
   });
 

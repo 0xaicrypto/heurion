@@ -57,6 +57,14 @@ export interface DeckAsset {
   replaceDeckSlideBlock: (slideIndex: number, blockIndex: number, next: DeckSlideBlock, expectBlock?: DeckSlideBlock, expectEpoch?: SlideEpochSnapshot) => void;
   /** #1044: 删除块（content 契约下限 1 块，最后一块不删）。 */
   deleteDeckSlideBlock: (slideIndex: number, blockIndex: number) => void;
+  /**
+   * #1090-1: deck 编辑撤销栈（对比正文完整 Undo 历史的 deck 侧补齐）—
+   * 用户卡片编辑（删页/删块/替换/排序/文本）逐操作入栈（限深 10，文本编辑
+   * 800ms 合帧防按键洪泛），undoDeckEdit() 弹栈恢复上一态（含 epochs，恢复
+   * 后 deckJson 变化由既有 dirty/autosave 机制落盘）。
+   */
+  canUndoDeck: boolean;
+  undoDeckEdit: () => boolean;
 }
 
 /** #1044: image 块形状单点 — url（web 渲染用 canonical 下载 URL，#1038 链路）+
@@ -93,6 +101,31 @@ export function useDeckAsset(): DeckAsset {
   const lastSavedDeck = useRef<string>('');
   const appliedDocDeck = useRef<string>('');
   const deckJson = useMemo(() => (deckAsset ? JSON.stringify(deckAsset) : ''), [deckAsset]);
+
+  // #1090-1: deck 编辑撤销栈 — 深度 10；引用安全：deck/epochs 全部不可变更新，
+  // 快照存原引用即可（无可变别名）。文本编辑 800ms 合帧（连击/输入法组合只
+  // 留一帧），结构操作（删页/加页/移页/插块/删块）逐操作入栈。
+  const undoStackRef = useRef<Array<{ deck: DeckWire; epochs: number[] }>>([]);
+  const lastUndoPushAtRef = useRef(0);
+  const [canUndoDeck, setCanUndoDeck] = useState(false);
+  const syncCanUndo = () => setCanUndoDeck(undoStackRef.current.length > 0);
+  const pushUndo = (prevState: DeckWithEpochs, structural: boolean) => {
+    if (!prevState.deck) return;
+    const now = Date.now();
+    if (!structural && now - lastUndoPushAtRef.current < 800) return;
+    lastUndoPushAtRef.current = now;
+    const stack = undoStackRef.current;
+    stack.push({ deck: prevState.deck, epochs: prevState.epochs });
+    if (stack.length > 10) stack.splice(0, stack.length - 10);
+    syncCanUndo();
+  };
+  const undoDeckEdit = useCallback((): boolean => {
+    const snap = undoStackRef.current.pop();
+    syncCanUndo();
+    if (!snap) return false;
+    setDeckState({ deck: snap.deck, epochs: snap.epochs });
+    return true;
+  }, []);
 
   // #1087: 最新结构态镜像（渲染期同步,幂等）— 上传 await 落地后闭包里的
   // deckAsset 已过期,快照/校验经此读当前值;写回决策仍以 insert/replace 的
@@ -134,6 +167,7 @@ export function useDeckAsset(): DeckAsset {
   // 导出时 validateRenderContent 整体失败 → 静默落回 body 重编排。
   // 现约定：空文本块是编辑中态，行始终存在；仅兜底保证 content 永不为空数组。
   const updateDeckSlide = (index: number, next: { title?: string; bullets?: string[] }) => {
+    pushUndo(deckStateRef.current, false);
     setDeckState((prev) => {
       if (!prev.deck) return prev;
       const slides = prev.deck.slides.map((s, i) => {
@@ -164,6 +198,7 @@ export function useDeckAsset(): DeckAsset {
     });
   };
   const deleteDeckSlide = (index: number) => {
+    pushUndo(deckStateRef.current, true);
     setDeckState((prev) => {
       if (!prev.deck || prev.deck.slides.length <= 1) return prev;
       // #1087: 删页 = 结构变更 — epoch 同步 splice（被删页及其后移位页上的
@@ -175,6 +210,7 @@ export function useDeckAsset(): DeckAsset {
     });
   };
   const addDeckSlide = () => {
+    pushUndo(deckStateRef.current, true);
     setDeckState((prev) => {
       if (!prev.deck) return prev;
       // #1087: 追加新页签发新 epoch（既有下标不变，在途快照不受影响）。
@@ -193,6 +229,7 @@ export function useDeckAsset(): DeckAsset {
 
   // ── #959 排版编辑（contracts deck v2）──────────────────────────
   const moveDeckSlide = (from: number, to: number) => {
+    pushUndo(deckStateRef.current, true);
     setDeckState((prev) => {
       if (!prev.deck || from === to || from < 0 || to < 0 || from >= prev.deck.slides.length || to >= prev.deck.slides.length) return prev;
       // #1087: 移页 = 结构变更 — epoch 与 slides 同步 tandem 重排：
@@ -208,6 +245,7 @@ export function useDeckAsset(): DeckAsset {
     });
   };
   const setDeckSlideLayout = (index: number, layout: string | undefined) => {
+    pushUndo(deckStateRef.current, false);
     setDeckState((prev) => {
       if (!prev.deck) return prev;
       // #1087: 布局是页内属性，页身份/位置不变 — 不动 epoch。
@@ -216,6 +254,7 @@ export function useDeckAsset(): DeckAsset {
   };
   // ── #1046 备注编辑（导入显示 / 手动补录，导出经 worker addNotes 写回）──
   const updateDeckSlideNotes = (index: number, notes: string) => {
+    pushUndo(deckStateRef.current, false);
     setDeckState((prev) => {
       if (!prev.deck) return prev;
       // #1087: 备注为文本编辑 — 不动 epoch。
@@ -223,6 +262,7 @@ export function useDeckAsset(): DeckAsset {
     });
   };
   const setDeckTheme = (theme: string | undefined) => {
+    pushUndo(deckStateRef.current, false);
     setDeckState((prev) => {
       if (!prev.deck) return prev;
       return { deck: { ...prev.deck, theme }, epochs: prev.epochs };
@@ -238,6 +278,7 @@ export function useDeckAsset(): DeckAsset {
    * （修复 #1071-3 引用判据对无 id slide 的误杀）。
    */
   const insertDeckSlideBlock = (index: number, block: DeckSlideBlock, expect?: SlideEpochSnapshot) => {
+    pushUndo(deckStateRef.current, true);
     setDeckState((prev) => {
       if (!prev.deck) return prev;
       if (expect && prev.epochs[index] !== expect.epoch) return prev;
@@ -259,6 +300,7 @@ export function useDeckAsset(): DeckAsset {
    * #1087: expectEpoch（slide 结构快照）叠加校验 — 页被删/移/整 deck 替换则放弃。
    */
   const replaceDeckSlideBlock = (slideIndex: number, blockIndex: number, next: DeckSlideBlock, expectBlock?: DeckSlideBlock, expectEpoch?: SlideEpochSnapshot) => {
+    pushUndo(deckStateRef.current, true);
     setDeckState((prev) => {
       if (!prev.deck) return prev;
       // #1087: slide 层结构校验 — 页被删/移/整 deck 替换 → 放弃。
@@ -280,6 +322,7 @@ export function useDeckAsset(): DeckAsset {
   };
   // content 契约下限 1 块（presentationContentSchema content min 1）— 最后一块不删。
   const deleteDeckSlideBlock = (slideIndex: number, blockIndex: number) => {
+    pushUndo(deckStateRef.current, true);
     setDeckState((prev) => {
       if (!prev.deck) return prev;
       return {
@@ -295,5 +338,5 @@ export function useDeckAsset(): DeckAsset {
     });
   };
 
-  return { deckAsset, setDeckAsset, lastSavedDeck, appliedDocDeck, deckJson, snapshotSlideEpoch, verifySlideEpoch, updateDeckSlide, updateDeckSlideNotes, deleteDeckSlide, addDeckSlide, slideBullets, moveDeckSlide, setDeckSlideLayout, setDeckTheme, insertDeckSlideImage, insertDeckSlideChart, replaceDeckSlideBlock, deleteDeckSlideBlock };
+  return { deckAsset, setDeckAsset, lastSavedDeck, appliedDocDeck, deckJson, snapshotSlideEpoch, verifySlideEpoch, updateDeckSlide, updateDeckSlideNotes, deleteDeckSlide, addDeckSlide, slideBullets, moveDeckSlide, setDeckSlideLayout, setDeckTheme, insertDeckSlideImage, insertDeckSlideChart, replaceDeckSlideBlock, deleteDeckSlideBlock, canUndoDeck, undoDeckEdit };
 }

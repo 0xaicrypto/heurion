@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useChatStore, latestAssistantTurnId, onChatPendingDropped, resetAssistantTurnIdsForTests, type ChatMessage, type SessionState } from '@/stores/chat';
+import { useChatStore, latestAssistantTurnId, onChatPendingDropped, pendingQueuePosition, resetAssistantTurnIdsForTests, type ChatMessage, type PendingChatSlot } from '@/stores/chat';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -177,29 +177,38 @@ describe('chat store — 追加问题排队(#fix)', () => {
     const queued = store.sendMessageQueued('s1', { sessionId: 's1', text: '顺便把标题也改一下', attachments: [], skills: [] });
     expect(queued).toBeInstanceOf(Promise);
     expect(sent).toEqual(['润色摘要']);
-    expect(useChatStore.getState().sessions.s1.pending?.text).toBe('顺便把标题也改一下');
+    // #1095: 多槽 FIFO — 排队槽带显式 turnId。
+    const queue = useChatStore.getState().sessions.s1.pendingQueue ?? [];
+    expect(queue.map((s) => s.text)).toEqual(['顺便把标题也改一下']);
+    await expect(queued).resolves.toBe(queue[0].turnId);
 
     await p1;
-    // 第一轮完成后,排队消息自动发出。
+    // 第一轮完成后,排队消息自动发出(FIFO 出队 → 队列清空)。
     await vi.waitFor(() => expect(sent).toEqual(['润色摘要', '顺便把标题也改一下']));
-    await vi.waitFor(() => expect(useChatStore.getState().sessions.s1.pending).toBeNull());
+    await vi.waitFor(() => expect(useChatStore.getState().sessions.s1.pendingQueue).toEqual([]));
     const msgs = useChatStore.getState().sessions.s1.messages;
     expect(msgs.filter((m) => m.role === 'user').map((m) => m.text)).toEqual(['润色摘要', '顺便把标题也改一下']);
   });
 
-  test('回复中连续追加只保留最后一条', async () => {
+  test('#1095 回复中连续追加 → 多槽 FIFO 全部保留,按序发出', async () => {
     const { api } = await import('@/lib/api');
     const sendChatFull = api.sendChatFull as any;
-    sendChatFull.mockImplementationOnce(async function* () {
-      yield { type: 'final_answer_chunk', text: '回复中' };
+    const sent: string[] = [];
+    sendChatFull.mockImplementation(async function* (opts: any) {
+      sent.push(opts.text);
+      yield { type: 'final_answer_chunk', text: '回复' };
       yield { type: 'turn_complete' };
     });
     const store = useChatStore.getState();
     const p1 = store.sendMessage('s1', { sessionId: 's1', text: '第一轮', attachments: [], skills: [] });
-    await store.sendMessageQueued('s1', { sessionId: 's1', text: '追加 A', attachments: [], skills: [] });
-    await store.sendMessageQueued('s1', { sessionId: 's1', text: '追加 B', attachments: [], skills: [] });
-    expect(useChatStore.getState().sessions.s1.pending?.text).toBe('追加 B');
+    const tA = await store.sendMessageQueued('s1', { sessionId: 's1', text: '追加 A', attachments: [], skills: [] });
+    const tB = await store.sendMessageQueued('s1', { sessionId: 's1', text: '追加 B', attachments: [], skills: [] });
+    // #1095: 队列不再覆盖 — A、B 都在，顺序 FIFO；turnId 互不相同。
+    const queue = useChatStore.getState().sessions.s1.pendingQueue ?? [];
+    expect(queue.map((s) => s.text)).toEqual(['追加 A', '追加 B']);
+    expect(tA).not.toBe(tB);
     await p1;
+    await vi.waitFor(() => expect(sent).toEqual(['第一轮', '追加 A', '追加 B']));
   });
 
   test('stopStream 停止分析并清空排队消息(不自动发出)', async () => {
@@ -219,14 +228,14 @@ describe('chat store — 追加问题排队(#fix)', () => {
     const p1 = store.sendMessage('s1', { sessionId: 's1', text: '第一轮', attachments: [], skills: [] });
     // 排队一条。
     await store.sendMessageQueued('s1', { sessionId: 's1', text: '追加消息', attachments: [], skills: [] });
-    expect(useChatStore.getState().sessions.s1.pending?.text).toBe('追加消息');
+    expect(useChatStore.getState().sessions.s1.pendingQueue?.[0]?.text).toBe('追加消息');
 
-    // 停止:loading 结束、pending 清空、排队消息不被发出。
+    // 停止:loading 结束、队列清空、排队消息不被发出。
     store.stopStream('s1');
     await p1;
     const s = useChatStore.getState().sessions.s1;
     expect(s.loading).toBe(false);
-    expect(s.pending).toBeNull();
+    expect(s.pendingQueue).toEqual([]);
     expect(sent).toEqual(['第一轮']);
   });
 });
@@ -279,7 +288,7 @@ describe('chat store — 停滞提示起点保留(#fix 2026-09)', () => {  befor
   });
 });
 
-describe('#1074-4 pending 单槽显式 turnId', () => {
+describe('#1074-4/#1095 排队槽显式 turnId（多槽 FIFO）', () => {
   beforeEach(() => {
     useChatStore.setState({ sessions: {} });
     resetAssistantTurnIdsForTests();
@@ -288,7 +297,7 @@ describe('#1074-4 pending 单槽显式 turnId', () => {
     vi.useRealTimers();
   });
 
-  test('排队入队生成 turnId;被覆盖丢弃时事件携带同 id（可按 id 清账）', async () => {
+  test('#1095 排队入队生成独立 turnId；多槽不覆盖不丢（覆盖丢弃路径退役）', async () => {
     const droppedEvents: Array<{ text: string; turnId?: string }> = [];
     onChatPendingDropped((e) => droppedEvents.push({ text: e.text, turnId: e.turnId }));
     const { api } = await import('@/lib/api');
@@ -298,20 +307,21 @@ describe('#1074-4 pending 单槽显式 turnId', () => {
     });
     const store = useChatStore.getState();
     const p1 = store.sendMessage('s1', { sessionId: 's1', text: '第一轮', attachments: [], skills: [] });
-    await store.sendMessageQueued('s1', { sessionId: 's1', text: '评论指令 A', attachments: [], skills: [] });
-    const firstSlot = useChatStore.getState().sessions.s1.pending;
-    expect(firstSlot?.text).toBe('评论指令 A');
-    const firstTurnId = (firstSlot as { turnId?: string } | null)?.turnId;
-    expect(typeof firstTurnId).toBe('string');
-    expect(firstTurnId).not.toBe('');
+    const turnIdA = await store.sendMessageQueued('s1', { sessionId: 's1', text: '评论指令 A', attachments: [], skills: [] });
+    const queue = useChatStore.getState().sessions.s1.pendingQueue ?? [];
+    expect(queue.map((s) => s.text)).toEqual(['评论指令 A']);
+    expect(turnIdA).toBe(queue[0].turnId);
+    expect(typeof turnIdA).toBe('string');
 
-    // 第二条排队覆盖单槽 → 丢弃事件带被覆盖指令的入队 turnId。
-    await store.sendMessageQueued('s1', { sessionId: 's1', text: '评论指令 B', attachments: [], skills: [] });
-    expect(droppedEvents).toEqual([{ text: '评论指令 A', turnId: firstTurnId }]);
+    // #1095: 第二条排队不再覆盖/丢弃 A — 队列追加 B，零丢弃事件。
+    const turnIdB = await store.sendMessageQueued('s1', { sessionId: 's1', text: '评论指令 B', attachments: [], skills: [] });
+    expect(droppedEvents).toEqual([]);
+    expect((useChatStore.getState().sessions.s1.pendingQueue ?? []).map((s) => s.text)).toEqual(['评论指令 A', '评论指令 B']);
+    expect(turnIdA).not.toBe(turnIdB);
     await p1;
   });
 
-  test('Stop / regenerate 清空排队时事件携带同 turnId', async () => {
+  test('Stop / regenerate 清空队列时逐槽事件携带同 turnId', async () => {
     const droppedEvents: Array<{ text: string; turnId?: string }> = [];
     onChatPendingDropped((e) => droppedEvents.push({ text: e.text, turnId: e.turnId }));
     const { api } = await import('@/lib/api');
@@ -324,31 +334,56 @@ describe('#1074-4 pending 单槽显式 turnId', () => {
     });
     const store = useChatStore.getState();
     const p1 = store.sendMessage('s1', { sessionId: 's1', text: '第一轮', attachments: [], skills: [] });
-    await store.sendMessageQueued('s1', { sessionId: 's1', text: '排队指令', attachments: [], skills: [] });
-    const turnId = ((useChatStore.getState().sessions.s1.pending ?? null) as { turnId?: string } | null)?.turnId;
+    const queuedTurnId = await store.sendMessageQueued('s1', { sessionId: 's1', text: '排队指令', attachments: [], skills: [] });
 
     store.stopStream('s1');
     await p1;
-    expect(droppedEvents).toEqual([{ text: '排队指令', turnId }]);
+    expect(droppedEvents).toEqual([{ text: '排队指令', turnId: queuedTurnId }]);
 
-    // regenerate 同口径。
+    // regenerate 同口径（逐槽事件）。
     useChatStore.setState({ sessions: {} });
     const regenEvents: Array<{ text: string; turnId?: string }> = [];
     onChatPendingDropped((e) => regenEvents.push({ text: e.text, turnId: e.turnId }));
-    // #1074-4: pending 槽类型声明在 chat-reducer(不含 turnId) — 以结构化
-    // 断言注入带 id 的槽(与 store 内写入路径同形状)。
-    const regenSlot = {
-      text: '排队指令',
-      opts: { sessionId: 's1', text: '排队指令', attachments: [], skills: [] },
-      turnId: 'turn_regen',
-    } as SessionState['pending'];
+    const regenSlotA: PendingChatSlot = {
+      text: '排队指令 A',
+      opts: { sessionId: 's1', text: '排队指令 A', attachments: [], skills: [] },
+      turnId: 'turn_regen_a',
+    };
+    const regenSlotB: PendingChatSlot = {
+      text: '排队指令 B',
+      opts: { sessionId: 's1', text: '排队指令 B', attachments: [], skills: [] },
+      turnId: 'turn_regen_b',
+    };
     useChatStore.setState({
       sessions: { s1: { messages: [
         { id: 'u1', role: 'user', text: '第一问', createdAt: 1 },
-      ], abort: null, loading: false, compacting: false, pending: regenSlot } },
+      ], abort: null, loading: false, compacting: false, pendingQueue: [regenSlotA, regenSlotB] } },
     });
     await useChatStore.getState().regenerate('s1', { sessionId: 's1', text: '', attachments: [], skills: [] });
-    expect(regenEvents).toEqual([{ text: '排队指令', turnId: 'turn_regen' }]);
+    expect(regenEvents).toEqual([
+      { text: '排队指令 A', turnId: 'turn_regen_a' },
+      { text: '排队指令 B', turnId: 'turn_regen_b' },
+    ]);
+  });
+
+  test('#1095 队列位次：pendingQueuePosition 按 FIFO 1-based，出队后归零', async () => {
+    const { api } = await import('@/lib/api');
+    (api.sendChatFull as any).mockImplementationOnce(async function* () {
+      yield { type: 'final_answer_chunk', text: '第一轮' };
+      yield { type: 'turn_complete' };
+    });
+    const store = useChatStore.getState();
+    const p1 = store.sendMessage('s1', { sessionId: 's1', text: '第一轮', attachments: [], skills: [] });
+    const tA = await store.sendMessageQueued('s1', { sessionId: 's1', text: 'A', attachments: [], skills: [] });
+    const tB = await store.sendMessageQueued('s1', { sessionId: 's1', text: 'B', attachments: [], skills: [] });
+    expect(pendingQueuePosition('s1', tA!)).toBe(1);
+    expect(pendingQueuePosition('s1', tB!)).toBe(2);
+    expect(pendingQueuePosition('s1', 'nope')).toBe(0);
+    await p1;
+    // A 出队 → B 升为第 1 位；全部发完后双双归零。
+    await vi.waitFor(() => expect(useChatStore.getState().sessions.s1.pendingQueue).toEqual([]));
+    expect(pendingQueuePosition('s1', tA!)).toBe(0);
+    expect(pendingQueuePosition('s1', tB!)).toBe(0);
   });
 });
 

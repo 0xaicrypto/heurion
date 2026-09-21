@@ -15,7 +15,7 @@ import { SpotHint } from '@/components/SpotHint';
 import { UploadProgressModal } from '@/components/UploadProgressModal';
 // #1060/#1074-4: onChatPendingDropped — 排队指令被覆盖/清理事件（评论登记
 // 解除卡死）订阅已随评论-AI 状态机下沉 comments-ai hook;路由保留失败文案工具。
-import { chatFailureText, useChatStore } from '@/stores/chat';
+import { chatFailureText, onChatTurnComplete, useChatStore } from '@/stores/chat';
 import { Alert, Button, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { sha1Hex } from '@/lib/hash';
@@ -47,9 +47,13 @@ import { ChatPanel } from './writing-editor/chat-panel';
 // #1040: 侧边栏评论面板 + 评论创建弹窗(选区高亮标注线程列表)。
 // #1089-6: AnchorConfirmState — 侧边栏「待确认位置」数据形状。
 import { AddCommentModal, CommentsPanel, type AnchorConfirmState } from './writing-editor/comments-panel';
-// #1089-5/#1089-6: 服务端偏移消费 + 「用此位置」显式重定位注入。
+import { CitationHealthBanner } from './writing-editor/citation-health';
+// #1077: 引用详情预览弹窗(点击正文引用徽标弹出)。
+import { CitationPreviewModal } from './writing-editor/citation-preview';
+// #1078: 自动生成的 References 列表视图(只读派生)。
+import { ReferencesList } from './writing-editor/references-list';
 import { adoptAnchorCandidate, describeAnchorIssues } from '@/lib/comment-anchor';
-import type { DocCommentWire } from '@/lib/api';
+import type { DocCommentWire, DocCitationWire } from '@/lib/api';
 // #996/#1000: 共享 SegmentedControl（视图胶囊）/页头 Toolbar 收敛。
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Toolbar } from './writing-editor/toolbar';
@@ -160,6 +164,9 @@ export function WritingEditorPage() {
   const [docComments, setDocComments] = useState<DocCommentWire[]>([]);
   const [commentsPanelOpen, setCommentsPanelOpen] = useState(false);
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  // #1077: 引用元数据(徽标渲染/详情预览数据源) + 当前预览的引用 id。
+  const [docCitations, setDocCitations] = useState<DocCitationWire[]>([]);
+  const [activeCitationId, setActiveCitationId] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState<
     { text: string; from: number; to: number } | { target: 'deck_slide'; slideIndex0: number; anchorText: string } | null
   >(null);
@@ -773,6 +780,20 @@ export function WritingEditorPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 沿检测仅依赖 chatLoading;doc/投影经 store 快照读取
   }, [chat.chatLoading, flushPendingWriteBack, commentsAi.settlePendingCommentTurns]);
 
+  // #1095: 多槽队列下，turn 结束与下一 turn 开始在同一同步块完成 — React
+  // 渲染层看不到中间的 loading=false 沿，上面的边沿 effect 会漏掉中间 turn
+  // 的收口。改为订阅 store 的 turn 完成事件逐 turn 触发（先于排队槽出队，
+  // 指纹匹配不受下一 turn 的 user 消息污染）。边沿 effect 保留兜底（无队列
+  // 的单 turn 场景事件与边沿等价，收口幂等）。
+  const settlePendingCommentTurns = commentsAi.settlePendingCommentTurns;
+  useEffect(() => {
+    return onChatTurnComplete((sid) => {
+      if (!docId || sid !== `doc-${docId}`) return;
+      flushPendingWriteBack();
+      settlePendingCommentTurns();
+    });
+  }, [docId, flushPendingWriteBack, settlePendingCommentTurns]);
+
   // #696: 润色气泡状态机下沉 usePolishBubble（#797: rAF 合帧）。
   const bubble = usePolishBubble({
     docId,
@@ -885,15 +906,12 @@ export function WritingEditorPage() {
       return;
     }
     setDiffReview(null);
-    // #1041: 评论来源的审阅收口 — accept → 评论自动 resolved（用例 3）；
-    // 放弃/拒绝 → 保持 open 可重新编辑后再触发（用例 4）。
-    // #1074-3: 登记表/审阅关联 refs 由 comments-ai hook 持有,路由经返回值消费。
+    // #1096 评论生命周期重构：accept = 采纳本轮修改 — **不再**自动 resolved。
+    // 评论保持 open，用户可继续多轮交互；「标记已解决」（手动 PATCH）是唯一
+    // 关闭路径。登记关联仍清账（diffCommentSourcesRef 用毕即清）。
     const commentSources = commentsAi.diffCommentSourcesRef.current;
     if (commentSources && commentSources.key === commentsAi.diffReviewKeyRef.current) {
       commentsAi.diffCommentSourcesRef.current = null;
-      if (!result.cancelled) {
-        for (const id of commentSources.ids) void commentsAi.resolveCommentById(id);
-      }
     }
     // #720: 用显式 cancelled 字段区分"放弃"，不再用空串推断 — 全文删空的
     // 接受结果(空 md)应落地为空正文,而不是被当成放弃。
@@ -960,7 +978,7 @@ export function WritingEditorPage() {
     // (bodyRef 同帧还未更新,显式传 result.md)。
     popNextWriteBack(result.md);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- t 引用稳定,避免抖动
-  }, [docId, title, restoreReview, showNotice, popNextWriteBack, extractConflictCurrent, commentsAi.resolveCommentById]);
+  }, [docId, title, restoreReview, showNotice, popNextWriteBack, extractConflictCurrent]);
 
   // #402-merge: append a library figure to the document body.
   const handleInsertChart = (markdown: string) => {
@@ -1205,6 +1223,9 @@ export function WritingEditorPage() {
     setDocComments([]);
     setActiveCommentId(null);
     setCommentDraft(null);
+    // #1077: 切文档清引用态 — 旧文档的文献列表/预览弹窗不得串染新文档。
+    setDocCitations([]);
+    setActiveCitationId(null);
     // #1089-6: 锚点采纳态随切文档清空（采纳候选属于旧文档正文）。
     setAnchorAdoptions({});
     // #1041: 评论处理在途状态一并清 — 旧文档的 pending turn/审阅关联/
@@ -1238,6 +1259,21 @@ export function WritingEditorPage() {
   useEffect(() => {
     loadComments();
   }, [loadComments]);
+
+  // #1077/#1078: 引用元数据 — 文档挂载后拉取 + 30s 轻轮询(与 #1081 悬挂
+  // 横幅同节奏;AI insert_citation / 编辑链路改动后的刷新由轮询兜底)。
+  // 失败静默降级 — 徽标/References 列表暂缺,不打扰编辑主路径。
+  const loadCitations = useCallback(() => {
+    if (!docId) return;
+    api.listDocCitations(docId)
+      .then((r) => setDocCitations(r.citations))
+      .catch(() => { /* 引用列表失败不打扰 — 非关键路径 */ });
+  }, [docId]);
+  useEffect(() => {
+    loadCitations();
+    const timer = setInterval(loadCitations, 30_000);
+    return () => clearInterval(timer);
+  }, [loadCitations]);
 
   // #1040: 提交选区评论 — 选区文字作 anchorText,节引用反查与「选中即引用」
   // 同口径(投影缺失降级 'doc');本地乐观插入(located=true,刚创建必可定位)。
@@ -1702,6 +1738,7 @@ export function WritingEditorPage() {
               </div>
 
               <div>
+                <CitationHealthBanner docId={docId} sendChatText={chat.sendChatText} />
                 {deckUndo && (
                   /* #1071-1: deck AI 写回可撤销窗口 — 落地前快照本地画布,
                      TTL 内可一键回滚（no-op 优于 AI 改错页后无出口）。 */
@@ -1839,6 +1876,10 @@ export function WritingEditorPage() {
                         activeCommentId: activeCommentId,
                         onAnchorClick: (id) => { setActiveCommentId(id); setCommentsPanelOpen(true); },
                       }}
+                      /* #1077: 引用徽标渲染数据源 + 点击弹详情预览(悬挂引用
+                          id 同样可点 — 预览弹窗渲染警示态说明)。 */
+                      citations={docCitations}
+                      onCitationClick={setActiveCitationId}
                       onStartComment={(sel) => {
                         // #1070: 跨块选区不创建评论 — 锚点算法按块扫描,跨块
                         // 评论正文高亮永不出现且无提示（无痕第三态）。创建入口
@@ -1863,6 +1904,11 @@ export function WritingEditorPage() {
                     />
                   </div>
                 )}
+                {viewMode === 'document' && (
+                  /* #1078: 自动生成 References 列表 — 编辑器/预览块下方,
+                     正文有引用标记且命中文献记录时才渲染(只读派生视图)。 */
+                  <ReferencesList citations={docCitations} bodyText={body} />
+                )}
               </div>
 
               {doc.updated_at && (
@@ -1884,6 +1930,7 @@ export function WritingEditorPage() {
               onToggleResolve={(c) => void toggleCommentResolved(c)}
               onAiProcess={commentsAi.handleCommentAiProcess}
               processingCommentIds={commentsAi.commentProcessing}
+              queuePositions={commentsAi.commentQueuePositions}
               /* #1088: deck 写回待确认 — 线程级确认/撤销动作。 */
               deckConfirming={commentsAi.deckPendingConfirm}
               onDeckConfirm={(id) => void commentsAi.confirmDeckWriteBack(id)}
@@ -1968,6 +2015,14 @@ export function WritingEditorPage() {
             onSubmit={(text) => void submitComment(text)}
           />
         )}
+
+        {/* #1077: 引用详情预览弹窗 — 点击正文引用徽标/shortcode 弹出;
+            悬挂引用渲染警示态说明(与 #1081 横幅口径一致)。 */}
+        <CitationPreviewModal
+          citationId={activeCitationId}
+          citations={docCitations}
+          onClose={() => setActiveCitationId(null)}
+        />
       </div>
       {/* #757: 共享知识库选择器 */}
       <KbPicker open={kbPickerOpen} onClose={() => setKbPickerOpen(false)} onConfirm={handleKbPickConfirm} max={5} />

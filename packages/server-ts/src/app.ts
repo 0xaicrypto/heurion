@@ -17,6 +17,7 @@ import { documentsRouter } from './modules/documents/documents.router.js'
 // #1039: 写作编辑器评论线程（sidecar 旁路表 + 锚点漂移诊断）。
 import { commentsRouter } from './modules/comments/comments.router.js'
 import { referencesRouter } from './modules/references/references.router.js'
+import { citationsRouter } from './modules/citations/citations.router.js'
 import { skillsRouter } from './modules/skills/skills.router.js'
 import { settingsRouter } from './modules/settings/settings.router.js'
 import { filesRouter } from './modules/files/files.router.js'
@@ -98,6 +99,7 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   await app.register(documentsRouter)
   await app.register(commentsRouter)
   await app.register(referencesRouter)
+  await app.register(citationsRouter)
   await app.register(skillsRouter)
   await app.register(settingsRouter)
   await app.register(filesRouter)

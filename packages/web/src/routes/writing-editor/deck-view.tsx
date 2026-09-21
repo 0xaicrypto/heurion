@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
-import { BarChart3, Bold, ChevronDown, ChevronUp, FilePlus, ImagePlus, Italic, Link2, MessageSquare, MessageSquarePlus, Pencil, Presentation, Sparkles, Strikethrough, Underline, X } from 'lucide-react';
+import { BarChart3, Bold, ChevronDown, ChevronUp, FilePlus, ImagePlus, Italic, Link2, MessageSquare, MessageSquarePlus, Pencil, Presentation, Sparkles, Strikethrough, Underline, Undo2, X } from 'lucide-react';
 import { tableBlockSchema } from '@heurion/contracts';
 import { Button } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
@@ -956,7 +956,8 @@ export function DeckView(input: {
   slides: Slide[];
   body: string;
   deckCtl: DeckAsset;
-  sendChatText: (text: string) => Promise<void>;
+  /** #1095: 返回值语义 — 排队时返回 turnId（消费方不关心可按 Promise<void> 用）。 */
+  sendChatText: (text: string) => Promise<string | undefined> | Promise<void>;
   onCardEdit: (slide: Slide) => void;
   /** #1051: deck slide 评论（target='deck_slide'）— 高亮/徽标数据源。 */
   deckComments?: DeckSlideCommentInfo[];
@@ -970,6 +971,28 @@ export function DeckView(input: {
 }) {
   const { t } = useTranslation();
   const { deckAsset, slides, body, deckCtl, sendChatText, onCardEdit, deckComments, onAddSlideComment, onCommentClick, onNotice } = input;
+
+  // #1090-1: deck 编辑撤销快捷键 — Cmd/Ctrl+Z（deck 资产在场时）。焦点在输入框/
+  // textarea/contenteditable 内不拦截（留给原生文本撤销），避免打断输入法与
+  // 卡片内文本编辑的原生撤销。
+  useEffect(() => {
+    if (!deckAsset) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+      if (!e.shiftKey) {
+        const target = e.target as HTMLElement | null;
+        const tag = target?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+        e.preventDefault();
+        if (deckCtl.undoDeckEdit()) {
+          onNotice?.(t('writing.deckUndoNotice', '已撤销上一次 deck 编辑'), 2000);
+        }
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [deckAsset, deckCtl, onNotice, t]);
+
   return (
     <div className="space-y-3">
                     {deckAsset ? (
@@ -978,6 +1001,19 @@ export function DeckView(input: {
                           {t('writing.deckAssetBadge', 'AI 编排 deck 资产 — 卡片内可直接编辑（改标题/调要点/删页），保存不会改动文档正文。')}
                         </span>
                         <div className="flex shrink-0 items-center gap-2">
+                          {/* #1090-1: deck 编辑撤销 — 撤销最近一次卡片编辑（栈深 10）+
+                              Cmd/Ctrl+Z 快捷键（hook 挂载，见下方 effect）。 */}
+                          {deckCtl.canUndoDeck && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              data-testid="deck-undo-btn"
+                              onClick={() => deckCtl.undoDeckEdit()}
+                              title={t('writing.deckUndoHint', '撤销上一次 deck 编辑（⌘Z）')}
+                            >
+                              <Undo2 size={13} className="mr-1" /> {t('writing.deckUndo', '撤销')}
+                            </Button>
+                          )}
                           {/* #959: deck 级主题选择（contracts v2）— 预览与导出（worker 母版）同语义。 */}
                           <select
                             value={deckAsset.theme ?? ''}
@@ -994,18 +1030,31 @@ export function DeckView(input: {
                           </Button>
                         </div>
                       </div>
-                    ) : slides.length <= 1 && body.trim() && (
+                    ) : body.trim() && (
                       <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-surface-elevated px-4 py-2.5">
+                        {/* #1098: 无 deck 资产时补「生成可编辑幻灯片」主入口 — 引导 AI 经 edit_deck
+                            创建可编辑 deck 资产（拆页只改 ## 分页，建不了资产）；原「AI 帮我拆页」
+                            保留为次级选项。多页时同样展示（原条件仅 ≤1 页有引导，入口缺口主场景）。 */}
                         <span className="text-xs text-text-secondary">
-                          {t('writing.deckSinglePageHint', '文档还没有 ## 分页结构，导出 PPT 只会有一页。可让 AI 按内容语义拆页。')}
+                          {slides.length <= 1
+                            ? t('writing.deckSinglePageHint', '文档还没有 ## 分页结构，导出 PPT 只会有一页。可让 AI 按内容语义拆页。')
+                            : t('writing.deckReadonlyHint', '当前为只读投影视图，卡片不可直接编辑。可生成 deck 资产后在卡片内改标题/调要点/删页。')}
                         </span>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => void sendChatText(t('writing.aiSplitPrompt', '请把当前稿件按内容语义拆成多页（每页一个 ## 二级标题），为生成 PPT 做准备。'))}
-                        >
-                          <Sparkles size={13} className="mr-1" /> {t('writing.aiSplitPages', 'AI 帮我拆页')}
-                        </Button>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => void sendChatText(t('writing.aiSplitPrompt', '请把当前稿件按内容语义拆成多页（每页一个 ## 二级标题），为生成 PPT 做准备。'))}
+                          >
+                            <Sparkles size={13} className="mr-1" /> {t('writing.aiSplitPages', 'AI 帮我拆页')}
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => void sendChatText(t('writing.deckGenerateAssetPrompt', '请把当前稿件编排为可编辑的幻灯片画布：先用 edit_deck 创建 deck 资产，按内容语义分页（每页一个主题），保留关键要点与图片。'))}
+                          >
+                            <Presentation size={13} className="mr-1" /> {t('writing.deckGenerateAsset', '生成可编辑幻灯片')}
+                          </Button>
+                        </div>
                       </div>
                     )}
                     {deckAsset ? (
@@ -1029,6 +1078,12 @@ export function DeckView(input: {
                       </div>
                     ) : (
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      {/* #1098: 只读投影卡片的引导 — 指回上方「生成可编辑幻灯片」入口。 */}
+                      {slides.length > 0 && (
+                        <div className="md:col-span-2 rounded-lg border border-dashed border-border bg-surface-elevated px-4 py-2 text-xs text-text-tertiary">
+                          {t('writing.deckProjectionHint', '想要直接编辑卡片？点击上方“生成可编辑幻灯片”创建 deck 资产')}
+                        </div>
+                      )}
                       {slides.map((slide, i) => (
                         <div
                           key={i}

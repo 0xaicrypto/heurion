@@ -386,3 +386,66 @@ describe('#1068 表格高度传导渲染（页高预算/拆续页/多表不重�
     expect(slideXml).toContain('药名')
   })
 })
+
+describe('#1090-3 表格块超 2 个 → 丢弃可观测（warn + 页面注记）', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+    vi.restoreAllMocks()
+  })
+
+  const generate = async (content: unknown) => {
+    const res = await generatePptx({ schema_version: 1, content_type: 'sidecar.generate_pptx', data: content })
+    return unzip((res as { buffer: Buffer }).buffer)
+  }
+
+  test('3 个表格块 → 前 2 个渲染、第 3 个丢弃，warn 留痕 + 页面注记可见', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const parts = await generate({
+      schemaVersion: 2,
+      title: 'T',
+      slides: [
+        {
+          title: '多表页',
+          content: [
+            { type: 'table', data: JSON.stringify({ rows: [['T1A'], ['1']] }) },
+            { type: 'table', data: JSON.stringify({ rows: [['T2A'], ['1']] }) },
+            { type: 'table', data: JSON.stringify({ rows: [['T3A'], ['1']] }) },
+          ],
+        },
+      ],
+    })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('#1090-3'))
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('其余 1 个已省略'))
+    const all = Object.values(parts).join('\n')
+    // 前 2 个表格正常渲染
+    expect(all).toContain('<a:t>T1A</a:t>')
+    expect(all).toContain('<a:t>T2A</a:t>')
+    // 第 3 个丢弃
+    expect(all).not.toContain('T3A')
+    // 页面注记（#1062-7 截断标注同口径 — 丢弃数可见，不再静默）
+    expect(all).toContain('仅渲染前 2 个')
+    expect(all).toContain('源共 3 个')
+  })
+
+  test('回归：恰 2 个表格块 → 不触发 warn、无注记', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const parts = await generate({
+      schemaVersion: 2,
+      title: 'T',
+      slides: [
+        {
+          title: '双表页',
+          content: [
+            { type: 'table', data: JSON.stringify({ rows: [['T1A'], ['1']] }) },
+            { type: 'table', data: JSON.stringify({ rows: [['T2A'], ['1']] }) },
+          ],
+        },
+      ],
+    })
+    expect(warn).not.toHaveBeenCalled()
+    const all = Object.values(parts).join('\n')
+    expect(all).toContain('<a:t>T1A</a:t>')
+    expect(all).toContain('<a:t>T2A</a:t>')
+    expect(all).not.toContain('表格过多')
+  })
+})

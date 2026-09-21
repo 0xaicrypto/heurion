@@ -88,9 +88,11 @@ export function CommentsPanel(input: {
   onAiProcess?: (c: DocCommentWire) => void;
   /** #1041: 处理中的评论 id 集合 — 按钮 loading/禁用，防并发二次触发。 */
   processingCommentIds?: Record<string, boolean>;
+  /** #1095: 排队位次（commentId → 队列位次）— 处理中按钮的「排队第 n 位」提示。 */
+  queuePositions?: Record<string, number>;
   /** #1088: deck 写回待确认态（commentId → { undoable }）— 线程级确认/撤销按钮。 */
   deckConfirming?: Record<string, { undoable: boolean }>;
-  /** #1088: 「确认修改」— PATCH resolved。 */
+  /** #1088: 「确认修改」— #1096: 采纳本轮修改（不关闭评论）。 */
   onDeckConfirm?: (id: string) => void;
   /** #1088: 「撤销修改」— 恢复写回前画布快照。 */
   onDeckUndo?: (id: string) => void;
@@ -103,11 +105,9 @@ export function CommentsPanel(input: {
   className?: string;
 }) {
   const { t } = useTranslation();
-  const { comments, activeId, onSelect, onReply, onToggleResolve, onAiProcess, processingCommentIds, deckConfirming, onDeckConfirm, onDeckUndo, anchorConfirms, adoptedAnchors, onAdoptAnchor, className } = input;
-  // #1060: 单评论单 turn — 任一评论处理中（含指令排队等待真实 turn）时，
-  // 其余「请AI处理」按钮一并禁用（ref 级守卫的状态层镜像），避免排队单槽
-  // 被第二条评论指令占用后被覆盖丢弃（卡死源）或与首条共享冲刷窗口（误归属源）。
-  const anyProcessing = Object.values(processingCommentIds ?? {}).some(Boolean);
+  const { comments, activeId, onSelect, onReply, onToggleResolve, onAiProcess, processingCommentIds, queuePositions, deckConfirming, onDeckConfirm, onDeckUndo, anchorConfirms, adoptedAnchors, onAdoptAnchor, className } = input;
+  // #1095: 评论并行处理 — 各评论独立登记独立 turn，不再全局互斥禁用；
+  // 每按钮只禁用自身（防同评论双击），排队中的按钮显示「排队第 n 位」。
   // 展开态覆盖:open 默认展开、resolved 默认收起;用户点开后记为展开。
   const [manualExpand, setManualExpand] = useState<Record<string, boolean>>({});
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
@@ -294,14 +294,15 @@ export function CommentsPanel(input: {
                   )}
                 </div>
               )}
-              {/* #1088: deck 评论 AI 写回待确认态 — 线程级「确认修改/撤销修改」
+              {/* #1088: deck 评论 AI 写回待确认态 — 线程级「采纳本轮修改/撤销修改」
                   (仅 target='deck_slide' 且待确认;撤销仅在快照可恢复时显示)。
                   #1091: 渲染条件从纯内存 map 扩为「内存态 || wire.deck_snapshot
-                  在场」— 刷新后从服务端快照恢复 pending-confirm 按钮态。 */}
+                  在场」— 刷新后从服务端快照恢复 pending-confirm 按钮态。
+                  #1096: 确认语义 = 采纳本轮修改（不关闭评论，关闭权在用户）。 */}
               {c.target === 'deck_slide' && c.status !== 'resolved' && (!!deckConfirming?.[c.id] || !!c.deck_snapshot) && (
                 <div data-testid={`comment-deck-confirm-${c.id}`} className="flex gap-1 px-2.5 pb-1 pt-0.5">
                   <Button size="sm" data-testid={`comment-deck-confirm-btn-${c.id}`} onClick={() => onDeckConfirm?.(c.id)}>
-                    {t('writing.commentDeckConfirm', '确认修改')}
+                    {t('writing.commentDeckConfirm', '采纳本轮修改')}
                   </Button>
                   {(!!deckConfirming?.[c.id]?.undoable || !!c.deck_snapshot) && (
                     <Button size="sm" variant="ghost" data-testid={`comment-deck-undo-btn-${c.id}`} onClick={() => onDeckUndo?.(c.id)}>
@@ -312,17 +313,19 @@ export function CommentsPanel(input: {
               )}
               <div className="flex justify-end gap-1 px-2.5 pb-2">
                 {/* #1041: 「请AI处理」— 处理中 loading/禁用（issue 用例 6 防并发）。
-                    #1060: 其余按钮随任一评论处理中一并禁用（单评论单 turn）。 */}
+                    #1095: 评论并行处理 — 各按钮独立禁用；排队中的显示位次提示。 */}
                 {c.status !== 'resolved' && onAiProcess && (
                   <Button
                     size="sm"
                     variant="secondary"
                     data-testid={`comment-ai-process-${c.id}`}
                     isLoading={!!processingCommentIds?.[c.id]}
-                    disabled={!!processingCommentIds?.[c.id] || anyProcessing}
+                    disabled={!!processingCommentIds?.[c.id]}
                     onClick={() => onAiProcess(c)}
                   >
-                    {t('writing.commentAiProcess', '请AI处理')}
+                    {(!!processingCommentIds?.[c.id] && (queuePositions?.[c.id] ?? 0) > 0)
+                      ? t('writing.commentQueuePosition', '排队第 {{n}} 位', { n: queuePositions?.[c.id] })
+                      : t('writing.commentAiProcess', '请AI处理')}
                   </Button>
                 )}
                 <Button size="sm" variant="ghost" onClick={() => void onToggleResolve(c)}>

@@ -12,6 +12,8 @@ import { InsertAssetTool } from './insert-asset-tool.js'
 import { FixDocumentImagesTool } from './fix-document-images-tool.js'
 import { QueryLogsTool, isUserAdmin } from './query-logs-tool.js'
 import { SearchCitationTool } from './search-citation-tool.js'
+// #1076: insert_citation — 正式引用（DocCitation）唯一写入工具（[cite:id] 标记）。
+import { InsertCitationTool } from './insert-citation-tool.js'
 import { OaPdfLookupTool } from './oa-pdf-tool.js'
 import { EditDeckTool } from './edit-deck-tool.js'
 // #976: 会话级任务清单（agent todo-list）— 全场景可用（chat/doc 通用账本）。
@@ -293,9 +295,12 @@ export class ToolRegistry {
     // #801: AI 日志检索 — 排障一等能力,仅 admin 用户暴露。
     this.register(new QueryLogsTool(ctx))
     // #807: 引用实体化 — PubMed 真实检索,治 References 编造。
-    this.register(new SearchCitationTool(ctx))    // #454-followup: plugin-gated renderers — registered so execute() can
+    this.register(new SearchCitationTool(ctx))
+    // #1076: insert_citation — 正式引用唯一写入入口（[cite:id] 标记 + DOI 强制）。
+    this.register(new InsertCitationTool(ctx))
     // #837: OA 全文获取 — Unpaywall + Crossref combo(阅读全文,非引用编造治理)。
     this.register(new OaPdfLookupTool(ctx))
+    // #454-followup: plugin-gated renderers — registered so execute() can
     // give a clear error, but excluded from definitions unless installed.
     this.register(new RenderChartTool(ctx))
     this.register(new LoadSkillTool(ctx))
@@ -379,6 +384,8 @@ export class ToolRegistry {
     const out: ToolDefinition[] = []
     for (const tool of this.tools.values()) {
       if (tool.name === 'edit_document' && !isDocSession) continue
+      // #1076: insert_citation 写 DocCitation（挂在文档上）— 同 edit_document 只在 doc- 会话暴露。
+      if (tool.name === 'insert_citation' && !isDocSession) continue
       if (tool.name === 'insert_asset' && !isDocSession) continue
       if (tool.name === 'edit_deck' && !isDocSession) continue
       if (tool.name === 'fix_document_images' && !isDocSession) continue

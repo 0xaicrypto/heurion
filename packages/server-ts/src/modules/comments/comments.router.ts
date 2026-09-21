@@ -19,6 +19,8 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { DocComment, DocCommentReply } from '@prisma/client'
 import { authGuard } from '../../common/auth.guard.js'
+// #1090-5: 内部调用凭证（brand 类型 + 运行时断言，见 common/internal.ts）
+import { assertInternalCaller, internalCaller, type InternalCaller } from '../../common/internal.js'
 import prisma from '../../common/prisma.js'
 import { makeLogger } from '../../common/logger.js'
 import { EventLog } from '../../core/event-log.js'
@@ -245,8 +247,12 @@ function diagnoseDeckAnchor(anchorText: string, deck: { slides?: unknown } | nul
  * #1064: 服务端内部回复写入 — role 'ai' 只能走这条路径（供 #1041 评论驱动
  * AI 编辑收口等内部流程调用），HTTP 端点拒绝客户端自封。doc/comment 归属
  * 校验由调用方先行完成（内部函数不做鉴权）。
+ * #1090-5: 契约类型化 — 首参 caller 必须为 InternalCaller（由
+ * common/internal.ts 的 internalCaller() 签发；brand 的 key symbol 不导出，
+ * 外部模块类型上不可伪造），并运行时断言，普通对象/缺省即抛错不写入。
  */
-export async function appendCommentReplyInternal(input: { commentId: string; role: 'user' | 'ai'; text: string }): Promise<SerializedReply> {
+export async function appendCommentReplyInternal(input: { caller: InternalCaller; commentId: string; role: 'user' | 'ai'; text: string }): Promise<SerializedReply> {
+  assertInternalCaller(input.caller)
   const row = await prisma.docCommentReply.create({
     data: { commentId: input.commentId, role: input.role, text: input.text, createdAt: new Date().toISOString() },
   })
@@ -401,7 +407,7 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
     if (!turnValid) {
       return reply.status(403).send({ error: 'turn_id 不合法 — 必须是当前用户在该文档 chat 中真实存在的 AI turn（assistant 响应）序号' })
     }
-    const row = await appendCommentReplyInternal({ commentId: comment.id, role: 'ai', text: parsed.data.text })
+    const row = await appendCommentReplyInternal({ caller: internalCaller(), commentId: comment.id, role: 'ai', text: parsed.data.text })
     return reply.status(201).send(row)
   })
 

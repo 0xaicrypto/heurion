@@ -2,7 +2,7 @@
  * Asset content builders (#789②) — pure markdown → contract content-model
  * conversion extracted from insert-asset-tool.ts. No prisma, no I/O.
  */
-import { SCHEMA_VERSION } from '@heurion/contracts'
+import { SCHEMA_VERSION, CITE_SHORTCODE_PATTERN } from '@heurion/contracts'
 
 /** headers/rows → markdown 表格；单元格转义竖线与换行，短行补空。 */
 export function buildMarkdownTable(headers: string[], rows: string[][]): string {
@@ -110,4 +110,47 @@ export function safeParseDeckJson(raw: string | null | undefined): Record<string
   } catch {
     return null
   }
+}
+
+/**
+ * #1078 — 手写/遗留 References 节识别：`## References` / `## 参考文献`
+ * / `# References`（大小写不敏感）或 `**References**` 加粗行。
+ */
+const LEGACY_REFERENCES_HEADING = /^(#{1,6}\s+|)\**\s*(references|参考文献)\s*\**\s*$/i
+
+/** #1078: 复用 contracts 的 shortcode 形状做布尔判定 — 不在共享 /g 正则上
+ *  直接 .test()（lastIndex 泄漏进后续 replace 的已知坑）。 */
+export function hasCiteShortcode(text: string): boolean {
+  return new RegExp(CITE_SHORTCODE_PATTERN.source).test(text)
+}
+
+/**
+ * #1078: 从 markdown 正文中剥除「References / 参考文献」节 — 命中标题行
+ * （`## References`、`# 参考文献`、`**References**` 等）起，到下一个
+ * **同级或更高级**标题（heading 级别 ≤ 该标题级别）或文末为止。
+ * 纯函数、零 I/O；未命中时原样返回（导出边界对无引用文档零开销直通）。
+ */
+export function stripLegacyReferencesSection(body: string): string {
+  if (!body) return body
+  const lines = body.split('\n')
+  let start = -1
+  let level = 0
+  for (let i = 0; i < lines.length; i++) {
+    const m = LEGACY_REFERENCES_HEADING.exec(lines[i].trim())
+    if (m) {
+      start = i
+      level = /^#{1,6}/.exec(lines[i].trim())?.[0]?.length || 7
+      break
+    }
+  }
+  if (start === -1) return body
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i++) {
+    const h = /^(#{1,6})\s+/.exec(lines[i].trim())
+    if (h && h[1].length <= level) {
+      end = i
+      break
+    }
+  }
+  return [...lines.slice(0, start), ...lines.slice(end)].join('\n')
 }

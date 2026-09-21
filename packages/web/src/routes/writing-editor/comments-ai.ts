@@ -3,9 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { api } from '@/lib/api';
 import type { DocCommentWire } from '@/lib/api';
 import type { DeckWire } from '@/lib/types';
-// #1074-4: 显式 turnId — 排队单槽入队 id;#1072-2 web 适配: SSE 服务端
+// #1074-4: 显式 turnId — 排队槽入队 id;#1072-2 web 适配: SSE 服务端
 // assistant 消息 id 的记录/读取（latestAssistantTurnId）。
-import { latestAssistantTurnId, onChatPendingDropped, pendingTurnId, useChatStore, type ChatPendingDropped } from '@/stores/chat';
+// #1095: pending 多槽 FIFO 队列 — pendingQueuePosition 供「排队第 n 位」提示。
+import { latestAssistantTurnId, onChatPendingDropped, pendingQueuePosition, useChatStore, type ChatPendingDropped } from '@/stores/chat';
 
 /**
  * #1074-3 — 评论-AI 状态机从 writing-editor 路由下沉（仿 bubble.ts/doc-chat.ts
@@ -28,7 +29,11 @@ interface PendingCommentTurn {
    * （null = 画布无 deck，不提供撤销，同 #1071-1 的取舍）。
    */
   prevDeck?: DeckWire | null;
-  instruction: string;
+  /**
+   * #1095: 登记分两步 — 点击即登记（target 锁定防同评论双击），anchor
+   * 重取后补齐 instruction（收口指纹）；发送通道异常时清理半登记。
+   */
+  instruction?: string;
   /**
    * #1074-4: 指令排队时捕获的显式 turnId（sendMessageQueued 入队 uuid）。
    * 丢弃事件按它精确清账（指纹为二重校验）；直发（未排队）的轮次不带 —
@@ -48,8 +53,12 @@ export interface CommentsAiInput {
   pendingWriteBackRef: React.MutableRefObject<{ base: string; body: string; timer: ReturnType<typeof setTimeout> | null } | null>;
   /** #837: 累计写回队列（settle 判定「写回排队中」用，路由所有）。 */
   writeBackQueueRef: React.MutableRefObject<Array<{ base: string; next: string; fp: string | null }>>;
-  /** 发送通道（doc-chat hook 的 sendChatText）。 */
-  sendChatText: (text: string) => Promise<void>;
+  /**
+   * 发送通道（doc-chat hook 的 sendChatText）。
+   * #1095: 返回值 = 排队时该指令槽的显式 turnId（直发为 undefined）—
+   * 评论并行处理以此登记/清账（丢弃事件按 id 精确匹配）。
+   */
+  sendChatText: (text: string) => Promise<string | undefined>;
   /**
    * #1088: deck 撤销出口 — 路由接线 deck-conflict 的 restoreDeckSnapshot
    * （恢复写回前快照 + force 落盘；true = 已恢复并落盘成功）。useCommentsAi
@@ -76,6 +85,11 @@ export interface CommentsAi {
   diffPendingRef: React.MutableRefObject<boolean>;
   commentProcessing: Record<string, boolean>;
   clearCommentProcessing: (id: string) => void;
+  /**
+   * #1095: 排队位次镜像（commentId → 队列中位次，1-based）— 面板按钮
+   * 「排队第 n 位」提示的数据源；不在队列（已执行/直发）为 0/缺省。
+   */
+  commentQueuePositions: Record<string, number>;
   currentTurnInstruction: () => string | null;
   lastAssistantAnswer: () => string;
   appendAiReply: (commentId: string, text: string) => Promise<void>;
@@ -92,7 +106,7 @@ export interface CommentsAi {
    * 写回落地后进入该态，长期可用、无 TTL）。
    */
   deckPendingConfirm: Record<string, { undoable: boolean }>;
-  /** #1088: 「确认修改」— PATCH resolved（正文 diff accept 的对等语义）。 */
+  /** #1088: 「确认修改」— #1096: 采纳本轮修改（不触碰 status，评论保持 open）。 */
   confirmDeckWriteBack: (commentId: string) => Promise<void>;
   /** #1088: 「撤销修改」— 恢复写回前 deck 快照（force 落盘）+ 评论保持 open
    *  + 线程追加「已撤销」说明。 */
@@ -133,6 +147,11 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
   // 边界对齐 — 指令排队等待期间保持 loading,由消费点(attach/settle)或
   // pending 丢弃事件收口,不再随 send promise(入队即 resolve)提前消失。
   const [commentProcessing, setCommentProcessing] = useState<Record<string, boolean>>({});
+  /**
+   * #1095: 排队位次镜像 — 已登记 turnId 的评论在 FIFO 队列中的位次。
+   * store 订阅驱动（队列任意变化重算；值不变不触发渲染）。
+   */
+  const [commentQueuePositions, setCommentQueuePositions] = useState<Record<string, number>>({});
   const docCommentsRef = useRef(docComments);
   docCommentsRef.current = docComments;
 
@@ -252,7 +271,7 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
   }, []);
 
   /** #1041: 评论来源的写回进入 diff 审阅 — 线程追加 AI 回复 + 记录审阅关联
-   *  （handleDiffResolve accept 分支据此 PATCH resolved；拒绝/放弃保持 open）。
+   *  （#1096: accept = 采纳本轮修改，评论保持 open — 不再自动 resolved）。
    *  #1060: fp = 写回所属 turn 的指令指纹；消费时同步收按钮 loading（与
    *  turn 真实边界对齐，替代 send promise 的提前 finally 收口）。 */
   const attachCommentSourcesToReview = useCallback((reviewKey: string, fp: string | null) => {
@@ -260,7 +279,7 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
     if (ids.length === 0) return;
     diffCommentSourcesRef.current = { key: reviewKey, ids };
     const aiText = lastAssistantAnswer()
-      || t('writing.commentAiDiffReply', 'AI 已按评论意见生成修改建议 — 请审阅 diff；接受后将自动把该评论标记为已解决。');
+      || t('writing.commentAiDiffReply', 'AI 已按评论意见生成修改建议 — 请审阅 diff；接受后即采纳本轮修改，评论保持打开，可继续多轮交互。');
     for (const id of ids) {
       clearCommentProcessing(id);
       void appendAiReply(id, aiText);
@@ -339,10 +358,24 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
     // 不受正文审阅/写回队列状态影响。turn 期间 Doc.deck 有变化 = 修改已生效。
     const sess = docId ? useChatStore.getState().sessions[`doc-${docId}`] : undefined;
     const deckNow = JSON.stringify(sess?.lastDocDeck ?? null);
+    // #1041: 正文评论 — 写回排队中（审阅未决跨轮入队）→ **保留登记**留待队列
+    // 重放开审阅时关联（attachCommentSourcesToReview 按该轮指纹消费），不误报
+    // 失败；否则 = 本 turn 未产生任何写回（edit_document 定位失败/模型未动
+    // 文档）→ 删除登记 + 失败 AI 回复（用例 5）。
+    // #1095 修复：此前 matched 条目在此处**先删后判** — 未决跨轮时登记被
+    // 静默清掉，队列重放时 attach 找不到条目 → 评论永久无回复（多评论排队
+    // 下必现）。改为未决时只挂起（登记+loading 保留），仅失败路径才删除。
+    const deferSection = diffPendingRef.current || writeBackQueueRef.current.length > 0;
     for (const [id, meta] of matched) {
+      if (meta.target !== 'deck_slide') {
+        if (deferSection) continue;
+        pendingCommentTurnsRef.current.delete(id);
+        clearCommentProcessing(id);
+        void appendAiReply(id, commentFailReply(id, 'section'));
+        continue;
+      }
       pendingCommentTurnsRef.current.delete(id);
       clearCommentProcessing(id);
-      if (meta.target !== 'deck_slide') continue;
       if (deckNow !== meta.deckKeyAtStart) {
         void appendAiReply(id, lastAssistantAnswer() || t('writing.commentAiDeckDone', 'AI 已按评论意见修改幻灯片（画布已更新）。'));
         // #1088: 不再自动 resolved — 进入待确认态，撤销快照 = 登记时的画布 deck。
@@ -360,14 +393,6 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
       } else {
         void appendAiReply(id, commentFailReply(id, 'deck_slide'));
       }
-    }
-    // #1041: 正文评论 — 写回排队中（审阅未决跨轮入队）→ 留待队列重放开审阅时
-    // 关联（attachCommentSourcesToReview），不误报失败；否则 = 本 turn 未产生
-    // 任何写回（edit_document 定位失败/模型未动文档）→ 失败 AI 回复（用例 5）。
-    if (diffPendingRef.current || writeBackQueueRef.current.length > 0) return;
-    for (const [id, meta] of matched) {
-      if (meta.target !== 'section') continue;
-      void appendAiReply(id, commentFailReply(id, 'section'));
     }
   }, [docId, currentTurnInstruction, clearCommentProcessing, appendAiReply, lastAssistantAnswer, commentFailReply, t, writeBackQueueRef, persistDeckSnapshot]);
 
@@ -403,10 +428,12 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
   }, [docId, appendAiReply, setDocComments, t]);
 
   /**
-   * #1088: 「确认修改」— PATCH resolved（正文 diff accept 的对等语义）。
-   * #1091: 同一 PATCH 清服务端快照（status='resolved' + deck_snapshot=null，
-   * 与 issue 定案一致）；入口兼容刷新后的纯服务端态 — 内存待确认或
-   * wire.deck_snapshot 任一在场均可确认。
+   * #1088: 「确认修改」— 采纳本轮修改。
+   * #1096 生命周期重构：确认**不再** PATCH resolved（AI 的任何动作都不触碰
+   * status；关闭权在用户）— 只清 #1091 的服务端快照（确认后无需恢复点），
+   * 评论保持 open 可继续多轮交互；用户手动「标记已解决」是唯一关闭路径。
+   * 入口兼容刷新后的纯服务端态 — 内存待确认或 wire.deck_snapshot 任一在场
+   * 均可确认。
    */
   const confirmDeckWriteBack = useCallback(async (commentId: string) => {
     const wireHasSnapshot = !!docCommentsRef.current.find((c) => c.id === commentId)?.deck_snapshot;
@@ -420,11 +447,11 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
     });
     if (docId) {
       try {
-        const updated = await api.updateDocComment(docId, commentId, 'resolved', { deck_snapshot: null });
-        setDocComments((prev) => prev.map((c) => (c.id === commentId ? { ...c, status: updated.status, resolved_at: updated.resolved_at, deck_snapshot: updated.deck_snapshot ?? null } : c)));
-      } catch { /* 状态更新失败保持 open — 用户可手动标记 */ }
+        const updated = await api.updateDocComment(docId, commentId, undefined, { deck_snapshot: null });
+        setDocComments((prev) => prev.map((c) => (c.id === commentId ? { ...c, deck_snapshot: updated.deck_snapshot ?? null } : c)));
+      } catch { /* 快照清除失败 — 待确认态已收口，重试撤销仍可用 */ }
     }
-    onNotice(t('writing.commentDeckConfirmDone', '已确认修改 — 评论已标记解决'), 3000);
+    onNotice(t('writing.commentDeckConfirmDone', '已采纳本轮修改 — 评论保持打开，可继续多轮处理'), 3000);
   }, [docId, setDocComments, onNotice, t]);
 
   /**
@@ -480,78 +507,103 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
    * （sendChatText → doc- 工具循环）：正文评论 → edit_document（old_text
    * 用 anchorText）；#1051 deck 评论 → edit_deck。产出复用既有
    * doc_updated → diffReview → ProposalCard accept/reject 流，不做新 diff UI。
-   * 用例 6：处理中二次点击忽略（同步登记 + 按钮 loading/禁用双保险）。
-   * #1060: 单评论单 turn — 已有待收口评论时拒绝登记第二个（面板按钮禁用
-   * 是 UX 层，此处 ref 级守卫兜底）：排队单槽同一时刻只容纳一条指令，
-   * 第二条评论指令要么被覆盖丢弃（卡死源）要么与首条共享冲刷窗口（误
-   * 归属源）。登记置于全部守卫之后，指令文本即收口匹配用的指纹。
-   * #1074-4: 指令入队（排队等待真实 turn）后捕获排队槽的显式 turnId —
-   * 丢弃事件按它精确清账;直发（未排队）无槽可读,登记保持无 turnId。
+   * 用例 6：同评论处理中二次点击忽略（同步登记 + 按钮 loading/禁用双保险）。
+   * #1095（Phase 1 排队式并行）：放开单评论单 turn 守卫 — N 个评论可同时
+   * 处于「已排队/处理中」，各自独立 turnId + 状态机；执行层仍串行（chat
+   * 会话 FIFO 逐个 turn，同文档写回无并发竞争）。#1060 的"第二条登记被拒"
+   * 守卫（size>0）随之退役；指纹收口仍按「本 turn 实际发出的指令」精确归属。
+   * #1074-4: sendChatText 返回入队槽的显式 turnId — 丢弃事件按它精确清账；
+   * 直发（未排队）返回 undefined，登记保持无 turnId（收口走指纹）。
+   * #1095 漂移注意：串行执行时后排评论的指令基于前排修改后的正文 —
+   * 登记前重取 anchor 诊断（列表接口 with_anchor 已有），最新锚点随指令发出。
    */
   const handleCommentAiProcess = useCallback((c: DocCommentWire) => {
     if (!docId || c.status === 'resolved') return;
     if (pendingCommentTurnsRef.current.has(c.id)) return;
-    if (pendingCommentTurnsRef.current.size > 0) return;
     // 与生成 Methods 同一互斥纪律：审阅未决/写回批次待冲刷时先完成审阅。
     if (diffReview !== null || pendingWriteBackRef.current !== null) {
       onNotice(t('writing.reviewFirstForComment', '请先完成当前的 AI 修改审阅，再处理评论'));
       return;
     }
-    const instructionText = c.replies.filter((r) => r.role === 'user').map((r) => r.text.trim()).filter(Boolean).join('\n');
-    if (!instructionText) return;
-    const isDeck = c.target === 'deck_slide';
-    // 用例 5：定位失败（located=false）时仍可发起，但指令注明锚点可能漂移。
-    const driftNote = c.anchor?.located === false
-      ? '- 注意：该锚点片段可能已在' + (isDeck ? '幻灯片' : '文档') + '中漂移，如无法精确定位，请基于最接近的原文处理，或在回复中说明定位失败与候选。\n'
-      : '';
-    const instruction = isDeck
-      ? [
-          '【评论处理】请按以下评论意见修改 deck（幻灯片）：',
-          `- 目标位置：第 ${c.slide_index ?? '?'} 页（slide_index，1-based）`,
-          `- 该页锚点片段（用于定位原文）：「${c.anchor_text}」`,
-          driftNote,
-          `- 评论意见（编辑指令）：${instructionText}`,
-          '请直接调用 edit_deck 工具完成修改（action 用 update，slide_index 用上面的页码；删页/插页/调布局选合适的 action）。完成后请在回复中说明你做了什么修改。',
-        ].filter(Boolean).join('\n')
-      : [
-          '【评论处理】请按以下评论意见修改文档正文：',
-          `- 目标位置：section「${c.section_id}」`,
-          `- 原文片段（edit_document 的 old_text）：「${c.anchor_text}」`,
-          driftNote,
-          `- 评论意见（编辑指令）：${instructionText}`,
-          '请直接调用 edit_document 工具完成修改（old_text 用上面的原文片段，new_text 为按评论意见修改后的内容）。完成后请在回复中说明你做了什么修改。',
-        ].filter(Boolean).join('\n');
-    // 同步登记 — 防同帧双击并发（用例 6）；deck 评论记录起始 deck 基线用于收口判定。
-    // #1088: 同时捕获画布快照（撤销修改的恢复目标 — 画布是含文档装载/本地
-    // 编辑的最新 deck，比 store 的 lastDocDeck 更贴近「写回前」状态）。
+    const sid = `doc-${docId}`;
+    // #1095: 同评论防双击后，立刻乐观置 loading — 后续 anchor 重取/入队
+    // 期间按钮即锁定（等待中的位次提示由订阅 effect 补齐）。
     pendingCommentTurnsRef.current.set(c.id, {
-      target: isDeck ? 'deck_slide' : 'section',
-      ...(isDeck ? { deckKeyAtStart: JSON.stringify(useChatStore.getState().sessions[`doc-${docId}`]?.lastDocDeck ?? null) } : {}),
-      ...(isDeck ? { prevDeck: deckSnapshotNow() } : {}),
-      instruction,
+      target: c.target === 'deck_slide' ? 'deck_slide' : 'section',
     });
     setCommentProcessing((prev) => ({ ...prev, [c.id]: true }));
-    // #1060: loading 与 turn 真实边界对齐 — 不再在 send promise 的 finally
-    // 收口（排队时入队即 resolve，按钮会提前复活而 turn 尚未运行）。改由
-    // 消费点（attach/settle）或 pending 覆盖/清理事件统一收口。
     void (async () => {
-      await sendChatText(instruction);
-      // #1074-4: 入队捕获 turnId — 与登记比对排队槽文本一致才记（槽已被
-      // 覆盖/消费时不记,丢弃事件回退指纹路径）。
-      const queued = docId ? useChatStore.getState().sessions[`doc-${docId}`]?.pending : undefined;
-      const queuedTurnId = pendingTurnId(docId ? `doc-${docId}` : '');
-      if (queued && queued.text === instruction && queuedTurnId) {
+      try {
+        // #1095: 处理前重取 anchor 诊断 — 排队执行时正文可能已被前排 turn
+        // 修改；重取保证指令里的 old_text 尽量新鲜（漂移仍由 AI 回复带候选兜底）。
+        let fresh: DocCommentWire = c;
+        try {
+          const listed = await api.listDocComments(docId, { with_anchor: true });
+          const hit = listed.comments.find((x) => x.id === c.id);
+          if (hit) fresh = hit;
+        } catch { /* 重取失败用点击时的锚点（原行为） */ }
+        const instructionText = fresh.replies.filter((r) => r.role === 'user').map((r) => r.text.trim()).filter(Boolean).join('\n');
+        if (!instructionText) {
+          pendingCommentTurnsRef.current.delete(c.id);
+          clearCommentProcessing(c.id);
+          return;
+        }
+        const isDeck = fresh.target === 'deck_slide';
+        // 用例 5：定位失败（located=false）时仍可发起，但指令注明锚点可能漂移。
+        const driftNote = fresh.anchor?.located === false
+          ? '- 注意：该锚点片段可能已在' + (isDeck ? '幻灯片' : '文档') + '中漂移，如无法精确定位，请基于最接近的原文处理，或在回复中说明定位失败与候选。\n'
+          : '';
+        const instruction = isDeck
+          ? [
+              '【评论处理】请按以下评论意见修改 deck（幻灯片）：',
+              `- 目标位置：第 ${fresh.slide_index ?? '?'} 页（slide_index，1-based）`,
+              `- 该页锚点片段（用于定位原文）：「${fresh.anchor_text}」`,
+              driftNote,
+              `- 评论意见（编辑指令）：${instructionText}`,
+              '请直接调用 edit_deck 工具完成修改（action 用 update，slide_index 用上面的页码；删页/插页/调布局选合适的 action）。完成后请在回复中说明你做了什么修改。',
+            ].filter(Boolean).join('\n')
+          : [
+              '【评论处理】请按以下评论意见修改文档正文：',
+              `- 目标位置：section「${fresh.section_id}」`,
+              `- 原文片段（edit_document 的 old_text）：「${fresh.anchor_text}」`,
+              driftNote,
+              `- 评论意见（编辑指令）：${instructionText}`,
+              '请直接调用 edit_document 工具完成修改（old_text 用上面的原文片段，new_text 为按评论意见修改后的内容）。完成后请在回复中说明你做了什么修改。',
+            ].filter(Boolean).join('\n');
+        // 登记补全 — deck 评论记录起始 deck 基线用于收口判定；#1088: 同时
+        // 捕获画布快照（撤销修改的恢复目标 — 画布是含文档装载/本地编辑的
+        // 最新 deck，比 store 的 lastDocDeck 更贴近「写回前」状态。#1095:
+        // 排队执行的 deck 撤销回到「本评论登记时」的画布基线，保守可回退）。
         const reg = pendingCommentTurnsRef.current.get(c.id);
-        if (reg) pendingCommentTurnsRef.current.set(c.id, { ...reg, turnId: queuedTurnId });
+        if (reg) {
+          pendingCommentTurnsRef.current.set(c.id, {
+            ...reg,
+            ...(isDeck ? { deckKeyAtStart: JSON.stringify(useChatStore.getState().sessions[sid]?.lastDocDeck ?? null) } : {}),
+            ...(isDeck ? { prevDeck: deckSnapshotNow() } : {}),
+            instruction,
+          });
+        }
+        const queuedTurnId = await sendChatText(instruction);
+        // #1095: 入队返回显式 turnId — 登记（丢弃事件按 id 精确清账）；
+        // 直发（未排队）为 undefined，登记保持无 turnId（指纹收口兜底）。
+        if (queuedTurnId) {
+          const cur = pendingCommentTurnsRef.current.get(c.id);
+          if (cur) pendingCommentTurnsRef.current.set(c.id, { ...cur, turnId: queuedTurnId });
+        }
+      } catch (err) {
+        // #1095: 发送通道异常（网络等）— 不留死登记（has() 守卫会挡死重试）。
+        pendingCommentTurnsRef.current.delete(c.id);
+        clearCommentProcessing(c.id);
+        void appendAiReply(c.id, t('writing.commentAiSendFail', 'AI 处理发起失败：{{msg}} — 评论保持打开，可重试。', { msg: err instanceof Error ? err.message : String(err) }));
       }
     })();
-  }, [docId, diffReview, pendingWriteBackRef, onNotice, t, sendChatText, deckSnapshotNow]);
+  }, [docId, diffReview, pendingWriteBackRef, onNotice, t, sendChatText, deckSnapshotNow, clearCommentProcessing, appendAiReply]);
 
-  // #1060: 排队指令被覆盖/Stop/regenerate 清空 — store 单槽只保留最后一条,
-  // 被静默丢弃的评论指令此前永久滞留登记表（has() 守卫反把合法重试挡死,
-  // 仅切文档才清）。订阅丢弃事件:按 turnId 精确清账（#1074-4,指纹为二重
-  // 校验/回退路径）— 登记清空+按钮 loading 收口+线程补失败说明,被覆盖的
-  // 评论可立即重试。
+  // #1060: 排队指令被 Stop/regenerate 清空 — 丢弃事件按 turnId 精确清账
+  // （#1074-4,指纹为二重校验/回退路径）— 登记清空+按钮 loading 收口+线程补
+  // 失败说明,被清的评论可立即重试。
+  // #1095: 多槽队列下排队不再互相覆盖（覆盖丢弃路径退役）— 事件只剩
+  // Stop/regenerate 清队两个来源。
   useEffect(() => {
     if (!docId) return;
     const sid = `doc-${docId}`;
@@ -561,6 +613,27 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
     });
   }, [docId, failCommentTurnsByDrop]);
 
+  // #1095: 队列位次镜像 — 订阅 store 任意变化，重算已登记 turnId 的评论在
+  // FIFO 队列中的位次（1-based；不在队列=0 即移除）。仅值变化时 setState。
+  useEffect(() => {
+    const recompute = () => {
+      const sid = docId ? `doc-${docId}` : '';
+      const entries = [...pendingCommentTurnsRef.current.entries()]
+        .filter(([, meta]) => !!meta.turnId)
+        .map(([id, meta]) => [id, pendingQueuePosition(sid, meta.turnId!)] as const)
+        .filter(([, pos]) => pos > 0);
+      setCommentQueuePositions((prev) => {
+        const next: Record<string, number> = {};
+        for (const [id, pos] of entries) next[id] = pos;
+        const prevKeys = Object.keys(prev);
+        if (prevKeys.length === entries.length && entries.every(([id, pos]) => prev[id] === pos)) return prev;
+        return next;
+      });
+    };
+    recompute();
+    return useChatStore.subscribe(recompute);
+  }, [docId]);
+
   /** 切文档双保险 — #1041: 旧文档的 pending turn/审阅关联/按钮 loading 不得串染。 */
   const resetForDocSwitch = useCallback(() => {
     pendingCommentTurnsRef.current.clear();
@@ -569,6 +642,7 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
     deckConfirmRef.current.clear();
     setDeckPendingConfirm({});
     setCommentProcessing({});
+    setCommentQueuePositions({});
   }, []);
 
   return {
@@ -578,6 +652,7 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
     diffPendingRef,
     commentProcessing,
     clearCommentProcessing,
+    commentQueuePositions,
     currentTurnInstruction,
     lastAssistantAnswer,
     appendAiReply,

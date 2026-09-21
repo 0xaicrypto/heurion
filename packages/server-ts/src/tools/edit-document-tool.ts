@@ -20,6 +20,8 @@ import { CONTEXT_CONFIG } from '../common/context-config.js'
 import { executeImportFromUrl } from './doc-import.js'
 // #1020/#1022: 锚点失败结构化诊断（最接近候选 + 可用节清单）— 纯函数可单测。
 import { closestTextCandidates, formatAnchorCandidates, describeSectionList } from './anchor-diagnostics.js'
+// #1079: 引用纪律护栏 — 手写 References 列表检测（纯函数,可独立单测）。
+import { looksLikeHandwrittenReferences, HANDWRITTEN_REFERENCES_GUIDANCE } from './citation-guard.js'
 
 /**
  * §15.4/#171 — edit_document: the conversational-writing write-back tool.
@@ -106,6 +108,7 @@ export class EditDocumentTool extends BaseTool {
       '- Import: pass `import_reference` (the reference-material name to import) when the document body is EMPTY and the user wants to work on an uploaded reference (PDF/DOCX/txt). This copies the reference text into the document. Alternatively pass `url` (+ optional `doi`) to download an OA full-text PDF directly into the reference library — use the URL from oa_pdf_lookup results (#875: closes the search→read→cite loop).',
       '- Range edit (preferred for polishing long documents without section IDs, or fine-grained in-section tweaks): pass `old_text` (the original text to replace, copied from the current document — line breaks/whitespace differences are tolerated; [sec:...] markers are stripped automatically) and `new_text` (the replacement). One edit per call; make multiple calls to edit multiple parts. When the document body is EMPTY and exactly one reference exists, the tool auto-imports it before applying the edit (so you can polish an uploaded reference without a separate import call). To replace a figure/link, include its image markdown together with surrounding caption text — image URLs must match exactly, and an old_text that spans an image must include the image.',
       '- Full rewrite: pass `full_text` (complete new document in markdown). Allowed within the model single-response output budget (the main model budget is generous — full rewrites of multi-thousand-token documents work). If it exceeds the budget the tool refuses with guidance; for long-document cleanup/polish prefer section edits or range edits.',
+      'Citations (#1079): to add citations, call insert_citation first and insert the returned `[cite:<citation_id>]` marker into the body with this tool — never hand-write numbered reference entries ([1][2] / "1. Author...") or a References section; hand-written reference lists are rejected and the References list is generated automatically at export.',
       'Formatting: write-back content must arrive pre-structured in markdown — organize new content by its logic (### / ## headings for topics or steps, bullet/numbered lists for enumerations, bold for key conclusions, GFM pipe tables for comparisons). Never write back unstructured prose walls; match the heading level style already used in the document.',
       'Rename: pass `title` (the new document title) — use it alone for a title-only rename, or combine it with any edit mode (section/range/full); the title is written atomically with the body. Imported manuscripts often start with a title heading inside the body: the tool auto-syncs it when it matches the old title. If that first heading still differs from the new title (stale old title, or the output carries `title_sync_warning`), you MUST also edit that heading (section replace or old_text/new_text) in the same turn before claiming the rename is done — the metadata title alone does not change what the user sees.',
       'Use this instead of explaining changes.',
@@ -119,12 +122,12 @@ export class EditDocumentTool extends BaseTool {
         target_section: { type: 'string', description: 'Section-edit mode: the section id from [sec:...] markers in the injected document (e.g. s_xxx). Deterministic whole-section edit — preferred over old_text when visible. Alias: section_id.' },
         section_id: { type: 'string', description: 'Stable section id (same as target_section / [sec:...] marker). Use with old_text+new_text for an in-section range edit (tolerates minor wording/whitespace drift; misses report the closest in-section candidates), or with section_action+content for a whole-section edit.' },
         section_action: { type: 'string', enum: ['replace', 'append', 'prepend', 'delete'], description: 'Section-edit action (REQUIRED when target_section is used — invalid or missing values are rejected, never silently defaulted): replace = rewrite the section content / append = add after it / prepend = insert right after the heading / delete removes the ENTIRE section (heading + content + nested subsections, no content needed).' },
-        content: { type: 'string', description: 'Section-edit payload: the markdown content for replace/append/prepend (alias: new_text is accepted).' },
+        content: { type: 'string', description: 'Section-edit payload: the markdown content for replace/append/prepend (alias: new_text is accepted). Citations must be [cite:<citation_id>] markers from insert_citation — hand-written reference lists are rejected.' },
         import_reference: { type: 'string', description: 'Import mode: the label/name of the reference material to import into the empty document (e.g. the uploaded file name).' },
         url: { type: 'string', description: 'Import via URL: direct OA full-text PDF link (e.g. the url_for_pdf returned by oa_pdf_lookup). Downloads into the reference library and sets the extracted content as the document body.' },
         doi: { type: 'string', description: 'Optional DOI alongside url — enables Unpaywall OA verification (refuses paywalled / non-OA links).' },
         old_text: { type: 'string', description: 'Range mode: the original text to replace (must match the current document — whitespace/line-break differences are tolerated).' },
-        new_text: { type: 'string', description: 'Range mode: the replacement text (empty to delete).' },
+        new_text: { type: 'string', description: 'Range mode: the replacement text (empty to delete). Citations must be [cite:<citation_id>] markers from insert_citation — hand-written reference lists are rejected.' },
         full_text: { type: 'string', description: 'Full mode: the complete new document content in markdown.' },
         title: { type: 'string', description: 'New document title (1-500 chars). Use alone for a title-only rename (no body edit), or combine with section/range/full edits — written atomically with the body. The tool auto-syncs the document\'s leading title heading when it matches the old title; if that heading still differs from the new title (or the output carries `title_sync_warning`), edit that heading too in the same turn.' },
         summary: { type: 'string', description: 'A one-line summary of what changed.' },
@@ -177,6 +180,11 @@ export class EditDocumentTool extends BaseTool {
     const sectionRef = targetSection || sectionIdArg
     const oldText = typeof args.old_text === 'string' ? args.old_text : ''
     const newText = typeof args.new_text === 'string' ? args.new_text : ''
+    // #1079: 引用纪律护栏 — range 模式与节编辑共用的 new_text/content 在
+    // 定位/写回之前统一检查（命中 → 拒绝并引导 insert_citation，不产生半截写回）。
+    if (looksLikeHandwrittenReferences(newText)) {
+      return { success: false, error: HANDWRITTEN_REFERENCES_GUIDANCE }
+    }
     if (sectionRef) {
       const rawAction = typeof args.section_action === 'string' ? args.section_action.trim() : ''
       // #1020: 仅给节 ID + old_text（未声明 section_action）→ 节内锚点编辑：
@@ -189,6 +197,10 @@ export class EditDocumentTool extends BaseTool {
     }
 
     const fullText = typeof args.full_text === 'string' ? args.full_text : ''
+    // #1079: 全量重写同样不得手写 References（正文引用一律走 [cite:id] 标记）。
+    if (looksLikeHandwrittenReferences(fullText)) {
+      return { success: false, error: HANDWRITTEN_REFERENCES_GUIDANCE }
+    }
 
     // #fix: 分步编辑 — 提供了 old_text 就走局部替换,不要求完整文档。
     if (oldText) {
@@ -307,6 +319,10 @@ export class EditDocumentTool extends BaseTool {
     const content = typeof args.content === 'string' && args.content.trim()
       ? args.content
       : (typeof args.new_text === 'string' ? args.new_text : '')
+    // #1079: 节编辑 payload 同样受引用纪律护栏约束（replace/append/prepend）。
+    if (looksLikeHandwrittenReferences(content)) {
+      return { success: false, error: HANDWRITTEN_REFERENCES_GUIDANCE }
+    }
     try {
       const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
       if (!existing) return { success: false, error: `Document not found: ${docId}` }

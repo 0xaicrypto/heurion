@@ -42,6 +42,11 @@ function logRemoteImageSkip(ref: string, err: unknown): void {
 const FILE_DOWNLOAD_PATH_PREFIX = '/api/v1/files/download/'
 export function resolveRelativeFileRef(ref: string, origin: string): string | null {
   if (!origin) return null
+  // #1090-2: 显式拒绝 `//host/path` 协议相对形式 — new URL(ref, origin) 会把
+  // 该形态解析到 ref 自带的 host（逃逸出 origin 的信任边界，pathname 前缀
+  // 校验照样通过）。与 ssrf-guard resolvePublicHttpUrl 口径统一（后者无 base
+  // 的 new URL(raw) 对 `//` 形态直接抛 invalid_url，见包内注释）。
+  if (ref.startsWith('//')) return null
   try {
     const u = new URL(ref, origin)
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null

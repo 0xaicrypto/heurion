@@ -141,8 +141,10 @@ describe('#1039 comments API', () => {
       payload: JSON.stringify({ role: 'ai', text: 'AI 已按要求修改该节' }),
     })
     expect(r2.statusCode).toBe(400)
+    // #1090-5: 内部函数契约类型化 — 必须携带 internalCaller() 凭证
     const { appendCommentReplyInternal } = await import('../src/modules/comments/comments.router.js')
-    await appendCommentReplyInternal({ commentId, role: 'ai', text: 'AI 已按要求修改该节' })
+    const { internalCaller } = await import('../src/common/internal.js')
+    await appendCommentReplyInternal({ caller: internalCaller(), commentId, role: 'ai', text: 'AI 已按要求修改该节' })
     // role 非法值 → 400（zod 枚举）
     const badRole = await app.inject({
       method: 'POST',
@@ -608,14 +610,75 @@ describe('#1064 comments API 健壮性批次', () => {
     })
     expect(okUser.statusCode).toBe(201)
     expect(JSON.parse(okUser.payload).role).toBe('user')
-    // 服务端内部路径：'ai' 仅内部函数可写
+    // 服务端内部路径：'ai' 仅内部函数可写（#1090-5: 需 internalCaller() 凭证）
     const { appendCommentReplyInternal } = await import('../src/modules/comments/comments.router.js')
-    const aiReply = await appendCommentReplyInternal({ commentId, role: 'ai', text: '内部 AI 回复' })
+    const { internalCaller } = await import('../src/common/internal.js')
+    const aiReply = await appendCommentReplyInternal({ caller: internalCaller(), commentId, role: 'ai', text: '内部 AI 回复' })
     expect(aiReply.role).toBe('ai')
     const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers })).payload)
     const thread = list.comments.find((c: any) => c.id === commentId)
     expect(thread.replies.map((r: any) => r.role)).toEqual(['user', 'user', 'ai'])
     expect(thread.replies.map((r: any) => r.text)).toEqual(['首条', '显式 user', '内部 AI 回复'])
+  })
+
+  // ── #1090-5: 内部契约类型化 — caller 缺失/伪造 → 运行时断言拒绝 ──────
+  test('appendCommentReplyInternal 无凭证/伪造凭证调用 → 抛错不写入', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# Intro\n\n正文。\n')
+    const headers = await h()
+    const created = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers,
+      payload: JSON.stringify({ section_id: 's1', anchor_text: '正文。', text: '首条' }),
+    })
+    const commentId = JSON.parse(created.payload).id
+    const { appendCommentReplyInternal } = await import('../src/modules/comments/comments.router.js')
+    // 普通 caller 对象（类型不合法，JS 运行时穿透）→ 断言抛错
+    await expect(
+      appendCommentReplyInternal({ commentId, role: 'ai', text: '无凭证' } as unknown as Parameters<typeof appendCommentReplyInternal>[0]),
+    ).rejects.toThrow(/internalCaller/)
+    // 缺 caller（同上穿透）→ 抛错
+    await expect(
+      appendCommentReplyInternal({ commentId, role: 'ai', text: '缺凭证' } as unknown as Parameters<typeof appendCommentReplyInternal>[0]),
+    ).rejects.toThrow(/internalCaller/)
+    // 未发生写入（线程仍只有首条 user 回复）
+    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers })).payload)
+    const thread = list.comments.find((c: any) => c.id === commentId)
+    expect(thread.replies.map((r: any) => r.role)).toEqual(['user'])
+  })
+
+  // ── #1090-6: 枚举字段的 API 边界拒绝（SQLite+Prisma 无 DB 枚举，见 schema 注释）──
+  test('非法枚举值在 API 边界被拒：PATCH status:bogus / 回复 role:ai / target:bogus → 400', async () => {
+    const app = await getApp()
+    const docId = await createDoc('# Intro\n\n正文。\n')
+    const headers = await h()
+    const created = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers,
+      payload: JSON.stringify({ section_id: 's1', anchor_text: '正文。', text: '首条' }),
+    })
+    const commentId = JSON.parse(created.payload).id
+    // PATCH status:'bogus' → 400（zod 枚举；issue #1090 项 6 原例）
+    const badStatus = await app.inject({
+      method: 'PATCH', url: `/api/v1/docs/${docId}/comments/${commentId}`, headers,
+      payload: JSON.stringify({ status: 'bogus' }),
+    })
+    expect(badStatus.statusCode).toBe(400)
+    // 通用回复端点自封 role:'ai' → 400（role='ai' 只能走内部凭证路径）
+    const selfAi = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments/${commentId}/replies`, headers,
+      payload: JSON.stringify({ role: 'ai', text: '自封 AI' }),
+    })
+    expect(selfAi.statusCode).toBe(400)
+    // target 非枚举值 → 400
+    const badTarget = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`, headers,
+      payload: JSON.stringify({ target: 'bogus', section_id: 's1', anchor_text: 'x', text: 'x' }),
+    })
+    expect(badTarget.statusCode).toBe(400)
+    // 均未落库 — status 仍 open，线程仍只有首条 user 回复
+    const list = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/comments`, headers })).payload)
+    const thread = list.comments.find((c: any) => c.id === commentId)
+    expect(thread.status).toBe('open')
+    expect(thread.replies.map((r: any) => r.role)).toEqual(['user'])
   })
 
   // ── 项 5：校验错误信封统一 ──────────────────────────────────────────

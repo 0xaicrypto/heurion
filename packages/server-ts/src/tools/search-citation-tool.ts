@@ -21,8 +21,9 @@ export function resetEutilsState(): void {
   resetExternalFetchState()
 }
 
-/** #837: 统一 eutils 出口 — 主/写作 chat 的所有 PubMed 检索都过同一节流阀。 */
-async function eutilsJson(path: string, params: Record<string, string>): Promise<any> {
+/** #837: 统一 eutils 出口 — 主/写作 chat 的所有 PubMed 检索都过同一节流阀。
+ *  #1076: insert_citation 复用同一出口（不再复制节流/缓存/退避语义）。 */
+export async function eutilsJson(path: string, params: Record<string, string>): Promise<any> {
   return JSON.parse(await eutilsRequest(path, params))
 }
 
@@ -67,6 +68,35 @@ export function formatAma(r: Omit<CitationRecord, 'ama'>): string {
 }
 
 
+/**
+ * #807 → #1076: PubMed esearch → esummary 检索段 — search_citation 与
+ * insert_citation 共用同一实现（复用 #835 节流/缓存/退避管道），返回
+ * CitationRecord 列表。零命中/请求失败 → 空列表（由调用方决定降级路径）。
+ */
+export async function pubmedSearchRecords(query: string, retmax: number): Promise<CitationRecord[]> {
+  const search = await eutilsJson('esearch.fcgi', { db: 'pubmed', term: query, retmode: 'json', retmax: String(retmax), sort: 'relevance' })
+  const ids: string[] = search?.esearchresult?.idlist ?? []
+  if (ids.length === 0) return []
+  const summary = await eutilsJson('esummary.fcgi', { db: 'pubmed', id: ids.join(','), retmode: 'json' })
+  const docs = summary?.result ?? {}
+  return ids
+    .filter((pmid) => docs[pmid])
+    .map((pmid) => {
+      const d = docs[pmid]
+      const record = {
+        pmid,
+        title: String(d.title || '').replace(/\.$/, ''),
+        authors: Array.isArray(d.authors) ? d.authors.map((a: any) => String(a.name || '')).filter(Boolean) : [],
+        journal: String(d.fulljournalname || d.source || ''),
+        year: String(d.pubdate || '').slice(0, 4) || '',
+        volume: String(d.volume || ''),
+        pages: String(d.pages || ''),
+        doi: (Array.isArray(d.summaryids) ? d.summaryids.find((x: any) => x.idtype === 'doi')?.value : '') || undefined,
+      }
+      return { ...record, ama: formatAma(record) }
+    })
+}
+
 export class SearchCitationTool extends BaseTool {
   constructor(_ctx: ToolContext) {
     super()
@@ -101,29 +131,9 @@ export class SearchCitationTool extends BaseTool {
 
     let citations: CitationRecord[] = []
     let pubmedError: string | null = null
+    // #1076: esearch→esummary 段下沉为 pubmedSearchRecords 共用（insert_citation 同管道）。
     try {
-      const search = await eutilsJson('esearch.fcgi', { db: 'pubmed', term: query, retmode: 'json', retmax: String(retmax), sort: 'relevance' })
-      const ids: string[] = search?.esearchresult?.idlist ?? []
-      if (ids.length > 0) {
-        const summary = await eutilsJson('esummary.fcgi', { db: 'pubmed', id: ids.join(','), retmode: 'json' })
-        const docs = summary?.result ?? {}
-        citations = ids
-          .filter((pmid) => docs[pmid])
-          .map((pmid) => {
-            const d = docs[pmid]
-            const record = {
-              pmid,
-              title: String(d.title || '').replace(/\.$/, ''),
-              authors: Array.isArray(d.authors) ? d.authors.map((a: any) => String(a.name || '')).filter(Boolean) : [],
-              journal: String(d.fulljournalname || d.source || ''),
-              year: String(d.pubdate || '').slice(0, 4) || '',
-              volume: String(d.volume || ''),
-              pages: String(d.pages || ''),
-              doi: (Array.isArray(d.summaryids) ? d.summaryids.find((x: any) => x.idtype === 'doi')?.value : '') || undefined,
-            }
-            return { ...record, ama: formatAma(record) }
-          })
-      }
+      citations = await pubmedSearchRecords(query, retmax)
     } catch (err) {
       pubmedError = (err as Error).message.slice(0, 160)
     }

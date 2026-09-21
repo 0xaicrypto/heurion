@@ -73,8 +73,10 @@ export const PLAN_PROGRESS_QUERY_RE = /到哪里|进度|状态如何|还有多�
  * 此前"一律先计划表经确认"是模型对直接修改指令打太极的主要源头。 */
 export const REVISION_RULE = '修订意见处理:意见 ≥3 条时先调用 set_task_plan 建清单(每步一条意见,系统自动勾选写回步骤),逐项执行;用户给出 1-2 条明确的修改意见时,直接逐条调用 edit_document 执行,完成后一句话汇报改动 — 不要先输出计划表等待确认。一次给出 ≥3 条编号意见/审稿意见时,可先输出「意见→修改点」计划表经确认后逐条执行;但用户表示「直接改」「不用确认」或指令语气明确时,跳过计划立即执行。一轮内可按序调用多次 edit_document 依次完成多条意见的批量写回,每完成一处播报「意见 N/共 M 已落实」,全部完成后输出修订对照表(原意见×实际改动×所在章节)。修回(response letter)场景:对照表后追加给审稿人的正式回复信草稿(意见→回复→改动位置)。'
 
-/** #807: 引用纪律 — References 零编造。#836: 允许检索源扩展至 PubMed+Crossref。 */
-export const CITATION_RULE = '引用纪律:新增/修改 References 或正文内引用时,必须先用 search_citation 检索真实文献(PubMed 优先,无命中自动补 Crossref — 覆盖 preprint 与非 MEDLINE 期刊),只允许引用检索命中的文献(保留 PMID/DOI 便于核对);检索无命中或工具失败时如实告知用户,严禁编造任何 PMID/DOI/作者/年份。'
+/** #807: 引用纪律 — References 零编造。#836: 允许检索源扩展至 PubMed+Crossref。
+ *  #1079: 正式引用唯一入口 = insert_citation → [cite:citation_id] 标记插正文；
+ *  References 列表由导出边界自动生成（#1078）— 手写编号/条目/列表一律禁止。 */
+export const CITATION_RULE = '引用纪律:正式引用只能通过 insert_citation 工具插入 — 调用后把它返回的 [cite:citation_id] 标记用 edit_document 原样插入正文相应位置;严禁手写编号（[1][2]）、严禁手写文献条目或 References 列表文本（导出时系统自动生成）。search_citation 仍用于查询核实文献信息,但不得把检索结果文本直接写进正文;无 DOI 的检索结果不得作为正式引用。检索无命中或工具失败时如实告知用户,严禁编造任何 PMID/DOI/作者/年份。'
 
 /** #fix: 确认循环 — 确认信号后立即执行，不再重复询问。词源见文件头 #984 注释。 */
 export const CONFIRM_RULE = `行动纪律:用户回复「${CONFIRM_SIGNAL_ZH_WORDS.join('」「')}」等确认信号后,不要再重复询问确认,立即执行计划的第一步:若文档正文为空,先调用 edit_document 的 import_reference 导入参考材料(或直接用 old_text/new_text 润色),然后逐段处理并写回草稿。第一步必须是对工具的真实调用,不是复述计划。不要只给计划不执行,不要在每步后重复询问同一问题。`

@@ -330,11 +330,33 @@ describe('#1058 相对路径 ref（deck 手动插图不再静默丢失）', () =
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  test('#1090-2: `//` 协议相对形式（//evil.com/...）→ null，不逃逸到外部 host', async () => {
+    vi.stubEnv('SERVER_ORIGIN', 'https://files.example.com')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // new URL('//evil.com/api/v1/files/download/x', origin) 会解析到
+    // evil.com 且 pathname 仍匹配下载前缀 — 信任边界不一致（issue #1090 项 2）。
+    expect(await resolveImage({ type: 'image', ref: '//evil.com/api/v1/files/download/x' })).toBeNull()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('REMOTE-IMAGE'))
+    warn.mockRestore()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   test('BACKEND_URL 兼容别名同样生效', async () => {
     vi.stubEnv('BACKEND_URL', 'https://api.example.net')
     fetchMock.mockResolvedValue(okResponse(PNG))
     expect(await resolveImage({ type: 'image', ref: '/api/v1/files/download/y' })).not.toBeNull()
     expect(String(fetchMock.mock.calls[0][0])).toBe('https://api.example.net/api/v1/files/download/y')
+  })
+
+  test('#1090-2 回归：正常相对路径与绝对 URL 不受 `//` 拒绝影响', async () => {
+    vi.stubEnv('SERVER_ORIGIN', 'https://files.example.com')
+    // 正常相对路径（单斜杠开头）照常解析
+    fetchMock.mockResolvedValue(okResponse(PNG))
+    expect(await resolveImage({ type: 'image', ref: '/api/v1/files/download/ok' })).not.toBeNull()
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://files.example.com/api/v1/files/download/ok')
+    // 绝对 URL（同源/他源均可）走既有 SSRF 校验分支，不受影响
+    fetchMock.mockResolvedValue(okResponse(PNG))
+    expect(await resolveImage({ type: 'image', ref: 'https://cdn.example.com/fig.png' })).not.toBeNull()
   })
 })
 

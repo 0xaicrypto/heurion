@@ -3,16 +3,21 @@ import i18n from '../i18n';
 import { batchChunks } from '@/lib/sse';
 import { api } from '@/lib/api';
 import type { ChatStreamChunk, SendChatOptions } from '@/lib/types';
-import { applyChunkToSession, emptySession, type ChatMessage, type SessionState } from '@/lib/chat-reducer';
+import { applyChunkToSession, emptySession, type ChatMessage, type PendingChatSlot, type SessionState } from '@/lib/chat-reducer';
 
-export type { ChatMessage, SessionState };
+export type { ChatMessage, SessionState, PendingChatSlot };
 
 interface ChatStore {
   sessions: Record<string, SessionState>;
   sendMessage: (sessionId: string, opts: SendChatOptions) => Promise<void>;
-  /** #fix: 回复进行中追加消息 → 排队,当前 turn 完成后自动发送(不打断
-   *  正在执行的工具/写回,文档状态始终一致)。 */
-  sendMessageQueued: (sessionId: string, opts: SendChatOptions) => Promise<void>;
+  /**
+   * #fix: 回复进行中追加消息 → 排队,当前 turn 完成后自动发送(不打断
+   *  正在执行的工具/写回,文档状态始终一致)。
+   * #1095: 多槽 FIFO 队列 — 排队不再互相覆盖（此前单槽覆盖即静默丢弃，
+   *  是「请AI处理」多评论卡死的根因）。返回值：入队成功时返回该槽的
+   *  显式 turnId（uuid）；未排队（直发）返回 undefined。
+   */
+  sendMessageQueued: (sessionId: string, opts: SendChatOptions) => Promise<string | undefined>;
   /** §10.3 (#220): re-run the last user turn — drops its stale reply first. */
   regenerate: (sessionId: string, opts: SendChatOptions) => Promise<void>;
   /** #420: 并行深度分析 — 与 sendMessage 共用同一个 SSE reducer + 批处理。 */
@@ -46,12 +51,13 @@ export function chatFailureText(err: unknown): string {
 }
 
 /**
- * #1060: 排队单槽被覆盖 / Stop·regenerate 清空 pending 时的事件 — 被静默
- *  丢弃的排队指令（如「请AI处理」的评论指令）据此解除路由层关联登记，
- *  保证可重试、不永久卡死。监听者须自行匹配 sessionId。
- * #1074-4: 事件携带显式 turnId（入队时生成、随 pending 槽存储）— 消费方
- *  按 id 清账；text（指令原文）匹配降级为二重校验，不再是唯一关联依据
- *  （文本裁剪/改写不再静默打破评论↔turn 关联）。
+ * #1060: 排队指令被 Stop·regenerate 清空时的事件 — 被清掉的排队指令（如
+ *  「请AI处理」的评论指令）据此解除路由层关联登记，保证可重试、不永久
+ *  卡死。监听者须自行匹配 sessionId。
+ * #1074-4: 事件携带显式 turnId（入队时生成、随排队槽存储）— 消费方按 id
+ *  清账；text（指令原文）匹配降级为二重校验，不再是唯一关联依据。
+ * #1095: 多槽队列下排队不再互相覆盖 — sendMessageQueued 的覆盖丢弃路径
+ *  退役；丢弃事件只剩 Stop/regenerate 清队两个来源（每槽各发一条）。
  */
 export interface ChatPendingDropped {
   sessionId: string;
@@ -70,18 +76,33 @@ function emitPendingDropped(sessionId: string, text: string, turnId?: string) {
 }
 
 /**
- * #1074-4: pending 槽的完整形状 — SessionState.pending 的声明（chat-reducer）
- * 只含 { text, opts }；turnId 以结构化子类型扩展（不入 reducer 类型，最小改动），
- * 读取处经 pendingTurnId()/本类型断言消费。
+ * #1095: turn 完成事件 — sendMessage 的流收尾（finally）即发（先于排队
+ *  槽出队）。多槽队列下 turn 结束与下一 turn 开始在同一个同步块里完成，
+ *  React 渲染层看不到中间的 loading=false 沿 — 收口逻辑（写回冲刷/评论
+ *  收口）改为订阅本事件，逐 turn 确定性触发，不再依赖 loading 边沿。
  */
-interface PendingSlotWithTurnId {
-  text: string;
-  opts: SendChatOptions;
-  turnId: string;
+const turnCompleteListeners = new Set<(sessionId: string) => void>();
+/** 订阅 turn 完成事件，返回解绑函数。 */
+export function onChatTurnComplete(fn: (sessionId: string) => void): () => void {
+  turnCompleteListeners.add(fn);
+  return () => { turnCompleteListeners.delete(fn); };
+}
+function emitTurnComplete(sessionId: string) {
+  for (const fn of turnCompleteListeners) fn(sessionId);
+}
+
+/**
+ * #1074-4: 排队槽形状即 PendingChatSlot（chat-reducer）— turnId 为一等
+ * 字段（#1095 多槽队列：每槽独立身份）。
+ */
+function queueOf(pending: unknown): PendingChatSlot[] {
+  const slots = pending as PendingChatSlot[] | null | undefined;
+  return Array.isArray(slots) ? slots : [];
 }
 function pendingTurnIdOf(pending: unknown): string | undefined {
-  const slot = pending as PendingSlotWithTurnId | null | undefined;
-  return typeof slot?.turnId === 'string' ? slot.turnId : undefined;
+  const slots = queueOf(pending);
+  const last = slots[slots.length - 1];
+  return typeof last?.turnId === 'string' ? last.turnId : undefined;
 }
 
 /**
@@ -101,9 +122,22 @@ export function latestAssistantTurnId(sessionId: string): string | null {
 export function resetAssistantTurnIdsForTests(): void {
   lastAssistantTurnIds.clear();
 }
-/** #1074-4: 读取某会话排队单槽的显式 turnId（未排队/已消费 → undefined）。 */
+/** #1074-4: 读取某会话排队队列最后一槽的显式 turnId（未排队/已消费 → undefined）。 */
 export function pendingTurnId(sessionId: string): string | undefined {
-  return pendingTurnIdOf(useChatStore.getState().sessions[sessionId]?.pending);
+  return pendingTurnIdOf(useChatStore.getState().sessions[sessionId]?.pendingQueue);
+}
+
+/**
+ * #1095: 读取某会话排队队列的快照（FIFO 顺序）— 评论并行处理的队列位次
+ * 提示数据源。queuePosition(sessionId, turnId) 返回 1-based 位次（不在队
+ * 列 → 0）。
+ */
+export function pendingQueueSnapshot(sessionId: string): PendingChatSlot[] {
+  return queueOf(useChatStore.getState().sessions[sessionId]?.pendingQueue);
+}
+export function pendingQueuePosition(sessionId: string, turnId: string): number {
+  const idx = queueOf(useChatStore.getState().sessions[sessionId]?.pendingQueue).findIndex((s) => s.turnId === turnId);
+  return idx === -1 ? 0 : idx + 1;
 }
 
 /** #828: 距最近一条 SSE data 事件超过该阈值即标记会话停滞（心跳注释行
@@ -252,17 +286,23 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (!s || s.abort !== abort) return state;
         return { sessions: { ...state.sessions, [sessionId]: { ...s, loading: false, compacting: false, stallSince: null } } };
       });
+      // #1095: turn 完成 — 先发事件再出队：收口逻辑（写回冲刷/评论收口）
+      // 以「会话最后一条 user 消息 = 本 turn 指令」为指纹，下一 turn 的
+      // user 消息此时尚未入列（还在排队槽里），指纹匹配不会被污染。
+      if (get().sessions[sessionId]?.abort === abort) emitTurnComplete(sessionId);
       // #fix: 排队消息在 turn 完成后自动发出(不 await — 避免嵌套状态
       // 竞争;新的 turn 会设置自己的 loading/abort)。
+      // #1095: 多槽 FIFO — 按序出队首条（此前单槽被覆盖即丢）。
       const s2 = get().sessions[sessionId];
-      if (s2?.pending && s2.abort === abort) {
-        const queued = s2.pending;
+      const queue = s2 ? queueOf(s2.pendingQueue) : [];
+      if (queue.length > 0 && s2.abort === abort) {
+        const [first, ...rest] = queue;
         set((state) => {
           const cur = state.sessions[sessionId];
           if (!cur) return state;
-          return { sessions: { ...state.sessions, [sessionId]: { ...cur, pending: null } } };
+          return { sessions: { ...state.sessions, [sessionId]: { ...cur, pendingQueue: rest } } };
         });
-        void get().sendMessage(sessionId, queued.opts);
+        void get().sendMessage(sessionId, first.opts);
       }
     }
   },
@@ -270,27 +310,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   sendMessageQueued: async (sessionId: string, opts: SendChatOptions) => {
     const s = get().sessions[sessionId];
     if (s?.loading || s?.compacting) {
-      // 回复进行中 → 排队;同一时刻只保留最后一条(用户可连续输入覆盖)。
-      // #1060: 覆盖即静默丢弃旧排队指令 — 发丢弃事件(路由层清理关联登记)。
-      // #1074-4: 入队生成显式 turnId(uuid)随槽存储;被覆盖指令的丢弃事件
-      // 携带其入队 id — 消费方按 id 精确清账。
-      const dropped = (s.pending ?? null) as PendingSlotWithTurnId | null;
-      const droppedTurnId = pendingTurnIdOf(dropped);
-      const slot: PendingSlotWithTurnId = { text: opts.text, opts, turnId: crypto.randomUUID() };
+      // 回复进行中 → 排队。
+      // #1095: 多槽 FIFO — 追加到队尾，不再覆盖/丢弃任何已排队指令
+      // （此前单槽覆盖即静默丢弃 + 发丢弃事件；多评论「请AI处理」依赖
+      // 各自排队独立执行，覆盖路径退役）。turnId 入队即生成并返回。
+      const turnId = crypto.randomUUID();
+      const slot: PendingChatSlot = { text: opts.text, opts, turnId };
       set((state) => {
         const cur = state.sessions[sessionId] ?? emptySession();
         return {
           sessions: {
             ...state.sessions,
-            // slot 为结构化子类型(多余字段合法) — SessionState.pending 声明不动。
-            [sessionId]: { ...cur, pending: slot },
+            [sessionId]: { ...cur, pendingQueue: [...queueOf(cur.pendingQueue), slot] },
           },
         };
       });
-      if (dropped) emitPendingDropped(sessionId, dropped.text, droppedTurnId);
-      return;
+      return turnId;
     }
-    return get().sendMessage(sessionId, opts);
+    await get().sendMessage(sessionId, opts);
+    return undefined;
   },
 
   runDeepAnalysis: async (sessionId: string, opts) => {
@@ -370,7 +408,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     s?.abort?.abort();
     // #1060: Stop 丢弃排队指令 — 先取引用再清理,发丢弃事件(路由层清理关联登记)。
     // #1074-4: 丢弃事件携带被清指令的入队 turnId。
-    const dropped = (s?.pending ?? null) as PendingSlotWithTurnId | null;
+    // #1095: 多槽队列 — 逐槽各发一条丢弃事件（每条排队指令独立清账）。
+    const dropped = s ? queueOf(s.pendingQueue) : [];
     set((state) => {
       const cur = state.sessions[sessionId];
       if (!cur) return state;
@@ -390,12 +429,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             stallSince: null,
             // #fix: Stop = 停止一切(含排队中的追加消息) — 用户点停止
             // 就是不想继续了,排队消息不应在 turn 结束后自动发出。
-            pending: null,
+            pendingQueue: [],
           },
         },
       };
     });
-    if (dropped) emitPendingDropped(sessionId, dropped.text, pendingTurnIdOf(dropped));
+    for (const slot of dropped) emitPendingDropped(sessionId, slot.text, slot.turnId);
   },
 
   regenerate: async (sessionId: string, opts: SendChatOptions) => {
@@ -408,17 +447,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const userMsg = s.messages[lastUserIdx];
     // #1060: regenerate 丢弃排队中的追加消息 — 发丢弃事件(路由层清理关联登记)。
     // #1074-4: 丢弃事件携带被清指令的入队 turnId。
-    const dropped = (s.pending ?? null) as PendingSlotWithTurnId | null;
+    // #1095: 多槽队列 — 逐槽各发一条丢弃事件。
+    const dropped = s ? queueOf(s.pendingQueue) : [];
     const prev: SessionState = {
       ...s,
       messages: s.messages.slice(0, lastUserIdx),
       // #fix: 丢弃排队中的追加消息 — regenerate 语义是重跑上一条用户消息。
-      pending: null,
+      pendingQueue: [],
     };
     set((state) => ({
       sessions: { ...state.sessions, [sessionId]: prev },
     }));
-    if (dropped) emitPendingDropped(sessionId, dropped.text, pendingTurnIdOf(dropped));
+    for (const slot of dropped) emitPendingDropped(sessionId, slot.text, slot.turnId);
     await get().sendMessage(sessionId, {
       ...opts,
       text: userMsg.text,

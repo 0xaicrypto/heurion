@@ -85,8 +85,9 @@ describe('#1037 用例1 选中文字后气泡菜单渲染', () => {
     expect(screen.getByTitle('删除线')).toBeInTheDocument();
     expect(screen.getByTitle('链接')).toBeInTheDocument();
     // AI 动作按钮不受影响,共存于同一气泡(测试环境语言检测为 en → 英文文案)
+    // #1097: 气泡精简 — 润色保留，改写/更学术/总结按钮移除。
     expect(screen.getByTitle(/润色|Polish/)).toBeInTheDocument();
-    expect(screen.getByTitle(/改写|Rewrite/)).toBeInTheDocument();
+    expect(screen.queryByTitle(/改写|Rewrite/)).not.toBeInTheDocument();
   });
 });
 

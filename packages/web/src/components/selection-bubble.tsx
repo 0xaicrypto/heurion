@@ -55,9 +55,6 @@ export interface SelectionBubbleProps {
 
 const ACTIONS: ReadonlyArray<readonly [string, string, string]> = [
   ['polish', '✨', 'bubblePolish'],
-  ['rewrite', '📝', 'bubbleRewrite'],
-  ['academic', '🔬', 'bubbleAcademic'],
-  ['summarize', '📄', 'bubbleSummarize'],
 ];
 
 /** #1037: 浮层配置固定引用 — BubbleMenu 在 options 身份变化时会派发
