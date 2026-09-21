@@ -126,8 +126,22 @@ describe('#904 writeDocVersion 乐观锁条件更新', () => {
     const res = await writeDocVersion({ userId: USER, docId: DOC, body: 'B', baseBody: 'A', snapshotLabel: 't' })
     expect(res.conflict).toBeUndefined()
     expect(res.changed).toBe(true)
+    // 复审轮 5 一致性债务: bodyChanged/deckChanged 权威暴露（调用方不再启发式重算）
+    expect(res.bodyChanged).toBe(true)
+    expect(res.deckChanged).toBe(false)
     const [args] = mocks.txDocUpdateMany.mock.calls[0]
     expect(args.where.body).toBe('A')
+  })
+
+  test('deck 变化 → deckChanged 权威标记为 true；未变化路径两者皆 false', async () => {
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: '{"v":1}' })
+    const res = await writeDocVersion({ userId: USER, docId: DOC, deck: { v: 2 }, snapshotLabel: 't' })
+    expect(res.deckChanged).toBe(true)
+    expect(res.bodyChanged).toBe(false)
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: '{"v":2}' })
+    const unchanged = await writeDocVersion({ userId: USER, docId: DOC, snapshotLabel: 't' })
+    expect(unchanged.bodyChanged).toBe(false)
+    expect(unchanged.deckChanged).toBe(false)
   })
 
   // 复审轮 4 P1 — deck 侧与 body 同强度的输入级基线

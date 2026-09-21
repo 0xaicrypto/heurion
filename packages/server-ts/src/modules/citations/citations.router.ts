@@ -120,7 +120,11 @@ export async function citationsRouter(app: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: 'No dangling marker for this citation id in document content' })
     }
 
-    const bodyChanged = bodyRemoved > 0
+    // bodyTouched/deckTouched = **写入前**的决策（是否提交该维度的写回 —
+    // 基于标记计数）；写后权威结果由 writeDocVersion 的 bodyChanged/deckChanged
+    // 直接返回（复审轮 5 一致性债务修复：路由不再用启发式重算写后结果）。
+    const bodyTouched = bodyRemoved > 0
+    const deckTouched = deckRemoved > 0
     const writeInput: Parameters<typeof writeDocVersion>[0] = {
       userId: request.user!.userId,
       docId: doc.id,
@@ -130,11 +134,11 @@ export async function citationsRouter(app: FastifyInstance): Promise<void> {
       baseBody: serverBody,
       baseDeck: doc.deck,
     }
-    if (bodyChanged) {
+    if (bodyTouched) {
       writeInput.body = stripCitationMarkers(effectiveBody, citationId)
     }
     let deckOut: string | null = null
-    if (deckRemoved > 0) {
+    if (deckTouched) {
       const nextDeck = stripDeckCitationMarkers(effectiveDeck, citationId)
       writeInput.deck = JSON.parse(nextDeck) as Record<string, unknown>
       deckOut = nextDeck
@@ -143,10 +147,11 @@ export async function citationsRouter(app: FastifyInstance): Promise<void> {
     const outcome = await writeDocVersion(writeInput)
     if (outcome.conflict) return reply.status(409).send({ error: '文档已被其他窗口修改，请刷新后重试' })
     if (outcome.error) return reply.status(500).send({ error: outcome.error })
-    // 复审轮 5（P0 镜像 bug）— body_changed 显式标记：deck-only 清除时
-    // writeDocVersion 不触碰 body（outcome.body = 数据库旧值 prevBody），
-    // 前端不得把它当"新内容"灌回编辑器（镜像第二轮的 deck 侧缺陷）。与
-    // deck 侧的 deck:null 守卫同构 — 前端按「服务端实际改写的维度」同步。
-    return { ok: true, body: outcome.body, body_changed: bodyChanged, deck: deckOut, removed: bodyRemoved + deckRemoved }
+    // 复审轮 5（P0 镜像 bug）— body_changed/deck_changed 为 writeDocVersion
+    // 的**权威**写后结果（不再由路由启发式重算）：deck-only 清除时
+    // body_changed=false，前端不得把 outcome.body（数据库旧值）当"新内容"
+    // 灌回编辑器。与 deck 侧的 deck:null 守卫同构 — 前端按「服务端实际
+    // 改写的维度」同步。一致性问题由单点暴露根治（评审轮 5）。
+    return { ok: true, body: outcome.body, body_changed: outcome.bodyChanged, deck: outcome.deckChanged ? deckOut : null, removed: bodyRemoved + deckRemoved }
   })
 }

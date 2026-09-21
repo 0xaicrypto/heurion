@@ -1767,7 +1767,9 @@ export function WritingEditorPage() {
                       serverBodyRef.current = nb;
                       appliedDocBody.current = nb;
                     }
-                    if (nd !== null && nd !== undefined) {
+                    // 复审轮 5（风格）: 判空写法与 body 侧统一（响应类型为
+                    // string | null，undefined 不可能出现 — 单一守卫形式）
+                    if (nd !== null) {
                       lastSavedDeck.current = nd;
                       appliedDocDeck.current = nd;
                       try {

@@ -75,6 +75,14 @@ export interface DocVersionResult {
   /** 写回后的 deck（解析对象；无 deck 为 null）。 */
   deck: unknown
   changed: boolean
+  /**
+   * 复审轮 5（一致性债务）— body/deck 是否被本次写回**实际改写**的权威标记
+   * （内部 bodyChanged/deckChanged 判定的直接暴露）。此前调用方（citations
+   * router）在写入前用启发式（标记计数）自行重算，与写后权威结果"碰巧一致"
+   * — 又一处两套平行实现靠人工同步。冲突/错误/未变化路径为 false。
+   */
+  bodyChanged: boolean
+  deckChanged: boolean
   error?: string
   /** #904: 条件更新 0 行命中 — 读到的旧值已过期（并发修改），可重读后重试。 */
   conflict?: boolean
@@ -212,7 +220,7 @@ function scheduleSectionMetaFinalize(args: {
 
 export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersionResult> {
   const existing = await prisma.doc.findFirst({ where: { id: input.docId, userId: input.userId } })
-  if (!existing) return { body: '', deck: null, changed: false, error: `Document not found: ${input.docId}`, projection: null }
+  if (!existing) return { body: '', deck: null, changed: false, bodyChanged: false, deckChanged: false, error: `Document not found: ${input.docId}`, projection: null }
 
   const prevBody = String(existing.body || '')
   const prevDeckRaw = existing.deck ?? null
@@ -221,7 +229,7 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
   // 基于过期快照,拒绝而非静默覆盖中间变更。
   if (input.baseBody !== undefined && input.baseBody !== prevBody) {
     return {
-      body: '', deck: null, changed: false,
+      body: '', deck: null, changed: false, bodyChanged: false, deckChanged: false,
       conflict: true,
       projection: null,
       error: '文档已被并发修改，本次写回基于过期内容被拒绝，请重新读取文档后重试',
@@ -231,7 +239,7 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
   // 窗口的并发修改直接冲突拒绝（null 感知：prevDeckRaw 可空列按原值比对）。
   if (input.baseDeck !== undefined && input.baseDeck !== prevDeckRaw) {
     return {
-      body: '', deck: null, changed: false,
+      body: '', deck: null, changed: false, bodyChanged: false, deckChanged: false,
       conflict: true,
       projection: null,
       error: '幻灯片内容已被并发修改，本次写回基于过期内容被拒绝，请重新读取文档后重试',
@@ -266,14 +274,14 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
       }).catch(() => undefined)
       if (!res || res.count === 0) {
         return {
-          body: '', deck: null, changed: false,
+          body: '', deck: null, changed: false, bodyChanged: false, deckChanged: false,
           conflict: true,
           projection: null,
           error: '文档已被并发修改，title 未写入，请重新读取文档后重试',
         }
       }
     }
-    return { body: prevBody, deck: parseDeckJson(prevDeckRaw), changed: false, projection }
+    return { body: prevBody, deck: parseDeckJson(prevDeckRaw), changed: false, bodyChanged: false, deckChanged: false, projection }
   }
 
   const now = new Date().toISOString()
@@ -312,7 +320,7 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
     // 冲突对调用方（edit_document 等工具）是可重试错误 — error 注入模型
     // 自纠：重读最新文档后再编辑，避免基于过期视图的整段覆盖。
     return {
-      body: '', deck: null, changed: false,
+      body: '', deck: null, changed: false, bodyChanged: false, deckChanged: false,
       conflict: true,
       projection: null,
       error: '文档已被并发修改，本次写回基于过期内容被拒绝，请重新读取文档后重试',
@@ -350,6 +358,8 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
     body: nextBody,
     deck: input.deck === undefined ? parseDeckJson(prevDeckRaw) : input.deck,
     changed: true,
+    bodyChanged,
+    deckChanged,
     projection,
     ...(sectionMeta ? { sectionMeta } : {}),
     ...(changedSections && changedSections.length > 0 ? { changedSections } : {}),
