@@ -257,3 +257,35 @@ describe('#960 edit_deck v2 actions（布局/主题/排序/图表）', () => {
     expect(JSON.parse(doc.deck).slides[2].content[0].type).toBe('chart')
   })
 })
+
+describe('#1079 复审 #3 — deck 写入接入引用纪律守卫', () => {
+  test('update/insert_after 的 title+bullets 含手写引用列表（无 [cite:] 标记）→ 拒绝并引导', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDocWithDeck(app, DECK)
+
+    const result = await new EditDeckTool({ userId, sessionId: `doc-${docId}` })
+      .execute({
+        action: 'update', slide_index: 1, title: 'References',
+        bullets: ['[1] Smith J, et al. Some title. J Clin. 2020;5:1-9.', '[2] Doe A, et al. Another title. Nature. 2021;2:3-4.'],
+      })
+    expect(result.success).toBe(false)
+    expect(String(result.error)).toContain('insert_citation')
+    // deck 未被修改
+    const doc = await prisma.doc.findUnique({ where: { id: docId } })
+    expect(JSON.parse(doc!.deck!).slides[0].title).toBe('研究背景')
+  })
+
+  test('含合法 [cite:id] 标记的 bullets 放行（insert_citation 产物）', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    const docId = await createDocWithDeck(app, DECK)
+
+    const result = await new EditDeckTool({ userId, sessionId: `doc-${docId}` })
+      .execute({
+        action: 'update', slide_index: 1, title: '证据',
+        bullets: ['[1] 关键数据（[cite:cite_abc123]）', 'ORR 68%'],
+      })
+    expect(result.success).toBe(true)
+  })
+})

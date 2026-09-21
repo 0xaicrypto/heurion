@@ -1738,7 +1738,22 @@ export function WritingEditorPage() {
               </div>
 
               <div>
-                <CitationHealthBanner docId={docId} sendChatText={chat.sendChatText} />
+                <CitationHealthBanner
+                  docId={docId}
+                  sendChatText={chat.sendChatText}
+                  onNotice={showNotice}
+                  onBodyReplaced={(md) => {
+                    // 复审 #2: 悬挂标记清理由服务端写回（返回新正文）— 同步
+                    // 编辑器与服务端基线（写回已落库，本地不再标 dirty）。
+                    setBody(md);
+                    lastSavedBody.current = md;
+                    serverBodyRef.current = md;
+                    appliedDocBody.current = md;
+                    setDoc((prev) => (prev ? { ...prev, body: md, updated_at: new Date().toISOString() } : prev));
+                    dirtyRef.current = false;
+                    setDirty(false);
+                  }}
+                />
                 {deckUndo && (
                   /* #1071-1: deck AI 写回可撤销窗口 — 落地前快照本地画布,
                      TTL 内可一键回滚（no-op 优于 AI 改错页后无出口）。 */
@@ -1788,6 +1803,10 @@ export function WritingEditorPage() {
                       }))}
                     onAddSlideComment={(slideIndex0, anchorText) => setCommentDraft({ target: 'deck_slide', slideIndex0, anchorText })}
                     onCommentClick={(id) => { setActiveCommentId(id); setCommentsPanelOpen(true); }}
+                    /* #review-4: deck 卡片引用徽标 — 复用 docCitations（30s 轮询），
+                        点击弹既有 CitationPreviewModal（悬挂引用 id 同样可点）。 */
+                    citations={docCitations}
+                    onCitationClick={setActiveCitationId}
                     /* #1087: deck 插入竞态丢弃/唯一块拒绝（#1089-1）走统一轻提示通道。 */
                     onNotice={showNotice}
                   />

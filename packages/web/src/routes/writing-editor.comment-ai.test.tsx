@@ -593,8 +593,6 @@ describe('#1095 评论并行处理（多评论同时「请AI处理」）', () =>
     const acceptBtn = await screen.findByRole('button', { name: /Keep AI's edit|保留 AI 的修改/ });
     fireEvent.click(acceptBtn);
     await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
-    console.log('DBG2 replies', JSON.stringify(apiMock.createDocCommentAiReply.mock.calls.map((c) => [c[1], String(c[2]).slice(0, 24)])))
-    console.log('DBG2 loading', useChatStore.getState().sessions[SESSION]?.loading, 'queue', JSON.stringify((useChatStore.getState().sessions[SESSION]?.pendingQueue ?? []).map((x) => x.text)))
     await waitFor(() => expect(apiMock.createDocCommentAiReply.mock.calls.filter((c) => c[1] === 'c2').length).toBeGreaterThan(0));
     await waitFor(() => expect(useChatStore.getState().sessions[SESSION]?.loading).toBe(false));
     await act(async () => {});
@@ -631,6 +629,44 @@ describe('#1095 评论并行处理（多评论同时「请AI处理」）', () =>
     releaseTurn();
     // A 结束 → B 自动发出
     await waitFor(() => expect(apiMock.sendChatFull).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(useChatStore.getState().sessions[SESSION]?.loading).toBe(false));
+    await act(async () => {});
+  });
+
+  test('复审 #6 — 并发上限 5：第 6 条评论登记被拒（队列不增长，不静默）', async () => {
+    const sixComments = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'].map((id) =>
+      makeComment({ id, anchor_text: PARA1, replies: [{ id: `r_${id}`, role: 'user', text: `${id} 的处理意见`, created_at: 't0' }] }),
+    );
+    apiMock.listDocComments.mockResolvedValue({ comments: sixComments });
+    let releaseTurn!: () => void;
+    const turnGate = new Promise<void>((r) => { releaseTurn = r; });
+    apiMock.sendChatFull.mockImplementation(async function* () {
+      await turnGate;
+      yield { type: 'final_answer_chunk', text: 'ok' };
+      yield { type: 'turn_complete', assistant_event_idx: 11 };
+    });
+    renderEditor();
+    await screen.findByDisplayValue('Original');
+    await openCommentsPanel();
+    for (const id of ['c2', 'c3', 'c4', 'c5', 'c6']) {
+      await screen.findByTestId(`comment-thread-${id}`);
+    }
+    // c1 直发 + 其余 5 条... 上限 5：c1 直发（登记 1）+ c2-c5 入队（登记 5）→ c6 被拒
+    fireEvent.click(btnFor('c1'));
+    await waitFor(() => expect(apiMock.sendChatFull).toHaveBeenCalledTimes(1));
+    for (const id of ['c2', 'c3', 'c4', 'c5']) {
+      fireEvent.click(btnFor(id));
+      await waitFor(() => expect(useChatStore.getState().sessions[SESSION]?.pendingQueue?.length).toBeGreaterThanOrEqual(1), { timeout: 3000 });
+    }
+    await waitFor(() => expect(useChatStore.getState().sessions[SESSION]?.pendingQueue?.length).toBe(4));
+    // 第 6 条（c6）→ 被上限拒绝：队列不变、不发起新 turn
+    const queueBefore = (useChatStore.getState().sessions[SESSION]?.pendingQueue ?? []).map((x) => x.text);
+    fireEvent.click(btnFor('c6'));
+    await act(async () => { await new Promise((r) => setTimeout(r, 120)); });
+    expect((useChatStore.getState().sessions[SESSION]?.pendingQueue ?? []).map((x) => x.text)).toEqual(queueBefore);
+    expect(apiMock.sendChatFull).toHaveBeenCalledTimes(1);
+    // 解除挂起收尾（不污染后续用例）
+    releaseTurn();
     await waitFor(() => expect(useChatStore.getState().sessions[SESSION]?.loading).toBe(false));
     await act(async () => {});
   });

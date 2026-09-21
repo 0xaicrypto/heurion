@@ -222,12 +222,19 @@ export async function migrateDocCitations(docId: string, opts: { dryRun?: boolea
       for (const row of resolvedRows) {
         const created = await resolveOrCreateDocCitation(row.input)
         numbersForText.set(row.n, created.id)
+        // 复审 #7 修复: plan.resolved[].citationId 回填真实创建 id — 此前恒为
+        // 空串，运营审计 JSON 无法核对每条引用落到了哪个 citation 记录。
+        const entry = plan.resolved.find((r) => r.n === row.n)
+        if (entry) entry.citationId = created.id
       }
     } else {
       for (const row of resolvedRows) {
         // dry-run 用确定性 id 展示（与 citation-store.docCitationId 同规则）
         const { docCitationId } = await import('./citation-store.js')
-        numbersForText.set(row.n, docCitationId(docId, row.input.doi))
+        const predicted = docCitationId(docId, row.input.doi)
+        numbersForText.set(row.n, predicted)
+        const entry = plan.resolved.find((r) => r.n === row.n)
+        if (entry) entry.citationId = predicted
       }
     }
 

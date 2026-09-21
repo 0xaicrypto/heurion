@@ -4,7 +4,7 @@
  * EXPORT_FORMATS table, the two-phase organize protocol and the render →
  * store → download-card pipeline via asset-render-pipeline.
  */
-import { validateRenderContent, SCHEMA_VERSION, slideLayoutSchema, deckThemeSchema, chartBlockSchema, assignCitationNumbers } from '@heurion/contracts'
+import { validateRenderContent, SCHEMA_VERSION, slideLayoutSchema, deckThemeSchema, chartBlockSchema } from '@heurion/contracts'
 import prisma from '../common/prisma.js'
 import type { ToolResult } from './base-tool.js'
 import type { ToolExecutionPlane } from './tool-registry.js'
@@ -13,8 +13,7 @@ import { buildDocumentContent, buildPresentationContent, digestBody } from '../l
 import { embedContentImages, resolveLocalImageBlock } from './asset-embed.js'
 import { runRenderJob } from './asset-render-pipeline.js'
 import { chartSpecPng } from './deck-chart-embed.js'
-import { resolveBodyCitations, resolveDeckContentCitations, listDocCitations, serializeDocCitation, buildReferencesSection } from '../lib/citation-store.js'
-import { stripLegacyReferencesSection, hasCiteShortcode } from '../lib/asset-content.js'
+import { resolveDeckContentCitations, composeExportBody } from '../lib/citation-store.js'
 
 /** #767 — 导出格式 → 插件 id / 契约 content_type / job type / 模板 / mime。 */
 export const EXPORT_FORMATS: Record<string, { pluginId: string; contentType: 'sidecar.generate_docx' | 'sidecar.generate_pptx' | 'sidecar.convert_to_pdf'; templateId: string; ext: string; mime: string; label: string }> = {
@@ -79,23 +78,13 @@ export async function executeInsertExport(deps: ExportExecutorDeps, docId: strin
   if (deps.figurePipeline) {
     body = await deps.figurePipeline.resolveBody(userId, body)
   }
-  // #1099: 导出边界解析正文引用 shortcode → [n] 编号（悬挂引用 → [?] 占位
-  // + warn 日志；编号算法与 web 渲染/References 列表共用 contracts 单一实现）。
-  const citationNumbers = assignCitationNumbers(body)
-  body = await resolveBodyCitations(docId, body)
-  // #1078: 自动生成 References 节 — 正文含 [cite:id] 标记（尚未解析的形态）
-  // 时，以【strip 前原文】的编号为准（与正文首现顺序一致），先剥除遗留的
-  // 手写 References 节再追加 store 生成的列表；无标记的存量文档原样直通
-  // （不剥遗留内容 — 未迁移文档的 References 不丢失）。deck 编排路径
-  // （organize=true，上方已提前返回）不适用 — slides 不携带 References 节。
-  if (hasCiteShortcode(body)) {
-    const citations = (await listDocCitations(docId)).map(serializeDocCitation)
-    const references = buildReferencesSection(citations, citationNumbers)
-    if (references) {
-      const stripped = stripLegacyReferencesSection(body)
-      body = `${stripped.replace(/\s+$/, '')}\n\n${references}\n`
-    }
-  }
+  // #1099/#1078: 导出正文合成 — 引用 shortcode → [n]（悬挂 → [?] + warn）
+  // + References 列表烘焙，单一可测入口 composeExportBody（编号在解析前原文
+  // 上计算；判定逻辑收进 helper，不再依赖「解析后」字符串重扫 — 复审 #1
+  // 修复：此前 hasCiteShortcode 对已解析 body 恒 false，列表从不追加）。
+  // 无标记的存量文档原样直通；deck 编排路径（organize=true，上方已提前
+  // 返回）不适用 — slides 不携带 References 节。
+  body = await composeExportBody(docId, body)
   let content = spec.contentType === 'sidecar.generate_pptx'
     ? buildPresentationContent(body, String(existing.title || 'Presentation'))
     : buildDocumentContent(body, String(existing.title || 'Document'))

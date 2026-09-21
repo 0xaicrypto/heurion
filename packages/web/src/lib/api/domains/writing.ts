@@ -213,15 +213,25 @@ export class WritingApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}/citations/dangling`);
   }
 
-  // #1081: 「删除该引用」— 移除 DocCitation 记录；正文标记由 AI 编辑链路移除。
+  // #1081: 「删除该引用」— 移除 DocCitation 记录（真实记录场景）。
   async deleteDocCitation(docId: string, citationId: string): Promise<{ ok: boolean }> {
     return this.fetch(`/api/v1/docs/${docId}/citations/${citationId}`, { method: 'DELETE' });
   }
+
+  // 复审 #2 修复: 悬挂引用的「删除」= 清除正文中的 [cite:id] 标记本身
+  // （悬挂引用按定义无 DocCitation 记录 — 复用面向真实记录的 DELETE 必然 404）。
+  // 服务端经写回单点改写 body（同帧快照+投影+乐观锁），返回新正文供前端同步。
+  async deleteDanglingCitation(docId: string, citationId: string): Promise<{ ok: boolean; body: string; removed: number }> {
+    return this.fetch(`/api/v1/docs/${docId}/citations/dangling/${citationId}`, { method: 'DELETE' });
+  }
 }
 
+// 复审 #9 修复: 字段命名与 serializeDocCitation（camelCase docId/createdAt）
+// 对齐 — 此前 snake_case 的 doc_id/created_at 无消费方也永不匹配服务端回包，
+// 一旦按时间排序/按 docId 关联会静默拿 undefined。
 export interface DocCitationWire {
   id: string;
-  doc_id?: string;
+  docId?: string;
   doi: string;
   pmid?: string | null;
   title: string;
@@ -230,5 +240,5 @@ export interface DocCitationWire {
   year?: number | null;
   url?: string | null;
   source: string;
-  created_at?: string;
+  createdAt?: string;
 }

@@ -457,6 +457,14 @@ export interface SendChatOptions {
   selection?: string;
   /** #996/#1003: 用户消息的节引用(选中即引用→投影反查)— pill 跳转标签。 */
   sectionRef?: { id: string; heading: string };
+  /**
+   * #1095 复审 #5: 排队策略 — 'replace-last'（交互式输入：覆盖队列里最后一条
+   * **同源**排队指令，保留「别管那条，改成 Y」的覆盖语义）；缺省 'append'
+   * （评论并行批处理/一键指令逐条入队不覆盖）。注释性元数据，不上行服务端。
+   */
+  queuePolicy?: 'replace-last';
+  /** #1095 复审 #5: 排队槽来源标记 — 'comment' 槽不受交互 replace-last 覆盖。 */
+  queueTag?: 'comment';
 }
 
 /**

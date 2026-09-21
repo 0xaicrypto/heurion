@@ -2,6 +2,7 @@ import { BaseTool, ToolResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { validateRenderContent, SCHEMA_VERSION, slideLayoutSchema, deckThemeSchema, chartBlockSchema } from '@heurion/contracts'
 import { writeDocVersion } from './doc-version-writer.js'
+import { looksLikeHandwrittenReferences, HANDWRITTEN_REFERENCES_GUIDANCE } from './citation-guard.js'
 
 /**
  * #773 — edit_deck: deck 资产（Doc.deck）的 AI 编辑工具。
@@ -108,6 +109,17 @@ export class EditDeckTool extends BaseTool {
       const title = String(args.title || '').trim().slice(0, 500)
       const rawBullets = Array.isArray(args.bullets) ? args.bullets : []
       const bullets = rawBullets.map((b: unknown) => String(b ?? '').trim()).filter(Boolean).slice(0, 50)
+
+      // #1079（复审 #3 修复）: deck 写入同样接入引用纪律守卫 — 模型不得在
+      // slides 的 title/bullets 里手写编号引用列表（与 edit_document 同一门控；
+      // insert_citation 在 deck 会话同样可用，写 [cite:id] 标记照常放行）。
+      // insert_chart 的 chart spec 数据标注不走本守卫（spec 是结构化数据）。
+      if (action === 'update' || action === 'insert_after') {
+        const deckText = [title, ...bullets].join('\n')
+        if (looksLikeHandwrittenReferences(deckText)) {
+          return { success: false, error: HANDWRITTEN_REFERENCES_GUIDANCE }
+        }
+      }
 
       if (action === 'delete') {
         if (slides.length <= 1) return { success: false, error: '至少保留 1 页，不能删除最后一页。' }

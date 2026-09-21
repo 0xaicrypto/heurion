@@ -903,7 +903,13 @@
     "citationPreviewDangling": "该引用标记未找到对应文献记录",
     "citationPreviewClose": "关闭",
     "referencesAutoTitle": "参考文献",
-    "referencesAutoHint": "由正文引用自动生成（不可手写）"
+    "referencesAutoHint": "由正文引用自动生成（不可手写）",
+    "chatQueuedCount": "已排队 {{n}} 条 — 逐条自动发送（最后一条可撤回）",
+    "chatQueuedOne": "已排队 — 当前回复完成后自动发送",
+    "chatQueuedDropLast": "撤回最后一条排队消息",
+    "citationDanglingDeleted": "已从正文移除该悬挂引用标记（{{n}} 处）",
+    "citationDanglingDeleteFail": "悬挂引用清理失败 — 请刷新后重试",
+    "commentQueueFull": "已有 {{n}} 条评论在排队处理 — 请等待部分完成后再继续"
   },
   "preview": {
     "open": "预览",

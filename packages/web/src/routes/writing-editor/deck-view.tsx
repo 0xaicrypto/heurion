@@ -15,6 +15,8 @@ import type { DeckWire } from '@/lib/types';
 import type { DeckAsset, SlideEpochSnapshot } from './deck-asset';
 import { deckImageBlock } from './deck-asset';
 import { DeckChartFormDialog, type DeckChartFormResult } from './deck-chart-form';
+import type { DocCitationWire } from '@/lib/api';
+import { CitationBadges } from './citation-badges';
 
 /** #688: deck 卡片网格视图 — 从 writing-editor 路由机械拆出；
  * deck 数据与操作状态仍归路由，单卡片操作回调经 props 传入。 */
@@ -519,13 +521,16 @@ function DeckChartBlock({ block, onReplace, onDelete }: {
 }
 
 /** 单张 deck 卡片（deckAsset 分支）— 提取为组件承载卡片级 UI 状态（如 #1046 备注折叠、#1044 插入/替换目标）。 */
-function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComment, onCommentClick, onNotice }: {
+function DeckSlideCard({ index, slide, deckCtl, total, slideComments, citations, onCitationClick, onAddComment, onCommentClick, onNotice }: {
   index: number;
   slide: DeckWire['slides'][number];
   deckCtl: DeckAsset;
   total: number;
   /** #1051: 锚定本页的评论（target='deck_slide', slideIndex=index+1）。 */
   slideComments: DeckSlideCommentInfo[];
+  /** #review-4: 引用元数据 + 徽标点击回调 — 卡片内容下方叠加 [n]/[?] 徽标行。 */
+  citations?: DocCitationWire[];
+  onCitationClick?: (id: string) => void;
   /** #1051: 「添加评论」入口（整页评论 — anchorText 取页标题）。 */
   onAddComment?: (slideIndex0: number, anchorText: string) => void;
   /** #1051: 点击评论标记 → 侧边栏定位/展开线程。 */
@@ -578,6 +583,13 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
   const openSlideComments = slideComments.filter((c) => c.status !== 'resolved');
   const driftedHere = openSlideComments.some((c) => !c.located);
   const activeHere = slideComments.some((c) => c.active);
+  // #review-4: slide 全文本（标题 + 要点段落 + 备注）— 引用徽标扫描域
+  // （每页独立编号；可编辑 input/textarea 内的原始 shortcode 不动）。
+  const slideCitationText = [
+    slide.title,
+    ...slide.content.filter((b) => typeof b.text === 'string').map((b) => b.text as string),
+    slide.notes ?? '',
+  ].join('\n');
 
   /** #1044: 复用 #1038 打通的上传链路（api.uploadFile → getDownloadUrl canonical
    * URL，见 DocEditor.runImageUpload 同构），成功后按目标插入/原位替换 image 块；
@@ -796,6 +808,9 @@ function DeckSlideCard({ index, slide, deckCtl, total, slideComments, onAddComme
             </div>
           );
         })}
+        {/* #review-4: 引用徽标行 — 编号/悬挂警示 affordance 叠加在内容下方
+            （编辑面不动：input 内仍保留原始 shortcode 文本）。 */}
+        <CitationBadges text={slideCitationText} citations={citations ?? []} onCitationClick={onCitationClick} />
         {/* #1044: 插入图片（复用 #1038 上传链路）/ 插入图表（结构化表单，非生成式）入口。 */}
         <div className="flex flex-wrap items-center gap-1">
           <button
@@ -965,12 +980,16 @@ export function DeckView(input: {
   onAddSlideComment?: (slideIndex0: number, anchorText: string) => void;
   /** #1051: 评论标记点击 → 侧边栏联动。 */
   onCommentClick?: (commentId: string) => void;
+  /** #review-4: 引用元数据（docCitations）— 卡片内容下方渲染 [n]/[?] 徽标行。 */
+  citations?: DocCitationWire[];
+  /** #review-4: 徽标点击 → 路由层弹 CitationPreviewModal（悬挂 id 同样可点）。 */
+  onCitationClick?: (id: string) => void;
   /** #1087: 丢弃/拒绝提示通道（路由 showNotice 横幅）— epoch 失配放弃插入、
    * #1089-1 唯一块拒绝删除等场景明示（非静默）。 */
   onNotice?: (text: string, ttlMs?: number) => void;
 }) {
   const { t } = useTranslation();
-  const { deckAsset, slides, body, deckCtl, sendChatText, onCardEdit, deckComments, onAddSlideComment, onCommentClick, onNotice } = input;
+  const { deckAsset, slides, body, deckCtl, sendChatText, onCardEdit, deckComments, onAddSlideComment, onCommentClick, citations, onCitationClick, onNotice } = input;
 
   // #1090-1: deck 编辑撤销快捷键 — Cmd/Ctrl+Z（deck 资产在场时）。焦点在输入框/
   // textarea/contenteditable 内不拦截（留给原生文本撤销），避免打断输入法与
@@ -1070,6 +1089,8 @@ export function DeckView(input: {
                             deckCtl={deckCtl}
                             total={deckAsset.slides.length}
                             slideComments={(deckComments ?? []).filter((c) => c.slideIndex === i + 1)}
+                            citations={citations}
+                            onCitationClick={onCitationClick}
                             onAddComment={onAddSlideComment}
                             onCommentClick={onCommentClick}
                             onNotice={onNotice}
@@ -1117,6 +1138,13 @@ export function DeckView(input: {
                             {slide.blocks.length > 8 && (
                               <span className="text-[11px] text-text-tertiary">…{t('writing.deckMoreBlocks', '还有 {{n}} 段', { n: slide.blocks.length - 8 })}</span>
                             )}
+                            {/* #review-4: 只读投影仍显示原始 markdown（含 shortcode），
+                                徽标行作为编号/预览 affordance 叠加在卡片内容下方。 */}
+                            <CitationBadges
+                              text={[slide.title, ...slide.blocks.map((b) => b.text)].join('\n')}
+                              citations={citations ?? []}
+                              onCitationClick={onCitationClick}
+                            />
                           </div>
                         </div>
                       ))}

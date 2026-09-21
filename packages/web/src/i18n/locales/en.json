@@ -903,7 +903,13 @@
     "citationPreviewDangling": "No matching reference record for this citation marker",
     "citationPreviewClose": "Close",
     "referencesAutoTitle": "References",
-    "referencesAutoHint": "Auto-generated from in-text citations (read-only)"
+    "referencesAutoHint": "Auto-generated from in-text citations (read-only)",
+    "chatQueuedCount": "{{n}} messages queued — sent one by one (last one can be withdrawn)",
+    "chatQueuedOne": "Queued — will send after the current reply finishes",
+    "chatQueuedDropLast": "Withdraw the last queued message",
+    "citationDanglingDeleted": "Removed the dangling citation marker from the body ({{n}} place(s))",
+    "citationDanglingDeleteFail": "Failed to clean up the dangling citation — please refresh and retry",
+    "commentQueueFull": "{{n}} comments already queued — wait for some to finish before adding more"
   },
   "preview": {
     "open": "Preview",

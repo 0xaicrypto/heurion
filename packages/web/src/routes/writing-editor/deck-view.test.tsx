@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { chartBlockSchema } from '@heurion/contracts';
 import i18n from '@/i18n';
 import type { DeckWire } from '@/lib/types';
+import type { DocCitationWire } from '@/lib/api';
 import type { Slide } from '@/lib/deck';
 import { useDeckAsset } from './deck-asset';
 import { DeckView } from './deck-view';
@@ -43,8 +44,10 @@ const makeDeck = (titles: string[]): DeckWire => ({
 });
 
 /** 测试挂载点:真实 useDeckAsset hook + 种子数据,DeckView 直连(与路由同构)。
- * #1087: onNotice 透传 DeckView（路由 showNotice 同款签名），断言丢弃提示用。 */
-function Harness({ initialDeck, onDeckChange, onNotice, sendChatText, slides, body }: { initialDeck: DeckWire; onDeckChange?: (deck: DeckWire | null) => void; onNotice?: (text: string, ttlMs?: number) => void; sendChatText?: (text: string) => Promise<void>; slides?: Slide[]; body?: string }) {
+ * #1087: onNotice 透传 DeckView（路由 showNotice 同款签名），断言丢弃提示用。
+ * #review-4: citations/onCitationClick 透传 DeckView（路由 docCitations +
+ * setActiveCitationId 同款），断言卡片引用徽标用。 */
+function Harness({ initialDeck, onDeckChange, onNotice, sendChatText, slides, body, citations, onCitationClick }: { initialDeck: DeckWire; onDeckChange?: (deck: DeckWire | null) => void; onNotice?: (text: string, ttlMs?: number) => void; sendChatText?: (text: string) => Promise<void>; slides?: Slide[]; body?: string; citations?: DocCitationWire[]; onCitationClick?: (id: string) => void }) {
   const ctl = useDeckAsset();
   const seededRef = useRef(false);
   // #1044 测试探针:deckAsset 每次变化回传最新 deck,断言 content 块形状用。
@@ -69,6 +72,8 @@ function Harness({ initialDeck, onDeckChange, onNotice, sendChatText, slides, bo
         sendChatText={sendChatText ?? (async () => {})}
         onCardEdit={() => {}}
         onNotice={onNotice}
+        citations={citations}
+        onCitationClick={onCitationClick}
       />
     </I18nextProvider>
   );
@@ -1683,3 +1688,98 @@ describe('#1090-1 deck 编辑撤销', () => {
 function slidesNow(): number {
   return screen.getAllByRole('button', { name: '删除此页' }).length;
 }
+
+// ── #review-4: deck 卡片引用徽标 — deck 非 TipTap（无 decoration 管道）， ──
+// 卡片内容下方叠加 [n]/[?] 徽标行：编号与正文/References/导出同源
+// （assignCitationNumbers，每页独立作用域），点击弹 CitationPreviewModal。
+const CITE_A: DocCitationWire = {
+  id: 'cite_aaa',
+  doi: '10.1000/aaa',
+  title: 'Trial A',
+  authors: ['Zhang S'],
+  journal: 'J Clin Oncol',
+  year: 2024,
+  source: 'pubmed',
+};
+const CITE_B: DocCitationWire = {
+  id: 'cite_bbb',
+  doi: '10.1000/bbb',
+  title: 'Trial B',
+  authors: ['Li Q'],
+  journal: 'Lancet Oncol',
+  year: 2023,
+  source: 'crossref',
+};
+
+describe('#review-4 deck 卡片引用徽标', () => {
+  test('两个不同 shortcode → [1]/[2] 徽标（首现顺序编号），点击回调带正确 id，原始 shortcode 保留在输入框', () => {
+    const onCitationClick = vi.fn<(id: string) => void>();
+    render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          {
+            title: 'A',
+            content: [
+              { type: 'paragraph', text: '结果 [cite:cite_aaa]', style: 'bullet' },
+              { type: 'paragraph', text: '结论 [cite:cite_bbb]', style: 'bullet' },
+            ],
+          },
+        ])}
+        citations={[CITE_A, CITE_B]}
+        onCitationClick={onCitationClick}
+      />,
+    );
+
+    const badge0 = screen.getByTestId('deck-citation-badge-0');
+    const badge1 = screen.getByTestId('deck-citation-badge-1');
+    expect(badge0.textContent).toBe('[1]');
+    expect(badge0.getAttribute('data-citation-id')).toBe('cite_aaa');
+    expect(badge1.textContent).toBe('[2]');
+    expect(badge1.getAttribute('data-citation-id')).toBe('cite_bbb');
+    // tooltip = 元数据摘要（title · journal · year · doi）。
+    expect(badge0.getAttribute('title')).toContain('Trial A');
+
+    // 点击 → 路由层（onCitationClick）拿到被点的引用 id。
+    fireEvent.click(badge1);
+    expect(onCitationClick).toHaveBeenCalledTimes(1);
+    expect(onCitationClick).toHaveBeenCalledWith('cite_bbb');
+
+    // 编辑面不动：原始 shortcode 文本仍在要点输入框内。
+    expect(screen.getAllByRole('textbox').map((el) => (el as HTMLInputElement).value)).toContain('结果 [cite:cite_aaa]');
+  });
+
+  test('未知 id → [?] 悬挂警示徽标（warning 样式），点击同样回调该 id', () => {
+    const onCitationClick = vi.fn<(id: string) => void>();
+    render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [{ type: 'paragraph', text: '悬挂 [cite:cite_ghost]', style: 'bullet' }] },
+        ])}
+        citations={[CITE_A]}
+        onCitationClick={onCitationClick}
+      />,
+    );
+
+    const badge = screen.getByTestId('deck-citation-badge-0');
+    expect(badge.textContent).toBe('[?]');
+    expect(badge.getAttribute('data-citation-id')).toBe('cite_ghost');
+    expect(badge.className).toContain('text-warning');
+    expect(badge.getAttribute('title')).toContain('未解析的引用标记');
+
+    fireEvent.click(badge);
+    expect(onCitationClick).toHaveBeenCalledWith('cite_ghost');
+  });
+
+  test('无 shortcode 的 slide → 不渲染徽标行', () => {
+    render(
+      <Harness
+        initialDeck={makeDeckSlides([
+          { title: 'A', content: [{ type: 'paragraph', text: 'A-要点', style: 'bullet' }] },
+        ])}
+        citations={[CITE_A]}
+      />,
+    );
+    expect(screen.queryByTestId('deck-citation-badges')).toBeNull();
+    expect(screen.queryByTestId('deck-citation-badge-0')).toBeNull();
+  });
+});

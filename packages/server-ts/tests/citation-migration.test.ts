@@ -98,6 +98,9 @@ describe('#1080 迁移端到端（mock 反查）', () => {
     const rows = await prisma.docCitation.findMany({ where: { docId: DOC } })
     expect(rows).toHaveLength(2)
     expect(rows.every((r) => /^10\./.test(r.doi))).toBe(true)
+    // 复审 #7: plan.resolved[].citationId 回填真实 id（此前恒空串，审计无法核对）
+    expect(plan.resolved.every((r) => /^cite_/.test(r.citationId))).toBe(true)
+    expect(plan.resolved.map((r) => r.citationId).sort()).toEqual(rows.map((r) => r.id).sort())
   })
 
   test('用例2：仅标题无 DOI → Crossref 命中回填入库', async () => {

@@ -16,6 +16,9 @@ export interface DocChat {
   chatMessages: ReturnType<typeof useChatStore.getState>['sessions'][string]['messages'];
   chatLoading: boolean;
   chatPending: boolean;
+  /** 复审 #5: 队列条数（排队提示 N 条 + ✕ 撤回）。 */
+  chatPendingCount: number;
+  dropLastQueued: (sid: string) => void;
   chatEndRef: React.RefObject<HTMLDivElement>;
   chatFileRef: React.RefObject<HTMLInputElement>;
   activeSkills: string[];
@@ -29,8 +32,9 @@ export interface DocChat {
   /**
    * #1095: 返回值 = 排队时该槽的显式 turnId（直发为 undefined）— 评论
    * 并行处理以它登记/清账。消费方不关心时按 Promise<void> 使用即可。
+   * 复审 #5: extra 透传 SendChatOptions 扩展（queueTag/queuePolicy 等）。
    */
-  sendChatText: (text: string) => Promise<string | undefined>;
+  sendChatText: (text: string, extra?: Partial<import('@/lib/types').SendChatOptions>) => Promise<string | undefined>;
   handleSendChat: () => Promise<void>;
   handleChatPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => Promise<void>;
   handleChatFile: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
@@ -102,7 +106,10 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   const chatMessages = chatSession?.messages ?? [];
   const chatLoading = chatSession?.loading ?? false;
   // #1095: pending 单槽 → 多槽 FIFO 队列（排队不再互相覆盖）。
-  const chatPending = useChatStore((s) => (chatSessionId ? !!s.sessions[chatSessionId]?.pendingQueue?.length : false));
+  // 复审 #5: 队列计数 + 撤回入口数据源（排队提示显示 N 条 + ✕ 撤回最后一条）。
+  const chatPendingCount = useChatStore((s) => (chatSessionId ? (s.sessions[chatSessionId]?.pendingQueue?.length ?? 0) : 0));
+  const chatPending = chatPendingCount > 0;
+  const dropLastQueued = useChatStore((s) => s.dropLastQueued);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatFileRef = useRef<HTMLInputElement>(null);
@@ -143,7 +150,7 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   // #770: 统一发送管道（先保存编辑框内容再走 doc- 工具循环）—
   // 幻灯片视图的一键指令（AI 拆页 / AI 导出 PPT）与 chat 输入框共用；
   // 不新建旁路 API，保持"AI 在工具循环里决策"单管道。
-  const sendChatText = async (text: string): Promise<string | undefined> => {
+  const sendChatText = async (text: string, extra?: Partial<import('@/lib/types').SendChatOptions>): Promise<string | undefined> => {
     if (!docId || !text.trim()) return undefined;
     // §15.4: the writing chat runs through the unified pipeline (session
     // doc-{docId}); the doc context is injected via the docs/current source.
@@ -186,6 +193,8 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
       selection: selection || undefined,
       // #996/#1003: 节引用随消息持久化(节跳转标签)。
       ...(input.resolveSection && selection ? { sectionRef: input.resolveSection(selection) ?? undefined } : {}),
+      // 复审 #5: 调用方扩展（评论槽 queueTag / 交互 replace-last 等）。
+      ...extra,
     });
   };
 
@@ -193,7 +202,10 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
     if (!docId || !chatInput.trim()) return;
     const text = chatInput.trim();
     setChatInput('');
-    await sendChatText(text);
+    // 复审 #5: 交互式输入排队用 'replace-last' — 用户连发「改成 X」「等等改成 Y」
+    // 时后者覆盖前者（旧单槽语义对交互输入保留）；评论/一键指令槽（queueTag:
+    // 'comment'）不受影响，各自排队独立执行。
+    await sendChatText(text, { queuePolicy: 'replace-last' });
   };
 
   const attachUploaded = async (file: File) => {
@@ -388,6 +400,8 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
     chatMessages,
     chatLoading,
     chatPending,
+    chatPendingCount,
+    dropLastQueued,
     chatEndRef,
     chatFileRef,
     activeSkills,
@@ -398,7 +412,7 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
     kbDedupNotice,
     chatAttachedFiles,
     stopStream,
-    sendChatText: (text) => sendChatText(text),
+    sendChatText: (text, extra) => sendChatText(text, extra),
     handleSendChat,
     handleChatPaste: (e) => handleChatPaste(e),
     handleChatFile: (e) => handleChatFile(e),

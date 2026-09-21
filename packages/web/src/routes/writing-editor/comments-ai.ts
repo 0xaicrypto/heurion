@@ -57,8 +57,10 @@ export interface CommentsAiInput {
    * 发送通道（doc-chat hook 的 sendChatText）。
    * #1095: 返回值 = 排队时该指令槽的显式 turnId（直发为 undefined）—
    * 评论并行处理以此登记/清账（丢弃事件按 id 精确匹配）。
+   * 复审 #5: extra 透传 — 评论槽打 queueTag:'comment'（交互 replace-last
+   * 覆盖语义不吃掉已排队评论指令）。
    */
-  sendChatText: (text: string) => Promise<string | undefined>;
+  sendChatText: (text: string, extra?: { queueTag?: 'comment' }) => Promise<string | undefined>;
   /**
    * #1088: deck 撤销出口 — 路由接线 deck-conflict 的 restoreDeckSnapshot
    * （恢复写回前快照 + force 落盘；true = 已恢复并落盘成功）。useCommentsAi
@@ -134,6 +136,8 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
   // 下不再误归属),排队单槽被覆盖/Stop 清空时经 store 事件清理登记(可重试)。
   // #1074-4: 登记在入队后补记显式 turnId — 丢弃事件按 id 精确清账。
   const pendingCommentTurnsRef = useRef<Map<string, PendingCommentTurn>>(new Map());
+  /** 复审 #6: 评论并行并发上限 — 队列过深时后排锚点失真 + 无告警；到顶明示。 */
+  const MAX_CONCURRENT_COMMENT_TURNS = 5;
   // #1041: 当前 diff 审阅 ← 评论来源关联(accept → 评论自动 resolved)。
   const diffCommentSourcesRef = useRef<{ key: string; ids: string[] } | null>(null);
   const diffReviewKeyRef = useRef<string | null>(null);
@@ -520,6 +524,12 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
   const handleCommentAiProcess = useCallback((c: DocCommentWire) => {
     if (!docId || c.status === 'resolved') return;
     if (pendingCommentTurnsRef.current.has(c.id)) return;
+    // 复审 #6: 并发上限 — 无界队列下 10+ 条评论连点会让后排指令的锚点随
+    // 前排编辑落地逐渐失真且无降级。限深 5：到顶明示用户等待（不静默拒绝）。
+    if (pendingCommentTurnsRef.current.size >= MAX_CONCURRENT_COMMENT_TURNS) {
+      onNotice(t('writing.commentQueueFull', '已有 {{n}} 条评论在排队处理 — 请等待部分完成后再继续', { n: MAX_CONCURRENT_COMMENT_TURNS }));
+      return;
+    }
     // 与生成 Methods 同一互斥纪律：审阅未决/写回批次待冲刷时先完成审阅。
     if (diffReview !== null || pendingWriteBackRef.current !== null) {
       onNotice(t('writing.reviewFirstForComment', '请先完成当前的 AI 修改审阅，再处理评论'));
@@ -583,7 +593,9 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
             instruction,
           });
         }
-        const queuedTurnId = await sendChatText(instruction);
+        // 复审 #5: 评论槽打 queueTag — 交互式输入的 replace-last 覆盖语义
+        // 不会吃掉已排队的评论指令（评论并行批处理不受交互输入影响）。
+        const queuedTurnId = await sendChatText(instruction, { queueTag: 'comment' });
         // #1095: 入队返回显式 turnId — 登记（丢弃事件按 id 精确清账）；
         // 直发（未排队）为 undefined，登记保持无 turnId（指纹收口兜底）。
         if (queuedTurnId) {

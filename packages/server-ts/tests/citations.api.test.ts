@@ -94,6 +94,44 @@ describe('#1083/#1081 citations API', () => {
     expect(resAgain.statusCode).toBe(404)
   })
 
+  test('复审 #2 — 悬挂引用删除端点：清除正文标记（写回单点），真实记录 DELETE 仍走原语义', async () => {
+    const app = await getApp()
+    const docId = await createDoc('A [cite:cite_ghostX] B [cite:cite_ghostX]')
+    // 面向真实记录的 DELETE 对悬挂引用 → 404（无记录可删）
+    const resOld = await app.inject({ method: 'DELETE', url: `/api/v1/docs/${docId}/citations/cite_ghostX`, headers: await authHeader() })
+    expect(resOld.statusCode).toBe(404)
+    // 专用悬挂端点 → 标记从正文移除（返回新正文 + 移除数）
+    const res = await app.inject({ method: 'DELETE', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX`, headers: await authHeader() })
+    expect(res.statusCode).toBe(200)
+    const data = JSON.parse(res.payload)
+    expect(data.ok).toBe(true)
+    expect(data.removed).toBe(2)
+    const updated = await getPrisma().then((p) => p.doc.findUnique({ where: { id: docId } }))
+    expect(updated!.body).toBe('A B') // 标记及前导空格一并清除
+    // 标记已不存在 → 重复清理 → 404
+    const resAgain = await app.inject({ method: 'DELETE', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX`, headers: await authHeader() })
+    expect(resAgain.statusCode).toBe(404)
+    // 他人文档 → 404 防枚举
+    const otherDoc = await createDoc('X [cite:cite_ghostY]')
+    const other = await registerSecondUser()
+    const resOther2 = await app.inject({ method: 'DELETE', url: `/api/v1/docs/${otherDoc}/citations/dangling/cite_ghostY`, headers: { authorization: `Bearer ${other.token}` } })
+    expect(resOther2.statusCode).toBe(404)
+  })
+
+  test('复审 #8 — 悬挂诊断扫描 deck 内容 + occurrences 计数', async () => {
+    const app = await getApp()
+    const docId = await createDoc('正文 [cite:cite_bd1]')
+    const prisma = await getPrisma()
+    const deck = JSON.stringify({ title: 'D', slides: [{ title: '页 [cite:cite_bd2]', content: [{ type: 'paragraph', text: '块 [cite:cite_bd2] [cite:cite_bd1]' }] }] })
+    await prisma.doc.update({ where: { id: docId }, data: { deck } })
+    const res = await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/citations/dangling`, headers: await authHeader() })
+    expect(res.statusCode).toBe(200)
+    const data = JSON.parse(res.payload)
+    const byId = new Map(data.dangling.map((d: { id: string; occurrences: number }) => [d.id, d.occurrences]))
+    expect(byId.get('cite_bd1')).toBe(2) // 正文 1 + deck 块 1
+    expect(byId.get('cite_bd2')).toBe(2) // deck 标题 1 + 块 1
+  })
+
   test('未认证 → 401', async () => {
     const app = await getApp()
     const docId = await createDoc('x')

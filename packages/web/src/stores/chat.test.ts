@@ -413,3 +413,57 @@ describe('#1072-2 web 适配 — latestAssistantTurnId(turn_complete.assistant_e
     expect(latestAssistantTurnId('s2')).toBeNull();
   });
 });
+
+describe('#1095 复审 #5/#6 — 交互 replace-last + 撤回 + 评论并发上限', () => {
+  beforeEach(() => {
+    useChatStore.setState({ sessions: {} });
+    resetAssistantTurnIdsForTests();
+  });
+
+  test("replace-last：交互式排队覆盖最后一条非评论槽（'别管那条，改成 Y' 语义保留）", async () => {
+    const { api } = await import('@/lib/api');
+    (api.sendChatFull as any).mockImplementationOnce(async function* () {
+      yield { type: 'final_answer_chunk', text: '第一轮' };
+      yield { type: 'turn_complete' };
+    });
+    const dropped: Array<{ text: string }> = [];
+    onChatPendingDropped((e) => dropped.push({ text: e.text }));
+    const store = useChatStore.getState();
+    const p1 = store.sendMessage('s1', { sessionId: 's1', text: '第一轮', attachments: [], skills: [] });
+    await store.sendMessageQueued('s1', { sessionId: 's1', text: '把标题改成 X', attachments: [], skills: [] });
+    // 评论槽先入队
+    await store.sendMessageQueued('s1', { sessionId: 's1', text: '评论指令', attachments: [], skills: [], queueTag: 'comment' });
+    // 交互输入 replace-last → 覆盖「把标题改成 X」，但评论槽保留
+    const tY = await store.sendMessageQueued('s1', { sessionId: 's1', text: '等等改成 Y', attachments: [], skills: [], queuePolicy: 'replace-last' });
+    // 替换发生在 X 原位（队序不变：评论槽仍在 Y 之后 — 交互改主意只覆盖
+    // 交互槽自身位置，评论槽不受牵连）
+    const queue = useChatStore.getState().sessions.s1.pendingQueue ?? [];
+    expect(queue.map((s) => s.text)).toEqual(['等等改成 Y', '评论指令']);
+    expect(dropped).toEqual([{ text: '把标题改成 X' }]);
+    // replace-last 再次覆盖最后一条非评论槽（Y）— 评论槽保持不受牵连
+    await store.sendMessageQueued('s1', { sessionId: 's1', text: '再来一条', attachments: [], skills: [], queuePolicy: 'replace-last' });
+    expect((useChatStore.getState().sessions.s1.pendingQueue ?? []).map((s) => s.text)).toEqual(['再来一条', '评论指令']);
+    void tY;
+    await p1;
+  });
+
+  test('dropLastQueued：撤回最后一条 + 丢弃事件（评论槽经 turnId 清账）', async () => {
+    const { api } = await import('@/lib/api');
+    (api.sendChatFull as any).mockImplementationOnce(async function* () {
+      yield { type: 'final_answer_chunk', text: 'x' };
+      yield { type: 'turn_complete' };
+    });
+    const dropped: Array<{ text: string; turnId?: string }> = [];
+    onChatPendingDropped((e) => dropped.push({ text: e.text, turnId: e.turnId }));
+    const store = useChatStore.getState();
+    const p1 = store.sendMessage('s1', { sessionId: 's1', text: '第一轮', attachments: [], skills: [] });
+    const tA = await store.sendMessageQueued('s1', { sessionId: 's1', text: '排队 A', attachments: [], skills: [] });
+    await store.sendMessageQueued('s1', { sessionId: 's1', text: '排队 B', attachments: [], skills: [] });
+    store.dropLastQueued('s1');
+    expect((useChatStore.getState().sessions.s1.pendingQueue ?? []).map((s) => s.text)).toEqual(['排队 A']);
+    expect(dropped).toEqual([{ text: '排队 B', turnId: expect.any(String) }]);
+    expect(dropped[0].turnId).toBeTruthy();
+    void tA;
+    await p1;
+  });
+});

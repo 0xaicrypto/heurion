@@ -18,6 +18,8 @@ interface ChatStore {
    *  显式 turnId（uuid）；未排队（直发）返回 undefined。
    */
   sendMessageQueued: (sessionId: string, opts: SendChatOptions) => Promise<string | undefined>;
+  /** #1095 复审 #5: 撤回最后一条排队指令（排队提示的 ✕ 入口）。 */
+  dropLastQueued: (sessionId: string) => void;
   /** §10.3 (#220): re-run the last user turn — drops its stale reply first. */
   regenerate: (sessionId: string, opts: SendChatOptions) => Promise<void>;
   /** #420: 并行深度分析 — 与 sendMessage 共用同一个 SSE reducer + 批处理。 */
@@ -314,21 +316,62 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       // #1095: 多槽 FIFO — 追加到队尾，不再覆盖/丢弃任何已排队指令
       // （此前单槽覆盖即静默丢弃 + 发丢弃事件；多评论「请AI处理」依赖
       // 各自排队独立执行，覆盖路径退役）。turnId 入队即生成并返回。
+      // #1095 复审 #5: 交互式输入可声明 'replace-last' — 覆盖队列里最后一条
+      // **非评论**排队槽（用户改主意的「别管那条，改成 Y」语义保留）；评论/
+      // 一键指令槽（queueTag:'comment'）不受交互覆盖。被覆盖槽照发丢弃事件。
       const turnId = crypto.randomUUID();
       const slot: PendingChatSlot = { text: opts.text, opts, turnId };
+      // set() 回调内的赋值对 TS 控制流不可见 — 用持有对象避免 never 窄化。
+      const droppedHolder: { slot: PendingChatSlot | null; idx: number } = { slot: null, idx: -1 };
       set((state) => {
         const cur = state.sessions[sessionId] ?? emptySession();
+        const queue = queueOf(cur.pendingQueue);
+        if (opts.queuePolicy === 'replace-last') {
+          // 覆盖最后一条**非评论**槽（可位于评论槽之前 — 用户的交互改主意
+          // 语义只作用于交互槽；评论/一键指令槽永远保留，逐条独立执行）。
+          for (let i = queue.length - 1; i >= 0; i--) {
+            if (queue[i].opts.queueTag !== 'comment') {
+              droppedHolder.slot = queue[i];
+              droppedHolder.idx = i;
+              queue[i] = slot;
+              return {
+                sessions: {
+                  ...state.sessions,
+                  [sessionId]: { ...cur, pendingQueue: queue },
+                },
+              };
+            }
+          }
+        }
         return {
           sessions: {
             ...state.sessions,
-            [sessionId]: { ...cur, pendingQueue: [...queueOf(cur.pendingQueue), slot] },
+            [sessionId]: { ...cur, pendingQueue: [...queue, slot] },
           },
         };
       });
+      if (droppedHolder.slot) emitPendingDropped(sessionId, droppedHolder.slot.text, droppedHolder.slot.turnId);
       return turnId;
     }
     await get().sendMessage(sessionId, opts);
     return undefined;
+  },
+
+  /**
+   * #1095 复审 #5: 撤回最后一条排队指令（聊天面板排队提示的 ✕ 入口）—
+   * 逐槽丢弃事件照发（评论槽经登记清理；交互槽无需清账）。
+   */
+  dropLastQueued: (sessionId: string) => {
+    const s = get().sessions[sessionId];
+    const queue = s ? queueOf(s.pendingQueue) : [];
+    if (queue.length === 0) return;
+    const dropped = queue[queue.length - 1];
+    set((state) => {
+      const cur = state.sessions[sessionId];
+      if (!cur) return state;
+      return { sessions: { ...state.sessions, [sessionId]: { ...cur, pendingQueue: queueOf(cur.pendingQueue).slice(0, -1) } } };
+    });
+    emitPendingDropped(sessionId, dropped.text, dropped.turnId);
   },
 
   runDeepAnalysis: async (sessionId: string, opts) => {

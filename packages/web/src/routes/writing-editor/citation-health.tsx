@@ -20,9 +20,14 @@ export function CitationHealthBanner(input: {
   pollMs?: number;
   /** 指令发送通道 — 「重新检索绑定」走 AI 工具循环（与 #770 导出同哲学）。 */
   sendChatText?: (text: string) => Promise<unknown>;
+  /** 复审 #2 修复: 删除悬挂标记后服务端返回新正文 — 路由同步编辑器/基线
+   *  refs（对齐 onApplyExternalBody 语义），否则用户看到的还是旧正文。 */
+  onBodyReplaced?: (body: string) => void;
+  /** 统一轻提示通道（删除失败等可见反馈 — 此前空 catch 静默）。 */
+  onNotice?: (text: string, ttlMs?: number) => void;
 }) {
   const { t } = useTranslation();
-  const { docId, pollMs = 30_000, sendChatText } = input;
+  const { docId, pollMs = 30_000, sendChatText, onBodyReplaced, onNotice } = input;
   const [dangling, setDangling] = useState<Array<{ id: string; occurrences: number }>>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -45,12 +50,19 @@ export function CitationHealthBanner(input: {
 
   if (!docId || dangling.length === 0) return null;
 
+  // 复审 #2 修复: 悬挂引用「删除」= 清除正文标记本身（新端点 dangling/:id —
+  // 悬挂引用按定义无记录可删，旧实现复用面向真实记录的 DELETE 必然 404 且
+  // 空 catch 静默失效）。服务端返回新正文 → onBodyReplaced 同步编辑器。
   const onDelete = async (id: string) => {
     setBusyId(id);
     try {
-      await api.deleteDocCitation(docId, id);
+      const res = await api.deleteDanglingCitation(docId, id);
       setDangling((prev) => prev.filter((x) => x.id !== id));
-    } catch { /* 删除失败保留提示 — 可重试 */ } finally {
+      onBodyReplaced?.(res.body);
+      onNotice?.(t('writing.citationDanglingDeleted', '已从正文移除该悬挂引用标记（{{n}} 处）', { n: res.removed }), 3000);
+    } catch {
+      onNotice?.(t('writing.citationDanglingDeleteFail', '悬挂引用清理失败 — 请刷新后重试'), 4000);
+    } finally {
       setBusyId(null);
     }
   };

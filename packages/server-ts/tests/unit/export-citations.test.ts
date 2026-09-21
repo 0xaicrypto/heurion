@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach } from 'vitest'
 import prisma from '../../src/common/prisma.js'
-import { resolveOrCreateDocCitation, resolveBodyCitations, resolveDeckContentCitations, listDocCitations, serializeDocCitation, buildReferencesSection } from '../../src/lib/citation-store.js'
+import { resolveOrCreateDocCitation, resolveBodyCitations, resolveDeckContentCitations, listDocCitations, serializeDocCitation, buildReferencesSection, composeExportBody } from '../../src/lib/citation-store.js'
 import { stripLegacyReferencesSection } from '../../src/lib/asset-content.js'
 import { assignCitationNumbers, CITE_SHORTCODE_PATTERN } from '@heurion/contracts'
 
@@ -184,5 +184,41 @@ describe('#1078 导出 References — buildReferencesSection', () => {
 
   test('空编号 → 空段（调用方跳过追加）', () => {
     expect(buildReferencesSection(citations, new Map())).toBe('')
+  })
+})
+
+// ── 复审 #1 修复回归 — composeExportBody 单一入口（此前 insert-asset-export
+// 内联实现的 hasCiteShortcode 判定放在 resolveBodyCitations 之后，body 已被
+// 改写为 [n]/[?]，条件恒 false → References 列表从不追加）。──
+describe('#1078 复审 #1 — composeExportBody 导出正文合成', () => {
+  beforeEach(async () => {
+    await (prisma as any).docCitation.deleteMany({ where: { docId: DOC } })
+    await ensureDocFixture()
+  })
+
+  test('有标记：正文解析为 [n] + 遗留手写区被剥除 + References 列表追加（同序同编号）', async () => {
+    const c1 = await resolveOrCreateDocCitation({ docId: DOC, doi: '10.1000/compose.1', title: 'C1', authors: ['A'], source: 'crossref' })
+    const c2 = await resolveOrCreateDocCitation({ docId: DOC, doi: '10.1000/compose.2', title: 'C2', authors: [], source: 'pubmed' })
+    const body = `# T\n\n引用 [cite:${c1.id}] 与 [cite:${c2.id}]。\n\n## References\n\n[1] 旧手写条目\n`
+    const out = await composeExportBody(DOC, body)
+    expect(out).toContain('引用 [1] 与 [2]')
+    expect(out).not.toContain('[cite:')
+    expect(out).not.toContain('旧手写条目') // 手写区被剥除
+    expect(out).toContain('## References')
+    expect(out.indexOf('C1')).toBeLessThan(out.indexOf('C2')) // 编号顺序一致
+    expect(out).toContain('doi: 10.1000/compose.1')
+  })
+
+  test('悬挂标记也触发 References 合成（此前恒 false 的直接后果 — 列表永不生成）', async () => {
+    const c1 = await resolveOrCreateDocCitation({ docId: DOC, doi: '10.1000/compose.2', title: 'C1', authors: [], source: 'crossref' })
+    const body = `引用 [cite:${c1.id}] 悬挂 [cite:cite_ghost]\n\n## References\n\n[1] 旧条目\n`
+    const out = await composeExportBody(DOC, body)
+    expect(out).toContain('[1]') && expect(out).toContain('[?]')
+    expect(out).toContain('## References') // 关键断言：列表被追加（修复前恒 false）
+  })
+
+  test('无标记的存量文档零改动直通（不剥遗留 References）', async () => {
+    const legacy = '# T\n\n正文。\n\n## References\n\n[1] 手写遗留条目\n'
+    expect(await composeExportBody(DOC, legacy)).toBe(legacy)
   })
 })

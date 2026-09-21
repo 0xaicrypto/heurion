@@ -120,6 +120,70 @@ export async function findDanglingCitationIds(docId: string, body: string): Prom
   return ids.filter((id) => !known.has(id))
 }
 
+/**
+ * #1081（复审 #8 修复）— 悬挂引用统一诊断入口：正文 + deck 内容合并扫描。
+ * citations.router 的 /dangling 端点消费（deck 内悬挂引用在 UI 健康检查
+ * 同样可见，不再只等导出时 [?] + warn 暴露）；deck 文本抽取与
+ * resolveDeckContentCitations 的消费面同口径（title/bullets/paragraph）。
+ */
+export function deckCitationText(deckJson: string | null | undefined): string {
+  if (!deckJson) return ''
+  try {
+    const deck = JSON.parse(deckJson) as { slides?: Array<{ title?: string; bullets?: unknown[]; content?: unknown }> }
+    const parts: string[] = []
+    for (const slide of deck.slides ?? []) {
+      if (typeof slide?.title === 'string') parts.push(slide.title)
+      if (Array.isArray(slide?.bullets)) for (const b of slide.bullets) if (typeof b === 'string') parts.push(b)
+      if (Array.isArray(slide?.content)) {
+        for (const block of slide.content) {
+          if (block && typeof block === 'object' && (block as { type?: string }).type === 'paragraph' && typeof (block as { text?: unknown }).text === 'string') {
+            parts.push((block as { text: string }).text)
+          }
+        }
+      }
+    }
+    return parts.join('\n')
+  } catch {
+    return '' // deck 损坏 → 不参与悬挂扫描（导出路径已有降级语义）
+  }
+}
+
+/** 悬挂引用完整诊断 — 正文 + deck 文本合并扫描（单一实现，端点直接复用）。 */
+export async function findDanglingCitations(docId: string, body: string, deckJson?: string | null): Promise<Array<{ id: string; occurrences: number }>> {
+  const { assignCitationNumbers } = await import('@heurion/contracts')
+  const combined = deckJson ? `${body}\n${deckCitationText(deckJson)}` : body
+  const ids = [...assignCitationNumbers(combined).keys()]
+  if (ids.length === 0) return []
+  const rows = await prisma.docCitation.findMany({ where: { docId, id: { in: ids } } })
+  const known = new Set(rows.map((r) => r.id))
+  return ids
+    .filter((id) => !known.has(id))
+    .map((id) => ({ id, occurrences: [...combined.matchAll(new RegExp(`\\[cite:${id}\\]`, 'g'))].length }))
+}
+
+/**
+ * #1078（复审 #1 修复）— 导出正文合成：单一可测入口。
+ *
+ * 顺序关键不变量（此前 insert-asset-export 内联实现把 hasCiteShortcode 判定
+ * 放在 resolveBodyCitations **之后**，body 已被改写为 [n]/[?]，条件恒 false —
+ * References 列表永远不会追加）：
+ *   1. 先在【解析前原文】上算编号（与正文首现顺序一致）并捕获 hasMarkers；
+ *   2. 再解析 shortcode（[n]/[?] 占位）；
+ *   3. 有标记时：strip 遗留手写 References 区 + 追加 store 生成的列表
+ *      （无标记的存量文档原样直通 — 不剥遗留内容）。
+ */
+export async function composeExportBody(docId: string, body: string): Promise<string> {
+  const { assignCitationNumbers } = await import('@heurion/contracts')
+  const citationNumbers = assignCitationNumbers(body)
+  const resolved = await resolveBodyCitations(docId, body)
+  if (citationNumbers.size === 0) return resolved
+  const { stripLegacyReferencesSection } = await import('./asset-content.js')
+  const citations = await listDocCitations(docId)
+  const references = buildReferencesSection(citations.map(serializeDocCitation), citationNumbers)
+  if (!references) return resolved
+  return `${stripLegacyReferencesSection(resolved).replace(/\s+$/, '')}\n\n${references}\n`
+}
+
 /** 序列化为 API 形状（authors 反序列化为数组）。 */
 export function serializeDocCitation(row: DocCitationRow) {
   let authors: string[] = []
@@ -233,11 +297,14 @@ export async function resolveDeckContentCitations(docId: string, slides: Array<R
       warnDangling(docId, dangling)
     }
     if (Array.isArray(slide?.bullets)) {
-      slide.bullets = slide.bullets.map((b) =>
-        typeof b === 'string' && b.includes('[cite:')
-          ? resolveCitationShortcodes(b, known).text
-          : b,
-      )
+      // #1090 复审 #10 修复: bullets 分支此前漏调 warnDangling（title/content
+      // 分支都有）— deck 内容占比最大的 bullets 场景悬挂告警观测性补齐。
+      slide.bullets = slide.bullets.map((b) => {
+        if (typeof b !== 'string' || !b.includes('[cite:')) return b
+        const { text, dangling } = resolveCitationShortcodes(b, known)
+        warnDangling(docId, dangling)
+        return text
+      })
     }
     if (Array.isArray(slide?.content)) {
       for (const block of slide.content) {

@@ -1,26 +1,29 @@
 /**
  * #1083/#1084（epic）— 正式参考文献端点。
  *
- * - GET    /api/v1/docs/:docId/citations            → 结构化引用列表（唯一事实源）
- * - GET    /api/v1/docs/:docId/citations/dangling   → 悬挂引用诊断（正文 [cite:id]
- *   找不到 DocCitation 记录 — 迁移未命中/数据异常/跨文档复制，#1081）
- * - DELETE /api/v1/docs/:docId/citations/:citationId → 删除引用记录（清理入口；
- *   正文标记的移除由前端/AI 编辑链路完成）
+ * - GET    /api/v1/docs/:docId/citations              → 结构化引用列表（唯一事实源）
+ * - GET    /api/v1/docs/:docId/citations/dangling     → 悬挂引用诊断（正文 + deck 内容合并
+ *   扫描，复用 citation-store.findDanglingCitations 单一实现 — 复审 #8 修复）
+ * - DELETE /api/v1/docs/:docId/citations/:citationId   → 删除引用记录（真实记录场景）
+ * - DELETE /api/v1/docs/:docId/citations/dangling/:citationId → 清除正文中的悬挂引用标记
+ *   （悬挂引用按定义无记录可删 — 复审 #2 修复：此前复用面向真实记录的 DELETE
+ *   必然 404，前端 catch 静默吞错，UI 永远清不掉。本端点经 writeDocVersion
+ *   单点改写 body（同帧快照 + 投影 + 乐观锁），把 `[cite:<id>]` 标记从正文移除）
  *
  * 归属校验跟随现有 doc 路由口径：findFirst({ id, userId }) → 404（防枚举）。
- * 序号不落库 — 渲染/导出按正文 shortcode 首现顺序动态计算（contracts）。
  */
 import type { FastifyInstance } from 'fastify'
 import type { FastifyRequest } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
-import { assignCitationNumbers } from '@heurion/contracts'
 import {
   listDocCitations,
   getDocCitation,
   deleteDocCitation,
   serializeDocCitation,
+  findDanglingCitations,
 } from '../../lib/citation-store.js'
+import { writeDocVersion } from '../../tools/doc-version-writer.js'
 
 async function ownedDoc(request: FastifyRequest<{ Params: { docId: string } }>) {
   const userId = request.user!.userId
@@ -40,19 +43,13 @@ export async function citationsRouter(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/docs/:docId/citations/dangling', async (request, reply) => {
     const doc = await ownedDoc(request as never)
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
-    // #1081: 悬挂引用 = 正文 shortcode 有编号位但无 DocCitation 记录。
-    // 编号算法与在线渲染/References 列表/导出共用 contracts.assignCitationNumbers。
-    const body = String(doc.body || '')
-    const known = await listDocCitations(doc.id)
-    const knownIds = new Set(known.map((c) => c.id))
-    const dangling: Array<{ id: string; occurrences: number }> = []
-    for (const id of assignCitationNumbers(body).keys()) {
-      if (!knownIds.has(id)) {
-        const occurrences = [...body.matchAll(new RegExp(`\\[cite:${id}\\]`, 'g'))].length
-        dangling.push({ id, occurrences })
-      }
-    }
-    return { dangling, citations: known.map(serializeDocCitation) }
+    // #1081: 悬挂引用 = shortcode 有编号位但无 DocCitation 记录。
+    // 复审 #8 修复: 正文 + deck 内容合并扫描（此前只扫 body，deck 内悬挂
+    // 只能等导出时 [?] + warn 暴露），且复用 citation-store 单一实现
+    // （端点内联手写副本退役 — 规范扩展时单一同步点）。
+    const dangling = await findDanglingCitations(doc.id, String(doc.body || ''), doc.deck)
+    const citations = await listDocCitations(doc.id)
+    return { dangling, citations: citations.map(serializeDocCitation) }
   })
 
   app.delete('/api/v1/docs/:docId/citations/:citationId', async (request, reply) => {
@@ -63,5 +60,31 @@ export async function citationsRouter(app: FastifyInstance): Promise<void> {
     if (!target) return reply.status(404).send({ error: 'Citation not found' })
     await deleteDocCitation(doc.id, citationId)
     return { ok: true }
+  })
+
+  // 复审 #2 修复 — 悬挂引用的「删除」语义 = 清除正文中的标记本身
+  // （悬挂引用按定义没有 DocCitation 记录，复用面向真实记录的 DELETE 必然 404）。
+  app.delete('/api/v1/docs/:docId/citations/dangling/:citationId', async (request, reply) => {
+    const doc = await ownedDoc(request as never)
+    if (!doc) return reply.status(404).send({ error: 'Document not found' })
+    const { citationId } = request.params as { citationId: string }
+    const body = String(doc.body || '')
+    const re = new RegExp(`\\[cite:${citationId}\\]`, 'g')
+    if (!re.test(body)) {
+      return reply.status(404).send({ error: 'No dangling marker for this citation id in document body' })
+    }
+    const nextBody = body.replace(new RegExp(`\\s*\\[cite:${citationId}\\]`, 'g'), '')
+    // 写回单点 — 同帧快照 + 块投影维护 + 乐观锁（并发修改 → 409 可重试）。
+    const outcome = await writeDocVersion({
+      userId: request.user!.userId,
+      docId: doc.id,
+      body: nextBody,
+      baseBody: body,
+      snapshotLabel: '悬挂引用清理',
+      writeSource: 'human',
+    })
+    if (outcome.conflict) return reply.status(409).send({ error: '文档已被其他窗口修改，请刷新后重试' })
+    if (outcome.error) return reply.status(500).send({ error: outcome.error })
+    return { ok: true, body: outcome.body, removed: (body.match(new RegExp(`\\[cite:${citationId}\\]`, 'g')) ?? []).length }
   })
 }

@@ -28,7 +28,7 @@ export function ChatPanel(input: {
 }) {
   const { t } = useTranslation();
   const { chat, chatWidth, sidePanelTab, setSidePanelTab, onClose, onResizeStart, chatSessionId, onInsertChart, onJumpToSection, onPinAttachment, attachmentPinning } = input;
-  const { chatInput, setChatInput, chatMessages, chatSession, chatLoading, chatPending, chatEndRef, chatSelection, setChatSelection } = chat;
+  const { chatInput, setChatInput, chatMessages, chatSession, chatLoading, chatPending, chatPendingCount, chatEndRef, chatSelection, setChatSelection } = chat;
   return (
     <>
               {/* #351: tap the scrim to close the mobile chat drawer */}
@@ -115,10 +115,24 @@ export function ChatPanel(input: {
                     ))}
                   </div>
                 )}
-                {/* #fix: 追加问题排队提示 — 回复完成后自动发送,不打断。 */}
+                {/* #fix: 追加问题排队提示 — 回复完成后自动发送,不打断。
+                    #1095 复审 #5: 多槽队列 — 显示条数 + ✕ 撤回最后一条
+                    （评论指令槽撤回经 turnId 清账；提示不再对多条排队静默）。 */}
                 {chatPending && (
                   <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-2 py-1">
-                    <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">已排队 — 当前回复完成后自动发送</span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+                      {chatPendingCount > 1
+                        ? t('writing.chatQueuedCount', '已排队 {{n}} 条 — 逐条自动发送（最后一条可撤回）', { n: chatPendingCount })
+                        : t('writing.chatQueuedOne', '已排队 — 当前回复完成后自动发送')}
+                    </span>
+                    <button
+                      onClick={() => chat.dropLastQueued(chatSessionId)}
+                      className="shrink-0 text-text-tertiary transition-colors hover:text-text-primary"
+                      title={t('writing.chatQueuedDropLast', '撤回最后一条排队消息')}
+                      aria-label={t('writing.chatQueuedDropLast', '撤回最后一条排队消息')}
+                    >
+                      <X size={14} />
+                    </button>
                   </div>
                 )}
                 {/* #693: 选中即引用 — 当前编辑器选中文本将随下一条消息发送。 */}
