@@ -21,11 +21,12 @@ export function CitationHealthBanner(input: {
   /** 指令发送通道 — 「重新检索绑定」走 AI 工具循环（与 #770 导出同哲学）。 */
   sendChatText?: (text: string) => Promise<unknown>;
   /**
-   * 复审 #2 修复: 清除悬挂标记后服务端基于客户端基线（base_body/base_deck）
-   * 计算，返回改写后的正文/deck — 路由据此同步编辑器与服务端基线（用户
-   * 未保存编辑不会被服务端旧版本静默覆盖：基线由调用方传入而非服务端旧值）。
+   * 复审 #2 修复 + 复审轮 5: 清除悬挂标记后服务端基于客户端基线（base_body/
+   * base_deck）计算，返回**实际改写的维度**（body_changed/deck）— 路由按
+   * 改写维度同步编辑器，未改写的维度保留用户本地未保存内容（body 与 deck
+   * 走同一段共用 apply 逻辑，不再人工保持两段并行代码同步）。
    */
-  onCleanupApplied?: (next: { body: string; deck: string | null }) => void;
+  onCleanupApplied?: (next: { body: string; body_changed: boolean; deck: string | null }) => void;
   /** 统一轻提示通道（删除失败等可见反馈 — 此前空 catch 静默）。 */
   onNotice?: (text: string, ttlMs?: number) => void;
   /** 复审 #2: 客户端当前正文基线（用户正在编辑的未保存内容）— 清除以它为底稿
@@ -82,7 +83,7 @@ export function CitationHealthBanner(input: {
         server_deck_base: serverDeckBase ?? undefined,
       });
       setDangling((prev) => prev.filter((x) => x.id !== id));
-      onCleanupApplied?.({ body: res.body, deck: res.deck });
+      onCleanupApplied?.({ body: res.body, body_changed: res.body_changed, deck: res.deck });
       onNotice?.(t('writing.citationDanglingDeleted', '已移除该悬挂引用标记（{{n}} 处）', { n: res.removed }), 3000);
     } catch (err) {
       // 复审 #2: 409（服务端内容已被并发修改）等失败必须可见，不静默吞错。

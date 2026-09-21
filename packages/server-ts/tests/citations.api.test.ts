@@ -115,6 +115,8 @@ describe('#1083/#1081 citations API', () => {
     expect(data.ok).toBe(true)
     expect(data.removed).toBe(2)
     expect(data.deck).toBeNull()
+    // 复审轮 5: body_changed 显式标记（前端只同步实际改写的维度）
+    expect(data.body_changed).toBe(true)
     const updated = await getPrisma().then((p) => p.doc.findUnique({ where: { id: docId } }))
     expect(updated!.body).toContain('用户未保存的编辑') // 未保存编辑保留并落库
     expect(updated!.body).not.toContain('[cite:cite_ghostX]')
@@ -154,6 +156,11 @@ describe('#1083/#1081 citations API', () => {
     // 未保存的画布编辑保留（复审轮 4 P0：此前 serverDeck 参与计算 → 编辑被静默丢弃）
     expect(deckData.deck).toContain('用户未保存的标题')
     expect(deckData.deck).not.toContain('[cite:cite_ghostX]')
+    // 复审轮 5 P0 镜像修复 — deck-only 清除：body_changed=false，前端不得把
+    // 返回的旧 body 灌回编辑器（服务端 outcome.body = 未改写的库值）
+    expect(deckData.body_changed).toBe(false)
+    // body 未被本请求改写 → 返回库值（前端守卫不会灌回编辑器）
+    expect(deckData.body).toBe('A B 用户未保存的编辑')
     // 标记已不存在 → 重复清理 → 404
     const resAgain = await app.inject({ method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX/remove`, headers: await authHeader() })
     expect(resAgain.statusCode).toBe(404)

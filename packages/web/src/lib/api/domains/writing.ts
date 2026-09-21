@@ -223,7 +223,7 @@ export class WritingApi extends ApiCore {
   // base_body/base_deck = 客户端当前内容基线（用户未保存编辑参与计算，不
   // 被服务端旧版本静默覆盖；deck 基线不符 → 409）；body 基线由服务端写回
   // 单点乐观锁继续保护。deck 非空 = deck 侧标记同帧清除（复审 #3 对齐扫描范围）。
-  async removeDanglingCitation(docId: string, citationId: string, opts: { base_body?: string; server_base?: string; base_deck?: string; server_deck_base?: string } = {}): Promise<{ ok: boolean; body: string; deck: string | null; removed: number }> {
+  async removeDanglingCitation(docId: string, citationId: string, opts: { base_body?: string; server_base?: string; base_deck?: string; server_deck_base?: string } = {}): Promise<{ ok: boolean; body: string; body_changed: boolean; deck: string | null; removed: number }> {
     return this.fetch(`/api/v1/docs/${docId}/citations/dangling/${citationId}/remove`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

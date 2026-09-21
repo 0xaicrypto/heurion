@@ -1749,25 +1749,34 @@ export function WritingEditorPage() {
                   currentBody={body}
                   serverBase={lastSavedBody.current}
                   currentDeck={deckJson || null}
-                  serverDeckBase={lastSavedDeck.current || null}
-                  onCleanupApplied={({ body: md, deck: nextDeck }) => {
-                    // 悬挂标记清理已由服务端写回单点落库 — 同步编辑器/基线。
-                    // deck 返回非空 = deck 侧标记同帧清除（复审 #3），画布与
-                    // lastSavedDeck/appliedDocDeck 一并对齐（同 #773 写回语义）。
-                    setBody(md);
-                    lastSavedBody.current = md;
-                    serverBodyRef.current = md;
-                    appliedDocBody.current = md;
-                    setDoc((prev) => (prev ? { ...prev, body: md, updated_at: new Date().toISOString() } : prev));
-                    if (nextDeck) {
-                      lastSavedDeck.current = nextDeck;
-                      appliedDocDeck.current = nextDeck;
+                  // 复审轮 5（P2）: '' 与 null 语义分离 — '' = 客户端已知"服务端
+                  // 尚无 deck"（有效基线，服务端照常做新鲜度校验），null 才是
+                  // 跳过校验；此前 `|| null` 把两者混为一谈，无 deck → 有 deck
+                  // 的并发修改检测被静默跳过。
+                  serverDeckBase={lastSavedDeck.current}
+                  // 复审轮 5（P0 镜像 bug 修复）— body/deck 共用单段 apply：
+                  // 只同步**服务端实际改写**的维度（body_changed / deck 非空），
+                  // 未改写的维度保留用户本地未保存内容（deck-only 清除不再把
+                  // 服务端旧 body 灌回编辑器；镜像第二轮只修 deck 的缺陷）。
+                  // dirty 不在此处盲目清零 — 交给既有 markDirty 派生 effect 按
+                  // body/deckJson vs 保存基线重算（未改写维度的未保存态保留）。
+                  onCleanupApplied={({ body: nb, body_changed: bodyChanged, deck: nd }) => {
+                    if (bodyChanged) {
+                      setBody(nb);
+                      lastSavedBody.current = nb;
+                      serverBodyRef.current = nb;
+                      appliedDocBody.current = nb;
+                    }
+                    if (nd !== null && nd !== undefined) {
+                      lastSavedDeck.current = nd;
+                      appliedDocDeck.current = nd;
                       try {
-                        setDeckAsset(JSON.parse(nextDeck) as import('@/lib/types').DeckWire);
+                        setDeckAsset(JSON.parse(nd) as import('@/lib/types').DeckWire);
                       } catch { /* 损坏 deck 不灌画布 — 导出路径已有降级语义 */ }
                     }
-                    dirtyRef.current = false;
-                    setDirty(false);
+                    if (bodyChanged || nd !== null) {
+                      setDoc((prev) => (prev ? { ...prev, body: bodyChanged ? nb : prev.body, updated_at: new Date().toISOString() } : prev));
+                    }
                   }}
                 />
                 {deckUndo && (

@@ -120,6 +120,7 @@ export async function citationsRouter(app: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: 'No dangling marker for this citation id in document content' })
     }
 
+    const bodyChanged = bodyRemoved > 0
     const writeInput: Parameters<typeof writeDocVersion>[0] = {
       userId: request.user!.userId,
       docId: doc.id,
@@ -129,7 +130,7 @@ export async function citationsRouter(app: FastifyInstance): Promise<void> {
       baseBody: serverBody,
       baseDeck: doc.deck,
     }
-    if (bodyRemoved > 0) {
+    if (bodyChanged) {
       writeInput.body = stripCitationMarkers(effectiveBody, citationId)
     }
     let deckOut: string | null = null
@@ -142,6 +143,10 @@ export async function citationsRouter(app: FastifyInstance): Promise<void> {
     const outcome = await writeDocVersion(writeInput)
     if (outcome.conflict) return reply.status(409).send({ error: '文档已被其他窗口修改，请刷新后重试' })
     if (outcome.error) return reply.status(500).send({ error: outcome.error })
-    return { ok: true, body: outcome.body, deck: deckOut, removed: bodyRemoved + deckRemoved }
+    // 复审轮 5（P0 镜像 bug）— body_changed 显式标记：deck-only 清除时
+    // writeDocVersion 不触碰 body（outcome.body = 数据库旧值 prevBody），
+    // 前端不得把它当"新内容"灌回编辑器（镜像第二轮的 deck 侧缺陷）。与
+    // deck 侧的 deck:null 守卫同构 — 前端按「服务端实际改写的维度」同步。
+    return { ok: true, body: outcome.body, body_changed: bodyChanged, deck: deckOut, removed: bodyRemoved + deckRemoved }
   })
 }
